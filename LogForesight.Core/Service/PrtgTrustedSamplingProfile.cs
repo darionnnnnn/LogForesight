@@ -50,10 +50,20 @@ public sealed record PrtgTrustedSamplingProfile(
     double ComparedPrimaryChannelValue,
     double ComparedSnapshotMeasurementOaDate,
     double ComparedPrimaryChannelMeasurementOaDate,
-    string MetadataDigest)
+    string MetadataDigest,
+    string AuthorityKind = "legacy_native_marker_v1",
+    long BindingRevision = 0,
+    string BindingFingerprint = "",
+    string NativePrimaryChannelPropertyId = "",
+    string QualificationProofReference = "",
+    string BindingSettingsRevision = "",
+    string BindingPolicyRevision = "",
+    string AuthorityContextFingerprint = "")
 {
     public const int MaximumSerializedBytes = 8 * 1024;
     public const string StorePrefix = "prtg_trusted_sampling_profile_";
+    public const string ExplicitBindingAuthorityKind = "explicit_binding_primary_property_v1";
+    public const string LegacyAuthorityKind = "legacy_native_marker_v1";
     private const int MaxText = 256;
 
     /// <summary>Creates a profile only from typed facts parsed from a source metadata response.</summary>
@@ -66,7 +76,11 @@ public sealed record PrtgTrustedSamplingProfile(
         string analysisTimeZoneId, DateTimeOffset observedAtUtc,
         string sourceMetadataReference, string physicalSampleReference, bool sourceMarkedPrimary,
         double comparedSnapshotValue, double comparedPrimaryChannelValue,
-        double comparedSnapshotMeasurementOaDate, double comparedPrimaryChannelMeasurementOaDate)
+        double comparedSnapshotMeasurementOaDate, double comparedPrimaryChannelMeasurementOaDate,
+        string authorityKind = LegacyAuthorityKind, long bindingRevision = 0,
+        string bindingFingerprint = "", string nativePrimaryChannelPropertyId = "",
+        string qualificationProofReference = "", string bindingSettingsRevision = "",
+        string bindingPolicyRevision = "", string authorityContextFingerprint = "")
     {
         ArgumentNullException.ThrowIfNull(identity);
         var profile = new PrtgTrustedSamplingProfile(sensorObjid, identity.SourceGeneration,
@@ -77,7 +91,9 @@ public sealed record PrtgTrustedSamplingProfile(
             analysisTimeZoneId, observedAtUtc,
             sourceMetadataReference, physicalSampleReference, sourceMarkedPrimary,
             comparedSnapshotValue, comparedPrimaryChannelValue, comparedSnapshotMeasurementOaDate,
-            comparedPrimaryChannelMeasurementOaDate, "");
+            comparedPrimaryChannelMeasurementOaDate, "", authorityKind, bindingRevision,
+            bindingFingerprint, nativePrimaryChannelPropertyId, qualificationProofReference,
+            bindingSettingsRevision, bindingPolicyRevision, authorityContextFingerprint);
         profile = profile with { MetadataDigest = profile.ComputeDigest() };
         profile.Validate();
         return profile;
@@ -120,7 +136,19 @@ public sealed record PrtgTrustedSamplingProfile(
             !WholeHourInZone(StrategyEffectiveFromHourUtc, AnalysisTimeZoneId) ||
             MetadataDigest != ComputeDigest())
             throw new InvalidDataException("可信採樣 profile 缺少來源欄位、身分不完整或超出界限。");
-        if (!SourceMarkedPrimary || !double.IsFinite(ComparedSnapshotValue) ||
+        var explicitBinding = AuthorityKind == ExplicitBindingAuthorityKind;
+        if (explicitBinding)
+        {
+            if (SourceMarkedPrimary || BindingRevision <= 0 || !Hex64(BindingFingerprint) ||
+                !Hex64(AuthorityContextFingerprint) ||
+                NativePrimaryChannelPropertyId != PrimaryChannelId ||
+                !Valid(QualificationProofReference, 128) || QualificationProofReference.Contains("://", StringComparison.Ordinal) ||
+                !Valid(BindingSettingsRevision, 128) || !Valid(BindingPolicyRevision, 128))
+                throw new InvalidDataException("管理員 binding、primarychannel property 或 qualification proof 不完整。");
+        }
+        else if (AuthorityKind != LegacyAuthorityKind)
+            throw new InvalidDataException("可信採樣 profile authority kind 未支援。");
+        if ((!explicitBinding && !SourceMarkedPrimary) || !double.IsFinite(ComparedSnapshotValue) ||
             !double.IsFinite(ComparedPrimaryChannelValue) || ComparedSnapshotValue != ComparedPrimaryChannelValue ||
             !ValidOaDate(ComparedSnapshotMeasurementOaDate) || !ValidOaDate(ComparedPrimaryChannelMeasurementOaDate) ||
             Math.Abs(ComparedSnapshotMeasurementOaDate - ComparedPrimaryChannelMeasurementOaDate) > 1.0 / 86400.0)
@@ -129,8 +157,8 @@ public sealed record PrtgTrustedSamplingProfile(
             throw new InvalidDataException("可信採樣 profile 的量值方向未確認。");
         var normalizedComparedValue = Direction switch
         { "inverse" => -ComparedSnapshotValue * Scale, "absolute" => Math.Abs(ComparedSnapshotValue) * Scale, _ => ComparedSnapshotValue * Scale };
-        if (Unit != "%" || Scale != 1 || !double.IsFinite(normalizedComparedValue) || normalizedComparedValue is < 0 or > 100)
-            throw new InvalidDataException("百分比量義必須證明 scale=1 且同一物理樣本正規化後介於 0 與 100。");
+        if (Unit != "%" || !double.IsFinite(normalizedComparedValue) || normalizedComparedValue is < 0 or > 100)
+            throw new InvalidDataException("百分比量義正規化後必須介於 0 與 100。");
         if (Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(this with { MetadataDigest = "" })) > MaximumSerializedBytes)
             throw new InvalidDataException("可信採樣 profile 超過 8 KiB 上限。");
     }
@@ -151,6 +179,7 @@ public sealed record PrtgTrustedSamplingProfile(
         try { _ = DateTime.FromOADate(value); return true; }
         catch (ArgumentException) { return false; }
     }
+    private static bool Hex64(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
     private static bool ZoneExists(string id)
     {
         try { _ = TimeZoneInfo.FindSystemTimeZoneById(id); return true; }

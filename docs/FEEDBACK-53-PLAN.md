@@ -51,7 +51,9 @@
 ### 5.1 尚未完成的實作與必要交付
 
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
-- [ ] R15：typed量測時間／品質／physical sample與唯一slot已穿過accumulator、journal、SQL、transfer、readiness及正式consumer；仍須補齊實際原生頻道／主要通道／單位縮放與時基authority，使正式profile可取得資格，不能由fixture追認舊聚合。使用者已於 2026-10-09 定案：由管理者明確設定主通道、單位及尺度，再用有界原生探測核對實際通道 ID、值與時間；核對失敗維持等待，不產生正式風險。此流程仍須完整實作及驗證。
+- [ ] R15：完成全範圍初次資格的耐久作業、容量准入、跨程序 historic 共享配額、取消／逾期／同作業續跑與管理者動線。已驗證的單顆 binding／核驗／consumer 子項移至 §5.3；原生來源事實仍歸 A0／N1，不以 fixture 追認舊聚合。
+
+- [ ] R16：隔離 SQL Server 發現新建人工對應表的 device_objid 錯設 IDENTITY；修正模型與既有錯誤結構升級，按新建／資料與索引保留／重跑／併發／失敗回滾實際 provider gate 驗證後清除。
 
 ### 5.2 尚未通過的驗收門檻
 
@@ -65,6 +67,7 @@
 
 | 已完成子項 | 實際程式→consumer | 驗證與限制 |
 |---|---|---|
+| R15 單顆正式綁定與核驗、批次草稿、可信 consumer | binding CAS→有界原生 proof→profile resolver→snapshot→期間規則／主機明細；metadata 撤銷保留 samples/journal；API 提交回執與按 sensor 草稿 | 主代理固定回歸、尺度／語意守門 RED→GREEN、隔離 SQL Server 四項實際鎖／租約檢查與瀏覽器驗證；完整耐久資格作業及來源／容量另列活動待辦。 |
 | R07/day-window 跨主機日完成窗口 | 較晚小時開始時間→Local 主機日；closed-day 前一小時有界讀取→每日合格 NetIQ 父列→finding／案件 consumer | 原三個跨日正向 mutation、缺父、缺小時、DST 歧義及 UTC 不連續反例已驗；擴大受影響回歸僅一個未啟用設定的新增 fixture 失敗，修正 fixture 後定向全綠。歷史不倒退目前 episode、重跑保留人工處理；固定原始 case JSON 不改。原生來源及整輪容量仍未通過。 |
 
 | 子項 | 實際程式→consumer | 完成證據／仍有效限制 |
@@ -1435,3 +1438,16 @@ Root 再逐一登入一般負責人並開啟主機詳情，實際確認停用、
 當前 compatibility producer 以实际 sensor ID 有界讀取 `getobjectproperty.htm?name=primarychannel`，保存去識別別名、來源版本、HTTP／耗時與唯一 XML result；同一探測請求 snapshot 的 primarychannel，核對原生 property、raw channel ID 與 snapshot 的通道身分。DTD、深度、重複／巢狀／命名空間 result、溢位及非數字皆拒絕；未知、缺漏或不一致明示。這些診斷不證明量測當時主通道、語意或時基，不授予正式 profile。
 
 主代理在 Main 強制 Rebuild 0 errors，相關 112/112 通過、零略過，1133 項輸入零漂移；PowerShell verifier 20 個契約通過、兩份腳本雜湊不變。原四個 RED、兩次候選失敗均保存；後兩次失敗是數字子字串誤匹配合法 channel ID／時間戳，已改為 JSON 身分欄位核對。超過 30 秒的真實 elapsed 保留並裁定 incomplete，不當作畸形收據。證據記於 `current_native_primary_diagnostics_20261010`。仍無同 build 現場原生支援證據；§5.1 兩項必要交付、§5.2 五組验收繼續保留。
+
+
+### 2026-10-10 explicit binding 單顆流程與可信 consumer 完成段落
+
+管理者明確設定流程已打通 API／SQL／原生有限核验／profile resolver／snapshot parser／期間規則及主機明細。首次空世代 CAS、安全批次草稿、相同保存保留资格与时间依據回讀已由主代理驗證。合法 scale 0.5 原始值只換算一次；自洽摘要但保存語意不相符的 profile 被共同 resolver 与明細拒絕。完成 refresh 缺必要事实時撤銷舊 profile，舊結果不能刪較新 profile或新binding，逾期租約／傳輸失敗不能撤銷。SQL profile 發布交易改為 Serializable。
+
+主代理保留真實 RED：原 scale=1 明細守門 1/3 失敗；自洽但舊語意指紋 2/5 失敗；首個候選負例因 raw×scale 超出 100 的 fixture失敗另保留，未當產品反例。最終定向 gate `round53-binding-stage-final-affected-current-v16` 188/188 通過、0失敗／略過、Rebuild零錯誤／輸入零漂移。先前 consumer 441/441 與 seam 101/101 只作各凍結版本證據，不宣告最新全量回歸通過。實際本機瀏覽器 `/lf-binding` 驗單顆ready、草稿保留、批次冪等及stale拒絕、native primary不符等待、重新開啟時間依據保留；合成來源不得當現場支援。
+
+R15 留下耐久初始資格作業與跨程序配額項，A0及五組整輪門檻仍保留；不宣告15000容量或整輪完成。
+
+此次採逐案例聯集裁定：廣版 `round53-explicit-binding-stage-final-current-v13` 原始結果仍為失敗，三個錯誤量測語意案例卡在測試資料數字列舉讀取；修正該 fixture 的數字型別核對後，重跑全部同方法負例與所有變動的 Controller／Probe 呼叫端，未縮減原 case manifest 或斷言。Core 唯一差異是已被 resolver 拒絕的錯誤資源量測語意之等待原因分類；以來源反向替換及雜湊證明 ready／正式資格路徑未改，並重跑期間及規則 consumer。其餘差異為逐檔核對的 API／JS／測試輸入；聯集覆蓋 860 個唯一案例，廣版原有案例全部有成功結果，並保留原廣版失敗。這不是宣稱失敗的廣版 gate 通過。SQL Server 四項 provider 驗證確實使用目前 Core DLL，無漂移且專用資料庫／instance 已清除。瀏覽器 v3 的 UI／Controller／JS 與此段凍結來源相同，原始 Web DLL 雜湊另存於 browser evidence；驗證未排入草稿切換與 queued V1／editor V2 的保留動線；來源全為合成。
+
+原生 property 形狀補漏：主代理先以實際 XML envelope 重現容量 pilot 的純數字 parser 拒絕，v17 4通過／1失敗；改為共用既有有界 XML parser，未擴張來源資格。v18 保留 93通過／5失敗（四個既有 Razor BOM 契約與一個舊兩次 GET 計數）；還原 BOM 並要求三顆 sensor 完整 12 次 attempted／sent 後，v19 98/98 通過，零失敗／略過／輸入漂移，Rebuild 零錯誤。此 gate 同時補齊原先未選到的 TrustedSnapshotParser 與 ResourceConsumerContract、Help、管理頁檢查。容量 pilot 與資格探測現在解析同一個受限原生 XML 形狀；合成成功不代表現場支援或全範圍容量通過。

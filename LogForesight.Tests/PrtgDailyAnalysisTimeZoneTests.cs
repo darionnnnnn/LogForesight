@@ -116,15 +116,17 @@ public sealed partial class PrtgDiskFormalFlowTests
             new SystemSettingsStore(_backend.Blob("system_settings")),
             new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
             new PrtgDiskVerificationResultStore(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey)));
-        var baseline = service.Assess(DateOnly.FromDateTime(_completedDay), DiskRule(enabled: true),
-            PrtgDiskDecisionMode.Formal, 100, 0, [HostId], [SensorId]);
-        var baselineRow = Assert.Single(baseline.Rows);
-        Assert.NotNull(baselineRow.Decision.Finding);
-
         var firstRun = await RunPipeline();
         var firstFinding = Assert.Single(firstRun.Registry.For(HostId, _completedDay));
         var recordStore = _backend.RecordStore(new HostKey { HostId = HostId, HostName = "DISK-HOST" });
         var firstRecord = Assert.Single(recordStore.ReadRecent(_completedDay, 1));
+
+        // RunPipeline refreshes profile CAS metadata. Take the fingerprint baseline
+        // after that refresh so this test isolates the late sample rows.
+        var baseline = service.Assess(DateOnly.FromDateTime(_completedDay), DiskRule(enabled: true),
+            PrtgDiskDecisionMode.Formal, 100, 0, [HostId], [SensorId]);
+        var baselineRow = Assert.Single(baseline.Rows);
+        Assert.NotNull(baselineRow.Decision.Finding);
 
         // Analysis UTC 的 16:00–24:00 wall hours 已落在 Taipei/Local 父日次日。
         // 後到的可信樣本不屬於父日 D，不能改動已完成父日的來源結果。

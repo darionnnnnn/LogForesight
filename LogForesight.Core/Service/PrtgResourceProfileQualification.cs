@@ -78,9 +78,10 @@ public static class PrtgResourceProfileQualification
                 PrtgResourceFamily.Cpu => profile.Quantity == PrtgTrustedQuantitySemantic.CpuLoadPercent,
                 PrtgResourceFamily.Memory => profile.Quantity is PrtgTrustedQuantitySemantic.MemoryUsedPercent or
                     PrtgTrustedQuantitySemantic.MemoryAvailablePercent,
+                // DiskUsedPercent is a configured quantity, but no formal risk rule consumes it yet.
                 _ => profile.Quantity == PrtgTrustedQuantitySemantic.DiskFreePercent
             }) ||
-            profile.Unit != "%" || profile.Scale != 1) return false;
+            profile.Unit != "%" || !double.IsFinite(profile.Scale) || profile.Scale <= 0) return false;
         var strategyProfile = PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy);
         var strategy = new PrtgTrustedSamplingStrategyStateStore(
             backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey)).GetCurrent(policy,

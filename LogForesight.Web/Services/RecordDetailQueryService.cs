@@ -1,4 +1,4 @@
-﻿using LogForesight.Web.Auth;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -615,9 +615,10 @@ public class RecordDetailQueryService
         DateTime nowUtc)
     {
         if (nowUtc.Kind != DateTimeKind.Utc || !strategy.Ready ||
+            !PrtgTrustedSamplingBinding.MatchesProfileAuthority(profile, policy.TimeBasisEvidenceReference) ||
             expectedSemanticVersion is not null && profile.SemanticVersion != expectedSemanticVersion ||
             expectedStrategyVersion is not null && profile.StrategyFingerprint != expectedStrategyVersion ||
-            profile.Unit != "%" || profile.Scale != 1 || (family switch
+            profile.Unit != "%" || !double.IsFinite(profile.Scale) || profile.Scale <= 0 || (family switch
             {
                 PrtgResourceFamily.Cpu => profile.Quantity != PrtgTrustedQuantitySemantic.CpuLoadPercent,
                 PrtgResourceFamily.Memory => profile.Quantity is not (PrtgTrustedQuantitySemantic.MemoryUsedPercent or

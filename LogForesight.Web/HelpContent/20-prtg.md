@@ -54,7 +54,7 @@ CPU 與記憶體預設只產生提示，不改變主機日風險，也不建立�
 
 環境探測是唯讀工具，用來確認 API 回應、分頁、狀態變更查詢、數值查詢、取數範圍和資源守門目標。首次啟用或調整取數範圍前先執行，特別查看「9d-5 逐物件查詢驗證」與「站台對照」。探測遇到連線、認證或逾時會顯示原因，不把量不到當成零資料。
 
-探測結果仍需依現場的 PRTG 版本、sensor 分類、裝置數量與網路延遲判讀；頁面顯示的估算不能取代夜間實機執行確認。
+有界探測結果綁定 PRTG 版本、sensor 分類、作用範圍與傳輸成本；共同容量准入必須符合固定工作負載、配額與完成期限。缺少相符證據時顯示等待原因，不能因單次探測成功宣告整體容量通過。
 
 ## NetIQ 試點與判定資格
 
@@ -110,7 +110,7 @@ SMTP 接受不代表收件匣實收。每名收件人的「SMTP 已接受」、�
 
 另到 NetIQ 維護 → 診斷，選擇實際 Sentinel 並執行「安全欄位形狀探測」，複製其獨立、有界的安全報告；這不是 PRTG 完整探測 JSON 的一部分。下一輪交接需同時提供完整 PRTG JSON 與這份 NetIQ metadata 報告，不能用小範圍資料流輸出替代。這是受控探測材料，不代表要在現場部署或完成正式站台驗收；執行時仍須使用既有且有權存取來源的探測環境。
 
-容量核准分開收集快照與 Profile 傳輸樣本。Profile 試測可在 PRTG 擷取停用時執行；它對目前政策排序後的前 5 顆 sensor（範圍較小時取全部）各依序送出 sensors 與 channels 兩個 Table API 請求，每份回應最多 512 KiB、整趟 30 秒。只有 5 筆相同來源憑證、範圍、策略、請求形式與程式版本的成功樣本才可參與 Profile 容量估算；失敗、逾時、格式變更或來源／設定／範圍／策略變更都會留下可見的等待原因或使舊樣本失效。它只保存不可逆雜湊、請求數與耗時，不會寫入信任 Profile，也不會改資源身分或頻道世代，因此不會讓來源資格通過。重新啟用或擴大有效採集範圍時，快照與 Profile 都必須各有 5 筆新鮮且相符的成功樣本；共享 Table API 每秒 2 次配額、快照期限及 Profile 23 小時刷新期限會保留餘裕後一起估算。範圍估算會另外顯示共同容量結果、每秒保留配額與各自完成期限；分項試測個別符合條件只代表樣本足以估算，不代表共享配額、最多 5 顆 sensor 共用的 30 秒探測期限或整體期限已通過。綠色狀態依共同容量結果判定，並區分已核准方案與尚待儲存／啟用重驗的候選估算。停用狀態可儲存設定。
+容量核准分開收集快照與 Profile 傳輸樣本。Profile 試測可在 PRTG 擷取停用時執行；它對目前政策排序後的前 5 顆 sensor（範圍較小時取全部）各依序送出前置 sensors、channels、native primarychannel property 與後置 sensors 四個 Table 配額請求，每份回應最多 512 KiB、整趟 30 秒。只有 5 筆相同來源憑證、範圍、策略、請求形式與程式版本的成功樣本才可參與 Profile 容量估算；失敗、逾時、格式變更或來源／設定／範圍／策略變更都會留下可見的等待原因或使舊樣本失效。它只保存不可逆雜湊、請求數與耗時，不會寫入信任 Profile，也不會改資源身分或頻道世代，因此不會讓來源資格通過。重新啟用或擴大有效採集範圍時，快照與 Profile 都必須各有 5 筆新鮮且相符的成功樣本；共享 Table API 每秒 2 次配額、快照期限及 Profile 23 小時刷新期限會保留餘裕後一起估算。範圍估算會另外顯示共同容量結果、每秒保留配額與各自完成期限；分項試測個別符合條件只代表樣本足以估算，不代表共享配額、最多 5 顆 sensor 共用的 30 秒探測期限或整體期限已通過。綠色狀態依共同容量結果判定，並區分已核准方案與尚待儲存／啟用重驗的候選估算。停用狀態可儲存設定。
 
 既有採集方案失敗後另有有限復原：必須仍是同一已核准方案、來源／設定／範圍／策略，Profile 資格有效，取數範圍僅 1–50 顆，且有 1–4 筆 24 小時內同契約的真實快照批次結果。系統以設定的最壞請求逾時、目前共享配額及 25% 餘裕重新准入；每輪只允許一批快照，先不執行 sensor 補抓或狀態 Queue。這些結果不會被補造成成功樣本；完整作業仍須等到 5 筆新鮮且相符的成功快照。沒有批次證據、證據過期、範圍擴大或契約改變時，維持等待並顯示原因。
 
@@ -127,3 +127,25 @@ SMTP 接受不代表收件匣實收。每名收件人的「SMTP 已接受」、�
 - SQLite：核對部署的 `Storage:SqliteWal` 為 `true`（預設值），並以唯讀 `PRAGMA journal_mode` 確認為 `wal`；修改部署設定須依服務重啟流程生效。不要在下載流程臨時改資料庫模式。
 
 這些設定不會授予來源信任，也不代表容量通過。服務遇到不符合前提的資料庫會在下載開始前拒絕；校正後可重新執行匯出。
+
+## Trusted profile 頻道綁定與資格核驗
+
+在 PRTG 維護的 Trusted profile 進度頁逐列選取實際 sensor。唯讀 probe 回傳的頻道清單只供管理者明確選擇精確 Channel ID、caption 與來源單位；清單順序、來源 primary 標記、sensor 值相等或環境 native primary capability 都不會自動選頻道或授予資格。若清單截斷、身分／頻道世代不明或來源欄位不足，保持 unknown 並重新核對。
+
+保存綁定時會帶入 `ExpectedSettingsRevision`、`ExpectedPolicyRevision`、`ExpectedIdentityEpoch`、`ExpectedChannelGeneration` 與 `ExpectedBindingRevision`，以及明確選定的 `ChannelObjectId`、`ExpectedCaption`、語意、單位、正 Scale、方向、原始間隔單位、原始與分析時區及不含密鑰的 `TimeBasisEvidenceReference`。首次保存或語意／來源契約變更後為 waiting，並列出 `qualification_required`；保存本身不是資格核准。完全相同且仍符合目前身分與來源契約的保存會保留既有 proof、binding revision 及頻道世代，回覆可維持 qualified。若回覆 409 `binding_fence_changed` 或 `catalogue_changed`，保留草稿，重新載入目前版本及來源候選，再由管理者核對後重送，不自動覆寫。
+
+「核驗此綁定」會按已保存綁定版本執行單次有界來源核驗。只有取得真實、可解析的原生 PRTG 歷史 XML，且其 sensor、明確綁定頻道、raw value 與 `datetime_raw` 證據通過前後來源核對，才可能建立 physical-sample qualification proof；missing fact、逾時、格式錯誤、身分或頻道世代變更都保持 waiting/unknown。連續 metadata 更新不能冒充重新取得 historic proof。native primary property 探測只屬診斷資料，永遠不使正式 Profile ready。
+
+Profile metadata freshness 為 24 小時；背景 refresh 工作的期限為 23 小時，兩者含義不同。共享 historic API quota 的初次核驗每顆 sensor 限一次有限的 `avg=0` GET，用於取得真實 raw proof；它不是冷卻時間，也不代表其他請求已通過容量驗收。正式擴至 15,000 顆前仍須以量測結果完成整體來源 probe、refresh、quota、timeout 及期限的共同准入；目前不能把範圍上限或分項試測描述為 15,000 顆已驗收。
+
+管理者介面所用唯讀查詢形狀：`GET profiles?offset&limit` 回傳分頁與每列 binding/status/缺項摘要，不含原始頻道 payload；`GET bindings/{sensorObjid}` 回傳目前 binding（可為 null）及五個 expected CAS 值；`POST probe` 接受 `{sensorObjids:[...]}`，一次 1–5 顆並回傳逐 sensor 身分世代及頻道候選；`PUT bindings/{sensorObjid}` 保存一筆 explicit binding；`POST bindings/{sensorObjid}/qualify` 接受 `{expectedBindingRevision,expectedBindingFingerprint}`。保存候選最多 100 筆的批次使用 `POST bindings/batch`，每列仍需自己的五個 expected fence 並逐列回報。初次 physical-sample proof 綁定當時的 binding、source、resource、channel 與 time-basis 證據；之後 metadata refresh 不會改寫或重新取得該 historic proof。
+
+MVC API 的 binding request 使用 `ChannelObjectId` 十進位字串；`Quantity` 是數字 enum：1=CpuLoadPercent、2=MemoryUsedPercent、3=MemoryAvailablePercent、4=DiskFreePercent、5=DiskUsedPercent（0=Unknown 不可保存）。管理者要先按每顆 sensor 讀取 probe，再從該 row 的 channels 精確挑選 channel ID、確認 caption/unit、填語意與時間證據，不能套用其他 sensor 的頻道。
+
+如需多顆設定，可逐顆完成 probe 與表單後按「加入批次草稿」；草稿留在目前頁面記憶體中，最多 100 筆，跨 profile 分頁保留。按「提交批次綁定」才送出伺服器；每列仍使用加入草稿時的獨立版本 fence，回覆逐列接受或拒絕，首次／變更的接受列是 waiting，後續必須明確核驗；相同且仍有效的列維持既有 qualified。拒絕列與未提交草稿會保留，重新載入不會默默取代草稿。若 fence／目錄衝突，草稿會保留；逐列重新載入 sensor、probe、核對並重新加入可更新該列 fence。批次上限不是 100 顆自動挑選，也不代表全部 15,000 顆容量已驗收。
+
+Qualify API 成功回應的外層 `status` 才是本次核驗狀態；內層 `binding` 是保存資料，`probe` 是來源回報。Profiles row 也分別提供 profile resolver `status` 與 `bindingStatus`，不可把已有 proof reference 的 `qualified` 字樣直接當成 profile `ready`。
+
+來源 Profile 必須同時符合摘要、目前資源身分、保存的 binding 語意指紋與當前時間依據。Scale 可為有限正數，原始值只正規化一次；合法的非 1 Scale 證據可出現在主機明細。背景 metadata 刷新若完成核對並確認必要來源事實缺失／衝突，會原子撤銷該次捕捉的舊 Profile；較新 Profile、改動後的 binding、歷史資料及 journal 不受舊結果覆寫。網路失敗、逾時、取消或失去租約只記錄失敗／等待，不能冒充已觀測到語意變更。
+
+切換 sensor 會保留未提交編輯器草稿，明確排入批次的版本與較新的編輯草稿各自保留。API 確認已寫入但目錄隨後變更時，顯示已提交並要求 reload；此回執不帶來源／binding 內容，核驗按鈕保持停用，直到 reload 與 probe 核對。網路、逾時或伺服器錯誤只表示結果未確認，草稿保留，先 reload 核對已保存版本再决定重送，不自動重試。

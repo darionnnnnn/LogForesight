@@ -51,11 +51,11 @@ public sealed class PrtgProfileTransportCapacityStore(EfJsonBlobStore blob)
     {
         if (!Hash(sample.SourceFingerprint) || !Hash(sample.ScopeFingerprint) || !Hash(sample.StrategyFingerprint) ||
             !Hash(sample.RequestShapeFingerprint) || !Hash(sample.VersionFingerprint) || sample.SensorCount is < 1 or > 5 ||
-            sample.RequestsAttempted is < 0 or > 10 || sample.RequestsSent is < 0 or > 10 ||
+            sample.RequestsAttempted is < 0 or > 20 || sample.RequestsSent is < 0 or > 20 ||
             sample.ElapsedMilliseconds < 0 || sample.Outcome is not ("success" or "failed" or "timeout"))
             throw new ArgumentException("Invalid bounded profile transport sample.", nameof(sample));
         if (sample.Outcome == "success" &&
-            (sample.RequestsAttempted != sample.SensorCount * 2 || sample.RequestsSent != sample.SensorCount * 2))
+            (sample.RequestsAttempted != sample.SensorCount * 4 || sample.RequestsSent != sample.SensorCount * 4))
             throw new ArgumentException("A successful profile transport sample must contain every attempted and sent GET.", nameof(sample));
 
         blob.MutateWithContext((_, current) =>
@@ -174,7 +174,7 @@ public sealed class PrtgCapacityReservationStore(EfJsonBlobStore blob)
     }
 }
 
-/// <summary>Conservative completion estimate: two sequential table requests per selected sensor.</summary>
+/// <summary>Conservative completion estimate: four sequential Table-budget requests per sensor.</summary>
 public static class PrtgProfileTransportCapacityEvaluator
 {
     public const double RequiredHeadroomFraction = .25;
@@ -194,10 +194,10 @@ public static class PrtgProfileTransportCapacityEvaluator
             s.CompletedAtUtc <= nowUtc && nowUtc - s.CompletedAtUtc <= EvidenceFreshness)
             .OrderBy(s => s.CompletedAtUtc).ToArray();
         var lastInvalidIndex = Array.FindLastIndex(matching, x => x.Outcome != "success" ||
-            x.RequestsAttempted != x.SensorCount * 2 || x.RequestsSent != x.SensorCount * 2);
+            x.RequestsAttempted != x.SensorCount * 4 || x.RequestsSent != x.SensorCount * 4);
         var latest = matching.LastOrDefault();
         var successful = matching.Skip(lastInvalidIndex + 1).Where(x => x.Outcome == "success" &&
-            x.RequestsAttempted == x.SensorCount * 2 && x.RequestsSent == x.SensorCount * 2).ToArray();
+            x.RequestsAttempted == x.SensorCount * 4 && x.RequestsSent == x.SensorCount * 4).ToArray();
         var requiredSamples = lastInvalidIndex >= 0
             ? PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples : requiredFreshSuccessfulSamples;
         var oldest = successful.FirstOrDefault()?.CompletedAtUtc;
@@ -216,9 +216,9 @@ public static class PrtgProfileTransportCapacityEvaluator
             return Result(PrtgSnapshotCapacityStatus.CapacityUnverified, null, null, "shared_table_budget_unavailable");
         var perSensorSeconds = successful.Select(x => x.ElapsedMilliseconds / 1000d / x.SensorCount).Order().ToArray();
         var p95 = perSensorSeconds[Math.Clamp((int)Math.Ceiling(perSensorSeconds.Length * .95) - 1, 0, perSensorSeconds.Length - 1)];
-        // The probe performs two sequential GETs per sensor. The shared rate model includes current
+        // The probe performs four sequential Table-budget GETs per sensor. The shared rate model includes current
         // work before assigning the remaining Table2/s tokens to this serialized refresh lane.
-        var requestRateFloor = Math.Ceiling(targetSensorCount * 2d / tableRequestsAvailableAfterSharedTraffic);
+        var requestRateFloor = Math.Ceiling(targetSensorCount * 4d / tableRequestsAvailableAfterSharedTraffic);
         var sequentialFloor = Math.Ceiling(targetSensorCount * p95);
         var estimate = Math.Max(requestRateFloor, sequentialFloor);
         if (!double.IsFinite(estimate) || estimate > ProfileRefreshWindow.TotalSeconds)
@@ -347,7 +347,7 @@ public static class PrtgJointCapacityEvaluator
         var inFlightWait = usage.InFlight > 0 ? Math.Max(1, httpTimeoutSeconds) : 0;
         var observedReclaim = Math.Max(tableWait, Math.Max(historicWait, inFlightWait));
         var snapshotRateWindow = snapshotWindow - reclaim - 1;
-        var profileRequests = profile.TargetSensorCount * 2d;
+        var profileRequests = profile.TargetSensorCount * 4d;
         var profileP95 = profile.P95SensorSeconds ?? double.PositiveInfinity;
         var profileSensorWorkSeconds = profile.TargetSensorCount * profileP95;
         var profileInterSliceBudget = ProfileRefreshInterSliceDelayBudget(profileWindow);
@@ -363,11 +363,11 @@ public static class PrtgJointCapacityEvaluator
         // between GETs, so reserve enough throughput for one measured group to finish inside
         // that request deadline as well as the full-scope completion window.
         var groupDeadlineSeconds = TimeSpan.FromSeconds(30).TotalSeconds;
-        var groupRequestGaps = Math.Max(0, measuredChunkSize * 2d - 1);
+        var groupRequestGaps = Math.Max(0, measuredChunkSize * 4d - 1);
         const double profileGroupDeadlineMarginSeconds = 5;
         // Keep the floor independent of observed elapsed-time samples so renewing a plan does not
         // silently change its lane fingerprint. Slow measurements still fail the deadline check.
-        const double minimumProfileRate = .5;
+        const double minimumProfileRate = 1.0;
         var profileRate = reservedProfileRate ?? (profileRateWindow > 0
             ? Math.Max(profileRequests / profileRateWindow, minimumProfileRate)
             : double.PositiveInfinity);
@@ -388,7 +388,7 @@ public static class PrtgJointCapacityEvaluator
             Math.Ceiling(snapshot.BatchCount / 3d) * snapshotP95) + reclaim;
         var profilePacedCompletion = effectiveProfileRate > 0
             ? Math.Max(0, profileRequests - 1d) / effectiveProfileRate : double.PositiveInfinity;
-        // Each sensor performs two serial GETs; the pilot's per-sensor p95 covers response time,
+        // Each sensor performs four serial GETs; the pilot's per-sensor p95 covers response time,
         // while the plan rate adds the gap between each actual send. A max() would hide this
         // sequential cost and understate large-scope completion time.
         var profileTransportSeconds = profilePacedCompletion + profileSensorWorkSeconds + reclaim;

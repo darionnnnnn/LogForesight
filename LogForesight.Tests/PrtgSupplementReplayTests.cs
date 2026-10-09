@@ -1,4 +1,4 @@
-﻿using LogForesight.Core.Models;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -110,13 +110,13 @@ public sealed class PrtgSupplementReplayTests : IDisposable
             strategyProfile.SnapshotIntervalMinutes, DateTime.UtcNow.AddDays(-2));
         var now = DateTime.UtcNow;
         var oa = now.ToOADate();
-        var profile = PrtgTrustedSamplingProfile.FromProbe(identity.SensorId, identity, "disk",
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(identity.SensorId, identity, "disk",
             "primary-disk-channel", "Disk Free", PrtgTrustedQuantitySemantic.DiskFreePercent, "%", 1,
             "direct", "disk-resource-v1", strategy.StrategyFingerprint, strategy.StrategyMinutes,
             strategy.EffectiveFromHourUtc, TimeSpan.FromMinutes(strategy.StrategyMinutes), "minutes",
             "UTC", "UTC", "UTC", new DateTimeOffset(now), "metadata-reference-valid",
             "physical-reference-valid", true, 20, 20, oa, oa);
-        new PrtgTrustedSamplingProfileStore(_backend).RecordProbeResult(profile);
+        var profile = PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
         var sensorId = identity.SensorId;
         new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Update(e =>
         {

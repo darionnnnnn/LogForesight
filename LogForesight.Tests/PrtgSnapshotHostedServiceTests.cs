@@ -1141,7 +1141,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             profileStore.Record(new PrtgProfileTransportSample(contract.SourceFingerprint,
                 contract.ScopeFingerprint, contract.StrategyFingerprint, contract.RequestShapeFingerprint,
                 now.AddMinutes(-5).AddMilliseconds(index), profileElapsed, profileSensorCount,
-                profileSensorCount * 2, profileSensorCount * 2, "success", null, contract.VersionFingerprint));
+                profileSensorCount * 4, profileSensorCount * 4, "success", null, contract.VersionFingerprint));
 
         var snapshot = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
             PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), selection.ScopeFingerprint,
@@ -2602,7 +2602,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Enumerable.Range(0, count).Select(i => (start + i, "Ping"));
 
     /// <summary>快照請求（查目前值）；補抓請求帶 parentid 欄位，兩者以欄位區分。</summary>
-    private static bool IsSnapshotUrl(string url) => url.Contains("columns=objid,lastvalue,interval,lastcheck,status");
+    private static bool IsSnapshotUrl(string url) => url.Contains("columns=objid,lastvalue,interval,lastcheck,status,primarychannel");
 
     private static bool IsBackfillUrl(string url) => url.Contains("content=sensors") && url.Contains("parentid");
 

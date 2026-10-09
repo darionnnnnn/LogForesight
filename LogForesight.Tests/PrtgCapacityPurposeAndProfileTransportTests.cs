@@ -65,7 +65,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         var shape = new string('D', 64);
         var version = new string('E', 64);
         var samples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(
-            source, scope, strategy, shape, now.AddMinutes(-i), 5000, 5, 10, 10, "success", null, version)).ToArray();
+            source, scope, strategy, shape, now.AddMinutes(-i), 5000, 5, 20, 20, "success", null, version)).ToArray();
 
         var qualified = PrtgProfileTransportCapacityEvaluator.Evaluate(1000, source, scope, strategy,
             shape, version, samples, now);
@@ -75,7 +75,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
             version, samples.Append(samples[0] with { Outcome = "timeout", RequestsAttempted = 1, RequestsSent = 0 }), now);
         var olderAfterFailure = PrtgProfileTransportCapacityEvaluator.Evaluate(1000, source, scope, strategy, shape,
             version, samples.Append(samples[^1] with { CompletedAtUtc = now.AddSeconds(1), Outcome = "failed",
-                RequestsAttempted = 10, RequestsSent = 10 }), now.AddSeconds(2));
+                RequestsAttempted = 20, RequestsSent = 20 }), now.AddSeconds(2));
         var failure = samples[^1] with { CompletedAtUtc = now.AddSeconds(1), Outcome = "timeout",
             RequestsAttempted = 1, RequestsSent = 0 };
         var oneRecovery = samples.Append(failure).Append(samples[0] with { CompletedAtUtc = now.AddSeconds(2) });
@@ -87,7 +87,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
             strategy, shape, version, fullRecovery, now.AddSeconds(7));
 
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, qualified.Status);
-        Assert.Equal(1000d, qualified.EstimatedSeconds);
+        Assert.Equal(2000d, qualified.EstimatedSeconds);
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, otherSource.Status);
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, failed.Status);
         Assert.Equal("latest_profile_transport_sample_failed_or_timed_out", olderAfterFailure.Reason);
@@ -271,7 +271,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         var profileShape = new string('F', 64);
         var runtimeVersion = new string('7', 64);
         var initialSamples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(source,
-            profileScope, strategy, profileShape, now.AddMinutes(-i), 1_000, 5, 10, 10,
+            profileScope, strategy, profileShape, now.AddMinutes(-i), 1_000, 5, 20, 20,
             "success", null, runtimeVersion)).ToArray();
         var snapshot = new PrtgSnapshotCapacityEstimate(PrtgSnapshotCapacityStatus.CapacityQualified,
             150, 3, 5, now, 2, 6, 600, .25, "qualified");
@@ -284,7 +284,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
             profileScope, strategy, snapshotShape, profileShape, runtimeVersion, now, "settings-r1", "policy-r1");
 
         var oneFreshSafeSample = new PrtgProfileTransportSample(source, profileScope, strategy, profileShape,
-            now, 1_050, 5, 10, 10, "success", null, runtimeVersion);
+            now, 1_050, 5, 20, 20, "success", null, runtimeVersion);
         var agedSamplesAndRefresh = initialSamples.Select((sample, i) => sample with
             { CompletedAtUtc = now.AddHours(-25).AddMinutes(i) }).Append(oneFreshSafeSample);
         var refreshedProfile = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000, source, profileScope,

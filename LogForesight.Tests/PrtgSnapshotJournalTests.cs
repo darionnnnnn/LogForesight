@@ -1,4 +1,4 @@
-﻿using LogForesight.Core;
+using LogForesight.Core;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -340,16 +340,20 @@ public sealed class PrtgSnapshotJournalTests : IDisposable
             {
                 SensorId = pair.Sensor, Epoch = 1, Generation = pair.Resource, SourceGeneration = source,
                 DeviceId = pair.Host + 100, HostId = pair.Host, ResourceFingerprint = $"resource-fp-{pair.Sensor}",
-                InventoryFingerprint = $"inventory-fp-{pair.Sensor}", ChannelFingerprint = $"channel-fp-{pair.Sensor}",
+                InventoryFingerprint = $"inventory-fp-{pair.Sensor}",
+                ChannelFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes($"synthetic-channel-fingerprint-{pair.Sensor}"))),
                 ChannelGeneration = pair.Channel, Active = true
             };
             var strategy = PrtgTrustedSamplingProfileResolver.StrategyFingerprint(source, "UTC", "UTC", "UTC",
                 PrtgFetchStrategy.Conservative, 15);
-            var profile = PrtgTrustedSamplingProfile.FromProbe(pair.Sensor, identity, "CPU", pair.Channel,
+            var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(pair.Sensor, identity, "CPU", pair.Channel,
                 "Load", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct", "cpu-percent-v1",
                 strategy, 15, effective, TimeSpan.FromMinutes(1), "seconds", "UTC", "UTC", "UTC",
                 observedAt, $"metadata-{pair.Sensor}", $"physical-{pair.Sensor}", true, 10, 10,
                 profileMeasured.ToOADate(), profileMeasured.ToOADate());
+            var profile = PrtgConsumerProfileFixtureClosure.CreateProfileOnly(identity, policy,
+                "synthetic-journal-settings", PrtgFetchStrategy.Conservative, sourceProfile);
             var resolution = PrtgTrustedSamplingProfileResolver.Resolve(profile, identity, policy, pair.Sensor,
                 "CPU", PrtgFetchStrategy.Conservative, 15, effective, now.UtcDateTime, now.UtcDateTime,
                 now.UtcDateTime);

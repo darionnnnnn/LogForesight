@@ -120,11 +120,12 @@ public class StorageBackend
 
             // 暫時性錯誤（failover／節流等）自動重試；Sqlite 是本機檔案，沒有這類網路層
             // 暫時性錯誤，不需要
-            options = new DbContextOptionsBuilder<LfDbContext>()
+            var sqlServerOptions = new DbContextOptionsBuilder<LfDbContext>()
                 .UseSqlServer(cs, o => o
                     .EnableRetryOnFailure(maxRetryCount: 5)
-                    .CommandTimeout(timeoutSeconds))
-                .Options;
+                    .CommandTimeout(timeoutSeconds));
+            if (commandInterceptor is not null) sqlServerOptions.AddInterceptors(commandInterceptor);
+            options = sqlServerOptions.Options;
             _dbDesc = $"SqlServer（{MaskConnectionString(cs)}）";
         }
 

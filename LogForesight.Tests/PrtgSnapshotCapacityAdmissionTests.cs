@@ -510,7 +510,8 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
             Assert.Equal(sample == 4 ? "capacity-qualified" : "capacity-unverified", result.Status);
             if (sample < 4)
                 Assert.Equal("insufficient_fresh_matching_profile_samples", result.Reason);
-            Assert.Equal(6, result.RequestsSent);
+            Assert.Equal(3 * 4, result.RequestsSent);
+            Assert.Equal(3 * 4, result.RequestsAttempted);
             Assert.False(settings.Get().PrtgEnabled);
         }
     }
@@ -565,14 +566,17 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         {
             RequestCount++;
             var query = request.RequestUri!.Query;
+            var isPrimaryProperty = request.RequestUri.AbsolutePath.EndsWith("/getobjectproperty.htm", StringComparison.OrdinalIgnoreCase);
             var idPart = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
                 .FirstOrDefault(part => part.StartsWith("id=", StringComparison.Ordinal));
             var id = idPart is not null && long.TryParse(Uri.UnescapeDataString(idPart[3..]), out var parsed) ? parsed : 501;
-            var body = query.Contains("content=sensors", StringComparison.Ordinal)
-                ? JsonSerializer.Serialize(new { sensors = new[] { new { objid = id } } })
-                : JsonSerializer.Serialize(new { channels = new[] { new { objid = 3 } } });
+            var body = isPrimaryProperty
+                ? "<prtg><result>3</result></prtg>"
+                : query.Contains("content=sensors", StringComparison.Ordinal)
+                    ? JsonSerializer.Serialize(new { sensors = new[] { new { objid = id } } })
+                    : JsonSerializer.Serialize(new { channels = new[] { new { objid = 3 } } });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            { Content = new StringContent(body, Encoding.UTF8, isPrimaryProperty ? "application/xml" : "application/json") });
         }
     }
 

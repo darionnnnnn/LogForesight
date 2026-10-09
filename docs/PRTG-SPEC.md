@@ -1257,3 +1257,16 @@ Maintain 的 `POST api/prtg/resource-pressure/{hostId}/trial`、`PUT .../{hostId
 Compatibility 探測對每種最多一顆 sensor 查詢 `getobjectproperty.htm?id=<sensor>&name=primarychannel`；每請求 30 秒、64 KiB、XML 深度 8，整輪仍受 5 分鐘限制。僅接受無命名空間 prtg 根與唯一直接 leaf result 的非負 Int64。snapshot 同時請求 primarychannel；primarychannel／primarychannel_raw 只接受 JSON 整數，兩欄衝突或缺漏保持未知。sensor ID 以 s1–s3 替代；實際 channel ID 為核對必要資料。保存與原生 raw-history channel ID、snapshot ID 的可空比對結果及來源版本。
 
 `authorizes_formal_profile=false` 與 `reported_at_sample_time=false` 固定成立：此查詢只確認觀測時設定，不能推論量測當時身分或正式語意。離線 verifier 遇通道不一致、缺漏、timeout 或 elapsed 超過 30 秒裁定 incomplete，拒絕偽造正式授權。原生欄位是否受現場版本支援仍須由同版有界環境探測核實。
+
+
+### 管理者明確頻道綁定與正式採樣資格
+
+每個 sensor 保存獨立 semantic binding：精確十進位通道 ID／caption、百分比語意、有限正 Scale／方向、間隔單位、原始與分析時區、時間依據。初次綁定允許尚無通道世代的資源，僅限未保存 binding 且 fingerprint／generation 同為空的原子 CAS；過期設定、政策、身分、通道及 binding revision 都拒絕。相同有效契約保存保留 proof 與世代，無關設定不使全部資源重暖機。
+
+唯讀 probe、單筆保存、最多 100 筆逐列 CAS 批次、單筆 qualify 及每頁最多 100 筆完整 profile 目錄都要求 Maintain 與完整作用範圍授權，case-only 不可操作。未提交的草稿不被 reload 或背景更新取代；保存／核驗互斥，核驗使用保存後最新 fence。通道 Int64 以字串跨越 JavaScript 邊界，不能由清單順序或數值相等自動挑選。
+
+來源 metadata 核對是 sensors→channels→native primarychannel property→sensors 四個有界 Table 配額請求。單筆原生資格另外使用一次 avg=0/usecaption=1 Historic XML，核對精確 channel ID/caption、有限 raw value 與時間（至多一秒差）；DTD、歧義、截斷、過期與缺失皆不授予資格。原始值在 snapshot parser 正規化一次；consumer 與主機明細核對 profile 的語意可重新產生保存的 binding fingerprint，不接受改語意後只重算 profile digest。
+
+proof 綁定來源／資源／通道／時間依據，後續 metadata refresh 不重新取得或延長初始 raw proof；metadata freshness 為 24 小時，刷新期限 23 小時。完成刷新確認缺失／衝突時，以原 profile digest、目前 binding／identity 及 live lease 原子撤銷舊 Profile並更新 authority revision，保留 samples/journal；傳輸失敗／取消不當作語意變更。所有 profile 發布均用 Serializable 交易，避免 concurrent binding save 清除後舊發布復活。這段完成單顆操作及 consumer 守門；全範圍初始資格耐久作業與跨程序 historic 配額另列 R15 待辦，原生現場能力与完整容量仍依固定 AC。
+
+切換 sensor 會保留未提交編輯器草稿，明確排入批次的版本與較新的編輯草稿各自保留。API 確認已寫入但目錄隨後變更時，顯示已提交並要求 reload；此回執不帶來源／binding 內容，核驗按鈕保持停用，直到 reload 與 probe 核對。網路、逾時或伺服器錯誤只表示結果未確認，草稿保留，先 reload 核對已保存版本再决定重送，不自動重試。

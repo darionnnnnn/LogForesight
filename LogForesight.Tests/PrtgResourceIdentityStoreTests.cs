@@ -260,11 +260,16 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         const long sensorId = 5001;
         const string sourceGeneration = "profile-freshness-source-v1";
         var store = new EfPrtgStore(_fx.NewContext);
-        new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
+        var policyStore = new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(policy =>
         {
             policy.SourceGeneration = sourceGeneration;
             policy.HostIds = [hostId];
             policy.SensorIds = [sensorId];
+            policy.SourceTimeZoneId = "UTC";
+            policy.RawTimestampTimeZoneId = "UTC";
+            policy.AnalysisTimeZoneId = "UTC";
+            policy.TimeBasisEvidenceReference = "synthetic-profile-freshness-time-basis";
         });
         store.UpsertDevices([new PrtgDeviceRow { Objid = deviceId, Name = "profile-host" }], DateTime.Now);
         store.UpsertSensors([new PrtgSensorRow
@@ -276,7 +281,9 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         var identity = store.BindObservedResource(sensorId, hostId, sourceGeneration, "profile-resource-v1");
         identity = store.SetObservedChannel(sensorId, sourceGeneration, "profile-channel-v1", identity.Generation);
 
-        PrtgTrustedSamplingProfile MakeProfile(DateTimeOffset observedAtUtc) => PrtgTrustedSamplingProfile.FromProbe(
+        PrtgTrustedSamplingProfile MakeProfile(DateTimeOffset observedAtUtc)
+        {
+            var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(
             sensorId, identity, "CPU", "primary", "CPU utilization", PrtgTrustedQuantitySemantic.CpuLoadPercent,
             "%", 1, "direct", "cpu-semantic-v1", new string('a', 64), 15,
             DateTime.SpecifyKind(new DateTime(2026, 10, 1, 0, 0, 0), DateTimeKind.Utc),
@@ -284,8 +291,12 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
             "typed-metadata-reference", "same-physical-sample-reference", true, 50, 50,
             new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate(),
             new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate());
+            return PrtgConsumerProfileFixtureClosure.PublishEfFixture(store,
+                _fx.Blob(PrtgMonitoringPolicyStore.BlobKey),
+                "synthetic-profile-freshness-settings", PrtgFetchStrategy.Conservative, sourceProfile);
+        }
 
-        store.RecordTrustedSamplingProfile(MakeProfile(DateTimeOffset.UtcNow.AddHours(-25)));
+        _ = MakeProfile(DateTimeOffset.UtcNow.AddHours(-25));
         var dailyMap = new Dictionary<long, long> { [deviceId] = hostId };
         var selectedSensorIds = new HashSet<long> { sensorId };
         var valueSensorsByHost = store.GetResourceSensorIdsByHost(dailyMap, [hostId], selectedSensorIds,
@@ -299,7 +310,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         Assert.Empty(stateOnlySensorsByHost[hostId]);
         Assert.DoesNotContain(hostId, store.HostsWithInvalidTrustedProfiles(new Dictionary<long, long>(), DateTimeOffset.UtcNow));
 
-        store.RecordTrustedSamplingProfile(MakeProfile(DateTimeOffset.UtcNow));
+        _ = MakeProfile(DateTimeOffset.UtcNow);
         Assert.DoesNotContain(hostId, store.HostsWithInvalidTrustedProfiles(sensorToHost, DateTimeOffset.UtcNow));
         using (var ctx = _fx.NewContext())
         {

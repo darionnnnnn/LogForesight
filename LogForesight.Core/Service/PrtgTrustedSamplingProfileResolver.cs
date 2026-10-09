@@ -25,6 +25,19 @@ public static class PrtgTrustedSamplingProfileResolver
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(facts)));
     }
 
+    /// <summary>Stable semantic authority context; global settings/policy revisions remain CAS tokens only.</summary>
+    public static string AuthorityContextFingerprint(PrtgMonitoringPolicy policy,
+        string strategyName, int strategyMinutes)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        var strategy = StrategyFingerprint(policy.SourceGeneration, policy.RawTimestampTimeZoneId,
+            policy.SourceTimeZoneId, policy.AnalysisTimeZoneId, strategyName, strategyMinutes);
+        var facts = string.Join("\u001f", strategy, policy.EndpointHint, policy.TimeBasisEvidenceReference,
+            policy.SourceCultureName, policy.ValidFrom.ToUniversalTime().ToString("O",
+                System.Globalization.CultureInfo.InvariantCulture));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(facts)));
+    }
+
     public static PrtgTrustedSamplingProfileResolution Resolve(
         PrtgTrustedSamplingProfile? profile, PrtgResourceIdentity? identity,
         PrtgMonitoringPolicy policy, long sensorObjid, string sensorType,
@@ -35,8 +48,21 @@ public static class PrtgTrustedSamplingProfileResolver
         if (profile == null) return Missing("profile");
         if (identity == null || !identity.Active || identity.PendingReconciliation || identity.Epoch <= 0)
             return Missing("current_resource_identity");
+        if (profile.AuthorityKind != PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind ||
+            profile.BindingRevision <= 0 || string.IsNullOrWhiteSpace(profile.BindingFingerprint) ||
+            string.IsNullOrWhiteSpace(profile.AuthorityContextFingerprint) ||
+            string.IsNullOrWhiteSpace(profile.NativePrimaryChannelPropertyId) ||
+            string.IsNullOrWhiteSpace(profile.QualificationProofReference) ||
+            string.IsNullOrWhiteSpace(profile.BindingSettingsRevision) ||
+            string.IsNullOrWhiteSpace(profile.BindingPolicyRevision))
+            return Missing("management_binding_or_native_qualification");
+        if (identity.ChannelFingerprint != profile.BindingFingerprint ||
+            profile.NativePrimaryChannelPropertyId != profile.PrimaryChannelId)
+            return new(null, Array.Empty<string>(), "binding_or_primary_channel_stale");
         if (string.IsNullOrWhiteSpace(policy.SourceGeneration) || string.IsNullOrWhiteSpace(policy.Revision))
             return Missing("current_source_policy");
+        if (!policy.SensorIds.Contains(sensorObjid) || !policy.HostIds.Contains(identity.HostId))
+            return new(null, Array.Empty<string>(), "profile_outside_current_policy_scope");
         if (string.IsNullOrWhiteSpace(policy.RawTimestampTimeZoneId) ||
             string.IsNullOrWhiteSpace(policy.TimeBasisEvidenceReference)) missing.Add("raw_timestamp_timezone_probe");
         if (string.IsNullOrWhiteSpace(policy.AnalysisTimeZoneId)) missing.Add("analysis_timezone");
@@ -52,7 +78,9 @@ public static class PrtgTrustedSamplingProfileResolver
         var strategyFingerprint = StrategyFingerprint(policy.SourceGeneration,
             profile.RawTimestampTimeZoneId, profile.SourceApiTimeZoneId, profile.AnalysisTimeZoneId,
             strategyName, strategyMinutes);
+        var authorityContextFingerprint = AuthorityContextFingerprint(policy, strategyName, strategyMinutes);
         if (profile.SensorObjid != sensorObjid || profile.SourceGeneration != policy.SourceGeneration ||
+            profile.AuthorityContextFingerprint != authorityContextFingerprint ||
             profile.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
             profile.SourceApiTimeZoneId != policy.SourceTimeZoneId ||
             profile.AnalysisTimeZoneId != policy.AnalysisTimeZoneId ||
@@ -63,6 +91,8 @@ public static class PrtgTrustedSamplingProfileResolver
         try
         {
             profile.Validate();
+            if (!PrtgTrustedSamplingBinding.MatchesProfileAuthority(profile, policy.TimeBasisEvidenceReference))
+                return new(null, Array.Empty<string>(), "profile_binding_semantics_mismatch");
             var context = new PrtgTrustedSnapshotContext(sensorObjid, profile.SourceGeneration,
                 profile.ResourceGeneration, profile.ChannelGeneration, profile.IdentityEpoch.ToString(
                     System.Globalization.CultureInfo.InvariantCulture), profile.SemanticVersion,
@@ -81,7 +111,8 @@ public static class PrtgTrustedSamplingProfileResolver
                     "absolute" => Math.Abs(value) * profile.Scale,
                     _ => throw new InvalidDataException("unconfirmed_quantity_direction")
                 },
-                SelectedPrimaryChannelId = profile.PrimaryChannelId
+                SelectedPrimaryChannelId = profile.PrimaryChannelId,
+                RequireCurrentNativePrimaryChannelId = true
             };
             return new(context, Array.Empty<string>(), null);
         }

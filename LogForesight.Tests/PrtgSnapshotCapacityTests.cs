@@ -165,7 +165,7 @@ public sealed class PrtgSnapshotCapacityTests
         using var client = new PrtgClient("https://prtg.example", "token", 10, false,
             new FixedBodyHandler(body), PrtgAuthModes.Token, "", "", "");
         var sent = false;
-        var json = await client.GetBoundedJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue,interval,lastcheck,status", 8192,
+        var json = await client.GetBoundedJsonAsync("api/table.json?content=sensors&columns=objid,lastvalue,interval,lastcheck,status,primarychannel", 8192,
             onRequestSent: () => sent = true);
 
         Assert.True(sent);

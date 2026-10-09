@@ -20,10 +20,11 @@ import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true, onChange: name => {
     if (name === 'probe') queueMicrotask(loadDiskReadiness);
     if (name === 'timeline-progress') queueMicrotask(loadTimelineProgress);
-    if (name === 'profile-refresh') queueMicrotask(loadTrustedProfileRefresh);
+    if (name === 'profile-refresh') { queueMicrotask(loadTrustedProfileRefresh); queueMicrotask(loadTrustedProfileBindings); }
 } });
 
 let trustedProfileOffset = 0;
+let trustedBindingOffset = 0;
 async function loadTrustedProfileRefresh() {
     const status = document.getElementById('prtg-profile-refresh-progress');
     const rowsRoot = document.getElementById('prtg-profile-refresh-rows');
@@ -58,7 +59,517 @@ async function loadTrustedProfileRefresh() {
 }
 document.getElementById('prtg-profile-refresh-reload')?.addEventListener('click', loadTrustedProfileRefresh);
 document.getElementById('prtg-profile-refresh-prev')?.addEventListener('click', () => { trustedProfileOffset = Math.max(0, trustedProfileOffset - 100); loadTrustedProfileRefresh(); });
+
 document.getElementById('prtg-profile-refresh-next')?.addEventListener('click', () => { trustedProfileOffset += 100; loadTrustedProfileRefresh(); });
+
+const trustedBindingBase = '/api/prtg/monitoring/trusted-sampling';
+let trustedBindingSelectedSensor = null;
+let trustedBindingVersions = null;
+let trustedBindingProbe = null;
+let trustedBindingSaved = null;
+let trustedBindingDraftDirty = false;
+let trustedBindingBusy = false;
+const trustedBindingBatchDrafts = new Map();
+const trustedQuantityValues = {
+    CpuLoadPercent: '1', MemoryUsedPercent: '2', MemoryAvailablePercent: '3',
+    DiskFreePercent: '4', DiskUsedPercent: '5'
+};
+const bindingFieldIds = {
+    channelObjectId: 'prtg-profile-binding-channel', quantity: 'prtg-profile-binding-quantity', unit: 'prtg-profile-binding-unit',
+    scale: 'prtg-profile-binding-scale', direction: 'prtg-profile-binding-direction', intervalRawUnit: 'prtg-profile-binding-interval-unit',
+    rawTimestampTimeZoneId: 'prtg-profile-binding-raw-zone', analysisTimeZoneId: 'prtg-profile-binding-analysis-zone',
+    timeBasisEvidenceReference: 'prtg-profile-binding-time-evidence'
+};
+const trustedBindingEditorDrafts = new Map();
+
+function trustedChannelObjectId(value) {
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
+    if (typeof value === 'string' && /^[0-9]{1,20}$/.test(value)) return value.replace(/^0+(?=\d)/, '');
+    return null;
+}
+
+function sameTrustedBindingFence(left, right) {
+    const keys = ['expectedSettingsRevision', 'expectedPolicyRevision', 'expectedIdentityEpoch', 'expectedChannelGeneration', 'expectedBindingRevision'];
+    return !!left && !!right && keys.every(key => left[key] != null && right[key] != null && left[key] === right[key]);
+}
+
+function updateTrustedBindingBatchStatus(message) {
+    const count = trustedBindingBatchDrafts.size;
+    document.getElementById('prtg-profile-binding-batch-status').textContent = message ||
+        (count ? `目前有 ${count} 筆待送批次草稿；最多 100 筆。逐筆核對後才會送出。` : '尚無批次草稿。');
+    document.getElementById('prtg-profile-binding-batch-submit').disabled = trustedBindingBusy || count < 1;
+    document.getElementById('prtg-profile-binding-batch-clear').disabled = trustedBindingBusy || count < 1;
+}
+
+async function loadTrustedProfileBindings() {
+    const status = document.getElementById('prtg-profile-binding-status');
+    const root = document.getElementById('prtg-profile-binding-rows');
+    if (!status || !root) return;
+    status.textContent = '正在讀取目前正式範圍的 Trusted profiles…';
+    try {
+        const page = await api.get(`${trustedBindingBase}/profiles?offset=${trustedBindingOffset}&limit=100`, { silent: true });
+        const rows = Array.isArray(page?.rows) ? page.rows : [];
+        root.replaceChildren();
+        for (const row of rows) {
+            const line = document.createElement('div');
+            line.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2 small py-2 border-bottom';
+            const summary = document.createElement('span');
+            const sensorKey = String(row.sensorObjid);
+            const queued = trustedBindingBatchDrafts.has(sensorKey) ? '｜待批次提交' : '';
+            summary.textContent = `Sensor #${row.sensorObjid}｜profile ${row.status || 'unknown'}／binding ${row.bindingStatus || 'unbound'}｜綁定 ${row.bindingRevision ?? '—'}｜頻道 ${row.boundChannelObjectId ?? '未選'} ${row.boundChannelCaption || ''}｜語意 ${row.bindingQuantity || row.quantity || '未設定'} ${row.unit || ''}｜資格 ${row.qualificationProofReference ? '有證據參考' : '尚無核驗證據'}${queued}${Array.isArray(row.missingFacts) && row.missingFacts.length ? `｜缺項 ${row.missingFacts.join(', ')}` : ''}`;
+            const inspect = document.createElement('button');
+            inspect.type = 'button'; inspect.className = 'btn btn-sm btn-outline-primary'; inspect.textContent = '設定此 sensor';
+            inspect.addEventListener('click', () => openTrustedBinding(row.sensorObjid));
+            line.append(summary, inspect); root.append(line);
+        }
+        const next = page?.nextOffset;
+        document.getElementById('prtg-profile-binding-page').textContent = `offset ${page?.offset ?? trustedBindingOffset}｜共 ${page?.total ?? 0}`;
+        document.getElementById('prtg-profile-binding-prev').disabled = trustedBindingOffset === 0;
+        document.getElementById('prtg-profile-binding-next').disabled = next == null;
+        status.textContent = `已載入 ${rows.length} 筆 profile｜總數 ${page?.total ?? 0}`;
+    } catch (error) {
+        root.replaceChildren();
+        document.getElementById('prtg-profile-binding-page').textContent = '';
+        document.getElementById('prtg-profile-binding-prev').disabled = true;
+        document.getElementById('prtg-profile-binding-next').disabled = true;
+        status.textContent = `Trusted profile 綁定資料無法讀取：${error?.message || '請重新載入。'}`;
+    }
+}
+
+function setTrustedBindingPending(pending) {
+    trustedBindingBusy = pending;
+    for (const id of ['prtg-profile-binding-probe', 'prtg-profile-binding-reload', 'prtg-profile-binding-channel', ...Object.values(bindingFieldIds), 'prtg-profile-binding-save', 'prtg-profile-binding-queue', 'prtg-profile-binding-qualify', 'prtg-profile-binding-batch-submit', 'prtg-profile-binding-batch-clear']) {
+        const control = document.getElementById(id);
+        if (control) control.disabled = pending;
+    }
+    if (!pending) updateTrustedBindingBatchStatus();
+    renderTrustedBindingQualificationControl();
+}
+
+function renderTrustedBindingQualificationControl() {
+    const control = document.getElementById('prtg-profile-binding-qualify');
+    if (control) control.disabled = trustedBindingBusy || trustedBindingDraftDirty ||
+        (trustedBindingSelectedSensor != null && trustedBindingBatchDrafts.has(trustedBindingSelectedSensor)) ||
+        !trustedBindingSaved?.bindingFingerprint || !!trustedBindingSaved.qualificationProofReference;
+}
+
+function fillTrustedBindingDraft(binding) {
+    const channel = document.getElementById(bindingFieldIds.channelObjectId);
+    if (channel && binding?.channelObjectId != null && ![...channel.options].some(option => option.value === String(binding.channelObjectId))) {
+        const option = document.createElement('option'); option.value = String(binding.channelObjectId); option.textContent = `已保存頻道 #${binding.channelObjectId}（需重新 probe 確認）`; channel.append(option);
+    }
+    for (const [key, id] of Object.entries(bindingFieldIds)) {
+        const control = document.getElementById(id);
+        if (!control) continue;
+        const field = key === 'channelObjectId' ? 'channelObjectId' : key;
+        let value = binding?.[field];
+        if (key === 'quantity' && typeof value === 'string') value = trustedQuantityValues[value] || '';
+        if (value !== undefined && value !== null) control.value = String(value);
+    }
+    trustedBindingDraftDirty = false;
+}
+
+function captureTrustedBindingEditorDraft(sensorId) {
+    if (!sensorId || !trustedBindingDraftDirty) return;
+    const channel = document.getElementById(bindingFieldIds.channelObjectId);
+    trustedBindingEditorDrafts.set(sensorId, {
+        fields: Object.fromEntries(Object.entries(bindingFieldIds).map(([key, id]) => [key,
+            document.getElementById(id)?.value ?? ''])),
+        channelOptions: channel ? [...channel.options].map(option => ({ value: option.value, text: option.textContent || '' })) : [],
+        selectedChannel: channel?.value || '',
+        versions: trustedBindingVersions,
+        probe: trustedBindingProbe
+    });
+}
+
+function restoreTrustedBindingEditorDraft(draft) {
+    const channel = document.getElementById(bindingFieldIds.channelObjectId);
+    if (channel) {
+        channel.replaceChildren(...(draft.channelOptions || []).map(item => new Option(item.text, item.value)));
+        channel.value = draft.selectedChannel || '';
+    }
+    for (const [key, id] of Object.entries(bindingFieldIds)) {
+        const control = document.getElementById(id);
+        if (control) control.value = draft.fields?.[key] ?? '';
+    }
+    trustedBindingVersions = draft.versions;
+    trustedBindingProbe = draft.probe || null;
+    trustedBindingDraftDirty = true;
+    renderTrustedBindingQualificationControl();
+}
+
+function isTrustedBindingCommitReceipt(value) {
+    return value?.committed === true && value?.reloadRequired === true &&
+        Array.isArray(value?.committedSensorObjids);
+}
+
+function clearTrustedBindingOperationAuthority() {
+    trustedBindingSaved = null;
+    trustedBindingProbe = null;
+    trustedBindingVersions = null;
+    renderTrustedBindingQualificationControl();
+}
+
+function bindingEditorFieldsMatchBody(fields, body) {
+    if (!fields || !body) return false;
+    return trustedChannelObjectId(fields.channelObjectId) === trustedChannelObjectId(body.channelObjectId) &&
+        Number(fields.quantity) === Number(body.quantity) && fields.unit === body.unit &&
+        Number(fields.scale) === Number(body.scale) && fields.direction === body.direction &&
+        fields.intervalRawUnit === body.intervalRawUnit &&
+        fields.rawTimestampTimeZoneId === body.rawTimestampTimeZoneId &&
+        fields.analysisTimeZoneId === body.analysisTimeZoneId &&
+        fields.timeBasisEvidenceReference === body.timeBasisEvidenceReference;
+}
+
+function cachedTrustedBindingEditorMatchesBody(sensorId, body) {
+    const draft = trustedBindingEditorDrafts.get(String(sensorId));
+    return !!draft && bindingEditorFieldsMatchBody(draft.fields, body);
+}
+
+function removeCommittedTrustedBindingDraft(sensorId, body) {
+    const key = String(sensorId);
+    if (body && trustedBindingBatchDrafts.has(key) &&
+        bindingEditorFieldsMatchBody(trustedBindingBatchDrafts.get(key), body))
+        trustedBindingBatchDrafts.delete(key);
+    if (cachedTrustedBindingEditorMatchesBody(key, body)) trustedBindingEditorDrafts.delete(key);
+}
+
+async function openTrustedBinding(sensorObjid) {
+    if (trustedBindingBusy) return;
+    captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
+    trustedBindingSelectedSensor = String(sensorObjid);
+    trustedBindingProbe = null;
+    trustedBindingSaved = null;
+    trustedBindingVersions = null;
+    const form = document.getElementById('prtg-profile-binding-form');
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    const current = document.getElementById('prtg-profile-binding-current');
+    const channel = document.getElementById('prtg-profile-binding-channel');
+    form?.classList.remove('d-none');
+    form?.reset();
+    document.getElementById('prtg-profile-binding-sensor-label').textContent = `#${trustedBindingSelectedSensor}`;
+    action.textContent = '正在載入最新 CAS 版本…';
+    current.textContent = '';
+    channel.replaceChildren(new Option('請先 probe 並人工選取頻道', ''));
+    document.getElementById('prtg-profile-binding-qualify').disabled = true;
+    trustedBindingDraftDirty = false;
+    await reloadTrustedBinding(false);
+    const editorDraft = trustedBindingEditorDrafts.get(trustedBindingSelectedSensor);
+    if (editorDraft) {
+        const freshVersions = trustedBindingVersions;
+        restoreTrustedBindingEditorDraft(editorDraft);
+        action.textContent = sameTrustedBindingFence(freshVersions, editorDraft.versions)
+            ? '已恢復此 sensor 尚未提交的本機草稿；草稿仍使用原始 fence，核驗已停用。'
+            : '已恢復未提交草稿，但來源 fence 已過期；草稿不會自動升級版本，請重新載入並 probe 後再送出。';
+        return;
+    }
+    const queuedDraft = trustedBindingBatchDrafts.get(trustedBindingSelectedSensor);
+    if (queuedDraft) {
+        fillTrustedBindingDraft(queuedDraft);
+        action.textContent = '已載入此 sensor 的本機批次草稿；它保留原始 fence，重新 probe 並加入批次可更新 fence。';
+    }
+}
+
+async function reloadTrustedBinding(preserveDraft = true, allowPending = false) {
+    if (!trustedBindingSelectedSensor || (trustedBindingBusy && !allowPending)) return;
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    const current = document.getElementById('prtg-profile-binding-current');
+    setTrustedBindingPending(true);
+    try {
+        const response = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
+        const originalVersions = trustedBindingDraftDirty ? trustedBindingVersions : null;
+        trustedBindingVersions = originalVersions || response || null;
+        trustedBindingSaved = response?.binding || null;
+        const b = trustedBindingSaved;
+        current.textContent = b
+            ? `目前狀態：${b.status || 'unknown'}｜revision ${b.bindingRevision ?? '—'}｜頻道 #${b.channelObjectId ?? '未設定'} ${b.expectedCaption || ''}｜資格證據 ${b.qualificationProofReference ? '已保存參考' : '無'}｜${Array.isArray(b.missingFacts) ? b.missingFacts.join(', ') : '無已知缺項'}`
+            : '尚無已保存綁定。保存後狀態仍為 waiting，需另行執行來源核驗。';
+        if (!preserveDraft || !trustedBindingDraftDirty) fillTrustedBindingDraft(b);
+        action.textContent = preserveDraft && trustedBindingDraftDirty
+            ? (sameTrustedBindingFence(response, originalVersions)
+                ? '已重新讀取目前版本；保留原始 fence 與尚未提交草稿。'
+                : '目前版本已變更；保留尚未提交草稿與舊 fence，請重新載入並 probe 後再送出。')
+            : '已載入目前版本。';
+        document.getElementById('prtg-profile-binding-qualify').disabled = !b || !!b.qualificationProofReference || !b.bindingFingerprint;
+    } catch (error) {
+        action.textContent = `目前版本無法讀取，草稿保留：${error?.message || '請稍後重試。'}`;
+    } finally { setTrustedBindingPending(false); }
+}
+
+for (const id of Object.values(bindingFieldIds)) document.getElementById(id)?.addEventListener('input', () => { trustedBindingDraftDirty = true; renderTrustedBindingQualificationControl(); });
+document.getElementById('prtg-profile-binding-channel')?.addEventListener('change', () => { trustedBindingDraftDirty = true; renderTrustedBindingQualificationControl(); });
+document.getElementById('prtg-profile-binding-reload')?.addEventListener('click', () => reloadTrustedBinding(true));
+document.getElementById('prtg-profile-refresh-reload')?.addEventListener('click', loadTrustedProfileBindings);
+document.getElementById('prtg-profile-binding-prev')?.addEventListener('click', () => { trustedBindingOffset = Math.max(0, trustedBindingOffset - 100); loadTrustedProfileBindings(); });
+document.getElementById('prtg-profile-binding-next')?.addEventListener('click', () => { trustedBindingOffset += 100; loadTrustedProfileBindings(); });
+document.getElementById('prtg-profile-binding-probe')?.addEventListener('click', async () => {
+    if (!trustedBindingSelectedSensor || trustedBindingBusy) return;
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    const channel = document.getElementById('prtg-profile-binding-channel');
+    setTrustedBindingPending(true); action.textContent = '正在讀取單顆唯讀來源 probe…';
+    try {
+        const rows = await api.post(`${trustedBindingBase}/probe`, { sensorObjids: [Number(trustedBindingSelectedSensor)] }, { silent: true, timeoutMs: 30000 });
+        if (isTrustedBindingCommitReceipt(rows)) {
+            action.textContent = '探測期間已有 profile 更新提交，但目錄已變更；請重新載入核對，不要直接重送。';
+            clearTrustedBindingOperationAuthority();
+            await loadTrustedProfileBindings();
+            return;
+        }
+        const result = Array.isArray(rows) ? rows.find(item => String(item.sensorObjid) === trustedBindingSelectedSensor) : null;
+        if (!result || !Array.isArray(result.channels)) throw new Error('來源未回傳可選頻道；請確認 probe 狀態。');
+        trustedBindingProbe = result;
+        channel.replaceChildren(new Option('請人工選擇頻道（不自動猜測）', ''));
+        for (const item of result.channels) {
+            const channelId = trustedChannelObjectId(item.channelObjectId);
+            if (channelId === null) continue;
+            const option = document.createElement('option'); option.value = channelId;
+            option.textContent = `#${item.channelObjectId}｜${item.caption || '無 caption'}｜${item.unit || '無單位'}｜值 ${item.rawValue ?? '未知'}${item.sourceMarkedPrimary ? '｜來源標記 primary' : ''}`;
+            channel.append(option);
+        }
+        document.getElementById('prtg-profile-binding-channel-evidence').textContent = `Probe 狀態 ${result.status || 'unknown'}｜Identity epoch ${result.identityEpoch ?? '未知'}｜Channel generation ${result.channelGeneration ?? '未知'}｜資源 generation ${result.resourceGeneration ?? '未知'}｜${result.channelsTruncated ? '頻道清單已截斷，不能由此保存完整語意' : '已列來源回傳頻道'}；probe 本身只供選擇，不授予資格。`;
+        action.textContent = `來源回傳 ${result.channels.length} 個頻道，其中可用 ID ${channel.options.length - 1} 個；請核對來源語意後明確選取。`;
+    } catch {
+        action.textContent = 'Probe 結果未確認；草稿保留。請先重新載入核對已保存版本與來源狀態，再決定是否重送。';
+    }
+    finally { setTrustedBindingPending(false); }
+});
+
+document.getElementById('prtg-profile-binding-queue')?.addEventListener('click', async () => {
+    if (!trustedBindingSelectedSensor || !trustedBindingProbe || trustedBindingBusy) return;
+    if (!document.getElementById('prtg-profile-binding-form').reportValidity()) return;
+    if (trustedBindingBatchDrafts.size >= 100 && !trustedBindingBatchDrafts.has(trustedBindingSelectedSensor)) {
+        document.getElementById('prtg-profile-binding-action-status').textContent = '批次已達 100 筆上限；先提交或清除這批草稿。';
+        return;
+    }
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    const selectedId = document.getElementById(bindingFieldIds.channelObjectId).value;
+    const selected = trustedBindingProbe.channels?.find(item => trustedChannelObjectId(item.channelObjectId) === selectedId);
+    if (!selected || trustedBindingProbe.channelsTruncated) { action.textContent = '請重新 probe，並從未截斷的來源頻道中明確選擇一個 Channel ID。'; return; }
+    if (!String(selected.caption || '').trim()) { action.textContent = '所選頻道缺少來源 caption；無法建立要求 exact caption 的 binding。'; return; }
+    const scale = Number(document.getElementById(bindingFieldIds.scale).value);
+    if (!Number.isFinite(scale) || scale <= 0) { action.textContent = 'Scale 必須是有限正數。'; return; }
+    setTrustedBindingPending(true); action.textContent = '正在讀取目前 fence，建立一筆本機批次草稿…';
+    try {
+        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
+        if (!sameTrustedBindingFence(latest, trustedBindingVersions) || trustedBindingProbe.identityEpoch == null || trustedBindingProbe.channelGeneration == null ||
+            latest.expectedIdentityEpoch !== trustedBindingProbe.identityEpoch || latest.expectedChannelGeneration !== trustedBindingProbe.channelGeneration) {
+            action.textContent = '設定、政策、綁定或來源 fence 已改變；草稿未加入。請明確重新載入並 probe。'; return;
+        }
+        const body = {
+            sensorObjid: Number(trustedBindingSelectedSensor), expectedSettingsRevision: latest.expectedSettingsRevision,
+            expectedPolicyRevision: latest.expectedPolicyRevision, expectedIdentityEpoch: trustedBindingProbe.identityEpoch,
+            expectedChannelGeneration: trustedBindingProbe.channelGeneration, expectedBindingRevision: latest.expectedBindingRevision,
+            channelObjectId: selectedId, expectedCaption: selected.caption || '',
+            quantity: Number(document.getElementById(bindingFieldIds.quantity).value),
+            unit: document.getElementById(bindingFieldIds.unit).value, scale,
+            direction: document.getElementById(bindingFieldIds.direction).value,
+            intervalRawUnit: document.getElementById(bindingFieldIds.intervalRawUnit).value,
+            rawTimestampTimeZoneId: document.getElementById(bindingFieldIds.rawTimestampTimeZoneId).value,
+            analysisTimeZoneId: document.getElementById(bindingFieldIds.analysisTimeZoneId).value,
+            timeBasisEvidenceReference: document.getElementById(bindingFieldIds.timeBasisEvidenceReference).value
+        };
+        trustedBindingBatchDrafts.set(trustedBindingSelectedSensor, body);
+        trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
+        trustedBindingDraftDirty = false;
+        renderTrustedBindingQualificationControl();
+        action.textContent = `已將 sensor #${trustedBindingSelectedSensor} 加入批次草稿；尚未送到伺服器。`;
+        updateTrustedBindingBatchStatus();
+        await loadTrustedProfileBindings();
+    } catch (error) {
+        action.textContent = `無法建立批次草稿：${error?.message || '請稍後重試。'}`;
+    } finally { setTrustedBindingPending(false); updateTrustedBindingBatchStatus(); }
+});
+
+document.getElementById('prtg-profile-binding-batch-clear')?.addEventListener('click', () => {
+    if (trustedBindingSelectedSensor && trustedBindingBatchDrafts.has(trustedBindingSelectedSensor) && !trustedBindingDraftDirty) {
+        trustedBindingDraftDirty = true;
+        captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
+    }
+    trustedBindingBatchDrafts.clear();
+    document.getElementById('prtg-profile-binding-batch-results').replaceChildren();
+    renderTrustedBindingQualificationControl();
+    updateTrustedBindingBatchStatus('已清除明確排入的批次草稿；目前編輯器內容保留為未提交草稿。');
+});
+
+document.getElementById('prtg-profile-binding-batch-submit')?.addEventListener('click', async () => {
+    if (trustedBindingBusy || trustedBindingBatchDrafts.size < 1 || trustedBindingBatchDrafts.size > 100) return;
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    const resultsRoot = document.getElementById('prtg-profile-binding-batch-results');
+    const rows = [...trustedBindingBatchDrafts.values()];
+    const submittedBySensor = new Map(rows.map(row => [String(row.sensorObjid), row]));
+    const acceptedSensorIds = new Set();
+    let committedReceiptReceived = false;
+    setTrustedBindingPending(true); updateTrustedBindingBatchStatus(`正在送出 ${rows.length} 筆逐 row fence 批次…`);
+    action.textContent = '批次保存進行中；每列會各自接受或拒絕，語意變更後須重新核驗。';
+    resultsRoot.replaceChildren();
+    try {
+        const results = await api.post(`${trustedBindingBase}/bindings/batch`, { rows }, { silent: true, timeoutMs: 60000 });
+        if (isTrustedBindingCommitReceipt(results)) {
+            committedReceiptReceived = true;
+            for (const sensorId of results.committedSensorObjids) {
+                const key = String(sensorId);
+                removeCommittedTrustedBindingDraft(key, submittedBySensor.get(key));
+                trustedBindingBatchDrafts.delete(key);
+                acceptedSensorIds.add(key);
+            }
+            action.textContent = `已提交 sensor ${results.committedSensorObjids.map(id => `#${id}`).join(', ')}；目錄已變更，請重新載入核對，不要直接重送。`;
+            for (const sensorId of results.committedSensorObjids) {
+                const line = document.createElement('div');
+                line.textContent = `Sensor #${sensorId}｜已提交｜目錄已變更，請重新載入核對。`;
+                resultsRoot.append(line);
+            }
+            await loadTrustedProfileBindings();
+            return;
+        }
+        if (!Array.isArray(results)) throw new Error('伺服器未回傳逐列結果。');
+        for (const result of results) {
+            const sensorKey = String(result.sensorObjid);
+            const line = document.createElement('div');
+            line.textContent = `Sensor #${sensorKey}｜${result.status || 'unknown'}${result.status === 'waiting' ? '｜已保存但仍需逐筆核驗' : result.status === 'qualified' ? '｜語意未變，保留既有核驗資格；目前採樣狀態請查看清單' : `｜${result.rejectionReason || (Array.isArray(result.missingFacts) ? result.missingFacts.join(', ') : '請重新載入與核對')}`}`;
+            resultsRoot.append(line);
+            if (result.status === 'waiting' || result.status === 'qualified') {
+                removeCommittedTrustedBindingDraft(sensorKey, submittedBySensor.get(sensorKey));
+                trustedBindingBatchDrafts.delete(sensorKey);
+                acceptedSensorIds.add(sensorKey);
+            }
+        }
+        action.textContent = `批次完成 ${results.length} 筆；新／變更列等待核驗，語意未變列保留資格；拒絕列保留草稿供核對。`;
+        await loadTrustedProfileBindings();
+    } catch (error) {
+        action.textContent = error?.status === 409
+            ? '版本或目錄已改變；批次結果未確認，草稿保留。請先重新載入核對已保存版本，再決定是否重送。'
+            : '批次結果未確認；草稿保留。請先重新載入核對已保存版本，再決定是否重送。';
+    } finally {
+        setTrustedBindingPending(false);
+        updateTrustedBindingBatchStatus();
+        if (trustedBindingSelectedSensor && acceptedSensorIds.has(trustedBindingSelectedSensor)) {
+            const submitted = submittedBySensor.get(trustedBindingSelectedSensor);
+            const currentFields = Object.fromEntries(Object.entries(bindingFieldIds).map(([key, id]) => [key,
+                document.getElementById(id)?.value ?? '']));
+            const hasNewerEditorDraft = trustedBindingDraftDirty && submitted &&
+                !bindingEditorFieldsMatchBody(currentFields, submitted);
+            if (hasNewerEditorDraft) {
+                captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
+                document.getElementById('prtg-profile-binding-action-status').textContent =
+                    '批次中先前排入的版本已提交；較新的編輯草稿已保留，仍使用原始 fence，請核對並重新 probe。';
+            } else if (committedReceiptReceived) {
+                trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
+                trustedBindingDraftDirty = false;
+                clearTrustedBindingOperationAuthority();
+            } else {
+                trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
+                trustedBindingDraftDirty = false;
+                await reloadTrustedBinding(false);
+            }
+        }
+        renderTrustedBindingQualificationControl();
+    }
+});
+
+document.getElementById('prtg-profile-binding-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!trustedBindingSelectedSensor || !trustedBindingProbe || trustedBindingBusy) return;
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    const selectedId = document.getElementById(bindingFieldIds.channelObjectId).value;
+    const selected = trustedBindingProbe.channels?.find(item => trustedChannelObjectId(item.channelObjectId) === selectedId);
+    if (!selected || trustedBindingProbe.channelsTruncated) { action.textContent = '請重新 probe，並從未截斷的來源頻道中明確選擇一個 Channel ID。'; return; }
+    if (!String(selected.caption || '').trim()) { action.textContent = '所選頻道缺少來源 caption；無法保存要求 exact caption 的 binding。'; return; }
+    setTrustedBindingPending(true); action.textContent = '正在重新讀取 CAS 版本並保存…';
+    try {
+        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
+        const expected = latest || {};
+        if (!sameTrustedBindingFence(expected, trustedBindingVersions) || trustedBindingProbe.identityEpoch == null || trustedBindingProbe.channelGeneration == null || expected.expectedIdentityEpoch !== trustedBindingProbe.identityEpoch || expected.expectedChannelGeneration !== trustedBindingProbe.channelGeneration) {
+            action.textContent = '設定、政策、綁定或來源 fence 已改變；草稿保留。請明確重新載入並執行 probe 後再保存。'; return;
+        }
+        const number = id => Number(document.getElementById(id).value);
+        const scale = number(bindingFieldIds.scale);
+        if (!Number.isFinite(scale) || scale <= 0) { action.textContent = 'Scale 必須是有限正數。'; return; }
+        const body = {
+            sensorObjid: Number(trustedBindingSelectedSensor), expectedSettingsRevision: expected.expectedSettingsRevision,
+            expectedPolicyRevision: expected.expectedPolicyRevision, expectedIdentityEpoch: trustedBindingProbe.identityEpoch,
+            expectedChannelGeneration: trustedBindingProbe.channelGeneration, expectedBindingRevision: expected.expectedBindingRevision,
+            channelObjectId: selectedId, expectedCaption: selected.caption || '',
+            quantity: Number(document.getElementById(bindingFieldIds.quantity).value), unit: document.getElementById(bindingFieldIds.unit).value,
+            scale, direction: document.getElementById(bindingFieldIds.direction).value,
+            intervalRawUnit: document.getElementById(bindingFieldIds.intervalRawUnit).value,
+            rawTimestampTimeZoneId: document.getElementById(bindingFieldIds.rawTimestampTimeZoneId).value,
+            analysisTimeZoneId: document.getElementById(bindingFieldIds.analysisTimeZoneId).value,
+            timeBasisEvidenceReference: document.getElementById(bindingFieldIds.timeBasisEvidenceReference).value
+        };
+        const saved = await api.put(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, body, { silent: true });
+        if (isTrustedBindingCommitReceipt(saved)) {
+            const committedIds = new Set(saved.committedSensorObjids.map(String));
+            if (committedIds.has(trustedBindingSelectedSensor)) {
+                const currentFields = Object.fromEntries(Object.entries(bindingFieldIds).map(([key, id]) => [key,
+                    document.getElementById(id)?.value ?? '']));
+                const editorStillMatchesSubmitted = bindingEditorFieldsMatchBody(currentFields, body);
+                removeCommittedTrustedBindingDraft(trustedBindingSelectedSensor, body);
+                if (editorStillMatchesSubmitted) {
+                    trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
+                    trustedBindingDraftDirty = false;
+                    clearTrustedBindingOperationAuthority();
+                } else {
+                    trustedBindingDraftDirty = true;
+                    captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
+                }
+            }
+            updateTrustedBindingBatchStatus();
+            action.textContent = trustedBindingDraftDirty
+                ? `已提交 sensor #${trustedBindingSelectedSensor}；較新的編輯草稿仍保留。目錄已變更，請重新載入核對後再 probe，不要直接重送。`
+                : `已提交 sensor #${trustedBindingSelectedSensor}；目錄已變更，請重新載入核對，不要直接重送。`;
+            await loadTrustedProfileBindings();
+            return;
+        }
+        trustedBindingSaved = saved?.binding || saved;
+        trustedBindingDraftDirty = false;
+        removeCommittedTrustedBindingDraft(trustedBindingSelectedSensor, body);
+        trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
+        updateTrustedBindingBatchStatus();
+        action.textContent = `已保存 binding revision ${trustedBindingSaved?.bindingRevision ?? '未知'}；狀態 ${trustedBindingSaved?.status || saved?.status || 'waiting'}；語意未變可保留既有資格，新／變更設定仍需來源核驗。`;
+        document.getElementById('prtg-profile-binding-qualify').disabled = !trustedBindingSaved?.bindingFingerprint;
+        await loadTrustedProfileBindings();
+        await reloadTrustedBinding(true, true);
+    } catch (error) {
+        action.textContent = error?.status === 409
+            ? '版本或目錄已改變；保存結果未確認，草稿保留。請先重新載入核對已保存版本，再決定是否重送。'
+            : '保存結果未確認；草稿保留。請先重新載入核對已保存版本，再決定是否重送。';
+    } finally { setTrustedBindingPending(false); }
+});
+
+document.getElementById('prtg-profile-binding-qualify')?.addEventListener('click', async () => {
+    if (!trustedBindingSelectedSensor || trustedBindingBusy) return;
+    if (trustedBindingDraftDirty) { document.getElementById('prtg-profile-binding-action-status').textContent = '目前草稿尚未保存；先保存並重新核對綁定版本，再執行核驗。'; return; }
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    setTrustedBindingPending(true); action.textContent = '正在重新讀取 binding 並執行單次有界來源核驗…';
+    try {
+        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
+        const binding = latest?.binding;
+        if (!sameTrustedBindingFence(latest, trustedBindingVersions) || !binding?.bindingFingerprint ||
+            binding.bindingRevision !== trustedBindingSaved?.bindingRevision ||
+            binding.bindingFingerprint !== trustedBindingSaved?.bindingFingerprint) {
+            action.textContent = '設定、政策、來源或綁定 fence 已改變；未執行核驗，草稿保留。請明確重新載入並核對。'; return;
+        }
+        const result = await api.post(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}/qualify`, {
+            expectedBindingRevision: binding.bindingRevision, expectedBindingFingerprint: binding.bindingFingerprint
+        }, { silent: true, timeoutMs: 30000 });
+        if (isTrustedBindingCommitReceipt(result)) {
+            trustedBindingDraftDirty = false;
+            trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
+            clearTrustedBindingOperationAuthority();
+            action.textContent = `已提交核驗 sensor #${trustedBindingSelectedSensor}；目錄已變更，請重新載入核對，不要直接重送。`;
+            await loadTrustedProfileBindings();
+            return;
+        }
+        trustedBindingSaved = result?.binding || result;
+        const qualificationMessage = `核驗結果：${result?.status || trustedBindingSaved?.status || 'unknown'}｜${Array.isArray(result?.missingFacts) ? result.missingFacts.join(', ') : '請查看缺項'}｜來源版本 ${result?.probe?.sourceVersion || trustedBindingSaved?.qualificationSourceVersion || 'unknown'}。`;
+        await loadTrustedProfileBindings(); await reloadTrustedBinding(true, true);
+        action.textContent = qualificationMessage;
+    } catch (error) {
+        action.textContent = error?.status === 409
+            ? '版本或目錄已改變；核驗結果未確認。請先重新載入核對目前綁定與資格狀態，再決定是否重送。'
+            : '核驗結果未確認。請先重新載入核對目前綁定與資格狀態，再決定是否重送。';
+    } finally { setTrustedBindingPending(false); }
+});
 
 let timelineProgressPage = 1;
 let timelineProgressController = null;

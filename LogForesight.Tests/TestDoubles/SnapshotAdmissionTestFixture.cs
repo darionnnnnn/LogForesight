@@ -62,7 +62,7 @@ internal static class SnapshotAdmissionTestFixture
             profileSamples.Record(new PrtgProfileTransportSample(contract.SourceFingerprint,
                 contract.ScopeFingerprint, contract.StrategyFingerprint, contract.RequestShapeFingerprint,
                 now.AddSeconds(index - 5), 1_000L * profileIds.Length, profileIds.Length,
-                profileIds.Length * 2, profileIds.Length * 2, "success", null, contract.VersionFingerprint));
+                profileIds.Length * 4, profileIds.Length * 4, "success", null, contract.VersionFingerprint));
 
         var snapshotEstimate = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
             PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), selection.ScopeFingerprint,

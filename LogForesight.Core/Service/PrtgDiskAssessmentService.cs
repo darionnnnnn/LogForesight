@@ -392,7 +392,7 @@ public sealed class PrtgDiskAssessmentService
                 authority.Policy, sensor.Objid, sensor.SensorType, authority.Strategy, DateTime.UtcNow, DateTime.UtcNow);
             var profile = pageProfiles.GetValueOrDefault(sensor.Objid);
             if (profile is null || profile.Quantity != PrtgTrustedQuantitySemantic.DiskFreePercent ||
-                profile.Unit != "%" || profile.Scale != 1 || profile.Direction != "direct" ||
+                profile.Unit != "%" || !double.IsFinite(profile.Scale) || profile.Scale <= 0 || profile.Direction != "direct" ||
                 !IsAvailableCapacityChannel(profile.PrimaryChannelCaption))
                 resolved = new(null, resolved.MissingFacts, resolved.RejectionReason ?? "disk_semantic_profile_mismatch");
             profileResolutions[sensor.Objid] = resolved;

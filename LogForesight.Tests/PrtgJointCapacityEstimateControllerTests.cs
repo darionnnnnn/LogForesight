@@ -136,7 +136,7 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
             profileStore.Record(new PrtgProfileTransportSample(contract.SourceFingerprint, contract.ScopeFingerprint,
                 contract.StrategyFingerprint, contract.RequestShapeFingerprint, now.AddSeconds(-sample),
                 profileP95MillisecondsPerSensor * profileIds.Length, profileIds.Length,
-                profileIds.Length * 2, profileIds.Length * 2, "success", null, contract.VersionFingerprint));
+                profileIds.Length * 4, profileIds.Length * 4, "success", null, contract.VersionFingerprint));
 
         return _controller.EstimatePrtgFetchScope(PrtgValueFetchScope.AllMapped, PrtgFetchStrategy.Aggressive).Data!;
     }

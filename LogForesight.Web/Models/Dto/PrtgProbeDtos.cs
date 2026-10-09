@@ -389,7 +389,7 @@ public class PrtgValueFetchScopeEstimateDto
     public DateTimeOffset? SnapshotCapacityOldestSampleAtUtc { get; set; }
     public double? SnapshotCapacityOldestSampleAgeSeconds { get; set; }
     public string SnapshotCapacityModel { get; set; } = "max(ceil(batchCount/2), ceil(batchCount/4) * measured p95 batch seconds)";
-    public string SnapshotCapacityRequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status; sorted exact-size ID filter; response cap 512 KiB";
+    public string SnapshotCapacityRequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status,primarychannel; sorted exact-size ID filter; response cap 512 KiB";
     public string ProfileCapacityStatus { get; set; } = "capacity-unverified";
     public string ProfileCapacityReason { get; set; } = "profile_transport_evidence_not_available";
     public int ProfileCapacitySamples { get; set; }
@@ -421,7 +421,7 @@ public sealed class PrtgSnapshotCapacityPilotDto
     public int RequestsSent { get; set; }
     public int UniqueSensorsSampled { get; set; }
     public string Coverage { get; set; } = "";
-    public string RequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status; sorted exact-size ID filter; response cap 512 KiB";
+    public string RequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status,primarychannel; sorted exact-size ID filter; response cap 512 KiB";
     public int MatchingFullBatchSamples { get; set; }
     public double? P95BatchSeconds { get; set; }
     public double? EstimatedSeconds { get; set; }

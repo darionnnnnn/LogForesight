@@ -41,3 +41,23 @@ Acceptance default segment includes build, parser semantics and visible pilot re
 校準卡「PRTG 狀態規則門檻」僅重算 down／flapping／warning；silent、磁碟趨勢及資源期間規則明示未評估，不能解讀為零命中。匯出保留完整規則目錄，以 ThresholdKind 區分門檻種類，趨勢及期間規則的純量 Threshold 為 null。規則目錄開關不代表來源可信、試算合格或已授權正式風險。
 
 - 診斷匯出前提：SQL Server在服務資料庫查`sys.databases.snapshot_isolation_state_desc`必須ON；DBA依實際DB名稱設定ALLOW_SNAPSHOT_ISOLATION後重查，RCSI逐敘述快照不能替代整份一致快照。SQLite核Storage:SqliteWal=true及PRAGMA journal_mode=wal，依部署重啟生效；下載端不臨時改正式DB設定。前提通過不授予來源或容量資格。
+
+## Trusted profile 頻道綁定與資格核驗
+
+- 在 Trusted profile 進度頁逐列選 sensor。只讀 probe 的 channels 僅提供精確 Channel ID、caption、unit 選項；不按順序猜測第一頻道、不因 primary 標記、值相等或 native capability 探測而自動核准。
+- PUT `bindings/{sensorObjid}` 帶五個 CAS fence：`ExpectedSettingsRevision`、`ExpectedPolicyRevision`、`ExpectedIdentityEpoch`、`ExpectedChannelGeneration`、`ExpectedBindingRevision`，另帶明確 ChannelObjectId/ExpectedCaption、Quantity、Unit、正 Scale、Direction、IntervalRawUnit、RawTimestampTimeZoneId、AnalysisTimeZoneId、TimeBasisEvidenceReference。首次或契約變更保存為 waiting，含 `qualification_required`；完全相同且符合目前身分／來源契約的保存保留 proof/revision/channel generation，可維持 qualified。保存本身不授予 ready。
+- 409 `binding_fence_changed` 或 `catalogue_changed` 時保留草稿，要求 reload/reprobe 與人工核對後再送，不自動覆寫。批次可含最多 100 個逐筆版本 fenced 的 rows；每列結果各自接受或拒絕。
+- POST `bindings/{sensorObjid}/qualify` 對已保存 binding revision/fingerprint 執行單次有界原生歷史核驗。只有真實 raw XML 與實際 sensor/channel/raw value/`datetime_raw` 前後來源證據匹配才可能建立 physical-sample proof；錯誤、缺項、逾時、格式不符或身份世代改變仍是 waiting/unknown。metadata 持續更新不等同重新取得 historic proof。native primary capability 僅診斷，永不授予 ready。
+- Profile metadata freshness 是 24 小時；refresh 工作期限是 23 小時。共享 historic API quota 初次核驗每顆 sensor 限一次有限 `avg=0` GET，這是請求配額條件，不是冷卻時間，也不代表總容量通過。
+- 15,000 顆需有量測支持的整體共同准入，涵蓋來源 probe、refresh、共享 quota、逾時與工作期限；目前不得宣稱該容量已驗收。
+
+- Read-only API shapes: `GET profiles?offset&limit` returns page plus per-row binding/status/missing-fact summaries, without channel payload; `GET bindings/{sensorObjid}` returns nullable binding and the five expected CAS fences; `POST probe` accepts `{sensorObjids:[...]}` for 1–5 sensors and returns per-sensor epochs/generations/channels; `PUT bindings/{sensorObjid}` saves one explicit binding; `POST bindings/{sensorObjid}/qualify` accepts `{expectedBindingRevision,expectedBindingFingerprint}`. `POST bindings/batch` accepts up to 100 rows, each with its own five expected fences and an individual result.
+- Initial physical-sample proof is bound to its observed binding, source, resource, channel, and time-basis evidence. Later metadata refresh does not rewrite or reacquire that historic proof.
+
+- Wire types: `ChannelObjectId` is a decimal digit string. `Quantity` is numeric enum 1=`CpuLoadPercent`, 2=`MemoryUsedPercent`, 3=`MemoryAvailablePercent`, 4=`DiskFreePercent`, 5=`DiskUsedPercent`; 0=`Unknown` is not saveable. Probe/select/caption/semantic confirmation must be per sensor; never reuse a different sensor's selected channel.
+- Batch UI: probe and configure rows individually, add them to the local in-page batch draft (retained across profile pages, maximum 100), then explicitly submit. Each row keeps its own CAS fence and returns an individual accepted/rejected result. Accepted saves stay waiting and require per-sensor qualification. Fence/catalogue conflicts retain drafts; reopen/reprobe/review each affected sensor and re-add to refresh its fence. This is not an automatic 100-row selection or 15,000-sensor acceptance.
+- Qualification response outer `status` is the attempt outcome; nested `binding` is saved configuration and `probe` is source result. Profiles rows distinguish resolver `status` from `bindingStatus`; a `qualified` proof reference is not equivalent to profile `ready`.
+
+來源 Profile 必須同時符合摘要、目前資源身分、保存的 binding 語意指紋與當前時間依據。Scale 可為有限正數，原始值只正規化一次；合法的非 1 Scale 證據可出現在主機明細。背景 metadata 刷新若完成核對並確認必要來源事實缺失／衝突，會原子撤銷該次捕捉的舊 Profile；較新 Profile、改動後的 binding、歷史資料及 journal 不受舊結果覆寫。網路失敗、逾時、取消或失去租約只記錄失敗／等待，不能冒充已觀測到語意變更。
+
+切換 sensor 會保留未提交編輯器草稿，明確排入批次的版本與較新的編輯草稿各自保留。API 確認已寫入但目錄隨後變更時，顯示已提交並要求 reload；此回執不帶來源／binding 內容，核驗按鈕保持停用，直到 reload 與 probe 核對。網路、逾時或伺服器錯誤只表示結果未確認，草稿保留，先 reload 核對已保存版本再决定重送，不自動重試。

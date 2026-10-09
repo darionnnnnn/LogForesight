@@ -802,7 +802,26 @@ public sealed partial class PrtgDiskFormalFlowTests
             DeviceObjid = DeviceId, MapDate = _completedDay, HostId = HostId,
             HostName = "DISK-HOST", MapStatus = PrtgMapStatus.Ok, CreatedAt = now
         }]);
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
+        var currentSettings = settings.Get();
         var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(policy =>
+        {
+            policy.Revision = "mode-replay-fixture";
+            policy.CoreSystemId = "mode-replay-consumer-fixture";
+            if (string.IsNullOrWhiteSpace(policy.SourceGeneration))
+                policy.SourceGeneration = "mode-replay-source-generation";
+            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl);
+            if (policy.ValidFrom == default)
+                policy.ValidFrom = new DateTimeOffset(_completedDay.AddDays(-31));
+            policy.HostIds = policy.HostIds.Append(HostId).Distinct().ToList();
+            policy.SensorIds = policy.SensorIds.Append(sensorId).Distinct().ToList();
+            policy.SourceTimeZoneId = "UTC";
+            policy.SourceCultureName = "en-US";
+            policy.RawTimestampTimeZoneId = "UTC";
+            policy.AnalysisTimeZoneId = "UTC";
+            policy.TimeBasisEvidenceReference = "mode-replay-fixture-time-basis";
+        });
         var policy = policyStore.Get();
         var identity = prtg.BindObservedResource(sensorId, HostId, policy.SourceGeneration,
             $"mode-replay-{sensorId}");
@@ -815,13 +834,13 @@ public sealed partial class PrtgDiskFormalFlowTests
             PrtgFetchStrategy.Normalize(new SystemSettingsStore(_backend.Blob("system_settings")).Get().PrtgFetchStrategy),
             strategyDefinition.SnapshotIntervalMinutes, DateTime.UtcNow.AddDays(-32));
         var observedOa = now.ToOADate();
-        var profile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, "SNMP CPU Load", "load",
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, "SNMP CPU Load", "load",
             name, quantity, "%", 1, "direct", PrtgDiskAssessmentService.ParserSemanticVersion,
             strategy.StrategyFingerprint, strategy.StrategyMinutes, strategy.EffectiveFromHourUtc,
             TimeSpan.FromMinutes(strategy.StrategyMinutes), "seconds", "UTC", "UTC", "UTC",
             new DateTimeOffset(now), "mode-replay-source-metadata", "mode-replay-physical-sample", true,
             95, 95, observedOa, observedOa);
-        prtg.RecordTrustedSamplingProfile(profile);
+        var profile = PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
         return profile;
     }
 

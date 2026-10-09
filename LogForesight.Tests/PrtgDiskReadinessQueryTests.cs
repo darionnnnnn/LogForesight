@@ -490,7 +490,8 @@ public sealed class PrtgDiskReadinessQueryTests : IDisposable
         var refreshedAt = first.SourceMetadataObservedAtUtc.AddSeconds(2);
         var refreshed = PrtgResourceFixture.ConfigureDiskTrustedProfile(store,
             _fx.Blob(PrtgMonitoringPolicyStore.BlobKey), _fx.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey),
-            200, 100, 7, "disk", first.StrategyEffectiveFromHourUtc, refreshedAt);
+            200, 100, 7, "disk", first.StrategyEffectiveFromHourUtc, refreshedAt,
+            preserveIdentity: true);
         var policyContext = store.GetTrustedSamplingPolicyContext("conservative", 15);
         var current = PrtgTrustedSamplingProfileResolver.Resolve(refreshed,
             store.GetResourceIdentity(200), policyContext.Policy, 200, "disk", policyContext.Strategy,
@@ -730,6 +731,8 @@ public sealed class PrtgDiskReadinessQueryTests : IDisposable
         var store = new EfPrtgStore(_fx.NewContext);
         var identity = PrtgResourceFixture.Bind(store,
             _fx.Blob(PrtgMonitoringPolicyStore.BlobKey), sensorId, deviceId, hostId, "readiness-source");
+        if (PrtgConsumerProfileFixtureClosure.HasCurrentQualifiedBinding(
+            _fx.Blob(PrtgMonitoringPolicyStore.BlobKey), identity)) return identity;
         return PrtgResourceFixture.BindChannel(store, identity, "free", "Free Space", "%", 1,
             "descending-danger");
     }

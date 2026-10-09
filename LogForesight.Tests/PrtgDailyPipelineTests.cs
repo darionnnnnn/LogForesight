@@ -137,7 +137,8 @@ public class PrtgDailyPipelineTests : IDisposable
                 p.CoreSystemId = "fixture-core"; p.SourceGeneration = FixtureSourceGeneration;
                 p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
                 p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(fixtureSettings.PrtgUrl);
-                p.ValidFrom = DateTimeOffset.Now.AddDays(-31); p.Revision = "fixture";
+                if (p.ValidFrom == default) p.ValidFrom = DateTimeOffset.Now.AddDays(-31);
+                p.Revision = "fixture";
                 p.HostIds = fixtureHosts.Select(h => h.HostId).ToList(); p.SensorIds = fixtureSensors.Select(s => s.Objid).ToList();
             });
             var fixtureChanges = prtgStore.GetStateChanges(DateTime.Today.AddDays(-30), DateTime.Today.AddDays(1));
@@ -221,16 +222,19 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     private void SeedCompleteSilentPresenceProof(WebHost host, long deviceId, long sensorId, DateTime day,
-        IReadOnlyList<PrtgSilentSensorSnapshot>? inventorySensors = null)
+        IReadOnlyList<PrtgSilentSensorSnapshot>? inventorySensors = null, bool updatePolicyTimeBasis = true)
     {
         var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
         var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy =>
+        if (updatePolicyTimeBasis)
         {
-            policy.RawTimestampTimeZoneId = "UTC";
-            policy.AnalysisTimeZoneId = "UTC";
-            policy.TimeBasisEvidenceReference = "whole-readiness-test-fixture";
-        });
+            policyStore.Update(policy =>
+            {
+                policy.RawTimestampTimeZoneId = "UTC";
+                policy.AnalysisTimeZoneId = "UTC";
+                policy.TimeBasisEvidenceReference = "whole-readiness-test-fixture";
+            });
+        }
         var policy = policyStore.Get();
         var sourceZone = TimeZoneInfo.FindSystemTimeZoneById(policy.SourceTimeZoneId);
         var localEnd = DateTime.SpecifyKind(day.Date.AddDays(1).AddTicks(-1), DateTimeKind.Unspecified);
@@ -1750,20 +1754,24 @@ public class PrtgDailyPipelineTests : IDisposable
         });
 
         const long deviceId = 1;
-        var mappingRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
         var timeline = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 4000));
         var diskFingerprint = JsonSerializer.Serialize(new
         { ChannelIdentifier = "5", ChannelName = "Free", Unit = "%", Scale = (double?)1.0, Direction = "descending-danger" }) +
             "|" + PrtgDiskAssessmentService.ParserSemanticVersion;
-        var resourceIdentity = prtgStore.BindObservedResource(4000, host.HostId, FixtureSourceGeneration,
+        prtgStore.BindObservedResource(4000, host.HostId, FixtureSourceGeneration,
             "1|SNMP Disk Free|2000");
-        resourceIdentity = prtgStore.SetObservedChannel(4000, FixtureSourceGeneration, diskFingerprint, resourceIdentity.Generation);
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(_backend.CreateContext, 4000, deviceId, host.HostId,
+            "SNMP Disk Free", FixtureSourceGeneration, caption: "Free", channelIdentifier: "5");
+        // The closure helper installs the current qualified binding and may rotate channel generation.
+        // Build all typed semantic fixtures only after that fence is final.
+        var resourceIdentity = prtgStore.GetResourceIdentity(4000);
+        var currentMappingRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
         timeline.Update(e =>
         {
             e.Bind(4000, host.HostId, resourceIdentity.SourceGeneration,
-                $"{deviceId}|SNMP Disk Free|2000|map:{mappingRevision}", resourceIdentity.Generation,
+                $"{deviceId}|SNMP Disk Free|2000|map:{currentMappingRevision}", resourceIdentity.Generation,
                 resourceIdentity.Epoch, resourceIdentity.ChannelGeneration, policyStore.Get().ValidFrom);
-            e.MappingRevision = mappingRevision;
+            e.MappingRevision = currentMappingRevision;
             e.Accept(policyStore.Get().ValidFrom, DateTimeOffset.Now, Array.Empty<PrtgTimedState>());
             e.DiskSemanticValidFrom = DateTimeOffset.Now.AddDays(-31); e.DiskSemanticCheckedAt = DateTimeOffset.Now;
             e.DiskSemanticFingerprint = diskFingerprint;
@@ -1777,8 +1785,6 @@ public class PrtgDailyPipelineTests : IDisposable
                 "5", "Free", "%", 1, "descending-danger", 5, true, DateTime.UtcNow, day, PrtgDiskAssessmentService.ParserSemanticVersion,
                 SourceGeneration: resourceIdentity.SourceGeneration, ResourceGeneration: resourceIdentity.Generation,
                 ChannelGeneration: resourceIdentity.ChannelGeneration, IdentityEpoch: resourceIdentity.Epoch));
-        PrtgResourceFixture.AuthorizeSeededDiskHistory(_backend.CreateContext, 4000, deviceId, host.HostId,
-            "SNMP Disk Free", FixtureSourceGeneration, caption: "Free", channelIdentifier: "5");
         // The helper narrows its proof fixture to sensor 4000. Restore the actual pilot policy
         // scope so DailyPipeline's production consumer assesses the same 101 selected sensors.
         var selectedPilotSensors = sensors.Select(sensor => sensor.Objid).Order().ToArray();
@@ -2139,7 +2145,7 @@ public class PrtgDailyPipelineTests : IDisposable
             PrtgFetchStrategy.Normalize(profileSettings.PrtgFetchStrategy), 15,
             DateTime.SpecifyKind(day.Date.AddDays(-30), DateTimeKind.Utc));
         Assert.True(profileStrategy.Ready);
-        var profile = PrtgTrustedSamplingProfile.FromProbe(sensorId, currentIdentityForProfile,
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, currentIdentityForProfile,
             "Ping", "ping-profile", "Ping", PrtgTrustedQuantitySemantic.DiskFreePercent,
             "%", 1, "direct", PrtgDiskAssessmentService.ParserSemanticVersion,
             profileStrategy.StrategyFingerprint, profileStrategy.StrategyMinutes,
@@ -2149,7 +2155,21 @@ public class PrtgDailyPipelineTests : IDisposable
             "typed-source-metadata-reference", "same-physical-sample-compared", true,
             50, 50, new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate(),
             new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate());
-        prtgStore.RecordTrustedSamplingProfile(profile);
+        var profile = PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
+        var profileIdentity = prtgStore.GetResourceIdentity(sensorId);
+        var timeline = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensorId));
+        var stateChanges = prtgStore.GetStateChanges(DateTime.Today.AddDays(-30), DateTime.Today.AddDays(1));
+        timeline.Update(e =>
+        {
+            e.Bind(sensorId, host.HostId, profileIdentity.SourceGeneration, "fixture",
+                profileIdentity.Generation, profileIdentity.Epoch, profileIdentity.ChannelGeneration,
+                profilePolicyStore.Get().ValidFrom);
+            e.Accept(new DateTimeOffset(DateTime.Today.AddDays(-30)), DateTimeOffset.Now,
+                stateChanges.Where(change => change.SensorObjid == sensorId).Select(change =>
+                    new PrtgTimedState(sensorId, new DateTimeOffset(change.ChangedAt), change.Status,
+                        e.SourceGeneration, e.ResourceGeneration)));
+        });
+        SeedCompleteSilentPresenceProof(host, deviceId, sensorId, day, updatePolicyTimeBasis: false);
 
         await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, [day], Task.CompletedTask, hostIds: null, guard: null);
 
@@ -2302,17 +2322,21 @@ public class PrtgDailyPipelineTests : IDisposable
         var stableDueAt = readyBeforeMetadataRefresh.SupplementDueAt;
         var profileRevisionBeforeMetadataRefresh = prtgStore.ReadResourceAuthorityRevision(host.HostId);
         var observationRevisionBeforeMetadataRefresh = prtgStore.ReadResourceObservationRevisions([host.HostId])[host.HostId];
-        var refreshedProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, currentIdentity,
+        var refreshedSourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, currentIdentity,
             profile.SensorType, profile.PrimaryChannelId, profile.PrimaryChannelCaption, profile.Quantity,
             profile.Unit, profile.Scale, profile.Direction, profile.SemanticVersion,
             profile.StrategyFingerprint, profile.StrategyMinutes, profile.StrategyEffectiveFromHourUtc,
             profile.ConfirmedScanInterval, profile.IntervalRawUnit, profile.RawTimestampTimeZoneId,
             profile.SourceApiTimeZoneId, profile.AnalysisTimeZoneId, DateTimeOffset.UtcNow,
             profile.SourceMetadataReference, profile.PhysicalSampleReference,
-            profile.SourceMarkedPrimary, 49, 49,
+            false, 49, 49,
             DateTime.SpecifyKind(new DateTime(2026, 9, 1, 0, 5, 0), DateTimeKind.Utc).ToOADate(),
-            DateTime.SpecifyKind(new DateTime(2026, 9, 1, 0, 5, 0), DateTimeKind.Utc).ToOADate());
-        prtgStore.RecordTrustedSamplingProfile(refreshedProfile);
+            DateTime.SpecifyKind(new DateTime(2026, 9, 1, 0, 5, 0), DateTimeKind.Utc).ToOADate(),
+            PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind, profile.BindingRevision,
+            profile.BindingFingerprint, profile.NativePrimaryChannelPropertyId,
+            profile.QualificationProofReference, profile.BindingSettingsRevision,
+            profile.BindingPolicyRevision, profile.AuthorityContextFingerprint);
+        var refreshedProfile = PrtgConsumerProfileFixtureClosure.Publish(_backend, refreshedSourceProfile);
         Assert.Equal(profileRevisionBeforeMetadataRefresh, prtgStore.ReadResourceAuthorityRevision(host.HostId));
         Assert.True(prtgStore.ReadResourceObservationRevisions([host.HostId])[host.HostId] > observationRevisionBeforeMetadataRefresh);
         await RecoverRevisitedRow();
@@ -2330,9 +2354,9 @@ public class PrtgDailyPipelineTests : IDisposable
             refreshedProfile.ConfirmedScanInterval, refreshedProfile.IntervalRawUnit, refreshedProfile.RawTimestampTimeZoneId,
             refreshedProfile.SourceApiTimeZoneId, refreshedProfile.AnalysisTimeZoneId, DateTimeOffset.UtcNow,
             refreshedProfile.SourceMetadataReference + "-semantic-change", refreshedProfile.PhysicalSampleReference + "-semantic-change",
-            refreshedProfile.SourceMarkedPrimary, refreshedProfile.ComparedSnapshotValue, refreshedProfile.ComparedPrimaryChannelValue,
+            true, refreshedProfile.ComparedSnapshotValue, refreshedProfile.ComparedPrimaryChannelValue,
             refreshedProfile.ComparedSnapshotMeasurementOaDate, refreshedProfile.ComparedPrimaryChannelMeasurementOaDate);
-        prtgStore.RecordTrustedSamplingProfile(driftedProfile);
+        driftedProfile = PrtgConsumerProfileFixtureClosure.Publish(_backend, driftedProfile);
         Assert.True(prtgStore.ReadResourceAuthorityRevision(host.HostId) > profileRevisionBeforeChange);
         Assert.Equal(driftedProfile.SemanticVersion,
             Assert.Single(prtgStore.GetTrustedSamplingProfiles([sensorId])).Value.SemanticVersion);

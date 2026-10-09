@@ -179,7 +179,7 @@ public sealed partial class PrtgDiskFormalFlowTests
                     $"page100-resource-{sensorId}", 0));
             identity = PrtgResourceFixture.BindChannel(store, identity, "free", $"Disk {index} Free",
                 "%", 1, "descending-danger");
-            var profile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, "SNMP Disk Free", "free",
+            var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, "SNMP Disk Free", "free",
                 $"Disk {index} Free", PrtgTrustedQuantitySemantic.DiskFreePercent, "%", 1, "direct",
                 PrtgDiskAssessmentService.ParserSemanticVersion, strategy.StrategyFingerprint,
                 strategy.StrategyMinutes, strategy.EffectiveFromHourUtc, TimeSpan.FromMinutes(15),
@@ -187,7 +187,7 @@ public sealed partial class PrtgDiskFormalFlowTests
                 "page100-synthetic-channel-profile", $"page100-physical-sample-reference-{sensorId}",
                 true, 50, 50, nowUtc.ToOADate(),
                 nowUtc.ToOADate());
-            store.RecordTrustedSamplingProfile(profile);
+            var profile = PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
             profiles.Add(sensorId, profile);
         }
 

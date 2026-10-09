@@ -43,7 +43,7 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
         var restartedSettings = new SystemSettingsStore(restartedBackend.Blob("system_settings"));
         var profiles = new PrtgTrustedSamplingProfileStore(restartedBackend);
         var storedProfile = profiles.GetMany([SensorId])[SensorId];
-        profiles.RecordProbeResult(RefreshProfile(storedProfile));
+        _ = RefreshProfile(restartedBackend, storedProfile);
         var refreshedAssessment = Assert.Single(new PrtgResourcePeriodConsumer(restartedBackend, restartedSettings)
             .EvaluateBatch([SensorId], assessment.EvidenceAsOfUtc, DateTime.UtcNow).Assessments);
         Assert.Equal(assessment.ProfileFingerprint, refreshedAssessment.ProfileFingerprint);
@@ -64,7 +64,7 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
             { TrialExpiresAtUtc = expiredAt, UpdatedAtUtc = expiredAt.AddMinutes(-1) };
         });
         storedProfile = profiles.GetMany([SensorId])[SensorId];
-        profiles.RecordProbeResult(RefreshProfile(storedProfile));
+        _ = RefreshProfile(restartedBackend, storedProfile);
         var postExpiry = Assert.Single(new PrtgResourcePeriodConsumer(restartedBackend, restartedSettings)
             .EvaluateBatch([SensorId], assessment.EvidenceAsOfUtc, DateTime.UtcNow).Assessments);
         Assert.Equal(PrtgResourceDecisionMode.FormalRisk, postExpiry.Decision.Mode);
@@ -308,13 +308,13 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
             strategyDefinition.SnapshotIntervalMinutes, DateTime.UtcNow.AddDays(-2));
         var now = DateTime.UtcNow;
         var oa = now.ToOADate();
-        var profile = PrtgTrustedSamplingProfile.FromProbe(SensorId, identity, "cpu", "primary-channel",
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(SensorId, identity, "cpu", "primary-channel",
             "CPU Usage", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct",
             "resource-period-v1", strategy.StrategyFingerprint, strategy.StrategyMinutes,
             strategy.EffectiveFromHourUtc, TimeSpan.FromMinutes(strategy.StrategyMinutes), "seconds",
             "UTC", "UTC", "UTC", new DateTimeOffset(now), "metadata-reference-valid",
             "physical-reference-valid", true, value, value, oa, oa);
-        new PrtgTrustedSamplingProfileStore(backend).RecordProbeResult(profile);
+        var profile = PrtgConsumerProfileFixtureClosure.Publish(backend, sourceProfile);
 
         var evidenceCutoff = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
         // The public pressure contract requires both adjacent completed hours to map to one
@@ -371,7 +371,8 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
         };
     }
 
-    private static PrtgTrustedSamplingProfile RefreshProfile(PrtgTrustedSamplingProfile prior)
+    private static PrtgTrustedSamplingProfile RefreshProfile(StorageBackend backend,
+        PrtgTrustedSamplingProfile prior)
     {
         var now = DateTime.UtcNow;
         var oa = now.ToOADate();
@@ -381,13 +382,14 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
             Generation = prior.ResourceGeneration, Epoch = prior.IdentityEpoch,
             ChannelGeneration = prior.ChannelGeneration, Active = true
         };
-        return PrtgTrustedSamplingProfile.FromProbe(prior.SensorObjid, identity, prior.SensorType,
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(prior.SensorObjid, identity, prior.SensorType,
             prior.PrimaryChannelId, prior.PrimaryChannelCaption, prior.Quantity, prior.Unit, prior.Scale,
             prior.Direction, prior.SemanticVersion, prior.StrategyFingerprint, prior.StrategyMinutes,
             prior.StrategyEffectiveFromHourUtc, prior.ConfirmedScanInterval, prior.IntervalRawUnit,
             prior.RawTimestampTimeZoneId, prior.SourceApiTimeZoneId, prior.AnalysisTimeZoneId,
             new DateTimeOffset(now), "metadata-reference-refreshed", "physical-reference-refreshed",
             true, prior.ComparedSnapshotValue, prior.ComparedPrimaryChannelValue, oa, oa);
+        return PrtgConsumerProfileFixtureClosure.Publish(backend, sourceProfile);
     }
 
     public void Dispose()

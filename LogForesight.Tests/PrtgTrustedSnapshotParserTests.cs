@@ -66,6 +66,62 @@ public sealed class PrtgTrustedSnapshotParserTests
     }
 
     [Fact]
+    public void ExplicitBindingRejectsSnapshotWhoseNativePrimaryChannelSwitched()
+    {
+        var context = Context() with { SelectedPrimaryChannelId = "3" };
+        var switched = JsonSerializer.Serialize(new
+        {
+            objid = 77, lastvalue_raw = "17.25", lastcheck_raw = Hour.ToOADate().ToString("R", CultureInfo.InvariantCulture),
+            interval_raw = "60", status_raw = 3, primarychannel_raw = 4
+        });
+
+        Assert.Equal(PrtgTrustedSnapshotParser.NativePrimaryChannelMismatch,
+            _parser.Parse(switched, context).RejectionReason);
+    }
+
+    [Fact]
+    public void ExplicitBindingRejectsSnapshotWithoutNativePrimaryChannelEvidence()
+    {
+        var context = Context() with { SelectedPrimaryChannelId = "3" };
+
+        Assert.Equal(PrtgTrustedSnapshotParser.MissingNativePrimaryChannelId,
+            _parser.Parse(Row(), context).RejectionReason);
+    }
+
+    [Fact]
+    public void ExplicitBindingAcceptsOnlyNumericNativePrimaryChannelAliasesAndRejectsDisagreement()
+    {
+        var context = Context() with { SelectedPrimaryChannelId = "3" };
+        var primaryChannel = JsonSerializer.Serialize(new
+        {
+            objid = 77, lastvalue_raw = "17.25", lastcheck_raw = Hour.ToOADate().ToString("R", CultureInfo.InvariantCulture),
+            interval_raw = "60", status_raw = 3, primarychannel = 3
+        });
+        var matchingAliases = JsonSerializer.Serialize(new
+        {
+            objid = 77, lastvalue_raw = "17.25", lastcheck_raw = Hour.ToOADate().ToString("R", CultureInfo.InvariantCulture),
+            interval_raw = "60", status_raw = 3, primarychannel = 3, primarychannel_raw = 3
+        });
+        var disagreeingAliases = JsonSerializer.Serialize(new
+        {
+            objid = 77, lastvalue_raw = "17.25", lastcheck_raw = Hour.ToOADate().ToString("R", CultureInfo.InvariantCulture),
+            interval_raw = "60", status_raw = 3, primarychannel = 3, primarychannel_raw = 4
+        });
+        var stringAlias = JsonSerializer.Serialize(new
+        {
+            objid = 77, lastvalue_raw = "17.25", lastcheck_raw = Hour.ToOADate().ToString("R", CultureInfo.InvariantCulture),
+            interval_raw = "60", status_raw = 3, primarychannel = "3"
+        });
+
+        Assert.True(_parser.Parse(primaryChannel, context).AcceptedForAccumulation);
+        Assert.True(_parser.Parse(matchingAliases, context).AcceptedForAccumulation);
+        Assert.Equal(PrtgTrustedSnapshotParser.MissingNativePrimaryChannelId,
+            _parser.Parse(disagreeingAliases, context).RejectionReason);
+        Assert.Equal(PrtgTrustedSnapshotParser.MissingNativePrimaryChannelId,
+            _parser.Parse(stringAlias, context).RejectionReason);
+    }
+
+    [Fact]
     public void PRTG_OADate依明確來源時區轉UTC且DST模糊或不存在時間拒收()
     {
         var zone = "Eastern Standard Time";

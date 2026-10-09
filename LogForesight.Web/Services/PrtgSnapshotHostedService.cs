@@ -912,7 +912,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     RecordDiagnostic(now, "attempt", targets: targets.Count);
                     capacityStartedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
                     var json = await client.GetBoundedJsonAsync(
-                        "api/table.json?content=sensors&columns=objid,lastvalue,interval,lastcheck,status"
+                        "api/table.json?content=sensors&columns=" + PrtgSnapshotTargetResolver.SnapshotColumns
                         + PrtgResourceGuardProbe.BuildObjidFilter(batch), MaximumSnapshotBatchResponseBytes, batchToken);
                     capacityCompletedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
                     try

@@ -138,6 +138,11 @@ public sealed partial class PrtgDiskFormalFlowTests : IDisposable
         bool excludeOutsideParentDay = false, bool omitPriorAnalysisDayHoursBelongingToParentDay = false,
         bool highNetiqBaseline = false)
     {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(settings =>
+        {
+            settings.PrtgUrl = _url;
+            settings.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        });
         var now = DateTime.UtcNow;
         var host = _hosts.Upsert(new WebHost { HostId = HostId, HostName = "DISK-HOST", Source = "netiq", Active = true, IpAddress = "192.0.2.81" });
         HostId = host.HostId;
@@ -235,12 +240,22 @@ public sealed partial class PrtgDiskFormalFlowTests : IDisposable
     private void SeedTypedSemanticEvidence()
     {
         var prtg = _backend.PrtgStore();
-        var identity = prtg.BindObservedResource(SensorId, HostId, "b582b0e038e34b0697d74368fcd266dd",
-            PrtgTimelineResourceIdentity.BuildResourceFingerprint(DeviceId.ToString(), "SNMP Disk Free", "creation-1", 0));
-        var channelFingerprint = JsonSerializer.Serialize(new
+        var policyBlob = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey);
+        var policyStore = new PrtgMonitoringPolicyStore(policyBlob);
+        var policy = policyStore.Get();
+        var identity = prtg.GetResourceIdentity(SensorId);
+        var expectedChannelFingerprint = JsonSerializer.Serialize(new
         { ChannelIdentifier = "free", ChannelName = "Free Space", Unit = "%", Scale = (double?)1, Direction = "descending-danger" }) +
             "|" + PrtgDiskAssessmentService.ParserSemanticVersion;
-        identity = prtg.SetObservedChannel(SensorId, "b582b0e038e34b0697d74368fcd266dd", channelFingerprint, identity.Generation);
+        if (!PrtgConsumerProfileFixtureClosure.HasCurrentQualifiedBinding(policyBlob, identity))
+        {
+            identity = prtg.BindObservedResource(SensorId, HostId, policy.SourceGeneration,
+                PrtgTimelineResourceIdentity.BuildResourceFingerprint(DeviceId.ToString(), "SNMP Disk Free", "creation-1", 0));
+            identity = prtg.SetObservedChannel(SensorId, identity.SourceGeneration,
+                expectedChannelFingerprint, identity.Generation);
+        }
+        var channelFingerprint = identity.ChannelFingerprint
+            ?? throw new InvalidOperationException("Typed semantic fixture requires the final channel identity fence.");
         var evidence = new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
         evidence.ConfirmManually(new PrtgDiskSemanticContext(SensorId, DeviceId, HostId, "SNMP Disk Free",
             "free", "Free Space", "%", 1, "descending-danger"), 42,
@@ -254,7 +269,7 @@ public sealed partial class PrtgDiskFormalFlowTests : IDisposable
                 PrtgDiskAssessmentService.ParserSemanticVersion, SourceGeneration: identity.SourceGeneration,
                 ResourceGeneration: identity.Generation, ChannelGeneration: identity.ChannelGeneration,
                 IdentityEpoch: identity.Epoch));
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+
         var revision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
         new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + SensorId)).Update(e =>
         {
@@ -289,6 +304,15 @@ public sealed partial class PrtgDiskFormalFlowTests : IDisposable
             policyStore.Update(p => { p.Revision="fixture"; p.CoreSystemId="core"; p.SourceGeneration="b582b0e038e34b0697d74368fcd266dd";
                 p.EndpointHint=EfPrtgObservationStore.SourceHintFor(_url); p.ValidFrom=new DateTimeOffset(_completedDay.AddDays(-31));
                 p.HostIds=[HostId]; p.SensorIds=[SensorId]; if (p.SourceTimeZoneId.Length == 0) p.SourceTimeZoneId="UTC"; p.SourceCultureName="en-US"; });
+        }
+        var profiles = _backend.PrtgStore().GetTrustedSamplingProfiles([SensorId]);
+        if (policyStore.Get().SensorIds.Contains(SensorId) &&
+            profiles.TryGetValue(SensorId, out var sourceProfile))
+        {
+            var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+            PrtgConsumerProfileFixtureClosure.PublishEfFixture(_backend.PrtgStore(),
+                _backend.Blob(PrtgMonitoringPolicyStore.BlobKey), settings.Revision,
+                PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), sourceProfile);
         }
         if (newSemanticConfirmation)
             new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + SensorId)).Update(e =>

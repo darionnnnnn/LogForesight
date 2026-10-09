@@ -328,13 +328,13 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
             PrtgFetchStrategy.Normalize(settings.Get().PrtgFetchStrategy),
             strategyDefinition.SnapshotIntervalMinutes, DateTime.UtcNow.AddDays(-32));
         if (!strategy.Ready) throw new InvalidOperationException("Synthetic strategy fixture was not ready.");
-        var profile = PrtgTrustedSamplingProfile.FromProbe(SensorId, identity, sensorType, channel, caption,
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(SensorId, identity, sensorType, channel, caption,
             quantity, "%", 1d, "direct", "resource-period-v1", strategy.StrategyFingerprint,
             strategy.StrategyMinutes, strategy.EffectiveFromHourUtc,
             TimeSpan.FromMinutes(strategy.StrategyMinutes), "seconds", "UTC", "UTC", analysisTimeZoneId,
             DateTimeOffset.UtcNow, "synthetic-source-metadata-reference", "synthetic-physical-sample-reference",
             true, completedHourValues[0], completedHourValues[0], DateTime.UtcNow.ToOADate(), DateTime.UtcNow.ToOADate());
-        new PrtgTrustedSamplingProfileStore(Backend).RecordProbeResult(profile);
+        var profile = PrtgConsumerProfileFixtureClosure.Publish(Backend, sourceProfile);
 
         var cutoffUtc = TimeZoneInfo.ConvertTimeToUtc(
             DateTime.SpecifyKind(AnalysisDay.AddDays(1), DateTimeKind.Unspecified), TimeZoneInfo.Local);
@@ -600,33 +600,32 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
         var key = PrtgTrustedSamplingProfile.StorePrefix + SensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var profileStore = new PrtgTrustedSamplingProfileStore(Backend);
         var current = profileStore.GetMany([SensorId])[SensorId];
-        var identity = Backend.PrtgStore().GetResourceIdentity(SensorId);
         var changedProfile = mutation switch
         {
-            "wrong-quantity-semantic" => Reprobe(current with
-            { Quantity = family == PrtgResourceFamily.Disk ? PrtgTrustedQuantitySemantic.CpuLoadPercent : PrtgTrustedQuantitySemantic.DiskFreePercent }, identity),
-            "trial-profile-drift" => Reprobe(current with { SemanticVersion = current.SemanticVersion + "-trial-drift" }, identity),
+            "wrong-quantity-semantic" => WithDigest(current with
+            {
+                Quantity = family == PrtgResourceFamily.Disk
+                    ? PrtgTrustedQuantitySemantic.CpuLoadPercent
+                    : PrtgTrustedQuantitySemantic.DiskFreePercent,
+                MetadataDigest = ""
+            }),
+            "trial-profile-drift" => WithDigest(current with
+            { SemanticVersion = current.SemanticVersion + "-trial-drift", MetadataDigest = "" }),
             "wrong-unit" => WithDigest(current with { Unit = "MB", MetadataDigest = "" }),
             "wrong-scale" => WithDigest(current with { Scale = 100d, MetadataDigest = "" }),
             _ => throw new ArgumentOutOfRangeException(nameof(mutation), mutation, "Unknown resource profile mutation.")
         };
-        if (mutation is "wrong-quantity-semantic" or "trial-profile-drift")
-        {
-            profileStore.RecordProbeResult(changedProfile);
-        }
-        else
-        {
-            // Preserve a self-consistent digest so the consumer reaches Validate's unit/scale
-            // guards instead of failing earlier on malformed JSON metadata.
-            Backend.Blob(key).Mutate(_ => (JsonSerializer.Serialize(changedProfile), true));
-        }
+        // These are adversarial persistence fixtures: retain a valid serialized digest while
+        // deliberately disagreeing with the saved explicit binding. The production publisher
+        // must reject those mutations, so exercise the consumer's persistence guard directly.
+        // The fixed scale=100 case remains unchanged and is not normalized away.
+        Backend.Blob(key).Mutate(_ => (JsonSerializer.Serialize(changedProfile), true));
 
         var persistedJson = JsonNode.Parse(Backend.Blob(key).Read() ?? "null");
         var verified = mutation switch
         {
-            "wrong-quantity-semantic" => Enum.TryParse<PrtgTrustedQuantitySemantic>(
-                persistedJson?["Quantity"]?.GetValue<string>(), out var persistedQuantity) &&
-                persistedQuantity == changedProfile.Quantity,
+            "wrong-quantity-semantic" => persistedJson?["Quantity"]?.GetValue<int>() ==
+                (int)changedProfile.Quantity,
             "wrong-unit" => persistedJson?["Unit"]?.GetValue<string>() == "MB",
             "wrong-scale" => persistedJson?["Scale"]?.GetValue<double>() == 100d,
             "trial-profile-drift" => persistedJson?["SemanticVersion"]?.GetValue<string>() == changedProfile.SemanticVersion,
@@ -655,16 +654,7 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
                 TrustedHour(changedProfile, hour, zone, completedHourValues[index], 4)).ToArray());
         }
 
-        PrtgTrustedSamplingProfile Reprobe(PrtgTrustedSamplingProfile candidate, PrtgResourceIdentity currentIdentity) =>
-            PrtgTrustedSamplingProfile.FromProbe(candidate.SensorObjid, currentIdentity, candidate.SensorType,
-                candidate.PrimaryChannelId, candidate.PrimaryChannelCaption, candidate.Quantity, candidate.Unit,
-                candidate.Scale, candidate.Direction, candidate.SemanticVersion, candidate.StrategyFingerprint,
-                candidate.StrategyMinutes, candidate.StrategyEffectiveFromHourUtc, candidate.ConfirmedScanInterval,
-                candidate.IntervalRawUnit, candidate.RawTimestampTimeZoneId, candidate.SourceApiTimeZoneId,
-                candidate.AnalysisTimeZoneId, DateTimeOffset.UtcNow, candidate.SourceMetadataReference + "-mutation",
-                candidate.PhysicalSampleReference, candidate.SourceMarkedPrimary, candidate.ComparedSnapshotValue,
-                candidate.ComparedPrimaryChannelValue, candidate.ComparedSnapshotMeasurementOaDate,
-                candidate.ComparedPrimaryChannelMeasurementOaDate);
+
 
         static PrtgTrustedSamplingProfile WithDigest(PrtgTrustedSamplingProfile candidate)
         {

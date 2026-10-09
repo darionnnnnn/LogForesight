@@ -199,7 +199,7 @@ public class PrtgRunsCardAndProbeTests : IDisposable
             var device21 = Regex.IsMatch(query, @"[?&]id=21(&|$)");
             // The pre-existing device 20 can be drained first; wait for the actual new-device handoff.
             if (messages && device21) MessagesRequested.TrySetResult(true);
-            var snapshot = query.Contains("columns=objid,lastvalue,interval,lastcheck,status", StringComparison.Ordinal);
+            var snapshot = query.Contains("columns=objid,lastvalue,interval,lastcheck,status,primarychannel", StringComparison.Ordinal);
             var lastCheck = DateTimeOffset.UtcNow.ToString("O");
             var json = messages
                 ? "{\"treesize\":0,\"messages\":[]}"
@@ -295,7 +295,7 @@ public class PrtgRunsCardAndProbeTests : IDisposable
                 sensor.Objid == 211 && sensor.DeviceObjid == 21 && sensor.Name == "S");
             string[] requests;
             lock (handler.Requests) requests = handler.Requests.ToArray();
-            Assert.Contains(requests, query => query.Contains("columns=objid,lastvalue,interval,lastcheck,status", StringComparison.Ordinal) &&
+            Assert.Contains(requests, query => query.Contains("columns=objid,lastvalue,interval,lastcheck,status,primarychannel", StringComparison.Ordinal) &&
                 Regex.IsMatch(query, @"[?&]filter_objid=201(&|$)"));
             Assert.Contains(requests, query => query.Contains("content=sensors", StringComparison.Ordinal) &&
                 Regex.IsMatch(query, @"[?&]id=21(&|$)"));

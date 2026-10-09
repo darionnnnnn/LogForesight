@@ -257,7 +257,10 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                         elapsed.Stop();
                         RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
                             requestCount, TimeSpan.FromTicks(Interlocked.Read(ref transportTicks)), "success", null);
-                        RecordProbeRows(rows, scopeFingerprint, pageIndex, pageStates, requestCount, elapsed.Elapsed.TotalSeconds);
+                        var expectedProfiles = group.Where(profiles.ContainsKey)
+                            .ToDictionary(id => id, id => profiles[id]);
+                        RecordProbeRows(rows, scopeFingerprint, pageIndex, pageStates, requestCount,
+                            elapsed.Elapsed.TotalSeconds, expectedProfiles, owner, version);
                     }
                     catch (OperationCanceledException ex) when (!ct.IsCancellationRequested &&
                         (workCts.IsCancellationRequested || ex.Message.Contains("profile-refresh-lease-lost", StringComparison.Ordinal)))
@@ -424,8 +427,16 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
     }
 
     private void RecordProbeRows(IReadOnlyList<PrtgTrustedSamplingProbeRow> rows, string scope, int pageIndex,
-        List<(long Id, SensorState State)> pageStates, int requestCount, double elapsedSeconds)
+        List<(long Id, SensorState State)> pageStates, int requestCount, double elapsedSeconds,
+        IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> expectedProfiles,
+        string leaseOwner, long leaseVersion)
     {
+        // A returned waiting row is a completed source observation. Unlike timeout, transport
+        // exceptions, caller cancellation, or lease loss, it can establish that the prior source
+        // authority facts are no longer present. Revoke only the captured profile via the SQL
+        // digest/identity/binding/lease CAS; API probes never enter this hosted-worker path.
+        RevokeCompletedWaitingProfiles(backend, rows, expectedProfiles, leaseOwner, leaseVersion);
+
         var profiles = new PrtgTrustedSamplingProfileStore(backend).GetMany(rows.Select(row => row.SensorObjid));
         var nextRows = rows.Select(row =>
         {
@@ -445,6 +456,35 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
         SaveSensorOutcomes(scope, pageIndex, pageStates, nextRows, requestCount, elapsedSeconds,
             nextRows.All(row => row.Item2.Status == "qualified") ? "qualified" : "waiting-for-source-authority",
             nextRows.FirstOrDefault(row => row.Item2.Status != "qualified").Item2?.Reason);
+    }
+
+    /// <summary>Shared invocation seam for completed scheduled refresh rows only.</summary>
+    internal static void RevokeCompletedWaitingProfiles(StorageBackend backend,
+        IReadOnlyList<PrtgTrustedSamplingProbeRow> rows,
+        IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> expectedProfiles,
+        string leaseOwner, long leaseVersion)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(expectedProfiles);
+        foreach (var row in rows)
+        {
+            if (!expectedProfiles.TryGetValue(row.SensorObjid, out var expectedProfile)) continue;
+            _ = RevokeCompletedWaitingProfile(backend, row, expectedProfile, leaseOwner, leaseVersion);
+        }
+    }
+
+    internal static bool RevokeCompletedWaitingProfile(StorageBackend backend,
+        PrtgTrustedSamplingProbeRow? row, PrtgTrustedSamplingProfile expectedProfile,
+        string leaseOwner, long leaseVersion)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        ArgumentNullException.ThrowIfNull(expectedProfile);
+        if (row is null || row.ProfileRecorded || row.Status != "waiting" ||
+            row.MissingAuthorityFields.Count == 0 || row.SensorObjid != expectedProfile.SensorObjid)
+            return false;
+        return new PrtgTrustedSamplingProfileStore(backend).RevokeAfterObservedRefreshFailure(
+            expectedProfile, leaseOwner, leaseVersion);
     }
 
     private State PrepareScope(string fingerprint, int count) => Update(s =>

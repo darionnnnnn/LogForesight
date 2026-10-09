@@ -21,6 +21,10 @@ public sealed partial class PrtgDiskFormalFlowTests
             PrtgSensorCategories.Cpu, PrtgTrustedQuantitySemantic.CpuLoadPercent);
         var memoryProfile = SeedPressureSensor(MemoryPressureSensorId, "Memory Used",
             PrtgSensorCategories.Memory, PrtgTrustedQuantitySemantic.MemoryUsedPercent);
+        // This scenario asserts CPU and memory replay hints only. The disk fixture
+        // is seeded by SeedDiskHistory but is outside this test's intended scope.
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
+            policy.SensorIds.Remove(SensorId));
         var currentHour = FloorUtcHour(DateTime.UtcNow);
         foreach (var profile in new[] { cpuProfile, memoryProfile })
             store.MergeSampledValues(new[] { currentHour.AddHours(-2), currentHour.AddHours(-1) }
@@ -360,16 +364,38 @@ public sealed partial class PrtgDiskFormalFlowTests
             Objid = sensorId, DeviceObjid = DeviceId, Name = name, SensorType = "SNMP Disk Free",
             Category = category, Status = "Up"
         }], now);
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy => policy.SensorIds = [CpuPressureSensorId, MemoryPressureSensorId]);
-        var policy = policyStore.Get();
         var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
-        settings.Update(value =>
+        var currentSettings = settings.Get();
+        if (!currentSettings.PrtgEnabled || !StringComparer.Ordinal.Equals(currentSettings.PrtgUrl, _url) ||
+            PrtgFetchStrategy.Normalize(currentSettings.PrtgFetchStrategy) != PrtgFetchStrategy.Conservative)
         {
-            value.PrtgEnabled = true;
-            value.PrtgUrl = _url;
-            value.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            settings.Update(value =>
+            {
+                value.PrtgEnabled = true;
+                value.PrtgUrl = _url;
+                value.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            });
+            currentSettings = settings.Get();
+        }
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(policy =>
+        {
+            policy.Revision = "daily-pressure-fixture";
+            policy.CoreSystemId = "daily-pressure-consumer-fixture";
+            if (string.IsNullOrWhiteSpace(policy.SourceGeneration))
+                policy.SourceGeneration = "daily-pressure-source-generation";
+            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl);
+            if (policy.ValidFrom == default)
+                policy.ValidFrom = new DateTimeOffset(_completedDay.AddDays(-31));
+            policy.HostIds = policy.HostIds.Append(HostId).Distinct().ToList();
+            policy.SensorIds = policy.SensorIds.Append(sensorId).Distinct().ToList();
+            policy.SourceTimeZoneId = "UTC";
+            policy.SourceCultureName = "en-US";
+            policy.RawTimestampTimeZoneId = "UTC";
+            policy.AnalysisTimeZoneId = "UTC";
+            policy.TimeBasisEvidenceReference = "daily-pressure-fixture-time-basis";
         });
+        var policy = policyStore.Get();
         var strategyProfile = PrtgFetchStrategy.Profile(settings.Get().PrtgFetchStrategy);
         var effectiveFrom = DateTime.SpecifyKind(_completedDay.Date.AddDays(-32), DateTimeKind.Utc);
         var strategy = new PrtgTrustedSamplingStrategyStateStore(
@@ -383,13 +409,13 @@ public sealed partial class PrtgDiskFormalFlowTests
         var channelId = quantity == PrtgTrustedQuantitySemantic.CpuLoadPercent ? "cpu-load" : "memory-used";
         identity = prtg.SetObservedChannel(sensorId, policy.SourceGeneration,
             $"{channelId}|{name}|%|1|direct|{semanticVersion}", identity.Generation);
-        var profile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, "SNMP Disk Free", channelId,
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, "SNMP Disk Free", channelId,
             name, quantity, "%", 1, "direct", semanticVersion,
             strategy.StrategyFingerprint, strategy.StrategyMinutes, strategy.EffectiveFromHourUtc,
             TimeSpan.FromMinutes(strategy.StrategyMinutes), "minutes", "UTC", "UTC", "UTC",
             new DateTimeOffset(now), "daily-pressure-metadata", $"physical-{sensorId}", true, 95, 95,
             now.ToOADate(), now.ToOADate());
-        new PrtgTrustedSamplingProfileStore(_backend).RecordProbeResult(profile);
+        var profile = PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
         return profile;
     }
 
@@ -398,11 +424,27 @@ public sealed partial class PrtgDiskFormalFlowTests
 
     private void EnableResourceConsumerSettings()
     {
-        new SystemSettingsStore(_backend.Blob("system_settings")).Update(settings =>
+        var profiles = _backend.PrtgStore().GetTrustedSamplingProfiles([SensorId]);
+        var sourceProfile = profiles.TryGetValue(SensorId, out var existingProfile)
+            ? existingProfile
+            : throw new InvalidOperationException("Synthetic disk consumer fixture requires its seeded source profile.");
+        var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settingsStore.Update(settings =>
         {
             settings.PrtgEnabled = true;
             settings.PrtgUrl = _url;
         });
+        var settings = settingsStore.Get();
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(policy =>
+        {
+            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl);
+            policy.HostIds = policy.HostIds.Append(HostId).Distinct().ToList();
+            policy.SensorIds = policy.SensorIds.Append(SensorId).Distinct().ToList();
+        });
+        PrtgConsumerProfileFixtureClosure.PublishEfFixture(_backend.PrtgStore(),
+            _backend.Blob(PrtgMonitoringPolicyStore.BlobKey), settings.Revision,
+            PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), sourceProfile);
     }
 
     private void ReplaceFixtureSamples(EfPrtgStore store, long sensorId, IReadOnlyList<PrtgValueRow> desiredRows)

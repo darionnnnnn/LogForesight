@@ -333,7 +333,7 @@ public sealed record PrtgResourceFormalDeliveryFence(
                 PrtgTrustedQuantitySemantic.MemoryAvailablePercent,
             _ => false
         };
-        if (!semanticMatches || profile.Unit != "%" || profile.Scale != 1) return false;
+        if (!semanticMatches || profile.Unit != "%" || !double.IsFinite(profile.Scale) || profile.Scale <= 0) return false;
         var nowUtc = DateTime.UtcNow;
         return PrtgTrustedSamplingProfileResolver.Resolve(profile, identity, policy, sensorObjid,
             sensor.SensorType, strategy, nowUtc, nowUtc, nowUtc).Ready;

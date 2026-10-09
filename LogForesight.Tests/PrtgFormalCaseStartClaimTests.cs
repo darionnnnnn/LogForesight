@@ -308,13 +308,14 @@ public sealed class PrtgFormalCaseStartClaimTests
                 strategyDefinition.SnapshotIntervalMinutes, DateTime.UtcNow.AddDays(-2));
             var now = DateTime.UtcNow;
             var sampleTime = now.ToOADate();
-            _profile = PrtgTrustedSamplingProfile.FromProbe(SensorId, identity, "cpu", "primary-channel",
+            var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(SensorId, identity, "cpu", "primary-channel",
                 "CPU Usage", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct", "cpu-semantic-v1",
                 strategy.StrategyFingerprint, strategy.StrategyMinutes, strategy.EffectiveFromHourUtc,
                 TimeSpan.FromMinutes(strategy.StrategyMinutes), "seconds", "UTC", "UTC", "UTC",
                 new DateTimeOffset(now), "claim-metadata-reference", "claim-physical-reference", true,
                 50, 50, sampleTime, sampleTime);
-            new PrtgTrustedSamplingProfileStore(Backend).RecordProbeResult(_profile);
+            _profile = PrtgConsumerProfileFixtureClosure.Publish(Backend, sourceProfile);
+            identity = Backend.PrtgStore().GetResourceIdentity(SensorId);
             var profileContext = new PrtgResourceCurrentContext(SensorId, _profile.SourceGeneration,
                 _profile.ResourceGeneration, _profile.ChannelGeneration,
                 _profile.IdentityEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture),

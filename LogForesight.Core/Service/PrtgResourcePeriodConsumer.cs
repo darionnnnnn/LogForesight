@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -248,9 +248,15 @@ public sealed class PrtgResourcePeriodConsumer
                     {
                         "source_authority_incomplete" => "source-authority-incomplete",
                         "profile_invalid" => "source-profile-invalid",
+                        // A rejected profile with the wrong resource quantity must retain the
+                        // established semantic waiting reason. This never authorizes context.
+                        "profile_binding_semantics_mismatch" when
+                            !TryMeasurement(family.Value, profile.Quantity, profile.Unit, out _) =>
+                            "measurement-semantics-unverified",
                         _ => "source-profile-stale"
                     };
-                    missingFacts = resolution.MissingFacts.ToArray();
+                    missingFacts = reasonCode == "measurement-semantics-unverified"
+                        ? ["measurement_semantics"] : resolution.MissingFacts.ToArray();
                 }
                 else if (!TryMeasurement(family.Value, profile.Quantity, profile.Unit, out measurement))
                 {
@@ -972,8 +978,12 @@ public sealed class PrtgResourcePeriodConsumer
             (PrtgResourceFamily.Memory, PrtgTrustedQuantitySemantic.MemoryUsedPercent) => PrtgResourceSemantic.MemoryUsed,
             (PrtgResourceFamily.Memory, PrtgTrustedQuantitySemantic.MemoryAvailablePercent) => PrtgResourceSemantic.MemoryRemaining,
             (PrtgResourceFamily.Disk, PrtgTrustedQuantitySemantic.DiskFreePercent) => PrtgResourceSemantic.DiskRemaining,
+            // DiskUsedPercent remains unsupported for formal readiness until a disk-used rule exists.
             _ => (PrtgResourceSemantic?)null
         };
+        // Trusted snapshots were already normalized by PrtgTrustedSamplingProfileResolver before
+        // they entered the physical accumulator. Readiness therefore consumes percent values
+        // with a fixed factor of one; applying the profile's raw-source scale here would double-scale.
         if (semantic.HasValue && unit == "%")
         {
             measurement = new(semantic.Value, "%", 1.0, IsVerified: true);

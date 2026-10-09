@@ -23,7 +23,8 @@ public sealed record PrtgTrustedSnapshotContext(
     bool ProbeAvailable = true,
     string AnalysisTimeZoneId = "",
     Func<double, double>? NormalizeConfirmedQuantity = null,
-    string SelectedPrimaryChannelId = "");
+    string SelectedPrimaryChannelId = "",
+    bool RequireCurrentNativePrimaryChannelId = false);
 
 public sealed record PrtgTrustedSnapshotParseResult(
     PrtgTrustedSample? Sample,
@@ -60,6 +61,12 @@ public sealed class PrtgTrustedSnapshotParser
     public const string FutureTooFar = "measurement_future_too_far";
     public const string StaleMeasurement = "measurement_stale";
     public const string PhysicalMeasurementConflict = "physical_measurement_conflict";
+    public const string MissingNativePrimaryChannelId = "missing_native_primarychannel_id";
+    public const string NativePrimaryChannelMismatch = "native_primarychannel_id_mismatch";
+    // Only the native API column aliases observed by the bounded compatibility probe are allowed.
+    // Their presence/semantics are still deployment facts: missing or malformed values stay waiting.
+    public const string NativePrimaryChannelIdField = "primarychannel";
+    public const string NativePrimaryChannelIdRawField = "primarychannel_raw";
 
     public PrtgTrustedSnapshotParseResult Parse(string rawJson, PrtgTrustedSnapshotContext context)
     {
@@ -83,6 +90,15 @@ public sealed class PrtgTrustedSnapshotParser
 
             if (!TryLong(root, "objid", out var objid)) return Reject(MissingObjectId);
             if (objid != context.SensorObjid) return Reject(ObjectIdMismatch);
+            if (context.RequireCurrentNativePrimaryChannelId || !string.IsNullOrEmpty(context.SelectedPrimaryChannelId))
+            {
+                if (!long.TryParse(context.SelectedPrimaryChannelId, NumberStyles.None,
+                        CultureInfo.InvariantCulture, out var expectedPrimaryId) || expectedPrimaryId < 0)
+                    return Reject(InvalidContext);
+                if (!TryNativePrimaryChannelId(root, out var currentPrimaryId))
+                    return Reject(MissingNativePrimaryChannelId);
+                if (currentPrimaryId != expectedPrimaryId) return Reject(NativePrimaryChannelMismatch);
+            }
 
             if (!TryProperty(root, "lastvalue_raw", out _)) return Reject(MissingValue);
             if (!TryRawNumber(root, "lastvalue_raw", out var value) || !double.IsFinite(value)) return Reject(InvalidValue);
@@ -255,6 +271,28 @@ public sealed class PrtgTrustedSnapshotParser
         return token.ValueKind == JsonValueKind.Number ? token.TryGetInt64(out value) :
             token.ValueKind == JsonValueKind.String && long.TryParse(token.GetString(), NumberStyles.None,
                 CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryNativePrimaryChannelId(JsonElement root, out long value)
+    {
+        value = 0;
+        var hasValue = TryProperty(root, NativePrimaryChannelIdField, out var token);
+        var hasRaw = TryProperty(root, NativePrimaryChannelIdRawField, out var rawToken);
+        if (!hasValue && !hasRaw) return false;
+        if (hasValue && !TryNumericNonNegativeId(token, out value)) return false;
+        if (hasRaw)
+        {
+            if (!TryNumericNonNegativeId(rawToken, out var rawId)) return false;
+            if (hasValue && rawId != value) return false;
+            value = rawId;
+        }
+        return true;
+    }
+
+    private static bool TryNumericNonNegativeId(JsonElement token, out long value)
+    {
+        value = 0;
+        return token.ValueKind == JsonValueKind.Number && token.TryGetInt64(out value) && value >= 0;
     }
 
     private static bool TryRawNumber(JsonElement root, string name, out double value)

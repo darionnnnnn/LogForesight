@@ -13,10 +13,10 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
     Func<SystemSettings, PrtgClient>? clientFactory = null, IHostStore? hosts = null)
 {
     public const int MaximumSensorIds = 5;
-    public const int MaximumRequests = MaximumSensorIds * 2;
+    public const int MaximumRequests = MaximumSensorIds * 4;
     public const int MaximumResponseBytes = 512 * 1024;
     public static readonly TimeSpan PilotDeadline = TimeSpan.FromSeconds(30);
-    public const string RequestShape = "table.json sensors then channels; one exact sensor id; max 100 channels; 512 KiB each; 2 sequential GETs per sensor";
+    public const string RequestShape = "table.json sensors-before, channels, getobjectproperty primarychannel, sensors-after; one exact sensor id; max 100 channels; 512 KiB each; four sequential Table-budget GETs per sensor";
 
     public sealed record Result(
         string Status, string Reason, int TargetSensorCount, int RequestsAttempted, int RequestsSent,
@@ -125,6 +125,7 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
         {
             client = clientFactory?.Invoke(settings) ?? PrtgClientFactory.Create(settings);
             client.RequestPurpose = PrtgRequestPurpose.CapacityPilot;
+            client.TableRequestSent = () => Interlocked.Increment(ref sent);
             foreach (var id in ids)
             {
                 deadline.Token.ThrowIfCancellationRequested();
@@ -133,15 +134,28 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
                 attempted++;
                 var sensor = await client.GetBoundedJsonAsync(
                     $"api/table.json?content=sensors&id={id}&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count=2",
-                    MaximumResponseBytes, deadline.Token, () => Interlocked.Increment(ref sent));
+                    MaximumResponseBytes, deadline.Token);
                 ValidateSensorShape(sensor, id);
                 EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
 
                 attempted++;
                 var channels = await client.GetBoundedJsonAsync(
                     $"api/table.json?content=channels&id={id}&columns=objid,name,lastvalue_raw,unit&usecaption=1&count=100",
-                    MaximumResponseBytes, deadline.Token, () => Interlocked.Increment(ref sent));
+                    MaximumResponseBytes, deadline.Token);
                 ValidateChannelShape(channels);
+                EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
+
+                attempted++;
+                var primary = await client.GetBoundedXmlAsync(
+                    $"api/getobjectproperty.htm?id={id}&name=primarychannel", MaximumResponseBytes, deadline.Token);
+                _ = PrtgTrustedSamplingProbeService.ParseNativePrimaryProperty(primary.Content);
+                EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
+
+                attempted++;
+                var sensorAfter = await client.GetBoundedJsonAsync(
+                    $"api/table.json?content=sensors&id={id}&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count=2",
+                    MaximumResponseBytes, deadline.Token);
+                ValidateSensorShape(sensorAfter, id);
                 EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
                 if (!reservationStore.Renew(planFingerprint, owner, leaseVersion, DateTimeOffset.UtcNow.AddSeconds(45)))
                     throw new InvalidOperationException("profile-capacity-plan-reservation-lost");

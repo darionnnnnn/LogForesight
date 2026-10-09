@@ -2527,8 +2527,8 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
-    /// Bounded read for one closed host-day replay window, including the preceding analysis-zone
-    /// hour needed when a two-hour window is assigned to the later hour's host-local date.
+    /// Bounded read for one closed analysis-zone calendar day. This is deliberately separate
+    /// from the live two-hour query so its existing contract remains unchanged.
     /// </summary>
     public PrtgResourcePressureValuesResult GetResourcePressureValuesForClosedDay(
         IReadOnlyCollection<long> sensorObjids, DateTime dayStartInclusive, DateTime dayEndExclusive)
@@ -3810,10 +3810,11 @@ public sealed class EfPrtgStore
                 ?? throw new InvalidDataException("Trusted sampling profile snapshot could not be restored for SQL retry.");
             attemptProfile.Validate();
             using var ctx = _contextFactory();
-            var isolation = expectedLeaseOwner is null
-                ? System.Data.IsolationLevel.Unspecified
-                : System.Data.IsolationLevel.Serializable;
-            using var tx = ctx.Database.BeginTransaction(isolation);
+            // The identity/binding/settings rows and the profile blob are one publication
+            // fence. ReadCommitted lets a concurrent binding save clear the old profile after
+            // these reads and before this writer inserts it again, so both publication paths
+            // must hold the same serializable boundary.
+            using var tx = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
             if (expectedLeaseOwner is not null && expectedLeaseVersion is not null &&
                 !OwnsTrustedProfileRefreshLease(ctx, expectedLeaseOwner, expectedLeaseVersion.Value, DateTimeOffset.UtcNow))
                 return false;
@@ -3823,6 +3824,60 @@ public sealed class EfPrtgStore
                 identity.SourceGeneration != attemptProfile.SourceGeneration || identity.Generation != attemptProfile.ResourceGeneration ||
                 identity.ChannelGeneration != attemptProfile.ChannelGeneration)
                 throw new InvalidOperationException("資源身分已在 probe 後變更；profile 未保存。");
+
+            if (attemptProfile.AuthorityKind != PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind ||
+                identity.ChannelFingerprint != attemptProfile.BindingFingerprint)
+                throw new InvalidOperationException("管理員 binding 或來源 primarychannel 證據已變更；profile 未保存。");
+            var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + attemptProfile.SensorObjid.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+            var bindingRow = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == bindingKey)
+                .Select(row => new { row.Content, row.Version, row.UpdatedAt }).SingleOrDefault();
+            if (bindingRow is null || bindingRow.Content.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
+                Encoding.UTF8.GetByteCount(bindingRow.Content) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
+                throw new InvalidOperationException("管理員 binding 已移除或超出上限；profile 未保存。");
+            var currentBinding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(bindingRow.Content, LfJsonOptions.Pretty)
+                ?? throw new InvalidDataException("管理員 binding 無效；profile 未保存。");
+            currentBinding.Validate();
+            var currentSettingsRaw = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == "system_settings")
+                .Select(blob => blob.Content).SingleOrDefault();
+            var currentPolicyRaw = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
+                .Select(blob => blob.Content).SingleOrDefault();
+            var currentSettings = string.IsNullOrWhiteSpace(currentSettingsRaw) ? new SystemSettings() :
+                JsonSerializer.Deserialize<SystemSettings>(currentSettingsRaw, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException("System settings invalid; profile not saved.");
+            var currentPolicy = string.IsNullOrWhiteSpace(currentPolicyRaw) ? new PrtgMonitoringPolicy() :
+                JsonSerializer.Deserialize<PrtgMonitoringPolicy>(currentPolicyRaw, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException("PRTG policy invalid; profile not saved.");
+            var strategyName = PrtgFetchStrategy.Normalize(currentSettings.PrtgFetchStrategy);
+            var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
+            var currentAuthorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                currentPolicy, strategyName, strategyMinutes);
+            if (!currentSettings.PrtgEnabled || currentSettings.Revision != attemptProfile.BindingSettingsRevision ||
+                currentPolicy.Revision != attemptProfile.BindingPolicyRevision ||
+                currentPolicy.SourceGeneration != currentBinding.SourceGeneration ||
+                !currentPolicy.Ready(currentSettings.PrtgUrl) || !currentPolicy.SensorIds.Contains(attemptProfile.SensorObjid) ||
+                !currentPolicy.HostIds.Contains(identity.HostId) ||
+                currentPolicy.RawTimestampTimeZoneId != currentBinding.RawTimestampTimeZoneId ||
+                currentPolicy.AnalysisTimeZoneId != currentBinding.AnalysisTimeZoneId ||
+                currentPolicy.TimeBasisEvidenceReference != currentBinding.TimeBasisEvidenceReference ||
+                currentAuthorityContext != currentBinding.AuthorityContextFingerprint ||
+                currentAuthorityContext != attemptProfile.AuthorityContextFingerprint)
+                throw new InvalidOperationException("管理員 binding 的來源設定或政策 revision 已變更；profile 未保存。");
+            if (currentBinding.BindingRevision != attemptProfile.BindingRevision ||
+                currentBinding.BindingFingerprint != attemptProfile.BindingFingerprint ||
+                !currentBinding.Matches(attemptProfile.SensorObjid, currentAuthorityContext,
+                    identity.SourceGeneration, identity.Generation,
+                    identity.Epoch, identity.ChannelGeneration) ||
+                string.IsNullOrWhiteSpace(currentBinding.QualificationProofReference) ||
+                currentBinding.ChannelObjectId != attemptProfile.PrimaryChannelId ||
+                currentBinding.ExpectedCaption != attemptProfile.PrimaryChannelCaption ||
+                currentBinding.Quantity != attemptProfile.Quantity || currentBinding.Unit != attemptProfile.Unit ||
+                currentBinding.Scale != attemptProfile.Scale || currentBinding.Direction != attemptProfile.Direction ||
+                currentBinding.IntervalRawUnit != attemptProfile.IntervalRawUnit ||
+                currentBinding.RawTimestampTimeZoneId != attemptProfile.RawTimestampTimeZoneId ||
+                currentBinding.AnalysisTimeZoneId != attemptProfile.AnalysisTimeZoneId ||
+                currentBinding.QualificationProofReference != attemptProfile.QualificationProofReference)
+                throw new InvalidOperationException("管理員 binding 已變更；profile 未保存。");
 
             var key = PrtgTrustedSamplingProfile.StorePrefix + attemptProfile.SensorObjid.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
@@ -3870,6 +3925,125 @@ public sealed class EfPrtgStore
         });
     }
 
+    /// <summary>
+    /// Remove only the exact profile whose completed scheduled refresh observed missing or
+    /// conflicting source authority. A transport failure never calls this method. The expected
+    /// profile digest and current lease/resource/binding fences prevent an old refresh result
+    /// from deleting a newer successful publisher or a newly configured binding.
+    /// </summary>
+    internal bool RevokeTrustedSamplingProfileAfterObservedRefreshFailure(
+        PrtgTrustedSamplingProfile expectedProfile, string leaseOwner, long leaseVersion)
+    {
+        ArgumentNullException.ThrowIfNull(expectedProfile);
+        if (string.IsNullOrWhiteSpace(leaseOwner) || leaseVersion <= 0)
+            throw new ArgumentException("A live refresh lease is required.");
+        expectedProfile.Validate();
+        if (expectedProfile.AuthorityKind != PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind)
+            return false;
+
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
+        return strategy.Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
+            var now = DateTimeOffset.UtcNow;
+            if (!OwnsTrustedProfileRefreshLease(ctx, leaseOwner, leaseVersion, now))
+                return false;
+
+            var profileKey = PrtgTrustedSamplingProfile.StorePrefix + expectedProfile.SensorObjid.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+            var profileRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == profileKey);
+            if (profileRow is null || profileRow.Content.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
+                Encoding.UTF8.GetByteCount(profileRow.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
+                return false;
+
+            PrtgTrustedSamplingProfile currentProfile;
+            try
+            {
+                currentProfile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(
+                    profileRow.Content, LfJsonOptions.Pretty) ?? throw new InvalidDataException();
+                currentProfile.Validate();
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidDataException)
+            {
+                return false;
+            }
+            // MetadataDigest covers the complete typed source/profile payload, including its
+            // source observation time and native-primary comparison. It is the old-profile CAS.
+            if (currentProfile.SensorObjid != expectedProfile.SensorObjid ||
+                !StringComparer.Ordinal.Equals(currentProfile.MetadataDigest, expectedProfile.MetadataDigest))
+                return false;
+
+            var identity = PrtgResourceIdentityStore.Read(ctx, currentProfile.SensorObjid);
+            if (!identity.Active || identity.PendingReconciliation ||
+                identity.Epoch != currentProfile.IdentityEpoch ||
+                identity.SourceGeneration != currentProfile.SourceGeneration ||
+                identity.Generation != currentProfile.ResourceGeneration ||
+                identity.ChannelGeneration != currentProfile.ChannelGeneration ||
+                identity.ChannelFingerprint != currentProfile.BindingFingerprint)
+                return false;
+
+            var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + currentProfile.SensorObjid.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+            var bindingRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == bindingKey)
+                .Select(row => row.Content).SingleOrDefault();
+            if (string.IsNullOrWhiteSpace(bindingRaw) ||
+                Encoding.UTF8.GetByteCount(bindingRaw) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
+                return false;
+            PrtgTrustedSamplingBinding currentBinding;
+            try
+            {
+                currentBinding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(bindingRaw, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException();
+                currentBinding.Validate();
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidDataException)
+            {
+                return false;
+            }
+
+            var settingsRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == "system_settings")
+                .Select(row => row.Content).SingleOrDefault();
+            var policyRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
+                .Select(row => row.Content).SingleOrDefault();
+            var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
+                JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException("System settings invalid; refresh profile was not revoked.");
+            var policy = string.IsNullOrWhiteSpace(policyRaw) ? new PrtgMonitoringPolicy() :
+                JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRaw, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException("PRTG policy invalid; refresh profile was not revoked.");
+            var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+            var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
+            var authorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                policy, strategyName, strategyMinutes);
+            if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) ||
+                policy.SourceGeneration != currentProfile.SourceGeneration ||
+                !policy.SensorIds.Contains(currentProfile.SensorObjid) || !policy.HostIds.Contains(identity.HostId) ||
+                currentBinding.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference ||
+                authorityContext != currentProfile.AuthorityContextFingerprint ||
+                currentBinding.BindingRevision != currentProfile.BindingRevision ||
+                currentBinding.BindingFingerprint != currentProfile.BindingFingerprint ||
+                !currentBinding.Matches(currentProfile.SensorObjid, authorityContext,
+                    identity.SourceGeneration, identity.Generation, identity.Epoch, identity.ChannelGeneration) ||
+                currentBinding.ChannelObjectId != currentProfile.PrimaryChannelId ||
+                currentBinding.ExpectedCaption != currentProfile.PrimaryChannelCaption ||
+                currentBinding.Quantity != currentProfile.Quantity || currentBinding.Unit != currentProfile.Unit ||
+                currentBinding.Scale != currentProfile.Scale || currentBinding.Direction != currentProfile.Direction ||
+                currentBinding.IntervalRawUnit != currentProfile.IntervalRawUnit ||
+                currentBinding.RawTimestampTimeZoneId != currentProfile.RawTimestampTimeZoneId ||
+                currentBinding.AnalysisTimeZoneId != currentProfile.AnalysisTimeZoneId ||
+                currentBinding.QualificationProofReference != currentProfile.QualificationProofReference)
+                return false;
+
+            ctx.Blobs.Remove(profileRow);
+            PrtgResourceIdentityStore.IncrementStableAuthorityRevision(ctx, identity.HostId, now);
+            ctx.SaveChanges();
+            tx.Commit();
+            return true;
+        });
+    }
+
     private static bool SameTrustedSamplingAuthority(PrtgTrustedSamplingProfile left,
         PrtgTrustedSamplingProfile right) =>
         left.SensorObjid == right.SensorObjid &&
@@ -3893,7 +4067,13 @@ public sealed class EfPrtgStore
         StringComparer.Ordinal.Equals(left.RawTimestampTimeZoneId, right.RawTimestampTimeZoneId) &&
         StringComparer.Ordinal.Equals(left.SourceApiTimeZoneId, right.SourceApiTimeZoneId) &&
         StringComparer.Ordinal.Equals(left.AnalysisTimeZoneId, right.AnalysisTimeZoneId) &&
-        left.SourceMarkedPrimary == right.SourceMarkedPrimary;
+        left.SourceMarkedPrimary == right.SourceMarkedPrimary &&
+        StringComparer.Ordinal.Equals(left.AuthorityKind, right.AuthorityKind) &&
+        left.BindingRevision == right.BindingRevision &&
+        StringComparer.Ordinal.Equals(left.BindingFingerprint, right.BindingFingerprint) &&
+        StringComparer.Ordinal.Equals(left.NativePrimaryChannelPropertyId, right.NativePrimaryChannelPropertyId) &&
+        StringComparer.Ordinal.Equals(left.AuthorityContextFingerprint, right.AuthorityContextFingerprint) &&
+        StringComparer.Ordinal.Equals(left.QualificationProofReference, right.QualificationProofReference);
 
     private static bool OwnsTrustedProfileRefreshLease(LfDbContext ctx, string owner, long version,
         DateTimeOffset nowUtc)

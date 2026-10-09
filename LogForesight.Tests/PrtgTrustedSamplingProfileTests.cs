@@ -11,12 +11,28 @@ public sealed class PrtgTrustedSamplingProfileTests
     private static readonly DateTime Effective = new(2026, 10, 5, 10, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime AsOf = Effective.AddMinutes(6);
 
-    private static PrtgResourceIdentity Identity() => new()
+    private static PrtgResourceIdentity BaseIdentity() => new()
     {
         SensorId = 77, Epoch = 4, Generation = "resource-g4", SourceGeneration = "source-g2",
-        DeviceId = 88, HostId = 99, ChannelGeneration = "channel-g3", Active = true,
+        DeviceId = 88, HostId = 99, ChannelGeneration = "channel-g3", ChannelFingerprint = new string('F', 64), Active = true,
         PendingReconciliation = false
     };
+
+    private static PrtgResourceIdentity Identity()
+    {
+        return IdentityFor(Profile());
+    }
+
+    private static PrtgResourceIdentity IdentityFor(PrtgTrustedSamplingProfile profile)
+    {
+        return new PrtgResourceIdentity
+        {
+            SensorId = profile.SensorObjid, Epoch = profile.IdentityEpoch,
+            Generation = profile.ResourceGeneration, SourceGeneration = profile.SourceGeneration,
+            DeviceId = 88, HostId = 99, ChannelGeneration = profile.ChannelGeneration,
+            ChannelFingerprint = profile.BindingFingerprint, Active = true, PendingReconciliation = false
+        };
+    }
 
     private static PrtgMonitoringPolicy Policy() => new()
     {
@@ -29,21 +45,28 @@ public sealed class PrtgTrustedSamplingProfileTests
     private static PrtgTrustedSamplingProfile Profile(PrtgResourceIdentity? identity = null,
         PrtgTrustedQuantitySemantic quantity = PrtgTrustedQuantitySemantic.CpuLoadPercent,
         string direction = "direct", string intervalUnit = "seconds", DateTimeOffset? observed = null,
-        string rawZone = "UTC", string analysisZone = "UTC", bool primary = true,
-        double snapshotValue = 12.5, double primaryValue = 12.5,
+        string rawZone = "UTC", string analysisZone = "UTC",
+        double snapshotValue = 12.5, double primaryValue = 12.5, double scale = 1,
         string sourceMetadataReference = "probe-metadata:cpu-77",
         string physicalSampleReference = "sample-compare:cpu-77", double channelTimeDeltaSeconds = 0)
     {
-        var id = identity ?? Identity();
+        var id = identity ?? BaseIdentity();
+        var policy = Policy();
         var strategy = PrtgTrustedSamplingProfileResolver.StrategyFingerprint(
             id.SourceGeneration, rawZone, "UTC", analysisZone, PrtgFetchStrategy.Conservative, 15);
-        return PrtgTrustedSamplingProfile.FromProbe(77, id, "CPU", "channel-id-1", "Load",
-            quantity, "%", 1, direction, "cpu-percent-v1", strategy, 15, Effective,
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(77, id, "CPU", "3", "Load",
+            quantity, "%", scale, direction, "cpu-percent-v1", strategy, 15, Effective,
             TimeSpan.FromSeconds(60), intervalUnit, rawZone, "UTC", analysisZone,
             observed ?? new DateTimeOffset(AsOf.AddMinutes(-1)), sourceMetadataReference,
-            physicalSampleReference, primary, snapshotValue, primaryValue,
+            physicalSampleReference, false, snapshotValue, primaryValue,
             new DateTime(2026, 10, 5, 10, 6, 0).ToOADate(),
-            new DateTime(2026, 10, 5, 10, 6, 0).AddSeconds(channelTimeDeltaSeconds).ToOADate());
+            new DateTime(2026, 10, 5, 10, 6, 0).AddSeconds(channelTimeDeltaSeconds).ToOADate(),
+            PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind, 1, new string('F', 64), "3",
+            new string('A', 64), "settings-r1", policy.Revision,
+            PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                policy, PrtgFetchStrategy.Conservative, 15));
+        return PrtgConsumerProfileFixtureClosure.CreateProfileOnly(id, policy,
+            "settings-r1", PrtgFetchStrategy.Conservative, sourceProfile);
     }
 
     private static PrtgTrustedSamplingProfileResolution Resolve(PrtgTrustedSamplingProfile? profile,
@@ -52,7 +75,8 @@ public sealed class PrtgTrustedSamplingProfileTests
         int minutes = 15, DateTime? effective = null, DateTime? asOf = null)
     {
         var at = asOf ?? AsOf;
-        return PrtgTrustedSamplingProfileResolver.Resolve(profile, identity ?? Identity(),
+        var currentIdentity = identity ?? (profile is null ? Identity() : IdentityFor(profile));
+        return PrtgTrustedSamplingProfileResolver.Resolve(profile, currentIdentity,
             policy ?? Policy(), 77, sensorType, strategy, minutes, effective ?? Effective,
             at.AddSeconds(-1), at);
     }
@@ -77,14 +101,33 @@ public sealed class PrtgTrustedSamplingProfileTests
     }
 
     [Fact]
-    public void 一般mappingrevision變化不混入profilestrategyfingerprint()
+    public void UnrelatedPolicyRevisionAndScopeExpansionPreserveQualifiedBinding()
     {
         var before = Policy();
         var after = Policy();
         after.Revision = "policy-r9";
+        after.SensorIds.Add(78);
+        after.HostIds.Add(100);
         var profile = Profile();
         Assert.True(Resolve(profile, policy: after).Ready);
         Assert.NotEqual(before.Revision, after.Revision);
+    }
+
+    [Theory]
+    [InlineData("time-basis")]
+    [InlineData("source")]
+    [InlineData("endpoint")]
+    [InlineData("source-culture")]
+    [InlineData("valid-from")]
+    public void ChangedSemanticAuthorityContextStillRejectsOldQualification(string changed)
+    {
+        var policy = Policy();
+        if (changed == "time-basis") policy.TimeBasisEvidenceReference = "probe-time-basis:changed";
+        else if (changed == "source") policy.SourceGeneration = "source-g3";
+        else if (changed == "endpoint") policy.EndpointHint = "other-endpoint-hash";
+        else if (changed == "source-culture") policy.SourceCultureName = "fr-FR";
+        else policy.ValidFrom = policy.ValidFrom.AddHours(1);
+        Assert.False(Resolve(Profile(), policy: policy).Ready);
     }
 
     [Fact]
@@ -99,6 +142,16 @@ public sealed class PrtgTrustedSamplingProfileTests
     }
 
     [Fact]
+    public void 明確管理scale可用且正規化結果仍須介於百分比界限()
+    {
+        var profile = Profile(scale: 2);
+        var resolved = Resolve(profile);
+        Assert.True(resolved.Ready, resolved.RejectionReason);
+        Assert.Equal(25, resolved.Context!.NormalizeConfirmedQuantity!(12.5));
+        Assert.Throws<InvalidDataException>(() => Profile(scale: 9));
+    }
+
+    [Fact]
     public void Profile要求物理sample時間在一秒內且接受明確小誤差()
     {
         Assert.True(Resolve(Profile(channelTimeDeltaSeconds: 0.5)).Ready);
@@ -109,12 +162,14 @@ public sealed class PrtgTrustedSamplingProfileTests
     public void 已確認profile可讓批次rawsample進入trustedaccumulator()
     {
         var at = new DateTime(2026, 10, 5, 10, 6, 0, DateTimeKind.Utc);
-        var result = PrtgTrustedSamplingProfileResolver.Resolve(Profile(), Identity(), Policy(), 77,
+        var profile = Profile(snapshotValue: 9500, primaryValue: 9500, scale: 0.01);
+        var result = PrtgTrustedSamplingProfileResolver.Resolve(profile, IdentityFor(profile), Policy(), 77,
             "CPU", PrtgFetchStrategy.Conservative, 15, Effective, at.AddSeconds(5), at.AddSeconds(10));
         Assert.True(result.Ready, result.RejectionReason);
         var row = JsonSerializer.Serialize(new Dictionary<string, object>
         {
-            ["objid"] = 77, ["lastvalue_raw"] = "12.5", ["lastcheck_raw"] = at.ToOADate().ToString("R", CultureInfo.InvariantCulture),
+            ["objid"] = 77, ["lastvalue_raw"] = "9500", ["lastcheck_raw"] = at.ToOADate().ToString("R", CultureInfo.InvariantCulture),
+            ["primarychannel_raw"] = 3,
             ["interval_raw"] = "60", ["status_raw"] = 3
         });
         var accumulator = new PrtgSnapshotAccumulator();
@@ -123,7 +178,19 @@ public sealed class PrtgTrustedSamplingProfileTests
             parser.AddToAccumulator(row, result.Context!, accumulator, out var rejection));
         Assert.Null(rejection);
         var checkpoint = Assert.Single(accumulator.Capture());
-        Assert.Equal(12.5, checkpoint.Sum / checkpoint.Count);
+        Assert.Equal(95, checkpoint.Sum / checkpoint.Count);
+    }
+
+    [Fact]
+    public void 明確非一尺度將raw正規化為百分比並拒絕溢位或越界()
+    {
+        var normalized = Profile(snapshotValue: 9500, primaryValue: 9500, scale: 0.01);
+        Assert.Equal(95, Resolve(normalized).Context!.NormalizeConfirmedQuantity!(9500));
+
+        Assert.Throws<InvalidDataException>(() => Profile(snapshotValue: 10001,
+            primaryValue: 10001, scale: 0.01));
+        Assert.Throws<InvalidDataException>(() => Profile(snapshotValue: 2,
+            primaryValue: 2, scale: double.MaxValue));
     }
 
     [Fact]
@@ -235,7 +302,7 @@ public sealed class PrtgTrustedSamplingProfileTests
         switch (defect)
         {
             case "unknown-semantic": args.Quantity = PrtgTrustedQuantitySemantic.Unknown; break;
-            case "missing-primary": args.Primary = false; break;
+            case "missing-primary": args.ChannelId = ""; break;
             case "physical-value-mismatch": args.PrimaryValue = 99; break;
             case "physical-time-mismatch": args.ChannelTimeDeltaSeconds = 2; break;
             case "missing-metadata-ref": args.SourceReference = ""; break;
@@ -254,12 +321,18 @@ public sealed class PrtgTrustedSamplingProfileTests
         var id = Identity();
         var strategy = PrtgTrustedSamplingProfileResolver.StrategyFingerprint(id.SourceGeneration,
             a.RawZone, "UTC", "UTC", PrtgFetchStrategy.Conservative, 15);
-        return PrtgTrustedSamplingProfile.FromProbe(77, id, "CPU", a.ChannelId, "Load", a.Quantity,
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(77, id, "CPU", a.ChannelId, "Load", a.Quantity,
             "%", a.Scale, a.Direction, "cpu-percent-v1", strategy, 15, Effective,
             TimeSpan.FromSeconds(60), a.IntervalUnit, a.RawZone, "UTC", "UTC",
             new DateTimeOffset(AsOf.AddMinutes(-1)), a.SourceReference, a.PhysicalReference,
-            a.Primary, 12.5, a.PrimaryValue, new DateTime(2026, 10, 5, 10, 6, 0).ToOADate(),
-            new DateTime(2026, 10, 5, 10, 6, 0).AddSeconds(a.ChannelTimeDeltaSeconds).ToOADate());
+            false, 12.5, a.PrimaryValue, new DateTime(2026, 10, 5, 10, 6, 0).ToOADate(),
+            new DateTime(2026, 10, 5, 10, 6, 0).AddSeconds(a.ChannelTimeDeltaSeconds).ToOADate(),
+            PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind, 1, new string('F', 64),
+            a.ChannelId, new string('A', 64), "settings-r1", Policy().Revision,
+            PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                Policy(), PrtgFetchStrategy.Conservative, 15));
+        return PrtgConsumerProfileFixtureClosure.CreateProfileOnly(id, Policy(),
+            "settings-r1", PrtgFetchStrategy.Conservative, sourceProfile);
     }
 
     private sealed class ProfileArgs
@@ -268,12 +341,11 @@ public sealed class PrtgTrustedSamplingProfileTests
         public string Direction = "direct";
         public string IntervalUnit = "seconds";
         public string RawZone = "UTC";
-        public bool Primary = true;
         public double PrimaryValue = 12.5;
         public double ChannelTimeDeltaSeconds;
         public double Scale = 1;
         public string SourceReference = "probe-metadata:cpu-77";
         public string PhysicalReference = "sample-compare:cpu-77";
-        public string ChannelId = "channel-id-1";
+        public string ChannelId = "3";
     }
 }

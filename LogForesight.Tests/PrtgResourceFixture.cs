@@ -63,14 +63,15 @@ internal static class PrtgResourceFixture
         });
         var identity = preserveIdentity ? store.GetResourceIdentity(sensorId) : Bind(store, policyBlob, sensorId, deviceId, hostId, source,
             sensorType: sensorType, creationReference: creationReference);
-        identity = BindChannel(store, identity, channelIdentifier, channelCaption, "%", 1, "descending-danger");
+        if (!preserveIdentity || !PrtgConsumerProfileFixtureClosure.HasCurrentQualifiedBinding(policyBlob, identity))
+            identity = BindChannel(store, identity, channelIdentifier, channelCaption, "%", 1, "descending-danger");
         var policy = new PrtgMonitoringPolicyStore(policyBlob).Get();
         var strategy = new PrtgTrustedSamplingStrategyStateStore(strategyBlob).GetCurrent(policy,
             "conservative", 15, effectiveFromHourUtc);
         if (!strategy.Ready || strategy.EffectiveFromHourUtc != effectiveFromHourUtc)
             throw new InvalidOperationException("Trusted history fixture strategy did not resolve to its requested start.");
         var observed = observedAtUtc ?? DateTimeOffset.UtcNow;
-        var profile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, sensorType, channelIdentifier, channelCaption,
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, sensorType, channelIdentifier, channelCaption,
             PrtgTrustedQuantitySemantic.DiskFreePercent, "%", 1, "direct",
             PrtgDiskAssessmentService.ParserSemanticVersion, strategy.StrategyFingerprint,
             strategy.StrategyMinutes, strategy.EffectiveFromHourUtc, TimeSpan.FromMinutes(15),
@@ -78,7 +79,8 @@ internal static class PrtgResourceFixture
             "same-physical-sample-compared", true, 50, 50,
             new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate(),
             new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate());
-        store.RecordTrustedSamplingProfile(profile);
+        var profile = PrtgConsumerProfileFixtureClosure.PublishEfFixture(store, policyBlob,
+            "synthetic-settings-revision", "conservative", sourceProfile);
         return profile;
     }
 

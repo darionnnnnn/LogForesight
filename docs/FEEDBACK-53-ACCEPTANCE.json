@@ -1,7 +1,7 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
   "plan_sha256": "67176e24c5041cd91245d4840978b3236d35299989fc6143b339b5abe9b2b6be",
-  "date": "2026-10-09",
+  "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
   "decisions": [
@@ -6263,5 +6263,515 @@
       "input_drift": 0
     },
     "final_cleanup": "EOF whitespace and Assert.Single predicate overload; production unchanged; full 112-case gate rerun on final inputs"
-  }
+  },
+  "current_explicit_binding_single_sensor_20261010": {
+    "owner": "root",
+    "verification": "synthetic application contracts and actual local browser; no native source or fleet capacity claim",
+    "final_gate": {
+      "gate": "round53-binding-stage-final-affected-current-v16",
+      "driver": {
+        "Owner": "round53-root-controlled-acceptance",
+        "DriverPid": 14472,
+        "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+        "EvidenceName": "round53-binding-stage-final-affected-current-v16",
+        "LiteralFilter": "FullyQualifiedName~PrtgTrustedSampling|FullyQualifiedName~ResourceNegativeQualificationHasNoFormalDailyFindingAndPreservesHumanData|FullyQualifiedName~PrtgNativePrimarySnapshotGuardTests|FullyQualifiedName~PrtgResourcePeriodConsumerTests|FullyQualifiedName~PrtgRuleConsumerAcceptanceTests",
+        "HangTimeout": "",
+        "StartedAtUtc": "2026-10-09T19:45:25.2057509+00:00",
+        "Status": "finished",
+        "ExitCode": 0,
+        "Error": null,
+        "PowerScope": "system-required-for-owned-driver-only",
+        "PowerScopeRestored": true,
+        "CompletedAtUtc": "2026-10-09T19:59:46.5799030+00:00"
+      },
+      "result": {
+        "InputCount": 1142,
+        "InputDrift": 0,
+        "Changed": [],
+        "AddedOrRemoved": [],
+        "TestExit": 0
+      },
+      "counters": {
+        "total": "188",
+        "executed": "188",
+        "passed": "188",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "failedCases": [],
+      "runOutcome": "Completed",
+      "unitOutcomes": {
+        "Passed": 188
+      },
+      "optionalScaleCasesSkipped": [],
+      "consistentUnitCounts": true,
+      "rootInterrupted": false,
+      "stageAccepted": true,
+      "wholeRoundAccepted": false
+    },
+    "per_case_union": {
+      "owner": "root",
+      "broadGate": "round53-explicit-binding-stage-final-current-v13",
+      "deltaGate": "round53-binding-stage-final-affected-current-v16",
+      "broadCounters": {
+        "total": "857",
+        "executed": "857",
+        "passed": "854",
+        "failed": "3",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "deltaCounters": {
+        "total": "188",
+        "executed": "188",
+        "passed": "188",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "preservedBroadFailures": [
+        {
+          "name": "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.ResourceNegativeQualificationHasNoFormalDailyFindingAndPreservesHumanData(manifestFamily: \"CPUFormal\", caseId: \"F53-CPUFormal-N09-wrong-quantity-semantic\")",
+          "message": "System.InvalidOperationException : An element of type 'Number' cannot be converted to a 'System.String'.",
+          "stack": "   at System.Text.Json.Nodes.JsonValue`1.ConvertJsonElement[TypeToConvert]()\r\n   at System.Text.Json.Nodes.JsonValue`1.GetValue[T]()\r\n   at LogForesight.Tests.PrtgFormalRuleCaseFixture.MutateResourceProfile(String mutation, PrtgResourceFamily family, IReadOnlyList`1 completedHourValues) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseFixture.cs:line 627\r\n   at LogForesight.Tests.PrtgFormalRuleCaseFixture.SeedFormalResourceCase(PrtgResourceFamily family, IReadOnlyList`1 completedHourValues, Int32 goodPhysicalSlotsPerHour, Boolean crossesAnalysisMidnight, Boolean crossesHostMidnight, Boolean memoryValuesAreRemainingPercent, Boolean formalRuleEnabled, String periodMutation, String profileMutation, String evidenceMutation, String authorityMutation) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseFixture.cs:line 384\r\n   at LogForesight.Tests.PrtgFormalRuleCaseManifestTests.ResourceNegativeQualificationHasNoFormalDailyFindingAndPreservesHumanData(String manifestFamily, String caseId) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseManifestTests.cs:line 809\r\n--- End of stack trace from previous location ---"
+        },
+        {
+          "name": "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.ResourceNegativeQualificationHasNoFormalDailyFindingAndPreservesHumanData(manifestFamily: \"DiskTwoHourLowWater\", caseId: \"F53-DiskTwoHourLowWater-N09-wrong-quantity-semanti\"···)",
+          "message": "System.InvalidOperationException : An element of type 'Number' cannot be converted to a 'System.String'.",
+          "stack": "   at System.Text.Json.Nodes.JsonValue`1.ConvertJsonElement[TypeToConvert]()\r\n   at System.Text.Json.Nodes.JsonValue`1.GetValue[T]()\r\n   at LogForesight.Tests.PrtgFormalRuleCaseFixture.MutateResourceProfile(String mutation, PrtgResourceFamily family, IReadOnlyList`1 completedHourValues) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseFixture.cs:line 627\r\n   at LogForesight.Tests.PrtgFormalRuleCaseFixture.SeedFormalResourceCase(PrtgResourceFamily family, IReadOnlyList`1 completedHourValues, Int32 goodPhysicalSlotsPerHour, Boolean crossesAnalysisMidnight, Boolean crossesHostMidnight, Boolean memoryValuesAreRemainingPercent, Boolean formalRuleEnabled, String periodMutation, String profileMutation, String evidenceMutation, String authorityMutation) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseFixture.cs:line 384\r\n   at LogForesight.Tests.PrtgFormalRuleCaseManifestTests.ResourceNegativeQualificationHasNoFormalDailyFindingAndPreservesHumanData(String manifestFamily, String caseId) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseManifestTests.cs:line 809\r\n--- End of stack trace from previous location ---"
+        },
+        {
+          "name": "LogForesight.Tests.PrtgFormalRuleCaseManifestTests.ResourceNegativeQualificationHasNoFormalDailyFindingAndPreservesHumanData(manifestFamily: \"MemoryFormal\", caseId: \"F53-MemoryFormal-N10-wrong-quantity-semantic\")",
+          "message": "System.InvalidOperationException : An element of type 'Number' cannot be converted to a 'System.String'.",
+          "stack": "   at System.Text.Json.Nodes.JsonValue`1.ConvertJsonElement[TypeToConvert]()\r\n   at System.Text.Json.Nodes.JsonValue`1.GetValue[T]()\r\n   at LogForesight.Tests.PrtgFormalRuleCaseFixture.MutateResourceProfile(String mutation, PrtgResourceFamily family, IReadOnlyList`1 completedHourValues) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseFixture.cs:line 627\r\n   at LogForesight.Tests.PrtgFormalRuleCaseFixture.SeedFormalResourceCase(PrtgResourceFamily family, IReadOnlyList`1 completedHourValues, Int32 goodPhysicalSlotsPerHour, Boolean crossesAnalysisMidnight, Boolean crossesHostMidnight, Boolean memoryValuesAreRemainingPercent, Boolean formalRuleEnabled, String periodMutation, String profileMutation, String evidenceMutation, String authorityMutation) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseFixture.cs:line 384\r\n   at LogForesight.Tests.PrtgFormalRuleCaseManifestTests.ResourceNegativeQualificationHasNoFormalDailyFindingAndPreservesHumanData(String manifestFamily, String caseId) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgFormalRuleCaseManifestTests.cs:line 809\r\n--- End of stack trace from previous location ---"
+        }
+      ],
+      "reviewedInputChanges": {
+        "LogForesight.Core/bin/Debug/net8.0-windows/LogForesight.Core.dll": {
+          "broad": "dd66ec7e1f08c2b6c4d250d4d98161eafce56369336518548a3bb1f9ae5e2b81",
+          "delta": "960d5e77f23c520b7da42a23ca8791bc3be52e667f7a5320720a0ee23d888b7d"
+        },
+        "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs": {
+          "broad": "cabf6e5de1d838f667601d92f9f8ccdb12379cbe080f3e3c518dca899865e239",
+          "delta": "e94232e5d151e59a8df5a7e7fbb964eec5e1a11e9987f20fa948619360c70b7f"
+        },
+        "LogForesight.Tests/bin/Debug/net8.0-windows/LogForesight.Tests.dll": {
+          "broad": "ee3e42811bfb20f9bde397b4b5daf2a62ef121be0f92c934ef92ecf5d431e625",
+          "delta": "47974a20e20c100782a0332e3e75b05ab7cb74aed91e4a1330c71295c36479b9"
+        },
+        "LogForesight.Tests/PrtgFormalRuleCaseFixture.cs": {
+          "broad": "fc317bdb0568f85a9668959d6f9a378246034ac53da0f01a6af4815a9dc1d48f",
+          "delta": "93055a558732eeeaf2c21f897b4d8fd9ff69e7c00184043cfa49b309a88951da"
+        },
+        "LogForesight.Tests/PrtgTrustedSamplingProfilesControllerTests.cs": {
+          "broad": "65951df8b2fe790672ae7ccf8e2eebfb27756876dfca04319c81e87d57c3b0b3",
+          "delta": "0b8f7bbd28f12e675e704575a6127b6d08c5c65479276f1683008c4f7a262cc0"
+        },
+        "LogForesight.Web/bin/Debug/net8.0-windows/LogForesight.Web.dll": {
+          "broad": "dbf1cbe75471eb3452bceae134510985a17163d80206fc1d82128027d4f6335d",
+          "delta": "914b28259a9316e58e14aad2e1f5dd0e45271d153c73480030de8aafb0614799"
+        },
+        "LogForesight.Web/Controllers/Api/PrtgTrustedSamplingProfilesController.cs": {
+          "broad": "2d9a607e54c4c188d592183948ec2b6c9ddfd39a32af94890f70ef2be1293f43",
+          "delta": "a17d425fcc7fd136122a6940fc20b3f6e8990c6356bbb73cbecdd1dbab4c7f93"
+        },
+        "LogForesight.Web/Services/PrtgTrustedSamplingProbeService.cs": {
+          "broad": "ca6101c68402198d4583d9f4fd29ac7c5ba5574e99cdcfc38a822f24046ad09e",
+          "delta": "047e0ef4863756004ad919304ed730980c39fe11c327ffdbccddb4959477b86d"
+        },
+        "LogForesight.Web/wwwroot/js/pages/prtg-admin.js": {
+          "broad": "92c785e79ed7ecdc850bcdb645fd4c033eed87f871bd2219f82d36709bd12fb9",
+          "delta": "09d98eef017df79ff1a5322e41f4478032ff67e338c7c4fb45e5344af70817ee"
+        }
+      },
+      "unchangedCoreBinary": false,
+      "reviewedCoreDiagnosticOnlyChange": {
+        "path": "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
+        "beforeSha256": "cabf6e5de1d838f667601d92f9f8ccdb12379cbe080f3e3c518dca899865e239",
+        "afterSha256": "e94232e5d151e59a8df5a7e7fbb964eec5e1a11e9987f20fa948619360c70b7f",
+        "beforeSnapshot": "round53-semantic-diagnostic-before.cs",
+        "oldChunk": "                        \"profile_invalid\" => \"source-profile-invalid\",\n                        _ => \"source-profile-stale\"\n                    };\n                    missingFacts = resolution.MissingFacts.ToArray();",
+        "newChunk": "                        \"profile_invalid\" => \"source-profile-invalid\",\n                        // A rejected profile with the wrong resource quantity must retain the\n                        // established semantic waiting reason. This never authorizes context.\n                        \"profile_binding_semantics_mismatch\" when\n                            !TryMeasurement(family.Value, profile.Quantity, profile.Unit, out _) =>\n                            \"measurement-semantics-unverified\",\n                        _ => \"source-profile-stale\"\n                    };\n                    missingFacts = reasonCode == \"measurement-semantics-unverified\"\n                        ? [\"measurement_semantics\"] : resolution.MissingFacts.ToArray();",
+        "ownerReview": "Only maps one existing rejection to the fixed semantic waiting reason. Resolver still rejects, currentContext remains null, ready branch, period evidence and formal authorization are byte-for-byte unchanged."
+      },
+      "coveredUniqueCases": 860,
+      "originalBroadCasesAllCovered": true,
+      "periodConsumerCoveredVia": "all original ResourceNegative cases and PrtgRuleConsumerAcceptanceTests execute PrtgResourcePeriodConsumer",
+      "deltaRequiredCallersAllCovered": true,
+      "sourceHashesCurrent": true,
+      "accepted": true,
+      "wholeRoundAccepted": false,
+      "limits": "Per-case union of closed frozen broad and delta gates. The sole Core delta changes the waiting diagnostic for an already-rejected wrong resource quantity; exact source reversal was checked and its period/rule consumers and all original negative cases were rerun. Broad run itself remains failed; browser and native source evidence are separate."
+    },
+    "preserved_red": [
+      "round53-record-detail-scale-unsafe-red-current-v2",
+      "round53-profile-semantic-unsafe-red-current-v2"
+    ],
+    "sql_server_profile_publication_and_revocation": {
+      "Owner": "root",
+      "Provider": "SqlServer LocalDB",
+      "ProviderVersion": "17.0.925.4",
+      "Results": {
+        "sql-unleased-publication-serializable": {
+          "passed": true
+        },
+        "sql-live-lease-revokes-exact-profile": {
+          "passed": true
+        },
+        "sql-expired-lease-cannot-revoke": {
+          "passed": true
+        },
+        "sql-binding-save-blocks-old-publication-resurrection": {
+          "passed": true
+        }
+      },
+      "Hashes": {
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/Sql/EfPrtgStore.cs": "CD8441BDDF75DCF88C12095E0336C5EE6394DB4F8CEE2825FEBD4435CF773429",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/Persistence/PrtgTrustedSamplingBindingStore.cs": "B4962C9A0B4F758490253C002DB6A4516A35E6774BC673CE3D028B1D805C9938",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Core/bin/Debug/net8.0-windows/LogForesight.Core.dll": "960D5E77F23C520B7DA42A23CA8791BC3BE52E667F7A5320720A0EE23D888B7D",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\profile-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Core.dll": "960D5E77F23C520B7DA42A23CA8791BC3BE52E667F7A5320720A0EE23D888B7D",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\profile-provider\\bin\\Debug\\net8.0-windows\\LogForesight.Tests.dll": "C20F949E11EF2AB6B29CFE2B0493CCEB65EBD803BE870364360668FBFB142BBF",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\profile-provider\\Program.cs": "E2575237D1C9470D4685BEBD288FFBCE4C5DF8168CAD78A98B664A983F30DC47",
+        "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\profile-provider\\Probe.csproj": "683C50DE526EEC7C86CA789076191EA3C3DE842C0A6C9B914CDDBA253FF25FEC"
+      },
+      "InputDrift": [],
+      "OwnedDatabaseRemoved": true,
+      "Accepted": true,
+      "WholeRoundAccepted": false,
+      "SourceTruth": "synthetic profile authority only; no native source or fleet capacity claim"
+    },
+    "preserved_sql_provider_failures": [
+      "round53-profile-sql-provider-current-v1",
+      "round53-profile-sql-provider-current-v2",
+      "round53-profile-sql-provider-current-v3",
+      "round53-profile-sql-provider-current-v4"
+    ],
+    "preserved_regression_failures": [
+      "round53-explicit-binding-guard-affected-green-current-v10",
+      "round53-explicit-binding-guard-delta-current-v11",
+      "round53-explicit-binding-stage-final-current-v13",
+      "round53-binding-receipt-and-formal-negative-current-v14"
+    ],
+    "semantic_rejection_minimal_gate": "round53-semantic-rejection-three-cases-current-v15",
+    "preserved_fixture_failure": "round53-profile-semantic-unsafe-red-current-v1",
+    "browser_evidence": [
+      "../round53-binding-browser-root-v1/root-browser-review-v1.json",
+      "../round53-binding-browser-root-v1/root-browser-review-v2.json",
+      {
+        "owner": "root",
+        "accepted": true,
+        "syntheticOnly": true,
+        "wholeRoundAccepted": false,
+        "binaryHash": "914b28259a9316e58e14aad2e1f5dd0e45271d153c73480030de8aafb0614799",
+        "ownedProcessesStopped": true,
+        "observations": {
+          "url": "http://127.0.0.1:31154/lf-binding/admin/prtg#profile-refresh",
+          "switchDraft": {
+            "batch": "尚無批次草稿。",
+            "channel": "3",
+            "qualifyDisabled": true,
+            "scale": "0.6",
+            "sensor": "#111",
+            "status": "已恢復此 sensor 尚未提交的本機草稿；草稿仍使用原始 fence，核驗已停用。"
+          },
+          "queuedV1EditorV2": {
+            "batch": "尚無批次草稿。",
+            "batchResults": "Sensor #111｜waiting｜已保存但仍需逐筆核驗",
+            "qualifyDisabled": true,
+            "scale": "0.7",
+            "status": "批次中先前排入的版本已提交；較新的編輯草稿已保留，仍使用原始 fence，請核對並重新 probe。"
+          },
+          "reloadDraft": {
+            "current": "目前狀態：waiting｜revision 2｜頻道 #3 Load｜資格證據 無｜qualification:raw_channel_id_time_proof_required",
+            "qualifyDisabled": true,
+            "scale": "0.7",
+            "status": "目前版本已變更；保留尚未提交草稿與舊 fence，請重新載入並 probe 後再送出。"
+          },
+          "initialAttempts": [
+            {
+              "url": "/lf-binding/Prtg",
+              "outcome": "first attempted before host ready; second incorrect route"
+            },
+            {
+              "url": "/lf-binding/admin/prtg",
+              "outcome": "actual project route loaded"
+            }
+          ],
+          "syntheticOnly": true
+        },
+        "browserPassed": [
+          "unqueued-draft-and-channel-options-survive-sensor-switch",
+          "queued-v1-save-keeps-newer-v2-dirty-and-qualification-disabled",
+          "explicit-reload-preserves-v2-and-old-fence",
+          "actual-sqlite-binding-is-submitted-v1-not-editor-v2"
+        ],
+        "persistedBinding": {
+          "sensor": 111,
+          "scale": 0.6,
+          "revision": 2,
+          "hasQualificationProof": false
+        },
+        "screenshot": "draft-preservation-v3.jpg",
+        "screenshotSha256": "dc5142be0fc70e6e01e3de28ca99d1a78d3127ca981fa74c0058033f43bfafc7",
+        "limits": "Actual local application UI and persistence with a synthetic source; API post-commit drift receipts are independently tested by the controller seam, not claimed as this browser flow."
+      }
+    ],
+    "source_hashes": {
+      "LogForesight.Core/Service/PrtgTrustedSamplingBinding.cs": "b350f5b9571daa9b74c7d57596d1ae9fd5d893383f22b5dabf0f68058b42e75b",
+      "LogForesight.Core/Service/PrtgTrustedSamplingProfileResolver.cs": "e981efc30de3fb0e05f41bb1815d518c89d22f6f05a9d67e486d7e34facec78c",
+      "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs": "cd8441bddf75dcf88c12095e0336c5ee6394db4f8cee2825febd4435cf773429",
+      "LogForesight.Web/Services/PrtgTrustedSamplingProfileRefreshHostedService.cs": "2b9e9a24077bda3e072f1394e4df9615dbf8214f4256e04bd68f881583b2a531",
+      "LogForesight.Web/Services/PrtgTrustedSamplingProbeService.cs": "f9f1b3310d9ce8f1e31822a3fee7a9f9a0f5041b4ccad1f570ffe21b4c5091a3",
+      "LogForesight.Web/Services/RecordDetailQueryService.cs": "5c1e39ef67d2611a6eb6151a3fe13f57d779763c15c3bf2cc3a54b026680eaa9",
+      "LogForesight.Web/Controllers/Api/PrtgTrustedSamplingProfilesController.cs": "a17d425fcc7fd136122a6940fc20b3f6e8990c6356bbb73cbecdd1dbab4c7f93",
+      "LogForesight.Web/wwwroot/js/pages/prtg-admin.js": "09d98eef017df79ff1a5322e41f4478032ff67e338c7c4fb45e5344af70817ee",
+      "LogForesight.Tests/PrtgTrustedSamplingScaleConsumerTests.cs": "07078d163021a81fe549fdc6bde091ce792636ce0a7a2de58cac20b986f8c3a7",
+      "LogForesight.Tests/RecordDetailScaleConsumerTests.cs": "4a24a43c205688f9bea302dd8f6149e5d491dffee2ff8af57b6a38c7d7102976",
+      "LogForesight.Tests/PrtgProfileRefreshAuthorityRevocationTests.cs": "259b5325f2613401cfbcf083185db257ebcd69b86c799c18c8ca8f77ebc09851",
+      "LogForesight.Web/Services/PrtgProfileTransportCapacityPilot.cs": "0d93bd7fe6dabd506657191d991c4ff6fdc615f6a724b32195a0abce3153ea6d",
+      "LogForesight.Web/Views/Pages/Prtg.cshtml": "2c3e9f0165f43d0e30c6568c2d2fcc6591a05909ad5bec9137123488d0476ee4",
+      "LogForesight.Tests/PrtgSnapshotCapacityAdmissionTests.cs": "91aff0eb3fa51618241a3d3bba78dfff38327fec13717a1058bd9fb562da08c2",
+      "LogForesight.Tests/PrtgNativePrimaryPropertyParserTests.cs": "10c8e307dfc12880f5d4437a50d3c48c9d8416c41cfc2bfd9d2471a05fd2483b"
+    },
+    "single_sensor_flow_implemented": true,
+    "semantic_guard_implemented": true,
+    "refresh_revocation_implemented": true,
+    "durable_initial_qualification_implemented": false,
+    "native_source_support_verified": false,
+    "full_fleet_capacity_accepted": false,
+    "whole_round_accepted": false,
+    "active_implementation_delivery_count": 3,
+    "active_acceptance_groups": 5,
+    "supplemental_parser_capacity_help_ui_gate": {
+      "gate": "round53-capacity-xml-parser-help-ui-green-current-v19",
+      "driver": {
+        "Owner": "round53-root-controlled-acceptance",
+        "DriverPid": 6300,
+        "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+        "EvidenceName": "round53-capacity-xml-parser-help-ui-green-current-v19",
+        "LiteralFilter": "FullyQualifiedName~PrtgSnapshotCapacityAdmissionTests|FullyQualifiedName~PrtgNativePrimaryPropertyParserTests|FullyQualifiedName~PrtgTrustedSnapshotParserTests|FullyQualifiedName~PrtgResourceConsumerContractTests|FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpNavigationConsistencyTests|FullyQualifiedName~PrtgAdminPageUiTests|FullyQualifiedName~PrtgCapacityPurposeAndProfileTransportTests",
+        "HangTimeout": "",
+        "StartedAtUtc": "2026-10-09T20:05:39.3569233+00:00",
+        "Status": "finished",
+        "ExitCode": 0,
+        "Error": null,
+        "PowerScope": "system-required-for-owned-driver-only",
+        "PowerScopeRestored": true,
+        "CompletedAtUtc": "2026-10-09T20:08:15.7359635+00:00"
+      },
+      "result": {
+        "InputCount": 1143,
+        "InputDrift": 0,
+        "Changed": [],
+        "AddedOrRemoved": [],
+        "TestExit": 0
+      },
+      "counters": {
+        "total": "98",
+        "executed": "98",
+        "passed": "98",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "failedCases": [],
+      "runOutcome": "Completed",
+      "unitOutcomes": {
+        "Passed": 98
+      },
+      "optionalScaleCasesSkipped": [],
+      "consistentUnitCounts": true,
+      "rootInterrupted": false,
+      "stageAccepted": true,
+      "wholeRoundAccepted": false
+    },
+    "preserved_native_capacity_xml_red": {
+      "gate": "round53-capacity-native-xml-red-current-v17",
+      "driver": {
+        "Owner": "round53-root-controlled-acceptance",
+        "DriverPid": 21240,
+        "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+        "EvidenceName": "round53-capacity-native-xml-red-current-v17",
+        "LiteralFilter": "FullyQualifiedName~Sql_settings_cold_bootstrap_pilot_admits_exact_scope_and_cas_blocks_precheck_race|FullyQualifiedName~PrtgNativePrimaryPropertyParserTests",
+        "HangTimeout": "",
+        "StartedAtUtc": "2026-10-09T20:01:18.5653623+00:00",
+        "Status": "finished",
+        "ExitCode": 1,
+        "Error": null,
+        "PowerScope": "system-required-for-owned-driver-only",
+        "PowerScopeRestored": true,
+        "CompletedAtUtc": "2026-10-09T20:02:43.0134727+00:00"
+      },
+      "result": {
+        "InputCount": 1143,
+        "InputDrift": 0,
+        "Changed": [],
+        "AddedOrRemoved": [],
+        "TestExit": 1
+      },
+      "counters": {
+        "total": "5",
+        "executed": "5",
+        "passed": "4",
+        "failed": "1",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "failedCases": [
+        {
+          "name": "LogForesight.Tests.PrtgSnapshotCapacityAdmissionTests.Sql_settings_cold_bootstrap_pilot_admits_exact_scope_and_cas_blocks_precheck_race",
+          "message": "Assert.Equal() Failure: Strings differ\r\n           ↓ (pos 0)\r\nExpected: \"insufficient_fresh_matching_profile_sampl\"···\r\nActual:   \"response_shape_invalid\"\r\n           ↑ (pos 0)",
+          "stack": "   at LogForesight.Tests.PrtgSnapshotCapacityAdmissionTests.RunFiveProfileCapacitySamples(StorageBackend backend, IHostStore hosts, SystemSettingsStore settings) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgSnapshotCapacityAdmissionTests.cs:line 512\r\n   at LogForesight.Tests.PrtgSnapshotCapacityAdmissionTests.Sql_settings_cold_bootstrap_pilot_admits_exact_scope_and_cas_blocks_precheck_race() in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgSnapshotCapacityAdmissionTests.cs:line 126\r\n--- End of stack trace from previous location ---"
+        }
+      ],
+      "runOutcome": "Failed",
+      "unitOutcomes": {
+        "Passed": 4,
+        "Failed": 1
+      },
+      "optionalScaleCasesSkipped": [],
+      "consistentUnitCounts": true,
+      "rootInterrupted": false,
+      "stageAccepted": false,
+      "wholeRoundAccepted": false
+    },
+    "preserved_supplemental_failure": {
+      "gate": "round53-capacity-xml-parser-help-ui-green-current-v18",
+      "driver": {
+        "Owner": "round53-root-controlled-acceptance",
+        "DriverPid": 20144,
+        "StagePath": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53",
+        "EvidenceName": "round53-capacity-xml-parser-help-ui-green-current-v18",
+        "LiteralFilter": "FullyQualifiedName~PrtgSnapshotCapacityAdmissionTests|FullyQualifiedName~PrtgNativePrimaryPropertyParserTests|FullyQualifiedName~PrtgTrustedSnapshotParserTests|FullyQualifiedName~PrtgResourceConsumerContractTests|FullyQualifiedName~HelpContentServiceTests|FullyQualifiedName~HelpNavigationConsistencyTests|FullyQualifiedName~PrtgAdminPageUiTests|FullyQualifiedName~PrtgCapacityPurposeAndProfileTransportTests",
+        "HangTimeout": "",
+        "StartedAtUtc": "2026-10-09T20:03:03.1956115+00:00",
+        "Status": "finished",
+        "ExitCode": 1,
+        "Error": null,
+        "PowerScope": "system-required-for-owned-driver-only",
+        "PowerScopeRestored": true,
+        "CompletedAtUtc": "2026-10-09T20:04:44.1518056+00:00"
+      },
+      "result": {
+        "InputCount": 1143,
+        "InputDrift": 0,
+        "Changed": [],
+        "AddedOrRemoved": [],
+        "TestExit": 1
+      },
+      "counters": {
+        "total": "98",
+        "executed": "98",
+        "passed": "93",
+        "failed": "5",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "failedCases": [
+        {
+          "name": "LogForesight.Tests.PrtgSnapshotCapacityAdmissionTests.Sql_settings_cold_bootstrap_pilot_admits_exact_scope_and_cas_blocks_precheck_race",
+          "message": "Assert.Equal() Failure: Values differ\r\nExpected: 6\r\nActual:   12",
+          "stack": "   at LogForesight.Tests.PrtgSnapshotCapacityAdmissionTests.RunFiveProfileCapacitySamples(StorageBackend backend, IHostStore hosts, SystemSettingsStore settings) in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgSnapshotCapacityAdmissionTests.cs:line 513\r\n   at LogForesight.Tests.PrtgSnapshotCapacityAdmissionTests.Sql_settings_cold_bootstrap_pilot_admits_exact_scope_and_cas_blocks_precheck_race() in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgSnapshotCapacityAdmissionTests.cs:line 126\r\n--- End of stack trace from previous location ---"
+        },
+        {
+          "name": "LogForesight.Tests.PrtgAdminPageUiTests.PrtgCshtml包含快照狀態與規模估算元素且保留Utf8Bom",
+          "message": "Assert.Equal() Failure: Values differ\r\nExpected: 239\r\nActual:   64",
+          "stack": "   at LogForesight.Tests.PrtgAdminPageUiTests.PrtgCshtml包含快照狀態與規模估算元素且保留Utf8Bom() in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgAdminPageUiTests.cs:line 861\r\n   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)"
+        },
+        {
+          "name": "LogForesight.Tests.PrtgAdminPageUiTests.PrtgCshtml取數策略包含說明Popover且保留Utf8Bom",
+          "message": "Assert.Equal() Failure: Values differ\r\nExpected: 239\r\nActual:   64",
+          "stack": "   at LogForesight.Tests.PrtgAdminPageUiTests.PrtgCshtml取數策略包含說明Popover且保留Utf8Bom() in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgAdminPageUiTests.cs:line 954\r\n   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)"
+        },
+        {
+          "name": "LogForesight.Tests.PrtgAdminPageUiTests.PrtgCshtml保留Utf8Bom",
+          "message": "Assert.Equal() Failure: Values differ\r\nExpected: 239\r\nActual:   64",
+          "stack": "   at LogForesight.Tests.PrtgAdminPageUiTests.PrtgCshtml保留Utf8Bom() in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgAdminPageUiTests.cs:line 843\r\n   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)"
+        },
+        {
+          "name": "LogForesight.Tests.PrtgAdminPageUiTests.Calibration校準頁顯示層指標標籤與摘要匯出及大小提示齊備",
+          "message": "Assert.Equal() Failure: Values differ\r\nExpected: 239\r\nActual:   64",
+          "stack": "   at LogForesight.Tests.PrtgAdminPageUiTests.Calibration校準頁顯示層指標標籤與摘要匯出及大小提示齊備() in C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\LogForesight.Tests\\PrtgAdminPageUiTests.cs:line 903\r\n   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)\r\n   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)"
+        }
+      ],
+      "runOutcome": "Failed",
+      "unitOutcomes": {
+        "Passed": 93,
+        "Failed": 5
+      },
+      "optionalScaleCasesSkipped": [],
+      "consistentUnitCounts": true,
+      "rootInterrupted": false,
+      "stageAccepted": false,
+      "wholeRoundAccepted": false
+    },
+    "formatting_only_after_frozen_tests": {
+      "path": "LogForesight.Tests/PrtgConsumerProfileFixtureClosure.cs",
+      "beforeSha256": "2f7b418cf15da4b7659402060c73836a42cb3de33deab04e9ab348cb828e6387",
+      "afterSha256": "49a9ba64fcdf857ccbd3befdda22991b956531f265ca37c8453630014fbddda8",
+      "change": "remove extra empty line at EOF; all non-newline bytes identical"
+    }
+  },
+  "current_implementation_source_commit": null
 }

@@ -289,6 +289,8 @@ public class PrtgRequestBudgetTests
     [InlineData("api/TABLE.JSON", PrtgEndpointCategory.Table)]
     [InlineData("/api/table.xml?content=devices", PrtgEndpointCategory.Table)]
     [InlineData("/api/table.json?content=historicdata", PrtgEndpointCategory.Table)]
+    [InlineData("/api/getobjectproperty.htm?id=11&name=primarychannel", PrtgEndpointCategory.Table)]
+    [InlineData("api/GETOBJECTPROPERTY?id=11&name=primarychannel", PrtgEndpointCategory.Table)]
     [InlineData("/api/stable/status.json", PrtgEndpointCategory.Other)]
     [InlineData("/api/getpasshash.htm?username=admin", PrtgEndpointCategory.Other)]
     [InlineData("/api/unknown/endpoint", PrtgEndpointCategory.Other)]

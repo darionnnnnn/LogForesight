@@ -27,4 +27,17 @@ public sealed class PrtgTrustedSamplingProfileStore(StorageBackend backend)
         profile.Validate();
         return backend.PrtgStore().RecordTrustedSamplingProfile(profile, leaseOwner, leaseVersion);
     }
+
+    /// <summary>
+    /// Revoke only the exact prior profile after a completed scheduled refresh observed missing
+    /// source authority. Callers must not use this for diagnostic/API probes or transport failures.
+    /// </summary>
+    public bool RevokeAfterObservedRefreshFailure(PrtgTrustedSamplingProfile expectedProfile,
+        string leaseOwner, long leaseVersion)
+    {
+        ArgumentNullException.ThrowIfNull(expectedProfile);
+        expectedProfile.Validate();
+        return backend.PrtgStore().RevokeTrustedSamplingProfileAfterObservedRefreshFailure(
+            expectedProfile, leaseOwner, leaseVersion);
+    }
 }

@@ -20,7 +20,7 @@ public sealed record PrtgSnapshotTargetSelection(
 /// <summary>One target and evidence fingerprint implementation shared by snapshot runtime, estimate, and pilot.</summary>
 public static class PrtgSnapshotTargetResolver
 {
-    public const string SnapshotColumns = "objid,lastvalue,interval,lastcheck,status";
+    public const string SnapshotColumns = "objid,lastvalue,interval,lastcheck,status,primarychannel";
     public const string RequestShape = "GET api/table.json?content=sensors&columns=" + SnapshotColumns + "&filter_objid=sorted;batch={0};response-cap=524288";
 
     public static PrtgSnapshotTargetSelection Resolve(StorageBackend backend, IHostStore hosts,

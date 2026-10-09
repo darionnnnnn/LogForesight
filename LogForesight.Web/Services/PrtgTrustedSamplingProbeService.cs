@@ -1,6 +1,9 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Xml;
+using System.Xml.Linq;
 using System.Security.Cryptography;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -11,10 +14,32 @@ using LogForesight.Core;
 namespace LogForesight.Web.Services;
 
 public sealed record PrtgTrustedSamplingChannelProbeRow(
-    long? ChannelObjectId, string? Caption, string? Unit,
+    [property: JsonConverter(typeof(NullableInt64StringJsonConverter))] long? ChannelObjectId, string? Caption, string? Unit,
     double? RawValue, bool EqualsSensorSnapshotValue, bool? SourceMarkedPrimary,
     string? QuantitySemantic, double? Scale, string? Direction, double? LastCheckRaw,
     string? IntervalRawUnit, string? SemanticVersion);
+
+/// <summary>Keep native Int64 channel IDs lossless when probe rows cross the JavaScript JSON boundary.</summary>
+public sealed class NullableInt64StringJsonConverter : JsonConverter<long?>
+{
+    public override long? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Null) return null;
+        if (reader.TokenType == JsonTokenType.String && long.TryParse(reader.GetString(), NumberStyles.None,
+                CultureInfo.InvariantCulture, out var fromString) && fromString >= 0)
+            return fromString;
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt64(out var fromNumber) && fromNumber >= 0)
+            return fromNumber;
+        throw new JsonException("Channel object ID must be a nonnegative Int64 decimal value.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, long? value, JsonSerializerOptions options)
+    {
+        if (!value.HasValue) writer.WriteNullValue();
+        else if (value.Value >= 0) writer.WriteStringValue(value.Value.ToString(CultureInfo.InvariantCulture));
+        else throw new JsonException("Channel object ID must be nonnegative.");
+    }
+}
 
 public sealed record PrtgTrustedSamplingProbeRow(
     long SensorObjid, string Status, IReadOnlyList<string> ReturnedSensorFields,
@@ -22,12 +47,17 @@ public sealed record PrtgTrustedSamplingProbeRow(
     double? LastCheckRaw, double? IntervalRaw, IReadOnlyList<PrtgTrustedSamplingChannelProbeRow> Channels,
     bool ChannelsTruncated, IReadOnlyList<string> MissingAuthorityFields,
     string ResourceGeneration, long IdentityEpoch, string ChannelGeneration,
-    DateTimeOffset ProbedAtUtc, bool ProfileRecorded);
+    DateTimeOffset ProbedAtUtc, bool ProfileRecorded,
+    string? NativePrimaryChannelPropertyId = null)
+{
+    /// <summary>True only when this probe call wrote a new qualification proof.</summary>
+    public bool QualificationRecorded { get; init; }
+}
 
 /// <summary>
-/// Bounded read-only baseline source capability probe. It never fabricates a trust profile from
-/// fields not present in the deployed PRTG table contract and does not call historicdata or one
-/// property endpoint per sensor on the recurring snapshot path.
+/// Bounded profile refresh. Recurring refresh is four Table-budget calls per sensor, with the
+/// primarychannel property inside a before/channels/after sensor bracket. Historic XML is used
+/// only for an explicit operator qualification when the saved binding has no raw-channel proof.
 /// </summary>
 public sealed class PrtgTrustedSamplingProbeService
 {
@@ -49,7 +79,10 @@ public sealed class PrtgTrustedSamplingProbeService
         PrtgRequestPurpose requestPurpose = PrtgRequestPurpose.General,
         string? admissionPlanFingerprint = null,
         Action? onRequestAttempted = null,
-        Action<TimeSpan>? onResponseRead = null)
+        Action<TimeSpan>? onResponseRead = null,
+        bool allowQualification = false,
+        long? expectedBindingRevision = null,
+        string? expectedBindingFingerprint = null)
     {
         if (requestedIds.Count is < 1 or > MaxSensorIds || requestedIds.Any(id => id <= 0) ||
             requestedIds.Distinct().Count() != requestedIds.Count)
@@ -63,6 +96,8 @@ public sealed class PrtgTrustedSamplingProbeService
 
         var ids = requestedIds.Order().ToArray();
         var store = backend.PrtgStore();
+        var bindingStore = new PrtgTrustedSamplingBindingStore(backend);
+        var bindings = bindingStore.GetMany(ids);
         var identities = store.GetResourceIdentities(ids);
         foreach (var id in ids)
         {
@@ -78,6 +113,8 @@ public sealed class PrtgTrustedSamplingProbeService
         var strategy = new PrtgTrustedSamplingStrategyStateStore(
             backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey))
             .GetCurrent(policy, strategyName, strategyMinutes, DateTime.UtcNow);
+        var authorityContextFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+            policy, strategyName, strategyMinutes);
         using var client = clientFactory(settings);
         client.RequestPurpose = requestPurpose;
         client.AdmissionPlanFingerprint = admissionPlanFingerprint;
@@ -88,6 +125,10 @@ public sealed class PrtgTrustedSamplingProbeService
         {
             deadline.Token.ThrowIfCancellationRequested();
             var before = identities[id];
+            bindings.TryGetValue(id, out var binding);
+            if (binding is not null && (expectedBindingRevision.HasValue && binding.BindingRevision != expectedBindingRevision ||
+                expectedBindingFingerprint is not null && binding.BindingFingerprint != expectedBindingFingerprint))
+                throw new InvalidOperationException($"binding-revision-changed:{id}");
             onRequestAttempted?.Invoke();
             var sensorJson = await client.GetBoundedJsonAsync(
                 $"api/table.json?content=sensors&id={id}&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count=2",
@@ -98,6 +139,17 @@ public sealed class PrtgTrustedSamplingProbeService
                 $"api/table.json?content=channels&id={id}&columns=objid,name,lastvalue_raw,unit&usecaption=1&count={MaxChannelsPerSensor}",
                 MaxResponseBytes, deadline.Token, onResponseRead: onResponseRead);
             var channels = ParseChannels(channelsJson, sensor.LastValueRaw, out var truncated);
+            onRequestAttempted?.Invoke();
+            var primaryPropertyResponse = await client.GetBoundedXmlAsync(
+                $"api/getobjectproperty.htm?id={id}&name=primarychannel", MaxResponseBytes, deadline.Token);
+            string? nativePrimaryId;
+            try { nativePrimaryId = ParseNativePrimaryProperty(primaryPropertyResponse.Content); }
+            catch (InvalidDataException) { nativePrimaryId = null; }
+            onRequestAttempted?.Invoke();
+            var sensorAfterJson = await client.GetBoundedJsonAsync(
+                $"api/table.json?content=sensors&id={id}&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count=2",
+                MaxResponseBytes, deadline.Token, onResponseRead: onResponseRead);
+            var sensorAfter = ParseSingleSensor(sensorAfterJson, id);
             var after = backend.PrtgStore().GetResourceIdentity(id);
             var latestPolicy = policyStore.Get();
             var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
@@ -106,29 +158,61 @@ public sealed class PrtgTrustedSamplingProbeService
                 latestPolicy.SourceGeneration != policy.SourceGeneration || !latestPolicy.SensorIds.Contains(id) ||
                 !latestPolicy.HostIds.Contains(after.HostId) ||
                 !latestPolicy.Ready(latestSettings.PrtgUrl) || settings.PrtgUrl != latestSettings.PrtgUrl ||
+                settings.Revision != latestSettings.Revision ||
                 settings.PrtgFetchStrategy != latestSettings.PrtgFetchStrategy || !latestSettings.PrtgEnabled ||
                 policy.RawTimestampTimeZoneId != latestPolicy.RawTimestampTimeZoneId ||
                 policy.SourceTimeZoneId != latestPolicy.SourceTimeZoneId ||
                 policy.AnalysisTimeZoneId != latestPolicy.AnalysisTimeZoneId ||
-                policy.TimeBasisEvidenceReference != latestPolicy.TimeBasisEvidenceReference)
+                policy.TimeBasisEvidenceReference != latestPolicy.TimeBasisEvidenceReference ||
+                authorityContextFingerprint != PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                    latestPolicy, PrtgFetchStrategy.Normalize(latestSettings.PrtgFetchStrategy),
+                    PrtgFetchStrategy.Profile(PrtgFetchStrategy.Normalize(latestSettings.PrtgFetchStrategy)).SnapshotIntervalMinutes))
                 throw new InvalidOperationException($"probe-fence-changed:{id}");
 
             var probedAtUtc = DateTimeOffset.UtcNow;
-            var missing = MissingAuthority(sensor, channels, truncated, policy);
+            var missing = MissingAuthority(sensor, sensorAfter, channels, truncated, policy, binding, nativePrimaryId);
             if (!strategy.Ready) missing.AddRange(strategy.MissingFacts.Select(f => $"strategy:{f}"));
             var profileRecorded = false;
+            var qualificationRecorded = false;
             if (sensor.ParentObjid != after.DeviceId || string.IsNullOrWhiteSpace(sensor.Cumsince) ||
                 PrtgTimelineResourceIdentity.BuildResourceFingerprint(sensor.ParentObjid?.ToString(CultureInfo.InvariantCulture) ?? "",
                     sensor.SensorType ?? "", sensor.Cumsince ?? "", 0) != after.ResourceFingerprint)
                 missing.Add("source:observed_resource_identity_mismatch");
-            if (missing.Count == 0)
+            if (binding is null) missing.Add("management:binding_missing");
+            else if (!binding.Matches(id, authorityContextFingerprint, policy.SourceGeneration,
+                         before.Generation, before.Epoch, before.ChannelGeneration) ||
+                     binding.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference ||
+                     binding.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
+                     binding.AnalysisTimeZoneId != policy.AnalysisTimeZoneId)
+                missing.Add("management:binding_fence_or_time_basis_changed");
+            if (missing.Count == 0 && binding is not null && string.IsNullOrWhiteSpace(binding.QualificationProofReference) && allowQualification)
             {
                 try
                 {
-                    var primary = channels.Single(channel => channel.SourceMarkedPrimary == true);
-                    var interval = primary.IntervalRawUnit == "seconds"
+                    onRequestAttempted?.Invoke();
+                    var historic = await client.GetBoundedXmlAsync(
+                        $"api/historicdata.xml?id={id}&sdate=now-1h&edate=now&avg=0&usecaption=1",
+                        PrtgHistoricXmlReader.MaximumBytes, deadline.Token);
+                    var proof = QualifyHistoric(binding, historic.Content, sensor, probedAtUtc);
+                    binding = bindingStore.RecordQualification(id, binding.BindingRevision, binding.BindingFingerprint,
+                        latestSettings.Revision, latestPolicy.Revision,
+                        proof.RawValue, proof.MeasuredOaDate, proof.SourceVersion, probedAtUtc, proof.ProofReference);
+                    qualificationRecorded = true;
+                    after = backend.PrtgStore().GetResourceIdentity(id);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or ArgumentException or TimeZoneNotFoundException or InvalidTimeZoneException)
+                { missing.Add("qualification:bounded_raw_historic_proof_unavailable"); }
+            }
+            if (binding is null || string.IsNullOrWhiteSpace(binding.QualificationProofReference))
+                missing.Add("qualification:raw_channel_id_time_proof_required");
+            if (missing.Count == 0 && binding is not null)
+            {
+                try
+                {
+                    var primary = channels.Single(channel => channel.ChannelObjectId?.ToString(CultureInfo.InvariantCulture) == binding.ChannelObjectId);
+                    var interval = binding.IntervalRawUnit == "seconds"
                         ? TimeSpan.FromSeconds(sensor.IntervalRaw!.Value) : TimeSpan.FromMinutes(sensor.IntervalRaw!.Value);
-                    var zone = TimeZoneInfo.FindSystemTimeZoneById(policy.RawTimestampTimeZoneId);
+                    var zone = TimeZoneInfo.FindSystemTimeZoneById(binding.RawTimestampTimeZoneId);
                     var wall = DateTime.SpecifyKind(DateTime.FromOADate(sensor.LastCheckRaw!.Value), DateTimeKind.Unspecified);
                     if (zone.IsAmbiguousTime(wall) || zone.IsInvalidTime(wall))
                         throw new InvalidDataException("source_measurement_time_ambiguous");
@@ -136,41 +220,29 @@ public sealed class PrtgTrustedSamplingProbeService
                     var maximumAge = TimeSpan.FromMinutes(strategyMinutes) + interval + interval;
                     if (measuredAtUtc > probedAtUtc || probedAtUtc - measuredAtUtc > maximumAge)
                         throw new InvalidDataException("source_measurement_not_recent");
-                    var reference = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sensorJson + "\n" + channelsJson)));
+                    var reference = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                        sensorJson + "\n" + channelsJson + "\n" + primaryPropertyResponse.Content + "\n" + sensorAfterJson)));
                     var physicalReference = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
                         string.Join("|", id, primary.ChannelObjectId, sensor.LastCheckRaw.Value.ToString("R", CultureInfo.InvariantCulture),
                             sensor.LastValueRaw!.Value.ToString("R", CultureInfo.InvariantCulture)))));
-                    var quantity = Enum.Parse<PrtgTrustedQuantitySemantic>(primary.QuantitySemantic!, true);
                     if (interval <= TimeSpan.Zero || interval > TimeSpan.FromHours(1))
                         throw new InvalidDataException("source_interval_out_of_range");
-                    var normalized = primary.Direction switch
-                    { "inverse" => -sensor.LastValueRaw!.Value, "absolute" => Math.Abs(sensor.LastValueRaw!.Value), _ => sensor.LastValueRaw!.Value };
+                    var normalized = binding.Direction switch
+                    { "inverse" => -sensor.LastValueRaw!.Value * binding.Scale,
+                      "absolute" => Math.Abs(sensor.LastValueRaw!.Value) * binding.Scale,
+                      _ => sensor.LastValueRaw!.Value * binding.Scale };
                     if (!double.IsFinite(normalized) || normalized is < 0 or > 100)
                         throw new InvalidDataException("source_quantity_out_of_range");
-                    var priorProfile = store.GetTrustedSamplingProfiles([id]).GetValueOrDefault(id);
-                    var channelChanged = priorProfile is not null &&
-                        (priorProfile.PrimaryChannelId != primary.ChannelObjectId!.Value.ToString(CultureInfo.InvariantCulture) ||
-                         priorProfile.PrimaryChannelCaption != primary.Caption || priorProfile.Quantity != quantity ||
-                         priorProfile.Unit != primary.Unit || priorProfile.Scale != primary.Scale ||
-                         priorProfile.Direction != primary.Direction || priorProfile.SemanticVersion != primary.SemanticVersion);
-                    if (string.IsNullOrWhiteSpace(after.ChannelGeneration) || channelChanged)
-                    {
-                        if ((leaseOwner is null) != (leaseVersion is null))
-                            throw new ArgumentException("Profile refresh lease owner and version must be supplied together.");
-                        var channelFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-                            JsonSerializer.Serialize(new { primary.ChannelObjectId, primary.Caption, quantity,
-                                primary.Unit, primary.Scale, primary.Direction, primary.SemanticVersion }))));
-                        after = store.SetObservedChannel(id, policy.SourceGeneration, channelFingerprint, after.Generation,
-                            leaseOwner, leaseVersion);
-                    }
                     var profile = PrtgTrustedSamplingProfile.FromProbe(id, after, sensor.SensorType!,
-                        primary.ChannelObjectId!.Value.ToString(CultureInfo.InvariantCulture), primary.Caption!,
-                        Enum.Parse<PrtgTrustedQuantitySemantic>(primary.QuantitySemantic!, true), primary.Unit!,
-                        primary.Scale!.Value, primary.Direction!, primary.SemanticVersion!, strategy.StrategyFingerprint,
-                        strategy.StrategyMinutes, strategy.EffectiveFromHourUtc, interval, primary.IntervalRawUnit!,
-                        policy.RawTimestampTimeZoneId, policy.SourceTimeZoneId, policy.AnalysisTimeZoneId, probedAtUtc,
-                        reference, physicalReference, true, sensor.LastValueRaw!.Value, primary.RawValue!.Value,
-                        sensor.LastCheckRaw.Value, primary.LastCheckRaw!.Value);
+                        binding.ChannelObjectId, binding.ExpectedCaption, binding.Quantity, binding.Unit,
+                        binding.Scale, binding.Direction, "operator-explicit-v1", strategy.StrategyFingerprint,
+                        strategy.StrategyMinutes, strategy.EffectiveFromHourUtc, interval, binding.IntervalRawUnit,
+                        binding.RawTimestampTimeZoneId, policy.SourceTimeZoneId, binding.AnalysisTimeZoneId, probedAtUtc,
+                        reference, physicalReference, false, sensor.LastValueRaw!.Value, primary.RawValue!.Value,
+                        sensor.LastCheckRaw.Value, sensor.LastCheckRaw.Value,
+                        PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind, binding.BindingRevision,
+                        binding.BindingFingerprint, nativePrimaryId!, binding.QualificationProofReference,
+                        latestSettings.Revision, latestPolicy.Revision, authorityContextFingerprint);
                     profileRecorded = profilePublisher is null
                         ? RecordNormally(profile)
                         : profilePublisher(profile);
@@ -179,10 +251,11 @@ public sealed class PrtgTrustedSamplingProbeService
                 catch (Exception ex) when (ex is InvalidDataException or ArgumentException or TimeZoneNotFoundException or InvalidTimeZoneException)
                 { missing.Add("source:profile_validation_failed"); }
             }
-            output.Add(new(id, profileRecorded ? "ready" : "waiting", sensor.ReturnedFields,
+            output.Add(new PrtgTrustedSamplingProbeRow(id, profileRecorded ? "ready" : "waiting", sensor.ReturnedFields,
                 sensor.ParentObjid, sensor.SensorType, sensor.StatusRaw, sensor.LastValueRaw,
                 sensor.LastCheckRaw, sensor.IntervalRaw, channels, truncated, missing,
-                after.Generation, after.Epoch, after.ChannelGeneration, probedAtUtc, profileRecorded));
+                after.Generation, after.Epoch, after.ChannelGeneration, probedAtUtc, profileRecorded, nativePrimaryId)
+                { QualificationRecorded = qualificationRecorded });
         }
         return output;
 
@@ -232,49 +305,167 @@ public sealed class PrtgTrustedSamplingProbeService
         }).ToArray();
     }
 
-    private static List<string> MissingAuthority(SensorRow sensor,
-        IReadOnlyList<PrtgTrustedSamplingChannelProbeRow> channels, bool truncated, PrtgMonitoringPolicy policy)
+    private sealed record HistoricQualification(double RawValue, double MeasuredOaDate,
+        string SourceVersion, string ProofReference);
+
+    private static HistoricQualification QualifyHistoric(PrtgTrustedSamplingBinding binding,
+        string xml, SensorRow sensor, DateTimeOffset observedAtUtc)
+    {
+        var document = PrtgHistoricXmlReader.Parse(xml);
+        if (document.Samples.Count == 0 || string.IsNullOrWhiteSpace(document.Version))
+            throw new InvalidDataException("historic-qualification-empty-or-unversioned");
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(binding.RawTimestampTimeZoneId);
+        var selected = document.Samples.Select(sample =>
+        {
+            var wall = DateTime.SpecifyKind(DateTime.FromOADate(sample.MeasuredOaDate), DateTimeKind.Unspecified);
+            if (zone.IsAmbiguousTime(wall) || zone.IsInvalidTime(wall))
+                throw new InvalidDataException("historic-qualification-time-ambiguous");
+            var utc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(wall, zone));
+            return (Sample: sample, Utc: utc);
+        }).Where(row => row.Utc <= observedAtUtc && observedAtUtc - row.Utc <= TimeSpan.FromHours(1))
+          .OrderByDescending(row => row.Utc).ToArray();
+        if (selected.Length == 0) throw new InvalidDataException("historic-qualification-no-recent-row");
+        var latest = selected[0];
+        var rows = latest.Sample.Channels.Where(channel => channel.ChannelId == binding.ChannelObjectId).ToArray();
+        if (rows.Length != 1 || rows[0].Caption != binding.ExpectedCaption)
+            throw new InvalidDataException("historic-qualification-channel-identity-mismatch");
+        if (!sensor.LastValueRaw.HasValue || !sensor.LastCheckRaw.HasValue ||
+            rows[0].RawValue != sensor.LastValueRaw.Value ||
+            Math.Abs(latest.Sample.MeasuredOaDate - sensor.LastCheckRaw.Value) > 1.0 / 86400)
+            throw new InvalidDataException("historic-qualification-not-the-sensor-last-primary-sample");
+        var proof = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(xml + "\n" + binding.BindingFingerprint +
+            "\n" + rows[0].ChannelId + "\n" + rows[0].RawValue.ToString("R", CultureInfo.InvariantCulture) +
+            "\n" + latest.Sample.MeasuredOaDate.ToString("R", CultureInfo.InvariantCulture))));
+        return new(rows[0].RawValue, latest.Sample.MeasuredOaDate, document.Version, proof);
+    }
+
+    internal static string ParseNativePrimaryProperty(string response)
+    {
+        // The bounded property endpoint is accepted only as the exact unnamespaced PRTG XML
+        // envelope with one direct, leaf result containing a nonnegative integer ID. Unknown
+        // shapes stay waiting until deployment qualification observes a supported native response.
+        try
+        {
+            if (Encoding.UTF8.GetByteCount(response) > MaxResponseBytes)
+                throw new InvalidDataException("primarychannel-property-shape-unrecognized");
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = MaxResponseBytes,
+                MaxCharactersFromEntities = 0,
+                IgnoreComments = false,
+                IgnoreProcessingInstructions = false
+            };
+            using (var depthScan = XmlReader.Create(new StringReader(response), settings))
+            {
+                while (depthScan.Read())
+                    if (depthScan.Depth > 8)
+                        throw new InvalidDataException("primarychannel-property-shape-unrecognized");
+            }
+            using var input = new StringReader(response);
+            using var reader = XmlReader.Create(input, settings);
+            var document = XDocument.Load(reader, LoadOptions.None);
+            var root = document.Root;
+            if (root is null || root.Name != XName.Get("prtg") || root.HasAttributes ||
+                root.Elements().Count() != 1 ||
+                root.Descendants().Count(element => element.Name.LocalName == "result") != 1)
+                throw new InvalidDataException("primarychannel-property-shape-unrecognized");
+            var result = root.Elements(XName.Get("result")).SingleOrDefault();
+            if (result is null || result.HasAttributes || result.Elements().Any())
+                throw new InvalidDataException("primarychannel-property-shape-unrecognized");
+            var value = result.Value.Trim();
+            if (value.Length is < 1 or > 20 || !value.All(char.IsAsciiDigit) ||
+                !long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id < 0)
+                throw new InvalidDataException("primarychannel-property-shape-unrecognized");
+            return id.ToString(CultureInfo.InvariantCulture);
+        }
+        catch (InvalidDataException) { throw; }
+        catch (Exception ex) when (ex is XmlException or InvalidOperationException or ArgumentException)
+        {
+            throw new InvalidDataException("primarychannel-property-shape-unrecognized", ex);
+        }
+    }
+
+    private static List<string> MissingAuthority(SensorRow sensor, SensorRow after,
+        IReadOnlyList<PrtgTrustedSamplingChannelProbeRow> channels, bool truncated, PrtgMonitoringPolicy policy,
+        PrtgTrustedSamplingBinding? binding, string? nativePrimaryId)
     {
         var missing = new List<string>();
         if (sensor.LastCheckRaw is null) missing.Add("source:lastcheck_raw");
-        if (sensor.StatusRaw != 3) missing.Add("source:good_sample_status_required");
+        if (sensor.StatusRaw != 3 || after.StatusRaw != 3) missing.Add("source:good_sample_status_required");
         if (sensor.ParentObjid is null || sensor.ParentObjid <= 0 || string.IsNullOrWhiteSpace(sensor.SensorType))
             missing.Add("source:parent_or_sensor_type");
-        if (sensor.LastValueRaw is null) missing.Add("source:lastvalue_raw");
+        if (sensor.ParentObjid != after.ParentObjid || sensor.SensorType != after.SensorType ||
+            sensor.Cumsince != after.Cumsince || sensor.IntervalRaw != after.IntervalRaw)
+            missing.Add("source:sensor_metadata_bracket_changed");
+        if (sensor.LastValueRaw is null || after.LastValueRaw is null || sensor.LastValueRaw != after.LastValueRaw)
+            missing.Add("source:lastvalue_raw_or_bracket_changed");
+        if (sensor.LastCheckRaw is null || after.LastCheckRaw is null || sensor.LastCheckRaw != after.LastCheckRaw)
+            missing.Add("source:lastcheck_raw_or_bracket_changed");
         if (sensor.IntervalRaw is null) missing.Add("source:interval_raw");
         if (string.IsNullOrWhiteSpace(policy.RawTimestampTimeZoneId) ||
             string.IsNullOrWhiteSpace(policy.TimeBasisEvidenceReference)) missing.Add("source:raw_timestamp_timezone_basis");
         if (string.IsNullOrWhiteSpace(policy.AnalysisTimeZoneId)) missing.Add("analysis_timezone");
-        if (string.IsNullOrWhiteSpace(sensor.RawTimestampTimeZoneId) ||
-            sensor.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId) missing.Add("source:raw_timestamp_timezone_id");
-        var primaryChannels = channels.Where(c => c.SourceMarkedPrimary == true).ToArray();
-        if (sensor.LastCheckRaw is null || primaryChannels.Length != 1 || primaryChannels[0].LastCheckRaw is null ||
-            Math.Abs(primaryChannels[0].LastCheckRaw!.Value - sensor.LastCheckRaw!.Value) > 1.0 / 86400)
-            missing.Add("channels:physical_sample_time_alignment_not_exact");
+        if (binding is null) return missing;
+        if (nativePrimaryId is null) missing.Add("source:primarychannel_property_shape_unrecognized");
+        if (binding.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
+            binding.AnalysisTimeZoneId != policy.AnalysisTimeZoneId ||
+            binding.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference)
+            missing.Add("management:binding_time_basis_mismatch");
+        if (nativePrimaryId is null || nativePrimaryId != binding.ChannelObjectId)
+            missing.Add("channels:bound_channel_not_current_native_primary");
         if (truncated) missing.Add("channels:truncated");
-        if (channels.Count == 0 || channels.Any(c => c.ChannelObjectId is null or < 0 || string.IsNullOrWhiteSpace(c.Caption)))
-            missing.Add("channels:actual_id_or_caption");
-        if (primaryChannels.Length != 1 || !primaryChannels[0].EqualsSensorSnapshotValue)
-            missing.Add("channels:physical_sample_value_alignment_not_exact_for_primary");
-        if (primaryChannels.Length != 1 || primaryChannels[0].ChannelObjectId is null ||
-            string.IsNullOrWhiteSpace(primaryChannels[0].Caption))
-            missing.Add("channels:selected_primary_channel_authority");
-        if (primaryChannels.Length != 1 || !Enum.TryParse<PrtgTrustedQuantitySemantic>(primaryChannels[0].QuantitySemantic,
-                true, out var quantity) || !Enum.IsDefined(quantity) || quantity == PrtgTrustedQuantitySemantic.Unknown ||
-            string.IsNullOrWhiteSpace(primaryChannels[0].Unit) || !primaryChannels[0].Scale.HasValue ||
-            primaryChannels[0].Scale != 1 || primaryChannels[0].Unit != "%" || primaryChannels[0].Direction is not ("direct" or "inverse" or "absolute") ||
-            string.IsNullOrWhiteSpace(primaryChannels[0].SemanticVersion))
-            missing.Add("channels:quantity_unit_scale_direction_semantics");
-        if (sensor.IntervalRaw is null or <= 0 || primaryChannels.Length != 1 ||
-            primaryChannels[0].IntervalRawUnit is not ("seconds" or "minutes"))
+        var selected = channels.Where(c => c.ChannelObjectId?.ToString(CultureInfo.InvariantCulture) == binding.ChannelObjectId).ToArray();
+        if (selected.Length != 1 || selected[0].ChannelObjectId is null or < 0 ||
+            string.IsNullOrWhiteSpace(selected[0].Caption) || selected[0].Caption != binding.ExpectedCaption)
+            missing.Add("channels:bound_id_caption_mismatch_or_ambiguous");
+        if (channels.Count(c => string.Equals(c.Caption, binding.ExpectedCaption, StringComparison.Ordinal)) > 1)
+            missing.Add("channels:bound_caption_ambiguous");
+        if (selected.Length != 1 || selected[0].RawValue is null || sensor.LastValueRaw is null ||
+            selected[0].RawValue.Value != sensor.LastValueRaw.Value)
+            missing.Add("channels:bound_raw_value_not_equal_to_primary_sensor_snapshot");
+        // Unit is operator-authored binding data. Missing native unit is unknown, not proof of a
+        // different unit; an explicit contradictory native unit remains a hard conflict.
+        if (selected.Length == 1)
+        {
+            if (!string.IsNullOrWhiteSpace(selected[0].Unit) && !IsPercentUnit(selected[0].Unit))
+                missing.Add("channels:native_unit_conflicts_binding");
+            if (selected[0].Scale.HasValue && selected[0].Scale.Value != binding.Scale)
+                missing.Add("channels:native_scale_conflicts_binding");
+            if (!string.IsNullOrWhiteSpace(selected[0].Direction) &&
+                !string.Equals(selected[0].Direction, binding.Direction, StringComparison.OrdinalIgnoreCase))
+                missing.Add("channels:native_direction_conflicts_binding");
+        }
+        if (sensor.IntervalRaw is null or <= 0 || binding.IntervalRawUnit is not ("seconds" or "minutes"))
             missing.Add("source:scan_interval_unit");
         return missing.Distinct(StringComparer.Ordinal).ToList();
     }
 
+    private static bool IsPercentUnit(string? unit) => string.Equals(unit, "%", StringComparison.Ordinal) ||
+        string.Equals(unit, "percent", StringComparison.OrdinalIgnoreCase);
+
     private static JsonDocument ParseBounded(string json)
     {
         if (Encoding.UTF8.GetByteCount(json) > MaxResponseBytes) throw new InvalidDataException("source-probe-response-over-limit");
-        return JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 24 });
+        var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 24 });
+        try { RejectDuplicateKeys(document.RootElement); return document; }
+        catch { document.Dispose(); throw; }
+    }
+
+    private static void RejectDuplicateKeys(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name)) throw new InvalidDataException("source-probe-duplicate-json-key");
+                RejectDuplicateKeys(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) RejectDuplicateKeys(item);
     }
 
     private static bool SameIdentity(PrtgResourceIdentity left, PrtgResourceIdentity right) =>

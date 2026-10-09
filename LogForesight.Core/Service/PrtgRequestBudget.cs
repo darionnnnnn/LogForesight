@@ -681,6 +681,12 @@ public class PrtgRequestBudget
 
         var lastSegment = segments[^1];
 
+        // The bounded primary-channel property lookup participates in the same reserved 2/s
+        // source lane as the table reads in a four-call trusted-profile refresh.
+        if (string.Equals(lastSegment, "getobjectproperty.htm", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(lastSegment, "getobjectproperty", StringComparison.OrdinalIgnoreCase))
+            return PrtgEndpointCategory.Table;
+
         if (lastSegment.StartsWith("historicdata.", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(lastSegment, "historicdata", StringComparison.OrdinalIgnoreCase))
         {
