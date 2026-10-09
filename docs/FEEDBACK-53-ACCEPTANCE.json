@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "f44964918de9c318f6bf1d84c4fada4a955e2acdbf1095744a7e768a5c1fa451",
+  "plan_sha256": "53c3955fde0d54ec9f01095a1589b793532628e88c3fd1f52737b768b6a2de3f",
   "date": "2026-10-09",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -5709,6 +5709,73 @@
       "round53-ai-zero-retry-netiq-current-v1"
     ],
     "previous_full_result": "previous_main_regression_v2",
+    "whole_round_accepted": false
+  },
+  "current_case_scope_presentation_verification": {
+    "base_commit": "bb4744c326036c7ac86d6636589b06cc5554ac78",
+    "kind": "owned synthetic current Web actual API/browser and focused regression",
+    "red": {
+      "gate": "round53-case-scope-red-v1",
+      "passed": 11,
+      "failed": 1,
+      "input_drift": 0
+    },
+    "green": {
+      "gate": "round53-case-scope-current-v1",
+      "passed": 117,
+      "failed": 0,
+      "skipped": 0,
+      "input_count": 1129,
+      "input_drift": 0
+    },
+    "actual_api_matrix": {
+      "receipt": "work/round53-current-browser-seed-candidate/runs/casegrant-seed-44afe01875fb4241aa46db5b92860a45/api-matrix-bf4d29c29abe4ed383f39db699f30d3f.json",
+      "states": 6,
+      "roles_per_state": 4,
+      "asserted_responses": 48,
+      "failures": 0,
+      "all_exact_owner_processes_stopped": true
+    },
+    "actual_browser_observations": {
+      "case_only_granted_issue_visible": true,
+      "case_only_coverage_and_signals_explicitly_out_of_scope": true,
+      "false_complete_claim_count": 0,
+      "false_no_signal_claim_count": 0,
+      "false_ai_unanalyzed_claim_count": 0,
+      "ordinary_owner_original_coverage_and_ai_badge_visible": true,
+      "case_host_timeline_summary_prtg_controls_and_mapping_fenced": true,
+      "ordinary_current_cpu_memory_disk_evidence_visible_without_maintain_controls": true,
+      "maintain_cpu_trial_enable_reload_persistence_disable_walked": true,
+      "empty_visible_dashboard_has_no_unrelated_host_rows": true,
+      "empty_visible_generic_clean_wording_followup_required": true,
+      "source_web_dll_sha256": "C380D3813E854D392EA6A905EC780383CCD180F7A5EB689852E94E09046D1F19",
+      "exact_owner_process_stopped": true,
+      "method": "Root CUA visible DOM observations; no native source or whole-browser-matrix claim"
+    },
+    "source_files": [
+      {
+        "Sha256": "89EFEC6A958CCA5D1F3C48F72157E79F317DBE1BFB864FA71848633ADFF70A16",
+        "Path": "LogForesight.Web/Services/RecordDetailQueryService.cs"
+      },
+      {
+        "Sha256": "D5CD31A1FCDF45472E1FD6952095AF5DF147321EBE975E5315F16B4BB9BD8F2D",
+        "Path": "LogForesight.Web/wwwroot/js/pages/record-detail.js"
+      },
+      {
+        "Sha256": "C5DFC5045907E2853924321E0D5FAE83061A588D085B4EB3D5596E68E0C02B50",
+        "Path": "LogForesight.Tests/CaseGrantVisibilityTests.cs"
+      },
+      {
+        "Sha256": "055493073AF05155A5F0DD947F170FB46C4DFC0D84719F12A7AA08FF83F6550A",
+        "Path": "LogForesight.Web/HelpContent/04-record-detail.md"
+      },
+      {
+        "Sha256": "7EB491F3E710FA012CA08E9726B4549BD4D0B237C85DEF482277935DF68593E9",
+        "Path": "LogForesight.Web/HelpContent/04-record-detail.ai.md"
+      }
+    ],
+    "native_source_verified": false,
+    "complete_180_day_capacity_accepted": false,
     "whole_round_accepted": false
   }
 }

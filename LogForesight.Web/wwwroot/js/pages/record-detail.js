@@ -269,7 +269,7 @@ function renderHeader(detail) {
         top.appendChild(ipSpan);
     }
 
-    if (detail.aiPending && isAiRetryPending(detail.headline)) {
+    if (!detail.caseGrantOnly && detail.aiPending && isAiRetryPending(detail.headline)) {
         // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：不能顯示成「分析中」——
         // 那會讓人以為稍後重整就有，實際要靠排程「只補跑失敗或未執行」才補得回來
         const badge = document.createElement('span');
@@ -277,7 +277,7 @@ function renderHeader(detail) {
         badge.textContent = 'AI 待補';
         badge.title = 'AI 服務當時未回應，白話摘要從缺；可用排程頁「只補跑失敗或未執行」補回';
         top.appendChild(badge);
-    } else if (detail.aiPending) {
+    } else if (!detail.caseGrantOnly && detail.aiPending) {
         // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
         // 中性色，不能顯示成跟「統計模式（AI 未分析）」一樣，那看起來像失敗
         const badge = document.createElement('span');
@@ -285,7 +285,7 @@ function renderHeader(detail) {
         badge.textContent = 'AI 分析中';
         badge.title = '統計結果已完成，AI 白話摘要正在背景處理，稍後重新整理即可看到';
         top.appendChild(badge);
-    } else if (!detail.aiAnalyzed) {
+    } else if (!detail.caseGrantOnly && !detail.aiAnalyzed) {
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary';
         badge.textContent = '統計模式（AI 未分析）';
@@ -1812,6 +1812,14 @@ function renderAlerts(detail) {
     const container = document.getElementById('detail-alerts');
     container.replaceChildren();
 
+    if (detail.caseGrantOnly) {
+        renderEmpty(container, {
+            title: '不在案件檢視範圍',
+            hint: '此頁僅顯示受交辦問題；整日關聯與趨勢訊號未提供。'
+        });
+        return;
+    }
+
     const hasSuppressed = detail.suppressedTrendAlerts?.length > 0 || detail.suppressedCorrelationAlerts?.length > 0;
     if (detail.correlationAlerts.length === 0 && detail.trendAlerts.length === 0 && !hasSuppressed) {
         renderEmpty(container, { title: '無關聯或趨勢訊號', hint: '當日未偵測到跨事件關聯或異常趨勢告警。' });
@@ -2097,6 +2105,14 @@ function scrollToCategory(category) {
 function renderCoverage(detail) {
     const container = document.getElementById('detail-coverage');
     container.replaceChildren();
+
+    if (detail.caseGrantOnly) {
+        renderEmpty(container, {
+            title: '資料完整度不在案件檢視範圍',
+            hint: '本頁不呈現整日檢查範圍；不能由此判斷資料完整、檢查已執行或沒有告警。'
+        });
+        return;
+    }
 
     const hasGap = detail.dataIncomplete || detail.securityLogAvailable === false;
 

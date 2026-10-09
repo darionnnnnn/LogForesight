@@ -214,16 +214,17 @@ public class RecordDetailQueryService
                     NextSteps = f.NextSteps
                 }).ToList()
             }).ToList(),
-            DataIncomplete = record.DataIncomplete,
-            SecurityLogAvailable = record.SecurityLogAvailable,
-            UncoveredChecks = record.UncoveredChecks,
+            // 案件授與只提供單一問題範圍；整日檢查涵蓋率與週檢結果不可讀，也不可顯示為完整或無發現。
+            DataIncomplete = !caseGrantOnly && record.DataIncomplete,
+            SecurityLogAvailable = caseGrantOnly ? null : record.SecurityLogAvailable,
+            UncoveredChecks = caseGrantOnly ? new List<string>() : record.UncoveredChecks,
             // 報告有自己的保留期，可能比紀錄先被清掉——實查有無，不看紀錄上那個永遠留著的旗標，
             // 否則畫面會給出一個點下去必定落空的入口
             HasReport = !caseGrantOnly && _reports.Exists(reportHost, date, ReportKinds.DailyRisk),
             // 這是整日報告工作狀態；案件授與只涵蓋被交辦問題，不能洩漏整台主機的報告狀態。
             RiskReportPending = caseGrantOnly ? null : record.RiskReportPending,
             CaseGrantOnly = caseGrantOnly,
-            WeeklyCheckup = record.WeeklyCheckup == null ? null : new WeeklyCheckupDto
+            WeeklyCheckup = caseGrantOnly || record.WeeklyCheckup == null ? null : new WeeklyCheckupDto
             {
                 CheckupDate = record.WeeklyCheckup.CheckupDate.ToString("yyyy-MM-dd"),
                 HasFindings = record.WeeklyCheckup.HasFindings,

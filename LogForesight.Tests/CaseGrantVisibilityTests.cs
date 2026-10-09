@@ -95,7 +95,17 @@ public class CaseGrantVisibilityTests : IDisposable
             RiskReportPending = true,
             TopIssues = issues.ToList(),
             CorrelationAlerts = new List<string> { "關聯訊號" },
-            TrendAlerts = new List<string> { "趨勢異常" }
+            TrendAlerts = new List<string> { "趨勢異常" },
+            DataIncomplete = true,
+            SecurityLogAvailable = false,
+            UncoveredChecks = new List<string> { "Security log 未讀取" },
+            WeeklyCheckup = new WeeklyCheckupResult
+            {
+                CheckupDate = date,
+                HasFindings = true,
+                Conclusion = "整日週檢結論",
+                ReportFile = "weekly-report.txt"
+            }
         });
 
     private VisibilityService Visibility() =>
@@ -174,6 +184,10 @@ public class CaseGrantVisibilityTests : IDisposable
         Assert.False(detail.AiAnalyzed);
         Assert.Empty(detail.CorrelationAlerts);
         Assert.Empty(detail.TrendAlerts);
+        Assert.False(detail.DataIncomplete);
+        Assert.Null(detail.SecurityLogAvailable);
+        Assert.Empty(detail.UncoveredChecks);
+        Assert.Null(detail.WeeklyCheckup);
         Assert.False(detail.HasReport);
         Assert.Null(detail.RiskReportPending);
 
@@ -284,6 +298,12 @@ public class CaseGrantVisibilityTests : IDisposable
         Assert.False(detail.CaseGrantOnly);
         Assert.Equal(2, detail.TopIssues.Count);
         Assert.Equal("整日敘事：這一天發生了很多事", detail.Headline);
+        Assert.True(detail.AiAnalyzed);
+        Assert.True(detail.DataIncomplete);
+        Assert.False(detail.SecurityLogAvailable);
+        Assert.Equal(new[] { "Security log 未讀取" }, detail.UncoveredChecks);
+        Assert.NotNull(detail.WeeklyCheckup);
+        Assert.Equal("整日週檢結論", detail.WeeklyCheckup.Conclusion);
         Assert.True(detail.HasReport);
         Assert.True(detail.RiskReportPending);
     }
