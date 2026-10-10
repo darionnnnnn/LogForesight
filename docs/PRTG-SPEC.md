@@ -1288,3 +1288,13 @@ Maintain 與完整作用範圍授權下，管理頁可量測最多五顆容量 p
 同 LF DB 的全部 Historic 呼叫透過 SQL coordinator 共用 5 次／60 秒；活躍資格輪次保留一條每分鐘一次的 lane，其他用途共四次。等待共同容量仍保留 lane，取消／逾期／來源失效才結束輪次；已發送 token 不退款，未發送票券可釋放且 90 秒到期。無 SQL coordinator 或 DB 不可用時拒絕，沒有本地回退。raw 資格 proof 只授權精確 binding／來源／時間語意，普通診斷匯入、pilot 成功及排入作業均不表示正式準備度完成。
 
 Historic 排隊使用單調時鐘兩分鐘總等待上限，不在重試重置；呼叫者取消優先，尚未發送的票券清理，已扣sent不退款。當前同步SQL嘗試及清理另受有限SQL／app lock重試限制，不能解讀為兩分鐘硬中斷資料庫命令。資格容量除整輪期限外，單顆來源pilot耗時加四次正式Table lane節流成本也須在30秒×75%以內；成本不符保留waiting-capacity，不啟動會持續逾時的輪次。
+
+### 隔離資格作業的明確開始、續跑與核對
+
+工作負載前置流程使用 scripts/prtg-workload/Invoke-QualificationJob.ps1；Action 明確選 Start、Resume 或 Check，重用已登入的 WebSession。BaseUri、PrtgFixtureUri、SentinelFixtureUri 必須是明確 numeric loopback；工具在連線前拒絕遠端，並由 settings API 核對實際保存的 PRTG URL。這是隔離驗收工具；現場來源資訊透過環境探測取得，不由此工具連接。
+
+Manifest schema 為 qualification-job-manifest-v1，最大 8 MiB；sensorIds 為完整作用範圍 1–15000 個遞增、唯一、正整數。每顆 sensorFences 須提供 sensorObjid、identityEpoch、channelGeneration、bindingRevision、bindingFingerprint，另提供 settingsRevision、policyRevision、scopeFingerprint、sourceGeneration、authorityContextFingerprint。只沿用管理者已保存的綁定與 API current fences，不自動建立 binding 或 raw proof；Start 可接受明確 raw-proof-required 等待狀態，不能要求先 ready 才開始取得 proof。
+
+Resume／Check 必須提供實際 JobId、ExpectedVersion、ExpectedWave；Resume 使用版本 CAS，回應後 pin 新 accepted wave，poll 不接續他人重開的 wave，允許同 wave 合法 version 前進。每個已接受回應与 poll 以 atomic receipt 保存；整次 1–600 秒與每次 HTTP 30 秒期限、禁止 redirect、bounded JSON／深度保持。期限到達且作業仍 active 時回傳已保存進度與 pollDeadlineReached=true，不假報作業失敗或完成；Check -RequireMatrixReady 仍須 completed 且 current 全範圍 ready/proof，否則拒絕。
+
+此 manifest 的逐顆 fences 在 15000 顆會超過唯讀 coverage collector 的 512 KiB 上限。呼叫 collector 時另產生只含 jobId、sensorIds 與來源契約的最小 coverage manifest，保留原 manifest SHA-256 關聯，不能直接放寬 collector 上限。最後仍由 Read-QualificationCoverage.ps1 與同源 QualificationCoverage.Verify 核全部 raw／profile 分頁；coordinator 的 completed receipt 不代替完整核對、容量或原生來源證據。scripts/prtg-workload/Test-InvokeQualificationJob.ps1 提供可重跑 HTTP 契約驗證。

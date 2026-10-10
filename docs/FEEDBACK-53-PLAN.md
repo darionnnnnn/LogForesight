@@ -52,7 +52,7 @@
 
 - [ ] R05／N6：完成 snapshot 100 顆精確批次及同形來源探測、profile／snapshot 容量失效後的有界重新校準；驗證完整 15000 顆共同排程，不降低 25% 餘裕、10 分鐘快照期限或週期性採樣。profile 分批及滾動補齊子項已由本輪 Main 239 項回歸核對完成。
 - [ ] R15／N5：完成耐久唯讀通道探索與新綁定操作、實際六顆 current API 資格→自動 profile→全頁核對。共同剩餘額度前置檢查、缺 raw proof 明示耐久作業與 enabled qualification pilot 正式 lane 接線已由 Main 116 項及前端 4 項測試核對。
-- [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣（精確全分頁核對及唯讀收集工具已完成），依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
+- [ ] R09／N6：完成可交付的實際 API 固定矩陣 consumer，依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。精確全分頁核對、唯讀 collector 與明確 Start／Resume／Check lifecycle 工具已完成；兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
 
@@ -1618,3 +1618,9 @@ raw qualification 的 proof、作業確認與當前來源／綁定 fence 通知�
 單顆 qualify 缺 raw proof 時回 requires-durable-qualification 並引導完整政策資格面板，保持使用者草稿；不自動開始全量作業。有 current proof 才保存 fence-bound 通知與 queued 狀態，不能當 ready。enabled qualification pilot 以正式 ProfileRefresh lane 送每顆 4 Table+1 Historic，整輪最長 10 分鐘，逐群維持前置配額與最後來源守門。主代理另修正外層 30 秒取消誤含合法 Historic 等候：沿用 service 在 ticket 就緒後的 30 秒來源期限，整輪 10 分鐘不變。
 
 Main 建置成功，受影響七類測試 116／116、零失敗／略過，證據 maintenance-main-green TRX；前端 helper 4／4，兩個 browser ES module 語法檢查成功。最初以 Node CommonJS 預設執行 browser ES module 失敗，改用 --experimental-default-type=module 後通過，未改產品模組格式。此元件段落完成；真實 controlled loopback 的連續兩轮 pilot／六顆資料流、唯讀通道探索與原生來源及整輪驗收仍保留。
+
+### 2026-10-10 全範圍資格 lifecycle 工具交付
+
+新增明確 Start／Resume／Check coordinator，逐頁核全部 current 身分與顯式 binding，缺 raw proof 不形成先 ready 的循環前提。1–15000 顆完整遞增 manifest 及逐顆 fences 至多 8 MiB；核對真實保存的 PRTG loopback URL，重用 session，不猜 binding／proof。接受 job 後先保存 atomic receipt，短期限回傳進度及 pollDeadlineReached；同一 job 的 concurrent wave 變更拒絕，Resume 僅採明確 CAS，新 wave 回應後再 pin，正常同 wave version 前進保留。
+
+主代理在 Main 重跑 23 個 HTTP 場景及 1 個連線前拒絕遠端案例，全部通過；包含 15000 顆 150 頁及大於 512 KiB manifest、缺 raw proof Start、重啟續跑 CAS、active deadline、wave 漂移、HTTP／JSON 限制與 completed gate，證據 coordinator-main-final-contracts.log。這是工具契約，沒有實際取得 15000 顆原生 raw proof。actual current Main 六顆 canonical Start／Check→exact collector 正在獨立驗證；固定矩陣的可交付 consumer 尚未完成，不以未追蹤私有 runner 或小測例當容量通過。

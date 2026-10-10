@@ -7939,5 +7939,27 @@
     "nativeSourceVerified": false,
     "capacityAccepted": false,
     "wholeRoundAccepted": false
+  },
+  "qualification_lifecycle_tool_20261010": {
+    "status": "component-verified",
+    "contracts": {
+      "httpPassed": 23,
+      "preConnectRemoteRefusalPassed": 1,
+      "failed": 0,
+      "path": ".gemini-tasks/primary-results/coordinator-main-final-contracts.log"
+    },
+    "inputs": {
+      "scripts/prtg-workload/Invoke-QualificationJob.ps1": "73832B9A0C965D85657605109231BB02435794F66916589F98FDA8183E1FA6C7",
+      "scripts/prtg-workload/Test-InvokeQualificationJob.ps1": "BDF1423884527FECED72D3035B21F9EB498224695F07358290034C19C02E2693",
+      "scripts/prtg-workload/qualification_job_fixture.py": "712BE01E828051EACD63716571BAC042BC8910002EC3827A1CEA26D6DF666154"
+    },
+    "manifestLimits": "8 MiB fenced lifecycle manifest; 15000 exact sensors; derive separate <=512 KiB minimal coverage manifest.",
+    "progress": "Atomic accepted and polled receipts; whole-invocation active deadline returns persisted progress and pollDeadlineReached=true; completed matrix Check remains strict.",
+    "waveFence": "Pin accepted wave; refuse concurrent resume, allow stable-wave version progress; explicit resume CAS.",
+    "remaining": "Actual current API six-sensor Start/Check seam and delivered fixed-matrix API consumer; fixed full provider workload.",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "wholeRoundAccepted": false
   }
 }
