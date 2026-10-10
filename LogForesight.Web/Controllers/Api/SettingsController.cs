@@ -704,7 +704,7 @@ public class SettingsController : ControllerBase
         var capacityStrategy = PrtgFetchStrategy.Normalize(snapshotSettings.PrtgFetchStrategy);
         var capacity = actualSelection == null
             ? new PrtgSnapshotCapacityEstimate(PrtgSnapshotCapacityStatus.CapacityUnverified,
-                snapshotTargets, (snapshotTargets + 49) / 50, 0, null, null, null,
+                snapshotTargets, (snapshotTargets + PrtgSnapshotCapacityEvaluator.BatchSize - 1) / PrtgSnapshotCapacityEvaluator.BatchSize, 0, null, null, null,
                 capacityStrategy == PrtgFetchStrategy.Aggressive ? 180 : 600, 0.25,
                 "runtime_target_catalogue_unavailable")
             : PrtgSnapshotCapacityEvaluator.Evaluate(snapshotTargets, capacityStrategy,

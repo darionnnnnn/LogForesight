@@ -1231,7 +1231,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     {
         // Three snapshot transports may be in flight. Change scope before any response;
         // already admitted requests may finish, but the three queued batches must not start.
-        SetupTargetSensors(Enumerable.Range(1, 251).Select(id => ((long)id, "ping")).ToArray());
+        SetupTargetSensors(Enumerable.Range(1, 351).Select(id => ((long)id, "ping")).ToArray());
         var threeAdmitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseResponses = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = 0;
@@ -1262,10 +1262,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         }
         Assert.Equal(3, _stubHandler.RequestedUrls.Count);
         var admittedBatches = _stubHandler.RequestedUrls.Select(FilterObjids).ToArray();
-        Assert.All(admittedBatches, batch => Assert.Equal(50, batch.Count));
+        Assert.All(admittedBatches, batch => Assert.Equal(100, batch.Count));
         var admittedIds = admittedBatches.SelectMany(ids => ids).ToArray();
-        Assert.Equal(150, admittedIds.Distinct().Count());
-        Assert.All(admittedIds, id => Assert.InRange(id, 1L, 251L));
+        Assert.Equal(300, admittedIds.Distinct().Count());
+        Assert.All(admittedIds, id => Assert.InRange(id, 1L, 351L));
         Assert.Null(service.GetStatus().LastSuccessAt);
         Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
         Assert.Equal(0, service.Accumulator.SampleCount);
@@ -1628,9 +1628,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         SetupTargetSensors(new[] { (101L, "Ping"), (102L, "Ping") }, nonTargets: new[] { (103L, "Ping") });
 
         var json = "{\"treesize\":3,\"sensors\":[" +
-                   "{\"objid\":101,\"lastvalue_raw\":10,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}," +
-                   "{\"objid\":102,\"lastvalue_raw\":20,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}," +
-                   "{\"objid\":103,\"lastvalue_raw\":30,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}" +
+                    "{\"objid\":101,\"lastvalue_raw\":10,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}," +
+                    "{\"objid\":102,\"lastvalue_raw\":20,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}" +
                    "]}";
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(json));
 
@@ -1670,7 +1669,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         SetupTargetSensors(new[] { (301L, "SNMP Traffic 64bit") });
 
         var json = "{\"treesize\":1,\"sensors\":[" +
-                   "{\"objid\":301,\"lastvalue_raw\":100,\"interval\":\"abc\"}" +
+                   "{\"objid\":301,\"lastvalue_raw\":100,\"interval\":\"abc\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}" +
                    "]}";
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(json));
 
@@ -2718,16 +2717,17 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         var snapshots = SnapshotUrls();
-        Assert.Equal(3, snapshots.Count);
+        Assert.Equal(2, snapshots.Count);
         Assert.All(snapshots, u => Assert.Contains("filter_objid=", u));
+        Assert.All(snapshots, u => Assert.Contains("count=", u));
+        Assert.All(snapshots, u => Assert.True(System.Text.Encoding.UTF8.GetByteCount(new Uri(u).PathAndQuery.TrimStart('/')) <= 4096));
         Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
-        // 依 objid 排序、每批 50 顆
+        // Sorted 100-ID batches with one extra response row available to detect ignored filters.
         // Three concurrent requests may arrive in a different order. Assert exact
         // batches and target coverage without treating arrival order as batch order.
         var batches = snapshots.Select(FilterObjids).OrderBy(ids => ids.First()).ToArray();
-        Assert.Equal(Enumerable.Range(1001, 50).Select(i => (long)i), batches[0]);
-        Assert.Equal(Enumerable.Range(1051, 50).Select(i => (long)i), batches[1]);
-        Assert.Equal(Enumerable.Range(1101, 20).Select(i => (long)i), batches[2]);
+        Assert.Equal(Enumerable.Range(1001, 100).Select(i => (long)i), batches[0]);
+        Assert.Equal(Enumerable.Range(1101, 20).Select(i => (long)i), batches[1]);
         Assert.Equal(120, service.GetStatus().PendingSamples);
         Assert.Equal(120, service.GetStatus().LastSensorCount);
     }
@@ -2735,7 +2735,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     [Fact]
     public async Task 分批快照_三批同時等待且第四批僅在名額釋放後開始()
     {
-        SetupTargetSensors(ManyTargets(1001, 250));
+        SetupTargetSensors(ManyTargets(1001, 350));
         var threeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = 0;
@@ -2774,17 +2774,17 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             try { await tick.WaitAsync(TimeSpan.FromSeconds(5)); }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
         }
-        Assert.Equal(5, started);
+        Assert.Equal(4, started);
         Assert.Equal(3, maximumInFlight);
         Assert.Equal(0, inFlight);
-        Assert.Equal(250, service.GetStatus().PendingSamples);
-        Assert.Equal(250, service.GetStatus().LastSensorCount);
+        Assert.Equal(350, service.GetStatus().PendingSamples);
+        Assert.Equal(350, service.GetStatus().LastSensorCount);
     }
 
     [Fact]
     public async Task 分批快照_取消會等待三個在途請求退出且不開始剩餘批次()
     {
-        SetupTargetSensors(ManyTargets(1001, 250));
+        SetupTargetSensors(ManyTargets(1001, 350));
         var threeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = 0;
         var exited = 0;
@@ -2818,7 +2818,11 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(0, _sqlDiagnostics.SensorSelectCount);
         var evidence = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read();
         Assert.NotEmpty(evidence);
-        Assert.All(evidence, sample => Assert.Equal("failed", sample.Outcome));
+        Assert.All(evidence, sample =>
+        {
+            Assert.Equal("failed", sample.Outcome);
+            Assert.Equal(100, sample.RequestedSensorCount);
+        });
     }
 
     [Fact]
@@ -2835,9 +2839,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var console = new TestConsole();
         var service = CreateService(console);
         await service.TickAsync();
-        Assert.Equal(3, SnapshotUrls().Count);
-        Assert.Equal(100, service.GetStatus().PendingSamples);
-        Assert.Equal(100, service.GetStatus().LastSensorCount);
+        Assert.Equal(2, SnapshotUrls().Count);
+        Assert.Equal(50, service.GetStatus().PendingSamples);
+        Assert.Equal(50, service.GetStatus().LastSensorCount);
         Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
         Assert.Contains(console.Lines, line => line.Contains("1 批查詢失敗"));
     }
@@ -2852,12 +2856,14 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         var snapshots = SnapshotUrls();
-        Assert.Equal(41, snapshots.Count);
+        Assert.Equal(21, snapshots.Count);
         Assert.All(snapshots, u => Assert.Contains("filter_objid=", u));
+        Assert.All(snapshots, u => Assert.Contains($"count={FilterObjids(u).Count + 1}", u));
+        Assert.All(snapshots, u => Assert.True(System.Text.Encoding.UTF8.GetByteCount(new Uri(u).PathAndQuery.TrimStart('/')) <= 4096));
         Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
         var batches = snapshots.Select(FilterObjids).OrderBy(ids => ids.First()).ToArray();
         for (var index = 0; index < batches.Length; index++)
-            Assert.Equal(Enumerable.Range(1001 + index * 50, Math.Min(50, 2001 - index * 50))
+            Assert.Equal(Enumerable.Range(1001 + index * 100, Math.Min(100, 2001 - index * 100))
                 .Select(id => (long)id), batches[index]);
         Assert.Equal(2001, service.GetStatus().PendingSamples);
         Assert.Equal(2001, service.GetStatus().LastSensorCount);
@@ -2877,10 +2883,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         var recoveryUrl = Assert.Single(SnapshotUrls());
-        Assert.Equal(50, FilterObjids(recoveryUrl).Count);
+        Assert.Equal(100, FilterObjids(recoveryUrl).Count);
         Assert.NotNull(service.GetStatus().LastSuccessAt);
         Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
-        Assert.Equal(51, service.GetStatus().PendingSamples);
+        Assert.Equal(101, service.GetStatus().PendingSamples);
         Assert.Contains("容量證據恢復中", service.GetStatus().LastSkipReason);
     }
 
@@ -2893,7 +2899,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         await service.TickAsync();
 
-        Assert.Equal(3, SnapshotUrls().Count);
+        Assert.Equal(2, SnapshotUrls().Count);
         Assert.NotNull(service.GetStatus().LastSuccessAt);
         Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
         Assert.Equal(120, service.GetStatus().LastSensorCount);
@@ -3171,12 +3177,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         var snapshots = SnapshotUrls();
-        Assert.Equal(40, snapshots.Count);
+        Assert.Equal(20, snapshots.Count);
         Assert.All(snapshots, u => Assert.Contains("filter_objid=", u));
+        Assert.All(snapshots, u => Assert.Contains("count=101", u));
         Assert.DoesNotContain(_stubHandler.RequestedUrls, u => u.Contains("count=50000"));
         var batches = snapshots.Select(FilterObjids).OrderBy(ids => ids.First()).ToArray();
         for (var index = 0; index < batches.Length; index++)
-            Assert.Equal(Enumerable.Range(1001 + index * 50, 50).Select(id => (long)id), batches[index]);
+            Assert.Equal(Enumerable.Range(1001 + index * 100, 100).Select(id => (long)id), batches[index]);
         Assert.Equal(2000, service.GetStatus().PendingSamples);
         Assert.Equal(2000, service.GetStatus().LastSensorCount);
     }
@@ -3219,7 +3226,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 分批快照_要求50回48_輸出缺2顆()
+    public async Task 分批快照_缺少要求sensor時拒絕整批且不寫部分資料()
     {
         SetupTargetSensors(ManyTargets(1001, 50));
         var omit = new HashSet<long> { 1010, 1020 };
@@ -3228,8 +3235,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var service = CreateService();
         await service.TickAsync();
 
-        Assert.Single(service.ExecutionOutputs, l => l.Contains("要求 50 顆、取回 48 顆") && l.Contains("缺 2 顆"));
-        Assert.Equal(48, service.GetStatus().PendingSamples);
+        Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
+        Assert.Equal(0, service.GetStatus().PendingSamples);
     }
 
     [Fact]
@@ -3245,7 +3252,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 分批快照_三批中一批500_其餘照累積且不進退避()
+    public async Task 分批快照_兩批中一批500_其餘照累積且不進退避()
     {
         SetupTargetSensors(ManyTargets(1001, 150));
         _stubHandler.OnSend = (req, _) =>
@@ -3259,18 +3266,18 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var service = CreateService();
         await service.TickAsync();
 
-        Assert.Equal(3, SnapshotUrls().Count);
+        Assert.Equal(2, SnapshotUrls().Count);
         Assert.Contains(service.ExecutionOutputs, l => l.Contains("1 批查詢失敗"));
         // 失敗批次不重複算成「缺」
         Assert.DoesNotContain(service.ExecutionOutputs, l => l.Contains("缺"));
         var status = service.GetStatus();
-        Assert.Equal(100, status.PendingSamples);
+        Assert.Equal(50, status.PendingSamples);
         Assert.Equal(0, status.ConsecutiveFailures);
         Assert.NotNull(status.LastSuccessAt);
     }
 
     [Fact]
-    public async Task 分批快照_三批全500清除容量證據_後續等待容量驗證()
+    public async Task 分批快照_兩批全500清除容量證據_後續等待容量驗證()
     {
         SetupTargetSensors(ManyTargets(1001, 150));
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{}", HttpStatusCode.InternalServerError));
@@ -3280,7 +3287,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.Now = () => clock;
 
         await service.TickAsync();
-        Assert.Equal(3, SnapshotUrls().Count);
+        Assert.Equal(2, SnapshotUrls().Count);
         Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
         Assert.Null(service.GetStatus().LastSuccessAt);
 
@@ -3289,7 +3296,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         clock = clock.AddMinutes(15);
         await service.TickAsync();
         var status = service.GetStatus();
-        Assert.Equal(5, SnapshotUrls().Count); // Each later tick is limited to one bounded recovery batch.
+        Assert.Equal(4, SnapshotUrls().Count); // Each later tick is limited to one bounded recovery batch.
         Assert.Equal(3, status.ConsecutiveFailures); // Recovery attempts are real requests and failures.
         Assert.Equal(30, status.IntervalMinutes);
     }
@@ -3438,10 +3445,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 分批快照_PRTG忽略filter回整站時_每顆只累積一次()
+    public async Task 分批快照_PRTG忽略filter且回傳foreign_sentinel時_整批拒絕且不發布()
     {
         SetupTargetSensors(ManyTargets(1001, 120));
-        // 不論 filter 帶什麼，一律回全部 120 顆
+        // 不論 filter 帶什麼，一律回全部 120 顆；每個 request 只容許預期 ID 加一個 sentinel。
         _stubHandler.OnSend = (req, _) =>
         {
             var url = req.RequestUri!.ToString();
@@ -3453,8 +3460,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var service = CreateService();
         await service.TickAsync();
 
-        Assert.Equal(3, SnapshotUrls().Count);
-        Assert.Equal(120, service.GetStatus().LastSensorCount);
+        Assert.Equal(2, SnapshotUrls().Count);
+        Assert.Equal(0, service.GetStatus().PendingSamples);
+        Assert.Equal(0, service.GetStatus().LastSensorCount);
+        Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
     }
 
     [Fact]

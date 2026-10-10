@@ -579,7 +579,36 @@ try {
     if (-not $rawShapeValid) { Fail-Safely 'RawChannelIdentityMissingOrWrongShape' }
 
     $batchComplete = $false
-    $batch = Get-JsonProperty $root 'sensor_batch_identity'
+    $batchFull100 = $false
+    $legacyBatchComplete = $false
+    # Keep legacy profile evidence readable and bounded independently from the new snapshot contract.
+    $legacyBatch = Get-JsonProperty $root 'sensor_batch_identity'
+    if ($null -ne $legacyBatch -and $legacyBatch.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        $legacyRequested = Get-JsonProperty $legacyBatch 'requested_aliases'
+        $legacyReturned = Get-JsonProperty $legacyBatch 'returned_aliases'
+        $legacyExact = Get-JsonProperty $legacyBatch 'exact_requested_set'
+        $legacyAuthority = Get-JsonProperty $legacyBatch 'authorizes_formal_profile'
+        if ($legacyBatch.ValueKind -ne [System.Text.Json.JsonValueKind]::Object -or
+            $null -eq $legacyRequested -or $legacyRequested.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $legacyRequested.GetArrayLength() -gt 5 -or
+            $null -eq $legacyReturned -or $legacyReturned.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $legacyReturned.GetArrayLength() -gt 6 -or
+            $null -eq $legacyExact -or -not (Test-JsonBoolean $legacyExact) -or
+            $null -eq $legacyAuthority -or $legacyAuthority.ValueKind -ne [System.Text.Json.JsonValueKind]::False) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+        foreach ($alias in $legacyRequested.EnumerateArray()) {
+            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch '^b[1-5]$') { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+        }
+        foreach ($alias in $legacyReturned.EnumerateArray()) {
+            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch '^(b[1-5]|foreign[1-6]|invalid)$') { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+        }
+        $legacyRequestedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        $legacyReturnedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($alias in $legacyRequested.EnumerateArray()) { [void]$legacyRequestedSet.Add($alias.GetString()) }
+        $legacyReturnedUnique = $true
+        foreach ($alias in $legacyReturned.EnumerateArray()) { if (-not $legacyReturnedSet.Add($alias.GetString())) { $legacyReturnedUnique = $false } }
+        $legacyBatchComplete = $legacyRequestedSet.Count -ge 2 -and $legacyReturnedUnique -and $legacyReturnedSet.SetEquals($legacyRequestedSet) -and $legacyExact.ValueKind -eq [System.Text.Json.JsonValueKind]::True
+        if ($legacyExact.ValueKind -eq [System.Text.Json.JsonValueKind]::True -and -not $legacyBatchComplete) { Fail-Safely 'SensorBatchExactSetContradiction' }
+    }
+    $batch = Get-JsonProperty $root 'snapshot_batch100_identity'
+    if ($null -eq $batch -and $null -ne $legacyBatch) { $sourceIncomplete = $true }
     if ($null -ne $batch -and $batch.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
         $batchStatus = Get-JsonProperty $batch 'status'
         $batchExact = Get-JsonProperty $batch 'exact_requested_set'
@@ -587,27 +616,129 @@ try {
         $batchReason = Get-JsonProperty $batch 'reason'
         $requestedAliases = Get-JsonProperty $batch 'requested_aliases'
         $returnedAliases = Get-JsonProperty $batch 'returned_aliases'
+        $batchSchema = Get-JsonProperty $batch 'observation_schema_version'
+        $isBatch100 = $null -ne $batchSchema -and $batchSchema.ValueKind -eq [System.Text.Json.JsonValueKind]::String -and $batchSchema.GetString() -ceq '2.0.0'
+        $requestedLimit = if ($isBatch100) { 100 } else { 5 }
+        $returnedLimit = if ($isBatch100) { 101 } else { 6 }
         if ($batch.ValueKind -ne [System.Text.Json.JsonValueKind]::Object -or
             $null -eq $batchStatus -or -not (Test-JsonString $batchStatus @('ok','partial','unknown','error','timeout')) -or
             $null -eq $batchExact -or -not (Test-JsonBoolean $batchExact) -or
             $null -eq $batchAuthority -or $batchAuthority.ValueKind -ne [System.Text.Json.JsonValueKind]::False -or
             $null -eq $batchReason -or -not (Test-JsonString $batchReason) -or
-            $null -eq $requestedAliases -or $requestedAliases.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $requestedAliases.GetArrayLength() -gt 5 -or
-            $null -eq $returnedAliases -or $returnedAliases.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $returnedAliases.GetArrayLength() -gt 6) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+            ($null -ne $batchSchema -and -not $isBatch100) -or
+            $null -eq $requestedAliases -or $requestedAliases.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $requestedAliases.GetArrayLength() -gt $requestedLimit -or
+            $null -eq $returnedAliases -or $returnedAliases.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $returnedAliases.GetArrayLength() -gt $returnedLimit) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
         $requestedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
         foreach ($alias in $requestedAliases.EnumerateArray()) {
-            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch '^b[1-5]$' -or -not $requestedSet.Add($alias.GetString())) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+            $aliasPattern = if ($isBatch100) { '^b(?:[1-9]|[1-9][0-9]|100)$' } else { '^b[1-5]$' }
+            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch $aliasPattern -or -not $requestedSet.Add($alias.GetString())) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
         }
         $returnedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
         $returnedUnique = $true
         foreach ($alias in $returnedAliases.EnumerateArray()) {
-            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch '^(b[1-5]|foreign[1-6]|invalid)$') { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+            $returnedPattern = if ($isBatch100) { '^(b(?:[1-9]|[1-9][0-9]|100)|foreign[1-8]|foreign-other|invalid|invalid-other)$' } else { '^(b[1-5]|foreign[1-6]|invalid)$' }
+            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch $returnedPattern) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
             if (-not $returnedSet.Add($alias.GetString())) { $returnedUnique = $false }
         }
-        $setMatches = $requestedSet.Count -ge 2 -and $returnedUnique -and $returnedSet.SetEquals($requestedSet)
+        $minimumRequested = if ($isBatch100) { 1 } else { 2 }
+        $setMatches = $requestedSet.Count -ge $minimumRequested -and $returnedUnique -and $returnedSet.SetEquals($requestedSet)
         if ($batchExact.ValueKind -eq [System.Text.Json.JsonValueKind]::True -and
             (-not $setMatches -or $batchStatus.GetString() -cne 'ok' -or $batchReason.GetString() -cne 'exact-unique-requested-set')) { Fail-Safely 'SensorBatchExactSetContradiction' }
         $batchComplete = $setMatches -and $batchExact.ValueKind -eq [System.Text.Json.JsonValueKind]::True
+        if ($isBatch100) {
+            $batchContractMatched = $true
+            $requestShape = Get-JsonProperty $batch 'request_shape_version'
+            $runtimeContract = Get-JsonProperty $batch 'runtime_request_contract_version'
+            $requestMethod = Get-JsonProperty $batch 'request_method'
+            $nativeColumns = Get-JsonProperty $batch 'native_columns'
+            $filterMode = Get-JsonProperty $batch 'filter_mode'
+            $requestCountParameter = Get-JsonProperty $batch 'request_count_parameter'
+            $sentinelRows = Get-JsonProperty $batch 'sentinel_rows'
+            $usesCaption = Get-JsonProperty $batch 'uses_caption'
+            $selectionScope = Get-JsonProperty $batch 'selection_scope'
+            $requestedCount = Get-JsonProperty $batch 'requested_count'
+            $respondedCount = Get-JsonProperty $batch 'responded_count'
+            $truncated = Get-JsonProperty $batch 'truncated'
+            $responseBytes = Get-JsonProperty $batch 'response_bytes'
+            $urlBytes = Get-JsonProperty $batch 'request_url_bytes'
+            $maximumResponseBytes = Get-JsonProperty $batch 'maximum_response_bytes'
+            $maximumUrlBytes = Get-JsonProperty $batch 'maximum_relative_url_bytes'
+            $maximumDepth = Get-JsonProperty $batch 'maximum_json_depth'
+            $shapeFingerprint = Get-JsonProperty $batch 'shape_fingerprint'
+            $full100 = Get-JsonProperty $batch 'full_batch100_observed'
+            $runtimeResponseCompatible = Get-JsonProperty $batch 'runtime_response_compatible'
+            $minimumFieldsObserved = Get-JsonProperty $batch 'minimum_fields_observed'
+            $runtimeResponseReason = Get-JsonProperty $batch 'runtime_response_reason'
+            $profileAuthorized = Get-JsonProperty $batch 'profile_authorized'
+            $capacityAccepted = Get-JsonProperty $batch 'capacity_accepted'
+            if ($null -eq $requestShape -or -not (Test-JsonString $requestShape) -or
+                $null -eq $runtimeContract -or -not (Test-JsonString $runtimeContract) -or
+                $null -eq $requestMethod -or -not (Test-JsonString $requestMethod) -or
+                $null -eq $nativeColumns -or -not (Test-JsonString $nativeColumns) -or
+                $null -eq $filterMode -or -not (Test-JsonString $filterMode) -or
+                $null -eq $requestCountParameter -or -not (Test-JsonNonNegativeInteger $requestCountParameter -AllowNull $true -Maximum 101) -or
+                $null -eq $sentinelRows -or -not (Test-JsonNonNegativeInteger $sentinelRows -Maximum 10) -or
+                $null -eq $usesCaption -or -not (Test-JsonBoolean $usesCaption) -or
+                $null -eq $selectionScope -or -not (Test-JsonString $selectionScope) -or
+                $null -eq $requestedCount -or -not (Test-JsonNonNegativeInteger $requestedCount -Maximum 100) -or
+                $requestedCount.GetInt32() -ne $requestedAliases.GetArrayLength() -or
+                $null -eq $respondedCount -or -not (Test-JsonNonNegativeInteger $respondedCount -AllowNull $true -Maximum 101) -or
+                ($respondedCount.ValueKind -eq [System.Text.Json.JsonValueKind]::Number -and $respondedCount.GetInt32() -ne $returnedAliases.GetArrayLength()) -or
+                $null -eq $truncated -or -not (Test-JsonBoolean $truncated) -or
+                $null -eq $responseBytes -or -not (Test-JsonNonNegativeInteger $responseBytes -AllowNull $true -Maximum 524288) -or
+                $null -eq $urlBytes -or -not (Test-JsonNonNegativeInteger $urlBytes -AllowNull $true -Maximum 4096) -or
+                $null -eq $maximumResponseBytes -or -not (Test-JsonNonNegativeInteger $maximumResponseBytes -Maximum 524288) -or
+                $null -eq $maximumUrlBytes -or -not (Test-JsonNonNegativeInteger $maximumUrlBytes -Maximum 4096) -or
+                $null -eq $maximumDepth -or -not (Test-JsonNonNegativeInteger $maximumDepth -Maximum 32) -or
+                $null -eq $shapeFingerprint -or
+                ($requestedCount.GetInt32() -ge 1 -and (-not (Test-JsonString $shapeFingerprint) -or $shapeFingerprint.GetString() -cnotmatch '^[0-9a-f]{64}$')) -or
+                ($requestedCount.GetInt32() -lt 1 -and $shapeFingerprint.ValueKind -ne [System.Text.Json.JsonValueKind]::String) -or
+                $null -eq $full100 -or -not (Test-JsonBoolean $full100) -or
+                $null -eq $profileAuthorized -or $profileAuthorized.ValueKind -ne [System.Text.Json.JsonValueKind]::False -or
+                $null -eq $capacityAccepted -or $capacityAccepted.ValueKind -ne [System.Text.Json.JsonValueKind]::False) { Fail-Safely 'InvalidSensorBatch100Metadata' }
+            if ($urlBytes.ValueKind -eq [System.Text.Json.JsonValueKind]::Null -and $requestedCount.GetInt32() -ge 1) { Fail-Safely 'InvalidSensorBatch100Metadata' }
+            if ($requestedCount.GetInt32() -ge 1) {
+                $batchCount = $requestedCount.GetInt32()
+                if ($requestCountParameter.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or $requestCountParameter.GetInt32() -ne $batchCount + 1) { $batchContractMatched = $false }
+                $shapeMaterial = "snapshot-filter-batch100-v1`nGET`n/api/table.json?content=sensors&columns=objid,lastvalue,interval,lastcheck,status,primarychannel&filter_objid={$batchCount IDs}&count=$($batchCount + 1)`nfilter=sorted-repeated-filter_objid`nsentinel=1`nusecaption=false`nurl-utf8<=4096`nresponse<=524288`ndepth<=32`nselection=existing-bounded-step3-sample"
+                $expectedFingerprint = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData(
+                    [System.Text.Encoding]::UTF8.GetBytes($shapeMaterial))).ToLowerInvariant()
+                if (-not [string]::Equals($shapeFingerprint.GetString(), $expectedFingerprint, [StringComparison]::Ordinal)) { $batchContractMatched = $false }
+                if ($requestShape.GetString() -cne 'snapshot-filter-batch100-v1' -or
+                    $runtimeContract.GetString() -cne 'snapshot-filter-batch100-v1' -or
+                    $requestMethod.GetString() -cne 'GET' -or
+                    $nativeColumns.GetString() -cne 'objid,lastvalue,interval,lastcheck,status,primarychannel' -or
+                    $filterMode.GetString() -cne 'sorted-repeated-filter_objid' -or
+                    $sentinelRows.GetInt32() -ne 1 -or $usesCaption.GetBoolean() -or
+                    $selectionScope.GetString() -cne 'existing-bounded-step3-sample' -or
+                    $maximumResponseBytes.GetInt32() -ne 524288 -or $maximumUrlBytes.GetInt32() -ne 4096 -or $maximumDepth.GetInt32() -ne 32) { $batchContractMatched = $false }
+                if ($respondedCount.ValueKind -eq [System.Text.Json.JsonValueKind]::Number -and
+                    $truncated.GetBoolean() -ne ($respondedCount.GetInt32() -gt $batchCount)) { Fail-Safely 'SensorBatch100TruncationContradiction' }
+                if ($batchExact.GetBoolean() -and
+                    ($respondedCount.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or $respondedCount.GetInt32() -ne $batchCount -or $truncated.GetBoolean())) { Fail-Safely 'SensorBatch100ExactSetContradiction' }
+                if ($batchStatus.GetString() -ceq 'ok' -and
+                    ($respondedCount.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or $responseBytes.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+                     $urlBytes.ValueKind -ne [System.Text.Json.JsonValueKind]::Number)) { Fail-Safely 'InvalidSensorBatch100Metadata' }
+            }
+            # Older v2 observations did not evaluate the runtime minimum-field contract. They
+            # remain parseable for their exact-ID diagnostic but cannot validate a batch-100 shape.
+            if ($null -ne $runtimeResponseCompatible -and -not (Test-JsonBoolean $runtimeResponseCompatible)) { Fail-Safely 'InvalidSnapshotRuntimeResponseMetadata' }
+            if ($null -ne $minimumFieldsObserved -and -not (Test-JsonBoolean $minimumFieldsObserved)) { Fail-Safely 'InvalidSnapshotRuntimeResponseMetadata' }
+            if ($null -ne $runtimeResponseReason -and -not (Test-JsonString $runtimeResponseReason @(
+                'not-observed','invalid-request-scope','response-byte-limit','malformed-json',
+                'duplicate-or-case-ambiguous-properties','sensors-array-missing','malformed-or-duplicate-sensor-id',
+                'sensor-outside-requested-scope','requested-sensor-set-mismatch','minimum-snapshot-fields-missing',
+                'runtime-snapshot-contract-compatible'))) { Fail-Safely 'InvalidSnapshotRuntimeResponseMetadata' }
+            if ($full100.ValueKind -eq [System.Text.Json.JsonValueKind]::True -and
+                ($requestedCount.GetInt32() -ne 100 -or $respondedCount.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or
+                 $respondedCount.GetInt32() -ne 100 -or $batchExact.ValueKind -ne [System.Text.Json.JsonValueKind]::True -or $truncated.GetBoolean())) { Fail-Safely 'SensorBatch100ExactSetContradiction' }
+            if (-not $batchContractMatched) { $sourceIncomplete = $true }
+            $batchComplete = $batchComplete -and $batchContractMatched
+            $runtimeCompatible = $null -ne $runtimeResponseCompatible -and $runtimeResponseCompatible.ValueKind -eq [System.Text.Json.JsonValueKind]::True
+            $minimumFields = $null -ne $minimumFieldsObserved -and $minimumFieldsObserved.ValueKind -eq [System.Text.Json.JsonValueKind]::True
+            $batchFull100 = $full100.GetBoolean() -and $batchContractMatched -and $batchComplete -and $runtimeCompatible -and $minimumFields
+            if (-not $batchFull100) { $sourceIncomplete = $true }
+        }
     }
 
     $sourceStatus = $rootStatus.GetString()
@@ -622,6 +753,10 @@ try {
     Write-Output "NativePrimaryCapabilityDiagnostics: $nativePrimaryDiagnosticCompleteCount/$nativePrimaryCapabilityCount"
     Write-Output "NativePrimaryConflicts: $nativePrimaryConflictCount"
     Write-Output "SensorBatchExactSetObserved: $batchComplete"
+    Write-Output "LegacySensorBatchExactSetObserved: $legacyBatchComplete"
+    Write-Output "SensorBatchFull100ExactObserved: $batchFull100"
+    Write-Output 'SensorBatchProfileAuthorized: false'
+    Write-Output 'SensorBatchCapacityAccepted: false'
     Write-Output 'NativePrimaryFormalAuthorization: not-asserted'
     Write-Output "DeploymentProcessorCount: $processorCountValue"
     Write-Output "RuntimeGcAvailableMemoryBytes: $runtimeMemoryValue"

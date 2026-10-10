@@ -58,7 +58,7 @@ public sealed class PrtgSnapshotCapacityStore(EfJsonBlobStore blob)
     public void Record(PrtgSnapshotCapacitySample sample)
     {
         if (sample.ScopeFingerprint.Length != 64 || sample.EndpointFingerprint.Length != 64 ||
-            sample.RequestShapeFingerprint.Length != 64 || sample.RequestedSensorCount is < 1 or > 50 ||
+            sample.RequestShapeFingerprint.Length != 64 || sample.RequestedSensorCount is < 1 or > PrtgSnapshotCapacityEvaluator.BatchSize ||
             sample.ElapsedMilliseconds < 0 || sample.Outcome is not ("success" or "failed" or "timeout"))
             throw new ArgumentException("Invalid bounded snapshot capacity sample.", nameof(sample));
 
@@ -135,7 +135,7 @@ public static class PrtgSnapshotCapacityEvaluator
     public const int MaximumTableRequestsPerSecond = 2;
     public const int MaximumSharedInFlight = 4;
     public const int RequiredFullBatchSamples = 5;
-    public const int BatchSize = 50;
+    public const int BatchSize = 100;
     public const double RequiredHeadroomFraction = 0.25;
     public static readonly TimeSpan EvidenceFreshness = TimeSpan.FromHours(24);
     public static readonly TimeSpan ConservativeWindow = TimeSpan.FromMinutes(10);

@@ -801,7 +801,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private void NoteBoundedSnapshotRecovery(PrtgSnapshotTargetSelection selection)
     {
-        _lastSkipReason = "容量證據恢復中：本輪只執行一個 50-ID 以下的 timeout-bounded 快照；一般範圍工作須等 5 筆新鮮同形成功樣本。";
+        _lastSkipReason = "容量證據恢復中：本輪只執行一個 100-ID 以下的 timeout-bounded 快照；一般範圍工作須等 5 筆新鮮同形成功樣本。";
         RecordDiagnostic(Now(), "recovery", _lastSkipReason, selection.SensorObjids.Count,
             reasonCode: "snapshot-capacity-bounded-recovery");
     }
@@ -843,7 +843,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             selection.ScopeFingerprint, selection.EndpointFingerprint, selection.RequestShapeFingerprint,
             new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
             DateTimeOffset.UtcNow);
-        // Up to one real 50-ID batch remains an intentionally bounded cold-start pilot path.
+        // Up to one real 100-ID batch remains an intentionally bounded cold-start pilot path.
         return selection.SensorObjids.Count <= PrtgSnapshotCapacityEvaluator.BatchSize ||
             estimate.Status == PrtgSnapshotCapacityStatus.CapacityQualified;
     }
@@ -856,7 +856,7 @@ public class PrtgSnapshotHostedService : BackgroundService
             : $"目前沒有足夠的同形新鮮樣本（{estimate.FreshMatchingFullBatchSamples}/5）。";
         var reason = exceeded ? "容量估算超出固定完成期限" : "完整快照容量尚未驗證";
         NoteSkip(exceeded ? "snapshot-capacity-exceeded" : "snapshot-capacity-unverified",
-            $"{reason}：目前有效範圍 {selection.SensorObjids.Count} 顆；{estimateText}正式全範圍快照與範圍補抓已暫停，已接收樣本與待寫佇列保留。請縮小有效範圍或先停用正式取數，以目前來源、策略與範圍完成 5 筆同形 50-ID pilot，再確認模型可行後重新啟用。",
+            $"{reason}：目前有效範圍 {selection.SensorObjids.Count} 顆；{estimateText}正式全範圍快照與範圍補抓已暫停，已接收樣本與待寫佇列保留。請縮小有效範圍或先停用正式取數，以目前來源、策略與範圍完成 5 筆同形 100-ID pilot，再確認模型可行後重新啟用。",
             trackPause: false, targetCount: selection.SensorObjids.Count);
     }
 
@@ -870,12 +870,12 @@ public class PrtgSnapshotHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 分批模式：依 objid 排序後每 <see cref="PrtgResourceGuardProbe.MaxBatchSize"/> 顆一個 filter_objid 請求。
+    /// 分批模式：依 objid 排序後每 100 顆一個 filter_objid 請求；其他資源守門仍使用 50 顆批次。
     /// 單批失敗（非取消）只記數、其餘照做；全部批次都失敗才往外擲，交給既有退避。
     /// </summary>
     // Match the shared snapshot lane so workers do not occupy the profile's reserved slot.
     internal const int MaximumConcurrentSnapshotBatches = 3;
-    internal const int MaximumSnapshotBatchResponseBytes = 512 * 1024;
+    internal const int MaximumSnapshotBatchResponseBytes = PrtgSnapshotResponseContract.MaximumResponseBytes;
 
     private async Task FetchFilteredAsync(
         SystemSettings settings, IReadOnlyList<long> targets, DateTime now, SnapshotTally tally,
@@ -883,7 +883,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         PrtgTrustedSamplingStrategyContext trustStrategy, PrtgSnapshotTargetSelection capacitySelection,
         CancellationToken ct)
     {
-        var batchSize = PrtgResourceGuardProbe.MaxBatchSize;
+        var batchSize = PrtgSnapshotCapacityEvaluator.BatchSize;
         var batchCount = (targets.Count + batchSize - 1) / batchSize;
         var failedBatches = 0;
         var requested = 0;
@@ -916,20 +916,13 @@ public class PrtgSnapshotHostedService : BackgroundService
                         : _backend.PrtgStore().GetResourceIdentities(beforeProfiles.Keys);
                     RecordDiagnostic(now, "attempt", targets: targets.Count);
                     capacityStartedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-                    var json = await client.GetBoundedJsonAsync(
-                        "api/table.json?content=sensors&columns=" + PrtgSnapshotTargetResolver.SnapshotColumns
-                        + PrtgResourceGuardProbe.BuildObjidFilter(batch), MaximumSnapshotBatchResponseBytes, batchToken);
+                    var relativeUrl = PrtgSnapshotTargetResolver.BuildSnapshotRelativeUrl(batch);
+                    var json = await client.GetBoundedJsonAsync(relativeUrl, MaximumSnapshotBatchResponseBytes, batchToken);
                     capacityCompletedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-                    try
-                    {
-                        PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
-                        capacityResponseValid = true;
-                    }
-                    catch (Exception validationError) when (validationError is InvalidDataException or System.Text.Json.JsonException)
-                    {
-                        // Preserve the existing bounded snapshot parser behavior, but do not treat
-                        // an incomplete or malformed table response as capacity evidence.
-                    }
+                    // count=batch+1 is a sentinel contract: exact-set failure rejects the entire
+                    // batch before any snapshot rows are published.
+                    PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
+                    capacityResponseValid = true;
                     var receivedAtUtc = DateTime.UtcNow;
                     RecordDiagnostic(now, "success", targets: targets.Count);
                     // 只收本批要求的 objid：PRTG 若忽略 filter_objid 會每批都回整站，
@@ -980,7 +973,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                 }
                 finally
                 {
-                    // Only real full 50-ID requests of the exact runtime shape can qualify capacity.
+                    // Only real full 100-ID requests of the exact runtime shape can qualify capacity.
                     // Partial final batches remain useful work but cannot masquerade as full-batch evidence.
                     if (batch.Count == capacitySelection.CapacitySampleBatchSize && capacityStartedTimestamp != 0)
                     {

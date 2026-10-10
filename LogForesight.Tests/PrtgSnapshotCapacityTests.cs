@@ -15,7 +15,7 @@ public sealed class PrtgSnapshotCapacityTests
     private static PrtgSnapshotCapacitySample[] Samples(DateTimeOffset now, string outcome = "success") =>
         Enumerable.Range(0, PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples)
             .Select(i => new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddMinutes(-i),
-                9000, 50, outcome)).ToArray();
+                9000, 100, outcome)).ToArray();
 
     [Theory]
     [InlineData("conservative")]
@@ -27,23 +27,32 @@ public sealed class PrtgSnapshotCapacityTests
             Samples(now), now);
 
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, result.Status);
-        Assert.Equal(20, result.BatchCount);
+        Assert.Equal(10, result.BatchCount);
         Assert.Equal(9d, result.P95BatchSeconds);
-        Assert.Equal(63d, result.EstimatedSeconds);
+        Assert.Equal(36d, result.EstimatedSeconds);
     }
 
     [Theory]
-    [InlineData("conservative")]
-    [InlineData("aggressive")]
-    public void Capacity_15000targets_9sP95_rejected_by_fixed_window(string strategy)
+    [InlineData("conservative", PrtgSnapshotCapacityStatus.CapacityQualified)]
+    [InlineData("aggressive", PrtgSnapshotCapacityStatus.CapacityExceeded)]
+    public void Capacity_15000targets_full100_9sP95_respects_each_fixed_window(string strategy, PrtgSnapshotCapacityStatus expected)
     {
         var now = DateTimeOffset.UtcNow;
         var result = PrtgSnapshotCapacityEvaluator.Evaluate(15000, strategy, Scope, Endpoint, Shape,
             Samples(now), now);
 
-        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityExceeded, result.Status);
-        Assert.Equal(300, result.BatchCount);
-        Assert.Equal(900d, result.EstimatedSeconds);
+        Assert.Equal(expected, result.Status);
+        Assert.Equal(150, result.BatchCount);
+        Assert.Equal(450d, result.EstimatedSeconds);
+    }
+
+    [Fact]
+    public void Legacy50_cost_samples_cannot_qualify_the_new100_request_shape()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var legacy = Samples(now).Select(x => x with { RequestedSensorCount = 50 });
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified,
+            PrtgSnapshotCapacityEvaluator.Evaluate(15000, "conservative", Scope, Endpoint, Shape, legacy, now).Status);
     }
 
     [Fact]
@@ -66,7 +75,7 @@ public sealed class PrtgSnapshotCapacityTests
     {
         var now = DateTimeOffset.UtcNow;
         var samples = Samples(now).Append(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape,
-            now, 30_000, 50, "timeout"));
+            now, 30_000, 100, "timeout"));
 
         var result = PrtgSnapshotCapacityEvaluator.Evaluate(1000, "conservative", Scope, Endpoint, Shape,
             samples, now);
@@ -104,8 +113,8 @@ public sealed class PrtgSnapshotCapacityTests
 
         var medium = PrtgSnapshotCapacityPilot.BuildPilotBatches(Enumerable.Range(1, 113).Select(x => (long)x).ToArray());
         Assert.Equal(5, medium.Count);
-        Assert.All(medium, batch => Assert.Equal(50, batch.Length));
-        Assert.All(medium, batch => Assert.Equal(50, batch.Distinct().Count()));
+        Assert.All(medium, batch => Assert.Equal(100, batch.Length));
+        Assert.All(medium, batch => Assert.Equal(100, batch.Distinct().Count()));
         Assert.DoesNotContain(medium, batch => batch.Length != PrtgSnapshotCapacityEvaluator.BatchSize);
     }
 
@@ -123,8 +132,8 @@ public sealed class PrtgSnapshotCapacityTests
             var store = new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
             var now = new DateTimeOffset(2026, 10, 6, 4, 0, 0, TimeSpan.Zero);
             for (var i = 0; i < 5; i++)
-                store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddSeconds(i), 9000, 50, "success"));
-            store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddSeconds(10), 30_000, 50, "success"));
+                store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddSeconds(i), 9000, 100, "success"));
+            store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddSeconds(10), 30_000, 100, "success"));
 
             var retained = store.Read();
             Assert.Equal(5, retained.Count);
@@ -196,17 +205,17 @@ public sealed class PrtgSnapshotCapacityTests
             var store = new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
             var now = new DateTimeOffset(2026, 10, 6, 4, 0, 0, TimeSpan.Zero);
             for (var i = 0; i < 6; i++)
-                store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddSeconds(i), 9000, 50, "success"));
+                store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddSeconds(i), 9000, 100, "success"));
             Assert.Equal(5, store.Read().Count);
 
-            store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddMinutes(1), 30_000, 50, "timeout"));
+            store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddMinutes(1), 30_000, 100, "timeout"));
             Assert.Single(store.Read());
             Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified,
                 PrtgSnapshotCapacityEvaluator.Evaluate(1000, "conservative", Scope, Endpoint, Shape,
                     store.Read(), now.AddMinutes(1)).Status);
 
             for (var i = 0; i < 5; i++)
-                store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddHours(1).AddSeconds(i), 9000, 50, "success"));
+                store.Record(new PrtgSnapshotCapacitySample(Scope, Endpoint, Shape, now.AddHours(1).AddSeconds(i), 9000, 100, "success"));
             Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified,
                 PrtgSnapshotCapacityEvaluator.Evaluate(1000, "conservative", Scope, Endpoint, Shape,
                     store.Read(), now.AddHours(1).AddMinutes(1)).Status);

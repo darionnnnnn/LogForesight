@@ -40,6 +40,9 @@ public sealed class PrtgCompatibilityProbeEvidence
     [JsonPropertyName("sensor_batch_identity")]
     public PrtgSensorBatchCapability? SensorBatchIdentity { get; set; }
 
+    [JsonPropertyName("snapshot_batch100_identity")]
+    public PrtgSnapshotBatch100Capability? SnapshotBatch100Identity { get; set; }
+
     [JsonPropertyName("schema_version")]
     public string SchemaVersion { get; set; } = "1.0.0";
 
@@ -724,7 +727,8 @@ public static class PrtgCompatibilityProbe
             onEvidenceJsonProduced,
             (url, token) => client.GetBoundedXmlAsync(url, PrtgHistoricXmlReader.MaximumBytes, token),
             (url, token) => client.GetBoundedXmlAsync(url, MaxNativePrimaryXmlBytes, token),
-            (url, token) => client.GetBoundedJsonAsync(url, 512 * 1024, token));
+            (url, token) => client.GetBoundedJsonAsync(url, 512 * 1024, token),
+            (url, token) => client.GetBoundedJsonAsync(url, PrtgSnapshotBatch100Capability.MaximumResponseBytes, token));
     }
 
     public static async Task<PrtgCompatibilityProbeEvidence> ExecuteCoreAsync(
@@ -736,7 +740,8 @@ public static class PrtgCompatibilityProbe
         Action<string>? onEvidenceJsonProduced = null,
         Func<string, CancellationToken, Task<PrtgSourceResponse>>? getHistoricXml = null,
         Func<string, CancellationToken, Task<PrtgSourceResponse>>? getNativePrimaryXml = null,
-        Func<string, CancellationToken, Task<string>>? getSensorBatchJson = null)
+        Func<string, CancellationToken, Task<string>>? getSensorBatchJson = null,
+        Func<string, CancellationToken, Task<string>>? getSnapshotBatch100Json = null)
     {
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         overallCts.CancelAfter(OverallTimeout);
@@ -894,9 +899,9 @@ public static class PrtgCompatibilityProbe
 
         if (getSensorBatchJson is not null)
         {
-            var batchIds = sensorSamples.Where(s => s.Objid > 0).Select(s => s.Objid!.Value)
+            var legacyIds = sensorSamples.Where(s => s.Objid is > 0).Select(s => s.Objid!.Value)
                 .Distinct().Order().Take(5).ToArray();
-            if (batchIds.Length < 2)
+            if (legacyIds.Length < 2)
                 evidence.SensorBatchIdentity = new() { Reason = "insufficient-distinct-samples" };
             else
             {
@@ -908,8 +913,8 @@ public static class PrtgCompatibilityProbe
                     using var request = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
                     request.CancelAfter(RequestTimeout);
                     var json = await getSensorBatchJson("api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince" +
-                        PrtgResourceGuardProbe.BuildObjidFilter(batchIds) + "&count=" + (batchIds.Length + 1), request.Token);
-                    evidence.SensorBatchIdentity = PrtgSensorBatchCapability.Parse(json, batchIds);
+                        PrtgResourceGuardProbe.BuildObjidFilter(legacyIds) + "&count=" + (legacyIds.Length + 1), request.Token);
+                    evidence.SensorBatchIdentity = PrtgSensorBatchCapability.Parse(json, legacyIds);
                     requestsSucceeded++;
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -921,7 +926,54 @@ public static class PrtgCompatibilityProbe
                 evidence.SensorBatchIdentity.ReceivedAtUtc = DateTimeOffset.UtcNow.ToString("o");
                 evidence.SensorBatchIdentity.ElapsedMilliseconds = (long)Math.Ceiling(elapsed.Elapsed.TotalMilliseconds);
             }
-            console.WriteLine($"     多感測器精確集合探測：{evidence.SensorBatchIdentity.Status}（{evidence.SensorBatchIdentity.Reason}）；不授權正式 profile。");
+            console.WriteLine($"     舊版多感測器 profile exact-set 探測：{evidence.SensorBatchIdentity.Status}（{evidence.SensorBatchIdentity.Reason}）；不授權正式 profile。");
+        }
+
+        if (getSnapshotBatch100Json is not null)
+        {
+            // Reuse only the already-bounded step-3 inventory result. Do not issue another inventory
+            // request or widen the source selection to obtain a 100-ID batch.
+            var batchIds = sensorSamples.Where(s => s.Objid is > 0).Select(s => s.Objid!.Value)
+                .Distinct().Order().Take(PrtgSnapshotBatch100Capability.MaximumBatchSize).ToArray();
+            if (batchIds.Length < 1)
+                evidence.SnapshotBatch100Identity = PrtgSnapshotBatch100Capability.CreateUnavailable(batchIds, null, "partial", "insufficient-distinct-bounded-step3-samples");
+            else
+            {
+                var relativeUrl = "/api/table.json?content=sensors&columns=" + PrtgSnapshotBatch100Capability.SnapshotColumns +
+                    PrtgResourceGuardProbe.BuildObjidFilter(batchIds) + "&count=" + (batchIds.Length + 1).ToString(CultureInfo.InvariantCulture);
+                var relativeUrlBytes = Encoding.UTF8.GetByteCount(relativeUrl);
+                var observation = PrtgSnapshotBatch100Capability.CreateUnavailable(batchIds, relativeUrlBytes, "partial", "not-observed");
+                if (relativeUrlBytes > PrtgSnapshotBatch100Capability.MaximumRelativeUrlBytes)
+                {
+                    observation.Status = "partial";
+                    observation.Reason = "relative-url-byte-limit";
+                    requestsSkipped++;
+                }
+                else
+                {
+                    requestsAttempted++;
+                    var began = DateTimeOffset.UtcNow;
+                    var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                    try
+                    {
+                        using var request = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
+                        request.CancelAfter(RequestTimeout);
+                        var json = await getSnapshotBatch100Json(relativeUrl, request.Token);
+                        observation = PrtgSnapshotBatch100Capability.Parse(json, batchIds, relativeUrlBytes);
+                        requestsSucceeded++;
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    { observation = PrtgSnapshotBatch100Capability.CreateUnavailable(batchIds, relativeUrlBytes, "timeout", "bounded-request-deadline"); requestsTimedOut++; }
+                    catch (Exception ex) when (ex is PrtgClientException or InvalidDataException or JsonException or HttpRequestException or InvalidOperationException)
+                    { observation = PrtgSnapshotBatch100Capability.CreateUnavailable(batchIds, relativeUrlBytes, "error", "bounded-source-unavailable"); requestsFailed++; }
+                    elapsed.Stop();
+                    observation.RequestedAtUtc = began.ToString("o");
+                    observation.ReceivedAtUtc = DateTimeOffset.UtcNow.ToString("o");
+                    observation.ElapsedMilliseconds = (long)Math.Ceiling(elapsed.Elapsed.TotalMilliseconds);
+                }
+                evidence.SnapshotBatch100Identity = observation;
+            }
+            console.WriteLine($"     Snapshot 100-ID exact-set 探測：{evidence.SnapshotBatch100Identity!.Status}（{evidence.SnapshotBatch100Identity.Reason}；要求 {evidence.SnapshotBatch100Identity.RequestedCount}/100，回應 {evidence.SnapshotBatch100Identity.RespondedCount?.ToString(CultureInfo.InvariantCulture) ?? "未知"}，exact={evidence.SnapshotBatch100Identity.ExactRequestedSet}，full100={evidence.SnapshotBatch100Identity.FullBatch100Observed}）；不授權 profile 或容量。");
         }
 
         var targetsOk = 0;

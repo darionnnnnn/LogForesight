@@ -85,10 +85,35 @@ public class PrtgSnapshotObservabilityTests : IDisposable
             new PrtgProbeRunState(),
             lifetime);
 
-        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "");
+        service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "", CreateFixtureBudget());
         return service;
     }
 
+    private PrtgRequestBudget CreateFixtureBudget()
+    {
+        // Each fixture owns a different database/plan version. Never borrow another fixture's
+        // process-wide plan; retain production purpose pacing with a monotonic test clock.
+        var budget = new PrtgRequestBudget(new SnapshotFixtureBudgetClock());
+        var plan = new PrtgCapacityAdmissionPlanStore(
+            _backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(DateTimeOffset.UtcNow);
+        if (plan is not null) budget.SetAdmissionPlan(plan);
+        return budget;
+    }
+
+    private sealed class SnapshotFixtureBudgetClock : IPrtgClock
+    {
+        private readonly DateTimeOffset start = DateTimeOffset.UtcNow;
+        private long elapsedTicks;
+        public TimeSpan Elapsed => TimeSpan.FromTicks(Interlocked.Read(ref elapsedTicks));
+        public DateTimeOffset UtcNow => start + Elapsed;
+        public async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Yield();
+            if (delay > TimeSpan.Zero) Interlocked.Add(ref elapsedTicks, delay.Ticks);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
     private SettingsController CreateController(
         PrtgSnapshotHostedService? snapshot = null,
         StubSystemSettingsService? settingsService = null,
@@ -260,8 +285,8 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         SetupTargetSensors(new[] { (101L, "Ping"), (102L, "Ping") });
 
         var json = "{\"treesize\":2,\"sensors\":[" +
-                   "{\"objid\":101,\"lastvalue_raw\":10,\"interval\":\"60 s\"}," +
-                   "{\"objid\":102,\"lastvalue_raw\":20,\"interval\":\"60 s\"}" +
+                   "{\"objid\":101,\"status\":\"Up\",\"lastcheck\":\"2026-10-10T00:00:00Z\",\"lastvalue_raw\":10,\"interval\":\"60 s\"}," +
+                   "{\"objid\":102,\"status\":\"Up\",\"lastcheck\":\"2026-10-10T00:00:00Z\",\"lastvalue_raw\":20,\"interval\":\"60 s\"}" +
                    "]}";
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(json));
 

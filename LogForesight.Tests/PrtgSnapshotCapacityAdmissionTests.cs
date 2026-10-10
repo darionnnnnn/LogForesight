@@ -374,7 +374,7 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedProfileRefreshRecoveryReason, reason);
 
         // After the actual profile worker records its one successful five-sensor calibration,
-        // the snapshot worker can rebuild missing snapshot evidence one real 50-ID batch at a time.
+        // the snapshot worker can rebuild missing snapshot evidence one real 100-ID batch at a time.
         var policy = new PrtgMonitoringPolicyStore(
             fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         var profileIds = policy.SensorIds.Order().Take(5).ToArray();

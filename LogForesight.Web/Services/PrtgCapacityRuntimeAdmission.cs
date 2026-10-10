@@ -76,7 +76,7 @@ internal static class PrtgCapacityRuntimeAdmission
             profile.Status == PrtgSnapshotCapacityStatus.CapacityQualified &&
             PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored))
         {
-            // Symmetric snapshot-worker recovery: one real <=50-ID batch under the retained
+            // Symmetric snapshot-worker recovery: one real <=100-ID batch under the retained
             // plan's snapshot lane may rebuild the five full-batch sample set. Missing or stale
             // evidence does not authorize the remaining batches or scope work.
             var recovery = PrtgJointCapacityEvaluator.EvaluateBoundedSnapshotScopeRecovery(

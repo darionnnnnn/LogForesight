@@ -221,7 +221,7 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 |---|---|---|
 | 快照間隔 | 15 分鐘 | 5 分鐘 |
 | 夜間逐顆 `historicdata`（§3a 階段 4） | **不執行**，數值全由快照供應 | 執行，沿用取數範圍設定，給觸發主機 PRTG 真平均 |
-| 每日 PRTG 負擔（估） | 約 96 次快照，分散整天、每 50 顆一批且最多 4 批並行，共用 table 2 次／秒額度 | 約 288 次快照＋每晚數百次 `historicdata` |
+| 每日 PRTG 負擔（估） | 約 96 次快照，分散整天、每 100 顆一批且最多 3 批快照並行，保留一個 profile 在途位置，共用 table 2 次／秒額度 | 約 288 次快照＋每晚數百次 `historicdata` |
 
 - 常數與判定收斂在 `PrtgFetchStrategy`（`IsValid`／`Normalize`／`Profile`）；不合法或未設定的值退回保守。
 - 保守策略下夜間路徑印「取數策略為保守，夜間不逐顆查詢歷史值，數值由快照供應。」；每晚開頭另印一行目前策略與快照間隔。
@@ -234,7 +234,7 @@ finding 的追加**不等取數**：追加的前提是「該主機當日紀錄�
 
 - 每 60 秒檢查，依策略與退避間隔採樣。停用、連線設定不足或待寫復原失敗時不開新 PRTG 請求。結構同步、回填與夜間 PRTG 作業最多讓出一個策略採樣間隔；到期仍以已落地鏡像採樣，維護期間不順便擴大补抓。採樣優先權會中止背景狀態歷史頁，結束後才續入下一頁；範圍補抓及近期狀態工作有獨立有限時段與耐久待辦。
 - **先定目標再查**：最近合格主機對應、目前有效主機、排除與白名單共同決定精確 sensor 集合；目標为空不發請求。範圍或鏡像改變後重新核對集合與成本，快照及補抓使用相同作用範圍契約。
-- **有界查詢與容量守門**：所有規模都依 objid 排序，每批最多 50 顆、最多三批快照在途；回應只接受該批 ID，不再退回全站 count=50000。所有呼叫共享 table 2/秒、historic 5/分鐘及最多四個在途請求的預算。首次核准或擴大／更改採集契約時，非空範圍須有目前同來源、同範圍及同請求形狀的五份新鮮成功快照與五份成功 Profile 傳輸樣本，並通過保留 25% 餘裕的共同容量准入；已核准同契約方案以相符的新鮮 Profile 更新證據持續重驗，近期失敗後仍須重新收集五份成功 Profile 樣本；首次設定可在停用狀態進行有界容量試測，試測不授予來源信任。未知或超出策略期限時停止新取數並明示容量等待，不更新成功時間或計為連線失敗。既有採集方案的租約或容量樣本失效後，系統可有限恢復：必須仍是同一已核准方案，來源、設定、完整範圍、政策、策略及建置契約完全相符。Profile 更新先以最多五顆一組重新校準；Profile 容量合格後，快照每輪只重新採樣一批最多 50 顆，先不執行其他批次、sensor 補抓或狀態 Queue。仍依原方案速率、設定逾時、目前共享配額及 25% 餘裕守門；完整作業須等五筆新鮮且相符的成功快照。恢復只記錄實際結果，不補造成功樣本。没有舊核准方案、契約改變或成本超額時，維持等待並顯示原因。
+- **有界查詢與容量守門**：所有規模都依 objid 排序，每批最多 100 顆、最多三批快照在途；回應只接受該批 ID，不再退回全站 count=50000。所有呼叫共享 table 2/秒、historic 5/分鐘及最多四個在途請求的預算。首次核准或擴大／更改採集契約時，非空範圍須有目前同來源、同範圍及同請求形狀的五份新鮮成功快照與五份成功 Profile 傳輸樣本，並通過保留 25% 餘裕的共同容量准入；已核准同契約方案以相符的新鮮 Profile 更新證據持續重驗，近期失敗後仍須重新收集五份成功 Profile 樣本；首次設定可在停用狀態進行有界容量試測，試測不授予來源信任。未知或超出策略期限時停止新取數並明示容量等待，不更新成功時間或計為連線失敗。既有採集方案的租約或容量樣本失效後，系統可有限恢復：必須仍是同一已核准方案，來源、設定、完整範圍、政策、策略及建置契約完全相符。Profile 更新先以最多五顆一組重新校準；Profile 容量合格後，快照每輪只重新採樣一批最多 100 顆，先不執行其他批次、sensor 補抓或狀態 Queue。仍依原方案速率、設定逾時、目前共享配額及 25% 餘裕守門；完整作業須等五筆新鮮且相符的成功快照。恢復只記錄實際結果，不補造成功樣本。没有舊核准方案、契約改變或成本超額時，維持等待並顯示原因。
 - 快照 table 查詢使用共同計畫的 Snapshot 專用額度；範圍 sensor 補抓、守門 parent 查詢及近期 messages 使用 General 剩餘額度，仍受同一 table／historic／在途上限及目前准入 fingerprint 約束。共用連線每次刷新用途，不讓背景補抓預占下一輪採樣；剩餘額度不可用時保留等待及佇列，範圍工作維持每段 30 秒截止。
 - **可信累積器**：來源 profile、資源／channel generation、epoch、語意／策略與時間基準核對後，以來源量測時間與 physical sample 建立唯一策略 slot；重播與重複回應不增加涵蓋率。每小時保存平均、極值、涵蓋與最多 4 KiB typed proof；退避不降低期望 slot 數，資料不足仍不足。正式值型規則只使用完成小時與自己的品質／期間門檻，單次目前值不補成歷史。
 - **診斷取值**：profile 不足時只保存診斷樣本，不授予正式信任。舊流量型 lastvalue 的整小時換算與 interval fallback 仍屬診斷路徑，不能證明來源單位、比例或 primary channel；CPU／記憶體／磁碟的名稱與 type 亦不替代語意證據。可信 parser 拒絕的樣本不可再以診斷 fallback 覆蓋已保存可信 slot。
@@ -531,7 +531,7 @@ PRTG 維護頁提供兩種共用執行狀態與停止鈕的探測。「完整環
        (a) `content=sensors&id=<裝置>` 判「✓ 只回該裝置的感測器」／「✗ 回傳含其他裝置的感測器（id 參數未生效）」／無法判定；
        (b) `content=messages&id=<裝置>&filter_drel=7days&count=50` 判「✓ 含下層感測器訊息」／「✗ 只有裝置自身——狀態變更取數需改為逐感測器」／
        「⚠ 回傳的 objid 不屬於該裝置」／無資料。結論行彙總 (b)（任一台 ✓ 即 ✓）並印平均每台耗時。
-       另以一顆感測器量 `id=<感測器>` 的 messages 耗時（改逐感測器時估算用），並以最多 50 顆量一次 `filter_objid` 分批取值（快照 §3b 的取法）。
+       另以一顆感測器量 `id=<感測器>` 的 messages 耗時（改逐感測器時估算用），並以最多 50 顆量一次 `filter_objid` 舊版分批取值（獨立 snapshot_batch100_identity 才對應目前快照 §3b 的取法）。
        (a) 的預期集合來自步驟 3 的全站清單，那份清單被截斷時 (a) 可能誤判 ✗（步驟 3 已印截斷警告）。
        樣本裝置取自全站、不一定是取數範圍內的裝置——範圍內裝置的實測在「站台對照」[S2]。
 
@@ -1306,3 +1306,9 @@ Resume／Check 必須提供實際 JobId、ExpectedVersion、ExpectedWave；Resum
 觀測 IdentityChannelFingerprint 和正式 BindingFingerprint 分開保存。首次尚無 binding 或觀測 metadata 已存在時可探索；任何 identity epoch／channel generation／觀測 fingerprint／binding revision 或來源修訂變更均使舊結果失效。結果 readOnly=true、authorizesQualification=false、authorizesProfile=false，不寫 binding、raw proof 或 profile。管理者明選精確 Channel ID 並保存後，依既有正式資格流程取得 raw proof，不預選第一個頻道。重啟續處理及網路狀態未確認時保留草稿；按目前 job ID 輪詢，有界期限與取消不自動重送正式保存。
 
 通道唯讀探測的最後授權與來源核對位於所有共享配額、在途與 purpose pacing 等待之後、實際送出記帳之前。任何 fence 失效都保存 failed-stale 原因碼，停止該次來源 GET，也不建立正式信任或容量證據。
+
+### 100 顆快照同形來源探測
+
+環境探測沿用既有 Step 3 最多 `count=50000` 的既有 sensor sample rows，取排序後最多 100 個不同正 objid；不為取得 100 顆另作 inventory scan，也不把樣本稱為使用者選取的有效採集範圍。舊 `sensor_batch_identity` 保留原 2–5-ID profile query（`objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince`、重複 `filter_objid`、`count=N+1`），不可與新 snapshot query 混為同一證據。新增的獨立 `snapshot_batch100_identity` 對所選 N 個既有樣本發一個唯讀 `GET api/table.json?content=sensors&columns=objid,lastvalue,interval,lastcheck,status,primarychannel`，每個 objid 一個排序後 `filter_objid`，並設 `count=N+1` sentinel；不使用 caption。若現有樣本少於 100 顆，只記錄實際 N 的 diagnostic，`full_batch100_observed=false`，不得當成完整 batch100 或容量證據。該觀測明列 `runtime_request_contract_version=snapshot-filter-batch100-v1`、HTTP method、native columns、filter mode、count parameter、sentinel、caption use 與限制；relative URL UTF-8 上限 4096 bytes、回應 512 KiB、JSON depth 32、單請求 30 秒，沿用整輪 5 分鐘界線與共同 request quota。source-observation shape fingerprint 僅核對這個請求契約，不等同 runtime formal admission fingerprint。安全 JSON 的 snapshot observation 僅保存 b1–b100、最多 8 個 foreign alias 加 overflow marker、有限 invalid alias、requested/responded count、exactness、truncation、byte limits 與耗時，不保存原始 sensor ID、URL 或主機名稱。`runtime_response_compatible` 僅在精確 ID 集合中每列均含非空字串 `status`、非空字串或數字 `lastcheck`，且 JSON 任一深度沒有重複或大小寫歧義屬性時為 true；欄位不合格時仍可保留可確認的 exact ID observation，但不得算 runtime compatible。`full_batch100_observed` 還要求 N=100。`profile_authorized` 與 `capacity_accepted` 永遠為 false。舊五 ID evidence 仍可讀，但缺少 `snapshot_batch100_identity` 即為 batch100 INCOMPLETE。列數相同但重複、外來、缺列或關鍵欄位歧義均不得算 exact。偽稱精確集合或授權則拒絕。此觀測只核對來源是否回傳要求集合，不代替正式 profile 的個別通道／原生主通道／raw proof 核驗或容量驗收。
+
+此請求契約依 [Paessler Multiple Object Property or Status 官方 API 文件](https://www.paessler.com/manuals/prtg/multiple_object_property_or_status) 實作，特定來源是否正確處理多個 filter_objid 則由新增的唯讀 exact-set 探測核對；文件與單次探測不授予完整容量。

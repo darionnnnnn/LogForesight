@@ -43,6 +43,25 @@ public class PrtgProbeRunnerTests
         }
     }
 
+    [Fact]
+    public async Task CompatibilityProbe_keeps_one_id_identity_but_never_claims_full_batch100()
+    {
+        var samples = new[] { new PrtgProbeRunner.SensorTypeSample("fixture", null, null, 78123, "Up") };
+        string? requestedUrl = null;
+        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((_, _) => Task.FromResult("{}"), new TestConsole(), samples, null,
+            getSnapshotBatch100Json: (url, _) =>
+            {
+                requestedUrl = url;
+                return Task.FromResult("{\"sensors\":[{\"objid\":78123,\"status\":\"Up\",\"lastcheck\":1728547323}]}");
+            });
+
+        Assert.Contains("&filter_objid=78123&count=2", requestedUrl);
+        Assert.True(result.SnapshotBatch100Identity!.ExactRequestedSet);
+        Assert.True(result.SnapshotBatch100Identity.RuntimeResponseCompatible);
+        Assert.False(result.SnapshotBatch100Identity.FullBatch100Observed);
+        Assert.False(result.SnapshotBatch100Identity.CapacityAccepted);
+    }
+
     private readonly Xunit.Abstractions.ITestOutputHelper _output;
 
     public PrtgProbeRunnerTests(Xunit.Abstractions.ITestOutputHelper output)
@@ -1058,10 +1077,19 @@ public class PrtgProbeRunnerTests
         Assert.False(root.GetProperty("evidence_ready").GetBoolean());
         Assert.Contains("時間欄位基準未確認", root.GetProperty("historical_date_boundary").GetProperty("limitations").GetString());
 
-        var snapshotUrls = stub.RequestedUrls.Where(u => u.Contains("filter_objid=") &&
-            !u.Contains("columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince")).ToList();
-        Assert.Single(stub.RequestedUrls.Where(u => u.Contains("columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince")));
+        const string batchColumns = "columns=objid,lastvalue,interval,lastcheck,status,primarychannel";
+        var batchUrls = stub.RequestedUrls.Where(u => u.Contains(batchColumns, StringComparison.Ordinal)).ToList();
+        var legacyBatchUrls = stub.RequestedUrls.Where(u => u.Contains("columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince", StringComparison.Ordinal)).ToList();
+        var snapshotUrls = stub.RequestedUrls.Where(u => u.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval,primarychannel", StringComparison.Ordinal)).ToList();
+        Assert.Single(batchUrls);
+        Assert.Contains("count=4", batchUrls[0]);
+        Assert.Single(legacyBatchUrls);
+        Assert.Contains("count=4", legacyBatchUrls[0]);
         Assert.False(root.GetProperty("sensor_batch_identity").GetProperty("authorizes_formal_profile").GetBoolean());
+        Assert.True(root.GetProperty("sensor_batch_identity").GetProperty("exact_requested_set").ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False);
+        Assert.False(root.GetProperty("snapshot_batch100_identity").GetProperty("capacity_accepted").GetBoolean());
+        Assert.False(root.GetProperty("snapshot_batch100_identity").GetProperty("profile_authorized").GetBoolean());
+        Assert.False(root.GetProperty("snapshot_batch100_identity").GetProperty("full_batch100_observed").GetBoolean());
         Assert.Equal(3, snapshotUrls.Count);
         Assert.All(snapshotUrls, u => Assert.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval,primarychannel", u));
         Assert.All(snapshotUrls, u => Assert.DoesNotContain("status_raw", u));

@@ -318,7 +318,7 @@ public static class PrtgJointCapacityEvaluator
             snapshotTableRequestsPerSecond, profileTableRequestsPerSecond);
 
     /// <summary>
-    /// Bounds a single <=50-ID snapshot recovery request by the configured HTTP timeout while
+    /// Bounds a single <=100-ID snapshot recovery request by the configured HTTP timeout while
     /// reusing the existing plan's reserved rates and the currently qualified profile evidence.
     /// This temporary envelope does not create or replace full-scope five-sample evidence.
     /// </summary>

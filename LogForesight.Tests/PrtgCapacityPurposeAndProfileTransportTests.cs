@@ -8,6 +8,42 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgCapacityPurposeAndProfileTransportTests
 {
+    [Fact]
+    public void Fifteen_thousand_scope_qualifies_only_with_fresh_batch100_evidence_and_slow_batches_fail()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshotScope = new string('A', 64);
+        var endpoint = new string('B', 64);
+        var snapshotShape = new string('C', 64);
+        var profileSource = new string('D', 64);
+        var profileScope = new string('E', 64);
+        var strategy = new string('F', 64);
+        var profileShape = new string('1', 64);
+        var runtimeVersion = new string('2', 64);
+        var snapshotSamples = Enumerable.Range(0, 5).Select(i => new PrtgSnapshotCapacitySample(
+            snapshotScope, endpoint, snapshotShape, now.AddSeconds(i - 5), 100, 100, "success")).ToArray();
+
+        var snapshot = PrtgSnapshotCapacityEvaluator.Evaluate(15_000, "conservative", snapshotScope,
+            endpoint, snapshotShape, snapshotSamples, now);
+        var slowSnapshot = PrtgSnapshotCapacityEvaluator.Evaluate(15_000, "conservative", snapshotScope,
+            endpoint, snapshotShape, snapshotSamples.Select(s => s with { ElapsedMilliseconds = 10_000 }), now);
+        var profileSamples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(
+            profileSource, profileScope, strategy, profileShape, now.AddSeconds(i - 5), 500, 5,
+            12, 12, "success", null, runtimeVersion, 500)).ToArray();
+        var profile = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000, profileSource, profileScope,
+            strategy, profileShape, runtimeVersion, profileSamples, now);
+        var joint = PrtgJointCapacityEvaluator.EvaluateAgainstReservedRates(snapshot, profile,
+            new PrtgRequestBudgetUsage(0, 0, 0, 0, 0, TimeSpan.Zero, TimeSpan.Zero), 60, .457, 1.0);
+
+        Assert.Equal(150, snapshot.BatchCount);
+        Assert.Equal(100, snapshotSamples[0].RequestedSensorCount);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, snapshot.Status);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityExceeded, slowSnapshot.Status);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, profile.Status);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, joint.Status);
+        Assert.True(joint.GeneralResidualRequestsPerSecond > 0);
+    }
+
     [Theory]
     [InlineData(1, 4)]
     [InlineData(2, 6)]
@@ -476,7 +512,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         Assert.Equal("bounded_single_batch_recovery_timeout_bound_fit", safe.Reason);
 
         var oversized = PrtgJointCapacityEvaluator.EvaluateBoundedSingleBatchRecovery(
-            51, "conservative", profile, idle, 30, .4, .5);
+            101, "conservative", profile, idle, 30, .4, .5);
         Assert.False(oversized.Admitted);
         Assert.Equal("recovery_scope_not_one_bounded_batch", oversized.Reason);
 

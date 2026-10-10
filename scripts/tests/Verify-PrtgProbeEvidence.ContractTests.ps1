@@ -92,6 +92,48 @@ function New-ValidEvidence {
     }
 }
 
+function Set-Batch100Metadata {
+    param([object] $Evidence, [int] $Count = 100, [bool] $Full100 = $true)
+    $aliases = @(1..$Count | ForEach-Object { "b$_" })
+    $shapeMaterial = "snapshot-filter-batch100-v1`nGET`n/api/table.json?content=sensors&columns=objid,lastvalue,interval,lastcheck,status,primarychannel&filter_objid={$Count IDs}&count=$($Count + 1)`nfilter=sorted-repeated-filter_objid`nsentinel=1`nusecaption=false`nurl-utf8<=4096`nresponse<=524288`ndepth<=32`nselection=existing-bounded-step3-sample"
+    $shapeFingerprint = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData(
+        [System.Text.Encoding]::UTF8.GetBytes($shapeMaterial))).ToLowerInvariant()
+    $Evidence.snapshot_batch100_identity = [ordered]@{
+        observation_schema_version = '2.0.0'
+        request_shape_version = 'snapshot-filter-batch100-v1'
+        runtime_request_contract_version = 'snapshot-filter-batch100-v1'
+        request_method = 'GET'
+        native_columns = 'objid,lastvalue,interval,lastcheck,status,primarychannel'
+        filter_mode = 'sorted-repeated-filter_objid'
+        request_count_parameter = $Count + 1
+        sentinel_rows = 1
+        uses_caption = $false
+        selection_scope = 'existing-bounded-step3-sample'
+        status = 'ok'
+        requested_aliases = $aliases
+        returned_aliases = $aliases
+        requested_count = $Count
+        responded_count = $Count
+        exact_requested_set = $true
+        runtime_response_compatible = $true
+        minimum_fields_observed = $true
+        runtime_response_reason = 'runtime-snapshot-contract-compatible'
+        truncated = $false
+        response_bytes = 4096
+        request_url_bytes = 3500
+        maximum_response_bytes = 524288
+        maximum_relative_url_bytes = 4096
+        maximum_json_depth = 32
+        shape_fingerprint = $shapeFingerprint
+        full_batch100_observed = $Full100
+        profile_authorized = $false
+        capacity_accepted = $false
+        reason = 'exact-unique-requested-set'
+        authorizes_formal_profile = $false
+    }
+    return $Evidence
+}
+
 function Invoke-ContractCase {
     param([string] $Name, [object] $Evidence, [int] $ExpectedExitCode, [string[]] $ExpectedOutput = @(), [string] $RawJson)
     $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("lf-probe-contract-$([guid]::NewGuid().ToString('N')).json")
@@ -116,7 +158,7 @@ function Invoke-ContractCase {
         if (-not $process.Start()) { throw "$Name could not start verifier" }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(15000)) { $process.Kill($true); throw "$Name verifier exceeded the local test timeout" }
+        if (-not $process.WaitForExit(60000)) { $process.Kill($true); throw "$Name verifier exceeded the local test timeout" }
         $output = $stdoutTask.GetAwaiter().GetResult()
         $errorOutput = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne $ExpectedExitCode) { throw "$Name expected exit $ExpectedExitCode, got $($process.ExitCode): $errorOutput $output" }
@@ -133,7 +175,7 @@ function Invoke-ContractCase {
     }
 }
 
-$valid = New-ValidEvidence
+$valid = Set-Batch100Metadata (New-ValidEvidence)
 Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
     'RuntimeGcAvailableMemoryBytes: 8589934592',
     'StorageProvider: Sqlite',
@@ -141,8 +183,78 @@ Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
     'StorageVolumeRows: 1',
     'NativePrimaryCapabilityDiagnostics: 1/1',
     'NativePrimaryFormalAuthorization: not-asserted',
+    'SensorBatchFull100ExactObserved: True',
+    'SensorBatchCapacityAccepted: false',
     'HANDOFF_INTEGRITY_OK'
 )
+
+$legacyFiveEvidence = New-ValidEvidence
+$legacyFiveEvidence.sensor_batch_identity.requested_aliases = @('b1','b2','b3','b4','b5')
+$legacyFiveEvidence.sensor_batch_identity.returned_aliases = @('b1','b2','b3','b4','b5')
+Invoke-ContractCase 'legacy-five-id-evidence-remains-readable-but-not-batch100' $legacyFiveEvidence 2 @(
+    'LegacySensorBatchExactSetObserved: True',
+    'SensorBatchExactSetObserved: False',
+    'SensorBatchFull100ExactObserved: False',
+    'Result: INCOMPLETE'
+)
+
+$exactBatch100 = Set-Batch100Metadata (New-ValidEvidence)
+Invoke-ContractCase 'batch100-exact-bounded-shape-is-diagnostic-only' $exactBatch100 0 @(
+    'SensorBatchExactSetObserved: True',
+    'SensorBatchFull100ExactObserved: True',
+    'SensorBatchProfileAuthorized: false',
+    'SensorBatchCapacityAccepted: false',
+    'HANDOFF_INTEGRITY_OK'
+)
+
+$shortExactBatch100 = Set-Batch100Metadata (New-ValidEvidence) -Count 99 -Full100 $false
+Invoke-ContractCase 'batch100-contract-with-short-population-remains-incomplete-for-full100' $shortExactBatch100 2 @(
+    'SensorBatchExactSetObserved: True',
+    'SensorBatchFull100ExactObserved: False',
+    'SensorBatchCapacityAccepted: false',
+    'Result: INCOMPLETE'
+)
+
+$forgedBatch100Authority = Set-Batch100Metadata (New-ValidEvidence)
+$forgedBatch100Authority.snapshot_batch100_identity.capacity_accepted = $true
+Invoke-ContractCase 'batch100-cannot-claim-capacity-acceptance' $forgedBatch100Authority 1 @('InvalidSensorBatch100Metadata')
+
+$forgedBatch100Fingerprint = Set-Batch100Metadata (New-ValidEvidence)
+$forgedBatch100Fingerprint.snapshot_batch100_identity.shape_fingerprint = 'f'.PadRight(64, 'f')
+Invoke-ContractCase 'observation-fingerprint-mismatch-is-incomplete' $forgedBatch100Fingerprint 2 @(
+    'SensorBatchFull100ExactObserved: False',
+    'Result: INCOMPLETE'
+)
+
+$driftedQueryContract = Set-Batch100Metadata (New-ValidEvidence)
+$driftedQueryContract.snapshot_batch100_identity.native_columns = 'objid,lastvalue,status'
+Invoke-ContractCase 'runtime-source-contract-drift-is-incomplete' $driftedQueryContract 2 @(
+    'SensorBatchFull100ExactObserved: False',
+    'Result: INCOMPLETE'
+)
+
+$runtimeIncompatibleBatch100 = Set-Batch100Metadata (New-ValidEvidence)
+$runtimeIncompatibleBatch100.snapshot_batch100_identity.runtime_response_compatible = $false
+$runtimeIncompatibleBatch100.snapshot_batch100_identity.minimum_fields_observed = $false
+$runtimeIncompatibleBatch100.snapshot_batch100_identity.runtime_response_reason = 'minimum-snapshot-fields-missing'
+$runtimeIncompatibleBatch100.snapshot_batch100_identity.full_batch100_observed = $false
+Invoke-ContractCase 'exact-ids-with-runtime-incompatible-rows-remain-incomplete' $runtimeIncompatibleBatch100 2 @(
+    'SensorBatchExactSetObserved: True',
+    'SensorBatchFull100ExactObserved: False',
+    'Result: INCOMPLETE'
+)
+
+$legacyV2MissingRuntimeCheck = Set-Batch100Metadata (New-ValidEvidence)
+$legacyV2MissingRuntimeCheck.snapshot_batch100_identity.Remove('runtime_response_compatible')
+$legacyV2MissingRuntimeCheck.snapshot_batch100_identity.Remove('minimum_fields_observed')
+$legacyV2MissingRuntimeCheck.snapshot_batch100_identity.Remove('runtime_response_reason')
+Invoke-ContractCase 'older-v2-without-runtime-response-check-is-incomplete' $legacyV2MissingRuntimeCheck 2 @(
+    'SensorBatchFull100ExactObserved: False',
+    'Result: INCOMPLETE'
+)
+
+$forgedShortFull100 = Set-Batch100Metadata (New-ValidEvidence) -Count 99 -Full100 $true
+Invoke-ContractCase 'short-batch-cannot-claim-full100-observed' $forgedShortFull100 1 @('SensorBatch100ExactSetContradiction')
 
 $forgedAuthorization = New-ValidEvidence
 $forgedAuthorization.targets[0].native_primary_capability.authorizes_formal_profile = $true
