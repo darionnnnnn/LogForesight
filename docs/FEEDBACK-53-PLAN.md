@@ -50,7 +50,7 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R09／N6：修正快照服務的範圍補抓共用 Snapshot lane，核對受控來源的主通道欄位及連續採样证據；反例／修正／受影響回歸完成後移除本子項。
+- [ ] R09／N6：完成有界共同資料流的條件切換及合併分析驗證；受控九輪採樣已通過，不能代替 NetIQ／AI／PRTG 共同工作負載全項。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
 
@@ -1516,3 +1516,14 @@ fresh Main producer 受控採樣 v5 已核對 2 顆 current identities／2 顆 r
 主代理額外修正 null issue 與重複 JSON outbox 守門，核對实际 StorageBackend interceptor 可用，加入 SQL 命令斷言；33 列確實分成三頁 substr／length 投影，未 SELECT 完整 ContentJson 或 OriginalRiskContentJson。串流測試於小固定輸出預算停止，未枚舉完整 10000 筆圖形。序列化行為核對 [.NET 8 原始碼](https://github.com/dotnet/runtime/blob/v8.0.0/src/libraries/System.Text.Json/src/System/Text/Json/Serialization/Metadata/JsonTypeInfoOfT.WriteHelpers.cs)。
 
 Main Rebuild 0 errors／136 warnings；`round53-acceptance-byte-bounds-green-v1` 136／136、0 skipped、輸入零漂移，主代理核 TRX／driver／source receipts。此實作子項移出 TODO；原 AC／Q、原生來源、全角色、長期正式 provider 容量及整輪門檻維持未通過。
+
+
+### 2026-10-10 R09 範圍補抓不得占用下一輪快照額度
+
+fresh producer v5 的原始準備已核到 2 顆現有身分及 2 顆實際 raw-qualified profiles，但九輪只完成一輪。主代理定位兩因：owned fixture 未回應本輪 SnapshotColumns 明確要求的原生主通道 ID；產品服務則讓範圍 sensor／parent 補抓及 messages 使用快照專用 lane，背景 HTTP 可占用下一輪採樣的 slot。前者修測試來源且保留非原生標記，後者在 Main 建立 `round53-scope-residual-lane-red-v1` 兩項实际 HTTP 用途反例，均失敗。
+
+Main 僅讓正式 snapshot 使用 Snapshot lane；三種背景範圍工作改 General 剩餘額度，每次重用 client 更新用途及當前 admission fingerprint。所有請求仍共用同一 table 2／秒、historic 5／分鐘、4 在途、25% 餘裕、30 秒 scope slice 與版本／取消守門；未增加或繞過 quota。規格同步三批快照、整體四在途。
+
+主代理 Rebuild 0 errors／137 warnings；`round53-scope-residual-lane-green-v1` 129／129、0 skipped、輸入零漂移，核 TRX／driver／source。新增反例驗实际 parent／sensor／messages HTTP 的 lane、scope pacing 少於 30 秒、Queue 完成及同連線回復 Snapshot；完整快照與原有 request budget／取消／來源切換／容量守門回歸通過。此產品修正完成。
+
+owned v6 在固定 60 秒／輪條件完成九輪，並核到兩顆各兩個四 slot 的可信小時；但後續 combined 條件重新核驗遇 synthetic raw fixture 的 logical／real UTC 不一致，整個 smoke 保留失敗（InputDrift=0、owned cleanup complete）。九輪採樣證據不冒稱共同流程全過；正在修 bounded harness 並重驗。所有 A0、全角色、3000／15000／180 日正式 provider 與整輪 gates 維持開啟。

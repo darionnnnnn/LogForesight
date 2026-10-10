@@ -1226,7 +1226,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
             PrtgSensorBackfillResult result;
             List<long> pending;
-            var client = GetClient(settings);
+            var client = GetClient(settings, PrtgRequestPurpose.General);
             {
                 var overrideDevices = await LookupOverrideDevicesAsync(client, missingOverride, ct);
                 // 守門覆寫清單的裝置排在前面：它們進不了鏡像時守門會靜默失效，不能被大批新進範圍的裝置擠到後面幾輪
@@ -1374,7 +1374,7 @@ public class PrtgSnapshotHostedService : BackgroundService
 
             try
             {
-                var client = GetClient(settings);
+                var client = GetClient(settings, PrtgRequestPurpose.General);
                 client.OperationCheckpoint = () =>
                 {
                     _operationCheckpoint?.Invoke();
@@ -1878,7 +1878,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 設定指紋（連線位址、認證方式、帳號、各憑證密文、逾時、忽略憑證錯誤）不同才換新的。
     /// 只由 ExecuteAsync 的單一迴圈呼叫，沒有併發。
     /// </summary>
-    private PrtgClient GetClient(SystemSettings settings)
+    private PrtgClient GetClient(SystemSettings settings, PrtgRequestPurpose purpose = PrtgRequestPurpose.Snapshot)
     {
         var fingerprint = string.Join("\u001f",
             settings.PrtgUrl ?? string.Empty,
@@ -1893,7 +1893,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         if (_client == null || _clientFingerprint != fingerprint)
         {
             var created = CreateClient(settings);
-            created.RequestPurpose = PrtgRequestPurpose.Snapshot;
+            created.RequestPurpose = purpose;
             created.AdmissionPlanFingerprint = _admissionPlanFingerprint;
             _client?.Dispose();
             _client = created;
@@ -1901,6 +1901,9 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
         // Connection reuse is keyed by transport settings, while shared admission is renewed
         // independently. Refresh the authorization proof for every use of the cached client.
+        // Scope discovery and messages consume residual capacity, preserving the dedicated
+        // snapshot cadence. Refresh purpose even when the same transport client is reused.
+        _client.RequestPurpose = purpose;
         _client.AdmissionPlanFingerprint = _admissionPlanFingerprint;
         _client.OperationCheckpoint = _operationCheckpoint;
         return _client;

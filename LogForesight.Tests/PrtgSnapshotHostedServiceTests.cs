@@ -3504,6 +3504,69 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ScopeBackfillUsesResidualLaneWithoutSpendingTheNextSnapshotSlot()
+    {
+        SetupScopeWithoutPending("9001");
+        var service = CreateService();
+        var purposes = new List<(string Url, PrtgRequestPurpose Purpose)>();
+        var clientField = typeof(PrtgSnapshotHostedService).GetField("_client",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var url = request.RequestUri!.ToString();
+            purposes.Add((url, Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose));
+            if (IsParentLookupUrl(url)) return Task.FromResult(JsonResponse(
+                "{\"treesize\":1,\"sensors\":[{\"objid\":9001,\"parentid\":77}]}"));
+            if (IsBackfillUrl(url)) return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
+            return Task.FromResult(FilteredValues(url));
+        };
+        await service.TickAsync();
+        Assert.Single(purposes.Where(p => IsSnapshotUrl(p.Url)));
+        Assert.All(purposes.Where(p => IsSnapshotUrl(p.Url)), p => Assert.Equal(PrtgRequestPurpose.Snapshot, p.Purpose));
+        var backfill = purposes.Where(p => IsParentLookupUrl(p.Url) || IsBackfillUrl(p.Url)).ToArray();
+        Assert.True(backfill.Length >= 2);
+        Assert.All(backfill, p => Assert.Equal(PrtgRequestPurpose.General, p.Purpose));
+        Assert.True(Assert.Single(_fixtureBudgets).Clock.Elapsed < TimeSpan.FromSeconds(30),
+            "Bounded scope work must use residual quota instead of spending several minutes of reserved snapshot cadence.");
+    }
+
+    [Fact]
+    public async Task RecentMessagesUseResidualLaneAndTheReusedClientReturnsToSnapshotPurpose()
+    {
+        const long deviceId = 702;
+        SeedManualBusinessDevice(deviceId);
+        SetupOkDevices([10]);
+        SeedCurrentMappedJointAdmission();
+        var today = DateTime.Today;
+        SeedCompletedMappedQueueRows(today);
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(
+            [new PrtgSensorRow { Objid = 703, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" }],
+            DateTime.Now, NewRecentStateQueueItem(deviceId, today));
+        var service = CreateService();
+        service.Now = () => today.AddHours(12);
+        var purposes = new List<PrtgRequestPurpose>();
+        var snapshotPurposes = new List<PrtgRequestPurpose>();
+        var clientField = typeof(PrtgSnapshotHostedService).GetField("_client",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        _stubHandler.OnSend = (request, _) =>
+        {
+            if (request.RequestUri!.ToString().Contains("columns=" + PrtgSnapshotTargetResolver.SnapshotColumns, StringComparison.Ordinal))
+                snapshotPurposes.Add(Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose);
+            if (request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal))
+                purposes.Add(Assert.IsType<PrtgClient>(clientField.GetValue(service)).RequestPurpose);
+            return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[],\"messages\":[]}"));
+        };
+        await service.ScopeRefreshTickAsync();
+        Assert.NotEmpty(purposes);
+        Assert.All(purposes, purpose => Assert.Equal(PrtgRequestPurpose.General, purpose));
+        Assert.NotNull(QueueItemForDevice(deviceId).CompletedAtUtc);
+        Assert.True(Assert.Single(_fixtureBudgets).Clock.Elapsed < TimeSpan.FromSeconds(30));
+        await service.TickAsync();
+        Assert.NotEmpty(snapshotPurposes);
+        Assert.All(snapshotPurposes, purpose => Assert.Equal(PrtgRequestPurpose.Snapshot, purpose));
+    }
+
+    [Fact]
     public async Task 覆寫補抓_鏡像沒有的覆寫感測器_查到所在裝置後補抓並進入範圍()
     {
         SetupScopeWithoutPending("9001");
