@@ -50,6 +50,7 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
+- [ ] R05／N7：補驗收匯出的每日 ContentJson SQL 前綴分頁、通知 outbox 有界讀取及總輸出 bytes 上限；候選未經主代理驗證不算完成。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
 
@@ -1493,3 +1494,14 @@ R15／R17／R18自活動TODO刪除。A0同版原生PRTG24事實及3000／15000�
 Main 強制 Rebuild 0 errors／134 既有 warnings；當前 `round53-usefulness-segment-green-current-v3` 103／103、0 skipped、輸入零漂移，包含跨 100 顆分頁／最後一頁語意、超限時間線、正式啟停與試算穩定、私有資源 fence、原事故保留、UI 契約及實際四基準 controlled replay。主代理已核 TRX／driver／source receipts；v1 55／55 及 v2 fixture 編譯失敗保留。此段完成，N7 全項、A0／原生來源、全角色瀏覽器與 3000／15000／180 日共同容量仍未裁定通過。
 
 續查另定位驗收匯出的事故清單與時間線全量讀取風險，已接續補有界輸出、範圍完整性及主機查證入口，尚未以候選宣告完成。受控共同負載改以 fresh Main producer 及明確 binding→raw proof 路徑重驗；舊 1／9 cycle RED 與零 current profile 準備度保持未通過。
+
+
+### 2026-10-10 N7 驗收匯出範圍及事故主機日補修
+
+主代理核對有效反例：`round53-acceptance-bounds-red-v1` 四項重現事故全域超過 1000 筆未標示不完整及既存非法事故文件仍允許覆寫；`round53-acceptance-local-day-red-v1` 六項中的三項重現 UTC 儲存的凌晨事故漏出本機主機日。編譯失敗的 green-v1 保留，不算產品反例。
+
+事故文件改有界讀取與原子驗證，過大、缺失、null、錯誤歸戶及超 1000 筆保留未知並拒絕危險覆寫；全域輸出至多 1000 筆，先按主機／期間篩選。時間線沿 100 顆身分頁及 12 列有界 prefix，僅匯出摘要，不輸出歷史陣列或 lease；私有與未歸戶資源不洩漏 ID／數量。完整性未知時不計效益比較。匯出 schema 明示 FormatVersion 2／bounded-summary-v1；事故日期依既有 NetIQ 的服務本機主機日，與 PRTG 採樣分析時區分開。管理頁補主機專屬事故查證與過期回應守門，說明文件同步。
+
+Main Rebuild 0 errors／136 warnings；當前 `round53-acceptance-bounds-green-v5` 118／118、0 skipped、輸入零漂移，主代理已核 TRX／driver／source receipts，涵蓋讀寫、ACL、全域上限、正向摘要與六種主機日邊界及管理頁契約。此段完成；每日 ContentJson／outbox／最終序列化 bytes 上限續列 §5.1，不宣稱此段已解決全部記憶體風險。A0／原生來源、全角色瀏覽器、3000／15000／180 日共同容量及整輪驗收均仍未通過。
+
+fresh Main producer 受控採樣 v5 已核對 2 顆 current identities／2 顆 raw-qualified profiles 的精確集合，但 9 輪僅完成 1 輪，第二輪超過固定 60 秒期限；保留 RED 並追查，不縮小完整容量分母、不放寬時限或冒稱連續採樣通過。

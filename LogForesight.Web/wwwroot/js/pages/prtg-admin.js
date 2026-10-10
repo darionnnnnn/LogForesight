@@ -4524,9 +4524,19 @@ if (acceptanceExport) {
     const status = document.getElementById('prtg-acceptance-status');
     let acceptanceLabels = [];
     const existing = document.getElementById('prtg-acceptance-existing');
+    let acceptanceLabelRequest = 0;
     async function refreshAcceptanceLabels() {
+        const requestId = ++acceptanceLabelRequest;
+        const hostId = document.getElementById('prtg-acceptance-host')?.value;
+        if (!hostId) {
+            acceptanceLabels = []; existing.replaceChildren();
+            const empty = document.createElement('option'); empty.value = ''; empty.textContent = '新增查證'; existing.append(empty);
+            status.textContent = '請先選擇主機，再載入該主機完整查證清單。'; return null;
+        }
         try {
-            const data = await api.get('/api/prtg/acceptance/incidents'); acceptanceLabels = data.items;
+            const data = await api.get(`/api/prtg/acceptance/incidents?hostId=${encodeURIComponent(hostId)}`);
+            if (requestId !== acceptanceLabelRequest || hostId !== document.getElementById('prtg-acceptance-host')?.value) return null;
+            acceptanceLabels = Array.isArray(data.items) ? data.items : [];
             existing.replaceChildren();
             const empty = document.createElement('option'); empty.value = ''; empty.textContent = '新增查證'; existing.append(empty);
             acceptanceLabels.forEach((item, index) => {
@@ -4535,11 +4545,24 @@ if (acceptanceExport) {
                 option.textContent = `${item.incidentId}｜主機 #${item.hostId}｜${item.confirmedPositive == null ? '待查證' : item.confirmedPositive ? '需要處理' : '誤報'}｜${outcomeLabel}`;
                 existing.append(option);
             });
-        } catch (error) { status.textContent = `查證清單讀取失敗：${error.message}`; }
+            status.textContent = data.scopeComplete === false
+                ? `主機 #${hostId} 的查證清單不完整（${data.scopeStatus || '資料上限或格式錯誤'}）；統計已停用。`
+                : `主機 #${hostId} 已載入 ${data.itemsTotal ?? acceptanceLabels.length} 筆完整查證。`;
+            return data;
+        } catch (error) {
+            if (requestId !== acceptanceLabelRequest || hostId !== document.getElementById('prtg-acceptance-host')?.value) return null;
+            acceptanceLabels = []; existing.replaceChildren();
+            const empty = document.createElement('option'); empty.value = ''; empty.textContent = '新增查證'; existing.append(empty);
+            status.textContent = `查證清單讀取失敗：${error.message}`; return null;
+        }
     }
+    document.getElementById('prtg-acceptance-host')?.addEventListener('change', () => {
+        existing.value = ''; const form = document.getElementById('prtg-acceptance-label-form'); const hostId = document.getElementById('prtg-acceptance-host').value;
+        form.reset(); document.getElementById('prtg-acceptance-host').value = hostId; refreshAcceptanceLabels();
+    });
     existing.addEventListener('change', () => {
         const form = document.getElementById('prtg-acceptance-label-form');
-        if (existing.value === '') { form.reset(); return; }
+        if (existing.value === '') { const hostId = document.getElementById('prtg-acceptance-host').value; form.reset(); document.getElementById('prtg-acceptance-host').value = hostId; return; }
         const item = acceptanceLabels[Number(existing.value)];
         const set = (id, value) => { document.getElementById(`prtg-acceptance-${id}`).value = value ?? ''; };
         for (const [id, key] of Object.entries({ 'incident-id': 'incidentId', host: 'hostId', evidence: 'evidenceReference', reason: 'reason',
@@ -4556,7 +4579,7 @@ if (acceptanceExport) {
         status.textContent = '已載入既有查證；修改後按保存，會更新同主機／事故識別。';
     });
     document.getElementById('prtg-acceptance-labels-refresh').addEventListener('click', refreshAcceptanceLabels);
-    refreshAcceptanceLabels();
+    if (document.getElementById('prtg-acceptance-host')?.value) refreshAcceptanceLabels();
     acceptanceExport.addEventListener('click', () => {
         const from = document.getElementById('prtg-effectiveness-from').value;
         const through = document.getElementById('prtg-effectiveness-through').value;
@@ -4564,10 +4587,12 @@ if (acceptanceExport) {
         const link = document.createElement('a');
         link.href = appUrl(`/api/prtg/acceptance/export?from=${encodeURIComponent(from)}&through=${encodeURIComponent(through)}`);
         link.download = ''; link.click();
-        status.textContent = '已請求下載；包內 ScopeComplete 為 false 時代表超過匯出上限，須縮短期間。';
+        status.textContent = '已請求下載；包內 ScopeComplete 為 false 時代表有資料超限、缺失或無法驗證，請依 ScopeStatus 核對後再使用。';
     });
     document.getElementById('prtg-acceptance-label-form').addEventListener('submit', async event => {
         event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
+        const submittedHostId = document.getElementById('prtg-acceptance-host').value;
+        const isSubmittedHostCurrent = () => submittedHostId === document.getElementById('prtg-acceptance-host').value;
         try {
             const value = id => document.getElementById(`prtg-acceptance-${id}`).value;
             const cost = id => value(`cost-${id}`) === '' ? null : Number(value(`cost-${id}`));
@@ -4582,10 +4607,16 @@ if (acceptanceExport) {
                 netiqVerificationMinutes: cost('netiq'), nativePrtgVerificationMinutes: cost('native'),
                 simpleUnionVerificationMinutes: cost('union'), combinedVerificationMinutes: cost('combined') };
             const data = await api.put('/api/prtg/acceptance/incidents', incident);
+            if (!isSubmittedHostCurrent()) return;
             await refreshAcceptanceLabels();
+            if (!isSubmittedHostCurrent()) return;
             const c = data.comparison;
-            status.textContent = `已保存。查證事故 ${c.incidents} 筆、待查證 ${c.unreviewed} 筆、預防案例 ${c.prevented} 筆、結果未知 ${c.outcomeUnknown} 筆、真陽性 ${c.confirmedPositive} 筆、誤報 ${c.confirmedFalsePositive} 筆；具當時證據 ${c.evidenceQualified} 筆、完整基準 ${c.fullyCompared} 筆、比全部基準提早 ${c.incrementalBeforeAllBaselines} 筆。${c.limitations}`;
-        } catch (error) { status.textContent = `保存失敗：${error.message}`; }
+            if (data.scopeComplete !== true || !c) {
+                status.textContent = `已保存；主機查證範圍不完整（${data.scopeStatus || '未知'}），不顯示部分統計。`;
+            } else {
+                status.textContent = `已保存。主機查證 ${c.incidents} 筆、待查證 ${c.unreviewed} 筆、預防案例 ${c.prevented} 筆、結果未知 ${c.outcomeUnknown} 筆、真陽性 ${c.confirmedPositive} 筆、誤報 ${c.confirmedFalsePositive} 筆；具當時證據 ${c.evidenceQualified} 筆、完整基準 ${c.fullyCompared} 筆、比全部基準提早 ${c.incrementalBeforeAllBaselines} 筆。${c.limitations}`;
+            }
+        } catch (error) { if (isSubmittedHostCurrent()) status.textContent = `保存失敗：${error.message}`; }
         finally { button.disabled = false; }
     });
 }
