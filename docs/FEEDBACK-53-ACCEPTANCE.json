@@ -7876,5 +7876,28 @@
     "formalProfileAuthorized": false,
     "capacityAccepted": false,
     "wholeRoundAccepted": false
+  },
+  "raw_proof_profile_refresh_20261010": {
+    "status": "component-verified",
+    "purpose": "Persist fence-bound profile refresh notice atomically with raw proof; recover restart and bypass cooldown only for current proof.",
+    "regression": [
+      {
+        "path": ".gemini-tasks/primary-results/proof-refresh-main-green/proof-refresh-main-green.trx",
+        "passed": 26,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "path": ".gemini-tasks/primary-results/proof-refresh-main-seam-green/proof-refresh-main-seam-green.trx",
+        "passed": 94,
+        "failed": 0,
+        "skipped": 0
+      }
+    ],
+    "limits": "15000 notices; 4096 UTF-8 bytes each; depth32; 100-row reads; bounded orphan cleanup; exact-content CAS.",
+    "actual_new_profile_api_seam": "Prior six-sensor profile-not-ready RED retained; rerun after batch transport integration.",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "wholeRoundAccepted": false
   }
 }

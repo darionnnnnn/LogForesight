@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Web.Services;
@@ -13,6 +14,9 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
     public const string OverviewKey = "prtg_trusted_profile_refresh_v1";
     public const int MaximumOverviewBytes = 16 * 1024;
     public const int MaximumPageBytes = 64 * 1024;
+    public const int MaximumProofRefreshNoticeBytes = 4096;
+    public const int MaximumPendingProofRefreshNotices = PrtgTrustedSamplingProofRefreshRequest.MaximumPending;
+    public const string ProofRefreshNoticePrefix = PrtgTrustedSamplingProofRefreshRequest.BlobKeyPrefix;
     private readonly EfJsonBlobStore overviewBlob = backend.Blob(OverviewKey);
 
     public sealed class Overview
@@ -55,6 +59,194 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
         public DateTimeOffset UpdatedAtUtc { get; set; }
         public List<SensorState> Sensors { get; set; } = [];
     }
+
+    public void QueueProofRefresh(PrtgTrustedSamplingProofRefreshRequest notice)
+    {
+        ValidateNotice(notice);
+        var blob = backend.Blob(ProofRefreshNoticeKey(notice.SensorObjid));
+        var stored = blob.MutateWithContext((ctx, current) =>
+        {
+            PrtgTrustedSamplingProofRefreshRequest? prior = null;
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                prior = ParseNotice(current, current.Length);
+            }
+            // Do not let an older notification replace a newer binding/proof revision.
+            if (prior is not null && (prior.BindingRevision > notice.BindingRevision ||
+                prior.BindingRevision == notice.BindingRevision && prior.QueuedAtUtc > notice.QueuedAtUtc))
+                return (current!, false);
+            if (prior is null)
+            {
+                var policyMeta = ctx.Blobs.AsNoTracking()
+                    .Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
+                    .Select(row => new { Prefix = row.Content.Substring(0, 512 * 1024 + 1), Length = row.Content.Length })
+                    .SingleOrDefault();
+                if (policyMeta is null || policyMeta.Length > 512 * 1024 ||
+                    Encoding.UTF8.GetByteCount(policyMeta.Prefix) > 512 * 1024)
+                    throw new InvalidDataException("profile-refresh-policy-size-invalid");
+                using var policyDocument = JsonDocument.Parse(policyMeta.Prefix,
+                    new JsonDocumentOptions { MaxDepth = 32 });
+                var policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyMeta.Prefix)
+                    ?? throw new InvalidDataException("profile-refresh-policy-invalid");
+                if (policyDocument.RootElement.ValueKind != JsonValueKind.Object ||
+                    policy.Revision != notice.PolicyRevision || !policy.SensorIds.Contains(notice.SensorObjid) ||
+                    policy.SensorIds.Count > MaximumPendingProofRefreshNotices)
+                    throw new InvalidOperationException("profile-refresh-proof-notice-policy-changed");
+                PrtgTrustedSamplingProofRefreshRequest.MakeRoomForNewRequest(ctx, notice.SensorObjid,
+                    policy.SensorIds);
+            }
+            var serialized = JsonSerializer.Serialize(notice);
+            if (Encoding.UTF8.GetByteCount(serialized) > MaximumProofRefreshNoticeBytes)
+                throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
+            return (serialized, true);
+        }, MaximumProofRefreshNoticeBytes, isolationLevel: System.Data.IsolationLevel.Serializable);
+        if (!stored) return;
+        // The notice itself is durable. This overview nudge makes it visible immediately and also
+        // survives a process restart if the in-memory wake signal is lost.
+        var now = DateTimeOffset.UtcNow;
+        overviewBlob.Mutate(raw =>
+        {
+            var overview = ParseOverview(raw);
+            overview.Cursor = 0;
+            overview.NextSweepAtUtc = now;
+            overview.UpdatedAtUtc = now;
+            return (SerializeBounded(overview, MaximumOverviewBytes, "profile-refresh-overview-cap-exceeded"), true);
+        });
+    }
+
+    public IReadOnlyDictionary<long, PrtgTrustedSamplingProofRefreshRequest> ReadProofRefreshNotices(IReadOnlyCollection<long> sensorIds)
+    {
+        if (sensorIds.Count is < 1 or > 100 || sensorIds.Any(id => id <= 0))
+            throw new ArgumentOutOfRangeException(nameof(sensorIds));
+        var keys = sensorIds.Distinct().Select(ProofRefreshNoticeKey).ToArray();
+        using var ctx = backend.CreateContext();
+        var rows = ctx.Blobs.AsNoTracking().Where(row => keys.Contains(row.BlobKey))
+            .Select(row => new { row.BlobKey,
+                Prefix = row.Content.Substring(0, MaximumProofRefreshNoticeBytes + 1),
+                Length = row.Content.Length }).ToArray();
+        var result = new Dictionary<long, PrtgTrustedSamplingProofRefreshRequest>();
+        foreach (var row in rows)
+        {
+            var notice = ParseNotice(row.Prefix, row.Length);
+            if (row.BlobKey != ProofRefreshNoticeKey(notice.SensorObjid) || !sensorIds.Contains(notice.SensorObjid))
+                throw new InvalidDataException("profile-refresh-proof-notice-key-invalid");
+            result[notice.SensorObjid] = notice;
+        }
+        return result;
+    }
+
+    public bool CompleteProofRefresh(PrtgTrustedSamplingProofRefreshRequest expected) => MutateProofRefreshNotice(expected, null);
+
+    public bool DeferProofRefresh(PrtgTrustedSamplingProofRefreshRequest expected, DateTimeOffset notBeforeUtc)
+    {
+        if (notBeforeUtc < expected.QueuedAtUtc || notBeforeUtc > DateTimeOffset.UtcNow.AddDays(2))
+            throw new ArgumentOutOfRangeException(nameof(notBeforeUtc));
+        return MutateProofRefreshNotice(expected, expected with { NotBeforeUtc = notBeforeUtc });
+    }
+
+    public DateTimeOffset? EarliestPendingProofRefresh(IReadOnlyCollection<long> currentSelectedSensorIds)
+    {
+        if (currentSelectedSensorIds.Count > 15_000 || currentSelectedSensorIds.Any(id => id <= 0))
+            throw new ArgumentOutOfRangeException(nameof(currentSelectedSensorIds));
+        var ids = currentSelectedSensorIds.Distinct().ToArray();
+        if (ids.Length == 0) return null;
+        using var ctx = backend.CreateContext();
+        if (!ctx.Blobs.AsNoTracking().Any(row => row.BlobKey.StartsWith(ProofRefreshNoticePrefix))) return null;
+        DateTimeOffset? earliest = null;
+        foreach (var batch in ids.Chunk(100))
+        {
+            var keys = batch.Select(ProofRefreshNoticeKey).ToArray();
+            var rows = ctx.Blobs.AsNoTracking().Where(row => keys.Contains(row.BlobKey))
+                .Select(row => new { row.BlobKey,
+                    Prefix = row.Content.Substring(0, MaximumProofRefreshNoticeBytes + 1),
+                    Length = row.Content.Length }).ToArray();
+            foreach (var row in rows)
+            {
+                var notice = ParseNotice(row.Prefix, row.Length);
+                if (row.BlobKey != ProofRefreshNoticeKey(notice.SensorObjid) || !batch.Contains(notice.SensorObjid))
+                    throw new InvalidDataException("profile-refresh-proof-notice-key-invalid");
+                if (earliest is null || notice.NotBeforeUtc < earliest) earliest = notice.NotBeforeUtc;
+            }
+        }
+        return earliest;
+    }
+
+    /// <summary>Delete a small bounded batch of notices for sensors no longer in the current policy scope.</summary>
+    public int PurgeOutOfScopeProofRefreshNotices(IReadOnlyCollection<long> currentSelectedSensorIds, int maximum = 100)
+    {
+        if (currentSelectedSensorIds.Count > 15_000 || currentSelectedSensorIds.Any(id => id <= 0))
+            throw new ArgumentOutOfRangeException(nameof(currentSelectedSensorIds));
+        var keep = currentSelectedSensorIds.ToHashSet();
+        using var ctx = backend.CreateContext();
+        var staleKeys = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey.StartsWith(ProofRefreshNoticePrefix))
+            .OrderBy(row => row.BlobKey).Select(row => row.BlobKey)
+            .Take(Math.Clamp(maximum, 1, 1000) + keep.Count).ToArray()
+            .Where(key => !long.TryParse(key.AsSpan(ProofRefreshNoticePrefix.Length),
+                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var id) || !keep.Contains(id))
+            .Take(Math.Clamp(maximum, 1, 1000)).ToArray();
+        if (staleKeys.Length == 0) return 0;
+        return ctx.Blobs.Where(row => staleKeys.Contains(row.BlobKey) && row.BlobKey.StartsWith(ProofRefreshNoticePrefix))
+            .ExecuteDelete();
+    }
+
+    private bool MutateProofRefreshNotice(PrtgTrustedSamplingProofRefreshRequest expected,
+        PrtgTrustedSamplingProofRefreshRequest? replacement)
+    {
+        ValidateNotice(expected);
+        using var ctx = backend.CreateContext();
+        var key = ProofRefreshNoticeKey(expected.SensorObjid);
+        var expectedJson = JsonSerializer.Serialize(expected);
+        if (replacement is null)
+            return ctx.Blobs.Where(item => item.BlobKey == key && item.Content == expectedJson)
+                .ExecuteDelete() == 1;
+        ValidateNotice(replacement);
+        var serialized = JsonSerializer.Serialize(replacement);
+        if (Encoding.UTF8.GetByteCount(serialized) > MaximumProofRefreshNoticeBytes)
+            throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
+        var now = DateTime.UtcNow;
+        return ctx.Blobs.Where(item => item.BlobKey == key && item.Content == expectedJson)
+            .ExecuteUpdate(setters => setters.SetProperty(item => item.Content, serialized)
+                .SetProperty(item => item.UpdatedAt, now)
+                .SetProperty(item => item.Version, item => item.Version + 1)) == 1;
+    }
+
+    private static string ProofRefreshNoticeKey(long sensorObjid) =>
+        ProofRefreshNoticePrefix + sensorObjid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static void ValidateNotice(PrtgTrustedSamplingProofRefreshRequest? notice)
+    {
+        if (notice is null || notice.SensorObjid <= 0 || notice.BindingRevision <= 0 || !Hash(notice.BindingFingerprint) ||
+            !Hash(notice.QualificationProofReference) || notice.IdentityEpoch <= 0 ||
+            !Opaque(notice.ResourceGeneration, 128) || !Opaque(notice.SourceGeneration, 128) ||
+            !Opaque(notice.ChannelGeneration, 128) || !Hash(notice.AuthorityContextFingerprint) ||
+            !Opaque(notice.SettingsRevision, 128) || !Opaque(notice.PolicyRevision, 128) ||
+            notice.QueuedAtUtc == default || notice.NotBeforeUtc < notice.QueuedAtUtc ||
+            notice.QueuedAtUtc.Offset != TimeSpan.Zero || notice.NotBeforeUtc.Offset != TimeSpan.Zero)
+            throw new ArgumentException("Invalid bounded raw-proof refresh notice.", nameof(notice));
+    }
+
+    private static PrtgTrustedSamplingProofRefreshRequest ParseNotice(string prefix, int length)
+    {
+        if (length > MaximumProofRefreshNoticeBytes || prefix.Length != length ||
+            Encoding.UTF8.GetByteCount(prefix) > MaximumProofRefreshNoticeBytes)
+            throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
+        using var document = JsonDocument.Parse(prefix, new JsonDocumentOptions { MaxDepth = 32 });
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("profile-refresh-proof-notice-invalid");
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in document.RootElement.EnumerateObject())
+            if (!names.Add(property.Name))
+                throw new InvalidDataException("profile-refresh-proof-notice-duplicate-field");
+        var notice = JsonSerializer.Deserialize<PrtgTrustedSamplingProofRefreshRequest>(prefix)
+            ?? throw new InvalidDataException("profile-refresh-proof-notice-invalid");
+        try { ValidateNotice(notice); }
+        catch (ArgumentException ex) { throw new InvalidDataException("profile-refresh-proof-notice-invalid", ex); }
+        return notice;
+    }
+
+    private static bool Hash(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
+    private static bool Opaque(string? value, int max) => !string.IsNullOrWhiteSpace(value) && value.Length <= max &&
+        !value.Contains("://", StringComparison.Ordinal) && value.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_');
 
     public Overview ReadOverview()
     {

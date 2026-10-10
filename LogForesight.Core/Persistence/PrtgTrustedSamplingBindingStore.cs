@@ -261,6 +261,38 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
                 new PrtgQualificationJobStateStore(backend).RecordQualificationInContext(
                     ctx, qualificationFence, qualified, now);
             PrtgResourceIdentityStore.IncrementAuthorityRevision(ctx, identity.HostId, now);
+            // Persist the follow-on profile request in the same SQL transaction as the raw proof.
+            // The profile refresh worker will revalidate every captured fence before probing.
+            var refreshRequest = new PrtgTrustedSamplingProofRefreshRequest(sensorId,
+                qualified.BindingRevision, qualified.BindingFingerprint, qualified.QualificationProofReference,
+                nextIdentity.Epoch, nextIdentity.Generation, nextIdentity.SourceGeneration,
+                nextIdentity.ChannelGeneration, qualified.AuthorityContextFingerprint,
+                settings.Revision, policy.Revision, now, now);
+            var refreshKey = PrtgTrustedSamplingProofRefreshRequest.BlobKeyPrefix +
+                sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var refreshJson = JsonSerializer.Serialize(refreshRequest);
+            if (Encoding.UTF8.GetByteCount(refreshJson) > 4096)
+                throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
+            var priorRefreshMeta = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == refreshKey)
+                .Select(row => new
+                {
+                    Prefix = row.Content.Substring(0, 4097),
+                    Length = row.Content.Length
+                }).SingleOrDefault();
+            if (priorRefreshMeta is not null &&
+                (priorRefreshMeta.Length > 4096 || Encoding.UTF8.GetByteCount(priorRefreshMeta.Prefix) > 4096))
+                throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
+            if (priorRefreshMeta is null)
+                PrtgTrustedSamplingProofRefreshRequest.MakeRoomForNewRequest(ctx, sensorId, policy.SensorIds);
+            var refreshRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == refreshKey);
+            if (refreshRow is null)
+                ctx.Blobs.Add(new BlobRow { BlobKey = refreshKey, Content = refreshJson, UpdatedAt = now.UtcDateTime, Version = 1 });
+            else
+            {
+                refreshRow.Content = refreshJson;
+                refreshRow.UpdatedAt = now.UtcDateTime;
+                refreshRow.Version++;
+            }
             return (JsonSerializer.Serialize(qualified, LfJsonOptions.Pretty), qualified);
         }, maxCurrentCharacters: PrtgTrustedSamplingBinding.MaximumSerializedBytes,
         isolationLevel: System.Data.IsolationLevel.Serializable,

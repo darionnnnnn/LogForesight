@@ -50,7 +50,6 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R09：raw qualification 完成後，以同交易持久通知促使當前 profile 自動刷新；重啟、既有一小時冷卻、過期來源及通知大小邊界均須驗證。
 - [ ] R05／N6：profile 改採精確集合核對的分批共同資料查詢，依真實 request shape 重算完整 15000 顆刷新與快照容量；不降低 25% 餘裕或週期性採樣。
 - [ ] R15／N5：管理操作在共同剩餘額度必然不足時前置明示等待；缺 raw proof 接耐久資格流程；啟用後的 qualification pilot 不繞過正式 lane／來源守門。
 - [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣（精確全分頁核對及唯讀收集工具已完成），依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
@@ -1592,3 +1591,12 @@ profile-pacing-red 與 profile-runtime-count-red 各一項有效 RED；修正後
 主代理最終 Main 定向回歸 100／100、零略過，證據 sensor-batch-probe-final TRX；包含 16 個新增 exact-set／隱私／大小／深度及實際 probe 接線案例。初輪 99 通過、一個舊 fixture 因新增必要查詢仍斷言三次而失敗，修 fixture 後完整重跑，不算來源失敗。離線 verifier 契約 24／24，證據 sensor-batch-verifier-contract-v2.log；舊證據缺新欄位明示 INCOMPLETE，矛盾成功或正式授權宣告拒絕。
 
 [PRTG 官方 Multiple Object Property or Status](https://www.paessler.com/manuals/prtg/multiple_object_property_or_status) 支援有界 table 查詢、count 與原始數值，但未明確保證重複 filter_objid 的 OR 語意；過往分批回應亦不足以證明唯一集合。故以既有實際用法繼續實作，逐次精確驗證且將來源差異交給環境探測核對，不擴大為全站退路或先認定兼容通過。此探測交付子項完成；§5 已明列新發現的 raw proof 自動刷新、15000 顆請求量及管理操作剩餘配額修正，原生來源／容量／整輪 gate 保留。
+
+
+### 2026-10-10 raw proof 同交易持久通知與自動 profile 刷新
+
+raw qualification 的 proof、作業確認與當前來源／綁定 fence 通知在同一 SQL 交易保存；程序在 commit 後中斷或未收到記憶體喚醒，worker 仍可從持久通知恢復。只有全部 current fences 一致的新 proof 可提前略過既有一小時冷卻；過期、停用、不可用或缺 proof 保持明確等待，不取數或產生正式風險。通知完成／延後以精確內容 CAS，舊消費者不能刪除後來的新 proof 通知。
+
+通知最多 15000 筆、每筆 4096 UTF-8 bytes、depth32；SQL 僅讀有界前綴及長度，讀取每頁 100。滿額時只在同交易淘汰不屬目前範圍的舊 key；不丟掉現有作用集合。零通知先用存在性查詢返回，舊範圍每切片有界清理。缺 raw proof 的 sensor 顯示 raw-qualification-pending，不反覆呼叫原生 profile。
+
+主代理在本輪 Main 工作區建置及核對兩個互斥測試集合：proof-refresh-main-green 26／26，以及 proof-refresh-main-seam-green 94／94，共 120 項、零失敗／略過；涵蓋真實 SQLite RecordQualification、滿額舊通知、冷卻、CAS、來源／binding 撤銷、資格作業接線、原生 probe 與取消。此自動刷新元件待辦移除；先前六顆實際 API 的 profile-not-ready RED 保留，完整新 profile GET 資料流會在分批傳輸整合後重驗。這些元件結果不等於 15000 顆容量、原生來源或整輪 AC／Q 通過。

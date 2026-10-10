@@ -45,6 +45,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
     private const int PageSize = 100;
     private readonly string owner = Guid.NewGuid().ToString("N");
     private readonly PrtgTrustedSamplingProfileRefreshStateStore stateStore = new(backend);
+    private readonly SemaphoreSlim proofRefreshWake = new(0, 1);
     private long leaseVersion;
 
     private sealed class SensorState
@@ -88,9 +89,46 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
             try { await RunSliceAsync(stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex) { logger.LogWarning(ex, "PRTG trusted profile refresh slice failed"); }
-            await Task.Delay(TimeSpan.FromSeconds(
+            await proofRefreshWake.WaitAsync(TimeSpan.FromSeconds(
                 PrtgJointCapacityEvaluator.ProfileRefreshInterSliceDelaySeconds), stoppingToken);
         }
+    }
+
+    /// <summary>Persist and wake a bounded refresh request after a raw proof is committed.</summary>
+    public PrtgTrustedSamplingProofRefreshRequest? QueueCurrentQualificationProofRefresh(
+        long sensorObjid)
+    {
+        if (sensorObjid <= 0) throw new ArgumentOutOfRangeException(nameof(sensorObjid));
+        var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) || !policy.SensorIds.Contains(sensorObjid)) return null;
+        var binding = new PrtgTrustedSamplingBindingStore(backend).Get(sensorObjid);
+        var identity = backend.PrtgStore().GetResourceIdentity(sensorObjid);
+        var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+        var context = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy, strategyName,
+            PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes);
+        if (binding is null || string.IsNullOrWhiteSpace(binding.QualificationProofReference) ||
+            !identity.Active || identity.PendingReconciliation || identity.SourceGeneration != policy.SourceGeneration ||
+            !policy.HostIds.Contains(identity.HostId) || identity.ChannelFingerprint != binding.BindingFingerprint ||
+            !binding.Matches(sensorObjid, context, policy.SourceGeneration, identity.Generation,
+                identity.Epoch, identity.ChannelGeneration) ||
+            binding.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference ||
+            binding.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
+            binding.AnalysisTimeZoneId != policy.AnalysisTimeZoneId)
+            return null;
+        var now = DateTimeOffset.UtcNow;
+        var notice = new PrtgTrustedSamplingProofRefreshRequest(sensorObjid,
+            binding.BindingRevision, binding.BindingFingerprint, binding.QualificationProofReference,
+            identity.Epoch, identity.Generation, identity.SourceGeneration, identity.ChannelGeneration,
+            context, settings.Revision, policy.Revision, now, now);
+        new PrtgTrustedSamplingProfileRefreshStateStore(backend).QueueProofRefresh(notice);
+        WakeForPendingProofRefresh();
+        return notice;
+    }
+
+    public void WakeForPendingProofRefresh()
+    {
+        try { proofRefreshWake.Release(); } catch (SemaphoreFullException) { }
     }
 
     public async Task RunSliceAsync(CancellationToken ct)
@@ -100,6 +138,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
         using var workCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var heartbeat = RenewLeaseLoopAsync(version, workCts);
         var deadline = DateTime.UtcNow + SliceDuration;
+        var purgedOutOfScopeProofNotices = false;
         try
         {
             stateStore.PurgeExpiredPages(DateTimeOffset.UtcNow.AddDays(-14));
@@ -117,6 +156,11 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                         s.LastWaitingReason = s.LastOutcome; s.UpdatedAtUtc = DateTimeOffset.UtcNow; });
                     return;
                 }
+                if (!purgedOutOfScopeProofNotices)
+                {
+                    stateStore.PurgeOutOfScopeProofRefreshNotices(ids);
+                    purgedOutOfScopeProofNotices = true;
+                }
 
                 var catalog = PrtgResourceCurrentRuleCatalog.Load(backend);
                 var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
@@ -125,10 +169,14 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     .GetCurrent(policy, strategyName, strategyMinutes, DateTime.UtcNow);
                 var scopeFingerprint = ScopeFingerprint(policy, settings, strategy, catalog, ids);
                 var state = PrepareScope(scopeFingerprint, ids.Length);
-                if (state.Cursor == 0 && state.NextSweepAtUtc > DateTimeOffset.UtcNow) return;
+                if (state.Cursor == 0 && state.NextSweepAtUtc > DateTimeOffset.UtcNow)
+                {
+                    var proofRefreshDue = stateStore.EarliestPendingProofRefresh(ids);
+                    if (proofRefreshDue is null || proofRefreshDue > DateTimeOffset.UtcNow) return;
+                }
                 if (state.Cursor >= ids.Length)
                 {
-                    CompleteSweep();
+                    CompleteSweep(ids);
                     return;
                 }
 
@@ -137,7 +185,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     .Select(h => h.HostId).ToHashSet();
                 var pageStart = state.Cursor;
                 var pageIds = ids.Skip(pageStart).Take(PageSize).ToArray();
-                if (pageIds.Length == 0) { CompleteSweep(); return; }
+                if (pageIds.Length == 0) { CompleteSweep(ids); return; }
                 var pageIndex = pageStart / PageSize;
                 var previousPage = ReadPageWithMigration(state, scopeFingerprint, pageIndex);
                 var priorById = previousPage.Sensors.ToDictionary(row => row.SensorObjid);
@@ -145,6 +193,8 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     .ToDictionary(row => row.SensorObjid);
                 var identities = backend.PrtgStore().GetResourceIdentities(pageIds);
                 var profiles = new PrtgTrustedSamplingProfileStore(backend).GetMany(pageIds);
+                var bindings = new PrtgTrustedSamplingBindingStore(backend).GetMany(pageIds);
+                var proofRefreshNotices = stateStore.ReadProofRefreshNotices(pageIds);
                 var candidates = new List<long>();
                 var pageStates = new List<(long Id, SensorState State)>();
                 var now = DateTimeOffset.UtcNow;
@@ -154,6 +204,15 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     metadata.TryGetValue(id, out var sensor);
                     identities.TryGetValue(id, out var identity);
                     profiles.TryGetValue(id, out var profile);
+                    bindings.TryGetValue(id, out var binding);
+                    proofRefreshNotices.TryGetValue(id, out var proofNotice);
+                    var proofNoticeCurrent = proofNotice is not null && IsCurrentProofRefreshNotice(
+                        proofNotice, binding, identity, settings, policy);
+                    if (proofNotice is not null && !proofNoticeCurrent)
+                    {
+                        _ = stateStore.CompleteProofRefresh(proofNotice);
+                        proofNotice = null;
+                    }
                     var family = FamilyForCategory(sensor?.Category);
                     var ruleFingerprint = family switch
                     {
@@ -182,6 +241,8 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     };
                     if (!eligible)
                     {
+                        if (proofNoticeCurrent && proofNotice is not null)
+                            _ = stateStore.CompleteProofRefresh(proofNotice);
                         next.Status = "unavailable";
                         next.Reason = sensor is null ? "sensor-missing" : family is null ? "unsupported-category" :
                             ruleFingerprint is null ? "no-enabled-current-rule" : sensor.Paused || sensor.DevicePaused
@@ -191,6 +252,17 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     }
                     else
                     {
+                        if (IsRawQualificationPending(binding))
+                        {
+                            // Qualification owns the bounded raw-evidence cadence. Do not issue
+                            // profile transport requests until its durable proof is committed.
+                            next.Status = "waiting";
+                            next.Reason = "raw-qualification-pending";
+                            next.NextAttemptAtUtc = null;
+                            next.LastOutcomeAtUtc = now;
+                            pageStates.Add((id, next));
+                            continue;
+                        }
                         var resolution = profile is null ? null : PrtgTrustedSamplingProfileResolver.Resolve(profile,
                             identity, policy, id, sensor!.SensorType, strategy, now.UtcDateTime, now.UtcDateTime);
                         if (resolution?.Ready == true && profile!.SourceMetadataObservedAtUtc > now - FreshRefreshAfter)
@@ -199,8 +271,11 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                             next.Reason = "current-profile-fresh";
                             next.NextAttemptAtUtc = profile.SourceMetadataObservedAtUtc + FreshRefreshAfter;
                             next.LastOutcomeAtUtc ??= profile.SourceMetadataObservedAtUtc;
+                            if (proofNoticeCurrent && proofNotice is not null)
+                                _ = stateStore.CompleteProofRefresh(proofNotice);
                         }
-                        else if (!changed && next.NextAttemptAtUtc > now)
+                        else if (ShouldHonorCooldown(changed, next.NextAttemptAtUtc,
+                            proofNoticeCurrent, proofNotice?.NotBeforeUtc, now))
                         {
                             // Current per-sensor contract is unchanged; preserve a finite cooldown.
                         }
@@ -263,6 +338,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                             .ToDictionary(id => id, id => profiles[id]);
                         RecordProbeRows(rows, scopeFingerprint, pageIndex, pageStates, requestCount,
                             elapsed.Elapsed.TotalSeconds, expectedProfiles, owner, version);
+                        UpdateProofRefreshNotices(rows, proofRefreshNotices, DateTimeOffset.UtcNow);
                     }
                     catch (OperationCanceledException ex) when (!ct.IsCancellationRequested &&
                         (workCts.IsCancellationRequested || ex.Message.Contains("profile-refresh-lease-lost", StringComparison.Ordinal)))
@@ -275,6 +351,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                         elapsed.Stop();
                         RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
                             requestCount, elapsed.Elapsed, "timeout", SafeReason(ex), WorkElapsed());
+                        DeferProofRefreshNotices(group, proofRefreshNotices, DateTimeOffset.UtcNow);
                         SaveSensorOutcomes(scopeFingerprint, pageIndex, pageStates, group.Select(id => (id, new SensorState
                         {
                             Eligible = true,
@@ -288,6 +365,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                         elapsed.Stop();
                         RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
                             requestCount, elapsed.Elapsed, "failed", SafeReason(ex), WorkElapsed());
+                        DeferProofRefreshNotices(group, proofRefreshNotices, DateTimeOffset.UtcNow);
                         SaveSensorOutcomes(scopeFingerprint, pageIndex, pageStates, group.Select(id => (id, new SensorState
                         {
                             Eligible = true,
@@ -327,7 +405,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                         s.LastWaitingReason = "selection-host-source-or-rule-changed"; s.UpdatedAtUtc = DateTimeOffset.UtcNow; });
                     return;
                 }
-                if (pageStart + pageIds.Length >= ids.Length) { CompleteSweep(); return; }
+                if (pageStart + pageIds.Length >= ids.Length) { CompleteSweep(ids); return; }
             }
         }
         finally
@@ -510,10 +588,12 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
         return s;
     });
 
-    private void CompleteSweep()
+    private void CompleteSweep(IReadOnlyCollection<long> currentSelectedSensorIds)
     {
         var current = ReadState();
         var earliest = stateStore.EarliestNextAttempt(current.ScopeFingerprint, (current.SelectedSensors + PageSize - 1) / PageSize);
+        var proofRefreshDue = stateStore.EarliestPendingProofRefresh(currentSelectedSensorIds);
+        if (proofRefreshDue.HasValue && (earliest is null || proofRefreshDue < earliest)) earliest = proofRefreshDue;
         Update(s =>
         {
             var now = DateTimeOffset.UtcNow;
@@ -522,6 +602,62 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
             s.PreviousScopeFingerprints.Clear();
             s.LastOutcome = "full-scope-traversal-complete"; s.UpdatedAtUtc = now;
         });
+    }
+
+    internal static bool IsCurrentProofRefreshNotice(
+        PrtgTrustedSamplingProofRefreshRequest notice,
+        PrtgTrustedSamplingBinding? binding, PrtgResourceIdentity? identity, SystemSettings settings,
+        PrtgMonitoringPolicy policy)
+    {
+        var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+        var authorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy,
+            strategyName, PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes);
+        return binding is not null && identity is { Active: true, PendingReconciliation: false } &&
+            settings.PrtgEnabled && policy.Ready(settings.PrtgUrl) && policy.SensorIds.Contains(notice.SensorObjid) &&
+            policy.HostIds.Contains(identity.HostId) &&
+            settings.Revision == notice.SettingsRevision && policy.Revision == notice.PolicyRevision &&
+            authorityContext == notice.AuthorityContextFingerprint &&
+            identity.SensorId == notice.SensorObjid && identity.Epoch == notice.IdentityEpoch &&
+            identity.Generation == notice.ResourceGeneration && identity.SourceGeneration == notice.SourceGeneration &&
+            identity.SourceGeneration == policy.SourceGeneration && identity.ChannelGeneration == notice.ChannelGeneration &&
+            identity.ChannelFingerprint == notice.BindingFingerprint &&
+            binding.SensorObjid == notice.SensorObjid && binding.BindingRevision == notice.BindingRevision &&
+            binding.BindingFingerprint == notice.BindingFingerprint &&
+            binding.QualificationProofReference == notice.QualificationProofReference &&
+            binding.TimeBasisEvidenceReference == policy.TimeBasisEvidenceReference &&
+            binding.RawTimestampTimeZoneId == policy.RawTimestampTimeZoneId &&
+            binding.AnalysisTimeZoneId == policy.AnalysisTimeZoneId &&
+            binding.Matches(notice.SensorObjid, authorityContext, policy.SourceGeneration,
+                identity.Generation, identity.Epoch, identity.ChannelGeneration);
+    }
+
+    internal static bool ShouldHonorCooldown(bool contractChanged, DateTimeOffset? nextAttemptAtUtc,
+        bool proofNoticeCurrent, DateTimeOffset? proofNoticeNotBeforeUtc, DateTimeOffset nowUtc) =>
+        !contractChanged && nextAttemptAtUtc > nowUtc &&
+        !(proofNoticeCurrent && proofNoticeNotBeforeUtc <= nowUtc);
+
+    internal static bool IsRawQualificationPending(PrtgTrustedSamplingBinding? binding) =>
+        binding is null || string.IsNullOrWhiteSpace(binding.QualificationProofReference);
+
+    private void UpdateProofRefreshNotices(IReadOnlyList<PrtgTrustedSamplingProbeRow> rows,
+        IReadOnlyDictionary<long, PrtgTrustedSamplingProofRefreshRequest> notices,
+        DateTimeOffset now)
+    {
+        foreach (var row in rows)
+        {
+            if (!notices.TryGetValue(row.SensorObjid, out var notice)) continue;
+            if (row.ProfileRecorded) _ = stateStore.CompleteProofRefresh(notice);
+            else _ = stateStore.DeferProofRefresh(notice, now + ProbeCooldown);
+        }
+    }
+
+    private void DeferProofRefreshNotices(IEnumerable<long> sensorIds,
+        IReadOnlyDictionary<long, PrtgTrustedSamplingProofRefreshRequest> notices,
+        DateTimeOffset now)
+    {
+        foreach (var sensorId in sensorIds.Distinct())
+            if (notices.TryGetValue(sensorId, out var notice))
+                _ = stateStore.DeferProofRefresh(notice, now + ProbeCooldown);
     }
 
     private static PrtgResourceFamily? FamilyForCategory(string? category) => category?.ToLowerInvariant() switch

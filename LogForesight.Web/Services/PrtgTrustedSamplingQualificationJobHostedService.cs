@@ -23,24 +23,32 @@ public sealed class PrtgTrustedSamplingQualificationJobHostedService : Backgroun
         Task<IReadOnlyList<PrtgTrustedSamplingProbeRow>>> probeFactory;
     private readonly Func<SystemSettings, PrtgMonitoringPolicy,
         (bool Allowed, string? Fingerprint, string Reason)>? tableAdmissionOverride;
+    private readonly PrtgTrustedSamplingProfileRefreshHostedService? profileRefresh;
     private readonly string owner = Guid.NewGuid().ToString("N");
     private readonly PrtgQualificationJobStateStore store;
 
     public PrtgTrustedSamplingQualificationJobHostedService(StorageBackend backend,
         ILogger<PrtgTrustedSamplingQualificationJobHostedService> logger)
-        : this(backend, logger, CreateNativeProbeFactory(backend), null) { }
+        : this(backend, logger, CreateNativeProbeFactory(backend), null, null) { }
+
+    public PrtgTrustedSamplingQualificationJobHostedService(StorageBackend backend,
+        ILogger<PrtgTrustedSamplingQualificationJobHostedService> logger,
+        PrtgTrustedSamplingProfileRefreshHostedService profileRefresh)
+        : this(backend, logger, CreateNativeProbeFactory(backend), null, profileRefresh) { }
 
     internal PrtgTrustedSamplingQualificationJobHostedService(StorageBackend backend,
         ILogger<PrtgTrustedSamplingQualificationJobHostedService> logger,
         Func<long, PrtgQualificationWriteFence, string, CancellationToken,
             Task<IReadOnlyList<PrtgTrustedSamplingProbeRow>>> probeFactory,
         Func<SystemSettings, PrtgMonitoringPolicy,
-            (bool Allowed, string? Fingerprint, string Reason)>? tableAdmissionOverride = null)
+            (bool Allowed, string? Fingerprint, string Reason)>? tableAdmissionOverride = null,
+        PrtgTrustedSamplingProfileRefreshHostedService? profileRefresh = null)
     {
         this.backend = backend;
         this.logger = logger;
         this.probeFactory = probeFactory ?? throw new ArgumentNullException(nameof(probeFactory));
         this.tableAdmissionOverride = tableAdmissionOverride;
+        this.profileRefresh = profileRefresh;
         store = new PrtgQualificationJobStateStore(backend);
     }
 
@@ -188,6 +196,10 @@ public sealed class PrtgTrustedSamplingQualificationJobHostedService : Backgroun
                             "failed-stale", "qualification-proof-not-recorded-for-job", releaseQuota: true);
                         return;
                     }
+                    if (rows.Count == 1 && rows[0].Status == "qualified")
+                        // Requeueing current proof is idempotent and recovers a process restart
+                        // after the atomic proof commit but before this worker observed its result.
+                        _ = profileRefresh?.QueueCurrentQualificationProofRefresh(rows[0].SensorObjid);
                     if (rows.Count != 1 || rows[0].Status != "qualified")
                     {
                         var reason = rows.Count == 1 && rows[0].MissingAuthorityFields.Count > 0

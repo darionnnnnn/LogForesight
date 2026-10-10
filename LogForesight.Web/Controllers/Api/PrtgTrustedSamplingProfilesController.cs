@@ -83,6 +83,8 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
                     allowQualification: true, expectedBindingRevision: request.ExpectedBindingRevision,
                     expectedBindingFingerprint: request.ExpectedBindingFingerprint);
             var row = rows.Single();
+            if (row.QualificationRecorded || row.ProfileRecorded)
+                refresh.WakeForPendingProofRefresh();
             var latestHosts = CaptureHostSnapshot();
             if (latestHosts.Version != hostSnapshot.Version || !CanManageScope(policy, latestHosts))
             {
