@@ -105,6 +105,123 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     }
 
     [Fact]
+    public void 預設事故分組包含新採樣語意_日常核對時間不切段()
+    {
+        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
+        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
+        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100)).Update(p =>
+        { p.HostId = 1; p.SensorId = 100; p.SourceGeneration = "source"; p.ResourceGeneration = "resource"; });
+        string Segment(string id)
+        {
+            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = id, Outcome = "unknown" };
+            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
+        }
+        PrtgTrustedSamplingBinding Binding(double scale, long revision) => PrtgTrustedSamplingBinding.Create(
+            100, "3", "CPU", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", scale, "direct", "seconds",
+            "UTC", "UTC", "synthetic-time-basis", "settings", "policy", new string('A', 64), "source", "resource", 1, "channel", revision);
+        void Persist(PrtgTrustedSamplingBinding binding) => _backend.Blob(binding.StoreKey).Mutate(_ => (JsonSerializer.Serialize(binding), true));
+        var original = Segment("original");
+        var binding = Binding(1, 1); Persist(binding);
+        var configured = Segment("configured"); Assert.NotEqual(original, configured);
+        Persist(binding with { UpdatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(1) });
+        Assert.Equal(configured, Segment("routine-observation"));
+        Persist(Binding(0.5, 2));
+        Assert.NotEqual(configured, Segment("new-scale"));
+        // Existing labels retain the comparison segment from their original configuration.
+        var labels = JsonSerializer.Deserialize<List<PrtgAcceptanceIncident>>(_backend.Blob("prtg_acceptance_labels_1").Read()!)!;
+        Assert.Equal(configured, labels.Single(row => row.IncidentId == "configured").Segment);
+    }
+
+    [Fact]
+    public void 預設事故分組隨正式模式切段_試算更新及不可見主機不影響()
+    {
+        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
+        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100)).Update(p =>
+        { p.HostId = 1; p.SensorId = 100; });
+        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
+        string Segment()
+        {
+            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "mode-label", Outcome = "unknown" };
+            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
+        }
+        var at = DateTime.UtcNow;
+        var grant = new PrtgResourcePressureModeGrant(1, 100, PrtgResourceFamily.Cpu, new string('A', 64),
+            PrtgResourcePressureEvaluator.RulesVersion, "source", "resource", "channel", "epoch", "semantic",
+            "strategy", "rule", new string('B', 64), new string('C', 64), true, false, at, at.AddHours(1));
+        void Persist(PrtgResourcePressureModeGrant g) => new PrtgResourcePressureModeStore(
+            _backend.Blob(PrtgResourcePressureModeStore.BlobKey(g.HostId))).Update(d => d.Grants = [g]);
+        var hint = Segment(); Persist(grant);
+        Assert.Equal(hint, Segment());
+        Persist(grant with { FormalEnabled = true, ModeTransitionId = "activation-1" });
+        var formal = Segment(); Assert.NotEqual(hint, formal);
+        Persist(grant with { FormalEnabled = true, ModeTransitionId = "activation-1", UpdatedAtUtc = at.AddMinutes(1),
+            TrialExpiresAtUtc = at.AddHours(2), TrialResultHash = new string('D', 64) });
+        Assert.Equal(formal, Segment());
+        // A malformed inaccessible mode document must not even be read.
+        _backend.Blob(PrtgResourcePressureModeStore.BlobKey(2)).Mutate(_ => ("not-json", true));
+        Assert.Equal(formal, Segment());
+        Persist(grant with { FormalEnabled = false, ModeTransitionId = "disabled-1" });
+        Assert.Equal(hint, Segment());
+        Persist(grant with { FormalEnabled = true, ModeTransitionId = "activation-2" });
+        Assert.NotEqual(formal, Segment());
+    }
+
+    [Fact]
+    public void 預設事故分組以現有資源權威限制可見範圍_舊時間線不洩漏()
+    {
+        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
+        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100)).Update(p =>
+        { p.HostId = 1; p.SensorId = 100; });
+        var identity = new PrtgResourceIdentity { SensorId = 100, HostId = 2, Epoch = 1, Generation = "private" };
+        _backend.Blob(PrtgResourceIdentityStore.Prefix + 100).Mutate(_ => (JsonSerializer.Serialize(identity), true));
+        _backend.Blob(PrtgTrustedSamplingBinding.StorePrefix + 100).Mutate(_ => ("not-json", true));
+        _backend.Blob(PrtgResourcePressureModeStore.BlobKey(2)).Mutate(_ => ("not-json", true));
+        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
+        string Segment()
+        {
+            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "scope-label", Outcome = "unknown" };
+            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
+        }
+        var before = Segment();
+        identity.Epoch++;
+        _backend.Blob(PrtgResourceIdentityStore.Prefix + 100).Mutate(_ => (JsonSerializer.Serialize(identity), true));
+        Assert.Equal(before, Segment());
+    }
+
+    [Fact]
+    public void 預設事故分組分頁讀取超過一百個Binding_未知時間線不冒用()
+    {
+        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
+        var ids = Enumerable.Range(100, 101).Select(id => (long)id).ToArray();
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => p.SensorIds = ids.ToList());
+        foreach (var id in ids)
+        {
+            var identity = new PrtgResourceIdentity { SensorId = id, HostId = 1, Epoch = 1, Generation = "resource", SourceGeneration = "source" };
+            _backend.Blob(PrtgResourceIdentityStore.Prefix + id).Mutate(_ => (JsonSerializer.Serialize(identity), true));
+            var binding = PrtgTrustedSamplingBinding.Create(id, "3", "CPU", PrtgTrustedQuantitySemantic.CpuLoadPercent,
+                "%", 1, "direct", "seconds", "UTC", "UTC", "synthetic-time-basis", "settings", "policy",
+                new string('A', 64), "source", "resource", 1, "channel", 1);
+            _backend.Blob(binding.StoreKey).Mutate(_ => (JsonSerializer.Serialize(binding), true));
+        }
+        // Existing oversized evidence remains unknown; the summary never reads an unbounded blob.
+        _backend.Blob(PrtgSensorTimelineStore.Prefix + 100).Mutate(_ =>
+            (new string('x', PrtgSensorTimelineStore.MaxSilentReadBytes + 1), true));
+        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
+        var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "paged-label", Outcome = "unknown" };
+        Assert.IsType<OkObjectResult>(api.Save(label));
+        var before = label.Segment;
+        _backend.Blob(PrtgResourceIdentityStore.Prefix + 200).Mutate(raw =>
+        {
+            var identity = JsonSerializer.Deserialize<PrtgResourceIdentity>(raw!)!;
+            identity.ChannelGeneration = "changed-last-page";
+            return (JsonSerializer.Serialize(identity), true);
+        });
+        label.Segment = "";
+        Assert.IsType<OkObjectResult>(api.Save(label));
+        Assert.NotEqual(before, label.Segment);
+    }
+
+    [Fact]
     public void 預設驗收分組隨資源語意修訂改變_日常探測時間不切段()
     {
         Save(Controller(), Request());

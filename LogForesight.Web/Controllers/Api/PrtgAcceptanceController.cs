@@ -22,12 +22,51 @@ public sealed class PrtgAcceptanceController(StorageBackend backend, IVisibility
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         var visible = visibility.GetVisibleHostIds().Where(id => !visibility.IsCaseGrantOnly(id)).ToHashSet();
-        var identities = policy.SensorIds.Order().Select(id => new PrtgSensorTimelineStore(
-            backend.Blob(PrtgSensorTimelineStore.Prefix + id)).Get()).Where(p => visible.Contains(p.HostId))
-            .Select(p => new { p.SensorId, p.SourceGeneration, p.ResourceGeneration, p.MappingRevision,
-                p.DiskSemanticFingerprint, p.DiskSemanticValidFrom });
+        var identities = new List<object>();
+        var ownedSensors = new Dictionary<long, HashSet<long>>();
+        var bindingStore = new PrtgTrustedSamplingBindingStore(backend);
+        foreach (var page in policy.SensorIds.Distinct().Order().Chunk(100))
+        {
+            var current = backend.PrtgStore().GetResourceIdentities(page);
+            var timelinePage = PrtgSensorTimelineStore.ReadManyBoundedForSilentRule(backend.CreateContext, page);
+            var timelines = page.Select(id => (SensorId: id, Timeline: timelinePage.GetValueOrDefault(id))).ToArray();
+            // Current authority wins over a stale timeline's host assignment. Read bindings
+            // only after this visibility fence, in bounded batches even for a full fleet.
+            var scoped = timelines.Where(p => current.TryGetValue(p.SensorId, out var identity)
+                ? visible.Contains(identity.HostId) : p.Timeline is not null && visible.Contains(p.Timeline.HostId)).ToArray();
+            var bindings = bindingStore.GetMany(scoped.Select(p => p.SensorId));
+            foreach (var item in scoped)
+            {
+                var p = item.Timeline;
+                current.TryGetValue(item.SensorId, out var identity);
+                bindings.TryGetValue(item.SensorId, out var binding);
+                var hostId = identity?.HostId ?? p!.HostId;
+                if (!ownedSensors.TryGetValue(hostId, out var sensors)) ownedSensors[hostId] = sensors = [];
+                sensors.Add(item.SensorId);
+                identities.Add(new
+                {
+                    SensorId = item.SensorId,
+                    Timeline = p is null ? null : new { p.SourceGeneration, p.ResourceGeneration, p.MappingRevision,
+                        p.DiskSemanticFingerprint, p.DiskSemanticValidFrom },
+                    Current = identity is null ? null : new { identity.Epoch, identity.Generation,
+                        identity.SourceGeneration, identity.HostId, identity.ChannelGeneration,
+                        identity.Active, identity.PendingReconciliation },
+                    Sampling = binding is null ? null : new { binding.BindingRevision, binding.SemanticFingerprint,
+                        binding.AuthorityContextFingerprint, binding.SourceGeneration, binding.ResourceGeneration,
+                        binding.IdentityEpoch, binding.ChannelGeneration }
+                });
+            }
+        }
+        var modes = ownedSensors.OrderBy(pair => pair.Key).SelectMany(pair =>
+            new PrtgResourcePressureModeStore(backend.Blob(PrtgResourcePressureModeStore.BlobKey(pair.Key)))
+                .ReadHostSnapshot(pair.Key).Grants.Where(g => g.FormalEnabled && pair.Value.Contains(g.SensorObjid))
+                .OrderBy(g => g.SensorObjid).ThenBy(g => g.Family)
+                .Select(g => new { g.HostId, g.SensorObjid, g.Family, g.ProfileFingerprint, g.RulesVersion,
+                    g.SourceGeneration, g.ResourceGeneration, g.ChannelGeneration, g.ResourceEpoch,
+                    g.SemanticVersion, g.StrategyVersion, g.RuleId, g.RuleFingerprint, g.MaintainAuthorized,
+                    g.ModeTransitionId })).ToArray();
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(identities)))).ToLowerInvariant();
+            System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { identities, modes })))).ToLowerInvariant();
         var build = typeof(PrtgAcceptanceController).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         return $"{settings.Revision}|{policy.Revision}|{backend.Blob("rules").ReadVersion()}|{PrtgDiskAssessmentService.ParserSemanticVersion}|{build}|{hash}";
     }

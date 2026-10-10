@@ -1482,3 +1482,14 @@ R15／R17／R18自活動TODO刪除。A0同版原生PRTG24事實及3000／15000�
 最小反例 `round53-usefulness-label-red-current-v2` 為 11 案／6 通過／5 失敗、零輸入漂移；v1 是新增反例的編譯失敗，不當成行為反例。修正後擴大 v1 為 89 案／86 通過／3 失敗，三案是測試觀測原始 NaN／Infinity 欄位時 JSON 序列化拒絕；測試限定允許這些原始值的表示後，「計算改善值必須 null」斷言不變。最終 `round53-usefulness-label-green-current-v2` 88／88 通過，建置零錯誤／134 個既存警告、1,159 項輸入無漂移。四基準回放在擴大 v1 實際通過；最終 v2 只改上述測試觀測設定，Core／Web／回放來源及固定 fixtures 雜湊相同，沿用該逐案成功證據，原失敗 gate 不改標成通過。
 
 本段瀏覽器嘗試在目前 Main DLL 的 localhost 子路徑合成環境登入，登入操作持續等待，未取得結果、未裁定 UI 通過或正式登入缺陷；分頁與精確擁有的兩個服務程序已關閉。共同負載另重驗舊私有計時 build 的有界逐輪追蹤，627 項輸入無漂移，仍在第二輪 60 秒截止失敗，只有 1／9 次快照。準備結果的目前 profile／identity 皆為零，不能用該舊工具宣稱新版共同工作負載通過；後續須對齊目前 producer／qualification 接線。這些外部工具診斷不變更固定負載分母、門檻或既有 RED。A0 與五組驗收門檻繼續保留，本輪未結案。
+
+
+### 2026-10-10 N7 採樣語意與正式模式版本分組補修
+
+主代理直接回查 CurrentSegment 發現舊磁碟時間線摘要未納入明確採樣 binding、現有資源權威及 CPU／記憶體正式模式，可能把不同通道尺度或正式風險配置混算。有效反例 `round53-usefulness-segment-red-current-v3` 已重現設定 binding 後分組不變；v1 是編譯失敗、v2 是 fixture 的 authority hash 無效，均保留而不冒稱產品反例。
+
+已補可見資源的現有 epoch／source／resource／channel、binding revision／semantic fingerprint 及正式模式契約與啟用世代。現有資源歸戶優先於舊時間線，私有及案件授權範圍不讀 binding／mode；資源身分與 binding 每頁最多 100，時間線沿既有 12 列有界讀取。缺漏／超限時間線保留未知，不能授予正式資格。日常檢查、試算更新及工作進度不切段；已有事故保留原分組。
+
+Main 強制 Rebuild 0 errors／134 既有 warnings；當前 `round53-usefulness-segment-green-current-v3` 103／103、0 skipped、輸入零漂移，包含跨 100 顆分頁／最後一頁語意、超限時間線、正式啟停與試算穩定、私有資源 fence、原事故保留、UI 契約及實際四基準 controlled replay。主代理已核 TRX／driver／source receipts；v1 55／55 及 v2 fixture 編譯失敗保留。此段完成，N7 全項、A0／原生來源、全角色瀏覽器與 3000／15000／180 日共同容量仍未裁定通過。
+
+續查另定位驗收匯出的事故清單與時間線全量讀取風險，已接續補有界輸出、範圍完整性及主機查證入口，尚未以候選宣告完成。受控共同負載改以 fresh Main producer 及明確 binding→raw proof 路徑重驗；舊 1／9 cycle RED 與零 current profile 準備度保持未通過。
