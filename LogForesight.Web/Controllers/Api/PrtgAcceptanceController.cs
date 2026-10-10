@@ -114,7 +114,7 @@ public sealed class PrtgAcceptanceController(StorageBackend backend, IVisibility
                 string.IsNullOrWhiteSpace(incident.AfterMeasurement) || string.IsNullOrWhiteSpace(incident.EvidenceReference))))
             return BadRequest(ApiResponse.Fail("validation_failed", "預防案例須填介入時間、具體動作、前後量測與證據；未發生的事故時間請留空。欄位最多 1000 字。"));
         if (incident.CombinedActionableAt.HasValue && (!incident.CombinedEvidenceAvailableAt.HasValue ||
-            incident.CombinedEvidenceAvailableAt > incident.CombinedActionableAt || incident.EvidenceReference.Length == 0))
+            incident.CombinedEvidenceAvailableAt > incident.CombinedActionableAt || string.IsNullOrWhiteSpace(incident.EvidenceReference)))
             return BadRequest(ApiResponse.Fail("validation_failed", "可行動時間須有當時可取得的證據；不得把事後取得的證據算作提前預警。"));
         if (new[] { incident.NetiqVerificationMinutes, incident.NativePrtgVerificationMinutes,
             incident.SimpleUnionVerificationMinutes, incident.CombinedVerificationMinutes }.Any(v => v.HasValue && (!double.IsFinite(v.Value) || v < 0 || v > 1000000)))

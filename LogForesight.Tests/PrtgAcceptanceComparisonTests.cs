@@ -5,6 +5,83 @@ namespace LogForesight.Tests;
 public sealed class PrtgAcceptanceComparisonTests
 {
     [Fact]
+    public void 未查證與空白證據不產生查證耗時增益_逐筆及彙總一致()
+    {
+        var at = DateTimeOffset.UtcNow.AddDays(-1);
+        var rows = new[]
+        {
+            new PrtgAcceptanceIncident { IncidentId = "unreviewed", EvidenceReference = "ticket", NetiqVerificationMinutes = 30, CombinedVerificationMinutes = 10 },
+            new PrtgAcceptanceIncident { IncidentId = "blank", ConfirmedPositive = true, EvidenceReference = " \t", OccurredAt = at,
+                CombinedActionableAt = at.AddHours(-1), CombinedEvidenceAvailableAt = at.AddHours(-2), NetiqVerificationMinutes = 30, CombinedVerificationMinutes = 10 }
+        };
+        foreach (var row in PrtgAcceptanceComparison.Timings(rows))
+        {
+            var json = System.Text.Json.JsonSerializer.SerializeToElement(row);
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, json.GetProperty("NetiqSavedVerificationMinutes").ValueKind);
+        }
+        var summary = System.Text.Json.JsonSerializer.SerializeToElement(PrtgAcceptanceComparison.TimingSummary(rows));
+        Assert.Equal(0, summary.GetProperty("NetiqSavedVerification").GetProperty("Samples").GetInt32());
+        Assert.Equal(0, PrtgAcceptanceComparison.Evaluate(rows).EvidenceQualified);
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 10)]
+    [InlineData(double.PositiveInfinity, 10)]
+    [InlineData(30, double.NegativeInfinity)]
+    [InlineData(-1, 10)]
+    [InlineData(30, -1)]
+    [InlineData(1000001, 10)]
+    [InlineData(30, 1000001)]
+    public void 舊標籤無效耗時不得變成改善數值(double baseline, double combined)
+    {
+        var row = new PrtgAcceptanceIncident { ConfirmedPositive = true, EvidenceReference = "ticket",
+            NetiqVerificationMinutes = baseline, CombinedVerificationMinutes = combined };
+        // The raw input columns deliberately retain invalid numbers for inspection. Allow their
+        // representation only in this fixture so we can assert the computed saving stays null.
+        var timing = System.Text.Json.JsonSerializer.SerializeToElement(PrtgAcceptanceComparison.Timings([row])[0],
+            new System.Text.Json.JsonSerializerOptions { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals });
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, timing.GetProperty("NetiqSavedVerificationMinutes").ValueKind);
+        var summary = System.Text.Json.JsonSerializer.SerializeToElement(PrtgAcceptanceComparison.TimingSummary([row]));
+        Assert.Equal(0, summary.GetProperty("NetiqSavedVerification").GetProperty("Samples").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" \t")]
+    public void 空證據不計為具當時證據或提前增益(string? evidence)
+    {
+        var at = DateTimeOffset.UtcNow.AddDays(-1);
+        var row = new PrtgAcceptanceIncident { ConfirmedPositive = true, OccurredAt = at, EvidenceReference = evidence!,
+            CombinedActionableAt = at.AddHours(-2), CombinedEvidenceAvailableAt = at.AddHours(-3),
+            NetiqActionableAt = at, NativePrtgActionableAt = at, SimpleUnionActionableAt = at };
+        var result = PrtgAcceptanceComparison.Evaluate([row]);
+        Assert.Equal(0, result.EvidenceQualified);
+        Assert.Equal(0, result.BeforeIncident);
+        Assert.Equal(0, result.IncrementalBeforeAllBaselines);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(PrtgAcceptanceComparison.Timings([row])[0]);
+        Assert.False(json.GetProperty("EvidenceQualified").GetBoolean());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, json.GetProperty("IncidentLeadMinutes").ValueKind);
+    }
+
+    [Fact]
+    public void 已查證誤報及預防案例可比較耗時_負增益保留()
+    {
+        var rows = new[]
+        {
+            new PrtgAcceptanceIncident { ConfirmedPositive = false, EvidenceReference = "reviewed false alarm", NetiqVerificationMinutes = 10, CombinedVerificationMinutes = 30 },
+            new PrtgAcceptanceIncident { ConfirmedPositive = true, Outcome = "prevented", EvidenceReference = "intervention", NetiqVerificationMinutes = 30, CombinedVerificationMinutes = 10 }
+        };
+        var timings = PrtgAcceptanceComparison.Timings(rows).Select(row => System.Text.Json.JsonSerializer.SerializeToElement(row)).ToArray();
+        Assert.Equal(-20, timings[0].GetProperty("NetiqSavedVerificationMinutes").GetDouble());
+        Assert.Equal(20, timings[1].GetProperty("NetiqSavedVerificationMinutes").GetDouble());
+        var summary = System.Text.Json.JsonSerializer.SerializeToElement(PrtgAcceptanceComparison.TimingSummary(rows));
+        Assert.Equal(2, summary.GetProperty("NetiqSavedVerification").GetProperty("Samples").GetInt32());
+        Assert.Equal(0, summary.GetProperty("NetiqSavedVerification").GetProperty("MedianMinutes").GetDouble());
+        Assert.Equal(-20, summary.GetProperty("NetiqSavedVerification").GetProperty("WorstMinutes").GetDouble());
+    }
+
+    [Fact]
     public void 缺基準不能把原生Prtg早已發現算為合併增益()
     {
         var at = DateTimeOffset.UtcNow;

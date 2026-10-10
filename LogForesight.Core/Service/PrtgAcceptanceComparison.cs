@@ -31,16 +31,21 @@ public sealed class PrtgAcceptanceIncident
 
 public static class PrtgAcceptanceComparison
 {
+    private static bool HasEvidence(PrtgAcceptanceIncident incident) => !string.IsNullOrWhiteSpace(incident.EvidenceReference);
+    private static bool ValidCost(double? minutes) => minutes.HasValue && double.IsFinite(minutes.Value) && minutes.Value is >= 0 and <= 1000000;
+    private static double? SavedCost(PrtgAcceptanceIncident incident, double? baseline) =>
+        incident.ConfirmedPositive.HasValue && HasEvidence(incident) && ValidCost(baseline) && ValidCost(incident.CombinedVerificationMinutes)
+            ? baseline!.Value - incident.CombinedVerificationMinutes!.Value : null;
+
     public static object TimingSummary(IReadOnlyList<PrtgAcceptanceIncident> incidents)
     {
         var qualified = incidents.Where(i => i.ConfirmedPositive == true && i.Outcome == "occurred" &&
             i.OccurredAt.HasValue && i.CombinedActionableAt.HasValue && i.CombinedEvidenceAvailableAt.HasValue &&
-            i.CombinedEvidenceAvailableAt <= i.CombinedActionableAt && i.EvidenceReference.Length > 0).ToArray();
+            i.CombinedEvidenceAvailableAt <= i.CombinedActionableAt && HasEvidence(i)).ToArray();
         PrtgTimingDistribution Leads(Func<PrtgAcceptanceIncident, DateTimeOffset?> baseline) => Distribution(qualified
             .Where(i => baseline(i).HasValue).Select(i => (baseline(i)!.Value - i.CombinedActionableAt!.Value).TotalMinutes));
         PrtgTimingDistribution Costs(Func<PrtgAcceptanceIncident, double?> baseline) => Distribution(incidents
-            .Where(i => i.ConfirmedPositive.HasValue && baseline(i).HasValue && i.CombinedVerificationMinutes.HasValue)
-            .Select(i => baseline(i)!.Value - i.CombinedVerificationMinutes!.Value));
+            .Select(i => SavedCost(i, baseline(i))).Where(value => value.HasValue).Select(value => value!.Value));
         return new { ObservedIncidentLead = Leads(i => i.OccurredAt), NetiqLead = Leads(i => i.NetiqActionableAt),
             NativePrtgLead = Leads(i => i.NativePrtgActionableAt), SimpleUnionLead = Leads(i => i.SimpleUnionActionableAt),
             NetiqSavedVerification = Costs(i => i.NetiqVerificationMinutes),
@@ -56,11 +61,10 @@ public static class PrtgAcceptanceComparison
     }
     public static object[] Timings(IReadOnlyList<PrtgAcceptanceIncident> incidents) => incidents.Select(i => {
         var qualified = i.ConfirmedPositive == true && i.CombinedActionableAt.HasValue &&
-            i.CombinedEvidenceAvailableAt.HasValue && i.CombinedEvidenceAvailableAt <= i.CombinedActionableAt && i.EvidenceReference.Length > 0;
+            i.CombinedEvidenceAvailableAt.HasValue && i.CombinedEvidenceAvailableAt <= i.CombinedActionableAt && HasEvidence(i);
         double? Lead(DateTimeOffset? baseline) => qualified && baseline.HasValue
             ? (baseline.Value - i.CombinedActionableAt!.Value).TotalMinutes : null;
-        double? Saved(double? baseline) => baseline.HasValue && i.CombinedVerificationMinutes.HasValue
-            ? baseline - i.CombinedVerificationMinutes : null;
+        double? Saved(double? baseline) => SavedCost(i, baseline);
         return (object)new { i.IncidentId, i.HostId, i.Segment, EvidenceQualified = qualified,
             ObservedOutcome = i.Outcome, IncidentLeadMinutes = i.Outcome == "occurred" ? Lead(i.OccurredAt) : null,
             PredictedLeadMinutes = Lead(i.PredictedImpactAt), NetiqLeadMinutes = Lead(i.NetiqActionableAt),
@@ -73,7 +77,7 @@ public static class PrtgAcceptanceComparison
     public static PrtgAcceptanceComparisonResult Evaluate(IReadOnlyList<PrtgAcceptanceIncident> incidents)
     {
         var positives = incidents.Where(i => i.ConfirmedPositive == true).ToArray();
-        var valid = positives.Where(i => i.EvidenceReference.Length > 0 && i.CombinedActionableAt.HasValue &&
+        var valid = positives.Where(i => HasEvidence(i) && i.CombinedActionableAt.HasValue &&
             i.CombinedEvidenceAvailableAt.HasValue && i.CombinedEvidenceAvailableAt <= i.CombinedActionableAt).ToArray();
         var compared = valid.Where(i => i.Outcome == "occurred" && i.OccurredAt.HasValue && i.NetiqActionableAt.HasValue && i.NativePrtgActionableAt.HasValue &&
             i.SimpleUnionActionableAt.HasValue).ToArray();

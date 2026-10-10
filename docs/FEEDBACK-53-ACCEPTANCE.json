@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "d5e0add921fcce7674a56f0d8b79d6d972b625d504dc4333894b0daec3f724d7",
+  "plan_sha256": "f092bb4f7e9ca5236cbc7566dfb85d7534010f78c4e22b6c58e2b62caf399174",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -7618,5 +7618,35 @@
       "R15"
     ],
     "meaning": "移除已完成 R05/shared-admission、C1/D1 程式 TODO；完整操作、原生來源、共同容量及全部 AC/Q 不因 source audit 或局部測試而完成。"
+  },
+  "current_usefulness_label_20261010": {
+    "finalGate": "round53-usefulness-label-green-current-v2",
+    "redCounts": {
+      "inputDrift": 0,
+      "total": 11,
+      "passed": 6,
+      "failed": 5
+    },
+    "scope": "N7 per-row/summary cost eligibility and nonblank contemporaneous evidence",
+    "replayReuse": {
+      "case": "WritesBoundedVersionedFourBaselineControlledReplayReport",
+      "gate": "round53-usefulness-label-green-current-v1",
+      "passed": true,
+      "wholeGatePassed": false,
+      "delta": "Only invalid-input test serialization observation changed in v2; Core/Web/replay/fixed fixture hashes equal"
+    },
+    "nativeSourceVerified": false,
+    "status": "bounded-fix-verified-not-whole-round",
+    "redGate": "round53-usefulness-label-red-current-v2",
+    "fullWorkloadAccepted": false,
+    "wholeRoundAccepted": false,
+    "evidence": ".gemini-tasks/primary-results/round53-usefulness-label-green-current-v2-review.json",
+    "browserAccepted": false,
+    "finalCounts": {
+      "inputDrift": 0,
+      "total": 88,
+      "passed": 88,
+      "failed": 0
+    }
   }
 }

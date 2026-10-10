@@ -91,6 +91,20 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         return estimate is OkObjectResult ? controller.Put(request) : estimate;
     }
     [Fact]
+    public void 合併可行動時間不能只填空白證據_拒絕不保存()
+    {
+        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
+        var at = DateTimeOffset.UtcNow.AddDays(-1);
+        var incident = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "blank-evidence", OccurredAt = at,
+            ConfirmedPositive = true, CombinedActionableAt = at.AddHours(-1), CombinedEvidenceAvailableAt = at.AddHours(-2), EvidenceReference = " \t" };
+        Assert.IsType<BadRequestObjectResult>(api.Save(incident));
+        Assert.Null(_backend.Blob("prtg_acceptance_labels_1").Read());
+        incident.EvidenceReference = "independent incident ticket";
+        Assert.IsType<OkObjectResult>(api.Save(incident));
+        Assert.Contains("blank-evidence", _backend.Blob("prtg_acceptance_labels_1").Read());
+    }
+
+    [Fact]
     public void 預設驗收分組隨資源語意修訂改變_日常探測時間不切段()
     {
         Save(Controller(), Request());
