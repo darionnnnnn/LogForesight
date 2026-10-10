@@ -216,4 +216,3 @@ public sealed record NetiqHostDayTimingSnapshot(
     double? P95Milliseconds,
     DateTimeOffset StartedAtUtc,
     DateTimeOffset? CompletedAtUtc);
-

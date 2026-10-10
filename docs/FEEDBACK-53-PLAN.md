@@ -46,16 +46,13 @@
 
 ## 5. 完成裁定與有效 TODO
 
-2026-10-10 再按本輪工作分支的實際程式、測試及呼叫端逐項回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
+2026-10-11 再按本輪工作分支的實際程式、測試及呼叫端逐項回查；程式位置以 `work/logforesight-feedback-53` 為準。以下活動清單只列未完成的實作／門檻；已完成子項刪出 TODO，但保留契約與 §18 完成證據，不撤銷其較廣的 AC 驗收條件。
 
-### 5.1 尚未完成的實作與必要交付
+### 5.1 實作與交付現況
 
 R05 的 snapshot100／同形來源探測程式與受影響驗證已完成；完整 15000 顆共同排程的容量裁定仍逐條保留於 §5.2 N6。
-- [ ] R09／N6：完成可交付的實際 API 固定矩陣 consumer，依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。精確全分頁核對、唯讀 collector 與明確 Start／Resume／Check lifecycle 工具已完成；兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項完整範圍。
-- [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
-
-
-
+R09 的公共 API 固定矩陣 consumer、初始化入口、精確主機日計時與受影響驗證已完成；正式 provider／3000／15000／180 日的容量與保留裁定仍在 §5.2 N6，沒有降低其母體或門檻。
+A0 所需環境探測與離線核對工具已實作，來源、頻道、時區及 provider／部署資源的尚缺事實透過探測回傳核對，列入 §5.2 N1–N3／A0；未知資訊不留空程式，也不冒稱原生來源通過。
 
 ### 5.2 尚未通過的驗收門檻
 
@@ -1659,3 +1656,26 @@ profile／snapshot worker 能以契約相同的保留計畫，在租約或樣本
 正式 DI 將同一 bounded collector 送入 Orchestrator、NetIQ pipeline 與 ScheduleController；actual BatchRunRecorder.RunId 經 OrchestratorResult、RunOutcome 到 lastRunBatchRunId，與 aggregate timing runId 對齊。從 AnalyzeHostDayAsync 開始至成功 Append 提交；來源抓取、AI 呼叫與後續佇列排除。planned missing host-days 分母，未完成／漏日／來源失敗／保留不完整／重複／空分母／溢位一律 p95=null；最多600000筆，完成僅排序一次精確 nearest-rank p95，終態拒絕遲到更新，same-ID 重入不洗白。Recorder 無正 ID 時維持既有分析最佳努力，不借上一轮計時。
 
 Root Main 建置與受影響回歸 138/138、零略過，含 NetIQ/AI 解耦、排程／資格 API、已保留 channel discovery 舊測試；保留候選舊 helper 缺建構參數的 premerge log，已合回 Main 原 helper 與舊兩案，新增 DTO case 而非整檔覆蓋。Luna high 唯讀審查資料流無具體缺陷，主代理獨立執行回歸。此段不授予完整 N6／來源容量；公共六條件矩陣 consumer 另段核對與提交。
+
+### 2026-10-11 四項剩餘程式交付完成
+
+本次恢復工作的四項實作均已完成，活動 TODO 已清除已完成的程式子項；§5.2 的整輪來源、角色流程、完整容量、實用性與獨立結案門檻繼續保留，不以程式交付取代其證據。
+
+| 項目 | 正式實作與可驗收結果 |
+|---|---|
+| 過期容量恢復 | 同一 retained 契約的有界抽樣及 exact CAS 續約；來源回查失敗立即撤銷該份計畫，不影響較新計畫，取消清理不重掃 catalogue。已分段推送 f3cbba73。 |
+| 等待後再核對 | 帳號／權限／完整範圍及 source/settings/policy/host/identity/channel/binding 在所有配額與目的節流等待後、wire 計數前重新核對；撤銷時零 HTTP。已推送 71643f76。 |
+| 快照 100 與來源探測 | 共用 bounded exact-set response 契約、100 正唯一排序 ID、count=N+1、三個 snapshot 位置並保留 profile；同形原生探測及離線核對已交付，最終 85/85。已推送 075e4d83。 |
+| 固定矩陣與精確主機日計時 | 公共初始化、明確 Start/Resume/Check、全 15000 raw/profile 每輪前後 fence、固定六條件、3000 主機 preview、200 路由成功查詢、actual BatchRunId 對齊及精確 p95。受影響 Main 138/138，交付腳本完整正反例與 wrapper 串接驗證通過。 |
+
+NetIQ 計時從 AnalyzeHostDayAsync 開始至同一父紀錄 Append 提交成功，排除來源抓取、AI 呼叫及後續佇列；planned host-day 固定分母，來源失敗／保留不完整／漏日／重複／零分母／溢位／未完成一律 p95=null。上限 600000 筆支援 3000×180=540000；完成後 p95 只排序計算一次，查詢回傳快照；重入及已終結後資料不可使失敗變成功。actual recorder ID 未取得時不改變既有分析最佳努力行为，也不借用上一輪結果。
+
+Root 核實與修正候選包的兩層 repo root／公開 collector 路徑、README initializer 參數、測試 artifact 路徑、路由錯誤分母及 post-cell fence；Main 保留既有兩個 channel discovery 測試與新建構相依，僅合入新 DTO 測試。最初編譯抓到舊候選 helper 缺參數，保留 premerge build log；修後 Main 完整通過。Luna high 唯讀檢查計時資料流無具體缺陷，Root 仍獨立建置與執行全部受影響案例。矩陣執行失敗保存 failed/stage，不推進 checkpoint；artifact 保留，明確建立新 owned run 重核對後重試。
+
+可操作步驟、provider descriptor 與固定矩陣例子見 scripts/prtg-workload/README.md；provider／180 日是明確宣告，工具不自行捏造來源事實或物理容量。full nativeSourceVerified、capacityAccepted、retentionAccepted、wholeRoundAccepted 持續 false。後續收到新探測，只需依真實來源欄位、成本及 provider 事實調整與核對，不存在因缺探測而未實作的本次四項程式。
+
+Root 另以目前 Main Web／SQLite 與隔離 loopback fixtures 實際走通六顆感測器的 channel discovery、綁定、容量 pilot、公開資格 Start／Check、自動 profile 更新及 exact 全分頁 coverage，六份 raw proof 與六份 current profile 均通過，正常時鐘與共享配額不變，五個 owned process 全部清理。證據在 stage4-current-web-api-six.log 及 driver-result.json；此六顆應用串接驗證與 15000 DTO 矩陣工具測試皆不代表實體來源或完整 provider 容量。完整 wrapper 另驗失敗狀態落盤且 checkpoint 不前進、時間不符拒絕；受控 Python fixture 的成功時間加兩秒，毫秒級 skew 的診斷重建明確標示非原始執行 log，正式負 skew 反例另有實際執行證據，正式程式的 trigger 與 RunId 核對沒有放寬。
+
+交付前獨立審查補齊矩陣拒絕條件：每 cell 必須有兩種有效路由、完整十二份 verdict，缺測或空 numeric 欄位不能以零代替；checkpoint 與六份 condition owner 綁定目前 runId／profile／固定順序，拒絕混入舊輪測量；相鄰 cell 及自己 CAS 結果到 pre-fence 的 settingsRevision 連續核對，只允許工具自己的 PRTG 開關寫入；排程及路由前後 settingsRevision 必須相同，依正式 SystemSettingsStore 每次寫入換新 GUID 的契約，拒絕期間切換後恢復；所有 owned 路徑拒絕 reparse ancestor，EvidenceRoot 必須位於該 run 內。這些均有受影響正反例實際重跑，才清除程式 TODO。
+
+Root 的本輪分支重跑包含六套交付測試，consumer 共 22 個正反例；最後使用完整 3000 筆主機清單執行六輪 wrapper。公開路由測量要求 HTTP 成功、ApiResponse.success=true、非截斷且與 owned 集合完全相符的 3000 個主機 ID，以及 detail 回應符合 requested hostId。HTTP 200 的 domain error、空 DTO、漏主機或錯誤主機也計為失敗；每個回應最多 2 MiB，2 秒請求期限與 p95 門檻不變。交付包一併包含全分頁 coverage collector 的測試及 fixture，相依程式沒有留在候選目錄。
