@@ -37,6 +37,9 @@ public sealed class PrtgProbeEvidenceContext
 
 public sealed class PrtgCompatibilityProbeEvidence
 {
+    [JsonPropertyName("sensor_batch_identity")]
+    public PrtgSensorBatchCapability? SensorBatchIdentity { get; set; }
+
     [JsonPropertyName("schema_version")]
     public string SchemaVersion { get; set; } = "1.0.0";
 
@@ -720,7 +723,8 @@ public static class PrtgCompatibilityProbe
             ct,
             onEvidenceJsonProduced,
             (url, token) => client.GetBoundedXmlAsync(url, PrtgHistoricXmlReader.MaximumBytes, token),
-            (url, token) => client.GetBoundedXmlAsync(url, MaxNativePrimaryXmlBytes, token));
+            (url, token) => client.GetBoundedXmlAsync(url, MaxNativePrimaryXmlBytes, token),
+            (url, token) => client.GetBoundedJsonAsync(url, 512 * 1024, token));
     }
 
     public static async Task<PrtgCompatibilityProbeEvidence> ExecuteCoreAsync(
@@ -731,7 +735,8 @@ public static class PrtgCompatibilityProbe
         CancellationToken ct = default,
         Action<string>? onEvidenceJsonProduced = null,
         Func<string, CancellationToken, Task<PrtgSourceResponse>>? getHistoricXml = null,
-        Func<string, CancellationToken, Task<PrtgSourceResponse>>? getNativePrimaryXml = null)
+        Func<string, CancellationToken, Task<PrtgSourceResponse>>? getNativePrimaryXml = null,
+        Func<string, CancellationToken, Task<string>>? getSensorBatchJson = null)
     {
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         overallCts.CancelAfter(OverallTimeout);
@@ -885,6 +890,38 @@ public static class PrtgCompatibilityProbe
             }
 
             evidence.Targets.Add(target);
+        }
+
+        if (getSensorBatchJson is not null)
+        {
+            var batchIds = sensorSamples.Where(s => s.Objid > 0).Select(s => s.Objid!.Value)
+                .Distinct().Order().Take(5).ToArray();
+            if (batchIds.Length < 2)
+                evidence.SensorBatchIdentity = new() { Reason = "insufficient-distinct-samples" };
+            else
+            {
+                requestsAttempted++;
+                var began = DateTimeOffset.UtcNow;
+                var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    using var request = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
+                    request.CancelAfter(RequestTimeout);
+                    var json = await getSensorBatchJson("api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince" +
+                        PrtgResourceGuardProbe.BuildObjidFilter(batchIds) + "&count=" + (batchIds.Length + 1), request.Token);
+                    evidence.SensorBatchIdentity = PrtgSensorBatchCapability.Parse(json, batchIds);
+                    requestsSucceeded++;
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                { evidence.SensorBatchIdentity = new() { Status = "timeout", Reason = "bounded-request-deadline" }; requestsTimedOut++; }
+                catch (Exception ex) when (ex is PrtgClientException or InvalidDataException or JsonException or HttpRequestException or InvalidOperationException)
+                { evidence.SensorBatchIdentity = new() { Status = "error", Reason = "bounded-source-unavailable" }; requestsFailed++; }
+                elapsed.Stop();
+                evidence.SensorBatchIdentity.RequestedAtUtc = began.ToString("o");
+                evidence.SensorBatchIdentity.ReceivedAtUtc = DateTimeOffset.UtcNow.ToString("o");
+                evidence.SensorBatchIdentity.ElapsedMilliseconds = (long)Math.Ceiling(elapsed.Elapsed.TotalMilliseconds);
+            }
+            console.WriteLine($"     多感測器精確集合探測：{evidence.SensorBatchIdentity.Status}（{evidence.SensorBatchIdentity.Reason}）；不授權正式 profile。");
         }
 
         var targetsOk = 0;

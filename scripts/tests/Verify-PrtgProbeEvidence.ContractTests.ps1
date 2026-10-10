@@ -15,6 +15,7 @@ function New-ValidEvidence {
         schema_version = '1.0.0'
         build_version = "$script:version+$script:revision"
         status = 'ok'
+        sensor_batch_identity = @{ status='ok'; requested_aliases=@('b1','b2'); returned_aliases=@('b2','b1'); exact_requested_set=$true; reason='exact-unique-requested-set'; authorizes_formal_profile=$false }
         source_fingerprint = 'a'.PadRight(64, 'a')
         scope_summary = 'Secret-Server-Name-Must-Not-Be-Printed'
         deployment_resources = [ordered]@{
@@ -264,4 +265,21 @@ Invoke-ContractCase '64-kib-limit-is-preserved' $null 1 @('Oversize') -RawJson $
 $deepJson = '{"x":' + ('[' * 33) + '0' + (']' * 33) + '}'
 Invoke-ContractCase 'json-depth-limit-is-preserved' $null 1 @('UnreadableOrMalformedJson') -RawJson $deepJson
 
+
+
+$noBatch = New-ValidEvidence
+$noBatch.Remove('sensor_batch_identity')
+Invoke-ContractCase 'legacy-without-batch-observation-is-incomplete' $noBatch 2 @('SensorBatchExactSetObserved: False','Result: INCOMPLETE')
+$duplicateBatch = New-ValidEvidence
+$duplicateBatch.sensor_batch_identity.returned_aliases = @('b1','b1')
+Invoke-ContractCase 'duplicate-batch-cannot-assert-exact-set' $duplicateBatch 1 @('SensorBatchExactSetContradiction')
+$foreignBatch = New-ValidEvidence
+$foreignBatch.sensor_batch_identity.returned_aliases = @('b1','foreign1')
+$foreignBatch.sensor_batch_identity.exact_requested_set = $false
+$foreignBatch.sensor_batch_identity.status = 'partial'
+$foreignBatch.sensor_batch_identity.reason = 'missing-foreign-duplicate-or-invalid-sensor'
+Invoke-ContractCase 'foreign-batch-remains-incomplete' $foreignBatch 2 @('SensorBatchExactSetObserved: False','Result: INCOMPLETE')
+$unsafeBatch = New-ValidEvidence
+$unsafeBatch.sensor_batch_identity.authorizes_formal_profile = $true
+Invoke-ContractCase 'batch-does-not-authorize-profile' $unsafeBatch 1 @('InvalidSensorBatchIdentityShape')
 Write-Output 'All bounded PRTG evidence verifier contracts passed.'

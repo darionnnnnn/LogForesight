@@ -578,6 +578,38 @@ try {
     }
     if (-not $rawShapeValid) { Fail-Safely 'RawChannelIdentityMissingOrWrongShape' }
 
+    $batchComplete = $false
+    $batch = Get-JsonProperty $root 'sensor_batch_identity'
+    if ($null -ne $batch -and $batch.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        $batchStatus = Get-JsonProperty $batch 'status'
+        $batchExact = Get-JsonProperty $batch 'exact_requested_set'
+        $batchAuthority = Get-JsonProperty $batch 'authorizes_formal_profile'
+        $batchReason = Get-JsonProperty $batch 'reason'
+        $requestedAliases = Get-JsonProperty $batch 'requested_aliases'
+        $returnedAliases = Get-JsonProperty $batch 'returned_aliases'
+        if ($batch.ValueKind -ne [System.Text.Json.JsonValueKind]::Object -or
+            $null -eq $batchStatus -or -not (Test-JsonString $batchStatus @('ok','partial','unknown','error','timeout')) -or
+            $null -eq $batchExact -or -not (Test-JsonBoolean $batchExact) -or
+            $null -eq $batchAuthority -or $batchAuthority.ValueKind -ne [System.Text.Json.JsonValueKind]::False -or
+            $null -eq $batchReason -or -not (Test-JsonString $batchReason) -or
+            $null -eq $requestedAliases -or $requestedAliases.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $requestedAliases.GetArrayLength() -gt 5 -or
+            $null -eq $returnedAliases -or $returnedAliases.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $returnedAliases.GetArrayLength() -gt 6) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+        $requestedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($alias in $requestedAliases.EnumerateArray()) {
+            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch '^b[1-5]$' -or -not $requestedSet.Add($alias.GetString())) { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+        }
+        $returnedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        $returnedUnique = $true
+        foreach ($alias in $returnedAliases.EnumerateArray()) {
+            if ($alias.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $alias.GetString() -cnotmatch '^(b[1-5]|foreign[1-6]|invalid)$') { Fail-Safely 'InvalidSensorBatchIdentityShape' }
+            if (-not $returnedSet.Add($alias.GetString())) { $returnedUnique = $false }
+        }
+        $setMatches = $requestedSet.Count -ge 2 -and $returnedUnique -and $returnedSet.SetEquals($requestedSet)
+        if ($batchExact.ValueKind -eq [System.Text.Json.JsonValueKind]::True -and
+            (-not $setMatches -or $batchStatus.GetString() -cne 'ok' -or $batchReason.GetString() -cne 'exact-unique-requested-set')) { Fail-Safely 'SensorBatchExactSetContradiction' }
+        $batchComplete = $setMatches -and $batchExact.ValueKind -eq [System.Text.Json.JsonValueKind]::True
+    }
+
     $sourceStatus = $rootStatus.GetString()
     if ($sourceStatus -notin @('ok', 'partial', 'unknown', 'error', 'truncated')) { $sourceStatus = 'unknown' }
 
@@ -589,6 +621,7 @@ try {
     Write-Output "RawChannelIds: $channelIdCount"
     Write-Output "NativePrimaryCapabilityDiagnostics: $nativePrimaryDiagnosticCompleteCount/$nativePrimaryCapabilityCount"
     Write-Output "NativePrimaryConflicts: $nativePrimaryConflictCount"
+    Write-Output "SensorBatchExactSetObserved: $batchComplete"
     Write-Output 'NativePrimaryFormalAuthorization: not-asserted'
     Write-Output "DeploymentProcessorCount: $processorCountValue"
     Write-Output "RuntimeGcAvailableMemoryBytes: $runtimeMemoryValue"
@@ -599,7 +632,7 @@ try {
     Write-Output "StorageFileRows: $($fileRows.GetArrayLength())"
     Write-Output "StorageVolumeRows: $($volumeRows.GetArrayLength())"
     Write-Output "SqlHostResources: $(if ($storageProvider -eq 'Sqlite') { 'not-applicable' } else { 'unknown' })"
-    if ($targetCount -eq 0 -or $sourceIncomplete -or $metadataIncomplete -or $sourceStatus -in @('partial', 'unknown', 'error', 'truncated')) {
+    if ($targetCount -eq 0 -or -not $batchComplete -or $sourceIncomplete -or $metadataIncomplete -or $sourceStatus -in @('partial', 'unknown', 'error', 'truncated')) {
         Write-Output 'Result: INCOMPLETE (來源核對未齊；此結果只核對探測交接完整性，不代表來源、風險資格或 fleet capacity 驗收)'
         exit 2
     }

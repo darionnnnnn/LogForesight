@@ -1058,7 +1058,10 @@ public class PrtgProbeRunnerTests
         Assert.False(root.GetProperty("evidence_ready").GetBoolean());
         Assert.Contains("時間欄位基準未確認", root.GetProperty("historical_date_boundary").GetProperty("limitations").GetString());
 
-        var snapshotUrls = stub.RequestedUrls.Where(u => u.Contains("filter_objid=")).ToList();
+        var snapshotUrls = stub.RequestedUrls.Where(u => u.Contains("filter_objid=") &&
+            !u.Contains("columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince")).ToList();
+        Assert.Single(stub.RequestedUrls.Where(u => u.Contains("columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince")));
+        Assert.False(root.GetProperty("sensor_batch_identity").GetProperty("authorizes_formal_profile").GetBoolean());
         Assert.Equal(3, snapshotUrls.Count);
         Assert.All(snapshotUrls, u => Assert.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval,primarychannel", u));
         Assert.All(snapshotUrls, u => Assert.DoesNotContain("status_raw", u));

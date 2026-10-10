@@ -1236,6 +1236,8 @@ CPU 與記憶體預設為「提示」：只保存資源提示，不調升主機�
 
 scripts/Verify-PrtgProbeEvidence.ps1以PowerShell7唯讀核對安全JSON，最多64KiB、depth32，拒絕重複字段與錯誤UTF8；要求精確版本及完整40位build revision，可指定ExpectedRevision作精確比對。實際字段為targets[].identity_preserving_raw_history，最多3份樣本、每份8個channels；任何目標或raw未齊均INCOMPLETE。exit0僅版本與交接形狀核對、2来源未齊、1檔案/版本/形狀拒絕。只輸出固定摘要，不輸出URL、caption或任意原始字串；不授予profile/primary/time authority或容量資格。
 
+環境探測另外以最多五顆不同感測器執行一次多個 filter_objid 的唯讀 sensors 查詢，檢查回傳是否恰為要求的唯一集合。回應限制 512 KiB、depth32、至多要求筆數加一，單請求 30 秒並沿用整輪期限及共同配額。安全 JSON 的 sensor_batch_identity 僅保存 b1–b5／foreign1–foreign6／invalid 別名、集合核對結果及耗時，不保存原始 sensor ID、URL 或主機名稱；authorizes_formal_profile 永遠為 false。列數相同但重複、外來、缺列或關鍵字段歧義均不得算成功。離線核對遇舊證據缺此欄位回 INCOMPLETE；偽稱精確集合或正式授權則拒絕。此觀測用於來源相容性核對，不代替正式 profile 的個別通道／原生主通道／raw proof 核驗或容量驗收。
+
 
 ### 正式模式續作與一般使用者的證據入口
 

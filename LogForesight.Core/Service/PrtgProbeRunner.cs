@@ -826,28 +826,43 @@ public static class PrtgProbeRunner
         // (e) 查 filter_objid 分批取值
         try
         {
-            var requestedBatch = firstDeviceSensors.Take(50).ToList();
+            var requestedBatch = firstDeviceSensors.Distinct().Take(50).ToList();
             var requestedSet = requestedBatch.ToHashSet();
             var r = requestedBatch.Count;
             var filterQuery = PrtgResourceGuardProbe.BuildObjidFilter(requestedBatch);
             var url = $"/api/table.json?content=sensors&columns=objid,lastvalue_raw{filterQuery}";
 
             var swE = System.Diagnostics.Stopwatch.StartNew();
-            var jsonE = await client.GetJsonAsync(url, ct);
+            var jsonE = await client.GetBoundedJsonAsync(url + "&count=" + (r + 1), 512 * 1024, ct);
             swE.Stop();
 
             var parsedE = ParseTable(jsonE, "sensors", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, null) : null);
             var rowsE = parsedE.Rows.Select(r => r.Objid).ToList();
             var n = rowsE.Count;
+            using var rawBatch = JsonDocument.Parse(jsonE, new JsonDocumentOptions { MaxDepth = 32 });
+            var shapeValid = rawBatch.RootElement.ValueKind == JsonValueKind.Object &&
+                rawBatch.RootElement.EnumerateObject().Count(p => string.Equals(p.Name, "sensors", StringComparison.OrdinalIgnoreCase)) == 1 &&
+                rawBatch.RootElement.TryGetProperty("sensors", out var rawRows) && rawRows.ValueKind == JsonValueKind.Array &&
+                rawRows.GetArrayLength() == n && rawRows.EnumerateArray().All(row =>
+                    row.ValueKind == JsonValueKind.Object && row.EnumerateObject().Count(p =>
+                        string.Equals(p.Name, "objid", StringComparison.OrdinalIgnoreCase)) == 1);
 
             string verdictE;
-            if (rowsE.Any(id => !requestedSet.Contains(id)))
+            if (!shapeValid)
+            {
+                verdictE = "⚠ 回傳格式含無效或歧義物件；不採用精確集合結論";
+            }
+            else if (rowsE.Any(id => !requestedSet.Contains(id)))
             {
                 verdictE = "⚠ 回傳了未要求的感測器（filter_objid 未生效）";
             }
-            else if (n == r)
+            else if (rowsE.Distinct().Count() != n)
             {
-                verdictE = "✓ 分批取值可用";
+                verdictE = "⚠ 回傳重複感測器；列數相同不代表精確集合";
+            }
+            else if (n == r && requestedSet.SetEquals(rowsE))
+            {
+                verdictE = "✓ 分批取值可用（精確且唯一的要求集合相符）";
             }
             else
             {

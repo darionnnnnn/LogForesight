@@ -50,6 +50,9 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
+- [ ] R09：raw qualification 完成後，以同交易持久通知促使當前 profile 自動刷新；重啟、既有一小時冷卻、過期來源及通知大小邊界均須驗證。
+- [ ] R05／N6：profile 改採精確集合核對的分批共同資料查詢，依真實 request shape 重算完整 15000 顆刷新與快照容量；不降低 25% 餘裕或週期性採樣。
+- [ ] R15／N5：管理操作在共同剩餘額度必然不足時前置明示等待；缺 raw proof 接耐久資格流程；啟用後的 qualification pilot 不繞過正式 lane／來源守門。
 - [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣（精確全分頁核對及唯讀收集工具已完成），依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
@@ -1581,3 +1584,11 @@ Main 真實共同 quota 的五顆／20 GET pilot 重現 RED：wall time 已包�
 profile-pacing-red 與 profile-runtime-count-red 各一項有效 RED；修正後 Main 受影響共同配額、client、pilot、profile 與 snapshot 服務回歸 242／242、零略過，證據 profile-capacity-affected-green TRX。真實 Main 六顆資料流 v2 的五次 pilot 均成功送出 20 GET，wall 9942–9997 ms、work 483–527 ms；v2 driver 的第六顆 CAS 欄位錯誤已修正，不算產品失敗。v3 第六顆經 durable job 新取得 raw proof，但全頁核對正確拒絕 profile-not-ready，暴露 raw proof→profile 自動刷新缺口，已納入本輪修正；不把 completed raw job 當完整 profile。
 
 另已在開發前核算確認：目前固定 snapshot／profile lane 在 15000 顆時，即使零來源延遲，所需速率合計約 1.868 req/s，超過含 25% 餘裕的 1.5；有 0.1 秒 work 時約 1.898。R05／N6 容量排程修正與驗收仍未完成，不能只放寬 evaluator、降低餘裕或省略週期性 snapshot 來通過。此計時與計數子項完成，原始 AC／Q 與 §5 整體 gate 保留。
+
+### 2026-10-10 精確分批來源探測與離線核對
+
+依使用者指示，所需實際 PRTG 事實直接加入既有環境探測，功能開發不等待新探測。新增一次最多五顆的共同 sensors 欄位查詢，count 採要求數加一；檢查回傳恰好是要求的唯一集合，拒絕缺列、外來、重複、關鍵字段歧義或錯誤 JSON。回應至多 512 KiB／depth32，單查 30 秒並沿用整輪期限及共同配額。安全證據僅保存 b1–b5／foreign／invalid 別名與固定狀態、耗時，不保存 sensor ID、主機名稱或 URL；不寫正式 profile，授權旗標固定 false。原 9d 分批診斷同步補唯一集合與無效列核對，不能再以相同列數認定成功。
+
+主代理最終 Main 定向回歸 100／100、零略過，證據 sensor-batch-probe-final TRX；包含 16 個新增 exact-set／隱私／大小／深度及實際 probe 接線案例。初輪 99 通過、一個舊 fixture 因新增必要查詢仍斷言三次而失敗，修 fixture 後完整重跑，不算來源失敗。離線 verifier 契約 24／24，證據 sensor-batch-verifier-contract-v2.log；舊證據缺新欄位明示 INCOMPLETE，矛盾成功或正式授權宣告拒絕。
+
+[PRTG 官方 Multiple Object Property or Status](https://www.paessler.com/manuals/prtg/multiple_object_property_or_status) 支援有界 table 查詢、count 與原始數值，但未明確保證重複 filter_objid 的 OR 語意；過往分批回應亦不足以證明唯一集合。故以既有實際用法繼續實作，逐次精確驗證且將來源差異交給環境探測核對，不擴大為全站退路或先認定兼容通過。此探測交付子項完成；§5 已明列新發現的 raw proof 自動刷新、15000 顆請求量及管理操作剩餘配額修正，原生來源／容量／整輪 gate 保留。

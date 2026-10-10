@@ -7853,5 +7853,28 @@
     "nativeSourceVerified": false,
     "capacityAccepted": false,
     "wholeRoundAccepted": false
+  },
+  "sensor_batch_source_probe_20261010": {
+    "status": "component-verified",
+    "purpose": "Observe the exact unique requested multi-filter sensor set through a bounded readonly environment probe; implementation proceeds independently of new source evidence.",
+    "regression": {
+      "path": ".gemini-tasks/primary-results/sensor-batch-probe-final/sensor-batch-probe-final.trx",
+      "passed": 100,
+      "failed": 0,
+      "skipped": 0
+    },
+    "offline_verifier_contract": {
+      "path": ".gemini-tasks/primary-results/sensor-batch-verifier-contract-v2.log",
+      "passed": 24,
+      "failed": 0
+    },
+    "first_regression": "99 passed; one old fixture expected three filter queries instead of the newly required fourth observation; fixture corrected and final suite rerun.",
+    "limits": "2-5 distinct sensor IDs; count=requested+1; 512 KiB response; depth 32; 30-second request; existing overall probe deadline and shared quota.",
+    "privacy": "Only stable b1-b5/foreign1-foreign6/invalid aliases and fixed reasons are exported; no raw IDs, URLs or host names.",
+    "legacy_evidence": "Missing batch observation is incomplete; contradictory exact-set or formal-authority claims are rejected.",
+    "nativeSourceVerified": false,
+    "formalProfileAuthorized": false,
+    "capacityAccepted": false,
+    "wholeRoundAccepted": false
   }
 }
