@@ -1527,3 +1527,10 @@ Main 僅讓正式 snapshot 使用 Snapshot lane；三種背景範圍工作改 Ge
 主代理 Rebuild 0 errors／137 warnings；`round53-scope-residual-lane-green-v1` 129／129、0 skipped、輸入零漂移，核 TRX／driver／source。新增反例驗实际 parent／sensor／messages HTTP 的 lane、scope pacing 少於 30 秒、Queue 完成及同連線回復 Snapshot；完整快照與原有 request budget／取消／來源切換／容量守門回歸通過。此產品修正完成。
 
 owned v6 在固定 60 秒／輪條件完成九輪，並核到兩顆各兩個四 slot 的可信小時；但後續 combined 條件重新核驗遇 synthetic raw fixture 的 logical／real UTC 不一致，整個 smoke 保留失敗（InputDrift=0、owned cleanup complete）。九輪採樣證據不冒稱共同流程全過；正在修 bounded harness 並重驗。所有 A0、全角色、3000／15000／180 日正式 provider 與整輪 gates 維持開啟。
+
+
+### 2026-10-10 R09／N7 證據包下載的有界本文及明確失敗
+
+原頁面直接點下載連結並顯示「已請求下載」，未讀取 HTTP 413 的後端原因。改由既有 core/api 唯一出口下載原始 JSON，保留同源認證、PathBase 與 401 登入導頁。成功及錯誤本文均採串流上限 64 MiB，Content-Length 已知超限先取消；未知長度逐片計數，超限、停滯、主動取消或傳輸中斷均停止讀取，不交付部分 Blob。頁面只在完整本文到達後提供日期檔名、恢復按鈕及釋放 object URL；失敗原因保留在當頁。標頭等待及本文讀取各自有界，頁面每階段上限 120 秒；一般寫入 POST 的既有逾時政策未改。
+
+新增 12 項 Node 行為案例，含真實 ReadableStream／Response、子站精確路徑、413 原因、已知及未知長度超限、登入 HTML、401、本文逾時／取消／中斷，以及擷取實際頁面 handler 的等待／成功／失敗操作。最初 6 項 RED 證明下載 API 尚未存在，不能當成 6 個獨立產品缺陷。主代理 Rebuild 0 errors／137 warnings，定向 API、匯出範圍、管理頁與前端一致性共 131／131、0 skipped，1160 個輸入零漂移；逐核 TRX／driver／回歸。此下載實作子項已移除 TODO，原始 AC／Q items 未改；原生來源、全角色瀏覽器、容量及整輪仍未通過。

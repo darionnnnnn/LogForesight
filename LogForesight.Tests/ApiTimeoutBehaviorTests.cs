@@ -44,6 +44,18 @@ public class ApiTimeoutBehaviorTests
     [InlineData("找不到資料不顯示重試鈕")]
     [InlineData("空白403回應仍分類為權限不足")]
     [InlineData("403保留後端明確拒絕原因")]
+    [InlineData("JSON下載保留原始內容與子站路徑")]
+    [InlineData("JSON下載413保留明確原因且不提供檔案")]
+    [InlineData("JSON下載超限取消串流且不提供部分檔案")]
+    [InlineData("JSON下載拒絕登入HTML")]
+    [InlineData("JSON下載本文逾時會取消串流")]
+    [InlineData("JSON下載本文主動取消保持AbortError")]
+    [InlineData("JSON下載ContentLength超限不讀取本文")]
+    [InlineData("JSON下載錯誤本文停滯仍有界逾時")]
+    [InlineData("JSON下載傳輸中斷不提供部分檔案")]
+    [InlineData("JSON下載登入逾期保留子站導頁")]
+    [InlineData("JSON下載頁面失敗不交付檔案且恢復按鈕")]
+    [InlineData("JSON下載頁面等待完成才交付且釋放資源")]
     public void 前端等待體驗的行為案例(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

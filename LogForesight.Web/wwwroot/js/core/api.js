@@ -29,6 +29,63 @@ export class ApiError extends Error {
     }
 }
 
+// 證據檔保留原始 JSON；讀取有界且完成後才交付 Blob，避免錯誤／部分內容被當成檔案。
+async function readJsonDownload(response, options) {
+    const limit = options.maxBytes ?? 64 * 1024 * 1024;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64 * 1024 * 1024) {
+        throw new RangeError('JSON 下載上限必須介於 1 byte 與 64 MiB。');
+    }
+    const reject = (code, message) => new ApiError(code, message, response.status);
+    if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get('Content-Type') || '') || !response.body) {
+        await response.body?.cancel();
+        throw reject('download_invalid_response', '伺服器未提供 JSON 證據檔，請確認登入狀態後重試。');
+    }
+    if (Number(response.headers.get('Content-Length')) > limit) {
+        await response.body.cancel();
+        throw reject('download_byte_cap', '證據檔超過下載上限，請縮小日期範圍；未提供部分檔案。');
+    }
+    const reader = response.body.getReader();
+    let interruption = null;
+    const interrupt = error => {
+        if (interruption) return;
+        interruption = error;
+        // cancel 會解除停滯的 read；不等待網路端的取消確認。
+        reader.cancel().catch(() => {});
+    };
+    const abort = () => interrupt(new DOMException('作業已取消。', 'AbortError'));
+    const timeoutMs = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+        ? options.timeoutMs : GET_TIMEOUT_MS;
+    const timer = setTimeout(() => interrupt(reject('timeout',
+        '證據檔下載逾時，請縮小日期範圍或稍後重試；未提供部分檔案。')), timeoutMs);
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener('abort', abort, { once: true });
+    try {
+        const parts = [];
+        let size = 0;
+        while (true) {
+            if (interruption) throw interruption;
+            const { value, done } = await reader.read();
+            if (interruption) throw interruption;
+            if (done) return new Blob(parts, { type: 'application/json' });
+            size += value.byteLength;
+            if (size > limit) {
+                interrupt(reject('download_byte_cap',
+                    '證據檔超過下載上限，請縮小日期範圍；未提供部分檔案。'));
+                throw interruption;
+            }
+            parts.push(value);
+        }
+    } catch (error) {
+        reader.cancel().catch(() => {});
+        if (error instanceof ApiError || error.name === 'AbortError') throw error;
+        throw reject('download_failed', '證據檔傳輸中斷，請稍後重試；未提供部分檔案。');
+    } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', abort);
+        reader.releaseLock();
+    }
+}
+
 async function request(method, url, body, options = {}) {
     const init = {
         method,
@@ -117,10 +174,18 @@ async function request(method, url, body, options = {}) {
     }
 
     let payload = null;
-    try {
-        payload = await response.json();
-    } catch {
-        payload = null;
+    if (options.downloadJson === true) {
+        try {
+            const blob = await readJsonDownload(response, options);
+            if (response.ok) return blob;
+            try { payload = JSON.parse(await blob.text()); } catch { payload = null; }
+        }
+        catch (error) {
+            if (error.name !== 'AbortError' && options.silent !== true) toast(error.message, 'danger');
+            throw error;
+        }
+    } else {
+        try { payload = await response.json(); } catch { payload = null; }
     }
 
     if (!response.ok || !payload || payload.success !== true) {
@@ -137,6 +202,7 @@ async function request(method, url, body, options = {}) {
 
 export const api = {
     get: (url, options) => request('GET', url, null, options),
+    downloadJson: (url, options) => request('GET', url, null, { ...options, downloadJson: true }),
     post: (url, body, options) => request('POST', url, body, options),
     // 大範圍查詢使用 POST body，仍經相同 CSRF／登入／信封與取消處理。
     readOnlyPost: (url, body, options) => request('POST', url, body, { ...options, readOnly: true }),

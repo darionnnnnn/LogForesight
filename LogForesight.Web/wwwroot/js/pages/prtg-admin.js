@@ -4580,14 +4580,23 @@ if (acceptanceExport) {
     });
     document.getElementById('prtg-acceptance-labels-refresh').addEventListener('click', refreshAcceptanceLabels);
     if (document.getElementById('prtg-acceptance-host')?.value) refreshAcceptanceLabels();
-    acceptanceExport.addEventListener('click', () => {
+    acceptanceExport.addEventListener('click', async () => {
         const from = document.getElementById('prtg-effectiveness-from').value;
         const through = document.getElementById('prtg-effectiveness-through').value;
         if (!from || !through || from > through) { status.textContent = '請先選擇有效的起訖日期。'; return; }
-        const link = document.createElement('a');
-        link.href = appUrl(`/api/prtg/acceptance/export?from=${encodeURIComponent(from)}&through=${encodeURIComponent(through)}`);
-        link.download = ''; link.click();
-        status.textContent = '已請求下載；包內 ScopeComplete 為 false 時代表有資料超限、缺失或無法驗證，請依 ScopeStatus 核對後再使用。';
+        acceptanceExport.disabled = true;
+        status.textContent = '正在準備證據包，完成傳輸後才會提供下載。';
+        try {
+            const blob = await api.downloadJson(`/api/prtg/acceptance/export?from=${encodeURIComponent(from)}&through=${encodeURIComponent(through)}`,
+                { timeoutMs: 120000 });
+            const objectUrl = URL.createObjectURL(blob);
+            try {
+                const link = document.createElement('a');
+                link.href = objectUrl; link.download = `prtg-acceptance-${from}-${through}.json`; link.click();
+            } finally { setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); }
+            status.textContent = '證據包已備妥並交給瀏覽器下載；包內 ScopeComplete 為 false 時代表有資料超限、缺失或無法驗證，請依 ScopeStatus 核對後再使用。';
+        } catch (error) { status.textContent = `下載失敗：${error.message}`; }
+        finally { acceptanceExport.disabled = false; }
     });
     document.getElementById('prtg-acceptance-label-form').addEventListener('submit', async event => {
         event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
