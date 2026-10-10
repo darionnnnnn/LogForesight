@@ -498,6 +498,30 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
     }
 
     [Fact]
+    public void Bounded_snapshot_scope_recovery_keeps_fifteen_thousand_denominator_but_only_admits_one_batch()
+    {
+        var profile = new PrtgProfileTransportEstimate(PrtgSnapshotCapacityStatus.CapacityQualified,
+            15_000, 1, DateTimeOffset.UtcNow.AddMinutes(-1), .1, 15_000,
+            PrtgProfileTransportCapacityEvaluator.ProfileRefreshWindow.TotalSeconds, .25, "qualified");
+        var idle = new PrtgRequestBudgetUsage(0, 0, 0, 0, 0, TimeSpan.Zero, TimeSpan.Zero);
+
+        var fullScope = PrtgJointCapacityEvaluator.EvaluateBoundedSnapshotScopeRecovery(
+            15_000, "conservative", profile, idle, 60, .45, 1.0);
+        Assert.True(fullScope.Admitted, fullScope.Reason);
+        Assert.Equal(15_000, fullScope.TargetCount);
+        Assert.Equal("bounded_single_batch_recovery_timeout_bound_fit", fullScope.Reason);
+
+        var beyondPolicyLimit = PrtgJointCapacityEvaluator.EvaluateBoundedSnapshotScopeRecovery(
+            15_001, "conservative", profile, idle, 60, .45, 1.0);
+        Assert.False(beyondPolicyLimit.Admitted);
+        Assert.Equal("recovery_scope_outside_policy_limit", beyondPolicyLimit.Reason);
+
+        var slowGroup = PrtgJointCapacityEvaluator.EvaluateBoundedSnapshotScopeRecovery(
+            15_000, "conservative", profile with { P95SensorSeconds = 6 }, idle, 60, .45, 1.0);
+        Assert.False(slowGroup.Admitted);
+    }
+
+    [Fact]
     public async Task Purpose_rate_wait_happens_before_global_in_flight_permit_is_acquired()
     {
         var clock = new TestClock(DateTimeOffset.UtcNow);

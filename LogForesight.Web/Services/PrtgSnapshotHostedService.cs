@@ -566,7 +566,8 @@ public class PrtgSnapshotHostedService : BackgroundService
             try
             {
                 preflightSelection = ResolveSnapshotCapacitySelection(settings, now);
-                if (!SnapshotCapacityAllows(preflightSelection, settings, out preflightEstimate))
+                if (!SnapshotCapacityAllows(preflightSelection, settings, out preflightEstimate) &&
+                    preflightEstimate.Status != PrtgSnapshotCapacityStatus.CapacityUnverified)
                 {
                     NoteCapacitySkip(preflightSelection, preflightEstimate);
                     return;
@@ -724,13 +725,17 @@ public class PrtgSnapshotHostedService : BackgroundService
             NoteCapacityScopeChanged(capacitySelection);
             return false;
         }
-        if (!SnapshotCapacityAllows(capacitySelection, settings, out var capacityEstimate))
+        if (!SnapshotCapacityAllows(capacitySelection, settings, out var capacityEstimate) &&
+            !(allowBoundedSingleBatchRecovery &&
+              capacityEstimate.Status == PrtgSnapshotCapacityStatus.CapacityUnverified))
         {
             _scopeRefreshRequested = true;
             NoteCapacitySkip(capacitySelection, capacityEstimate);
             return false;
         }
-        var targets = capacitySelection.SensorObjids;
+        var targets = allowBoundedSingleBatchRecovery
+            ? capacitySelection.SensorObjids.Take(PrtgSnapshotCapacityEvaluator.BatchSize).ToArray()
+            : capacitySelection.SensorObjids;
         var emptyScope = targets.Count == 0;
         string? admissionFingerprint = null;
         if (!emptyScope)
@@ -981,11 +986,13 @@ public class PrtgSnapshotHostedService : BackgroundService
                     {
                         try
                         {
-                            var currentSettings = _settingsStore.Get();
-                            var currentPolicy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-                            var currentSelection = PrtgSnapshotTargetResolver.CreateSelection(targets,
-                                capacitySelection.ActiveMappedDeviceCount, _backend, currentSettings, currentPolicy);
-                            if (currentSelection.ScopeFingerprint == capacitySelection.ScopeFingerprint &&
+                            // Cancellation records only a failed sample for the captured contract.
+                            // It cannot promote capacity, so do not rebuild the fleet catalogue
+                            // during cancellation cleanup for every in-flight batch.
+                            var cancelled = ct.IsCancellationRequested;
+                            var currentSelection = cancelled ? null :
+                                ResolveSnapshotCapacitySelection(_settingsStore.Get(), Now());
+                            if (cancelled || currentSelection!.ScopeFingerprint == capacitySelection.ScopeFingerprint &&
                                 currentSelection.EndpointFingerprint == capacitySelection.EndpointFingerprint &&
                                 currentSelection.RequestShapeFingerprint == capacitySelection.RequestShapeFingerprint)
                             {
@@ -995,7 +1002,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                                     new PrtgSnapshotCapacitySample(capacitySelection.ScopeFingerprint,
                                         capacitySelection.EndpointFingerprint, capacitySelection.RequestShapeFingerprint,
                                         DateTimeOffset.UtcNow, (long)Math.Ceiling(Math.Max(0, elapsed)), batch.Count,
-                                        capacityOutcome));
+                                        cancelled ? "failed" : capacityOutcome));
                             }
                         }
                         catch (Exception evidenceError)

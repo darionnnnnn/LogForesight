@@ -361,6 +361,55 @@ public static class PrtgJointCapacityEvaluator
                 : "bounded_recovery_" + joint.Reason);
     }
 
+    /// <summary>Admits one calibration batch while retaining the full selected-scope contract.</summary>
+    public static PrtgBoundedSnapshotRecoveryEstimate EvaluateBoundedSnapshotScopeRecovery(
+        int fullScopeTargetCount, string strategy, PrtgProfileTransportEstimate profile,
+        PrtgRequestBudgetUsage usage, int httpTimeoutSeconds,
+        double snapshotTableRequestsPerSecond, double profileTableRequestsPerSecond)
+    {
+        if (fullScopeTargetCount is < 1 or > 15_000)
+            return new(false, fullScopeTargetCount, Math.Max(0, httpTimeoutSeconds),
+                double.PositiveInfinity, profile.EstimatedSeconds ?? double.PositiveInfinity,
+                "recovery_scope_outside_policy_limit");
+        var batchSize = Math.Min(PrtgSnapshotCapacityEvaluator.BatchSize, fullScopeTargetCount);
+        var estimate = EvaluateBoundedSingleBatchRecovery(batchSize, strategy, profile, usage,
+            httpTimeoutSeconds, snapshotTableRequestsPerSecond, profileTableRequestsPerSecond);
+        return estimate with { TargetCount = fullScopeTargetCount };
+    }
+
+    /// <summary>
+    /// Checks one profile-worker calibration group against an already retained joint allocation.
+    /// It deliberately makes no capacity claim: the normal worker must record the real request
+    /// counters and the normal full-scope evaluator remains the only route to qualified capacity.
+    /// </summary>
+    public static bool CanAdmitBoundedProfileRefreshRecovery(int groupSize,
+        PrtgRequestBudgetUsage usage, double snapshotTableRequestsPerSecond,
+        double profileTableRequestsPerSecond, double generalResidualRequestsPerSecond,
+        out string reason)
+    {
+        reason = "bounded_profile_recovery_invalid_group";
+        if (groupSize is < 1 or > 5) return false;
+        reason = "bounded_profile_recovery_reserved_rates_invalid";
+        if (!double.IsFinite(snapshotTableRequestsPerSecond) || snapshotTableRequestsPerSecond <= 0 ||
+            !double.IsFinite(profileTableRequestsPerSecond) || profileTableRequestsPerSecond <= 0 ||
+            !double.IsFinite(generalResidualRequestsPerSecond) || generalResidualRequestsPerSecond <= 0 ||
+            snapshotTableRequestsPerSecond + profileTableRequestsPerSecond >
+                SharedTableRequestsPerSecond * (1 - RequiredHeadroomFraction) + 1e-9)
+            return false;
+        reason = "bounded_profile_recovery_shared_pool_busy";
+        if (usage.InFlight >= 3) return false;
+
+        var wait = Math.Max(0, usage.UntilNextTableToken?.TotalSeconds ?? 0);
+        var requestGaps = Math.Max(0, PrtgProfileTransportCapacityEvaluator.ExpectedRequests(groupSize) - 1d);
+        const double hardGroupDeadlineSeconds = 30;
+        const double recoveryMarginSeconds = 5;
+        var estimate = wait + requestGaps / profileTableRequestsPerSecond + recoveryMarginSeconds;
+        reason = "bounded_profile_recovery_group_deadline_exceeded";
+        if (!double.IsFinite(estimate) || estimate >= hardGroupDeadlineSeconds) return false;
+        reason = "bounded_profile_refresh_recovery_admitted";
+        return true;
+    }
+
     private static PrtgJointCapacityEstimate EvaluateCore(PrtgSnapshotCapacityEstimate snapshot,
         PrtgProfileTransportEstimate profile, PrtgRequestBudgetUsage usage, int httpTimeoutSeconds,
         double? reservedSnapshotRate, double? reservedProfileRate)

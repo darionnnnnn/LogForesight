@@ -276,21 +276,25 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         {
             fixture.RecordSnapshotFailure();
             Assert.Equal(51, fixture.Selection.SensorObjids.Count);
-            Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
-                fixture.Settings.Get(), fixture.Selection, out _, out _, allowBoundedSingleBatchRecovery: true));
+            Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), fixture.Selection, out _, out var reason,
+                allowBoundedSingleBatchRecovery: true), reason);
+            Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedSingleBatchRecoveryReason, reason);
         }
     }
 
     [Fact]
-    public void Bounded_recovery_requires_a_fresh_real_snapshot_sample_and_cannot_bootstrap_from_absence()
+    public void Bounded_snapshot_recovery_can_restart_from_absent_or_expired_samples_but_not_without_a_plan()
     {
         using (var fixture = RuntimeRecoveryFixture.Create(1))
         {
             var evidence = fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey);
             evidence.Mutate(_ => ("[]", true));
 
-            Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
-                fixture.Settings.Get(), fixture.Selection, out _, out _, allowBoundedSingleBatchRecovery: true));
+            Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), fixture.Selection, out _, out var reason,
+                allowBoundedSingleBatchRecovery: true), reason);
+            Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedSingleBatchRecoveryReason, reason);
         }
 
         using (var fixture = RuntimeRecoveryFixture.Create(1))
@@ -306,9 +310,140 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
                 Outcome = "failed"
             });
 
-            Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
-                fixture.Settings.Get(), selection, out _, out _, allowBoundedSingleBatchRecovery: true));
+            Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), selection, out _, out var reason,
+                allowBoundedSingleBatchRecovery: true), reason);
+            Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedSingleBatchRecoveryReason, reason);
         }
+
+        using (var fixture = RuntimeRecoveryFixture.Create(5))
+        {
+            var planStore = new PrtgCapacityAdmissionPlanStore(
+                fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
+            var original = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
+            planStore.Invalidate(original.Owner, original.Version);
+            Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), fixture.Selection, out _, out _, allowBoundedSingleBatchRecovery: true));
+        }
+    }
+
+    [Fact]
+    public void Expired_plan_and_missing_capacity_evidence_allow_only_one_bounded_profile_recovery_group_after_restart()
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(6);
+        var planBlob = fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey);
+        var planStore = new PrtgCapacityAdmissionPlanStore(planBlob);
+        var original = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
+        planBlob.Mutate(raw =>
+        {
+            var expired = JsonSerializer.Deserialize<PrtgCapacityAdmissionPlan>(raw!)! with
+            { CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(-49), LeaseUntilUtc = DateTimeOffset.UtcNow.AddHours(-25) };
+            return (JsonSerializer.Serialize(expired), true);
+        });
+        fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+        fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+
+        var selection = fixture.Selection;
+        Assert.Equal(6, selection.SensorObjids.Count);
+        Assert.True(PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(original));
+        Assert.Equal(fixture.Settings.Get().Revision, original.SettingsRevision);
+        Assert.Equal(new PrtgMonitoringPolicyStore(fixture.Backend.Blob(
+            PrtgMonitoringPolicyStore.BlobKey)).Get().Revision, original.PolicyRevision);
+        Assert.Equal(original.Fingerprint, planStore.ReadRetained()!.Fingerprint);
+        Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            fixture.Settings.Get(), selection, out _, out _));
+
+        Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            fixture.Settings.Get(), selection, out var recovery, out var reason,
+            boundedProfileRefreshRecoveryGroupSize: 5), reason);
+        Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedProfileRefreshRecoveryReason, reason);
+        Assert.Equal(original.Fingerprint, recovery!.Fingerprint);
+        Assert.Equal(original.Version + 1, recovery.Version);
+        Assert.True(recovery.LeaseUntilUtc > DateTimeOffset.UtcNow);
+
+        // Admission only authorizes the one worker group. It did not create success evidence or
+        // make either full-scope evaluator qualified; a process restart can repeat this bounded
+        // step until real current samples are recorded.
+        Assert.Empty(new PrtgSnapshotCapacityStore(
+            fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read());
+        Assert.Empty(new PrtgProfileTransportCapacityStore(
+            fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read());
+        Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            fixture.Settings.Get(), selection, out _, out reason,
+            boundedProfileRefreshRecoveryGroupSize: 5), reason);
+        Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedProfileRefreshRecoveryReason, reason);
+
+        // After the actual profile worker records its one successful five-sensor calibration,
+        // the snapshot worker can rebuild missing snapshot evidence one real 50-ID batch at a time.
+        var policy = new PrtgMonitoringPolicyStore(
+            fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var profileIds = policy.SensorIds.Order().Take(5).ToArray();
+        var profileContract = PrtgProfileTransportCapacityPilot.BuildContract(
+            fixture.Backend, fixture.Hosts, fixture.Settings.Get(), policy, profileIds);
+        new PrtgProfileTransportCapacityStore(
+            fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Record(
+            new PrtgProfileTransportSample(profileContract.SourceFingerprint, profileContract.ScopeFingerprint,
+                profileContract.StrategyFingerprint, profileContract.RequestShapeFingerprint, DateTimeOffset.UtcNow,
+                5_000, 5, 12, 12, "success", null, profileContract.VersionFingerprint, 5_000));
+        Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            fixture.Settings.Get(), selection, out _, out reason,
+            allowBoundedSingleBatchRecovery: true), reason);
+        Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedSingleBatchRecoveryReason, reason);
+        Assert.False(PrtgJointCapacityEvaluator.CanAdmitBoundedProfileRefreshRecovery(6,
+            new PrtgRequestBudgetUsage(0, 0, 0, 0, 0, TimeSpan.Zero, TimeSpan.Zero),
+            recovery.SnapshotTableRequestsPerSecond, recovery.ProfileTableRequestsPerSecond,
+            recovery.GeneralResidualRequestsPerSecond, out _));
+    }
+
+    [Fact]
+    public void Expired_profile_recovery_rejects_a_changed_source_contract()
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(5);
+        var blob = fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey);
+        blob.Mutate(raw =>
+        {
+            var expired = JsonSerializer.Deserialize<PrtgCapacityAdmissionPlan>(raw!)! with
+            { CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(-49), LeaseUntilUtc = DateTimeOffset.UtcNow.AddHours(-25) };
+            return (JsonSerializer.Serialize(expired), true);
+        });
+        fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+        fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+        fixture.Settings.Update(settings => settings.PrtgUrl = "https://changed-after-restart.example.test");
+
+        Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+            fixture.Settings.Get(), fixture.Selection, out _, out _,
+            boundedProfileRefreshRecoveryGroupSize: 5));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Retained_renewal_invalidates_exact_accepted_plan_when_post_commit_source_check_fails(bool throws)
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(1);
+        var blob = fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey);
+        var store = new PrtgCapacityAdmissionPlanStore(blob);
+        var original = store.ReadCurrent(DateTimeOffset.UtcNow)!;
+        var expired = original with
+        {
+            CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(-49),
+            LeaseUntilUtc = DateTimeOffset.UtcNow.AddHours(-25)
+        };
+        blob.Mutate(_ => (JsonSerializer.Serialize(expired), true));
+        var checks = 0;
+        bool SourceCheck()
+        {
+            if (++checks == 1) return true;
+            if (throws) throw new InvalidOperationException("source-check-failed");
+            return false;
+        }
+        bool Attempt() => store.TryRenewRetainedForBoundedRecovery(expired, DateTimeOffset.UtcNow,
+            TimeSpan.FromHours(24), SourceCheck, out _);
+        if (throws) Assert.Throws<InvalidOperationException>(() => Attempt());
+        else Assert.False(Attempt());
+        Assert.Equal(2, checks);
+        Assert.Null(store.ReadCurrent(DateTimeOffset.UtcNow));
+        Assert.Null(store.ReadRetained());
     }
 
     [Fact]

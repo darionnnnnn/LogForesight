@@ -50,7 +50,7 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R05／N6：完成 snapshot 100 顆精確批次及同形來源探測、profile／snapshot 容量失效後的有界重新校準；驗證完整 15000 顆共同排程，不降低 25% 餘裕、10 分鐘快照期限或週期性採樣。profile 分批及滾動補齊子項已由本輪 Main 239 項回歸核對完成。
+- [ ] R05／N6：完成 snapshot 100 顆精確批次及同形來源探測；驗證完整 15000 顆共同排程，不降低 25% 餘裕、10 分鐘快照期限或週期性採樣。profile 分批及滾動補齊子項已由本輪 Main 239 項回歸核對完成。
 - [ ] R09／N6：完成可交付的實際 API 固定矩陣 consumer，依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。精確全分頁核對、唯讀 collector 與明確 Start／Resume／Check lifecycle 工具已完成；兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
@@ -1633,3 +1633,11 @@ Main 建置成功，受影響七類測試 116／116、零失敗／略過，證�
 正常時鐘、未改共享配額的 numeric-loopback 隔離 API 已完成 disabled snapshot／profile pilots→settings CAS 啟用→無 binding 的唯讀探索→六顆明確 binding→enabled qualification pilots→耐久 Start→六顆 raw proof→自動 profile→current-fenced Check→真正 Read-QualificationCoverage 全頁核對。第二輪五顆 qualification pilot 合法等待共享額度，wall 66.2552173 秒，確認不能將排隊併入 ticket 就緒後的 30 秒來源期限。Start 20 秒返回已保存 active 進度；Check completed 與 collector ready／6 raw／6 current profile 通過，唯讀探索前後 binding 完全相同，五個 owned process 已清理。證據位於 work/qualification-coverage-api-six-866e61280b96430681b6be8d64221996。此 R15 實作與六顆資料流 TODO 清除；宣告類型的原生來源、全部角色動線、完整 3000／15000／180 日容量與 AC 門檻仍依 §5.2 核對。
 
 同版隔離瀏覽器另確認：新版重啟後拒絕舊容量證據，維護頁顯示 waiting-capacity；經公開 API 停用→新 snapshot／profile pilots→CAS 啟用重新取得 current plan，重新固定來源的唯讀探索完成。編輯器回傳 1 個精確 channel、不自動選取、保留既有 qualified／revision 1 與語意欄位，明示不授權 profile；六顆作業狀態 6/6 qualified／waiting 0／failed 0 可見，console error 0。completed-dom.txt／completed.png 保存該段畫面，僅本段管理者操作，不替代全部角色 AC。兩個重啟 owned process 已清理。
+
+### 2026-10-10 容量樣本失效後的有限恢復已完成
+
+profile／snapshot worker 能以契約相同的保留計畫，在租約或樣本過期後先重新校準一組最多五顆 profile、或一批快照。來源、範圍、設定、政策、請求形狀及建置必須完全相符；沒有舊計畫、契約變更或成本超額仍拒絕，不能用恢復路徑執行完整範圍。租約以完整紀錄 CAS 續行；實際新樣本才恢復一般准入，五筆快照成功前繼續顯示等待。共享配額、25% 餘裕、快照期限未放寬。
+
+主代理 Main 建置零錯誤；完整六類回歸 183 案實際完成，181 通過、兩個反例保留。SQL 回填等待斷言恢復正確原因；取消後原本每個在途批次都重查完整範圍，造成取消清理超時，改為直接記錄 captured contract 的失敗樣本，不授予容量。修正後受影響分批、取消、來源異動、SQL 重試與過期恢復 24/24 全過、零略過；原兩個失敗案均完整重驗，另要求取消後零 sensor SELECT、全部容量樣本為 failed。未變更路径沿用原完整回歸结果，沒有把原失敗 TRX 當作單次全綠。最終 TRX 為 .gemini-tasks/primary-results/recovery-main-repaired/recovery-main-repaired.trx；最終輸入雜湊已保存。此程式子項移出 TODO，100 顆快照、固定全量工作負載及原生來源仍保留各自門檻。
+
+續租後的來源核對返回 false 或拋出例外，現在均精確撤銷此次 owner/version 的租約，不會留下重啟可讀的有效方案，也不會撤銷後來的版本。新增兩個反例在強制重編舊碼後均失敗（red-v2），修正版連同既有 CAS／過期恢復 17 案全過、零略過。初次 red 使用增量建置誤沿用新 DLL，未作缺陷證據；red-v2 明確更新輸入時間並重编，保留兩份結果供追查。主代理修正及獨立整合驗證，不稱為此手改的換模型體檢。

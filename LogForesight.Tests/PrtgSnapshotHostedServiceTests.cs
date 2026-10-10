@@ -1310,6 +1310,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         private long _sensorWriteMs;
         private long _blobWriteMs;
 
+        public long SensorSelectCount => Interlocked.Read(ref _sensorSelectCount);
+
         public void Reset()
         {
             Interlocked.Exchange(ref _sensorSelectCount, 0);
@@ -2464,7 +2466,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(2, SnapshotUrls().Count); // This pass sampled the current small scope before backfill expanded to 5002 sensors.
         Assert.Contains("完整快照容量尚未驗證", service.GetStatus().LastSkipReason);
         Assert.Contains("5002 顆", service.GetStatus().LastSkipReason);
-        Assert.Contains("0/5", service.GetStatus().LastSkipReason);
         Assert.DoesNotContain(_stubHandler.RequestedUrls,
             url => url.Contains("content=messages", StringComparison.Ordinal));
         Assert.Null(QueueItemForDevice(20).CompletedAtUtc);
@@ -2575,9 +2576,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(35));
         Assert.Equal(clock.AddMinutes(-15), service.GetStatus().LastSuccessAt);
         Assert.Equal(2, SnapshotUrls().Count);
-        Assert.Contains("完整快照容量尚未驗證", service.GetStatus().LastSkipReason);
-        Assert.Contains("502 顆", service.GetStatus().LastSkipReason);
-        Assert.Contains("0/5", service.GetStatus().LastSkipReason);
+        Assert.Contains("Joint PRTG admission", service.GetStatus().LastSkipReason);
     }
 
     [Fact]
@@ -2802,6 +2801,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         try
         {
             await threeStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            _sqlDiagnostics.Reset();
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
                 await tick.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -2815,6 +2815,10 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(3, started);
         Assert.Equal(3, exited);
         Assert.Equal(0, service.GetStatus().PendingSamples);
+        Assert.Equal(0, _sqlDiagnostics.SensorSelectCount);
+        var evidence = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read();
+        Assert.NotEmpty(evidence);
+        Assert.All(evidence, sample => Assert.Equal("failed", sample.Outcome));
     }
 
     [Fact]
@@ -2860,11 +2864,11 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 大範圍容量未知時不開快照請求並保留既有累積列()
+    public async Task 大範圍容量未知時只執行一批有界恢復並保留既有累積列()
     {
         SetupTargetSensors(ManyTargets(1001, 120));
         _backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
-        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("容量未驗證時不得開啟完整快照請求");
+        _stubHandler.OnSend = (request, _) => Task.FromResult(CapacityValidFilteredValues(request.RequestUri!.ToString()));
         var service = CreateService();
         var hour = DateTime.Today.AddHours(10);
         service.Now = () => hour.AddMinutes(5);
@@ -2872,14 +2876,12 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         await service.TickAsync();
 
-        Assert.Empty(_stubHandler.RequestedUrls);
-        Assert.Null(service.GetStatus().LastSuccessAt);
+        var recoveryUrl = Assert.Single(SnapshotUrls());
+        Assert.Equal(50, FilterObjids(recoveryUrl).Count);
+        Assert.NotNull(service.GetStatus().LastSuccessAt);
         Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
-        Assert.Equal(1, service.GetStatus().PendingSamples);
-        Assert.Contains("120 顆", service.GetStatus().LastSkipReason);
-        Assert.Contains("0/5", service.GetStatus().LastSkipReason);
-        var diagnostic = Assert.Single(service.Diagnostics.ReadRecent(hour.AddHours(1), 1));
-        Assert.Equal(1, diagnostic.ReasonCodes["snapshot-capacity-unverified"]);
+        Assert.Equal(51, service.GetStatus().PendingSamples);
+        Assert.Contains("容量證據恢復中", service.GetStatus().LastSkipReason);
     }
 
     [Fact]
@@ -3287,12 +3289,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         clock = clock.AddMinutes(15);
         await service.TickAsync();
         var status = service.GetStatus();
-        Assert.Equal(3, SnapshotUrls().Count); // Both later ticks are held before HTTP by capacity admission.
-        Assert.Equal(1, status.ConsecutiveFailures); // Only the first tick made real failed requests.
-        Assert.Equal(15, status.IntervalMinutes);
-        Assert.Contains("完整快照容量尚未驗證", status.LastSkipReason);
-        Assert.Contains("150 顆", status.LastSkipReason);
-        Assert.Contains("1/5", status.LastSkipReason);
+        Assert.Equal(5, SnapshotUrls().Count); // Each later tick is limited to one bounded recovery batch.
+        Assert.Equal(3, status.ConsecutiveFailures); // Recovery attempts are real requests and failures.
+        Assert.Equal(30, status.IntervalMinutes);
     }
 
     [Fact]

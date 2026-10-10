@@ -8,10 +8,11 @@ namespace LogForesight.Web.Services;
 internal static class PrtgCapacityRuntimeAdmission
 {
     public const string BoundedSingleBatchRecoveryReason = "bounded-single-batch-recovery-only";
+    public const string BoundedProfileRefreshRecoveryReason = "bounded-profile-refresh-recovery-only";
 
     public static bool TryGetCurrent(StorageBackend backend, IHostStore hosts, SystemSettings settings,
         PrtgSnapshotTargetSelection snapshotSelection, out PrtgCapacityAdmissionPlan? plan, out string reason,
-        bool allowBoundedSingleBatchRecovery = false)
+        bool allowBoundedSingleBatchRecovery = false, int? boundedProfileRefreshRecoveryGroupSize = null)
     {
         plan = null;
         reason = "capacity-admission-plan-missing";
@@ -32,6 +33,13 @@ internal static class PrtgCapacityRuntimeAdmission
 
         var planStore = new PrtgCapacityAdmissionPlanStore(backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
         var stored = planStore.ReadCurrent(now);
+        var retainedExpiredPlan = false;
+        if (stored is null && (allowBoundedSingleBatchRecovery ||
+            boundedProfileRefreshRecoveryGroupSize is >= 1 and <= 5))
+        {
+            stored = planStore.ReadRetained();
+            retainedExpiredPlan = stored is not null && stored.LeaseUntilUtc <= now;
+        }
         var priorContractMatches = stored is not null && stored.SourceFingerprint == contract.SourceFingerprint &&
             stored.SnapshotScopeFingerprint == snapshotSelection.ScopeFingerprint &&
             stored.ProfileScopeFingerprint == contract.ScopeFingerprint &&
@@ -60,37 +68,106 @@ internal static class PrtgCapacityRuntimeAdmission
                 stored.ProfileTableRequestsPerSecond)
             : PrtgJointCapacityEvaluator.Evaluate(snapshot, profile, usage, settings.PrtgTimeoutSeconds);
         var boundedRecovery = false;
-        if (joint.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
+        var boundedProfileRecovery = false;
+        if (allowBoundedSingleBatchRecovery && joint.Status != PrtgSnapshotCapacityStatus.CapacityQualified &&
+            priorContractMatches && stored is not null && stored.SettingsRevision == settings.Revision &&
+            stored.PolicyRevision == policy.Revision && snapshotSelection.SensorObjids.Count is >= 1 and <= 15_000 &&
+            snapshot.Reason == "insufficient_fresh_full_batch_samples" &&
+            profile.Status == PrtgSnapshotCapacityStatus.CapacityQualified &&
+            PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored))
         {
-            if (!allowBoundedSingleBatchRecovery || !priorContractMatches || stored is null ||
-                snapshotSelection.SensorObjids.Count is < 1 or > PrtgSnapshotCapacityEvaluator.BatchSize ||
-                snapshot.Reason != "insufficient_fresh_full_batch_samples")
-            { reason = "current-capacity-evidence-" + joint.Reason; return false; }
-
-            // Recovery is available only while there is fresh, real evidence for this exact
-            // batch contract. An absent or stale blob cannot bootstrap a request.
-            var requiredBatchCount = snapshotSelection.SensorObjids.Count;
-            var recoveryProgress = snapshotEvidence.Where(sample =>
-                    sample.ScopeFingerprint == snapshotSelection.ScopeFingerprint &&
-                    sample.EndpointFingerprint == snapshotSelection.EndpointFingerprint &&
-                    sample.RequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint &&
-                    sample.RequestedSensorCount == requiredBatchCount && sample.CompletedAtUtc <= now &&
-                    now - sample.CompletedAtUtc <= PrtgSnapshotCapacityEvaluator.EvidenceFreshness)
-                .OrderBy(sample => sample.CompletedAtUtc).ToArray();
-            if (recoveryProgress.Length is < 1 or >= PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples ||
-                recoveryProgress.Any(sample => sample.ElapsedMilliseconds < 0 ||
-                    sample.Outcome is not ("success" or "failed" or "timeout")))
-            { reason = "current-capacity-evidence-bounded-recovery-progress-missing-or-invalid"; return false; }
-
-            var recovery = PrtgJointCapacityEvaluator.EvaluateBoundedSingleBatchRecovery(
-                snapshotSelection.SensorObjids.Count, PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy),
-                profile, usage, settings.PrtgTimeoutSeconds,
-                stored.SnapshotTableRequestsPerSecond, stored.ProfileTableRequestsPerSecond);
+            // Symmetric snapshot-worker recovery: one real <=50-ID batch under the retained
+            // plan's snapshot lane may rebuild the five full-batch sample set. Missing or stale
+            // evidence does not authorize the remaining batches or scope work.
+            var recovery = PrtgJointCapacityEvaluator.EvaluateBoundedSnapshotScopeRecovery(
+                snapshotSelection.SensorObjids.Count, PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), profile,
+                usage, settings.PrtgTimeoutSeconds, stored.SnapshotTableRequestsPerSecond,
+                stored.ProfileTableRequestsPerSecond);
             if (!recovery.Admitted)
             { reason = "current-capacity-evidence-" + recovery.Reason; return false; }
-            if (!PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored))
-            { reason = "current-source-scope-or-strategy-plan-mismatch"; return false; }
+            if (retainedExpiredPlan)
+            {
+                bool StillCurrent()
+                {
+                    var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                    var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                    if (!latestSettings.PrtgEnabled || latestSettings.Revision != settings.Revision ||
+                        latestPolicy.Revision != policy.Revision || !latestPolicy.Ready(latestSettings.PrtgUrl)) return false;
+                    try
+                    {
+                        var latestContract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(
+                            latestSettings, latestPolicy, hosts.CapturePrtgSnapshot());
+                        var latestSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, latestSettings,
+                            new SentinelStore(backend.Blob("sentinels")).GetAll(), latestPolicy);
+                        return latestContract == contract &&
+                            latestSelection.ScopeFingerprint == snapshotSelection.ScopeFingerprint &&
+                            latestSelection.RequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint;
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+                    { return false; }
+                }
+
+                if (!planStore.TryRenewRetainedForBoundedRecovery(stored, DateTimeOffset.UtcNow,
+                    TimeSpan.FromHours(24), StillCurrent, out var renewed) || renewed is null)
+                { reason = "bounded-snapshot-recovery-plan-renewal-superseded"; return false; }
+                stored = renewed;
+            }
             boundedRecovery = true;
+        }
+        if (boundedProfileRefreshRecoveryGroupSize is { } recoveryGroupSize &&
+            (profile.Status != PrtgSnapshotCapacityStatus.CapacityQualified || retainedExpiredPlan))
+        {
+            // This branch is callable only by the profile-refresh worker. It can recover from
+            // missing/expired capacity samples, but only against the exact retained plan and
+            // only for one <=5-sensor group. It never writes a qualified estimate or plan.
+            var profileRecoveryReason = "bounded-profile-contract-mismatch";
+            if (recoveryGroupSize is < 1 or > 5 || !priorContractMatches || stored is null ||
+                stored.SettingsRevision != settings.Revision || stored.PolicyRevision != policy.Revision ||
+                !PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored) ||
+                profile.Status == PrtgSnapshotCapacityStatus.CapacityExceeded ||
+                !PrtgJointCapacityEvaluator.CanAdmitBoundedProfileRefreshRecovery(recoveryGroupSize, usage,
+                    stored.SnapshotTableRequestsPerSecond, stored.ProfileTableRequestsPerSecond,
+                    stored.GeneralResidualRequestsPerSecond, out profileRecoveryReason))
+            { reason = "current-capacity-evidence-" + profileRecoveryReason; return false; }
+
+            if (retainedExpiredPlan)
+            {
+                bool StillCurrent()
+                {
+                    var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                    var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                    if (!latestSettings.PrtgEnabled || latestSettings.Revision != settings.Revision ||
+                        latestPolicy.Revision != policy.Revision || !latestPolicy.Ready(latestSettings.PrtgUrl)) return false;
+                    try
+                    {
+                        var latestContract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(
+                            latestSettings, latestPolicy, hosts.CapturePrtgSnapshot());
+                        var latestSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, latestSettings,
+                            new SentinelStore(backend.Blob("sentinels")).GetAll(), latestPolicy);
+                        return latestContract == contract &&
+                            latestSelection.ScopeFingerprint == snapshotSelection.ScopeFingerprint &&
+                            latestSelection.RequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint;
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+                    { return false; }
+                }
+
+                if (!planStore.TryRenewRetainedForBoundedRecovery(stored, DateTimeOffset.UtcNow,
+                    TimeSpan.FromHours(24), StillCurrent, out var renewed) || renewed is null)
+                { reason = "bounded-profile-recovery-plan-renewal-superseded"; return false; }
+                stored = renewed;
+            }
+            boundedProfileRecovery = true;
+        }
+        if (joint.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
+        {
+            if (boundedProfileRecovery)
+            {
+                // The single calibration attempt is bounded above; the real worker records its
+                // outcome and the next admission again evaluates the complete evidence contract.
+            }
+            else if (!boundedRecovery)
+            { reason = "current-capacity-evidence-" + joint.Reason; return false; }
         }
 
         if (!priorContractMatches || stored is null ||
@@ -104,7 +181,7 @@ internal static class PrtgCapacityRuntimeAdmission
             stored.PolicyRevision != policy.Revision)
         { reason = "current-source-scope-or-strategy-plan-mismatch"; return false; }
 
-        if (!boundedRecovery)
+        if (!boundedRecovery && !boundedProfileRecovery)
         {
             PrtgCapacityAdmissionPlan expected;
             try { expected = PrtgJointCapacityEvaluator.CreatePlan(joint, contract.SourceFingerprint,
@@ -163,7 +240,8 @@ internal static class PrtgCapacityRuntimeAdmission
 
         PrtgRequestBudget.Shared.SetAdmissionPlan(stored);
         plan = stored;
-        reason = boundedRecovery ? BoundedSingleBatchRecoveryReason : "admitted";
+        reason = boundedRecovery ? BoundedSingleBatchRecoveryReason :
+            boundedProfileRecovery ? BoundedProfileRefreshRecoveryReason : "admitted";
         return true;
     }
 }

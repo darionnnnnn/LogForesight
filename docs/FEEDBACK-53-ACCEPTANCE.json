@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "8d849bea1ad64ee88b93b8e9d4dd45f867baac9037af7bde68a01435581d5800",
+  "plan_sha256": "a761b41fd0514dd44407c5a4aba0aeba61597288f05da2310b00c6cdbfaab593",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -8112,6 +8112,102 @@
       "existingBindingStatus": "qualified",
       "consoleErrors": 0,
       "ownedCleanupComplete": true
+    }
+  },
+  "bounded_capacity_recovery_current_main_20261010": {
+    "status": "implementation-and-affected-regression-passed",
+    "baseline_counters": {
+      "total": "183",
+      "executed": "183",
+      "passed": "181",
+      "failed": "2",
+      "error": "0",
+      "timeout": "0",
+      "aborted": "0",
+      "inconclusive": "0",
+      "passedButRunAborted": "0",
+      "notRunnable": "0",
+      "notExecuted": "0",
+      "disconnected": "0",
+      "warning": "0",
+      "completed": "0",
+      "inProgress": "0",
+      "pending": "0"
+    },
+    "baseline_trx": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\recovery-main-final\\recovery-main-final.trx",
+    "repaired_counters": {
+      "total": "24",
+      "executed": "24",
+      "passed": "24",
+      "failed": "0",
+      "error": "0",
+      "timeout": "0",
+      "aborted": "0",
+      "inconclusive": "0",
+      "passedButRunAborted": "0",
+      "notRunnable": "0",
+      "notExecuted": "0",
+      "disconnected": "0",
+      "warning": "0",
+      "completed": "0",
+      "inProgress": "0",
+      "pending": "0"
+    },
+    "repaired_failed_cases": [
+      "LogForesight.Tests.PrtgSnapshotHostedServiceTests.分批快照_取消會等待三個在途請求退出且不開始剩餘批次",
+      "LogForesight.Tests.PrtgSnapshotHostedServiceTests.補抓第二批SQL失敗不留下部分鏡像且下一輪重試全部裝置"
+    ],
+    "trx": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\recovery-main-repaired\\recovery-main-repaired.trx",
+    "trx_sha256": "1cded805a5d3c6141a382769f294f5600db88c4060a4ec14d3e26133dea2a8bb",
+    "inputs": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\recovery-primary-final-inputs.json",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "wholeRoundAccepted": false,
+    "renewal_post_commit_fence": {
+      "red": {
+        "counters": {
+          "total": "2",
+          "executed": "2",
+          "passed": "0",
+          "failed": "2",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "trx": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\recovery-renewal-red-v2\\recovery-renewal-red-v2.trx",
+        "sha256": "87200418043a1fb544b4a3085ebc8205798bafde8e9e62878793bcd2568413f0"
+      },
+      "green": {
+        "counters": {
+          "total": "17",
+          "executed": "17",
+          "passed": "17",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "trx": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\recovery-renewal-green\\recovery-renewal-green.trx",
+        "sha256": "75a6997149ff6b3a10f0d2363f24cdaa8b65f6acd4ee0a936478e15dbb874cce"
+      }
     }
   }
 }

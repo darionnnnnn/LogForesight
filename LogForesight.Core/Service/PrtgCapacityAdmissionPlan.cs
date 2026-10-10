@@ -44,6 +44,55 @@ public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob, TimePro
         { return null; }
     }
 
+    /// <summary>Reads a valid retained plan even when its runtime lease expired.</summary>
+    public PrtgCapacityAdmissionPlan? ReadRetained()
+    {
+        var (raw, _, length) = blob.ReadBoundedWithVersion(MaximumBytes);
+        if (length > MaximumBytes || raw is not null && Encoding.UTF8.GetByteCount(raw) > MaximumBytes) return null;
+        return Parse(raw);
+    }
+
+    /// <summary>
+    /// Renews an expired retained plan only through an exact-record CAS and a caller supplied
+    /// current-source check. This is intended for one bounded profile calibration group, never
+    /// for normal runtime work or for publishing new capacity evidence.
+    /// </summary>
+    public bool TryRenewRetainedForBoundedRecovery(PrtgCapacityAdmissionPlan expected,
+        DateTimeOffset nowUtc, TimeSpan leaseDuration, Func<bool> sourceAndSettingsStillCurrent,
+        out PrtgCapacityAdmissionPlan? renewed)
+    {
+        ArgumentNullException.ThrowIfNull(sourceAndSettingsStillCurrent);
+        renewed = null;
+        if (!IsValid(expected) || expected.Version == long.MaxValue || leaseDuration <= TimeSpan.Zero)
+            return false;
+        var currentTime = CurrentTime(nowUtc);
+        if (expected.LeaseUntilUtc > currentTime) return false;
+        var desired = expected with { Version = expected.Version + 1, LeaseUntilUtc = currentTime + leaseDuration };
+        var accepted = blob.MutateWithContext<PrtgCapacityAdmissionPlan?>((_, raw) =>
+        {
+            var current = Parse(raw);
+            if (current != expected || current.LeaseUntilUtc > CurrentTime(nowUtc) ||
+                !sourceAndSettingsStillCurrent()) return (raw ?? "", null);
+            return (Serialize(desired), desired);
+        }, MaximumBytes, skipUnchangedContent: true);
+        if (accepted is null) return false;
+        try
+        {
+            if (!sourceAndSettingsStillCurrent() || accepted.LeaseUntilUtc <= CurrentTime(nowUtc))
+            {
+                Invalidate(accepted.Owner, accepted.Version);
+                return false;
+            }
+        }
+        catch
+        {
+            Invalidate(accepted.Owner, accepted.Version);
+            throw;
+        }
+        renewed = accepted;
+        return true;
+    }
+
     public PrtgCapacityAdmissionPlan Publish(PrtgCapacityAdmissionPlan candidate, string owner,
         DateTimeOffset nowUtc, TimeSpan leaseDuration, string currentSettingsRevision,
         Func<bool> sourceAndSettingsStillCurrent)

@@ -324,12 +324,15 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                 // contains source requests, so unavailable/unsupported sensors can still complete
                 // a sweep and an already completed scope can honor its next-sweep deadline.
                 PrtgCapacityAdmissionPlan? admission = null;
+                var admissionReason = "admitted";
                 if (candidates.Count > 0)
                 {
                     var snapshotSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, settings,
                         new SentinelStore(backend.Blob("sentinels")).GetAll());
                     if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(backend, hosts, settings, snapshotSelection,
-                        out admission, out var admissionReason))
+                        out admission, out admissionReason,
+                        boundedProfileRefreshRecoveryGroupSize: refreshGroups.Count == 0
+                            ? null : refreshGroups.Max(group => group.Length)))
                     {
                         Update(s => { s.LastOutcome = "waiting-capacity-admission";
                             s.LastWaitingReason = admissionReason; s.UpdatedAtUtc = DateTimeOffset.UtcNow; });
@@ -337,7 +340,9 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     }
                 }
 
-                foreach (var group in refreshGroups)
+                var admittedGroups = admissionReason == PrtgCapacityRuntimeAdmission.BoundedProfileRefreshRecoveryReason
+                    ? refreshGroups.Take(1) : refreshGroups;
+                foreach (var group in admittedGroups)
                 {
                     workCts.Token.ThrowIfCancellationRequested();
                     if (DateTime.UtcNow >= deadline) break;
