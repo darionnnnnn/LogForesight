@@ -88,7 +88,8 @@ public sealed class PrtgTrustedSamplingProbeService
         PrtgQualificationWriteFence? qualificationFence = null,
         bool qualificationPilotOnly = false,
         Action<TimeSpan>? onSensorElapsed = null,
-        Action<string>? onHistoricSourceVersion = null)
+        Action<string>? onHistoricSourceVersion = null,
+        Action<TimeSpan>? onTableBudgetAdmissionWait = null)
     {
         if (requestedIds.Count is < 1 or > MaxSensorIds || requestedIds.Any(id => id <= 0) ||
             requestedIds.Distinct().Count() != requestedIds.Count)
@@ -132,6 +133,7 @@ public sealed class PrtgTrustedSamplingProbeService
         client.RequestPurpose = qualificationOnly ? PrtgRequestPurpose.ProfileRefresh : requestPurpose;
         client.AdmissionPlanFingerprint = admissionPlanFingerprint;
         client.TableRequestSent = onRequestStarted;
+        client.TableBudgetAdmissionWaitObserved = onTableBudgetAdmissionWait;
         using var historicReservation = qualificationOnly
             ? await client.Budget!.ReserveQualificationHistoricAsync(qualificationFence!.JobId,
                 qualificationFence.Owner, qualificationFence.LeaseVersion, ct)

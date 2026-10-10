@@ -1573,3 +1573,11 @@ M5 在實際 MergeSampledValues 交易提交後、journal ACK 前寫入 4 KiB �
 主代理另以 Main Web 實際 API、正常 wall clock／共同 quota／SQLite 與 owned synthetic PRTG 跑完整兩顆集合 1000001、1000006，job a30c694b01534b1aa0c24c1265819457 為 completed，qualified=2、current ready profiles=2，收集 receipt.ready=true；worker 初始化使用當前已核驗 bindings，未宣稱此例跑過未核驗 raw 批次。Run coverage-api-current-940cbe18cd8b434988426a0852093070 的 6 個 owned processes 已清除。前置 v1／v2 的 owner checkpoint 缺漏及 v3 fixture 只在 controlled clock 回應 native primary/raw 的失敗保留；修正僅在外部隔離 harness，不繞過 Main 准入。
 
 這一工具段落可獨立交付，完整 runner 接線仍列 §5.1。receipt 的 nativeSourceVerified／capacityAccepted／retentionAccepted／wholeRoundAccepted 固定 false；15000 顆圖形與两顆 API 接線不是原生來源、180 日實際 provider 或整輪效能通過。原始 AC／Q items 不改。
+
+### 2026-10-10 profile 容量計時與背景更新計數
+
+Main 真實共同 quota 的五顆／20 GET pilot 重現 RED：wall time 已包含 Table 等候，joint admission 又加 lane pacing，形成重複計算。另實際 SQLite runtime recorder 的 RED 證明舊 10 次上限使成功的 20 GET 樣本無法保存。改為同時保留 wall 與扣除實測 Table quota／permit／lane 等候的 work；認證交換、HTTP、回應讀取、驗證與持久化不扣除。pilot request-shape fingerprint 更新，舊資料以 wall 保守估算；runtime 20 次計數完整保存。負 work／大於 wall 的 work 拒絕，最新無效或失敗樣本仍使資格失效。
+
+profile-pacing-red 與 profile-runtime-count-red 各一項有效 RED；修正後 Main 受影響共同配額、client、pilot、profile 與 snapshot 服務回歸 242／242、零略過，證據 profile-capacity-affected-green TRX。真實 Main 六顆資料流 v2 的五次 pilot 均成功送出 20 GET，wall 9942–9997 ms、work 483–527 ms；v2 driver 的第六顆 CAS 欄位錯誤已修正，不算產品失敗。v3 第六顆經 durable job 新取得 raw proof，但全頁核對正確拒絕 profile-not-ready，暴露 raw proof→profile 自動刷新缺口，已納入本輪修正；不把 completed raw job 當完整 profile。
+
+另已在開發前核算確認：目前固定 snapshot／profile lane 在 15000 顆時，即使零來源延遲，所需速率合計約 1.868 req/s，超過含 25% 餘裕的 1.5；有 0.1 秒 work 時約 1.898。R05／N6 容量排程修正與驗收仍未完成，不能只放寬 evaluator、降低餘裕或省略週期性 snapshot 來通過。此計時與計數子項完成，原始 AC／Q 與 §5 整體 gate 保留。

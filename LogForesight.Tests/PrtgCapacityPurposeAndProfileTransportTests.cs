@@ -8,6 +8,37 @@ namespace LogForesight.Tests;
 public sealed class PrtgCapacityPurposeAndProfileTransportTests
 {
     [Fact]
+    public void Profile_work_timing_excludes_only_measured_admission_and_legacy_keeps_full_wall_time()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var samples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(
+            "source", "scope", "strategy", "shape", now.AddSeconds(-i), 12_000, 5, 20, 20,
+            "success", null, "version", NonAdmissionElapsedMilliseconds: 1_000)).ToArray();
+        var measured = PrtgProfileTransportCapacityEvaluator.Evaluate(5, "source", "scope", "strategy",
+            "shape", "version", samples, now);
+        var legacy = PrtgProfileTransportCapacityEvaluator.Evaluate(5, "source", "scope", "strategy",
+            "shape", "version", samples.Select(sample => sample with { NonAdmissionElapsedMilliseconds = null }), now);
+        Assert.Equal(.2, measured.P95SensorSeconds);
+        Assert.Equal(2.4, legacy.P95SensorSeconds);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(5_001)]
+    public void Invalid_work_timing_invalidates_current_success_evidence(long workMilliseconds)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var samples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(
+            "source", "scope", "strategy", "shape", now.AddSeconds(-i), 5_000, 5, 20, 20,
+            "success", null, "version", NonAdmissionElapsedMilliseconds: 1_000)).ToArray();
+        var invalid = samples[0] with { CompletedAtUtc = now.AddSeconds(1), NonAdmissionElapsedMilliseconds = workMilliseconds };
+        var result = PrtgProfileTransportCapacityEvaluator.Evaluate(5, "source", "scope", "strategy",
+            "shape", "version", samples.Append(invalid), now.AddSeconds(2));
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, result.Status);
+        Assert.Null(result.P95SensorSeconds);
+    }
+
+    [Fact]
     public async Task Snapshot_lane_allows_three_in_flight_and_leaves_the_fourth_slot_to_profile()
     {
         var budget = new PrtgRequestBudget();

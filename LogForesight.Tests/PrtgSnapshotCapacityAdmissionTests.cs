@@ -499,6 +499,56 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         }
     }
 
+    [Fact]
+    public async Task Real_five_sensor_pilot_does_not_count_shared_pacing_twice_in_joint_admission()
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(5);
+        fixture.Settings.Update(settings => settings.PrtgEnabled = false);
+        var policy = new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var result = await new PrtgProfileTransportCapacityPilot(fixture.Backend,
+            value => PrtgClientFactory.Create(value, new CapacityProfileTableHandler(), new PrtgRequestBudget()), fixture.Hosts)
+            .RunAsync(policy.SensorIds.Order().ToArray(), CancellationToken.None);
+        Assert.Equal(20, result.RequestsSent);
+        Assert.True(result.ElapsedMilliseconds >= 8_000, "The test must exercise real Table2/s pacing.");
+        var samples = new PrtgProfileTransportCapacityStore(
+            fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read();
+        var profile = PrtgProfileTransportCapacityEvaluator.Evaluate(5, result.SourceFingerprint,
+            result.ScopeFingerprint, result.StrategyFingerprint, result.RequestShapeFingerprint,
+            result.VersionFingerprint, samples, DateTimeOffset.UtcNow, requiredFreshSuccessfulSamples: 1);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, profile.Status);
+        Assert.InRange(profile.P95SensorSeconds!.Value, 0, 1);
+        var snapshot = new PrtgSnapshotCapacityEstimate(PrtgSnapshotCapacityStatus.CapacityQualified,
+            5, 1, 5, DateTimeOffset.UtcNow, .1, .1, 600, .25, "qualified");
+        var joint = PrtgJointCapacityEvaluator.Evaluate(snapshot, profile,
+            new PrtgRequestBudgetUsage(0, 0, 0, 0, 0, TimeSpan.Zero, TimeSpan.Zero), 10);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, joint.Status);
+        Assert.True(joint.ProfileTableRequestsPerSecond >= 1);
+    }
+
+    [Fact]
+    public void Runtime_five_sensor_refresh_keeps_all_twenty_requests_in_capacity_evidence()
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(5);
+        var settings = fixture.Settings.Get();
+        var policy = new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var admission = new PrtgCapacityAdmissionPlanStore(
+            fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(DateTimeOffset.UtcNow)!;
+        Assert.NotNull(admission);
+        fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+        var worker = new PrtgTrustedSamplingProfileRefreshHostedService(fixture.Backend, fixture.Hosts,
+            NullLogger<PrtgTrustedSamplingProfileRefreshHostedService>.Instance);
+        var recorder = typeof(PrtgTrustedSamplingProfileRefreshHostedService).GetMethod("RecordRuntimeTransportSample",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        recorder.Invoke(worker, [policy.SensorIds.ToArray(), policy.SensorIds.ToArray(), settings, policy, admission,
+            20, 20, TimeSpan.FromMilliseconds(500), "success", null, TimeSpan.FromMilliseconds(200)]);
+        var sample = Assert.Single(new PrtgProfileTransportCapacityStore(
+            fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read());
+        Assert.Equal(20, sample.RequestsAttempted);
+        Assert.Equal(20, sample.RequestsSent);
+        Assert.Equal(500, sample.ElapsedMilliseconds);
+        Assert.Equal(200, sample.NonAdmissionElapsedMilliseconds);
+    }
+
     private static async Task RunFiveProfileCapacitySamples(StorageBackend backend, IHostStore hosts,
         SystemSettingsStore settings)
     {

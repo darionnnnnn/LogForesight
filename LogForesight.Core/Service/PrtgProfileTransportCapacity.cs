@@ -17,7 +17,8 @@ public sealed record PrtgProfileTransportSample(
     int RequestsSent,
     string Outcome,
     string? FailureCode,
-    string VersionFingerprint);
+    string VersionFingerprint,
+    long? NonAdmissionElapsedMilliseconds = null);
 
 public sealed record PrtgProfileTransportEstimate(
     PrtgSnapshotCapacityStatus Status,
@@ -52,7 +53,9 @@ public sealed class PrtgProfileTransportCapacityStore(EfJsonBlobStore blob)
         if (!Hash(sample.SourceFingerprint) || !Hash(sample.ScopeFingerprint) || !Hash(sample.StrategyFingerprint) ||
             !Hash(sample.RequestShapeFingerprint) || !Hash(sample.VersionFingerprint) || sample.SensorCount is < 1 or > 5 ||
             sample.RequestsAttempted is < 0 or > 20 || sample.RequestsSent is < 0 or > 20 ||
-            sample.ElapsedMilliseconds < 0 || sample.Outcome is not ("success" or "failed" or "timeout"))
+            sample.ElapsedMilliseconds < 0 ||
+            sample.NonAdmissionElapsedMilliseconds is { } work && (work < 0 || work > sample.ElapsedMilliseconds) ||
+            sample.Outcome is not ("success" or "failed" or "timeout"))
             throw new ArgumentException("Invalid bounded profile transport sample.", nameof(sample));
         if (sample.Outcome == "success" &&
             (sample.RequestsAttempted != sample.SensorCount * 4 || sample.RequestsSent != sample.SensorCount * 4))
@@ -194,7 +197,9 @@ public static class PrtgProfileTransportCapacityEvaluator
             s.CompletedAtUtc <= nowUtc && nowUtc - s.CompletedAtUtc <= EvidenceFreshness)
             .OrderBy(s => s.CompletedAtUtc).ToArray();
         var lastInvalidIndex = Array.FindLastIndex(matching, x => x.Outcome != "success" ||
-            x.RequestsAttempted != x.SensorCount * 4 || x.RequestsSent != x.SensorCount * 4);
+            x.RequestsAttempted != x.SensorCount * 4 || x.RequestsSent != x.SensorCount * 4 ||
+            x.ElapsedMilliseconds < 0 ||
+            x.NonAdmissionElapsedMilliseconds is { } work && (work < 0 || work > x.ElapsedMilliseconds));
         var latest = matching.LastOrDefault();
         var successful = matching.Skip(lastInvalidIndex + 1).Where(x => x.Outcome == "success" &&
             x.RequestsAttempted == x.SensorCount * 4 && x.RequestsSent == x.SensorCount * 4).ToArray();
@@ -214,7 +219,10 @@ public static class PrtgProfileTransportCapacityEvaluator
                 ? "recent_profile_transport_failure_or_timeout" : "insufficient_fresh_matching_profile_samples");
         if (tableRequestsAvailableAfterSharedTraffic <= 0)
             return Result(PrtgSnapshotCapacityStatus.CapacityUnverified, null, null, "shared_table_budget_unavailable");
-        var perSensorSeconds = successful.Select(x => x.ElapsedMilliseconds / 1000d / x.SensorCount).Order().ToArray();
+        // Legacy samples retain their full wall time as a conservative upper bound. New samples
+        // separate actual work from quota waiting, which the joint lane model adds exactly once.
+        var perSensorSeconds = successful.Select(x =>
+            (x.NonAdmissionElapsedMilliseconds ?? x.ElapsedMilliseconds) / 1000d / x.SensorCount).Order().ToArray();
         var p95 = perSensorSeconds[Math.Clamp((int)Math.Ceiling(perSensorSeconds.Length * .95) - 1, 0, perSensorSeconds.Length - 1)];
         // The probe performs four sequential Table-budget GETs per sensor. The shared rate model includes current
         // work before assigning the remaining Table2/s tokens to this serialized refresh lane.

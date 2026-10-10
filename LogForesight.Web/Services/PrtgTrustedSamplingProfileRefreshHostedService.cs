@@ -241,8 +241,10 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     if (!RenewLease(version)) { workCts.Cancel(); throw new OperationCanceledException("profile refresh lease lost"); }
                     var requestCount = 0;
                     var requestAttempted = 0;
-                    long transportTicks = 0;
+                    long admissionWaitTicks = 0;
                     var elapsed = Stopwatch.StartNew();
+                    TimeSpan WorkElapsed() => TimeSpan.FromTicks(Math.Max(0,
+                        elapsed.Elapsed.Ticks - Interlocked.Read(ref admissionWaitTicks)));
                     try
                     {
                         var rows = await new PrtgTrustedSamplingProbeService(backend).ProbeAsync(group, workCts.Token,
@@ -253,10 +255,10 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                             requestPurpose: PrtgRequestPurpose.ProfileRefresh,
                             admissionPlanFingerprint: admission!.Fingerprint,
                             onRequestAttempted: () => Interlocked.Increment(ref requestAttempted),
-                            onResponseRead: duration => Interlocked.Add(ref transportTicks, duration.Ticks));
+                            onTableBudgetAdmissionWait: duration => Interlocked.Add(ref admissionWaitTicks, duration.Ticks));
                         elapsed.Stop();
                         RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
-                            requestCount, TimeSpan.FromTicks(Interlocked.Read(ref transportTicks)), "success", null);
+                            requestCount, elapsed.Elapsed, "success", null, WorkElapsed());
                         var expectedProfiles = group.Where(profiles.ContainsKey)
                             .ToDictionary(id => id, id => profiles[id]);
                         RecordProbeRows(rows, scopeFingerprint, pageIndex, pageStates, requestCount,
@@ -272,7 +274,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     {
                         elapsed.Stop();
                         RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
-                            requestCount, TimeSpan.FromTicks(Interlocked.Read(ref transportTicks)), "timeout", SafeReason(ex));
+                            requestCount, elapsed.Elapsed, "timeout", SafeReason(ex), WorkElapsed());
                         SaveSensorOutcomes(scopeFingerprint, pageIndex, pageStates, group.Select(id => (id, new SensorState
                         {
                             Eligible = true,
@@ -285,7 +287,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     {
                         elapsed.Stop();
                         RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
-                            requestCount, TimeSpan.FromTicks(Interlocked.Read(ref transportTicks)), "failed", SafeReason(ex));
+                            requestCount, elapsed.Elapsed, "failed", SafeReason(ex), WorkElapsed());
                         SaveSensorOutcomes(scopeFingerprint, pageIndex, pageStates, group.Select(id => (id, new SensorState
                         {
                             Eligible = true,
@@ -339,7 +341,8 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
 
     private void RecordRuntimeTransportSample(IReadOnlyCollection<long> group, IReadOnlyList<long> selectedIds,
         SystemSettings settings, PrtgMonitoringPolicy policy, PrtgCapacityAdmissionPlan admission,
-        int attempted, int sent, TimeSpan elapsed, string outcome, string? failureCode)
+        int attempted, int sent, TimeSpan elapsed, string outcome, string? failureCode,
+        TimeSpan? nonAdmissionElapsed = null)
     {
         var expectedCount = Math.Min(policy.SensorIds.Where(id => id > 0).Distinct().Count(),
             PrtgProfileTransportCapacityPilot.MaximumSensorIds);
@@ -356,9 +359,11 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
             var store = new PrtgProfileTransportCapacityStore(backend.Blob(PrtgProfileTransportCapacityStore.BlobKey));
             store.Record(new PrtgProfileTransportSample(contract.SourceFingerprint, contract.ScopeFingerprint,
                 contract.StrategyFingerprint, contract.RequestShapeFingerprint, DateTimeOffset.UtcNow,
-                Math.Max(0, (long)elapsed.TotalMilliseconds), sampledIds.Length, Math.Clamp(attempted, 0, 10),
-                Math.Clamp(sent, 0, 10), outcome, failureCode,
-                contract.VersionFingerprint));
+                Math.Max(0, (long)Math.Ceiling(elapsed.TotalMilliseconds)), sampledIds.Length,
+                Math.Clamp(attempted, 0, PrtgProfileTransportCapacityPilot.MaximumRequests),
+                Math.Clamp(sent, 0, PrtgProfileTransportCapacityPilot.MaximumRequests), outcome, failureCode,
+                contract.VersionFingerprint, nonAdmissionElapsed is { } work
+                    ? Math.Max(0, (long)Math.Ceiling(work.TotalMilliseconds)) : null));
         }
         catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
         {

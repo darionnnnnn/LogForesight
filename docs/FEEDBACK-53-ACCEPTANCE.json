@@ -7831,5 +7831,27 @@
     "capacity_accepted": false,
     "retention_accepted": false,
     "whole_round_accepted": false
+  },
+  "profile_admission_timing_20261010": {
+    "status": "component-verified",
+    "purpose": "Avoid counting measured Table admission pacing twice and retain all twenty runtime profile requests.",
+    "red": [
+      "profile-pacing-red/profile-pacing-red.trx",
+      "profile-runtime-count-red/profile-runtime-count-red.trx"
+    ],
+    "regression": {
+      "path": ".gemini-tasks/primary-results/profile-capacity-affected-green/profile-capacity-affected-green.trx",
+      "passed": 242,
+      "failed": 0,
+      "skipped": 0
+    },
+    "timingContract": "Retain wall time; work excludes only measured Table quota/permit/lane admission waits. Authentication, HTTP, reads, validation and persistence remain work.",
+    "legacySamples": "Use full wall elapsed conservatively; request shape changed for current evidence.",
+    "actualApiSixSensorRun": "coverage-api-six-current-d7785eeee6cb47869c15ff2a7aeec932",
+    "actualApiSixSensorOutcome": "Raw proof completed; exact full coverage correctly refused profile-not-ready. Automatic refresh wiring remains to fix.",
+    "largeScopeStaticRateDefect": "15000 sensors require at least 1.868 req/s even with zero work under current independent lanes, exceeding planned 1.5 req/s; R05/N6 pending.",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "wholeRoundAccepted": false
   }
 }

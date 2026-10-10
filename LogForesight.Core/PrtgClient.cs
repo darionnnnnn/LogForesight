@@ -64,6 +64,8 @@ public sealed class PrtgClient : IDisposable
     public string? AdmissionPlanFingerprint { get; set; }
     /// <summary>Optional diagnostic hook invoked when a shared-budgeted Table request is admitted to transport.</summary>
     public Action? TableRequestSent { get; set; }
+    /// <summary>Table quota/permit/lane waiting only; excludes authentication exchange, HTTP and response reads.</summary>
+    public Action<TimeSpan>? TableBudgetAdmissionWaitObserved { get; set; }
 
     public PrtgClient(
         string baseUrl,
@@ -355,9 +357,13 @@ public sealed class PrtgClient : IDisposable
         var category = PrtgRequestBudget.Classify(relativePathAndQuery);
 
         Checkpoint(ct);
+        var admissionTimer = category == PrtgEndpointCategory.Table && TableBudgetAdmissionWaitObserved is not null
+            ? Stopwatch.StartNew() : null;
         using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General
             ? await Budget.AcquireAsync(category, ct)
             : await Budget.AcquireAsync(category, ct, RequestPurpose, AdmissionPlanFingerprint);
+        admissionTimer?.Stop();
+        var quotaWait = admissionTimer?.Elapsed ?? TimeSpan.Zero;
         // Create the linked token now, but do not start its HTTP timer until rate/quota admission finishes.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var requestToken = ct;
@@ -369,7 +375,13 @@ public sealed class PrtgClient : IDisposable
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             Checkpoint(ct);
             // Purpose-lane pacing is admission delay, like shared quota and permit waits.
+            admissionTimer?.Restart();
             if (lease != null) await lease.MarkRequestSentAsync(ct);
+            if (admissionTimer is not null)
+            {
+                admissionTimer.Stop();
+                TableBudgetAdmissionWaitObserved?.Invoke(quotaWait + admissionTimer.Elapsed);
+            }
             transportTimer = Stopwatch.StartNew();
             // Start the HTTP timeout only after every admission delay, immediately before send.
             deadline.CancelAfter(_http.Timeout);

@@ -16,14 +16,15 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
     public const int MaximumRequests = MaximumSensorIds * 4;
     public const int MaximumResponseBytes = 512 * 1024;
     public static readonly TimeSpan PilotDeadline = TimeSpan.FromSeconds(30);
-    public const string RequestShape = "table.json sensors-before, channels, getobjectproperty primarychannel, sensors-after; one exact sensor id; max 100 channels; 512 KiB each; four sequential Table-budget GETs per sensor";
+    public const string RequestShape = "table.json sensors-before, channels, getobjectproperty primarychannel, sensors-after; one exact sensor id; max 100 channels; 512 KiB each; four sequential Table-budget GETs per sensor; wall time and work excluding measured Table admission waits recorded separately";
 
     public sealed record Result(
         string Status, string Reason, int TargetSensorCount, int RequestsAttempted, int RequestsSent,
         long ElapsedMilliseconds, DateTimeOffset CompletedAtUtc, int MatchingFreshSuccessfulSamples,
         double? P95SensorSeconds, double? EstimatedSeconds, double CompletionWindowSeconds,
         string SourceFingerprint, string ScopeFingerprint, string StrategyFingerprint,
-        string RequestShapeFingerprint, string VersionFingerprint);
+        string RequestShapeFingerprint, string VersionFingerprint,
+        long NonAdmissionElapsedMilliseconds = 0, long AdmissionWaitMilliseconds = 0);
     public sealed record Contract(string SourceFingerprint, string ScopeFingerprint,
         string StrategyFingerprint, string RequestShapeFingerprint, string VersionFingerprint);
 
@@ -117,6 +118,7 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
             throw new InvalidOperationException("profile-capacity-pilot-already-running-for-current-plan");
         var attempted = 0;
         var sent = 0;
+        long admissionWaitTicks = 0;
         var failure = (string?)null;
         var outcome = "success";
         var timer = Stopwatch.StartNew();
@@ -126,6 +128,7 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
             client = clientFactory?.Invoke(settings) ?? PrtgClientFactory.Create(settings);
             client.RequestPurpose = PrtgRequestPurpose.CapacityPilot;
             client.TableRequestSent = () => Interlocked.Increment(ref sent);
+            client.TableBudgetAdmissionWaitObserved = elapsed => Interlocked.Add(ref admissionWaitTicks, elapsed.Ticks);
             foreach (var id in ids)
             {
                 deadline.Token.ThrowIfCancellationRequested();
@@ -195,6 +198,9 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
         ct.ThrowIfCancellationRequested();
 
         var completed = DateTimeOffset.UtcNow;
+        var admissionWait = TimeSpan.FromTicks(Interlocked.Read(ref admissionWaitTicks));
+        var workMilliseconds = (long)Math.Ceiling(Math.Max(0,
+            timer.Elapsed.TotalMilliseconds - admissionWait.TotalMilliseconds));
         var sample = sampleContract with
         {
             CompletedAtUtc = completed,
@@ -202,7 +208,8 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
             RequestsAttempted = attempted,
             RequestsSent = sent,
             Outcome = outcome,
-            FailureCode = failure
+            FailureCode = failure,
+            NonAdmissionElapsedMilliseconds = workMilliseconds
         };
         new PrtgProfileTransportCapacityStore(backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Record(sample);
         var selection = new PrtgProfileTransportCapacityStore(backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read();
@@ -219,7 +226,8 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
             policy.SensorIds.Distinct().Count(), attempted, sent, sample.ElapsedMilliseconds, completed,
             estimate.FreshSuccessfulSamples, estimate.P95SensorSeconds, estimate.EstimatedSeconds,
             estimate.CompletionWindowSeconds, contract.SourceFingerprint, contract.ScopeFingerprint,
-            contract.StrategyFingerprint, contract.RequestShapeFingerprint, contract.VersionFingerprint);
+            contract.StrategyFingerprint, contract.RequestShapeFingerprint, contract.VersionFingerprint,
+            workMilliseconds, (long)Math.Floor(admissionWait.TotalMilliseconds));
     }
 
     private static void ValidateSensorShape(string json, long expectedId)
