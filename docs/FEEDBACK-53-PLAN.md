@@ -50,7 +50,7 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣，依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
+- [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣（精確全分頁核對及唯讀收集工具已完成），依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
 
@@ -1562,3 +1562,14 @@ M5 在實際 MergeSampledValues 交易提交後、journal ACK 前寫入 4 KiB �
 主代理直接核對 durable job→raw proof→profile refresh 生產路徑，確認完整範圍接線缺口在工作負載工具；另以實際 controller／SQLite 重現三項 RED：profile 分頁沒有來源契約、讀取中停用及無關設定修訂仍回成功。補每頁 settingsRevision／policyRevision／sourceGeneration／authorityContextFingerprint／prtgEnabled，讀取中設定修訂或啟停變更拒絕 catalogue_changed；權限、分頁與既有風險規則不改。Main 受影響 controller、資格作業 API 及 profile 回歸 62／62、零略過，建置零錯誤；證據 profile-context-red／profile-context-green TRX。這一段完成，完整資格與固定工作矩陣仍按 §5 保留。
 
 使用者本日再次明確：來源資訊暫缺不得空置功能，先以既有現場回應、PRTG 官方資料及已定契約完成實作；需要實際連接的事實加入環境探測，由使用者回傳後核對調整。不要求現場直接驗收，也不把未觀測來源或容量推測標成通過。已查 PRTG 官方 Historic Data（https://www.paessler.com/manuals/prtg/historic-data）、Multiple Object Property or Status（https://www.paessler.com/manuals/prtg/multiple_object_property_or_status）與 Single Object Property（https://manuals.paessler.com/single_object_property.htm）：維持 raw avg=0、時基明確核對及共享 Historic 上限，不依 caption 或數值相等推定通道身分。
+
+
+### 2026-10-10 全範圍資格核對與有界唯讀收集工具
+
+新增 scripts/prtg-workload/QualificationCoverage.cs 與 Read-QualificationCoverage.ps1，供隔離工作負載在矩陣前核對精確 1–15000 顆作用集合。所有 100 顆分頁、最後不足一頁、raw proof、binding revision／fingerprint、current profile 與來源契約須一致；前後 durable job version／wave／計數不得漂移，completed／全數 qualified／全數 ready 且未取消才給 ready。缺列、外來或重複 ID、未完成、來源停用、設定修訂、錯型別或重複 JSON 欄位均拒絕。工具只讀既有登入的 numeric loopback API，保留 PathBase、禁止 redirect，單請求 30 秒、整輪最多 600 秒、raw 每頁 128 KiB、profile 每頁 512 KiB、合計 64 MiB；新目錄 CreateNew 留原始快照及 receipt，錯誤不交付部分 ready。
+
+主代理核對並修正候選測試漏寫 durationHours 的 fixture，保留首輪 9 fail／24 pass，並非 9 個產品缺陷。最終 qualification-coverage-green-v2 33／33、零略過；含真正 15000 顆／150 頁資料圖形的 verifier 正向及尾頁／漂移反例。coverage-http-root-v3 11／11 核對真實 loopback HTTP、cookie／子路徑、401、302 不跟隨、錯 MIME、chunked 超限、截止及壞 DLL。工具 library 建置零錯誤／警告，PS parse 通過；最後補載入 assembly 與實際解析 type 的 SHA256 一致守門，11 個 HTTP 案例再次全過。v2 因 driver 傳錯參數未執行，保留且不算產品失敗。
+
+主代理另以 Main Web 實際 API、正常 wall clock／共同 quota／SQLite 與 owned synthetic PRTG 跑完整兩顆集合 1000001、1000006，job a30c694b01534b1aa0c24c1265819457 為 completed，qualified=2、current ready profiles=2，收集 receipt.ready=true；worker 初始化使用當前已核驗 bindings，未宣稱此例跑過未核驗 raw 批次。Run coverage-api-current-940cbe18cd8b434988426a0852093070 的 6 個 owned processes 已清除。前置 v1／v2 的 owner checkpoint 缺漏及 v3 fixture 只在 controlled clock 回應 native primary/raw 的失敗保留；修正僅在外部隔離 harness，不繞過 Main 准入。
+
+這一工具段落可獨立交付，完整 runner 接線仍列 §5.1。receipt 的 nativeSourceVerified／capacityAccepted／retentionAccepted／wholeRoundAccepted 固定 false；15000 顆圖形與两顆 API 接線不是原生來源、180 日實際 provider 或整輪效能通過。原始 AC／Q items 不改。

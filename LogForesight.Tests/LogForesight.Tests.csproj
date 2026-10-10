@@ -23,6 +23,7 @@
 
     <ItemGroup>
         <None Update="Fixtures\prtg-round53-formal-cases.json" CopyToOutputDirectory="PreserveNewest" />
+        <Compile Include="..\scripts\prtg-workload\QualificationCoverage.cs" Link="PrtgWorkload\QualificationCoverage.cs" />
     </ItemGroup>
 
 </Project>

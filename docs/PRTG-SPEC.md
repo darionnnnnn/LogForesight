@@ -1268,6 +1268,10 @@ Compatibility 探測對每種最多一顆 sensor 查詢 `getobjectproperty.htm?i
 
 profile 目錄每頁另回傳 settingsRevision、policyRevision、sourceGeneration、authorityContextFingerprint 與 prtgEnabled，供完整範圍核對識別當前來源契約；讀取途中設定修訂或啟停狀態改變回覆 catalogue_changed，禁止把不同版本的分頁合併成完成證據。停用狀態仍可查看目錄，但不可用該頁授予共同工作負載資格。
 
+隔離工作負載的完整資格收集入口為 scripts/prtg-workload/Read-QualificationCoverage.ps1，先以 dotnet build scripts/prtg-workload/PrtgWorkloadGate.csproj 建置同源 verifier。傳入既有 WebSession、numeric loopback BaseUri、精確 manifest（sensorIds、jobId、scopeFingerprint、settingsRevision、policyRevision、sourceGeneration、authorityContextFingerprint）、AssemblyPath 與全新 OutputDirectory。這是唯讀工具，不登入、綁定、開始或續跑作業；呼叫端必須明確檢查 receipt.ready 才能啟動矩陣。未完成及讀取錯誤回 ready=false，原始快照保留供核對。
+
+QualificationCoverage 核所有每頁 100 顆及精確集合、來源契約、raw binding 與 current ready profile；前後 job 身分／version／wave／計數一致、completed／全數 qualified／waiting=0／failed=0／未取消才通過。HTTP 禁止 redirect、保留 PathBase 和既有 cookie，單次 30 秒、整輪 1–600 秒；manifest 512 KiB、job 16 KiB、raw 頁 128 KiB、profile 頁 512 KiB、aggregate 64 MiB、JSON 深度 32，超限或重複欄位拒絕。所有 receipt 無論 ready 與否都把 nativeSourceVerified、capacityAccepted、retentionAccepted、wholeRoundAccepted 留 false；資格快照不代表容量或原生相容性。
+
 來源 metadata 核對是 sensors→channels→native primarychannel property→sensors 四個有界 Table 配額請求。單筆原生資格另外使用一次 avg=0/usecaption=1 Historic XML，核對精確 channel ID/caption、有限 raw value 與時間（至多一秒差）；DTD、歧義、截斷、過期與缺失皆不授予資格。原始值在 snapshot parser 正規化一次；consumer 與主機明細核對 profile 的語意可重新產生保存的 binding fingerprint，不接受改語意後只重算 profile digest。
 
 proof 綁定來源／資源／通道／時間依據，後續 metadata refresh 不重新取得或延長初始 raw proof；metadata freshness 為 24 小時，刷新期限 23 小時。完成刷新確認缺失／衝突時，以原 profile digest、目前 binding／identity 及 live lease 原子撤銷舊 Profile並更新 authority revision，保留 samples/journal；傳輸失敗／取消不當作語意變更。所有 profile 發布均用 Serializable 交易，避免 concurrent binding save 清除後舊發布復活。單顆操作、consumer、全範圍耐久初始資格及跨程序 Historic 配額已整合；原生現場能力与完整容量仍依固定 AC，不由合成資格追認。

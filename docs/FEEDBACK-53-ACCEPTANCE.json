@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "1fe5b7ba818a84802182c8d0c36a5a82b051d66abc8a2777b3132b8043dfc609",
+  "plan_sha256": "42b2a0bb012d93ebb27d9ad87ac642d7d5751e83d5e9e19ef5441bd80a2ef138",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -7802,6 +7802,34 @@
     "scope": "profile page context and settings/enable read fence; qualification API and profile affected regression",
     "native_source_verified": false,
     "capacity_accepted": false,
+    "whole_round_accepted": false
+  },
+  "qualification_coverage_tool_20261010": {
+    "implementation_status": "completed and independently checked; runner integration remains pending",
+    "xunit": {
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "evidence": ".gemini-tasks/primary-results/qualification-coverage-green-v2/qualification-coverage-green-v2.trx"
+    },
+    "http_contract": {
+      "passed": 11,
+      "failed": 0,
+      "evidence": ".gemini-tasks/primary-results/coverage-http-root-v3.log"
+    },
+    "actual_api_seam": {
+      "run": "../coverage-api-current-940cbe18cd8b434988426a0852093070",
+      "expected_sensors": 2,
+      "qualified": 2,
+      "ready_profiles": 2,
+      "job_id": "a30c694b01534b1aa0c24c1265819457",
+      "ready": true,
+      "owned_cleanup_complete": true,
+      "scope": "current Main API; synthetic loopback; SQLite; normal wall clock and shared quota; initialization reuses current qualified bindings"
+    },
+    "native_source_verified": false,
+    "capacity_accepted": false,
+    "retention_accepted": false,
     "whole_round_accepted": false
   }
 }
