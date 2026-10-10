@@ -1556,3 +1556,9 @@ M5 在實際 MergeSampledValues 交易提交後、journal ACK 前寫入 4 KiB �
 另以真實 IAB 管理員瀏覽器登入、PRTG 使用效果分頁實際下載，4595 bytes、FormatVersion=2，SHA256 f9f324707098a697151d5367b0558aec7a9b5c4534d32f34965687f4658a971b；完整本文到達後按鈕恢復。ScopeComplete=false 明示缺標籤及 timeline，不產生免費驗收結論。僅此管理員下載劇本，N4／N5 全角色仍未通過。
 
 完成子項已自活動 TODO 細節移除；完整作用範圍耐久 qualification／矩陣、同版 A0 探測及 §5.2 五組 gate 仍保留。原始 AC01–AC22／Q1–Q6 items 不改；Luna 獨立體檢目前因用量限制未執行，不由主代理自驗冒稱完成。
+
+### 2026-10-10 全範圍 profile 分頁的來源契約與讀取守門
+
+主代理直接核對 durable job→raw proof→profile refresh 生產路徑，確認完整範圍接線缺口在工作負載工具；另以實際 controller／SQLite 重現三項 RED：profile 分頁沒有來源契約、讀取中停用及無關設定修訂仍回成功。補每頁 settingsRevision／policyRevision／sourceGeneration／authorityContextFingerprint／prtgEnabled，讀取中設定修訂或啟停變更拒絕 catalogue_changed；權限、分頁與既有風險規則不改。Main 受影響 controller、資格作業 API 及 profile 回歸 62／62、零略過，建置零錯誤；證據 profile-context-red／profile-context-green TRX。這一段完成，完整資格與固定工作矩陣仍按 §5 保留。
+
+使用者本日再次明確：來源資訊暫缺不得空置功能，先以既有現場回應、PRTG 官方資料及已定契約完成實作；需要實際連接的事實加入環境探測，由使用者回傳後核對調整。不要求現場直接驗收，也不把未觀測來源或容量推測標成通過。已查 PRTG 官方 Historic Data（https://www.paessler.com/manuals/prtg/historic-data）、Multiple Object Property or Status（https://www.paessler.com/manuals/prtg/multiple_object_property_or_status）與 Single Object Property（https://manuals.paessler.com/single_object_property.htm）：維持 raw avg=0、時基明確核對及共享 Historic 上限，不依 caption 或數值相等推定通道身分。

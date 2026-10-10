@@ -1266,6 +1266,8 @@ Compatibility 探測對每種最多一顆 sensor 查詢 `getobjectproperty.htm?i
 
 唯讀 probe、單筆保存、最多 100 筆逐列 CAS 批次、單筆 qualify 及每頁最多 100 筆完整 profile 目錄都要求 Maintain 與完整作用範圍授權，case-only 不可操作。未提交的草稿不被 reload 或背景更新取代；保存／核驗互斥，核驗使用保存後最新 fence。通道 Int64 以字串跨越 JavaScript 邊界，不能由清單順序或數值相等自動挑選。
 
+profile 目錄每頁另回傳 settingsRevision、policyRevision、sourceGeneration、authorityContextFingerprint 與 prtgEnabled，供完整範圍核對識別當前來源契約；讀取途中設定修訂或啟停狀態改變回覆 catalogue_changed，禁止把不同版本的分頁合併成完成證據。停用狀態仍可查看目錄，但不可用該頁授予共同工作負載資格。
+
 來源 metadata 核對是 sensors→channels→native primarychannel property→sensors 四個有界 Table 配額請求。單筆原生資格另外使用一次 avg=0/usecaption=1 Historic XML，核對精確 channel ID/caption、有限 raw value 與時間（至多一秒差）；DTD、歧義、截斷、過期與缺失皆不授予資格。原始值在 snapshot parser 正規化一次；consumer 與主機明細核對 profile 的語意可重新產生保存的 binding fingerprint，不接受改語意後只重算 profile digest。
 
 proof 綁定來源／資源／通道／時間依據，後續 metadata refresh 不重新取得或延長初始 raw proof；metadata freshness 為 24 小時，刷新期限 23 小時。完成刷新確認缺失／衝突時，以原 profile digest、目前 binding／identity 及 live lease 原子撤銷舊 Profile並更新 authority revision，保留 samples/journal；傳輸失敗／取消不當作語意變更。所有 profile 發布均用 Serializable 交易，避免 concurrent binding save 清除後舊發布復活。單顆操作、consumer、全範圍耐久初始資格及跨程序 Historic 配額已整合；原生現場能力与完整容量仍依固定 AC，不由合成資格追認。

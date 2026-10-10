@@ -371,6 +371,43 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
         Assert.Equal(long.MaxValue, Assert.Single(restored!.Channels).ChannelObjectId);
     }
 
+    [Fact]
+    public void ProfilePagesExposeCurrentSourceContextForFullScopeCoverage()
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        var response = Assert.IsType<OkObjectResult>(controller.Get());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(response.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var page = json.RootElement.GetProperty("data");
+        var settings = _settings.Get();
+        var policy = _policy.Get();
+        Assert.Equal(settings.Revision, page.GetProperty("settingsRevision").GetString());
+        Assert.Equal(policy.Revision, page.GetProperty("policyRevision").GetString());
+        Assert.Equal(policy.SourceGeneration, page.GetProperty("sourceGeneration").GetString());
+        Assert.True(page.GetProperty("prtgEnabled").GetBoolean());
+        Assert.Equal(PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy,
+            PrtgFetchStrategy.Conservative, 15), page.GetProperty("authorityContextFingerprint").GetString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ProfilePagesRejectSettingsChangesDuringRead(bool disableSource)
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        controller.HostSnapshotProviderOverride = () =>
+        {
+            _settings.Update(value =>
+            {
+                if (disableSource) value.PrtgEnabled = false;
+                else value.BrandName = "Changed while profile page was read";
+            });
+            return _hosts.CapturePrtgSnapshot();
+        };
+        var response = Assert.IsType<ConflictObjectResult>(controller.Get());
+        Assert.Equal("catalogue_changed", Assert.IsAssignableFrom<ApiResponse<object>>(response.Value).Error!.Code);
+    }
+
     private PrtgTrustedSamplingBindingRequest BindingRequest(long sensorId, string channelId)
     {
         var identity = _backend.PrtgStore().GetResourceIdentity(sensorId);

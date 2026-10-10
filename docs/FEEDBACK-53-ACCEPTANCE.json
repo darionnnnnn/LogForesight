@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "77fba2789ded15ddbea0fe01cc4c1f0fde8652f315605f027568954947ada9ea",
+  "plan_sha256": "1fe5b7ba818a84802182c8d0c36a5a82b051d66abc8a2777b3132b8043dfc609",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -7778,6 +7778,30 @@
     "all_roles_verified": false,
     "full_capacity_accepted": false,
     "independent_closeout_accepted": false,
+    "whole_round_accepted": false
+  },
+  "profile_page_source_context_20261010": {
+    "status": "bounded-stage-passed-not-whole-round",
+    "base_commit": "9933d17e31e29ebf82e24c3b97c50cabf1f28b3e",
+    "actual_red": {
+      "failed": 3,
+      "passed": 0
+    },
+    "green": {
+      "passed": 62,
+      "failed": 0,
+      "skipped": 0
+    },
+    "production_paths": [
+      "LogForesight.Web/Controllers/Api/PrtgTrustedSamplingProfilesController.cs"
+    ],
+    "evidence": [
+      ".gemini-tasks/primary-results/profile-context-red/profile-context-red.trx",
+      ".gemini-tasks/primary-results/profile-context-green/profile-context-green.trx"
+    ],
+    "scope": "profile page context and settings/enable read fence; qualification API and profile affected regression",
+    "native_source_verified": false,
+    "capacity_accepted": false,
     "whole_round_accepted": false
   }
 }

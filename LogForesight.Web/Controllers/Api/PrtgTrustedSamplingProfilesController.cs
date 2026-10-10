@@ -402,6 +402,8 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
         var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         if (policy.Revision != latestPolicy.Revision || hostSnapshot.Version != latestHosts.Version ||
             !visibleHosts.SetEquals(visibility.GetVisibleHostIds(latestHosts)) ||
+            currentSettings.Revision != latestSettings.Revision ||
+            currentSettings.PrtgEnabled != latestSettings.PrtgEnabled ||
             currentSettings.PrtgFetchStrategy != latestSettings.PrtgFetchStrategy ||
             ids.Any(id => profiles.GetValueOrDefault(id)?.MetadataDigest != latestProfiles.GetValueOrDefault(id)?.MetadataDigest ||
                 bindings.GetValueOrDefault(id)?.BindingFingerprint != latestBindings.GetValueOrDefault(id)?.BindingFingerprint ||
@@ -410,6 +412,12 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
             return Conflict(ApiResponse.Fail("catalogue_changed", "主機、授權或來源設定在讀取期間已變更；請重新載入。"));
         return Ok(ApiResponse<object>.Ok(new
         {
+            SettingsRevision = currentSettings.Revision,
+            PolicyRevision = policy.Revision,
+            SourceGeneration = policy.SourceGeneration,
+            AuthorityContextFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                policy, strategyName, strategyMinutes),
+            PrtgEnabled = currentSettings.PrtgEnabled,
             Total = sensorIds.Length,
             Offset = offset,
             Limit = limit,
