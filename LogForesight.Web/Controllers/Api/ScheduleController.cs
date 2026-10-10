@@ -35,13 +35,14 @@ public class ScheduleController : ControllerBase
     private readonly NetiqOptionsStore? _netiqStore;
     private readonly AiAnalysisHostedService _aiScheduler;
     private readonly AiAnalysisRunState _aiRunState;
+    private readonly INetiqHostDayTimingCollector? _hostDayTiming;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
         IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IUserDisplayNameService userDisplayNames,
         AiAnalysisHostedService aiScheduler, AiAnalysisRunState aiRunState,
-        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null)
+        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null, INetiqHostDayTimingCollector? hostDayTiming = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -58,6 +59,7 @@ public class ScheduleController : ControllerBase
         _netiqStore = netiqStore;
         _aiScheduler = aiScheduler;
         _aiRunState = aiRunState;
+        _hostDayTiming = hostDayTiming;
     }
 
     [HttpGet("options")]
@@ -150,7 +152,9 @@ public class ScheduleController : ControllerBase
             LastRunSuccess = lastOutcome?.Success,
             LastRunMessage = lastOutcome?.Message,
             LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,
-            LastRunEndedAt = lastOutcome?.EndedAt
+            LastRunEndedAt = lastOutcome?.EndedAt,
+            LastRunBatchRunId = lastOutcome?.BatchRunId,
+            NetiqHostDayTiming = NetiqHostDayTimingDto.FromSnapshot(_hostDayTiming?.Read())
         });
     }
 

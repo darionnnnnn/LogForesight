@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "e0fbb7c59bde235dc0de0e4c443c39090431802f0661e62d25d916bb22041d0b",
+  "plan_sha256": "94309fa54779bbf36a802c71f6f9b3b2fa5a23109efb86fd2be9b4a36dfbc0ef",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -8314,5 +8314,35 @@
       "pending": "0"
     },
     "pre_bom_trx": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\snapshot100-main-repaired-pre-bom\\snapshot100-main-repaired.trx"
+  },
+  "netiq_host_day_timing_current_main_20261010": {
+    "status": "implemented-and-affected-regression-passed",
+    "counters": {
+      "total": "138",
+      "executed": "138",
+      "passed": "138",
+      "failed": "0",
+      "error": "0",
+      "timeout": "0",
+      "aborted": "0",
+      "inconclusive": "0",
+      "passedButRunAborted": "0",
+      "notRunnable": "0",
+      "notExecuted": "0",
+      "disconnected": "0",
+      "warning": "0",
+      "completed": "0",
+      "inProgress": "0",
+      "pending": "0"
+    },
+    "trx": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\stage4-app-main\\stage4-app-main.trx",
+    "trx_sha256": "19c5632ecd1c7092e4664b6699fe4fe8191bbea9cc63771c60e352f76db474cd",
+    "final_inputs": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\stage4-app-final-inputs.json",
+    "scope": "exact parent-append timing and persistent scheduler run ID; excludes source-fetch and AI calls",
+    "primary_merged_preserved_channel_discovery_cases": true,
+    "readonly_luna_review": "no-concrete-defect",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "wholeRoundAccepted": false
   }
 }

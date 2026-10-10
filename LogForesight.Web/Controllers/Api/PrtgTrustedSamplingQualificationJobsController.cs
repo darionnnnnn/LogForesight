@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -24,15 +24,18 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
     [HttpGet("contract")]
     public IActionResult Contract()
     {
-        if (!TryCapture(out var settings, out var policy, out var contract, out var failure))
+        // This endpoint is a read-only matrix fence and must remain available while the
+        // PRTG consumer is disabled for the NetIQ-only baseline cell.
+        if (!TryCapture(out var settings, out var policy, out var contract, out var failure, requireEnabled: false))
             return Conflict(ApiResponse.Fail("source_not_ready", failure));
         if (!CanManageScope(policy!)) return Forbid();
         var pilot = pilots.Read();
         var pilotCurrent = pilot is not null && PrtgQualificationCapacityEvaluator.ValidPilot(pilot, contract!.SourceFingerprint,
             contract.ScopeFingerprint, PrtgQualificationCapacityEvaluator.RequestShapeFingerprint(),
             contract.VersionFingerprint, DateTimeOffset.UtcNow);
-        return Ok(ApiResponse<QualificationJobContract>.Ok(new(settings!.Revision, policy!.Revision,
-            contract.ScopeFingerprint, policy.SensorIds.Count, pilotCurrent,
+        pilotCurrent &= settings!.PrtgEnabled;
+        return Ok(ApiResponse<QualificationJobContract>.Ok(new(settings.Revision, policy!.Revision,
+            contract.ScopeFingerprint, policy.SensorIds.Count, pilotCurrent, settings.PrtgEnabled,
             pilotCurrent ? "capacity-pilot-current" : "qualification-capacity-pilot-required")));
     }
 
@@ -377,13 +380,13 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
     }
 
     private bool TryCapture(out SystemSettings? settings, out PrtgMonitoringPolicy? policy,
-        out PrtgProfileTransportCapacityPilot.Contract? contract, out string failure)
+        out PrtgProfileTransportCapacityPilot.Contract? contract, out string failure, bool requireEnabled = true)
     {
         settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         contract = null;
         failure = "source-policy-not-ready";
-        if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) || policy.SensorIds.Count is < 1 or > 15000) return false;
+        if (requireEnabled && !settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) || policy.SensorIds.Count is < 1 or > 15000) return false;
         try
         {
             contract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(settings, policy, hosts.CapturePrtgSnapshot());
@@ -460,7 +463,7 @@ public sealed record QualificationJobStartRequest(int DurationHours, string Expe
 public sealed record QualificationJobResumeRequest(long ExpectedVersion, int DurationHours, int MaximumAttempts = 1);
 public sealed record QualificationJobCancelRequest(long ExpectedVersion, int? ExpectedWave = null);
 public sealed record QualificationJobContract(string SettingsRevision, string PolicyRevision,
-    string ScopeFingerprint, int SelectedSensors, bool CapacityPilotCurrent, string Status);
+    string ScopeFingerprint, int SelectedSensors, bool CapacityPilotCurrent, bool PrtgEnabled, string Status);
 public sealed record QualificationJobPage(string Status, int Total, int Offset, int Limit, int? NextOffset,
     IReadOnlyList<PrtgQualificationJobStateStore.Sensor> Rows);
 public sealed record PrtgQualificationStartResult(string Status, string Reason,

@@ -115,6 +115,44 @@ public class ScheduleStatusDto
     public string? LastRunMessage { get; set; }
     public string? LastRunTriggerText { get; set; }
     public DateTime? LastRunEndedAt { get; set; }
+    public long? LastRunBatchRunId { get; set; }
+
+    /// <summary>Aggregate NetIQ host-day timing for the current or most recent scheduler run; contains no host identity or source data.</summary>
+    public NetiqHostDayTimingDto? NetiqHostDayTiming { get; set; }
+}
+
+public class NetiqHostDayTimingDto
+{
+    public static NetiqHostDayTimingDto? FromSnapshot(NetiqHostDayTimingSnapshot? value) => value is null ? null : new NetiqHostDayTimingDto
+    {
+        RunId = value.RunId,
+        Status = value.Status,
+        ExpectedHostDays = value.ExpectedHostDays,
+        ObservedHostDays = value.ObservedHostDays,
+        CommittedHostDays = value.CommittedHostDays,
+        SourceFailedHostDays = value.SourceFailedHostDays,
+        UnknownHostDays = value.UnknownHostDays,
+        DuplicateHostDays = value.DuplicateHostDays,
+        DurationSampleCount = value.DurationSampleCount,
+        Overflow = value.Overflow,
+        P95Milliseconds = value.P95Milliseconds,
+        StartedAtUtc = value.StartedAtUtc,
+        CompletedAtUtc = value.CompletedAtUtc
+    };
+
+    public long RunId { get; set; }
+    public string Status { get; set; } = "incomplete";
+    public int ExpectedHostDays { get; set; }
+    public int ObservedHostDays { get; set; }
+    public int CommittedHostDays { get; set; }
+    public int SourceFailedHostDays { get; set; }
+    public int UnknownHostDays { get; set; }
+    public int DuplicateHostDays { get; set; }
+    public int DurationSampleCount { get; set; }
+    public bool Overflow { get; set; }
+    public double? P95Milliseconds { get; set; }
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
 }
 
 /// <summary>

@@ -102,6 +102,24 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
     }
 
     [Fact]
+    public void ProfilePageJsonUsesTheLiveQualificationFenceFieldNames()
+    {
+        var response = Assert.IsType<OkObjectResult>(CreateController(new TestVisibility([_host.HostId])).Get(0, 2));
+        var envelope = Assert.IsType<ApiResponse<object>>(response.Value);
+        var json = JsonSerializer.Serialize(envelope.Data, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using var document = JsonDocument.Parse(json);
+        var row = document.RootElement.GetProperty("rows")[0];
+
+        Assert.True(row.TryGetProperty("currentIdentityEpoch", out _));
+        Assert.True(row.TryGetProperty("currentChannelGeneration", out _));
+        Assert.True(row.TryGetProperty("bindingRevision", out _));
+        Assert.True(row.TryGetProperty("bindingFingerprint", out _));
+        Assert.True(row.TryGetProperty("qualificationProofReference", out _));
+        Assert.False(row.TryGetProperty("identityEpoch", out _));
+        Assert.False(row.TryGetProperty("channelGeneration", out _));
+    }
+
+    [Fact]
     public void ChannelDiscoveryAcceptanceIsDurableAndDoesNotCreateBindingQualificationOrProfile()
     {
         var controller = CreateController(new TestVisibility([_host.HostId]));

@@ -1653,3 +1653,9 @@ profile／snapshot worker 能以契約相同的保留計畫，在租約或樣本
 主代理完整受影響回歸 274 案實際執行、264 通過；10 個失敗中，八案仍用 50-ID 容量黃金值，已按新 100-ID 固定契約修正並新增舊 50 成本不得授權新版反例；兩案為觀測測試，一案成功回應缺必要欄位，另一案經實際例外記錄證實共用 Shared 殘留其他獨立 DB 的計畫而在 HTTP 前拒絕，改用自身持久計畫與單調測試時鐘，保留正式准入條件。診斷重跑 2 案為 1 通過／1 拒絕，保留原始失敗證據。主代理修後 85/85 全過、零略過，涵蓋容量、response forwarding、取消後三批各 100 顆 failed、UI 及觀測恢復契約。容量黃金值仍按固定期限：1000 顆／9 秒 p95 為 10 批／36 秒；15000 顆為 150 批／450 秒，僅保守策略的 600 秒×75% 恰可納入，激進策略拒絕。9 秒是受控樣本，過往 50 顆原生耗時不能當成 100 顆來源成本，模型不冒稱物理容量。PowerShell 原生 evidence 核對全部正反例通過；Luna high 唯讀審查無具體缺陷，Root另共用 request columns/version/URL cap 並修估算 fallback、UI/Help/spec 舊批次數。
 
 額外 UI 回歸於中途 85 案中揭露四案因整合寫檔遺失 Prtg.cshtml 的既有 UTF-8 BOM；已恢復標記，保留 81 通過／4 失敗的中途 TRX，最終重驗同一 85 案，不修改 UI 斷言。
+
+### 2026-10-10 R09 精確主機日計時已完成
+
+正式 DI 將同一 bounded collector 送入 Orchestrator、NetIQ pipeline 與 ScheduleController；actual BatchRunRecorder.RunId 經 OrchestratorResult、RunOutcome 到 lastRunBatchRunId，與 aggregate timing runId 對齊。從 AnalyzeHostDayAsync 開始至成功 Append 提交；來源抓取、AI 呼叫與後續佇列排除。planned missing host-days 分母，未完成／漏日／來源失敗／保留不完整／重複／空分母／溢位一律 p95=null；最多600000筆，完成僅排序一次精確 nearest-rank p95，終態拒絕遲到更新，same-ID 重入不洗白。Recorder 無正 ID 時維持既有分析最佳努力，不借上一轮計時。
+
+Root Main 建置與受影響回歸 138/138、零略過，含 NetIQ/AI 解耦、排程／資格 API、已保留 channel discovery 舊測試；保留候選舊 helper 缺建構參數的 premerge log，已合回 Main 原 helper 與舊兩案，新增 DTO case 而非整檔覆蓋。Luna high 唯讀審查資料流無具體缺陷，主代理獨立執行回歸。此段不授予完整 N6／來源容量；公共六條件矩陣 consumer 另段核對與提交。

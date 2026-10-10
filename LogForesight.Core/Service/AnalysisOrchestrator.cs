@@ -79,6 +79,8 @@ public class OrchestratorResult
     public List<LocalDaySummary> LocalResults { get; set; } = new();
     public NetiqPipelineResult? NetiqResult { get; set; }
     public TimeSpan Elapsed { get; set; }
+    /// <summary>Persistent BatchRun identity for joining aggregate timing to this scheduler outcome.</summary>
+    public long? BatchRunId { get; set; }
 
     /// <summary>本趟夜間派工彙總；派工收尾失敗時為 null。供排程端寄交辦摘要信。</summary>
     public NightlyDispatchSummary? DispatchSummary { get; set; }
@@ -158,12 +160,29 @@ public class AnalysisOrchestrator
 
     private readonly IDispatchCandidateSource _candidateSource;
     private readonly Action? _permissionVersionBump;
+    private readonly INetiqHostDayTimingCollector? _hostDayTiming;
 
     /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
-    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null)
+    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null, INetiqHostDayTimingCollector? hostDayTiming = null)
     {
         _candidateSource = candidateSource;
         _permissionVersionBump = permissionVersionBump;
+        _hostDayTiming = hostDayTiming;
+    }
+
+    internal static long? TryBeginHostDayTiming(long runId, INetiqHostDayTimingCollector? collector)
+    {
+        if (runId <= 0 || collector is null) return null;
+        try
+        {
+            collector.Begin(runId);
+            return runId;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "NetIQ 主機日計時登記失敗（不影響本次分析）：{0}", ex.Message);
+            return null;
+        }
     }
 
     /// <summary>
@@ -216,6 +235,7 @@ public class AnalysisOrchestrator
     {
         var runStopwatch = Stopwatch.StartNew();
         var result = new OrchestratorResult();
+        long? timingRunId = null;
 
         try
         {
@@ -268,6 +288,9 @@ public class AnalysisOrchestrator
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
                 onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"),
                 catchUp: request.CatchUpNote != null);
+            result.BatchRunId = runRecorder.RunId > 0 ? runRecorder.RunId : null;
+            // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
+            timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
             if (request.CatchUpNote != null)
             {
@@ -696,6 +719,7 @@ public class AnalysisOrchestrator
                 Log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
                 runRecorder.Milestone("執行結束");
                 runRecorder.Finish(exitCode: 0);
+                if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: true);
 
                 result.Elapsed = runStopwatch.Elapsed;
                 return result;
@@ -708,6 +732,7 @@ public class AnalysisOrchestrator
         }
         catch (OperationCanceledException)
         {
+            if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: false);
             // 使用者手動停止（Phase 3）：停在主機日邊界，不是失敗——BatchRun 由呼叫端依情境回填
             console.WriteLine($"\n執行已停止（使用者取消）。");
             console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
@@ -719,6 +744,7 @@ public class AnalysisOrchestrator
         }
         catch (Exception ex)
         {
+            if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: false);
             // 全域防護：任何未預期的錯誤都要留下訊息並回報失敗，讓呼叫端（Web 的 BatchRun
             // 回填與排程狀態卡的「上次執行結果」）能監控到。
             console.WriteLine($"\n執行失敗：{ex}");
@@ -1100,7 +1126,8 @@ public class AnalysisOrchestrator
                 guard: guard,
                 prtgFindings: prtgFindings,
                 workflow: workflow,
-                prtgEnabled: prtgEnabled);
+                prtgEnabled: prtgEnabled,
+                hostDayTiming: _hostDayTiming);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
@@ -1123,10 +1150,12 @@ public class AnalysisOrchestrator
         }
         catch (OperationCanceledException)
         {
+            _hostDayTiming?.MarkIncomplete(runRecorder.RunId);
             throw;
         }
         catch (Exception ex)
         {
+            _hostDayTiming?.MarkIncomplete(runRecorder.RunId);
             // 與本機分析的失敗邊界一致：NetIQ 這段出問題不該讓已經完成的本機分析與寫入作廢，
             // 只記錄失敗、留給下次執行的缺漏日回補機制自動重試
             Log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");

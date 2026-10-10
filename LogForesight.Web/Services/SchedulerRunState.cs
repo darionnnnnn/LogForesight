@@ -21,7 +21,7 @@ namespace LogForesight.Web.Services;
 /// 另一路已有真實產出」，後者不該讓已完成的通知一起靜音。預設 false，供既有呼叫端
 /// （測試／例外路徑「orchestrator 環境層級炸掉、result 不可信」）零改動沿用舊行為。
 /// </param>
-public sealed record RunOutcome(bool Success, string? Message, string Trigger, DateTime EndedAt, bool AnyRecordsWritten = false)
+public sealed record RunOutcome(bool Success, string? Message, string Trigger, DateTime EndedAt, bool AnyRecordsWritten = false, long? BatchRunId = null)
 {
     /// <summary>通知閘門（回饋十八輪批次B）：成功**或**有產出就通知——本機出問題讓整趟
     /// Success=false 時，NetIQ 那一路已寫入的高風險通知不該一起被靜音。抽成屬性讓

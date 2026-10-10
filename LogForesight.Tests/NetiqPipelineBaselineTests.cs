@@ -1,4 +1,9 @@
-﻿using Xunit;
+﻿using System.Text.Json;
+using LogForesight.Core.Service;
+using LogForesight.Web.Controllers.Api;
+using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Services;
+using Xunit;
 
 namespace LogForesight.Tests;
 
@@ -80,7 +85,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         [SentinelFieldMap.XdasOutcome] = "1"
     });
 
-    private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null)
+    private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null, INetiqHostDayTimingCollector? hostDayTiming = null)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var hosts = overrideHosts ?? _hosts;
@@ -88,6 +93,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         var reportService = new RiskReportService(_ai, reportSink);
         var batchRunStore = new BatchRunStore(_backend.LogStore("baseline_runs"), _backend.LogStore("baseline_run_logs"));
         var runRecorder = new BatchRunRecorder(batchRunStore, "test-host", Array.Empty<string>());
+        hostDayTiming?.Begin(runRecorder.RunId);
         var caseCoordinator = new IssueCaseCoordinator(
             _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
             _backend.RecordStore(), hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
@@ -100,7 +106,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             _backend, netiqOptions, _sentinels, hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
-            clientFactory: FakeSentinelSearchClientFactory.Single(_client));
+            clientFactory: FakeSentinelSearchClientFactory.Single(_client), hostDayTiming: hostDayTiming);
     }
 
     /// <summary>基準 1：全程零事件的乾淨主機——統計模式寫入一筆低風險紀錄，AI 完全不被呼叫。</summary>
@@ -124,6 +130,57 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Equal(AnalysisLogSource.Netiq, record.LogSource);
         Assert.Equal(RiskLevels.Low, record.RiskLevel);
         Assert.False(record.AiAnalyzed);
+    }
+
+    [Fact]
+    public async Task 已Append的NetIq主機日會進入排程狀態DTO的精確計時分布()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        var collector = new NetiqHostDayTimingCollector();
+        var pipeline = MakePipeline(hostDayTiming: collector);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+        var running = Assert.IsType<NetiqHostDayTimingSnapshot>(collector.Read());
+        Assert.Equal("running", running.Status);
+        Assert.Equal(1, running.ExpectedHostDays);
+        Assert.Equal(1, running.CommittedHostDays);
+        Assert.Equal(1, running.DurationSampleCount);
+        var stored = Assert.Single(_backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" }).ReadRecent(DateTime.Today.AddDays(-1), 1));
+        Assert.Equal(AnalysisLogSource.Netiq, stored.LogSource);
+
+        // AnalysisOrchestrator closes the run only after the whole scheduler invocation is terminal.
+        collector.Complete(running.RunId, pipelineCompleted: true);
+        var runState = new SchedulerRunState();
+        runState.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now, BatchRunId: running.RunId));
+        var controller = new ScheduleController(
+            new ScheduleOptionsStore(_backend.Blob("schedule_options")),
+            scheduler: null!,
+            runState: runState,
+            hosts: null!,
+            sentinels: null!,
+            audit: null!,
+            currentUser: null!,
+            users: null!,
+            records: _backend.RecordStore(),
+            settingsStore: null!,
+            userDisplayNames: null!,
+            aiScheduler: null!,
+            aiRunState: new AiAnalysisRunState(),
+            hostDayTiming: collector);
+        var response = controller.GetStatus();
+        Assert.True(response.Success);
+        var status = Assert.IsType<ScheduleStatusDto>(response.Data);
+        var json = JsonSerializer.Serialize(status, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using var document = JsonDocument.Parse(json);
+        var timing = document.RootElement.GetProperty("netiqHostDayTiming");
+        Assert.Equal("complete", timing.GetProperty("status").GetString());
+        Assert.Equal(1, timing.GetProperty("expectedHostDays").GetInt32());
+        Assert.Equal(1, timing.GetProperty("durationSampleCount").GetInt32());
+        Assert.True(double.IsFinite(timing.GetProperty("p95Milliseconds").GetDouble()));
+        Assert.Equal(running.RunId, timing.GetProperty("runId").GetInt64());
+        Assert.Equal(running.RunId, document.RootElement.GetProperty("lastRunBatchRunId").GetInt64());
     }
 
     /// <summary>基準 2：命中重大規則的主機在 useAi=true 時，取數端仍零 AI 呼叫，紀錄標記 AiPending=true。</summary>

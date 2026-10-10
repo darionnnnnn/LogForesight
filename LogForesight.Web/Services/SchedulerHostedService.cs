@@ -348,7 +348,7 @@ public class SchedulerHostedService : BackgroundService
                     // 「一路失敗、另一路已有真實產出」，見 RunOutcome.AnyRecordsWritten 的說明。
                     dispatchSummary = result.DispatchSummary;
                     outcome = new RunOutcome(result.Success, result.Success ? null : result.FailureMessage,
-                        effectiveRequest.Trigger ?? "manual", DateTime.Now, RunOutcome.ComputeAnyRecordsWritten(result));
+                        effectiveRequest.Trigger ?? "manual", DateTime.Now, RunOutcome.ComputeAnyRecordsWritten(result), result.BatchRunId);
                 }, MutexTimeout);
 
                 if (!acquired)

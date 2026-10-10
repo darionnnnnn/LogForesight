@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -69,6 +69,19 @@ public sealed class PrtgTrustedSamplingQualificationJobsControllerTests : IDispo
         Assert.IsType<ForbidResult>(Controller(new Visibility([])).Contract());
         Assert.IsType<ForbidResult>(Controller(new Visibility([host.HostId], caseOnly: true)).Contract());
         Assert.IsType<OkObjectResult>(Controller(new Visibility([host.HostId])).Contract());
+    }
+
+    [Fact]
+    public void DisabledReadOnlyContractRemainsAvailableForNetiqOnlyMatrixCell()
+    {
+        settings.Update(value => value.PrtgEnabled = false);
+
+        var result = Assert.IsType<OkObjectResult>(Controller(new Visibility([host.HostId])).Contract());
+        var response = Assert.IsType<ApiResponse<QualificationJobContract>>(result.Value);
+        var contract = Assert.IsType<QualificationJobContract>(response.Data);
+        Assert.False(contract.PrtgEnabled);
+        Assert.False(contract.CapacityPilotCurrent);
+        Assert.Equal(2, contract.SelectedSensors);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using LogForesight.Core.Models;
 using NLog;
 
@@ -73,6 +74,7 @@ public class NetiqPipelineService
     private readonly PrtgResourceGuard? _guard;
     private readonly HostDayWorkflowService? _workflow;
     private readonly bool _prtgEnabled;
+    private readonly INetiqHostDayTimingCollector? _hostDayTiming;
     /// <summary>權限異動的主機日佔位（回饋三十四輪 A2）：只放「主機＋日期」，不放事件內容——
     /// 內容去重由 <see cref="PermissionChangeStore.GetDedupeKeysForHost"/> 逐主機日現查承擔。</summary>
     private ConcurrentDictionary<string, byte> _permissionHostDayClaims = new();
@@ -117,7 +119,8 @@ public class NetiqPipelineService
         PrtgResourceGuard? guard = null,
         PrtgFindingsRegistry? prtgFindings = null,
         HostDayWorkflowService? workflow = null,
-        bool prtgEnabled = true)
+        bool prtgEnabled = true,
+        INetiqHostDayTimingCollector? hostDayTiming = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -147,6 +150,7 @@ public class NetiqPipelineService
         _guard = guard;
         _workflow = workflow;
         _prtgEnabled = prtgEnabled;
+        _hostDayTiming = hostDayTiming;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -161,7 +165,7 @@ public class NetiqPipelineService
         {
             return result;
         }
-
+        var timingRunId = _runRecorder.RunId;
         // 權限異動去重（回饋三十四輪 A2）：跨執行的內容去重改由資料庫逐主機日現查
         // （PermissionChangeStore.GetDedupeKeysForHost），這裡只留主機日層級的佔位集合，
         // 確保平行處理下同一個主機日不會被處理兩次。舊做法是開跑時把整個查詢窗的內容去重鍵
@@ -218,12 +222,14 @@ public class NetiqPipelineService
                 var sentinel = _sentinels.FindByName(serverName);
                 if (sentinel == null)
                 {
+                    _hostDayTiming?.MarkIncomplete(timingRunId);
                     _console.WriteLine($"  ⚠ Sentinel「{serverName}」設定已消失，略過（轄下 {targets.Count} 台主機本次不查詢）");
                     result.AddWarning($"Sentinel「{serverName}」設定已消失，轄下 {targets.Count} 台主機本次不查詢");
                     return;
                 }
                 if (!sentinel.CanDiscover)
                 {
+                    _hostDayTiming?.MarkIncomplete(timingRunId);
                     _console.WriteLine($"  ⚠ Sentinel「{serverName}」查詢帳密未設定，略過（轄下 {targets.Count} 台主機本次不查詢）");
                     result.AddWarning($"Sentinel「{serverName}」查詢帳密未設定，轄下 {targets.Count} 台主機本次不查詢");
                     return;
@@ -235,6 +241,7 @@ public class NetiqPipelineService
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    _hostDayTiming?.MarkIncomplete(timingRunId);
                     // 失敗隔離：一台 Sentinel 整台失聯（如連線位址設定壞掉）不該讓其餘 Sentinel
                     // 完全沒被查詢——這正是 HostListResult.Warnings 一貫的「不能靜默略過」原則
                     Log.Warn(ex, "[{Server}] NetIQ 分析失敗，轄下主機本次未完成", serverName);
@@ -351,6 +358,7 @@ public class NetiqPipelineService
             // 進度分母（docs/archive/FEEDBACK-8-PLAN.md #2）：各 Sentinel 平行掃描完才知道各自要補幾天，
             // 這裡累加進共享的 HostDaysTotal，分母隨掃描進度自然變大
             result.AddToTotal(plans.Sum(p => p.MissingDates.Count));
+            _hostDayTiming?.AddPlanned(_runRecorder.RunId, plans.Sum(p => p.MissingDates.Count));
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
 
             var allDates = plans.SelectMany(p => p.MissingDates).Distinct().OrderBy(d => d).ToList();
@@ -436,6 +444,8 @@ public class NetiqPipelineService
         }
         catch (ArgumentException)
         {
+            foreach (var plan in batch) _hostDayTiming?.RecordUnknown(_runRecorder.RunId, plan.Target.HostId, date);
+            _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
             return; // ips 不可能為空（Chunk 保證每批至少 1 筆），這裡只是防禦性守住
         }
 
@@ -472,6 +482,7 @@ public class NetiqPipelineService
         }
         catch (SentinelClientException ex)
         {
+            foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
             NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
             _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：{ex.Message}");
             Log.Warn(ex, "[{Server}] {Date} 批次查詢失敗", sentinelName, date);
@@ -586,6 +597,8 @@ public class NetiqPipelineService
         string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result, string sentinelName,
         List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
+        var timingStarted = Stopwatch.GetTimestamp();
+        var timingRecorded = false;
         var target = plan.Target;
         var isRerun = plan.RerunDates.Contains(date.Date);
 
@@ -593,6 +606,8 @@ public class NetiqPipelineService
         // 判定與本機路徑共用同一個函式，不各寫一份
         if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(events.Count, dataIncomplete, sourceDegraded: false))
         {
+            _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
+            timingRecorded = true;
             NetiqSourceAttempt.Mark(_backend, target.HostId, date, "retained-incomplete");
             result.AddRerunRetained();
             _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
@@ -637,6 +652,11 @@ public class NetiqPipelineService
             }
 
             plan.Store.Append(record);
+            if (dataIncomplete)
+                _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
+            else
+                _hostDayTiming?.RecordCommitted(_runRecorder.RunId, target.HostId, date, Stopwatch.GetTimestamp() - timingStarted);
+            timingRecorded = true;
 
             try
             {
@@ -715,6 +735,7 @@ public class NetiqPipelineService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            if (!timingRecorded) _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
             NetiqSourceAttempt.Mark(_backend, target.HostId, date, "failed");
             try { _workflow?.ParentFailed(target.HostId, target.HostName, date, _runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture), "failed"); }
             catch (Exception workflowError) { Log.Warn(workflowError, "NetIQ workflow failure metadata could not be persisted"); }
