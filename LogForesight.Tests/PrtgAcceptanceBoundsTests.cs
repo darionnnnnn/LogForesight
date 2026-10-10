@@ -1,4 +1,8 @@
-﻿using System.Text.Json;
+using System.Text.Json;
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Reflection;
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -18,6 +22,14 @@ public sealed class PrtgAcceptanceBoundsTests : IDisposable
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-acceptance-bounds-" + Guid.NewGuid().ToString("N"));
     private readonly StorageBackend _backend;
     private readonly RecordingAuditService _audit = new();
+    private readonly ReadCommands _commands = new();
+    private sealed class ReadCommands : DbCommandInterceptor
+    {
+        public List<string> Commands { get; } = [];
+        public override InterceptionResult<DbDataReader> ReaderExecuting(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        { Commands.Add(command.CommandText); return result; }
+    }
     private sealed class Visible(params long[] ids) : IVisibilityService
     {
         public bool CaseOnly { get; set; }
@@ -32,7 +44,7 @@ public sealed class PrtgAcceptanceBoundsTests : IDisposable
         public List<WebHost> GetVisibleHosts() => [];
         public void EnsureVisible(long id) { }
     }
-    public PrtgAcceptanceBoundsTests() => _backend = new(new StorageSettings { Type = "Sqlite" }, _dir);
+    public PrtgAcceptanceBoundsTests() => _backend = new(new StorageSettings { Type = "Sqlite" }, _dir, _commands);
     private PrtgAcceptanceController Api(Visible? visible = null) => new(_backend, visible ?? new Visible(1, 2),
         FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
     private static JsonElement Data(IActionResult result)
@@ -70,6 +82,7 @@ public sealed class PrtgAcceptanceBoundsTests : IDisposable
     [Fact]
     public void ExportPeriodFilterRunsBeforeGlobalLabelCap()
     {
+        PutEmptyMailState();
         var oldDate = DateTimeOffset.UtcNow.AddYears(-2);
         var within = DateTimeOffset.UtcNow.AddDays(-1);
         PutRows(1, Enumerable.Range(0, 1000).Select(i => new PrtgAcceptanceIncident { HostId = 1, IncidentId = "old" + i,
@@ -208,6 +221,7 @@ public sealed class PrtgAcceptanceBoundsTests : IDisposable
     [Fact]
     public void CompleteOwnedTimelineExportsSummaryWithoutPrivateLeaseOrHistoricalArrays()
     {
+        PutEmptyMailState();
         new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => { p.HostIds = [1]; p.SensorIds = [100]; });
         PutRows(1, []);
         var identity = new PrtgResourceIdentity { SensorId = 100, HostId = 1, Epoch = 1, Active = true, Generation = "resource" };
@@ -248,6 +262,7 @@ public sealed class PrtgAcceptanceBoundsTests : IDisposable
     [InlineData("unknown", 23.5)]
     public void UtcIncidentTimesBelongToNetiqLocalHostDay(string outcome, double hour)
     {
+        PutEmptyMailState();
         var day = new DateTime(2026, 10, 10);
         var wall = day.AddHours(hour);
         var utc = new DateTimeOffset(wall, TimeZoneInfo.Local.GetUtcOffset(wall)).ToUniversalTime();
@@ -271,12 +286,254 @@ public sealed class PrtgAcceptanceBoundsTests : IDisposable
         }
     }
 
+    [Fact]
+    public void ExportBatchesDailyRowsAndMarksPrunedAndOversizedContentUnknown()
+    {
+        PrepareExportScope();
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var valid = new DailyAnalysisRecord { HostId = 1, Date = day, LogSource = AnalysisLogSource.Netiq, TopIssues = [] };
+        var oversized = "{\"HostId\":1,\"Date\":\"" + day.ToString("O") + "\",\"TopIssues\":[],\"Extra\":\"" + new string('x', 128 * 1024) + "\"}";
+        SeedRecord(1, day, JsonSerializer.Serialize(valid));
+        SeedRecord(1, day, oversized);
+        SeedRecord(1, day, "{}", detailPruned: true);
+        for (var i = 0; i < 30; i++) SeedRecord(1, day.AddDays(-1), JsonSerializer.Serialize(new DailyAnalysisRecord
+            { HostId = 1, Date = day.AddDays(-1), TopIssues = [] }));
+
+        _commands.Commands.Clear();
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day.AddDays(-1), day));
+        var payloadQueries = _commands.Commands.Where(sql => sql.Contains("content_json", StringComparison.OrdinalIgnoreCase)).ToArray();
+        Assert.Equal(3, payloadQueries.Length);
+        Assert.All(payloadQueries, sql =>
+        {
+            Assert.Contains("substr(", sql.ToLowerInvariant());
+            Assert.Contains("length(", sql.ToLowerInvariant());
+            Assert.Contains("LIMIT", sql);
+            Assert.DoesNotContain("original_risk_content_json", sql);
+            Assert.DoesNotContain(", \"d\".\"content_json\"", sql);
+        });
+        using var doc = JsonDocument.Parse(file.FileContents);
+        Assert.Equal(33, doc.RootElement.GetProperty("RecordsTotal").GetInt32());
+        Assert.Equal(33, doc.RootElement.GetProperty("RecordsOutputCount").GetInt32());
+        Assert.False(doc.RootElement.GetProperty("RecordsScopeComplete").GetBoolean());
+        Assert.False(doc.RootElement.GetProperty("ScopeComplete").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("Comparison").ValueKind);
+        var rows = doc.RootElement.GetProperty("Records").EnumerateArray().ToArray();
+        Assert.Equal("known", rows[0].GetProperty("ContentStatus").GetString());
+        Assert.True(rows[0].GetProperty("NetiqQualified").GetBoolean());
+        Assert.Equal("unknown", rows[1].GetProperty("ContentStatus").GetString());
+        Assert.Equal("content-prefix-cap", rows[1].GetProperty("ContentUnknownReason").GetString());
+        Assert.Equal(JsonValueKind.Null, rows[1].GetProperty("NetiqQualified").ValueKind);
+        Assert.Equal("detail-pruned", rows[2].GetProperty("ContentUnknownReason").GetString());
+        Assert.Contains("record-content-unknown", doc.RootElement.GetProperty("ScopeStatus").EnumerateArray().Select(x => x.GetString()));
+    }
+
+    [Fact]
+    public void ExportRejectsContentClaimingDifferentParentHostOrDayWithoutLeakingIssueText()
+    {
+        PrepareExportScope();
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var forgedHost = new DailyAnalysisRecord { HostId = 2, Date = day, TrendAlerts = ["private-host-secret"], TopIssues = [] };
+        var forgedDay = new DailyAnalysisRecord { HostId = 1, Date = day.AddDays(-1), TrendAlerts = ["private-day-secret"], TopIssues = [] };
+        SeedRecord(1, day, JsonSerializer.Serialize(forgedHost));
+        SeedRecord(1, day, JsonSerializer.Serialize(forgedDay));
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        using var doc = JsonDocument.Parse(file.FileContents);
+        var body = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.Equal(2, doc.RootElement.GetProperty("RecordsTotal").GetInt32());
+        Assert.False(doc.RootElement.GetProperty("RecordsScopeComplete").GetBoolean());
+        Assert.DoesNotContain("private-host-secret", body);
+        Assert.DoesNotContain("private-day-secret", body);
+        Assert.All(doc.RootElement.GetProperty("Records").EnumerateArray(), row =>
+        {
+            Assert.Equal("unknown", row.GetProperty("ContentStatus").GetString());
+            Assert.Equal(JsonValueKind.Null, row.GetProperty("Prtg").ValueKind);
+            Assert.Equal(JsonValueKind.Null, row.GetProperty("NetiqEvents").ValueKind);
+        });
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("null-root")]
+    [InlineData("missing-outbox")]
+    [InlineData("null-outbox")]
+    [InlineData("malformed")]
+    [InlineData("oversized")]
+    [InlineData("duplicate-outbox")]
+    [InlineData("null-intent")]
+    public void ExportDoesNotTreatUnknownMailStateAsZeroIntents(string kind)
+    {
+        PrepareExportScope();
+        switch (kind)
+        {
+            case "duplicate-outbox": _backend.Blob("mail_notify_state").Mutate(_ => ("{\"UrgentOutbox\":{},\"UrgentOutbox\":{}}", true)); break;
+            case "null-intent": _backend.Blob("mail_notify_state").Mutate(_ => ("{\"UrgentOutbox\":{\"bad\":null}}", true)); break;
+            case "null-root": _backend.Blob("mail_notify_state").Mutate(_ => ("null", true)); break;
+            case "missing-outbox": _backend.Blob("mail_notify_state").Mutate(_ => ("{}", true)); break;
+            case "null-outbox": _backend.Blob("mail_notify_state").Mutate(_ => ("{\"UrgentOutbox\":null}", true)); break;
+            case "malformed": _backend.Blob("mail_notify_state").Mutate(_ => ("{broken", true)); break;
+            case "oversized": _backend.Blob("mail_notify_state").Mutate(_ => ("{" + new string(' ', 4 * 1024 * 1024) + "}", true)); break;
+        }
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        using var doc = JsonDocument.Parse(file.FileContents);
+        Assert.False(doc.RootElement.GetProperty("ScopeComplete").GetBoolean());
+        Assert.False(doc.RootElement.GetProperty("NotificationIntentsScopeComplete").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("NotificationIntentsTotal").ValueKind);
+        Assert.Empty(doc.RootElement.GetProperty("NotificationIntents").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("Comparison").ValueKind);
+        if (kind == "missing") Assert.Contains("notification-state-missing", doc.RootElement.GetProperty("ScopeStatus").EnumerateArray().Select(x => x.GetString()));
+        if (kind == "oversized") Assert.Contains("notification-state-oversized", doc.RootElement.GetProperty("ScopeStatus").EnumerateArray().Select(x => x.GetString()));
+    }
+
+    [Fact]
+    public void ExplicitEmptyMailOutboxIsKnownZeroAndPrivateIntentsAreNeverProjected()
+    {
+        PrepareExportScope();
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var state = new MailNotifyState { UrgentOutbox = new Dictionary<string, MailUrgentIntent>() };
+        _backend.Blob("mail_notify_state").Mutate(_ => (JsonSerializer.Serialize(state), true));
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        using (var doc = JsonDocument.Parse(file.FileContents))
+        {
+            Assert.True(doc.RootElement.GetProperty("NotificationIntentsScopeComplete").GetBoolean());
+            Assert.Equal(0, doc.RootElement.GetProperty("NotificationIntentsTotal").GetInt32());
+            Assert.Empty(doc.RootElement.GetProperty("NotificationIntents").EnumerateArray());
+        }
+        state.UrgentOutbox["private-intent"] = new MailUrgentIntent { Key = "private-intent", HostId = 2,
+            RecordDate = day, SettingsRevision = "secret-settings", Status = "pending" };
+        _backend.Blob("mail_notify_state").Mutate(_ => (JsonSerializer.Serialize(state), true));
+        file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        var body = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        using var second = JsonDocument.Parse(file.FileContents);
+        Assert.Equal(0, second.RootElement.GetProperty("NotificationIntentsTotal").GetInt32());
+        Assert.DoesNotContain("private-intent", body);
+        Assert.DoesNotContain("secret-settings", body);
+    }
+
+    [Fact]
+    public void MailIntentPeriodAndHostFilteringPrecedeTheExistingThousandRowCap()
+    {
+        PrepareExportScope();
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var outbox = new Dictionary<string, MailUrgentIntent>();
+        for (var i = 0; i < 1001; i++)
+        {
+            var key = $"selected-{i:D4}";
+            outbox[key] = new MailUrgentIntent { Key = key, HostId = 1, RecordDate = day,
+                SettingsRevision = "revision", Status = "pending" };
+        }
+        outbox["private-host"] = new MailUrgentIntent { Key = "private-host", HostId = 2, RecordDate = day,
+            SettingsRevision = "private", Status = "pending" };
+        outbox["outside-period"] = new MailUrgentIntent { Key = "outside-period", HostId = 1, RecordDate = day.AddDays(-10),
+            SettingsRevision = "outside", Status = "pending" };
+        _backend.Blob("mail_notify_state").Mutate(_ => (JsonSerializer.Serialize(new MailNotifyState { UrgentOutbox = outbox }), true));
+
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        using var doc = JsonDocument.Parse(file.FileContents);
+        Assert.Equal(1001, doc.RootElement.GetProperty("NotificationIntentsTotal").GetInt32());
+        Assert.Equal(1000, doc.RootElement.GetProperty("NotificationIntents").GetArrayLength());
+        Assert.False(doc.RootElement.GetProperty("NotificationIntentsScopeComplete").GetBoolean());
+        Assert.False(doc.RootElement.GetProperty("ScopeComplete").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("Comparison").ValueKind);
+        Assert.Contains("notification-intent-output-cap", doc.RootElement.GetProperty("ScopeStatus").EnumerateArray().Select(x => x.GetString()));
+        var body = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        Assert.DoesNotContain("private-host", body);
+        Assert.DoesNotContain("outside-period", body);
+    }
+
+    [Fact]
+    public void RecordFactByteBudgetStopsBeforeAppendingAndKeepsFullDenominator()
+    {
+        PrepareExportScope();
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var oversizedKey = new string('p', 16 * 1024);
+        var rows = Enumerable.Range(0, 600).Select(_ =>
+        {
+            var record = new DailyAnalysisRecord { HostId = 1, Date = day, LogSource = AnalysisLogSource.Netiq,
+                TopIssues = [new LogIssueSignature { LogName = "PRTG", EventKey = oversizedKey }] };
+            return new DailyRecordRow { HostId = 1, HostName = "host-1", RecordDate = day, CreatedAt = day,
+                RiskLevel = "low", RiskReviewStatus = "unchecked", ContentJson = JsonSerializer.Serialize(record) };
+        }).ToArray();
+        using (var db = _backend.CreateContext()) { db.DailyRecords.AddRange(rows); db.SaveChanges(); }
+
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        using var doc = JsonDocument.Parse(file.FileContents);
+        Assert.Equal(600, doc.RootElement.GetProperty("RecordsTotal").GetInt32());
+        Assert.InRange(doc.RootElement.GetProperty("RecordsOutputCount").GetInt32(), 1, 599);
+        Assert.True(doc.RootElement.GetProperty("RecordsOutputBytes").GetInt32() <= 8 * 1024 * 1024);
+        Assert.False(doc.RootElement.GetProperty("RecordsScopeComplete").GetBoolean());
+        Assert.Contains("record-output-byte-cap", doc.RootElement.GetProperty("ScopeStatus").EnumerateArray().Select(x => x.GetString()));
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("Comparison").ValueKind);
+    }
+
+    [Fact]
+    public void MailStateOverLimitIsUnknownRatherThanEmpty()
+    {
+        PrepareExportScope();
+        _backend.Blob("mail_notify_state").Mutate(_ => ("{" + new string(' ', 4 * 1024 * 1024) + "}", true));
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        using var doc = JsonDocument.Parse(file.FileContents);
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("NotificationIntentsTotal").ValueKind);
+        Assert.False(doc.RootElement.GetProperty("NotificationIntentsScopeComplete").GetBoolean());
+        Assert.Contains("notification-state-oversized", doc.RootElement.GetProperty("ScopeStatus").EnumerateArray().Select(x => x.GetString()));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{broken")]
+    [InlineData("{\"HostId\":1,\"TopIssues\":[null]}")]
+    public void MalformedDailyPayloadDoesNotCrashOrReportKnownFacts(string payload)
+    {
+        PrepareExportScope();
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        SeedRecord(1, day, payload);
+        var file = Assert.IsType<FileContentResult>(Api(new Visible(1)).Export(day, day));
+        using var doc = JsonDocument.Parse(file.FileContents);
+        var row = Assert.Single(doc.RootElement.GetProperty("Records").EnumerateArray());
+        Assert.Equal("unknown", row.GetProperty("ContentStatus").GetString());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("NetiqQualified").ValueKind);
+        Assert.False(doc.RootElement.GetProperty("RecordsScopeComplete").GetBoolean());
+    }
+
+    [Fact]
+    public void StreamingJsonStopsAtOutputBudgetBeforeEnumeratingTheEntireGraph()
+    {
+        var streamType = typeof(PrtgAcceptanceController).GetNestedType("CappedMemoryStream", BindingFlags.NonPublic)!;
+        using var stream = (Stream)Activator.CreateInstance(streamType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [64L * 1024], null)!;
+        var visited = 0;
+        IEnumerable<object> Facts()
+        {
+            for (var i = 0; i < 10000; i++) { visited++; yield return new { Value = new string('x', 1024) }; }
+        }
+        var exception = Record.Exception(() => JsonSerializer.Serialize(stream, new { Records = Facts() }));
+        Assert.NotNull(exception);
+        Assert.InRange(visited, 1, 100);
+        Assert.True(stream.Length <= 64 * 1024);
+    }
+
+    private void PutEmptyMailState() => _backend.Blob("mail_notify_state")
+        .Mutate(_ => (JsonSerializer.Serialize(new MailNotifyState()), true));
+
+    private void PrepareExportScope()
+    {
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
+        { p.HostIds = [1]; p.SensorIds = []; });
+        PutRows(1, []);
+    }
+
+    private void SeedRecord(long hostId, DateTime day, string contentJson, bool detailPruned = false)
+    {
+        using var db = _backend.CreateContext();
+        db.DailyRecords.Add(new DailyRecordRow { HostId = hostId, HostName = $"host-{hostId}", RecordDate = day,
+            CreatedAt = day, RiskLevel = "low", RiskReviewStatus = "unchecked", ContentJson = contentJson, DetailPruned = detailPruned });
+        db.SaveChanges();
+    }
+
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         Directory.Delete(_dir, true);
     }
 }
-
-
-

@@ -50,7 +50,7 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R05／N7：補驗收匯出的每日 ContentJson SQL 前綴分頁、通知 outbox 有界讀取及總輸出 bytes 上限；候選未經主代理驗證不算完成。
+- [ ] R09／N6：修正快照服務的範圍補抓共用 Snapshot lane，核對受控來源的主通道欄位及連續採样证據；反例／修正／受影響回歸完成後移除本子項。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
 
@@ -1505,3 +1505,14 @@ Main 強制 Rebuild 0 errors／134 既有 warnings；當前 `round53-usefulness-
 Main Rebuild 0 errors／136 warnings；當前 `round53-acceptance-bounds-green-v5` 118／118、0 skipped、輸入零漂移，主代理已核 TRX／driver／source receipts，涵蓋讀寫、ACL、全域上限、正向摘要與六種主機日邊界及管理頁契約。此段完成；每日 ContentJson／outbox／最終序列化 bytes 上限續列 §5.1，不宣稱此段已解決全部記憶體風險。A0／原生來源、全角色瀏覽器、3000／15000／180 日共同容量及整輪驗收均仍未通過。
 
 fresh Main producer 受控採樣 v5 已核對 2 顆 current identities／2 顆 raw-qualified profiles 的精確集合，但 9 輪僅完成 1 輪，第二輪超過固定 60 秒期限；保留 RED 並追查，不縮小完整容量分母、不放寬時限或冒稱連續採樣通過。
+
+
+### 2026-10-10 R05／N7 驗收包內容及 bytes 上限补修
+
+主代理保留 `round53-acceptance-byte-bounds-red-v1` 12／12 失敗的有效反例：每日內容無 SQL 前綴／bytes 守門，通知 missing 被視為零、null／損壞可拋例外，匯出無明確完整性與大小欄位。
+
+每日列改 keyset 每頁 16，SQL 只投影既有 128 KiB payload 契約的至多 128 Ki 字元加一字元前綴及長度；UTF-8 超限、pruned、格式／null issue、主機／日期不符均保留未知衍生事實。每日事實輸出上限 8 MiB，完整分母與輸出筆數分列。通知沿既有 4 MiB 有界讀取，明确空 outbox 才知零；重复 outbox／损壞／null／超限為未知，主機及期間篩選先於 1000 上限，不輸出私有 intent／email。最終 JSON 同步 stream 採 .NET 8 的可續行序列化，64 MiB 上限回 HTTP 413，不交付部分檔案。
+
+主代理額外修正 null issue 與重複 JSON outbox 守門，核對实际 StorageBackend interceptor 可用，加入 SQL 命令斷言；33 列確實分成三頁 substr／length 投影，未 SELECT 完整 ContentJson 或 OriginalRiskContentJson。串流測試於小固定輸出預算停止，未枚舉完整 10000 筆圖形。序列化行為核對 [.NET 8 原始碼](https://github.com/dotnet/runtime/blob/v8.0.0/src/libraries/System.Text.Json/src/System/Text/Json/Serialization/Metadata/JsonTypeInfoOfT.WriteHelpers.cs)。
+
+Main Rebuild 0 errors／136 warnings；`round53-acceptance-byte-bounds-green-v1` 136／136、0 skipped、輸入零漂移，主代理核 TRX／driver／source receipts。此實作子項移出 TODO；原 AC／Q、原生來源、全角色、長期正式 provider 容量及整輪門檻維持未通過。
