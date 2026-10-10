@@ -1170,7 +1170,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             profileStore.Record(new PrtgProfileTransportSample(contract.SourceFingerprint,
                 contract.ScopeFingerprint, contract.StrategyFingerprint, contract.RequestShapeFingerprint,
                 now.AddMinutes(-5).AddMilliseconds(index), profileElapsed, profileSensorCount,
-                profileSensorCount * 4, profileSensorCount * 4, "success", null, contract.VersionFingerprint));
+                PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileSensorCount),
+                PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileSensorCount), "success", null, contract.VersionFingerprint));
 
         var snapshot = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
             PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), selection.ScopeFingerprint,

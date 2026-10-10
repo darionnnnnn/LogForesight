@@ -1,5 +1,6 @@
 using LogForesight.Core.Service;
 using LogForesight.Core.Persistence;
+using LogForesight.Web.Services;
 using System.Text.Json;
 using Xunit;
 
@@ -7,12 +8,128 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgCapacityPurposeAndProfileTransportTests
 {
+    [Theory]
+    [InlineData(1, 4)]
+    [InlineData(2, 6)]
+    [InlineData(3, 8)]
+    [InlineData(4, 10)]
+    [InlineData(5, 12)]
+    public void Grouped_refresh_request_count_is_shared_by_contract(int sensors, int expectedRequests) =>
+        Assert.Equal(expectedRequests, PrtgProfileTransportCapacityEvaluator.ExpectedRequests(sensors));
+
+    [Fact]
+    public void Partial_runtime_samples_keep_bootstrap_strict_and_require_exact_group_shape()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var source = new string('A', 64); var scope = new string('B', 64);
+        var strategy = new string('C', 64); var shape = new string('D', 64); var version = new string('E', 64);
+        var sample = new PrtgProfileTransportSample(source, scope, strategy, shape, now.AddSeconds(-1),
+            2_000, 2, 6, 6, "success", null, version, 2_000);
+        var strict = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000, source, scope, strategy,
+            shape, version, [sample], now);
+        var runtime = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000, source, scope, strategy,
+            shape, version, [sample], now, tableRequestsAvailableAfterSharedTraffic: 1.5,
+            requiredFreshSuccessfulSamples: 1, allowPartialRuntimeSamples: true);
+        var mismatch = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000, source, scope, strategy,
+            shape, version, [sample with { RequestsSent = 8 }], now,
+            tableRequestsAvailableAfterSharedTraffic: 1.5, requiredFreshSuccessfulSamples: 1,
+            allowPartialRuntimeSamples: true);
+        var stale = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000, source, scope, strategy,
+            shape, version, [sample with { CompletedAtUtc = now.AddHours(-25) }], now,
+            tableRequestsAvailableAfterSharedTraffic: 1.5, requiredFreshSuccessfulSamples: 1,
+            allowPartialRuntimeSamples: true);
+
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, strict.Status);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, runtime.Status);
+        Assert.Equal(24_000d, runtime.EstimatedSeconds);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, mismatch.Status);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, stale.Status);
+    }
+
+    [Fact]
+    public void Partial_runtime_store_preserves_actual_failure_counters_and_invalidates_old_success()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lf-prtg-partial-runtime-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var backend = new StorageBackend(new StorageSettings
+            {
+                Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(directory, "test.db")}"
+            }, directory);
+            var store = new PrtgProfileTransportCapacityStore(backend.Blob(PrtgProfileTransportCapacityStore.BlobKey));
+            var now = DateTimeOffset.UtcNow;
+            PrtgProfileTransportSample Make(DateTimeOffset at, string outcome, int attempted, int sent) => new(
+                new string('A', 64), new string('B', 64), new string('C', 64), new string('D', 64),
+                at, 2_000, 2, attempted, sent, outcome, outcome == "success" ? null : "request-shape-mismatch",
+                new string('E', 64), 2_000);
+
+            store.Record(Make(now, "success", 6, 6));
+            Assert.Contains(store.Read(), sample => sample.SensorCount == 2 &&
+                sample.RequestsAttempted == 6 && sample.RequestsSent == 6 && sample.Outcome == "success");
+            Assert.Throws<ArgumentException>(() => store.Record(Make(now.AddSeconds(1), "success", 8, 8)));
+
+            store.Record(Make(now.AddSeconds(2), "failed", 20, 20));
+            store.Record(Make(now.AddSeconds(3), "success", 6, 6));
+            var recovered = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000,
+                new string('A', 64), new string('B', 64), new string('C', 64), new string('D', 64),
+                new string('E', 64), store.Read(), now.AddSeconds(4),
+                tableRequestsAvailableAfterSharedTraffic: 1.5, requiredFreshSuccessfulSamples: 1,
+                allowPartialRuntimeSamples: true);
+            Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, recovered.Status);
+
+            store.Record(Make(now.AddSeconds(4), "success", 12, 12) with { SensorCount = 5 });
+            store.Record(Make(now.AddSeconds(5), "failed", 20, 20));
+            var result = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000,
+                new string('A', 64), new string('B', 64), new string('C', 64), new string('D', 64),
+                new string('E', 64), store.Read(), now.AddSeconds(6),
+                tableRequestsAvailableAfterSharedTraffic: 1.5, requiredFreshSuccessfulSamples: 1,
+                allowPartialRuntimeSamples: true);
+            var strictResult = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000,
+                new string('A', 64), new string('B', 64), new string('C', 64), new string('D', 64),
+                new string('E', 64), store.Read(), now.AddSeconds(6), tableRequestsAvailableAfterSharedTraffic: 1.5);
+
+            Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, result.Status);
+            Assert.Equal("latest_profile_transport_sample_failed_or_timed_out", result.Reason);
+            Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, strictResult.Status);
+            Assert.Equal("latest_profile_transport_sample_failed_or_timed_out", strictResult.Reason);
+            Assert.Contains(store.Read(), sample => sample.Outcome == "failed" &&
+                sample.RequestsAttempted == 20 && sample.RequestsSent == 20);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void Fixed_refresh_groups_align_due_sensor_with_only_fresh_proven_eligible_neighbors()
+    {
+        var page = Enumerable.Range(1, 12).Select(value => (long)value).ToArray();
+        var groups = PrtgTrustedSamplingProfileRefreshHostedService.BuildRefreshGroups(page,
+            [1, 6, 12], [2, 3, 4, 5, 7, 8, 9, 10, 11]);
+
+        Assert.Equal(3, groups.Count);
+        Assert.Equal(new long[] { 1, 2, 3, 4, 5 }, groups[0]);
+        Assert.Equal(new long[] { 6, 7, 8, 9, 10 }, groups[1]);
+        Assert.Equal(new long[] { 11, 12 }, groups[2]);
+        Assert.Equal(30, groups.Sum(group => PrtgProfileTransportCapacityEvaluator.ExpectedRequests(group.Length)));
+
+        var oneDueSensor = PrtgTrustedSamplingProfileRefreshHostedService.BuildRefreshGroups(page,
+            [1], [2, 3, 4, 5]);
+        Assert.Equal(new long[] { 1, 2, 3, 4, 5 }, Assert.Single(oneDueSensor));
+        Assert.Equal(12, PrtgProfileTransportCapacityEvaluator.ExpectedRequests(Assert.Single(oneDueSensor).Length));
+
+        // Failed/cooldown and pending-proof/no-proof sensors are deliberately absent from the
+        // fresh-proven-eligible set, so a due neighbor cannot pull them into an early retry.
+        var cooldownAndPendingExcluded = PrtgTrustedSamplingProfileRefreshHostedService.BuildRefreshGroups(page,
+            [1], [2]);
+        Assert.Equal(new long[] { 1, 2 }, Assert.Single(cooldownAndPendingExcluded));
+    }
+
     [Fact]
     public void Profile_work_timing_excludes_only_measured_admission_and_legacy_keeps_full_wall_time()
     {
         var now = DateTimeOffset.UtcNow;
         var samples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(
-            "source", "scope", "strategy", "shape", now.AddSeconds(-i), 12_000, 5, 20, 20,
+            "source", "scope", "strategy", "shape", now.AddSeconds(-i), 12_000, 5, 12, 12,
             "success", null, "version", NonAdmissionElapsedMilliseconds: 1_000)).ToArray();
         var measured = PrtgProfileTransportCapacityEvaluator.Evaluate(5, "source", "scope", "strategy",
             "shape", "version", samples, now);
@@ -29,7 +146,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
     {
         var now = DateTimeOffset.UtcNow;
         var samples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(
-            "source", "scope", "strategy", "shape", now.AddSeconds(-i), 5_000, 5, 20, 20,
+            "source", "scope", "strategy", "shape", now.AddSeconds(-i), 5_000, 5, 12, 12,
             "success", null, "version", NonAdmissionElapsedMilliseconds: 1_000)).ToArray();
         var invalid = samples[0] with { CompletedAtUtc = now.AddSeconds(1), NonAdmissionElapsedMilliseconds = workMilliseconds };
         var result = PrtgProfileTransportCapacityEvaluator.Evaluate(5, "source", "scope", "strategy",
@@ -96,7 +213,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         var shape = new string('D', 64);
         var version = new string('E', 64);
         var samples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(
-            source, scope, strategy, shape, now.AddMinutes(-i), 5000, 5, 20, 20, "success", null, version)).ToArray();
+            source, scope, strategy, shape, now.AddMinutes(-i), 5000, 5, 12, 12, "success", null, version)).ToArray();
 
         var qualified = PrtgProfileTransportCapacityEvaluator.Evaluate(1000, source, scope, strategy,
             shape, version, samples, now);
@@ -118,7 +235,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
             strategy, shape, version, fullRecovery, now.AddSeconds(7));
 
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, qualified.Status);
-        Assert.Equal(2000d, qualified.EstimatedSeconds);
+        Assert.Equal(1200d, qualified.EstimatedSeconds);
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, otherSource.Status);
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, failed.Status);
         Assert.Equal("latest_profile_transport_sample_failed_or_timed_out", olderAfterFailure.Reason);
@@ -259,10 +376,10 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         var joint = PrtgJointCapacityEvaluator.Evaluate(snapshot, profile, usage, 30);
 
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, joint.Status);
-        Assert.True(joint.ProfileTableRequestsPerSecond >= 9d / 20d);
-        Assert.True(9d / joint.ProfileTableRequestsPerSecond + 5d < 30d);
+        Assert.True(joint.ProfileTableRequestsPerSecond >= 11d / 20d);
+        Assert.True(11d / joint.ProfileTableRequestsPerSecond + 10d < 30d);
 
-        var slowProfile = profile with { P95SensorSeconds = 2 };
+        var slowProfile = profile with { P95SensorSeconds = 3 };
         var slowJoint = PrtgJointCapacityEvaluator.Evaluate(snapshot, slowProfile, usage, 30);
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityExceeded, slowJoint.Status);
         Assert.Equal("profile_probe_group_deadline_exceeded", slowJoint.Reason);
@@ -302,7 +419,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         var profileShape = new string('F', 64);
         var runtimeVersion = new string('7', 64);
         var initialSamples = Enumerable.Range(0, 5).Select(i => new PrtgProfileTransportSample(source,
-            profileScope, strategy, profileShape, now.AddMinutes(-i), 1_000, 5, 20, 20,
+            profileScope, strategy, profileShape, now.AddMinutes(-i), 1_000, 5, 12, 12,
             "success", null, runtimeVersion)).ToArray();
         var snapshot = new PrtgSnapshotCapacityEstimate(PrtgSnapshotCapacityStatus.CapacityQualified,
             150, 3, 5, now, 2, 6, 600, .25, "qualified");
@@ -315,7 +432,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
             profileScope, strategy, snapshotShape, profileShape, runtimeVersion, now, "settings-r1", "policy-r1");
 
         var oneFreshSafeSample = new PrtgProfileTransportSample(source, profileScope, strategy, profileShape,
-            now, 1_050, 5, 20, 20, "success", null, runtimeVersion);
+            now, 1_050, 5, 12, 12, "success", null, runtimeVersion);
         var agedSamplesAndRefresh = initialSamples.Select((sample, i) => sample with
             { CompletedAtUtc = now.AddHours(-25).AddMinutes(i) }).Append(oneFreshSafeSample);
         var refreshedProfile = PrtgProfileTransportCapacityEvaluator.Evaluate(15_000, source, profileScope,

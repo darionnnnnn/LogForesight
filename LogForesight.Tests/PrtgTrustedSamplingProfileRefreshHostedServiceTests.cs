@@ -133,9 +133,16 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedServiceTests : IDispo
         var qualified = bindings.RecordQualification(11, saved.BindingRevision, saved.BindingFingerprint,
             settings.Revision, policy.Revision, 91, observed.AddSeconds(-1).UtcDateTime.ToOADate(),
             "source-r1", observed, new string('B', 64));
+        identity = backend.PrtgStore().GetResourceIdentity(11);
 
         Assert.NotEmpty(qualified.QualificationProofReference);
         Assert.False(PrtgTrustedSamplingProfileRefreshHostedService.IsRawQualificationPending(qualified));
+        var authorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy,
+            PrtgFetchStrategy.Conservative, 15);
+        Assert.True(PrtgTrustedSamplingProfileRefreshHostedService.HasCurrentRawProof(11, qualified,
+            identity, authorityContext, settings, policy));
+        Assert.False(PrtgTrustedSamplingProfileRefreshHostedService.HasCurrentRawProof(11, saved,
+            identity, authorityContext, settings, policy));
         Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles([11]));
         using (var verify = backend.CreateContext())
         {
@@ -172,6 +179,8 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedServiceTests : IDispo
         };
         Assert.False(PrtgTrustedSamplingProfileRefreshHostedService.IsCurrentProofRefreshNotice(
             restored, qualified, staleIdentity, settings, policy));
+        Assert.False(PrtgTrustedSamplingProfileRefreshHostedService.HasCurrentRawProof(11, qualified,
+            staleIdentity, authorityContext, settings, policy));
         var cooldownUntil = DateTimeOffset.UtcNow.AddHours(1);
         var now = DateTimeOffset.UtcNow;
         Assert.True(PrtgTrustedSamplingProfileRefreshHostedService.ShouldHonorCooldown(

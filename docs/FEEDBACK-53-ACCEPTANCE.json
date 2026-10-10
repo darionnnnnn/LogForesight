@@ -7899,5 +7899,24 @@
     "nativeSourceVerified": false,
     "capacityAccepted": false,
     "wholeRoundAccepted": false
+  },
+  "grouped_profile_refresh_20261010": {
+    "status": "component-verified",
+    "regression": {
+      "path": ".gemini-tasks/primary-results/batch-rolling-main-green/batch-rolling-main-green.trx",
+      "passed": 239,
+      "failed": 0,
+      "skipped": 0
+    },
+    "request_contract": "Recurring profile group n=1..5 uses exactly 2+2n GETs; 15000 sensors require 36000 GETs. Qualification singleton remains 4 Table + 1 Historic.",
+    "fences": "Exact unique requested sets before and after; all staged local and remote fences checked before first per-row CAS. No cross-sensor transaction claim.",
+    "partial_groups": "Runtime partial evidence requires an existing matching admitted plan; bootstrap still needs five full five-sensor samples. Latest partial failure invalidates prior success.",
+    "rolling_groups": "Due sensors may use fresh proven eligible neighbors within the fixed policy five-ID group; pending, not-before, cooldown and unavailable neighbors excluded.",
+    "first_run": "170 passed, one timestamp-observation race, aborted; root added callback checkpoint without changing quota assertions and reran the full affected suite.",
+    "remaining": "Snapshot exact 100-sensor batching and matching probe; bounded expired/failed evidence recovery; fixed 3000 hosts / 15000 sensors / 180 days shared workload.",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "wholeRoundAccepted": false
   }
 }

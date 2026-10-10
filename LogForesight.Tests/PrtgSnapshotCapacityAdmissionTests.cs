@@ -508,8 +508,8 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         var result = await new PrtgProfileTransportCapacityPilot(fixture.Backend,
             value => PrtgClientFactory.Create(value, new CapacityProfileTableHandler(), new PrtgRequestBudget()), fixture.Hosts)
             .RunAsync(policy.SensorIds.Order().ToArray(), CancellationToken.None);
-        Assert.Equal(20, result.RequestsSent);
-        Assert.True(result.ElapsedMilliseconds >= 8_000, "The test must exercise real Table2/s pacing.");
+        Assert.Equal(12, result.RequestsSent);
+        Assert.True(result.ElapsedMilliseconds >= 4_000, "The test must exercise real Table2/s pacing.");
         var samples = new PrtgProfileTransportCapacityStore(
             fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read();
         var profile = PrtgProfileTransportCapacityEvaluator.Evaluate(5, result.SourceFingerprint,
@@ -526,7 +526,7 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
     }
 
     [Fact]
-    public void Runtime_five_sensor_refresh_keeps_all_twenty_requests_in_capacity_evidence()
+    public void Runtime_five_sensor_refresh_keeps_all_twelve_requests_in_capacity_evidence()
     {
         using var fixture = RuntimeRecoveryFixture.Create(5);
         var settings = fixture.Settings.Get();
@@ -540,11 +540,11 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         var recorder = typeof(PrtgTrustedSamplingProfileRefreshHostedService).GetMethod("RecordRuntimeTransportSample",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         recorder.Invoke(worker, [policy.SensorIds.ToArray(), policy.SensorIds.ToArray(), settings, policy, admission,
-            20, 20, TimeSpan.FromMilliseconds(500), "success", null, TimeSpan.FromMilliseconds(200)]);
+            12, 12, TimeSpan.FromMilliseconds(500), "success", null, TimeSpan.FromMilliseconds(200)]);
         var sample = Assert.Single(new PrtgProfileTransportCapacityStore(
             fixture.Backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read());
-        Assert.Equal(20, sample.RequestsAttempted);
-        Assert.Equal(20, sample.RequestsSent);
+        Assert.Equal(12, sample.RequestsAttempted);
+        Assert.Equal(12, sample.RequestsSent);
         Assert.Equal(500, sample.ElapsedMilliseconds);
         Assert.Equal(200, sample.NonAdmissionElapsedMilliseconds);
     }
@@ -560,8 +560,8 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
             Assert.Equal(sample == 4 ? "capacity-qualified" : "capacity-unverified", result.Status);
             if (sample < 4)
                 Assert.Equal("insufficient_fresh_matching_profile_samples", result.Reason);
-            Assert.Equal(3 * 4, result.RequestsSent);
-            Assert.Equal(3 * 4, result.RequestsAttempted);
+            Assert.Equal(PrtgProfileTransportCapacityEvaluator.ExpectedRequests(3), result.RequestsSent);
+            Assert.Equal(PrtgProfileTransportCapacityEvaluator.ExpectedRequests(3), result.RequestsAttempted);
             Assert.False(settings.Get().PrtgEnabled);
         }
     }
@@ -620,10 +620,14 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
             var idPart = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
                 .FirstOrDefault(part => part.StartsWith("id=", StringComparison.Ordinal));
             var id = idPart is not null && long.TryParse(Uri.UnescapeDataString(idPart[3..]), out var parsed) ? parsed : 501;
+            var groupIds = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Where(part => part.StartsWith("filter_objid=", StringComparison.Ordinal))
+                .Select(part => long.Parse(Uri.UnescapeDataString(part[13..]), System.Globalization.CultureInfo.InvariantCulture))
+                .ToArray();
             var body = isPrimaryProperty
                 ? "<prtg><result>3</result></prtg>"
                 : query.Contains("content=sensors", StringComparison.Ordinal)
-                    ? JsonSerializer.Serialize(new { sensors = new[] { new { objid = id } } })
+                    ? JsonSerializer.Serialize(new { sensors = (groupIds.Length > 0 ? groupIds : [id]).Select(value => new { objid = value }) })
                     : JsonSerializer.Serialize(new { channels = new[] { new { objid = 3 } } });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             { Content = new StringContent(body, Encoding.UTF8, isPrimaryProperty ? "application/xml" : "application/json") });

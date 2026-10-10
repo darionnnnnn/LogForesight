@@ -58,7 +58,8 @@ public sealed class PrtgProfileTransportCapacityStore(EfJsonBlobStore blob)
             sample.Outcome is not ("success" or "failed" or "timeout"))
             throw new ArgumentException("Invalid bounded profile transport sample.", nameof(sample));
         if (sample.Outcome == "success" &&
-            (sample.RequestsAttempted != sample.SensorCount * 4 || sample.RequestsSent != sample.SensorCount * 4))
+            (sample.RequestsAttempted != PrtgProfileTransportCapacityEvaluator.ExpectedRequests(sample.SensorCount) ||
+             sample.RequestsSent != PrtgProfileTransportCapacityEvaluator.ExpectedRequests(sample.SensorCount)))
             throw new ArgumentException("A successful profile transport sample must contain every attempted and sent GET.", nameof(sample));
 
         blob.MutateWithContext((_, current) =>
@@ -70,7 +71,9 @@ public sealed class PrtgProfileTransportCapacityStore(EfJsonBlobStore blob)
                 x.CompletedAtUtc.UtcDateTime.Hour == sample.CompletedAtUtc.UtcDateTime.Hour).ToArray();
             if (sample.Outcome == "success" && hour.Length >= PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples)
             {
-                var keep = hour.Append(sample).OrderByDescending(x => x.ElapsedMilliseconds)
+                var keep = hour.Append(sample)
+                    .OrderByDescending(x => x.NonAdmissionElapsedMilliseconds ?? x.ElapsedMilliseconds)
+                    .ThenByDescending(x => x.ElapsedMilliseconds)
                     .ThenByDescending(x => x.CompletedAtUtc).Take(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples).ToHashSet();
                 rows.RemoveAll(x => MatchesContract(x, sample) && x.Outcome == "success" &&
                     x.CompletedAtUtc.UtcDateTime.Date == sample.CompletedAtUtc.UtcDateTime.Date &&
@@ -177,33 +180,51 @@ public sealed class PrtgCapacityReservationStore(EfJsonBlobStore blob)
     }
 }
 
-/// <summary>Conservative completion estimate: four sequential Table-budget requests per sensor.</summary>
+/// <summary>Conservative completion estimate for grouped profile refresh transport.</summary>
 public static class PrtgProfileTransportCapacityEvaluator
 {
     public const double RequiredHeadroomFraction = .25;
     public static readonly TimeSpan EvidenceFreshness = TimeSpan.FromHours(24);
     public static readonly TimeSpan ProfileRefreshWindow = TimeSpan.FromHours(23 * .75);
 
+    /// <summary>Grouped recurring refresh brackets the scope once and performs two reads per sensor.</summary>
+    public static int ExpectedRequests(int sensorCount)
+    {
+        if (sensorCount is < 1 or > 5) throw new ArgumentOutOfRangeException(nameof(sensorCount));
+        return 2 + 2 * sensorCount;
+    }
+
+    public static long ExpectedScopeRequests(int targetSensorCount)
+    {
+        if (targetSensorCount < 0) throw new ArgumentOutOfRangeException(nameof(targetSensorCount));
+        return 2L * ((targetSensorCount + 4L) / 5L) + 2L * targetSensorCount;
+    }
+
     public static PrtgProfileTransportEstimate Evaluate(int targetSensorCount, string sourceFingerprint,
         string scopeFingerprint, string strategyFingerprint, string requestShapeFingerprint,
         string versionFingerprint, IEnumerable<PrtgProfileTransportSample> evidence, DateTimeOffset nowUtc,
         double tableRequestsAvailableAfterSharedTraffic = PrtgSnapshotCapacityEvaluator.MaximumTableRequestsPerSecond,
-        int requiredFreshSuccessfulSamples = PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples)
+        int requiredFreshSuccessfulSamples = PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples,
+        bool allowPartialRuntimeSamples = false)
     {
         if (targetSensorCount < 0) throw new ArgumentOutOfRangeException(nameof(targetSensorCount));
         var matching = evidence.Where(s => s.SourceFingerprint == sourceFingerprint && s.ScopeFingerprint == scopeFingerprint &&
             s.StrategyFingerprint == strategyFingerprint && s.RequestShapeFingerprint == requestShapeFingerprint &&
-            s.VersionFingerprint == versionFingerprint && s.SensorCount == Math.Min(targetSensorCount, 5) &&
+            s.VersionFingerprint == versionFingerprint &&
+            (allowPartialRuntimeSamples || s.Outcome != "success" ||
+             s.SensorCount == Math.Min(targetSensorCount, 5)) &&
+            s.SensorCount is >= 1 and <= 5 &&
             s.CompletedAtUtc <= nowUtc && nowUtc - s.CompletedAtUtc <= EvidenceFreshness)
             .OrderBy(s => s.CompletedAtUtc).ToArray();
         var lastInvalidIndex = Array.FindLastIndex(matching, x => x.Outcome != "success" ||
-            x.RequestsAttempted != x.SensorCount * 4 || x.RequestsSent != x.SensorCount * 4 ||
+            x.RequestsAttempted != ExpectedRequests(x.SensorCount) || x.RequestsSent != ExpectedRequests(x.SensorCount) ||
             x.ElapsedMilliseconds < 0 ||
             x.NonAdmissionElapsedMilliseconds is { } work && (work < 0 || work > x.ElapsedMilliseconds));
         var latest = matching.LastOrDefault();
         var successful = matching.Skip(lastInvalidIndex + 1).Where(x => x.Outcome == "success" &&
-            x.RequestsAttempted == x.SensorCount * 4 && x.RequestsSent == x.SensorCount * 4).ToArray();
-        var requiredSamples = lastInvalidIndex >= 0
+            x.RequestsAttempted == ExpectedRequests(x.SensorCount) &&
+            x.RequestsSent == ExpectedRequests(x.SensorCount)).ToArray();
+        var requiredSamples = lastInvalidIndex >= 0 && !allowPartialRuntimeSamples
             ? PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples : requiredFreshSuccessfulSamples;
         var oldest = successful.FirstOrDefault()?.CompletedAtUtc;
         PrtgProfileTransportEstimate Result(PrtgSnapshotCapacityStatus status, double? p95, double? seconds, string reason) =>
@@ -212,6 +233,8 @@ public static class PrtgProfileTransportCapacityEvaluator
         if (targetSensorCount == 0) return Result(PrtgSnapshotCapacityStatus.CapacityQualified, 0, 0, "empty_scope");
         if (requiredFreshSuccessfulSamples is < 1 or > PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples)
             throw new ArgumentOutOfRangeException(nameof(requiredFreshSuccessfulSamples));
+        if (allowPartialRuntimeSamples && requiredFreshSuccessfulSamples != 1)
+            throw new ArgumentException("Partial runtime profile evidence is valid only under a current matching plan with one fresh sample required.", nameof(requiredFreshSuccessfulSamples));
         if (latest is not null && lastInvalidIndex == matching.Length - 1)
             return Result(PrtgSnapshotCapacityStatus.CapacityUnverified, null, null, "latest_profile_transport_sample_failed_or_timed_out");
         if (successful.Length < requiredSamples)
@@ -224,9 +247,10 @@ public static class PrtgProfileTransportCapacityEvaluator
         var perSensorSeconds = successful.Select(x =>
             (x.NonAdmissionElapsedMilliseconds ?? x.ElapsedMilliseconds) / 1000d / x.SensorCount).Order().ToArray();
         var p95 = perSensorSeconds[Math.Clamp((int)Math.Ceiling(perSensorSeconds.Length * .95) - 1, 0, perSensorSeconds.Length - 1)];
-        // The probe performs four sequential Table-budget GETs per sensor. The shared rate model includes current
-        // work before assigning the remaining Table2/s tokens to this serialized refresh lane.
-        var requestRateFloor = Math.Ceiling(targetSensorCount * 4d / tableRequestsAvailableAfterSharedTraffic);
+        // Refreshes use fixed groups of five: two group brackets and two per-sensor reads.
+        // The shared rate model includes current work before assigning this lane its reserved rate.
+        var requestRateFloor = Math.Ceiling(ExpectedScopeRequests(targetSensorCount) /
+            tableRequestsAvailableAfterSharedTraffic);
         var sequentialFloor = Math.Ceiling(targetSensorCount * p95);
         var estimate = Math.Max(requestRateFloor, sequentialFloor);
         if (!double.IsFinite(estimate) || estimate > ProfileRefreshWindow.TotalSeconds)
@@ -355,7 +379,7 @@ public static class PrtgJointCapacityEvaluator
         var inFlightWait = usage.InFlight > 0 ? Math.Max(1, httpTimeoutSeconds) : 0;
         var observedReclaim = Math.Max(tableWait, Math.Max(historicWait, inFlightWait));
         var snapshotRateWindow = snapshotWindow - reclaim - 1;
-        var profileRequests = profile.TargetSensorCount * 4d;
+        var profileRequests = PrtgProfileTransportCapacityEvaluator.ExpectedScopeRequests(profile.TargetSensorCount);
         var profileP95 = profile.P95SensorSeconds ?? double.PositiveInfinity;
         var profileSensorWorkSeconds = profile.TargetSensorCount * profileP95;
         var profileInterSliceBudget = ProfileRefreshInterSliceDelayBudget(profileWindow);
@@ -371,7 +395,8 @@ public static class PrtgJointCapacityEvaluator
         // between GETs, so reserve enough throughput for one measured group to finish inside
         // that request deadline as well as the full-scope completion window.
         var groupDeadlineSeconds = TimeSpan.FromSeconds(30).TotalSeconds;
-        var groupRequestGaps = Math.Max(0, measuredChunkSize * 4d - 1);
+        var groupRequestGaps = Math.Max(0,
+            PrtgProfileTransportCapacityEvaluator.ExpectedRequests(measuredChunkSize) - 1d);
         const double profileGroupDeadlineMarginSeconds = 5;
         // Keep the floor independent of observed elapsed-time samples so renewing a plan does not
         // silently change its lane fingerprint. Slow measurements still fail the deadline check.
@@ -396,7 +421,7 @@ public static class PrtgJointCapacityEvaluator
             Math.Ceiling(snapshot.BatchCount / 3d) * snapshotP95) + reclaim;
         var profilePacedCompletion = effectiveProfileRate > 0
             ? Math.Max(0, profileRequests - 1d) / effectiveProfileRate : double.PositiveInfinity;
-        // Each sensor performs four serial GETs; the pilot's per-sensor p95 covers response time,
+        // Each group performs two bracket GETs and two serial GETs per sensor; the pilot's per-sensor p95 covers response time,
         // while the plan rate adds the gap between each actual send. A max() would hide this
         // sequential cost and understate large-scope completion time.
         var profileTransportSeconds = profilePacedCompletion + profileSensorWorkSeconds + reclaim;

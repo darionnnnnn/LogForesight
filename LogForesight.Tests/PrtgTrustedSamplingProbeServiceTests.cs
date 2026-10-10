@@ -284,7 +284,7 @@ public sealed class PrtgTrustedSamplingProbeServiceTests : IDisposable
     [Theory]
     [InlineData(1)]
     [InlineData(5)]
-    public async Task Joint_profile_lane_plan_runs_four_bounded_calls_but_keeps_unbound_sensors_waiting(int count)
+    public async Task Joint_profile_lane_plan_runs_grouped_brackets_and_keeps_unbound_sensors_waiting(int count)
     {
         var ids = Enumerable.Range(11, count).Select(value => (long)value).ToArray();
         if (count > 1)
@@ -340,13 +340,87 @@ public sealed class PrtgTrustedSamplingProbeServiceTests : IDisposable
 
         Assert.Equal(count, rows.Count);
         Assert.All(rows, row => Assert.False(row.ProfileRecorded));
-        Assert.Equal(count * 4, counter.RequestCount);
+        Assert.Equal(PrtgProfileTransportCapacityEvaluator.ExpectedRequests(count), counter.RequestCount);
         Assert.Equal(0, budget.InFlightCount);
         Assert.True(clock.Elapsed <= TimeSpan.FromSeconds(30),
             $"The bounded {count}-sensor profile request group took {clock.Elapsed}.");
         var afterProbe = PrtgProfileTransportCapacityPilot.BuildContract(backend, null,
             settings.Get(), policy.Get(), ids);
         Assert.Equal(contract.ScopeFingerprint, afterProbe.ScopeFingerprint);
+    }
+
+    [Theory]
+    [InlineData("group-missing")]
+    [InlineData("group-foreign")]
+    [InlineData("group-duplicate")]
+    [InlineData("group-truncated")]
+    [InlineData("group-filter-ignored-extra")]
+    [InlineData("group-after-missing")]
+    public async Task Grouped_bracket_rejects_nonexact_sensor_sets_without_publishing(string scenario)
+    {
+        var ids = Enumerable.Range(11, 5).Select(value => (long)value).ToArray();
+        policy.Update(value => value.SensorIds = ids.ToList());
+        var maps = ids.Select((id, index) => new PrtgHostMapRow
+        { DeviceObjid = 22 + index, HostId = 7, MapDate = DateTime.Today, MapStatus = PrtgMapStatus.Ok }).ToArray();
+        backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today, maps);
+        foreach (var (id, index) in ids.Select((id, index) => (id, index)))
+        {
+            if (id != 11)
+                backend.PrtgStore().UpsertSensors([new PrtgSensorRow { Objid = id, DeviceObjid = 22 + index, SensorType = "CPU" }], DateTime.UtcNow);
+            backend.PrtgStore().BindObservedResource(id, 7, "source",
+                PrtgTimelineResourceIdentity.BuildResourceFingerprint((22 + index).ToString(), "CPU", "created", 0));
+        }
+        var budget = new PrtgRequestBudget();
+        var counter = new RequestCounter();
+        var service = new PrtgTrustedSamplingProbeService(backend, value =>
+            PrtgClientFactory.Create(value, new Handler(scenario, policy, counter), budget));
+        var publishCalls = 0;
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.ProbeAsync(ids, CancellationToken.None,
+            profilePublisher: _ => { publishCalls++; return true; }));
+
+        Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles(ids));
+        Assert.Equal(0, publishCalls);
+        Assert.Equal(scenario == "group-after-missing" ? 12 : 1, counter.RequestCount);
+    }
+
+    [Fact]
+    public async Task Exact_five_sensor_group_is_bracketed_and_published_after_all_fences()
+    {
+        var ids = Enumerable.Range(11, 5).Select(value => (long)value).ToArray();
+        policy.Update(value => value.SensorIds = ids.ToList());
+        var maps = ids.Select((id, index) => new PrtgHostMapRow
+        { DeviceObjid = 22 + index, HostId = 7, MapDate = DateTime.Today, MapStatus = PrtgMapStatus.Ok }).ToArray();
+        backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today, maps);
+        var bindingStore = new PrtgTrustedSamplingBindingStore(backend);
+        foreach (var (id, index) in ids.Select((id, index) => (id, index)))
+        {
+            if (id != 11)
+                backend.PrtgStore().UpsertSensors([new PrtgSensorRow { Objid = id, DeviceObjid = 22 + index, SensorType = "CPU" }], DateTime.UtcNow);
+            backend.PrtgStore().BindObservedResource(id, 7, "source",
+                PrtgTimelineResourceIdentity.BuildResourceFingerprint((22 + index).ToString(), "CPU", "created", 0));
+            var identity = backend.PrtgStore().GetResourceIdentity(id);
+            var currentSettings = settings.Get();
+            var currentPolicy = policy.Get();
+            var saved = bindingStore.Save(new(id, currentSettings.Revision, currentPolicy.Revision,
+                identity.Epoch, identity.ChannelGeneration, 0, "3", "Load",
+                PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct", "seconds", "UTC", "UTC",
+                "fixture-source-time-basis"));
+            bindingStore.RecordQualification(id, saved.BindingRevision, saved.BindingFingerprint,
+                currentSettings.Revision, currentPolicy.Revision, 93, DateTime.UtcNow.AddSeconds(-2).ToOADate(),
+                "fixture-version", DateTimeOffset.UtcNow, new string('B', 64));
+        }
+        var budget = new PrtgRequestBudget();
+        var counter = new RequestCounter();
+        var service = new PrtgTrustedSamplingProbeService(backend, value =>
+            PrtgClientFactory.Create(value, new Handler("group-ready", policy, counter), budget));
+
+        var rows = await service.ProbeAsync(ids, CancellationToken.None);
+
+        Assert.Equal(12, counter.RequestCount);
+        Assert.Equal(ids, rows.Select(row => row.SensorObjid).ToArray());
+        Assert.All(rows, row => Assert.True(row.ProfileRecorded, string.Join(',', row.MissingAuthorityFields)));
+        Assert.Equal(ids.Order(), backend.PrtgStore().GetTrustedSamplingProfiles(ids).Keys.Order());
     }
 
     [Theory]
@@ -423,17 +497,23 @@ public sealed class PrtgTrustedSamplingProbeServiceTests : IDisposable
     private sealed class Handler(string scenario, PrtgMonitoringPolicyStore policy, RequestCounter? counter = null) : HttpMessageHandler
     {
         private readonly double measured = DateTime.UtcNow.AddSeconds(-2).ToOADate();
+        private int groupedSensorResponses;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             counter?.Increment();
             var id = ReadRequestedId(request.RequestUri!.Query);
+            var query = request.RequestUri.Query;
+            var groupIds = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Where(part => part.StartsWith("filter_objid=", StringComparison.Ordinal))
+                .Select(part => long.Parse(Uri.UnescapeDataString(part[13..]), System.Globalization.CultureInfo.InvariantCulture))
+                .ToArray();
             var deviceId = 22 + id - 11;
             var sourceTime = scenario == "stale-sample" ? measured - 1 : scenario == "future-sample" ? measured + 1 : measured;
             if (request.RequestUri.AbsolutePath.EndsWith("getobjectproperty.htm", StringComparison.Ordinal))
             {
                 var property = scenario switch
                 {
-                    "synthetic-explicit-binding" or "bytes-conflict" => "<prtg><result>3</result></prtg>",
+                    "synthetic-explicit-binding" or "group-ready" or "bytes-conflict" => "<prtg><result>3</result></prtg>",
                     "primary-nested-result" => "<prtg><wrapper><result>3</result></wrapper></prtg>",
                     "primary-namespaced-result" => "<prtg xmlns=\"urn:fixture\"><result>3</result></prtg>",
                     "primary-duplicate-result" => "<prtg><result>3</result><result>3</result></prtg>",
@@ -452,15 +532,27 @@ public sealed class PrtgTrustedSamplingProbeServiceTests : IDisposable
                 { Content = new StringContent(xml, Encoding.UTF8, "application/xml") });
             }
             object response;
-            if (request.RequestUri!.Query.Contains("content=sensors"))
-                response = new { sensors = new[] { new { objid = id, parentid = scenario == "different-parent" ? deviceId + 1 : deviceId,
+            if (query.Contains("content=sensors"))
+            {
+                var sensorIds = groupIds.Length > 0 ? groupIds.ToList() : [id];
+                if (groupIds.Length > 0)
+                {
+                    groupedSensorResponses++;
+                    if (scenario is "group-missing" or "group-truncated" || scenario == "group-after-missing" && groupedSensorResponses == 2)
+                        sensorIds.RemoveAt(sensorIds.Count - 1);
+                    if (scenario is "group-foreign" or "group-filter-ignored-extra") sensorIds.Add(999_999);
+                    if (scenario == "group-duplicate") sensorIds.Add(sensorIds[0]);
+                }
+                response = new { sensors = sensorIds.Select(sensorId => new { objid = sensorId,
+                    parentid = scenario == "different-parent" ? deviceId + 1 : 22 + sensorId - 11,
                     type = "CPU", cumsince_raw = scenario == "changed-creation" ? "recreated" : "created",
                     status_raw = scenario == "unknown-status" ? 1 : 3, lastvalue_raw = 93.0,
                     lastcheck_raw = sourceTime, interval_raw = scenario == "bad-interval" ? 0 : 60,
-                    raw_timestamp_timezone_id = "UTC" } } };
+                    raw_timestamp_timezone_id = "UTC" }) };
+            }
             else if (scenario == "native-baseline")
                 response = new { channels = new[] { new { objid = 3, name = "Load", lastvalue_raw = 93.0 } } };
-            else if (scenario == "synthetic-explicit-binding")
+            else if (scenario is "synthetic-explicit-binding" or "group-ready")
                 response = new { channels = new[] { new { objid = 3, name = "Load", lastvalue_raw = 93.0 } } };
             else
             {

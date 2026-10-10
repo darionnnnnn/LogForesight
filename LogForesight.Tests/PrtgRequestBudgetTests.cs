@@ -637,6 +637,12 @@ public class PrtgRequestBudgetTests
             // Task.Run 的入列順序不等於陣列順序，只等待實際發送數及其餘等待者。
             await handler.WaitUntilRequestCountAsync(5, TimeSpan.FromSeconds(5));
             await WaitForWaiterCountAsync(budget, 4, TimeSpan.FromSeconds(5));
+            // Handler admission is recorded before its timestamp callback. Wait for that
+            // observation too, so the assertion cannot race the fifth admitted send.
+            await WaitForCheckpointAsync(() =>
+            {
+                lock (historicLock) return historicSendTimes.Count >= 5;
+            }, "五個已准入 historic 請求的發送時間應已觀測");
 
             // 驗證：在 t=60s 當下，恰送出 5 個 historic 請求（4 個解除 + 1 個遞補），不得全部突發！
             lock (historicLock)

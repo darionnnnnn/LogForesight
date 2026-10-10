@@ -41,7 +41,7 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
     public void Estimate_reports_joint_profile_group_deadline_failure_when_both_components_qualify()
     {
         var dto = SeedEstimate(snapshotSensorCount: 5, profileSensorCount: 5,
-            snapshotP95Milliseconds: 1000, profileP95MillisecondsPerSensor: 2000);
+            snapshotP95Milliseconds: 1000, profileP95MillisecondsPerSensor: 3000);
 
         Assert.Equal("capacity-qualified", dto.SnapshotCapacityStatus);
         Assert.Equal("capacity-qualified", dto.ProfileCapacityStatus);
@@ -136,7 +136,8 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
             profileStore.Record(new PrtgProfileTransportSample(contract.SourceFingerprint, contract.ScopeFingerprint,
                 contract.StrategyFingerprint, contract.RequestShapeFingerprint, now.AddSeconds(-sample),
                 profileP95MillisecondsPerSensor * profileIds.Length, profileIds.Length,
-                profileIds.Length * 4, profileIds.Length * 4, "success", null, contract.VersionFingerprint));
+                PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileIds.Length),
+                PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileIds.Length), "success", null, contract.VersionFingerprint));
 
         return _controller.EstimatePrtgFetchScope(PrtgValueFetchScope.AllMapped, PrtgFetchStrategy.Aggressive).Data!;
     }

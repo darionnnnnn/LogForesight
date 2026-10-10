@@ -13,10 +13,10 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
     Func<SystemSettings, PrtgClient>? clientFactory = null, IHostStore? hosts = null)
 {
     public const int MaximumSensorIds = 5;
-    public const int MaximumRequests = MaximumSensorIds * 4;
+    public static readonly int MaximumRequests = PrtgProfileTransportCapacityEvaluator.ExpectedRequests(MaximumSensorIds);
     public const int MaximumResponseBytes = 512 * 1024;
     public static readonly TimeSpan PilotDeadline = TimeSpan.FromSeconds(30);
-    public const string RequestShape = "table.json sensors-before, channels, getobjectproperty primarychannel, sensors-after; one exact sensor id; max 100 channels; 512 KiB each; four sequential Table-budget GETs per sensor; wall time and work excluding measured Table admission waits recorded separately";
+    public const string RequestShape = "table.json sensors-before and sensors-after: single sensor uses exact id= query; multi-sensor group uses repeated filter_objid for exact unique groups up to five with count=n+1 sentinel; channels and getobjectproperty primarychannel per sensor between brackets; max 100 channels; 512 KiB each; two grouped plus two per-sensor Table-budget GETs (2+2n); exact unique ID set required; wall time and work excluding measured Table admission waits recorded separately";
 
     public sealed record Result(
         string Status, string Reason, int TargetSensorCount, int RequestsAttempted, int RequestsSent,
@@ -129,18 +129,19 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
             client.RequestPurpose = PrtgRequestPurpose.CapacityPilot;
             client.TableRequestSent = () => Interlocked.Increment(ref sent);
             client.TableBudgetAdmissionWaitObserved = elapsed => Interlocked.Add(ref admissionWaitTicks, elapsed.Ticks);
+            var filter = ids.Length == 1 ? $"&id={ids[0]}&count=2" :
+                $"&count={ids.Length + 1}{PrtgResourceGuardProbe.BuildObjidFilter(ids)}";
+            attempted++;
+            var before = await client.GetBoundedJsonAsync(
+                $"api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince{filter}",
+                MaximumResponseBytes, deadline.Token);
+            ValidateSensorSet(before, ids);
+            EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
             foreach (var id in ids)
             {
                 deadline.Token.ThrowIfCancellationRequested();
                 if (!reservationStore.Renew(planFingerprint, owner, leaseVersion, DateTimeOffset.UtcNow.AddSeconds(45)))
                     throw new InvalidOperationException("profile-capacity-plan-reservation-lost");
-                attempted++;
-                var sensor = await client.GetBoundedJsonAsync(
-                    $"api/table.json?content=sensors&id={id}&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count=2",
-                    MaximumResponseBytes, deadline.Token);
-                ValidateSensorShape(sensor, id);
-                EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
-
                 attempted++;
                 var channels = await client.GetBoundedJsonAsync(
                     $"api/table.json?content=channels&id={id}&columns=objid,name,lastvalue_raw,unit&usecaption=1&count=100",
@@ -154,15 +155,15 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
                 _ = PrtgTrustedSamplingProbeService.ParseNativePrimaryProperty(primary.Content);
                 EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
 
-                attempted++;
-                var sensorAfter = await client.GetBoundedJsonAsync(
-                    $"api/table.json?content=sensors&id={id}&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count=2",
-                    MaximumResponseBytes, deadline.Token);
-                ValidateSensorShape(sensorAfter, id);
-                EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
                 if (!reservationStore.Renew(planFingerprint, owner, leaseVersion, DateTimeOffset.UtcNow.AddSeconds(45)))
                     throw new InvalidOperationException("profile-capacity-plan-reservation-lost");
             }
+            attempted++;
+            var after = await client.GetBoundedJsonAsync(
+                $"api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince{filter}",
+                MaximumResponseBytes, deadline.Token);
+            ValidateSensorSet(after, ids);
+            EnsureCurrent(settingsStore, policyStore, policy, contract, ids);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -237,6 +238,23 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
             rows.GetArrayLength() != 1 || !rows[0].TryGetProperty("objid", out var id) ||
             !id.TryGetInt64(out var actual) || actual != expectedId)
             throw new InvalidDataException("profile_capacity_sensor_shape_invalid");
+    }
+
+    private static void ValidateSensorSet(string json, IReadOnlyCollection<long> expectedIds)
+    {
+        using var doc = Parse(json);
+        if (!doc.RootElement.TryGetProperty("sensors", out var rows) || rows.ValueKind != JsonValueKind.Array ||
+            rows.GetArrayLength() != expectedIds.Count)
+            throw new InvalidDataException("profile_capacity_sensor_group_count_mismatch");
+        var expected = expectedIds.ToHashSet();
+        var actual = new HashSet<long>();
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("objid", out var id) ||
+                !id.TryGetInt64(out var value) || !expected.Contains(value) || !actual.Add(value))
+                throw new InvalidDataException("profile_capacity_sensor_group_id_set_mismatch");
+        }
+        if (!actual.SetEquals(expected)) throw new InvalidDataException("profile_capacity_sensor_group_id_set_mismatch");
     }
 
     private static void ValidateChannelShape(string json)

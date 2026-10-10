@@ -51,7 +51,8 @@ internal static class PrtgCapacityRuntimeAdmission
             contract.SourceFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
             contract.RequestShapeFingerprint, contract.VersionFingerprint,
             new PrtgProfileTransportCapacityStore(backend.Blob(PrtgProfileTransportCapacityStore.BlobKey)).Read(), now,
-            requiredFreshSuccessfulSamples: priorContractMatches ? 1 : PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples);
+            requiredFreshSuccessfulSamples: priorContractMatches ? 1 : PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples,
+            allowPartialRuntimeSamples: priorContractMatches);
         var usage = PrtgRequestBudget.Shared.ReadUsage();
         var joint = priorContractMatches && stored is not null
             ? PrtgJointCapacityEvaluator.EvaluateAgainstReservedRates(snapshot, profile, usage,

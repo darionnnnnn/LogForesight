@@ -50,7 +50,7 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R05／N6：profile 改採精確集合核對的分批共同資料查詢，依真實 request shape 重算完整 15000 顆刷新與快照容量；不降低 25% 餘裕或週期性採樣。
+- [ ] R05／N6：完成 snapshot 100 顆精確批次及同形來源探測、profile／snapshot 容量失效後的有界重新校準；驗證完整 15000 顆共同排程，不降低 25% 餘裕、10 分鐘快照期限或週期性採樣。profile 分批及滾動補齊子項已由本輪 Main 239 項回歸核對完成。
 - [ ] R15／N5：管理操作在共同剩餘額度必然不足時前置明示等待；缺 raw proof 接耐久資格流程；啟用後的 qualification pilot 不繞過正式 lane／來源守門。
 - [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣（精確全分頁核對及唯讀收集工具已完成），依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
@@ -1600,3 +1600,13 @@ raw qualification 的 proof、作業確認與當前來源／綁定 fence 通知�
 通知最多 15000 筆、每筆 4096 UTF-8 bytes、depth32；SQL 僅讀有界前綴及長度，讀取每頁 100。滿額時只在同交易淘汰不屬目前範圍的舊 key；不丟掉現有作用集合。零通知先用存在性查詢返回，舊範圍每切片有界清理。缺 raw proof 的 sensor 顯示 raw-qualification-pending，不反覆呼叫原生 profile。
 
 主代理在本輪 Main 工作區建置及核對兩個互斥測試集合：proof-refresh-main-green 26／26，以及 proof-refresh-main-seam-green 94／94，共 120 項、零失敗／略過；涵蓋真實 SQLite RecordQualification、滿額舊通知、冷卻、CAS、來源／binding 撤銷、資格作業接線、原生 probe 與取消。此自動刷新元件待辦移除；先前六顆實際 API 的 profile-not-ready RED 保留，完整新 profile GET 資料流會在分批傳輸整合後重驗。這些元件結果不等於 15000 顆容量、原生來源或整輪 AC／Q 通過。
+
+### 2026-10-10 profile 精確批次、滾動補齊與部分批次守門
+
+週期性 profile 改為前後兩次共同 sensors 查詢，加每顆 channels 與原生主頻道查詢；1–5 顆實際 GET 數為 2+2n（4／6／8／10／12），15000 顆完整刷新為 36000 次。count 採 n+1，前後回傳皆須精確唯一集合；所有來源、身分、綁定與通道 fences 核對後才開始逐列 CAS，未宣稱跨 sensor 單一交易。資格初始化的單顆 4 Table+1 Historic 契約維持。
+
+固定五顆 policy 分組將到期 sensor 與已有新鮮 proof 的合格鄰居補齊；缺 raw proof、not-before、冷卻或不可用鄰居不補猜。已准入當前 plan 可記錄真實部分批次；初始容量門檻仍須五個完整五顆樣本，最新部分批次失敗仍撤銷舊成功。樣本優先保留最壞非配額工作成本，沒有將 quota 等候當來源成本重算。
+
+主代理於 Main force rebuild 成功；受影響十類測試最終 239／239、零失敗／略過，證據 batch-rolling-main-green TRX。初輪暴露測試觀測競態：handler 的 admission 計數先於 timestamp callback；增加該 callback 的等待後重跑，未修改 5／4／9 配額斷言。輸入十二檔逐一核對凍結 SHA-256，CLAUDE.md 雜湊保持原值。
+
+此為已完成的 profile 傳輸元件；固定 15000 顆共同容量仍未通過。現有 50 顆 snapshot 分組加 profile floor 1 req/s 超出共享 1.5 req/s，已在實作前算出，接續以精確 snapshot 100 顆及有界重校準修正，不靠調低安全餘裕或縮小分母。原生來源、180 日 provider 及整輪 AC／Q 保持待驗。

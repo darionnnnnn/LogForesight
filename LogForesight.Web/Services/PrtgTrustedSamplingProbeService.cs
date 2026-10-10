@@ -56,8 +56,8 @@ public sealed record PrtgTrustedSamplingProbeRow(
 }
 
 /// <summary>
-/// Bounded profile refresh. Recurring refresh is four Table-budget calls per sensor, with the
-/// primarychannel property inside a before/channels/after sensor bracket. Historic XML is used
+/// Bounded profile refresh. Recurring refresh uses grouped before/after sensor brackets and two
+/// per-sensor Table-budget calls, with the primarychannel property inside each bracket. Historic XML is used
 /// only for an explicit operator qualification when the saved binding has no raw-channel proof.
 /// </summary>
 public sealed class PrtgTrustedSamplingProbeService
@@ -145,6 +145,11 @@ public sealed class PrtgTrustedSamplingProbeService
             ? null : client.Budget!.UseHistoricReservation(historicReservation);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(PrtgQualificationCapacityEvaluator.PerSensorProbeDeadlineSeconds));
+        if (ids.Length > 1 && !qualificationOnly && !qualificationPilotOnly && !allowQualification)
+            return await ProbeGroupedRefreshAsync(ids, settings, policy, policyStore, bindings, identities, strategy,
+                strategyMinutes, authorityContextFingerprint, client, deadline.Token, profilePublisher, leaseOwner,
+                leaseVersion, allowUnrelatedPolicyRevisionChanges, expectedBindingRevision, expectedBindingFingerprint,
+                onRequestAttempted, onResponseRead, onSensorElapsed, ct);
         foreach (var id in ids)
         {
             var sensorStarted = Stopwatch.StartNew();
@@ -300,6 +305,201 @@ public sealed class PrtgTrustedSamplingProbeService
         }
     }
 
+    private sealed record GroupedSensorStage(long Id, PrtgResourceIdentity BeforeIdentity,
+        PrtgTrustedSamplingBinding? Binding, SensorRow Before, IReadOnlyList<PrtgTrustedSamplingChannelProbeRow> Channels,
+        bool ChannelsTruncated, string ChannelsJson, string PrimaryPropertyXml, string? NativePrimaryId,
+        Stopwatch SensorTimer);
+
+    private async Task<IReadOnlyList<PrtgTrustedSamplingProbeRow>> ProbeGroupedRefreshAsync(
+        long[] ids, SystemSettings settings, PrtgMonitoringPolicy policy, PrtgMonitoringPolicyStore policyStore,
+        IReadOnlyDictionary<long, PrtgTrustedSamplingBinding> bindings,
+        IReadOnlyDictionary<long, PrtgResourceIdentity> identities,
+        PrtgTrustedSamplingStrategyContext strategy, int strategyMinutes, string authorityContextFingerprint,
+        PrtgClient client, CancellationToken ct, Func<PrtgTrustedSamplingProfile, bool>? profilePublisher,
+        string? leaseOwner, long? leaseVersion, bool allowUnrelatedPolicyRevisionChanges,
+        long? expectedBindingRevision, string? expectedBindingFingerprint,
+        Action? onRequestAttempted, Action<TimeSpan>? onResponseRead, Action<TimeSpan>? onSensorElapsed,
+        CancellationToken callerToken)
+    {
+        var filter = PrtgResourceGuardProbe.BuildObjidFilter(ids);
+        var beforeUrl = $"api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count={ids.Length + 1}{filter}";
+        var beforeTimer = Stopwatch.StartNew();
+        onRequestAttempted?.Invoke();
+        var beforeJson = await client.GetBoundedJsonAsync(beforeUrl, MaxResponseBytes, ct,
+            onResponseRead: onResponseRead);
+        var beforeRows = ParseExactSensorSet(beforeJson, ids);
+        beforeTimer.Stop();
+
+        var stages = new List<GroupedSensorStage>(ids.Length);
+        foreach (var id in ids)
+        {
+            ct.ThrowIfCancellationRequested();
+            var sensorTimer = Stopwatch.StartNew();
+            var beforeIdentity = identities[id];
+            bindings.TryGetValue(id, out var binding);
+            if (binding is not null && (expectedBindingRevision.HasValue && binding.BindingRevision != expectedBindingRevision ||
+                expectedBindingFingerprint is not null && binding.BindingFingerprint != expectedBindingFingerprint))
+                throw new InvalidOperationException($"binding-revision-changed:{id}");
+
+            var sensor = beforeRows[id];
+            onRequestAttempted?.Invoke();
+            var channelsJson = await client.GetBoundedJsonAsync(
+                $"api/table.json?content=channels&id={id}&columns=objid,name,lastvalue_raw,unit&usecaption=1&count={MaxChannelsPerSensor}",
+                MaxResponseBytes, ct, onResponseRead: onResponseRead);
+            var channels = ParseChannels(channelsJson, sensor.LastValueRaw, out var truncated);
+            onRequestAttempted?.Invoke();
+            var primaryResponse = await client.GetBoundedXmlAsync(
+                $"api/getobjectproperty.htm?id={id}&name=primarychannel", MaxResponseBytes, ct);
+            string? nativePrimaryId;
+            try { nativePrimaryId = ParseNativePrimaryProperty(primaryResponse.Content); }
+            catch (InvalidDataException) { nativePrimaryId = null; }
+            sensorTimer.Stop();
+            stages.Add(new(id, beforeIdentity, binding, sensor, channels, truncated, channelsJson,
+                primaryResponse.Content, nativePrimaryId, sensorTimer));
+        }
+
+        var afterUrl = $"api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince&count={ids.Length + 1}{filter}";
+        var afterTimer = Stopwatch.StartNew();
+        onRequestAttempted?.Invoke();
+        var afterJson = await client.GetBoundedJsonAsync(afterUrl, MaxResponseBytes, ct,
+            onResponseRead: onResponseRead);
+        var afterRows = ParseExactSensorSet(afterJson, ids);
+        afterTimer.Stop();
+
+        var latestPolicy = policyStore.Get();
+        var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var currentStrategy = PrtgFetchStrategy.Normalize(latestSettings.PrtgFetchStrategy);
+        if (!allowUnrelatedPolicyRevisionChanges && latestPolicy.Revision != policy.Revision ||
+            latestPolicy.SourceGeneration != policy.SourceGeneration ||
+            !latestPolicy.Ready(latestSettings.PrtgUrl) || settings.PrtgUrl != latestSettings.PrtgUrl ||
+            settings.Revision != latestSettings.Revision || settings.PrtgFetchStrategy != latestSettings.PrtgFetchStrategy ||
+            !latestSettings.PrtgEnabled || policy.RawTimestampTimeZoneId != latestPolicy.RawTimestampTimeZoneId ||
+            policy.SourceTimeZoneId != latestPolicy.SourceTimeZoneId || policy.AnalysisTimeZoneId != latestPolicy.AnalysisTimeZoneId ||
+            policy.TimeBasisEvidenceReference != latestPolicy.TimeBasisEvidenceReference ||
+            authorityContextFingerprint != PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                latestPolicy, currentStrategy, PrtgFetchStrategy.Profile(currentStrategy).SnapshotIntervalMinutes))
+            throw new InvalidOperationException("probe-fence-changed:group-context");
+
+        var afterIdentities = backend.PrtgStore().GetResourceIdentities(ids);
+        var latestBindings = new PrtgTrustedSamplingBindingStore(backend).GetMany(ids);
+        var probedAtUtc = DateTimeOffset.UtcNow;
+        var prepared = new List<(GroupedSensorStage Stage, PrtgResourceIdentity AfterIdentity,
+            List<string> Missing, PrtgTrustedSamplingProbeRow Row, PrtgTrustedSamplingProfile? Profile)>(ids.Length);
+        foreach (var stage in stages)
+        {
+            var id = stage.Id;
+            if (!afterIdentities.TryGetValue(id, out var afterIdentity) || !SameIdentity(stage.BeforeIdentity, afterIdentity) ||
+                !latestPolicy.SensorIds.Contains(id) || !latestPolicy.HostIds.Contains(afterIdentity.HostId))
+                throw new InvalidOperationException($"probe-fence-changed:{id}");
+            var hasCurrentBinding = latestBindings.TryGetValue(id, out var currentBinding);
+            if ((stage.Binding is null) != !hasCurrentBinding ||
+                stage.Binding is not null && hasCurrentBinding && currentBinding is not null &&
+                (stage.Binding.BindingRevision != currentBinding.BindingRevision ||
+                 stage.Binding.BindingFingerprint != currentBinding.BindingFingerprint))
+                throw new InvalidOperationException($"binding-revision-changed:{id}");
+
+            var sensorAfter = afterRows[id];
+            var missing = MissingAuthority(stage.Before, sensorAfter, stage.Channels, stage.ChannelsTruncated,
+                policy, stage.Binding, stage.NativePrimaryId);
+            if (!strategy.Ready) missing.AddRange(strategy.MissingFacts.Select(f => $"strategy:{f}"));
+            if (stage.Before.ParentObjid != afterIdentity.DeviceId || string.IsNullOrWhiteSpace(stage.Before.Cumsince) ||
+                PrtgTimelineResourceIdentity.BuildResourceFingerprint(stage.Before.ParentObjid?.ToString(CultureInfo.InvariantCulture) ?? "",
+                    stage.Before.SensorType ?? "", stage.Before.Cumsince ?? "", 0) != afterIdentity.ResourceFingerprint)
+                missing.Add("source:observed_resource_identity_mismatch");
+            var binding = stage.Binding;
+            if (binding is null) missing.Add("management:binding_missing");
+            else if (!binding.Matches(id, authorityContextFingerprint, policy.SourceGeneration,
+                         stage.BeforeIdentity.Generation, stage.BeforeIdentity.Epoch, stage.BeforeIdentity.ChannelGeneration) ||
+                     binding.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference ||
+                     binding.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
+                     binding.AnalysisTimeZoneId != policy.AnalysisTimeZoneId)
+                missing.Add("management:binding_fence_or_time_basis_changed");
+            if (binding is null || string.IsNullOrWhiteSpace(binding.QualificationProofReference))
+                missing.Add("qualification:raw_channel_id_time_proof_required");
+
+            PrtgTrustedSamplingProfile? profile = null;
+            if (missing.Count == 0 && binding is not null)
+            {
+                try
+                {
+                    var primary = stage.Channels.Single(channel => channel.ChannelObjectId?.ToString(CultureInfo.InvariantCulture) == binding.ChannelObjectId);
+                    var interval = binding.IntervalRawUnit == "seconds"
+                        ? TimeSpan.FromSeconds(stage.Before.IntervalRaw!.Value) : TimeSpan.FromMinutes(stage.Before.IntervalRaw!.Value);
+                    var zone = TimeZoneInfo.FindSystemTimeZoneById(binding.RawTimestampTimeZoneId);
+                    var wall = DateTime.SpecifyKind(DateTime.FromOADate(stage.Before.LastCheckRaw!.Value), DateTimeKind.Unspecified);
+                    if (zone.IsAmbiguousTime(wall) || zone.IsInvalidTime(wall))
+                        throw new InvalidDataException("source_measurement_time_ambiguous");
+                    var measuredAtUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(wall, zone));
+                    var maximumAge = TimeSpan.FromMinutes(strategyMinutes) + interval + interval;
+                    if (measuredAtUtc > probedAtUtc || probedAtUtc - measuredAtUtc > maximumAge)
+                        throw new InvalidDataException("source_measurement_not_recent");
+                    var primaryXml = stage.PrimaryPropertyXml;
+                    var reference = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                        beforeJson + "\n" + stage.ChannelsJson + "\n" + primaryXml + "\n" + afterJson)));
+                    var physicalReference = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                        string.Join("|", id, primary.ChannelObjectId, stage.Before.LastCheckRaw.Value.ToString("R", CultureInfo.InvariantCulture),
+                            stage.Before.LastValueRaw!.Value.ToString("R", CultureInfo.InvariantCulture)))));
+                    if (interval <= TimeSpan.Zero || interval > TimeSpan.FromHours(1))
+                        throw new InvalidDataException("source_interval_out_of_range");
+                    var normalized = binding.Direction switch
+                    { "inverse" => -stage.Before.LastValueRaw!.Value * binding.Scale,
+                      "absolute" => Math.Abs(stage.Before.LastValueRaw!.Value) * binding.Scale,
+                      _ => stage.Before.LastValueRaw!.Value * binding.Scale };
+                    if (!double.IsFinite(normalized) || normalized is < 0 or > 100)
+                        throw new InvalidDataException("source_quantity_out_of_range");
+                    profile = PrtgTrustedSamplingProfile.FromProbe(id, afterIdentity, stage.Before.SensorType!,
+                        binding.ChannelObjectId, binding.ExpectedCaption, binding.Quantity, binding.Unit,
+                        binding.Scale, binding.Direction, "operator-explicit-v1", strategy.StrategyFingerprint,
+                        strategy.StrategyMinutes, strategy.EffectiveFromHourUtc, interval, binding.IntervalRawUnit,
+                        binding.RawTimestampTimeZoneId, policy.SourceTimeZoneId, binding.AnalysisTimeZoneId, probedAtUtc,
+                        reference, physicalReference, false, stage.Before.LastValueRaw!.Value, primary.RawValue!.Value,
+                        stage.Before.LastCheckRaw.Value, stage.Before.LastCheckRaw.Value,
+                        PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind, binding.BindingRevision,
+                        binding.BindingFingerprint, stage.NativePrimaryId!, binding.QualificationProofReference,
+                        latestSettings.Revision, latestPolicy.Revision, authorityContextFingerprint);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or ArgumentException or TimeZoneNotFoundException or InvalidTimeZoneException)
+                { missing.Add("source:profile_validation_failed"); }
+            }
+            var row = new PrtgTrustedSamplingProbeRow(id, profile is null ? "waiting" : "prepared",
+                stage.Before.ReturnedFields, stage.Before.ParentObjid, stage.Before.SensorType, stage.Before.StatusRaw,
+                stage.Before.LastValueRaw, stage.Before.LastCheckRaw, stage.Before.IntervalRaw, stage.Channels,
+                stage.ChannelsTruncated, missing, afterIdentity.Generation, afterIdentity.Epoch,
+                afterIdentity.ChannelGeneration, probedAtUtc, false, stage.NativePrimaryId);
+            prepared.Add((stage, afterIdentity, missing, row, profile));
+        }
+
+        // All remote snapshots and every current identity/context/binding fence are checked before
+        // the first profile row is published. Persistence remains a separate CAS per sensor.
+        callerToken.ThrowIfCancellationRequested();
+        ct.ThrowIfCancellationRequested();
+        var output = new List<PrtgTrustedSamplingProbeRow>(ids.Length);
+        foreach (var item in prepared)
+        {
+            callerToken.ThrowIfCancellationRequested();
+            ct.ThrowIfCancellationRequested();
+            item.Stage.SensorTimer.Stop();
+            onSensorElapsed?.Invoke(item.Stage.SensorTimer.Elapsed +
+                TimeSpan.FromTicks((beforeTimer.Elapsed.Ticks + afterTimer.Elapsed.Ticks) / ids.Length));
+            var recorded = false;
+            if (item.Profile is not null)
+            {
+                recorded = profilePublisher is null
+                    ? RecordNormally(item.Profile)
+                    : profilePublisher(item.Profile);
+                if (!recorded) throw new OperationCanceledException("profile-refresh-lease-lost-before-publish");
+            }
+            output.Add(item.Row with { Status = recorded ? "ready" : "waiting", ProfileRecorded = recorded });
+        }
+        return output;
+
+        bool RecordNormally(PrtgTrustedSamplingProfile profile)
+        {
+            new PrtgTrustedSamplingProfileStore(backend).RecordProbeResult(profile);
+            return true;
+        }
+    }
+
 
     private sealed record SensorRow(long? ParentObjid, string? SensorType, int? StatusRaw,
         double? LastValueRaw, double? LastCheckRaw, double? IntervalRaw, string[] ReturnedFields,
@@ -318,6 +518,30 @@ public sealed class PrtgTrustedSamplingProbeService
             row.EnumerateObject().Select(p => p.Name.ToLowerInvariant()).Distinct().Order().ToArray(),
             ReadString(row, "cumsince_raw") ?? ReadString(row, "cumsince"),
             ReadString(row, "raw_timestamp_timezone_id"));
+    }
+
+    private static IReadOnlyDictionary<long, SensorRow> ParseExactSensorSet(string json, IReadOnlyCollection<long> expectedIds)
+    {
+        using var document = ParseBounded(json);
+        if (!document.RootElement.TryGetProperty("sensors", out var rows) || rows.ValueKind != JsonValueKind.Array ||
+            rows.GetArrayLength() != expectedIds.Count)
+            throw new InvalidDataException("sensor-table-group-count-mismatch");
+        var expected = expectedIds.ToHashSet();
+        var actual = new Dictionary<long, SensorRow>(expectedIds.Count);
+        foreach (var row in rows.EnumerateArray())
+        {
+            var id = ReadLong(row, "objid");
+            if (!id.HasValue || !expected.Contains(id.Value) || actual.ContainsKey(id.Value))
+                throw new InvalidDataException("sensor-table-group-id-set-mismatch");
+            actual.Add(id.Value, new(ReadLong(row, "parentid"), ReadString(row, "type"), ReadInt(row, "status_raw"),
+                ReadDouble(row, "lastvalue_raw"), ReadDouble(row, "lastcheck_raw"), ReadDouble(row, "interval_raw"),
+                row.EnumerateObject().Select(p => p.Name.ToLowerInvariant()).Distinct().Order().ToArray(),
+                ReadString(row, "cumsince_raw") ?? ReadString(row, "cumsince"),
+                ReadString(row, "raw_timestamp_timezone_id")));
+        }
+        if (actual.Count != expected.Count || !actual.Keys.ToHashSet().SetEquals(expected))
+            throw new InvalidDataException("sensor-table-group-id-set-mismatch");
+        return actual;
     }
 
     private static IReadOnlyList<PrtgTrustedSamplingChannelProbeRow> ParseChannels(

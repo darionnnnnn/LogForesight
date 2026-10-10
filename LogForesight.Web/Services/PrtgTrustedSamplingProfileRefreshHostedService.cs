@@ -198,6 +198,8 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                 var candidates = new List<long>();
                 var pageStates = new List<(long Id, SensorState State)>();
                 var now = DateTimeOffset.UtcNow;
+                var authorityContextFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                    policy, strategyName, strategyMinutes);
 
                 foreach (var id in pageIds)
                 {
@@ -263,9 +265,20 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                             pageStates.Add((id, next));
                             continue;
                         }
+                        if (!HasCurrentRawProof(id, binding, identity, authorityContextFingerprint, settings, policy))
+                        {
+                            next.Status = "waiting";
+                            next.Reason = "raw-qualification-proof-not-current";
+                            next.NextAttemptAtUtc = null;
+                            next.LastOutcomeAtUtc = now;
+                            pageStates.Add((id, next));
+                            continue;
+                        }
                         var resolution = profile is null ? null : PrtgTrustedSamplingProfileResolver.Resolve(profile,
                             identity, policy, id, sensor!.SensorType, strategy, now.UtcDateTime, now.UtcDateTime);
-                        if (resolution?.Ready == true && profile!.SourceMetadataObservedAtUtc > now - FreshRefreshAfter)
+                        if (resolution?.Ready == true && profile!.SourceMetadataObservedAtUtc > now - FreshRefreshAfter &&
+                            !ShouldHonorCooldown(changed, next.NextAttemptAtUtc, proofNoticeCurrent,
+                                proofNotice?.NotBeforeUtc, now))
                         {
                             next.Status = "qualified";
                             next.Reason = "current-profile-fresh";
@@ -291,6 +304,21 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                 }
                     SavePage(scopeFingerprint, pageIndex, pageStates);
 
+                // A due sensor advances its fixed policy-order group into the next 23-hour window.
+                // Only already-fresh, eligible neighbors with a current raw proof may join; pending
+                // proof, failed cooldown, unavailable, and stale neighbors remain outside the request.
+                var dueSet = candidates.ToHashSet();
+                var freshProvenNeighbors = pageStates.Where(item => item.State.Eligible &&
+                        item.State.Status == "qualified" && item.State.Reason == "current-profile-fresh")
+                    .Where(item => identities.TryGetValue(item.Id, out var identity) &&
+                        bindings.TryGetValue(item.Id, out var binding) &&
+                        HasCurrentRawProof(item.Id, binding, identity, authorityContextFingerprint, settings, policy) &&
+                        (!proofRefreshNotices.TryGetValue(item.Id, out var notice) ||
+                         !IsCurrentProofRefreshNotice(notice, binding, identity, settings, policy) ||
+                         notice.NotBeforeUtc <= now))
+                    .Select(item => item.Id).ToHashSet();
+                var refreshGroups = BuildRefreshGroups(pageIds, dueSet, freshProvenNeighbors);
+
                 // Read-only eligibility evaluation and durable progress are safe without transport
                 // admission. Require the joint snapshot/profile plan only when this page actually
                 // contains source requests, so unavailable/unsupported sensors can still complete
@@ -309,7 +337,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     }
                 }
 
-                foreach (var group in candidates.Chunk(PrtgTrustedSamplingProbeService.MaxSensorIds))
+                foreach (var group in refreshGroups)
                 {
                     workCts.Token.ThrowIfCancellationRequested();
                     if (DateTime.UtcNow >= deadline) break;
@@ -332,8 +360,19 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                             onRequestAttempted: () => Interlocked.Increment(ref requestAttempted),
                             onTableBudgetAdmissionWait: duration => Interlocked.Add(ref admissionWaitTicks, duration.Ticks));
                         elapsed.Stop();
-                        RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
-                            requestCount, elapsed.Elapsed, "success", null, WorkElapsed());
+                        if (!RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
+                            requestCount, elapsed.Elapsed, "success", null, WorkElapsed()))
+                        {
+                            DeferProofRefreshNotices(group, proofRefreshNotices, DateTimeOffset.UtcNow);
+                            SaveSensorOutcomes(scopeFingerprint, pageIndex, pageStates, group.Select(id => (id, new SensorState
+                            {
+                                Eligible = true,
+                                ContractFingerprint = pageStates.First(item => item.Id == id).State.ContractFingerprint,
+                                Status = "failed", Reason = "request-shape-mismatch", LastOutcomeAtUtc = DateTimeOffset.UtcNow,
+                                NextAttemptAtUtc = DateTimeOffset.UtcNow + ProbeCooldown
+                            })), requestCount, elapsed.Elapsed.TotalSeconds, "failed", "request-shape-mismatch");
+                            continue;
+                        }
                         var expectedProfiles = group.Where(profiles.ContainsKey)
                             .ToDictionary(id => id, id => profiles[id]);
                         RecordProbeRows(rows, scopeFingerprint, pageIndex, pageStates, requestCount,
@@ -349,7 +388,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
                     {
                         elapsed.Stop();
-                        RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
+                        _ = RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
                             requestCount, elapsed.Elapsed, "timeout", SafeReason(ex), WorkElapsed());
                         DeferProofRefreshNotices(group, proofRefreshNotices, DateTimeOffset.UtcNow);
                         SaveSensorOutcomes(scopeFingerprint, pageIndex, pageStates, group.Select(id => (id, new SensorState
@@ -363,7 +402,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
                     catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or PrtgClientException)
                     {
                         elapsed.Stop();
-                        RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
+                        _ = RecordRuntimeTransportSample(group, ids, settings, policy, admission!, requestAttempted,
                             requestCount, elapsed.Elapsed, "failed", SafeReason(ex), WorkElapsed());
                         DeferProofRefreshNotices(group, proofRefreshNotices, DateTimeOffset.UtcNow);
                         SaveSensorOutcomes(scopeFingerprint, pageIndex, pageStates, group.Select(id => (id, new SensorState
@@ -417,35 +456,42 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
         }
     }
 
-    private void RecordRuntimeTransportSample(IReadOnlyCollection<long> group, IReadOnlyList<long> selectedIds,
+    private bool RecordRuntimeTransportSample(IReadOnlyCollection<long> group, IReadOnlyList<long> selectedIds,
         SystemSettings settings, PrtgMonitoringPolicy policy, PrtgCapacityAdmissionPlan admission,
         int attempted, int sent, TimeSpan elapsed, string outcome, string? failureCode,
         TimeSpan? nonAdmissionElapsed = null)
     {
-        var expectedCount = Math.Min(policy.SensorIds.Where(id => id > 0).Distinct().Count(),
-            PrtgProfileTransportCapacityPilot.MaximumSensorIds);
         var selected = selectedIds.ToHashSet();
         var sampledIds = group.Distinct().Order().ToArray();
-        if (sampledIds.Length != expectedCount || sampledIds.Any(id => !selected.Contains(id)) ||
-            attempted == 0) return;
+        if (sampledIds.Length is < 1 or > PrtgProfileTransportCapacityPilot.MaximumSensorIds ||
+            group.Count != sampledIds.Length || sampledIds.Any(id => !selected.Contains(id))) return false;
         try
         {
             var contract = PrtgProfileTransportCapacityPilot.BuildContract(backend, hosts, settings, policy, sampledIds);
             if (contract.ScopeFingerprint != admission.ProfileScopeFingerprint ||
                 contract.SourceFingerprint != admission.SourceFingerprint ||
-                contract.StrategyFingerprint != admission.StrategyFingerprint) return;
+                contract.StrategyFingerprint != admission.StrategyFingerprint) return false;
+            var validSuccess = outcome == "success";
+            var expectedRequests = PrtgProfileTransportCapacityEvaluator.ExpectedRequests(sampledIds.Length);
+            if (outcome == "success" && (attempted != expectedRequests || sent != expectedRequests))
+            {
+                validSuccess = false;
+                outcome = "failed";
+                failureCode = "request-shape-mismatch";
+            }
             var store = new PrtgProfileTransportCapacityStore(backend.Blob(PrtgProfileTransportCapacityStore.BlobKey));
             store.Record(new PrtgProfileTransportSample(contract.SourceFingerprint, contract.ScopeFingerprint,
                 contract.StrategyFingerprint, contract.RequestShapeFingerprint, DateTimeOffset.UtcNow,
                 Math.Max(0, (long)Math.Ceiling(elapsed.TotalMilliseconds)), sampledIds.Length,
-                Math.Clamp(attempted, 0, PrtgProfileTransportCapacityPilot.MaximumRequests),
-                Math.Clamp(sent, 0, PrtgProfileTransportCapacityPilot.MaximumRequests), outcome, failureCode,
+                attempted, sent, outcome, failureCode,
                 contract.VersionFingerprint, nonAdmissionElapsed is { } work
                     ? Math.Max(0, (long)Math.Ceiling(work.TotalMilliseconds)) : null));
+            return validSuccess;
         }
         catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
         {
             logger.LogWarning(ex, "Could not record bounded runtime profile transport evidence");
+            return false;
         }
     }
 
@@ -638,6 +684,39 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
 
     internal static bool IsRawQualificationPending(PrtgTrustedSamplingBinding? binding) =>
         binding is null || string.IsNullOrWhiteSpace(binding.QualificationProofReference);
+
+    internal static IReadOnlyList<long[]> BuildRefreshGroups(IReadOnlyList<long> pageIds,
+        IReadOnlyCollection<long> dueCandidateIds, IReadOnlyCollection<long> freshProvenEligibleIds)
+    {
+        if (pageIds.Count > PageSize || pageIds.Any(id => id <= 0) || pageIds.Distinct().Count() != pageIds.Count)
+            throw new ArgumentException("Profile refresh page IDs must be unique positive IDs within one bounded page.", nameof(pageIds));
+        var pageSet = pageIds.ToHashSet();
+        var due = dueCandidateIds.ToHashSet();
+        var fresh = freshProvenEligibleIds.ToHashSet();
+        if (due.Any(id => !pageSet.Contains(id)) || fresh.Any(id => !pageSet.Contains(id)))
+            throw new ArgumentException("Refresh candidates and neighbors must belong to the current page.");
+
+        return pageIds.Chunk(PrtgTrustedSamplingProbeService.MaxSensorIds)
+            .Where(group => group.Any(due.Contains))
+            .Select(group => group.Where(id => due.Contains(id) || fresh.Contains(id)).ToArray())
+            .Where(group => group.Length > 0)
+            .ToArray();
+    }
+
+    internal static bool HasCurrentRawProof(long sensorObjid, PrtgTrustedSamplingBinding? binding,
+        PrtgResourceIdentity? identity, string authorityContextFingerprint, SystemSettings settings,
+        PrtgMonitoringPolicy policy) => binding is not null &&
+        !string.IsNullOrWhiteSpace(binding.QualificationProofReference) &&
+        identity is { Active: true, PendingReconciliation: false } && settings.PrtgEnabled &&
+        policy.Ready(settings.PrtgUrl) && policy.SensorIds.Contains(sensorObjid) &&
+        policy.HostIds.Contains(identity.HostId) && identity.SensorId == sensorObjid &&
+        identity.SourceGeneration == policy.SourceGeneration && identity.ChannelFingerprint == binding.BindingFingerprint &&
+        binding.SensorObjid == sensorObjid &&
+        binding.TimeBasisEvidenceReference == policy.TimeBasisEvidenceReference &&
+        binding.RawTimestampTimeZoneId == policy.RawTimestampTimeZoneId &&
+        binding.AnalysisTimeZoneId == policy.AnalysisTimeZoneId &&
+        binding.Matches(sensorObjid, authorityContextFingerprint, policy.SourceGeneration,
+            identity.Generation, identity.Epoch, identity.ChannelGeneration);
 
     private void UpdateProofRefreshNotices(IReadOnlyList<PrtgTrustedSamplingProbeRow> rows,
         IReadOnlyDictionary<long, PrtgTrustedSamplingProofRefreshRequest> notices,
