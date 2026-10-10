@@ -50,7 +50,7 @@
 
 ### 5.1 尚未完成的實作與必要交付
 
-- [ ] R09／N6：完成有界共同資料流的條件切換及合併分析驗證；受控九輪採樣已通過，不能代替 NetIQ／AI／PRTG 共同工作負載全項。
+- [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣，依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
 
@@ -1541,3 +1541,18 @@ owned v6 在固定 60 秒／輪條件完成九輪，並核到兩顆各兩個四 
 主代理補查已知超限及非 JSON 回應的取消分支，兩項真實 ReadableStream 反例將上游 cancel 設為永不完成，均重現呼叫卡在取消確認。改成提出取消但不等待其回執，立即拋出原本的明確拒絕；取消 promise 的失敗已處理，不提供部分檔案。
 
 兩項 Node RED 保留於 round53-json-cancel-red-cap-v1／red-mime-v1；修正後 Rebuild 0 errors／137 warnings，API 與相關頁面行為 90／90、0 skipped、輸入零漂移，主代理核 TRX／driver／變更範圍。匯出伺服器未改，先前 131 項中伺服器範圍與大小上限結果仍適用。此子項移出 TODO，原始 AC／Q 與整輪門檻保留。
+
+
+### 2026-10-10 R09 有界共同資料流、當前世代與 M5 中斷重放
+
+主代理以 Main 97b169c 與 owned overlay 1127 個來源逐一對應；差異只有 NetIQ 計時、受控 request／資料時鐘及快照觀測插點，另三個明確的隔離 helper。最終 v12 固定 637 個 source／binary／driver 輸入重核零漂移，TestExit=0、owned cleanup complete。所有 sources 為 Development／Stub／SQLite／loopback fixtures，資料時鐘及 request budget 時鐘模擬期間；容量／原生來源／正式風險 join／整輪旗標均 false。
+
+固定兩顆 selected IDs 1000001、1000006 經明確綁定 CAS 與實際 raw XML 核驗，首次及 combined 重新啟用後各九輪、15 分鐘策略、每輪最多 60 秒，兩顆各產生兩個四 slot 可信小時。停用／啟用會重建世代，v10 舊 proof 不算當前證據；最終 combined 在新世代重新取得 4 筆有效 typed rows 與 2 顆 current profiles。NetIQ-only／combined 的真實排程各 2／2 主機日落盤，無來源／處理／缺分母失敗；各 100 次列表與 100 次明細，共 400／400 HTTP 成功。這是小範圍資料流，沒有把小樣本時間外推為 N6 性能、PRTG 正式風險 join 或完整 31／180 日準備度。
+
+M5 在實際 MergeSampledValues 交易提交後、journal ACK 前寫入 4 KiB 內的隔離 marker 並停住 worker，依 exact PID／start／exe 中断，重啟 Main journal 路徑重放。2 列提交前後均存在，批次數 7、typed rows 2 及 SHA256 logical digest 完全一致；ACK 完成，pending 2 為新小時樣本，沒有額外插列。觀測只在明確 isolated cutpoint 開啟時生效，不新增 Main 測試後門或修改 SQL／ACK 實作。M5 實際中斷與重放通過，不代表完整 provider 故障／備份／復原全通過。
+
+失敗原件保留：v9 第四輪後 Windows 原子換檔中止，讀鎖 RED 重現，1 秒內重試的 GREEN 證明短鎖成功、長鎖拒絕且保留舊值；v10 两種排程完成但 M5 舊 candidate 路徑拒絕；v11 插點把 journal binding fingerprint 當 URL，實際寫入後 marker 核驗拒絕。最終修正只在 owned 工具：明確 current runs 路徑、當前來源核對、UTC marker、輸入 hash 與有界時鐘換檔，未放寬產品資格／quota／期間門檻。
+
+另以真實 IAB 管理員瀏覽器登入、PRTG 使用效果分頁實際下載，4595 bytes、FormatVersion=2，SHA256 f9f324707098a697151d5367b0558aec7a9b5c4534d32f34965687f4658a971b；完整本文到達後按鈕恢復。ScopeComplete=false 明示缺標籤及 timeline，不產生免費驗收結論。僅此管理員下載劇本，N4／N5 全角色仍未通過。
+
+完成子項已自活動 TODO 細節移除；完整作用範圍耐久 qualification／矩陣、同版 A0 探測及 §5.2 五組 gate 仍保留。原始 AC01–AC22／Q1–Q6 items 不改；Luna 獨立體檢目前因用量限制未執行，不由主代理自驗冒稱完成。

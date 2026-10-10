@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "2bc15ca46b4a666d90bef417f09426ba9a6ddb817d6933d0e2c5a8aafa2abac2",
+  "plan_sha256": "77fba2789ded15ddbea0fe01cc4c1f0fde8652f315605f027568954947ada9ea",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -7743,6 +7743,41 @@
     "scope": "Immediate refusal when upstream cancellation never acknowledges, authenticated bounded download and page regression",
     "native_source_verified": false,
     "full_capacity_accepted": false,
+    "whole_round_accepted": false
+  },
+  "bounded_current_consumer_20261010": {
+    "gate": "round53-current-consumer-smoke-v12",
+    "run_id": "3e7da895bcc3401499ae78d18820e2d3",
+    "producer_source_head": "97b169c1eebc17c025e9f5ca23719b8578e16fab",
+    "input_count": 637,
+    "input_drift": 0,
+    "source_review": "root-source-review-v4.json",
+    "root_review": "round53-current-consumer-smoke-v12-root-review.json",
+    "bounded_stage_accepted": true,
+    "selected_hosts": 2,
+    "selected_sensors": 2,
+    "snapshot_cycles_per_epoch": 9,
+    "epochs_observed": 2,
+    "conditions": [
+      "netiq-only",
+      "combined"
+    ],
+    "host_days_committed_per_condition": 2,
+    "http_requests": 400,
+    "http_successes": 400,
+    "combined_current_profiles": 2,
+    "combined_current_typed_proofs": 4,
+    "post_sql_pre_ack_crash_recovery_accepted": true,
+    "owned_cleanup_complete": true,
+    "admin_browser_download_accepted": true,
+    "browser_download_receipt": "round53-json-download-browser-v1.json",
+    "controlled_clock_budget_simulation": true,
+    "actual_throughput_capacity_evidence": false,
+    "native_source_verified": false,
+    "formal_risk_join_acceptance": false,
+    "all_roles_verified": false,
+    "full_capacity_accepted": false,
+    "independent_closeout_accepted": false,
     "whole_round_accepted": false
   }
 }
