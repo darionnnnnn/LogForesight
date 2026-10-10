@@ -521,6 +521,40 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
     }
 
     [Fact]
+    public async Task Twenty_enabled_qualification_pilot_table_sends_use_the_serialized_profile_lane()
+    {
+        var clock = new TestClock(DateTimeOffset.UtcNow);
+        var budget = new PrtgRequestBudget(clock);
+        var fingerprint = new string('A', 64);
+        budget.SetAdmissionPlan(TestPlan(fingerprint, 1));
+        var sendTimes = new List<TimeSpan>();
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        async Task SendPilotTableRequestAsync()
+        {
+            using var lease = await budget.AcquireAsync(PrtgEndpointCategory.Table, watchdog.Token,
+                PrtgRequestPurpose.ProfileRefresh, fingerprint);
+            await lease.MarkRequestSentAsync(watchdog.Token);
+            lock (sendTimes) sendTimes.Add(clock.Elapsed);
+        }
+
+        var batch = Task.Run(async () =>
+        {
+            for (var i = 0; i < 20; i++) await SendPilotTableRequestAsync();
+        }, watchdog.Token);
+        await clock.AdvanceUntilCompleteAsync(batch, watchdog.Token);
+        await batch;
+
+        Assert.Equal(20, sendTimes.Count);
+        Assert.Equal(TimeSpan.Zero, sendTimes[0]);
+        Assert.True(sendTimes[^1] >= TimeSpan.FromSeconds(38),
+            $"20 Table requests should be paced at the profile plan rate; elapsed {sendTimes[^1]}.");
+        Assert.All(sendTimes.Zip(sendTimes.Skip(1)), pair =>
+            Assert.True(pair.Second - pair.First >= TimeSpan.FromSeconds(2)));
+        Assert.Equal(0, budget.InFlightCount);
+    }
+
+    [Fact]
     public async Task Mixed_snapshot_profile_and_general_table_lanes_progress_under_shared_rolling_quota()
     {
         var clock = new TestClock(DateTimeOffset.UtcNow);

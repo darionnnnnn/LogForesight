@@ -84,6 +84,22 @@ public sealed class PrtgTrustedSamplingQualificationJobsControllerTests : IDispo
     }
 
     [Fact]
+    public async Task Enabled_qualification_pilot_waits_for_current_fenced_table_plan_before_any_source_call()
+    {
+        var controller = Controller(new Visibility([host.HostId]));
+
+        var result = Assert.IsType<OkObjectResult>(await controller.Pilot(
+            new QualificationPilotRequest([11]), CancellationToken.None));
+        var response = Assert.IsType<ApiResponse<QualificationPilotResult>>(result.Value);
+        var pilot = Assert.IsType<QualificationPilotResult>(response.Data);
+
+        Assert.Equal("waiting-capacity", pilot.Status);
+        Assert.StartsWith("qualification-pilot-table-admission-", pilot.Reason);
+        Assert.Empty(pilot.Rows);
+        Assert.Null(new PrtgQualificationCapacityPilotStore(backend).Read());
+    }
+
+    [Fact]
     public void PageRejectsNegativeOrOversizedCursorAndHidesOutOfScopeJob()
     {
         var now = DateTimeOffset.UtcNow;

@@ -209,6 +209,60 @@ public class PrtgRequestBudget
         get { lock (_lock) return _admissionPlan; }
     }
 
+    /// <summary>
+    /// Returns a lower bound for Table purpose pacing under the current, exact admission plan.
+    /// It includes any already reserved slot for the first send and the minimum spacing between
+    /// the remaining sends. It deliberately excludes HTTP latency and shared rolling-window waits;
+    /// callers may reject only when this lower bound alone exceeds their deadline budget.
+    /// </summary>
+    public bool TryGetMinimumTablePacingWait(PrtgRequestPurpose purpose, int requestCount,
+        string admissionPlanFingerprint, out TimeSpan minimumWait)
+    {
+        minimumWait = TimeSpan.Zero;
+        if (requestCount is < 1 or > 100_000 || string.IsNullOrWhiteSpace(admissionPlanFingerprint) ||
+            purpose is not (PrtgRequestPurpose.General or PrtgRequestPurpose.ProfileRefresh or PrtgRequestPurpose.Snapshot))
+            return false;
+
+        lock (_lock)
+        {
+            var plan = _admissionPlan;
+            if (plan is null || plan.LeaseUntilUtc <= Clock.UtcNow || plan.Fingerprint != admissionPlanFingerprint)
+                return false;
+            var rate = purpose switch
+            {
+                PrtgRequestPurpose.Snapshot => plan.SnapshotTableRequestsPerSecond,
+                PrtgRequestPurpose.ProfileRefresh => plan.ProfileTableRequestsPerSecond,
+                _ => plan.GeneralResidualRequestsPerSecond
+            };
+            if (!double.IsFinite(rate) || rate <= 0) return false;
+
+            var intervalSeconds = 1d / rate;
+            if (!double.IsFinite(intervalSeconds) || intervalSeconds > TimeSpan.MaxValue.TotalSeconds)
+                return false;
+            TimeSpan interval;
+            try { interval = TimeSpan.FromSeconds(intervalSeconds); }
+            catch (OverflowException) { return false; }
+            var now = Clock.Elapsed;
+            var firstDue = now;
+            if (_lastPurposeTableSent.TryGetValue(purpose, out var lastSent))
+            {
+                if (lastSent.Ticks > TimeSpan.MaxValue.Ticks - interval.Ticks) return false;
+                var lastDue = TimeSpan.FromTicks(lastSent.Ticks + interval.Ticks);
+                if (lastDue > firstDue) firstDue = lastDue;
+            }
+            if (_nextPurposeTableSlot.TryGetValue(purpose, out var reservedSlot) && reservedSlot > firstDue)
+                firstDue = reservedSlot;
+
+            var firstDelay = firstDue > now ? firstDue - now : TimeSpan.Zero;
+            var restTicks = (double)interval.Ticks * (requestCount - 1);
+            if (!double.IsFinite(restTicks) || restTicks > TimeSpan.MaxValue.Ticks) return false;
+            var roundedRestTicks = (long)Math.Ceiling(restTicks);
+            if (firstDelay.Ticks > TimeSpan.MaxValue.Ticks - roundedRestTicks) return false;
+            minimumWait = TimeSpan.FromTicks(firstDelay.Ticks + roundedRestTicks);
+            return true;
+        }
+    }
+
     public int InFlightCount
     {
         get { lock (_lock) return _inFlightCount; }
@@ -477,7 +531,9 @@ public class PrtgRequestBudget
     private void ValidateAdmissionPlanUnderLock(PrtgRequestPurpose purpose, string? fingerprint,
         PrtgEndpointCategory category)
     {
-        if (category != PrtgEndpointCategory.Table || purpose is not (PrtgRequestPurpose.Snapshot or PrtgRequestPurpose.ProfileRefresh))
+        if (category != PrtgEndpointCategory.Table ||
+            purpose is not (PrtgRequestPurpose.Snapshot or PrtgRequestPurpose.ProfileRefresh) &&
+            !(purpose == PrtgRequestPurpose.General && fingerprint is not null))
             return;
         if (_admissionPlan is null || _admissionPlan.LeaseUntilUtc <= DateTimeOffset.UtcNow ||
             string.IsNullOrWhiteSpace(fingerprint) || _admissionPlan.Fingerprint != fingerprint)

@@ -51,7 +51,7 @@
 ### 5.1 尚未完成的實作與必要交付
 
 - [ ] R05／N6：完成 snapshot 100 顆精確批次及同形來源探測、profile／snapshot 容量失效後的有界重新校準；驗證完整 15000 顆共同排程，不降低 25% 餘裕、10 分鐘快照期限或週期性採樣。profile 分批及滾動補齊子項已由本輪 Main 239 項回歸核對完成。
-- [ ] R15／N5：管理操作在共同剩餘額度必然不足時前置明示等待；缺 raw proof 接耐久資格流程；啟用後的 qualification pilot 不繞過正式 lane／來源守門。
+- [ ] R15／N5：完成耐久唯讀通道探索與新綁定操作、實際六顆 current API 資格→自動 profile→全頁核對。共同剩餘額度前置檢查、缺 raw proof 明示耐久作業與 enabled qualification pilot 正式 lane 接線已由 Main 116 項及前端 4 項測試核對。
 - [ ] R09／N6：接上完整作用範圍的耐久 raw qualification 與固定矩陣（精確全分頁核對及唯讀收集工具已完成），依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項的完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
@@ -1610,3 +1610,11 @@ raw qualification 的 proof、作業確認與當前來源／綁定 fence 通知�
 主代理於 Main force rebuild 成功；受影響十類測試最終 239／239、零失敗／略過，證據 batch-rolling-main-green TRX。初輪暴露測試觀測競態：handler 的 admission 計數先於 timestamp callback；增加該 callback 的等待後重跑，未修改 5／4／9 配額斷言。輸入十二檔逐一核對凍結 SHA-256，CLAUDE.md 雜湊保持原值。
 
 此為已完成的 profile 傳輸元件；固定 15000 顆共同容量仍未通過。現有 50 顆 snapshot 分組加 profile floor 1 req/s 超出共享 1.5 req/s，已在實作前算出，接續以精確 snapshot 100 顆及有界重校準修正，不靠調低安全餘裕或縮小分母。原生來源、180 日 provider 及整輪 AC／Q 保持待驗。
+
+### 2026-10-10 管理維護配額前置檢查與明確資格流程
+
+依當前精確 admission plan 計算最低 Table lane 排隊時間，包含第一個已保留 send slot；若最低成本已超過 30 秒扣 5 秒餘裕，前置回應等待原因。General 的 plan fingerprint 也在實際 budget 核對，不能用過期 plan 發送。HTTP 延遲與共享 window 等候仍由既有硬期限取消，不把前置估算當保證成功。
+
+單顆 qualify 缺 raw proof 時回 requires-durable-qualification 並引導完整政策資格面板，保持使用者草稿；不自動開始全量作業。有 current proof 才保存 fence-bound 通知與 queued 狀態，不能當 ready。enabled qualification pilot 以正式 ProfileRefresh lane 送每顆 4 Table+1 Historic，整輪最長 10 分鐘，逐群維持前置配額與最後來源守門。主代理另修正外層 30 秒取消誤含合法 Historic 等候：沿用 service 在 ticket 就緒後的 30 秒來源期限，整輪 10 分鐘不變。
+
+Main 建置成功，受影響七類測試 116／116、零失敗／略過，證據 maintenance-main-green TRX；前端 helper 4／4，兩個 browser ES module 語法檢查成功。最初以 Node CommonJS 預設執行 browser ES module 失敗，改用 --experimental-default-type=module 後通過，未改產品模組格式。此元件段落完成；真實 controlled loopback 的連續兩轮 pilot／六顆資料流、唯讀通道探索與原生來源及整輪驗收仍保留。

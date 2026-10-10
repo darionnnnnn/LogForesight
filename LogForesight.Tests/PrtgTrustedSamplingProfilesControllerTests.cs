@@ -268,6 +268,54 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Missing_raw_proof_returns_full_scope_durable_job_instructions_without_inline_probe()
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        var saved = Assert.IsType<PrtgTrustedSamplingBindingStatusDto>(
+            Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingStatusDto>>(
+                Assert.IsType<OkObjectResult>(controller.SaveBinding(11, BindingRequest(11, "73"))).Value).Data);
+
+        var response = Assert.IsType<OkObjectResult>(await controller.QualifyBinding(11,
+            new(saved.BindingRevision, saved.BindingFingerprint), CancellationToken.None));
+        var result = Assert.IsType<PrtgTrustedSamplingBindingQualificationResult>(
+            Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingQualificationResult>>(response.Value).Data);
+
+        Assert.Equal("requires-durable-qualification", result.Status);
+        Assert.Null(result.Probe);
+        Assert.True(result.RequiresExplicitStart);
+        Assert.Equal(2, result.DurableSelectedSensors);
+        Assert.Null(result.DurableJobId);
+        Assert.Equal("qualification:durable_full_policy_job_required", Assert.Single(result.MissingFacts));
+        Assert.Null(new PrtgQualificationJobStateStore(_backend).ReadCurrent());
+    }
+
+    [Fact]
+    public async Task Existing_raw_proof_qualify_request_returns_queued_only_after_durable_notice_is_saved()
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        var saved = Assert.IsType<PrtgTrustedSamplingBindingStatusDto>(
+            Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingStatusDto>>(
+                Assert.IsType<OkObjectResult>(controller.SaveBinding(11, BindingRequest(11, "74"))).Value).Data);
+        var bindingStore = new PrtgTrustedSamplingBindingStore(_backend);
+        bindingStore.RecordQualification(11, saved.BindingRevision, saved.BindingFingerprint,
+            _settings.Get().Revision, _policy.Get().Revision, 91, DateTime.UtcNow.ToOADate(),
+            "source-api-r1", DateTimeOffset.UtcNow, new string('C', 64));
+        var qualified = bindingStore.Get(11)!;
+
+        var response = Assert.IsType<OkObjectResult>(await controller.QualifyBinding(11,
+            new(qualified.BindingRevision, qualified.BindingFingerprint), CancellationToken.None));
+        var result = Assert.IsType<PrtgTrustedSamplingBindingQualificationResult>(
+            Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingQualificationResult>>(response.Value).Data);
+        var notices = new PrtgTrustedSamplingProfileRefreshStateStore(_backend).ReadProofRefreshNotices([11]);
+
+        Assert.Equal("queued", result.Status);
+        Assert.NotNull(result.ProofRefresh);
+        Assert.True(notices.ContainsKey(11));
+        Assert.Equal(qualified.QualificationProofReference, notices[11].QualificationProofReference);
+        Assert.Null(result.Probe);
+    }
+
+    [Fact]
     public async Task MalformedProbeAndQualificationSourceJsonAreClassifiedWithoutWriting()
     {
         var controller = CreateController(new TestVisibility([_host.HostId]));

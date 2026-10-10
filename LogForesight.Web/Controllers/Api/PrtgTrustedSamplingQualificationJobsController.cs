@@ -49,6 +49,16 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
             request.SensorObjids.Any(id => !policy.SensorIds.Contains(id)))
             return BadRequest(ApiResponse.Fail("sensor_outside_policy", "pilot sensor 必須位於目前完整政策範圍內。"));
 
+        if (!TryGetCurrentTableAdmission(settings!, policy!, contract!, out var admissionFingerprint, out failure))
+            return Ok(ApiResponse<QualificationPilotResult>.Ok(new("waiting-capacity",
+                "qualification-pilot-table-admission-" + failure, null, [])));
+        var groupPreflight = PrtgMaintenanceCapacityPreflight.Evaluate(PrtgRequestBudget.Shared,
+            PrtgRequestBudget.Shared.CurrentAdmissionPlan, PrtgRequestPurpose.ProfileRefresh,
+            PrtgMaintenanceCapacityPreflight.ExpectedOrdinaryProbeTableRequests(1));
+        if (!groupPreflight.Admitted)
+            return Ok(ApiResponse<QualificationPilotResult>.Ok(new("waiting-capacity",
+                "qualification-pilot-table-admission-" + groupPreflight.Reason, null, [])));
+
         var requestCount = 0;
         var elapsed = 0d;
         var maxSensorElapsed = 0d;
@@ -58,16 +68,34 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
         deadline.CancelAfter(TimeSpan.FromMinutes(10));
         foreach (var id in request.SensorObjids.Order())
         {
-            var probe = await new PrtgTrustedSamplingProbeService(backend).ProbeAsync([id], deadline.Token,
-                requestPurpose: PrtgRequestPurpose.CapacityPilot,
-                onRequestAttempted: () => requestCount++,
-                qualificationPilotOnly: true,
-                onSensorElapsed: value =>
-                {
-                    elapsed += value.TotalSeconds;
-                    maxSensorElapsed = Math.Max(maxSensorElapsed, value.TotalSeconds);
-                },
-                onHistoricSourceVersion: value => versions.Add(value));
+            var currentGroupPreflight = PrtgMaintenanceCapacityPreflight.Evaluate(PrtgRequestBudget.Shared,
+                PrtgRequestBudget.Shared.CurrentAdmissionPlan, PrtgRequestPurpose.ProfileRefresh,
+                PrtgMaintenanceCapacityPreflight.ExpectedOrdinaryProbeTableRequests(1));
+            if (!currentGroupPreflight.Admitted)
+                return Ok(ApiResponse<QualificationPilotResult>.Ok(new("waiting-capacity",
+                    "qualification-pilot-table-admission-" + currentGroupPreflight.Reason, null, rows)));
+            // Historic quota reservation precedes the service's 30-second source deadline.
+            // Keep that legitimate wait inside the overall ten-minute pilot deadline.
+            IReadOnlyList<PrtgTrustedSamplingProbeRow> probe;
+            try
+            {
+                probe = await new PrtgTrustedSamplingProbeService(backend).ProbeAsync([id], deadline.Token,
+                    requestPurpose: PrtgRequestPurpose.ProfileRefresh,
+                    admissionPlanFingerprint: admissionFingerprint,
+                    onRequestAttempted: () => requestCount++,
+                    qualificationPilotOnly: true,
+                    onSensorElapsed: value =>
+                    {
+                        elapsed += value.TotalSeconds;
+                        maxSensorElapsed = Math.Max(maxSensorElapsed, value.TotalSeconds);
+                    },
+                    onHistoricSourceVersion: value => versions.Add(value));
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return StatusCode(StatusCodes.Status504GatewayTimeout,
+                    ApiResponse.Fail("probe_deadline", "資格容量 pilot 超過整輪 10 分鐘期限；未保存 pilot 結果。"));
+            }
             rows.AddRange(probe);
         }
         if (!TryCapture(out var afterSettings, out var afterPolicy, out var afterContract, out failure))
@@ -364,6 +392,39 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
         }
         catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
         { failure = "qualification-source-contract-unavailable"; return false; }
+    }
+
+    private bool TryGetCurrentTableAdmission(SystemSettings settings, PrtgMonitoringPolicy policy,
+        PrtgProfileTransportCapacityPilot.Contract contract, out string fingerprint, out string reason)
+    {
+        fingerprint = "";
+        reason = "qualification-runtime-table-admission-unavailable";
+        try
+        {
+            var snapshotSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, settings,
+                new SentinelStore(backend.Blob("sentinels")).GetAll(), policy);
+            if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(backend, hosts, settings, snapshotSelection,
+                    out var plan, out reason) || plan is null)
+                return false;
+            if (plan.SourceFingerprint != contract.SourceFingerprint ||
+                plan.ProfileScopeFingerprint != contract.ScopeFingerprint ||
+                plan.StrategyFingerprint != contract.StrategyFingerprint ||
+                plan.RequestShapeFingerprint != contract.RequestShapeFingerprint ||
+                plan.RuntimeVersionFingerprint != contract.VersionFingerprint ||
+                plan.PolicyRevision != policy.Revision || plan.SettingsRevision != settings.Revision ||
+                plan.LeaseUntilUtc <= DateTimeOffset.UtcNow)
+            {
+                reason = "qualification-runtime-table-admission-plan-stale";
+                return false;
+            }
+            fingerprint = plan.Fingerprint;
+            return !string.IsNullOrWhiteSpace(fingerprint);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+        {
+            reason = "qualification-runtime-table-admission-" + ex.GetType().Name;
+            return false;
+        }
     }
 
     private bool TryCurrentScope(out PrtgMonitoringPolicy policy, out string scopeFingerprint)

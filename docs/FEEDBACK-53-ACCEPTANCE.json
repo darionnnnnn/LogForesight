@@ -7918,5 +7918,26 @@
     "capacityAccepted": false,
     "retentionAccepted": false,
     "wholeRoundAccepted": false
+  },
+  "maintenance_capacity_preflight_20261010": {
+    "status": "component-verified",
+    "regression": {
+      "path": ".gemini-tasks/primary-results/maintenance-main-green/maintenance-main-green.trx",
+      "passed": 116,
+      "failed": 0,
+      "skipped": 0
+    },
+    "frontend": {
+      "helperTestsPassed": 4,
+      "moduleSyntaxChecksPassed": 2,
+      "actualBrowserAccepted": false
+    },
+    "preflight": "Exact current plan; include first reserved slot and all minimum Table spacing; 30 seconds minus 5-second safety margin; no guessed shared-window or HTTP guarantee.",
+    "rawProofMissing": "Explicit durable full-policy qualification route; keep drafts; no automatic bulk job start or invented proof.",
+    "pilot": "Enabled pilot uses ProfileRefresh lane, 4 Table plus 1 Historic per sensor; ten-minute overall deadline, thirty-second source deadline begins after Historic ticket admission.",
+    "remaining": "Readonly durable channel discovery; actual current Main six-sensor and repeated pilot seam; full source and workload acceptance.",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "wholeRoundAccepted": false
   }
 }

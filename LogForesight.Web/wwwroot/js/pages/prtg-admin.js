@@ -13,6 +13,7 @@ import {
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 import { initializePrtgQualificationJobs } from '../prtg-qualification-jobs.js';
+import { trustedProbeErrorMessage, trustedQualificationOutcome } from '../prtg-maintenance-outcomes.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { extractProbeEvidenceJson, isProbeEvidenceDownloadable } from '../core/prtg-probe-evidence.js';
@@ -329,8 +330,8 @@ document.getElementById('prtg-profile-binding-probe')?.addEventListener('click',
         }
         document.getElementById('prtg-profile-binding-channel-evidence').textContent = `Probe 狀態 ${result.status || 'unknown'}｜Identity epoch ${result.identityEpoch ?? '未知'}｜Channel generation ${result.channelGeneration ?? '未知'}｜資源 generation ${result.resourceGeneration ?? '未知'}｜${result.channelsTruncated ? '頻道清單已截斷，不能由此保存完整語意' : '已列來源回傳頻道'}；probe 本身只供選擇，不授予資格。`;
         action.textContent = `來源回傳 ${result.channels.length} 個頻道，其中可用 ID ${channel.options.length - 1} 個；請核對來源語意後明確選取。`;
-    } catch {
-        action.textContent = 'Probe 結果未確認；草稿保留。請先重新載入核對已保存版本與來源狀態，再決定是否重送。';
+    } catch (error) {
+        action.textContent = trustedProbeErrorMessage(error);
     }
     finally { setTrustedBindingPending(false); }
 });
@@ -562,6 +563,12 @@ document.getElementById('prtg-profile-binding-qualify')?.addEventListener('click
             return;
         }
         trustedBindingSaved = result?.binding || result;
+        const durableOutcome = trustedQualificationOutcome(result, trustedBindingSelectedSensor);
+        if (durableOutcome) {
+            action.textContent = durableOutcome.message;
+            document.getElementById(durableOutcome.destination)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        }
         const qualificationMessage = `核驗結果：${result?.status || trustedBindingSaved?.status || 'unknown'}｜${Array.isArray(result?.missingFacts) ? result.missingFacts.join(', ') : '請查看缺項'}｜來源版本 ${result?.probe?.sourceVersion || trustedBindingSaved?.qualificationSourceVersion || 'unknown'}。`;
         await loadTrustedProfileBindings(); await reloadTrustedBinding(true, true);
         action.textContent = qualificationMessage;

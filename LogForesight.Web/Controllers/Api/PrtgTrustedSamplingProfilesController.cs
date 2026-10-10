@@ -75,6 +75,29 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
         if (!policy.SensorIds.Contains(sensorObjid))
             return BadRequest(ApiResponse.Fail("sensor_outside_policy", "只能核驗目前監控政策範圍內的 sensor。"));
         if (!CanManageScope(policy, hostSnapshot)) return Forbid();
+        if (QualificationProbeOverride is null)
+        {
+            var savedBinding = new PrtgTrustedSamplingBindingStore(backend).Get(sensorObjid);
+            if (savedBinding is null || savedBinding.BindingRevision != request.ExpectedBindingRevision ||
+                savedBinding.BindingFingerprint != request.ExpectedBindingFingerprint)
+                return Conflict(ApiResponse.Fail("binding_fence_changed", "binding 版本或 fingerprint 已改變；請重新載入後再核驗。"));
+
+            if (!string.IsNullOrWhiteSpace(savedBinding.QualificationProofReference))
+            {
+                var notice = refresh.QueueCurrentQualificationProofRefresh(sensorObjid);
+                if (notice is null)
+                    return Conflict(ApiResponse.Fail("proof_refresh_not_current", "原始資格證據或來源 fence 已失效；請重新載入綁定與政策狀態。"));
+                var existingStatus = PrtgTrustedSamplingBindingStatusDto.From(savedBinding, "waiting", []);
+                return Ok(ApiResponse<PrtgTrustedSamplingBindingQualificationResult>.Ok(new(sensorObjid,
+                    "queued", [], existingStatus, null, ProofRefresh: notice)));
+            }
+
+            // Raw Historic qualification is admitted only through the durable full-policy job.
+            // A per-sensor button must not synchronously consume shared Historic allowance or
+            // silently start a potentially 15,000-sensor job on the operator's behalf.
+            if (string.IsNullOrWhiteSpace(savedBinding.QualificationProofReference))
+                return DurableQualificationRequired(sensorObjid, savedBinding, policy);
+        }
         try
         {
             var rows = QualificationProbeOverride is { } probeOverride
@@ -278,11 +301,25 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
             (!canViewAll && !policy.HostIds.All(visibleHosts.Contains))) return Forbid();
         if (request.SensorObjids.Any(id => !policy.SensorIds.Contains(id)))
             return BadRequest(ApiResponse.Fail("sensor_outside_policy", "只能探測目前監控政策範圍內的 sensor。"));
+        string? admissionFingerprint = null;
+        if (ProbeOverride is null)
+        {
+            if (!TryGetCurrentTableAdmission(out var admission, out var admissionFailure))
+                return MaintenanceCapacityWait(admissionFailure, null);
+            var preflight = PrtgMaintenanceCapacityPreflight.Evaluate(PrtgRequestBudget.Shared,
+                PrtgRequestBudget.Shared.CurrentAdmissionPlan, PrtgRequestPurpose.General,
+                PrtgProfileTransportCapacityEvaluator.ExpectedRequests(request.SensorObjids.Count));
+            if (!preflight.Admitted)
+                return MaintenanceCapacityWait(preflight.Reason, preflight);
+            admissionFingerprint = admission;
+        }
         try
         {
             var rows = ProbeOverride is { } probeOverride
                 ? await probeOverride(request.SensorObjids, ct)
-                : await new PrtgTrustedSamplingProbeService(backend).ProbeAsync(request.SensorObjids, ct);
+                : await new PrtgTrustedSamplingProbeService(backend).ProbeAsync(request.SensorObjids, ct,
+                    requestPurpose: PrtgRequestPurpose.General,
+                    admissionPlanFingerprint: admissionFingerprint);
             var latestHosts = CaptureHostSnapshot();
             if (latestHosts.Version != hostSnapshot.Version || !CanManageScope(policy, latestHosts))
             {
@@ -458,6 +495,75 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
         catch (InvalidTimeZoneException) { return false; }
     }
 
+    private IActionResult DurableQualificationRequired(long sensorObjid,
+        PrtgTrustedSamplingBinding binding, PrtgMonitoringPolicy policy)
+    {
+        var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var selectedSensors = policy.SensorIds.Where(id => id > 0).Distinct().Count();
+        PrtgQualificationJobStateStore.Job? matchingJob = null;
+        try
+        {
+            var contract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(settings, policy,
+                CaptureHostSnapshot());
+            var jobs = new PrtgQualificationJobStateStore(backend);
+            jobs.ExpireIfDeadlinePassed(DateTimeOffset.UtcNow);
+            var current = jobs.ReadCurrent();
+            if (current is not null && current.ScopeFingerprint == contract.ScopeFingerprint &&
+                current.SourceGeneration == policy.SourceGeneration && current.SettingsRevision == settings.Revision &&
+                current.PolicyRevision == policy.Revision && current.Selected == selectedSensors)
+                matchingJob = current;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+        {
+            // The existing full-scope panel remains the authoritative place to re-check its contract.
+        }
+
+        var missing = new[] { "qualification:durable_full_policy_job_required" };
+        var bindingStatus = PrtgTrustedSamplingBindingStatusDto.From(binding, "waiting", missing);
+        var response = new PrtgTrustedSamplingBindingQualificationResult(sensorObjid,
+            "requires-durable-qualification", missing, bindingStatus, null,
+            matchingJob?.JobId, matchingJob?.Status, selectedSensors,
+            matchingJob?.DeadlineUtc, RequiresExplicitStart: matchingJob is null ||
+                matchingJob.Status is not ("initializing" or "running" or "waiting-capacity"));
+        return Ok(ApiResponse<PrtgTrustedSamplingBindingQualificationResult>.Ok(response));
+    }
+
+    private bool TryGetCurrentTableAdmission(out string fingerprint, out string reason)
+    {
+        fingerprint = "";
+        reason = "capacity-admission-plan-missing";
+        var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl))
+        { reason = "profile-source-or-scope-not-ready"; return false; }
+        try
+        {
+            var snapshotSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, settings,
+                new SentinelStore(backend.Blob("sentinels")).GetAll(), policy);
+            if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(backend, hosts, settings, snapshotSelection,
+                out var plan, out reason) || plan is null)
+                return false;
+            if (plan.SettingsRevision != settings.Revision || plan.PolicyRevision != policy.Revision ||
+                plan.LeaseUntilUtc <= DateTimeOffset.UtcNow)
+            { reason = "capacity-admission-plan-settings-scope-or-lease-stale"; return false; }
+            fingerprint = plan.Fingerprint;
+            return !string.IsNullOrWhiteSpace(fingerprint);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+        {
+            reason = "capacity-admission-plan-current-check-" + ex.GetType().Name;
+            return false;
+        }
+    }
+
+    private IActionResult MaintenanceCapacityWait(string reason, PrtgMaintenanceCapacityDecision? decision)
+    {
+        var pacing = decision is null ? "目前沒有可用且與來源／完整範圍相符的容量准入計畫" :
+            $"目前最低必要 Table 排程等待約 {decision.MinimumPacingSeconds:F1} 秒，期限扣除安全餘裕後為 {decision.AvailablePacingSeconds:F1} 秒";
+        return Conflict(ApiResponse.Fail("maintenance_capacity_wait",
+            $"{pacing}；未發送任何來源請求（{reason}）。請等待有效容量計畫，或使用下方明確的 durable 資格作業。"));
+    }
+
     private bool CanManageScope(PrtgMonitoringPolicy policy, PrtgHostSnapshot? captured = null)
     {
         var hostSnapshot = captured ?? CaptureHostSnapshot();
@@ -520,7 +626,9 @@ public sealed record PrtgTrustedSamplingBindingQualificationRequest(long Expecte
     string ExpectedBindingFingerprint);
 public sealed record PrtgTrustedSamplingBindingQualificationResult(long SensorObjid, string Status,
     IReadOnlyList<string> MissingFacts, PrtgTrustedSamplingBindingStatusDto? Binding,
-    PrtgTrustedSamplingProbeRow Probe);
+    PrtgTrustedSamplingProbeRow? Probe, string? DurableJobId = null, string? DurableJobStatus = null,
+    int? DurableSelectedSensors = null, DateTimeOffset? DurableDeadlineUtc = null,
+    bool RequiresExplicitStart = false, PrtgTrustedSamplingProofRefreshRequest? ProofRefresh = null);
 
 public sealed record PrtgTrustedSamplingCommitReceipt(bool Committed, bool ReloadRequired,
     IReadOnlyList<long> CommittedSensorObjids);
