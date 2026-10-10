@@ -37,11 +37,11 @@ async function readJsonDownload(response, options) {
     }
     const reject = (code, message) => new ApiError(code, message, response.status);
     if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get('Content-Type') || '') || !response.body) {
-        await response.body?.cancel();
+        response.body?.cancel().catch(() => {});
         throw reject('download_invalid_response', '伺服器未提供 JSON 證據檔，請確認登入狀態後重試。');
     }
     if (Number(response.headers.get('Content-Length')) > limit) {
-        await response.body.cancel();
+        response.body.cancel().catch(() => {});
         throw reject('download_byte_cap', '證據檔超過下載上限，請縮小日期範圍；未提供部分檔案。');
     }
     const reader = response.body.getReader();

@@ -56,6 +56,8 @@ public class ApiTimeoutBehaviorTests
     [InlineData("JSON下載登入逾期保留子站導頁")]
     [InlineData("JSON下載頁面失敗不交付檔案且恢復按鈕")]
     [InlineData("JSON下載頁面等待完成才交付且釋放資源")]
+    [InlineData("JSON下載已知超限不等待取消確認")]
+    [InlineData("JSON下載非JSON不等待取消確認")]
     public void 前端等待體驗的行為案例(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

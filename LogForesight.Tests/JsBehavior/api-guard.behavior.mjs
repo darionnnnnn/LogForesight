@@ -71,6 +71,25 @@ function slowFetch(record, delayMs) {
 }
 
 const cases = {
+    async JSON下載已知超限不等待取消確認() {
+        const body = new ReadableStream({ cancel() { return new Promise(() => {}); } });
+        globalThis.fetch = async () => new Response(body,
+            { headers: { 'Content-Type': 'application/json', 'Content-Length': '6' } });
+        const caught = await Promise.race([
+            api.downloadJson('/api/prtg/acceptance/export', { maxBytes: 5, timeoutMs: 20, silent: true }).catch(error => error),
+            new Promise(resolve => setTimeout(() => resolve(null), 100))
+        ]);
+        assert(caught?.code === 'download_byte_cap', '已知超限必須立即拒絕，不能卡在取消確認');
+    },
+    async JSON下載非JSON不等待取消確認() {
+        const body = new ReadableStream({ cancel() { return new Promise(() => {}); } });
+        globalThis.fetch = async () => new Response(body, { headers: { 'Content-Type': 'text/html' } });
+        const caught = await Promise.race([
+            api.downloadJson('/api/prtg/acceptance/export', { timeoutMs: 20, silent: true }).catch(error => error),
+            new Promise(resolve => setTimeout(() => resolve(null), 100))
+        ]);
+        assert(caught?.code === 'download_invalid_response', '非 JSON 必須立即拒絕，不能卡在取消確認');
+    },
     async JSON下載頁面失敗不交付檔案且恢復按鈕() {
         const page = await downloadPageHarness(async () => {
             throw new ApiError('export_output_byte_cap', '超過上限；請縮小日期範圍。', 413);

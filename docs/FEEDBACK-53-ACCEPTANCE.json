@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "b282bea5f1c1adf73f129efd8504c6fc4f0b1d01aba06b63c0b1d863768347a2",
+  "plan_sha256": "2bc15ca46b4a666d90bef417f09426ba9a6ddb817d6933d0e2c5a8aafa2abac2",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -7729,6 +7729,19 @@
     "scope": "Bounded JSON success/error bodies, authenticated subsite download, current page success/failure flow and acceptance export regression",
     "native_source_verified": false,
     "full_browser_roles_accepted": false,
+    "full_capacity_accepted": false,
+    "whole_round_accepted": false
+  },
+  "json_cancel_20261010": {
+    "gate": "round53-json-cancel-green-v1",
+    "tests": 90,
+    "passed": 90,
+    "skipped": 0,
+    "input_drift": 0,
+    "stage_accepted": true,
+    "new_behavior_cases": 2,
+    "scope": "Immediate refusal when upstream cancellation never acknowledges, authenticated bounded download and page regression",
+    "native_source_verified": false,
     "full_capacity_accepted": false,
     "whole_round_accepted": false
   }
