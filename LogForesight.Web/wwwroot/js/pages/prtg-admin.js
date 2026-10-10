@@ -13,7 +13,8 @@ import {
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 import { initializePrtgQualificationJobs } from '../prtg-qualification-jobs.js';
-import { trustedProbeErrorMessage, trustedQualificationOutcome } from '../prtg-maintenance-outcomes.js';
+import { trustedQualificationOutcome } from '../prtg-maintenance-outcomes.js';
+import { applyReadOnlyChannelDiscovery, channelDiscoveryPollOutcome, resumableChannelDiscovery } from '../prtg-channel-discovery-outcomes.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { extractProbeEvidenceJson, isProbeEvidenceDownloadable } from '../core/prtg-probe-evidence.js';
@@ -91,8 +92,67 @@ function trustedChannelObjectId(value) {
 }
 
 function sameTrustedBindingFence(left, right) {
-    const keys = ['expectedSettingsRevision', 'expectedPolicyRevision', 'expectedIdentityEpoch', 'expectedChannelGeneration', 'expectedBindingRevision'];
+    const keys = ['expectedSettingsRevision', 'expectedPolicyRevision', 'expectedIdentityEpoch', 'expectedChannelGeneration', 'expectedBindingRevision', 'expectedHostSnapshotVersion'];
     return !!left && !!right && keys.every(key => left[key] != null && right[key] != null && left[key] === right[key]);
+}
+
+const trustedChannelDiscoveryStorageKey = 'prtg-trusted-channel-discovery-v1';
+function storedTrustedChannelDiscovery() {
+    try { return JSON.parse(sessionStorage.getItem(trustedChannelDiscoveryStorageKey) || 'null'); }
+    catch { return null; }
+}
+function saveTrustedChannelDiscovery(jobId, sensorId, deadlineUtc) {
+    sessionStorage.setItem(trustedChannelDiscoveryStorageKey, JSON.stringify({ jobId, sensorId, deadlineUtc }));
+}
+function clearTrustedChannelDiscovery(jobId) {
+    const saved = storedTrustedChannelDiscovery();
+    if (saved?.jobId === jobId) sessionStorage.removeItem(trustedChannelDiscoveryStorageKey);
+}
+async function applyTrustedChannelDiscovery(discovery, sensorId) {
+    const applied = applyReadOnlyChannelDiscovery({ doc: document, discovery, requestedSensorId: sensorId,
+        selectedSensorId: trustedBindingSelectedSensor });
+    if (!applied) return false;
+    trustedBindingProbe = { ...discovery, channels: applied.channels,
+        channelsTruncated: applied.channelsTruncated };
+    return true;
+}
+async function pollTrustedChannelDiscovery(jobId, sensorId, deadlineUtc) {
+    const action = document.getElementById('prtg-profile-binding-action-status');
+    const hardDeadline = Date.parse(deadlineUtc);
+    let checkedAfterDeadline = false;
+    while (Number.isFinite(hardDeadline) && String(trustedBindingSelectedSensor) === String(sensorId)) {
+        const atDeadline = Date.now() >= hardDeadline;
+        if (atDeadline && checkedAfterDeadline) break;
+        if (atDeadline) checkedAfterDeadline = true;
+        let job;
+        try { job = await api.get(`${trustedBindingBase}/channel-discovery/${encodeURIComponent(jobId)}`, { silent: true, timeoutMs: 10000 }); }
+        catch (error) {
+            action.textContent = `唯讀探索作業 ${jobId} 已耐久接受，但進度讀取暫時失敗（${error?.message || '連線錯誤'}）；不會視為成功，重新載入此 sensor 可繼續查詢。`;
+            return false;
+        }
+        if (String(trustedBindingSelectedSensor) !== String(sensorId)) return false;
+        const outcome = channelDiscoveryPollOutcome(job);
+        if (outcome === 'read-only-complete') {
+            if (String(trustedBindingSelectedSensor) !== String(sensorId)) return false;
+            clearTrustedChannelDiscovery(jobId);
+            return applyTrustedChannelDiscovery(job, sensorId);
+        }
+        if (outcome === 'invalid-completion') {
+            action.textContent = '探索回應缺少唯讀授權標記；拒絕把它當成完成結果。';
+            return false;
+        }
+        if (outcome === 'terminal') {
+            clearTrustedChannelDiscovery(jobId);
+            action.textContent = `唯讀來源探索${job.status === 'failed-stale' ? '已因來源 fence 改變而停止' : job.status === 'expired' ? '已超過 5 分鐘期限' : '未完成'}（${job.reason || 'unknown'}）；未建立資格證據或 profile。請重新載入 fence 後再試。`;
+            return false;
+        }
+        action.textContent = `唯讀 channel discovery 已耐久接受，狀態 ${job.status}（${job.reason || '等待中'}）；期限 ${job.deadlineUtc}。這不是資格核驗。重新載入頁面後可繼續讀取此作業。`;
+        if (checkedAfterDeadline) break;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (String(trustedBindingSelectedSensor) === String(sensorId))
+        action.textContent = '唯讀來源探索的 5 分鐘期限已到；未收到終態時仍保留已接受的 job，重新載入後可再查詢，但不會把缺少的頻道當成核驗結果。';
+    return false;
 }
 
 function updateTrustedBindingBatchStatus(message) {
@@ -263,6 +323,9 @@ async function openTrustedBinding(sensorObjid) {
         action.textContent = sameTrustedBindingFence(freshVersions, editorDraft.versions)
             ? '已恢復此 sensor 尚未提交的本機草稿；草稿仍使用原始 fence，核驗已停用。'
             : '已恢復未提交草稿，但來源 fence 已過期；草稿不會自動升級版本，請重新載入並 probe 後再送出。';
+        const pendingDiscovery = storedTrustedChannelDiscovery();
+        if (resumableChannelDiscovery(pendingDiscovery, trustedBindingSelectedSensor))
+            await pollTrustedChannelDiscovery(pendingDiscovery.jobId, pendingDiscovery.sensorId, pendingDiscovery.deadlineUtc);
         return;
     }
     const queuedDraft = trustedBindingBatchDrafts.get(trustedBindingSelectedSensor);
@@ -270,6 +333,9 @@ async function openTrustedBinding(sensorObjid) {
         fillTrustedBindingDraft(queuedDraft);
         action.textContent = '已載入此 sensor 的本機批次草稿；它保留原始 fence，重新 probe 並加入批次可更新 fence。';
     }
+    const pendingDiscovery = storedTrustedChannelDiscovery();
+    if (resumableChannelDiscovery(pendingDiscovery, trustedBindingSelectedSensor))
+        await pollTrustedChannelDiscovery(pendingDiscovery.jobId, pendingDiscovery.sensorId, pendingDiscovery.deadlineUtc);
 }
 
 async function reloadTrustedBinding(preserveDraft = true, allowPending = false) {
@@ -307,31 +373,30 @@ document.getElementById('prtg-profile-binding-next')?.addEventListener('click', 
 document.getElementById('prtg-profile-binding-probe')?.addEventListener('click', async () => {
     if (!trustedBindingSelectedSensor || trustedBindingBusy) return;
     const action = document.getElementById('prtg-profile-binding-action-status');
-    const channel = document.getElementById('prtg-profile-binding-channel');
-    setTrustedBindingPending(true); action.textContent = '正在讀取單顆唯讀來源 probe…';
+    if (!trustedBindingVersions) { action.textContent = '目前沒有最新 source/binding fence；請重新載入。'; return; }
+    setTrustedBindingPending(true); action.textContent = '正在耐久排入唯讀 channel discovery…';
     try {
-        const rows = await api.post(`${trustedBindingBase}/probe`, { sensorObjids: [Number(trustedBindingSelectedSensor)] }, { silent: true, timeoutMs: 30000 });
-        if (isTrustedBindingCommitReceipt(rows)) {
-            action.textContent = '探測期間已有 profile 更新提交，但目錄已變更；請重新載入核對，不要直接重送。';
-            clearTrustedBindingOperationAuthority();
-            await loadTrustedProfileBindings();
-            return;
+        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
+        if (!sameTrustedBindingFence(latest, trustedBindingVersions)) {
+            action.textContent = '來源、政策或綁定 fence 已改變；尚未建立探索作業。請重新載入後再試。'; return;
         }
-        const result = Array.isArray(rows) ? rows.find(item => String(item.sensorObjid) === trustedBindingSelectedSensor) : null;
-        if (!result || !Array.isArray(result.channels)) throw new Error('來源未回傳可選頻道；請確認 probe 狀態。');
-        trustedBindingProbe = result;
-        channel.replaceChildren(new Option('請人工選擇頻道（不自動猜測）', ''));
-        for (const item of result.channels) {
-            const channelId = trustedChannelObjectId(item.channelObjectId);
-            if (channelId === null) continue;
-            const option = document.createElement('option'); option.value = channelId;
-            option.textContent = `#${item.channelObjectId}｜${item.caption || '無 caption'}｜${item.unit || '無單位'}｜值 ${item.rawValue ?? '未知'}${item.sourceMarkedPrimary ? '｜來源標記 primary' : ''}`;
-            channel.append(option);
-        }
-        document.getElementById('prtg-profile-binding-channel-evidence').textContent = `Probe 狀態 ${result.status || 'unknown'}｜Identity epoch ${result.identityEpoch ?? '未知'}｜Channel generation ${result.channelGeneration ?? '未知'}｜資源 generation ${result.resourceGeneration ?? '未知'}｜${result.channelsTruncated ? '頻道清單已截斷，不能由此保存完整語意' : '已列來源回傳頻道'}；probe 本身只供選擇，不授予資格。`;
-        action.textContent = `來源回傳 ${result.channels.length} 個頻道，其中可用 ID ${channel.options.length - 1} 個；請核對來源語意後明確選取。`;
+        const accepted = await api.post(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}/channel-discovery`, {
+            expectedSettingsRevision: latest.expectedSettingsRevision,
+            expectedPolicyRevision: latest.expectedPolicyRevision,
+            expectedHostSnapshotVersion: latest.expectedHostSnapshotVersion,
+            expectedIdentityEpoch: latest.expectedIdentityEpoch,
+            expectedChannelGeneration: latest.expectedChannelGeneration,
+            expectedBindingRevision: latest.expectedBindingRevision,
+            expectedBindingFingerprint: latest.binding?.bindingFingerprint || ''
+        }, { silent: true });
+        saveTrustedChannelDiscovery(accepted.jobId, trustedBindingSelectedSensor, accepted.deadlineUtc);
+        await pollTrustedChannelDiscovery(accepted.jobId, trustedBindingSelectedSensor, accepted.deadlineUtc);
     } catch (error) {
-        action.textContent = trustedProbeErrorMessage(error);
+        action.textContent = error?.code === 'channel_discovery_capacity_full'
+            ? `${error.message}尚未建立作業，也沒有發送來源 GET。`
+            : error?.code === 'channel_discovery_fence_changed'
+                ? `${error.message}尚未發送來源 GET。`
+                : `唯讀來源探索未確認；不會當成已完成。${error?.message || '請重新載入 fence 後再試。'}`;
     }
     finally { setTrustedBindingPending(false); }
 });

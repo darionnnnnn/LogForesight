@@ -92,6 +92,8 @@ try
     builder.Services.AddLogForesightAuth(settings);
     builder.Services.AddLogForesightServices();
     builder.Services.AddHostedService<PrtgTrustedSamplingQualificationJobHostedService>();
+    builder.Services.AddSingleton<PrtgTrustedSamplingChannelDiscoveryHostedService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<PrtgTrustedSamplingChannelDiscoveryHostedService>());
 
     builder.Services.AddControllersWithViews(options =>
     {

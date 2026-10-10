@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "42b2a0bb012d93ebb27d9ad87ac642d7d5751e83d5e9e19ef5441bd80a2ef138",
+  "plan_sha256": "8d849bea1ad64ee88b93b8e9d4dd45f867baac9037af7bde68a01435581d5800",
   "date": "2026-10-10",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -7935,7 +7935,7 @@
     "preflight": "Exact current plan; include first reserved slot and all minimum Table spacing; 30 seconds minus 5-second safety margin; no guessed shared-window or HTTP guarantee.",
     "rawProofMissing": "Explicit durable full-policy qualification route; keep drafts; no automatic bulk job start or invented proof.",
     "pilot": "Enabled pilot uses ProfileRefresh lane, 4 Table plus 1 Historic per sensor; ten-minute overall deadline, thirty-second source deadline begins after Historic ticket admission.",
-    "remaining": "Readonly durable channel discovery; actual current Main six-sensor and repeated pilot seam; full source and workload acceptance.",
+    "remaining": "Complete native-source, all-role/browser and fixed full workload gates; actual six-sensor/repeated-pilot and durable readonly discovery seams now verified.",
     "nativeSourceVerified": false,
     "capacityAccepted": false,
     "wholeRoundAccepted": false
@@ -7961,5 +7961,157 @@
     "capacityAccepted": false,
     "retentionAccepted": false,
     "wholeRoundAccepted": false
+  },
+  "durable_channel_discovery_current_api_20261010": {
+    "status": "component-and-six-sensor-seam-verified",
+    "regression": {
+      "path": ".gemini-tasks/primary-results/channel-discovery-main-final-green/channel-discovery-main-final-green.trx",
+      "passed": 92,
+      "failed": 0,
+      "skipped": 0
+    },
+    "frontend": {
+      "helperTestsPassed": 9,
+      "moduleSyntaxChecksPassed": 2,
+      "actualMaintainerReadonlyBrowserVerified": true,
+      "allRoleBrowserAccepted": false
+    },
+    "inputs": [
+      {
+        "path": "LogForesight.Core/Persistence/PrtgChannelDiscoveryJobStore.cs",
+        "before": null,
+        "final": "9b620d55c80fb6bc29140afe472b5fd800d6cac5a3fb0405185cbf181c9a93c9",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-candidate-20261010\\LogForesight.Core\\Persistence\\PrtgChannelDiscoveryJobStore.cs",
+        "verified_final": "11dce5bb88dad9b47fa01aaf4c132a9f76202d7f76c0755910048883f8c0f7dc",
+        "root_followup": true
+      },
+      {
+        "path": "LogForesight.Web/Controllers/Api/PrtgTrustedSamplingProfilesController.cs",
+        "before": "4bad6e1147b64972bc8a2c64562eeaf1a43afc03c5907c38246f091789418fd4",
+        "final": "2664ca0802e9ae5ef68dc7227ea74311f0b526a69caecdcde21f8b629ddd3899",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-candidate-20261010\\LogForesight.Web\\Controllers\\Api\\PrtgTrustedSamplingProfilesController.cs",
+        "verified_final": "155f53594a4aa76785cd02105f036622f4f650ef147b0b39faec0247252fafb0",
+        "root_followup": true
+      },
+      {
+        "path": "LogForesight.Web/Program.cs",
+        "before": "83a86daca961e6b4264ed3506924c4f6daf024bbfa94dd5dff10d2d659b863fa",
+        "final": "cd0ee3a40f7ae7709e864080a72e37f74d7464df0ff1e959fe43d22bccb38252",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-candidate-20261010\\LogForesight.Web\\Program.cs",
+        "verified_final": "cd0ee3a40f7ae7709e864080a72e37f74d7464df0ff1e959fe43d22bccb38252",
+        "root_followup": false
+      },
+      {
+        "path": "LogForesight.Web/Views/Pages/Prtg.cshtml",
+        "before": "769ab3a88f8ad7899f8f93a333844526aad9686746d9a01612108a0997129219",
+        "final": "87b6b58019f07ae4886bfde36707ef76fb630eb80e0ca37ec869c4795ed8c8e3",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-candidate-20261010\\LogForesight.Web\\Views\\Pages\\Prtg.cshtml",
+        "verified_final": "9b3a72cb32297c1f3274d02c624c5d5405ec5da7f5e7e378caf8e0048691c3db",
+        "root_followup": true
+      },
+      {
+        "path": "LogForesight.Tests/PrtgChannelDiscoveryJobStoreTests.cs",
+        "before": null,
+        "final": "82a5b612e7d3430d0f84247bf9c3f4be141b521bb4bbb82a48f37c206521b684",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-candidate-20261010\\LogForesight.Tests\\PrtgChannelDiscoveryJobStoreTests.cs",
+        "verified_final": "82a5b612e7d3430d0f84247bf9c3f4be141b521bb4bbb82a48f37c206521b684",
+        "root_followup": false
+      },
+      {
+        "path": "LogForesight.Tests/PrtgTrustedSamplingProfilesControllerTests.cs",
+        "before": "f19d5c34efafb772d73179448dd19e82890d8eb955477a65de6cf40dc4558e61",
+        "final": "4807365c96c9dac25ef048f56826f68b77addaf6c2f29f961eea1f57e1fa6f5c",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-candidate-20261010\\LogForesight.Tests\\PrtgTrustedSamplingProfilesControllerTests.cs",
+        "verified_final": "4807365c96c9dac25ef048f56826f68b77addaf6c2f29f961eea1f57e1fa6f5c",
+        "root_followup": false
+      },
+      {
+        "path": "LogForesight.Tests/PrtgClientTests.cs",
+        "before": "96a0645a0f452f6132054ca9a2e89b394dae06d9d102b616380bb0ba2afd667f",
+        "final": "ebcca2d8ac3b5c70d9fe4bb7ed7cb642e3fed21924f7922b6de13bd13889ca32",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-candidate-20261010\\LogForesight.Tests\\PrtgClientTests.cs",
+        "verified_final": "ebcca2d8ac3b5c70d9fe4bb7ed7cb642e3fed21924f7922b6de13bd13889ca32",
+        "root_followup": false
+      },
+      {
+        "path": "LogForesight.Core/PrtgClient.cs",
+        "before": "767d69119bc8c5184291688213dde6730f5fcdb6524544d24c05f795d3cb10c5",
+        "final": "1cfe55acb2153d2c05da0f6a0c6f38822d014bf19a53e465513bd707f464b2a3",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-acceptance-candidate-20261010\\LogForesight.Core\\PrtgClient.cs",
+        "verified_final": "1cfe55acb2153d2c05da0f6a0c6f38822d014bf19a53e465513bd707f464b2a3",
+        "root_followup": false
+      },
+      {
+        "path": "LogForesight.Web/Services/PrtgTrustedSamplingChannelDiscoveryHostedService.cs",
+        "before": null,
+        "final": "6b77cbdc7eaf4a89e6ca61e05480f0b11bee36c6df0b889e5712463e3388fe05",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-acceptance-candidate-20261010\\LogForesight.Web\\Services\\PrtgTrustedSamplingChannelDiscoveryHostedService.cs",
+        "verified_final": "f6631b9d9d1e32217915607d4e9c433d8231325775612827f2cd3aef2527d255",
+        "root_followup": true
+      },
+      {
+        "path": "LogForesight.Web/wwwroot/js/pages/prtg-admin.js",
+        "before": "8c28fad8352c6986135d0cc06e416ef0e0490a7db9b580607ee2981d040b4d78",
+        "final": "d296303413f825c611364033003ad27920bd76110f925f33f791d89f9c385ba3",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-acceptance-candidate-20261010\\LogForesight.Web\\wwwroot\\js\\pages\\prtg-admin.js",
+        "verified_final": "d296303413f825c611364033003ad27920bd76110f925f33f791d89f9c385ba3",
+        "root_followup": false
+      },
+      {
+        "path": "LogForesight.Web/wwwroot/js/prtg-channel-discovery-outcomes.js",
+        "before": null,
+        "final": "75e4f30b143ff4493bbcdf49c3c10c22c74f2377b262f1c94c4278e2c4c7a0b3",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-acceptance-candidate-20261010\\LogForesight.Web\\wwwroot\\js\\prtg-channel-discovery-outcomes.js",
+        "verified_final": "75e4f30b143ff4493bbcdf49c3c10c22c74f2377b262f1c94c4278e2c4c7a0b3",
+        "root_followup": false
+      },
+      {
+        "path": "LogForesight.Tests/PrtgTrustedSamplingChannelDiscoveryWorkerAcceptanceTests.cs",
+        "before": null,
+        "final": "0c71620437cd194bd55eee16e39e6ee7caa90eea21f491d4cc71f83b1b0d6f78",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-acceptance-candidate-20261010\\LogForesight.Tests\\PrtgTrustedSamplingChannelDiscoveryWorkerAcceptanceTests.cs",
+        "verified_final": "45e87babb69ebc157ffaeaafe4069f092b171e3168adff53ecaa739280d2a35b",
+        "root_followup": true
+      },
+      {
+        "path": "LogForesight.Tests/js/prtg-channel-discovery-outcomes.test.mjs",
+        "before": null,
+        "final": "4ad6ba10d5868425f401a0f83e5498fac8b1739290feb7205068dc03f6f676b2",
+        "candidate": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\maintenance-channel-discovery-acceptance-candidate-20261010\\LogForesight.Tests\\js\\prtg-channel-discovery-outcomes.test.mjs",
+        "verified_final": "4ad6ba10d5868425f401a0f83e5498fac8b1739290feb7205068dc03f6f676b2",
+        "root_followup": false
+      }
+    ],
+    "actualApiEvidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\qualification-coverage-api-six-866e61280b96430681b6be8d64221996",
+    "actualApi": {
+      "normalClock": true,
+      "sharedQuotasUnchanged": true,
+      "rawProofs": 6,
+      "currentProfiles": 6,
+      "coverageReady": true,
+      "checkCompleted": true,
+      "readonlyBindingUnchanged": true,
+      "secondPilotWallSeconds": 66.2552173,
+      "ownedCleanupComplete": true
+    },
+    "rootRed": {
+      "actualApiRun": "qualification-coverage-api-six-dd770935519e428280f8c174e1b8b9ef",
+      "unitTrx": ".gemini-tasks/primary-results/channel-observed-red/channel-observed-red.trx",
+      "reason": "Observed identity channel fingerprint was incorrectly equated to absent formal binding."
+    },
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "wholeRoundAccepted": false,
+    "browser": {
+      "evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\qualification-coverage-api-six-866e61280b96430681b6be8d64221996\\browser-channel",
+      "freshBuildOldCapacityDenied": true,
+      "sameBuildPublicPilotRecovery": true,
+      "exactChannelManualSelectionRequired": true,
+      "existingBindingRevision": 1,
+      "existingBindingStatus": "qualified",
+      "consoleErrors": 0,
+      "ownedCleanupComplete": true
+    }
   }
 }

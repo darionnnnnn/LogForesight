@@ -135,7 +135,8 @@ public sealed class PrtgClient : IDisposable
     {
         var handler = new SocketsHttpHandler
         {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            AllowAutoRedirect = false
         };
         if (ignoreSslErrors)
         {
@@ -359,7 +360,8 @@ public sealed class PrtgClient : IDisposable
         Checkpoint(ct);
         var admissionTimer = category == PrtgEndpointCategory.Table && TableBudgetAdmissionWaitObserved is not null
             ? Stopwatch.StartNew() : null;
-        using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General
+        using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General &&
+            string.IsNullOrWhiteSpace(AdmissionPlanFingerprint)
             ? await Budget.AcquireAsync(category, ct)
             : await Budget.AcquireAsync(category, ct, RequestPurpose, AdmissionPlanFingerprint);
         admissionTimer?.Stop();

@@ -1298,3 +1298,9 @@ Manifest schema 為 qualification-job-manifest-v1，最大 8 MiB；sensorIds 為
 Resume／Check 必須提供實際 JobId、ExpectedVersion、ExpectedWave；Resume 使用版本 CAS，回應後 pin 新 accepted wave，poll 不接續他人重開的 wave，允許同 wave 合法 version 前進。每個已接受回應与 poll 以 atomic receipt 保存；整次 1–600 秒與每次 HTTP 30 秒期限、禁止 redirect、bounded JSON／深度保持。期限到達且作業仍 active 時回傳已保存進度與 pollDeadlineReached=true，不假報作業失敗或完成；Check -RequireMatrixReady 仍須 completed 且 current 全範圍 ready/proof，否則拒絕。
 
 此 manifest 的逐顆 fences 在 15000 顆會超過唯讀 coverage collector 的 512 KiB 上限。呼叫 collector 時另產生只含 jobId、sensorIds 與來源契約的最小 coverage manifest，保留原 manifest SHA-256 關聯，不能直接放寬 collector 上限。最後仍由 Read-QualificationCoverage.ps1 與同源 QualificationCoverage.Verify 核全部 raw／profile 分頁；coordinator 的 completed receipt 不代替完整核對、容量或原生來源證據。scripts/prtg-workload/Test-InvokeQualificationJob.ps1 提供可重跑 HTTP 契約驗證。
+
+### 耐久唯讀通道探索
+
+讀取可選頻道使用獨立 discovery job，最多 16 active／32 retained jobs，state 上限 4 MiB、結果保留 24 小時。全域一個 SQL lease，30 秒 lease／8 秒續租，整作業 5 分鐘；單回應 128 KiB、100 channels、depth24，使用 current General lane 與禁止 HTTP redirect。queue、GET 前後、結果讀取均核對 Maintain／完整 host visibility 與當前來源契約。
+
+觀測 IdentityChannelFingerprint 和正式 BindingFingerprint 分開保存。首次尚無 binding 或觀測 metadata 已存在時可探索；任何 identity epoch／channel generation／觀測 fingerprint／binding revision 或來源修訂變更均使舊結果失效。結果 readOnly=true、authorizesQualification=false、authorizesProfile=false，不寫 binding、raw proof 或 profile。管理者明選精確 Channel ID 並保存後，依既有正式資格流程取得 raw proof，不預選第一個頻道。重啟續處理及網路狀態未確認時保留草稿；按目前 job ID 輪詢，有界期限與取消不自動重送正式保存。

@@ -14,7 +14,8 @@ namespace LogForesight.Web.Controllers.Api;
 [ApiController, Route("api/prtg/monitoring/trusted-sampling"), Permission(Capability.Maintain)]
 public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend, IHostStore hosts,
     IVisibilityService visibility, ICurrentUser user,
-    PrtgTrustedSamplingProfileRefreshHostedService refresh) : ControllerBase
+    PrtgTrustedSamplingProfileRefreshHostedService refresh,
+    PrtgTrustedSamplingChannelDiscoveryHostedService channelDiscovery) : ControllerBase
 {
     private const int MaxSensors = 15000;
     private const int PageSize = 100;
@@ -60,8 +61,95 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
         return Ok(ApiResponse<PrtgTrustedSamplingBindingEditDto>.Ok(new(
             binding is null ? null : PrtgTrustedSamplingBindingStatusDto.From(binding, status, missing),
             settings.Revision, policy.Revision, identity.Epoch, identity.ChannelGeneration,
-            binding?.BindingRevision ?? 0)));
+            binding?.BindingRevision ?? 0, hostSnapshot.Version)));
     }
+
+    [HttpPost("bindings/{sensorObjid:long}/channel-discovery")]
+    public IActionResult QueueChannelDiscovery(long sensorObjid,
+        [FromBody] PrtgTrustedSamplingChannelDiscoveryRequest request)
+    {
+        if (sensorObjid <= 0 || request is null || request.ExpectedBindingRevision < 0 ||
+            request.ExpectedIdentityEpoch <= 0 || request.ExpectedHostSnapshotVersion < 0 ||
+            !SafeRevision(request.ExpectedSettingsRevision) || !SafeRevision(request.ExpectedPolicyRevision) ||
+            request.ExpectedChannelGeneration is null || request.ExpectedChannelGeneration.Length > 128 ||
+            request.ExpectedBindingFingerprint is { Length: > 128 })
+            return BadRequest(ApiResponse.Fail("validation_failed", "read-only channel discovery fence 無效。"));
+
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var hostSnapshot = CaptureHostSnapshot();
+        if (!policy.SensorIds.Contains(sensorObjid))
+            return BadRequest(ApiResponse.Fail("sensor_outside_policy", "只能查詢目前監控政策範圍內的 sensor。"));
+        if (!CanManageScope(policy, hostSnapshot)) return Forbid();
+        var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var identity = backend.PrtgStore().GetResourceIdentity(sensorObjid);
+        var binding = new PrtgTrustedSamplingBindingStore(backend).Get(sensorObjid);
+        if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) ||
+            request.ExpectedSettingsRevision != settings.Revision || request.ExpectedPolicyRevision != policy.Revision ||
+            request.ExpectedHostSnapshotVersion != hostSnapshot.Version || request.ExpectedIdentityEpoch != identity.Epoch ||
+            request.ExpectedChannelGeneration != identity.ChannelGeneration ||
+            request.ExpectedBindingRevision != (binding?.BindingRevision ?? 0) ||
+            request.ExpectedBindingFingerprint != (binding?.BindingFingerprint ?? "") ||
+            !identity.Active || identity.PendingReconciliation || identity.SourceGeneration != policy.SourceGeneration ||
+            !policy.HostIds.Contains(identity.HostId))
+            return Conflict(ApiResponse.Fail("channel_discovery_fence_changed", "政策、主機可見目錄、來源 identity 或綁定 fence 已變更；請重新載入後再試。"));
+
+        var now = DateTimeOffset.UtcNow;
+        var job = new PrtgChannelDiscoveryJobStore.Job
+        {
+            JobId = Guid.NewGuid().ToString("N"), RequesterUserId = user.UserId,
+            RequesterWasServerAdmin = user.IsServerAdmin, SensorObjid = sensorObjid,
+            Status = "queued", Reason = "queued", SettingsRevision = settings.Revision,
+            PolicyRevision = policy.Revision, SourceGeneration = policy.SourceGeneration,
+            HostSnapshotVersion = hostSnapshot.Version, ResourceGeneration = identity.Generation,
+            IdentityEpoch = identity.Epoch, ChannelGeneration = identity.ChannelGeneration,
+            IdentityChannelFingerprint = identity.ChannelFingerprint,
+            BindingRevision = binding?.BindingRevision ?? 0, BindingFingerprint = binding?.BindingFingerprint ?? "",
+            QueuedAtUtc = now, DeadlineUtc = now.Add(PrtgTrustedSamplingChannelDiscoveryHostedService.JobDeadline)
+        };
+        try
+        {
+            var accepted = channelDiscovery.Queue(job);
+            return Accepted(ApiResponse<PrtgTrustedSamplingChannelDiscoveryDto>.Ok(ToChannelDiscoveryDto(accepted)));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "channel-discovery-active-capacity-full" ||
+            ex.Message == "channel-discovery-retention-capacity-full")
+        { return Conflict(ApiResponse.Fail("channel_discovery_capacity_full", "唯讀來源探索佇列已滿；目前請求尚未排入，請稍後查看作業狀態再重試。")); }
+    }
+
+    [HttpGet("channel-discovery/{jobId}")]
+    public IActionResult ReadChannelDiscovery(string jobId)
+    {
+        if (!Guid.TryParseExact(jobId, "N", out _))
+            return BadRequest(ApiResponse.Fail("validation_failed", "channel discovery job id 無效。"));
+        var job = channelDiscovery.Read(jobId);
+        if (job is null || job.RequesterUserId != user.UserId) return NotFound(ApiResponse.Fail("job_not_found", "找不到此唯讀來源探索作業。"));
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var hostSnapshot = CaptureHostSnapshot();
+        if (!policy.SensorIds.Contains(job.SensorObjid) || !CanManageScope(policy, hostSnapshot)) return Forbid();
+        if (job.Status == "completed")
+        {
+            var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            var identity = backend.PrtgStore().GetResourceIdentity(job.SensorObjid);
+            var binding = new PrtgTrustedSamplingBindingStore(backend).Get(job.SensorObjid);
+            if (hostSnapshot.Version != job.HostSnapshotVersion || settings.Revision != job.SettingsRevision ||
+                policy.Revision != job.PolicyRevision || policy.SourceGeneration != job.SourceGeneration ||
+                identity.SourceGeneration != job.SourceGeneration || identity.Generation != job.ResourceGeneration ||
+                identity.Epoch != job.IdentityEpoch || identity.ChannelGeneration != job.ChannelGeneration ||
+                !identity.Active || identity.PendingReconciliation ||
+                (binding?.BindingRevision ?? 0) != job.BindingRevision ||
+                (binding?.BindingFingerprint ?? "") != job.BindingFingerprint ||
+                identity.ChannelFingerprint != job.IdentityChannelFingerprint)
+                return Conflict(ApiResponse.Fail("channel_discovery_fence_changed", "探索完成後 source、binding 或 host fence 已變更；不回傳舊頻道清單，請重新載入並重試。"));
+        }
+        return Ok(ApiResponse<PrtgTrustedSamplingChannelDiscoveryDto>.Ok(ToChannelDiscoveryDto(job)));
+    }
+
+    private static PrtgTrustedSamplingChannelDiscoveryDto ToChannelDiscoveryDto(PrtgChannelDiscoveryJobStore.Job job) => new(
+        job.JobId, job.SensorObjid, job.Status, job.Reason, job.QueuedAtUtc, job.DeadlineUtc,
+        job.CompletedAtUtc, job.Channels.Select(row => new PrtgTrustedSamplingChannelDiscoveryChannelDto(
+            row.ChannelObjectId.ToString(System.Globalization.CultureInfo.InvariantCulture), row.Caption, row.Unit, row.RawValue)).ToArray(),
+        job.ChannelsTruncated, ReadOnly: true, AuthorizesQualification: false, AuthorizesProfile: false,
+        job.ResourceGeneration, job.IdentityEpoch, job.ChannelGeneration);
 
     [HttpPost("bindings/{sensorObjid:long}/qualify")]
     public async Task<IActionResult> QualifyBinding(long sensorObjid,
@@ -574,6 +662,8 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
     }
 
     private static bool Hex64(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
+    private static bool SafeRevision(string? value) => value is { Length: > 0 and <= 128 } &&
+        value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
 }
 
 public sealed record PrtgTrustedSamplingProbeRequest(IReadOnlyList<long> SensorObjids);
@@ -621,7 +711,17 @@ public sealed record PrtgTrustedSamplingBindingStatusDto(long SensorObjid, long 
 
 public sealed record PrtgTrustedSamplingBindingEditDto(PrtgTrustedSamplingBindingStatusDto? Binding,
     string ExpectedSettingsRevision, string ExpectedPolicyRevision, long ExpectedIdentityEpoch,
-    string ExpectedChannelGeneration, long ExpectedBindingRevision);
+    string ExpectedChannelGeneration, long ExpectedBindingRevision, long ExpectedHostSnapshotVersion = 0);
+public sealed record PrtgTrustedSamplingChannelDiscoveryRequest(string ExpectedSettingsRevision,
+    string ExpectedPolicyRevision, long ExpectedHostSnapshotVersion, long ExpectedIdentityEpoch,
+    string ExpectedChannelGeneration, long ExpectedBindingRevision, string? ExpectedBindingFingerprint);
+public sealed record PrtgTrustedSamplingChannelDiscoveryChannelDto(string ChannelObjectId,
+    string Caption, string Unit, double? RawValue);
+public sealed record PrtgTrustedSamplingChannelDiscoveryDto(string JobId, long SensorObjid,
+    string Status, string Reason, DateTimeOffset QueuedAtUtc, DateTimeOffset DeadlineUtc,
+    DateTimeOffset? CompletedAtUtc, IReadOnlyList<PrtgTrustedSamplingChannelDiscoveryChannelDto> Channels,
+    bool ChannelsTruncated, bool ReadOnly, bool AuthorizesQualification, bool AuthorizesProfile,
+    string ResourceGeneration, long IdentityEpoch, string ChannelGeneration);
 public sealed record PrtgTrustedSamplingBindingQualificationRequest(long ExpectedBindingRevision,
     string ExpectedBindingFingerprint);
 public sealed record PrtgTrustedSamplingBindingQualificationResult(long SensorObjid, string Status,

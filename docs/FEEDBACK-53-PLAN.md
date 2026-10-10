@@ -51,7 +51,6 @@
 ### 5.1 尚未完成的實作與必要交付
 
 - [ ] R05／N6：完成 snapshot 100 顆精確批次及同形來源探測、profile／snapshot 容量失效後的有界重新校準；驗證完整 15000 顆共同排程，不降低 25% 餘裕、10 分鐘快照期限或週期性採樣。profile 分批及滾動補齊子項已由本輪 Main 239 項回歸核對完成。
-- [ ] R15／N5：完成耐久唯讀通道探索與新綁定操作、實際六顆 current API 資格→自動 profile→全頁核對。共同剩餘額度前置檢查、缺 raw proof 明示耐久作業與 enabled qualification pilot 正式 lane 接線已由 Main 116 項及前端 4 項測試核對。
 - [ ] R09／N6：完成可交付的實際 API 固定矩陣 consumer，依正式 provider 及 3000／15000／180 日固定母體完成共同工作負載。精確全分頁核對、唯讀 collector 與明確 Start／Resume／Check lifecycle 工具已完成；兩台有界條件切換、當前世代重新採樣與 M5 SQL 提交後重放子項已驗收，不能移除本項完整範圍。
 - [ ] A0／N1：取得同版本現場有限探測輸出、來源字段／頻道／時區、provider與部署資源；封存真實 fixtures、完整 case manifest。現有安全探測工具已實作，工具成功不等於來源已驗證。
 
@@ -1624,3 +1623,13 @@ Main 建置成功，受影響七類測試 116／116、零失敗／略過，證�
 新增明確 Start／Resume／Check coordinator，逐頁核全部 current 身分與顯式 binding，缺 raw proof 不形成先 ready 的循環前提。1–15000 顆完整遞增 manifest 及逐顆 fences 至多 8 MiB；核對真實保存的 PRTG loopback URL，重用 session，不猜 binding／proof。接受 job 後先保存 atomic receipt，短期限回傳進度及 pollDeadlineReached；同一 job 的 concurrent wave 變更拒絕，Resume 僅採明確 CAS，新 wave 回應後再 pin，正常同 wave version 前進保留。
 
 主代理在 Main 重跑 23 個 HTTP 場景及 1 個連線前拒絕遠端案例，全部通過；包含 15000 顆 150 頁及大於 512 KiB manifest、缺 raw proof Start、重啟續跑 CAS、active deadline、wave 漂移、HTTP／JSON 限制與 completed gate，證據 coordinator-main-final-contracts.log。這是工具契約，沒有實際取得 15000 顆原生 raw proof。actual current Main 六顆 canonical Start／Check→exact collector 正在獨立驗證；固定矩陣的可交付 consumer 尚未完成，不以未追蹤私有 runner 或小測例當容量通過。
+
+### 2026-10-10 耐久唯讀通道探索與六顆實際 API 資格資料流
+
+通道選單改為耐久唯讀探索：目前來源、identity epoch／channel generation、觀測 fingerprint 與 binding revision／fingerprint 分別固定，沒有正式綁定也能探索。所有 Get 前後與讀回重新核對來源及 Maintain／完整 visibility，回傳不授予正式資格、不保存 binding、proof 或 profile。使用共同 General lane、全域單工作 SQL lease、有界 queue／期限／bytes／depth；worker 重啟保留作業，舊身份／權限變更即拒絕。HTTP redirect 禁止，避免來源憑證轉送。
+
+主代理實際六顆 API 首輪發現「metadata 已有非空觀測 fingerprint，尚無 binding」探索被誤拒 409，保留失敗證據並建立 RED。修正為分開 pin identity 與 binding fingerprint；空／非空觀測可探索，GET 前／中 channel 變更仍拒絕。Main 回歸 92/92、Node 9/9、零略過；Razor 顯示同步每組最多 12 顆，Web 建置 0 errors。
+
+正常時鐘、未改共享配額的 numeric-loopback 隔離 API 已完成 disabled snapshot／profile pilots→settings CAS 啟用→無 binding 的唯讀探索→六顆明確 binding→enabled qualification pilots→耐久 Start→六顆 raw proof→自動 profile→current-fenced Check→真正 Read-QualificationCoverage 全頁核對。第二輪五顆 qualification pilot 合法等待共享額度，wall 66.2552173 秒，確認不能將排隊併入 ticket 就緒後的 30 秒來源期限。Start 20 秒返回已保存 active 進度；Check completed 與 collector ready／6 raw／6 current profile 通過，唯讀探索前後 binding 完全相同，五個 owned process 已清理。證據位於 work/qualification-coverage-api-six-866e61280b96430681b6be8d64221996。此 R15 實作與六顆資料流 TODO 清除；宣告類型的原生來源、全部角色動線、完整 3000／15000／180 日容量與 AC 門檻仍依 §5.2 核對。
+
+同版隔離瀏覽器另確認：新版重啟後拒絕舊容量證據，維護頁顯示 waiting-capacity；經公開 API 停用→新 snapshot／profile pilots→CAS 啟用重新取得 current plan，重新固定來源的唯讀探索完成。編輯器回傳 1 個精確 channel、不自動選取、保留既有 qualified／revision 1 與語意欄位，明示不授權 profile；六顆作業狀態 6/6 qualified／waiting 0／failed 0 可見，console error 0。completed-dom.txt／completed.png 保存該段畫面，僅本段管理者操作，不替代全部角色 AC。兩個重啟 owned process 已清理。

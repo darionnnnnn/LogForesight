@@ -144,7 +144,7 @@
     <section class="lf-card mb-3" aria-labelledby="prtg-profile-refresh-title">
         <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-profile-refresh-title">Trusted sampling profile 更新進度</h2></div>
         <div class="lf-card__body">
-            <p class="small text-muted">背景工作公平巡覽目前正式選取的 sensor，每次最多讀取 100 筆並探測最多 5 顆。只有目前啟用、CPU／記憶體／磁碟且未暫停的資源會探測；來源欄位或身分未能證明時會等待並冷卻重試。這項進度不代表 15,000 顆容量驗收或原生 PRTG 24 小時歷史證明。</p>
+            <p class="small text-muted">背景工作公平巡覽目前正式選取的 sensor，每次最多讀取 100 筆，並以最多 12 顆一組核對來源。只有目前啟用、CPU／記憶體／磁碟且未暫停的資源會探測；來源欄位或身分未能證明時會等待並冷卻重試。這項進度不代表 15,000 顆容量驗收或原生 PRTG 24 小時歷史證明。</p>
             <div class="d-flex flex-wrap gap-2 mb-2">
                 <button class="btn btn-sm btn-outline-primary" id="prtg-profile-refresh-reload" type="button">重新載入</button>
                 <button class="btn btn-sm btn-outline-secondary" id="prtg-profile-refresh-prev" type="button" disabled>上一頁</button>
@@ -155,7 +155,7 @@
             <div id="prtg-profile-refresh-rows" class="border rounded p-2" aria-live="polite"></div>
             <hr />
             <h3 class="h6">逐 sensor 頻道綁定與資格</h3>
-            <p class="small text-muted">每列依明確 Sensor ID 載入設定。先執行最多 5 顆的唯讀來源 probe，再由管理者逐一選擇精確 Channel ID；不預選第一個頻道。首次或語意變更保存為 waiting；完全相同且仍有效的保存保留既有資格。正式資格需要「核驗此綁定」的真實來源證據。</p>
+            <p class="small text-muted">每列依明確 Sensor ID 載入設定。先讀取此 sensor 的可選來源頻道，再由管理者選擇精確 Channel ID；不預選第一個頻道。首次或語意變更保存為 waiting；完全相同且仍有效的保存保留既有資格。正式資格需要另外取得原始採樣核驗證據。</p>
             <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
                 <button class="btn btn-sm btn-outline-secondary" id="prtg-profile-binding-prev" type="button" disabled>上一頁</button>
                 <button class="btn btn-sm btn-outline-secondary" id="prtg-profile-binding-next" type="button" disabled>下一頁</button>
@@ -523,7 +523,7 @@
                     <span class="small d-block" id="prtg-capacity-pilot-result"></span>
                     <span class="small d-block" id="prtg-profile-capacity-pilot-result"></span>
                     <span class="small text-muted d-block">容量試測使用實際快照表格查詢與共用限流，僅估算 10 分鐘（保守）／3 分鐘（激進）窗口並保留 25% 餘裕；這不是原生 PRTG 24 小時能力證明。</span>
-                    <span class="small text-muted d-block">Profile 試測可在擷取停用時執行，依目前範圍排序取最多 5 顆，每顆依序核對前置 sensor、channels、native primarychannel property 與後置 sensor（四次 Table 配額請求）；每份回應最多 512 KiB、整趟 30 秒。只保存遮罩來源／範圍／策略／版本雜湊、請求數、結果與耗時，不建立 trusted profile，也不改 identity／channel generation。</span>
+                    <span class="small text-muted d-block">Profile 試測可在擷取停用時執行，依目前範圍排序取最多 5 顆；每組最多 5 顆以 before/after sensors bracket 加每顆 channels 與 native primarychannel 各一次，共 2+2n 次 Table 配額請求（5 顆共 12 次）。每份回應最多 512 KiB、每組 30 秒。只保存遮罩來源／範圍／策略／版本雜湊、請求數、結果與耗時，不建立 trusted profile，也不改 identity／channel generation。</span>
                 </div>
             </div>
         </div>

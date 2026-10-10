@@ -102,6 +102,52 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
     }
 
     [Fact]
+    public void ChannelDiscoveryAcceptanceIsDurableAndDoesNotCreateBindingQualificationOrProfile()
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        var current = Assert.IsType<OkObjectResult>(controller.GetBinding(11)).Value;
+        var edit = Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingEditDto>>(current);
+        var beforeIdentity = _backend.PrtgStore().GetResourceIdentity(11);
+        Assert.Null(new PrtgTrustedSamplingBindingStore(_backend).Get(11));
+
+        var accepted = Assert.IsType<AcceptedResult>(controller.QueueChannelDiscovery(11,
+            new PrtgTrustedSamplingChannelDiscoveryRequest(edit.Data!.ExpectedSettingsRevision,
+                edit.Data.ExpectedPolicyRevision, edit.Data.ExpectedHostSnapshotVersion,
+                edit.Data.ExpectedIdentityEpoch, edit.Data.ExpectedChannelGeneration,
+                edit.Data.ExpectedBindingRevision, "")));
+        var response = Assert.IsType<ApiResponse<PrtgTrustedSamplingChannelDiscoveryDto>>(accepted.Value);
+        var queued = response.Data!;
+        Assert.Equal("queued", queued.Status);
+        Assert.True(queued.ReadOnly);
+        Assert.False(queued.AuthorizesQualification);
+        Assert.False(queued.AuthorizesProfile);
+        Assert.Empty(queued.Channels);
+
+        var polled = Assert.IsType<OkObjectResult>(controller.ReadChannelDiscovery(queued.JobId)).Value;
+        var persisted = Assert.IsType<ApiResponse<PrtgTrustedSamplingChannelDiscoveryDto>>(polled).Data!;
+        Assert.Equal(queued.JobId, persisted.JobId);
+        Assert.Equal("queued", persisted.Status);
+        Assert.Null(new PrtgTrustedSamplingBindingStore(_backend).Get(11));
+        var afterIdentity = _backend.PrtgStore().GetResourceIdentity(11);
+        Assert.Equal(beforeIdentity.Epoch, afterIdentity.Epoch);
+        Assert.Equal(beforeIdentity.ChannelFingerprint, afterIdentity.ChannelFingerprint);
+    }
+
+    [Fact]
+    public void ChannelDiscoveryRefusesStaleHostOrBindingFenceBeforePersistingQueueEntry()
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        var edit = Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingEditDto>>(
+            Assert.IsType<OkObjectResult>(controller.GetBinding(11)).Value);
+        var staleRequest = new PrtgTrustedSamplingChannelDiscoveryRequest(edit.Data!.ExpectedSettingsRevision,
+            edit.Data.ExpectedPolicyRevision, edit.Data.ExpectedHostSnapshotVersion + 1,
+            edit.Data.ExpectedIdentityEpoch, edit.Data.ExpectedChannelGeneration,
+            edit.Data.ExpectedBindingRevision, "");
+
+        Assert.IsType<ConflictObjectResult>(controller.QueueChannelDiscovery(11, staleRequest));
+    }
+
+    [Fact]
     public void NumericQuantityDtoSavesBindingAndGetReturnsFencedWaitingState()
     {
         var identity = _backend.PrtgStore().GetResourceIdentity(11);
@@ -467,7 +513,10 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
     private PrtgTrustedSamplingProfilesController CreateController(IVisibilityService visibility) => new(
         _backend, _hosts, visibility, _user,
         new PrtgTrustedSamplingProfileRefreshHostedService(_backend, _hosts,
-            NullLogger<PrtgTrustedSamplingProfileRefreshHostedService>.Instance));
+            NullLogger<PrtgTrustedSamplingProfileRefreshHostedService>.Instance),
+        new PrtgTrustedSamplingChannelDiscoveryHostedService(_backend, _hosts,
+            NullLogger<PrtgTrustedSamplingChannelDiscoveryHostedService>.Instance,
+            settings => PrtgClientFactory.Create(settings)));
 
     private sealed class TestUser(params Capability[] capabilities) : ICurrentUser
     {
