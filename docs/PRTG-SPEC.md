@@ -1304,3 +1304,5 @@ Resume／Check 必須提供實際 JobId、ExpectedVersion、ExpectedWave；Resum
 讀取可選頻道使用獨立 discovery job，最多 16 active／32 retained jobs，state 上限 4 MiB、結果保留 24 小時。全域一個 SQL lease，30 秒 lease／8 秒續租，整作業 5 分鐘；單回應 128 KiB、100 channels、depth24，使用 current General lane 與禁止 HTTP redirect。queue、GET 前後、結果讀取均核對 Maintain／完整 host visibility 與當前來源契約。
 
 觀測 IdentityChannelFingerprint 和正式 BindingFingerprint 分開保存。首次尚無 binding 或觀測 metadata 已存在時可探索；任何 identity epoch／channel generation／觀測 fingerprint／binding revision 或來源修訂變更均使舊結果失效。結果 readOnly=true、authorizesQualification=false、authorizesProfile=false，不寫 binding、raw proof 或 profile。管理者明選精確 Channel ID 並保存後，依既有正式資格流程取得 raw proof，不預選第一個頻道。重啟續處理及網路狀態未確認時保留草稿；按目前 job ID 輪詢，有界期限與取消不自動重送正式保存。
+
+通道唯讀探測的最後授權與來源核對位於所有共享配額、在途與 purpose pacing 等待之後、實際送出記帳之前。任何 fence 失效都保存 failed-stale 原因碼，停止該次來源 GET，也不建立正式信任或容量證據。

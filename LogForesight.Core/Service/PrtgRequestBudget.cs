@@ -74,12 +74,14 @@ public sealed class PrtgBudgetLease : IDisposable
         _beforeMarkSent = beforeMarkSent;
     }
 
-    public async Task MarkRequestSentAsync(CancellationToken cancellationToken = default)
+    public async Task MarkRequestSentAsync(CancellationToken cancellationToken = default,
+        Action? beforeMarkRequestSent = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (Volatile.Read(ref _markedSent) != 0) return;
         if (_beforeMarkSent is not null) await _beforeMarkSent(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
+        beforeMarkRequestSent?.Invoke();
         MarkRequestSent();
     }
 

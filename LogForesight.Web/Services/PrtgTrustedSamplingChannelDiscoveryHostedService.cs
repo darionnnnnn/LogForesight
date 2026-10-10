@@ -135,7 +135,14 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryHostedService : Backgroun
             client.AdmissionPlanFingerprint = plan.Fingerprint;
             var json = await client.GetBoundedJsonAsync(
                 $"api/table.json?content=channels&id={job.SensorObjid}&columns=objid,name,lastvalue_raw,unit&usecaption=1&count=100",
-                MaxResponseBytes, operation.Token);
+                MaxResponseBytes, operation.Token,
+                beforeRequestSent: () =>
+                {
+                    if (!HasCurrentFences(job, out _, out _, out _, out _, out var currentHostVersion, out var fenceReason))
+                        throw new PrtgPreSendFenceException(fenceReason);
+                    if (hostSnapshot.Version != currentHostVersion || hostVersion != currentHostVersion)
+                        throw new PrtgPreSendFenceException("host-snapshot-changed");
+                });
             var channels = ParseChannels(json, out var truncated);
 
             if (!HasCurrentFences(job, out _, out _, out _, out _, out var finalHostVersion, out var finalReason) ||
@@ -147,6 +154,8 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryHostedService : Backgroun
             store.Complete(job, DateTimeOffset.UtcNow, channels, truncated);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        catch (PrtgPreSendFenceException ex)
+        { store.Fail(job, DateTimeOffset.UtcNow, "failed-stale", ex.Reason); }
         catch (OperationCanceledException)
         {
             var now = DateTimeOffset.UtcNow;

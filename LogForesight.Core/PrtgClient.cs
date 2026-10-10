@@ -7,6 +7,12 @@ using NLog;
 
 namespace LogForesight.Core;
 
+/// <summary>Raised when a caller's authorization or source fence changes while waiting for request admission.</summary>
+public sealed class PrtgPreSendFenceException(string reason) : Exception(reason)
+{
+    public string Reason { get; } = reason;
+}
+
 /// <summary>
 /// PRTG 連線／存取例外。訊息保證不含敏感的 token、密碼或 passhash 資訊，可直接顯示給操作者或寫入 log。
 /// </summary>
@@ -322,10 +328,12 @@ public sealed class PrtgClient : IDisposable
         => (await GetResponseCoreAsync(relativePathAndQuery, null, true, ct)).Content;
 
     public async Task<string> GetBoundedJsonAsync(string relativePathAndQuery, int maximumResponseBytes,
-        CancellationToken ct = default, Action? onRequestSent = null, Action<TimeSpan>? onResponseRead = null)
+        CancellationToken ct = default, Action? onRequestSent = null, Action<TimeSpan>? onResponseRead = null,
+        Action? beforeRequestSent = null)
     {
         if (maximumResponseBytes is < 1 or > 2 * 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(maximumResponseBytes));
-        return (await GetResponseCoreAsync(relativePathAndQuery, maximumResponseBytes, true, ct, onRequestSent, onResponseRead)).Content;
+        return (await GetResponseCoreAsync(relativePathAndQuery, maximumResponseBytes, true, ct, onRequestSent, onResponseRead,
+            beforeRequestSent)).Content;
     }
 
     public Task<PrtgSourceResponse> GetBoundedJsonResponseAsync(string relativePathAndQuery, int maximumResponseBytes,
@@ -342,7 +350,8 @@ public sealed class PrtgClient : IDisposable
     }
 
     private async Task<PrtgSourceResponse> GetResponseCoreAsync(string relativePathAndQuery, int? maximumResponseBytes,
-        bool expectJson, CancellationToken ct, Action? onRequestSent = null, Action<TimeSpan>? onResponseRead = null)
+        bool expectJson, CancellationToken ct, Action? onRequestSent = null, Action<TimeSpan>? onResponseRead = null,
+        Action? beforeRequestSent = null)
     {
         Checkpoint(ct);
         // 帳號類認證（password／passhash）的憑證失敗要黏住：每個 sensor 的數值擷取各自
@@ -378,7 +387,9 @@ public sealed class PrtgClient : IDisposable
             Checkpoint(ct);
             // Purpose-lane pacing is admission delay, like shared quota and permit waits.
             admissionTimer?.Restart();
-            if (lease != null) await lease.MarkRequestSentAsync(ct);
+            // Revalidate after every asynchronous lease wait, immediately before send accounting.
+            if (lease != null) await lease.MarkRequestSentAsync(ct, beforeRequestSent);
+            else beforeRequestSent?.Invoke();
             if (admissionTimer is not null)
             {
                 admissionTimer.Stop();
@@ -397,6 +408,10 @@ public sealed class PrtgClient : IDisposable
                 ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, requestToken);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (PrtgPreSendFenceException)
         {
             throw;
         }
