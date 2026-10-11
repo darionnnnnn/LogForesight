@@ -718,7 +718,7 @@ public class AnalysisOrchestrator
                 runConsole.WriteLine("--- 執行結束 ---");
                 Log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
                 runRecorder.Milestone("執行結束");
-                runRecorder.Finish(exitCode: 0);
+                runRecorder.Finish(exitCode: result.Success ? 0 : 1);
                 if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: true);
 
                 result.Elapsed = runStopwatch.Elapsed;
@@ -1131,6 +1131,11 @@ public class AnalysisOrchestrator
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
+            if (netiqResult.HostsFailed > 0)
+            {
+                result.Success = false;
+                result.FailureMessage ??= $"NetIQ 分析有 {netiqResult.HostsFailed} 個主機日失敗";
+            }
             runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
@@ -1156,6 +1161,8 @@ public class AnalysisOrchestrator
         catch (Exception ex)
         {
             _hostDayTiming?.MarkIncomplete(runRecorder.RunId);
+            result.Success = false;
+            result.FailureMessage ??= $"NetIQ 分析失敗：{ex.Message}";
             // 與本機分析的失敗邊界一致：NetIQ 這段出問題不該讓已經完成的本機分析與寫入作廢，
             // 只記錄失敗、留給下次執行的缺漏日回補機制自動重試
             Log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");

@@ -318,7 +318,9 @@ public class NetiqPipelineService
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = _backend.RecordStore(hostKey);
-            var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
+            var missingScan = MissingDateFinder.FindWithExistingDates(
+                store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
+            var missingDates = missingScan.MissingDates;
 
             // 缺漏日與重跑日共用同一個回望窗口（回饋三十四輪 C）：兩者找的是同一條時間軸上
             // 互斥的兩半（沒紀錄的補、有紀錄的依模式重跑），沒有任何模式需要兩個不同的天數。
@@ -341,7 +343,8 @@ public class NetiqPipelineService
             }
             else
             {
-                plans.Add(new HostPlan(target, store, targetDates, rerunDates.ToHashSet(), groupIds, isHighVolume));
+                plans.Add(new HostPlan(target, store, targetDates, rerunDates.ToHashSet(),
+                    missingScan.ExistingNetiqDates, groupIds, isHighVolume));
             }
         }
 
@@ -444,8 +447,11 @@ public class NetiqPipelineService
         }
         catch (ArgumentException)
         {
-            foreach (var plan in batch) _hostDayTiming?.RecordUnknown(_runRecorder.RunId, plan.Target.HostId, date);
+            foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
+            NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "failed");
+            NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
             _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
+            result.AddFailed(batch.Length);
             return; // ips 不可能為空（Chunk 保證每批至少 1 筆），這裡只是防禦性守住
         }
 
@@ -457,6 +463,7 @@ public class NetiqPipelineService
         var eventsByIp = new Dictionary<string, List<SentinelEvent>>(StringComparer.OrdinalIgnoreCase);
 
         SentinelSearchResult searchResult;
+        NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "running");
         NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "running");
         try
         {
@@ -483,12 +490,20 @@ public class NetiqPipelineService
         catch (SentinelClientException ex)
         {
             foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
+            NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "failed");
             NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
             _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：{ex.Message}");
             Log.Warn(ex, "[{Server}] {Date} 批次查詢失敗", sentinelName, date);
             result.AddFailed(batch.Length);
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             return;
+        }
+        catch (OperationCanceledException)
+        {
+            NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "stopped");
+            // Keep old formal parents ineligible after a canceled re-fetch, using the existing fail-closed metadata contract.
+            NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
+            throw;
         }
 
         if (searchResult.Truncated)
@@ -537,50 +552,69 @@ public class NetiqPipelineService
         var plansPerIp = batch
             .GroupBy(p => p.Target.IpAddress, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        var terminalAttempts = new List<(long HostId, string Status)>(batch.Length);
 
-        foreach (var plan in batch)
+        try
         {
-            var hostRawEvents = eventsByIp.TryGetValue(plan.Target.IpAddress, out var raw) ? raw : new List<SentinelEvent>();
-            var (mapped, skipped) = SentinelEventMapper.MapAll(hostRawEvents, os);
-            // repip/IP identifies the emitting host; promote it to the canonical owner key only when
-            // this IP maps to one configured target. Duplicate-IP targets remain host-IP scoped/weak.
-            if (plansPerIp[plan.Target.IpAddress] == 1 && plan.Target.HostId > 0)
+            foreach (var plan in batch)
             {
-                var canonicalHostKey = $"host-id:{plan.Target.HostId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-                foreach (var item in mapped)
-                    if (item.SourceEvidence != null)
-                        item.SourceEvidence = SourceEvidence.WithCanonicalHost(item.SourceEvidence, canonicalHostKey);
+                var hostRawEvents = eventsByIp.TryGetValue(plan.Target.IpAddress, out var raw) ? raw : new List<SentinelEvent>();
+                var (mapped, skipped) = SentinelEventMapper.MapAll(hostRawEvents, os);
+                // repip/IP identifies the emitting host; promote it to the canonical owner key only when
+                // this IP maps to one configured target. Duplicate-IP targets remain host-IP scoped/weak.
+                if (plansPerIp[plan.Target.IpAddress] == 1 && plan.Target.HostId > 0)
+                {
+                    var canonicalHostKey = $"host-id:{plan.Target.HostId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+                    foreach (var item in mapped)
+                        if (item.SourceEvidence != null)
+                            item.SourceEvidence = SourceEvidence.WithCanonicalHost(item.SourceEvidence, canonicalHostKey);
+                }
+                totalSkipped += skipped;
+
+                // sn（回報此事件的主機名稱）回填 DisplayName——NetIQ 主機以 IP 登錄，
+                // 光看清單認不出是哪台機器，這是既有 TouchNetiq 設計就支援的欄位
+                var displayName = hostRawEvents
+                    .Select(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostName))
+                    .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+                var hostReported = hostRawEvents.Count > 0;
+
+                // 這台的原始事件已經映射完，分析期間不必再留著（回饋三十四輪 A3）：
+                // 移出桶子讓原始字典層在 AnalyzeHostDayAsync 執行期間就能被回收。
+                // 共用同一 IP 的主機都取用過了才丟。
+                if (--plansPerIp[plan.Target.IpAddress] == 0)
+                {
+                    eventsByIp.Remove(plan.Target.IpAddress);
+                }
+
+                var attemptStatus = await AnalyzeHostDayAsync(
+                    plan, date, mapped, searchResult.Truncated, displayName,
+                    hostReported, trendWindowDays, result, sentinelName, suppressionSnapshot, ct);
+                terminalAttempts.Add((plan.Target.HostId, attemptStatus));
+
+                // 主機之間讓出執行緒（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計段（AI 已脫鉤，
+                // §3）幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒佔到整批
+                // 50 台跑完，期間前景請求只能等 thread pool 長新執行緒（每秒才補一條）。
+                // Yield 讓已排隊的前景工作先跑——成本是每台一次排程往返，相對於一台主機一天的
+                // 分析時間可以忽略。回饋十三輪 D 之後，MaxParallelQueriesPerServer 大於 1 時會有
+                // 多個批次的這個 foreach 同時執行、各自佔用一條執行緒各自 yield——讓步的必要性
+                // 隨批次平行度等比放大，不是變得沒必要，故不因批次 D 而移除或改變頻率。
+                await Task.Yield();
             }
-            totalSkipped += skipped;
-
-            // sn（回報此事件的主機名稱）回填 DisplayName——NetIQ 主機以 IP 登錄，
-            // 光看清單認不出是哪台機器，這是既有 TouchNetiq 設計就支援的欄位
-            var displayName = hostRawEvents
-                .Select(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostName))
-                .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
-            var hostReported = hostRawEvents.Count > 0;
-
-            // 這台的原始事件已經映射完，分析期間不必再留著（回饋三十四輪 A3）：
-            // 移出桶子讓原始字典層在 AnalyzeHostDayAsync 執行期間就能被回收。
-            // 共用同一 IP 的主機都取用過了才丟。
-            if (--plansPerIp[plan.Target.IpAddress] == 0)
-            {
-                eventsByIp.Remove(plan.Target.IpAddress);
-            }
-
-            await AnalyzeHostDayAsync(
-                plan, date, mapped, searchResult.Truncated, displayName,
-                hostReported, trendWindowDays, result, sentinelName, suppressionSnapshot, ct);
-
-            // 主機之間讓出執行緒（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計段（AI 已脫鉤，
-            // §3）幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒佔到整批
-            // 50 台跑完，期間前景請求只能等 thread pool 長新執行緒（每秒才補一條）。
-            // Yield 讓已排隊的前景工作先跑——成本是每台一次排程往返，相對於一台主機一天的
-            // 分析時間可以忽略。回饋十三輪 D 之後，MaxParallelQueriesPerServer 大於 1 時會有
-            // 多個批次的這個 foreach 同時執行、各自佔用一條執行緒各自 yield——讓步的必要性
-            // 隨批次平行度等比放大，不是變得沒必要，故不因批次 D 而移除或改變頻率。
-            await Task.Yield();
         }
+        catch (OperationCanceledException)
+        {
+            foreach (var group in terminalAttempts.GroupBy(item => item.Status))
+                NetiqSourceAttempt.RecordBatch(_backend, group.Select(item => item.HostId).ToArray(), date, _runRecorder.RunId, group.Key);
+            var finished = terminalAttempts.Select(item => item.HostId).ToHashSet();
+            var pending = batch.Select(plan => plan.Target.HostId).Where(hostId => !finished.Contains(hostId)).ToArray();
+            NetiqSourceAttempt.RecordBatch(_backend, pending, date, _runRecorder.RunId, "stopped");
+            // Exclude retained existing parents from downstream PRTG consumers after a stopped retry.
+            NetiqSourceAttempt.MarkExistingBatch(_backend, pending, date, "failed");
+            throw;
+        }
+
+        foreach (var group in terminalAttempts.GroupBy(item => item.Status))
+            NetiqSourceAttempt.RecordBatch(_backend, group.Select(item => item.HostId).ToArray(), date, _runRecorder.RunId, group.Key);
 
         if (totalSkipped > 0)
         {
@@ -592,7 +626,7 @@ public class NetiqPipelineService
     /// 統計段：聚合/規則/趨勢/關聯計算完立刻寫入。取數端只負責統計分析與落地，
     /// 不再執行 AI 分析；需要 AI 的紀錄標記 AiPending=true，留待獨立 AI 排程處理。
     /// </summary>
-    private async Task AnalyzeHostDayAsync(
+    private async Task<string> AnalyzeHostDayAsync(
         HostPlan plan, DateTime date, List<EventLogEntryData> events, bool dataIncomplete,
         string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result, string sentinelName,
         List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
@@ -600,11 +634,13 @@ public class NetiqPipelineService
         var timingStarted = Stopwatch.GetTimestamp();
         var timingRecorded = false;
         var target = plan.Target;
-        var isRerun = plan.RerunDates.Contains(date.Date);
+        var isExplicitRerun = plan.RerunDates.Contains(date.Date);
+        var hasExistingNetiqRecord = plan.ExistingNetiqDates.Contains(date.Date);
+        var replacesExistingRecord = isExplicitRerun || hasExistingNetiqRecord;
 
         // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺（查詢被截斷）時保留原結果——
         // 判定與本機路徑共用同一個函式，不各寫一份
-        if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(events.Count, dataIncomplete, sourceDegraded: false))
+        if (replacesExistingRecord && HostDayPostProcessor.ShouldRetainExistingDay(events.Count, dataIncomplete, sourceDegraded: false))
         {
             _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
             timingRecorded = true;
@@ -612,7 +648,7 @@ public class NetiqPipelineService
             result.AddRerunRetained();
             _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
-            return;
+            return "retained-incomplete";
         }
 
         // 每台主機各自一個 LogAnalysisService 實例：historyService（owner-host 隔離）與
@@ -645,13 +681,14 @@ public class NetiqPipelineService
             record.LatestNetiqAttemptStatus = dataIncomplete ? "partial" : "success";
             record.LatestNetiqAttemptAtUtc = DateTime.UtcNow;
 
-            if (isRerun)
+            if (replacesExistingRecord)
             {
                 plan.Store.DeleteDays(new[] { date });
                 result.AddRerunAnalyzed();
             }
 
             plan.Store.Append(record);
+            // Formal-parent qualification consumers still read this existing metadata; retain that contract.
             if (dataIncomplete)
                 _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
             else
@@ -732,6 +769,7 @@ public class NetiqPipelineService
 
             // 統計完成即算 done（取數端不再處理 AI）：進度條分子分母只反映搜尋+統計的進度
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
+            return dataIncomplete ? "partial" : "success";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -746,6 +784,7 @@ public class NetiqPipelineService
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             // 刻意不寫入歷史：下次執行的缺漏日判定（HasRecord）會自動把這天當缺漏重新處理，
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
+            return "failed";
         }
     }
 
@@ -827,7 +866,8 @@ public class NetiqPipelineService
     /// <see cref="WebHost.IsHighVolume"/> 的計畫階段快照）：true 時分批（<see cref="RunServerOsGroupAsync"/>）
     /// 直接讓它單獨成一批，不必每天都從整批大小重新二分收斂到它。</param>
     private sealed record HostPlan(NetiqTarget Target, IAnalysisRecordStore Store, List<DateTime> MissingDates,
-        HashSet<DateTime> RerunDates, IReadOnlyCollection<long> GroupIds, bool IsHighVolume);
+        HashSet<DateTime> RerunDates, HashSet<DateTime> ExistingNetiqDates,
+        IReadOnlyCollection<long> GroupIds, bool IsHighVolume);
 }
 
 /// <summary>

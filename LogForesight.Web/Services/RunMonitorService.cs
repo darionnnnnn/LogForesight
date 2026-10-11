@@ -20,6 +20,7 @@ public class RunMonitorService
     private readonly ScheduleOptionsStore _scheduleOptions;
     private readonly IUserDisplayNameService _displayNameService;
     private readonly HostDayWorkflowService? _workflow;
+    private readonly StorageBackend? _backend;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     internal static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -29,7 +30,7 @@ public class RunMonitorService
 
     public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users,
         ScheduleOptionsStore scheduleOptions, IUserDisplayNameService displayNameService,
-        HostDayWorkflowService? workflow = null)
+        HostDayWorkflowService? workflow = null, StorageBackend? backend = null)
     {
         _runs = runs;
         _hosts = hosts;
@@ -38,6 +39,7 @@ public class RunMonitorService
         _scheduleOptions = scheduleOptions;
         _displayNameService = displayNameService;
         _workflow = workflow;
+        _backend = backend;
     }
 
     /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
@@ -96,6 +98,8 @@ public class RunMonitorService
         var recordFrom = pageFrom.AddDays(-1);
         var recordTo = pageEnd.AddDays(-1);
         var recordDates = _records.ListHostDates(recordFrom, recordTo);
+        var attempts = ReadAttempts(recordFrom, recordTo, out var attemptsAvailable);
+        var runsById = runs.ToDictionary(run => run.RunId);
 
         var hosts = AllHosts(runs);
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
@@ -147,7 +151,7 @@ public class RunMonitorService
             foreach (var host in hosts)
             {
                 var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
-                var status = StatusOf(host, dayRuns, date, recordDates, localEnabled);
+                var status = StatusOf(host, dayRuns, date, recordDates, localEnabled, attempts, attemptsAvailable, runsById);
 
                 switch (status)
                 {
@@ -182,13 +186,16 @@ public class RunMonitorService
         var dateStr = date.ToString("yyyy-MM-dd");
         var hosts = AllHosts(runs);
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
-        var recordDates = _records.ListHostDates(date.AddDays(-1), date.AddDays(-1));
+        var recordDate = date.AddDays(-1);
+        var recordDates = _records.ListHostDates(recordDate, recordDate);
+        var attempts = ReadAttempts(recordDate, recordDate, out var attemptsAvailable);
+        var runsById = runs.ToDictionary(run => run.RunId);
 
         return hosts.Select(host =>
         {
             var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
             var cell = host.Source == "netiq"
-                ? NetiqCell(host, date, recordDates)
+                ? NetiqCell(host, date, recordDates, attempts, attemptsAvailable, runsById)
                 : LocalCell(host, dateStr, dayRuns, date, recordDates, localEnabled);
             var workflow = host.HostId > 0 ? _workflow?.Get(host.HostId, date.AddDays(-1)) : null;
             return new RunDayHostStatusDto
@@ -225,16 +232,52 @@ public class RunMonitorService
     /// <summary>NetIQ 主機沒有個別 <see cref="BatchRun"/>（管線只登記彙總的一筆，見類別註解），
     /// 「該日是否有分析紀錄」是唯一可用的執行代理指標：分析紀錄的日期是「執行日前一天」
     /// （管線在晚上跑，回補的是昨天的缺漏日，見 <c>NetiqPipelineService</c>）。
-    /// 只能判斷 success／none 兩態——沒有個別失敗/警告訊號可用：分析失敗時管線刻意不寫入紀錄，
-    /// 下次自動重試（與「沒跑」在資料面完全等價，這是誠實的合併，不是遺漏）。</summary>
-    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled) =>
-        host.Source == "netiq" ? NetiqStatus(host, date, recordDates) : LocalStatus(host, dayRuns, date, recordDates, localEnabled);
+    /// 最新取數狀態以持久化主機日收據為準；成功仍須有分析紀錄，失敗不製造父紀錄。
+    /// 舊版沒有收據的日期沿用紀錄存在與否，損壞收據則顯示警告，不冒稱健康。</summary>
+    private IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> ReadAttempts(
+        DateTime from, DateTime to, out bool available)
+    {
+        available = true;
+        if (_backend == null) return new Dictionary<(long, DateTime), NetiqSourceAttempt.Receipt>();
+        try { return NetiqSourceAttempt.ReadLatest(_backend, from, to); }
+        catch (InvalidDataException) { available = false; return new Dictionary<(long, DateTime), NetiqSourceAttempt.Receipt>(); }
+    }
 
-    private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
-        recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? BatchRunStatus.Success : "none";
+    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,
+        HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled,
+        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
+        IReadOnlyDictionary<long, BatchRun> runsById) =>
+        host.Source == "netiq" ? NetiqStatus(host, date, recordDates, attempts, attemptsAvailable, runsById) : LocalStatus(host, dayRuns, date, recordDates, localEnabled);
 
-    private static RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
-        new() { Status = NetiqStatus(host, date, recordDates) };
+    private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates,
+        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
+        IReadOnlyDictionary<long, BatchRun> runsById)
+    {
+        var key = (host.HostId, date.AddDays(-1).Date);
+        if (!attemptsAvailable) return BatchRunStatus.Warning;
+        if (attempts.TryGetValue(key, out var latest))
+        {
+            return latest.Status switch
+            {
+                "failed" => BatchRunStatus.Failed,
+                "stopped" => BatchRunStatus.Stopped,
+                "running" when runsById.TryGetValue(latest.RunId, out var run) && run.FinishedAt.HasValue =>
+                    run.Stopped ? BatchRunStatus.Stopped : run.ExitCode != 0 || run.ErrorCount > 0 ? BatchRunStatus.Failed : BatchRunStatus.Warning,
+                "running" when DateTime.UtcNow - latest.AttemptAtUtc > StuckThreshold => BatchRunStatus.Stuck,
+                "running" => BatchRunStatus.Running,
+                "partial" or "retained-incomplete" => BatchRunStatus.Warning,
+                "success" when recordDates.Contains(key) => BatchRunStatus.Success,
+                "success" => BatchRunStatus.Warning,
+                _ => BatchRunStatus.Warning
+            };
+        }
+        return recordDates.Contains(key) ? BatchRunStatus.Success : "none";
+    }
+
+    private static RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates,
+        IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
+        IReadOnlyDictionary<long, BatchRun> runsById) =>
+        new() { Status = NetiqStatus(host, date, recordDates, attempts, attemptsAvailable, runsById) };
 
     /// <summary>
     /// 本機主機的執行日狀態（§3）：有 BatchRun 時照原本的 exit code／錯誤計數判定；

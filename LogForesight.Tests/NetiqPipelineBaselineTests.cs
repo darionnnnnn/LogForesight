@@ -85,7 +85,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         [SentinelFieldMap.XdasOutcome] = "1"
     });
 
-    private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null, INetiqHostDayTimingCollector? hostDayTiming = null)
+    private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null,
+        INetiqHostDayTimingCollector? hostDayTiming = null, bool onlyMissingOrFailed = false)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var hosts = overrideHosts ?? _hosts;
@@ -106,7 +107,8 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             _backend, netiqOptions, _sentinels, hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, dispatch, console,
             riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
-            clientFactory: FakeSentinelSearchClientFactory.Single(_client), hostDayTiming: hostDayTiming);
+            clientFactory: FakeSentinelSearchClientFactory.Single(_client), hostDayTiming: hostDayTiming,
+            onlyMissingOrFailed: onlyMissingOrFailed);
     }
 
     /// <summary>基準 1：全程零事件的乾淨主機——統計模式寫入一筆低風險紀錄，AI 完全不被呼叫。</summary>
@@ -130,6 +132,64 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Equal(AnalysisLogSource.Netiq, record.LogSource);
         Assert.Equal(RiskLevels.Low, record.RiskLevel);
         Assert.False(record.AiAnalyzed);
+    }
+
+    [Fact]
+    public async Task MissingOnly重試既有NetIQ父紀錄_空來源保留且完整來源可恢復()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.53", "HOST-EXISTING");
+        var date = DateTime.Today.AddDays(-1);
+        var store = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+        store.Append(new LogForesight.Core.Models.DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = date,
+            LogSource = LogForesight.Core.Models.AnalysisLogSource.Netiq,
+            LatestNetiqAttemptStatus = "success", LatestNetiqAttemptAtUtc = DateTime.UtcNow.AddHours(-1),
+            RiskLevel = "高", ErrorCount = 1, Headline = "原本已確認的高風險分析",
+            Summary = "保留既有判定，不以空來源覆蓋。", Action = "依原判定追蹤處置。",
+            TopIssues = [new() { LogName = "Security", Source = "Microsoft-Windows-Security-Auditing", EventId = 1102, Count = 1 }]
+        });
+        NetiqSourceAttempt.Mark(_backend, host.HostId, date, "failed");
+        var original = Assert.Single(store.ReadRecent(date, 1));
+        Assert.False(original.CanSupplementWithPrtg());
+
+        _client.Responder = _ => new SentinelSearchResult
+        { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+        var emptyRetry = await MakePipeline(useAi: false, onlyMissingOrFailed: true)
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        var retained = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(0, emptyRetry.HostDaysAnalyzed);
+        Assert.Equal("高", retained.RiskLevel);
+        Assert.Equal("原本已確認的高風險分析", retained.Headline);
+        Assert.Equal(JsonSerializer.Serialize(original.TopIssues), JsonSerializer.Serialize(retained.TopIssues));
+        Assert.Equal("retained-incomplete", retained.LatestNetiqAttemptStatus);
+        Assert.False(retained.CanSupplementWithPrtg());
+
+        _client.Responder = _ => new SentinelSearchResult
+        { Events = new[] { HighRiskEvent("10.0.0.53") }, Found = 999, State = SentinelJobState.Completed };
+        var truncatedRetry = await MakePipeline(useAi: false, onlyMissingOrFailed: true)
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        var retainedAfterTruncation = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(0, truncatedRetry.HostDaysAnalyzed);
+        Assert.Equal("高", retainedAfterTruncation.RiskLevel);
+        Assert.Equal("原本已確認的高風險分析", retainedAfterTruncation.Headline);
+        Assert.Equal("retained-incomplete", retainedAfterTruncation.LatestNetiqAttemptStatus);
+        Assert.False(retainedAfterTruncation.CanSupplementWithPrtg());
+
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[] { HighRiskEvent("10.0.0.53") }, Found = 1, State = SentinelJobState.Completed
+        };
+        var completeRetry = await MakePipeline(useAi: false, onlyMissingOrFailed: true)
+            .RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        var recovered = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(1, completeRetry.HostDaysAnalyzed);
+        Assert.Equal("success", recovered.LatestNetiqAttemptStatus);
+        Assert.True(recovered.CanSupplementWithPrtg());
+        Assert.NotEqual("原本已確認的高風險分析", recovered.Headline);
     }
 
     [Fact]
@@ -367,15 +427,20 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Equal(4, firstResult.HostDaysAnalyzed);
         Assert.True(_hosts.Get(hosts[0].HostId)!.IsHighVolume, "收斂到單台仍截斷，應該被標記為高流量主機");
 
-        // 第二次執行（模擬下一次排程）：BackfillDays 加大到 2，昨天已有紀錄不重複處理，
-        // 只有前天是新的缺漏日——4 台主機一樣各自新增 1 個缺漏日，場景結構與第一次對等，
-        // 差別只在旗標是否已從第一次執行帶過來
+        // 第二次執行：四個前天缺日加上昨日仍截斷的高流量主機日。
+        // 昨日重取仍截斷，必須保留原結果而非覆寫或冒稱合格。
         var pipeline2 = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 2 });
         var secondResult = await pipeline2.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
         var secondCallQueries = _client.Requests.Count - firstCallQueries;
 
-        // 四個新缺日，加上一個昨日仍截斷的主機日；不把截斷紀錄冒稱可供 PRTG 補充的成功結果。
-        Assert.Equal(5, secondResult.HostDaysAnalyzed);
+        Assert.Equal(4, secondResult.HostDaysAnalyzed);
+        Assert.Equal(1, secondResult.RerunDaysRetained);
+        Assert.Equal(5, secondResult.HostDaysDone);
+        var retained = Assert.Single(_backend.RecordStore(new HostKey
+            { HostId = hosts[0].HostId, HostName = hosts[0].HostName }).ReadRecent(DateTime.Today.AddDays(-1), 1));
+        Assert.True(retained.DataIncomplete);
+        Assert.Equal("retained-incomplete", retained.LatestNetiqAttemptStatus);
+        Assert.False(retained.CanSupplementWithPrtg());
         Assert.True(secondCallQueries < firstCallQueries,
             $"第二次執行應該因為跨日記憶而少查詢很多次（第一次 {firstCallQueries} 次，第二次 {secondCallQueries} 次）");
     }

@@ -1,5 +1,9 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -13,18 +17,186 @@ namespace LogForesight.Tests;
 public class RunMonitorServiceTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
+    private readonly string _attemptDir = Path.Combine(Path.GetTempPath(), "lf-netiq-attempts-" + Guid.NewGuid().ToString("N"));
+    private readonly StorageBackend _attemptBackend;
     private readonly FakeHostStore _hosts = new();
     private BatchRunStore Runs() => new(_fx.LogStore("runs"), _fx.LogStore("run_logs"));
     private EfAnalysisRecordStore Records() => new(_fx.NewContext, "test");
     private ScheduleOptionsStore Options() => new(_fx.Blob("schedule_options"));
 
-    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
+    public RunMonitorServiceTests()
+    {
+        Directory.CreateDirectory(_attemptDir);
+        _attemptBackend = new StorageBackend(new StorageSettings
+        {
+            Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_attemptDir, "attempts.db")}"
+        }, _attemptDir);
+    }
+
+    public void Dispose()
+    {
+        _fx.Dispose();
+        if (Directory.Exists(_attemptDir)) Directory.Delete(_attemptDir, recursive: true);
+        GC.SuppressFinalize(this);
+    }
 
     private readonly UserDisplayNameService _displayNames = new(new FakeSystemSettingsStore());
     private RunMonitorService Create() => new(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames);
 
     private static DailyAnalysisRecord Rec(long hostId, string host, DateTime date) =>
         new() { HostId = hostId, Host = host, Date = date, RiskLevel = "低" };
+
+    private static string SerializeWithOriginalAttemptMetadata(DailyAnalysisRecord record, DailyAnalysisRecord original)
+    {
+        var normalized = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(
+            System.Text.Json.JsonSerializer.Serialize(record))!;
+        normalized.LatestNetiqAttemptStatus = original.LatestNetiqAttemptStatus;
+        normalized.LatestNetiqAttemptAtUtc = original.LatestNetiqAttemptAtUtc;
+        return System.Text.Json.JsonSerializer.Serialize(normalized);
+    }
+
+    [Fact]
+    public void NetIQ首跑取數失敗_沒有正式紀錄仍持久化失敗且摘要明細一致()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.53", Source = "netiq" });
+        var dataDate = DateTime.Today.AddDays(-2);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 2001, "running");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 2001, "failed");
+
+        using (var ctx = _attemptBackend.CreateContext()) Assert.Empty(ctx.DailyRecords);
+        var service = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames,
+            backend: _attemptBackend);
+        var detail = Assert.Single(service.GetDayDetail(dataDate.AddDays(1)), row => row.HostName == host.HostName);
+        var summary = Assert.Single(service.GetDaySummaries(1, 1, 30));
+
+        Assert.Equal("failed", detail.Status);
+        Assert.Equal(1, summary.FailedCount);
+        Assert.Equal(0, summary.NotRunCount);
+    }
+
+    [Fact]
+    public void NetIQ重跑失敗保留原紀錄內容_恢復成功後兩種檢視同步更新()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.54", Source = "netiq" });
+        var dataDate = DateTime.Today.AddDays(-2);
+        var record = Rec(host.HostId, host.HostName, dataDate);
+        record.LogSource = AnalysisLogSource.Netiq;
+        _attemptBackend.RecordStore().Append(record);
+        string before;
+        using (var ctx = _attemptBackend.CreateContext()) before = ctx.DailyRecords.Single(row => row.HostId == host.HostId).ContentJson;
+
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 3001, "success");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 3002, "running");
+        NetiqSourceAttempt.Mark(_attemptBackend, host.HostId, dataDate, "running");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 3002, "failed");
+        NetiqSourceAttempt.Mark(_attemptBackend, host.HostId, dataDate, "failed");
+        DailyAnalysisRecord failedRecord;
+        using (var ctx = _attemptBackend.CreateContext())
+            failedRecord = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(ctx.DailyRecords.Single(row => row.HostId == host.HostId).ContentJson)!;
+        var originalRecord = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(before)!;
+        Assert.Equal(before, SerializeWithOriginalAttemptMetadata(failedRecord, originalRecord));
+        Assert.False(failedRecord.CanSupplementWithPrtg());
+
+        var service = new RunMonitorService(Runs(), _hosts, _attemptBackend.RecordStore(), new FakeUserStore(), Options(), _displayNames,
+            backend: _attemptBackend);
+        Assert.Equal("failed", Assert.Single(service.GetDayDetail(dataDate.AddDays(1))).Status);
+        Assert.Equal(1, Assert.Single(service.GetDaySummaries(1, 1, 30)).FailedCount);
+
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, dataDate, 3003, "success");
+        NetiqSourceAttempt.Mark(_attemptBackend, host.HostId, dataDate, "success");
+        Assert.Equal("success", Assert.Single(service.GetDayDetail(dataDate.AddDays(1))).Status);
+        Assert.Equal(1, Assert.Single(service.GetDaySummaries(1, 1, 30)).SuccessCount);
+        using (var ctx = _attemptBackend.CreateContext())
+        {
+            var recovered = System.Text.Json.JsonSerializer.Deserialize<DailyAnalysisRecord>(ctx.DailyRecords.Single(row => row.HostId == host.HostId).ContentJson)!;
+            Assert.True(recovered.CanSupplementWithPrtg());
+            Assert.Equal(before, SerializeWithOriginalAttemptMetadata(recovered, originalRecord));
+        }
+    }
+
+    [Fact]
+    public void NetIQ三千主機一日期讀回為有界批次且無效RunId明確未知()
+    {
+        var hosts = Enumerable.Range(1, 3000)
+            .Select(i => _hosts.Upsert(new WebHost { HostName = $"10.1.{i / 256}.{i % 256}", Source = "netiq" }).HostId)
+            .ToArray();
+        var date = DateTime.Today.AddDays(-2);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, hosts, date, 4001, "failed");
+
+        var first = NetiqSourceAttempt.ReadLatest(_attemptBackend, date, date);
+        Assert.Equal(3000, first.Count);
+        Assert.All(first.Values, receipt => Assert.Equal("failed", receipt.Status));
+
+        var untrackedHost = hosts[1];
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { untrackedHost }, date.AddDays(1), 0, "running");
+        var unknown = NetiqSourceAttempt.ReadLatest(_attemptBackend, date.AddDays(1), date.AddDays(1))[(untrackedHost, date.AddDays(1))];
+        Assert.Equal(0, unknown.RunId);
+        Assert.Equal("unknown", unknown.Status);
+
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { hosts[2] }, date, 4003, "failed");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { hosts[2] }, date, 4002, "success");
+        Assert.Equal("failed", NetiqSourceAttempt.ReadLatest(_attemptBackend, date, date)[(hosts[2], date)].Status);
+    }
+
+    [Fact]
+    public void NetIQ取數狀態讀取拒絕超大行與主機日期分割鍵不一致()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.55", Source = "netiq" });
+        var date = DateTime.Today.AddDays(-2);
+        using (var ctx = _attemptBackend.CreateContext())
+        {
+            ctx.LogLines.Add(new LogForesight.Core.Persistence.Sql.LogLineRow
+            {
+                LogKey = NetiqSourceAttempt.LogKey(date, host.HostId), Line = new string('x', 4097), CreatedAt = DateTime.Now
+            });
+            ctx.SaveChanges();
+        }
+        Assert.Throws<InvalidDataException>(() => NetiqSourceAttempt.ReadLatest(_attemptBackend, date, date));
+
+        using (var ctx = _attemptBackend.CreateContext()) ctx.LogLines.ExecuteDelete();
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, date, 5001, "failed");
+        using (var ctx = _attemptBackend.CreateContext())
+        {
+            var row = ctx.LogLines.Single();
+            row.LogKey = NetiqSourceAttempt.LogKey(date, host.HostId + 10);
+            ctx.SaveChanges();
+        }
+        Assert.Throws<InvalidDataException>(() => NetiqSourceAttempt.ReadLatest(_attemptBackend, date, date));
+    }
+
+    [Fact]
+    public void NetIQ最新取數狀態依正式保留期清除舊資料日期()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.56", Source = "netiq" });
+        var oldDate = DateTime.Today.AddDays(-40);
+        var recentDate = DateTime.Today.AddDays(-2);
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, oldDate, 6001, "failed");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { host.HostId }, recentDate, 6001, "success");
+
+        Assert.Equal(1, NetiqSourceAttempt.Prune(_attemptBackend, retentionDays: 30));
+        Assert.Empty(NetiqSourceAttempt.ReadLatest(_attemptBackend, oldDate, oldDate));
+        Assert.Equal("success", NetiqSourceAttempt.ReadLatest(_attemptBackend, recentDate, recentDate)[(host.HostId, recentDate)].Status);
+    }
+
+    [Fact]
+    public void NetIQ執行中收據對應已取消BatchRun時列為已停止_沒有結束執行紀錄則逾時列卡住()
+    {
+        var stoppedHost = _hosts.Upsert(new WebHost { HostName = "10.0.0.57", Source = "netiq" });
+        var stuckHost = _hosts.Upsert(new WebHost { HostName = "10.0.0.58", Source = "netiq" });
+        var dataDate = DateTime.Today.AddDays(-2);
+        var runTime = DateTime.Now;
+        var runId = Runs().StartRun(new BatchRun { HostName = "BATCH", StartedAt = runTime });
+        Runs().FinishRun(new BatchRun { RunId = runId, HostName = "BATCH", StartedAt = runTime,
+            FinishedAt = runTime, ExitCode = 0, Stopped = true });
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { stoppedHost.HostId }, dataDate, runId, "running");
+        NetiqSourceAttempt.RecordBatch(_attemptBackend, new[] { stuckHost.HostId }, dataDate,
+            runId + 1, "running", DateTime.UtcNow.AddHours(-7));
+
+        var detail = new RunMonitorService(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames,
+            backend: _attemptBackend).GetDayDetail(dataDate.AddDays(1));
+        Assert.Equal("stopped", Assert.Single(detail, row => row.HostName == stoppedHost.HostName).Status);
+        Assert.Equal("stuck", Assert.Single(detail, row => row.HostName == stuckHost.HostName).Status);
+    }
 
     [Fact]
     public void NetIQ主機_昨日有分析紀錄_今日列為成功()

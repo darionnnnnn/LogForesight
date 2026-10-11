@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Models;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
@@ -36,13 +37,15 @@ public class ScheduleController : ControllerBase
     private readonly AiAnalysisHostedService _aiScheduler;
     private readonly AiAnalysisRunState _aiRunState;
     private readonly INetiqHostDayTimingCollector? _hostDayTiming;
+    private readonly StorageBackend? _storageBackend;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
         IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IUserDisplayNameService userDisplayNames,
         AiAnalysisHostedService aiScheduler, AiAnalysisRunState aiRunState,
-        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null, INetiqHostDayTimingCollector? hostDayTiming = null)
+        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null, INetiqHostDayTimingCollector? hostDayTiming = null,
+        StorageBackend? storageBackend = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -60,6 +63,7 @@ public class ScheduleController : ControllerBase
         _aiScheduler = aiScheduler;
         _aiRunState = aiRunState;
         _hostDayTiming = hostDayTiming;
+        _storageBackend = storageBackend;
     }
 
     [HttpGet("options")]
@@ -192,6 +196,28 @@ public class ScheduleController : ControllerBase
         // Query 會反序列化整份分析內容，三千台 × 14 天在預覽這種互動路徑上代價過高
         var recentRecords = _records.QueryLightweight(new RecordQueryFilter { From = from, To = to });
 
+        HashSet<long> retryAttemptHostIds = new();
+        if (_storageBackend != null && hostIds is { Count: > 0 })
+        {
+            try
+            {
+                var latestAttempts = NetiqSourceAttempt.ReadLatest(_storageBackend, from, to);
+                if (latestAttempts.Values.Any(attempt => attempt.Status == "unknown"))
+                    return ApiResponse<RunPreviewDto>.Fail("netiq_attempt_ledger_invalid",
+                        "NetIQ 最近執行狀態資料不完整，無法準確預覽補跑範圍；請先檢查執行狀態或聯絡管理員。");
+
+                retryAttemptHostIds = latestAttempts.Values
+                    .Where(attempt => attempt.Status is "failed" or "running" or "partial" or "retained-incomplete" or "stopped")
+                    .Select(attempt => attempt.HostId)
+                    .ToHashSet();
+            }
+            catch (InvalidDataException)
+            {
+                return ApiResponse<RunPreviewDto>.Fail("netiq_attempt_ledger_invalid",
+                    "NetIQ 最近執行狀態資料損毀或超出可檢查範圍，無法準確預覽補跑範圍；請檢查執行狀態或聯絡管理員。");
+            }
+        }
+
         var count = 0;
 
         if (hostIds is { Count: > 0 })
@@ -200,7 +226,7 @@ public class ScheduleController : ControllerBase
             foreach (var id in hostIds)
             {
                 // 「該主機在回望窗口內的紀錄筆數不足＝有缺日」語意保留
-                if (!recordsByHost.TryGetValue(id, out var hostRecords) || hostRecords.Count < lookback ||
+                if (retryAttemptHostIds.Contains(id) || !recordsByHost.TryGetValue(id, out var hostRecords) || hostRecords.Count < lookback ||
                     hostRecords.Any(r => HostDayPostProcessor.NeedsBackfill(r, useAi)))
                 {
                     count++;

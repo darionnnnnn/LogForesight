@@ -86,6 +86,10 @@ public static class RetentionPruner
             if (auditPruned > 0)
                 console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
 
+            var netiqAttemptsPruned = NetiqSourceAttempt.Prune(backend, retention.RetentionDays);
+            if (netiqAttemptsPruned > 0)
+                console.WriteLine($"已清除 {netiqAttemptsPruned} 筆超過 {retention.RetentionDays} 天的 NetIQ 最新取數狀態。");
+
             // 權限異動檢核（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
             // 跟稽核紀錄同一個保留天數
             var permPruned = backend.PermissionChanges()

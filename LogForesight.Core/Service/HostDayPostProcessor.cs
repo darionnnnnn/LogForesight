@@ -13,32 +13,45 @@ namespace LogForesight.Core.Service;
 internal static class MissingDateFinder
 {
     public static List<DateTime> Find(IAnalysisRecordReader store, int lookbackDays, bool requireAi = false, bool useAi = true)
+        => FindWithExistingDates(store, lookbackDays, requireAi, useAi).MissingDates;
+
+    public static MissingDateScanResult FindWithExistingDates(
+        IAnalysisRecordReader store, int lookbackDays, bool requireAi = false, bool useAi = true)
     {
+        var recent = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays);
+        var existingRecordDates = recent.Select(r => r.Date.Date).ToHashSet();
+        var existingNetiqDates = recent.Where(r => r.LogSource == AnalysisLogSource.Netiq)
+            .Select(r => r.Date.Date).ToHashSet();
+
         if (!requireAi)
         {
-            var retryDates = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
-                .Where(r => r.LogSource == AnalysisLogSource.Netiq && r.LatestNetiqAttemptStatus is "failed" or "running" or "partial")
+            var retryDates = recent
+                .Where(r => r.LogSource == AnalysisLogSource.Netiq && r.LatestNetiqAttemptStatus is "failed" or "running" or "partial" or "retained-incomplete")
                 .Select(r => r.Date.Date).ToHashSet();
-            return Enumerable.Range(1, lookbackDays)
+            var missingDates = Enumerable.Range(1, lookbackDays)
                 .Select(offset => DateTime.Today.AddDays(-offset))
-                .Where(date => !store.HasRecord(date) || retryDates.Contains(date))
+                .Where(date => !existingRecordDates.Contains(date) || retryDates.Contains(date))
                 .OrderBy(date => date)
                 .ToList();
+            return new MissingDateScanResult(missingDates, existingNetiqDates);
         }
 
         // GroupBy 再取第一筆而非直接 ToDictionary：同一天若有重複列（合併主機／遷移期間），
         // 撞鍵會在排程的計畫階段炸掉整台 Sentinel——這正是回饋二十輪 I 修掉的那類 500
-        var records = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
+        var records = recent
             .GroupBy(r => r.Date.Date)
             .ToDictionary(g => g.Key, g => g.First());
 
-        return Enumerable.Range(1, lookbackDays)
+        var missing = Enumerable.Range(1, lookbackDays)
             .Select(offset => DateTime.Today.AddDays(-offset))
             .Where(date => !records.TryGetValue(date, out var r) || HostDayPostProcessor.NeedsBackfill(r, useAi))
             .OrderBy(date => date)
             .ToList();
+        return new MissingDateScanResult(missing, existingNetiqDates);
     }
 }
+
+internal sealed record MissingDateScanResult(List<DateTime> MissingDates, HashSet<DateTime> ExistingNetiqDates);
 
 /// <summary>
 /// 單一主機日分析完成後的共通後續處理：問題案件掛接、風險 log 暫存寫入、AI 呼叫計數——
@@ -128,7 +141,7 @@ public static class HostDayPostProcessor
     public static bool NeedsBackfill(DailyAnalysisRecord? record, bool useAi)
     {
         if (record == null) return true;
-        if (record.LogSource == AnalysisLogSource.Netiq && record.LatestNetiqAttemptStatus is "failed" or "running" or "partial") return true;
+        if (record.LogSource == AnalysisLogSource.Netiq && record.LatestNetiqAttemptStatus is "failed" or "running" or "partial" or "retained-incomplete") return true;
         if (useAi && !record.AiPending && !record.AiAnalyzed && record.RiskLevel != RiskLevels.Low) return true;
         return false;
     }
