@@ -2,7 +2,7 @@
 
 > 2026-10-07 使用者更新驗收方式：不直接在實際現場環境執行驗收；必要來源／硬體／provider／版本事實只透過環境探測取得。功能、邊界、復原及容量在受控隔離環境，結合同版探測成本與來源 fixture 驗收；實際 SQL、SMTP 協定與收件匣指本輪隔離測試端。不得因此放寬既定時限、25%餘裕、3000／15000／180日負載或角色／版本守門，也不冒稱現場投遞／真實事故成效。以下歷史提及現場直接驗收的執行方式由本決策取代，未齊來源事實仍保留待探測。
 
-> 狀態：實作中（2026-10-03 授權開工；2026-10-04 已依使用者指示停用 AGY）。採 §16 全作業驗收及 §17 修正後契約；CPU／memory 預設提示及試算後啟用、每日主機日／合格父紀錄、磁碟 7 日內降到 20% 分支皆已定案。由主模型評估 gpt-6-luna high／medium／low 分段實作，主代理独立核對與驗收。來源兼容與資源前提未核實前不越過相依門檻；全部必要作業各自通過才可結案。
+> 狀態：必要程式子項已完成，整輪驗收中（2026-10-11 對碼；2026-10-03 授權開工；2026-10-04 已依使用者指示停用 AGY）。採 §16 全作業驗收及 §17 修正後契約；CPU／memory 預設提示及試算後啟用、每日主機日／合格父紀錄、磁碟 7 日內降到 20% 分支皆已定案。由主模型評估 gpt-6-luna high／medium／low 分段實作，主代理独立核對與驗收。來源兼容與資源前提未核實前不越過相依門檻；全部必要作業各自通過才可結案。
 > 規劃起始核對基準：`dev`／`beda825b3dadbba7c6936f20acdf9dc731ae26ec`；原規劃起點為 `feature/prtg-feedback-52`／`8db15b5`。工作區僅有既存未追蹤 `artifacts/`，保護不改；不讀 `docs/archive/`。部署版本仍須現場確認。
 > 承接：[第 52 輪第二輪 PLAN](FEEDBACK-52-ROUND2-PLAN.md) 的有效 NetIQ 契約、原需求 ID、E0–E4 與未通過門檻。此文件是下一輪有效待辦入口，舊 PLAN 保留證據與決策歷程。
 
@@ -54,6 +54,14 @@ R05 的 snapshot100／同形來源探測程式與受影響驗證已完成；完�
 R09 的公共 API 固定矩陣 consumer、初始化入口、精確主機日計時與受影響驗證已完成；正式 provider／3000／15000／180 日的容量與保留裁定仍在 §5.2 N6，沒有降低其母體或門檻。
 A0 所需環境探測與離線核對工具已實作，來源、頻道、時區及 provider／部署資源的尚缺事實透過探測回傳核對，列入 §5.2 N1–N3／A0；未知資訊不留空程式，也不冒稱原生來源通過。
 
+2026-10-11 再次對碼確認的補漏（每段驗證後清除）：
+
+本次確認的必要程式補漏已完成並通過受影響驗證，活動實作 TODO 為零；來源事實及五組完整驗收仍列 §5.2。
+
+R05／N6 矩陣工具補漏已完成並推送 f1b11d71：每種路由的三組固定 p95 相對增量不超過 10%；完整原始樣本重算及摘要／分母一致性核對，保留兩秒絕對門檻。Root 執行 42 個 consumer 契約斷言與完整六輪 wrapper 的 17 個串接斷言，零失敗；原先 11% 增量及缺原始樣本的錯誤通過皆以實際 RED 重現。
+
+AC21／AC12 重播狀態的 case-only 授權缺漏已修正並通過 15 項受影響測試，推送 4ab778e2；主機層級 replay 查詢採與 trial／mode 相同的 Maintain 與非 case-only 守門。
+
 ### 5.2 尚未通過的驗收門檻
 
 - [ ] N1–N3／A0：宣告支援的來源、範圍與資料品質逐項驗證完成。
@@ -78,11 +86,11 @@ A0 所需環境探測與離線核對工具已實作，來源、頻道、時區�
 | R04／A1.4 每批全檔重寫及空來源切換缺陷 | Accumulator delta→Journal.AppendDelta／manifest→SQL stable GUID→durable ack | 空V2及已載入空來源切換實際反例轉綠，最新完整回歸5815/0/10；完整容量／provider另驗 |
 | R06／B1.1 跨午夜Down漏報 | CoveredStateTimeline.EnteredAt→CoveredRuleEvaluator→DailyPipeline／FindingMapper | 完整episode門檻、當日overlap量分開；後續病例／通知整體驗收另列 |
 | R10／B1.2 候選逐顆重掃 | EfPrtgStore候選Count／Order／Skip／Take→DiskAssessment頁查詢 | 真正SQL命令攔截定向通過；SQLServer實機及180日高水位另驗 |
-| R12／A1.3 匯入覆寫正式可信資料 | SettingsController→PrtgDataTransfer診斷blob隔離→管理頁提示 | 正式非空state／policy逐值不變；R11有界傳輸仍待補 |
+| R12／A1.3 匯入覆寫正式可信資料 | SettingsController→PrtgDataTransfer診斷blob隔離→管理頁提示 | 正式非空state／policy逐值不變；R11有界傳輸已於後續段落補齊，完整操作與容量門檻仍保留。 |
 | A0.1 marker偽造／敏感輸出 | typed EvidenceJson→RunState→DTO→管理頁下載 | 白名單／64KiB／sentinel／版本尾碼、實際本機API与下載；現場兼容未驗 |
 | 共用CBC錯候選覆寫憑證 | CryptoHelper strict UTF8／歧義拒絕→Bootstrap PRtg／Sentinel重加密 | 主代理實際padding與雙候選反例、43定向、最新完整回歸通過 |
 | R10 每日共用候選及提交前日映射核對 | CandidateSnapshot→DailyPipeline暫存全頁→HostMapDataRevision最終守門→finding | 主代理整合289/289，841項source／組件／UI雜湊不變；101候選前頁專屬裝置變更拒絕整批；Web／range缺漏已於後續整合完成；R05容量仍列門檻 |
-| R12 legacy正式匯入退路及搬運授權fail open | public EF Import立即拒絕→StorageBackend診斷隔離；SettingsController完整可見範圍守門 | 執行端真實RED 5失敗→GREEN 64/64；主代理整合289/289、六表逐欄匯出保持；R11有界生命週期及AC21整體驗收仍待完成 |
+| R12 legacy正式匯入退路及搬運授權fail open | public EF Import立即拒絕→StorageBackend診斷隔離；SettingsController完整可見範圍守門 | 執行端真實RED 5失敗→GREEN 64/64；主代理整合289/289、六表逐欄匯出保持；R11有界生命週期後續已完成，AC21整體角色驗收仍保留。 |
 | R14可信校準及同版匯出 | CalibrationService共用Covered引擎／RuleValidator／有界證據→summary及export；Controller採package.Summary | 主代理整合289/289；晚於分析的規則及日映射變更均拒絕匯出，readonly不寫seed；silent顯示仍列R13，來源及容量不以此代替 |
 
 | C1/D1 全站磁碟診斷與趨勢試算 visibility | Maintain permission→full host visibility及case-only拒絕→query前守門；DI缺依賴fail closed | 等價unsafe guards RED 7失敗／95、GREEN95/95；主代理整合104/104及來源／組件雜湊不變；其餘角色及動線AC仍待驗 |
@@ -98,7 +106,7 @@ A0 所需環境探測與離線核對工具已實作，來源、頻道、時區�
 | R01 完整正式作用清單／舊選取修復 | SQL有界分頁及owner/version token→維護者批次選取／估算／精確保存→Daily正式集合 | 隔離160/160；實際SQL與瀏覽器3,000/15,000、停用修復2,999/14,990 exact DB IDs通過；main最新1875/1875。R01父TODO刪除，AC02/M4整體容量仍保留 |
 | R10 日期分母／range-preview consumer | 單次各日COUNT→有界跨日期page／100,000歷史點→RuleAdmin／Controller取消及最終ACL/版本核對 | 隔離186/186；實際SQL180日期分母、100日期分支／跨日page通過；main最新1875/1875。R10父TODO刪除，180日時序負載仍列R05 |
 | R09 耐久近期狀態交接 | 原子mirror+perdevice queue→採樣後／ScopeRefresh有界claim→完整讀完ACK／重試／重啟／退出範圍CAS移除 | 隔離195/195，932項輸入無漂移；main最新1875/1875，忙碌恢復／同輪Tick／first50失敗後51公平進度通過；R09父TODO刪除，formal逐sensor涵蓋仍為R02 |
-| R11 儲存層交易／提交未知／buffer ledger | SQL sessions+chunks→execution strategy整筆重試→每operation owner/scope/source與lease CAS | SQLite37/37；實際SQL續傳/hash/conflict／UTClease／3接受1容量拒／16buffer接受1拒通過，專用DB/instance已清除；R11容量probe、parser／HTTP/UI／export／保留consumer仍待補，不清父TODO |
+| R11 儲存層交易／提交未知／buffer ledger | SQL sessions+chunks→execution strategy整筆重試→每operation owner/scope/source與lease CAS | SQLite37/37；實際SQL續傳/hash/conflict／UTClease／3接受1容量拒／16buffer接受1拒通過，專用DB/instance已清除；R11 容量 probe、parser／HTTP/UI／export／保留 consumer 已於後續段落完成；完整容量及操作門檻仍列 §5.2 |
 
 | R02 增量水位與初始化期限 | 持久公平 collector→有界全範圍 SQL metadata／CAS→Daily 保存證據→Maintain 進度與明確續行 | 隔離73/73；Main v6 本項四類73/73、11項來源雜湊相符；真實合成瀏覽器逾期／同輪續行／設定不延長／過期競寫拒絕／1..720界線／一般角色拒絕及重啟保留通過。R02實作父TODO刪除；較早Main v6的其他失敗已由Main v9完整回歸6591/0/10確認修正。原生來源、15,000顆吞吐與AC整體門檻繼續保留。 |
 
@@ -143,9 +151,9 @@ A0 所需環境探測與離線核對工具已實作，來源、頻道、時區�
 
 目前相依順序：R08 whole-evidence期限與R14校準有界capture/output已完成並整合Main，相關consumer651項及實際SQL provider驗收通過。接續完成C1/D1逐族固定語料與真實角色UI，再驗當前來源完整回歸。A0/R15/Q2現場來源缺口以同版有限probe及已定契約解除，共同容量與AC仍按既定門檻裁定；缺外部事實不阻止獨立程式修正，也不更改gate。先前520/2的磁碟失敗已修正並由130項定向及Main v9整合回歸通過，不再列為目前未修的bug。
 
-### 5.5 2026-10-10 規劃與正式程式對照
+### 5.5 2026-10-11 規劃與正式程式對照
 
-基準 237591f 加本次耐久資格段落再次對碼：R01–R18 必要程式子項已實作並有分段證據；活動必要交付只保留 A0 原生事實，五組整輪驗收仍未通過。以下只裁定程式與已完成驗證的範圍；§5.4 與 §18 舊日期記錄保持為歷史證據。
+程式基準 `b3a10fdffa6c93f2fe97c9e6cbb239442bade98c`，含本次全量回填、授權及回歸修正再次對碼：R01–R18 必要程式子項已實作並有分段證據；必要程式實作 TODO 為零，尚缺來源事實保留 A0，五組整輪驗收仍未通過。以下只裁定程式與已完成驗證的範圍；§5.4 與 §18 舊日期記錄保持為歷史證據。
 
 | 規劃項目 | 當前正式路徑 | 本次裁定／保留缺口 |
 |---|---|---|
@@ -1679,3 +1687,22 @@ Root 另以目前 Main Web／SQLite 與隔離 loopback fixtures 實際走通六�
 交付前獨立審查補齊矩陣拒絕條件：每 cell 必須有兩種有效路由、完整十二份 verdict，缺測或空 numeric 欄位不能以零代替；checkpoint 與六份 condition owner 綁定目前 runId／profile／固定順序，拒絕混入舊輪測量；相鄰 cell 及自己 CAS 結果到 pre-fence 的 settingsRevision 連續核對，只允許工具自己的 PRTG 開關寫入；排程及路由前後 settingsRevision 必須相同，依正式 SystemSettingsStore 每次寫入換新 GUID 的契約，拒絕期間切換後恢復；所有 owned 路徑拒絕 reparse ancestor，EvidenceRoot 必須位於該 run 內。這些均有受影響正反例實際重跑，才清除程式 TODO。
 
 Root 的本輪分支重跑包含六套交付測試，consumer 共 22 個正反例；最後使用完整 3000 筆主機清單執行六輪 wrapper。公開路由測量要求 HTTP 成功、ApiResponse.success=true、非截斷且與 owned 集合完全相符的 3000 個主機 ID，以及 detail 回應符合 requested hostId。HTTP 200 的 domain error、空 DTO、漏主機或錯誤主機也計為失敗；每個回應最多 2 MiB，2 秒請求期限與 p95 門檻不變。交付包一併包含全分頁 coverage collector 的測試及 fixture，相依程式沒有留在候選目錄。
+
+
+### 2026-10-11 最後對碼補漏與主代理驗證
+
+- ReplayStatus 的 Maintain／非 case-only 守門修正已推送 `4ab778e2`；主代理 15/15 受影響測試通過。
+- 公共路由矩陣已推送 `f1b11d71`：六路由固定三組 p95 相對增量 ≤10%、絕對 ≤2 秒、原始分母及摘要重算；42 個 consumer 與 17 個完整六輪 wrapper 斷言通過。原始錯誤通過已有 RED，未改正式母體及門檻。
+- 全量回填已推送 `5fdff420`：共用每日實際目標計畫、31 日映射 fallback、只讀本機成本預覽、5 分鐘一次性版本票券、明確確認、啟動前與逐日計畫守門，未知訊息分頁明示而不猜 ETA。主代理 Main 142/142 與實際合成瀏覽器確認／取消／設定漂移拒絕／重新預覽／進度跳轉及實際停止皆通過；generic 停止空 body 修正由實際 400 RED 後重驗。
+- 本次補強已納程式基準 `b3a10fdffa6c93f2fe97c9e6cbb239442bade98c`：selected 起動前核一般可見主機、同鎖保存作業及主機範圍、status 不洩露越權輸出、取消以精確種類／ID CAS；未知範圍 fail closed。主代理後續回歸與瀏覽器結果登錄在 ACCEPTANCE 的 current_plan_code_audit_20261011。
+- 本輪對碼含 22 AC、18 R、6 Q；主代理逐一核現存路徑／符號及 SHA，所有 PLAN 的已移交舊輪記錄維持歷史，不重列活動 TODO。磁碟回歸失敗及修後結果完整登錄，不把首次失敗藏去。
+
+執行端為 gpt-6-luna high（候選實作／唯讀審查），主代理直接修正並獨立驗證整合結果。主代理精確模型識別未提供，不虛構；有限對碼不代替 N8 全輪獨立體檢。實際 UI、HTTP、SQL fixture 均為隔離合成資料，不聲稱原生來源、180 日保留或 3000／15000 容量通過。
+
+凍結舊版 Main 的全量回歸與新版的受影響驗證分別登錄：前者最先揭露的五項失敗已於 `4985e2e0` 修正，後者獨立 SHA 對齊 1277 個輸入、新建置 216/216 通過，涵蓋五項失敗的完整測試類別；最後兩份 Help 變更另驗 58/58，與 216 存在重疊，不加總為唯一案例。不冒稱已執行新版全量全綠。磁碟修正只調整測試 fixture 的可信綁定建立順序，保留 stale 世代反例及正式 readiness 守門。
+
+最後操作回查另補齊排程頁的指定回填停止：`9b637361` 依畫面輪詢身分送出 selected run ID，全量／接續仍用空 body；未知種類／識別不提供停止。舊 Runs 原始函式的實際互動契約重現 RED，修後 9/9 及 Root 39/39 受影響檢查通過；隔離瀏覽器兩主機預覽／確認啟動／排程頁進度／實際停止五項通過。1277 輸入快照完成後的 Runs JS 變更單獨列 SHA 與增量驗證，不冒稱最初 216 案已測到這個後續改動。
+
+凍結回歸後續再揭露兩個 metadata 變更案例的前置資格建立順序失敗；`cce348ca` 先建立合格 binding，再捕捉最終 identity 建立證據，保留兩種 mutation／final fence 例外並新增 store 版本確實變更斷言。主代理獨立 RED 2/2、修後新建置 62/62 磁碟案例通過；與前述 216 案有重疊。此兩項與此前五項均有新版受影響 PASS 對照；後續 snapshot fixture 補強見下段，不冒稱新版全量全綠。
+
+凍結回歸另揭露三項 snapshot fixture 失敗；程式基準 `b3a10fdffa6c93f2fe97c9e6cbb239442bade98c` 已隔離測試配額與虛擬時鐘、來源切換後載入精確新計畫、補抓新增鏡像後，以固定政策重新發布當前精確容量計畫，保留 5 秒 Queue／HTTP／Ack 及 client 重用／重建斷言。舊同源 client 測試獨立 30 秒等待中止與兩種補抓 RED 均保留，修後主代理新建置 46/46 受影響檢查通過，零失敗、零略過。凍結舊版最終 7,477 通過、10 失敗、10 略過；十項失敗均逐名稱有新版 PASS 對照，沒有降低正式節流或容量守門，也不把虛擬時鐘當容量證據。

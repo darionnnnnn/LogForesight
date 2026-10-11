@@ -1,7 +1,7 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "bc4e8329ee0e7fac707b218b71194b519503760d2d9986eb9874e47ed5557ce8",
-  "date": "2026-10-10",
+  "plan_sha256": "c4823fb19865a4972515e0d62d347e96cf9826cbc0acb08e4b72393f4dafa5ef",
+  "date": "2026-10-11",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
   "decisions": [
@@ -21,7 +21,29 @@
       "acceptance_contract": "有效、錯誤、逾時、空欄沿用、停用重啟；保存後實際使用指定來源；回應／畫面／log／匯出憑證外洩 0；停用不開新 PRTG 作業，NetIQ 繼續",
       "stages": "N1／M0、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC01",
+          "path": "LogForesight.Core/Service/PrtgClientFactory.cs",
+          "symbol": "PrtgClientFactory",
+          "role": "Core client construction",
+          "sha256": "82084b014d239ef7d189a578591d4ca612245042f203acd42027e68388f9f6b7"
+        },
+        {
+          "id": "AC01",
+          "path": "LogForesight.Tests/PrtgClientFactoryTests.cs",
+          "symbol": "PrtgClientFactoryTests",
+          "role": "existing test mapping",
+          "sha256": "d0efe14f0ed98aeb70e873957409046b2eacacb94f5fe49f136783e9bbb225f1"
+        },
+        {
+          "id": "AC01",
+          "path": "LogForesight.Web/Controllers/Api/SettingsController.cs",
+          "symbol": "SettingsController",
+          "role": "settings API",
+          "sha256": "7e6561269c7062c51687fba2deb91f44466a8b9c4a0da1c073788399faf497bf"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -53,7 +75,29 @@
       "acceptance_contract": "3,000 台／15,000 sensors 分頁、批次選取、超額及過期設定；預覽、保存、實際作用集合相等；舊 50／100／500 限制不靜默截斷；越界先拒絕再寫入",
       "stages": "N2／M2、M4、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC02",
+          "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
+          "symbol": "PrtgMonitoringController",
+          "role": "scope API",
+          "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
+        },
+        {
+          "id": "AC02",
+          "path": "LogForesight.Tests/PrtgMonitoringPagingTests.cs",
+          "symbol": "PrtgMonitoringPagingTests",
+          "role": "paging tests",
+          "sha256": "d4db3be9e39c04f6ceaebfb0be50a6e59b0620befc563fe64cd295ae503fa6b7"
+        },
+        {
+          "id": "AC02",
+          "path": "LogForesight.Core/Persistence/PrtgHostSnapshot.cs",
+          "symbol": "PrtgHostSnapshot",
+          "role": "immutable snapshot",
+          "sha256": "2cf8b48c470805805aa229c8d4395e4e1fd561360a00e7b33804344fe4f20e59"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -86,7 +130,22 @@
       "acceptance_contract": "一對多、多對一、手動對應及刪除、IP 排除、同 IP 不同來源、兩管理者競寫；未解衝突零正式副作用，舊歷史不改歸戶；過期寫入明確衝突",
       "stages": "N2／M1–M2、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC03",
+          "path": "LogForesight.Core/Persistence/PrtgResourceIdentityStore.cs",
+          "symbol": "PrtgResourceIdentityStore",
+          "role": "identity persistence",
+          "sha256": "764118555381bd7004af8ec637c0bf6768a2b568f1fb7447da262d6b50e38e36"
+        },
+        {
+          "id": "AC03",
+          "path": "LogForesight.Tests/PrtgManualMapIdentityContractTests.cs",
+          "symbol": "PrtgManualMapIdentityContractTests",
+          "role": "identity contract tests",
+          "sha256": "3ce0433ed61eba2549b8f79da02cafdbb6aafe9e28f305c813cb74b0e6278e4b"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -118,7 +177,29 @@
       "acceptance_contract": "末頁重複、差額、逾時、取消、範圍修訂；完整或明列未完成集合，未確認差額不刪；取消請求與已停止分開，停止後無新批次／舊版提交",
       "stages": "N2–N3／M2–M5",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC04",
+          "path": "LogForesight.Core/Service/PrtgStructureSyncRunner.cs",
+          "symbol": "PrtgStructureSyncRunner",
+          "role": "sync runner",
+          "sha256": "564cdeffaf57b818ce81aec0942767bd2829fcb94b5c9c9773cd5e488b272791"
+        },
+        {
+          "id": "AC04",
+          "path": "LogForesight.Tests/PrtgStructureSyncRunnerTests.cs",
+          "symbol": "PrtgStructureSyncRunnerTests",
+          "role": "runner tests",
+          "sha256": "550f7458e9b09c5e26cd96998245a389f3eab0ce18a256ecef88618895bb9cd7"
+        },
+        {
+          "id": "AC04",
+          "path": "LogForesight.Tests/PrtgStructureSyncCancelEndpointTests.cs",
+          "symbol": "PrtgStructureSyncCancelEndpointTests",
+          "role": "cancel endpoint tests",
+          "sha256": "4746a808f045c14dc241c5d8640a6c123ccb02dc61ed41ca281c3c4b2e1a7bfb"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -151,7 +232,29 @@
       "acceptance_contract": "50／500／2,001／15,000 targets、主頻道改變、重複／陳舊／集中回應；無全站退路，各用途清單外請求 0，每目標有結果；樣本時間／品質與 §17.1 唯一 slot coverage 精確一致；§15.3 負載及新鮮度通過",
       "stages": "N3／M1–M4",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC05",
+          "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
+          "symbol": "PrtgSnapshotHostedService",
+          "role": "producer",
+          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+        },
+        {
+          "id": "AC05",
+          "path": "LogForesight.Core/Service/PrtgSnapshotAccumulator.cs",
+          "symbol": "PrtgSnapshotAccumulator",
+          "role": "slot accumulation",
+          "sha256": "11dca92f61ec3476f6d71425d5504125e30c4d37c7e2f2f817fe91aa5cfada12"
+        },
+        {
+          "id": "AC05",
+          "path": "LogForesight.Tests/PrtgSnapshotAccumulatorTests.cs",
+          "symbol": "PrtgSnapshotAccumulatorTests",
+          "role": "accumulator tests",
+          "sha256": "8553272c9af7206c64b5780c597ca46f69477d968f4b84db0be54bb773075ccd"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -185,7 +288,29 @@
       "acceptance_contract": "前導、跨午夜 35 分 Down、無新訊息、缺口、恢復、ACK、暫停、Unknown、objid 重用；只用 as-of 可見證據，缺口不接續、ACK 不降風險、跨日不漏事故或重複建案",
       "stages": "N3–N4／M1–M2",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC06",
+          "path": "LogForesight.Core/Service/PrtgCoveredStateTimeline.cs",
+          "symbol": "PrtgCoveredStateTimeline",
+          "role": "timeline",
+          "sha256": "34639fe9abc1216a236845721d6947ef85d61523761b1491384f3e7612e58394"
+        },
+        {
+          "id": "AC06",
+          "path": "LogForesight.Tests/PrtgCoveredStateTimelineTests.cs",
+          "symbol": "PrtgCoveredStateTimelineTests",
+          "role": "timeline tests",
+          "sha256": "bbebc741720da8b95844fad6af5a9b4376f07abfc2ae8a36352c0f237164c6dc"
+        },
+        {
+          "id": "AC06",
+          "path": "LogForesight.Tests/PrtgCoveredRuleEvaluatorTests.cs",
+          "symbol": "PrtgCoveredRuleEvaluatorTests",
+          "role": "formal state rules",
+          "sha256": "a58c17741f80407497e392f961c0c56fcaf864752226ec1541ab64a1d8411395"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -218,7 +343,29 @@
       "acceptance_contract": "每族真實來源去識別樣本、方向／單位／channel 錯誤、28 日不足／恰足、世代改變；逐規則顯示不支援／暖機／就緒及原因入口；改一資源不重置其餘資源",
       "stages": "N3／M0–M2、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC07",
+          "path": "LogForesight.Core/Service/PrtgTrustedSamplingProfileResolver.cs",
+          "symbol": "PrtgTrustedSamplingProfileResolver",
+          "role": "profile resolver",
+          "sha256": "e981efc30de3fb0e05f41bb1815d518c89d22f6f05a9d67e486d7e34facec78c"
+        },
+        {
+          "id": "AC07",
+          "path": "LogForesight.Core/Service/PrtgResourcePeriodReadiness.cs",
+          "symbol": "PrtgResourcePeriodReadiness",
+          "role": "readiness",
+          "sha256": "14f704c9a39a210b86f99f7df6260c691e808782245fd77092d40123ebfa9206"
+        },
+        {
+          "id": "AC07",
+          "path": "LogForesight.Tests/PrtgTrustedSamplingProfileTests.cs",
+          "symbol": "PrtgTrustedSamplingProfileTests",
+          "role": "profile tests",
+          "sha256": "c3d7186b201cb9e779162af886dcab3fa54dc49697ab222cef973affaea25d6b"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -251,7 +398,29 @@
       "acceptance_contract": "目前表單及已保存來源各測成功、失敗、取消；結果回到 sensor／規則資格，無正式派工／通知，遵守共同預算；校準與正式引擎對同一 as-of／語意／品質／規則輸入精確一致，不可用另一套寬鬆引擎建議門檻；不把 probe 成功等同正式流程通過",
       "stages": "N1–N3／M0–M2、M6",
       "status": "部分驗證；完整 AC 未通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC08",
+          "path": "LogForesight.Web/Services/PrtgTrustedSamplingProbeService.cs",
+          "symbol": "PrtgTrustedSamplingProbeService",
+          "role": "probe service",
+          "sha256": "edc9b3641dddb23dd83eb1bc974425c1a3882ced661e0b788a6119aff5ffe3f5"
+        },
+        {
+          "id": "AC08",
+          "path": "LogForesight.Tests/PrtgTrustedSamplingProbeServiceTests.cs",
+          "symbol": "PrtgTrustedSamplingProbeServiceTests",
+          "role": "probe tests",
+          "sha256": "4af3b0c4be902101a51dce04a2187111971c13cf37aaf6a126cfe95f083140f4"
+        },
+        {
+          "id": "AC08",
+          "path": "LogForesight.Tests/PrtgCompatibilityProbeTests.cs",
+          "symbol": "PrtgCompatibilityProbeTests",
+          "role": "compatibility tests",
+          "sha256": "ddf0a27875339034cf2ff645a743ddec5d4ee7c0e16a31592b1cb88f10dae340"
+        }
+      ],
       "input_sha256": "189be3d9cf3cb0ce77c98881d0892ab446deef2ac9337616e48a945b457bcbdd",
       "case_ids": [
         "BROWSER-PRESSURE-TRIAL",
@@ -300,7 +469,71 @@
       "acceptance_contract": "2 sensors×2 日、重複、部分失敗、取消續跑、額度耗盡；成功／失敗／待辦基數精確，資料不重複，不追認歷史對應／語意，不寄過期告警；全量先估成本",
       "stages": "N3／M1–M5",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC09",
+          "path": "LogForesight.Core/Service/PrtgBackfillRunner.cs",
+          "symbol": "PrtgBackfillRunner",
+          "role": "backfill core",
+          "sha256": "02d539ba963337846db88a53a63c0a01f30e0a914f6908505c0d76dcbf404f14"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Web/Services/PrtgBackfillService.cs",
+          "symbol": "PrtgBackfillService",
+          "role": "Web trigger",
+          "sha256": "7f1d9d554b4c72e09655753bb53de8d2b5bbd3a0a7eb7eb499157edefbac71ff"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgBackfillRunnerTests.cs",
+          "symbol": "PrtgBackfillRunnerTests",
+          "role": "runner tests",
+          "sha256": "e005e9cd556d33775b86775218732e04afa070b822b53a2ba092bdb06a1191d9"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgSelectedBackfillServiceTests.cs",
+          "symbol": "PrtgSelectedBackfillServiceTests",
+          "role": "selected path tests",
+          "sha256": "c6034cd2ce94de80a08b3d143987da37b76ef45ea2e1363d2406b531e893eb53"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Core/Service/PrtgFullBackfillPlan.cs",
+          "symbol": "PrtgFullBackfillPlan",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4bc7f17bc6ba73272cf8d502fcb89db028be90aca9f867408c20aaf806706f34"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgFullBackfillPreviewServiceTests.cs",
+          "symbol": "PrtgFullBackfillPreviewServiceTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "135ea31e36321ec6ae2e64fe83b0f9497594d9abb8899c11520cedcb337bf193"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgBackfillAuthorizationControllerTests.cs",
+          "symbol": "PrtgBackfillAuthorizationControllerTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "3e0e0b7823d90723663abe21bec6a652dba4611e1a91234145e9e73481887ddf"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
+          "symbol": "bindPrtgBackfill",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+        },
+        {
+          "id": "AC09",
+          "path": "scripts/tests/Verify-PrtgRunsBackfillCancel.ContractTests.mjs",
+          "symbol": "selected supplies displayed exact run ID",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -333,7 +566,29 @@
       "acceptance_contract": "各族固定語料全數符合；門檻前／恰值／後、低 coverage、缺口、尖峰、合理負載、重跑、再發；無 consumer 的 rule code 明確處理，不允許保存後永不執行",
       "stages": "N3–N4／M1、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC10",
+          "path": "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
+          "symbol": "PrtgResourcePeriodConsumer",
+          "role": "period consumer",
+          "sha256": "e94232e5d151e59a8df5a7e7fbb964eec5e1a11e9987f20fa948619360c70b7f"
+        },
+        {
+          "id": "AC10",
+          "path": "LogForesight.Core/Service/PrtgDiskTrendEvaluator.cs",
+          "symbol": "PrtgDiskTrendEvaluator",
+          "role": "disk evaluator",
+          "sha256": "80c8b8b42cc339acbf41f91af2fdc75f6c3f600a84d1cbed2ff9b92c497267e5"
+        },
+        {
+          "id": "AC10",
+          "path": "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs",
+          "symbol": "PrtgFormalRuleCaseManifestTests",
+          "role": "case manifest",
+          "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -368,7 +623,36 @@
       "acceptance_contract": "成功零事件、NetIQ 既有高風險、弱同日／強同資源時窗佐證、父失敗／缺日；獨立 PRTG 理由保留，NetIQ 風險不降低，無事件數造假，弱佐證不冒充雙重確認",
       "stages": "N4／M2、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC11",
+          "path": "LogForesight.Core/Analysis/PrtgCorroboration.cs",
+          "symbol": "PrtgCorroboration",
+          "role": "matching",
+          "sha256": "46a8c72bde17d437d624e3ef903d69d72e5507b5a1fd352565398ef5d0e29d7b"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Core/Analysis/SentinelEventMapper.cs",
+          "symbol": "SentinelEventMapper",
+          "role": "NetIQ mapping",
+          "sha256": "f2dfba3c765acb0d33148eeea4dcc0d9fe3cf5f9774fb773f3c6a193cb5b3f46"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Tests/PrtgCorroborationTests.cs",
+          "symbol": "PrtgCorroborationTests",
+          "role": "matching tests",
+          "sha256": "c9f85e1d288d2a765c06c41260bfacad977fec60e8fb803b23cbc09f2941d813"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Tests/NetiqEvidenceMetadataProbeTests.cs",
+          "symbol": "NetiqEvidenceMetadataProbeTests",
+          "role": "shape-only probe tests",
+          "sha256": "8fb9f7eb0153dc44ec46e9f84d2152a0943e80d7520c4c799d289d7161cd1e25"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -401,7 +685,29 @@
       "acceptance_contract": "完成順序互換、5 次重跑、舊 AI 延遲回寫、規則／父版本變更；一份有效版本／成員，舊 AI 不覆寫；合格父及必要證據耐久提交後 ≤15 分鐘補充可見，歷史修訂不亂寄信",
       "stages": "N4／M2、M4、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC12",
+          "path": "LogForesight.Core/Service/PrtgSupplementReplay.cs",
+          "symbol": "PrtgSupplementReplay",
+          "role": "supplement replay",
+          "sha256": "350e82f51b8ae61f26322d6fa8d485539bb37eca793ced64f72234e4acc2995e"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Tests/PrtgSupplementReplayTests.cs",
+          "symbol": "PrtgSupplementReplayTests",
+          "role": "replay tests",
+          "sha256": "43996b431ea55049aab594901e8766024f45527ceb04df3c2105ce52f4420f31"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Tests/PrtgResourceModeReplayWorkerTests.cs",
+          "symbol": "PrtgDiskFormalFlowTests",
+          "role": "mode replay tests",
+          "sha256": "9b8faac5b40e5813b2aa4154879d4dc9b1694e5fff16d63113b55e6993d47f40"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -434,7 +740,29 @@
       "acceptance_contract": "受限使用者對每族正例由清單找到正確資源、原因、期間、缺口、版本、下一步；清單／詳情／報告同版本一致；不需 developer log 或管理維護頁",
       "stages": "N4–N5／M6",
       "status": "部分驗證；完整 AC 未通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC13",
+          "path": "LogForesight.Core/Service/RiskReportService.cs",
+          "symbol": "RiskReportService",
+          "role": "report producer",
+          "sha256": "253fd62d51e8afdd4665c297910a2578eeed17732aa8b42fd66ea0c469f79f15"
+        },
+        {
+          "id": "AC13",
+          "path": "LogForesight.Tests/HostDetailPrtgScopedQueryTests.cs",
+          "symbol": "HostDetailPrtgScopedQueryTests",
+          "role": "scoped evidence tests",
+          "sha256": "d8e517c684c5867f8a85fbff7be96afa18c45c9b91a5ba92472f3fe0af1d4028"
+        },
+        {
+          "id": "AC13",
+          "path": "LogForesight.Tests/RiskReportServiceTests.cs",
+          "symbol": "RiskReportServiceTests",
+          "role": "report tests",
+          "sha256": "9e7b740907746023b5cfd720ab275c11ec42b4a58154b1d1881d029849f28ce2"
+        }
+      ],
       "input_sha256": "189be3d9cf3cb0ce77c98881d0892ab446deef2ac9337616e48a945b457bcbdd",
       "case_ids": [
         "BROWSER-Q2-UTC",
@@ -489,7 +817,29 @@
       "acceptance_contract": "建案、指派、回覆、恢復再發、重評、父刪除；事故識別穩定，重複有效成員 0，人工回覆逐值保留；ACK／已回覆／風險解除區分",
       "stages": "N4–N5／M2、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC14",
+          "path": "LogForesight.Core/Persistence/IssueCaseCoordinator.cs",
+          "symbol": "IssueCaseCoordinator",
+          "role": "case workflow",
+          "sha256": "b4b34127535fe527b697c097253e7e365ccd9d01846c1d5843d115d4e834819f"
+        },
+        {
+          "id": "AC14",
+          "path": "LogForesight.Core/Persistence/WorkOrderCoordinator.cs",
+          "symbol": "WorkOrderCoordinator",
+          "role": "work-order workflow",
+          "sha256": "16fe1c35b187dabe2c914a539e3329b9ba81577a411f1687ea38dd2eb7871c96"
+        },
+        {
+          "id": "AC14",
+          "path": "LogForesight.Tests/IssueCaseCoordinatorTests.cs",
+          "symbol": "IssueCaseCoordinatorTests",
+          "role": "case tests",
+          "sha256": "d3e9a720e6b6f2f12bff9ad159bfb5fe1f56f7e4d04696dd219052b0f75f4b83"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -521,7 +871,29 @@
       "acceptance_contract": "SMTP 接受／拒絕、接受後提交未知、部分收件失敗、靜音重啟；同案識別及通知意圖不重複，失敗可重試，實收用測試信箱驗；外部 SMTP 無去重時不承諾郵件恰好一次",
       "stages": "N4／M2、M5–M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC15",
+          "path": "LogForesight.Web/Services/Mail/MailNotificationService.cs",
+          "symbol": "MailNotificationService",
+          "role": "notification consumer",
+          "sha256": "1b236213d1dc2d36953ee3ee4d6e19b58323a5519a48cb8b2a11bd3f7e356361"
+        },
+        {
+          "id": "AC15",
+          "path": "LogForesight.Tests/PrtgFormalMailStartClaimTests.cs",
+          "symbol": "PrtgFormalMailStartClaimTests",
+          "role": "durable claim tests",
+          "sha256": "b851eefd91a9894ab6b5cd54cac70fb9d8d375225f323a992580b3d9a023236c"
+        },
+        {
+          "id": "AC15",
+          "path": "LogForesight.Tests/PrtgSmtpProtocolAcceptanceTests.cs",
+          "symbol": "PrtgSmtpProtocolAcceptanceTests",
+          "role": "SMTP tests",
+          "sha256": "25711735e69cbcee6f98f4d89b17396b0a68d372d3bdf04edd97cdd52e1712be"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -553,7 +925,36 @@
       "acceptance_contract": "三來源成功／停用／失敗／積壓／補跑／維護重疊／重啟；一個總覽追溯整體工作與待補，降級不冒充完成，AI 失敗不抹掉確定性結果；公平性通過",
       "stages": "N4–N5／M2、M4–M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC16",
+          "path": "LogForesight.Web/Services/SchedulerHostedService.cs",
+          "symbol": "SchedulerHostedService",
+          "role": "scheduler",
+          "sha256": "fc4fa00c98c4cd420f562f5ee903845ac72b7540f6bbf7ea0e8a5c62e133e5fd"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Web/Services/SchedulerRunState.cs",
+          "symbol": "SchedulerRunState",
+          "role": "run state",
+          "sha256": "4117f3cde6906cb2741ed5d7eb84a6e7cec5de62f4e994d5602bf1b4283876e6"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Tests/SchedulerRunStateTests.cs",
+          "symbol": "SchedulerRunStateTests",
+          "role": "state tests",
+          "sha256": "66764aebfd92cdc0256982dfe1e541216ae5a69f5a5fe0f276783539012282ef"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Tests/PrtgPartialWorkflowContractTests.cs",
+          "symbol": "PrtgPartialWorkflowContractTests",
+          "role": "workflow contract tests",
+          "sha256": "f9eea0ab070ad5ac351a3bf2e19544bd74b361ba1bebb9a488652cd4f404ca26"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -586,7 +987,29 @@
       "acceptance_contract": "守門在範圍外、遙測缺失、閾值、恢復、無目標；守門不造業務告警；輪詢、取得、耐久落庫、就緒與判定逐層區分，沒資料不顯示健康",
       "stages": "N2、N5／M0、M2、M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC17",
+          "path": "LogForesight.Core/Service/PrtgResourceGuard.cs",
+          "symbol": "PrtgResourceGuard",
+          "role": "guard",
+          "sha256": "3e08218db6ad2e42e5606f086a87521d145d8a32c0ec41bf41f9747f1f3f00e6"
+        },
+        {
+          "id": "AC17",
+          "path": "LogForesight.Tests/PrtgResourceGuardTests.cs",
+          "symbol": "PrtgResourceGuardTests",
+          "role": "guard tests",
+          "sha256": "abae7609802addadeda4961b9ce45c1b968e4bf016b52594acbcf2141e49fac5"
+        },
+        {
+          "id": "AC17",
+          "path": "LogForesight.Tests/HealthPrtgSnapshotTests.cs",
+          "symbol": "HealthPrtgSnapshotTests",
+          "role": "health tests",
+          "sha256": "b591edaf0f6a236529ad04dcc865d9109bede621bfff48692af423ff7835246d"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -619,7 +1042,36 @@
       "acceptance_contract": "舊版包、受限範圍、分批中斷／缺片、重複匯入、來源／objid 衝突、低品質覆寫高品質；manifest 版本／筆數／雜湊完整；有界處理及診斷隔離，不污染正式資料或授權正式風險；洩漏 0",
       "stages": "N3、N6／M2–M3、M5–M6",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC18",
+          "path": "LogForesight.Core/Service/PrtgDiagnosticExportWriter.cs",
+          "symbol": "PrtgDiagnosticExportWriter",
+          "role": "export writer",
+          "sha256": "fae4bcadb0b816491d241ddbc50e298212321174acba0dec385e40804d09d640"
+        },
+        {
+          "id": "AC18",
+          "path": "LogForesight.Core/Service/PrtgDataTransfer.cs",
+          "symbol": "PrtgDataTransfer",
+          "role": "transfer contract",
+          "sha256": "d3731002923a78e95cb0086974e54471dc951aa6b9b3bfdc9d39046273597c87"
+        },
+        {
+          "id": "AC18",
+          "path": "LogForesight.Tests/PrtgDiagnosticImportIsolationTests.cs",
+          "symbol": "PrtgDiagnosticImportIsolationTests",
+          "role": "import isolation tests",
+          "sha256": "4660e5134d41171fd208b31b1db9ad9af4151d6c8b932c6b4e6ce49f7eb8a5ff"
+        },
+        {
+          "id": "AC18",
+          "path": "LogForesight.Tests/PrtgDiagnosticExportSourceTests.cs",
+          "symbol": "PrtgDiagnosticExportSourceTests",
+          "role": "export tests",
+          "sha256": "a75c95161ad8d83e2507c5e57eb7f64390945a65a996cd8edbd2cb9f2a539389"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -655,7 +1107,29 @@
       "acceptance_contract": "180 日高水位、未落庫 journal、未結案證據、到期、容量滿；批次清理不阻塞正常查詢，政策與實際筆數一致；未完成持久工作不清掉，案件證據保留或明示依設定裁切",
       "stages": "N6／M3–M5",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC19",
+          "path": "LogForesight.Core/Service/RetentionPruner.cs",
+          "symbol": "RetentionPruner",
+          "role": "cleanup core",
+          "sha256": "0727ef3f4aac3552bde8c1c0c6ba8d1689ee4ef01eab262bdfe76586c64d4d4e"
+        },
+        {
+          "id": "AC19",
+          "path": "LogForesight.Tests/RetentionPrunerTests.cs",
+          "symbol": "RetentionPrunerTests",
+          "role": "retention tests",
+          "sha256": "0bccd741ed42174e85c07846f41668f8a6be63f0de39b58842468f16c16c0577"
+        },
+        {
+          "id": "AC19",
+          "path": "LogForesight.Tests/PrtgDiagnosticRetentionTests.cs",
+          "symbol": "PrtgDiagnosticRetentionTests",
+          "role": "diagnostic retention tests",
+          "sha256": "a5893f94f69e2d3f3424517739a1ad6834f945e792528371d7bf2a1d2c949b7e"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -687,7 +1161,36 @@
       "acceptance_contract": "本輪建置、真實 provider、備份副本恢復、雙程序、提交未知、損壞 journal；精確基數通過；回退相容預先驗，不能恢復即阻擋升級",
       "stages": "N1、N6／M0、M3、M5",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC20",
+          "path": "LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs",
+          "symbol": "SchemaUpgrader",
+          "role": "upgrade path",
+          "sha256": "d4924be049415e2917d4edf059d3b161004f6ddcad05ca55d83c49f0a025d71c"
+        },
+        {
+          "id": "AC20",
+          "path": "LogForesight.Core/Persistence/Sql/EfPrtgTransferStore.cs",
+          "symbol": "EfPrtgTransferStore",
+          "role": "durable transfer store",
+          "sha256": "b48ae9eeca8b826b32692c58a2c17821fab9df603ba68ebe5f571bdc75f72487"
+        },
+        {
+          "id": "AC20",
+          "path": "LogForesight.Tests/SchemaUpgraderPrtgTests.cs",
+          "symbol": "SchemaUpgraderPrtgTests",
+          "role": "schema tests",
+          "sha256": "16236ec811a363ff68df0f7e26db36a34d1d8b883e0626874de7062e3a7ee359"
+        },
+        {
+          "id": "AC20",
+          "path": "LogForesight.Tests/PrtgTransferStoreTests.cs",
+          "symbol": "PrtgTransferStoreTests",
+          "role": "persistence tests",
+          "sha256": "8626219849c33d39e0e06bc8157ba2188b13b4dbecf4bd0e65cd17d7120394db"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -720,7 +1223,71 @@
       "acceptance_contract": "管理者、維護者、處理者、受限查看、空可見集合、直接 URL／API；列表／證據／診斷／匯出／通知越權 0，外部名稱／訊息作文字不執行腳本",
       "stages": "N5／M2、M6",
       "status": "部分驗證；完整 AC 未通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC21",
+          "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
+          "symbol": "PrtgMonitoringController",
+          "role": "visibility API",
+          "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Web/Controllers/Api/PrtgResourcePressureController.cs",
+          "symbol": "PrtgResourcePressureController",
+          "role": "resource ACL API",
+          "sha256": "1f2f42f09c51d36949a6b22c2319a9df75487b76a6636032f417d1daddb3e098"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgResourcePressureAuthorizationEndToEndTests.cs",
+          "symbol": "PrtgResourcePressureAuthorizationEndToEndTests",
+          "role": "authorization tests",
+          "sha256": "ba2ee546e92ddb7765f1e649778a6758ec456abd7024a4b7c23ca16a29eae27d"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgDiskVisibilityAuthorizationTests.cs",
+          "symbol": "PrtgDiskVisibilityAuthorizationTests",
+          "role": "visibility tests",
+          "sha256": "acb386a3541d16d76db10bca2ebba65ad6e5ca68d531ad0a45708f0665156d17"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Core/Service/PrtgFullBackfillPlan.cs",
+          "symbol": "PrtgFullBackfillPlan",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4bc7f17bc6ba73272cf8d502fcb89db028be90aca9f867408c20aaf806706f34"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgFullBackfillPreviewServiceTests.cs",
+          "symbol": "PrtgFullBackfillPreviewServiceTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "135ea31e36321ec6ae2e64fe83b0f9497594d9abb8899c11520cedcb337bf193"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgBackfillAuthorizationControllerTests.cs",
+          "symbol": "PrtgBackfillAuthorizationControllerTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "3e0e0b7823d90723663abe21bec6a652dba4611e1a91234145e9e73481887ddf"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
+          "symbol": "bindPrtgBackfill",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+        },
+        {
+          "id": "AC21",
+          "path": "scripts/tests/Verify-PrtgRunsBackfillCancel.ContractTests.mjs",
+          "symbol": "selected supplies displayed exact run ID",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b"
+        }
+      ],
       "input_sha256": "189be3d9cf3cb0ce77c98881d0892ab446deef2ac9337616e48a945b457bcbdd",
       "case_ids": [
         "BROWSER-Q2-XSS",
@@ -775,7 +1342,29 @@
       "acceptance_contract": "新操作者依正式文件完成設定、語意核對、查證、處置及排程診斷；實際限制／規則／恢復方式與文件一致；錯誤有原因、下一步及入口，不能只有聯絡開發者",
       "stages": "N5、N8／M6–M7",
       "status": "部分驗證；完整固定契約未全數通過",
-      "implementation_evidence": [],
+      "implementation_evidence": [
+        {
+          "id": "AC22",
+          "path": "LogForesight.Web/Services/HelpContentService.cs",
+          "symbol": "HelpContentService",
+          "role": "help content",
+          "sha256": "d71974104015cb52a6932bb487314fc4473d82a44bbf210014e9937c41b7bb5a"
+        },
+        {
+          "id": "AC22",
+          "path": "LogForesight.Tests/HelpAndHistoryTests.cs",
+          "symbol": "HelpAndHistoryTests",
+          "role": "help tests",
+          "sha256": "3f76b64a3f0e9acdcfeba7a04871ff79b5cb2fa8cf60b79401fc31ae5da80343"
+        },
+        {
+          "id": "AC22",
+          "path": "LogForesight.Tests/HelpNavigationConsistencyTests.cs",
+          "symbol": "HelpNavigationConsistencyTests",
+          "role": "navigation tests",
+          "sha256": "aca039d6db4ce30549fbb2a94d4b0e55a6577d2acd38e1f2aa1375a552d6eb3f"
+        }
+      ],
       "input_sha256": null,
       "case_ids": [],
       "expected_results": null,
@@ -1903,7 +2492,7 @@
     }
   ],
   "implementation_worktree": "C:/Users/eldar/Documents/Codex/2026-10-01/c-users-eldar-claude-project-logforesight/work/logforesight-feedback-53",
-  "implementation_blocker": "剩餘必要交付為跨主機日窗口歸屬、同 build 原生探測／fixture 及正式 profile authority；R05/C1 的程式與文件本次覆核修驗後清除 TODO，五組整輪验收保持未通過。",
+  "implementation_blocker": "本次對碼確認的必要程式補漏已完成並驗證，實作 TODO 零項；A0 缺原生事實，五組完整驗收未通過。未將程式完成或小 fixture 當整輪結案。",
   "execution_policy": {
     "executor": "gpt-6-luna",
     "allowed_efforts": [
@@ -2047,11 +2636,11 @@
     "complete_workload_acceptance": false
   },
   "current_blockers": [
-    "A0/N1：尚未收到當前 build 有限原生探測／provider／部署資源及完整來源 fixture。",
-    "R15：主要頻道、單位縮放及 raw/source/analysis 時基 authority 未確證；明確設定加原生核驗已獲使用者採用，流程實作及 native snapshot 通道身分核驗仍待完成。",
+    "N1–N3/A0：尚缺當前 build 原生探測、來源頻道及 raw/source/analysis 時基、provider／部署資源與完整來源 fixture；明確設定／核驗／離線核對程式已實作。",
     "N4–N5：完整多角色、報告、回放工作生命週期及 NetIQ 處置操作矩陣未全通過。",
-    "R05/N6：3000 hosts / 15000 sensors / 180 days 共同負載及完整持續負載／升退版／備份復原未通過；本機 Express 容量前置拒絕不算驗收通過。",
-    "N7：四基準獨立母體、查證與提前增益尚未達成；N8/M7 及全部必要 AC/Q 仍未結案。"
+    "R05/N6：3000 hosts / 15000 sensors / 180 days 共同負載、持續負載／升退版／備份復原未通過；本機 Express 容量前置拒絕不算通過。",
+    "N7：四基準獨立母體、查證與提前增益尚未達成。",
+    "N8/M7：全部必要 AC/Q 及全輪獨立體檢尚未通過。"
   ],
   "browser_verifications": [
     {
@@ -2204,12 +2793,14 @@
     "meaning": "offline integrity only; no source trust or capacity qualification"
   },
   "current_required_delivery_counts": {
-    "implementation_deliveries": 1,
-    "validation_groups": 5,
-    "implementation_ids": [
-      "A0/N1"
+    "implementation_deliveries": 0,
+    "implementation_ids": [],
+    "source_fact_deliveries": 1,
+    "source_fact_ids": [
+      "A0/N1–N3"
     ],
-    "meaning": "必要程式子項已分段驗證；原生事實及五組完整驗收未裁定通過。"
+    "validation_groups": 5,
+    "meaning": "程式完成與缺來源事實／五組完整驗收分列，不降低原門檻。"
   },
   "current_r08_r14_integration_verification": {
     "gate": "current-r08-r14-consumers-primary-v1",
@@ -2385,41 +2976,62 @@
     "whole_round_passed": false
   },
   "current_joint_profile_capacity_gap": {
-    "status": "completed-red-stage-returned-to-implementation",
-    "stage": "work/logforesight-profile-capacity",
-    "gate": "joint-profile-capacity-primary-v1",
-    "build_errors": 0,
-    "build_warnings": 67,
-    "counters": {
-      "passed": 104,
-      "failed": 5,
-      "skipped": 0
-    },
-    "input_count": 1094,
-    "input_drift": 0,
-    "additional_required_seams": [
-      "exact build/version/request-shape admission contract",
-      "sequential RTT and pacing completion bound",
-      "actual mixed-lane steady workload progress and rolling quota checks"
+    "status": "implementation-complete; affected verification passed; whole-round gates remain open",
+    "source_commit": "b3a10fdffa6c93f2fe97c9e6cbb239442bade98c",
+    "implementation_todo_closed": true,
+    "evidence_keys": [
+      "bounded_capacity_recovery_current_main_20261010",
+      "snapshot100_source_contract_current_main_20261010",
+      "remaining_four_software_delivery_20261011"
     ],
-    "native_or_complete_workload_pass": false
+    "original_gap_snapshot": {
+      "status": "completed-red-stage-returned-to-implementation",
+      "stage": "work/logforesight-profile-capacity",
+      "gate": "joint-profile-capacity-primary-v1",
+      "build_errors": 0,
+      "build_warnings": 67,
+      "counters": {
+        "passed": 104,
+        "failed": 5,
+        "skipped": 0
+      },
+      "input_count": 1094,
+      "input_drift": 0,
+      "additional_required_seams": [
+        "exact build/version/request-shape admission contract",
+        "sequential RTT and pacing completion bound",
+        "actual mixed-lane steady workload progress and rolling quota checks"
+      ],
+      "native_or_complete_workload_pass": false
+    },
+    "wholeRoundAccepted": false
   },
   "current_resource_day_window_gap": {
-    "status": "confirmed-contract-omission-cross-day-attribution-discussion-pending",
-    "source_verified_by_root": true,
-    "independent_review_model": "gpt-6-luna high",
-    "source_paths": [
-      "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
-      "LogForesight.Core/Service/PrtgResourcePeriodAssessment.cs",
-      "LogForesight.Core/Service/PrtgDailyPipeline.cs"
+    "status": "implementation-complete; affected verification passed; whole-round gates remain open",
+    "source_commit": "b3a10fdffa6c93f2fe97c9e6cbb239442bade98c",
+    "implementation_todo_closed": true,
+    "evidence_keys": [
+      "current_cross_day_completion_20261009",
+      "current_resource_same_host_day_v7"
     ],
-    "missing_behavior": [
-      "Earlier daytime qualified risk retained after later recovery",
-      "True host-local D23/D+1 00 window formal attribution"
-    ],
-    "proposal": "Evaluate all completed bounded host-day windows plus preceding hour; attribute pair to later hour host day; qualified parent required.",
-    "manifest_reclassification_is_acceptance": false,
-    "full_case_pack_pass": false
+    "original_gap_snapshot": {
+      "status": "confirmed-contract-omission-cross-day-attribution-discussion-pending",
+      "source_verified_by_root": true,
+      "independent_review_model": "gpt-6-luna high",
+      "source_paths": [
+        "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
+        "LogForesight.Core/Service/PrtgResourcePeriodAssessment.cs",
+        "LogForesight.Core/Service/PrtgDailyPipeline.cs"
+      ],
+      "missing_behavior": [
+        "Earlier daytime qualified risk retained after later recovery",
+        "True host-local D23/D+1 00 window formal attribution"
+      ],
+      "proposal": "Evaluate all completed bounded host-day windows plus preceding hour; attribute pair to later hour host day; qualified parent required.",
+      "manifest_reclassification_is_acceptance": false,
+      "full_case_pack_pass": false
+    },
+    "wholeRoundAccepted": false
   },
   "current_formal_case_pack_v17": {
     "status": "completed-red-returned-to-implementation",
@@ -2713,7 +3325,8 @@
     "historical_initial_status": "confirmed-root-source-review-implementation-in-private-stage",
     "implementation_todo_closed": true,
     "component_evidence": "current_mode_revocation_core_v4 and PLAN §5.3 mode-revocation row",
-    "remaining_distinct_requirement": "R07/day-window cross-host-day attribution remains undecided and open"
+    "remaining_distinct_requirement": "R07/day-window later-hour host-day attribution adopted and implemented; original gap is historical. Broader N4–N5 workflow gates remain open.",
+    "historical_remaining_distinct_requirement": "R07/day-window cross-host-day attribution remains undecided and open"
   },
   "acceptance_execution_scope": {
     "direct_onsite_application_required": false,
@@ -6770,7 +7383,7 @@
       "change": "remove extra empty line at EOF; all non-newline bytes identical"
     }
   },
-  "current_implementation_source_commit": null,
+  "current_implementation_source_commit": "b3a10fdffa6c93f2fe97c9e6cbb239442bade98c",
   "current_manual_map_schema_repair_20261010": {
     "owner": "root",
     "gate": {
@@ -8418,5 +9031,2159 @@
       "delivery_files": 14
     },
     "final_inputs_sha256": "1049b658ca9b3ceb4d194cdedaa99115956ab24004569b585b1364a2204d86ef"
+  },
+  "current_status_precedence_20261011": "Current delivery counts, blockers, implementation source commit and current_plan_code_audit_20261011 govern the active TODO. Earlier named current_* stage records retain their original failure/partial results as historical evidence and do not create duplicate active implementation TODOs.",
+  "current_plan_code_audit_20261011": {
+    "status": "software-implemented-and-affected-verification-passed",
+    "source_commit": "b3a10fdffa6c93f2fe97c9e6cbb239442bade98c",
+    "map_check": {
+      "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-code-map-primary-result.json",
+      "sha256": "0846e75a4244e39719c897cd051ffdc2004d2e001371962f0b7689ecbe126630",
+      "requirements": 46,
+      "paths": 163,
+      "failures": 0,
+      "meaning": "Mapped test references do not claim execution of full fixed acceptance matrix."
+    },
+    "implementation_map": {
+      "AC01": [
+        {
+          "id": "AC01",
+          "path": "LogForesight.Core/Service/PrtgClientFactory.cs",
+          "symbol": "PrtgClientFactory",
+          "role": "Core client construction",
+          "sha256": "82084b014d239ef7d189a578591d4ca612245042f203acd42027e68388f9f6b7"
+        },
+        {
+          "id": "AC01",
+          "path": "LogForesight.Tests/PrtgClientFactoryTests.cs",
+          "symbol": "PrtgClientFactoryTests",
+          "role": "existing test mapping",
+          "sha256": "d0efe14f0ed98aeb70e873957409046b2eacacb94f5fe49f136783e9bbb225f1"
+        },
+        {
+          "id": "AC01",
+          "path": "LogForesight.Web/Controllers/Api/SettingsController.cs",
+          "symbol": "SettingsController",
+          "role": "settings API",
+          "sha256": "7e6561269c7062c51687fba2deb91f44466a8b9c4a0da1c073788399faf497bf"
+        }
+      ],
+      "AC02": [
+        {
+          "id": "AC02",
+          "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
+          "symbol": "PrtgMonitoringController",
+          "role": "scope API",
+          "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
+        },
+        {
+          "id": "AC02",
+          "path": "LogForesight.Tests/PrtgMonitoringPagingTests.cs",
+          "symbol": "PrtgMonitoringPagingTests",
+          "role": "paging tests",
+          "sha256": "d4db3be9e39c04f6ceaebfb0be50a6e59b0620befc563fe64cd295ae503fa6b7"
+        },
+        {
+          "id": "AC02",
+          "path": "LogForesight.Core/Persistence/PrtgHostSnapshot.cs",
+          "symbol": "PrtgHostSnapshot",
+          "role": "immutable snapshot",
+          "sha256": "2cf8b48c470805805aa229c8d4395e4e1fd561360a00e7b33804344fe4f20e59"
+        }
+      ],
+      "AC03": [
+        {
+          "id": "AC03",
+          "path": "LogForesight.Core/Persistence/PrtgResourceIdentityStore.cs",
+          "symbol": "PrtgResourceIdentityStore",
+          "role": "identity persistence",
+          "sha256": "764118555381bd7004af8ec637c0bf6768a2b568f1fb7447da262d6b50e38e36"
+        },
+        {
+          "id": "AC03",
+          "path": "LogForesight.Tests/PrtgManualMapIdentityContractTests.cs",
+          "symbol": "PrtgManualMapIdentityContractTests",
+          "role": "identity contract tests",
+          "sha256": "3ce0433ed61eba2549b8f79da02cafdbb6aafe9e28f305c813cb74b0e6278e4b"
+        }
+      ],
+      "AC04": [
+        {
+          "id": "AC04",
+          "path": "LogForesight.Core/Service/PrtgStructureSyncRunner.cs",
+          "symbol": "PrtgStructureSyncRunner",
+          "role": "sync runner",
+          "sha256": "564cdeffaf57b818ce81aec0942767bd2829fcb94b5c9c9773cd5e488b272791"
+        },
+        {
+          "id": "AC04",
+          "path": "LogForesight.Tests/PrtgStructureSyncRunnerTests.cs",
+          "symbol": "PrtgStructureSyncRunnerTests",
+          "role": "runner tests",
+          "sha256": "550f7458e9b09c5e26cd96998245a389f3eab0ce18a256ecef88618895bb9cd7"
+        },
+        {
+          "id": "AC04",
+          "path": "LogForesight.Tests/PrtgStructureSyncCancelEndpointTests.cs",
+          "symbol": "PrtgStructureSyncCancelEndpointTests",
+          "role": "cancel endpoint tests",
+          "sha256": "4746a808f045c14dc241c5d8640a6c123ccb02dc61ed41ca281c3c4b2e1a7bfb"
+        }
+      ],
+      "AC05": [
+        {
+          "id": "AC05",
+          "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
+          "symbol": "PrtgSnapshotHostedService",
+          "role": "producer",
+          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+        },
+        {
+          "id": "AC05",
+          "path": "LogForesight.Core/Service/PrtgSnapshotAccumulator.cs",
+          "symbol": "PrtgSnapshotAccumulator",
+          "role": "slot accumulation",
+          "sha256": "11dca92f61ec3476f6d71425d5504125e30c4d37c7e2f2f817fe91aa5cfada12"
+        },
+        {
+          "id": "AC05",
+          "path": "LogForesight.Tests/PrtgSnapshotAccumulatorTests.cs",
+          "symbol": "PrtgSnapshotAccumulatorTests",
+          "role": "accumulator tests",
+          "sha256": "8553272c9af7206c64b5780c597ca46f69477d968f4b84db0be54bb773075ccd"
+        }
+      ],
+      "AC06": [
+        {
+          "id": "AC06",
+          "path": "LogForesight.Core/Service/PrtgCoveredStateTimeline.cs",
+          "symbol": "PrtgCoveredStateTimeline",
+          "role": "timeline",
+          "sha256": "34639fe9abc1216a236845721d6947ef85d61523761b1491384f3e7612e58394"
+        },
+        {
+          "id": "AC06",
+          "path": "LogForesight.Tests/PrtgCoveredStateTimelineTests.cs",
+          "symbol": "PrtgCoveredStateTimelineTests",
+          "role": "timeline tests",
+          "sha256": "bbebc741720da8b95844fad6af5a9b4376f07abfc2ae8a36352c0f237164c6dc"
+        },
+        {
+          "id": "AC06",
+          "path": "LogForesight.Tests/PrtgCoveredRuleEvaluatorTests.cs",
+          "symbol": "PrtgCoveredRuleEvaluatorTests",
+          "role": "formal state rules",
+          "sha256": "a58c17741f80407497e392f961c0c56fcaf864752226ec1541ab64a1d8411395"
+        }
+      ],
+      "AC07": [
+        {
+          "id": "AC07",
+          "path": "LogForesight.Core/Service/PrtgTrustedSamplingProfileResolver.cs",
+          "symbol": "PrtgTrustedSamplingProfileResolver",
+          "role": "profile resolver",
+          "sha256": "e981efc30de3fb0e05f41bb1815d518c89d22f6f05a9d67e486d7e34facec78c"
+        },
+        {
+          "id": "AC07",
+          "path": "LogForesight.Core/Service/PrtgResourcePeriodReadiness.cs",
+          "symbol": "PrtgResourcePeriodReadiness",
+          "role": "readiness",
+          "sha256": "14f704c9a39a210b86f99f7df6260c691e808782245fd77092d40123ebfa9206"
+        },
+        {
+          "id": "AC07",
+          "path": "LogForesight.Tests/PrtgTrustedSamplingProfileTests.cs",
+          "symbol": "PrtgTrustedSamplingProfileTests",
+          "role": "profile tests",
+          "sha256": "c3d7186b201cb9e779162af886dcab3fa54dc49697ab222cef973affaea25d6b"
+        }
+      ],
+      "AC08": [
+        {
+          "id": "AC08",
+          "path": "LogForesight.Web/Services/PrtgTrustedSamplingProbeService.cs",
+          "symbol": "PrtgTrustedSamplingProbeService",
+          "role": "probe service",
+          "sha256": "edc9b3641dddb23dd83eb1bc974425c1a3882ced661e0b788a6119aff5ffe3f5"
+        },
+        {
+          "id": "AC08",
+          "path": "LogForesight.Tests/PrtgTrustedSamplingProbeServiceTests.cs",
+          "symbol": "PrtgTrustedSamplingProbeServiceTests",
+          "role": "probe tests",
+          "sha256": "4af3b0c4be902101a51dce04a2187111971c13cf37aaf6a126cfe95f083140f4"
+        },
+        {
+          "id": "AC08",
+          "path": "LogForesight.Tests/PrtgCompatibilityProbeTests.cs",
+          "symbol": "PrtgCompatibilityProbeTests",
+          "role": "compatibility tests",
+          "sha256": "ddf0a27875339034cf2ff645a743ddec5d4ee7c0e16a31592b1cb88f10dae340"
+        }
+      ],
+      "AC09": [
+        {
+          "id": "AC09",
+          "path": "LogForesight.Core/Service/PrtgBackfillRunner.cs",
+          "symbol": "PrtgBackfillRunner",
+          "role": "backfill core",
+          "sha256": "02d539ba963337846db88a53a63c0a01f30e0a914f6908505c0d76dcbf404f14"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Web/Services/PrtgBackfillService.cs",
+          "symbol": "PrtgBackfillService",
+          "role": "Web trigger",
+          "sha256": "7f1d9d554b4c72e09655753bb53de8d2b5bbd3a0a7eb7eb499157edefbac71ff"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgBackfillRunnerTests.cs",
+          "symbol": "PrtgBackfillRunnerTests",
+          "role": "runner tests",
+          "sha256": "e005e9cd556d33775b86775218732e04afa070b822b53a2ba092bdb06a1191d9"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgSelectedBackfillServiceTests.cs",
+          "symbol": "PrtgSelectedBackfillServiceTests",
+          "role": "selected path tests",
+          "sha256": "c6034cd2ce94de80a08b3d143987da37b76ef45ea2e1363d2406b531e893eb53"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Core/Service/PrtgFullBackfillPlan.cs",
+          "symbol": "PrtgFullBackfillPlan",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4bc7f17bc6ba73272cf8d502fcb89db028be90aca9f867408c20aaf806706f34"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgFullBackfillPreviewServiceTests.cs",
+          "symbol": "PrtgFullBackfillPreviewServiceTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "135ea31e36321ec6ae2e64fe83b0f9497594d9abb8899c11520cedcb337bf193"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Tests/PrtgBackfillAuthorizationControllerTests.cs",
+          "symbol": "PrtgBackfillAuthorizationControllerTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "3e0e0b7823d90723663abe21bec6a652dba4611e1a91234145e9e73481887ddf"
+        },
+        {
+          "id": "AC09",
+          "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
+          "symbol": "bindPrtgBackfill",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+        },
+        {
+          "id": "AC09",
+          "path": "scripts/tests/Verify-PrtgRunsBackfillCancel.ContractTests.mjs",
+          "symbol": "selected supplies displayed exact run ID",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b"
+        }
+      ],
+      "AC10": [
+        {
+          "id": "AC10",
+          "path": "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
+          "symbol": "PrtgResourcePeriodConsumer",
+          "role": "period consumer",
+          "sha256": "e94232e5d151e59a8df5a7e7fbb964eec5e1a11e9987f20fa948619360c70b7f"
+        },
+        {
+          "id": "AC10",
+          "path": "LogForesight.Core/Service/PrtgDiskTrendEvaluator.cs",
+          "symbol": "PrtgDiskTrendEvaluator",
+          "role": "disk evaluator",
+          "sha256": "80c8b8b42cc339acbf41f91af2fdc75f6c3f600a84d1cbed2ff9b92c497267e5"
+        },
+        {
+          "id": "AC10",
+          "path": "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs",
+          "symbol": "PrtgFormalRuleCaseManifestTests",
+          "role": "case manifest",
+          "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
+        }
+      ],
+      "AC11": [
+        {
+          "id": "AC11",
+          "path": "LogForesight.Core/Analysis/PrtgCorroboration.cs",
+          "symbol": "PrtgCorroboration",
+          "role": "matching",
+          "sha256": "46a8c72bde17d437d624e3ef903d69d72e5507b5a1fd352565398ef5d0e29d7b"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Core/Analysis/SentinelEventMapper.cs",
+          "symbol": "SentinelEventMapper",
+          "role": "NetIQ mapping",
+          "sha256": "f2dfba3c765acb0d33148eeea4dcc0d9fe3cf5f9774fb773f3c6a193cb5b3f46"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Tests/PrtgCorroborationTests.cs",
+          "symbol": "PrtgCorroborationTests",
+          "role": "matching tests",
+          "sha256": "c9f85e1d288d2a765c06c41260bfacad977fec60e8fb803b23cbc09f2941d813"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Tests/NetiqEvidenceMetadataProbeTests.cs",
+          "symbol": "NetiqEvidenceMetadataProbeTests",
+          "role": "shape-only probe tests",
+          "sha256": "8fb9f7eb0153dc44ec46e9f84d2152a0943e80d7520c4c799d289d7161cd1e25"
+        }
+      ],
+      "AC12": [
+        {
+          "id": "AC12",
+          "path": "LogForesight.Core/Service/PrtgSupplementReplay.cs",
+          "symbol": "PrtgSupplementReplay",
+          "role": "supplement replay",
+          "sha256": "350e82f51b8ae61f26322d6fa8d485539bb37eca793ced64f72234e4acc2995e"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Tests/PrtgSupplementReplayTests.cs",
+          "symbol": "PrtgSupplementReplayTests",
+          "role": "replay tests",
+          "sha256": "43996b431ea55049aab594901e8766024f45527ceb04df3c2105ce52f4420f31"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Tests/PrtgResourceModeReplayWorkerTests.cs",
+          "symbol": "PrtgDiskFormalFlowTests",
+          "role": "mode replay tests",
+          "sha256": "9b8faac5b40e5813b2aa4154879d4dc9b1694e5fff16d63113b55e6993d47f40"
+        }
+      ],
+      "AC13": [
+        {
+          "id": "AC13",
+          "path": "LogForesight.Core/Service/RiskReportService.cs",
+          "symbol": "RiskReportService",
+          "role": "report producer",
+          "sha256": "253fd62d51e8afdd4665c297910a2578eeed17732aa8b42fd66ea0c469f79f15"
+        },
+        {
+          "id": "AC13",
+          "path": "LogForesight.Tests/HostDetailPrtgScopedQueryTests.cs",
+          "symbol": "HostDetailPrtgScopedQueryTests",
+          "role": "scoped evidence tests",
+          "sha256": "d8e517c684c5867f8a85fbff7be96afa18c45c9b91a5ba92472f3fe0af1d4028"
+        },
+        {
+          "id": "AC13",
+          "path": "LogForesight.Tests/RiskReportServiceTests.cs",
+          "symbol": "RiskReportServiceTests",
+          "role": "report tests",
+          "sha256": "9e7b740907746023b5cfd720ab275c11ec42b4a58154b1d1881d029849f28ce2"
+        }
+      ],
+      "AC14": [
+        {
+          "id": "AC14",
+          "path": "LogForesight.Core/Persistence/IssueCaseCoordinator.cs",
+          "symbol": "IssueCaseCoordinator",
+          "role": "case workflow",
+          "sha256": "b4b34127535fe527b697c097253e7e365ccd9d01846c1d5843d115d4e834819f"
+        },
+        {
+          "id": "AC14",
+          "path": "LogForesight.Core/Persistence/WorkOrderCoordinator.cs",
+          "symbol": "WorkOrderCoordinator",
+          "role": "work-order workflow",
+          "sha256": "16fe1c35b187dabe2c914a539e3329b9ba81577a411f1687ea38dd2eb7871c96"
+        },
+        {
+          "id": "AC14",
+          "path": "LogForesight.Tests/IssueCaseCoordinatorTests.cs",
+          "symbol": "IssueCaseCoordinatorTests",
+          "role": "case tests",
+          "sha256": "d3e9a720e6b6f2f12bff9ad159bfb5fe1f56f7e4d04696dd219052b0f75f4b83"
+        }
+      ],
+      "AC15": [
+        {
+          "id": "AC15",
+          "path": "LogForesight.Web/Services/Mail/MailNotificationService.cs",
+          "symbol": "MailNotificationService",
+          "role": "notification consumer",
+          "sha256": "1b236213d1dc2d36953ee3ee4d6e19b58323a5519a48cb8b2a11bd3f7e356361"
+        },
+        {
+          "id": "AC15",
+          "path": "LogForesight.Tests/PrtgFormalMailStartClaimTests.cs",
+          "symbol": "PrtgFormalMailStartClaimTests",
+          "role": "durable claim tests",
+          "sha256": "b851eefd91a9894ab6b5cd54cac70fb9d8d375225f323a992580b3d9a023236c"
+        },
+        {
+          "id": "AC15",
+          "path": "LogForesight.Tests/PrtgSmtpProtocolAcceptanceTests.cs",
+          "symbol": "PrtgSmtpProtocolAcceptanceTests",
+          "role": "SMTP tests",
+          "sha256": "25711735e69cbcee6f98f4d89b17396b0a68d372d3bdf04edd97cdd52e1712be"
+        }
+      ],
+      "AC16": [
+        {
+          "id": "AC16",
+          "path": "LogForesight.Web/Services/SchedulerHostedService.cs",
+          "symbol": "SchedulerHostedService",
+          "role": "scheduler",
+          "sha256": "fc4fa00c98c4cd420f562f5ee903845ac72b7540f6bbf7ea0e8a5c62e133e5fd"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Web/Services/SchedulerRunState.cs",
+          "symbol": "SchedulerRunState",
+          "role": "run state",
+          "sha256": "4117f3cde6906cb2741ed5d7eb84a6e7cec5de62f4e994d5602bf1b4283876e6"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Tests/SchedulerRunStateTests.cs",
+          "symbol": "SchedulerRunStateTests",
+          "role": "state tests",
+          "sha256": "66764aebfd92cdc0256982dfe1e541216ae5a69f5a5fe0f276783539012282ef"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Tests/PrtgPartialWorkflowContractTests.cs",
+          "symbol": "PrtgPartialWorkflowContractTests",
+          "role": "workflow contract tests",
+          "sha256": "f9eea0ab070ad5ac351a3bf2e19544bd74b361ba1bebb9a488652cd4f404ca26"
+        }
+      ],
+      "AC17": [
+        {
+          "id": "AC17",
+          "path": "LogForesight.Core/Service/PrtgResourceGuard.cs",
+          "symbol": "PrtgResourceGuard",
+          "role": "guard",
+          "sha256": "3e08218db6ad2e42e5606f086a87521d145d8a32c0ec41bf41f9747f1f3f00e6"
+        },
+        {
+          "id": "AC17",
+          "path": "LogForesight.Tests/PrtgResourceGuardTests.cs",
+          "symbol": "PrtgResourceGuardTests",
+          "role": "guard tests",
+          "sha256": "abae7609802addadeda4961b9ce45c1b968e4bf016b52594acbcf2141e49fac5"
+        },
+        {
+          "id": "AC17",
+          "path": "LogForesight.Tests/HealthPrtgSnapshotTests.cs",
+          "symbol": "HealthPrtgSnapshotTests",
+          "role": "health tests",
+          "sha256": "b591edaf0f6a236529ad04dcc865d9109bede621bfff48692af423ff7835246d"
+        }
+      ],
+      "AC18": [
+        {
+          "id": "AC18",
+          "path": "LogForesight.Core/Service/PrtgDiagnosticExportWriter.cs",
+          "symbol": "PrtgDiagnosticExportWriter",
+          "role": "export writer",
+          "sha256": "fae4bcadb0b816491d241ddbc50e298212321174acba0dec385e40804d09d640"
+        },
+        {
+          "id": "AC18",
+          "path": "LogForesight.Core/Service/PrtgDataTransfer.cs",
+          "symbol": "PrtgDataTransfer",
+          "role": "transfer contract",
+          "sha256": "d3731002923a78e95cb0086974e54471dc951aa6b9b3bfdc9d39046273597c87"
+        },
+        {
+          "id": "AC18",
+          "path": "LogForesight.Tests/PrtgDiagnosticImportIsolationTests.cs",
+          "symbol": "PrtgDiagnosticImportIsolationTests",
+          "role": "import isolation tests",
+          "sha256": "4660e5134d41171fd208b31b1db9ad9af4151d6c8b932c6b4e6ce49f7eb8a5ff"
+        },
+        {
+          "id": "AC18",
+          "path": "LogForesight.Tests/PrtgDiagnosticExportSourceTests.cs",
+          "symbol": "PrtgDiagnosticExportSourceTests",
+          "role": "export tests",
+          "sha256": "a75c95161ad8d83e2507c5e57eb7f64390945a65a996cd8edbd2cb9f2a539389"
+        }
+      ],
+      "AC19": [
+        {
+          "id": "AC19",
+          "path": "LogForesight.Core/Service/RetentionPruner.cs",
+          "symbol": "RetentionPruner",
+          "role": "cleanup core",
+          "sha256": "0727ef3f4aac3552bde8c1c0c6ba8d1689ee4ef01eab262bdfe76586c64d4d4e"
+        },
+        {
+          "id": "AC19",
+          "path": "LogForesight.Tests/RetentionPrunerTests.cs",
+          "symbol": "RetentionPrunerTests",
+          "role": "retention tests",
+          "sha256": "0bccd741ed42174e85c07846f41668f8a6be63f0de39b58842468f16c16c0577"
+        },
+        {
+          "id": "AC19",
+          "path": "LogForesight.Tests/PrtgDiagnosticRetentionTests.cs",
+          "symbol": "PrtgDiagnosticRetentionTests",
+          "role": "diagnostic retention tests",
+          "sha256": "a5893f94f69e2d3f3424517739a1ad6834f945e792528371d7bf2a1d2c949b7e"
+        }
+      ],
+      "AC20": [
+        {
+          "id": "AC20",
+          "path": "LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs",
+          "symbol": "SchemaUpgrader",
+          "role": "upgrade path",
+          "sha256": "d4924be049415e2917d4edf059d3b161004f6ddcad05ca55d83c49f0a025d71c"
+        },
+        {
+          "id": "AC20",
+          "path": "LogForesight.Core/Persistence/Sql/EfPrtgTransferStore.cs",
+          "symbol": "EfPrtgTransferStore",
+          "role": "durable transfer store",
+          "sha256": "b48ae9eeca8b826b32692c58a2c17821fab9df603ba68ebe5f571bdc75f72487"
+        },
+        {
+          "id": "AC20",
+          "path": "LogForesight.Tests/SchemaUpgraderPrtgTests.cs",
+          "symbol": "SchemaUpgraderPrtgTests",
+          "role": "schema tests",
+          "sha256": "16236ec811a363ff68df0f7e26db36a34d1d8b883e0626874de7062e3a7ee359"
+        },
+        {
+          "id": "AC20",
+          "path": "LogForesight.Tests/PrtgTransferStoreTests.cs",
+          "symbol": "PrtgTransferStoreTests",
+          "role": "persistence tests",
+          "sha256": "8626219849c33d39e0e06bc8157ba2188b13b4dbecf4bd0e65cd17d7120394db"
+        }
+      ],
+      "AC21": [
+        {
+          "id": "AC21",
+          "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
+          "symbol": "PrtgMonitoringController",
+          "role": "visibility API",
+          "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Web/Controllers/Api/PrtgResourcePressureController.cs",
+          "symbol": "PrtgResourcePressureController",
+          "role": "resource ACL API",
+          "sha256": "1f2f42f09c51d36949a6b22c2319a9df75487b76a6636032f417d1daddb3e098"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgResourcePressureAuthorizationEndToEndTests.cs",
+          "symbol": "PrtgResourcePressureAuthorizationEndToEndTests",
+          "role": "authorization tests",
+          "sha256": "ba2ee546e92ddb7765f1e649778a6758ec456abd7024a4b7c23ca16a29eae27d"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgDiskVisibilityAuthorizationTests.cs",
+          "symbol": "PrtgDiskVisibilityAuthorizationTests",
+          "role": "visibility tests",
+          "sha256": "acb386a3541d16d76db10bca2ebba65ad6e5ca68d531ad0a45708f0665156d17"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Core/Service/PrtgFullBackfillPlan.cs",
+          "symbol": "PrtgFullBackfillPlan",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4bc7f17bc6ba73272cf8d502fcb89db028be90aca9f867408c20aaf806706f34"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgFullBackfillPreviewServiceTests.cs",
+          "symbol": "PrtgFullBackfillPreviewServiceTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "135ea31e36321ec6ae2e64fe83b0f9497594d9abb8899c11520cedcb337bf193"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Tests/PrtgBackfillAuthorizationControllerTests.cs",
+          "symbol": "PrtgBackfillAuthorizationControllerTests",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "3e0e0b7823d90723663abe21bec6a652dba4611e1a91234145e9e73481887ddf"
+        },
+        {
+          "id": "AC21",
+          "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
+          "symbol": "bindPrtgBackfill",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+        },
+        {
+          "id": "AC21",
+          "path": "scripts/tests/Verify-PrtgRunsBackfillCancel.ContractTests.mjs",
+          "symbol": "selected supplies displayed exact run ID",
+          "role": "current round verified backfill implementation/test",
+          "sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b"
+        }
+      ],
+      "AC22": [
+        {
+          "id": "AC22",
+          "path": "LogForesight.Web/Services/HelpContentService.cs",
+          "symbol": "HelpContentService",
+          "role": "help content",
+          "sha256": "d71974104015cb52a6932bb487314fc4473d82a44bbf210014e9937c41b7bb5a"
+        },
+        {
+          "id": "AC22",
+          "path": "LogForesight.Tests/HelpAndHistoryTests.cs",
+          "symbol": "HelpAndHistoryTests",
+          "role": "help tests",
+          "sha256": "3f76b64a3f0e9acdcfeba7a04871ff79b5cb2fa8cf60b79401fc31ae5da80343"
+        },
+        {
+          "id": "AC22",
+          "path": "LogForesight.Tests/HelpNavigationConsistencyTests.cs",
+          "symbol": "HelpNavigationConsistencyTests",
+          "role": "navigation tests",
+          "sha256": "aca039d6db4ce30549fbb2a94d4b0e55a6577d2acd38e1f2aa1375a552d6eb3f"
+        }
+      ],
+      "R01": [
+        {
+          "id": "R01",
+          "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
+          "symbol": "PrtgMonitoringController",
+          "role": "API",
+          "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
+        },
+        {
+          "id": "R01",
+          "path": "LogForesight.Core/Persistence/PrtgHostSnapshot.cs",
+          "symbol": "PrtgHostSnapshot",
+          "role": "snapshot",
+          "sha256": "2cf8b48c470805805aa229c8d4395e4e1fd561360a00e7b33804344fe4f20e59"
+        },
+        {
+          "id": "R01",
+          "path": "LogForesight.Tests/PrtgHostVisibilitySnapshotTests.cs",
+          "symbol": "PrtgHostVisibilitySnapshotTests",
+          "role": "visibility tests",
+          "sha256": "2b0eea45fd096aa9505136e000644abd9f68f863a107b0536b682576bba0d683"
+        }
+      ],
+      "R02": [
+        {
+          "id": "R02",
+          "path": "LogForesight.Web/Services/PrtgSensorTimelineConsumer.cs",
+          "symbol": "PrtgSensorTimelineConsumer",
+          "role": "incremental consumer",
+          "sha256": "309e84b679d147132ea85903adae3632bbf780e412c6d7e3561991f36243cf8d"
+        },
+        {
+          "id": "R02",
+          "path": "LogForesight.Tests/PrtgSensorTimelineCollectorTests.cs",
+          "symbol": "PrtgSensorTimelineCollectorTests",
+          "role": "collector tests",
+          "sha256": "3c5971e076cad8b8a4d55df3626f23f40b60aec8229d6c5e00ecd97ca612219a"
+        },
+        {
+          "id": "R02",
+          "path": "LogForesight.Tests/PrtgFetchServiceTests.cs",
+          "symbol": "PrtgFetchServiceTests",
+          "role": "fetch tests",
+          "sha256": "39a4f14d287aa448acf9c1662d37e39e5df17522995b847e4dad7c28e6958ceb"
+        }
+      ],
+      "R03": [
+        {
+          "id": "R03",
+          "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
+          "symbol": "PrtgSnapshotHostedService",
+          "role": "producer",
+          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+        },
+        {
+          "id": "R03",
+          "path": "LogForesight.Web/Services/PrtgSnapshotJournal.cs",
+          "symbol": "PrtgSnapshotJournal",
+          "role": "journal",
+          "sha256": "1e87d3b7e7cf3e605f60a718ae0eb4da1eedeec2c7b2c06920b14d31d58a080c"
+        },
+        {
+          "id": "R03",
+          "path": "LogForesight.Tests/PrtgSnapshotJournalTests.cs",
+          "symbol": "PrtgSnapshotJournalTests",
+          "role": "journal tests",
+          "sha256": "071f7519a9b7bb921fd2e8f7ef6e187c717a81ca9fc0ec1fe256cac02a97796c"
+        },
+        {
+          "id": "R03",
+          "path": "LogForesight.Tests/PrtgResourceIdentityStoreTests.cs",
+          "symbol": "PrtgResourceIdentityStoreTests",
+          "role": "identity tests",
+          "sha256": "cd8415be12c144ebdf7da43f1b1201f20d7473a4d4c68735624949c7aa740c5a"
+        }
+      ],
+      "R04": [
+        {
+          "id": "R04",
+          "path": "LogForesight.Core/Service/PrtgTrustedSamplingProfileResolver.cs",
+          "symbol": "PrtgTrustedSamplingProfileResolver",
+          "role": "profile",
+          "sha256": "e981efc30de3fb0e05f41bb1815d518c89d22f6f05a9d67e486d7e34facec78c"
+        },
+        {
+          "id": "R04",
+          "path": "LogForesight.Core/Persistence/PrtgTrustedSamplingBindingStore.cs",
+          "symbol": "PrtgTrustedSamplingBindingStore",
+          "role": "binding",
+          "sha256": "9448fb584137f1e1077a6f06b444f73c378ce63bd69d5093f03616b4da9907e8"
+        },
+        {
+          "id": "R04",
+          "path": "LogForesight.Tests/PrtgTrustedSamplingBindingStoreTests.cs",
+          "symbol": "PrtgTrustedSamplingBindingStoreTests",
+          "role": "binding tests",
+          "sha256": "71491a2e7c8529e43a7e4e20a9b4a72e85689d1e04026a116611e0abaf3394bf"
+        },
+        {
+          "id": "R04",
+          "path": "LogForesight.Tests/PrtgTrustedSamplingProbeServiceTests.cs",
+          "symbol": "PrtgTrustedSamplingProbeServiceTests",
+          "role": "probe tests",
+          "sha256": "4af3b0c4be902101a51dce04a2187111971c13cf37aaf6a126cfe95f083140f4"
+        }
+      ],
+      "R05": [
+        {
+          "id": "R05",
+          "path": "LogForesight.Web/Services/PrtgProfileTransportCapacityPilot.cs",
+          "symbol": "PrtgProfileTransportCapacityPilot",
+          "role": "capacity pilot",
+          "sha256": "92074e70185659440f01fe20bba54bfffcfbbf54d579b2558c0784e37a342b2d"
+        },
+        {
+          "id": "R05",
+          "path": "LogForesight.Web/Services/PrtgCapacityRuntimeAdmission.cs",
+          "symbol": "PrtgCapacityRuntimeAdmission",
+          "role": "runtime admission",
+          "sha256": "c38d14f6beb92f41205e74fc4a982df3485bca1f44747b8bf780b4c044aaa7a3"
+        },
+        {
+          "id": "R05",
+          "path": "LogForesight.Core/Service/PrtgRequestBudget.cs",
+          "symbol": "PrtgRequestBudget",
+          "role": "shared budget",
+          "sha256": "c6067e7893c0932efe3098a92d933337d610b7be76b072b830ab70e08935272f"
+        },
+        {
+          "id": "R05",
+          "path": "LogForesight.Tests/PrtgCapacityPurposeAndProfileTransportTests.cs",
+          "symbol": "PrtgCapacityPurposeAndProfileTransportTests",
+          "role": "capacity tests",
+          "sha256": "d073acdc926062f35e7ef2a925528c48c86dffa711657d392fc96f30593627c3"
+        }
+      ],
+      "R06": [
+        {
+          "id": "R06",
+          "path": "LogForesight.Core/Service/PrtgCoveredStateTimeline.cs",
+          "symbol": "PrtgCoveredStateTimeline",
+          "role": "timeline",
+          "sha256": "34639fe9abc1216a236845721d6947ef85d61523761b1491384f3e7612e58394"
+        },
+        {
+          "id": "R06",
+          "path": "LogForesight.Core/Service/PrtgCoveredRuleEvaluator.cs",
+          "symbol": "PrtgCoveredRuleEvaluator",
+          "role": "rules",
+          "sha256": "21c7b854fde0ed2d5b70f862dbec9f02e7abfe47b142abc7fe5ebbdde87f9254"
+        },
+        {
+          "id": "R06",
+          "path": "LogForesight.Tests/PrtgCoveredStateTimelineTests.cs",
+          "symbol": "PrtgCoveredStateTimelineTests",
+          "role": "timeline cases",
+          "sha256": "bbebc741720da8b95844fad6af5a9b4376f07abfc2ae8a36352c0f237164c6dc"
+        },
+        {
+          "id": "R06",
+          "path": "LogForesight.Tests/PrtgCoveredRuleEvaluatorTests.cs",
+          "symbol": "PrtgCoveredRuleEvaluatorTests",
+          "role": "rule cases",
+          "sha256": "a58c17741f80407497e392f961c0c56fcaf864752226ec1541ab64a1d8411395"
+        }
+      ],
+      "R07": [
+        {
+          "id": "R07",
+          "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
+          "symbol": "PrtgDailyPipeline",
+          "role": "mode-aware analysis",
+          "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
+        },
+        {
+          "id": "R07",
+          "path": "LogForesight.Core/Service/PrtgSupplementReplay.cs",
+          "symbol": "PrtgSupplementReplay",
+          "role": "replay",
+          "sha256": "350e82f51b8ae61f26322d6fa8d485539bb37eca793ced64f72234e4acc2995e"
+        },
+        {
+          "id": "R07",
+          "path": "LogForesight.Tests/PrtgDailyModeOffWithdrawalIntegrationTests.cs",
+          "symbol": "PrtgDiskFormalFlowTests",
+          "role": "withdrawal integration",
+          "sha256": "9c82fcc55836b0326c7fbccdaaa5a78c84dbff7a76903e42b3baf27e784bdb78"
+        },
+        {
+          "id": "R07",
+          "path": "LogForesight.Tests/PrtgResourceModeRevocationAtomicTests.cs",
+          "symbol": "PrtgResourceModeRevocationAtomicTests",
+          "role": "atomic tests",
+          "sha256": "826813d56f86aaeb68acda06f2d78c069eb2523e4d51856c2d5ec071beee4518"
+        }
+      ],
+      "R08": [
+        {
+          "id": "R08",
+          "path": "LogForesight.Core/Service/AnalysisOrchestrator.cs",
+          "symbol": "AnalysisOrchestrator",
+          "role": "orchestration",
+          "sha256": "b88cf3ad0c2f9660f2dcb0d88c743a465a9655ca10a0815ef97911d1714fdfdd"
+        },
+        {
+          "id": "R08",
+          "path": "LogForesight.Web/Services/HostDayWorkflowRecoveryHostedService.cs",
+          "symbol": "HostDayWorkflowRecoveryHostedService",
+          "role": "recovery",
+          "sha256": "96006455b6e38f62dd2ed4f6c6bc1bef479135bebe98e8554b7f3bc0857e0d72"
+        },
+        {
+          "id": "R08",
+          "path": "LogForesight.Tests/HostDayWorkflowRecoveryRevisionTests.cs",
+          "symbol": "HostDayWorkflowRecoveryRevisionTests",
+          "role": "revision recovery",
+          "sha256": "1f9213bf595dc87cb68878803b34f168f3df9c4a2701e45540c6f6d4bc59557d"
+        },
+        {
+          "id": "R08",
+          "path": "LogForesight.Tests/HostDayWorkflowRecoveryHostedServiceTests.cs",
+          "symbol": "HostDayWorkflowRecoveryHostedServiceTests",
+          "role": "hosted recovery",
+          "sha256": "4dfe5b007ed6b89beb53cc9d6fb29cc8374b4001f70764402174016a58f54b44"
+        }
+      ],
+      "R09": [
+        {
+          "id": "R09",
+          "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
+          "symbol": "PrtgSnapshotHostedService",
+          "role": "sampling/refresh scheduler",
+          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+        },
+        {
+          "id": "R09",
+          "path": "LogForesight.Tests/PrtgAtomicReconciliationAttachTests.cs",
+          "symbol": "PrtgAtomicReconciliationAttachTests",
+          "role": "atomic reconciliation tests",
+          "sha256": "f19ee8b0c3f29ae3006c50f7f0c64be1789a8db736521d14642152ad9a621032"
+        },
+        {
+          "id": "R09",
+          "path": "LogForesight.Tests/PrtgSnapshotHostedServiceTests.cs",
+          "symbol": "PrtgSnapshotHostedServiceTests",
+          "role": "hosted tests",
+          "sha256": "4d3d16e8e5ce4dff54a262bc755e30385d9fee5524957c01e83a22a94b95c95e"
+        }
+      ],
+      "R10": [
+        {
+          "id": "R10",
+          "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
+          "symbol": "PrtgMonitoringController",
+          "role": "range endpoint",
+          "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
+        },
+        {
+          "id": "R10",
+          "path": "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs",
+          "symbol": "EfPrtgStore",
+          "role": "range store",
+          "sha256": "cd8441bddf75dcf88c12095e0336c5ee6394db4f8cee2825febd4435cf773429"
+        },
+        {
+          "id": "R10",
+          "path": "LogForesight.Tests/PrtgFetchScopeEstimateEndpointTests.cs",
+          "symbol": "PrtgFetchScopeEstimateEndpointTests",
+          "role": "estimate endpoint",
+          "sha256": "2463f11c9323432edf5c18d66f21ee6b0b0f921bf3dc5ead0a3514c373aa8ab5"
+        },
+        {
+          "id": "R10",
+          "path": "LogForesight.Tests/PrtgBackfillRangeRunnerTests.cs",
+          "symbol": "PrtgBackfillRangeRunnerTests",
+          "role": "range tests",
+          "sha256": "d4ceba55af5ddc1ce219fea2a706bdfd9b05db3efca20ccbccb66536ea2fe1b9"
+        }
+      ],
+      "R11": [
+        {
+          "id": "R11",
+          "path": "LogForesight.Core/Service/PrtgDataTransfer.cs",
+          "symbol": "PrtgDataTransfer",
+          "role": "transfer",
+          "sha256": "d3731002923a78e95cb0086974e54471dc951aa6b9b3bfdc9d39046273597c87"
+        },
+        {
+          "id": "R11",
+          "path": "LogForesight.Core/Persistence/Sql/EfPrtgTransferStore.cs",
+          "symbol": "EfPrtgTransferStore",
+          "role": "durable store",
+          "sha256": "b48ae9eeca8b826b32692c58a2c17821fab9df603ba68ebe5f571bdc75f72487"
+        },
+        {
+          "id": "R11",
+          "path": "LogForesight.Web/Controllers/Api/PrtgTransferController.cs",
+          "symbol": "PrtgTransferController",
+          "role": "HTTP consumer",
+          "sha256": "386617522fdce33f892933babbb86ca8f8685427af68773f998e6ec666a62d12"
+        },
+        {
+          "id": "R11",
+          "path": "LogForesight.Tests/PrtgTransferStoreTests.cs",
+          "symbol": "PrtgTransferStoreTests",
+          "role": "persistence tests",
+          "sha256": "8626219849c33d39e0e06bc8157ba2188b13b4dbecf4bd0e65cd17d7120394db"
+        }
+      ],
+      "R12": [
+        {
+          "id": "R12",
+          "path": "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs",
+          "symbol": "EfPrtgStore",
+          "role": "import/formal store fence",
+          "sha256": "cd8441bddf75dcf88c12095e0336c5ee6394db4f8cee2825febd4435cf773429"
+        },
+        {
+          "id": "R12",
+          "path": "LogForesight.Tests/PrtgDiagnosticImportIsolationTests.cs",
+          "symbol": "PrtgDiagnosticImportIsolationTests",
+          "role": "quarantine tests",
+          "sha256": "4660e5134d41171fd208b31b1db9ad9af4151d6c8b932c6b4e6ce49f7eb8a5ff"
+        },
+        {
+          "id": "R12",
+          "path": "LogForesight.Tests/PrtgDataTransferTests.cs",
+          "symbol": "PrtgDataTransferTests",
+          "role": "transfer tests",
+          "sha256": "3de740d6e7fe088daecd814042b88e4eb999b6a0f42d6da73b607aec3ee82bf6"
+        }
+      ],
+      "R13": [
+        {
+          "id": "R13",
+          "path": "LogForesight.Core/Service/PrtgSilentPresenceFormalConsumer.cs",
+          "symbol": "PrtgSilentPresenceFormalConsumer",
+          "role": "formal consumer",
+          "sha256": "189d3d1c5352d7d2354d8538787d053146899632f013fdc433d4b7f56133f623"
+        },
+        {
+          "id": "R13",
+          "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
+          "symbol": "PrtgDailyPipeline",
+          "role": "Daily caller",
+          "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
+        },
+        {
+          "id": "R13",
+          "path": "LogForesight.Tests/PrtgSilentPresenceSourceFlowTests.cs",
+          "symbol": "PrtgSilentPresenceSourceFlowTests",
+          "role": "source flow",
+          "sha256": "bf96ce4a2a3f93de357b5d90dda5867892a094edca408aa8dac01f897a46c74a"
+        },
+        {
+          "id": "R13",
+          "path": "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs",
+          "symbol": "PrtgFormalRuleCaseManifestTests",
+          "role": "formal cases",
+          "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
+        }
+      ],
+      "R14": [
+        {
+          "id": "R14",
+          "path": "LogForesight.Core/Service/CalibrationService.cs",
+          "symbol": "CalibrationService",
+          "role": "calibration",
+          "sha256": "52b1c377e0426cfad2439ba1c27c199ced44a1245af079f62445b46a69edad72"
+        },
+        {
+          "id": "R14",
+          "path": "LogForesight.Core/Service/PrtgAcceptanceComparison.cs",
+          "symbol": "PrtgAcceptanceComparison",
+          "role": "comparison",
+          "sha256": "52b3935cb709f8dcd3a9c7316d2700f0a55b80fff9cb0348bcd475ea1bcdecb7"
+        },
+        {
+          "id": "R14",
+          "path": "LogForesight.Tests/PrtgAcceptanceComparisonTests.cs",
+          "symbol": "PrtgAcceptanceComparisonTests",
+          "role": "comparison tests",
+          "sha256": "f7c6ca1398d80175e2e9ace8cef124bc35dd0c550eb8baab7e5964d3661f0330"
+        },
+        {
+          "id": "R14",
+          "path": "LogForesight.Tests/PrtgControlledUsefulnessReplayTests.cs",
+          "symbol": "PrtgControlledUsefulnessReplayTests",
+          "role": "controlled replay",
+          "sha256": "9fcd795997439f473bc513d801e167777a67453e5938731c0d27b33ffac88925"
+        }
+      ],
+      "R15": [
+        {
+          "id": "R15",
+          "path": "LogForesight.Core/Service/PrtgSnapshotAccumulator.cs",
+          "symbol": "PrtgSnapshotAccumulator",
+          "role": "slot identity",
+          "sha256": "11dca92f61ec3476f6d71425d5504125e30c4d37c7e2f2f817fe91aa5cfada12"
+        },
+        {
+          "id": "R15",
+          "path": "LogForesight.Core/Service/PrtgResourcePeriodReadiness.cs",
+          "symbol": "PrtgResourcePeriodReadiness",
+          "role": "coverage",
+          "sha256": "14f704c9a39a210b86f99f7df6260c691e808782245fd77092d40123ebfa9206"
+        },
+        {
+          "id": "R15",
+          "path": "LogForesight.Tests/PrtgFreshnessTests.cs",
+          "symbol": "PrtgFreshnessTests",
+          "role": "freshness cases",
+          "sha256": "57def620fa76f7a0dd518af44f73c37e83fb233341b012bd021e2266acfd6bb7"
+        },
+        {
+          "id": "R15",
+          "path": "LogForesight.Tests/PrtgDailyAnalysisTimeZoneTests.cs",
+          "symbol": "PrtgDiskFormalFlowTests",
+          "role": "time-zone cases",
+          "sha256": "076b77e127da39c64013120daf2d00f981edc6806ac092e7346ba287bf66aa16"
+        }
+      ],
+      "R16": [
+        {
+          "id": "R16",
+          "path": "LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs",
+          "symbol": "SchemaUpgrader",
+          "role": "upgrade",
+          "sha256": "d4924be049415e2917d4edf059d3b161004f6ddcad05ca55d83c49f0a025d71c"
+        },
+        {
+          "id": "R16",
+          "path": "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs",
+          "symbol": "EfPrtgStore",
+          "role": "manual-map upsert",
+          "sha256": "cd8441bddf75dcf88c12095e0336c5ee6394db4f8cee2825febd4435cf773429"
+        },
+        {
+          "id": "R16",
+          "path": "LogForesight.Tests/PrtgManualMapIdentityContractTests.cs",
+          "symbol": "PrtgManualMapIdentityContractTests",
+          "role": "identity tests",
+          "sha256": "3ce0433ed61eba2549b8f79da02cafdbb6aafe9e28f305c813cb74b0e6278e4b"
+        },
+        {
+          "id": "R16",
+          "path": "LogForesight.Tests/SchemaUpgraderPrtgTests.cs",
+          "symbol": "SchemaUpgraderPrtgTests",
+          "role": "upgrade tests",
+          "sha256": "16236ec811a363ff68df0f7e26db36a34d1d8b883e0626874de7062e3a7ee359"
+        }
+      ],
+      "R17": [
+        {
+          "id": "R17",
+          "path": "LogForesight.Core/Persistence/PrtgHistoricAdmissionStore.cs",
+          "symbol": "PrtgHistoricAdmissionStore",
+          "role": "durable admission",
+          "sha256": "8447dec3169a8424c4b82aa6743da20ff8d757a180919516c73481eb0a89304c"
+        },
+        {
+          "id": "R17",
+          "path": "LogForesight.Core/Service/PrtgRequestBudget.cs",
+          "symbol": "PrtgRequestBudget",
+          "role": "budget client",
+          "sha256": "c6067e7893c0932efe3098a92d933337d610b7be76b072b830ab70e08935272f"
+        },
+        {
+          "id": "R17",
+          "path": "LogForesight.Tests/PrtgHistoricAdmissionStoreTests.cs",
+          "symbol": "PrtgHistoricAdmissionStoreTests",
+          "role": "admission tests",
+          "sha256": "d5331b4bdeaa3a366c9cfcc6bd68895b6eee2d05e17d49980f959aea3d916430"
+        },
+        {
+          "id": "R17",
+          "path": "LogForesight.Tests/PrtgRequestBudgetTests.cs",
+          "symbol": "PrtgRequestBudgetTests",
+          "role": "budget tests",
+          "sha256": "ab4b6a76b3d84e59b483b532844c0735cbaa74c10616c6a10698a52240f6a734"
+        }
+      ],
+      "R18": [
+        {
+          "id": "R18",
+          "path": "LogForesight.Web/Services/PrtgProfileTransportCapacityPilot.cs",
+          "symbol": "PrtgProfileTransportCapacityPilot",
+          "role": "profile pilot",
+          "sha256": "92074e70185659440f01fe20bba54bfffcfbbf54d579b2558c0784e37a342b2d"
+        },
+        {
+          "id": "R18",
+          "path": "LogForesight.Web/Services/PrtgQualificationCapacityEvaluator.cs",
+          "symbol": "PrtgQualificationCapacityEvaluator",
+          "role": "qualification gate",
+          "sha256": "ccdf6923d5d423e95075d8bbb00ba4c83492fb9aca72e0694590a1f4aa4e31ab"
+        },
+        {
+          "id": "R18",
+          "path": "LogForesight.Core/Service/PrtgProfileTransportCapacity.cs",
+          "symbol": "PrtgProfileTransportCapacityEvaluator",
+          "role": "cost model",
+          "sha256": "970d87de89a7023d80933f5c0d607baedbe32672ac9822f4ef18f59fd425f910"
+        },
+        {
+          "id": "R18",
+          "path": "LogForesight.Tests/PrtgCapacityPurposeAndProfileTransportTests.cs",
+          "symbol": "PrtgCapacityPurposeAndProfileTransportTests",
+          "role": "cost tests",
+          "sha256": "d073acdc926062f35e7ef2a925528c48c86dffa711657d392fc96f30593627c3"
+        }
+      ],
+      "Q1": [
+        {
+          "id": "Q1",
+          "path": "LogForesight.Web/Services/PrtgProfileTransportCapacityPilot.cs",
+          "symbol": "PrtgProfileTransportCapacityPilot",
+          "role": "capacity pilot",
+          "sha256": "92074e70185659440f01fe20bba54bfffcfbbf54d579b2558c0784e37a342b2d"
+        },
+        {
+          "id": "Q1",
+          "path": "LogForesight.Core/Service/PrtgRequestBudget.cs",
+          "symbol": "PrtgRequestBudget",
+          "role": "shared budget",
+          "sha256": "c6067e7893c0932efe3098a92d933337d610b7be76b072b830ab70e08935272f"
+        },
+        {
+          "id": "Q1",
+          "path": "LogForesight.Tests/PrtgSnapshotCapacityTests.cs",
+          "symbol": "PrtgSnapshotCapacityTests",
+          "role": "capacity tests",
+          "sha256": "db18009be3c274d5a655f7184ad93cbf90fa8fdbe5cf7c55bdc771ad4a94fed6"
+        }
+      ],
+      "Q2": [
+        {
+          "id": "Q2",
+          "path": "LogForesight.Core/Analysis/PrtgCorroboration.cs",
+          "symbol": "PrtgCorroboration",
+          "role": "matching",
+          "sha256": "46a8c72bde17d437d624e3ef903d69d72e5507b5a1fd352565398ef5d0e29d7b"
+        },
+        {
+          "id": "Q2",
+          "path": "LogForesight.Core/Analysis/SentinelEventMapper.cs",
+          "symbol": "SentinelEventMapper",
+          "role": "NetIQ mapper",
+          "sha256": "f2dfba3c765acb0d33148eeea4dcc0d9fe3cf5f9774fb773f3c6a193cb5b3f46"
+        },
+        {
+          "id": "Q2",
+          "path": "LogForesight.Core/Models/SourceEvidence.cs",
+          "symbol": "SourceEvidence",
+          "role": "evidence contract",
+          "sha256": "a0653ca6386dc6bae9391a6fe2ac1b96ca9127e4e72af585477c27bbb3f3f6e0"
+        },
+        {
+          "id": "Q2",
+          "path": "LogForesight.Tests/PrtgCorroborationTests.cs",
+          "symbol": "PrtgCorroborationTests",
+          "role": "matching tests",
+          "sha256": "c9f85e1d288d2a765c06c41260bfacad977fec60e8fb803b23cbc09f2941d813"
+        },
+        {
+          "id": "Q2",
+          "path": "LogForesight.Tests/NetiqEvidenceMetadataProbeTests.cs",
+          "symbol": "NetiqEvidenceMetadataProbeTests",
+          "role": "shape-only probe",
+          "sha256": "8fb9f7eb0153dc44ec46e9f84d2152a0943e80d7520c4c799d289d7161cd1e25"
+        }
+      ],
+      "Q3": [
+        {
+          "id": "Q3",
+          "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
+          "symbol": "PrtgDailyPipeline",
+          "role": "independent rules",
+          "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
+        },
+        {
+          "id": "Q3",
+          "path": "LogForesight.Core/Service/PrtgSupplementReplay.cs",
+          "symbol": "PrtgSupplementReplay",
+          "role": "parent-qualified supplement",
+          "sha256": "350e82f51b8ae61f26322d6fa8d485539bb37eca793ced64f72234e4acc2995e"
+        },
+        {
+          "id": "Q3",
+          "path": "LogForesight.Tests/PrtgDailyPipelineTests.cs",
+          "symbol": "PrtgDailyPipelineTests",
+          "role": "pipeline tests",
+          "sha256": "e630584f65f4128c544374764429337c23a2389f19b91a3c3a4cbc22d372f40b"
+        },
+        {
+          "id": "Q3",
+          "path": "LogForesight.Tests/PrtgSupplementReplayTests.cs",
+          "symbol": "PrtgSupplementReplayTests",
+          "role": "replay tests",
+          "sha256": "43996b431ea55049aab594901e8766024f45527ceb04df3c2105ce52f4420f31"
+        }
+      ],
+      "Q4": [
+        {
+          "id": "Q4",
+          "path": "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
+          "symbol": "PrtgResourcePeriodConsumer",
+          "role": "resource period consumer",
+          "sha256": "e94232e5d151e59a8df5a7e7fbb964eec5e1a11e9987f20fa948619360c70b7f"
+        },
+        {
+          "id": "Q4",
+          "path": "LogForesight.Core/Service/PrtgDiskTrendEvaluator.cs",
+          "symbol": "PrtgDiskTrendEvaluator",
+          "role": "disk trend",
+          "sha256": "80c8b8b42cc339acbf41f91af2fdc75f6c3f600a84d1cbed2ff9b92c497267e5"
+        },
+        {
+          "id": "Q4",
+          "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
+          "symbol": "PrtgDailyPipeline",
+          "role": "host-day analysis",
+          "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
+        },
+        {
+          "id": "Q4",
+          "path": "LogForesight.Tests/PrtgResourceCrossDayHostDayTests.cs",
+          "symbol": "PrtgDiskFormalFlowTests",
+          "role": "cross-day tests",
+          "sha256": "339ba21a036c69162e0f79a69e55bfaebb7f1724bad10b178f831ed60da3bcdb"
+        },
+        {
+          "id": "Q4",
+          "path": "LogForesight.Tests/PrtgCrossDayTests.cs",
+          "symbol": "PrtgCrossDayTests",
+          "role": "cross-day tests",
+          "sha256": "5454ec516725bbfef811d0543db90462c20d46d0c6f8db347b8d3e61adb87bff"
+        }
+      ],
+      "Q5": [
+        {
+          "id": "Q5",
+          "path": "LogForesight.Web/Services/SchedulerHostedService.cs",
+          "symbol": "SchedulerHostedService",
+          "role": "scheduler",
+          "sha256": "fc4fa00c98c4cd420f562f5ee903845ac72b7540f6bbf7ea0e8a5c62e133e5fd"
+        },
+        {
+          "id": "Q5",
+          "path": "LogForesight.Web/Services/HostDayWorkflowRecoveryHostedService.cs",
+          "symbol": "HostDayWorkflowRecoveryHostedService",
+          "role": "recovery",
+          "sha256": "96006455b6e38f62dd2ed4f6c6bc1bef479135bebe98e8554b7f3bc0857e0d72"
+        },
+        {
+          "id": "Q5",
+          "path": "LogForesight.Tests/SchedulerRunStateTests.cs",
+          "symbol": "SchedulerRunStateTests",
+          "role": "state tests",
+          "sha256": "66764aebfd92cdc0256982dfe1e541216ae5a69f5a5fe0f276783539012282ef"
+        },
+        {
+          "id": "Q5",
+          "path": "LogForesight.Tests/PrtgPartialWorkflowContractTests.cs",
+          "symbol": "PrtgPartialWorkflowContractTests",
+          "role": "workflow contract",
+          "sha256": "f9eea0ab070ad5ac351a3bf2e19544bd74b361ba1bebb9a488652cd4f404ca26"
+        }
+      ],
+      "Q6": [
+        {
+          "id": "Q6",
+          "path": "LogForesight.Core/Service/PrtgAcceptanceComparison.cs",
+          "symbol": "PrtgAcceptanceComparison",
+          "role": "comparison",
+          "sha256": "52b3935cb709f8dcd3a9c7316d2700f0a55b80fff9cb0348bcd475ea1bcdecb7"
+        },
+        {
+          "id": "Q6",
+          "path": "LogForesight.Tests/PrtgAcceptanceComparisonTests.cs",
+          "symbol": "PrtgAcceptanceComparisonTests",
+          "role": "comparison tests",
+          "sha256": "f7c6ca1398d80175e2e9ace8cef124bc35dd0c550eb8baab7e5964d3661f0330"
+        },
+        {
+          "id": "Q6",
+          "path": "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs",
+          "symbol": "PrtgFormalRuleCaseManifestTests",
+          "role": "fixed matrix",
+          "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
+        }
+      ]
+    },
+    "full_backfill_before_auth": {
+      "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\full-backfill-main\\full-backfill-main.trx",
+      "sha256": "77889840aa848eb404d5b17cc0db1af8f8b86c918a03cbcf4686d3ef667b1d50",
+      "counters": {
+        "total": "142",
+        "executed": "142",
+        "passed": "142",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "failed_tests": [],
+      "skipped_tests": []
+    },
+    "replay_auth": {
+      "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\replay-auth-green\\replay-auth-green.trx",
+      "sha256": "8fb97ddfc775edf6cc62068365777a33cc13876b344352860dcf07da82f99fa2",
+      "counters": {
+        "total": "15",
+        "executed": "15",
+        "passed": "15",
+        "failed": "0",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "failed_tests": [],
+      "skipped_tests": []
+    },
+    "route_contract": {
+      "consumer_assertions": 42,
+      "wrapper_assertions": 17,
+      "logs": [
+        {
+          "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\round53-route-samples-green-retry.log",
+          "sha256": "fbe7470603e83c5b7902d2934a7df976cba9821c099daae904e2dc114df336bd"
+        },
+        {
+          "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\round53-route-wrapper-green.log",
+          "sha256": "4061f619a23ac12edec6ee06b206aa3a80f1165fc8a0b3d113da3eda4975b4ee"
+        }
+      ]
+    },
+    "runs_cancel_delta": {
+      "source_commit": "9b63736102fbc8159a7b3535b727319cefeb56fd",
+      "interaction_contracts_passed": 9,
+      "source_sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca",
+      "contract_script_sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b",
+      "logs": [
+        {
+          "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\runs-selected-cancel-red.log",
+          "sha256": "eabcb0fb0f9203e7f0c0d56eb8e0c4e31aa7ff530db37028aa6e29caf16732d9"
+        },
+        {
+          "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\runs-selected-cancel-green.log",
+          "sha256": "ea60f85199b35b59dbd86bc2f55c8aab602e65af8a0a25ebbbb6eaec5ddabc9b"
+        }
+      ],
+      "baseline_source_snapshot_replaced": false,
+      "meaning": "JS delta independently tested after 216 source snapshot run; no unique case count summed."
+    },
+    "metadata_fixture_delta": {
+      "source_commit": "cce348cadddfba46bf653eb31b2ccb93e44d2386",
+      "source_sha256": "42600ff1831d0a38f2bf8870b7e0b1ebdfb7aaccf3e1e8835883af5271c047cc",
+      "red": {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-metadata-ready-red-results\\root-metadata-ready-red.trx",
+        "sha256": "a1f96ccb9699b698443599c9341989a1971e83eeae67f0b92f078719c89f2d79",
+        "counters": {
+          "total": "2",
+          "executed": "2",
+          "passed": "0",
+          "failed": "2",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [
+          "LogForesight.Tests.PrtgDiskMetadataSnapshotTests.HasAnyReady的true返回前任一metadata變更都拒絕原本可用的判定(mutateVerification: True)",
+          "LogForesight.Tests.PrtgDiskMetadataSnapshotTests.HasAnyReady的true返回前任一metadata變更都拒絕原本可用的判定(mutateVerification: False)"
+        ],
+        "skipped_tests": []
+      },
+      "green": {
+        "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+        "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051",
+        "counters": {
+          "total": "62",
+          "executed": "62",
+          "passed": "62",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": [],
+        "scope": "Final metadata fixture delta cce348ca: independent RED 2/2, then fresh build 62/62 affected disk cases including both metadata mutation variants; overlaps prior disk cases, not summed as unique cases."
+      },
+      "production_readiness_guard_changed": false,
+      "meaning": "Binding before evidence; both mutation callbacks and final fence remain required."
+    },
+    "isolated_budget_fixture_delta": {
+      "source_commit": "b3a10fdffa6c93f2fe97c9e6cbb239442bade98c",
+      "snapshot": {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-isolated-budget-source-delta.json",
+        "sha256": "86a775ae68d84aa560d5829bd268ddb2c748e6d9525593354af2997995f52cb1",
+        "result": {
+          "owner": "root",
+          "entries": [
+            {
+              "path": "LogForesight.Tests/ExternalCallLimitTests.cs",
+              "sha256": "44840f9511f491b1e734e5957efa1350c13807a53cb7b5b65c9b3625e8b465f9"
+            },
+            {
+              "path": "LogForesight.Tests/PrtgRunsCardAndProbeTests.cs",
+              "sha256": "a68d1cd6a5ccec077d4214432ed87842f282fa74c1fc960c0f6c4a88432dbace"
+            },
+            {
+              "path": "LogForesight.Tests/TestDoubles/SnapshotAdmissionTestFixture.cs",
+              "sha256": "a8ae7eeb3b88f9d086743f9408efb7d9093b8c7b732161f5d1c9cb2e7c0f172f"
+            }
+          ],
+          "scope": "frozen independent fresh-build inputs",
+          "verification": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-isolated-budget-final-green-results\\root-isolated-budget-final-green.trx",
+          "counters": {
+            "total": "46",
+            "executed": "46",
+            "passed": "46",
+            "failed": "0",
+            "error": "0",
+            "timeout": "0",
+            "aborted": "0",
+            "inconclusive": "0",
+            "passedButRunAborted": "0",
+            "notRunnable": "0",
+            "notExecuted": "0",
+            "disconnected": "0",
+            "warning": "0",
+            "completed": "0",
+            "inProgress": "0",
+            "pending": "0"
+          },
+          "verified": true
+        }
+      },
+      "green": {
+        "path": "work\\round53-root-current-verification\\root-isolated-budget-final-green-results\\root-isolated-budget-final-green.trx",
+        "sha256": "f05e48427bec7b12f69d56d11445a44b62cd30f93d3b817a557bc7fb6428e5ec",
+        "counters": {
+          "total": "46",
+          "executed": "46",
+          "passed": "46",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": [],
+        "scope": "Independent fresh build: external client reuse/source change, Runs probe scope handoff and request budget tests; isolated virtual quota clock and exact published scope plan, original five-second Queue/HTTP assertions preserved."
+      },
+      "external_wait_red": {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-external-budget-red-results\\root-external-budget-red.trx",
+        "sha256": "4e47d7bcdb6d986b640096a364ddcc5dee08e1cf868f3a8da2b4de357757eaf0",
+        "counters": {
+          "total": "0",
+          "executed": "0",
+          "passed": "0",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": []
+      },
+      "external_wait_red_meaning": "30-second blame-hang timeout aborted without completed cases; not recorded as assertion failures.",
+      "scope_handoff_red": {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-runs-probe-budget-red-results\\root-runs-probe-budget-red.trx",
+        "sha256": "832ab9266b362cc8a73a87c71637ee105caad325265dd715466113c0565b6538",
+        "counters": {
+          "total": "2",
+          "executed": "2",
+          "passed": "0",
+          "failed": "2",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [
+          "LogForesight.Tests.PrtgRunsCardAndProbeTests.快照服務補抓感測器及狀態變更_忙碌時保留請求(initiallyBusy: False)",
+          "LogForesight.Tests.PrtgRunsCardAndProbeTests.快照服務補抓感測器及狀態變更_忙碌時保留請求(initiallyBusy: True)"
+        ],
+        "skipped_tests": []
+      },
+      "diagnostic_async_stack": {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-full-async.log",
+        "sha256": "57e4ec7e843e07ac50984b0ca68538ee4156adcdca5b182b91cb2ae9c9eb9556"
+      },
+      "production_guard_changed": false
+    },
+    "main_verifications": [
+      {
+        "path": "work\\logforesight-feedback-53\\.gemini-tasks\\primary-results\\round53-final-main-full\\round53-final-main-full.trx",
+        "sha256": "53bffe244c1265ed7b54e9e692542754d1aedcc931b74ecf8e33380ff8e42efb",
+        "counters": {
+          "total": "7497",
+          "executed": "7487",
+          "passed": "7477",
+          "failed": "10",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [
+          "LogForesight.Tests.PrtgDiskVerificationServiceTests.RuleTrial_AllowsLegalWindowOverThirtyFiveDaysAndReportsPositiveHitAsTrialOnly",
+          "LogForesight.Tests.PrtgDiskVerificationServiceTests.RuleTrial_WithVerifiedTwentyEightDaysReportsNoHitAndMakesNoBusinessWrite",
+          "LogForesight.Tests.PrtgDiskCandidatePagingTests.驗收4_正式Assess與decision返回與小fixture舊語意一致",
+          "LogForesight.Tests.PrtgDiskMetadataSnapshotTests.HasAnyReady的true返回前任一metadata變更都拒絕原本可用的判定(mutateVerification: False)",
+          "LogForesight.Tests.ExternalCallLimitTests.快照_舊來源樣本清空後改PRTG網址會重建client",
+          "LogForesight.Tests.PrtgRunsCardAndProbeTests.快照服務補抓感測器及狀態變更_忙碌時保留請求(initiallyBusy: True)",
+          "LogForesight.Tests.PrtgRunsCardAndProbeTests.快照服務補抓感測器及狀態變更_忙碌時保留請求(initiallyBusy: False)",
+          "LogForesight.Tests.EmptyStateGuidanceUiTests.儀表板依使用者能力分流空狀態提示",
+          "LogForesight.Tests.PrtgDiskAssessmentServiceTests.EnableGuardFindsReadySemanticCandidateAfterFirstHundredEvidenceIds",
+          "LogForesight.Tests.PrtgDiskMetadataSnapshotTests.HasAnyReady的true返回前任一metadata變更都拒絕原本可用的判定(mutateVerification: True)"
+        ],
+        "skipped_tests": [
+          "LogForesight.Tests.WorkOrderScaleBenchmarks.交辦建單_4000台同步段與背景展開",
+          "LogForesight.Tests.ScaleBenchmarks.主機別名展開成長曲線",
+          "LogForesight.Tests.WorkOrderScaleBenchmarks.缺口試跑_2000主機",
+          "LogForesight.Tests.ScaleBenchmarks.基準_2000台90天",
+          "LogForesight.Tests.ScaleBenchmarks.升級路徑_百萬列blob的遷移",
+          "LogForesight.Tests.WorkOrderScaleBenchmarks.夜間掛接含自動派工_4000主機日",
+          "LogForesight.Tests.ScaleBenchmarks.單筆標記成本不隨資料量成長",
+          "LogForesight.Tests.RetentionScopeBenchmarks.量測_保留期積壓量與清除耗時",
+          "LogForesight.Tests.ScaleBenchmarks.基準_6000台90天",
+          "LogForesight.Tests.WorkOrderScaleBenchmarks.交辦回覆_750成員同步段"
+        ],
+        "scope": "Frozen pre-auth Main binaries; first five failures repaired in 4985e2e0, two metadata fixtures repaired in cce348ca, final three snapshot fixture failures repaired in subsequent isolated budget stage; all covered by independent current affected verification. This is not a fresh all-green full run.",
+        "frozen_binary_sha256": {
+          "LogForesight.Tests.dll": "1c0ba62aaa50c2aa740c0cd2e94cdc88d1729edb53cfaa4603d7d48039534b99",
+          "LogForesight.Web.dll": "52b0b1d0c510a82869094a3feccb186f83b61bda3db6ce05bfc4deee9299a54a",
+          "LogForesight.Core.dll": "44a8f2c120efdec38779a07c45a39d97d16a03a0c806a0e0318b501a56d57df7"
+        }
+      },
+      {
+        "path": "work\\round53-root-current-verification\\root-results\\root-final-affected.trx",
+        "sha256": "709e6b33fcf53645ec5074e11ab4fd2d1566f24c82443758810359f46d059a80",
+        "counters": {
+          "total": "216",
+          "executed": "216",
+          "passed": "216",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": [],
+        "scope": "Independently SHA-matched current implementation source snapshot; fresh build, affected 216 cases; includes all five baseline failure classes."
+      },
+      {
+        "path": "work\\round53-root-current-verification\\root-help-results\\root-help-final.trx",
+        "sha256": "a78fdf449f2e113b7bd81d057fb72e721a3ba28cd8a66e18810aa99b2bda8a7c",
+        "counters": {
+          "total": "58",
+          "executed": "58",
+          "passed": "58",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": [],
+        "scope": "Final two Help source changes; 58 cases overlap affected verification and are not summed as unique cases."
+      },
+      {
+        "path": "work\\round53-root-current-verification\\root-runs-selected-cancel-results\\root-runs-selected-cancel.trx",
+        "sha256": "5cfe2c04c6269ea27965ec8798fb8f0aca1788cbec824691538d2edbc25ccb34",
+        "counters": {
+          "total": "39",
+          "executed": "39",
+          "passed": "39",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": [],
+        "scope": "Final Runs JS delta 9b637361: snapshot static Runs UI and existing compiled current auth/cancel tests 39/39; overlaps prior cases. Actual JS interaction contracts and browser stop separately verified."
+      },
+      {
+        "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+        "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051",
+        "counters": {
+          "total": "62",
+          "executed": "62",
+          "passed": "62",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": [],
+        "scope": "Final metadata fixture delta cce348ca: independent RED 2/2, then fresh build 62/62 affected disk cases including both metadata mutation variants; overlaps prior disk cases, not summed as unique cases."
+      },
+      {
+        "path": "work\\round53-root-current-verification\\root-isolated-budget-final-green-results\\root-isolated-budget-final-green.trx",
+        "sha256": "f05e48427bec7b12f69d56d11445a44b62cd30f93d3b817a557bc7fb6428e5ec",
+        "counters": {
+          "total": "46",
+          "executed": "46",
+          "passed": "46",
+          "failed": "0",
+          "error": "0",
+          "timeout": "0",
+          "aborted": "0",
+          "inconclusive": "0",
+          "passedButRunAborted": "0",
+          "notRunnable": "0",
+          "notExecuted": "0",
+          "disconnected": "0",
+          "warning": "0",
+          "completed": "0",
+          "inProgress": "0",
+          "pending": "0"
+        },
+        "failed_tests": [],
+        "skipped_tests": [],
+        "scope": "Independent fresh build: external client reuse/source change, Runs probe scope handoff and request budget tests; isolated virtual quota clock and exact published scope plan, original five-second Queue/HTTP assertions preserved."
+      }
+    ],
+    "source_snapshot_evidence": [
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-inputs.json",
+        "sha256": "9e7804f5bc4dd130cd20b0f6213ae1fef1958b30c2b523ac520250b1422ccb7f",
+        "result": {
+          "owner": "root",
+          "head": "5fdff4203fa0a916e7e9d0e17778df4600fd8dd0",
+          "sourceSnapshot": true,
+          "excluded": [
+            "CLAUDE.md",
+            "docs/archive",
+            "artifacts"
+          ]
+        },
+        "input_count": 1277
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-source-match-after-tests.json",
+        "sha256": "1da3194316ef64f903991623bbed5ef4144b1c8b6a4ef911520a18916f605c28",
+        "result": {
+          "owner": "root",
+          "checked": 1277,
+          "drifts": [],
+          "scope": "all frozen tracked inputs; archive and CLAUDE excluded"
+        }
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-help-doc-delta.json",
+        "sha256": "c77a26584309b48639a54927e64c71a3c2dc5f2bcdb63bb20c7806a987a0feb5",
+        "result": [
+          {
+            "path": "LogForesight.Web/HelpContent/20-prtg.md",
+            "sha256": "f7fbd38a296afed3b0297f4c821e5075622661357a4c70178cc8e710c3f25258"
+          },
+          {
+            "path": "LogForesight.Web/HelpContent/20-prtg.ai.md",
+            "sha256": "b95555ddbab952a6e1f90f32586e26798412dabd59c2ff4631035f2f4c3ea282"
+          }
+        ]
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-runs-source-delta.json",
+        "sha256": "fb022a476601040f73055210c67d14d36f9fee4dde674130be37e11d29dc0ac7",
+        "result": {
+          "owner": "root",
+          "source_commit": "9b63736102fbc8159a7b3535b727319cefeb56fd",
+          "entries": [
+            {
+              "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
+              "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+            },
+            {
+              "path": "scripts/tests/Verify-PrtgRunsBackfillCancel.ContractTests.mjs",
+              "sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b"
+            }
+          ],
+          "meaning": "Independent post-216 JS delta; original input manifest remains unchanged"
+        }
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-metadata-source-delta.json",
+        "sha256": "8251894ab08546b600018e668db1d26e962f65628d98a0cd99e5fa9177b65d09",
+        "result": {
+          "owner": "root",
+          "entries": [
+            {
+              "path": "LogForesight.Tests/PrtgDiskMetadataSnapshotTests.cs",
+              "sha256": "42600ff1831d0a38f2bf8870b7e0b1ebdfb7aaccf3e1e8835883af5271c047cc"
+            }
+          ],
+          "verification": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+          "counters": {
+            "total": "62",
+            "executed": "62",
+            "passed": "62",
+            "failed": "0",
+            "error": "0",
+            "timeout": "0",
+            "aborted": "0",
+            "inconclusive": "0",
+            "passedButRunAborted": "0",
+            "notRunnable": "0",
+            "notExecuted": "0",
+            "disconnected": "0",
+            "warning": "0",
+            "completed": "0",
+            "inProgress": "0",
+            "pending": "0"
+          }
+        }
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-isolated-budget-source-delta.json",
+        "sha256": "86a775ae68d84aa560d5829bd268ddb2c748e6d9525593354af2997995f52cb1",
+        "result": {
+          "owner": "root",
+          "entries": [
+            {
+              "path": "LogForesight.Tests/ExternalCallLimitTests.cs",
+              "sha256": "44840f9511f491b1e734e5957efa1350c13807a53cb7b5b65c9b3625e8b465f9"
+            },
+            {
+              "path": "LogForesight.Tests/PrtgRunsCardAndProbeTests.cs",
+              "sha256": "a68d1cd6a5ccec077d4214432ed87842f282fa74c1fc960c0f6c4a88432dbace"
+            },
+            {
+              "path": "LogForesight.Tests/TestDoubles/SnapshotAdmissionTestFixture.cs",
+              "sha256": "a8ae7eeb3b88f9d086743f9408efb7d9093b8c7b732161f5d1c9cb2e7c0f172f"
+            }
+          ],
+          "scope": "frozen independent fresh-build inputs",
+          "verification": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-root-current-verification\\root-isolated-budget-final-green-results\\root-isolated-budget-final-green.trx",
+          "counters": {
+            "total": "46",
+            "executed": "46",
+            "passed": "46",
+            "failed": "0",
+            "error": "0",
+            "timeout": "0",
+            "aborted": "0",
+            "inconclusive": "0",
+            "passedButRunAborted": "0",
+            "notRunnable": "0",
+            "notExecuted": "0",
+            "disconnected": "0",
+            "warning": "0",
+            "completed": "0",
+            "inProgress": "0",
+            "pending": "0"
+          },
+          "verified": true
+        }
+      }
+    ],
+    "browser_evidence": [
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-full-backfill-browser-primary\\browser-results-pre-auth.json",
+        "sha256": "46b8f056c245f98f8776a62d20a43c9db1db6075221750aa919f5622f6875ba0",
+        "result": {
+          "owner": "root",
+          "syntheticOnly": true,
+          "scope": "Main full-backfill UI before additional scope-auth guards",
+          "observedCases": [
+            "start-disabled-before-preview",
+            "actual-30-requests-2-days-and-6-state-change-objects",
+            "expanded-day-table",
+            "confirm-cancel-preserves-valid-preview",
+            "confirm-start-and-reject-double-submit-button",
+            "Runs-link-and-real-progress",
+            "cancel-empty-object-RED-required-RunId",
+            "cancel-null-body-GREEN-actually-stopped",
+            "settings-revision-drift-rejected-and-disabled",
+            "explicit-repreview-restores-enabled-start"
+          ],
+          "physicalQuotaChanged": false,
+          "smtpEnabled": false,
+          "wholeRoundAccepted": false
+        }
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-full-backfill-browser-primary\\browser-results-final.json",
+        "sha256": "5db0de75fad753af09c58dee33b4bbb5fea42edb16d4d86a00cdb972c7fa6d99",
+        "result": {
+          "owner": "root",
+          "source": "current Main source snapshot independently SHA matched",
+          "syntheticLoopbackOnly": true,
+          "preview": {
+            "days": 2,
+            "historicRequests": 30,
+            "quotaLowerBoundMinutes": 5,
+            "stateChangeObjects": 6,
+            "buildVersion": "1.0.53.2",
+            "contractVersion": "prtg-full-backfill-preview-v1"
+          },
+          "cases": [
+            "initial-start-disabled",
+            "preview-counts-and-version-visible",
+            "cancel-confirm-keeps-preview",
+            "confirmed-start-succeeds",
+            "used-preview-start-disabled",
+            "progress-link-navigates",
+            "full-cancel-physically-stopped"
+          ],
+          "passed": true,
+          "sourceRevisionInSnapshotBuild": false,
+          "nativeSourceVerified": false,
+          "capacityAccepted": false,
+          "wholeRoundAccepted": false
+        }
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-full-backfill-browser-primary\\browser-results-runs-selected.json",
+        "sha256": "7fe18946b65efbc12ebd1d52d0809c18b942cd9f29bd8ac8a72b36a7ce72eb85",
+        "result": {
+          "owner": "root",
+          "source": "SHA matched 4985e2e0 source snapshot plus current Runs JS delta",
+          "syntheticLoopbackOnly": true,
+          "preview": {
+            "hosts": 2,
+            "days": 2,
+            "historicRequests": 10
+          },
+          "cases": [
+            "selected-preview-two-hosts",
+            "explicit-confirm-start",
+            "Runs-shows-live-selected-progress",
+            "Runs-stop-selected-with-displayed-run-id",
+            "stopped-visible-and-button-removed"
+          ],
+          "passed": true,
+          "nativeSourceVerified": false,
+          "capacityAccepted": false,
+          "wholeRoundAccepted": false
+        }
+      }
+    ],
+    "cleanup_evidence": [
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-full-backfill-browser-primary\\cleanup-pre-auth.json",
+        "sha256": "46df2c46f4681520481eb4d7e17723d4d39a1ec40c4b2cd3c3e7d81a20ef8164",
+        "result": [
+          {
+            "name": "fixtures",
+            "pid": 23424,
+            "stopped": true
+          },
+          {
+            "name": "web",
+            "pid": 20504,
+            "stopped": true
+          }
+        ]
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-full-backfill-browser-primary\\cleanup-final.json",
+        "sha256": "8c42d15e713a331d665212cffad60dd94a33675473b18eb92e36b9fbe21a630c",
+        "result": {
+          "cleanupVerified": true,
+          "owner": "root",
+          "processes": [
+            {
+              "name": "fixtures",
+              "pid": 4652,
+              "stopped": true
+            },
+            {
+              "name": "web",
+              "pid": 1836,
+              "stopped": true
+            }
+          ],
+          "ownedPortsFree": true
+        }
+      },
+      {
+        "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-full-backfill-browser-primary\\cleanup-runs-selected.json",
+        "sha256": "d5d2b131a7e2a01eedeec2688982a01ad671dc006e9e41384a06ff955723abbb",
+        "result": {
+          "ownedPortsFree": true,
+          "processes": [
+            {
+              "pid": 23228,
+              "stopped": true,
+              "name": "fixtures"
+            },
+            {
+              "pid": 16976,
+              "stopped": true,
+              "name": "web"
+            }
+          ],
+          "cleanupVerified": true,
+          "owner": "root"
+        }
+      }
+    ],
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "wholeRoundAccepted": false,
+    "reviewers": {
+      "candidate": "gpt-6-luna high",
+      "integration": "root 主模型；獨立驗證，精確模型名稱未提供"
+    },
+    "baseline_failure_rechecks": [
+      {
+        "test_name": "LogForesight.Tests.PrtgDiskVerificationServiceTests.RuleTrial_AllowsLegalWindowOverThirtyFiveDaysAndReportsPositiveHitAsTrialOnly",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-results\\root-final-affected.trx",
+            "sha256": "709e6b33fcf53645ec5074e11ab4fd2d1566f24c82443758810359f46d059a80"
+          },
+          {
+            "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+            "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.PrtgDiskVerificationServiceTests.RuleTrial_WithVerifiedTwentyEightDaysReportsNoHitAndMakesNoBusinessWrite",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-results\\root-final-affected.trx",
+            "sha256": "709e6b33fcf53645ec5074e11ab4fd2d1566f24c82443758810359f46d059a80"
+          },
+          {
+            "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+            "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.PrtgDiskCandidatePagingTests.驗收4_正式Assess與decision返回與小fixture舊語意一致",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-results\\root-final-affected.trx",
+            "sha256": "709e6b33fcf53645ec5074e11ab4fd2d1566f24c82443758810359f46d059a80"
+          },
+          {
+            "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+            "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.PrtgDiskMetadataSnapshotTests.HasAnyReady的true返回前任一metadata變更都拒絕原本可用的判定(mutateVerification: False)",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+            "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.ExternalCallLimitTests.快照_舊來源樣本清空後改PRTG網址會重建client",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-isolated-budget-final-green-results\\root-isolated-budget-final-green.trx",
+            "sha256": "f05e48427bec7b12f69d56d11445a44b62cd30f93d3b817a557bc7fb6428e5ec"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.PrtgRunsCardAndProbeTests.快照服務補抓感測器及狀態變更_忙碌時保留請求(initiallyBusy: True)",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-isolated-budget-final-green-results\\root-isolated-budget-final-green.trx",
+            "sha256": "f05e48427bec7b12f69d56d11445a44b62cd30f93d3b817a557bc7fb6428e5ec"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.PrtgRunsCardAndProbeTests.快照服務補抓感測器及狀態變更_忙碌時保留請求(initiallyBusy: False)",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-isolated-budget-final-green-results\\root-isolated-budget-final-green.trx",
+            "sha256": "f05e48427bec7b12f69d56d11445a44b62cd30f93d3b817a557bc7fb6428e5ec"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.EmptyStateGuidanceUiTests.儀表板依使用者能力分流空狀態提示",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-results\\root-final-affected.trx",
+            "sha256": "709e6b33fcf53645ec5074e11ab4fd2d1566f24c82443758810359f46d059a80"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.PrtgDiskAssessmentServiceTests.EnableGuardFindsReadySemanticCandidateAfterFirstHundredEvidenceIds",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-results\\root-final-affected.trx",
+            "sha256": "709e6b33fcf53645ec5074e11ab4fd2d1566f24c82443758810359f46d059a80"
+          },
+          {
+            "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+            "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051"
+          }
+        ]
+      },
+      {
+        "test_name": "LogForesight.Tests.PrtgDiskMetadataSnapshotTests.HasAnyReady的true返回前任一metadata變更都拒絕原本可用的判定(mutateVerification: True)",
+        "passed_recheck": [
+          {
+            "path": "work\\round53-root-current-verification\\root-metadata-final-green-results\\root-metadata-final-green.trx",
+            "sha256": "1419a3695abce95a8f8a3886ba47c8aa65f8c85d795826c25273338a9ff0b051"
+          }
+        ]
+      }
+    ]
   }
 }
