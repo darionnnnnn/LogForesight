@@ -47,6 +47,50 @@ public class PrtgCompatibilityProbeTests
         Assert.Equal(4, result.Summary.RequestsAttempted);
     }
 
+    [Theory]
+    [InlineData("3", "3", "number")]
+    [InlineData("\"3\"", "3", "string")]
+    [InlineData("-1", "-1", "number")]
+    [InlineData("\"-1\"", "-1", "string")]
+    [InlineData("9223372036854775807", "9223372036854775807", "number")]
+    [InlineData("\"-9223372036854775808\"", "-9223372036854775808", "string")]
+    public async Task ChannelMetadata_PreservesOnlyBoundedNativeDecimalId(string idJson, string expectedId, string expectedType)
+    {
+        var samples = CreateSamples((1003, "SNMP Disk Free", "Up"));
+        var channelJson = "{\"channels\":[{\"objid\":" + idJson + ",\"name\":\"Free Space\",\"unit\":\"%\"}]}";
+        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((url, _) => Task.FromResult(
+            url.Contains("content=sensors") ? "{\"sensors\":[{\"objid\":1003,\"lastvalue_raw\":24}]}" :
+            url.Contains("content=channels") ? channelJson : "{\"histdata\":[]}"),
+            new TestConsole(), samples, null);
+
+        var row = Assert.Single(Assert.Single(result.Targets.Where(target => target.Category == "disk")).Channels!.Rows);
+        Assert.Equal(expectedId, row.ChannelId);
+        Assert.Equal(expectedType, row.ChannelIdType);
+        Assert.False(row.IsPrimary);
+        Assert.False(result.EvidenceReady);
+    }
+
+    [Theory]
+    [InlineData("9223372036854775808", "number")]
+    [InlineData("\"9223372036854775808\"", "string")]
+    [InlineData("-1.5", "number")]
+    [InlineData("\"+1\"", "string")]
+    [InlineData("true", "boolean")]
+    public async Task ChannelMetadata_RejectsMalformedOrOverflowChannelId(string idJson, string expectedType)
+    {
+        var samples = CreateSamples((1003, "SNMP Disk Free", "Up"));
+        var channelJson = "{\"channels\":[{\"objid\":" + idJson + ",\"name\":\"Free Space\",\"unit\":\"%\"}]}";
+        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((url, _) => Task.FromResult(
+            url.Contains("content=sensors") ? "{\"sensors\":[{\"objid\":1003,\"lastvalue_raw\":24}]}" :
+            url.Contains("content=channels") ? channelJson : "{\"histdata\":[]}"),
+            new TestConsole(), samples, null);
+
+        var row = Assert.Single(Assert.Single(result.Targets.Where(target => target.Category == "disk")).Channels!.Rows);
+        Assert.Null(row.ChannelId);
+        Assert.Equal(expectedType, row.ChannelIdType);
+        Assert.DoesNotContain("\"channel_id\":", PrtgCompatibilityProbe.SerializeEvidence(result));
+    }
+
     [Fact]
     public async Task FullCompatibilityArtifactIncludesSafeDeploymentAndProviderMatchedStorageMetadata()
     {

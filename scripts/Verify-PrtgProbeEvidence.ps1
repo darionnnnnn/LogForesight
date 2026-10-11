@@ -89,6 +89,18 @@ function Get-NativePrimaryId {
     return [pscustomobject]@{ Valid = $valid; Present = $true; Value = $value }
 }
 
+function Test-OptionalNativeChannelId {
+    param([System.Text.Json.JsonElement] $Element)
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { return $true }
+    if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { return $false }
+    $text = $Element.GetString()
+    if ($text.Length -gt 21 -or $text -notmatch '^(?:0|-?[1-9]\d*)$') { return $false }
+    $value = [long]0
+    return [long]::TryParse($text, [System.Globalization.NumberStyles]::AllowLeadingSign,
+        [System.Globalization.CultureInfo]::InvariantCulture, [ref] $value) -and
+        $value.ToString([System.Globalization.CultureInfo]::InvariantCulture) -ceq $text
+}
+
 function Test-NullableJsonBoolean {
     param([System.Text.Json.JsonElement] $Element)
     return $Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null -or (Test-JsonBoolean $Element)
@@ -501,6 +513,26 @@ try {
         $targetAliasElement = Get-JsonProperty $target 'alias'
         if ($null -ne $targetAliasElement -and $targetAliasElement.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
             Fail-Safely 'InvalidNativePrimaryCapabilityShape'
+        }
+        $channelsElement = Get-JsonProperty $target 'channels'
+        if ($null -ne $channelsElement -and $channelsElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+            if ($channelsElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { Fail-Safely 'InvalidChannelMetadataShape' }
+            $channelRows = Get-JsonProperty $channelsElement 'rows'
+            if ($null -ne $channelRows -and $channelRows.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+                if ($channelRows.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $channelRows.GetArrayLength() -gt 16) {
+                    Fail-Safely 'InvalidChannelMetadataShape'
+                }
+                foreach ($channelRow in $channelRows.EnumerateArray()) {
+                    if ($channelRow.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { Fail-Safely 'InvalidChannelMetadataShape' }
+                    $channelId = Get-JsonProperty $channelRow 'channel_id'
+                    if ($null -ne $channelId -and -not (Test-OptionalNativeChannelId $channelId)) {
+                        Fail-Safely 'InvalidChannelMetadataShape'
+                    }
+                    if ($null -ne $channelId -and $channelId.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) {
+                        $sourceIncomplete = $true
+                    }
+                }
+            }
         }
         $snapshot = Get-JsonProperty $target 'snapshot'
         $hasSnapshotNativeFields = $false

@@ -462,6 +462,10 @@ public sealed class PrtgChannelRowEntry
     [JsonPropertyName("index")]
     public int Index { get; set; }
 
+    [JsonPropertyName("channel_id")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ChannelId { get; set; }
+
     [JsonPropertyName("channel_id_type")]
     public string ChannelIdType { get; set; } = "missing";
 
@@ -1059,6 +1063,21 @@ public static class PrtgCompatibilityProbe
     private static bool IsNativePrimaryObjectId(string? value) =>
         value is { Length: > 0 and <= 20 } &&
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id >= 0;
+
+    private static string? GetNativeChannelId(JsonElement value)
+    {
+        string? text = value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt64(out var number) => number.ToString(CultureInfo.InvariantCulture),
+            JsonValueKind.String => value.GetString(),
+            _ => null
+        };
+        if (string.IsNullOrEmpty(text) || text.Length > 21 ||
+            !Regex.IsMatch(text, @"^-?\d{1,20}$", RegexOptions.CultureInvariant) ||
+            !long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var id))
+            return null;
+        return id.ToString(CultureInfo.InvariantCulture);
+    }
 
     private static async Task<PrtgNativePrimaryCapabilityEvidence> ProbeNativePrimaryCapabilityAsync(
         Func<string, CancellationToken, Task<PrtgSourceResponse>> getXml, long sensorId, string alias,
@@ -1703,6 +1722,7 @@ public static class PrtgCompatibilityProbe
                 evidence.Rows.Add(new PrtgChannelRowEntry
                 {
                     Index = idx++,
+                    ChannelId = ch.TryGetProperty("objid", out var rawChannelId) ? GetNativeChannelId(rawChannelId) : null,
                     ChannelIdType = ch.TryGetProperty("objid", out var channelId) ? JsonKind(channelId) : "missing",
                     SemanticName = semanticName,
                     SemanticKnown = isKnown,

@@ -82,6 +82,9 @@ function New-ValidEvidence {
                     source_version = '24.2.101'
                     authorizes_formal_profile = $false
                 }
+                channels = [ordered]@{
+                    rows = @([ordered]@{ channel_id = '3' })
+                }
                 identity_preserving_raw_history = [ordered]@{
                     Status = 'ok'
                     Samples = @([ordered]@{ Channels = @([ordered]@{ ChannelId = '3' }) })
@@ -263,6 +266,25 @@ Invoke-ContractCase 'native-property-diagnostic-cannot-claim-formal-authorizatio
 $wrongNativeIdType = New-ValidEvidence
 $wrongNativeIdType.targets[0].native_primary_capability.primary_channel_id = 3
 Invoke-ContractCase 'native-channel-id-must-be-bounded-decimal-string' $wrongNativeIdType 1 @('InvalidNativePrimaryCapabilityShape')
+
+$negativeMetadataChannelId = Set-Batch100Metadata (New-ValidEvidence)
+$negativeMetadataChannelId.targets[0].channels.rows[0].channel_id = '-1'
+Invoke-ContractCase 'negative-native-channel-id-sentinel-is-preserved' $negativeMetadataChannelId 0 @(
+    'HANDOFF_INTEGRITY_OK',
+    'NativePrimaryFormalAuthorization: not-asserted'
+)
+
+$numericChannelIdInEvidence = Set-Batch100Metadata (New-ValidEvidence)
+$numericChannelIdInEvidence.targets[0].channels.rows[0].channel_id = 3
+Invoke-ContractCase 'channel-id-evidence-must-use-bounded-decimal-string' $numericChannelIdInEvidence 1 @('InvalidChannelMetadataShape')
+
+$overflowChannelIdInEvidence = Set-Batch100Metadata (New-ValidEvidence)
+$overflowChannelIdInEvidence.targets[0].channels.rows[0].channel_id = '9223372036854775808'
+Invoke-ContractCase 'overflow-channel-id-evidence-is-rejected' $overflowChannelIdInEvidence 1 @('InvalidChannelMetadataShape')
+
+$legacyChannelRows = Set-Batch100Metadata (New-ValidEvidence)
+$legacyChannelRows.targets[0].channels.rows[0].Remove('channel_id')
+Invoke-ContractCase 'legacy-channel-rows-without-channel-id-remain-readable' $legacyChannelRows 0 @('HANDOFF_INTEGRITY_OK')
 
 $wrongSnapshotTimeSemantics = New-ValidEvidence
 $wrongSnapshotTimeSemantics.targets[0].snapshot.reported_at_sample_time = $true
