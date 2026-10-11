@@ -1421,6 +1421,10 @@ public class PrtgSnapshotHostedService : BackgroundService
         NoteSkip("recent-state-queue-deferred",
             $"狀態補抓 Queue {cause}；本輪未送出 messages 請求，尚未完成工作保留至下一輪，並依當前來源、範圍與容量證據重新准入。",
             trackPause: false);
+        // The first pass after a local queue reconciliation intentionally sends no messages
+        // request. Keep the refresh pending so a later service loop retries under fresh gates;
+        // this is paced by the hosted-service poll interval and cannot bypass admission.
+        _scopeRefreshRequested = true;
     }
 
     private static string SourceIdentityHash(SystemSettings settings)

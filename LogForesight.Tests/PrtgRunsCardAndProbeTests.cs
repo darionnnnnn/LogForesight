@@ -190,13 +190,17 @@ public class PrtgRunsCardAndProbeTests : IDisposable
     private sealed class ScopeRefreshHandler : HttpMessageHandler
     {
         public readonly TaskCompletionSource<bool> MessagesRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<bool> AnyMessagesRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<bool> ResponseReturned = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly List<string> Requests = new();
+        public readonly List<string> Responses = new();
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var query = request.RequestUri!.Query;
             lock (Requests) Requests.Add(query);
             var messages = query.Contains("content=messages");
             var device21 = Regex.IsMatch(query, @"[?&]id=21(&|$)");
+            if (messages) AnyMessagesRequested.TrySetResult(true);
             // The pre-existing device 20 can be drained first; wait for the actual new-device handoff.
             if (messages && device21) MessagesRequested.TrySetResult(true);
             var snapshot = query.Contains("columns=objid,lastvalue,interval,lastcheck,status,primarychannel", StringComparison.Ordinal);
@@ -208,10 +212,13 @@ public class PrtgRunsCardAndProbeTests : IDisposable
                     : device21
                         ? "{\"treesize\":1,\"sensors\":[{\"objid\":211,\"parentid\":21,\"sensor\":\"S\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false}]}"
                         : "{\"treesize\":0,\"sensors\":[]}";
-            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
-            });
+            };
+            lock (Responses) Responses.Add(query);
+            ResponseReturned.TrySetResult(true);
+            return Task.FromResult(response);
         }
     }
     [Theory]
@@ -256,17 +263,21 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         using var handler = new ScopeRefreshHandler();
         SnapshotAdmissionTestFixture.Seed(_backend, _hosts, _settingsStore, host.HostId, 20, (201, "ping"));
         var budgetFixture = new SnapshotRequestBudgetFixture(_backend);
+        var admittedScopeCount = 0;
+        service.ScopeRefreshAdmissionAccepted = () => Interlocked.Increment(ref admittedScopeCount);
         service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler,
             PrtgAuthModes.Token, "", "", "", budgetFixture.Budget);
+        // Retain one five-second deadline across the busy gate, startup, mirror/HTTP and both ACKs.
         using var ackDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         if (initiallyBusy)
         {
             Assert.True(probeState.TryBeginRun(out _));
-            await service.ScopeRefreshTickAsync();
+            await service.ScopeRefreshTickAsync(ackDeadline.Token);
             Assert.Empty(handler.Requests);
             probeState.FinishRun(success: true, cancelled: false);
         }
         else service.RequestScopeRefresh();
+
         try
         {
             await service.StartAsync(CancellationToken.None);
@@ -290,12 +301,16 @@ public class PrtgRunsCardAndProbeTests : IDisposable
                 var status = service.GetStatus();
                 string[] requests;
                 lock (handler.Requests) requests = handler.Requests.ToArray();
+                string[] responses;
+                lock (handler.Responses) responses = handler.Responses.ToArray();
                 var queue = _backend.PrtgStore().ReadRecentStateChangeQueue().Select(item =>
-                    $"device={item.DeviceObjid},from={item.FromLocalDate:O},to={item.ToLocalDate:O},attempts={item.Attempts},completed={item.CompletedAtUtc:O}");
+                    $"device={item.DeviceObjid},from={item.FromLocalDate:O},to={item.ToLocalDate:O},attempts={item.Attempts},completed={item.CompletedAtUtc:O},lease={item.LeaseOwner},leaseUntil={item.LeaseExpiresAtUtc:O},next={item.NextAttemptAtUtc:O}");
                 return $"{stage}; SnapshotStatus={status}; Outputs=[{string.Join(" || ", service.ExecutionOutputs)}]; " +
-                    $"Requests=[{string.Join(" || ", requests)}]; Queue=[{string.Join(" || ", queue)}]";
+                    $"Requests=[{string.Join(" || ", requests)}]; Queue=[{string.Join(" || ", queue)}]; " +
+                    $"Responses=[{string.Join(" || ", responses)}]; BudgetClockElapsed={budgetFixture.Budget.Clock.Elapsed}; " +
+                    $"ScopeAdmissions={Volatile.Read(ref admittedScopeCount)}; BudgetUsage={budgetFixture.Budget.ReadUsage()}; " +
+                    $"Admission={budgetFixture.Budget.CurrentAdmissionPlan}";
             }
-
             try
             {
                 await handler.MessagesRequested.Task.WaitAsync(ackDeadline.Token);
@@ -349,6 +364,177 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         }
         finally
         {
+            try
+            {
+                using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await service.StopAsync(stop.Token);
+            }
+            finally { service.Dispose(); }
+        }
+    }
+
+    [Fact]
+    public async Task 狀態補抓Queue整理後下一個新准入輪次才送messages並確認原裝置項目()
+    {
+        var probeState = new PrtgProbeRunState();
+        var service = new ScopeRefreshTrackingSnapshotService(_settingsStore, _backend, _hosts, _sentinels,
+            probeState, TimeSpan.FromMilliseconds(300));
+        service.TimelineTick = _ => Task.FromResult(new PrtgSensorTimelineTick(
+            TimeSpan.FromSeconds(5), false, "recent-state-queue-retry-fixture"));
+        _settingsStore.Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgSensorTypeWhitelist = ["ping"];
+        });
+
+        var host = _hosts.Upsert(new WebHost { HostName = "Server-20", IpAddress = "192.0.2.20", Active = true });
+        var secondHost = _hosts.Upsert(new WebHost { HostName = "Server-21", IpAddress = "192.0.2.21", Active = true });
+        _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 20, HostId = host.HostId, HostName = host.HostName,
+                MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today },
+            new PrtgHostMapRow { DeviceObjid = 21, HostId = secondHost.HostId, HostName = secondHost.HostName,
+                MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today }
+        });
+        var firstSensor = new PrtgSensorRow
+        {
+            Objid = 201, DeviceObjid = 20, Name = "Stable sensor", SensorType = "ping", Status = "Up", Paused = false
+        };
+        var secondSensor = new PrtgSensorRow
+        {
+            Objid = 211, DeviceObjid = 21, Name = "Stable second sensor", SensorType = "ping", Status = "Up", Paused = false
+        };
+        _backend.PrtgStore().UpsertSensors(new[] { firstSensor, secondSensor }, DateTime.Now);
+        var nowUtc = DateTime.UtcNow;
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[] { firstSensor }, DateTime.Now,
+            new PrtgRecentStateChangeQueueItem(20, DateTime.Today.AddDays(-1), DateTime.Today,
+                "stale-source-proof", "stale-scope-proof", nowUtc, nowUtc, 0, null, null, null));
+        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[] { secondSensor }, DateTime.Now,
+            new PrtgRecentStateChangeQueueItem(21, DateTime.Today.AddDays(-1), DateTime.Today,
+                "stale-source-proof", "stale-scope-proof", nowUtc, nowUtc, 0, null, null, null));
+        SnapshotAdmissionTestFixture.Seed(_backend, _hosts, _settingsStore, host.HostId, 20, (201, "ping"));
+        var budgetFixture = new SnapshotRequestBudgetFixture(_backend);
+        using var handler = new ScopeRefreshHandler();
+        service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler,
+            PrtgAuthModes.Token, "", "", "", budgetFixture.Budget);
+        var freshAdmission = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFreshAdmission = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var freshAdmissionCallbackReturned = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hostedServiceStartReturned = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pauseOnce = 0;
+        service.ScopeRefreshAdmissionAccepted = () =>
+        {
+            if (Volatile.Read(ref pauseOnce) != 0) return;
+            var deferred = service.Diagnostics.ReadRecent(DateTime.Now.AddHours(1), 1)
+                .Any(hour => hour.ReasonCodes.ContainsKey("recent-state-queue-deferred"));
+            var queued = _backend.PrtgStore().ReadRecentStateChangeQueue();
+            if (!deferred || queued.Count != 2 || queued.Any(item =>
+                item.Attempts != 0 || item.CompletedAtUtc.HasValue))
+                return;
+            if (Interlocked.CompareExchange(ref pauseOnce, 1, 0) != 0) return;
+            freshAdmission.TrySetResult(true);
+            releaseFreshAdmission.Task.GetAwaiter().GetResult();
+            freshAdmissionCallbackReturned.TrySetResult(true);
+        };
+        var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var admissionStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        using var admissionDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        CancellationTokenSource? drainDeadline = null;
+        System.Diagnostics.Stopwatch? drainStopwatch = null;
+
+        string FailureDiagnostics(string stage)
+        {
+            string[] requests;
+            lock (handler.Requests) requests = handler.Requests.ToArray();
+            string[] responses;
+            lock (handler.Responses) responses = handler.Responses.ToArray();
+            var queue = _backend.PrtgStore().ReadRecentStateChangeQueue();
+            return $"{stage}; Status={service.GetStatus()}; Outputs=[{string.Join(" || ", service.ExecutionOutputs)}]; " +
+                $"Requests=[{string.Join(" || ", requests)}]; Responses=[{string.Join(" || ", responses)}]; Queue=[{string.Join(" || ", queue)}]; " +
+                $"BudgetClockElapsed={budgetFixture.Budget.Clock.Elapsed}; TotalElapsed={totalStopwatch.Elapsed}; " +
+                $"AdmissionElapsed={admissionStopwatch.Elapsed}; DrainElapsed={drainStopwatch?.Elapsed}; " +
+                $"HostedServiceStartReturned={hostedServiceStartReturned.Task.IsCompleted}; " +
+                $"FreshAdmissionReached={freshAdmission.Task.IsCompleted}; " +
+                $"FreshAdmissionCallbackReturned={freshAdmissionCallbackReturned.Task.IsCompleted}; " +
+                $"BudgetUsage={budgetFixture.Budget.ReadUsage()}; Admission={budgetFixture.Budget.CurrentAdmissionPlan}";
+        }
+
+        try
+        {
+            service.RequestScopeRefresh();
+            // BackgroundService.StartAsync may run ExecuteAsync inline until its first
+            // incomplete await. Run startup separately so the test can release this
+            // deliberately synchronous admission barrier even if it is reached inline.
+            var startTask = Task.Run(async () =>
+            {
+                await service.StartAsync(CancellationToken.None);
+                hostedServiceStartReturned.TrySetResult(true);
+            });
+            try { await freshAdmission.Task.WaitAsync(admissionDeadline.Token); }
+            catch (OperationCanceledException) when (admissionDeadline.IsCancellationRequested)
+            {
+                throw new Xunit.Sdk.XunitException(FailureDiagnostics(
+                    "The reconciled queue did not reach a later fresh-gated scope pass within 5 seconds"));
+            }
+            admissionStopwatch.Stop();
+
+            string[] firstPassRequests;
+            lock (handler.Requests) firstPassRequests = handler.Requests.ToArray();
+            Assert.DoesNotContain(firstPassRequests, query => query.Contains("content=messages", StringComparison.Ordinal));
+            var pending = _backend.PrtgStore().ReadRecentStateChangeQueue();
+            Assert.Equal(new long[] { 20, 21 }, pending.Select(item => item.DeviceObjid).Order());
+            Assert.All(pending, item =>
+            {
+                Assert.Equal(0, item.Attempts);
+                Assert.Null(item.CompletedAtUtc);
+                Assert.NotEqual("stale-source-proof", item.SourceIdentityHash);
+                Assert.NotEqual("stale-scope-proof", item.BusinessScopeVersion);
+            });
+
+            drainStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            drainDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            releaseFreshAdmission.TrySetResult(true);
+            await startTask.WaitAsync(drainDeadline.Token);
+            try { await handler.AnyMessagesRequested.Task.WaitAsync(drainDeadline.Token); }
+            catch (OperationCanceledException) when (drainDeadline.IsCancellationRequested)
+            {
+                throw new Xunit.Sdk.XunitException(FailureDiagnostics(
+                    "The next admitted scope pass did not send the persisted messages request within 5 seconds"));
+            }
+            PrtgRecentStateChangeQueueItem completed;
+            do
+            {
+                var rows = _backend.PrtgStore().ReadRecentStateChangeQueue();
+                Assert.Equal(new long[] { 20, 21 }, rows.Select(item => item.DeviceObjid).Order());
+                completed = Assert.Single(rows, item => item.DeviceObjid == 21);
+                if (rows.All(item => item.CompletedAtUtc.HasValue)) break;
+                try { await Task.Delay(TimeSpan.FromMilliseconds(20), drainDeadline.Token); }
+                catch (OperationCanceledException) when (drainDeadline.IsCancellationRequested)
+                {
+                    throw new Xunit.Sdk.XunitException(FailureDiagnostics(
+                        "The admitted queue pass did not acknowledge both original device rows within 5 seconds"));
+                }
+            } while (!drainDeadline.IsCancellationRequested);
+            drainStopwatch.Stop();
+            totalStopwatch.Stop();
+            Assert.Equal(21, completed.DeviceObjid);
+            Assert.NotNull(completed.CompletedAtUtc);
+            Assert.All(_backend.PrtgStore().ReadRecentStateChangeQueue(), item =>
+                Assert.NotNull(item.CompletedAtUtc));
+            string[] requests;
+            lock (handler.Requests) requests = handler.Requests.ToArray();
+            Assert.Contains(requests, query => query.Contains("content=messages", StringComparison.Ordinal) &&
+                Regex.IsMatch(query, @"[?&]id=20(&|$)"));
+            Assert.Contains(requests, query => query.Contains("content=messages", StringComparison.Ordinal) &&
+                Regex.IsMatch(query, @"[?&]id=21(&|$)"));
+        }
+        finally
+        {
+            releaseFreshAdmission.TrySetResult(true);
+            drainDeadline?.Dispose();
             try
             {
                 using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));

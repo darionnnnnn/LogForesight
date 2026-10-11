@@ -896,15 +896,22 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(10, Assert.Single(recovered.Load(bindingA, now)!.Accumulator).Sum);
     }
 
-    [Fact]
-    public void HostedRestore_全域scope與resource修訂變動仍保留兩顆sensor既有trustedcheckpoint()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    [InlineData(5)]
+    public void HostedRestore_全域scope與resource修訂變動仍保留兩顆sensor既有trustedcheckpoint(int receivedSecond)
     {
         new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
             .Update(value => value.SourceGeneration = "source-r03-local-scope");
         var settings = _settingsStore.Get();
         var binding = PrtgSnapshotJournal.Binding(_backend, settings.PrtgUrl);
-        var received = DateTime.UtcNow;
-        var effective = new DateTime(received.Year, received.Month, received.Day, received.Hour, 0, 0,
+        var clock = DateTime.UtcNow;
+        var received = new DateTime(clock.Year, clock.Month, clock.Day, clock.Hour, 0, receivedSecond, DateTimeKind.Utc);
+        var measured = received.AddSeconds(-5);
+        // At the first five seconds of an hour the physical sample belongs to the prior hour.
+        // Its strategy must already be effective then; do not weaken the production time guard.
+        var effective = new DateTime(measured.Year, measured.Month, measured.Day, measured.Hour, 0, 0,
             DateTimeKind.Utc);
         var accumulator = new PrtgSnapshotAccumulator();
         foreach (var sensor in new[] { (Id: 501L, Resource: "resource-a", Epoch: "epoch-a"),
@@ -912,7 +919,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             var sample = new PrtgTrustedSample(sensor.Id, sensor.Id, "source-r03-local-scope",
                 sensor.Resource, $"channel-{sensor.Id}", sensor.Epoch, "semantic-v1", "strategy-v1", 15,
-                effective, received.AddSeconds(-5), received, TimeSpan.FromMinutes(1),
+                effective, measured, received, TimeSpan.FromMinutes(1),
                 PrtgTrustedSampleQuality.Good, $"physical-{sensor.Id}", "UTC", "UTC");
             Assert.Equal(PrtgTrustedSampleDisposition.Accepted, accumulator.AddTrusted(sample, received));
         }
@@ -1289,6 +1296,96 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.NotEqual(inactive, reader.Read());
     }
 
+    [Theory]
+    [InlineData("hosts")]
+    [InlineData("sentinels")]
+    [InlineData("prtg_scope_revision")]
+    [InlineData("prtg_monitoring_policy")]
+    [InlineData("rules")]
+    public void 範圍版本_五個來源blob版本變更都會被偵測(string key)
+    {
+        var host = _hostStore.Upsert(new WebHost { HostName = "scope-host", Active = true });
+        var sentinels = new SentinelStore(_backend.Blob("sentinels"));
+        var sentinel = sentinels.Upsert(new Sentinel { Name = "scope-sentinel", BaseUrl = "https://sentinel.example" });
+        var reader = new PrtgScopeRevisionReader(_backend, _hostStore);
+        var original = reader.Read();
+
+        switch (key)
+        {
+            case "hosts":
+                host.Active = false;
+                _hostStore.Upsert(host);
+                break;
+            case "sentinels":
+                sentinel.BaseUrl = "https://sentinel-updated.example";
+                sentinels.Upsert(sentinel);
+                break;
+            default:
+                _backend.Blob(key).Mutate(current => ((current ?? string.Empty) + "changed", true));
+                break;
+        }
+
+        Assert.NotEqual(original, reader.Read());
+    }
+
+    [Fact]
+    public void 範圍版本_固定五個blob只執行一次版本欄位查詢並記錄一次效能操作()
+    {
+        var reader = new PrtgScopeRevisionReader(_backend, _hostStore);
+        _ = reader.Read(); // Warm the host/sentinel fingerprints so the measured read is only the five-key query.
+        _sqlDiagnostics.Reset();
+        var operationsBefore = _backend.Performance.Snapshot().TotalOperations;
+
+        _ = reader.Read();
+
+        Assert.Equal(operationsBefore + 1, _backend.Performance.Snapshot().TotalOperations);
+        var commands = _sqlDiagnostics.BlobSelectCommands;
+        var sql = Assert.Single(commands);
+        Assert.Contains("lf_blobs", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("blob_key", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("version", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("content", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("openjson", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("hosts")]
+    [InlineData("sentinels")]
+    [InlineData("prtg_scope_revision")]
+    [InlineData("prtg_monitoring_policy")]
+    [InlineData("rules")]
+    public void 範圍版本_資料庫不分大小寫時沿用舊鍵名仍偵測變更(string key)
+    {
+        // Only this test's owned database is changed. Exercise database equality semantics,
+        // rather than changing the application's dictionary comparer or pretending SQLite is SQL Server.
+        using (var context = _backend.CreateContext())
+        {
+            context.Database.ExecuteSqlRaw("""
+                CREATE TABLE lf_blobs_scope_test (
+                    blob_key TEXT COLLATE NOCASE NOT NULL PRIMARY KEY,
+                    content TEXT NOT NULL, updated_at TEXT NOT NULL, version INTEGER NOT NULL);
+                INSERT INTO lf_blobs_scope_test SELECT blob_key, content, updated_at, version FROM lf_blobs;
+                DROP TABLE lf_blobs;
+                ALTER TABLE lf_blobs_scope_test RENAME TO lf_blobs;
+                """);
+        }
+        var host = _hostStore.Upsert(new WebHost { HostName = "scope-case-host", Active = true });
+        var sentinels = new SentinelStore(_backend.Blob("sentinels"));
+        var sentinel = sentinels.Upsert(new Sentinel { Name = "scope-case-source", BaseUrl = "https://source.example" });
+        if (key is not ("hosts" or "sentinels"))
+            _backend.Blob(key).Mutate(_ => ("initial", true));
+        using (var context = _backend.CreateContext())
+            context.Database.ExecuteSqlInterpolated($"UPDATE lf_blobs SET blob_key={key.ToUpperInvariant()} WHERE blob_key={key}");
+        var reader = new PrtgScopeRevisionReader(_backend, _hostStore);
+        var before = reader.Read();
+        var version = _backend.Blob(key).ReadVersion();
+        if (key == "hosts") { host.Active = false; _hostStore.Upsert(host); }
+        else if (key == "sentinels") { sentinel.BaseUrl = "https://changed.example"; sentinels.Upsert(sentinel); }
+        else _backend.Blob(key).Mutate(_ => ("changed", true));
+        Assert.True(_backend.Blob(key).ReadVersion() > version);
+        Assert.NotEqual(before, reader.Read());
+    }
+
     private static HttpResponseMessage JsonResponse(string json, HttpStatusCode code = HttpStatusCode.OK)
     {
         var responseNow = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
@@ -1301,6 +1398,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
     private sealed class SnapshotSqlDiagnosticRecorder : DbCommandInterceptor
     {
+        private const int MaximumCapturedBlobSelects = 16;
+        private readonly List<string> _blobSelectCommands = [];
+        private readonly object _commandsGate = new();
         private long _sensorSelectCount;
         private long _identityBatchSelectCount;
         private long _sensorWriteCount;
@@ -1312,6 +1412,11 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         public long SensorSelectCount => Interlocked.Read(ref _sensorSelectCount);
 
+        public IReadOnlyList<string> BlobSelectCommands
+        {
+            get { lock (_commandsGate) return _blobSelectCommands.ToArray(); }
+        }
+
         public void Reset()
         {
             Interlocked.Exchange(ref _sensorSelectCount, 0);
@@ -1322,6 +1427,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             Interlocked.Exchange(ref _identityBatchSelectMs, 0);
             Interlocked.Exchange(ref _sensorWriteMs, 0);
             Interlocked.Exchange(ref _blobWriteMs, 0);
+            lock (_commandsGate) _blobSelectCommands.Clear();
         }
 
         public string ReadAndReset()
@@ -1396,6 +1502,15 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         private void CountStarted(string sql)
         {
+            if (sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) &&
+                sql.Contains("lf_blobs", StringComparison.OrdinalIgnoreCase))
+            {
+                lock (_commandsGate)
+                {
+                    if (_blobSelectCommands.Count < MaximumCapturedBlobSelects)
+                        _blobSelectCommands.Add(sql);
+                }
+            }
             var kind = Classify(sql);
             switch (kind)
             {
