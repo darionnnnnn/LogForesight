@@ -98,6 +98,7 @@ public sealed class PrtgResourcePressureController(
     public IActionResult ReplayStatus(long hostId, [FromQuery] long? sensorObjid = null)
     {
         visibility.EnsureVisible(hostId);
+        if (!user.Has(Capability.Maintain) || visibility.IsCaseGrantOnly(hostId)) return Forbid();
         if (sensorObjid is <= 0) return BadRequest(ApiResponse.Fail("validation_failed", "sensor 識別碼無效。"));
         return Ok(ApiResponse<object>.Ok(ModeSavedResponse(hostId, sensorObjid, null)));
     }

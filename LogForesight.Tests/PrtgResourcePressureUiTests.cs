@@ -1,4 +1,7 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Configuration;
+using LogForesight.Core.Persistence;
+using Microsoft.Data.Sqlite;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Services;
@@ -9,6 +12,44 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgResourcePressureUiTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void ReplayStatusRejectsNonMaintainAndCaseGrantOnlyBeforeReadingHostState(bool maintain, bool caseGrantOnly)
+    {
+        var controller = new PrtgResourcePressureController(null!, null!, new VisibleScope(caseGrantOnly),
+            FakeCurrentUser.WithCapabilities(maintain ? Capability.Maintain : Capability.ViewAll));
+        Assert.IsType<ForbidResult>(controller.ReplayStatus(42, 100));
+    }
+
+    [Fact]
+    public void ReplayStatusAllowsMaintainerWithHostScopeToReadPersistedState()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lf-replay-api-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var backend = new StorageBackend(new StorageSettings
+            {
+                Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(directory, "state.db")}"
+            }, directory);
+            var controller = new PrtgResourcePressureController(backend, null!, new VisibleScope(false),
+                FakeCurrentUser.WithCapabilities(Capability.Maintain));
+            Assert.IsType<BadRequestObjectResult>(controller.ReplayStatus(42, 0));
+            var response = Assert.IsType<OkObjectResult>(controller.ReplayStatus(42));
+            using var json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(response.Value));
+            var data = json.RootElement.GetProperty("Data");
+            Assert.True(data.GetProperty("ModeSaved").GetBoolean());
+            Assert.False(data.GetProperty("ReplayPending").GetBoolean());
+            Assert.Equal(0, data.GetProperty("ReplayJobs").GetArrayLength());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void ControllerRejectsNonMaintainAndCaseGrantOnlyForBothModeActions()
     {
