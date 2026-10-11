@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using LogForesight.Core.Models;
 using NLog;
@@ -449,7 +449,6 @@ public class NetiqPipelineService
         {
             foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
             NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "failed");
-            NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
             _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
             result.AddFailed(batch.Length);
             return; // ips 不可能為空（Chunk 保證每批至少 1 筆），這裡只是防禦性守住
@@ -464,7 +463,6 @@ public class NetiqPipelineService
 
         SentinelSearchResult searchResult;
         NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "running");
-        NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "running");
         try
         {
             searchResult = await client.SearchAsync(
@@ -491,7 +489,6 @@ public class NetiqPipelineService
         {
             foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
             NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "failed");
-            NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
             _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：{ex.Message}");
             Log.Warn(ex, "[{Server}] {Date} 批次查詢失敗", sentinelName, date);
             result.AddFailed(batch.Length);
@@ -501,8 +498,6 @@ public class NetiqPipelineService
         catch (OperationCanceledException)
         {
             NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "stopped");
-            // Keep old formal parents ineligible after a canceled re-fetch, using the existing fail-closed metadata contract.
-            NetiqSourceAttempt.MarkExistingBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, "failed");
             throw;
         }
 
@@ -608,8 +603,6 @@ public class NetiqPipelineService
             var finished = terminalAttempts.Select(item => item.HostId).ToHashSet();
             var pending = batch.Select(plan => plan.Target.HostId).Where(hostId => !finished.Contains(hostId)).ToArray();
             NetiqSourceAttempt.RecordBatch(_backend, pending, date, _runRecorder.RunId, "stopped");
-            // Exclude retained existing parents from downstream PRTG consumers after a stopped retry.
-            NetiqSourceAttempt.MarkExistingBatch(_backend, pending, date, "failed");
             throw;
         }
 
@@ -644,7 +637,7 @@ public class NetiqPipelineService
         {
             _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
             timingRecorded = true;
-            NetiqSourceAttempt.Mark(_backend, target.HostId, date, "retained-incomplete");
+            NetiqSourceAttempt.RecordBatch(_backend, new[] { target.HostId }, date, _runRecorder.RunId, "retained-incomplete");
             result.AddRerunRetained();
             _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
@@ -774,7 +767,7 @@ public class NetiqPipelineService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             if (!timingRecorded) _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
-            NetiqSourceAttempt.Mark(_backend, target.HostId, date, "failed");
+            NetiqSourceAttempt.RecordBatch(_backend, new[] { target.HostId }, date, _runRecorder.RunId, "failed");
             try { _workflow?.ParentFailed(target.HostId, target.HostName, date, _runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture), "failed"); }
             catch (Exception workflowError) { Log.Warn(workflowError, "NetIQ workflow failure metadata could not be persisted"); }
             result.AddFailed();

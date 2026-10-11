@@ -19,7 +19,8 @@ public static class NetiqSourceAttempt
 
     public sealed record Receipt(long RunId, long HostId, DateTime Date, string Status, DateTime AttemptAtUtc);
 
-    /// <summary>Batch-upsert latest status receipts; does not manufacture or rewrite a DailyAnalysisRecord.</summary>
+    /// <summary>Atomically records attempts and disqualifies existing NetIQ parents for non-success attempts.
+    /// A success receipt never qualifies an old parent; qualification requires a successfully saved replacement.</summary>
     public static void RecordBatch(StorageBackend backend, IReadOnlyCollection<long> hostIds, DateTime day,
         long runId, string status, DateTime? attemptAtUtc = null)
     {
@@ -49,6 +50,7 @@ public static class NetiqSourceAttempt
                                     join latestSeq in lastSeqs on new { row.LogKey, row.Seq } equals new { latestSeq.LogKey, latestSeq.Seq }
                                     select new { row.LogKey, row.Seq, Length = row.Line.Length, Line = row.Line.Substring(0, MaxLineChars + 1) })
                         .ToList().ToDictionary(row => row.LogKey);
+                    var acceptedHostIds = new List<long>(idChunk.Length);
                     foreach (var (key, receipt) in keyToReceipt)
                     {
                         var line = JsonSerializer.Serialize(receipt);
@@ -70,8 +72,41 @@ public static class NetiqSourceAttempt
                         {
                             ctx.LogLines.Add(new LogLineRow { LogKey = key, Line = line, CreatedAt = DateTime.Now });
                         }
+                        acceptedHostIds.Add(receipt.HostId);
                     }
                     ctx.SaveChanges();
+                    ctx.ChangeTracker.Clear();
+                    if (status != "success")
+                    {
+                        // Keep the receipt and parent eligibility in the same transaction, including
+                        // across 500-host ledger chunks. SQL isolation and WriteRevision also fence
+                        // concurrent parent writers; no process-only host lock can cover other workers.
+                        // Bound full JSON residency independently of the small receipt batch.
+                        var parentIds = acceptedHostIds.ToArray();
+                        long cursor = 0;
+                        while (parentIds.Length > 0)
+                        {
+                            var parents = ctx.DailyRecords.Where(row => parentIds.Contains(row.HostId) &&
+                                row.RecordDate == date && !row.DetailPruned && row.RecordId > cursor)
+                                .OrderBy(row => row.RecordId).Take(16).ToList();
+                            if (parents.Count == 0) break;
+                            foreach (var parent in parents)
+                            {
+                                var record = JsonSerializer.Deserialize<DailyAnalysisRecord>(parent.ContentJson)
+                                    ?? throw new InvalidDataException("NetIQ parent contains invalid data.");
+                                if (record.LogSource != AnalysisLogSource.Netiq) continue;
+                                // Preserve the existing parent retry contract: cancellation is a
+                                // failed fetch for qualification, while the durable receipt says stopped.
+                                record.LatestNetiqAttemptStatus = status == "stopped" ? "failed" : status;
+                                record.LatestNetiqAttemptAtUtc = at;
+                                parent.ContentJson = JsonSerializer.Serialize(record);
+                            }
+                            cursor = parents[^1].RecordId;
+                            ctx.SaveChanges();
+                            ctx.ChangeTracker.Clear();
+                            if (parents.Count < 16) break;
+                        }
+                    }
                 }
                 tx.Commit();
             });
@@ -137,13 +172,6 @@ public static class NetiqSourceAttempt
         return total;
     }
 
-    public static void MarkExistingBatch(StorageBackend backend, IReadOnlyCollection<long> hostIds, DateTime day, string status)
-    {
-        using var ctx = backend.CreateContext();
-        var existing = ctx.DailyRecords.AsNoTracking().Where(r => hostIds.Contains(r.HostId) && r.RecordDate == day.Date)
-            .Select(r => r.HostId).Distinct().ToArray();
-        foreach (var id in existing) Mark(backend, id, day, status);
-    }
     public static void Mark(StorageBackend backend, long hostId, DateTime day, string status)
     {
         lock (EfAnalysisRecordStore.LockFor(hostId, day))
