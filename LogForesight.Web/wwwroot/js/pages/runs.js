@@ -1882,6 +1882,7 @@ function confirmRunWithPrtgValues(days, segment) {
 
 
 let prtgBackfillPollTimer = null;
+let prtgBackfillCancelTarget = null;
 
 function renderPrtgBackfillStatus(status) {
     const statusEl = document.getElementById('prtg-backfill-status');
@@ -1890,6 +1891,11 @@ function renderPrtgBackfillStatus(status) {
     const textEl = document.getElementById('prtg-backfill-progress-text');
 
     if (!statusEl) return;
+
+    // Capture only the authorized identity shown by this poll. A selected run requires its exact ID.
+    prtgBackfillCancelTarget = status.isRunning && typeof status.runId === 'string' && status.runId.trim() &&
+        ['full', 'tail', 'selected'].includes(status.runKind)
+        ? { runId: status.runId, runKind: status.runKind } : null;
 
     const dateStr = status.currentDate ? String(status.currentDate).slice(0, 10) : '';
     // daysDone 是「已完成」天數，正在處理的是第 daysDone + 1 天
@@ -1923,7 +1929,7 @@ function renderPrtgBackfillStatus(status) {
     // 不能碰它，否則輪詢會把唯讀使用者看不到的停止鈕重新露出來。
     const cancelBtn = document.getElementById('prtg-backfill-cancel');
     if (cancelBtn && canMaintainSchedule) {
-        cancelBtn.classList.toggle('d-none', !status.isRunning);
+        cancelBtn.classList.toggle('d-none', !prtgBackfillCancelTarget);
         if (!status.isRunning) cancelBtn.disabled = false;
     }
 
@@ -1969,10 +1975,13 @@ async function refreshPrtgBackfillStatus() {
 function bindPrtgBackfill() {
     const cancelBtn = document.getElementById('prtg-backfill-cancel');
     cancelBtn?.addEventListener('click', async () => {
+        const target = prtgBackfillCancelTarget;
+        if (!target) return;
         const restore = withBusy(cancelBtn, '停止中');
         try {
-            // Empty body selects the full-run stop contract; the selected-run DTO requires its RunId.
-            await api.post('/api/admin/settings/prtg-backfill/cancel', null);
+            // Full/tail use the generic contract; selected never borrows a newer poll's identity.
+            await api.post('/api/admin/settings/prtg-backfill/cancel',
+                target.runKind === 'selected' ? { runId: target.runId } : null);
             toast('已送出停止，回填會在目前這一步結束後停下', 'success');
             await refreshPrtgBackfillStatus();
         } catch {
