@@ -75,7 +75,8 @@ public class AiAnalysisSchedulerTests : IDisposable
     }
 
     private (AiAnalysisHostedService Service, AiAnalysisRunState RunState, ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState)
-        CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true)
+        CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true,
+            HostDayWorkflowService? workflow = null)
     {
         var optionsStore = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
         if (initialOptions != null)
@@ -105,7 +106,8 @@ public class AiAnalysisSchedulerTests : IDisposable
             CompletedBackfiller(),
             new FakeWebAiService(aiAvailable),
             _suppressions,
-            _ai);
+            _ai,
+            workflow: workflow);
 
         return (service, aiRunState, optionsStore, schedulerState);
     }
@@ -254,15 +256,16 @@ public class AiAnalysisSchedulerTests : IDisposable
         _ai.Behavior = (prompt, ct) =>
         {
             callCount++;
-            if (callCount == 2)
+            if (callCount == 3)
             {
-                // 處理完 2 筆後發出停止
+                // 前兩筆已寫入；第三筆仍在呼叫內時停止，該晚到結果必須保留待補。
                 cts.Cancel();
             }
             return Task.FromResult(new AiResponse { Success = true, Content = _ai.NextContent });
         };
 
         await service.ExecuteProcessingLoopAsync(cts.Token);
+        Assert.Equal(3, callCount);
 
         // 斷言第 1 次執行只完成了 2 筆，殘餘 2 筆仍為待補
         var r1 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date1);
@@ -568,14 +571,23 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var (service, runState, optionsStore, _) = CreateTestHarness();
         var store = _backend.RecordStore();
-        store.Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+        var completedDate = DateTime.Today.AddDays(-3);
+        var cancelledDate = DateTime.Today.AddDays(-4);
+        store.Append(CreateRecord(1, "HOST-A", completedDate, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", cancelledDate, pending: true));
 
-        // 閘門卡住假 AI：這趟執行在按下停止之前一定還在跑。不卡的話單筆待補瞬間跑完，
-        // 停止時已無可停止的對象（409），全套負載下偶發紅燈
+        // 先完成一筆，再把下一筆卡在 AI 呼叫內。停止後 provider 故意忽略 token 並回成功，
+        // 用來證明停止邊界會保留已完成結果、拒絕晚到結果，且把整趟記為已停止。
+        var secondCallStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
         _ai.Behavior = async (prompt, ct) =>
         {
-            await release.Task;
+            if (Interlocked.Increment(ref calls) == 2)
+            {
+                secondCallStarted.TrySetResult();
+                await release.Task;
+            }
             return new AiResponse { Success = true, Content = _ai.NextContent };
         };
 
@@ -601,21 +613,122 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.NotNull(statusResp.Data);
         Assert.Equal("netiq-ai", statusResp.Data.ProgressPhase);
         Assert.Equal("件", statusResp.Data.UnitText);
-        Assert.Equal(1, statusResp.Data.PendingTotal);
+        Assert.Equal(2, statusResp.Data.PendingTotal);
         Assert.False(statusResp.Data.IsRunning);
 
         // 觸發執行
         var runResp = await controller.RunAi(new TriggerAiRunRequest { ForceRerun = false });
         Assert.True(runResp.Success);
         Assert.True(runResp.Data!.Started);
+        await secondCallStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         // 停止執行
         var cancelResp = controller.CancelAi();
         Assert.True(cancelResp.Success);
 
-        // 放行並等這趟收尾，背景工作不留到測試結束後還在碰資料庫
+        // 放行 provider；停止後不能寫入這筆晚到的成功結果。
         release.SetResult();
-        Assert.True(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
+        Assert.False(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
+
+        var completed = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, completedDate);
+        var cancelled = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, cancelledDate);
+        Assert.False(completed!.AiPending);
+        Assert.True(cancelled!.AiPending);
+
+        var outcome = runState.Snapshot().LastOutcome;
+        Assert.NotNull(outcome);
+        Assert.False(outcome!.Success);
+        Assert.Equal("執行已停止（優雅停止）。", outcome.Message);
+
+        var aiRun = BatchRuns().GetRecentRuns(7, null).First(r => r.JobType == BatchRun.JobTypeAi);
+        Assert.Equal(1, aiRun.ExitCode);
+        Assert.True(aiRun.Stopped);
+        Assert.Equal(1, aiRun.DaysAnalyzed);
+        Assert.Equal(1, aiRun.AiCalls);
+        Assert.Equal(0, aiRun.AiFailures);
+    }
+
+    [Fact]
+    public async Task Ai排程遇到503_待補保留但不誤記為使用者停止()
+    {
+        var (service, runState, _, _) = CreateTestHarness();
+        var date = DateTime.Today.AddDays(-3);
+        var store = _backend.RecordStore();
+        store.Append(CreateRecord(1, "HOST-503", date, pending: true));
+        _ai.Behavior = (_, _) => throw new HttpRequestException("503 Service Unavailable");
+
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test"));
+        Assert.True(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10)));
+
+        var pending = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-503" } }, date);
+        Assert.True(pending!.AiPending);
+
+        var outcome = runState.Snapshot().LastOutcome;
+        Assert.NotNull(outcome);
+        Assert.True(outcome!.Success);
+        Assert.Null(outcome.Message);
+
+        var aiRun = BatchRuns().GetRecentRuns(7, null).First(r => r.JobType == BatchRun.JobTypeAi);
+        Assert.Equal(0, aiRun.ExitCode);
+        Assert.False(aiRun.Stopped);
+        Assert.Equal(0, aiRun.DaysAnalyzed);
+        Assert.Equal(1, aiRun.AiFailures);
+    }
+
+    [Fact]
+    public async Task 優雅停止會收尾目前版本Workflow但保留待補且不計AI失敗()
+    {
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
+        var (service, runState, _, _) = CreateTestHarness(workflow: workflow);
+        var date = DateTime.Today.AddDays(-3);
+        var store = _backend.RecordStore();
+        store.Append(CreateRecord(1, "HOST-CANCEL-WORKFLOW", date, pending: true));
+
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProvider = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ai.Behavior = async (_, _) =>
+        {
+            providerStarted.TrySetResult();
+            await releaseProvider.Task;
+            return new AiResponse { Success = true, Content = _ai.NextContent };
+        };
+
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test"));
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(WorkflowLegState.Running, workflow.Get(1, date)!.Ai);
+
+        Assert.True(runState.TryCancel());
+        releaseProvider.SetResult();
+        Assert.False(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.True(store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-CANCEL-WORKFLOW" } }, date)!.AiPending);
+        var workflowState = workflow.Get(1, date)!;
+        Assert.Equal(WorkflowLegState.Failed, workflowState.Ai);
+        Assert.Equal("cancelled", workflowState.AiFailure);
+        var aiRun = BatchRuns().GetRecentRuns(7, null).First(r => r.JobType == BatchRun.JobTypeAi);
+        Assert.True(aiRun.Stopped);
+        Assert.Equal(0, aiRun.AiFailures);
+    }
+
+    [Fact]
+    public async Task Provider例外會收尾目前版本Workflow並保留待補()
+    {
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
+        var (service, runState, _, _) = CreateTestHarness(workflow: workflow);
+        var date = DateTime.Today.AddDays(-3);
+        var store = _backend.RecordStore();
+        store.Append(CreateRecord(1, "HOST-PROVIDER-ERROR", date, pending: true));
+        _ai.Behavior = (_, _) => throw new HttpRequestException("provider connection reset");
+
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "manual:test"));
+        Assert.True(await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.True(store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-PROVIDER-ERROR" } }, date)!.AiPending);
+        var workflowState = workflow.Get(1, date)!;
+        Assert.Equal(WorkflowLegState.Failed, workflowState.Ai);
+        Assert.Equal("provider connection reset", workflowState.AiFailure);
+        var aiRun = BatchRuns().GetRecentRuns(7, null).First(r => r.JobType == BatchRun.JobTypeAi);
+        Assert.Equal(1, aiRun.AiFailures);
     }
 
     [Fact]

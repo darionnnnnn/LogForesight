@@ -253,7 +253,7 @@ public class AiAnalysisHostedService : BackgroundService
             {
                 await ExecuteProcessingLoopAsync(runCts.Token, counters);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (runCts.IsCancellationRequested)
             {
                 failureMessage = "執行已停止（優雅停止）。";
                 success = false;
@@ -267,6 +267,16 @@ public class AiAnalysisHostedService : BackgroundService
             }
             finally
             {
+                // ExecuteProcessingLoopAsync handles cancellation at the parallel/item boundary and
+                // may return normally after observing the run token. Treat that as a stopped run,
+                // while leaving completed results intact and unfinished records pending.
+                if (runCts.IsCancellationRequested)
+                {
+                    failureMessage = "執行已停止（優雅停止）。";
+                    success = false;
+                    stopped = true;
+                }
+
                 recorder.DaysAnalyzed = counters.Done;
                 recorder.AiCalls = counters.Done;
                 recorder.AiFailures = counters.Failed;
@@ -394,6 +404,7 @@ public class AiAnalysisHostedService : BackgroundService
                         if (token.IsCancellationRequested) break;
                         lock (attempted) { attempted.Add((record.HostId, record.Host, record.Date.Date)); }
 
+                        long workflowVersion = 0;
                         try
                         {
                             // 補跑輸入必須是**完整紀錄**（體檢輪）：QueryPendingAi 是不讀 ContentJson
@@ -411,7 +422,6 @@ public class AiAnalysisHostedService : BackgroundService
                                 continue;
                             }
 
-                            long workflowVersion = 0;
                             if (_workflow != null)
                             {
                                 try
@@ -426,6 +436,9 @@ public class AiAnalysisHostedService : BackgroundService
                             }
 
                             var outcome = await analysisService.RetryAiAsync(full, TrendWindowDays, token);
+                            // Providers may finish or return a result after cancellation. Do not
+                            // persist an in-flight result once the user has stopped this run.
+                            token.ThrowIfCancellationRequested();
 
                             // AI 呼叫成功：寫回結果並清 ai_pending
                             if (outcome.AiAnalyzed)
@@ -439,12 +452,16 @@ public class AiAnalysisHostedService : BackgroundService
                                             HostDayWorkflowFingerprint.ForRecord(current) != HostDayWorkflowFingerprint.ForRecord(full) ||
                                             !_workflow.IsCurrentAiVersion(record.HostId, record.Date, workflowVersion))
                                         {
+                                            CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
+                                                "AI 判定版本已更新，舊分析不再有效。");
                                             Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的判定版本已更新，拒絕舊 AI 回寫", record.Host, record.Date);
                                             continue;
                                         }
                                     }
                                     catch (Exception workflowError)
                                     {
+                                        CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
+                                            workflowError.Message);
                                         Log.Warn(workflowError, "AI version guard failed; refusing to risk writing a stale result");
                                         continue;
                                     }
@@ -455,6 +472,8 @@ public class AiAnalysisHostedService : BackgroundService
                                 if (!hostStore.TryAttachAiResult(record.Date, outcome, full.RecordId,
                                         expectedDecisionFingerprint, expectedPrtgFingerprint))
                                 {
+                                    CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion,
+                                        "正式資料已變更，舊 AI 分析不再有效。");
                                     Log.Info("主機 {Host} {Date:yyyy-MM-dd} 的正式 PRTG 證據已變更，拒絕舊 AI 回寫",
                                         record.Host, record.Date);
                                     continue;
@@ -480,11 +499,13 @@ public class AiAnalysisHostedService : BackgroundService
                         }
                         catch (OperationCanceledException) when (token.IsCancellationRequested)
                         {
+                            CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, "cancelled");
                             break;
                         }
                         catch (Exception ex)
                         {
                             // AI 呼叫失敗：該筆維持 ai_pending = true（下輪重試），記警告，不得中斷整批。
+                            CompleteWorkflowAiAttempt(record.HostId, record.Date, workflowVersion, ex.Message);
                             Interlocked.Increment(ref counters.Failed);
                             Log.Warn(ex, "主機 {Host} {Date:yyyy-MM-dd} AI 分析失敗，維持待補：{Msg}",
                                 record.Host, record.Date, ex.Message);
@@ -507,6 +528,33 @@ public class AiAnalysisHostedService : BackgroundService
                 Log.Warn("本批待補紀錄均未能成功完成 AI 分析，暫停本輪處理以防迴圈重試。");
                 break;
             }
+        }
+    }
+
+    private void CompleteWorkflowAiAttempt(long hostId, DateTime date, long workflowVersion, string failure)
+    {
+        if (_workflow == null || workflowVersion <= 0) return;
+
+        try
+        {
+            var current = _workflow.Get(hostId, date);
+            if (current is not
+                {
+                    Parent: WorkflowLegState.Succeeded,
+                    Ai: WorkflowLegState.Running
+                } || current.DecisionVersion != workflowVersion || current.AiInputVersion != workflowVersion)
+                return;
+
+            var record = _recordQuery.GetOne(
+                new[] { new HostKey { HostId = hostId, HostName = current.HostName } }, date);
+            if (record == null || !record.AiPending) return;
+
+            // Keep the workflow version fence: an obsolete attempt must never complete a newer decision.
+            _workflow.CompleteAi(hostId, date, workflowVersion, success: false, failure: failure);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "無法收尾主機 {HostId} {Date:yyyy-MM-dd} 的 AI workflow 狀態", hostId, date);
         }
     }
 

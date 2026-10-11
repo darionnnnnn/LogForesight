@@ -773,7 +773,7 @@ async function loadSchedule() {
 
     applyScheduleOptions(options);
     if (settings) {
-        // 啟用開關在 PRTG 維護頁「擷取參數」的數值取數對象下拉，本頁只顯示狀態
+        // 啟用開關在 PRTG 維護頁「擷取參數」的「啟用 PRTG 擷取」勾選框，本頁只顯示狀態。
         prtgFetchStrategy = settings.prtgFetchStrategy ?? null;
         renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope, prtgFetchStrategy);
         // 立即執行前要判斷「連線已設定但擷取未啟用」，連線資訊沿用這一次整包設定
@@ -1173,7 +1173,7 @@ function applyAiScheduleStatus(status) {
             messageEl.classList.remove('text-danger');
             messageEl.classList.add('text-muted');
         } else {
-            renderLastRunOutcome(messageEl, status);
+            renderLastRunOutcome(messageEl, status, 'AI 分析');
         }
     }
 
@@ -1529,11 +1529,11 @@ function renderAiScheduleProgress(status) {
 
 /**
  * 閒置時的「上次執行結果」（docs/archive/FEEDBACK-7-PLAN.md）：站台重啟後 lastRunEndedAt 為 null，
- * 顯示「—」即可——完整歷史查執行總表，這裡只回答「剛剛那次到底成不成功」。
+ * 顯示「—」即可。此處回報主程序是否正常結束；各來源、AI 與後續工作是否完整由執行總表判斷。
  * 使用者手動取消不算失敗（AnalysisOrchestrator 把取消也回報成 Success=false，
  * FailureMessage="使用者取消"），這裡特判成中性語氣，不用紅字嚇人。
  */
-function renderLastRunOutcome(messageEl, status) {
+function renderLastRunOutcome(messageEl, status, operation = '主程序') {
     const endedAt = status.lastRunEndedAt ?? status.completedAt;
     if (!endedAt) {
         messageEl.textContent = status.latestMessage ?? '';
@@ -1543,19 +1543,23 @@ function renderLastRunOutcome(messageEl, status) {
     }
 
     const when = formatDateTime(endedAt);
-    if (status.lastRunSuccess ?? true) {
+    if (status.lastRunSuccess === true) {
         const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
-        messageEl.textContent = `上次執行：成功${trigger}`;
+        messageEl.textContent = `上次${operation}：正常結束${trigger}；各來源與待補工作請看執行總表。`;
         messageEl.classList.remove('text-danger');
         messageEl.classList.add('text-muted');
-    } else if (status.lastRunMessage === '使用者取消') {
+    } else if (status.lastRunSuccess == null) {
+        messageEl.textContent = `上次${operation}：結果未知（${when}）；請看執行總表核對。`;
+        messageEl.classList.remove('text-danger');
+        messageEl.classList.add('text-muted');
+    } else if (status.lastRunMessage === '使用者取消' || status.lastRunMessage === '執行已停止（優雅停止）。') {
         const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
-        messageEl.textContent = `上次執行：已停止${trigger}`;
+        messageEl.textContent = `上次${operation}：已停止${trigger}`;
         messageEl.classList.remove('text-danger');
         messageEl.classList.add('text-muted');
     } else {
         const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
-        messageEl.textContent = `上次執行：失敗${trigger}— ${status.lastRunMessage ?? ''}`;
+        messageEl.textContent = `上次${operation}：失敗${trigger}— ${status.lastRunMessage ?? ''}`;
         messageEl.classList.remove('text-muted');
         messageEl.classList.add('text-danger');
     }
@@ -1800,7 +1804,7 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const goOn = await confirmAction({
             title: 'PRTG 尚未啟用',
             message: '這次執行不會做 PRTG 擷取（連線已設定，但擷取未啟用）。\n'
-                + '要啟用請到 PRTG 維護頁「擷取參數」選擇數值取數對象。\n\n仍要開始執行嗎？',
+                + '要啟用請到 PRTG 維護頁「擷取參數」勾選「啟用 PRTG 擷取」並儲存。\n\n仍要開始執行嗎？',
             confirmText: '仍要開始',
             confirmVariant: 'primary'
         });
