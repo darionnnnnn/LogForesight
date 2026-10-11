@@ -126,12 +126,16 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
 
     private SettingsController CreateBackfillController(PrtgBackfillService backfill)
     {
+        var hosts = new HostStore(_backend.Blob("hosts"));
+        if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "backfill-auth-host", Active = true });
         var controller = new SettingsController(
             new StubSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
             prtgBackfill: backfill,
-            backend: _backend);
+            backend: _backend,
+            hosts: hosts,
+            visibility: new AllVisibleBackfillHosts(hosts));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
@@ -143,7 +147,7 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
 
         var ex = Assert.Throws<DomainException>(() => controller.CancelPrtgBackfill());
         Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
-        Assert.Equal("目前沒有進行中的歷史回填。", ex.Message);
+        Assert.Equal("目前沒有可識別的全量或接續回填。", ex.Message);
         Assert.Empty(_audit.Entries);
     }
 
@@ -151,7 +155,7 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
     public void 回填停止_執行中時取消語彙基元並寫稽核()
     {
         var state = new PrtgBackfillRunState();
-        Assert.True(state.TryBeginRun(out var token));
+        Assert.True(state.TryBeginIdentifiedRun("full", out var token));
         var controller = CreateBackfillController(CreateBackfillService(state));
 
         var res = controller.CancelPrtgBackfill();
@@ -159,6 +163,33 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
         Assert.True(res.Success);
         Assert.True(token.IsCancellationRequested);
         Assert.Contains(_audit.Entries, e => e.Action == AuditActions.PrtgBackfillCancel && e.Summary == "停止 PRTG 歷史回填");
+    }
+
+    [Fact]
+    public void 回填停止_無法識別的舊執行拒絕generic取消()
+    {
+        var state = new PrtgBackfillRunState();
+        Assert.True(state.TryBeginRun(out var token));
+        var controller = CreateBackfillController(CreateBackfillService(state));
+
+        var ex = Assert.Throws<DomainException>(() => controller.CancelPrtgBackfill());
+
+        Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
+        Assert.False(token.IsCancellationRequested);
+        Assert.Empty(_audit.Entries);
+    }
+
+    private sealed class AllVisibleBackfillHosts(IHostStore hosts) : IVisibilityService
+    {
+        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Select(host => host.HostId).ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => GetVisibleHostIds();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
+        public bool IsCaseGrantOnly(long hostId) => false;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
+        public List<WebHost> GetVisibleHosts() => hosts.GetAll();
+        public void EnsureVisible(long hostId) { }
     }
 
     [Fact]

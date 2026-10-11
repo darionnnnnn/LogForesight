@@ -456,8 +456,43 @@ public class SettingsController : ControllerBase
     // ── PRTG 歷史回填（PRTG 第 1 輪批次E）────────────────────────────────────────
 
     [HttpGet("prtg-backfill/status")]
-    public ApiResponse<PrtgBackfillStatusDto> GetPrtgBackfillStatus() =>
-        ApiResponse<PrtgBackfillStatusDto>.Ok(_prtgBackfill?.GetStatus() ?? new PrtgBackfillStatusDto());
+    public ApiResponse<PrtgBackfillStatusDto> GetPrtgBackfillStatus()
+    {
+        if (_prtgBackfill == null)
+            return ApiResponse<PrtgBackfillStatusDto>.Ok(new PrtgBackfillStatusDto());
+
+        var first = _prtgBackfill.GetAccessSnapshot();
+        if (first.Status.IsRunning)
+        {
+            if (first.RunKind == "selected")
+                RequireRecordedSelectedPrtgBackfillAccess(first.SelectedHostIds);
+            else if (first.RunKind is "full" or "tail")
+                RequireFullPrtgTransferAccess();
+            else
+                throw DomainException.Forbidden("無法確認進行中 PRTG 回填的範圍，拒絕讀取狀態。");
+        }
+        else if (!HasFullPrtgTransferAccess() &&
+                 !(first.RunKind == "selected" && HasRecordedSelectedPrtgBackfillAccess(first.SelectedHostIds)))
+        {
+            // A limited maintainer may read only a completed selected run whose saved scope they can still see.
+            return ApiResponse<PrtgBackfillStatusDto>.Ok(new PrtgBackfillStatusDto());
+        }
+
+        var latest = _prtgBackfill.GetAccessSnapshot();
+        if (!SameBackfillRun(first, latest))
+            throw DomainException.Conflict("PRTG 回填狀態在授權期間已切換，請重新讀取狀態。");
+        if (latest.Status.IsRunning)
+        {
+            if (latest.RunKind == "selected") RequireRecordedSelectedPrtgBackfillAccess(latest.SelectedHostIds);
+            else RequireFullPrtgTransferAccess();
+        }
+        else if (!HasFullPrtgTransferAccess() &&
+                 !(latest.RunKind == "selected" && HasRecordedSelectedPrtgBackfillAccess(latest.SelectedHostIds)))
+        {
+            return ApiResponse<PrtgBackfillStatusDto>.Ok(new PrtgBackfillStatusDto());
+        }
+        return ApiResponse<PrtgBackfillStatusDto>.Ok(latest.Status);
+    }
 
     [HttpGet("prtg-backfill/preview")]
     public ApiResponse<PrtgFullBackfillPreviewDto> PreviewPrtgBackfill()
@@ -498,6 +533,9 @@ public class SettingsController : ControllerBase
     public ApiResponse<PrtgSelectedBackfillPreviewDto> PreviewSelectedPrtgBackfill(
         [FromBody] PrtgSelectedBackfillRequest request)
     {
+        if (request == null)
+            throw DomainException.Validation("請指定回填主機與日期範圍。");
+        RequireSelectedPrtgBackfillAccess(request.HostIds);
         if (_prtgBackfill == null)
             throw DomainException.Validation("PRTG 回填服務未啟用。");
         return ApiResponse<PrtgSelectedBackfillPreviewDto>.Ok(_prtgBackfill.PreviewSelected(request));
@@ -507,6 +545,9 @@ public class SettingsController : ControllerBase
     public ApiResponse<StartPrtgSelectedBackfillResultDto> StartSelectedPrtgBackfill(
         [FromBody] PrtgSelectedBackfillRequest request)
     {
+        if (request == null)
+            throw DomainException.Validation("請指定回填主機與日期範圍。");
+        RequireSelectedPrtgBackfillAccess(request.HostIds);
         if (_prtgBackfill == null)
             throw DomainException.Validation("PRTG 回填服務未啟用。");
         if (!_prtgBackfill.TryStartSelected(request, out var preview, out var error, out var isConflict))
@@ -543,10 +584,25 @@ public class SettingsController : ControllerBase
         if (_prtgBackfill == null)
             throw DomainException.Validation("PRTG 回填服務未啟用。");
 
-        // 沒有執行中就不是「停止成功」——回 409，與結構同步停止同一種語意。
-        var cancelled = request?.RunId is { Length: > 0 } runId
-            ? _prtgBackfill.TryCancelSelected(runId)
-            : _prtgBackfill.TryCancel();
+        // The selected UI supplies its run ID; generic (null/empty-body) cancellation is only for full/tail runs.
+        // Authorize the captured identity and then cancel that exact identity to prevent a scope-check race.
+        var snapshot = _prtgBackfill.GetAccessSnapshot();
+        var runId = request?.RunId;
+        bool cancelled;
+        if (!string.IsNullOrWhiteSpace(runId))
+        {
+            if (snapshot.RunKind != "selected")
+                throw DomainException.Conflict("指定回填已結束或執行識別不符，請重新讀取狀態。");
+            RequireRecordedSelectedPrtgBackfillAccess(snapshot.SelectedHostIds);
+            cancelled = _prtgBackfill.TryCancelIdentifiedRun("selected", runId);
+        }
+        else
+        {
+            if (snapshot.RunKind is not ("full" or "tail") || string.IsNullOrWhiteSpace(snapshot.RunId))
+                throw DomainException.Conflict("目前沒有可識別的全量或接續回填。");
+            RequireFullPrtgTransferAccess();
+            cancelled = _prtgBackfill.TryCancelIdentifiedRun(snapshot.RunKind, snapshot.RunId);
+        }
         if (!cancelled)
             throw DomainException.Conflict("目前沒有進行中的歷史回填。");
 
@@ -1846,6 +1902,67 @@ public class SettingsController : ControllerBase
         if (visible.Count == 0 || hosts.Count == 0 || hosts.Any(h => !visible.Contains(h.HostId) || _visibility.IsCaseGrantOnly(h.HostId)))
             throw DomainException.Forbidden("全站 PRTG 對應、排除及搬運須由可見全部主機的管理者操作；受限角色請使用試點與驗收證據入口。");
     }
+
+    private bool HasFullPrtgTransferAccess()
+    {
+        try
+        {
+            RequireFullPrtgTransferAccess();
+            return true;
+        }
+        catch (DomainException ex) when (ex.Code == ApiErrorCodes.Forbidden)
+        {
+            return false;
+        }
+    }
+
+    private void RequireSelectedPrtgBackfillAccess(IEnumerable<long>? requestedHostIds)
+    {
+        if (requestedHostIds == null) return; // Preserve the service's existing empty-selection validation.
+        const int maxRequestIdsToAuthorize = 64;
+        const int maxDistinctSelectedHosts = 5;
+        var ids = new HashSet<long>();
+        using (var enumerator = requestedHostIds.GetEnumerator())
+        {
+            var inspected = 0;
+            while (enumerator.MoveNext())
+            {
+                if (++inspected > maxRequestIdsToAuthorize)
+                    throw DomainException.Validation("指定回填主機清單過大，請重新選擇主機。");
+                var id = enumerator.Current;
+                if (id <= 0 || !ids.Add(id)) continue; // Preserve invalid/duplicate validation and normalization in the service.
+                if (ids.Count > maxDistinctSelectedHosts)
+                    throw DomainException.Validation("一次最多選擇 5 台主機。");
+            }
+        }
+        if (ids.Count == 0) return; // The service returns the existing validation error for an empty selection.
+        if (_visibility == null || _hosts == null)
+            throw DomainException.Forbidden("無法確認指定 PRTG 主機的可見範圍，拒絕執行回填。");
+        var visible = _visibility.GetVisibleHostIds();
+        if (ids.Any(id => !visible.Contains(id) || _visibility.IsCaseGrantOnly(id)))
+            throw DomainException.Forbidden("指定回填僅允許 Maintain 使用者對一般可見主機執行；案件授與主機不可用於回填。");
+    }
+
+    private void RequireRecordedSelectedPrtgBackfillAccess(IReadOnlySet<long>? selectedHostIds)
+    {
+        if (!HasRecordedSelectedPrtgBackfillAccess(selectedHostIds))
+            throw DomainException.Forbidden("無法確認指定回填保存的主機範圍，拒絕讀取或停止。");
+    }
+
+    private bool HasRecordedSelectedPrtgBackfillAccess(IReadOnlySet<long>? selectedHostIds)
+    {
+        if (selectedHostIds == null || selectedHostIds.Count == 0 || selectedHostIds.Count > 5 ||
+            selectedHostIds.Any(id => id <= 0) || _visibility == null || _hosts == null)
+            return false;
+        var visible = _visibility.GetVisibleHostIds();
+        return selectedHostIds.All(id => visible.Contains(id) && !_visibility.IsCaseGrantOnly(id));
+    }
+
+    private static bool SameBackfillRun(PrtgBackfillAccessSnapshot left, PrtgBackfillAccessSnapshot right) =>
+        string.Equals(left.RunId, right.RunId, StringComparison.Ordinal) &&
+        string.Equals(left.RunKind, right.RunKind, StringComparison.Ordinal) &&
+        ((left.SelectedHostIds == null && right.SelectedHostIds == null) ||
+         (left.SelectedHostIds != null && right.SelectedHostIds != null && left.SelectedHostIds.SetEquals(right.SelectedHostIds)));
 
     private static readonly JsonSerializerOptions PrtgDataJsonOptions = new()
     {

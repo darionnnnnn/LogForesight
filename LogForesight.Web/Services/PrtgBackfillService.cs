@@ -18,40 +18,98 @@ public record PrtgBackfillProgress(
     int SensorsDone, int SensorsTotal,
     int StateChangesRead, int StateChangesTotal, bool ReadingStateChanges);
 
+public sealed record PrtgBackfillAccessSnapshot(string? RunId, string? RunKind,
+    IReadOnlySet<long>? SelectedHostIds, PrtgBackfillStatusDto Status);
+
 /// <summary>
 /// PRTG 歷史回填的行程內單例執行狀態＋併發 1 的 gate。
 /// 繼承自 <see cref="PrtgProbeRunState"/> 避免重複實作。
 /// </summary>
 public class PrtgBackfillRunState : PrtgProbeRunState
 {
+    private const int SelectedHostScopeMaxCount = 5;
     private readonly object _runIdentityLock = new();
     private string? _runId;
     private string? _runKind;
+    private long[]? _selectedHostIds;
 
     public (string? RunId, string? RunKind) GetRunIdentity()
     {
         lock (_runIdentityLock) return (_runId, _runKind);
     }
 
-    public bool TryBeginIdentifiedRun(string runKind, out CancellationToken token)
+    public PrtgBackfillAccessSnapshot GetAccessSnapshot()
+    {
+        lock (_runIdentityLock)
+        {
+            var state = Snapshot();
+            var progress = GetProgress();
+            var status = new PrtgBackfillStatusDto
+            {
+                IsRunning = state.IsRunning,
+                StartedAt = state.StartedAt,
+                CompletedAt = state.CompletedAt,
+                Success = state.Success,
+                LatestMessage = state.LatestMessage,
+                Output = state.Output,
+                DaysDone = progress.DaysDone,
+                DaysTotal = progress.DaysTotal,
+                CurrentDate = progress.CurrentDate,
+                SensorsDone = progress.SensorsDone,
+                SensorsTotal = progress.SensorsTotal,
+                StateChangesRead = progress.StateChangesRead,
+                StateChangesTotal = progress.StateChangesTotal,
+                ReadingStateChanges = progress.ReadingStateChanges,
+                Cancelled = Cancelled,
+                RunId = _runId,
+                RunKind = _runKind
+            };
+            return new PrtgBackfillAccessSnapshot(_runId, _runKind,
+                _selectedHostIds == null ? null : _selectedHostIds.ToHashSet(), status);
+        }
+    }
+
+    public bool TryBeginIdentifiedRun(string runKind, out CancellationToken token,
+        IReadOnlyCollection<long>? selectedHostIds = null)
     {
         lock (_runIdentityLock)
         {
             if (!TryBeginRun(out token)) return false;
             _runId = Guid.NewGuid().ToString("N");
             _runKind = runKind;
+            _selectedHostIds = string.Equals(runKind, "selected", StringComparison.Ordinal)
+                ? SnapshotSelectedHostIds(selectedHostIds)
+                : null;
+            ResetProgress();
             return true;
         }
     }
 
-    public bool TryCancelSelected(string? runId)
+    private static long[]? SnapshotSelectedHostIds(IReadOnlyCollection<long>? selectedHostIds)
+    {
+        if (selectedHostIds == null || selectedHostIds.Count == 0 || selectedHostIds.Count > 64) return null;
+        var ids = new HashSet<long>();
+        foreach (var id in selectedHostIds)
+        {
+            if (id <= 0) return null;
+            ids.Add(id);
+            if (ids.Count > SelectedHostScopeMaxCount) return null;
+        }
+        return ids.Count == 0 ? null : ids.Order().ToArray();
+    }
+
+    public bool TryCancelIdentifiedRun(string? runKind, string? runId)
     {
         lock (_runIdentityLock)
         {
-            if (string.IsNullOrWhiteSpace(runId) || _runKind != "selected" || _runId != runId) return false;
+            if (string.IsNullOrWhiteSpace(runId) || !string.Equals(_runKind, runKind, StringComparison.Ordinal) ||
+                !string.Equals(_runId, runId, StringComparison.Ordinal)) return false;
             return TryCancel();
         }
     }
+
+    public bool TryCancelSelected(string? runId)
+        => TryCancelIdentifiedRun("selected", runId);
 
     private readonly object _progressLock = new();
 
@@ -197,32 +255,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
         _clientFactory = clientFactory;
     }
 
-    public PrtgBackfillStatusDto GetStatus()
-    {
-        var s = _state.Snapshot();
-        var p = _state.GetProgress();
-        var identity = _state.GetRunIdentity();
-        return new PrtgBackfillStatusDto
-        {
-            IsRunning = s.IsRunning,
-            StartedAt = s.StartedAt,
-            CompletedAt = s.CompletedAt,
-            Success = s.Success,
-            LatestMessage = s.LatestMessage,
-            Output = s.Output,
-            DaysDone = p.DaysDone,
-            DaysTotal = p.DaysTotal,
-            CurrentDate = p.CurrentDate,
-            SensorsDone = p.SensorsDone,
-            SensorsTotal = p.SensorsTotal,
-            StateChangesRead = p.StateChangesRead,
-            StateChangesTotal = p.StateChangesTotal,
-            ReadingStateChanges = p.ReadingStateChanges,
-            Cancelled = _state.Cancelled,
-            RunId = identity.RunId,
-            RunKind = identity.RunKind
-        };
-    }
+    public PrtgBackfillAccessSnapshot GetAccessSnapshot() => _state.GetAccessSnapshot();
+
+    public PrtgBackfillStatusDto GetStatus() => GetAccessSnapshot().Status;
 
     /// <summary>
     /// 清除監看範圍外資料（PRTG 維護頁確認）現在能不能做：取數執行、結構同步、回填任一在跑就不行，回傳原因；null＝可以。
@@ -244,6 +279,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
     public bool TryCancel() => _state.TryCancel();
 
     public bool TryCancelSelected(string? runId) => _state.TryCancelSelected(runId);
+
+    public bool TryCancelIdentifiedRun(string? runKind, string? runId) =>
+        _state.TryCancelIdentifiedRun(runKind, runId);
 
     /// <summary>「（已 N 分鐘）」後綴；取不到開始時間時回空字串（兩道執行中閘門共用）。</summary>
     private static string ElapsedSuffix(DateTime? startedAt)
@@ -487,7 +525,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         var settings = _settings.Get();
         var days = preview.DayCount;
         if (!TryPrepare(settings, days, blockWhenSchedulerRunning: true, runKind: "selected", out var run, out error, out isConflict,
-                requireRecentMapping: false))
+                requireRecentMapping: false, selectedHostIds: preview.HostIds))
             return false;
         var selectedPreview = preview;
         _ = Task.Run(() => ExecuteSelectedAsync(run!, selectedPreview.FromDate, selectedPreview.ToDate, selectedPreview.HostIds));
@@ -591,7 +629,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
     private bool TryPrepare(SystemSettings s, int days, bool blockWhenSchedulerRunning, string runKind,
         out PreparedRun? run, out string? error, out bool isConflict, bool requireRecentMapping = true,
         FullPreviewSnapshot? expectedFullPreview = null, DateTime? expectedAnchorDate = null,
-        DateTime? expectedPreviewExpiryUtc = null)
+        DateTime? expectedPreviewExpiryUtc = null, IReadOnlyCollection<long>? selectedHostIds = null)
     {
         run = null;
         error = null;
@@ -684,14 +722,12 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
-        if (!_state.TryBeginIdentifiedRun(runKind, out var runToken))
+        if (!_state.TryBeginIdentifiedRun(runKind, out var runToken, selectedHostIds))
         {
             error = "回填已在執行中。";
             isConflict = true;
             return false;
         }
-
-        _state.ResetProgress();
 
         PrtgClient client;
         try

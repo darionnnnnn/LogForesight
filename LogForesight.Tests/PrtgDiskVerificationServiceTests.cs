@@ -302,10 +302,10 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             db.PrtgValues.AddRange(values);
             db.SaveChanges();
         }
-        ConfirmTrialSemanticEvidence();
-        var beforeResults = _results.GetRecent().Count;
         CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
         PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, 1, 2, 1, "snmpdiskfree", "source-v1");
+        ConfirmTrialSemanticEvidence();
+        var beforeResults = _results.GetRecent().Count;
         var trial = _service.AssessRuleTrial(1);
         Assert.Equal("ready-no-hit", trial.Status);
         Assert.True(trial.SemanticVerified);
@@ -378,9 +378,14 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
     private void ConfirmTrialSemanticEvidence()
     {
         var store = new EfPrtgStore(_fx.NewContext);
-        var identity = CaptureCurrentIdentity(store);
-        identity = PrtgResourceFixture.BindChannel(store, identity, "free", "Free", "%", 1,
-            "descending-danger");
+        var policyBlob = _fx.Blob(PrtgMonitoringPolicyStore.BlobKey);
+        var identity = store.GetResourceIdentity(1);
+        if (!PrtgConsumerProfileFixtureClosure.HasCurrentQualifiedBinding(policyBlob, identity))
+        {
+            identity = CaptureCurrentIdentity(store);
+            identity = PrtgResourceFixture.BindChannel(store, identity, "free", "Free", "%", 1,
+                "descending-danger");
+        }
         _evidence.ConfirmManually(new(1, 2, 1, "snmpdiskfree", "free", "Free", "%", 1, "descending-danger"),
             42, "test fixture semantic evidence", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion,
             identity.SourceGeneration, identity.Generation, identity.ChannelGeneration, identity.Epoch);
@@ -388,6 +393,8 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             "descending-danger", 1, true, DateTime.UtcNow, DateTime.Today.AddDays(-1), PrtgDiskAssessmentService.ParserSemanticVersion,
             SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
             ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
+        Assert.True(PrtgResourceQualification.IsChannelCurrent(
+            _evidence.Get(1), _results.Get(1), store.GetResourceIdentity(1)));
     }
 
     private void SaveTrialRule(bool enabled = true, PrtgDiskTrendThresholds? thresholds = null) => _ruleStore.Save(new RuleFileContent

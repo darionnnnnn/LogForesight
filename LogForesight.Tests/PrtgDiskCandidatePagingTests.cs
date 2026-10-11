@@ -756,6 +756,11 @@ public sealed class PrtgDiskCandidatePagingTests : IDisposable
             "candidate-formal-source", "candidate-formal-resource");
         identity = PrtgResourceFixture.BindChannel(store, identity, "free", "Free", "%", 1,
             "descending-danger");
+
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(NewContext, sensorId, deviceId, 1,
+            "SNMP Disk Free", identity.SourceGeneration);
+        identity = store.GetResourceIdentity(sensorId);
+
         var evidenceStore = new PrtgDiskSemanticEvidenceStore(new EfJsonBlobStore(NewContext, PrtgDiskSemanticEvidenceStore.BlobKey));
         evidenceStore.ConfirmManually(
             new PrtgDiskSemanticContext(sensorId, deviceId, 1, "SNMP Disk Free", "free", "Free", "%", 1, "descending-danger"),
@@ -774,9 +779,8 @@ public sealed class PrtgDiskCandidatePagingTests : IDisposable
         hosts.Upsert(new WebHost { HostId = 1, HostName = "active-svr", Active = true });
 
         var service = new PrtgDiskAssessmentService(store, hosts, new FakeSystemSettingsStore(), evidenceStore, verificationStore);
-
-        PrtgResourceFixture.AuthorizeSeededDiskHistory(NewContext, sensorId, deviceId, 1,
-            "SNMP Disk Free", identity.SourceGeneration);
+        Assert.True(PrtgResourceQualification.IsChannelCurrent(
+            evidenceStore.Get(sensorId), verificationStore.Get(sensorId), store.GetResourceIdentity(sensorId)));
 
         // Assess with selectedSensorObjids
         var batch = service.Assess(completedDay, null, PrtgDiskDecisionMode.Preview,

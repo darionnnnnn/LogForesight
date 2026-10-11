@@ -91,11 +91,11 @@ public class EmptyStateGuidanceUiTests
         // 2. renderGroupRisk 判斷使用者是否具備 Maintain 能力
         Assert.Contains("hasCapability(user, 'Maintain')", js);
 
-        // 3. 具備 Maintain 時建議前往「群組與授權」
-        Assert.Contains("可於「群組與授權」頁建立主機群組並指派主機", js);
+        // 3. 空可見集合可能由範圍／授權造成；Maintain 可核對設定，不能推定全站缺群組。
+        Assert.Contains("可於「群組與授權」頁檢查群組、主機指派與檢視權。", js);
 
         // 4. 無 Maintain 時建議聯絡系統管理員，不給前往不可進入之管理頁的連結/文字
-        Assert.Contains("請聯絡系統管理員建立主機群組並指派主機", js);
+        Assert.Contains("請聯絡系統管理員確認群組與檢視權；這不代表全站沒有主機群組。", js);
     }
 
     [Fact]

@@ -415,7 +415,7 @@ device 兩層都得不到 IP（名稱解析不到、或欄位根本沒填）→ 
 改寫成回填當下。回填時的 sensor 清單改從既有鏡像讀取。
 
 - **全量先預估再確認**：維護者須具有全主機範圍（不接受只有個案授權）。唯讀預覽與正式 runner 共用逐日目標 resolver，按已保存的觸發範圍、各日高／中風險、當日往回最多 31 天的有效對應及 sensor type 白名單計算；「全量」表示完整執行這套設定，不是對全站 sensor 無限制取數。預覽不建立 PRTG client、不發 PRTG HTTP、不取得 run lock。
-- **成本口徑**：逐日列主機與 sensor 數、合計 historicdata 次數，以及共享 5 次／滾動 60 秒配額的時間下界 `N≤1 ? 0 : floor((N−1)/5)×60` 秒；此為額度全空、沒有其他使用者競爭時的最短配額等待，不是總 ETA。另列一次整個區間的狀態變更查詢對象，未知分頁與回應成本明示未知。官方限制核對於 2026-10-11，見 [Paessler Historic Data](https://www.paessler.com/manuals/prtg/historic_data)。
+- **成本口徑**：逐日列主機與 sensor 數、合計 historicdata 次數，以及共享 5 次／滾動 60 秒配額的時間下界 `N≤1 ? 0 : floor((N−1)/5)×60` 秒；此為配額尚未使用、沒有其他作業競爭時的最短配額等待，不是總 ETA。另列一次整個區間的狀態變更查詢對象，未知分頁與回應成本明示未知。官方限制核對於 2026-10-11，見 [Paessler Historic Data](https://www.paessler.com/manuals/prtg/historic_data)。
 - **版本與啟動**：預覽綁定本服務 build／契約、設定、完整 scope、日期及實際目標 fingerprint，五分鐘有效，服務重啟後重新預覽。按確認後才傳送當次 PreviewId 與 Confirmed；缺預覽、未確認、過期、重用、跨日或設定／對應／紀錄漂移，在建立 client／run lock 前拒絕。執行使用已確認的固定日期區間，各日取值前再核對目標 fingerprint；變更就停止並要求重新預覽，不悄悄擴大成本。停用、互斥與取消仍沿用原門檻。
 
 - **狀態變更整趟只取一次**（區間＝最舊回填日的前一天到今天，§3a；只查取數範圍內裝置，範圍在回填開始時以既有對應算一次，§3c），之後逐日做數值；單日失敗不中止整趟，最後輸出成功、失敗、略過天數。進度的狀態變更段以台數顯示。
@@ -431,6 +431,7 @@ device 兩層都得不到 IP（名稱解析不到、或欄位根本沒填）→ 
   往回找 31 天（`PrtgTriggeredValueFetcher.HostMapLookbackDays`），仍對不到就**略過**該日——計入略過天數、不算成功；
   全部略過時整趟結果為失敗並寫明「沒有任何一天有主機對應」。什麼都沒抓的成功最難察覺。
 - **啟動閘門**（依序）：未啟用、連線不齊、環境探測執行中、鏡像沒有感測器、**取數執行中**、**同步結構與對應執行中**、**近（回填天數＋31）天沒有任何主機對應**。取數與同步執行中的訊息帶已執行分鐘數並指路停止鈕；沒有對應的訊息指路「同步結構與對應」。探測、取數、同步任一執行中都不放行：它們都打同一台 PRTG，疊在一起會互相拖慢（反向也成立：回填執行中，探測與同步都拒絕啟動）。對應的視窗要涵蓋「最舊回填日再往回 31 天」——逐日回填以各回填日為基準往回找對應，只看近 31 天會出現閘門放行、每一天都被略過的情形。
+- **狀態與停止授權**：Maintain 之外，全量／接續須一般可見全部主機，指定回填須一般可見本輪保存的每台主機，案件授與不算。啟動時保存不可變主機範圍，未知範圍拒絕讀取／停止；受限維護者仍可查看有權操作的指定回填完成結果；其他已結束作業回空狀態，不洩露上一輪輸出，全主機維護者可查看全量／接續完成結果。取消綁定精確種類與 run ID，不會取消授權核對期間接手的新作業。指定回填傳 run ID；排程作業的全量停止傳空 body。
 - **可停止**：`POST prtg-backfill/cancel`（權限同 start，寫稽核），排程作業頁 PRTG 卡的停止鈕只在回填執行中出現。停止後結果寫明「已停止：完成 X／N 天」，畫面標「已停止」。
 - 回填**不受取數策略影響**（§3b），寫入的是 `ok` 列，會覆蓋同一小時的 `sampled` 列。
 
@@ -701,7 +702,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET prtg-mirror` | 鏡像狀態與主機對應摘要；含快照最近成功時間、感測器數、生效間隔、連續失敗數、是否退避中、暫停原因 |
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-probe/data-flow/start` | 小範圍資料流驗證；與完整環境探測共用 status 與 cancel，僅抽樣一台主機、一顆 sensor、一天資料 |
-| `GET prtg-backfill/preview`、`POST prtg-backfill/start`、`POST prtg-backfill/cancel`、`GET prtg-backfill/status` | 歷史回填（§5）。全量 start 要求最新單次 PreviewId 及 Confirmed=true；preview/start 限全主機維護範圍。status 含天數、當日 sensor 進度、讀取狀態變更進度與是否被停止；cancel 在沒有執行中時回 409 |
+| `GET prtg-backfill/preview`、`POST prtg-backfill/start`、`POST prtg-backfill/cancel`、`GET prtg-backfill/status` | 歷史回填（§5）。全量 start 要求最新單次 PreviewId 及 Confirmed=true；preview/start 限全主機維護範圍；status/cancel 核本輪不可變主機範圍及精確作業識別。status 含天數、當日 sensor 進度、讀取狀態變更進度與是否被停止；cancel 在沒有執行中時回 409 |
 | `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過。cancel 在沒有執行中時回 409；成功時回 200（只代表取消訊號已送出，實際結束要看 status） |
 | `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；**含總開關 `PrtgEnabled`**，有送才更新） |
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |

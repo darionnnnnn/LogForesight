@@ -82,6 +82,10 @@ public sealed class PrtgDiskAssessmentServiceTests : IDisposable
             sensorId, deviceId, 1, "assessment-source", "assessment-resource-1101");
         identity = PrtgResourceFixture.BindChannel(prtgStore, identity, "free", "Free", "%", 1,
             "descending-danger");
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, sensorId, deviceId, 1,
+            "SNMP Disk Free", identity.SourceGeneration);
+        identity = prtgStore.GetResourceIdentity(sensorId);
+
         for (long id = 1001; id <= sensorId; id++)
         {
             var proofIdentity = id == sensorId ? identity : null;
@@ -106,13 +110,13 @@ public sealed class PrtgDiskAssessmentServiceTests : IDisposable
         hosts.Upsert(new WebHost { HostName = "active", Active = true });
         var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(_fx.NewContext), hosts,
             new FakeSystemSettingsStore(), evidence, verifications);
+        Assert.True(PrtgResourceQualification.IsChannelCurrent(
+            evidence.Get(sensorId), verifications.Get(sensorId), prtgStore.GetResourceIdentity(sensorId)));
 
         var longWindowRule = new KnownIssueRule
         {
             PrtgDiskTrendThresholds = PrtgDiskTrendThresholds.Provisional with { RecentWindowDays = 730 }
         };
-        PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, sensorId, deviceId, 1,
-            "SNMP Disk Free", identity.SourceGeneration);
         Assert.True(assessment.HasAnyReadySemanticCandidate(completedDay, longWindowRule));
     }
 
