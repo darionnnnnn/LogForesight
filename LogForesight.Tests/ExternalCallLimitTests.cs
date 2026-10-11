@@ -179,23 +179,28 @@ public class ExternalCallLimitTests : IDisposable
     private sealed class CountingSnapshotService : PrtgSnapshotHostedService
     {
         private readonly HttpMessageHandler _handler;
+        private readonly SnapshotRequestBudgetFixture _budgetFixture;
         public int CreateCount { get; private set; }
 
         public CountingSnapshotService(
             ISystemSettingsStore settingsStore, StorageBackend backend, SchedulerRunState schedulerRunState,
             PrtgStructureSyncService structureSync, PrtgBackfillService backfill, IHostStore hosts,
             ISentinelStore sentinels, PrtgProbeRunState probeState, IHostApplicationLifetime lifetime,
-            HttpMessageHandler handler)
+            HttpMessageHandler handler, SnapshotRequestBudgetFixture budgetFixture)
             : base(settingsStore, backend, schedulerRunState, structureSync, backfill, hosts, sentinels, probeState, lifetime)
         {
             _handler = handler;
+            _budgetFixture = budgetFixture;
         }
 
         internal override PrtgClient CreateClient(SystemSettings settings)
         {
             CreateCount++;
-            return new PrtgClient(settings.PrtgUrl, "token123", 30, false, _handler, PrtgAuthModes.Token, "", "", "");
+            return new PrtgClient(settings.PrtgUrl, "token123", 30, false, _handler, PrtgAuthModes.Token, "", "", "",
+                _budgetFixture.Budget);
         }
+
+        public void RefreshFixtureAdmission(StorageBackend backend) => _budgetFixture.RefreshAdmission(backend);
     }
 
     private sealed class FakeHostApplicationLifetime : IHostApplicationLifetime
@@ -251,6 +256,7 @@ public class ExternalCallLimitTests : IDisposable
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "Sensor-101", SensorType = "Ping", Status = "Up", Paused = false }
         }, DateTime.Now);
         SnapshotAdmissionTestFixture.Seed(backend, hostStore, settingsStore, host.HostId, 10, (101, "Ping"));
+        var budgetFixture = new SnapshotRequestBudgetFixture(backend);
 
         var handler = new CountingHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -260,8 +266,14 @@ public class ExternalCallLimitTests : IDisposable
         }));
 
         var service = new CountingSnapshotService(settingsStore, backend, schedulerRunState, structureSync, backfill,
-            hostStore, new FakeSentinelStore(), probeState, lifetime, handler);
+            hostStore, new FakeSentinelStore(), probeState, lifetime, handler, budgetFixture);
         return (service, settingsStore, handler, backend, hostStore, host.HostId);
+    }
+
+    private static async Task TickWithinDeadlineAsync(PrtgSnapshotHostedService service)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await service.TickAsync(deadline.Token).WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
@@ -270,17 +282,19 @@ public class ExternalCallLimitTests : IDisposable
         var (service, _, handler, _, _, _) = NewSnapshotService();
         var clock = DateTime.Today.AddHours(10);
         service.Now = () => clock;
+        try
+        {
+            await TickWithinDeadlineAsync(service);
+            var afterFirst = handler.Calls;
+            clock = clock.AddHours(1);
+            await TickWithinDeadlineAsync(service);
 
-        await service.TickAsync();
-        var afterFirst = handler.Calls;
-        clock = clock.AddHours(1);
-        await service.TickAsync();
-
-        // 兩輪都真的打了 PRTG，才代表「只建一次」不是因為第二輪根本沒走到取數
-        Assert.True(afterFirst > 0);
-        Assert.True(handler.Calls > afterFirst);
-        Assert.Equal(1, service.CreateCount);
-        service.Dispose();
+            // 兩輪都真的打了 PRTG，才代表「只建一次」不是因為第二輪根本沒走到取數
+            Assert.True(afterFirst > 0);
+            Assert.True(handler.Calls > afterFirst);
+            Assert.Equal(1, service.CreateCount);
+        }
+        finally { service.Dispose(); }
     }
 
     [Fact]
@@ -289,24 +303,27 @@ public class ExternalCallLimitTests : IDisposable
         var (service, settings, handler, backend, hosts, hostId) = NewSnapshotService();
         var clock = DateTime.Today.AddHours(10);
         service.Now = () => clock;
+        try
+        {
+            await TickWithinDeadlineAsync(service);
+            var afterFirst = handler.Calls;
+            // 舊來源待寫樣本先結算，避免在 objid 可重用的新來源下混寫。
+            settings.Update(s => s.PrtgEnabled = false);
+            clock = clock.AddHours(1);
+            await TickWithinDeadlineAsync(service);
+            Assert.Equal(0, service.GetStatus().PendingSamples);
+            settings.Update(s => s.PrtgUrl = "https://prtg2.example.com");
+            settings.Update(s => s.PrtgEnabled = true);
+            // The source-bound policy and capacity proof must describe the replacement endpoint.
+            SnapshotAdmissionTestFixture.Seed(backend, hosts, settings, hostId, 10, (101, "Ping"));
+            service.RefreshFixtureAdmission(backend);
+            clock = clock.AddHours(1);
+            await TickWithinDeadlineAsync(service);
 
-        await service.TickAsync();
-        var afterFirst = handler.Calls;
-        // 舊來源待寫樣本先結算，避免在 objid 可重用的新來源下混寫。
-        settings.Update(s => s.PrtgEnabled = false);
-        clock = clock.AddHours(1);
-        await service.TickAsync();
-        Assert.Equal(0, service.GetStatus().PendingSamples);
-        settings.Update(s => s.PrtgUrl = "https://prtg2.example.com");
-        settings.Update(s => s.PrtgEnabled = true);
-        // The source-bound policy and capacity proof must describe the replacement endpoint.
-        SnapshotAdmissionTestFixture.Seed(backend, hosts, settings, hostId, 10, (101, "Ping"));
-        clock = clock.AddHours(1);
-        await service.TickAsync();
-
-        Assert.True(afterFirst > 0);
-        Assert.True(handler.Calls > afterFirst);
-        Assert.Equal(2, service.CreateCount);
-        service.Dispose();
+            Assert.True(afterFirst > 0);
+            Assert.True(handler.Calls > afterFirst);
+            Assert.Equal(2, service.CreateCount);
+        }
+        finally { service.Dispose(); }
     }
 }

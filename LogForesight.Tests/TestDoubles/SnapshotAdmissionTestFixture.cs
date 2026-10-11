@@ -41,7 +41,18 @@ internal static class SnapshotAdmissionTestFixture
                     deviceId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     sensor.SensorType, "created", 0));
 
-        var policy = policyStore.Get();
+        PublishCurrentScope(backend, hosts, settingsStore, policyStore.Get());
+    }
+
+    /// <summary>Refreshes synthetic capacity evidence for the exact current scope without changing policy authority.</summary>
+    public static void PublishCurrentScope(StorageBackend backend, IHostStore hosts,
+        ISystemSettingsStore settingsStore, PrtgMonitoringPolicy? policyOverride = null)
+    {
+        var settings = settingsStore.Get();
+        var policy = policyOverride ?? new PrtgMonitoringPolicyStore(
+            backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var now = DateTimeOffset.UtcNow;
+        var policyStore = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
         var selection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, settings, Array.Empty<Sentinel>(), policy);
         if (selection.SensorObjids.Count == 0)
             throw new InvalidOperationException("Synthetic snapshot fixture did not resolve an active mapped target.");
@@ -94,5 +105,43 @@ internal static class SnapshotAdmissionTestFixture
                 currentSelection.ScopeFingerprint == selection.ScopeFingerprint &&
                 currentSelection.RequestShapeFingerprint == selection.RequestShapeFingerprint;
         });
+    }
+}
+
+/// <summary>Isolated, deterministic request-budget clock for snapshot tests with published admission plans.</summary>
+internal sealed class SnapshotRequestBudgetFixture
+{
+    private sealed class FixtureClock : IPrtgClock
+    {
+        private readonly DateTimeOffset _start = DateTimeOffset.UtcNow;
+        private long _elapsedTicks;
+
+        public TimeSpan Elapsed => TimeSpan.FromTicks(Interlocked.Read(ref _elapsedTicks));
+        public DateTimeOffset UtcNow => _start + Elapsed;
+
+        public async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Yield();
+            if (delay > TimeSpan.Zero) Interlocked.Add(ref _elapsedTicks, delay.Ticks);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    private readonly FixtureClock _clock = new();
+    public PrtgRequestBudget Budget { get; }
+
+    public SnapshotRequestBudgetFixture(StorageBackend backend)
+    {
+        Budget = new PrtgRequestBudget(_clock);
+        RefreshAdmission(backend);
+    }
+
+    public void RefreshAdmission(StorageBackend backend)
+    {
+        var plan = new PrtgCapacityAdmissionPlanStore(
+            backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(_clock.UtcNow)
+            ?? throw new InvalidOperationException("Snapshot fixture did not persist a current admission plan.");
+        Budget.SetAdmissionPlan(plan);
     }
 }

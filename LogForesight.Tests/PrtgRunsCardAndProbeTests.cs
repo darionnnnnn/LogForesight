@@ -255,7 +255,9 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         }, DateTime.Now);
         using var handler = new ScopeRefreshHandler();
         SnapshotAdmissionTestFixture.Seed(_backend, _hosts, _settingsStore, host.HostId, 20, (201, "ping"));
-        service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler, PrtgAuthModes.Token, "", "", "");
+        var budgetFixture = new SnapshotRequestBudgetFixture(_backend);
+        service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler,
+            PrtgAuthModes.Token, "", "", "", budgetFixture.Budget);
         using var ackDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         if (initiallyBusy)
         {
@@ -265,9 +267,24 @@ public class PrtgRunsCardAndProbeTests : IDisposable
             probeState.FinishRun(success: true, cancelled: false);
         }
         else service.RequestScopeRefresh();
-        await service.StartAsync(CancellationToken.None);
         try
         {
+            await service.StartAsync(CancellationToken.None);
+            while (!_backend.PrtgStore().GetAllSensors().Any(sensor => sensor.Objid == 211))
+            {
+                try { await Task.Delay(TimeSpan.FromMilliseconds(20), ackDeadline.Token); }
+                catch (OperationCanceledException) when (ackDeadline.IsCancellationRequested)
+                {
+                    throw new Xunit.Sdk.XunitException(FailureDiagnostics(
+                        "Backfill did not mirror sensor 211 within the fixed 5-second deadline"));
+                }
+            }
+
+            // The completed backfill changes the exact snapshot scope. Re-publish synthetic
+            // capacity evidence for the new scope without rotating policy authority mid-tick.
+            SnapshotAdmissionTestFixture.PublishCurrentScope(_backend, _hosts, _settingsStore);
+            budgetFixture.RefreshAdmission(_backend);
+
             string FailureDiagnostics(string stage)
             {
                 var status = service.GetStatus();
@@ -332,8 +349,12 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         }
         finally
         {
-            await service.StopAsync(CancellationToken.None);
-            service.Dispose();
+            try
+            {
+                using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await service.StopAsync(stop.Token);
+            }
+            finally { service.Dispose(); }
         }
     }
     // ── 驗收點 5：HostAdminService 呼叫 RequestScopeRefresh 的條件 ────────
