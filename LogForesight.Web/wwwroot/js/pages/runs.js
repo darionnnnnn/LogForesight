@@ -753,13 +753,19 @@ async function loadSchedule() {
             }
         }
         document.getElementById('schedule-readonly-hint')?.classList.remove('d-none');
+    } else {
+        for (const el of document.querySelectorAll('[data-maintain-action]')) el.classList.remove('d-none');
+        for (const el of document.querySelectorAll('[data-maintain-only]')) {
+            if (el.matches('input, select, textarea')) el.disabled = false;
+        }
     }
 
     const statusPromise = refreshScheduleStatus();
-    const [options, aiReady, settings] = await Promise.all([
+    const [options, aiReady, settings, scheduleStatus] = await Promise.all([
         api.get('/api/admin/schedule/options'),
         getAiAvailable(),
-        api.get('/api/admin/settings', { silent: true }).catch(() => null)
+        api.get('/api/admin/settings', { silent: true }).catch(() => null),
+        statusPromise
     ]);
     aiAvailable = aiReady;
     document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', aiAvailable !== true);
@@ -777,12 +783,21 @@ async function loadSchedule() {
         if (daysHintEl && settings.prtgBackfillDays) {
             daysHintEl.textContent = `往前 ${settings.prtgBackfillDays} 天`;
         }
+    } else if (scheduleStatus) {
+        // DevMonitor cannot read the settings endpoint. The schedule status route exposes this
+        // small operational projection without connection details or credentials.
+        prtgFetchStrategy = scheduleStatus.prtgFetchStrategy ?? null;
+        renderPrtgModuleState(Boolean(scheduleStatus.prtgEnabled), scheduleStatus.prtgValueFetchScope, prtgFetchStrategy);
+        prtgConnectionConfigured = false;
+        const daysHintEl = document.getElementById('prtg-backfill-days-hint');
+        if (daysHintEl && scheduleStatus.prtgBackfillDays) {
+            daysHintEl.textContent = `往前 ${scheduleStatus.prtgBackfillDays} 天`;
+        }
     } else {
         // 設定 API 需要 Maintain；DevMonitor 讀不到就明講「—」，不能讓「載入中…」永遠掛著
         const stateEl = document.getElementById('prtg-module-state');
         if (stateEl) stateEl.textContent = '—';
     }
-    await statusPromise;
 }
 
 function applyScheduleOptions(options) {
@@ -959,13 +974,29 @@ async function refreshScheduleStatus() {
         refreshPrtgSyncStatus(),
         refreshPrtgBackfillStatus()
     ]);
-    if (status) applyScheduleStatus(status);
+    if (status) {
+        applyScheduleStatus(status);
+        applyPrtgOperationalStatus(status);
+    }
     if (aiStatus) applyAiScheduleStatus(aiStatus);
 
     clearTimeout(scheduleStatusTimer);
     const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
     const interval = isAnyRunning ? 3000 : 10000;
     scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
+    return status;
+}
+
+// This projection is available to DevMonitor as well as Maintain. It contains only
+// non-secret operational settings; connection configuration remains a Maintain-only read.
+function applyPrtgOperationalStatus(status) {
+    if (!status) return;
+    prtgFetchStrategy = status.prtgFetchStrategy ?? null;
+    renderPrtgModuleState(Boolean(status.prtgEnabled), status.prtgValueFetchScope, prtgFetchStrategy);
+    const daysHintEl = document.getElementById('prtg-backfill-days-hint');
+    if (daysHintEl && status.prtgBackfillDays) {
+        daysHintEl.textContent = `往前 ${status.prtgBackfillDays} 天`;
+    }
 }
 
 /**

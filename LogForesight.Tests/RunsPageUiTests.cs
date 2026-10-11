@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -556,8 +557,9 @@ public class RunsPageUiTests
         var cshtml = ReadRunsCshtml();
         var actions = ExtractDivContaining(
             cshtml, "id=\"schedule-ai-force-rerun\"",
-            "<div class=\"d-flex flex-wrap align-items-center gap-2 lf-run-actions\" data-maintain-only>");
+            "<div class=\"d-flex flex-wrap align-items-center gap-2 lf-run-actions d-none\" data-maintain-only data-maintain-action>");
         Assert.False(string.IsNullOrWhiteSpace(actions), "擷取不到 AI 卡的 .lf-run-actions 容器");
+        Assert.Contains("data-maintain-action", actions);
         Assert.Contains("id=\"schedule-ai-run-now\"", actions);
         Assert.Contains("id=\"schedule-ai-actions-hint\"", actions);
         // 連結不得寫死 / 開頭
@@ -580,6 +582,110 @@ public class RunsPageUiTests
         var aiBody = ExtractBlock(js, "function applyAiScheduleStatus(");
         Assert.Contains("renderAiActionsHint(fetchRunning)", aiBody);
     }
+
+    /// <summary>維護權限尚未解析時，初始 HTML 不得短暫暴露可變更設定的動作。</summary>
+    [Fact]
+    public void 權限未知時初始動作隱藏且設定仍以唯讀方式顯示()
+    {
+        var html = ReadRunsCshtml();
+        foreach (var id in new[]
+        {
+            "schedule-run-now", "schedule-ai-run-now", "schedule-ai-force-rerun",
+            "schedule-add-window", "schedule-ai-add-window", "schedule-save"
+        })
+        {
+            var marker = $"id=\"{id}\"";
+            var index = html.IndexOf(marker, StringComparison.Ordinal);
+            Assert.True(index >= 0, $"找不到 {id}");
+            var element = FindOpeningTagContaining(html, index);
+            if (element.Contains("data-maintain-action", StringComparison.Ordinal))
+            {
+                Assert.Contains("d-none", element);
+            }
+            else
+            {
+                var actionMarker = html.LastIndexOf("data-maintain-action", index, StringComparison.Ordinal);
+                Assert.True(actionMarker >= 0, $"{id} 沒有受 data-maintain-action 保護");
+                var start = html.LastIndexOf("<div", actionMarker, StringComparison.Ordinal);
+                var end = html.IndexOf('>', actionMarker);
+                Assert.True(start >= 0 && end > start, $"找不到 {id} 的權限動作容器");
+                var openMarker = html[start..(end + 1)];
+                var actionContainer = ExtractDivContaining(html, marker, openMarker);
+                Assert.False(string.IsNullOrWhiteSpace(actionContainer), $"找不到 {id} 的權限動作容器");
+                Assert.Contains("d-none", openMarker);
+            }
+        }
+
+        // 設定值仍留在頁面供 DevMonitor 閱讀；鎖定輸入控制項，直到 JS 確認 Maintain。
+        foreach (var id in new[] { "schedule-enabled", "schedule-local-analysis", "schedule-auto-catchup", "schedule-ai-concurrency" })
+        {
+            var element = FindElementById(html, id);
+            Assert.False(string.IsNullOrWhiteSpace(element), $"找不到唯讀設定 {id}");
+            Assert.Contains("disabled", element);
+            Assert.Contains("data-maintain-only", element);
+        }
+    }
+
+    private static string FindOpeningTagContaining(string html, int contentIndex)
+    {
+        var start = html.LastIndexOf('<', contentIndex);
+        var end = html.IndexOf('>', contentIndex);
+        return start >= 0 && end > start ? html[start..(end + 1)] : string.Empty;
+    }
+
+    private static string FindElementById(string html, string id)
+    {
+        var index = html.IndexOf($"id=\"{id}\"", StringComparison.Ordinal);
+        return index >= 0 ? FindOpeningTagContaining(html, index) : string.Empty;
+    }
+
+    /// <summary>實際執行 runs.js 的運作摘要更新函式，確保輪詢可更新唯讀狀態與回填天數。</summary>
+    [NodeTheory]
+    [InlineData("安全運作摘要輪詢更新啟用狀態與回填天數")]
+    public void 運作摘要輪詢會套用最新PRTG狀態(string _)
+    {
+        var js = ReadRunsJs();
+        var helper = ExtractBlock(js, "function applyPrtgOperationalStatus(");
+        Assert.False(string.IsNullOrWhiteSpace(helper), "擷取不到 applyPrtgOperationalStatus 主體");
+        var refresh = ExtractBlock(js, "async function refreshScheduleStatus(");
+        Assert.Contains("applyPrtgOperationalStatus(status)", refresh);
+
+        const string nodeScript = @"
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const helper = process.argv[1];
+const calls = [];
+const hint = { textContent: '' };
+const context = {
+  prtgFetchStrategy: null,
+  renderPrtgModuleState: (...args) => calls.push(args),
+  document: { getElementById: id => id === 'prtg-backfill-days-hint' ? hint : null }
+};
+vm.runInNewContext(`${helper}; applyPrtgOperationalStatus({ prtgEnabled: false, prtgValueFetchScope: 'Triggered', prtgFetchStrategy: 'Conservative', prtgBackfillDays: 7 });`, context);
+vm.runInNewContext(`applyPrtgOperationalStatus({ prtgEnabled: true, prtgValueFetchScope: 'All', prtgFetchStrategy: 'Aggressive', prtgBackfillDays: 30 });`, context);
+assert.deepEqual(calls, [[false, 'Triggered', 'Conservative'], [true, 'All', 'Aggressive']]);
+assert.equal(context.prtgFetchStrategy, 'Aggressive');
+assert.equal(hint.textContent, '往前 30 天');
+console.log('PASS operational status refresh');
+";
+        var psi = new ProcessStartInfo("node")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        psi.ArgumentList.Add("--eval");
+        psi.ArgumentList.Add(nodeScript);
+        psi.ArgumentList.Add(helper);
+        using var process = Process.Start(psi);
+        Assert.NotNull(process);
+        var stdout = process!.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        Assert.True(process.WaitForExit(15_000), "運作摘要 Node 行為測試逾時");
+        Assert.True(process.ExitCode == 0, $"運作摘要行為測試失敗：{stdout}{stderr}");
+        Assert.Contains("PASS operational status refresh", stdout);
+    }
+
 
     /// <summary>C5：兩顆停止鈕的 click 處理各自有 withBusy 防連點。</summary>
     [Fact]

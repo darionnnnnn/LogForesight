@@ -111,6 +111,13 @@ public class ScheduleStatusDto
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }
+
+    /// <summary>PRTG 的唯讀運作摘要，提供 DevMonitor 顯示目前模組狀態；刻意不包含連線位址或憑證。</summary>
+    public bool PrtgEnabled { get; set; }
+    public string PrtgValueFetchScope { get; set; } = LogForesight.Core.Service.PrtgValueFetchScope.Triggered;
+    public string PrtgFetchStrategy { get; set; } = LogForesight.Core.Service.PrtgFetchStrategy.Conservative;
+    public int PrtgBackfillDays { get; set; } = LogForesight.Core.Models.SystemSettings.DefaultPrtgBackfillDays;
+
     public bool? LastRunSuccess { get; set; }
     public string? LastRunMessage { get; set; }
     public string? LastRunTriggerText { get; set; }

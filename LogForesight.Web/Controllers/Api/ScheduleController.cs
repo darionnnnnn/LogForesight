@@ -121,6 +121,7 @@ public class ScheduleController : ControllerBase
     public ApiResponse<ScheduleStatusDto> GetStatus()
     {
         var options = _optionsStore.Get();
+        var systemSettings = _settingsStore.Get();
 
         var lastOutcome = _runState.LastOutcome;
 
@@ -149,6 +150,10 @@ public class ScheduleController : ControllerBase
             CanStop = _runState.IsRunning,
             ScheduleEnabled = options.Enabled,
             NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
+            PrtgEnabled = systemSettings.PrtgEnabled,
+            PrtgValueFetchScope = PrtgValueFetchScope.Normalize(systemSettings.PrtgValueFetchScope),
+            PrtgFetchStrategy = PrtgFetchStrategy.Normalize(systemSettings.PrtgFetchStrategy),
+            PrtgBackfillDays = Math.Clamp(systemSettings.PrtgBackfillDays, 1, 365),
             LastRunSuccess = lastOutcome?.Success,
             LastRunMessage = lastOutcome?.Message,
             LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,
