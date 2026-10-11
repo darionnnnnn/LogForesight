@@ -886,4 +886,6 @@ NetiqSourceAttempt 使用既有 lf_log_lines，log_key 為 netiq_hostday_attempt
 RetentionPruner 按 key 的来源主機日與 RetentionDays 清理，不依 CreatedAt 判保留期；每批 5,000、單輪最多 200,000，剩餘留後續輪次。更新與讀取保留原 NetIQ 判定內容、案件與人工回覆，父日的 LatestNetiqAttemptStatus 同步標示失敗或 retained-incomplete，使正式補強 consumer 等待。狀態帳本的 3,000 主機 provider 驗證不代表完整 PRTG 容量／180日保留通過。
 
 
-NetIQ 回執與既存父紀錄的資格失效由 RecordBatch 在同一 Serializable 交易提交，整筆交易在 execution strategy 內以新 context 重試。只處理已接受的新嘗試；500 個鍵分批回執，父列以 RecordId keyset 每頁 16 筆讀取／保存／清 tracker，任一後續 chunk 失敗回滾全部先前寫入。success 回執不修改父資格，必須由成功完整分析替換父列；stopped 回執將父資格標為 failed，沿用 MissingOnly 重試判斷。只更動 LatestNetiqAttemptStatus／AtUtc 與 WriteRevision，保留既有風險、案件與人工處置。
+NetIQ 回執與既存父紀錄的資格失效由 RecordBatch 在同一 Serializable 交易提交，整筆交易在 execution strategy 內以新 context 重試。只處理已接受的新嘗試；500 個鍵分批回執，父列以 RecordId keyset 每頁 16 筆投影 scalar metadata，既存 ContentJson／OriginalRiskContentJson 不由 reader 回傳，SQLite json_set／SQL Server JSON_MODIFY 在資料庫內更新兩個嘗試欄位並以 WriteRevision 守門，任一後續 chunk 失敗回滾全部先前寫入。success 回執不修改父資格，必須由成功完整分析替換父列；stopped 回執將父資格標為 failed，沿用 MissingOnly 重試判斷。只更動 LatestNetiqAttemptStatus／AtUtc 與 WriteRevision，保留既有風險、案件與人工處置。
+
+更新前核對有效 JSON object、0／1／2 的 numeric LogSource 及來源／嘗試欄位無重複鍵；損壞或歧義時整輪回滾。EF Raw SQL 的 JSON literal 大括號先作 composite-format escaping，status／UTC O-format 時間及 key／revision 均用參數。保留未知欄位及原始風險 payload；SQLite engine 仍會在行程內解析完整 JSON，因此此投影不能替代 N6 固定全負載的 ≤1GiB 額外記憶體驗收。

@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "175b14d79e167765b87ead64c82940b644d9cb07a38911c87d6e80ce050d7fa3",
+  "plan_sha256": "0d0eef9d532dfe2f671d75452eabe9d0f99ad35482e57e1797dd0f225d557e80",
   "date": "2026-10-11",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -678,7 +678,7 @@
           "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
           "symbol": "RecordBatch",
           "role": "bounded NetIQ retry status or actionable operator flow",
-          "sha256": "9ff29d4777ebc700472dd003bcb8ce427210654bfd949bfbb688552d3d99b60b"
+          "sha256": "202b9545aa0c65e4f398791f789b3003fc00c79d0b3e7566125b3ebc9e9dca78"
         },
         {
           "id": "AC11",
@@ -692,7 +692,14 @@
           "path": "LogForesight.Tests/NetiqSourceAttemptAtomicTests.cs",
           "symbol": "NetiqSourceAttemptAtomicTests",
           "role": "rollback, bounded parent pages, old-run fence and actual retry contract",
-          "sha256": "506a06b41cfecb5a04645e7333d88ada1086332b6d33789622866eb93d05dc9c"
+          "sha256": "701a21dd850e59e8a33d7e345e08ed86f1d2679bb2bdec1006903ba80f11c561"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Tests/NetiqSourceAttemptPayloadTests.cs",
+          "symbol": "NetiqSourceAttemptPayloadTests",
+          "role": "scalar reader projection, large payload preservation, duplicate metadata rollback",
+          "sha256": "0da201b61faca6742ec41615cefe629d547840665d9ecb72f2cd0f03d2ea4995"
         }
       ],
       "input_sha256": null,
@@ -761,14 +768,21 @@
           "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
           "symbol": "RecordBatch",
           "role": "atomic receipt and existing-parent eligibility",
-          "sha256": "9ff29d4777ebc700472dd003bcb8ce427210654bfd949bfbb688552d3d99b60b"
+          "sha256": "202b9545aa0c65e4f398791f789b3003fc00c79d0b3e7566125b3ebc9e9dca78"
         },
         {
           "id": "AC12",
           "path": "LogForesight.Tests/NetiqSourceAttemptAtomicTests.cs",
           "symbol": "NetiqSourceAttemptAtomicTests",
           "role": "rollback, bounded parent pages, old-run fence and actual retry contract",
-          "sha256": "506a06b41cfecb5a04645e7333d88ada1086332b6d33789622866eb93d05dc9c"
+          "sha256": "701a21dd850e59e8a33d7e345e08ed86f1d2679bb2bdec1006903ba80f11c561"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Tests/NetiqSourceAttemptPayloadTests.cs",
+          "symbol": "NetiqSourceAttemptPayloadTests",
+          "role": "scalar reader projection, large payload preservation, duplicate metadata rollback",
+          "sha256": "0da201b61faca6742ec41615cefe629d547840665d9ecb72f2cd0f03d2ea4995"
         }
       ],
       "input_sha256": null,
@@ -1232,7 +1246,7 @@
           "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
           "symbol": "Prune",
           "role": "bounded NetIQ retry status or actionable operator flow",
-          "sha256": "9ff29d4777ebc700472dd003bcb8ce427210654bfd949bfbb688552d3d99b60b"
+          "sha256": "202b9545aa0c65e4f398791f789b3003fc00c79d0b3e7566125b3ebc9e9dca78"
         }
       ],
       "input_sha256": null,
@@ -3380,7 +3394,7 @@
     "review": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-rule-case-manifest\\.gemini-tasks\\primary-results\\formal-rule-case-pack-primary-v20-all-review.json",
     "main_integration_checkpoint": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\logforesight-feedback-53\\.gemini-tasks\\checkpoints\\formal-rule-case-pack-v20-main-20261008\\manifest.json",
     "whole_round_accepted": false,
-    "current_main_full_regression": "pending",
+    "current_main_full_regression": "Completed v4 baseline RED preserved; latest changed classes verified separately.",
     "files": [
       {
         "path": "LogForesight.Tests/Fixtures/prtg-round53-formal-cases.json",
@@ -6419,7 +6433,7 @@
   },
   "current_main_regression": {
     "product_revision": "bc2e5ffed21b43082ac2960197fd958020e95d60",
-    "status": "Final frozen-source whole suite running; previous completed baseline RED preserved.",
+    "status": "Normal completed v4 baseline: 7751 PASS, 1 fixed-fixture RED, 10 optional SKIP; changed complete classes reverified separately; not latest single whole-suite GREEN.",
     "passed": false,
     "completed_trx": null,
     "running_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-final-scope-verify-20261011\\root-final-results\\full-source-before.json",
@@ -6433,7 +6447,9 @@
     },
     "affected_component_passed": true,
     "affected_component_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-final-scope-verify-20261011\\root-final-results\\root-scope-independent-verification.json",
-    "whole_round_accepted": false
+    "whole_round_accepted": false,
+    "historical_status_before_completed_v4": "Final frozen-source whole suite running; previous completed baseline RED preserved.",
+    "latest_completed_proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v4-20261011\\root-results\\root-full-v4-completed-proof.json"
   },
   "current_case_scope_presentation_verification": {
     "base_commit": "bb4744c326036c7ac86d6636589b06cc5554ac78",
@@ -7500,7 +7516,7 @@
       "change": "remove extra empty line at EOF; all non-newline bytes identical"
     }
   },
-  "current_implementation_source_commit": "7ea8d8d6525d814049801c2f2c89d32e14b8c90b",
+  "current_implementation_source_commit": "eccc435da49a4cb1e63be3c38de69715d807642d",
   "current_manual_map_schema_repair_20261010": {
     "owner": "root",
     "gate": {
@@ -11560,7 +11576,8 @@
     "browser_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\2fa36a2025c34644a317266776990196\\root-evidence",
     "positive_api_fixture": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\positive-role-fixture-20261011\\runs\\u53-positive-be8154ee8140479c97e62f7dc70ad7c5\\current-api-v3-20261011",
     "positive_worker_scope": "Six actual complete zero-event NetIQ parents; PRTG structure sync succeeded; no manufactured trusted two-hour periods; whole positive flow remains unaccepted.",
-    "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde"
+    "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde",
+    "latest_full_status": "Completed v4 baseline RED; see current_completed_full_baseline_20261011. Original status below is historical at segment verification."
   },
   "current_atomic_attempt_invalidation": {
     "status": "implemented-and-scoped-isolated-verification-passed",
@@ -11700,6 +11717,267 @@
     "wholeRoundAccepted": false,
     "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v6-20261011\\root-results\\root-atomic-verified-segment.json",
     "proof_sha256": "c26f2a5bd3b0bb8018315e415028955aac98e7a8575861a66353119e3c80768b",
+    "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde",
+    "latest_full_status": "Completed v4 baseline RED; see current_completed_full_baseline_20261011. Original status below is historical at segment verification."
+  },
+  "current_parent_metadata_bound": {
+    "status": "implemented-and-scoped-isolated-verification-passed",
+    "source_commit": "eccc435da49a4cb1e63be3c38de69715d807642d",
+    "result": "Return only scalar identity/revision/JSON/source/duplicate-key metadata. Patch attempt status/time inside the database, with serializable receipt transaction and revision fence. Preserve unknown/risk JSON and reject malformed/ambiguous keys.",
+    "parent_keyset_page": 16,
+    "receipt_chunk": 500,
+    "affected_unique_cases": 198,
+    "actual_sql_server_cases": 11,
+    "actual_browser_host_days": 8,
+    "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v8-20261011\\root-results\\root-parent-metadata-verified-segment.json",
+    "proof_sha256": "1b6bcd28d07ab26d57e5ed38a21e02026b1b8d805c32a1f2ddd38d8ed3011869",
+    "sqlite_engine_parses_full_json_in_process": true,
+    "strict_pathological_payload_memory_guarantee": false,
+    "capacityAccepted": false,
+    "gate_thresholds_changed": false,
+    "wholeRoundAccepted": false
+  },
+  "current_verified_segments_20261011_parent_metadata": {
+    "source_base_commit": "b7d9164f2450c93de38f978d3dea81cf5fc91fd6",
+    "frozen_root": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v8-20261011",
+    "source_inputs": 1266,
+    "production_input_drift": 0,
+    "verified_test_only_delta": [
+      "LogForesight.Tests/NetiqSourceAttemptPayloadTests.cs"
+    ],
+    "complete_affected_unique_cases": 198,
+    "frozen_run_passed": 197,
+    "frozen_run_fixture_failures": 1,
+    "corrected_complete_payload_class_passed": 11,
+    "corrected_payload_class_sha256": "0da201b61faca6742ec41615cefe629d547840665d9ecb72f2cd0f03d2ea4995",
+    "original_v6_red": {
+      "passed": 6,
+      "failed": 5
+    },
+    "candidate_v7_format_failure_preserved": true,
+    "runtime_hashes": [
+      {
+        "part": "Core",
+        "sha256": "F152A5920450286F047B6B577AF10F51BE8F12DE2AD036537B6D79F64F9570AD"
+      },
+      {
+        "part": "Web",
+        "sha256": "1D1A3C2DB19DB408C7BA583794C221D9129BD1E48CD5FB9389BACE648763AC22"
+      },
+      {
+        "part": "Tests",
+        "sha256": "390DE6FF1B490ED66E1BC1EDEFB4BF85EA09F1E2364FB6F4CC5C8CBC1922A39D"
+      }
+    ],
+    "sql": {
+      "passed": true,
+      "cases": [
+        {
+          "name": "actual-sqlserver-retry-strategy-3000-host-write-read",
+          "passed": true
+        },
+        {
+          "name": "mixed-host-latest-failure-does-not-contaminate-other-hosts",
+          "passed": true
+        },
+        {
+          "name": "late-old-run-cannot-replace-newer-attempt",
+          "passed": true
+        },
+        {
+          "name": "recovery-updates-latest-state-without-fake-parent-or-ledger-growth",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-business-date-retention-preserves-live-3000-host-state",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-second-ledger-chunk-parent-fault-rolls-back-all-3000-receipts-and-parents",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-3000-host-atomic-running-parent-invalidation-and-unrelated-content-preservation",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-success-receipt-does-not-requalify-retained-parents",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-rejected-old-run-does-not-invalidate-newer-qualified-3000-host-parents",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-large-json-whitespace-unknown-field-original-risk-and-ticks-preserved",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-malformed-array-large-invalid-source-and-duplicate-metadata-atomic-rollback",
+          "passed": true
+        }
+      ],
+      "coreHash": "F152A5920450286F047B6B577AF10F51BE8F12DE2AD036537B6D79F64F9570AD",
+      "ownedDatabaseRemoved": true,
+      "syntheticControlledOnly": true,
+      "nativeSourceVerified": false,
+      "capacityAccepted": false,
+      "wholeRoundAccepted": false
+    },
+    "browser": {
+      "passed": true,
+      "actualConsumer": "DailyAnalysisRecord.CanSupplementWithPrtg",
+      "exactHostDays": 8,
+      "retainedContentPreserved": true,
+      "nonEmptyRecovered": true,
+      "restartedDurable": true,
+      "coreSha256": "F152A5920450286F047B6B577AF10F51BE8F12DE2AD036537B6D79F64F9570AD",
+      "wholeU08Accepted": false,
+      "nativeSourceVerified": false,
+      "wholeRoundAccepted": false
+    },
+    "browser_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\69b310f90c3f472893d1ed9779959dd7\\root-evidence",
+    "screenshot": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\69b310f90c3f472893d1ed9779959dd7\\root-evidence\\v8-restarted-summary.jpg",
+    "full_baseline_proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v4-20261011\\root-results\\root-full-v4-completed-proof.json",
+    "sqlite_engine_still_parses_json_in_process": true,
+    "strict_pathological_payload_memory_guarantee": false,
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "independentN8Accepted": false,
+    "wholeRoundAccepted": false,
+    "source_commit": "eccc435da49a4cb1e63be3c38de69715d807642d",
+    "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v8-20261011\\root-results\\root-parent-metadata-verified-segment.json",
+    "proof_sha256": "1b6bcd28d07ab26d57e5ed38a21e02026b1b8d805c32a1f2ddd38d8ed3011869",
     "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde"
+  },
+  "current_completed_full_baseline_20261011": {
+    "baseline_freeze": "v4-7c279b90",
+    "counters": {
+      "total": 7762,
+      "executed": 7752,
+      "passed": 7751,
+      "failed": 1,
+      "error": 0,
+      "timeout": 0,
+      "aborted": 0,
+      "inconclusive": 0,
+      "passedButRunAborted": 0,
+      "notRunnable": 0,
+      "notExecuted": 0,
+      "disconnected": 0,
+      "warning": 0,
+      "completed": 0,
+      "inProgress": 0,
+      "pending": 0
+    },
+    "optional_skipped": 10,
+    "failed_tests": [
+      "LogForesight.Tests.PrtgTransferControllerTests.KestrelMvcReceivesRawChunksUnderPathBaseWithCsrfAndRejectsOversizeOrDeniedWrites"
+    ],
+    "normal_completion": true,
+    "binaries_unchanged": true,
+    "fixed_case_ids_verified": 222,
+    "rule_and_usefulness_cases_passed": 231,
+    "four_baselines_recomputed": true,
+    "controlled_scenarios": 22,
+    "combined_strictly_beats_union": false,
+    "baselines": {
+      "netIqOnly": {
+        "ScenarioDenominator": 22,
+        "TruthKnownActionable": 10,
+        "TruthKnownBenign": 9,
+        "TruthUnknown": 2,
+        "TruthExcluded": 1,
+        "BaselineUnknownWithinKnownTruth": 1,
+        "BaselineExcludedWithinKnownTruth": 0,
+        "BaselineFailuresWithinKnownTruth": 0,
+        "ScoredKnownTruthRows": 18,
+        "TruePositive": 5,
+        "FalsePositive": 0,
+        "TrueNegative": 9,
+        "FalseNegative": 4,
+        "Precision": 1,
+        "Recall": 0.5555555555555556,
+        "CorrectKnownTruthRows": 14
+      },
+      "nativePrtgOnly": {
+        "ScenarioDenominator": 22,
+        "TruthKnownActionable": 10,
+        "TruthKnownBenign": 9,
+        "TruthUnknown": 2,
+        "TruthExcluded": 1,
+        "BaselineUnknownWithinKnownTruth": 0,
+        "BaselineExcludedWithinKnownTruth": 0,
+        "BaselineFailuresWithinKnownTruth": 0,
+        "ScoredKnownTruthRows": 19,
+        "TruePositive": 9,
+        "FalsePositive": 0,
+        "TrueNegative": 9,
+        "FalseNegative": 1,
+        "Precision": 1,
+        "Recall": 0.9,
+        "CorrectKnownTruthRows": 18
+      },
+      "simpleUnion": {
+        "ScenarioDenominator": 22,
+        "TruthKnownActionable": 10,
+        "TruthKnownBenign": 9,
+        "TruthUnknown": 2,
+        "TruthExcluded": 1,
+        "BaselineUnknownWithinKnownTruth": 0,
+        "BaselineExcludedWithinKnownTruth": 0,
+        "BaselineFailuresWithinKnownTruth": 0,
+        "ScoredKnownTruthRows": 19,
+        "TruePositive": 10,
+        "FalsePositive": 0,
+        "TrueNegative": 9,
+        "FalseNegative": 0,
+        "Precision": 1,
+        "Recall": 1,
+        "CorrectKnownTruthRows": 19
+      },
+      "actualCombinedDailyPipeline": {
+        "ScenarioDenominator": 22,
+        "TruthKnownActionable": 10,
+        "TruthKnownBenign": 9,
+        "TruthUnknown": 2,
+        "TruthExcluded": 1,
+        "BaselineUnknownWithinKnownTruth": 0,
+        "BaselineExcludedWithinKnownTruth": 0,
+        "BaselineFailuresWithinKnownTruth": 0,
+        "ScoredKnownTruthRows": 19,
+        "TruePositive": 9,
+        "FalsePositive": 1,
+        "TrueNegative": 8,
+        "FalseNegative": 1,
+        "Precision": 0.9,
+        "Recall": 0.9,
+        "CorrectKnownTruthRows": 17
+      }
+    },
+    "trx_sha256": "cf2fdf35ba8b01c1c0a5a0205f03eff3dd5f785fa143125b3e5bfcc839ee722b",
+    "report_sha256": "53e903e4080639867f26629b543dc133d3750dd131bf4ac1e3c36a842b15720a",
+    "report_bytes": 61336,
+    "current_fixture_fix_commit": "c22c148c",
+    "current_complete_transfer_class_passed": 12,
+    "latest_whole_suite_green": false,
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "independentIncidentBenefitAccepted": false,
+    "wholeRoundAccepted": false,
+    "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v4-20261011\\root-results\\root-full-v4-completed-proof.json",
+    "proof_sha256": "6e779b3a511f5ff34a0585141083d42f978dec2ae12d7a82070d0c761cc0a1d3",
+    "meaning": "Normal complete v4 baseline RED retained. Current changed complete classes separately reverified. Not latest whole-suite GREEN."
+  },
+  "current_capacity_provider_preflight_r2": {
+    "capacityAccepted": false,
+    "atUtc": "2026-10-11T15:05:18.9261350Z",
+    "engineAccepted": false,
+    "stopDeadlineSeconds": 30,
+    "remaining": [],
+    "startupDeadlineSeconds": 180,
+    "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-docker-provider-preflight-r2-20261011\\cleanup-final.json",
+    "proof_sha256": "ab235e2f3d9c515348566f4766a1c087a4107135bcc5877ce9fdca40e3540f3e",
+    "meaning": "Owned Docker engine did not become usable within 180 seconds; finite attempt and strict cleanup completed. No formal capacity acceptance."
   }
 }
