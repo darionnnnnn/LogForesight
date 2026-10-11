@@ -114,13 +114,16 @@ public sealed class PrtgDiagnosticExportHttpTests
         {
             using var client = fixture.CreateClient(app);
             using var received = new MemoryStream();
+            // ResponseHeadersRead does not extend HttpClient.Timeout to subsequent body reads.
+            // Bound the client independently; the actual server abort and lease release remain mandatory below.
+            using var readDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             try
             {
-                using var response = await client.GetAsync(ExportUrl(), HttpCompletionOption.ResponseHeadersRead);
-                using var body = await response.Content.ReadAsStreamAsync();
+                using var response = await client.GetAsync(ExportUrl(), HttpCompletionOption.ResponseHeadersRead, readDeadline.Token);
+                using var body = await response.Content.ReadAsStreamAsync(readDeadline.Token);
                 var scratch = new byte[64 * 1024];
                 int count;
-                while ((count = await body.ReadAsync(scratch.AsMemory())) > 0)
+                while ((count = await body.ReadAsync(scratch.AsMemory(), readDeadline.Token)) > 0)
                     await received.WriteAsync(scratch.AsMemory(0, count));
             }
             catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException) { }
