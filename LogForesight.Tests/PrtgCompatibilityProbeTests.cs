@@ -158,12 +158,14 @@ public class PrtgCompatibilityProbeTests
     }
 
     [Fact]
-    public async Task ExecuteCoreAsync_三種目標均存在且正常_產出標準Target與別名()
+    public async Task ExecuteCoreAsync_五種目標均存在且正常_保留安全多頻道名稱和單位()
     {
         var samples = CreateSamples(
             (1001, "SNMP CPU Load", "Up"),
             (1002, "SNMP Memory", "Up"),
-            (1003, "SNMP Disk Free", "Up"));
+            (1003, "SNMP Disk Free", "Up"),
+            (1004, "Ping", "Up"),
+            (1005, "SNMP Traffic 64bit", "Up"));
 
         var console = new TestConsole();
         var context = new PrtgProbeEvidenceContext
@@ -189,12 +191,24 @@ public class PrtgCompatibilityProbeTests
             }
             if (url.Contains("content=channels"))
             {
-                return Task.FromResult(@"{
-                    ""channels"": [
-                        {""channel"": ""Total Memory"", ""lastvalue"": ""16 GB""},
-                        {""channel"": ""Customer Secret Host"", ""lastvalue"": ""99%""}
+                object[] rows = url.Contains("id=1004&", StringComparison.Ordinal)
+                    ? [
+                        new { objid = 1, name = "Ping Time", unit = "ms" },
+                        new { objid = 2, name = "Packet Loss", unit = "%" },
+                        new { objid = 3, name = "Private Endpoint 10.2.3.4", unit = "ms" }
                     ]
-                }");
+                    : url.Contains("id=1005&", StringComparison.Ordinal)
+                        ? [
+                            new { objid = 11, name = "Traffic In", unit = "Mbit/s" },
+                            new { objid = 12, name = "Traffic Out", unit = "MByte/s" },
+                            new { objid = 13, name = "Traffic Total", unit = "MByte" },
+                            new { objid = 14, name = "Private Interface VLAN7", unit = "SENTINEL_UNIT_7" }
+                        ]
+                        : [
+                            new { objid = 1, name = "Total Memory", lastvalue = "16 GB" },
+                            new { objid = 2, name = "Customer Secret Host", lastvalue = "99%" }
+                        ];
+                return Task.FromResult(JsonSerializer.Serialize(new { channels = rows }));
             }
             if (url.Contains("/api/historicdata.json"))
             {
@@ -214,15 +228,21 @@ public class PrtgCompatibilityProbeTests
         Assert.Equal("1.0.0", evidence.SchemaVersion);
         Assert.Equal("partial", evidence.Status); // 探測結果永遠不可宣稱完全就緒
         Assert.False(evidence.EvidenceReady);
-        Assert.Equal(3, evidence.Targets.Count);
+        Assert.Equal(5, evidence.Targets.Count);
+        Assert.Equal(5, evidence.Summary.TargetCategoriesCount);
+        Assert.Equal(5, evidence.Summary.TargetedSensorsCount);
 
-        // 別名必須為 s1, s2, s3 且不外洩原始 objid
+        // Alias order is stable and raw sensor object IDs are not exported.
         Assert.Equal("s1", evidence.Targets[0].Alias);
         Assert.Equal("cpu", evidence.Targets[0].Category);
         Assert.Equal("s2", evidence.Targets[1].Alias);
         Assert.Equal("memory", evidence.Targets[1].Category);
         Assert.Equal("s3", evidence.Targets[2].Alias);
         Assert.Equal("disk", evidence.Targets[2].Category);
+        Assert.Equal("s4", evidence.Targets[3].Alias);
+        Assert.Equal("ping", evidence.Targets[3].Category);
+        Assert.Equal("s5", evidence.Targets[4].Alias);
+        Assert.Equal("traffic", evidence.Targets[4].Category);
 
         var json = PrtgCompatibilityProbe.SerializeEvidence(evidence);
         // Object identities must be aliases. Numeric substrings in timestamps are unrelated.
@@ -235,13 +255,25 @@ public class PrtgCompatibilityProbeTests
             Assert.Equal(target.GetProperty("alias").GetString(), objectId.GetProperty("value").GetString());
         }
         Assert.DoesNotContain("Customer Secret Host", json);
-        Assert.Contains("total memory", json);
+        Assert.DoesNotContain("Private Endpoint", json);
+        Assert.DoesNotContain("Private Interface", json);
+        Assert.Contains("ping time", json);
+        Assert.Contains("packet loss", json);
+        Assert.Contains("traffic in", json);
+        Assert.Contains("traffic out", json);
+        Assert.Contains("traffic total", json);
+        Assert.Contains("\"unit\":\"mbit/s\"", json);
+        Assert.Contains("\"unit\":\"mbyte/s\"", json);
+        Assert.Contains("\"unit\":\"mbyte\"", json);
+        Assert.DoesNotContain("SENTINEL_UNIT_7", json);
+        Assert.Equal(15, evidence.Summary.RequestsAttempted);
+        Assert.True(Encoding.UTF8.GetByteCount(json) <= PrtgCompatibilityProbe.MaxJsonSizeBytes);
     }
 
     [Fact]
-    public async Task ExecuteCoreAsync_缺少部分目標_標記為missing且不猜測()
+    public async Task ExecuteCoreAsync_缺少部分目標_五類未採樣都明示missing()
     {
-        // 只有 CPU，缺少 Memory 和 Disk
+        // Only CPU is present; all other declared categories must remain explicit missing rows.
         var samples = CreateSamples((1001, "SNMP CPU Load", "Up"));
 
         Func<string, CancellationToken, Task<string>> getJson = (url, _) =>
@@ -255,7 +287,8 @@ public class PrtgCompatibilityProbeTests
         var evidence = await PrtgCompatibilityProbe.ExecuteCoreAsync(getJson, console, samples, null);
 
         Assert.Equal("partial", evidence.Status);
-        Assert.Equal(3, evidence.Targets.Count);
+        Assert.Equal(5, evidence.Targets.Count);
+        Assert.Equal(5, evidence.Summary.TargetCategoriesCount);
 
         var cpu = evidence.Targets.First(t => t.Category == "cpu");
         Assert.NotEqual("missing", cpu.Status);
@@ -274,12 +307,48 @@ public class PrtgCompatibilityProbeTests
 
         var disk = evidence.Targets.First(t => t.Category == "disk");
         Assert.Equal("missing", disk.Status);
+        var ping = evidence.Targets.First(t => t.Category == "ping");
+        Assert.Equal("s4", ping.Alias);
+        Assert.Equal("missing", ping.Status);
+        var traffic = evidence.Targets.First(t => t.Category == "traffic");
+        Assert.Equal("s5", traffic.Alias);
+        Assert.Equal("missing", traffic.Status);
+    }
+
+    [Fact]
+    public async Task ExecuteCoreAsync_只接受新類別的精確sensorType_近似類型仍missing()
+    {
+        var samples = CreateSamples(
+            (1001, "SNMP CPU Load", "Up"),
+            (1004, "Ping Sensor", "Up"),
+            (1005, "SNMP Traffic", "Up"));
+        var requestedUrls = new List<string>();
+
+        Func<string, CancellationToken, Task<string>> getJson = (url, _) =>
+        {
+            requestedUrls.Add(url);
+            if (url.Contains("filter_objid=", StringComparison.Ordinal))
+            {
+                var id = url.Split("filter_objid=")[1];
+                return Task.FromResult($@"{{""sensors"":[{{""objid"":""{id}"",""type"":""SNMP CPU Load"",""status"":""Up""}}]}}");
+            }
+            return Task.FromResult("{}");
+        };
+
+        var evidence = await PrtgCompatibilityProbe.ExecuteCoreAsync(getJson, new TestConsole(), samples, null);
+
+        Assert.Equal(1, evidence.Summary.TargetedSensorsCount);
+        Assert.Equal(5, evidence.Targets.Count);
+        Assert.Equal("missing", evidence.Targets.Single(target => target.Category == "ping").Status);
+        Assert.Equal("missing", evidence.Targets.Single(target => target.Category == "traffic").Status);
+        Assert.DoesNotContain(requestedUrls, url => url.Contains("filter_objid=1004", StringComparison.Ordinal));
+        Assert.DoesNotContain(requestedUrls, url => url.Contains("filter_objid=1005", StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task ExecuteCoreAsync_目標處於Paused狀態_標記為paused且非ready()
     {
-        var samples = CreateSamples((1001, "SNMP CPU Load", "Paused"));
+        var samples = CreateSamples((1001, "SNMP CPU Load", "Paused"), (1005, "Ping", "Paused"));
 
         var console = new TestConsole();
         Func<string, CancellationToken, Task<string>> getJson = (_, _) => Task.FromResult(@"{
@@ -292,6 +361,9 @@ public class PrtgCompatibilityProbeTests
 
         var cpu = evidence.Targets.First(t => t.Category == "cpu");
         Assert.Equal("paused", cpu.Status);
+        var ping = evidence.Targets.First(t => t.Category == "ping");
+        Assert.Equal("paused", ping.Status);
+        Assert.Equal("missing", evidence.Targets.First(t => t.Category == "traffic").Status);
         Assert.False(evidence.EvidenceReady);
     }
 
@@ -561,6 +633,21 @@ public class PrtgCompatibilityProbeTests
         Assert.False(k5);
     }
 
+    [Theory]
+    [InlineData("Ping Time", "ping time")]
+    [InlineData("Packet Loss", "packet loss")]
+    [InlineData("Traffic In", "traffic in")]
+    [InlineData("Traffic Out", "traffic out")]
+    [InlineData("Traffic Total", "traffic total")]
+    [InlineData("Router 10.0.0.7 Traffic In", "[redacted]")]
+    [InlineData("Customer Traffic Out", "[redacted]")]
+    public void SanitizeChannelName_只保留PRTG通用Ping和Traffic頻道標籤(string input, string expected)
+    {
+        var (name, known) = PrtgCompatibilityProbe.SanitizeChannelName(input);
+        Assert.Equal(expected, name);
+        Assert.Equal(expected != "[redacted]", known);
+    }
+
     [Fact]
     public void ComputeUrlFingerprint_清除認證參數並產出穩定匿名SHA256()
     {
@@ -587,13 +674,14 @@ public class PrtgCompatibilityProbeTests
             Targets = new List<PrtgProbeTargetEvidence>()
         };
 
-        // 構造大量 targets 與長字串模擬超大資料
-        for (var i = 0; i < 3; i++)
+        // Exercise the current five-target envelope while preserving the 64 KiB hard cap.
+        var categories = new[] { "cpu", "memory", "disk", "ping", "traffic" };
+        for (var i = 0; i < categories.Length; i++)
         {
             var target = new PrtgProbeTargetEvidence
             {
                 Alias = $"s{i + 1}",
-                Category = "cpu",
+                Category = categories[i],
                 Channels = new PrtgChannelsEvidence
                 {
                     Rows = Enumerable.Range(1, 16).Select(j => new PrtgChannelRowEntry

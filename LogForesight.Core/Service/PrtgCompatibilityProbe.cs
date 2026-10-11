@@ -155,7 +155,7 @@ public sealed class PrtgDateBoundary
 public sealed class PrtgProbeEvidenceSummary
 {
     [JsonPropertyName("target_categories_count")]
-    public int TargetCategoriesCount { get; set; } = 3;
+    public int TargetCategoriesCount { get; set; } = 5;
 
     [JsonPropertyName("targeted_sensors_count")]
     public int TargetedSensorsCount { get; set; }
@@ -621,7 +621,9 @@ public static class PrtgCompatibilityProbe
     {
         ("cpu", "SNMP CPU Load", "s1"),
         ("memory", "SNMP Memory", "s2"),
-        ("disk", "SNMP Disk Free", "s3")
+        ("disk", "SNMP Disk Free", "s3"),
+        ("ping", "Ping", "s4"),
+        ("traffic", "SNMP Traffic 64bit", "s5")
     };
 
     private static readonly HashSet<string> AllowedSemanticLabels = new(StringComparer.OrdinalIgnoreCase)
@@ -631,6 +633,7 @@ public static class PrtgCompatibilityProbe
         "free memory", "memory free", "used memory", "memory used",
         "free disk", "disk free", "available disk", "disk available", "percent available disk",
         "used disk", "disk used", "total disk", "disk total",
+        "ping time", "packet loss", "traffic in", "traffic out", "traffic total",
         "可用", "已用", "剩餘", "總計", "記憶體", "磁碟", "剩餘 記憶體"
     };
 
@@ -671,7 +674,9 @@ public static class PrtgCompatibilityProbe
     {
         "snmp cpu load", "snmpcpuload",
         "snmp memory", "snmpmemory",
-        "snmp disk free", "snmpdiskfree"
+        "snmp disk free", "snmpdiskfree",
+        "ping",
+        "snmp traffic 64bit"
     };
 
     private static readonly Regex IpRegex = new(
@@ -802,7 +807,7 @@ public static class PrtgCompatibilityProbe
             if (matching.Count == 0)
             {
                 console.WriteLine($"     相容性樣本 [{alias}] {category}（{sensorType}）：無可用樣本（missing）");
-                requestsSkipped += 3;
+                requestsSkipped += 3 + (getHistoricXml is null ? 0 : 1) + (getNativePrimaryXml is null ? 0 : 1);
                 evidence.Targets.Add(new PrtgProbeTargetEvidence
                 {
                     Alias = alias,

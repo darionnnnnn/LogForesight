@@ -900,13 +900,14 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_步驟9_採樣上限最多3顆且historicdata呼叫不超過3次()
+    public async Task RunAsync_步驟9_採樣上限最多五類且歷史查詢共用預算()
     {
         var sensors = TypedSensorRows(
             ("SNMP CPU Load", 5),
             ("SNMP Memory", 5),
             ("SNMP Disk Free", 5),
-            ("Ping", 10));
+            ("Ping", 10),
+            ("SNMP Traffic 64bit", 10));
 
         var stub = BuildPerfStub(sensors, url =>
         {
@@ -922,8 +923,26 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        var historicCalls = stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.json"));
-        Assert.True(historicCalls <= 3, $"historicdata 呼叫次數應 <= 3，實際為 {historicCalls}");
+        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
+        var root = doc.RootElement;
+        Assert.Equal(5, root.GetProperty("summary").GetProperty("target_categories_count").GetInt32());
+        Assert.Equal(5, root.GetProperty("summary").GetProperty("targeted_sensors_count").GetInt32());
+        Assert.Equal(0, root.GetProperty("summary").GetProperty("targets_missing").GetInt32());
+        Assert.Collection(root.GetProperty("targets").EnumerateArray(),
+            t => { Assert.Equal("s1", t.GetProperty("alias").GetString()); Assert.Equal("cpu", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s2", t.GetProperty("alias").GetString()); Assert.Equal("memory", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s3", t.GetProperty("alias").GetString()); Assert.Equal("disk", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s4", t.GetProperty("alias").GetString()); Assert.Equal("ping", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s5", t.GetProperty("alias").GetString()); Assert.Equal("traffic", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); });
+
+        var hourlyJsonCalls = stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.json"));
+        var rawXmlCalls = stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.xml"));
+        Assert.Equal(5, hourlyJsonCalls);
+        Assert.Equal(5, rawXmlCalls);
+        Assert.Equal(10, hourlyJsonCalls + rawXmlCalls);
     }
 
     [Fact]
@@ -945,7 +964,8 @@ public class PrtgProbeRunnerTests
     [Fact]
     public async Task RunAsync_步驟9_無可用目標感測器時略過且探測仍回true()
     {
-        var stub = BuildPerfStub(SensorRows(3, type: "Ping"));
+        // An unselected sensor type leaves all five exact target categories absent.
+        var stub = BuildPerfStub(SensorRows(3, type: "HTTP"));
 
         using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
         var console = new TestConsole();
@@ -959,8 +979,16 @@ public class PrtgProbeRunnerTests
         using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
         var root = doc.RootElement;
         Assert.Equal("unknown", root.GetProperty("status").GetString());
+        Assert.Equal(5, root.GetProperty("summary").GetProperty("target_categories_count").GetInt32());
+        Assert.Equal(0, root.GetProperty("summary").GetProperty("targeted_sensors_count").GetInt32());
+        Assert.Equal(5, root.GetProperty("summary").GetProperty("targets_missing").GetInt32());
         var targets = root.GetProperty("targets");
-        Assert.All(targets.EnumerateArray(), t => Assert.Equal("missing", t.GetProperty("status").GetString()));
+        Assert.Collection(targets.EnumerateArray(),
+            t => { Assert.Equal("s1", t.GetProperty("alias").GetString()); Assert.Equal("cpu", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s2", t.GetProperty("alias").GetString()); Assert.Equal("memory", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s3", t.GetProperty("alias").GetString()); Assert.Equal("disk", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s4", t.GetProperty("alias").GetString()); Assert.Equal("ping", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
+            t => { Assert.Equal("s5", t.GetProperty("alias").GetString()); Assert.Equal("traffic", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); });
     }
 
     [Fact]
@@ -1152,10 +1180,40 @@ public class PrtgProbeRunnerTests
         var chineseCandidate = chineseRange.GetProperty("timestamp_candidates")[0];
         Assert.Equal("2026-10-04T01:00:00.000", chineseCandidate.GetProperty("start_components").GetString());
         Assert.Equal("14:00:00.000", chineseCandidate.GetProperty("end_components").GetString());
-        var nonCpu = root.GetProperty("targets").EnumerateArray().Where(t => t.GetProperty("category").GetString() != "cpu");
-        Assert.All(nonCpu, target => Assert.Contains("invalid_datetime_string",
+        var targets = root.GetProperty("targets").EnumerateArray().ToList();
+        Assert.Equal(5, root.GetProperty("summary").GetProperty("target_categories_count").GetInt32());
+        Assert.Equal(3, root.GetProperty("summary").GetProperty("targeted_sensors_count").GetInt32());
+        Assert.Equal(2, root.GetProperty("summary").GetProperty("targets_missing").GetInt32());
+        Assert.Collection(targets,
+            target => { Assert.Equal("s1", target.GetProperty("alias").GetString()); Assert.Equal("cpu", target.GetProperty("category").GetString()); Assert.NotEqual("missing", target.GetProperty("status").GetString()); },
+            target => { Assert.Equal("s2", target.GetProperty("alias").GetString()); Assert.Equal("memory", target.GetProperty("category").GetString()); Assert.NotEqual("missing", target.GetProperty("status").GetString()); },
+            target => { Assert.Equal("s3", target.GetProperty("alias").GetString()); Assert.Equal("disk", target.GetProperty("category").GetString()); Assert.NotEqual("missing", target.GetProperty("status").GetString()); },
+            target => { Assert.Equal("s4", target.GetProperty("alias").GetString()); Assert.Equal("ping", target.GetProperty("category").GetString()); Assert.Equal("missing", target.GetProperty("status").GetString()); },
+            target => { Assert.Equal("s5", target.GetProperty("alias").GetString()); Assert.Equal("traffic", target.GetProperty("category").GetString()); Assert.Equal("missing", target.GetProperty("status").GetString()); });
+
+        var nonCpuAcquired = targets.Where(t =>
+            t.GetProperty("category").GetString() != "cpu" &&
+            t.GetProperty("status").GetString() != "missing").ToList();
+        Assert.Equal(2, nonCpuAcquired.Count);
+        Assert.All(nonCpuAcquired, target => Assert.Contains("invalid_datetime_string",
             target.GetProperty("snapshot").GetProperty("fields").EnumerateArray()
                 .Single(f => f.GetProperty("field").GetString() == "lastcheck").GetProperty("value_type").GetString()));
+        var missingTargets = targets.Where(t => t.GetProperty("status").GetString() == "missing").ToList();
+        Assert.Equal(2, missingTargets.Count);
+        Assert.All(missingTargets, target =>
+        {
+            Assert.False(target.TryGetProperty("snapshot", out var missingSnapshot) &&
+                missingSnapshot.ValueKind != System.Text.Json.JsonValueKind.Null);
+            Assert.False(target.TryGetProperty("channels", out var missingChannels) &&
+                missingChannels.ValueKind != System.Text.Json.JsonValueKind.Null);
+            Assert.False(target.TryGetProperty("history", out var missingHistory) &&
+                missingHistory.ValueKind != System.Text.Json.JsonValueKind.Null);
+            Assert.False(target.TryGetProperty("identity_preserving_raw_history", out var missingRawHistory) &&
+                missingRawHistory.ValueKind != System.Text.Json.JsonValueKind.Null);
+        });
+        var cpuRawHistory = cpu.GetProperty("identity_preserving_raw_history");
+        Assert.Equal("unknown", cpuRawHistory.GetProperty("RawTimestampBasis").GetString());
+        Assert.False(cpuRawHistory.GetProperty("AuthorizesFormalProfile").GetBoolean());
         Assert.DoesNotContain("CUSTOMER_SECRET", jsonText);
         Assert.DoesNotContain("CUSTOMER_SECRET_TIMESTAMP", jsonText);
         Assert.DoesNotContain("private-host-name", jsonText);

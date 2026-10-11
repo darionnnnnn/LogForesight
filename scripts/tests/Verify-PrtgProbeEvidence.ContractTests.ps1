@@ -178,6 +178,22 @@ function Invoke-ContractCase {
     }
 }
 
+function Set-TargetCount {
+    param([object] $Evidence, [int] $Count)
+    $categories = @('cpu','memory','disk','ping','traffic')
+    $targets = @()
+    for ($i = 0; $i -lt $Count; $i++) {
+        $target = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Evidence.targets[0] -Depth 20 -Compress) -AsHashtable
+        $alias = "s$($i + 1)"
+        $target.alias = $alias
+        $target.category = $categories[$i % $categories.Count]
+        $target.native_primary_capability.requested_object_alias = $alias
+        $targets += $target
+    }
+    $Evidence.targets = $targets
+    return $Evidence
+}
+
 $valid = Set-Batch100Metadata (New-ValidEvidence)
 Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
     'RuntimeGcAvailableMemoryBytes: 8589934592',
@@ -190,6 +206,21 @@ Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
     'SensorBatchCapacityAccepted: false',
     'HANDOFF_INTEGRITY_OK'
 )
+
+$legacyThreeTargets = Set-TargetCount (New-ValidEvidence) 3
+Invoke-ContractCase 'legacy-three-target-evidence-remains-readable' $legacyThreeTargets 2 @(
+    'TargetsCount: 3',
+    'Result: INCOMPLETE'
+)
+
+$currentFiveTargets = Set-TargetCount (New-ValidEvidence) 5
+Invoke-ContractCase 'current-five-target-evidence-remains-bounded' $currentFiveTargets 2 @(
+    'TargetsCount: 5',
+    'Result: INCOMPLETE'
+)
+
+$sixTargets = Set-TargetCount (New-ValidEvidence) 6
+Invoke-ContractCase 'more-than-five-targets-is-rejected' $sixTargets 1 @('InvalidTargetsCount')
 
 $legacyFiveEvidence = New-ValidEvidence
 $legacyFiveEvidence.sensor_batch_identity.requested_aliases = @('b1','b2','b3','b4','b5')

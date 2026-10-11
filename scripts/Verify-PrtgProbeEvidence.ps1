@@ -493,7 +493,7 @@ try {
     if ($engineVersionText -eq 'unknown') { $metadataIncomplete = $true }
     if ($storageIncomplete) { $metadataIncomplete = $true }
 
-    if ($targets.GetArrayLength() -gt 3) { Fail-Safely 'InvalidTargetsCount' }
+    if ($targets.GetArrayLength() -gt 5) { Fail-Safely 'InvalidTargetsCount' }
     $targetCount = $targets.GetArrayLength()
     $rawCount = 0
     $channelIdCount = 0
