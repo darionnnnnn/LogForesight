@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -15,6 +16,7 @@ public sealed class EfJsonLogStore
     private readonly Func<LfDbContext> _contextFactory;
     private readonly string _key;
     private readonly object _lock = new();
+    private readonly EfJsonBlobStore _idAllocator;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     /// <summary>
@@ -28,9 +30,23 @@ public sealed class EfJsonLogStore
         _contextFactory = contextFactory;
         _key = key;
         _performance = performance;
+        _idAllocator = new EfJsonBlobStore(contextFactory, $"log_id_allocator:{key}", performance, serializeSqlServerWriters: true);
     }
 
     public string Location => $"db:{_key}";
+
+    /// <summary>
+    /// 以資料庫交易配發高於既有紀錄下限的單調序號。Blob counter 透過 SQL Server application lock
+    /// 或 SQLite 寫入交易跨 store instance 與 process 序列化；損毀的 counter fail closed，避免重號。
+    /// </summary>
+    public long ReserveMonotonicId(long initialFloor) => _idAllocator.MutateWithContext((_, current) =>
+    {
+        var persisted = current == null
+            ? 0
+            : long.Parse(current, NumberStyles.None, CultureInfo.InvariantCulture);
+        var next = checked(Math.Max(persisted, initialFloor) + 1);
+        return (next.ToString(CultureInfo.InvariantCulture), next);
+    }, maxCurrentCharacters: 19);
 
     /// <summary>全部行，依附加順序</summary>
     public IReadOnlyList<string> ReadLines()
