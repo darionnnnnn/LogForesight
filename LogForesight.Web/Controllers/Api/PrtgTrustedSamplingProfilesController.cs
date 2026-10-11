@@ -172,9 +172,17 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
 
             if (!string.IsNullOrWhiteSpace(savedBinding.QualificationProofReference))
             {
+                var settingsStore = new SystemSettingsStore(backend.Blob("system_settings"));
+                if (!settingsStore.Get().PrtgEnabled)
+                    return PrtgDisabledForProofRefresh();
+
                 var notice = refresh.QueueCurrentQualificationProofRefresh(sensorObjid);
                 if (notice is null)
+                {
+                    if (!settingsStore.Get().PrtgEnabled)
+                        return PrtgDisabledForProofRefresh();
                     return Conflict(ApiResponse.Fail("proof_refresh_not_current", "原始資格證據或來源 fence 已失效；請重新載入綁定與政策狀態。"));
+                }
                 var existingStatus = PrtgTrustedSamplingBindingStatusDto.From(savedBinding, "waiting", []);
                 return Ok(ApiResponse<PrtgTrustedSamplingBindingQualificationResult>.Ok(new(sensorObjid,
                     "queued", [], existingStatus, null, ProofRefresh: notice)));
@@ -582,6 +590,9 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
         catch (TimeZoneNotFoundException) { return false; }
         catch (InvalidTimeZoneException) { return false; }
     }
+
+    private ConflictObjectResult PrtgDisabledForProofRefresh() => Conflict(ApiResponse.Fail(
+        "prtg_disabled", "PRTG 擷取目前未啟用；請先到 PRTG 維護頁啟用擷取，再重新整理資格證據。這次未啟動作業。"));
 
     private IActionResult DurableQualificationRequired(long sensorObjid,
         PrtgTrustedSamplingBinding binding, PrtgMonitoringPolicy policy)

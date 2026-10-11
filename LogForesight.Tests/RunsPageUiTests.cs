@@ -33,6 +33,29 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void Ai未設定提示只描述預設缺漏模式並隨選擇變化更新()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains("const show = runNowAiDisabled === true && rerunMode === 'None';", js);
+        Assert.Contains("此模式僅補跑失敗或未執行項目", js);
+
+        var previewStart = js.IndexOf("async function updateRunNowPreview()", StringComparison.Ordinal);
+        Assert.True(previewStart >= 0, "runs.js 應包含立即執行預覽函式。");
+        var syncHint = js.IndexOf("updateRunNowAiDisabledHint();", previewStart, StringComparison.Ordinal);
+        var emptySegmentReturn = js.IndexOf("if (scope === 'segment' && !segment)", previewStart, StringComparison.Ordinal);
+        Assert.True(syncHint > previewStart && emptySegmentReturn > syncHint,
+            "模式提示需在預覽可能早退之前同步，否則切換模式後會留下舊提示。");
+
+        var modeChange = js.IndexOf("document.getElementById('run-now-rerun-mode')?.addEventListener('change'", StringComparison.Ordinal);
+        Assert.True(modeChange >= 0, "重新分析模式選擇需有 change listener。");
+        var modePreview = js.IndexOf("updateRunNowPreview();", modeChange, StringComparison.Ordinal);
+        Assert.True(modePreview > modeChange,
+            "切換重新分析模式需觸發預覽更新，以同步 AI 未設定提示。");
+    }
+
+    [Fact]
     public void Prtg完工進度不得把結構同步台數說成Sensor取值數()
     {
         var root = FindRepoRoot();

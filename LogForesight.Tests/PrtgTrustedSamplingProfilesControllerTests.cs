@@ -380,6 +380,41 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Existing_raw_proof_when_prtg_disabled_returns_actionable_conflict_without_mutation()
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        var saved = Assert.IsType<PrtgTrustedSamplingBindingStatusDto>(
+            Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingStatusDto>>(
+                Assert.IsType<OkObjectResult>(controller.SaveBinding(11, BindingRequest(11, "75"))).Value).Data);
+        var bindingStore = new PrtgTrustedSamplingBindingStore(_backend);
+        bindingStore.RecordQualification(11, saved.BindingRevision, saved.BindingFingerprint,
+            _settings.Get().Revision, _policy.Get().Revision, 91, DateTime.UtcNow.ToOADate(),
+            "source-api-r1", DateTimeOffset.UtcNow, new string('D', 64));
+        var before = bindingStore.Get(11)!;
+        var beforeJson = JsonSerializer.Serialize(before);
+        var refreshState = new PrtgTrustedSamplingProfileRefreshStateStore(_backend);
+        var noticeBefore = Assert.Single(refreshState.ReadProofRefreshNotices([11])).Value;
+        _settings.Update(value => value.PrtgEnabled = false);
+
+        var staleFence = Assert.IsType<ConflictObjectResult>(await controller.QualifyBinding(11,
+            new(before.BindingRevision + 1, before.BindingFingerprint), CancellationToken.None));
+        Assert.Equal("binding_fence_changed", Assert.IsAssignableFrom<ApiResponse<object>>(staleFence.Value).Error!.Code);
+
+        var disabled = Assert.IsType<ConflictObjectResult>(await controller.QualifyBinding(11,
+            new(before.BindingRevision, before.BindingFingerprint), CancellationToken.None));
+        var error = Assert.IsAssignableFrom<ApiResponse<object>>(disabled.Value).Error!;
+        Assert.Equal("prtg_disabled", error.Code);
+        Assert.Contains("啟用擷取", error.Message);
+        Assert.Contains("未啟動作業", error.Message);
+
+        var after = bindingStore.Get(11)!;
+        Assert.Equal(beforeJson, JsonSerializer.Serialize(after));
+        var noticeAfter = Assert.Single(refreshState.ReadProofRefreshNotices([11])).Value;
+        Assert.Equal(JsonSerializer.Serialize(noticeBefore), JsonSerializer.Serialize(noticeAfter));
+        Assert.Null(new PrtgQualificationJobStateStore(_backend).ReadCurrent());
+    }
+
+    [Fact]
     public async Task MalformedProbeAndQualificationSourceJsonAreClassifiedWithoutWriting()
     {
         var controller = CreateController(new TestVisibility([_host.HostId]));

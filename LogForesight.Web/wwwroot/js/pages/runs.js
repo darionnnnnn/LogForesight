@@ -1643,6 +1643,7 @@ document.getElementById('schedule-ai-rerun-confirm')?.addEventListener('click', 
 // ── 立即執行（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，「host」範圍另放在主機詳情頁）──────
 
 let runNowPreviewDebounce = null;
+let runNowAiDisabled = null;
 
 const RERUN_MODE_CONFIG = {
     None: {
@@ -1686,6 +1687,15 @@ function updateRerunModeUI() {
     }
 }
 
+function updateRunNowAiDisabledHint() {
+    const hint = document.getElementById('run-now-ai-disabled-hint');
+    if (!hint) return;
+    const rerunMode = document.getElementById('run-now-rerun-mode')?.value || 'None';
+    const show = runNowAiDisabled === true && rerunMode === 'None';
+    hint.textContent = show ? 'AI 未設定，此模式僅補跑失敗或未執行項目。' : '';
+    hint.hidden = !show;
+}
+
 document.getElementById('schedule-run-now')?.addEventListener('click', () => {
     document.getElementById('run-now-form').reset();
     document.getElementById('run-now-scope-all').checked = true;
@@ -1724,6 +1734,8 @@ async function updateRunNowPreview() {
     const onlyMissingOrFailed = rerunMode === 'None';
     const backfillDays = document.getElementById('run-now-backfill')?.value;
     const previewEl = document.getElementById('run-now-preview');
+    // Keep the hint synchronized even when the segment is empty and preview returns early.
+    updateRunNowAiDisabledHint();
 
     if (scope === 'segment' && !segment) {
         previewEl.textContent = '請輸入要執行的網段（如 192.168.0 或 192.168.0.0/24）。';
@@ -1747,12 +1759,8 @@ async function updateRunNowPreview() {
         previewEl.textContent = text;
         previewEl.className = heavy ? 'alert alert-warning py-2 px-3 mb-0' : 'alert alert-secondary py-2 px-3 mb-0';
 
-        // 當 AI 未設定時，在「只補跑失敗或未執行的主機」選項旁顯示提示文字
-        const aiDisabledHint = document.getElementById('run-now-ai-disabled-hint');
-        if (aiDisabledHint) {
-            aiDisabledHint.textContent = result.aiDisabled ? 'AI 未設定，此選項僅補跑缺漏日' : '';
-            aiDisabledHint.hidden = !result.aiDisabled;
-        }
+        runNowAiDisabled = result.aiDisabled === true;
+        updateRunNowAiDisabledHint();
     } catch (err) {
         previewEl.textContent = err?.message || '無法預覽，請確認網段格式。';
         previewEl.className = 'alert alert-danger py-2 px-3 mb-0';
