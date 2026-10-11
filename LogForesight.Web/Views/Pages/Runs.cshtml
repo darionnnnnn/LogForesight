@@ -121,7 +121,7 @@
             @* 未啟用時指路：開關與數值取數對象是維護頁「擷取參數」的同一個下拉，
                卡片上只說「未啟用」的話，使用者會在這頁到處找開關。 *@
             <div class="small text-warning d-none" id="prtg-disabled-hint">
-                到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>選擇數值取數對象即可啟用；
+                <span class="d-none" data-maintain-only data-maintain-action>到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>選擇數值取數對象即可啟用；</span>
                 未啟用時可手動同步結構；數值取樣與回填仍會停用。
             </div>
             <div class="lf-kv">
@@ -159,7 +159,7 @@
                 <button type="button" class="btn btn-sm btn-outline-danger d-none" id="prtg-backfill-cancel" data-maintain-only>停止回填</button>
             </div>
 
-            <div class="small text-muted mt-3">結構同步會在每次執行時自動進行；要補過去日的數值，用「立即執行」時勾選「一併補齊 PRTG 數值」，或到 PRTG 維護頁。<a href="@Url.Content("~/admin/prtg")" class="ms-1">前往 PRTG 維護</a></div>
+            <div class="small text-muted mt-3 d-none" data-maintain-only data-maintain-action>結構同步會在每次執行時自動進行；要補過去日的數值，用「立即執行」時勾選「一併補齊 PRTG 數值」，或到 PRTG 維護頁。<a href="@Url.Content("~/admin/prtg")" class="ms-1">前往 PRTG 維護</a></div>
         </div>
     </section>
 </div>
