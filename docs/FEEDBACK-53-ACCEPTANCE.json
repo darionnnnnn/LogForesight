@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "26ccd148ff673f9122a068e8d2f0d8101ccc93c23c8ba7e9caebc1df83298bd1",
+  "plan_sha256": "175b14d79e167765b87ead64c82940b644d9cb07a38911c87d6e80ce050d7fa3",
   "date": "2026-10-11",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -538,7 +538,7 @@
           "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
           "symbol": "bindPrtgBackfill",
           "role": "current round verified backfill implementation/test",
-          "sha256": "77b73d9167f6b964a9df12061086e64fe18fe61a383cff1e87e7f21157925644"
+          "sha256": "4a8af372f8270f751026e199107bddcc82cddfef5a3adfc0d9d5fed949df3a6d"
         },
         {
           "id": "AC09",
@@ -672,6 +672,20 @@
           "symbol": "NetiqEvidenceMetadataProbeTests",
           "role": "shape-only probe tests",
           "sha256": "8fb9f7eb0153dc44ec46e9f84d2152a0943e80d7520c4c799d289d7161cd1e25"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
+          "symbol": "RecordBatch",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "sha256": "5b14e3e829e6d27cfd03d41c2b3e6cf0c4c870197a3f2355c5bf4dd7d25e690f"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Tests/NetiqPipelineBaselineTests.cs",
+          "symbol": "retained-incomplete",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "sha256": "0c4e6c7479fbeeebb55176f1c0cbec04e7ec498826708508067ae662a97606b9"
         }
       ],
       "input_sha256": null,
@@ -995,6 +1009,20 @@
           "symbol": "PrtgPartialWorkflowContractTests",
           "role": "workflow contract tests",
           "sha256": "f9eea0ab070ad5ac351a3bf2e19544bd74b361ba1bebb9a488652cd4f404ca26"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Web/Controllers/Api/ScheduleController.cs",
+          "symbol": "retryAttemptHostIds",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "sha256": "0f7d5c91f582dabae867af1b4e019115fc734c16b3b792c212778d6eb8653692"
+        },
+        {
+          "id": "AC16",
+          "path": "LogForesight.Tests/ScheduleRunPreviewNetiqAttemptTests.cs",
+          "symbol": "ScheduleRunPreviewNetiqAttemptTests",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "sha256": "114f0b8277766c2dfbe483465828ce356aea864d0d84c9a1b1ab05a0188af34e"
         }
       ],
       "input_sha256": null,
@@ -1162,7 +1190,7 @@
           "path": "LogForesight.Core/Service/RetentionPruner.cs",
           "symbol": "RetentionPruner",
           "role": "cleanup core",
-          "sha256": "0727ef3f4aac3552bde8c1c0c6ba8d1689ee4ef01eab262bdfe76586c64d4d4e"
+          "sha256": "8f286f29883c278a323b00a07b7bfe02c10eeed771ed0c1cc3f60b0ab8f8fb3d"
         },
         {
           "id": "AC19",
@@ -1177,6 +1205,13 @@
           "symbol": "PrtgDiagnosticRetentionTests",
           "role": "diagnostic retention tests",
           "sha256": "a5893f94f69e2d3f3424517739a1ad6834f945e792528371d7bf2a1d2c949b7e"
+        },
+        {
+          "id": "AC19",
+          "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
+          "symbol": "Prune",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "sha256": "5b14e3e829e6d27cfd03d41c2b3e6cf0c4c870197a3f2355c5bf4dd7d25e690f"
         }
       ],
       "input_sha256": null,
@@ -1327,7 +1362,7 @@
           "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
           "symbol": "bindPrtgBackfill",
           "role": "current round verified backfill implementation/test",
-          "sha256": "77b73d9167f6b964a9df12061086e64fe18fe61a383cff1e87e7f21157925644"
+          "sha256": "4a8af372f8270f751026e199107bddcc82cddfef5a3adfc0d9d5fed949df3a6d"
         },
         {
           "id": "AC21",
@@ -1412,6 +1447,13 @@
           "symbol": "HelpNavigationConsistencyTests",
           "role": "navigation tests",
           "sha256": "aca039d6db4ce30549fbb2a94d4b0e55a6577d2acd38e1f2aa1375a552d6eb3f"
+        },
+        {
+          "id": "AC22",
+          "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
+          "symbol": "updateRunNowAiDisabledHint",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "sha256": "4a8af372f8270f751026e199107bddcc82cddfef5a3adfc0d9d5fed949df3a6d"
         }
       ],
       "input_sha256": null,
@@ -7437,7 +7479,7 @@
       "change": "remove extra empty line at EOF; all non-newline bytes identical"
     }
   },
-  "current_implementation_source_commit": "bc2e5ffed21b43082ac2960197fd958020e95d60",
+  "current_implementation_source_commit": "7c279b903a6ab17887f7c8fd40fdfd08104b61a5",
   "current_manual_map_schema_repair_20261010": {
     "owner": "root",
     "gate": {
@@ -9089,1316 +9131,1407 @@
   "current_status_precedence_20261011": "Current delivery counts, blockers, implementation source commit and current_plan_code_audit_20261011 govern the active TODO. Earlier named current_* stage records retain their original failure/partial results as historical evidence and do not create duplicate active implementation TODOs.",
   "current_plan_code_audit_20261011": {
     "status": "software-implemented-and-affected-verification-passed",
-    "source_commit": "bc2e5ffed21b43082ac2960197fd958020e95d60",
+    "source_commit": "7c279b903a6ab17887f7c8fd40fdfd08104b61a5",
     "map_check": {
-      "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-code-map-primary-result.json",
-      "sha256": "0846e75a4244e39719c897cd051ffdc2004d2e001371962f0b7689ecbe126630",
+      "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-current-plan-map-primary.json",
+      "sha256": "2e20e6ce6507a21d337b2f141cb5a1617eef32face9021e04c5507863d469797",
       "requirements": 46,
-      "paths": 163,
+      "paths": 186,
       "failures": 0,
-      "meaning": "Mapped test references do not claim execution of full fixed acceptance matrix."
+      "meaning": "Existing path/symbol/hash map only; all five full gates remain open."
     },
     "implementation_map": {
       "AC01": [
         {
-          "id": "AC01",
           "path": "LogForesight.Core/Service/PrtgClientFactory.cs",
           "symbol": "PrtgClientFactory",
           "role": "Core client construction",
+          "exists_and_symbol_found": true,
           "sha256": "82084b014d239ef7d189a578591d4ca612245042f203acd42027e68388f9f6b7"
         },
         {
-          "id": "AC01",
           "path": "LogForesight.Tests/PrtgClientFactoryTests.cs",
           "symbol": "PrtgClientFactoryTests",
           "role": "existing test mapping",
+          "exists_and_symbol_found": true,
           "sha256": "d0efe14f0ed98aeb70e873957409046b2eacacb94f5fe49f136783e9bbb225f1"
         },
         {
-          "id": "AC01",
           "path": "LogForesight.Web/Controllers/Api/SettingsController.cs",
           "symbol": "SettingsController",
           "role": "settings API",
+          "exists_and_symbol_found": true,
           "sha256": "7e6561269c7062c51687fba2deb91f44466a8b9c4a0da1c073788399faf497bf"
         }
       ],
       "AC02": [
         {
-          "id": "AC02",
           "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
           "symbol": "PrtgMonitoringController",
           "role": "scope API",
+          "exists_and_symbol_found": true,
           "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
         },
         {
-          "id": "AC02",
           "path": "LogForesight.Tests/PrtgMonitoringPagingTests.cs",
           "symbol": "PrtgMonitoringPagingTests",
           "role": "paging tests",
+          "exists_and_symbol_found": true,
           "sha256": "d4db3be9e39c04f6ceaebfb0be50a6e59b0620befc563fe64cd295ae503fa6b7"
         },
         {
-          "id": "AC02",
           "path": "LogForesight.Core/Persistence/PrtgHostSnapshot.cs",
           "symbol": "PrtgHostSnapshot",
           "role": "immutable snapshot",
+          "exists_and_symbol_found": true,
           "sha256": "2cf8b48c470805805aa229c8d4395e4e1fd561360a00e7b33804344fe4f20e59"
         }
       ],
       "AC03": [
         {
-          "id": "AC03",
           "path": "LogForesight.Core/Persistence/PrtgResourceIdentityStore.cs",
           "symbol": "PrtgResourceIdentityStore",
           "role": "identity persistence",
+          "exists_and_symbol_found": true,
           "sha256": "764118555381bd7004af8ec637c0bf6768a2b568f1fb7447da262d6b50e38e36"
         },
         {
-          "id": "AC03",
           "path": "LogForesight.Tests/PrtgManualMapIdentityContractTests.cs",
           "symbol": "PrtgManualMapIdentityContractTests",
           "role": "identity contract tests",
+          "exists_and_symbol_found": true,
           "sha256": "3ce0433ed61eba2549b8f79da02cafdbb6aafe9e28f305c813cb74b0e6278e4b"
         }
       ],
       "AC04": [
         {
-          "id": "AC04",
           "path": "LogForesight.Core/Service/PrtgStructureSyncRunner.cs",
           "symbol": "PrtgStructureSyncRunner",
           "role": "sync runner",
+          "exists_and_symbol_found": true,
           "sha256": "564cdeffaf57b818ce81aec0942767bd2829fcb94b5c9c9773cd5e488b272791"
         },
         {
-          "id": "AC04",
           "path": "LogForesight.Tests/PrtgStructureSyncRunnerTests.cs",
           "symbol": "PrtgStructureSyncRunnerTests",
           "role": "runner tests",
+          "exists_and_symbol_found": true,
           "sha256": "550f7458e9b09c5e26cd96998245a389f3eab0ce18a256ecef88618895bb9cd7"
         },
         {
-          "id": "AC04",
           "path": "LogForesight.Tests/PrtgStructureSyncCancelEndpointTests.cs",
           "symbol": "PrtgStructureSyncCancelEndpointTests",
           "role": "cancel endpoint tests",
+          "exists_and_symbol_found": true,
           "sha256": "4746a808f045c14dc241c5d8640a6c123ccb02dc61ed41ca281c3c4b2e1a7bfb"
         }
       ],
       "AC05": [
         {
-          "id": "AC05",
           "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
           "symbol": "PrtgSnapshotHostedService",
           "role": "producer",
-          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+          "exists_and_symbol_found": true,
+          "sha256": "2eadeeff8faa109c0d2b5a08f1e0b4754308ee3cdc82f8ca957e2f303d5e76b5"
         },
         {
-          "id": "AC05",
           "path": "LogForesight.Core/Service/PrtgSnapshotAccumulator.cs",
           "symbol": "PrtgSnapshotAccumulator",
           "role": "slot accumulation",
+          "exists_and_symbol_found": true,
           "sha256": "11dca92f61ec3476f6d71425d5504125e30c4d37c7e2f2f817fe91aa5cfada12"
         },
         {
-          "id": "AC05",
           "path": "LogForesight.Tests/PrtgSnapshotAccumulatorTests.cs",
           "symbol": "PrtgSnapshotAccumulatorTests",
           "role": "accumulator tests",
+          "exists_and_symbol_found": true,
           "sha256": "8553272c9af7206c64b5780c597ca46f69477d968f4b84db0be54bb773075ccd"
+        },
+        {
+          "path": "LogForesight.Core/Service/PrtgScopeRevisionReader.cs",
+          "symbol": "PrtgScopeRevisionReader",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "exists_and_symbol_found": true,
+          "sha256": "8ca99c0131cfa6ffec2445adb3b3a0f1228d858acccdaccdb08c87a6bad60367"
+        },
+        {
+          "path": "LogForesight.Tests/PrtgRunsCardAndProbeTests.cs",
+          "symbol": "狀態補抓Queue整理後下一個新准入輪次才送messages並確認原裝置項目",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "exists_and_symbol_found": true,
+          "sha256": "e11d8e4a143616673619d4a12073d987c047f40e69bb6a745613b6d6fb400c97"
         }
       ],
       "AC06": [
         {
-          "id": "AC06",
           "path": "LogForesight.Core/Service/PrtgCoveredStateTimeline.cs",
           "symbol": "PrtgCoveredStateTimeline",
           "role": "timeline",
+          "exists_and_symbol_found": true,
           "sha256": "34639fe9abc1216a236845721d6947ef85d61523761b1491384f3e7612e58394"
         },
         {
-          "id": "AC06",
           "path": "LogForesight.Tests/PrtgCoveredStateTimelineTests.cs",
           "symbol": "PrtgCoveredStateTimelineTests",
           "role": "timeline tests",
+          "exists_and_symbol_found": true,
           "sha256": "bbebc741720da8b95844fad6af5a9b4376f07abfc2ae8a36352c0f237164c6dc"
         },
         {
-          "id": "AC06",
           "path": "LogForesight.Tests/PrtgCoveredRuleEvaluatorTests.cs",
           "symbol": "PrtgCoveredRuleEvaluatorTests",
           "role": "formal state rules",
+          "exists_and_symbol_found": true,
           "sha256": "a58c17741f80407497e392f961c0c56fcaf864752226ec1541ab64a1d8411395"
         }
       ],
       "AC07": [
         {
-          "id": "AC07",
           "path": "LogForesight.Core/Service/PrtgTrustedSamplingProfileResolver.cs",
           "symbol": "PrtgTrustedSamplingProfileResolver",
           "role": "profile resolver",
+          "exists_and_symbol_found": true,
           "sha256": "e981efc30de3fb0e05f41bb1815d518c89d22f6f05a9d67e486d7e34facec78c"
         },
         {
-          "id": "AC07",
           "path": "LogForesight.Core/Service/PrtgResourcePeriodReadiness.cs",
           "symbol": "PrtgResourcePeriodReadiness",
           "role": "readiness",
+          "exists_and_symbol_found": true,
           "sha256": "14f704c9a39a210b86f99f7df6260c691e808782245fd77092d40123ebfa9206"
         },
         {
-          "id": "AC07",
           "path": "LogForesight.Tests/PrtgTrustedSamplingProfileTests.cs",
           "symbol": "PrtgTrustedSamplingProfileTests",
           "role": "profile tests",
+          "exists_and_symbol_found": true,
           "sha256": "c3d7186b201cb9e779162af886dcab3fa54dc49697ab222cef973affaea25d6b"
         }
       ],
       "AC08": [
         {
-          "id": "AC08",
           "path": "LogForesight.Web/Services/PrtgTrustedSamplingProbeService.cs",
           "symbol": "PrtgTrustedSamplingProbeService",
           "role": "probe service",
+          "exists_and_symbol_found": true,
           "sha256": "edc9b3641dddb23dd83eb1bc974425c1a3882ced661e0b788a6119aff5ffe3f5"
         },
         {
-          "id": "AC08",
           "path": "LogForesight.Tests/PrtgTrustedSamplingProbeServiceTests.cs",
           "symbol": "PrtgTrustedSamplingProbeServiceTests",
           "role": "probe tests",
+          "exists_and_symbol_found": true,
           "sha256": "4af3b0c4be902101a51dce04a2187111971c13cf37aaf6a126cfe95f083140f4"
         },
         {
-          "id": "AC08",
           "path": "LogForesight.Tests/PrtgCompatibilityProbeTests.cs",
           "symbol": "PrtgCompatibilityProbeTests",
           "role": "compatibility tests",
-          "sha256": "ddf0a27875339034cf2ff645a743ddec5d4ee7c0e16a31592b1cb88f10dae340"
+          "exists_and_symbol_found": true,
+          "sha256": "fec13b9048a561aeba9a8f36eae2987fadad138d875137570227c5511dc1b601"
         }
       ],
       "AC09": [
         {
-          "id": "AC09",
           "path": "LogForesight.Core/Service/PrtgBackfillRunner.cs",
           "symbol": "PrtgBackfillRunner",
           "role": "backfill core",
+          "exists_and_symbol_found": true,
           "sha256": "02d539ba963337846db88a53a63c0a01f30e0a914f6908505c0d76dcbf404f14"
         },
         {
-          "id": "AC09",
           "path": "LogForesight.Web/Services/PrtgBackfillService.cs",
           "symbol": "PrtgBackfillService",
           "role": "Web trigger",
+          "exists_and_symbol_found": true,
           "sha256": "7f1d9d554b4c72e09655753bb53de8d2b5bbd3a0a7eb7eb499157edefbac71ff"
         },
         {
-          "id": "AC09",
           "path": "LogForesight.Tests/PrtgBackfillRunnerTests.cs",
           "symbol": "PrtgBackfillRunnerTests",
           "role": "runner tests",
+          "exists_and_symbol_found": true,
           "sha256": "e005e9cd556d33775b86775218732e04afa070b822b53a2ba092bdb06a1191d9"
         },
         {
-          "id": "AC09",
           "path": "LogForesight.Tests/PrtgSelectedBackfillServiceTests.cs",
           "symbol": "PrtgSelectedBackfillServiceTests",
           "role": "selected path tests",
+          "exists_and_symbol_found": true,
           "sha256": "c6034cd2ce94de80a08b3d143987da37b76ef45ea2e1363d2406b531e893eb53"
         },
         {
-          "id": "AC09",
           "path": "LogForesight.Core/Service/PrtgFullBackfillPlan.cs",
           "symbol": "PrtgFullBackfillPlan",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "4bc7f17bc6ba73272cf8d502fcb89db028be90aca9f867408c20aaf806706f34"
         },
         {
-          "id": "AC09",
           "path": "LogForesight.Tests/PrtgFullBackfillPreviewServiceTests.cs",
           "symbol": "PrtgFullBackfillPreviewServiceTests",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "135ea31e36321ec6ae2e64fe83b0f9497594d9abb8899c11520cedcb337bf193"
         },
         {
-          "id": "AC09",
           "path": "LogForesight.Tests/PrtgBackfillAuthorizationControllerTests.cs",
           "symbol": "PrtgBackfillAuthorizationControllerTests",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "3e0e0b7823d90723663abe21bec6a652dba4611e1a91234145e9e73481887ddf"
         },
         {
-          "id": "AC09",
           "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
           "symbol": "bindPrtgBackfill",
           "role": "current round verified backfill implementation/test",
-          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+          "exists_and_symbol_found": true,
+          "sha256": "4a8af372f8270f751026e199107bddcc82cddfef5a3adfc0d9d5fed949df3a6d"
         },
         {
-          "id": "AC09",
           "path": "scripts/tests/Verify-PrtgRunsBackfillCancel.ContractTests.mjs",
           "symbol": "selected supplies displayed exact run ID",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b"
         }
       ],
       "AC10": [
         {
-          "id": "AC10",
           "path": "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
           "symbol": "PrtgResourcePeriodConsumer",
           "role": "period consumer",
+          "exists_and_symbol_found": true,
           "sha256": "e94232e5d151e59a8df5a7e7fbb964eec5e1a11e9987f20fa948619360c70b7f"
         },
         {
-          "id": "AC10",
           "path": "LogForesight.Core/Service/PrtgDiskTrendEvaluator.cs",
           "symbol": "PrtgDiskTrendEvaluator",
           "role": "disk evaluator",
+          "exists_and_symbol_found": true,
           "sha256": "80c8b8b42cc339acbf41f91af2fdc75f6c3f600a84d1cbed2ff9b92c497267e5"
         },
         {
-          "id": "AC10",
           "path": "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs",
           "symbol": "PrtgFormalRuleCaseManifestTests",
           "role": "case manifest",
+          "exists_and_symbol_found": true,
           "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
+        },
+        {
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "FixedManifestCaseCrossesDailyAiAndMailConsumers",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "exists_and_symbol_found": true,
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "AC11": [
         {
-          "id": "AC11",
           "path": "LogForesight.Core/Analysis/PrtgCorroboration.cs",
           "symbol": "PrtgCorroboration",
           "role": "matching",
+          "exists_and_symbol_found": true,
           "sha256": "46a8c72bde17d437d624e3ef903d69d72e5507b5a1fd352565398ef5d0e29d7b"
         },
         {
-          "id": "AC11",
           "path": "LogForesight.Core/Analysis/SentinelEventMapper.cs",
           "symbol": "SentinelEventMapper",
           "role": "NetIQ mapping",
+          "exists_and_symbol_found": true,
           "sha256": "f2dfba3c765acb0d33148eeea4dcc0d9fe3cf5f9774fb773f3c6a193cb5b3f46"
         },
         {
-          "id": "AC11",
           "path": "LogForesight.Tests/PrtgCorroborationTests.cs",
           "symbol": "PrtgCorroborationTests",
           "role": "matching tests",
+          "exists_and_symbol_found": true,
           "sha256": "c9f85e1d288d2a765c06c41260bfacad977fec60e8fb803b23cbc09f2941d813"
         },
         {
-          "id": "AC11",
           "path": "LogForesight.Tests/NetiqEvidenceMetadataProbeTests.cs",
           "symbol": "NetiqEvidenceMetadataProbeTests",
           "role": "shape-only probe tests",
+          "exists_and_symbol_found": true,
           "sha256": "8fb9f7eb0153dc44ec46e9f84d2152a0943e80d7520c4c799d289d7161cd1e25"
+        },
+        {
+          "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
+          "symbol": "RecordBatch",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "exists_and_symbol_found": true,
+          "sha256": "5b14e3e829e6d27cfd03d41c2b3e6cf0c4c870197a3f2355c5bf4dd7d25e690f"
+        },
+        {
+          "path": "LogForesight.Tests/NetiqPipelineBaselineTests.cs",
+          "symbol": "retained-incomplete",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "exists_and_symbol_found": true,
+          "sha256": "0c4e6c7479fbeeebb55176f1c0cbec04e7ec498826708508067ae662a97606b9"
         }
       ],
       "AC12": [
         {
-          "id": "AC12",
           "path": "LogForesight.Core/Service/PrtgSupplementReplay.cs",
           "symbol": "PrtgSupplementReplay",
           "role": "supplement replay",
+          "exists_and_symbol_found": true,
           "sha256": "350e82f51b8ae61f26322d6fa8d485539bb37eca793ced64f72234e4acc2995e"
         },
         {
-          "id": "AC12",
           "path": "LogForesight.Tests/PrtgSupplementReplayTests.cs",
           "symbol": "PrtgSupplementReplayTests",
           "role": "replay tests",
+          "exists_and_symbol_found": true,
           "sha256": "43996b431ea55049aab594901e8766024f45527ceb04df3c2105ce52f4420f31"
         },
         {
-          "id": "AC12",
           "path": "LogForesight.Tests/PrtgResourceModeReplayWorkerTests.cs",
           "symbol": "PrtgDiskFormalFlowTests",
           "role": "mode replay tests",
+          "exists_and_symbol_found": true,
           "sha256": "9b8faac5b40e5813b2aa4154879d4dc9b1694e5fff16d63113b55e6993d47f40"
+        },
+        {
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "PrtgRuleConsumerAcceptanceTests",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "exists_and_symbol_found": true,
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "AC13": [
         {
-          "id": "AC13",
           "path": "LogForesight.Core/Service/RiskReportService.cs",
           "symbol": "RiskReportService",
           "role": "report producer",
+          "exists_and_symbol_found": true,
           "sha256": "253fd62d51e8afdd4665c297910a2578eeed17732aa8b42fd66ea0c469f79f15"
         },
         {
-          "id": "AC13",
           "path": "LogForesight.Tests/HostDetailPrtgScopedQueryTests.cs",
           "symbol": "HostDetailPrtgScopedQueryTests",
           "role": "scoped evidence tests",
+          "exists_and_symbol_found": true,
           "sha256": "d8e517c684c5867f8a85fbff7be96afa18c45c9b91a5ba92472f3fe0af1d4028"
         },
         {
-          "id": "AC13",
           "path": "LogForesight.Tests/RiskReportServiceTests.cs",
           "symbol": "RiskReportServiceTests",
           "role": "report tests",
+          "exists_and_symbol_found": true,
           "sha256": "9e7b740907746023b5cfd720ab275c11ec42b4a58154b1d1881d029849f28ce2"
         }
       ],
       "AC14": [
         {
-          "id": "AC14",
           "path": "LogForesight.Core/Persistence/IssueCaseCoordinator.cs",
           "symbol": "IssueCaseCoordinator",
           "role": "case workflow",
+          "exists_and_symbol_found": true,
           "sha256": "b4b34127535fe527b697c097253e7e365ccd9d01846c1d5843d115d4e834819f"
         },
         {
-          "id": "AC14",
           "path": "LogForesight.Core/Persistence/WorkOrderCoordinator.cs",
           "symbol": "WorkOrderCoordinator",
           "role": "work-order workflow",
+          "exists_and_symbol_found": true,
           "sha256": "16fe1c35b187dabe2c914a539e3329b9ba81577a411f1687ea38dd2eb7871c96"
         },
         {
-          "id": "AC14",
           "path": "LogForesight.Tests/IssueCaseCoordinatorTests.cs",
           "symbol": "IssueCaseCoordinatorTests",
           "role": "case tests",
+          "exists_and_symbol_found": true,
           "sha256": "d3e9a720e6b6f2f12bff9ad159bfb5fe1f56f7e4d04696dd219052b0f75f4b83"
+        },
+        {
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "FixedManifestCaseCrossesDailyAiAndMailConsumers",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "exists_and_symbol_found": true,
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "AC15": [
         {
-          "id": "AC15",
           "path": "LogForesight.Web/Services/Mail/MailNotificationService.cs",
           "symbol": "MailNotificationService",
           "role": "notification consumer",
+          "exists_and_symbol_found": true,
           "sha256": "1b236213d1dc2d36953ee3ee4d6e19b58323a5519a48cb8b2a11bd3f7e356361"
         },
         {
-          "id": "AC15",
           "path": "LogForesight.Tests/PrtgFormalMailStartClaimTests.cs",
           "symbol": "PrtgFormalMailStartClaimTests",
           "role": "durable claim tests",
+          "exists_and_symbol_found": true,
           "sha256": "b851eefd91a9894ab6b5cd54cac70fb9d8d375225f323a992580b3d9a023236c"
         },
         {
-          "id": "AC15",
           "path": "LogForesight.Tests/PrtgSmtpProtocolAcceptanceTests.cs",
           "symbol": "PrtgSmtpProtocolAcceptanceTests",
           "role": "SMTP tests",
+          "exists_and_symbol_found": true,
           "sha256": "25711735e69cbcee6f98f4d89b17396b0a68d372d3bdf04edd97cdd52e1712be"
+        },
+        {
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "FixedManifestCaseCrossesDailyAiAndMailConsumers",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "exists_and_symbol_found": true,
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "AC16": [
         {
-          "id": "AC16",
           "path": "LogForesight.Web/Services/SchedulerHostedService.cs",
           "symbol": "SchedulerHostedService",
           "role": "scheduler",
+          "exists_and_symbol_found": true,
           "sha256": "fc4fa00c98c4cd420f562f5ee903845ac72b7540f6bbf7ea0e8a5c62e133e5fd"
         },
         {
-          "id": "AC16",
           "path": "LogForesight.Web/Services/SchedulerRunState.cs",
           "symbol": "SchedulerRunState",
           "role": "run state",
+          "exists_and_symbol_found": true,
           "sha256": "4117f3cde6906cb2741ed5d7eb84a6e7cec5de62f4e994d5602bf1b4283876e6"
         },
         {
-          "id": "AC16",
           "path": "LogForesight.Tests/SchedulerRunStateTests.cs",
           "symbol": "SchedulerRunStateTests",
           "role": "state tests",
+          "exists_and_symbol_found": true,
           "sha256": "66764aebfd92cdc0256982dfe1e541216ae5a69f5a5fe0f276783539012282ef"
         },
         {
-          "id": "AC16",
           "path": "LogForesight.Tests/PrtgPartialWorkflowContractTests.cs",
           "symbol": "PrtgPartialWorkflowContractTests",
           "role": "workflow contract tests",
+          "exists_and_symbol_found": true,
           "sha256": "f9eea0ab070ad5ac351a3bf2e19544bd74b361ba1bebb9a488652cd4f404ca26"
+        },
+        {
+          "path": "LogForesight.Web/Controllers/Api/ScheduleController.cs",
+          "symbol": "retryAttemptHostIds",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "exists_and_symbol_found": true,
+          "sha256": "0f7d5c91f582dabae867af1b4e019115fc734c16b3b792c212778d6eb8653692"
+        },
+        {
+          "path": "LogForesight.Tests/ScheduleRunPreviewNetiqAttemptTests.cs",
+          "symbol": "ScheduleRunPreviewNetiqAttemptTests",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "exists_and_symbol_found": true,
+          "sha256": "114f0b8277766c2dfbe483465828ce356aea864d0d84c9a1b1ab05a0188af34e"
         }
       ],
       "AC17": [
         {
-          "id": "AC17",
           "path": "LogForesight.Core/Service/PrtgResourceGuard.cs",
           "symbol": "PrtgResourceGuard",
           "role": "guard",
+          "exists_and_symbol_found": true,
           "sha256": "3e08218db6ad2e42e5606f086a87521d145d8a32c0ec41bf41f9747f1f3f00e6"
         },
         {
-          "id": "AC17",
           "path": "LogForesight.Tests/PrtgResourceGuardTests.cs",
           "symbol": "PrtgResourceGuardTests",
           "role": "guard tests",
+          "exists_and_symbol_found": true,
           "sha256": "abae7609802addadeda4961b9ce45c1b968e4bf016b52594acbcf2141e49fac5"
         },
         {
-          "id": "AC17",
           "path": "LogForesight.Tests/HealthPrtgSnapshotTests.cs",
           "symbol": "HealthPrtgSnapshotTests",
           "role": "health tests",
+          "exists_and_symbol_found": true,
           "sha256": "b591edaf0f6a236529ad04dcc865d9109bede621bfff48692af423ff7835246d"
+        },
+        {
+          "path": "LogForesight.Tests/PrtgControlledUsefulnessReplayTests.cs",
+          "symbol": "PrtgControlledUsefulnessReplayTests",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "exists_and_symbol_found": true,
+          "sha256": "0d30ced969ea681514ae2b466cf6328eb34b852da2fa1b4a1723b0607c1c8c20"
         }
       ],
       "AC18": [
         {
-          "id": "AC18",
           "path": "LogForesight.Core/Service/PrtgDiagnosticExportWriter.cs",
           "symbol": "PrtgDiagnosticExportWriter",
           "role": "export writer",
+          "exists_and_symbol_found": true,
           "sha256": "fae4bcadb0b816491d241ddbc50e298212321174acba0dec385e40804d09d640"
         },
         {
-          "id": "AC18",
           "path": "LogForesight.Core/Service/PrtgDataTransfer.cs",
           "symbol": "PrtgDataTransfer",
           "role": "transfer contract",
+          "exists_and_symbol_found": true,
           "sha256": "d3731002923a78e95cb0086974e54471dc951aa6b9b3bfdc9d39046273597c87"
         },
         {
-          "id": "AC18",
           "path": "LogForesight.Tests/PrtgDiagnosticImportIsolationTests.cs",
           "symbol": "PrtgDiagnosticImportIsolationTests",
           "role": "import isolation tests",
+          "exists_and_symbol_found": true,
           "sha256": "4660e5134d41171fd208b31b1db9ad9af4151d6c8b932c6b4e6ce49f7eb8a5ff"
         },
         {
-          "id": "AC18",
           "path": "LogForesight.Tests/PrtgDiagnosticExportSourceTests.cs",
           "symbol": "PrtgDiagnosticExportSourceTests",
           "role": "export tests",
+          "exists_and_symbol_found": true,
           "sha256": "a75c95161ad8d83e2507c5e57eb7f64390945a65a996cd8edbd2cb9f2a539389"
         }
       ],
       "AC19": [
         {
-          "id": "AC19",
           "path": "LogForesight.Core/Service/RetentionPruner.cs",
           "symbol": "RetentionPruner",
           "role": "cleanup core",
-          "sha256": "0727ef3f4aac3552bde8c1c0c6ba8d1689ee4ef01eab262bdfe76586c64d4d4e"
+          "exists_and_symbol_found": true,
+          "sha256": "8f286f29883c278a323b00a07b7bfe02c10eeed771ed0c1cc3f60b0ab8f8fb3d"
         },
         {
-          "id": "AC19",
           "path": "LogForesight.Tests/RetentionPrunerTests.cs",
           "symbol": "RetentionPrunerTests",
           "role": "retention tests",
+          "exists_and_symbol_found": true,
           "sha256": "0bccd741ed42174e85c07846f41668f8a6be63f0de39b58842468f16c16c0577"
         },
         {
-          "id": "AC19",
           "path": "LogForesight.Tests/PrtgDiagnosticRetentionTests.cs",
           "symbol": "PrtgDiagnosticRetentionTests",
           "role": "diagnostic retention tests",
+          "exists_and_symbol_found": true,
           "sha256": "a5893f94f69e2d3f3424517739a1ad6834f945e792528371d7bf2a1d2c949b7e"
+        },
+        {
+          "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
+          "symbol": "Prune",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "exists_and_symbol_found": true,
+          "sha256": "5b14e3e829e6d27cfd03d41c2b3e6cf0c4c870197a3f2355c5bf4dd7d25e690f"
         }
       ],
       "AC20": [
         {
-          "id": "AC20",
           "path": "LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs",
           "symbol": "SchemaUpgrader",
           "role": "upgrade path",
+          "exists_and_symbol_found": true,
           "sha256": "d4924be049415e2917d4edf059d3b161004f6ddcad05ca55d83c49f0a025d71c"
         },
         {
-          "id": "AC20",
           "path": "LogForesight.Core/Persistence/Sql/EfPrtgTransferStore.cs",
           "symbol": "EfPrtgTransferStore",
           "role": "durable transfer store",
+          "exists_and_symbol_found": true,
           "sha256": "b48ae9eeca8b826b32692c58a2c17821fab9df603ba68ebe5f571bdc75f72487"
         },
         {
-          "id": "AC20",
           "path": "LogForesight.Tests/SchemaUpgraderPrtgTests.cs",
           "symbol": "SchemaUpgraderPrtgTests",
           "role": "schema tests",
+          "exists_and_symbol_found": true,
           "sha256": "16236ec811a363ff68df0f7e26db36a34d1d8b883e0626874de7062e3a7ee359"
         },
         {
-          "id": "AC20",
           "path": "LogForesight.Tests/PrtgTransferStoreTests.cs",
           "symbol": "PrtgTransferStoreTests",
           "role": "persistence tests",
+          "exists_and_symbol_found": true,
           "sha256": "8626219849c33d39e0e06bc8157ba2188b13b4dbecf4bd0e65cd17d7120394db"
         }
       ],
       "AC21": [
         {
-          "id": "AC21",
           "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
           "symbol": "PrtgMonitoringController",
           "role": "visibility API",
+          "exists_and_symbol_found": true,
           "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
         },
         {
-          "id": "AC21",
           "path": "LogForesight.Web/Controllers/Api/PrtgResourcePressureController.cs",
           "symbol": "PrtgResourcePressureController",
           "role": "resource ACL API",
+          "exists_and_symbol_found": true,
           "sha256": "1f2f42f09c51d36949a6b22c2319a9df75487b76a6636032f417d1daddb3e098"
         },
         {
-          "id": "AC21",
           "path": "LogForesight.Tests/PrtgResourcePressureAuthorizationEndToEndTests.cs",
           "symbol": "PrtgResourcePressureAuthorizationEndToEndTests",
           "role": "authorization tests",
+          "exists_and_symbol_found": true,
           "sha256": "ba2ee546e92ddb7765f1e649778a6758ec456abd7024a4b7c23ca16a29eae27d"
         },
         {
-          "id": "AC21",
           "path": "LogForesight.Tests/PrtgDiskVisibilityAuthorizationTests.cs",
           "symbol": "PrtgDiskVisibilityAuthorizationTests",
           "role": "visibility tests",
+          "exists_and_symbol_found": true,
           "sha256": "acb386a3541d16d76db10bca2ebba65ad6e5ca68d531ad0a45708f0665156d17"
         },
         {
-          "id": "AC21",
           "path": "LogForesight.Core/Service/PrtgFullBackfillPlan.cs",
           "symbol": "PrtgFullBackfillPlan",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "4bc7f17bc6ba73272cf8d502fcb89db028be90aca9f867408c20aaf806706f34"
         },
         {
-          "id": "AC21",
           "path": "LogForesight.Tests/PrtgFullBackfillPreviewServiceTests.cs",
           "symbol": "PrtgFullBackfillPreviewServiceTests",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "135ea31e36321ec6ae2e64fe83b0f9497594d9abb8899c11520cedcb337bf193"
         },
         {
-          "id": "AC21",
           "path": "LogForesight.Tests/PrtgBackfillAuthorizationControllerTests.cs",
           "symbol": "PrtgBackfillAuthorizationControllerTests",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "3e0e0b7823d90723663abe21bec6a652dba4611e1a91234145e9e73481887ddf"
         },
         {
-          "id": "AC21",
           "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
           "symbol": "bindPrtgBackfill",
           "role": "current round verified backfill implementation/test",
-          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+          "exists_and_symbol_found": true,
+          "sha256": "4a8af372f8270f751026e199107bddcc82cddfef5a3adfc0d9d5fed949df3a6d"
         },
         {
-          "id": "AC21",
           "path": "scripts/tests/Verify-PrtgRunsBackfillCancel.ContractTests.mjs",
           "symbol": "selected supplies displayed exact run ID",
           "role": "current round verified backfill implementation/test",
+          "exists_and_symbol_found": true,
           "sha256": "4e930fa2a11b4fda2c53152399fea6cc626d9a053bd8fcf061633790350c179b"
         }
       ],
       "AC22": [
         {
-          "id": "AC22",
           "path": "LogForesight.Web/Services/HelpContentService.cs",
           "symbol": "HelpContentService",
           "role": "help content",
+          "exists_and_symbol_found": true,
           "sha256": "d71974104015cb52a6932bb487314fc4473d82a44bbf210014e9937c41b7bb5a"
         },
         {
-          "id": "AC22",
           "path": "LogForesight.Tests/HelpAndHistoryTests.cs",
           "symbol": "HelpAndHistoryTests",
           "role": "help tests",
+          "exists_and_symbol_found": true,
           "sha256": "3f76b64a3f0e9acdcfeba7a04871ff79b5cb2fa8cf60b79401fc31ae5da80343"
         },
         {
-          "id": "AC22",
           "path": "LogForesight.Tests/HelpNavigationConsistencyTests.cs",
           "symbol": "HelpNavigationConsistencyTests",
           "role": "navigation tests",
+          "exists_and_symbol_found": true,
           "sha256": "aca039d6db4ce30549fbb2a94d4b0e55a6577d2acd38e1f2aa1375a552d6eb3f"
+        },
+        {
+          "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
+          "symbol": "updateRunNowAiDisabledHint",
+          "role": "bounded NetIQ retry status or actionable operator flow",
+          "exists_and_symbol_found": true,
+          "sha256": "4a8af372f8270f751026e199107bddcc82cddfef5a3adfc0d9d5fed949df3a6d"
         }
       ],
       "R01": [
         {
-          "id": "R01",
           "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
           "symbol": "PrtgMonitoringController",
           "role": "API",
+          "exists_and_symbol_found": true,
           "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
         },
         {
-          "id": "R01",
           "path": "LogForesight.Core/Persistence/PrtgHostSnapshot.cs",
           "symbol": "PrtgHostSnapshot",
           "role": "snapshot",
+          "exists_and_symbol_found": true,
           "sha256": "2cf8b48c470805805aa229c8d4395e4e1fd561360a00e7b33804344fe4f20e59"
         },
         {
-          "id": "R01",
           "path": "LogForesight.Tests/PrtgHostVisibilitySnapshotTests.cs",
           "symbol": "PrtgHostVisibilitySnapshotTests",
           "role": "visibility tests",
+          "exists_and_symbol_found": true,
           "sha256": "2b0eea45fd096aa9505136e000644abd9f68f863a107b0536b682576bba0d683"
         }
       ],
       "R02": [
         {
-          "id": "R02",
           "path": "LogForesight.Web/Services/PrtgSensorTimelineConsumer.cs",
           "symbol": "PrtgSensorTimelineConsumer",
           "role": "incremental consumer",
+          "exists_and_symbol_found": true,
           "sha256": "309e84b679d147132ea85903adae3632bbf780e412c6d7e3561991f36243cf8d"
         },
         {
-          "id": "R02",
           "path": "LogForesight.Tests/PrtgSensorTimelineCollectorTests.cs",
           "symbol": "PrtgSensorTimelineCollectorTests",
           "role": "collector tests",
+          "exists_and_symbol_found": true,
           "sha256": "3c5971e076cad8b8a4d55df3626f23f40b60aec8229d6c5e00ecd97ca612219a"
         },
         {
-          "id": "R02",
           "path": "LogForesight.Tests/PrtgFetchServiceTests.cs",
           "symbol": "PrtgFetchServiceTests",
           "role": "fetch tests",
+          "exists_and_symbol_found": true,
           "sha256": "39a4f14d287aa448acf9c1662d37e39e5df17522995b847e4dad7c28e6958ceb"
         }
       ],
       "R03": [
         {
-          "id": "R03",
           "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
           "symbol": "PrtgSnapshotHostedService",
           "role": "producer",
-          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+          "exists_and_symbol_found": true,
+          "sha256": "2eadeeff8faa109c0d2b5a08f1e0b4754308ee3cdc82f8ca957e2f303d5e76b5"
         },
         {
-          "id": "R03",
           "path": "LogForesight.Web/Services/PrtgSnapshotJournal.cs",
           "symbol": "PrtgSnapshotJournal",
           "role": "journal",
+          "exists_and_symbol_found": true,
           "sha256": "1e87d3b7e7cf3e605f60a718ae0eb4da1eedeec2c7b2c06920b14d31d58a080c"
         },
         {
-          "id": "R03",
           "path": "LogForesight.Tests/PrtgSnapshotJournalTests.cs",
           "symbol": "PrtgSnapshotJournalTests",
           "role": "journal tests",
+          "exists_and_symbol_found": true,
           "sha256": "071f7519a9b7bb921fd2e8f7ef6e187c717a81ca9fc0ec1fe256cac02a97796c"
         },
         {
-          "id": "R03",
           "path": "LogForesight.Tests/PrtgResourceIdentityStoreTests.cs",
           "symbol": "PrtgResourceIdentityStoreTests",
           "role": "identity tests",
+          "exists_and_symbol_found": true,
           "sha256": "cd8415be12c144ebdf7da43f1b1201f20d7473a4d4c68735624949c7aa740c5a"
         }
       ],
       "R04": [
         {
-          "id": "R04",
           "path": "LogForesight.Core/Service/PrtgTrustedSamplingProfileResolver.cs",
           "symbol": "PrtgTrustedSamplingProfileResolver",
           "role": "profile",
+          "exists_and_symbol_found": true,
           "sha256": "e981efc30de3fb0e05f41bb1815d518c89d22f6f05a9d67e486d7e34facec78c"
         },
         {
-          "id": "R04",
           "path": "LogForesight.Core/Persistence/PrtgTrustedSamplingBindingStore.cs",
           "symbol": "PrtgTrustedSamplingBindingStore",
           "role": "binding",
+          "exists_and_symbol_found": true,
           "sha256": "9448fb584137f1e1077a6f06b444f73c378ce63bd69d5093f03616b4da9907e8"
         },
         {
-          "id": "R04",
           "path": "LogForesight.Tests/PrtgTrustedSamplingBindingStoreTests.cs",
           "symbol": "PrtgTrustedSamplingBindingStoreTests",
           "role": "binding tests",
+          "exists_and_symbol_found": true,
           "sha256": "71491a2e7c8529e43a7e4e20a9b4a72e85689d1e04026a116611e0abaf3394bf"
         },
         {
-          "id": "R04",
           "path": "LogForesight.Tests/PrtgTrustedSamplingProbeServiceTests.cs",
           "symbol": "PrtgTrustedSamplingProbeServiceTests",
           "role": "probe tests",
+          "exists_and_symbol_found": true,
           "sha256": "4af3b0c4be902101a51dce04a2187111971c13cf37aaf6a126cfe95f083140f4"
         }
       ],
       "R05": [
         {
-          "id": "R05",
           "path": "LogForesight.Web/Services/PrtgProfileTransportCapacityPilot.cs",
           "symbol": "PrtgProfileTransportCapacityPilot",
           "role": "capacity pilot",
+          "exists_and_symbol_found": true,
           "sha256": "92074e70185659440f01fe20bba54bfffcfbbf54d579b2558c0784e37a342b2d"
         },
         {
-          "id": "R05",
           "path": "LogForesight.Web/Services/PrtgCapacityRuntimeAdmission.cs",
           "symbol": "PrtgCapacityRuntimeAdmission",
           "role": "runtime admission",
+          "exists_and_symbol_found": true,
           "sha256": "c38d14f6beb92f41205e74fc4a982df3485bca1f44747b8bf780b4c044aaa7a3"
         },
         {
-          "id": "R05",
           "path": "LogForesight.Core/Service/PrtgRequestBudget.cs",
           "symbol": "PrtgRequestBudget",
           "role": "shared budget",
+          "exists_and_symbol_found": true,
           "sha256": "c6067e7893c0932efe3098a92d933337d610b7be76b072b830ab70e08935272f"
         },
         {
-          "id": "R05",
           "path": "LogForesight.Tests/PrtgCapacityPurposeAndProfileTransportTests.cs",
           "symbol": "PrtgCapacityPurposeAndProfileTransportTests",
           "role": "capacity tests",
+          "exists_and_symbol_found": true,
           "sha256": "d073acdc926062f35e7ef2a925528c48c86dffa711657d392fc96f30593627c3"
         }
       ],
       "R06": [
         {
-          "id": "R06",
           "path": "LogForesight.Core/Service/PrtgCoveredStateTimeline.cs",
           "symbol": "PrtgCoveredStateTimeline",
           "role": "timeline",
+          "exists_and_symbol_found": true,
           "sha256": "34639fe9abc1216a236845721d6947ef85d61523761b1491384f3e7612e58394"
         },
         {
-          "id": "R06",
           "path": "LogForesight.Core/Service/PrtgCoveredRuleEvaluator.cs",
           "symbol": "PrtgCoveredRuleEvaluator",
           "role": "rules",
+          "exists_and_symbol_found": true,
           "sha256": "21c7b854fde0ed2d5b70f862dbec9f02e7abfe47b142abc7fe5ebbdde87f9254"
         },
         {
-          "id": "R06",
           "path": "LogForesight.Tests/PrtgCoveredStateTimelineTests.cs",
           "symbol": "PrtgCoveredStateTimelineTests",
           "role": "timeline cases",
+          "exists_and_symbol_found": true,
           "sha256": "bbebc741720da8b95844fad6af5a9b4376f07abfc2ae8a36352c0f237164c6dc"
         },
         {
-          "id": "R06",
           "path": "LogForesight.Tests/PrtgCoveredRuleEvaluatorTests.cs",
           "symbol": "PrtgCoveredRuleEvaluatorTests",
           "role": "rule cases",
+          "exists_and_symbol_found": true,
           "sha256": "a58c17741f80407497e392f961c0c56fcaf864752226ec1541ab64a1d8411395"
         }
       ],
       "R07": [
         {
-          "id": "R07",
           "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
           "symbol": "PrtgDailyPipeline",
           "role": "mode-aware analysis",
+          "exists_and_symbol_found": true,
           "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
         },
         {
-          "id": "R07",
           "path": "LogForesight.Core/Service/PrtgSupplementReplay.cs",
           "symbol": "PrtgSupplementReplay",
           "role": "replay",
+          "exists_and_symbol_found": true,
           "sha256": "350e82f51b8ae61f26322d6fa8d485539bb37eca793ced64f72234e4acc2995e"
         },
         {
-          "id": "R07",
           "path": "LogForesight.Tests/PrtgDailyModeOffWithdrawalIntegrationTests.cs",
           "symbol": "PrtgDiskFormalFlowTests",
           "role": "withdrawal integration",
+          "exists_and_symbol_found": true,
           "sha256": "9c82fcc55836b0326c7fbccdaaa5a78c84dbff7a76903e42b3baf27e784bdb78"
         },
         {
-          "id": "R07",
           "path": "LogForesight.Tests/PrtgResourceModeRevocationAtomicTests.cs",
           "symbol": "PrtgResourceModeRevocationAtomicTests",
           "role": "atomic tests",
+          "exists_and_symbol_found": true,
           "sha256": "826813d56f86aaeb68acda06f2d78c069eb2523e4d51856c2d5ec071beee4518"
         }
       ],
       "R08": [
         {
-          "id": "R08",
           "path": "LogForesight.Core/Service/AnalysisOrchestrator.cs",
           "symbol": "AnalysisOrchestrator",
           "role": "orchestration",
-          "sha256": "b88cf3ad0c2f9660f2dcb0d88c743a465a9655ca10a0815ef97911d1714fdfdd"
+          "exists_and_symbol_found": true,
+          "sha256": "a1db3e31e5f27a3ab70b633c67afb87f3140b47fc07e9915a3b085f67eee621a"
         },
         {
-          "id": "R08",
           "path": "LogForesight.Web/Services/HostDayWorkflowRecoveryHostedService.cs",
           "symbol": "HostDayWorkflowRecoveryHostedService",
           "role": "recovery",
+          "exists_and_symbol_found": true,
           "sha256": "96006455b6e38f62dd2ed4f6c6bc1bef479135bebe98e8554b7f3bc0857e0d72"
         },
         {
-          "id": "R08",
           "path": "LogForesight.Tests/HostDayWorkflowRecoveryRevisionTests.cs",
           "symbol": "HostDayWorkflowRecoveryRevisionTests",
           "role": "revision recovery",
+          "exists_and_symbol_found": true,
           "sha256": "1f9213bf595dc87cb68878803b34f168f3df9c4a2701e45540c6f6d4bc59557d"
         },
         {
-          "id": "R08",
           "path": "LogForesight.Tests/HostDayWorkflowRecoveryHostedServiceTests.cs",
           "symbol": "HostDayWorkflowRecoveryHostedServiceTests",
           "role": "hosted recovery",
+          "exists_and_symbol_found": true,
           "sha256": "4dfe5b007ed6b89beb53cc9d6fb29cc8374b4001f70764402174016a58f54b44"
         }
       ],
       "R09": [
         {
-          "id": "R09",
           "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
           "symbol": "PrtgSnapshotHostedService",
           "role": "sampling/refresh scheduler",
-          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+          "exists_and_symbol_found": true,
+          "sha256": "2eadeeff8faa109c0d2b5a08f1e0b4754308ee3cdc82f8ca957e2f303d5e76b5"
         },
         {
-          "id": "R09",
           "path": "LogForesight.Tests/PrtgAtomicReconciliationAttachTests.cs",
           "symbol": "PrtgAtomicReconciliationAttachTests",
           "role": "atomic reconciliation tests",
+          "exists_and_symbol_found": true,
           "sha256": "f19ee8b0c3f29ae3006c50f7f0c64be1789a8db736521d14642152ad9a621032"
         },
         {
-          "id": "R09",
           "path": "LogForesight.Tests/PrtgSnapshotHostedServiceTests.cs",
           "symbol": "PrtgSnapshotHostedServiceTests",
           "role": "hosted tests",
-          "sha256": "4d3d16e8e5ce4dff54a262bc755e30385d9fee5524957c01e83a22a94b95c95e"
+          "exists_and_symbol_found": true,
+          "sha256": "26f242492c1bef5165f0a18c13c5eb0b5749a69f116e2f7e7ecc0ed2f17b98ae"
         }
       ],
       "R10": [
         {
-          "id": "R10",
           "path": "LogForesight.Web/Controllers/Api/PrtgMonitoringController.cs",
           "symbol": "PrtgMonitoringController",
           "role": "range endpoint",
+          "exists_and_symbol_found": true,
           "sha256": "12bee06c38bd5e5e302ae18bb314fa3a43c9a7da8296fba58422a42ec96999ef"
         },
         {
-          "id": "R10",
           "path": "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs",
           "symbol": "EfPrtgStore",
           "role": "range store",
+          "exists_and_symbol_found": true,
           "sha256": "cd8441bddf75dcf88c12095e0336c5ee6394db4f8cee2825febd4435cf773429"
         },
         {
-          "id": "R10",
           "path": "LogForesight.Tests/PrtgFetchScopeEstimateEndpointTests.cs",
           "symbol": "PrtgFetchScopeEstimateEndpointTests",
           "role": "estimate endpoint",
+          "exists_and_symbol_found": true,
           "sha256": "2463f11c9323432edf5c18d66f21ee6b0b0f921bf3dc5ead0a3514c373aa8ab5"
         },
         {
-          "id": "R10",
           "path": "LogForesight.Tests/PrtgBackfillRangeRunnerTests.cs",
           "symbol": "PrtgBackfillRangeRunnerTests",
           "role": "range tests",
+          "exists_and_symbol_found": true,
           "sha256": "d4ceba55af5ddc1ce219fea2a706bdfd9b05db3efca20ccbccb66536ea2fe1b9"
         }
       ],
       "R11": [
         {
-          "id": "R11",
           "path": "LogForesight.Core/Service/PrtgDataTransfer.cs",
           "symbol": "PrtgDataTransfer",
           "role": "transfer",
+          "exists_and_symbol_found": true,
           "sha256": "d3731002923a78e95cb0086974e54471dc951aa6b9b3bfdc9d39046273597c87"
         },
         {
-          "id": "R11",
           "path": "LogForesight.Core/Persistence/Sql/EfPrtgTransferStore.cs",
           "symbol": "EfPrtgTransferStore",
           "role": "durable store",
+          "exists_and_symbol_found": true,
           "sha256": "b48ae9eeca8b826b32692c58a2c17821fab9df603ba68ebe5f571bdc75f72487"
         },
         {
-          "id": "R11",
           "path": "LogForesight.Web/Controllers/Api/PrtgTransferController.cs",
           "symbol": "PrtgTransferController",
           "role": "HTTP consumer",
+          "exists_and_symbol_found": true,
           "sha256": "386617522fdce33f892933babbb86ca8f8685427af68773f998e6ec666a62d12"
         },
         {
-          "id": "R11",
           "path": "LogForesight.Tests/PrtgTransferStoreTests.cs",
           "symbol": "PrtgTransferStoreTests",
           "role": "persistence tests",
+          "exists_and_symbol_found": true,
           "sha256": "8626219849c33d39e0e06bc8157ba2188b13b4dbecf4bd0e65cd17d7120394db"
         }
       ],
       "R12": [
         {
-          "id": "R12",
           "path": "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs",
           "symbol": "EfPrtgStore",
           "role": "import/formal store fence",
+          "exists_and_symbol_found": true,
           "sha256": "cd8441bddf75dcf88c12095e0336c5ee6394db4f8cee2825febd4435cf773429"
         },
         {
-          "id": "R12",
           "path": "LogForesight.Tests/PrtgDiagnosticImportIsolationTests.cs",
           "symbol": "PrtgDiagnosticImportIsolationTests",
           "role": "quarantine tests",
+          "exists_and_symbol_found": true,
           "sha256": "4660e5134d41171fd208b31b1db9ad9af4151d6c8b932c6b4e6ce49f7eb8a5ff"
         },
         {
-          "id": "R12",
           "path": "LogForesight.Tests/PrtgDataTransferTests.cs",
           "symbol": "PrtgDataTransferTests",
           "role": "transfer tests",
+          "exists_and_symbol_found": true,
           "sha256": "3de740d6e7fe088daecd814042b88e4eb999b6a0f42d6da73b607aec3ee82bf6"
         }
       ],
       "R13": [
         {
-          "id": "R13",
           "path": "LogForesight.Core/Service/PrtgSilentPresenceFormalConsumer.cs",
           "symbol": "PrtgSilentPresenceFormalConsumer",
           "role": "formal consumer",
+          "exists_and_symbol_found": true,
           "sha256": "189d3d1c5352d7d2354d8538787d053146899632f013fdc433d4b7f56133f623"
         },
         {
-          "id": "R13",
           "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
           "symbol": "PrtgDailyPipeline",
           "role": "Daily caller",
+          "exists_and_symbol_found": true,
           "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
         },
         {
-          "id": "R13",
           "path": "LogForesight.Tests/PrtgSilentPresenceSourceFlowTests.cs",
           "symbol": "PrtgSilentPresenceSourceFlowTests",
           "role": "source flow",
+          "exists_and_symbol_found": true,
           "sha256": "bf96ce4a2a3f93de357b5d90dda5867892a094edca408aa8dac01f897a46c74a"
         },
         {
-          "id": "R13",
           "path": "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs",
           "symbol": "PrtgFormalRuleCaseManifestTests",
           "role": "formal cases",
+          "exists_and_symbol_found": true,
           "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
         }
       ],
       "R14": [
         {
-          "id": "R14",
           "path": "LogForesight.Core/Service/CalibrationService.cs",
           "symbol": "CalibrationService",
           "role": "calibration",
+          "exists_and_symbol_found": true,
           "sha256": "52b1c377e0426cfad2439ba1c27c199ced44a1245af079f62445b46a69edad72"
         },
         {
-          "id": "R14",
           "path": "LogForesight.Core/Service/PrtgAcceptanceComparison.cs",
           "symbol": "PrtgAcceptanceComparison",
           "role": "comparison",
+          "exists_and_symbol_found": true,
           "sha256": "52b3935cb709f8dcd3a9c7316d2700f0a55b80fff9cb0348bcd475ea1bcdecb7"
         },
         {
-          "id": "R14",
           "path": "LogForesight.Tests/PrtgAcceptanceComparisonTests.cs",
           "symbol": "PrtgAcceptanceComparisonTests",
           "role": "comparison tests",
+          "exists_and_symbol_found": true,
           "sha256": "f7c6ca1398d80175e2e9ace8cef124bc35dd0c550eb8baab7e5964d3661f0330"
         },
         {
-          "id": "R14",
           "path": "LogForesight.Tests/PrtgControlledUsefulnessReplayTests.cs",
           "symbol": "PrtgControlledUsefulnessReplayTests",
           "role": "controlled replay",
-          "sha256": "9fcd795997439f473bc513d801e167777a67453e5938731c0d27b33ffac88925"
+          "exists_and_symbol_found": true,
+          "sha256": "0d30ced969ea681514ae2b466cf6328eb34b852da2fa1b4a1723b0607c1c8c20"
         }
       ],
       "R15": [
         {
-          "id": "R15",
           "path": "LogForesight.Core/Service/PrtgSnapshotAccumulator.cs",
           "symbol": "PrtgSnapshotAccumulator",
           "role": "slot identity",
+          "exists_and_symbol_found": true,
           "sha256": "11dca92f61ec3476f6d71425d5504125e30c4d37c7e2f2f817fe91aa5cfada12"
         },
         {
-          "id": "R15",
           "path": "LogForesight.Core/Service/PrtgResourcePeriodReadiness.cs",
           "symbol": "PrtgResourcePeriodReadiness",
           "role": "coverage",
+          "exists_and_symbol_found": true,
           "sha256": "14f704c9a39a210b86f99f7df6260c691e808782245fd77092d40123ebfa9206"
         },
         {
-          "id": "R15",
           "path": "LogForesight.Tests/PrtgFreshnessTests.cs",
           "symbol": "PrtgFreshnessTests",
           "role": "freshness cases",
+          "exists_and_symbol_found": true,
           "sha256": "57def620fa76f7a0dd518af44f73c37e83fb233341b012bd021e2266acfd6bb7"
         },
         {
-          "id": "R15",
           "path": "LogForesight.Tests/PrtgDailyAnalysisTimeZoneTests.cs",
           "symbol": "PrtgDiskFormalFlowTests",
           "role": "time-zone cases",
+          "exists_and_symbol_found": true,
           "sha256": "076b77e127da39c64013120daf2d00f981edc6806ac092e7346ba287bf66aa16"
         }
       ],
       "R16": [
         {
-          "id": "R16",
           "path": "LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs",
           "symbol": "SchemaUpgrader",
           "role": "upgrade",
+          "exists_and_symbol_found": true,
           "sha256": "d4924be049415e2917d4edf059d3b161004f6ddcad05ca55d83c49f0a025d71c"
         },
         {
-          "id": "R16",
           "path": "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs",
           "symbol": "EfPrtgStore",
           "role": "manual-map upsert",
+          "exists_and_symbol_found": true,
           "sha256": "cd8441bddf75dcf88c12095e0336c5ee6394db4f8cee2825febd4435cf773429"
         },
         {
-          "id": "R16",
           "path": "LogForesight.Tests/PrtgManualMapIdentityContractTests.cs",
           "symbol": "PrtgManualMapIdentityContractTests",
           "role": "identity tests",
+          "exists_and_symbol_found": true,
           "sha256": "3ce0433ed61eba2549b8f79da02cafdbb6aafe9e28f305c813cb74b0e6278e4b"
         },
         {
-          "id": "R16",
           "path": "LogForesight.Tests/SchemaUpgraderPrtgTests.cs",
           "symbol": "SchemaUpgraderPrtgTests",
           "role": "upgrade tests",
+          "exists_and_symbol_found": true,
           "sha256": "16236ec811a363ff68df0f7e26db36a34d1d8b883e0626874de7062e3a7ee359"
         }
       ],
       "R17": [
         {
-          "id": "R17",
           "path": "LogForesight.Core/Persistence/PrtgHistoricAdmissionStore.cs",
           "symbol": "PrtgHistoricAdmissionStore",
           "role": "durable admission",
+          "exists_and_symbol_found": true,
           "sha256": "8447dec3169a8424c4b82aa6743da20ff8d757a180919516c73481eb0a89304c"
         },
         {
-          "id": "R17",
           "path": "LogForesight.Core/Service/PrtgRequestBudget.cs",
           "symbol": "PrtgRequestBudget",
           "role": "budget client",
+          "exists_and_symbol_found": true,
           "sha256": "c6067e7893c0932efe3098a92d933337d610b7be76b072b830ab70e08935272f"
         },
         {
-          "id": "R17",
           "path": "LogForesight.Tests/PrtgHistoricAdmissionStoreTests.cs",
           "symbol": "PrtgHistoricAdmissionStoreTests",
           "role": "admission tests",
+          "exists_and_symbol_found": true,
           "sha256": "d5331b4bdeaa3a366c9cfcc6bd68895b6eee2d05e17d49980f959aea3d916430"
         },
         {
-          "id": "R17",
           "path": "LogForesight.Tests/PrtgRequestBudgetTests.cs",
           "symbol": "PrtgRequestBudgetTests",
           "role": "budget tests",
+          "exists_and_symbol_found": true,
           "sha256": "ab4b6a76b3d84e59b483b532844c0735cbaa74c10616c6a10698a52240f6a734"
         }
       ],
       "R18": [
         {
-          "id": "R18",
           "path": "LogForesight.Web/Services/PrtgProfileTransportCapacityPilot.cs",
           "symbol": "PrtgProfileTransportCapacityPilot",
           "role": "profile pilot",
+          "exists_and_symbol_found": true,
           "sha256": "92074e70185659440f01fe20bba54bfffcfbbf54d579b2558c0784e37a342b2d"
         },
         {
-          "id": "R18",
           "path": "LogForesight.Web/Services/PrtgQualificationCapacityEvaluator.cs",
           "symbol": "PrtgQualificationCapacityEvaluator",
           "role": "qualification gate",
+          "exists_and_symbol_found": true,
           "sha256": "ccdf6923d5d423e95075d8bbb00ba4c83492fb9aca72e0694590a1f4aa4e31ab"
         },
         {
-          "id": "R18",
           "path": "LogForesight.Core/Service/PrtgProfileTransportCapacity.cs",
           "symbol": "PrtgProfileTransportCapacityEvaluator",
           "role": "cost model",
+          "exists_and_symbol_found": true,
           "sha256": "970d87de89a7023d80933f5c0d607baedbe32672ac9822f4ef18f59fd425f910"
         },
         {
-          "id": "R18",
           "path": "LogForesight.Tests/PrtgCapacityPurposeAndProfileTransportTests.cs",
           "symbol": "PrtgCapacityPurposeAndProfileTransportTests",
           "role": "cost tests",
+          "exists_and_symbol_found": true,
           "sha256": "d073acdc926062f35e7ef2a925528c48c86dffa711657d392fc96f30593627c3"
         }
       ],
       "Q1": [
         {
-          "id": "Q1",
           "path": "LogForesight.Web/Services/PrtgProfileTransportCapacityPilot.cs",
           "symbol": "PrtgProfileTransportCapacityPilot",
           "role": "capacity pilot",
+          "exists_and_symbol_found": true,
           "sha256": "92074e70185659440f01fe20bba54bfffcfbbf54d579b2558c0784e37a342b2d"
         },
         {
-          "id": "Q1",
           "path": "LogForesight.Core/Service/PrtgRequestBudget.cs",
           "symbol": "PrtgRequestBudget",
           "role": "shared budget",
+          "exists_and_symbol_found": true,
           "sha256": "c6067e7893c0932efe3098a92d933337d610b7be76b072b830ab70e08935272f"
         },
         {
-          "id": "Q1",
           "path": "LogForesight.Tests/PrtgSnapshotCapacityTests.cs",
           "symbol": "PrtgSnapshotCapacityTests",
           "role": "capacity tests",
+          "exists_and_symbol_found": true,
           "sha256": "db18009be3c274d5a655f7184ad93cbf90fa8fdbe5cf7c55bdc771ad4a94fed6"
         }
       ],
       "Q2": [
         {
-          "id": "Q2",
           "path": "LogForesight.Core/Analysis/PrtgCorroboration.cs",
           "symbol": "PrtgCorroboration",
           "role": "matching",
+          "exists_and_symbol_found": true,
           "sha256": "46a8c72bde17d437d624e3ef903d69d72e5507b5a1fd352565398ef5d0e29d7b"
         },
         {
-          "id": "Q2",
           "path": "LogForesight.Core/Analysis/SentinelEventMapper.cs",
           "symbol": "SentinelEventMapper",
           "role": "NetIQ mapper",
+          "exists_and_symbol_found": true,
           "sha256": "f2dfba3c765acb0d33148eeea4dcc0d9fe3cf5f9774fb773f3c6a193cb5b3f46"
         },
         {
-          "id": "Q2",
           "path": "LogForesight.Core/Models/SourceEvidence.cs",
           "symbol": "SourceEvidence",
           "role": "evidence contract",
+          "exists_and_symbol_found": true,
           "sha256": "a0653ca6386dc6bae9391a6fe2ac1b96ca9127e4e72af585477c27bbb3f3f6e0"
         },
         {
-          "id": "Q2",
           "path": "LogForesight.Tests/PrtgCorroborationTests.cs",
           "symbol": "PrtgCorroborationTests",
           "role": "matching tests",
+          "exists_and_symbol_found": true,
           "sha256": "c9f85e1d288d2a765c06c41260bfacad977fec60e8fb803b23cbc09f2941d813"
         },
         {
-          "id": "Q2",
           "path": "LogForesight.Tests/NetiqEvidenceMetadataProbeTests.cs",
           "symbol": "NetiqEvidenceMetadataProbeTests",
           "role": "shape-only probe",
+          "exists_and_symbol_found": true,
           "sha256": "8fb9f7eb0153dc44ec46e9f84d2152a0943e80d7520c4c799d289d7161cd1e25"
         }
       ],
       "Q3": [
         {
-          "id": "Q3",
           "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
           "symbol": "PrtgDailyPipeline",
           "role": "independent rules",
+          "exists_and_symbol_found": true,
           "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
         },
         {
-          "id": "Q3",
           "path": "LogForesight.Core/Service/PrtgSupplementReplay.cs",
           "symbol": "PrtgSupplementReplay",
           "role": "parent-qualified supplement",
+          "exists_and_symbol_found": true,
           "sha256": "350e82f51b8ae61f26322d6fa8d485539bb37eca793ced64f72234e4acc2995e"
         },
         {
-          "id": "Q3",
           "path": "LogForesight.Tests/PrtgDailyPipelineTests.cs",
           "symbol": "PrtgDailyPipelineTests",
           "role": "pipeline tests",
+          "exists_and_symbol_found": true,
           "sha256": "e630584f65f4128c544374764429337c23a2389f19b91a3c3a4cbc22d372f40b"
         },
         {
-          "id": "Q3",
           "path": "LogForesight.Tests/PrtgSupplementReplayTests.cs",
           "symbol": "PrtgSupplementReplayTests",
           "role": "replay tests",
+          "exists_and_symbol_found": true,
           "sha256": "43996b431ea55049aab594901e8766024f45527ceb04df3c2105ce52f4420f31"
         }
       ],
       "Q4": [
         {
-          "id": "Q4",
           "path": "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs",
           "symbol": "PrtgResourcePeriodConsumer",
           "role": "resource period consumer",
+          "exists_and_symbol_found": true,
           "sha256": "e94232e5d151e59a8df5a7e7fbb964eec5e1a11e9987f20fa948619360c70b7f"
         },
         {
-          "id": "Q4",
           "path": "LogForesight.Core/Service/PrtgDiskTrendEvaluator.cs",
           "symbol": "PrtgDiskTrendEvaluator",
           "role": "disk trend",
+          "exists_and_symbol_found": true,
           "sha256": "80c8b8b42cc339acbf41f91af2fdc75f6c3f600a84d1cbed2ff9b92c497267e5"
         },
         {
-          "id": "Q4",
           "path": "LogForesight.Core/Service/PrtgDailyPipeline.cs",
           "symbol": "PrtgDailyPipeline",
           "role": "host-day analysis",
+          "exists_and_symbol_found": true,
           "sha256": "8a0aa47e08793b00b8063acbfeee674ef49d11a69fff6e2f18be1abd272b6f6e"
         },
         {
-          "id": "Q4",
           "path": "LogForesight.Tests/PrtgResourceCrossDayHostDayTests.cs",
           "symbol": "PrtgDiskFormalFlowTests",
           "role": "cross-day tests",
+          "exists_and_symbol_found": true,
           "sha256": "339ba21a036c69162e0f79a69e55bfaebb7f1724bad10b178f831ed60da3bcdb"
         },
         {
-          "id": "Q4",
           "path": "LogForesight.Tests/PrtgCrossDayTests.cs",
           "symbol": "PrtgCrossDayTests",
           "role": "cross-day tests",
+          "exists_and_symbol_found": true,
           "sha256": "5454ec516725bbfef811d0543db90462c20d46d0c6f8db347b8d3e61adb87bff"
         }
       ],
       "Q5": [
         {
-          "id": "Q5",
           "path": "LogForesight.Web/Services/SchedulerHostedService.cs",
           "symbol": "SchedulerHostedService",
           "role": "scheduler",
+          "exists_and_symbol_found": true,
           "sha256": "fc4fa00c98c4cd420f562f5ee903845ac72b7540f6bbf7ea0e8a5c62e133e5fd"
         },
         {
-          "id": "Q5",
           "path": "LogForesight.Web/Services/HostDayWorkflowRecoveryHostedService.cs",
           "symbol": "HostDayWorkflowRecoveryHostedService",
           "role": "recovery",
+          "exists_and_symbol_found": true,
           "sha256": "96006455b6e38f62dd2ed4f6c6bc1bef479135bebe98e8554b7f3bc0857e0d72"
         },
         {
-          "id": "Q5",
           "path": "LogForesight.Tests/SchedulerRunStateTests.cs",
           "symbol": "SchedulerRunStateTests",
           "role": "state tests",
+          "exists_and_symbol_found": true,
           "sha256": "66764aebfd92cdc0256982dfe1e541216ae5a69f5a5fe0f276783539012282ef"
         },
         {
-          "id": "Q5",
           "path": "LogForesight.Tests/PrtgPartialWorkflowContractTests.cs",
           "symbol": "PrtgPartialWorkflowContractTests",
           "role": "workflow contract",
+          "exists_and_symbol_found": true,
           "sha256": "f9eea0ab070ad5ac351a3bf2e19544bd74b361ba1bebb9a488652cd4f404ca26"
         }
       ],
       "Q6": [
         {
-          "id": "Q6",
           "path": "LogForesight.Core/Service/PrtgAcceptanceComparison.cs",
           "symbol": "PrtgAcceptanceComparison",
           "role": "comparison",
+          "exists_and_symbol_found": true,
           "sha256": "52b3935cb709f8dcd3a9c7316d2700f0a55b80fff9cb0348bcd475ea1bcdecb7"
         },
         {
-          "id": "Q6",
           "path": "LogForesight.Tests/PrtgAcceptanceComparisonTests.cs",
           "symbol": "PrtgAcceptanceComparisonTests",
           "role": "comparison tests",
+          "exists_and_symbol_found": true,
           "sha256": "f7c6ca1398d80175e2e9ace8cef124bc35dd0c550eb8baab7e5964d3661f0330"
         },
         {
-          "id": "Q6",
           "path": "LogForesight.Tests/PrtgFormalRuleCaseManifestTests.cs",
           "symbol": "PrtgFormalRuleCaseManifestTests",
           "role": "fixed matrix",
+          "exists_and_symbol_found": true,
           "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
         }
       ]
@@ -11330,6 +11463,82 @@
     "retentionAccepted": false,
     "humanVerificationGainAccepted": false,
     "wholeRoundAccepted": false,
+    "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde"
+  },
+  "current_verified_segments_20261011_netiq_attempts": {
+    "source_commit": "7c279b903a6ab17887f7c8fd40fdfd08104b61a5",
+    "freeze_manifest_commit": "c5f6fc74d6d98ecd79d28ed97cf7296814e538aa",
+    "source_manifest": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v4-20261011\\root-results\\source-before.json",
+    "code_inputs": 1237,
+    "code_input_drift": 0,
+    "build_errors": 0,
+    "build_warnings": 143,
+    "targeted_passed": 102,
+    "targeted_failed": 0,
+    "targeted_skipped": 0,
+    "targeted_trx_sha256": "752cb10ec0c6b13f5c23463de6960e19a8a95463739bedf7b3d54b8b5f38ddf3",
+    "actual_sql_server_cases": {
+      "passed": true,
+      "cases": [
+        {
+          "name": "actual-sqlserver-retry-strategy-3000-host-write-read",
+          "passed": true
+        },
+        {
+          "name": "mixed-host-latest-failure-does-not-contaminate-other-hosts",
+          "passed": true
+        },
+        {
+          "name": "late-old-run-cannot-replace-newer-attempt",
+          "passed": true
+        },
+        {
+          "name": "recovery-updates-latest-state-without-fake-parent-or-ledger-growth",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-business-date-retention-preserves-live-3000-host-state",
+          "passed": true
+        }
+      ],
+      "coreHash": "F04B473A339036C14D221932438143B4BCB7DB56E817ACF2165F93EB37E35AEF",
+      "ownedDatabaseRemoved": true,
+      "syntheticControlledOnly": true,
+      "nativeSourceVerified": false,
+      "capacityAccepted": false,
+      "wholeRoundAccepted": false
+    },
+    "actual_u08_subset": {
+      "passed": true,
+      "actualConsumer": "DailyAnalysisRecord.CanSupplementWithPrtg",
+      "exactHostDays": 8,
+      "retainedContentPreserved": true,
+      "nonEmptyRecovered": true,
+      "restartedDurable": true,
+      "coreSha256": "F04B473A339036C14D221932438143B4BCB7DB56E817ACF2165F93EB37E35AEF",
+      "wholeU08Accepted": false,
+      "nativeSourceVerified": false,
+      "wholeRoundAccepted": false
+    },
+    "original_export_abort_assertions_retained": true,
+    "whole_U08_accepted": false,
+    "full_regression_status": "running",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "independentIncidentBenefitAccepted": false,
+    "independentN8Accepted": false,
+    "wholeRoundAccepted": false,
+    "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v4-20261011\\root-results\\root-verified-segments.json",
+    "proof_sha256": "449058ef797fd27a90835242313e4c2d3fe1a275a98b35770608e3c3a1a8add7",
+    "commits": [
+      "c5f6fc74",
+      "687dcd06",
+      "7c279b90"
+    ],
+    "browser_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\2fa36a2025c34644a317266776990196\\root-evidence",
+    "positive_api_fixture": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\positive-role-fixture-20261011\\runs\\u53-positive-be8154ee8140479c97e62f7dc70ad7c5\\current-api-v3-20261011",
+    "positive_worker_scope": "Six actual complete zero-event NetIQ parents; PRTG structure sync succeeded; no manufactured trusted two-hour periods; whole positive flow remains unaccepted.",
     "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde"
   }
 }

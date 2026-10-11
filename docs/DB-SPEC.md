@@ -877,3 +877,10 @@ Formal mail dated shard 清理每頁最多 16 鍵，先快照 outbox 參照，�
 專用 writer-lock timeout 不採一般 TimeoutException 進入 EF 內部 execution retry；外層最多五次、每次 app lock 1000 ms，其他 SQL 錯誤仍 fail closed。SQLite 保留原 provider 交易方式。取消／逾期保留 page 與水位，等待期間 worker lease 可釋放而活躍 lane 保留；目前作業的固定 deadline 與 wave 必須核對後才可明確續跑。此帳本不是來源能力或正式準備度的代用品。
 
 coordinator每次排隊以單調時鐘限制兩分鐘，阻塞SQL讀寫前後核對取消／期限；成功建立票券但逾時或取消時釋放pending，已sent不退款。兩分鐘不是正在執行同步SQL的硬中斷；當前有限SQL嘗試及cleanup另計，儲存錯誤不回退本地budget。
+
+
+### NetIQ 最新取數嘗試帳本
+
+NetiqSourceAttempt 使用既有 lf_log_lines，log_key 為 netiq_hostday_attempt_yyyyMMdd_HOSTID，正常狀態更新覆寫最新列，不為每次嘗試追加歷程；既有多列按最大 seq 判最新。Receipt 含 RunId、HostId、來源主機日、running／success／partial／retained-incomplete／failed／stopped 及 UTC 嘗試時間。execution strategy 每次重試新 context，Serializable 交易按 500 個鍵分批，舊 RunId／同輪舊時間不得覆盖新嘗試。讀取每來源日一個 grouped-max SQL，最多 10,000 主機再加一列檢超限；本文最多 4,096 字元，SQL 先投影有限前綴及原長度，未知／超大／損壞拒絕。不新增 Daily 父列，也不代替父資格。
+
+RetentionPruner 按 key 的来源主機日與 RetentionDays 清理，不依 CreatedAt 判保留期；每批 5,000、單輪最多 200,000，剩餘留後續輪次。更新與讀取保留原 NetIQ 判定內容、案件與人工回覆，父日的 LatestNetiqAttemptStatus 同步標示失敗或 retained-incomplete，使正式補強 consumer 等待。狀態帳本的 3,000 主機 provider 驗證不代表完整 PRTG 容量／180日保留通過。
