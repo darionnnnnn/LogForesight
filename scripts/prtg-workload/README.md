@@ -129,3 +129,20 @@ If a cell fails, keep its failed owner receipt and do not resume by overwriting 
 Route success requires the real ApiResponse success flag and object DTO, an exact non-truncated 3,000-item host-list identity set, and the requested host-detail ID. HTTP 200 error/empty envelopes count as failures. Route bodies remain bounded to 2 MiB with the original two-second request deadline.
 
 Evaluation requires the complete raw samples for both routes in every cell, the requested denominator (100–10,000 per route), and exactly twice that many requests. It independently recomputes nearest-rank p95, maximum, successes and failures; absent, truncated, nonnumeric, foreign-route or contradictory measurements fail closed. The wrapper's positive functional fixture deliberately performs slower real server work for baseline routes than combined routes, so its measured timing vectors are separated without changing the consumer clock or acceptance thresholds. This controlled work is not a provider-capacity measurement.
+
+## Generate isolated typed storage evidence
+
+`storage-generator/PrtgStorageGenerator.csproj` references the current production Core project and writes deterministic four-slot trusted proofs through `MergeSampledValues`. It creates 3,000 synthetic PRTG devices, 15,000 sensors and 3,000 current-day host maps. It does not create Web hosts, NetIQ parents or qualified native profiles, and cannot replace the joint matrix above.
+
+```powershell
+dotnet build .\storage-generator\PrtgStorageGenerator.csproj -c Release
+$Generator = Join-Path $ToolRoot 'storage-generator\bin\Release\net8.0-windows\PrtgStorageGenerator.dll'
+python .\storage-generator\test_contracts.py $Generator
+dotnet $Generator --mode n6 --provider sqlite --root C:\work\lf-storage-new-001 --rows 100000
+```
+
+Choose a new directory on a local fixed volume, without reparse-point ancestors. Existing directories are refused; databases are never reused or automatically deleted. `--rows` is mandatory and bounded to 1–64,800,000. The full shape requires exactly 64,800,000 rows. Before that SQLite run, the tool requires estimated space for a database plus backup copy and at least 25% of the total volume left free. Keep the owned output for independent inspection.
+
+SQL Server mode reads `LF_CAPACITY_SQLSERVER_CONNECTION` from the process environment, never from arguments or evidence. Only `(localdb)\instance` and `tcp:127.0.0.1,port` / `tcp:[::1],port` are permitted; named aliases, remote servers and attached files are refused. The tool checks the edition before creating a new GUID-named database. Express is refused because its size ceiling cannot hold the fixed dataset. Supply credentials through an existing local secret mechanism; do not paste them into receipts or Git. The tool has a five-second connection/edition-query timeout and never overwrites the supplied catalog.
+
+The progress/result report contains actual committed counts, typed-proof byte lengths, batch p95, sampled process working-set high water and SQLite DB/WAL/SHM high water. Sampling occurs after committed batches, so it does not establish unsampled transient peaks or SQL Server server-side storage. All capacity, retention, recovery and whole-round acceptance flags remain false, even for the full row count. A bounded functional test or the frozen 100k size estimate cannot establish 180-day retention, mixed workload headroom, paired p95, backup/restore, upgrade/rollback or native-source compatibility; those remain separate fixed PLAN gates.
