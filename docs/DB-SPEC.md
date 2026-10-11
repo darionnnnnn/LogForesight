@@ -777,6 +777,7 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 | blob key | 內容與用途 |
 |---|---|
 | `user_prefs` | 每位使用者的常用語及初始設定引導顯示偏好；全站預設常用語在 `system_settings` |
+| `log_id_allocator:batch_runs`／`log_id_allocator:batch_run_logs` | 最高已預約的單調 RunId／LogId；19 字元上限，SQL Server transaction app lock／SQLite 寫入交易跨 store 配發。清除 log 不刪計數器；append 失敗保留間隙；損毀、過長或耗盡拒絕配發，無新 DDL。 |
 | `permission_version` | 群組、主機負責人與問題負責人能力變動後的權限版本；請求時比對並刷新權限 |
 | `prtg_freshness` | 各 PRTG 資料類別的最後成功時間、筆數及連續零筆次數 |
 | `prtg_scope_baseline` | 監看裝置範圍外清除的上次基準及最近擋下原因 |
@@ -784,6 +785,7 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 
 PRTG 衝突類型依最新裝置鏡像及主機對應即時計算，未另存 `conflict_kind` 欄；持久化會使主機 IP
 或鏡像變動後留下過期分類。回填依本次指定天數執行，沒有另設回填水位。
+執行編號升退版須先停止所有舊版寫入者，再啟動單一版本；舊版不參與新計數器，不支援新舊版同時寫同一 DB。完整升退版／容量門檻仍待本輪 N6 驗收。
 AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記對象、字數與結果，不保存原文或輸出。
 
 兩條不可放寬的約束：
