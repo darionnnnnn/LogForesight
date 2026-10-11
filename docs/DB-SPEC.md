@@ -884,3 +884,6 @@ coordinator每次排隊以單調時鐘限制兩分鐘，阻塞SQL讀寫前後核
 NetiqSourceAttempt 使用既有 lf_log_lines，log_key 為 netiq_hostday_attempt_yyyyMMdd_HOSTID，正常狀態更新覆寫最新列，不為每次嘗試追加歷程；既有多列按最大 seq 判最新。Receipt 含 RunId、HostId、來源主機日、running／success／partial／retained-incomplete／failed／stopped 及 UTC 嘗試時間。execution strategy 每次重試新 context，Serializable 交易按 500 個鍵分批，舊 RunId／同輪舊時間不得覆盖新嘗試。讀取每來源日一個 grouped-max SQL，最多 10,000 主機再加一列檢超限；本文最多 4,096 字元，SQL 先投影有限前綴及原長度，未知／超大／損壞拒絕。不新增 Daily 父列，也不代替父資格。
 
 RetentionPruner 按 key 的来源主機日與 RetentionDays 清理，不依 CreatedAt 判保留期；每批 5,000、單輪最多 200,000，剩餘留後續輪次。更新與讀取保留原 NetIQ 判定內容、案件與人工回覆，父日的 LatestNetiqAttemptStatus 同步標示失敗或 retained-incomplete，使正式補強 consumer 等待。狀態帳本的 3,000 主機 provider 驗證不代表完整 PRTG 容量／180日保留通過。
+
+
+NetIQ 回執與既存父紀錄的資格失效由 RecordBatch 在同一 Serializable 交易提交，整筆交易在 execution strategy 內以新 context 重試。只處理已接受的新嘗試；500 個鍵分批回執，父列以 RecordId keyset 每頁 16 筆讀取／保存／清 tracker，任一後續 chunk 失敗回滾全部先前寫入。success 回執不修改父資格，必須由成功完整分析替換父列；stopped 回執將父資格標為 failed，沿用 MissingOnly 重試判斷。只更動 LatestNetiqAttemptStatus／AtUtc 與 WriteRevision，保留既有風險、案件與人工處置。

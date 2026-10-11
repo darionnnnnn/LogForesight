@@ -678,7 +678,7 @@
           "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
           "symbol": "RecordBatch",
           "role": "bounded NetIQ retry status or actionable operator flow",
-          "sha256": "5b14e3e829e6d27cfd03d41c2b3e6cf0c4c870197a3f2355c5bf4dd7d25e690f"
+          "sha256": "9ff29d4777ebc700472dd003bcb8ce427210654bfd949bfbb688552d3d99b60b"
         },
         {
           "id": "AC11",
@@ -686,6 +686,13 @@
           "symbol": "retained-incomplete",
           "role": "bounded NetIQ retry status or actionable operator flow",
           "sha256": "0c4e6c7479fbeeebb55176f1c0cbec04e7ec498826708508067ae662a97606b9"
+        },
+        {
+          "id": "AC11",
+          "path": "LogForesight.Tests/NetiqSourceAttemptAtomicTests.cs",
+          "symbol": "NetiqSourceAttemptAtomicTests",
+          "role": "rollback, bounded parent pages, old-run fence and actual retry contract",
+          "sha256": "506a06b41cfecb5a04645e7333d88ada1086332b6d33789622866eb93d05dc9c"
         }
       ],
       "input_sha256": null,
@@ -748,6 +755,20 @@
           "symbol": "PrtgRuleConsumerAcceptanceTests",
           "role": "latest root-verified implementation or real downstream acceptance",
           "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
+          "symbol": "RecordBatch",
+          "role": "atomic receipt and existing-parent eligibility",
+          "sha256": "9ff29d4777ebc700472dd003bcb8ce427210654bfd949bfbb688552d3d99b60b"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Tests/NetiqSourceAttemptAtomicTests.cs",
+          "symbol": "NetiqSourceAttemptAtomicTests",
+          "role": "rollback, bounded parent pages, old-run fence and actual retry contract",
+          "sha256": "506a06b41cfecb5a04645e7333d88ada1086332b6d33789622866eb93d05dc9c"
         }
       ],
       "input_sha256": null,
@@ -1211,7 +1232,7 @@
           "path": "LogForesight.Core/Service/NetiqSourceAttempt.cs",
           "symbol": "Prune",
           "role": "bounded NetIQ retry status or actionable operator flow",
-          "sha256": "5b14e3e829e6d27cfd03d41c2b3e6cf0c4c870197a3f2355c5bf4dd7d25e690f"
+          "sha256": "9ff29d4777ebc700472dd003bcb8ce427210654bfd949bfbb688552d3d99b60b"
         }
       ],
       "input_sha256": null,
@@ -7479,7 +7500,7 @@
       "change": "remove extra empty line at EOF; all non-newline bytes identical"
     }
   },
-  "current_implementation_source_commit": "7c279b903a6ab17887f7c8fd40fdfd08104b61a5",
+  "current_implementation_source_commit": "7ea8d8d6525d814049801c2f2c89d32e14b8c90b",
   "current_manual_map_schema_repair_20261010": {
     "owner": "root",
     "gate": {
@@ -11539,6 +11560,146 @@
     "browser_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\2fa36a2025c34644a317266776990196\\root-evidence",
     "positive_api_fixture": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\positive-role-fixture-20261011\\runs\\u53-positive-be8154ee8140479c97e62f7dc70ad7c5\\current-api-v3-20261011",
     "positive_worker_scope": "Six actual complete zero-event NetIQ parents; PRTG structure sync succeeded; no manufactured trusted two-hour periods; whole positive flow remains unaccepted.",
+    "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde"
+  },
+  "current_atomic_attempt_invalidation": {
+    "status": "implemented-and-scoped-isolated-verification-passed",
+    "original_defect": "Receipt and existing-parent invalidation were separate commits; crash could retain old qualification after newer attempt.",
+    "result": "Accepted attempt receipts and existing-parent invalidation commit in one Serializable transaction under provider execution strategy. Rejected old attempts never change parents; success receipts never qualify retained parents. Stopped receipts leave failed parent eligibility so MissingOnly remains retryable.",
+    "receipt_chunk": 500,
+    "parent_keyset_page": 16,
+    "source_commit": "7ea8d8d6525d814049801c2f2c89d32e14b8c90b",
+    "targeted_cases": 187,
+    "atomic_cases": 10,
+    "sql_server_cases": 9,
+    "actual_browser_host_days": 8,
+    "gate_thresholds_changed": false,
+    "wholeRoundAccepted": false
+  },
+  "current_verified_segments_20261011_atomic_attempts": {
+    "source_commit": "7ea8d8d6525d814049801c2f2c89d32e14b8c90b",
+    "freeze_manifest_commit": "c22c148c2c3eeb1699ab3fe9ceedb26765641027",
+    "code_inputs": 1265,
+    "code_input_drift": 0,
+    "build_errors": 0,
+    "build_warnings": 143,
+    "targeted_passed": 187,
+    "targeted_failed": 0,
+    "targeted_skipped": 0,
+    "targeted_trx_sha256": "a7b018eebb9af73eb78c00008e01efe3c1818cdfb29de49cf96317b6e85c6797",
+    "atomic_original_red": {
+      "passed": 2,
+      "failed": 4
+    },
+    "atomic_current_cases": 10,
+    "actual_sql_server_cases": {
+      "passed": true,
+      "cases": [
+        {
+          "name": "actual-sqlserver-retry-strategy-3000-host-write-read",
+          "passed": true
+        },
+        {
+          "name": "mixed-host-latest-failure-does-not-contaminate-other-hosts",
+          "passed": true
+        },
+        {
+          "name": "late-old-run-cannot-replace-newer-attempt",
+          "passed": true
+        },
+        {
+          "name": "recovery-updates-latest-state-without-fake-parent-or-ledger-growth",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-business-date-retention-preserves-live-3000-host-state",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-second-ledger-chunk-parent-fault-rolls-back-all-3000-receipts-and-parents",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-3000-host-atomic-running-parent-invalidation-and-unrelated-content-preservation",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-success-receipt-does-not-requalify-retained-parents",
+          "passed": true
+        },
+        {
+          "name": "actual-sqlserver-rejected-old-run-does-not-invalidate-newer-qualified-3000-host-parents",
+          "passed": true
+        }
+      ],
+      "coreHash": "3FF235126EA5B0F3F89E1005E125CC7D1E9E14855002EC1BA005A37B92D3BC55",
+      "ownedDatabaseRemoved": true,
+      "syntheticControlledOnly": true,
+      "nativeSourceVerified": false,
+      "capacityAccepted": false,
+      "wholeRoundAccepted": false
+    },
+    "actual_u08_subset": {
+      "passed": true,
+      "actualConsumer": "DailyAnalysisRecord.CanSupplementWithPrtg",
+      "exactHostDays": 8,
+      "retainedContentPreserved": true,
+      "nonEmptyRecovered": true,
+      "restartedDurable": true,
+      "coreSha256": "3FF235126EA5B0F3F89E1005E125CC7D1E9E14855002EC1BA005A37B92D3BC55",
+      "wholeU08Accepted": false,
+      "nativeSourceVerified": false,
+      "wholeRoundAccepted": false
+    },
+    "runtime_hashes": [
+      {
+        "part": "Core",
+        "sha256": "3FF235126EA5B0F3F89E1005E125CC7D1E9E14855002EC1BA005A37B92D3BC55"
+      },
+      {
+        "part": "Web",
+        "sha256": "EA5D53047A89B18601894B727CEB21A877B08EACE8EDC1AFB83103545F43FBA7"
+      },
+      {
+        "part": "Tests",
+        "sha256": "4FE3EA40706ADFEC6C5BB026978543725B0E9292892CC46F5BA56B6FB02FAE0F"
+      }
+    ],
+    "actual_browser_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\d5d74b36e70d4bf18f0c0a822ef33f95\\root-evidence",
+    "browser_invalid_helper_rejected": {
+      "bundle": "71f146c8b78945d9a6a85bba47cbf4be",
+      "reason": "Stale fixture binary produced 4624; fixed source contract requires matching 4625. Original failure preserved, no product gate changed."
+    },
+    "verified_browser_helper_stamp": {
+      "OwnerFile": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\d5d74b36e70d4bf18f0c0a822ef33f95\\process-owner.json",
+      "StubMode": "healthy",
+      "WebUrl": "http://127.0.0.1:6442/u08/login",
+      "StubLog": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\workflow-u08-source-recovery\\runs\\rt\\d5d74b36e70d4bf18f0c0a822ef33f95\\stub-requests.jsonl",
+      "FrozenVerifierRoot": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v6-20261011",
+      "ImplementationCommit": "7ea8d8d6525d814049801c2f2c89d32e14b8c90b",
+      "WebDllSha256": "EA5D53047A89B18601894B727CEB21A877B08EACE8EDC1AFB83103545F43FBA7",
+      "CoreDllSha256": "3FF235126EA5B0F3F89E1005E125CC7D1E9E14855002EC1BA005A37B92D3BC55",
+      "SeedBinaryProvenanceOnly": true,
+      "SourceHelperStamp": {
+        "stub_sha256": "24e73bb62d3fa1712adf0028cf9d985e805fffaef1f273c4e0b9ad6f8699f981",
+        "source_sha256": "70dbce4e9e1c8b6194d026ca4510093a2cb74a2a9d93cd84907ef19dd9719503",
+        "build_errors": 0,
+        "case_event_id": 4625
+      }
+    },
+    "commits": [
+      "c22c148c",
+      "7ea8d8d6"
+    ],
+    "full_regression_status": "Frozen v4 full run in progress; known old oversized-upload fixture failure is RED. Current complete affected classes passed; not latest whole-suite GREEN.",
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "independentIncidentBenefitAccepted": false,
+    "independentN8Accepted": false,
+    "wholeRoundAccepted": false,
+    "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-netiq-status-verify-v6-20261011\\root-results\\root-atomic-verified-segment.json",
+    "proof_sha256": "c26f2a5bd3b0bb8018315e415028955aac98e7a8575861a66353119e3c80768b",
     "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde"
   }
 }
