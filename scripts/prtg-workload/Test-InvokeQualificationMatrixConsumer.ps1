@@ -13,6 +13,11 @@ $null=New-Item -ItemType Directory -Path $fixtureLogRoot -Force
 $fixtureRunId=[guid]::NewGuid().ToString('N')
 $passed=0
 function Assert([bool]$condition,[string]$message){if(-not$condition){throw $message};$script:passed++}
+function New-RouteReceipt {
+    @{schema='round53-route-measurement-v1';requestedPerRoute=100;requests=200;status='measured';routes=@(foreach($name in @('host-list','host-detail')){
+        @{route=$name;denominator=100;successes=100;failures=0;p95Ms=100;maxMs=100;deadlineMs=2000;samples=@(1..100|ForEach-Object{@{route=$name;statusCode=200;elapsedMs=100}})}
+    })}
+}
 function Start-Fixture([string]$Mode='ok'){
     $portFile=Join-Path ([IO.Path]::GetTempPath()) ('lf-matrix-fixture-port-'+[guid]::NewGuid().ToString('N')+'.txt')
     $script:portFiles.Add($portFile)
@@ -26,9 +31,9 @@ function Start-Fixture([string]$Mode='ok'){
     if(-not(Test-Path -LiteralPath $portFile)){throw 'Owned matrix fixture did not publish its bound port within 10 seconds.'}
     $port=[int](Get-Content -LiteralPath $portFile -Raw)
     $uri=[uri]"http://127.0.0.1:$port/"
-    $ready=$false;$until=[DateTime]::UtcNow.AddSeconds(10)
-    while([DateTime]::UtcNow -lt $until){try{$response=Invoke-WebRequest -Uri ([uri]::new($uri,'health')) -TimeoutSec 1 -UseBasicParsing;$ready=$response.StatusCode -eq 200;if($ready){break}}catch{};Start-Sleep -Milliseconds 50}
-    if(-not$ready){throw 'Owned matrix fixture did not become ready within 10 seconds.'}
+    $ready=$false;$lastReadyError='';$until=[DateTime]::UtcNow.AddSeconds(30)
+    while([DateTime]::UtcNow -lt $until){try{$response=Invoke-WebRequest -Uri ([uri]::new($uri,'health')) -TimeoutSec 1 -UseBasicParsing;$ready=$response.StatusCode -eq 200;if($ready){break}}catch{$lastReadyError=$_.Exception.Message};Start-Sleep -Milliseconds 50}
+    if(-not$ready){throw "Owned matrix fixture did not become ready within the 30-second startup bound: $lastReadyError"}
     return $uri
 }
 function New-Session([uri]$Uri){$session=[Microsoft.PowerShell.Commands.WebRequestSession]::new();$session.Cookies.Add($Uri,[Net.Cookie]::new('lf_auth','fixture'));return $session}
@@ -59,16 +64,63 @@ try{
     Assert ($stale -and -not(Test-Path (Join-Path $staleOut 'schedule-complete.json'))) 'A previous completed timing snapshot was accepted for a newly triggered run.'
     foreach($mode in @('redirect','unauthorized','mime','oversize')){$badUri=Start-Fixture $mode;$badOut=Join-Path $taskRoot ('bad-'+$mode);$bad=$false;try{$null=& $consumer -Action SetCondition -BaseUri $badUri -WebSession (New-Session $badUri) -OutputDirectory $badOut -Condition 'netiq-only' -ExpectedSettingsRevision '1' -MaxSeconds 5}catch{$bad=$true};Assert $bad "Consumer did not refuse $mode response."}
     $matrixRoot=Join-Path $taskRoot 'evaluation';$conditions=@('netiq-only','combined','combined','netiq-only','netiq-only','combined');$evaluationRunId='evaluation-run-53'
-    for($i=0;$i -lt 6;$i++){$dir=Join-Path $matrixRoot ("condition-{0:D2}-{1}" -f ($i+1),$conditions[$i]);$null=New-Item -ItemType Directory -Path $dir -Force;$p95=if($conditions[$i] -eq 'combined'){105.0}else{100.0};$receipt=@{schema='round53-schedule-run-v1';elapsedMs=10000;configuredWindowMinutes=720;status='observed-idle';hostCount=3000;netiqHostDayTiming=@{status='complete';expectedHostDays=15000;observedHostDays=15000;committedHostDays=15000;durationSampleCount=15000;sourceFailedHostDays=0;unknownHostDays=0;duplicateHostDays=0;overflow=$false;p95Milliseconds=$p95};state=@{lastRunSuccess=$true}};[IO.File]::WriteAllText((Join-Path $dir 'schedule-complete.json'),($receipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false));$routeReceipt=@{routes=@(@{route='host-list';denominator=100;successes=100;failures=0;p95Ms=100},@{route='host-detail';denominator=100;successes=100;failures=0;p95Ms=100})};[IO.File]::WriteAllText((Join-Path $dir 'route-measurement.json'),($routeReceipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false));$fence=@{status='current';rawRows=15000;profileRows=15000;proofFenceSha256=('A'*64);nativeSourceVerified=$false;formalAcceptance=$false;wholeRoundAccepted=$false};[IO.File]::WriteAllText((Join-Path $dir 'live-qualification-fence-final.json'),($fence|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$owner=@{schema='round53-condition-attempt-v1';runId=$evaluationRunId;profile='controlled-loopback-3000';conditionIndex=$i+1;condition=$conditions[$i];state='complete'};[IO.File]::WriteAllText((Join-Path $dir 'condition-owner.json'),($owner|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))}
+    for($i=0;$i -lt 6;$i++){$dir=Join-Path $matrixRoot ("condition-{0:D2}-{1}" -f ($i+1),$conditions[$i]);$null=New-Item -ItemType Directory -Path $dir -Force;$p95=if($conditions[$i] -eq 'combined'){105.0}else{100.0};$receipt=@{schema='round53-schedule-run-v1';elapsedMs=10000;configuredWindowMinutes=720;status='observed-idle';hostCount=3000;netiqHostDayTiming=@{status='complete';expectedHostDays=15000;observedHostDays=15000;committedHostDays=15000;durationSampleCount=15000;sourceFailedHostDays=0;unknownHostDays=0;duplicateHostDays=0;overflow=$false;p95Milliseconds=$p95};state=@{lastRunSuccess=$true}};[IO.File]::WriteAllText((Join-Path $dir 'schedule-complete.json'),($receipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false));$routeReceipt=New-RouteReceipt;[IO.File]::WriteAllText((Join-Path $dir 'route-measurement.json'),($routeReceipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false));$fence=@{status='current';rawRows=15000;profileRows=15000;proofFenceSha256=('A'*64);nativeSourceVerified=$false;formalAcceptance=$false;wholeRoundAccepted=$false};[IO.File]::WriteAllText((Join-Path $dir 'live-qualification-fence-final.json'),($fence|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$owner=@{schema='round53-condition-attempt-v1';runId=$evaluationRunId;profile='controlled-loopback-3000';conditionIndex=$i+1;condition=$conditions[$i];state='complete'};[IO.File]::WriteAllText((Join-Path $dir 'condition-owner.json'),($owner|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))}
     $evaluation=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId
     Assert ($evaluation.metricChecksPass -and $evaluation.observableSubchecksPass -and $evaluation.pairs.Count -eq 3 -and $evaluation.pairs[0].relativeP95Increase -eq 0.05) 'Fixed six-cell evaluation did not calculate exact known p95 vectors.'
+    function Set-RouteP95([int]$cell,[string]$route,[double]$value){
+        $path=Join-Path $matrixRoot ("condition-{0:D2}-{1}/route-measurement.json" -f $cell,$conditions[$cell-1])
+        $receipt=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json -Depth 10
+        ($receipt.routes|Where-Object route -ceq $route).p95Ms=$value
+        ($receipt.routes|Where-Object route -ceq $route).maxMs=$value
+        foreach($sample in ($receipt.routes|Where-Object route -ceq $route).samples){$sample.elapsedMs=$value}
+        [IO.File]::WriteAllText($path,($receipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+    }
+    foreach($pair in @(@(1,2),@(4,3),@(5,6))){foreach($route in @('host-list','host-detail')){
+        Set-RouteP95 $pair[1] $route 111
+        $overLimit=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId
+        Assert (-not$overLimit.metricChecksPass -and -not$overLimit.observableSubchecksPass -and $overLimit.routePairs.Count -eq 6 -and @($overLimit.routePairs|Where-Object { $_.combinedIndex -eq $pair[1] -and $_.route -ceq $route -and -not$_.pass -and $_.relativeP95Increase -eq 0.11 }).Count -eq 1) "Route $route pair $($pair[0])/$($pair[1]) accepted an 11% increase below the 2-second absolute bound."
+        Set-RouteP95 $pair[1] $route 100
+    }}
+    foreach($cell in @(2,3,6)){foreach($route in @('host-list','host-detail')){Set-RouteP95 $cell $route 110}}
+    $atLimit=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId
+    Assert ($atLimit.metricChecksPass -and $atLimit.observableSubchecksPass -and $atLimit.routePairs.Count -eq 6 -and @($atLimit.routePairs|Where-Object { -not$_.pass -or $_.relativeP95Increase -ne 0.1 }).Count -eq 0) 'Exact 10% route increases did not pass every fixed baseline/combined pair.'
+    Set-RouteP95 1 'host-list' 0
+    $zeroBaseline=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId
+    Assert (-not$zeroBaseline.metricChecksPass -and -not$zeroBaseline.observableSubchecksPass -and $null -eq $zeroBaseline.routePairs[0].relativeP95Increase -and $zeroBaseline.routePairs[0].reason -ceq 'route-baseline-unusable') 'A zero route baseline fabricated a finite passing relative increase.'
+    foreach($cell in 1..6){foreach($route in @('host-list','host-detail')){Set-RouteP95 $cell $route 100}}
     $foreignOwnerPath=Join-Path $matrixRoot 'condition-01-netiq-only' 'condition-owner.json';$foreignOwner=Get-Content -LiteralPath $foreignOwnerPath -Raw|ConvertFrom-Json;$foreignOwner.runId='foreign-run';[IO.File]::WriteAllText($foreignOwnerPath,($foreignOwner|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$foreignOwnerRejected=$false;$foreignOwnerMessage="";try{$null=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId}catch{$foreignOwnerRejected=$true;$foreignOwnerMessage=$_.Exception.Message};Assert ($foreignOwnerRejected -and $foreignOwnerMessage -like "*owner receipt does not match this exact run/profile/condition*") 'Evaluation accepted a condition owner receipt from a different run.';$foreignOwner.runId=$evaluationRunId;[IO.File]::WriteAllText($foreignOwnerPath,($foreignOwner|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
     $routeReceiptPath=Join-Path $matrixRoot 'condition-01-netiq-only' 'route-measurement.json';$routeReceipt=Get-Content -LiteralPath $routeReceiptPath -Raw|ConvertFrom-Json -Depth 8;$routeReceipt.routes=@($routeReceipt.routes|Where-Object{$_.route -eq 'host-list'});[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$missingRoute=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId;Assert (-not$missingRoute.metricChecksPass -and -not$missingRoute.observableSubchecksPass) 'A missing API route unexpectedly passed the route gate.'
     $routeReceipt.routes=@();[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$emptyRoutes=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId;Assert (-not$emptyRoutes.metricChecksPass -and -not$emptyRoutes.observableSubchecksPass -and $emptyRoutes.routeSamples.Count -eq 12 -and $emptyRoutes.routeSetChecks[0].pass -eq $false) 'An empty route array passed vacuously or omitted explicit per-cell route verdicts.'
     $routeReceipt.routes=@(@{route='host-list';denominator=100;successes=100;failures=0;p95Ms=$null},@{route='host-detail';denominator=100;successes=100;failures=0;p95Ms=100});[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$nullP95=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId;Assert (-not$nullP95.metricChecksPass -and -not$nullP95.observableSubchecksPass -and $null -eq $nullP95.routeSamples[0].p95Ms) 'A null/missing route p95 was coerced to zero and passed.'
     $routeReceipt.routes=@(@{route='host-list';denominator=100;successes=0;failures=100;p95Ms=1},@{route='host-detail';denominator=100;successes=0;failures=100;p95Ms=1});[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$allFail=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId;Assert (-not$allFail.metricChecksPass -and -not$allFail.observableSubchecksPass) 'All fast failed HTTP samples unexpectedly passed the route gate.'
     $routeReceipt.routes[0].denominator=100;$routeReceipt.routes[0].successes=80;$routeReceipt.routes[0].failures=15;$routeReceipt.routes[0].p95Ms=100;$routeReceipt.routes[1].successes=100;$routeReceipt.routes[1].failures=0;[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false));$contradictory=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId;Assert (-not$contradictory.metricChecksPass) 'Contradictory success/failure denominator unexpectedly passed the route gate.'
-    $routeReceipt.routes=@(@{route='host-list';denominator=100;successes=100;failures=0;p95Ms=100},@{route='host-detail';denominator=100;successes=100;failures=0;p95Ms=100});[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+    $routeReceipt=New-RouteReceipt;[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+    foreach($mutation in @('missing-samples','short-samples','forged-p95','forged-max','failed-sample','foreign-route','negative-time','non-numeric-time','boolean-time','wrong-request-count','wrong-requested-denominator')){
+        $routeReceipt=New-RouteReceipt
+        switch($mutation){
+            'missing-samples' {$routeReceipt.routes[0].Remove('samples')}
+            'short-samples' {$routeReceipt.routes[0].samples=@($routeReceipt.routes[0].samples|Select-Object -First 99)}
+            'forged-p95' {$routeReceipt.routes[0].p95Ms=10}
+            'forged-max' {$routeReceipt.routes[0].maxMs=10}
+            'failed-sample' {$routeReceipt.routes[0].samples[0].statusCode=0}
+            'foreign-route' {$routeReceipt.routes[0].samples[0].route='host-detail'}
+            'negative-time' {$routeReceipt.routes[0].samples[0].elapsedMs=-1}
+            'non-numeric-time' {$routeReceipt.routes[0].samples[0].elapsedMs='NaN'}
+            'boolean-time' {$routeReceipt.routes[0].samples[0].elapsedMs=$true}
+            'wrong-request-count' {$routeReceipt.requests=199}
+            'wrong-requested-denominator' {$routeReceipt.requestedPerRoute=101}
+        }
+        [IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+        $invalidSamples=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId
+        Assert (-not$invalidSamples.metricChecksPass -and -not$invalidSamples.observableSubchecksPass) "Route receipt $mutation passed without independently checking the complete raw measurements."
+    }
+    $routeReceipt=New-RouteReceipt
+    for($i=0;$i -lt 100;$i++){$routeReceipt.routes[0].samples[$i].elapsedMs=$i+1}
+    $routeReceipt.routes[0].p95Ms=95;$routeReceipt.routes[0].maxMs=100
+    [IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+    $nearestRank=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId
+    Assert ($nearestRank.metricChecksPass -and $nearestRank.routeSamples[0].p95Ms -eq 95) 'Revalidation did not use nearest-rank p95 over all 100 samples.'
+    $routeReceipt=New-RouteReceipt;[IO.File]::WriteAllText($routeReceiptPath,($routeReceipt|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
     $badSchedulePath=Join-Path $matrixRoot 'condition-04-netiq-only' 'schedule-complete.json';$badSchedule=Get-Content -LiteralPath $badSchedulePath -Raw|ConvertFrom-Json -Depth 16;$badSchedule.netiqHostDayTiming.status='incomplete';$badSchedule.netiqHostDayTiming.unknownHostDays=1;$badSchedule.netiqHostDayTiming.p95Milliseconds=$null;[IO.File]::WriteAllText($badSchedulePath,($badSchedule|ConvertTo-Json -Depth 16),[Text.UTF8Encoding]::new($false))
     $failedEvaluation=& $consumer -Action Evaluate -BaseUri $uri -WebSession $session -OutputDirectory $matrixRoot -MatrixRunDirectory $matrixRoot -ProfileName 'controlled-loopback-3000' -ExpectedRunId $evaluationRunId
     Assert (-not$failedEvaluation.metricChecksPass -and -not$failedEvaluation.pairs[1].pass -and -not$failedEvaluation.sourceQualification.qualified) 'Incomplete timing or source evidence did not fail closed.'

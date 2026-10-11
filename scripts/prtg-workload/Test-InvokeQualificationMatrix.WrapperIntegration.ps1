@@ -40,6 +40,7 @@ try{
     $savedOrder=@(Get-ChildItem -LiteralPath $runRoot -Directory -Filter 'condition-*'|Sort-Object Name|ForEach-Object{(Get-Content -LiteralPath (Join-Path $_.FullName 'condition-owner.json') -Raw|ConvertFrom-Json).condition})
     $evaluation=Get-Content -LiteralPath (Join-Path $runRoot 'matrix-evaluation.json') -Raw|ConvertFrom-Json -Depth 16
     Assert (($savedOrder -join ',') -ceq ($expected -join ',') -and $evaluation.metricChecksPass -and $evaluation.observableSubchecksPass) 'Wrapper did not preserve the exact six-cell sequence or metric subchecks.'
+    Assert ($evaluation.routePairs.Count -eq 6 -and @($evaluation.routePairs|Where-Object { -not$_.pass -or $_.relativeP95Increase -gt 0.10 }).Count -eq 0 -and @($evaluation.routeSamples|Where-Object { -not$_.rawSamplesValid -or $_.rawSampleCount -ne 100 }).Count -eq 0) 'Wrapper did not evaluate all six route pairs using the complete independently recalculated measurements.'
     Assert (-not$evaluation.nativeSourceVerified -and -not$evaluation.formalAcceptance -and -not$evaluation.wholeRoundAccepted -and -not$evaluation.sourceQualification.qualified) 'Fixture wrapper result promoted physical-source or formal evidence.'
 
     # The success fixture uses API-host timestamps 2 seconds ahead to model

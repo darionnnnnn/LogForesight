@@ -1,6 +1,7 @@
 """Public-API-only fixture for exercising the delivered Check -> six-cell Matrix wrapper."""
 import json
 import threading
+import time
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -137,6 +138,11 @@ class Handler(BaseHTTPRequestHandler):
                                'lastRunBatchRunId': state['run']['run_id'], 'lastRunSuccess': True,
                                'lastRunTriggerText': 'manual', 'netiqHostDayTiming': state['run']['timing']})
         if path == '/api/hosts' or path.startswith('/api/host-detail/'):
+            # Real server work in this functional fixture gives a deliberately
+            # separated positive pair. Client timings remain unmodified and the
+            # production 10%/2-second gates still evaluate every actual request.
+            # This fixture proves orchestration, not physical capacity.
+            time.sleep(0.20 if not state['enabled'] else 0.01)
             if state['drift_revision_on_next_route']:
                 state['drift_revision_on_next_route'] = False
                 state['revision'] += 2  # model an intervening settings change and restore
