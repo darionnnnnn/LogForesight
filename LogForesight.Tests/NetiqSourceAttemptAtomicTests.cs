@@ -193,7 +193,7 @@ public sealed class NetiqSourceAttemptAtomicTests : IDisposable
     }
 
     [Fact]
-    public void ParentInvalidationPagesFullJsonAtSixteenRowsWithoutPerHostQueries()
+    public void ParentInvalidationPagesMetadataAtSixteenRowsWithoutPerHostQueries()
     {
         var hostIds = Enumerable.Range(0, 1_001).Select(index => BaseHostId + 1_000 + index).ToArray();
         using (var context = _backend.CreateContext())

@@ -1,9 +1,12 @@
 using System.Text.Json;
 using System.Data;
+using System.Data.Common;
+using System.Globalization;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace LogForesight.Core.Service;
 
@@ -81,29 +84,27 @@ public static class NetiqSourceAttempt
                         // Keep the receipt and parent eligibility in the same transaction, including
                         // across 500-host ledger chunks. SQL isolation and WriteRevision also fence
                         // concurrent parent writers; no process-only host lock can cover other workers.
-                        // Bound full JSON residency independently of the small receipt batch.
                         var parentIds = acceptedHostIds.ToArray();
                         long cursor = 0;
                         while (parentIds.Length > 0)
                         {
-                            var parents = ctx.DailyRecords.Where(row => parentIds.Contains(row.HostId) &&
-                                row.RecordDate == date && !row.DetailPruned && row.RecordId > cursor)
-                                .OrderBy(row => row.RecordId).Take(16).ToList();
+                            var parents = ReadParentMetadataPage(ctx, parentIds, date, cursor);
                             if (parents.Count == 0) break;
                             foreach (var parent in parents)
                             {
-                                var record = JsonSerializer.Deserialize<DailyAnalysisRecord>(parent.ContentJson)
-                                    ?? throw new InvalidDataException("NetIQ parent contains invalid data.");
-                                if (record.LogSource != AnalysisLogSource.Netiq) continue;
+                                if (!parent.JsonValid || !parent.IsObject)
+                                    throw new JsonException("NetIQ parent content must be a valid JSON object.");
+                                if (parent.SourceCount == 0) continue; // omitted enum defaults to Unknown.
+                                if (parent.SourceCount != 1 || parent.SourceValid != 1 || !parent.SourceEnum.HasValue)
+                                    throw new JsonException("NetIQ parent LogSource must be one legal numeric enum value.");
+                                if (parent.SourceEnum.Value != (int)AnalysisLogSource.Netiq) continue;
+                                if (parent.AttemptStatusCount > 1 || parent.AttemptAtCount > 1)
+                                    throw new JsonException("NetIQ parent contains duplicate attempt metadata properties.");
                                 // Preserve the existing parent retry contract: cancellation is a
                                 // failed fetch for qualification, while the durable receipt says stopped.
-                                record.LatestNetiqAttemptStatus = status == "stopped" ? "failed" : status;
-                                record.LatestNetiqAttemptAtUtc = at;
-                                parent.ContentJson = JsonSerializer.Serialize(record);
+                                PatchParentAttempt(ctx, parent, status == "stopped" ? "failed" : status, at);
                             }
                             cursor = parents[^1].RecordId;
-                            ctx.SaveChanges();
-                            ctx.ChangeTracker.Clear();
                             if (parents.Count < 16) break;
                         }
                     }
@@ -111,6 +112,115 @@ public static class NetiqSourceAttempt
                 tx.Commit();
             });
         }
+    }
+
+    private sealed class ParentMetadataRow
+    {
+        public long RecordId { get; set; }
+        public long WriteRevision { get; set; }
+        public int JsonValid { get; set; }
+        public int IsObject { get; set; }
+        public int SourceCount { get; set; }
+        public int SourceValid { get; set; }
+        public int? SourceEnum { get; set; }
+        public int AttemptStatusCount { get; set; }
+        public int AttemptAtCount { get; set; }
+    }
+
+    private sealed record ParentMetadata(long RecordId, long WriteRevision, bool JsonValid, bool IsObject,
+        int SourceCount, int SourceValid, int? SourceEnum, int AttemptStatusCount, int AttemptAtCount);
+
+    /// <summary>Read only bounded identity/revision/source metadata; never materialize either JSON LOB.</summary>
+    private static List<ParentMetadata> ReadParentMetadataPage(LfDbContext ctx, long[] hostIds, DateTime date, long cursor)
+    {
+        var sqlite = ctx.Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
+        var sqlServer = ctx.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true;
+        if (!sqlite && !sqlServer) throw new NotSupportedException("NetIQ parent patching supports SQLite and SQL Server.");
+
+        var valid = sqlite ? "json_valid(p.content_json)" : "ISJSON(p.content_json)";
+        var objectPrefix = "LEFT(LTRIM(REPLACE(REPLACE(REPLACE(p.content_json, CHAR(9), N''), " +
+                           "CHAR(10), N''), CHAR(13), N'')), 1)";
+        var objectCheck = sqlite
+            ? $"CASE WHEN {valid} = 1 THEN json_type(p.content_json, '$') = 'object' ELSE 0 END"
+            : $"({valid} = 1 AND {objectPrefix} = N'{{')";
+        var safeJson = $"CASE WHEN {valid} = 1 AND {objectCheck} THEN p.content_json ELSE " + (sqlite ? "'{}'" : "N'{}'") + " END";
+        var sourceCount = sqlite
+            ? $"MIN(2, (SELECT COUNT(*) FROM json_each({safeJson}) WHERE key = 'LogSource'))"
+            : "CASE WHEN source.source_count > 1 THEN 2 ELSE CONVERT(int, source.source_count) END";
+        var sourceValid = sqlite
+            ? $"CASE WHEN {sourceCount} = 1 AND json_type({safeJson}, '$.LogSource') = 'integer' " +
+              $"AND json_extract({safeJson}, '$.LogSource') IN (0, 1, 2) THEN 1 ELSE 0 END"
+            : "COALESCE(source.source_valid, 0)";
+        var sourceEnum = sqlite
+            ? $"CASE WHEN {sourceValid} = 1 THEN CAST(json_extract({safeJson}, '$.LogSource') AS INTEGER) END"
+            : "source.source_enum";
+        var attemptStatusCount = sqlite
+            ? $"MIN(2, (SELECT COUNT(*) FROM json_each({safeJson}) WHERE key = 'LatestNetiqAttemptStatus'))"
+            : "CASE WHEN source.attempt_status_count > 1 THEN 2 ELSE CONVERT(int, source.attempt_status_count) END";
+        var attemptAtCount = sqlite
+            ? $"MIN(2, (SELECT COUNT(*) FROM json_each({safeJson}) WHERE key = 'LatestNetiqAttemptAtUtc'))"
+            : "CASE WHEN source.attempt_at_count > 1 THEN 2 ELSE CONVERT(int, source.attempt_at_count) END";
+        var sourceApply = sqlite
+            ? ""
+            : " OUTER APPLY (SELECT COUNT_BIG(CASE WHEN [key] = N'LogSource' THEN 1 END) AS source_count, " +
+              "MAX(CASE WHEN [key] = N'LogSource' AND [type] = 2 AND [value] IN (N'0', N'1', N'2') THEN TRY_CONVERT(int, [value]) END) AS source_enum, " +
+              "MAX(CASE WHEN [key] = N'LogSource' AND [type] = 2 AND [value] IN (N'0', N'1', N'2') THEN 1 ELSE 0 END) AS source_valid, " +
+              "COUNT_BIG(CASE WHEN [key] = N'LatestNetiqAttemptStatus' THEN 1 END) AS attempt_status_count, " +
+              "COUNT_BIG(CASE WHEN [key] = N'LatestNetiqAttemptAtUtc' THEN 1 END) AS attempt_at_count " +
+              $"FROM OPENJSON({safeJson})) source";
+        var hostScope = sqlite
+            ? "p.host_id IN (SELECT CAST(value AS INTEGER) FROM json_each(@hostIds))"
+            : "p.host_id IN (SELECT TRY_CONVERT(bigint, [value]) FROM OPENJSON(@hostIds))";
+        var pageLimit = sqlite ? "LIMIT @pageSize" : "OFFSET 0 ROWS FETCH NEXT @pageSize ROWS ONLY";
+        var table = sqlite ? "\"lf_daily_records\"" : "[lf_daily_records]";
+        var query = $"SELECT p.record_id AS RecordId, p.write_revision AS WriteRevision, " +
+                    $"CASE WHEN {valid} = 1 THEN 1 ELSE 0 END AS JsonValid, " +
+                    $"CASE WHEN {objectCheck} THEN 1 ELSE 0 END AS IsObject, {sourceCount} AS SourceCount, " +
+                    $"{sourceValid} AS SourceValid, {sourceEnum} AS SourceEnum, " +
+                    $"{attemptStatusCount} AS AttemptStatusCount, {attemptAtCount} AS AttemptAtCount " +
+                    "FROM " + table + " p" + sourceApply + " WHERE " + hostScope + " " +
+                    "AND p.record_date = @recordDate AND p.detail_pruned = 0 AND p.record_id > @cursor " +
+                    $"ORDER BY p.record_id {pageLimit}";
+        // EF formats Raw SQL even with named DbParameters; escape the JSON object
+        // literals so they remain SQL text rather than composite-format placeholders.
+        var rawSqlFormat = query.Replace("{", "{{", StringComparison.Ordinal)
+            .Replace("}", "}}", StringComparison.Ordinal);
+        var rows = ctx.Database.SqlQueryRaw<ParentMetadataRow>(rawSqlFormat,
+            CreateParameters(ctx, ("@hostIds", JsonSerializer.Serialize(hostIds)), ("@recordDate", date),
+                ("@cursor", cursor), ("@pageSize", 16))).ToList();
+        return rows.Select(row => new ParentMetadata(row.RecordId, row.WriteRevision, row.JsonValid != 0,
+            row.IsObject != 0, row.SourceCount, row.SourceValid, row.SourceEnum,
+            row.AttemptStatusCount, row.AttemptAtCount)).ToList();
+    }
+
+    private static void PatchParentAttempt(LfDbContext ctx, ParentMetadata parent, string status, DateTime at)
+    {
+        var sqlite = ctx.Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
+        var table = sqlite ? "\"lf_daily_records\"" : "[lf_daily_records]";
+        var sql = sqlite
+            ? $"UPDATE {table} SET content_json = json_set(json_set(content_json, '$.LatestNetiqAttemptStatus', @status), " +
+              "'$.LatestNetiqAttemptAtUtc', @attemptAt), write_revision = write_revision + 1 " +
+              "WHERE record_id = @recordId AND write_revision = @revision AND detail_pruned = 0"
+            : $"UPDATE {table} SET content_json = JSON_MODIFY(JSON_MODIFY(content_json, '$.LatestNetiqAttemptStatus', @status), " +
+              "'$.LatestNetiqAttemptAtUtc', @attemptAt), write_revision = write_revision + 1 " +
+              "WHERE record_id = @recordId AND write_revision = @revision AND detail_pruned = 0";
+        var affected = ctx.Database.ExecuteSqlRaw(sql, CreateParameters(ctx,
+            ("@status", status), ("@attemptAt", at.ToString("O", CultureInfo.InvariantCulture)),
+            ("@recordId", parent.RecordId), ("@revision", parent.WriteRevision)));
+        if (affected != 1)
+            throw new DBConcurrencyException("NetIQ parent revision changed during attempt invalidation.");
+    }
+
+    private static DbParameter[] CreateParameters(LfDbContext ctx, params (string Name, object Value)[] values)
+    {
+        using var command = ctx.Database.GetDbConnection().CreateCommand();
+        return values.Select(value =>
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = value.Name;
+            parameter.Value = value.Value;
+            return parameter;
+        }).ToArray();
     }
 
     /// <summary>One bounded SQL query per requested date; query count depends on days, never hosts.</summary>
