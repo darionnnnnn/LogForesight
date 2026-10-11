@@ -319,25 +319,55 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         });
     }
 
-    private SettingsController CreateBackfillController(SchedulerRunState schedulerState)
+    private SettingsController CreateBackfillController(SchedulerRunState schedulerState, IVisibilityService? visibility = null)
     {
+        var hosts = new HostStore(_backend.Blob("hosts"));
+        if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "full-backfill-host", Active = true });
         var backfill = new PrtgBackfillService(
             _settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
-            new HostStore(_backend.Blob("hosts")), schedulerState, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
-            new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState, new HostStore(_backend.Blob("hosts")), new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
+            hosts, schedulerState, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
+            new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState, hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
 
         var controller = new SettingsController(
             new StubSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
             prtgBackfill: backfill,
-            backend: _backend);
+            backend: _backend,
+            hosts: hosts,
+            visibility: visibility ?? new FullPrtgVisibility(hosts));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
 
+    private sealed class FullPrtgVisibility(IHostStore hosts) : IVisibilityService
+    {
+        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Select(host => host.HostId).ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
+        public bool IsCaseGrantOnly(long id) => false;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => null;
+        public List<WebHost> GetVisibleHosts() => hosts.GetAll();
+        public void EnsureVisible(long hostId) { }
+    }
+
+    private sealed class PartialPrtgVisibility(IHostStore hosts, bool caseOnly) : IVisibilityService
+    {
+        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Take(1).Select(host => host.HostId).ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => Array.Empty<string>();
+        public bool IsCaseGrantOnly(long id) => caseOnly;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => caseOnly ? new HashSet<string>() : null;
+        public List<WebHost> GetVisibleHosts() => hosts.GetAll().Take(1).ToList();
+        public void EnsureVisible(long hostId) { }
+    }
+
     [Fact]
-    public void C4_回填啟動_取數執行中回409()
+    public void C4_回填啟動_舊的無預覽請求一律拒絕()
     {
         EnablePrtgWithMirror();
         var schedulerState = new SchedulerRunState();
@@ -346,13 +376,13 @@ public class ScheduleGuardStatusCodeTests : IDisposable
 
         var ex = Assert.Throws<DomainException>(() => controller.StartPrtgBackfill());
 
-        Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
-        Assert.Contains("取數執行中", ex.Message); // 訊息文字不變
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("先取得最新成本預覽", ex.Message);
         Assert.Empty(_audit.Entries);
     }
 
     [Fact]
-    public void C4_回填啟動_PRTG未啟用維持400()
+    public void C4_回填啟動_即使PRTG停用也先要求預覽確認()
     {
         // 不啟用 PRTG：設定／前提類的拒絕仍是輸入面的問題
         var controller = CreateBackfillController(new SchedulerRunState());
@@ -360,11 +390,11 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         var ex = Assert.Throws<DomainException>(() => controller.StartPrtgBackfill());
 
         Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
-        Assert.Contains("PRTG 擷取未啟用", ex.Message);
+        Assert.Contains("先取得最新成本預覽", ex.Message);
     }
 
     [Fact]
-    public void C4_回填啟動_鏡像無感測器改由背景工作先同步()
+    public void C4_回填啟動_鏡像無感測器也不得跳過明確預覽確認()
     {
         _settingsStore.Update(s =>
         {
@@ -376,19 +406,52 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         });
         var controller = CreateBackfillController(new SchedulerRunState());
 
-        var response = controller.StartPrtgBackfill();
+        var ex = Assert.Throws<DomainException>(() => controller.StartPrtgBackfill());
 
-        Assert.True(response.Data?.Started);
+        Assert.Contains("先取得最新成本預覽", ex.Message);
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 全量預覽與啟動各自要求完整主機可見範圍()
+    {
+        EnablePrtgWithMirror();
+        var hosts = new HostStore(_backend.Blob("hosts"));
+        if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "full-backfill-host", Active = true });
+        hosts.Upsert(new WebHost { HostName = "second-backfill-host", Active = true });
+        var partial = CreateBackfillController(new SchedulerRunState(), new PartialPrtgVisibility(hosts, caseOnly: false));
+        var previewDenied = Assert.Throws<DomainException>(() => partial.PreviewPrtgBackfill());
+        var startDenied = Assert.Throws<DomainException>(() => partial.StartPrtgBackfill(new PrtgFullBackfillStartRequest
+        { PreviewId = "not-issued", Confirmed = true }));
+        Assert.Equal(ApiErrorCodes.Forbidden, previewDenied.Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, startDenied.Code);
+
+        var caseOnly = CreateBackfillController(new SchedulerRunState(), new PartialPrtgVisibility(hosts, caseOnly: true));
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => caseOnly.PreviewPrtgBackfill()).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => caseOnly.StartPrtgBackfill(new PrtgFullBackfillStartRequest
+        { PreviewId = "not-issued", Confirmed = true })).Code);
+
+        var scheduler = new SchedulerRunState();
+        Assert.True(scheduler.TryBeginRun("manual", out _));
+        var full = CreateBackfillController(scheduler);
+        var preview = full.PreviewPrtgBackfill().Data!;
+        var conflict = Assert.Throws<DomainException>(() => full.StartPrtgBackfill(new PrtgFullBackfillStartRequest
+        { PreviewId = preview.PreviewId, Confirmed = true }));
+        Assert.Equal(ApiErrorCodes.Conflict, conflict.Code);
     }
 
     [Fact]
     public void C4_回填服務未啟用維持400()
     {
+        var hosts = new HostStore(_backend.Blob("hosts"));
+        if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "service-unavailable-host", Active = true });
         var controller = new SettingsController(
             new StubSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
-            backend: _backend);
+            backend: _backend,
+            hosts: hosts,
+            visibility: new FullPrtgVisibility(hosts));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
 
         var ex = Assert.Throws<DomainException>(() => controller.StartPrtgBackfill());

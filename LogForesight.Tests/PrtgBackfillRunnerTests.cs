@@ -90,6 +90,42 @@ public class PrtgBackfillRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_核對預覽後每日目標漂移時在任何PRTG請求前停止()
+    {
+        var store = CreateStore();
+        var records = CreateRecordStore();
+        var day = DateTime.Today.AddDays(-1);
+        store.ReplaceHostMapForDate(day, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 101, HostId = 1, MapStatus = PrtgMapStatus.Ok }
+        });
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "diskfree" }
+        }, DateTime.Now);
+        records.Append(CreateRecord(1, "host-1", day, "高"));
+        var scopeDevices = new long[] { 101 };
+        var whitelist = new[] { "diskfree" };
+        var expected = PrtgFullBackfillPlanBuilder.Build(store, records, DateTime.Today, 1,
+            scopeDevices, whitelist, PrtgValueFetchScope.Triggered, null);
+
+        // 增加會改變該日計畫指紋的保留風險紀錄，模擬預覽後、回填前資料變動。
+        records.Append(CreateRecord(2, "host-2", day, "中"));
+        var (client, handler) = CreateClient(_ => JsonResponse("{}"));
+        var fetch = new PrtgFetchService(client, store,
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            new TestConsole(), new Dictionary<string, string>());
+
+        var ok = await PrtgBackfillRunner.RunAsync(fetch, 1, 1, new TestConsole(), CancellationToken.None,
+            scopeDevices, store, records, whitelist, scope: PrtgValueFetchScope.Triggered,
+            expectedDayFingerprints: expected.Days.ToDictionary(daySummary => daySummary.Day, daySummary => daySummary.TargetFingerprint),
+            expectedPlanAnchorDate: DateTime.Today);
+
+        Assert.False(ok);
+        Assert.Empty(handler.RequestedUrls);
+    }
+
+    [Fact]
     public async Task RunAsync_逐日推進回填過去多天數據且成功回傳true()
     {
         var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";

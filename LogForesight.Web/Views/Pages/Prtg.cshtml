@@ -111,7 +111,7 @@
     <li class="nav-item"><button class="nav-link" data-tab="params" type="button">擷取參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="mirror" type="button">鏡像狀態</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">環境探測</button></li>
-    <li class="nav-item"><button class="nav-link" data-tab="selected-backfill" type="button">指定主機補值</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="selected-backfill" type="button">歷史回填</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="timeline-progress" type="button">狀態涵蓋進度</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="profile-refresh" type="button">Trusted profile 進度</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="effectiveness" type="button">使用效果</button></li>
@@ -262,6 +262,18 @@
 </div>
 
 <div data-panel="selected-backfill" class="d-none">
+    <section class="lf-card" aria-labelledby="prtg-full-backfill-title">
+        <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-full-backfill-title">全量歷史回填</h2></div>
+        <div class="lf-card__body">
+            <p class="small text-muted">依已儲存的回填天數、每日高／中風險主機、歷史有效對應、sensor 白名單與監看數值範圍預估。全量表示完整執行這套已設定範圍，不代表全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。</p>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button type="button" class="btn btn-outline-primary" id="prtg-full-backfill-preview">預估全量工作量</button>
+                <button type="button" class="btn btn-danger" id="prtg-full-backfill-start" disabled>確認並開始全量回填</button>
+            </div>
+            <div id="prtg-full-backfill-preview-result" data-runs-url="@Url.Content("~/runs")" aria-live="polite" aria-atomic="true"></div>
+        </div>
+    </section>
+
     <section class="lf-card" aria-labelledby="prtg-selected-backfill-title">
         <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-selected-backfill-title">指定主機歷史數值補值</h2></div>
         <div class="lf-card__body">

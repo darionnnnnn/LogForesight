@@ -139,7 +139,9 @@ public static class PrtgBackfillRunner
         Action<int, int>? sensorProgress = null,
         string? scope = null,
         IReadOnlyCollection<long>? extraScopeHosts = null,
-        Action<int, int>? stateChangeProgress = null)
+        Action<int, int>? stateChangeProgress = null,
+        IReadOnlyDictionary<DateTime, string>? expectedDayFingerprints = null,
+        DateTime? expectedPlanAnchorDate = null)
     {
         // 白名單為空時 all-mapped 會退回 triggered（第二道防線，見 PrtgValueFetchScope）
         var whitelistEmpty = whitelist == null || whitelist.Count == 0;
@@ -156,6 +158,10 @@ public static class PrtgBackfillRunner
             return false;
         }
 
+        // Freeze the plan anchor once so a run that crosses midnight keeps the same dates.
+        // Preview admission itself rejects a preview whose anchor is no longer today's date.
+        var anchorDate = expectedPlanAnchorDate?.Date ?? DateTime.Today;
+
         var triggered = store != null && records != null;
         var successDays = 0;
         var failedDays = 0;
@@ -167,6 +173,26 @@ public static class PrtgBackfillRunner
 
         console.WriteLine($"開始執行 PRTG 歷史回填（共 {days} 天，由近往遠逐日擷取）...");
 
+        if (expectedDayFingerprints != null)
+        {
+            if (!triggered || expectedDayFingerprints.Count != days)
+            {
+                console.WriteLine("全量回填計畫不完整或執行範圍不相符，停止且不發出 PRTG 請求。");
+                return false;
+            }
+            for (var i = 1; i <= days; i++)
+            {
+                var day = anchorDate.AddDays(-i);
+                var current = PrtgFullBackfillPlanBuilder.ResolveDay(store!, records!, day,
+                    scopeDeviceObjids, whitelist, scope, extraScopeHosts);
+                if (!expectedDayFingerprints.TryGetValue(day, out var expected) || expected != current.Fingerprint)
+                {
+                    console.WriteLine($"全量回填 {day:yyyy-MM-dd} 的記錄、對應或目標已變更，停止且不發出 PRTG 請求；請重新預覽。");
+                    return false;
+                }
+            }
+        }
+
         try
         {
             if (triggered)
@@ -177,7 +203,7 @@ public static class PrtgBackfillRunner
                 try
                 {
                     var range = await fetchService.FetchStateChangesRangeAsync(
-                        DateTime.Today.AddDays(-days - 1), DateTime.Today, scopeDeviceObjids, concurrency, ct,
+                        anchorDate.AddDays(-days - 1), anchorDate, scopeDeviceObjids, concurrency, ct,
                         (stage, done, total) => stateChangeProgress?.Invoke(done, total));
                     console.WriteLine($"狀態變更：查詢 {range.QueriedObjects} 台、讀取 {range.ReadRows} 筆、新增 {range.TotalWritten} 筆（其餘已存在）");
                     if (!range.Converged)
@@ -204,7 +230,7 @@ public static class PrtgBackfillRunner
             {
                 ct.ThrowIfCancellationRequested();
 
-                var day = DateTime.Today.AddDays(-i);
+                var day = anchorDate.AddDays(-i);
                 // 已完成 i-1 天、正在處理第 i 天：回報 i 會讓剛開始第 1 天就顯示 1/N，
                 // 最後一天處理中顯示 N/N（看起來已經跑完但其實還在跑）
                 dayProgress?.Invoke(i - 1, days, day);
@@ -241,14 +267,18 @@ public static class PrtgBackfillRunner
 
                         // 該日無對應時退回最近一日的對應：以回填當日為基準往回查，
                         // 單一聚合查詢取代逐日往回的多次獨立查詢（回填 N 天會放大 N 倍）
-                        var hostMapRows = store!.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, day).Rows;
-                        var mappedHostIds = hostMapRows
-                            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
-                            .Select(m => m.HostId!.Value)
-                            .Distinct()
-                            .ToList();
+                        var targetPlan = PrtgFullBackfillPlanBuilder.ResolveDay(
+                            store!, records!, day, scopeDeviceObjids, whitelist, scope, extraScopeHosts);
 
-                        if (mappedHostIds.Count == 0)
+                        if (expectedDayFingerprints != null &&
+                            (!expectedDayFingerprints.TryGetValue(day, out var expectedFingerprint) ||
+                             expectedFingerprint != targetPlan.Fingerprint))
+                        {
+                            console.WriteLine($"全量回填 {day:yyyy-MM-dd} 的記錄、對應或目標在執行中變更，停止且不發出該日 historicdata 請求。");
+                            return false;
+                        }
+
+                        if (targetPlan.MappedHosts == 0)
                         {
                             // 沒有對應就沒有目標 sensor：不是成功（一筆都沒取）也不是失敗（沒有東西壞）
                             skippedDays++;
@@ -256,50 +286,17 @@ public static class PrtgBackfillRunner
                             continue;
                         }
 
-                        var filter = new RecordQueryFilter
-                        {
-                            From = day,
-                            To = day,
-                            RiskLevels = new[] { "高", "中" },
-                            Hosts = null
-                        };
-                        var riskyRecords = records!.QueryLightweight(filter);
-                        var triggeredHostIds = riskyRecords
-                            .Select(r => r.HostId)
-                            .Distinct()
-                            .ToList();
-
-                        // 取數範圍與每日擷取共用同一個判定（docs/PRTG-SPEC.md §3a），不各寫一份
-                        var selectedHostIds = PrtgValueFetchScope
-                            .SelectHosts(effectiveScope, triggeredHostIds, mappedHostIds, extraScopeHosts ?? Array.Empty<long>())
-                            .ToHashSet();
-
-                        var problemHostsCount = selectedHostIds.Count;
+                        var problemHostsCount = targetPlan.SelectedHosts;
                         var valuesWritten = 0;
                         var failedSensors = 0;
-                        var targetSensorsCount = 0;
-
-                        if (problemHostsCount > 0)
+                        var targetSensorsCount = targetPlan.SensorObjids.Count;
+                        if (targetSensorsCount > 0)
                         {
-                            var deviceObjids = hostMapRows
-                                .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && selectedHostIds.Contains(m.HostId.Value))
-                                .Select(m => m.DeviceObjid)
-                                .Distinct()
-                                .ToList();
-
-                            if (deviceObjids.Count > 0)
-                            {
-                                var targets = store.GetValueFetchTargets(whitelist, deviceObjids);
-                                targetSensorsCount = targets.Count;
-                                if (targets.Count > 0)
-                                {
-                                    var (written, failed) = await fetchService.FetchValuesForSensorsAsync(
-                                        day, targets, concurrency, ct,
-                                        progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
-                                    valuesWritten = written;
-                                    failedSensors = failed;
-                                }
-                            }
+                            var (written, failed) = await fetchService.FetchValuesForSensorsAsync(
+                                day, targetPlan.SensorObjids, concurrency, ct,
+                                progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
+                            valuesWritten = written;
+                            failedSensors = failed;
                         }
 
                         // 失敗＝有目標 sensor 且全部失敗；狀態變更不再逐日取，不參與判定

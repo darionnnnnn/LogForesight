@@ -1,5 +1,44 @@
 namespace LogForesight.Web.Models.Dto;
 
+/// <summary>Full backfill preview calculated from current retained records and mirror mappings.</summary>
+public sealed class PrtgFullBackfillPreviewDto
+{
+    public string PreviewId { get; init; } = "";
+    public string ContractVersion { get; init; } = "";
+    public string BuildVersion { get; init; } = "";
+    public string BuildRevision { get; init; } = "";
+    public DateTime CreatedAtUtc { get; init; }
+    public DateTime ExpiresAtUtc { get; init; }
+    public DateTime PlanAnchorLocalDate { get; init; }
+    public DateTime FromDate { get; init; }
+    public DateTime ToDate { get; init; }
+    public int DayCount { get; init; }
+    public long EstimatedHistoricRequests { get; init; }
+    public long HistoricQuotaLowerBoundSeconds { get; init; }
+    public int DaysWithTargets { get; init; }
+    public int StateChangeObjects { get; init; }
+    public string StateChangePageCost { get; init; } = "unknown_until_live_response";
+    public string SettingsRevision { get; init; } = "";
+    public string ScopeRevision { get; init; } = "";
+    public IReadOnlyList<PrtgFullBackfillDayPreviewDto> Days { get; init; } = Array.Empty<PrtgFullBackfillDayPreviewDto>();
+    public string Message { get; init; } = "";
+}
+
+public sealed class PrtgFullBackfillDayPreviewDto
+{
+    public DateTime Day { get; init; }
+    public int TriggeredHosts { get; init; }
+    public int MappedHosts { get; init; }
+    public int SelectedHosts { get; init; }
+    public int TargetSensors { get; init; }
+}
+
+public sealed class PrtgFullBackfillStartRequest
+{
+    public string PreviewId { get; set; } = "";
+    public bool Confirmed { get; set; }
+}
+
 /// <summary>指定主機與日期的 PRTG 歷史數值回填要求。</summary>
 public sealed class PrtgSelectedBackfillRequest
 {

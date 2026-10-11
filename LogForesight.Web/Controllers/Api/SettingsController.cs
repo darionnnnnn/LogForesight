@@ -459,13 +459,23 @@ public class SettingsController : ControllerBase
     public ApiResponse<PrtgBackfillStatusDto> GetPrtgBackfillStatus() =>
         ApiResponse<PrtgBackfillStatusDto>.Ok(_prtgBackfill?.GetStatus() ?? new PrtgBackfillStatusDto());
 
-    [HttpPost("prtg-backfill/start")]
-    public ApiResponse<StartPrtgBackfillResultDto> StartPrtgBackfill()
+    [HttpGet("prtg-backfill/preview")]
+    public ApiResponse<PrtgFullBackfillPreviewDto> PreviewPrtgBackfill()
     {
+        RequireFullPrtgTransferAccess();
+        if (_prtgBackfill == null)
+            throw DomainException.Validation("PRTG 回填服務未啟用。");
+        return ApiResponse<PrtgFullBackfillPreviewDto>.Ok(_prtgBackfill.PreviewFull());
+    }
+
+    [HttpPost("prtg-backfill/start")]
+    public ApiResponse<StartPrtgBackfillResultDto> StartPrtgBackfill([FromBody] PrtgFullBackfillStartRequest? request = null)
+    {
+        RequireFullPrtgTransferAccess();
         if (_prtgBackfill == null)
             throw DomainException.Validation("PRTG 回填服務未啟用。");
 
-        if (!_prtgBackfill.TryStart(out var error, out var isConflict))
+        if (!_prtgBackfill.TryStartFull(request, out var error, out var isConflict))
         {
             // 被互斥擋下（探測／取數／結構同步／回填自己在跑）是狀態衝突，回 409；
             // 設定或前提不齊仍是 400。與結構同步端點同一套分支。

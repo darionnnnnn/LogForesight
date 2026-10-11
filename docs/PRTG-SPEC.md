@@ -409,10 +409,14 @@ device 兩層都得不到 IP（名稱解析不到、或欄位根本沒填）→ 
 
 ## 5. 歷史回填
 
-手動觸發的離峰作業（**排程作業頁**），**不掛夜間排程**。從昨天往前回填
+手動觸發的離峰作業（**PRTG 維護 → 歷史回填**；排程作業頁查看進度及停止），**不掛夜間排程**。從昨天往前回填
 `PrtgBackfillDays` 天（預設 30）的數值與狀態變更，**不重跑 device／sensor 結構同步**——
 結構鏡像永遠是現況，逐日重跑既是對 PRTG 做 N 次無謂的全量查詢，也會把「最後結構同步時間」
 改寫成回填當下。回填時的 sensor 清單改從既有鏡像讀取。
+
+- **全量先預估再確認**：維護者須具有全主機範圍（不接受只有個案授權）。唯讀預覽與正式 runner 共用逐日目標 resolver，按已保存的觸發範圍、各日高／中風險、當日往回最多 31 天的有效對應及 sensor type 白名單計算；「全量」表示完整執行這套設定，不是對全站 sensor 無限制取數。預覽不建立 PRTG client、不發 PRTG HTTP、不取得 run lock。
+- **成本口徑**：逐日列主機與 sensor 數、合計 historicdata 次數，以及共享 5 次／滾動 60 秒配額的時間下界 `N≤1 ? 0 : floor((N−1)/5)×60` 秒；此為額度全空、沒有其他使用者競爭時的最短配額等待，不是總 ETA。另列一次整個區間的狀態變更查詢對象，未知分頁與回應成本明示未知。官方限制核對於 2026-10-11，見 [Paessler Historic Data](https://www.paessler.com/manuals/prtg/historic_data)。
+- **版本與啟動**：預覽綁定本服務 build／契約、設定、完整 scope、日期及實際目標 fingerprint，五分鐘有效，服務重啟後重新預覽。按確認後才傳送當次 PreviewId 與 Confirmed；缺預覽、未確認、過期、重用、跨日或設定／對應／紀錄漂移，在建立 client／run lock 前拒絕。執行使用已確認的固定日期區間，各日取值前再核對目標 fingerprint；變更就停止並要求重新預覽，不悄悄擴大成本。停用、互斥與取消仍沿用原門檻。
 
 - **狀態變更整趟只取一次**（區間＝最舊回填日的前一天到今天，§3a；只查取數範圍內裝置，範圍在回填開始時以既有對應算一次，§3c），之後逐日做數值；單日失敗不中止整趟，最後輸出成功、失敗、略過天數。進度的狀態變更段以台數顯示。
 - **斷點續傳靠冪等**：所有寫入都有自然鍵去重，中斷後重跑同一區間不會產生重複資料，
@@ -697,7 +701,7 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 | `GET prtg-mirror` | 鏡像狀態與主機對應摘要；含快照最近成功時間、感測器數、生效間隔、連續失敗數、是否退避中、暫停原因 |
 | `POST prtg-probe/start`、`GET prtg-probe/status` | 環境探測 |
 | `POST prtg-probe/data-flow/start` | 小範圍資料流驗證；與完整環境探測共用 status 與 cancel，僅抽樣一台主機、一顆 sensor、一天資料 |
-| `POST prtg-backfill/start`、`POST prtg-backfill/cancel`、`GET prtg-backfill/status` | 歷史回填（§5）。status 含天數、當日 sensor 進度、讀取狀態變更進度與是否被停止；cancel 在沒有執行中時回 409 |
+| `GET prtg-backfill/preview`、`POST prtg-backfill/start`、`POST prtg-backfill/cancel`、`GET prtg-backfill/status` | 歷史回填（§5）。全量 start 要求最新單次 PreviewId 及 Confirmed=true；preview/start 限全主機維護範圍。status 含天數、當日 sensor 進度、讀取狀態變更進度與是否被停止；cancel 在沒有執行中時回 409 |
 | `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a）。status 含執行中進度與上次結果摘要；上次結果為 null 代表從未執行過。cancel 在沒有執行中時回 409；成功時回 200（只代表取消訊號已送出，實際結束要看 status） |
 | `PUT prtg` | PRTG 專屬設定更新（維護頁「連線與參數」，只寫 PRTG 欄位；**含總開關 `PrtgEnabled`**，有送才更新） |
 | `GET／PUT／DELETE prtg-manual-map` | 人工主機對應的查詢、指派與移除（§4a） |

@@ -1,4 +1,9 @@
 ﻿using LogForesight.Core;
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -140,6 +145,11 @@ public class PrtgBackfillService : IPrtgBackfillTail
 {
     public const int SelectedBackfillMaxHosts = 5;
     public const int SelectedBackfillMaxDays = 7;
+    public const string FullBackfillPreviewContractVersion = "prtg-full-backfill-preview-v1";
+    private static readonly TimeSpan FullBackfillPreviewLifetime = TimeSpan.FromMinutes(5);
+    private const int MaxPendingFullBackfillPreviews = 128;
+    private readonly object _fullPreviewLock = new();
+    private readonly ConcurrentDictionary<string, PendingFullBackfillPreview> _fullPreviews = new(StringComparer.Ordinal);
     private readonly ISystemSettingsStore _settings;
     private readonly StorageBackend _backend;
     private readonly PrtgBackfillRunState _state;
@@ -155,6 +165,11 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
     /// <summary>鏡像沒有感測器時，回填自己先做一次結構同步。</summary>
     private readonly PrtgStructureSyncService _structureSync;
+    private readonly TimeProvider _timeProvider;
+    private readonly Func<SystemSettings, PrtgClient>? _clientFactory;
+
+    private sealed record PendingFullBackfillPreview(DateTime AnchorDate, DateTime ExpiresAtUtc,
+        string SettingsRevision, string ScopeRevision, string TargetFingerprint, string BuildVersion, string BuildRevision);
 
     public PrtgBackfillService(
         ISystemSettingsStore settings,
@@ -165,7 +180,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
         SchedulerRunState schedulerRunState,
         PrtgStructureSyncRunState structureSyncState,
         ISentinelStore sentinels,
-        PrtgStructureSyncService structureSync)
+        PrtgStructureSyncService structureSync,
+        TimeProvider? timeProvider = null,
+        Func<SystemSettings, PrtgClient>? clientFactory = null)
     {
         _sentinels = sentinels;
         _settings = settings;
@@ -176,6 +193,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
         _schedulerRunState = schedulerRunState;
         _structureSyncState = structureSyncState;
         _structureSync = structureSync;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _clientFactory = clientFactory;
     }
 
     public PrtgBackfillStatusDto GetStatus()
@@ -235,7 +254,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
     }
 
     /// <summary>回填啟動前準備好的一趟（已佔住執行狀態）。</summary>
-    private sealed record PreparedRun(SystemSettings Settings, int Days, PrtgClient Client, CancellationToken Token, bool NeedsStructureSync);
+    private sealed record PreparedRun(SystemSettings Settings, int Days, PrtgClient Client, CancellationToken Token,
+        bool NeedsStructureSync, PrtgFullBackfillPlan? ExpectedPlan = null);
 
     /// <summary>「近 N 天」的對應視窗：逐日迴圈以每個回填日為基準往回找 HostMapLookbackDays 天，閘門要涵蓋「最舊回填日再往回」整段。</summary>
     private static int MapGateWindow(int days) => days + PrtgTriggeredValueFetcher.HostMapLookbackDays;
@@ -258,6 +278,152 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
         _ = Task.Run(() => ExecuteAsync(run!, new PrtgBackfillConsole(_state), hostIds: null));
         return true;
+    }
+
+    /// <summary>Builds a bounded, read-only estimate from local mirror data and retained records.</summary>
+    public PrtgFullBackfillPreviewDto PreviewFull()
+    {
+        var settings = _settings.Get();
+        var snapshot = BuildFullPreviewSnapshot(settings, _timeProvider.GetLocalNow().Date);
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var expires = now.Add(FullBackfillPreviewLifetime);
+        var previewId = Guid.NewGuid().ToString("N");
+        var (buildVersion, buildRevision) = CurrentBuildIdentity();
+        lock (_fullPreviewLock)
+        {
+            foreach (var stale in _fullPreviews.Where(pair => pair.Value.ExpiresAtUtc <= now).Select(pair => pair.Key).ToArray())
+                _fullPreviews.TryRemove(stale, out _);
+            if (_fullPreviews.Count >= MaxPendingFullBackfillPreviews)
+                throw DomainException.Conflict("目前已有太多尚未使用的全量回填預覽，請稍後再試或使用既有預覽。 ");
+            _fullPreviews[previewId] = new PendingFullBackfillPreview(snapshot.AnchorDate, expires,
+                snapshot.SettingsRevision, snapshot.ScopeRevision, snapshot.Plan.TargetFingerprint, buildVersion, buildRevision);
+        }
+
+        return new PrtgFullBackfillPreviewDto
+        {
+            PreviewId = previewId,
+            ContractVersion = FullBackfillPreviewContractVersion,
+            BuildVersion = buildVersion,
+            BuildRevision = buildRevision,
+            CreatedAtUtc = now,
+            ExpiresAtUtc = expires,
+            PlanAnchorLocalDate = snapshot.AnchorDate,
+            FromDate = snapshot.Plan.FromDate,
+            ToDate = snapshot.Plan.ToDate,
+            DayCount = snapshot.Plan.DayCount,
+            EstimatedHistoricRequests = snapshot.Plan.HistoricRequests,
+            HistoricQuotaLowerBoundSeconds = snapshot.Plan.HistoricQuotaLowerBoundSeconds,
+            DaysWithTargets = snapshot.Plan.DaysWithTargets,
+            StateChangeObjects = snapshot.Plan.StateChangeObjects,
+            SettingsRevision = snapshot.SettingsRevision,
+            ScopeRevision = snapshot.ScopeRevision,
+            Days = snapshot.Plan.Days.Select(day => new PrtgFullBackfillDayPreviewDto
+            {
+                Day = day.Day, TriggeredHosts = day.TriggeredHosts, MappedHosts = day.MappedHosts,
+                SelectedHosts = day.SelectedHosts, TargetSensors = day.TargetSensors
+            }).ToArray(),
+            Message = FullPreviewMessage(snapshot.Plan)
+        };
+    }
+
+    /// <summary>Starts only the exact preview accepted by the operator. Preview IDs are single-use and expire.</summary>
+    public bool TryStartFull(PrtgFullBackfillStartRequest? request, out string? error, out bool isConflict)
+    {
+        error = null;
+        isConflict = false;
+        if (request == null || string.IsNullOrWhiteSpace(request.PreviewId))
+        {
+            error = "全量回填必須先取得最新成本預覽，再確認啟動。";
+            return false;
+        }
+        if (!request.Confirmed)
+        {
+            error = "尚未確認全量回填成本預覽。";
+            return false;
+        }
+        if (!_fullPreviews.TryRemove(request.PreviewId, out var pending))
+        {
+            error = "預覽已使用、過期或不屬於目前服務版本，請重新預覽。";
+            return false;
+        }
+        var currentLocalDate = _timeProvider.GetLocalNow().Date;
+        if (pending.ExpiresAtUtc <= _timeProvider.GetUtcNow().UtcDateTime || pending.AnchorDate != currentLocalDate)
+        {
+            error = "預覽已過期或日期已跨日，請重新預覽。";
+            return false;
+        }
+
+        var settings = _settings.Get();
+        var current = BuildFullPreviewSnapshot(settings, currentLocalDate);
+        var (buildVersion, buildRevision) = CurrentBuildIdentity();
+        if (pending.SettingsRevision != current.SettingsRevision || pending.ScopeRevision != current.ScopeRevision ||
+            pending.TargetFingerprint != current.Plan.TargetFingerprint || pending.BuildVersion != buildVersion ||
+            pending.BuildRevision != buildRevision)
+        {
+            error = "設定、主機範圍、歷史記錄或對應已在預覽後變更，請重新預覽確認最新成本。";
+            return false;
+        }
+
+        if (!TryPrepare(settings, settings.PrtgBackfillDays, blockWhenSchedulerRunning: true, runKind: "full",
+                out var run, out error, out isConflict, expectedFullPreview: current,
+                expectedAnchorDate: pending.AnchorDate, expectedPreviewExpiryUtc: pending.ExpiresAtUtc))
+            return false;
+
+        var prepared = run! with { ExpectedPlan = current.Plan };
+        _ = Task.Run(() => ExecuteAsync(prepared, new PrtgBackfillConsole(_state), hostIds: null));
+        return true;
+    }
+
+    private sealed record FullPreviewSnapshot(DateTime AnchorDate, PrtgFullBackfillPlan Plan,
+        string SettingsRevision, string ScopeRevision);
+
+    private FullPreviewSnapshot BuildFullPreviewSnapshot(SystemSettings settings, DateTime anchorDate)
+    {
+        if (settings.PrtgBackfillDays is < 1 or > 365)
+            throw DomainException.Validation("歷史回填天數設定無效，請儲存 1 至 365 天的範圍後重新預覽。");
+        var anchor = anchorDate.Date;
+        var scopeReader = new PrtgScopeRevisionReader(_backend, _hosts);
+        var scopeBefore = scopeReader.Read();
+        var settingsRevision = Hash(JsonSerializer.Serialize(settings));
+        var store = _backend.PrtgStore();
+        if (store.GetSensorTargets().Count == 0)
+            throw DomainException.Validation("PRTG 結構鏡像目前沒有感測器，請先同步結構，再預覽全量回填成本。");
+        var scopeResult = PrtgScopeDevices.Compute(store, _hosts, new PrtgMirrorGuardSource(store), settings,
+            _sentinels.GetAll(), new SilentBackfillConsole(), new PrtgAddressResolver(), hostIds: null);
+        var (extraScopeHosts, _) = PrtgValueFetchScope.ResolveHostNames(settings.PrtgValueFetchExtraHosts,
+            _hosts.GetAll().Select(host => (host.HostId, host.HostName, host.Active, host.MergedInto.HasValue)));
+        var plan = PrtgFullBackfillPlanBuilder.Build(store, _backend.RecordStore(), anchor,
+            settings.PrtgBackfillDays, scopeResult.DeviceObjids, settings.PrtgSensorTypeWhitelist,
+            settings.PrtgValueFetchScope, extraScopeHosts);
+        var scopeAfter = scopeReader.Read();
+        var settingsAfter = Hash(JsonSerializer.Serialize(_settings.Get()));
+        if (scopeBefore != scopeAfter || settingsRevision != settingsAfter)
+            throw DomainException.Conflict("預覽時計算範圍或設定正好變更，請重新預覽。");
+        return new FullPreviewSnapshot(anchor, plan, settingsRevision, Hash(scopeAfter));
+    }
+
+    private static string FullPreviewMessage(PrtgFullBackfillPlan plan)
+    {
+        var lowerBound = TimeSpan.FromSeconds(plan.HistoricQuotaLowerBoundSeconds);
+        var stateText = plan.StateChangeObjects == 0
+            ? "沒有狀態變更查詢對象。"
+            : $"另有 {plan.StateChangeObjects:N0} 個狀態變更查詢對象；其 table 分頁成本要等來源回應，預覽不估 ETA。";
+        return $"數值歷史約 {plan.HistoricRequests:N0} 次請求；依每滾動 60 秒最多 5 次，僅配額下界為 {lowerBound.TotalMinutes:N0} 分鐘，不含 PRTG 回應延遲。{stateText}";
+    }
+
+    private static (string Version, string Revision) CurrentBuildIdentity()
+    {
+        var assembly = typeof(PrtgBackfillService).Assembly;
+        return (assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ??
+                assembly.GetName().Version?.ToString() ?? "unknown",
+            assembly.ManifestModule.ModuleVersionId.ToString("N"));
+    }
+
+    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    private sealed class SilentBackfillConsole : IRunConsole
+    {
+        public void WriteLine(string message = "") { }
     }
 
     /// <summary>預估指定主機與日期的數值請求量；只讀鏡像資料，不連線 PRTG。</summary>
@@ -423,7 +589,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
     /// </summary>
     /// <param name="blockWhenSchedulerRunning">手動回填要避開取數執行；接續回填本身就是那一趟，不檢查。</param>
     private bool TryPrepare(SystemSettings s, int days, bool blockWhenSchedulerRunning, string runKind,
-        out PreparedRun? run, out string? error, out bool isConflict, bool requireRecentMapping = true)
+        out PreparedRun? run, out string? error, out bool isConflict, bool requireRecentMapping = true,
+        FullPreviewSnapshot? expectedFullPreview = null, DateTime? expectedAnchorDate = null,
+        DateTime? expectedPreviewExpiryUtc = null)
     {
         run = null;
         error = null;
@@ -481,6 +649,41 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
+        // Re-read the complete preview contract immediately before claiming the run gate or creating a PRTG client.
+        // The runner performs a second per-day check before source calls to catch changes after this admission point.
+        if (expectedFullPreview != null)
+        {
+            try
+            {
+                var live = BuildFullPreviewSnapshot(_settings.Get(), expectedFullPreview.AnchorDate);
+                if (live.SettingsRevision != expectedFullPreview.SettingsRevision ||
+                    live.ScopeRevision != expectedFullPreview.ScopeRevision ||
+                    live.Plan.TargetFingerprint != expectedFullPreview.Plan.TargetFingerprint)
+                {
+                    error = "設定、範圍、歷史記錄或對應已在啟動前變更，請重新預覽確認最新成本。";
+                    return false;
+                }
+            }
+            catch (DomainException ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        // Recheck the preview's temporal fence after the potentially expensive plan recompute and
+        // immediately before claiming the run. Once claimed, execution keeps this admitted anchor.
+        if (expectedAnchorDate.HasValue && _timeProvider.GetLocalNow().Date != expectedAnchorDate.Value.Date)
+        {
+            error = "預覽計算期間日期已跨日，請重新預覽確認最新成本。";
+            return false;
+        }
+        if (expectedPreviewExpiryUtc.HasValue && _timeProvider.GetUtcNow().UtcDateTime >= expectedPreviewExpiryUtc.Value)
+        {
+            error = "預覽計算期間已過期，請重新預覽確認最新成本。";
+            return false;
+        }
+
         if (!_state.TryBeginIdentifiedRun(runKind, out var runToken))
         {
             error = "回填已在執行中。";
@@ -493,7 +696,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         PrtgClient client;
         try
         {
-            client = PrtgClientFactory.Create(s);
+            client = _clientFactory?.Invoke(s) ?? PrtgClientFactory.Create(s);
         }
         catch (Exception ex)
         {
@@ -571,7 +774,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),
                     scope: s.PrtgValueFetchScope,
                     extraScopeHosts: scopeHostIds,
-                    stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices));
+                    stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices),
+                    expectedDayFingerprints: run.ExpectedPlan?.Days.ToDictionary(day => day.Day, day => day.TargetFingerprint),
+                    expectedPlanAnchorDate: run.ExpectedPlan?.ToDate.AddDays(1));
                 operation.CompletedStage("歷史補值已返回");
             }
         }

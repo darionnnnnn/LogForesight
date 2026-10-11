@@ -1971,7 +1971,8 @@ function bindPrtgBackfill() {
     cancelBtn?.addEventListener('click', async () => {
         const restore = withBusy(cancelBtn, '停止中');
         try {
-            await api.post('/api/admin/settings/prtg-backfill/cancel', {});
+            // Empty body selects the full-run stop contract; the selected-run DTO requires its RunId.
+            await api.post('/api/admin/settings/prtg-backfill/cancel', null);
             toast('已送出停止，回填會在目前這一步結束後停下', 'success');
             await refreshPrtgBackfillStatus();
         } catch {

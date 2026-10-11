@@ -1100,6 +1100,113 @@ function bindSelectedBackfill() {
     refreshSelectedBackfillStatus();
 }
 
+let fullBackfillPreview = null;
+
+function renderFullBackfillPreview(preview) {
+    const root = document.getElementById('prtg-full-backfill-preview-result');
+    const start = document.getElementById('prtg-full-backfill-start');
+    if (!root || !start) return;
+    root.replaceChildren();
+    const summary = document.createElement('p');
+    summary.className = 'small mb-2';
+    summary.textContent = `${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)}，${formatNumber(preview.dayCount)} 天、` +
+        `${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata；配額時間下界 ${formatNumber(Math.ceil(preview.historicQuotaLowerBoundSeconds / 60))} 分鐘（不含回應延遲）。`;
+    root.appendChild(summary);
+    const limits = document.createElement('p');
+    limits.className = 'small text-muted mb-2';
+    limits.textContent = `${preview.daysWithTargets} 天有數值目標；另有 ${formatNumber(preview.stateChangeObjects)} 個狀態變更對象，table 分頁成本未知，故不估總 ETA。${preview.message}`;
+    root.appendChild(limits);
+    const metadata = document.createElement('p');
+    metadata.className = 'small text-muted text-break mb-2';
+    metadata.textContent = `預覽版本 ${preview.contractVersion} / ${preview.buildVersion}，有效至 ${formatDateTime(preview.expiresAtUtc)}；起算日 ${preview.planAnchorLocalDate.slice(0, 10)}。設定與範圍版本已綁定。`;
+    root.appendChild(metadata);
+
+    const details = document.createElement('details');
+    const heading = document.createElement('summary');
+    heading.textContent = '查看逐日工作量';
+    details.appendChild(heading);
+    const table = document.createElement('table');
+    table.className = 'table table-sm mt-2';
+    const caption = document.createElement('caption');
+    caption.className = 'visually-hidden';
+    caption.textContent = '全量歷史回填逐日估算的觸發主機、歷史對應、選取主機與目標感測器數';
+    table.appendChild(caption);
+    const thead = document.createElement('thead');
+    const header = document.createElement('tr');
+    for (const label of ['日期', '觸發主機', '歷史對應主機', '選取主機', '目標 sensor']) {
+        const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; header.appendChild(th);
+    }
+    thead.appendChild(header); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const day of preview.days || []) {
+        const tr = document.createElement('tr');
+        for (const value of [day.day.slice(0, 10), formatNumber(day.triggeredHosts), formatNumber(day.mappedHosts), formatNumber(day.selectedHosts), formatNumber(day.targetSensors)]) {
+            const td = document.createElement('td'); td.textContent = value; tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    const responsive = document.createElement('div');
+    responsive.className = 'table-responsive';
+    responsive.appendChild(table);
+    details.appendChild(responsive); root.appendChild(details);
+    start.disabled = !preview.previewId;
+}
+
+function bindFullBackfill() {
+    const previewButton = document.getElementById('prtg-full-backfill-preview');
+    const startButton = document.getElementById('prtg-full-backfill-start');
+    const result = document.getElementById('prtg-full-backfill-preview-result');
+    if (!previewButton || !startButton || !result) return;
+    previewButton.addEventListener('click', async event => {
+        const restore = withBusy(event.currentTarget, '預估中');
+        fullBackfillPreview = null;
+        startButton.disabled = true;
+        try {
+            fullBackfillPreview = await api.get('/api/admin/settings/prtg-backfill/preview', { silent: true });
+            renderFullBackfillPreview(fullBackfillPreview);
+        } catch (e) {
+            result.textContent = `無法建立全量回填預覽：${e?.message || '請重新整理後重試。'}`;
+        } finally { restore(); }
+    });
+    startButton.addEventListener('click', async event => {
+        if (startButton.dataset.pending === 'true') return;
+        const button = event.currentTarget;
+        const preview = fullBackfillPreview;
+        if (!preview?.previewId) { toast('請先取得有效的全量成本預覽。', 'warning'); return; }
+        startButton.dataset.pending = 'true';
+        const restore = withBusy(button, '等待確認');
+        try {
+            const confirmed = await confirmAction({
+                title: '確認全量歷史回填',
+                message: `全量依目前保存的觸發主機、歷史對應、sensor 白名單與監看數值範圍執行，不代表全站所有 sensor。${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)} 預估 ${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata。` +
+                    `共享配額時間下界 ${Math.ceil(preview.historicQuotaLowerBoundSeconds / 60)} 分鐘，不含來源延遲；狀態變更另有 ${formatNumber(preview.stateChangeObjects)} 個對象，分頁成本未知。` +
+                    '預覽五分鐘有效；設定、範圍、歷史紀錄或對應變更時必須重新預覽。',
+                confirmText: '確認並開始', confirmVariant: 'danger'
+            });
+            if (!confirmed) return;
+            button.querySelector('span')?.remove();
+            button.replaceChildren(document.createTextNode('啟動中'));
+            await api.post('/api/admin/settings/prtg-backfill/start', { previewId: preview.previewId, confirmed: true }, { silent: true });
+            fullBackfillPreview = null;
+            result.replaceChildren(document.createTextNode('已啟動全量歷史回填。執行進度與停止控制位於 Runs 頁的 PRTG 狀態卡：'));
+            const runsLink = document.createElement('a');
+            runsLink.href = result.dataset.runsUrl || '/runs';
+            runsLink.textContent = '查看進度／停止作業';
+            result.appendChild(runsLink);
+            toast('已開始全量歷史回填。', 'success');
+        } catch (e) {
+            fullBackfillPreview = null;
+            result.textContent = `未啟動：${e?.message || '預覽失效，請重新預估並確認。'}`;
+            toast(e?.message || '全量預覽已失效，請重新預估並確認。', 'danger');
+        } finally {
+            restore();
+            delete startButton.dataset.pending;
+            startButton.disabled = !fullBackfillPreview;
+        }
+    });
+}
+
 /** PRTG 認證方式切換：依選取模式切換 token / password / passhash 區塊顯示（只動 classList 不設 style.display） */
 function syncPrtgAuthFields() {
     const authMode = document.getElementById('prtg-auth-mode')?.value ?? 'token';
@@ -3819,6 +3926,7 @@ function bindUnmatchedControls() {
 
 function init() {
     document.getElementById('prtg-snapshot-diagnostics-retry')?.addEventListener('click', loadSnapshotDiagnostics);
+    bindFullBackfill();
     bindSelectedBackfill();
     bindPrtgEffectiveness();
     getCurrentUser().then(user => {
