@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "c4823fb19865a4972515e0d62d347e96cf9826cbc0acb08e4b72393f4dafa5ef",
+  "plan_sha256": "26ccd148ff673f9122a068e8d2f0d8101ccc93c23c8ba7e9caebc1df83298bd1",
   "date": "2026-10-11",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -238,7 +238,7 @@
           "path": "LogForesight.Web/Services/PrtgSnapshotHostedService.cs",
           "symbol": "PrtgSnapshotHostedService",
           "role": "producer",
-          "sha256": "247809012eb327b7374420b113f8e35965f9f1fd81076b6f00799239bec88880"
+          "sha256": "2eadeeff8faa109c0d2b5a08f1e0b4754308ee3cdc82f8ca957e2f303d5e76b5"
         },
         {
           "id": "AC05",
@@ -253,6 +253,20 @@
           "symbol": "PrtgSnapshotAccumulatorTests",
           "role": "accumulator tests",
           "sha256": "8553272c9af7206c64b5780c597ca46f69477d968f4b84db0be54bb773075ccd"
+        },
+        {
+          "id": "AC05",
+          "path": "LogForesight.Core/Service/PrtgScopeRevisionReader.cs",
+          "symbol": "PrtgScopeRevisionReader",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "sha256": "8ca99c0131cfa6ffec2445adb3b3a0f1228d858acccdaccdb08c87a6bad60367"
+        },
+        {
+          "id": "AC05",
+          "path": "LogForesight.Tests/PrtgRunsCardAndProbeTests.cs",
+          "symbol": "狀態補抓Queue整理後下一個新准入輪次才送messages並確認原裝置項目",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "sha256": "e11d8e4a143616673619d4a12073d987c047f40e69bb6a745613b6d6fb400c97"
         }
       ],
       "input_sha256": null,
@@ -418,7 +432,7 @@
           "path": "LogForesight.Tests/PrtgCompatibilityProbeTests.cs",
           "symbol": "PrtgCompatibilityProbeTests",
           "role": "compatibility tests",
-          "sha256": "ddf0a27875339034cf2ff645a743ddec5d4ee7c0e16a31592b1cb88f10dae340"
+          "sha256": "fec13b9048a561aeba9a8f36eae2987fadad138d875137570227c5511dc1b601"
         }
       ],
       "input_sha256": "189be3d9cf3cb0ce77c98881d0892ab446deef2ac9337616e48a945b457bcbdd",
@@ -524,7 +538,7 @@
           "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
           "symbol": "bindPrtgBackfill",
           "role": "current round verified backfill implementation/test",
-          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+          "sha256": "77b73d9167f6b964a9df12061086e64fe18fe61a383cff1e87e7f21157925644"
         },
         {
           "id": "AC09",
@@ -587,6 +601,13 @@
           "symbol": "PrtgFormalRuleCaseManifestTests",
           "role": "case manifest",
           "sha256": "d63ed5aac08aa2cf759310c2cf272f5f28ae8dadea124c856161cc2ad43736ad"
+        },
+        {
+          "id": "AC10",
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "FixedManifestCaseCrossesDailyAiAndMailConsumers",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "input_sha256": null,
@@ -706,6 +727,13 @@
           "symbol": "PrtgDiskFormalFlowTests",
           "role": "mode replay tests",
           "sha256": "9b8faac5b40e5813b2aa4154879d4dc9b1694e5fff16d63113b55e6993d47f40"
+        },
+        {
+          "id": "AC12",
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "PrtgRuleConsumerAcceptanceTests",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "input_sha256": null,
@@ -838,6 +866,13 @@
           "symbol": "IssueCaseCoordinatorTests",
           "role": "case tests",
           "sha256": "d3e9a720e6b6f2f12bff9ad159bfb5fe1f56f7e4d04696dd219052b0f75f4b83"
+        },
+        {
+          "id": "AC14",
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "FixedManifestCaseCrossesDailyAiAndMailConsumers",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "input_sha256": null,
@@ -892,6 +927,13 @@
           "symbol": "PrtgSmtpProtocolAcceptanceTests",
           "role": "SMTP tests",
           "sha256": "25711735e69cbcee6f98f4d89b17396b0a68d372d3bdf04edd97cdd52e1712be"
+        },
+        {
+          "id": "AC15",
+          "path": "LogForesight.Tests/PrtgRuleConsumerAcceptanceTests.cs",
+          "symbol": "FixedManifestCaseCrossesDailyAiAndMailConsumers",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "sha256": "41ee15dc29732ed3ac9b9d430ef8dc99dc116b72fe7f09960a88e4515dea4a51"
         }
       ],
       "input_sha256": null,
@@ -1008,6 +1050,13 @@
           "symbol": "HealthPrtgSnapshotTests",
           "role": "health tests",
           "sha256": "b591edaf0f6a236529ad04dcc865d9109bede621bfff48692af423ff7835246d"
+        },
+        {
+          "id": "AC17",
+          "path": "LogForesight.Tests/PrtgControlledUsefulnessReplayTests.cs",
+          "symbol": "PrtgControlledUsefulnessReplayTests",
+          "role": "latest root-verified implementation or real downstream acceptance",
+          "sha256": "0d30ced969ea681514ae2b466cf6328eb34b852da2fa1b4a1723b0607c1c8c20"
         }
       ],
       "input_sha256": null,
@@ -1278,7 +1327,7 @@
           "path": "LogForesight.Web/wwwroot/js/pages/runs.js",
           "symbol": "bindPrtgBackfill",
           "role": "current round verified backfill implementation/test",
-          "sha256": "fbf9e316f2859fbdbff770880b063d72eb9d47b1f9e1385ac48c5899cde7c3ca"
+          "sha256": "77b73d9167f6b964a9df12061086e64fe18fe61a383cff1e87e7f21157925644"
         },
         {
           "id": "AC21",
@@ -6306,16 +6355,21 @@
     "applies_to_previous_product_revision": "81e1fcf025472f041b8a66a0d0ff2aaff7fd4ad0"
   },
   "current_main_regression": {
-    "product_revision": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
-    "status": "affected-components-verified-no-single-complete-full-green-run",
+    "product_revision": "bc2e5ffed21b43082ac2960197fd958020e95d60",
+    "status": "Final frozen-source whole suite running; previous completed baseline RED preserved.",
     "passed": false,
-    "completed_trx": false,
-    "affected_component_passed": 135,
-    "affected_component_evidence": [
-      "round53-ai-zero-retry-current-v1",
-      "round53-ai-zero-retry-netiq-current-v1"
-    ],
-    "previous_full_result": "previous_main_regression_v2",
+    "completed_trx": null,
+    "running_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-final-scope-verify-20261011\\root-final-results\\full-source-before.json",
+    "previous_complete_baseline": {
+      "trx": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-n7-consumer-verify-20261011\\root-complete-regression-results\\current-rest.trx",
+      "passed": 7500,
+      "failed": 1,
+      "optional_skipped": 10,
+      "fixed_by": "7d9897a13fe2eafd568dbb7c3fb74a08863593e3",
+      "failed_case": "NetiqPipelineBaselineTests.已Append的NetIq主機日會進入排程狀態DTO的精確計時分布"
+    },
+    "affected_component_passed": true,
+    "affected_component_evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-final-scope-verify-20261011\\root-final-results\\root-scope-independent-verification.json",
     "whole_round_accepted": false
   },
   "current_case_scope_presentation_verification": {
@@ -7383,7 +7437,7 @@
       "change": "remove extra empty line at EOF; all non-newline bytes identical"
     }
   },
-  "current_implementation_source_commit": "b3a10fdffa6c93f2fe97c9e6cbb239442bade98c",
+  "current_implementation_source_commit": "bc2e5ffed21b43082ac2960197fd958020e95d60",
   "current_manual_map_schema_repair_20261010": {
     "owner": "root",
     "gate": {
@@ -9035,7 +9089,7 @@
   "current_status_precedence_20261011": "Current delivery counts, blockers, implementation source commit and current_plan_code_audit_20261011 govern the active TODO. Earlier named current_* stage records retain their original failure/partial results as historical evidence and do not create duplicate active implementation TODOs.",
   "current_plan_code_audit_20261011": {
     "status": "software-implemented-and-affected-verification-passed",
-    "source_commit": "b3a10fdffa6c93f2fe97c9e6cbb239442bade98c",
+    "source_commit": "bc2e5ffed21b43082ac2960197fd958020e95d60",
     "map_check": {
       "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-code-map-primary-result.json",
       "sha256": "0846e75a4244e39719c897cd051ffdc2004d2e001371962f0b7689ecbe126630",
@@ -11184,6 +11238,98 @@
           }
         ]
       }
-    ]
+    ],
+    "latest_literal_map": {
+      "evidence": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\round53-current-plan-map-primary.json",
+      "requirements": 46,
+      "references": 180,
+      "missing_paths_or_symbols": 0,
+      "meaning": "Direct source map; does not replace all original-clause acceptance."
+    }
+  },
+  "historical_current_main_regression_before_bc2e5ffe_20261011": {
+    "product_revision": "02e2348710696be6eb1b01f3615ff9c1e03ac150",
+    "status": "affected-components-verified-no-single-complete-full-green-run",
+    "passed": false,
+    "completed_trx": false,
+    "affected_component_passed": 135,
+    "affected_component_evidence": [
+      "round53-ai-zero-retry-current-v1",
+      "round53-ai-zero-retry-netiq-current-v1"
+    ],
+    "previous_full_result": "previous_main_regression_v2",
+    "whole_round_accepted": false
+  },
+  "current_verified_segments_20261011_bc2e5ffe": {
+    "source_commit": "bc2e5ffed21b43082ac2960197fd958020e95d60",
+    "scope_queue_and_version_reader": {
+      "commits": [
+        "7d9897a1",
+        "bc2e5ffe"
+      ],
+      "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-final-scope-verify-20261011\\root-final-results\\root-scope-independent-verification.json",
+      "proof_sha256": "6e073db39dbafc5549bb2e753301d320e9cecca2e63f5e81ab59a495fc993562",
+      "unique_affected_passed": 142,
+      "actual_sql_cases": 9,
+      "original_five_second_guard_retained": true,
+      "new_two_device_case_has_two_separate_five_second_phases": true,
+      "sql_casing_red_preserved": true,
+      "journal_hour_boundary_fixture_theory_seconds": [
+        0,
+        3,
+        5
+      ]
+    },
+    "fixed_daily_ai_mail_consumers": {
+      "commit": "2bccc180",
+      "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\root-n7-consumer-verify-20261011\\root-final-stage-results\\root-consumer-independent-verification.json",
+      "proof_sha256": "d15ad429575a4be70715c97a424a540d889023d29acab859744463871f1ca100",
+      "passed": 231,
+      "fixed_cases": 222,
+      "fixed_case_ids_sha256": "54854ee42362487a4d87af02b994e5b01e60517770fef0fb9cfa01eb04482381",
+      "four_baselines_recomputed": true,
+      "report_bytes": 61336,
+      "scope": "Controlled technical replay; not human cost or actual incident benefit."
+    },
+    "actual_role_browser_subset": {
+      "proof": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n4-n5-current-ui-fixture-20261011\\root-u05-browser-evidence\\root-u05-browser-receipt.json",
+      "proof_sha256": "4aa72356ba10f49f4a186cd88e7109d667a85a492d56c8316ccec1b2de814e3e",
+      "roles_observed": 6,
+      "case_status_actual_ui_and_sql_persistence": true,
+      "actual_download_bytes": 4239,
+      "scope_complete": false,
+      "whole_U53_05_accepted": false,
+      "current_synthetic_profiles_rejected": true
+    },
+    "bounded_native_probe": {
+      "commit": "89281314",
+      "families": [
+        "cpu",
+        "memory",
+        "disk",
+        "ping",
+        "traffic"
+      ],
+      "max_sample_sensors": 5,
+      "scope": "Shared quota, hourly JSON/raw XML, bounded safe aliases; no automatic source qualification."
+    },
+    "typed_storage_generator": {
+      "commit": "e70144ef",
+      "rows_verified": 100000,
+      "full_64800000_row_capacity_accepted": false
+    },
+    "n8_handoff": {
+      "path": "C:\\Users\\eldar\\Documents\\Codex\\2026-10-01\\c-users-eldar-claude-project-logforesight\\work\\n8-current-original-diff-handoff-20261011\\handoff.json",
+      "planning_dev_diff_files": 495,
+      "previous_feature52_diff_files": 497,
+      "accepted": false,
+      "reason": "Distinct implementation/review model identity must be established; finite Luna audits are not N8."
+    },
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "humanVerificationGainAccepted": false,
+    "wholeRoundAccepted": false,
+    "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde"
   }
 }
