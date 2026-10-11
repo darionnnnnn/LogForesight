@@ -164,7 +164,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             currentUser: null!,
             users: null!,
             records: _backend.RecordStore(),
-            settingsStore: null!,
+            settingsStore: new SystemSettingsStore(_backend.Blob("system_settings")),
             userDisplayNames: null!,
             aiScheduler: null!,
             aiRunState: new AiAnalysisRunState(),
