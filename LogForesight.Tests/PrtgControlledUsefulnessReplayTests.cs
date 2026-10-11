@@ -16,6 +16,7 @@ namespace LogForesight.Tests;
 /// Emits a bounded, versioned report for a synthetic technical replay. The independent truth rows
 /// are controlled scenarios, not incidents, vendor observations, or operational outcome evidence.
 /// </summary>
+[Collection("KnownIssueCatalogState")]
 public sealed class PrtgControlledUsefulnessReplayTests
 {
     private const string TruthFixturePath = "LogForesight.Tests/Fixtures/prtg-usefulness-controlled-truth-v1.json";
@@ -280,7 +281,7 @@ public sealed class PrtgControlledUsefulnessReplayTests
 
         var manifestCase = PrtgRuleConsumerAcceptanceTests.ReadCase(family, formalCaseId);
         var mutations = manifestCase.GetProperty("mutations");
-        return await PrtgRuleConsumerAcceptanceTests.SeedFixedCaseAsync(fixture, family, mutations);
+        return await PrtgRuleConsumerAcceptanceTests.SeedFixedCaseAsync(fixture, family, formalCaseId, mutations);
     }
 
     private static void SetSyntheticNetIqInput(PrtgFormalRuleCaseFixture fixture, WebHost host, DateTime day,

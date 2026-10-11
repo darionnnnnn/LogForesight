@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using LogForesight.Core;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
@@ -16,35 +18,42 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// Consumer coverage is one exact positive and one exact negative from each fixed family.
-/// Additional fixed cases within each family remain pending consumer-level coverage.
+/// Consumer coverage exercises fixed manifest witnesses through Daily and downstream AI/mail
+/// consumers. The complete fixed manifest remains separately dispatched by its producer suite.
 /// </summary>
 [Collection("KnownIssueCatalogState")]
 public sealed class PrtgRuleConsumerAcceptanceTests
 {
+    [Fact]
+    public void ConsumerManifestReferenceUsesTheFrozen222CaseIdUniverse()
+    {
+        var cases = ReadFixedCaseUniverse();
+        Assert.Equal(222, cases.Count);
+        Assert.Equal(8, cases.Select(item => item.Family).Distinct(StringComparer.Ordinal).Count());
+        foreach (var family in cases.GroupBy(item => item.Family, StringComparer.Ordinal))
+        {
+            Assert.Equal(5, family.Count(item => item.IsPositive));
+            Assert.InRange(family.Count(item => !item.IsPositive), 20, 25);
+        }
+        var canonical = string.Join("\n", cases.Select(item => item.CaseId).OrderBy(id => id, StringComparer.Ordinal));
+        Assert.Equal("54854EE42362487A4D87AF02B994E5B01E60517770FEF0FB9CFA01EB04482381",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))));
+    }
+
     public static IEnumerable<object[]> RepresentativeFixedCases()
     {
-        yield return ["Down", "F53-Down-P01-down-exact-30-minute-availability-threshold", true];
-        yield return ["Down", "F53-Down-N01-below-threshold", false];
-        yield return ["Warning", "F53-Warning-P01-warning-exact-240-minute-total", true];
-        yield return ["Warning", "F53-Warning-N01-below-threshold-total", false];
-        yield return ["Flapping", "F53-Flapping-P01-flapping-exact-five-round-trips", true];
-        yield return ["Flapping", "F53-Flapping-N01-four-of-five-round-trips", false];
-        yield return ["Silent", "F53-Silent-P01-silent-complete-up-availability-unknown-resource", true];
-        yield return ["Silent", "F53-Silent-N22-all-unknown-inventory-no-up-availability", false];
-        yield return ["DiskTwoHourLowWater", "F53-DiskTwoHourLowWater-P01-disk-low-water-exact-ten-percent", true];
-        yield return ["DiskTwoHourLowWater", "F53-DiskTwoHourLowWater-N01-one-hour-only", false];
-        yield return ["DiskTrend", "F53-DiskTrend-P01-disk-trend-seven-day-low-water-at-boundary", true];
-        yield return ["DiskTrend", "F53-DiskTrend-N01-27-valid-days", false];
-        yield return ["CPUFormal", "F53-CPUFormal-P01-cpu-formal-exact-90-percent-two-hours", true];
-        yield return ["CPUFormal", "F53-CPUFormal-N01-single-hour-peak", false];
-        yield return ["MemoryFormal", "F53-MemoryFormal-P01-memory-formal-exact-90-percent-used-two-hours", true];
-        yield return ["MemoryFormal", "F53-MemoryFormal-N01-single-hour-peak", false];
+        foreach (var testCase in ReadFixedCaseUniverse())
+            yield return [testCase.Family, testCase.CaseId,
+                testCase.IsPositive || testCase.CaseId == "F53-DiskTrend-N08-duplicate-day" ||
+                // These three families use the original-positive mutation solely to reassign
+                // the sample window across host midnight; Warning and Silent keep their negatives.
+                (testCase.Family is "DiskTwoHourLowWater" or "CPUFormal" or "MemoryFormal") &&
+                testCase.HasOriginalPositiveMutation];
     }
 
     [Theory]
     [MemberData(nameof(RepresentativeFixedCases))]
-    public Task FixedRepresentativeCaseCrossesDailyAiAndMailConsumers(string family, string caseId, bool expectedHit) =>
+    public Task FixedManifestCaseCrossesDailyAiAndMailConsumers(string family, string caseId, bool expectedHit) =>
         RunFixedCaseAsync(family, caseId, expectedHit);
 
     public static IEnumerable<object[]> ResourceAndSilentPositiveCases()
@@ -77,16 +86,66 @@ public sealed class PrtgRuleConsumerAcceptanceTests
         var manifestCase = ReadCase(family, caseId);
         var mutations = manifestCase.GetProperty("mutations");
         using var fixture = new PrtgFormalRuleCaseFixture();
-        var (host, day) = await SeedFixedCaseAsync(fixture, family, mutations, nativeCurrentDaySilent);
-        SetSyntheticParentNeverAnalyzed(fixture, host, day);
+        var (host, day) = await SeedFixedCaseAsync(fixture, family, caseId, mutations, nativeCurrentDaySilent);
+        var scenario = family == "Silent"
+            ? PrtgFormalRuleCaseManifestTests.NormalizeConsumerSilentScenario(mutations)
+            : mutations.TryGetProperty("scenario", out var scenarioValue) ? scenarioValue.GetString()
+            : family == "DiskTrend" && mutations.TryGetProperty("parentStatus", out var parentStatusValue)
+                ? parentStatusValue.GetString() : null;
+        var missingParentScenario = scenario is "missing-parent" or "missing-netiq-parent" or "missing";
+        var parentGateScenario = missingParentScenario || scenario is "partial-parent" or "failed-parent" or
+            "running-parent" or "unknown-parent" or "partial" or "failed" or "running" or "unknown";
+        if (!missingParentScenario)
+            SetSyntheticParentNeverAnalyzed(fixture, host, day);
         if (highRiskSyntheticBaseline)
             PromoteSyntheticNetIqBaselineForConsumerTest(fixture, host, day);
         _ = fixture.SeedHumanOwnedBaseline(host);
-        var humanSidecars = fixture.CaptureHumanOwnedData(host);
+        var missingParent = missingParentScenario;
+        var humanSidecars = parentGateScenario
+            ? PrtgFormalRuleCaseManifestTests.CaptureConsumerHumanSidecars(fixture, host, day)
+            : fixture.CaptureHumanOwnedData(host);
+        if (missingParent)
+            PrtgFormalRuleCaseManifestTests.DeleteConsumerParent(fixture, host, day);
+        else if (scenario is "partial-parent" or "partial")
+            PrtgFormalRuleCaseManifestTests.SetConsumerParentAttemptStatus(fixture, host, day, "partial");
+        else if (scenario is "failed-parent" or "running-parent" or "unknown-parent" or "failed" or "running" or "unknown")
+            PrtgFormalRuleCaseManifestTests.SetConsumerParentAttemptStatus(fixture, host, day,
+                scenario.EndsWith("-parent", StringComparison.Ordinal) ? scenario[..^7] : scenario);
 
+        var resourceFamily = family is "DiskTwoHourLowWater" or "CPUFormal" or "MemoryFormal";
+        var hostDayStraddle = resourceFamily &&
+            (scenario == "host-day-straddle" ||
+             manifestCase.TryGetProperty("originalPositiveMutation", out var originalPositiveMutation) &&
+             originalPositiveMutation.ValueKind == JsonValueKind.Object);
+        if (hostDayStraddle)
+        {
+            var priorDay = day.AddDays(-1);
+            var priorDaily = await fixture.RunDailyAsync(host, priorDay);
+            Assert.DoesNotContain(priorDaily.Registry.For(host.HostId, priorDay), item => item.Source == SourceForFamily(family));
+        }
         var daily = await fixture.RunDailyAsync(host, day);
         var source = SourceForFamily(family);
         var findings = daily.Registry.For(host.HostId, day).Where(item => item.Source == source).ToArray();
+        if (parentGateScenario)
+        {
+            // These contracts intentionally have no eligible Daily parent. Never synthesize a
+            // replacement parent just to exercise AI or mail; verify the gate and human state.
+            Assert.Empty(findings);
+            Assert.Equal(humanSidecars, PrtgFormalRuleCaseManifestTests.CaptureConsumerHumanSidecars(fixture, host, day));
+            var store = fixture.Backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+            if (missingParent) Assert.Empty(store.ReadRecent(day, 1));
+            else
+            {
+                var blockedParent = Assert.Single(store.ReadRecent(day, 1));
+                var expectedAttempt = scenario!.EndsWith("-parent", StringComparison.Ordinal)
+                    ? scenario[..^7] : scenario;
+                Assert.Equal(expectedAttempt, blockedParent.LatestNetiqAttemptStatus, ignoreCase: true);
+                Assert.DoesNotContain(blockedParent.TopIssues, issue => issue.Source == source);
+                Assert.False(blockedParent.CanSupplementWithPrtg());
+            }
+            Assert.Empty(fixture.Backend.WorkOrderStore().GetAllActive());
+            return;
+        }
         if (expectedHit)
             Assert.True(findings.Length == 1, MissingFindingDiagnostic(fixture, host, day, family, manifestCase, daily));
         var expectedSideEffects = manifestCase.TryGetProperty("expectedFormalSideEffects", out var sideEffects)
@@ -106,6 +165,11 @@ public sealed class PrtgRuleConsumerAcceptanceTests
                 { HostId = host.HostId, HostName = host.HostName }).ReadRecent(day, 1));
             Assert.Contains(persisted.TopIssues, issue => issue.EventKey == finding.EventKey &&
                 issue.Source == finding.Source && issue.SampleMessages.SequenceEqual(finding.SampleMessages));
+            if (caseId == "F53-DiskTrend-N08-duplicate-day")
+            {
+                Assert.Single(persisted.TopIssues, issue => issue.Source == "PRTG:disk_free_trend");
+                Assert.Single(fixture.Backend.IssueCaseStore().GetOpenForHost(host.HostName));
+            }
         }
         else
         {
@@ -134,7 +198,11 @@ public sealed class PrtgRuleConsumerAcceptanceTests
         if (aiEligible)
         {
             Assert.NotEmpty(consumerFindings);
-            var (record, prompt) = await ConsumePendingWithActualHostedService(fixture, host, day, aiQueueDiagnostic);
+            var expectedAiDays = hostDayStraddle
+                ? new[] { day.AddDays(-1).Date, day.Date }
+                : new[] { day.Date };
+            var (record, prompt) = await ConsumePendingWithActualHostedService(
+                fixture, host, day, aiQueueDiagnostic, expectedAiDays);
             Assert.False(record.AiPending);
             Assert.True(record.AiAnalyzed);
             foreach (var consumerFinding in consumerFindings)
@@ -198,84 +266,89 @@ public sealed class PrtgRuleConsumerAcceptanceTests
     }
 
     internal static async Task<(WebHost Host, DateTime Day)> SeedFixedCaseAsync(
-        PrtgFormalRuleCaseFixture fixture, string family, JsonElement mutations, bool nativeCurrentDaySilent = false)
+        PrtgFormalRuleCaseFixture fixture, string family, string caseId, JsonElement mutations,
+        bool nativeCurrentDaySilent = false)
     {
         var day = fixture.AnalysisDay;
+        var manifestCase = ReadCase(family, caseId);
+        var resourceFamily = family is "DiskTwoHourLowWater" or "CPUFormal" or "MemoryFormal";
+        var hasOriginalPositiveMutation = manifestCase.TryGetProperty("originalPositiveMutation", out var originalPositiveMutation) &&
+            originalPositiveMutation.ValueKind == JsonValueKind.Object;
+        var positiveResourceHostDayStraddle = resourceFamily &&
+            mutations.TryGetProperty("scenario", out var resourceScenario) &&
+            resourceScenario.GetString() == "host-day-straddle";
+        if (resourceFamily && (hasOriginalPositiveMutation || positiveResourceHostDayStraddle))
+        {
+            var positiveMutation = hasOriginalPositiveMutation ? originalPositiveMutation : mutations;
+            var seeded = PrtgFormalRuleCaseManifestTests.SeedConsumerHostDayStraddle(fixture, family, positiveMutation);
+            return (seeded.Host, seeded.LaterHostDay);
+        }
+        if (family == "Warning" && caseId == "F53-Warning-P03-warning-cross-midnight-evidence" &&
+            manifestCase.TryGetProperty("originalPositiveMutation", out var warningPositiveMutation) &&
+            warningPositiveMutation.ValueKind == JsonValueKind.Object)
+        {
+            // Preserve the frozen 240-minute episode. Only 120 minutes overlap this target day,
+            // so it must remain a negative consumer case without the unsupported reclassification tag.
+            return (PrtgFormalRuleCaseManifestTests.SeedConsumerStatePositive(
+                fixture, family, caseId, warningPositiveMutation), day);
+        }
         switch (family)
         {
             case "Down":
             case "Warning":
             case "Flapping":
             {
-                var host = fixture.SeedCoveredStateCase("consumer-" + family, "Ping", "Ping", "Up", currentDay =>
-                {
-                    if (family == "Down")
-                    {
-                        var minutes = mutations.GetProperty("durationMinutes").GetInt32();
-                        return [(currentDay.AddHours(1), "Down"), (currentDay.AddHours(1).AddMinutes(minutes), "Up")];
-                    }
-                    if (family == "Warning")
-                    {
-                        var minutes = mutations.GetProperty("warningMinutes").GetInt32();
-                        return [(currentDay.AddHours(1), "Warning"), (currentDay.AddHours(1).AddMinutes(minutes), "Up")];
-                    }
-                    var roundTrips = mutations.GetProperty("roundTrips").GetInt32();
-                    return Enumerable.Range(0, roundTrips).SelectMany(index => new[]
-                    {
-                        (currentDay.AddHours(1 + index * 2), "Down"),
-                        (currentDay.AddHours(2 + index * 2), "Up")
-                    }).ToArray();
-                }, PrtgSensorCategories.Availability);
-                return (host, day);
+                if (mutations.TryGetProperty("scenario", out _))
+                    return (PrtgFormalRuleCaseManifestTests.SeedConsumerStateScenario(fixture, family, mutations), day);
+                return (PrtgFormalRuleCaseManifestTests.SeedConsumerStatePositive(fixture, family, caseId, mutations), day);
             }
             case "Silent":
-            {
-                var noUpAvailability = caseIdIsNoUpAvailability(mutations);
-                var resourceStatus = noUpAvailability ? "Up" : "Unknown";
-                var availabilityStatus = noUpAvailability ? "Unknown" : "Up";
                 if (nativeCurrentDaySilent)
                 {
                     var currentSourceAsOf = DateTimeOffset.UtcNow;
                     day = TimeZoneInfo.ConvertTime(currentSourceAsOf, TimeZoneInfo.Local).Date;
                     fixture.UseAnalysisDay(day);
-                    var currentHost = fixture.SeedSilentCase(resourceStatus, availabilityStatus);
-                    await fixture.CaptureSyntheticSilentSourceAsync(currentHost, currentSourceAsOf,
-                        resourceStatus: resourceStatus, availabilityStatus: availabilityStatus);
-                    return (currentHost, day);
+                    var host = fixture.SeedSilentCase();
+                    await fixture.CaptureSyntheticSilentSourceAsync(host, currentSourceAsOf);
+                    return (host, day);
                 }
-                var host = fixture.SeedSilentCase(resourceStatus, availabilityStatus);
-                fixture.StoreSyntheticHistoricalSilentProof(host, resourceStatus, availabilityStatus);
-                return (host, day);
-            }
+                return await PrtgFormalRuleCaseManifestTests.SeedConsumerSilentCase(fixture, mutations);
             case "DiskTwoHourLowWater":
             case "CPUFormal":
             case "MemoryFormal":
-            {
-                var values = mutations.GetProperty("completedHourAverages").EnumerateArray()
-                    .Select(value => value.GetDouble()).ToArray();
-                var resource = family switch
-                {
-                    "CPUFormal" => PrtgResourceFamily.Cpu,
-                    "MemoryFormal" => PrtgResourceFamily.Memory,
-                    _ => PrtgResourceFamily.Disk
-                };
-                var remaining = family == "MemoryFormal" && mutations.TryGetProperty("semantic", out var semantic) &&
-                    semantic.GetString() == "memory-available-percent";
-                return (fixture.SeedFormalResourceCase(resource, values,
-                    memoryValuesAreRemainingPercent: remaining), day);
-            }
+                return (PrtgFormalRuleCaseManifestTests.SeedConsumerResourceCase(fixture, family, mutations), day);
             case "DiskTrend":
-                return (fixture.SeedDiskTrendCase(mutations.GetProperty("validDays").GetInt32(),
-                    mutations.GetProperty("currentPercent").GetDouble(),
-                    mutations.GetProperty("declinePercentPerDay").GetDouble()), day);
+            {
+                var validDays = mutations.TryGetProperty("validDays", out var validDayValue)
+                    ? validDayValue.GetInt32() : 28;
+                var current = mutations.TryGetProperty("currentPercent", out var currentValue)
+                    ? currentValue.GetDouble() : 27d;
+                var decline = mutations.TryGetProperty("declinePercentPerDay", out var declineValue)
+                    ? declineValue.GetDouble() : 1d;
+                var dailyValues = mutations.TryGetProperty("dailyValues", out var daily)
+                    ? daily.EnumerateArray().Select(value => value.GetDouble()).ToArray() : null;
+                var missingDays = mutations.TryGetProperty("missingDayOffsets", out var missing)
+                    ? missing.EnumerateArray().Select(value => value.GetInt32()).ToArray() : null;
+                var host = fixture.SeedDiskTrendCase(validDays, current, decline, dailyValues, missingDays,
+                    "success",
+                    trustedHistory: !mutations.TryGetProperty("trustedHistory", out var trusted) || trusted.GetBoolean(),
+                    profileEffectiveDaysBefore: mutations.TryGetProperty("profileEffectiveDaysBefore", out var effective)
+                        ? effective.GetInt32() : 40,
+                    identityDrift: mutations.TryGetProperty("identityDrift", out var drift) ? drift.GetString() : null,
+                    hoursPerDay: mutations.TryGetProperty("hoursPerDay", out var hours) ? hours.GetInt32() : 24,
+                    outOfRangePercent: mutations.TryGetProperty("outOfRangePercent", out var range) ? range.GetDouble() : null,
+                    outOfRangeDayOffset: mutations.TryGetProperty("outOfRangeDayOffset", out var rangeOffset) ? rangeOffset.GetInt32() : null,
+                    futureMeasurements: mutations.TryGetProperty("futureMeasurements", out var future) && future.GetBoolean(),
+                    physicalSlotsPerHour: mutations.TryGetProperty("physicalSlotsPerHour", out var slots) ? slots.GetInt32() : 4,
+                    duplicatePeriodDayOffset: mutations.TryGetProperty("duplicatePeriodDayOffset", out var duplicate) ? duplicate.GetInt32() : null);
+                if (mutations.TryGetProperty("ruleEnabled", out var enabled) && !enabled.GetBoolean())
+                    fixture.SetDiskTrendRuleEnabled(false);
+                return (host, day);
+            }
             default:
                 throw new InvalidOperationException($"Unsupported fixed consumer family {family}.");
         }
     }
-
-    private static bool caseIdIsNoUpAvailability(JsonElement mutations) =>
-        mutations.TryGetProperty("scenario", out var scenario) &&
-        scenario.GetString() == "all-unknown-inventory-no-up-availability";
 
     internal static string SourceForFamily(string family) => family switch
     {
@@ -483,13 +556,28 @@ public sealed class PrtgRuleConsumerAcceptanceTests
     }
 
     private static async Task<(DailyAnalysisRecord Record, string Prompt)> ConsumePendingWithActualHostedService(
-        PrtgFormalRuleCaseFixture fixture, WebHost host, DateTime day, string diagnostic)
+        PrtgFormalRuleCaseFixture fixture, WebHost host, DateTime day, string diagnostic,
+        IReadOnlyCollection<DateTime>? expectedEligibleDays = null)
     {
         var backend = fixture.Backend;
         var recordStore = backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
         Assert.Single(recordStore.ReadRecent(day, 1));
+        var eligibleDays = expectedEligibleDays ?? [day.Date];
+        var expectedEligibleParents = eligibleDays.Select(expectedDay =>
+            (HostId: host.HostId, RecordDate: expectedDay.Date)).OrderBy(item => item.RecordDate).ToArray();
+        using (var context = backend.CreateContext())
+        {
+            var actualEligibleParents = context.DailyRecords.AsNoTracking()
+                .Where(row => (row.AiAnalyzed || row.RiskLevel != RiskLevels.Low) && !row.DetailPruned)
+                .Select(row => new { row.HostId, row.RecordDate })
+                .AsEnumerable()
+                .Select(row => (HostId: row.HostId, RecordDate: row.RecordDate.Date))
+                .OrderBy(item => item.RecordDate).ToArray();
+            Assert.Equal(expectedEligibleParents, actualEligibleParents);
+        }
         var markCount = backend.RecordStore().MarkAllForAiRerun();
-        Assert.True(markCount == 1, diagnostic + "; actual MarkAllForAiRerun count=" + markCount);
+        Assert.True(markCount == expectedEligibleParents.Length,
+            diagnostic + $"; expected exact eligible parent universe={expectedEligibleParents.Length}; actual MarkAllForAiRerun count={markCount}");
 
         var ai = new FakeAiService
         {
@@ -505,8 +593,19 @@ public sealed class PrtgRuleConsumerAcceptanceTests
 
         await service.ExecuteProcessingLoopAsync(CancellationToken.None);
         var updated = Assert.Single(recordStore.ReadRecent(day, 1));
-        Assert.Single(ai.Prompts);
-        return (updated, ai.Prompts.Single());
+        Assert.Equal(expectedEligibleParents.Length, ai.Prompts.Count);
+        foreach (var expectedDay in eligibleDays)
+        {
+            var dateHeader = $"在 {expectedDay:yyyy-MM-dd}（";
+            Assert.Single(ai.Prompts.Where(prompt => prompt.Contains(dateHeader, StringComparison.Ordinal)));
+            var processedParent = Assert.Single(recordStore.ReadRecent(expectedDay, 1));
+            Assert.True(processedParent.AiAnalyzed);
+            Assert.False(processedParent.AiPending);
+        }
+        var targetHeader = $"在 {day:yyyy-MM-dd}（";
+        var targetPrompt = Assert.Single(ai.Prompts.Where(prompt =>
+            prompt.Contains(targetHeader, StringComparison.Ordinal)));
+        return (updated, targetPrompt);
     }
 
     private static async Task<(FakeSmtpMailSender Sender, MailNotifyState State)> NotifyWithActualMailService(
@@ -565,6 +664,30 @@ public sealed class PrtgRuleConsumerAcceptanceTests
             return familyNode.GetProperty("positiveCases").EnumerateArray()
                 .Concat(familyNode.GetProperty("negativeAndBoundaryCases").EnumerateArray())
                 .Single(item => item.GetProperty("caseId").GetString() == caseId).Clone();
+        }
+        throw new FileNotFoundException("Could not locate the fixed formal PRTG case manifest.", relative);
+    }
+
+    private static IReadOnlyList<(string Family, string CaseId, bool IsPositive, bool HasOriginalPositiveMutation)> ReadFixedCaseUniverse()
+    {
+        const string relative = "Fixtures/prtg-round53-formal-cases.json";
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            var direct = Path.Combine(directory.FullName, relative);
+            if (!File.Exists(direct)) direct = Path.Combine(directory.FullName, "LogForesight.Tests", relative);
+            if (!File.Exists(direct)) continue;
+            using var document = JsonDocument.Parse(File.ReadAllText(direct));
+            return document.RootElement.GetProperty("families").EnumerateArray()
+                .SelectMany(family =>
+                {
+                    var name = family.GetProperty("family").GetString()!;
+                    return family.GetProperty("positiveCases").EnumerateArray()
+                        .Select(item => (name, item.GetProperty("caseId").GetString()!, true, false))
+                        .Concat(family.GetProperty("negativeAndBoundaryCases").EnumerateArray()
+                            .Select(item => (name, item.GetProperty("caseId").GetString()!, false,
+                                item.TryGetProperty("originalPositiveMutation", out var mutation) &&
+                                mutation.ValueKind == JsonValueKind.Object)));
+                }).ToArray();
         }
         throw new FileNotFoundException("Could not locate the fixed formal PRTG case manifest.", relative);
     }
