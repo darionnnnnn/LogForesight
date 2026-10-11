@@ -454,12 +454,22 @@ public sealed class PrtgTransferControllerTests
         await using var app = builder.Build();
         app.UsePathBase("/lf-r11");
         app.UseMiddleware<CsrfHeaderMiddleware>();
+        // Model a busy server deciding the declared-length rejection after the handler's
+        // default one-second Expect: 100-continue wait. The oversized body must stay unsent.
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Method == HttpMethods.Put &&
+                context.Request.ContentLength > EfPrtgTransferStore.MaxChunkBytes)
+                await Task.Delay(TimeSpan.FromSeconds(2), context.RequestAborted);
+            await next(context);
+        });
         app.MapControllers();
         await app.StartAsync();
         try
         {
             var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
-            using var client = new HttpClient { BaseAddress = new Uri(address + "/lf-r11/"), Timeout = TimeSpan.FromSeconds(30) };
+            using var handler = new SocketsHttpHandler { Expect100ContinueTimeout = TimeSpan.FromSeconds(30) };
+            using var client = new HttpClient(handler) { BaseAddress = new Uri(address + "/lf-r11/"), Timeout = TimeSpan.FromSeconds(30) };
             var bytes = LargeLegacyV1Payload();
             var id = Guid.NewGuid();
             const string route = "api/admin/settings/prtg-import-transfers";
@@ -468,7 +478,7 @@ public sealed class PrtgTransferControllerTests
             using (var verify = fixture.Backend.CreateContext()) Assert.False(verify.PrtgTransferSessions.Any(row => row.TransferId == id));
             client.DefaultRequestHeaders.Add(CsrfHeaderMiddleware.HeaderName, CsrfHeaderMiddleware.HeaderValue);
             using (var created = await client.PostAsJsonAsync(route, request)) Assert.Equal(HttpStatusCode.OK, created.StatusCode);
-            using (var tooLarge = new ByteArrayContent(bytes))
+            using (var tooLarge = new TrackedOversizedContent(bytes))
             {
                 tooLarge.Headers.ContentType = new("application/octet-stream");
                 // This rejection is decided from headers. Wait for that decision before sending
@@ -477,6 +487,7 @@ public sealed class PrtgTransferControllerTests
                 oversizedRequest.Headers.ExpectContinue = true;
                 using var response = await client.SendAsync(oversizedRequest);
                 Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                Assert.False(tooLarge.BodyWasSent);
                 Assert.Equal(0, fixture.TransferRow(id).ReceivedBytes);
             }
             for (var ordinal = 0; ordinal < 2; ordinal++)
@@ -494,6 +505,17 @@ public sealed class PrtgTransferControllerTests
             using (var forbidden = await client.GetAsync($"{route}/{id}")) Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
         }
         finally { await app.StopAsync(); }
+    }
+
+    private sealed class TrackedOversizedContent(byte[] bytes) : HttpContent
+    {
+        public bool BodyWasSent { get; private set; }
+        protected override bool TryComputeLength(out long length) { length = bytes.Length; return true; }
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            BodyWasSent = true;
+            return stream.WriteAsync(bytes, 0, bytes.Length);
+        }
     }
 
     private static byte[] LargeLegacyV1Payload()
