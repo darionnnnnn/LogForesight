@@ -305,6 +305,9 @@ public sealed class PrtgDiskMetadataSnapshotTests : IDisposable
             "metadata-source", "metadata-resource");
         identity = PrtgResourceFixture.BindChannel(prtgStore, identity, "free", "Free", "%", 1,
             "descending-danger");
+        PrtgResourceFixture.AuthorizeSeededDiskHistory(NewContext, sensorId, deviceId, 1,
+            "SNMP Disk Free", identity.SourceGeneration);
+        identity = prtgStore.GetResourceIdentity(sensorId);
         var evidence = new PrtgDiskSemanticEvidenceStore(new EfJsonBlobStore(NewContext,
             PrtgDiskSemanticEvidenceStore.BlobKey));
         evidence.ConfirmManually(new PrtgDiskSemanticContext(sensorId, deviceId, 1,
@@ -323,8 +326,8 @@ public sealed class PrtgDiskMetadataSnapshotTests : IDisposable
         PrtgDiskAssessmentService CreateService(ISystemSettingsStore settings) => new(new EfPrtgStore(NewContext),
             hosts, settings, evidence, verification);
 
-        PrtgResourceFixture.AuthorizeSeededDiskHistory(NewContext, sensorId, deviceId, 1,
-            "SNMP Disk Free", identity.SourceGeneration);
+        Assert.True(PrtgResourceQualification.IsChannelCurrent(
+            evidence.Get(sensorId), verification.Get(sensorId), prtgStore.GetResourceIdentity(sensorId)));
         Assert.True(CreateService(new FakeSystemSettingsStore()).HasAnyReadySemanticCandidate(completedDate, null));
         var settingsWithMutation = new CallbackSettingsStore(() =>
         {
@@ -337,11 +340,19 @@ public sealed class PrtgDiskMetadataSnapshotTests : IDisposable
                     "descending-danger"), 7, "Changed during readiness evaluation.", DateTime.UtcNow,
                     PrtgDiskAssessmentService.ParserSemanticVersion);
         });
+        var versionBeforeMutation = mutateVerification
+            ? verification.CaptureSnapshot().Version
+            : evidence.CaptureSnapshot().Version;
 
         var rejected = Assert.Throws<InvalidOperationException>(() =>
             CreateService(settingsWithMutation).HasAnyReadySemanticCandidate(completedDate, null));
 
         Assert.Contains("metadata", rejected.Message);
+        var versionAfterMutation = mutateVerification
+            ? verification.CaptureSnapshot().Version
+            : evidence.CaptureSnapshot().Version;
+        Assert.True(versionAfterMutation > versionBeforeMutation,
+            "The settings callback must mutate the metadata store before the final fence rejects readiness.");
     }
 
     [Fact]
