@@ -2040,6 +2040,7 @@ function bindPrtgBackfill() {
 // 天數與圖例只對三個報表頁籤有意義；切到「排程設定」時整組隱藏，
 // 留著會讓人以為那個天數也在篩設定。
 bindTabs(document.getElementById('runs-tabs'), {
+    hash: true,
     onChange: (tab) => {
         document.getElementById('runs-toolbar')?.classList.toggle('d-none', tab === 'settings');
     }

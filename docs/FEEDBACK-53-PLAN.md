@@ -1892,3 +1892,7 @@ Root 實際隔離瀏覽器由四台×兩個失敗日出發，預覽確實顯示�
 ### 2026-10-12 E05 已儲存作用範圍：固定分母回歸子項
 
 新增 PrtgSavedScopeWorkflowAcceptanceTests，透過真實隔離 SQLite 驗證 20 業務装置／18 對應／2 衝突，加 3 守門裝置／6 CPU-memory sensor 的探測→明確保存→新 store 重讀→作用範圍及快照目標鏈；衝突不進業務快照，守門覆寫不建立數值、案件或通知。主代理將此測試獨立加至 b7df53cf＋E01 工作樹，建置並執行：1 通過／0 失敗／0 略過，不依赖尚未提交的 E02–E06 實作。root-e05-independent-prior-source-20261012.log SHA256=82733afd6f66050d8d8c34555f5e25bbbeb570d3af2ae53f1ac17129239e986c，TRX SHA256=0f9b5230d177636c6545cdc2d697308de6b4e6301c4e51e5ecf210323fb54aba。另主代理對已凍結候選 DLL 執行 E04／AI readiness／E05 子集合：24 通過／0 失敗／0 略過，含 SQLite 取消、單調期限與鎖等待反例。只清除此固定分母鏈的測試缺漏；E05 完整六工作流程與 E04 整體門檻仍依活動 TODO 保留。
+
+### 2026-10-12 E08 排程頁操作與日期說明：獨立修正子項
+
+排程頁啟用既有 bindTabs 的 hash 選項，直接開啟 #settings、切換頁籤後網址更新、鍵盤 Enter 切換及重新整理均保留正確頁籤。執行總表新增可見說明：執行日 D 的主機狀態對應 D-1 資料，PRTG 欄對應 D 資料；維持原取數／日期計算。主代理僅將 Runs.cshtml／runs.js 套入 b7df53cf＋E01 獨立工作樹，Web 建置 0 errors（16 warnings），以自有 loopback 角色副本完成上述瀏覽器操作，且本機分析停用。證據為 root-runs-ui-independent-build-20261012.log 與隔離 run 0b1172d26caf40fba7cdf40e70b889da 的實際版本／來源指紋；不依賴未提交 E02–E06。此段只完成操作與日期清楚度，不宣告完整 E08 矩陣通過。
