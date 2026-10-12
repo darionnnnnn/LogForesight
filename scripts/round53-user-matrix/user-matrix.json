@@ -52,8 +52,8 @@
     { "id": "U53-10", "scenario": "database-source-restart-storage-and-schema-recovery" }
   ],
   "qualityObjectives": [
-    { "id": "Q1", "journeys": ["U53-07", "U53-10"] },
-    { "id": "Q2", "journeys": ["U53-02", "U53-04"] },
+    { "id": "Q1", "journeys": ["U53-01", "U53-07", "U53-10"] },
+    { "id": "Q2", "journeys": ["U53-02", "U53-04", "U53-05"] },
     { "id": "Q3", "journeys": ["U53-06"] },
     { "id": "Q4", "journeys": ["U53-03", "U53-06"] },
     { "id": "Q5", "journeys": ["U53-08"] },

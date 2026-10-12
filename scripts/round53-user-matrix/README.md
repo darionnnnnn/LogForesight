@@ -71,10 +71,10 @@ For coverage, use the fixed ID links below to record evidence one requirement at
 | --- | --- | --- |
 | U53-01 | AC01, AC07, AC08, AC17, AC22 | Q1, Q6 |
 | U53-02 | AC06, AC11, AC13, AC22 | Q2 |
-| U53-03 | AC07, AC08, AC10 | Q4 |
-| U53-04 | AC11 | Q2 |
+| U53-03 | AC07, AC08, AC10, AC22 | Q4 |
+| U53-04 | AC11, AC22 | Q2 |
 | U53-05 | AC14, AC21, AC22 | Q2 |
-| U53-06 | AC06, AC12, AC14 | Q3, Q4 |
+| U53-06 | AC06, AC12, AC14, AC22 | Q3, Q4 |
 | U53-07 | AC02, AC05, AC09, AC22 | Q1, Q6 |
 | U53-08 | AC01, AC09, AC12, AC15, AC16, AC22 | Q5 |
 | U53-09 | AC02, AC03, AC04, AC21, AC22 | Q6 |

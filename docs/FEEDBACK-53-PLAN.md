@@ -1957,3 +1957,7 @@ E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留�
   - 工作：核對 `PrtgHistoricXmlReader.cs:60–69`、`PrtgCompatibilityProbe.cs:1179–1195`、TrustedSampling property/binding/snapshot 與 `Verify-PrtgProbeEvidence.ps1` 的所有識別邊界。不能把 sensor object ID 與 channel ID 混用；保留 PRTG 合法特殊頻道 ID，區分合計、Downtime、內部 coverage/error。Paessler [Channel Settings](https://www.paessler.com/manuals/prtg/channel_settings) 明列 `-1` traffic sum、`-4` Downtime、`-2/-3` internal，據此修正非負 ID 假設；traffic 原始值需區分 volume 與 speed；相同 channel ID 的不同量值不可混合、覆寫或一律判重複。原始 XML 缺失的格式是假設測例，須標官方／合成來源，不能冒稱現場原文。錯誤改成有界安全分類以取得下一次診斷。
   - 通過：`0`、一般正 ID、合法 `-1` 合計能在允許用途保留識別；`-4` 保留身分但不得當 CPU/memory/disk 數值，`-2/-3` 不冒充業務量值；非法、overflow、canonical collision、真重複、caption／quantity 漂移、外 sensor、DTD、超量仍拒絕。同 sensor 同 ID 的 speed/volume 分開查證，缺单位／尺度不造結果；主通道核驗與 binding/profile consumer 结果一致。四個現有非 traffic property 正例保持通過；traffic 僅查證用途、無正式風險／派工／通知。未取得的現場 traffic raw 根因列UC02；本段以現有樣本與標明來源的官方格式／受控反例驗收。
   - 相依：實作與隔離驗收不等現場結果；現場來源適用性另列UC01、UC02。狀態：代理範圍已完成；現場 traffic 原文根因依原定UC02提示，不算代理驗收必要輸入。
+
+### 2026-10-12 E08 驗收清單連結一致性：已驗證交付子項
+
+主代理直接核對原契約與當前user-matrix／README：Q1加入U53-01、Q2加入U53-05，保留README與§14原定整合／角色範圍；U53-03／04／06文件漏列AC22，補回JSON原有全動線交付條件。Q6當前JSON本來就含U53-01／07／09／10，不改此既有正確清單；先前私有盤點的Q6缺漏推論已撤回。Test-UserMatrixManifest新增逐journey核對README與machine-readable AC/Q精確對照，正常22AC／10U／6Q及coverage inventory通過；自有反例缺AC22及缺Q2連結皆在正確journey拒絕，沒有以完整ID數量掩蓋關聯缺漏。固定222、六角色、七來源scenario、59項尚待覆蓋的gap及全部aggregate未通過狀態保持；這是交付清單一致性，不是實際動線驗收通過。
