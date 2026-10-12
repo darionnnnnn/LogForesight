@@ -1900,3 +1900,11 @@ Root 實際隔離瀏覽器由四台×兩個失敗日出發，預覽確實顯示�
 ### 2026-10-12 E08 自有隔離驗收工具：交付子項
 
 新增版本綁定的使用者矩陣工具，列出固定 22 AC／10 U53／6 Q／6 角色與 7 個受控來源情境，僅操作自有 loopback 副本；來源 DB/key 保持不變，排程與本機 Security log 分析預設停用。主代理獨立執行 controlled source protocols、啟停／來源模式、實際 EF SQLite 連續 concurrency-token 變更、錯誤 commit／偽造 MVID／混合 DLL 拒絕及觀察紀錄契約，全部通過；manifest／inventory 一致性通過，但仍明列 59 個未覆蓋範圍，不計為完整瀏覽器通過。證據：root-e08-controlled-sources-20261012.log、root-e08-lifecycle-20261012.log、root-e08-concurrency-20261012.log、root-e08-buildfence-20261012.log、root-e08-recorder-20261012.log；隔離 Web 為明確的 7fa04409 modified-tree 凍結產物。工具不依賴 E02–E06 未提交原始碼，來源成功不代表 native qualification。完整 E08／五組整輪門檻保留。
+
+### 2026-10-12 E08 NetIQ 成功登入證據來源隔離：已驗證子項
+
+NetIQ 4625 暴力破解分析只使用該來源提供的 Security 4624／RDP 成功事件，不再補讀服務主機的本機 Security；Local 分析保留本機補查，原有時間、規則與可用性門檻不變。主代理核對全部五個建構呼叫端：NetIQ／Local 主分析明示來源，另三個既存呼叫端僅重新分析 AI 或完成報告，沒有重新讀事件。獨立工作樹來源隔離正反例與既有 correlation 共 47/47 通過；證據 root-successful-logon-source-boundary-20261012.log、root-successful-logon-source-boundary.trx。自有 loopback run 24d966e6a5474479be391a779f4697bb（b7df53cf modified-tree、source fingerprint 9dc5e12c）重跑真正指定主機更新：2026-10-12 11:51 成功，1 個 NetIQ 主機日、2 秒、本機欄 —、警告／錯誤 0/0；執行詳情顯示 NetIQ 完成且無本機 Security 補查警告。移除此已完成缺陷子項；完整 E08 使用者矩陣仍待完成，未宣告整組通過。
+
+### 2026-10-12 E09 全 222 個固定案例 consumer 重播：已驗證子項
+
+主代理以凍結隔離 Tests 產物實際跑完整 MemberData 固定案例集合，跨每日／AI／郵件 consumer：222/222 通過，0 失敗、0 略過，34 分 13 秒。證據 root-e09-all222-20261012.log 與 root-e09-all222-results/root-e09-all222.trx。此為全固定案例 consumer 重播結果，不能代替 E08 操作矩陣、全量容量或 E09 其餘對照計算；父待辦保留。

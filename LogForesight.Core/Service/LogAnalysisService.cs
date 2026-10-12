@@ -37,6 +37,8 @@ public class LogAnalysisService
     private readonly IRiskyEventStore? _riskyEventStore;
     private readonly IReadOnlyCollection<long> _hostGroupIds;
     private readonly List<RuleSuppression>? _suppressionSnapshot;
+    private readonly AnalysisLogSource _logSource;
+    private readonly Func<DateTime, EventLogScanResult>? _localSecuritySupplementScanner;
 
     /// <param name="suppressionStore">主機級告警抑制設定（見 docs/RULES-SPEC.md）：只影響「要不要吵」
     /// （通知、風險升級），偵測與紀錄照常——事件照樣聚合、命中規則、寫入歷史，只是不進告警清單、不拉高風險</param>
@@ -59,10 +61,16 @@ public class LogAnalysisService
     /// 可忽略，不需要快照；也讓「排程執行中使用者新增的抑制」在本機路徑仍是即時生效）。
     /// 快照語意：整趟 run 內看到的是同一份清單，run 開始後才新增的抑制要下次執行才生效——
     /// 對批次規模執行反而更一致（不會同一晚不同主機看到不同的抑制清單）。</param>
+    /// <param name="logSource">事件資料實際來源。只有 Local 分析可補查執行此服務的主機 Security 4624；
+    /// 遠端來源只使用傳入的遠端 4624 與 RDP 事件。</param>
+    /// <param name="localSecuritySupplementScanner">可選的本機 4624 補查提供者，供隔離測試驗證來源邊界；
+    /// null 時由 <see cref="EventLogService.ScanRange"/> 讀取本機 Security log。</param>
     public LogAnalysisService(EventLogService eventLogService, IAiService aiService, IAnalysisRecordStore historyService,
         ISuppressionStore suppressionStore, string serverDescription = "", RiskReportService? reportService = null,
         string? host = null, long hostId = 0, IRiskyEventStore? riskyEventStore = null,
-        IReadOnlyCollection<long>? hostGroupIds = null, List<RuleSuppression>? suppressionSnapshot = null)
+        IReadOnlyCollection<long>? hostGroupIds = null, List<RuleSuppression>? suppressionSnapshot = null,
+        AnalysisLogSource logSource = AnalysisLogSource.Local,
+        Func<DateTime, EventLogScanResult>? localSecuritySupplementScanner = null)
     {
         _eventLogService = eventLogService;
         _aiService = aiService;
@@ -76,6 +84,8 @@ public class LogAnalysisService
         _riskyEventStore = riskyEventStore;
         _hostGroupIds = hostGroupIds ?? Array.Empty<long>();
         _suppressionSnapshot = suppressionSnapshot;
+        _logSource = logSource;
+        _localSecuritySupplementScanner = localSecuritySupplementScanner;
     }
 
     /// <summary>run 開始時已有快照就用快照，否則即時查 store——見建構子 <c>suppressionSnapshot</c> 參數說明。</summary>
@@ -910,10 +920,19 @@ public class LogAnalysisService
             return null;
         }
 
-        var scan = await Task.Run(() =>
-            _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security", securityExtraEventIds: new[] { 4624 }));
-
-        var logonSuccessEntries = scan.Entries.Where(l => l.EventId == 4624);
+        // Remote source events belong to the analyzed host; reading this process host's
+        // Security log here would create cross-host success evidence. Keep the historical
+        // conditional local supplement only for local analysis. Remote-provided 4624 records
+        // remain valid evidence when the source supplied them.
+        IEnumerable<EventLogEntryData> logonSuccessEntries = logs.Where(l =>
+            l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4624);
+        if (_logSource == AnalysisLogSource.Local)
+        {
+            var scan = await Task.Run(() => _localSecuritySupplementScanner?.Invoke(targetDate.Date) ??
+                _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security",
+                    securityExtraEventIds: new[] { 4624 }));
+            logonSuccessEntries = logonSuccessEntries.Concat(scan.Entries.Where(l => l.EventId == 4624));
+        }
 
         // RDP 成功登入（LSM 21/25、RCM 1149）已在主掃描收進 logs（Operational 頻道 watchlist），
         // 一併納入成功登入面：暴力破解未必走 4624，也可能直接以 RDP 工作階段得手

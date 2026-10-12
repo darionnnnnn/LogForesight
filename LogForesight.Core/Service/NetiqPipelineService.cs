@@ -652,7 +652,8 @@ public class NetiqPipelineService
         var analysisService = new LogAnalysisService(
             _eventLogService, _aiService, plan.Store, _suppressionStore,
             target.RoleDesc, _reportService, target.HostName, target.HostId,
-            hostGroupIds: plan.GroupIds, suppressionSnapshot: suppressionSnapshot);
+            hostGroupIds: plan.GroupIds, suppressionSnapshot: suppressionSnapshot,
+            logSource: AnalysisLogSource.Netiq);
 
         // 記錄是否已成功寫入
         DailyAnalysisRecord? record = null;

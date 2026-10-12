@@ -421,7 +421,7 @@ public class AnalysisOrchestrator
                 var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
                 var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
                     settings.Analysis.ServerDescription, reportService, currentHost, currentHostId,
-                    hostGroupIds: currentHostGroupIds);
+                    hostGroupIds: currentHostGroupIds, logSource: AnalysisLogSource.Local);
                 // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
                 // NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
                 var riskyEventStore = backend.RiskyEventStore();
