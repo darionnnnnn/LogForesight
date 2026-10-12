@@ -1941,3 +1941,9 @@ E07 準備工具後續修正：產生的啟動檔要求明確存在的 Web cspro
 另由實際瀏覽器 run 968d8b39f43d46e1be149d6557a14c29（467776/c52b1221 凍結產物）完成普通主機 NetIQ 取數，生成父紀錄13／host3／2026-10-11／中風險。原高門檻正確不寄此筆；正常UI改摘要門檻至中後，正式重試入口經SMTP451拒收→本機收件匣接受，141.484458秒，重試不重寄且SummarySentKeys保存版本/route/content。摘要四筆含三筆繼承合成資料，不把它們當新風險；urgent outbox不含此摘要，未證明高風險即時通知狀態。觀察U53-08仍inconclusive，artifact root-summary-mail-retry.txt SHA bc97f53619ea0b24e9cbe08db902f6c47ab710a4dc5c21ddec864594d4a7ebf6。程序與三份狀態均已停止；完整 E08 待辦保留。
 
 探測／支援／固定規則 producer 定向集合已完成396/396、0失敗／0略過，1小時15分，root-support-formal-final-20261012.log／root-support-formal-final.trx，執行組件仍為467776/c52b1221，早於後續回退容量欄位修正。此證據不替代新修正的排程整合測試、最終全量回歸、E07完整容量及E08動線。
+
+### 2026-10-12 E08 組合受控來源：已驗證交付子項
+
+受控來源新增 netiq-risk-audit-prtg-healthy，原12筆4625與1筆明示合成1102可和PRTG取數同時使用；device112對應192.0.2.3，212–214三顆CPU／memory／disk同屬此裝置，通道1212–1214。實際裝置子項查詢、sensor／channel篩選、分頁、property、XML／JSON原始值與UTC quarter-hour時間一致。歷史端點依實際請求期間回傳，範圍外為空，錯誤／逆序時間400；不以現在資料冒充過去期間。沿用既有mode setter，不新增平行控制工具。主代理獨立執行 Test-ControlledSources.ps1 通過（root-e08-composite-source-protocol-20261012.log，stub-smoke-9ec5af7774394216b559e69ad38bdf84），包含過去空結果、目前窗口、錯時基字串、各ID／交集反例及原AI／NetIQ／SMTP正反協定。README保持原有export／restart／角色來源說明。此為完整合成來源契約交付，不自動建立time authority、binding／profile proof／job／風險結果，不代表兩完成小時、28日、原生來源或完整E08通過。
+
+另由主代理實際瀏覽器run773c23a315544f2c9031c453f7672779（5fbd67d3／3fa6e6e2修改中凍結組件）取得一筆合成Security1102，正常NetIQ流程生成host3／2026-10-11高風險日，未使用AI／local／PRTG。高風險通知經SMTP451拒收後，正常UI重試於67.0083644秒由自有收件匣接受499bytes，MIME SHA5e60306740b4226c4596a2a28b03ba7c3a463a5a81f00d2626a8c077363cdfc6；再次重試無重複接受。操作頁總狀態卻顯示無合格收件人，與recipient未知／接受1位矛盾，已列本輪必修且未驗收通過。artifact root-urgent-retry.txt；U53-08記錄inconclusive，程序及分頁已停止。此失敗不得以SMTP已接受掩蓋；E08父待辦保留。

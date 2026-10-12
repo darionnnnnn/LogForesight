@@ -66,7 +66,7 @@ async Task HandleHttpAsync(HttpListenerContext context, CancellationToken ct)
         if (path == "/__fixture/health")
         { await HttpReply(context, 200, JsonSerializer.Serialize(new { runId, requests = requestCount, loopbackOnly = true }), "application/json"); return; }
         if (path == "/__fixture/control" && request.HttpMethod == "GET")
-        { await HttpReply(context, 200, JsonSerializer.Serialize(new { httpMode = (await File.ReadAllTextAsync(httpModeFile)).Trim(), smtpMode = (await File.ReadAllTextAsync(smtpModeFile)).Trim() }), "application/json"); return; }
+        { await HttpReply(context, 200, JsonSerializer.Serialize(new { httpMode = (await ReadControlFileAsync(httpModeFile)).Trim(), smtpMode = (await ReadControlFileAsync(smtpModeFile)).Trim() }), "application/json"); return; }
 
         string? body = null;
         if (request.HasEntityBody)
@@ -80,14 +80,14 @@ async Task HandleHttpAsync(HttpListenerContext context, CancellationToken ct)
         var safePath = path;
         var bodyBytes = body is null ? 0 : Encoding.UTF8.GetByteCount(body);
         var bodyHash = body is null ? null : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
-        await File.AppendAllTextAsync(httpLog, JsonSerializer.Serialize(new { atUtc = DateTimeOffset.UtcNow, runId, mode = (await File.ReadAllTextAsync(httpModeFile)).Trim(), kind, method = request.HttpMethod, path = safePath, remote = remote.Address.ToString(), bodyBytes, bodySha256 = bodyHash, syntheticOnly = true }) + Environment.NewLine, ct);
-        var mode = (await File.ReadAllTextAsync(httpModeFile)).Trim();
+        await File.AppendAllTextAsync(httpLog, JsonSerializer.Serialize(new { atUtc = DateTimeOffset.UtcNow, runId, mode = (await ReadControlFileAsync(httpModeFile)).Trim(), kind, method = request.HttpMethod, path = safePath, remote = remote.Address.ToString(), bodyBytes, bodySha256 = bodyHash, syntheticOnly = true }) + Environment.NewLine, ct);
+        var mode = (await ReadControlFileAsync(httpModeFile)).Trim();
 
         if (kind == "prtg")
         {
-            if (mode is "prtg-healthy" or "all-sources-healthy")
+            if (mode is "prtg-healthy" or "all-sources-healthy" or "netiq-risk-audit-prtg-healthy")
             {
-                await HandleSyntheticPrtgAsync(context, request.Url!, ct);
+                await HandleSyntheticPrtgAsync(context, request.Url!, mode, ct);
                 return;
             }
             if ((mode is "prtg-hold-503" or "netiq-risk-events-ai-hold-prtg-503") && Interlocked.CompareExchange(ref prtgHoldUsed, 1, 0) == 0)
@@ -122,9 +122,11 @@ async Task HandleHttpAsync(HttpListenerContext context, CancellationToken ct)
         if (request.HttpMethod == "POST" && path.EndsWith("/SentinelRESTServices/objects/event-search", StringComparison.OrdinalIgnoreCase))
         {
             var search = ParseSearch(body);
-            var include = mode is "netiq-events" or "netiq-risk-events" or "netiq-audit-cleared-events" or "netiq-risk-events-ai-hold-prtg-503" or "late-events-released";
+            var include = mode is "netiq-events" or "netiq-risk-events" or "netiq-audit-cleared-events" or "netiq-risk-audit-prtg-healthy" or "netiq-risk-events-ai-hold-prtg-503" or "late-events-released";
             var risk = mode is "netiq-risk-events" or "netiq-risk-events-ai-hold-prtg-503";
-            var events = mode == "netiq-audit-cleared-events"
+            var events = mode == "netiq-risk-audit-prtg-healthy"
+                ? BuildEvents(search.Start, search.End, search.ScopedIps, true).Concat(BuildAuditClearedEvent(search.Start, search.End, search.ScopedIps)).ToArray()
+                : mode == "netiq-audit-cleared-events"
                 ? BuildAuditClearedEvent(search.Start, search.End, search.ScopedIps)
                 : include ? BuildEvents(search.Start, search.End, search.ScopedIps, risk) : Array.Empty<object>();
             await File.WriteAllTextAsync(stateFile, JsonSerializer.Serialize(new { Events = events, ResultHref = new Uri(httpBase, "SentinelRESTServices/objects/event?query=_jobid_.round53-job&page=1&pagesize=500").ToString() }), ct);
@@ -153,11 +155,16 @@ async Task HandleHttpAsync(HttpListenerContext context, CancellationToken ct)
     finally { requestGate.Release(); }
 }
 
-static async Task HandleSyntheticPrtgAsync(HttpListenerContext context, Uri requestUrl, CancellationToken ct)
+async Task HandleSyntheticPrtgAsync(HttpListenerContext context, Uri requestUrl, string mode, CancellationToken ct)
 {
     if (requestUrl.AbsolutePath.EndsWith("status.json", StringComparison.OrdinalIgnoreCase))
     {
         await HttpReply(context, 200, "{\"prtg-version\":\"24.1.92.1554+\"}", "application/json");
+        return;
+    }
+    if (mode == "netiq-risk-audit-prtg-healthy")
+    {
+        await HandleSyntheticPrtgNativeAsync(context, requestUrl, ct);
         return;
     }
     var query = System.Web.HttpUtility.ParseQueryString(requestUrl.Query);
@@ -209,6 +216,126 @@ static async Task HandleSyntheticPrtgAsync(HttpListenerContext context, Uri requ
     await HttpReply(context, 200, body, "application/json");
 }
 
+async Task HandleSyntheticPrtgNativeAsync(HttpListenerContext context, Uri requestUrl, CancellationToken ct)
+{
+    var query = System.Web.HttpUtility.ParseQueryString(requestUrl.Query);
+    var path = requestUrl.AbsolutePath;
+    var devices = new[] {
+        new { objid = 112, device = "R53 synthetic host", host = "192.0.2.3", group = "Round53 synthetic", status = "Up", tags = "round53;synthetic", paused = false, dependency = "" }
+    };
+    // Use a synthetic scan clock stable within each UTC quarter-hour, but refresh it
+    // automatically so a long-running helper never keeps reporting a startup timestamp.
+    var clockNow = DateTime.UtcNow;
+    var quarterTicks = TimeSpan.FromMinutes(15).Ticks;
+    var observedAt = new DateTime(clockNow.Ticks - clockNow.Ticks % quarterTicks, DateTimeKind.Utc);
+    var oa = observedAt.ToOADate();
+    var sensors = new[] {
+        new { objid = 212, parentid = 112, device = devices[0].device, sensor = "Synthetic CPU", type = "CPU", tags = "round53;synthetic", unit = "%", status = "Up", status_raw = 3, paused = false, dependency = "", lastvalue = "35 %", lastvalue_raw = 35d, lastcheck = observedAt.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), lastcheck_raw = oa, interval = "900 s", interval_raw = 900d, cumsince = "2026-10-01 00:00:00", cumsince_raw = "2026-10-01 00:00:00", primarychannel = 1212 },
+        new { objid = 213, parentid = 112, device = devices[0].device, sensor = "Synthetic Memory", type = "Memory", tags = "round53;synthetic", unit = "%", status = "Up", status_raw = 3, paused = false, dependency = "", lastvalue = "42 %", lastvalue_raw = 42d, lastcheck = observedAt.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), lastcheck_raw = oa, interval = "900 s", interval_raw = 900d, cumsince = "2026-10-01 00:00:00", cumsince_raw = "2026-10-01 00:00:00", primarychannel = 1213 },
+        new { objid = 214, parentid = 112, device = devices[0].device, sensor = "Synthetic Disk Free", type = "Disk Free", tags = "round53;synthetic", unit = "%", status = "Up", status_raw = 3, paused = false, dependency = "", lastvalue = "65 %", lastvalue_raw = 65d, lastcheck = observedAt.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), lastcheck_raw = oa, interval = "900 s", interval_raw = 900d, cumsince = "2026-10-01 00:00:00", cumsince_raw = "2026-10-01 00:00:00", primarychannel = 1214 }
+    };
+    if (path.EndsWith("getobjectproperty.htm", StringComparison.OrdinalIgnoreCase))
+    {
+        var sensorId = int.TryParse(query["id"], out var parsed) ? parsed : 0;
+        var primary = sensorId is >= 212 and <= 214 ? sensorId + 1000 : 0;
+        var value = query["name"] == "primarychannel" ? primary.ToString(System.Globalization.CultureInfo.InvariantCulture) : "0";
+        await HttpReply(context, 200, $"<prtg><result>{value}</result></prtg>", "application/xml");
+        return;
+    }
+    if (path.EndsWith("historicdata.xml", StringComparison.OrdinalIgnoreCase) || path.EndsWith("historicdata.json", StringComparison.OrdinalIgnoreCase))
+    {
+        var queryNow = DateTime.UtcNow;
+        if (!TryParsePrtgUtc(query["sdate"], queryNow, out var rangeStart) ||
+            !TryParsePrtgUtc(query["edate"], queryNow, out var rangeEnd) || rangeEnd <= rangeStart)
+        {
+            await HttpReply(context, 400, "invalid synthetic PRTG history time range", "text/plain");
+            return;
+        }
+        var sensorId = int.TryParse(query["id"], out var parsed) ? parsed : 0;
+        var sensor = sensors.SingleOrDefault(x => x.objid == sensorId);
+        if (sensor is null) { await HttpReply(context, 404, "unknown synthetic sensor", "text/plain"); return; }
+        var channelId = sensorId + 1000;
+        var caption = sensorId switch { 212 => "CPU Load", 213 => "Memory Usage", _ => "Disk Free" };
+        var value = sensor.lastvalue_raw;
+        var hasSample = observedAt >= rangeStart && observedAt <= rangeEnd;
+        var stamp = observedAt.ToOADate();
+        if (path.EndsWith("historicdata.xml", StringComparison.OrdinalIgnoreCase))
+        {
+            var stampText = stamp.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            var valueText = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var item = hasSample ? $"<item><datetime_raw>{stampText}</datetime_raw><value channel=\"{caption}\" channelid=\"{channelId}\">{valueText} %</value><value_raw channel=\"{caption}\" channelid=\"{channelId}\">{valueText}</value_raw></item>" : "";
+            var xml = $"<histdata totalcount=\"{(hasSample ? 1 : 0)}\"><prtg-version>24.1.92.1554+</prtg-version>{item}</histdata>";
+            await HttpReply(context, 200, xml, "application/xml");
+        }
+        else
+        {
+            var histRows = hasSample ? new[] { new {
+                datetime = observedAt.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + " - " + observedAt.AddHours(1).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
+                datetime_raw = stamp, value_raw = value, value_ = $"{value.ToString(System.Globalization.CultureInfo.InvariantCulture)} %",
+                coverage_raw = 10000, coverage = "100 %", channel = caption, channelid = channelId
+            } } : [];
+            var json = JsonSerializer.Serialize(new { histdata = histRows });
+            await HttpReply(context, 200, json, "application/json");
+        }
+        return;
+    }
+    if (path.EndsWith("getpasshash.htm", StringComparison.OrdinalIgnoreCase))
+    { await HttpReply(context, 200, "530053", "text/plain"); return; }
+    var content = query["content"]?.ToLowerInvariant() ?? "";
+    if (content is not ("devices" or "sensors" or "channels"))
+    { await HttpReply(context, 400, "unsupported synthetic table content", "text/plain"); return; }
+    var deviceRows = devices.Select(x => (object)x).ToArray();
+    var sensorRows = sensors.Select(x => (object)x).ToArray();
+    var channelRows = sensors.Select(x => (object)new { objid = x.objid + 1000, parentid = x.objid, name = x.objid switch { 212 => "CPU Load", 213 => "Memory Usage", _ => "Disk Free" }, lastvalue_raw = x.lastvalue_raw, unit = "%", scaling = 1, primary = true }).ToArray();
+    var idFilter = int.TryParse(query["id"], out var id) ? id : (int?)null;
+    var filterIds = query.GetValues("filter_objid")?.Select(x => int.TryParse(x, out var n) ? n : -1).ToHashSet();
+    object[] rows = content switch
+    {
+        "devices" => deviceRows.Where(r => idFilter is null || GetInt(r, "objid") == idFilter).Where(r => filterIds is null || filterIds.Contains(GetInt(r, "objid"))).ToArray(),
+        // PRTG's content=sensors&id=<device objid> query returns that device's child sensors.
+        // Exact sensor consumers use filter_objid, which remains an independent intersection.
+        "sensors" => sensorRows.Where(r => idFilter is null || GetInt(r, "objid") == idFilter || GetInt(r, "parentid") == idFilter).Where(r => filterIds is null || filterIds.Contains(GetInt(r, "objid"))).ToArray(),
+        _ => channelRows.Where(r => idFilter is null || GetInt(r, "parentid") == idFilter).ToArray()
+    };
+    var total = rows.Length;
+    var start = int.TryParse(query["start"], out var startValue) ? Math.Clamp(startValue, 0, total) : 0;
+    var count = int.TryParse(query["count"], out var countValue) ? Math.Clamp(countValue, 0, 1000) : total;
+    rows = rows.Skip(start).Take(count).ToArray();
+    var payload = JsonSerializer.Serialize(new Dictionary<string, object> { ["treesize"] = total, [content] = rows });
+    await HttpReply(context, 200, payload, "application/json");
+
+    static int GetInt(object row, string property) => (int)(row.GetType().GetProperty(property)?.GetValue(row) ?? -1);
+}
+
+static bool TryParsePrtgUtc(string? value, DateTime nowUtc, out DateTime result)
+{
+    result = default;
+    if (string.Equals(value, "now", StringComparison.OrdinalIgnoreCase))
+    {
+        result = nowUtc;
+        return true;
+    }
+    if (value is not null && value.StartsWith("now-", StringComparison.OrdinalIgnoreCase))
+    {
+        var amountUnit = value[4..];
+        if (amountUnit.Length >= 2 && int.TryParse(amountUnit[..^1], out var amount) && amount > 0)
+        {
+            var delta = amountUnit[^1] switch
+            {
+                's' or 'S' => TimeSpan.FromSeconds(amount),
+                'm' or 'M' => TimeSpan.FromMinutes(amount),
+                'h' or 'H' => TimeSpan.FromHours(amount),
+                'd' or 'D' => TimeSpan.FromDays(amount),
+                _ => TimeSpan.MinValue
+            };
+            if (delta != TimeSpan.MinValue) { result = nowUtc - delta; return true; }
+        }
+        return false;
+    }
+    return DateTime.TryParseExact(value, "yyyy-MM-dd-HH-mm-ss", System.Globalization.CultureInfo.InvariantCulture,
+        System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out result);
+}
+
 async Task AcceptSmtpAsync(CancellationToken ct)
 {
     while (!ct.IsCancellationRequested)
@@ -234,7 +361,7 @@ async Task ServeSmtpAsync(TcpClient client, CancellationToken ct)
             {
                 var line = await ReadLine(stream, 64 * 1024, ct);
                 if (line is null) return;
-                var mode = (await File.ReadAllTextAsync(smtpModeFile, ct)).Trim();
+                var mode = (await ReadControlFileAsync(smtpModeFile, ct)).Trim();
                 if (line.StartsWith("EHLO ", StringComparison.OrdinalIgnoreCase) || line.StartsWith("HELO ", StringComparison.OrdinalIgnoreCase))
                 { await WriteLine(stream, "250-round53-loopback.invalid", ct); await WriteLine(stream, "250 SIZE 262144", ct); }
                 else if (line.StartsWith("MAIL FROM:", StringComparison.OrdinalIgnoreCase))
@@ -280,6 +407,21 @@ async Task<StubState> ReadStateAsync()
     catch { return new StubState(); }
 }
 
+static async Task<string> ReadControlFileAsync(string path, CancellationToken ct = default)
+{
+    for (var attempt = 0; ; attempt++)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
+            return await reader.ReadToEndAsync(ct);
+        }
+        catch (IOException) when (attempt < 4) { await Task.Delay(10, ct); }
+    }
+}
 static string Classify(string path)
 {
     if (path.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase) || path.Contains("chat/completions", StringComparison.OrdinalIgnoreCase)) return "ai";

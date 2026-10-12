@@ -104,6 +104,69 @@ try {
         $prtgHistory.Content -notmatch '<histdata totalcount="1">' -or $prtgHistory.Content -notmatch '<datetime_raw>') {
         throw 'Successful bounded synthetic PRTG response contract failed.'
     }
+
+    # Composite synthetic mode exercises the real endpoint/query shapes used by current PRTG
+    # inventory, trusted primary-channel qualification, and historic-value consumers.
+    [IO.File]::WriteAllText($httpModeFile,'netiq-risk-audit-prtg-healthy',[Text.UTF8Encoding]::new($false))
+    $resourceDevices = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=devices&columns=objid,device,host,group,status,tags,paused,dependency&count=10"
+    $deviceSensors = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&id=112&columns=objid,parentid,type,status,lastvalue_raw,lastcheck_raw,interval_raw,cumsince_raw,primarychannel&count=5000"
+    $resourceSensors = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastvalue_raw,lastcheck,lastcheck_raw,interval,interval_raw,cumsince,cumsince_raw,primarychannel&filter_objid=212&filter_objid=213&filter_objid=214&count=4"
+    $wrongSensor = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&id=999&columns=objid,parentid&count=2"
+    $wrongIntersection = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&id=213&filter_objid=212&columns=objid&count=2"
+    $secondPage = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&columns=objid&count=1&start=1"
+    if (@($resourceDevices.devices).Count -ne 1 -or $resourceDevices.devices[0].objid -ne 112 -or
+        $resourceDevices.devices[0].host -ne '192.0.2.3' -or @($deviceSensors.sensors).Count -ne 3 -or
+        @($deviceSensors.sensors | Where-Object { $_.parentid -ne 112 }).Count -ne 0 -or
+        @($resourceSensors.sensors).Count -ne 3 -or
+        @($wrongSensor.sensors).Count -ne 0 -or @($wrongIntersection.sensors).Count -ne 0 -or
+        @($secondPage.sensors).Count -ne 1 -or $secondPage.sensors[0].objid -ne 213) {
+        throw 'Composite PRTG inventory ID filters or pagination contract failed.'
+    }
+    $mappedSourceSensors = @($deviceSensors.sensors | Where-Object { $_.objid -in @(212,213,214) })
+    if ($mappedSourceSensors.Count -ne 3 -or @($mappedSourceSensors | Where-Object { $_.parentid -ne 112 }).Count -ne 0) {
+        throw 'Production inventory sync query id=112 did not return the three sensors parented to mapped device 112.'
+    }
+    $resourceHistoryChecks = @()
+    $badHistoryTime = Invoke-WebRequest -Uri "$httpUrl/api/historicdata.json?id=212&avg=3600&sdate=not-a-date&edate=now" -SkipHttpErrorCheck
+    if ($badHistoryTime.StatusCode -ne 400) { throw 'Malformed PRTG history timestamps must be rejected.' }
+    foreach ($sensorId in 212,213,214) {
+        $sensor = @($resourceSensors.sensors | Where-Object { $_.objid -eq $sensorId })[0]
+        $expectedChannelId = $sensorId + 1000
+        $channels = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=channels&id=$sensorId&columns=objid,parentid,name,lastvalue_raw,unit,scaling,primary&usecaption=1&count=100"
+        $property = Invoke-WebRequest -Uri "$httpUrl/api/getobjectproperty.htm?id=$sensorId&name=primarychannel"
+        $historyXmlResponse = Invoke-WebRequest -Uri "$httpUrl/api/historicdata.xml?id=$sensorId&sdate=now-1h&edate=now&avg=0&usecaption=1"
+        $historyJson = Invoke-RestMethod -Uri "$httpUrl/api/historicdata.json?id=$sensorId&avg=3600&sdate=now-1h&edate=now&usecaption=1"
+        $pastXmlResponse = Invoke-WebRequest -Uri "$httpUrl/api/historicdata.xml?id=$sensorId&sdate=2026-10-10-00-00-00&edate=2026-10-11-00-00-00&avg=0&usecaption=1"
+        $pastJson = Invoke-RestMethod -Uri "$httpUrl/api/historicdata.json?id=$sensorId&avg=3600&sdate=2026-10-10-00-00-00&edate=2026-10-11-00-00-00&usecaption=1"
+        [xml]$historyXml = $historyXmlResponse.Content
+        [xml]$pastXml = $pastXmlResponse.Content
+        $xmlChannel = [int]$historyXml.histdata.item.value.GetAttribute('channelid')
+        $xmlValue = [double]$historyXml.histdata.item.value_raw.'#text'
+        $historyRow = @($historyJson.histdata)[0]
+        if ([int]$pastXml.histdata.GetAttribute('totalcount') -ne 0 -or @($pastJson.histdata).Count -ne 0) {
+            throw "Historic data outside the requested range was returned for sensor $sensorId."
+        }
+        if (@($channels.channels).Count -ne 1 -or $channels.channels[0].objid -ne $expectedChannelId -or
+            $channels.channels[0].parentid -ne $sensorId -or $property.Content -notmatch "<result>$expectedChannelId</result>" -or
+            $xmlChannel -ne $expectedChannelId -or [double]$historyRow.channelid -ne $expectedChannelId -or
+            [math]::Abs([double]$sensor.lastvalue_raw - $xmlValue) -gt 0.000001 -or
+            [math]::Abs([double]$sensor.lastvalue_raw - [double]$historyRow.value_raw) -gt 0.000001 -or
+            [math]::Abs([double]$sensor.lastcheck_raw - [double]$historyRow.datetime_raw) -gt 0.0000000001 -or
+            [math]::Abs([double]$sensor.lastcheck_raw - [double]$historyXml.histdata.item.datetime_raw) -gt 0.0000000001 -or
+            [string]::IsNullOrWhiteSpace([string]$sensor.cumsince_raw)) {
+            throw "Composite PRTG sensor/channel/property/XML/JSON values or timestamps drifted for sensor $sensorId."
+        }
+        $resourceHistoryChecks += [pscustomobject]@{ SensorId=$sensorId; ChannelId=$expectedChannelId; Value=$sensor.lastvalue_raw }
+    }
+    $compositeSearchBody = '{"start":"2026-10-10T00:00:00Z","end":"2026-10-11T00:00:00Z","filter":"192.0.2.3"}'
+    $null = Invoke-RestMethod -Method Post -Uri "$httpUrl/SentinelRESTServices/objects/event-search" -Body $compositeSearchBody -ContentType 'application/json'
+    $compositeSearch = Invoke-RestMethod -Uri "$httpUrl/SentinelRESTServices/objects/event-search/round53-job"
+    $compositeEvents = @( (Invoke-RestMethod -Uri "$httpUrl/SentinelRESTServices/objects/event").events )
+    if ($compositeSearch.found -ne 13 -or $compositeEvents.Count -ne 13 -or
+        @($compositeEvents | Where-Object { $_.rv40 -eq '4625' }).Count -ne 12 -or
+        @($compositeEvents | Where-Object { $_.rv40 -eq '1102' -and $_.r53FixtureSourceKind -eq 'synthetic' }).Count -ne 1) {
+        throw 'Composite NetIQ risk and audit-clear events did not coexist with PRTG healthy mode.'
+    }
     [IO.File]::WriteAllText($httpModeFile,'ai-healthy',[Text.UTF8Encoding]::new($false))
     $aiBody = '{"model":"round53-loopback","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'
     $aiResponse = Invoke-RestMethod -Uri "$httpUrl/v1/chat/completions" -Method Post -Body $aiBody -ContentType 'application/json'
@@ -157,7 +220,7 @@ try {
         $inbox -notmatch 'Round53 SMTP acceptance') { throw 'SMTP acceptance/refusal/unknown-commit sink evidence was incomplete or outside .invalid.' }
     if (@($httpRows | Where-Object { $_.path -match '\?' -or $_.PSObject.Properties.Name -contains 'pathAndQuery' }).Count -gt 0 -or
         @($httpRows.kind | Select-Object -Unique).Count -lt 3) { throw 'HTTP source evidence retained query strings or missed a controlled source kind.' }
-    [pscustomobject]@{ Result='PASS'; RunId=$runId; RunRoot=$runRoot; HttpEndpoint=$httpUrl; SmtpEndpoint="127.0.0.1:$smtpPort"; NetiqSyntheticEvents=$search.found; NetiqAuditClearEvents=$auditEvents.Count; NetiqAuditClearEventId=$auditEvent.rv40; NetiqAuditClearSyntheticMarker=$auditEvent.r53FixtureSourceKind; NetiqPrtgAi='synthetic responses/failures passed'; LateArrival='held-zero-then-released-one'; SmtpAcceptRejectUnknownCommit='passed'; RealAddressRejected=$realAddressRejected; Evidence='source-requests.jsonl, smtp-captures.jsonl, smtp-inbox.eml' }
+    [pscustomobject]@{ Result='PASS'; RunId=$runId; RunRoot=$runRoot; HttpEndpoint=$httpUrl; SmtpEndpoint="127.0.0.1:$smtpPort"; NetiqSyntheticEvents=$search.found; NetiqAuditClearEvents=$auditEvents.Count; NetiqAuditClearEventId=$auditEvent.rv40; NetiqAuditClearSyntheticMarker=$auditEvent.r53FixtureSourceKind; CompositeRiskEvents=$compositeSearch.found; CompositePrtgSensorChecks=$resourceHistoryChecks; NetiqPrtgAi='synthetic responses/failures passed'; LateArrival='held-zero-then-released-one'; SmtpAcceptRejectUnknownCommit='passed'; RealAddressRejected=$realAddressRejected; Evidence='source-requests.jsonl, smtp-captures.jsonl, smtp-inbox.eml' }
 }
 finally {
     $process.Refresh()
