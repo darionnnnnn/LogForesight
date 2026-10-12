@@ -1908,3 +1908,8 @@ NetIQ 4625 暴力破解分析只使用該來源提供的 Security 4624／RDP 成
 ### 2026-10-12 E09 全 222 個固定案例 consumer 重播：已驗證子項
 
 主代理以凍結隔離 Tests 產物實際跑完整 MemberData 固定案例集合，跨每日／AI／郵件 consumer：222/222 通過，0 失敗、0 略過，34 分 13 秒。證據 root-e09-all222-20261012.log 與 root-e09-all222-results/root-e09-all222.trx。此為全固定案例 consumer 重播結果，不能代替 E08 操作矩陣、全量容量或 E09 其餘對照計算；父待辦保留。
+### 2026-10-12 E08 實際匯出 API 六角色：已驗證子項
+
+新增自有 temporary-stage API 驗證腳本，使用實際 Web／SQLite clone 與六個固定測試角色，不以畫面隱藏按鈕代替授權。主代理兩次獨立執行：當前凍結 467776acc4/c52b1221 modified-tree 的 Maintain 得 HTTP 200、format v2 JSON（範圍不完整如實標 false）；普通負責人、唯讀 Manager、受限 Dev、案件授與及無可見範圍者皆 HTTP 403 且無匯出資料欄位。來源 DB/key 未改；工具只在真正 Stop 成功且 owner 狀態為 stopped 才記停止成功。最終紀錄 root-e08-api-export-final-20261012.log 與各自 owned run 的 api-export-authority-observation.json／maintain-api-export.json。此子項不代表完整 AC21／U53-05／E08 通過。
+
+四基準另外獨立重跑 22 個固定受控情境 1/1 通過（0 執行失敗、真值 10 actionable／9 benign／2 unknown／1 excluded）。NetIQ TP/FP/TN/FN=5/0/9/4，known truth 中另 1 unknown，計分18；原生 PRTG=9/0/9/1，聯集=10/0/9/0，合併=9/1/8/1，各計分19。合併未優於聯集的結論保留，不改真值或門檻。61336 bytes 版本化報表 SHA256 30EB25B2A84E55D21F288550F238901CDF6B39F664AC6D3D01B2C0A0F1081E50；root-four-baselines-final-20261012.log 與 root-four-baselines-final.trx 留存。尚待操作查證部分，不移除 E09 整組待辦。
