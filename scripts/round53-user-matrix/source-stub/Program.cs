@@ -122,9 +122,11 @@ async Task HandleHttpAsync(HttpListenerContext context, CancellationToken ct)
         if (request.HttpMethod == "POST" && path.EndsWith("/SentinelRESTServices/objects/event-search", StringComparison.OrdinalIgnoreCase))
         {
             var search = ParseSearch(body);
-            var include = mode is "netiq-events" or "netiq-risk-events" or "netiq-risk-events-ai-hold-prtg-503" or "late-events-released";
+            var include = mode is "netiq-events" or "netiq-risk-events" or "netiq-audit-cleared-events" or "netiq-risk-events-ai-hold-prtg-503" or "late-events-released";
             var risk = mode is "netiq-risk-events" or "netiq-risk-events-ai-hold-prtg-503";
-            var events = include ? BuildEvents(search.Start, search.End, search.ScopedIps, risk) : Array.Empty<object>();
+            var events = mode == "netiq-audit-cleared-events"
+                ? BuildAuditClearedEvent(search.Start, search.End, search.ScopedIps)
+                : include ? BuildEvents(search.Start, search.End, search.ScopedIps, risk) : Array.Empty<object>();
             await File.WriteAllTextAsync(stateFile, JsonSerializer.Serialize(new { Events = events, ResultHref = new Uri(httpBase, "SentinelRESTServices/objects/event?query=_jobid_.round53-job&page=1&pagesize=500").ToString() }), ct);
             context.Response.StatusCode = 201;
             context.Response.Headers["Location"] = new Uri(httpBase, "SentinelRESTServices/objects/event-search/round53-job").ToString();
@@ -320,6 +322,32 @@ static object[] BuildEvents(DateTimeOffset start, DateTimeOffset end, string[] i
         ["rv150"] = "Security", ["rv40"] = "4625", ["evt"] = "Synthetic failed logon", ["msg"] = "Synthetic fixture event; no real Sentinel data.",
         ["sun"] = riskEvents ? $"r53.synthetic{index:00}" : "r53.synthetic", ["xdasoutcome"] = "1"
     })).ToArray();
+}
+static object[] BuildAuditClearedEvent(DateTimeOffset start, DateTimeOffset end, string[] ips)
+{
+    var now = DateTimeOffset.UtcNow;
+    var from = start > now.AddDays(-3660) ? start : now.AddDays(-3660);
+    var until = end < now.AddTicks(-1) ? end : now.AddTicks(-1);
+    if (from >= until || ips.Length == 0) return [];
+    var at = from + TimeSpan.FromTicks((until - from).Ticks / 2);
+    var timestamp = at.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture);
+    return [new Dictionary<string, string>
+    {
+        ["dt"] = timestamp,
+        ["sev"] = "0",
+        ["dhn"] = "R53-SYNTH-DC01",
+        ["sn"] = "R53-SYNTH-DC01",
+        ["repip"] = ips[0],
+        ["sip"] = "198.51.100.12",
+        ["obssvcname"] = "Microsoft-Windows-Security-Auditing",
+        ["rv150"] = "Security",
+        ["rv40"] = "1102",
+        ["evt"] = "Security audit log cleared",
+        ["msg"] = "Synthetic loopback fixture event: Security audit log cleared (Event ID 1102); no real Sentinel data.",
+        ["sun"] = "r53.synthetic-audit",
+        ["xdasoutcome"] = "1",
+        ["r53FixtureSourceKind"] = "synthetic"
+    }];
 }
 static string ExtractAddress(string raw) { var left = raw.IndexOf('<'); var right = raw.IndexOf('>'); return left >= 0 && right > left ? raw[(left + 1)..right] : raw.Trim(); }
 static async Task<string?> ReadLine(NetworkStream stream, int limit, CancellationToken ct)

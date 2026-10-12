@@ -1930,3 +1930,14 @@ E07 準備工具後續修正：產生的啟動檔要求明確存在的 Web cspro
 新增自有 LocalDB 專用實例／資料庫驗證工具，主代理独立重建及實跑固定 50／500／2001／15000 顆四組，逐組 production typed Merge／GetValues、耐久 journal 新實例恢復、租約互斥及 ACK、BatchRunStore 重開續號、Prune(180) 邊界皆通過。交易回滾採具名 CHECK constraint，實際 SqlException.Errors 必須為 547 且含 CK_e07_abort_sample_insert，兩筆嘗試列皆不存在；較早 trigger 路徑錯誤 334 的失敗不追認通過。四組專用 DB／實例已清除。最終 root-e07-sql-constraint-run-20261012.log、sql-compat-f2e6566966634587ad6c8445f298758b/sql-compat-result.json；六項来源 pre／report／post SHA 相符，工具 Program SHA C3EC69102857E50C79F9F9DFD7E34E10F867387AEEFCD63446F8D3EDB000CDBA。驗證工作樹 01c09f86 之相關 production 來源與本輪現況經換行正規化逐檔相同；EfPrtgStore／LfDbContext 原始檔換行 hash 不同，如實記錄，不宣稱 byte-identical。
 
 每顆僅一筆合成值，並非 180 日密度；未取得 SQL execution plan 或全量 SQL 吞吐。Express EngineEdition=4 於全量資料庫建立前拒絕 64800000 列；報告 full-capacity／retention accepted 固定 false。此子項不能代替 SQLite 全量、M3 期間高水位與 query-plan、N6 混合容量、備份還原及升降版復原；E07 父待辦保留。
+
+
+### 2026-10-12 E08 同資料庫 Web 重啟及受控來源：已驗證交付子項
+
+新增只重啟同一 owned run Web 的工具，保留 dataRoot／DB／key／source helper，禁止重新 seed 或 clone；canonical owner／PID／DLL／manifest dataRoot 四反例均於停止前拒絕。Root 独立實跑初版同庫恢復通過後，另發現 Stop 未同步 fixture-manifest 的 stopped，修正後重跑最終 root-e08-same-db-restart-final-20261012.log 通過：run 772ad7808a61462d8c89630c3adffb1c、restart 9ee54dfa5da0463988035d412a7e857d。production Blob 寫入的合成 sentinel 重開可讀，七表持久列／主鍵／內容摘要前後相同，key hash 保持；Web PID 更新、source PID 保留、owner/manifest同步。正常 startup 可合法修改 DB 位元，before／closed-before／after hash如實記錄 unequal。最終 owner／marker／manifest 三者皆確認 stopped。這不是原生資格、滿載恢復或完整 U53-08；父待辦保留。
+
+受控來源新增獨立 netiq-audit-cleared-events：一筆 Security 1102／Security-Auditing、明示 synthetic，不改原12筆4625模式或固定222／22真值。Root 独立實際协议 test PASS（root-e08-audit-source-protocol-20261012.log，stub-smoke-4c3241316a714e81a146994ab4c006a4），Sentinel search/status/event、範圍時間、原有PRTG／AI正反協定、SMTP拒收／接受／未知提交等通過；這僅交付可測來源，不冒稱來源回應即正式高風險或全動線通過。
+
+另由實際瀏覽器 run 968d8b39f43d46e1be149d6557a14c29（467776/c52b1221 凍結產物）完成普通主機 NetIQ 取數，生成父紀錄13／host3／2026-10-11／中風險。原高門檻正確不寄此筆；正常UI改摘要門檻至中後，正式重試入口經SMTP451拒收→本機收件匣接受，141.484458秒，重試不重寄且SummarySentKeys保存版本/route/content。摘要四筆含三筆繼承合成資料，不把它們當新風險；urgent outbox不含此摘要，未證明高風險即時通知狀態。觀察U53-08仍inconclusive，artifact root-summary-mail-retry.txt SHA bc97f53619ea0b24e9cbe08db902f6c47ab710a4dc5c21ddec864594d4a7ebf6。程序與三份狀態均已停止；完整 E08 待辦保留。
+
+探測／支援／固定規則 producer 定向集合已完成396/396、0失敗／0略過，1小時15分，root-support-formal-final-20261012.log／root-support-formal-final.trx，執行組件仍為467776/c52b1221，早於後續回退容量欄位修正。此證據不替代新修正的排程整合測試、最終全量回歸、E07完整容量及E08動線。

@@ -4,6 +4,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSVersion -lt [Version]'7.4') { throw 'Requires PowerShell 7.4+.' }
 $stageRoot = [IO.Path]::GetFullPath($PSScriptRoot)
+$modeScript = Get-Content -LiteralPath (Join-Path $stageRoot 'Set-UserMatrixMode.ps1') -Raw
+if ($modeScript -notmatch "'netiq-audit-cleared-events'") { throw 'Set-UserMatrixMode does not allow the bounded audit-clear mode.' }
 $project = Join-Path $stageRoot 'source-stub\Round53ControlledSources.csproj'
 $output = Join-Path $stageRoot 'source-stub\out'
 $dotnet = (Get-Command dotnet.exe -CommandType Application -ErrorAction Stop).Source
@@ -48,6 +50,30 @@ try {
             throw 'Risk-event source row does not match the bounded Windows 4625 host/day protocol shape.'
         }
     }
+
+    # This separate mode emits exactly one synthetic Security 1102 audit-clear event;
+    # it does not add rows to the existing 12-event 4625 risk scenario.
+    [IO.File]::WriteAllText($httpModeFile,'netiq-audit-cleared-events',[Text.UTF8Encoding]::new($false))
+    $auditSearchBody = '{"start":"2026-10-10T00:00:00Z","end":"2026-10-11T00:00:00Z","filter":"192.0.2.1"}'
+    $null = Invoke-RestMethod -Method Post -Uri "$httpUrl/SentinelRESTServices/objects/event-search" -Body $auditSearchBody -ContentType 'application/json'
+    $auditSearch = Invoke-RestMethod -Uri "$httpUrl/SentinelRESTServices/objects/event-search/round53-job"
+    $auditResult = Invoke-RestMethod -Uri "$httpUrl/SentinelRESTServices/objects/event"
+    $auditEvents = @($auditResult.events)
+    if ($auditSearch.found -ne 1 -or $auditSearch.avail -ne 1 -or $auditEvents.Count -ne 1) {
+        throw 'Audit-clear mode must return exactly one event in the bounded Sentinel search.'
+    }
+    $auditEvent = $auditEvents[0]
+    if ($auditEvent.rv40 -ne '1102' -or $auditEvent.rv150 -ne 'Security' -or
+        $auditEvent.obssvcname -ne 'Microsoft-Windows-Security-Auditing' -or
+        $auditEvent.repip -ne '192.0.2.1' -or $auditEvent.r53FixtureSourceKind -ne 'synthetic' -or
+        $auditEvent.msg -notmatch 'Synthetic loopback fixture event' -or
+        [DateTimeOffset]::Parse($auditEvent.dt).ToUniversalTime() -lt [DateTimeOffset]'2026-10-10T00:00:00Z' -or
+        [DateTimeOffset]::Parse($auditEvent.dt).ToUniversalTime() -ge [DateTimeOffset]'2026-10-11T00:00:00Z') {
+        throw 'Audit-clear event must preserve the Windows Security 1102 source shape and explicit synthetic marker.'
+    }
+    $auditRequest = @(Get-Content -LiteralPath (Join-Path $runRoot 'source-requests.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } |
+        Where-Object { $_.kind -eq 'netiq' -and $_.mode -eq 'netiq-audit-cleared-events' })
+    if ($auditRequest.Count -ne 3) { throw 'Audit-clear HTTP exchange did not record the bounded search/status/result request sequence.' }
 
     # Exercise the late-arrival source shape as a real request sequence: initially no event,
     # then the same bounded query is eligible to receive an event after the mode is released.
@@ -131,7 +157,7 @@ try {
         $inbox -notmatch 'Round53 SMTP acceptance') { throw 'SMTP acceptance/refusal/unknown-commit sink evidence was incomplete or outside .invalid.' }
     if (@($httpRows | Where-Object { $_.path -match '\?' -or $_.PSObject.Properties.Name -contains 'pathAndQuery' }).Count -gt 0 -or
         @($httpRows.kind | Select-Object -Unique).Count -lt 3) { throw 'HTTP source evidence retained query strings or missed a controlled source kind.' }
-    [pscustomobject]@{ Result='PASS'; RunId=$runId; RunRoot=$runRoot; HttpEndpoint=$httpUrl; SmtpEndpoint="127.0.0.1:$smtpPort"; NetiqSyntheticEvents=$search.found; NetiqPrtgAi='synthetic responses/failures passed'; LateArrival='held-zero-then-released-one'; SmtpAcceptRejectUnknownCommit='passed'; RealAddressRejected=$realAddressRejected; Evidence='source-requests.jsonl, smtp-captures.jsonl, smtp-inbox.eml' }
+    [pscustomobject]@{ Result='PASS'; RunId=$runId; RunRoot=$runRoot; HttpEndpoint=$httpUrl; SmtpEndpoint="127.0.0.1:$smtpPort"; NetiqSyntheticEvents=$search.found; NetiqAuditClearEvents=$auditEvents.Count; NetiqAuditClearEventId=$auditEvent.rv40; NetiqAuditClearSyntheticMarker=$auditEvent.r53FixtureSourceKind; NetiqPrtgAi='synthetic responses/failures passed'; LateArrival='held-zero-then-released-one'; SmtpAcceptRejectUnknownCommit='passed'; RealAddressRejected=$realAddressRejected; Evidence='source-requests.jsonl, smtp-captures.jsonl, smtp-inbox.eml' }
 }
 finally {
     $process.Refresh()

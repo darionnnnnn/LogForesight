@@ -8,10 +8,20 @@ if ($owner.Schema -cne 'lf-round53-user-matrix-process-owner-v1' -or $owner.Stat
 $runRoot = [IO.Path]::GetFullPath([string]$owner.BundlePath)
 $runsRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'runs'))
 if ([IO.Path]::GetDirectoryName($runRoot).TrimEnd('\') -ine $runsRoot.TrimEnd('\') -or [IO.Path]::GetFileName($runRoot) -cnotmatch '^[0-9a-f]{32}$') { throw 'Owner bundle is outside the canonical owned runs root.' }
+$lifecycleLock = $null
+try { $lifecycleLock = [IO.File]::Open((Join-Path $runRoot '.lifecycle.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
+catch { throw 'Another fixture lifecycle operation is active; refusing to stop processes concurrently.' }
+try {
+$owner = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json
+if ($owner.Schema -cne 'lf-round53-user-matrix-process-owner-v1' -or $owner.Status -cne 'running' -or [IO.Path]::GetFullPath([string]$owner.BundlePath) -ine $runRoot) { throw 'Fixture process owner changed before the lifecycle lock was acquired.' }
 $markerPath = Join-Path $runRoot '.lf-round53-user-matrix-owner.json'
 $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
 if ($marker.Schema -cne 'lf-round53-user-matrix-owner-v1' -or $marker.RunId -cne $owner.RunId -or [IO.Path]::GetFullPath($marker.BundlePath) -ine $runRoot) { throw 'Fixture owner marker mismatch.' }
-if ([IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($ownerPath)) -ine $runRoot) { throw 'Owner file path differs from the canonical bundle.' }
+if ($ownerPath -ine [IO.Path]::GetFullPath((Join-Path $runRoot 'process-owner.json'))) { throw 'Owner file path differs from the canonical bundle.' }
+$manifestPath = Join-Path $runRoot 'fixture-manifest.json'
+$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+if ($manifest.Schema -cne 'lf-round53-user-matrix-fixture-v1' -or $manifest.RunId -cne $owner.RunId -or
+    [IO.Path]::GetFullPath([string]$manifest.Runtime.DataRoot) -ine [IO.Path]::GetFullPath((Join-Path $runRoot 'data'))) { throw 'Fixture manifest identity differs from this owned run.' }
 
 $processes = @()
 foreach ($processOwner in $owner.Processes) {
@@ -48,6 +58,10 @@ foreach ($processOwner in $owner.Processes) {
 }
 $owner.Status = 'stopped'; $owner | Add-Member -NotePropertyName StoppedAtUtc -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('O')) -Force
 $marker.Status = 'stopped'; $marker | Add-Member -NotePropertyName StoppedAtUtc -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('O')) -Force
-[IO.File]::WriteAllText($ownerPath, ($owner | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+$manifest.Status = 'stopped'; $manifest | Add-Member -NotePropertyName StoppedAtUtc -NotePropertyValue $owner.StoppedAtUtc -Force
+[IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 60), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($ownerPath, ($owner | ConvertTo-Json -Depth 24), [Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText($markerPath, ($marker | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
 [pscustomobject]@{ RunId=$owner.RunId; Status='stopped'; BundlePath=$runRoot; Retained=$true }
+}
+finally { if ($null -ne $lifecycleLock) { $lifecycleLock.Dispose() } }

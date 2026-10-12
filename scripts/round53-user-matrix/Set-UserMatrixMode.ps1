@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$OwnerFile,
-[ValidateSet('netiq-healthy','prtg-healthy','ai-healthy','all-sources-healthy','netiq-events','netiq-risk-events','netiq-risk-events-ai-hold-prtg-503','late-events-held','late-events-released','netiq-503','prtg-503','prtg-hold-503','ai-hold','ai-hold-prtg-503','all-503')][string]$HttpMode,
+[ValidateSet('netiq-healthy','prtg-healthy','ai-healthy','all-sources-healthy','netiq-events','netiq-risk-events','netiq-audit-cleared-events','netiq-risk-events-ai-hold-prtg-503','late-events-held','late-events-released','netiq-503','prtg-503','prtg-hold-503','ai-hold','ai-hold-prtg-503','all-503')][string]$HttpMode,
     [ValidateSet('accept','reject-next-recipient','drop-after-data')][string]$SmtpMode = 'accept'
 )
 Set-StrictMode -Version Latest
