@@ -1,4 +1,4 @@
-# 第 53 輪規劃：PRTG 整合完全體版本
+﻿# 第 53 輪規劃：PRTG 整合完全體版本
 
 > 2026-10-12 最新驗收範圍定案：只將代理可在自有隔離環境執行、重播或核對並提供證據的工作列為開發驗收；需使用者／現場人員確認的事實另列 §5.7，不列驗收待辦、分母或開發結案阻塞。既有 §§3–4、15–17 及歷程涉及現場真值、真實人員成效或外部獨立模型的要求，依 §5.7 改列使用者確認；可执行的功能／安全／規模／時限門檻維持。其後使用者已於 2026-10-12 授權依此範圍接續實作與隔離驗收，逐段驗證後 commit＋push。
 
@@ -1918,8 +1918,15 @@ NetIQ 4625 暴力破解分析只使用該來源提供的 Security 4624／RDP 成
 
 新增 capacity-harness，完整生成完成且來源靜止後才允許建立隔離副本；來源 DB／WAL 以檔案複製並核對指紋，不對生成原庫開啟 SQLite。固定 3000／15000／180 日／64800000／四 slot 形狀由完成報告及實際副本核對，預留工作副本、備份副本及全卷 25% 空間。只透過 production HostStore 建立合成 Web 主機目錄，不造資格作業、binding、profile、原生 proof 或案件。主代理修正 staging 搬移後報告／啟動路徑與跨午夜 map 日期問題，再独立建置（0 警告／0 錯誤）及執行三個契約：3/3 通過，90.715 秒，缺靜止確認／偽造完整報告配部分 DB 均拒絕且原庫不變；搬移後最終路徑可用。四檔與驗證工作樹逐一 hash 相同。證據 root-e07-preparation-build-20261012.log、root-e07-preparation-contracts-20261012.log。此為準備工具交付，E07 全量資料、六格混合排程、1200 route、備份恢復／保留門檻皆未因此通過。
 
-### 2026-10-12 E08 實際瀏覽器角色邊界：部分驗證
-
 E07 準備工具後續修正：產生的啟動檔要求明確存在的 Web csproj 路徑，不再依賴呼叫端相對目錄；loopback port 有範圍檢查，PreviewOnly 不啟動 Web／dotnet，顯示最終 DB/dataRoot 與來源未配置，不冒稱版本／資格核驗 launcher。主代理獨立重建 0 警告／0 錯誤，從無關工作目錄以合成 csproj 跑預覽並拒絕超界 port，原三個安全契約全部 3/3 通過（138.135 秒）；證據 root-e07-preparation-launch-build-20261012.log、root-e07-preparation-launch-contracts-20261012.log。此交付不改 E07 固定完整驗收條件。
 
+### 2026-10-12 E08 實際瀏覽器角色邊界：部分驗證
+
 自有 loopback run 38377c471dad4992a3dead50d15a6c8f，當前凍結 467776acc4/c52b1221：唯讀 Manager 及受限 Dev 直達維護頁均拒絕；Dev 排程設定明示唯讀且全部修改控制停用；無可見集合者顯示零主機與權限原因，直達主機 3 不含主機身分／值；案件授與者可讀其案件，但主機 4 時間軸、問題摘要、資源觀察及 PRTG 對應明確不顯示，無關主機 3 亦拒絕。原始角色副本含既有合成紀錄／案件，正常啟動可整併成工作單，README 已修正來源說明；不能把它當新風險生成。觀察記錄 U53-05 維持 inconclusive，artifact root-role-boundaries.txt SHA256 704bcaa70f047eb6023c7b13e5f11dc9a2ee5dcee6a85cf98159c1e6c3f4a7cd；另存無關主機拒絕補充筆記。程序已確認 stopped，來源 hash 綁於 manifest。剩餘修改 API、回覆與完整角色動線仍保留，不移除父 TODO。
+
+
+### 2026-10-12 E07 SQL Server 相容性：已驗證子項
+
+新增自有 LocalDB 專用實例／資料庫驗證工具，主代理独立重建及實跑固定 50／500／2001／15000 顆四組，逐組 production typed Merge／GetValues、耐久 journal 新實例恢復、租約互斥及 ACK、BatchRunStore 重開續號、Prune(180) 邊界皆通過。交易回滾採具名 CHECK constraint，實際 SqlException.Errors 必須為 547 且含 CK_e07_abort_sample_insert，兩筆嘗試列皆不存在；較早 trigger 路徑錯誤 334 的失敗不追認通過。四組專用 DB／實例已清除。最終 root-e07-sql-constraint-run-20261012.log、sql-compat-f2e6566966634587ad6c8445f298758b/sql-compat-result.json；六項来源 pre／report／post SHA 相符，工具 Program SHA C3EC69102857E50C79F9F9DFD7E34E10F867387AEEFCD63446F8D3EDB000CDBA。驗證工作樹 01c09f86 之相關 production 來源與本輪現況經換行正規化逐檔相同；EfPrtgStore／LfDbContext 原始檔換行 hash 不同，如實記錄，不宣稱 byte-identical。
+
+每顆僅一筆合成值，並非 180 日密度；未取得 SQL execution plan 或全量 SQL 吞吐。Express EngineEdition=4 於全量資料庫建立前拒絕 64800000 列；報告 full-capacity／retention accepted 固定 false。此子項不能代替 SQLite 全量、M3 期間高水位與 query-plan、N6 混合容量、備份還原及升降版復原；E07 父待辦保留。

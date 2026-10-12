@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>LogForesight.Tests</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\LogForesight.Core\LogForesight.Core.csproj" />
+    <ProjectReference Include="..\..\..\LogForesight.Web\LogForesight.Web.csproj" />
+  </ItemGroup>
+</Project>
