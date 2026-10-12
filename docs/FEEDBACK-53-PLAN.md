@@ -1896,3 +1896,7 @@ Root 實際隔離瀏覽器由四台×兩個失敗日出發，預覽確實顯示�
 ### 2026-10-12 E08 排程頁操作與日期說明：獨立修正子項
 
 排程頁啟用既有 bindTabs 的 hash 選項，直接開啟 #settings、切換頁籤後網址更新、鍵盤 Enter 切換及重新整理均保留正確頁籤。執行總表新增可見說明：執行日 D 的主機狀態對應 D-1 資料，PRTG 欄對應 D 資料；維持原取數／日期計算。主代理僅將 Runs.cshtml／runs.js 套入 b7df53cf＋E01 獨立工作樹，Web 建置 0 errors（16 warnings），以自有 loopback 角色副本完成上述瀏覽器操作，且本機分析停用。證據為 root-runs-ui-independent-build-20261012.log 與隔離 run 0b1172d26caf40fba7cdf40e70b889da 的實際版本／來源指紋；不依賴未提交 E02–E06。此段只完成操作與日期清楚度，不宣告完整 E08 矩陣通過。
+
+### 2026-10-12 E08 自有隔離驗收工具：交付子項
+
+新增版本綁定的使用者矩陣工具，列出固定 22 AC／10 U53／6 Q／6 角色與 7 個受控來源情境，僅操作自有 loopback 副本；來源 DB/key 保持不變，排程與本機 Security log 分析預設停用。主代理獨立執行 controlled source protocols、啟停／來源模式、實際 EF SQLite 連續 concurrency-token 變更、錯誤 commit／偽造 MVID／混合 DLL 拒絕及觀察紀錄契約，全部通過；manifest／inventory 一致性通過，但仍明列 59 個未覆蓋範圍，不計為完整瀏覽器通過。證據：root-e08-controlled-sources-20261012.log、root-e08-lifecycle-20261012.log、root-e08-concurrency-20261012.log、root-e08-buildfence-20261012.log、root-e08-recorder-20261012.log；隔離 Web 為明確的 7fa04409 modified-tree 凍結產物。工具不依賴 E02–E06 未提交原始碼，來源成功不代表 native qualification。完整 E08／五組整輪門檻保留。

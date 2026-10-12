@@ -1,0 +1,8 @@
+/runs/
+/_seed-test-*/
+/_stub-smoke-*/
+/source-stub/bin/
+/source-stub/obj/
+/source-stub/out/
+/sqlite-concurrency/bin/
+/sqlite-concurrency/obj/
