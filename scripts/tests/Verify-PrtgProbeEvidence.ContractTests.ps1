@@ -14,6 +14,11 @@ function New-ValidEvidence {
     return [ordered]@{
         schema_version = '1.0.0'
         build_version = "$script:version+$script:revision"
+        build_identity = @{
+            Status='verified'; Reason='matching-source-and-assemblies'; SourceState='clean'; SourceCommit=$script:revision
+            SourceFingerprint=('a'*64); Token=('b'*64); WebVersion="$script:version+$script:revision"; CoreVersion="$script:version+$script:revision"
+            WebModuleId=('c'*32); CoreModuleId=('d'*32); WebFileSha256=('e'*64); CoreFileSha256=('f'*64)
+        }
         status = 'ok'
         sensor_batch_identity = @{ status='ok'; requested_aliases=@('b1','b2'); returned_aliases=@('b2','b1'); exact_requested_set=$true; reason='exact-unique-requested-set'; authorizes_formal_profile=$false }
         source_fingerprint = 'a'.PadRight(64, 'a')
@@ -305,6 +310,28 @@ Invoke-ContractCase 'negative-native-channel-id-sentinel-is-preserved' $negative
     'NativePrimaryFormalAuthorization: not-asserted'
 )
 
+$unrecognizedNegativeChannelId = Set-Batch100Metadata (New-ValidEvidence)
+$unrecognizedNegativeChannelId.targets[0].channels.rows[0].channel_id = '-5'
+Invoke-ContractCase 'undocumented-negative-channel-id-is-rejected' $unrecognizedNegativeChannelId 1 @('InvalidChannelMetadataShape')
+
+$noncanonicalChannelId = Set-Batch100Metadata (New-ValidEvidence)
+$noncanonicalChannelId.targets[0].channels.rows[0].channel_id = '03'
+Invoke-ContractCase 'noncanonical-channel-id-alias-is-rejected' $noncanonicalChannelId 1 @('InvalidChannelMetadataShape')
+
+$sameIdDifferentQuantities = Set-Batch100Metadata (New-ValidEvidence)
+$sameIdDifferentQuantities.targets[0].identity_preserving_raw_history.Samples[0].Channels = @(
+    [ordered]@{ ChannelId = '3'; QuantityKind = 'volume' },
+    [ordered]@{ ChannelId = '3'; QuantityKind = 'speed' }
+)
+Invoke-ContractCase 'same-channel-id-separate-traffic-quantities-are-retained' $sameIdDifferentQuantities 0 @('HANDOFF_INTEGRITY_OK')
+
+$duplicateRawQuantity = New-ValidEvidence
+$duplicateRawQuantity.targets[0].identity_preserving_raw_history.Samples[0].Channels = @(
+    [ordered]@{ ChannelId = '3'; QuantityKind = 'volume' },
+    [ordered]@{ ChannelId = '3'; QuantityKind = 'volume' }
+)
+Invoke-ContractCase 'true-duplicate-channel-id-and-quantity-is-rejected' $duplicateRawQuantity 1 @('RawChannelIdentityMissingOrWrongShape')
+
 $numericChannelIdInEvidence = Set-Batch100Metadata (New-ValidEvidence)
 $numericChannelIdInEvidence.targets[0].channels.rows[0].channel_id = 3
 Invoke-ContractCase 'channel-id-evidence-must-use-bounded-decimal-string' $numericChannelIdInEvidence 1 @('InvalidChannelMetadataShape')
@@ -447,4 +474,32 @@ Invoke-ContractCase 'foreign-batch-remains-incomplete' $foreignBatch 2 @('Sensor
 $unsafeBatch = New-ValidEvidence
 $unsafeBatch.sensor_batch_identity.authorizes_formal_profile = $true
 Invoke-ContractCase 'batch-does-not-authorize-profile' $unsafeBatch 1 @('InvalidSensorBatchIdentityShape')
+$legacyIdentity = New-ValidEvidence
+$legacyIdentity.Remove('build_identity')
+Invoke-ContractCase 'legacy-build-tail-without-assembly-proof-is-incomplete' $legacyIdentity 2 @('Result: INCOMPLETE')
+$wrongIdentity = New-ValidEvidence
+$wrongIdentity.build_identity.CoreVersion = "$version+ffffffffffffffffffffffffffffffffffffffff"
+Invoke-ContractCase 'mixed-web-core-identity-is-rejected' $wrongIdentity 1 @('InvalidBuildIdentity')
+$localFacts = @{
+    SchemaVersion='local-probe-facts-v1'; Status='observed'; Reason='local-read-only-counts'; AuthorizesFormalProfile=$false
+    AuthorityKind='unknown'; SourceTimeZoneId='unknown'; RawTimestampTimeZoneId='unknown'; AnalysisTimeZoneId='unknown'
+    SourceCultureName='unknown'; AuthorityFingerprint='unknown'; PolicyHosts=20; PolicySensors=100
+    MirrorDevices=6576; MirrorSensors=43762; MappedDevices=18; ConflictingDevices=2; GuardOverrideSensors=6; GuardSensorsInMirror=6
+    ReadinessSampledSensors=100; SavedBindings=0; QualifiedProfiles=0; ReadinessReason='explicit-time-authority-missing-or-invalid'
+    NetiqDay='2026-10-11'; NetiqReceipts=2; NetiqSuccess=1; NetiqWaiting=1; NetiqParentRows=2; NetiqEligibleParents=1
+    NetiqReason='parent-qualification-is-separate-from-receipt-success'; AiProbeStatus='small-request-ready'; AiProbeElapsedMilliseconds=10
+    AiProbeTotalTokens=2; AiProbeEvidenceOrigin='current-small-request'; AiCostReason='tokens-observed-price-not-configured'
+}
+$typedFacts = New-ValidEvidence
+$typedFacts = Set-Batch100Metadata $typedFacts
+$typedFacts.local_facts = $localFacts
+Invoke-ContractCase 'bounded-local-facts-are-readable' $typedFacts 0 @('Version: 1.0.53.2')
+$localFacts.AuthorizesFormalProfile = $true
+Invoke-ContractCase 'local-facts-cannot-authorize-profile' $typedFacts 1 @('InvalidLocalProbeFacts')
+$localFacts.AuthorizesFormalProfile = $false
+$localFacts.QualifiedProfiles = 101
+Invoke-ContractCase 'local-facts-cannot-overclaim-bounded-page' $typedFacts 1 @('InvalidLocalProbeFacts')
+$localFacts.QualifiedProfiles = 0
+$localFacts.Secret = 'private-host-must-not-appear'
+Invoke-ContractCase 'local-facts-reject-unbounded-private-field' $typedFacts 1 @('InvalidLocalProbeFacts')
 Write-Output 'All bounded PRTG evidence verifier contracts passed.'

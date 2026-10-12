@@ -83,9 +83,10 @@ function Get-NativePrimaryId {
     }
     $text = $Element.GetString()
     $value = [long]0
-    $valid = $text -match '^\d{1,20}$' -and
-        [long]::TryParse($text, [System.Globalization.NumberStyles]::None,
-            [System.Globalization.CultureInfo]::InvariantCulture, [ref] $value) -and $value -ge 0
+    $valid = $text -match '^(?:0|[1-9]\d*|-[1-4])$' -and
+        [long]::TryParse($text, [System.Globalization.NumberStyles]::AllowLeadingSign,
+            [System.Globalization.CultureInfo]::InvariantCulture, [ref] $value) -and
+        $value.ToString([System.Globalization.CultureInfo]::InvariantCulture) -ceq $text
     return [pscustomobject]@{ Valid = $valid; Present = $true; Value = $value }
 }
 
@@ -94,7 +95,7 @@ function Test-OptionalNativeChannelId {
     if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { return $true }
     if ($Element.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { return $false }
     $text = $Element.GetString()
-    if ($text.Length -gt 21 -or $text -notmatch '^(?:0|-?[1-9]\d*)$') { return $false }
+    if ($text.Length -gt 20 -or $text -notmatch '^(?:0|[1-9]\d*|-[1-4])$') { return $false }
     $value = [long]0
     return [long]::TryParse($text, [System.Globalization.NumberStyles]::AllowLeadingSign,
         [System.Globalization.CultureInfo]::InvariantCulture, [ref] $value) -and
@@ -297,6 +298,98 @@ function Fail-Safely {
     exit 1
 }
 
+function Test-LocalProbeFacts {
+    param([System.Text.Json.JsonElement] $Facts)
+    $countNames = @('PolicyHosts','PolicySensors','MirrorDevices','MirrorSensors','MappedDevices','ConflictingDevices',
+        'GuardOverrideSensors','GuardSensorsInMirror','ReadinessSampledSensors','SavedBindings','QualifiedProfiles',
+        'NetiqReceipts','NetiqSuccess','NetiqWaiting','NetiqParentRows','NetiqEligibleParents')
+    $allowed = $countNames + @('SchemaVersion','Status','Reason','AuthorizesFormalProfile','AuthorityKind',
+        'SourceTimeZoneId','RawTimestampTimeZoneId','AnalysisTimeZoneId','SourceCultureName','AuthorityFingerprint',
+        'ReadinessReason','NetiqDay','NetiqReason','AiProbeStatus','AiProbeElapsedMilliseconds','AiProbeTotalTokens','AiProbeEvidenceOrigin','AiCostReason')
+    if (-not (Test-AllowedJsonProperties $Facts $allowed)) { return $false }
+    $schema = Get-JsonProperty $Facts 'SchemaVersion'
+    $formal = Get-JsonProperty $Facts 'AuthorizesFormalProfile'
+    if ($null -eq $schema -or -not (Test-JsonString $schema @('local-probe-facts-v1')) -or
+        $null -eq $formal -or $formal.ValueKind -ne [System.Text.Json.JsonValueKind]::False) { return $false }
+    $values = @{}
+    foreach ($name in $countNames) {
+        $element = Get-JsonProperty $Facts $name
+        if ($null -eq $element -or -not (Test-JsonNonNegativeInteger $element -Maximum ([int]::MaxValue))) { return $false }
+        $number = [long]0; [void]$element.TryGetInt64([ref]$number); $values[$name] = $number
+    }
+    if ($values.ReadinessSampledSensors -gt 100 -or $values.SavedBindings -gt $values.ReadinessSampledSensors -or
+        $values.QualifiedProfiles -gt $values.ReadinessSampledSensors -or $values.GuardOverrideSensors -gt 100 -or
+        $values.GuardSensorsInMirror -gt $values.GuardOverrideSensors -or $values.NetiqEligibleParents -gt $values.NetiqParentRows -or
+        $values.NetiqSuccess + $values.NetiqWaiting -ne $values.NetiqReceipts) { return $false }
+    $fixed = @{
+        Status = @('observed','unknown')
+        Reason = @('local-read-only-counts','local-facts-unavailable-or-bounded-deadline','local-facts-invalid-withheld')
+        AuthorityKind = @('saved-explicit-authority','unknown')
+        ReadinessReason = @('explicit-time-authority-missing-or-invalid','formal-scope-empty','sampled-profile-qualification-incomplete',
+            'bounded-profile-sample-not-full-scope-verdict','sampled-profiles-current','policy-not-ready')
+        NetiqReason = @('no-eligible-netiq-parent','parent-qualification-is-separate-from-receipt-success','netiq-summary-not-collected')
+        AiProbeStatus = @('small-request-ready','not-configured','not-probed','failed','failed-or-deadline')
+        AiCostReason = @('token-and-price-cost-not-observed','tokens-observed-price-not-configured')
+        AiProbeEvidenceOrigin = @('not-observed','cached-small-request','current-small-request')
+    }
+    foreach ($name in $fixed.Keys) {
+        $element = Get-JsonProperty $Facts $name
+        if ($null -eq $element -or -not (Test-JsonString $element $fixed[$name])) { return $false }
+    }
+    foreach ($name in @('SourceTimeZoneId','RawTimestampTimeZoneId','AnalysisTimeZoneId')) {
+        $element = Get-JsonProperty $Facts $name
+        if ($null -eq $element -or -not (Test-JsonString $element $null)) { return $false }
+        $text = $element.GetString(); if ($text.Length -gt 128) { return $false }
+        if ($text -ne 'unknown') { try { [void][TimeZoneInfo]::FindSystemTimeZoneById($text) } catch { return $false } }
+    }
+    $culture = Get-JsonProperty $Facts 'SourceCultureName'
+    $fingerprint = Get-JsonProperty $Facts 'AuthorityFingerprint'
+    $day = Get-JsonProperty $Facts 'NetiqDay'
+    if ($null -eq $culture -or -not (Test-JsonString $culture $null) -or $culture.GetString().Length -gt 64 -or
+        $null -eq $fingerprint -or -not (Test-JsonString $fingerprint $null) -or
+        $fingerprint.GetString() -cnotmatch '^(unknown|[a-fA-F0-9]{64})$' -or
+        $null -eq $day -or -not (Test-JsonString $day $null) -or $day.GetString() -cnotmatch '^(unknown|[0-9]{4}-[0-9]{2}-[0-9]{2})$') { return $false }
+    if ($culture.GetString() -ne 'unknown') { try { [void][Globalization.CultureInfo]::GetCultureInfo($culture.GetString()) } catch { return $false } }
+    $elapsed = Get-JsonProperty $Facts 'AiProbeElapsedMilliseconds'
+    if ($null -eq $elapsed) { return $false }
+    if ($elapsed.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
+        $number = [double]0
+        if ($elapsed.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or -not $elapsed.TryGetDouble([ref]$number) -or
+            -not [double]::IsFinite($number) -or $number -lt 0 -or $number -gt 15000) { return $false }
+    }
+    $tokens = Get-JsonProperty $Facts 'AiProbeTotalTokens'
+    if ($null -eq $tokens -or ($tokens.ValueKind -ne [System.Text.Json.JsonValueKind]::Null -and
+        -not (Test-JsonNonNegativeInteger $tokens -Maximum ([int]::MaxValue)))) { return $false }
+    return $true
+}
+
+function Test-ProbeBuildIdentity {
+    param([System.Text.Json.JsonElement] $Facts, [string] $ExpectedBuild, [string] $Revision)
+    $names = @('Status','Reason','SourceState','SourceCommit','SourceFingerprint','Token','WebVersion','CoreVersion',
+        'WebModuleId','CoreModuleId','WebFileSha256','CoreFileSha256')
+    if (-not (Test-AllowedJsonProperties $Facts $names)) { return $false }
+    foreach ($name in $names) {
+        $value = Get-JsonProperty $Facts $name
+        if ($null -eq $value -or $value.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { return $false }
+    }
+    $status = (Get-JsonProperty $Facts 'Status').GetString()
+    $state = (Get-JsonProperty $Facts 'SourceState').GetString()
+    if ($status -cnotin @('verified','invalid','mixed','unknown-source','unavailable','version-mismatch') -or
+        $state -cnotin @('clean','modified','unknown')) { return $false }
+    foreach ($name in @('SourceCommit','SourceFingerprint','Token','WebModuleId','CoreModuleId','WebFileSha256','CoreFileSha256')) {
+        $size = if ($name -eq 'SourceCommit') { 40 } elseif ($name -in @('WebModuleId','CoreModuleId')) { 32 } else { 64 }
+        $text = (Get-JsonProperty $Facts $name).GetString()
+        if ($text -ne 'unknown' -and $text -cnotmatch "^[0-9a-fA-F]{$size}$") { return $false }
+        if ($status -eq 'verified' -and $text -eq 'unknown') { return $false }
+    }
+    if ($status -eq 'verified') {
+        if ($state -eq 'unknown' -or (Get-JsonProperty $Facts 'SourceCommit').GetString().ToLowerInvariant() -ne $Revision -or
+            (Get-JsonProperty $Facts 'WebVersion').GetString() -ne $ExpectedBuild -or
+            (Get-JsonProperty $Facts 'CoreVersion').GetString() -ne $ExpectedBuild) { return $false }
+    }
+    return $true
+}
+
 if ($ExpectedVersion -notmatch '^\d+\.\d+(?:\.\d+){0,2}$') {
     Fail-Safely 'InvalidExpectedVersion'
 }
@@ -354,8 +447,12 @@ try {
     $revision = $Matches.revision.ToLowerInvariant()
     if ($version -ne $ExpectedVersion) { Fail-Safely 'VersionMismatch' }
     if ($ExpectedRevision -and $revision -ne $ExpectedRevision.ToLowerInvariant()) { Fail-Safely 'RevisionMismatch' }
+    $localFacts = Get-JsonProperty $root 'local_facts'
+    if ($null -ne $localFacts -and -not (Test-LocalProbeFacts $localFacts)) { Fail-Safely 'InvalidLocalProbeFacts' }
+    $buildIdentity = Get-JsonProperty $root 'build_identity'
+    if ($null -ne $buildIdentity -and -not (Test-ProbeBuildIdentity $buildIdentity $buildText $revision)) { Fail-Safely 'InvalidBuildIdentity' }
 
-    $metadataIncomplete = $false
+    $metadataIncomplete = $null -eq $buildIdentity -or (Get-JsonProperty $buildIdentity 'Status').GetString() -ne 'verified'
     $deployment = Get-JsonProperty $root 'deployment_resources'
     if ($null -eq $deployment -or $deployment.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { Fail-Safely 'InvalidDeploymentResourcesShape' }
     $processorCount = Get-JsonProperty $deployment 'processor_count'
@@ -576,6 +673,24 @@ try {
             continue
         }
         if ($raw.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { $rawShapeValid = $false; break }
+        $responseShape = Get-JsonProperty $raw 'ResponseShape'
+        if ($null -ne $responseShape) {
+            if (-not (Test-JsonString $responseShape @('not-observed','empty','oversize','html','non-xml','historic-xml','other-xml-root','malformed-or-prohibited-xml'))) { $rawShapeValid = $false; break }
+            $bytes = Get-JsonProperty $raw 'ResponseUtf8Bytes'
+            $digest = Get-JsonProperty $raw 'ResponseSha256'
+            if ($null -ne $bytes -and $bytes.ValueKind -ne [System.Text.Json.JsonValueKind]::Null -and
+                -not (Test-JsonNonNegativeInteger $bytes -Maximum ([int]::MaxValue))) { $rawShapeValid = $false; break }
+            if ($null -ne $digest -and $digest.ValueKind -ne [System.Text.Json.JsonValueKind]::Null -and
+                (-not (Test-JsonString $digest $null) -or $digest.GetString() -cnotmatch '^[a-fA-F0-9]{64}$')) { $rawShapeValid = $false; break }
+            foreach ($timingName in @('HttpElapsedMs','QuotaWaitMs')) {
+                $timing = Get-JsonProperty $raw $timingName
+                $number = [double]0
+                if ($null -ne $timing -and $timing.ValueKind -ne [System.Text.Json.JsonValueKind]::Null -and
+                    ($timing.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or -not $timing.TryGetDouble([ref]$number) -or
+                     -not [double]::IsFinite($number) -or $number -lt 0)) { $rawShapeValid = $false; break }
+            }
+            if (-not $rawShapeValid) { break }
+        }
         $status = Get-JsonProperty $raw 'Status'
         $samples = Get-JsonProperty $raw 'Samples'
         $sampleCount = Get-JsonProperty $raw 'SampleCount'
@@ -598,10 +713,18 @@ try {
             $channels = Get-JsonProperty $sample 'Channels'
             if ($null -eq $channels -or $channels.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $channels.GetArrayLength() -gt 8) { $rawShapeValid = $false; break }
             if ($channels.GetArrayLength() -eq 0 -and ($rawStatus -eq 'ok' -or $sampleCountValue -gt 0)) { $sourceIncomplete = $true }
+            $sampleChannelIdentities = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
             foreach ($channel in $channels.EnumerateArray()) {
                 if ($channel.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { $rawShapeValid = $false; break }
                 $channelId = Get-JsonProperty $channel 'ChannelId'
-                if ($null -eq $channelId -or $channelId.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or [string]::IsNullOrWhiteSpace($channelId.GetString())) { $rawShapeValid = $false; break }
+                if ($null -eq $channelId -or -not (Test-OptionalNativeChannelId $channelId)) { $rawShapeValid = $false; break }
+                $quantityKind = Get-JsonProperty $channel 'QuantityKind'
+                if ($null -eq $quantityKind) { $quantityText = 'unknown' }
+                elseif (-not (Test-JsonString $quantityKind @('unknown','volume','speed'))) { $rawShapeValid = $false; break }
+                else { $quantityText = $quantityKind.GetString() }
+                $identityKey = $channelId.GetString() + '|' + $quantityText
+                if ($sampleChannelIdentities.Contains($identityKey)) { $rawShapeValid = $false; break }
+                [void]$sampleChannelIdentities.Add($identityKey)
                 $channelIdCount++
             }
             if (-not $rawShapeValid) { break }
