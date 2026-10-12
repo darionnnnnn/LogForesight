@@ -1888,3 +1888,7 @@ Root 實際隔離瀏覽器由四台×兩個失敗日出發，預覽確實顯示�
 ### 2026-10-12 E07 隔離 SQLite 副本驗證工具：交付子項
 
 新增 sqlite-highwater 工具，僅接受完整 64,800,000／3,000／15,000／180 日四 slot 合成輸入，原庫唯讀且核對不變，以新目錄的備份／還原副本執行 production Prune(180) 精確邊界及三輪各 15,000 筆 MergeSampledValues 高水位觀測，另有唯讀結果核對。主代理在 b7df53cf＋E01 的獨立工作樹建置此工具：0 warnings／0 errors；直接執行獨立產物的 safety self-test，原庫不變、備份還原完整性、拒絕部分負載、保留期限前後各一 tick 全部通過（root-sqlite-highwater-independent-build-20261012.log 與 root-sqlite-highwater-pristine-selftest-20261012）。此段清除工具交付缺漏；安全測例不冒充全量證據，完整生成仍執行中，所有 fullCapacity／retention／recovery／wholeRound／SQLServer verdict 維持 false，E07 與原固定容量門檻仍未通過。
+
+### 2026-10-12 E05 已儲存作用範圍：固定分母回歸子項
+
+新增 PrtgSavedScopeWorkflowAcceptanceTests，透過真實隔離 SQLite 驗證 20 業務装置／18 對應／2 衝突，加 3 守門裝置／6 CPU-memory sensor 的探測→明確保存→新 store 重讀→作用範圍及快照目標鏈；衝突不進業務快照，守門覆寫不建立數值、案件或通知。主代理將此測試獨立加至 b7df53cf＋E01 工作樹，建置並執行：1 通過／0 失敗／0 略過，不依赖尚未提交的 E02–E06 實作。root-e05-independent-prior-source-20261012.log SHA256=82733afd6f66050d8d8c34555f5e25bbbeb570d3af2ae53f1ac17129239e986c，TRX SHA256=0f9b5230d177636c6545cdc2d697308de6b4e6301c4e51e5ecf210323fb54aba。另主代理對已凍結候選 DLL 執行 E04／AI readiness／E05 子集合：24 通過／0 失敗／0 略過，含 SQLite 取消、單調期限與鎖等待反例。只清除此固定分母鏈的測試缺漏；E05 完整六工作流程與 E04 整體門檻仍依活動 TODO 保留。
