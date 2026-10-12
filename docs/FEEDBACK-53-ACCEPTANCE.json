@@ -1,9 +1,9 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "e3a9e080bdc91aec3a846c6dbe218629a95b4debe7584ed5ff9285b599b8669c",
+  "plan_sha256": "a2fa8d975f3f15d2854cb92812af2f1338d5400024f13b60c0ea2109842f06d8",
   "date": "2026-10-12",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
-  "gate": "代理可執行範圍內的AC01–AC22、Q1–Q6、有效需求全數通過；§5.7使用者確認事項不計驗收或結案阻塞",
+  "gate": "代理可執行範圍內的AC01–AC22、Q1–Q6、有效需求全數通過；依PLAN§5.9在自有隔離環境客觀驗收，正式機實測、現場人工評估及§5.7使用者確認事項不計驗收或結案阻塞",
   "decisions": [
     "CPU／memory預設提示，試算後可啟用正式風險",
     "每日主機日及合格NetIQ父紀錄",
@@ -12,7 +12,7 @@
     "不直接套用實際環境驗收；程式及負載在自有隔離環境按固定條件驗收，缺少現場事實僅透過有限環境探測取得",
     "2026-10-12：无法由代理協助驗收的現場／人員／外部審查事項移到使用者確認提醒，不計開發驗收、完成率或結案阻塞；可執行技術門檻不變，本次不實作"
   ],
-  "measurement_contract": "PLAN §§15.3、16.5、17的可執行技術門檻；責任／環境範圍依最新§5.7",
+  "measurement_contract": "PLAN §§15.3、16.5、17的可執行技術門檻；責任、環境及矛盾修正依最新§5.7與§5.9",
   "case_package_status": "目前 Main 固定受控規則類別 224 項（含新增跨時區邊界）與 owned SMTP 21 項，共 245/245、零失敗／略過、輸入無漂移；原生來源 fixture、完整角色瀏覽器及全負載仍未通過，不能替代 A0/C1/D1。",
   "items": [
     {
@@ -12044,7 +12044,7 @@
     "wholeRoundAccepted": false
   },
   "probe_followup_plan_20261012": {
-    "source_of_truth": "FEEDBACK-53-PLAN.md §§5.6–5.7; user-directed responsibility split supersedes external acceptance prerequisites",
+    "source_of_truth": "FEEDBACK-53-PLAN.md §§5.6–5.9 and §18; user-directed responsibility split supersedes external acceptance prerequisites",
     "user_instruction": "2026-10-12 resumed implementation and owned-isolated acceptance; retain fixed thresholds and commit/push each verified segment",
     "code_baseline_commit": "e3b1bdb2b18f30e0abe95a7b368348276231deae",
     "latest_product_code_commit": "3d23c5bd7f911c95ae774b24608fe8b22b5dd5f9",
@@ -12088,14 +12088,14 @@
       "raw_timestamp_basis": "unknown",
       "formal_profile_authorized": false
     },
-    "todo_count": 10,
+    "todo_count": 9,
     "tasks": [
       {
         "id": "E01",
         "title": "部署與建置可追溯性",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "deployment-provenance-and-handoff",
-        "current_state": "追溯原因未定，部署／交付補強待做。",
+        "current_state": "E01 建置識別與 manifest 子項已有分段交付；最終 clean 同版建置與整輪版本核對仍未完成。",
         "gates": [
           "N1",
           "A0"
@@ -12120,9 +12120,9 @@
       {
         "id": "E02",
         "title": "合法頻道識別與 traffic 查證相容性",
-        "status": "planned-not-started",
+        "status": "complete",
         "category": "confirmed-compatibility-development-gap",
-        "current_state": "非負 channel 假設已確認需修，traffic 格式完整根因待核。",
+        "current_state": "代理範圍契約與隔離反例已完成；現場 traffic 原始根因列 UC02，不阻此開發子項。",
         "gates": [
           "N3"
         ],
@@ -12134,9 +12134,9 @@
         ],
         "depends_on": [],
         "expected_results": "`0`、一般正 ID、合法 `-1` 合計能在允許用途保留識別；`-4` 保留身分但不得當 CPU/memory/disk 數值，`-2/-3` 不冒充業務量值；非法、overflow、canonical collision、真重複、caption／quantity 漂移、外 sensor、DTD、超量仍拒絕。同 sensor 同 ID 的 speed/volume 分開查證，缺单位／尺度不造結果；主通道核驗與 binding/profile consumer 结果一致。四個現有非 traffic property 正例保持通過；traffic 僅查證用途、無正式風險／派工／通知。未取得的現場 traffic raw 根因列UC02；本段以現有樣本與標明來源的官方格式／受控反例驗收。",
-        "actual_results": null,
-        "verified_by": null,
-        "evidence_paths": [],
+        "actual_results": "依 PLAN §18，E02 來源相容交付的受影響集合 325/325、額外集合 31/31、最終 fresh-build 四案例 4/4、Hosted/fallback/pilot/admission 集合 144/144 及通道探索邊界補驗 33/33 均記錄為通過、0 失敗／略過。已完成代理範圍內的 E02 條件；受控／官方格式及隔離結果不宣稱現場 traffic raw 根因已確認。",
+        "verified_by": "主代理（依 PLAN §18 已記錄的獨立核對；此欄不代表另行外部背書）",
+        "evidence_paths": ["docs/FEEDBACK-53-PLAN.md §18，2026-10-12 E02–E06 來源相容與共同准入交付段落","docs/FEEDBACK-53-PLAN.md §18，2026-10-12 E02 通道探索邊界補驗；TestResults/root-discovery-channel-policy/root-discovery-channel-policy.trx"],
         "plan_section": "5.6/E02",
         "acceptance_environment": "agent-owned-isolated; available evidence and labelled official/controlled fixtures",
         "user_confirmation_refs": [
@@ -12147,9 +12147,9 @@
       {
         "id": "E03",
         "title": "時基、單位及正式資格的可操作核驗",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "native-qualification-and-consumer-acceptance",
-        "current_state": "現有流程已實作，可取得來源變體與完整consumer驗收未完成；現場設定真值列UC02，發現接線缺漏仍須本輪修。",
+        "current_state": "共用解析與可取得來源變體已有交付；時基／單位／28 日資格及完整正式 consumer 驗收仍未完成。",
         "gates": [
           "N3",
           "M1"
@@ -12179,9 +12179,9 @@
       {
         "id": "E04",
         "title": "下一次環境探測的完整交付",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "probe-delivery-development-strengthening",
-        "current_state": "現有探測可用，缺項診斷與已知本機摘要交付待補強。",
+        "current_state": "探測本機摘要及有界 provider 查詢已有交付子項；完整輸出／consumer、取消及版本分支驗收仍未完成。",
         "gates": [
           "A0",
           "N1",
@@ -12212,9 +12212,9 @@
       {
         "id": "E05",
         "title": "衝突、範圍差額與資源守門",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "configuration-and-operational-acceptance",
-        "current_state": "隔離完整操作／邊界驗收与指引待做；現場設定未就緒列UC03，不阻本段隔離驗收。",
+        "current_state": "固定作用範圍的隔離保存／讀回子項已有證據；stale write、完整角色操作與守門全流程仍未完成。",
         "gates": [
           "N2",
           "N5"
@@ -12243,9 +12243,9 @@
       {
         "id": "E06",
         "title": "真實來源成本進入共同排程",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "joint-cost-and-admission-acceptance",
-        "current_state": "同形一次觀測已取得，完整共同負載成本及吞吐未通過。",
+        "current_state": "fallback 成本、共同准入及 pilot 子項已有分段證據；真實共同負載吞吐與全門檻仍未通過。",
         "gates": [
           "R05",
           "N6"
@@ -12275,9 +12275,9 @@
       {
         "id": "E07",
         "title": "隔離 SQLite、完整容量及恢復",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "full-provider-capacity-recovery-acceptance",
-        "current_state": "provider已知，全量／長期／恢復門檻未通過。",
+        "current_state": "容量準備工具及 SQL Server 相容子項已有證據；SQLite 全量／期間高水位、混合負載與復原門檻仍未通過。",
         "gates": [
           "N6",
           "M3",
@@ -12309,9 +12309,9 @@
       {
         "id": "E08",
         "title": "端到端全作業與使用者矩陣",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "whole-workflow-browser-and-regression-acceptance",
-        "current_state": "完整固定矩陣與受影響全量回歸未完成。",
+        "current_state": "匯出 API、同資料庫重啟、受控來源及部分瀏覽器角色子項已有證據；完整操作矩陣與受影響全量回歸仍未完成。",
         "gates": [
           "N4",
           "N5",
@@ -12362,9 +12362,9 @@
       {
         "id": "E09",
         "title": "可重播實用功能與四基準計算",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "usefulness-and-independent-outcome-acceptance",
-        "current_state": "隔離重播／計算／操作查證驗收未完成。",
+        "current_state": "222 案 consumer 重播與 22 案四基準子項已有結果；角色證據動線及其餘操作／效益計算驗收仍未完成。",
         "gates": [
           "N7",
           "M6"
@@ -12394,9 +12394,9 @@
       {
         "id": "E10",
         "title": "完整性回查與可執行程式審查",
-        "status": "planned-not-started",
+        "status": "open",
         "category": "independent-review-and-closeout",
-        "current_state": "可執行完整性回查、程式審查及開發結案未完成。",
+        "current_state": "E10-T01 文件同步子項已完成；完整性回查、可執行程式審查及開發結案仍未完成。",
         "gates": [
           "N8",
           "M7"
@@ -12461,13 +12461,21 @@
     "capacityAccepted": false,
     "retentionAccepted": false,
     "wholeRoundAccepted": false,
-    "historical_status_interpretation": "Earlier zero-confirmed-TODO statements describe their dated scopes. E02 and E04 are reopened/additional current work; this block supersedes zero-TODO as a current completion statement, without overwriting prior verified evidence. Latest user directive separates user confirmations from executable development gates; removed external prerequisites are not marked passed.",
+    "historical_status_interpretation": "歷史記錄保留其當時範圍；最新§18已確認E02代理開發子項完成，E04及其他未結父驗收依當前登錄維持open。使用者確認與外部獨立背書仍非開發結案阻塞，未通過條件沒有標成通過。",
     "acceptance_scope_changed_by_user": true,
     "historical_fixed_contract_sha256_before_responsibility_split": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde",
     "active_contract_sha256": "c80439755ac8a67a2924faebaf2d09337cc99e6f5a2d666b16e46d22480a562d"
   },
+  "e10_t01_document_sync_20261012": {
+    "status": "complete",
+    "source_of_truth": "FEEDBACK-53-PLAN.md §§5.6–5.9 and §18",
+    "updated_files": ["docs/FEEDBACK-53-ACCEPTANCE.json", "scripts/round53-user-matrix/coverage-inventory.json"],
+    "result": "E02 development subtask marked complete with §18 traceability; E01 and E03–E10 parent acceptance status remains open; whole-gate statuses remain not-passed. Coverage inventory records bounded evidence and retains its inventory-only fence.",
+    "verification": "Both JSON files parsed after update; PLAN was not modified.",
+    "commit_or_push_performed": false
+  },
   "active_acceptance_scope_20261012": {
-    "source_of_truth": "FEEDBACK-53-PLAN.md §5.7",
+    "source_of_truth": "FEEDBACK-53-PLAN.md §§5.7 and 5.9",
     "user_instruction": "無法由代理協助驗收的項目另列使用者確認提醒；2026-10-12 後續指示已授權依固定規劃與驗收條件繼續實作，每段驗證後 commit 與 push",
     "implementation_authorized": true,
     "development_acceptance_environment": "owned-isolated",
@@ -12490,7 +12498,7 @@
       "AC22": "新操作者依正式文件完成設定、語意核對、查證、處置及排程診斷；實際限制／規則／恢復方式與文件一致；錯誤有原因、下一步及入口，不能只有聯絡開發者"
     },
     "previous_gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
-    "notes": "Historical proofs retain their original scope/hash. Current completion uses this user-directed responsibility split; all ten development TODOs remain planned, not passed. External model identity requirement moved by user instruction, not falsely completed.",
+    "notes": "歷史證據保留原範圍與雜湊；E02開發子項已完成，其他九個父驗收維持open，既有子項結果只作局部證據，不代表整體AC／E08／E09通過。外部模型身分與使用者確認仍依使用者責任切分，不列必要驗收。",
     "user_confirmations": [
       {
         "id": "UC01",
