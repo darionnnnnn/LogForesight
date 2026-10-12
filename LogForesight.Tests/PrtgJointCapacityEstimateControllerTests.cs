@@ -45,11 +45,19 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
 
         Assert.Equal("capacity-qualified", dto.SnapshotCapacityStatus);
         Assert.Equal("capacity-qualified", dto.ProfileCapacityStatus);
+        Assert.Equal(5, dto.ProfileCapacityTargetSensors);
+        Assert.Equal(12, dto.ProfileCapacityExpectedTableRequests);
         Assert.Equal(180d, dto.SnapshotCapacityWindowSeconds);
         Assert.Equal(62_100d, dto.ProfileCapacityWindowSeconds);
         Assert.Equal(135d, dto.JointSnapshotWindowSeconds!.Value);
         Assert.Equal("capacity-exceeded", dto.JointCapacityStatus);
         Assert.Equal("profile_probe_group_deadline_exceeded", dto.JointCapacityReason);
+        Assert.Equal(1, dto.QualificationEligibleSensors);
+        Assert.Equal(4, dto.QualificationWorstCaseTableRequests);
+        Assert.Equal(1, dto.QualificationWorstCaseHistoricRequests);
+        Assert.Equal("capacity-unverified", dto.QualificationCapacityStatus);
+        Assert.Equal("shared-table-plan-missing-or-stale", dto.QualificationCapacityReason);
+        Assert.Null(dto.QualificationRequiredSeconds);
         AssertFiniteJson(dto);
     }
 
@@ -61,16 +69,35 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
 
         Assert.Equal("capacity-qualified", dto.SnapshotCapacityStatus);
         Assert.Equal("capacity-qualified", dto.ProfileCapacityStatus);
+        Assert.Equal(13_400, dto.ProfileCapacityTargetSensors);
+        Assert.Equal(PrtgProfileTransportCapacityEvaluator.ExpectedScopeRequests(13_400),
+            dto.ProfileCapacityExpectedTableRequests);
         Assert.Equal(180d, dto.SnapshotCapacityWindowSeconds);
         Assert.Equal(62_100d, dto.ProfileCapacityWindowSeconds);
         Assert.Equal(135d, dto.JointSnapshotWindowSeconds!.Value);
         Assert.Equal("capacity-exceeded", dto.JointCapacityStatus);
         Assert.Equal("joint_table_quota_or_traffic_exceeded", dto.JointCapacityReason);
+        Assert.Equal(1, dto.QualificationEligibleSensors);
+        Assert.Equal(4, dto.QualificationWorstCaseTableRequests);
+        Assert.Equal(1, dto.QualificationWorstCaseHistoricRequests);
         AssertFiniteJson(dto);
     }
 
+    [Fact]
+    public void Estimate_uses_selected_qualification_duration_and_attempts_for_initialization_cost()
+    {
+        var dto = SeedEstimate(snapshotSensorCount: 5, profileSensorCount: 5,
+            snapshotP95Milliseconds: 1000, profileP95MillisecondsPerSensor: 3000,
+            qualificationDurationHours: 24, qualificationMaximumAttempts: 2);
+
+        Assert.Equal(24, dto.QualificationDurationHours);
+        Assert.Equal(2, dto.QualificationAttemptsAssumed);
+        Assert.Equal(8, dto.QualificationWorstCaseTableRequests);
+        Assert.Equal(2, dto.QualificationWorstCaseHistoricRequests);
+    }
+
     private PrtgValueFetchScopeEstimateDto SeedEstimate(int snapshotSensorCount, int profileSensorCount, int snapshotP95Milliseconds,
-        int profileP95MillisecondsPerSensor)
+        int profileP95MillisecondsPerSensor, int qualificationDurationHours = 72, int qualificationMaximumAttempts = 1)
     {
         const string url = "https://prtg.example.test";
         var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
@@ -80,7 +107,7 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
             s.PrtgAuthMode = PrtgAuthModes.Token;
             s.PrtgApiTokenEnc = "capacity-fixture-token";
             s.PrtgTimeoutSeconds = 30;
-            s.PrtgEnabled = false;
+            s.PrtgEnabled = true;
             s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
             s.PrtgValueFetchScope = PrtgValueFetchScope.AllMapped;
             s.PrtgSensorTypeWhitelist = ["cpu"];
@@ -105,6 +132,7 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
         var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
         policyStore.Update(p =>
         {
+            p.Revision = "joint-capacity-policy-r1";
             p.CoreSystemId = "joint-capacity-fixture";
             p.SourceGeneration = "joint-capacity-generation";
             p.EndpointHint = EfPrtgObservationStore.SourceHintFor(url);
@@ -113,13 +141,24 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
             p.SensorIds = sensorIds.ToList();
             p.SourceTimeZoneId = "UTC";
             p.SourceCultureName = "en-US";
+            p.RawTimestampTimeZoneId = "UTC";
+            p.AnalysisTimeZoneId = "UTC";
+            p.TimeBasisEvidenceReference = "joint-capacity-time-basis";
         });
         foreach (var id in sensorIds.Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds))
             prtg.BindObservedResource(id, host.HostId, "joint-capacity-generation",
                 PrtgTimelineResourceIdentity.BuildResourceFingerprint("100",
                     id < 10_000 + snapshotSensorCount ? "cpu" : "other", "created", 0));
+        var unqualifiedSensorId = sensorIds[0];
+        var identity = prtg.GetResourceIdentity(unqualifiedSensorId);
+        new PrtgTrustedSamplingBindingStore(_backend).Save(new PrtgTrustedSamplingBindingUpdate(
+            unqualifiedSensorId, settings.Get().Revision, policyStore.Get().Revision, identity.Epoch,
+            identity.ChannelGeneration, 0, "3", "CPU", PrtgTrustedQuantitySemantic.CpuLoadPercent,
+            "%", 1, "direct", "seconds", "UTC", "UTC", "joint-capacity-time-basis"));
 
         var selection = PrtgSnapshotTargetResolver.Resolve(_backend, _hosts, settings.Get(), [], policyStore.Get());
+        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
         Assert.Equal(snapshotSensorCount, selection.SensorObjids.Count);
         var snapshotStore = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
         for (var sample = 0; sample < 5; sample++)
@@ -139,7 +178,8 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
                 PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileIds.Length),
                 PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileIds.Length), "success", null, contract.VersionFingerprint));
 
-        return _controller.EstimatePrtgFetchScope(PrtgValueFetchScope.AllMapped, PrtgFetchStrategy.Aggressive).Data!;
+        return _controller.EstimatePrtgFetchScope(PrtgValueFetchScope.AllMapped, PrtgFetchStrategy.Aggressive,
+            qualificationDurationHours, qualificationMaximumAttempts).Data!;
     }
 
     private static void AssertFiniteJson(PrtgValueFetchScopeEstimateDto dto)
@@ -151,7 +191,8 @@ public sealed class PrtgJointCapacityEstimateControllerTests : IDisposable
             nameof(dto.JointSharedTableRequestsPerSecond), nameof(dto.JointSnapshotTableRequestsPerSecond),
             nameof(dto.JointProfileTableRequestsPerSecond), nameof(dto.JointGeneralResidualTableRequestsPerSecond),
             nameof(dto.JointSnapshotEstimatedSeconds), nameof(dto.JointSnapshotWindowSeconds),
-            nameof(dto.JointProfileEstimatedSeconds), nameof(dto.JointProfileWindowSeconds)
+            nameof(dto.JointProfileEstimatedSeconds), nameof(dto.JointProfileWindowSeconds),
+            nameof(dto.QualificationRequiredSeconds), nameof(dto.QualificationAvailableSeconds)
         })
         {
             var value = document.RootElement.GetProperty(name);

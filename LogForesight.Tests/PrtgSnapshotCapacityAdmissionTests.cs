@@ -220,7 +220,8 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
     public void Existing_plan_allows_only_a_fresh_same_contract_single_batch_recovery()
     {
         using var fixture = RuntimeRecoveryFixture.Create(1);
-        var selection = fixture.Selection;
+        var selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(fixture.Selection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
         var planStore = new PrtgCapacityAdmissionPlanStore(
             fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
         var originalPlan = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
@@ -243,6 +244,26 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         planStore.Invalidate(originalPlan.Owner, originalPlan.Version);
         Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
             fixture.Settings.Get(), selection, out _, out _, allowBoundedSingleBatchRecovery: true));
+    }
+
+    [Fact]
+    public void Revalidation_fence_rejects_a_fresh_primary_channel_mode_change()
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(1);
+        var selection = fixture.Selection;
+        var expected = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
+        var latest = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
+
+        Assert.False(PrtgCapacityRuntimeAdmission.TryMatchRevalidationSelection(fixture.Backend,
+            latest, expected, fixture.Settings.Get(), null!, null!, null!,
+            allowRetainedUnknownMode: false, out _));
+        Assert.True(PrtgCapacityRuntimeAdmission.TryMatchRevalidationSelection(fixture.Backend,
+            expected, expected, fixture.Settings.Get(), null!, null!, null!,
+            allowRetainedUnknownMode: false, out var validated));
+        Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeProvided,
+            validated.PrimaryChannelCapabilityMode);
     }
 
     [Fact]
@@ -277,9 +298,11 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
             fixture.RecordSnapshotFailure();
             Assert.Equal(51, fixture.Selection.SensorObjids.Count);
             Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
-                fixture.Settings.Get(), fixture.Selection, out _, out var reason,
+                fixture.Settings.Get(), fixture.Selection, out _, out var reason, out var effectiveSelection,
                 allowBoundedSingleBatchRecovery: true), reason);
             Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedSingleBatchRecoveryReason, reason);
+            Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeProvided,
+                effectiveSelection.PrimaryChannelCapabilityMode);
         }
     }
 
@@ -293,8 +316,11 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
 
             Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
                 fixture.Settings.Get(), fixture.Selection, out _, out var reason,
+                out var effectiveSelection,
                 allowBoundedSingleBatchRecovery: true), reason);
             Assert.Equal(PrtgCapacityRuntimeAdmission.BoundedSingleBatchRecoveryReason, reason);
+            Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeProvided,
+                effectiveSelection.PrimaryChannelCapabilityMode);
         }
 
         using (var fixture = RuntimeRecoveryFixture.Create(1))
@@ -396,6 +422,77 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
     }
 
     [Fact]
+    public void Retained_mode_recovery_fails_closed_when_candidate_binding_or_mode_changes()
+    {
+        using (var fixture = RuntimeRecoveryFixture.Create(1))
+        {
+            var settings = fixture.Settings.Get();
+            var policyStore = new PrtgMonitoringPolicyStore(
+                fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+            policyStore.Update(policy =>
+            {
+                policy.RawTimestampTimeZoneId = "UTC";
+                policy.AnalysisTimeZoneId = "UTC";
+                policy.TimeBasisEvidenceReference = "retained-mode-test-time-basis";
+            });
+            var policy = policyStore.Get();
+            var identity = fixture.Backend.PrtgStore().GetResourceIdentity(10_000);
+            var bindings = new PrtgTrustedSamplingBindingStore(fixture.Backend);
+            bindings.Save(new PrtgTrustedSamplingBindingUpdate(10_000, settings.Revision, policy.Revision,
+                identity.Epoch, identity.ChannelGeneration, 0, "3", "CPU",
+                PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct", "seconds",
+                "UTC", "UTC", policy.TimeBasisEvidenceReference));
+            SnapshotAdmissionTestFixture.PublishCurrentScope(fixture.Backend, fixture.Hosts,
+                fixture.Settings, policyStore.Get());
+
+            fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+            var unknownModeSelection = fixture.Selection;
+            Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown,
+                unknownModeSelection.PrimaryChannelCapabilityMode);
+            Assert.Equal(1, unknownModeSelection.PotentialQualifiedSensorCount);
+            Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), unknownModeSelection, out _, out var reason, out var admittedSelection,
+                allowBoundedSingleBatchRecovery: true), reason);
+            Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeProvided,
+                admittedSelection.PrimaryChannelCapabilityMode);
+
+            var currentIdentity = fixture.Backend.PrtgStore().GetResourceIdentity(10_000);
+            bindings.Save(new PrtgTrustedSamplingBindingUpdate(10_000, settings.Revision, policy.Revision,
+                currentIdentity.Epoch, currentIdentity.ChannelGeneration, 1, "4", "CPU",
+                PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct", "seconds",
+                "UTC", "UTC", policy.TimeBasisEvidenceReference));
+            var changedBindingSelection = fixture.Selection;
+            Assert.NotEqual(unknownModeSelection.ScopeFingerprint, changedBindingSelection.ScopeFingerprint);
+            Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), changedBindingSelection, out _, out _,
+                allowBoundedSingleBatchRecovery: true));
+        }
+
+        using (var fixture = RuntimeRecoveryFixture.Create(1))
+        {
+            var store = new PrtgSnapshotCapacityStore(
+                fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
+            fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
+            var selection = fixture.Selection;
+            var fallback = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+                PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
+            var now = DateTimeOffset.UtcNow;
+            for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
+                store.Record(new PrtgSnapshotCapacitySample(fallback.ScopeFingerprint,
+                    fallback.EndpointFingerprint, fallback.RequestShapeFingerprint,
+                    now.AddSeconds(-index), 250, fallback.CapacitySampleBatchSize, "success",
+                    PrtgSnapshotTargetResolver.PrimaryChannelModeFallback));
+
+            var changedModeSelection = fixture.Selection;
+            Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeFallback,
+                changedModeSelection.PrimaryChannelCapabilityMode);
+            Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), changedModeSelection, out _, out _,
+                allowBoundedSingleBatchRecovery: true));
+        }
+    }
+
+    [Fact]
     public void Expired_profile_recovery_rejects_a_changed_source_contract()
     {
         using var fixture = RuntimeRecoveryFixture.Create(5);
@@ -453,6 +550,43 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
     }
 
     [Fact]
+    public void Unrelated_settings_update_succeeds_but_clears_live_admission_when_source_contract_changes()
+    {
+        using var fixture = RuntimeRecoveryFixture.Create(1);
+        PrtgRequestBudget.Shared.ClearAdmissionPlan();
+        var settingsService = CreateSettingsService(fixture.Backend, fixture.Settings);
+        var policyStore = new PrtgMonitoringPolicyStore(
+            fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        var racingService = new RacingSettingsService(settingsService, fixture.Settings)
+        {
+            BeforeNextUpdate = () => policyStore.Update(policy => policy.HostIds.Clear())
+        };
+        var controller = new SettingsController(racingService, new AiUsageStore(fixture.Backend.Blob("ai_usage")),
+            new RecordingAuditService(), backend: fixture.Backend, hosts: fixture.Hosts);
+        var planStore = new PrtgCapacityAdmissionPlanStore(
+            fixture.Backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
+        var before = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
+        PrtgRequestBudget.Shared.SetAdmissionPlan(before);
+        var request = FullSystemSettingsRequest(settingsService.Get());
+        request.BrandSubtitle = "Updated while source changed";
+
+        try
+        {
+            var updated = controller.Update(request).Data!;
+
+            Assert.Equal("Updated while source changed", updated.BrandSubtitle);
+            Assert.NotEqual(before.SettingsRevision, updated.Revision);
+            Assert.Null(PrtgRequestBudget.Shared.CurrentAdmissionPlan);
+            Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
+                fixture.Settings.Get(), fixture.Selection, out _, out _));
+        }
+        finally
+        {
+            PrtgRequestBudget.Shared.ClearAdmissionPlan();
+        }
+    }
+
+    [Fact]
     public void Unrelated_ai_settings_update_rebinds_admission_without_changing_capacity_contract()
     {
         AssertUnrelatedSettingsUpdateRebindsAdmission(request => request.AiRetryCount++);
@@ -470,11 +604,21 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         var formattedRequestShape = string.Format(
             System.Globalization.CultureInfo.InvariantCulture,
             PrtgSnapshotTargetResolver.RequestShape, selection.CapacitySampleBatchSize);
+        var capacityContractShape = $"|primarychannel-mode={selection.PrimaryChannelCapabilityMode}" +
+            $"|qualified-candidates={selection.PotentialQualifiedSensorCount}" +
+            $"|qualified-id-hash={selection.PotentialQualifiedContractFingerprint}" +
+            $"|fallback-group-size={PrtgSnapshotTargetResolver.PrimaryChannelFallbackGroupSize}" +
+            $"|fallback-groups={selection.PotentialQualifiedBatchCount}" +
+            $"|sample-group-size={selection.PotentialQualifiedFallbackSampleSize}" +
+            "|fallback-shape=initial-bulk+property-before+bounded-group-bulk+property-after";
         var legacyRequestShape = PrtgSnapshotCapacityStore.Fingerprint(formattedRequestShape);
         var currentRequestShape = PrtgSnapshotCapacityStore.Fingerprint(
-            PrtgProfileTransportCapacityPilot.RuntimeVersionFingerprint() + "|" + formattedRequestShape);
+            PrtgProfileTransportCapacityPilot.RuntimeVersionFingerprint() + "|" + formattedRequestShape + capacityContractShape);
+        var changedRuntimeShape = PrtgSnapshotCapacityStore.Fingerprint(
+            "changed-runtime-version|" + formattedRequestShape + capacityContractShape);
         Assert.Equal(currentRequestShape, selection.RequestShapeFingerprint);
         Assert.NotEqual(legacyRequestShape, currentRequestShape);
+        Assert.NotEqual(changedRuntimeShape, currentRequestShape);
 
         var now = DateTimeOffset.UtcNow;
         for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
@@ -491,6 +635,19 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
         Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(fixture.Backend, fixture.Hosts,
             fixture.Settings.Get(), selection, out _, out var legacyReason));
         Assert.Contains("insufficient_fresh_full_batch_samples", legacyReason);
+
+        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
+            snapshotStore.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
+                selection.EndpointFingerprint, changedRuntimeShape, now.AddSeconds(index - 5),
+                250, selection.CapacitySampleBatchSize, "success"));
+        var changedRuntimeOnly = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
+            PrtgFetchStrategy.Normalize(fixture.Settings.Get().PrtgFetchStrategy), selection.ScopeFingerprint,
+            selection.EndpointFingerprint, selection.RequestShapeFingerprint, snapshotStore.Read(),
+            DateTimeOffset.UtcNow);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, changedRuntimeOnly.Status);
+        Assert.Equal(0, changedRuntimeOnly.FreshMatchingFullBatchSamples);
+
+        fixture.Backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
 
         for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
             snapshotStore.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
@@ -772,8 +929,15 @@ public sealed class PrtgSnapshotCapacityAdmissionTests
     private sealed class RacingSettingsService(ISystemSettingsService inner, ISystemSettingsStore store) : ISystemSettingsService
     {
         public bool MutateBeforeNextPrtgUpdate { get; set; }
+        public Action? BeforeNextUpdate { get; set; }
         public SystemSettingsDto Get() => inner.Get();
-        public SystemSettingsDto Update(UpdateSystemSettingsRequest request) => inner.Update(request);
+        public SystemSettingsDto Update(UpdateSystemSettingsRequest request)
+        {
+            var callback = BeforeNextUpdate;
+            BeforeNextUpdate = null;
+            callback?.Invoke();
+            return inner.Update(request);
+        }
         public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request)
         {
             if (MutateBeforeNextPrtgUpdate)

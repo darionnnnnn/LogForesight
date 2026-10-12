@@ -33,6 +33,8 @@ public sealed class PrtgProbeEvidenceContext
     public PrtgStorageEnvironmentFacts? StorageEnvironment { get; init; }
     public string? ScopeSummary { get; init; }
     public string? ReadinessSummary { get; init; }
+    public PrtgProbeLocalFacts? LocalFacts { get; init; }
+    public PrtgProbeBuildFacts? BuildIdentity { get; init; }
 }
 
 public sealed class PrtgCompatibilityProbeEvidence
@@ -93,6 +95,14 @@ public sealed class PrtgCompatibilityProbeEvidence
 
     [JsonPropertyName("readiness_summary")]
     public string ReadinessSummary { get; set; } = "unknown";
+
+    [JsonPropertyName("local_facts")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PrtgProbeLocalFacts? LocalFacts { get; set; }
+
+    [JsonPropertyName("build_identity")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PrtgProbeBuildFacts? BuildIdentity { get; set; }
 
     [JsonPropertyName("status")]
     public string Status { get; set; } = "unknown";
@@ -299,6 +309,11 @@ public sealed class PrtgNativePrimaryCapabilityEvidence
 
 public sealed class PrtgRawChannelIdentityEvidence
 {
+    public string ResponseShape { get; set; } = "not-observed";
+    public int? ResponseUtf8Bytes { get; set; }
+    public string? ResponseSha256 { get; set; }
+    public double? HttpElapsedMs { get; set; }
+    public double? QuotaWaitMs { get; set; }
     public string Status { get; set; } = "unknown";
     public string? HttpDateUtc { get; set; }
     public string? ReceivedAtUtc { get; set; }
@@ -318,7 +333,7 @@ public sealed class PrtgRawChannelIdentityEvidence
 public sealed record PrtgRawChannelIdentitySample(double RawOaDate,
     IReadOnlyList<PrtgRawChannelIdentityValue> Channels);
 public sealed record PrtgRawChannelIdentityValue(string ChannelId, string SemanticCaption,
-    bool SemanticKnown, double RawValue, bool ExplicitPercentDisplay);
+    bool SemanticKnown, double RawValue, bool ExplicitPercentDisplay, string QuantityKind = "unknown");
 
 public sealed class PrtgSnapshotEvidence
 {
@@ -604,6 +619,86 @@ public sealed class PrtgTimestampCandidate
 
 public static class PrtgCompatibilityProbe
 {
+    private static PrtgProbeLocalFacts? SanitizeLocalFacts(PrtgProbeLocalFacts? value)
+    {
+        if (value is null) return null;
+        int[] counts = [value.PolicyHosts, value.PolicySensors, value.MirrorDevices, value.MirrorSensors,
+            value.MappedDevices, value.ConflictingDevices, value.GuardOverrideSensors, value.GuardSensorsInMirror,
+            value.ReadinessSampledSensors, value.SavedBindings, value.QualifiedProfiles, value.NetiqReceipts,
+            value.NetiqSuccess, value.NetiqWaiting, value.NetiqParentRows, value.NetiqEligibleParents];
+        if (value.SchemaVersion != PrtgProbeLocalFacts.Schema || value.AuthorizesFormalProfile ||
+            value.Status is not ("observed" or "unknown") || counts.Any(count => count < 0) ||
+            value.ReadinessSampledSensors > 100 || value.SavedBindings > value.ReadinessSampledSensors ||
+            value.QualifiedProfiles > value.ReadinessSampledSensors || value.GuardOverrideSensors > 100 ||
+            value.GuardSensorsInMirror > value.GuardOverrideSensors || value.NetiqEligibleParents > value.NetiqParentRows ||
+            value.NetiqSuccess + (long)value.NetiqWaiting != value.NetiqReceipts)
+            return new PrtgProbeLocalFacts { Reason = "local-facts-invalid-withheld" };
+        var sourceZone = SafeTimeZone(value.SourceTimeZoneId);
+        var rawZone = SafeTimeZone(value.RawTimestampTimeZoneId);
+        var analysisZone = SafeTimeZone(value.AnalysisTimeZoneId);
+        var culture = SafeCulture(value.SourceCultureName);
+        var fingerprint = SafeFingerprint(value.AuthorityFingerprint);
+        var authority = value.AuthorityKind == "saved-explicit-authority" && sourceZone != "unknown" &&
+            rawZone != "unknown" && analysisZone != "unknown" && culture != "unknown" && fingerprint != "unknown";
+        return value with
+        {
+            Reason = value.Status == "observed" ? "local-read-only-counts" : "local-facts-unavailable-or-bounded-deadline",
+            AuthorityKind = authority ? "saved-explicit-authority" : "unknown",
+            SourceTimeZoneId = authority ? sourceZone : "unknown", RawTimestampTimeZoneId = authority ? rawZone : "unknown",
+            AnalysisTimeZoneId = authority ? analysisZone : "unknown", SourceCultureName = authority ? culture : "unknown",
+            AuthorityFingerprint = authority ? fingerprint : "unknown",
+            ReadinessReason = value.ReadinessReason is "explicit-time-authority-missing-or-invalid" or "formal-scope-empty" or
+                "sampled-profile-qualification-incomplete" or "bounded-profile-sample-not-full-scope-verdict" or "sampled-profiles-current"
+                ? value.ReadinessReason : "policy-not-ready",
+            NetiqDay = DateTime.TryParseExact(value.NetiqDay, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out _) ? value.NetiqDay : "unknown",
+            NetiqReason = value.NetiqReason is "no-eligible-netiq-parent" or "parent-qualification-is-separate-from-receipt-success"
+                ? value.NetiqReason : "netiq-summary-not-collected",
+            AiProbeStatus = value.AiProbeStatus is "small-request-ready" or "not-configured" or "not-probed" or "failed" or "failed-or-deadline"
+                ? value.AiProbeStatus : "not-probed",
+            AiProbeElapsedMilliseconds = value.AiProbeElapsedMilliseconds is { } elapsed && double.IsFinite(elapsed) && elapsed >= 0 && elapsed <= 15000
+                ? elapsed : null,
+            AiProbeTotalTokens = value.AiProbeTotalTokens is >= 0 ? value.AiProbeTotalTokens : null,
+            AiProbeEvidenceOrigin = value.AiProbeEvidenceOrigin is "cached-small-request" or "current-small-request"
+                ? value.AiProbeEvidenceOrigin : "not-observed",
+            AiCostReason = value.AiProbeTotalTokens is >= 0 ? "tokens-observed-price-not-configured" : "token-and-price-cost-not-observed"
+        };
+    }
+
+    private static string SafeTimeZone(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 128) return "unknown";
+        try { return TimeZoneInfo.FindSystemTimeZoneById(value).Id; }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException) { return "unknown"; }
+    }
+
+    private static string SafeCulture(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 64) return "unknown";
+        try { return CultureInfo.GetCultureInfo(value).Name; }
+        catch (CultureNotFoundException) { return "unknown"; }
+    }
+
+    private static PrtgProbeBuildFacts? SafeBuildFacts(PrtgProbeBuildFacts? value)
+    {
+        if (value is null) return null;
+        string Hex(string? text, int length) => text != null && Regex.IsMatch(text, $"^[a-fA-F0-9]{{{length}}}$", RegexOptions.CultureInvariant) ? text.ToLowerInvariant() : "unknown";
+        var reasons = new[] { "product-assembly-set-mismatch", "build-source-stamp-missing", "git-source-unavailable",
+            "build-source-state-invalid", "web-core-source-stamp-mismatch", "build-source-stamp-invalid",
+            "product-assembly-file-identity-unavailable", "web-core-informational-version-mismatch",
+            "informational-version-source-mismatch", "source-fingerprint-current-dirty-tree", "source-fingerprint-current" };
+        return value with
+        {
+            Status = value.Status is "verified" or "invalid" or "mixed" or "unknown-source" or "unavailable" or "version-mismatch" ? value.Status : "unknown-source",
+            Reason = reasons.Contains(value.Reason, StringComparer.Ordinal) ? value.Reason : "build-source-stamp-missing",
+            SourceState = value.SourceState is "clean" or "modified" ? value.SourceState : "unknown",
+            SourceCommit = Hex(value.SourceCommit, 40), SourceFingerprint = Hex(value.SourceFingerprint, 64), Token = Hex(value.Token, 64),
+            WebVersion = SafeBuildVersion(value.WebVersion), CoreVersion = SafeBuildVersion(value.CoreVersion),
+            WebModuleId = Hex(value.WebModuleId?.Replace("-", "", StringComparison.Ordinal), 32),
+            CoreModuleId = Hex(value.CoreModuleId?.Replace("-", "", StringComparison.Ordinal), 32),
+            WebFileSha256 = Hex(value.WebFileSha256, 64), CoreFileSha256 = Hex(value.CoreFileSha256, 64)
+        };
+    }
     public const string BeginMarker = "BEGIN_PRTG_COMPATIBILITY_JSON";
     public const string EndMarker = "END_PRTG_COMPATIBILITY_JSON";
 
@@ -760,6 +855,7 @@ public static class PrtgCompatibilityProbe
         var sdate = yesterday.ToString("yyyy-MM-dd-00-00-00", CultureInfo.InvariantCulture);
         var edate = yesterday.AddDays(1).ToString("yyyy-MM-dd-00-00-00", CultureInfo.InvariantCulture);
 
+        var localFacts = SanitizeLocalFacts(context?.LocalFacts);
         var evidence = new PrtgCompatibilityProbeEvidence
         {
             SchemaVersion = "1.0.0",
@@ -771,13 +867,19 @@ public static class PrtgCompatibilityProbe
             StorageEnvironment = SanitizeStorageEnvironment(context?.StorageEnvironment),
             SettingsRevision = SafeSettingsRevision(context?.SettingsRevision),
             SourceFingerprint = SafeFingerprint(context?.SourceFingerprint),
-            SourceTimezone = "unknown",
-            SourceLocale = "unknown",
+            SourceTimezone = localFacts?.AuthorityKind == "saved-explicit-authority"
+                ? localFacts.SourceTimeZoneId : "unknown",
+            SourceLocale = localFacts?.AuthorityKind == "saved-explicit-authority"
+                ? localFacts.SourceCultureName : "unknown",
             StorageProvider = SafeProvider(context?.StorageProvider),
             EfCoreProvider = SafeEfProvider(context?.EfCoreProvider),
             RetentionDays = context?.RetentionDays is >= 1 and <= 10000 ? context.RetentionDays : null,
-            ScopeSummary = "unknown (no bounded summary available)",
-            ReadinessSummary = "unknown (no bounded summary available)",
+            ScopeSummary = localFacts is { Status: "observed" } local
+                ? $"policy-hosts={local.PolicyHosts}; policy-sensors={local.PolicySensors}; mirror-devices={local.MirrorDevices}; mirror-sensors={local.MirrorSensors}; mapped-devices={local.MappedDevices}; conflicts={local.ConflictingDevices}; guard-overrides={local.GuardOverrideSensors}" : "unknown (local facts unavailable)",
+            ReadinessSummary = localFacts is { Status: "observed" } readiness
+                ? $"sampled={readiness.ReadinessSampledSensors}; bindings={readiness.SavedBindings}; qualified-profiles={readiness.QualifiedProfiles}; not-full-scope-verdict" : "unknown (local facts unavailable)",
+            LocalFacts = localFacts,
+            BuildIdentity = SafeBuildFacts(context?.BuildIdentity),
             Status = "unknown",
             EvidenceReady = false,
             HistoricalDateBoundary = new PrtgDateBoundary
@@ -1066,8 +1168,7 @@ public static class PrtgCompatibilityProbe
     }
 
     private static bool IsNativePrimaryObjectId(string? value) =>
-        value is { Length: > 0 and <= 20 } &&
-        long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id >= 0;
+        PrtgChannelIdPolicy.TryParseCanonical(value, out _);
 
     private static string? GetNativeChannelId(JsonElement value)
     {
@@ -1077,9 +1178,7 @@ public static class PrtgCompatibilityProbe
             JsonValueKind.String => value.GetString(),
             _ => null
         };
-        if (string.IsNullOrEmpty(text) || text.Length > 21 ||
-            !Regex.IsMatch(text, @"^-?\d{1,20}$", RegexOptions.CultureInvariant) ||
-            !long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var id))
+        if (!PrtgChannelIdPolicy.TryParseCanonical(text, out var id))
             return null;
         return id.ToString(CultureInfo.InvariantCulture);
     }
@@ -1174,10 +1273,8 @@ public static class PrtgCompatibilityProbe
                 return evidence;
             }
 
-            var propertyValue = results[0].Value.Trim();
-            if (propertyValue.Length is < 1 or > 20 ||
-                !long.TryParse(propertyValue, NumberStyles.None, CultureInfo.InvariantCulture, out var primaryChannelId) ||
-                primaryChannelId < 0)
+            var propertyValue = results[0].Value;
+            if (!PrtgChannelIdPolicy.TryParseCanonical(propertyValue, out var primaryChannelId))
             {
                 evidence.Error = "invalid_property_value";
                 return evidence;
@@ -1189,10 +1286,10 @@ public static class PrtgCompatibilityProbe
             evidence.PrimaryChannelId = primaryChannelId.ToString(CultureInfo.InvariantCulture);
             if (rawChannelIds is { Count: > 0 })
                 evidence.MatchesRawObservedChannelIds = rawChannelIds.Any(id =>
-                    long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var rawId) && rawId == primaryChannelId);
+                    PrtgChannelIdPolicy.TryParseCanonical(id, out var rawId) && rawId == primaryChannelId);
             if (IsNativePrimaryObjectId(snapshotPrimaryChannelId))
                 evidence.MatchesSnapshotPrimaryChannelId =
-                    long.TryParse(snapshotPrimaryChannelId, NumberStyles.None, CultureInfo.InvariantCulture, out var snapshotId) && snapshotId == primaryChannelId;
+                    PrtgChannelIdPolicy.TryParseCanonical(snapshotPrimaryChannelId, out var snapshotId) && snapshotId == primaryChannelId;
             // Bulk snapshot and native property observations are diagnostic only. Neither
             // establishes measurement-time identity, source semantics, or a formal profile.
         }
@@ -1253,6 +1350,11 @@ public static class PrtgCompatibilityProbe
             using var request = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
             request.CancelAfter(TimeSpan.FromSeconds(90));
             var response = await getXml($"/api/historicdata.xml?id={sensorId}&avg=0&usecaption=1&sdate={start}&edate={end}", request.Token);
+            evidence.ResponseUtf8Bytes = Encoding.UTF8.GetByteCount(response.Content);
+            evidence.ResponseSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(response.Content)));
+            evidence.ResponseShape = RawResponseShape(response.Content);
+            evidence.HttpElapsedMs = response.TransportElapsed?.TotalMilliseconds;
+            evidence.QuotaWaitMs = response.BudgetWait?.TotalMilliseconds;
             var parsed = PrtgHistoricXmlReader.Parse(response.Content);
             evidence.HttpDateUtc = response.HttpDateUtc?.ToString("o", CultureInfo.InvariantCulture);
             evidence.ReceivedAtUtc = response.ReceivedAtUtc.ToString("o", CultureInfo.InvariantCulture);
@@ -1267,7 +1369,7 @@ public static class PrtgCompatibilityProbe
                 {
                     var (caption, known) = SanitizeChannelName(channel.Caption);
                     return new PrtgRawChannelIdentityValue(channel.ChannelId, caption, known,
-                        channel.RawValue, channel.DisplayValue?.Trim().EndsWith('%') == true);
+                        channel.RawValue, channel.DisplayValue?.Trim().EndsWith('%') == true, channel.QuantityKind);
                 }).ToArray();
                 evidence.Samples.Add(new(sample.MeasuredOaDate, values));
             }
@@ -1277,9 +1379,39 @@ public static class PrtgCompatibilityProbe
         }
         catch (OperationCanceledException) when (userToken.IsCancellationRequested) { throw; }
         catch (OperationCanceledException) { evidence.Status = "timeout"; evidence.Error = "raw-channel-probe-deadline"; }
-        catch (Exception ex) when (ex is InvalidDataException or PrtgClientException)
-        { evidence.Status = "error"; evidence.Error = "raw-channel-source-shape-or-transport-invalid"; }
+        catch (InvalidDataException ex)
+        {
+            evidence.Status = "error";
+            evidence.Error = ex.Message switch
+            {
+                "historic-xml-channel-id-invalid" => "raw-channel-id-invalid-or-noncanonical",
+                "historic-xml-duplicate-channel-quantity" => "raw-channel-duplicate-id-and-quantity",
+                "historic-xml-channel-caption-drift" => "raw-channel-caption-drift",
+                _ => "raw-channel-source-shape-invalid"
+            };
+        }
+        catch (PrtgClientException)
+        { evidence.Status = "error"; evidence.Error = "raw-channel-transport-invalid"; }
         return evidence;
+    }
+
+    private static string RawResponseShape(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return "empty";
+        if (Encoding.UTF8.GetByteCount(content) > PrtgHistoricXmlReader.MaximumBytes) return "oversize";
+        var start = content.AsSpan().TrimStart();
+        if (start.StartsWith("<html", StringComparison.OrdinalIgnoreCase) || start.StartsWith("<!doctype html", StringComparison.OrdinalIgnoreCase)) return "html";
+        if (!start.StartsWith("<", StringComparison.Ordinal)) return "non-xml";
+        try
+        {
+            using var reader = XmlReader.Create(new StringReader(content), new XmlReaderSettings
+                { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = PrtgHistoricXmlReader.MaximumBytes });
+            reader.MoveToContent();
+            var historic = reader.LocalName == "histdata";
+            while (reader.Read()) { }
+            return historic ? "historic-xml" : "other-xml-root";
+        }
+        catch (XmlException) { return "malformed-or-prohibited-xml"; }
     }
 
     private static async Task<PrtgSnapshotEvidence> ProbeSnapshotAsync(
@@ -1369,7 +1501,7 @@ public static class PrtgCompatibilityProbe
                 {
                     long? primaryValue = null;
                     if (prop.Value.ValueKind == JsonValueKind.Number &&
-                        prop.Value.TryGetInt64(out var primaryId) && primaryId >= 0)
+                        prop.Value.TryGetInt64(out var primaryId) && PrtgChannelIdPolicy.IsAllowed(primaryId))
                         primaryValue = primaryId;
                     primaryChannelValues.Add((colName, primaryValue));
                     continue;

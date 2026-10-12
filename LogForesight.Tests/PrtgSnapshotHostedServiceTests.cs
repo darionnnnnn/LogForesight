@@ -309,6 +309,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var policySnapshot = policyStore.Get();
         var selection = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
             settings, Array.Empty<Sentinel>(), policySnapshot);
+        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
         SeedSyntheticCapacityEvidence(9_000, selection);
     }
 
@@ -671,8 +673,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.Now = () => DateTime.Today.AddHours(12);
         var resolveSelection = typeof(PrtgSnapshotHostedService).GetMethod("ResolveSnapshotCapacitySelection",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        PrtgSnapshotTargetSelection CurrentSelection() => Assert.IsType<PrtgSnapshotTargetSelection>(
-            resolveSelection.Invoke(service, new object[] { _settingsStore.Get(), service.Now() }));
+        PrtgSnapshotTargetSelection CurrentSelection()
+        {
+            var selection = Assert.IsType<PrtgSnapshotTargetSelection>(
+                resolveSelection.Invoke(service, new object[] { _settingsStore.Get(), service.Now() }));
+            return PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+                PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
+        }
         var selectionBeforeBackfill = CurrentSelection();
         Assert.DoesNotContain(sensorId, selectionBeforeBackfill.SensorObjids);
         await service.TickAsync();
@@ -1128,25 +1135,28 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     private void SeedSyntheticCapacityEvidence(long elapsedMilliseconds,
-        PrtgSnapshotTargetSelection? supplied = null, long? profileElapsedMilliseconds = null)
+        PrtgSnapshotTargetSelection? supplied = null, long? profileElapsedMilliseconds = null,
+        string primaryChannelMode = PrtgSnapshotTargetResolver.PrimaryChannelModeProvided)
     {
         var settings = _settingsStore.Get();
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         var selection = supplied ?? PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
             settings, Array.Empty<Sentinel>(), policy);
+        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection, primaryChannelMode);
         if (selection.CapacitySampleBatchSize == 0) return;
         var store = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
         for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
             store.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
                 selection.EndpointFingerprint, selection.RequestShapeFingerprint,
                 DateTimeOffset.UtcNow.AddMinutes(-5).AddMilliseconds(index), elapsedMilliseconds,
-                selection.CapacitySampleBatchSize, "success"));
+                selection.CapacitySampleBatchSize, "success", selection.PrimaryChannelCapabilityMode));
 
         SeedSyntheticJointAdmissionPlan(settings, policy, selection, profileElapsedMilliseconds);
     }
 
     private void SeedSyntheticJointAdmissionPlan(SystemSettings settings, PrtgMonitoringPolicy policy,
-        PrtgSnapshotTargetSelection selection, long? profileElapsedMilliseconds = null)
+        PrtgSnapshotTargetSelection selection, long? profileElapsedMilliseconds = null,
+        Func<PrtgSnapshotTargetSelection>? currentSelectionResolver = null)
     {
         if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) || policy.Revision.Length == 0 ||
             selection.SensorObjids.Count == 0) return;
@@ -1183,7 +1193,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var snapshot = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
             PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), selection.ScopeFingerprint,
             selection.EndpointFingerprint, selection.RequestShapeFingerprint,
-            new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(), now);
+            new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(), now,
+            selection.PrimaryChannelCapabilityMode, selection.PotentialQualifiedSensorCount,
+            selection.PotentialQualifiedBatchCount, selection.PotentialQualifiedFallbackSampleSize);
         var profile = PrtgProfileTransportCapacityEvaluator.Evaluate(policy.SensorIds.Distinct().Count(),
             contract.SourceFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
             contract.RequestShapeFingerprint, contract.VersionFingerprint, profileStore.Read(), now);
@@ -1206,8 +1218,11 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
                     currentPolicy.Revision != policy.Revision) return false;
                 var currentContract = PrtgProfileTransportCapacityPilot.BuildContract(
                     _backend, _hostStore, currentSettings, currentPolicy, profileIds);
-                var currentSelection = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
-                    currentSettings, Array.Empty<Sentinel>(), currentPolicy);
+                var currentSelection = currentSelectionResolver?.Invoke() ??
+                    PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
+                        currentSettings, Array.Empty<Sentinel>(), currentPolicy);
+                currentSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(currentSelection,
+                    selection.PrimaryChannelCapabilityMode);
                 return currentContract == contract &&
                     currentSelection.ScopeFingerprint == selection.ScopeFingerprint &&
                     currentSelection.RequestShapeFingerprint == selection.RequestShapeFingerprint;
@@ -1215,6 +1230,203 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         // Production renews Shared before using a cached client. Keep each isolated fixture
         // budget on the same published plan when this helper changes scope or strategy.
         foreach (var budget in _fixtureBudgets) budget.SetAdmissionPlan(published);
+    }
+
+    private PrtgTrustedSamplingProfile SeedFallbackQualifiedProfile(long sensorId)
+    {
+        var settings = _settingsStore.Get();
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(policy =>
+        {
+            policy.RawTimestampTimeZoneId = "UTC";
+            policy.AnalysisTimeZoneId = "UTC";
+            policy.TimeBasisEvidenceReference = "synthetic-fallback-integration-time-basis";
+        });
+        var policy = policyStore.Get();
+        var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+        var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
+        var strategy = new PrtgTrustedSamplingStrategyStateStore(
+            _backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey)).GetCurrent(
+                policy, strategyName, strategyMinutes, DateTime.UtcNow.AddHours(-3));
+        Assert.True(strategy.Ready);
+
+        var store = _backend.PrtgStore();
+        var identity = store.GetResourceIdentity(sensorId);
+        identity = store.SetObservedChannel(sensorId, policy.SourceGeneration,
+            "53001", identity.Generation);
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity,
+            "SNMP CPU Load", "1", "SNMP CPU Load", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1,
+            "direct", "synthetic-fallback-integration-v1", strategy.StrategyFingerprint,
+            strategy.StrategyMinutes, strategy.EffectiveFromHourUtc,
+            TimeSpan.FromMinutes(strategy.StrategyMinutes), "seconds", "UTC", "UTC", "UTC",
+            DateTimeOffset.UtcNow, "synthetic-source-metadata-reference",
+            "synthetic-physical-sample-reference", true, 50, 50,
+            DateTime.UtcNow.AddSeconds(-10).ToOADate(), DateTime.UtcNow.AddSeconds(-10).ToOADate());
+        return PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
+    }
+
+    private PrtgSnapshotTargetSelection ResolveHostedSelection(PrtgSnapshotHostedService service)
+    {
+        var selection = (PrtgSnapshotTargetSelection)typeof(PrtgSnapshotHostedService).GetMethod(
+            "ResolveSnapshotCapacitySelection",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(service,
+                new object[] { _settingsStore.Get(), DateTime.UtcNow })!;
+        return selection;
+    }
+
+    private void SeedFallbackModeCapacityEvidence(PrtgSnapshotHostedService service)
+    {
+        var settings = _settingsStore.Get();
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var selection = ResolveHostedSelection(service);
+        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
+        SeedSyntheticCapacityEvidence(9_000, selection,
+            primaryChannelMode: PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
+        var store = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
+        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
+        {
+            store.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
+                selection.EndpointFingerprint, selection.RequestShapeFingerprint,
+                DateTimeOffset.UtcNow.AddMinutes(-3).AddMilliseconds(index), 0,
+                selection.PotentialQualifiedFallbackSampleSize, "success",
+                PrtgSnapshotTargetResolver.PrimaryChannelModeFallback,
+                selection.PotentialQualifiedFallbackSampleSize,
+                2 * selection.PotentialQualifiedFallbackSampleSize + 1, 100,
+                "fallback-group"));
+        }
+        // The mode is not inferable until all five fallback-group samples exist, so publish
+        // the matching synthetic plan only after the complete shape evidence is present.
+        SeedSyntheticJointAdmissionPlan(settings, policy, selection,
+            currentSelectionResolver: () => ResolveHostedSelection(service));
+    }
+
+    [Fact]
+    public async Task HostedFallbackUsesFreshPropertySnapshotPropertyBracketForTrustedRow()
+    {
+        const long sensorId = 501;
+        SetupTargetSensors(new[] { (sensorId, "SNMP CPU Load") });
+        var profile = SeedFallbackQualifiedProfile(sensorId);
+        var interval = profile.ConfirmedScanInterval.TotalSeconds.ToString("R", CultureInfo.InvariantCulture) + " s";
+        var binding = new PrtgTrustedSamplingBindingStore(_backend).Get(sensorId)!;
+        var channelId = binding.ChannelObjectId;
+        Assert.True(long.TryParse(channelId, NumberStyles.None, CultureInfo.InvariantCulture, out var numericChannelId));
+        var service = CreateService();
+        var testNowUtc = DateTime.UtcNow;
+        service.Now = () => testNowUtc;
+        SeedFallbackModeCapacityEvidence(service);
+
+        var selected = ResolveHostedSelection(service);
+        var fallbackSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selected,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
+        Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeFallback,
+            selected.PrimaryChannelCapabilityMode);
+        var measuredAt = testNowUtc.AddSeconds(-10).ToOADate().ToString("R", CultureInfo.InvariantCulture);
+        var displayedLastCheck = testNowUtc.AddSeconds(-10).ToString("O", CultureInfo.InvariantCulture);
+        var propertyReads = 0;
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath.EndsWith("getobjectproperty.htm", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref propertyReads);
+                return Task.FromResult(XmlResponse($"<prtg><result>{channelId}</result></prtg>"));
+            }
+            return Task.FromResult(JsonResponse($"{{\"treesize\":1,\"sensors\":[{{\"objid\":{sensorId},\"lastvalue_raw\":50,\"interval\":\"{interval}\",\"status\":\"Up\",\"lastcheck\":\"{displayedLastCheck}\",\"lastcheck_raw\":{measuredAt}}}]}}"));
+        };
+
+        var tickStartedAtUtc = DateTimeOffset.UtcNow;
+        await service.TickAsync();
+        var tickStatus = service.GetStatus();
+
+        Assert.Equal(2, propertyReads);
+        var urls = _stubHandler.RequestedUrls.ToArray();
+        Assert.Equal(4, urls.Length);
+        Assert.Contains("getobjectproperty.htm", urls[1], StringComparison.Ordinal);
+        Assert.Contains("table.json", urls[2], StringComparison.Ordinal);
+        Assert.Contains("getobjectproperty.htm", urls[3], StringComparison.Ordinal);
+        Assert.NotNull(tickStatus.LastSuccessAt);
+        Assert.Equal(0, tickStatus.ConsecutiveFailures);
+        Assert.Equal(1, tickStatus.LastSensorCount);
+        var journalError = typeof(PrtgSnapshotHostedService).GetField("_journalError",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(service);
+        Assert.Null(journalError);
+        var row = Assert.Single(ServiceAccumulator(service).Capture());
+        Assert.Equal(sensorId, row.SensorObjid);
+        Assert.NotNull(row.Trusted);
+        Assert.Equal(1, row.Trusted!.Slots.Count);
+        Assert.Equal(testNowUtc.Hour, row.Trusted.Slots.Single().MeasuredAt.Hour);
+        var sourceBinding = PrtgSnapshotJournal.CaptureBindingPair(_backend, _settingsStore.Get().PrtgUrl);
+        using var recoveredJournal = new PrtgSnapshotJournal(_backend);
+        var recovered = recoveredJournal.Load(sourceBinding.Current, DateTime.Now, sourceBinding.Legacy);
+        Assert.NotNull(recovered);
+        var recoveredRow = Assert.Single(recovered!.Accumulator);
+        Assert.Equal(sensorId, recoveredRow.SensorObjid);
+        Assert.NotNull(recoveredRow.Trusted);
+        Assert.Single(recoveredRow.Trusted!.Slots);
+        var freshFallbackGroup = Assert.Single(new PrtgSnapshotCapacityStore(
+                _backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read()
+            .Where(sample => sample.ScopeFingerprint == fallbackSelection.ScopeFingerprint &&
+                sample.EvidenceKind == "fallback-group" && sample.Outcome == "success" &&
+                sample.PrimaryChannelCapabilityMode == "fallback" &&
+                sample.CompletedAtUtc >= tickStartedAtUtc));
+        Assert.Equal(0, freshFallbackGroup.ElapsedMilliseconds);
+        Assert.True(freshFallbackGroup.FallbackGroupElapsedMilliseconds > 0);
+        Assert.Equal(3, freshFallbackGroup.FallbackGroupRequestCount);
+    }
+
+    [Theory]
+    [InlineData("after-property-id-mismatch")]
+    [InlineData("identity-changed-after-bracket")]
+    public async Task HostedFallbackDefersWholeGroupAfterBracketOrIdentityChange(string mutation)
+    {
+        const long sensorId = 501;
+        SetupTargetSensors(new[] { (sensorId, "SNMP CPU Load") });
+        var profile = SeedFallbackQualifiedProfile(sensorId);
+        var interval = profile.ConfirmedScanInterval.TotalSeconds.ToString("R", CultureInfo.InvariantCulture) + " s";
+        var binding = new PrtgTrustedSamplingBindingStore(_backend).Get(sensorId)!;
+        var channelId = binding.ChannelObjectId;
+        Assert.True(long.TryParse(channelId, NumberStyles.None, CultureInfo.InvariantCulture, out var numericChannelId));
+        var changedChannelId = checked(numericChannelId + 1).ToString(CultureInfo.InvariantCulture);
+        var service = CreateService();
+        var testNowUtc = DateTime.UtcNow;
+        service.Now = () => testNowUtc;
+        SeedFallbackModeCapacityEvidence(service);
+
+        var measuredAt = testNowUtc.AddSeconds(-10).ToOADate().ToString("R", CultureInfo.InvariantCulture);
+        var displayedLastCheck = testNowUtc.AddSeconds(-10).ToString("O", CultureInfo.InvariantCulture);
+        var propertyReads = 0;
+        _stubHandler.OnSend = (request, _) =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath.EndsWith("getobjectproperty.htm", StringComparison.Ordinal))
+            {
+                var read = Interlocked.Increment(ref propertyReads);
+                if (read == 2 && mutation == "identity-changed-after-bracket")
+                {
+                    var store = _backend.PrtgStore();
+                    var identity = store.GetResourceIdentity(sensorId);
+                    store.SetObservedChannel(sensorId, identity.SourceGeneration,
+                        changedChannelId, identity.Generation);
+                }
+                var channel = read == 2 && mutation == "after-property-id-mismatch" ? changedChannelId : channelId;
+                return Task.FromResult(XmlResponse($"<prtg><result>{channel}</result></prtg>"));
+            }
+            return Task.FromResult(JsonResponse($"{{\"treesize\":1,\"sensors\":[{{\"objid\":{sensorId},\"lastvalue_raw\":50,\"interval\":\"{interval}\",\"status\":\"Up\",\"lastcheck\":\"{displayedLastCheck}\",\"lastcheck_raw\":{measuredAt}}}]}}"));
+        };
+
+        var tickStartedAtUtc = DateTimeOffset.UtcNow;
+        await service.TickAsync();
+
+        Assert.Equal(2, propertyReads);
+        Assert.Equal(4, _stubHandler.RequestedUrls.Count);
+        Assert.All(ServiceAccumulator(service).Capture(), checkpoint => Assert.Null(checkpoint.Trusted));
+        Assert.DoesNotContain(new PrtgSnapshotCapacityStore(
+                _backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
+            sample => sample.ScopeFingerprint == ResolveHostedSelection(service).ScopeFingerprint &&
+                sample.EvidenceKind == "fallback-group" && sample.Outcome == "success" &&
+                sample.CompletedAtUtc >= tickStartedAtUtc);
     }
 
     [Fact]
@@ -1385,6 +1597,11 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.True(_backend.Blob(key).ReadVersion() > version);
         Assert.NotEqual(before, reader.Read());
     }
+
+    private static HttpResponseMessage XmlResponse(string xml) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(xml, Encoding.UTF8, "application/xml")
+    };
 
     private static HttpResponseMessage JsonResponse(string json, HttpStatusCode code = HttpStatusCode.OK)
     {
@@ -1831,7 +2048,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             selection, out _, out _));
         Assert.All(SnapshotUrls(), url => Assert.Contains("filter_objid=401", url));
 
-        var successJson = "{\"treesize\":1,\"sensors\":[{\"objid\":401,\"lastvalue_raw\":50,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}";
+        var successJson = "{\"treesize\":1,\"sensors\":[{\"objid\":401,\"lastvalue_raw\":50,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\",\"primarychannel\":1}]}";
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(successJson));
         var settings = _settingsStore.Get();
         var planStore = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
@@ -2146,7 +2363,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
                 "", "", ["current_strategy_contract_missing"]);
             parse.Invoke(service, new object[] { json, now, tally, accepted, false, policy,
                 new Dictionary<long, PrtgTrustedSamplingProfile>(), new Dictionary<long, PrtgResourceIdentity>(),
-                strategy, DateTime.UtcNow });
+                strategy, DateTime.UtcNow, null });
         }
 
         var endpoint = PrtgSnapshotJournal.Binding(_backend, _settingsStore.Get().PrtgUrl);
@@ -2774,7 +2991,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     {
         var ids = FilterObjids(url).Where(id => omit == null || !omit.Contains(id)).ToList();
         var lastCheck = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-        var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"{lastCheck}\"}}"));
+        var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"{lastCheck}\",\"primarychannel\":1}}"));
         return JsonResponse($"{{\"treesize\":{ids.Count},\"sensors\":[{rows}]}}");
     }
 
@@ -2782,7 +2999,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     {
         var ids = FilterObjids(url);
         var lastCheck = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-        var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"{lastCheck}\"}}"));
+        var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"{lastCheck}\",\"primarychannel\":1}}"));
         return JsonResponse($"{{\"treesize\":{ids.Count},\"sensors\":[{rows}]}}");
     }
 
@@ -3115,6 +3332,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         // this negative exercises joint admission, without creating a replacement plan.
         var changedSelection = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
             _settingsStore.Get(), Array.Empty<Sentinel>(), policyStore.Get());
+        changedSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(changedSelection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
         var snapshotCapacity = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
         for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
             snapshotCapacity.Record(new PrtgSnapshotCapacitySample(changedSelection.ScopeFingerprint,

@@ -3,6 +3,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using LogForesight.Web.Services;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -62,6 +63,31 @@ public sealed class PrtgTrustedSamplingBindingStoreTests : IDisposable
     }
 
     [Fact]
+    public void SnapshotCostCandidateAndFingerprintStayStableAcrossInitialRawQualification()
+    {
+        var identity = backend.PrtgStore().GetResourceIdentity(11);
+        var currentSettings = settings.Get();
+        var currentPolicy = policy.Get();
+        var bindings = new PrtgTrustedSamplingBindingStore(backend);
+        var binding = bindings.Save(Update(currentSettings.Revision, currentPolicy.Revision,
+            identity.Epoch, identity.ChannelGeneration, 0));
+
+        var before = PrtgSnapshotTargetResolver.CreateSelection([11], 1, backend, currentSettings, currentPolicy);
+        Assert.Equal(1, before.PotentialQualifiedSensorCount);
+        Assert.Equal(4, before.ExpectedTableRequests); // one bulk, two properties, one bounded refetch
+
+        bindings.RecordQualification(11, binding.BindingRevision, binding.BindingFingerprint,
+            currentSettings.Revision, currentPolicy.Revision, 91, DateTime.UtcNow.ToOADate(),
+            "source-r1", DateTimeOffset.UtcNow, new string('C', 64));
+        var after = PrtgSnapshotTargetResolver.CreateSelection([11], 1, backend, currentSettings, currentPolicy);
+
+        Assert.Equal(1, after.PotentialQualifiedSensorCount);
+        Assert.Equal(before.PotentialQualifiedContractFingerprint, after.PotentialQualifiedContractFingerprint);
+        Assert.Equal(before.ScopeFingerprint, after.ScopeFingerprint);
+        Assert.Equal(before.ExpectedTableRequests, after.ExpectedTableRequests);
+    }
+
+    [Fact]
     public void StaleSettingsPolicyIdentityChannelAndBindingRevisionsAreRejected()
     {
         var identity = backend.PrtgStore().GetResourceIdentity(11);
@@ -85,20 +111,22 @@ public sealed class PrtgTrustedSamplingBindingStoreTests : IDisposable
     }
 
     [Fact]
-    public void ChannelObjectIdsCanonicalizeLeadingZerosAndRejectInt64Overflow()
+    public void ChannelObjectIdsRejectNoncanonicalAliasesAndInt64Overflow()
     {
         var identity = backend.PrtgStore().GetResourceIdentity(11);
         var currentSettings = settings.Get();
         var currentPolicy = policy.Get();
         var store = new PrtgTrustedSamplingBindingStore(backend);
         var saved = store.Save(Update(currentSettings.Revision, currentPolicy.Revision,
-            identity.Epoch, identity.ChannelGeneration, 0) with { ChannelObjectId = "007" });
+            identity.Epoch, identity.ChannelGeneration, 0) with { ChannelObjectId = "7" });
         Assert.Equal("7", saved.ChannelObjectId);
 
         var after = backend.PrtgStore().GetResourceIdentity(11);
         Assert.Throws<ArgumentException>(() => store.Save(Update(currentSettings.Revision, currentPolicy.Revision,
             after.Epoch, after.ChannelGeneration, saved.BindingRevision) with
             { ChannelObjectId = "99999999999999999999" }));
+        Assert.Throws<ArgumentException>(() => store.Save(Update(currentSettings.Revision, currentPolicy.Revision,
+            after.Epoch, after.ChannelGeneration, saved.BindingRevision) with { ChannelObjectId = "007" }));
         Assert.Equal("7", store.Get(11)!.ChannelObjectId);
     }
 

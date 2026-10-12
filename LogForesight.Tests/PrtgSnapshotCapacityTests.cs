@@ -47,6 +47,34 @@ public sealed class PrtgSnapshotCapacityTests
     }
 
     [Fact]
+    public void Fallback_capacity_requires_fresh_group_evidence_and_counts_all_bounded_calls()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var batchShape = PrtgSnapshotCapacityStore.Fingerprint("fallback batch shape");
+        var fallbackEvidence = Enumerable.Range(0, PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples)
+            .SelectMany(index => new[]
+            {
+                new PrtgSnapshotCapacitySample(Scope, Endpoint, batchShape, now.AddSeconds(-index),
+                    8_540, 100, "success", "fallback"),
+                new PrtgSnapshotCapacitySample(Scope, Endpoint, batchShape, now.AddSeconds(-index),
+                    0, 5, "success", "fallback", 5, 11, 6_000, "fallback-group")
+            }).ToArray();
+
+        var noGroupSamples = PrtgSnapshotCapacityEvaluator.Evaluate(15_000, "conservative", Scope,
+            Endpoint, batchShape, fallbackEvidence.Where(sample => sample.EvidenceKind != "fallback-group"), now,
+            "fallback", 15_000, 3_000, 5);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, noGroupSamples.Status);
+        Assert.Equal("insufficient_fresh_fallback_group_samples", noGroupSamples.Reason);
+
+        var estimate = PrtgSnapshotCapacityEvaluator.Evaluate(15_000, "conservative", Scope,
+            Endpoint, batchShape, fallbackEvidence, now, "fallback", 15_000, 3_000, 5);
+        Assert.Equal(33_150, estimate.ExpectedTableRequests);
+        Assert.Equal(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples, estimate.FreshFallbackGroupSamples);
+        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityExceeded, estimate.Status);
+        Assert.True(estimate.EstimatedSeconds >= 16_575);
+    }
+
+    [Fact]
     public void Legacy50_cost_samples_cannot_qualify_the_new100_request_shape()
     {
         var now = DateTimeOffset.UtcNow;

@@ -186,9 +186,8 @@ public sealed record PrtgTrustedSamplingBinding(
 
     private static string CanonicalChannelObjectId(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 20 || !value.All(char.IsAsciiDigit) ||
-            !long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id < 0)
-            throw new ArgumentException("Channel object ID must be a nonnegative Int64 decimal string.", nameof(value));
+        if (!PrtgChannelIdPolicy.TryParseCanonical(value, out var id) || id < 0)
+            throw new ArgumentException("Trusted business channel object ID must be a canonical nonnegative Int64 decimal string.", nameof(value));
         return id.ToString(CultureInfo.InvariantCulture);
     }
     private static bool CanonicalChannelObjectIdValid(string? value)

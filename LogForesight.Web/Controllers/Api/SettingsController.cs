@@ -132,7 +132,11 @@ public class SettingsController : ControllerBase
             PrtgRequestBudget.Shared.ClearAdmissionPlan();
             return;
         }
-        if (plan is null) return;
+        if (plan is null)
+        {
+            RebindUnchangedAdmissionPlan(updated);
+            return;
+        }
         var store = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
         PrtgCapacityAdmissionPlan published;
         var publicationMismatch = "plan-validation-failed";
@@ -182,6 +186,54 @@ public class SettingsController : ControllerBase
                 $"PRTG 容量計畫無法發布（{publicationMismatch}）；此次啟用已撤回，請重新估算並完成同形容量 pilots。");
         }
         PrtgRequestBudget.Shared.SetAdmissionPlan(published);
+    }
+
+    private void RebindUnchangedAdmissionPlan(SystemSettingsDto updated)
+    {
+        if (_backend is null || _hosts is null || !updated.PrtgEnabled) return;
+        var store = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
+        var now = DateTimeOffset.UtcNow;
+        var expected = store.ReadCurrent(now);
+        if (expected is null || expected.SettingsRevision == updated.Revision) return;
+
+        try
+        {
+            if (store.TryRebindSettingsRevision(expected, updated.Revision, now, () =>
+                {
+                    var settingsCurrent = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+                    var policyCurrent = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                    if (settingsCurrent.Revision != updated.Revision || !settingsCurrent.PrtgEnabled ||
+                        policyCurrent.Revision != expected.PolicyRevision) return false;
+                    var profileIds = policyCurrent.SensorIds.Distinct().Order()
+                        .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
+                    if (profileIds.Length == 0 || policyCurrent.SensorIds.Count > 15_000 ||
+                        profileIds.Length != Math.Min(policyCurrent.SensorIds.Distinct().Count(),
+                            PrtgProfileTransportCapacityPilot.MaximumSensorIds)) return false;
+                    var contract = PrtgProfileTransportCapacityPilot.BuildContract(_backend, _hosts,
+                        settingsCurrent, policyCurrent, profileIds);
+                    var selection = PrtgSnapshotTargetResolver.Resolve(_backend, _hosts, settingsCurrent,
+                        new SentinelStore(_backend.Blob("sentinels")).GetAll());
+                    return contract.SourceFingerprint == expected.SourceFingerprint &&
+                        contract.ScopeFingerprint == expected.ProfileScopeFingerprint &&
+                        contract.StrategyFingerprint == expected.StrategyFingerprint &&
+                        contract.RequestShapeFingerprint == expected.RequestShapeFingerprint &&
+                        contract.VersionFingerprint == expected.RuntimeVersionFingerprint &&
+                        selection.ScopeFingerprint == expected.SnapshotScopeFingerprint &&
+                        selection.RequestShapeFingerprint == expected.SnapshotRequestShapeFingerprint;
+                }, out var rebound) && rebound is not null)
+            {
+                PrtgRequestBudget.Shared.SetAdmissionPlan(rebound);
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
+        {
+            // The unrelated settings write has already succeeded. If the source contract changed
+            // while rechecking it, report success for that write but withdraw the stale live budget.
+            Log.Warn("Unchanged PRTG admission plan was not rebound because its current contract is invalid.");
+        }
+
+        PrtgRequestBudget.Shared.ClearAdmissionPlan();
     }
 
     private PrtgCapacityAdmissionPlan? EnsureSnapshotCapacityAdmission(UpdatePrtgSettingsRequest request)
@@ -246,10 +298,11 @@ public class SettingsController : ControllerBase
         if (!enabling && !expanded && !sourceOrStrategyChanged) return null;
 
         var capacity = PrtgSnapshotCapacityEvaluator.Evaluate(next.SensorObjids.Count,
-            PrtgFetchStrategy.Normalize(candidate.PrtgFetchStrategy), next.ScopeFingerprint,
-            next.EndpointFingerprint, next.RequestShapeFingerprint,
-            new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
-            DateTimeOffset.UtcNow);
+            PrtgFetchStrategy.Normalize(candidate.PrtgFetchStrategy), next.ScopeFingerprint, next.EndpointFingerprint,
+            next.RequestShapeFingerprint,
+            new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(), DateTimeOffset.UtcNow,
+            next.PrimaryChannelCapabilityMode, next.PotentialQualifiedSensorCount, next.PotentialQualifiedBatchCount,
+            next.PotentialQualifiedFallbackSampleSize);
         if (capacity.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
         {
             var status = capacity.Status switch
@@ -696,8 +749,11 @@ public class SettingsController : ControllerBase
     /// <param name="scope">要估算的模式；未帶時用目前已儲存的設定</param>
     [HttpGet("prtg-fetch-scope/estimate")]
     public ApiResponse<PrtgValueFetchScopeEstimateDto> EstimatePrtgFetchScope([FromQuery] string? scope,
-        [FromQuery] string? strategy = null)
+        [FromQuery] string? strategy = null, [FromQuery] int? qualificationDurationHours = null,
+        [FromQuery] int? qualificationMaximumAttempts = null)
     {
+        var qualificationDuration = qualificationDurationHours ?? PrtgQualificationCapacityEvaluator.DefaultInitializationWindowHours;
+        var qualificationAttempts = qualificationMaximumAttempts ?? PrtgQualificationCapacityEvaluator.DefaultMaximumAttempts;
         // 維護頁下拉的「關閉」不是後端的合法 scope；Normalize 會把它退回 triggered 而給出一組
         // 看起來正常的數字——關閉狀態下不會取數，回一個估算值是語意矛盾。
         if (string.Equals(scope, "off", StringComparison.OrdinalIgnoreCase))
@@ -774,13 +830,17 @@ public class SettingsController : ControllerBase
                 capacityStrategy == PrtgFetchStrategy.Aggressive ? 180 : 600, 0.25,
                 "runtime_target_catalogue_unavailable")
             : PrtgSnapshotCapacityEvaluator.Evaluate(snapshotTargets, capacityStrategy,
-                actualSelection.ScopeFingerprint, actualSelection.EndpointFingerprint,
-                actualSelection.RequestShapeFingerprint,
-                new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
-                DateTimeOffset.UtcNow);
+                actualSelection.ScopeFingerprint, actualSelection.EndpointFingerprint, actualSelection.RequestShapeFingerprint,
+                new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(), DateTimeOffset.UtcNow,
+                actualSelection.PrimaryChannelCapabilityMode, actualSelection.PotentialQualifiedSensorCount,
+                actualSelection.PotentialQualifiedBatchCount, actualSelection.PotentialQualifiedFallbackSampleSize);
         var profileCapacity = new PrtgProfileTransportEstimate(PrtgSnapshotCapacityStatus.CapacityUnverified,
             0, 0, null, null, null, PrtgProfileTransportCapacityEvaluator.ProfileRefreshWindow.TotalSeconds,
             PrtgProfileTransportCapacityEvaluator.RequiredHeadroomFraction, "profile_transport_scope_unavailable");
+        var qualificationEligibleSensors = 0;
+        var qualificationCapacity = new PrtgQualificationCapacityDecision(false, "waiting-capacity",
+            "qualification_capacity_scope_unavailable", 0, 0, 0,
+            qualificationDuration * 3600d, qualificationAttempts);
         PrtgProfileTransportCapacityPilot.Contract? profileContract = null;
         PrtgCapacityAdmissionPlan? matchingAdmissionPlan = null;
         if (_backend != null && _hosts != null)
@@ -807,6 +867,40 @@ public class SettingsController : ControllerBase
                         admissionPlan.PolicyRevision == policy.Revision;
                     profileContract = contract;
                     if (existingPlanMatches) matchingAdmissionPlan = admissionPlan;
+                    qualificationEligibleSensors = CountQualificationEligibleSensors(_backend, policy.SensorIds);
+                    var qualificationPilot = new PrtgQualificationCapacityPilotStore(_backend).Read();
+                    if (qualificationDuration is < 1 or > 720 || qualificationAttempts is < 1 or > 3)
+                    {
+                        qualificationCapacity = new PrtgQualificationCapacityDecision(false, "waiting-capacity",
+                            "capacity-input-invalid", 0, 0, 0, qualificationDuration * 3600d,
+                            qualificationAttempts);
+                    }
+                    else if (qualificationEligibleSensors == 0)
+                    {
+                        qualificationCapacity = PrtgQualificationCapacityEvaluator.Evaluate(0,
+                            qualificationDuration,
+                            qualificationAttempts,
+                            qualificationPilot, contract.SourceFingerprint, contract.ScopeFingerprint,
+                            PrtgQualificationCapacityEvaluator.RequestShapeFingerprint(), DateTimeOffset.UtcNow,
+                            existingPlanMatches ? admissionPlan!.ProfileTableRequestsPerSecond : 1);
+                    }
+                    else if (!existingPlanMatches || admissionPlan is null)
+                    {
+                        qualificationCapacity = new PrtgQualificationCapacityDecision(false, "waiting-capacity",
+                            "shared-table-plan-missing-or-stale",
+                            ExpectedQualificationRequests(qualificationEligibleSensors, qualificationAttempts, table: true),
+                            ExpectedQualificationRequests(qualificationEligibleSensors, qualificationAttempts, table: false),
+                            0, qualificationDuration * 3600d, qualificationAttempts);
+                    }
+                    else
+                    {
+                        qualificationCapacity = PrtgQualificationCapacityEvaluator.Evaluate(qualificationEligibleSensors,
+                            qualificationDuration,
+                            qualificationAttempts,
+                            qualificationPilot, contract.SourceFingerprint, contract.ScopeFingerprint,
+                            PrtgQualificationCapacityEvaluator.RequestShapeFingerprint(), DateTimeOffset.UtcNow,
+                            admissionPlan.ProfileTableRequestsPerSecond);
+                    }
                     profileCapacity = PrtgProfileTransportCapacityEvaluator.Evaluate(policy.SensorIds.Distinct().Count(),
                         contract.SourceFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
                         contract.RequestShapeFingerprint, contract.VersionFingerprint,
@@ -816,6 +910,7 @@ public class SettingsController : ControllerBase
                 catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
                 {
                     profileCapacity = profileCapacity with { Reason = "profile_transport_contract_unavailable" };
+                    qualificationCapacity = qualificationCapacity with { Reason = "qualification_contract_unavailable" };
                 }
             }
         }
@@ -886,6 +981,13 @@ public class SettingsController : ControllerBase
             SnapshotCapacitySamples = capacity.FreshMatchingFullBatchSamples,
             SnapshotCapacitySampleBatchSize = actualSelection?.CapacitySampleBatchSize ?? 0,
             SnapshotCapacityBatchCount = capacity.BatchCount,
+            SnapshotCapacityExpectedTableRequests = actualSelection?.ExpectedTableRequests ?? capacity.BatchCount,
+            SnapshotCapacityPrimaryChannelMode = actualSelection?.PrimaryChannelCapabilityMode ?? "unknown",
+            SnapshotCapacityPotentialQualifiedSensors = actualSelection?.PotentialQualifiedSensorCount ?? 0,
+            SnapshotCapacityFallbackGroups = actualSelection?.PotentialQualifiedBatchCount ?? 0,
+            SnapshotCapacityFallbackSampleGroupSize = actualSelection?.PotentialQualifiedFallbackSampleSize ?? 0,
+            SnapshotCapacityFallbackSamples = capacity.FreshFallbackGroupSamples,
+            SnapshotCapacityP95FallbackGroupSeconds = capacity.P95FallbackGroupSeconds,
             SnapshotCapacityP95BatchSeconds = capacity.P95BatchSeconds,
             SnapshotCapacityEstimatedSeconds = capacity.EstimatedSeconds,
             SnapshotCapacityWindowSeconds = capacity.CompletionWindowSeconds,
@@ -901,10 +1003,29 @@ public class SettingsController : ControllerBase
             },
             ProfileCapacityReason = profileCapacity.Reason,
             ProfileCapacitySamples = profileCapacity.FreshSuccessfulSamples,
+            ProfileCapacityTargetSensors = profileCapacity.TargetSensorCount,
+            ProfileCapacityExpectedTableRequests = PrtgProfileTransportCapacityEvaluator.ExpectedScopeRequests(
+                profileCapacity.TargetSensorCount),
             ProfileCapacityP95SensorSeconds = profileCapacity.P95SensorSeconds,
             ProfileCapacityEstimatedSeconds = profileCapacity.EstimatedSeconds,
             ProfileCapacityWindowSeconds = profileCapacity.CompletionWindowSeconds,
             ProfileCapacityRequestShape = PrtgProfileTransportCapacityPilot.RequestShape,
+            QualificationCapacityStatus = qualificationCapacity.Status switch
+            {
+                "admitted" => "capacity-qualified",
+                _ when qualificationCapacity.RequiredSeconds > qualificationCapacity.AvailableSeconds ||
+                    qualificationCapacity.Reason == "qualification-probe-deadline-headroom-insufficient" => "capacity-exceeded",
+                _ => "capacity-unverified"
+            },
+            QualificationCapacityReason = qualificationCapacity.Reason,
+            QualificationEligibleSensors = qualificationEligibleSensors,
+            QualificationWorstCaseTableRequests = qualificationCapacity.WorstCaseTableRequests,
+            QualificationWorstCaseHistoricRequests = qualificationCapacity.WorstCaseHistoricRequests,
+            QualificationRequiredSeconds = double.IsFinite(qualificationCapacity.RequiredSeconds) &&
+                qualificationCapacity.RequiredSeconds > 0 ? qualificationCapacity.RequiredSeconds : null,
+            QualificationAvailableSeconds = qualificationCapacity.AvailableSeconds,
+            QualificationDurationHours = qualificationDuration,
+            QualificationAttemptsAssumed = qualificationAttempts,
             JointCapacityStatus = CapacityStatusName(jointCapacity.Status),
             JointCapacityReason = jointCapacity.Reason,
             JointAdmissionPlanMatched = matchingAdmissionPlan is not null,
@@ -925,6 +1046,28 @@ public class SettingsController : ControllerBase
         PrtgSnapshotCapacityStatus.CapacityExceeded => "capacity-exceeded",
         _ => "capacity-unverified"
     };
+
+    private static int CountQualificationEligibleSensors(StorageBackend backend, IEnumerable<long> policySensorIds)
+    {
+        var ids = policySensorIds.Where(id => id > 0).Distinct().Order().Take(15_001).ToArray();
+        if (ids.Length > 15_000) throw new InvalidDataException("qualification-scope-exceeds-limit");
+        var bindings = new PrtgTrustedSamplingBindingStore(backend);
+        var eligible = 0;
+        for (var offset = 0; offset < ids.Length; offset += 100)
+        {
+            var rows = bindings.GetMany(ids.Skip(offset).Take(100));
+            eligible += rows.Values.Count(binding => string.IsNullOrWhiteSpace(binding.QualificationProofReference));
+        }
+        return eligible;
+    }
+
+    private static long ExpectedQualificationRequests(int eligibleSensors, int attempts, bool table)
+    {
+        if (attempts is < 1 or > 3) return 0;
+        return table
+            ? PrtgQualificationCapacityEvaluator.ExpectedTableRequests(eligibleSensors, attempts)
+            : PrtgQualificationCapacityEvaluator.ExpectedHistoricRequests(eligibleSensors, attempts);
+    }
 
     private static double? FiniteOrNull(double value) => double.IsFinite(value) ? value : null;
 

@@ -56,6 +56,11 @@ internal static class SnapshotAdmissionTestFixture
         var selection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, settings, Array.Empty<Sentinel>(), policy);
         if (selection.SensorObjids.Count == 0)
             throw new InvalidOperationException("Synthetic snapshot fixture did not resolve an active mapped target.");
+        // This fixture stands in for five successful native observations of the source's
+        // primarychannel field. Keep the synthetic samples on that explicit request-shape
+        // contract so later admission checks can infer the same mode from the evidence.
+        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
 
         var snapshotSamples = new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
         for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
@@ -99,8 +104,10 @@ internal static class SnapshotAdmissionTestFixture
                 currentPolicy.Revision != policy.Revision) return false;
             var currentContract = PrtgProfileTransportCapacityPilot.BuildContract(
                 backend, hosts, currentSettings, currentPolicy, profileIds);
-            var currentSelection = PrtgSnapshotTargetResolver.Resolve(
-                backend, hosts, currentSettings, Array.Empty<Sentinel>(), currentPolicy);
+            var currentSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(
+                PrtgSnapshotTargetResolver.Resolve(
+                    backend, hosts, currentSettings, Array.Empty<Sentinel>(), currentPolicy),
+                PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
             return currentContract == contract &&
                 currentSelection.ScopeFingerprint == selection.ScopeFingerprint &&
                 currentSelection.RequestShapeFingerprint == selection.RequestShapeFingerprint;

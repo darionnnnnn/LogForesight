@@ -1,4 +1,4 @@
-﻿# 第 53 輪規劃：PRTG 整合完全體版本
+# 第 53 輪規劃：PRTG 整合完全體版本
 
 > 2026-10-12 最新驗收範圍定案：只將代理可在自有隔離環境執行、重播或核對並提供證據的工作列為開發驗收；需使用者／現場人員確認的事實另列 §5.7，不列驗收待辦、分母或開發結案阻塞。既有 §§3–4、15–17 及歷程涉及現場真值、真實人員成效或外部獨立模型的要求，依 §5.7 改列使用者確認；可执行的功能／安全／規模／時限門檻維持。其後使用者已於 2026-10-12 授權依此範圍接續實作與隔離驗收，逐段驗證後 commit＋push。
 
@@ -213,10 +213,6 @@ AC21／AC12 重播狀態的 case-only 授權缺漏已修正並通過 15 項受�
   - 通過：乾淨隔離建置的 source commit、manifest、執行中 Web/Core 與探測一致；舊尾碼、混版 DLL、未核實 source、舊預覽 token 四種反例都不授權最新驗收／全量啟動，且顯示實際識別與下一步；舊檔不被自動覆寫。以隔離建置／部署重現證明工具鏈；現場版本一致性移至UC01，不作本段驗收必要輸入。
   - 相依：無；最先做。狀態：追溯原因未定，部署／交付補強待做。
 
-- [ ] **E02／合法頻道識別與 traffic 查證相容性（N3；AC05、AC07、AC08、AC13）**
-  - 工作：核對 `PrtgHistoricXmlReader.cs:60–69`、`PrtgCompatibilityProbe.cs:1179–1195`、TrustedSampling property/binding/snapshot 與 `Verify-PrtgProbeEvidence.ps1` 的所有識別邊界。不能把 sensor object ID 與 channel ID 混用；保留 PRTG 合法特殊頻道 ID，區分合計、Downtime、內部 coverage/error。Paessler [Channel Settings](https://www.paessler.com/manuals/prtg/channel_settings) 明列 `-1` traffic sum、`-4` Downtime、`-2/-3` internal，據此修正非負 ID 假設；traffic 原始值需區分 volume 與 speed；相同 channel ID 的不同量值不可混合、覆寫或一律判重複。原始 XML 缺失的格式是假設測例，須標官方／合成來源，不能冒稱現場原文。錯誤改成有界安全分類以取得下一次診斷。
-  - 通過：`0`、一般正 ID、合法 `-1` 合計能在允許用途保留識別；`-4` 保留身分但不得當 CPU/memory/disk 數值，`-2/-3` 不冒充業務量值；非法、overflow、canonical collision、真重複、caption／quantity 漂移、外 sensor、DTD、超量仍拒絕。同 sensor 同 ID 的 speed/volume 分開查證，缺单位／尺度不造結果；主通道核驗與 binding/profile consumer 结果一致。四個現有非 traffic property 正例保持通過；traffic 僅查證用途、無正式風險／派工／通知。未取得的現場 traffic raw 根因列UC02；本段以現有樣本與標明來源的官方格式／受控反例驗收。
-  - 相依：實作與隔離驗收不等現場結果；現場來源適用性另列UC01、UC02。狀態：非負 channel 假設已確認需修，traffic 格式完整根因待核。
 
 - [ ] **E03／時基、單位及正式資格的可操作核驗（N3／M1；AC05、AC06、AC07、AC10、AC11）**
   - 工作：沿用管理者明確 channel／unit／scale／方向及 raw/source/analysis 時區設定→原生 probe→正式 proof 的既定流程，納入本次 available-memory、disk 剩餘百分比、CPU／ping 實際去識別樣本。核對 query wall、OA raw、snapshot lastcheck、messages datetime 是否各自有證據；來源 locale 未知不影響可確認的 invariant raw，但不得猜解在地時間文字。現有主通道 property 方案不被缺 snapshot 欄位一律封死，也不得免除核验。
@@ -266,7 +262,7 @@ AC21／AC12 重播狀態的 case-only 授權缺漏已修正並通過 15 項受�
 
 需要回傳的資訊只透過環境探測：實際source commit／manifest與組件識別、設定修訂及作用清單分母、明確raw/source/analysis時基與locale來源、CPU/memory/disk單位尺度／方向核驗、traffic合法頻道與兩種錯誤的安全形狀、守門清單/缺資料、同形snapshot及profile請求成本、NetIQ昨日回執與合格父摘要、AI實際小樣本兼容與成本。先完成相应程式和離線consumer再交探測版本；不要求現場提供帳密、不直接在現場跑容量／SMTP投遞／故障驗收、不自動啟用正式規則。
 
-本次資料可作**有版本限制的來源觀測與回歸輸入**。現場版本尚未核實，不宣稱最新程式已在該站通過；代理仍可完成E01–E10的隔離實作與驗收。五組 §5.2 與十項TODO目前都未完成，已依後續指示開工，逐段證據記於 §18，未通過的整體條件不勾選 PASS；外部確認是否完成不納代理完成率。
+本次資料可作**有版本限制的來源觀測與回歸輸入**。現場版本尚未核實，不宣稱最新程式已在該站通過；代理仍可完成E01–E10的隔離實作與驗收。五組 §5.2 尚未全部完成；E02已完成並移至§18，其餘九项活動TODO保留，已依後續指示開工，逐段證據記於 §18，未通過的整體條件不勾選 PASS；外部確認是否完成不納代理完成率。
 
 
 ### 5.7 驗收責任與使用者確認事項（2026-10-12 最新定案）
@@ -1947,3 +1943,17 @@ E07 準備工具後續修正：產生的啟動檔要求明確存在的 Web cspro
 受控來源新增 netiq-risk-audit-prtg-healthy，原12筆4625與1筆明示合成1102可和PRTG取數同時使用；device112對應192.0.2.3，212–214三顆CPU／memory／disk同屬此裝置，通道1212–1214。實際裝置子項查詢、sensor／channel篩選、分頁、property、XML／JSON原始值與UTC quarter-hour時間一致。歷史端點依實際請求期間回傳，範圍外為空，錯誤／逆序時間400；不以現在資料冒充過去期間。沿用既有mode setter，不新增平行控制工具。主代理獨立執行 Test-ControlledSources.ps1 通過（root-e08-composite-source-protocol-20261012.log，stub-smoke-9ec5af7774394216b559e69ad38bdf84），包含過去空結果、目前窗口、錯時基字串、各ID／交集反例及原AI／NetIQ／SMTP正反協定。README保持原有export／restart／角色來源說明。此為完整合成來源契約交付，不自動建立time authority、binding／profile proof／job／風險結果，不代表兩完成小時、28日、原生來源或完整E08通過。
 
 另由主代理實際瀏覽器run773c23a315544f2c9031c453f7672779（5fbd67d3／3fa6e6e2修改中凍結組件）取得一筆合成Security1102，正常NetIQ流程生成host3／2026-10-11高風險日，未使用AI／local／PRTG。高風險通知經SMTP451拒收後，正常UI重試於67.0083644秒由自有收件匣接受499bytes，MIME SHA5e60306740b4226c4596a2a28b03ba7c3a463a5a81f00d2626a8c077363cdfc6；再次重試無重複接受。操作頁總狀態卻顯示無合格收件人，與recipient未知／接受1位矛盾，已列本輪必修且未驗收通過。artifact root-urgent-retry.txt；U53-08記錄inconclusive，程序及分頁已停止。此失敗不得以SMTP已接受掩蓋；E08父待辦保留。
+
+
+### 2026-10-12 E02–E06 來源相容、回退採樣與共同准入：已驗證交付段落
+
+本段完成canonical Int64 channel用途分流及traffic同ID不同quantity、主通道缺欄位時有界property→fresh group snapshot→property核對、整組身分／binding漂移拒絕、typed row與耐久journal、fallback成本／共同admission、60秒pilot與5筆current-scope證據、設定CAS與陳舊plan拒絕、探測本機摘要／有界provider查詢及AI小探測。依原兩小時／28日／7日20%等規則門檻，未放寬正式來源資格；全量fallback超窗口維持拒絕。實際worker回退容量記錄原generic elapsed誤填group elapsed而遭store拒絕，已改generic=0、專屬group elapsed>0；新增真正worker及journal reload正例與兩項漂移反例，防止只看記憶體accepted而忽略持久化。
+
+主代理先前受影響325/325及額外31/31通過，另在新修正後fresh main build獨立四案例4/4通過（root-fallback-scope-final-20261012.log／TestResults/root-fallback-scope-final/root-fallback-scope-final.trx，1分54秒），再跑Hosted／fallback／pilot bindings／admission／joint estimate 144/144、0失敗／0略過（root-fallback-admission-final-20261012.log／TestResults/root-fallback-admission-final/root-fallback-admission-final.trx，24分22秒）。四案例含完整對應→估算／預覽→保存→同步→真實預算5次snapshot及5次profile transport pilot→啟用准入→snapshot tick→guard實讀；合成鏡像42998、20業務／衝突裝置18成功2衝突、126業務／衝突sensor、3guard裝置6sensor、42866剩餘，正式business108＋guard6目標，衝突18不進snapshot，案件及urgent副作用0。這些母體不相加成單一完成率。JS語法與diff check通過；測試DLL SHA C88E32D38637A3FD2650B478900EB7E9AF2EE452587E0DD8DFAD4469031EC044，Web/Core識別為5fbd67d3／3fa6e6e2修改中凍結組件，不冒稱最終clean版。
+
+E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留如下。E03完整來源核驗consumer、E04完整探測交付consumer、E05其餘stale／角色操作、E06真實共同全負載吞吐仍須和E07–E10完成剩餘驗收，不移除父待辦；正在執行的全量回歸也不提前算通過。
+
+**E02／合法頻道識別與 traffic 查證相容性（N3；AC05、AC07、AC08、AC13）**
+  - 工作：核對 `PrtgHistoricXmlReader.cs:60–69`、`PrtgCompatibilityProbe.cs:1179–1195`、TrustedSampling property/binding/snapshot 與 `Verify-PrtgProbeEvidence.ps1` 的所有識別邊界。不能把 sensor object ID 與 channel ID 混用；保留 PRTG 合法特殊頻道 ID，區分合計、Downtime、內部 coverage/error。Paessler [Channel Settings](https://www.paessler.com/manuals/prtg/channel_settings) 明列 `-1` traffic sum、`-4` Downtime、`-2/-3` internal，據此修正非負 ID 假設；traffic 原始值需區分 volume 與 speed；相同 channel ID 的不同量值不可混合、覆寫或一律判重複。原始 XML 缺失的格式是假設測例，須標官方／合成來源，不能冒稱現場原文。錯誤改成有界安全分類以取得下一次診斷。
+  - 通過：`0`、一般正 ID、合法 `-1` 合計能在允許用途保留識別；`-4` 保留身分但不得當 CPU/memory/disk 數值，`-2/-3` 不冒充業務量值；非法、overflow、canonical collision、真重複、caption／quantity 漂移、外 sensor、DTD、超量仍拒絕。同 sensor 同 ID 的 speed/volume 分開查證，缺单位／尺度不造結果；主通道核驗與 binding/profile consumer 结果一致。四個現有非 traffic property 正例保持通過；traffic 僅查證用途、無正式風險／派工／通知。未取得的現場 traffic raw 根因列UC02；本段以現有樣本與標明來源的官方格式／受控反例驗收。
+  - 相依：實作與隔離驗收不等現場結果；現場來源適用性另列UC01、UC02。狀態：代理範圍已完成；現場 traffic 原文根因依原定UC02提示，不算代理驗收必要輸入。

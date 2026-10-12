@@ -19,7 +19,12 @@ public sealed record PrtgSnapshotCapacitySample(
     DateTimeOffset CompletedAtUtc,
     long ElapsedMilliseconds,
     int RequestedSensorCount,
-    string Outcome);
+    string Outcome,
+    string PrimaryChannelCapabilityMode = "provided",
+    int FallbackGroupSensorCount = 0,
+    int FallbackGroupRequestCount = 0,
+    long FallbackGroupElapsedMilliseconds = 0,
+    string EvidenceKind = "snapshot-batch");
 
 public sealed record PrtgSnapshotCapacityEstimate(
     PrtgSnapshotCapacityStatus Status,
@@ -31,7 +36,16 @@ public sealed record PrtgSnapshotCapacityEstimate(
     double? EstimatedSeconds,
     double CompletionWindowSeconds,
     double RequiredHeadroomFraction,
-    string Reason);
+    string Reason)
+{
+    public string PrimaryChannelCapabilityMode { get; init; } = "unknown";
+    public int PotentialQualifiedSensorCount { get; init; }
+    public int PotentialQualifiedBatchCount { get; init; }
+    public int FallbackSampleGroupSize { get; init; }
+    public long ExpectedTableRequests { get; init; }
+    public int FreshFallbackGroupSamples { get; init; }
+    public double? P95FallbackGroupSeconds { get; init; }
+}
 
 /// <summary>Bounded evidence of real snapshot-table requests. It stores opaque hashes and timings only.</summary>
 public sealed class PrtgSnapshotCapacityStore(EfJsonBlobStore blob)
@@ -59,7 +73,19 @@ public sealed class PrtgSnapshotCapacityStore(EfJsonBlobStore blob)
     {
         if (sample.ScopeFingerprint.Length != 64 || sample.EndpointFingerprint.Length != 64 ||
             sample.RequestShapeFingerprint.Length != 64 || sample.RequestedSensorCount is < 1 or > PrtgSnapshotCapacityEvaluator.BatchSize ||
-            sample.ElapsedMilliseconds < 0 || sample.Outcome is not ("success" or "failed" or "timeout"))
+            sample.ElapsedMilliseconds < 0 || sample.Outcome is not ("success" or "failed" or "timeout") ||
+            sample.PrimaryChannelCapabilityMode is not ("provided" or "fallback" or "unknown") ||
+            sample.FallbackGroupSensorCount is < 0 or > 5 || sample.FallbackGroupRequestCount < 0 ||
+            sample.FallbackGroupElapsedMilliseconds < 0 || sample.EvidenceKind is not ("snapshot-batch" or "fallback-group") ||
+            sample.EvidenceKind == "fallback-group" && (sample.PrimaryChannelCapabilityMode != "fallback" ||
+                sample.RequestedSensorCount is < 1 or > 5 || sample.ElapsedMilliseconds != 0 ||
+                sample.FallbackGroupSensorCount != sample.RequestedSensorCount) ||
+            sample.PrimaryChannelCapabilityMode == "fallback" && sample.FallbackGroupSensorCount > 0 &&
+            (sample.FallbackGroupRequestCount != 2 * sample.FallbackGroupSensorCount + 1 ||
+             sample.FallbackGroupElapsedMilliseconds <= 0) ||
+            sample.PrimaryChannelCapabilityMode != "fallback" &&
+            (sample.FallbackGroupSensorCount != 0 || sample.FallbackGroupRequestCount != 0 ||
+             sample.FallbackGroupElapsedMilliseconds != 0))
             throw new ArgumentException("Invalid bounded snapshot capacity sample.", nameof(sample));
 
         blob.MutateWithContext((_, current) =>
@@ -84,6 +110,7 @@ public sealed class PrtgSnapshotCapacityStore(EfJsonBlobStore blob)
             var sameHour = samples.Where(x => x.ScopeFingerprint == sample.ScopeFingerprint &&
                 x.EndpointFingerprint == sample.EndpointFingerprint &&
                 x.RequestShapeFingerprint == sample.RequestShapeFingerprint &&
+                x.EvidenceKind == sample.EvidenceKind &&
                 x.Outcome == "success" &&
                 x.CompletedAtUtc.UtcDateTime.Date == sample.CompletedAtUtc.UtcDateTime.Date &&
                 x.CompletedAtUtc.UtcDateTime.Hour == sample.CompletedAtUtc.UtcDateTime.Hour).ToArray();
@@ -97,6 +124,7 @@ public sealed class PrtgSnapshotCapacityStore(EfJsonBlobStore blob)
                 samples.RemoveAll(x => x.ScopeFingerprint == sample.ScopeFingerprint &&
                     x.EndpointFingerprint == sample.EndpointFingerprint &&
                     x.RequestShapeFingerprint == sample.RequestShapeFingerprint &&
+                    x.EvidenceKind == sample.EvidenceKind &&
                     x.Outcome == "success" &&
                     x.CompletedAtUtc.UtcDateTime.Date == sample.CompletedAtUtc.UtcDateTime.Date &&
                     x.CompletedAtUtc.UtcDateTime.Hour == sample.CompletedAtUtc.UtcDateTime.Hour);
@@ -143,28 +171,66 @@ public static class PrtgSnapshotCapacityEvaluator
 
     public static PrtgSnapshotCapacityEstimate Evaluate(int targetCount, string strategy,
         string scopeFingerprint, string endpointFingerprint, string requestShapeFingerprint,
-        IEnumerable<PrtgSnapshotCapacitySample> evidence, DateTimeOffset nowUtc)
+        IEnumerable<PrtgSnapshotCapacitySample> evidence, DateTimeOffset nowUtc,
+        string primaryChannelCapabilityMode = "provided", int potentialQualifiedSensorCount = 0,
+        int potentialQualifiedBatchCount = 0, int fallbackSampleGroupSize = 0)
     {
         if (targetCount < 0) throw new ArgumentOutOfRangeException(nameof(targetCount));
         var window = string.Equals(strategy, "aggressive", StringComparison.OrdinalIgnoreCase)
             ? AggressiveWindow.TotalSeconds : ConservativeWindow.TotalSeconds;
         var batches = (targetCount + BatchSize - 1) / BatchSize;
         var expectedBatchSize = Math.Min(BatchSize, targetCount);
-        var matching = evidence.Where(s => s.ScopeFingerprint == scopeFingerprint &&
+        if (potentialQualifiedSensorCount < 0 || potentialQualifiedBatchCount < 0 ||
+            potentialQualifiedBatchCount > potentialQualifiedSensorCount ||
+            fallbackSampleGroupSize < 0 || fallbackSampleGroupSize > 5 || fallbackSampleGroupSize > potentialQualifiedSensorCount ||
+            primaryChannelCapabilityMode is not ("provided" or "fallback" or "unknown"))
+            throw new ArgumentOutOfRangeException(nameof(potentialQualifiedSensorCount));
+        var expectedRequests = primaryChannelCapabilityMode switch
+        {
+            "provided" => batches,
+            "fallback" => batches + potentialQualifiedSensorCount * 2L + potentialQualifiedBatchCount,
+            _ => batches + potentialQualifiedSensorCount * 2L + potentialQualifiedBatchCount
+        };
+        var matchingAll = evidence.Where(s => s.ScopeFingerprint == scopeFingerprint &&
             s.EndpointFingerprint == endpointFingerprint && s.RequestShapeFingerprint == requestShapeFingerprint &&
-            s.RequestedSensorCount == expectedBatchSize && s.CompletedAtUtc <= nowUtc &&
+            s.PrimaryChannelCapabilityMode == primaryChannelCapabilityMode &&
+            s.CompletedAtUtc <= nowUtc &&
             nowUtc - s.CompletedAtUtc <= EvidenceFreshness).OrderBy(s => s.CompletedAtUtc).ToArray();
+        var matching = matchingAll.Where(s => s.EvidenceKind == "snapshot-batch" &&
+            s.RequestedSensorCount == expectedBatchSize).ToArray();
         var fullSamples = matching.Length;
         var oldest = matching.FirstOrDefault()?.CompletedAtUtc;
 
+        var fallbackSamples = matchingAll.Where(s => s.EvidenceKind == "fallback-group" && s.Outcome == "success" &&
+            s.FallbackGroupSensorCount == fallbackSampleGroupSize &&
+            s.FallbackGroupSensorCount > 0 &&
+            s.FallbackGroupRequestCount == 2 * s.FallbackGroupSensorCount + 1 &&
+            s.FallbackGroupElapsedMilliseconds > 0).ToArray();
+        var fallbackRequired = primaryChannelCapabilityMode == "fallback" && potentialQualifiedSensorCount > 0;
+        var fallbackTimings = fallbackSamples.Select(s => s.FallbackGroupElapsedMilliseconds / 1000d).Order().ToArray();
+        double? fallbackP95 = fallbackTimings.Length == 0 ? null :
+            fallbackTimings[Math.Clamp((int)Math.Ceiling(fallbackTimings.Length * 0.95) - 1, 0, fallbackTimings.Length - 1)];
+
         PrtgSnapshotCapacityEstimate Result(PrtgSnapshotCapacityStatus status, double? p95, double? seconds, string reason) =>
             new(status, targetCount, batches, fullSamples, oldest, p95, seconds, window,
-                RequiredHeadroomFraction, reason);
+                RequiredHeadroomFraction, reason)
+            {
+                PrimaryChannelCapabilityMode = primaryChannelCapabilityMode,
+                PotentialQualifiedSensorCount = potentialQualifiedSensorCount,
+                PotentialQualifiedBatchCount = potentialQualifiedBatchCount,
+                FallbackSampleGroupSize = fallbackSampleGroupSize,
+                ExpectedTableRequests = expectedRequests,
+                FreshFallbackGroupSamples = fallbackSamples.Length,
+                P95FallbackGroupSeconds = fallbackP95
+            };
 
         if (batches == 0) return Result(PrtgSnapshotCapacityStatus.CapacityQualified, 0, 0, "empty_scope");
+        if (primaryChannelCapabilityMode == "unknown" && potentialQualifiedSensorCount > 0)
+            return Result(PrtgSnapshotCapacityStatus.CapacityUnverified, null, null, "primarychannel_cost_mode_unknown");
         if (fullSamples < RequiredFullBatchSamples)
             return Result(PrtgSnapshotCapacityStatus.CapacityUnverified, null, null, "insufficient_fresh_full_batch_samples");
-        if (matching.Any(s => s.Outcome != "success"))
+        if (matchingAll.Any(s => s.EvidenceKind == "snapshot-batch" && s.Outcome != "success" &&
+            s.RequestedSensorCount == expectedBatchSize))
             return Result(PrtgSnapshotCapacityStatus.CapacityUnverified, null, null, "recent_full_batch_failure_or_timeout");
 
         var timings = matching.Select(s => s.ElapsedMilliseconds / 1000d).Order().ToArray();
@@ -176,6 +242,17 @@ public static class PrtgSnapshotCapacityEvaluator
         var pacedCompletion = Math.Max(0, batches - 1d) / MaximumTableRequestsPerSecond + p95;
         var concurrencyCompletion = Math.Ceiling(batches / (double)(MaximumSharedInFlight - 1)) * p95;
         var estimate = Math.Max(Math.Max(rateFloor, concurrencyCompletion), pacedCompletion);
+        if (fallbackRequired)
+        {
+            if (fallbackSamples.Length < RequiredFullBatchSamples || fallbackP95 is null)
+                return Result(PrtgSnapshotCapacityStatus.CapacityUnverified, p95, null,
+                    "insufficient_fresh_fallback_group_samples");
+            // The strict fallback group's observed elapsed includes its paced property/refetch calls.
+            // Sum group work conservatively with the original batch estimate; the global 2/s request
+            // floor is checked separately using the exact combined request count.
+            estimate = Math.Max(estimate + potentialQualifiedBatchCount * fallbackP95.Value,
+                Math.Ceiling(expectedRequests / (double)MaximumTableRequestsPerSecond));
+        }
         if (!double.IsFinite(estimate) || estimate > window * (1 - RequiredHeadroomFraction))
             return Result(PrtgSnapshotCapacityStatus.CapacityExceeded, p95, estimate, "completion_window_or_headroom_exceeded");
         return Result(PrtgSnapshotCapacityStatus.CapacityQualified, p95, estimate, "within_fixed_window_with_headroom");

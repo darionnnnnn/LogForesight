@@ -243,7 +243,9 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                         PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), proposedTargets.ScopeFingerprint,
                         proposedTargets.EndpointFingerprint, proposedTargets.RequestShapeFingerprint,
                         new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
-                        DateTimeOffset.UtcNow);
+                        DateTimeOffset.UtcNow, proposedTargets.PrimaryChannelCapabilityMode,
+                        proposedTargets.PotentialQualifiedSensorCount, proposedTargets.PotentialQualifiedBatchCount,
+                        proposedTargets.PotentialQualifiedFallbackSampleSize);
                     if (estimateCapacity.Status != PrtgSnapshotCapacityStatus.CapacityQualified)
                     {
                         var code = estimateCapacity.Status == PrtgSnapshotCapacityStatus.CapacityExceeded

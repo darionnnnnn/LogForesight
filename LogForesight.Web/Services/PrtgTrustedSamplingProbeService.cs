@@ -26,19 +26,18 @@ public sealed class NullableInt64StringJsonConverter : JsonConverter<long?>
     public override long? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.Null) return null;
-        if (reader.TokenType == JsonTokenType.String && long.TryParse(reader.GetString(), NumberStyles.None,
-                CultureInfo.InvariantCulture, out var fromString) && fromString >= 0)
+        if (reader.TokenType == JsonTokenType.String && PrtgChannelIdPolicy.TryParseCanonical(reader.GetString(), out var fromString))
             return fromString;
-        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt64(out var fromNumber) && fromNumber >= 0)
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt64(out var fromNumber) && PrtgChannelIdPolicy.IsAllowed(fromNumber))
             return fromNumber;
-        throw new JsonException("Channel object ID must be a nonnegative Int64 decimal value.");
+        throw new JsonException("Channel object ID must be a canonical PRTG Int64 decimal value.");
     }
 
     public override void Write(Utf8JsonWriter writer, long? value, JsonSerializerOptions options)
     {
         if (!value.HasValue) writer.WriteNullValue();
-        else if (value.Value >= 0) writer.WriteStringValue(value.Value.ToString(CultureInfo.InvariantCulture));
-        else throw new JsonException("Channel object ID must be nonnegative.");
+        else if (PrtgChannelIdPolicy.IsAllowed(value.Value)) writer.WriteStringValue(value.Value.ToString(CultureInfo.InvariantCulture));
+        else throw new JsonException("Channel object ID is outside the documented PRTG range.");
     }
 }
 
@@ -555,7 +554,7 @@ public sealed class PrtgTrustedSamplingProbeService
         return rows.EnumerateArray().Take(MaxChannelsPerSensor).Select(row =>
         {
             var raw = ReadDouble(row, "lastvalue_raw");
-            return new PrtgTrustedSamplingChannelProbeRow(ReadLong(row, "objid"), ReadString(row, "name"),
+            return new PrtgTrustedSamplingChannelProbeRow(ReadChannelId(row, "objid"), ReadString(row, "name"),
                 ReadString(row, "unit"), raw, sensorValue.HasValue && raw.HasValue && sensorValue.Value == raw.Value,
                 ReadBool(row, "isprimary"), ReadString(row, "quantity"), ReadDouble(row, "scale"),
                 ReadString(row, "direction"), ReadDouble(row, "lastcheck_raw"),
@@ -632,9 +631,8 @@ public sealed class PrtgTrustedSamplingProbeService
             var result = root.Elements(XName.Get("result")).SingleOrDefault();
             if (result is null || result.HasAttributes || result.Elements().Any())
                 throw new InvalidDataException("primarychannel-property-shape-unrecognized");
-            var value = result.Value.Trim();
-            if (value.Length is < 1 or > 20 || !value.All(char.IsAsciiDigit) ||
-                !long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id < 0)
+            var value = result.Value;
+            if (!PrtgChannelIdPolicy.TryParseCanonical(value, out var id))
                 throw new InvalidDataException("primarychannel-property-shape-unrecognized");
             return id.ToString(CultureInfo.InvariantCulture);
         }
@@ -739,6 +737,12 @@ public sealed class PrtgTrustedSamplingProbeService
         if (token.ValueKind == JsonValueKind.Number && token.TryGetInt64(out var number)) return number;
         return token.ValueKind == JsonValueKind.String && long.TryParse(token.GetString(), NumberStyles.None,
             CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+    }
+    private static long? ReadChannelId(JsonElement row, string name)
+    {
+        if (!TryProperty(row, name, out var token)) return null;
+        if (token.ValueKind == JsonValueKind.Number && token.TryGetInt64(out var number) && PrtgChannelIdPolicy.IsAllowed(number)) return number;
+        return token.ValueKind == JsonValueKind.String && PrtgChannelIdPolicy.TryParseCanonical(token.GetString(), out var parsed) ? parsed : null;
     }
     private static long? ReadLong(JsonElement row, string name) => TryProperty(row, name, out var value) ? ReadLong(value) : null;
     private static int? ReadInt(JsonElement row, string name) => TryProperty(row, name, out var value) && ReadLong(value) is long n && n is >= int.MinValue and <= int.MaxValue ? (int)n : null;

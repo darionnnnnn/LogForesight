@@ -14,7 +14,18 @@ internal static class PrtgCapacityRuntimeAdmission
         PrtgSnapshotTargetSelection snapshotSelection, out PrtgCapacityAdmissionPlan? plan, out string reason,
         bool allowBoundedSingleBatchRecovery = false, int? boundedProfileRefreshRecoveryGroupSize = null)
     {
+        var effectiveSelection = snapshotSelection;
+        return TryGetCurrent(backend, hosts, settings, snapshotSelection, out plan, out reason,
+            out effectiveSelection, allowBoundedSingleBatchRecovery, boundedProfileRefreshRecoveryGroupSize);
+    }
+
+    public static bool TryGetCurrent(StorageBackend backend, IHostStore hosts, SystemSettings settings,
+        PrtgSnapshotTargetSelection snapshotSelection, out PrtgCapacityAdmissionPlan? plan, out string reason,
+        out PrtgSnapshotTargetSelection effectiveSelection, bool allowBoundedSingleBatchRecovery = false,
+        int? boundedProfileRefreshRecoveryGroupSize = null)
+    {
         plan = null;
+        effectiveSelection = snapshotSelection;
         reason = "capacity-admission-plan-missing";
         if (!settings.PrtgEnabled) { reason = "prtg-disabled"; return false; }
         var now = DateTimeOffset.UtcNow;
@@ -40,6 +51,19 @@ internal static class PrtgCapacityRuntimeAdmission
             stored = planStore.ReadRetained();
             retainedExpiredPlan = stored is not null && stored.LeaseUntilUtc <= now;
         }
+
+        var snapshotCapacityStore = new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
+        var snapshotEvidence = snapshotCapacityStore.Read();
+        if (stored is not null && snapshotSelection.PrimaryChannelCapabilityMode ==
+                PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown &&
+            (allowBoundedSingleBatchRecovery || boundedProfileRefreshRecoveryGroupSize is >= 1 and <= 5) &&
+            TryResolveRetainedCapabilityMode(snapshotSelection, settings, policy, contract, stored,
+                snapshotEvidence, now, out var retainedModeSelection))
+        {
+            snapshotSelection = retainedModeSelection;
+            effectiveSelection = retainedModeSelection;
+        }
+
         var priorContractMatches = stored is not null && stored.SourceFingerprint == contract.SourceFingerprint &&
             stored.SnapshotScopeFingerprint == snapshotSelection.ScopeFingerprint &&
             stored.ProfileScopeFingerprint == contract.ScopeFingerprint &&
@@ -49,12 +73,11 @@ internal static class PrtgCapacityRuntimeAdmission
             stored.RuntimeVersionFingerprint == contract.VersionFingerprint &&
             stored.PolicyRevision == policy.Revision;
 
-        var snapshotCapacityStore = new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
-        var snapshotEvidence = snapshotCapacityStore.Read();
         var snapshot = PrtgSnapshotCapacityEvaluator.Evaluate(snapshotSelection.SensorObjids.Count,
             PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), snapshotSelection.ScopeFingerprint,
-            snapshotSelection.EndpointFingerprint, snapshotSelection.RequestShapeFingerprint,
-            snapshotEvidence, now);
+            snapshotSelection.EndpointFingerprint, snapshotSelection.RequestShapeFingerprint, snapshotEvidence, now,
+            snapshotSelection.PrimaryChannelCapabilityMode, snapshotSelection.PotentialQualifiedSensorCount,
+            snapshotSelection.PotentialQualifiedBatchCount, snapshotSelection.PotentialQualifiedFallbackSampleSize);
         var profile = PrtgProfileTransportCapacityEvaluator.Evaluate(policy.SensorIds.Distinct().Count(),
             contract.SourceFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
             contract.RequestShapeFingerprint, contract.VersionFingerprint,
@@ -99,9 +122,9 @@ internal static class PrtgCapacityRuntimeAdmission
                             latestSettings, latestPolicy, hosts.CapturePrtgSnapshot());
                         var latestSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, latestSettings,
                             new SentinelStore(backend.Blob("sentinels")).GetAll(), latestPolicy);
-                        return latestContract == contract &&
-                            latestSelection.ScopeFingerprint == snapshotSelection.ScopeFingerprint &&
-                            latestSelection.RequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint;
+                        return latestContract == contract && TryMatchRevalidationSelection(backend,
+                            latestSelection, snapshotSelection, latestSettings, latestPolicy, latestContract,
+                            stored, allowRetainedUnknownMode: true, out _);
                     }
                     catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
                     { return false; }
@@ -144,9 +167,9 @@ internal static class PrtgCapacityRuntimeAdmission
                             latestSettings, latestPolicy, hosts.CapturePrtgSnapshot());
                         var latestSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, latestSettings,
                             new SentinelStore(backend.Blob("sentinels")).GetAll(), latestPolicy);
-                        return latestContract == contract &&
-                            latestSelection.ScopeFingerprint == snapshotSelection.ScopeFingerprint &&
-                            latestSelection.RequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint;
+                        return latestContract == contract && TryMatchRevalidationSelection(backend,
+                            latestSelection, snapshotSelection, latestSettings, latestPolicy, latestContract,
+                            stored, allowRetainedUnknownMode: true, out _);
                     }
                     catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
                     { return false; }
@@ -210,9 +233,9 @@ internal static class PrtgCapacityRuntimeAdmission
                         latest, latestPolicy, hosts.CapturePrtgSnapshot());
                     var latestSelection = PrtgSnapshotTargetResolver.Resolve(backend, hosts, latest,
                         new SentinelStore(backend.Blob("sentinels")).GetAll(), latestPolicy);
-                    return latestContract == contract &&
-                        latestSelection.ScopeFingerprint == snapshotSelection.ScopeFingerprint &&
-                        latestSelection.RequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint;
+                    return latestContract == contract && TryMatchRevalidationSelection(backend,
+                        latestSelection, snapshotSelection, latest, latestPolicy, latestContract,
+                        stored, allowRetainedUnknownMode: false, out _);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
                 { return false; }
@@ -243,5 +266,71 @@ internal static class PrtgCapacityRuntimeAdmission
         reason = boundedRecovery ? BoundedSingleBatchRecoveryReason :
             boundedProfileRecovery ? BoundedProfileRefreshRecoveryReason : "admitted";
         return true;
+    }
+
+    private static bool TryResolveRetainedCapabilityMode(PrtgSnapshotTargetSelection selection,
+        SystemSettings settings, PrtgMonitoringPolicy policy,
+        PrtgProfileTransportCapacityPilot.Contract contract, PrtgCapacityAdmissionPlan stored,
+        IReadOnlyList<PrtgSnapshotCapacitySample> samples, DateTimeOffset nowUtc,
+        out PrtgSnapshotTargetSelection resolved)
+    {
+        resolved = selection;
+        if (!PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored) ||
+            stored.SettingsRevision != settings.Revision || stored.PolicyRevision != policy.Revision ||
+            stored.SourceFingerprint != contract.SourceFingerprint ||
+            stored.SnapshotScopeFingerprint != selection.ScopeFingerprint ||
+            stored.ProfileScopeFingerprint != contract.ScopeFingerprint ||
+            stored.StrategyFingerprint != contract.StrategyFingerprint ||
+            stored.RequestShapeFingerprint != contract.RequestShapeFingerprint ||
+            stored.RuntimeVersionFingerprint != contract.VersionFingerprint)
+            return false;
+
+        var modes = new[] { PrtgSnapshotTargetResolver.PrimaryChannelModeProvided,
+            PrtgSnapshotTargetResolver.PrimaryChannelModeFallback };
+        var matches = modes.Select(mode => PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection, mode))
+            .Where(candidate => candidate.RequestShapeFingerprint == stored.SnapshotRequestShapeFingerprint)
+            .ToArray();
+        if (matches.Length != 1) return false;
+        var matched = matches[0];
+        var conflictingMode = matched.PrimaryChannelCapabilityMode == PrtgSnapshotTargetResolver.PrimaryChannelModeProvided
+            ? PrtgSnapshotTargetResolver.PrimaryChannelModeFallback
+            : PrtgSnapshotTargetResolver.PrimaryChannelModeProvided;
+        var conflictingShape = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection, conflictingMode)
+            .RequestShapeFingerprint;
+        if (samples.Any(sample => sample.ScopeFingerprint == selection.ScopeFingerprint &&
+                sample.EndpointFingerprint == selection.EndpointFingerprint &&
+                sample.RequestShapeFingerprint == conflictingShape && sample.CompletedAtUtc <= nowUtc &&
+                nowUtc - sample.CompletedAtUtc <= PrtgSnapshotCapacityEvaluator.EvidenceFreshness))
+            return false;
+
+        resolved = matched;
+        return true;
+    }
+
+    internal static bool TryMatchRevalidationSelection(StorageBackend backend,
+        PrtgSnapshotTargetSelection latestSelection, PrtgSnapshotTargetSelection expectedSelection,
+        SystemSettings settings, PrtgMonitoringPolicy policy,
+        PrtgProfileTransportCapacityPilot.Contract contract, PrtgCapacityAdmissionPlan stored,
+        bool allowRetainedUnknownMode, out PrtgSnapshotTargetSelection validatedSelection)
+    {
+        validatedSelection = latestSelection;
+        if (latestSelection.ScopeFingerprint != expectedSelection.ScopeFingerprint ||
+            latestSelection.EndpointFingerprint != expectedSelection.EndpointFingerprint)
+            return false;
+
+        if (latestSelection.PrimaryChannelCapabilityMode == PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown)
+        {
+            // Failed samples can invalidate the retained mode, but never establish one. Unknown
+            // mode is recoverable only for the bounded retained-plan lanes, from a fresh read of
+            // the exact plan's evidence contract inside the renewal fence.
+            if (!allowRetainedUnknownMode ||
+                !TryResolveRetainedCapabilityMode(latestSelection, settings, policy, contract, stored,
+                    new PrtgSnapshotCapacityStore(backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
+                    DateTimeOffset.UtcNow, out validatedSelection))
+                return false;
+        }
+
+        return validatedSelection.PrimaryChannelCapabilityMode == expectedSelection.PrimaryChannelCapabilityMode &&
+            validatedSelection.RequestShapeFingerprint == expectedSelection.RequestShapeFingerprint;
     }
 }

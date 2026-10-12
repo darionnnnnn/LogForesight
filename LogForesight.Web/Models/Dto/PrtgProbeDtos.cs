@@ -383,20 +383,40 @@ public class PrtgValueFetchScopeEstimateDto
     public int SnapshotCapacitySamples { get; set; }
     public int SnapshotCapacitySampleBatchSize { get; set; }
     public int SnapshotCapacityBatchCount { get; set; }
+    public long SnapshotCapacityExpectedTableRequests { get; set; }
+    public string SnapshotCapacityPrimaryChannelMode { get; set; } = "unknown";
+    public int SnapshotCapacityPotentialQualifiedSensors { get; set; }
+    public int SnapshotCapacityFallbackGroups { get; set; }
+    public int SnapshotCapacityFallbackSampleGroupSize { get; set; }
+    public int SnapshotCapacityFallbackSamples { get; set; }
+    public double? SnapshotCapacityP95FallbackGroupSeconds { get; set; }
     public double? SnapshotCapacityP95BatchSeconds { get; set; }
     public double? SnapshotCapacityEstimatedSeconds { get; set; }
     public double SnapshotCapacityWindowSeconds { get; set; }
     public DateTimeOffset? SnapshotCapacityOldestSampleAtUtc { get; set; }
     public double? SnapshotCapacityOldestSampleAgeSeconds { get; set; }
-    public string SnapshotCapacityModel { get; set; } = "max(ceil(batchCount/2), ceil(batchCount/4) * measured p95 batch seconds)";
+    public string SnapshotCapacityModel { get; set; } = "max(shared 2 Table GET/s floor, measured worker completion, fallback group work) with 25% headroom";
     public string SnapshotCapacityRequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status,primarychannel; sorted exact-size ID filter; response cap 512 KiB";
     public string ProfileCapacityStatus { get; set; } = "capacity-unverified";
     public string ProfileCapacityReason { get; set; } = "profile_transport_evidence_not_available";
     public int ProfileCapacitySamples { get; set; }
+    public int ProfileCapacityTargetSensors { get; set; }
+    public long ProfileCapacityExpectedTableRequests { get; set; }
     public double? ProfileCapacityP95SensorSeconds { get; set; }
     public double? ProfileCapacityEstimatedSeconds { get; set; }
     public double ProfileCapacityWindowSeconds { get; set; }
     public string ProfileCapacityRequestShape { get; set; } = "sensor + channels table GET, sequential, max 5 sensors, 512 KiB each, 30 seconds";
+    /// <summary>Separate initial raw qualification workload; it does not belong to recurring profile refresh.</summary>
+    public string QualificationCapacityStatus { get; set; } = "capacity-unverified";
+    public string QualificationCapacityReason { get; set; } = "qualification_capacity_not_available";
+    public int QualificationEligibleSensors { get; set; }
+    public int QualificationDurationHours { get; set; } = 72;
+    public int QualificationAttemptsAssumed { get; set; } = 1;
+    public long QualificationWorstCaseTableRequests { get; set; }
+    public long QualificationWorstCaseHistoricRequests { get; set; }
+    public double? QualificationRequiredSeconds { get; set; }
+    public double QualificationAvailableSeconds { get; set; } = 72 * 3600d;
+    public string QualificationCapacityRequestShape { get; set; } = "per eligible sensor and attempt: 4 Table/property GETs + 1 Historic XML GET; 25% headroom";
     /// <summary>Joint snapshot/profile capacity result; component pilots alone do not grant admission.</summary>
     public string JointCapacityStatus { get; set; } = "capacity-unverified";
     public string JointCapacityReason { get; set; } = "joint_capacity_evidence_not_available";
@@ -419,10 +439,18 @@ public sealed class PrtgSnapshotCapacityPilotDto
     public int CapacitySampleBatchSize { get; set; }
     public int RequestsAttempted { get; set; }
     public int RequestsSent { get; set; }
+    public int MaximumRequestsPerRun { get; set; } = 5;
     public int UniqueSensorsSampled { get; set; }
     public string Coverage { get; set; } = "";
     public string RequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status,primarychannel; sorted exact-size ID filter; response cap 512 KiB";
     public int MatchingFullBatchSamples { get; set; }
+    public string PrimaryChannelCapabilityMode { get; set; } = "unknown";
+    public long ExpectedTableRequests { get; set; }
+    public int PotentialQualifiedSensors { get; set; }
+    public int PotentialFallbackGroups { get; set; }
+    public int MatchingFallbackGroupSamples { get; set; }
+    public int RequiredFallbackGroupSamples { get; set; }
+    public double? P95FallbackGroupSeconds { get; set; }
     public double? P95BatchSeconds { get; set; }
     public double? EstimatedSeconds { get; set; }
     public double CompletionWindowSeconds { get; set; }

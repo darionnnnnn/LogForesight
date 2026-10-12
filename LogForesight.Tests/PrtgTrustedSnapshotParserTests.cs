@@ -89,6 +89,57 @@ public sealed class PrtgTrustedSnapshotParserTests
     }
 
     [Fact]
+    public void OmittedSnapshotPrimaryChannelRequiresFreshStablePropertyBracket()
+    {
+        var received = Hour.AddSeconds(10);
+        var context = Context(received: received, asOf: Hour.AddSeconds(15)) with
+        { SelectedPrimaryChannelId = "3", RequireCurrentNativePrimaryChannelId = true };
+        var bracket = new PrtgNativePrimaryChannelBracket(77, "3", "3",
+            Hour.AddSeconds(8), received, Hour.AddSeconds(12));
+
+        Assert.Equal(PrtgTrustedSnapshotParser.MissingNativePrimaryChannelId,
+            _parser.Parse(Row(), context).RejectionReason);
+        Assert.True(_parser.Parse(Row(), context, bracket).AcceptedForAccumulation);
+    }
+
+    [Fact]
+    public void OmittedSnapshotPrimaryChannelRejectsUnstableStaleOrOutOfScopeBracket()
+    {
+        var received = Hour.AddSeconds(10);
+        var context = Context(received: received, asOf: Hour.AddSeconds(80)) with
+        { SelectedPrimaryChannelId = "3", RequireCurrentNativePrimaryChannelId = true };
+        PrtgNativePrimaryChannelBracket Bracket(string before, string after, DateTime beforeAt, DateTime afterAt,
+            long sensor = 77, DateTime? snapshotAt = null) => new(sensor, before, after, beforeAt, snapshotAt ?? received, afterAt);
+
+        Assert.Equal(PrtgTrustedSnapshotParser.NativePrimaryChannelMismatch,
+            _parser.Parse(Row(), context, Bracket("3", "4", Hour.AddSeconds(8), Hour.AddSeconds(12))).RejectionReason);
+        Assert.Equal(PrtgTrustedSnapshotParser.NativePrimaryChannelMismatch,
+            _parser.Parse(Row(), context, Bracket("4", "4", Hour.AddSeconds(8), Hour.AddSeconds(12))).RejectionReason);
+        Assert.Equal(PrtgTrustedSnapshotParser.InvalidNativePrimaryChannelObservation,
+            _parser.Parse(Row(), context, Bracket("03", "03", Hour.AddSeconds(8), Hour.AddSeconds(12))).RejectionReason);
+        Assert.Equal(PrtgTrustedSnapshotParser.InvalidNativePrimaryChannelObservation,
+            _parser.Parse(Row(), context, Bracket("3", "3", Hour.AddSeconds(8), Hour.AddSeconds(12), 78)).RejectionReason);
+        Assert.Equal(PrtgTrustedSnapshotParser.InvalidNativePrimaryChannelObservation,
+            _parser.Parse(Row(), context, Bracket("3", "3", Hour.AddSeconds(-100), Hour.AddSeconds(12))).RejectionReason);
+        Assert.Equal(PrtgTrustedSnapshotParser.InvalidNativePrimaryChannelObservation,
+            _parser.Parse(Row(), context, Bracket("3", "3", Hour.AddSeconds(11), Hour.AddSeconds(12))).RejectionReason);
+    }
+
+    [Fact]
+    public void FreshBracketCannotOverrideMalformedNativeSnapshotField()
+    {
+        var context = Context() with { SelectedPrimaryChannelId = "3", RequireCurrentNativePrimaryChannelId = true };
+        var malformed = "{\"objid\":77,\"lastvalue_raw\":\"17.25\",\"lastcheck_raw\":\"" +
+            Hour.ToOADate().ToString("R", CultureInfo.InvariantCulture) +
+            "\",\"interval_raw\":\"60\",\"status_raw\":3,\"primarychannel\":\"3\"}";
+        var bracket = new PrtgNativePrimaryChannelBracket(77, "3", "3", Hour.AddSeconds(8),
+            context.ReceivedAt, Hour.AddSeconds(12));
+
+        Assert.Equal(PrtgTrustedSnapshotParser.InvalidNativePrimaryChannelObservation,
+            _parser.Parse(malformed, context, bracket).RejectionReason);
+    }
+
+    [Fact]
     public void ExplicitBindingAcceptsOnlyNumericNativePrimaryChannelAliasesAndRejectsDisagreement()
     {
         var context = Context() with { SelectedPrimaryChannelId = "3" };
@@ -115,9 +166,9 @@ public sealed class PrtgTrustedSnapshotParserTests
 
         Assert.True(_parser.Parse(primaryChannel, context).AcceptedForAccumulation);
         Assert.True(_parser.Parse(matchingAliases, context).AcceptedForAccumulation);
-        Assert.Equal(PrtgTrustedSnapshotParser.MissingNativePrimaryChannelId,
+        Assert.Equal(PrtgTrustedSnapshotParser.InvalidNativePrimaryChannelObservation,
             _parser.Parse(disagreeingAliases, context).RejectionReason);
-        Assert.Equal(PrtgTrustedSnapshotParser.MissingNativePrimaryChannelId,
+        Assert.Equal(PrtgTrustedSnapshotParser.InvalidNativePrimaryChannelObservation,
             _parser.Parse(stringAlias, context).RejectionReason);
     }
 

@@ -26,6 +26,21 @@ public sealed record PrtgTrustedSnapshotContext(
     string SelectedPrimaryChannelId = "",
     bool RequireCurrentNativePrimaryChannelId = false);
 
+/// <summary>
+/// A fresh, bounded primary-channel observation made immediately around a snapshot-table refetch.
+/// This is only used when that refetched row omits both native primarychannel aliases.
+/// </summary>
+public sealed record PrtgNativePrimaryChannelBracket(
+    long SensorObjid,
+    string BeforeId,
+    string AfterId,
+    DateTime BeforeObservedAtUtc,
+    DateTime SnapshotObservedAtUtc,
+    DateTime AfterObservedAtUtc)
+{
+    public static readonly TimeSpan MaximumWindow = TimeSpan.FromSeconds(90);
+}
+
 public sealed record PrtgTrustedSnapshotParseResult(
     PrtgTrustedSample? Sample,
     string? RejectionReason)
@@ -63,12 +78,17 @@ public sealed class PrtgTrustedSnapshotParser
     public const string PhysicalMeasurementConflict = "physical_measurement_conflict";
     public const string MissingNativePrimaryChannelId = "missing_native_primarychannel_id";
     public const string NativePrimaryChannelMismatch = "native_primarychannel_id_mismatch";
+    public const string InvalidNativePrimaryChannelObservation = "native_primarychannel_observation_invalid";
     // Only the native API column aliases observed by the bounded compatibility probe are allowed.
     // Their presence/semantics are still deployment facts: missing or malformed values stay waiting.
     public const string NativePrimaryChannelIdField = "primarychannel";
     public const string NativePrimaryChannelIdRawField = "primarychannel_raw";
 
-    public PrtgTrustedSnapshotParseResult Parse(string rawJson, PrtgTrustedSnapshotContext context)
+    public PrtgTrustedSnapshotParseResult Parse(string rawJson, PrtgTrustedSnapshotContext context) =>
+        Parse(rawJson, context, null);
+
+    public PrtgTrustedSnapshotParseResult Parse(string rawJson, PrtgTrustedSnapshotContext context,
+        PrtgNativePrimaryChannelBracket? primaryChannelBracket)
     {
         if (string.IsNullOrWhiteSpace(rawJson)) return Reject("invalid_json");
         if (!ContextIsValid(context)) return Reject(InvalidContext);
@@ -92,12 +112,20 @@ public sealed class PrtgTrustedSnapshotParser
             if (objid != context.SensorObjid) return Reject(ObjectIdMismatch);
             if (context.RequireCurrentNativePrimaryChannelId || !string.IsNullOrEmpty(context.SelectedPrimaryChannelId))
             {
-                if (!long.TryParse(context.SelectedPrimaryChannelId, NumberStyles.None,
-                        CultureInfo.InvariantCulture, out var expectedPrimaryId) || expectedPrimaryId < 0)
+                if (!PrtgChannelIdPolicy.TryParseCanonical(context.SelectedPrimaryChannelId, out var expectedPrimaryId))
                     return Reject(InvalidContext);
-                if (!TryNativePrimaryChannelId(root, out var currentPrimaryId))
-                    return Reject(MissingNativePrimaryChannelId);
-                if (currentPrimaryId != expectedPrimaryId) return Reject(NativePrimaryChannelMismatch);
+                if (HasNativePrimaryChannelId(root))
+                {
+                    if (!TryNativePrimaryChannelId(root, out var currentPrimaryId))
+                        return Reject(InvalidNativePrimaryChannelObservation);
+                    if (currentPrimaryId != expectedPrimaryId) return Reject(NativePrimaryChannelMismatch);
+                }
+                else
+                {
+                    if (primaryChannelBracket == null) return Reject(MissingNativePrimaryChannelId);
+                    if (!TryFreshBracket(primaryChannelBracket, context, expectedPrimaryId, out var bracketReason))
+                        return Reject(bracketReason!);
+                }
             }
 
             if (!TryProperty(root, "lastvalue_raw", out _)) return Reject(MissingValue);
@@ -157,13 +185,18 @@ public sealed class PrtgTrustedSnapshotParser
     /// <summary>交由 accumulator 在其原子入帳鎖內處理物理樣本重播與衝突。</summary>
     public PrtgTrustedSampleDisposition AddToAccumulator(string rawJson, PrtgTrustedSnapshotContext context,
         PrtgSnapshotAccumulator accumulator, out string? rejectionReason, CancellationToken cancellationToken = default)
+        => AddToAccumulator(rawJson, context, accumulator, null, out rejectionReason, cancellationToken);
+
+    public PrtgTrustedSampleDisposition AddToAccumulator(string rawJson, PrtgTrustedSnapshotContext context,
+        PrtgSnapshotAccumulator accumulator, PrtgNativePrimaryChannelBracket? primaryChannelBracket,
+        out string? rejectionReason, CancellationToken cancellationToken = default)
     {
         if (cancellationToken.IsCancellationRequested)
         {
             rejectionReason = "cancelled";
             return PrtgTrustedSampleDisposition.Rejected;
         }
-        var parsed = Parse(rawJson, context);
+        var parsed = Parse(rawJson, context, primaryChannelBracket);
         rejectionReason = parsed.RejectionReason;
         if (parsed.Sample == null) return PrtgTrustedSampleDisposition.Rejected;
         if (cancellationToken.IsCancellationRequested)
@@ -289,10 +322,39 @@ public sealed class PrtgTrustedSnapshotParser
         return true;
     }
 
+    private static bool HasNativePrimaryChannelId(JsonElement root) =>
+        TryProperty(root, NativePrimaryChannelIdField, out _) ||
+        TryProperty(root, NativePrimaryChannelIdRawField, out _);
+
+    private static bool TryFreshBracket(PrtgNativePrimaryChannelBracket bracket,
+        PrtgTrustedSnapshotContext context, long expectedId, out string? rejectionReason)
+    {
+        rejectionReason = InvalidNativePrimaryChannelObservation;
+        if (bracket.SensorObjid != context.SensorObjid ||
+            !PrtgChannelIdPolicy.TryParseCanonical(bracket.BeforeId, out var beforeId) ||
+            !PrtgChannelIdPolicy.TryParseCanonical(bracket.AfterId, out var afterId) ||
+            bracket.BeforeObservedAtUtc.Kind != DateTimeKind.Utc ||
+            bracket.SnapshotObservedAtUtc.Kind != DateTimeKind.Utc ||
+            bracket.AfterObservedAtUtc.Kind != DateTimeKind.Utc ||
+            bracket.BeforeObservedAtUtc > bracket.SnapshotObservedAtUtc ||
+            bracket.SnapshotObservedAtUtc != context.ReceivedAt ||
+            bracket.SnapshotObservedAtUtc > bracket.AfterObservedAtUtc ||
+            bracket.AfterObservedAtUtc > context.AsOf ||
+            bracket.AfterObservedAtUtc - bracket.BeforeObservedAtUtc > PrtgNativePrimaryChannelBracket.MaximumWindow)
+            return false;
+        if (beforeId != afterId || beforeId != expectedId)
+        {
+            rejectionReason = NativePrimaryChannelMismatch;
+            return false;
+        }
+        rejectionReason = null;
+        return true;
+    }
+
     private static bool TryNumericNonNegativeId(JsonElement token, out long value)
     {
         value = 0;
-        return token.ValueKind == JsonValueKind.Number && token.TryGetInt64(out value) && value >= 0;
+        return token.ValueKind == JsonValueKind.Number && token.TryGetInt64(out value) && PrtgChannelIdPolicy.IsAllowed(value);
     }
 
     private static bool TryRawNumber(JsonElement root, string name, out double value)

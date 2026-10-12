@@ -101,7 +101,7 @@ public class SetupReadinessProbeTests : IDisposable
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"data\":[]}", Encoding.UTF8, "application/json")
+                Content = new StringContent("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}],\"usage\":{\"total_tokens\":2}}", Encoding.UTF8, "application/json")
             };
         }
     }
@@ -127,6 +127,33 @@ public class SetupReadinessProbeTests : IDisposable
     }
 
     // ── AI 探活測試 ─────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("{\"data\":[]}")]
+    [InlineData("<html>login</html>")]
+    [InlineData("{\"choices\":[]}")]
+    [InlineData("{\"choices\":[{\"message\":{\"role\":\"user\",\"content\":\"ok\"}}]}")]
+    [InlineData("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null}}]}")]
+    [InlineData("{\"choices\":[],\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}]}")]
+    public async Task Successful_http_without_compatible_chat_body_is_not_ready(string body)
+    {
+        var handler = new ProbeTestHttpMessageHandler { HandlerFunc = (_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) }) };
+        using var client = new HttpClient(handler);
+        var result = await new AiProbeService(_settings, client).RefreshAsync();
+        Assert.False(result.IsReady);
+        Assert.Equal(AiProbeStatus.Failed, result.Status);
+        Assert.DoesNotContain(body, result.Detail);
+    }
+
+    [Fact]
+    public async Task Oversized_success_body_is_rejected()
+    {
+        var handler = new ProbeTestHttpMessageHandler { HandlerFunc = (_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(new string('x', 65537)) }) };
+        using var client = new HttpClient(handler);
+        Assert.False((await new AiProbeService(_settings, client).RefreshAsync()).IsReady);
+    }
 
     [Fact]
     public async Task AI1_AI位址為出廠預設但探活失敗_AI步驟未完成且不拋例外()
@@ -207,7 +234,7 @@ public class SetupReadinessProbeTests : IDisposable
                 await Task.Delay(50, ct);
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent("{\"data\":[]}", Encoding.UTF8, "application/json")
+                    Content = new StringContent("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}],\"usage\":{\"total_tokens\":2}}", Encoding.UTF8, "application/json")
                 };
             }
         };

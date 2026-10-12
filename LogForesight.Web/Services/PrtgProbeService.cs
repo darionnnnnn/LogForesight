@@ -164,16 +164,18 @@ public class PrtgProbeService
     private readonly StorageBackend _backend;
     private readonly IHostStore _hosts;
     private readonly ISentinelStore _sentinels;
+    private readonly IAiProbeService? _aiProbe;
 
     public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState,
         StorageBackend backend, IHostStore hosts, ISentinelStore sentinels,
-        SchedulerRunState schedulerState, PrtgStructureSyncRunState structureState)
+        SchedulerRunState schedulerState, PrtgStructureSyncRunState structureState, IAiProbeService? aiProbe = null)
     {
         _settings = settings;
         _state = state;
         _backfillState = backfillState;
         _schedulerState = schedulerState;
         _structureState = structureState;
+        _aiProbe = aiProbe;
         _backend = backend;
         _hosts = hosts;
         _sentinels = sentinels;
@@ -255,6 +257,9 @@ public class PrtgProbeService
             .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
             ?? assembly.GetName().Version?.ToString() ?? "unknown";
         console.WriteLine($"程式版本：{buildVersion}");
+        var buildIdentity = LogForesightBuildIdentity.ReadCurrent(assembly, typeof(PrtgClient).Assembly);
+        console.WriteLine($"建置識別：{buildIdentity.Status}／{buildIdentity.Reason}；來源 {buildIdentity.SourceCommit}；指紋 {buildIdentity.SourceFingerprint}。若不一致，請部署同一份 Web/Core 與 build-identity.json 後重新探測。");
+        if (s.Revision == "legacy") console.WriteLine("設定修訂 legacy：既有設定可能仍有效，但缺少可追溯修訂；請由管理者檢視並明確儲存，不自動改設定。");
         console.WriteLine($"設定版本：{s.Revision}；PRTG 啟用：{(s.PrtgEnabled ? "是" : "否")}；取數策略：{s.PrtgFetchStrategy}");
         console.WriteLine("輸出可能含主機名稱、IP 或 PRTG 訊息；分享前請先檢視並遮蔽。");
         console.WriteLine();
@@ -314,6 +319,10 @@ public class PrtgProbeService
                             efCoreProvider = null;
                         }
 
+                        var localFacts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, s, _aiProbe, runToken);
+                        operation.Checkpoint();
+                        console.WriteLine($"本機摘要：{localFacts.Status}／{localFacts.Reason}；正式設定 {localFacts.PolicyHosts} 台／{localFacts.PolicySensors} 顆；守門覆寫 {localFacts.GuardOverrideSensors} 顆。摘要不授權正式風險。");
+                        console.WriteLine($"昨日 NetIQ 回執 {localFacts.NetiqReceipts} 筆、成功 {localFacts.NetiqSuccess}、等待 {localFacts.NetiqWaiting}；合格父紀錄 {localFacts.NetiqEligibleParents}／{localFacts.NetiqParentRows}。AI 小請求：{localFacts.AiProbeStatus}；不是正式服務驗收。");
                         var evidenceContext = new PrtgProbeEvidenceContext
                         {
                             SchemaVersion = "1.0.0",
@@ -329,7 +338,9 @@ public class PrtgProbeService
                             StorageEnvironment = storageEnvironment,
                             RetentionDays = s.PrtgRetentionDays,
                             ScopeSummary = "unknown",
-                            ReadinessSummary = "unknown"
+                            ReadinessSummary = "unknown",
+                            LocalFacts = localFacts,
+                            BuildIdentity = PrtgProbeBuildFacts.From(buildIdentity)
                         };
                         success = await PrtgProbeRunner.RunAsync(client, console, evidenceContext, runToken, _state.SetEvidenceJson);
                     }

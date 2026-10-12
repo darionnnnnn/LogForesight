@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -24,7 +25,9 @@ public sealed record AiProbeResult(
     bool IsReady,
     AiProbeStatus Status,
     string Detail,
-    DateTime ProbedAt);
+    DateTime ProbedAt,
+    double? HttpElapsedMilliseconds = null,
+    int? TotalTokens = null);
 
 /// <summary>
 /// AI 服務探活介面（五十輪批次 F-1b）。
@@ -153,14 +156,44 @@ public class AiProbeService : IAiProbeService
 
         try
         {
-            using var response = await _httpClient.SendAsync(request, timeoutCts.Token);
+            var timer = Stopwatch.StartNew();
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
             if (response.IsSuccessStatusCode)
             {
+                const int maximumBytes = 64 * 1024;
+                if (response.Content.Headers.ContentLength > maximumBytes)
+                    throw new InvalidDataException("AI probe response is oversized.");
+                await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
+                using var buffer = new MemoryStream();
+                var block = new byte[4096];
+                int read;
+                while ((read = await stream.ReadAsync(block, timeoutCts.Token)) > 0)
+                {
+                    if (buffer.Length + read > maximumBytes) throw new InvalidDataException("AI probe response is oversized.");
+                    buffer.Write(block, 0, read);
+                }
+                using var body = JsonDocument.Parse(buffer.ToArray(), new JsonDocumentOptions { MaxDepth = 32 });
+                var root = body.RootElement;
+                if (!UniqueProperties(root) || root.ValueKind != JsonValueKind.Object || root.TryGetProperty("error", out _) ||
+                    !root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0 ||
+                    choices[0].ValueKind != JsonValueKind.Object || !choices[0].TryGetProperty("message", out var message) ||
+                    message.ValueKind != JsonValueKind.Object || !message.TryGetProperty("role", out var role) ||
+                    role.ValueKind != JsonValueKind.String || role.GetString() != "assistant" ||
+                    !message.TryGetProperty("content", out var content) ||
+                    content.ValueKind is not (JsonValueKind.String or JsonValueKind.Null) ||
+                    (content.ValueKind == JsonValueKind.Null &&
+                     (!choices[0].TryGetProperty("finish_reason", out var finish) ||
+                      finish.ValueKind != JsonValueKind.String || finish.GetString() != "length")))
+                    throw new InvalidDataException("AI probe chat response shape is invalid.");
+                int? tokens = null;
+                if (root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object &&
+                    usage.TryGetProperty("total_tokens", out var total) && total.TryGetInt32(out var tokenCount) && tokenCount >= 0)
+                    tokens = tokenCount;
                 return new AiProbeResult(
                     true,
                     AiProbeStatus.Ready,
-                    "AI 服務探活成功，可正常提供白話摘要。",
-                    now);
+                    "AI 服務探活成功，小請求回應格式相容；正式摘要仍由分析作業產生。",
+                    now, Math.Round(timer.Elapsed.TotalMilliseconds, 3), tokens);
             }
 
             Log.Warn("AI 探活收到非成功狀態碼：{0}", (int)response.StatusCode);
@@ -192,5 +225,18 @@ public class AiProbeService : IAiProbeService
                 "AI 服務探活失敗，請檢查服務位址與連線狀態（分析將以統計模式執行）。",
                 now);
         }
+    }
+
+    private static bool UniqueProperties(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in value.EnumerateObject())
+                if (!seen.Add(property.Name) || !UniqueProperties(property.Value)) return false;
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+            foreach (var item in value.EnumerateArray()) if (!UniqueProperties(item)) return false;
+        return true;
     }
 }

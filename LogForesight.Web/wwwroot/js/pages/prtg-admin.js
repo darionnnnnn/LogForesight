@@ -1453,8 +1453,10 @@ function bindScopeControls() {
             // 估算的是「目前選的模式」而非已儲存的模式——管理者是在決定要不要改設定。
             const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
             const strategy = document.getElementById('prtg-fetch-strategy')?.value ?? 'conservative';
+            const qualificationDuration = document.getElementById('prtg-qualification-duration')?.value ?? '72';
+            const qualificationAttempts = document.getElementById('prtg-qualification-attempts')?.value ?? '1';
             const res = await api.get(
-                `/api/admin/settings/prtg-fetch-scope/estimate?scope=${encodeURIComponent(scope)}&strategy=${encodeURIComponent(strategy)}`,
+                `/api/admin/settings/prtg-fetch-scope/estimate?scope=${encodeURIComponent(scope)}&strategy=${encodeURIComponent(strategy)}&qualificationDurationHours=${encodeURIComponent(qualificationDuration)}&qualificationMaximumAttempts=${encodeURIComponent(qualificationAttempts)}`,
                 { silent: true });
 
             if (!res.success) {
@@ -1469,8 +1471,17 @@ function bindScopeControls() {
                     ? '尚無足夠同形新樣本' : `p95 ${Number(res.snapshotCapacityP95BatchSeconds).toFixed(1)} 秒/批，估計 ${Number(res.snapshotCapacityEstimatedSeconds).toFixed(0)} 秒`;
                 const age = res.snapshotCapacityOldestSampleAgeSeconds == null
                     ? '無樣本時間' : `最舊樣本 ${Number(res.snapshotCapacityOldestSampleAgeSeconds).toFixed(0)} 秒前`;
-                const capacity = `快照分項量測 ${res.snapshotCapacityStatus}（${res.snapshotCapacityStrategy}，${formatNumber(res.snapshotTargets)} 顆/${formatNumber(res.snapshotCapacityBatchCount)} 批；${formatNumber(res.snapshotCapacitySamples)} 個新鮮 ${formatNumber(res.snapshotCapacitySampleBatchSize)}-ID 樣本（至少 5 個）；${model}；${age}；原因 ${res.snapshotCapacityReason}；模型 ${res.snapshotCapacityModel}；請求形式 ${res.snapshotCapacityRequestShape}）`;
-                const profileCapacity = `Profile 分項量測 ${res.profileCapacityStatus}（目前有效的新鮮樣本 ${formatNumber(res.profileCapacitySamples)} 筆；首次核准及失敗後恢復需 5 筆；p95 ${res.profileCapacityP95SensorSeconds == null ? '—' : Number(res.profileCapacityP95SensorSeconds).toFixed(2) + ' 秒／sensor'}；${res.profileCapacityEstimatedSeconds == null ? '尚無僅傳輸估算' : '僅傳輸試測估算 ' + formatNumber(res.profileCapacityEstimatedSeconds) + ' 秒'}／${formatNumber(res.profileCapacityWindowSeconds)} 秒可用期限；原因 ${res.profileCapacityReason}；請求形式 ${res.profileCapacityRequestShape}）`;
+                const primaryModeText = res.snapshotCapacityPrimaryChannelMode === 'provided' ? 'bulk 提供 primarychannel'
+                    : res.snapshotCapacityPrimaryChannelMode === 'fallback' ? 'property fallback' : 'primarychannel 成本模式未核實';
+                const fallbackEvidence = res.snapshotCapacityPrimaryChannelMode === 'fallback' && res.snapshotCapacityPotentialQualifiedSensors > 0
+                    ? `；fallback bracket ${formatNumber(res.snapshotCapacityFallbackSamples)}/5 組，p95 ${res.snapshotCapacityP95FallbackGroupSeconds == null ? '—' : Number(res.snapshotCapacityP95FallbackGroupSeconds).toFixed(1) + ' 秒/組'}` : '';
+                const capacity = `快照分項量測 ${res.snapshotCapacityStatus}（${res.snapshotCapacityStrategy}，${formatNumber(res.snapshotTargets)} 顆/${formatNumber(res.snapshotCapacityBatchCount)} 批；預期 ${formatNumber(res.snapshotCapacityExpectedTableRequests)} 次 Table GET；${primaryModeText}，${formatNumber(res.snapshotCapacityPotentialQualifiedSensors)} 個有效 trusted profile／${formatNumber(res.snapshotCapacityFallbackGroups)} 組最多 5 顆；${formatNumber(res.snapshotCapacitySamples)} 個新鮮 ${formatNumber(res.snapshotCapacitySampleBatchSize)}-ID 樣本（至少 5 個）${fallbackEvidence}；${model}；${age}；原因 ${res.snapshotCapacityReason}；模型 ${res.snapshotCapacityModel}；請求形式 ${res.snapshotCapacityRequestShape}）`;
+                const profileCapacity = `Profile 分項量測 ${res.profileCapacityStatus}（範圍 ${formatNumber(res.profileCapacityTargetSensors)} 顆，預期 ${formatNumber(res.profileCapacityExpectedTableRequests)} 次 Table GET；目前有效的新鮮樣本 ${formatNumber(res.profileCapacitySamples)} 筆；首次核准及失敗後恢復需 5 筆；p95 ${res.profileCapacityP95SensorSeconds == null ? '—' : Number(res.profileCapacityP95SensorSeconds).toFixed(2) + ' 秒／sensor'}；${res.profileCapacityEstimatedSeconds == null ? '尚無僅傳輸估算' : '僅傳輸試測估算 ' + formatNumber(res.profileCapacityEstimatedSeconds) + ' 秒'}／${formatNumber(res.profileCapacityWindowSeconds)} 秒可用期限；原因 ${res.profileCapacityReason}；請求形式 ${res.profileCapacityRequestShape}）`;
+                const qualificationStatus = res.qualificationCapacityStatus === 'capacity-qualified' ? '成本已核可'
+                    : res.qualificationCapacityStatus === 'capacity-exceeded' ? '超出初始化期限' : '成本未核實';
+                const qualificationTime = res.qualificationRequiredSeconds == null
+                    ? '所需時間未知' : `預估 ${formatNumber(res.qualificationRequiredSeconds)}／${formatNumber(res.qualificationAvailableSeconds)} 秒`;
+                const qualificationCapacity = `初次 raw 資格初始化 ${qualificationStatus}（目前有 binding 且缺 raw proof ${formatNumber(res.qualificationEligibleSensors)} 顆；${formatNumber(res.qualificationWorstCaseTableRequests)} 次 Table/property GET + ${formatNumber(res.qualificationWorstCaseHistoricRequests)} 次 Historic GET；${qualificationTime}；${formatNumber(res.qualificationDurationHours)} 小時、以 ${formatNumber(res.qualificationAttemptsAssumed)} 次嘗試估算、保留 25%；原因 ${res.qualificationCapacityReason}）`;
                 const jointStatusText = res.jointCapacityStatus === 'capacity-qualified' ? '符合容量條件'
                     : res.jointCapacityStatus === 'capacity-exceeded' ? '超出期限或共享額度' : '待驗證';
                 const jointPlanText = res.jointAdmissionPlanMatched
@@ -1482,12 +1493,12 @@ function bindScopeControls() {
                 const jointCapacity = `共同容量 ${jointStatusText}（${jointPlanText}；原因 ${res.jointCapacityReason}；Table API 共享配額 ${jointRate(res.jointSharedTableRequestsPerSecond)}/秒；快照保留 ${jointRate(res.jointSnapshotTableRequestsPerSecond)}/秒、Profile 保留 ${jointRate(res.jointProfileTableRequestsPerSecond)}/秒、一般請求餘額 ${jointRate(res.jointGeneralResidualTableRequestsPerSecond)}/秒；快照完成估算 ${jointSeconds(res.jointSnapshotEstimatedSeconds)}/${jointSeconds(res.jointSnapshotWindowSeconds)} 秒；Profile 完成估算 ${jointSeconds(res.jointProfileEstimatedSeconds)}/${jointSeconds(res.jointProfileWindowSeconds)} 秒）`;
                 if (res.snapshotWarning) {
                     snapshotResult.className = 'text-warning small d-block';
-                    snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}；${capacity}；${profileCapacity}；${jointCapacity}`;
+                    snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}；${capacity}；${profileCapacity}；${qualificationCapacity}；${jointCapacity}`;
                 } else {
                     snapshotResult.className = res.jointCapacityStatus === 'capacity-qualified'
                         ? 'text-success small d-block'
                         : res.jointCapacityStatus === 'capacity-exceeded' ? 'text-danger small d-block' : 'text-warning small d-block';
-                    snapshotResult.textContent = `${snapBase}；${capacity}；${profileCapacity}；${jointCapacity}`;
+                    snapshotResult.textContent = `${snapBase}；${capacity}；${profileCapacity}；${qualificationCapacity}；${jointCapacity}`;
                 }
             }
 
@@ -1605,7 +1616,9 @@ function bindPrtgTest() {
             if (pilotResult) {
                 const model = res.estimatedSeconds == null ? '尚無可用估算' : `估計 ${Number(res.estimatedSeconds).toFixed(0)} 秒`;
                 pilotResult.classList.add(res.status === 'capacity-qualified' ? 'text-success' : 'text-warning');
-                pilotResult.textContent = `${res.status}：${formatNumber(res.targetCount)} 個目前目標、送出 ${res.requestsSent}/${res.requestsAttempted} 批、${formatNumber(res.matchingFullBatchSamples)} 個新鮮 ${formatNumber(res.capacitySampleBatchSize)}-ID 樣本（至少 5 個），p95 ${res.p95BatchSeconds == null ? '—' : Number(res.p95BatchSeconds).toFixed(1) + ' 秒'}；${model}；覆蓋 ${res.coverage}；形狀 ${res.requestShape}（${res.reason}）。`;
+                const fallbackProgress = res.primaryChannelCapabilityMode === 'fallback' && res.potentialQualifiedSensors > 0
+                    ? `；fallback brackets ${formatNumber(res.matchingFallbackGroupSamples)}/${formatNumber(res.requiredFallbackGroupSamples)} 組，p95 ${res.p95FallbackGroupSeconds == null ? '—' : Number(res.p95FallbackGroupSeconds).toFixed(1) + ' 秒/組'}` : '';
+                pilotResult.textContent = `${res.status}：${formatNumber(res.targetCount)} 個目前目標、送出 ${res.requestsSent}/${res.requestsAttempted} 個 GET（本次最多 ${formatNumber(res.maximumRequestsPerRun)} 個；fallback 單組最多 12 個），${formatNumber(res.matchingFullBatchSamples)} 個新鮮 ${formatNumber(res.capacitySampleBatchSize)}-ID 樣本（至少 5 個）${fallbackProgress}，p95 ${res.p95BatchSeconds == null ? '—' : Number(res.p95BatchSeconds).toFixed(1) + ' 秒'}；${model}；覆蓋 ${res.coverage}；形狀 ${res.requestShape}（${res.reason}）。`;
             }
         } catch (error) {
             if (pilotResult) {

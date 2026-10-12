@@ -14,7 +14,7 @@ public sealed class NativePrimaryCapabilityTests
     }
 
     [Fact]
-    public async Task Snapshot_requestsPrimaryChannelDiscoveryAndRetainsOnlyObservedNonnegativeIntegerId()
+    public async Task Snapshot_requestsPrimaryChannelDiscoveryAndRetainsObservedCanonicalChannelId()
     {
         var requests = new List<string>();
         var evidence = await PrtgCompatibilityProbe.ExecuteCoreAsync((url, _) =>
@@ -166,7 +166,9 @@ public sealed class NativePrimaryCapabilityTests
 
     [Theory]
     [InlineData("<prtg><result>not-an-id</result></prtg>", "invalid_property_value")]
-    [InlineData("<prtg><result>-2</result></prtg>", "invalid_property_value")]
+    [InlineData("<prtg><result>-5</result></prtg>", "invalid_property_value")]
+    [InlineData("<prtg><result>+1</result></prtg>", "invalid_property_value")]
+    [InlineData("<prtg><result>01</result></prtg>", "invalid_property_value")]
     [InlineData("<prtg><result>1</result><result>2</result></prtg>", "ambiguous_property_value")]
     [InlineData("<prtg><result><nested>31003</nested></result></prtg>", "invalid_property_result_shape")]
     [InlineData("<prtg><result>31003</result><data><result>31003</result></data></prtg>", "ambiguous_property_value")]
@@ -187,6 +189,22 @@ public sealed class NativePrimaryCapabilityTests
         Assert.Null(capability.PrimaryChannelId);
         Assert.False(capability.AuthorizesFormalProfile);
         Assert.False(evidence.EvidenceReady);
+    }
+
+    [Fact]
+    public async Task NativePropertyProbePreservesOfficialTrafficSumIdentityForDiagnosticsOnly()
+    {
+        var xml = "<histdata totalcount=\"1\"><prtg-version>24.1.92.1554+</prtg-version><item><datetime_raw>46288.5</datetime_raw><value channel=\"Traffic\" channelid=\"-1\">1 Gbit/s</value><value_raw channel=\"Traffic\" channelid=\"-1\">1</value_raw></item></histdata>";
+        var evidence = await RunAsync((_, _) => Task.FromResult(Response("<prtg><result>-1</result></prtg>")), rawHistory: xml);
+        var capability = evidence.Targets.Single(target => target.Category == "disk").NativePrimaryCapability!;
+        var raw = evidence.Targets.Single(target => target.Category == "disk").RawChannelIdentity!;
+
+        Assert.Equal("ok", capability.Status);
+        Assert.Equal("-1", capability.PrimaryChannelId);
+        Assert.True(capability.MatchesRawObservedChannelIds);
+        Assert.Equal("-1", Assert.Single(Assert.Single(raw.Samples).Channels).ChannelId);
+        Assert.False(capability.AuthorizesFormalProfile);
+        Assert.False(raw.AuthorizesFormalProfile);
     }
 
     [Fact]

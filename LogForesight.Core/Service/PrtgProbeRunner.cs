@@ -489,7 +489,9 @@ public static class PrtgProbeRunner
                     RetentionDays = evidenceContext.RetentionDays,
                     StorageEnvironment = evidenceContext.StorageEnvironment,
                     ScopeSummary = evidenceContext.ScopeSummary,
-                    ReadinessSummary = evidenceContext.ReadinessSummary
+                    ReadinessSummary = evidenceContext.ReadinessSummary,
+                    LocalFacts = evidenceContext.LocalFacts,
+                    BuildIdentity = evidenceContext.BuildIdentity
                 };
             }
             await PrtgCompatibilityProbe.ExecuteAsync(client, console, sensorSamples, evidenceContext, ct, onEvidenceJsonProduced);

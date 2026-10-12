@@ -29,10 +29,25 @@ public static class PrtgQualificationCapacityEvaluator
     public const int ExpectedPrimaryPropertyGets = 1;
     public const int ExpectedClosingSensorTableGets = 1;
     public const int ExpectedHistoricXmlGets = 1;
+    public const int DefaultInitializationWindowHours = 72;
+    public const int DefaultMaximumAttempts = 1;
     public const int MaximumPilotSensors = 5;
     public const int InitialWindowDrainSeconds = 120;
     public const int PerSensorProbeDeadlineSeconds = 30;
     public static readonly TimeSpan MaximumPilotAge = TimeSpan.FromDays(7);
+
+    public static long ExpectedTableRequests(int eligibleSensors, int maxAttempts = DefaultMaximumAttempts)
+    {
+        if (eligibleSensors < 0 || maxAttempts is < 1 or > 3) throw new ArgumentOutOfRangeException();
+        return (long)eligibleSensors * maxAttempts * (ExpectedSensorTableGets + ExpectedChannelTableGets +
+            ExpectedPrimaryPropertyGets + ExpectedClosingSensorTableGets);
+    }
+
+    public static long ExpectedHistoricRequests(int eligibleSensors, int maxAttempts = DefaultMaximumAttempts)
+    {
+        if (eligibleSensors < 0 || maxAttempts is < 1 or > 3) throw new ArgumentOutOfRangeException();
+        return (long)eligibleSensors * maxAttempts * ExpectedHistoricXmlGets;
+    }
 
     public static PrtgQualificationCapacityDecision Evaluate(int eligibleSensors, int durationHours,
         int maxAttempts, PrtgQualificationCapacityPilot? pilot, string expectedSourceFingerprint,
@@ -53,9 +68,8 @@ public static class PrtgQualificationCapacityEvaluator
                 0, durationHours * 3600d, maxAttempts);
 
         var attempts = (long)eligibleSensors * maxAttempts;
-        var historic = attempts * ExpectedHistoricXmlGets;
-        var table = attempts * (ExpectedSensorTableGets + ExpectedChannelTableGets +
-            ExpectedPrimaryPropertyGets + ExpectedClosingSensorTableGets);
+        var historic = ExpectedHistoricRequests(eligibleSensors, maxAttempts);
+        var table = ExpectedTableRequests(eligibleSensors, maxAttempts);
         var headroom = 1 - RequiredHeadroomFraction;
         var historicSeconds = historic / (QualificationHistoricRequestsPerMinute / 60d * headroom);
         var tableSeconds = table / (reservedTableRequestsPerSecond * headroom);

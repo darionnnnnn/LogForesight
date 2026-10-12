@@ -47,13 +47,80 @@ public class PrtgCompatibilityProbeTests
         Assert.Equal(4, result.Summary.RequestsAttempted);
     }
 
+    [Fact]
+    public async Task OfficialTrafficHistoryEmitsSeparateSameIdVolumeAndSpeedEvidence()
+    {
+        const string xml = "<histdata totalcount=\"1\"><prtg-version>24.1.92.1554+</prtg-version><item><datetime_raw>43263.875</datetime_raw>" +
+            "<value channel=\"Traffic Total (volume)\" channelid=\"-1\">3.944 MByte</value><value_raw channel=\"Traffic Total (volume)\" channelid=\"-1\">4135535619.0572</value_raw>" +
+            "<value channel=\"Traffic Total (speed)\" channelid=\"-1\">0,38 Mbit/s</value><value_raw channel=\"Traffic Total (speed)\" channelid=\"-1\">47868.8351</value_raw></item></histdata>";
+        var now = DateTimeOffset.UtcNow;
+        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((url, _) => Task.FromResult(
+            url.Contains("content=sensors", StringComparison.Ordinal) ? "{\"sensors\":[{\"objid\":1003,\"lastvalue_raw\":0}]}" :
+            url.Contains("content=channels", StringComparison.Ordinal) ? "{\"channels\":[]}" : "{\"histdata\":[]}"),
+            new TestConsole(), CreateSamples((1003, "SNMP Traffic 64bit", "Up")), null,
+            getHistoricXml: (_, _) => Task.FromResult(new PrtgSourceResponse(xml, now, now)));
+
+        var raw = Assert.Single(result.Targets.Where(target => target.Category == "traffic")).RawChannelIdentity!;
+        Assert.Equal("ok", raw.Status);
+        Assert.Equal(new[] { "volume", "speed" }, Assert.Single(raw.Samples).Channels.Select(channel => channel.QuantityKind));
+        Assert.All(raw.Samples[0].Channels, channel => Assert.Equal("-1", channel.ChannelId));
+        using var evidenceJson = JsonDocument.Parse(PrtgCompatibilityProbe.SerializeEvidence(result));
+        var projectedTarget = evidenceJson.RootElement.GetProperty("targets").EnumerateArray()
+            .Single(target => target.GetProperty("category").GetString() == "traffic");
+        var projectedChannels = projectedTarget
+            .GetProperty("identity_preserving_raw_history").GetProperty("Samples")[0].GetProperty("Channels");
+        Assert.Equal(new[] { "volume", "speed" }, projectedChannels.EnumerateArray()
+            .Select(channel => channel.GetProperty("QuantityKind").GetString()));
+        Assert.False(raw.AuthorizesFormalProfile);
+    }
+
+    [Fact]
+    public async Task HistoricQuantityDriftIsClassifiedAsErrorWithoutRetainingSourceCaption()
+    {
+        const string xml = "<histdata totalcount=\"2\"><item><datetime_raw>46288.5</datetime_raw>" +
+            "<value_raw channel=\"Private Sensor Label\" channelid=\"5\">1</value_raw></item>" +
+            "<item><datetime_raw>46288.6</datetime_raw>" +
+            "<value_raw channel=\"Private Sensor Label (speed)\" channelid=\"5\">2</value_raw></item></histdata>";
+        var now = DateTimeOffset.UtcNow;
+        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((url, _) => Task.FromResult(
+            url.Contains("content=sensors", StringComparison.Ordinal) ? "{\"sensors\":[{\"objid\":1003,\"lastvalue_raw\":0}]}" :
+            url.Contains("content=channels", StringComparison.Ordinal) ? "{\"channels\":[]}" : "{\"histdata\":[]}"),
+            new TestConsole(), CreateSamples((1003, "SNMP Traffic 64bit", "Up")), null,
+            getHistoricXml: (_, _) => Task.FromResult(new PrtgSourceResponse(xml, now, now)));
+
+        var raw = Assert.Single(result.Targets.Where(target => target.Category == "traffic")).RawChannelIdentity!;
+        Assert.Equal("error", raw.Status);
+        Assert.Equal("raw-channel-source-shape-invalid", raw.Error);
+        Assert.False(raw.AuthorizesFormalProfile);
+        Assert.DoesNotContain("Private Sensor Label", PrtgCompatibilityProbe.SerializeEvidence(result));
+    }
+
+    [Fact]
+    public async Task HistoricInvalidChannelIdGetsSafeClassificationWithoutRetainingSourceText()
+    {
+        const string xml = "<histdata totalcount=\"1\"><item><datetime_raw>46288.5</datetime_raw><value_raw channel=\"Bad\" channelid=\"-5\">1</value_raw></item></histdata>";
+        var now = DateTimeOffset.UtcNow;
+        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((url, _) => Task.FromResult(
+            url.Contains("content=sensors", StringComparison.Ordinal) ? "{\"sensors\":[{\"objid\":1003,\"lastvalue_raw\":0}]}" :
+            url.Contains("content=channels", StringComparison.Ordinal) ? "{\"channels\":[]}" : "{\"histdata\":[]}"),
+            new TestConsole(), CreateSamples((1003, "SNMP Traffic 64bit", "Up")), null,
+            getHistoricXml: (_, _) => Task.FromResult(new PrtgSourceResponse(xml, now, now)));
+
+        var raw = Assert.Single(result.Targets.Where(target => target.Category == "traffic")).RawChannelIdentity!;
+        Assert.Equal("raw-channel-id-invalid-or-noncanonical", raw.Error);
+        Assert.DoesNotContain("Bad", PrtgCompatibilityProbe.SerializeEvidence(result));
+        Assert.False(raw.AuthorizesFormalProfile);
+    }
+
     [Theory]
     [InlineData("3", "3", "number")]
     [InlineData("\"3\"", "3", "string")]
     [InlineData("-1", "-1", "number")]
     [InlineData("\"-1\"", "-1", "string")]
+    [InlineData("-2", "-2", "number")]
+    [InlineData("-3", "-3", "number")]
+    [InlineData("-4", "-4", "number")]
     [InlineData("9223372036854775807", "9223372036854775807", "number")]
-    [InlineData("\"-9223372036854775808\"", "-9223372036854775808", "string")]
     public async Task ChannelMetadata_PreservesOnlyBoundedNativeDecimalId(string idJson, string expectedId, string expectedType)
     {
         var samples = CreateSamples((1003, "SNMP Disk Free", "Up"));
@@ -75,6 +142,9 @@ public class PrtgCompatibilityProbeTests
     [InlineData("\"9223372036854775808\"", "string")]
     [InlineData("-1.5", "number")]
     [InlineData("\"+1\"", "string")]
+    [InlineData("-5", "number")]
+    [InlineData("\"-9223372036854775808\"", "string")]
+    [InlineData("\"03\"", "string")]
     [InlineData("true", "boolean")]
     public async Task ChannelMetadata_RejectsMalformedOrOverflowChannelId(string idJson, string expectedType)
     {

@@ -22,7 +22,8 @@ public class PrtgClientException : Exception
 }
 
 /// <summary>Transport metadata is retained separately from the sensor's measurement clock.</summary>
-public sealed record PrtgSourceResponse(string Content, DateTimeOffset? HttpDateUtc, DateTimeOffset ReceivedAtUtc);
+public sealed record PrtgSourceResponse(string Content, DateTimeOffset? HttpDateUtc, DateTimeOffset ReceivedAtUtc,
+    TimeSpan? TransportElapsed = null, TimeSpan? BudgetWait = null);
 
 /// <summary>
 /// PRTG 監控系統 HTTP 存取客戶端（PRTG 第 1 輪批次B、第 2 輪批次A）。
@@ -367,14 +368,14 @@ public sealed class PrtgClient : IDisposable
         var category = PrtgRequestBudget.Classify(relativePathAndQuery);
 
         Checkpoint(ct);
-        var admissionTimer = category == PrtgEndpointCategory.Table && TableBudgetAdmissionWaitObserved is not null
-            ? Stopwatch.StartNew() : null;
+        var admissionTimer = Stopwatch.StartNew();
         using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General &&
             string.IsNullOrWhiteSpace(AdmissionPlanFingerprint)
             ? await Budget.AcquireAsync(category, ct)
             : await Budget.AcquireAsync(category, ct, RequestPurpose, AdmissionPlanFingerprint);
         admissionTimer?.Stop();
         var quotaWait = admissionTimer?.Elapsed ?? TimeSpan.Zero;
+        var totalBudgetWait = quotaWait;
         // Create the linked token now, but do not start its HTTP timer until rate/quota admission finishes.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var requestToken = ct;
@@ -393,7 +394,9 @@ public sealed class PrtgClient : IDisposable
             if (admissionTimer is not null)
             {
                 admissionTimer.Stop();
-                TableBudgetAdmissionWaitObserved?.Invoke(quotaWait + admissionTimer.Elapsed);
+                totalBudgetWait = quotaWait + admissionTimer.Elapsed;
+                if (category == PrtgEndpointCategory.Table)
+                    TableBudgetAdmissionWaitObserved?.Invoke(totalBudgetWait);
             }
             transportTimer = Stopwatch.StartNew();
             // Start the HTTP timeout only after every admission delay, immediately before send.
@@ -497,7 +500,8 @@ public sealed class PrtgClient : IDisposable
 
             transportTimer?.Stop();
             if (transportTimer is { } completedTransport) onResponseRead?.Invoke(completedTransport.Elapsed);
-            return new(text, resp.Headers.Date?.ToUniversalTime(), DateTimeOffset.UtcNow);
+            return new(text, resp.Headers.Date?.ToUniversalTime(), DateTimeOffset.UtcNow,
+                transportTimer?.Elapsed, totalBudgetWait);
         }
     }
 

@@ -116,10 +116,15 @@ public sealed class PrtgTrustedSamplingScaleConsumerTests : IDisposable
         }
         var rawJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
         {
-            ["objid"] = SensorId, ["primarychannel_raw"] = 3, ["lastvalue_raw"] = 190d,
+            ["objid"] = SensorId, ["lastvalue_raw"] = 190d,
             ["lastcheck_raw"] = now.ToOADate(), ["interval_raw"] = 60, ["status_raw"] = 3
         });
-        var parsed = new PrtgTrustedSnapshotParser().Parse(rawJson, resolution.Context!);
+        var parser = new PrtgTrustedSnapshotParser();
+        Assert.Equal(PrtgTrustedSnapshotParser.MissingNativePrimaryChannelId,
+            parser.Parse(rawJson, resolution.Context!).RejectionReason);
+        var primaryBracket = new PrtgNativePrimaryChannelBracket(SensorId, "3", "3",
+            now.AddSeconds(4), now.AddSeconds(5), now.AddSeconds(6));
+        var parsed = parser.Parse(rawJson, resolution.Context!, primaryBracket);
         Assert.True(parsed.AcceptedForAccumulation, parsed.RejectionReason);
         Assert.Equal(95d, parsed.Sample!.Value);
 
