@@ -1883,3 +1883,8 @@ Root 實際隔離瀏覽器由四台×兩個失敗日出發，預覽確實顯示�
 ### 2026-10-12 E09 固定四基準精確核對：實作子項
 
 既有 22 個受控真值案例現在逐值斷言四基準及分母：NetIQ 5TP/0FP/9TN/4FN（另有一個已知真值的未知輸出），原生 PRTG 9/0/9/1，簡單聯集 10/0/9/0，合併 9/1/8/1。來源與真值檔雜湊、222 例規則 manifest 關聯、未知／排除、提前時間及不得宣告真實效益的契約維持。主代理直接執行 root-e09-fixed-baselines-20261012.log／root-e09-fixed-baselines.trx：1/1 全部 22 案重播通過，0 失敗／略過；合併未優於聯集，不能宣告額外增益。這只清除精確計算斷言缺漏；八族完整 222 案執行、角色证據動線及 E09 整體驗收仍保留。
+
+
+### 2026-10-12 E07 隔離 SQLite 副本驗證工具：交付子項
+
+新增 sqlite-highwater 工具，僅接受完整 64,800,000／3,000／15,000／180 日四 slot 合成輸入，原庫唯讀且核對不變，以新目錄的備份／還原副本執行 production Prune(180) 精確邊界及三輪各 15,000 筆 MergeSampledValues 高水位觀測，另有唯讀結果核對。主代理在 b7df53cf＋E01 的獨立工作樹建置此工具：0 warnings／0 errors；直接執行獨立產物的 safety self-test，原庫不變、備份還原完整性、拒絕部分負載、保留期限前後各一 tick 全部通過（root-sqlite-highwater-independent-build-20261012.log 與 root-sqlite-highwater-pristine-selftest-20261012）。此段清除工具交付缺漏；安全測例不冒充全量證據，完整生成仍執行中，所有 fullCapacity／retention／recovery／wholeRound／SQLServer verdict 維持 false，E07 與原固定容量門檻仍未通過。
