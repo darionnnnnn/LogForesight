@@ -1961,3 +1961,7 @@ E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留�
 ### 2026-10-12 E08 驗收清單連結一致性：已驗證交付子項
 
 主代理直接核對原契約與當前user-matrix／README：Q1加入U53-01、Q2加入U53-05，保留README與§14原定整合／角色範圍；U53-03／04／06文件漏列AC22，補回JSON原有全動線交付條件。Q6當前JSON本來就含U53-01／07／09／10，不改此既有正確清單；先前私有盤點的Q6缺漏推論已撤回。Test-UserMatrixManifest新增逐journey核對README與machine-readable AC/Q精確對照，正常22AC／10U／6Q及coverage inventory通過；自有反例缺AC22及缺Q2連結皆在正確journey拒絕，沒有以完整ID數量掩蓋關聯缺漏。固定222、六角色、七來源scenario、59項尚待覆蓋的gap及全部aggregate未通過狀態保持；這是交付清單一致性，不是實際動線驗收通過。
+
+### 2026-10-12 E02 通道探索邊界補驗
+
+逐入口重查發現 readonly channel discovery 尚用正整數限制，會漏掉合法 channel 0 與特殊通道。已共用 canonical Int64 policy，保留合法識別但不建立 binding／profile 或正式風險資格；非 canonical、unsupported negative、overflow 仍拒絕。主代理 fresh build 跑實際 HTTP worker／pre-send fence／binding store 33/33、0失敗／0略過（TestResults/root-discovery-channel-policy/root-discovery-channel-policy.trx，5分9秒），含0數字／字串與-1至-4正例、六項非法反例及既有安全邊界。E02完成狀態維持，其他父待辦未變。

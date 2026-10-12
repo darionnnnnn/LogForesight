@@ -136,6 +136,54 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryWorkerAcceptanceTests : I
         Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles([11]));
     }
 
+    [Theory]
+    [InlineData("0", 0L)]
+    [InlineData("\"0\"", 0L)]
+    [InlineData("-1", -1L)]
+    [InlineData("-2", -2L)]
+    [InlineData("-3", -3L)]
+    [InlineData("-4", -4L)]
+    public async Task ReadOnlyDiscoveryPreservesCanonicalZeroAndSpecialChannelsWithoutAuthorizingProfiles(string rawId, long expected)
+    {
+        loopback.OnRequest = _ => Task.FromResult(LoopbackResponse.Json(
+            "{\"channels\":[{\"objid\":" + rawId + ",\"name\":\"Synthetic channel\",\"lastvalue_raw\":1,\"unit\":\"%\"}]}"));
+        var worker = NewWorker(true);
+        worker.AdmissionOverride = (_, _) => (plan, "fixture-only-capacity-plan");
+        var job = QueueDirect(worker, 11);
+
+        Assert.True(await worker.RunOneAsync(CancellationToken.None));
+
+        var completed = worker.Read(job.JobId)!;
+        Assert.Equal("completed", completed.Status);
+        Assert.Equal(expected, Assert.Single(completed.Channels).ChannelObjectId);
+        Assert.Null(new PrtgTrustedSamplingBindingStore(backend).Get(11));
+        Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles([11]));
+        Assert.Equal(1, loopback.RequestCount);
+    }
+
+    [Theory]
+    [InlineData("\"00\"")]
+    [InlineData("\"+1\"")]
+    [InlineData("-0")]
+    [InlineData("1.0")]
+    [InlineData("-5")]
+    [InlineData("9223372036854775808")]
+    public async Task ReadOnlyDiscoveryRejectsNonCanonicalOrUnsupportedChannelIdentity(string rawId)
+    {
+        loopback.OnRequest = _ => Task.FromResult(LoopbackResponse.Json(
+            "{\"channels\":[{\"objid\":" + rawId + ",\"name\":\"Synthetic channel\",\"unit\":\"%\"}]}"));
+        var worker = NewWorker(true);
+        worker.AdmissionOverride = (_, _) => (plan, "fixture-only-capacity-plan");
+        var job = QueueDirect(worker, 11);
+
+        Assert.True(await worker.RunOneAsync(CancellationToken.None));
+
+        Assert.NotEqual("completed", worker.Read(job.JobId)!.Status);
+        Assert.Empty(worker.Read(job.JobId)!.Channels);
+        Assert.Null(new PrtgTrustedSamplingBindingStore(backend).Get(11));
+        Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles([11]));
+    }
+
     [Fact]
     public async Task WorkerRechecksMaintainRoleBeforeAndAfterGet()
     {

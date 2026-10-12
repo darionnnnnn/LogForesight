@@ -240,7 +240,7 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryHostedService : Backgroun
         foreach (var row in rows.EnumerateArray())
         {
             if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("objid", out var idToken) ||
-                !TryPositiveInt64(idToken, out var id) || !seen.Add(id) ||
+                !TryChannelId(idToken, out var id) || !seen.Add(id) ||
                 !row.TryGetProperty("name", out var captionToken) || captionToken.ValueKind != JsonValueKind.String)
                 throw new InvalidDataException("channel-list-row-invalid");
             var caption = captionToken.GetString()!;
@@ -260,11 +260,11 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryHostedService : Backgroun
         return output;
     }
 
-    private static bool TryPositiveInt64(JsonElement token, out long value)
+    private static bool TryChannelId(JsonElement token, out long value)
     {
         value = 0;
-        if (token.ValueKind == JsonValueKind.Number) return token.TryGetInt64(out value) && value > 0;
-        return token.ValueKind == JsonValueKind.String && long.TryParse(token.GetString(), NumberStyles.None,
-            CultureInfo.InvariantCulture, out value) && value > 0;
+        if (token.ValueKind is not (JsonValueKind.Number or JsonValueKind.String)) return false;
+        var text = token.ValueKind == JsonValueKind.String ? token.GetString() : token.GetRawText();
+        return PrtgChannelIdPolicy.TryParseCanonical(text, out value);
     }
 }
