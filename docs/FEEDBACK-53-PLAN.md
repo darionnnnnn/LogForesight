@@ -2,7 +2,7 @@
 
 > 2026-10-07 使用者更新驗收方式：不直接在實際現場環境執行驗收；必要來源／硬體／provider／版本事實只透過環境探測取得。功能、邊界、復原及容量在受控隔離環境，結合同版探測成本與來源 fixture 驗收；實際 SQL、SMTP 協定與收件匣指本輪隔離測試端。不得因此放寬既定時限、25%餘裕、3000／15000／180日負載或角色／版本守門，也不冒稱現場投遞／真實事故成效。以下歷史提及現場直接驗收的執行方式由本決策取代，未齊來源事實仍保留待探測。
 
-> 狀態：必要程式子項已完成，整輪驗收中（2026-10-12 對碼；2026-10-03 授權開工；2026-10-04 已依使用者指示停用 AGY）。採 §16 全作業驗收及 §17 修正後契約；CPU／memory 預設提示及試算後啟用、每日主機日／合格父紀錄、磁碟 7 日內降到 20% 分支皆已定案。由主模型評估 gpt-6-luna high／medium／low 分段實作，主代理独立核對與驗收。來源兼容與資源前提未核實前不越過相依門檻；全部必要作業各自通過才可結案。
+> 狀態：探測後補強規劃中，本次暫停實作（2026-10-12 新探測核對；2026-10-03 授權開工；2026-10-04 已依使用者指示停用 AGY）。採 §16 全作業驗收及 §17 修正後契約；CPU／memory 預設提示及試算後啟用、每日主機日／合格父紀錄、磁碟 7 日內降到 20% 分支皆已定案。由主模型評估 gpt-6-luna high／medium／low 分段實作，主代理独立核對與驗收。來源兼容與資源前提未核實前不越過相依門檻；全部必要作業各自通過才可結案。
 > 規劃起始核對基準：`dev`／`beda825b3dadbba7c6936f20acdf9dc731ae26ec`；原規劃起點為 `feature/prtg-feedback-52`／`8db15b5`。工作區僅有既存未追蹤 `artifacts/`，保護不改；不讀 `docs/archive/`。部署版本仍須現場確認。
 > 承接：[第 52 輪第二輪 PLAN](FEEDBACK-52-ROUND2-PLAN.md) 的有效 NetIQ 契約、原需求 ID、E0–E4 與未通過門檻。此文件是下一輪有效待辦入口，舊 PLAN 保留證據與決策歷程。
 
@@ -174,6 +174,95 @@ AC21／AC12 重播狀態的 case-only 授權缺漏已修正並通過 15 項受�
 | R13/R14 規則及校準 | SilentPresenceFormalConsumer／Daily→CoveredRuleEvaluator→CalibrationService／RuleAdmin | silent 原生 presence 與同引擎有界校準已接線；原生語意資格、全部規則固定母體驗收保留。 |
 | D1/A0 探測及自助文件 | PrtgProbeService／StorageEnvironmentProbe→ProbeDtos→管理頁→Verify-PrtgProbeEvidence.ps1；Help／SPEC／README | 工具與交付說明已實作；尚未收到當前 build 原生輸出，A0/N1 保留。 |
 | Q1–Q6 整體目標 | 以上正式鏈＋PrtgAcceptanceComparison／EffectivenessService | Q1 容量、Q2 強配對原生來源依據及 Q6 全面驗收仍開；Q4 跨主機日程式已驗，但原生來源門檻保留；Q3 保留獨立風險但沿用合格父紀錄，Q5 已統一工作治理而共同吞吐未裁定通過。 |
+
+
+### 5.6 2026-10-12 探測後重新規劃：活動 TODO 與驗收條件
+
+本節是最新活動清單，取代 §5.1「當時已確認缺漏為零」的現況解讀；原有已驗子项及五組整體門檻仍有效。使用者本次要求**先建立 TODO 與驗收條件，暫不接續實作**。以下十項都是未完成工作；其中明列新增相容性修正、交付補強、來源事實核對與既有整體驗收，不能將所有項目混稱「等待探測」，也不能將規劃寫成已完成。
+
+#### 輸入、事實與本次裁定
+
+基準：`feature/prtg-feedback-53`／`e3b1bdb2b18f30e0abe95a7b368348276231deae`；產品程式最後提交 `3d23c5bd`。使用者提供 `C:/Users/eldar/Claude/Project/LogForesight/docs/env/20261012.txt`，63,322 bytes，SHA256 `6847d31ab7e953c1acf25acf2c15cb9e0d962365bce89ba9f37126709943a935`；完整探測開始 08:32:55 +08:00。原始檔有內部位址／名稱，僅在本機核對，不將全文納入 Git；本節只記去識別事實。小範圍資料流會寫入樣本資料，完整環境探測對 PRTG 為唯讀；兩者不可混称全部唯讀。
+
+| 觀測 | 已確認內容 | 尚不能作的裁定／安排 |
+|---|---|---|
+| 版本追溯 | 回報 `1.0.53.2+332e879117ec9e0c555f8747a14fff432f5be856`，設定 `legacy`；與目前分支 commit 不同 | 相同版本號不足以證明同版程式；也不能僅憑尾碼推定整份程式必然為舊版。E01 查建置／部署來源，不改報表尾碼來偽造對齊 |
+| 少量取數 | 一顆 CPU sensor 昨日 24 hourly 全部有效且落庫／讀回成功 | 只證明這個目前對應樣本；不授權昨日歷史歸戶、全站規則／期間／排程 |
+| 全站 inventory | PRTG 24.1.92.1554+；6,576 devices／43,762 sensors／33 types | 全站數不是本服務 3,000 主機的業務 sensor 數；取數範圍、正式集合與型別密度須另核，不將全部 43,762 顆自動加入業務 scope |
+| 快照 batch100 | 要求／回應 100/100，exact=true，runtime shape compatible；28,314 bytes、URL 1,926 bytes、一次耗時 8,540 ms | 可作此來源形狀觀測；不是 15,000 targets 的 p95、併發／餘裕或正式 profile 通過。E06 收入同形成本表 |
+| 原生主通道 | CPU／memory／disk／ping 的 property ID=0 且與 raw channels 相符；所有 snapshot 未返回 primarychannel | 既有 property 核驗路徑保留；不放寬成 caption 猜主通道。離線工具的 diagnostic complete=0/5 是缺 snapshot 對照，不代表四個 property 查詢全失敗 |
+| Traffic | raw history `raw-channel-source-shape-or-transport-invalid`；主通道 `invalid_property_value`；channels 有 `-1` traffic total | 程式已查到排除負數 ID 的相容性缺漏；未有原始 XML／property 值，不能定論此次兩種錯誤的唯一根因。E02 補合法識別及錯誤分類，不新增流量風險規則 |
+| 時間與語意 | source timezone／locale、raw timestamp basis 未知；CPU raw 首筆 OA 對應 2026-10-10 16:00:31，query wall start 是 2026-10-11 00:00 | 時間差是核對線索，不以服務主機 +08:00／HTTP Date 推定 PRTG 全部端點基準。memory 主通道為 available percent，disk caption 部分去識別；明確 binding 與時間 proof 仍必要 |
+| 本服務儲存／資源 | SQLite 3.41.2、EF Sqlite、保留設定 180 日；24 logical processors、runtime GC 可用記憶體約 31.68 GiB；DB 約 156.21 MiB，資料卷可用約 168.69 GiB | runtime GC 數字不是實體 RAM／PRTG 伺服器資源證明；SQL host 不適用。不得再只因沒有 SQL Server 就說現場 provider 未知。現場 SQLite 路徑要完整驗，既有 SQL Server 支援門檻仍保留 |
+| 範圍／守門 | 現行 scope 20 devices（18 對應、2 衝突），鏡像 42,998 sensors、範圍外 42,872；守門命中 3 devices／6 CPU-memory sensors，未納守門清單 | 衝突不自動歸戶，巨大範圍外鏡像不直接清除；守門缺資料不能默認安全。依既有明確覆寫流程核對，守門取數不得流入業務風險 |
+| 分頁／相依 | devices／sensors 超界夾末頁；messages 可分頁；dependency 700 樣本後逾時，含預設父依賴 | `PrtgTablePager` 已有 newInPage=0 保險絲，不重開未實作 TODO；用此變體補來源回歸。700/700 不是全站人工拓撲或完整期間 coverage |
+
+本次只執行既有離線核對工具：抽取唯一 `BEGIN_PRTG_COMPATIBILITY_JSON` 內容，以 `scripts/Verify-PrtgProbeEvidence.ps1 -ExpectedRevision e3b1bdb2b18f30e0abe95a7b368348276231deae` 得 `FAIL (RevisionMismatch)`／exit 1；另以**回報尾碼作形狀檢查**得到 `INCOMPLETE`／exit 2（不是接受舊尾碼為最新版本）。抽取 JSON SHA256 `1aeec164691038d029c42673bd54fca56e5e7bd9aa2b3582c65fbb0f47344ecc`。沒有執行來源連線、隔離整體验收或改應用程式。
+
+#### 批次、相依與客觀完成條件
+
+每項先固定輸入、預期、反例、母體及環境，再以最小重現→修正→相同反例→受影響驗收交付。若來源觀測不足，既有證據／官方規格可先完成實作與隔離契約驗收；缺現場資訊列 E04 有界探測交付，不能留下空程式。每段在後續獲准開工、完成相依改動並通過後，commit＋push 本輪分支，確認遠端 SHA；本次只交規劃。
+
+- [ ] **E01／部署與建置可追溯性（N1／A0；AC01、AC20、AC22）**
+  - 工作：追查為何新版本號配舊尾碼，包含 Git source、MSBuild revision override、清理／publish、Web/Core 組件與部署啟動路徑；必要時補建置 manifest／部署核對與版本不符提示。`legacy` 需說清是缺設定修訂證據，不能直接當不存在設定。禁止憑空修尾碼、以一樣版本號接受混版或自動改現場設定。
+  - 輸入→輸出／使用端：本次回報＋目前 commit／組件→具 SHA 的建置／部署識別→probe、回填成本預覽、驗收 consumer、管理者自助核對。
+  - 通過：乾淨隔離建置的 source commit、manifest、執行中 Web/Core 與探測一致；舊尾碼、混版 DLL、未核實 source、舊預覽 token 四種反例都不授權最新驗收／全量啟動，且顯示實際識別與下一步；舊檔不被自動覆寫。此段先完成可重現工具鏈，最新現場來源資格仍須同版探測。
+  - 相依：無；最先做。狀態：追溯原因未定，部署／交付補強待做。
+
+- [ ] **E02／合法頻道識別與 traffic 查證相容性（N3；AC05、AC07、AC08、AC13）**
+  - 工作：核對 `PrtgHistoricXmlReader.cs:60–69`、`PrtgCompatibilityProbe.cs:1179–1195`、TrustedSampling property/binding/snapshot 與 `Verify-PrtgProbeEvidence.ps1` 的所有識別邊界。不能把 sensor object ID 與 channel ID 混用；保留 PRTG 合法特殊頻道 ID，區分合計、Downtime、內部 coverage/error。Paessler [Channel Settings](https://www.paessler.com/manuals/prtg/channel_settings) 明列 `-1` traffic sum、`-4` Downtime、`-2/-3` internal，據此修正非負 ID 假設；traffic 原始值需區分 volume 與 speed；相同 channel ID 的不同量值不可混合、覆寫或一律判重複。原始 XML 缺失的格式是假設測例，須標官方／合成來源，不能冒稱現場原文。錯誤改成有界安全分類以取得下一次診斷。
+  - 通過：`0`、一般正 ID、合法 `-1` 合計能在允許用途保留識別；`-4` 保留身分但不得當 CPU/memory/disk 數值，`-2/-3` 不冒充業務量值；非法、overflow、canonical collision、真重複、caption／quantity 漂移、外 sensor、DTD、超量仍拒絕。同 sensor 同 ID 的 speed/volume 分開查證，缺单位／尺度不造結果；主通道核驗與 binding/profile consumer 结果一致。四個現有非 traffic property 正例保持通過；traffic 僅查證用途、無正式風險／派工／通知。現場 traffic raw 實際根因另由有界重探確認。
+  - 相依：實作不等 E01 現場結果；正式來源裁定接 E01、E04。狀態：非負 channel 假設已確認需修，traffic 格式完整根因待核。
+
+- [ ] **E03／時基、單位及正式資格的可操作核驗（N3／M1；AC05、AC06、AC07、AC10、AC11）**
+  - 工作：沿用管理者明確 channel／unit／scale／方向及 raw/source/analysis 時區設定→原生 probe→正式 proof 的既定流程，納入本次 available-memory、disk 剩餘百分比、CPU／ping 實際去識別樣本。核對 query wall、OA raw、snapshot lastcheck、messages datetime 是否各自有證據；來源 locale 未知不影響可確認的 invariant raw，但不得猜解在地時間文字。現有主通道 property 方案不被缺 snapshot 欄位一律封死，也不得免除核验。
+  - 通過：可信設定＋核對可發布對應 profile 並被正式採樣／期間引擎消費；memory available 25.0834% 精確轉 used 74.9166%，disk 90.0887% 保留剩餘方向，不能當已用。錯時區、UTC 假設、缺 unit／scale／主通道、改 generation、陳舊 proof 均保持等待且無正式副作用；DST 重複／缺小時、午夜較後一小時歸日及舊無時區歷史不追認全過。規則固定兩完成小時／coverage、28 日準備度與 7 日20%分支保持原值；CPU/memory 預設提示，不自動提升。
+  - 相依：E02 的共用解析與 E04 證據契約；固定邏輯可先在隔離資料驗。狀態：現有流程已實作，來源變體與完整 consumer 驗收未完成，發現接線缺漏須本輪修。
+
+- [ ] **E04／下一次環境探測的完整交付（A0／N1–N3；AC08、AC22）**
+  - 工作：補有界、去識別且有 provenance 的 build／設定修訂、保存之時區 authority、正式 scope 各階段計數與 readiness 摘要。現有 `PrtgProbeService.cs` 的 context 及 `PrtgCompatibilityProbe.cs` 輸出有硬編碼 unknown；沒有資料仍未知，有已保存且可核對的資料不能永遠不交付。traffic 加原始回應安全形狀／錯誤類別、合法 channel／quantity ID、HTTP與quota等待耗時；guard 狀態與正式 scope 分開。另沿用既有 NetIQ metadata probe 補昨日回執種類／筆數／合格父與待補原因，以及有效 AI 設定的小範圍兼容／成本結果；不匯出原始敏感日誌或 prompt，不以設定存在冒稱呼叫成功。現場只執行探測，不做壓測、故障注入或派工驗收。
+  - 通過：目前表單／已保存來源、取消／截斷／逾時、無設定／有效已核設定、版本不符均能完整匯出並由離線 consumer 核對；64 KiB、depth32、白名單及 marker 防偽不放寬，無憑證／任意名稱洩漏。每個未知有原因及具體缺項，傳入 authority 不等於新授權；缺主通道快照與 property 成功分開呈現。輸出各欄在正式 consumer 或明確人工核對流程有去向，不能只印到 log。必要診斷可重試且共用預算／截止，無全站歷史擴量；取消≤5秒、單 HTTP≤30秒及既有整輪截止不變。
+  - 相依：E01、E02 的新增契約；可與 E03 隔離核對並行。狀態：現有探測可用，缺項診斷與已知本機摘要交付待補強。
+
+- [ ] **E05／衝突、範圍差額與資源守門（N2／N5；AC02、AC03、AC04、AC17、AC21）**
+  - 工作：用本次 20 台／2 衝突、巨大範圍外鏡像及 3 台守門未納入的形狀，核對對應→預覽→保存→同步→採樣→守門。既有「自動偵測並填入」是管理者明確保存，不由探測自動更改；補缺項／陳舊原因及到設定的入口，驗守門失聯不當安全。實際業務 host/sensor 密度需有界計數，不把全站量當業務量。
+  - 通過：兩個衝突不進正式業務風險；守門6sensor保存後下一輪只納明確guard用途，業務 finding／案件／通知副作用0；未保存／沒資料明示守門未就緒。scope縮小、鏡像差額、未完成同步、守門保留不誤刪正式／案件證據；readonly/case-only不可改。末頁整數倍重讀最多一個無新鍵尾頁即收斂；messages 用含時間列鍵及完整前導／期間覆蓋，700依赖樣本不授權拓撲。預覽、保存及實際作用集合逐 ID 一致。
+  - 相依：E04 摘要契約；使用既有 scope/guard/pager，不重做已完成保險絲。狀態：現場設定未就緒；完整操作／邊界驗收與必要指引補強待做。
+
+- [ ] **E06／真實來源成本進入共同排程（R05／N6；AC05、AC09、AC16、AC17）**
+  - 工作：將 batch100 的 8.540秒／28,314bytes 與各 endpoint 的已觀測成本納入既有成本預覽／共同 admission，分開 transport、quota等待、profile核驗／刷新、historic初始化及守門。缺項加 E04 同形小探測；不直接擴成現場15,000壓測。原生快照不含主通道欄位，成本不可只算150個batch而漏 property／profile刷新；profile目前23小時刷新、24小時資格期限，排程需避免同批期限尖峰。
+  - 事前核算：15,000／100=150批；用單次8.540秒估串行約1,281秒，理想在途4的transport總工作下界约320.25秒；兩者只定位成本，均非 p95／容量通過。若15,000全部需要5顆一組、2+2n的profile核驗，一輪36,000個Table-budget請求，單2/秒配額基線5小時，需攤開刷新與留日常額度；這是全qualified最壞形狀，不把 traffic 等非正式profile也算成已選資格。historic仍5/60（[Paessler Historic Data](https://www.paessler.com/manuals/prtg/historic-data)），初始化72小時獨立列帳。table2/秒、在途4是本應用既定保守契約，不能冒稱官方額度。
+  - 通過：成本預覽與實際請求種類／數量／scope／版本一致；超窗口、不明成本或不夠保留額度先拒擴量並顯示原因，不能只調大併發或timeout。15分鐘一輪≤10分鐘／sample age p95≤30分鐘；5分鐘一輪≤3分鐘／age≤10分鐘；≥25%時間餘裕、table2/秒、在途4、historic5/60不變。正常／10%timeout＋10%unknown／全來源拒絕、長回填＋profile刷新＋NetIQ＋AI＋查詢中，每類已接受工作有限期限，來源失敗不阻NetIQ，停止不開新請求。先過最小成本反例再進E07全負載。
+  - 相依：E02–E04 的同形契約；成本算術前移，不等全部瀏覽器驗收。狀態：同形一次觀測已取得，完整共同負載成本及吞吐未通過。
+
+- [ ] **E07／SQLite 指定部署、完整容量及恢復（N6／M3–M5；AC18、AC19、AC20）**
+  - 工作：按已知SQLiteprovider建立自有隔離資料根／備份副本，先核空間、WAL/checkpoint、鎖等待及高水位成本，再實跑固定3,000 hosts／15,000 sensors／180日64,800,000hourly形狀、三對六輪NetIQ基準／合併矩陣。SQL Server 相容及其原定門檻另保留，不能用SQL小測替代SQLite指定部署，也不自動要求現場遷移。隔離硬體／provider／檔案系統與探測差异列明。
+  - 資源前提：現場卷total約476.82GiB、available約168.69GiB；依既有generator的25%total空間保留條件，DB＋副本可用預算约49.49GiB，不能宣稱足够。先以實際單窗口成本封存完整DB／WAL／副本／匯出／保留峰值估算，驗收全量需隔離卷實際容納同形高水位；小樣本線性估算僅admission，不算完整容量PASS。容量不足依既有明示拒絕／恢復策略，調資源或方案須先討論，不能縮原負載／保留期。
+  - 通過：完整分母與真實I/O；三對六輪各NetIQ p95增量≤10%、3,000主機日warm≤10分鐘且日窗口75%內；兩路由各100成功、每對相對p95≤10%、絕對≤2秒。PRTG額外常駐≤1GiB、高水位3輪留存增長≤5%；停寫2個採樣間隔再恢復，4間隔內清積壓，已耐久接受丟失0、重複sample/finding/member0。備份還原、升級／回退、双程序、提交未知、損壞journal、容量滿後續跑及180日保留全部逐值驗；舊／新RunId allocator版本不得混寫，停全部舊writer後升退版。未知來源或profile不能用假proof通過工具preflight。
+  - 相依：E06 admission及E01–E03版本／資格；可先完成隔離資源準備與最小元件測例。狀態：provider已知，全量／長期／恢復門檻未通過。
+
+- [ ] **E08／端到端全作業與使用者矩陣（N4–N5／M6；AC01–AC22、U53-01–10、Q1–Q6）**
+  - 工作：建立逐子契約覆蓋表；既有相同程式／環境有效證據可沿用，缺測或變更才補。用隔離Web、真實SQLite／必要SQLServer、SMTP服務及收件匣、受控AI故障完成完整動線；來源fixture是本次去識別資料／官方格式／受控故障，三者分別標記。真實AI兼容／小成本事實缺項只加探測，stub不冒稱實際模型通過。
+  - 通過：新站設定→明確核驗→就緒／等待→NetIQ每日父紀錄→PRTG期間判定→AI→同版報告／案件／交辦回覆→通知重試／實收→恢復／再發全程可操作；不合格父不正式發布、成功零事件可由PRTG合法理由提高到既定級別，同日弱佐證不升級、兩來源取較高級不相加。兩連續完成小時及全部8規則族固定222正反例／28日／7日20%精確結果全過。六角色、直接URL/API、子路徑、過期設定／雙管理者、晚AI、取消／重啟、停用PRTG、local-only及NetIQ無PRTG逐项無越權。SMTP5分鐘契約、意圖去重與實際收件匣分列；一源壞不誤稱全部完成。現有236受影響PASS與6角色子集合不當完整矩陣PASS，舊完整回歸7751/1/10不得改稱當前全綠。
+  - 相依：E02–E05的受影響相容性；與E07隔離準備並行，全負載／來源資格的宣告各自裁定。狀態：完整固定矩陣與受影響全量回歸未完成。
+
+- [ ] **E09／實用性與四基準增益（N7／M6；AC10、AC11、AC13、AC14、AC15）**
+  - 工作：固定獨立incident／ticket母體、真值與可見時間，不從系統finding反向挑母體；比較NetIQ、原生PRTG、簡單聯集、合併。本次probe只是來源事實，不能作事故／處置成效。既有合成combined 9TP/1FP/8TN/1FN對union 10TP/0FP/9TN/0FN沒有額外增益，保留此結果並定位融合／語意／證據對齊差異，必要修正本輪完成。
+  - 通過：§16固定各族≥5正例／≥20負例、當時可得證據、正確資源／原因／可採取行動、無未來資料；強／弱對照及≥1強配對實體提前增益依原門檻裁定；查證者實際操作時間、錯誤/漏報、失敗／排除分母及四基準完整留存。合成受控重播可證限定情境功能，但不能當獨立真實事故或實際操作者成本；combined未勝union不得宣稱1＋1＞2。缺母體／查證事實明列所需資料，可交付有界去識別取得方式，不能讓環境probe捏造真值、等上線出事才驗或默默降低原门檻。
+  - 相依：E03、E08同版可信輸出；固定case/資料取得契約可先準備。狀態：限定情境重播及獨立成效門檻未完成，非只等技術探測。
+
+- [ ] **E10／完整性回查與獨立體檢（N8／M7；AC01–AC22、Q1–Q6、原輪有效子條款）**
+  - 工作：從原始起點到最終版全部差異逐需求核對（含第52輪有效範圍、本次新增E01–E09、腳本／文件／consumer），記實作與測試模型、程式／依賴／環境SHA及全量結果。每個TODO移除須有真實呼叫端／結果／證據；只有symbol存在不算完成。
+  - 通過：原固定AC與critical cases不變，每項結果／命令／母體／版本／驗收人齊全，已知缺陷與必要未測為0；所有相依門檻AND通過，適合最終改動的全量回歸完成。依 `project-closeout`「體檢模型須不同於受檢範圍內所有實際實作模型」，可信身分可確認且符合才獨立體檢；Luna實作者不能以換effort代替，Root身分不猜。若尚無合格模型先準備交接，不能把準備或本次規劃當N8PASS。最終PLAN／AC／現況規格／部署限制同步，分支最後SHA與遠端一致。
+  - 相依：E01–E09實作與必要門檻。狀態：完整性回查、合格獨立體檢及最終結案未完成。
+
+建議順序：E01＋E02先解除已知交付／解析缺漏；E04補可回傳資訊、E03核語意；**E06成本與E07資源預檢同時前移**，不等所有功能做完才發現容量不可行；E05、E08依受影響契約逐段驗；E09固定母體可提前準備；最後E10。主模型負責規劃及裁定；日後委派仍僅gpt-6-luna low／medium／high，不用AGY；本次沒有啟動實作代理。
+
+#### 下一次現場資料取得與結案邊界
+
+需要回傳的資訊只透過環境探測：實際source commit／manifest與組件識別、設定修訂及作用清單分母、明確raw/source/analysis時基與locale來源、CPU/memory/disk單位尺度／方向核驗、traffic合法頻道與兩種錯誤的安全形狀、守門清單/缺資料、同形snapshot及profile請求成本、NetIQ昨日回執與合格父摘要、AI實際小樣本兼容與成本。先完成相应程式和離線consumer再交探測版本；不要求現場提供帳密、不直接在現場跑容量／SMTP投遞／故障驗收、不自動啟用正式規則。
+
+本次資料可作**有版本限制的來源觀測與回歸輸入**。E01未對齊之前，不可升格為最新程式的来源／容量驗收；E02／E04待補強未實作，其餘各項的既有門檻同樣未過。五組 §5.2 保留未勾選，不用10項完成率替代整體AND判定；本節所有TODO目前未勾選，本次停在規劃。
 
 
 ## 6. 第 52 輪移交完整性

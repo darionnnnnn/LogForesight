@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "b2d4432826ab3f8d1209110f11e5da03a3f97eda662d42da40409820d195c95d",
+  "plan_sha256": "b02a9f74f66366eb2c0721166b0a02ef59a1f2173e5318b71c37fb6976b5cdd8",
   "date": "2026-10-12",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "AC01–AC22、Q1–Q6、R01–R15、有效舊需求全數通過",
@@ -12041,5 +12041,373 @@
     "map_sha256": "217a2c00a90d7604e1601a3f4bfd9afdf5cef94051b7ec56b610dd8c8c9be09d",
     "meaning": "Existence/symbol/SHA mapping with Root independently verified workflow stage. No semantic full-scope N8 or whole-gate pass claim.",
     "wholeRoundAccepted": false
+  },
+  "probe_followup_plan_20261012": {
+    "source_of_truth": "FEEDBACK-53-PLAN.md §5.6; original §§15–17 and fixed acceptance contracts remain binding",
+    "user_instruction": "probe-informed TODO and acceptance planning only; do not continue implementation",
+    "code_baseline_commit": "e3b1bdb2b18f30e0abe95a7b368348276231deae",
+    "latest_product_code_commit": "3d23c5bd7f911c95ae774b24608fe8b22b5dd5f9",
+    "reported_build_version": "1.0.53.2+332e879117ec9e0c555f8747a14fff432f5be856",
+    "reported_settings_revision": "legacy",
+    "source_report_path": "C:/Users/eldar/Claude/Project/LogForesight/docs/env/20261012.txt",
+    "source_report_bytes": 63322,
+    "source_report_sha256": "6847d31ab7e953c1acf25acf2c15cb9e0d962365bce89ba9f37126709943a935",
+    "raw_report_committed": false,
+    "compatibility_json_sha256": "1aeec164691038d029c42673bd54fca56e5e7bd9aa2b3582c65fbb0f47344ecc",
+    "same_version_native_probe_accepted": false,
+    "offline_checks": [
+      {
+        "expected_revision": "e3b1bdb2b18f30e0abe95a7b368348276231deae",
+        "result": "FAIL (RevisionMismatch)",
+        "exit_code": 1
+      },
+      {
+        "expected_revision": "332e879117ec9e0c555f8747a14fff432f5be856",
+        "purpose": "reported-revision shape inspection only; not accepting as latest source",
+        "result": "INCOMPLETE",
+        "exit_code": 2
+      }
+    ],
+    "observed_facts": {
+      "provider": "Sqlite",
+      "ef_core_provider": "Microsoft.EntityFrameworkCore.Sqlite",
+      "engine_version": "3.41.2",
+      "source_prtg_version": "24.1.92.1554+",
+      "global_devices": 6576,
+      "global_sensors": 43762,
+      "business_scope_devices": 20,
+      "mapping_conflicts": 2,
+      "guard_devices_missing_from_scope": 3,
+      "guard_cpu_memory_sensor_count": 6,
+      "batch100_exact_observed": true,
+      "batch100_elapsed_ms_single_observation": 8540,
+      "batch100_response_bytes": 28314,
+      "volume_total_bytes": 511986102272,
+      "volume_available_bytes": 181132120064,
+      "raw_timestamp_basis": "unknown",
+      "formal_profile_authorized": false
+    },
+    "todo_count": 10,
+    "tasks": [
+      {
+        "id": "E01",
+        "title": "部署與建置可追溯性",
+        "status": "planned-not-started",
+        "category": "deployment-provenance-and-handoff",
+        "current_state": "追溯未定，交付補強待做",
+        "gates": [
+          "N1",
+          "A0"
+        ],
+        "acceptance_ids": [
+          "AC01",
+          "AC20",
+          "AC22"
+        ],
+        "depends_on": [],
+        "expected_results": "乾淨隔離建置的 source commit、manifest、執行中 Web/Core 與探測一致；舊尾碼、混版 DLL、未核實 source、舊預覽 token 四種反例都不授權最新驗收／全量啟動，且顯示實際識別與下一步；舊檔不被自動覆寫。此段先完成可重現工具鏈，最新現場來源資格仍須同版探測。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E01"
+      },
+      {
+        "id": "E02",
+        "title": "合法頻道識別與 traffic 查證相容性",
+        "status": "planned-not-started",
+        "category": "confirmed-compatibility-development-gap",
+        "current_state": "非負頻道假設缺漏成立，traffic完整根因未定",
+        "gates": [
+          "N3"
+        ],
+        "acceptance_ids": [
+          "AC05",
+          "AC07",
+          "AC08",
+          "AC13"
+        ],
+        "depends_on": [],
+        "expected_results": "`0`、一般正 ID、合法 `-1` 合計能在允許用途保留識別；`-4` 保留身分但不得當 CPU/memory/disk 數值，`-2/-3` 不冒充業務量值；非法、overflow、canonical collision、真重複、caption／quantity 漂移、外 sensor、DTD、超量仍拒絕。同 sensor 同 ID 的 speed/volume 分開查證，缺单位／尺度不造結果；主通道核驗與 binding/profile consumer 结果一致。四個現有非 traffic property 正例保持通過；traffic 僅查證用途、無正式風險／派工／通知。現場 traffic raw 實際根因另由有界重探確認。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E02"
+      },
+      {
+        "id": "E03",
+        "title": "時基、單位及正式資格的可操作核驗",
+        "status": "planned-not-started",
+        "category": "native-qualification-and-consumer-acceptance",
+        "current_state": "流程既有，來源變體及完整驗收待完成",
+        "gates": [
+          "N3",
+          "M1"
+        ],
+        "acceptance_ids": [
+          "AC05",
+          "AC06",
+          "AC07",
+          "AC10",
+          "AC11"
+        ],
+        "depends_on": [
+          "E02",
+          "E04"
+        ],
+        "expected_results": "可信設定＋核對可發布對應 profile 並被正式採樣／期間引擎消費；memory available 25.0834% 精確轉 used 74.9166%，disk 90.0887% 保留剩餘方向，不能當已用。錯時區、UTC 假設、缺 unit／scale／主通道、改 generation、陳舊 proof 均保持等待且無正式副作用；DST 重複／缺小時、午夜較後一小時歸日及舊無時區歷史不追認全過。規則固定兩完成小時／coverage、28 日準備度與 7 日20%分支保持原值；CPU/memory 預設提示，不自動提升。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E03"
+      },
+      {
+        "id": "E04",
+        "title": "下一次環境探測的完整交付",
+        "status": "planned-not-started",
+        "category": "probe-delivery-development-strengthening",
+        "current_state": "有界摘要及缺項診斷待補強",
+        "gates": [
+          "A0",
+          "N1",
+          "N2",
+          "N3"
+        ],
+        "acceptance_ids": [
+          "AC08",
+          "AC22"
+        ],
+        "depends_on": [
+          "E01",
+          "E02"
+        ],
+        "expected_results": "目前表單／已保存來源、取消／截斷／逾時、無設定／有效已核設定、版本不符均能完整匯出並由離線 consumer 核對；64 KiB、depth32、白名單及 marker 防偽不放寬，無憑證／任意名稱洩漏。每個未知有原因及具體缺項，傳入 authority 不等於新授權；缺主通道快照與 property 成功分開呈現。輸出各欄在正式 consumer 或明確人工核對流程有去向，不能只印到 log。必要診斷可重試且共用預算／截止，無全站歷史擴量；取消≤5秒、單 HTTP≤30秒及既有整輪截止不變。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E04"
+      },
+      {
+        "id": "E05",
+        "title": "衝突、範圍差額與資源守門",
+        "status": "planned-not-started",
+        "category": "configuration-and-operational-acceptance",
+        "current_state": "現場守門未就緒，完整邊界驗收待完成",
+        "gates": [
+          "N2",
+          "N5"
+        ],
+        "acceptance_ids": [
+          "AC02",
+          "AC03",
+          "AC04",
+          "AC17",
+          "AC21"
+        ],
+        "depends_on": [
+          "E04"
+        ],
+        "expected_results": "兩個衝突不進正式業務風險；守門6sensor保存後下一輪只納明確guard用途，業務 finding／案件／通知副作用0；未保存／沒資料明示守門未就緒。scope縮小、鏡像差額、未完成同步、守門保留不誤刪正式／案件證據；readonly/case-only不可改。末頁整數倍重讀最多一個無新鍵尾頁即收斂；messages 用含時間列鍵及完整前導／期間覆蓋，700依赖樣本不授權拓撲。預覽、保存及實際作用集合逐 ID 一致。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E05"
+      },
+      {
+        "id": "E06",
+        "title": "真實來源成本進入共同排程",
+        "status": "planned-not-started",
+        "category": "joint-cost-and-admission-acceptance",
+        "current_state": "一次形狀觀測已取得，完整成本與吞吐未通過",
+        "gates": [
+          "R05",
+          "N6"
+        ],
+        "acceptance_ids": [
+          "AC05",
+          "AC09",
+          "AC16",
+          "AC17"
+        ],
+        "depends_on": [
+          "E02",
+          "E03",
+          "E04"
+        ],
+        "expected_results": "成本預覽與實際請求種類／數量／scope／版本一致；超窗口、不明成本或不夠保留額度先拒擴量並顯示原因，不能只調大併發或timeout。15分鐘一輪≤10分鐘／sample age p95≤30分鐘；5分鐘一輪≤3分鐘／age≤10分鐘；≥25%時間餘裕、table2/秒、在途4、historic5/60不變。正常／10%timeout＋10%unknown／全來源拒絕、長回填＋profile刷新＋NetIQ＋AI＋查詢中，每類已接受工作有限期限，來源失敗不阻NetIQ，停止不開新請求。先過最小成本反例再進E07全負載。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E06"
+      },
+      {
+        "id": "E07",
+        "title": "SQLite 指定部署、完整容量及恢復",
+        "status": "planned-not-started",
+        "category": "full-provider-capacity-recovery-acceptance",
+        "current_state": "provider已知，固定全負載與恢復未通過",
+        "gates": [
+          "N6",
+          "M3",
+          "M4",
+          "M5"
+        ],
+        "acceptance_ids": [
+          "AC18",
+          "AC19",
+          "AC20"
+        ],
+        "depends_on": [
+          "E01",
+          "E02",
+          "E03",
+          "E06"
+        ],
+        "expected_results": "完整分母與真實I/O；三對六輪各NetIQ p95增量≤10%、3,000主機日warm≤10分鐘且日窗口75%內；兩路由各100成功、每對相對p95≤10%、絕對≤2秒。PRTG額外常駐≤1GiB、高水位3輪留存增長≤5%；停寫2個採樣間隔再恢復，4間隔內清積壓，已耐久接受丟失0、重複sample/finding/member0。備份還原、升級／回退、双程序、提交未知、損壞journal、容量滿後續跑及180日保留全部逐值驗；舊／新RunId allocator版本不得混寫，停全部舊writer後升退版。未知來源或profile不能用假proof通過工具preflight。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E07"
+      },
+      {
+        "id": "E08",
+        "title": "端到端全作業與使用者矩陣",
+        "status": "planned-not-started",
+        "category": "whole-workflow-browser-and-regression-acceptance",
+        "current_state": "現有局部證據有效，完整矩陣未完成",
+        "gates": [
+          "N4",
+          "N5",
+          "M6"
+        ],
+        "acceptance_ids": [
+          "AC01",
+          "AC02",
+          "AC03",
+          "AC04",
+          "AC05",
+          "AC06",
+          "AC07",
+          "AC08",
+          "AC09",
+          "AC10",
+          "AC11",
+          "AC12",
+          "AC13",
+          "AC14",
+          "AC15",
+          "AC16",
+          "AC17",
+          "AC18",
+          "AC19",
+          "AC20",
+          "AC21",
+          "AC22"
+        ],
+        "depends_on": [
+          "E02",
+          "E03",
+          "E04",
+          "E05"
+        ],
+        "expected_results": "新站設定→明確核驗→就緒／等待→NetIQ每日父紀錄→PRTG期間判定→AI→同版報告／案件／交辦回覆→通知重試／實收→恢復／再發全程可操作；不合格父不正式發布、成功零事件可由PRTG合法理由提高到既定級別，同日弱佐證不升級、兩來源取較高級不相加。兩連續完成小時及全部8規則族固定222正反例／28日／7日20%精確結果全過。六角色、直接URL/API、子路徑、過期設定／雙管理者、晚AI、取消／重啟、停用PRTG、local-only及NetIQ無PRTG逐项無越權。SMTP5分鐘契約、意圖去重與實際收件匣分列；一源壞不誤稱全部完成。現有236受影響PASS與6角色子集合不當完整矩陣PASS，舊完整回歸7751/1/10不得改稱當前全綠。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E08"
+      },
+      {
+        "id": "E09",
+        "title": "實用性與四基準增益",
+        "status": "planned-not-started",
+        "category": "usefulness-and-independent-outcome-acceptance",
+        "current_state": "重播／獨立成效仍未通過，非僅等環境探測",
+        "gates": [
+          "N7",
+          "M6"
+        ],
+        "acceptance_ids": [
+          "AC10",
+          "AC11",
+          "AC13",
+          "AC14",
+          "AC15"
+        ],
+        "depends_on": [
+          "E03",
+          "E08"
+        ],
+        "expected_results": "§16固定各族≥5正例／≥20負例、當時可得證據、正確資源／原因／可採取行動、無未來資料；強／弱對照及≥1強配對實體提前增益依原門檻裁定；查證者實際操作時間、錯誤/漏報、失敗／排除分母及四基準完整留存。合成受控重播可證限定情境功能，但不能當獨立真實事故或實際操作者成本；combined未勝union不得宣稱1＋1＞2。缺母體／查證事實明列所需資料，可交付有界去識別取得方式，不能讓環境probe捏造真值、等上線出事才驗或默默降低原门檻。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E09"
+      },
+      {
+        "id": "E10",
+        "title": "完整性回查與獨立體檢",
+        "status": "planned-not-started",
+        "category": "independent-review-and-closeout",
+        "current_state": "最終回查／合格不同模型體檢未完成",
+        "gates": [
+          "N8",
+          "M7"
+        ],
+        "acceptance_ids": [
+          "AC01",
+          "AC02",
+          "AC03",
+          "AC04",
+          "AC05",
+          "AC06",
+          "AC07",
+          "AC08",
+          "AC09",
+          "AC10",
+          "AC11",
+          "AC12",
+          "AC13",
+          "AC14",
+          "AC15",
+          "AC16",
+          "AC17",
+          "AC18",
+          "AC19",
+          "AC20",
+          "AC21",
+          "AC22"
+        ],
+        "depends_on": [
+          "E01",
+          "E02",
+          "E03",
+          "E04",
+          "E05",
+          "E06",
+          "E07",
+          "E08",
+          "E09"
+        ],
+        "expected_results": "原固定AC與critical cases不變，每項結果／命令／母體／版本／驗收人齊全，已知缺陷與必要未測為0；所有相依門檻AND通過，適合最終改動的全量回歸完成。依 `project-closeout`「體檢模型須不同於受檢範圍內所有實際實作模型」，可信身分可確認且符合才獨立體檢；Luna實作者不能以換effort代替，Root身分不猜。若尚無合格模型先準備交接，不能把準備或本次規劃當N8PASS。最終PLAN／AC／現況規格／部署限制同步，分支最後SHA與遠端一致。",
+        "actual_results": null,
+        "verified_by": null,
+        "evidence_paths": [],
+        "plan_section": "5.6/E10"
+      }
+    ],
+    "fixed_contract_sha256": "02f43fa2bf69d0d24f9d1ee8189053d83c39c62c0abf331f7043f90379643bde",
+    "fixed_original_gate_flags_changed": false,
+    "implementation_started": false,
+    "current_whole_gates": {
+      "N1-N3/A0": "not-passed",
+      "N4-N5": "not-passed",
+      "R05/N6": "not-passed",
+      "N7": "not-passed",
+      "N8/M7": "not-passed"
+    },
+    "nativeSourceVerified": false,
+    "capacityAccepted": false,
+    "retentionAccepted": false,
+    "wholeRoundAccepted": false,
+    "historical_status_interpretation": "Earlier zero-confirmed-TODO statements describe their dated scopes. E02 and E04 are reopened/additional current work; this block supersedes zero-TODO as a current completion statement, without overwriting prior verified evidence."
   }
 }
