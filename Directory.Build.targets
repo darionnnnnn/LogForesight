@@ -1,0 +1,27 @@
+<Project>
+  <PropertyGroup>
+    <LfBuildIdentityEnabled Condition="'$(MSBuildProjectName)' == 'LogForesight.Core' or '$(MSBuildProjectName)' == 'LogForesight.Web'">true</LfBuildIdentityEnabled>
+    <LfBuildIdentityStampFile>$(IntermediateOutputPath)LfBuildIdentity.g.cs</LfBuildIdentityStampFile>
+    <GenerateAssemblyInformationalVersionAttribute Condition="'$(LfBuildIdentityEnabled)' == 'true'">false</GenerateAssemblyInformationalVersionAttribute>
+  </PropertyGroup>
+
+  <!--
+    SourceRevisionId is an SDK informational-version input and can be supplied as a global
+    command-line property. It is deliberately not used as provenance here. The stamp writer
+    obtains HEAD directly from Git and hashes the source tree that is actually being compiled.
+  -->
+  <Target Name="GenerateLfBuildIdentityStamp" BeforeTargets="CoreCompile" Condition="'$(LfBuildIdentityEnabled)' == 'true'">
+    <Exec Command="powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)scripts/Write-BuildIdentityStamp.ps1&quot; -RepositoryRoot &quot;$(MSBuildThisFileDirectory).&quot; -OutputPath &quot;$(LfBuildIdentityStampFile)&quot; -ProductVersion &quot;$(Version)&quot; -SourceRevisionId &quot;$(SourceRevisionId)&quot;" />
+    <ItemGroup>
+      <Compile Include="$(LfBuildIdentityStampFile)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="WriteLfBuildIdentityManifestAfterBuild" AfterTargets="Build" Condition="'$(MSBuildProjectName)' == 'LogForesight.Web' and '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)scripts/build-identity/BuildIdentityManifest.csproj&quot; --no-launch-profile -- &quot;$(TargetDir).&quot; &quot;$(TargetDir)build-identity.json&quot;" />
+  </Target>
+
+  <Target Name="WriteLfBuildIdentityManifestAfterPublish" AfterTargets="Publish" Condition="'$(MSBuildProjectName)' == 'LogForesight.Web' and '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)scripts/build-identity/BuildIdentityManifest.csproj&quot; --no-launch-profile -- &quot;$(PublishDir).&quot; &quot;$(PublishDir)build-identity.json&quot;" />
+  </Target>
+</Project>

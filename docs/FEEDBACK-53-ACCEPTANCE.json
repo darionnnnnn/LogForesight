@@ -12045,7 +12045,7 @@
   },
   "probe_followup_plan_20261012": {
     "source_of_truth": "FEEDBACK-53-PLAN.md §§5.6–5.7; user-directed responsibility split supersedes external acceptance prerequisites",
-    "user_instruction": "probe-informed TODO and acceptance planning only; do not continue implementation",
+    "user_instruction": "2026-10-12 resumed implementation and owned-isolated acceptance; retain fixed thresholds and commit/push each verified segment",
     "code_baseline_commit": "e3b1bdb2b18f30e0abe95a7b368348276231deae",
     "latest_product_code_commit": "3d23c5bd7f911c95ae774b24608fe8b22b5dd5f9",
     "reported_build_version": "1.0.53.2+332e879117ec9e0c555f8747a14fff432f5be856",
@@ -12449,7 +12449,7 @@
       }
     ],
     "fixed_original_gate_flags_changed": false,
-    "implementation_started": false,
+    "implementation_started": true,
     "current_whole_gates": {
       "N1-N3/A0": "not-passed",
       "N4-N5": "not-passed",
@@ -12469,7 +12469,7 @@
   "active_acceptance_scope_20261012": {
     "source_of_truth": "FEEDBACK-53-PLAN.md §5.7",
     "user_instruction": "無法由你協助驗收的項目不要列入驗收清單中，但要清楚地提示使用者須確認哪些項目；再次確認不實作",
-    "implementation_authorized": false,
+    "implementation_authorized": true,
     "development_acceptance_environment": "owned-isolated",
     "user_confirmations_are_acceptance_items": false,
     "user_confirmations_block_development_closeout": false,

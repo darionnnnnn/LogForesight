@@ -51,6 +51,8 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
             sentinels, new DataVersionStamp());
         _service = new PrtgBackfillService(_settings, _backend, _runState, new PrtgProbeRunState(), _hosts,
             _scheduler, syncState, sentinels, sync, _clock, _ => CreateOfflinePrtgClient(_offlineHistoricRequests));
+        var testBuildIdentity = TestBuildIdentity("a");
+        _service.BuildIdentityProvider = () => testBuildIdentity;
         SeedTwoDays();
     }
 
@@ -83,6 +85,35 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         Assert.NotEmpty(preview.BuildRevision);
         Assert.Equal(PrtgBackfillService.FullBackfillPreviewContractVersion, preview.ContractVersion);
         Assert.False(_runState.Snapshot().IsRunning);
+    }
+
+    [Fact]
+    public void TryStartFull_RejectsUnknownSourceIdentityBeforeClaimingRunOrOpeningPrtg()
+    {
+        _service.BuildIdentityProvider = UnknownBuildIdentity;
+        var preview = _service.PreviewFull();
+
+        Assert.Contains("unknown-source", preview.Message);
+        Assert.False(_service.TryStartFull(Confirmed(preview), out var error, out var conflict));
+        Assert.Contains("unknown-source", error);
+        Assert.False(conflict);
+        Assert.False(_runState.Snapshot().IsRunning);
+        Assert.Empty(_offlineHistoricRequests);
+    }
+
+    [Fact]
+    public void TryStartFull_RejectsPreviewWhenEitherLoadedAssemblyIdentityChanges()
+    {
+        var current = TestBuildIdentity("a");
+        _service.BuildIdentityProvider = () => current;
+        var preview = _service.PreviewFull();
+        current = TestBuildIdentity("b");
+
+        Assert.False(_service.TryStartFull(Confirmed(preview), out var error, out var conflict));
+        Assert.Contains("重新預覽", error);
+        Assert.False(conflict);
+        Assert.False(_runState.Snapshot().IsRunning);
+        Assert.Empty(_offlineHistoricRequests);
     }
 
     [Fact]
@@ -228,6 +259,29 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
 
     private static PrtgFullBackfillStartRequest Confirmed(PrtgFullBackfillPreviewDto preview) => new()
     { PreviewId = preview.PreviewId, Confirmed = true };
+
+    private static LogForesightBuildIdentity UnknownBuildIdentity()
+    {
+        const string fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        const string stamp = "lfbuild-v1|unknown||" + fingerprint;
+        var web = new LogForesightBuildAssemblyIdentity("LogForesight.Web", "1.0.53.2+unknown." + fingerprint,
+            Guid.NewGuid().ToString(), new string('a', 64), stamp, "");
+        var core = new LogForesightBuildAssemblyIdentity("LogForesight.Core", web.InformationalVersion,
+            Guid.NewGuid().ToString(), new string('b', 64), stamp, "");
+        return LogForesightBuildIdentity.Assess(web, core);
+    }
+
+    private static LogForesightBuildIdentity TestBuildIdentity(string binaryTag)
+    {
+        const string commit = "0123456789abcdef0123456789abcdef01234567";
+        const string fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        var stamp = "lfbuild-v1|modified|" + commit + "|" + fingerprint;
+        var web = new LogForesightBuildAssemblyIdentity("LogForesight.Web", "1.0.53.2+" + commit,
+            Guid.NewGuid().ToString(), new string(binaryTag[0], 64), stamp, "");
+        var core = new LogForesightBuildAssemblyIdentity("LogForesight.Core", "1.0.53.2+" + commit,
+            Guid.NewGuid().ToString(), new string(binaryTag[0], 64), stamp, "");
+        return LogForesightBuildIdentity.Assess(web, core);
+    }
 
     private void SeedTwoDays()
     {

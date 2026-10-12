@@ -1,6 +1,5 @@
 ﻿using LogForesight.Core;
 using System.Collections.Concurrent;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -225,6 +224,10 @@ public class PrtgBackfillService : IPrtgBackfillTail
     private readonly PrtgStructureSyncService _structureSync;
     private readonly TimeProvider _timeProvider;
     private readonly Func<SystemSettings, PrtgClient>? _clientFactory;
+    // Test seam for controlled provenance failures; production reads the loaded Web/Core assemblies.
+    internal Func<LogForesightBuildIdentity> BuildIdentityProvider { get; set; } = () =>
+        LogForesightBuildIdentity.ReadCurrent(typeof(PrtgBackfillService).Assembly,
+            typeof(LogForesightBuildIdentity).Assembly);
 
     private sealed record PendingFullBackfillPreview(DateTime AnchorDate, DateTime ExpiresAtUtc,
         string SettingsRevision, string ScopeRevision, string TargetFingerprint, string BuildVersion, string BuildRevision);
@@ -326,7 +329,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var expires = now.Add(FullBackfillPreviewLifetime);
         var previewId = Guid.NewGuid().ToString("N");
-        var (buildVersion, buildRevision) = CurrentBuildIdentity();
+        var buildIdentity = BuildIdentityProvider();
+        var buildVersion = buildIdentity.Web.InformationalVersion;
+        var buildRevision = buildIdentity.Token;
         lock (_fullPreviewLock)
         {
             foreach (var stale in _fullPreviews.Where(pair => pair.Value.ExpiresAtUtc <= now).Select(pair => pair.Key).ToArray())
@@ -360,7 +365,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
                 Day = day.Day, TriggeredHosts = day.TriggeredHosts, MappedHosts = day.MappedHosts,
                 SelectedHosts = day.SelectedHosts, TargetSensors = day.TargetSensors
             }).ToArray(),
-            Message = FullPreviewMessage(snapshot.Plan)
+            Message = FullPreviewMessage(snapshot.Plan) + (buildIdentity.IsReadyForLatestAcceptance
+                ? $" 建置識別：{buildIdentity.Status}，來源 {buildIdentity.SourceCommit}，指紋 {buildIdentity.SourceFingerprint[..12]}。"
+                : $" 建置尚未核實（{buildIdentity.Status}: {buildIdentity.Reason}）；全量回填目前不會啟動。")
         };
     }
 
@@ -391,9 +398,17 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
+        var buildIdentity = BuildIdentityProvider();
+        if (!buildIdentity.IsReadyForLatestAcceptance)
+        {
+            error = $"目前 Web/Core 建置身分無法核實（{buildIdentity.Status}: {buildIdentity.Reason}）；全量回填未啟動，請使用 Git 來源明確且版本一致的建置重新部署。";
+            return false;
+        }
+
         var settings = _settings.Get();
         var current = BuildFullPreviewSnapshot(settings, currentLocalDate);
-        var (buildVersion, buildRevision) = CurrentBuildIdentity();
+        var buildVersion = buildIdentity.Web.InformationalVersion;
+        var buildRevision = buildIdentity.Token;
         if (pending.SettingsRevision != current.SettingsRevision || pending.ScopeRevision != current.ScopeRevision ||
             pending.TargetFingerprint != current.Plan.TargetFingerprint || pending.BuildVersion != buildVersion ||
             pending.BuildRevision != buildRevision)
@@ -447,14 +462,6 @@ public class PrtgBackfillService : IPrtgBackfillTail
             ? "沒有狀態變更查詢對象。"
             : $"另有 {plan.StateChangeObjects:N0} 個狀態變更查詢對象；其 table 分頁成本要等來源回應，預覽不估 ETA。";
         return $"數值歷史約 {plan.HistoricRequests:N0} 次請求；依每滾動 60 秒最多 5 次，僅配額下界為 {lowerBound.TotalMinutes:N0} 分鐘，不含 PRTG 回應延遲。{stateText}";
-    }
-
-    private static (string Version, string Revision) CurrentBuildIdentity()
-    {
-        var assembly = typeof(PrtgBackfillService).Assembly;
-        return (assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ??
-                assembly.GetName().Version?.ToString() ?? "unknown",
-            assembly.ManifestModule.ModuleVersionId.ToString("N"));
     }
 
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
@@ -651,6 +658,16 @@ public class PrtgBackfillService : IPrtgBackfillTail
         {
             error = "尚未設定 PRTG 認證資訊（API token 或帳號密碼），無法執行回填。";
             return false;
+        }
+
+        if (string.Equals(runKind, "full", StringComparison.Ordinal))
+        {
+            var buildIdentity = BuildIdentityProvider();
+            if (!buildIdentity.IsReadyForLatestAcceptance)
+            {
+                error = $"目前 Web/Core 建置身分無法核實（{buildIdentity.Status}: {buildIdentity.Reason}）；全量回填未啟動，請使用 Git 來源明確且版本一致的建置重新部署。";
+                return false;
+            }
         }
 
         if (_probeState.Snapshot().IsRunning)
