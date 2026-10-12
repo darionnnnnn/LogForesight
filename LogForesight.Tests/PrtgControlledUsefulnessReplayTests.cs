@@ -82,7 +82,24 @@ public sealed class PrtgControlledUsefulnessReplayTests
             ["simpleUnion"] = Summarize(results, item => item.SimpleUnion),
             ["actualCombinedDailyPipeline"] = Summarize(results, item => item.ActualCombinedDailyPipeline)
         };
+        Assert.Equal(new ReplayDenominator(22, 10, 9, 2, 1, 0), new ReplayDenominator(
+            TotalRows: results.Count,
+            TruthActionable: results.Count(item => item.Truth.Status == "actionable"),
+            TruthBenign: results.Count(item => item.Truth.Status == "benign"),
+            TruthUnknown: results.Count(item => item.Truth.Status == "unknown"),
+            TruthExcluded: results.Count(item => item.Truth.Status == "excluded"),
+            ExecutionFailures: results.Count(item => item.Pipeline.ExecutionStatus == "failed")));
+        AssertBaseline(summaries["netIqOnly"], truePositive: 5, falsePositive: 0, trueNegative: 9,
+            falseNegative: 4, precision: 1d, recall: 5d / 9d, correct: 14, scoredRows: 18,
+            unknownWithinKnownTruth: 1);
+        AssertBaseline(summaries["nativePrtgOnly"], truePositive: 9, falsePositive: 0, trueNegative: 9,
+            falseNegative: 1, precision: 1d, recall: 0.9d, correct: 18);
+        AssertBaseline(summaries["simpleUnion"], truePositive: 10, falsePositive: 0, trueNegative: 9,
+            falseNegative: 0, precision: 1d, recall: 1d, correct: 19);
+        AssertBaseline(summaries["actualCombinedDailyPipeline"], truePositive: 9, falsePositive: 1,
+            trueNegative: 8, falseNegative: 1, precision: 0.9d, recall: 0.9d, correct: 17);
         var combinedStrictlyBeatsUnion = StrictlyBeats(summaries["actualCombinedDailyPipeline"], summaries["simpleUnion"]);
+        Assert.False(combinedStrictlyBeatsUnion);
         var report = new ReplayReport(
             Schema: "LogForesight.ControlledUsefulnessReplayReport",
             SchemaVersion: 1,
@@ -135,6 +152,29 @@ public sealed class PrtgControlledUsefulnessReplayTests
         Assert.All(results.Where(item => item.ExpectationMatched is not null), item =>
             Assert.True(item.ExpectationMatched == true, $"{item.Id}: actual Daily pipeline did not match the fixed scenario expectation; report: {outputPath}"));
         Assert.DoesNotContain(results, item => item.Pipeline.ExecutionStatus == "failed");
+    }
+
+    private static void AssertBaseline(BaselineSummary actual, int truePositive, int falsePositive,
+        int trueNegative, int falseNegative, double precision, double recall, int correct,
+        int scoredRows = 19, int unknownWithinKnownTruth = 0)
+    {
+        Assert.Equal(22, actual.ScenarioDenominator);
+        Assert.Equal(10, actual.TruthKnownActionable);
+        Assert.Equal(9, actual.TruthKnownBenign);
+        Assert.Equal(2, actual.TruthUnknown);
+        Assert.Equal(1, actual.TruthExcluded);
+        Assert.Equal(19, actual.TruthKnownActionable + actual.TruthKnownBenign);
+        Assert.Equal(unknownWithinKnownTruth, actual.BaselineUnknownWithinKnownTruth);
+        Assert.Equal(0, actual.BaselineExcludedWithinKnownTruth);
+        Assert.Equal(0, actual.BaselineFailuresWithinKnownTruth);
+        Assert.Equal(scoredRows, actual.ScoredKnownTruthRows);
+        Assert.Equal(truePositive, actual.TruePositive);
+        Assert.Equal(falsePositive, actual.FalsePositive);
+        Assert.Equal(trueNegative, actual.TrueNegative);
+        Assert.Equal(falseNegative, actual.FalseNegative);
+        Assert.Equal((double?)precision, actual.Precision);
+        Assert.Equal((double?)recall, actual.Recall);
+        Assert.Equal(correct, actual.CorrectKnownTruthRows);
     }
 
     private static async Task<ScenarioResult> ReplayScenarioAsync(JsonElement definition, DateTime analysisDay,

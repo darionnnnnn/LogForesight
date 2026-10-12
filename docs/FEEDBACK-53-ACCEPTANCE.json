@@ -12468,7 +12468,7 @@
   },
   "active_acceptance_scope_20261012": {
     "source_of_truth": "FEEDBACK-53-PLAN.md §5.7",
-    "user_instruction": "無法由你協助驗收的項目不要列入驗收清單中，但要清楚地提示使用者須確認哪些項目；再次確認不實作",
+    "user_instruction": "無法由代理協助驗收的項目另列使用者確認提醒；2026-10-12 後續指示已授權依固定規劃與驗收條件繼續實作，每段驗證後 commit 與 push",
     "implementation_authorized": true,
     "development_acceptance_environment": "owned-isolated",
     "user_confirmations_are_acceptance_items": false,
