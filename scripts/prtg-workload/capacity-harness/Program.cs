@@ -365,11 +365,52 @@ static string CreateLaunchScript(string dbPath, string dataRoot)
 {
     var escapedDb = dbPath.Replace("'", "''", StringComparison.Ordinal);
     var escapedRoot = dataRoot.Replace("'", "''", StringComparison.Ordinal);
-    return "# Test-source-only local Web launch. This does not configure a NetIQ/PRTG source or qualify profiles.\n" +
-           "$env:ASPNETCORE_ENVIRONMENT = 'Development'\n" +
-           "dotnet run --project ..\\..\\LogForesight.Web\\LogForesight.Web.csproj -- " +
-           "--Storage:Type Sqlite --Storage:ConnectionString 'Data Source=" + escapedDb + ";Pooling=False' " +
-           "--Storage:DataRoot '" + escapedRoot + "' --Auth:Provider Stub --urls http://127.0.0.1:5100\n";
+    var script = @"
+param(
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$WebProjectPath,
+    [ValidateRange(1, 65535)][int]$LoopbackPort = 5100,
+    [switch]$PreviewOnly
+)
+$ErrorActionPreference = 'Stop'
+$resolvedWebProjectPath = (Resolve-Path -LiteralPath $WebProjectPath -ErrorAction Stop).Path
+if (-not (Test-Path -LiteralPath $resolvedWebProjectPath -PathType Leaf) -or
+    [IO.Path]::GetExtension($resolvedWebProjectPath) -cne '.csproj') {
+    throw 'WebProjectPath must resolve to an existing .csproj file.'
+}
+$dotnetArguments = @(
+    'run', '--project', $resolvedWebProjectPath, '--',
+    '--Storage:Type', 'Sqlite',
+    '--Storage:ConnectionString', 'Data Source=@DB@;Pooling=False',
+    '--Storage:DataRoot', '@ROOT@',
+    '--Auth:Provider', 'Stub',
+    '--urls', ""http://127.0.0.1:$LoopbackPort""
+)
+$preview = [ordered]@{
+    status = 'preview-only-no-web-started'
+    purpose = 'test-source Web startup preview only; not a version-fence or qualification launcher'
+    webProjectPath = $resolvedWebProjectPath
+    loopbackUrl = ""http://127.0.0.1:$LoopbackPort""
+    sqlitePath = '@DB@'
+    dataRoot = '@ROOT@'
+    dotnetExecutable = 'dotnet'
+    dotnetArguments = $dotnetArguments
+    sourceInputs = @{
+        netiqServerEndpoint = 'not-configured'
+        sentinelFixtureEndpoint = 'not-configured'
+        scheduleOutcomes = 'not-created'
+        nativeQualificationProofs = 0
+    }
+}
+if ($PreviewOnly) {
+    $preview | ConvertTo-Json -Depth 6 -Compress
+    return
+}
+$env:ASPNETCORE_ENVIRONMENT = 'Development'
+& dotnet @dotnetArguments
+exit $LASTEXITCODE
+";
+    return script.Replace("@DB@", escapedDb, StringComparison.Ordinal)
+        .Replace("@ROOT@", escapedRoot, StringComparison.Ordinal).TrimStart();
 }
 
 static Dictionary<string, string> ParseArgs(string[] args)

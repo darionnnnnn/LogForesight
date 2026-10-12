@@ -1920,4 +1920,6 @@ NetIQ 4625 暴力破解分析只使用該來源提供的 Security 4624／RDP 成
 
 ### 2026-10-12 E08 實際瀏覽器角色邊界：部分驗證
 
+E07 準備工具後續修正：產生的啟動檔要求明確存在的 Web csproj 路徑，不再依賴呼叫端相對目錄；loopback port 有範圍檢查，PreviewOnly 不啟動 Web／dotnet，顯示最終 DB/dataRoot 與來源未配置，不冒稱版本／資格核驗 launcher。主代理獨立重建 0 警告／0 錯誤，從無關工作目錄以合成 csproj 跑預覽並拒絕超界 port，原三個安全契約全部 3/3 通過（138.135 秒）；證據 root-e07-preparation-launch-build-20261012.log、root-e07-preparation-launch-contracts-20261012.log。此交付不改 E07 固定完整驗收條件。
+
 自有 loopback run 38377c471dad4992a3dead50d15a6c8f，當前凍結 467776acc4/c52b1221：唯讀 Manager 及受限 Dev 直達維護頁均拒絕；Dev 排程設定明示唯讀且全部修改控制停用；無可見集合者顯示零主機與權限原因，直達主機 3 不含主機身分／值；案件授與者可讀其案件，但主機 4 時間軸、問題摘要、資源觀察及 PRTG 對應明確不顯示，無關主機 3 亦拒絕。原始角色副本含既有合成紀錄／案件，正常啟動可整併成工作單，README 已修正來源說明；不能把它當新風險生成。觀察記錄 U53-05 維持 inconclusive，artifact root-role-boundaries.txt SHA256 704bcaa70f047eb6023c7b13e5f11dc9a2ee5dcee6a85cf98159c1e6c3f4a7cd；另存無關主機拒絕補充筆記。程序已確認 stopped，來源 hash 綁於 manifest。剩餘修改 API、回覆與完整角色動線仍保留，不移除父 TODO。

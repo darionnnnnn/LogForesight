@@ -59,6 +59,37 @@ class PreparationContracts(unittest.TestCase):
             self.assertIn(output["sqlitePath"], launch)
             self.assertIn(output["dataRoot"], launch)
             self.assertNotIn(".stage-", json.dumps(output) + launch)
+            powershell = shutil.which("pwsh") or shutil.which("powershell")
+            self.assertIsNotNone(powershell, "PowerShell is required to verify launch preview behavior.")
+            outside_cwd = pathlib.Path(temporary) / "unrelated-working-directory"
+            outside_cwd.mkdir()
+            synthetic_project = pathlib.Path(temporary) / "synthetic-web" / "Synthetic.Web.csproj"
+            synthetic_project.parent.mkdir()
+            synthetic_project.write_text("<Project />\n", encoding="utf-8")
+            preview_result = subprocess.run(
+                [powershell, "-NoProfile", "-File", output["launchInstructions"],
+                 "-WebProjectPath", str(synthetic_project), "-LoopbackPort", "54321", "-PreviewOnly"],
+                cwd=outside_cwd, capture_output=True, text=True, timeout=15, check=False,
+            )
+            self.assertEqual(0, preview_result.returncode, preview_result.stderr)
+            preview = json.loads(preview_result.stdout)
+            self.assertEqual("preview-only-no-web-started", preview["status"])
+            self.assertEqual(str(synthetic_project.resolve()), preview["webProjectPath"])
+            self.assertEqual("http://127.0.0.1:54321", preview["loopbackUrl"])
+            self.assertEqual(output["sqlitePath"], preview["sqlitePath"])
+            self.assertEqual(output["dataRoot"], preview["dataRoot"])
+            self.assertEqual(str(synthetic_project.resolve()), preview["dotnetArguments"][2])
+            self.assertEqual("not-configured", preview["sourceInputs"]["netiqServerEndpoint"])
+            self.assertEqual("not-configured", preview["sourceInputs"]["sentinelFixtureEndpoint"])
+            self.assertEqual("not-created", preview["sourceInputs"]["scheduleOutcomes"])
+            self.assertEqual(0, preview["sourceInputs"]["nativeQualificationProofs"])
+            self.assertIn("not a version-fence or qualification launcher", preview["purpose"])
+            invalid_port = subprocess.run(
+                [powershell, "-NoProfile", "-File", output["launchInstructions"],
+                 "-WebProjectPath", str(synthetic_project), "-LoopbackPort", "70000", "-PreviewOnly"],
+                cwd=outside_cwd, capture_output=True, text=True, timeout=15, check=False,
+            )
+            self.assertNotEqual(0, invalid_port.returncode)
 
     def test_requires_explicit_quiescence_acknowledgement_before_source_access(self):
         with tempfile.TemporaryDirectory(prefix="lf-e07-quiescence-") as temporary:

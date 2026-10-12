@@ -15,6 +15,13 @@ python .\scripts\prtg-workload\capacity-harness\test_contracts.py
 
 The self-test seeds only three synthetic Web hosts into a separately owned SQLite database. Its receipt is explicitly `self-test-only-not-e07-evidence`; it does not dilute the fixed scale requirements.
 
+The emitted `start-development-web.ps1` requires `-WebProjectPath` naming an existing `.csproj`; it resolves and validates that path, so invocation does not depend on the caller's working directory. `-LoopbackPort` is optional and constrained to 1–65535 (default 5100). Preview the command from any directory without starting Web or invoking `dotnet`:
+
+```powershell
+& .\work\e07-preparation-self-test-001\start-development-web.ps1 `
+  -WebProjectPath C:\repo\LogForesight.Web\LogForesight.Web.csproj -PreviewOnly
+```
+
 Prepare the full prerequisite only after the storage generator exits and writes its final receipt:
 
 ```powershell
@@ -24,4 +31,4 @@ dotnet .\scripts\prtg-workload\capacity-harness\bin\Release\net8.0-windows\Capac
   --confirm-source-quiescent
 ```
 
-The generated preparation receipt is `capacity-prerequisite-only`. It records the unchanged six-cell sequence, 1,200 route-request denominator, route and NetIQ p95 limits, 75% schedule-window limit, and 25% reserve. It does not configure a NetIQ source, create outcomes, run schedule cells, measure routes, or pass the public matrix's live qualification fence. It creates no durable qualified job, binding, profile, or native qualification proof. Therefore this preparation result is only a capacity prerequisite; the PLAN E07 gate remains open until the actual workload, backup/recovery, and retention checks pass. The public qualification matrix scripts and their live fence remain unchanged.
+The generated preparation receipt is `capacity-prerequisite-only`. It records the unchanged six-cell sequence, 1,200 route-request denominator, route and NetIQ p95 limits, 75% schedule-window limit, and 25% reserve. It does not configure a NetIQ source, create outcomes, run schedule cells, measure routes, or pass the public matrix's live qualification fence. It creates no durable qualified job, binding, profile, or native qualification proof. Its local Web startup script is only a test-data-root launcher: it is not a version-fence or qualification launcher, and its preview explicitly reports that NetIQ, Sentinel, and schedule outcomes are not configured. Therefore this preparation result is only a capacity prerequisite; the PLAN E07 gate remains open until the actual workload, backup/recovery, and retention checks pass. The public qualification matrix scripts and their live fence remain unchanged.
