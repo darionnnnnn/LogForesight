@@ -1965,3 +1965,7 @@ E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留�
 ### 2026-10-12 E02 通道探索邊界補驗
 
 逐入口重查發現 readonly channel discovery 尚用正整數限制，會漏掉合法 channel 0 與特殊通道。已共用 canonical Int64 policy，保留合法識別但不建立 binding／profile 或正式風險資格；非 canonical、unsupported negative、overflow 仍拒絕。主代理 fresh build 跑實際 HTTP worker／pre-send fence／binding store 33/33、0失敗／0略過（TestResults/root-discovery-channel-policy/root-discovery-channel-policy.trx，5分9秒），含0數字／字串與-1至-4正例、六項非法反例及既有安全邊界。E02完成狀態維持，其他父待辦未變。
+
+### 2026-10-12 E08 AI URL 與嚴格受控來源：已驗證修正
+
+正常隔離UI使用README建議的 /v1 base URL 時，正式AIService會重複附加 /v1。現已由共同 URI path resolver 保留 origin、proxy prefix、既有/v1與query；OpenAI及Local共用，Azure原路徑不變。新增實際ChatAsync與AiProbe HTTP handler測試，主代理 fresh build AIService／AiProbe相關集合22/22、0失敗／0略過（TestResults/root-ai-endpoint/root-ai-endpoint.trx）。受控來源只接受 /v1/chat/completions，重複路徑404；主代理完整 Test-ControlledSources.ps1 通過（root-ai-strict-source-protocol-20261012.log），涵蓋各來源／SMTP既有正反協定。依OpenAI官方chat create API路徑核對（https://developers.openai.com/api/reference/resources/chat）。這是程式與來源協定修正；完整瀏覽器動線及E08父待辦仍保留。

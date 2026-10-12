@@ -173,6 +173,8 @@ try {
     if ($aiResponse.choices[0].message.role -ne 'assistant' -or
         $aiResponse.choices[0].message.content -notmatch 'No real model was called' -or
         $aiResponse.usage.total_tokens -ne 2) { throw 'OpenAI-compatible successful AI probe response contract failed.' }
+    $doubleVersionAi = Invoke-WebRequest -Uri "$httpUrl/v1/v1/chat/completions" -Method Post -Body $aiBody -ContentType 'application/json' -SkipHttpErrorCheck
+    if ($doubleVersionAi.StatusCode -ne 404) { throw 'AI fixture must reject the duplicated /v1/v1 endpoint instead of hiding a client URL error.' }
     [IO.File]::WriteAllText($httpModeFile,'all-sources-healthy',[Text.UTF8Encoding]::new($false))
     $allSourcesHealth = Invoke-RestMethod -Uri "$httpUrl/__fixture/health"
     if ($allSourcesHealth.runId -ne $runId -or !$allSourcesHealth.loopbackOnly) { throw 'All-source healthy mode escaped its run-owned loopback fixture.' }

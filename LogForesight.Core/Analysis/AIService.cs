@@ -503,7 +503,7 @@ public class AIService : IAiService
         else if (provider == AiProviders.OpenAi)
         {
             var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com" : settings.BaseUrl.TrimEnd('/');
-            var url = $"{baseUrl}/v1/chat/completions";
+            var url = BuildOpenAiCompatibleChatUrl(baseUrl);
             Action<HttpRequestHeaders> applyAuth = headers =>
             {
                 if (!string.IsNullOrWhiteSpace(settings.ApiKey))
@@ -516,7 +516,7 @@ public class AIService : IAiService
         else
         {
             var baseUrl = (settings.BaseUrl ?? "").TrimEnd('/');
-            var url = $"{baseUrl}/v1/chat/completions";
+            var url = BuildOpenAiCompatibleChatUrl(baseUrl);
             Action<HttpRequestHeaders> applyAuth = headers =>
             {
                 if (!string.IsNullOrWhiteSpace(settings.ApiKey))
@@ -526,6 +526,30 @@ public class AIService : IAiService
             };
             return (url, applyAuth);
         }
+    }
+
+    private static string BuildOpenAiCompatibleChatUrl(string baseUrl)
+    {
+        var trimmed = baseUrl.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var baseUri))
+        {
+            // BaseUrl may be an origin, a reverse-proxy prefix, or already include the
+            // OpenAI-compatible /v1 segment. Append to the URI path so any legitimate
+            // proxy query remains a query (and is never mistaken for part of the path).
+            var path = baseUri.AbsolutePath.TrimEnd('/');
+            var route = path.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+                ? "chat/completions"
+                : "v1/chat/completions";
+            var builder = new UriBuilder(baseUri)
+            {
+                Path = $"{path}/{route}"
+            };
+            return builder.Uri.ToString();
+        }
+
+        // Retain the existing deferred-invalid-URL behavior for incomplete legacy settings;
+        // configured absolute HTTP(S) URLs take the URI-safe path above.
+        return $"{trimmed.TrimEnd('/')}/v1/chat/completions";
     }
 
     /// <summary>

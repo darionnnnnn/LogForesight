@@ -97,6 +97,11 @@ async Task HandleHttpAsync(HttpListenerContext context, CancellationToken ct)
         }
         if (kind == "ai")
         {
+            if (!string.Equals(path, "/v1/chat/completions", StringComparison.Ordinal))
+            {
+                await HttpReply(context, 404, "unsupported synthetic AI endpoint");
+                return;
+            }
             if (mode is "ai-healthy" or "all-sources-healthy")
             {
                 await HttpReply(context, 200, JsonSerializer.Serialize(new
