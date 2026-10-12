@@ -1913,3 +1913,11 @@ NetIQ 4625 暴力破解分析只使用該來源提供的 Security 4624／RDP 成
 新增自有 temporary-stage API 驗證腳本，使用實際 Web／SQLite clone 與六個固定測試角色，不以畫面隱藏按鈕代替授權。主代理兩次獨立執行：當前凍結 467776acc4/c52b1221 modified-tree 的 Maintain 得 HTTP 200、format v2 JSON（範圍不完整如實標 false）；普通負責人、唯讀 Manager、受限 Dev、案件授與及無可見範圍者皆 HTTP 403 且無匯出資料欄位。來源 DB/key 未改；工具只在真正 Stop 成功且 owner 狀態為 stopped 才記停止成功。最終紀錄 root-e08-api-export-final-20261012.log 與各自 owned run 的 api-export-authority-observation.json／maintain-api-export.json。此子項不代表完整 AC21／U53-05／E08 通過。
 
 四基準另外獨立重跑 22 個固定受控情境 1/1 通過（0 執行失敗、真值 10 actionable／9 benign／2 unknown／1 excluded）。NetIQ TP/FP/TN/FN=5/0/9/4，known truth 中另 1 unknown，計分18；原生 PRTG=9/0/9/1，聯集=10/0/9/0，合併=9/1/8/1，各計分19。合併未優於聯集的結論保留，不改真值或門檻。61336 bytes 版本化報表 SHA256 30EB25B2A84E55D21F288550F238901CDF6B39F664AC6D3D01B2C0A0F1081E50；root-four-baselines-final-20261012.log 與 root-four-baselines-final.trx 留存。尚待操作查證部分，不移除 E09 整組待辦。
+
+### 2026-10-12 E07 全量副本準備工具：已驗證交付子項
+
+新增 capacity-harness，完整生成完成且來源靜止後才允許建立隔離副本；來源 DB／WAL 以檔案複製並核對指紋，不對生成原庫開啟 SQLite。固定 3000／15000／180 日／64800000／四 slot 形狀由完成報告及實際副本核對，預留工作副本、備份副本及全卷 25% 空間。只透過 production HostStore 建立合成 Web 主機目錄，不造資格作業、binding、profile、原生 proof 或案件。主代理修正 staging 搬移後報告／啟動路徑與跨午夜 map 日期問題，再独立建置（0 警告／0 錯誤）及執行三個契約：3/3 通過，90.715 秒，缺靜止確認／偽造完整報告配部分 DB 均拒絕且原庫不變；搬移後最終路徑可用。四檔與驗證工作樹逐一 hash 相同。證據 root-e07-preparation-build-20261012.log、root-e07-preparation-contracts-20261012.log。此為準備工具交付，E07 全量資料、六格混合排程、1200 route、備份恢復／保留門檻皆未因此通過。
+
+### 2026-10-12 E08 實際瀏覽器角色邊界：部分驗證
+
+自有 loopback run 38377c471dad4992a3dead50d15a6c8f，當前凍結 467776acc4/c52b1221：唯讀 Manager 及受限 Dev 直達維護頁均拒絕；Dev 排程設定明示唯讀且全部修改控制停用；無可見集合者顯示零主機與權限原因，直達主機 3 不含主機身分／值；案件授與者可讀其案件，但主機 4 時間軸、問題摘要、資源觀察及 PRTG 對應明確不顯示，無關主機 3 亦拒絕。原始角色副本含既有合成紀錄／案件，正常啟動可整併成工作單，README 已修正來源說明；不能把它當新風險生成。觀察記錄 U53-05 維持 inconclusive，artifact root-role-boundaries.txt SHA256 704bcaa70f047eb6023c7b13e5f11dc9a2ee5dcee6a85cf98159c1e6c3f4a7cd；另存無關主機拒絕補充筆記。程序已確認 stopped，來源 hash 綁於 manifest。剩餘修改 API、回覆與完整角色動線仍保留，不移除父 TODO。
