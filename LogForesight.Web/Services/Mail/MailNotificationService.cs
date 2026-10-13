@@ -220,6 +220,8 @@ public class MailNotificationService
                     var (_, urgentViews) = ResolvePerRecipient(currentSettings, urgentRecords, currentContext, includeSuspended: true);
                     PlanWorkflowMail("summary", summaryRecords, summaryViews, mailVersions, mailContextFingerprint);
                     PlanWorkflowMail("urgent", urgentRecords, urgentViews, mailVersions, mailContextFingerprint);
+                    TrackDurableUrgentStatisticsReceipts(urgentRecords, urgentViews, mailVersions,
+                        mailContextFingerprint, currentSettings);
                     foreach (var day in notificationDays)
                     {
                         var key = $"{day.HostId}|{day.Date:yyyy-MM-dd}";
@@ -309,10 +311,16 @@ public class MailNotificationService
         if (intent.Status != "no-qualified-recipient" || !urgentSentKeys.Contains(intent.Key) || intent.Recipients.Count == 0)
             return intent.Status;
 
+        var nowUtc = DateTime.UtcNow;
         var allRecipientsAccepted = intent.Recipients.All(pair => pair.Value == "smtp-accepted" &&
-            intent.SmtpAcceptedAtUtc.TryGetValue(pair.Key, out var acceptedAtUtc) && acceptedAtUtc.Kind == DateTimeKind.Utc);
+            HasCurrentSmtpAcceptance(intent, pair.Key, nowUtc));
         return allRecipientsAccepted ? "smtp-accepted" : intent.Status;
     }
+
+    private static bool HasCurrentSmtpAcceptance(MailUrgentIntent intent, string recipient, DateTime nowUtc) =>
+        intent.CreatedAtUtc != default && intent.CreatedAtUtc.Kind == DateTimeKind.Utc &&
+        intent.SmtpAcceptedAtUtc.TryGetValue(recipient, out var acceptedAtUtc) && acceptedAtUtc != default &&
+        acceptedAtUtc.Kind == DateTimeKind.Utc && acceptedAtUtc >= intent.CreatedAtUtc && acceptedAtUtc <= nowUtc;
 
     private static bool IsRetryableLegacyNoQualifiedIntent(MailUrgentIntent intent) =>
         intent.Status == "no-qualified-recipient" && intent.Recipients.Values.Any(status =>
@@ -2419,7 +2427,11 @@ public class MailNotificationService
             var key = RecordKey(record);
             if (!mailVersions.TryGetValue(key, out var version) || version.ParentRecordId != record.RecordId) continue;
             var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint);
-            var expectedParts = views.Where(view => view.Value.Detail != null && view.Value.Detail.Any(item => RecordKey(item) == key))
+            // A null detail is an intentional statistics-only recipient. Its message still
+            // includes the global aggregate containing this record, so SMTP acceptance must
+            // satisfy the generic mail leg even though it has no per-host detail coverage.
+            var expectedParts = views.Where(view => view.Value.Detail == null ||
+                    view.Value.Detail.Any(item => RecordKey(item) == key))
                 .Select(view => WorkflowMailPart(intent, Convert.ToHexString(SHA256.HashData(
                     Encoding.UTF8.GetBytes(view.Key.Trim().ToLowerInvariant())))))
                 .Distinct(StringComparer.Ordinal).ToArray();
@@ -2444,7 +2456,8 @@ public class MailNotificationService
                 if (mailVersions == null || !mailVersions.TryGetValue(key, out var version) || version.ParentRecordId != record.RecordId) continue;
                 var intent = WorkflowMailIntent(kind, record, version, mailContextFingerprint);
                 var part = WorkflowMailPart(intent, recipientKey);
-                var expected = views.Where(view => view.Value.Detail != null && view.Value.Detail.Any(item => RecordKey(item) == key))
+                var expected = views.Where(view => view.Value.Detail == null ||
+                        view.Value.Detail.Any(item => RecordKey(item) == key))
                     .Select(view => WorkflowMailPart(intent, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(view.Key.Trim().ToLowerInvariant())))))
                     .Distinct(StringComparer.Ordinal).ToArray();
                 if (!expected.Contains(part, StringComparer.Ordinal)) continue;
@@ -2455,6 +2468,41 @@ public class MailNotificationService
             catch (Exception ex)
             {
                 Log.Warn(ex, "郵件 workflow tracking failed for {RecordKey}; notification outcome remains governed by mail sender", RecordKey(record));
+            }
+        }
+    }
+
+    /// <summary>Restore generic workflow receipts for statistics-only urgent mail from an exact durable
+    /// outbox recipient acceptance. This covers a process boundary after SMTP accepted but before the
+    /// workflow blob was updated. It never creates PRTG facts or formal start claims; absent, failed,
+    /// unknown, stale-version, or non-UTC recipient evidence remains unresolved.</summary>
+    private void TrackDurableUrgentStatisticsReceipts(List<DailyAnalysisRecord> records,
+        IReadOnlyDictionary<string, RecipientView> views,
+        IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions,
+        string? mailContextFingerprint, SystemSettings settings)
+    {
+        if (_workflow == null || versions == null || records.Count == 0) return;
+        var state = _state.Get();
+        foreach (var record in records)
+        {
+            var recordKey = RecordKey(record);
+            if (!versions.TryGetValue(recordKey, out var version) || version.ParentRecordId != record.RecordId ||
+                _workflow.CaptureDeliveryVersion(record.HostId, record.Date, record.RecordId) != version)
+                continue;
+            var intentKey = UrgentRecordKey(record, versions, views, mailContextFingerprint);
+            if (!state.UrgentOutbox.TryGetValue(intentKey, out var intent) || intent.Key != intentKey ||
+                intent.HostId != record.HostId || intent.RecordDate.Date != record.Date.Date ||
+                intent.ParentRecordId != record.RecordId || intent.SettingsRevision != settings.Revision ||
+                !intent.ProblemKeys.OrderBy(value => value, StringComparer.Ordinal)
+                    .SequenceEqual(record.TopIssues.Select(issue => issue.EventKey).OrderBy(value => value, StringComparer.Ordinal), StringComparer.Ordinal))
+                continue;
+
+            foreach (var (email, view) in views.Where(pair => pair.Value.Detail == null))
+            {
+                if (!intent.Recipients.TryGetValue(email, out var recipientStatus) || recipientStatus != "smtp-accepted" ||
+                    !HasCurrentSmtpAcceptance(intent, email, DateTime.UtcNow))
+                    continue;
+                TrackWorkflowMail("urgent", [record], email, true, views, versions, mailContextFingerprint);
             }
         }
     }

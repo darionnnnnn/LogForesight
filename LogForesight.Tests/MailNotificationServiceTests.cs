@@ -140,6 +140,9 @@ public class MailNotificationServiceTests : IDisposable
     [InlineData("partial")]
     [InlineData("cancelled")]
     [InlineData("stale")]
+    [InlineData("statistics-only")]
+    [InlineData("statistics-only-failed")]
+    [InlineData("statistics-only-stale")]
     public async Task ActualNotifyReceiverClosesOnlyCurrentEvaluatedPlan(string scenario)
     {
         EnableMail(settings =>
@@ -148,8 +151,10 @@ public class MailNotificationServiceTests : IDisposable
             settings.MailOnRunCompleted = true; settings.MailUrgentEnabled = false;
             settings.MailMinRiskLevel = RiskLevels.Medium;
             settings.MailRecipients = scenario is "partial" or "cancelled" ? ["a@test.local", "b@test.local"] : ["a@test.local"];
+            if (scenario == "no-recipient") settings.MailRecipients.Clear();
         });
-        if (scenario != "no-recipient") CreateViewAllAccount("a@test.local");
+        if (scenario is not ("no-recipient" or "statistics-only" or "statistics-only-failed" or "statistics-only-stale"))
+            CreateViewAllAccount("a@test.local");
         if (scenario is "partial" or "cancelled") CreateViewAllAccount("b@test.local");
         var host = _hosts.Upsert(new WebHost { HostName = "MAIL-WORKFLOW", Active = true });
         var record = Record(host.HostId, host.HostName, Yesterday,
@@ -167,8 +172,9 @@ public class MailNotificationServiceTests : IDisposable
             Assert.False(workflow.Get(host.HostId, Yesterday)!.MailIsComplete);
             if (scenario == "partial") _sender.ThrowOnSendForRecipient = "b@test.local";
             if (scenario == "cancelled") _sender.OnSend = _ => cts.Cancel();
-            if (scenario == "stale") _sender.OnSend = _ => workflow.ParentSucceeded(host.HostId, host.HostName,
+            if (scenario is "stale" or "statistics-only-stale") _sender.OnSend = _ => workflow.ParentSucceeded(host.HostId, host.HostName,
                 Yesterday, "replacement", 0, "changed", false, false, parentRecordId: 4002);
+            if (scenario == "statistics-only-failed") _sender.ThrowOnSendForRecipient = "a@test.local";
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
                 _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
                 _issueOwners, _issueAggregates, workflow: workflow);
@@ -187,8 +193,37 @@ public class MailNotificationServiceTests : IDisposable
                 Assert.Empty(restored.MailFailedPartsByIntent.Values.Single());
                 Assert.Equal(3, _sender.Attempts.Count); // second pass sends only the unresolved recipient part.
             }
-            Assert.Equal(scenario is "accepted" or "disabled" or "below-threshold" or "partial", restored.MailIsComplete);
-            Assert.Equal(scenario is "accepted" or "disabled" or "below-threshold" or "partial", restored.MailPlanClosed);
+            if (scenario == "statistics-only-failed")
+            {
+                Assert.True(restored.MailPlanClosed);
+                Assert.False(restored.MailIsComplete);
+                Assert.Single(restored.MailExpectedPartsByIntent.Values.Single());
+                Assert.Single(restored.MailFailedPartsByIntent.Values.Single());
+                _sender.ThrowOnSendForRecipient = null;
+                await service.NotifyAfterRunAsync(cts.Token);
+                restored = new HostDayWorkflowService(new HostDayWorkflowStore(backend)).Get(host.HostId, Yesterday)!;
+                Assert.True(restored.MailIsComplete);
+                Assert.Empty(restored.MailFailedPartsByIntent.Values.Single());
+                Assert.Single(restored.MailDeliveredPartsByIntent.Values.Single());
+                await service.NotifyAfterRunAsync(cts.Token);
+                Assert.Equal(2, _sender.Attempts.Count);
+                Assert.Single(_sender.Sent);
+            }
+            if (scenario == "statistics-only")
+            {
+                Assert.True(restored.MailPlanClosed);
+                Assert.Single(restored.MailExpectedPartsByIntent.Values.Single());
+                Assert.Single(restored.MailDeliveredPartsByIntent.Values.Single());
+                Assert.Empty(restored.MailFailedPartsByIntent.Values.Single());
+                Assert.DoesNotContain("MAIL-WORKFLOW", _sender.Sent.Single().Message.Body);
+                await service.NotifyAfterRunAsync(cts.Token);
+                Assert.Single(_sender.Attempts);
+                Assert.Single(_sender.Sent);
+            }
+            var complete = scenario is "accepted" or "disabled" or "below-threshold" or "partial" or
+                "statistics-only" or "statistics-only-failed";
+            Assert.Equal(complete, restored.MailIsComplete);
+            Assert.Equal(complete, restored.MailPlanClosed);
             if (scenario == "partial")
             {
                 Assert.Single(restored.MailIntents);
@@ -197,7 +232,12 @@ public class MailNotificationServiceTests : IDisposable
                 Assert.Empty(restored.MailFailedPartsByIntent.Values.Single());
             }
             if (scenario == "cancelled") Assert.Single(restored.MailDeliveredPartsByIntent.Values.Single());
-            if (scenario == "stale") { Assert.Equal(4002, restored.ParentRecordId); Assert.Empty(restored.MailIntents); }
+            if (scenario is "stale" or "statistics-only-stale")
+            {
+                Assert.Equal(4002, restored.ParentRecordId);
+                Assert.Empty(restored.MailIntents);
+                if (scenario == "statistics-only-stale") Assert.Single(_sender.Sent);
+            }
             if (scenario is "disabled" or "below-threshold") Assert.Empty(_sender.Attempts);
             if (scenario == "no-recipient") Assert.Equal("no-qualified-recipient-or-current-receipt", restored.MailPlanReason);
         }
@@ -1986,12 +2026,26 @@ public class MailNotificationServiceTests : IDisposable
         });
         var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
         var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High);
+        record.RecordId = 4001;
         record.LogSource = AnalysisLogSource.Netiq;
         _records.Add(record);
         _sender.ThrowOnSendForRecipient = "ops@test.local";
-        var service = Create();
+        var workflowRoot = Path.Combine(Path.GetTempPath(), "lf-mail-stat-workflow-" + Guid.NewGuid().ToString("N"));
+        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, workflowRoot);
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+        workflow.RestoreFromRecord(record, aiEnabled: false, prtgEnabled: false);
+        var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
+            _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            _issueOwners, _issueAggregates, workflow: workflow);
 
+        try
+        {
         await service.NotifyAfterRunAsync();
+        var workflowAfterFailure = workflow.Get(host.HostId, Yesterday)!;
+        Assert.True(workflowAfterFailure.MailPlanClosed);
+        Assert.False(workflowAfterFailure.MailIsComplete);
+        Assert.Single(workflowAfterFailure.MailExpectedPartsByIntent.Values.Single());
+        Assert.Single(workflowAfterFailure.MailFailedPartsByIntent.Values.Single());
 
         var stateStore = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
         var key = Assert.Single(stateStore.Get().UrgentOutbox.Keys);
@@ -2022,6 +2076,160 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Equal(2, _sender.Attempts.Count);
         Assert.Single(_sender.Sent);
         Assert.DoesNotContain("host", _sender.Sent[0].Message.Body);
+        var workflowAfterAccept = workflow.Get(host.HostId, Yesterday)!;
+        Assert.True(workflowAfterAccept.MailPlanClosed);
+        Assert.True(workflowAfterAccept.MailIsComplete);
+        Assert.Single(workflowAfterAccept.MailDeliveredPartsByIntent.Values.Single());
+        Assert.Empty(workflowAfterAccept.MailFailedPartsByIntent.Values.Single());
+        Assert.Empty(acceptedState.PrtgUrgentAcceptedFacts);
+        var deliveryVersion = workflow.CaptureDeliveryVersion(host.HostId, Yesterday, record.RecordId)!;
+        workflow.ReplaceMailPlan(host.HostId, Yesterday, "urgent",
+            new Dictionary<string, IReadOnlyCollection<string>>(), deliveryVersion);
+        workflow.CloseMailPlan(host.HostId, Yesterday, deliveryVersion, ["urgent"], "recipient-plan-evaluated");
+        Assert.False(workflow.Get(host.HostId, Yesterday)!.MailPlanClosed);
+        await service.NotifyAfterRunAsync();
+        Assert.Equal(2, _sender.Attempts.Count);
+        Assert.Single(_sender.Sent);
+        Assert.True(workflow.Get(host.HostId, Yesterday)!.MailIsComplete);
+
+        // An accepted-looking row without its durable UTC recipient receipt is not enough to
+        // recreate the workflow delivery part, and does not trigger another SMTP send.
+        workflow.ReplaceMailPlan(host.HostId, Yesterday, "urgent",
+            new Dictionary<string, IReadOnlyCollection<string>>(), deliveryVersion);
+        workflow.CloseMailPlan(host.HostId, Yesterday, deliveryVersion, ["urgent"], "recipient-plan-evaluated");
+        stateStore.Update(s => s.UrgentOutbox[key].SmtpAcceptedAtUtc.Remove("ops@test.local"));
+        await service.NotifyAfterRunAsync();
+        var missingReceipt = workflow.Get(host.HostId, Yesterday)!;
+        Assert.True(missingReceipt.MailPlanClosed);
+        Assert.False(missingReceipt.MailIsComplete);
+        Assert.Empty(missingReceipt.MailDeliveredPartsByIntent.Values.Single());
+        Assert.Equal(2, _sender.Attempts.Count);
+        Assert.Single(_sender.Sent);
+
+        var acceptedAtUtc = accepted.SmtpAcceptedAtUtc["ops@test.local"];
+        var acceptedIntent = acceptedState.UrgentOutbox[key];
+        var invalidReceipts = new[]
+        {
+            default(DateTime),
+            DateTime.UtcNow.AddMinutes(5),
+            acceptedIntent.CreatedAtUtc.AddTicks(-1)
+        };
+        foreach (var invalidReceipt in invalidReceipts)
+        {
+            workflow.ReplaceMailPlan(host.HostId, Yesterday, "urgent",
+                new Dictionary<string, IReadOnlyCollection<string>>(), deliveryVersion);
+            workflow.CloseMailPlan(host.HostId, Yesterday, deliveryVersion, ["urgent"], "recipient-plan-evaluated");
+            stateStore.Update(s => s.UrgentOutbox[key].SmtpAcceptedAtUtc["ops@test.local"] = invalidReceipt);
+            await service.NotifyAfterRunAsync();
+            var invalid = workflow.Get(host.HostId, Yesterday)!;
+            Assert.True(invalid.MailPlanClosed);
+            Assert.False(invalid.MailIsComplete);
+            Assert.Empty(invalid.MailDeliveredPartsByIntent.Values.Single());
+            Assert.Equal(2, _sender.Attempts.Count);
+            Assert.Single(_sender.Sent);
+        }
+
+        workflow.ReplaceMailPlan(host.HostId, Yesterday, "urgent",
+            new Dictionary<string, IReadOnlyCollection<string>>(), deliveryVersion);
+        workflow.CloseMailPlan(host.HostId, Yesterday, deliveryVersion, ["urgent"], "recipient-plan-evaluated");
+        stateStore.Update(s => s.UrgentOutbox[key].SmtpAcceptedAtUtc["ops@test.local"] = acceptedAtUtc);
+        await service.NotifyAfterRunAsync();
+        Assert.True(workflow.Get(host.HostId, Yesterday)!.MailIsComplete);
+        Assert.Equal(2, _sender.Attempts.Count);
+        Assert.Single(_sender.Sent);
+        Assert.Empty(stateStore.Get().PrtgUrgentAcceptedFacts);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(workflowRoot)) Directory.Delete(workflowRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StatisticsOnlyUrgentAcceptanceAfterParentReplacementDoesNotCloseStaleWorkflowMail()
+    {
+        EnableMail(s =>
+        {
+            s.MailOnRunCompleted = false;
+            s.MailUrgentEnabled = true;
+            s.MailNotifyHostOwners = false;
+        });
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
+        var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High);
+        record.RecordId = 4011;
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+        var workflowRoot = Path.Combine(Path.GetTempPath(), "lf-mail-stat-stale-" + Guid.NewGuid().ToString("N"));
+        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, workflowRoot);
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+        workflow.RestoreFromRecord(record, aiEnabled: false, prtgEnabled: false);
+        _sender.OnSend = _ => workflow.ParentSucceeded(host.HostId, host.HostName, Yesterday,
+            "replacement", 0, "changed", false, false, parentRecordId: record.RecordId + 1);
+        var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
+            _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            _issueOwners, _issueAggregates, workflow: workflow);
+        try
+        {
+            await service.NotifyAfterRunAsync();
+            var replaced = workflow.Get(host.HostId, Yesterday)!;
+            Assert.Equal(record.RecordId + 1, replaced.ParentRecordId);
+            Assert.Empty(replaced.MailIntents);
+            Assert.False(replaced.MailIsComplete);
+            Assert.Single(_sender.Sent); // SMTP accepted after the concurrent parent replacement.
+            Assert.Empty(new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get().PrtgUrgentAcceptedFacts);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(workflowRoot)) Directory.Delete(workflowRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StatisticsOnlyAggregateReceiptDoesNotBecomeFormalPrtgAcceptance()
+    {
+        EnableMail(s =>
+        {
+            s.MailOnRunCompleted = false;
+            s.MailUrgentEnabled = true;
+            s.MailNotifyHostOwners = false;
+        });
+        var prtgHost = _hosts.Upsert(new WebHost { HostName = "PRTG-HOST", Active = true, Source = "netiq" });
+        var netiqHost = _hosts.Upsert(new WebHost { HostName = "NETIQ-HOST", Active = true, Source = "netiq" });
+        var prtgRecord = Record(prtgHost.HostId, prtgHost.HostName, Yesterday, RiskLevels.High, issues: ActionablePrtg());
+        prtgRecord.RecordId = 5011;
+        prtgRecord.LogSource = AnalysisLogSource.Netiq;
+        var netiqRecord = Record(netiqHost.HostId, netiqHost.HostName, Yesterday, RiskLevels.High);
+        netiqRecord.RecordId = 5012;
+        netiqRecord.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(prtgRecord);
+        _records.Add(netiqRecord);
+        var workflowRoot = Path.Combine(Path.GetTempPath(), "lf-mail-stat-formal-" + Guid.NewGuid().ToString("N"));
+        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, workflowRoot);
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+        workflow.RestoreFromRecord(prtgRecord, aiEnabled: false, prtgEnabled: false);
+        workflow.RestoreFromRecord(netiqRecord, aiEnabled: false, prtgEnabled: false);
+        var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
+            _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            _issueOwners, _issueAggregates, workflow: workflow);
+        try
+        {
+            await service.NotifyAfterRunAsync();
+            Assert.Single(_sender.Sent);
+            Assert.DoesNotContain("PRTG-HOST", _sender.Sent[0].Message.Body);
+            var notifyState = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
+            Assert.Empty(notifyState.PrtgUrgentAcceptedFacts);
+            Assert.Equal(2, notifyState.UrgentOutbox.Count);
+            Assert.All(notifyState.UrgentOutbox.Values, intent => Assert.Equal("smtp-accepted", intent.Status));
+            Assert.True(workflow.Get(prtgHost.HostId, Yesterday)!.MailIsComplete);
+            Assert.True(workflow.Get(netiqHost.HostId, Yesterday)!.MailIsComplete);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(workflowRoot)) Directory.Delete(workflowRoot, recursive: true);
+        }
     }
 
     [Fact]
@@ -2091,7 +2299,7 @@ public class MailNotificationServiceTests : IDisposable
                 {
                     state.UrgentOutbox[key] = new MailUrgentIntent
                     {
-                        Key = key, HostId = hostId, RecordDate = Yesterday, UpdatedAtUtc = acceptedAt,
+                        Key = key, HostId = hostId, RecordDate = Yesterday, CreatedAtUtc = acceptedAt.AddMinutes(-1), UpdatedAtUtc = acceptedAt,
                         Status = "no-qualified-recipient",
                         Recipients = new Dictionary<string, string> { ["ops@test.local"] = "smtp-accepted" },
                         SmtpAcceptedAtUtc = new Dictionary<string, DateTime> { ["ops@test.local"] = acceptedAt }

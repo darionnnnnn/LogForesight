@@ -2131,3 +2131,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 ### 2026-10-13：E03 期間消費鏈反例補驗
 
 新增 SQLite joined negative matrix：缺值、DST重複／不存在、已儲存策略生效前的樣本均由 parser 明確拒絕，accumulator 空、typed merge零列、正式 finding零；來源身分漂移與兩小時缺口由期間consumer拒絕。主代理合併後 fresh build 核對新六例、既有正式磁碟flow及採樣parser／accumulator集合51/51、零失敗／略過，13分36秒，TRX root-e03-negative-current.trx SHA256 9DECE9665A50D292E6C0CC822A7D2C49D2C5B64EA720655D84B0578B72741F6E。策略反例只控制 freshness 評估時鐘以隔離生效欄位，使用真正已保存策略門檻，不冒稱qualification time可追認。T01仍需正式probe產生profile的完整joined operation；T02尚需逐條核對其他原契約反例與28日／7日20%引用，故不刪除TODO或宣告E03整體通過。
+
+### 2026-10-13：統計收件者郵件工作流與耐久回執修正
+
+只有統計摘要的收件者也納入 generic mail leg 的實際期望集合；SMTP 接受後可完成目前版本的郵件工作流。重啟恢復僅採 exact outbox key、parent／host-day／settings revision／problem keys／delivery version 及有效 UTC 回執，缺回執、預設時間、早於建立或未來時間、舊版本及真正零收件者保持未完成，不重寄已接受郵件，不建立 formal PRTG facts 或放寬正式 start fence。
+
+主代理 fresh build：MailNotificationServiceTests 99/99，另同版 PrtgFormalMailStartClaimTests 20/20，皆零失敗／略過。TRX 分別 root-stats-mail-final.trx、root-formal-mail-after-stats.trx。隔離實際 UI／NetIQ 1102／SMTP run e1d868c21dfc4881aea63f5621e6ae66：host3 的 2026-10-11 parent13 與 2026-10-12 parent14，共用一封統計摘要，拒收後背景重試接受，兩日 MailPlanClosed=true／recipient-plan-evaluated；手動再重試實收仍1封，正式PRTG facts為0。root verify_e08_stats_workflow_20261013.py readonly核對PASS；證據 root-e08-stats-workflow-evidence-20261013。瀏覽器 frozen modified 95cc 候選尚未包含最後時間邊界防護；這些邊界由目前 fresh tests核對，瀏覽器證據不冒稱最終乾淨成品。E08-T05 其餘三來源、故障、重啟劇本及 E01 最終成品核對仍保留。
