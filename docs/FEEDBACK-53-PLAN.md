@@ -2155,3 +2155,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 完整探測在連線失敗、初始化失敗或取消時仍產生有界白名單 JSON，五類來源明示 missing 與固定缺項原因；取消時捨棄來源觀測授權，僅保留已取得的本機診斷，不追加來源請求或 DB 收尾查詢。新增 Maintain-only GET prtg-probe/local-evidence 與實際下載入口，未設定／來源故障也能讀取本機 DB/provider／範圍摘要，15秒有界，不建立PRTG client、不呼叫AI、不更新設定或來源探測通過狀態，修訂變更拒絕交付。
 
 主代理 fresh build 相關契約109/109、零失敗／略過，2分40秒；TRX root-e04-producer-final.trx SHA256 74d721a15854838df8dfae9684bdafca947ed0ac65c9c69484afd46ad27524bd。包含 held HTTP 取消≤5秒、無設定、不可達來源、本機匯出不呼叫AI、caller取消與固定缺項理由防任意文字。第一輪廣集合108通過／1失敗保留，失敗為既知 busy=true 狀態補抓五秒門檻；此109集合排除兩個無關補抓參數案例，該缺陷仍由排程段追查，不能稱全輪回歸綠。Node以module語法核對通過。E04父項與目前乾淨版本瀏覽器交接TODO繼續保留。
+
+### 2026-10-13：主通道冷啟動恢復補強
+
+主通道容量模式 unknown 不再永久停止採樣；只允許已准入的有界恢復批次，所有原生列具一致合法 channel ID 才採 Provided，全部未提供時才進入原有限額的 property 核驗。混合、空值、字串、非法負值與衝突別名不推測。重新核驗期間不授權正式風險，仍需五次新鮮成功樣本與原來源／範圍／修訂門檻。
+
+主代理整合後 fresh build 的 observability、trusted parser、primary fallback 集合38/38通過、零失敗／略過，6分10秒；TRX TestResults/root-cold-recovery-current/root-cold-recovery-current.trx SHA256 5c3c3827020ae129b959fce46ce6af99d5d82794ac81abf8471f2a2c2cef8d7c。此段不含尚未通過的啟動狀態補抓五秒案例，不代表15000顆容量或全輪回歸通過；相關 TODO 保留。

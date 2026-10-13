@@ -11,6 +11,18 @@ public sealed class PrtgTrustedSnapshotParserTests
     private static readonly DateTime Hour = new(2026, 10, 5, 10, 0, 0, DateTimeKind.Utc);
     private readonly PrtgTrustedSnapshotParser _parser = new();
 
+    [Theory]
+    [InlineData("{\"primarychannel\":-1}", -1)]
+    [InlineData("{\"primarychannel\":-2}", -2)]
+    [InlineData("{\"primarychannel_raw\":-3}", -3)]
+    [InlineData("{\"primarychannel\":-4,\"primarychannel_raw\":-4}", -4)]
+    public void NativePrimaryChannelId_accepts_documented_negative_numeric_ids(string json, long expected)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.True(PrtgTrustedSnapshotParser.TryNativePrimaryChannelId(document.RootElement, out var actual));
+        Assert.Equal(expected, actual);
+    }
+
     private static PrtgTrustedSnapshotContext Context(DateTime? received = null, DateTime? asOf = null,
         string zone = "UTC", int minutes = 15, DateTime? effective = null, bool probe = true,
         Func<double, TimeSpan?>? intervalReader = null, long sensorId = 77, string? channelGeneration = null) => new(

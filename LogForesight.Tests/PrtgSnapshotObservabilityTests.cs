@@ -306,21 +306,49 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         Assert.Equal(0, res.Data.SnapshotConsecutiveFailures);
     }
 
-    [Fact]
-    public async Task 鏡像狀態_連續失敗三次後標示退避()
+    [Theory]
+    [InlineData("provided")]
+    [InlineData("allowed-negative")]
+    [InlineData("missing")]
+    [InlineData("mixed")]
+    [InlineData("null")]
+    [InlineData("string")]
+    [InlineData("invalid-negative")]
+    [InlineData("conflict")]
+    public async Task 鏡像狀態_連續失敗三次後標示退避(string nativeShape)
     {
-        SetupTargetSensors(new[] { (101L, "Ping") });
+        SetupTargetSensors(new[] { (101L, "Ping"), (102L, "Ping") });
         var failuresRemaining = 3;
         _stubHandler.OnSend = (_, _) =>
         {
             if (failuresRemaining-- > 0)
                 throw new HttpRequestException("Simulated HTTP failure");
+            var firstPrimary = nativeShape switch
+            {
+                "provided" => ",\"primarychannel\":303",
+                "allowed-negative" => ",\"primarychannel\":-1",
+                "mixed" => ",\"primarychannel\":303",
+                "null" => ",\"primarychannel\":null",
+                "string" => ",\"primarychannel\":\"303\"",
+                "invalid-negative" => ",\"primarychannel\":-5",
+                "conflict" => ",\"primarychannel\":303,\"primarychannel_raw\":304",
+                _ => ""
+            };
+            var secondPrimary = nativeShape switch
+            {
+                "provided" => ",\"primarychannel\":304",
+                "allowed-negative" => ",\"primarychannel_raw\":-1",
+                "conflict" => ",\"primarychannel\":303,\"primarychannel_raw\":304",
+                _ => ""
+            };
             return Task.FromResult(JsonResponse(
-                "{\"treesize\":1,\"sensors\":[{\"objid\":101,\"status\":\"Up\",\"lastcheck\":\"2026-10-08T00:00:00Z\",\"lastvalue_raw\":10,\"interval\":\"60 s\"}]}"));
+                $"{{\"treesize\":2,\"sensors\":[" +
+                $"{{\"objid\":101,\"status\":\"Up\",\"lastcheck\":\"2026-10-08T00:00:00Z\",\"lastvalue_raw\":10,\"interval\":\"60 s\"{firstPrimary}}}," +
+                $"{{\"objid\":102,\"status\":\"Up\",\"lastcheck\":\"2026-10-08T00:00:00Z\",\"lastvalue_raw\":20,\"interval\":\"60 s\"{secondPrimary}}}]}}"));
         };
 
         var service = CreateService();
-        SeedSnapshotAdmission((101, "Ping"));
+        SeedSnapshotAdmission((101, "Ping"), (102, "Ping"));
         var clock = DateTime.Now;
         service.Now = () => clock;
 
@@ -359,22 +387,50 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         var selection = PrtgSnapshotTargetResolver.Resolve(_backend, new HostStore(_backend.Blob("hosts")),
             _settingsStore.Get(), Array.Empty<Sentinel>());
         var evidenceStore = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
-        var firstRecoveryEstimate = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
-            PrtgFetchStrategy.Normalize(_settingsStore.Get().PrtgFetchStrategy), selection.ScopeFingerprint,
-            selection.EndpointFingerprint, selection.RequestShapeFingerprint, evidenceStore.Read(), DateTimeOffset.UtcNow);
-        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityUnverified, firstRecoveryEstimate.Status);
-        Assert.Equal(1, firstRecoveryEstimate.FreshMatchingFullBatchSamples);
+        // Selection intentionally stays unknown until five observations; inspect this recovery
+        // sample under the shape actually observed by the successful native response.
+        var providedExpected = nativeShape is "provided" or "allowed-negative";
+        var firstSampleMode = providedExpected
+            ? PrtgSnapshotTargetResolver.PrimaryChannelModeProvided
+            : PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown;
+        var firstSampleSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection, firstSampleMode);
+        var firstRecoveryEstimate = PrtgSnapshotCapacityEvaluator.Evaluate(firstSampleSelection.SensorObjids.Count,
+            PrtgFetchStrategy.Normalize(_settingsStore.Get().PrtgFetchStrategy), firstSampleSelection.ScopeFingerprint,
+            firstSampleSelection.EndpointFingerprint, firstSampleSelection.RequestShapeFingerprint, evidenceStore.Read(),
+            DateTimeOffset.UtcNow, firstSampleMode, firstSampleSelection.PotentialQualifiedSensorCount,
+            firstSampleSelection.PotentialQualifiedBatchCount, firstSampleSelection.PotentialQualifiedFallbackSampleSize);
+        var firstRecoveryQualified = false;
+        Assert.True(firstRecoveryEstimate.Status == (firstRecoveryQualified
+                ? PrtgSnapshotCapacityStatus.CapacityQualified
+                : PrtgSnapshotCapacityStatus.CapacityUnverified),
+            $"First recovery status={firstRecoveryEstimate.Status}; fresh={firstRecoveryEstimate.FreshMatchingFullBatchSamples}; " +
+            $"reason={firstRecoveryEstimate.Reason}; mode={firstRecoveryEstimate.PrimaryChannelCapabilityMode}; " +
+            $"requestShape={firstSampleSelection.RequestShapeFingerprint}; matching=" +
+            string.Join(" | ", evidenceStore.Read().Where(sample => sample.ScopeFingerprint == firstSampleSelection.ScopeFingerprint &&
+                sample.EndpointFingerprint == firstSampleSelection.EndpointFingerprint &&
+                sample.RequestShapeFingerprint == firstSampleSelection.RequestShapeFingerprint)
+                .Select(sample => $"{sample.CompletedAtUtc:O}:{sample.ElapsedMilliseconds}:{sample.Outcome}:{sample.PrimaryChannelCapabilityMode}:{sample.RequestedSensorCount}")));
+        Assert.Equal(firstRecoveryQualified ? PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples :
+            providedExpected ? 1 : 0, firstRecoveryEstimate.FreshMatchingFullBatchSamples);
 
         for (var sample = 1; sample < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; sample++)
         {
             clock = clock.AddMinutes(service.GetStatus().IntervalMinutes);
             await service.TickAsync();
         }
+        // Re-resolve after the fifth real success; mode inference must now agree with the
+        // measured request shape before capacity is evaluated for normal admission.
+        selection = PrtgSnapshotTargetResolver.Resolve(_backend, new HostStore(_backend.Blob("hosts")),
+            _settingsStore.Get(), Array.Empty<Sentinel>());
         var requalified = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
             PrtgFetchStrategy.Normalize(_settingsStore.Get().PrtgFetchStrategy), selection.ScopeFingerprint,
-            selection.EndpointFingerprint, selection.RequestShapeFingerprint, evidenceStore.Read(), DateTimeOffset.UtcNow);
-        Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, requalified.Status);
-        Assert.Equal(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples, requalified.FreshMatchingFullBatchSamples);
+            selection.EndpointFingerprint, selection.RequestShapeFingerprint, evidenceStore.Read(), DateTimeOffset.UtcNow,
+            selection.PrimaryChannelCapabilityMode, selection.PotentialQualifiedSensorCount,
+            selection.PotentialQualifiedBatchCount, selection.PotentialQualifiedFallbackSampleSize);
+        Assert.Equal(providedExpected ? PrtgSnapshotCapacityStatus.CapacityQualified : PrtgSnapshotCapacityStatus.CapacityUnverified,
+            requalified.Status);
+        Assert.Equal(providedExpected ? PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples : 0,
+            requalified.FreshMatchingFullBatchSamples);
     }
 
     [Fact]

@@ -891,6 +891,13 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         var batchSize = PrtgSnapshotCapacityEvaluator.BatchSize;
         var batchCount = (targets.Count + batchSize - 1) / batchSize;
+        // Admission may temporarily restore the retained plan's mode while the resolver has
+        // fewer than five fresh samples. Treat that mode as observational only until inference
+        // independently agrees; it can never enable trusted parsing during requalification.
+        var freshlyResolvedSelection = ResolveSnapshotCapacitySelection(settings, now);
+        var modeRequalificationInProgress = capacitySelection.PrimaryChannelCapabilityMode ==
+                PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown ||
+            freshlyResolvedSelection.PrimaryChannelCapabilityMode != capacitySelection.PrimaryChannelCapabilityMode;
         var failedBatches = 0;
         var requested = 0;
         Exception? lastError = null;
@@ -914,6 +921,8 @@ public class PrtgSnapshotHostedService : BackgroundService
                 var capacityOutcome = "failed";
                 var capacityResponseValid = false;
                 var primaryChannelModeMatches = true;
+                var bootstrapProvidedModeObserved = false;
+                var bootstrapFallbackModeObserved = false;
                 var fallbackBrackets = new Dictionary<long, PrtgNativePrimaryChannelBracket>();
                 var fallbackResults = new List<PrtgSnapshotPrimaryChannelFallback.Result>();
                 try
@@ -939,7 +948,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
                     capacityResponseValid = true;
                     var receivedAtUtc = DateTime.UtcNow;
-                    if (candidateIds.Length > 0)
+                    if (candidateIds.Length > 0 || batchCount == 1 && modeRequalificationInProgress)
                     {
                         var providedFieldCount = CountRowsWithPrimaryChannel(json, candidateIds);
                         switch (capacitySelection.PrimaryChannelCapabilityMode)
@@ -947,12 +956,17 @@ public class PrtgSnapshotHostedService : BackgroundService
                             case PrtgSnapshotTargetResolver.PrimaryChannelModeProvided:
                                 // This request shape was qualified only with a native snapshot field.
                                 // A missing field invalidates that evidence; never silently add unbudgeted calls.
-                                primaryChannelModeMatches = providedFieldCount == candidateIds.Length;
+                                primaryChannelModeMatches = providedFieldCount == candidateIds.Length &&
+                                    (!modeRequalificationInProgress ||
+                                     CountRowsWithPrimaryChannel(json, batch) == batch.Count &&
+                                     CountRowsWithValidNativePrimaryChannel(json, batch) == batch.Count);
                                 break;
                             case PrtgSnapshotTargetResolver.PrimaryChannelModeFallback:
                                 // The selected source shape omits the field. Keep this first bounded bulk
                                 // as the diagnostic sample, then gather one strict fresh bracket per group.
-                                primaryChannelModeMatches = providedFieldCount == 0;
+                                primaryChannelModeMatches = providedFieldCount == 0 &&
+                                    (!modeRequalificationInProgress || candidateIds.Length > 0 &&
+                                     CountRowsWithPrimaryChannel(json, batch) == 0);
                                 if (primaryChannelModeMatches)
                                 {
                                     var replacements = new Dictionary<long, JsonElement>();
@@ -990,8 +1004,55 @@ public class PrtgSnapshotHostedService : BackgroundService
                                 }
                                 break;
                             default:
-                                // Until the source mode has fresh matching pilot evidence, this batch
-                                // remains diagnostic-only for formally qualified profiles.
+                                // A single already-bounded recovery batch can seed a *mode* sample
+                                // when every qualified candidate has the same native shape. For
+                                // omitted fields, require the normal bounded property/table/property
+                                // brackets and exact row replacement before recording fallback evidence.
+                                if (batchCount == 1 &&
+                                    capacitySelection.PrimaryChannelCapabilityMode == PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown &&
+                                    batch.Count > 0)
+                                {
+                                    var batchProvidedFieldCount = CountRowsWithPrimaryChannel(json, batch);
+                                    if (batchProvidedFieldCount == batch.Count &&
+                                        CountRowsWithValidNativePrimaryChannel(json, batch) == batch.Count &&
+                                        (candidateIds.Length == 0 || providedFieldCount == candidateIds.Length))
+                                        bootstrapProvidedModeObserved = true;
+                                    else if (candidateIds.Length > 0 && providedFieldCount == 0 &&
+                                        batchProvidedFieldCount == 0)
+                                    {
+                                        var replacements = new Dictionary<long, JsonElement>();
+                                        try
+                                        {
+                                            foreach (var group in candidateIds.Chunk(PrtgSnapshotPrimaryChannelFallback.MaximumSensorsPerGroup))
+                                            {
+                                                var fallback = await PrtgSnapshotPrimaryChannelFallback.ReadGroupAsync(
+                                                    client, group, batchToken);
+                                                fallbackResults.Add(fallback);
+                                                foreach (var pair in fallback.Rows) replacements.Add(pair.Key, pair.Value);
+                                                foreach (var pair in fallback.Brackets)
+                                                {
+                                                    beforeBindings.TryGetValue(pair.Key, out var expectedBinding);
+                                                    beforeProfiles.TryGetValue(pair.Key, out var expectedProfile);
+                                                    if (!PrtgSnapshotPrimaryChannelFallback.MatchesCapturedBinding(
+                                                        pair.Value, expectedBinding, expectedProfile))
+                                                        throw new InvalidDataException("primarychannel-fallback-binding-mismatch");
+                                                    fallbackBrackets.Add(pair.Key, pair.Value);
+                                                }
+                                            }
+                                            json = MergeSnapshotRows(json, replacements);
+                                            PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
+                                            bootstrapFallbackModeObserved = fallbackBrackets.Count == candidateIds.Length;
+                                        }
+                                        catch (OperationCanceledException) { throw; }
+                                        catch (Exception ex) when (ex is PrtgClientException or InvalidDataException or
+                                            System.Text.Json.JsonException or HttpRequestException)
+                                        {
+                                            // A partial or stale bracket set cannot establish source mode.
+                                            fallbackBrackets.Clear();
+                                            fallbackResults.Clear();
+                                        }
+                                    }
+                                }
                                 primaryChannelModeMatches = false;
                                 break;
                         }
@@ -1017,6 +1078,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                             PrtgFetchStrategy.Profile(currentSettings.PrtgFetchStrategy).SnapshotIntervalMinutes,
                             DateTime.UtcNow);
                     var trustFence = SameTrustedPolicyInputs(trustPolicy, currentPolicy) &&
+                        !modeRequalificationInProgress &&
                         primaryChannelModeMatches &&
                         candidateIds.All(id => beforeBindings.TryGetValue(id, out var beforeBinding) &&
                             currentBindings.TryGetValue(id, out var currentBinding) && beforeBinding == currentBinding &&
@@ -1040,7 +1102,9 @@ public class PrtgSnapshotHostedService : BackgroundService
                     ParseAndCheckpoint(json, now, tally, batch.ToHashSet(), trustFence,
                         trustPolicy, currentProfiles, currentIdentities, currentStrategy,
                         receivedAtUtc, fallbackBrackets);
-                    capacityOutcome = capacityResponseValid && primaryChannelModeMatches ? "success" : "failed";
+                    capacityOutcome = capacityResponseValid && (primaryChannelModeMatches || bootstrapProvidedModeObserved ||
+                        bootstrapFallbackModeObserved)
+                        ? "success" : "failed";
                     Interlocked.Add(ref requested, batch.Count);
                 }
                 catch (OperationCanceledException) when (batchToken.IsCancellationRequested)
@@ -1071,25 +1135,36 @@ public class PrtgSnapshotHostedService : BackgroundService
                             var cancelled = ct.IsCancellationRequested;
                             var currentSelection = cancelled ? null :
                                 ResolveSnapshotCapacitySelection(_settingsStore.Get(), Now());
+                            var sampleMode = bootstrapProvidedModeObserved
+                                ? PrtgSnapshotTargetResolver.PrimaryChannelModeProvided
+                                : bootstrapFallbackModeObserved
+                                    ? PrtgSnapshotTargetResolver.PrimaryChannelModeFallback
+                                    : capacitySelection.PrimaryChannelCapabilityMode;
+                            var sampleSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(
+                                capacitySelection, sampleMode);
+                            var normalizedCurrentShapeMatches = !cancelled && modeRequalificationInProgress &&
+                                PrtgSnapshotTargetResolver.WithPrimaryChannelMode(currentSelection!, sampleMode)
+                                    .RequestShapeFingerprint == sampleSelection.RequestShapeFingerprint;
                             if (cancelled || currentSelection!.ScopeFingerprint == capacitySelection.ScopeFingerprint &&
                                 currentSelection.EndpointFingerprint == capacitySelection.EndpointFingerprint &&
-                                currentSelection.RequestShapeFingerprint == capacitySelection.RequestShapeFingerprint)
+                                (currentSelection.RequestShapeFingerprint == capacitySelection.RequestShapeFingerprint ||
+                                 normalizedCurrentShapeMatches))
                             {
                                 var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(capacityStartedTimestamp,
                                     capacityCompletedTimestamp == 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : capacityCompletedTimestamp).TotalMilliseconds;
                                 new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Record(
-                                    new PrtgSnapshotCapacitySample(capacitySelection.ScopeFingerprint,
-                                        capacitySelection.EndpointFingerprint, capacitySelection.RequestShapeFingerprint,
+                                    new PrtgSnapshotCapacitySample(sampleSelection.ScopeFingerprint,
+                                        sampleSelection.EndpointFingerprint, sampleSelection.RequestShapeFingerprint,
                                         DateTimeOffset.UtcNow, (long)Math.Ceiling(Math.Max(0, elapsed)), batch.Count,
                                         cancelled ? "failed" : capacityOutcome,
-                                        capacitySelection.PrimaryChannelCapabilityMode));
+                                        sampleSelection.PrimaryChannelCapabilityMode));
                                 if (!cancelled && capacityOutcome == "success" &&
-                                    capacitySelection.PrimaryChannelCapabilityMode == PrtgSnapshotTargetResolver.PrimaryChannelModeFallback)
+                                    sampleSelection.PrimaryChannelCapabilityMode == PrtgSnapshotTargetResolver.PrimaryChannelModeFallback)
                                 {
                                     foreach (var fallback in fallbackResults)
                                         new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Record(
-                                            new PrtgSnapshotCapacitySample(capacitySelection.ScopeFingerprint,
-                                                capacitySelection.EndpointFingerprint, capacitySelection.RequestShapeFingerprint,
+                                            new PrtgSnapshotCapacitySample(sampleSelection.ScopeFingerprint,
+                                                sampleSelection.EndpointFingerprint, sampleSelection.RequestShapeFingerprint,
                                                 DateTimeOffset.UtcNow, 0,
                                                 fallback.Brackets.Count, "success",
                                                 PrtgSnapshotTargetResolver.PrimaryChannelModeFallback,
@@ -1189,6 +1264,24 @@ public class PrtgSnapshotHostedService : BackgroundService
                 property.Name.Equals(PrtgTrustedSnapshotParser.NativePrimaryChannelIdField, StringComparison.OrdinalIgnoreCase) ||
                 property.Name.Equals(PrtgTrustedSnapshotParser.NativePrimaryChannelIdRawField, StringComparison.OrdinalIgnoreCase)))
                 count++;
+        }
+        return count;
+    }
+
+    private static int CountRowsWithValidNativePrimaryChannel(string json, IReadOnlyCollection<long> expectedIds)
+    {
+        var expected = expectedIds.ToHashSet();
+        using var document = JsonDocument.Parse(json,
+            new JsonDocumentOptions { MaxDepth = PrtgSnapshotResponseContract.MaximumDepth });
+        if (document.RootElement.ValueKind != JsonValueKind.Object ||
+            !document.RootElement.TryGetProperty("sensors", out var sensors) || sensors.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("snapshot-primarychannel-shape-invalid");
+        var count = 0;
+        foreach (var row in sensors.EnumerateArray())
+        {
+            if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("objid", out var idToken) ||
+                !TrySnapshotSensorId(idToken, out var id) || !expected.Contains(id)) continue;
+            if (PrtgTrustedSnapshotParser.TryNativePrimaryChannelId(row, out _)) count++;
         }
         return count;
     }

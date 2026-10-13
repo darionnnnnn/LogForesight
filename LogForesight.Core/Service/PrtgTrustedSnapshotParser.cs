@@ -306,7 +306,7 @@ public sealed class PrtgTrustedSnapshotParser
                 CultureInfo.InvariantCulture, out value);
     }
 
-    private static bool TryNativePrimaryChannelId(JsonElement root, out long value)
+    public static bool TryNativePrimaryChannelId(JsonElement root, out long value)
     {
         value = 0;
         var hasValue = TryProperty(root, NativePrimaryChannelIdField, out var token);
