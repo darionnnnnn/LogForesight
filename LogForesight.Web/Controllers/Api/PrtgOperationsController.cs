@@ -25,10 +25,11 @@ public sealed class PrtgOperationsController(StorageBackend backend, IVisibility
         var supplements = db.PrtgObservations.AsNoTracking().Where(r => r.ActiveKey != null && visible.Contains(r.HostId))
             .GroupBy(r => r.SupplementStatus).Select(g => new { Status = g.Key, Count = g.Count() }).ToArray();
         // 先授權才取前 100 筆；不回傳收件人地址、原始判定或不可見主機統計。
-        var intents = mailState.Get().UrgentOutbox.Values.Where(i => visible.Contains(i.HostId))
+        var state = mailState.Get();
+        var intents = state.UrgentOutbox.Values.Where(i => visible.Contains(i.HostId))
             .OrderByDescending(i => i.UpdatedAtUtc).Take(100).Select(i => new
             {
-                i.HostId, i.RecordDate, i.Status, i.UpdatedAtUtc,
+                i.HostId, i.RecordDate, Status = MailNotificationService.EffectiveUrgentStatusForRead(i, state.UrgentSentKeys), i.UpdatedAtUtc,
                 AdoptedSettingsRevision = i.SettingsRevision, ExpectedSettingsRevision = settingsRevision,
                 Recipients = i.Recipients.Values.GroupBy(s => s).Select(g => new { Status = g.Key, Count = g.Count() })
             }).ToArray();

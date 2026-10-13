@@ -2,8 +2,11 @@ using LogForesight.Core.Service;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Web.Models;
+using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
+using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -1963,7 +1966,187 @@ public class MailNotificationServiceTests : IDisposable
         await Create().NotifyAfterRunAsync();
         var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
         Assert.Empty(state.UrgentSentKeys);
-        Assert.Equal("no-qualified-recipient", Assert.Single(state.UrgentOutbox.Values).Status);
+        var intent = Assert.Single(state.UrgentOutbox.Values);
+        Assert.Equal("no-qualified-recipient", intent.Status);
+        Assert.Equal("no-qualified-recipient", MailNotificationService.EffectiveUrgentStatusForRead(intent, state.UrgentSentKeys));
+    }
+
+    [Theory]
+    [InlineData("failed-or-unknown")]
+    [InlineData("sending-result-unknown")]
+    public async Task NetiqUrgentStatisticsOnlyRecipientTracksFailureThenAcceptedRetry(string legacyRecipientStatus)
+    {
+        // A free-text global address receives only the statistics block. It has no issue-detail
+        // coverage, but a completed SMTP delivery must still be reflected in the intent status.
+        EnableMail(s =>
+        {
+            s.MailOnRunCompleted = false;
+            s.MailUrgentEnabled = true;
+            s.MailNotifyHostOwners = false;
+        });
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
+        var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High);
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+        _sender.ThrowOnSendForRecipient = "ops@test.local";
+        var service = Create();
+
+        await service.NotifyAfterRunAsync();
+
+        var stateStore = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
+        var key = Assert.Single(stateStore.Get().UrgentOutbox.Keys);
+        var failed = stateStore.Get().UrgentOutbox[key];
+        Assert.Equal("pending", failed.Status);
+        Assert.Equal("failed-or-unknown", failed.Recipients["ops@test.local"]);
+        Assert.Empty(failed.SmtpAcceptedAtUtc);
+        Assert.Empty(stateStore.Get().UrgentSentKeys);
+
+        // Reproduce a persisted legacy status from before statistics-only recipients were
+        // accounted for. The durable failure fact must make this same intent retryable.
+        stateStore.Update(s =>
+        {
+            s.UrgentOutbox[key].Status = "no-qualified-recipient";
+            s.UrgentOutbox[key].Recipients["ops@test.local"] = legacyRecipientStatus;
+        });
+
+        _sender.ThrowOnSendForRecipient = null;
+        await service.RetryPendingUrgentAsync();
+
+        var acceptedState = stateStore.Get();
+        var accepted = Assert.Single(acceptedState.UrgentOutbox.Values);
+        Assert.Equal(key, accepted.Key);
+        Assert.Equal("smtp-accepted", accepted.Status);
+        Assert.Equal("smtp-accepted", accepted.Recipients["ops@test.local"]);
+        Assert.Contains("ops@test.local", accepted.SmtpAcceptedAtUtc.Keys);
+        Assert.Single(acceptedState.UrgentSentKeys);
+        Assert.Equal(2, _sender.Attempts.Count);
+        Assert.Single(_sender.Sent);
+        Assert.DoesNotContain("host", _sender.Sent[0].Message.Body);
+    }
+
+    [Fact]
+    public async Task LegacyAcceptedStatisticsOnlyStatusIsProjectedWithoutResendOrFormalAcceptance()
+    {
+        EnableMail(s =>
+        {
+            s.MailOnRunCompleted = false;
+            s.MailUrgentEnabled = true;
+            s.MailNotifyHostOwners = false;
+        });
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
+        var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High);
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+        var service = Create();
+        await service.NotifyAfterRunAsync();
+
+        var stateStore = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
+        var sentState = stateStore.Get();
+        var key = Assert.Single(sentState.UrgentOutbox.Keys);
+        Assert.Contains(key, sentState.UrgentSentKeys);
+        Assert.Equal(DateTimeKind.Utc, sentState.UrgentOutbox[key].SmtpAcceptedAtUtc["ops@test.local"].Kind);
+        Assert.Empty(sentState.PrtgUrgentAcceptedFacts);
+
+        // Model the old persisted inconsistency without changing any durable acceptance facts.
+        stateStore.Update(s => s.UrgentOutbox[key].Status = "no-qualified-recipient");
+        var legacyState = stateStore.Get();
+        Assert.Equal("smtp-accepted", MailNotificationService.EffectiveUrgentStatusForRead(
+            legacyState.UrgentOutbox[key], legacyState.UrgentSentKeys));
+        Assert.Equal("no-qualified-recipient", legacyState.UrgentOutbox[key].Status);
+        var unknownWithoutDurableAcceptance = new MailUrgentIntent
+        {
+            Key = "unknown-legacy-intent",
+            Status = "no-qualified-recipient",
+            Recipients = new Dictionary<string, string> { ["ops@test.local"] = "sending-result-unknown" }
+        };
+        Assert.Equal("no-qualified-recipient", MailNotificationService.EffectiveUrgentStatusForRead(
+            unknownWithoutDurableAcceptance, new HashSet<string> { unknownWithoutDurableAcceptance.Key }));
+
+        await service.RetryPendingUrgentAsync();
+
+        var afterRetry = stateStore.Get();
+        Assert.Equal("no-qualified-recipient", afterRetry.UrgentOutbox[key].Status);
+        Assert.Equal(1, _sender.Attempts.Count);
+        Assert.Single(_sender.Sent);
+        Assert.Empty(afterRetry.PrtgUrgentAcceptedFacts);
+    }
+
+    [Fact]
+    public void OperationsGetProjectsLegacyAcceptedOnlyForVisibleHostsWithoutWritingOrSending()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lf-mail-operations-read-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, root);
+            var hosts = new HostStore(backend.Blob("hosts"));
+            var visibleHost = hosts.Upsert(new WebHost { HostName = "VISIBLE-MAIL", Active = true, Source = "netiq" });
+            var privateHost = hosts.Upsert(new WebHost { HostName = "PRIVATE-MAIL", Active = true, Source = "netiq" });
+            var stateStore = new MailNotifyStateStore(backend.Blob("mail_notify_state"));
+            var acceptedAt = DateTime.UtcNow;
+            var visibleKey = $"{visibleHost.HostId}|{Yesterday:yyyy-MM-dd}|visible-intent";
+            var privateKey = $"{privateHost.HostId}|{Yesterday:yyyy-MM-dd}|private-intent";
+            stateStore.Update(state =>
+            {
+                foreach (var (key, hostId) in new[] { (visibleKey, visibleHost.HostId), (privateKey, privateHost.HostId) })
+                {
+                    state.UrgentOutbox[key] = new MailUrgentIntent
+                    {
+                        Key = key, HostId = hostId, RecordDate = Yesterday, UpdatedAtUtc = acceptedAt,
+                        Status = "no-qualified-recipient",
+                        Recipients = new Dictionary<string, string> { ["ops@test.local"] = "smtp-accepted" },
+                        SmtpAcceptedAtUtc = new Dictionary<string, DateTime> { ["ops@test.local"] = acceptedAt }
+                    };
+                    state.UrgentSentKeys.Add(key);
+                }
+            });
+            new SystemSettingsStore(backend.Blob("system_settings")).Update(settings => settings.Revision = "fixture-revision");
+            var beforeRawState = backend.Blob("mail_notify_state").Read();
+            var controller = new PrtgOperationsController(backend, new FixedVisibility(hosts, visibleHost.HostId),
+                stateStore, Create(), null!, null!, new DataVersionStamp(), new RecordingAuditService(), hosts, null!);
+
+            var response = Assert.IsType<OkObjectResult>(controller.Get());
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(response.Value));
+            var notifications = json.RootElement.GetProperty("Data").GetProperty("Notifications").EnumerateArray().ToArray();
+            var visibleRow = Assert.Single(notifications);
+            Assert.Equal(visibleHost.HostId, visibleRow.GetProperty("HostId").GetInt64());
+            Assert.Equal("smtp-accepted", visibleRow.GetProperty("Status").GetString());
+            Assert.DoesNotContain(notifications, row => row.GetProperty("HostId").GetInt64() == privateHost.HostId);
+
+            Assert.Equal(beforeRawState, backend.Blob("mail_notify_state").Read());
+            Assert.Empty(stateStore.Get().PrtgUrgentAcceptedFacts);
+            Assert.Empty(_sender.Attempts);
+            Assert.Empty(_sender.Sent);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task NetiqUrgentWithNoRecipientsRemainsNoQualifiedRecipient()
+    {
+        EnableMail(s =>
+        {
+            s.MailOnRunCompleted = false;
+            s.MailUrgentEnabled = true;
+            s.MailNotifyHostOwners = false;
+            s.MailRecipients.Clear();
+        });
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
+        var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High);
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+
+        await Create().NotifyAfterRunAsync();
+
+        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
+        var intent = Assert.Single(state.UrgentOutbox.Values);
+        Assert.Equal("no-qualified-recipient", intent.Status);
+        Assert.Equal("no-qualified-recipient", MailNotificationService.EffectiveUrgentStatusForRead(intent, state.UrgentSentKeys));
+        Assert.Empty(_sender.Attempts);
+        Assert.Empty(state.UrgentSentKeys);
     }
 
     [Fact]
@@ -2014,6 +2197,23 @@ public class MailNotificationServiceTests : IDisposable
         await service.NotifyAfterRunAsync();
         Assert.Equal(2, _sender.Sent.Count);
         Assert.Equal(2, new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get().UrgentOutbox.Count);
+    }
+
+    private sealed class FixedVisibility(IHostStore hosts, params long[] visibleIds) : IVisibilityService
+    {
+        private readonly HashSet<long> _visibleIds = visibleIds.ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIds() => _visibleIds;
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => _visibleIds;
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => _visibleIds;
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => _visibleIds;
+        public IReadOnlyList<string> GetCaseGrantHostNames() => [];
+        public bool IsCaseGrantOnly(long hostId) => false;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
+        public List<WebHost> GetVisibleHosts() => hosts.GetAll().Where(host => _visibleIds.Contains(host.HostId)).ToList();
+        public void EnsureVisible(long hostId)
+        {
+            if (!_visibleIds.Contains(hostId)) throw new InvalidOperationException("The host is outside the test visibility scope.");
+        }
     }
 }
 

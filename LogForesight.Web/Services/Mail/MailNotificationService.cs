@@ -294,9 +294,29 @@ public class MailNotificationService
     public async Task RetryPendingUrgentAsync(CancellationToken ct = default)
     {
         if (!_state.Get().UrgentOutbox.Values.Any(i =>
-                i.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))) return;
+                i.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient") ||
+                IsRetryableLegacyNoQualifiedIntent(i))) return;
         await NotifyAfterRunAsync(ct);
     }
+
+    /// <summary>
+    /// Projects a legacy no-recipient status as accepted only when every persisted recipient
+    /// acceptance and the durable sent key prove delivery. This is read-only; it never infers
+    /// formal PRTG acceptance or changes the stored outbox.
+    /// </summary>
+    public static string EffectiveUrgentStatusForRead(MailUrgentIntent intent, IReadOnlySet<string> urgentSentKeys)
+    {
+        if (intent.Status != "no-qualified-recipient" || !urgentSentKeys.Contains(intent.Key) || intent.Recipients.Count == 0)
+            return intent.Status;
+
+        var allRecipientsAccepted = intent.Recipients.All(pair => pair.Value == "smtp-accepted" &&
+            intent.SmtpAcceptedAtUtc.TryGetValue(pair.Key, out var acceptedAtUtc) && acceptedAtUtc.Kind == DateTimeKind.Utc);
+        return allRecipientsAccepted ? "smtp-accepted" : intent.Status;
+    }
+
+    private static bool IsRetryableLegacyNoQualifiedIntent(MailUrgentIntent intent) =>
+        intent.Status == "no-qualified-recipient" && intent.Recipients.Values.Any(status =>
+            status is "failed-or-unknown" or "sending-result-unknown");
 
     private async Task RetryOldPendingUrgentPageAsync(SystemSettings settings, MailContext context,
         DateTime currentFrom, DateTime currentTo, CancellationToken ct, string? mailContextFingerprint,
@@ -306,7 +326,8 @@ public class MailNotificationService
         const int pageSize = 100;
         var state = _state.Get();
         var eligible = state.UrgentOutbox.Values.Where(intent => intent.RecordDate.Date < currentFrom.Date &&
-                intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
+                (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient") ||
+                 IsRetryableLegacyNoQualifiedIntent(intent)))
             .OrderBy(intent => intent.Key, StringComparer.Ordinal).ToArray();
         var cursorStore = new MailUrgentRetryCursorStore(_prtgBackend.Blob(MailUrgentRetryCursorStore.BlobKey));
         var cursor = cursorStore.Get().LastIntentKey;
@@ -1093,7 +1114,8 @@ public class MailNotificationService
             record.Date.Date == DateTime.Today.AddDays(-1) ||
             durableRetryIntentKeys?.ContainsKey(record.RecordId) == true ||
             state.UrgentOutbox.TryGetValue(IntentKey(record), out var existingIntent) &&
-                existingIntent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
+                (existingIntent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient") ||
+                 IsRetryableLegacyNoQualifiedIntent(existingIntent)))
             .ToList(); // Late PRTG delivery is eligible only as a retry of the exact durable parent/fence intent.
         var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r)))
             .Where(r => !state.UrgentOutbox.TryGetValue(IntentKey(r), out var priorIntent) ||
@@ -1312,8 +1334,16 @@ public class MailNotificationService
                             if (intent.Recipients.GetValueOrDefault(email) is not ("sending-result-unknown" or "failed-or-unknown" or "cancelled-formal-revoked"))
                                 intent.Recipients[email] = "not-sent";
                         }
-                        intent.Status = expected.Count == 0 ? "no-qualified-recipient" :
-                            expected.All(e => success.GetValueOrDefault(e) ||
+                        var attemptedRecipients = attemptedKeys
+                            .Where(pair => pair.Value.Contains(key))
+                            .Select(pair => pair.Key)
+                            .ToArray();
+                        intent.Status = expected.Count == 0
+                            ? attemptedRecipients.Length == 0 ? "no-qualified-recipient" :
+                                attemptedRecipients.All(email => success.GetValueOrDefault(email) ||
+                                    intent.Recipients.GetValueOrDefault(email) == "smtp-accepted" ||
+                                    intent.SmtpAcceptedAtUtc.ContainsKey(email)) ? "smtp-accepted" : "pending"
+                            : expected.All(e => success.GetValueOrDefault(e) ||
                                 intent.Recipients.GetValueOrDefault(e) == "smtp-accepted" ||
                                 intent.SmtpAcceptedAtUtc.ContainsKey(e)) ? "smtp-accepted" : "pending";
                         var targetIssues = record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue).ToArray();
@@ -1324,7 +1354,10 @@ public class MailNotificationService
                                 intent.FormalIssueStates.GetValueOrDefault(FormalRecipientIssueKey(email, issue)) == "revoked")))
                             intent.Status = "cancelled-formal-revoked";
                         intent.UpdatedAtUtc = DateTime.UtcNow;
-                        if (intent.Status == "smtp-accepted")
+                        // A statistics-only global recipient can receive an accepted NetIQ
+                        // urgent message without coverage of its PRTG details. That delivery
+                        // must not become formal PRTG acceptance evidence.
+                        if (intent.Status == "smtp-accepted" && expected.Count > 0)
                             foreach (var fact in PrtgUrgentFactsForAcceptedIntent(record, intent))
                                 s.PrtgUrgentAcceptedFacts[fact.Key] = fact.Value;
                     }
@@ -1345,6 +1378,8 @@ public class MailNotificationService
                         if (state.UrgentOutbox.TryGetValue(key, out var intent) && intent.Recipients.GetValueOrDefault(email) != "smtp-accepted")
                         {
                             intent.Recipients[email] = "sending-result-unknown";
+                            if (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked"))
+                                intent.Status = "pending";
                             intent.UpdatedAtUtc = DateTime.UtcNow;
                         }
                 });

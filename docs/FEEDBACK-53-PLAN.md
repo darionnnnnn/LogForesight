@@ -2084,3 +2084,7 @@ E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留�
 ### 2026-10-13 E02 探索頁面與綁定識別一致性
 
 後端通道探索修正後，逐前端入口核對發現探索結果UI仍濾掉-1至-4並改寫前導零。已共用Int64 canonical JS policy，0及大於JS安全整數的字串ID保留；合法特殊通道以唯讀查證選項呈現、明確停用資源綁定，草稿恢復仍保留停用狀態。非法alias／overflow／不安全number拒絕，不把兩個invalid ID視為相同已提交binding。主代理node scripts/tests/PrtgChannelIdentity.ContractTests.mjs通過，直接執行實際identity與discovery module，核對六個保留ID、四個特殊disabled選項、非法輸入及sensor／授權marker反例；JS語法與diff check通過。這是前端module契約補驗，不代替E08整體瀏覽器驗收。
+
+### 2026-10-13 E08 統計收件人的 urgent 狀態與舊持久化資料
+
+修正實際瀏覽器已重現的統計收件人SMTP接受但總狀態仍為no-qualified-recipient：未成功保留pending，成功依該intent真正attempted recipients計算smtp-accepted；沒有detail coverage不得新增正式PRTG接受fact。舊noqual失敗／未知intent可按同一耐久intent重試；舊accepted僅在sentkey及全部recipient UTC acceptance證據完整時於GET投影正確狀態，不寫回、不重送。真空收件人及缺耐久接受證據保持原狀。Operations GET只投影可見host，測試核raw blob不變及無寄送／formal副作用。主代理fresh build MailNotificationServiceTests94＋PrtgFormalMailStartClaimTests20均通過，包含六個新增／受影響案例；同次整體受影響集合222/222、0失敗／略過，3分40秒（TestResults/root-runs-mail-final/root-runs-mail-final.trx）。此222母體不是固定風險規則222案例。E08-T01瀏覽器修正後重驗及父動線尚待，未刪TODO。
