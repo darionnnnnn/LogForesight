@@ -2193,3 +2193,7 @@ PRTG停用或契約缺失的資格start／resume／pilot停用並提示真正前
 依PRTG官方sensor status表修正0／2／6／10／11被誤歸Unknown：0=None、1=Unknown，其餘保留各自語意；非法raw拒收，raw缺失時保留合法canonical文字相容。原生snapshot缺狀態保持等待；正式read-side亦拒絕舊snapshot／timeline的空或null狀態，不能以Unknown時間軸追認。已合格但未命中與真正等待分開顯示，保留既有門檻及messages端的獨立語意。官方依據：[Paessler status table](https://www.paessler.com/manuals/prtg/multiple_object_property_or_status)。
 
 主代理no-hit最小RED 1/1失敗，修後來源／collector／silent evaluator／no-hit集合96/96通過（root-closeout-status.trx內，整份114中另6個profile負例尚未對齊時仍失敗，不改寫原TRX）；read-side代理RED為5/6失敗、GREEN6/6，已由主代理上述集合覆驗。CPU／memory／disk共6個unit/scale負例依現行有界profile reader及live hint契約核對，保留原輸入、222個ID母體、零正式finding／manifest與人工資料不變，僅更正拒絕原因及等待／時間預期；最後root-profile-current-hints.trx為18/18通過，1分21秒。JS channel identity、五類probe下載與9個Runs操作契約通過。尚待下面的全量回歸，未以定向通過替代。
+
+### 2026-10-13 收尾文件與觀察文案核對
+
+第54輪E08-T05更正為統計郵件工作流缺陷已修正、其餘組合仍待验；保留原27個TODO，不重開已通過子項。補上細部coverage inventory引用及53個明列覆蓋缺口，確保粗粒度移交不遺失子句。主機資源區統一標示為「觀察」，一般讀者亦可看到CPU／memory預設提示、試算啟用條件與每日正式風險的查閱位置；未改授權、正式模式設定或判定。JS module語法核對及diff whitespace檢查通過，此為文案核對，不作完整瀏覽器／六角色驗收證據。

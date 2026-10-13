@@ -566,7 +566,7 @@ function renderResourcePressure(detail) {
     const hints = detail.resourcePressureHints ?? [];
     const intro = document.createElement('div');
     intro.className = 'text-muted small mb-2';
-    intro.textContent = '以可信來源與最近兩個完整小時評估；等待中的資料不代表主機故障。';
+    intro.textContent = '以可信來源與最近兩個完整小時評估。CPU／記憶體預設為壓力提示，須由管理者試算後啟用正式模式；期間觀察不等於每日正式風險，請以該日風險理由為準。等待中的資料不代表主機故障。';
     const availability = resourcePressureAvailability(detail.resourcePressureAvailability);
     const modes = detail.resourcePressureModes ?? [];
     const canManage = detail.canManageResourcePressure === true;
@@ -619,7 +619,7 @@ function renderResourcePressure(detail) {
         row.className = 'border-bottom py-2';
         const title = document.createElement('div');
         title.className = 'fw-semibold';
-        title.textContent = `${familyNames[hint.family] ?? '資源'}：${stateNames[hint.state] ?? '等待核實'}`;
+        title.textContent = `${familyNames[hint.family] ?? '資源'}觀察：${stateNames[hint.state] ?? '等待核實'}`;
         row.appendChild(title);
         const detailLine = document.createElement('div');
         detailLine.className = 'small text-muted';
