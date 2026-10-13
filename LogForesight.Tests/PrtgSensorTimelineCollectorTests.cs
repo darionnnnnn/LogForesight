@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
@@ -49,7 +50,7 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         { Calls++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response(request.RequestUri!.Query), Encoding.UTF8, "application/json") }); }
     }
     private static string Sensor(long id = 10, string since = "created-A") => JsonSerializer.Serialize(new
-    { sensors = new[] { new { objid = id, parentid = 100, type = "ping", status = "Down", cumsince = since } } });
+    { sensors = new[] { new { objid = id, parentid = 100, type = "ping", status = "Down", status_raw = 5, cumsince = since } } });
     private void Seed()
     {
         var fingerprint = PrtgTimelineResourceIdentity.BuildResourceFingerprint("100", "ping", "created-A", 0);
@@ -83,6 +84,65 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         var periods = evidence.Periods(new(DateTime.Today.AddDays(-1)), new(DateTime.Today));
         Assert.Equal(1440, periods.Sum(p => (p.Through - p.From).TotalMinutes));
         Assert.Equal(3, handler.Calls); // 初始身分、完整 messages、提交前身分 fence。
+    }
+
+    [Theory]
+    [InlineData("0", "None")]
+    [InlineData("1", "Unknown")]
+    [InlineData("2", "Scanning")]
+    [InlineData("3", "Up")]
+    [InlineData("4", "Warning")]
+    [InlineData("5", "Down")]
+    [InlineData("6", "No Probe")]
+    [InlineData("7", "Paused")]
+    [InlineData("8", "Paused")]
+    [InlineData("9", "Paused")]
+    [InlineData("10", "Unusual")]
+    [InlineData("11", "Not Licensed")]
+    [InlineData("12", "Paused")]
+    [InlineData("13", "Down (Acknowledged)")]
+    [InlineData("14", "Down (Partial)")]
+    public void OfficialNativeStatusCodeIsPreserved(string raw, string expected)
+    {
+        Assert.True(PrtgSensorStatuses.TryParseSourceStatus(raw, "contradictory display text", out var status));
+        Assert.Equal(expected, status);
+    }
+
+    [Theory]
+    [InlineData("999", "Up")]
+    [InlineData("invalid", "Unknown")]
+    [InlineData(null, "")]
+    public void UnknownRawStatusRejectsDisplayFallbackAndMissingBothIsUnavailable(string? raw, string display)
+    {
+        Assert.False(PrtgSensorStatuses.TryParseSourceStatus(raw, display, out _));
+    }
+
+    [Fact]
+    public async Task CollectorKeepsNativeNoneDistinctFromUnknown()
+    {
+        Seed();
+        static string NoneSensor() => JsonSerializer.Serialize(new
+        {
+            sensors = new[] { new { objid = 10, parentid = 100, type = "ping", status = "None", status_raw = 0, cumsince = "created-A" } }
+        });
+        var evidence = await Collect(new Handler(q => q.Contains("content=sensors") ? NoneSensor() : "{\"messages\":[]}"));
+
+        Assert.Equal("None", Store.Get().States.Last().Status);
+        Assert.Equal("covered", evidence.QualityReason);
+    }
+
+    [Fact]
+    public async Task CollectorUsesCanonicalDisplayWhenRawIsMissing()
+    {
+        Seed();
+        static string TextOnlyUnknownSensor() => JsonSerializer.Serialize(new
+        {
+            sensors = new[] { new { objid = 10, parentid = 100, type = "ping", status = "Unknown", cumsince = "created-A" } }
+        });
+        var evidence = await Collect(new Handler(q => q.Contains("content=sensors") ? TextOnlyUnknownSensor() : "{\"messages\":[]}"));
+
+        Assert.Equal("covered", evidence.QualityReason);
+        Assert.Equal("Unknown", Store.Get().States.Last().Status);
     }
     [Fact]
     public async Task 新身分的現在Down不能宣稱昨日故障()

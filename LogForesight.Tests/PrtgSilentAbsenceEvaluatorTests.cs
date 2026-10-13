@@ -180,6 +180,10 @@ public sealed class PrtgSilentAbsenceEvaluatorTests
         new object[] { "pending-reconciliation" },
         new object[] { "partial-timeline" },
         new object[] { "coverage-gap" },
+        new object[] { "source-status-null" },
+        new object[] { "source-status-empty" },
+        new object[] { "timeline-state-null" },
+        new object[] { "timeline-state-empty" },
         new object[] { "timeline-state-not-unknown" },
         new object[] { "missing-asof" },
         new object[] { "only-disabled-rule" },
@@ -225,6 +229,12 @@ public sealed class PrtgSilentAbsenceEvaluatorTests
             case "pending-reconciliation": sensors[1] = WithIdentity(sensors[1], identity => identity.PendingReconciliation = true); device = device with { Sensors = sensors }; break;
             case "partial-timeline": sensors[1] = WithTimeline(sensors[1], proof => proof.QualityReason = "identity-warmup"); device = device with { Sensors = sensors }; break;
             case "coverage-gap": sensors[1] = WithTimeline(sensors[1], proof => proof.Coverage = []); device = device with { Sensors = sensors }; break;
+            case "source-status-null": sensors[1] = sensors[1] with { SourceStatus = null }; device = device with { Sensors = sensors }; break;
+            case "source-status-empty": sensors[1] = sensors[1] with { SourceStatus = "" }; device = device with { Sensors = sensors }; break;
+            case "timeline-state-null": sensors[1] = WithTimeline(sensors[1], proof => proof.States =
+                [new(101, AsOf.AddHours(-1), null!, proof.SourceGeneration, proof.ResourceGeneration)]); device = device with { Sensors = sensors }; break;
+            case "timeline-state-empty": sensors[1] = WithTimeline(sensors[1], proof => proof.States =
+                [new(101, AsOf.AddHours(-1), "", proof.SourceGeneration, proof.ResourceGeneration)]); device = device with { Sensors = sensors }; break;
             case "timeline-state-not-unknown": sensors[1] = WithTimeline(sensors[1], proof => proof.States =
                 [new(101, AsOf.AddHours(-1), "Up", proof.SourceGeneration, proof.ResourceGeneration)]); device = device with { Sensors = sensors }; break;
             case "missing-asof": sensors[1] = sensors[1] with { SourceAsOf = null }; device = device with { Sensors = sensors }; break;

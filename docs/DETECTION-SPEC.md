@@ -659,8 +659,7 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
    `AttachAiResult` 完成後覆寫暫代欄位（含抽出欄 `RiskLevel` 同步）並把 `ai_pending` 清回 `false`。
 
 **`AiPending` 三態**（`DailyAnalysisRecord`／`lf_daily_records.ai_pending`）：
-- `AiAnalyzed=false` 且 `AiPending=false`：AI 判定不需要（低風險日）或已嘗試但失敗——既有的
-  「統計模式紀錄」語意，行為不變。
+- `AiAnalyzed=false` 且 `AiPending=false`：AI 判定不需要（例如低風險日）或未排入待補的統計模式紀錄。需要 AI 但本次呼叫失敗者保留 `AiPending=true`，供後續補跑。
 - `AiPending=true`：統計已寫入，等待 AI 分析排程撿取——畫面顯示「AI 分析中」徽章，
   與「統計模式（AI 未分析）」區分。
 - `AiAnalyzed=true`：AI 已完成並覆寫定案內容。
@@ -709,7 +708,7 @@ AI 的日子要等 AI 補寫完成才產出（暫代紀錄的 `ReportFile` 為 `
 | **診斷檔案 Log（NLog）** | 執行輸出不夠判斷問題細節時（重試原因、AI 回覆內容、完整例外堆疊），到 `logs\web.log` 查——詳見下方獨立章節 |
 
 
-## PRTG 第二輪 NetIQ 補充契約
+## PRTG 與 NetIQ 主機日補充契約
 
 明確 NetIQ 成功主機日才允許 PRTG 正式補追加；零事件成功仍有效。失敗／尚未完成／本機／未知來源不建立獨立 PRTG 問題。持久可信觀察於 NetIQ 晚到後可恢復補追加、案件、交辦及通知，不依賴單趟記憶體。
 

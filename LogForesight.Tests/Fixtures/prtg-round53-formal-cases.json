@@ -1480,7 +1480,7 @@
         {
           "caseId": "F53-DiskTwoHourLowWater-N10-wrong-unit",
           "mutation": "wrong-unit",
-          "failedQualification": "resource-period-assessment-failed",
+          "failedQualification": "source-profile-missing",
           "mutations": {
             "completedHourAverages": [
               5,
@@ -1496,7 +1496,7 @@
         {
           "caseId": "F53-DiskTwoHourLowWater-N11-wrong-scale",
           "mutation": "wrong-scale",
-          "failedQualification": "resource-period-assessment-failed",
+          "failedQualification": "source-profile-missing",
           "mutations": {
             "completedHourAverages": [
               5,
@@ -2414,7 +2414,7 @@
         {
           "caseId": "F53-CPUFormal-N10-wrong-unit",
           "mutation": "wrong-unit",
-          "failedQualification": "resource-period-assessment-failed",
+          "failedQualification": "source-profile-missing",
           "mutations": {
             "completedHourAverages": [
               95,
@@ -2430,7 +2430,7 @@
         {
           "caseId": "F53-CPUFormal-N11-wrong-scale",
           "mutation": "wrong-scale",
-          "failedQualification": "resource-period-assessment-failed",
+          "failedQualification": "source-profile-missing",
           "mutations": {
             "completedHourAverages": [
               95,
@@ -2923,7 +2923,7 @@
         {
           "caseId": "F53-MemoryFormal-N11-wrong-unit",
           "mutation": "wrong-unit",
-          "failedQualification": "resource-period-assessment-failed",
+          "failedQualification": "source-profile-missing",
           "mutations": {
             "completedHourAverages": [
               95,
@@ -2939,7 +2939,7 @@
         {
           "caseId": "F53-MemoryFormal-N12-wrong-scale",
           "mutation": "wrong-scale",
-          "failedQualification": "resource-period-assessment-failed",
+          "failedQualification": "source-profile-missing",
           "mutations": {
             "completedHourAverages": [
               95,

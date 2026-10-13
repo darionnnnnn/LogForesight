@@ -86,7 +86,7 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 （`PrtgRuleCode`／`PrtgThreshold`／`PrtgSensorCategory`）。三個平台**共用同一份規則儲存與同一套抑制、
 匯入、驗證、Web CRUD 機制**——不分多套 store。各平台的比對欄位互斥（一個平台的規則不可填另一平台的欄位），
 由 `RuleValidator` 平台條件式驗證把關（prtg 另驗代碼合法、門檻依代碼、`silent` 不可填分類）；
-`FindRule`／`FindLinuxRule` 依平台分路，PRTG 規則不走 `Classify` 而由 `PrtgRuleEvaluator` 依 sensor 分類挑選；
+`FindRule`／`FindLinuxRule` 依平台分路，PRTG 規則不走 `Classify`；`down`／`flapping`／`warning` 由 `PrtgCoveredRuleEvaluator` 依有效 timeline 與 sensor 分類挑選，`silent` 則由 `PrtgSilentPresenceFormalConsumer` 依完整原生 presence 快照及持續 timeline 評估為 device-level 規則；
 遮蔽偵測按平台分區（一個平台的規則永遠不會遮蔽另一平台）。完整語意見各該文件。
 
 一個容易踩的點：`ProgramPattern` 沿用 `SourcePattern` 的子字串比對語意，所以 program 名稱有包含

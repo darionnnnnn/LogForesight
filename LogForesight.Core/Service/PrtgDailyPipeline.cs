@@ -507,8 +507,17 @@ internal static class PrtgDailyPipeline
                     {
                         silentEvaluation = new PrtgSilentPresenceFormalConsumer(backend).EvaluateWithReadiness(
                             day, monitoringPolicy, systemSettings.PrtgUrl, deviceToHost, prtgRules);
-                        if (silentRuleEnabled && day == newest && silentEvaluation.Findings.Count == 0)
-                            prtgConsole.WriteLine($"{day:yyyy-MM-dd} 靜默監測判定等待：沒有同來源日、完整且符合目前 policy/scope 的原生狀態快照與涵蓋時間軸。");
+                        if (silentRuleEnabled && day == newest)
+                        {
+                            var waitingCount = silentEvaluation.Devices.Values.Count(device =>
+                                device.State == PrtgSilentPresenceReadinessState.Waiting);
+                            var noHitCount = silentEvaluation.Devices.Values.Count(device =>
+                                device.State == PrtgSilentPresenceReadinessState.QualifiedNoHit);
+                            if (waitingCount > 0)
+                                prtgConsole.WriteLine($"{day:yyyy-MM-dd} 靜默監測判定等待：{waitingCount} 台裝置尚缺同來源日、完整且符合目前 policy/scope 的原生狀態快照或涵蓋時間軸。");
+                            if (noHitCount > 0)
+                                prtgConsole.WriteLine($"{day:yyyy-MM-dd} 靜默監測已判定未命中：{noHitCount} 台裝置的來源證據合格，未符合靜默條件。");
+                        }
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)

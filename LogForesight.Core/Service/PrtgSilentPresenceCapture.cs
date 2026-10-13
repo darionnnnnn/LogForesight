@@ -75,10 +75,11 @@ public sealed class PrtgSilentPresenceCapture(StorageBackend backend)
             {
                 var sensorId = ReadLong(row, "objid");
                 var type = ReadString(row, "type");
-                if (sensorId <= 0 || string.IsNullOrWhiteSpace(type) || !TryReadPaused(row, out var paused))
+                if (sensorId <= 0 || string.IsNullOrWhiteSpace(type) || !TryReadPaused(row, out var paused) ||
+                    !PrtgSensorStatuses.TryParseSourceStatus(ReadString(row, "status_raw"), ReadString(row, "status"), out var sourceStatus))
                     throw new InvalidOperationException("sensor-inventory-row-incomplete");
                 rows.Add(new(sensorId, deviceObjid, type,
-                    PrtgSensorTypeCategoryMap.Resolve(type, categoryOverrides), ReadStatus(row), paused));
+                    PrtgSensorTypeCategoryMap.Resolve(type, categoryOverrides), sourceStatus, paused));
             }
             if (rows.Select(s => s.SensorObjid).Distinct().Count() != rows.Count)
                 throw new InvalidOperationException("sensor-inventory-duplicate-object");
@@ -156,14 +157,6 @@ public sealed class PrtgSilentPresenceCapture(StorageBackend backend)
         if (bool.TryParse(text, out paused)) return true;
         if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out number)) { paused = number != 0; return true; }
         return false;
-    }
-
-    private static string ReadStatus(JsonElement row)
-    {
-        var raw = ReadString(row, "status_raw");
-        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code))
-            return code switch { 3 => "Up", 4 => "Warning", 5 => "Down", 13 => "Down (Acknowledged)", 14 => "Down (Partial)", 7 or 8 or 9 or 12 => "Paused", _ => "Unknown" };
-        return ReadString(row, "status");
     }
 
     private static string InventoryFingerprint(IEnumerable<PrtgSilentSensorSnapshot> rows)

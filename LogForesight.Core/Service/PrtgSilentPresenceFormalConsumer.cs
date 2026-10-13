@@ -116,7 +116,7 @@ public sealed class PrtgSilentPresenceFormalConsumer(StorageBackend backend)
                     if (!string.Equals(row.Category, PrtgSensorCategories.Availability, StringComparison.OrdinalIgnoreCase) && timeline is not null)
                     {
                         var currentUnknown = timeline.Periods(sourceAsOf.AddDays(-31), sourceAsOf)
-                            .Where(period => PrtgSensorStatuses.IsUnknownOrEmpty(period.Status) && period.From <= sourceAsOf && period.Through >= sourceAsOf)
+                            .Where(period => string.Equals(period.Status, PrtgSensorStatuses.Unknown, StringComparison.OrdinalIgnoreCase) && period.From <= sourceAsOf && period.Through >= sourceAsOf)
                             .OrderByDescending(period => period.From).FirstOrDefault();
                         if (currentUnknown is not null) unknownSince = currentUnknown.EnteredAt;
                     }
@@ -196,7 +196,7 @@ public sealed class PrtgSilentPresenceFormalConsumer(StorageBackend backend)
     private static bool HasCoveredSourceState(PrtgSilentSensorSnapshot sensor, PrtgSensorTimelineEvidence? proof,
         PrtgResourceIdentity identity, DateTimeOffset sourceAsOf)
     {
-        if (proof is not { QualityReason: "covered" }) return false;
+        if (proof is not { QualityReason: "covered" } || string.IsNullOrWhiteSpace(sensor.SourceStatus)) return false;
         var state = proof.States.Where(item => item.At <= sourceAsOf && item.SourceGeneration == proof.SourceGeneration &&
                 item.ResourceGeneration == proof.ResourceGeneration).OrderBy(item => item.At).LastOrDefault();
         if (state is null || !StatusEquivalent(sensor.SourceStatus, state.Status)) return false;
@@ -210,7 +210,8 @@ public sealed class PrtgSilentPresenceFormalConsumer(StorageBackend backend)
         PrtgSensorStatuses.IsDown(source) && PrtgSensorStatuses.IsDown(timeline) ||
         PrtgSensorStatuses.IsWarning(source) && PrtgSensorStatuses.IsWarning(timeline) ||
         PrtgSensorStatuses.IsUp(source) && PrtgSensorStatuses.IsUp(timeline) ||
-        PrtgSensorStatuses.IsUnknownOrEmpty(source) && PrtgSensorStatuses.IsUnknownOrEmpty(timeline);
+        string.Equals(source, PrtgSensorStatuses.Unknown, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(timeline, PrtgSensorStatuses.Unknown, StringComparison.OrdinalIgnoreCase);
 
     private static string DeviceEvidenceFingerprint(PrtgSilentDeviceSnapshot snapshot,
         IReadOnlyDictionary<long, PrtgResourceIdentity> identities,

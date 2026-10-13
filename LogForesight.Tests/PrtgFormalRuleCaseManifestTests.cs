@@ -347,7 +347,7 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         }
         var captured = await fixture.CaptureSyntheticSilentSourceAsync(host, sourceAsOf, deviceAsOf,
             availabilitySensorCount: availabilityCount);
-        Assert.Equal(PrtgPresenceReadQuality.Complete, captured.ReadQuality);
+        Assert.True(captured.ReadQuality == PrtgPresenceReadQuality.Complete, $"Native silent capture quality={captured.ReadQuality}; reason={captured.ReadReason}");
         Assert.Equal(1 + availabilityCount, captured.ReportedSensorCount);
         if (mutations.TryGetProperty("sourcePoint", out _))
         {
@@ -400,7 +400,7 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         var captured = await fixture.CaptureSyntheticSilentSourceAsync(host, sourceAsOf,
             resourceStatus: resourceStatus, availabilityStatus: availabilityStatuses[0],
             availabilitySensorCount: availabilityStatuses.Length);
-        Assert.Equal(PrtgPresenceReadQuality.Complete, captured.ReadQuality);
+        Assert.True(captured.ReadQuality == PrtgPresenceReadQuality.Complete, $"Native silent capture quality={captured.ReadQuality}; reason={captured.ReadReason}");
         Assert.Equal(1 + availabilityStatuses.Length, captured.ReportedSensorCount);
         var run = await fixture.RunDailyAsync(host, localDay);
         Assert.Empty(run.Registry.For(host.HostId, localDay).Where(item => item.Source == "PRTG:silent"));
@@ -411,6 +411,8 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
             KnownIssueCatalog.Rules).Devices[PrtgFormalRuleCaseFixture.DeviceId];
         Assert.Equal(PrtgSilentPresenceReadinessState.QualifiedNoHit, readiness.State);
         Assert.Equal("qualified-no-silent-hit", readiness.Reason);
+        Assert.DoesNotContain(run.ConsoleLines, line => line.Contains("靜默監測判定等待", StringComparison.Ordinal));
+        Assert.Contains(run.ConsoleLines, line => line.Contains("靜默監測已判定未命中", StringComparison.Ordinal));
         Assert.Equal(beforeHumanState, fixture.CaptureHumanOwnedBaseline(host));
         Assert.Equal(beforeOpenCaseIds, fixture.Backend.IssueCaseStore().GetOpenForHost(host.HostName)
             .Select(item => item.CaseId).OrderBy(item => item, StringComparer.Ordinal).ToArray());
@@ -816,7 +818,19 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         PrtgResourcePeriodAssessment? preview = null;
         if (invalidProfile)
         {
-            Assert.Throws<InvalidDataException>(() => fixture.AssessResourcePeriod(resourceFamily));
+            preview = fixture.AssessResourcePeriod(resourceFamily);
+            Assert.NotNull(preview);
+            Assert.Equal(PrtgResourceDecisionKind.Insufficient, preview!.Decision.Kind);
+            // Bounded profile reads omit invalid persisted profiles before the resolver runs.
+            Assert.Equal("source-profile-missing", preview.Decision.ReasonCode);
+            // Isolate the malformed resource profile's workflow gate from the unrelated
+            // silent rule, whose native presence proof is not part of this resource fixture.
+            var ruleStore = new KnownIssueRuleStore(fixture.Backend.Blob("rules"));
+            var rules = ruleStore.Load().Content!.Rules.Select(rule =>
+                rule.PrtgRuleCode == PrtgRuleEvaluator.RuleSilent
+                    ? rule.CloneForSeedOverwrite(false) : rule).ToList();
+            ruleStore.Save(new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = rules });
+            KnownIssueCatalog.Initialize(rules);
         }
         else if (ruleEnabled)
         {
@@ -892,18 +906,25 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         if (invalidProfile)
         {
             Assert.Empty(pressureFindings);
-            Assert.Null(preDailyHint);
+            Assert.NotNull(preDailyHint);
+            AssertHintMatchesPreview(preview!, preDailyHint!);
             Assert.Null(run.Registry.ManifestFor(host.HostId, fixture.AnalysisDay));
             var receipt = new HostDayWorkflowStore(fixture.Backend).Get(host.HostId, fixture.AnalysisDay);
             Assert.NotNull(receipt);
             Assert.Equal(WorkflowLegState.Waiting, receipt!.Prtg);
-            Assert.Equal(testCase.FailedQualification, receipt.PrtgFailure);
+            Assert.Equal(testCase.FailedQualification, preview!.Decision.ReasonCode);
+            Assert.Equal("timeline-resource-semantic-or-sample-quality-not-ready", receipt.PrtgFailure);
+            var workflowFamily = resourceFamily switch
+            {
+                PrtgResourceFamily.Cpu => PrtgWorkflowResourceFamily.Cpu,
+                PrtgResourceFamily.Memory => PrtgWorkflowResourceFamily.Memory,
+                _ => PrtgWorkflowResourceFamily.Disk
+            };
+            Assert.Equal(PrtgWorkflowAssessment.Insufficient, receipt.PrtgResourceAssessments[workflowFamily]);
             Assert.False(receipt.PrtgReadinessComplete);
-            Assert.Contains(run.ConsoleLines, line => line.Contains("資源期間評估未完成", StringComparison.Ordinal));
-            AssertSameHint(preDailyHint, pressureHintStore.GetCurrent(host.HostId, DateTime.UtcNow)
-                .SingleOrDefault(item => item.SensorObjid == PrtgFormalRuleCaseFixture.SensorId && item.Family == resourceFamily));
+            Assert.DoesNotContain(run.ConsoleLines, line => line.Contains("資源期間評估未完成", StringComparison.Ordinal));
         }
-        else
+        // Every assessment, including an invalid profile, uses the same live-window hint contract.
         {
             if (preview is null)
             {
@@ -1253,7 +1274,7 @@ public sealed partial class PrtgFormalRuleCaseManifestTests
         fixture.UseAnalysisDay(localDay);
         var host = fixture.SeedSilentCase();
         var captured = await fixture.CaptureSyntheticSilentSourceAsync(host, sourceAsOf);
-        Assert.Equal(PrtgPresenceReadQuality.Complete, captured.ReadQuality);
+        Assert.True(captured.ReadQuality == PrtgPresenceReadQuality.Complete, $"Native silent capture quality={captured.ReadQuality}; reason={captured.ReadReason}");
         Assert.Equal(2, captured.ReportedSensorCount);
 
         var run = await fixture.RunDailyAsync(host, localDay);

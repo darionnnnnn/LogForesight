@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 
@@ -124,7 +125,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                     if (at > attemptAt.AddMinutes(2) || previous.HasValue && at > previous.Value)
                         throw new InvalidOperationException("source-clock-or-order-unverified");
                     previous = at;
-                    var status = ReadStatus(row);
+                    var status = ReadMessageStatusCategory(row);
                     if (string.IsNullOrWhiteSpace(status)) throw new InvalidOperationException("state-unavailable");
                     var rawKey = $"{at:O}|{status}|{Read(row, "message")}";
                     pageKeys.Add(rawKey);
@@ -151,7 +152,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             }
             if (!ended) throw new InvalidOperationException("messages-truncated");
 
-            var currentStatus = ReadStatus(observed.Sensor);
+            var currentStatus = ReadSensorState(observed.Sensor);
             if (string.IsNullOrWhiteSpace(currentStatus)) throw new InvalidOperationException("state-unavailable");
             var previousStatus = scanned.OrderByDescending(state => state.At).Select(state => state.Status).FirstOrDefault()
                 ?? initial.PendingStates.OrderByDescending(state => state.At).Select(state => state.Status).FirstOrDefault()
@@ -484,7 +485,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 if (at > candidate.CapturedAt.AddMinutes(2) || previous.HasValue && at > previous.Value)
                     throw new InvalidOperationException("source-clock-or-order-unverified");
                 previous = at;
-                var status = ReadStatus(row);
+                var status = ReadMessageStatusCategory(row);
                 if (string.IsNullOrWhiteSpace(status)) throw new InvalidOperationException("state-unavailable");
                 var key = $"{at:O}|{status}|{Read(row, "message")}";
                 pageKeys.Add(key);
@@ -526,7 +527,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             candidate.ExtendFrom(anchor.At);
         }
 
-        var startStatus = ReadStatus(candidate.Identity.Sensor);
+        var startStatus = ReadSensorState(candidate.Identity.Sensor);
         if (string.IsNullOrWhiteSpace(startStatus)) throw new InvalidOperationException("state-unavailable");
         var previousStatus = candidate.Scanned.OrderByDescending(s => s.At).Select(s => s.Status).FirstOrDefault()
             ?? candidate.Initial.PendingStates.OrderByDescending(s => s.At).Select(s => s.Status).FirstOrDefault()
@@ -541,7 +542,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         var revision = backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
         var query = PrtgResourceGuardProbe.BuildObjidFilter(sensorIds);
         using var doc = JsonDocument.Parse(await client.GetJsonAsync(
-            $"/api/table.json?content=sensors&columns=objid,parentid,type,status,cumsince{query}", ct));
+            $"/api/table.json?content=sensors&columns=objid,parentid,type,status,status_raw,cumsince{query}", ct));
         if (!doc.RootElement.TryGetProperty("sensors", out var rows) || rows.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException("sensor-identity-batch-unavailable");
         var requested = sensorIds.ToHashSet();
@@ -553,7 +554,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 throw new InvalidOperationException("sensor-identity-batch-out-of-scope");
             var parent = Read(sensor, "parentid"); var type = Read(sensor, "type");
             var since = Read(sensor, "cumsince_raw"); if (since.Length == 0) since = Read(sensor, "cumsince");
-            var status = ReadStatus(sensor);
+            var status = ReadSensorState(sensor);
             if (parent.Length == 0 || type.Length == 0 || since.Length == 0 || status.Length == 0)
                 throw new InvalidOperationException("sensor-identity-batch-schema-invalid");
             if (found.ContainsKey(id)) throw new InvalidOperationException("sensor-identity-batch-duplicate");
@@ -673,7 +674,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
     private async Task<(JsonElement Sensor, string Fingerprint, long MappingRevision)> ReadIdentity(long sensorId, CancellationToken ct)
     {
         using var sensorDoc = JsonDocument.Parse(await client.GetJsonAsync(
-            $"api/table.json?content=sensors&id={sensorId}&columns=objid,parentid,type,status,cumsince&count=2", ct));
+            $"api/table.json?content=sensors&id={sensorId}&columns=objid,parentid,type,status,status_raw,cumsince&count=2", ct));
         if (!sensorDoc.RootElement.TryGetProperty("sensors", out var sensors) || sensors.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException("sensor-identity-unavailable");
         var exact = sensors.EnumerateArray().Where(s => Read(s, "objid") == sensorId.ToString(CultureInfo.InvariantCulture)).ToArray();
@@ -701,7 +702,15 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
     private static string Read(JsonElement row, string name) => row.TryGetProperty(name, out var value)
         ? value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString() : "";
 
-    private static string ReadStatus(JsonElement row)
+    private static string ReadSensorState(JsonElement row)
+    {
+        var raw = Read(row, "status_raw"); var text = Read(row, "status");
+        return PrtgSensorStatuses.TryParseSourceStatus(raw, text, out var status) ? status : string.Empty;
+    }
+
+    // Message.status is a category (for example, "System"), not a sensor-state code.
+    // Preserve its existing interpretation while applying the documented map only to sensor rows.
+    private static string ReadMessageStatusCategory(JsonElement row)
     {
         var raw = Read(row, "status_raw"); var text = Read(row, "status");
         if (!int.TryParse(raw.Length > 0 ? raw : text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code)) return text;

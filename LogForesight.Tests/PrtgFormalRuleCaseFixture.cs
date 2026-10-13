@@ -974,7 +974,7 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
         var sourceDay = TimeZoneInfo.ConvertTime(sourceAsOf, sourceZone).Date;
         using var client = new PrtgClient(SourceUrl, "synthetic-fixture-token", 5, false,
             new SilentSourceHandler(sourceAsOf, deviceStatusAsOf, resourceStatus, availabilityStatus,
-                availabilitySensorCount), PrtgAuthModes.Token, "", "", "");
+                availabilitySensorCount), PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
         var store = new PrtgSilentPresenceSnapshotStore(Backend.Blob(
             PrtgSilentPresenceSnapshotStore.BlobKey(DeviceId, sourceDay)));
         return await new PrtgSilentPresenceCapture(Backend).CaptureDeviceAsync(client, store, policy,
@@ -1079,13 +1079,13 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
                 var sensors = new List<object>
                 {
                     new { objid = SensorId, parentid = DeviceId, type = "Synthetic Hardware", status = resourceStatus,
-                        status_raw = resourceStatus == "Up" ? "3" : "0", paused = false },
+                        status_raw = resourceStatus == "Up" ? "3" : "1", paused = false },
                     new { objid = SilentAvailabilitySensorId, parentid = DeviceId, type = "Ping", status = availabilityStatus,
-                        status_raw = availabilityStatus == "Up" ? "3" : "0", paused = false }
+                        status_raw = availabilityStatus == "Up" ? "3" : "1", paused = false }
                 };
                 if (availabilitySensorCount > 1)
                     sensors.Add(new { objid = SilentSecondAvailabilitySensorId, parentid = DeviceId, type = "HTTP",
-                        status = availabilityStatus, status_raw = availabilityStatus == "Up" ? "3" : "0", paused = false });
+                        status = availabilityStatus, status_raw = availabilityStatus == "Up" ? "3" : "1", paused = false });
                 payload = JsonSerializer.Serialize(new { treesize = sensors.Count, sensors });
             }
             var response = new HttpResponseMessage(HttpStatusCode.OK)

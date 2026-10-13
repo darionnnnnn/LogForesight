@@ -108,13 +108,13 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
         : JsonSerializer.Serialize(new { treesize = 2, sensors = new[]
         {
             new { objid = AvailabilityId, parentid = DeviceId, type = "Ping", status = "Up", status_raw = "3", paused = false },
-            new { objid = UnknownId, parentid = DeviceId, type = "SNMP CPU Load", status = "Unknown", status_raw = "0", paused = false }
+            new { objid = UnknownId, parentid = DeviceId, type = "SNMP CPU Load", status = "Unknown", status_raw = "1", paused = false }
         } });
 
     private async Task<PrtgSilentDeviceSnapshot> Capture(SourceHandler handler, CancellationToken cancellationToken = default,
         IReadOnlyDictionary<long, long>? producerMap = null)
     {
-        using var client = new PrtgClient(_url, "fixture-token", 10, false, handler, PrtgAuthModes.Token, "", "", "");
+        using var client = new PrtgClient(_url, "fixture-token", 10, false, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
         var sourceZone = TimeZoneInfo.FindSystemTimeZoneById(Policy.SourceTimeZoneId);
         var sourceDay = TimeZoneInfo.ConvertTime(_sourceDate, sourceZone).Date;
         var store = new PrtgSilentPresenceSnapshotStore(_backend.Blob(PrtgSilentPresenceSnapshotStore.BlobKey(DeviceId, sourceDay)));
@@ -145,6 +145,125 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
             Policy, _url, new Dictionary<long, long> { [DeviceId] = HostId }, [SilentRule]);
         Assert.Equal(PrtgSilentPresenceReadinessState.QualifiedHit, readiness.Devices[DeviceId].State);
         Assert.Equal(64, readiness.Devices[DeviceId].EvidenceFingerprint.Length);
+    }
+
+    [Fact]
+    public async Task MissingNativeStatusFieldWaitsAndCannotBecomeFormalSilentFinding()
+    {
+        static string MissingStatusSource(string content) => content == "devices"
+            ? JsonSerializer.Serialize(new { treesize = 1, devices = new[] { new { objid = DeviceId, paused = false } } })
+            : JsonSerializer.Serialize(new { treesize = 2, sensors = new object[]
+            {
+                new { objid = AvailabilityId, parentid = DeviceId, type = "Ping", status = "Up", status_raw = "3", paused = false },
+                new { objid = UnknownId, parentid = DeviceId, type = "SNMP CPU Load", paused = false }
+            } });
+
+        var captured = await Capture(new SourceHandler(MissingStatusSource, _sourceDate));
+        Assert.Equal(PrtgPresenceReadQuality.Partial, captured.ReadQuality);
+        Assert.Equal("sensor-inventory-row-incomplete", captured.ReadReason);
+
+        var day = TimeZoneInfo.ConvertTime(_sourceDate, TimeZoneInfo.Local).Date;
+        var readiness = new PrtgSilentPresenceFormalConsumer(_backend).EvaluateWithReadiness(day,
+            Policy, _url, new Dictionary<long, long> { [DeviceId] = HostId }, [SilentRule]);
+        Assert.Equal(PrtgSilentPresenceReadinessState.Waiting, readiness.Devices[DeviceId].State);
+        Assert.Empty(readiness.Findings);
+    }
+
+    [Fact]
+    public async Task UnrecognizedRawStatusWithoutTextWaitsAndCannotBecomeFormalSilentFinding()
+    {
+        static string UnrecognizedStatusSource(string content) => content == "devices"
+            ? JsonSerializer.Serialize(new { treesize = 1, devices = new[] { new { objid = DeviceId, paused = false } } })
+            : JsonSerializer.Serialize(new { treesize = 2, sensors = new object[]
+            {
+                new { objid = AvailabilityId, parentid = DeviceId, type = "Ping", status = "Up", status_raw = "3", paused = false },
+                new { objid = UnknownId, parentid = DeviceId, type = "SNMP CPU Load", status_raw = "999", paused = false }
+            } });
+
+        var captured = await Capture(new SourceHandler(UnrecognizedStatusSource, _sourceDate));
+        Assert.Equal(PrtgPresenceReadQuality.Partial, captured.ReadQuality);
+        Assert.Equal("sensor-inventory-row-incomplete", captured.ReadReason);
+
+        var day = TimeZoneInfo.ConvertTime(_sourceDate, TimeZoneInfo.Local).Date;
+        var readiness = new PrtgSilentPresenceFormalConsumer(_backend).EvaluateWithReadiness(day,
+            Policy, _url, new Dictionary<long, long> { [DeviceId] = HostId }, [SilentRule]);
+        Assert.Equal(PrtgSilentPresenceReadinessState.Waiting, readiness.Devices[DeviceId].State);
+        Assert.Empty(readiness.Findings);
+    }
+
+    [Fact]
+    public async Task NativeNoneStatusIsNotFormalUnknownEvenWhenTimelineSaysUnknown()
+    {
+        static string NoneStatusSource(string content) => content == "devices"
+            ? JsonSerializer.Serialize(new { treesize = 1, devices = new[] { new { objid = DeviceId, paused = false } } })
+            : JsonSerializer.Serialize(new { treesize = 2, sensors = new object[]
+            {
+                new { objid = AvailabilityId, parentid = DeviceId, type = "Ping", status = "Up", status_raw = "3", paused = false },
+                new { objid = UnknownId, parentid = DeviceId, type = "SNMP CPU Load", status = "None", status_raw = "0", paused = false }
+            } });
+
+        var captured = await Capture(new SourceHandler(NoneStatusSource, _sourceDate));
+        Assert.Equal(PrtgPresenceReadQuality.Complete, captured.ReadQuality);
+        Assert.Equal("None", Assert.Single(captured.Sensors.Where(sensor => sensor.SensorObjid == UnknownId)).SourceStatus);
+
+        var day = TimeZoneInfo.ConvertTime(_sourceDate, TimeZoneInfo.Local).Date;
+        var readiness = new PrtgSilentPresenceFormalConsumer(_backend).EvaluateWithReadiness(day,
+            Policy, _url, new Dictionary<long, long> { [DeviceId] = HostId }, [SilentRule]);
+        Assert.Equal(PrtgSilentPresenceReadinessState.Waiting, readiness.Devices[DeviceId].State);
+        Assert.Empty(readiness.Findings);
+    }
+
+    [Fact]
+    public async Task MissingStatusCannotBecomeFormalUnknown()
+    {
+        static string MissingRawSource(string content) => content == "devices"
+            ? JsonSerializer.Serialize(new { treesize = 1, devices = new[] { new { objid = DeviceId, paused = false } } })
+            : JsonSerializer.Serialize(new { treesize = 2, sensors = new object[]
+            {
+                new { objid = AvailabilityId, parentid = DeviceId, type = "Ping", status = "Up", status_raw = "3", paused = false },
+                new { objid = UnknownId, parentid = DeviceId, type = "SNMP CPU Load", paused = false }
+            } });
+
+        var captured = await Capture(new SourceHandler(MissingRawSource, _sourceDate));
+        Assert.Equal(PrtgPresenceReadQuality.Partial, captured.ReadQuality);
+        Assert.Equal("sensor-inventory-row-incomplete", captured.ReadReason);
+
+        var day = TimeZoneInfo.ConvertTime(_sourceDate, TimeZoneInfo.Local).Date;
+        var readiness = new PrtgSilentPresenceFormalConsumer(_backend).EvaluateWithReadiness(day,
+            Policy, _url, new Dictionary<long, long> { [DeviceId] = HostId }, [SilentRule]);
+        Assert.Equal(PrtgSilentPresenceReadinessState.Waiting, readiness.Devices[DeviceId].State);
+        Assert.Empty(readiness.Findings);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task PersistedEmptyOrNullSourceStatusCannotBeRequalifiedByUnknownTimeline(string? invalidStatus)
+    {
+        await Capture(new SourceHandler(CompleteSource, _sourceDate));
+        var sourceZone = TimeZoneInfo.FindSystemTimeZoneById(Policy.SourceTimeZoneId);
+        var sourceDay = TimeZoneInfo.ConvertTime(_sourceDate, sourceZone).Date;
+        var store = new PrtgSilentPresenceSnapshotStore(_backend.Blob(
+            PrtgSilentPresenceSnapshotStore.BlobKey(DeviceId, sourceDay)));
+        var captured = Assert.IsType<PrtgSilentDeviceSnapshot>(store.Get(DeviceId));
+        var sensors = captured.Sensors.Select(sensor => sensor.SensorObjid == UnknownId
+            ? sensor with { SourceStatus = invalidStatus }
+            : sensor).ToArray();
+        var inventory = string.Join("\n", sensors.OrderBy(sensor => sensor.SensorObjid).Select(sensor =>
+            $"{sensor.SensorObjid}|{sensor.DeviceObjid}|{sensor.SensorType}|{sensor.Category}|{sensor.SourceStatus}|{sensor.Paused}"));
+        var snapshot = captured with
+        {
+            Sensors = sensors,
+            InventoryFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(inventory)))
+        };
+        store.Save(snapshot);
+
+        var day = TimeZoneInfo.ConvertTime(_sourceDate, TimeZoneInfo.Local).Date;
+        var readiness = new PrtgSilentPresenceFormalConsumer(_backend).EvaluateWithReadiness(day,
+            Policy, _url, new Dictionary<long, long> { [DeviceId] = HostId }, [SilentRule]);
+        Assert.Equal(PrtgSilentPresenceReadinessState.Waiting, readiness.Devices[DeviceId].State);
+        Assert.Empty(readiness.Findings);
     }
 
     [Fact]

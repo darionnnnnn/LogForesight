@@ -10,7 +10,7 @@
 
 > 歷史狀態：探測後補強實作與隔離驗收進行中（2026-10-12 新探測核對；2026-10-03 授權開工；2026-10-04 已依使用者指示停用 AGY）。採 §16 全作業驗收及 §17 修正後契約；CPU／memory 預設提示及試算後啟用、每日主機日／合格父紀錄、磁碟 7 日內降到 20% 分支皆已定案。由主模型評估 gpt-6-luna high／medium／low 分段實作，主代理独立核對與驗收。來源兼容與資源前提未核實前不越過相依門檻；全部必要作業各自通過才可結案。
 > 規劃起始核對基準：`dev`／`beda825b3dadbba7c6936f20acdf9dc731ae26ec`；原規劃起點為 `feature/prtg-feedback-52`／`8db15b5`。工作區僅有既存未追蹤 `artifacts/`，保護不改；不讀 `docs/archive/`。部署版本仍須現場確認。
-> 承接：[第 52 輪第二輪 PLAN](FEEDBACK-52-ROUND2-PLAN.md) 的有效 NetIQ 契約、原需求 ID、E0–E4 與未通過門檻。此文件是下一輪有效待辦入口，舊 PLAN 保留證據與決策歷程。
+> 承接：[第 52 輪第二輪 PLAN](FEEDBACK-52-ROUND2-PLAN.md) 的有效 NetIQ 契約、原需求 ID、E0–E4 與未通過門檻。本文件保留原契約與證據；活動待辦入口已移交第54輪，舊 PLAN 保留有效決策歷程。
 
 ## 1. 完全體的範圍
 
@@ -2177,3 +2177,19 @@ RunId舊log尾端32行全損毀且無allocator時，bounded probe原會以0重�
 PRTG停用或契約缺失的資格start／resume／pilot停用並提示真正前置條件。隔離矩陣Start／Resume／Matrix在exact runtime ownership未實作前安全拒絕；正常production管理者API保留。六個JS cases與六個runner否定核對通過，實際foreign loopback listener零HTTP；此不代表矩陣正常全負載通過。提交efecd8be已推送並核對遠端。完整owned preparation及恢復接線列D54-02。
 
 本輪目前只完成以上收尾子項。全分支review及回歸仍在進行，最新正式規則重跑已有失敗，未裁定整輪全綠。未實作接線及原27個未通過驗收完整移交第54輪，不能把移交寫成刪除門檻。
+
+### 2026-10-13 最後收尾：範圍、文件與整合授權
+
+使用者再次明確要求先確認下一輪PLAN，再收尾已實作範圍；通過檢查後授權合併並push `dev`、刪除 `feature/prtg-feedback-53`。原起點仍為 `beda825b`，不得用合併後空diff縮小審查範圍。第54輪§3與本輪§5.8的27個未勾ID已逐集合比對完全一致，無重複、未重開E10-T01；N1–N8對照及D54-01–04相依順序已補齊。這是部分交付收尾，非原PRTG完整驗收PASS。
+
+本輪root沿正式來源→covered timeline／presence→NetIQ合格主機日→resource assessment／workflow→報表與維護入口核對，並由gpt-6-luna high審查來源契約／權限／架構，medium核對13份非封存docs Markdown。實作與體檢模型範圍可能重疊，未宣稱不同於全部實作者的獨立模型背書。67份已追蹤且非封存Markdown的相對檔案連結核對零缺檔；歷史PLAN保留原始契約，未因部分收尾搬移仍被驗收工具使用的來源文件。
+
+現況文件修正正式sensor狀態判定來源、silent完整inventory／持續timeline、資源期間風險與精確事件關聯的界線，以及AI失敗仍待補的語意；維持既有Core／Web／StorageBackend分工，未新增設定、服務框架或重構。Skill評估沿用既有逐項驗收／範圍記錄機制，本次未修改skill；不為單次移交情境擴大共用規則。
+
+驗證結果與最終程式基準將在下方補入；在結果完成前不裁定合併。
+
+### 2026-10-13 收尾修正：原生狀態、靜默證據與測試契約
+
+依PRTG官方sensor status表修正0／2／6／10／11被誤歸Unknown：0=None、1=Unknown，其餘保留各自語意；非法raw拒收，raw缺失時保留合法canonical文字相容。原生snapshot缺狀態保持等待；正式read-side亦拒絕舊snapshot／timeline的空或null狀態，不能以Unknown時間軸追認。已合格但未命中與真正等待分開顯示，保留既有門檻及messages端的獨立語意。官方依據：[Paessler status table](https://www.paessler.com/manuals/prtg/multiple_object_property_or_status)。
+
+主代理no-hit最小RED 1/1失敗，修後來源／collector／silent evaluator／no-hit集合96/96通過（root-closeout-status.trx內，整份114中另6個profile負例尚未對齊時仍失敗，不改寫原TRX）；read-side代理RED為5/6失敗、GREEN6/6，已由主代理上述集合覆驗。CPU／memory／disk共6個unit/scale負例依現行有界profile reader及live hint契約核對，保留原輸入、222個ID母體、零正式finding／manifest與人工資料不變，僅更正拒絕原因及等待／時間預期；最後root-profile-current-hints.trx為18/18通過，1分21秒。JS channel identity、五類probe下載與9個Runs操作契約通過。尚待下面的全量回歸，未以定向通過替代。

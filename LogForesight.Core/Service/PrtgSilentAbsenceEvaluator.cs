@@ -86,7 +86,7 @@ public static class PrtgSilentAbsenceEvaluator
             PrtgSensorCategories.Availability, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (availability.Length == 0 || unknownSensors.Length == 0 ||
             availability.Any(s => !PrtgSensorStatuses.IsUp(s.SourceStatus) || !HasCoveredCurrentState(s, PrtgSensorStatuses.Up)) ||
-            unknownSensors.Any(s => !PrtgSensorStatuses.IsUnknownOrEmpty(s.SourceStatus) || s.UnknownSince is null ||
+            unknownSensors.Any(s => !IsExactUnknown(s.SourceStatus) || s.UnknownSince is null ||
                 s.SourceAsOf!.Value <= s.UnknownSince.Value || !HasContinuousUnknown(s, s.UnknownSince.Value, s.SourceAsOf.Value)))
             return false;
 
@@ -126,14 +126,14 @@ public static class PrtgSilentAbsenceEvaluator
         var stateAtAsOf = proof.States.Where(s => s.At <= asOf &&
                 s.SourceGeneration == proof.SourceGeneration && s.ResourceGeneration == proof.ResourceGeneration)
             .OrderBy(s => s.At).LastOrDefault();
-        if (stateAtAsOf is null || !PrtgSensorStatuses.IsUnknownOrEmpty(stateAtAsOf.Status)) return false;
+        if (stateAtAsOf is null || !IsExactUnknown(stateAtAsOf.Status)) return false;
 
         var periods = proof.Periods(unknownSince, asOf).OrderBy(p => p.From).ToArray();
         if (periods.Length == 0 || periods[0].EnteredAt != unknownSince) return false;
         var cursor = unknownSince;
         foreach (var period in periods)
         {
-            if (!PrtgSensorStatuses.IsUnknownOrEmpty(period.Status) || period.From > cursor) return false;
+            if (!IsExactUnknown(period.Status) || period.From > cursor) return false;
             if (period.Through > cursor) cursor = period.Through;
         }
         return cursor >= asOf && asOf > unknownSince;
@@ -145,6 +145,9 @@ public static class PrtgSilentAbsenceEvaluator
             .Select(s => $"{s.Sensor.Objid}:{s.Identity!.Epoch}:{s.Identity.Generation}"));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)));
     }
+
+    private static bool IsExactUnknown(string? status) =>
+        string.Equals(status, PrtgSensorStatuses.Unknown, StringComparison.OrdinalIgnoreCase);
 
     private sealed record QualifiedResult(DateTimeOffset AsOf, DateTimeOffset UnknownSince,
         PrtgSilentSensorEvidence[] UnknownSensors, PrtgSilentSensorEvidence[] AvailabilitySensors);
