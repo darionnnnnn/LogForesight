@@ -2115,3 +2115,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 主代理以 clean b4cc3d0d 的 Web／Core 建置身分啟動自有隔離 run 0dc0867873244a488cdd195d3ba7a360，從實際維護表單儲存合成來源、完整唯讀探測後下載獨立白名單 JSON。五類下載按鈕正常；下載檔 SHA256=533149f658349fefd9716b70bdbc74f85cc915cb679655c77e6743cb2a28abe5，離線核對版本、來源修訂及 native primary 通道可核對，結果正確維持 INCOMPLETE：四類缺樣本、Ping 歷史不足、本機舊 profile 摘要未齊；不授權 profile／正式風險／容量。此項不宣告 E04-T02 整體完成。瀏覽器 DOM／截圖保存 root-e04-five-target-export-dom-20261013.txt／root-e04-five-target-export-20261013.png。
 
 實際匯出發現 missing target 省略 raw 回執時核對器誤判 malformed；僅針對明示 missing 保留 incomplete，有觀測的 target 缺 raw 仍拒絕。完整 PowerShell 正反例集合及新增 missing/observed 兩例均通過（root-e04-offline-current-contracts-20261013.log）；64 KiB、depth32、防偽及授權門檻不變。另補齊組合合成來源的 groups/messages 唯讀端點，避免完整探測在群組步驟因 fixture 不支援而中斷；Test-ControlledSources 全集合重跑通過，SMTP accepted/refused/unknown-commit 與僅允許 .invalid 均有回執（root-composite-probe-source-contracts-retry-20261013.log）。首輪 SMTP 缺 post-DATA 回執不計通過，未調整原測試截止或正式門檻。
+
+### 2026-10-13：完整水位生成工具中斷續跑
+
+補齊 immutable manifest、checksummed atomic checkpoint 與同資料庫擁有權標記，使用正式 MergeSampledValues 取精確下一列續行，處理 DB 已提交而外部 checkpoint 未完成的尾段；範圍、來源 binary、foreign DB、checkpoint 不符皆拒絕。舊版每 100,000 列記錄進度、100 列提交，採納前唯讀逐列核對所有 device／sensor／map／id／typed proof，僅允许同採樣區間內、100 列提交邊界的尾段，並記錄 sampled／audited rows 與實際 DB／WAL／SHM。舊日誌一位小數時間僅按其明示精度核對；不能要求 SHM=0 或把週期性檔案抽樣值當最終大小。35.8M 原輪日誌 SHA 與來源快照仍固定核對，不降低 64.8M 完整門檻。
+
+獨立審查另外修正首批時間誤作整輪時間與續跑 proof 分母：正式收據累計實際程序 Stopwatch 活動時間，未知的中斷旧輪完整時間／總速率回傳 null；proof byte 計數明示本程序生成列數。主代理 fresh 私有工具及主分支 Release 建置後契約均通過，涵蓋 205 列精確序列、DB ahead checkpoint 恢復、拒絕反例及計時／proof 分母（root-storage-final-contracts-20261013.log、root-storage-main-contracts-20261013.log）。此為續跑功能完成，E07-T01–T03 的全水位／備份／混合容量／恢復驗收繼續保留，任何容量旗標仍 false；下一步對既有完整目標的35.8M自有隔離輪唯讀稽核後續填。
