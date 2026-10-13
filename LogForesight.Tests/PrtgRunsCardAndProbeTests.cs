@@ -162,7 +162,10 @@ public class PrtgRunsCardAndProbeTests : IDisposable
 
     private sealed class ScopeRefreshTrackingSnapshotService : PrtgSnapshotHostedService
     {
-
+        public readonly TaskCompletionSource<bool> FirstSamplingTickStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<bool> ReleaseFirstSamplingTick = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool BlockFirstSamplingTick { get; set; }
+        private int _samplingTicks;
 
         public ScopeRefreshTrackingSnapshotService(
             ISystemSettingsStore settingsStore,
@@ -183,6 +186,16 @@ public class PrtgRunsCardAndProbeTests : IDisposable
                 new FakeHostApplicationLifetime(),
                 pollInterval)
         {
+        }
+
+        internal override async Task TickAsync(CancellationToken ct = default)
+        {
+            if (BlockFirstSamplingTick && Interlocked.Increment(ref _samplingTicks) == 1)
+            {
+                FirstSamplingTickStarted.TrySetResult(true);
+                await ReleaseFirstSamplingTick.Task.WaitAsync(ct);
+            }
+            await base.TickAsync(ct);
         }
 
     }
@@ -264,11 +277,11 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         SnapshotAdmissionTestFixture.Seed(_backend, _hosts, _settingsStore, host.HostId, 20, (201, "ping"));
         var budgetFixture = new SnapshotRequestBudgetFixture(_backend);
         var admittedScopeCount = 0;
+        using var ackDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         service.ScopeRefreshAdmissionAccepted = () => Interlocked.Increment(ref admittedScopeCount);
         service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler,
             PrtgAuthModes.Token, "", "", "", budgetFixture.Budget);
         // Retain one five-second deadline across the busy gate, startup, mirror/HTTP and both ACKs.
-        using var ackDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         if (initiallyBusy)
         {
             Assert.True(probeState.TryBeginRun(out _));
@@ -364,6 +377,74 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         }
         finally
         {
+            try
+            {
+                using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await service.StopAsync(stop.Token);
+            }
+            finally { service.Dispose(); }
+        }
+    }
+
+    [Fact]
+    public async Task 啟動前待處理範圍補抓先鏡像新感測器再進入首個採樣()
+    {
+        var probeState = new PrtgProbeRunState();
+        var service = new ScopeRefreshTrackingSnapshotService(_settingsStore, _backend, _hosts, _sentinels,
+            probeState, TimeSpan.FromMilliseconds(300))
+        {
+            BlockFirstSamplingTick = true,
+            TimelineTick = _ => Task.FromResult(new PrtgSensorTimelineTick(
+                TimeSpan.FromSeconds(5), false, "startup-scope-order-fixture"))
+        };
+        _settingsStore.Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgSensorTypeWhitelist = ["ping"];
+        });
+
+        var existingHost = _hosts.Upsert(new WebHost { HostName = "Server-20", IpAddress = "192.0.2.20", Active = true });
+        var newHost = _hosts.Upsert(new WebHost { HostName = "Server-21", IpAddress = "192.0.2.21", Active = true });
+        _backend.PrtgStore().ReplaceHostMapForDate(DateTime.Today, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 20, HostId = existingHost.HostId, HostName = existingHost.HostName,
+                MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today },
+            new PrtgHostMapRow { DeviceObjid = 21, HostId = newHost.HostId, HostName = newHost.HostName,
+                MapStatus = PrtgMapStatus.Ok, MapDate = DateTime.Today }
+        });
+        _backend.PrtgStore().UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 201, DeviceObjid = 20, Name = "Existing sensor", SensorType = "ping",
+                Status = "Up", Paused = false }
+        }, DateTime.Now);
+        using var handler = new ScopeRefreshHandler();
+        SnapshotAdmissionTestFixture.Seed(_backend, _hosts, _settingsStore, existingHost.HostId, 20, (201, "ping"));
+        var budgetFixture = new SnapshotRequestBudgetFixture(_backend);
+        var admittedScopeCount = 0;
+        service.ScopeRefreshAdmissionAccepted = () => Interlocked.Increment(ref admittedScopeCount);
+        service.ClientFactory = () => new PrtgClient("https://prtg.example", "token", 30, true, handler,
+            PrtgAuthModes.Token, "", "", "", budgetFixture.Budget);
+        service.RequestScopeRefresh();
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            await service.StartAsync(CancellationToken.None);
+            await service.FirstSamplingTickStarted.Task.WaitAsync(deadline.Token);
+
+            Assert.Contains(_backend.PrtgStore().GetAllSensors(), sensor => sensor.Objid == 211);
+            Assert.Equal(1, Volatile.Read(ref admittedScopeCount));
+            string[] requests;
+            lock (handler.Requests) requests = handler.Requests.ToArray();
+            Assert.Contains(requests, query => query.Contains("content=sensors", StringComparison.Ordinal) &&
+                Regex.IsMatch(query, @"[?&]id=21(&|$)"));
+        }
+        finally
+        {
+            service.ReleaseFirstSamplingTick.TrySetResult(true);
             try
             {
                 using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));

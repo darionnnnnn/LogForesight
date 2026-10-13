@@ -270,6 +270,22 @@ public class PrtgSnapshotHostedService : BackgroundService
         var timelineTask = RunTimelineAsync(stoppingToken);
         try
         {
+        // A refresh requested before the hosted loop starts may include a new device
+        // that the first snapshot cannot see yet. Give that one already-pending request
+        // a bounded turn before the first sample; later requests remain sampling-first.
+        if (_scopeRefreshRequested)
+        {
+            try
+            {
+                _scopeRefreshRequested = false;
+                await ScopeRefreshTickAsync(stoppingToken, prepareBeforeFirstSample: true);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "PRTG 啟動時範圍補抓發生未預期錯誤；不影響後續快照輪詢");
+            }
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -321,6 +337,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     }
 
     internal async Task ScopeRefreshTickAsync(CancellationToken ct = default)
+        => await ScopeRefreshTickAsync(ct, prepareBeforeFirstSample: false);
+
+    private async Task ScopeRefreshTickAsync(CancellationToken ct, bool prepareBeforeFirstSample)
     {
         var settings = _settingsStore.Get();
         if (!settings.PrtgEnabled) return;
@@ -344,7 +363,11 @@ public class PrtgSnapshotHostedService : BackgroundService
             await WithOperationScopeAsync(settings, ct, _ =>
             {
                 _operationCheckpoint?.Invoke();
-                queueContext = ReconcileRecentStateChangesForCurrentScope(settings);
+                // Startup prepares discovery only. The first sampling tick owns queue
+                // reconciliation and its defer-until-fresh-admission boundary.
+                queueContext = prepareBeforeFirstSample
+                    ? CaptureRecentStateChangeScopeContext(settings)
+                    : ReconcileRecentStateChangesForCurrentScope(settings);
                 _operationCheckpoint?.Invoke();
                 queueReconciled = true;
                 return Task.CompletedTask;
@@ -437,7 +460,11 @@ public class PrtgSnapshotHostedService : BackgroundService
                     NoteCapacitySkip(refreshedSelection, refreshedEstimate);
                     return;
                 }
-                await FetchRecentStateChangesAsync(settings, slice);
+                // Startup preparation exists to make newly mapped sensors visible before the
+                // first sample. Leave the message queue drain to that sampling pass so the
+                // pre-sample turn cannot consume its one-pass queue deferral.
+                if (!prepareBeforeFirstSample)
+                    await FetchRecentStateChangesAsync(settings, slice);
             });
         });
     }
@@ -478,7 +505,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
     }
 
-    internal async Task TickAsync(CancellationToken ct = default)
+    internal virtual async Task TickAsync(CancellationToken ct = default)
     {
         var settings = _settingsStore.Get();
         // 新樣本保存採集時的涵蓋率；此值也供尚未帶涵蓋率的程序內累積列結算使用。
@@ -1560,20 +1587,26 @@ public class PrtgSnapshotHostedService : BackgroundService
         // any stale bit before reconciling the next pass.
         Interlocked.Exchange(ref _recentStateQueueHttpDeferred, 0);
         var store = _backend.PrtgStore();
+        var context = CaptureRecentStateChangeScopeContext(settings);
+        var reconciled = store.ReconcileRecentStateChanges(context.BusinessDeviceObjids, context.SourceIdentityHash,
+            context.ScopeVersionHash, context.LocalToday.AddDays(-1), context.LocalToday, context.ReconciledAtUtc);
+        if (reconciled > 0) Interlocked.Exchange(ref _recentStateQueueHttpDeferred, 1);
+        var stoppedQueue = store.ReadRecentStateChangeQueueStopSummary();
+        if (stoppedQueue?.AtUtc == context.ReconciledAtUtc && stoppedQueue.StoppedCount > 0)
+            WriteOutput($"[PRTG快照] 監看範圍變更，已停止 {stoppedQueue.StoppedCount} 台離開業務範圍的狀態補抓工作（{stoppedQueue.Reason}）。", LogLevel.Info);
+        return context;
+    }
+
+    private RecentStateChangeScopeContext CaptureRecentStateChangeScopeContext(SystemSettings settings)
+    {
+        var store = _backend.PrtgStore();
         var businessDeviceObjids = ComputeBusinessScopeDevices(store);
         var sourceIdentityHash = SourceIdentityHash(settings);
         var scopeRevision = new PrtgScopeRevisionReader(_backend, _hosts).Read();
         var scopeVersionHash = ScopeVersionHash(scopeRevision);
         var localToday = Now().Date;
-        var reconciliationAtUtc = DateTime.UtcNow;
-        var reconciled = store.ReconcileRecentStateChanges(businessDeviceObjids, sourceIdentityHash,
-            scopeVersionHash, localToday.AddDays(-1), localToday, reconciliationAtUtc);
-        if (reconciled > 0) Interlocked.Exchange(ref _recentStateQueueHttpDeferred, 1);
-        var stoppedQueue = store.ReadRecentStateChangeQueueStopSummary();
-        if (stoppedQueue?.AtUtc == reconciliationAtUtc && stoppedQueue.StoppedCount > 0)
-            WriteOutput($"[PRTG快照] 監看範圍變更，已停止 {stoppedQueue.StoppedCount} 台離開業務範圍的狀態補抓工作（{stoppedQueue.Reason}）。", LogLevel.Info);
         return new RecentStateChangeScopeContext(businessDeviceObjids, sourceIdentityHash,
-            scopeVersionHash, localToday, reconciliationAtUtc);
+            scopeVersionHash, localToday, DateTime.UtcNow);
     }
 
     private async Task FetchRecentStateChangesAsync(SystemSettings settings, CancellationToken ct)
