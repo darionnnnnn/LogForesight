@@ -1144,7 +1144,11 @@ function applyAiScheduleStatus(status) {
             pendingEl.style.color = 'var(--lf-accent-text)';
             pendingEl.classList.remove('text-muted');
         } else {
-            pendingEl.textContent = '0 件（已全部完成）';
+            // pendingTotal 只數待處理項目；目前批次可能已領走最後一件但尚未完成。
+            // 執行中時不可把零待補誤報成整輪工作已完成。
+            pendingEl.textContent = status.isRunning
+                ? '0 件（本次分析尚未結束）'
+                : '0 件（已全部完成）';
             pendingEl.style.color = '';
             pendingEl.classList.add('text-muted');
         }

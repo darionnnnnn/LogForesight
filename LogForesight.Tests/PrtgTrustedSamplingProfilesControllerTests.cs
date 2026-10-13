@@ -171,11 +171,11 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
         var identity = _backend.PrtgStore().GetResourceIdentity(11);
         var settings = _settings.Get();
         var policy = _policy.Get();
-        var json = $$"""{"sensorObjid":11,"expectedSettingsRevision":"{{settings.Revision}}","expectedPolicyRevision":"{{policy.Revision}}","expectedIdentityEpoch":{{identity.Epoch}},"expectedChannelGeneration":"{{identity.ChannelGeneration}}","expectedBindingRevision":0,"channelObjectId":"007","expectedCaption":"Load","quantity":1,"unit":"%","scale":1,"direction":"direct","intervalRawUnit":"seconds","rawTimestampTimeZoneId":"UTC","analysisTimeZoneId":"UTC","timeBasisEvidenceReference":"api-fixture-time-basis"}""";
+        var json = $$"""{"sensorObjid":11,"expectedSettingsRevision":"{{settings.Revision}}","expectedPolicyRevision":"{{policy.Revision}}","expectedIdentityEpoch":{{identity.Epoch}},"expectedChannelGeneration":"{{identity.ChannelGeneration}}","expectedBindingRevision":0,"channelObjectId":"7","expectedCaption":"Load","quantity":1,"unit":"%","scale":1,"direction":"direct","intervalRawUnit":"seconds","rawTimestampTimeZoneId":"UTC","analysisTimeZoneId":"UTC","timeBasisEvidenceReference":"api-fixture-time-basis"}""";
         var request = Assert.IsType<PrtgTrustedSamplingBindingRequest>(JsonSerializer.Deserialize<PrtgTrustedSamplingBindingRequest>(
             json, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         Assert.Equal(PrtgTrustedQuantitySemantic.CpuLoadPercent, request.Quantity);
-        Assert.Equal("007", request.ChannelObjectId);
+        Assert.Equal("7", request.ChannelObjectId);
 
         var controller = CreateController(new TestVisibility([_host.HostId]));
         var saved = Assert.IsType<OkObjectResult>(controller.SaveBinding(11, request));
@@ -193,6 +193,17 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
         Assert.Equal("7", dto.Binding!.ChannelObjectId);
         Assert.Equal("waiting", dto.Binding.Status);
         Assert.Equal("api-fixture-time-basis", dto.Binding.TimeBasisEvidenceReference);
+    }
+
+    [Theory]
+    [InlineData("007")]
+    [InlineData("+7")]
+    [InlineData("-0")]
+    public void NonCanonicalBindingIdentityIsRejectedWithoutWriting(string channelId)
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        Assert.IsType<BadRequestObjectResult>(controller.SaveBinding(11, BindingRequest(11, channelId)));
+        Assert.Null(new PrtgTrustedSamplingBindingStore(_backend).Get(11));
     }
 
     [Fact]

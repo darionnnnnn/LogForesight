@@ -184,6 +184,38 @@ public class BranchOutcomeAndCacheTests : IDisposable
     }
 
     [Fact]
+    public void RunsEndpoints_執行紀錄包含今天但每日總表錨定昨天()
+    {
+        var runs = Runs();
+        foreach (var startedAt in new[] { DateTime.Today.AddDays(-1).AddHours(9), DateTime.Today.AddHours(9) })
+        {
+            var run = new BatchRun
+            {
+                HostName = "DATE-CONTRACT",
+                StartedAt = startedAt,
+                FinishedAt = startedAt.AddMinutes(1),
+                ExitCode = 0
+            };
+            run.RunId = runs.StartRun(run);
+            runs.FinishRun(run);
+        }
+
+        var service = CreateService();
+        var controller = new RunsController(service, new FakeSystemSettingsStore());
+
+        // /api/runs/list is an execution-time view and includes the current local day.
+        var list = Assert.IsType<ApiResponse<List<RunListItemDto>>>(controller.List(days: 1)).Data!;
+        var listed = Assert.Single(list);
+        Assert.Equal(DateTime.Today, listed.StartedAt.Date);
+
+        // /api/runs/summary is a completed-day view; today is intentionally absent.
+        var summary = Assert.IsType<ApiResponse<RunDaySummaryPageDto>>(
+            controller.Summary(days: 1, page: 1, pageSize: 30)).Data!;
+        var day = Assert.Single(summary.Items);
+        Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), day.Date);
+    }
+
+    [Fact]
     public void PRTG欄依逐日統計對應資料日期()
     {
         var runs = Runs();

@@ -85,6 +85,22 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void AI待補為零時依執行狀態區分未結束與全部完成且今日執行有明確入口()
+    {
+        var js = ReadRunsJs();
+        var aiBody = ExtractBlock(js, "function applyAiScheduleStatus(");
+        Assert.Contains("status.isRunning", aiBody);
+        Assert.Contains("0 件（本次分析尚未結束）", aiBody);
+        Assert.Contains("0 件（已全部完成）", aiBody);
+
+        // 今日的執行紀錄使用 List API；每日彙總維持昨天為錨點，並在 UI 明確指向紀錄頁籤。
+        Assert.Contains("api.get(`/api/runs/list?days=${currentDays}`)", js);
+        var cshtml = ReadRunsCshtml();
+        Assert.Contains("總表不含今天", cshtml);
+        Assert.Contains("今天的手動或排程執行請看上方狀態卡與「執行紀錄」頁籤", cshtml);
+    }
+
+    [Fact]
     public void UpdateProgressBar函式本體內不含特定Phase字串()
     {
         var root = FindRepoRoot();

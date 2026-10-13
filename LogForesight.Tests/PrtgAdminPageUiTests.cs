@@ -459,7 +459,7 @@ public class PrtgAdminPageUiTests
         }
 
         Assert.Equal(
-            new[] { "prtg-admin.js", "settings.js", "work-orders.js" },
+            new[] { "prtg-admin.js", "runs.js", "settings.js", "work-orders.js" },
             filesWithHashTrue.OrderBy(f => f, StringComparer.Ordinal).ToArray());
     }
 

@@ -2088,3 +2088,7 @@ E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留�
 ### 2026-10-13 E08 統計收件人的 urgent 狀態與舊持久化資料
 
 修正實際瀏覽器已重現的統計收件人SMTP接受但總狀態仍為no-qualified-recipient：未成功保留pending，成功依該intent真正attempted recipients計算smtp-accepted；沒有detail coverage不得新增正式PRTG接受fact。舊noqual失敗／未知intent可按同一耐久intent重試；舊accepted僅在sentkey及全部recipient UTC acceptance證據完整時於GET投影正確狀態，不寫回、不重送。真空收件人及缺耐久接受證據保持原狀。Operations GET只投影可見host，測試核raw blob不變及無寄送／formal副作用。主代理fresh build MailNotificationServiceTests94＋PrtgFormalMailStartClaimTests20均通過，包含六個新增／受影響案例；同次整體受影響集合222/222、0失敗／略過，3分40秒（TestResults/root-runs-mail-final/root-runs-mail-final.trx）。此222母體不是固定風險規則222案例。E08-T01瀏覽器修正後重驗及父動線尚待，未刪TODO。
+
+### 2026-10-13 E08 排程進度文案與回歸契約
+
+AI待補0件仍執行中時顯示本次分析尚未結束，不再誤報全部完成。每日總表依既定完成日契約錨定昨日，實際執行紀錄包含今日，保留原說明與入口並以真實RunsController兩端點驗證。全量凍結回歸曾發現兩個陳舊預期：hash頁籤白名單漏掉已啟用的runs；binding成功例仍接受007。已補runs白名單，成功例改canonical7並新增007／+7／-0拒絕且零binding寫入反例，未放寬後端格式。主代理受影響RunsPageUi30／BranchOutcome12／PrtgAdminUI46／binding controller20全部通過，合計108；與mail114共222/222、0失敗／略過（root-runs-mail-final.trx），JS語法通過。完整全量回歸及實際瀏覽器修正後核對仍待執行，E08父TODO保留。
