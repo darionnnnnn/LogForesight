@@ -332,11 +332,10 @@ E02 已完成，不重列 TODO。E01 建置識別防線、E05 固定作用範圍
 
 #### E08：已知缺陷與完整使用者動線
 
-- [ ] E08-T01【待修缺陷】重現並修正高風險通知已被隔離收件匣接受、操作頁卻顯示「無合格收件人」的矛盾；同案重驗拒收→重試→接受→狀態一致→再次重試不重複，保留原失敗證據（§18「E08組合受控來源」）。
 - [ ] E08-T02【驗收】完成初次設定→核驗／等待→NetIQ父紀錄→PRTG期間風險→AI→報告／案件／交辦回覆→通知／恢復／再發全程；成功零事件可合法補強、不合格父不發布、弱佐證不升級、兩來源取較高級不相加。
 - [ ] E08-T03【驗收】逐 AC01–AC22／U53-01–10／Q1–Q6 核對並補齊六角色真實操作、直接URL及修改API、子路徑、受限證據閱讀與交辦回覆；既有匯出授權及部分頁面拒絕不代替完整角色流程。
 - [ ] E08-T04【驗收】完成兩管理者過期寫入、對應修改／合併／刪除／回退、取消／續跑與精確持久集合；在完整3,000／15,000母體核對預覽、保存、讀回與實際來源請求一致。
-- [ ] E08-T05【驗收】補齊三來源進度、晚到NetIQ／晚AI、AI故障、PRTG失敗／停用、local-only、NetIQ無PRTG、重啟與DB失敗／滿journal恢復；真實瀏覽器結果與耐久ID／版本／副作用一致。
+- [ ] E08-T05【驗收】補齊三來源進度、晚到NetIQ／晚AI、AI故障、PRTG失敗／停用、local-only、NetIQ無PRTG、重啟與DB失敗／滿journal恢復；真實瀏覽器結果與耐久ID／版本／副作用一致；補齊統計通知已SMTP接受但generic mail workflow仍等待的缺漏，不新增formal PRTG接受facts。
 - [ ] E08-T06【驗收】補完摘要及高風險通知的SMTP五分鐘、部分成功、提交未知、重試去重與隔離實收；ACK→可信恢復→再發保持案件、人工回覆與通知識別一致。
 
 #### E09：實用操作與四基準剩餘查證
@@ -2096,3 +2095,13 @@ AI待補0件仍執行中時顯示本次分析尚未結束，不再誤報全部�
 ### 2026-10-13 E06 工作流程恢復游標不混入主機日
 
 逐資料枚舉核對發現恢復服務保存的 workflow_recovery_cursor 也符合 workflow_ 前綴，會消耗主機日分頁並被當成孤兒。改用共用保留鍵並僅排除此精確 metadata key；真正格式錯誤的 workflow row 仍保留於游標與警告路徑。主代理獨立 fresh build 執行 HostDayWorkflowTests 與 HostDayWorkflowRecoveryHostedServiceTests，31/31、0失敗／略過，3分37秒（TestResults/root-workflow-cursor/root-workflow-cursor.trx，SHA256 6658D0B291580C4D5C29AF3CA0B1A5B9AEBB8FAA565BCB37E19A31D995126DC4）。新測試直接核持久化 checkpoint 不占分頁、正常主機日不漏失，真 malformed row 繼續前進；原有 malformed 分頁案例保持。此為恢復邊界子項，E06全負載共同成本與整輪父待辦維持未通過。
+
+### 2026-10-13 E08-T01 隔離實收、同案重試與 AI 取消子項
+
+E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原契約保留：同一合法NetIQ父紀錄的urgent經SMTP拒收→背景重試→接受→操作頁狀態一致→手動再重試不重複；保留舊失敗證據，不把統計收件人變成正式PRTG資格。主代理使用實際正常UI設定／Sentinel保存／主機歸屬／範圍預覽（1台）／只補缺日／操作页查詢及重試；來源與收件匣全為自有loopback合成環境，不連現場。run 63b3aa2a00cc4482b17e9df1501f2c2a，host3／2026-10-11／parent14，UTC 01:35:00.0735772拒收、01:35:39.7481391接受；intent建立至接受40.027193秒≤300秒。再次手動重試後實收仍1封，durable outbox與recipient皆smtp-accepted、sentkey只有1筆，操作頁顯示SMTP已接受1位；formal PRTG facts為空。起初來源未切換成功的零事件取數不作此情境通過證據，實際request mode已另外核對。
+
+同fixture實際AI force-rerun使用嚴格/v1/chat/completions（未重複/v1），RunId3收到503後進入重試；正常UI按確認停止，01:47:52.732按下至耐久FinishedAt01:47:52.9654821為0.233482秒≤5秒，audit22與stopped=true／exit1一致，12件未完成仍待補。舊RunId3結束後、下一個RunId4開始前無新增AI请求；RunId4为新的自動排程，不算舊作業取消失敗。這只通過該取消／URL接縫，沒有宣稱所有AI／E08情境通過。
+
+證據凍結於work/root-e08-urgent-evidence-20261013與work/root-e08-ai-cancel-evidence-20261013；主代理verify_e08_urgent_20261013.py與verify_e08_ai_cancel_20261013.py均PASS，含readonly DB、來源request、SMTP實收MIME、DOM與build identity。SMTP captures SHA256 4336960e2bfecae5087c265724b3567b6648092a1a4ef773e97f625f4eb8ff6e；MIME SHA256 ceaa49f6740323c01a41731aeb1a90b100b9aa5b23048b6c6711a784200ef1f0。凍結Web/Core为modified fb240b32與已獨立驗證的cursor修正，不冒稱E01最終clean版本。
+
+耐久核對另發現統計郵件generic工作流MailPlanClosed仍false／no-qualified-recipient-or-current-receipt，列入E08-T05持續修正；不得因操作頁已正確便宣告整體工作流完成。E08父TODO、完整角色／PRTG／報告動線及全量回歸皆保留。
