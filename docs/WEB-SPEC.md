@@ -3142,3 +3142,8 @@ Maintain 的 CPU／記憶體試算及正式模式依同版不透明一次性授�
 
 
 NetIQ 新嘗試的耐久回執與父列資格在同一交易更新，排程總表、日常補跑預覽與 PRTG 正式補強因此讀取一致狀態。空／截斷重試保留既有分析且顯示警告；只有完整成功分析重建才能恢復合格父列。停止不阻止後續只補跑失敗或未執行。NetIQ 成功仍明列 PRTG、AI、案件與郵件各自的待補原因，不把來源成功等同完整工作流完成。
+
+
+### 2026-10-13 資格操作與隔離工具限制
+
+PRTG來源停用或資格契約不可讀時，start／resume／pilot按鈕停用並提示來源前置條件；仍可唯讀載入契約與現有作業，取消依原作業狀態授權。隔離QualificationMatrix的Start／Resume／Matrix目前安全拒絕，因尚無actual listener／process／runtime DB擁有權核對；loopback或receipt-shaped JSON不能授權寫入。補齊可用owned入口列 [第54輪 PLAN](FEEDBACK-54-PLAN.md) D54-02；正常管理者production資格API並未因此停用。

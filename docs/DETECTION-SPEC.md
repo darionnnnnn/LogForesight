@@ -1,4 +1,4 @@
-﻿# LogForesight 偵測與 AI 內部規格
+# LogForesight 偵測與 AI 內部規格
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 
@@ -27,7 +27,7 @@
 → 風險強制「高」；
 趨勢層（含慢速趨勢）有頻率異常或關聯層有任何訊號 → 風險至少「中」。AI 判斷只能把風險往上拉、
 不能往下壓，即使 AI 判斷輕忽或 AI 服務不可用也不影響告警與處置建議（詳見
-[docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
+[docs/archive/HISTORY.md](archive/HISTORY.md)）。
 
 ### 關聯層偵測的組合模式（`CorrelationAnalyzer`）
 
@@ -564,7 +564,7 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
 - **確定性閘門**：窗口內任一天有風險（非「低」）、趨勢異常或關聯訊號，才呼叫 AI 敘事；
   三層皆無訊號的窗口直接寫固定結論「本期無累積性異常，程式比對通過」，不消耗 AI 呼叫——
   安靜的期間本來就沒有故事可講，這是多主機規模下 AI 時間預算能否成立的關鍵之一
-  （詳見 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
+  （詳見 [docs/archive/HISTORY.md](archive/HISTORY.md)）。
 - **AI 失敗不消耗額度**：閘門判定有訊號、實際呼叫 AI 卻失敗時，該次**不寫入歷史**
   （`WeeklyCheckupResult.Completed = false`），讓下次執行的補跑機制重試，而不是把這一期的
   體檢額度用掉。
@@ -681,7 +681,7 @@ AI 的日子要等 AI 補寫完成才產出（暫代紀錄的 `ReportFile` 為 `
 
 **適用範圍**：本機分析路徑（`AnalyzeDayAsync`）仍是統計＋AI 一體的組合呼叫——單機序列
 執行、多個主機日之間沒有並行搜尋主線可保護，拆分收益低，詳細評估見
-[docs/archive/FEEDBACK-12-PLAN.md](docs/archive/FEEDBACK-12-PLAN.md) §3.9。
+[docs/archive/FEEDBACK-12-PLAN.md](archive/FEEDBACK-12-PLAN.md) §3.9。
 本機的 AI 呼叫與 AI 分析排程共用 `AIService` 內部的序列化出口。
 
 ---

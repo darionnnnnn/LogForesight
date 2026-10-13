@@ -214,4 +214,4 @@ Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一�
 `UncoveredChecks` 會明講「關聯層（攻擊鏈/故障鏈比對）僅涵蓋 SSH 破解得手一項」——與
 「沒告警 ≠ 沒問題，是沒看」同一原則，不適用的部分要說出來，不能讓人以為有看。批次執行
 輸出、風險報告、Web 詳情頁同步顯示。詳見
-[docs/archive/FEEDBACK-12-PLAN.md](FEEDBACK-12-PLAN.md) §4.5。
+[docs/archive/FEEDBACK-12-PLAN.md](archive/FEEDBACK-12-PLAN.md) §4.5。

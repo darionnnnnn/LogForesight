@@ -464,7 +464,7 @@
 - **先備欄位／常數尚無寫入邏輯**（不是資料遺失，清單與現況見 docs/PRTG-SPEC.md §2）：
   `PrtgDataQuality.Untrusted`（需要 probe 斷線區間的資料來源）、`lf_prtg_state_changes.quality`
   （恆 `ok`，無品質判定依據）、`lf_prtg_sensors.thresholds_json`（未向 PRTG 索取閾值欄）、
-  `lf_prtg_values.min_value`/`max_value`（hourly 聚合只取平均）、`lf_prtg_state_changes.prev_status`
+  `lf_prtg_values.min_value`/`max_value`（legacy historic hourly 路徑只取平均；正式 sampled accumulator 已寫入 min/max，不能泛稱全系統未實作）、`lf_prtg_state_changes.prev_status`
   （PRTG messages 不提供前一狀態）。
 - **歷史回填沒有完成水位**：靠寫入冪等達成「重跑不重複」，但**不會跳過已完成的日期**——
   回填 30 天中斷在第 29 天，重跑仍是 30 天全打一次 API。以目前的回填規模可接受。

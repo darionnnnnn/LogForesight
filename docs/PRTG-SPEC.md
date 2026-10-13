@@ -1327,3 +1327,8 @@ scripts/prtg-workload/Initialize-QualificationMatrixRun.ps1 透過同一 authent
 ### 未完成來源與本機診斷 JSON
 
 完整環境探測於來源連線失敗、初始化失敗或取消時，保留已取得的白名單本機上下文並明示五類來源缺項；取消不追加來源請求或資料庫查詢，JSON不宣告來源就緒。Maintain可透過 `GET api/admin/settings/prtg-probe/local-evidence` 或探測頁「下載本機診斷 JSON」取得尚未設定／故障來源的本機診斷；此入口不連PRTG或AI，15秒有界，設定修訂變動拒絕輸出，不更新來源探測通過狀態。沿用64 KiB、depth32與去識別限制；可下載不代表取得正式profile、風險或容量授權。
+
+
+### 2026-10-13 實作範圍與跨輪限制
+
+第53輪改為已實作部分收尾；剩餘工作與原27項驗收承接見 [第54輪 PLAN](FEEDBACK-54-PLAN.md)。文字messages日期尚缺PRTG帳號獨立Date Format授權；舊fetch使用環境日期解析、正式timeline使用保存culture／timezone，皆不代表完整日期格式支援。磁碟人工語意驗證入口尚未傳入必要source contract，保持source-contract-unconfirmed；不能把規則consumer測試或直接保存fixture當成該正常入口已核驗成功。取數快照、raw時間授權與既有正式proof門檻仍依各自契約，不以此限制追認舊資料。全量資格與容量、完整角色流程仍未驗收，本輪移交不改稱通過。
