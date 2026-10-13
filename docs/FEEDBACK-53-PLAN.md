@@ -2127,3 +2127,7 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 主代理獨立 fresh build 核對 parser→accumulator→SQLite typed Merge→期間 consumer 的 CPU 25.0834、memory available 25.0834→used 74.9166、disk free 90.0887 與兩小時完整證據；資格先於觀測，不追認旧資料。加上舊 profile／readiness／local facts 相關集合共66/66、零失敗／略過，TRX root-e03-e05-final.trx SHA256 D810E13EB4CC559167419716E9C9DC031E17C9B62D280629581454AF29CC76D3。首輪 readiness reason 被覆蓋的反例已修正為保留原原因並附加白話下一步，未放寬可信門檻。
 
 不合格持久化 profile 僅排除該筆授權，其他唯讀摘要繼續保留，避免整頁500與全部數量歸零。實際隔離瀏覽器 run 0de51d4153af48728f92522f37db8b96，readiness 顯示可信採樣未確認與管理者下一步；完整探測 local facts=observed，正式設定1台／3顆、鏡像5台／5顆、mapped5、readiness sampled3／qualified0，沒有授權或正式判定。正常下載五類JSON後，以建置修訂b76b3e06離線核對，SHA256 1c705320be53d634f60f916d2fce865725150b61c1aef35c7fcef60ca40540c3，正確維持INCOMPLETE，四類缺樣本且Ping歷史不完整；不是來源或容量通過。DOM／截圖 root-e05-legacy-profile-* 與 root-e05-localfacts-probe-* 已保存。E03/E04/E05父項及其尚未完整核對子項維持待辦。
+
+### 2026-10-13：E03 期間消費鏈反例補驗
+
+新增 SQLite joined negative matrix：缺值、DST重複／不存在、已儲存策略生效前的樣本均由 parser 明確拒絕，accumulator 空、typed merge零列、正式 finding零；來源身分漂移與兩小時缺口由期間consumer拒絕。主代理合併後 fresh build 核對新六例、既有正式磁碟flow及採樣parser／accumulator集合51/51、零失敗／略過，13分36秒，TRX root-e03-negative-current.trx SHA256 9DECE9665A50D292E6C0CC822A7D2C49D2C5B64EA720655D84B0578B72741F6E。策略反例只控制 freshness 評估時鐘以隔離生效欄位，使用真正已保存策略門檻，不冒稱qualification time可追認。T01仍需正式probe產生profile的完整joined operation；T02尚需逐條核對其他原契約反例與28日／7日20%引用，故不刪除TODO或宣告E03整體通過。
