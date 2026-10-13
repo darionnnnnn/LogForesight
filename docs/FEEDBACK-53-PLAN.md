@@ -2109,3 +2109,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 ### 2026-10-13：五類相容性證據下載邊界修正
 
 隔離瀏覽器完整探測已完成，發現前端仍限制 targets<=3，與目前 CPU／memory／disk／ping／traffic 五類後端輸出不一致，導致去識別 JSON 按鈕被停用。前端改為五類上限；Node 可執行契約已核對五類可下載、六類拒絕、執行中停用、不可宣告 evidence_ready=true、無效 JSON／版本／狀態與 64 KiB UTF-8 超限拒絕。來源及正式風險授權不變；E04-T02 仍保留，等待目前版本完整瀏覽器匯出與離線核對等其餘反例，不能以此局部修正宣告父項完成。
+
+### 2026-10-13：目前版本瀏覽器 JSON 交接與缺樣本核對
+
+主代理以 clean b4cc3d0d 的 Web／Core 建置身分啟動自有隔離 run 0dc0867873244a488cdd195d3ba7a360，從實際維護表單儲存合成來源、完整唯讀探測後下載獨立白名單 JSON。五類下載按鈕正常；下載檔 SHA256=533149f658349fefd9716b70bdbc74f85cc915cb679655c77e6743cb2a28abe5，離線核對版本、來源修訂及 native primary 通道可核對，結果正確維持 INCOMPLETE：四類缺樣本、Ping 歷史不足、本機舊 profile 摘要未齊；不授權 profile／正式風險／容量。此項不宣告 E04-T02 整體完成。瀏覽器 DOM／截圖保存 root-e04-five-target-export-dom-20261013.txt／root-e04-five-target-export-20261013.png。
+
+實際匯出發現 missing target 省略 raw 回執時核對器誤判 malformed；僅針對明示 missing 保留 incomplete，有觀測的 target 缺 raw 仍拒絕。完整 PowerShell 正反例集合及新增 missing/observed 兩例均通過（root-e04-offline-current-contracts-20261013.log）；64 KiB、depth32、防偽及授權門檻不變。另補齊組合合成來源的 groups/messages 唯讀端點，避免完整探測在群組步驟因 fixture 不支援而中斷；Test-ControlledSources 全集合重跑通過，SMTP accepted/refused/unknown-commit 與僅允許 .invalid 均有回執（root-composite-probe-source-contracts-retry-20261013.log）。首輪 SMTP 缺 post-DATA 回執不計通過，未調整原測試截止或正式門檻。

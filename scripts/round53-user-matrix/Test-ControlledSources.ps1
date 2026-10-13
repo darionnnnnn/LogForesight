@@ -109,6 +109,12 @@ try {
     # inventory, trusted primary-channel qualification, and historic-value consumers.
     [IO.File]::WriteAllText($httpModeFile,'netiq-risk-audit-prtg-healthy',[Text.UTF8Encoding]::new($false))
     $resourceDevices = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=devices&columns=objid,device,host,group,status,tags,paused,dependency&count=10"
+    $resourceGroups = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=groups&columns=objid,name&count=10"
+    $resourceMessages = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=messages&columns=objid,datetime,status&count=10"
+    if (@($resourceGroups.groups).Count -ne 1 -or $resourceGroups.treesize -ne 1 -or
+        $resourceGroups.groups[0].objid -ne 1 -or @($resourceMessages.messages).Count -ne 0 -or $resourceMessages.treesize -ne 0) {
+        throw 'Composite PRTG read-only groups/messages probe contract failed.'
+    }
     $deviceSensors = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&id=112&columns=objid,parentid,type,status,lastvalue_raw,lastcheck_raw,interval_raw,cumsince_raw,primarychannel&count=5000"
     $resourceSensors = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&columns=objid,parentid,type,status,lastvalue,lastvalue_raw,lastcheck,lastcheck_raw,interval,interval_raw,cumsince,cumsince_raw,primarychannel&filter_objid=212&filter_objid=213&filter_objid=214&count=4"
     $wrongSensor = Invoke-RestMethod -Uri "$httpUrl/api/table.json?content=sensors&id=999&columns=objid,parentid&count=2"

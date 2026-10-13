@@ -667,6 +667,12 @@ try {
             if ($nativeConflict) { $nativePrimaryConflictCount++; $sourceIncomplete = $true }
         }
         $raw = Get-JsonProperty $target 'identity_preserving_raw_history'
+        # A missing representative has no raw operation; the producer omits that field.
+        # Successful/partial/error representatives still require an explicit raw receipt.
+        if ($null -eq $raw -and $targetStatus -eq 'missing') {
+            $sourceIncomplete = $true
+            continue
+        }
         if ($null -eq $raw) { $rawShapeValid = $false; break }
         if ($raw.ValueKind -eq [System.Text.Json.JsonValueKind]::Null -and $targetStatus -eq 'missing') {
             $sourceIncomplete = $true

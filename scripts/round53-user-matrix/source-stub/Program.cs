@@ -287,7 +287,7 @@ async Task HandleSyntheticPrtgNativeAsync(HttpListenerContext context, Uri reque
     if (path.EndsWith("getpasshash.htm", StringComparison.OrdinalIgnoreCase))
     { await HttpReply(context, 200, "530053", "text/plain"); return; }
     var content = query["content"]?.ToLowerInvariant() ?? "";
-    if (content is not ("devices" or "sensors" or "channels"))
+    if (content is not ("devices" or "sensors" or "channels" or "groups" or "messages"))
     { await HttpReply(context, 400, "unsupported synthetic table content", "text/plain"); return; }
     var deviceRows = devices.Select(x => (object)x).ToArray();
     var sensorRows = sensors.Select(x => (object)x).ToArray();
@@ -296,6 +296,8 @@ async Task HandleSyntheticPrtgNativeAsync(HttpListenerContext context, Uri reque
     var filterIds = query.GetValues("filter_objid")?.Select(x => int.TryParse(x, out var n) ? n : -1).ToHashSet();
     object[] rows = content switch
     {
+        "groups" => [new { objid = 1, group = "Round53 synthetic", name = "Round53 synthetic" }],
+        "messages" => [],
         "devices" => deviceRows.Where(r => idFilter is null || GetInt(r, "objid") == idFilter).Where(r => filterIds is null || filterIds.Contains(GetInt(r, "objid"))).ToArray(),
         // PRTG's content=sensors&id=<device objid> query returns that device's child sensors.
         // Exact sensor consumers use filter_objid, which remains an independent intersection.

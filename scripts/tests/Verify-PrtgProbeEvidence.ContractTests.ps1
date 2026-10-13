@@ -502,4 +502,9 @@ Invoke-ContractCase 'local-facts-cannot-overclaim-bounded-page' $typedFacts 1 @(
 $localFacts.QualifiedProfiles = 0
 $localFacts.Secret = 'private-host-must-not-appear'
 Invoke-ContractCase 'local-facts-reject-unbounded-private-field' $typedFacts 1 @('InvalidLocalProbeFacts')
+$missingRepresentative = New-ValidEvidence
+$missingRepresentative.targets += @{ alias='s5'; category='traffic'; status='missing'; reason='No sensor sample found for type in step 3' }
+Invoke-ContractCase -Name 'missing-representative-without-raw-receipt-is-incomplete' -Evidence $missingRepresentative -ExpectedExitCode 2
+$missingRepresentative.targets[-1].status = 'ok'
+Invoke-ContractCase -Name 'observed-representative-cannot-omit-raw-receipt' -Evidence $missingRepresentative -ExpectedExitCode 1 -ExpectedOutput @('RawChannelIdentityMissingOrWrongShape')
 Write-Output 'All bounded PRTG evidence verifier contracts passed.'
