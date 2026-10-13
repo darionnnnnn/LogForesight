@@ -1,4 +1,5 @@
 import { api } from './core/api.js';
+import { qualificationSourceGate } from './prtg-maintenance-outcomes.js';
 
 const base = '/api/prtg/monitoring/trusted-sampling/qualification-jobs';
 const activeStatuses = new Set(['initializing', 'running', 'waiting-capacity']);
@@ -30,10 +31,11 @@ export function initializePrtgQualificationJobs(root = document.querySelector('[
     const show = (value) => { status.textContent = value; };
     const updateButtons = () => {
         const blocked = busy || rendering;
+        const sourceGate = qualificationSourceGate(contract);
         cancelButton.disabled = blocked || !current || !activeStatuses.has(current.status);
-        startButton.disabled = blocked || !contract || Boolean(current && activeStatuses.has(current.status));
-        resumeButton.disabled = blocked || !contract || !current || activeStatuses.has(current.status) || current.status === 'failed-stale';
-        pilotButton.disabled = blocked || !contract;
+        startButton.disabled = blocked || !sourceGate.enabled || Boolean(current && activeStatuses.has(current.status));
+        resumeButton.disabled = blocked || !sourceGate.enabled || !current || activeStatuses.has(current.status) || current.status === 'failed-stale';
+        pilotButton.disabled = blocked || !sourceGate.enabled;
         root.querySelector('[data-action="reload"]').disabled = blocked;
         for (const button of page.querySelectorAll('button[data-action]'))
             button.disabled = blocked || button.dataset.unavailable === 'true';
@@ -78,10 +80,12 @@ export function initializePrtgQualificationJobs(root = document.querySelector('[
             if (!scopeNotice) scopeNotice = `容量准入契約目前無法讀取：${error.message}`;
         }
         updateButtons();
+        const sourceGate = qualificationSourceGate(contract);
         const pilot = contract ? (contract.capacityPilotCurrent ? '容量探測有效' : '需要重新執行容量探測') : '容量准入暫不可用';
+        const sourceNotice = sourceGate.enabled ? '' : ` ${sourceGate.reason}。`;
         show(current
-            ? `${statusText[current.status] || current.status}；第 ${current.wave} 輪已取得 raw 資格證據 ${current.qualified}/${current.selected}，待核 eligible ${current.eligible}，等待 ${current.waiting}，本輪失敗或未授權 ${current.failed}，累計來源嘗試 ${current.attempts}；這不代表已發布正式 profile。${pilot}。期限 ${current.deadlineUtc}。${scopeNotice ? ` ${scopeNotice}` : ''}${notice ? ` ${notice}` : ''}`
-            : `${scopeNotice || '尚無資格作業'}；${contract ? `完整政策範圍 ${contract.selectedSensors} 個 sensor；` : ''}${pilot}。${notice ? ` ${notice}` : ''}`);
+            ? `${statusText[current.status] || current.status}；第 ${current.wave} 輪已取得 raw 資格證據 ${current.qualified}/${current.selected}，待核 eligible ${current.eligible}，等待 ${current.waiting}，本輪失敗或未授權 ${current.failed}，累計來源嘗試 ${current.attempts}；這不代表已發布正式 profile。${pilot}。期限 ${current.deadlineUtc}。${sourceNotice}${scopeNotice ? ` ${scopeNotice}` : ''}${notice ? ` ${notice}` : ''}`
+            : `${scopeNotice || '尚無資格作業'}；${contract ? `完整政策範圍 ${contract.selectedSensors} 個 sensor；` : ''}${pilot}。${sourceNotice}${notice ? ` ${notice}` : ''}`);
         if (current) await renderPage(current, pageOffset);
         else page.replaceChildren();
         } catch (error) {

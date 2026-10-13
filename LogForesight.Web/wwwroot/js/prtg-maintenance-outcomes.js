@@ -1,3 +1,10 @@
+export function qualificationSourceGate(contract) {
+    if (contract?.prtgEnabled === true) return { enabled: true, reason: '' };
+    if (contract?.prtgEnabled === false)
+        return { enabled: false, reason: 'PRTG 來源目前已停用；請前往 PRTG 設定啟用來源後再執行資格操作' };
+    return { enabled: false, reason: '來源資格契約尚未可用；請重新載入或檢查 PRTG 設定' };
+}
+
 export function trustedQualificationOutcome(result, selectedSensorId) {
     if (result?.status === 'queued') {
         const sensor = result.proofRefresh?.sensorObjid ?? selectedSensorId;

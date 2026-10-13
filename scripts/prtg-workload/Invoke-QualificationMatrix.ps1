@@ -80,6 +80,13 @@ function Assert-OwnedMatrixContext {
     return [pscustomobject]@{owner=$owner;profile=$profileDocument;preflight=$preflight;hostIdsPath=$hostIdsPath;profilePath=$profilePath;dataRoot=$dataRoot;provider=$provider}
 }
 Assert-Loopback $BaseUri 'Web fixture URL';Assert-Loopback $PrtgFixtureUri 'PRTG fixture URL';Assert-Loopback $SentinelFixtureUri 'Sentinel fixture URL'
+$runtimeOwnerPath=[IO.Path]::GetFullPath((Join-Path $MatrixRunDirectory 'verified-web-runtime-owner.json'))
+if($Action -in @('Start','Resume','Matrix')) {
+    if(-not(Test-Path -LiteralPath $runtimeOwnerPath -PathType Leaf)) {
+        throw "D54-02: refusing public lifecycle mutation because the verified Web runtime owner receipt is missing at '$runtimeOwnerPath'. The exact listener PID/start time, Web assembly, arguments, data root, provider, and descriptor hash are not proven."
+    }
+    throw "D54-02: refusing public lifecycle mutation because '$runtimeOwnerPath' has no implemented exact process/listener verifier. A receipt-shaped file alone cannot authorize mutation."
+}
 $matrix=Assert-OwnedMatrixContext
 $candidatePrefix=$candidateRoot.TrimEnd('\')+'\'
 $matrixRootFull=[IO.Path]::GetFullPath($MatrixRunDirectory);$evidenceRootFull=[IO.Path]::GetFullPath($EvidenceRoot);$assemblyFull=[IO.Path]::GetFullPath($CoverageAssemblyPath)
