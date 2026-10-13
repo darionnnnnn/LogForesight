@@ -183,6 +183,30 @@ public sealed class HostDayWorkflowTests : IDisposable
     }
 
     [Fact]
+    public void RecoveryPageExcludesItsCheckpointBlobButKeepsMalformedWorkflowRowsVisible()
+    {
+        var backend = Backend();
+        backend.Blob(HostDayWorkflowStore.RecoveryCheckpointBlobKey)
+            .Mutate(_ => ("{\"AfterWorkflowKey\":\"workflow_1_20261011\"}", true));
+        var store = new HostDayWorkflowStore(backend);
+        store.Update(1, _day, _ => { });
+
+        var page = store.GetExistingHostDaysPage(afterKey: null, limit: 10);
+        Assert.Equal(1, page.RawCount);
+        Assert.Single(page.Items);
+        Assert.Equal($"workflow_1_{_day:yyyyMMdd}", page.Items[0].BlobKey);
+        Assert.Equal(page.Items[0].BlobKey, page.NextCursor);
+
+        // The metadata key must not consume a page slot or appear as an orphan. A truly malformed
+        // workflow-shaped key remains visible to the recovery cursor and retains its warning path.
+        backend.Blob("workflow_999_malformed").Mutate(_ => ("{}", true));
+        var afterWorkflow = store.GetExistingHostDaysPage(page.NextCursor, limit: 10);
+        Assert.Equal(1, afterWorkflow.RawCount);
+        Assert.Empty(afterWorkflow.Items);
+        Assert.Equal("workflow_999_malformed", afterWorkflow.NextCursor);
+    }
+
+    [Fact]
     public async Task MailPartialsAndConcurrentUpdatesAreDurableAndSerialized()
     {
         var service = Service();

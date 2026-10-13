@@ -2092,3 +2092,7 @@ E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留�
 ### 2026-10-13 E08 排程進度文案與回歸契約
 
 AI待補0件仍執行中時顯示本次分析尚未結束，不再誤報全部完成。每日總表依既定完成日契約錨定昨日，實際執行紀錄包含今日，保留原說明與入口並以真實RunsController兩端點驗證。全量凍結回歸曾發現兩個陳舊預期：hash頁籤白名單漏掉已啟用的runs；binding成功例仍接受007。已補runs白名單，成功例改canonical7並新增007／+7／-0拒絕且零binding寫入反例，未放寬後端格式。主代理受影響RunsPageUi30／BranchOutcome12／PrtgAdminUI46／binding controller20全部通過，合計108；與mail114共222/222、0失敗／略過（root-runs-mail-final.trx），JS語法通過。完整全量回歸及實際瀏覽器修正後核對仍待執行，E08父TODO保留。
+
+### 2026-10-13 E06 工作流程恢復游標不混入主機日
+
+逐資料枚舉核對發現恢復服務保存的 workflow_recovery_cursor 也符合 workflow_ 前綴，會消耗主機日分頁並被當成孤兒。改用共用保留鍵並僅排除此精確 metadata key；真正格式錯誤的 workflow row 仍保留於游標與警告路徑。主代理獨立 fresh build 執行 HostDayWorkflowTests 與 HostDayWorkflowRecoveryHostedServiceTests，31/31、0失敗／略過，3分37秒（TestResults/root-workflow-cursor/root-workflow-cursor.trx，SHA256 6658D0B291580C4D5C29AF3CA0B1A5B9AEBB8FAA565BCB37E19A31D995126DC4）。新測試直接核持久化 checkpoint 不占分頁、正常主機日不漏失，真 malformed row 繼續前進；原有 malformed 分頁案例保持。此為恢復邊界子項，E06全負載共同成本與整輪父待辦維持未通過。

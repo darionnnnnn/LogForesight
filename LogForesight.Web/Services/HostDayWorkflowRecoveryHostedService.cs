@@ -12,7 +12,7 @@ namespace LogForesight.Web.Services;
 /// <summary>Repairs recent workflow versions frequently and advances older retention/orphan work in bounded slices.</summary>
 public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
 {
-    private const string CheckpointKey = "workflow_recovery_cursor";
+    private const string CheckpointKey = HostDayWorkflowStore.RecoveryCheckpointBlobKey;
     private const string LeaseName = "Global\\LogForesight.Workflow.Recovery";
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(15);
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();

@@ -149,6 +149,7 @@ public sealed record HostDayWorkflowKeyPage(IReadOnlyList<HostDayWorkflowKey> It
 /// </summary>
 public sealed class HostDayWorkflowStore(StorageBackend backend)
 {
+    public const string RecoveryCheckpointBlobKey = "workflow_recovery_cursor";
     private const int MaxMetadataChars = 64 * 1024;
     private const int MaxFormalCaseStartClaims = 64;
 
@@ -166,6 +167,7 @@ public sealed class HostDayWorkflowStore(StorageBackend backend)
         if (limit is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(limit));
         using var ctx = backend.CreateContext();
         var keys = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey.StartsWith("workflow_") &&
+                row.BlobKey != RecoveryCheckpointBlobKey &&
                 (afterKey == null || string.Compare(row.BlobKey, afterKey) > 0))
             .OrderBy(row => row.BlobKey).Select(row => row.BlobKey).Take(limit).ToList();
         var result = new List<HostDayWorkflowKey>(keys.Count);
