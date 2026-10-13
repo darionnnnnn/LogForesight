@@ -2143,3 +2143,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 新增明示 UTC 合成來源的 SQLite joined 驗收，經正常 binding Save→production ProbeAsync→耐久 qualification proof/profile→原生 snapshot parser→四 slot 的兩完成小時→typed merge→未修改的期間 consumer。CPU 25.0834%、memory available 25.0834% 精確轉 used 74.9166%、disk free 90.0887% 保留剩餘方向，六列 coverage100%、沒有健康資料的 formal finding。Ping 原始 XML 的 -1 channel／時間／25.0834 值可查證；缺 parent identity 與 raw timestamp authority 仍 partial／unknown，無 binding、profile、assessment 或正式風險。
 
 只新增可控制語意時間的 TimeProvider 接縫；正式預設仍 System，HTTP Date、Stopwatch、quota、請求期限及期間 consumer 未改，不以測試時鐘當容量證據。主代理合併後 fresh build：新 joined 案及 probe／binding／client／factory／profile 集合139/139通過，零失敗／略過，6分32秒；TRX TestResults/root-e03-production-probe-current/root-e03-production-probe-current.trx SHA256 b365aa161026b32789da37b0328b05d700c11c684342b23800d61fdc0f976f68。另原契約對照集合152/152、零略過（root-e03-contract-map-current.trx SHA256 ea5ccf2a696a892d954e3b5c9d3d189c4ff0d6f51014f9f36c2d037eb19248ad），與前段51案保留各自母體；完成逐條對照前仍保留E03活動TODO，不將局部測試算全輪通過。
+
+### 2026-10-13：E04 離線本機事實核對器補齊
+
+離線核對新增設定修訂、保存時區／locale、來源 fingerprint 的證據範圍、本機 scope／readiness／guard、NetIQ receipt／eligible parent 與 AI 小探測成本摘要。未知或舊版缺欄維持 INCOMPLETE，互相矛盾的摘要與修訂不符拒絕；安全 opaque revision 不限 GUID，但拒絕控制字元與換行注入，不輸出拒絕值。64 KiB、depth32、原生身分與正式授權門檻不變。
+
+主代理獨立執行完整 PowerShell 契約，exit0，All bounded PRTG evidence verifier contracts passed；root-e04-verifier-final-20261013.log SHA256 91f86d09c5d108e4217ae7cf0bca8879153b65dc9a69869cd1c7422bc7451729。此為核對器段落完成；來源失敗／取消／未設定的實際匯出與完整瀏覽器交接尚需另段驗證，E04 活動 TODO 保留。

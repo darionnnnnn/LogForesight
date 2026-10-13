@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
-用途：只核對完整環境探測 JSON 的版本、build revision、raw identity 與部署／儲存 metadata 形狀。
-用法：pwsh -File .\Verify-PrtgProbeEvidence.ps1 -Path .\evidence.json [-ExpectedVersion 1.0.53.2] [-ExpectedRevision <40 位 hex>]
+用途：核對環境探測 JSON 的版本、來源／設定修訂、保存時區 authority、readiness、raw identity 與部署／儲存 metadata。
+用法：pwsh -File .\Verify-PrtgProbeEvidence.ps1 -Path .\evidence.json [-ExpectedVersion 1.0.53.2] [-ExpectedRevision <40 位 hex>] [-ExpectedSettingsRevision <opaque revision token>]
 輸出為固定摘要；不代表來源、風險資格或 fleet capacity 驗收。需要 PowerShell 7。
 #>
 [CmdletBinding()]
@@ -9,7 +9,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $Path,
     [string] $ExpectedVersion = '1.0.53.2',
-    [string] $ExpectedRevision
+    [string] $ExpectedRevision,
+    [string] $ExpectedSettingsRevision
 )
 
 $ErrorActionPreference = 'Stop'
@@ -350,6 +351,16 @@ function Test-LocalProbeFacts {
         $fingerprint.GetString() -cnotmatch '^(unknown|[a-fA-F0-9]{64})$' -or
         $null -eq $day -or -not (Test-JsonString $day $null) -or $day.GetString() -cnotmatch '^(unknown|[0-9]{4}-[0-9]{2}-[0-9]{2})$') { return $false }
     if ($culture.GetString() -ne 'unknown') { try { [void][Globalization.CultureInfo]::GetCultureInfo($culture.GetString()) } catch { return $false } }
+    $factsStatus = (Get-JsonProperty $Facts 'Status').GetString()
+    $factsReason = (Get-JsonProperty $Facts 'Reason').GetString()
+    $authorityKind = (Get-JsonProperty $Facts 'AuthorityKind').GetString()
+    $authorityValuesKnown = $fingerprint.GetString() -ne 'unknown' -and
+        $culture.GetString() -ne 'unknown' -and
+        @('SourceTimeZoneId','RawTimestampTimeZoneId','AnalysisTimeZoneId' | ForEach-Object { (Get-JsonProperty $Facts $_).GetString() -ne 'unknown' } | Where-Object { -not $_ }).Count -eq 0
+    if (($factsStatus -eq 'observed' -and $factsReason -ne 'local-read-only-counts') -or
+        ($factsStatus -eq 'unknown' -and $factsReason -notin @('local-facts-unavailable-or-bounded-deadline','local-facts-invalid-withheld')) -or
+        ($authorityKind -eq 'saved-explicit-authority' -and -not $authorityValuesKnown) -or
+        ($authorityKind -eq 'unknown' -and $authorityValuesKnown)) { return $false }
     $elapsed = Get-JsonProperty $Facts 'AiProbeElapsedMilliseconds'
     if ($null -eq $elapsed) { return $false }
     if ($elapsed.ValueKind -ne [System.Text.Json.JsonValueKind]::Null) {
@@ -363,6 +374,67 @@ function Test-LocalProbeFacts {
     return $true
 }
 
+function Test-LocalContext {
+    param([System.Text.Json.JsonElement] $Root, [AllowNull()][object] $Facts)
+    $revision = Get-JsonProperty $Root 'settings_revision'
+    $fingerprint = Get-JsonProperty $Root 'source_fingerprint'
+    $timezone = Get-JsonProperty $Root 'source_timezone'
+    $locale = Get-JsonProperty $Root 'source_locale'
+    $scope = Get-JsonProperty $Root 'scope_summary'
+    $readiness = Get-JsonProperty $Root 'readiness_summary'
+    if (($null -ne $revision -and ($revision.ValueKind -notin @([System.Text.Json.JsonValueKind]::String,[System.Text.Json.JsonValueKind]::Null) -or
+        ($revision.ValueKind -eq [System.Text.Json.JsonValueKind]::String -and $revision.GetString().Length -gt 128))) -or
+        $null -eq $fingerprint -or -not (Test-JsonString $fingerprint $null) -or
+        $null -eq $timezone -or -not (Test-JsonString $timezone $null) -or
+        $null -eq $locale -or -not (Test-JsonString $locale $null) -or
+        $null -eq $scope -or -not (Test-JsonString $scope $null) -or $scope.GetString().Length -gt 512 -or
+        $null -eq $readiness -or -not (Test-JsonString $readiness $null) -or $readiness.GetString().Length -gt 512) {
+        Fail-Safely 'InvalidLocalContextShape'
+    }
+    $revisionText = if ($null -eq $revision -or $revision.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { 'unknown' } else { $revision.GetString() }
+    $fingerprintText = $fingerprint.GetString()
+    if (($revisionText -ne 'unknown' -and $revisionText -cnotmatch '^[A-Za-z0-9._:-]{1,128}$') -or
+        ($fingerprintText -ne 'unknown' -and $fingerprintText -cnotmatch '^[a-fA-F0-9]{64}$')) {
+        Fail-Safely 'InvalidLocalContextShape'
+    }
+    if ($ExpectedSettingsRevision -and $revisionText -cne $ExpectedSettingsRevision) { Fail-Safely 'SettingsRevisionMismatch' }
+    if ($null -eq $Facts) {
+        return [pscustomobject]@{ Complete = $false; Revision = $revisionText; Fingerprint = $fingerprintText; Timezone = 'unknown'; Locale = 'unknown';
+            Scope = 'unknown'; Readiness = 'unknown'; Reason = 'local-facts-not-exported';
+            RevisionReason = $(if ($revisionText -eq 'unknown') { 'settings-revision-not-exported' } else { 'exported-no-local-facts' });
+            FingerprintReason = $(if ($fingerprintText -eq 'unknown') { 'source-fingerprint-unavailable' } else { 'exported-no-local-facts' });
+            AuthorityReason = 'local-facts-not-exported' }
+    }
+    $factsStatus = (Get-JsonProperty $Facts 'Status').GetString()
+    $factsReason = (Get-JsonProperty $Facts 'Reason').GetString()
+    $authorityKind = (Get-JsonProperty $Facts 'AuthorityKind').GetString()
+    $factsZone = (Get-JsonProperty $Facts 'SourceTimeZoneId').GetString()
+    $factsLocale = (Get-JsonProperty $Facts 'SourceCultureName').GetString()
+    $authorityReason = (Get-JsonProperty $Facts 'ReadinessReason').GetString()
+    $reason = if ($factsStatus -eq 'unknown') { $factsReason } elseif ($authorityKind -eq 'unknown') { 'explicit-time-authority-missing-or-invalid' } else { 'observed-bounded-local-facts' }
+    $expectedTimezone = if ($authorityKind -eq 'saved-explicit-authority') { $factsZone } else { 'unknown' }
+    $expectedLocale = if ($authorityKind -eq 'saved-explicit-authority') { $factsLocale } else { 'unknown' }
+    $expectedScope = if ($factsStatus -eq 'observed') {
+        "policy-hosts=$((Get-JsonProperty $Facts 'PolicyHosts').GetInt32()); policy-sensors=$((Get-JsonProperty $Facts 'PolicySensors').GetInt32()); mirror-devices=$((Get-JsonProperty $Facts 'MirrorDevices').GetInt32()); mirror-sensors=$((Get-JsonProperty $Facts 'MirrorSensors').GetInt32()); mapped-devices=$((Get-JsonProperty $Facts 'MappedDevices').GetInt32()); conflicts=$((Get-JsonProperty $Facts 'ConflictingDevices').GetInt32()); guard-overrides=$((Get-JsonProperty $Facts 'GuardOverrideSensors').GetInt32())"
+    } else { 'unknown (local facts unavailable)' }
+    $expectedReadiness = if ($factsStatus -eq 'observed') {
+        "sampled=$((Get-JsonProperty $Facts 'ReadinessSampledSensors').GetInt32()); bindings=$((Get-JsonProperty $Facts 'SavedBindings').GetInt32()); qualified-profiles=$((Get-JsonProperty $Facts 'QualifiedProfiles').GetInt32()); not-full-scope-verdict"
+    } else { 'unknown (local facts unavailable)' }
+    if ($timezone.GetString() -cne $expectedTimezone -or $locale.GetString() -cne $expectedLocale -or
+        $scope.GetString() -cne $expectedScope -or $readiness.GetString() -cne $expectedReadiness) {
+        Fail-Safely 'LocalContextContradiction'
+    }
+    $complete = $factsStatus -eq 'observed' -and $authorityKind -eq 'saved-explicit-authority' -and
+        $revisionText -ne 'unknown' -and $fingerprintText -ne 'unknown'
+    if (-not $complete -and $reason -eq 'observed-bounded-local-facts') { $reason = 'settings-revision-or-source-fingerprint-unavailable' }
+    if ($factsStatus -eq 'observed' -and $authorityKind -eq 'unknown') { $reason = $authorityReason }
+    $revisionReason = if ($revisionText -eq 'unknown') { 'settings-revision-not-exported' } elseif ($ExpectedSettingsRevision) { 'matches-expected-settings-revision' } else { 'exported-no-expected-revision-supplied' }
+    $fingerprintReason = if ($fingerprintText -eq 'unknown') { 'source-fingerprint-unavailable' } else { 'exported-sha256-shape-only-source-not-independently-verified' }
+    return [pscustomobject]@{ Complete = $complete; Revision = $revisionText; Fingerprint = $fingerprintText;
+        Timezone = $expectedTimezone; Locale = $expectedLocale; Scope = $expectedScope; Readiness = $expectedReadiness; Reason = $reason;
+        RevisionReason = $revisionReason; FingerprintReason = $fingerprintReason; AuthorityReason = $authorityReason }
+}
+
 function Test-ProbeBuildIdentity {
     param([System.Text.Json.JsonElement] $Facts, [string] $ExpectedBuild, [string] $Revision)
     $names = @('Status','Reason','SourceState','SourceCommit','SourceFingerprint','Token','WebVersion','CoreVersion',
@@ -374,8 +446,12 @@ function Test-ProbeBuildIdentity {
     }
     $status = (Get-JsonProperty $Facts 'Status').GetString()
     $state = (Get-JsonProperty $Facts 'SourceState').GetString()
+    $reason = (Get-JsonProperty $Facts 'Reason').GetString()
+    $allowedReasons = @('matching-source-and-assemblies','product-assembly-set-mismatch','build-source-stamp-missing','git-source-unavailable',
+        'build-source-state-invalid','web-core-source-stamp-mismatch','build-source-stamp-invalid','product-assembly-file-identity-unavailable',
+        'web-core-informational-version-mismatch','informational-version-source-mismatch','source-fingerprint-current-dirty-tree','source-fingerprint-current')
     if ($status -cnotin @('verified','invalid','mixed','unknown-source','unavailable','version-mismatch') -or
-        $state -cnotin @('clean','modified','unknown')) { return $false }
+        $state -cnotin @('clean','modified','unknown') -or $reason -cnotin $allowedReasons) { return $false }
     foreach ($name in @('SourceCommit','SourceFingerprint','Token','WebModuleId','CoreModuleId','WebFileSha256','CoreFileSha256')) {
         $size = if ($name -eq 'SourceCommit') { 40 } elseif ($name -in @('WebModuleId','CoreModuleId')) { 32 } else { 64 }
         $text = (Get-JsonProperty $Facts $name).GetString()
@@ -395,6 +471,10 @@ if ($ExpectedVersion -notmatch '^\d+\.\d+(?:\.\d+){0,2}$') {
 }
 if ($ExpectedRevision -and $ExpectedRevision -notmatch '^[0-9a-fA-F]{40}$') {
     Fail-Safely 'InvalidExpectedRevision'
+}
+if ($PSBoundParameters.ContainsKey('ExpectedSettingsRevision') -and
+    $ExpectedSettingsRevision -cnotmatch '^[A-Za-z0-9._:-]{1,128}$') {
+    Fail-Safely 'InvalidExpectedSettingsRevision'
 }
 
 try {
@@ -453,6 +533,8 @@ try {
     if ($null -ne $buildIdentity -and -not (Test-ProbeBuildIdentity $buildIdentity $buildText $revision)) { Fail-Safely 'InvalidBuildIdentity' }
 
     $metadataIncomplete = $null -eq $buildIdentity -or (Get-JsonProperty $buildIdentity 'Status').GetString() -ne 'verified'
+    $localContext = Test-LocalContext $root $localFacts
+    if (-not $localContext.Complete) { $metadataIncomplete = $true }
     $deployment = Get-JsonProperty $root 'deployment_resources'
     if ($null -eq $deployment -or $deployment.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { Fail-Safely 'InvalidDeploymentResourcesShape' }
     $processorCount = Get-JsonProperty $deployment 'processor_count'
@@ -907,6 +989,40 @@ try {
 
     Write-Output "Version: $version"
     Write-Output "GitRevision: $revision"
+    Write-Output "SettingsRevision: $($localContext.Revision)"
+    Write-Output "SettingsRevisionReason: $($localContext.RevisionReason)"
+    Write-Output "SourceFingerprint: $($localContext.Fingerprint)"
+    Write-Output "SourceFingerprintReason: $($localContext.FingerprintReason)"
+    Write-Output "SavedTimeAuthority: source_timezone=$($localContext.Timezone); source_locale=$($localContext.Locale)"
+    Write-Output "SavedTimeAuthorityReason: $($localContext.AuthorityReason)"
+    Write-Output "LocalScopeSummary: $($localContext.Scope)"
+    Write-Output "LocalReadinessSummary: $($localContext.Readiness)"
+    Write-Output "LocalFactsStatus: $(if ($null -eq $localFacts) { 'missing' } else { (Get-JsonProperty $localFacts 'Status').GetString() })"
+    Write-Output "LocalFactsReason: $($localContext.Reason)"
+    if ($null -ne $buildIdentity) {
+        Write-Output "BuildIdentityStatus: $((Get-JsonProperty $buildIdentity 'Status').GetString())"
+        Write-Output "BuildSourceState: $((Get-JsonProperty $buildIdentity 'SourceState').GetString())"
+        Write-Output "BuildIdentityReason: $((Get-JsonProperty $buildIdentity 'Reason').GetString())"
+    } else {
+        Write-Output 'BuildIdentityStatus: missing'
+        Write-Output 'BuildSourceState: unknown'
+        Write-Output 'BuildIdentityReason: build-identity-not-exported'
+    }
+    if ($null -ne $localFacts) {
+        Write-Output "ReadinessReason: $((Get-JsonProperty $localFacts 'ReadinessReason').GetString())"
+        Write-Output "GuardScopeCounts: overrides=$((Get-JsonProperty $localFacts 'GuardOverrideSensors').GetInt32()); in-mirror=$((Get-JsonProperty $localFacts 'GuardSensorsInMirror').GetInt32())"
+        Write-Output "NetIqReceiptSummary: day=$((Get-JsonProperty $localFacts 'NetiqDay').GetString()); receipts=$((Get-JsonProperty $localFacts 'NetiqReceipts').GetInt32()); success=$((Get-JsonProperty $localFacts 'NetiqSuccess').GetInt32()); waiting=$((Get-JsonProperty $localFacts 'NetiqWaiting').GetInt32()); eligible-parents=$((Get-JsonProperty $localFacts 'NetiqEligibleParents').GetInt32())/$((Get-JsonProperty $localFacts 'NetiqParentRows').GetInt32()); reason=$((Get-JsonProperty $localFacts 'NetiqReason').GetString())"
+        $aiElapsed = Get-JsonProperty $localFacts 'AiProbeElapsedMilliseconds'
+        $aiElapsedText = if ($aiElapsed.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { 'unknown' } else { $aiElapsed.GetDouble().ToString('0.###', [Globalization.CultureInfo]::InvariantCulture) }
+        $aiTokens = Get-JsonProperty $localFacts 'AiProbeTotalTokens'
+        $aiTokensText = if ($aiTokens.ValueKind -eq [System.Text.Json.JsonValueKind]::Null) { 'unknown' } else { $aiTokens.GetInt32().ToString([Globalization.CultureInfo]::InvariantCulture) }
+        Write-Output "AiSmallProbeSummary: status=$((Get-JsonProperty $localFacts 'AiProbeStatus').GetString()); elapsed-ms=$aiElapsedText; tokens=$aiTokensText; origin=$((Get-JsonProperty $localFacts 'AiProbeEvidenceOrigin').GetString()); cost=$((Get-JsonProperty $localFacts 'AiCostReason').GetString())"
+    } else {
+        Write-Output 'ReadinessReason: local-facts-not-exported'
+        Write-Output 'GuardScopeCounts: unknown (local facts not exported)'
+        Write-Output 'NetIqReceiptSummary: unknown (local facts not exported)'
+        Write-Output 'AiSmallProbeSummary: unknown (local facts not exported)'
+    }
     Write-Output "FileSHA256: $sha256"
     Write-Output "TargetsCount: $targetCount"
     Write-Output "RawChannelIdentityTargets: $rawCount"

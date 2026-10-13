@@ -8,9 +8,20 @@ $ErrorActionPreference = 'Stop'
 $scriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..\Verify-PrtgProbeEvidence.ps1')).Path
 $version = '1.0.53.2'
 $revision = '0123456789abcdef0123456789abcdef01234567'
+$settingsRevision = 'd2719dfc202641048000000000000001'
 $remoteSqlHostUnknown = 'unknown (remote database host resources not observable from app process)'
 
 function New-ValidEvidence {
+    $facts = @{
+        SchemaVersion='local-probe-facts-v1'; Status='observed'; Reason='local-read-only-counts'; AuthorizesFormalProfile=$false
+        AuthorityKind='saved-explicit-authority'; SourceTimeZoneId='UTC'; RawTimestampTimeZoneId='UTC'; AnalysisTimeZoneId='UTC'
+        SourceCultureName='en-US'; AuthorityFingerprint=('a'*64); PolicyHosts=20; PolicySensors=100
+        MirrorDevices=200; MirrorSensors=500; MappedDevices=18; ConflictingDevices=2; GuardOverrideSensors=6; GuardSensorsInMirror=6
+        ReadinessSampledSensors=100; SavedBindings=90; QualifiedProfiles=80; ReadinessReason='sampled-profile-qualification-incomplete'
+        NetiqDay='2026-10-11'; NetiqReceipts=2; NetiqSuccess=1; NetiqWaiting=1; NetiqParentRows=2; NetiqEligibleParents=1
+        NetiqReason='parent-qualification-is-separate-from-receipt-success'; AiProbeStatus='small-request-ready'; AiProbeElapsedMilliseconds=10
+        AiProbeTotalTokens=2; AiProbeEvidenceOrigin='current-small-request'; AiCostReason='tokens-observed-price-not-configured'
+    }
     return [ordered]@{
         schema_version = '1.0.0'
         build_version = "$script:version+$script:revision"
@@ -21,8 +32,13 @@ function New-ValidEvidence {
         }
         status = 'ok'
         sensor_batch_identity = @{ status='ok'; requested_aliases=@('b1','b2'); returned_aliases=@('b2','b1'); exact_requested_set=$true; reason='exact-unique-requested-set'; authorizes_formal_profile=$false }
+        settings_revision = $script:settingsRevision
         source_fingerprint = 'a'.PadRight(64, 'a')
-        scope_summary = 'Secret-Server-Name-Must-Not-Be-Printed'
+        source_timezone = 'UTC'
+        source_locale = 'en-US'
+        scope_summary = 'policy-hosts=20; policy-sensors=100; mirror-devices=200; mirror-sensors=500; mapped-devices=18; conflicts=2; guard-overrides=6'
+        readiness_summary = 'sampled=100; bindings=90; qualified-profiles=80; not-full-scope-verdict'
+        local_facts = $facts
         deployment_resources = [ordered]@{
             processor_count = 4
             process_architecture = 'X64'
@@ -143,7 +159,7 @@ function Set-Batch100Metadata {
 }
 
 function Invoke-ContractCase {
-    param([string] $Name, [object] $Evidence, [int] $ExpectedExitCode, [string[]] $ExpectedOutput = @(), [string] $RawJson)
+    param([string] $Name, [object] $Evidence, [int] $ExpectedExitCode, [string[]] $ExpectedOutput = @(), [string] $RawJson, [string] $ExpectedSettingsRevision, [string[]] $ForbiddenOutput = @())
     $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("lf-probe-contract-$([guid]::NewGuid().ToString('N')).json")
     try {
         $json = if ($PSBoundParameters.ContainsKey('RawJson')) { $RawJson } else { ConvertTo-Json -InputObject $Evidence -Depth 20 -Compress }
@@ -158,6 +174,10 @@ function Invoke-ContractCase {
         $start.ArgumentList.Add($script:version)
         $start.ArgumentList.Add('-ExpectedRevision')
         $start.ArgumentList.Add($script:revision)
+        if ($PSBoundParameters.ContainsKey('ExpectedSettingsRevision')) {
+            $start.ArgumentList.Add('-ExpectedSettingsRevision')
+            $start.ArgumentList.Add($ExpectedSettingsRevision)
+        }
         $start.RedirectStandardOutput = $true
         $start.RedirectStandardError = $true
         $start.UseShellExecute = $false
@@ -176,6 +196,9 @@ function Invoke-ContractCase {
         if ($output.Contains('Secret-Server-Name-Must-Not-Be-Printed', [StringComparison]::Ordinal) -or
             $output.Contains($script:remoteSqlHostUnknown, [StringComparison]::Ordinal)) {
             throw "$Name leaked a raw deployment string"
+        }
+        foreach ($forbidden in $ForbiddenOutput) {
+            if ($output.Contains($forbidden, [StringComparison]::Ordinal)) { throw "$Name echoed forbidden input" }
         }
         Write-Output "PASS $Name exit=$($process.ExitCode)"
     } finally {
@@ -209,8 +232,55 @@ Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
     'NativePrimaryFormalAuthorization: not-asserted',
     'SensorBatchFull100ExactObserved: True',
     'SensorBatchCapacityAccepted: false',
+    "SettingsRevision: $settingsRevision",
+    'SettingsRevisionReason: exported-no-expected-revision-supplied',
+    'SourceFingerprintReason: exported-sha256-shape-only-source-not-independently-verified',
+    'SavedTimeAuthority: source_timezone=UTC; source_locale=en-US',
+    'SavedTimeAuthorityReason: sampled-profile-qualification-incomplete',
+    'LocalScopeSummary: policy-hosts=20; policy-sensors=100; mirror-devices=200; mirror-sensors=500; mapped-devices=18; conflicts=2; guard-overrides=6',
+    'LocalReadinessSummary: sampled=100; bindings=90; qualified-profiles=80; not-full-scope-verdict',
+    'LocalFactsReason: observed-bounded-local-facts',
+    'ReadinessReason: sampled-profile-qualification-incomplete',
+    'GuardScopeCounts: overrides=6; in-mirror=6',
+    'NetIqReceiptSummary: day=2026-10-11; receipts=2; success=1; waiting=1; eligible-parents=1/2; reason=parent-qualification-is-separate-from-receipt-success',
+    'AiSmallProbeSummary: status=small-request-ready; elapsed-ms=10; tokens=2; origin=current-small-request; cost=tokens-observed-price-not-configured',
     'HANDOFF_INTEGRITY_OK'
 )
+
+Invoke-ContractCase 'settings-revision-can-be-checked-by-operator' $valid 0 @("SettingsRevision: $settingsRevision",'SettingsRevisionReason: matches-expected-settings-revision') -ExpectedSettingsRevision $settingsRevision
+$wrongSettingsRevision = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$wrongSettingsRevision.settings_revision = 'ffffffffffffffffffffffffffffffff'
+Invoke-ContractCase 'settings-revision-mismatch-is-rejected' $wrongSettingsRevision 1 @('SettingsRevisionMismatch') -ExpectedSettingsRevision $settingsRevision
+$injectedSettingsRevision = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$injectedSettingsRevision.settings_revision = "revision`nSENTINEL_REVISION_SECRET"
+Invoke-ContractCase 'settings-revision-output-injection-is-rejected-without-echo' $injectedSettingsRevision 1 @('InvalidLocalContextShape') -ForbiddenOutput @('SENTINEL_REVISION_SECRET')
+Invoke-ContractCase 'expected-settings-revision-output-injection-is-rejected' $valid 1 @('InvalidExpectedSettingsRevision') -ExpectedSettingsRevision "revision`nSENTINEL_REVISION_SECRET" -ForbiddenOutput @('SENTINEL_REVISION_SECRET')
+$missingSettingsRevision = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$missingSettingsRevision.Remove('settings_revision')
+Invoke-ContractCase 'missing-settings-revision-is-incomplete' $missingSettingsRevision 2 @('SettingsRevision: unknown','SettingsRevisionReason: settings-revision-not-exported','Result: INCOMPLETE')
+$missingSourceFingerprint = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$missingSourceFingerprint.source_fingerprint = 'unknown'
+Invoke-ContractCase 'missing-source-fingerprint-has-specific-incomplete-reason' $missingSourceFingerprint 2 @('SourceFingerprint: unknown','SourceFingerprintReason: source-fingerprint-unavailable','Result: INCOMPLETE')
+$missingLocalFacts = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$missingLocalFacts.Remove('local_facts')
+Invoke-ContractCase 'legacy-without-local-provenance-is-incomplete' $missingLocalFacts 2 @('LocalFactsStatus: missing','LocalFactsReason: local-facts-not-exported','SavedTimeAuthorityReason: local-facts-not-exported','Result: INCOMPLETE')
+$contradictoryTimezone = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$contradictoryTimezone.source_timezone = 'America/Los_Angeles'
+Invoke-ContractCase 'top-level-timezone-must-match-saved-authority' $contradictoryTimezone 1 @('LocalContextContradiction')
+$forgedScope = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$forgedScope.local_facts.PolicyHosts = 999
+Invoke-ContractCase 'scope-summary-must-match-typed-bounded-counts' $forgedScope 1 @('LocalContextContradiction')
+$unknownAuthority = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$unknownAuthority.local_facts.AuthorityKind = 'unknown'
+$unknownAuthority.local_facts.SourceTimeZoneId = 'unknown'
+$unknownAuthority.local_facts.RawTimestampTimeZoneId = 'unknown'
+$unknownAuthority.local_facts.AnalysisTimeZoneId = 'unknown'
+$unknownAuthority.local_facts.SourceCultureName = 'unknown'
+$unknownAuthority.local_facts.AuthorityFingerprint = 'unknown'
+$unknownAuthority.local_facts.ReadinessReason = 'explicit-time-authority-missing-or-invalid'
+$unknownAuthority.source_timezone = 'unknown'
+$unknownAuthority.source_locale = 'unknown'
+Invoke-ContractCase 'missing-saved-time-authority-is-reported-and-incomplete' $unknownAuthority 2 @('SavedTimeAuthority: source_timezone=unknown; source_locale=unknown','LocalFactsReason: explicit-time-authority-missing-or-invalid','Result: INCOMPLETE')
 
 $legacyThreeTargets = Set-TargetCount (New-ValidEvidence) 3
 Invoke-ContractCase 'legacy-three-target-evidence-remains-readable' $legacyThreeTargets 2 @(
@@ -493,7 +563,11 @@ $localFacts = @{
 $typedFacts = New-ValidEvidence
 $typedFacts = Set-Batch100Metadata $typedFacts
 $typedFacts.local_facts = $localFacts
-Invoke-ContractCase 'bounded-local-facts-are-readable' $typedFacts 0 @('Version: 1.0.53.2')
+$typedFacts.source_timezone = 'unknown'
+$typedFacts.source_locale = 'unknown'
+$typedFacts.scope_summary = 'policy-hosts=20; policy-sensors=100; mirror-devices=6576; mirror-sensors=43762; mapped-devices=18; conflicts=2; guard-overrides=6'
+$typedFacts.readiness_summary = 'sampled=100; bindings=0; qualified-profiles=0; not-full-scope-verdict'
+Invoke-ContractCase 'bounded-local-facts-are-readable-but-unknown-authority-incomplete' $typedFacts 2 @('Version: 1.0.53.2','SavedTimeAuthorityReason: explicit-time-authority-missing-or-invalid','Result: INCOMPLETE')
 $localFacts.AuthorizesFormalProfile = $true
 Invoke-ContractCase 'local-facts-cannot-authorize-profile' $typedFacts 1 @('InvalidLocalProbeFacts')
 $localFacts.AuthorizesFormalProfile = $false
