@@ -355,6 +355,7 @@ public sealed class PrtgSmtpProtocolAcceptanceTests
             new KnownIssueRuleStore(_prtgBackend.Blob("rules")).Save(new RuleFileContent { Rules = [rule] });
             var finding = new PrtgFinding(DeviceId, SensorId, "down", "trusted", 60, rule)
             {
+                MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
                 SourceGeneration = identity.SourceGeneration,
                 ResourceGeneration = identity.Generation,
                 IncidentStartedAt = new DateTimeOffset(RecordDay.AddHours(1))

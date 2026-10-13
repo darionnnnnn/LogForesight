@@ -2206,3 +2206,5 @@ finding保存產生時的解析版本，經daily JSON、storage shaper與lf_top_
 主代理自有SQL Server LocalDB17實測新增schema、移除新欄後production升級兩次、舊NULL未追認、production寫入／讀回與郵件聚合通過：一般歷史4台PRTG，郵件只1台current，獨立NetIQ1台，actionable2筆。證據work/root-closeout-sql-message-version/evidence/17cf941a29134b2dba3f933c344525d4/result.json；私有資料庫及instance已清理，capacityAccepted=false。此為小型provider相容驗證，不替代第54輪完整SQL Server容量／恢復門檻。
 
 主代理在最後取消／preemption修正後fresh build獨立定向95/95通過、零失敗／略過，1分55秒（TestResults/root-message-status-final/root-message-status-final.trx），包含collector、consumer、metadata、replay、實際SQLite mail聚合及舊finding通知排除。代理較廣受影響集合299/299通過（最後取消修正前），最後取消與預算6/6另通過；主代理95集涵蓋其最後改動。JS三组契約及module語法、文件相對引用與PLAN hash核對通過。此段可獨立提交，整輪回歸仍在下一步，不代替第54輪完整驗收。
+
+SMTP協定fixture手工建立新版down finding時漏設解析版本，乾淨全量回歸因此重現3個無sender呼叫的失敗。只補fixture的current marker，保留原SMTP收件／ack／未知結果／重試及重啟斷言；主代理fresh build隔離SMTP七案7/7通過、38秒（TestResults/root-smtp-status-version/root-smtp-status-version.trx）。正式程式与舊證據守門未修改，完整回歸仍待結束核對。
