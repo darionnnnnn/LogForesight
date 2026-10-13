@@ -63,10 +63,18 @@ public sealed class PrtgTrustedSamplingProbeService
 {
     private readonly StorageBackend backend;
     private readonly Func<SystemSettings, PrtgClient> clientFactory;
+    private readonly TimeProvider timeProvider;
     public PrtgTrustedSamplingProbeService(StorageBackend backend)
-        : this(backend, settings => PrtgClientFactory.Create(settings)) { }
+        : this(backend, settings => PrtgClientFactory.Create(settings), TimeProvider.System) { }
     internal PrtgTrustedSamplingProbeService(StorageBackend backend, Func<SystemSettings, PrtgClient> clientFactory)
-    { this.backend = backend; this.clientFactory = clientFactory; }
+        : this(backend, clientFactory, TimeProvider.System) { }
+    internal PrtgTrustedSamplingProbeService(StorageBackend backend, Func<SystemSettings, PrtgClient> clientFactory,
+        TimeProvider timeProvider)
+    {
+        this.backend = backend;
+        this.clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory));
+        this.timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+    }
     public const int MaxSensorIds = 5;
     public const int MaxChannelsPerSensor = 100;
     private const int MaxResponseBytes = 512 * 1024;
@@ -109,7 +117,7 @@ public sealed class PrtgTrustedSamplingProbeService
 
         var ids = requestedIds.Order().ToArray();
         var store = backend.PrtgStore();
-        var bindingStore = new PrtgTrustedSamplingBindingStore(backend);
+        var bindingStore = new PrtgTrustedSamplingBindingStore(backend, timeProvider);
         var bindings = bindingStore.GetMany(ids);
         var identities = store.GetResourceIdentities(ids);
         foreach (var id in ids)
@@ -125,7 +133,7 @@ public sealed class PrtgTrustedSamplingProbeService
         var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
         var strategy = new PrtgTrustedSamplingStrategyStateStore(
             backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey))
-            .GetCurrent(policy, strategyName, strategyMinutes, DateTime.UtcNow);
+            .GetCurrent(policy, strategyName, strategyMinutes, timeProvider.GetUtcNow().UtcDateTime);
         var authorityContextFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
             policy, strategyName, strategyMinutes);
         using var client = clientFactory(settings);
@@ -198,7 +206,7 @@ public sealed class PrtgTrustedSamplingProbeService
                     PrtgFetchStrategy.Profile(PrtgFetchStrategy.Normalize(latestSettings.PrtgFetchStrategy)).SnapshotIntervalMinutes))
                 throw new InvalidOperationException($"probe-fence-changed:{id}");
 
-            var probedAtUtc = DateTimeOffset.UtcNow;
+            var probedAtUtc = timeProvider.GetUtcNow();
             var missing = MissingAuthority(sensor, sensorAfter, channels, truncated, policy, binding, nativePrimaryId);
             if (!strategy.Ready) missing.AddRange(strategy.MissingFacts.Select(f => $"strategy:{f}"));
             var profileRecorded = false;
@@ -381,7 +389,7 @@ public sealed class PrtgTrustedSamplingProbeService
 
         var afterIdentities = backend.PrtgStore().GetResourceIdentities(ids);
         var latestBindings = new PrtgTrustedSamplingBindingStore(backend).GetMany(ids);
-        var probedAtUtc = DateTimeOffset.UtcNow;
+        var probedAtUtc = timeProvider.GetUtcNow();
         var prepared = new List<(GroupedSensorStage Stage, PrtgResourceIdentity AfterIdentity,
             List<string> Missing, PrtgTrustedSamplingProbeRow Row, PrtgTrustedSamplingProfile? Profile)>(ids.Length);
         foreach (var stage in stages)

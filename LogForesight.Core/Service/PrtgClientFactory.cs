@@ -12,7 +12,8 @@ public static class PrtgClientFactory
     /// 依 SystemSettings 建立配置完成的 PrtgClient 實例。
     /// 內部依 PrtgAuthMode 自動解密所需憑證。
     /// </summary>
-    public static PrtgClient Create(SystemSettings settings, HttpMessageHandler? handler = null, PrtgRequestBudget? budget = null)
+    public static PrtgClient Create(SystemSettings settings, HttpMessageHandler? handler = null,
+        PrtgRequestBudget? budget = null, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -28,7 +29,8 @@ public static class PrtgClientFactory
             usernameOrEmpty: username,
             passwordOrEmpty: password,
             passhashOrEmpty: passhash,
-            budget: budget ?? PrtgRequestBudget.Shared);
+            budget: budget ?? PrtgRequestBudget.Shared,
+            timeProvider: timeProvider ?? TimeProvider.System);
     }
 
     /// <summary>

@@ -2137,3 +2137,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 只有統計摘要的收件者也納入 generic mail leg 的實際期望集合；SMTP 接受後可完成目前版本的郵件工作流。重啟恢復僅採 exact outbox key、parent／host-day／settings revision／problem keys／delivery version 及有效 UTC 回執，缺回執、預設時間、早於建立或未來時間、舊版本及真正零收件者保持未完成，不重寄已接受郵件，不建立 formal PRTG facts 或放寬正式 start fence。
 
 主代理 fresh build：MailNotificationServiceTests 99/99，另同版 PrtgFormalMailStartClaimTests 20/20，皆零失敗／略過。TRX 分別 root-stats-mail-final.trx、root-formal-mail-after-stats.trx。隔離實際 UI／NetIQ 1102／SMTP run e1d868c21dfc4881aea63f5621e6ae66：host3 的 2026-10-11 parent13 與 2026-10-12 parent14，共用一封統計摘要，拒收後背景重試接受，兩日 MailPlanClosed=true／recipient-plan-evaluated；手動再重試實收仍1封，正式PRTG facts為0。root verify_e08_stats_workflow_20261013.py readonly核對PASS；證據 root-e08-stats-workflow-evidence-20261013。瀏覽器 frozen modified 95cc 候選尚未包含最後時間邊界防護；這些邊界由目前 fresh tests核對，瀏覽器證據不冒稱最終乾淨成品。E08-T05 其餘三來源、故障、重啟劇本及 E01 最終成品核對仍保留。
+
+### 2026-10-13：E03 正式核驗至兩完成小時消費鏈
+
+新增明示 UTC 合成來源的 SQLite joined 驗收，經正常 binding Save→production ProbeAsync→耐久 qualification proof/profile→原生 snapshot parser→四 slot 的兩完成小時→typed merge→未修改的期間 consumer。CPU 25.0834%、memory available 25.0834% 精確轉 used 74.9166%、disk free 90.0887% 保留剩餘方向，六列 coverage100%、沒有健康資料的 formal finding。Ping 原始 XML 的 -1 channel／時間／25.0834 值可查證；缺 parent identity 與 raw timestamp authority 仍 partial／unknown，無 binding、profile、assessment 或正式風險。
+
+只新增可控制語意時間的 TimeProvider 接縫；正式預設仍 System，HTTP Date、Stopwatch、quota、請求期限及期間 consumer 未改，不以測試時鐘當容量證據。主代理合併後 fresh build：新 joined 案及 probe／binding／client／factory／profile 集合139/139通過，零失敗／略過，6分32秒；TRX TestResults/root-e03-production-probe-current/root-e03-production-probe-current.trx SHA256 b365aa161026b32789da37b0328b05d700c11c684342b23800d61fdc0f976f68。另原契約對照集合152/152、零略過（root-e03-contract-map-current.trx SHA256 ea5ccf2a696a892d954e3b5c9d3d189c4ff0d6f51014f9f36c2d037eb19248ad），與前段51案保留各自母體；完成逐條對照前仍保留E03活動TODO，不將局部測試算全輪通過。

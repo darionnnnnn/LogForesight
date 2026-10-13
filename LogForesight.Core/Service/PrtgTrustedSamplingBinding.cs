@@ -46,13 +46,13 @@ public sealed record PrtgTrustedSamplingBinding(
         string timeBasisEvidenceReference, string settingsRevision, string policyRevision,
         string authorityContextFingerprint, string sourceGeneration, string resourceGeneration,
         long identityEpoch, string channelGeneration,
-        long revision, string qualificationProofReference = "")
+        long revision, string qualificationProofReference = "", DateTimeOffset? createdAtUtc = null)
     {
         var value = new PrtgTrustedSamplingBinding(sensorId, revision, channelObjectId.Trim(), caption,
             quantity, unit.Trim(), scale, direction.Trim(), intervalRawUnit.Trim(), rawTimeZoneId.Trim(),
             analysisTimeZoneId.Trim(), timeBasisEvidenceReference.Trim(), settingsRevision,
             policyRevision, authorityContextFingerprint, sourceGeneration, resourceGeneration, identityEpoch, channelGeneration,
-            "", "", qualificationProofReference, DateTimeOffset.UtcNow);
+            "", "", qualificationProofReference, createdAtUtc ?? DateTimeOffset.UtcNow);
         value = value with { ChannelObjectId = CanonicalChannelObjectId(value.ChannelObjectId) };
         value = value with { SemanticFingerprint = value.ComputeSemanticFingerprint() };
         value = value with { BindingFingerprint = value.ComputeBindingFingerprint() };

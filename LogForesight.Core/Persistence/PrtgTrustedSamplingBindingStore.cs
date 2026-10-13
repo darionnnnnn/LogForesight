@@ -26,8 +26,20 @@ public sealed record PrtgTrustedSamplingBindingUpdate(
     string TimeBasisEvidenceReference);
 
 /// <summary>Stores operator-authored per-sensor authority separately from source probe evidence.</summary>
-public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
+public sealed class PrtgTrustedSamplingBindingStore
 {
+    private readonly StorageBackend backend;
+    private readonly TimeProvider timeProvider;
+
+    public PrtgTrustedSamplingBindingStore(StorageBackend backend)
+        : this(backend, TimeProvider.System) { }
+
+    internal PrtgTrustedSamplingBindingStore(StorageBackend backend, TimeProvider timeProvider)
+    {
+        this.backend = backend;
+        this.timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+    }
+
     private const int MaximumSensorsPerBatch = 100;
 
     public PrtgTrustedSamplingBinding? Get(long sensorId)
@@ -135,20 +147,20 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
             var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
             var authorityContextFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
                 policy, strategyName, strategyMinutes);
+            var now = timeProvider.GetUtcNow();
             var candidate = PrtgTrustedSamplingBinding.Create(update.SensorObjid, update.ChannelObjectId,
                 update.ExpectedCaption, update.Quantity, update.Unit, update.Scale, update.Direction,
                 update.IntervalRawUnit, update.RawTimestampTimeZoneId, update.AnalysisTimeZoneId,
                 update.TimeBasisEvidenceReference, settings.Revision, policy.Revision,
                 authorityContextFingerprint,
                 identity.SourceGeneration, identity.Generation, identity.Epoch, pendingChannelGeneration,
-                nextRevision);
+                nextRevision, createdAtUtc: now);
             if (prior is not null && prior.SemanticFingerprint == candidate.SemanticFingerprint &&
                 prior.AuthorityContextFingerprint == candidate.AuthorityContextFingerprint &&
                 prior.SourceGeneration == candidate.SourceGeneration && prior.ResourceGeneration == candidate.ResourceGeneration &&
                 prior.IdentityEpoch == candidate.IdentityEpoch && prior.ChannelGeneration == candidate.ChannelGeneration)
                 return (raw!, prior);
 
-            var now = DateTimeOffset.UtcNow;
             var nextIdentity = PrtgResourceIdentityStore.Set(ctx, identity.SensorId, identity.SourceGeneration,
                 identity.DeviceId, identity.HostId, identity.ResourceFingerprint, identity.InventoryFingerprint,
                 candidate.BindingFingerprint, true, now, reconciled: true);
@@ -167,7 +179,7 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
                 update.TimeBasisEvidenceReference, settings.Revision, policy.Revision,
                 authorityContextFingerprint,
                 nextIdentity.SourceGeneration, nextIdentity.Generation, nextIdentity.Epoch,
-                nextIdentity.ChannelGeneration, nextRevision);
+                nextIdentity.ChannelGeneration, nextRevision, createdAtUtc: now);
             if (candidate.BindingFingerprint != nextIdentity.ChannelFingerprint)
                 throw new InvalidOperationException("binding-install-fingerprint-mismatch");
 
@@ -191,7 +203,7 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
         if (sensorId <= 0 || expectedBindingRevision <= 0 || !Hex64(expectedBindingFingerprint) ||
             !double.IsFinite(rawValue) || !Hex64(proofReference) ||
             string.IsNullOrWhiteSpace(sourceVersion) || sourceVersion.Length > 128 ||
-            observedAtUtc == default || observedAtUtc.Offset != TimeSpan.Zero || observedAtUtc > DateTimeOffset.UtcNow ||
+            observedAtUtc == default || observedAtUtc.Offset != TimeSpan.Zero || observedAtUtc > timeProvider.GetUtcNow() ||
             measuredOaDate is < -657435 or >= 2958466 || !double.IsFinite(measuredOaDate))
             throw new ArgumentOutOfRangeException(nameof(sensorId));
         var blob = backend.Blob(Key(sensorId));
@@ -249,7 +261,7 @@ public sealed class PrtgTrustedSamplingBindingStore(StorageBackend backend)
                 qualificationFence.SettingsRevision != expectedSettingsRevision ||
                 qualificationFence.PolicyRevision != expectedPolicyRevision))
                 throw new InvalidOperationException("qualification-job-binding-fence-mismatch");
-            var now = DateTimeOffset.UtcNow;
+            var now = timeProvider.GetUtcNow();
             var nextIdentity = PrtgResourceIdentityStore.Set(ctx, sensorId, identity.SourceGeneration,
                 identity.DeviceId, identity.HostId, identity.ResourceFingerprint, identity.InventoryFingerprint,
                 qualified.BindingFingerprint, true, now, reconciled: true);

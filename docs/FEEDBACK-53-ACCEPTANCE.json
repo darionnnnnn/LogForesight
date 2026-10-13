@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "30bb4c69042905e7b8c95257dd7526d0d8ebfdf1c942e4d4cc406cf9aa10f3de",
+  "plan_sha256": "d05853e67eb12bfa2d3af2db502b10cdc43f11a403cb47ce64006be6744084c4",
   "date": "2026-10-12",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "代理可執行範圍內的AC01–AC22、Q1–Q6、有效需求全數通過；依PLAN§5.9在自有隔離環境客觀驗收，正式機實測、現場人工評估及§5.7使用者確認事項不計驗收或結案阻塞",

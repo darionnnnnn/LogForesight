@@ -41,6 +41,7 @@ public sealed class PrtgClient : IDisposable
     private readonly string _username;
     private readonly string _password;
     private readonly HttpClient _http;
+    private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _passhashLock = new(1, 1);
     private string? _cachedPasshash;
     private string? _credentialFailure;
@@ -84,9 +85,11 @@ public sealed class PrtgClient : IDisposable
         string usernameOrEmpty,
         string passwordOrEmpty,
         string passhashOrEmpty,
-        PrtgRequestBudget? budget = null)
+        PrtgRequestBudget? budget = null,
+        TimeProvider? timeProvider = null)
     {
         Budget = budget ?? PrtgRequestBudget.Shared;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new PrtgClientException("PRTG 未設定連線位址。");
 
@@ -500,7 +503,7 @@ public sealed class PrtgClient : IDisposable
 
             transportTimer?.Stop();
             if (transportTimer is { } completedTransport) onResponseRead?.Invoke(completedTransport.Elapsed);
-            return new(text, resp.Headers.Date?.ToUniversalTime(), DateTimeOffset.UtcNow,
+            return new(text, resp.Headers.Date?.ToUniversalTime(), _timeProvider.GetUtcNow(),
                 transportTimer?.Elapsed, totalBudgetWait);
         }
     }
