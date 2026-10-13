@@ -844,8 +844,9 @@
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-copy" disabled>複製</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-download" disabled>下載探測結果</button>
                 <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-probe-download-evidence" disabled>下載去識別相容性證據 (JSON)</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-probe-download-local">下載本機診斷 JSON（不連 PRTG／AI）</button>
             </div>
-            <p class="text-muted small">JSON 下載使用後端獨立保存的白名單證據欄位，不從文字輸出尋找標記；未知來源欄位與任意文字不會匯出，缺項及未確認時區會標為 unknown 或 partial，這不代表正式就緒。完整探測文字檔可能含主機名稱、IP 與 PRTG 訊息，分享前請先檢查。環境資源描述的是此應用程式可見資源，遠端資料庫主機規格仍為 unknown。</p>
+            <p class="text-muted small">本機診斷在尚未設定或來源故障時仍可下載，不更新來源探測通過狀態。JSON 下載使用後端獨立保存的白名單證據欄位，不從文字輸出尋找標記；未知來源欄位與任意文字不會匯出，缺項及未確認時區會標為 unknown 或 partial，這不代表正式就緒。完整探測文字檔可能含主機名稱、IP 與 PRTG 訊息，分享前請先檢查。環境資源描述的是此應用程式可見資源，遠端資料庫主機規格仍為 unknown。</p>
             <textarea class="form-control font-monospace small" id="prtg-probe-output" rows="18" readonly placeholder="尚未執行過探測。"></textarea>
         </div>
     </div>

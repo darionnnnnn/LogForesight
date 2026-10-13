@@ -2149,3 +2149,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 離線核對新增設定修訂、保存時區／locale、來源 fingerprint 的證據範圍、本機 scope／readiness／guard、NetIQ receipt／eligible parent 與 AI 小探測成本摘要。未知或舊版缺欄維持 INCOMPLETE，互相矛盾的摘要與修訂不符拒絕；安全 opaque revision 不限 GUID，但拒絕控制字元與換行注入，不輸出拒絕值。64 KiB、depth32、原生身分與正式授權門檻不變。
 
 主代理獨立執行完整 PowerShell 契約，exit0，All bounded PRTG evidence verifier contracts passed；root-e04-verifier-final-20261013.log SHA256 91f86d09c5d108e4217ae7cf0bca8879153b65dc9a69869cd1c7422bc7451729。此為核對器段落完成；來源失敗／取消／未設定的實際匯出與完整瀏覽器交接尚需另段驗證，E04 活動 TODO 保留。
+
+### 2026-10-13：E04 未完成来源與本機診斷交付
+
+完整探測在連線失敗、初始化失敗或取消時仍產生有界白名單 JSON，五類來源明示 missing 與固定缺項原因；取消時捨棄來源觀測授權，僅保留已取得的本機診斷，不追加來源請求或 DB 收尾查詢。新增 Maintain-only GET prtg-probe/local-evidence 與實際下載入口，未設定／來源故障也能讀取本機 DB/provider／範圍摘要，15秒有界，不建立PRTG client、不呼叫AI、不更新設定或來源探測通過狀態，修訂變更拒絕交付。
+
+主代理 fresh build 相關契約109/109、零失敗／略過，2分40秒；TRX root-e04-producer-final.trx SHA256 74d721a15854838df8dfae9684bdafca947ed0ac65c9c69484afd46ad27524bd。包含 held HTTP 取消≤5秒、無設定、不可達來源、本機匯出不呼叫AI、caller取消與固定缺項理由防任意文字。第一輪廣集合108通過／1失敗保留，失敗為既知 busy=true 狀態補抓五秒門檻；此109集合排除兩個無關補抓參數案例，該缺陷仍由排程段追查，不能稱全輪回歸綠。Node以module語法核對通過。E04父項與目前乾淨版本瀏覽器交接TODO繼續保留。

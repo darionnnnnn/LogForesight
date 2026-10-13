@@ -564,7 +564,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
         public SchedulerRunState Scheduler { get; } = new();
         public PrtgStructureSyncRunState Structure { get; } = new();
 
-        public ServiceHarness()
+        public ServiceHarness(IAiProbeService? aiProbe = null)
         {
             _dir = Path.Combine(Path.GetTempPath(), "lf-probe-site-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_dir);
@@ -573,14 +573,14 @@ public class PrtgProbeSiteCheckTests : IDisposable
                 _dir);
             Settings = new SystemSettingsStore(Backend.Blob("system_settings"));
             Service = new PrtgProbeService(Settings, new PrtgProbeRunState(), new PrtgBackfillRunState(),
-                Backend, new FakeHostStore(), new FakeSentinelStore(), Scheduler, Structure);
+                Backend, new FakeHostStore(), new FakeSentinelStore(), Scheduler, Structure, aiProbe);
         }
 
         public void PointTo(int port) => Settings.Update(s =>
         {
             s.PrtgUrl = $"http://127.0.0.1:{port}";
             s.PrtgAuthMode = PrtgAuthModes.Token;
-            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("SENTINEL_PROBE_CREDENTIAL_20261013");
             s.PrtgTimeoutSeconds = 5;
         });
 
@@ -641,6 +641,100 @@ public class PrtgProbeSiteCheckTests : IDisposable
 
         Assert.False(result.Success);
         Assert.DoesNotContain("站台對照", result.Text);
+        AssertUnobservedEvidence(h.Service.GetStatus().EvidenceJson, "source-observations-unavailable", h.DataRoot);
+    }
+
+    private static void AssertUnobservedEvidence(string? json, string reason, string dataRoot)
+    {
+        Assert.NotNull(json);
+        Assert.InRange(Encoding.UTF8.GetByteCount(json!), 1, 64 * 1024);
+        using var document = System.Text.Json.JsonDocument.Parse(json!);
+        var root = document.RootElement;
+        Assert.False(root.GetProperty("evidence_ready").GetBoolean());
+        Assert.Equal("unknown", root.GetProperty("source_prtg_version").GetString());
+        var targets = root.GetProperty("targets").EnumerateArray().ToArray();
+        Assert.Equal(5, targets.Length);
+        Assert.All(targets, target =>
+        {
+            Assert.Equal("missing", target.GetProperty("status").GetString());
+            Assert.Contains(reason, target.GetProperty("reason").GetString());
+        });
+        Assert.DoesNotContain(dataRoot, json!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SENTINEL_PROBE_CREDENTIAL_20261013", json!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LocalDiagnosticsWithoutSourcePreservesProbeStateAndSettings()
+    {
+        using var h = new ServiceHarness();
+        var revision = h.Settings.Get().Revision;
+        var before = h.Service.GetStatus();
+        var json = await h.Service.GetLocalEvidenceAsync(CancellationToken.None);
+        AssertUnobservedEvidence(json, "source-not-configured", h.DataRoot);
+        Assert.Equal(revision, h.Settings.Get().Revision);
+        Assert.Equal(before.StartedAt, h.Service.GetStatus().StartedAt);
+        Assert.Equal(before.CompletedAt, h.Service.GetStatus().CompletedAt);
+        Assert.Null(h.Service.GetStatus().EvidenceJson);
+        Assert.False(h.Service.GetStatus().IsRunning);
+    }
+
+    [Fact]
+    public async Task LocalDiagnosticsWithConfiguredUnreachableSourceDoesNotStartTransport()
+    {
+        var ai = new RejectAiProbe();
+        using var h = new ServiceHarness(ai);
+        h.PointTo(GetFreePort());
+        var json = await h.Service.GetLocalEvidenceAsync(CancellationToken.None);
+        AssertUnobservedEvidence(json, "source-observations-not-started", h.DataRoot);
+        Assert.Null(h.Service.GetStatus().StartedAt);
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal("Sqlite", document.RootElement.GetProperty("storage_provider").GetString());
+        Assert.Equal(0, ai.Calls);
+    }
+
+    private sealed class RejectAiProbe : IAiProbeService
+    {
+        public int Calls { get; private set; }
+        public AiProbeResult LatestResult => throw new InvalidOperationException("AI must not be accessed by local diagnostics");
+        public Task<AiProbeResult> RefreshAsync(CancellationToken ct = default)
+        {
+            Calls++;
+            throw new InvalidOperationException("AI must not be called by local diagnostics");
+        }
+    }
+
+    [Fact]
+    public async Task LocalDiagnosticsHonorsCallerCancellationWithoutPublishingEvidence()
+    {
+        using var h = new ServiceHarness();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => h.Service.GetLocalEvidenceAsync(cancellation.Token));
+        Assert.Null(h.Service.GetStatus().StartedAt);
+        Assert.Null(h.Service.GetStatus().EvidenceJson);
+    }
+
+    [Fact]
+    public async Task CancelHeldSourceCompletesWithinFiveSecondsAndRetainsIncompleteDiagnostics()
+    {
+        using var h = new ServiceHarness();
+        var port = GetFreePort();
+        using var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        h.PointTo(port);
+        Assert.True(h.Service.TryStart(out var error, out _), error);
+        var request = await listener.GetContextAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        Assert.True(h.Service.TryCancel());
+        while (h.Service.GetStatus().IsRunning && stopwatch.Elapsed < TimeSpan.FromSeconds(5))
+            await Task.Delay(10);
+        Assert.False(h.Service.GetStatus().IsRunning);
+        Assert.True(h.Service.GetStatus().Cancelled);
+        Assert.False(h.Service.GetStatus().Success);
+        AssertUnobservedEvidence(h.Service.GetStatus().EvidenceJson, "probe-cancelled", h.DataRoot);
+        request.Response.Abort();
+        listener.Stop();
     }
 
     [Fact]

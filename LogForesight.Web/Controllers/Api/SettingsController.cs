@@ -438,6 +438,13 @@ public class SettingsController : ControllerBase
     public ApiResponse<PrtgProbeStatusDto> GetPrtgProbeStatus() =>
         ApiResponse<PrtgProbeStatusDto>.Ok(_prtgProbe?.GetStatus() ?? new PrtgProbeStatusDto());
 
+    [HttpGet("prtg-probe/local-evidence")]
+    public async Task<ApiResponse<string>> GetPrtgLocalEvidence(CancellationToken ct)
+    {
+        if (_prtgProbe is null) throw DomainException.Validation("PRTG 探測服務未啟用。");
+        return ApiResponse<string>.Ok(await _prtgProbe.GetLocalEvidenceAsync(ct));
+    }
+
     [HttpPost("prtg-probe/start")]
     public ApiResponse<StartPrtgProbeResultDto> StartPrtgProbe()
     {

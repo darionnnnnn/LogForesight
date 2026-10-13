@@ -1323,3 +1323,7 @@ Resume／Check 必須提供實際 JobId、ExpectedVersion、ExpectedWave；Resum
 scripts/prtg-workload/Initialize-QualificationMatrixRun.ps1 透過同一 authenticated numeric-loopback Web API 核對 settings 與精確 3000 host IDs；operator-owned provider／180 日宣告保持 waiting qualification。Invoke-QualificationMatrix.ps1 使用同 repo 交付的 coordinator、coverage collector 與 consumer，僅在完成全 15000 raw/profile 的 Check 後進入固定六條件。每輪前後核 source/settings/policy/scope/identity/channel/binding/proof/job version/wave，失敗保存狀態及輸入而不推進。Schedule API 提供 lastRunBatchRunId 與 netiqHostDayTiming.runId，兩者須與本次觸發對齊；精確分母全部提交才有 p95，固定 10% 增量、2 秒路由 p95、75% 排程窗口不變。聚合計時最高 600000 host-days、完成時計算一次 p95，不含原始事件／名稱／IP。所有 source/formal/retention/whole flags 仍 false；詳見同目錄 README。
 
 兩種路由均核對實際 ApiResponse DTO：host list 必須 success=true、total=3000、truncated=false 且 items 的唯一 ID 與 owned 集合相同；host detail 必須 success=true 且 hostId 等於請求 ID。HTTP 200 的錯誤或空資料仍計入失敗。回應上限 2 MiB，請求期限 2 秒；六輪每 cell 各量測 100 次 list 與 100 次 detail，缺測不得形成合格 verdict。
+
+### 未完成來源與本機診斷 JSON
+
+完整環境探測於來源連線失敗、初始化失敗或取消時，保留已取得的白名單本機上下文並明示五類來源缺項；取消不追加來源請求或資料庫查詢，JSON不宣告來源就緒。Maintain可透過 `GET api/admin/settings/prtg-probe/local-evidence` 或探測頁「下載本機診斷 JSON」取得尚未設定／故障來源的本機診斷；此入口不連PRTG或AI，15秒有界，設定修訂變動拒絕輸出，不更新來源探測通過狀態。沿用64 KiB、depth32與去識別限制；可下載不代表取得正式profile、風險或容量授權。

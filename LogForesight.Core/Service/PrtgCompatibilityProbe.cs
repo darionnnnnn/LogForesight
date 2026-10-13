@@ -855,40 +855,7 @@ public static class PrtgCompatibilityProbe
         var sdate = yesterday.ToString("yyyy-MM-dd-00-00-00", CultureInfo.InvariantCulture);
         var edate = yesterday.AddDays(1).ToString("yyyy-MM-dd-00-00-00", CultureInfo.InvariantCulture);
 
-        var localFacts = SanitizeLocalFacts(context?.LocalFacts);
-        var evidence = new PrtgCompatibilityProbeEvidence
-        {
-            SchemaVersion = "1.0.0",
-            GeneratedAtUtc = (context?.GeneratedAtUtc ?? DateTimeOffset.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
-            HostUtcOffset = SafeUtcOffset(context?.HostUtcOffset),
-            BuildVersion = SafeBuildVersion(context?.BuildVersion),
-            SourcePrtgVersion = SanitizePrtgVersion(context?.SourcePrtgVersion) ?? "unknown",
-            DeploymentResources = new PrtgDeploymentResources(),
-            StorageEnvironment = SanitizeStorageEnvironment(context?.StorageEnvironment),
-            SettingsRevision = SafeSettingsRevision(context?.SettingsRevision),
-            SourceFingerprint = SafeFingerprint(context?.SourceFingerprint),
-            SourceTimezone = localFacts?.AuthorityKind == "saved-explicit-authority"
-                ? localFacts.SourceTimeZoneId : "unknown",
-            SourceLocale = localFacts?.AuthorityKind == "saved-explicit-authority"
-                ? localFacts.SourceCultureName : "unknown",
-            StorageProvider = SafeProvider(context?.StorageProvider),
-            EfCoreProvider = SafeEfProvider(context?.EfCoreProvider),
-            RetentionDays = context?.RetentionDays is >= 1 and <= 10000 ? context.RetentionDays : null,
-            ScopeSummary = localFacts is { Status: "observed" } local
-                ? $"policy-hosts={local.PolicyHosts}; policy-sensors={local.PolicySensors}; mirror-devices={local.MirrorDevices}; mirror-sensors={local.MirrorSensors}; mapped-devices={local.MappedDevices}; conflicts={local.ConflictingDevices}; guard-overrides={local.GuardOverrideSensors}" : "unknown (local facts unavailable)",
-            ReadinessSummary = localFacts is { Status: "observed" } readiness
-                ? $"sampled={readiness.ReadinessSampledSensors}; bindings={readiness.SavedBindings}; qualified-profiles={readiness.QualifiedProfiles}; not-full-scope-verdict" : "unknown (local facts unavailable)",
-            LocalFacts = localFacts,
-            BuildIdentity = SafeBuildFacts(context?.BuildIdentity),
-            Status = "unknown",
-            EvidenceReady = false,
-            HistoricalDateBoundary = new PrtgDateBoundary
-            {
-                Start = $"{yesterday:yyyy-MM-dd} 00:00:00",
-                End = $"{yesterday.AddDays(1):yyyy-MM-dd} 00:00:00",
-                Limitations = "來源時區及時間欄位基準未確認"
-            }
-        };
+        var evidence = CreateBaseEvidence(context, yesterday);
 
         var targetedSensorsCount = 0;
         var requestsAttempted = 0;
@@ -1147,6 +1114,65 @@ public static class PrtgCompatibilityProbe
         onEvidenceJsonProduced?.Invoke(serializedJson);
 
         return evidence;
+    }
+
+    /// <summary>Exports bounded local facts when source observations did not complete. No transport or authority writes.</summary>
+    public static PrtgCompatibilityProbeEvidence CreateUnobservedEvidence(PrtgProbeEvidenceContext? context, string reason)
+    {
+        if (reason is not ("source-observations-not-started" or "source-observations-unavailable" or
+            "probe-cancelled" or "source-not-configured" or "client-initialization-failed"))
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        var evidence = CreateBaseEvidence(context, DateTime.Today.AddDays(-1));
+        foreach (var (category, sensorType, alias) in TargetCategories)
+            evidence.Targets.Add(new PrtgProbeTargetEvidence
+            {
+                Alias = alias, Category = category, TargetType = sensorType, Status = "missing",
+                Reason = "Source observations unavailable: " + reason
+            });
+        evidence.Summary = new PrtgProbeEvidenceSummary
+        {
+            TargetCategoriesCount = TargetCategories.Count, TargetsMissing = TargetCategories.Count,
+            RequestsSkipped = TargetCategories.Count * 3
+        };
+        return evidence;
+    }
+
+    private static PrtgCompatibilityProbeEvidence CreateBaseEvidence(PrtgProbeEvidenceContext? context, DateTime yesterday)
+    {
+        var localFacts = SanitizeLocalFacts(context?.LocalFacts);
+        return new PrtgCompatibilityProbeEvidence
+        {
+            SchemaVersion = "1.0.0",
+            GeneratedAtUtc = (context?.GeneratedAtUtc ?? DateTimeOffset.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+            HostUtcOffset = SafeUtcOffset(context?.HostUtcOffset),
+            BuildVersion = SafeBuildVersion(context?.BuildVersion),
+            SourcePrtgVersion = SanitizePrtgVersion(context?.SourcePrtgVersion) ?? "unknown",
+            DeploymentResources = new PrtgDeploymentResources(),
+            StorageEnvironment = SanitizeStorageEnvironment(context?.StorageEnvironment),
+            SettingsRevision = SafeSettingsRevision(context?.SettingsRevision),
+            SourceFingerprint = SafeFingerprint(context?.SourceFingerprint),
+            SourceTimezone = localFacts?.AuthorityKind == "saved-explicit-authority"
+                ? localFacts.SourceTimeZoneId : "unknown",
+            SourceLocale = localFacts?.AuthorityKind == "saved-explicit-authority"
+                ? localFacts.SourceCultureName : "unknown",
+            StorageProvider = SafeProvider(context?.StorageProvider),
+            EfCoreProvider = SafeEfProvider(context?.EfCoreProvider),
+            RetentionDays = context?.RetentionDays is >= 1 and <= 10000 ? context.RetentionDays : null,
+            ScopeSummary = localFacts is { Status: "observed" } local
+                ? $"policy-hosts={local.PolicyHosts}; policy-sensors={local.PolicySensors}; mirror-devices={local.MirrorDevices}; mirror-sensors={local.MirrorSensors}; mapped-devices={local.MappedDevices}; conflicts={local.ConflictingDevices}; guard-overrides={local.GuardOverrideSensors}" : "unknown (local facts unavailable)",
+            ReadinessSummary = localFacts is { Status: "observed" } readiness
+                ? $"sampled={readiness.ReadinessSampledSensors}; bindings={readiness.SavedBindings}; qualified-profiles={readiness.QualifiedProfiles}; not-full-scope-verdict" : "unknown (local facts unavailable)",
+            LocalFacts = localFacts,
+            BuildIdentity = SafeBuildFacts(context?.BuildIdentity),
+            Status = "unknown",
+            EvidenceReady = false,
+            HistoricalDateBoundary = new PrtgDateBoundary
+            {
+                Start = $"{yesterday:yyyy-MM-dd} 00:00:00",
+                End = $"{yesterday.AddDays(1):yyyy-MM-dd} 00:00:00",
+                Limitations = "來源時區及時間欄位基準未確認"
+            }
+        };
     }
 
     private static void TrackRequestStatus(string status, ref int succeeded, ref int failed, ref int timedOut)

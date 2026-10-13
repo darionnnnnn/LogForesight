@@ -68,12 +68,12 @@ public class PrtgProbeRunState
     }
 
     /// <summary>結束本趟：記住是否被停止、釋放並清空取消來源，再結束執行狀態。</summary>
-    public void FinishRun(bool success, bool cancelled)
+    public void FinishRun(bool success, bool cancelled, string? cancelledEvidenceJson = null)
     {
         lock (_lock)
         {
             _cancelled = cancelled;
-            if (cancelled) _evidenceJson = null;
+            if (cancelled) _evidenceJson = cancelledEvidenceJson;
             _cts?.Dispose();
             _cts = null;
         }
@@ -197,6 +197,49 @@ public class PrtgProbeService
         };
     }
 
+    /// <summary>Read-only local diagnostics; does not create a client, contact PRTG/AI, or update probe readiness.</summary>
+    public async Task<string> GetLocalEvidenceAsync(CancellationToken ct)
+    {
+        var settings = _settings.Get();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        var token = deadline.Token;
+        var assembly = typeof(PrtgProbeService).Assembly;
+        var buildVersion = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString() ?? "unknown";
+        var build = LogForesightBuildIdentity.ReadCurrent(assembly, typeof(PrtgClient).Assembly);
+        using var db = _backend.CreateContext();
+        var provider = db.Database.ProviderName;
+        var storage = await PrtgStorageEnvironmentProbe.CollectAsync(db, _backend.DataRoot, token);
+        var facts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, settings, null, token);
+        token.ThrowIfCancellationRequested();
+        if (_settings.Get().Revision != settings.Revision)
+            throw new InvalidOperationException("設定已變更，請重新匯出本機診斷。");
+        var context = new PrtgProbeEvidenceContext
+        {
+            BuildVersion = buildVersion, GeneratedAtUtc = DateTimeOffset.UtcNow,
+            HostUtcOffset = DateTimeOffset.Now.ToString("zzz"), SettingsRevision = settings.Revision,
+            SourceFingerprint = PrtgCompatibilityProbe.ComputeUrlFingerprint(settings.PrtgUrl),
+            StorageProvider = provider switch
+            {
+                "Microsoft.EntityFrameworkCore.Sqlite" => "Sqlite",
+                "Microsoft.EntityFrameworkCore.SqlServer" => "SqlServer",
+                _ => "unknown"
+            },
+            EfCoreProvider = provider is "Microsoft.EntityFrameworkCore.Sqlite" or "Microsoft.EntityFrameworkCore.SqlServer" ? provider : null,
+            StorageEnvironment = storage, RetentionDays = settings.PrtgRetentionDays,
+            LocalFacts = facts, BuildIdentity = PrtgProbeBuildFacts.From(build)
+        };
+        var json = PrtgCompatibilityProbe.SerializeEvidence(
+            PrtgCompatibilityProbe.CreateUnobservedEvidence(context,
+                string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings)
+                    ? "source-not-configured" : "source-observations-not-started"));
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > 64 * 1024)
+            throw new InvalidDataException("本機診斷超過有界匯出上限。");
+        return json;
+    }
+
     public bool TryCancel() => _state.TryCancel();
 
     public bool TryStartDataFlow(out string? error, out bool isConflict) =>
@@ -263,6 +306,14 @@ public class PrtgProbeService
         console.WriteLine($"設定版本：{s.Revision}；PRTG 啟用：{(s.PrtgEnabled ? "是" : "否")}；取數策略：{s.PrtgFetchStrategy}");
         console.WriteLine("輸出可能含主機名稱、IP 或 PRTG 訊息；分享前請先檢視並遮蔽。");
         console.WriteLine();
+        var evidenceContext = new PrtgProbeEvidenceContext
+        {
+            BuildVersion = buildVersion, GeneratedAtUtc = DateTimeOffset.UtcNow,
+            HostUtcOffset = DateTimeOffset.Now.ToString("zzz"),
+            SourceFingerprint = PrtgCompatibilityProbe.ComputeUrlFingerprint(s.PrtgUrl),
+            SettingsRevision = s.Revision, RetentionDays = s.PrtgRetentionDays,
+            BuildIdentity = PrtgProbeBuildFacts.From(buildIdentity)
+        };
         PrtgClient? client = null;
         try
         {
@@ -271,6 +322,8 @@ public class PrtgProbeService
         catch (Exception ex)
         {
             _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
+            if (!dataFlow) _state.SetEvidenceJson(PrtgCompatibilityProbe.SerializeEvidence(
+                PrtgCompatibilityProbe.CreateUnobservedEvidence(evidenceContext, "client-initialization-failed")));
             _state.FinishRun(false, false);
             error = $"初始化 PRTG 連線失敗：{ex.Message}";
             return false;
@@ -284,6 +337,7 @@ public class PrtgProbeService
             var runToken = operation.Token;
             var success = false;
             var cancelled = false;
+            var compatibilityEvidenceProduced = false;
             try
             {
                 using (client)
@@ -323,7 +377,7 @@ public class PrtgProbeService
                         operation.Checkpoint();
                         console.WriteLine($"本機摘要：{localFacts.Status}／{localFacts.Reason}；正式設定 {localFacts.PolicyHosts} 台／{localFacts.PolicySensors} 顆；守門覆寫 {localFacts.GuardOverrideSensors} 顆。摘要不授權正式風險。");
                         console.WriteLine($"昨日 NetIQ 回執 {localFacts.NetiqReceipts} 筆、成功 {localFacts.NetiqSuccess}、等待 {localFacts.NetiqWaiting}；合格父紀錄 {localFacts.NetiqEligibleParents}／{localFacts.NetiqParentRows}。AI 小請求：{localFacts.AiProbeStatus}；不是正式服務驗收。");
-                        var evidenceContext = new PrtgProbeEvidenceContext
+                        evidenceContext = new PrtgProbeEvidenceContext
                         {
                             SchemaVersion = "1.0.0",
                             BuildVersion = buildVersion,
@@ -342,7 +396,11 @@ public class PrtgProbeService
                             LocalFacts = localFacts,
                             BuildIdentity = PrtgProbeBuildFacts.From(buildIdentity)
                         };
-                        success = await PrtgProbeRunner.RunAsync(client, console, evidenceContext, runToken, _state.SetEvidenceJson);
+                        success = await PrtgProbeRunner.RunAsync(client, console, evidenceContext, runToken, json =>
+                        {
+                            compatibilityEvidenceProduced = true;
+                            _state.SetEvidenceJson(json);
+                        });
                     }
 
                     // 站台對照只在探測本身成功後才做（連線都不通時對照不出東西），
@@ -380,7 +438,17 @@ public class PrtgProbeService
             }
             finally
             {
-                _state.FinishRun(success, cancelled);
+                // Failed/cancelled source work still exports the captured, sanitized local context.
+                // Never start extra transport or repeat database reads during cancellation cleanup.
+                string? incompleteEvidence = null;
+                if (!dataFlow && (cancelled || !compatibilityEvidenceProduced))
+                {
+                    incompleteEvidence = PrtgCompatibilityProbe.SerializeEvidence(
+                        PrtgCompatibilityProbe.CreateUnobservedEvidence(evidenceContext,
+                            cancelled ? "probe-cancelled" : "source-observations-unavailable"));
+                    if (!cancelled) _state.SetEvidenceJson(incompleteEvidence);
+                }
+                _state.FinishRun(success, cancelled, cancelled ? incompleteEvidence : null);
             }
         });
 

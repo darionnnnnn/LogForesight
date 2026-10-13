@@ -3501,6 +3501,23 @@ function bindPrtgProbe() {
         anchor.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
+    const downloadLocalButton = document.getElementById('prtg-probe-download-local');
+    downloadLocalButton?.addEventListener('click', async () => {
+        const restore = withBusy(downloadLocalButton, '讀取本機診斷');
+        try {
+            const evidence = await api.get('/api/admin/settings/prtg-probe/local-evidence');
+            const jsonText = extractProbeEvidenceJson(evidence);
+            if (!jsonText) throw new Error('本機診斷未符合有界去識別證據契約，請重新匯出。');
+            const url = URL.createObjectURL(new Blob([jsonText + '\n'], { type: 'application/json;charset=utf-8' }));
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = `prtg-local-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            anchor.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+            toast(error?.message || '無法匯出本機診斷。', 'danger');
+        } finally { restore(); }
+    });
     downloadEvidenceButton?.addEventListener('click', () => {
         if (downloadEvidenceButton.disabled) return;
         const jsonText = extractProbeEvidenceJson(currentProbeEvidenceJson);

@@ -14,6 +14,20 @@ namespace LogForesight.Tests;
 public class PrtgCompatibilityProbeTests
 {
     [Fact]
+    public void UnobservedEvidenceRejectsArbitraryReasonAndNeverClaimsSourceReadiness()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PrtgCompatibilityProbe.CreateUnobservedEvidence(null, "private-error-with-credentials"));
+        var json = PrtgCompatibilityProbe.SerializeEvidence(
+            PrtgCompatibilityProbe.CreateUnobservedEvidence(null, "probe-cancelled"));
+        using var document = JsonDocument.Parse(json);
+        Assert.False(document.RootElement.GetProperty("evidence_ready").GetBoolean());
+        Assert.Equal(5, document.RootElement.GetProperty("targets").GetArrayLength());
+        Assert.DoesNotContain("private-error-with-credentials", json);
+        Assert.InRange(Encoding.UTF8.GetByteCount(json), 1, 64 * 1024);
+    }
+
+    [Fact]
     public async Task IdentityPreservingXmlReachesSafeProbeArtifactWithoutAuthorizingUnknownClockOrPrimary()
     {
         var samples = CreateSamples((1003, "SNMP Disk Free", "Up"));
