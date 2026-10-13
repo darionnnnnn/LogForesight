@@ -14,6 +14,7 @@ import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserN
 import { initCalibration } from './prtg-calibration.js';
 import { initializePrtgQualificationJobs } from '../prtg-qualification-jobs.js';
 import { trustedQualificationOutcome } from '../prtg-maintenance-outcomes.js';
+import { canonicalPrtgChannelId } from '../prtg-channel-identity.js';
 import { applyReadOnlyChannelDiscovery, channelDiscoveryPollOutcome, resumableChannelDiscovery } from '../prtg-channel-discovery-outcomes.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
@@ -86,9 +87,7 @@ const bindingFieldIds = {
 const trustedBindingEditorDrafts = new Map();
 
 function trustedChannelObjectId(value) {
-    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
-    if (typeof value === 'string' && /^[0-9]{1,20}$/.test(value)) return value.replace(/^0+(?=\d)/, '');
-    return null;
+    return canonicalPrtgChannelId(value);
 }
 
 function sameTrustedBindingFence(left, right) {
@@ -237,7 +236,7 @@ function captureTrustedBindingEditorDraft(sensorId) {
     trustedBindingEditorDrafts.set(sensorId, {
         fields: Object.fromEntries(Object.entries(bindingFieldIds).map(([key, id]) => [key,
             document.getElementById(id)?.value ?? ''])),
-        channelOptions: channel ? [...channel.options].map(option => ({ value: option.value, text: option.textContent || '' })) : [],
+        channelOptions: channel ? [...channel.options].map(option => ({ value: option.value, text: option.textContent || '', disabled: option.disabled })) : [],
         selectedChannel: channel?.value || '',
         versions: trustedBindingVersions,
         probe: trustedBindingProbe
@@ -247,7 +246,11 @@ function captureTrustedBindingEditorDraft(sensorId) {
 function restoreTrustedBindingEditorDraft(draft) {
     const channel = document.getElementById(bindingFieldIds.channelObjectId);
     if (channel) {
-        channel.replaceChildren(...(draft.channelOptions || []).map(item => new Option(item.text, item.value)));
+        channel.replaceChildren(...(draft.channelOptions || []).map(item => {
+            const option = new Option(item.text, item.value);
+            option.disabled = item.disabled === true || String(item.value).startsWith('-');
+            return option;
+        }));
         channel.value = draft.selectedChannel || '';
     }
     for (const [key, id] of Object.entries(bindingFieldIds)) {
@@ -274,7 +277,8 @@ function clearTrustedBindingOperationAuthority() {
 
 function bindingEditorFieldsMatchBody(fields, body) {
     if (!fields || !body) return false;
-    return trustedChannelObjectId(fields.channelObjectId) === trustedChannelObjectId(body.channelObjectId) &&
+    const channelId = trustedChannelObjectId(fields.channelObjectId);
+    return channelId !== null && channelId === trustedChannelObjectId(body.channelObjectId) &&
         Number(fields.quantity) === Number(body.quantity) && fields.unit === body.unit &&
         Number(fields.scale) === Number(body.scale) && fields.direction === body.direction &&
         fields.intervalRawUnit === body.intervalRawUnit &&

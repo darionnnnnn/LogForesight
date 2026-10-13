@@ -1,3 +1,5 @@
+import { canonicalPrtgChannelId } from './prtg-channel-identity.js';
+
 const terminalStatuses = new Set(['failed', 'failed-stale', 'expired']);
 
 export function channelDiscoveryPollOutcome(job) {
@@ -21,11 +23,12 @@ export function applyReadOnlyChannelDiscovery({ doc, discovery, requestedSensorI
     const channels = [];
     for (const item of discovery.channels || []) {
         const rawId = String(item.channelObjectId ?? '');
-        if (!/^[0-9]{1,20}$/.test(rawId)) continue;
-        const channelId = rawId.replace(/^0+(?=\d)/, '');
+        const channelId = canonicalPrtgChannelId(item.channelObjectId, true);
+        if (channelId === null) continue;
         const option = doc.createElement('option');
         option.value = channelId;
-        option.textContent = `#${rawId}｜${item.caption || '無 caption'}｜${item.unit || '無單位'}｜值 ${item.rawValue ?? '未知'}｜未核對 primary`;
+        option.disabled = channelId.startsWith('-');
+        option.textContent = `#${rawId}｜${item.caption || '無 caption'}｜${item.unit || '無單位'}｜值 ${item.rawValue ?? '未知'}｜${option.disabled ? '特殊通道：僅唯讀查證，不能綁定資源風險' : '未核對 primary'}`;
         options.push(option);
         channels.push(item);
     }

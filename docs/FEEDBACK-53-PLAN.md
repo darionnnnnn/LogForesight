@@ -2080,3 +2080,7 @@ E02所有代理條件已核對完成，從§5.6活動TODO移除，契約保留�
 使用者已授權接續全部實作，每段驗證後commit/push本輪分支；委派僅gpt-6-luna low/medium/high，主代理獨立核對。先前§5.8末尾「本次只盤點」只指當時文件輪，不撤銷本次開工／提交授權。驗收責任依§5.9，不要求正式機實測或現場人員評估。
 
 主代理在Mac執行 Test-UserMatrixManifest.ps1 與 Test-UserMatrixCoverageInventory.ps1，兩者PASS；22 AC／10 U53／6 Q／6角色／7來源情境及222固定case完整，coverage inventory保留53個缺口及browser/native acceptance=false。已同步E02完成與其餘九父驗收open、歷史子項證據和PLAN雜湊。原inventory的新增狀態／描述式source path不符合真實validator，改回既定partial-existing-test與可解析文件路徑後驗證；沒有將記錄到的舊Windows結果當本次執行PASS。JSON parse及git diff --check通過。只勾E10-T01，E10整輪審查／全量回歸仍開。
+
+### 2026-10-13 E02 探索頁面與綁定識別一致性
+
+後端通道探索修正後，逐前端入口核對發現探索結果UI仍濾掉-1至-4並改寫前導零。已共用Int64 canonical JS policy，0及大於JS安全整數的字串ID保留；合法特殊通道以唯讀查證選項呈現、明確停用資源綁定，草稿恢復仍保留停用狀態。非法alias／overflow／不安全number拒絕，不把兩個invalid ID視為相同已提交binding。主代理node scripts/tests/PrtgChannelIdentity.ContractTests.mjs通過，直接執行實際identity與discovery module，核對六個保留ID、四個特殊disabled選項、非法輸入及sensor／授權marker反例；JS語法與diff check通過。這是前端module契約補驗，不代替E08整體瀏覽器驗收。
