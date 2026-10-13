@@ -2105,3 +2105,7 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 證據凍結於work/root-e08-urgent-evidence-20261013與work/root-e08-ai-cancel-evidence-20261013；主代理verify_e08_urgent_20261013.py與verify_e08_ai_cancel_20261013.py均PASS，含readonly DB、來源request、SMTP實收MIME、DOM與build identity。SMTP captures SHA256 4336960e2bfecae5087c265724b3567b6648092a1a4ef773e97f625f4eb8ff6e；MIME SHA256 ceaa49f6740323c01a41731aeb1a90b100b9aa5b23048b6c6711a784200ef1f0。凍結Web/Core为modified fb240b32與已獨立驗證的cursor修正，不冒稱E01最終clean版本。
 
 耐久核對另發現統計郵件generic工作流MailPlanClosed仍false／no-qualified-recipient-or-current-receipt，列入E08-T05持續修正；不得因操作頁已正確便宣告整體工作流完成。E08父TODO、完整角色／PRTG／報告動線及全量回歸皆保留。
+
+### 2026-10-13：五類相容性證據下載邊界修正
+
+隔離瀏覽器完整探測已完成，發現前端仍限制 targets<=3，與目前 CPU／memory／disk／ping／traffic 五類後端輸出不一致，導致去識別 JSON 按鈕被停用。前端改為五類上限；Node 可執行契約已核對五類可下載、六類拒絕、執行中停用、不可宣告 evidence_ready=true、無效 JSON／版本／狀態與 64 KiB UTF-8 超限拒絕。來源及正式風險授權不變；E04-T02 仍保留，等待目前版本完整瀏覽器匯出與離線核對等其餘反例，不能以此局部修正宣告父項完成。

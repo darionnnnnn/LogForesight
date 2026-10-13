@@ -15,7 +15,8 @@ export function extractProbeEvidenceJson(evidenceJson) {
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
         if (parsed.schema_version !== '1.0.0' || parsed.evidence_ready !== false) return null;
         if (!['unknown', 'partial', 'error', 'truncated'].includes(parsed.status)) return null;
-        if (!Array.isArray(parsed.targets) || parsed.targets.length > 3) return null;
+        // CPU、memory、disk、ping、traffic；與後端五類唯讀探測範圍一致。
+        if (!Array.isArray(parsed.targets) || parsed.targets.length > 5) return null;
         return rawBlock;
     } catch {
         return null;
