@@ -2208,3 +2208,6 @@ finding保存產生時的解析版本，經daily JSON、storage shaper與lf_top_
 主代理在最後取消／preemption修正後fresh build獨立定向95/95通過、零失敗／略過，1分55秒（TestResults/root-message-status-final/root-message-status-final.trx），包含collector、consumer、metadata、replay、實際SQLite mail聚合及舊finding通知排除。代理較廣受影響集合299/299通過（最後取消修正前），最後取消與預算6/6另通過；主代理95集涵蓋其最後改動。JS三组契約及module語法、文件相對引用與PLAN hash核對通過。此段可獨立提交，整輪回歸仍在下一步，不代替第54輪完整驗收。
 
 SMTP協定fixture手工建立新版down finding時漏設解析版本，乾淨全量回歸因此重現3個無sender呼叫的失敗。只補fixture的current marker，保留原SMTP收件／ack／未知結果／重試及重啟斷言；主代理fresh build隔離SMTP七案7/7通過、38秒（TestResults/root-smtp-status-version/root-smtp-status-version.trx）。正式程式与舊證據守門未修改，完整回歸仍待結束核對。
+
+
+乾淨checkout發現PLAN原始位元組SHA會受Git自動換行轉換影響；沿用既有fixture的-text屬性固定本PLAN位元組並更新plan_sha256。以core.autocrlf=true從index輸出副本，再核對SHA，避免只核本機工作檔。此修改僅影響文件證據，不改程式或驗收門檻。
