@@ -43,18 +43,22 @@ public class ImportLogStore : IImportLogStore
     private readonly EfJsonLogStore _log;
     private readonly object _lock = new();
     private long _lastId;
+    private bool _tailUnreadable;
 
     public ImportLogStore(EfJsonLogStore log)
     {
         _log = log;
         // 續號起點以尾端反向 seek 取得、不整表讀回（Singleton store 的建構式＝站台啟動路徑）
-        _lastId = _log.ProbeMaxId<ImportLogEntry>(e => e.ImportId, BatchRunStore.IdProbeLines, "匯入紀錄", LfJsonOptions.Compact);
+        _lastId = _log.ProbeMaxId<ImportLogEntry>(e => e.ImportId, BatchRunStore.IdProbeLines, "匯入紀錄", LfJsonOptions.Compact,
+            out _tailUnreadable);
     }
 
     public void Append(ImportLogEntry entry)
     {
         lock (_lock)
         {
+            if (_tailUnreadable)
+                throw new InvalidDataException("匯入紀錄尾端全部無法解析，沒有耐久計數器可安全續號；拒絕新增匯入列。");
             entry.ImportId = ++_lastId;
             _log.AppendLine(JsonSerializer.Serialize(entry, LfJsonOptions.Compact));
         }

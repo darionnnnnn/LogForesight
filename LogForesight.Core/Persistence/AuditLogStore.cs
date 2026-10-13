@@ -23,6 +23,7 @@ public class AuditLogStore
     private readonly EfJsonLogStore _log;
     private readonly object _lock = new();
     private long _lastId;
+    private bool _tailUnreadable;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -39,13 +40,16 @@ public class AuditLogStore
         _log = log;
         // 續號起點以尾端反向 seek 取得、不整表讀回：這是 Singleton store 的建構式，
         // 整表讀等於站台啟動時同步讀回全部稽核列並逐行解析
-        _lastId = _log.ProbeMaxId<AuditEntry>(e => e.AuditId, BatchRunStore.IdProbeLines, "稽核紀錄", JsonOptions);
+        _lastId = _log.ProbeMaxId<AuditEntry>(e => e.AuditId, BatchRunStore.IdProbeLines, "稽核紀錄", JsonOptions,
+            out _tailUnreadable);
     }
 
     public void Append(AuditEntry entry)
     {
         lock (_lock)
         {
+            if (_tailUnreadable)
+                throw new InvalidDataException("稽核紀錄尾端全部無法解析，沒有耐久計數器可安全續號；拒絕新增稽核列。");
             entry.AuditId = ++_lastId;
             if (entry.OccurredAt == default) entry.OccurredAt = DateTime.Now;
 

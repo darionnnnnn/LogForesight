@@ -189,6 +189,8 @@ public class BatchRunStore
     private readonly object _lock = new();
     private long _lastObservedRunId;
     private long _lastLogId;
+    private readonly bool _runTailUnreadable;
+    private readonly bool _logTailUnreadable;
 
     public BatchRunStore(EfJsonLogStore runs, EfJsonLogStore logs)
     {
@@ -197,8 +199,8 @@ public class BatchRunStore
 
         // 續號起點以反向 seek 取得，不再整份讀回——這裡是 Singleton store 的建構式，
         // 全撈等於站台啟動時同步讀十萬列並逐行解析。
-        _lastObservedRunId = _runs.ProbeMaxId<BatchRun>(r => r.RunId, IdProbeLines, "執行紀錄", LfJsonOptions.Compact);
-        _lastLogId = _logs.ProbeMaxId<BatchRunLog>(l => l.LogId, IdProbeLines, "執行診斷紀錄", LfJsonOptions.Compact);
+        _lastObservedRunId = _runs.ProbeMaxId<BatchRun>(r => r.RunId, IdProbeLines, "執行紀錄", LfJsonOptions.Compact, out _runTailUnreadable);
+        _lastLogId = _logs.ProbeMaxId<BatchRunLog>(l => l.LogId, IdProbeLines, "執行診斷紀錄", LfJsonOptions.Compact, out _logTailUnreadable);
     }
 
     /// <summary>啟動時登記，回傳配發的 RunId</summary>
@@ -206,7 +208,7 @@ public class BatchRunStore
     {
         lock (_lock)
         {
-            _lastObservedRunId = run.RunId = _runs.ReserveMonotonicId(_lastObservedRunId);
+            _lastObservedRunId = run.RunId = _runs.ReserveMonotonicId(_lastObservedRunId, _runTailUnreadable);
             AppendRunLine(run);
             return run.RunId;
         }
@@ -225,7 +227,7 @@ public class BatchRunStore
     {
         lock (_lock)
         {
-            _lastLogId = log.LogId = _logs.ReserveMonotonicId(_lastLogId);
+            _lastLogId = log.LogId = _logs.ReserveMonotonicId(_lastLogId, _logTailUnreadable);
             if (log.LoggedAt == default) log.LoggedAt = DateTime.Now;
 
             _logs.AppendLine(JsonSerializer.Serialize(log, LfJsonOptions.Compact));

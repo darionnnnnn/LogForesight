@@ -141,4 +141,71 @@ public sealed class BatchRunIdentityAllocationTests : IDisposable
         Assert.Equal(value, check.Blobs.Single().Content);
         Assert.Equal(1, check.Blobs.Single().Version);
     }
+
+    [Fact]
+    public void LegacyIdsBehindCorruptTailFailClosedUntilSafeCounterExists()
+    {
+        using (var context = NewContext())
+        {
+            for (var id = 1; id <= 100; id++)
+                context.LogLines.Add(new LogLineRow
+                {
+                    LogKey = "batch_runs",
+                    Line = System.Text.Json.JsonSerializer.Serialize(new BatchRun { RunId = id, HostName = $"legacy-{id}" }, LfJsonOptions.Compact),
+                    CreatedAt = DateTime.Now
+                });
+            for (var i = 0; i < BatchRunStore.IdProbeLines; i++)
+            {
+                context.LogLines.Add(new LogLineRow { LogKey = "batch_runs", Line = "{bad", CreatedAt = DateTime.Now });
+                context.LogLines.Add(new LogLineRow { LogKey = "batch_run_logs", Line = "{bad", CreatedAt = DateTime.Now });
+            }
+            context.SaveChanges();
+        }
+
+        var storeWithoutCounter = NewStore();
+        var error = Record.Exception(() => storeWithoutCounter.StartRun(new BatchRun { HostName = "must-not-reuse", StartedAt = DateTime.Now }));
+        Assert.IsType<InvalidDataException>(error);
+        using (var check = NewContext())
+        {
+            Assert.Equal(100 + BatchRunStore.IdProbeLines,
+                check.LogLines.Count(line => line.LogKey == "batch_runs"));
+            Assert.Equal(BatchRunStore.IdProbeLines, check.LogLines.Count(line => line.LogKey == "batch_run_logs"));
+            Assert.Empty(check.Blobs);
+        }
+
+        // Durable counters are authoritative for both run and diagnostic IDs even when their
+        // legacy tails are unreadable.
+        using (var context = NewContext())
+        {
+            context.Blobs.Add(new BlobRow { BlobKey = "log_id_allocator:batch_runs", Content = "100", Version = 1 });
+            context.Blobs.Add(new BlobRow { BlobKey = "log_id_allocator:batch_run_logs", Content = "12", Version = 1 });
+            context.SaveChanges();
+        }
+        var resumed = NewStore();
+        var next = resumed.StartRun(new BatchRun { HostName = "safe-counter", StartedAt = DateTime.Now });
+        Assert.Equal(101, next);
+        var log = new BatchRunLog { RunId = next, Level = "Info", Logger = "test", Message = "safe counter" };
+        resumed.AppendLog(log);
+        Assert.Equal(13, log.LogId);
+    }
+
+    [Fact]
+    public void NonAllocatorLogConsumersFailClosedOnEntirelyUnreadableTail()
+    {
+        using (var context = NewContext())
+        {
+            foreach (var key in new[] { "audit", "import_logs", "record_handling_log" })
+                for (var i = 0; i < BatchRunStore.IdProbeLines; i++)
+                    context.LogLines.Add(new LogLineRow { LogKey = key, Line = "{broken", CreatedAt = DateTime.Now });
+            context.SaveChanges();
+        }
+
+        var audit = new AuditLogStore(NewLogStore("audit"));
+        var import = new ImportLogStore(NewLogStore("import_logs"));
+        Assert.Throws<InvalidDataException>(() => audit.Append(new AuditEntry()));
+        Assert.Throws<InvalidDataException>(() => import.Append(new ImportLogEntry()));
+        var probe = NewLogStore("record_handling_log");
+        var handling = new EfRecordHandlingStore(NewContext, probe);
+        Assert.Throws<InvalidDataException>(() => handling.AppendLog(new RecordHandlingLog()));
+    }
 }

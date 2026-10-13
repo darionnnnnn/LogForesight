@@ -39,8 +39,16 @@ public sealed class EfJsonLogStore
     /// 以資料庫交易配發高於既有紀錄下限的單調序號。Blob counter 透過 SQL Server application lock
     /// 或 SQLite 寫入交易跨 store instance 與 process 序列化；損毀的 counter fail closed，避免重號。
     /// </summary>
-    public long ReserveMonotonicId(long initialFloor) => _idAllocator.MutateWithContext((_, current) =>
+    public long ReserveMonotonicId(long initialFloor) => ReserveMonotonicId(initialFloor, failClosedIfCounterMissing: false);
+
+    /// <summary>
+    /// Reserve after a bounded probe. When the probe found rows but none were parseable, only an
+    /// already durable allocator can safely continue; an absent counter must not seed from zero.
+    /// </summary>
+    internal long ReserveMonotonicId(long initialFloor, bool failClosedIfCounterMissing) => _idAllocator.MutateWithContext((_, current) =>
     {
+        if (current == null && failClosedIfCounterMissing)
+            throw new InvalidDataException($"Log '{_key}' has an unreadable tail and no durable ID counter; refusing to guess the next ID.");
         var persisted = current == null
             ? 0
             : long.Parse(current, NumberStyles.None, CultureInfo.InvariantCulture);
@@ -93,8 +101,14 @@ public sealed class EfJsonLogStore
     /// 仍是索引 (log_key, seq) 的同一次反向 seek，不整表讀回。
     /// </summary>
     public long ProbeMaxId<T>(Func<T, long> idOf, int lines, string what, JsonSerializerOptions options) where T : class
+        => ProbeMaxId(idOf, lines, what, options, out _);
+
+    /// <summary>Also reports the unsafe case where the log is nonempty but every probed line is unreadable.</summary>
+    internal long ProbeMaxId<T>(Func<T, long> idOf, int lines, string what, JsonSerializerOptions options,
+        out bool nonemptyTailHasNoParseableIds) where T : class
     {
         var tail = ReadLastLines(lines);
+        nonemptyTailHasNoParseableIds = false;
         if (tail.Count == 0) return 0;
 
         long? max = null;
@@ -107,8 +121,9 @@ public sealed class EfJsonLogStore
         }
         if (max != null) return max.Value;
 
-        Log.Warn("[{Key}] {What}最後 {Count} 行都無法解析，續號自 0 起算——可能與既有紀錄重號，請檢查 lf_log_lines 的內容。",
+        Log.Warn("[{Key}] {What}最後 {Count} 行都無法解析，無法從舊紀錄確認續號下限；需有耐久計數器才能安全續號，請檢查 lf_log_lines 的內容。",
             _key, what, tail.Count);
+        nonemptyTailHasNoParseableIds = true;
         return 0;
     }
 

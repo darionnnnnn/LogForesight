@@ -187,10 +187,15 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     /// </summary>
     private const int LogIdProbeLines = 100;
 
-    /// <summary>下一個 LogId＝回看窗內可解析的最大 LogId＋1（共用 <see cref="EfJsonLogStore.ProbeMaxId{T}"/>，
-    /// 全部解析失敗時該方法記 Warn 回 0）</summary>
-    private long NextLogIdStart() =>
-        _logStore.ProbeMaxId<RecordHandlingLog>(l => l.LogId, LogIdProbeLines, "處理歷程", LfJsonOptions.Compact) + 1;
+    /// <summary>下一個 LogId＝回看窗內可解析的最大 LogId＋1。非空尾端全部損毀時沒有耐久 counter 可安全續號，拒絕猜測。</summary>
+    private long NextLogIdStart()
+    {
+        var max = _logStore.ProbeMaxId<RecordHandlingLog>(l => l.LogId, LogIdProbeLines, "處理歷程",
+            LfJsonOptions.Compact, out var unreadableTail);
+        if (unreadableTail)
+            throw new InvalidDataException("處理歷程尾端全部無法解析，沒有耐久計數器可安全續號；拒絕新增歷程。");
+        return checked(max + 1);
+    }
 
     // ── 保留天數（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）────────────────────
     //
