@@ -35,6 +35,9 @@ public class LogIssueSignature
     public string EventKey { get; set; } = string.Empty;
     public string? PrtgSourceGeneration { get; set; }
     public string? PrtgResourceGeneration { get; set; }
+    /// <summary>隨狀態風險保存的解析版本，防止舊結果在時間軸重建後重新獲准。</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? PrtgMessageStatusSemanticVersion { get; set; }
     public DateTimeOffset? PrtgIncidentStartedAt { get; set; }
     /// <summary>Server-authored resource reason label; event/source identity remains the governed legacy key.</summary>
     public string? PrtgDisplayLabel { get; set; }

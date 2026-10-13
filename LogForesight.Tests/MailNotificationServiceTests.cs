@@ -1915,6 +1915,7 @@ public class MailNotificationServiceTests : IDisposable
         LogName = "PRTG", Source = "PRTG:down", EventId = 0,
         EventKey = "prtg:down:10:core:resource", ElevatesDayRisk = true,
         Severity = IssueSeverity.High, PrtgSourceGeneration = "core", PrtgResourceGeneration = "resource",
+        PrtgMessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
         PrtgIncidentStartedAt = start ?? new DateTimeOffset(Yesterday.AddHours(1))
     };
 
@@ -1947,7 +1948,8 @@ public class MailNotificationServiceTests : IDisposable
         rules.Save(new RuleFileContent { Rules = [rule] });
         var finding = new PrtgFinding(1, 10, "down", "trusted", 60, rule)
         { SourceGeneration = identity.SourceGeneration, ResourceGeneration = identity.Generation,
-            IncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1)) };
+            IncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1)),
+            MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent };
         var signature = PrtgFindingMapper.ToSignature(finding, Yesterday);
         backend.PrtgObservationStore().Capture(host.HostId, Yesterday, "r1", [(finding, signature)]);
         new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + 10)).Update(e =>
@@ -2009,6 +2011,80 @@ public class MailNotificationServiceTests : IDisposable
         var intent = Assert.Single(state.UrgentOutbox.Values);
         Assert.Equal("no-qualified-recipient", intent.Status);
         Assert.Equal("no-qualified-recipient", MailNotificationService.EffectiveUrgentStatusForRead(intent, state.UrgentSentKeys));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task LegacyOrUnsupportedStatusFinding_IsNotMailed(int? version)
+    {
+        CreateViewAllAccount("ops@test.local");
+        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
+        var issue = ActionablePrtg();
+        issue.RuleId = PrtgRuleEvaluator.RuleDown;
+        issue.PrtgMessageStatusSemanticVersion = version;
+        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: issue);
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task StaleStatusFindingDoesNotInflateHighRiskCountButNetiqBaselineRemains()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
+        var staleHost = _hosts.Upsert(new WebHost { HostName = "stale-host", Active = true, Source = "netiq" });
+        var netiqHost = _hosts.Upsert(new WebHost { HostName = "netiq-host", Active = true, Source = "netiq" });
+        var staleIssue = ActionablePrtg();
+        staleIssue.RuleId = PrtgRuleEvaluator.RuleDown;
+        staleIssue.PrtgMessageStatusSemanticVersion = null;
+        var staleRecord = Record(staleHost.HostId, staleHost.HostName, Yesterday, RiskLevels.High, issues: staleIssue);
+        staleRecord.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(staleRecord);
+
+        var correlationHost = _hosts.Upsert(new WebHost { HostName = "correlation-host", Active = true, Source = "netiq" });
+        var correlatedStatus = ActionablePrtg();
+        correlatedStatus.PrtgMessageStatusSemanticVersion = null;
+        var correlationRecord = Record(correlationHost.HostId, correlationHost.HostName, Yesterday, RiskLevels.High,
+            issues: correlatedStatus);
+        correlationRecord.LogSource = AnalysisLogSource.Netiq;
+        correlationRecord.CorrelationAlerts = ["NetIQ correlation remains independently medium"];
+        correlationRecord.CorrelationAlertRefs = [new() { Text = correlationRecord.CorrelationAlerts[0], PatternId = "netiq-test-medium" }];
+        _records.Add(correlationRecord);
+
+        var mediumHost = _hosts.Upsert(new WebHost { HostName = "medium-host", Active = true, Source = "netiq" });
+        var mediumStatus = ActionablePrtg();
+        mediumStatus.PrtgMessageStatusSemanticVersion = null;
+        var ordinaryMedium = new LogIssueSignature { LogName = "System", Source = "Service", EventId = 7036,
+            EventKey = "netiq-medium", Count = 1, Severity = IssueSeverity.High, ElevatesDayRisk = false };
+        var mediumRecord = Record(mediumHost.HostId, mediumHost.HostName, Yesterday, RiskLevels.High,
+            issues: [ordinaryMedium, mediumStatus]);
+        mediumRecord.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(mediumRecord);
+
+        var independentIssue = new LogIssueSignature { LogName = "System", Source = "Service", EventId = 7036,
+            EventKey = "netiq-service", Count = 1, Severity = IssueSeverity.High, ElevatesDayRisk = true };
+        var netiqRecord = Record(netiqHost.HostId, netiqHost.HostName, Yesterday, RiskLevels.High, issues: independentIssue);
+        netiqRecord.LogSource = AnalysisLogSource.Netiq;
+        netiqRecord.PrtgBaselineRiskLevel = RiskLevels.High;
+        netiqRecord.PrtgBaselineRiskBasis = "NetIQ baseline";
+        var staleDuplicate = ActionablePrtg();
+        staleDuplicate.PrtgMessageStatusSemanticVersion = null;
+        netiqRecord.TopIssues.Add(staleDuplicate);
+        _records.Add(netiqRecord);
+
+        await Create().NotifyAfterRunAsync();
+
+        var message = Assert.Single(_sender.Sent).Message;
+        Assert.Contains("共 1 筆高風險主機日達門檻", message.Body);
+        Assert.DoesNotContain(staleIssue.Source, message.Body);
+        Assert.DoesNotContain(staleIssue.EventKey, message.Body);
     }
 
     [Theory]

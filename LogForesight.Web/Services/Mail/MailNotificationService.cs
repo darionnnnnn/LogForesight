@@ -206,7 +206,8 @@ public class MailNotificationService
                                 ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }
                         })
                         : new List<DailyAnalysisRecord>();
-                    currentRecords = currentRecords.Where(record => CurrentWorkflowVersion(record, mailVersions)).ToList();
+                    currentRecords = RemoveStaleMessageStatusFindings(
+                        currentRecords.Where(record => CurrentWorkflowVersion(record, mailVersions)));
                     var currentContext = BuildContext();
                     var summaryRecords = currentSettings.MailEnabled && currentSettings.MailOnRunCompleted
                         ? currentRecords.Where(record => RiskLevels.Rank(record.RiskLevel) >= RiskLevels.Rank(currentSettings.MailMinRiskLevel)).ToList()
@@ -250,7 +251,8 @@ public class MailNotificationService
                 var riskFilter = settings.MailOnRunCompleted
                     ? RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
                     : new[] { RiskLevels.High };
-                var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = riskFilter });
+                var records = RemoveStaleMessageStatusFindings(
+                    _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = riskFilter }));
                 if (recoveryWaitingRecordIds.Count > 0)
                     records = records.Where(record => !recoveryWaitingRecordIds.Contains(record.RecordId)).ToList();
                 var ctx = BuildContext();
@@ -984,6 +986,7 @@ public class MailNotificationService
         string? expectedSettingsFingerprint = null,
         IReadOnlyCollection<DailyAnalysisRecord>? formalScopeRecords = null)
     {
+        records = RemoveStaleMessageStatusFindings(records);
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var state = _state.Get();
         var candidates = records.Where(r => RiskLevels.Rank(r.RiskLevel) >= minRank).ToList();
@@ -1035,9 +1038,9 @@ public class MailNotificationService
                 !currentSettings.MailEnabled || !currentSettings.MailOnRunCompleted ||
                 _prtgMonitoring?.Get().Revision != policyRevision || scopeReader?.Read() != scopeRevision) return null;
             var currentRisk = RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel);
-            var currentRecords = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = currentRisk })
+            var currentRecords = RemoveStaleMessageStatusFindings(_records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = currentRisk })
                 .Where(record => qualifying.Any(candidate => RecordKey(candidate) == RecordKey(record)) && CurrentWorkflowVersion(record, mailVersions))
-                .ToList();
+                .ToList());
             var (currentOrder, currentViews) = ResolvePerRecipient(currentSettings, currentRecords, BuildContext());
             foreach (var oldRecipient in views.Keys.ToArray()) views.Remove(oldRecipient);
             foreach (var entry in currentViews) views[entry.Key] = entry.Value;
@@ -1093,6 +1096,7 @@ public class MailNotificationService
         IReadOnlyCollection<DailyAnalysisRecord>? formalScopeRecords = null,
         IReadOnlyDictionary<long, string>? durableRetryIntentKeys = null)
     {
+        records = RemoveStaleMessageStatusFindings(records);
         // 固定本輪起點，避免 store 回傳共用物件時設定修改連帶改掉比較基準。
         settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(settings))!;
         var settingsFingerprint = expectedSettingsFingerprint ?? HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
@@ -1204,7 +1208,8 @@ public class MailNotificationService
             var liveContext = BuildContext();
             if (HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(currentSettings)]) != settingsFingerprint ||
                 MailContextFingerprint(currentSettings) != mailContextFingerprint) return null;
-            var currentRecords = _records.Query(new RecordQueryFilter { From = from, To = to, Hosts = null, RiskLevels = (currentSettings.MailOnRunCompleted ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }) });
+            var currentRecords = RemoveStaleMessageStatusFindings(
+                _records.Query(new RecordQueryFilter { From = from, To = to, Hosts = null, RiskLevels = (currentSettings.MailOnRunCompleted ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }) }));
             if (durableRetryIntentKeys is { Count: > 0 })
                 currentRecords = currentRecords.Concat(records.Where(record => durableRetryIntentKeys.ContainsKey(record.RecordId)))
                     .GroupBy(record => record.RecordId).Select(group => group.Last()).ToList();
@@ -1240,6 +1245,7 @@ public class MailNotificationService
         }
         bool CurrentResource(long hostId, long sensorId, LogIssueSignature issue, DateTime recordDate)
         {
+            if (IsStaleMessageStatusFinding(issue)) return false;
             if (_prtgBackend == null) return true;
             var host = _hosts.GetAll().FirstOrDefault(h => h.HostId == hostId);
             if (host == null || host.Source != "netiq") return false;
@@ -2192,10 +2198,10 @@ public class MailNotificationService
         var from = to.AddDays(-(windowDays - 1));
         // RiskLevels 下推（回饋十八輪批次A-3，與 NotifyAfterRunAsync 同一手法）：記憶體 Rank 過濾
         // 保留（雙保險，語意不變），下推只是收窄 DB 端回傳的列數。
-        var records = _records.Query(new RecordQueryFilter
+        var records = RemoveStaleMessageStatusFindings(_records.Query(new RecordQueryFilter
         {
             Hosts = null, From = from, To = to, RiskLevels = RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
-        });
+        }));
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var qualifying = records.Where(r => RiskLevels.Rank(r.RiskLevel) >= minRank).ToList();
 
@@ -2513,6 +2519,73 @@ public class MailNotificationService
         return parts.Length >= 2 && DateTime.TryParse(parts[1], out var date) && date < cutoff;
     }
 
+    private static bool IsStaleMessageStatusFinding(LogIssueSignature issue) =>
+        RequiresMessageStatusSemanticVersion(issue) &&
+        issue.PrtgMessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
+
+    private static bool RequiresMessageStatusSemanticVersion(LogIssueSignature issue) =>
+        TryGetMessageStatusRuleCode(issue, out _);
+
+    private static bool TryGetMessageStatusRuleCode(LogIssueSignature issue, out string code)
+    {
+        if (!PrtgFindingMapper.IsPrtg(issue)) { code = string.Empty; return false; }
+        if (PrtgFindingMapper.TryGetRuleCode(issue.Source, out var sourceCode) && IsMessageStatusCode(sourceCode))
+        { code = sourceCode; return true; }
+        if (issue.EventKey.Split(':') is { Length: >= 2 } keyParts &&
+            keyParts[0].Equals("prtg", StringComparison.OrdinalIgnoreCase) && IsMessageStatusCode(keyParts[1]))
+        { code = keyParts[1]; return true; }
+        code = string.Empty;
+        return false;
+    }
+
+    private static bool IsMessageStatusCode(string code) =>
+        code.Equals(PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase) ||
+        code.Equals(PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase) ||
+        code.Equals(PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase);
+
+    private static List<DailyAnalysisRecord> RemoveStaleMessageStatusFindings(IEnumerable<DailyAnalysisRecord> records)
+    {
+        var result = new List<DailyAnalysisRecord>();
+        foreach (var record in records)
+        {
+            if (!record.TopIssues.Any(IsStaleMessageStatusFinding))
+            {
+                result.Add(record);
+                continue;
+            }
+
+            var copy = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(record))!;
+            copy.RecordId = record.RecordId;
+            copy.TopIssues = copy.TopIssues.Where(issue => !IsStaleMessageStatusFinding(issue)).ToList();
+            PrtgCorroboration.Refresh(copy);
+            var baseline = record.PrtgBaselineRiskLevel;
+            if (baseline != null)
+            {
+                copy.RiskLevel = RiskLevels.MoreSevere(baseline, PrtgFindingMapper.RiskFromFindings(copy.TopIssues));
+                copy.RiskBasis = copy.RiskLevel == baseline
+                    ? record.PrtgBaselineRiskBasis : PrtgFindingMapper.RiskBasisFrom(copy.TopIssues);
+            }
+            else
+            {
+                var correlations = copy.CorrelationAlerts.Select((description, index) => new CorrelationFinding
+                {
+                    Description = description,
+                    PatternId = index < copy.CorrelationAlertRefs.Count ? copy.CorrelationAlertRefs[index].PatternId : string.Empty,
+                    Severity = IssueSeverity.High,
+                    // Persisted daily records do not carry this flag. Match the existing reload
+                    // reconstruction contract: correlations remain a medium signal unless an
+                    // independently persisted baseline establishes a higher risk.
+                    ElevatesDayRisk = false
+                }).ToList();
+                copy.RiskLevel = LogAnalysisService.ComputeRuleBasedRisk(copy.TopIssues, copy.TrendAlerts, correlations);
+                copy.RiskBasis = record.RiskBasis?.Contains("PRTG", StringComparison.OrdinalIgnoreCase) == true
+                    ? null : record.RiskBasis;
+            }
+            result.Add(copy);
+        }
+        return result;
+    }
+
     /// <summary>
     /// 寄送失敗只記 WARN、回 false，不往外拋——這是三路觸發共用的最後一道防線，呼叫端（排程輪詢／
     /// 執行收尾）不該因為一封信寄失敗而受影響。SmtpClient 逾時無獨立設定，共用 30 秒合理上限，
@@ -2535,6 +2608,7 @@ public class MailNotificationService
                 new MailMessageSpec(settings.MailFrom, recipients, subject, body), timeoutCts.Token);
             return true;
         }
+
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;

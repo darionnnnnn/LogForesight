@@ -56,6 +56,12 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                     if (finding == null || finding.EventKey != row.EventKey || finding.PrtgSourceGeneration != policy.SourceGeneration ||
                         finding.PrtgResourceGeneration != row.ResourceGeneration)
                     { Mark(row, "invalid", null); continue; }
+                    var capturedFinding = document.RootElement.GetProperty("Finding").Deserialize<PrtgFinding>();
+                    if (TryGetMessageStatusRuleCode(finding, out var messageStatusRuleCode) &&
+                        (finding.PrtgMessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent ||
+                         capturedFinding?.MessageStatusSemanticVersion != finding.PrtgMessageStatusSemanticVersion ||
+                         !string.Equals(capturedFinding?.RuleCode, messageStatusRuleCode, StringComparison.OrdinalIgnoreCase)))
+                    { Mark(row, "invalid", null); continue; }
                     var currentRule = currentRules?.FirstOrDefault(r => r.Id == finding.RuleId && r.Enabled && r.Platform == "prtg");
                     var capturedRule = document.RootElement.GetProperty("Finding").GetProperty("Rule").Deserialize<KnownIssueRule>();
                     if (currentRule == null || JsonSerializer.Serialize(currentRule) != JsonSerializer.Serialize(capturedRule))
@@ -208,6 +214,23 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
         operation.CompletedStage("本批補追加／派工核對已返回");
         return applied;
     }
+
+    private static bool TryGetMessageStatusRuleCode(LogIssueSignature finding, out string code)
+    {
+        code = string.Empty;
+        if (!PrtgFindingMapper.IsPrtg(finding)) return false;
+        if (PrtgFindingMapper.TryGetRuleCode(finding.Source, out var sourceCode) && IsMessageStatusCode(sourceCode))
+        { code = sourceCode; return true; }
+        if (finding.EventKey.Split(':') is { Length: >= 2 } keyParts &&
+            keyParts[0].Equals("prtg", StringComparison.OrdinalIgnoreCase) && IsMessageStatusCode(keyParts[1]))
+        { code = keyParts[1]; return true; }
+        return false;
+    }
+
+    private static bool IsMessageStatusCode(string code) =>
+        code.Equals(PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase) ||
+        code.Equals(PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase) ||
+        code.Equals(PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase);
     private void Mark(PrtgObservationRow row, string status, long? parentId)
     {
         using var ctx = backend.CreateContext();

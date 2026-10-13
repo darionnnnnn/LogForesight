@@ -58,7 +58,8 @@ public sealed class PrtgSensorTimelineProgressStore(EfJsonBlobStore blob)
             policy.RawTimestampTimeZoneId,
             policy.AnalysisTimeZoneId,
             policy.TimeBasisEvidenceReference,
-            settings.PrtgUrl
+            settings.PrtgUrl,
+            MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
@@ -129,7 +130,9 @@ public static class PrtgSensorTimelineWorkSelector
         {
             if (selected.Count == maximum) break;
             var evidence = readEvidence(candidate.SensorId);
-            var notBefore = Max(evidence.NextAttemptAt, evidence.LeaseUntil);
+            var notBefore = evidence.MessageStatusSemanticVersion == PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent
+                ? Max(evidence.NextAttemptAt, evidence.LeaseUntil)
+                : evidence.LeaseUntil;
             if (notBefore > now)
             {
                 if (nextEligibleAt == null || notBefore < nextEligibleAt) nextEligibleAt = notBefore;

@@ -76,6 +76,7 @@ internal static class RecordStorageShaper
                 EventKey = i.EventKey,
                 PrtgSourceGeneration = i.PrtgSourceGeneration,
                 PrtgResourceGeneration = i.PrtgResourceGeneration,
+                PrtgMessageStatusSemanticVersion = i.PrtgMessageStatusSemanticVersion,
                 PrtgIncidentStartedAt = i.PrtgIncidentStartedAt,
                 PrtgPresenceSourceDay = i.PrtgPresenceSourceDay,
                 PrtgPresenceSourceAsOf = i.PrtgPresenceSourceAsOf,

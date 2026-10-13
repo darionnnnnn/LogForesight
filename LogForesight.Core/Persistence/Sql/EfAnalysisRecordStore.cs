@@ -1045,7 +1045,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             KnownIssue = issue.KnownIssue,
             EventKey = issue.EventKey,
             SourceObservationsJson = sourceObservationsJson,
-            SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated
+            SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated,
+            PrtgMessageStatusSemanticVersion = issue.PrtgMessageStatusSemanticVersion
         };
     }
 
@@ -1997,7 +1998,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             {
                 t.RecordId, t.LogName, t.SourceName, t.EventId, t.Category, t.SeverityRank,
                 t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey,
-                t.SourceObservationsJson, t.SourceObservationsTruncated
+                t.SourceObservationsJson, t.SourceObservationsTruncated, t.PrtgMessageStatusSemanticVersion
             })
             .ToList()
             .GroupBy(t => t.RecordId)
@@ -2017,7 +2018,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 Severity = (IssueSeverity)t.SeverityRank,
                 Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
                 ElevatesDayRisk = t.ElevatesDayRisk,
-                KnownIssue = t.KnownIssue
+                KnownIssue = t.KnownIssue,
+                PrtgMessageStatusSemanticVersion = t.PrtgMessageStatusSemanticVersion
             }).ToList());
     }
 

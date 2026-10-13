@@ -104,6 +104,21 @@ public sealed class PrtgSensorTimelineConsumerTests : IDisposable
     }
 
     [Fact]
+    public void LegacyParserSemanticEvidenceIsImmediatelyEligibleDespiteOldBackoff()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var selected = PrtgSensorTimelineWorkSelector.Select([new PrtgTimelineWorkItem(101, 1)], 0,
+            now, 1, _ => new PrtgSensorTimelineEvidence
+            {
+                MessageStatusSemanticVersion = 0,
+                NextAttemptAt = now.AddHours(12)
+            }, out var nextEligibleAt);
+
+        Assert.Single(selected);
+        Assert.Null(nextEligibleAt);
+    }
+
+    [Fact]
     public async Task 前五十顆失敗後新consumer仍公平推進第五十一顆()
     {
         var ids = Enumerable.Range(101, 51).Select(id => (long)id).ToArray();
@@ -210,6 +225,28 @@ public sealed class PrtgSensorTimelineConsumerTests : IDisposable
         var waitingResult = Assert.IsType<OkObjectResult>(await controller.Get(1, 1, CancellationToken.None));
         var waitingPage = Assert.IsType<ApiResponse<PrtgTimelineProgressPage>>(waitingResult.Value).Data!;
         Assert.Equal("waiting-identity", Assert.Single(waitingPage.Rows).BootstrapStatus);
+
+        validFixture.MessageStatusSemanticVersion = 0;
+        _backend.Blob(PrtgSensorTimelineStore.Prefix + "101").Mutate(_ =>
+            (JsonSerializer.Serialize(validFixture, LfJsonOptions.Pretty), true));
+        new PrtgSensorTimelineProgressStore(_backend.Blob(PrtgSensorTimelineProgressStore.BlobKey))
+            .Update(progress =>
+            {
+                progress.BootstrapCycleId = "old-cycle";
+                progress.BootstrapScopeFingerprint = "old-parser-scope";
+                progress.BootstrapCycleOutcome = "initial-collection-complete";
+            });
+        var parserStaleResult = Assert.IsType<OkObjectResult>(await controller.Get(1, 1, CancellationToken.None));
+        var parserStalePage = Assert.IsType<ApiResponse<PrtgTimelineProgressPage>>(parserStaleResult.Value).Data!;
+        Assert.Equal("waiting-message-status-refresh", Assert.Single(parserStalePage.Rows).BootstrapStatus);
+        Assert.Equal("message-status-semantics-stale", parserStalePage.Rows[0].QualityReason);
+        Assert.Equal("waiting-message-status-refresh", parserStalePage.BootstrapCycleOutcome);
+        Assert.Equal("message-status-semantics-stale", parserStalePage.BootstrapCycleReason);
+
+        var emptyStaleResult = Assert.IsType<OkObjectResult>(await controller.Get(2, 1, CancellationToken.None));
+        var emptyStalePage = Assert.IsType<ApiResponse<PrtgTimelineProgressPage>>(emptyStaleResult.Value).Data!;
+        Assert.Empty(emptyStalePage.Rows);
+        Assert.Equal("waiting-message-status-refresh", emptyStalePage.BootstrapCycleOutcome);
 
         new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + "101")).Update(evidence =>
         {
@@ -579,7 +616,15 @@ public sealed class PrtgSensorTimelineConsumerTests : IDisposable
     private static HttpResponseMessage Json(string content) => new(HttpStatusCode.OK)
     { Content = new StringContent(content, Encoding.UTF8, "application/json") };
 
-    private sealed record MessageRow(long objid, string datetime, string status, string message);
+    private sealed record MessageRow(long objid, string datetime, string status, string message)
+    {
+        public int status_raw => status switch
+        {
+            "Unknown" => 601, "Up" => 607, "Down" => 608, "Warning" => 609,
+            "Unusual" => 610, "OK" => 611, "Paused" => 604, "None" => 617,
+            _ => throw new InvalidOperationException("message-fixture-status-unmapped")
+        };
+    }
 
     public void Dispose()
     {

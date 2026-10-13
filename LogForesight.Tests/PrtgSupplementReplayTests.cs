@@ -52,7 +52,8 @@ public sealed class PrtgSupplementReplayTests : IDisposable
             LatestNetiqAttemptStatus = attempt, RiskLevel = RiskLevels.Low,
             TopIssues = issue ? [new() { LogName = "System", Source = "Disk", EventId = 153, EventKey = "netiq-disk", Count = 1, Severity = IssueSeverity.High }] : []
         });
-    private void Observe(long id)
+    private void Observe(long id, int? statusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
+        string ruleId = "down")
     {
         var sensorId = 100 + id;
         var prtgStore = _backend.PrtgStore();
@@ -68,10 +69,12 @@ public sealed class PrtgSupplementReplayTests : IDisposable
             HostName = "H" + id, MapStatus = PrtgMapStatus.Ok, CreatedAt = now });
         prtgStore.ReplaceHostMapForDate(_day, maps);
         var identity = prtgStore.BindObservedResource(sensorId, id, "source", $"supplement-resource-{sensorId}");
-        var rule = new KnownIssueRule { Id = "down", Platform = "prtg", Enabled = true, Severity = IssueSeverity.High, ElevatesDayRisk = true };
+        var rule = new KnownIssueRule { Id = ruleId, Platform = "prtg", PrtgRuleCode = "down", Enabled = true,
+            Severity = IssueSeverity.High, ElevatesDayRisk = true };
         new KnownIssueRuleStore(_backend.Blob("rules")).Save(new RuleFileContent { Rules = [rule] });
         var finding = new PrtgFinding(1, sensorId, "down", "confirmed sensor failure", 60, rule)
-        { SourceGeneration = identity.SourceGeneration, ResourceGeneration = identity.Generation, IncidentStartedAt = new DateTimeOffset(_day) };
+        { SourceGeneration = identity.SourceGeneration, ResourceGeneration = identity.Generation, IncidentStartedAt = new DateTimeOffset(_day),
+            MessageStatusSemanticVersion = statusSemanticVersion };
         new EfPrtgObservationStore(_backend.CreateContext).Capture(id, _day, "r1", [(finding, PrtgFindingMapper.ToSignature(finding, _day))]);
         new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Update(e =>
         {
@@ -140,6 +143,34 @@ public sealed class PrtgSupplementReplayTests : IDisposable
         using var db = _backend.CreateContext();
         Assert.Empty(db.TopIssues); Assert.Empty(db.IssueCases);
         Assert.Equal("rules-changed", Assert.Single(db.PrtgObservations).SupplementStatus);
+    }
+
+    [Theory]
+    [InlineData(null, "builtin-prtg-down")]
+    [InlineData(0, "custom-availability-down")]
+    [InlineData(2, "custom-availability-down")]
+    public void LegacyOrUnsupportedMessageStatusFinding_IsTerminallyRejectedAfterTimelineRebuild(int? version, string ruleId)
+    {
+        Parent(2);
+        Observe(2, version, ruleId); // Current timeline models completed reparse; stored finding stays on its old semantic version.
+
+        Assert.Equal(0, Replay().RunBatch());
+        using var db = _backend.CreateContext();
+        Assert.Empty(db.TopIssues);
+        Assert.Empty(db.IssueCases);
+        Assert.Equal("invalid", Assert.Single(db.PrtgObservations).SupplementStatus);
+    }
+
+    [Fact]
+    public void CurrentMessageStatusFinding_WithBuiltinRuleIdStillReplays()
+    {
+        Parent(2);
+        Observe(2, PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, "builtin-prtg-down");
+
+        Assert.Equal(1, Replay().RunBatch());
+        using var db = _backend.CreateContext();
+        Assert.Single(db.TopIssues);
+        Assert.Equal("applied", Assert.Single(db.PrtgObservations).SupplementStatus);
     }
 
     [Fact]

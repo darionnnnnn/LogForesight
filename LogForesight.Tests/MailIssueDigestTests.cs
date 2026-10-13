@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
 using Xunit;
@@ -27,9 +29,10 @@ public class MailIssueDigestTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private MailIssueDigest Digest()
+    private MailIssueDigest Digest(bool requireCurrentPrtgMessageStatus = false)
     {
-        var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
+        var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts,
+            requireCurrentPrtgMessageStatus: requireCurrentPrtgMessageStatus);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
         return new MailIssueDigest(aggregates, statusResolver, _settings, new FixedIssueExclusionSource(IssueExclusion.None));
     }
@@ -71,6 +74,80 @@ public class MailIssueDigestTests : IDisposable
         var rows = Digest().Build(new DateTime(2026, 8, 1), new DateTime(2026, 8, 1), null);
 
         Assert.Empty(rows);
+    }
+
+    [Fact]
+    public void Mail專用聚合只保留目前Parser版本且逐列篩選_預設查詢仍保留歷史()
+    {
+        var previous = new DateTime(2026, 8, 8);
+        var current = previous.AddDays(1);
+        LogIssueSignature StatusIssue(int? version, string eventKey) => new()
+        {
+            LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = EventLogEntryType.Warning,
+            Category = IssueCategory.Other, Severity = IssueSeverity.High, Count = 1,
+            EventKey = eventKey, PrtgMessageStatusSemanticVersion = version
+        };
+
+        var previousHost = _hosts.Upsert(new WebHost { HostName = "legacy-previous" });
+        Add(previousHost.HostId, previousHost.HostName, previous, StatusIssue(null, "prtg:down:101"));
+
+        var legacyHost = _hosts.Upsert(new WebHost { HostName = "legacy-current" });
+        var zeroHost = _hosts.Upsert(new WebHost { HostName = "zero-current" });
+        var futureHost = _hosts.Upsert(new WebHost { HostName = "future-current" });
+        var currentHost = _hosts.Upsert(new WebHost { HostName = "current-parser" });
+        var netIqHost = _hosts.Upsert(new WebHost { HostName = "netiq-current" });
+        Add(legacyHost.HostId, legacyHost.HostName, current, StatusIssue(null, "prtg:down:101"));
+        Add(zeroHost.HostId, zeroHost.HostName, current, StatusIssue(0, "prtg:down:102"));
+        Add(futureHost.HostId, futureHost.HostName, current, StatusIssue(2, "prtg:down:103"));
+        Add(currentHost.HostId, currentHost.HostName, current, StatusIssue(
+            PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, "prtg:down:104"));
+        Add(netIqHost.HostId, netIqHost.HostName, current, Issue("Security-Auditing", 4719, IssueSeverity.High));
+
+        // The exact per-issue version survives both the SQL projection and ordinary record readback.
+        using (var ctx = _fx.NewContext())
+        {
+            var projected = ctx.TopIssues.Where(row => row.RecordDate == current)
+                .OrderBy(row => row.HostId).Select(row => row.PrtgMessageStatusSemanticVersion).ToList();
+            Assert.Equal(new int?[] { null, 0, 2, PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, null }, projected);
+        }
+        var readBack = Assert.Single(_records.Query(new RecordQueryFilter
+        {
+            Hosts = new[] { HostKey.Of(currentHost) }, From = current, To = current
+        }));
+        Assert.Equal(PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
+            Assert.Single(readBack.TopIssues).PrtgMessageStatusSemanticVersion);
+
+        var allHistory = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
+        var defaultDown = Assert.Single(allHistory.Aggregate(IssueExclusion.None, previous, current, null)
+            .Where(row => row.Source == "PRTG:down"));
+        Assert.Equal(5, defaultDown.HostCount);
+        var mailQuery = new EfIssueAggregateQuery(_fx.NewContext, _hosts,
+            requireCurrentPrtgMessageStatus: true);
+        var mailPrevious = mailQuery.Aggregate(IssueExclusion.None, previous, previous, null)
+            .Where(row => row.Source == "PRTG:down").ToList();
+        var mailCurrent = mailQuery.Aggregate(IssueExclusion.None, current, current, null)
+            .Where(row => row.Source == "PRTG:down").ToList();
+        Assert.Empty(mailPrevious);
+        Assert.Equal(1, Assert.Single(mailCurrent).HostCount);
+        Assert.Single(mailQuery.Aggregate(IssueExclusion.None, current, current, null)
+            .Where(row => row.Source == "Security-Auditing"));
+        Assert.Empty(mailQuery.ActionableOccurrences(IssueExclusion.None, previous, previous, null));
+        var actionable = mailQuery.ActionableOccurrences(IssueExclusion.None, current, current, null);
+        Assert.Contains(actionable, row => row.HostId == currentHost.HostId && row.IssueKey.Contains("PRTG:down", StringComparison.Ordinal));
+        Assert.DoesNotContain(actionable, row => row.HostId == legacyHost.HostId || row.HostId == zeroHost.HostId || row.HostId == futureHost.HostId);
+
+        // Historical previous rows cannot turn the valid current finding into an overdue issue.
+        var overdueKey = IssueSignatureKey.For("PRTG", "PRTG:down", 0, EventLogEntryType.Warning, "prtg:down:101");
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = legacyHost.HostName, Date = current, IssueKey = overdueKey,
+            Status = IssueHandlingStatuses.InProgress, DueDate = current.AddDays(-1)
+        });
+        var mailRow = Assert.Single(Digest(requireCurrentPrtgMessageStatus: true)
+            .Build(current, current, null).Where(row => row.Source == "PRTG:down"));
+        Assert.Equal(MailIssueBucket.New, mailRow.Bucket);
+        Assert.Equal(0, mailRow.PreviousHostCount);
+        Assert.Equal(1, mailRow.HostCount);
     }
 
     /// <summary>新出現＝等長前期完全沒有這個簽章（與 IssueRankingBuilder.IsNew 同一套判定式）</summary>

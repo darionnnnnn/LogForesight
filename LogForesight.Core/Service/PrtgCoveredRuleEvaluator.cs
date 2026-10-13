@@ -41,6 +41,7 @@ public static class PrtgCoveredRuleEvaluator
                     magnitude, rule, ack)
                 { SensorCategory = sensor.Category, SourceGeneration = proof.SourceGeneration,
                     ResourceGeneration = proof.ResourceGeneration, IncidentStartedAt = entered,
+                    MessageStatusSemanticVersion = proof.MessageStatusSemanticVersion,
                     ThresholdMagnitude = thresholdValue, EvidenceWindows = windows?.Take(64).ToArray() ?? [] });
             }
             var downRule = Rule("down");

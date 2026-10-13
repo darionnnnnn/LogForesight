@@ -8,6 +8,13 @@ public static class PrtgResourceQualification
     public static bool IsCurrent(PrtgSensorTimelineEvidence? proof, PrtgResourceIdentity? identity,
         string sourceGeneration, long sensorId, long deviceId, long hostId)
     {
+        return proof is not null && proof.MessageStatusSemanticVersion == PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent &&
+            IsIdentityCurrent(proof, identity, sourceGeneration, sensorId, deviceId, hostId);
+    }
+
+    public static bool IsIdentityCurrent(PrtgSensorTimelineEvidence? proof, PrtgResourceIdentity? identity,
+        string sourceGeneration, long sensorId, long deviceId, long hostId)
+    {
         return proof is not null && identity is not null && identity.Active && !identity.PendingReconciliation && identity.Epoch > 0 &&
             proof.IdentityEpoch > 0 && !string.IsNullOrWhiteSpace(identity.Generation) &&
             !string.IsNullOrWhiteSpace(proof.ResourceGeneration) &&

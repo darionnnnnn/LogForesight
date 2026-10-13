@@ -30,6 +30,9 @@ public sealed record PrtgFinding(
     public string? SensorCategory { get; init; }
     public string? SourceGeneration { get; init; }
     public string? ResourceGeneration { get; init; }
+    /// <summary>產生狀態風險時的訊息解析版本；舊資料與非狀態規則不補猜。</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? MessageStatusSemanticVersion { get; init; }
     public DateTimeOffset? IncidentStartedAt { get; init; }
     public DateTime? PresenceSourceDay { get; init; }
     public DateTimeOffset? PresenceSourceAsOf { get; init; }

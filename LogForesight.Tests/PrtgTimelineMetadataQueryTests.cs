@@ -31,6 +31,8 @@ public sealed class PrtgTimelineMetadataQueryTests : IDisposable
         hugeCoverageDate["Coverage"]!.AsArray()[0]!["From"] = new string('x', 2 * 1024 * 1024);
         var objectCoverageDate = JsonNode.Parse(JsonSerializer.Serialize(Evidence(49), LfJsonOptions.Pretty))!.AsObject();
         objectCoverageDate["Coverage"]!.AsArray()[0]!["Through"] = JsonSerializer.SerializeToNode(new { nested = true });
+        var legacyTimeline = JsonNode.Parse(JsonSerializer.Serialize(Evidence(50), LfJsonOptions.Pretty))!.AsObject();
+        legacyTimeline.Remove("MessageStatusSemanticVersion");
         db.Blobs.AddRange(
             Blob(PrtgSensorTimelineStore.Prefix + "41", Evidence(41)),
             Blob(PrtgSensorTimelineStore.Prefix + "42", "{ malformed"),
@@ -39,7 +41,8 @@ public sealed class PrtgTimelineMetadataQueryTests : IDisposable
             Blob(PrtgSensorTimelineStore.Prefix + "46", nullCoverage),
             Blob(PrtgSensorTimelineStore.Prefix + "47", scalarCoverageItem.ToJsonString()),
             Blob(PrtgSensorTimelineStore.Prefix + "48", hugeCoverageDate.ToJsonString()),
-            Blob(PrtgSensorTimelineStore.Prefix + "49", objectCoverageDate.ToJsonString()));
+            Blob(PrtgSensorTimelineStore.Prefix + "49", objectCoverageDate.ToJsonString()),
+            Blob(PrtgSensorTimelineStore.Prefix + "50", legacyTimeline.ToJsonString()));
         db.SaveChanges();
         _commands.Reset();
     }
@@ -49,7 +52,7 @@ public sealed class PrtgTimelineMetadataQueryTests : IDisposable
     {
         var query = new PrtgTimelineMetadataQuery(NewContext);
 
-        var result = await query.ReadAsync([41, 42, 43, 44, 45, 46], PrtgSensorTimelineStore.Prefix,
+        var result = await query.ReadAsync([41, 42, 43, 44, 45, 46, 50], PrtgSensorTimelineStore.Prefix,
             CancellationToken.None);
 
         Assert.True(result.StableVersions);
@@ -59,6 +62,7 @@ public sealed class PrtgTimelineMetadataQueryTests : IDisposable
         Assert.Equal(8, row.BootstrapPagesRead);
         Assert.Equal("capacity-unverified", row.BootstrapStatus);
         Assert.Equal("identity-warmup", row.QualityReason);
+        Assert.Equal(PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, row.MessageStatusSemanticVersion);
         Assert.Equal(1, row.CoverageSpanCount);
         Assert.Equal(1, row.StateCount);
         Assert.Equal(DateTimeOffset.Parse("2026-10-01T00:00:00+00:00"), row.CoveredFrom);
@@ -69,6 +73,8 @@ public sealed class PrtgTimelineMetadataQueryTests : IDisposable
         Assert.True(result.Rows[43].Malformed);
         Assert.True(result.Rows[44].Malformed);
         Assert.True(result.Rows[46].Malformed);
+        Assert.False(result.Rows[50].Malformed);
+        Assert.Null(result.Rows[50].MessageStatusSemanticVersion);
         Assert.DoesNotContain(45, result.Rows.Keys);
 
         Assert.Equal(2, _commands.BlobReads.Count);

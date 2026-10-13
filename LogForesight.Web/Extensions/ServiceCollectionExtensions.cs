@@ -407,9 +407,16 @@ public static class ServiceCollectionExtensions
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。
         services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
-        // 郵件問題優先摘要（回饋十九輪批次H1）：同樣 Singleton-safe，相依的 IIssueAggregateQuery／
-        // OccurrenceStatusResolver 皆已是 Singleton
-        services.AddSingleton<MailIssueDigest>();
+        // 郵件問題優先摘要只納入具目前 message-status parser 版本的 PRTG 狀態列；
+        // 其他頁面保留一般 IIssueAggregateQuery 的完整歷史語意。
+        services.AddSingleton<MailIssueDigest>(sp => new MailIssueDigest(
+            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(
+                sp.GetRequiredService<IHostStore>(),
+                () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady,
+                requireCurrentPrtgMessageStatus: true),
+            sp.GetRequiredService<OccurrenceStatusResolver>(),
+            sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetRequiredService<IIssueExclusionSource>()));
         services.AddSingleton<MailNotificationService>();
         services.AddSingleton(sp => new PrtgMonitoringPolicyStore(
             sp.GetRequiredService<StorageBackend>().Blob(PrtgMonitoringPolicyStore.BlobKey)));

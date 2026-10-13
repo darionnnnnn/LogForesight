@@ -117,6 +117,7 @@ public static class PrtgFindingMapper
                     ? $":{finding.SourceGeneration}:{finding.ResourceGeneration}" : ""),
             PrtgSourceGeneration = finding.SourceGeneration,
             PrtgResourceGeneration = finding.ResourceGeneration,
+            PrtgMessageStatusSemanticVersion = finding.MessageStatusSemanticVersion,
             PrtgIncidentStartedAt = finding.IncidentStartedAt,
             PrtgPresenceSourceDay = finding.PresenceSourceDay,
             PrtgPresenceSourceAsOf = finding.PresenceSourceAsOf,

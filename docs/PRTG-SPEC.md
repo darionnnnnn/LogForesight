@@ -721,6 +721,12 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 
 ## 9. 規則第一階（狀態變更型）
 
+訊息記錄的 `status_raw` 使用 PRTG log category（例如607=Up、608=Down、609=Warning、619=Down Acknowledged、620=Down Partial），與sensor table的0–14狀態碼分開解析。已知系統／通知等非狀態訊息只參與分頁完整性檢查；未知代碼拒絕正式涵蓋。缺raw時僅接受可辨識的canonical狀態文字，不把任意文字推定為Unknown。依據為 [PRTG API log category說明](https://helpdesk.paessler.com/en/support/solutions/articles/76000063578)。
+
+狀態時間軸保存獨立的訊息解析版本。升級後舊版本coverage、狀態及分頁游標不沿用，正式consumer先拒絕舊證據、背景重新收集，進度頁顯示等待重建；新版本尚未完整收集仍不得判定風險。重建只清訊息狀態證據，保留資源／通道身分、數值歷史、磁碟語意與28日準備資料；不把升級當成感測器換代。帳號獨立Date Format及完整文字時間授權仍按第54輪D54-01處理。
+
+狀態finding同時保存產生時的解析版本，經每日紀錄JSON與問題抽出表保留。舊版或缺版本的down／warning／flapping不得因時間軸重建而自動恢復重播或郵件授權；摘要、即時及週期郵件排除其風險與問題計數，保留可確認的獨立NetIQ風險。歷史查詢仍保留舊紀錄供追溯，新增SQL欄位保持NULL，不回填猜測版本。初始化重建沿用累計20次messages請求上限，重試的邊界重讀同樣扣額度；超量明示未合格，不以重試重置預算。
+
 正式每日管線以目前來源／資源世代有效且有涵蓋證據的 timeline 評估 `down`、`flapping`、`warning`；
 `silent` 另由 `PrtgSilentPresenceFormalConsumer` 消費完整原生裝置／感測器快照及持續狀態 timeline，
 不是由 `lf_prtg_sensors.status` 或「沒有狀態變更」推定。規則存在規則維護頁的 `prtg` 平台，**規則庫是執行期唯一的真相**：

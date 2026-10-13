@@ -295,6 +295,7 @@ internal sealed class PrtgSensorTimelineConsumer(
                 .ReadAsync(page, PrtgSensorTimelineStore.Prefix, cancellationToken).ConfigureAwait(false);
             if (!metadata.StableVersions || page.Any(id =>
                 !metadata.Rows.TryGetValue(id, out var row) || row.Malformed ||
+                row.MessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent ||
                 row.BootstrapCollectionCycleId != cycleId || row.SourceGeneration != policy.SourceGeneration ||
                 row.PendingNextPage != 0 || row.LastCompleteThrough is null || row.LastCompleteThrough < asOf ||
                 row.HostId is null || !policy.HostIds.Contains(row.HostId.Value) ||

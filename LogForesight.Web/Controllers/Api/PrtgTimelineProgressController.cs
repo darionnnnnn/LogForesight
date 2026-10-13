@@ -59,6 +59,9 @@ public sealed class PrtgTimelineProgressController(
         var metadataResult = await new PrtgTimelineMetadataQuery(backend.CreateContext)
             .ReadAsync(pageIds, PrtgSensorTimelineStore.Prefix, cancellationToken).ConfigureAwait(false);
         var progress = new PrtgSensorTimelineProgressStore(backend.Blob(PrtgSensorTimelineProgressStore.BlobKey)).Get();
+        var expectedCycleScopeFingerprint = PrtgSensorTimelineProgressStore.ScopeFingerprint(policy, settings);
+        var parserRefreshPending = progress.BootstrapCycleId.Length > 0 &&
+            progress.BootstrapScopeFingerprint != expectedCycleScopeFingerprint;
 
         var rows = pageIds.Select(sensorId =>
         {
@@ -81,6 +84,11 @@ public sealed class PrtgTimelineProgressController(
                     PrtgSensorTimelineEvidence.SupportedBootstrapWindow.TotalHours, 0,
                     null, null, null, "source-scope-stale");
 
+            if (evidence.MessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent)
+                return new PrtgTimelineProgressRow(sensorId, evidence.HostId, "waiting-message-status-refresh",
+                    evidence.BootstrapStartedAt, null, PrtgSensorTimelineEvidence.SupportedBootstrapWindow.TotalHours,
+                    0, null, null, null, "message-status-semantics-stale");
+
             var identityMatches = identityBefore.TryGetValue(sensorId, out var identity) &&
                 identity.Active && !identity.PendingReconciliation && identity.Epoch > 0 &&
                 evidence.IdentityEpoch is > 0 &&
@@ -99,6 +107,7 @@ public sealed class PrtgTimelineProgressController(
                 evidence.BootstrapPagesRead ?? 0, evidence.LastCompleteThrough, evidence.NextAttemptAt,
                 evidence.PendingNextPage is > 0 ? evidence.PendingNextPage : null, evidence.QualityReason ?? "metadata-malformed",
                 evidence.BootstrapCollectionCycleId == progress.BootstrapCycleId &&
+                !parserRefreshPending && progress.BootstrapScopeFingerprint == expectedCycleScopeFingerprint &&
                 progress.BootstrapCycleAsOfUtc is { } asOf && evidence.LastCompleteThrough is { } through && through >= asOf &&
                 evidence.PendingNextPage == 0);
         }).ToArray();
@@ -128,11 +137,14 @@ public sealed class PrtgTimelineProgressController(
 
         var revision = BuildRevision(policyVersion, settingsVersion, hostSnapshot.Version, scopeRevision,
             visible, page, pageSize, identityAfter, progress, authorizationFenceVersions);
+        var parserStale = parserRefreshPending || rows.Any(row => row.BootstrapStatus == "waiting-message-status-refresh");
         var response = new PrtgTimelineProgressPage(selected.Length, page, pageSize, totalPages,
             "capacity-unverified", PrtgSensorTimelineEvidence.SupportedBootstrapWindow.TotalHours, revision,
             progress.LastRoundStartedAt, progress.LastRoundCompletedAt, progress.LastRoundOutcome, rows,
             progress.BootstrapDeadlineHours, progress.BootstrapSettingsRevision, progress.BootstrapCycleId,
-            progress.BootstrapCycleOutcome, progress.BootstrapCycleReason, progress.BootstrapCycleStartedAtUtc,
+            parserStale ? "waiting-message-status-refresh" : progress.BootstrapCycleOutcome,
+            parserStale ? "message-status-semantics-stale" : progress.BootstrapCycleReason,
+            progress.BootstrapCycleStartedAtUtc,
             progress.BootstrapCycleDeadlineAtUtc, progress.BootstrapCycleAsOfUtc,
             progress.BootstrapCycleSelectedSensors, progress.LastServedSensorId, "unknown", EstimateHours(selected.Length),
             rows.Count(row => row.InitialCollectionCaptured),

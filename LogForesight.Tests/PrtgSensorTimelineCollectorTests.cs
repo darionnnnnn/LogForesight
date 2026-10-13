@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -46,8 +47,14 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
     private sealed class Handler(Func<string, string> response) : HttpMessageHandler
     {
         public int Calls { get; private set; }
+        public List<string> QueryUris { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-        { Calls++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response(request.RequestUri!.Query), Encoding.UTF8, "application/json") }); }
+        { Calls++; QueryUris.Add(request.RequestUri!.Query); return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response(request.RequestUri.Query), Encoding.UTF8, "application/json") }); }
+    }
+    private sealed class CancellableHandler(Func<string, CancellationToken, Task<string>> response) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            new(HttpStatusCode.OK) { Content = new StringContent(await response(request.RequestUri!.Query, ct), Encoding.UTF8, "application/json") };
     }
     private static string Sensor(long id = 10, string since = "created-A") => JsonSerializer.Serialize(new
     { sensors = new[] { new { objid = id, parentid = 100, type = "ping", status = "Down", status_raw = 5, cumsince = since } } });
@@ -69,10 +76,17 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
                 [new(10, _policy.ValidFrom.AddMinutes(1), "Down", e.SourceGeneration, e.ResourceGeneration)]);
         });
     }
-    private async Task<PrtgSensorTimelineEvidence> Collect(Handler handler)
+    private async Task<PrtgSensorTimelineEvidence> Collect(HttpMessageHandler handler,
+        PrtgSamplingActivity.BackgroundLease? admission = null, CancellationToken cancellationToken = default)
     {
         using var client = new PrtgClient("https://fixture.example", "fixture", 10, false, handler, PrtgAuthModes.Token, "", "", "");
-        return await new PrtgSensorTimelineCollector(_backend, client).CollectAsync(10, 1, _policy, CancellationToken.None);
+        return await new PrtgSensorTimelineCollector(_backend, client).CollectAsync(10, 1, _policy, cancellationToken, admission);
+    }
+    private async Task<PrtgSensorTimelineEvidence> CollectBatch(Handler handler)
+    {
+        using var client = new PrtgClient("https://fixture.example", "fixture", 10, false, handler, PrtgAuthModes.Token, "", "", "");
+        return Assert.Single(await new PrtgSensorTimelineCollector(_backend, client).CollectBatchAsync(
+            [new PrtgTimelineWorkItem(10, 1)], _policy, CancellationToken.None));
     }
     [Fact]
     public async Task 空完整逐Sensor查詢保留可信前導_不依今日鏡像回填()
@@ -143,6 +157,303 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
 
         Assert.Equal("covered", evidence.QualityReason);
         Assert.Equal("Unknown", Store.Get().States.Last().Status);
+    }
+
+    [Theory]
+    [InlineData("607", "Up")]
+    [InlineData("608", "Down")]
+    [InlineData("609", "Warning")]
+    [InlineData("619", "Down (Acknowledged)")]
+    [InlineData("620", "Down (Partial)")]
+    public async Task MessageStatusUsesOfficialCategoryRawCode(string raw, string expected)
+    {
+        Seed();
+        Store.Update(e => e.States = [new(10, e.ValidFrom.AddMinutes(1), "None", e.SourceGeneration, e.ResourceGeneration)]);
+        var at = DateTime.Now.AddHours(-2);
+        at = new DateTime(at.Year, at.Month, at.Day, at.Hour, at.Minute, at.Second, DateTimeKind.Local);
+        var messages = JsonSerializer.Serialize(new { messages = new[] { new
+        {
+            objid = 10, datetime = at.ToString("yyyy-MM-dd HH:mm:ss"), status = "misleading display",
+            status_raw = raw, message = "sensor state"
+        } } });
+        var handler = new Handler(q => q.Contains("content=sensors") ? Sensor() : messages);
+
+        var evidence = await Collect(handler);
+
+        Assert.Contains(evidence.States, state => state.At == new DateTimeOffset(
+            DateTime.SpecifyKind(at, DateTimeKind.Unspecified), TimeZoneInfo.Local.GetUtcOffset(at)) && state.Status == expected);
+        Assert.Contains(handler.QueryUris, uri => uri.Contains("columns=objid,datetime,status,message", StringComparison.Ordinal));
+        Assert.DoesNotContain(handler.QueryUris, uri => uri.Contains("columns=objid,datetime,status,status_raw", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("3", "System Reset")]
+    [InlineData("5", "Probe Denied Key")]
+    public async Task MessageSystemCategoriesArePaginatedButDoNotBecomeSensorStates(string raw, string display)
+    {
+        Seed();
+        var at = DateTime.Now.AddHours(-2);
+        at = new DateTime(at.Year, at.Month, at.Day, at.Hour, at.Minute, at.Second, DateTimeKind.Local);
+        var messages = JsonSerializer.Serialize(new { messages = new[] { new
+        {
+            objid = 10, datetime = at.ToString("yyyy-MM-dd HH:mm:ss"), status = display,
+            status_raw = raw, message = "system event"
+        } } });
+        var evidence = await Collect(new Handler(q => q.Contains("content=sensors") ? Sensor() : messages));
+
+        Assert.DoesNotContain(evidence.States, state => state.At == new DateTimeOffset(
+            DateTime.SpecifyKind(at, DateTimeKind.Unspecified), TimeZoneInfo.Local.GetUtcOffset(at)));
+        Assert.Equal("covered", evidence.QualityReason);
+    }
+
+    [Theory]
+    [InlineData("999", "Unknown", "message-status-code-unrecognized")]
+    [InlineData("", "System Reset", "message-status-text-unrecognized")]
+    public async Task UnknownMessageCategoriesFailClosed(string raw, string display, string reason)
+    {
+        Seed();
+        var before = Store.Get().Coverage.ToArray();
+        var messages = JsonSerializer.Serialize(new { messages = new[] { new
+        {
+            objid = 10, datetime = DateTime.Now.AddHours(-2).ToString("yyyy-MM-dd HH:mm:ss"),
+            status = display, status_raw = raw, message = "not a sensor transition"
+        } } });
+
+        var evidence = await Collect(new Handler(q => q.Contains("content=sensors") ? Sensor() : messages));
+
+        Assert.Equal(reason, evidence.QualityReason);
+        Assert.Equal(before, evidence.Coverage);
+    }
+
+    [Fact]
+    public async Task NonStatePageDoesNotHideOlderStatusPredecessorOnNextPage()
+    {
+        Seed();
+        var pageTime = DateTime.Now.AddDays(-3);
+        var nonStatePage = JsonSerializer.Serialize(new { messages = Enumerable.Range(0, 1000).Select(i => new
+        {
+            objid = 10, datetime = pageTime.AddSeconds(-i).ToString("yyyy-MM-dd HH:mm:ss"),
+            status = "System Reset", status_raw = "3", message = "system-" + i
+        }).ToArray() });
+        var olderState = JsonSerializer.Serialize(new { messages = new[] { new
+        {
+            objid = 10, datetime = pageTime.AddDays(-1).ToString("yyyy-MM-dd HH:mm:ss"),
+            status = "Up", status_raw = "607", message = "older state predecessor"
+        } } });
+        var handler = new Handler(q => q.Contains("content=sensors") ? Sensor() :
+            q.Contains("start=0") ? nonStatePage : q.Contains("start=1000") ? olderState : "{}");
+
+        var evidence = await Collect(handler);
+
+        Assert.Equal("covered", evidence.QualityReason);
+        Assert.Contains(handler.QueryUris, uri => uri.Contains("start=1000", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LegacyTimelineJsonIsNotCurrentAndCannotProducePeriods()
+    {
+        var legacy = JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>("""
+            {"SensorId":10,"SourceGeneration":"core","ResourceGeneration":"resource","Coverage":[],"States":[]}
+            """)!;
+
+        Assert.Equal(0, legacy.MessageStatusSemanticVersion);
+        Assert.Empty(legacy.Periods(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+        Assert.Equal(PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
+            new PrtgSensorTimelineEvidence().MessageStatusSemanticVersion);
+    }
+
+    [Fact]
+    public void LegacyTimelineFailsFormalResourceQualification()
+    {
+        Seed();
+        Store.Update(e => e.MessageStatusSemanticVersion = 0);
+        var evidence = Store.Get();
+        var identity = _backend.PrtgStore().GetResourceIdentity(10);
+
+        Assert.False(PrtgResourceQualification.IsCurrent(evidence, identity, _policy.SourceGeneration,
+            10, 100, 1));
+        Assert.Empty(evidence.Periods(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public async Task LegacyTimelineRefreshResetsOnlyMessageEvidenceAndCanResumePageCheckpoint()
+    {
+        Seed();
+        var before = Store.Get();
+        var diskCheckedAt = DateTimeOffset.UtcNow.AddDays(-1);
+        Store.Update(e =>
+        {
+            e.MessageStatusSemanticVersion = 0;
+            e.States.Add(new(10, diskCheckedAt.AddMinutes(-5), "Up", e.SourceGeneration, e.ResourceGeneration));
+            e.DiskSemanticFingerprint = "preserved-disk-semantic";
+            e.DiskSemanticValidFrom = diskCheckedAt.AddDays(-10);
+            e.DiskSemanticCheckedAt = diskCheckedAt;
+            e.NextAttemptAt = DateTimeOffset.UtcNow.AddHours(5);
+        });
+
+        var pageTime = DateTime.Now.AddHours(-2);
+        var page = JsonSerializer.Serialize(new { messages = Enumerable.Range(0, 1000).Select(i => new
+        {
+            objid = 10, datetime = pageTime.AddSeconds(-i).ToString("yyyy-MM-dd HH:mm:ss"),
+            status = "Up", status_raw = "607", message = "state-" + i
+        }).ToArray() });
+        var first = new Handler(q => q.Contains("content=sensors") ? Sensor() :
+            q.Contains("start=0") ? page : "{}");
+
+        var partial = await Collect(first);
+
+        Assert.Equal(PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, partial.MessageStatusSemanticVersion);
+        Assert.Equal(before.ResourceGeneration, partial.ResourceGeneration);
+        Assert.Equal(before.ValidFrom, partial.ValidFrom);
+        Assert.Equal("preserved-disk-semantic", partial.DiskSemanticFingerprint);
+        Assert.Equal(diskCheckedAt, partial.DiskSemanticCheckedAt);
+        Assert.Null(partial.LastCompleteThrough);
+        Assert.Equal(2, partial.BootstrapPagesRead); // successful page plus failed request both consume the fixed request budget
+        Assert.Empty(partial.Coverage);
+        Assert.Equal(1, partial.PendingNextPage);
+        Assert.Equal("messages-array-missing", partial.QualityReason);
+
+        var retry = new Handler(q => q.Contains("content=sensors") ? Sensor() :
+            q.Contains("start=0") ? page : "{\"messages\":[]}");
+        var completed = await Collect(retry);
+
+        Assert.Equal(PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, completed.MessageStatusSemanticVersion);
+        Assert.Equal(0, completed.PendingNextPage);
+        Assert.Equal("covered", completed.QualityReason);
+        Assert.Contains(retry.QueryUris, uri => uri.Contains("start=1000", StringComparison.Ordinal));
+        Assert.DoesNotContain(completed.States, state => state.At == diskCheckedAt.AddMinutes(-5));
+    }
+
+    [Fact]
+    public async Task ParserRefreshBootstrapThatExhaustedItsPageBudgetStaysExplicitlyUnqualified()
+    {
+        Seed();
+        Store.Update(e =>
+        {
+            e.MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
+            e.LastCompleteThrough = null;
+            e.Coverage.Clear();
+            e.States.Clear();
+            e.PendingStates.Clear();
+            e.PendingEventKeys.Clear();
+            e.BootstrapPagesRead = 20;
+            e.PendingNextPage = 20;
+            e.NextAttemptAt = null;
+        });
+        var handler = new Handler(q => q.Contains("content=sensors") ? Sensor() : "{\"messages\":[]}");
+
+        var evidence = await Collect(handler);
+
+        Assert.Equal("timeline-bootstrap-capacity-shortfall", evidence.QualityReason);
+        Assert.Null(evidence.LastCompleteThrough);
+        Assert.Empty(evidence.Coverage);
+        Assert.Empty(evidence.Periods(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+        Assert.DoesNotContain(handler.QueryUris, uri => uri.Contains("content=messages", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BootstrapBoundaryRereadConsumesNearLimitRequestBudget()
+    {
+        Seed();
+        Store.Update(e =>
+        {
+            e.MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
+            e.LastCompleteThrough = null;
+            e.Coverage.Clear();
+            e.States.Clear();
+            e.PendingStates.Clear();
+            e.PendingEventKeys.Clear();
+            e.BootstrapPagesRead = 19;
+            e.PendingNextPage = 20;
+            e.NextAttemptAt = null;
+        });
+        var pageTime = DateTime.Now.AddHours(-2);
+        var page = JsonSerializer.Serialize(new { messages = Enumerable.Range(0, 1000).Select(i => new
+        {
+            objid = 10, datetime = pageTime.AddSeconds(-i).ToString("yyyy-MM-dd HH:mm:ss"),
+            status = "Unknown", status_raw = "601", message = "non-state-" + i
+        }).ToArray() });
+        var handler = new Handler(q => q.Contains("content=sensors") ? Sensor() : page);
+
+        var evidence = await Collect(handler);
+
+        Assert.Equal("timeline-bootstrap-capacity-shortfall", evidence.QualityReason);
+        Assert.Equal(20, evidence.BootstrapPagesRead);
+        Assert.Single(handler.QueryUris.Where(uri => uri.Contains("content=messages", StringComparison.Ordinal)));
+        Assert.Contains(handler.QueryUris, uri => uri.Contains("start=19000", StringComparison.Ordinal));
+        Assert.Empty(evidence.Coverage);
+    }
+
+    [Fact]
+    public async Task BatchBootstrapWithExhaustedRequestBudgetMakesNoMessageRequest()
+    {
+        Seed();
+        Store.Update(e =>
+        {
+            e.MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
+            e.LastCompleteThrough = null;
+            e.Coverage.Clear();
+            e.States.Clear();
+            e.PendingStates.Clear();
+            e.PendingEventKeys.Clear();
+            e.BootstrapPagesRead = 20;
+            e.PendingNextPage = 20;
+            e.NextAttemptAt = null;
+        });
+        var handler = new Handler(q => q.Contains("content=sensors") ? Sensor() : "{\"messages\":[]}");
+
+        var evidence = await CollectBatch(handler);
+
+        Assert.Equal("timeline-bootstrap-capacity-shortfall", evidence.QualityReason);
+        Assert.Null(evidence.LastCompleteThrough);
+        Assert.Equal(20, evidence.BootstrapPagesRead);
+        Assert.Empty(evidence.Coverage);
+        Assert.DoesNotContain(handler.QueryUris, uri => uri.Contains("content=messages", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("sampling")]
+    [InlineData("caller")]
+    public async Task InterruptedSingleBootstrapPersistsAttemptedRequestBudget(string interruption)
+    {
+        Seed();
+        Store.Update(e => e.MessageStatusSemanticVersion = 0);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new CancellableHandler(async (q, token) =>
+        {
+            if (q.Contains("content=sensors", StringComparison.Ordinal)) return Sensor();
+            started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return "{\"messages\":[]}";
+        });
+        var sampling = new PrtgSamplingActivity();
+        PrtgSamplingActivity.BackgroundLease? admission = null;
+        CancellationTokenSource? callerCancellation = null;
+        if (interruption == "sampling")
+        {
+            Assert.True(sampling.TryBeginBackground(out var acquired));
+            admission = acquired;
+        }
+        else callerCancellation = new CancellationTokenSource();
+
+        var collect = Collect(handler, admission, callerCancellation?.Token ?? CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (interruption == "sampling")
+        {
+            using (sampling.BeginSampling()) await collect;
+        }
+        else
+        {
+            callerCancellation!.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => collect);
+        }
+
+        var evidence = Store.Get();
+        Assert.Null(evidence.LastCompleteThrough);
+        Assert.Empty(evidence.Coverage);
+        Assert.Equal(1, evidence.BootstrapPagesRead);
+        callerCancellation?.Dispose();
+        admission?.Dispose();
     }
     [Fact]
     public async Task 新身分的現在Down不能宣稱昨日故障()

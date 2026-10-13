@@ -2197,3 +2197,12 @@ PRTG停用或契約缺失的資格start／resume／pilot停用並提示真正前
 ### 2026-10-13 收尾文件與觀察文案核對
 
 第54輪E08-T05更正為統計郵件工作流缺陷已修正、其餘組合仍待验；保留原27個TODO，不重開已通過子項。補上細部coverage inventory引用及53個明列覆蓋缺口，確保粗粒度移交不遺失子句。主機資源區統一標示為「觀察」，一般讀者亦可看到CPU／memory預設提示、試算啟用條件與每日正式風險的查閱位置；未改授權、正式模式設定或判定。JS module語法核對及diff whitespace檢查通過，此為文案核對，不作完整瀏覽器／六角色驗收證據。
+### 2026-10-13 收尾修正：訊息狀態語意與舊證據隔離
+
+PRTG messages使用601–620訊息類別狀態碼，與sensor的0–14碼分開；已知非狀態訊息只參與分頁完整性，不偽造狀態，未知代碼拒絕正式涵蓋。舊timeline新增解析版本守門，重新收集時保留資源身分、磁碟語意及數值歷史；舊coverage／游標清除，不把舊資料默認升級。重建沿用初始化20次messages請求累計預算，重試重讀同樣扣額度，耗盡保持明確未合格。
+
+finding保存產生時的解析版本，經daily JSON、storage shaper與lf_top_issues可空欄位保留；舊NULL不回填猜測。重播拒絕舊狀態finding，即使timeline後來已重建也不復活。郵件摘要、即時與週期通知均排除舊狀態理由；問題聚合的前期／本期／逾期及其獨立host/day/signature/category子查詢同樣處理，保留一般歷史查詢供追溯。NetIQ基準存在時沿用其獨立風險；缺基準只用既有規則引擎及持久化可重建資料，不由相關性文字猜測High。
+
+主代理自有SQL Server LocalDB17實測新增schema、移除新欄後production升級兩次、舊NULL未追認、production寫入／讀回與郵件聚合通過：一般歷史4台PRTG，郵件只1台current，獨立NetIQ1台，actionable2筆。證據work/root-closeout-sql-message-version/evidence/17cf941a29134b2dba3f933c344525d4/result.json；私有資料庫及instance已清理，capacityAccepted=false。此為小型provider相容驗證，不替代第54輪完整SQL Server容量／恢復門檻。
+
+主代理在最後取消／preemption修正後fresh build獨立定向95/95通過、零失敗／略過，1分55秒（TestResults/root-message-status-final/root-message-status-final.trx），包含collector、consumer、metadata、replay、實際SQLite mail聚合及舊finding通知排除。代理較廣受影響集合299/299通過（最後取消修正前），最後取消與預算6/6另通過；主代理95集涵蓋其最後改動。JS三组契約及module語法、文件相對引用與PLAN hash核對通過。此段可獨立提交，整輪回歸仍在下一步，不代替第54輪完整驗收。

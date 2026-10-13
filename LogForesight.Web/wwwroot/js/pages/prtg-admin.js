@@ -678,16 +678,23 @@ async function loadTimelineProgress() {
         const labels = {
             complete: '31天歷史狀態涵蓋已累積', 'capacity-unverified': '歷史狀態涵蓋尚未完整驗證', 'capacity-shortfall': '歷史頁數上限不足',
             'waiting-identity': '等待目前資源身分', 'source-scope-stale': '來源範圍待更新',
+            'waiting-message-status-refresh': '升級後等待重建訊息狀態歷史',
             malformed: '進度資料無效', 'not-started': '尚未開始'
         };
         for (const row of rows) {
             const line = document.createElement('div');
             line.className = 'small py-1 border-bottom';
             const label = labels[row.bootstrapStatus] || '等待更新';
+            const reason = ({
+                'message-status-semantics-stale': '舊解析版本的狀態證據暫不使用，系統將重新收集',
+                'message-status-semantics-warmup': '正在重建訊息狀態歷史，數值歷史仍保留',
+                'message-status-code-unrecognized': '來源訊息代碼無法核對，請以環境探測取得來源資訊',
+                'message-status-text-unrecognized': '來源訊息狀態文字無法核對，請以環境探測取得來源資訊'
+            })[row.qualityReason] || row.qualityReason || '狀態待核對';
             const watermark = row.lastCompleteThrough ? `｜完整水位 ${row.lastCompleteThrough}` : '';
             const retry = row.nextAttemptAt ? `｜下次嘗試 ${row.nextAttemptAt}` : '';
             const initial = row.initialCollectionCaptured ? '｜本週期初始查詢完成' : '｜本週期初始查詢待完成';
-            line.textContent = `Sensor #${row.sensorId}｜${label}${initial}${watermark}${retry}｜${row.qualityReason || '狀態待核對'}`;
+            line.textContent = `Sensor #${row.sensorId}｜${label}${initial}${watermark}${retry}｜${reason}`;
             root.append(line);
         }
         pageLabel.textContent = `第 ${data.page} / ${data.totalPages} 頁｜選取 ${data.selectedSensors} 顆｜版本 ${data.revision || '已核對'}`;
@@ -695,9 +702,13 @@ async function loadTimelineProgress() {
         next.disabled = data.page >= data.totalPages;
         const remaining = Number.isFinite(Number(data.bootstrapCycleRemainingSeconds))
             ? Math.ceil(Number(data.bootstrapCycleRemainingSeconds) / 3600) : null;
+        const cycleOutcome = data.bootstrapCycleOutcome === 'waiting-message-status-refresh'
+            ? '升級後等待重建訊息狀態歷史' : data.bootstrapCycleOutcome;
+        const cycleReason = data.bootstrapCycleReason === 'message-status-semantics-stale'
+            ? '舊解析版本的狀態證據暫不使用，系統將重新收集' : data.bootstrapCycleReason;
         const cycle = data.bootstrapCycleOutcome === 'running' && remaining !== null
             ? `週期 ${data.bootstrapCycleOutcome}，期限 ${data.bootstrapCycleDeadlineAtUtc}（剩餘約${remaining}小時）`
-            : `週期 ${data.bootstrapCycleOutcome || '尚未開始'}${data.bootstrapCycleReason ? `：${data.bootstrapCycleReason}` : ''}`;
+            : `週期 ${cycleOutcome || '尚未開始'}${cycleReason ? `：${cycleReason}` : ''}`;
         const prior = data.previousBootstrapCycle
             ? `；前一週期 ${data.previousBootstrapCycle.outcome}（${data.previousBootstrapCycle.deadlineAtUtc || '無期限資料'}）` : '';
         status.textContent = `${cycle}${prior}；目前頁已完成初始收集 ${data.bootstrapCycleCapturedOnPage ?? 0} 顆，選取總數 ${data.bootstrapCycleSelectedSensors || data.selectedSensors} 顆，公平游標 sensor #${data.lastServedSensorId || 0}；成本基準估算 ${Number(data.estimatedBootstrapBaselineHours || 0).toFixed(1)} 小時，預算遙測 ${data.budgetTelemetryStatus || 'unknown'}；最近一輪 ${data.lastRoundOutcome || '尚未執行'}，完成時間 ${data.lastRoundCompletedAt || '尚無'}。估算不是容量保證；各規則品質與暖機條件另行判定。`;

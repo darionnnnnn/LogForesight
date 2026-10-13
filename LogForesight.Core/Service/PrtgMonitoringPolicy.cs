@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -162,11 +163,20 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
 /// <summary>逐 sensor 保存，避免所有感測器歷史集中在單一大 blob；每個試點最多保存 31 天。</summary>
 public sealed class PrtgSensorTimelineEvidence
 {
+    public const int MessageStatusSemanticVersionCurrent = 1;
     public const int MaximumBootstrapSensors = 15_000;
     public const int MaximumBootstrapPagesPerSensor = 20;
     public static readonly TimeSpan SupportedBootstrapWindow = TimeSpan.FromHours(
         ((MaximumBootstrapSensors * (double)MaximumBootstrapPagesPerSensor +
           Math.Ceiling(MaximumBootstrapSensors / (double)PrtgResourceGuardProbe.MaxBatchSize) * 2) / 2 / 3600) / 0.75d);
+    public PrtgSensorTimelineEvidence() => MessageStatusSemanticVersion = MessageStatusSemanticVersionCurrent;
+
+    // Missing property in old JSON intentionally becomes legacy (0). New instances use the parameterless constructor.
+    [JsonConstructor]
+    public PrtgSensorTimelineEvidence(int? messageStatusSemanticVersion) =>
+        MessageStatusSemanticVersion = messageStatusSemanticVersion ?? 0;
+
+    public int? MessageStatusSemanticVersion { get; set; }
     public long SensorId { get; set; }
     public long HostId { get; set; }
     public string SourceGeneration { get; set; } = string.Empty;
@@ -225,7 +235,9 @@ public sealed class PrtgSensorTimelineEvidence
         Bind(sensorId, hostId, sourceGeneration, fingerprint, Guid.NewGuid().ToString("N"), 0, "", observedAt);
 
     public IReadOnlyList<PrtgCoveredStatePeriod> Periods(DateTimeOffset from, DateTimeOffset through) =>
-        PrtgCoveredStateTimeline.Build(SensorId, SourceGeneration, ResourceGeneration, Coverage, States, from, through);
+        MessageStatusSemanticVersion == MessageStatusSemanticVersionCurrent
+            ? PrtgCoveredStateTimeline.Build(SensorId, SourceGeneration, ResourceGeneration, Coverage, States, from, through)
+            : [];
 
     public void Accept(DateTimeOffset from, DateTimeOffset through, IEnumerable<PrtgTimedState> states)
     {

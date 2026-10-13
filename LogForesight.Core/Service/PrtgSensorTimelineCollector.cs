@@ -37,9 +37,11 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         var scannedKeys = new List<string>();
         var pendingNextPage = 0;
         var pendingBoundaryHash = "";
+        var bootstrapPagesRead = 0;
         var authorityBefore = backend.PrtgStore().GetResourceIdentity(sensorId);
         PrtgSensorTimelineEvidence initial = store.Update(e =>
         {
+            InvalidateLegacyMessageStatus(e, attemptAt);
             if (e.SensorId != 0 && ScopeNeedsReset(e, scope, authorityBefore, policy.SourceGeneration, sensorId, hostId))
             {
                 // 僅此 sensor 的有效範圍改變時清除舊證據，不以全域修訂重暖其他資源。
@@ -55,6 +57,20 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             if (!acquired) e.QualityReason = "another-worker-holds-lease";
         });
         if (!acquired) return initial;
+
+        bool BootstrapScopeStillCurrent()
+        {
+            var currentIdentity = backend.PrtgStore().GetResourceIdentity(sensorId);
+            var currentPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+            var currentSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            return currentIdentity.Generation == initial.ResourceGeneration &&
+                currentIdentity.Epoch == initial.IdentityEpoch &&
+                currentIdentity.ChannelGeneration == initial.ChannelGeneration &&
+                currentIdentity.ResourceFingerprint == initial.IdentityFingerprint &&
+                currentPolicy.SourceGeneration == policy.SourceGeneration &&
+                currentPolicy.EffectiveSensorScope(sensorId, hostId) == scope && currentSettings.PrtgEnabled &&
+                currentPolicy.EndpointHint == EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl);
+        }
 
         using var linked = admission == null
             ? CancellationTokenSource.CreateLinkedTokenSource(ct)
@@ -102,10 +118,16 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             var firstPage = initial.PendingNextPage > 0 ? initial.PendingNextPage - 1 : 0;
             var expectedBoundary = initial.PendingBoundaryHash;
             var lastPageHash = "";
-            for (var pageOffset = 0; pageOffset < MaximumPages; pageOffset++)
+            bootstrapPagesRead = initial.BootstrapPagesRead;
+            var pageBudget = initial.LastCompleteThrough == null
+                ? MaximumPages - bootstrapPagesRead : MaximumPages;
+            if (initial.LastCompleteThrough == null && initial.BootstrapPagesRead >= MaximumPages)
+                throw new InvalidOperationException("timeline-bootstrap-capacity-shortfall");
+            for (var pageOffset = 0; pageOffset < pageBudget; pageOffset++)
             {
                 var page = firstPage + pageOffset;
                 token.ThrowIfCancellationRequested();
+                if (initial.LastCompleteThrough == null) bootstrapPagesRead++;
                 using var doc = JsonDocument.Parse(await client.GetJsonAsync(
                     $"api/table.json?content=messages&id={sensorId}&columns=objid,datetime,status,message&filter_drel=12months&sortby=-datetime&start={page * PageSize}&count={PageSize}", token));
                 if (!doc.RootElement.TryGetProperty("messages", out var rows) || rows.ValueKind != JsonValueKind.Array)
@@ -125,12 +147,13 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                     if (at > attemptAt.AddMinutes(2) || previous.HasValue && at > previous.Value)
                         throw new InvalidOperationException("source-clock-or-order-unverified");
                     previous = at;
-                    var status = ReadMessageStatusCategory(row);
-                    if (string.IsNullOrWhiteSpace(status)) throw new InvalidOperationException("state-unavailable");
-                    var rawKey = $"{at:O}|{status}|{Read(row, "message")}";
+                    var messageStatus = ReadMessageStatus(row);
+                    var status = messageStatus.State;
+                    var rawKey = $"{at:O}|{messageStatus.CategoryKey}|{Read(row, "message")}";
                     pageKeys.Add(rawKey);
                     if (!seen.Add(rawKey))
                         throw new InvalidOperationException("messages-repeated-page-or-ambiguous-event");
+                    if (status is null) continue;
                     if (timestampStatuses.TryGetValue(at, out var priorStatus) && priorStatus != status)
                         throw new InvalidOperationException("contradictory-status-at-same-time");
                     timestampStatuses[at] = status;
@@ -150,7 +173,9 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 pendingNextPage = page + 1;
                 pendingBoundaryHash = lastPageHash;
             }
-            if (!ended) throw new InvalidOperationException("messages-truncated");
+            if (!ended) throw new InvalidOperationException(initial.LastCompleteThrough == null &&
+                bootstrapPagesRead >= MaximumPages
+                ? "timeline-bootstrap-capacity-shortfall" : "messages-truncated");
 
             var currentStatus = ReadSensorState(observed.Sensor);
             if (string.IsNullOrWhiteSpace(currentStatus)) throw new InvalidOperationException("state-unavailable");
@@ -193,6 +218,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                     e.PendingNextPage = 0; e.PendingBoundaryHash = "";
                 }
                 else e.Accept(from, attemptAt, e.PendingStates.Concat(scanned));
+                e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, bootstrapPagesRead);
                 if (from == attemptAt) e.QualityReason = "identity-warmup";
                 e.LastAttemptAt = attemptAt; e.LastServedAt = attemptAt;
                 e.NextAttemptAt = attemptAt.AddDays(1);
@@ -202,29 +228,45 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         }
         catch (OperationCanceledException) when (admission?.WasPreempted == true)
         {
+            var scopeStillCurrent = BootstrapScopeStillCurrent();
             return store.Update(e =>
             {
-                if (e.OwnsLease(_leaseOwner, leaseVersion, DateTimeOffset.UtcNow) &&
-                    e.ResourceGeneration == initial.ResourceGeneration && e.EffectiveScopeFingerprint == scope)
+                if (scopeStillCurrent && e.OwnsLease(_leaseOwner, leaseVersion, DateTimeOffset.UtcNow) &&
+                    e.ResourceGeneration == initial.ResourceGeneration && e.IdentityEpoch == initial.IdentityEpoch &&
+                    e.ChannelGeneration == initial.ChannelGeneration && e.EffectiveScopeFingerprint == scope)
                 {
                     e.LastAttemptAt = attemptAt; e.LastServedAt = attemptAt; e.QualityReason = "yielded-to-sampling";
                     var pending = PrtgSensorTimelineEvidence.CompactStates(e.PendingStates.Concat(scanned)).ToArray();
                     if (pending.Length <= 20000) e.PendingStates = pending.ToList();
                     e.PendingEventKeys = e.PendingEventKeys.Concat(scannedKeys).Distinct(StringComparer.Ordinal).TakeLast(20000).ToList();
                     if (pendingNextPage > 0) { e.PendingNextPage = pendingNextPage; e.PendingBoundaryHash = pendingBoundaryHash; }
+                    if (e.LastCompleteThrough == null)
+                        e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, bootstrapPagesRead);
                     e.LeaseOwner = ""; e.LeaseUntil = null;
                 }
             });
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        { return RecordFailure(store, leaseVersion, attemptAt, "query-time-budget-exceeded", scanned, preservePrefix, scannedKeys, pendingNextPage, pendingBoundaryHash); }
-        catch (OperationCanceledException) { throw; }
+        { return RecordFailure(store, leaseVersion, attemptAt, "query-time-budget-exceeded", scanned, preservePrefix, scannedKeys, pendingNextPage, pendingBoundaryHash, bootstrapPagesRead); }
+        catch (OperationCanceledException)
+        {
+            var scopeStillCurrent = BootstrapScopeStillCurrent();
+            store.Update(e =>
+            {
+                if (scopeStillCurrent && e.OwnsLease(_leaseOwner, leaseVersion, DateTimeOffset.UtcNow) &&
+                    e.ResourceGeneration == initial.ResourceGeneration && e.IdentityEpoch == initial.IdentityEpoch &&
+                    e.ChannelGeneration == initial.ChannelGeneration && e.EffectiveScopeFingerprint == scope &&
+                    e.LastCompleteThrough == null)
+                    e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, bootstrapPagesRead);
+            });
+            throw;
+        }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException or PrtgClientException)
         {
             var reason = ex is InvalidOperationException ? ex.Message : "source-query-failed";
             return RecordFailure(store, leaseVersion, attemptAt, reason, scanned,
                 preservePrefix && reason is not "identity-or-scope-changed-during-query" and not "contradictory-status-at-same-time" and not "timeline-resume-boundary-shifted",
-                scannedKeys, pendingNextPage, pendingBoundaryHash);
+                scannedKeys, pendingNextPage, pendingBoundaryHash, bootstrapPagesRead);
         }
         finally
         {
@@ -275,6 +317,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 {
                     ResetForIdentityOrScope(e, item, scope, policy.SourceGeneration, observed.Fingerprint, identity,
                         capturedAt);
+                    InvalidateLegacyMessageStatus(e, capturedAt);
                     e.EffectiveScopeFingerprint = scope;
                     acquired = e.TryAcquireLease(_leaseOwner, capturedAt, BatchLeaseDuration, out leaseVersion);
                     if (!acquired) e.QualityReason = "another-worker-holds-lease";
@@ -427,13 +470,32 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         if (reset) e.ValidFrom = capturedAt;
     }
 
+    private static void InvalidateLegacyMessageStatus(PrtgSensorTimelineEvidence evidence, DateTimeOffset observedAt)
+    {
+        if (evidence.MessageStatusSemanticVersion == PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent)
+            return;
+
+        // Keep resource identity, ValidFrom, and disk semantic evidence; only message-derived timeline data is stale.
+        evidence.States.Clear(); evidence.Coverage.Clear(); evidence.PendingStates.Clear(); evidence.PendingEventKeys.Clear();
+        evidence.PendingNextPage = 0; evidence.PendingBoundaryHash = "";
+        // A parser refresh is a bootstrap, not a completed watermark. Keeping this null also
+        // preserves the bounded initial page budget and makes an exhausted scan explicit.
+        evidence.LastCompleteThrough = null;
+        evidence.BootstrapStartedAt = observedAt; evidence.BootstrapDeadlineAt = null;
+        evidence.BootstrapStatus = "capacity-unverified"; evidence.BootstrapPagesRead = 0;
+        evidence.BootstrapCollectionCycleId = "";
+        evidence.NextAttemptAt = null;
+        evidence.QualityReason = "message-status-semantics-warmup";
+        evidence.MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
+    }
+
     private static bool ScopeNeedsReset(PrtgSensorTimelineEvidence evidence, string scope,
         PrtgResourceIdentity authority, string sourceGeneration, long sensorId, long hostId)
     {
         if (evidence.EffectiveScopeFingerprint == scope) return false;
         // 舊版尚無逐 sensor scope 欄位；只沿用已具有當前權威 epoch 的證據，絕不追認舊鏡像。
         return !string.IsNullOrEmpty(evidence.EffectiveScopeFingerprint) ||
-            !PrtgResourceQualification.IsCurrent(evidence, authority, sourceGeneration, sensorId, authority.DeviceId, hostId) ||
+            !PrtgResourceQualification.IsIdentityCurrent(evidence, authority, sourceGeneration, sensorId, authority.DeviceId, hostId) ||
             evidence.ChannelGeneration != authority.ChannelGeneration;
     }
 
@@ -461,18 +523,20 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         var ended = false;
         var pageBudget = candidate.Initial.LastCompleteThrough == null
             ? MaximumPages - candidate.Initial.BootstrapPagesRead : MaximumPages;
+        if (candidate.Initial.LastCompleteThrough == null && candidate.Initial.BootstrapPagesRead >= MaximumPages)
+            throw new InvalidOperationException("timeline-bootstrap-capacity-shortfall");
         if (pageBudget <= 0) throw new InvalidOperationException("timeline-bootstrap-capacity-shortfall");
         for (var pageOffset = 0; pageOffset < pageBudget; pageOffset++)
         {
             var page = firstPage + pageOffset;
             token.ThrowIfCancellationRequested();
+            if (candidate.Initial.LastCompleteThrough == null) candidate.BootstrapPagesRead++;
             using var doc = JsonDocument.Parse(await client.GetJsonAsync(
                 $"api/table.json?content=messages&id={candidate.Item.SensorId}&columns=objid,datetime,status,message&filter_drel=12months&sortby=-datetime&start={page * PageSize}&count={PageSize}", token));
             if (!doc.RootElement.TryGetProperty("messages", out var rows) || rows.ValueKind != JsonValueKind.Array)
                 throw new InvalidOperationException("messages-array-missing");
             var count = rows.GetArrayLength();
             if (count == 0) { ended = true; break; }
-            candidate.BootstrapPagesRead = Math.Max(candidate.BootstrapPagesRead, page + 1);
             var pageKeys = new List<string>(count);
             var boundaryReached = false;
             foreach (var row in rows.EnumerateArray())
@@ -485,11 +549,13 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 if (at > candidate.CapturedAt.AddMinutes(2) || previous.HasValue && at > previous.Value)
                     throw new InvalidOperationException("source-clock-or-order-unverified");
                 previous = at;
-                var status = ReadMessageStatusCategory(row);
-                if (string.IsNullOrWhiteSpace(status)) throw new InvalidOperationException("state-unavailable");
-                var key = $"{at:O}|{status}|{Read(row, "message")}";
+                var messageStatus = ReadMessageStatus(row);
+                var status = messageStatus.State;
+                var key = $"{at:O}|{messageStatus.CategoryKey}|{Read(row, "message")}";
                 pageKeys.Add(key);
                 if (!seen.Add(key)) throw new InvalidOperationException("messages-repeated-page-or-ambiguous-event");
+                if (status is null)
+                    continue;
                 if (timestampStatuses.TryGetValue(at, out var priorStatus) && priorStatus != status)
                     throw new InvalidOperationException("contradictory-status-at-same-time");
                 timestampStatuses[at] = status;
@@ -648,7 +714,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
 
     private PrtgSensorTimelineEvidence RecordFailure(PrtgSensorTimelineStore store, long leaseVersion,
         DateTimeOffset attemptAt, string reason, IReadOnlyCollection<PrtgTimedState> scanned, bool preservePrefix,
-        IReadOnlyCollection<string> scannedKeys, int pendingNextPage, string pendingBoundaryHash) =>
+        IReadOnlyCollection<string> scannedKeys, int pendingNextPage, string pendingBoundaryHash, int bootstrapPagesRead) =>
         store.Update(e =>
         {
             if (!e.OwnsLease(_leaseOwner, leaseVersion, DateTimeOffset.UtcNow)) return;
@@ -666,6 +732,9 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             { e.PendingNextPage = pendingNextPage; e.PendingBoundaryHash = pendingBoundaryHash; }
             else if (reason == "timeline-resume-boundary-shifted")
             { e.PendingNextPage = 0; e.PendingBoundaryHash = ""; }
+            if (e.LastCompleteThrough == null)
+                e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, bootstrapPagesRead);
+            if (reason == "timeline-bootstrap-capacity-shortfall") e.BootstrapStatus = "capacity-shortfall";
             e.LeaseOwner = ""; e.LeaseUntil = null;
         });
 
@@ -708,18 +777,46 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         return PrtgSensorStatuses.TryParseSourceStatus(raw, text, out var status) ? status : string.Empty;
     }
 
-    // Message.status is a category (for example, "System"), not a sensor-state code.
-    // Preserve its existing interpretation while applying the documented map only to sensor rows.
-    private static string ReadMessageStatusCategory(JsonElement row)
+    private static (string? State, string CategoryKey) ReadMessageStatus(JsonElement row)
     {
         var raw = Read(row, "status_raw"); var text = Read(row, "status");
-        if (!int.TryParse(raw.Length > 0 ? raw : text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code)) return text;
-        return code switch
+        if (raw.Length > 0)
         {
-            3 => "Up", 4 => "Warning", 5 => "Down", 13 => "Down (Acknowledged)", 14 => "Down (Partial)",
-            7 or 8 or 9 or 12 => "Paused", _ => "Unknown"
+            if (!int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var code))
+                throw new InvalidOperationException("message-status-code-unrecognized");
+            var state = code switch
+            {
+                601 => "Unknown", 602 => "Resuming", 603 => "Pausing", 604 or 605 or 606 => "Paused",
+                607 => "Up", 608 => "Down", 609 => "Warning", 610 => "Unusual", 611 => "OK",
+                612 => "Connected", 613 => "Disconnected", 614 => "Info", 615 => "Paused License Limit",
+                616 => "No Probe", 617 => "None", 618 => "Active", 619 => "Down (Acknowledged)",
+                620 => "Down (Partial)", _ => null
+            };
+            if (state is not null) return (state, raw);
+            if (IsKnownNonStateMessageCategory(code)) return (null, raw);
+            throw new InvalidOperationException("message-status-code-unrecognized");
+        }
+
+        var fallback = text.Trim();
+        var canonical = fallback.ToLowerInvariant() switch
+        {
+            "unknown" => "Unknown", "resuming" => "Resuming", "pausing" => "Pausing", "paused" => "Paused",
+            "up" => "Up", "down" => "Down", "warning" => "Warning", "unusual" => "Unusual", "ok" => "OK",
+            "connected" => "Connected", "disconnected" => "Disconnected", "info" => "Info",
+            "paused license limit" => "Paused License Limit", "no probe" => "No Probe", "none" => "None",
+            "active" => "Active", "down acknowledged" or "down (acknowledged)" => "Down (Acknowledged)",
+            "down partial" or "down (partial)" => "Down (Partial)",
+            _ => null
         };
+        return canonical is null
+            ? throw new InvalidOperationException("message-status-text-unrecognized")
+            : (canonical, "text:" + canonical);
     }
+
+    private static bool IsKnownNonStateMessageCategory(int code) =>
+        code is >= 1 and <= 14 or >= 101 and <= 109 or >= 201 and <= 204 or >= 301 and <= 303 or
+            >= 401 and <= 407 or >= 501 and <= 514 or >= 701 and <= 731 or >= 801 and <= 806 or
+            >= 851 and <= 859 or >= 901 and <= 902;
 }
 
 /// <summary>來源物件的穩定指紋；全域修訂只在 collection operation 前後作取消 fence。</summary>

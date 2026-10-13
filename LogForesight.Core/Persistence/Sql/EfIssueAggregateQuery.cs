@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -30,15 +31,17 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     private readonly IHostStore _hosts;
     private readonly SqlPerformanceMonitor? _performance;
     private readonly Func<bool> _sourceKeyReady;
+    private readonly bool _requireCurrentPrtgMessageStatus;
 
     public EfIssueAggregateQuery(
         Func<LfDbContext> contextFactory, IHostStore hosts, SqlPerformanceMonitor? performance = null,
-        Func<bool>? sourceKeyReady = null)
+        Func<bool>? sourceKeyReady = null, bool requireCurrentPrtgMessageStatus = false)
     {
         _contextFactory = contextFactory;
         _hosts = hosts;
         _performance = performance;
         _sourceKeyReady = sourceKeyReady ?? (() => false);
+        _requireCurrentPrtgMessageStatus = requireCurrentPrtgMessageStatus;
     }
 
     private sealed record IssueAggregateGroup(
@@ -151,6 +154,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // 回填未完成期間數字會偏低，由呼叫端誠實標示「統計中」（P4 的既定取捨）
             .Where(x => x.RecordDate >= f && x.RecordDate <= t);
         q = IssueExclusionSql.Apply(q, exclusion, sourceKeyReady);
+        q = ApplyCurrentPrtgMessageStatusFilter(q);
 
         // SiteHidden 模式（RecordRepository.ApplySeverityVisibility 的 SQL 端等價物）：
         // 這裡繞過 RecordRepository 的單一咽喉，隱藏的嚴重度要在這裡自己擋掉，
@@ -625,6 +629,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             from ti in IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady)
             join dr in recordsQuery on ti.RecordId equals dr.RecordId
             select ti;
+        q = ApplyCurrentPrtgMessageStatusFilter(q);
 
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
@@ -1903,6 +1908,20 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .ToList();
     }
 
+    private IQueryable<TopIssueRow> ApplyCurrentPrtgMessageStatusFilter(IQueryable<TopIssueRow> query)
+    {
+        if (!_requireCurrentPrtgMessageStatus) return query;
+
+        var down = $"PRTG:{PrtgRuleEvaluator.RuleDown}".ToUpperInvariant();
+        var warning = $"PRTG:{PrtgRuleEvaluator.RuleWarning}".ToUpperInvariant();
+        var flapping = $"PRTG:{PrtgRuleEvaluator.RuleFlapping}".ToUpperInvariant();
+        return query.Where(row =>
+            (row.LogName.ToUpper() != "PRTG" ||
+             (row.SourceName.ToUpper() != down && row.SourceName.ToUpper() != warning &&
+              row.SourceName.ToUpper() != flapping)) ||
+            row.PrtgMessageStatusSemanticVersion == PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent);
+    }
+
     /// <summary>
     /// 日風險等級母體限縮的單一出口：問題只要出現在風險等級符合的主機日就算。
     /// 主查詢（<see cref="Aggregate"/>／<see cref="AggregateByCategory"/>／
@@ -1922,12 +1941,13 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
     /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
-    private static Dictionary<(string, int), int> SurvivingHostCounts(
+    private Dictionary<(string, int), int> SurvivingHostCounts(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
         HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels,
         bool sourceKeyReady)
     {
         var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyCurrentPrtgMessageStatusFilter(q);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
@@ -1943,12 +1963,13 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     /// <summary>主機日數＝相異 (存活主機, record_date) 組合數（同一台主機多天各算一次）</summary>
-    private static Dictionary<(string, int), int> SurvivingHostDayCounts(
+    private Dictionary<(string, int), int> SurvivingHostDayCounts(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
         HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels,
         (string SourceUpper, int EventId)? onlyIssue, bool sourceKeyReady)
     {
         var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyCurrentPrtgMessageStatusFilter(q);
         if (onlyIssue != null)
         {
             var (src, id) = onlyIssue.Value;
@@ -1980,11 +2001,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 查的是去重後的 (來源, EventId, 日期, 類別) 四元組，不是原始列——筆數是簽章數×天數等級，
     /// 遠小於逐主機日的列數，與其他三趟輕量查詢同一個作法。
     /// </summary>
-    private static Dictionary<(string, int), string> LatestCategories(
+    private Dictionary<(string, int), string> LatestCategories(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels, bool sourceKeyReady)
     {
         var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyCurrentPrtgMessageStatusFilter(q);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (hostIds != null)
         {
@@ -2017,11 +2039,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 這是 join 處理狀態的鍵（處理狀態以 <c>IssueSignatureKey</c> 為鍵，含 LogName 與 EntryType），
     /// 沒有它就答不出「這個問題是不是已經有結論」——§10.6 的前提。
     /// </summary>
-    private static Dictionary<(string, int), IReadOnlyList<string>> DistinctSignatures(
+    private Dictionary<(string, int), IReadOnlyList<string>> DistinctSignatures(
         LfDbContext ctx, IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels, bool sourceKeyReady)
     {
         var q = IssueExclusionSql.Apply(ctx.TopIssues.AsNoTracking(), exclusion, sourceKeyReady).Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyCurrentPrtgMessageStatusFilter(q);
         q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (hostIds != null)
         {

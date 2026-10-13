@@ -202,6 +202,7 @@ lf_top_issues                                        -- LogIssueSignature 的**�
   event_count       int NOT NULL                      -- 'count' 是保留字，改名
   category          nvarchar(20) NOT NULL             -- Storage/Hardware/Security/...
   severity_rank     int NOT NULL                      -- IssueSeverity 的**序數**（不是字串）
+  prtg_message_status_semantic_version int NULL     -- PRTG訊息狀態finding的解析版本；舊列維持NULL
   elevates_day_risk bit NOT NULL DEFAULT 0            -- 「重大」旗標（排行清單的嚴重度維度）
   known_issue       nvarchar(max) NULL                -- 命中規則表時的中文說明（SQLite TEXT；
                                                      --   依問題視角的說明欄直接查此欄不解 JSON）
