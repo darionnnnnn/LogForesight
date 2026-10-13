@@ -2121,3 +2121,9 @@ E08-T01指定矛盾已完成修正後瀏覽器重驗，從活動TODO移除，原
 補齊 immutable manifest、checksummed atomic checkpoint 與同資料庫擁有權標記，使用正式 MergeSampledValues 取精確下一列續行，處理 DB 已提交而外部 checkpoint 未完成的尾段；範圍、來源 binary、foreign DB、checkpoint 不符皆拒絕。舊版每 100,000 列記錄進度、100 列提交，採納前唯讀逐列核對所有 device／sensor／map／id／typed proof，僅允许同採樣區間內、100 列提交邊界的尾段，並記錄 sampled／audited rows 與實際 DB／WAL／SHM。舊日誌一位小數時間僅按其明示精度核對；不能要求 SHM=0 或把週期性檔案抽樣值當最終大小。35.8M 原輪日誌 SHA 與來源快照仍固定核對，不降低 64.8M 完整門檻。
 
 獨立審查另外修正首批時間誤作整輪時間與續跑 proof 分母：正式收據累計實際程序 Stopwatch 活動時間，未知的中斷旧輪完整時間／總速率回傳 null；proof byte 計數明示本程序生成列數。主代理 fresh 私有工具及主分支 Release 建置後契約均通過，涵蓋 205 列精確序列、DB ahead checkpoint 恢復、拒絕反例及計時／proof 分母（root-storage-final-contracts-20261013.log、root-storage-main-contracts-20261013.log）。此為續跑功能完成，E07-T01–T03 的全水位／備份／混合容量／恢復驗收繼續保留，任何容量旗標仍 false；下一步對既有完整目標的35.8M自有隔離輪唯讀稽核後續填。
+
+### 2026-10-13：E03 精確樣本接縫與 E05 舊 profile 可觀測性
+
+主代理獨立 fresh build 核對 parser→accumulator→SQLite typed Merge→期間 consumer 的 CPU 25.0834、memory available 25.0834→used 74.9166、disk free 90.0887 與兩小時完整證據；資格先於觀測，不追認旧資料。加上舊 profile／readiness／local facts 相關集合共66/66、零失敗／略過，TRX root-e03-e05-final.trx SHA256 D810E13EB4CC559167419716E9C9DC031E17C9B62D280629581454AF29CC76D3。首輪 readiness reason 被覆蓋的反例已修正為保留原原因並附加白話下一步，未放寬可信門檻。
+
+不合格持久化 profile 僅排除該筆授權，其他唯讀摘要繼續保留，避免整頁500與全部數量歸零。實際隔離瀏覽器 run 0de51d4153af48728f92522f37db8b96，readiness 顯示可信採樣未確認與管理者下一步；完整探測 local facts=observed，正式設定1台／3顆、鏡像5台／5顆、mapped5、readiness sampled3／qualified0，沒有授權或正式判定。正常下載五類JSON後，以建置修訂b76b3e06離線核對，SHA256 1c705320be53d634f60f916d2fce865725150b61c1aef35c7fcef60ca40540c3，正確維持INCOMPLETE，四類缺樣本且Ping歷史不完整；不是來源或容量通過。DOM／截圖 root-e05-legacy-profile-* 與 root-e05-localfacts-probe-* 已保存。E03/E04/E05父項及其尚未完整核對子項維持待辦。

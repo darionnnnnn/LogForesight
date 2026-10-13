@@ -499,6 +499,7 @@ public sealed class PrtgDiskAssessmentService
             rows.Add(new(sensor.Objid, sensor.DeviceObjid, sensor.HostId, readiness, validity, decision)
             {
                 CompletedDate = completedDay,
+                TrustedProfileReady = profileResolutions.TryGetValue(sensor.Objid, out var profileResolution) && profileResolution.Ready,
                 EvidenceFingerprint = Fingerprint(System.Text.Json.JsonSerializer.Serialize(new
                 {
                     sensor.Objid, sensor.DeviceObjid, sensor.HostId, CompletedDay = completedDay,
@@ -896,6 +897,7 @@ public sealed record PrtgDiskAssessmentRow(long SensorObjid, long DeviceObjid, l
     PrtgDiskRuleDecisionResult Decision)
 {
     public DateOnly CompletedDate { get; internal init; }
+    public bool TrustedProfileReady { get; internal init; }
     /// <summary>Exact qualified history/identity/rule digest retained for the formal day manifest.</summary>
     public string EvidenceFingerprint { get; internal init; } = string.Empty;
     /// <summary>Compact coverage projection derived from the same bounded value rows as Readiness.</summary>

@@ -70,6 +70,56 @@ public sealed class PrtgProbeLocalFactsTests : IDisposable
     }
 
     [Fact]
+    public async Task OneLegacyInvalidProfileIsExcludedWithoutErasingOtherSavedLocalFacts()
+    {
+        const long sensorId = 501;
+        const long deviceId = 502;
+        var settings = new SystemSettings { PrtgUrl = "https://private-source.invalid", PrtgEnabled = true };
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
+        {
+            policy.Revision = "legacy-profile-fixture";
+            policy.CoreSystemId = "legacy-profile-test-core";
+            policy.SourceGeneration = "source-v1";
+            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl);
+            policy.ValidFrom = DateTimeOffset.UtcNow.AddDays(-1);
+            policy.HostIds = [1]; policy.SensorIds = [sensorId];
+            policy.SourceTimeZoneId = "UTC"; policy.RawTimestampTimeZoneId = "UTC";
+            policy.AnalysisTimeZoneId = "UTC"; policy.SourceCultureName = "en-US";
+            policy.TimeBasisEvidenceReference = "saved-time-basis-proof";
+        });
+        using (var db = _backend.CreateContext())
+        {
+            db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId, Name = "fixture-device" });
+            db.PrtgSensors.Add(new PrtgSensorRow { Objid = sensorId, DeviceObjid = deviceId,
+                SensorType = "disk", Category = PrtgSensorCategories.Disk });
+            db.DailyRecords.Add(Parent(5, "{\"LogSource\":2}"));
+            db.SaveChanges();
+        }
+        NetiqSourceAttempt.RecordBatch(_backend, [1L], DateTime.Today.AddDays(-1), 1, "success");
+        _backend.Blob(PrtgTrustedSamplingProfile.StorePrefix + sensorId).Mutate(_ =>
+            ("{\"SensorObjid\":501,\"SourceGeneration\":\"old\",\"MetadataDigest\":\"legacy-digest\"}", true));
+
+        var profiles = new PrtgTrustedSamplingProfileStore(_backend).GetMany([sensorId]);
+        Assert.Empty(profiles); // Invalid legacy material never becomes profile authority.
+        var facts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, settings, null, CancellationToken.None);
+
+        Assert.Equal("observed", facts.Status);
+        Assert.Equal("saved-explicit-authority", facts.AuthorityKind);
+        Assert.Equal("UTC", facts.RawTimestampTimeZoneId);
+        Assert.Equal(1, facts.PolicyHosts);
+        Assert.Equal(1, facts.PolicySensors);
+        Assert.Equal(1, facts.MirrorDevices);
+        Assert.Equal(1, facts.MirrorSensors);
+        Assert.Equal(1, facts.ReadinessSampledSensors);
+        Assert.Equal(0, facts.QualifiedProfiles);
+        Assert.Equal("sampled-profile-qualification-incomplete", facts.ReadinessReason);
+        Assert.Equal(1, facts.NetiqReceipts);
+        Assert.Equal(1, facts.NetiqSuccess);
+        Assert.Equal(1, facts.NetiqParentRows);
+        Assert.DoesNotContain("legacy-digest", JsonSerializer.Serialize(facts));
+    }
+
+    [Fact]
     public async Task CancellationPropagatesAndDoesNotCallAi()
     {
         using var cts = new CancellationTokenSource(); cts.Cancel();

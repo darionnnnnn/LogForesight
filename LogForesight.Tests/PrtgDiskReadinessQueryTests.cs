@@ -56,6 +56,23 @@ public sealed class PrtgDiskReadinessQueryTests : IDisposable
         });
     }
 
+    [Fact]
+    public void InvalidLegacyProfileReturnsUnqualifiedReadinessInsteadOfThrowing()
+    {
+        SeedOneDiskWithHistory(7, 1);
+        _fx.Blob(PrtgTrustedSamplingProfile.StorePrefix + 200).Mutate(_ =>
+            ("{\"SensorObjid\":200,\"SourceGeneration\":\"old\",\"MetadataDigest\":\"legacy-digest\"}", true));
+
+        var result = Service(new EfPrtgStore(_fx.NewContext), ActiveHost(7)).Get(1, 20, _asOf);
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("InsufficientData", row.Status);
+        Assert.False(row.SemanticVerified);
+        Assert.False(row.SemanticReady);
+        Assert.Equal("可信採樣未確認", row.SemanticLabel);
+        Assert.Contains("補齊缺項後重新探測並執行資格確認", row.Reason);
+    }
+
     [Theory]
     [InlineData(3000)]
     [InlineData(1000000)]

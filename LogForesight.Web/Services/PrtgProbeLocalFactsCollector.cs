@@ -198,13 +198,14 @@ public static class PrtgProbeLocalFactsCollector
             var id = keys[row.BlobKey];
             if (row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
                 Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                throw new InvalidDataException("可信採樣 profile 超過 8 KiB；拒絕使用不完整授權。");
+                continue; // Exclude only this untrusted profile; other bounded saved facts remain observable.
             PrtgTrustedSamplingProfile? profile;
             try { profile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Content, LfJsonOptions.Pretty); }
-            catch (JsonException ex) { throw new InvalidDataException("可信採樣 profile 格式損壞；拒絕使用授權。", ex); }
+            catch (JsonException) { continue; }
             if (profile is null || profile.SensorObjid != id)
-                throw new InvalidDataException("可信採樣 profile 識別不一致；拒絕使用授權。");
-            profile.Validate();
+                continue;
+            try { profile.Validate(); }
+            catch (InvalidDataException) { continue; }
             result.Add(id, profile);
         }
         return result;

@@ -90,15 +90,19 @@ public sealed class PrtgDiskReadinessQueryService
             // Core currently omits EvidenceValidity when the newest host mapping no longer matches
             // the stored host id. Preserve the evidence lifecycle state in the card for that case.
             invalidReason ??= operation.GetEvidenceIdentityMismatchReason(sensor.Objid);
-            var semanticReady = readiness.Status == PrtgValueReadinessStatus.Ready && semanticVerified;
+            var semanticReady = assessed.TrustedProfileReady && readiness.Status == PrtgValueReadinessStatus.Ready && semanticVerified;
             var missingHourMasks = assessed.MissingHourMasks;
-            var semanticLabel = invalidReason is not null ? "已失效" : readiness.Status == PrtgValueReadinessStatus.Ready
+            var profileUnqualified = !assessed.TrustedProfileReady;
+            var semanticLabel = invalidReason is not null ? "已失效" : profileUnqualified ? "可信採樣未確認" : readiness.Status == PrtgValueReadinessStatus.Ready
                 ? semanticReady ? "可試算" : "語意未確認"
                 : "資料累積中";
+            var reason = invalidReason ?? readiness.Reason;
+            if (profileUnqualified)
+                reason += " 可信採樣尚未確認。請到 Trusted profile 進度檢查來源身分、時間基準、採樣策略與已儲存的通道設定，補齊缺項後重新探測並執行資格確認。";
             return new PrtgDiskReadinessRow(sensor.Objid, sensor.DeviceObjid, sensor.Name, sensor.SensorType ?? string.Empty,
                 readiness.Status.ToString(), readiness.UsableDays, readiness.RequiredDays, readiness.UsableHours,
                 readiness.RequiredHoursPerDay, readiness.LatestUsableHour, semanticVerified, semanticReady, semanticLabel,
-                invalidReason ?? readiness.Reason, assessed.MissingHourWindowStart, missingHourMasks, mappedNames.OrderBy(x => x).ToArray());
+                reason, assessed.MissingHourWindowStart, missingHourMasks, mappedNames.OrderBy(x => x).ToArray());
         }).ToArray();
         // Aggregate readiness in bounded Core-assessor batches. Never load all hourly rows at once;
         // if the mirror exceeds the cap, the response labels these numbers as a prefix sample.
