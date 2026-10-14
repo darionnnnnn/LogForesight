@@ -2,7 +2,7 @@
   "schema": "logforesight-round53-user-matrix-v1",
   "readiness": "prepared-not-browser-accepted",
   "sourcePolicy": {
-    "required": "latest completed Round 53 build output",
+    "required": "current Round 54 frozen clean build output; exact source commit and matching Web/Core/static assets required",
     "identity": "scripts/Verify-BuildIdentity.ps1 must pass for the exact Web output used by the browser run; record source revision, Web/Core assembly hashes, static asset hashes and fixture DB/key hashes in the run manifest",
     "syntheticOnly": true,
     "externalConnections": false
@@ -72,6 +72,75 @@
     "markupOrApiTestsAreBrowserAcceptance": false,
     "stubSuccessIsNativeSourceQualification": false,
     "syntheticSourceEvidenceIsProductionEvidence": false,
-    "siteAndOperatorReminders": ["UC01", "UC04", "UC05", "UC06"]
-  }
+    "siteAndOperatorReminders": ["UC01", "UC02", "UC03", "UC04", "UC05", "UC06", "UC07"]
+  },
+  "maintenanceRoleMatrix": {
+    "status": "planned-not-provisioned",
+    "baselineRolesUnchanged": true,
+    "linkedReviewIds": [
+      "R54-01",
+      "R54-04",
+      "R54-07"
+    ],
+    "roles": [
+      {
+        "id": "M54-rescue",
+        "identity": "actual serverAdmin authentication path; not an ordinary user renamed serverAdmin",
+        "maintain": true,
+        "viewAll": false,
+        "visibleHosts": [],
+        "expected": "Global maintenance counts and safe reasons only; no device names or identifiers; global purge allowed only with current preview and safety gates."
+      },
+      {
+        "id": "M54-scoped",
+        "identity": "ordinary Maintain user with a fixed proper subset of host visibility",
+        "maintain": true,
+        "viewAll": false,
+        "visibleHosts": [
+          "fixture-host-A"
+        ],
+        "expected": "Global counts plus authorized device details only; purge scope remains global and is explicitly disclosed."
+      },
+      {
+        "id": "M54-global",
+        "identity": "ordinary Maintain and ViewAll user",
+        "maintain": true,
+        "viewAll": true,
+        "visibleHosts": [
+          "all-fixture-hosts"
+        ],
+        "expected": "Global counts and complete eligible details subject to declared pagination; same purge set as other Maintain identities."
+      },
+      {
+        "id": "M54-readall",
+        "identity": "ordinary ViewAll user without Maintain",
+        "maintain": false,
+        "viewAll": true,
+        "visibleHosts": [
+          "all-fixture-hosts"
+        ],
+        "expected": "Purge preview and confirm APIs denied; broad read access does not grant maintenance."
+      },
+      {
+        "id": "M54-nomaintain",
+        "identity": "ordinary scoped user without Maintain",
+        "maintain": false,
+        "viewAll": false,
+        "visibleHosts": [
+          "fixture-host-A"
+        ],
+        "expected": "Purge preview and confirm APIs denied, no leaked preview details."
+      }
+    ]
+  },
+  "round54ReviewIds": [
+    "R54-01",
+    "R54-02",
+    "R54-03",
+    "R54-04",
+    "R54-05",
+    "R54-06",
+    "R54-07",
+    "R54-08"
+  ]
 }

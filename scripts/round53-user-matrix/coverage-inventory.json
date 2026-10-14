@@ -124,5 +124,220 @@
       "boundary": "This does not establish native-source qualification, full-capacity recovery, or full U53-08/E08 acceptance."
     }
   ],
-  "evidenceFence": "Source-level automated tests, protocol stub responses, synthetic findings, README steps, and API/markup tests do not count as browser acceptance. UC01-UC07 are reminders and are not isolated acceptance blockers."
+  "evidenceFence": "Source-level automated tests, protocol stub responses, synthetic findings, README steps, and API/markup tests do not count as browser acceptance. UC01-UC07 are reminders and are not isolated acceptance blockers.",
+  "round54ReviewAdditions": [
+    {
+      "id": "R54-01",
+      "batch": "F2",
+      "originalTodoIds": [
+        "E05-T02",
+        "E08-T04"
+      ],
+      "acceptanceCriteria": [
+        "AC03",
+        "AC04",
+        "AC21"
+      ],
+      "journeys": [
+        "U53-09",
+        "U53-10"
+      ],
+      "title": "Purge preview identity, concurrency and partial recovery",
+      "requiredChecks": [
+        "Bind confirmation to the reviewed scope and relevant data versions; changed mapping/scope invalidates preview and requires a new explicit confirmation.",
+        "Prevent concurrent purge, sync and backfill from changing the accepted deletion set through effective ownership or equivalent consistency protection.",
+        "Inject preview-then-map-change, simultaneous admins, job-start-after-check and mid-batch failure; preserve exact deleted/remaining sets, durable progress and retry semantics without reporting partial deletion as complete."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "R54-02",
+      "batch": "C1",
+      "originalTodoIds": [
+        "E03-T01",
+        "E03-T02",
+        "E08-T02"
+      ],
+      "acceptanceCriteria": [
+        "AC07",
+        "AC08",
+        "AC22"
+      ],
+      "journeys": [
+        "U53-01",
+        "U53-03"
+      ],
+      "title": "One analysis-date contract across disk verification",
+      "requiredChecks": [
+        "Backend derives completed analysis date from saved analysis timezone; UI displays supplied date and timezone, not browser-local yesterday.",
+        "Single/batch start, eligibility, preview, evidence expiry and manual confirmation use the same date contract.",
+        "Different browser/server/analysis zones, midnight crossings and DST 23/25-hour days have exact expected UTC intervals; reject ambiguous points without silently dropping a valid completed day."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "R54-03",
+      "batch": "F1",
+      "originalTodoIds": [
+        "E04-T01",
+        "E08-T02",
+        "E09-T01"
+      ],
+      "acceptanceCriteria": [
+        "AC13",
+        "AC22"
+      ],
+      "journeys": [
+        "U53-01",
+        "U53-02"
+      ],
+      "title": "Actionable qualification and recovery states",
+      "requiredChecks": [
+        "Distinguish missing authority/configuration, insufficient samples, actionable manual review, mismatch, stale settings and retryable failure.",
+        "Maintain reaches the correct repair setting; non-Maintain sees the reason and administrator action without a dead-end forbidden link.",
+        "Repair then reverify through normal UI; admin/runs/detail/report agree on state, and manual review is offered only when usable matched points exist."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "R54-04",
+      "batch": "F2",
+      "originalTodoIds": [
+        "E05-T02",
+        "E08-T03"
+      ],
+      "acceptanceCriteria": [
+        "AC21",
+        "AC22"
+      ],
+      "journeys": [
+        "U53-05",
+        "U53-09"
+      ],
+      "title": "Global destructive scope with restricted readable details",
+      "requiredChecks": [
+        "Separate global impact counts, visible detail counts and permission-limited detail disclosure; zero visible detail is not zero affected data.",
+        "Confirmation explicitly says global deletion is not limited to displayed names; filter authorization before taking the visible top 20.",
+        "Test hidden names/identifiers, more than 20 devices, orphan sensors and zero-visible users; safe blocking reasons and exact authorized detail sets."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "R54-05",
+      "batch": "B2",
+      "originalTodoIds": [
+        "E03-T02",
+        "E08-T05",
+        "E08-T06"
+      ],
+      "acceptanceCriteria": [
+        "AC11",
+        "AC12",
+        "AC14",
+        "AC15",
+        "AC20"
+      ],
+      "journeys": [
+        "U53-06",
+        "U53-08",
+        "U53-10"
+      ],
+      "title": "Message-time migration and downstream lifecycle",
+      "requiredChecks": [
+        "Map date-format, culture, raw/source/analysis timezone, source-generation and unrelated scope changes to each authority fingerprint and cursor.",
+        "On upgrade or authority change, unqualified message evidence cannot create new formal risk/cases/mail; retain historical facts, manual replies and valid unrelated NetIQ/raw evidence.",
+        "Pre-existing findings/cases/replies/pending mail, restart, replay, setting restore and version rollback are checked across collector, read side, reports, exports and notification consumers; blank legacy authority is never retroactively trusted."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "R54-06",
+      "batch": "D1",
+      "originalTodoIds": [
+        "E03-T02",
+        "E07-T03",
+        "E08-T05"
+      ],
+      "acceptanceCriteria": [
+        "AC08",
+        "AC15",
+        "AC18",
+        "AC20"
+      ],
+      "journeys": [
+        "U53-08",
+        "U53-10"
+      ],
+      "title": "Bounded-read units, failure isolation and repair",
+      "requiredChecks": [
+        "Mode cap is 262144 characters and disk snapshot cap is 33554432 characters; encoded bytes and process memory are separate measured quantities, not renamed limits.",
+        "SQLite/SQL Server ASCII, Chinese, supplementary characters, cap boundaries and oversized/malformed input are tested for equivalent acceptance decisions.",
+        "One bad document does not abort unrelated valid hosts/mail/replay; affected items show a reason and a bounded authorized repair/retry path preserving unrelated entries and CAS."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "R54-07",
+      "batch": "A2",
+      "originalTodoIds": [
+        "E01-T01",
+        "E08-T03",
+        "E10-T02"
+      ],
+      "acceptanceCriteria": [
+        "AC01",
+        "AC20",
+        "AC21"
+      ],
+      "journeys": [
+        "U53-05",
+        "U53-10"
+      ],
+      "title": "Executable maintenance roles and frozen round54 build",
+      "requiredChecks": [
+        "Retain six baseline roles and add the maintenanceRoleMatrix scenarios with exact capability/visibility assertions; actual rescue login is distinct from an ordinary user.",
+        "Freeze current round54 source commit, Web/Core/static assets, fixture and environment identities; old results are reused only with explicit unchanged-scope evidence.",
+        "Later extend validators/fixture/recorders to check supplementary roles and review IDs; current document additions alone do not provision roles or claim browser acceptance."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "R54-08",
+      "batch": "A2",
+      "originalTodoIds": [
+        "E10-T02",
+        "E10-T03",
+        "E10-T04"
+      ],
+      "acceptanceCriteria": [
+        "AC22"
+      ],
+      "journeys": [
+        "U53-01",
+        "U53-10"
+      ],
+      "title": "Traceable substage completion and repair loop",
+      "requiredChecks": [
+        "Each F/G substage has original IDs, dependencies, exact expected results, negative cases and accessible evidence; original TODO closes only after all linked mandatory items pass.",
+        "The 27 TODOs and 53 inherited gaps are baseline counts, not a ceiling; eight review additions remain separately pending and new findings are recorded explicitly.",
+        "Before each stage acceptance and final acceptance, inspect real consumers and repair omissions; only rerun affected evidence unless changes invalidate broader results."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    }
+  ],
+  "coverageCounting": {
+    "originalTodoCount": 27,
+    "inheritedExplicitGapCount": 53,
+    "additionalReviewItemCount": 8,
+    "countsAreCeilings": false,
+    "rule": "Review items contain multiple required checks and are not interchangeable units of completion. All remain pending; inherited evidence does not close new checks."
+  }
 }

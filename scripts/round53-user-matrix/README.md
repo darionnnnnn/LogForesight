@@ -1,4 +1,4 @@
-# Round 53 user matrix (prepared, not browser accepted)
+# Round 54 acceptance using inherited Round 53 user matrix (not browser accepted)
 
 `user-matrix.json` is the fixed inventory for 22 AC, 10 user journeys, 6 quality objectives, six roles, and four synthetic source kinds. Run its integrity check with:
 
@@ -14,7 +14,7 @@ Use the paths from the latest completed build, not the older v11/v12 fixtures:
 $webOut = '<latest completed LogForesight.Web bin output>'
 $webAssets = '<same build Web wwwroot assets>'
 $expectedSourceCommit = '<40-hex source commit frozen by root for this build>'
-$sourceBundle = 'C:\Users\eldar\Documents\Codex\2026-10-01\c-users-eldar-claude-project-logforesight\work\n4-n5-current-ui-fixture-20261011\runs\u05-roles-d7ee69c2b78146079a11a12ad4abe5b2'
+$sourceBundle = '<owned immutable synthetic role bundle with verified DB/key hashes>'
 $started = & scripts/round53-user-matrix/Start-UserMatrixFixture.ps1 -WebOutputDirectory $webOut -WebAssetsDirectory $webAssets -SourceFixtureBundlePath $sourceBundle -ExpectedSourceCommit $expectedSourceCommit
 $started | Format-List
 # Root operates only the printed loopback login URL, then stops the exact owned processes:
@@ -90,7 +90,7 @@ For U53-08, through the normal Runs controls, capture NetIQ success/zero events,
 
 ## Known gaps
 
-- The current launcher is build-parameterized, hashes the selected artifact at runtime, and requires Root to pass the exact expected 40-hex source commit; it contains no pinned product SHA. Root still has to supply and freeze the latest completed Round 53 Web output and matching assets before browser operation.
+- The current launcher is build-parameterized, hashes the selected artifact at runtime, and requires Root to pass the exact expected 40-hex source commit; it contains no pinned product SHA. Root still has to supply and freeze the current Round 54 frozen clean Web output and matching assets before browser operation.
 - The source HTTP stub emits the Sentinel REST token/job/event response, bounded PRTG/AI failures, and synthetic PRTG JSON/XML and OpenAI-compatible AI success responses; it does not claim native-source qualification or real-model quality. SMTP local accept/reject/unknown-commit shapes are executable, while browser retry remains to be operated and recorded by Root.
 - E08 audit finding `RUNS-DATE-SEMANTICS-001`: commit e8350207 adds a visible execution-day D / NetIQ data D-1 / PRTG data D caption and hash tab navigation. Root independently built and browser-verified the caption, deep link, keyboard switch and reload on an owned loopback fixture. The original popover already explained the NetIQ offset. Final same-version summary/drilldown checks remain part of full U53-08; this subcheck does not complete that journey.
 - The browser observation recorder is a log helper only. It requires an already captured file and operator-entered result; it does not verify that a browser was used, inspect pixels, grade the UI, or mark any aggregate gate complete.
@@ -107,3 +107,30 @@ For U53-08, through the normal Runs controls, capture NetIQ success/zero events,
 `Set-UserMatrixMode.ps1 -OwnerFile <owner.json> -HttpMode netiq-risk-audit-prtg-healthy` selects the loopback-only composite mode after validating the exact run owner, helper process, source assembly hash, and run-local mode file. It combines the existing 12-event synthetic 4625 risk shape with one separately marked synthetic 1102 audit-clear event and PRTG device 112 at `192.0.2.3`, with sensors 212–214 parented to that device. PRTG channels are positive IDs 1212–1214; the per-sensor primary-channel property, XML history, and JSON history agree on channel and value. Sensor rows expose stable synthetic `cumsince`, current-check text/OA fields, and 900-second interval fields. The clock is stable within each UTC quarter-hour and advances automatically for long-running fixtures. Inventory supports the production sync query `content=sensors&id=112`, exact sensor `filter_objid` intersections, repeated filters, count, and start pagination. Historic XML/JSON parsing honors `now-1h`/`now` and `yyyy-MM-dd-HH-mm-ss` query ranges, returning an empty result outside the requested interval and HTTP 400 for malformed bounds. The JSON row uses production `datetime`, `datetime_raw`, `value_raw`, and `coverage_raw` fields. The existing 5301 Ping response and standalone 12-row `netiq-risk-events` behavior remain available.
 
 `Test-ControlledSources.ps1` makes actual HTTP requests to verify wrong IDs and filter intersections return no sensors, pagination selects the expected row, and all three resource IDs preserve primary-channel/value/time coherence across sensors, channels, property XML, historic XML, and historic JSON. It also checks malformed history times fail, a current one-hour window returns one row, and a past window returns none. It then verifies 12 risk events plus one synthetic audit-clear event while PRTG requests succeed in that same mode. All source records remain synthetic and loopback-only. These protocol checks do not set up a PRTG binding, provide timezone or other time-basis authority, create a qualification proof/job/outcome, write application data, establish two completed analysis hours, or provide 28-day value history.
+
+## Round 54 review additions and maintenance roles (planned only)
+
+The original six roles, 22 AC, 10 journeys, six Q, seven source scenarios and 222 fixed rule cases remain. The 53 inherited uncovered entries are a baseline, not a maximum. `coverage-inventory.json.round54ReviewAdditions` adds R54-01 through R54-08, each with original TODO IDs, AC/journey links, required checks and pending evidence. The authoritative behavior is in `docs/FEEDBACK-54-PLAN.md` §§4.6–4.8. No new role is provisioned and no validator/launcher/recorder is implemented by this planning update. Existing consistency scripts cover only their existing schema checks; supplementary checks must be implemented in A2 before claiming the new matrix is executable.
+
+Use the current Round 54 frozen clean build and exact expected commit, matching Web/Core/static assets and owned fixture/environment hashes. Do not select a Round 53 build merely because the directory/schema retains its historical name. Reuse historical evidence only after verifying unchanged code/configuration/environment and the exact covered subset. No external site or subjective user confirmation is required.
+
+| Maintenance scenario | Identity/capabilities | Readable data | Expected operation |
+|---|---|---|---|
+| M54-rescue | Real serverAdmin login; Maintain, no ViewAll | Necessary global counts and safe reasons; no business names/IDs | Global purge only under current preview and safety gates |
+| M54-scoped | Ordinary Maintain; fixed host-A visibility | Global counts and authorized details only | Clearly disclosed global purge, not merely displayed hosts |
+| M54-global | Ordinary Maintain + ViewAll | All eligible details with declared pagination | Same global purge set under the same scope |
+| M54-readall | ViewAll without Maintain | No maintenance preview payload | Preview and confirm denied |
+| M54-nomaintain | Scoped user without Maintain | No maintenance preview payload | Preview and confirm denied |
+
+Each scenario uses an isolated session; test direct APIs as well as controls. Capture capabilities/visible set, global-vs-visible counts, no-leak responses, accepted preview identity and exact deletion outcome. Include hidden devices, more than 20 visible candidates, orphan sensors and zero-visible accounts. Actual rescue authentication must not be replaced by renaming an ordinary user.
+
+| Review ID | Planned stage | Required result |
+|---|---|---|
+| R54-01 | F2 | Version-bound purge, concurrency protection and exact partial/retry results |
+| R54-02 | C1 | One backend analysis-date contract including timezone/midnight/DST |
+| R54-03 | F1 | Distinct actionable states and authorized repair/reverification flow |
+| R54-04 | F2 | Honest global impact disclosure with restricted readable details |
+| R54-05 | B2 | Upgrade/change/replay/mail lifecycle without trusting legacy authority |
+| R54-06 | D1 | Character limits, provider boundaries, isolated failure and safe repair |
+| R54-07 | A2 | Supplementary role identity and frozen Round 54 build/evidence |
+| R54-08 | A2 | Substage traceability and mandatory omission-repair loop |
