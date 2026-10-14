@@ -33,6 +33,35 @@ public static class PrtgFindingMapper
         signature != null && string.Equals(signature.LogName, PrtgLogName, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Text status findings derive their event time from PRTG messages. Raw resource findings
+    /// (including the legacy 28-day disk trend) and silent-presence findings use separate
+    /// authority contracts and must not be gated by message date-format configuration.
+    /// </summary>
+    public static bool RequiresMessageTimeAuthority(string? ruleCode) => ruleCode is
+        PrtgRuleEvaluator.RuleDown or PrtgRuleEvaluator.RuleFlapping or PrtgRuleEvaluator.RuleWarning;
+
+    public static bool RequiresMessageTimeAuthority(LogIssueSignature? issue)
+    {
+        if (issue is null || !IsPrtg(issue)) return false;
+        if (TryGetRuleCode(issue.Source, out var sourceCode) && RequiresMessageTimeAuthority(sourceCode))
+            return true;
+
+        // Older signatures may keep only the stable event key's rule segment in Source.
+        // Use that explicit PRTG identity as a fallback, while leaving raw disk-trend keys
+        // outside message-time authority.
+        var parts = issue.EventKey.Split(':');
+        return parts.Length >= 3 && parts[0].Equals("prtg", StringComparison.OrdinalIgnoreCase) &&
+            RequiresMessageTimeAuthority(parts[1]);
+    }
+
+    /// <summary>Missing/old message authority is never inferred from a freshly recollected timeline.</summary>
+    public static bool HasCurrentMessageTimeAuthority(LogIssueSignature? issue, string expectedFingerprint) =>
+        issue is not null && (!RequiresMessageTimeAuthority(issue) ||
+            !string.IsNullOrWhiteSpace(expectedFingerprint) &&
+            !string.IsNullOrWhiteSpace(issue.PrtgMessageTimeFingerprint) &&
+            string.Equals(issue.PrtgMessageTimeFingerprint, expectedFingerprint, StringComparison.Ordinal));
+
+    /// <summary>
     /// 從簽章 Source（<c>PRTG:{規則代碼}</c>，前綴不分大小寫）解出規則代碼。
     /// 前綴不符或代碼為空白時回 false。白話說明與 prompt 共用這一份解析，不各寫字串切割。
     /// </summary>
@@ -118,6 +147,9 @@ public static class PrtgFindingMapper
             PrtgSourceGeneration = finding.SourceGeneration,
             PrtgResourceGeneration = finding.ResourceGeneration,
             PrtgMessageStatusSemanticVersion = finding.MessageStatusSemanticVersion,
+            PrtgMessageTimeFingerprint = RequiresMessageTimeAuthority(finding.RuleCode) ||
+                finding.RuleCode == PrtgRuleEvaluator.RuleSilent
+                    ? finding.MessageTimeFingerprint : null,
             PrtgIncidentStartedAt = finding.IncidentStartedAt,
             PrtgPresenceSourceDay = finding.PresenceSourceDay,
             PrtgPresenceSourceAsOf = finding.PresenceSourceAsOf,

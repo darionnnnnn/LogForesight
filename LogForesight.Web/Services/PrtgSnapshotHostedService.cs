@@ -1685,7 +1685,14 @@ public class PrtgSnapshotHostedService : BackgroundService
                 };
                 var fetch = new PrtgFetchService(client, store,
                     new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+                    PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map,
+                    messageTimeAuthorityProvider: () =>
+                    {
+                        var liveSettings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+                        var livePolicy = new PrtgMonitoringPolicyStore(
+                            _backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                        return (livePolicy, liveSettings.PrtgUrl);
+                    });
                 var result = await fetch.FetchStateChangesRangeAsync(lease.Item.FromLocalDate, lease.Item.ToLocalDate,
                     new[] { lease.Item.DeviceObjid }, settings.PrtgFetchConcurrency, operationToken.Token);
                 Checkpoint();

@@ -89,6 +89,7 @@ public sealed class PrtgSilentAbsenceEvaluatorTests
         Assert.Equal(1, finding.Magnitude);
         Assert.Equal(AsOf.AddHours(-3), finding.IncidentStartedAt);
         Assert.Equal(0, finding.ThresholdMagnitude);
+        Assert.Equal(MessageTimeFingerprint, finding.MessageTimeFingerprint);
         Assert.Contains("不代表主機故障", finding.Detail);
     }
 

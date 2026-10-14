@@ -15,11 +15,22 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
         HostDayWorkflowService? workflow = null, bool aiConfigured = false)
     {
         if (limit is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(limit));
-        var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
-        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        if (!PrtgSharedAuthoritySnapshot.TryRead(backend, out var sharedAuthority, out _)) return 0;
+        var settings = sharedAuthority!.Settings;
+        var policy = sharedAuthority.Policy;
         if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl)) return 0;
+        SystemSettings ReadSettingsIfAuthorityCurrent()
+        {
+            try
+            {
+                return backend.Blob("system_settings").ReadVersion() == sharedAuthority.SettingsBlobVersion &&
+                    backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion() == sharedAuthority.PolicyBlobVersion
+                    ? settings : new SystemSettings();
+            }
+            catch { return new SystemSettings(); }
+        }
         using var operation = new PrtgOperationScope(settings,
-            () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), cancellationToken,
+            ReadSettingsIfAuthorityCurrent, cancellationToken,
             new PrtgScopeRevisionReader(backend, hosts).Read, "補追加與派工");
         operation.Checkpoint();
         using var ctx = backend.CreateContext();
@@ -35,6 +46,7 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
         var dispatch = new NightlyDispatch(orders, dispatchContext, hosts);
         var rules = new KnownIssueRuleStore(backend.Blob("rules"));
         var currentRules = rules.Exists ? rules.Load().Content?.Rules : null;
+        var liveMessageFingerprint = policy.MessageTimeFingerprint(settings.PrtgUrl);
         var applied = 0;
         foreach (var row in rows)
         {
@@ -57,10 +69,13 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                         finding.PrtgResourceGeneration != row.ResourceGeneration)
                     { Mark(row, "invalid", null); continue; }
                     var capturedFinding = document.RootElement.GetProperty("Finding").Deserialize<PrtgFinding>();
-                    if (TryGetMessageStatusRuleCode(finding, out var messageStatusRuleCode) &&
+                    if (PrtgFindingMapper.RequiresMessageTimeAuthority(finding) &&
                         (finding.PrtgMessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent ||
                          capturedFinding?.MessageStatusSemanticVersion != finding.PrtgMessageStatusSemanticVersion ||
-                         !string.Equals(capturedFinding?.RuleCode, messageStatusRuleCode, StringComparison.OrdinalIgnoreCase)))
+                         !PrtgFindingMapper.HasCurrentMessageTimeAuthority(finding, liveMessageFingerprint) ||
+                         !PrtgFindingMapper.TryGetRuleCode(finding.Source, out var messageStatusRuleCode) ||
+                         !string.Equals(capturedFinding?.RuleCode, messageStatusRuleCode, StringComparison.OrdinalIgnoreCase) ||
+                         !string.Equals(capturedFinding?.MessageTimeFingerprint, finding.PrtgMessageTimeFingerprint, StringComparison.Ordinal)))
                     { Mark(row, "invalid", null); continue; }
                     var currentRule = currentRules?.FirstOrDefault(r => r.Id == finding.RuleId && r.Enabled && r.Platform == "prtg");
                     var capturedRule = document.RootElement.GetProperty("Finding").GetProperty("Rule").Deserialize<KnownIssueRule>();
@@ -87,15 +102,19 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                                 row.SensorObjid.Value, finding, DateTime.UtcNow);
                     else
                     {
-                        var proof = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + row.SensorObjid)).Get();
-                        resourceCurrent = proof.HostId == row.HostId && proof.SourceGeneration == row.SourceGeneration &&
-                            proof.ResourceGeneration == row.ResourceGeneration &&
-                            PrtgResourceQualification.IsCurrent(proof, identity, policy.SourceGeneration,
-                                row.SensorObjid.Value, identity.DeviceId, row.HostId,
-                                policy.MessageTimeFingerprint(settings.PrtgUrl));
+                        if (finding.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
+                            resourceCurrent = PrtgResourceQualification.IsCurrentDiskChannel(backend, row.SensorObjid.Value, identity);
+                        else if (PrtgFindingMapper.RequiresMessageTimeAuthority(finding) &&
+                            PrtgFindingMapper.HasCurrentMessageTimeAuthority(finding, liveMessageFingerprint))
+                        {
+                            var proof = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + row.SensorObjid)).Get();
+                            resourceCurrent = proof.HostId == row.HostId && proof.SourceGeneration == row.SourceGeneration &&
+                                proof.ResourceGeneration == row.ResourceGeneration &&
+                                PrtgResourceQualification.IsCurrent(proof, identity, policy.SourceGeneration,
+                                    row.SensorObjid.Value, identity.DeviceId, row.HostId, liveMessageFingerprint);
+                        }
+                        else resourceCurrent = false;
                     }
-                    if (resourceCurrent && finding.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-                        resourceCurrent = PrtgResourceQualification.IsCurrentDiskChannel(backend, row.SensorObjid.Value, identity);
                     if (!resourceCurrent)
                     { Mark(row, "scope-paused", null); continue; }
                     if (finding.RuleId == "builtin-prtg-resource-disk-pressure")

@@ -1199,7 +1199,12 @@ public class MailNotificationService
         RecipientView? Recheck(string email, RecipientView original)
         {
             var currentSettings = _settingsStore.Get();
-            var policy = _prtgMonitoring?.Get();
+            PrtgSharedAuthoritySnapshot? sharedAuthority = null;
+            var sharedAuthorityAvailable = _prtgBackend is null ||
+                PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out sharedAuthority, out _);
+            var authoritySettings = sharedAuthority?.Settings ?? new SystemSettings();
+            var policy = sharedAuthority?.Policy ?? (_prtgBackend is null ? _prtgMonitoring?.Get() : null);
+            var currentMessageFingerprint = policy?.MessageTimeFingerprint(authoritySettings.PrtgUrl) ?? string.Empty;
             if (!currentSettings.MailEnabled || !currentSettings.MailUrgentEnabled ||
                 currentSettings.SmtpServer != settings.SmtpServer || currentSettings.SmtpPort != settings.SmtpPort ||
                 currentSettings.SmtpUseTls != settings.SmtpUseTls || currentSettings.SmtpAccount != settings.SmtpAccount ||
@@ -1210,10 +1215,19 @@ public class MailNotificationService
                 MailContextFingerprint(currentSettings) != mailContextFingerprint) return null;
             var currentRecords = RemoveStaleMessageStatusFindings(
                 _records.Query(new RecordQueryFilter { From = from, To = to, Hosts = null, RiskLevels = (currentSettings.MailOnRunCompleted ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }) }));
+            if (_prtgBackend is not null)
+                currentRecords = FilterCurrentPrtgLanes(currentRecords, currentSettings, authoritySettings,
+                    policy, currentMessageFingerprint, sharedAuthorityAvailable, CurrentResource);
             if (durableRetryIntentKeys is { Count: > 0 })
                 currentRecords = currentRecords.Concat(records.Where(record => durableRetryIntentKeys.ContainsKey(record.RecordId)))
                     .GroupBy(record => record.RecordId).Select(group => group.Last()).ToList();
-            var allowedKeys = (original.Detail ?? new()).Select(IntentKey).ToHashSet(StringComparer.Ordinal);
+            // Recheck may legitimately narrow a mixed record after one PRTG lane loses
+            // authority. Keep the original parent/event envelope as the upper bound so
+            // refreshed current lanes can survive without admitting newly appeared issues.
+            var allowedIssueKeysByRecord = (original.Detail ?? new()).GroupBy(RecordKey, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key,
+                    group => group.SelectMany(record => record.TopIssues).Select(issue => issue.EventKey)
+                        .ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
             var (_, liveViews) = ResolvePerRecipient(currentSettings, currentRecords, liveContext);
             if (!liveViews.TryGetValue(email, out var liveView)) return null;
             if (liveView.Detail == null)
@@ -1224,29 +1238,50 @@ public class MailNotificationService
             }
             var visible = liveView.VisibleHostIds;
             var detail = liveView.Detail.Where(r => CurrentWorkflowVersion(r, mailVersions) &&
-                allowedKeys.Contains(IntentKey(r)))
+                allowedIssueKeysByRecord.ContainsKey(RecordKey(r)))
+                .Select(r =>
+                {
+                    var allowedIssueKeys = allowedIssueKeysByRecord[RecordKey(r)];
+                    var allowedIssues = r.TopIssues.Where(issue => allowedIssueKeys.Contains(issue.EventKey)).ToList();
+                    if (allowedIssues.Count == r.TopIssues.Count) return r;
+                    var narrowed = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(r))!;
+                    narrowed.RecordId = r.RecordId;
+                    narrowed.TopIssues = allowedIssues;
+                    PrtgCorroboration.Refresh(narrowed);
+                    RecomputeTransientMailRisk(r, narrowed);
+                    return narrowed;
+                })
                 .Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg) ||
-                    (currentSettings.PrtgEnabled && PrtgOperationScope.SameSettings(settings, currentSettings) &&
+                    (sharedAuthorityAvailable && authoritySettings.PrtgEnabled && currentSettings.PrtgEnabled &&
+                     PrtgOperationScope.SameSettings(authoritySettings, currentSettings) &&
+                     PrtgOperationScope.SameSettings(settings, currentSettings) &&
                      (policy == null || policy.Revision == policyRevision && policy.Ready(currentSettings.PrtgUrl) &&
                         policy.HostIds.Contains(r.HostId) && r.TopIssues.Where(PrtgFindingMapper.IsPrtg).All(i =>
                             PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(i) ||
                             i.PrtgSourceGeneration == policy.SourceGeneration && i.EventKey.Split(':') is { Length: >= 3 } parts &&
                             long.TryParse(parts[2], out var targetId) &&
                             (i.EventKey.Split(':') is { Length: >= 2 } keyParts && keyParts[1] == PrtgRuleEvaluator.RuleSilent
-                                ? CurrentResource(r.HostId, targetId, i, r.Date)
-                                : policy.SensorIds.Contains(targetId) && CurrentResource(r.HostId, targetId, i, r.Date)))) &&
+                                ? CurrentResource(r.HostId, targetId, i, r.Date, authoritySettings, currentMessageFingerprint)
+                                : policy.SensorIds.Contains(targetId) && CurrentResource(r.HostId, targetId, i, r.Date, authoritySettings, currentMessageFingerprint)))) &&
                      (scopeReader == null || scopeReader.Read() == scopeRevision) &&
                      r.CanSupplementWithPrtg() && liveContext.Host(r.HostId) is { Active: true, MergedInto: null }))
                 .ToList();
             var liveFiltered = FilterUnresolvedWorkflowMail("urgent", email, new RecipientView(detail, visible), mailVersions, mailContextFingerprint);
+            if (_prtgBackend is not null && (!sharedAuthorityAvailable || sharedAuthority is null ||
+                    !PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out var finalAuthority, out _) ||
+                    finalAuthority!.SettingsBlobVersion != sharedAuthority.SettingsBlobVersion ||
+                    finalAuthority.PolicyBlobVersion != sharedAuthority.PolicyBlobVersion))
+                liveFiltered = RemovePrtgLanesTransiently(liveFiltered).Where(QualifiesForUrgentRisk).ToList();
             foreach (var oldRecipient in views.Keys.ToArray()) views.Remove(oldRecipient);
             foreach (var entry in liveViews) views[entry.Key] = entry.Value;
             return liveFiltered.Count == 0 && original.Detail?.Count > 0 ? null : new RecipientView(liveFiltered, visible);
         }
-        bool CurrentResource(long hostId, long sensorId, LogIssueSignature issue, DateTime recordDate)
+        bool CurrentResource(long hostId, long sensorId, LogIssueSignature issue, DateTime recordDate,
+            SystemSettings authoritySettings, string currentMessageFingerprint)
         {
-            if (IsStaleMessageStatusFinding(issue)) return false;
-            if (_prtgBackend == null) return true;
+            if (_prtgBackend == null)
+                return !PrtgFindingMapper.RequiresMessageTimeAuthority(issue) && !IsStaleMessageStatusFinding(issue, "");
+            if (IsStaleMessageStatusFinding(issue, currentMessageFingerprint)) return false;
             var host = _hosts.GetAll().FirstOrDefault(h => h.HostId == hostId);
             if (host == null || host.Source != "netiq") return false;
             var rules = new KnownIssueRuleStore(_prtgBackend.Blob("rules"));
@@ -1271,20 +1306,27 @@ public class MailNotificationService
             if (copy.Suppressed) return false;
             if (issue.EventKey.Split(':') is { Length: >= 2 } keyParts && keyParts[1] == PrtgRuleEvaluator.RuleSilent)
                 return PrtgSilentDeviceProofRevalidator.IsCurrent(_prtgBackend, hostId,
-                    recordDate, issue, capturedRule, _settingsStore.Get().PrtgUrl);
+                    recordDate, issue, capturedRule, authoritySettings.PrtgUrl);
             var identity = _prtgBackend.PrtgStore().GetResourceIdentity(sensorId);
             if (PrtgResourceProfileQualification.IsCpuOrMemoryPressure(issue))
                 return PrtgResourceProfileQualification.IsCurrentFormalPressure(_prtgBackend, hostId, sensorId,
                     issue, DateTime.UtcNow);
-            if (issue.RuleId != "builtin-prtg-resource-disk-pressure")
+            if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
+                return PrtgResourceQualification.IsCurrentDiskChannel(_prtgBackend, sensorId, identity);
+            if (issue.RuleId != "builtin-prtg-resource-disk-pressure" &&
+                PrtgFindingMapper.RequiresMessageTimeAuthority(issue))
             {
                 var evidence = new PrtgSensorTimelineStore(_prtgBackend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Get();
                 if (evidence.HostId != hostId || evidence.SourceGeneration != issue.PrtgSourceGeneration ||
                     evidence.ResourceGeneration != issue.PrtgResourceGeneration ||
                     !PrtgResourceQualification.IsCurrent(evidence, identity, issue.PrtgSourceGeneration,
-                        sensorId, identity.DeviceId, hostId,
-                        new PrtgMonitoringPolicyStore(_prtgBackend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get()
-                            .MessageTimeFingerprint(_settingsStore.Get().PrtgUrl))) return false;
+                        sensorId, identity.DeviceId, hostId, currentMessageFingerprint)) return false;
+            }
+            else if (issue.RuleId != "builtin-prtg-resource-disk-pressure" &&
+                     issue.RuleId is not ("disk_free_trend" or "builtin-prtg-disk-free-trend"))
+            {
+                // Unknown PRTG lanes need an explicit independent authority contract.
+                return false;
             }
             if (issue.RuleId == "builtin-prtg-resource-disk-pressure")
             {
@@ -1369,8 +1411,15 @@ public class MailNotificationService
                         // urgent message without coverage of its PRTG details. That delivery
                         // must not become formal PRTG acceptance evidence.
                         if (intent.Status == "smtp-accepted" && expected.Count > 0)
-                            foreach (var fact in PrtgUrgentFactsForAcceptedIntent(record, intent))
+                        {
+                            var deliveredIssueKeys = expected.Select(email => attemptedFormalDetails
+                                    .GetValueOrDefault(email)?.FirstOrDefault(delivered => RecordKey(delivered) == RecordKey(record)))
+                                .Select(delivered => delivered is null ? new HashSet<string>(StringComparer.Ordinal)
+                                    : PrtgUrgentFacts(delivered).Keys.ToHashSet(StringComparer.Ordinal))
+                                .Aggregate((left, right) => { left.IntersectWith(right); return left; });
+                            foreach (var fact in PrtgUrgentFactsForAcceptedIntent(record, intent, deliveredIssueKeys))
                                 s.PrtgUrgentAcceptedFacts[fact.Key] = fact.Value;
+                        }
                     }
                 });
             }, recheck: Recheck,
@@ -1439,9 +1488,12 @@ public class MailNotificationService
         .GroupBy(i => $"{record.HostId}|{i.EventKey}|{i.PrtgIncidentStartedAt:O}")
         .ToDictionary(g => g.Key, g => g.Max(i => (int)i.Severity + 10));
 
-    private static Dictionary<string, int> PrtgUrgentFactsForAcceptedIntent(DailyAnalysisRecord record, MailUrgentIntent intent)
+    private static Dictionary<string, int> PrtgUrgentFactsForAcceptedIntent(DailyAnalysisRecord record, MailUrgentIntent intent,
+        IReadOnlySet<string>? deliveredIssueKeys = null)
     {
         var accepted = record.TopIssues.Where(issue => PrtgFindingMapper.IsPrtg(issue) && !issue.Suppressed && issue.ElevatesDayRisk)
+            .Where(issue => deliveredIssueKeys == null || deliveredIssueKeys.Contains(
+                $"{record.HostId}|{issue.EventKey}|{issue.PrtgIncidentStartedAt:O}"))
             .Where(issue => !PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(issue) ||
                 intent.Recipients.Count > 0 && intent.Recipients.Keys.All(email =>
                     (intent.FormalStartFenceRefs?.ContainsKey(FormalRecipientIssueKey(email, issue)) == true ||
@@ -2516,36 +2568,21 @@ public class MailNotificationService
         return parts.Length >= 2 && DateTime.TryParse(parts[1], out var date) && date < cutoff;
     }
 
-    private static bool IsStaleMessageStatusFinding(LogIssueSignature issue) =>
-        RequiresMessageStatusSemanticVersion(issue) &&
-        issue.PrtgMessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
+    private static bool IsStaleMessageStatusFinding(LogIssueSignature issue, string expectedFingerprint) =>
+        PrtgFindingMapper.RequiresMessageTimeAuthority(issue) &&
+        (issue.PrtgMessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent ||
+         !PrtgFindingMapper.HasCurrentMessageTimeAuthority(issue, expectedFingerprint));
 
-    private static bool RequiresMessageStatusSemanticVersion(LogIssueSignature issue) =>
-        TryGetMessageStatusRuleCode(issue, out _);
-
-    private static bool TryGetMessageStatusRuleCode(LogIssueSignature issue, out string code)
+    private List<DailyAnalysisRecord> RemoveStaleMessageStatusFindings(IEnumerable<DailyAnalysisRecord> records)
     {
-        if (!PrtgFindingMapper.IsPrtg(issue)) { code = string.Empty; return false; }
-        if (PrtgFindingMapper.TryGetRuleCode(issue.Source, out var sourceCode) && IsMessageStatusCode(sourceCode))
-        { code = sourceCode; return true; }
-        if (issue.EventKey.Split(':') is { Length: >= 2 } keyParts &&
-            keyParts[0].Equals("prtg", StringComparison.OrdinalIgnoreCase) && IsMessageStatusCode(keyParts[1]))
-        { code = keyParts[1]; return true; }
-        code = string.Empty;
-        return false;
-    }
-
-    private static bool IsMessageStatusCode(string code) =>
-        code.Equals(PrtgRuleEvaluator.RuleDown, StringComparison.OrdinalIgnoreCase) ||
-        code.Equals(PrtgRuleEvaluator.RuleWarning, StringComparison.OrdinalIgnoreCase) ||
-        code.Equals(PrtgRuleEvaluator.RuleFlapping, StringComparison.OrdinalIgnoreCase);
-
-    private static List<DailyAnalysisRecord> RemoveStaleMessageStatusFindings(IEnumerable<DailyAnalysisRecord> records)
-    {
+        var expectedFingerprint = string.Empty;
+        if (_prtgBackend is not null && PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend,
+                out var sharedAuthority, out _))
+            expectedFingerprint = sharedAuthority!.Policy.MessageTimeFingerprint(sharedAuthority.Settings.PrtgUrl);
         var result = new List<DailyAnalysisRecord>();
         foreach (var record in records)
         {
-            if (!record.TopIssues.Any(IsStaleMessageStatusFinding))
+            if (!record.TopIssues.Any(issue => IsStaleMessageStatusFinding(issue, expectedFingerprint)))
             {
                 result.Add(record);
                 continue;
@@ -2553,7 +2590,7 @@ public class MailNotificationService
 
             var copy = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(record))!;
             copy.RecordId = record.RecordId;
-            copy.TopIssues = copy.TopIssues.Where(issue => !IsStaleMessageStatusFinding(issue)).ToList();
+            copy.TopIssues = copy.TopIssues.Where(issue => !IsStaleMessageStatusFinding(issue, expectedFingerprint)).ToList();
             PrtgCorroboration.Refresh(copy);
             var baseline = record.PrtgBaselineRiskLevel;
             if (baseline != null)
@@ -2581,6 +2618,100 @@ public class MailNotificationService
             result.Add(copy);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Filters stale PRTG evidence per issue lane on a transient mail projection. A bad
+    /// message or raw-channel proof must not suppress an independent NetIQ finding (or a
+    /// separately current PRTG lane) on the same host-day. Durable records remain untouched.
+    /// </summary>
+    private static List<DailyAnalysisRecord> FilterCurrentPrtgLanes(IEnumerable<DailyAnalysisRecord> records,
+        SystemSettings mailSettings, SystemSettings authoritySettings, PrtgMonitoringPolicy? policy,
+        string messageFingerprint, bool sharedAuthorityAvailable,
+        Func<long, long, LogIssueSignature, DateTime, SystemSettings, string, bool> currentResource)
+    {
+        var result = new List<DailyAnalysisRecord>();
+        foreach (var record in records)
+        {
+            if (!record.TopIssues.Any(PrtgFindingMapper.IsPrtg))
+            {
+                result.Add(record);
+                continue;
+            }
+
+            bool IsCurrentLane(LogIssueSignature issue)
+            {
+                if (!PrtgFindingMapper.IsPrtg(issue)) return true;
+                // Target-pressure findings are governed by the separate formal recipient
+                // fence immediately before transport; keep that independent lane here.
+                if (PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(issue)) return true;
+                if (!sharedAuthorityAvailable || policy is null ||
+                    !authoritySettings.PrtgEnabled || !mailSettings.PrtgEnabled ||
+                    !PrtgOperationScope.SameSettings(authoritySettings, mailSettings) ||
+                    !policy.Ready(authoritySettings.PrtgUrl) || !policy.HostIds.Contains(record.HostId) ||
+                    issue.PrtgSourceGeneration != policy.SourceGeneration ||
+                    issue.EventKey.Split(':') is not { Length: >= 3 } parts ||
+                    !long.TryParse(parts[2], out var sensorId)) return false;
+                var rulePart = parts[1];
+                if (rulePart != PrtgRuleEvaluator.RuleSilent && !policy.SensorIds.Contains(sensorId)) return false;
+                return currentResource(record.HostId, sensorId, issue, record.Date,
+                    authoritySettings, messageFingerprint);
+            }
+
+            var retained = record.TopIssues.Where(IsCurrentLane).ToList();
+            if (retained.Count == record.TopIssues.Count)
+            {
+                result.Add(record);
+                continue;
+            }
+
+            var copy = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(record))!;
+            copy.RecordId = record.RecordId;
+            copy.TopIssues = retained;
+            PrtgCorroboration.Refresh(copy);
+            RecomputeTransientMailRisk(record, copy);
+            result.Add(copy);
+        }
+        return result;
+    }
+
+    private static List<DailyAnalysisRecord> RemovePrtgLanesTransiently(IEnumerable<DailyAnalysisRecord> records)
+    {
+        var result = new List<DailyAnalysisRecord>();
+        foreach (var record in records)
+        {
+            if (!record.TopIssues.Any(PrtgFindingMapper.IsPrtg)) { result.Add(record); continue; }
+            var copy = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(record))!;
+            copy.RecordId = record.RecordId;
+            copy.TopIssues = copy.TopIssues.Where(issue => !PrtgFindingMapper.IsPrtg(issue)).ToList();
+            PrtgCorroboration.Refresh(copy);
+            RecomputeTransientMailRisk(record, copy);
+            result.Add(copy);
+        }
+        return result;
+    }
+
+    private static void RecomputeTransientMailRisk(DailyAnalysisRecord original, DailyAnalysisRecord copy)
+    {
+        var baseline = original.PrtgBaselineRiskLevel;
+        if (baseline != null)
+        {
+            copy.RiskLevel = RiskLevels.MoreSevere(baseline, PrtgFindingMapper.RiskFromFindings(copy.TopIssues));
+            copy.RiskBasis = copy.RiskLevel == baseline
+                ? original.PrtgBaselineRiskBasis : PrtgFindingMapper.RiskBasisFrom(copy.TopIssues);
+            return;
+        }
+
+        var correlations = copy.CorrelationAlerts.Select((description, index) => new CorrelationFinding
+        {
+            Description = description,
+            PatternId = index < copy.CorrelationAlertRefs.Count ? copy.CorrelationAlertRefs[index].PatternId : string.Empty,
+            Severity = IssueSeverity.High,
+            ElevatesDayRisk = false
+        }).ToList();
+        copy.RiskLevel = LogAnalysisService.ComputeRuleBasedRisk(copy.TopIssues, copy.TrendAlerts, correlations);
+        copy.RiskBasis = original.RiskBasis?.Contains("PRTG", StringComparison.OrdinalIgnoreCase) == true
+            ? null : original.RiskBasis;
     }
 
     /// <summary>

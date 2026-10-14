@@ -24,6 +24,7 @@ public sealed class PrtgSupplementReplayTests : IDisposable
         {
             p.Revision = "r1"; p.CoreSystemId = "core"; p.SourceGeneration = "source";
             p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
+            p.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24; p.MessageTimeAuthorityRevision = 1;
             p.EndpointHint = EfPrtgObservationStore.SourceHintFor("https://fixture.example");
             p.ValidFrom = DateTimeOffset.Now.AddDays(-3); p.HostIds = [1, 2, 3, 4]; p.SensorIds = [102, 103];
         });
@@ -53,7 +54,7 @@ public sealed class PrtgSupplementReplayTests : IDisposable
             TopIssues = issue ? [new() { LogName = "System", Source = "Disk", EventId = 153, EventKey = "netiq-disk", Count = 1, Severity = IssueSeverity.High }] : []
         });
     private void Observe(long id, int? statusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
-        string ruleId = "down")
+        string ruleId = "down", bool includeMessageFingerprint = true)
     {
         var sensorId = 100 + id;
         var prtgStore = _backend.PrtgStore();
@@ -74,13 +75,19 @@ public sealed class PrtgSupplementReplayTests : IDisposable
         new KnownIssueRuleStore(_backend.Blob("rules")).Save(new RuleFileContent { Rules = [rule] });
         var finding = new PrtgFinding(1, sensorId, "down", "confirmed sensor failure", 60, rule)
         { SourceGeneration = identity.SourceGeneration, ResourceGeneration = identity.Generation, IncidentStartedAt = new DateTimeOffset(_day),
-            MessageStatusSemanticVersion = statusSemanticVersion };
+            MessageStatusSemanticVersion = statusSemanticVersion,
+            MessageTimeFingerprint = includeMessageFingerprint
+                ? new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
+                    .Get().MessageTimeFingerprint("https://fixture.example")
+                : null };
         new EfPrtgObservationStore(_backend.CreateContext).Capture(id, _day, "r1", [(finding, PrtgFindingMapper.ToSignature(finding, _day))]);
         new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Update(e =>
         {
             e.Bind(sensorId, id, identity.SourceGeneration, $"supplement-resource-{sensorId}", identity.Generation,
                 identity.Epoch, identity.ChannelGeneration, new PrtgMonitoringPolicyStore(_backend.Blob(
                     PrtgMonitoringPolicyStore.BlobKey)).Get().ValidFrom);
+            e.MessageTimeFingerprint = new PrtgMonitoringPolicyStore(_backend.Blob(
+                PrtgMonitoringPolicyStore.BlobKey)).Get().MessageTimeFingerprint("https://fixture.example");
             e.Accept(e.ValidFrom, new DateTimeOffset(_day.AddDays(1)),
                 [new(e.SensorId, e.ValidFrom, "Down", e.SourceGeneration, e.ResourceGeneration)]);
         });
@@ -174,6 +181,20 @@ public sealed class PrtgSupplementReplayTests : IDisposable
     }
 
     [Fact]
+    public void 舊訊息finding缺少指紋時不能由新timeline重新取證()
+    {
+        Parent(2);
+        Observe(2, includeMessageFingerprint: false);
+
+        Assert.Equal(0, Replay().RunBatch());
+        using var db = _backend.CreateContext();
+        Assert.Empty(db.TopIssues);
+        Assert.Equal("invalid", Assert.Single(db.PrtgObservations).SupplementStatus);
+        Assert.NotEmpty(new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 102))
+            .Get().MessageTimeFingerprint);
+    }
+
+    [Fact]
     public void 四主機矩陣_缺Netiq不建立正式資料_晚到零事件成功才追加_重啟五次不重派()
     {
         Parent(1, issue: true); Parent(3, issue: true); Observe(2); Observe(3);
@@ -192,6 +213,13 @@ public sealed class PrtgSupplementReplayTests : IDisposable
             Assert.Equal(2, db.IssueCases.Count()); Assert.Single(db.WorkOrders);
             Assert.All(db.PrtgObservations, o => Assert.Equal("applied", o.SupplementStatus));
             Assert.All(db.IssueCases, c => Assert.Contains("confirmed sensor failure", c.PrtgEvidenceJson));
+            var messageFingerprint = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
+                .Get().MessageTimeFingerprint("https://fixture.example");
+            var messageEvidence = db.IssueCases.AsEnumerable().Where(c => c.PrtgEvidenceJson != null)
+                .Select(c => System.Text.Json.JsonSerializer.Deserialize<PrtgCaseEvidence>(c.PrtgEvidenceJson!))
+                .ToArray();
+            Assert.Equal(2, messageEvidence.Length);
+            Assert.All(messageEvidence, evidence => Assert.Equal(messageFingerprint, evidence!.PrtgMessageTimeFingerprint));
         }
     }
 

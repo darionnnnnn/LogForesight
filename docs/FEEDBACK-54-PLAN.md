@@ -369,3 +369,10 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 正常 controller→service→來源／主頻道／historicdata→結果與語意證據使用保存的來源 API、raw OA 與分析時區及精確 profile 合約；canonical 資源指紋一致。單日 DST 23／25 小時區間不依本機時區；歧義端點／樣本、authority 缺少／漂移保持等待或失效。比較樣本在 SQL 依品質、時間及 ID 排序只投影最多 5 筆時間／數值，不宣稱整日涵蓋。
 - 主代理檢查完整呼叫鏈並在隔離 checkout 獨立執行 Probe／VerificationService 60/60 通過、零略過（59 秒）；work/round54-mode-validation/work/c1-root/c1-root.trx。含正常入口取得 Verified、DST、malformed policy、來源漂移及人工證據失效反例。測試使用獨立 request budget，未證正式 shared historic SQL admission；production guard 未變。
 - 後端回應已完成分析日期／時區供 F1 UI 使用；UI 尚未完成瀏覽器核驗，不勾 C1／E03／E08 父驗收或整輪完成。
+
+### B2接線段：已保存訊息時間指紋到正式消費端
+
+- range 取數依保存的 strict 格式／fingerprint，請求與頁提交核當前 authority；未配置格式只等待文字 messages，保留獨立數值。daily／歷史回填／snapshot queue 接入保存政策。finding→signature→SQL TopIssue→pending/replay/mail 保留原 fingerprint，nullable 新欄不回填舊授權。
+- 正式通知逐 issue 排除過期訊息／raw 證據，保留同主機合法 NetIQ、有效 message 及有效 raw disk trend；送達事實只記各實際收件者都收到的 issue。paired shared authority 及版本在重查前後核對；explicit-null policy 當不可用，保持歷史與其他 lane。人工歷史案件／回覆不改寫，缺訊息指紋的舊證據標示 legacy-message-time-unverified。
+- 主代理讀取實際 diff／producer／persisted projection／consumer，隔離 checkout 獨立 42/42、零略過（1分50秒），含真 SQL TopIssue readback、受控 SMTP 混合 lane、range authority drift、replay、case history 及 5 個 tiny null authority 反例。work/round54-mode-validation/work/b2-root/b2-root.trx；補 daily provider 後 Web build 0 errors，16 個既有 nullable／captured-field warnings。
+- 此段取代前文 B1 紀錄的 range／finding→SQL／replay／mail 待接線項；正式 Date Format 樣本 probe／離線證據與 tiny 多頁 cursor lifecycle 仍在本輪補齊，A2差額／通知去重回退、報告／匯出最終生命週期矩陣及整輪驗收仍未通過。未把 account format 設定當成已從遠端讀回的事實。

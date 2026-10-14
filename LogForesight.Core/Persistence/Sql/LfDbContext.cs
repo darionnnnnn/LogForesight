@@ -261,6 +261,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.EventCount).HasColumnName("event_count").HasDefaultValue(0);
             e.Property(x => x.ElevatesDayRisk).HasColumnName("elevates_day_risk").HasDefaultValue(false);
             e.Property(x => x.PrtgMessageStatusSemanticVersion).HasColumnName("prtg_message_status_semantic_version");
+            e.Property(x => x.PrtgMessageTimeFingerprint).HasColumnName("prtg_message_time_fingerprint");
             // 完整簽章的另外兩段：依問題視角以 (Source, EventId) 分組，但處理狀態是以
             // **完整簽章**（LogName|Source|EventId|EntryType）為鍵——少了這兩欄就 join 不到
             // 處理狀態，§10.6「排除已有結論的問題」也就做不出來（規劃 §8.1 缺陷 1）
@@ -831,6 +832,9 @@ public class TopIssueRow
 
     /// <summary>PRTG message-status interpretation version; null for legacy and non-status issue rows.</summary>
     public int? PrtgMessageStatusSemanticVersion { get; set; }
+
+    /// <summary>Saved PRTG message-time authority fingerprint; null means the legacy row is untrusted.</summary>
+    public string? PrtgMessageTimeFingerprint { get; set; }
 
     /// <summary>完整簽章的第一段——與 <see cref="EntryType"/> 一起才能組回 IssueSignatureKey 去 join 處理狀態</summary>
     public string LogName { get; set; } = string.Empty;

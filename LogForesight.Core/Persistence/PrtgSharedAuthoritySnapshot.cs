@@ -34,6 +34,10 @@ public sealed record PrtgSharedAuthoritySnapshot(SystemSettings Settings, PrtgMo
         var policy = policyRow.Prefix is null && policyRow.Version == 0 ? new PrtgMonitoringPolicy()
             : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRow.Prefix!, LfJsonOptions.Pretty)
                 ?? throw new JsonException("PRTG monitoring policy authority is null.");
+        if (policy.HostIds is null || policy.SensorIds is null ||
+            typeof(PrtgMonitoringPolicy).GetProperties().Any(property =>
+                property.PropertyType == typeof(string) && property.GetValue(policy) is null))
+            throw new JsonException("PRTG monitoring policy contains null authority fields.");
         return new(settings, policy, settingsRow.Version, policyRow.Version);
     }
 

@@ -65,6 +65,38 @@ public class PrtgFindingMapperTests
     }
 
     [Fact]
+    public void MessageAuthority_只綁文字狀態Finding且缺少舊指紋不追認()
+    {
+        const string fingerprint = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
+        var down = new PrtgFinding(1001, 2001, PrtgRuleEvaluator.RuleDown, "Down", 60,
+            SeedRules["builtin-prtg-down"])
+        { MessageTimeFingerprint = fingerprint };
+        var textIssue = PrtgFindingMapper.ToSignature(down, TestDay);
+        Assert.Equal(fingerprint, textIssue.PrtgMessageTimeFingerprint);
+        Assert.True(PrtgFindingMapper.HasCurrentMessageTimeAuthority(textIssue, fingerprint));
+        Assert.False(PrtgFindingMapper.HasCurrentMessageTimeAuthority(textIssue, "changed"));
+        var legacyTextIssue = System.Text.Json.JsonSerializer.Deserialize<LogIssueSignature>(
+            System.Text.Json.JsonSerializer.Serialize(textIssue))!;
+        legacyTextIssue.PrtgMessageTimeFingerprint = null;
+        Assert.False(PrtgFindingMapper.HasCurrentMessageTimeAuthority(legacyTextIssue, fingerprint));
+        legacyTextIssue.Source = "PRTG";
+        Assert.True(PrtgFindingMapper.RequiresMessageTimeAuthority(legacyTextIssue));
+        Assert.False(PrtgFindingMapper.HasCurrentMessageTimeAuthority(legacyTextIssue, fingerprint));
+
+        var legacyDiskTrend = new PrtgFinding(1001, 2001, PrtgRuleEvaluator.RuleDiskFreeTrend,
+            "Disk trend", 1, SeedRules["builtin-prtg-disk-free-trend"]);
+        var diskIssue = PrtgFindingMapper.ToSignature(legacyDiskTrend, TestDay);
+        Assert.Null(diskIssue.PrtgMessageTimeFingerprint);
+        Assert.False(PrtgFindingMapper.RequiresMessageTimeAuthority(diskIssue));
+
+        var silent = new PrtgFinding(1001, null, PrtgRuleEvaluator.RuleSilent, "Silent", 1,
+            SeedRules["builtin-prtg-silent"]) { MessageTimeFingerprint = fingerprint };
+        var silentIssue = PrtgFindingMapper.ToSignature(silent, TestDay);
+        Assert.False(PrtgFindingMapper.RequiresMessageTimeAuthority(silentIssue));
+        Assert.Equal(fingerprint, silentIssue.PrtgMessageTimeFingerprint);
+    }
+
+    [Fact]
     public void DiskResourceAggregate_OnlyGovernedCurrentRuleMayUseLegacyTrendIdentityAndReasonLabel()
     {
         var rule = System.Text.Json.JsonSerializer.Deserialize<KnownIssueRule>(System.Text.Json.JsonSerializer.Serialize(

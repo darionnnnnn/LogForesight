@@ -38,6 +38,9 @@ public class LogIssueSignature
     /// <summary>隨狀態風險保存的解析版本，防止舊結果在時間軸重建後重新獲准。</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public int? PrtgMessageStatusSemanticVersion { get; set; }
+    /// <summary>Message timestamp parser authority captured when a text/status finding was produced.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PrtgMessageTimeFingerprint { get; set; }
     public DateTimeOffset? PrtgIncidentStartedAt { get; set; }
     /// <summary>Server-authored resource reason label; event/source identity remains the governed legacy key.</summary>
     public string? PrtgDisplayLabel { get; set; }

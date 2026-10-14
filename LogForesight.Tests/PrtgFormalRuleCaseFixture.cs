@@ -68,6 +68,8 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
             policy.SensorIds = [];
             policy.SourceTimeZoneId = TimeZoneInfo.Local.Id;
             policy.SourceCultureName = "en-US";
+            policy.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
+            policy.MessageTimeAuthorityRevision = 1;
             policy.RawTimestampTimeZoneId = "UTC";
             policy.AnalysisTimeZoneId = TimeZoneInfo.Local.Id;
             policy.TimeBasisEvidenceReference = "synthetic-fixture-time-basis";
@@ -237,6 +239,7 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
             evidence.Accept(new DateTimeOffset(coverageStart), new DateTimeOffset(AnalysisDay.AddDays(1)),
                 timedStates.Select(item => new PrtgTimedState(SensorId, new DateTimeOffset(item.At), item.Status,
                     identity.SourceGeneration, identity.Generation)));
+            evidence.MessageTimeFingerprint = policy.Get().MessageTimeFingerprint(SourceUrl);
         });
         if (includeParent)
         {

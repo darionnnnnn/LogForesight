@@ -21,6 +21,129 @@ public class PrtgFetchServiceTests : IDisposable
 
     private EfPrtgStore CreateStore() => new(_fx.NewContext);
 
+    private static PrtgMonitoringPolicy MessagePolicy => new()
+    {
+        CoreSystemId = "fetch-test-core", SourceGeneration = "fetch-test-source",
+        EndpointHint = EfPrtgObservationStore.SourceHintFor("https://prtg.example.com"),
+        ValidFrom = DateTimeOffset.Now.AddDays(-1), HostIds = [1], SensorIds = [1],
+        SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US",
+        MessageDateFormat = PrtgMessageDateTimeParser.Ymd24, MessageTimeAuthorityRevision = 1
+    };
+
+    private PrtgFetchService NewFetchService(PrtgClient client, EfPrtgStore store,
+        PrtgFreshnessStore freshness, IRunConsole console, IReadOnlyDictionary<string, string> categoryOverrides,
+        PrtgResourceGuard? guard = null) => new(client, store, freshness, console, categoryOverrides, guard,
+        () => (MessagePolicy, "https://prtg.example.com"));
+
+    [Fact]
+    public async Task 未設定訊息時間格式時略過messages但仍獨立寫入數值()
+    {
+        var (client, handler) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("historicdata.json"))
+                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":12.5,\"coverage\":100}]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        SeedOldSensors(store, (201, 1));
+        var service = new PrtgFetchService(client, store,
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None,
+            ScopeOf(1), syncStructure: false, fetchValues: true);
+
+        Assert.DoesNotContain(handler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
+        Assert.Contains(handler.RequestedUrls, url => url.Contains("historicdata.json", StringComparison.Ordinal));
+        Assert.Equal(1, result.Values);
+        using var db = _fx.NewContext();
+        Assert.Equal(12.5, await db.PrtgValues.Where(row => row.SensorObjid == 201)
+            .Select(row => row.AvgValue).SingleAsync());
+    }
+
+    [Fact]
+    public async Task Range拒絕與已儲存格式不符的訊息列且不授予完成指紋()
+    {
+        var (client, handler) = CreateClient(_ => JsonResponse(
+            "{\"treesize\":1,\"messages\":[{\"objid\":201,\"datetime\":\"12/31/2026 11:59 PM\",\"status\":\"Down\",\"message\":\"fixture\"}]}"));
+        var store = CreateStore();
+        var service = NewFetchService(client, store,
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchStateChangesRangeAsync(DateTime.Today, DateTime.Today,
+            [1], 1, CancellationToken.None);
+
+        Assert.False(result.Converged);
+        Assert.Null(result.MessageTimeFingerprint);
+        Assert.Contains(handler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
+        using var db = _fx.NewContext();
+        Assert.Empty(await db.PrtgStateChanges.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Range成功時攜帶原始savedAuthorityFingerprint()
+    {
+        var today = DateTime.Today;
+        var (client, _) = CreateMessagesClient(new Dictionary<long, string>
+        { [1] = MessagesJson((201, today.AddHours(1))) });
+        var service = NewFetchService(client, CreateStore(),
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, [1], 1, CancellationToken.None);
+
+        Assert.True(result.Converged);
+        Assert.Equal(MessagePolicy.MessageTimeFingerprint("https://prtg.example.com"), result.MessageTimeFingerprint);
+    }
+
+    [Fact]
+    public async Task Range收到頁面期間savedAuthority漂移時不提交該頁message列()
+    {
+        var today = DateTime.Today;
+        var livePolicy = MessagePolicy;
+        var handler = new StubHandler
+        {
+            OnSend = (request, _) =>
+            {
+                var url = request.RequestUri!.ToString();
+                if (!url.Contains("content=messages", StringComparison.Ordinal))
+                    return Task.FromResult(JsonResponse("{}", HttpStatusCode.NotFound));
+
+                livePolicy = new PrtgMonitoringPolicy
+                {
+                    CoreSystemId = MessagePolicy.CoreSystemId,
+                    SourceGeneration = MessagePolicy.SourceGeneration,
+                    EndpointHint = MessagePolicy.EndpointHint,
+                    ValidFrom = MessagePolicy.ValidFrom,
+                    HostIds = [.. MessagePolicy.HostIds],
+                    SensorIds = [.. MessagePolicy.SensorIds],
+                    SourceTimeZoneId = MessagePolicy.SourceTimeZoneId,
+                    SourceCultureName = MessagePolicy.SourceCultureName,
+                    MessageDateFormat = PrtgMessageDateTimeParser.Dmy24,
+                    MessageTimeAuthorityRevision = MessagePolicy.MessageTimeAuthorityRevision + 1
+                };
+                return Task.FromResult(JsonResponse(MessagesJson((201, today.AddHours(1)))));
+            }
+        };
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler,
+            PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        var store = CreateStore();
+        var service = new PrtgFetchService(client, store,
+            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
+            new TestConsole(), new Dictionary<string, string>(), null,
+            () => (livePolicy, "https://prtg.example.com"));
+
+        var result = await service.FetchStateChangesRangeAsync(today, today, [1], 1, CancellationToken.None);
+
+        Assert.False(result.Converged);
+        Assert.Null(result.MessageTimeFingerprint);
+        Assert.Contains("授權在分頁期間變更", result.Error);
+        using var db = _fx.NewContext();
+        Assert.Empty(await db.PrtgStateChanges.ToListAsync());
+    }
+
     private static HttpResponseMessage JsonResponse(string json, HttpStatusCode code = HttpStatusCode.OK)
     {
         return new HttpResponseMessage(code)
@@ -107,7 +230,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
@@ -162,7 +285,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 跑第一次
@@ -208,7 +331,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
@@ -259,7 +382,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
@@ -305,7 +428,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
@@ -351,7 +474,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
@@ -399,7 +522,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(101));
@@ -436,7 +559,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 斷言不擲出例外
@@ -488,7 +611,7 @@ public class PrtgFetchServiceTests : IDisposable
         var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 限制併發數為 1
@@ -534,7 +657,7 @@ public class PrtgFetchServiceTests : IDisposable
         };
 
         var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), concurrency: 3, CancellationToken.None, ScopeOf(0));
 
@@ -581,7 +704,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, NoScope);
@@ -611,7 +734,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var store = CreateStore();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var task = service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope);
         var finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10)));
@@ -642,7 +765,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope);
 
@@ -684,7 +807,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var store = CreateStore();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(day, 1, CancellationToken.None, ScopeOf(1));
 
@@ -754,7 +877,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var (client, _) = CreateHistClient(histJson);
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var result = await service.FetchDayAsync(new DateTime(2026, 9, 10), 1, CancellationToken.None, ScopeOf(1));
         using var ctx = _fx.NewContext();
         var rows = await ctx.PrtgValues.OrderBy(v => v.PeriodStart).ToListAsync();
@@ -976,7 +1099,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
@@ -1010,7 +1133,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
@@ -1045,7 +1168,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
@@ -1073,7 +1196,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(1));
 
@@ -1103,7 +1226,7 @@ public class PrtgFetchServiceTests : IDisposable
         }, syncedAt);
 
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope, syncStructure: false);
 
@@ -1126,7 +1249,7 @@ public class PrtgFetchServiceTests : IDisposable
         var (client, handler) = CreateClient(_ => JsonResponse("{}"));
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope, syncStructure: false);
 
@@ -1165,7 +1288,7 @@ public class PrtgFetchServiceTests : IDisposable
         var console = new TestConsole();
         // 建構端傳入的補充表必須真的流到分類重算（203 只在補充表裡）
         var overrides = PrtgSensorTypeCategoryMap.ParseOverrides(new[] { "Custom Fan=hardware" }).Map;
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, overrides);
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, overrides);
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 1, CancellationToken.None, ScopeOf(101));
@@ -1212,7 +1335,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var result = await service.FetchDayAsync(day, 1, CancellationToken.None, ScopeOf(101), syncStructure: true, fetchValues: false);
@@ -1256,7 +1379,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         // 指定 501，未指定 502 與 503
@@ -1286,7 +1409,7 @@ public class PrtgFetchServiceTests : IDisposable
             + "{\"datetime\":\"2026-08-31 00:00:00\",\"value_raw\":3}]}"));
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store,
+        var service = NewFetchService(client, store,
             new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
             console, new Dictionary<string, string>());
 
@@ -1308,7 +1431,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
         var sensors = new long[] { 101, 102, 103, 104, 105, 106 };
 
@@ -1376,7 +1499,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var day = new DateTime(2026, 8, 30);
 
         var reports = new List<(string Stage, int Done, int Total)>();
@@ -1427,7 +1550,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
 
         var reports = new List<(string Stage, int Done, int Total)>();
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(101),
             syncStructure: true, fetchValues: false,
@@ -1474,7 +1597,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
         await service.FetchDayAsync(DateTime.Today.AddDays(-daysAgo), 2, CancellationToken.None, ScopeOf(1),
             syncStructure: true, fetchValues: false);
 
@@ -1508,7 +1631,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
         await service.FetchStateChangesRangeAsync(DateTime.Today.AddDays(-daysAgo), DateTime.Today, new long[] { 1 }, 1, CancellationToken.None);
 
         var messageUrl = Assert.Single(messageUrls);
@@ -1537,7 +1660,7 @@ public class PrtgFetchServiceTests : IDisposable
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
 
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
         await service.FetchDayAsync(DateTime.Today.AddDays(-400), 2, CancellationToken.None, ScopeOf(1),
             syncStructure: true, fetchValues: false);
 
@@ -1606,7 +1729,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
@@ -1665,7 +1788,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
@@ -1709,7 +1832,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
@@ -1753,7 +1876,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
@@ -1786,7 +1909,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
 
@@ -1825,7 +1948,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 第一次執行：新增 2 筆
         var res1 = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1 }, 1, CancellationToken.None);
@@ -1865,7 +1988,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         var store = CreateStore();
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(day, 2, CancellationToken.None, ScopeOf(1), syncStructure: true, fetchValues: false);
 
@@ -1919,7 +2042,7 @@ public class PrtgFetchServiceTests : IDisposable
             [1] = MessagesJson((201, today.AddHours(1))),
             [2] = MessagesJson((202, today.AddHours(2))),
         });
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(today.AddDays(-1), 2, CancellationToken.None, ScopeOf(1, 2), fetchValues: false);
 
@@ -1938,7 +2061,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var (client, handler) = CreateMessagesClient(new Dictionary<long, string>());
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(DateTime.Today.AddDays(-1), 2, CancellationToken.None, NoScope, fetchValues: false);
 
@@ -1952,7 +2075,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var (client, handler) = CreateMessagesClient(new Dictionary<long, string>());
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(DateTime.Today.AddDays(-1), 2, CancellationToken.None,
             _ => throw new InvalidOperationException("模擬範圍計算失敗"), fetchValues: false);
@@ -1987,7 +2110,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 2, Name = "Dev-Two" } }, DateTime.Now);
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1, 2 }, 2, CancellationToken.None);
 
@@ -2012,7 +2135,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 2, Name = "Dev-Two" } }, DateTime.Now);
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(today.AddDays(-1), 2, CancellationToken.None, ScopeOf(1, 2), fetchValues: false);
 
@@ -2028,7 +2151,7 @@ public class PrtgFetchServiceTests : IDisposable
         var today = DateTime.Today;
         var (emptyClient, _) = CreateMessagesClient(new Dictionary<long, string>());
         var emptyConsole = new TestConsole();
-        var emptyService = new PrtgFetchService(emptyClient, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), emptyConsole, new Dictionary<string, string>());
+        var emptyService = NewFetchService(emptyClient, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), emptyConsole, new Dictionary<string, string>());
         var emptyResult = await emptyService.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1, 2 }, 2, CancellationToken.None);
         Assert.Contains(emptyConsole.Lines, l => l.Contains("9d-5") && l.Contains("範圍內 2 台裝置近期都沒有任何狀態變更"));
         Assert.Equal(2, emptyResult.EmptyObjects);
@@ -2038,7 +2161,7 @@ public class PrtgFetchServiceTests : IDisposable
             [2] = MessagesJson((202, today.AddHours(1))),
         });
         var someConsole = new TestConsole();
-        var someService = new PrtgFetchService(someClient, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), someConsole, new Dictionary<string, string>());
+        var someService = NewFetchService(someClient, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), someConsole, new Dictionary<string, string>());
         var someResult = await someService.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1, 2 }, 2, CancellationToken.None);
         Assert.DoesNotContain(someConsole.Lines, l => l.Contains("9d-5"));
         Assert.Equal(1, someResult.EmptyObjects);
@@ -2064,7 +2187,7 @@ public class PrtgFetchServiceTests : IDisposable
                 return JsonResponse(HasIdQuery(url, 1) ? oldPage : recentPage);
             return JsonResponse("{\"messages\":[]}");
         });
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         // 併發 1：裝置 1 一定先跑完，它的提早停止若外洩就會讓裝置 2 少翻一頁
         var result = await service.FetchStateChangesRangeAsync(fromDate, toDate, new long[] { 1, 2 }, 1, CancellationToken.None);
@@ -2110,7 +2233,7 @@ public class PrtgFetchServiceTests : IDisposable
                 return Task.CompletedTask;
             }
         };
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>(), guard);
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>(), guard);
 
         var result = await service.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1 }, 1, CancellationToken.None);
 
@@ -2130,7 +2253,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         SeedOldSensors(store, (201, 1));
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(today.AddDays(-1), today, new long[] { 1 }, 1, CancellationToken.None);
 
@@ -2185,7 +2308,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var (client, handler) = CreateScopeClient("ok");
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
         var received = new List<bool>();
 
         await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, MarkingScope(handler, received));
@@ -2206,7 +2329,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var (client, handler) = CreateScopeClient("ok");
         var store = CreateStore();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
         // 先跑一次讓鏡像有感測器（syncStructure:false 需要既有鏡像）
         await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, ScopeOf(101));
         lock (handler.RequestedUrls) handler.RequestedUrls.Clear();
@@ -2229,7 +2352,7 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task FetchDayAsync_範圍提供者收到的devicesRefreshed依裝置同步結果(string devicesMode, bool expected)
     {
         var (client, handler) = CreateScopeClient(devicesMode);
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
         var received = new List<bool>();
 
         await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, MarkingScope(handler, received));
@@ -2242,7 +2365,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var (client, handler) = CreateScopeClient("ok");
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var baseline = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None, NoScope);
         lock (handler.RequestedUrls) handler.RequestedUrls.Clear();
@@ -2291,7 +2414,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         SeedOldDevices(store, new long[] { 101, 102, 99 });
         var console = new TestConsole();
-        var service = new PrtgFetchService(CreateDevicesOnlyClient(new long[] { 101, 102 }), store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console,
+        var service = NewFetchService(CreateDevicesOnlyClient(new long[] { 101, 102 }), store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console,
             new Dictionary<string, string>());
 
         int? devicesSeenByProvider = null;
@@ -2325,7 +2448,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
         var store = CreateStore();
         SeedOldDevices(store, new long[] { 101, 102, 99 });
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
             fetchValues: false);
@@ -2356,7 +2479,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         SeedOldDevices(store, new long[] { 99 });
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
             fetchValues: false);
@@ -2374,7 +2497,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         SeedOldDevices(store, Enumerable.Range(1, 10).Select(i => (long)i));
         var console = new TestConsole();
-        var service = new PrtgFetchService(CreateDevicesOnlyClient(new long[] { 1, 2, 3, 4 }), store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console,
+        var service = NewFetchService(CreateDevicesOnlyClient(new long[] { 1, 2, 3, 4 }), store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console,
             new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
@@ -2470,7 +2593,7 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task 感測器同步_範圍不超過門檻時逐台帶id查詢且沒有全站查詢()
     {
         var (client, handler) = CreateSensorScopeClient(TwoDeviceSensors);
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
             fetchValues: false);
@@ -2493,7 +2616,7 @@ public class PrtgFetchServiceTests : IDisposable
         store.ScopeBaseline().Update(b => { b.DeviceCount = 2; b.At = DateTime.Now.AddDays(-1); });
         var console = new TestConsole();
         var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, devices: new long[] { 1, 2 });
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
             fetchValues: false);
@@ -2527,7 +2650,7 @@ public class PrtgFetchServiceTests : IDisposable
         });
         var console = new TestConsole();
         var freshness = new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey));
-        var service = new PrtgFetchService(client, store, freshness, console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, freshness, console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
             _ => new PrtgScopeResult(new HashSet<long> { 1 }, 1, 0, 0, 0), fetchValues: false);
@@ -2549,7 +2672,7 @@ public class PrtgFetchServiceTests : IDisposable
         SeedOldSensors(store, (9901, 3));
         var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, devices: new long[] { 1, 2 });
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
             ScopeOf(1, 2), fetchValues: false);
@@ -2567,7 +2690,7 @@ public class PrtgFetchServiceTests : IDisposable
         SeedOldSensors(store, (301, 3));
         var console = new TestConsole();
         var (client, handler) = CreateSensorScopeClient(TwoDeviceSensors);
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, NoScope,
             fetchValues: false);
@@ -2585,7 +2708,7 @@ public class PrtgFetchServiceTests : IDisposable
         SeedOldSensors(store, (301, 3));
         var console = new TestConsole();
         var (client, handler) = CreateSensorScopeClient(TwoDeviceSensors);
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
             _ => throw new InvalidOperationException("範圍壞了"), fetchValues: false);
@@ -2603,7 +2726,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         SeedOldSensors(store, (301, 3));
         var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, failingDevice: 2);
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
             fetchValues: false);
@@ -2624,7 +2747,7 @@ public class PrtgFetchServiceTests : IDisposable
         }, DateTime.Now.AddDays(-3));
         var (client, _) = CreateSensorScopeClient(new FakeSensor[] { new(201, 1, "D1-A") }, devices: new long[] { 1, 2 });
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
             fetchValues: false);
@@ -2641,7 +2764,7 @@ public class PrtgFetchServiceTests : IDisposable
         SeedOldSensors(store, (301, 3));
         var (client, _) = CreateSensorScopeClient(TwoDeviceSensors);
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         // 範圍只有守門裝置（Mapped = 0）：主機主檔讀到空清單時就是這個形狀
         await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None,
@@ -2657,7 +2780,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         var (client, handler) = CreateSensorScopeClient(Array.Empty<FakeSensor>());
         var console = new TestConsole();
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, NoScope,
             syncStructure: false, fetchValues: false);
@@ -2673,7 +2796,7 @@ public class PrtgFetchServiceTests : IDisposable
         var store = CreateStore();
         SeedOldSensors(store, (301, 3));
         var (client, _) = CreateSensorScopeClient(Array.Empty<FakeSensor>());
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
             fetchValues: false);
@@ -2687,7 +2810,7 @@ public class PrtgFetchServiceTests : IDisposable
     {
         var console = new TestConsole();
         var (client, _) = CreateSensorScopeClient(TwoDeviceSensors, failingDevice: 2);
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(1, 2),
             fetchValues: false);
@@ -2703,7 +2826,7 @@ public class PrtgFetchServiceTests : IDisposable
     public async Task 感測器同步_範圍超過門檻時全站分頁一次且只寫範圍內()
     {
         var (client, handler) = CreateSensorScopeClient(new FakeSensor[] { new(201, 1, "D1-A"), new(901, 9999, "Out") });
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
         var scope = Enumerable.Range(1, 501).Select(i => (long)i).ToArray();
 
         var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(scope),
@@ -2727,7 +2850,7 @@ public class PrtgFetchServiceTests : IDisposable
             new(901, 7777, "Out"),
         };
         var (client, handler) = CreateSensorScopeClient(sensors);
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         List<(long, long, string, string, string?, bool)> Snapshot()
         {
@@ -2765,7 +2888,7 @@ public class PrtgFetchServiceTests : IDisposable
             new(301, 3, "D3-A"),
         };
         var (client, handler) = CreateSensorScopeClient(sensors);
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
         var scope = siteWide
             ? new long[] { 1 }.Concat(Enumerable.Range(1000, 500).Select(i => (long)i)).ToArray()
             : new long[] { 1 };
@@ -2797,7 +2920,7 @@ public class PrtgFetchServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 900, DeviceObjid = 999, Name = "Old", SensorType = "ping", Status = "Up" }
         }, new DateTime(2020, 1, 1));
-        var service = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(),
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(),
             new Dictionary<string, string> { ["wmicpu"] = PrtgSensorCategories.Cpu });
 
         var before = DateTime.Now;
@@ -2832,7 +2955,7 @@ public class PrtgFetchServiceTests : IDisposable
                 return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
             return JsonResponse("{}", HttpStatusCode.InternalServerError);
         });
-        var service = new PrtgFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var service = NewFetchService(client, CreateStore(), new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
 
         var result = await service.BackfillSensorsForDevicesAsync(new long[] { 101, 102, 103 }, 1, CancellationToken.None);
 

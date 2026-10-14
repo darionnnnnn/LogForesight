@@ -28,7 +28,11 @@ public sealed record PrtgStateChangeRangeResult(
     string? Error,
     int QueriedObjects, // 逐一查詢的物件數
     int FailedObjects,  // 例外或分頁未收斂的物件數
-    int EmptyObjects);  // 本趟區間內一筆都沒取到的物件數
+    int EmptyObjects)  // 本趟區間內一筆都沒取到的物件數
+{
+    /// <summary>Authority used to parse this completed range; empty on missing/drifted authority.</summary>
+    public string? MessageTimeFingerprint { get; init; }
+}
 
 /// <summary>範圍補抓結果：寫入的感測器數、取得失敗的裝置、查詢成功但 PRTG 端一顆感測器都沒有的裝置。</summary>
 public sealed record PrtgSensorBackfillResult(
@@ -74,6 +78,7 @@ public sealed class PrtgFetchService
     private readonly IRunConsole _console;
     private readonly PrtgResourceGuard? _guard;
     private readonly IReadOnlyDictionary<string, string> _categoryOverrides;
+    private readonly Func<(PrtgMonitoringPolicy Policy, string Url)>? _messageTimeAuthorityProvider;
 
     /// <param name="categoryOverrides">
     /// sensor type 語意分類補充對照表，由建構端以
@@ -81,7 +86,8 @@ public sealed class PrtgFetchService
     /// （錯誤行已被略過；設定層存檔時已擋，這裡只防禦舊資料）。
     /// </param>
     public PrtgFetchService(PrtgClient client, EfPrtgStore store, PrtgFreshnessStore freshness, IRunConsole console,
-        IReadOnlyDictionary<string, string> categoryOverrides, PrtgResourceGuard? guard = null)
+        IReadOnlyDictionary<string, string> categoryOverrides, PrtgResourceGuard? guard = null,
+        Func<(PrtgMonitoringPolicy Policy, string Url)>? messageTimeAuthorityProvider = null)
     {
         _client = client;
         _store = store;
@@ -89,6 +95,7 @@ public sealed class PrtgFetchService
         _console = console;
         _categoryOverrides = categoryOverrides;
         _guard = guard;
+        _messageTimeAuthorityProvider = messageTimeAuthorityProvider;
     }
 
     /// <summary>
@@ -750,6 +757,16 @@ public sealed class PrtgFetchService
 
         var objects = StateChangeQueryObjects(scopeDeviceObjids);
         var totalObjects = objects.Count;
+        var messageAuthority = ReadMessageTimeAuthority();
+        if (messageAuthority is null)
+        {
+            var reason = _messageTimeAuthorityProvider is null
+                ? "message-date-format-unconfigured"
+                : "message-time-authority-unavailable";
+            _console.WriteLine($"[階段 3/4] 訊息時間授權未就緒（{reason}）；不查詢或寫入 PRTG messages。數值與其他取數階段照常執行。");
+            return new PrtgStateChangeRangeResult(new Dictionary<DateTime, int>(), 0, 0, 0, false, false,
+                $"訊息時間授權未就緒（{reason}），已略過狀態變更同步。", 0, totalObjects, 0);
+        }
         var threshold = from.AddDays(-1);
         var now = DateTime.Now;
         var maxConcurrency = Math.Max(concurrency, 1);
@@ -766,6 +783,16 @@ public sealed class PrtgFetchService
         var emptyObjects = 0;
         var failed = new List<long>();
         var completed = 0;
+        var authorityDrift = 0;
+
+        bool MessageAuthorityCurrent()
+        {
+            var current = ReadMessageTimeAuthority();
+            var matches = current is not null && string.Equals(current.Fingerprint, messageAuthority.Fingerprint,
+                StringComparison.Ordinal);
+            if (!matches) Interlocked.Exchange(ref authorityDrift, 1);
+            return matches;
+        }
 
         _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{from:yyyy-MM-dd} ～ {to:yyyy-MM-dd}，逐裝置查詢 {totalObjects} 台，併發 {maxConcurrency}）...");
         progress?.Invoke(PrtgSyncMessagesPhase, 0, totalObjects);
@@ -779,6 +806,8 @@ public sealed class PrtgFetchService
             {
                 ct.ThrowIfCancellationRequested();
                 if (_guard != null) await _guard.WaitIfBusyAsync(ct);
+                if (!MessageAuthorityCurrent())
+                    throw new PrtgPageFenceRejectedException("messages", 0);
 
                 // 本物件區間內取到的列數：用來判斷「區間內無訊息」
                 var inRangeRows = 0;
@@ -789,7 +818,7 @@ public sealed class PrtgFetchService
                     mapper: el =>
                     {
                         var dtStr = GetStringProperty(el, "datetime");
-                        if (string.IsNullOrWhiteSpace(dtStr) || !DateTime.TryParse(dtStr, out var changedAt))
+                        if (!TryParseMessageDateTime(dtStr, messageAuthority, out var changedAt))
                         {
                             Interlocked.Increment(ref unparseableCount);
                             return null;
@@ -818,6 +847,9 @@ public sealed class PrtgFetchService
                     },
                     onBatch: batch =>
                     {
+                        // These rows are a diagnostic mirror; a batch observed after authority
+                        // drift must not be appended or treated as a completed formal range.
+                        if (!MessageAuthorityCurrent()) return;
                         lock (sync)
                         {
                             // AppendStateChanges 只回總數，按日期分組各呼叫一次才能得到正確的每日新增數
@@ -852,7 +884,7 @@ public sealed class PrtgFetchService
                         foreach (var el in pageElements)
                         {
                             var dtStr = GetStringProperty(el, "datetime");
-                            if (string.IsNullOrWhiteSpace(dtStr) || !DateTime.TryParse(dtStr, out var dt))
+                            if (!TryParseMessageDateTime(dtStr, messageAuthority, out var dt))
                             {
                                 return false;
                             }
@@ -867,7 +899,8 @@ public sealed class PrtgFetchService
 
                         // 4. 本頁最新的一筆（第一列）早於 fromDate.Date.AddDays(-1)（即整頁都比區間起點再早一天以上）。
                         return dts[0] < threshold;
-                    }));
+                    },
+                    beforePageRequest: _ => MessageAuthorityCurrent()));
 
                 lock (sync)
                 {
@@ -895,6 +928,12 @@ public sealed class PrtgFetchService
         });
 
         await Task.WhenAll(tasks);
+        if (!MessageAuthorityCurrent())
+        {
+            lock (sync)
+                foreach (var objid in objects)
+                    if (!failed.Contains(objid)) failed.Add(objid);
+        }
         stopwatch.Stop();
 
         if (unparseableCount > 0)
@@ -902,6 +941,12 @@ public sealed class PrtgFetchService
             _console.WriteLine($"  ⚠ 狀態變更中有 {unparseableCount} 筆紀錄無法解析時間，已略過。");
         }
 
+        if (unparseableCount > 0)
+        {
+            lock (sync)
+                foreach (var objid in objects)
+                    if (!failed.Contains(objid)) failed.Add(objid);
+        }
         var converged = failed.Count == 0;
         var head = converged ? "狀態變更同步完成" : "狀態變更同步未完成";
         var elapsed = stopwatch.Elapsed.TotalSeconds;
@@ -917,7 +962,11 @@ public sealed class PrtgFetchService
         string? error = null;
         if (!converged)
         {
-            error = $"{failed.Count} 台裝置的狀態變更取得失敗。";
+            error = Volatile.Read(ref authorityDrift) != 0
+                ? "訊息時間授權在分頁期間變更；本次狀態變更範圍未完成，已寫入的診斷鏡像列不得用於正式判定。"
+                : unparseableCount > 0
+                    ? $"有 {unparseableCount} 筆 PRTG messages 時間不符合已確認格式；本次狀態變更範圍未完成，診斷鏡像列不得用於正式判定。"
+                    : $"{failed.Count} 台裝置的狀態變更取得失敗。";
             var shownIds = failed.OrderBy(id => id).Take(5).ToList();
             var names = _store.GetDeviceNamesByObjids(shownIds);
             var shown = string.Join("、", shownIds.Select(id =>
@@ -951,7 +1000,8 @@ public sealed class PrtgFetchService
             Error: error,
             QueriedObjects: totalObjects,
             FailedObjects: failed.Count,
-            EmptyObjects: emptyObjects);
+            EmptyObjects: emptyObjects)
+        { MessageTimeFingerprint = converged ? messageAuthority.Fingerprint : null };
     }
 
     /// <summary>
@@ -1357,6 +1407,40 @@ public sealed class PrtgFetchService
 
     private sealed record PagedStageResult(PrtgPagerResult? Result, string? Error, PrtgPagingNotConvergedException? Exception = null);
 
+    private sealed record MessageTimeAuthority(PrtgMonitoringPolicy Policy, string Fingerprint,
+        CultureInfo Culture, TimeZoneInfo SourceTimeZone);
+
+    private MessageTimeAuthority? ReadMessageTimeAuthority()
+    {
+        if (_messageTimeAuthorityProvider is null) return null;
+        try
+        {
+            var (policy, url) = _messageTimeAuthorityProvider();
+            if (policy is null) return null;
+            var fingerprint = policy.MessageTimeFingerprint(url);
+            if (string.IsNullOrWhiteSpace(fingerprint)) return null;
+            var culture = CultureInfo.GetCultureInfo(policy.SourceCultureName);
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(policy.SourceTimeZoneId);
+            return new MessageTimeAuthority(policy, fingerprint, culture, zone);
+        }
+        catch (Exception ex) when (ex is ArgumentException or TimeZoneNotFoundException or InvalidTimeZoneException or
+                                   InvalidOperationException or NullReferenceException)
+        {
+            return null;
+        }
+    }
+
+    private static bool TryParseMessageDateTime(string? text, MessageTimeAuthority authority, out DateTime changedAt)
+    {
+        changedAt = default;
+        if (!PrtgMessageDateTimeParser.TryParse(text, authority.Policy.MessageDateFormat,
+                authority.Culture, authority.SourceTimeZone, out var parsed, out _))
+            return false;
+        // Mirror timestamps are source-zone wall time, matching the historical state-change contract.
+        changedAt = DateTime.SpecifyKind(parsed.DateTime, DateTimeKind.Unspecified);
+        return true;
+    }
+
     /// <summary>
     /// 執行一次分頁讀取，把「分頁未收斂」轉成可回報的結果而不是例外——
     /// 它與連線失敗不同，前面已經寫進鏡像的資料是有效的，不該讓整個階段的數字歸零。
@@ -1397,10 +1481,11 @@ public sealed class PrtgFetchService
         Action<string, int, int>? progress = null,
         string? stageLabel = null,
         Func<JsonElement, string?>? rowKey = null,
-        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null,
+        Func<int, bool>? beforePageRequest = null)
         => PrtgTablePager.FetchAsync(
             _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel,
-            rowKey: rowKey, stopAfterPage: stopAfterPage);
+            rowKey: rowKey, stopAfterPage: stopAfterPage, beforePageRequest: beforePageRequest);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。

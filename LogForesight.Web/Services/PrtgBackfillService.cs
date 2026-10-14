@@ -800,7 +800,14 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
                 var fetchService = new PrtgFetchService(run.Client, prtgStore,
                     new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
+                    PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map,
+                    messageTimeAuthorityProvider: () =>
+                    {
+                        var liveSettings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+                        var livePolicy = new PrtgMonitoringPolicyStore(
+                            _backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+                        return (livePolicy, liveSettings.PrtgUrl);
+                    });
 
                 // 數值取數對象與排程取數共用同一份設定與判定（docs/PRTG-SPEC.md §3a）
                 var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(

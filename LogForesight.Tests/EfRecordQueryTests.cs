@@ -25,6 +25,33 @@ public class EfRecordQueryTests : IDisposable
         new() { LogName = "System", Source = source, EventId = eventId, Category = cat, Count = 1 };
 
     [Fact]
+    public void Query_PhysicalTopIssueRoundtripKeepsMessageFingerprintAndLegacyNull()
+    {
+        var store = Store();
+        var current = new LogIssueSignature
+        {
+            LogName = "PRTG", Source = "PRTG:down", EventId = 0, EventKey = "prtg:down:11:source:resource",
+            RuleId = "down", PrtgSourceGeneration = "source", PrtgResourceGeneration = "resource",
+            PrtgMessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
+            PrtgMessageTimeFingerprint = "saved-message-authority-fp"
+        };
+        var legacy = new LogIssueSignature
+        {
+            LogName = "PRTG", Source = "PRTG:warning", EventId = 0, EventKey = "prtg:warning:12:source:resource",
+            RuleId = "warning", PrtgSourceGeneration = "source", PrtgResourceGeneration = "resource",
+            PrtgMessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent
+        };
+        store.Append(Rec(51, "host", new DateTime(2026, 10, 13), RiskLevels.High, current, legacy));
+
+        var loaded = Assert.Single(store.Query(new RecordQueryFilter
+        { Hosts = [new HostKey { HostId = 51, HostName = "host" }] }));
+
+        Assert.Equal("saved-message-authority-fp", Assert.Single(loaded.TopIssues, i => i.EventKey == current.EventKey)
+            .PrtgMessageTimeFingerprint);
+        Assert.Null(Assert.Single(loaded.TopIssues, i => i.EventKey == legacy.EventKey).PrtgMessageTimeFingerprint);
+    }
+
+    [Fact]
     public void Query_日期區間篩選()
     {
         var store = Store();

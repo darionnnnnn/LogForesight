@@ -57,7 +57,8 @@ public static class PrtgSilentAbsenceEvaluator
                 PresenceDeviceStatusAsOf = device.DeviceStatusAsOf,
                 PresenceSourceAuthorityFingerprint = device.SourceAuthorityFingerprint,
                 PresenceMappingFingerprint = device.MappingFingerprint,
-                PresenceInventoryFingerprint = device.InventoryFingerprint
+                PresenceInventoryFingerprint = device.InventoryFingerprint,
+                MessageTimeFingerprint = device.MessageTimeFingerprint
             });
         }
         return findings;

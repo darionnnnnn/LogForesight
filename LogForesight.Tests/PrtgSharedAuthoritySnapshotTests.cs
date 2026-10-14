@@ -43,6 +43,24 @@ public sealed class PrtgSharedAuthoritySnapshotTests
         Assert.Equal(before,backend.Blob(key).ReadWithVersion());
     }
 
+    [Theory]
+    [InlineData("{\"HostIds\":null}")]
+    [InlineData("{\"SensorIds\":null}")]
+    [InlineData("{\"CoreSystemId\":null}")]
+    [InlineData("{\"SourceGeneration\":null}")]
+    [InlineData("{\"SourceTimeZoneId\":null}")]
+    public void ExplicitNullAuthorityFieldsAreUnavailableWithoutChangingHistory(string raw)
+    {
+        var backend=NewBackend();
+        var blob=backend.Blob(PrtgMonitoringPolicyStore.BlobKey);
+        blob.Mutate(_ => (raw,true));
+        Assert.False(PrtgSharedAuthoritySnapshot.TryRead(backend,out var snapshot,out var reason));
+        Assert.Null(snapshot);
+        Assert.Equal(PrtgSharedAuthoritySnapshot.UnavailableReason,reason);
+        Assert.Equal(raw,blob.Read());
+        Assert.Equal(1,blob.ReadVersion());
+    }
+
     private static StorageBackend NewBackend()
     {
         var root = Path.Combine(Path.GetTempPath(),"lf-r54-shared-authority-"+Guid.NewGuid().ToString("N"));

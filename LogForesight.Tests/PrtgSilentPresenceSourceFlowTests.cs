@@ -37,6 +37,7 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
         EndpointHint = EfPrtgObservationStore.SourceHintFor(_url), ValidFrom = _sourceDate.AddDays(-2),
         HostIds = [HostId], SensorIds = [AvailabilityId, UnknownId], ConfirmedBy = "test",
         SourceTimeZoneId = _sourceTimeZoneId, SourceCultureName = "en-US",
+        MessageDateFormat = PrtgMessageDateTimeParser.Ymd24, MessageTimeAuthorityRevision = 1,
         RawTimestampTimeZoneId = "UTC", AnalysisTimeZoneId = _analysisTimeZoneId,
         TimeBasisEvidenceReference = "fixture-verified-time-basis"
     };
@@ -59,6 +60,7 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
             policy.ValidFrom = _sourceDate.AddDays(-2); policy.HostIds = [HostId];
             policy.SensorIds = [AvailabilityId, UnknownId]; policy.ConfirmedBy = "test";
             policy.SourceTimeZoneId = _sourceTimeZoneId; policy.SourceCultureName = "en-US";
+            policy.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24; policy.MessageTimeAuthorityRevision = 1;
             policy.RawTimestampTimeZoneId = "UTC"; policy.AnalysisTimeZoneId = _analysisTimeZoneId;
             policy.TimeBasisEvidenceReference = "fixture-verified-time-basis";
         });
@@ -83,6 +85,7 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
                 identity.Epoch, identity.ChannelGeneration, _sourceDate.AddDays(-1));
             e.Accept(_sourceDate.AddDays(-1), _sourceDate.AddSeconds(1),
                 [new(sensorId, enteredAt, status, e.SourceGeneration, e.ResourceGeneration)]);
+            e.MessageTimeFingerprint = Policy.MessageTimeFingerprint(_url);
         });
     }
 

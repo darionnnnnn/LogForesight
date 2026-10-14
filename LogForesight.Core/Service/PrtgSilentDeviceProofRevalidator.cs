@@ -49,6 +49,8 @@ public static class PrtgSilentDeviceProofRevalidator
         if (finding is null) return false;
         var recomputed = PrtgFindingMapper.ToSignature(finding, hostDay);
         return recomputed.EventKey == issue.EventKey &&
+            !string.IsNullOrWhiteSpace(recomputed.PrtgMessageTimeFingerprint) &&
+            string.Equals(recomputed.PrtgMessageTimeFingerprint, issue.PrtgMessageTimeFingerprint, StringComparison.Ordinal) &&
             recomputed.PrtgSourceGeneration == issue.PrtgSourceGeneration &&
             recomputed.PrtgResourceGeneration == issue.PrtgResourceGeneration &&
             recomputed.PrtgPresenceSourceDay == issue.PrtgPresenceSourceDay &&
