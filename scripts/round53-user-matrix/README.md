@@ -110,19 +110,18 @@ For U53-08, through the normal Runs controls, capture NetIQ success/zero events,
 
 ## Round 54 review additions and maintenance roles (planned only)
 
-The original six roles, 22 AC, 10 journeys, six Q, seven source scenarios and 222 fixed rule cases remain. The 53 inherited uncovered entries are a baseline, not a maximum. `coverage-inventory.json.round54ReviewAdditions` adds R54-01 through R54-08, each with original TODO IDs, AC/journey links, required checks and pending evidence. The authoritative behavior is in `docs/FEEDBACK-54-PLAN.md` §§4.6–4.8. No new role is provisioned and no validator/launcher/recorder is implemented by this planning update. Existing consistency scripts cover only their existing schema checks; supplementary checks must be implemented in A2 before claiming the new matrix is executable.
+The original six roles, 22 AC, 10 journeys, six Q, seven source scenarios and 222 fixed rule cases remain. The 53 inherited uncovered entries are a baseline, not a maximum. `coverage-inventory.json.round54ReviewAdditions` adds R54-01 through R54-08 and linked C54-01 through C54-05 contract corrections, each with original TODO IDs, AC/journey links, required checks and pending evidence. The authoritative behavior is in `docs/FEEDBACK-54-PLAN.md` §§4.6–4.8. No new role is provisioned and no validator/launcher/recorder is implemented by this planning update. Existing consistency scripts cover only their existing schema checks; supplementary checks must be implemented in A2 before claiming the new matrix is executable.
 
 Use the current Round 54 frozen clean build and exact expected commit, matching Web/Core/static assets and owned fixture/environment hashes. Do not select a Round 53 build merely because the directory/schema retains its historical name. Reuse historical evidence only after verifying unchanged code/configuration/environment and the exact covered subset. No external site or subjective user confirmation is required.
 
 | Maintenance scenario | Identity/capabilities | Readable data | Expected operation |
 |---|---|---|---|
 | M54-rescue | Real serverAdmin login; Maintain, no ViewAll | Necessary global counts and safe reasons; no business names/IDs | Global purge only under current preview and safety gates |
-| M54-scoped | Ordinary Maintain; fixed host-A visibility | Global counts and authorized details only | Clearly disclosed global purge, not merely displayed hosts |
 | M54-global | Ordinary Maintain + ViewAll | All eligible details with declared pagination | Same global purge set under the same scope |
 | M54-readall | ViewAll without Maintain | No maintenance preview payload | Preview and confirm denied |
 | M54-nomaintain | Scoped user without Maintain | No maintenance preview payload | Preview and confirm denied |
 
-Each scenario uses an isolated session; test direct APIs as well as controls. Capture capabilities/visible set, global-vs-visible counts, no-leak responses, accepted preview identity and exact deletion outcome. Include hidden devices, more than 20 visible candidates, orphan sensors and zero-visible accounts. Actual rescue authentication must not be replaced by renaming an ordinary user.
+Each of the four real-login scenarios uses an isolated session; test direct APIs as well as controls. Capture capabilities/visible set, global-vs-visible counts, no-leak responses, accepted preview identity and exact deletion outcome. Include hidden devices, more than 20 visible candidates, orphan sensors and zero-visible accounts. Actual rescue authentication must not be replaced by renaming an ordinary user.
 
 | Review ID | Planned stage | Required result |
 |---|---|---|
@@ -134,3 +133,13 @@ Each scenario uses an isolated session; test direct APIs as well as controls. Ca
 | R54-06 | D1 | Character limits, provider boundaries, isolated failure and safe repair |
 | R54-07 | A2 | Supplementary role identity and frozen Round 54 build/evidence |
 | R54-08 | A2 | Substage traceability and mandatory omission-repair loop |
+
+### Corrected contract boundaries (planning only)
+
+Four maintenance scenarios are real-login acceptance: M54-rescue, M54-global, M54-readall and M54-nomaintain. `maintenanceRoleMatrix.syntheticDefenseCases` retains M54-scoped solely as a synthetic authorization-component defense. Ordinary Maintain currently implies ViewAll; do not provision this impossible account, inject claims for browser acceptance, add a role or expand the authorization model. The original six-role matrix is unchanged.
+
+C54-01 maps to R54-07/A2; C54-02 to R54-06/D1; C54-03 and C54-05 to R54-01/F2; C54-04 to R54-05/B2. All are pending contract checks, not additional passed tests. Shared unreadable disk evidence blocks all dependent disk qualifications while independent NetIQ/evidence/notifications continue; do not partially trust damaged JSON or redesign storage merely to meet isolation wording.
+
+Manual purge and both automatic callers (PrtgDailyPipeline, PrtgStructureSyncRunner) share ownership and durable partial-progress protection. Automatic purge binds the successful sync generation and keeps existing scope/shrink guards, without requiring manual preview. A manual preview lasts five minutes from server creation and binds actor/permission version, source/mapping/keep-set and candidate data boundary. Duplicate accepted confirmation returns the same operation. Permission loss before acceptance means zero deletion; during execution it stops at the next safe point before any new batch. Resume needs current Maintain and unchanged accepted scope/generation; otherwise obtain a new preview and operation linked to previous partial results. Never silently add newly eligible data to a prior approval.
+
+A2 freezes an exact previous artifact and paired pre-upgrade DB/key/config backup for B2 rollback. Setting restoration is distinct from binary rollback. Same-data downgrade is allowed only with explicit compatibility evidence; otherwise reject it and use paired restore. Verify cases/replies/jobs and mail dedupe, account for changes after the backup and never blindly resend externally accepted mail after restore. PLAN §4.9 specifies authoritative details. No feature, fixture or validation script is implemented by this update.

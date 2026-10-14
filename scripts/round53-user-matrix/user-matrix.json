@@ -92,16 +92,6 @@
         "expected": "Global maintenance counts and safe reasons only; no device names or identifiers; global purge allowed only with current preview and safety gates."
       },
       {
-        "id": "M54-scoped",
-        "identity": "ordinary Maintain user with a fixed proper subset of host visibility",
-        "maintain": true,
-        "viewAll": false,
-        "visibleHosts": [
-          "fixture-host-A"
-        ],
-        "expected": "Global counts plus authorized device details only; purge scope remains global and is explicitly disclosed."
-      },
-      {
         "id": "M54-global",
         "identity": "ordinary Maintain and ViewAll user",
         "maintain": true,
@@ -130,6 +120,22 @@
           "fixture-host-A"
         ],
         "expected": "Purge preview and confirm APIs denied, no leaked preview details."
+      }
+    ],
+    "authorizationModelExpansion": false,
+    "syntheticDefenseCases": [
+      {
+        "id": "M54-scoped",
+        "identity": "synthetic authorization-component context only; impossible ordinary login under current RoleCapabilityMap",
+        "maintain": true,
+        "viewAll": false,
+        "visibleHosts": [
+          "fixture-host-A"
+        ],
+        "expected": "Global counts plus authorized device details only; purge scope remains global and is explicitly disclosed.",
+        "status": "planned-component-test-only",
+        "browserAcceptance": false,
+        "provisionAccount": false
       }
     ]
   },
