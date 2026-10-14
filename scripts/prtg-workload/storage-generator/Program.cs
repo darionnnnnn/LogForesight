@@ -20,6 +20,17 @@ const int BatchSize = 100;
 try
 {
     var argsMap = ParseArgs(args);
+    if (argsMap.ContainsKey("inspect-legacy-log"))
+    {
+        if (argsMap.Count != 2 || !argsMap.ContainsKey("source-log"))
+            throw new ArgumentException("--inspect-legacy-log accepts only --source-log <path>.");
+        var line = ReadLastProgressLine(Path.GetFullPath(Required(argsMap, "source-log")))
+            ?? throw new InvalidDataException("Legacy source log contains no row progress record.");
+        var parsed = ParseLegacyProgressLine(line);
+        var match = System.Text.RegularExpressions.Regex.Match(line, @"^rows=(?<rows>[0-9]+)/(?<requested>[0-9]+) ");
+        Console.WriteLine($"rows={match.Groups["rows"].Value}/{match.Groups["requested"].Value} elapsed_s={parsed.ElapsedSeconds:F1} db_bytes={parsed.DbBytes}");
+        return 0;
+    }
     var mode = Required(argsMap, "mode");
     var root = Path.GetFullPath(Required(argsMap, "root"));
     if (new DriveInfo(Path.GetPathRoot(root)!).DriveType != DriveType.Fixed)
@@ -29,11 +40,19 @@ try
             throw new ArgumentException("Output ancestors must not be reparse points.");
     var resume = argsMap.ContainsKey("resume");
     var adoptLegacy = argsMap.ContainsKey("adopt-legacy");
+    var upgradeOwnedRun = argsMap.ContainsKey("upgrade-owned-run");
     var simulateCrashAfterCommit = argsMap.ContainsKey("simulate-crash-after-db-commit");
+    var simulateInitCrash = argsMap.GetValueOrDefault("simulate-init-crash-after");
+    var simulateAdoptCrash = argsMap.GetValueOrDefault("simulate-adopt-crash-after");
+    var simulateUpgradeCrash = argsMap.GetValueOrDefault("simulate-upgrade-crash-after");
     var controlledStopAfterBatches = argsMap.TryGetValue("stop-after-batches", out var stopAfterText)
         ? int.Parse(stopAfterText, System.Globalization.CultureInfo.InvariantCulture) : 0;
     if (controlledStopAfterBatches < 0) throw new ArgumentOutOfRangeException("stop-after-batches");
-    if (resume && adoptLegacy || simulateCrashAfterCommit && (resume || adoptLegacy)) throw new ArgumentException("Invalid combination of resume/adoption/interruption controls.");
+    if (resume && adoptLegacy || upgradeOwnedRun && !resume || simulateCrashAfterCommit && (resume || adoptLegacy) ||
+        !string.IsNullOrEmpty(simulateInitCrash) && (adoptLegacy || simulateCrashAfterCommit || simulateInitCrash is not ("manifest" or "db-marker" or "checkpoint") || resume && simulateInitCrash == "manifest") ||
+        !string.IsNullOrEmpty(simulateAdoptCrash) && (!adoptLegacy || simulateAdoptCrash is not ("manifest" or "db-marker" or "checkpoint")) ||
+        !string.IsNullOrEmpty(simulateUpgradeCrash) && (!upgradeOwnedRun || simulateUpgradeCrash is not ("intent" or "db-marker" or "manifest" or "checkpoint")))
+        throw new ArgumentException("Invalid combination of resume/adoption/interruption controls.");
     if (Directory.Exists(root) && !resume && !adoptLegacy || !Directory.Exists(root) && (resume || adoptLegacy))
         throw new ArgumentException(resume || adoptLegacy
             ? "--resume/--adopt-legacy requires an existing owned run directory."
@@ -53,35 +72,54 @@ try
     {
         if (provider != "sqlite")
             throw new InvalidOperationException("Legacy adoption is restricted to SQLite runs.");
-        AdoptLegacyRun(root, requestedRows, Required(argsMap, "source-root"), Required(argsMap, "source-log"), sourceFingerprint);
-        return 0;
+        return AdoptLegacyRun(root, requestedRows, Required(argsMap, "source-root"), Required(argsMap, "source-log"), sourceFingerprint, simulateAdoptCrash);
     }
     if (resume && provider != "sqlite") throw new InvalidOperationException("Resume is supported only for an owned SQLite run.");
     Directory.CreateDirectory(root);
     var manifestPath = Path.Combine(root, "n6-run-manifest.json");
     var checkpointPath = Path.Combine(root, "n6-checkpoint.json");
+    var upgradeIntentPath = Path.Combine(root, "n6-upgrade-intent.json");
     var databasePath = Path.Combine(root, $"n6-{provider}-{Guid.NewGuid():N}.db");
     RunManifest manifest;
     RunCheckpoint? priorCheckpoint = null;
+    RunUpgradeIntent? upgradeIntent = File.Exists(upgradeIntentPath) ? ReadAndValidateUpgradeIntent(upgradeIntentPath) : null;
+    if (upgradeIntent is not null && !upgradeOwnedRun)
+        throw new InvalidDataException("This owned run has an interrupted tool upgrade; resume with --upgrade-owned-run after its audit.");
+    var initializationRecovery = false;
+    if (!string.IsNullOrEmpty(simulateInitCrash) && provider != "sqlite")
+        throw new ArgumentException("Initialization failure injection is restricted to SQLite contract runs.");
     if (resume)
     {
-        manifest = ReadAndValidateManifest(manifestPath, root, provider, requestedRows, sourceFingerprint);
-        priorCheckpoint = ReadAndValidateCheckpoint(checkpointPath, manifest);
+        manifest = ReadAndValidateManifest(manifestPath, root, provider, requestedRows, sourceFingerprint, upgradeOwnedRun || upgradeIntent is not null);
+        initializationRecovery = !File.Exists(checkpointPath);
+        if (initializationRecovery && manifest.SourceFingerprint != sourceFingerprint)
+            throw new InvalidDataException("Interrupted initialization must first publish its checkpoint with the original owned tool; only then may an audited tool upgrade begin.");
+        priorCheckpoint = initializationRecovery ? null : ReadAndValidateCheckpoint(checkpointPath, manifest, upgradeIntent);
         databasePath = manifest.DatabasePath;
-        var recoveredRows = ValidateOwnedDatabase(databasePath, manifest, priorCheckpoint.CommittedRows);
-        if (recoveredRows != priorCheckpoint.CommittedRows)
+        if (!initializationRecovery)
         {
-            AuditOwnedRowRange(databasePath, manifest, priorCheckpoint.CommittedRows, recoveredRows);
-            UpdateOwnedDatabaseCheckpoint(databasePath, manifest, recoveredRows);
-            priorCheckpoint.CommittedRows = recoveredRows;
-            priorCheckpoint.CheckpointSha256 = HashCheckpoint(priorCheckpoint);
-            WriteJsonAtomic(checkpointPath, priorCheckpoint);
+            var recoveredRows = ValidateOwnedDatabase(databasePath, manifest, priorCheckpoint!.CommittedRows, upgradeIntent);
+            AuditOwnedRowRange(databasePath, manifest, 0, recoveredRows);
+            AuditOwnedStructure(databasePath);
+            if (recoveredRows != priorCheckpoint.CommittedRows)
+            {
+                UpdateOwnedDatabaseCheckpoint(databasePath, manifest, recoveredRows);
+                priorCheckpoint.CommittedRows = recoveredRows;
+                priorCheckpoint.CheckpointSha256 = HashCheckpoint(priorCheckpoint);
+                WriteJsonAtomic(checkpointPath, priorCheckpoint);
+            }
+            if (upgradeOwnedRun || upgradeIntent is not null)
+            {
+                manifest = FinishOwnedToolUpgrade(manifest, priorCheckpoint!, databasePath, sourceFingerprint, upgradeIntentPath, upgradeIntent, simulateUpgradeCrash);
+                upgradeIntent = null;
+            }
         }
     }
     else
     {
         manifest = CreateManifest(root, databasePath, provider, requestedRows, sourceFingerprint);
         WriteJsonAtomic(manifestPath, manifest);
+        if (simulateInitCrash == "manifest") return 76;
     }
     string connectionString;
     if (provider == "sqlite")
@@ -151,14 +189,26 @@ try
         MapDate = mapDate, DeviceObjid = d.Objid, HostId = d.Objid, HostName = $"capacity-host-{d.Objid:D4}",
         Ip = d.Ip, MapStatus = "mapped", CreatedAt = now
     }).ToList();
-    var devicesWritten = resume ? HostCount : store.UpsertDevices(devices, now);
-    var sensorsWritten = resume ? SensorCount : store.UpsertSensors(sensors, now);
-    var mapsWritten = resume ? HostCount : store.ReplaceHostMapForDate(mapDate, hostMaps);
+    // The marker is the durable completion record for the fixed structure. If
+    // a prior process committed it, validate the full mapping before doing any
+    // writes and leave the already completed seed timestamps untouched.
+    var initializationStructureComplete = resume && initializationRecovery &&
+        HasInitializationMarker(databasePath, manifest);
+    var devicesWritten = resume && (!initializationRecovery || initializationStructureComplete)
+        ? HostCount : store.UpsertDevices(devices, now);
+    var sensorsWritten = resume && (!initializationRecovery || initializationStructureComplete)
+        ? SensorCount : store.UpsertSensors(sensors, now);
+    var mapsWritten = resume && (!initializationRecovery || initializationStructureComplete)
+        ? HostCount : store.ReplaceHostMapForDate(mapDate, hostMaps);
     if (devicesWritten != HostCount || sensorsWritten != SensorCount || mapsWritten != HostCount)
         throw new InvalidOperationException($"Shape setup mismatch: devices={devicesWritten}, sensors={sensorsWritten}, hostMaps={mapsWritten}.");
-    if (provider == "sqlite" && !resume)
+    if (provider == "sqlite" && (!resume || initializationRecovery))
     {
         InitializeOwnedDatabase(databasePath, manifest);
+        if (simulateInitCrash == "db-marker") return 76;
+    }
+    if (provider == "sqlite" && (!resume || initializationRecovery))
+    {
         var initialCheckpoint = new RunCheckpoint
         {
             Schema = "LogForesight.N6StorageCheckpoint", SchemaVersion = 1,
@@ -169,6 +219,7 @@ try
         };
         initialCheckpoint.CheckpointSha256 = HashCheckpoint(initialCheckpoint);
         WriteJsonAtomic(checkpointPath, initialCheckpoint);
+        if (simulateInitCrash == "checkpoint") return 76;
     }
 
     var firstPeriod = mapDate.AddDays(-180).Date;
@@ -351,6 +402,10 @@ try
     Console.WriteLine($"result={resultPath}");
     return 0;
 }
+catch (SimulatedCrashException)
+{
+    return 76;
+}
 catch (Exception ex)
 {
     Console.Error.WriteLine($"FAILED: {ex.GetType().Name}. Check input, provider availability and dedicated output path; connection details are intentionally omitted.");
@@ -425,7 +480,7 @@ static RunManifest CreateManifest(string root, string databasePath, string provi
     value.ManifestSha256 = HashManifest(value);
     return value;
 }
-static RunManifest ReadAndValidateManifest(string path, string root, string provider, long rows, string sourceFingerprint)
+static RunManifest ReadAndValidateManifest(string path, string root, string provider, long rows, string sourceFingerprint, bool allowOwnedUpgrade = false)
 {
     var value = JsonSerializer.Deserialize<RunManifest>(File.ReadAllBytes(path), JsonOptionsHolder.Options)
         ?? throw new InvalidDataException("Owned run manifest is empty.");
@@ -435,25 +490,82 @@ static RunManifest ReadAndValidateManifest(string path, string root, string prov
         value.Hosts != HostCount || value.Sensors != SensorCount || value.Days != 180 || value.TypedSlotsPerRow != 4 ||
         value.RowOrder != "sensor-major, one row per sensor-hour")
         throw new InvalidDataException("Resume scope differs from the immutable owned run manifest.");
-    if (value.SourceFingerprint != sourceFingerprint)
+    if (value.SourceFingerprint != sourceFingerprint && !allowOwnedUpgrade)
         throw new InvalidDataException("Resume executable/core fingerprint differs from the original generator build.");
-    if (!IsSameOrWithin(Path.GetFullPath(value.DatabasePath), Path.GetFullPath(root)) || !File.Exists(value.DatabasePath))
-        throw new InvalidDataException("Manifest database path is missing or outside the owned run root.");
-    if ((File.GetAttributes(value.DatabasePath) & FileAttributes.ReparsePoint) != 0)
+    if (!IsSameOrWithin(Path.GetFullPath(value.DatabasePath), Path.GetFullPath(root)))
+        throw new InvalidDataException("Manifest database path is outside the owned run root.");
+    if (File.Exists(value.DatabasePath) && (File.GetAttributes(value.DatabasePath) & FileAttributes.ReparsePoint) != 0)
         throw new InvalidDataException("Manifest database must be a regular file, not a reparse point.");
     return value;
 }
-static RunCheckpoint ReadAndValidateCheckpoint(string path, RunManifest manifest)
+static RunCheckpoint ReadAndValidateCheckpoint(string path, RunManifest manifest, RunUpgradeIntent? intent = null)
 {
     var value = JsonSerializer.Deserialize<RunCheckpoint>(File.ReadAllBytes(path), JsonOptionsHolder.Options)
         ?? throw new InvalidDataException("Owned run checkpoint is empty.");
     if (value.Schema != "LogForesight.N6StorageCheckpoint" || value.SchemaVersion != 1 ||
-        value.RunId != manifest.RunId || value.ManifestSha256 != manifest.ManifestSha256 ||
+        value.RunId != manifest.RunId || value.ManifestSha256 != manifest.ManifestSha256 &&
+            (intent is null || value.ManifestSha256 != intent.OldManifestSha256 && value.ManifestSha256 != intent.NewManifestSha256) ||
         value.CheckpointSha256 != HashCheckpoint(value))
         throw new InvalidDataException("Checkpoint schema, run identity, manifest, or checksum is invalid.");
     if (value.CommittedRows < 0 || value.CommittedRows > manifest.RequestedRows || value.CommittedRows % BatchSize != 0 && value.CommittedRows != manifest.RequestedRows)
         throw new InvalidDataException("Checkpoint row boundary is outside the fixed committed-batch sequence.");
     return value;
+}
+static RunUpgradeIntent ReadAndValidateUpgradeIntent(string path)
+{
+    var intent = JsonSerializer.Deserialize<RunUpgradeIntent>(File.ReadAllBytes(path), JsonOptionsHolder.Options)
+        ?? throw new InvalidDataException("Owned tool-upgrade intent is empty.");
+    if (intent.Schema != "LogForesight.N6StorageUpgradeIntent" || intent.SchemaVersion != 1 ||
+        intent.IntentSha256 != HashUpgradeIntent(intent))
+        throw new InvalidDataException("Owned tool-upgrade intent schema or checksum is invalid.");
+    return intent;
+}
+static RunManifest FinishOwnedToolUpgrade(RunManifest manifest, RunCheckpoint checkpoint, string databasePath,
+    string currentFingerprint, string intentPath, RunUpgradeIntent? existingIntent, string? simulateCrashAfter)
+{
+    var target = JsonSerializer.Deserialize<RunManifest>(JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptionsHolder.Options), JsonOptionsHolder.Options)
+        ?? throw new InvalidDataException("Could not copy the owned manifest for upgrade.");
+    target.SourceFingerprint = currentFingerprint;
+    target.ManifestSha256 = HashManifest(target);
+    var intent = existingIntent;
+    if (intent is null)
+    {
+        intent = new RunUpgradeIntent
+        {
+            Schema = "LogForesight.N6StorageUpgradeIntent", SchemaVersion = 1, RunId = manifest.RunId,
+            OldManifestSha256 = manifest.ManifestSha256, NewManifestSha256 = target.ManifestSha256,
+            NewSourceFingerprint = currentFingerprint, IntentSha256 = string.Empty
+        };
+        intent.IntentSha256 = HashUpgradeIntent(intent);
+        WriteJsonAtomic(intentPath, intent);
+        if (simulateCrashAfter == "intent") throw new SimulatedCrashException();
+    }
+    else if (intent.RunId != manifest.RunId || intent.NewSourceFingerprint != currentFingerprint ||
+             intent.NewManifestSha256 != target.ManifestSha256 ||
+             manifest.ManifestSha256 != intent.OldManifestSha256 && manifest.ManifestSha256 != intent.NewManifestSha256)
+        throw new InvalidDataException("Interrupted tool-upgrade intent does not match the audited run or current tool identity.");
+
+    using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = databasePath, Pooling = false }.ConnectionString))
+    {
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE lf_n6_generation_control SET manifest_sha256=$new WHERE run_id=$run AND manifest_sha256 IN ($old,$new);";
+        command.Parameters.AddWithValue("$new", target.ManifestSha256);
+        command.Parameters.AddWithValue("$old", intent.OldManifestSha256);
+        command.Parameters.AddWithValue("$run", manifest.RunId);
+        if (command.ExecuteNonQuery() != 1) throw new InvalidDataException("Owned database marker could not be rebound to the audited upgraded manifest.");
+    }
+    if (simulateCrashAfter == "db-marker") throw new SimulatedCrashException();
+    manifest.SourceFingerprint = currentFingerprint;
+    manifest.ManifestSha256 = target.ManifestSha256;
+    WriteJsonAtomic(Path.Combine(manifest.RootPath, "n6-run-manifest.json"), manifest);
+    if (simulateCrashAfter == "manifest") throw new SimulatedCrashException();
+    checkpoint.ManifestSha256 = target.ManifestSha256;
+    checkpoint.CheckpointSha256 = HashCheckpoint(checkpoint);
+    WriteJsonAtomic(Path.Combine(manifest.RootPath, "n6-checkpoint.json"), checkpoint);
+    if (simulateCrashAfter == "checkpoint") throw new SimulatedCrashException();
+    File.Delete(intentPath);
+    return manifest;
 }
 static string HashManifest(RunManifest value) => HashText(JsonSerializer.Serialize(new
 {
@@ -470,6 +582,10 @@ static string HashCheckpoint(RunCheckpoint value) => HashText(JsonSerializer.Ser
     value.Schema, value.SchemaVersion, value.RunId, value.ManifestSha256, value.CommittedRows,
     value.CurrentProcessActiveSeconds, value.InitialElapsedSeconds, value.AccumulatedActiveSeconds, value.ResumeWallSeconds,
     value.ResumeCount, value.LastProcessStartedUtc
+}, JsonOptionsHolder.Options));
+static string HashUpgradeIntent(RunUpgradeIntent value) => HashText(JsonSerializer.Serialize(new
+{
+    value.Schema, value.SchemaVersion, value.RunId, value.OldManifestSha256, value.NewManifestSha256, value.NewSourceFingerprint
 }, JsonOptionsHolder.Options));
 static string HashText(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 static string HashFile(string path)
@@ -491,11 +607,79 @@ static void InitializeOwnedDatabase(string path, RunManifest manifest)
 {
     using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ConnectionString);
     connection.Open();
+    using var transaction = connection.BeginTransaction();
     using var command = connection.CreateCommand();
-    command.CommandText = "CREATE TABLE lf_n6_generation_control (run_id TEXT NOT NULL PRIMARY KEY, manifest_sha256 TEXT NOT NULL, committed_rows INTEGER NOT NULL); INSERT INTO lf_n6_generation_control (run_id, manifest_sha256, committed_rows) VALUES ($run, $hash, 0);";
+    command.Transaction = transaction;
+    ValidateInitialValueSequence(connection, transaction);
+    command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='lf_n6_generation_control';";
+    var markerExists = Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 1;
+    if (!markerExists)
+    {
+        command.CommandText = "SELECT COUNT(*) FROM lf_prtg_values;";
+        if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0)
+            throw new InvalidDataException("Cannot claim an unmarked SQLite database that already contains generated values.");
+        AuditOwnedStructure(path);
+        command.CommandText = "CREATE TABLE lf_n6_generation_control (run_id TEXT NOT NULL PRIMARY KEY, manifest_sha256 TEXT NOT NULL, committed_rows INTEGER NOT NULL); INSERT INTO lf_n6_generation_control (run_id, manifest_sha256, committed_rows) VALUES ($run, $hash, 0);";
+    }
+    else
+    {
+        command.CommandText = "SELECT run_id, manifest_sha256, committed_rows FROM lf_n6_generation_control;";
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.GetString(0) != manifest.RunId || reader.GetString(1) != manifest.ManifestSha256 || reader.GetInt64(2) != 0 || reader.Read())
+            throw new InvalidDataException("Existing initialization marker belongs to another run or has advanced unexpectedly.");
+        reader.Close();
+        transaction.Commit();
+        return;
+    }
     command.Parameters.AddWithValue("$run", manifest.RunId);
     command.Parameters.AddWithValue("$hash", manifest.ManifestSha256);
     command.ExecuteNonQuery();
+    transaction.Commit();
+}
+
+static bool HasInitializationMarker(string path, RunManifest manifest)
+{
+    if (!File.Exists(path)) return false;
+    using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+    {
+        DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false
+    }.ConnectionString);
+    connection.Open();
+    ValidateInitialValueSequence(connection);
+    using var command = connection.CreateCommand();
+    command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='lf_n6_generation_control';";
+    if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0) return false;
+    command.CommandText = "SELECT run_id, manifest_sha256, committed_rows FROM lf_n6_generation_control;";
+    using (var reader = command.ExecuteReader())
+    {
+        if (!reader.Read() || reader.GetString(0) != manifest.RunId ||
+            reader.GetString(1) != manifest.ManifestSha256 || reader.GetInt64(2) != 0 || reader.Read())
+            throw new InvalidDataException("Existing initialization marker belongs to another run or is incomplete.");
+    }
+    AuditOwnedStructure(path);
+    return true;
+}
+
+static void ValidateInitialValueSequence(SqliteConnection connection, SqliteTransaction? transaction = null)
+{
+    using var command = connection.CreateCommand();
+    command.Transaction = transaction;
+    command.CommandText = "SELECT COUNT(*) FROM lf_prtg_values;";
+    if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0)
+        throw new InvalidDataException("Initialization recovery requires an empty generated-value table.");
+    command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sqlite_sequence';";
+    if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0) return;
+    command.CommandText = "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name='lf_prtg_values';";
+    if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0)
+        throw new InvalidDataException("Initialization recovery requires an untouched generated-value ID sequence.");
+}
+
+static void AuditOwnedStructure(string path)
+{
+    var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
+    using var connection = new SqliteConnection(builder.ConnectionString);
+    connection.Open();
+    AuditLegacyStructureRows(connection);
 }
 static void UpdateOwnedDatabaseCheckpoint(string path, RunManifest manifest, long committed)
 {
@@ -508,7 +692,7 @@ static void UpdateOwnedDatabaseCheckpoint(string path, RunManifest manifest, lon
     command.Parameters.AddWithValue("$hash", manifest.ManifestSha256);
     if (command.ExecuteNonQuery() != 1) throw new InvalidDataException("Owned database checkpoint identity or monotonic row count is invalid.");
 }
-static long ValidateOwnedDatabase(string path, RunManifest manifest, long committed)
+static long ValidateOwnedDatabase(string path, RunManifest manifest, long committed, RunUpgradeIntent? intent = null)
 {
     var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
     using var connection = new SqliteConnection(builder.ConnectionString);
@@ -518,7 +702,8 @@ static long ValidateOwnedDatabase(string path, RunManifest manifest, long commit
     command.CommandText = "SELECT run_id, manifest_sha256, committed_rows FROM lf_n6_generation_control;";
     using (var reader = command.ExecuteReader())
     {
-        if (!reader.Read() || reader.GetString(0) != manifest.RunId || reader.GetString(1) != manifest.ManifestSha256)
+        if (!reader.Read() || reader.GetString(0) != manifest.RunId || reader.GetString(1) != manifest.ManifestSha256 &&
+            (intent is null || reader.GetString(1) != intent.OldManifestSha256 && reader.GetString(1) != intent.NewManifestSha256))
             throw new InvalidDataException("Database ownership marker differs from the manifest/checkpoint or contains multiple run identities.");
         markerRows = reader.GetInt64(2);
         if (reader.Read()) throw new InvalidDataException("Database contains multiple run ownership markers.");
@@ -560,7 +745,7 @@ static void AuditOwnedRowRange(string path, RunManifest manifest, long start, lo
     }
     if (reader.Read()) throw new InvalidDataException("Database contains rows beyond its reported interrupted batch.");
 }
-static void AdoptLegacyRun(string root, long requestedRows, string sourceRootArgument, string sourceLogArgument, string currentFingerprint)
+static int AdoptLegacyRun(string root, long requestedRows, string sourceRootArgument, string sourceLogArgument, string currentFingerprint, string? simulateCrashAfter)
 {
     var sourceRoot = Path.GetFullPath(sourceRootArgument);
     var logPath = Path.GetFullPath(sourceLogArgument);
@@ -568,11 +753,10 @@ static void AdoptLegacyRun(string root, long requestedRows, string sourceRootArg
     var checkpointPath = Path.Combine(root, "n6-checkpoint.json");
     var resultPath = Path.Combine(root, "n6-high-water-result.json");
     var progressPath = Path.Combine(root, "n6-progress.json");
-    if (File.Exists(manifestPath) || File.Exists(checkpointPath) || File.Exists(resultPath) || !File.Exists(progressPath))
-        throw new InvalidDataException("Legacy adoption requires only the unfinished old progress receipt and one database; prior manifests/results are refused.");
+    if (File.Exists(resultPath) || !File.Exists(progressPath) || File.Exists(checkpointPath) && !File.Exists(manifestPath))
+        throw new InvalidDataException("Legacy adoption requires its old progress receipt, one database, and a consistent adoption state.");
     var frozenFingerprint = ValidateFrozenSourceTree(sourceRoot);
-    var sourceLog = File.ReadAllText(logPath, Encoding.UTF8);
-    var lastProgress = sourceLog.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries).LastOrDefault(line => line.StartsWith("rows=", StringComparison.Ordinal))
+    var lastProgress = ReadLastProgressLine(logPath)
         ?? throw new InvalidDataException("Frozen source log contains no row progress record.");
     using var progress = JsonDocument.Parse(File.ReadAllBytes(progressPath));
     var progressRoot = progress.RootElement;
@@ -603,30 +787,60 @@ static void AdoptLegacyRun(string root, long requestedRows, string sourceRootArg
     var shmBytesAtAdoption = FileBytes(databasePath + "-shm");
     var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        Path.GetFullPath(progressPath), databasePath, databasePath + "-wal", databasePath + "-shm"
+        Path.GetFullPath(progressPath), Path.GetFullPath(manifestPath), Path.GetFullPath(checkpointPath),
+        Path.GetFullPath(Path.Combine(root, "n6-legacy-progress-audited.json")), databasePath, databasePath + "-wal", databasePath + "-shm"
     };
-    if (Directory.GetFiles(root).Any(path => !allowed.Contains(Path.GetFullPath(path))) || Directory.GetDirectories(root).Length != 0)
+    if (Directory.GetFiles(root).Any(path => !allowed.Contains(Path.GetFullPath(path)) &&
+            !Path.GetFileName(path).StartsWith("n6-run-manifest.json.tmp-", StringComparison.Ordinal) &&
+            !Path.GetFileName(path).StartsWith("n6-checkpoint.json.tmp-", StringComparison.Ordinal)) || Directory.GetDirectories(root).Length != 0)
         throw new InvalidDataException("Legacy output directory contains unexpected files or subdirectories.");
-    var runDate = AuditLegacyDatabase(databasePath, progressRows, requestedRows, out var auditedRows);
+    RunManifest? existingManifest = null;
+    if (File.Exists(manifestPath))
+    {
+        existingManifest = JsonSerializer.Deserialize<RunManifest>(File.ReadAllBytes(manifestPath), JsonOptionsHolder.Options)
+            ?? throw new InvalidDataException("Interrupted adoption manifest is empty.");
+        if (existingManifest.Schema != "LogForesight.N6StorageRunManifest" || existingManifest.SchemaVersion != 1 ||
+            existingManifest.ManifestSha256 != HashManifest(existingManifest) || existingManifest.RootPath != Path.GetFullPath(root) ||
+            existingManifest.DatabasePath != databasePath || existingManifest.Provider != "sqlite" || existingManifest.RequestedRows != requestedRows ||
+            existingManifest.SourceFingerprint != currentFingerprint || existingManifest.OriginalProvenance != "legacy/audited-adopted" ||
+            existingManifest.OriginalProgressSha256 != HashFile(progressPath) || existingManifest.OriginalLogSha256 != HashFile(logPath) ||
+            existingManifest.OriginalSourceFingerprint != frozenFingerprint)
+            throw new InvalidDataException("Interrupted adoption manifest does not match the audited legacy source and run scope.");
+    }
+    var runDate = AuditLegacyDatabase(databasePath, progressRows, requestedRows, out var auditedRows, existingManifest is not null);
     var originalProgressSha = HashFile(progressPath);
     var originalLogSha = HashFile(logPath);
-    var manifest = CreateManifest(root, databasePath, "sqlite", requestedRows, currentFingerprint);
-    manifest.OriginalProvenance = "legacy/audited-adopted";
-    manifest.RunDate = runDate;
-    manifest.OriginalSourceFingerprint = frozenFingerprint;
-    manifest.OriginalProgressSha256 = originalProgressSha;
-    manifest.OriginalLogSha256 = originalLogSha;
-    manifest.OriginalProgressRows = progressRows;
-    manifest.OriginalAuditedRows = auditedRows;
-    manifest.OriginalUnloggedTailRows = auditedRows - progressRows;
-    manifest.OriginalProgressElapsedSeconds = elapsed;
-    manifest.OriginalProgressSampledDbBytes = progressRoot.GetProperty("dbHighWaterBytes").GetInt64();
-    manifest.DatabaseBytesAtAdoption = databaseBytesAtAdoption;
-    manifest.WalBytesAtAdoption = walBytesAtAdoption;
-    manifest.ShmBytesAtAdoption = shmBytesAtAdoption;
-    manifest.ManifestSha256 = HashManifest(manifest);
-    // Mutations begin only after the read-only full-prefix audit succeeds.
+    var manifest = existingManifest ?? CreateManifest(root, databasePath, "sqlite", requestedRows, currentFingerprint);
+    if (existingManifest is null)
+    {
+        manifest.OriginalProvenance = "legacy/audited-adopted";
+        manifest.RunDate = runDate;
+        manifest.OriginalSourceFingerprint = frozenFingerprint;
+        manifest.OriginalProgressSha256 = originalProgressSha;
+        manifest.OriginalLogSha256 = originalLogSha;
+        manifest.OriginalProgressRows = progressRows;
+        manifest.OriginalAuditedRows = auditedRows;
+        manifest.OriginalUnloggedTailRows = auditedRows - progressRows;
+        manifest.OriginalProgressElapsedSeconds = elapsed;
+        manifest.OriginalProgressSampledDbBytes = progressRoot.GetProperty("dbHighWaterBytes").GetInt64();
+        manifest.DatabaseBytesAtAdoption = databaseBytesAtAdoption;
+        manifest.WalBytesAtAdoption = walBytesAtAdoption;
+        manifest.ShmBytesAtAdoption = shmBytesAtAdoption;
+        manifest.ManifestSha256 = HashManifest(manifest);
+    }
+    if (manifest.RunDate != runDate || manifest.OriginalProgressRows != progressRows || manifest.OriginalAuditedRows != auditedRows ||
+        manifest.OriginalUnloggedTailRows != auditedRows - progressRows || manifest.OriginalProgressElapsedSeconds != elapsed ||
+        manifest.OriginalProgressSampledDbBytes != progressRoot.GetProperty("dbHighWaterBytes").GetInt64())
+        throw new InvalidDataException("Interrupted adoption manifest differs from the re-audited full deterministic prefix.");
+    // Persist the immutable adoption intent first. A retry can re-audit and finish
+    // the marker/checkpoint writes without changing the source or row denominator.
+    if (existingManifest is null)
+    {
+        WriteJsonAtomic(manifestPath, manifest);
+        if (simulateCrashAfter == "manifest") return 76;
+    }
     InitializeLegacyOwnedDatabase(databasePath, manifest, auditedRows);
+    if (existingManifest is null && simulateCrashAfter == "db-marker") return 76;
     var checkpoint = new RunCheckpoint
     {
         Schema = "LogForesight.N6StorageCheckpoint", SchemaVersion = 1,
@@ -636,11 +850,22 @@ static void AdoptLegacyRun(string root, long requestedRows, string sourceRootArg
         CheckpointSha256 = string.Empty
     };
     checkpoint.CheckpointSha256 = HashCheckpoint(checkpoint);
-    WriteJsonAtomic(manifestPath, manifest);
-    WriteJsonAtomic(checkpointPath, checkpoint);
+    if (File.Exists(checkpointPath))
+    {
+        var existingCheckpoint = ReadAndValidateCheckpoint(checkpointPath, manifest);
+        if (existingCheckpoint.CommittedRows != auditedRows)
+            throw new InvalidDataException("Interrupted adoption checkpoint differs from its audited legacy prefix.");
+    }
+    else
+    {
+        WriteJsonAtomic(checkpointPath, checkpoint);
+        if (simulateCrashAfter == "checkpoint") return 76;
+    }
     var evidenceCopy = Path.Combine(root, "n6-legacy-progress-audited.json");
-    File.Copy(progressPath, evidenceCopy, overwrite: false);
+    if (!File.Exists(evidenceCopy)) File.Copy(progressPath, evidenceCopy, overwrite: false);
+    else if (HashFile(evidenceCopy) != originalProgressSha) throw new InvalidDataException("Saved legacy progress evidence differs from the audited source.");
     Console.WriteLine($"ADOPTED: sampledRows={progressRows} auditedRows={auditedRows}/{requestedRows} unloggedTailRows={auditedRows - progressRows} provenance=legacy/audited-adopted sourceFingerprint={frozenFingerprint}; database changed only after complete read-only deterministic-prefix audit.");
+    return 0;
 }
 static (double ElapsedSeconds, long DbBytes) ParseLegacyProgressLine(string line)
 {
@@ -652,6 +877,35 @@ static (double ElapsedSeconds, long DbBytes) ParseLegacyProgressLine(string line
             System.Globalization.CultureInfo.InvariantCulture, out var bytes))
         throw new InvalidDataException("Legacy log row sample is not in the frozen canonical format.");
     return (elapsed, bytes);
+}
+static string? ReadLastProgressLine(string path)
+{
+    const int maxLineChars = 4096;
+    using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+    var line = new StringBuilder(maxLineChars);
+    string? lastProgress = null;
+    var overflow = false;
+    while (true)
+    {
+        var value = reader.Read();
+        if (value < 0 || value == '\n')
+        {
+            if (overflow && line.ToString().StartsWith("rows=", StringComparison.Ordinal))
+                throw new InvalidDataException("Legacy progress line exceeds its 4096-character bound.");
+            if (!overflow)
+            {
+                var candidate = line.ToString().TrimEnd('\r');
+                if (candidate.StartsWith("rows=", StringComparison.Ordinal)) lastProgress = candidate;
+            }
+            line.Clear();
+            overflow = false;
+            if (value < 0) break;
+            continue;
+        }
+        if (line.Length < maxLineChars) line.Append((char)value);
+        else overflow = true;
+    }
+    return lastProgress;
 }
 static string ValidateFrozenSourceTree(string root)
 {
@@ -675,7 +929,7 @@ static string ValidateFrozenSourceTree(string root)
     }
     return HashText(string.Join("|", expected.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Key + ":" + pair.Value)));
 }
-static string AuditLegacyDatabase(string path, long progressRows, long requestedRows, out long auditedRows)
+static string AuditLegacyDatabase(string path, long progressRows, long requestedRows, out long auditedRows, bool allowOwnedMarker = false)
 {
     var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
     using var connection = new SqliteConnection(builder.ConnectionString);
@@ -686,7 +940,8 @@ static string AuditLegacyDatabase(string path, long progressRows, long requested
     {
         if (!shape.Read() || shape.GetInt64(0) != HostCount || shape.GetInt64(1) != 1 || shape.GetInt64(2) != HostCount ||
             shape.GetInt64(3) != SensorCount || shape.GetInt64(4) != 1_000_001 || shape.GetInt64(5) != 1_015_000 ||
-            shape.GetInt64(6) != HostCount || shape.GetInt64(8) != 1 || shape.GetInt64(9) != shape.GetInt64(7) || shape.GetInt64(10) != 0)
+            shape.GetInt64(6) != HostCount || shape.GetInt64(8) != 1 || shape.GetInt64(9) != shape.GetInt64(7) ||
+            (!allowOwnedMarker && shape.GetInt64(10) != 0) || (allowOwnedMarker && shape.GetInt64(10) is not (0 or 1)))
             throw new InvalidDataException("Legacy SQLite fixed host/sensor/map/value shape failed the read-only audit.");
         auditedRows = shape.GetInt64(7);
     }
@@ -725,6 +980,7 @@ static void AuditLegacyStructureRows(SqliteConnection connection)
 {
     using var command = connection.CreateCommand();
     DateTime? seedTimestamp = null;
+    DateTime? syncedTimestamp = null;
     command.CommandText = "SELECT objid, name, group_path, ip, tags, status, dependency_objid, paused, synced_at, created_at FROM lf_prtg_devices ORDER BY objid;";
     using (var reader = command.ExecuteReader())
     {
@@ -735,15 +991,19 @@ static void AuditLegacyStructureRows(SqliteConnection connection)
             var syncedAt = DateTime.Parse(reader.GetString(8), System.Globalization.CultureInfo.InvariantCulture);
             var createdAt = DateTime.Parse(reader.GetString(9), System.Globalization.CultureInfo.InvariantCulture);
             seedTimestamp ??= createdAt;
+            syncedTimestamp ??= syncedAt;
             if (reader.GetInt64(0) != id || reader.GetString(1) != $"capacity-host-{id:D4}" ||
                 reader.GetString(2) != $"/capacity/region-{(id - 1) % 10:D2}" || reader.GetString(3) != expectedIp ||
                 reader.GetString(4) != "acceptance.synthetic" || reader.GetString(5) != PrtgSensorStatuses.Up ||
-                !reader.IsDBNull(6) || reader.GetInt64(7) != 0 || syncedAt != createdAt || createdAt != seedTimestamp)
+                !reader.IsDBNull(6) || reader.GetInt64(7) != 0 || syncedAt < createdAt ||
+                syncedAt != syncedTimestamp || createdAt != seedTimestamp)
                 throw new InvalidDataException($"Legacy device mapping differs at device {id}.");
         }
         if (reader.Read()) throw new InvalidDataException("Legacy database contains extra devices.");
     }
 
+    DateTime? sensorCreatedTimestamp = null;
+    DateTime? sensorSyncedTimestamp = null;
     command.CommandText = "SELECT objid, device_objid, name, sensor_type, tags, unit, status, thresholds_json, dependency_objid, paused, category, category_source, synced_at, created_at FROM lf_prtg_sensors ORDER BY objid;";
     using (var reader = command.ExecuteReader())
     {
@@ -753,13 +1013,16 @@ static void AuditLegacyStructureRows(SqliteConnection connection)
             var sensorId = 1_000_001L + index;
             var syncedAt = DateTime.Parse(reader.GetString(12), System.Globalization.CultureInfo.InvariantCulture);
             var createdAt = DateTime.Parse(reader.GetString(13), System.Globalization.CultureInfo.InvariantCulture);
+            sensorCreatedTimestamp ??= createdAt;
+            sensorSyncedTimestamp ??= syncedAt;
             if (reader.GetInt64(0) != sensorId || reader.GetInt64(1) != 1 + index / 5 ||
                 reader.GetString(2) != $"capacity-sensor-{index + 1:D5}" ||
                 reader.GetString(3) != "synthetic-hourly-aggregate" || !reader.IsDBNull(4) ||
                 reader.GetString(5) != "percent" || reader.GetString(6) != PrtgSensorStatuses.Up ||
                 !reader.IsDBNull(7) || !reader.IsDBNull(8) || reader.GetInt64(9) != 0 ||
                 reader.GetString(10) != "acceptance" || reader.GetString(11) != "auto" ||
-                syncedAt != createdAt || createdAt != seedTimestamp)
+                syncedAt < createdAt || createdAt < seedTimestamp ||
+                syncedAt != sensorSyncedTimestamp || createdAt != sensorCreatedTimestamp)
                 throw new InvalidDataException($"Legacy sensor mapping differs at sensor index {index}.");
         }
         if (reader.Read()) throw new InvalidDataException("Legacy database contains extra sensors.");
@@ -769,6 +1032,7 @@ static void AuditLegacyStructureRows(SqliteConnection connection)
     using (var reader = command.ExecuteReader())
     {
         DateTime? expectedMapDate = null;
+        DateTime? mapTimestamp = null;
         for (var id = 1; id <= HostCount; id++)
         {
             if (!reader.Read()) throw new InvalidDataException("Legacy host-map sequence is truncated.");
@@ -776,9 +1040,11 @@ static void AuditLegacyStructureRows(SqliteConnection connection)
             expectedMapDate ??= mapDate;
             var expectedIp = $"10.{(id - 1) / 65_536}.{((id - 1) / 256) % 256}.{((id - 1) % 254) + 1}";
             var createdAt = DateTime.Parse(reader.GetString(7), System.Globalization.CultureInfo.InvariantCulture);
+            mapTimestamp ??= createdAt;
             if (mapDate != expectedMapDate.Value || reader.GetInt64(1) != id || reader.GetString(2) != expectedIp ||
                 reader.GetInt64(3) != id || reader.GetString(4) != $"capacity-host-{id:D4}" ||
-                reader.GetString(5) != "mapped" || !reader.IsDBNull(6) || createdAt != seedTimestamp)
+                reader.GetString(5) != "mapped" || !reader.IsDBNull(6) || createdAt < seedTimestamp ||
+                createdAt < sensorCreatedTimestamp || createdAt != mapTimestamp)
                 throw new InvalidDataException($"Legacy host-map identity differs at device {id}.");
         }
         if (reader.Read()) throw new InvalidDataException("Legacy database contains extra host maps.");
@@ -795,12 +1061,27 @@ static void InitializeLegacyOwnedDatabase(string path, RunManifest manifest, lon
 {
     using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ConnectionString);
     connection.Open();
+    using var transaction = connection.BeginTransaction();
     using var command = connection.CreateCommand();
+    command.Transaction = transaction;
+    command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='lf_n6_generation_control';";
+    if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 1)
+    {
+        command.CommandText = "SELECT run_id, manifest_sha256, committed_rows FROM lf_n6_generation_control;";
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.GetString(0) != manifest.RunId || reader.GetString(1) != manifest.ManifestSha256 ||
+            reader.GetInt64(2) != committed || reader.Read())
+            throw new InvalidDataException("Existing legacy adoption marker differs from its immutable manifest or audited prefix.");
+        reader.Close();
+        transaction.Commit();
+        return;
+    }
     command.CommandText = "CREATE TABLE lf_n6_generation_control (run_id TEXT NOT NULL PRIMARY KEY, manifest_sha256 TEXT NOT NULL, committed_rows INTEGER NOT NULL); INSERT INTO lf_n6_generation_control (run_id, manifest_sha256, committed_rows) VALUES ($run, $hash, $rows);";
     command.Parameters.AddWithValue("$run", manifest.RunId);
     command.Parameters.AddWithValue("$hash", manifest.ManifestSha256);
     command.Parameters.AddWithValue("$rows", committed);
     command.ExecuteNonQuery();
+    transaction.Commit();
 }
 static bool IsSameOrWithin(string path, string parent)
 {
@@ -815,7 +1096,7 @@ static Dictionary<string, string> ParseArgs(string[] args)
     var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     for (var i = 0; i < args.Length; i++)
     {
-        if (args[i] is "--resume" or "--adopt-legacy" or "--simulate-crash-after-db-commit")
+        if (args[i] is "--resume" or "--adopt-legacy" or "--upgrade-owned-run" or "--inspect-legacy-log" or "--simulate-crash-after-db-commit")
         {
             var flag = args[i][2..];
             if (result.ContainsKey(flag)) throw new ArgumentException("Unknown or duplicate command argument.");
@@ -824,7 +1105,7 @@ static Dictionary<string, string> ParseArgs(string[] args)
         }
         if (!args[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= args.Length) throw new ArgumentException($"Expected --name value, got {args[i]}.");
         var key = args[i][2..];
-        if (key is not ("mode" or "root" or "provider" or "rows" or "stop-after-batches" or "source-root" or "source-log") || result.ContainsKey(key))
+        if (key is not ("mode" or "root" or "provider" or "rows" or "stop-after-batches" or "source-root" or "source-log" or "simulate-init-crash-after" or "simulate-adopt-crash-after" or "simulate-upgrade-crash-after") || result.ContainsKey(key))
             throw new ArgumentException("Unknown or duplicate command argument.");
         result[key] = args[++i];
     }
@@ -857,4 +1138,13 @@ sealed class RunCheckpoint
     public double ResumeWallSeconds { get; set; } public int ResumeCount { get; set; }
     public DateTimeOffset LastProcessStartedUtc { get; set; } public string CheckpointSha256 { get; set; } = "";
 }
+
+sealed class RunUpgradeIntent
+{
+    public string Schema { get; set; } = ""; public int SchemaVersion { get; set; } public string RunId { get; set; } = "";
+    public string OldManifestSha256 { get; set; } = ""; public string NewManifestSha256 { get; set; } = "";
+    public string NewSourceFingerprint { get; set; } = ""; public string IntentSha256 { get; set; } = "";
+}
+
+sealed class SimulatedCrashException : Exception { }
 

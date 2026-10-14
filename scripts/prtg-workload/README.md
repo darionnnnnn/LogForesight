@@ -137,11 +137,18 @@ Evaluation requires the complete raw samples for both routes in every cell, the 
 ```powershell
 dotnet build .\storage-generator\PrtgStorageGenerator.csproj -c Release
 $Generator = Join-Path $ToolRoot 'storage-generator\bin\Release\net8.0-windows\PrtgStorageGenerator.dll'
-python .\storage-generator\test_contracts.py $Generator
-dotnet $Generator --mode n6 --provider sqlite --root C:\work\lf-storage-new-001 --rows 100000
+# Only after approval for the fixed structure seed; preserve the fixture directory.
+$env:LF_E1_BOUNDED_HOME = 'C:\work\lf-storage-bounded-owned'
+python .\storage-generator\test_contracts.py --bounded-e1 $Generator $ApprovedFrozenSourceRoot
 ```
 
 Choose a new directory on a local fixed volume, without reparse-point ancestors. Existing directories are refused unless `--resume` validates a matching immutable manifest, checkpoint and SQLite ownership marker. Each production `MergeSampledValues` batch advances the in-database marker and a checksummed atomic checkpoint; continuation starts at the exact sensor-major next row. A different root, provider, row scope, source build, database identity, manifest or checkpoint is refused. Keep the owned output for independent inspection.
+
+The bounded E1 suite creates one fixed structure seed with at most 205 value rows and reuses its owned copies; it retains failures and data. Reuse an existing approved directory with `LF_E1_BOUNDED_CONTINUE=1`; do not start another seed merely to retry. The older default suite creates several structure seeds and is outside the current development-test authorization.
+
+Initialization interrupted before its first checkpoint can resume with its original tool. A committed structure marker prevents reseeding; the tool checks exact structure and an empty value table with an untouched value ID sequence. A different tool must wait until the original tool publishes that checkpoint. Thereafter `--resume --upgrade-owned-run` performs a full deterministic prefix/structure audit and uses a checksummed upgrade intent to recover interrupted marker/manifest/checkpoint publication. Plain resume refuses an unfinished upgrade. These checksums detect mismatched artifacts; they do not establish trusted release provenance.
+
+Legacy log inspection uses `--inspect-legacy-log --source-log <path>` without opening a database. The scanner bounds each line to 4,096 characters, rejects oversized progress lines and ignores trailing blank lines. Full-prefix adoption/resume of the existing large database remains unexecuted under the current test constraint.
 
 An unfinished pre-manifest run can be adopted only with `--adopt-legacy`, the frozen source snapshot and its run log. The frozen generator writes progress every 100,000 rows while committing 100-row batches. Adoption therefore treats logged progress as a sampled high-water mark, permits at most 99,999 additional persisted rows, and uses the read-only audited row count—not the older progress number—as the continuation checkpoint. It verifies exact device/sensor/map contents and every persisted value row, including canonical row IDs, in sensor-major order before writing any ownership marker. The receipt records `originalProvenance=legacy/audited-adopted`, original progress/log hashes and precision, sampled versus audited row counts, any unlogged tail, and actual database/WAL/SHM bytes separately from sampled database bytes. Original elapsed time is marked incomplete when the run did not reach its requested row count; later resume wall time is recorded separately. This audit reads every existing row and may take substantial time. A legacy adoption never marks a run continuous and never sets capacity, retention, recovery or whole-round acceptance flags.
 

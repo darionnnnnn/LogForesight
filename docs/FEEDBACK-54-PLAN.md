@@ -328,6 +328,13 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 小型SQLite：兩host各一sensor、各兩個可信hour；先確認兩者正式finding，再損壞其中一個mode，精確核另一host保留唯一formal finding、壞hostInsufficient／版本-1、壞文件零寫入。ASCII超限與壞JSON兩反例＋既有trial/restart/one-use/rule變動回歸共10/10通過、零略過、47秒，TRX work/round54-mode-validation/work/d1-mode-consumer/d1-mode-consumer-stable-fixture.trx。
 - 原fixture建立第二資源時意外改ValidFrom／settings revision，先導致兩個否定案例在正式baseline前失敗；修成共享既有來源契約後重驗通過，沒有放寬production authority。首次fixture還有以finding.HostId存取不存在欄位的compile錯誤，已改核SensorObjid。全部失敗log保留；此段不替代完整mail組合、disk共用等待、維護修復或SQL邊界驗收。
 
+### E1第一段：初始化、升級與前綴安全恢復
+
+- 已補初始化marker／checkpoint中斷恢復、legacy adoption完整結構與deterministic prefix稽核、owned tool upgrade intent與四個提交邊界恢復，以及有界4096字元log scanner。初始值表非空或自增序號已使用即拒絕；沒有checkpoint時須先由原工具恢復，不能跨版直接生成。結構marker已提交時保持既有結構及時間戳。
+- 使用者授權第二次固定結構後，保留並重用work/e1-generator-bounded-second-20261014；主代理最後獨立12步驟通過，包括初始跨版拒絕、原工具checkpoint恢復、四升級中斷、非零初始序號拒絕、一批100列停止、值／結構／foreign marker竄改拒絕，再新程序完成205列。結構三表SHA不變、synthetic fixture還原完全相同persistent bytes、新增structure seed=0；work/round54/e1-root-reused-report.json及e1-root-reused-final-console.log。
+- 測試合成fixture曾刪值但遺留AUTOINCREMENT序號，導致後續prefix恢復失敗；已明確記錄fixture-only sequence reset，正式工具僅拒絕而不修資料。另修測試WAL完整view還原、volatile SHM比較及result檔名；歷次失敗保留。主代理以隔離現行Core建置generator成功0警告／0錯誤；兼容凍結Core的恢復驗證不作正式release來源身份證據。
+- 仍待最終乾淨同版交付核對、正常E2資格準備及全量G驗收；未開啟既有41.14M DB、未全掃／續跑、未生成64.8M，各capacity／fullWorkload／wholeRound旗標維持false。
+
 ### 開發驗證限制更新：只執行分段小範圍（2026-10-14最新指示）
 
 使用者明確要求開發期間不要大規模大量資料測試，優先分段小範圍驗正確性；不得已必須先討論可行方案。本條約束所有階段、委派與舊驗收引用。持續完成各項程式／腳本／正常consumer接線，使用少量主機／sensor／列、可控批次、故障注入與精確預期，並逐段commit／push。
