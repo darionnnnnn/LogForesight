@@ -258,15 +258,57 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
             signature, DateTime.UtcNow));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InvalidHostModeWaitsWithoutAbortingOtherHostFormalEvidence(bool oversized)
+    {
+        var first = ReadyCpuAssessment(95);
+        _ = ReadyCpuAssessment(95, SensorId + 10, DeviceId + 10, HostId + 10);
+        var profiles = new PrtgTrustedSamplingProfileStore(_backend);
+        foreach (var profile in profiles.GetMany([SensorId, SensorId + 10]).Values)
+            _ = RefreshProfile(_backend, profile);
+        var consumer = new PrtgResourcePeriodConsumer(_backend, first.Settings);
+        var current = consumer.EvaluateBatch([SensorId, SensorId + 10], first.Assessment.EvidenceAsOfUtc, DateTime.UtcNow);
+        Assert.Equal(2, current.Assessments.Count);
+        Assert.True(current.Assessments.All(item => item.Decision.Kind == PrtgResourceDecisionKind.Hit),
+            string.Join(";", current.Assessments.Select(item => $"{item.SensorObjid}:{item.Decision.Kind}:{item.Decision.ReasonCode}")));
+        var authorization = new PrtgResourcePressureAuthorizationService(_backend, first.Settings);
+        foreach (var assessment in current.Assessments)
+        {
+            var trial = authorization.IssueSuccessfulTrial(assessment, true, DateTime.UtcNow);
+            Assert.True(authorization.SetFormalMode(assessment, trial.TrialResultId, true, true, DateTime.UtcNow));
+        }
+        Assert.Equal(2, consumer.EvaluateBatch([SensorId, SensorId + 10], first.Assessment.EvidenceAsOfUtc,
+            DateTime.UtcNow).FormalFindings.Count);
+        var blob = _backend.Blob(PrtgResourcePressureModeStore.BlobKey(HostId));
+        blob.Mutate(raw => (oversized
+            ? raw![..^1] + ",\"Padding\":\"" + new string('x', PrtgResourcePressureModeStore.MaximumDocumentCharacters) + "\"}"
+            : "not-json", true));
+        var before = blob.ReadVersion();
+
+        var result = consumer.EvaluateBatch([SensorId, SensorId + 10], first.Assessment.EvidenceAsOfUtc, DateTime.UtcNow);
+
+        Assert.Equal("formal-mode-document-unavailable", result.Assessments.Single(item => item.HostId == HostId).Decision.ReasonCode);
+        Assert.Equal(PrtgResourceDecisionKind.Insufficient, result.Assessments.Single(item => item.HostId == HostId).Decision.Kind);
+        Assert.Equal(PrtgResourceDecisionMode.FormalRisk, result.Assessments.Single(item => item.HostId == HostId + 10).Decision.Mode);
+        Assert.Equal(SensorId + 10, Assert.Single(result.FormalFindings).SensorObjid);
+        Assert.Equal(-1, result.ModeBlobVersionsByHost[HostId]);
+        Assert.True(result.ModeBlobVersionsByHost[HostId + 10] > 0);
+        Assert.Equal(before, blob.ReadVersion());
+    }
+
     private (StorageBackend Backend, ISystemSettingsStore Settings, EfPrtgStore Store,
-        PrtgResourcePeriodAssessment Assessment) ReadyCpuAssessment(double value)
+        PrtgResourcePeriodAssessment Assessment) ReadyCpuAssessment(double value,
+        long sensorId = SensorId, long deviceId = DeviceId, long hostId = HostId)
     {
         var backend = _backend;
         var seedRules = KnownIssueSeed.CreateRules();
         new KnownIssueRuleStore(backend.Blob("rules")).Save(new RuleFileContent
         { SeedVersion = KnownIssueSeed.Version, Rules = seedRules });
         var settings = new SystemSettingsStore(backend.Blob("system_settings"));
-        settings.Update(s => { s.PrtgEnabled = true; s.PrtgUrl = Url; });
+        if (!settings.Get().PrtgEnabled || settings.Get().PrtgUrl != Url)
+            settings.Update(s => { s.PrtgEnabled = true; s.PrtgUrl = Url; });
         var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
         policy.Update(p =>
         {
@@ -274,9 +316,9 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
             p.CoreSystemId = "core-test";
             p.SourceGeneration = "source-current";
             p.EndpointHint = EfPrtgObservationStore.SourceHintFor(Url);
-            p.ValidFrom = DateTimeOffset.UtcNow.AddDays(-10);
-            p.HostIds = [HostId];
-            p.SensorIds = [SensorId];
+            if (p.ValidFrom == default) p.ValidFrom = DateTimeOffset.UtcNow.AddDays(-10);
+            p.HostIds = p.HostIds.Append(hostId).Distinct().Order().ToList();
+            p.SensorIds = p.SensorIds.Append(sensorId).Distinct().Order().ToList();
             p.ConfirmedBy = "test-maintainer";
             p.SourceTimeZoneId = "UTC";
             p.SourceCultureName = "en-US";
@@ -286,17 +328,17 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
         });
         using (var context = backend.CreateContext())
         {
-            context.PrtgDevices.Add(new PrtgDeviceRow { Objid = DeviceId, Name = "resource-test-device" });
+            context.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId, Name = "resource-test-device" });
             context.PrtgSensors.Add(new PrtgSensorRow
             {
-                Objid = SensorId, DeviceObjid = DeviceId, SensorType = "cpu", Category = PrtgSensorCategories.Cpu
+                Objid = sensorId, DeviceObjid = deviceId, SensorType = "cpu", Category = PrtgSensorCategories.Cpu
             });
-            context.PrtgManualMaps.Add(new PrtgManualMapRow { DeviceObjid = DeviceId, HostId = HostId });
+            context.PrtgManualMaps.Add(new PrtgManualMapRow { DeviceObjid = deviceId, HostId = hostId });
             context.SaveChanges();
         }
         var store = backend.PrtgStore();
-        var identity = store.BindObservedResource(SensorId, HostId, "source-current", "resource-fingerprint");
-        identity = store.SetObservedChannel(SensorId, "source-current", "primary-channel|resource-period-v1",
+        var identity = store.BindObservedResource(sensorId, hostId, "source-current", "resource-fingerprint");
+        identity = store.SetObservedChannel(sensorId, "source-current", "primary-channel|resource-period-v1",
             identity.Generation);
 
         var strategyDefinition = PrtgFetchStrategy.Profile(settings.Get().PrtgFetchStrategy);
@@ -308,7 +350,7 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
             strategyDefinition.SnapshotIntervalMinutes, DateTime.UtcNow.AddDays(-2));
         var now = DateTime.UtcNow;
         var oa = now.ToOADate();
-        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(SensorId, identity, "cpu", "primary-channel",
+        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity, "cpu", "primary-channel",
             "CPU Usage", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1, "direct",
             "resource-period-v1", strategy.StrategyFingerprint, strategy.StrategyMinutes,
             strategy.EffectiveFromHourUtc, TimeSpan.FromMinutes(strategy.StrategyMinutes), "seconds",
@@ -335,7 +377,7 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
         var rows = new[] { previousHour, latestHour }.Select(hour => TrustedHour(profile, hour, value)).ToArray();
         store.MergeSampledValues(rows);
         var result = new PrtgResourcePeriodConsumer(backend, settings)
-            .EvaluateBatch([SensorId], evidenceCutoff, DateTime.UtcNow);
+            .EvaluateBatch([sensorId], evidenceCutoff, DateTime.UtcNow);
         Assert.NotNull(Assert.Single(result.Assessments).SingleWindowHostDay);
         return (backend, settings, store, Assert.Single(result.Assessments));
     }

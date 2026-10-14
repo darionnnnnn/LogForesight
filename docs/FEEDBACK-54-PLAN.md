@@ -322,6 +322,12 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 主代理獨立13/13 unit通過（4.11秒，無skip），再以已核Verify-BuildIdentity的真實舊版638c58434f0bc01fe77e62365addeafd75680fb0執行完整CLI，/login 200，815,104-byte自有SQLite少量case/reply/task/mail/sentinel逐列及blob完全不變、external TCP trap=0、source DB/key與release tree SHA完全不變；PID15376已停止並查無process。報告work/round54/rollback-real-root.json、命令log同目錄。沒有使用正式DB/key或完整母體。
 - 仍待：正式release/bundle consumer接線、差額reconcile與SMTP去重解除hold；SQL Server相容回退未知即拒絕，尚未做其正式還原驗收。此段不宣稱無損回退、全A2/B2/G/H或整輪PASS。
 
+### D1第五段：資源期間引擎逐host mode隔離
+
+- 主代理修正兩個正常consumer：期間引擎的host快照讀取及authorization snapshot讀取遇超限／壞JSON，不再擲出中斷整批；該host以負版本拒絕正式發布，回明確formal-mode-document-unavailable等待，不將缺mode當健康／正常關閉。historical authorization同用此防護；合法其他host繼續。
+- 小型SQLite：兩host各一sensor、各兩個可信hour；先確認兩者正式finding，再損壞其中一個mode，精確核另一host保留唯一formal finding、壞hostInsufficient／版本-1、壞文件零寫入。ASCII超限與壞JSON兩反例＋既有trial/restart/one-use/rule變動回歸共10/10通過、零略過、47秒，TRX work/round54-mode-validation/work/d1-mode-consumer/d1-mode-consumer-stable-fixture.trx。
+- 原fixture建立第二資源時意外改ValidFrom／settings revision，先導致兩個否定案例在正式baseline前失敗；修成共享既有來源契約後重驗通過，沒有放寬production authority。首次fixture還有以finding.HostId存取不存在欄位的compile錯誤，已改核SensorObjid。全部失敗log保留；此段不替代完整mail組合、disk共用等待、維護修復或SQL邊界驗收。
+
 ### 開發驗證限制更新：只執行分段小範圍（2026-10-14最新指示）
 
 使用者明確要求開發期間不要大規模大量資料測試，優先分段小範圍驗正確性；不得已必須先討論可行方案。本條約束所有階段、委派與舊驗收引用。持續完成各項程式／腳本／正常consumer接線，使用少量主機／sensor／列、可控批次、故障注入與精確預期，並逐段commit／push。

@@ -91,8 +91,18 @@ public sealed class PrtgResourcePressureAuthorizationService(StorageBackend back
     {
         if (assessment.Family is not (PrtgResourceFamily.Cpu or PrtgResourceFamily.Memory))
             return (null, new(null, null, 0));
-        var mode = ModeStore(assessment.HostId).ReadSnapshot(assessment.HostId,
-            assessment.SensorObjid, assessment.Family);
+        PrtgResourcePressureModeSnapshot mode;
+        try
+        {
+            mode = ModeStore(assessment.HostId).ReadSnapshot(assessment.HostId,
+                assessment.SensorObjid, assessment.Family);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
+        {
+            // A negative version fences formal publication and identifies unavailable authority,
+            // rather than treating a corrupt document as an empty, disabled-mode document.
+            return (null, new(null, null, -1));
+        }
         var grant = mode.Grant;
         if (grant is null || !grant.FormalEnabled || !grant.MaintainAuthorized ||
             grant.ProfileFingerprint != assessment.ProfileFingerprint ||

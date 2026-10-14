@@ -187,11 +187,18 @@ public sealed class PrtgResourcePeriodConsumer
                 hostScope is not null && !hostScope.Contains(identity.HostId)) continue;
             if (sensorMetadata.TryGetValue(sensorId, out var sensorMeta) &&
                 FamilyForCategory(sensorMeta.Category) is not (PrtgResourceFamily.Cpu or PrtgResourceFamily.Memory)) continue;
-            var snapshot = new PrtgResourcePressureModeStore(_backend.Blob(
-                PrtgResourcePressureModeStore.BlobKey(identity.HostId))).ReadHostSnapshot(identity.HostId);
-            CaptureModeVersion(identity.HostId, snapshot.BlobVersion);
-            foreach (var revocation in snapshot.Revocations.Where(item => item.SensorObjid == sensorId))
-                AddPendingModeRevocation(revocation);
+            try
+            {
+                var snapshot = new PrtgResourcePressureModeStore(_backend.Blob(
+                    PrtgResourcePressureModeStore.BlobKey(identity.HostId))).ReadHostSnapshot(identity.HostId);
+                CaptureModeVersion(identity.HostId, snapshot.BlobVersion);
+                foreach (var revocation in snapshot.Revocations.Where(item => item.SensorObjid == sensorId))
+                    AddPendingModeRevocation(revocation);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException)
+            {
+                CaptureModeVersion(identity.HostId, -1);
+            }
         }
         foreach (var sensorId in ids)
         {
@@ -308,7 +315,18 @@ public sealed class PrtgResourcePeriodConsumer
                 CaptureModeVersion(identity.HostId, modeSnapshot.BlobVersion);
                 if (modeSnapshot.Revocation is { } revocation) AddPendingModeRevocation(revocation);
             }
-            if (currentContext is not null && authorization is not null)
+            if (family.Value is PrtgResourceFamily.Cpu or PrtgResourceFamily.Memory &&
+                modeBlobVersions.GetValueOrDefault(identity.HostId) < 0)
+            {
+                authorization = null;
+                decision = Insufficient(family.Value, input, "formal-mode-document-unavailable");
+                assessment = new PrtgResourcePeriodAssessment(identity.HostId, identity.DeviceId,
+                    sensorId, family.Value, input, decision, authorityNowUtc, identity.SourceGeneration, identity.Generation,
+                    identity.ChannelGeneration, identity.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    profile?.SemanticVersion ?? "", profile?.StrategyFingerprint ?? "", currentRule?.Rule,
+                    currentRule?.Fingerprint ?? "", currentRules.AdmissionFingerprintFor(family.Value));
+            }
+            else if (currentContext is not null && authorization is not null)
             {
                 decision = PrtgResourcePressureEvaluator.EvaluateAuthorized(input, authorization);
                 assessment = new PrtgResourcePeriodAssessment(identity.HostId, identity.DeviceId,
