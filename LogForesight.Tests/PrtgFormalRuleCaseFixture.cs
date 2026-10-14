@@ -236,10 +236,10 @@ internal sealed class PrtgFormalRuleCaseFixture : IDisposable
                     "synthetic-formal-case-device-sensor", 0), identity.Generation, identity.Epoch,
                 identity.ChannelGeneration, _syntheticIdentityObservedAtUtc ?? policy.Get().ValidFrom);
             var coverageStart = AnalysisDay.AddDays(-30);
+            evidence.MessageTimeFingerprint = policy.Get().MessageTimeFingerprint(SourceUrl);
             evidence.Accept(new DateTimeOffset(coverageStart), new DateTimeOffset(AnalysisDay.AddDays(1)),
                 timedStates.Select(item => new PrtgTimedState(SensorId, new DateTimeOffset(item.At), item.Status,
                     identity.SourceGeneration, identity.Generation)));
-            evidence.MessageTimeFingerprint = policy.Get().MessageTimeFingerprint(SourceUrl);
         });
         if (includeParent)
         {

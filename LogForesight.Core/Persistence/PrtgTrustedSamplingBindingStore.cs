@@ -66,15 +66,12 @@ public sealed class PrtgTrustedSamplingBindingStore
         if (ids.Length == 0) return new Dictionary<long, PrtgTrustedSamplingBinding>();
         var keys = ids.Select(Key).ToArray();
         using var context = backend.CreateContext();
-        var rows = context.Blobs.AsNoTracking().Where(row => keys.Contains(row.BlobKey))
-            .Select(row => new { row.BlobKey, Content = row.Content.Substring(0,
-                PrtgTrustedSamplingBinding.MaximumSerializedBytes + 1), Length = row.Content.Length })
-            .ToDictionary(row => row.BlobKey, row => row);
+        var rows = BoundedJsonBlobBatchReader.Read(context,keys,PrtgTrustedSamplingBinding.MaximumSerializedBytes);
         var result = new Dictionary<long, PrtgTrustedSamplingBinding>();
         foreach (var id in ids)
         {
             if (!rows.TryGetValue(Key(id), out var row)) continue;
-            if (row.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
+            if (row.Content is null || row.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
                 Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
                 throw new InvalidDataException("PRTG 採樣 binding 超過 8 KiB；拒絕使用截斷值。");
             var binding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(row.Content, LfJsonOptions.Pretty)

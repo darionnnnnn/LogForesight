@@ -376,3 +376,12 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 正式通知逐 issue 排除過期訊息／raw 證據，保留同主機合法 NetIQ、有效 message 及有效 raw disk trend；送達事實只記各實際收件者都收到的 issue。paired shared authority 及版本在重查前後核對；explicit-null policy 當不可用，保持歷史與其他 lane。人工歷史案件／回覆不改寫，缺訊息指紋的舊證據標示 legacy-message-time-unverified。
 - 主代理讀取實際 diff／producer／persisted projection／consumer，隔離 checkout 獨立 42/42、零略過（1分50秒），含真 SQL TopIssue readback、受控 SMTP 混合 lane、range authority drift、replay、case history 及 5 個 tiny null authority 反例。work/round54-mode-validation/work/b2-root/b2-root.trx；補 daily provider 後 Web build 0 errors，16 個既有 nullable／captured-field warnings。
 - 此段取代前文 B1 紀錄的 range／finding→SQL／replay／mail 待接線項；正式 Date Format 樣本 probe／離線證據與 tiny 多頁 cursor lifecycle 仍在本輪補齊，A2差額／通知去重回退、報告／匯出最終生命週期矩陣及整輪驗收仍未通過。未把 account format 設定當成已從遠端讀回的事實。
+
+### D1第九段：批次完整有界讀取與正式派送閘
+
+- 新批次讀取以每頁最多 200 個 key 查 metadata；SQLite 於同一 read transaction 逐文件使用原生實體大小與嚴格 decoding，SQL Server 以 DATALENGTH 決定是否回完整 NVARCHAR。缺少、超限、NUL、非法 encoding 均不冒充截斷後的合法 JSON。binding GetMany 已接通，維持原每份 byte 限制；不改為每個 key 一次 SQL 查詢。
+- 正式派送的 mode 讀取改完整字元限制，避免中文被誤套等值 byte cap；相依 authority blob 同樣使用完整有界讀取。settings／policy 上限與 shared authority 的 2 Mi 字元一致，排除原 policy 64 KiB 閘可能拒絕正常 15,000 sensor scope 的矛盾。
+- 主代理隔離 checkout 小範圍 31/31（68秒）與正式郵件開始／撤銷／未知SMTP重試四例 4/4（48秒），零略過。首輪四例因 fixture 在 Accept 後才安裝訊息 fingerprint 而失敗，改為先安裝已保存 authority；未放寬正式檢查。TRX：work/round54-mode-validation/work/d1-batch-root/d1-batch-root.trx、work/d1-formal-fence-r2/d1-formal-fence-r2.trx。
+- 重用自有 LocalDB，以每筆最多 17 UTF-16 units 驗 7 個實體讀取及 3 份 batch 文件／missing key，正常／中文 supplementary／NUL 拒絕、內容不變均通過；work/round54/sql-character-parity/provider-small-batch-result.json。前兩次在5秒連線預算的 post-login 階段逾時，保留 log；確認既有 LocalDB 運行後把此測試連線預算設為30秒，未重啟服務或建立新DB。未建立33M文件或做容量壓測。
+- 技術依據：SQLite [length](https://www.sqlite.org/lang_corefunc.html) 按codepoint且在NUL前終止，TEXT計長需載入；[incremental blob IO](https://www.sqlite.org/c3ref/blob_open.html)可唯讀TEXT。Microsoft [.NET UTF-16](https://learn.microsoft.com/en-us/dotnet/standard/base-types/character-encoding-introduction)與[SQL DATALENGTH](https://learn.microsoft.com/en-us/sql/t-sql/functions/datalength-transact-sql?view=sql-server-ver16)支持目前單位核對。官方規則與小反例沒有被記為33M極限實測。
+- 其他直接批次 projection、維護修復、全生命週期 consumer 與整輪驗收仍待完成。

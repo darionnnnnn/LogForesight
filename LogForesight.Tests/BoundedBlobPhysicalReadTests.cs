@@ -32,6 +32,27 @@ public sealed class BoundedBlobPhysicalReadTests : IDisposable
     }
 
     [Fact]
+    public void BatchReadsCompleteUnicodeAndRejectsNulWithoutMutatingOtherDocuments()
+    {
+        fixture.Blob("batch-valid").Mutate(_ => ("😀中 ",true));
+        fixture.Blob("batch-nul").Mutate(_ => ("{}\0foreign",true));
+        fixture.Blob("batch-over").Mutate(_ => ("abcdefghijklmnopq",true));
+        using var context=fixture.NewContext();
+        using var transaction=context.Database.BeginTransaction();
+        var rows=BoundedJsonBlobBatchReader.Read(context,
+            ["batch-valid","batch-nul","batch-over","batch-missing","batch-valid"],16);
+        Assert.Equal(3,rows.Count);
+        Assert.Equal(("😀中 ",1L,4),rows["batch-valid"]);
+        Assert.Null(rows["batch-nul"].Content);
+        Assert.Null(rows["batch-over"].Content);
+        Assert.True(rows["batch-nul"].Length>16);
+        Assert.True(rows["batch-over"].Length>16);
+        Assert.Same(transaction,context.Database.CurrentTransaction);
+        Assert.Equal("{}\0foreign",fixture.Blob("batch-nul").Read());
+        Assert.Equal(1,fixture.Blob("batch-over").ReadVersion());
+    }
+
+    [Fact]
     public void PreReadFenceRunsBeforeContentAndSharesRollbackTransaction()
     {
         var blob=fixture.Blob("bounded-fenced");

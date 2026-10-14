@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
@@ -138,25 +138,7 @@ public sealed class EfJsonBlobStore
                     "UTF-16be" => new UnicodeEncoding(true,false,true),
                     _ => throw new InvalidDataException("SQLite text encoding is unsupported.")
                 };
-                using var stream = new SqliteBlob(sqlite,"lf_blobs","content",rowid,readOnly:true);
-                var maximumBytes = (long)maxCharacters*(encodingName == "UTF-8" ? 3 : 2);
-                if (stream.Length > maximumBytes) return (null,version,maxCharacters+1);
-                using var text = new StreamReader(stream,encoding,detectEncodingFromByteOrderMarks:false,bufferSize:4096);
-                var result = new StringBuilder(Math.Min(maxCharacters+1,4096));
-                var buffer = new char[Math.Min(maxCharacters+1,4096)];
-                try
-                {
-                    while (result.Length <= maxCharacters)
-                    {
-                        var read = text.Read(buffer,0,Math.Min(buffer.Length,maxCharacters+1-result.Length));
-                        if (read == 0) break;
-                        result.Append(buffer,0,read);
-                    }
-                }
-                catch (DecoderFallbackException) { return (null,version,maxCharacters+1); }
-                var content = result.ToString();
-                if (content.Length > maxCharacters || content.Contains('\0')) return (null,version,maxCharacters+1);
-                return (content,version,content.Length);
+                return ReadSqlitePhysicalText(sqlite,rowid,version,maxCharacters,encoding,encodingName);
             }
             // NVARCHAR is UTF-16 regardless of SC collation. DATALENGTH includes trailing
             // spaces and NUL; use its metadata budget before returning the complete value.
@@ -176,6 +158,30 @@ public sealed class EfJsonBlobStore
             return (sqlContent,sqlVersion,sqlContent.Length);
         }
         finally { if (wasClosed) connection.Close(); }
+    }
+
+    internal static (string? Prefix,long Version,int ReportedLength) ReadSqlitePhysicalText(
+        SqliteConnection sqlite,long rowid,long version,int maxCharacters,Encoding encoding,string encodingName)
+    {
+        using var stream = new SqliteBlob(sqlite,"lf_blobs","content",rowid,readOnly:true);
+        var maximumBytes = (long)maxCharacters*(encodingName == "UTF-8" ? 3 : 2);
+        if (stream.Length > maximumBytes) return (null,version,maxCharacters+1);
+        using var text = new StreamReader(stream,encoding,detectEncodingFromByteOrderMarks:false,bufferSize:4096);
+        var result = new StringBuilder(Math.Min(maxCharacters+1,4096));
+        var buffer = new char[Math.Min(maxCharacters+1,4096)];
+        try
+        {
+            while (result.Length <= maxCharacters)
+            {
+                var read = text.Read(buffer,0,Math.Min(buffer.Length,maxCharacters+1-result.Length));
+                if (read == 0) break;
+                result.Append(buffer,0,read);
+            }
+        }
+        catch (DecoderFallbackException) { return (null,version,maxCharacters+1); }
+        var content = result.ToString();
+        if (content.Length > maxCharacters || content.Contains('\0')) return (null,version,maxCharacters+1);
+        return (content,version,content.Length);
     }
 
     /// <summary>讀→改→寫的原子操作。mutation 收目前內容、回 (新內容, 結果)</summary>

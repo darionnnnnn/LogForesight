@@ -98,20 +98,13 @@ public sealed record PrtgResourceFormalDeliveryFence(
                     resourceGeneration, channelGeneration, manifest.ResourceAuthorityRevision, manifest.PolicyRevision, out var profile,
                     out var identity)) return false;
 
-            var modeRow = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgResourcePressureModeStore.BlobKey(hostId))
-                .Select(row => new
-                {
-                    Content = row.Content.Substring(0, PrtgResourcePressureModeStore.MaximumDocumentCharacters + 1),
-                    Length = row.Content.Length,
-                    row.Version
-                }).FirstOrDefault();
-            if (modeRow is null || modeRow.Version != manifest.ResourceModeBlobVersion ||
-                modeRow.Version < 1 || string.IsNullOrWhiteSpace(modeRow.Content) ||
-                modeRow.Length > PrtgResourcePressureModeStore.MaximumDocumentCharacters ||
-                modeRow.Content.Length > PrtgResourcePressureModeStore.MaximumDocumentCharacters ||
-                System.Text.Encoding.UTF8.GetByteCount(modeRow.Content) > PrtgResourcePressureModeStore.MaximumDocumentCharacters) return false;
+            var modeRow = EfJsonBlobStore.ReadBoundedInContext(ctx,PrtgResourcePressureModeStore.BlobKey(hostId),
+                PrtgResourcePressureModeStore.MaximumDocumentCharacters);
+            if (modeRow.Version != manifest.ResourceModeBlobVersion ||
+                modeRow.Version < 1 || string.IsNullOrWhiteSpace(modeRow.Prefix) ||
+                modeRow.ReportedLength > PrtgResourcePressureModeStore.MaximumDocumentCharacters) return false;
 
-            var mode = JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(modeRow.Content, LfJsonOptions.Pretty);
+            var mode = JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(modeRow.Prefix!, LfJsonOptions.Pretty);
             if (mode?.Grants is null || mode.Revocations is null ||
                 mode.Grants.Count > PrtgResourcePressureModeStore.MaximumResourcesPerHost ||
                 mode.Revocations.Count > PrtgResourcePressureModeStore.MaximumRevocationsPerHost ||
@@ -307,10 +300,10 @@ public sealed record PrtgResourceFormalDeliveryFence(
             .Select(row => (bool?)row.Paused).SingleOrDefault();
         if (devicePaused is not false) return false;
 
-        var settingsRaw = ReadBoundedBlob(ctx, "system_settings", 1024 * 1024);
+        var settingsRaw = ReadBoundedBlob(ctx, "system_settings", PrtgSharedAuthoritySnapshot.MaximumDocumentCharacters);
         var settings = settingsRaw is null ? null : JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty);
         if (settings is not { PrtgEnabled: true } || string.IsNullOrWhiteSpace(settings.PrtgUrl)) return false;
-        var policyRaw = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey, 64 * 1024);
+        var policyRaw = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey, PrtgSharedAuthoritySnapshot.MaximumDocumentCharacters);
         var policy = policyRaw is null ? null : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRaw, LfJsonOptions.Pretty);
         if (policy is null || !policy.Ready(settings.PrtgUrl) || !policy.HostIds.Contains(hostId) ||
             !policy.SensorIds.Contains(sensorObjid) || policy.SourceGeneration != sourceGeneration ||
@@ -341,14 +334,12 @@ public sealed record PrtgResourceFormalDeliveryFence(
 
     private static string? ReadBoundedBlob(LfDbContext ctx, string key, int maximumCharacters)
     {
-        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
-            .Select(blob => new { Content = blob.Content.Substring(0, maximumCharacters + 1), Length = blob.Content.Length })
-            .SingleOrDefault();
-        if (row is null) return null;
-        if (row.Length > maximumCharacters || row.Content.Length > maximumCharacters ||
-            System.Text.Encoding.UTF8.GetByteCount(row.Content) > maximumCharacters)
+        var row = EfJsonBlobStore.ReadBoundedInContext(ctx,key,maximumCharacters);
+        if (row.Prefix is null && row.Version==0 && row.ReportedLength==0) return null;
+        if (row.Prefix is null || row.ReportedLength > maximumCharacters ||
+            System.Text.Encoding.UTF8.GetByteCount(row.Prefix) > maximumCharacters)
             throw new InvalidDataException("PRTG authority blob exceeded its bounded read.");
-        return row.Content;
+        return row.Prefix;
     }
 
     private static bool TryFamily(string ruleCode, out PrtgResourceFamily family)
