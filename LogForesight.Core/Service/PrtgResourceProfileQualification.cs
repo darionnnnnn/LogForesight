@@ -28,8 +28,17 @@ public static class PrtgResourceProfileQualification
             profile is null) return false;
         var catalog = PrtgResourceCurrentRuleCatalog.Load(backend);
         var rule = catalog.For(family.Value);
-        var grant = new PrtgResourcePressureModeStore(backend.Blob(PrtgResourcePressureModeStore.BlobKey(hostId)))
-            .Find(hostId, sensorObjid, family.Value);
+        PrtgResourcePressureModeGrant? grant;
+        try
+        {
+            grant = new PrtgResourcePressureModeStore(backend.Blob(PrtgResourcePressureModeStore.BlobKey(hostId)))
+                .Find(hostId, sensorObjid, family.Value);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
+        {
+            // 此主機的授權文件不可用，僅拒絕相依的正式pressure理由，其他主機及NetIQ繼續。
+            return false;
+        }
         if (rule is null || rule.Rule.Id != issue.RuleId || issue.PrtgRuleAdmissionFingerprint !=
                 catalog.AdmissionFingerprintFor(family.Value) ||
             grant is not { FormalEnabled: true, MaintainAuthorized: true } ||

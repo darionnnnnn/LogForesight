@@ -288,3 +288,10 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 交付：validator逐R54／C54／4個refinement、固定相依與Q journey對照，核四真實＋一合成角色；initializer輸出全部pending欄位，recorder逐check ID記錄到獨立contract JSONL，不更新aggregate acceptance。
 - 主代理驗證：Manifest、CoverageInventory、7個清單否定案例通過；新增owned縮小fixture實際執行initializer→recorder，驗R54／C54／refinement／M54-global／M54-scoped及舊U53路徑。缺／錯CheckId、unknown ID及來源commit不符皆拒絕且不改ledger。此fixture使用明示fake build verifier，只證明記錄接線，不是實際build或browser驗收。
 - 首次獨立fixture找出C54單數required接線及PowerShell單字串索引缺陷，修正後相同fixture通過；原失敗不改称PASS。真實登入、serverAdmin及完整瀏覽器／即時撤權流程仍由F2驗；回退工具另段處理。A2父階段尚未全部完成。
+
+### D1第一段：正式mode讀取不再繞過有界快照
+
+- 主代理實作：`PrtgResourcePressureModeStore.Find`走同次有界snapshot，驗所有host/grant/revocation/replay識別；`PrtgResourceProfileQualification.IsCurrentFormalPressure`對該主機超限／JSON損壞返回不合格，避免相依理由授權且保留獨立NetIQ。真實使用端為正式郵件、supplement replay及詳情資格，沒有新增未使用介面。
+- 根因反例在f25cadd3隔離checkout：3案中2失敗／1通過，原Find可從超限及混主機文件挑有效grant；修後相同反例加正式資格、mode撤權／formal mail回歸40/40通過，零略過，3分34秒。紅／綠TRX位於主代理projectless work/round54-mode-validation/work/d1-red及d1-green；4個階段檔案逐位元組與實際checkout相同。
+- 字元cap正向、cap+1否定、選中grant有效但文件混主機、壞host不影響另一合法host、正常正式pressure→文件超限／損壞後拒絕且NetIQ父理由保留皆已核對。現行PRTG規格同步此事實。
+- D1其他binding／qualification／共享disk／data-transfer等讀取及SQL補充字元與修復流程尚待處理；本段不勾D1父階段或E03／E07／E08 TODO，未宣稱完整共享證據隔離。

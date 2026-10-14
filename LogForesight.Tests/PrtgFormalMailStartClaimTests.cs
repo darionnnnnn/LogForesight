@@ -16,6 +16,23 @@ namespace LogForesight.Tests;
 [Collection("KnownIssueCatalogState")]
 public sealed class PrtgFormalMailStartClaimTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvalidModeDocumentCannotAuthorizeFormalPressure(bool oversized)
+    {
+        using var fixture = await Fixture.CreateAsync(urgent: true, elevateCpuFormalRisk: true, highRiskNetIqBaseline: true);
+        var parent = fixture.ReloadParent();
+        var pressure = parent.TopIssues.Single(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue);
+        Assert.True(PrtgResourceProfileQualification.IsCurrentFormalPressure(fixture.Backend,
+            fixture.Host.HostId, PrtgFormalRuleCaseFixture.SensorId, pressure, DateTime.UtcNow));
+        fixture.Backend.Blob(PrtgResourcePressureModeStore.BlobKey(fixture.Host.HostId)).Mutate(raw =>
+            (oversized ? raw![..^1] + ",\"Padding\":\"" + new string('x', PrtgResourcePressureModeStore.MaximumDocumentCharacters) + "\"}" : "not-json", true));
+        Assert.False(PrtgResourceProfileQualification.IsCurrentFormalPressure(fixture.Backend,
+            fixture.Host.HostId, PrtgFormalRuleCaseFixture.SensorId, pressure, DateTime.UtcNow));
+        Assert.Contains(fixture.ReloadParent().TopIssues, issue => issue.Source == "Synthetic NetIQ disk baseline");
+    }
+
     [Fact]
     public async Task ModeOffBeforeUrgentStartRevokesOnlyTheFormalFindingAndKeepsBaselineRecord()
     {

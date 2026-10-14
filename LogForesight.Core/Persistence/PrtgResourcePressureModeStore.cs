@@ -19,8 +19,8 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
     public PrtgResourcePressureModeGrant? Find(long hostId, long sensorObjid, PrtgResourceFamily family)
     {
         if (hostId <= 0 || sensorObjid <= 0 || !Enum.IsDefined(family)) return null;
-        return Get().Grants?.FirstOrDefault(g => IsValid(g) && g.HostId == hostId &&
-            g.SensorObjid == sensorObjid && g.Family == family);
+        // 正式資格／郵件／重播亦須套用與整份快照相同的大小及主機識別閘門。
+        return ReadSnapshot(hostId, sensorObjid, family).Grant;
     }
 
     /// <summary>Reads the document, exact grant and blob revision from one database read.</summary>
