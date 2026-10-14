@@ -1268,6 +1268,8 @@ Compatibility 探測對每種最多一顆 sensor 查詢 `getobjectproperty.htm?i
 
 每個 sensor 保存獨立 semantic binding：精確十進位通道 ID／caption、百分比語意、有限正 Scale／方向、間隔單位、原始與分析時區、時間依據。初次綁定允許尚無通道世代的資源，僅限未保存 binding 且 fingerprint／generation 同為空的原子 CAS；過期設定、政策、身分、通道及 binding revision 都拒絕。相同有效契約保存保留 proof 與世代，無關設定不使全部資源重暖機。
 
+binding 保存與資格提交在原 mutation 交易內讀取 settings／policy 的長度及最多 2 Mi 字元加一的前綴；超限即拒絕，不寫 binding、channel generation 或 profile。不另開讀取交易，也不繞過原 CAS。SQLite 小型反例已核對；SQL 補充字元邊界仍待對應相容驗證。
+
 唯讀 probe、單筆保存、最多 100 筆逐列 CAS 批次、單筆 qualify 及每頁最多 100 筆完整 profile 目錄都要求 Maintain 與完整作用範圍授權，case-only 不可操作。未提交的草稿不被 reload 或背景更新取代；保存／核驗互斥，核驗使用保存後最新 fence。通道 Int64 以字串跨越 JavaScript 邊界，不能由清單順序或數值相等自動挑選。
 
 profile 目錄每頁另回傳 settingsRevision、policyRevision、sourceGeneration、authorityContextFingerprint 與 prtgEnabled，供完整範圍核對識別當前來源契約；讀取途中設定修訂或啟停狀態改變回覆 catalogue_changed，禁止把不同版本的分頁合併成完成證據。停用狀態仍可查看目錄，但不可用該頁授予共同工作負載資格。

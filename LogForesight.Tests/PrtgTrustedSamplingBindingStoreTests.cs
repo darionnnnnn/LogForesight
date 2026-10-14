@@ -37,6 +37,36 @@ public sealed class PrtgTrustedSamplingBindingStoreTests : IDisposable
             PrtgTimelineResourceIdentity.BuildResourceFingerprint("22", "CPU", "created", 0));
     }
 
+    [Theory]
+    [InlineData("system_settings", false)]
+    [InlineData(PrtgMonitoringPolicyStore.BlobKey, false)]
+    [InlineData("system_settings", true)]
+    [InlineData(PrtgMonitoringPolicyStore.BlobKey, true)]
+    public void OversizedAuthorityCannotSaveOrQualifyBinding(string key, bool qualification)
+    {
+        var identity = backend.PrtgStore().GetResourceIdentity(11);
+        var currentSettings = settings.Get();
+        var currentPolicy = policy.Get();
+        var store = new PrtgTrustedSamplingBindingStore(backend);
+        PrtgTrustedSamplingBinding? prior = null;
+        if (qualification)
+            prior = store.Save(Update(currentSettings.Revision, currentPolicy.Revision, identity.Epoch, identity.ChannelGeneration, 0));
+        var beforeIdentity = backend.PrtgStore().GetResourceIdentity(11);
+        var beforeBindingVersion = backend.Blob(PrtgTrustedSamplingBinding.StorePrefix + 11).ReadVersion();
+        backend.Blob(key).Mutate(raw =>
+            (raw![..^1] + ",\"Extra\":\"" + new string('x', PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters) + "\"}", true));
+        if (qualification)
+            Assert.Throws<InvalidDataException>(() => store.RecordQualification(11, prior!.BindingRevision,
+                prior.BindingFingerprint, currentSettings.Revision, currentPolicy.Revision, 91,
+                DateTime.UtcNow.ToOADate(), "source-r1", DateTimeOffset.UtcNow, new string('C', 64)));
+        else
+            Assert.Throws<InvalidDataException>(() => store.Save(Update(currentSettings.Revision, currentPolicy.Revision,
+                identity.Epoch, identity.ChannelGeneration, 0)));
+        Assert.Equal(beforeBindingVersion, backend.Blob(PrtgTrustedSamplingBinding.StorePrefix + 11).ReadVersion());
+        Assert.Equal(beforeIdentity.ChannelGeneration, backend.PrtgStore().GetResourceIdentity(11).ChannelGeneration);
+        Assert.False(new PrtgTrustedSamplingProfileStore(backend).GetMany([11]).ContainsKey(11));
+    }
+
     [Fact]
     public void SavingAnExplicitBindingOnlyCreatesWaitingConfigurationAndFencesPriorAuthority()
     {

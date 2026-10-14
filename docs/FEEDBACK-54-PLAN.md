@@ -296,6 +296,12 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 字元cap正向、cap+1否定、選中grant有效但文件混主機、壞host不影響另一合法host、正常正式pressure→文件超限／損壞後拒絕且NetIQ父理由保留皆已核對。現行PRTG規格同步此事實。
 - D1其他binding／qualification／共享disk／data-transfer等讀取及SQL補充字元與修復流程尚待處理；本段不勾D1父階段或E03／E07／E08 TODO，未宣稱完整共享證據隔離。
 
+### D1第二段：binding mutation 內的授權文件有界讀取
+
+- 主代理實作並驗證：Save／RecordQualification 對 settings 及 policy 使用同一原交易內的前綴＋長度 projection，2 Mi 字元上限，保留來源／身分／binding CAS；超限拒絕且不新增 binding version、channel generation 或 profile。使用端為現有 binding 保存及正式 raw qualification，無新增權限或資料模型。
+- 隔離 checkout 定向執行 BindingStore 與 RawByteCap 共 12/12 通過，零略過，2分10秒；含 settings／policy × 保存／資格提交四個超限反例及既有正常保存、CAS、qualification、raw byte cap。TRX 位於 work/round54-mode-validation/work/d1-binding/d1-binding-bounded.trx；兩個程式／測試檔與本輪 checkout SHA256 相同。
+- 此為 SQLite 小型功能驗證，SQL 補充字元邊界、共享 disk 快照及其他 D1 項目仍未完成，不提升父 TODO 或整輪 acceptance。
+
 ### 開發驗證限制更新：只執行分段小範圍（2026-10-14最新指示）
 
 使用者明確要求開發期間不要大規模大量資料測試，優先分段小範圍驗正確性；不得已必須先討論可行方案。本條約束所有階段、委派與舊驗收引用。持續完成各項程式／腳本／正常consumer接線，使用少量主機／sensor／列、可控批次、故障注入與精確預期，並逐段commit／push。

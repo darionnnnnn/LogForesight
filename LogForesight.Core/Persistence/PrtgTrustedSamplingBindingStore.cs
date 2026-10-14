@@ -86,6 +86,20 @@ public sealed class PrtgTrustedSamplingBindingStore
         return result;
     }
 
+    // 與probe現行policy上限一致；來源授權讀取仍在原mutation交易內，不另開DbContext。
+    public const int MaximumAuthorityCharacters = 2 * 1024 * 1024;
+
+    private static string? ReadAuthorityContent(LfDbContext ctx, string key)
+    {
+        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
+            .Select(blob => new { Prefix = blob.Content.Substring(0, MaximumAuthorityCharacters + 1), Length = blob.Content.Length })
+            .SingleOrDefault();
+        if (row is null) return null;
+        if (row.Length > MaximumAuthorityCharacters || row.Prefix.Length > MaximumAuthorityCharacters)
+            throw new InvalidDataException("PRTG binding authority document exceeds its bounded read limit.");
+        return row.Prefix;
+    }
+
     /// <summary>Compare-and-swap settings, policy, resource, channel, and binding revisions in one transaction.</summary>
     public PrtgTrustedSamplingBinding Save(PrtgTrustedSamplingBindingUpdate update)
     {
@@ -96,10 +110,8 @@ public sealed class PrtgTrustedSamplingBindingStore
         var blob = backend.Blob(Key(update.SensorObjid));
         return blob.MutateWithContext((ctx, raw) =>
         {
-            var settingsRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == "system_settings")
-                .Select(row => row.Content).SingleOrDefault();
-            var policyRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(row => row.Content).SingleOrDefault();
+            var settingsRaw = ReadAuthorityContent(ctx, "system_settings");
+            var policyRaw = ReadAuthorityContent(ctx, PrtgMonitoringPolicyStore.BlobKey);
             var settings = string.IsNullOrWhiteSpace(settingsRaw)
                 ? new SystemSettings()
                 : JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
@@ -225,10 +237,8 @@ public sealed class PrtgTrustedSamplingBindingStore
             if (sampleUtc > observedAtUtc || observedAtUtc - sampleUtc > TimeSpan.FromHours(1))
                 throw new InvalidDataException("qualification-measurement-time-out-of-range");
 
-            var settingsRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == "system_settings")
-                .Select(row => row.Content).SingleOrDefault();
-            var policyRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(row => row.Content).SingleOrDefault();
+            var settingsRaw = ReadAuthorityContent(ctx, "system_settings");
+            var policyRaw = ReadAuthorityContent(ctx, PrtgMonitoringPolicyStore.BlobKey);
             var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("System settings invalid.");
