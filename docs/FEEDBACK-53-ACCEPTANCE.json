@@ -1,6 +1,6 @@
 {
   "document": "FEEDBACK-53-PLAN.md",
-  "plan_sha256": "5f8711d6beaf18df3cd86d9a1a282814e913efcf13d22c4addd27ef33f4d8fdd",
+  "plan_sha256": "355c4ba8039201c1f2c269f9cc69a5499236784a23489f37d2a7204642ea03d8",
   "date": "2026-10-13",
   "artifact_kind": "規劃验收契約與登錄清單，非開發通過報告",
   "gate": "代理可執行範圍內的AC01–AC22、Q1–Q6、有效需求全數通過；依PLAN§5.9在自有隔離環境客觀驗收，正式機實測、現場人工評估及§5.7使用者確認事項不計驗收或結案阻塞",
@@ -12579,7 +12579,7 @@
     ]
   },
   "scope_handoff_20261013": {
-    "status": "partial-round-closeout-in-progress",
+    "status": "implemented-scope-closed-remaining-transferred",
     "next_plan": "FEEDBACK-54-PLAN.md",
     "open_child_items": 27,
     "original_child_items": 28,
@@ -12591,5 +12591,30 @@
       "D54-03",
       "D54-04"
     ]
+  },
+  "implemented_scope_closeout_20261014": {
+    "status": "implemented-scope-closed",
+    "verified_commit": "638c58434f0bc01fe77e62365addeafd75680fb0",
+    "wholeRoundAccepted": false,
+    "singleFinalFullRunPassed": false,
+    "full_run": {
+      "commit": "b77a72c7f2a4cb7c6f7dcb04c0875f9ba961828e",
+      "total": 7989,
+      "passed": 7978,
+      "failed": 1,
+      "optional_scale_skipped": 10,
+      "trx_sha256": "611e0e237f63736703f6a2161637ea103eb58f4699715af36a0774594fedd3e6"
+    },
+    "post_fix_tests": {
+      "formal_and_replay_passed": 226,
+      "clean_replay_passed": 1,
+      "unresolved_known_regression_failures": 0,
+      "runtime_source_unchanged": true
+    },
+    "build_identity": "BuildIdentityVerified",
+    "next_plan": "FEEDBACK-54-PLAN.md",
+    "remaining_implementation_groups": 4,
+    "remaining_child_items": 27,
+    "note": "Original failed run retained; only fixture hash binding and documentation changed. Reuse unaffected runtime results, with 226 passing affected tests and clean-commit replay. No full-capacity or whole-round acceptance claim."
   }
 }
