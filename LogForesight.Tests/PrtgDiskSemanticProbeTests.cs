@@ -1,5 +1,6 @@
 using LogForesight.Core;
 using LogForesight.Core.Service;
+using System.Globalization;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -11,9 +12,10 @@ public sealed class PrtgDiskSemanticProbeTests
     private static readonly DateTime End = Start.AddHours(1);
     private const string History = "{\"histdata\":[{\"datetime\":\"2026-09-23 08:00:00 - 09:00:00\",\"datetime_raw\":46288.3333333333,\"Free Space_raw\":72.5}]}";
 
-    private static PrtgDiskSemanticProbe Probe(string channels, Func<string>? history = null, Action<string>? called = null) =>
+    private static PrtgDiskSemanticProbe Probe(string channels, Func<string>? history = null, Action<string>? called = null,
+        PrtgDiskSemanticSourceContract? contract = null) =>
         new((path, ct) => { ct.ThrowIfCancellationRequested(); called?.Invoke(path); return Task.FromResult(path.Contains("channels") ? channels : history?.Invoke() ?? History); },
-            new("Taipei Standard Time", "Taipei Standard Time", "8", "Free Space"));
+            contract ?? new("Taipei Standard Time", "Taipei Standard Time", "Taipei Standard Time", "source-v1", "8", "Free Space"));
 
     [Fact]
     public async Task ExplicitPercentPrimaryAndMatchingPersistedPointCanBeVerified()
@@ -178,7 +180,12 @@ public sealed class PrtgDiskSemanticProbeTests
     {
         var result = await Probe(ValidChannels).ProbeAsync(101, Start, End, [new(Start.AddSeconds(seconds), 72.5)]);
         Assert.NotEqual(PrtgDiskSemanticProbeStatus.Verified, result.Status);
-        Assert.False(result.ValuesMatch);
+        if (seconds < 0)
+        {
+            Assert.Equal(PrtgDiskSemanticProbeStatus.NeedsManualReview, result.Status);
+            Assert.Null(result.ValuesMatch);
+        }
+        else Assert.False(result.ValuesMatch);
     }
 
     [Fact]
@@ -186,7 +193,82 @@ public sealed class PrtgDiskSemanticProbeTests
     {
         const string history = "{\"histdata\":[{\"datetime\":\"2026-09-23 08:00:00 - 09:00:00\",\"datetime_raw\":46287.3333333333,\"Free Space_raw\":72.5}]}";
         var result = await Probe(ValidChannels, () => history).ProbeAsync(101, Start, End, [new(Start, 72.5)]);
-        Assert.Equal(PrtgDiskSemanticProbeStatus.Mismatch, result.Status);
-        Assert.False(result.ValuesMatch);
+        Assert.Equal(PrtgDiskSemanticProbeStatus.NeedsManualReview, result.Status);
+        Assert.Null(result.ValuesMatch);
+    }
+
+    [Fact]
+    public async Task TwentyFiveHourAnalysisDayIsAllowedWhenBoundariesAreUnambiguous()
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+        var day = new DateOnly(2026, 11, 1);
+        var startWall = day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var endWall = day.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var startUtc = TimeZoneInfo.ConvertTimeToUtc(startWall, zone);
+        var endUtc = TimeZoneInfo.ConvertTimeToUtc(endWall, zone);
+        var history = "{\"histdata\":[{\"datetime_raw\":" + startUtc.ToOADate().ToString("R", CultureInfo.InvariantCulture) +
+            ",\"Free Space_raw\":72.5}]}";
+        var result = await Probe(ValidChannels, () => history,
+            contract: new("UTC", "Eastern Standard Time", "Eastern Standard Time", "source-v1", "8", "Free Space"))
+            .ProbeAsync(101, startUtc, endUtc, [new(startUtc, 72.5)]);
+        Assert.Equal(TimeSpan.FromHours(25), endUtc - startUtc);
+        Assert.Equal(PrtgDiskSemanticProbeStatus.Verified, result.Status);
+        Assert.True(result.ValuesMatch);
+    }
+
+    [Fact]
+    public async Task AmbiguousRawFoldPointInvalidatesWholeComparisonEvenWhenAnotherPointMatches()
+    {
+        var start = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+        var foldWall = new DateTime(2026, 11, 1, 1, 30, 0, DateTimeKind.Unspecified);
+        var history = "{\"histdata\":[{\"datetime_raw\":" + start.ToOADate().ToString("R", CultureInfo.InvariantCulture) +
+            ",\"Free Space_raw\":72.5},{\"datetime_raw\":" + foldWall.ToOADate().ToString("R", CultureInfo.InvariantCulture) +
+            ",\"Free Space_raw\":70.0}]}";
+        var result = await Probe(ValidChannels, () => history,
+            contract: new("Eastern Standard Time", "UTC", "Eastern Standard Time", "source-v1", "8", "Free Space"))
+            .ProbeAsync(101, start, start.AddHours(25), [new(start, 72.5)]);
+
+        Assert.Equal(PrtgDiskSemanticProbeStatus.NeedsManualReview, result.Status);
+        Assert.Null(result.ValuesMatch);
+        Assert.Equal(0, result.ComparedPointCount);
+    }
+
+    [Fact]
+    public async Task IntervalBeyondBoundedAnalysisDayIsRejected()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => Probe(ValidChannels).ProbeAsync(
+            101, Start, Start.AddHours(26).AddTicks(1), [new(Start, 72.5)]));
+    }
+
+    [Fact]
+    public async Task AmbiguousSourceApiFoldBoundaryCannotReachHistoricEndpoint()
+    {
+        var calls = new List<string>();
+        var start = new DateTime(2026, 11, 1, 6, 30, 0, DateTimeKind.Utc);
+        var result = await Probe(ValidChannels, called: calls.Add,
+            contract: new("UTC", "Eastern Standard Time", "Eastern Standard Time", "source-v1", "8", "Free Space"))
+            .ProbeAsync(101, start, start.AddHours(1), [new(start, 72.5)]);
+
+        Assert.Equal(PrtgDiskSemanticProbeStatus.NeedsManualReview, result.Status);
+        Assert.Contains("source-api-time-ambiguous", result.Evidence);
+        Assert.Single(calls);
+    }
+
+    [Theory]
+    [InlineData("", "UTC", "UTC", "source-v1", "8", "Free Space")]
+    [InlineData("UTC", "UTC", "", "source-v1", "8", "Free Space")]
+    [InlineData("UTC", "UTC", "UTC", "", "8", "Free Space")]
+    public async Task MissingAnalysisOrSourceGenerationAuthorityCannotCompare(string rawZone, string apiZone,
+        string analysisZone, string sourceGeneration, string channelId, string caption)
+    {
+        var calls = new List<string>();
+        var result = await Probe(ValidChannels, called: calls.Add,
+            contract: new(rawZone, apiZone, analysisZone, sourceGeneration, channelId, caption))
+            .ProbeAsync(101, Start, End, [new(Start, 72.5)]);
+
+        Assert.Equal(PrtgDiskSemanticProbeStatus.NeedsManualReview, result.Status);
+        Assert.Contains("source-contract-unconfirmed", result.Evidence);
+        Assert.Null(result.ValuesMatch);
+        Assert.Single(calls);
     }
 }

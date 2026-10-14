@@ -15,7 +15,11 @@ public sealed record PrtgDiskManualConfirmation(long SensorObjid, string Channel
     string Unit, double Scale, string Direction, string Reason);
 public sealed record PrtgDiskVerificationStatus(bool IsRunning, long? SensorObjid,
     IReadOnlyCollection<PrtgDiskVerificationResult> Results, string? Message,
-    bool IsBatch = false, int BatchTotal = 0, int BatchCompleted = 0, string? RequestId = null);
+    bool IsBatch = false, int BatchTotal = 0, int BatchCompleted = 0, string? RequestId = null)
+{
+    public string? CompletedAnalysisDay { get; init; }
+    public string? AnalysisTimeZoneId { get; init; }
+}
 public sealed record PrtgDiskRuleTrial(string Status, string Message, long SensorObjid, DateOnly CompletedDay,
     int UsableDays, int RequiredDays, int UsableHours, int RequiredHoursPerDay, string DataQuality,
     bool SemanticVerified, string? Exclusion, double? LowWaterPercent, double? MinimumDeclinePerDay,
@@ -44,6 +48,7 @@ public sealed class PrtgDiskVerificationService
     private readonly PrtgDiskSemanticEvidenceStore _evidence;
     private readonly PrtgDiskVerificationResultStore _results;
     private readonly IKnownIssueRuleStore _ruleStore;
+    private readonly Func<SystemSettings, PrtgClient> _clientFactory;
     private long? _runningSensor;
     private int _ownsRun;
     private readonly object _requestGate = new();
@@ -59,13 +64,21 @@ public sealed class PrtgDiskVerificationService
         PrtgProbeRunState run, PrtgDiskSemanticEvidenceStore evidence, PrtgDiskVerificationResultStore results,
         PrtgBackfillRunState backfill, PrtgStructureSyncRunState structure, SchedulerRunState scheduler,
         IKnownIssueRuleStore ruleStore)
+        : this(settings, store, hosts, run, evidence, results, backfill, structure, scheduler, ruleStore,
+            currentSettings => PrtgClientFactory.Create(currentSettings))
+    { }
+
+    internal PrtgDiskVerificationService(ISystemSettingsStore settings, EfPrtgStore store, IHostStore hosts,
+        PrtgProbeRunState run, PrtgDiskSemanticEvidenceStore evidence, PrtgDiskVerificationResultStore results,
+        PrtgBackfillRunState backfill, PrtgStructureSyncRunState structure, SchedulerRunState scheduler,
+        IKnownIssueRuleStore ruleStore, Func<SystemSettings, PrtgClient> clientFactory)
     { _settings = settings; _store = store; _hosts = hosts; _run = run; _evidence = evidence; _results = results;
-        _backfill = backfill; _structure = structure; _scheduler = scheduler; _ruleStore = ruleStore; }
+        _backfill = backfill; _structure = structure; _scheduler = scheduler; _ruleStore = ruleStore;
+        _clientFactory = clientFactory ?? throw new ArgumentNullException(nameof(clientFactory)); }
 
     public PrtgDiskRuleTrial AssessRuleTrial(long sensorObjid)
     {
         if (sensorObjid <= 0) throw new ArgumentOutOfRangeException(nameof(sensorObjid));
-        var completedDay = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
         var (content, usedFallback) = RuleBootstrapper.LoadContent(_ruleStore);
         var settingsRevision = _settings.Get().Revision;
         var rulesFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
@@ -73,6 +86,11 @@ public sealed class PrtgDiskVerificationService
         PrtgDiskRuleTrial Stamp(PrtgDiskRuleTrial trial) => trial with {
             RulesFingerprint = rulesFingerprint, SettingsRevision = settingsRevision,
             SemanticVersion = ParserSemanticVersion, AssessedAtUtc = DateTime.UtcNow };
+        if (!TryGetCompletedAnalysisDay(out var completedDay, out var analysisError))
+            return Stamp(new("source-authority-unconfirmed", analysisError ?? "磁碟來源時區授權尚未確認。", sensorObjid,
+                DateOnly.FromDateTime(DateTime.UtcNow), 0, PrtgValueReadiness.WindowDays, 0,
+                PrtgValueReadiness.MinDailyUsableHours, "來源授權不可用", false, "SourceAuthorityUnconfirmed",
+                null, null, null, null, null, null, false, "真實正向尚未觀察", null, null));
         var validation = RuleValidator.Validate(content.Rules);
         var diskRules = validation.ValidRules.Where(r =>
             string.Equals(r.Platform, "prtg", StringComparison.OrdinalIgnoreCase) &&
@@ -119,10 +137,20 @@ public sealed class PrtgDiskVerificationService
           EstimatedDaysToLowWater = trend?.EstimatedDaysToLowWater, Reasons = trend?.Reasons ?? [] });
     }
 
-    public PrtgDiskVerificationStatus GetStatus(long? sensorObjid = null) => new(Volatile.Read(ref _ownsRun) != 0, _runningSensor,
-        sensorObjid.HasValue
-            ? new[] { _results.Get(sensorObjid.Value) }.Where(x => x != null).Cast<PrtgDiskVerificationResult>().ToArray()
-            : _results.GetRecent(), null, _isBatch, _batchTotal, _batchCompleted, _activeRequestId);
+    public PrtgDiskVerificationStatus GetStatus(long? sensorObjid = null)
+    {
+        var status = new PrtgDiskVerificationStatus(Volatile.Read(ref _ownsRun) != 0, _runningSensor,
+            sensorObjid.HasValue
+                ? new[] { _results.Get(sensorObjid.Value) }.Where(x => x != null).Cast<PrtgDiskVerificationResult>().ToArray()
+                : _results.GetRecent(), null, _isBatch, _batchTotal, _batchCompleted, _activeRequestId);
+        if (!TryGetPolicyContext(_settings.Get(), out var context, out _)) return status;
+        return status with
+        {
+            CompletedAnalysisDay = CompletedDay(DateTime.UtcNow, context.Policy.AnalysisTimeZoneId)
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            AnalysisTimeZoneId = context.Policy.AnalysisTimeZoneId
+        };
+    }
     public bool Cancel() => Volatile.Read(ref _ownsRun) != 0 && _run.TryCancel();
 
     public bool TryStart(PrtgDiskVerificationStart request, out string? error)
@@ -142,7 +170,7 @@ public sealed class PrtgDiskVerificationService
         if (!ValidateDateAndConnection(request.DataDate, out error)) return false;
         var ids = request.SensorObjids.ToArray();
         var settings = _settings.Get();
-        var eligible = ValidateEligibleSensors(ids, settings, requireReady: true, out error);
+        var eligible = ValidateEligibleSensors(ids, request.DataDate, settings, requireReady: true, out error);
         if (!eligible) return false;
         if (_scheduler.IsRunning || _backfill.Snapshot().IsRunning || _structure.Snapshot().IsRunning)
         { error = "取數排程、回填或結構同步正在執行，請完成後再進行語意驗證。"; return false; }
@@ -174,8 +202,7 @@ public sealed class PrtgDiskVerificationService
                     }
                     catch (Exception ex)
                     {
-                        SaveOutcome(sensor, request.DataDate, ex is TaskCanceledException or TimeoutException ? "TimedOut" : "Failed",
-                            ex is TaskCanceledException or TimeoutException ? "PRTG 語意驗證逾時。" : "此感測器驗證失敗；批次會繼續下一顆。");
+                        SaveOutcome(sensor, request.DataDate, ProbeFailureState(ex), ProbeFailureMessage(ex, batch: true));
                     }
                     finally { _batchCompleted++; }
                     if (cancelled) break;
@@ -213,8 +240,7 @@ public sealed class PrtgDiskVerificationService
             catch (OperationCanceledException ex) when (ct.IsCancellationRequested || ex is PrtgScopeCancelledException)
             { cancelled = true; SaveOutcome(sensor, request.DataDate, "Cancelled", "語意驗證已停止（使用者停止或設定／範圍已變更）。", true); }
             catch (Exception ex)
-            { SaveOutcome(sensor, request.DataDate, ex is TaskCanceledException or TimeoutException ? "TimedOut" : "Failed",
-                ex is TaskCanceledException or TimeoutException ? "PRTG 語意驗證逾時。" : "PRTG 語意驗證失敗或回應無法解析。"); }
+            { SaveOutcome(sensor, request.DataDate, ProbeFailureState(ex), ProbeFailureMessage(ex, batch: false)); }
             finally { _batchCompleted = 1; _runningSensor = null; Volatile.Write(ref _ownsRun, 0); _run.FinishRun(success, cancelled); }
         });
         return true;
@@ -223,15 +249,16 @@ public sealed class PrtgDiskVerificationService
     private bool ValidateDateAndConnection(DateTime date, out string? error)
     {
         error = null;
-        if (date.Date != date || date.Date != DateTime.Today.AddDays(-1)) { error = "語意驗證只允許查詢昨天的單日資料。"; return false; }
-        var today = DateTime.Today;
         var settings = _settings.Get();
         if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings))
         { error = "PRTG 連線尚未設定完整。"; return false; }
+        if (!TryGetPolicyContext(settings, out var context, out error)) return false;
+        if (date.Date != date || DateOnly.FromDateTime(date) != CompletedDay(DateTime.UtcNow, context.Policy.AnalysisTimeZoneId))
+        { error = "語意驗證只允許查詢分析時區內最近已完成的單一主機日。"; return false; }
         return true;
     }
 
-    private bool ValidateEligibleSensors(long[] ids, SystemSettings settings, bool requireReady, out string? error)
+    private bool ValidateEligibleSensors(long[] ids, DateTime dataDate, SystemSettings settings, bool requireReady, out string? error)
     {
         error = null;
         foreach (var id in ids)
@@ -243,13 +270,69 @@ public sealed class PrtgDiskVerificationService
             if (requireReady)
             {
                 var assessed = new PrtgDiskAssessmentService(_store, _hosts, _settings, _evidence, _results)
-                    .Assess(DateOnly.FromDateTime(DateTime.Today.AddDays(-1)), null, PrtgDiskDecisionMode.Preview, 5, 0,
+                    .Assess(DateOnly.FromDateTime(dataDate), null, PrtgDiskDecisionMode.Preview, 5, 0,
                         selectedSensorObjids: new[] { id });
                 if (assessed.Rows.FirstOrDefault()?.Readiness.Status != PrtgValueReadinessStatus.Ready)
                 { error = $"Sensor {id} 尚未具備所需的 28 日可用資料。"; return false; }
             }
         }
         return true;
+    }
+
+    private bool TryGetCompletedAnalysisDay(out DateOnly completedDay, out string? error)
+    {
+        completedDay = default;
+        var settings = _settings.Get();
+        if (!TryGetPolicyContext(settings, out var context, out error)) return false;
+        completedDay = CompletedDay(DateTime.UtcNow, context.Policy.AnalysisTimeZoneId);
+        return true;
+    }
+
+    private bool TryGetPolicyContext(SystemSettings settings, out PrtgTrustedSamplingPolicyContext context,
+        out string? error)
+    {
+        context = null!;
+        error = null;
+        try
+        {
+            var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+            var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
+            context = _store.GetTrustedSamplingPolicyContext(strategyName, strategyMinutes);
+            if (!context.Strategy.Ready || !context.Policy.Ready(settings.PrtgUrl) ||
+                string.IsNullOrWhiteSpace(context.Policy.SourceAuthorityFingerprint(settings.PrtgUrl)))
+            {
+                error = "PRTG 來源世代、時間授權或目前取樣策略尚未完整核驗；請由維護入口修復設定與來源證據。";
+                return false;
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException or InvalidDataException or JsonException)
+        {
+            error = "PRTG 儲存的時間授權無效；請由維護入口重新核驗來源與分析時區。";
+            return false;
+        }
+    }
+
+    internal static DateOnly CompletedDay(DateTime nowUtc, string analysisTimeZoneId)
+    {
+        if (nowUtc.Kind != DateTimeKind.Utc) throw new ArgumentException("Current time must be UTC.", nameof(nowUtc));
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(analysisTimeZoneId);
+        return DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(nowUtc, zone)).AddDays(-1);
+    }
+
+    internal static (DateTime StartUtc, DateTime EndUtc) AnalysisDayWindow(DateOnly day, string analysisTimeZoneId)
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(analysisTimeZoneId);
+        var startWall = day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var endWall = day.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(startWall) || zone.IsAmbiguousTime(startWall) ||
+            zone.IsInvalidTime(endWall) || zone.IsAmbiguousTime(endWall))
+            throw new InvalidOperationException("Analysis-day boundary is missing or ambiguous in the saved time zone.");
+        var startUtc = TimeZoneInfo.ConvertTimeToUtc(startWall, zone);
+        var endUtc = TimeZoneInfo.ConvertTimeToUtc(endWall, zone);
+        if (endUtc <= startUtc || endUtc - startUtc > TimeSpan.FromHours(26))
+            throw new InvalidOperationException("Analysis-day UTC interval is outside the supported bound.");
+        return (DateTime.SpecifyKind(startUtc, DateTimeKind.Utc), DateTime.SpecifyKind(endUtc, DateTimeKind.Utc));
     }
 
     private bool TryBeginIdempotentRun(string? requestId, string signature, out CancellationToken token, out bool duplicate, out string? error)
@@ -286,43 +369,152 @@ public sealed class PrtgDiskVerificationService
         try
         {
         operation.Checkpoint();
-        var localStart = DateTime.SpecifyKind(date.Date, DateTimeKind.Local);
-        var points = _store.GetValuesForSensor(sensor.Objid, localStart, localStart.AddDays(1))
-            .Where(v => v.AvgValue.HasValue && (v.Quality == PrtgDataQuality.Ok ||
-                v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
-            .Take(5).Select(v => new PrtgDiskSemanticPersistedPoint(
-                DateTime.SpecifyKind(v.PeriodStart, DateTimeKind.Local).ToUniversalTime(), v.AvgValue!.Value)).ToArray();
-        using var client = PrtgClientFactory.Create(settings);
+        if (!TryGetSourceContract(sensor.Objid, sensor.SensorType, out var contract, out var capturedIdentity,
+                out var authorityState, out var authorityMessage))
+        {
+            SaveOutcome(sensor, date, authorityState, authorityMessage);
+            return;
+        }
+        var day = DateOnly.FromDateTime(date);
+        (DateTime StartUtc, DateTime EndUtc) window;
+        try { window = AnalysisDayWindow(day, contract.AnalysisTimeZoneId); }
+        catch (InvalidOperationException)
+        {
+            SaveOutcome(sensor, date, nameof(PrtgDiskSemanticProbeStatus.NeedsManualReview),
+                "分析時區的主機日邊界缺失、重複或超出安全範圍；未建立正式語意證據。");
+            return;
+        }
+        var apiZone = TimeZoneInfo.FindSystemTimeZoneById(contract.SourceApiTimeZoneId);
+        var apiStartWall = TimeZoneInfo.ConvertTimeFromUtc(window.StartUtc, apiZone);
+        var apiEndWall = TimeZoneInfo.ConvertTimeFromUtc(window.EndUtc, apiZone);
+        if (apiZone.IsAmbiguousTime(apiStartWall) || apiZone.IsAmbiguousTime(apiEndWall))
+        {
+            SaveOutcome(sensor, date, nameof(PrtgDiskSemanticProbeStatus.NeedsManualReview),
+                "來源 API 時區在分析日邊界有重複時間，無法唯一定位保存樣本；未建立正式語意證據。");
+            return;
+        }
+        // Historic `datetime` display strings are persisted as source-API wall time. Query that
+        // bounded wall interval, then map every candidate through the saved API zone; never let
+        // the current server's local zone reinterpret an Unspecified SQLite DateTime.
+        var queryStart = DateTime.SpecifyKind(apiStartWall < apiEndWall ? apiStartWall : apiEndWall, DateTimeKind.Unspecified);
+        var queryEnd = DateTime.SpecifyKind(apiStartWall < apiEndWall ? apiEndWall : apiStartWall, DateTimeKind.Unspecified);
+        // A bounded deterministic sample is sufficient for source semantics. The store applies
+        // quality filtering and Take(5) in SQL; this result makes no claim about full-day coverage.
+        var storedValues = _store.GetDiskSemanticComparisonValues(sensor.Objid, queryStart, queryEnd);
+        var points = new List<PrtgDiskSemanticPersistedPoint>(5);
+        foreach (var value in storedValues)
+        {
+            var wall = DateTime.SpecifyKind(value.PeriodStart, DateTimeKind.Unspecified);
+            if (apiZone.IsInvalidTime(wall) || apiZone.IsAmbiguousTime(wall))
+            {
+                SaveOutcome(sensor, date, nameof(PrtgDiskSemanticProbeStatus.NeedsManualReview),
+                    "保存樣本落在來源 API 時區的 DST 缺口或重複時段，無法唯一轉為 UTC；未建立正式語意證據。");
+                return;
+            }
+            var timestampUtc = TimeZoneInfo.ConvertTimeToUtc(wall, apiZone);
+            if (timestampUtc >= window.StartUtc && timestampUtc < window.EndUtc)
+                points.Add(new PrtgDiskSemanticPersistedPoint(DateTime.SpecifyKind(timestampUtc, DateTimeKind.Utc), value.AvgValue!.Value));
+        }
+        using var client = _clientFactory(settings);
         client.OperationCheckpoint = operation.Checkpoint;
         var priorIdentity = _store.GetResourceIdentity(sensor.Objid);
         if (!priorIdentity.Active || priorIdentity.PendingReconciliation || priorIdentity.Epoch <= 0 ||
             priorIdentity.DeviceId != sensor.DeviceObjid || priorIdentity.HostId != sensor.HostId ||
-            string.IsNullOrWhiteSpace(priorIdentity.SourceGeneration) || string.IsNullOrWhiteSpace(priorIdentity.Generation))
-            throw new InvalidOperationException("資源尚未完成新世代確認，請先重新收集狀態與語意證據。");
+            !SameResourceIdentity(capturedIdentity, priorIdentity))
+        {
+            SaveOutcome(sensor, date, "Stale", "磁碟資源身分在核驗期間已變更；請重新收集狀態與來源證據。");
+            return;
+        }
         var resourceFingerprint = await ReadObservedResourceFingerprintAsync(client, sensor.Objid, ct);
         operation.Checkpoint();
         var identity = _store.BindObservedResource(sensor.Objid, sensor.HostId, priorIdentity.SourceGeneration, resourceFingerprint);
         if (!identity.Active || identity.PendingReconciliation || identity.Epoch <= 0 ||
             identity.DeviceId != sensor.DeviceObjid || identity.HostId != sensor.HostId)
-            throw new InvalidOperationException("PRTG 資源身分於語意驗證期間改變；拒絕保存本次結果。");
-        var result = await new PrtgDiskSemanticProbe(client).ProbeAsync(sensor.Objid,
-            localStart.ToUniversalTime(), localStart.AddDays(1).ToUniversalTime(), points, ct);
+        {
+            SaveOutcome(sensor, date, "Stale", "PRTG 資源身分於語意驗證期間改變；拒絕保存本次結果。");
+            return;
+        }
+        if (!TryGetSourceContract(sensor.Objid, sensor.SensorType, out var currentContract,
+                out var currentIdentity, out _, out _) || currentContract != contract ||
+            !SameResourceIdentity(identity, currentIdentity))
+        {
+            SaveOutcome(sensor, date, "Stale", "來源時間、頻道或資源世代在核驗期間已變更；請重新探測。");
+            return;
+        }
+        var result = await new PrtgDiskSemanticProbe(client, contract).ProbeAsync(sensor.Objid,
+            window.StartUtc, window.EndUtc, points, ct);
         var checkedAtUtc = DateTime.UtcNow;
         operation.Checkpoint();
-        PersistProbeResult(sensor, result, date.Date, checkedAtUtc, identity);
+        if (!TryGetSourceContract(sensor.Objid, sensor.SensorType, out currentContract,
+                out currentIdentity, out _, out _) || currentContract != contract ||
+            !SameResourceIdentity(identity, currentIdentity))
+        {
+            SaveOutcome(sensor, date, "Stale", "來源時間、頻道或資源世代在核驗期間已變更；拒絕保存探測結果。");
+            return;
+        }
+        PersistProbeResult(sensor, result, date.Date, checkedAtUtc, identity, contract);
         operation.CompletedStage("語意驗證結果已保存");
         }
         catch (OperationCanceledException ex) when (operation.Token.IsCancellationRequested)
         { throw new PrtgScopeCancelledException(ex); }
     }
 
+    private bool TryGetSourceContract(long sensorObjid, string sensorType,
+        out PrtgDiskSemanticSourceContract contract, out PrtgResourceIdentity identity,
+        out string state, out string message)
+    {
+        contract = null!;
+        identity = null!;
+        state = "SourceAuthorityUnconfirmed";
+        message = "PRTG 來源時間、世代或主頻道權限尚未確認；請由維護入口完成核驗。";
+        var settings = _settings.Get();
+        if (!TryGetPolicyContext(settings, out var context, out _)) return false;
+        identity = _store.GetResourceIdentity(sensorObjid);
+        var profile = _store.GetTrustedSamplingProfiles([sensorObjid]).GetValueOrDefault(sensorObjid);
+        var now = DateTime.UtcNow;
+        var resolution = PrtgTrustedSamplingProfileResolver.Resolve(profile, identity, context.Policy,
+            sensorObjid, sensorType, context.Strategy.StrategyName, context.Strategy.StrategyMinutes,
+            context.Strategy.EffectiveFromHourUtc, now, now, now);
+        if (!resolution.Ready)
+        {
+            if (resolution.RejectionReason is not null)
+            {
+                state = "Stale";
+                message = "已保存的磁碟來源或主頻道核驗已過期；請重新核驗來源設定與頻道。";
+            }
+            else if (resolution.MissingFacts.Count > 0)
+            {
+                state = "SourceAuthorityUnconfirmed";
+                message = "磁碟來源缺少有效時區、世代、主頻道或資格核驗；請由維護入口補齊設定。";
+            }
+            return false;
+        }
+        contract = new(profile!.RawTimestampTimeZoneId, context.Policy.SourceTimeZoneId,
+            context.Policy.AnalysisTimeZoneId, context.Policy.SourceGeneration,
+            profile.PrimaryChannelId, profile.PrimaryChannelCaption);
+        state = "";
+        message = "";
+        return true;
+    }
+
     /// <summary>把一筆型別化探測結果綁到已確認的來源、資源與通道世代；供正式 producer 與 fixture 共用。</summary>
-    internal void PersistProbeResult(
+    private void PersistProbeResult(
         (long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused) sensor,
-        PrtgDiskSemanticProbeResult result, DateTime dataDate, DateTime checkedAtUtc, PrtgResourceIdentity capturedIdentity)
+        PrtgDiskSemanticProbeResult result, DateTime dataDate, DateTime checkedAtUtc,
+        PrtgResourceIdentity capturedIdentity, PrtgDiskSemanticSourceContract capturedContract)
     {
         if (dataDate.Date != dataDate) throw new ArgumentException("資料日期必須是日期值。", nameof(dataDate));
         if (checkedAtUtc.Kind != DateTimeKind.Utc) throw new ArgumentException("探測時間必須是 UTC。", nameof(checkedAtUtc));
+        if ((result.Status == PrtgDiskSemanticProbeStatus.Verified &&
+             (result.ValuesMatch != true || result.ComparedPointCount <= 0 ||
+              result.ChannelIdentifier != capturedContract.PrimaryChannelId ||
+              result.ChannelName != capturedContract.PrimaryChannelCaption)) ||
+            (result.ValuesMatch == true && result.ComparedPointCount <= 0))
+            throw new InvalidOperationException("探測結果沒有符合目前來源合約的有效比對點；拒絕保存正式語意證據。");
+        if (!TryGetSourceContract(sensor.Objid, sensor.SensorType, out var currentContract,
+                out var currentContractIdentity, out _, out _) || currentContract != capturedContract ||
+            !SameResourceIdentity(capturedIdentity, currentContractIdentity))
+            throw new InvalidOperationException("磁碟來源合約於保存前已變更；拒絕保存本次結果。");
         var current = _store.GetResourceIdentity(sensor.Objid);
         if (!SameResourceIdentity(capturedIdentity, current) || !current.Active || current.PendingReconciliation || current.Epoch <= 0 ||
             current.SourceGeneration.Length == 0 || current.Generation.Length == 0 ||
@@ -374,7 +566,7 @@ public sealed class PrtgDiskVerificationService
         if (string.IsNullOrWhiteSpace(created)) created = ReadText(exact[0], "cumsince");
         if (string.IsNullOrWhiteSpace(parent) || string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(created))
             throw new InvalidOperationException("resource-generation-unverified");
-        return $"{parent}|{type}|{created}";
+        return PrtgTimelineResourceIdentity.BuildResourceFingerprint(parent, type, created, 0);
     }
 
     private static string ReadText(JsonElement element, string name) => element.TryGetProperty(name, out var value)
@@ -388,18 +580,38 @@ public sealed class PrtgDiskVerificationService
         _results.Save(new(sensor.Objid, sensor.DeviceObjid, sensor.HostId, sensor.SensorType, state, message,
             null, null, null, null, null, 0, null, DateTime.UtcNow, date.Date, ParserSemanticVersion, Cancelled: cancelled));
 
+    private static string ProbeFailureState(Exception exception) => exception is TaskCanceledException or TimeoutException
+        ? "TimedOut" : exception is PrtgClientException or HttpRequestException or IOException
+            ? "RetryableFailure" : "Failed";
+
+    private static string ProbeFailureMessage(Exception exception, bool batch) => exception is TaskCanceledException or TimeoutException
+        ? "PRTG 語意驗證逾時。" : exception is PrtgClientException or HttpRequestException or IOException
+            ? batch ? "PRTG 暫時無法完成來源核驗；可稍後重試此感測器。" : "PRTG 暫時無法完成來源核驗；可稍後重試。"
+            : batch ? "此感測器驗證失敗；批次會繼續下一顆。" : "PRTG 語意驗證失敗或回應無法解析。";
+
     public PrtgDiskSemanticEvidence ConfirmManually(PrtgDiskManualConfirmation request, long userId)
     {
         var previous = _results.Get(request.SensorObjid) ?? throw new InvalidOperationException("該感測器尚無語意探測結果，不能人工確認。");
         var now = DateTime.UtcNow;
+        var settings = _settings.Get();
+        if (!TryGetPolicyContext(settings, out var policyContext, out _))
+            throw new InvalidOperationException("磁碟來源或分析時區授權尚未確認，不能人工確認；請由維護入口修復設定與來源證據。");
+        if (DateOnly.FromDateTime(previous.DataDate) != CompletedDay(now, policyContext.Policy.AnalysisTimeZoneId))
+            throw new InvalidOperationException("最近探測的主機日已過期；請重新取得分析時區內最近已完成日期並探測。");
         if (previous.CheckedAtUtc == default || previous.CheckedAtUtc > now || now - previous.CheckedAtUtc > TimeSpan.FromHours(24) ||
-            previous.Cancelled || previous.DataDate != DateTime.Today.AddDays(-1))
+            previous.Cancelled)
             throw new InvalidOperationException("最近的語意探測無有效候選或資料已過期，請重新探測。");
         if (previous.Status != nameof(PrtgDiskSemanticProbeStatus.NeedsManualReview) ||
             previous.ValuesMatch != true || previous.ComparedPointCount <= 0)
             throw new InvalidOperationException("最近探測未建立可供人工覆核的成功比對候選；不匹配、無落地資料點或其他探測狀態均須重新探測。");
         var current = FindCurrentSensor(request.SensorObjid);
         if (current.Objid == 0) throw new InvalidOperationException("感測器已不再映射至啟用主機。");
+        if (!TryGetSourceContract(request.SensorObjid, current.SensorType, out var currentContract,
+                out _, out var authorityState, out var authorityMessage))
+            throw new InvalidOperationException(authorityMessage.Length == 0 ? authorityState : authorityMessage);
+        if (!Same(currentContract.PrimaryChannelId, request.ChannelIdentifier) ||
+            !Same(currentContract.PrimaryChannelCaption, request.ChannelName))
+            throw new InvalidOperationException("人工確認頻道不符合目前已授權的主頻道 ID 與 caption；請重新核驗設定。");
         var identity = _store.GetResourceIdentity(request.SensorObjid);
         if (!identity.Active || identity.DeviceId != current.DeviceObjid || identity.HostId != current.HostId ||
             identity.PendingReconciliation || identity.Epoch <= 0 ||
@@ -513,7 +725,11 @@ public sealed class PrtgDiskVerificationService
 
     private (long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused) FindCurrentSensor(long id)
     {
-        var today = DateTime.Today;
+        var settings = _settings.Get();
+        var today = TryGetPolicyContext(settings, out var context, out _)
+            ? DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(
+                context.Policy.AnalysisTimeZoneId))).ToDateTime(TimeOnly.MinValue)
+            : DateTime.UtcNow.Date;
         return _store.GetCurrentReadinessSensorById(id,
             _hosts.GetAll().Where(h => h.Active && h.MergedInto == null).Select(h => h.HostId).ToArray(),
             today, today.AddDays(-30))

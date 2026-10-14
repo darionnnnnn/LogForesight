@@ -2762,6 +2762,27 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// Reads a deterministic, bounded sample for disk semantic source comparison. This sample
+    /// proves channel/unit/time interpretation only; it is not a day-wide coverage assertion.
+    /// </summary>
+    public List<PrtgValueRow> GetDiskSemanticComparisonValues(long sensorObjid,
+        DateTime fromInclusive, DateTime toExclusive)
+    {
+        if (sensorObjid <= 0) throw new ArgumentOutOfRangeException(nameof(sensorObjid));
+        if (toExclusive <= fromInclusive) throw new ArgumentException("Comparison range must be positive.", nameof(toExclusive));
+        using var ctx = _contextFactory();
+        return ctx.PrtgValues.AsNoTracking()
+            .Where(v => v.SensorObjid == sensorObjid && v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive &&
+                v.AvgValue.HasValue && (v.Quality == PrtgDataQuality.Ok ||
+                    v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage))
+            .OrderBy(v => v.PeriodStart)
+            .ThenBy(v => v.Id)
+            .Select(v => new PrtgValueRow { PeriodStart = v.PeriodStart, AvgValue = v.AvgValue })
+            .Take(5)
+            .ToList();
+    }
+
+    /// <summary>
     /// 取得 sensor 的 objid 與暫停狀態（唯讀，只取這兩欄）。
     /// 供歷史回填使用：回填不重跑結構同步，sensor 清單改從鏡像讀。
     /// </summary>

@@ -7,7 +7,8 @@ public enum PrtgDiskSemanticProbeStatus { Verified, NeedsManualReview, Mismatch 
 
 public sealed record PrtgDiskSemanticPersistedPoint(DateTime TimestampUtc, double Value);
 public sealed record PrtgDiskSemanticSourceContract(string RawTimestampTimeZoneId,
-    string SourceApiTimeZoneId, string PrimaryChannelId, string PrimaryChannelCaption);
+    string SourceApiTimeZoneId, string AnalysisTimeZoneId, string SourceGeneration,
+    string PrimaryChannelId, string PrimaryChannelCaption);
 public sealed record PrtgDiskSemanticProbeResult(
     long SensorObjid,
     PrtgDiskSemanticProbeStatus Status,
@@ -41,8 +42,8 @@ public sealed class PrtgDiskSemanticProbe
         CancellationToken cancellationToken = default)
     {
         if (sensorObjid <= 0) throw new ArgumentOutOfRangeException(nameof(sensorObjid));
-        if (startUtc.Kind != DateTimeKind.Utc || endUtc.Kind != DateTimeKind.Utc || endUtc <= startUtc || endUtc - startUtc > TimeSpan.FromDays(1))
-            throw new ArgumentException("Probe interval must be UTC, positive, and no longer than one day.");
+        if (startUtc.Kind != DateTimeKind.Utc || endUtc.Kind != DateTimeKind.Utc || endUtc <= startUtc || endUtc - startUtc > TimeSpan.FromHours(26))
+            throw new ArgumentException("Probe interval must be UTC, positive, and no longer than a supported local analysis day.");
 
         cancellationToken.ThrowIfCancellationRequested();
         var channelJson = await _getJson($"/api/table.json?content=channels&id={sensorObjid}&columns=objid,name,unit,scaling,primary&count=100", cancellationToken);
@@ -51,11 +52,22 @@ public sealed class PrtgDiskSemanticProbe
             return new(sensorObjid, PrtgDiskSemanticProbeStatus.NeedsManualReview,
                 "Source time basis or primary channel authority is unconfirmed; no physical sample comparison is authorized.",
                 channel?.Id, channel?.Name, channel?.Unit, channel?.Scale, null, 0, null, ["source-contract-unconfirmed"]);
-        var sdate = Uri.EscapeDataString(TimeZoneInfo.ConvertTimeFromUtc(startUtc, apiZone!).ToString("yyyy-MM-dd-HH-mm-ss", CultureInfo.InvariantCulture));
-        var edate = Uri.EscapeDataString(TimeZoneInfo.ConvertTimeFromUtc(endUtc, apiZone!).ToString("yyyy-MM-dd-HH-mm-ss", CultureInfo.InvariantCulture));
+        var apiStartWall = TimeZoneInfo.ConvertTimeFromUtc(startUtc, apiZone!);
+        var apiEndWall = TimeZoneInfo.ConvertTimeFromUtc(endUtc, apiZone!);
+        if (apiZone!.IsAmbiguousTime(apiStartWall) || apiZone.IsAmbiguousTime(apiEndWall))
+            return new(sensorObjid, PrtgDiskSemanticProbeStatus.NeedsManualReview,
+                "The source API endpoint time is ambiguous in its saved time zone; no historic comparison was requested.",
+                channel?.Id, channel?.Name, channel?.Unit, channel?.Scale, null, 0, null, ["source-api-time-ambiguous"]);
+        var sdate = Uri.EscapeDataString(apiStartWall.ToString("yyyy-MM-dd-HH-mm-ss", CultureInfo.InvariantCulture));
+        var edate = Uri.EscapeDataString(apiEndWall.ToString("yyyy-MM-dd-HH-mm-ss", CultureInfo.InvariantCulture));
         var historyJson = await _getJson($"/api/historicdata.json?id={sensorObjid}&avg=0&usecaption=1&sdate={sdate}&edate={edate}", cancellationToken);
         var raw = ParseRawPoints(historyJson, _contract!.PrimaryChannelCaption, rawZone!);
-        var compare = persistedPoints?.Take(5).ToArray() ?? [];
+        raw.RemoveAll(point => point.Time < startUtc || point.Time >= endUtc);
+        var suppliedPoints = persistedPoints?.Take(6).ToArray() ?? [];
+        var invalidPersistedPoints = suppliedPoints.Length > 5 || suppliedPoints.Any(point =>
+            point.TimestampUtc.Kind != DateTimeKind.Utc || point.TimestampUtc < startUtc || point.TimestampUtc >= endUtc ||
+            !double.IsFinite(point.Value));
+        var compare = invalidPersistedPoints ? [] : suppliedPoints;
         var aligned = channel is not null && channel.Value.Id == _contract.PrimaryChannelId && channel.Value.Name == _contract.PrimaryChannelCaption;
         var matches = aligned ? Compare(raw, compare) : null;
         var reasons = new List<string>();
@@ -68,6 +80,7 @@ public sealed class PrtgDiskSemanticProbe
             reasons.Add("Channel identifier or scale is missing or invalid.");
         if (channel is not null && channel.Value.Scale != 1) reasons.Add("Percent scale must be explicitly confirmed as 1.");
         if (raw.Count == 0) reasons.Add("No usable historic raw points were returned.");
+        if (invalidPersistedPoints) reasons.Add("Persisted comparison points are outside the authorized UTC window or exceed the comparison bound.");
         if (matches == false) reasons.Add("Historic raw points differ from persisted values.");
         if (matches != true) reasons.Add("At least one persisted value must match a historic raw point.");
 
@@ -113,13 +126,15 @@ public sealed class PrtgDiskSemanticProbe
         out TimeZoneInfo? rawZone, out TimeZoneInfo? apiZone)
     {
         rawZone = null; apiZone = null;
-        if (contract is null || string.IsNullOrWhiteSpace(contract.PrimaryChannelId) ||
+        if (contract is null || string.IsNullOrWhiteSpace(contract.SourceGeneration) ||
+            string.IsNullOrWhiteSpace(contract.AnalysisTimeZoneId) || string.IsNullOrWhiteSpace(contract.PrimaryChannelId) ||
             string.IsNullOrWhiteSpace(contract.PrimaryChannelCaption) || contract.PrimaryChannelCaption.Length > 128 ||
             string.IsNullOrWhiteSpace(contract.RawTimestampTimeZoneId) || string.IsNullOrWhiteSpace(contract.SourceApiTimeZoneId)) return false;
         try
         {
             rawZone = TimeZoneInfo.FindSystemTimeZoneById(contract.RawTimestampTimeZoneId);
             apiZone = TimeZoneInfo.FindSystemTimeZoneById(contract.SourceApiTimeZoneId);
+            _ = TimeZoneInfo.FindSystemTimeZoneById(contract.AnalysisTimeZoneId);
             return true;
         }
         catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException) { return false; }
@@ -138,7 +153,7 @@ public sealed class PrtgDiskSemanticProbe
             try
             {
                 var wall = DateTime.SpecifyKind(DateTime.FromOADate(serial), DateTimeKind.Unspecified);
-                if (rawZone.IsInvalidTime(wall) || rawZone.IsAmbiguousTime(wall)) continue;
+                if (rawZone.IsInvalidTime(wall) || rawZone.IsAmbiguousTime(wall)) return [];
                 var utc = TimeZoneInfo.ConvertTimeToUtc(wall, rawZone);
                 if (output.Any(p => p.Item1 == utc)) return []; // 重複時間無法唯一對齊物理樣本。
                 output.Add((utc, value));
@@ -151,6 +166,7 @@ public sealed class PrtgDiskSemanticProbe
     private static bool? Compare(List<(DateTime Time, double Value)> raw, PrtgDiskSemanticPersistedPoint[] points)
     {
         if (points.Length == 0 || raw.Count == 0) return null;
+        if (points.Select(point => point.TimestampUtc).Distinct().Count() != points.Length) return false;
         foreach (var point in points)
         {
             if (point.TimestampUtc.Kind != DateTimeKind.Utc || !double.IsFinite(point.Value)) return null;

@@ -6,6 +6,12 @@ using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Services;
+using LogForesight.Web.Auth;
+using LogForesight.Web.Controllers.Api;
+using System.Globalization;
+using System.Net;
+using System.Text;
+using Microsoft.AspNetCore.Mvc;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -70,79 +76,187 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
     }
 
     [Fact]
-    public void RuleTrial_ReportsMissingRuleWithoutWritingBusinessOrSemanticEvidence()
+    public void RuleTrial_ReportsMissingSourceTimeAuthorityWithoutWritingEvidence()
     {
         _ruleStore.Save(new RuleFileContent { Rules = new List<KnownIssueRule>() });
 
         var trial = _service.AssessRuleTrial(1);
-        Assert.NotEmpty(trial.RulesFingerprint); Assert.Equal(PrtgDiskVerificationService.ParserSemanticVersion, trial.SemanticVersion);
+        Assert.Equal(PrtgDiskVerificationService.ParserSemanticVersion, trial.SemanticVersion);
         Assert.Equal(DateTimeKind.Utc, trial.AssessedAtUtc.Kind);
-        Assert.Equal("no-configured-rule", trial.Status);
-        Assert.Contains("沒有已儲存", trial.Message);
+        Assert.Equal("source-authority-unconfirmed", trial.Status);
+        Assert.Contains("授權", trial.Message);
         Assert.Empty(_evidence.GetAll());
         Assert.Empty(_results.GetRecent());
     }
 
     [Fact]
-    public void VerifiedProbeProducerPersistsOneCurrentSourceResourceChannelEpoch()
+    public async Task NormalServiceRunUsesSavedContractAndPersistsVerifiedEvidence()
     {
         var store = new EfPrtgStore(_fx.NewContext);
-        var captured = CaptureCurrentIdentity(store);
         var now = DateTime.UtcNow;
-        var probe = new LogForesight.Core.Service.PrtgDiskSemanticProbeResult(1,
-            LogForesight.Core.Service.PrtgDiskSemanticProbeStatus.Verified, "verified", "free", "Free space", "%", 1,
-            "descending-danger", 1, true, Array.Empty<string>());
+        var effectiveFrom = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc).AddHours(-1);
+        ConfigureReadySourcePolicy("UTC");
+        var profile = PrtgResourceFixture.ConfigureDiskTrustedProfile(store,
+            _fx.Blob(PrtgMonitoringPolicyStore.BlobKey),
+            _fx.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey), 1, 2, 1, "snmpdiskfree",
+            effectiveFrom, sourceGeneration: "source-v1", channelIdentifier: "8");
+        var day = PrtgDiskVerificationService.CompletedDay(DateTime.UtcNow, profile.AnalysisTimeZoneId);
+        var window = PrtgDiskVerificationService.AnalysisDayWindow(day, profile.AnalysisTimeZoneId);
+        var sourceApiZone = TimeZoneInfo.FindSystemTimeZoneById(profile.SourceApiTimeZoneId);
+        var storedTimesUtc = Enumerable.Range(0, 6).Select(index => window.StartUtc.AddHours(index * 4)).ToArray();
+        using (var db = _fx.NewContext())
+        {
+            db.PrtgValues.AddRange(storedTimesUtc.Select(timestampUtc => new PrtgValueRow
+            {
+                SensorObjid = 1, PeriodStart = DateTime.SpecifyKind(
+                    TimeZoneInfo.ConvertTimeFromUtc(timestampUtc, sourceApiZone), DateTimeKind.Unspecified), AvgValue = 72.5,
+                MinValue = 72.5, MaxValue = 72.5, Coverage = 100, Quality = PrtgDataQuality.Ok,
+                CreatedAt = DateTime.UtcNow
+            }));
+            db.SaveChanges();
+        }
+        var rawHistory = "{\"histdata\":[" + string.Join(",", storedTimesUtc.Take(5).Select(timestampUtc =>
+            "{\"datetime_raw\":" + timestampUtc.ToOADate().ToString("R", CultureInfo.InvariantCulture) +
+            ",\"Free Space_raw\":72.5}")) + "]}";
 
-        _service.PersistProbeResult(CurrentDisk(), probe, DateTime.Today.AddDays(-1), now, captured);
+        var requests = new List<string>();
+        var driftAfterHistory = false;
+        var clientFactory = new Func<SystemSettings, PrtgClient>(currentSettings =>
+            PrtgClientFactory.Create(currentSettings, new DelegateHandler((request, _) =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            requests.Add(path);
+            var body = path.Contains("content=sensors", StringComparison.Ordinal)
+                ? "{\"sensors\":[{\"objid\":1,\"parentid\":2,\"type\":\"snmpdiskfree\",\"cumsince_raw\":\"fixture-created-1\"}]}"
+                : path.Contains("content=channels", StringComparison.Ordinal)
+                    ? "{\"channels\":[{\"objid\":8,\"name\":\"Free Space\",\"unit\":\"%\",\"scaling\":1,\"primary\":true}]}"
+                    : rawHistory;
+            if (path.Contains("historicdata.json", StringComparison.Ordinal) && driftAfterHistory)
+            {
+                driftAfterHistory = false;
+                new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey))
+                    .Update(policy => policy.SourceGeneration = "source-v2");
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        }), new PrtgRequestBudget()));
+        var runState = new PrtgProbeRunState();
+        var service = new PrtgDiskVerificationService(_settings, store, _hosts, runState, _evidence,
+            _results, new PrtgBackfillRunState(), new PrtgStructureSyncRunState(), new SchedulerRunState(),
+            _ruleStore, clientFactory);
+        var savedPolicyContext = store.GetTrustedSamplingPolicyContext("conservative", 15);
+        Assert.True(savedPolicyContext.Policy.Ready(_settings.Get().PrtgUrl),
+            $"The fixture policy must be ready: core={savedPolicyContext.Policy.CoreSystemId.Length > 0}, " +
+            $"generation={savedPolicyContext.Policy.SourceGeneration.Length > 0}, " +
+            $"validFrom={savedPolicyContext.Policy.ValidFrom != default}, " +
+            $"endpointMatch={savedPolicyContext.Policy.EndpointHint == EfPrtgObservationStore.SourceHintFor(_settings.Get().PrtgUrl)}, " +
+            $"hosts={savedPolicyContext.Policy.HostIds.Count}, sensors={savedPolicyContext.Policy.SensorIds.Count}, " +
+            $"apiZone={savedPolicyContext.Policy.SourceTimeZoneId.Length > 0}, " +
+            $"culture={savedPolicyContext.Policy.SourceCultureName.Length > 0}.");
+        Assert.NotEmpty(savedPolicyContext.Policy.SourceAuthorityFingerprint(_settings.Get().PrtgUrl));
+        Assert.True(savedPolicyContext.Strategy.Ready, "The fixture strategy must be ready before the API-to-service flow.");
+        var savedIdentity = store.GetResourceIdentity(1);
+        var savedProfile = store.GetTrustedSamplingProfiles([1]).GetValueOrDefault(1);
+        var profileResolution = PrtgTrustedSamplingProfileResolver.Resolve(savedProfile, savedIdentity,
+            savedPolicyContext.Policy, 1, "snmpdiskfree", savedPolicyContext.Strategy,
+            DateTime.UtcNow, DateTime.UtcNow, DateTime.UtcNow);
+        Assert.True(profileResolution.Ready,
+            $"Fixture profile must resolve before HTTP: rejection={profileResolution.RejectionReason}, " +
+            $"missing={string.Join(',', profileResolution.MissingFacts)}.");
+        var publishedDate = service.GetStatus(1);
+        Assert.Equal(day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), publishedDate.CompletedAnalysisDay);
+        Assert.Equal(profile.AnalysisTimeZoneId, publishedDate.AnalysisTimeZoneId);
 
-        var current = store.GetResourceIdentity(1);
+        var endpoint = new PrtgDiskVerificationController(service, new NoopAudit(), new MaintainUser());
+        var endpointResult = endpoint.Start(new(1, day.ToDateTime(TimeOnly.MinValue), Guid.NewGuid().ToString()));
+        Assert.IsType<OkObjectResult>(endpointResult);
+        Assert.True(SpinWait.SpinUntil(() => !runState.Snapshot().IsRunning, TimeSpan.FromSeconds(10)));
+
         var result = Assert.IsType<PrtgDiskVerificationResult>(_results.Get(1));
-        var evidence = Assert.Single(_evidence.GetAll());
-        Assert.Equal(current.SourceGeneration, result.SourceGeneration);
-        Assert.Equal(current.Generation, result.ResourceGeneration);
-        Assert.Equal(current.ChannelGeneration, result.ChannelGeneration);
-        Assert.Equal(current.Epoch, result.IdentityEpoch);
-        Assert.Equal(result.SourceGeneration, evidence.SourceGeneration);
-        Assert.Equal(result.ResourceGeneration, evidence.ResourceGeneration);
-        Assert.Equal(result.ChannelGeneration, evidence.ChannelGeneration);
-        Assert.Equal(result.IdentityEpoch, evidence.IdentityEpoch);
-        Assert.True(PrtgResourceQualification.IsChannelCurrent(evidence, result, current));
+        Assert.True(result.Status == nameof(PrtgDiskSemanticProbeStatus.Verified),
+            $"status={result.Status}; message={result.Summary}; requests={requests.Count}.");
+        Assert.Equal("8", result.ChannelIdentifier);
+        Assert.Equal("Free Space", result.ChannelName);
+        Assert.Equal(5, result.ComparedPointCount);
+        Assert.True(result.ValuesMatch);
+        using (var savedValues = _fx.NewContext()) Assert.Equal(6, savedValues.PrtgValues.Count());
+        Assert.Single(_evidence.GetAll());
+        Assert.Equal(3, requests.Count);
+        Assert.Contains(requests, path => path.Contains("content=sensors", StringComparison.Ordinal));
+        Assert.Contains(requests, path => path.Contains("content=channels", StringComparison.Ordinal));
+        Assert.Contains(requests, path => path.Contains("historicdata.json", StringComparison.Ordinal));
+        var evidenceCount = _evidence.GetAll().Count;
+        driftAfterHistory = true;
+        Assert.IsType<OkObjectResult>(endpoint.Start(new(1, day.ToDateTime(TimeOnly.MinValue), Guid.NewGuid().ToString())));
+        Assert.True(SpinWait.SpinUntil(() => !runState.Snapshot().IsRunning, TimeSpan.FromSeconds(10)));
+        Assert.Equal("Stale", _results.Get(1)?.Status);
+        Assert.Equal(evidenceCount, _evidence.GetAll().Count);
+    }
+
+    [Theory]
+    [InlineData(2026, 3, 8, 23)]
+    [InlineData(2026, 11, 1, 25)]
+    public void AnalysisDayWindowUsesRealDayLengthAcrossDst(int year, int month, int day, int expectedHours)
+    {
+        var window = PrtgDiskVerificationService.AnalysisDayWindow(new DateOnly(year, month, day), "Eastern Standard Time");
+        Assert.Equal(TimeSpan.FromHours(expectedHours), window.EndUtc - window.StartUtc);
+        Assert.Equal(DateTimeKind.Utc, window.StartUtc.Kind);
+        Assert.Equal(DateTimeKind.Utc, window.EndUtc.Kind);
     }
 
     [Fact]
-    public void VerifiedProbeProducerRejectsIdentityChangedDuringProbeWithoutSavingEvidence()
+    public void CompletedAnalysisDayIsIndependentOfBrowserAndServerLocalYesterday()
     {
-        var store = new EfPrtgStore(_fx.NewContext);
-        var captured = CaptureCurrentIdentity(store);
-        var policy = new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policy.UpdateWithResourceEpochs("revision-1", [1], p =>
+        var utcNearMidnight = new DateTime(2026, 10, 14, 1, 30, 0, DateTimeKind.Utc);
+        Assert.Equal(new DateOnly(2026, 10, 12), PrtgDiskVerificationService.CompletedDay(utcNearMidnight, "Pacific Standard Time"));
+        Assert.Equal(new DateOnly(2026, 10, 13), DateOnly.FromDateTime(utcNearMidnight).AddDays(-1));
+    }
+
+    [Fact]
+    public void StatusWithMalformedSavedPolicyReportsAuthorityUnavailableInsteadOfThrowing()
+    {
+        ConfigureReadySourcePolicy("UTC");
+        using (var db = _fx.NewContext())
         {
-            p.Revision = "revision-2";
-            p.SourceGeneration = "source-v2";
-        });
-        var probe = new LogForesight.Core.Service.PrtgDiskSemanticProbeResult(1,
-            LogForesight.Core.Service.PrtgDiskSemanticProbeStatus.Verified, "verified", "free", "Free space", "%", 1,
-            "descending-danger", 1, true, Array.Empty<string>());
+            var policyRow = db.Blobs.Single(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey);
+            policyRow.Content = "{";
+            db.SaveChanges();
+        }
 
-        Assert.Throws<InvalidOperationException>(() => _service.PersistProbeResult(CurrentDisk(), probe,
-            DateTime.Today.AddDays(-1), DateTime.UtcNow, captured));
+        var status = _service.GetStatus(1);
 
-        Assert.Empty(_evidence.GetAll());
-        Assert.Null(_results.Get(1));
-        Assert.True(store.GetResourceIdentity(1).PendingReconciliation);
+        Assert.Null(status.CompletedAnalysisDay);
+        Assert.Null(status.AnalysisTimeZoneId);
     }
 
     private PrtgResourceIdentity CaptureCurrentIdentity(EfPrtgStore store)
     {
-        var policy = new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policy.Update(p =>
+        var now = DateTime.UtcNow;
+        var effectiveFrom = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc).AddHours(-1);
+        ConfigureReadySourcePolicy("UTC");
+        PrtgResourceFixture.ConfigureDiskTrustedProfile(store, _fx.Blob(PrtgMonitoringPolicyStore.BlobKey),
+            _fx.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey), 1, 2, 1, "snmpdiskfree",
+            effectiveFrom, sourceGeneration: "source-v1", channelIdentifier: "8");
+        return store.GetResourceIdentity(1);
+    }
+
+    private void ConfigureReadySourcePolicy(string sourceApiTimeZone)
+    {
+        var url = _settings.Get().PrtgUrl;
+        new SystemSettingsStore(_fx.Blob("system_settings")).Update(fixtureSettings =>
         {
-            p.Revision = "revision-1";
-            p.SourceGeneration = "source-v1";
-            p.HostIds = [1];
-            p.SensorIds = [1];
+            fixtureSettings.PrtgEnabled = true;
+            fixtureSettings.PrtgUrl = url;
+            fixtureSettings.PrtgFetchStrategy = "conservative";
         });
-        return store.BindObservedResource(1, 1, "source-v1", "2|snmpdiskfree|created-A");
+        new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
+        {
+            policy.CoreSystemId = "disk-verification-fixture-core";
+            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(url);
+            policy.ValidFrom = DateTimeOffset.UtcNow.AddDays(-1);
+            policy.SourceTimeZoneId = sourceApiTimeZone;
+            policy.SourceCultureName = "en-US";
+        });
     }
 
     private static (long Objid, long DeviceObjid, long HostId, string Name, string SensorType, string Category,
@@ -236,6 +350,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
     [Fact]
     public void RuleTrial_LoadFailureDoesNotPresentSeedAsConfiguredRule()
     {
+        EnsureSourceAuthority();
         _ruleStore.Save(new RuleFileContent { Rules = new List<KnownIssueRule> { TrialRule("persisted", true, 20) } });
         _backend.Blob("rules").Mutate(_ => ("{ invalid json", 0));
 
@@ -270,7 +385,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             db.PrtgValues.AddRange(values);
             db.SaveChanges();
         }
-        CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
+        ConfigureReadySourcePolicy("UTC");
         PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, 1, 2, 1, "snmpdiskfree", "source-v1");
         var trial = _service.AssessRuleTrial(1);
         Assert.Equal("insufficient-data", trial.Status);
@@ -302,7 +417,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             db.PrtgValues.AddRange(values);
             db.SaveChanges();
         }
-        CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
+        ConfigureReadySourcePolicy("UTC");
         PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, 1, 2, 1, "snmpdiskfree", "source-v1");
         ConfirmTrialSemanticEvidence();
         var beforeResults = _results.GetRecent().Count;
@@ -370,7 +485,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         db.PrtgHostMaps.AddRange(maps);
         db.PrtgValues.AddRange(values);
         db.SaveChanges();
-        CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
+        ConfigureReadySourcePolicy("UTC");
         PrtgResourceFixture.AuthorizeSeededDiskHistory(_fx.NewContext, sensor.Objid, sensor.DeviceObjid,
             1, sensor.SensorType, "source-v1");
     }
@@ -397,22 +512,28 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
             _evidence.Get(1), _results.Get(1), store.GetResourceIdentity(1)));
     }
 
-    private void SaveTrialRule(bool enabled = true, PrtgDiskTrendThresholds? thresholds = null) => _ruleStore.Save(new RuleFileContent
+    private void SaveTrialRule(bool enabled = true, PrtgDiskTrendThresholds? thresholds = null)
     {
-        Rules = new List<KnownIssueRule> { new()
+        _ruleStore.Save(new RuleFileContent
         {
-            Id = "trial-disk", Origin = "custom", Enabled = enabled, Platform = "prtg", PrtgRuleCode = "disk_free_trend",
-            PrtgSensorCategory = PrtgSensorCategories.Disk, PrtgDiskTrendThresholds = thresholds ?? PrtgDiskTrendThresholds.Provisional,
-            Description = "Disk free trend trial", PlainExplanation = "Disk capacity is declining",
-            CountThreshold = 1, Impact = "Disk capacity may be exhausted", LikelyCauses = new[] { "Free disk space is declining" },
-            NextSteps = new[] { "Review disk usage and capacity" }
-        } }
-    });
+            Rules = new List<KnownIssueRule> { new()
+            {
+                Id = "trial-disk", Origin = "custom", Enabled = enabled, Platform = "prtg", PrtgRuleCode = "disk_free_trend",
+                PrtgSensorCategory = PrtgSensorCategories.Disk, PrtgDiskTrendThresholds = thresholds ?? PrtgDiskTrendThresholds.Provisional,
+                Description = "Disk free trend trial", PlainExplanation = "Disk capacity is declining",
+                CountThreshold = 1, Impact = "Disk capacity may be exhausted", LikelyCauses = new[] { "Free disk space is declining" },
+                NextSteps = new[] { "Review disk usage and capacity" }
+            } }
+        });
+    }
 
-    private void SaveTrialRules(params KnownIssueRule[] rules) => _ruleStore.Save(new RuleFileContent
+    private void SaveTrialRules(params KnownIssueRule[] rules)
     {
-        Rules = rules.ToList()
-    });
+        EnsureSourceAuthority();
+        _ruleStore.Save(new RuleFileContent { Rules = rules.ToList() });
+    }
+
+    private void EnsureSourceAuthority() => CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
 
     private static KnownIssueRule TrialRule(string id, bool enabled, double lowWater, string category = PrtgSensorCategories.Disk) => new()
     {
@@ -427,6 +548,7 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
     [Fact]
     public void Start_RejectsEachConflictingRunWithSpecificReason()
     {
+        EnsureSourceAuthority();
         Assert.True(_scheduler.TryBeginRun("manual:test", out _));
         AssertConflict("取數排程");
         _scheduler.EndRun();
@@ -524,14 +646,15 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         var identity = CaptureCurrentIdentity(new EfPrtgStore(_fx.NewContext));
         var probeAt = DateTime.UtcNow;
         _results.Save(new(1, 2, 1, "snmpdiskfree", "NeedsManualReview", "metadata incomplete",
-            null, null, null, null, null, 1, true, probeAt, DateTime.Today.AddDays(-1),
+            null, null, null, null, null, 1, true, probeAt,
+            PrtgDiskVerificationService.CompletedDay(probeAt, "UTC").ToDateTime(TimeOnly.MinValue),
             PrtgDiskVerificationService.ParserSemanticVersion, SourceGeneration: identity.SourceGeneration,
             ResourceGeneration: identity.Generation, ChannelGeneration: identity.ChannelGeneration,
             IdentityEpoch: identity.Epoch));
 
-        Assert.Throws<ArgumentException>(() => _service.ConfirmManually(new(1, "channel-1", "Free space", "%", 2,
+        Assert.Throws<ArgumentException>(() => _service.ConfirmManually(new(1, "8", "Free Space", "%", 2,
             "descending-danger", "scale must be one"), 42));
-        var evidence = _service.ConfirmManually(new(1, "channel-1", "Free space", "percent", 1,
+        var evidence = _service.ConfirmManually(new(1, "8", "Free Space", "percent", 1,
             "descending-danger", "已從 PRTG 核對頻道標籤與百分比單位。"), 42);
         Assert.Equal(PrtgDiskSemanticEvidenceSource.Manual, evidence.Source);
     }
@@ -540,6 +663,32 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
     {
         Assert.False(_service.TryStart(new(1, DateTime.Today.AddDays(-1)), out var error));
         Assert.Contains(expected, error);
+    }
+
+    private sealed class DelegateHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            send(request, cancellationToken);
+    }
+
+    private sealed class NoopAudit : IAuditService
+    {
+        public void Record(string action, string summary, string? targetKind = null, string? targetId = null,
+            object? detail = null, AuditResult result = AuditResult.Ok) { }
+        public void RecordAuth(string action, string account, long? userId, string summary, AuditResult result) { }
+        public void RecordSystem(string action, string summary, string? targetKind = null, string? targetId = null) { }
+    }
+
+    private sealed class MaintainUser : ICurrentUser
+    {
+        public bool IsAuthenticated => true;
+        public long UserId => 42;
+        public string Account => "disk-test";
+        public string DisplayName => "Disk Test";
+        public IReadOnlySet<Capability> Capabilities { get; } = new HashSet<Capability> { Capability.Maintain };
+        public bool IsServerAdmin => false;
+        public bool Has(Capability capability) => Capabilities.Contains(capability);
     }
 
     public void Dispose()

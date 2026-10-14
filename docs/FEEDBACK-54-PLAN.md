@@ -363,3 +363,9 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 有界更新的完整列讀取綁定預讀 version；版本改變時走既有並發重試，避免 SQL Server ReadCommitted 下檢查舊版後讀取另一份超限文件。新增交易內、所有文件讀取前的 beforeRead hook，供 F2 範圍鎖統一順序使用；沒有新增權限。
 - 主代理隔離 checkout 定向 physical read 8/8 通過（5 秒、零略過），含 tiny 16/17 字元及前置防護改寫超限後拒絕、原交易回滾、內容及 version 不變。TRX：work/round54-mode-validation/work/d1-bounded-fence/bounded-fence.trx。本段尚不代表 F2 完整工作流驗收。
 - 依使用者最新指示，33,554,432 字元極限內容不建立、不測量；字元／provider 邊界依官方文件與小型反例核對。其餘直接批次 projection、維護修復及同版交付仍待完成，父階段維持未勾。
+
+### C1後端接線：正常磁碟語意核驗
+
+- 正常 controller→service→來源／主頻道／historicdata→結果與語意證據使用保存的來源 API、raw OA 與分析時區及精確 profile 合約；canonical 資源指紋一致。單日 DST 23／25 小時區間不依本機時區；歧義端點／樣本、authority 缺少／漂移保持等待或失效。比較樣本在 SQL 依品質、時間及 ID 排序只投影最多 5 筆時間／數值，不宣稱整日涵蓋。
+- 主代理檢查完整呼叫鏈並在隔離 checkout 獨立執行 Probe／VerificationService 60/60 通過、零略過（59 秒）；work/round54-mode-validation/work/c1-root/c1-root.trx。含正常入口取得 Verified、DST、malformed policy、來源漂移及人工證據失效反例。測試使用獨立 request budget，未證正式 shared historic SQL admission；production guard 未變。
+- 後端回應已完成分析日期／時區供 F1 UI 使用；UI 尚未完成瀏覽器核驗，不勾 C1／E03／E08 父驗收或整輪完成。
