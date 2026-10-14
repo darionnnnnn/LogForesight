@@ -315,6 +315,13 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 最後補齊公開Get/GetAll/GetRecent拒絕反例後，同一兩host fixture新binary重驗5/5通過、零略過、29秒，TRX work/round54-mode-validation/work/d1-disk-accessors/d1-disk-accessors.trx。JS首次CommonJS syntax命令因ES module模式錯誤未通過；改用node --input-type=module --check後通過，此仍僅語法檢查。
 - 仍待：FetchStateChangesRangeAsync、正式probe/離線鏈與finding→signature→DB→pending/replay/mail fingerprint；current timeline gate不能防止舊finding被新timeline追認，B2尚未完成。主代理另確認resource period consumer的mode損壞可能中斷整批，依C54-02待補逐host等待；共享disk相關等待/維護修復及SQL字元相容也未完成。原父TODO維持未勾。
 
+### A2回退第一段：SQLite配套隔離還原與啟動前防護
+
+- 委派 gpt-6-luna high，主代理審查實際layout、startup integrations及process/listener相依。首次候選錯放DB/key且只驗fake binary，已修成產品data/Db及data/keys，核所有schedule/local-analysis、mail、PRTG、AI、AD與sentinel停用。主代理再修actual command substring比對為完整Windows argv token並核真正listener PID；拒絕時不啟動，啟動後身分不符停止該owned PID。
+- 交付 scripts/round54/rollback 的 prepare→verify→launch→stop；固定operator-reviewed full commit及authority SHA，核Web/Core/assets/config/DB/key/schema與封存差額精確清單。seal/hash只偵測相對pinned bytes變更，不是作者身分或簽章。拒絕同庫直接降版；差額保持held、不盲目重寄。
+- 主代理獨立13/13 unit通過（4.11秒，無skip），再以已核Verify-BuildIdentity的真實舊版638c58434f0bc01fe77e62365addeafd75680fb0執行完整CLI，/login 200，815,104-byte自有SQLite少量case/reply/task/mail/sentinel逐列及blob完全不變、external TCP trap=0、source DB/key與release tree SHA完全不變；PID15376已停止並查無process。報告work/round54/rollback-real-root.json、命令log同目錄。沒有使用正式DB/key或完整母體。
+- 仍待：正式release/bundle consumer接線、差額reconcile與SMTP去重解除hold；SQL Server相容回退未知即拒絕，尚未做其正式還原驗收。此段不宣稱無損回退、全A2/B2/G/H或整輪PASS。
+
 ### 開發驗證限制更新：只執行分段小範圍（2026-10-14最新指示）
 
 使用者明確要求開發期間不要大規模大量資料測試，優先分段小範圍驗正確性；不得已必須先討論可行方案。本條約束所有階段、委派與舊驗收引用。持續完成各項程式／腳本／正常consumer接線，使用少量主機／sensor／列、可控批次、故障注入與精確預期，並逐段commit／push。
