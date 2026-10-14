@@ -41,6 +41,13 @@ public sealed class PrtgSilentPresenceFormalConsumer(StorageBackend backend)
                 results[pair.Key] = results[pair.Key] with { Reason = "source-authority-unverified" };
             return Return();
         }
+        var messageTimeFingerprint = policy.MessageTimeFingerprint(configuredUrl);
+        if (messageTimeFingerprint.Length == 0)
+        {
+            foreach (var pair in currentDeviceToHost)
+                results[pair.Key] = results[pair.Key] with { Reason = "message-date-format-unconfigured" };
+            return Return();
+        }
         var configuredRetention = new SystemSettingsStore(backend.Blob("system_settings")).Get().RetentionDays;
         var proofRetentionDays = PrtgSilentPresenceSnapshotStore.EffectiveRetentionDays(configuredRetention);
         if (day.Date < DateTime.Today.AddDays(-proofRetentionDays))
@@ -107,7 +114,7 @@ public sealed class PrtgSilentPresenceFormalConsumer(StorageBackend backend)
                     identities.TryGetValue(row.SensorObjid, out var identity);
                     DateTimeOffset? unknownSince = null;
                     if (!row.Paused && (identity is null || !PrtgResourceQualification.IsCurrent(timeline, identity,
-                        policy.SourceGeneration, row.SensorObjid, snapshot.DeviceObjid, snapshot.HostId) ||
+                        policy.SourceGeneration, row.SensorObjid, snapshot.DeviceObjid, snapshot.HostId, messageTimeFingerprint) ||
                         !HasCoveredSourceState(row, timeline, identity, sourceAsOf)))
                     {
                         sensors.Clear();
@@ -144,7 +151,8 @@ public sealed class PrtgSilentPresenceFormalConsumer(StorageBackend backend)
                     SourceDay = snapshot.SourceDay,
                     SourceAsOf = snapshot.SourceAsOf,
                     DeviceStatusAsOf = snapshot.DeviceStatusAsOf,
-                    SourceAuthorityFingerprint = snapshot.SourceAuthorityFingerprint
+                    SourceAuthorityFingerprint = snapshot.SourceAuthorityFingerprint,
+                    MessageTimeFingerprint = messageTimeFingerprint
                 };
                 var deviceFindings = PrtgSilentAbsenceEvaluator.Evaluate(day, [evidence], rules);
                 var fingerprint = DeviceEvidenceFingerprint(snapshot, identities, timelines);

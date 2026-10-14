@@ -34,9 +34,10 @@ public sealed class PrtgDiskVerificationResultStore : JsonBlobSingleton<Dictiona
     internal bool IsSnapshotCurrent(PrtgDiskVerificationResultSnapshot snapshot) =>
         snapshot.Version == ReadCurrentBlobVersion();
 
+    public new Dictionary<long, PrtgDiskVerificationResult> Get() => CaptureSnapshot().CopyItems();
     public IReadOnlyCollection<PrtgDiskVerificationResult> GetRecent(int take = 20) =>
         Get().Values.OrderByDescending(x => x.CheckedAtUtc).Take(Math.Clamp(take, 1, 50)).ToArray();
-    public PrtgDiskVerificationResult? Get(long sensorObjid) => Get().GetValueOrDefault(sensorObjid);
+    public PrtgDiskVerificationResult? Get(long sensorObjid) => CaptureSnapshot().Get(sensorObjid);
     public void Save(PrtgDiskVerificationResult result) => Update(all => all[result.SensorObjid] = result);
 }
 
@@ -52,5 +53,7 @@ internal sealed class PrtgDiskVerificationResultSnapshot
     internal int DeserializeCount { get; }
     internal int SourceCharacters { get; }
     internal int Count => _items.Count;
+    internal Dictionary<long, PrtgDiskVerificationResult> CopyItems() => new(_items);
+    internal PrtgDiskVerificationResult[] Values() => _items.Values.ToArray();
     internal PrtgDiskVerificationResult? Get(long sensorObjid) => _items.GetValueOrDefault(sensorObjid);
 }

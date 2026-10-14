@@ -142,4 +142,5 @@ public sealed record PrtgSilentDeviceEvidence(
     public DateTimeOffset? DeviceStatusAsOf { get; init; }
     public DateTimeOffset? SourceAsOf { get; init; }
     public string SourceAuthorityFingerprint { get; init; } = string.Empty;
+    public string MessageTimeFingerprint { get; init; } = string.Empty;
 }

@@ -8,6 +8,7 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgSilentAbsenceEvaluatorTests
 {
+    private const string MessageTimeFingerprint = "fixture-message-time-authority";
     private static readonly DateTime Day = new(2026, 10, 4);
     private static readonly DateTimeOffset DayStart = new(Day, TimeSpan.FromHours(8));
     private static readonly DateTimeOffset AsOf = DayStart.AddHours(18);
@@ -46,7 +47,8 @@ public sealed class PrtgSilentAbsenceEvaluatorTests
         {
             RequestedAnalysisDay = Day,
             RequestedWindowStartUtc = new DateTimeOffset(Day, effectiveAsOf.Offset),
-            RequestedWindowEndUtc = new DateTimeOffset(Day.AddDays(1), effectiveAsOf.Offset)
+            RequestedWindowEndUtc = new DateTimeOffset(Day.AddDays(1), effectiveAsOf.Offset),
+            MessageTimeFingerprint = MessageTimeFingerprint
         };
     }
 
@@ -59,6 +61,7 @@ public sealed class PrtgSilentAbsenceEvaluatorTests
         {
             QualityReason = "covered", SensorId = sensorId, HostId = 20,
             SourceGeneration = source, ResourceGeneration = generation, IdentityEpoch = 1,
+            MessageTimeFingerprint = MessageTimeFingerprint,
             ValidFrom = asOf.AddDays(-2), LastAttemptAt = asOf.AddMinutes(1),
             Coverage = [new(sensorId, asOf.AddDays(-2), asOf.AddMinutes(1), source, generation)],
             States = statusEnteredAt.HasValue

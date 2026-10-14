@@ -36,7 +36,8 @@ public sealed record PrtgTimelineMetadata(
     string? ChannelGeneration = null,
     string? BootstrapCollectionCycleId = null,
     long Version = 0,
-    int? MessageStatusSemanticVersion = null);
+    int? MessageStatusSemanticVersion = null,
+    string? MessageTimeFingerprint = null);
 
 public sealed record PrtgTimelineMetadataReadResult(
     IReadOnlyDictionary<long, PrtgTimelineMetadata> Rows,
@@ -98,6 +99,8 @@ public sealed class PrtgTimelineMetadataProjectionRow
     public long? DiskSemanticCheckedAtLength { get; set; }
     public string? MessageStatusSemanticVersionText { get; set; }
     public long? MessageStatusSemanticVersionLength { get; set; }
+    public string? MessageTimeFingerprintText { get; set; }
+    public long? MessageTimeFingerprintLength { get; set; }
 }
 
 public sealed class PrtgTimelineMetadataVersionProjectionRow
@@ -185,7 +188,8 @@ public sealed class PrtgTimelineMetadataQuery(Func<LfDbContext> contextFactory)
             ArrayShapeValid("Coverage", sqlServer), ArrayShapeValid("States", sqlServer),
             JsonScalar("DiskSemanticValidFrom", TimestampLimit, sqlServer), JsonLength("DiskSemanticValidFrom", sqlServer),
             JsonScalar("DiskSemanticCheckedAt", TimestampLimit, sqlServer), JsonLength("DiskSemanticCheckedAt", sqlServer),
-            JsonScalar("MessageStatusSemanticVersion", 16, sqlServer), JsonLength("MessageStatusSemanticVersion", sqlServer)
+            JsonScalar("MessageStatusSemanticVersion", 16, sqlServer), JsonLength("MessageStatusSemanticVersion", sqlServer),
+            JsonScalar("MessageTimeFingerprint", FingerprintLimit, sqlServer), JsonLength("MessageTimeFingerprint", sqlServer)
         };
         var source = sqlServer
             ? $"FROM lf_blobs b CROSS APPLY (SELECT CASE WHEN ISJSON(b.content) = 1 AND LEFT(LTRIM(b.content), 1) = '{{' THEN b.content ELSE N'{{}}' END AS JsonContent) AS safe CROSS APPLY OPENJSON(safe.JsonContent) WITH ({OpenJsonColumns}) AS meta OUTER APPLY (SELECT COUNT_BIG(*) AS SpanCount FROM OPENJSON(CASE WHEN LEFT(LTRIM(JSON_QUERY(safe.JsonContent, '$.Coverage')), 1) = '[' THEN JSON_QUERY(safe.JsonContent, '$.Coverage') ELSE N'[]' END)) AS coverageMeta WHERE b.blob_key IN ({string.Join(", ", names)})"
@@ -217,6 +221,7 @@ public sealed class PrtgTimelineMetadataQuery(Func<LfDbContext> contextFactory)
             int? coverageSpanCount = null, stateCount = null;
             DateTimeOffset? diskSemanticValidFrom = null, diskSemanticCheckedAt = null;
             int? messageStatusSemanticVersion = null;
+            string? messageTimeFingerprint = null;
             var malformed = row.IsJsonValid != 1 ||
                 !TryLong(row.SensorIdText, row.SensorIdLength, out sensorId) || sensorId != keyEntry.SensorId ||
                 !TryLongNullable(row.HostIdText, row.HostIdLength, out hostId) || hostId is null or <= 0 ||
@@ -246,7 +251,8 @@ public sealed class PrtgTimelineMetadataQuery(Func<LfDbContext> contextFactory)
                 !TryNullableCount(row.StateCount, out stateCount) ||
                 !TryNullableDate(row.DiskSemanticValidFromText, row.DiskSemanticValidFromLength, TimestampLimit, out diskSemanticValidFrom) ||
                 !TryNullableDate(row.DiskSemanticCheckedAtText, row.DiskSemanticCheckedAtLength, TimestampLimit, out diskSemanticCheckedAt) ||
-                !TryNullableInt(row.MessageStatusSemanticVersionText, row.MessageStatusSemanticVersionLength, out messageStatusSemanticVersion);
+                !TryNullableInt(row.MessageStatusSemanticVersionText, row.MessageStatusSemanticVersionLength, out messageStatusSemanticVersion) ||
+                !TryOptionalString(row.MessageTimeFingerprintText, row.MessageTimeFingerprintLength, FingerprintLimit, out messageTimeFingerprint);
 
             var value = malformed
                 ? new PrtgTimelineMetadata(keyEntry.SensorId, null, sourceGeneration, resourceGeneration,
@@ -256,7 +262,8 @@ public sealed class PrtgTimelineMetadataQuery(Func<LfDbContext> contextFactory)
                     scopeFingerprint, status, startedAt, deadlineAt, pagesRead, completeThrough,
                     nextAttemptAt, nextPage, qualityReason, validFrom, lastAttemptAt, coveredFrom, coveredThrough,
                     coverageSpanCount, stateCount, diskSemanticValidFrom, diskSemanticCheckedAt, false,
-                    identityEpoch, channelGeneration, collectionCycleId, row.Version, messageStatusSemanticVersion);
+                    identityEpoch, channelGeneration, collectionCycleId, row.Version, messageStatusSemanticVersion,
+                    messageTimeFingerprint);
             result[keyEntry.SensorId] = new VersionedMetadata(value, row.Version);
         }
         return result;
@@ -302,7 +309,8 @@ public sealed class PrtgTimelineMetadataQuery(Func<LfDbContext> contextFactory)
         "QualityReason nvarchar(max) '$.QualityReason', ValidFrom nvarchar(max) '$.ValidFrom', " +
         "LastAttemptAt nvarchar(max) '$.LastAttemptAt', DiskSemanticValidFrom nvarchar(max) '$.DiskSemanticValidFrom', " +
         "DiskSemanticCheckedAt nvarchar(max) '$.DiskSemanticCheckedAt', " +
-        "MessageStatusSemanticVersion nvarchar(max) '$.MessageStatusSemanticVersion'";
+        "MessageStatusSemanticVersion nvarchar(max) '$.MessageStatusSemanticVersion', " +
+        "MessageTimeFingerprint nvarchar(max) '$.MessageTimeFingerprint'";
 
     private static string JsonScalar(string field, int cap, bool sqlServer) => sqlServer
         ? $"LEFT(meta.[{field}], {cap + 1}) AS [{field}Text]"

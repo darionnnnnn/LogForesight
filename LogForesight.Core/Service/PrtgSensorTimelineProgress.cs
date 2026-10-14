@@ -58,6 +58,7 @@ public sealed class PrtgSensorTimelineProgressStore(EfJsonBlobStore blob)
             policy.RawTimestampTimeZoneId,
             policy.AnalysisTimeZoneId,
             policy.TimeBasisEvidenceReference,
+            MessageTimeFingerprint = policy.MessageTimeFingerprint(settings.PrtgUrl),
             settings.PrtgUrl,
             MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent
         });

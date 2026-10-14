@@ -1282,7 +1282,9 @@ public class MailNotificationService
                 if (evidence.HostId != hostId || evidence.SourceGeneration != issue.PrtgSourceGeneration ||
                     evidence.ResourceGeneration != issue.PrtgResourceGeneration ||
                     !PrtgResourceQualification.IsCurrent(evidence, identity, issue.PrtgSourceGeneration,
-                        sensorId, identity.DeviceId, hostId)) return false;
+                        sensorId, identity.DeviceId, hostId,
+                        new PrtgMonitoringPolicyStore(_prtgBackend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get()
+                            .MessageTimeFingerprint(_settingsStore.Get().PrtgUrl))) return false;
             }
             if (issue.RuleId == "builtin-prtg-resource-disk-pressure")
             {
@@ -1296,16 +1298,11 @@ public class MailNotificationService
                 if (reasons.Contains("disk-seven-day-low-water-trend") &&
                     (!resourceRules.DiskTrendEnabled || issue.PrtgTrendSourceRuleId != resourceRules.DiskTrendRuleId ||
                      issue.PrtgTrendSourceRuleFingerprint != resourceRules.DiskTrendRuleFingerprint ||
-                     !PrtgResourceQualification.IsChannelCurrent(
-                        new PrtgDiskSemanticEvidenceStore(_prtgBackend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).Get(sensorId),
-                        new PrtgDiskVerificationResultStore(_prtgBackend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Get(sensorId),
-                        identity))) return false;
+                     !PrtgResourceQualification.IsCurrentDiskChannel(_prtgBackend, sensorId, identity))) return false;
             }
             else if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
             {
-                var semantic = new PrtgDiskSemanticEvidenceStore(_prtgBackend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).Get(sensorId);
-                var probe = new PrtgDiskVerificationResultStore(_prtgBackend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Get(sensorId);
-                return PrtgResourceQualification.IsChannelCurrent(semantic, probe, identity);
+                return PrtgResourceQualification.IsCurrentDiskChannel(_prtgBackend, sensorId, identity);
             }
             return true;
         }

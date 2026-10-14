@@ -105,7 +105,7 @@ public static class PrtgSilentAbsenceEvaluator
     private static bool IsCurrentResource(PrtgSilentSensorEvidence sensor, PrtgSilentDeviceEvidence device) =>
         sensor.Timeline is { QualityReason: "covered" } && sensor.Identity is not null &&
         PrtgResourceQualification.IsCurrent(sensor.Timeline, sensor.Identity, device.SourceGeneration,
-            sensor.Sensor.Objid, device.DeviceObjid, device.HostId);
+            sensor.Sensor.Objid, device.DeviceObjid, device.HostId, device.MessageTimeFingerprint);
 
     private static bool HasCoveredCurrentState(PrtgSilentSensorEvidence sensor, string expectedStatus)
     {

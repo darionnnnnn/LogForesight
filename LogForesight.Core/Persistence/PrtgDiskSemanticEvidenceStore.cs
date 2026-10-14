@@ -61,7 +61,8 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
 
     public PrtgDiskSemanticEvidenceStore(EfJsonBlobStore blob) : base(blob) { }
 
-    public IReadOnlyCollection<PrtgDiskSemanticEvidence> GetAll() => Get().Values.ToArray();
+    public new Dictionary<long, PrtgDiskSemanticEvidence> Get() => CaptureSnapshot().CopyItems();
+    public IReadOnlyCollection<PrtgDiskSemanticEvidence> GetAll() => CaptureSnapshot().Values();
 
     internal PrtgDiskSemanticEvidenceSnapshot CaptureSnapshot()
     {
@@ -84,8 +85,11 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
     internal bool IsSnapshotCurrent(PrtgDiskSemanticEvidenceSnapshot snapshot) =>
         snapshot.Version == ReadCurrentBlobVersion();
 
-    public PrtgDiskSemanticEvidence? Get(long sensorObjid) =>
-        Get().TryGetValue(sensorObjid, out var evidence) ? evidence : null;
+    public PrtgDiskSemanticEvidence? Get(long sensorObjid)
+    {
+        var snapshot = CaptureSnapshot();
+        return snapshot.TryGetValue(sensorObjid, out var evidence) ? evidence : null;
+    }
 
     public PrtgDiskSemanticEvidence ConfirmManually(
         PrtgDiskSemanticContext context,
@@ -226,6 +230,8 @@ internal sealed class PrtgDiskSemanticEvidenceSnapshot
     internal int DeserializeCount { get; }
     internal int SourceCharacters { get; }
     internal int Count => _items.Count;
+    internal Dictionary<long, PrtgDiskSemanticEvidence> CopyItems() => new(_items);
+    internal PrtgDiskSemanticEvidence[] Values() => _items.Values.ToArray();
     internal bool TryGetValue(long sensorObjid, out PrtgDiskSemanticEvidence? evidence) =>
         _items.TryGetValue(sensorObjid, out evidence);
     internal long[] GetSensorIds() => _items.Keys.OrderBy(id => id).ToArray();

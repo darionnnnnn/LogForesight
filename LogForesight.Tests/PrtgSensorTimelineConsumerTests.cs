@@ -38,10 +38,33 @@ public sealed class PrtgSensorTimelineConsumerTests : IDisposable
             CoreSystemId = "core-id", SourceGeneration = "source-a",
             EndpointHint = EfPrtgObservationStore.SourceHintFor("https://fixture.example"),
             HostIds = [1], SensorIds = [101], ValidFrom = DateTimeOffset.UtcNow.AddDays(-40),
-            SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US"
+            SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US",
+            MessageDateFormat = PrtgMessageDateTimeParser.Ymd24, MessageTimeAuthorityRevision = 1
         };
         SavePolicy(_policy);
         SeedMirror(_policy.SensorIds);
+    }
+
+    [Fact]
+    public async Task 日期格式缺設定時不啟動timeline週期或呼叫訊息API()
+    {
+        var unconfigured = PolicyFor(_policy.SensorIds);
+        unconfigured.MessageDateFormat = "";
+        SavePolicy(unconfigured);
+        var requests = 0;
+        var consumer = Consumer(new Handler((_, _) =>
+        {
+            requests++;
+            return Task.FromResult(Json("{}"));
+        }), new PrtgSamplingActivity());
+
+        var tick = await consumer.TickAsync(CancellationToken.None);
+
+        Assert.Equal("message-date-format-unconfigured", tick.Outcome);
+        Assert.Equal(0, requests);
+        var progress = new PrtgSensorTimelineProgressStore(_backend.Blob(PrtgSensorTimelineProgressStore.BlobKey)).Get();
+        Assert.Equal("", progress.BootstrapCycleId);
+        Assert.Equal(default, Evidence(101).LastAttemptAt);
     }
 
     [Fact]
@@ -545,6 +568,8 @@ public sealed class PrtgSensorTimelineConsumerTests : IDisposable
             saved.SensorIds = [.. policy.SensorIds];
             saved.SourceTimeZoneId = policy.SourceTimeZoneId;
             saved.SourceCultureName = policy.SourceCultureName;
+            saved.MessageDateFormat = policy.MessageDateFormat;
+            saved.MessageTimeAuthorityRevision = policy.MessageTimeAuthorityRevision;
             saved.ConfirmedBy = "1";
         });
 
@@ -558,7 +583,9 @@ public sealed class PrtgSensorTimelineConsumerTests : IDisposable
         HostIds = [.. _policy.HostIds],
         SensorIds = [.. ids],
         SourceTimeZoneId = _policy.SourceTimeZoneId,
-        SourceCultureName = _policy.SourceCultureName
+        SourceCultureName = _policy.SourceCultureName,
+        MessageDateFormat = _policy.MessageDateFormat,
+        MessageTimeAuthorityRevision = _policy.MessageTimeAuthorityRevision
     };
 
     private PrtgSensorTimelineEvidence Evidence(long id) =>

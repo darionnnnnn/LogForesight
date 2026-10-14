@@ -30,6 +30,10 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         var operationRevision = backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
         if (scope.Length == 0)
             return store.Update(e => { e.LastAttemptAt = attemptAt; e.QualityReason = "outside-effective-scope"; });
+        var configuredSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var messageTimeFingerprint = policy.MessageTimeFingerprint(configuredSettings.PrtgUrl);
+        if (messageTimeFingerprint.Length == 0)
+            return store.Update(e => { e.LastAttemptAt = attemptAt; e.QualityReason = "message-date-format-unconfigured"; });
 
         var leaseVersion = 0L;
         var acquired = false;
@@ -42,6 +46,8 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         PrtgSensorTimelineEvidence initial = store.Update(e =>
         {
             InvalidateLegacyMessageStatus(e, attemptAt);
+            InvalidateMessageTimeAuthority(e, messageTimeFingerprint, attemptAt);
+            InvalidateMessageTimeCursor(e, messageTimeFingerprint);
             if (e.SensorId != 0 && ScopeNeedsReset(e, scope, authorityBefore, policy.SourceGeneration, sensorId, hostId))
             {
                 // 僅此 sensor 的有效範圍改變時清除舊證據，不以全域修訂重暖其他資源。
@@ -68,6 +74,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 currentIdentity.ChannelGeneration == initial.ChannelGeneration &&
                 currentIdentity.ResourceFingerprint == initial.IdentityFingerprint &&
                 currentPolicy.SourceGeneration == policy.SourceGeneration &&
+                currentPolicy.MessageTimeFingerprint(currentSettings.PrtgUrl) == messageTimeFingerprint &&
                 currentPolicy.EffectiveSensorScope(sensorId, hostId) == scope && currentSettings.PrtgEnabled &&
                 currentPolicy.EndpointHint == EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl);
         }
@@ -138,12 +145,11 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 var pageKeys = new List<string>(count);
                 foreach (var row in rows.EnumerateArray())
                 {
-                    if (Read(row, "objid") != sensorId.ToString(CultureInfo.InvariantCulture) ||
-                        !DateTime.TryParse(Read(row, "datetime"), sourceCulture, DateTimeStyles.None, out var local))
+                    if (Read(row, "objid") != sensorId.ToString(CultureInfo.InvariantCulture))
                         throw new InvalidOperationException("sensor-or-time-unverified");
-                    if (sourceZone.IsAmbiguousTime(local) || sourceZone.IsInvalidTime(local))
-                        throw new InvalidOperationException("source-time-zone-ambiguous");
-                    var at = new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), sourceZone.GetUtcOffset(local));
+                    if (!PrtgMessageDateTimeParser.TryParse(Read(row, "datetime"), policy.MessageDateFormat,
+                            sourceCulture, sourceZone, out var at, out var parseReason))
+                        throw new InvalidOperationException(parseReason);
                     if (at > attemptAt.AddMinutes(2) || previous.HasValue && at > previous.Value)
                         throw new InvalidOperationException("source-clock-or-order-unverified");
                     previous = at;
@@ -165,7 +171,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                         scanned.Add(new(sensorId, at, status, policy.SourceGeneration, initial.ResourceGeneration));
                     }
                 }
-                var currentPageHash = HashPage(pageKeys);
+                var currentPageHash = HashPage(pageKeys, messageTimeFingerprint);
                 if (pageOffset == 0 && expectedBoundary.Length > 0 && currentPageHash != expectedBoundary)
                     throw new InvalidOperationException("timeline-resume-boundary-shifted");
                 lastPageHash = currentPageHash;
@@ -194,6 +200,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 !new PrtgResourceIdentityStore(backend.Blob(PrtgResourceIdentityStore.Prefix + sensorId))
                     .IsCurrent(sensorId, policy.SourceGeneration, identity.Generation, identity.DeviceId, hostId, identity.ChannelGeneration) ||
                 currentPolicy.EffectiveSensorScope(sensorId, hostId) != scope ||
+                currentPolicy.MessageTimeFingerprint(currentSettings.PrtgUrl) != messageTimeFingerprint ||
                 currentPolicy.SourceGeneration != policy.SourceGeneration || !currentSettings.PrtgEnabled ||
                 currentPolicy.EndpointHint != EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl))
                 throw new InvalidOperationException("identity-or-scope-changed-during-query");
@@ -202,9 +209,12 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             return store.Update(e =>
             {
                 var now = DateTimeOffset.UtcNow;
+                var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
                 if (!e.OwnsLease(_leaseOwner, leaseVersion, now) || e.ResourceGeneration != identity.Generation ||
                     e.IdentityEpoch != identity.Epoch || e.ChannelGeneration != identity.ChannelGeneration ||
-                    e.EffectiveScopeFingerprint != scope || currentPolicy.EffectiveSensorScope(sensorId, hostId) != scope)
+                    e.EffectiveScopeFingerprint != scope || currentPolicy.EffectiveSensorScope(sensorId, hostId) != scope ||
+                    latestPolicy.MessageTimeFingerprint(latestSettings.PrtgUrl) != messageTimeFingerprint)
                     throw new InvalidOperationException("identity-or-scope-changed-during-query");
                 var known = e.States.Concat(e.PendingStates).GroupBy(s => s.At).ToDictionary(g => g.Key, g => g.Select(s => s.Status).Distinct().ToArray());
                 if (scanned.Any(s => known.TryGetValue(s.At, out var statuses) && statuses.Any(status => status != s.Status)))
@@ -216,6 +226,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                     e.LastCompleteThrough = attemptAt;
                     e.PendingStates.Clear(); e.PendingEventKeys.Clear();
                     e.PendingNextPage = 0; e.PendingBoundaryHash = "";
+                    e.PendingMessageTimeFingerprint = "";
                 }
                 else e.Accept(from, attemptAt, e.PendingStates.Concat(scanned));
                 e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, bootstrapPagesRead);
@@ -239,7 +250,8 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                     var pending = PrtgSensorTimelineEvidence.CompactStates(e.PendingStates.Concat(scanned)).ToArray();
                     if (pending.Length <= 20000) e.PendingStates = pending.ToList();
                     e.PendingEventKeys = e.PendingEventKeys.Concat(scannedKeys).Distinct(StringComparer.Ordinal).TakeLast(20000).ToList();
-                    if (pendingNextPage > 0) { e.PendingNextPage = pendingNextPage; e.PendingBoundaryHash = pendingBoundaryHash; }
+                    if (pendingNextPage > 0) { e.PendingNextPage = pendingNextPage; e.PendingBoundaryHash = pendingBoundaryHash;
+                        e.PendingMessageTimeFingerprint = messageTimeFingerprint; }
                     if (e.LastCompleteThrough == null)
                         e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, bootstrapPagesRead);
                     e.LeaseOwner = ""; e.LeaseUntil = null;
@@ -291,6 +303,11 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
 
         var stores = items.ToDictionary(x => x.SensorId,
             x => new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + x.SensorId)));
+        var configuredSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var messageTimeFingerprint = policy.MessageTimeFingerprint(configuredSettings.PrtgUrl);
+        if (messageTimeFingerprint.Length == 0)
+            return stores.Values.Select(store => store.Update(e =>
+                { e.LastAttemptAt = DateTimeOffset.UtcNow; e.QualityReason = "message-date-format-unconfigured"; })).ToArray();
         var candidates = new List<BatchCandidate>();
         using var linked = admission == null
             ? CancellationTokenSource.CreateLinkedTokenSource(ct)
@@ -318,6 +335,8 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                     ResetForIdentityOrScope(e, item, scope, policy.SourceGeneration, observed.Fingerprint, identity,
                         capturedAt);
                     InvalidateLegacyMessageStatus(e, capturedAt);
+                    InvalidateMessageTimeAuthority(e, messageTimeFingerprint, capturedAt);
+                    InvalidateMessageTimeCursor(e, messageTimeFingerprint);
                     e.EffectiveScopeFingerprint = scope;
                     acquired = e.TryAcquireLease(_leaseOwner, capturedAt, BatchLeaseDuration, out leaseVersion);
                     if (!acquired) e.QualityReason = "another-worker-holds-lease";
@@ -330,7 +349,8 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 candidates.Add(new BatchCandidate(item, store, initial, new BatchIdentity(observed.Sensor, observed.Fingerprint,
                     observed.MappingRevision, identity), scope, leaseVersion,
                     capturedAt, initial.LastCompleteThrough is { } watermark
-                        ? Max(initial.ValidFrom, watermark - IncrementalOverlap) : initial.ValidFrom));
+                        ? Max(initial.ValidFrom, watermark - IncrementalOverlap) : initial.ValidFrom,
+                    messageTimeFingerprint));
             }
 
             foreach (var candidate in candidates.ToArray())
@@ -362,6 +382,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             if (before.MappingRevision != after.MappingRevision ||
                 backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() != before.MappingRevision ||
                 currentPolicy.SourceGeneration != policy.SourceGeneration ||
+                currentPolicy.MessageTimeFingerprint(currentSettings.PrtgUrl) != messageTimeFingerprint ||
                 items.Any(x => currentPolicy.EffectiveSensorScope(x.SensorId, x.HostId) != policy.EffectiveSensorScope(x.SensorId, x.HostId)) ||
                 !currentSettings.PrtgEnabled ||
                 currentPolicy.EndpointHint != EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl) ||
@@ -378,12 +399,15 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 var now = DateTimeOffset.UtcNow;
                 candidate.Store.Update(e =>
                 {
+                    var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                    var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
                     if (!e.OwnsLease(_leaseOwner, candidate.LeaseVersion, now) ||
                         e.ResourceGeneration != candidate.Initial.ResourceGeneration ||
                         e.EffectiveScopeFingerprint != candidate.Scope ||
                         e.IdentityEpoch != candidate.Identity.Authority.Epoch ||
                         e.ResourceGeneration != candidate.Identity.Authority.Generation ||
-                        e.ChannelGeneration != candidate.Identity.Authority.ChannelGeneration)
+                        e.ChannelGeneration != candidate.Identity.Authority.ChannelGeneration ||
+                        latestPolicy.MessageTimeFingerprint(latestSettings.PrtgUrl) != candidate.MessageTimeFingerprint)
                         throw new InvalidOperationException("identity-or-scope-changed-during-query");
                     var known = e.States.Concat(e.PendingStates).GroupBy(s => s.At)
                         .ToDictionary(g => g.Key, g => g.Select(s => s.Status).Distinct().ToArray());
@@ -391,10 +415,12 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                         throw new InvalidOperationException("contradictory-status-at-same-time");
                     if (candidate.Initial.LastCompleteThrough is null)
                     {
+                        e.MessageTimeFingerprint = candidate.MessageTimeFingerprint;
                         e.States = PrtgSensorTimelineEvidence.CompactStates(e.States.Concat(
                             candidate.Scanned.Where(state => state.At == candidate.CapturedAt)));
                         e.LastCompleteThrough = candidate.CapturedAt;
                         e.PendingStates.Clear(); e.PendingEventKeys.Clear(); e.PendingNextPage = 0; e.PendingBoundaryHash = "";
+                        e.PendingMessageTimeFingerprint = "";
                     }
                     else
                     {
@@ -458,7 +484,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         if (e.SensorId != 0 && reset)
         {
             e.Coverage.Clear(); e.States.Clear(); e.PendingStates.Clear(); e.PendingEventKeys.Clear();
-            e.PendingNextPage = 0; e.PendingBoundaryHash = ""; e.LastCompleteThrough = null;
+            e.PendingNextPage = 0; e.PendingBoundaryHash = ""; e.PendingMessageTimeFingerprint = ""; e.LastCompleteThrough = null;
             e.ResourceGeneration = Guid.NewGuid().ToString("N"); e.ValidFrom = capturedAt;
             e.BootstrapStartedAt = capturedAt; e.BootstrapDeadlineAt = null;
             e.BootstrapStatus = "capacity-unverified"; e.BootstrapPagesRead = 0; e.DiskSemanticFingerprint = ""; e.DiskSemanticValidFrom = null;
@@ -487,6 +513,30 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         evidence.NextAttemptAt = null;
         evidence.QualityReason = "message-status-semantics-warmup";
         evidence.MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
+    }
+
+    private static void InvalidateMessageTimeAuthority(PrtgSensorTimelineEvidence evidence,
+        string currentFingerprint, DateTimeOffset observedAt)
+    {
+        if (evidence.MessageTimeFingerprint == currentFingerprint) return;
+        // Message interpretation is its own authority. Retain resource identity and disk proof,
+        // while requiring a fresh message bootstrap from this confirmation time.
+        evidence.States.Clear(); evidence.Coverage.Clear(); evidence.PendingStates.Clear(); evidence.PendingEventKeys.Clear();
+        evidence.PendingNextPage = 0; evidence.PendingBoundaryHash = ""; evidence.PendingMessageTimeFingerprint = "";
+        evidence.LastCompleteThrough = null; evidence.ValidFrom = observedAt;
+        evidence.BootstrapStartedAt = observedAt; evidence.BootstrapDeadlineAt = null;
+        evidence.BootstrapStatus = "capacity-unverified"; evidence.BootstrapPagesRead = 0;
+        evidence.BootstrapCollectionCycleId = ""; evidence.NextAttemptAt = null;
+        evidence.MessageTimeFingerprint = currentFingerprint;
+        evidence.QualityReason = "message-time-authority-warmup";
+    }
+
+    private static void InvalidateMessageTimeCursor(PrtgSensorTimelineEvidence evidence, string currentFingerprint)
+    {
+        if (evidence.PendingNextPage <= 0 || evidence.PendingMessageTimeFingerprint == currentFingerprint) return;
+        evidence.PendingStates.Clear(); evidence.PendingEventKeys.Clear();
+        evidence.PendingNextPage = 0; evidence.PendingBoundaryHash = ""; evidence.PendingMessageTimeFingerprint = "";
+        evidence.QualityReason = "message-time-cursor-authority-mismatch";
     }
 
     private static bool ScopeNeedsReset(PrtgSensorTimelineEvidence evidence, string scope,
@@ -541,11 +591,11 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             var boundaryReached = false;
             foreach (var row in rows.EnumerateArray())
             {
-                if (Read(row, "objid") != candidate.Item.SensorId.ToString(CultureInfo.InvariantCulture) ||
-                    !DateTime.TryParse(Read(row, "datetime"), culture, DateTimeStyles.None, out var local))
+                if (Read(row, "objid") != candidate.Item.SensorId.ToString(CultureInfo.InvariantCulture))
                     throw new InvalidOperationException("sensor-or-time-unverified");
-                if (zone.IsAmbiguousTime(local) || zone.IsInvalidTime(local)) throw new InvalidOperationException("source-time-zone-ambiguous");
-                var at = new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), zone.GetUtcOffset(local));
+                if (!PrtgMessageDateTimeParser.TryParse(Read(row, "datetime"), policy.MessageDateFormat,
+                        culture, zone, out var at, out var parseReason))
+                    throw new InvalidOperationException(parseReason);
                 if (at > candidate.CapturedAt.AddMinutes(2) || previous.HasValue && at > previous.Value)
                     throw new InvalidOperationException("source-clock-or-order-unverified");
                 previous = at;
@@ -574,7 +624,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                     candidate.Scanned.Add(new(candidate.Item.SensorId, at, status, policy.SourceGeneration, candidate.Initial.ResourceGeneration));
                 }
             }
-            var hash = HashPage(pageKeys);
+            var hash = HashPage(pageKeys, candidate.MessageTimeFingerprint);
             if (pageOffset == 0 && expectedBoundary.Length > 0 && hash != expectedBoundary)
                 throw new InvalidOperationException("timeline-resume-boundary-shifted");
             if (boundaryReached || count < PageSize) { ended = true; break; }
@@ -655,9 +705,10 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             if (e.LastCompleteThrough == null)
                 e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, candidate.BootstrapPagesRead);
             if (candidate.PendingNextPage > 0 && reason != "timeline-resume-boundary-shifted")
-            { e.PendingNextPage = candidate.PendingNextPage; e.PendingBoundaryHash = candidate.PendingBoundaryHash; }
+            { e.PendingNextPage = candidate.PendingNextPage; e.PendingBoundaryHash = candidate.PendingBoundaryHash;
+                e.PendingMessageTimeFingerprint = candidate.MessageTimeFingerprint; }
             else if (reason == "timeline-resume-boundary-shifted")
-            { e.PendingNextPage = 0; e.PendingBoundaryHash = ""; }
+            { e.PendingNextPage = 0; e.PendingBoundaryHash = ""; e.PendingMessageTimeFingerprint = ""; }
             if (reason == "timeline-bootstrap-capacity-shortfall") e.BootstrapStatus = "capacity-shortfall";
             e.LeaseOwner = ""; e.LeaseUntil = null;
         });
@@ -694,7 +745,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
 
     private sealed class BatchCandidate(PrtgTimelineWorkItem item, PrtgSensorTimelineStore store,
         PrtgSensorTimelineEvidence initial, BatchIdentity identity, string scope, long leaseVersion,
-        DateTimeOffset capturedAt, DateTimeOffset from)
+        DateTimeOffset capturedAt, DateTimeOffset from, string messageTimeFingerprint)
     {
         public PrtgTimelineWorkItem Item { get; } = item;
         public PrtgSensorTimelineStore Store { get; } = store;
@@ -704,6 +755,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         public long LeaseVersion { get; } = leaseVersion;
         public DateTimeOffset CapturedAt { get; } = capturedAt;
         public DateTimeOffset From { get; private set; } = from;
+        public string MessageTimeFingerprint { get; } = messageTimeFingerprint;
         public List<PrtgTimedState> Scanned { get; } = [];
         public List<string> ScannedKeys { get; } = [];
         public int PendingNextPage { get; set; }
@@ -729,9 +781,10 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 e.PendingEventKeys = e.PendingEventKeys.Concat(scannedKeys).Distinct(StringComparer.Ordinal).TakeLast(20000).ToList();
             }
             if (preservePrefix && pendingNextPage > 0 && reason != "timeline-resume-boundary-shifted")
-            { e.PendingNextPage = pendingNextPage; e.PendingBoundaryHash = pendingBoundaryHash; }
+            { e.PendingNextPage = pendingNextPage; e.PendingBoundaryHash = pendingBoundaryHash;
+                e.PendingMessageTimeFingerprint = e.MessageTimeFingerprint; }
             else if (reason == "timeline-resume-boundary-shifted")
-            { e.PendingNextPage = 0; e.PendingBoundaryHash = ""; }
+            { e.PendingNextPage = 0; e.PendingBoundaryHash = ""; e.PendingMessageTimeFingerprint = ""; }
             if (e.LastCompleteThrough == null)
                 e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, bootstrapPagesRead);
             if (reason == "timeline-bootstrap-capacity-shortfall") e.BootstrapStatus = "capacity-shortfall";
@@ -766,8 +819,8 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         left.PendingReconciliation == right.PendingReconciliation;
 
     private static DateTimeOffset Max(DateTimeOffset left, DateTimeOffset right) => left > right ? left : right;
-    private static string HashPage(IEnumerable<string> keys) => Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes(string.Join("\n", keys))));
+    private static string HashPage(IEnumerable<string> keys, string messageTimeFingerprint) => Convert.ToHexString(SHA256.HashData(
+        Encoding.UTF8.GetBytes(messageTimeFingerprint + "\n" + string.Join("\n", keys))));
     private static string Read(JsonElement row, string name) => row.TryGetProperty(name, out var value)
         ? value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString() : "";
 

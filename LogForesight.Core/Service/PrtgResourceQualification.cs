@@ -6,9 +6,11 @@ namespace LogForesight.Core.Service;
 public static class PrtgResourceQualification
 {
     public static bool IsCurrent(PrtgSensorTimelineEvidence? proof, PrtgResourceIdentity? identity,
-        string sourceGeneration, long sensorId, long deviceId, long hostId)
+        string sourceGeneration, long sensorId, long deviceId, long hostId, string expectedMessageTimeFingerprint)
     {
         return proof is not null && proof.MessageStatusSemanticVersion == PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent &&
+            !string.IsNullOrWhiteSpace(expectedMessageTimeFingerprint) &&
+            string.Equals(proof.MessageTimeFingerprint, expectedMessageTimeFingerprint, StringComparison.Ordinal) &&
             IsIdentityCurrent(proof, identity, sourceGeneration, sensorId, deviceId, hostId);
     }
 
@@ -39,5 +41,24 @@ public static class PrtgResourceQualification
             result.ResourceGeneration == identity.Generation && result.ChannelGeneration == identity.ChannelGeneration &&
             evidence.SourceGeneration == identity.SourceGeneration && evidence.ResourceGeneration == identity.Generation &&
             evidence.ChannelGeneration == identity.ChannelGeneration;
+    }
+
+    /// <summary>Only a complete, bounded pair of current shared documents may authorize a disk channel.</summary>
+    public static bool IsCurrentDiskChannel(StorageBackend backend, long sensorId, PrtgResourceIdentity? identity)
+    {
+        var semanticStore = new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
+        var resultStore = new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey));
+        try
+        {
+            var semantic = semanticStore.CaptureSnapshot();
+            var results = resultStore.CaptureSnapshot();
+            semantic.TryGetValue(sensorId, out var evidence);
+            var qualified = IsChannelCurrent(evidence, results.Get(sensorId), identity);
+            return qualified && semanticStore.IsSnapshotCurrent(semantic) && resultStore.IsSnapshotCurrent(results);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 }

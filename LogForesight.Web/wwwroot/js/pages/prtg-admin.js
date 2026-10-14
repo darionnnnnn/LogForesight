@@ -4076,6 +4076,7 @@ if (monitoringForm) {
             coreSystemId: document.getElementById('prtg-monitoring-core').value,
             sourceTimeZoneId: document.getElementById('prtg-monitoring-zone').value,
             sourceCultureName: document.getElementById('prtg-monitoring-culture').value,
+            messageDateFormat: document.getElementById('prtg-monitoring-message-date-format').value,
             sourceChangeMode: sourceMode.value,
             continuityConfirmed: document.getElementById('prtg-monitoring-continuity-confirm').checked,
             continuityEvidenceReference: document.getElementById('prtg-monitoring-continuity-evidence').value,
@@ -4085,7 +4086,8 @@ if (monitoringForm) {
     }
     function sourceSignature(request) {
         return JSON.stringify([request.revision, request.coreSystemId, request.sourceTimeZoneId,
-            request.sourceCultureName, request.sourceChangeMode, request.continuityConfirmed, request.continuityEvidenceReference,
+            request.sourceCultureName, request.messageDateFormat, request.sourceChangeMode,
+            request.continuityConfirmed, request.continuityEvidenceReference,
             sortedIds(new Set(request.hostIds)), sortedIds(new Set(request.sensorIds))]);
     }
     async function estimateScope() {
@@ -4555,6 +4557,7 @@ if (monitoringForm) {
             document.getElementById('prtg-monitoring-core').value = monitoring.coreSystemId;
             document.getElementById('prtg-monitoring-zone').value = monitoring.sourceTimeZoneId || monitoring.suggestedTimeZoneId;
             document.getElementById('prtg-monitoring-culture').value = monitoring.sourceCultureName || 'zh-TW';
+            document.getElementById('prtg-monitoring-message-date-format').value = monitoring.messageDateFormat || '';
             const acceptanceHosts = document.getElementById('prtg-acceptance-host');
             acceptanceHosts?.replaceChildren();
             if (acceptanceHosts) for (const hostId of monitoring.hostIds) {
@@ -4641,7 +4644,7 @@ if (monitoringForm) {
             resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
         }, 250);
     });
-    for (const id of ['prtg-monitoring-core', 'prtg-monitoring-zone', 'prtg-monitoring-culture',
+    for (const id of ['prtg-monitoring-core', 'prtg-monitoring-zone', 'prtg-monitoring-culture', 'prtg-monitoring-message-date-format',
         'prtg-monitoring-continuity-confirm', 'prtg-monitoring-continuity-evidence', 'prtg-monitoring-confirm']) {
         const input = document.getElementById(id);
         input.addEventListener('input', invalidateEstimate); input.addEventListener('change', invalidateEstimate);

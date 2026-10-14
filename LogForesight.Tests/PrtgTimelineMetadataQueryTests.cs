@@ -63,6 +63,7 @@ public sealed class PrtgTimelineMetadataQueryTests : IDisposable
         Assert.Equal("capacity-unverified", row.BootstrapStatus);
         Assert.Equal("identity-warmup", row.QualityReason);
         Assert.Equal(PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, row.MessageStatusSemanticVersion);
+        Assert.Equal(new string('b', 64), row.MessageTimeFingerprint);
         Assert.Equal(1, row.CoverageSpanCount);
         Assert.Equal(1, row.StateCount);
         Assert.Equal(DateTimeOffset.Parse("2026-10-01T00:00:00+00:00"), row.CoveredFrom);
@@ -178,7 +179,8 @@ public sealed class PrtgTimelineMetadataQueryTests : IDisposable
             Coverage = [new PrtgSensorCoverage(sensorId, from, through, "source-generation-a", "resource-generation-a")],
             States = [new PrtgTimedState(sensorId, from, "Up", "source-generation-a", "resource-generation-a")],
             DiskSemanticValidFrom = from,
-            DiskSemanticCheckedAt = through
+            DiskSemanticCheckedAt = through,
+            MessageTimeFingerprint = new string('b', 64)
         };
     }
 

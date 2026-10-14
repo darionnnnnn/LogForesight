@@ -35,7 +35,17 @@
             <input class="form-control mb-2" id="prtg-monitoring-zone" maxlength="128" placeholder="例如 Taipei Standard Time 或 Asia/Taipei" required />
             <label class="form-label" for="prtg-monitoring-culture">PRTG 回應日期的語系</label>
             <input class="form-control mb-2" id="prtg-monitoring-culture" maxlength="64" placeholder="例如 zh-TW、en-US" required />
-            <p class="small text-muted">需與 API 帳號看到的日期、時區一致；不以網頁使用者或 Web 伺服器語系猜測。更改後開始新暖機。</p>
+            <label class="form-label" for="prtg-monitoring-message-date-format">PRTG API 帳號的訊息日期格式</label>
+            <select class="form-select mb-2" id="prtg-monitoring-message-date-format">
+                <option value="">請依 PRTG 帳號設定選擇</option>
+                <option value="dmy-24">日／月／年，24 小時（31.12.2026 23:59）</option>
+                <option value="dmy-12">日／月／年，12 小時（31.12.2026 11:59 PM）</option>
+                <option value="mdy-24">月／日／年，24 小時（12/31/2026 23:59）</option>
+                <option value="mdy-12">月／日／年，12 小時（12/31/2026 11:59 PM）</option>
+                <option value="ymd-24">年／月／日，24 小時（2026-12-31 23:59）</option>
+                <option value="ymd-12">年／月／日，12 小時（2026-12-31 11:59 PM）</option>
+            </select>
+            <p class="small text-muted">此設定只授權文字訊息時間解析。空值或格式不符時訊息規則保持等待；數值、NetIQ 及 raw timestamp 授權各自判定。</p>
             <label class="form-label" for="prtg-monitoring-host-search">搜尋 NetIQ 試點主機（勾選狀態會跨頁保留）</label>
             <p class="small text-muted" id="prtg-monitoring-selection-limits">正式作用範圍最多選取 3,000 台主機與 15,000 顆 sensor。目錄可分頁瀏覽較大環境；超過選取上限會明確拒絕，不會截斷選取或保存部分範圍。</p>
             <input class="form-control mb-2" id="prtg-monitoring-host-search" maxlength="128" autocomplete="off" />

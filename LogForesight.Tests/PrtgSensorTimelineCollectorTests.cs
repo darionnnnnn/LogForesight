@@ -14,13 +14,15 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-covered-http-" + Guid.NewGuid().ToString("N"));
     private readonly StorageBackend _backend;
-    private readonly PrtgMonitoringPolicy _policy = new() { CoreSystemId = "core-id", SourceGeneration = "core", EndpointHint = EfPrtgObservationStore.SourceHintFor("https://fixture.example"), HostIds = [1], SensorIds = [10], ValidFrom = DateTimeOffset.Now.AddDays(-3), SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US" };
+    private readonly PrtgMonitoringPolicy _policy = new() { CoreSystemId = "core-id", SourceGeneration = "core", EndpointHint = EfPrtgObservationStore.SourceHintFor("https://fixture.example"), HostIds = [1], SensorIds = [10], ValidFrom = DateTimeOffset.Now.AddDays(-3), SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US", MessageDateFormat = PrtgMessageDateTimeParser.Ymd24, MessageTimeAuthorityRevision = 1 };
     private PrtgSensorTimelineStore Store => new(_backend.Blob(PrtgSensorTimelineStore.Prefix + 10));
     public PrtgSensorTimelineCollectorTests()
     {
         _backend = new(new StorageSettings { Type = "Sqlite" }, _dir);
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         { s.PrtgEnabled = true; s.PrtgUrl = "https://fixture.example"; });
+        Assert.Equal("https://fixture.example", new SystemSettingsStore(_backend.Blob("system_settings")).Get().PrtgUrl);
+        Assert.NotEmpty(_policy.MessageTimeFingerprint("https://fixture.example"));
         using (var ctx = _backend.CreateContext())
         {
             ctx.Database.EnsureCreated();
@@ -42,6 +44,8 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
             p.SensorIds = [10];
             p.SourceTimeZoneId = _policy.SourceTimeZoneId;
             p.SourceCultureName = _policy.SourceCultureName;
+            p.MessageDateFormat = _policy.MessageDateFormat;
+            p.MessageTimeAuthorityRevision = _policy.MessageTimeAuthorityRevision;
         });
     }
     private sealed class Handler(Func<string, string> response) : HttpMessageHandler
@@ -72,6 +76,7 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         {
             e.Bind(10, 1, _policy.SourceGeneration, fingerprint, identity.Generation,
                 identity.Epoch, identity.ChannelGeneration, _policy.ValidFrom);
+            e.MessageTimeFingerprint = _policy.MessageTimeFingerprint("https://fixture.example");
             e.Accept(_policy.ValidFrom, DateTimeOffset.Now.AddDays(-1),
                 [new(10, _policy.ValidFrom.AddMinutes(1), "Down", e.SourceGeneration, e.ResourceGeneration)]);
         });
@@ -271,7 +276,7 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         var identity = _backend.PrtgStore().GetResourceIdentity(10);
 
         Assert.False(PrtgResourceQualification.IsCurrent(evidence, identity, _policy.SourceGeneration,
-            10, 100, 1));
+            10, 100, 1, _policy.MessageTimeFingerprint("https://fixture.example")));
         Assert.Empty(evidence.Periods(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
     }
 
@@ -366,6 +371,7 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
             e.BootstrapPagesRead = 19;
             e.PendingNextPage = 20;
             e.NextAttemptAt = null;
+            e.PendingMessageTimeFingerprint = _policy.MessageTimeFingerprint("https://fixture.example");
         });
         var pageTime = DateTime.Now.AddHours(-2);
         var page = JsonSerializer.Serialize(new { messages = Enumerable.Range(0, 1000).Select(i => new
@@ -571,7 +577,7 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         Assert.Equal("sensor-identity-unavailable", evidence.QualityReason);
         var current = _backend.PrtgStore().GetResourceIdentity(10);
         Assert.False(PrtgResourceQualification.IsCurrent(evidence, current, _policy.SourceGeneration,
-            10, 100, 1));
+            10, 100, 1, _policy.MessageTimeFingerprint("https://fixture.example")));
     }
     public void Dispose() { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); Directory.Delete(_dir, true); }
 }

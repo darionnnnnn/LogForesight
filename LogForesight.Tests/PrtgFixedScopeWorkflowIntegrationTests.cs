@@ -171,6 +171,7 @@ public sealed class PrtgFixedScopeWorkflowIntegrationTests : IDisposable
             CoreSystemId = "synthetic-controlled-source",
             SourceTimeZoneId = "UTC",
             SourceCultureName = "en-US",
+            MessageDateFormat = PrtgMessageDateTimeParser.Ymd24,
             HostIds = hostIds,
             SensorIds = businessSensorIds,
             CatalogueToken = initialData.GetProperty("CatalogueToken").GetString()!

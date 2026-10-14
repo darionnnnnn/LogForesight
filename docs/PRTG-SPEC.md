@@ -723,7 +723,9 @@ token、密碼與 passhash 的處理都與 SMTP 密碼、AI 金鑰完全對稱�
 
 訊息記錄的 `status_raw` 使用 PRTG log category（例如607=Up、608=Down、609=Warning、619=Down Acknowledged、620=Down Partial），與sensor table的0–14狀態碼分開解析。已知系統／通知等非狀態訊息只參與分頁完整性檢查；未知代碼拒絕正式涵蓋。缺raw時僅接受可辨識的canonical狀態文字，不把任意文字推定為Unknown。依據為 [PRTG API log category說明](https://helpdesk.paessler.com/en/support/solutions/articles/76000063578)。
 
-狀態時間軸保存獨立的訊息解析版本。升級後舊版本coverage、狀態及分頁游標不沿用，正式consumer先拒絕舊證據、背景重新收集，進度頁顯示等待重建；新版本尚未完整收集仍不得判定風險。重建只清訊息狀態證據，保留資源／通道身分、數值歷史、磁碟語意與28日準備資料；不把升級當成感測器換代。帳號獨立Date Format及完整文字時間授權仍按第54輪D54-01處理。
+狀態時間軸保存獨立的訊息解析版本。升級後舊版本coverage、狀態及分頁游標不沿用，正式consumer先拒絕舊證據、背景重新收集，進度頁顯示等待重建；新版本尚未完整收集仍不得判定風險。重建只清訊息狀態證據，保留資源／通道身分、數值歷史、磁碟語意與28日準備資料；不把升級當成感測器換代。
+
+管理頁保存獨立帳號 Date Format，支援 dmy／mdy／ymd × 12／24 小時六種明確格式；空值及未解析的 core default 不授權文字訊息。timeline 單顆／批次依保存的格式、culture、source zone 嚴格解析；日期-only、錯格式、DST gap／無 offset 的 fold 拒絕，明示 offset 必須與 source zone 一致。message-time fingerprint 包含 parser 版本、格式、source zone／culture／generation／endpoint 與單調確認版次；不混入 raw OA 時基或改動 raw authority。已提交頁、pending cursor 與正式 timeline 讀側均核目前 fingerprint，舊空值不追認。六種格式對照 [PRTG 帳號官方文件](https://www.paessler.com/manuals/prtg/my_account)。歷史 range、finding 持久指紋及 probe 鏈仍按第54輪剩餘子項完成，不以 timeline 測例代替。
 
 狀態finding同時保存產生時的解析版本，經每日紀錄JSON與問題抽出表保留。舊版或缺版本的down／warning／flapping不得因時間軸重建而自動恢復重播或郵件授權；摘要、即時及週期郵件排除其風險與問題計數，保留可確認的獨立NetIQ風險。歷史查詢仍保留舊紀錄供追溯，新增SQL欄位保持NULL，不回填猜測版本。初始化重建沿用累計20次messages請求上限，重試的邊界重讀同樣扣額度；超量明示未合格，不以重試重置預算。
 
@@ -1332,4 +1334,4 @@ scripts/prtg-workload/Initialize-QualificationMatrixRun.ps1 透過同一 authent
 
 ### 2026-10-13 實作範圍與跨輪限制
 
-第53輪改為已實作部分收尾；剩餘工作與原27項驗收承接見 [第54輪 PLAN](FEEDBACK-54-PLAN.md)。文字messages日期尚缺PRTG帳號獨立Date Format授權；舊fetch使用環境日期解析、正式timeline使用保存culture／timezone，皆不代表完整日期格式支援。磁碟人工語意驗證入口尚未傳入必要source contract，保持source-contract-unconfirmed；不能把規則consumer測試或直接保存fixture當成該正常入口已核驗成功。取數快照、raw時間授權與既有正式proof門檻仍依各自契約，不以此限制追認舊資料。全量資格與容量、完整角色流程仍未驗收，本輪移交不改稱通過。
+第53輪改為已實作部分收尾；剩餘工作與原27項驗收承接見 [第54輪 PLAN](FEEDBACK-54-PLAN.md)。第54輪已接設定與正式timeline的帳號獨立Date Format及fingerprint；歷史fetch仍待移除環境日期解析，finding持久授權與probe鏈尚未完成，不能宣稱完整日期格式交付。磁碟人工語意驗證入口尚未傳入必要source contract，保持source-contract-unconfirmed；不能把規則consumer測試或直接保存fixture當成該正常入口已核驗成功。取數快照、raw時間授權與既有正式proof門檻仍依各自契約，不以此限制追認舊資料。全量資格與容量、完整角色流程仍未驗收，本輪移交不改稱通過。

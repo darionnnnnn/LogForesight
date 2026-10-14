@@ -39,6 +39,9 @@ internal sealed class PrtgSensorTimelineConsumer(
         var policy = policyStore.Get();
         if (!settings.PrtgEnabled || !PrtgClientFactory.HasUsableCredentials(settings) || !policy.Ready(settings.PrtgUrl))
             return Complete("monitoring-not-ready", TimeSpan.FromMinutes(1), false);
+        var messageTimeFingerprint = policy.MessageTimeFingerprint(settings.PrtgUrl);
+        if (messageTimeFingerprint.Length == 0)
+            return Complete("message-date-format-unconfigured", IdlePoll, false);
 
         var ids = policy.SensorIds.Where(id => id > 0).Distinct().Order().ToArray();
         if (ids.Length == 0 || ids.Length > PrtgSensorTimelineEvidence.MaximumBootstrapSensors)
@@ -277,7 +280,9 @@ internal sealed class PrtgSensorTimelineConsumer(
         };
         var authorizationPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var messageTimeFingerprint = authorizationPolicy.MessageTimeFingerprint(settings.PrtgUrl);
         if (!settings.PrtgEnabled || authorizationPolicy.SourceGeneration != policy.SourceGeneration ||
+            messageTimeFingerprint.Length == 0 ||
             !authorizationPolicy.SensorIds.Order().SequenceEqual(ids) ||
             authorizationPolicy.EndpointHint != EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl) ||
             PrtgSensorTimelineProgressStore.ScopeFingerprint(authorizationPolicy, settings) !=
@@ -296,6 +301,7 @@ internal sealed class PrtgSensorTimelineConsumer(
             if (!metadata.StableVersions || page.Any(id =>
                 !metadata.Rows.TryGetValue(id, out var row) || row.Malformed ||
                 row.MessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent ||
+                row.MessageTimeFingerprint != messageTimeFingerprint ||
                 row.BootstrapCollectionCycleId != cycleId || row.SourceGeneration != policy.SourceGeneration ||
                 row.PendingNextPage != 0 || row.LastCompleteThrough is null || row.LastCompleteThrough < asOf ||
                 row.HostId is null || !policy.HostIds.Contains(row.HostId.Value) ||
@@ -325,6 +331,7 @@ internal sealed class PrtgSensorTimelineConsumer(
         var currentProgress = new PrtgSensorTimelineProgressStore(backend.Blob(PrtgSensorTimelineProgressStore.BlobKey)).Get();
         if (currentProgress.BootstrapCycleId != cycleId || currentProgress.BootstrapCycleOutcome != "running" ||
             currentPolicy.SourceGeneration != policy.SourceGeneration || !currentSettings.PrtgEnabled ||
+            currentPolicy.MessageTimeFingerprint(currentSettings.PrtgUrl) != messageTimeFingerprint ||
             currentPolicy.EndpointHint != EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl) ||
             !currentPolicy.SensorIds.Order().SequenceEqual(ids) ||
             PrtgSensorTimelineProgressStore.ScopeFingerprint(currentPolicy, currentSettings) !=

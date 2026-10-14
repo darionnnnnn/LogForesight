@@ -45,6 +45,8 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             return Conflict(ApiResponse.Fail("catalogue_changed", "主機、授權或來源目錄在讀取期間已變更；請重新載入。"));
         return Ok(ApiResponse<object>.Ok(new { policy.Revision, policy.CoreSystemId, policy.ValidFrom,
             policy.SourceTimeZoneId, policy.SourceCultureName, SuggestedTimeZoneId = TimeZoneInfo.Local.Id,
+            policy.MessageDateFormat, policy.MessageTimeAuthorityRevision,
+            MessageTimeConfigured = policy.MessageTimeFingerprint(settings.PrtgUrl).Length > 0,
             Enabled = settings.PrtgEnabled, Ready = policy.Ready(settings.PrtgUrl),
             HostIds = policy.HostIds.ToArray(), SensorIds = policy.SensorIds.ToArray(),
             SavedHosts = savedHosts, CanEdit = canViewAll || policy.HostIds.All(visible.Contains), SelectedHostCount = policy.HostIds.Count,
@@ -209,6 +211,14 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             var sourceChanges = (identityChanged && request.SourceChangeMode != "continue") ||
                 request.SourceChangeMode is "new" or "unknown";
             var nextSourceGeneration = sourceChanges ? Guid.NewGuid().ToString("N") : before.SourceGeneration;
+            var messageAuthorityChanged = sourceChanges || before.EndpointHint != hint ||
+                before.SourceTimeZoneId != request.SourceTimeZoneId || before.SourceCultureName != request.SourceCultureName ||
+                before.MessageDateFormat != request.MessageDateFormat;
+            if (messageAuthorityChanged && before.MessageTimeAuthorityRevision == long.MaxValue)
+                throw new InvalidOperationException("訊息時間授權版次已達上限；拒絕回退或重用舊授權。");
+            var nextMessageTimeAuthorityRevision = messageAuthorityChanged
+                ? Math.Max(0, before.MessageTimeAuthorityRevision) + 1
+                : before.MessageTimeAuthorityRevision;
             var proposedPolicy = new PrtgMonitoringPolicy
             {
                 Revision = before.Revision,
@@ -220,6 +230,8 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                 SensorIds = selectedSensors.ToList(),
                 SourceTimeZoneId = request.SourceTimeZoneId,
                 SourceCultureName = request.SourceCultureName,
+                MessageDateFormat = request.MessageDateFormat,
+                MessageTimeAuthorityRevision = nextMessageTimeAuthorityRevision,
                 RawTimestampTimeZoneId = before.RawTimestampTimeZoneId,
                 AnalysisTimeZoneId = before.AnalysisTimeZoneId,
                 TimeBasisEvidenceReference = before.TimeBasisEvidenceReference
@@ -324,6 +336,8 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                 { p.ContinuityEvidenceReference = request.ContinuityEvidenceReference.Trim(); p.ContinuityConfirmedAtUtc = DateTimeOffset.UtcNow; }
                 p.CoreSystemId = request.SourceChangeMode == "unknown" ? "" : request.CoreSystemId.Trim(); p.EndpointHint = hint;
                 p.SourceTimeZoneId = request.SourceTimeZoneId; p.SourceCultureName = request.SourceCultureName;
+                p.MessageDateFormat = request.MessageDateFormat;
+                p.MessageTimeAuthorityRevision = nextMessageTimeAuthorityRevision;
                 p.HostIds = selectedHosts.ToList(); p.SensorIds = selectedSensors.ToList();
                 p.Revision = Guid.NewGuid().ToString("N"); p.ConfirmedBy = user.UserId.ToString();
             });
@@ -616,7 +630,8 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             if (matching.Length == 0) reasons.Add("沒有適用且啟用的正式規則");
             if (host is null || !resourceIdentities.TryGetValue(sensor.SensorId, out var identity) ||
                 !PrtgResourceQualification.IsCurrent(proof, identity, policy.SourceGeneration,
-                    sensor.SensorId, sensor.DeviceObjid, host.HostId)) reasons.Add("來源／資源／對應身分待確認");
+                    sensor.SensorId, sensor.DeviceObjid, host.HostId,
+                    policy.MessageTimeFingerprint(settings.PrtgUrl))) reasons.Add("來源／資源／對應身分待確認");
             if (host is not null && matching.Any(r => r.Id == "builtin-prtg-resource-disk-pressure") &&
                 !PrtgResourceProfileQualification.IsCurrentDiskProfile(backend, host.HostId, sensor.SensorId, DateTime.UtcNow))
                 reasons.Add("磁碟正式判定需目前可信 primary-channel／量義／physical-sample profile");
@@ -660,6 +675,7 @@ public sealed class PrtgMonitoringRequest
     public string CoreSystemId { get; set; } = "";
     public string SourceTimeZoneId { get; set; } = "";
     public string SourceCultureName { get; set; } = "";
+    public string MessageDateFormat { get; set; } = "";
     public bool IdentityConfirmed { get; set; }
     public List<long> HostIds { get; set; } = [];
     public List<long> SensorIds { get; set; } = [];
@@ -738,12 +754,13 @@ public sealed partial class PrtgMonitoringController
             reason = "sensor 清單需含 1 至 15,000 個有效且去重的 ID；超出範圍會拒絕，不會截斷。";
             return false;
         }
-        if (request.SourceTimeZoneId is null || request.SourceCultureName is null || request.CoreSystemId is null ||
+        if (request.SourceTimeZoneId is null || request.SourceCultureName is null || request.MessageDateFormat is null || request.CoreSystemId is null ||
             request.SourceChangeMode is null || request.ContinuityEvidenceReference is null ||
             request.SourceTimeZoneId.Length is < 1 or > 128 || request.SourceCultureName.Length is < 1 or > 64 ||
+            request.MessageDateFormat.Length > 16 || request.MessageDateFormat.Length > 0 && !PrtgMessageDateTimeParser.IsSupported(request.MessageDateFormat) ||
             request.CoreSystemId?.Length is > 256 || request.ContinuityEvidenceReference?.Length is > 1000)
         {
-            reason = "來源資訊長度超出上限。";
+            reason = "來源資訊長度超出上限或訊息日期格式不受支援。";
             return false;
         }
         if (request.SourceChangeMode != "unknown" && string.IsNullOrWhiteSpace(request.CoreSystemId))
@@ -762,6 +779,7 @@ public sealed partial class PrtgMonitoringController
             CoreSystemId = request.CoreSystemId?.Trim() ?? "",
             SourceTimeZoneId = request.SourceTimeZoneId ?? "",
             SourceCultureName = request.SourceCultureName ?? "",
+            MessageDateFormat = request.MessageDateFormat ?? "",
             SourceChangeMode = request.SourceChangeMode ?? "",
             request.ContinuityConfirmed,
             ContinuityEvidenceReference = request.ContinuityEvidenceReference?.Trim() ?? "",

@@ -66,7 +66,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     }
     private static PrtgMonitoringRequest Request(string revision = "") => new()
     { Revision = revision, IdentityConfirmed = true, CoreSystemId = "fixture-core", SourceTimeZoneId = TimeZoneInfo.Local.Id,
-        SourceCultureName = "en-US", HostIds = [1], SensorIds = [100] };
+        SourceCultureName = "en-US", MessageDateFormat = PrtgMessageDateTimeParser.Ymd24, HostIds = [1], SensorIds = [100] };
 
     private static string DataString(IActionResult result, string name)
     {

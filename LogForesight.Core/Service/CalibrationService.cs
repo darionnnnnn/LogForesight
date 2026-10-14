@@ -2164,7 +2164,8 @@ public sealed class CalibrationService
                 if (proof.SourceGeneration != policy.SourceGeneration) { sourceMismatch = true; continue; }
                 if (!policy.HostIds.Contains(proof.HostId) || !resourceIdentities.TryGetValue(sensor.Objid, out var resourceIdentity) ||
                     !PrtgResourceQualification.IsCurrent(proof, resourceIdentity, policy.SourceGeneration,
-                        sensor.Objid, sensor.DeviceObjid, proof.HostId)) { mappingMismatch = true; continue; }
+                        sensor.Objid, sensor.DeviceObjid, proof.HostId,
+                        policy.MessageTimeFingerprint(settings.PrtgUrl))) { mappingMismatch = true; continue; }
                 var proofDays = false;
                 for (var day = from; day <= to; day = day.AddDays(1))
                 {

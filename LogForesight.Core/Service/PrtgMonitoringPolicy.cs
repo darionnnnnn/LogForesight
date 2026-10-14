@@ -24,6 +24,10 @@ public sealed class PrtgMonitoringPolicy
     public DateTimeOffset? ContinuityConfirmedAtUtc { get; set; }
     public string SourceTimeZoneId { get; set; } = "";
     public string SourceCultureName { get; set; } = "";
+    /// <summary>Explicit PRTG account message date/clock format; blank legacy values stay unauthorized.</summary>
+    public string MessageDateFormat { get; set; } = "";
+    /// <summary>Monotonic confirmation generation for message timestamp interpretation only.</summary>
+    public long MessageTimeAuthorityRevision { get; set; }
     /// <summary>Explicitly probed account zone for raw OLE Automation timestamps; blank stays untrusted.</summary>
     public string RawTimestampTimeZoneId { get; set; } = "";
     /// <summary>Analysis wall-clock zone used for fixed-slot qualification; blank stays untrusted.</summary>
@@ -40,6 +44,8 @@ public sealed class PrtgMonitoringPolicy
             ValidFrom.UtcTicks, SourceTimeZoneId, SourceCultureName);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
+
+    public string MessageTimeFingerprint(string url) => PrtgMessageDateTimeParser.BuildFingerprint(this, url);
 
     /// <summary>
     /// Stable source/time authority for native status points. It deliberately excludes policy revision
@@ -209,6 +215,8 @@ public sealed class PrtgSensorTimelineEvidence
     public List<string> PendingEventKeys { get; set; } = [];
     public int PendingNextPage { get; set; }
     public string PendingBoundaryHash { get; set; } = "";
+    public string PendingMessageTimeFingerprint { get; set; } = "";
+    public string MessageTimeFingerprint { get; set; } = "";
     public string QualityReason { get; set; } = "not-observed";
     public List<PrtgSensorCoverage> Coverage { get; set; } = [];
     public List<PrtgTimedState> States { get; set; } = [];
@@ -226,7 +234,7 @@ public sealed class PrtgSensorTimelineEvidence
         ValidFrom = observedAt; LastCompleteThrough = null; EffectiveScopeFingerprint = "";
         BootstrapStartedAt = observedAt; BootstrapDeadlineAt = null; BootstrapStatus = "capacity-unverified";
         BootstrapPagesRead = 0; NextAttemptAt = null; PendingStates.Clear(); PendingEventKeys.Clear();
-        PendingNextPage = 0; PendingBoundaryHash = "";
+        PendingNextPage = 0; PendingBoundaryHash = ""; PendingMessageTimeFingerprint = "";
         Coverage.Clear(); States.Clear(); QualityReason = "identity-warmup"; ConsecutiveAttempts = 0;
     }
 
@@ -235,13 +243,15 @@ public sealed class PrtgSensorTimelineEvidence
         Bind(sensorId, hostId, sourceGeneration, fingerprint, Guid.NewGuid().ToString("N"), 0, "", observedAt);
 
     public IReadOnlyList<PrtgCoveredStatePeriod> Periods(DateTimeOffset from, DateTimeOffset through) =>
-        MessageStatusSemanticVersion == MessageStatusSemanticVersionCurrent
+        MessageStatusSemanticVersion == MessageStatusSemanticVersionCurrent && !string.IsNullOrWhiteSpace(MessageTimeFingerprint)
             ? PrtgCoveredStateTimeline.Build(SensorId, SourceGeneration, ResourceGeneration, Coverage, States, from, through)
             : [];
 
     public void Accept(DateTimeOffset from, DateTimeOffset through, IEnumerable<PrtgTimedState> states)
     {
         if (from < ValidFrom || through <= from) throw new ArgumentException("涵蓋不可早於已確認身分。");
+        if (string.IsNullOrWhiteSpace(MessageTimeFingerprint))
+            throw new InvalidOperationException("message-date-format-unconfigured");
         var incoming = states.ToArray();
         if (incoming.Any(s => s.SensorObjid != SensorId || s.SourceGeneration != SourceGeneration ||
             s.ResourceGeneration != ResourceGeneration || s.At < from || s.At > through))
@@ -267,6 +277,7 @@ public sealed class PrtgSensorTimelineEvidence
         LastCompleteThrough = through;
         BootstrapStatus = through - ValidFrom >= TimeSpan.FromDays(31) ? "complete" : "capacity-unverified";
         PendingStates.Clear(); PendingEventKeys.Clear(); PendingNextPage = 0; PendingBoundaryHash = "";
+        PendingMessageTimeFingerprint = "";
         NextAttemptAt = null;
     }
 

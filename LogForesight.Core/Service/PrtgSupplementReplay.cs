@@ -91,13 +91,11 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                         resourceCurrent = proof.HostId == row.HostId && proof.SourceGeneration == row.SourceGeneration &&
                             proof.ResourceGeneration == row.ResourceGeneration &&
                             PrtgResourceQualification.IsCurrent(proof, identity, policy.SourceGeneration,
-                                row.SensorObjid.Value, identity.DeviceId, row.HostId);
+                                row.SensorObjid.Value, identity.DeviceId, row.HostId,
+                                policy.MessageTimeFingerprint(settings.PrtgUrl));
                     }
                     if (resourceCurrent && finding.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-                        resourceCurrent = PrtgResourceQualification.IsChannelCurrent(
-                            new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).Get(row.SensorObjid.Value),
-                            new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Get(row.SensorObjid.Value),
-                            identity);
+                        resourceCurrent = PrtgResourceQualification.IsCurrentDiskChannel(backend, row.SensorObjid.Value, identity);
                     if (!resourceCurrent)
                     { Mark(row, "scope-paused", null); continue; }
                     if (finding.RuleId == "builtin-prtg-resource-disk-pressure")
@@ -116,10 +114,7 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                         if (reasons.Contains("disk-seven-day-low-water-trend") &&
                             (!resourceRules.DiskTrendEnabled || finding.PrtgTrendSourceRuleId != resourceRules.DiskTrendRuleId ||
                              finding.PrtgTrendSourceRuleFingerprint != resourceRules.DiskTrendRuleFingerprint ||
-                             !PrtgResourceQualification.IsChannelCurrent(
-                                new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).Get(row.SensorObjid.Value),
-                                new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Get(row.SensorObjid.Value),
-                                identity)))
+                             !PrtgResourceQualification.IsCurrentDiskChannel(backend, row.SensorObjid.Value, identity)))
                         { Mark(row, "rules-changed", null); continue; }
                     }
                     }

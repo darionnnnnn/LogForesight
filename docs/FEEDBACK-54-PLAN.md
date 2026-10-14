@@ -307,6 +307,14 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 主代理實作 ResumeExisting 在原 overview mutation 交易內以 2 Mi 字元前綴加長度讀 settings／policy，保留原來源、scope、版本及頁面 CAS。超限拒絕，不推進 wave／deadline／overview version 或 page version；無新增資格或自動續跑。
 - 獨立隔離 checkout 執行 PrtgQualificationJobStateStoreTests，11/11 通過、零略過，27秒；含兩份授權文件超限及既有正常續跑、取消、到期、初始化水位與 proof attempt。TRX 為 work/round54-mode-validation/work/d1-resume/d1-resume-bounded.trx。此為小型 SQLite 功能證據，未驗 SQL 字元邊界或大量資料。
 
+### B1第一段及D1第四段：訊息timeline授權與磁碟共用證據消費
+
+- B1執行者 gpt-6-luna high，主代理直接核對設定/API/表單/JS→parser→single/batch collector→metadata projection→daily/calibration/silent/replay/mail 的呼叫相依；六格式與官方帳號文件核對。message fingerprint／單調版次獨立於 raw OA，缺設定不發 messages，改格式清訊息派生證據與游標、保留 raw／identity／disk；舊 timeline 無指紋拒絕。UI僅靜態接線／module syntax驗證，未宣稱瀏覽器或現場格式驗收。
+- D1主代理實作：兩份disk共享文件公開讀取走完整有界typed snapshot；正式mail/replay核完整paired snapshot及兩份版本，損壞只拒絕其相依channel資格，不能挑有效entry；data-transfer先核metadata、最後核版本，拒絕不完整匯出。正常／混入null record／壞JSON反例使用兩個host與兩顆sensor，拒絕後零寫入。維護修復及全部通知組合的精確隔離尚待下段驗證。
+- 主代理隔離checkout整合驗證182/182通過，零略過，6分鐘，TRX work/round54-mode-validation/work/b1-d1/b1-d1-integrated.trx。另前段disk store/consumer 29/29通過，22秒；B1委派首次151/152中游標fixture缺指紋失敗，修正後單案1/1通過，再由主代理全範圍定向重驗182案。保留原失敗，不將未執行容量測試改稱PASS。
+- 最後補齊公開Get/GetAll/GetRecent拒絕反例後，同一兩host fixture新binary重驗5/5通過、零略過、29秒，TRX work/round54-mode-validation/work/d1-disk-accessors/d1-disk-accessors.trx。JS首次CommonJS syntax命令因ES module模式錯誤未通過；改用node --input-type=module --check後通過，此仍僅語法檢查。
+- 仍待：FetchStateChangesRangeAsync、正式probe/離線鏈與finding→signature→DB→pending/replay/mail fingerprint；current timeline gate不能防止舊finding被新timeline追認，B2尚未完成。主代理另確認resource period consumer的mode損壞可能中斷整批，依C54-02待補逐host等待；共享disk相關等待/維護修復及SQL字元相容也未完成。原父TODO維持未勾。
+
 ### 開發驗證限制更新：只執行分段小範圍（2026-10-14最新指示）
 
 使用者明確要求開發期間不要大規模大量資料測試，優先分段小範圍驗正確性；不得已必須先討論可行方案。本條約束所有階段、委派與舊驗收引用。持續完成各項程式／腳本／正常consumer接線，使用少量主機／sensor／列、可控批次、故障注入與精確預期，並逐段commit／push。

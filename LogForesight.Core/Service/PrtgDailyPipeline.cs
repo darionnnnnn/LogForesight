@@ -474,7 +474,7 @@ internal static class PrtgDailyPipeline
                                 !deviceToHost.TryGetValue(device, out var mappedHost) || mappedHost != pair.Value.HostId ||
                                 !identityPage.TryGetValue(pair.Key, out var identity) ||
                                 !PrtgResourceQualification.IsCurrent(pair.Value, identity, monitoringPolicy.SourceGeneration,
-                                    pair.Key, device, mappedHost)) continue;
+                                    pair.Key, device, mappedHost, monitoringPolicy.MessageTimeFingerprint(systemSettings.PrtgUrl))) continue;
                             applicableEvidence[pair.Key] = pair.Value;
                             var proof = pair.Value;
                             var begin = new DateTimeOffset(day); var finish = begin.AddDays(1);
