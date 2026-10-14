@@ -199,6 +199,18 @@ public sealed class Sensor
         return ok;
     }
 
+    private static string? ReadResumeAuthority(LfDbContext ctx, string key)
+    {
+        const int cap = PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters;
+        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
+            .Select(blob => new { Prefix = blob.Content.Substring(0, cap + 1), Length = blob.Content.Length })
+            .SingleOrDefault();
+        if (row is null) return null;
+        if (row.Length > cap || row.Prefix.Length > cap)
+            throw new InvalidDataException("qualification-job-authority-cap-exceeded");
+        return row.Prefix;
+    }
+
     /// <summary>Starts a new explicitly approved wave on the same durable job and existing pages.</summary>
     public Job ResumeExisting(string jobId, long expectedVersion, string owner, string expectedScopeFingerprint,
         string expectedSourceGeneration, string expectedSettingsRevision, string expectedPolicyRevision,
@@ -223,10 +235,8 @@ public sealed class Sensor
                 job.InitializationCursor != job.InitializedPages)
                 throw new InvalidOperationException("qualification-job-resume-contract-changed");
 
-            var settingsRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == "system_settings")
-                .Select(row => row.Content).SingleOrDefault();
-            var policyRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(row => row.Content).SingleOrDefault();
+            var settingsRaw = ReadResumeAuthority(ctx, "system_settings");
+            var policyRaw = ReadResumeAuthority(ctx, PrtgMonitoringPolicyStore.BlobKey);
             var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("system-settings-invalid");

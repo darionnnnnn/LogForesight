@@ -302,6 +302,11 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 隔離 checkout 定向執行 BindingStore 與 RawByteCap 共 12/12 通過，零略過，2分10秒；含 settings／policy × 保存／資格提交四個超限反例及既有正常保存、CAS、qualification、raw byte cap。TRX 位於 work/round54-mode-validation/work/d1-binding/d1-binding-bounded.trx；兩個程式／測試檔與本輪 checkout SHA256 相同。
 - 此為 SQLite 小型功能驗證，SQL 補充字元邊界、共享 disk 快照及其他 D1 項目仍未完成，不提升父 TODO 或整輪 acceptance。
 
+### D1第三段：qualification 續跑授權讀取
+
+- 主代理實作 ResumeExisting 在原 overview mutation 交易內以 2 Mi 字元前綴加長度讀 settings／policy，保留原來源、scope、版本及頁面 CAS。超限拒絕，不推進 wave／deadline／overview version 或 page version；無新增資格或自動續跑。
+- 獨立隔離 checkout 執行 PrtgQualificationJobStateStoreTests，11/11 通過、零略過，27秒；含兩份授權文件超限及既有正常續跑、取消、到期、初始化水位與 proof attempt。TRX 為 work/round54-mode-validation/work/d1-resume/d1-resume-bounded.trx。此為小型 SQLite 功能證據，未驗 SQL 字元邊界或大量資料。
+
 ### 開發驗證限制更新：只執行分段小範圍（2026-10-14最新指示）
 
 使用者明確要求開發期間不要大規模大量資料測試，優先分段小範圍驗正確性；不得已必須先討論可行方案。本條約束所有階段、委派與舊驗收引用。持續完成各項程式／腳本／正常consumer接線，使用少量主機／sensor／列、可控批次、故障注入與精確預期，並逐段commit／push。

@@ -118,6 +118,32 @@ public sealed class PrtgQualificationJobStateStoreTests : IDisposable
         Assert.False(PrtgQualificationJobStateStore.IsRunnableNow(sensor, job, now.AddMinutes(1)));
     }
 
+    [Theory]
+    [InlineData("system_settings")]
+    [InlineData(PrtgMonitoringPolicyStore.BlobKey)]
+    public void ResumeRejectsOversizedAuthorityWithoutAdvancingWaveOrPages(string key)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var job = Start(now, [Sensor(11)], duration: 1);
+        store.ExpireIfDeadlinePassed(job.DeadlineUtc.AddSeconds(1));
+        var expired = store.ReadCurrent()!;
+        var beforeOverview = backend.Blob(PrtgHistoricAdmissionStore.BlobKey).ReadVersion();
+        var beforePage = store.ReadPageWithVersion(job.JobId, 0);
+        backend.Blob(key).Mutate(_ =>
+            ("{\"Extra\":\"" + new string('x', PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters) + "\"}", true));
+        var error = Assert.Throws<InvalidDataException>(() => store.ResumeExisting(job.JobId, expired.Version,
+            "new-owner", expired.ScopeFingerprint, expired.SourceGeneration, expired.SettingsRevision,
+            expired.PolicyRevision, expired.AuthorityContextFingerprint, 1, 72, 1,
+            job.DeadlineUtc.AddMinutes(2), TimeSpan.FromSeconds(180)));
+        Assert.Equal("qualification-job-authority-cap-exceeded", error.Message);
+        Assert.Equal(beforeOverview, backend.Blob(PrtgHistoricAdmissionStore.BlobKey).ReadVersion());
+        var after = store.ReadCurrent()!;
+        Assert.Equal(expired.Wave, after.Wave);
+        Assert.Equal(expired.Status, after.Status);
+        Assert.Equal(expired.DeadlineUtc, after.DeadlineUtc);
+        Assert.Equal(beforePage.Version, store.ReadPageWithVersion(job.JobId, 0).Version);
+    }
+
     [Fact]
     public void BindingAddedAfterAdmissionCannotIncreaseEligiblePopulationDuringInitialization()
     {
