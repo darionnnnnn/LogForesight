@@ -12,7 +12,7 @@
   "formalManifestBinding": {
     "path": "LogForesight.Tests/Fixtures/prtg-round53-formal-cases.json",
     "schemaVersion": 1,
-    "sha256": "9D05B81CE369359FA86F7FF3B4C8F119DC78D20A3681D1DB2C5C474093E4FFC2",
+    "sha256": "4A20335B3AD349BDF10D538B03947AAA90AAE203BD2EC4D0CF9F0E7D57214329",
     "caseRows": 222,
     "meaning": "This is the fixed rule-case pack denominator only; it is not the usefulness replay truth denominator or an incident population."
   },

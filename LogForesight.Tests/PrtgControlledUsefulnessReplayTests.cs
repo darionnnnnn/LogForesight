@@ -21,7 +21,7 @@ public sealed class PrtgControlledUsefulnessReplayTests
 {
     private const string TruthFixturePath = "LogForesight.Tests/Fixtures/prtg-usefulness-controlled-truth-v1.json";
     private const string FormalManifestPath = "LogForesight.Tests/Fixtures/prtg-round53-formal-cases.json";
-    private const string ExpectedFormalManifestSha256 = "9D05B81CE369359FA86F7FF3B4C8F119DC78D20A3681D1DB2C5C474093E4FFC2";
+    private const string ExpectedFormalManifestSha256 = "4A20335B3AD349BDF10D538B03947AAA90AAE203BD2EC4D0CF9F0E7D57214329";
     private static readonly JsonSerializerOptions ReportJsonOptions = new() { WriteIndented = false };
     private readonly ITestOutputHelper _output;
 

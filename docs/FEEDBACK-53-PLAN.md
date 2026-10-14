@@ -2211,3 +2211,13 @@ SMTP協定fixture手工建立新版down finding時漏設解析版本，乾淨全
 
 
 乾淨checkout發現PLAN原始位元組SHA會受Git自動換行轉換影響；沿用既有fixture的-text屬性固定本PLAN位元組並更新plan_sha256。以core.autocrlf=true從index輸出副本，再核對SHA，避免只核本機工作檔。此修改僅影響文件證據，不改程式或驗收門檻。
+
+### 2026-10-14 收尾複核：啟動失敗與重試路徑
+
+對啟動前scope refresh先清旗標的審查疑點，再追正常Tick、BackfillScopeSensorsAsync與RunBoundedScopeWorkAsync：啟動準備契約為一次有界機會，補抓失敗不記成已完成，下一個合格採樣輪仍重新比對缺少的sensor；容量／範圍變更／有界超時另保留refresh請求。未確認永久遺失工作的缺陷，不為單次失敗強制重試或延後日常採樣。這是程式路徑複核，既有啟動／queue 27案及本次全量回歸提供執行證據，不宣称已驗全部故障組合或容量。
+
+### 2026-10-14 收尾修正：四基準重播的案例版本綁定
+
+乾淨b77a72c7全量回歸重現WritesBoundedVersionedFourBaselineControlledReplayReport在案例SHA斷言失敗。逐行核對dc32bf28：正式案例檔只修正六個既有unit／scale負例的failedQualification為source-profile-missing，222個ID、輸入及分母不變；重播測試與controlled truth的formalManifestBinding漏同步。此次僅更新兩處SHA為4A20335B3AD349BDF10D538B03947AAA90AAE203BD2EC4D0CF9F0E7D57214329，不變更truth場景、四基準斷言、正式程式或門檻，歷史證據的舊SHA保留。
+
+主代理Release fresh build執行PrtgControlledUsefulnessReplayTests與PrtgFormalRuleCase集合，226/226通過、零失敗／略過，26分40秒。命令：`dotnet test LogForesight.Tests/LogForesight.Tests.csproj -c Release --filter 'FullyQualifiedName~PrtgControlledUsefulnessReplayTests|FullyQualifiedName~PrtgFormalRuleCase'`；TRX為TestResults/root-closeout-manifest-binding/root-closeout-manifest-binding.trx，SHA256 ec23a0af5d3a355859399c2708d4ebdb6f6de4f64951143bc2294bdb3db1653b。含原222案例與四基準重播，保留合併未優於單純聯集的結果。乾淨全量仍待完整結束，修正前失敗不改寫成單次全綠。
