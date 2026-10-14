@@ -334,6 +334,13 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - JSON document、grant、revocation及replay job以extension data保留未知欄位，維護已知欄位不靜默丟棄未認識內容。小型SQLite測例核90,000中文字（字元合格但UTF-8超262,144 bytes）的正式mode停用、未知document／grant欄位保留，以及超限停用／trial保存拒絕且content/version不變；既有atomic revocation回歸合計20/20通過、零skip、22秒，TRX work/round54-mode-validation/work/d1-character-mutation/d1-character-mutation.trx。
 - 尚未替代SQL Server實際邊界核對、超限／損壞文件管理修復入口及完整shared snapshot維護驗收。
 
+### D1第七段：完整有界文字與共用authority readset
+
+- 有界blob讀取改以UTF-16單元定義字元契約。SQLite使用既有Microsoft.Data.Sqlite 8.0的readonly SqliteBlob：先取得物理size，依資料庫UTF-8／UTF-16編碼確認有限byte budget，再分段解碼至cap+1；原context／transaction及blob version保留。SQL Server以NVARCHAR DATALENGTH的2×char budget先拒絕超限，再回完整合格內容。NUL、壞encoding或不完整文件均拒絕，不能信任截斷JSON前綴；既有byte-bound呼叫另保留原UTF-8限制。
+- 官方依據：[SQLite length／substr](https://www.sqlite.org/lang_corefunc.html)按codepoint計數，length(TEXT)停在NUL並需讀取整個文字；[.NET文字編碼](https://learn.microsoft.com/en-us/dotnet/standard/base-types/character-encoding-introduction)的String.Length是UTF-16單元；[SQL LEN](https://learn.microsoft.com/en-us/sql/t-sql/functions/len-transact-sql?view=sql-server-ver16)忽略尾空白、[SC SUBSTRING](https://learn.microsoft.com/en-us/sql/t-sql/functions/substring-transact-sql?view=sql-server-ver16)以surrogate pair計數，故不能直接假設兩provider相同。[Microsoft SQLite streaming](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/blob-io)與[SQLite readonly incremental I/O](https://www.sqlite.org/c3ref/blob_open.html)支援保留目前儲存結構的有界讀取，沒有升級套件或新增儲存拆分。
+- 主代理tiny16／17字元的ASCII、尾空白、中文、supplementary及NUL反例：SQLite7/7，SQL Server重用自有LocalDB7/7，content/version不變；work/round54/sql-character-parity/provider-small-physical-result.json。共用settings／policy新增原read transaction兩份完整有界snapshot及versions，bad JSON／超限回shared-authority-document-unavailable；與mode定向回歸17/17（11秒），binding原交易／qualification續跑22/22（77秒）。TRX於work/round54-mode-validation/work/d1-physical-*。
+- 本段未替代其餘直接批次projection的完整性接線、超限／壞文件維護修復及最終同版consumer驗收；共用snapshot正常mail／replay接線由B2整段驗證。
+
 ### E1第一段：初始化、升級與前綴安全恢復
 
 - 已補初始化marker／checkpoint中斷恢復、legacy adoption完整結構與deterministic prefix稽核、owned tool upgrade intent與四個提交邊界恢復，以及有界4096字元log scanner。初始值表非空或自增序號已使用即拒絕；沒有checkpoint時須先由原工具恢復，不能跨版直接生成。結構marker已提交時保持既有結構及時間戳。
@@ -344,6 +351,8 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 ### 開發驗證限制更新：只執行分段小範圍（2026-10-14最新指示）
 
 使用者明確要求開發期間不要大規模大量資料測試，優先分段小範圍驗正確性；不得已必須先討論可行方案。本條約束所有階段、委派與舊驗收引用。持續完成各項程式／腳本／正常consumer接線，使用少量主機／sensor／列、可控批次、故障注入與精確預期，並逐段commit／push。
+
+使用者再次定案：不做33,554,432字元磁碟共用文件的極限測試，改查官方或技術文件確認語意、配合縮小功能驗證及程式檢查。常數不調小／不提高；文獻型依據與小資料證據分別記錄，不宣稱曾做該極限實測或資源峰值量測。後續不得因舊清單提到cap而自動啟動巨大payload測試。
 
 完整64,800,000生成、既有41.14M前綴全掃／續跑、3,000／15,000共同負載與高水位恢復、原三對六輪／1200路由壓測以及其他大量資料操作，現階段不執行。G等既定門檻保留但標為待討論執行方案／未驗，不刪母體、不降低門檻、不把小fixtures或工具能力宣稱容量／整輪PASS。若某段必要驗證無法縮小，先列最小資料量、耗時／空間、隔離與清理方式、替代方案及仍無法證明的範圍，再討論；未取得定案不啟動該大量驗證，其他可做工作繼續。
 

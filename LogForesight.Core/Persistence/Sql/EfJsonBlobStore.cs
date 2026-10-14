@@ -1,6 +1,7 @@
 ﻿using System.Data;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore;
 using NLog;
@@ -95,17 +96,86 @@ public sealed class EfJsonBlobStore
             throw new ArgumentOutOfRangeException(nameof(maxCharacters));
         var sw = System.Diagnostics.Stopwatch.StartNew();
         using var ctx = _contextFactory();
-        var row = ctx.Blobs.AsNoTracking()
-            .Where(b => b.BlobKey == _key)
-            .Select(b => new
-            {
-                Prefix = b.Content.Substring(0, maxCharacters + 1),
-                Length = b.Content.Length,
-                b.Version
-            })
-            .FirstOrDefault();
+        var result = ReadBoundedInContext(ctx, _key, maxCharacters);
         _performance?.Record($"blob:{_key}:ReadBounded", sw.ElapsedMilliseconds);
-        return row == null ? (null, 0, 0) : (row.Prefix, row.Version, row.Length);
+        return result;
+    }
+
+    /// <summary>Reads complete bounded UTF-16 text and its version in the caller's existing transaction.</summary>
+    internal static (string? Prefix, long Version, int ReportedLength) ReadBoundedInContext(
+        LfDbContext ctx, string key, int maxCharacters)
+    {
+        if (maxCharacters is < 1 or > int.MaxValue - 1) throw new ArgumentOutOfRangeException(nameof(maxCharacters));
+        var connection = ctx.Database.GetDbConnection();
+        var wasClosed = connection.State == ConnectionState.Closed;
+        if (wasClosed) connection.Open();
+        try
+        {
+            if (connection is SqliteConnection sqlite)
+            {
+                // length(TEXT) scans the complete SQLite value and stops at NUL. Incremental
+                // read-only I/O obtains the physical size without materializing unbounded text.
+                using var ownTransaction = ctx.Database.CurrentTransaction is null
+                    ? sqlite.BeginTransaction(deferred: true) : null;
+                var transaction = (SqliteTransaction?)ctx.Database.CurrentTransaction?.GetDbTransaction() ?? ownTransaction;
+                using var metadata = sqlite.CreateCommand();
+                metadata.Transaction = transaction;
+                metadata.CommandText = "SELECT rowid, version, typeof(content) FROM lf_blobs WHERE blob_key=$key;";
+                metadata.Parameters.AddWithValue("$key", key);
+                long rowid, version;
+                using (var reader = metadata.ExecuteReader())
+                {
+                    if (!reader.Read()) return (null,0,0);
+                    rowid=reader.GetInt64(0); version=reader.GetInt64(1);
+                    if (reader.GetString(2) != "text") return (null,version,maxCharacters+1);
+                }
+                metadata.CommandText = "PRAGMA encoding;";
+                var encodingName = (string)metadata.ExecuteScalar()!;
+                Encoding encoding = encodingName switch
+                {
+                    "UTF-8" => new UTF8Encoding(false,true),
+                    "UTF-16le" => new UnicodeEncoding(false,false,true),
+                    "UTF-16be" => new UnicodeEncoding(true,false,true),
+                    _ => throw new InvalidDataException("SQLite text encoding is unsupported.")
+                };
+                using var stream = new SqliteBlob(sqlite,"lf_blobs","content",rowid,readOnly:true);
+                var maximumBytes = (long)maxCharacters*(encodingName == "UTF-8" ? 3 : 2);
+                if (stream.Length > maximumBytes) return (null,version,maxCharacters+1);
+                using var text = new StreamReader(stream,encoding,detectEncodingFromByteOrderMarks:false,bufferSize:4096);
+                var result = new StringBuilder(Math.Min(maxCharacters+1,4096));
+                var buffer = new char[Math.Min(maxCharacters+1,4096)];
+                try
+                {
+                    while (result.Length <= maxCharacters)
+                    {
+                        var read = text.Read(buffer,0,Math.Min(buffer.Length,maxCharacters+1-result.Length));
+                        if (read == 0) break;
+                        result.Append(buffer,0,read);
+                    }
+                }
+                catch (DecoderFallbackException) { return (null,version,maxCharacters+1); }
+                var content = result.ToString();
+                if (content.Length > maxCharacters || content.Contains('\0')) return (null,version,maxCharacters+1);
+                return (content,version,content.Length);
+            }
+            // NVARCHAR is UTF-16 regardless of SC collation. DATALENGTH includes trailing
+            // spaces and NUL; use its metadata budget before returning the complete value.
+            using var command = connection.CreateCommand();
+            command.Transaction = ctx.Database.CurrentTransaction?.GetDbTransaction();
+            command.CommandText = "SELECT CASE WHEN DATALENGTH(content)>@bytes THEN NULL ELSE content END, version, DATALENGTH(content) FROM lf_blobs WHERE blob_key=@key;";
+            var keyParameter=command.CreateParameter(); keyParameter.ParameterName="@key"; keyParameter.Value=key; command.Parameters.Add(keyParameter);
+            var bytesParameter=command.CreateParameter(); bytesParameter.ParameterName="@bytes"; bytesParameter.Value=(long)maxCharacters*2; command.Parameters.Add(bytesParameter);
+            using var sqlReader=command.ExecuteReader();
+            if (!sqlReader.Read()) return (null,0,0);
+            var sqlVersion=Convert.ToInt64(sqlReader.GetValue(1));
+            if (sqlReader.IsDBNull(0)) return (null,sqlVersion,maxCharacters+1);
+            var sqlContent=sqlReader.GetString(0);
+            if (sqlContent.Length>maxCharacters || sqlContent.Contains('\0') ||
+                Convert.ToInt64(sqlReader.GetValue(2)) != (long)sqlContent.Length*2)
+                return (null,sqlVersion,maxCharacters+1);
+            return (sqlContent,sqlVersion,sqlContent.Length);
+        }
+        finally { if (wasClosed) connection.Close(); }
     }
 
     /// <summary>讀→改→寫的原子操作。mutation 收目前內容、回 (新內容, 結果)</summary>
@@ -150,15 +220,10 @@ public sealed class EfJsonBlobStore
 
                         if (maxCurrentCharacters is { } max)
                         {
-                            var bounded = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == _key)
-                                .Select(b => new
-                                {
-                                    Prefix = b.Content.Substring(0, max + 1),
-                                    Length = b.Content.Length
-                                }).FirstOrDefault();
-                            if (bounded is { } existing &&
-                                (existing.Length > max || existing.Prefix.Length > max ||
-                                 enforceCurrentUtf8ByteCap && System.Text.Encoding.UTF8.GetByteCount(existing.Prefix) > max))
+                            var bounded = ReadBoundedInContext(ctx,_key,max);
+                            if (bounded.ReportedLength > max || bounded.Version != 0 && bounded.Prefix is null ||
+                                enforceCurrentUtf8ByteCap && bounded.Prefix is not null &&
+                                System.Text.Encoding.UTF8.GetByteCount(bounded.Prefix) > max)
                                 throw new InvalidDataException($"Blob '{_key}' exceeds its {max}-character/byte mutation limit.");
                         }
 

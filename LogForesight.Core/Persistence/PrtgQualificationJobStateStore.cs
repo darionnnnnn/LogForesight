@@ -202,11 +202,9 @@ public sealed class Sensor
     private static string? ReadResumeAuthority(LfDbContext ctx, string key)
     {
         const int cap = PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters;
-        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
-            .Select(blob => new { Prefix = blob.Content.Substring(0, cap + 1), Length = blob.Content.Length })
-            .SingleOrDefault();
-        if (row is null) return null;
-        if (row.Length > cap || row.Prefix.Length > cap)
+        var row = EfJsonBlobStore.ReadBoundedInContext(ctx,key,cap);
+        if (row.Version == 0 && row.ReportedLength == 0 && row.Prefix is null) return null;
+        if (row.ReportedLength > cap || row.Prefix is null)
             throw new InvalidDataException("qualification-job-authority-cap-exceeded");
         return row.Prefix;
     }

@@ -91,11 +91,9 @@ public sealed class PrtgTrustedSamplingBindingStore
 
     private static string? ReadAuthorityContent(LfDbContext ctx, string key)
     {
-        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
-            .Select(blob => new { Prefix = blob.Content.Substring(0, MaximumAuthorityCharacters + 1), Length = blob.Content.Length })
-            .SingleOrDefault();
-        if (row is null) return null;
-        if (row.Length > MaximumAuthorityCharacters || row.Prefix.Length > MaximumAuthorityCharacters)
+        var row = EfJsonBlobStore.ReadBoundedInContext(ctx,key,MaximumAuthorityCharacters);
+        if (row.Version == 0 && row.ReportedLength == 0 && row.Prefix is null) return null;
+        if (row.ReportedLength > MaximumAuthorityCharacters || row.Prefix is null)
             throw new InvalidDataException("PRTG binding authority document exceeds its bounded read limit.");
         return row.Prefix;
     }
