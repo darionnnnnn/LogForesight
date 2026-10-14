@@ -96,4 +96,3 @@ try {
   if ([IO.Path]::GetDirectoryName($canonical) -ine [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')) { throw 'Refusing cleanup outside the owned temporary root.' }
   if (Test-Path -LiteralPath $canonical) { Remove-Item -LiteralPath $canonical -Recurse -Force }
 }
-
