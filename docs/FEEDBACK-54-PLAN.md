@@ -281,3 +281,10 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 來源持久列數／所有權及prefix尚待E1正式audit，工具明列false，不能把checkpoint當完整receipt。報告位於work/round54/a1-capacity-preflight.json。
 - SQL只讀事實：現有MSSQLLocalDB為Express Edition 13.0.4001.0／EngineEdition4；不支援本輪完整密度目標，LocalDB小型相容結果不當G4容量PASS。完整SQL須取得適合的自有隔離engine。
 - A1仍待source cost及全卷峰值預檢，不勾E06／E07父TODO。本段僅可交付只讀預檢工具及其定向驗證。
+
+### A2第一段：驗收清單與逐檢查證據接線
+
+- 執行者：gpt-6-luna medium；主代理直接檢查diff、initializer／recorder真實消費端並獨立重跑。修改僅scripts/round53-user-matrix相關腳本與README，沒有建立新帳號或變更權限。
+- 交付：validator逐R54／C54／4個refinement、固定相依與Q journey對照，核四真實＋一合成角色；initializer輸出全部pending欄位，recorder逐check ID記錄到獨立contract JSONL，不更新aggregate acceptance。
+- 主代理驗證：Manifest、CoverageInventory、7個清單否定案例通過；新增owned縮小fixture實際執行initializer→recorder，驗R54／C54／refinement／M54-global／M54-scoped及舊U53路徑。缺／錯CheckId、unknown ID及來源commit不符皆拒絕且不改ledger。此fixture使用明示fake build verifier，只證明記錄接線，不是實際build或browser驗收。
+- 首次獨立fixture找出C54單數required接線及PowerShell單字串索引缺陷，修正後相同fixture通過；原失敗不改称PASS。真實登入、serverAdmin及完整瀏覽器／即時撤權流程仍由F2驗；回退工具另段處理。A2父階段尚未全部完成。

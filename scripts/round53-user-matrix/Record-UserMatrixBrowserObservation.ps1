@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$OwnerFile,
     [Parameter(Mandatory = $true)][string]$RequirementId,
     [Parameter(Mandatory = $true)][ValidateSet('passed','failed','inconclusive')][string]$ObservedResult,
+    [string]$CheckId,
     [Parameter(Mandatory = $true)][string]$Observation,
     [Parameter(Mandatory = $true)][string]$EvidenceFile
 )
@@ -24,6 +25,7 @@ $fixture = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if ($fixture.Schema -cne 'lf-round53-user-matrix-fixture-v1' -or $fixture.RunId -cne $owner.RunId -or $fixture.Status -cne 'running' -or $fixture.SyntheticOnly -ne $true) { throw 'Fixture manifest identity or synthetic boundary mismatch.' }
 
 $matrix = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'user-matrix.json') -Raw | ConvertFrom-Json
+$inventory = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'coverage-inventory.json') -Raw | ConvertFrom-Json
 $matchList = @()
 foreach ($group in @(
     @{ Kind='acceptanceCriteria'; Items=$matrix.acceptanceCriteria },
@@ -32,9 +34,34 @@ foreach ($group in @(
     @{ Kind='roles'; Items=$matrix.roles },
     @{ Kind='controlledSourceScenarios'; Items=$matrix.controlledSourceScenarios }
 )) { foreach ($item in $group.Items) { if ($item.id -ceq $RequirementId) { $matchList += [pscustomobject]@{ Kind=$group.Kind; Item=$item } } } }
+$contractGroups = @(
+    @{ Kind='round54Reviews'; Items=@($inventory.round54ReviewAdditions) },
+    @{ Kind='round54Contracts'; Items=@($inventory.round54ContractCorrections) },
+    @{ Kind='round54ExecutionRefinements'; Items=@($inventory.round54ExecutionRefinements) },
+    @{ Kind='maintenanceRoles'; Items=@($matrix.maintenanceRoleMatrix.roles) },
+    @{ Kind='syntheticDefenseCases'; Items=@($matrix.maintenanceRoleMatrix.syntheticDefenseCases) }
+)
+foreach ($group in $contractGroups) { foreach ($item in $group.Items) { if ($item.id -ceq $RequirementId) { $matchList += [pscustomobject]@{ Kind=$group.Kind; Item=$item } } } }
 $matches = @($matchList)
-if ($matches.Count -ne 1) { throw "RequirementId '$RequirementId' must identify exactly one AC/U53/Q/role/source scenario in user-matrix.json." }
+if ($matches.Count -ne 1) { throw "RequirementId '$RequirementId' must identify exactly one matrix or Round54 contract ID." }
 $requirement = $matches[0]
+$contractKind = $requirement.Kind -in @('round54Reviews','round54Contracts','round54ExecutionRefinements','maintenanceRoles','syntheticDefenseCases')
+if ($contractKind) {
+    if ([string]::IsNullOrWhiteSpace($CheckId)) { throw 'Round54 observations require a CheckId so each mandatory check is recorded independently.' }
+    $declaredChecks = switch ($requirement.Kind) {
+        'round54Reviews' { @($requirement.Item.requiredChecks) }
+        'round54Contracts' { @($requirement.Item.required) }
+        'round54ExecutionRefinements' { @($requirement.Item.checks) }
+        'maintenanceRoles' { @('identity-and-capability','visible-details-and-direct-api','effective-scope-and-side-effects') }
+        'syntheticDefenseCases' { @('synthetic-component-authorization-filter') }
+    }
+    $declaredChecks = @($declaredChecks)
+    $declaredCheckCount = $declaredChecks.Count
+    if ($CheckId -cnotmatch '^check-\d{2}$' -or [int]$CheckId.Substring(6,2) -lt 1 -or [int]$CheckId.Substring(6,2) -gt $declaredCheckCount) { throw "CheckId '$CheckId' is not declared for $RequirementId." }
+    $declaredCheck = [string]$declaredChecks[[int]$CheckId.Substring(6,2)-1]
+} else { $declaredCheck = $null }
+if ($requirement.Kind -eq 'syntheticDefenseCases' -and $ObservedResult -eq 'passed' -and
+    ($requirement.Item.browserAcceptance -ne $false -or $requirement.Item.provisionAccount -ne $false)) { throw 'Synthetic defense evidence cannot be represented as browser acceptance or a provisioned account.' }
 
 # Evidence must be an operator-captured, bounded artifact saved in this run. The recorder only
 # appends an observation; it does not infer a pass from the artifact or change matrix readiness.
@@ -48,16 +75,20 @@ $artifactInfo = Get-Item -LiteralPath $evidenceFullPath
 if ($artifactInfo.Length -le 0 -or $artifactInfo.Length -gt 15MB) { throw 'EvidenceFile must be nonempty and no larger than 15 MiB.' }
 if ([string]::IsNullOrWhiteSpace($Observation) -or $Observation.Length -gt 2000) { throw 'Observation must be 1–2000 characters.' }
 
-$recordPath = Join-Path $runRoot 'evidence\browser-observations.jsonl'
+$recordName = if ($requirement.Kind -in @('round54Reviews','round54Contracts','round54ExecutionRefinements','maintenanceRoles','syntheticDefenseCases')) { 'round54-contract-observations.jsonl' } else { 'browser-observations.jsonl' }
+$recordPath = Join-Path $runRoot (Join-Path 'evidence' $recordName)
 [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($recordPath)) | Out-Null
 [IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
 $relativeArtifact = [IO.Path]::GetRelativePath($runRoot, $evidenceFullPath).Replace('\','/')
 $record = [ordered]@{
-    schema='lf-round53-user-matrix-browser-observation-v1'
+    schema=if ($recordName -eq 'browser-observations.jsonl') { 'lf-round53-user-matrix-browser-observation-v1' } else { 'lf-round54-contract-observation-v1' }
     recordedAtUtc=[DateTimeOffset]::UtcNow.ToString('O')
     runId=$owner.RunId
     requirementKind=$requirement.Kind
     requirementId=$RequirementId
+    checkId=$CheckId
+    declaredCheck=$declaredCheck
+    evidenceType=if ($requirement.Kind -eq 'syntheticDefenseCases') { 'synthetic-authorization-component' } elseif ($requirement.Kind -eq 'maintenanceRoles') { 'real-login-maintenance-scenario' } else { 'operator-recorded-contract-observation' }
     observedResult=$ObservedResult
     observation=$Observation
     evidence=[ordered]@{ path=$relativeArtifact; sha256=(Get-FileHash -LiteralPath $evidenceFullPath -Algorithm SHA256).Hash.ToLowerInvariant(); bytes=$artifactInfo.Length }
@@ -65,4 +96,4 @@ $record = [ordered]@{
     limitations=@('Manually recorded observation; this helper does not validate the screenshot or browser interaction.', 'One observation does not mark an AC, journey, quality objective, or full matrix accepted.', 'Synthetic fixture evidence is not production or native-source evidence.')
 }
 Add-Content -LiteralPath $recordPath -Value ($record | ConvertTo-Json -Depth 12 -Compress) -Encoding utf8
-[pscustomobject]@{ RunId=$owner.RunId; RequirementKind=$requirement.Kind; RequirementId=$RequirementId; Result=$ObservedResult; EvidencePath=$relativeArtifact; RecordPath=$recordPath; AggregateAcceptanceChanged=$false }
+[pscustomobject]@{ RunId=$owner.RunId; RequirementKind=$requirement.Kind; RequirementId=$RequirementId; Result=$ObservedResult; EvidencePath=$relativeArtifact; RecordPath=$recordPath; AggregateAcceptanceChanged=$false; BrowserAcceptanceChanged=$false }
