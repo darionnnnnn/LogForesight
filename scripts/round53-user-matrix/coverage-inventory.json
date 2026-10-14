@@ -351,7 +351,8 @@
       "stage": "A2",
       "required": "Four real-login maintenance scenarios plus one synthetic component defense; no new role or authorization expansion.",
       "status": "planned-not-implemented",
-      "evidence": []
+      "evidence": [],
+      "refinementIds": []
     },
     {
       "id": "C54-02",
@@ -361,7 +362,8 @@
       "stage": "D1",
       "required": "Evidence-dependency isolation; unreadable shared disk evidence blocks dependent disk qualification, not independent work; no storage redesign.",
       "status": "planned-not-implemented",
-      "evidence": []
+      "evidence": [],
+      "refinementIds": []
     },
     {
       "id": "C54-03",
@@ -371,7 +373,11 @@
       "stage": "F2",
       "required": "Manual and both automatic purge entry points share safety and durable partial recovery; preserve automatic scope/shrink guards.",
       "status": "planned-not-implemented",
-      "evidence": []
+      "evidence": [],
+      "refinementIds": [
+        "C54-03-O",
+        "C54-03-T"
+      ]
     },
     {
       "id": "C54-04",
@@ -381,7 +387,10 @@
       "stage": "B2",
       "required": "Freeze exact rollback target and backup set before upgrade; reject unproven direct same-data downgrade; account for later replies/jobs/mail.",
       "status": "planned-not-implemented",
-      "evidence": []
+      "evidence": [],
+      "refinementIds": [
+        "C54-04-B"
+      ]
     },
     {
       "id": "C54-05",
@@ -390,6 +399,102 @@
       ],
       "stage": "F2",
       "required": "Five-minute preview, exact invalidators, idempotent confirmation, permission revocation and safe resume/new-operation distinction.",
+      "status": "planned-not-implemented",
+      "evidence": [],
+      "refinementIds": [
+        "C54-05-A",
+        "C54-03-T"
+      ]
+    }
+  ],
+  "round54ExecutionRefinements": [
+    {
+      "id": "C54-03-O",
+      "contracts": [
+        "C54-03"
+      ],
+      "reviews": [
+        "R54-01"
+      ],
+      "stages": [
+        "F2",
+        "G3"
+      ],
+      "title": "Parent-child purge ownership",
+      "checks": [
+        "Automatic purge inherits a verified parent operation identity from daily sync, standalone sync or sync inside backfill; do not reject a valid child merely because its own parent is running.",
+        "Only that parent may delegate the child step; competing external operations remain excluded. Parent cancellation or loss of ownership stops the child at a safe point.",
+        "Verify daily-sync-to-purge and backfill-sync-to-purge success, competing manual/automatic rejection, cancellation and no self-wait or ownership leak."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "C54-05-A",
+      "contracts": [
+        "C54-05"
+      ],
+      "reviews": [
+        "R54-01",
+        "R54-07"
+      ],
+      "stages": [
+        "A2",
+        "F2",
+        "G3"
+      ],
+      "title": "Live authority per batch",
+      "checks": [
+        "Persist actor identity; before new batches/resume resolve current account state and capabilities through the existing authorization rules, not captured HTTP principal/claims.",
+        "Disable user, remove Admin and disable group without another request from the actor; no subsequent batch may start. For supported multi-process operation verify durable permission changes across processes, not process-local version cache only.",
+        "Keep Core free of duplicated role rules. Test serverAdmin configuration/restart withdrawal separately and reject stale resume; log the stopping reason and exact partial result."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "C54-03-T",
+      "contracts": [
+        "C54-03",
+        "C54-05"
+      ],
+      "reviews": [
+        "R54-01"
+      ],
+      "stages": [
+        "F2",
+        "G3"
+      ],
+      "title": "Deletion and durable progress consistency",
+      "checks": [
+        "Each committed deletion batch and progress/result evidence are atomically consistent or have a proven equivalent recovery protocol; memory-only totals are insufficient.",
+        "Inject failure before commit, after deletion commit before response/progress observation, and before result delivery; restart/retry resolves the same operation without lost or double-counted progress or inclusion of new data.",
+        "Distinguish rows removed by this operation from rows removed by retention/other legitimate work; verify accepted, deleted, otherwise-removed and remaining sets exactly on both providers."
+      ],
+      "status": "planned-not-implemented",
+      "evidence": []
+    },
+    {
+      "id": "C54-04-B",
+      "contracts": [
+        "C54-04"
+      ],
+      "reviews": [
+        "R54-05"
+      ],
+      "stages": [
+        "A2",
+        "B2",
+        "G3",
+        "H1",
+        "H2"
+      ],
+      "title": "Rollback pre-start gate",
+      "checks": [
+        "A2 specifies and later delivers an executable rollback controller/tool with a pre-start compatibility gate; it owns rejection, not an assumption that old binaries understand new authority.",
+        "Before restored Web or background workers start, isolate schedules, source writes and notification dispatch. Keep the gate closed until exact artifact/DB/key/config, post-backup deltas and notification dedupe are verified; failure never releases isolation.",
+        "B2 tests time-authority rollback with queued mail/jobs and replies; G3 and H recheck final artifacts including F2 purge state. No external side effects occur before gate release; unproven same-data downgrade is rejected."
+      ],
       "status": "planned-not-implemented",
       "evidence": []
     }

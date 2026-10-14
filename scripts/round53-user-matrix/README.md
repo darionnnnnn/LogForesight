@@ -143,3 +143,14 @@ C54-01 maps to R54-07/A2; C54-02 to R54-06/D1; C54-03 and C54-05 to R54-01/F2; C
 Manual purge and both automatic callers (PrtgDailyPipeline, PrtgStructureSyncRunner) share ownership and durable partial-progress protection. Automatic purge binds the successful sync generation and keeps existing scope/shrink guards, without requiring manual preview. A manual preview lasts five minutes from server creation and binds actor/permission version, source/mapping/keep-set and candidate data boundary. Duplicate accepted confirmation returns the same operation. Permission loss before acceptance means zero deletion; during execution it stops at the next safe point before any new batch. Resume needs current Maintain and unchanged accepted scope/generation; otherwise obtain a new preview and operation linked to previous partial results. Never silently add newly eligible data to a prior approval.
 
 A2 freezes an exact previous artifact and paired pre-upgrade DB/key/config backup for B2 rollback. Setting restoration is distinct from binary rollback. Same-data downgrade is allowed only with explicit compatibility evidence; otherwise reject it and use paired restore. Verify cases/replies/jobs and mail dedupe, account for changes after the backup and never blindly resend externally accepted mail after restore. PLAN §4.9 specifies authoritative details. No feature, fixture or validation script is implemented by this update.
+
+### Execution refinements linked to existing C54 contracts (planned only)
+
+| Refinement | Contracts | Stages | Required evidence |
+|---|---|---|---|
+| C54-03-O | C54-03 | F2, G3 | Legitimate child purge inherits verified parent ownership; daily sync and sync inside backfill succeed while competing operations are excluded; cancellation stops at a safe point |
+| C54-05-A | C54-05 | A2, F2, G3 | Live authority without an actor refresh request; disable account/group or remove Admin; supported cross-process changes and real serverAdmin withdrawal/restart |
+| C54-03-T | C54-03, C54-05 | F2, G3 | Atomic or equivalently recoverable delete/progress; commit-unknown restart; precise own-deleted versus otherwise-removed versus remaining sets |
+| C54-04-B | C54-04 | A2, B2, G3, H1, H2 | Executable pre-start rollback gate, all side effects isolated until compatibility/delta/dedupe checks pass, final purge-state rollback included |
+
+The canonical pending checks and evidence slots are `coverage-inventory.json.round54ExecutionRefinements`; PLAN §4.10 defines the contracts. The maintenance matrix adds live-authority acceptance metadata, not accounts or a new authorization model. Existing validators do not yet validate these new fields; A2 implements that support later. These additions do not implement purge, rollback, fixtures or validators.

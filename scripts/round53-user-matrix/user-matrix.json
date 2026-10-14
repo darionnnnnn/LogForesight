@@ -137,7 +137,15 @@
         "browserAcceptance": false,
         "provisionAccount": false
       }
-    ]
+    ],
+    "liveAuthorityAcceptance": {
+      "status": "planned-not-implemented",
+      "refinementId": "C54-05-A",
+      "regularAdmin": "Disable account, remove Admin membership, or disable granting group while the operation runs; actor sends no refresh request. Check exact stop before any new batch.",
+      "rescue": "Use real serverAdmin identity; configuration withdrawal/restart must reject stale resume.",
+      "multiProcess": "When exercising supported two-process operation, durable permission changes must be observed across processes; cached HTTP claims/version alone are insufficient.",
+      "noNewRoles": true
+    }
   },
   "round54ReviewIds": [
     "R54-01",
