@@ -120,14 +120,15 @@ public abstract class JsonBlobCollection<T> where T : class
         });
 
     /// <summary>在寫入清單的同一交易內更新相依逐資源世代。</summary>
-    protected TResult MutateWithContext<TResult>(Func<LfDbContext, List<T>, List<T>, TResult> mutation) =>
+    protected TResult MutateWithContext<TResult>(Func<LfDbContext, List<T>, List<T>, TResult> mutation,
+        System.Data.IsolationLevel? isolationLevel = null, Action<LfDbContext>? beforeRead = null) =>
         _blob.MutateWithContext((ctx, raw) =>
         {
             var before = Deserialize(raw);
             var items = Deserialize(raw);
             var result = mutation(ctx, before, items);
             return (JsonSerializer.Serialize(items, LfJsonOptions.Pretty), result);
-        });
+        }, isolationLevel: isolationLevel, beforeRead: beforeRead);
 
     protected void Mutate(Action<List<T>> mutation) =>
         Mutate<object?>(items => { mutation(items); return null; });

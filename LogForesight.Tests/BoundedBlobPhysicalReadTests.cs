@@ -30,4 +30,25 @@ public sealed class BoundedBlobPhysicalReadTests : IDisposable
         using var transaction=context.Database.BeginTransaction();
         Assert.Equal(result,EfJsonBlobStore.ReadBoundedInContext(context,"bounded-physical",16));
     }
+
+    [Fact]
+    public void PreReadFenceRunsBeforeContentAndSharesRollbackTransaction()
+    {
+        var blob=fixture.Blob("bounded-fenced");
+        blob.Mutate(_ => ("old",true));
+        var mutated=false;
+        Assert.Throws<InvalidDataException>(() => blob.MutateWithContext((_,raw) =>
+        {
+            mutated=true;
+            return ("new",true);
+        },maxCurrentCharacters:16,beforeRead:ctx =>
+        {
+            Assert.NotNull(ctx.Database.CurrentTransaction);
+            ctx.Database.ExecuteSqlRaw("UPDATE lf_blobs SET content = {0}, version = version + 1 WHERE blob_key = {1}",
+                "abcdefghijklmnopq","bounded-fenced");
+        }));
+        Assert.False(mutated);
+        Assert.Equal("old",blob.Read());
+        Assert.Equal(1,blob.ReadBoundedWithVersion(16).Version);
+    }
 }

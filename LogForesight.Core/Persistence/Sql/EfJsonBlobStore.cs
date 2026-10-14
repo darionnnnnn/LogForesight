@@ -186,7 +186,7 @@ public sealed class EfJsonBlobStore
     internal TResult MutateWithContext<TResult>(Func<LfDbContext, string?, (string content, TResult result)> mutation,
         int? maxCurrentCharacters = null, IsolationLevel? isolationLevel = null,
         bool skipUnchangedContent = false, string? serializeSqlServerWriterKey = null,
-        bool enforceCurrentUtf8ByteCap = true)
+        bool enforceCurrentUtf8ByteCap = true, Action<LfDbContext>? beforeRead = null)
     {
         // 行程內序列化；跨程序靠 DB 交易（SQLite 寫入鎖／SqlServer 交易）
         //
@@ -215,9 +215,12 @@ public sealed class EfJsonBlobStore
                         // 加入的列，重試時再 Add 一次會造成重複追蹤
                         using var ctx = _contextFactory();
                         using var tx = ctx.Database.BeginTransaction(isolationLevel ?? IsolationLevel.Unspecified);
+                        beforeRead?.Invoke(ctx);
                         if (_serializeSqlServerWriters) SerializeSqlServerWriters(ctx, _key);
                         if (serializeSqlServerWriterKey is not null) SerializeSqlServerWriters(ctx, serializeSqlServerWriterKey);
 
+                        long? boundedVersion = null;
+                        bool boundedFound = false;
                         if (maxCurrentCharacters is { } max)
                         {
                             var bounded = ReadBoundedInContext(ctx,_key,max);
@@ -225,9 +228,15 @@ public sealed class EfJsonBlobStore
                                 enforceCurrentUtf8ByteCap && bounded.Prefix is not null &&
                                 System.Text.Encoding.UTF8.GetByteCount(bounded.Prefix) > max)
                                 throw new InvalidDataException($"Blob '{_key}' exceeds its {max}-character/byte mutation limit.");
+                            boundedVersion = bounded.Version;
+                            boundedFound = bounded.Prefix is not null;
                         }
 
-                        var row = ctx.Blobs.FirstOrDefault(b => b.BlobKey == _key);
+                        var row = boundedVersion is { } expectedVersion
+                            ? ctx.Blobs.FirstOrDefault(b => b.BlobKey == _key && b.Version == expectedVersion)
+                            : ctx.Blobs.FirstOrDefault(b => b.BlobKey == _key);
+                        if (boundedFound && row is null)
+                            throw new DbUpdateConcurrencyException("Blob changed after its bounded mutation read.");
                         var (content, result) = mutation(ctx, row?.Content);
 
                         if (skipUnchangedContent && row != null && StringComparer.Ordinal.Equals(row.Content, content))
