@@ -328,6 +328,12 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 小型SQLite：兩host各一sensor、各兩個可信hour；先確認兩者正式finding，再損壞其中一個mode，精確核另一host保留唯一formal finding、壞hostInsufficient／版本-1、壞文件零寫入。ASCII超限與壞JSON兩反例＋既有trial/restart/one-use/rule變動回歸共10/10通過、零略過、47秒，TRX work/round54-mode-validation/work/d1-mode-consumer/d1-mode-consumer-stable-fixture.trx。
 - 原fixture建立第二資源時意外改ValidFrom／settings revision，先導致兩個否定案例在正式baseline前失敗；修成共享既有來源契約後重驗通過，沒有放寬production authority。首次fixture還有以finding.HostId存取不存在欄位的compile錯誤，已改核SensorObjid。全部失敗log保留；此段不替代完整mail組合、disk共用等待、維護修復或SQL邊界驗收。
 
+### D1第六段：mode維護寫入與未知欄位
+
+- mode停用、trial保存／移除及consume維持原交易，先由DB投影cap+1字元檢查再讀完整row；補掉停用及繼承Update的無界讀取。此文件採262,144字元限制，UTF-8 bytes不再誤當相同字元上限；其他原有byte-bound呼叫保持原契約。
+- JSON document、grant、revocation及replay job以extension data保留未知欄位，維護已知欄位不靜默丟棄未認識內容。小型SQLite測例核90,000中文字（字元合格但UTF-8超262,144 bytes）的正式mode停用、未知document／grant欄位保留，以及超限停用／trial保存拒絕且content/version不變；既有atomic revocation回歸合計20/20通過、零skip、22秒，TRX work/round54-mode-validation/work/d1-character-mutation/d1-character-mutation.trx。
+- 尚未替代SQL Server實際邊界核對、超限／損壞文件管理修復入口及完整shared snapshot維護驗收。
+
 ### E1第一段：初始化、升級與前綴安全恢復
 
 - 已補初始化marker／checkpoint中斷恢復、legacy adoption完整結構與deterministic prefix稽核、owned tool upgrade intent與四個提交邊界恢復，以及有界4096字元log scanner。初始值表非空或自增序號已使用即拒絕；沒有checkpoint時須先由原工具恢復，不能跨版直接生成。結構marker已提交時保持既有結構及時間戳。

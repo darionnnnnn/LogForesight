@@ -115,7 +115,8 @@ public sealed class EfJsonBlobStore
     /// <summary>在同一個 JSON blob 交易內更新其他資料列，供需要先失效證據再發布設定的寫入端使用。</summary>
     internal TResult MutateWithContext<TResult>(Func<LfDbContext, string?, (string content, TResult result)> mutation,
         int? maxCurrentCharacters = null, IsolationLevel? isolationLevel = null,
-        bool skipUnchangedContent = false, string? serializeSqlServerWriterKey = null)
+        bool skipUnchangedContent = false, string? serializeSqlServerWriterKey = null,
+        bool enforceCurrentUtf8ByteCap = true)
     {
         // 行程內序列化；跨程序靠 DB 交易（SQLite 寫入鎖／SqlServer 交易）
         //
@@ -156,7 +157,8 @@ public sealed class EfJsonBlobStore
                                     Length = b.Content.Length
                                 }).FirstOrDefault();
                             if (bounded is { } existing &&
-                                (existing.Length > max || System.Text.Encoding.UTF8.GetByteCount(existing.Prefix) > max))
+                                (existing.Length > max || existing.Prefix.Length > max ||
+                                 enforceCurrentUtf8ByteCap && System.Text.Encoding.UTF8.GetByteCount(existing.Prefix) > max))
                                 throw new InvalidDataException($"Blob '{_key}' exceeds its {max}-character/byte mutation limit.");
                         }
 

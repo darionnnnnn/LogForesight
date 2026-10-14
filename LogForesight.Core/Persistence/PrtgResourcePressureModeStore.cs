@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 
@@ -97,7 +98,7 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
         ArgumentNullException.ThrowIfNull(grant);
         if (!IsValid(grant)) throw new ArgumentException("PRTG resource mode grant is invalid.", nameof(grant));
         var saved = false;
-        Update(document =>
+        UpdateMode(document =>
         {
             document.Grants ??= [];
             if (document.Grants.Count > MaximumResourcesPerHost)
@@ -312,12 +313,13 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
             if (serialized.Length > MaximumDocumentCharacters)
                 throw new InvalidDataException("PRTG resource mode document exceeds its bounded write limit.");
             return (serialized, signalPresent);
-        }, skipUnchangedContent: true);
+        }, maxCurrentCharacters: MaximumDocumentCharacters, skipUnchangedContent: true,
+            enforceCurrentUtf8ByteCap: false);
     }
 
     internal void RemoveTrial(long hostId, long sensorObjid, PrtgResourceFamily family, string trialResultHash)
     {
-        Update(document =>
+        UpdateMode(document =>
         {
             document.Grants ??= [];
             document.Grants.RemoveAll(grant => grant.HostId == hostId && grant.SensorObjid == sensorObjid &&
@@ -417,6 +419,9 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
             progress.Status is PrtgModeReplayStatus.Completed or PrtgModeReplayStatus.Superseded;
     }
 
+    private void UpdateMode(Action<PrtgResourcePressureModeDocument> update)
+        => MutateModeDocument((_, document) => { update(document); return true; });
+
     private bool MutateModeDocument(Func<LfDbContext, PrtgResourcePressureModeDocument, bool> mutate)
     {
         return blob.MutateWithContext((ctx, raw) =>
@@ -438,7 +443,8 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
             if (content.Length > MaximumDocumentCharacters)
                 throw new InvalidDataException("PRTG resource mode document exceeds its bounded write limit.");
             return (content, changed);
-        }, maxCurrentCharacters: MaximumDocumentCharacters, skipUnchangedContent: true);
+        }, maxCurrentCharacters: MaximumDocumentCharacters, skipUnchangedContent: true,
+            enforceCurrentUtf8ByteCap: false);
     }
 
     private static bool IsValidReplayJob(PrtgResourcePressureModeReplayJob? job) =>
@@ -454,6 +460,8 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
 
 public sealed class PrtgResourcePressureModeDocument
 {
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
     public List<PrtgResourcePressureModeGrant> Grants { get; set; } = [];
     public List<PrtgResourcePressureModeRevocation> Revocations { get; set; } = [];
     public List<PrtgResourcePressureModeReplayJob> ReplayJobs { get; set; } = [];
@@ -474,11 +482,19 @@ public sealed record PrtgResourcePressureModeHostPage(
 
 public sealed record PrtgResourcePressureModeRevocation(long HostId, long SensorObjid,
     PrtgResourceFamily Family, string SourceGeneration, string ResourceGeneration, DateTime DisabledAtUtc,
-    string ModeTransitionId = "");
+    string ModeTransitionId = "")
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
 
 public sealed record PrtgResourcePressureModeReplayJob(long HostId, long SensorObjid,
     PrtgResourceFamily Family, string SourceGeneration, string ResourceGeneration, bool Enabled,
-    string TransitionId, DateTime RequestedAtUtc, DateTime DueAtUtc, bool DeadlineArmed = true);
+    string TransitionId, DateTime RequestedAtUtc, DateTime DueAtUtc, bool DeadlineArmed = true)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
 
 public sealed record PrtgResourcePressureModeGrant(
     long HostId,
@@ -500,7 +516,11 @@ public sealed record PrtgResourcePressureModeGrant(
     DateTime UpdatedAtUtc,
     DateTime TrialExpiresAtUtc,
     bool TrialConsumed = false,
-    string ModeTransitionId = "");
+    string ModeTransitionId = "")
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
 
 /// <summary>Opaque one-use-to-activate token response; the store keeps only the hash.</summary>
 public sealed record PrtgResourceTrialGrant(

@@ -44,4 +44,34 @@ public sealed class PrtgResourceModeBoundedFindTests : IDisposable
         Assert.Null(Store(1).Find(1,11,PrtgResourceFamily.Cpu));
         Assert.Null(Store(1).Find(0,10,PrtgResourceFamily.Cpu));
     }
+
+    [Fact]
+    public void BoundedMutationUsesCharactersAndPreservesUnknownDocumentAndGrantFields()
+    {
+        var futureText = new string('中', 90_000);
+        var grant = Grant(1);
+        var raw = "{\"Grants\":[" + JsonSerializer.Serialize(grant).TrimEnd('}') +
+            ",\"FutureGrant\":{\"revision\":7}}],\"FutureDocument\":\"" + futureText + "\"}";
+        Assert.True(raw.Length < PrtgResourcePressureModeStore.MaximumDocumentCharacters);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(raw) > PrtgResourcePressureModeStore.MaximumDocumentCharacters);
+        Put(1, raw);
+        Assert.True(Store(1).DisableFormalMode(1,10,DateTime.UtcNow.AddMinutes(1)));
+        var content = _fixture.Blob(PrtgResourcePressureModeStore.BlobKey(1)).Read()!;
+        using var result = JsonDocument.Parse(content);
+        Assert.Equal(futureText,result.RootElement.GetProperty("FutureDocument").GetString());
+        Assert.Equal(7,result.RootElement.GetProperty("Grants")[0].GetProperty("FutureGrant").GetProperty("revision").GetInt32());
+        Assert.False(Store(1).Find(1,10,PrtgResourceFamily.Cpu)!.FormalEnabled);
+    }
+
+    [Fact]
+    public void OversizedMutationRejectsBeforeChangesAndLeavesDocumentUntouched()
+    {
+        var raw = WithPadding(1,PrtgResourcePressureModeStore.MaximumDocumentCharacters+1);
+        Put(1,raw);
+        var blob = _fixture.Blob(PrtgResourcePressureModeStore.BlobKey(1));
+        var before = blob.ReadWithVersion();
+        Assert.Throws<InvalidDataException>(() => Store(1).DisableFormalMode(1,10,DateTime.UtcNow));
+        Assert.Throws<InvalidDataException>(() => Store(1).UpsertTrial(Grant(1)));
+        Assert.Equal(before,blob.ReadWithVersion());
+    }
 }
