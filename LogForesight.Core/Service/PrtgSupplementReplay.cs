@@ -47,6 +47,8 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
         var rules = new KnownIssueRuleStore(backend.Blob("rules"));
         var currentRules = rules.Exists ? rules.Load().Content?.Rules : null;
         var liveMessageFingerprint = policy.MessageTimeFingerprint(settings.PrtgUrl);
+        var diskChannelAuthority = new Lazy<PrtgDiskChannelAuthoritySnapshot?>(() =>
+            PrtgResourceQualification.CaptureDiskChannelAuthority(backend));
         var applied = 0;
         foreach (var row in rows)
         {
@@ -103,7 +105,7 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                     else
                     {
                         if (finding.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-                            resourceCurrent = PrtgResourceQualification.IsCurrentDiskChannel(backend, row.SensorObjid.Value, identity);
+                            resourceCurrent = diskChannelAuthority.Value?.IsCurrent(row.SensorObjid.Value, identity) == true;
                         else if (PrtgFindingMapper.RequiresMessageTimeAuthority(finding) &&
                             PrtgFindingMapper.HasCurrentMessageTimeAuthority(finding, liveMessageFingerprint))
                         {
@@ -133,7 +135,7 @@ public sealed class PrtgSupplementReplay(StorageBackend backend, IHostStore host
                         if (reasons.Contains("disk-seven-day-low-water-trend") &&
                             (!resourceRules.DiskTrendEnabled || finding.PrtgTrendSourceRuleId != resourceRules.DiskTrendRuleId ||
                              finding.PrtgTrendSourceRuleFingerprint != resourceRules.DiskTrendRuleFingerprint ||
-                             !PrtgResourceQualification.IsCurrentDiskChannel(backend, row.SensorObjid.Value, identity)))
+                             diskChannelAuthority.Value?.IsCurrent(row.SensorObjid.Value, identity) != true))
                         { Mark(row, "rules-changed", null); continue; }
                     }
                     }

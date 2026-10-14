@@ -1196,6 +1196,8 @@ public class MailNotificationService
                 BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds, view.SuppressedPressurePairs), BuildContext());
         }
 
+        var diskChannelAuthority = new Lazy<PrtgDiskChannelAuthoritySnapshot?>(() =>
+            _prtgBackend is null ? null : PrtgResourceQualification.CaptureDiskChannelAuthority(_prtgBackend));
         RecipientView? Recheck(string email, RecipientView original)
         {
             var currentSettings = _settingsStore.Get();
@@ -1312,7 +1314,7 @@ public class MailNotificationService
                 return PrtgResourceProfileQualification.IsCurrentFormalPressure(_prtgBackend, hostId, sensorId,
                     issue, DateTime.UtcNow);
             if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-                return PrtgResourceQualification.IsCurrentDiskChannel(_prtgBackend, sensorId, identity);
+                return diskChannelAuthority.Value?.IsCurrent(sensorId, identity) == true;
             if (issue.RuleId != "builtin-prtg-resource-disk-pressure" &&
                 PrtgFindingMapper.RequiresMessageTimeAuthority(issue))
             {
@@ -1340,11 +1342,11 @@ public class MailNotificationService
                 if (reasons.Contains("disk-seven-day-low-water-trend") &&
                     (!resourceRules.DiskTrendEnabled || issue.PrtgTrendSourceRuleId != resourceRules.DiskTrendRuleId ||
                      issue.PrtgTrendSourceRuleFingerprint != resourceRules.DiskTrendRuleFingerprint ||
-                     !PrtgResourceQualification.IsCurrentDiskChannel(_prtgBackend, sensorId, identity))) return false;
+                     diskChannelAuthority.Value?.IsCurrent(sensorId, identity) != true)) return false;
             }
             else if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
             {
-                return PrtgResourceQualification.IsCurrentDiskChannel(_prtgBackend, sensorId, identity);
+                return diskChannelAuthority.Value?.IsCurrent(sensorId, identity) == true;
             }
             return true;
         }

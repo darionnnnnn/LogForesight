@@ -385,3 +385,9 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 重用自有 LocalDB，以每筆最多 17 UTF-16 units 驗 7 個實體讀取及 3 份 batch 文件／missing key，正常／中文 supplementary／NUL 拒絕、內容不變均通過；work/round54/sql-character-parity/provider-small-batch-result.json。前兩次在5秒連線預算的 post-login 階段逾時，保留 log；確認既有 LocalDB 運行後把此測試連線預算設為30秒，未重啟服務或建立新DB。未建立33M文件或做容量壓測。
 - 技術依據：SQLite [length](https://www.sqlite.org/lang_corefunc.html) 按codepoint且在NUL前終止，TEXT計長需載入；[incremental blob IO](https://www.sqlite.org/c3ref/blob_open.html)可唯讀TEXT。Microsoft [.NET UTF-16](https://learn.microsoft.com/en-us/dotnet/standard/base-types/character-encoding-introduction)與[SQL DATALENGTH](https://learn.microsoft.com/en-us/sql/t-sql/functions/datalength-transact-sql?view=sql-server-ver16)支持目前單位核對。官方規則與小反例沒有被記為33M極限實測。
 - 其他直接批次 projection、維護修復、全生命週期 consumer 與整輪驗收仍待完成。
+
+### D1第十段：通知／重播重用完整磁碟 readset
+
+- 每個通知／重播 operation 延遲擷取完整 semantic＋verification pair一次，逐sensor重用已解析文件並重查兩份 durable version；任一版本漂移拒絕該readset，下一operation才重新擷取。無法解析任一entry則整份pair不可用，不能跳過壞entry，也不能為每個issue重載兩份多主機共用文件。
+- 主代理隔離checkout整合61/61、零略過（3分19秒），其中readset／mixed SMTP／replay18項及F2 store/controller/protection43項。新tiny單sensor反例核重用正常pair、version變動即拒、fresh pair可重新核對、另一entry為null則全部拒且內容不變；work/round54-mode-validation/work/f2-d1-root/f2-d1-root.trx。F2另待UI／browser及提交完整相依，本段不宣稱F2父驗收完成。
+- 主代理開發時Lazy declaration先放錯其他mail closure，造成main Web編譯CS0103；已移到urgent Recheck／CurrentResource共同範圍，隔離整合通過。失敗輸出保留，不列為成功證據。

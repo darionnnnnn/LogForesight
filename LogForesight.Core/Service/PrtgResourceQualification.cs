@@ -45,6 +45,9 @@ public static class PrtgResourceQualification
 
     /// <summary>Only a complete, bounded pair of current shared documents may authorize a disk channel.</summary>
     public static bool IsCurrentDiskChannel(StorageBackend backend, long sensorId, PrtgResourceIdentity? identity)
+        => CaptureDiskChannelAuthority(backend)?.IsCurrent(sensorId,identity) == true;
+
+    internal static PrtgDiskChannelAuthoritySnapshot? CaptureDiskChannelAuthority(StorageBackend backend)
     {
         var semanticStore = new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
         var resultStore = new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey));
@@ -52,13 +55,24 @@ public static class PrtgResourceQualification
         {
             var semantic = semanticStore.CaptureSnapshot();
             var results = resultStore.CaptureSnapshot();
-            semantic.TryGetValue(sensorId, out var evidence);
-            var qualified = IsChannelCurrent(evidence, results.Get(sensorId), identity);
-            return qualified && semanticStore.IsSnapshotCurrent(semantic) && resultStore.IsSnapshotCurrent(results);
+            return new(semanticStore,resultStore,semantic,results);
         }
         catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
         {
-            return false;
+            return null;
         }
+    }
+}
+
+/// <summary>Operation-local complete disk readset; reuse parsed documents but recheck durable versions.</summary>
+internal sealed class PrtgDiskChannelAuthoritySnapshot(
+    PrtgDiskSemanticEvidenceStore semanticStore,PrtgDiskVerificationResultStore resultStore,
+    PrtgDiskSemanticEvidenceSnapshot semantic,PrtgDiskVerificationResultSnapshot results)
+{
+    internal bool IsCurrent(long sensorId,PrtgResourceIdentity? identity)
+    {
+        semantic.TryGetValue(sensorId,out var evidence);
+        return PrtgResourceQualification.IsChannelCurrent(evidence,results.Get(sensorId),identity) &&
+            semanticStore.IsSnapshotCurrent(semantic) && resultStore.IsSnapshotCurrent(results);
     }
 }
