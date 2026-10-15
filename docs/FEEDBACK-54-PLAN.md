@@ -753,3 +753,9 @@ owned runtime `a3842164129848259043ab52ca9b88d4`由原有約1.1MiB合成資料�
 主代理直接查collector、CaptureMessageTimeEvidence、compatibility serializer與正式consumer邊界；診斷JSON不被讀入正式風險權威。§8.26、30、32及本節共同覆蓋E04兩項的操作／格式契約，不替代E03、E08來源資格與業務工作流。原始產物`{local-evidence,saved-authority-local-evidence,projection-result}.json`、offline logs及harness在§8.35同目錄；第一次harness誤期望authority_status=configured，查碼確認正式值為saved-explicit-authority，只重核同一已保存產物的剩餘斷言，沒有重送設定／來源操作。原始失敗log保留。
 
 owned Web／source已停止，原小型來源DB及key hash仍與啟動前相同，clone保留供重用。原27項現4完成／23待驗，§4.12的程式可擴展性覆核仍待逐段完成，不宣稱正式效能量測。
+
+### 8.37 最小28日與七日低水位同鏈
+
+E03-T02原先只有分開的readiness／trend測例，joined receipt僅兩小時正例，缺同一正式trial service鏈。新增單一方法`RuleTrial_WithMinimumTwentyEightDayHistoryReportsExactSevenDayLowWaterAsTrialOnly`：一顆disk、28日×契約最低每天12個hourly，共336列；沿既有合法時間／磁碟語意證據及保存規則入口試算，54→27%、每天降1百分點，核28/28日Ready、latest27、exact7日到20%、predicted-low-water及ready-hit。同時規則保持停用、真實正向未觀察、結果數與336輸入列數不變，試算不冒稱正式風險命中。
+
+這是滿足28日readiness的最小單sensor輸入，不是generator固定結構或容量測試，未增加其他感測器或重跑已有邊界單元集合。只跑此方法1/1、零skip、約7秒；TRX `work/round54/acceptance-e03-lowwater/e03-lowwater.trx` SHA `EC5EC2605F29230F963C4C1507899C2138F7539B75D1D151CCE454CD6614EF02`，同目錄`dotnet-test-raw.log`。Luna high新增，主代理核實際diff、service呼叫與原始TRX，不重跑以背書。E03-T02其餘時間／semantic拒絕與正式副作用條款仍沿原證據逐條對照；此子項通過不直接勾父項，正式成品未改不再publish。

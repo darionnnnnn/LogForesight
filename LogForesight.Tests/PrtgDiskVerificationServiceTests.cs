@@ -581,6 +581,33 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void RuleTrial_WithMinimumTwentyEightDayHistoryReportsExactSevenDayLowWaterAsTrialOnly()
+    {
+        SaveTrialRule(enabled: false, thresholds: new PrtgDiskTrendThresholds(20, 0.5, 30, 28, 28, 0.70, 7));
+        SaveTrialHistory(28, dayIndex => 54 - dayIndex);
+        ConfirmTrialSemanticEvidence();
+        var beforeResults = _results.GetRecent().Count;
+
+        var trial = _service.AssessRuleTrial(1);
+
+        Assert.Equal("ready-hit", trial.Status);
+        Assert.True(trial.SemanticVerified);
+        Assert.Equal(28, trial.UsableDays);
+        Assert.Equal(28, trial.RequiredDays);
+        Assert.True(trial.PredictedHit);
+        Assert.Equal(27, trial.CurrentAvailablePercent);
+        Assert.Equal(7d, trial.EstimatedDaysToLowWater);
+        Assert.Equal(7d, trial.MaximumDaysToLowWater);
+        Assert.Equal("predicted-low-water", Assert.Single(trial.Reasons));
+        Assert.Contains("真實正向尚未觀察", trial.Message);
+        Assert.Equal("真實正向尚未觀察", trial.RealPositiveStatus);
+        Assert.False(trial.RuleEnabled);
+        Assert.Equal(beforeResults, _results.GetRecent().Count);
+        using var dbAfter = _fx.NewContext();
+        Assert.Equal(336, dbAfter.PrtgValues.Count());
+    }
+
+    [Fact]
     public void RuleTrial_AllowsLegalWindowOverThirtyFiveDaysAndReportsPositiveHitAsTrialOnly()
     {
         var thresholds = new PrtgDiskTrendThresholds(20, 0.5, 30, 36, 36, 0.70);
