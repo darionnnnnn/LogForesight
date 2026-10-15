@@ -421,3 +421,9 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 回退差額只接受同 schema、完整原生 Reply 相依圖；逐列前像 CAS、actor、父子關係、逐日與歷程一致性皆核對，保留 .NET 七位小數時間精度。單一回覆以外、未知差額、實體刪除與新清除工作表維持拒絕或 held。正式同步門檻仍為 5,000；內部測試門檻 2 只用三筆逐日列驗 pending intent 與真正消費端。
 - 主代理核對原生 SQLite before/after、恢復 DB 與 after-backup 六筆精確回讀、四份啟動保護設定、actor 竄改及一 tick 時間反例；pending intent 真正消費後為三筆逐日列與三筆歷程，來源快照雜湊未改。證據 `work/round54/a2-root/root-native-result.json`。實際 CLI 拒絕以共用 Refusal 型別回傳 structured refused-closed／exit 2。
 - 新增郵件貢獻帳本對舊版不透明時，完整保留前後原始 JSON 並持續 hold 郵件放行；資料回復另行裁定。主代理獨立 Python 小型套件 32/32 通過（零略過，32 秒）。這些證據不代表 SQL Server 回復、完整容量、正式資料無損回退或整輪驗收通過，A2／G／H 父項維持未勾。
+
+### E2執行中 ownership 正常端點（2026-10-15）
+
+- 新增既有 Maintain 能力下、只接受直接 loopback 的 runtime ownership 查詢；回傳實際 PID／啟動 UTC ticks、DataRoot、SQLite DB 路徑與已載入 Web／Core MVID／路徑，沒有連線字串或憑證。未配置 descriptor hash、轉送來源、非檔案 SQLite 或無實體 assembly 均拒絕；descriptor hash 只作比對 pin，不自行等同來源資格。
+- 主代理兩次獨立定向檢查均為 4/4（包含於 `root-timebasis-owner-mail-r1` 與隔離 `root-authority-consumers-r5`），並以自有約 1.5MiB fixture 的正常登入 HTTP 核對回應與真實行程／已載入 DLL／資料路徑。HTTP receipt：`work/round54/browser-timebasis-normal-bootstrap-result.json`。fixture 已停止並保留；未啟動完整容量流程。
+- 資格準備 launcher／獨立磁碟校驗工具仍屬下一接線段；本端點完成不代表完整 E2 準備、來源資格或同 HEAD 整輪驗收通過。
