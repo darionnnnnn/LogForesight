@@ -1342,4 +1342,4 @@ scripts/prtg-workload/Initialize-QualificationMatrixRun.ps1 透過同一 authent
 
 ### 第54輪實作範圍與交付限制
 
-訊息日期授權已接入設定、歷史 fetch、timeline、finding 持久指紋及 probe；正常磁碟核驗入口已傳入 source contract，缺契約或世代漂移仍拒絕正式資格。實作及小範圍證據統一見 [第54輪 PLAN](FEEDBACK-54-PLAN.md) §§2、8；原25項驗收仍開，收尾程式修正後另重開2項最終成品核對；舊候選證據保留。全量資格與容量、雙provider完整恢復、完整角色及跨功能操作仍未驗收，不能宣告整輪交付通過。取數快照、raw時間授權與正式proof維持各自契約，不追認舊資料。
+訊息日期授權已接入設定、歷史 fetch、timeline、finding 持久指紋及 probe；正常磁碟核驗入口已傳入 source contract，缺契約或世代漂移仍拒絕正式資格。實作及小範圍證據統一見 [第54輪 PLAN](FEEDBACK-54-PLAN.md) §§2、8；原27項已有2項對候選b2b82708完成成品核對，其餘25項仍開；舊候選證據保留。全量資格與容量、雙provider完整恢復、完整角色及跨功能操作仍未驗收，不能宣告整輪交付通過。取數快照、raw時間授權與正式proof維持各自契約，不追認舊資料。

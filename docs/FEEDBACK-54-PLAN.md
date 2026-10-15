@@ -1,6 +1,6 @@
 # 第 54 輪規劃：PRTG 剩餘實作與完整驗收
 
-> 狀態（2026-10-15）：實作完整性已核對，目前逐項驗收；原27項在§8.26曾有E01-T01／T02完成；收尾修正正式程式後，兩項最終成品驗收重新待驗，目前27項仍開，歷史證據保留。使用者已授權逐段完成並驗證後commit／push；只做必要小範圍驗證，沿用有效證據，不執行大規模大量資料測試，不得已須先提出方案討論。本輪未宣告整體驗收通過。
+> 狀態（2026-10-15）：實作完整性已核對，目前逐項驗收；原27項現以乾淨候選b2b82708重新完成E01-T01／T02，仍開25項；§8.30記本次證據，歷史證據保留。使用者已授權逐段完成並驗證後commit／push；只做必要小範圍驗證，沿用有效證據，不執行大規模大量資料測試，不得已須先提出方案討論。本輪未宣告整體驗收通過。
 > 來源：2026-10-13 使用者明確要求將第53輪尚未實作項目移入下一輪，先收尾已實作部分。此為範圍移交，不代表原目標、容量、實用性或驗收已通過。
 > 本輪起點：`dev` 的 `a69fedd7`；工作分支 `feature/prtg-feedback-54`。第53輪乾淨驗證基準為 `638c58434f0bc01fe77e62365addeafd75680fb0`，至本輪起點僅README、PLAN與驗收JSON差異，正式程式未變。
 > 原始需求與契約：[第53輪 PLAN](FEEDBACK-53-PLAN.md) §§3、6、13、15–17；最新責任邊界為 §§5.7、5.9。
@@ -53,8 +53,8 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 
 2026-10-15依實際程式重新核對：已完成的功能實作已從§2待辦刪除；本表保留的是尚未完成的驗收／交付，不把「已有程式但未驗」誤報成「功能未寫」，也不因已有程式而刪除未執行的驗收。E02、E08-T01、E10-T01既有完成項不重開。有效分段證據可在確認相同程式／設定／環境及母體後沿用。細部使用者劇本仍以 [coverage inventory](../scripts/round53-user-matrix/coverage-inventory.json) 逐子句追蹤；原22項AC、10項U53、6項Q、7種受控來源情境、222案與53條承接缺口保留，不以27個父項掩蓋子句。
 
-- [ ] **E01-T01【承接驗收】** 收尾已修改正式程式，最終候選成品待重新核對；歷史乾淨 `cfa062e9` 已重新建置／publish，source commit、來源指紋、manifest、Web/Core 組件與執行中 probe 完全一致（§8.24）。後續若修改正式程式／依賴／設定／成品輸入，須重新核對受影響成品；純驗收紀錄不觸發重建。
-- [ ] **E01-T02【承接驗收】** 收尾已修改成品輸入，最終候選拒絕防護待核對；歷史乾淨 `cfa062e9` 成品的錯提交／偽造MVID／混版啟動拒絕已實測；未知身分／已載入組件變更後的預覽皆拒絕且零來源請求。舊尾碼拒絕沿用未改動的build identity契約證據，舊成品雜湊未變（§8.25）。
+- [x] **E01-T01【承接驗收】** 收尾修正後已對乾淨`b2b82708`重新publish、獨立核組件及執行中probe／assets一致（§8.30）；歷史乾淨 `cfa062e9` 已重新建置／publish，source commit、來源指紋、manifest、Web/Core 組件與執行中 probe 完全一致（§8.24）。後續若修改正式程式／依賴／設定／成品輸入，須重新核對受影響成品；純驗收紀錄不觸發重建。
+- [x] **E01-T02【承接驗收】** 乾淨`b2b82708`的錯提交、偽造manifest／MVID及混版皆於啟動前拒絕（§8.30）；未改的preview／舊尾碼契約沿用有效證據；歷史乾淨 `cfa062e9` 成品的錯提交／偽造MVID／混版啟動拒絕已實測；未知身分／已載入組件變更後的預覽皆拒絕且零來源請求。舊尾碼拒絕沿用未改動的build identity契約證據，舊成品雜湊未變（§8.25）。
 - [ ] **E03-T01【承接驗收】** 操作明確設定→probe→proof/profile→正式採樣→期間引擎完整鏈，核對 CPU／memory／disk／ping 樣本來源、channel、unit、scale、方向與各端點時基；available-memory 25.0834% 轉 used 74.9166%，disk 90.0887% 保留剩餘方向。
 - [ ] **E03-T02【承接驗收】** 補齊錯時區、缺單位／尺度／主通道、世代變更、陳舊 proof、DST 重複／缺小時、跨午夜與無時區歷史反例；不合格輸入保持等待、零正式副作用，維持兩完成小時、28 日與 7 日20%契約。
 - [ ] **E04-T01【承接驗收】** 逐欄核對已補強的 build／設定修訂／時區 authority／scope／readiness／guard／traffic 安全診斷／NetIQ 回執與父資格／AI 小探測輸出及其正式消費端；每個 unknown 有原因與具體缺項，不把已保存可核對資料永遠標未知。
@@ -676,3 +676,14 @@ Luna high實作、主代理逐行核對實際入口後確認：回退after-backu
 本段原始驗證：authority 12/12、formal claim正常及settings／policy別名拒絕3/3，零skip。主代理已讀TRX實際case/outcome，保存至`work/round54/closeout-review/authority.trx`（SHA256 `7A7DC33A6CB9D873F5426B838D45F61940E29AC35242D8C710C164966B049840`）與`fence.trx`（`E723FFD56B0A19E0691BC4E2D049F6D0A253665622677962819D7E2D3F7C41DC`），同目錄有build/test原始log。使用Debug定向建置，既有nullable／analyzer warnings保留，不宣稱零警告或Release最終成品驗收；測試資料為少量設定／binding／父紀錄，resume沿用101個sensor識別的兩頁metadata，不寫大量數值。修前9案失敗由實作者工具輸出確認，沒有另存原始檔，不為補檔重跑。新增及修改測例直接檢查未產生binding／qualification／formal claim與保留未知欄位，不僅檢查helper回傳。清單validator在候選重開後通過（`inventory.log`，AcceptanceClaimed=false）；未執行其他整類／全量測試。
 
 本次架構核對結論限定於已查範圍：修正沿既有Core持久層、Web能力規則及隔離工具，沒有新增正式角色、權限或儲存重構；四個確認缺陷已修，兩個未成立的清除疑點撤回。G/H、完整操作矩陣及最終有效回歸仍未通過，不能保證沒有其他bug或稱全面完美整合。文件與工具修正已分段提交`cb975a6f`、`03e16f30`並確認遠端SHA；本段Core與相依清單再以完整提交推送feature，dev維持`a69fedd7`，分支保留。
+
+
+### 8.30 更新後規劃續驗：候選成品、descriptor派送與未保存表單
+
+本次正式程式未修改，凍結候選為乾淨`b2b82708f6fe9811f3cf95f4759f68aa074fc52e`。E01因§8.29實際Core變更而重開，故只做一次必要Release publish（`dotnet publish LogForesight.Web/LogForesight.Web.csproj -c Release --no-restore -o work/round54/acceptance-b2b82708/publish`），既有nullable警告保留。`Verify-BuildIdentity.ps1`通過；兩組件來源指紋`6671f59d81f15ae128d5dfcfc3806897f016093da89670cec99c124d99cb738e`，Web SHA `028c33a4de50d678dfb63e3fb47f0fd755d46d75c64e1586740950fa0202541e`／MVID `f7b2b0a4-df5c-4054-bfad-7216b4b8d673`，Core SHA `fa283ce167ff87f37a58554454a6c3c3c938b722602b841f11e1789e87811f9f`／MVID `e176b9ed-e31f-4d51-a88f-74adbb0da572`。
+
+owned小型fixture `7226860943fb42f9b20c198390f3bf2c`正常登入後讀公開local-evidence，逐項assert執行中source commit、clean狀態、Web／Core hash及MVID與publish完全一致；來源DB／key hash未變，靜態assets來源及拷貝一致。`build-runtime-result.json`記確切結果。只執行當前成品的`Test-UserMatrixBuildFence.ps1`，錯提交／偽造manifest／實際混版皆在分配run或啟動process前拒絕，`build-fence.log`顯示ProductProcessesStarted=false。未知來源／loaded assembly改變及舊suffix的preview防護程式與測試沒有改動，沿§8.25有效子集，不重跑。E01兩項對此候選完成；將來正式成品輸入變更才重開，文件及測試紀錄不觸發重建。
+
+§4.11 descriptor原有hash小檔／靜態證據不重跑；新增`test_descriptor_dispatch.ps1`直接取正式腳本的Invoke-Api與Assert-NoReparse函式，使用計數HttpMessageHandler及固定owner替身，專驗ownership核對後、業務派送前的接線。正常值送1次；在owner核對返回前令descriptor漂移，拒絕且新增請求0，PASS（`descriptor-dispatch.log`）。沒有開DB／listener、沒有全量preflight／metadata，這不宣稱runtime owner本身或完整資格流程通過。
+
+E04-T02／AC07–08補未保存表單操作：維護帳號在瀏覽器PRTG連線表單填自有loopback與合成token、不保存，切至探測按完整探測，顯示「尚未設定PRTG連線位址，無法執行探測」。公開API核對保存URL仍空、PRTG停用且probe沒有StartedAt/isRunning；source request log尚未建立。透過同頁本機診斷按鈕實際下載5846bytes，沒有未保存token，SHA `596B22CDE36A0653DF4BA0997EF7B4EABEBEF75D650F3D862F0549267D561B80`；正常offline verifier使用當前commit／settings revision回INCOMPLETE（exit2）而非來源就緒。`unsaved-form-result.json`、`unsaved-local-download.json`、`unsaved-offline.log`保存原檔與核對。首次offline命令參數名稱誤寫未執行verifier，修正為實際Path／ExpectedRevision後執行一次，沒有重送下載或探測。E04-T02其餘timeout／truncation／revision操作缺口仍保留；§8.26已驗取消／保存來源證據不重跑。
