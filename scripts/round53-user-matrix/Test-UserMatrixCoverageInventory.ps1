@@ -104,6 +104,40 @@ if ($inventory.coverageCounting.originalTodoCount -ne 27 -or
     throw 'Round54 must preserve the original TODO/gap denominators and eight review additions.'
 }
 $reviewIds = @('R54-01','R54-02','R54-03','R54-04','R54-05','R54-06','R54-07','R54-08')
+if ($inventory.PSObject.Properties.Name -contains 'round54TodoReview') {
+    $todoReview = $inventory.round54TodoReview
+    $todoItems = @($todoReview.items)
+    # The original IDs remain traceable after individual acceptance. Do not derive
+    # this universe only from open checkboxes or a subset of the R54 associations.
+    $todoIds = @('E01-T01','E01-T02','E03-T01','E03-T02','E04-T01','E04-T02',
+        'E05-T01','E05-T02','E05-T03','E06-T01','E06-T02','E06-T03',
+        'E07-T01','E07-T02','E07-T03','E07-T04','E07-T05',
+        'E08-T02','E08-T03','E08-T04','E08-T05','E08-T06','E09-T01','E09-T02',
+        'E10-T02','E10-T03','E10-T04')
+    if ($todoReview.originalTodoCount -ne 27 -or $todoItems.Count -ne 27 -or
+        @($todoItems.id | Select-Object -Unique).Count -ne 27 -or
+        (@($todoItems.id | Sort-Object) -join ',') -cne (@($todoIds | Sort-Object) -join ',') -or
+        $todoReview.wholeRoundAccepted -ne $false) {
+        throw 'Round54 TODO review must retain all 27 original IDs exactly once without claiming whole-round acceptance.'
+    }
+    $todoPlan = Get-Content -LiteralPath (Join-Path $repoRoot 'docs/FEEDBACK-54-PLAN.md') -Raw
+    foreach ($todo in $todoItems) {
+        $accepted = $todo.status -ceq 'accepted-for-candidate'
+        if ($accepted) {
+            if ([string]::IsNullOrWhiteSpace([string]$todo.evidence) -or
+                [string]::IsNullOrWhiteSpace([string]$todo.scope) -or
+                [string]::IsNullOrWhiteSpace([string]$todo.reopenWhen)) {
+                throw "$($todo.id) accepted TODO requires evidence, bounded scope and reopening conditions."
+            }
+        } elseif ($todo.status -notin @('pending-operation','pending-coverage','pending-workload','pending-dependencies') -or
+            [string]::IsNullOrWhiteSpace([string]$todo.remaining)) {
+            throw "$($todo.id) pending TODO requires a known status and explicit remaining acceptance."
+        }
+        $checkbox = if ($accepted) { 'x' } else { ' ' }
+        $pattern = '(?m)^- \[' + [regex]::Escape($checkbox) + '\] \*\*' + [regex]::Escape([string]$todo.id) + '【'
+        if ($todoPlan -notmatch $pattern) { throw "$($todo.id) TODO review and PLAN checkbox disagree." }
+    }
+}
 $reviews = @($inventory.round54ReviewAdditions)
 if (@($reviews.id).Count -ne 8 -or @($reviews.id | Select-Object -Unique).Count -ne 8 -or
     (@($reviews.id | Sort-Object) -join ',') -cne (@($reviewIds | Sort-Object) -join ',')) { throw 'Round54 review additions must contain every R54 ID exactly once.' }

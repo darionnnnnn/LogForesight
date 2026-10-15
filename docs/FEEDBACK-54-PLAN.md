@@ -1,11 +1,11 @@
 ﻿# 第 54 輪規劃：PRTG 剩餘實作與完整驗收
 
-> 狀態：2026-10-14使用者已授權全部實作及逐段驗證後commit／push；實作中。同日最新限制：開發期間只做分段小範圍驗證，不執行大規模大量資料測試；不得已須先提出方案討論。本輪未宣告整體驗收通過。
+> 狀態（2026-10-15）：實作完整性已核對，目前逐項驗收；原27項已有E01-T01／T02完成，仍開25項，逐項裁定見§8.26。使用者已授權逐段完成並驗證後commit／push；只做必要小範圍驗證，沿用有效證據，不執行大規模大量資料測試，不得已須先提出方案討論。本輪未宣告整體驗收通過。
 > 來源：2026-10-13 使用者明確要求將第53輪尚未實作項目移入下一輪，先收尾已實作部分。此為範圍移交，不代表原目標、容量、實用性或驗收已通過。
 > 本輪起點：`dev` 的 `a69fedd7`；工作分支 `feature/prtg-feedback-54`。第53輪乾淨驗證基準為 `638c58434f0bc01fe77e62365addeafd75680fb0`，至本輪起點僅README、PLAN與驗收JSON差異，正式程式未變。
 > 原始需求與契約：[第53輪 PLAN](FEEDBACK-53-PLAN.md) §§3、6、13、15–17；最新責任邊界為 §§5.7、5.9。
 
-> 2026-10-15分段進度：urgent逐收件者重查改以結構scope與各issue實際authority隔離，Date Format-only變更不取消同父有效NetIQ／raw lane；保留原SMTP／workflow key演算法，不遷移或重置既有接受紀錄。主代理正常checkout定向驗證16/16、零skip（49秒），其中6項mail混合lane／legacy接受投影／部分SMTP重試，其餘10項為尚待UI核對的時間設定及runtime ownership；TRX `work/round54/root-timebasis-owner-mail-r1/root-timebasis-owner-mail-r1.trx`。尚待補齊跨次Notify去重、summary／digest raw重驗及replay／qualification語意相依隔離；此段不勾B2父驗收。
+> 早期分段紀錄（後續已由§8.13～8.23補齊，不是目前實作待辦）：urgent逐收件者重查改以結構scope與各issue實際authority隔離，Date Format-only變更不取消同父有效NetIQ／raw lane；保留原SMTP／workflow key演算法，不遷移或重置既有接受紀錄。主代理正常checkout定向驗證16/16、零skip（49秒），其中6項mail混合lane／legacy接受投影／部分SMTP重試，其餘10項為時間設定及runtime ownership；TRX `work/round54/root-timebasis-owner-mail-r1/root-timebasis-owner-mail-r1.trx`。當時跨次Notify去重、summary／digest raw重驗及replay／qualification隔離尚待補齊；後續實作完成不連帶表示B2完整驗收通過。
 >
 > 小範圍驗證偏差：D1子代理曾以整類filter誤跑既有501／5,001／30,000 identity案例；`work/round54/d1-bounded-consumer-r1/d1-bounded-consumer-r1.trx`六例舊SQL形狀／query-count斷言失敗，不列PASS、不重跑大量案例。已改逐方法核資料量；後續新增tiny helper邊界4/4通過，但helper測試不代替正常consumer完整驗收。33M極限文件依使用者定案僅查官方文件，禁止建立極限payload。
 
@@ -580,3 +580,45 @@ E01-T01對此正式程式成品完成；E01-T02及其他來源、操作、容量
 - E04當前clean frozen瀏覽器在`/browser-fixture/admin/prtg#probe`正常下載「本機診斷JSON（不連PRTG／AI）」；下載事件工具等待逾時，但實際5846-byte檔已落地，未重按。檔`C:/Users/eldar/Downloads/prtg-local-diagnostics-2026-10-15T06-21-18-309Z.json`，SHA256 `1c7c72b4277e6e6de6c2089fbeb13fb55e70d5af712a068e44123ff5061d74a0`，由離線verifier核目前commit為INCOMPLETE；source-not-configured、五類missing、saved bindings=0、qualified=0、AI not-probed，且不把本機檔當探測成功。完整saved-source探測／取消／版本漂移操作尚未因此通過；E04-T01／T02保留。
 
 唯讀盤點提出NetIQ摘要日疑點後，主代理追`AnalysisOrchestrator`→`NetiqPipelineService`→`NetiqSourceAttempt`→`RunMonitorService`核對：NetIQ依伺服器主機日D−1，與PRTG分析時區相互獨立。原`DateTime.Today.AddDays(-1)`符合正式消費端，撤回缺陷推論，不改程式也不新增測試。既有證據只有PLAN摘要而未找到原始receipt者，僅列歷史線索，不能擴大認列目前未覆蓋條款。
+
+### 8.26 原27項驗收逐項裁定與最小剩餘範圍（2026-10-15）
+
+本次逐項核對的是原27個ID，沒有縮小驗收契約。已完成2項、仍開25項；§3的checkbox與`coverage-inventory.json.round54TodoReview`同步。主代理親查目前程式、建置／HTTP／TRX／下載原始產物；兩個gpt-6-luna high僅做唯讀條款盤點，沒有實作或執行測試。NetIQ日期疑點已由主代理否定並撤回。這不是不同於全部實作者的整輪換模型體檢，也沒有宣告G/H或整輪PASS。
+
+證據沿用方式：§8中有原始receipt且相關程式／依賴／設定／環境仍覆蓋該子條款者保留；較早來源或只有第53輪PLAN摘要而未找到原始receipt者列歷史線索，不擴大為目前整項驗收。原始53個gap及R54/C54各子條款仍保留，父項勾選不連帶授權來源／容量／角色動線。
+
+| 原TODO | 可用證據及本次裁定 | 仍缺的客觀門檻／下一步 |
+|---|---|---|
+| E01-T01 | 完成；§8.24 clean publish＋實際loaded probe的SHA/MVID及assets完全一致。 | 只有正式成品輸入改變才重開；文件提交不重建。 |
+| E01-T02 | 完成；§8.25三種實體啟動拒絕＋未知身分／換DLL預覽兩反例，舊尾碼契約未改沿用。 | 相同拒絕行為不再重跑；不得覆寫舊成品。 |
+| E03-T01 | §8.25目前joined probe/profile/數值/期間引擎與正常disk核驗2案通過；精確轉換值已核對。 | Ping實際來源父身分／raw時基仍partial；完整明示時間設定→四類來源→正式consumer操作不能用合成Ping未知替代。 |
+| E03-T02 | 保留先前parser／profile的缺值、單位、scale、primary、世代／stale、DST與時間authority拒絕子項；§8.14～8.20補raw ABA及正式consumer隔離。 | 尚欠逐子句完整證據對照，尤其無時區歷史／跨午夜與28日、7日20%同鏈引用；不得因51/152案摘要直接勾整項，亦不重跑其全母體。 |
+| E04-T01 | §8.24～8.25 clean local export；本節目前saved-source完整probe及取消後證據，build/settings/本機摘要有實際輸出。 | saved時區／scope／guard／traffic／NetIQ父資格／AI全部欄位與正式消費端仍需逐欄對照，unknown必須按其來源證據判定，不把operator input當native proof。 |
+| E04-T02 | 舊64KiB/depth32/白名單verifier與目前本機瀏覽器下載保留；本節saved-source API→offline及取消→瀏覽器下載→offline均通過。 | 目前表單未保存值、來源逾時、truncation／revision漂移與下載端的完整組合仍未全驗；每次只補缺失操作，不重跑整套109契約。 |
+| E05-T01 | 目前頁面實見停用、0/28天、profile未確認、白名單與設定入口；舊guard與readiness反例保留為相應子項。 | 守門失聯及未保存／缺資料／stale操作仍須精確核業務finding/case/notification為0；畫面原因不能代替持久副作用核對。 |
+| E05-T02 | 原18成功/2衝突及保存→取數→guard子集合保留；§8 F2 store/controller/protection43案及1值/1狀態正常HTTP清除證據。 | 目前scope縮小＋sync未完成＋保留集合、過期寫入與readonly/case-only完整拒絕操作；跨角色部分回掛E08-T03，不重建20-device歷史fixture。 |
+| E05-T03 | pager末頁／前導／取消與§8 timeline多頁authority漂移證據保留；抽樣不授權完整拓撲。 | 缺取消後cursor／剩餘集合的全部相依核對；全量預覽/保存/實際請求集合仍由E07/E08原母體承擔，不能拿小頁替代。 |
+| E06-T01 | §8.18 r30/r33 admission／qualification／refresh／discovery及§8.19 E2有界契約子項保留。 | 完整共同負載的transport種類/數量/版本/scope、資格到期尖峰與日常額度未量測；暫不啟動全負載。 |
+| E06-T02 | §8.20 r43五案loopback raw/scope漂移接線已通過。 | 正常、10%逾時＋10%unknown、全來源拒絕及合併負載的輪次/p95/25%餘裕需原負載母體，不能由1sensor推算。 |
+| E06-T03 | 現有quota/admission／有限等待及取消子項保留；本次不為舊2/s、4在途、5/60契約重跑計時集合。 | 72h初始化期限與共同工作公平性／停止後零新請求／NetIQ獨立續行需連續操作證據；未知成本仍拒擴量。 |
+| E07-T01 | §8 E1固定結構已獲授權且保留重用，205值/12步驟恢復；預檢報告只讀檔案metadata。 | 64.8M及DB/WAL/backup/export/保留峰值＋全卷25%未驗。既有預估多副本空間差約-59.6GB，先定案隔離資源方案；不開受保護41.1M副本、不再seed固定結構。 |
+| E07-T02 | 舊400成功HTTP只是歷史子項，1200分母receipt不是完成證據。 | 三對六輪/1200成功路由請求與各p95/warm/window門檻需要原量測，依no-bulk指示不執行。 |
+| E07-T03 | generator batch尺寸／高水位安全工具的既有小型證據保留。 | 額外RAM≤1GiB、三輪留存≤5%、I/O/lock/query plan與停寫清積壓、零丟失重複均需真實完整負載；小型工具自測不代替。 |
+| E07-T04 | §8 generator205列跨程序恢復及SQLite rollback CLI／原生Reply差額／held mail子項保留。 | 完整副本180日保留、升退版、雙程序、unknown commit／journal壞/滿續跑與精確集合尚未驗；SQLite受限回復不是SQLServer完整復原。 |
+| E07-T05 | tiny SQLServer Unicode/physical reader與Express完整shape拒絕邊界保留；未建立新SQL資料庫。 | 需合格自有隔離SQL engine的原定query plan、密度、容量及恢復證據；LocalDB Express及每sensor一筆均不能裁定通過。 |
+| E08-T02 | 舊Daily/父/AI/mail consumer及§8.15目前raw replay/scope 8案保留。 | 初設→NetIQ父→PRTG風險→AI→報告/案件/交辦回覆→通知/恢復/再發完整操作鏈，含零事件/弱佐證/不合格父，不是只補fixture資料即完成。 |
+| E08-T03 | §8.21六角色＋真serverAdmin登入API觀察、§8.22時間/repair瀏覽器子項保留；既有六角色/權限模型不擴張。 | AC01–22/U53/Q逐角色實際UI、直接URL、修改API、子路徑、受限證據和交辦回覆完整矩陣仍開；API觀察不冒稱全browser通過。 |
+| E08-T04 | §8.22兩頁時間設定stale409及F2預覽/owner/CAS局部證據保留。 | mapping/merge/delete/rollback兩管理者完整操作及3,000/15,000預覽→保存→讀回→來源集合未驗；不縮母體。 |
+| E08-T05 | 已修統計郵件generic workflow；§8.13/8.16目前reservation/未知SMTP重建不重送子項保留，原99+20維持分開歷史母體。 | 三來源進度、late NetIQ/AI、AI/PRTG故障/停用、local-only與DB/journal故障/重啟其他組合仍需真實操作與durable IDs核對。 |
+| E08-T06 | §8.13 r23～r26及§8.16實際SMTP拒收/unknown/重建/精確reservation子項保留。 | 五分鐘摘要/urgent、部分成功與隔離實收，以及ACK→可信恢復→再發的人工作業/案件/通知識別連續操作尚未完整。 |
+| E09-T01 | 固定222規則consumer重播是歷史子項，無新增ID或改真值；本輪raw/formal consumer變更另有定向證據。 | 每個規則族仍缺受限角色實際找資源/原因/證據/下一步及unknown/排除/校準瀏覽器核對；不得為湊完成重播222案。 |
+| E09-T02 | 舊四基準固定truth報表、時間/分母/unknown/排除斷言及「合併未優於聯集」裁定保留。 | 最終報表與真正操作結果、as-of/缺時間/禁止future資料的完整對照尚缺，舊226案例不是本次最終操作PASS。 |
+| E10-T02 | 本次27項全列、實作呼叫端核對、兩個新E03接縫及E01成品拒絕；修正§3.1 N3陳舊缺口文句。 | 原需求/52輪子條款/AC/U/Q與E01–09整體可執行審查及必要未測清零尚未成立；沒有新增已確認的production缺陷。 |
+| E10-T03 | 保留b77a72c7全量7,978/1/10與638修正後定向結果、Round54各分段receipt；這次只新增4個必要小型.NET案例。 | 最終受影響程式的完整有效回歸覆蓋尚未齊，不啟動未審過資料量的全套，也不冒稱最終曾單次全綠。 |
+| E10-T04 | 本次分段提交/遠端SHA已核對，PLAN/清單有明確狀態及限制。 | E01已完成；E03–09必要條件仍開，因此整輪正式交付仍待其相依，不合併/不推預設分支。 |
+
+本次補驗E04的原始結果：沿正常public settings API保存自有`127.0.0.1:3510`來源與合成token，PRTG/schedule/mail均維持停用；完整probe唯讀在17.01秒結束，僅讀取stub固定小型回應，evidence11793 bytes、設定修訂`d7d6feffa290416c8bf28383a6498ccd`，verifier正確INCOMPLETE。之後同一owned來源切`prtg-hold-503`，確認isRunning後cancel至cancelled=true/isRunning=false花165ms，沒有source qualification；clean目前瀏覽器顯示「已停止」及相同durable操作ID/版本，下載取消證據5886 bytes，verifier仍INCOMPLETE。來源請求log最後只有該次status請求，沒有取消後新請求。原始receipt在`work/round54/acceptance-cfa062e9/{saved-source-status,saved-source-evidence,cancelled-result,cancelled-evidence}.json`；實際瀏覽器下載為`C:/Users/eldar/Downloads/prtg-compatibility-evidence-2026-10-15T06-28-30-545Z.json`。這些是新接縫，不是重新跑整套verifier或完整角色矩陣。
+
+測試決策結束條件：已補上述必要缺口，未重跑相同程式的有效集合；沒有新production缺陷就不為製造修正而改碼。其餘25項的下一步已具體列明；大母體項仍須先討論合適資源與可行方案，小範圍操作項仍維持原契約待驗，不被改稱不可能或排除。工具本身沒有受保護路徑denylist，故任何generator/capacity/highwater命令均不得指向既定受保護副本；本次沒有呼叫這些資料工具。測試站保留小資料供後續重用，收尾停止owned Web/來源行程。
+
+清單驗證只針對本次新增狀態：validator逐一核原27個ID唯一且完整、已接受項須有證據/範圍/重開條件、pending須有明確缺口，並與PLAN checkbox一致。正常清單通過；兩個純JSON反例「重複ID」與「未勾PLAN卻標accepted」均依預期拒絕，零DB/HTTP/產品測試，receipt `work/round54/acceptance-todo-review/result.json`。既有22AC/10U/6Q/222case/53gap分母及aggregate flags不變。owned fixture `4f36b9ed6fc24ad896117a4702de4e5c` 已停止，來源DB/key最後再次hash核對不變，保留clone供重用。
