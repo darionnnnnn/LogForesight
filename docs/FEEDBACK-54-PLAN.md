@@ -28,7 +28,6 @@ AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留
 | ID／批次 | 現況、改動與下一個使用端 | 相依與客觀完成條件 |
 |---|---|---|
 | D54-01／各證據 lane 的生命週期隔離 | parser／message fingerprint／fetch／timeline／正式 finding、replay、郵件貢獻及 qualification／refresh／discovery／capacity raw context 已接線，實作待辦移除，見§8.13～8.18。再次逐consumer核對發現四處剩餘候選：期間評估 selected fingerprint／最終重驗、磁碟評估 metadata authority、資料流探測 operation scope、資格作業狀態提示；仍須完成小範圍驗證及提交。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
-| D54-02／正常HTTP資格準備交付 | `scripts/prtg-workload/qualification-preparation` 已有 Start／Resume／Check、來源預檢、磁碟與 live runtime owner 核對、正常 settings／policy／pilot／binding／job 路由及持久 receipt 候選；純契約 Python 24/24、PowerShell 通過。runtime ownership 端點已提交。剩餘是候選完整性核對、相依提交及正常入口的整合證據。 | 不增加 production 測試旁路；保留完整母體／owned listener／精確 PID、ticks、MVID、DataRoot、descriptor／reparse 防護及720h／1attempt。未執行完整容量來源，不宣稱正式資格或 E2 父驗收通過。 |
 
 ### 2.1 時間授權的明確接線缺口
 
@@ -40,11 +39,11 @@ D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.
 
 `scripts/prtg-workload/storage-generator/Program.cs` 的 `InitializeOwnedDatabase`、`HasInitializationMarker`、`AuditOwnedStructure`、`ValidateOwnedDatabase`、`AuditOwnedRowRange`、`AdoptLegacyRun`、`ReadLastProgressLine` 與 `FinishOwnedToolUpgrade` 已實作初始化／採納／升級中斷恢復、完整已提交前綴與 mapping 核對及有界逐行 log 讀取；原對應實作待辦刪除。既有小範圍證據與兩次獲授權的固定結構 seed 記錄保留；後續只能重用 `work/e1-generator-bounded-second-20261014`，不再次建立固定結構。完整64.8M／容量／恢復驗收仍保留 E07-T01/T04，且不得開啟或修改受保護41,140,900筆副本。
 
-完整資格矩陣必須由可驗證的 listener PID／start identity／assembly／exact command tokens／runtime DataRoot與provider綁定實際服務，核對 descriptor hash及reparse祖先。runtime 正常端點與獨立校驗候選已有實作；numeric loopback或可編輯JSON宣告仍不足以授權 public settings／排程寫入。D54-02在本輪完成剩餘整合，不移到下一輪。
+完整資格矩陣必須由可驗證的 listener PID／start identity／assembly／exact command tokens／runtime DataRoot與provider綁定實際服務，核對 descriptor hash及reparse祖先。runtime 正常端點、獨立校驗及 Start／Resume／Check 工具已實作並交付；numeric loopback或可編輯JSON宣告仍不足以授權 public settings／排程寫入。D54-02實作待辦移除，依使用者限制未跑完整來源的驗收仍保留 E07-T04／E08-T04，不冒稱功能缺漏或容量通過。
 
 交付來源以目前 repository 的實際程式與已提交版本為準，不再把舊私人候選目錄列為必要實作輸入。任何小型資格／契約驗證都不替代15,000顆完整容量；新缺口仍須明列並映回原ID。
 
-### 2.3 尚未完成的有界讀取接線（D54-04）
+### 2.3 已補齊的有界讀取接線（D54-04）
 
 原列 `PrtgResourcePressureModeStore.Find`、binding Save／RecordQualification、qualification ResumeExisting 及 disk semantic／verification snapshot 的有界接線已存在；不再列為完全未實作。identity／host marker、silent presence、probe local facts、formal-mail claim 的完整 physical bounded reader、CAS／逐筆隔離已有程式及小型驗證；候選提交狀態依分段紀錄。
 
@@ -517,3 +516,11 @@ Identity／binding／qualification／queue／timeline／profile mutation 直接 
 正常 monitoring PUT 及獨立 time-basis PUT 明確保存 raw／analysis zone／reference；來源啟用時拒絕時間變更，保存設定及受影響 disk 失效同交易。操作者輸入只標 saved-operator-input-unverified，不當作遠端帳號或 native 資格證明。binding 輸入需與目前保存時間基準完全一致。
 
 主代理小型分段證據：r30 capacity concurrency／retry／job store18例及 time-basis／binding6例通過；r31 identity五例通過；r32 attach snapshot兩例及資格三例通過；r33資格／capacity／refresh／discovery共11例通過；r34 physical Unicode／NUL四例及 permission／disabled／bounded input三例通過；r36真實 profile publisher 日期格式正例／raw ABA負例兩例通過。均使用單／少量 host、sensor 及值；UTF-8 byte[] CAST AS TEXT 建立 physical NUL，避免字串參數截斷造成假陽性。r27／r30舊失敗、r35 publisher 額外 policy revision 阻擋的重現保留，不宣稱整套失敗回合全過。後續補查期間／磁碟／資料流／資格作業提示四處接線仍另段列明，正式來源、全角色、完整容量及父驗收未通過。
+
+### 8.19 E2 正常 HTTP 資格準備工具（2026-10-15）
+
+qualification-preparation 提供來源與磁碟預檢、live runtime owner 確認、正常 settings／source policy／pilot／binding／qualification job 的 Start／Resume／Check 及 durable receipt。固定720h／每顆一次 attempt，沒有縮小完整母體的正式 CLI 開關；foreign listener、reparse、PID／ticks／MVID／DataRoot／descriptor 不符在寫入前拒絕。未知 start 結果只以正常 read-only current／page 與精確 job／version／wave 對帳。
+
+主代理核對腳本的真正 public API consumer、原 sealed manifest 及 receipt CAS。Resume／Check 不重寫 manifest 或政策；DateFormat-only 可續查，raw／source／scope／settings 漂移拒絕。資格帶來的 channel rotation 必須由已提交後端的 qualifiedIdentityEpoch／qualifiedChannelGeneration／binding proof 逐 sensor 證明；逐頁以 ReadStateVersion 防止同 lease 的混合快照。舊缺少 proof／read-state 欄位不得默認有效。
+
+最終 Python 24/24 與 PowerShell contract checks 再次通過，結果在 work/round54/root-e2-final-contracts.log；涵蓋 partial proof、合法 rotation、偽造 channel／binding、raw context 漂移、缺舊欄位及同 lease read-state 競爭等小型反例。這是工具實作／契約驗證，不是15,000 sensor、64.8M資料、正常全量來源的正式驗收；未啟動完整 CLI、未再 seed 固定結構、未開受保護資料庫。E2／G父驗收與 native／capacity／retention／formal acceptance 旗標仍保持未通過。
