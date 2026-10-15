@@ -5,6 +5,10 @@
 > 本輪起點：`dev` 的 `a69fedd7`；工作分支 `feature/prtg-feedback-54`。第53輪乾淨驗證基準為 `638c58434f0bc01fe77e62365addeafd75680fb0`，至本輪起點僅README、PLAN與驗收JSON差異，正式程式未變。
 > 原始需求與契約：[第53輪 PLAN](FEEDBACK-53-PLAN.md) §§3、6、13、15–17；最新責任邊界為 §§5.7、5.9。
 
+> 2026-10-15分段進度：urgent逐收件者重查改以結構scope與各issue實際authority隔離，Date Format-only變更不取消同父有效NetIQ／raw lane；保留原SMTP／workflow key演算法，不遷移或重置既有接受紀錄。主代理正常checkout定向驗證16/16、零skip（49秒），其中6項mail混合lane／legacy接受投影／部分SMTP重試，其餘10項為尚待UI核對的時間設定及runtime ownership；TRX `work/round54/root-timebasis-owner-mail-r1/root-timebasis-owner-mail-r1.trx`。尚待補齊跨次Notify去重、summary／digest raw重驗及replay／qualification語意相依隔離；此段不勾B2父驗收。
+>
+> 小範圍驗證偏差：D1子代理曾以整類filter誤跑既有501／5,001／30,000 identity案例；`work/round54/d1-bounded-consumer-r1/d1-bounded-consumer-r1.trx`六例舊SQL形狀／query-count斷言失敗，不列PASS、不重跑大量案例。已改逐方法核資料量；後續新增tiny helper邊界4/4通過，但helper測試不代替正常consumer完整驗收。33M極限文件依使用者定案僅查官方文件，禁止建立極限payload。
+
 ## 1. 定位與不變契約
 
 PRTG 輔助 NetIQ 已合格的每日主機日；成功零事件父紀錄也可加入獨立 PRTG 風險理由，缺父、父失敗或證據不合格只顯示等待。兩來源取較高級、不相加；同日弱佐證不升級。CPU／memory 預設壓力提示，Maintain 同版試算後才可啟用正式風險；磁碟低水位及可信趨勢可成正式理由。

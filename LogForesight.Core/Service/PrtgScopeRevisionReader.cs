@@ -20,7 +20,12 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
     private const string SentinelsBlobKey = "sentinels";
     private const string RulesBlobKey = "rules";
 
-    public string Read()
+    public string Read() => ReadCore(includePolicyRevision: true);
+
+    /// <summary>Structural fence for consumers that independently revalidate each policy-dependent issue.</summary>
+    public string ReadStructural() => ReadCore(includePolicyRevision: false);
+
+    private string ReadCore(bool includePolicyRevision)
     {
         lock (_gate)
         {
@@ -68,7 +73,8 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
                     .OrderBy(s => s.SentinelId).Select(s => new { s.SentinelId, s.Active, s.BaseUrl }));
                 _sentinelVersion = sentinelVersion;
             }
-            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{versions.GetValueOrDefault(PrtgMonitoringPolicyStore.BlobKey)}:{versions.GetValueOrDefault(RulesBlobKey)}:{_sentinelFingerprint}:{_hostFingerprint}";
+            var policyVersion = includePolicyRevision ? versions.GetValueOrDefault(PrtgMonitoringPolicyStore.BlobKey) : 0;
+            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{policyVersion}:{versions.GetValueOrDefault(RulesBlobKey)}:{_sentinelFingerprint}:{_hostFingerprint}";
         }
     }
 }

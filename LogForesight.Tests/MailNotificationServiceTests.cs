@@ -2075,17 +2075,24 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Equal("no-qualified-recipient", MailNotificationService.EffectiveUrgentStatusForRead(intent, state.UrgentSentKeys));
     }
 
-    [Fact]
-    public async Task MixedUrgentMail_DeliveredNetiqAndCurrentMessage_DoNotAcceptStaleRawTrendFact()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MixedUrgentMail_DeliveredNetiqAndCurrentMessage_DoNotAcceptStaleRawTrendFact(bool formatDriftsBetweenRecipients)
     {
         var directory = Path.Combine(Path.GetTempPath(), "lf-mail-mixed-lanes-" + Guid.NewGuid().ToString("N"));
         var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, directory);
         try
         {
             CreateViewAllAccount("ops@test.local");
+            if (formatDriftsBetweenRecipients) CreateViewAllAccount("ops2@test.local");
             var host = _hosts.Upsert(new WebHost { HostName = "mixed-host", Active = true, Source = "netiq" });
             const string url = "https://fixture.example";
-            EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.PrtgUrl = url; });
+            EnableMail(s =>
+            {
+                s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.PrtgUrl = url;
+                if (formatDriftsBetweenRecipients) s.MailRecipients.Add("ops2@test.local");
+            });
             new SystemSettingsStore(backend.Blob("system_settings")).Update(s =>
             { s.PrtgEnabled = true; s.PrtgUrl = url; });
 
@@ -2163,22 +2170,35 @@ public class MailNotificationServiceTests : IDisposable
                 "The current raw trend lane must have a complete, live semantic and verification channel proof.");
 
             var netiq = new LogIssueSignature { LogName = "Application", Source = "APP", EventId = 42,
-                EventKey = "APP|42", Severity = IssueSeverity.Low, ElevatesDayRisk = false };
+                EventKey = "APP|42", Severity = formatDriftsBetweenRecipients ? IssueSeverity.High : IssueSeverity.Low,
+                ElevatesDayRisk = formatDriftsBetweenRecipients };
             var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High, issues: [netiq,
                 findings[0].Item2, findings[1].Item2, findings[2].Item2]);
-            record.LogSource = AnalysisLogSource.Netiq; record.PrtgBaselineRiskLevel = RiskLevels.Low;
+            record.LogSource = AnalysisLogSource.Netiq;
+            record.PrtgBaselineRiskLevel = formatDriftsBetweenRecipients ? RiskLevels.High : RiskLevels.Low;
             _records.Add(record);
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
                 _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
                 _issueOwners, _issueAggregates, prtgMonitoring: policy, prtgBackend: backend);
 
+            if (formatDriftsBetweenRecipients)
+                _sender.OnSend = _ => policy.Update(p =>
+                {
+                    p.MessageDateFormat = PrtgMessageDateTimeParser.Mdy24;
+                    p.MessageTimeAuthorityRevision++;
+                    p.Revision = "changed-only-message-format";
+                });
+
             await service.NotifyAfterRunAsync();
 
             var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
-            Assert.True(_sender.Sent.Count == 1,
+            Assert.True(_sender.Sent.Count == (formatDriftsBetweenRecipients ? 2 : 1),
                 $"sent={_sender.Sent.Count}; intents={string.Join(',', state.UrgentOutbox.Values.Select(i => $"{i.Status}:{i.WaitingReasonCode}:{i.ProblemKeys.Count}"))}; accepted={state.PrtgUrgentAcceptedFacts.Count}");
             var accepted = state.PrtgUrgentAcceptedFacts.Keys.ToArray();
-            Assert.Contains(accepted, key => key.Contains(findings[0].Item2.EventKey, StringComparison.Ordinal));
+            if (formatDriftsBetweenRecipients)
+                Assert.DoesNotContain(accepted, key => key.Contains(findings[0].Item2.EventKey, StringComparison.Ordinal));
+            else
+                Assert.Contains(accepted, key => key.Contains(findings[0].Item2.EventKey, StringComparison.Ordinal));
             Assert.Contains(accepted, key => key.Contains(findings[2].Item2.EventKey, StringComparison.Ordinal));
             Assert.DoesNotContain(accepted, key => key.Contains(findings[1].Item2.EventKey, StringComparison.Ordinal));
             Assert.Equal(4, _records.Query(new RecordQueryFilter { Hosts = null, From = Yesterday, To = Yesterday })

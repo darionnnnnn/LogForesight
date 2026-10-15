@@ -1101,9 +1101,8 @@ public class MailNotificationService
         settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(settings))!;
         var settingsFingerprint = expectedSettingsFingerprint ?? HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
         var state = _state.Get();
-        var policyRevision = _prtgMonitoring?.Get().Revision;
         var scopeReader = _prtgBackend == null ? null : new PrtgScopeRevisionReader(_prtgBackend, _hosts);
-        var scopeRevision = scopeReader?.Read();
+        var scopeRevision = scopeReader?.ReadStructural();
         _state.Update(s =>
         {
             var cutoff = DateTime.UtcNow.AddDays(-Math.Max(14, settings.RetentionDays));
@@ -1213,8 +1212,10 @@ public class MailNotificationService
                 currentSettings.SmtpPasswordEnc != settings.SmtpPasswordEnc || currentSettings.MailFrom != settings.MailFrom ||
                 GetSuspendedRecipients().Contains(email, StringComparer.OrdinalIgnoreCase)) return null;
             var liveContext = BuildContext();
-            if (HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(currentSettings)]) != settingsFingerprint ||
-                MailContextFingerprint(currentSettings) != mailContextFingerprint) return null;
+            // Retain the persisted transport intent's context key. Settings are fenced in
+            // full; structural scope and each PRTG authority are rechecked independently.
+            // A policy-only Date Format edit cannot cancel unrelated lanes on this parent.
+            if (HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(currentSettings)]) != settingsFingerprint) return null;
             var currentRecords = RemoveStaleMessageStatusFindings(
                 _records.Query(new RecordQueryFilter { From = from, To = to, Hosts = null, RiskLevels = (currentSettings.MailOnRunCompleted ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }) }));
             if (_prtgBackend is not null)
@@ -1253,27 +1254,23 @@ public class MailNotificationService
                     RecomputeTransientMailRisk(r, narrowed);
                     return narrowed;
                 })
-                .Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg) ||
-                    (sharedAuthorityAvailable && authoritySettings.PrtgEnabled && currentSettings.PrtgEnabled &&
-                     PrtgOperationScope.SameSettings(authoritySettings, currentSettings) &&
-                     PrtgOperationScope.SameSettings(settings, currentSettings) &&
-                     (policy == null || policy.Revision == policyRevision && policy.Ready(currentSettings.PrtgUrl) &&
-                        policy.HostIds.Contains(r.HostId) && r.TopIssues.Where(PrtgFindingMapper.IsPrtg).All(i =>
-                            PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(i) ||
-                            i.PrtgSourceGeneration == policy.SourceGeneration && i.EventKey.Split(':') is { Length: >= 3 } parts &&
-                            long.TryParse(parts[2], out var targetId) &&
-                            (i.EventKey.Split(':') is { Length: >= 2 } keyParts && keyParts[1] == PrtgRuleEvaluator.RuleSilent
-                                ? CurrentResource(r.HostId, targetId, i, r.Date, authoritySettings, currentMessageFingerprint)
-                                : policy.SensorIds.Contains(targetId) && CurrentResource(r.HostId, targetId, i, r.Date, authoritySettings, currentMessageFingerprint)))) &&
-                     (scopeReader == null || scopeReader.Read() == scopeRevision) &&
-                     r.CanSupplementWithPrtg() && liveContext.Host(r.HostId) is { Active: true, MergedInto: null }))
+                .Select(r => PrtgOperationScope.SameSettings(settings, currentSettings) &&
+                     (scopeReader == null || scopeReader.ReadStructural() == scopeRevision) &&
+                     r.CanSupplementWithPrtg() && liveContext.Host(r.HostId) is { Active: true, MergedInto: null }
+                    ? r : RemovePrtgLanesTransiently([r]).Single())
+                .Where(QualifiesForUrgentRisk)
                 .ToList();
             var liveFiltered = FilterUnresolvedWorkflowMail("urgent", email, new RecipientView(detail, visible), mailVersions, mailContextFingerprint);
-            if (_prtgBackend is not null && (!sharedAuthorityAvailable || sharedAuthority is null ||
-                    !PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out var finalAuthority, out _) ||
-                    finalAuthority!.SettingsBlobVersion != sharedAuthority.SettingsBlobVersion ||
-                    finalAuthority.PolicyBlobVersion != sharedAuthority.PolicyBlobVersion))
-                liveFiltered = RemovePrtgLanesTransiently(liveFiltered).Where(QualifiesForUrgentRisk).ToList();
+            if (_prtgBackend is not null)
+            {
+                if (!PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out var finalAuthority, out _) || finalAuthority is null)
+                    liveFiltered = RemovePrtgLanesTransiently(liveFiltered).Where(QualifiesForUrgentRisk).ToList();
+                else if (sharedAuthority is null || finalAuthority.SettingsBlobVersion != sharedAuthority.SettingsBlobVersion ||
+                    finalAuthority.PolicyBlobVersion != sharedAuthority.PolicyBlobVersion)
+                    liveFiltered = FilterCurrentPrtgLanes(liveFiltered, currentSettings, finalAuthority.Settings,
+                        finalAuthority.Policy, finalAuthority.Policy.MessageTimeFingerprint(finalAuthority.Settings.PrtgUrl),
+                        true, CurrentResource).Where(QualifiesForUrgentRisk).ToList();
+            }
             foreach (var oldRecipient in views.Keys.ToArray()) views.Remove(oldRecipient);
             foreach (var entry in liveViews) views[entry.Key] = entry.Value;
             return liveFiltered.Count == 0 && original.Detail?.Count > 0 ? null : new RecipientView(liveFiltered, visible);
@@ -2404,6 +2401,8 @@ public class MailNotificationService
         {
             settings.MailSubjectTemplate, settings.MailBodyIntro, settings.MailMinRiskLevel, settings.MailNotifyHostOwners
         });
+        // Keep the existing durable key algorithm so an upgrade does not invalidate
+        // previously recorded workflow/SMTP acceptance keys.
         return HostDayWorkflowFingerprint.HashParts([messageSettings, policyRevision, scopeRevision]);
     }
 
