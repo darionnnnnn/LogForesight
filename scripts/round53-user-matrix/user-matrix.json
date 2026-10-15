@@ -75,7 +75,7 @@
     "siteAndOperatorReminders": ["UC01", "UC02", "UC03", "UC04", "UC05", "UC06", "UC07"]
   },
   "maintenanceRoleMatrix": {
-    "status": "planned-not-provisioned",
+    "status": "implemented-pending-browser-acceptance",
     "baselineRolesUnchanged": true,
     "linkedReviewIds": [
       "R54-01",
@@ -86,6 +86,8 @@
       {
         "id": "M54-rescue",
         "identity": "actual serverAdmin authentication path; not an ordinary user renamed serverAdmin",
+        "fixtureAccountKey": "serverAdminBuiltin",
+        "loginMode": "serverAdmin-password-required-owned-clone",
         "maintain": true,
         "viewAll": false,
         "visibleHosts": [],
@@ -94,6 +96,8 @@
       {
         "id": "M54-global",
         "identity": "ordinary Maintain and ViewAll user",
+        "fixtureAccountKey": "currentEvidence.MaintainAccount",
+        "loginMode": "existing-source-role-account",
         "maintain": true,
         "viewAll": true,
         "visibleHosts": [
@@ -104,6 +108,8 @@
       {
         "id": "M54-readall",
         "identity": "ordinary ViewAll user without Maintain",
+        "fixtureAccountKey": "accounts.manager.Account",
+        "loginMode": "existing-source-role-account",
         "maintain": false,
         "viewAll": true,
         "visibleHosts": [
@@ -114,6 +120,8 @@
       {
         "id": "M54-nomaintain",
         "identity": "ordinary scoped user without Maintain",
+        "fixtureAccountKey": "currentEvidence.OrdinaryAccount",
+        "loginMode": "existing-source-role-account",
         "maintain": false,
         "viewAll": false,
         "visibleHosts": [

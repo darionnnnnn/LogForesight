@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$WebOutputDirectory,
     [Parameter(Mandatory = $true)][string]$WebAssetsDirectory,
@@ -40,6 +40,9 @@ $exportArtifactPath = $null
 $allRoleExpectationsMet = $true
 $errorText = $null
 $webRunStopped = $false
+$rescueRunStopped = $false
+$rescueStarted = $null
+$serverAdminFixturePassword = $null
 try {
     $started = & $startScript -WebOutputDirectory $WebOutputDirectory -WebAssetsDirectory $WebAssetsDirectory `
         -SourceFixtureBundlePath $SourceFixtureBundlePath -ExpectedSourceCommit $ExpectedSourceCommit
@@ -60,13 +63,39 @@ try {
     if ($scenario.Count -ne 1) { throw 'Expected exactly one current-evidence scenario in the owned synthetic role bundle.' }
     $scenario = $scenario[0]
     $roleBundle = Get-Content -LiteralPath (Join-Path $SourceFixtureBundlePath 'fixture-manifest.json') -Raw | ConvertFrom-Json
+    $matrix = Get-Content -LiteralPath (Join-Path $matrixStage 'user-matrix.json') -Raw | ConvertFrom-Json
+    $maintenanceRoles = @($matrix.maintenanceRoleMatrix.roles)
+    if ($maintenanceRoles.Count -ne 4 -or @($maintenanceRoles.id | Select-Object -Unique).Count -ne 4) {
+        throw 'Round54 maintenance fixture metadata must define four separate real-login scenarios.'
+    }
+    $expectedFixtureAccountKeys = @{
+        'M54-rescue'='serverAdminBuiltin'
+        'M54-global'='currentEvidence.MaintainAccount'
+        'M54-readall'='accounts.manager.Account'
+        'M54-nomaintain'='currentEvidence.OrdinaryAccount'
+    }
+    $expectedMaintenanceCapabilities = @{
+        'M54-rescue'=@{ Maintain=$true; ViewAll=$false }
+        'M54-global'=@{ Maintain=$true; ViewAll=$true }
+        'M54-readall'=@{ Maintain=$false; ViewAll=$true }
+        'M54-nomaintain'=@{ Maintain=$false; ViewAll=$false }
+    }
+    foreach ($maintenanceRole in $maintenanceRoles) {
+        if ($maintenanceRole.fixtureAccountKey -cne $expectedFixtureAccountKeys[[string]$maintenanceRole.id] -or
+            $maintenanceRole.maintain -ne $expectedMaintenanceCapabilities[[string]$maintenanceRole.id].Maintain -or
+            $maintenanceRole.viewAll -ne $expectedMaintenanceCapabilities[[string]$maintenanceRole.id].ViewAll -or
+            ($maintenanceRole.id -ceq 'M54-rescue' -and $maintenanceRole.loginMode -cne 'serverAdmin-password-required-owned-clone') -or
+            ($maintenanceRole.id -cne 'M54-rescue' -and $maintenanceRole.loginMode -cne 'existing-source-role-account')) {
+            throw "Round54 account mapping or login mode is invalid for $($maintenanceRole.id)."
+        }
+    }
     $roleSpecs = @(
-        [pscustomobject]@{ Id='maintain-control'; Account=[string]$scenario.MaintainAccount; ExpectsMaintain=$true },
-        [pscustomobject]@{ Id='owner-handler'; Account=[string]$scenario.OrdinaryAccount; ExpectsMaintain=$false },
-        [pscustomobject]@{ Id='readonly-manager'; Account=[string]$roleBundle.Accounts.manager.Account; ExpectsMaintain=$false },
-        [pscustomobject]@{ Id='restricted-dev'; Account=[string]$roleBundle.Accounts.restrictedAdmin.Account; ExpectsMaintain=$false },
-        [pscustomobject]@{ Id='case-grant-handler'; Account=[string]$scenario.CaseHandlerAccount; ExpectsMaintain=$false },
-        [pscustomobject]@{ Id='empty-visible'; Account=[string]$scenario.EmptyVisibleAccount; ExpectsMaintain=$false }
+        [pscustomobject]@{ Id='maintain-control'; Account=[string]$scenario.MaintainAccount; ExpectsMaintain=$true; MaintenanceScenarioId='M54-global'; ExpectsViewAll=$true },
+        [pscustomobject]@{ Id='owner-handler'; Account=[string]$scenario.OrdinaryAccount; ExpectsMaintain=$false; MaintenanceScenarioId='M54-nomaintain'; ExpectsViewAll=$false },
+        [pscustomobject]@{ Id='readonly-manager'; Account=[string]$roleBundle.Accounts.manager.Account; ExpectsMaintain=$false; MaintenanceScenarioId='M54-readall'; ExpectsViewAll=$true },
+        [pscustomobject]@{ Id='restricted-dev'; Account=[string]$roleBundle.Accounts.restrictedAdmin.Account; ExpectsMaintain=$false; MaintenanceScenarioId=$null; ExpectsViewAll=$null },
+        [pscustomobject]@{ Id='case-grant-handler'; Account=[string]$scenario.CaseHandlerAccount; ExpectsMaintain=$false; MaintenanceScenarioId=$null; ExpectsViewAll=$null },
+        [pscustomobject]@{ Id='empty-visible'; Account=[string]$scenario.EmptyVisibleAccount; ExpectsMaintain=$false; MaintenanceScenarioId=$null; ExpectsViewAll=$null }
     )
     if (@($roleSpecs | Where-Object { [string]::IsNullOrWhiteSpace($_.Account) }).Count -gt 0 -or
         @($roleSpecs.Id | Select-Object -Unique).Count -ne 6) {
@@ -87,18 +116,26 @@ try {
         $me = $meResponse.Content | ConvertFrom-Json
         $capabilities = @($me.data.capabilities | ForEach-Object { [string]$_ })
         $hasMaintain = $capabilities -contains 'Maintain'
+        $hasViewAll = $capabilities -contains 'ViewAll'
+        $isServerAdmin = $me.data.isServerAdmin -eq $true
         if ($hasMaintain -ne [bool]$role.ExpectsMaintain) {
             throw "Seeded role capability mismatch for $($role.Id): Maintain=$hasMaintain."
+        }
+        if ($isServerAdmin -or ($null -ne $role.ExpectsViewAll -and $hasViewAll -ne [bool]$role.ExpectsViewAll)) {
+            throw "Ordinary source role identity/capability mismatch for $($role.Id): IsServerAdmin=$isServerAdmin, ViewAll=$hasViewAll."
         }
         $response = Invoke-WebRequest -Uri $exportUrl -WebSession $session -TimeoutSec 30 -SkipHttpErrorCheck
         $body = [string]$response.Content
         $bodyBytes = [Text.Encoding]::UTF8.GetByteCount($body)
         $dataFieldsVisible = $body -match '(?i)"(?:HostIds|Records|Observations|Timelines|Labels)"\s*:'
         $row = [ordered]@{
-            RequirementIds = @('AC21','U53-05')
+            RequirementIds = if ($null -ne $role.MaintenanceScenarioId) { @('AC21','U53-05',[string]$role.MaintenanceScenarioId,'C54-01') } else { @('AC21','U53-05') }
             RoleId = $role.Id
+            MaintenanceScenarioId = $role.MaintenanceScenarioId
             LoginHttpStatus = [int]$login.StatusCode
             CapabilityMaintain = $hasMaintain
+            CapabilityViewAll = $hasViewAll
+            IsServerAdmin = $isServerAdmin
             ExportHttpStatus = [int]$response.StatusCode
             ContentType = [string]$response.Headers['Content-Type']
             BodyBytes = $bodyBytes
@@ -139,6 +176,74 @@ try {
     }
 }
 
+if ($null -eq $errorText) {
+    try {
+        # Run rescue login separately with the password-required fallback provider. The ordinary
+        # six-role pass remains Stub-backed; the rescue pass proves the real serverAdmin branch
+        # validates a one-run PBKDF2 credential instead of inheriting Stub's password bypass.
+        $serverAdminFixturePassword = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+        $rescueStarted = & $startScript -WebOutputDirectory $WebOutputDirectory -WebAssetsDirectory $WebAssetsDirectory `
+            -SourceFixtureBundlePath $SourceFixtureBundlePath -ExpectedSourceCommit $ExpectedSourceCommit `
+            -AuthenticationProvider 'Ad' -ServerAdminFixturePassword $serverAdminFixturePassword
+        $rescueManifest = Get-Content -LiteralPath $rescueStarted.ManifestPath -Raw | ConvertFrom-Json
+        if ($rescueManifest.Runtime.AuthenticationProvider -cne 'Ad' -or
+            $rescueManifest.Runtime.ServerAdminAccount -cne 'serverAdmin' -or
+            $rescueManifest.Runtime.ServerAdminPasswordRequired -ne $true -or
+            [string]$rescueManifest.Runtime.ServerAdminPasswordHashSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'Owned rescue clone did not record a password-required serverAdmin fixture without exposing its credential.'
+        }
+        $wrongCredentialBody = @{ Account='serverAdmin'; Password=([Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))) } | ConvertTo-Json -Compress
+        $wrongCredential = Invoke-WebRequest -Uri "$($rescueManifest.Runtime.PathBaseUrl.TrimEnd('/'))/api/auth/login" `
+            -Method Post -WebSession ([Microsoft.PowerShell.Commands.WebRequestSession]::new()) -ContentType 'application/json' `
+            -Headers @{ 'X-Requested-By'='LogForesight' } -Body $wrongCredentialBody -TimeoutSec 15 -SkipHttpErrorCheck
+        $wrongCredentialBody = $null
+        if ($wrongCredential.StatusCode -ne 401) { throw "Owned serverAdmin fixture did not reject an incorrect password with HTTP 401." }
+        $rescueSession = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+        $rescueLoginBody = @{ Account='serverAdmin'; Password=$serverAdminFixturePassword } | ConvertTo-Json -Compress
+        $rescueLogin = Invoke-WebRequest -Uri "$($rescueManifest.Runtime.PathBaseUrl.TrimEnd('/'))/api/auth/login" `
+            -Method Post -WebSession $rescueSession -ContentType 'application/json' `
+            -Headers @{ 'X-Requested-By'='LogForesight' } -Body $rescueLoginBody -TimeoutSec 15 -SkipHttpErrorCheck
+        $rescueMeResponse = if ($rescueLogin.StatusCode -eq 200) {
+            Invoke-WebRequest -Uri "$($rescueManifest.Runtime.PathBaseUrl.TrimEnd('/'))/api/auth/me" `
+                -WebSession $rescueSession -TimeoutSec 15 -SkipHttpErrorCheck
+        } else { $null }
+        if ($rescueLogin.StatusCode -ne 200 -or $null -eq $rescueMeResponse -or $rescueMeResponse.StatusCode -ne 200) {
+            throw "Owned serverAdmin fixture login failed with HTTP $($rescueLogin.StatusCode)."
+        }
+        $rescueMe = $rescueMeResponse.Content | ConvertFrom-Json
+        $rescueCapabilities = @($rescueMe.data.capabilities | ForEach-Object { [string]$_ })
+        $rescueMaintain = $rescueCapabilities -contains 'Maintain'
+        $rescueViewAll = $rescueCapabilities -contains 'ViewAll'
+        if ($rescueMe.data.isServerAdmin -ne $true -or $rescueMaintain -ne $true -or $rescueViewAll -ne $false) {
+            throw "Owned rescue identity did not resolve to serverAdmin/Maintain-only: IsServerAdmin=$($rescueMe.data.isServerAdmin), Maintain=$rescueMaintain, ViewAll=$rescueViewAll."
+        }
+        $observations.Add([pscustomobject]@{
+            RequirementIds=@('M54-rescue','C54-01','R54-07')
+            RoleId='M54-rescue'
+            IncorrectPasswordHttpStatus=[int]$wrongCredential.StatusCode
+            LoginHttpStatus=[int]$rescueLogin.StatusCode
+            CapabilityMaintain=$rescueMaintain
+            CapabilityViewAll=$rescueViewAll
+            IsServerAdmin=$true
+            AuthenticationProvider=[string]$rescueManifest.Runtime.AuthenticationProvider
+            PasswordRequired=[bool]$rescueManifest.Runtime.ServerAdminPasswordRequired
+            CredentialHashFingerprint=[string]$rescueManifest.Runtime.ServerAdminPasswordHashSha256
+        })
+    } catch {
+        $errorText = $_.Exception.Message
+    } finally {
+        $serverAdminFixturePassword = $null
+        if ($null -ne $rescueStarted) {
+            try {
+                $null = & $stopScript -OwnerFile $rescueStarted.OwnerFile
+                $rescueOwner = Get-Content -LiteralPath $rescueStarted.OwnerFile -Raw | ConvertFrom-Json
+                if ($rescueOwner.Status -cne 'stopped') { throw 'Owned rescue fixture stop did not persist stopped status.' }
+                $rescueRunStopped = $true
+            } catch { if ($null -eq $errorText) { $errorText = "Owned rescue fixture stop failed: $($_.Exception.Message)" } }
+        }
+    }
+}
+
 if ($null -eq $started) { throw ($errorText ?? 'Owned API authority fixture failed to start.') }
 $sourceDatabasePath = Join-Path $SourceFixtureBundlePath 'data\Db\logforesight.db'
 $sourceKeyPath = Join-Path $SourceFixtureBundlePath 'data\keys\lf-crypto.key'
@@ -151,8 +256,10 @@ $report = [ordered]@{
     Schema = 'logforesight-round53-e08-api-export-authority-observation-v1'
     ObservedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
     RunId = $started.RunId
+    RescueRunId = if ($null -ne $rescueStarted) { $rescueStarted.RunId } else { $null }
     BuildSourceStamp = $started.BuildSourceStamp
     WebRunStopped = $webRunStopped
+    RescueRunStopped = $rescueRunStopped
     SourceDatabaseUnchanged = $sourceDatabaseUnchanged
     SourceKeyUnchanged = $sourceKeyUnchanged
     Observations = @($observations)
@@ -160,12 +267,12 @@ $report = [ordered]@{
     BrowserAccepted = $false
     MatrixAccepted = $false
     WholeRoundAccepted = $false
-    Limitation = 'This observes direct API authorization and one actual bounded export on an owned synthetic SQLite/Web fixture. It is not a browser observation and does not complete AC21, U53-05, the six-role matrix or any Q objective.'
+    Limitation = 'This observes the baseline roles and Round54 maintenance identities through direct APIs on owned synthetic SQLite/Web clones. Rescue uses the real serverAdmin password-required branch with a one-run credential. It is not a browser observation and does not complete the maintenance matrix or any Q objective.'
 }
 [IO.File]::WriteAllText($observationPath, ($report | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
 if ($null -ne $errorText) { throw $errorText }
 if (!$sourceDatabaseUnchanged -or !$sourceKeyUnchanged) { throw 'The source role bundle database or key changed during the owned API run.' }
-if (@($observations).Count -ne 6 -or !$allRoleExpectationsMet) {
-    throw "Role API observations did not match the expected Maintain-only export contract; raw observations retained at $observationPath."
+if (@($observations).Count -ne 7 -or !$allRoleExpectationsMet -or !$webRunStopped -or !$rescueRunStopped) {
+    throw "Role API observations did not match the expected role contract or both owned clones did not stop; raw observations retained at $observationPath."
 }
 $report | ConvertTo-Json -Depth 12

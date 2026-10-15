@@ -532,3 +532,10 @@ SelectedSensorFingerprint 材料變更會一次性使舊持久 closure/readiness
 主代理獨立查碼與驗證：r37資格作業提示4例通過；r42期間consumer25值正例／raw ABA負例、disk metadata正反例及selected fingerprint共5例通過；r43資料流真實 loopback HTTP五例全過，日期格式變更寫入單筆值，raw ABA／sensor移除／來源世代／相關settings變更均取消且零值寫入。每例最多1host／1sensor／25值。r37/r38測試缺白名單／SQL coordinator、r39臨時HttpListener埠註冊拒絕與首窗口fixture不足、r40/r42自製TCP回應連線失敗均保留，沒有宣稱失敗回合全過；最終使用標準HttpListener及有界埠重選，負例另明確斷言Cancelled，避免一般傳輸失敗冒充authority守門通過。
 
 本段移除D54-01實作待辦及R54-05 remainingImplementation；長期raw工作與當次寫入CAS分離。正式來源、所有角色／跨程序完整操作及G/H父驗收仍未通過。
+### 8.21 四種真實維護登入 fixture 與證據矩陣（2026-10-15）
+
+四種維護情境已映射既有帳號／授權路徑，六個正式角色不變。M54-rescue 使用隔離 Ad provider 的真正 serverAdmin password-required 分支；每次執行隨機密碼以 child environment 傳入PBKDF2 hash，manifest只記hash fingerprint，不保存明文／hash，不改正式部署憑證。M54-global／readall／nomaintain使用既有source角色帳號；M54-scoped仍是合成元件測例，不建立帳號。
+
+主代理實跑 Test-UserMatrixApiExportAuthority：六個baseline正常登入與能力核對、真serverAdmin錯密碼401／正常登入200、Maintain=true／ViewAll=false／IsServerAdmin=true共7份觀察通過。report為work/round54/root-role-api-current-r2.log；普通clone 49dae34df1094270bbf41cf3e26faa64、rescue clone 7a0862176067478583aec5c5b209d07e 均依精確owner停止；來源DB/key SHA未變。來源為cd062561的dirty-source fingerprint、配對Web/Core及明確靜態資源SHA；這是本段API角色驗證，不能當最終clean同版凍結或全瀏覽器矩陣通過。
+
+Manifest／CoverageInventory、A2所有正反契約、Round54 recorder／initializer evidence fixture與source-pin拒絕再次通過。已修正A2「有缺口卻標完成」反例不再依賴已完成R54-05的舊狀態，改明確注入合成未完成項後驗validator拒絕，保留原門檻。R54-07／C54-01實作待辦移除；maintenanceRoleMatrix標implemented-pending-browser-acceptance，所有acceptance／browser／native／capacity／whole-round旗標仍未通過。

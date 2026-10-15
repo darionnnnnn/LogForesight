@@ -429,16 +429,17 @@
       ],
       "status": "not-accepted",
       "evidence": [],
-      "implementationStatus": "partial-candidate",
+      "implementationStatus": "implemented-awaiting-acceptance",
       "sourceReferences": [
         "scripts/round53-user-matrix/Test-UserMatrixCoverageInventory.ps1::Maintenance matrix must have exactly four unique real-login scenarios.",
         "scripts/round53-user-matrix/Test-UserMatrixRound54A2Contracts.ps1::Invoke-Case",
         "scripts/round53-user-matrix/Record-UserMatrixBrowserObservation.ps1::round54ExecutionRefinements",
-        "scripts/round53-user-matrix/user-matrix.json::\"status\": \"planned-not-provisioned\"",
-        "scripts/round53-user-matrix/Initialize-UserMatrixEvidence.ps1::syntheticDefenseCases"
+        "scripts/round53-user-matrix/user-matrix.json::serverAdmin-password-required-owned-clone",
+        "scripts/round53-user-matrix/Initialize-UserMatrixEvidence.ps1::syntheticDefenseCases",
+        "scripts/round53-user-matrix/Start-UserMatrixFixture.ps1::ServerAdminPasswordRequired",
+        "scripts/round53-user-matrix/Test-UserMatrixApiExportAuthority.ps1::IncorrectPasswordHttpStatus"
       ],
       "remainingImplementation": [
-        "四種維護情境目前只有矩陣與證據骨架，沒有為四種真實登入建立 fixture/provision 接線，也沒有供 M54-rescue 使用的真 serverAdmin 登入 helper；補上只使用既有帳號/授權模型的真實登入 fixture，不建立新角色。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [
@@ -503,15 +504,16 @@
       "status": "not-accepted",
       "evidence": [],
       "refinementIds": [],
-      "implementationStatus": "partial-candidate",
+      "implementationStatus": "implemented-awaiting-acceptance",
       "sourceReferences": [
         "scripts/round53-user-matrix/Test-UserMatrixCoverageInventory.ps1::Maintenance matrix must have exactly four unique real-login scenarios.",
         "scripts/round53-user-matrix/Test-UserMatrixRound54A2Contracts.ps1::wrong-role-capability",
-        "scripts/round53-user-matrix/user-matrix.json::\"status\": \"planned-not-provisioned\"",
-        "scripts/round53-user-matrix/Initialize-UserMatrixEvidence.ps1::syntheticDefenseCases"
+        "scripts/round53-user-matrix/user-matrix.json::serverAdmin-password-required-owned-clone",
+        "scripts/round53-user-matrix/Initialize-UserMatrixEvidence.ps1::syntheticDefenseCases",
+        "scripts/round53-user-matrix/Start-UserMatrixFixture.ps1::ServerAdminPasswordRequired",
+        "scripts/round53-user-matrix/Test-UserMatrixApiExportAuthority.ps1::IncorrectPasswordHttpStatus"
       ],
       "remainingImplementation": [
-        "缺少四個真實維護登入情境的 fixture/provision 與真 serverAdmin 登入 helper；矩陣和 recorder 只建立待驗證證據，不建立登入帳號。不得擴充角色或能力。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [

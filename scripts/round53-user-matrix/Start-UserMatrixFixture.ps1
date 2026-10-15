@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)][string]$WebOutputDirectory,
     [Parameter(Mandatory = $true)][string]$WebAssetsDirectory,
     [Parameter(Mandatory = $true)][string]$SourceFixtureBundlePath,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedSourceCommit
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedSourceCommit,
+    [ValidateSet('Stub','Ad')][string]$AuthenticationProvider = 'Stub',
+    [string]$ServerAdminFixturePassword
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -13,6 +15,15 @@ $runsRoot = [IO.Path]::GetFullPath((Join-Path $stageRoot 'runs'))
 $webSource = [IO.Path]::GetFullPath($WebOutputDirectory)
 $assetSource = [IO.Path]::GetFullPath($WebAssetsDirectory)
 $sourceBundle = [IO.Path]::GetFullPath($SourceFixtureBundlePath)
+$serverAdminPasswordHash = $null
+if ($AuthenticationProvider -ceq 'Ad') {
+    if ([string]::IsNullOrWhiteSpace($ServerAdminFixturePassword)) { throw 'The owned rescue-auth fixture requires an explicit one-run serverAdmin password.' }
+    $salt = [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(16)
+    $derived = [System.Security.Cryptography.Rfc2898DeriveBytes]::Pbkdf2(
+        $ServerAdminFixturePassword, $salt, 210000, [System.Security.Cryptography.HashAlgorithmName]::SHA256, 32)
+    $serverAdminPasswordHash = 'PBKDF2$210000$' + [Convert]::ToBase64String($salt) + '$' + [Convert]::ToBase64String($derived)
+    $ServerAdminFixturePassword = $null
+}
 function Assert-BuildIdentity([object]$Manifest, [string]$Directory, [string]$Label, [string]$ExpectedCommit) {
     if ($Manifest.Schema -cne 'logforesight-build-identity-v1' -or @($Manifest.Assemblies).Count -ne 2) { throw "$Label build identity manifest shape invalid." }
     $entries = @{}
@@ -125,8 +136,8 @@ function Get-TreeSha256([string]$Root) {
         $relative = [IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
         "$relative`n$((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant())`n"
     }
-    $bytes = [Text.Encoding]::UTF8.GetBytes(($entries -join ''))
-    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($entries -join ''))
+    [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
 
 try {
@@ -223,8 +234,12 @@ try {
     $expectedWebCommandLine = '"' + [IO.Path]::GetFullPath($dotnet) + '" ' + $webArgLine
     $webEnvironment = @{
         ASPNETCORE_ENVIRONMENT='Development'; DOTNET_ENVIRONMENT='Development'; ASPNETCORE_URLS=$webBaseUrl
-        Auth__Provider='Stub'; Storage__Type='Sqlite'; Storage__DataRoot=$dataRoot; Storage__ConnectionString=''
+        Auth__Provider=$AuthenticationProvider; Storage__Type='Sqlite'; Storage__DataRoot=$dataRoot; Storage__ConnectionString=''
         Server__PathBase='/browser-fixture'; DOTNET_NOLOGO='1'; PATH=(Join-Path $appRoot 'runtimes\win-x64\native') + ';' + $env:PATH
+    }
+    if ($AuthenticationProvider -ceq 'Ad') {
+        $webEnvironment['Auth__ServerAdmin__Account'] = 'serverAdmin'
+        $webEnvironment['Auth__ServerAdmin__PasswordHash'] = $serverAdminPasswordHash
     }
     $webProcess = Start-Process -FilePath $dotnet -ArgumentList $webArgLine -WorkingDirectory $appRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runRoot 'web.stdout.log') -RedirectStandardError (Join-Path $runRoot 'web.stderr.log') -Environment $webEnvironment -PassThru
     $ready = $false
@@ -251,7 +266,7 @@ try {
         CreatedAtUtc=[DateTimeOffset]::UtcNow.ToString('O'); BundlePath=$runRoot
         SourceBuild=[ordered]@{ ExpectedSourceCommit=$ExpectedSourceCommit; Directory=$webSource; IdentityPath=$identityPath; IdentitySha256=(Get-FileHash -LiteralPath $identityPath -Algorithm SHA256).Hash.ToLowerInvariant(); ActualIdentityPath=$actualIdentityPath; SourceStamp=[string]$webEntry.SourceStamp; SourceRevision=[string]$webEntry.SourceRevisionIdOverride; WebDllSha256=(Get-FileHash -LiteralPath (Join-Path $webSource 'LogForesight.Web.dll') -Algorithm SHA256).Hash.ToLowerInvariant(); CoreDllSha256=(Get-FileHash -LiteralPath (Join-Path $webSource 'LogForesight.Core.dll') -Algorithm SHA256).Hash.ToLowerInvariant(); StaticAssetsSourceDirectory=$assetSource; StaticAssetsSourceSha256=$assetSourceSha256; StaticAssetsRuntimeSha256=$runtimeAssetsSha256 }
         SourceFixture=[ordered]@{ Bundle=$sourceBundle; RunId=$sourceManifest.RunId; DatabaseSha256Before=$sourceDbBefore; DatabaseSha256After=(Get-FileHash -LiteralPath $sourceDb -Algorithm SHA256).Hash.ToLowerInvariant(); KeySha256Before=$sourceKeyBefore; KeySha256After=(Get-FileHash -LiteralPath $sourceKey -Algorithm SHA256).Hash.ToLowerInvariant(); CloneDatabaseSha256BeforeLaunch=$cloneDbSha256BeforeLaunch; CloneKeySha256BeforeLaunch=$cloneKeySha256BeforeLaunch; AccountManifest=$sourceManifest.Accounts; RunRoles=$sourceManifest.RolesForU05; InheritedAccountsAndData=$sourceManifest.InheritedAccountsAndData }
-        Runtime=[ordered]@{ DataRoot=$dataRoot; WebBaseUrl=$webBaseUrl; PathBaseUrl="$webBaseUrl/browser-fixture"; SourceHttpBaseUrl=$httpBaseUrl; SourceSmtpEndpoint="127.0.0.1:$smtpPort"; InitialHttpMode='netiq-healthy'; InitialSmtpMode='accept'; ExternalConnectionsEnabled=$false; ScheduleEnabled=$false; LocalHostAnalysisEnabled=$false; MailEnabled=$false; PrtgEnabled=$false; AiUrlEmpty=$true }
+        Runtime=[ordered]@{ DataRoot=$dataRoot; WebBaseUrl=$webBaseUrl; PathBaseUrl="$webBaseUrl/browser-fixture"; SourceHttpBaseUrl=$httpBaseUrl; SourceSmtpEndpoint="127.0.0.1:$smtpPort"; AuthenticationProvider=$AuthenticationProvider; ServerAdminAccount=if($AuthenticationProvider -ceq 'Ad'){'serverAdmin'}else{$null}; ServerAdminPasswordRequired=($AuthenticationProvider -ceq 'Ad'); ServerAdminPasswordHashSha256=if($null -ne $serverAdminPasswordHash){[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($serverAdminPasswordHash))).ToLowerInvariant()}else{$null}; InitialHttpMode='netiq-healthy'; InitialSmtpMode='accept'; ExternalConnectionsEnabled=$false; ScheduleEnabled=$false; LocalHostAnalysisEnabled=$false; MailEnabled=$false; PrtgEnabled=$false; AiUrlEmpty=$true }
         Processes=@($sourceOwner,$webOwner)
         EvidenceLedger=(Get-Content -LiteralPath (Join-Path $stageRoot 'user-matrix.json') -Raw | ConvertFrom-Json)
         Limitations=@('The fixture is synthetic and loopback-only.', 'Run outcomes must be created through normal UI actions; the launcher writes no run, risk, finding, case, mail or progress outcomes.', 'The SMTP sink proves only local server acceptance/capture, not delivery to any external inbox.', 'Stub success/failure does not establish native source qualification or production outcomes.')

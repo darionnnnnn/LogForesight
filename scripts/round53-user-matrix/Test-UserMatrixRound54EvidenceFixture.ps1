@@ -15,8 +15,19 @@ $fixture = Join-Path $tempRoot 'fixture'
 [IO.Directory]::CreateDirectory((Join-Path $build 'wwwroot')) | Out-Null
 [IO.Directory]::CreateDirectory($fixture) | Out-Null
 try {
-  foreach ($file in @('Initialize-UserMatrixEvidence.ps1','Record-UserMatrixBrowserObservation.ps1','user-matrix.json','coverage-inventory.json')) {
+  foreach ($file in @('Initialize-UserMatrixEvidence.ps1','Record-UserMatrixBrowserObservation.ps1','Start-UserMatrixFixture.ps1','Test-UserMatrixApiExportAuthority.ps1','user-matrix.json','coverage-inventory.json')) {
     Copy-Item -LiteralPath (Join-Path $stageRoot $file) -Destination (Join-Path $stage $file)
+  }
+  $startSource = Get-Content -LiteralPath (Join-Path $stage 'Start-UserMatrixFixture.ps1') -Raw
+  $apiSource = Get-Content -LiteralPath (Join-Path $stage 'Test-UserMatrixApiExportAuthority.ps1') -Raw
+  if ($startSource -notmatch 'Rfc2898DeriveBytes\]::Pbkdf2' -or
+      $startSource -notmatch 'Auth__ServerAdmin__PasswordHash' -or
+      $startSource -notmatch 'ServerAdminPasswordHashSha256' -or
+      $apiSource -notmatch "-AuthenticationProvider 'Ad'" -or
+      $apiSource -notmatch "Account='serverAdmin'" -or
+      $apiSource -notmatch 'data\.isServerAdmin' -or
+      $apiSource -notmatch "-contains 'ViewAll'") {
+    throw 'Fixture source does not wire an explicit password-required serverAdmin credential through the real login/me API contract.'
   }
   Set-Content -LiteralPath $fakeVerifier -Value 'param([string]$Directory)' -Encoding utf8
   $commit = '0123456789abcdef0123456789abcdef01234567'
@@ -37,10 +48,27 @@ try {
   $evidencePath = [IO.Path]::GetFullPath([string]($initOutput | Select-Object -Last 1))
   $runRoot = Split-Path -Parent $evidencePath
   $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json
+  $matrixForFixture = Get-Content -LiteralPath (Join-Path $stage 'user-matrix.json') -Raw | ConvertFrom-Json
+  if ($matrixForFixture.roles.Count -ne 6 -or $matrixForFixture.maintenanceRoleMatrix.authorizationModelExpansion -ne $false) {
+    throw 'Maintenance fixture wiring must retain the six original roles and avoid authorization-model expansion.'
+  }
   if (@($evidence.round54Reviews).Count -ne 8 -or @($evidence.round54Contracts).Count -ne 5 -or @($evidence.round54ExecutionRefinements).Count -ne 4 -or
       @($evidence.maintenanceRoles).Count -ne 4 -or @($evidence.syntheticDefenseCases).Count -ne 1 -or
       @($evidence.round54Reviews | Where-Object result -ne 'pending').Count -ne 0 -or
       @($evidence.syntheticDefenseCases | Where-Object { $_.browserAcceptance -ne $false -or $_.provisionAccount -ne $false }).Count -ne 0) { throw 'Initializer did not create the complete pending Round54 evidence shape.' }
+  $expectedMaintenanceFixtureKeys = @{
+    'M54-rescue'='serverAdminBuiltin'
+    'M54-global'='currentEvidence.MaintainAccount'
+    'M54-readall'='accounts.manager.Account'
+    'M54-nomaintain'='currentEvidence.OrdinaryAccount'
+  }
+  foreach ($role in $evidence.maintenanceRoles) {
+    if ($role.fixtureAccountKey -cne $expectedMaintenanceFixtureKeys[[string]$role.id] -or
+        ($role.id -ceq 'M54-rescue' -and $role.loginMode -cne 'serverAdmin-password-required-owned-clone') -or
+        ($role.id -cne 'M54-rescue' -and $role.loginMode -cne 'existing-source-role-account') -or $role.result -cne 'pending') {
+      throw "Initializer changed or prematurely accepted the maintenance fixture mapping for $($role.id)."
+    }
+  }
   "PASS init fixture: $evidencePath"
 
   $runsRoot = Join-Path $stage 'runs'
@@ -65,6 +93,7 @@ try {
   $c54 = Record 'C54-01' passed
   $refinement = Record 'C54-05-A' passed
   $realRole = Record 'M54-global' passed
+  if ($realRole.FixtureAccountKey -cne 'currentEvidence.MaintainAccount' -or $realRole.LoginMode -cne 'existing-source-role-account') { throw 'Recorder did not bind maintenance evidence to its declared existing fixture identity.' }
   $syntheticRole = Record 'M54-scoped' passed
   $legacy = & $recorder -OwnerFile $ownerPath -RequirementId 'U53-05' -ObservedResult inconclusive -Observation 'Legacy contract path remains available; no browser result.' -EvidenceFile $artifact
   if ($r54.RequirementKind -ne 'round54Reviews' -or $c54.RequirementKind -ne 'round54Contracts' -or $refinement.RequirementKind -ne 'round54ExecutionRefinements' -or
@@ -72,7 +101,9 @@ try {
   $contractLog = Join-Path $runRoot 'evidence\round54-contract-observations.jsonl'
   $contractRecords = @(Get-Content -LiteralPath $contractLog | ForEach-Object { ConvertFrom-Json $_ })
   $cRecord = @($contractRecords | Where-Object requirementId -CEQ 'C54-01')[0]
+  $maintenanceRecord = @($contractRecords | Where-Object requirementId -CEQ 'M54-global')[0]
   if ($cRecord.declaredCheck -cne $evidence.round54Contracts[0].requiredChecks -or $syntheticRole.BrowserAcceptanceChanged -ne $false -or
+      $maintenanceRecord.fixtureAccountKey -cne 'currentEvidence.MaintainAccount' -or $maintenanceRecord.loginMode -cne 'existing-source-role-account' -or
       @($contractRecords | Where-Object { $_.requirementId -eq 'M54-scoped' -and $_.evidenceType -ne 'synthetic-authorization-component' }).Count -ne 0) { throw 'Contract record did not bind exact C54 check or maintain synthetic classification.' }
   "PASS recorder fixture: R54/C54/refinement/real+synthetic roles and legacy U53 route recorded by ID/check"
 

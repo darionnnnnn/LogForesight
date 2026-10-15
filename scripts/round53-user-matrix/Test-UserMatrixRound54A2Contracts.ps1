@@ -35,6 +35,6 @@ try {
   Invoke-Case 'accepted-without-evidence' $null { param($i) $i.round54ReviewAdditions[0].acceptanceStatus = 'accepted'; $i.round54ReviewAdditions[0].status = 'accepted'; $i.round54ReviewAdditions[0].sourceReferences = @() }
   Invoke-Case 'implemented-without-source' $null { param($i) $i.round54ReviewAdditions[0].implementationStatus = 'implemented-awaiting-acceptance'; $i.round54ReviewAdditions[0].sourceReferences = @() }
   Invoke-Case 'acceptance-description-omitted' $null { param($i) $i.round54ReviewAdditions[4].remainingAcceptance = @() }
-  Invoke-Case 'known-implementation-gap-marked-complete' $null { param($i) $i.round54ReviewAdditions[4].implementationStatus = 'implemented-awaiting-acceptance' }
+  Invoke-Case 'known-implementation-gap-marked-complete' $null { param($i) $i.round54ReviewAdditions[4].remainingImplementation = @('Synthetic unresolved implementation gap'); $i.round54ReviewAdditions[4].implementationStatus = 'implemented-awaiting-acceptance' }
   Invoke-Case 'unresolvable-source-locator' $null { param($i) $i.round54ReviewAdditions[0].sourceReferences = @('LogForesight.Core/Service/PrtgDailyPipeline.cs::missing-locator') }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }

@@ -86,6 +86,8 @@ $record = [ordered]@{
     runId=$owner.RunId
     requirementKind=$requirement.Kind
     requirementId=$RequirementId
+    fixtureAccountKey=if ($requirement.Kind -eq 'maintenanceRoles') { $requirement.Item.fixtureAccountKey } else { $null }
+    loginMode=if ($requirement.Kind -eq 'maintenanceRoles') { $requirement.Item.loginMode } else { $null }
     checkId=$CheckId
     declaredCheck=$declaredCheck
     evidenceType=if ($requirement.Kind -eq 'syntheticDefenseCases') { 'synthetic-authorization-component' } elseif ($requirement.Kind -eq 'maintenanceRoles') { 'real-login-maintenance-scenario' } else { 'operator-recorded-contract-observation' }
@@ -96,4 +98,4 @@ $record = [ordered]@{
     limitations=@('Manually recorded observation; this helper does not validate the screenshot or browser interaction.', 'One observation does not mark an AC, journey, quality objective, or full matrix accepted.', 'Synthetic fixture evidence is not production or native-source evidence.')
 }
 Add-Content -LiteralPath $recordPath -Value ($record | ConvertTo-Json -Depth 12 -Compress) -Encoding utf8
-[pscustomobject]@{ RunId=$owner.RunId; RequirementKind=$requirement.Kind; RequirementId=$RequirementId; Result=$ObservedResult; EvidencePath=$relativeArtifact; RecordPath=$recordPath; AggregateAcceptanceChanged=$false; BrowserAcceptanceChanged=$false }
+[pscustomobject]@{ RunId=$owner.RunId; RequirementKind=$requirement.Kind; RequirementId=$RequirementId; FixtureAccountKey=if($requirement.Kind -eq 'maintenanceRoles'){$requirement.Item.fixtureAccountKey}else{$null}; LoginMode=if($requirement.Kind -eq 'maintenanceRoles'){$requirement.Item.loginMode}else{$null}; Result=$ObservedResult; EvidencePath=$relativeArtifact; RecordPath=$recordPath; AggregateAcceptanceChanged=$false; BrowserAcceptanceChanged=$false }
