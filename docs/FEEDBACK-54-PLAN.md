@@ -438,3 +438,9 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - `PrtgFormalMailClaimStore` 在原交易內讀取有界完整shard，從snapshot attach並保留Version／UpdatedAt並發原值；不先載入另一份未核版本全文。prune retry重新有界核對同keyset，只認列精確匹配的已提交結果。額外重現並修正保留期bug：仍保留的smtp-accepted claim必須繼續保有其fence，直到引用claim本身到期，否則清理後ValidateShard會失敗。
 - 主代理獨立小型結果：local facts 6案通過（`root-authority-consumers-r5`子集）；silent批次NUL／過期清理2/2（`silent-bounded-consumer-r6`），原生HTTP來源至正式finding正向通過（`formal-claim-silent-r8`子集）；claim NUL／小cap／Local不一致3案通過，保留期正向修正後1/1（`claim-retention-r9`）。全部零略過，fixture最多兩sensor／單shard／單claim+fence；NUL以byte[] CAST寫入並核實實際bytes，避免provider字串截尾形成假反例。編譯錯誤與修正前失敗receipt保留，不冒稱曾整批全綠。
 - 依使用者新指令逐PLAN對照實際producer／consumer，已完成的原始實作待辦從§2刪除並修正§4、§6的陳舊現況；尚缺的背景raw工作隔離、郵件原子receipt／正文範圍、其餘D1consumer及中斷候選仍明列。§3保留未執行的驗收／交付，不把小型程式驗證當成G／H通過。
+
+### 實作與驗收清單分離核對（2026-10-15）
+
+- R54八項、C54五項與四項執行補強共17項，分別記錄 `implementationStatus`、實際 `sourceReferences`、`remainingImplementation` 與 `remainingAcceptance`；原必要檢查、ID、AC／journey／Q關係不刪除。已實作項的實作待辦留空，仍未通過的驗收維持 `not-accepted`，不再一律誤寫 `planned-not-implemented`。
+- validator核對檔案與精確source locator、禁止有已知程式缺口卻標實作完成，且逐字保留原驗收檢查。主代理獨立CoverageInventory及A2 baseline＋12個否定案例通過；22 AC／10 journeys／6 Q／7來源情境／222案／53承接缺口及原27責任索引不變。這是清單一致性證據，不是17項功能全通過。
+- 四種維護情境的真登入fixture接線另行補齊；仍保留原六角色與一個合成防禦測例，未實際登入前不宣稱browser accepted。

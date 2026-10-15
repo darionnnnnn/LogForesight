@@ -51,8 +51,58 @@ foreach ($journey in $inventory.userJourneys) {
         throw "$($journey.id) must state source coverage and explicit remaining gaps."
     }
 }
-# Round 54 review contracts remain pending, but each ID and dependency must be
-# represented exactly once so a missing row cannot disappear from the denominator.
+# Round 54 source implementation and acceptance are separate facts. A wired
+# candidate is not accepted until its linked checks have independently passed.
+$allowedImplementationStatuses = @('not-implemented','partial-candidate','implemented-awaiting-acceptance')
+function Assert-ImplementationMetadata($item, [string]$kind) {
+    if ($item.status -cne 'not-accepted' -or $item.acceptanceStatus -cne 'not-accepted') {
+        throw "$($item.id) $kind acceptance must remain not-accepted until all required checks pass."
+    }
+    if ($item.implementationStatus -notin $allowedImplementationStatuses) {
+        throw "$($item.id) $kind has an unknown implementationStatus."
+    }
+    $references = @($item.sourceReferences)
+    $remaining = @($item.remainingImplementation)
+    if ($null -ne $item.PSObject.Properties['requiredChecks']) { $acceptanceSource = @($item.requiredChecks) }
+    elseif ($null -ne $item.PSObject.Properties['required']) { $acceptanceSource = @([string]$item.required) }
+    else { $acceptanceSource = @($item.checks) }
+    $remainingAcceptance = @($item.remainingAcceptance)
+    if ($remainingAcceptance.Count -ne $acceptanceSource.Count) {
+        throw "$($item.id) must preserve every original acceptance check in remainingAcceptance."
+    }
+    for ($index = 0; $index -lt $acceptanceSource.Count; $index++) {
+        if ([string]$remainingAcceptance[$index] -cne [string]$acceptanceSource[$index]) {
+            throw "$($item.id) remainingAcceptance must exactly preserve the original acceptance check at index $index."
+        }
+    }
+    switch ([string]$item.implementationStatus) {
+        'not-implemented' {
+            if ($references.Count -ne 0 -or $remaining.Count -eq 0) { throw "$($item.id) not-implemented status requires no source references and explicit remaining implementation." }
+        }
+        'partial-candidate' {
+            if ($references.Count -eq 0 -or $remaining.Count -eq 0) { throw "$($item.id) partial-candidate status requires source references and explicit remaining implementation." }
+        }
+        'implemented-awaiting-acceptance' {
+            if ($references.Count -eq 0 -or $remaining.Count -ne 0) { throw "$($item.id) implemented-awaiting-acceptance requires source references and no known implementation gaps." }
+        }
+    }
+    foreach ($reference in $references) {
+        $parts = ([string]$reference -split '::', 2)
+        if ($parts.Count -ne 2 -or [string]::IsNullOrWhiteSpace($parts[1])) { throw "$($item.id) $kind source reference must include a file and exact source locator." }
+        $path = Join-Path $repoRoot $parts[0]
+        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "$($item.id) $kind source reference path is missing: $($parts[0])" }
+        $sourceText = Get-Content -LiteralPath $path -Raw
+        if ($sourceText -notmatch [regex]::Escape($parts[1])) { throw "$($item.id) $kind source locator is missing from $($parts[0]): $($parts[1])" }
+    }
+}
+# Every original denominator and review ID is fixed; source evidence only
+# annotates implementation progress and never changes acceptance state.
+if ($inventory.coverageCounting.originalTodoCount -ne 27 -or
+    $inventory.coverageCounting.inheritedExplicitGapCount -ne 53 -or
+    $inventory.coverageCounting.additionalReviewItemCount -ne 8 -or
+    $inventory.coverageCounting.countsAreCeilings -ne $false) {
+    throw 'Round54 must preserve the original TODO/gap denominators and eight review additions.'
+}
 $reviewIds = @('R54-01','R54-02','R54-03','R54-04','R54-05','R54-06','R54-07','R54-08')
 $reviews = @($inventory.round54ReviewAdditions)
 if (@($reviews.id).Count -ne 8 -or @($reviews.id | Select-Object -Unique).Count -ne 8 -or
@@ -66,7 +116,8 @@ $refinementIds = @('C54-03-O','C54-05-A','C54-03-T','C54-04-B')
 if (@($refinements.id).Count -ne 4 -or @($refinements.id | Select-Object -Unique).Count -ne 4 -or
     (@($refinements.id | Sort-Object) -join ',') -cne (@($refinementIds | Sort-Object) -join ',')) { throw 'Round54 execution refinements must contain all four IDs exactly once.' }
 foreach ($item in $reviews) {
-    if ($item.status -cne 'planned-not-implemented' -or @($item.requiredChecks).Count -eq 0 -or @($item.acceptanceCriteria).Count -eq 0 -or @($item.journeys).Count -eq 0) { throw "$($item.id) must remain pending and retain checks, AC and journey links." }
+    Assert-ImplementationMetadata $item 'review'
+    if (@($item.requiredChecks).Count -eq 0 -or @($item.acceptanceCriteria).Count -eq 0 -or @($item.journeys).Count -eq 0) { throw "$($item.id) must retain checks, AC and journey links." }
     foreach ($journeyId in $item.journeys) {
         $journey = @($matrix.userJourneys | Where-Object id -CEQ $journeyId)
         if ($journey.Count -ne 1) { throw "$($item.id) references unknown or duplicate journey $journeyId." }
@@ -78,7 +129,8 @@ foreach ($item in $reviews) {
     if (($expectedQForReview -join ',') -cne ($actualQForReview -join ',')) { throw "$($item.id) Q journey links do not resolve to the fixed matrix." }
 }
 foreach ($contract in $contracts) {
-    if ($contract.status -cne 'planned-not-implemented' -or @($contract.reviews).Count -eq 0) { throw "$($contract.id) must remain pending and link to R54." }
+    Assert-ImplementationMetadata $contract 'contract'
+    if (@($contract.reviews).Count -eq 0) { throw "$($contract.id) must link to R54." }
     foreach ($id in $contract.reviews) { if ($id -notin $reviewIds) { throw "$($contract.id) references unknown review $id." } }
     foreach ($id in $contract.refinementIds) { if ($id -notin $refinementIds) { throw "$($contract.id) references unknown refinement $id." } }
 }
@@ -96,7 +148,8 @@ $expectedRefinementLinks = @{
     'C54-03-O'='C54-03'; 'C54-05-A'='C54-05'; 'C54-03-T'='C54-03,C54-05'; 'C54-04-B'='C54-04'
 }
 foreach ($refinement in $refinements) {
-    if ($refinement.status -cne 'planned-not-implemented' -or @($refinement.checks).Count -eq 0) { throw "$($refinement.id) must remain pending and retain required checks." }
+    Assert-ImplementationMetadata $refinement 'refinement'
+    if (@($refinement.checks).Count -eq 0) { throw "$($refinement.id) must retain required checks." }
     foreach ($id in $refinement.contracts) { if ($id -notin $contractIds) { throw "$($refinement.id) references unknown contract $id." } }
     foreach ($id in $refinement.reviews) { if ($id -notin $reviewIds) { throw "$($refinement.id) references unknown review $id." } }
     if ((@($refinement.contracts | Sort-Object) -join ',') -cne $expectedRefinementLinks[$refinement.id]) { throw "$($refinement.id) is cross-linked to the wrong C54 contract." }

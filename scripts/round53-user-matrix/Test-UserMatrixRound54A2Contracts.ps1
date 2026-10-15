@@ -32,4 +32,9 @@ try {
   Invoke-Case 'synthetic-as-browser' { param($m) $m.maintenanceRoleMatrix.syntheticDefenseCases[0].browserAcceptance = $true } $null
   Invoke-Case 'wrong-q-journey-link' { param($m) $m.qualityObjectives[0].journeys = @('U53-02') } $null
   Invoke-Case 'pending-misreported' $null { param($i) $i.round54ReviewAdditions[0].status = 'passed' }
+  Invoke-Case 'accepted-without-evidence' $null { param($i) $i.round54ReviewAdditions[0].acceptanceStatus = 'accepted'; $i.round54ReviewAdditions[0].status = 'accepted'; $i.round54ReviewAdditions[0].sourceReferences = @() }
+  Invoke-Case 'implemented-without-source' $null { param($i) $i.round54ReviewAdditions[0].implementationStatus = 'implemented-awaiting-acceptance'; $i.round54ReviewAdditions[0].sourceReferences = @() }
+  Invoke-Case 'acceptance-description-omitted' $null { param($i) $i.round54ReviewAdditions[4].remainingAcceptance = @() }
+  Invoke-Case 'known-implementation-gap-marked-complete' $null { param($i) $i.round54ReviewAdditions[4].implementationStatus = 'implemented-awaiting-acceptance' }
+  Invoke-Case 'unresolvable-source-locator' $null { param($i) $i.round54ReviewAdditions[0].sourceReferences = @('LogForesight.Core/Service/PrtgDailyPipeline.cs::missing-locator') }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }

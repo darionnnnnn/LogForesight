@@ -82,7 +82,10 @@
   "auditFindings": [
     {
       "id": "RUNS-DATE-SEMANTICS-001",
-      "linkedContracts": ["AC22", "U53-08"],
+      "linkedContracts": [
+        "AC22",
+        "U53-08"
+      ],
       "status": "resolved-by-visible-date-caption-and-hash-navigation; full U53-08 remains pending",
       "evidence": [
         "LogForesight.Web/Services/RunMonitorService.cs::GetDaySummaries anchors rows on execution date D, while NetiqStatus queries source attempt/record date D-1.",
@@ -149,8 +152,26 @@
         "Check concurrent automatic/manual runs, duplicate confirmation, mapping changes, job-start-after-check and mid-batch failure/restart. Same accepted request returns the same operation, never a new deletion.",
         "Recheck Maintain before acceptance and before every new batch/resume. Revocation stops at the next safe point with exact durable counts; no new batch starts. Resume requires restored authority and unchanged accepted scope/generation; otherwise require a new preview and operation with predecessor linkage."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::CreatePreview",
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::Accept",
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::RunBatch",
+        "LogForesight.Web/Controllers/Api/PrtgScopePurgeJobsController.cs::Confirm",
+        "LogForesight.Web/Controllers/Api/PrtgScopePurgeJobsController.cs::Resume",
+        "LogForesight.Core/Service/PrtgDailyPipeline.cs::RunAfterStructureSync",
+        "LogForesight.Core/Service/PrtgStructureSyncRunner.cs::RunAfterStructureSync"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Manual confirmation binds actor, permission version, source generation, mapping, keep-set and candidate data boundary to a server preview valid for five minutes; changed or expired previews reject before deletion.",
+        "Manual, PrtgDailyPipeline and PrtgStructureSyncRunner purge paths share ownership, consistency and durable partial-progress protection; automatic runs bind successful sync generation and retain shrink guards without requiring a manual preview.",
+        "Check concurrent automatic/manual runs, duplicate confirmation, mapping changes, job-start-after-check and mid-batch failure/restart. Same accepted request returns the same operation, never a new deletion.",
+        "Recheck Maintain before acceptance and before every new batch/resume. Revocation stops at the next safe point with exact durable counts; no new batch starts. Resume requires restored authority and unchanged accepted scope/generation; otherwise require a new preview and operation with predecessor linkage."
+      ]
     },
     {
       "id": "R54-02",
@@ -175,8 +196,24 @@
         "Single/batch start, eligibility, preview, evidence expiry and manual confirmation use the same date contract.",
         "Different browser/server/analysis zones, midnight crossings and DST 23/25-hour days have exact expected UTC intervals; reject ambiguous points without silently dropping a valid completed day."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Web/Services/PrtgDiskVerificationService.cs::GetStatus",
+        "LogForesight.Web/Services/PrtgDiskVerificationService.cs::TryGetCompletedAnalysisDay",
+        "LogForesight.Web/Services/PrtgDiskVerificationService.cs::CompletedDay",
+        "LogForesight.Web/Services/PrtgDiskVerificationService.cs::ProbeAndSaveAsync",
+        "LogForesight.Web/Services/PrtgDiskVerificationService.cs::ConfirmManually",
+        "LogForesight.Tests/PrtgDiskVerificationServiceTests.cs::CompletedAnalysisDayIsIndependentOfBrowserAndServerLocalYesterday"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Backend derives completed analysis date from saved analysis timezone; UI displays supplied date and timezone, not browser-local yesterday.",
+        "Single/batch start, eligibility, preview, evidence expiry and manual confirmation use the same date contract.",
+        "Different browser/server/analysis zones, midnight crossings and DST 23/25-hour days have exact expected UTC intervals; reject ambiguous points without silently dropping a valid completed day."
+      ]
     },
     {
       "id": "R54-03",
@@ -200,8 +237,22 @@
         "Maintain reaches the correct repair setting; non-Maintain sees the reason and administrator action without a dead-end forbidden link.",
         "Repair then reverify through normal UI; admin/runs/detail/report agree on state, and manual review is offered only when usable matched points exist."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Web/Services/PrtgDiskVerificationService.cs::GetStatus",
+        "LogForesight.Web/Services/PrtgDiskVerificationService.cs::ConfirmManually",
+        "LogForesight.Web/Controllers/Api/PrtgAuthorityRepairController.cs::class PrtgAuthorityRepairController",
+        "LogForesight.Web/wwwroot/js/pages/prtg-authority-repair.js::InvalidJson"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Distinguish missing authority/configuration, insufficient samples, actionable manual review, mismatch, stale settings and retryable failure.",
+        "Maintain reaches the correct repair setting; non-Maintain sees the reason and administrator action without a dead-end forbidden link.",
+        "Repair then reverify through normal UI; admin/runs/detail/report agree on state, and manual review is offered only when usable matched points exist."
+      ]
     },
     {
       "id": "R54-04",
@@ -224,8 +275,22 @@
         "Confirmation explicitly says global deletion is not limited to displayed names; filter authorization before taking the visible top 20.",
         "Test hidden names/identifiers, more than 20 devices, orphan sensors and zero-visible users; safe blocking reasons and exact authorized detail sets."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Web/Controllers/Api/SettingsController.cs::PreviewPrtgScopePurge",
+        "LogForesight.Web/Controllers/Api/SettingsController.cs::TopDeviceNames = preview.TopDeviceNames.ToList()",
+        "LogForesight.Web/Controllers/Api/PrtgScopePurgeJobsController.cs::Get",
+        "LogForesight.Web/Services/PrtgScopePurgeAuthorizationService.cs::CheckRead"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Separate global impact counts, visible detail counts and permission-limited detail disclosure; zero visible detail is not zero affected data.",
+        "Confirmation explicitly says global deletion is not limited to displayed names; filter authorization before taking the visible top 20.",
+        "Test hidden names/identifiers, more than 20 devices, orphan sensors and zero-visible users; safe blocking reasons and exact authorized detail sets."
+      ]
     },
     {
       "id": "R54-05",
@@ -254,8 +319,27 @@
         "Pre-existing findings/cases/replies/pending mail, restart, replay, setting restore and version rollback are checked across collector, read side, reports, exports and notification consumers; blank legacy authority is never retroactively trusted.",
         "Distinguish setting restore from binary rollback. A2 freezes the exact prior supported artifact and paired pre-upgrade DB/key/config backup. Direct downgrade against upgraded storage is denied unless same-data compatibility is proven; otherwise use paired restore. Verify cases/replies, pending jobs, notification dedupe and post-backup delta accounting without replaying already accepted mail blindly."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "partial-candidate",
+      "sourceReferences": [
+        "LogForesight.Core/Service/PrtgFetchService.cs::FetchDayAsync",
+        "LogForesight.Core/Service/PrtgDailyPipeline.cs::RunAsync",
+        "LogForesight.Core/Service/PrtgSupplementReplay.cs::class PrtgSupplementReplay",
+        "LogForesight.Web/Services/Mail/MailNotificationService.cs::SendUrgentNotificationsAsync",
+        "LogForesight.Core/Persistence/PrtgFormalMailClaimStore.cs::Load("
+      ],
+      "remainingImplementation": [
+        "Replay、qualification、profile-refresh notice、channel discovery 與 capacity admission 尚未全部改接獨立的 raw/source authority 單調版本或等價防 ABA fence；不得以 MessageTimeAuthorityRevision 取代 raw/source fence，因 MessageDateFormat 變更本來就會遞增該 message-lane revision。MessageDateFormat-only 變更仍會取消目前依整份 policy Revision 比對的部分 raw work；message lane 則保留 MessageTimeAuthorityRevision。逐一補齊各 lane 的 fingerprint/cursor 接線並保留其他 scope fences。",
+        "Mail atomic reservation、render、formal-send 與 workflow-scope interruption 尚未完成同一端到端接線；補齊 caller integration，讓未接受的工作可安全取消，已接受的 intent 不被重送。"
+      ],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Map date-format, culture, raw/source/analysis timezone, source-generation and unrelated scope changes to each authority fingerprint and cursor.",
+        "On upgrade or authority change, unqualified message evidence cannot create new formal risk/cases/mail; retain historical facts, manual replies and valid unrelated NetIQ/raw evidence.",
+        "Pre-existing findings/cases/replies/pending mail, restart, replay, setting restore and version rollback are checked across collector, read side, reports, exports and notification consumers; blank legacy authority is never retroactively trusted.",
+        "Distinguish setting restore from binary rollback. A2 freezes the exact prior supported artifact and paired pre-upgrade DB/key/config backup. Direct downgrade against upgraded storage is denied unless same-data compatibility is proven; otherwise use paired restore. Verify cases/replies, pending jobs, notification dedupe and post-backup delta accounting without replaying already accepted mail blindly."
+      ]
     },
     {
       "id": "R54-06",
@@ -281,8 +365,35 @@
         "SQLite/SQL Server ASCII, Chinese, supplementary characters, cap boundaries and oversized/malformed input are tested for equivalent acceptance decisions.",
         "Isolate by evidence dependency: a host mode blob blocks its dependent items; an unreadable/oversized shared disk blob puts every dependent disk qualification into explicit wait. Independent NetIQ, evidence and notifications continue. No partial trust of corrupt shared JSON, no new storage split/migration; bounded authorized repair preserves CAS and unrelated data."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "partial-candidate",
+      "sourceReferences": [
+        "LogForesight.Core/Persistence/Sql/BoundedJsonBlobBatchReader.cs::class BoundedJsonBlobBatchReader",
+        "LogForesight.Core/Persistence/PrtgDiskSemanticEvidenceStore.cs::CaptureSnapshot",
+        "LogForesight.Core/Persistence/PrtgDiskVerificationResultStore.cs::CaptureSnapshot",
+        "LogForesight.Core/Persistence/PrtgResourcePressureModeStore.cs::Find",
+        "LogForesight.Core/Persistence/PrtgAuthorityRepairStore.cs::ValidateRepairDocument",
+        "LogForesight.Tests/PrtgAuthorityStrictJsonTests.cs::class PrtgAuthorityStrictJsonTests",
+        "LogForesight.Web/Services/PrtgSnapshotDiagnosticsStore.cs::class PrtgSnapshotDiagnosticsStore",
+        "LogForesight.Web/Services/PrtgDiagnosticExportActionResult.cs::class PrtgDiagnosticExportActionResult",
+        "LogForesight.Core/Service/PrtgDiagnosticExportSource.cs::class PrtgDiagnosticExportSource",
+        "LogForesight.Core/Service/CalibrationService.cs::ReadCalibrationBlobSnapshot",
+        "LogForesight.Web/Services/PrtgTrustedSamplingProfileRefreshStateStore.cs::class PrtgTrustedSamplingProfileRefreshStateStore",
+        "LogForesight.Core/Persistence/PrtgResourceFormalEpisodeStore.cs::class PrtgResourceFormalEpisodeStore",
+        "LogForesight.Core/Persistence/PrtgResourcePressureModeReplayProgressStore.cs::class PrtgResourcePressureModeReplayProgressStore"
+      ],
+      "remainingImplementation": [
+        "DiagnosticStore 的完整有界讀寫接線仍未完成；盤點並替換會先完整 materialize 再檢查長度的寫入/讀取路徑，保留既有 cap 與 CAS。",
+        "ExportActionResult、Core DiagnosticExportSource、CalibrationService projection 與 ProfileRefresh interruption 仍是未完成接線候選；逐個確認正式 producer/consumer 使用有界 projection、版本 fence 及安全中斷，不以類別存在當作已接線。",
+        "尚未完成 episode、hint、timeline、strategy 與 replay progress mutation 的 producer-to-consumer 全面盤點及有界/版本保護寫入接線。"
+      ],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Mode cap is 262144 characters and disk snapshot cap is 33554432 characters; encoded bytes and process memory are separate measured quantities, not renamed limits.",
+        "SQLite/SQL Server ASCII, Chinese, supplementary characters, cap boundaries and oversized/malformed input are tested for equivalent acceptance decisions.",
+        "Isolate by evidence dependency: a host mode blob blocks its dependent items; an unreadable/oversized shared disk blob puts every dependent disk qualification into explicit wait. Independent NetIQ, evidence and notifications continue. No partial trust of corrupt shared JSON, no new storage split/migration; bounded authorized repair preserves CAS and unrelated data."
+      ]
     },
     {
       "id": "R54-07",
@@ -307,8 +418,25 @@
         "Freeze current round54 source commit, Web/Core/static assets, fixture and environment identities; old results are reused only with explicit unchanged-scope evidence.",
         "Later extend validators/fixture/recorders to check supplementary roles and review IDs; current document additions alone do not provision roles or claim browser acceptance."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "partial-candidate",
+      "sourceReferences": [
+        "scripts/round53-user-matrix/Test-UserMatrixCoverageInventory.ps1::Maintenance matrix must have exactly four unique real-login scenarios.",
+        "scripts/round53-user-matrix/Test-UserMatrixRound54A2Contracts.ps1::Invoke-Case",
+        "scripts/round53-user-matrix/Record-UserMatrixBrowserObservation.ps1::round54ExecutionRefinements",
+        "scripts/round53-user-matrix/user-matrix.json::\"status\": \"planned-not-provisioned\"",
+        "scripts/round53-user-matrix/Initialize-UserMatrixEvidence.ps1::syntheticDefenseCases"
+      ],
+      "remainingImplementation": [
+        "四種維護情境目前只有矩陣與證據骨架，沒有為四種真實登入建立 fixture/provision 接線，也沒有供 M54-rescue 使用的真 serverAdmin 登入 helper；補上只使用既有帳號/授權模型的真實登入 fixture，不建立新角色。"
+      ],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Retain six baseline roles plus four real-login maintenance scenarios. M54-scoped is a synthetic authorization-component defense only, not an account, browser acceptance or production role. No authorization-model expansion; actual rescue login remains distinct.",
+        "Freeze current round54 source commit, Web/Core/static assets, fixture and environment identities; old results are reused only with explicit unchanged-scope evidence.",
+        "Later extend validators/fixture/recorders to check supplementary roles and review IDs; current document additions alone do not provision roles or claim browser acceptance."
+      ]
     },
     {
       "id": "R54-08",
@@ -331,8 +459,21 @@
         "The 27 TODOs and 53 inherited gaps are baseline counts, not a ceiling; eight review additions remain separately pending and new findings are recorded explicitly.",
         "Before each stage acceptance and final acceptance, inspect real consumers and repair omissions; only rerun affected evidence unless changes invalidate broader results."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "scripts/round53-user-matrix/Test-UserMatrixCoverageInventory.ps1::Round54 review additions must contain every R54 ID exactly once.",
+        "scripts/round53-user-matrix/Test-UserMatrixRound54A2Contracts.ps1::pending-misreported",
+        "scripts/round53-user-matrix/Record-UserMatrixBrowserObservation.ps1::round54-contract-observations.jsonl"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Each F/G substage has original IDs, dependencies, exact expected results, negative cases and accessible evidence; original TODO closes only after all linked mandatory items pass.",
+        "The 27 TODOs and 53 inherited gaps are baseline counts, not a ceiling; eight review additions remain separately pending and new findings are recorded explicitly.",
+        "Before each stage acceptance and final acceptance, inspect real consumers and repair omissions; only rerun affected evidence unless changes invalidate broader results."
+      ]
     }
   ],
   "coverageCounting": {
@@ -340,7 +481,7 @@
     "inheritedExplicitGapCount": 53,
     "additionalReviewItemCount": 8,
     "countsAreCeilings": false,
-    "rule": "Review items contain multiple required checks and are not interchangeable units of completion. All remain pending; inherited evidence does not close new checks."
+    "rule": "All R54/C54/refinement acceptance remains pending until its required checks pass. implementationStatus describes source integration only; candidate or tested implementation does not close linked acceptance items."
   },
   "round54ContractCorrections": [
     {
@@ -350,9 +491,23 @@
       ],
       "stage": "A2",
       "required": "Four real-login maintenance scenarios plus one synthetic component defense; no new role or authorization expansion.",
-      "status": "planned-not-implemented",
+      "status": "not-accepted",
       "evidence": [],
-      "refinementIds": []
+      "refinementIds": [],
+      "implementationStatus": "partial-candidate",
+      "sourceReferences": [
+        "scripts/round53-user-matrix/Test-UserMatrixCoverageInventory.ps1::Maintenance matrix must have exactly four unique real-login scenarios.",
+        "scripts/round53-user-matrix/Test-UserMatrixRound54A2Contracts.ps1::wrong-role-capability",
+        "scripts/round53-user-matrix/user-matrix.json::\"status\": \"planned-not-provisioned\"",
+        "scripts/round53-user-matrix/Initialize-UserMatrixEvidence.ps1::syntheticDefenseCases"
+      ],
+      "remainingImplementation": [
+        "缺少四個真實維護登入情境的 fixture/provision 與真 serverAdmin 登入 helper；矩陣和 recorder 只建立待驗證證據，不建立登入帳號。不得擴充角色或能力。"
+      ],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Four real-login maintenance scenarios plus one synthetic component defense; no new role or authorization expansion."
+      ]
     },
     {
       "id": "C54-02",
@@ -361,9 +516,24 @@
       ],
       "stage": "D1",
       "required": "Evidence-dependency isolation; unreadable shared disk evidence blocks dependent disk qualification, not independent work; no storage redesign.",
-      "status": "planned-not-implemented",
+      "status": "not-accepted",
       "evidence": [],
-      "refinementIds": []
+      "refinementIds": [],
+      "implementationStatus": "partial-candidate",
+      "sourceReferences": [
+        "LogForesight.Core/Persistence/PrtgResourcePressureModeStore.cs::Find",
+        "LogForesight.Core/Persistence/PrtgDiskSemanticEvidenceStore.cs::CaptureSnapshot",
+        "LogForesight.Core/Persistence/PrtgDiskVerificationResultStore.cs::CaptureSnapshot",
+        "LogForesight.Core/Persistence/StrictAuthorityJsonDocument.cs::class StrictAuthorityJsonDocument",
+        "LogForesight.Tests/PrtgAuthorityStrictJsonTests.cs::class PrtgAuthorityStrictJsonTests"
+      ],
+      "remainingImplementation": [
+        "仍需完成 shared disk authority 實際 consumer 的逐路徑 guard 接線盤點，確認壞文件只阻斷相依磁碟 qualification，並補齊未經 StrictAuthorityJsonDocument 驗證的正式讀寫路徑。"
+      ],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Evidence-dependency isolation; unreadable shared disk evidence blocks dependent disk qualification, not independent work; no storage redesign."
+      ]
     },
     {
       "id": "C54-03",
@@ -372,11 +542,24 @@
       ],
       "stage": "F2",
       "required": "Manual and both automatic purge entry points share safety and durable partial recovery; preserve automatic scope/shrink guards.",
-      "status": "planned-not-implemented",
+      "status": "not-accepted",
       "evidence": [],
       "refinementIds": [
         "C54-03-O",
         "C54-03-T"
+      ],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::RunBatch",
+        "LogForesight.Core/Service/PrtgScopeDevices.cs::RunAfterStructureSync",
+        "LogForesight.Core/Service/PrtgDailyPipeline.cs::RunAfterStructureSync",
+        "LogForesight.Core/Service/PrtgStructureSyncRunner.cs::RunAfterStructureSync",
+        "LogForesight.Tests/PrtgScopePurgeStoreTests.cs::RunAfterStructureSync"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Manual and both automatic purge entry points share safety and durable partial recovery; preserve automatic scope/shrink guards."
       ]
     },
     {
@@ -386,10 +569,25 @@
       ],
       "stage": "B2",
       "required": "Freeze exact rollback target and backup set before upgrade; reject unproven direct same-data downgrade; account for later replies/jobs/mail.",
-      "status": "planned-not-implemented",
+      "status": "not-accepted",
       "evidence": [],
       "refinementIds": [
         "C54-04-B"
+      ],
+      "implementationStatus": "partial-candidate",
+      "sourceReferences": [
+        "scripts/round54/rollback/rollback_control.py::validate_bundle",
+        "scripts/round54/rollback/rollback_control.py::reconcile",
+        "scripts/round54/rollback/tests/test_rollback_control.py::test_paired_restore_preserves_exact_files_and_rows_before_launch",
+        "scripts/round54/rollback/tests/test_delta_reconcile.py::test_same_schema_delta_cas_backup_and_controlled_release",
+        "scripts/round54/rollback/tests/real-target-smoke-report.json::\"result\": \"PASS\""
+      ],
+      "remainingImplementation": [
+        "目前 rollback/delta 工具與小型實證覆蓋 SQLite；SQL Server 專屬備份、還原及差額處理交付尚未完成。"
+      ],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Freeze exact rollback target and backup set before upgrade; reject unproven direct same-data downgrade; account for later replies/jobs/mail."
       ]
     },
     {
@@ -399,11 +597,24 @@
       ],
       "stage": "F2",
       "required": "Five-minute preview, exact invalidators, idempotent confirmation, permission revocation and safe resume/new-operation distinction.",
-      "status": "planned-not-implemented",
+      "status": "not-accepted",
       "evidence": [],
       "refinementIds": [
         "C54-05-A",
         "C54-03-T"
+      ],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::Accept",
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::RunBatch",
+        "LogForesight.Web/Controllers/Api/PrtgScopePurgeJobsController.cs::Confirm",
+        "LogForesight.Web/Controllers/Api/PrtgScopePurgeJobsController.cs::Resume",
+        "LogForesight.Web/Services/PrtgScopePurgeAuthorizationService.cs::Check"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Five-minute preview, exact invalidators, idempotent confirmation, permission revocation and safe resume/new-operation distinction."
       ]
     }
   ],
@@ -426,8 +637,22 @@
         "Only that parent may delegate the child step; competing external operations remain excluded. Parent cancellation or loss of ownership stops the child at a safe point.",
         "Verify daily-sync-to-purge and backfill-sync-to-purge success, competing manual/automatic rejection, cancellation and no self-wait or ownership leak."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Core/Service/PrtgDailyPipeline.cs::RunAfterStructureSync",
+        "LogForesight.Core/Service/PrtgStructureSyncRunner.cs::RunAfterStructureSync",
+        "LogForesight.Core/Service/PrtgScopeDevices.cs::RunAfterStructureSync",
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::ParentJobId"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Automatic purge inherits a verified parent operation identity from daily sync, standalone sync or sync inside backfill; do not reject a valid child merely because its own parent is running.",
+        "Only that parent may delegate the child step; competing external operations remain excluded. Parent cancellation or loss of ownership stops the child at a safe point.",
+        "Verify daily-sync-to-purge and backfill-sync-to-purge success, competing manual/automatic rejection, cancellation and no self-wait or ownership leak."
+      ]
     },
     {
       "id": "C54-05-A",
@@ -449,8 +674,22 @@
         "Disable user, remove Admin and disable group without another request from the actor; no subsequent batch may start. For supported multi-process operation verify durable permission changes across processes, not process-local version cache only.",
         "Keep Core free of duplicated role rules. Test serverAdmin configuration/restart withdrawal separately and reject stale resume; log the stopping reason and exact partial result."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Web/Services/PrtgScopePurgeAuthorizationService.cs::Check",
+        "LogForesight.Web/Services/PrtgScopePurgeAuthorizationService.cs::CheckRead",
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::RunBatch",
+        "LogForesight.Web/Controllers/Api/PrtgScopePurgeJobsController.cs::Resume"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Persist actor identity; before new batches/resume resolve current account state and capabilities through the existing authorization rules, not captured HTTP principal/claims.",
+        "Disable user, remove Admin and disable group without another request from the actor; no subsequent batch may start. For supported multi-process operation verify durable permission changes across processes, not process-local version cache only.",
+        "Keep Core free of duplicated role rules. Test serverAdmin configuration/restart withdrawal separately and reject stale resume; log the stopping reason and exact partial result."
+      ]
     },
     {
       "id": "C54-03-T",
@@ -471,8 +710,21 @@
         "Inject failure before commit, after deletion commit before response/progress observation, and before result delivery; restart/retry resolves the same operation without lost or double-counted progress or inclusion of new data.",
         "Distinguish rows removed by this operation from rows removed by retention/other legitimate work; verify accepted, deleted, otherwise-removed and remaining sets exactly on both providers."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "implemented-awaiting-acceptance",
+      "sourceReferences": [
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::RunBatch",
+        "LogForesight.Core/Persistence/Sql/PrtgScopePurgeStore.cs::RefreshFinalCounts",
+        "LogForesight.Tests/PrtgScopePurgeStoreTests.cs::class PrtgScopePurgeStoreTests"
+      ],
+      "remainingImplementation": [],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "Each committed deletion batch and progress/result evidence are atomically consistent or have a proven equivalent recovery protocol; memory-only totals are insufficient.",
+        "Inject failure before commit, after deletion commit before response/progress observation, and before result delivery; restart/retry resolves the same operation without lost or double-counted progress or inclusion of new data.",
+        "Distinguish rows removed by this operation from rows removed by retention/other legitimate work; verify accepted, deleted, otherwise-removed and remaining sets exactly on both providers."
+      ]
     },
     {
       "id": "C54-04-B",
@@ -495,8 +747,24 @@
         "Before restored Web or background workers start, isolate schedules, source writes and notification dispatch. Keep the gate closed until exact artifact/DB/key/config, post-backup deltas and notification dedupe are verified; failure never releases isolation.",
         "B2 tests time-authority rollback with queued mail/jobs and replies; G3 and H recheck final artifacts including F2 purge state. No external side effects occur before gate release; unproven same-data downgrade is rejected."
       ],
-      "status": "planned-not-implemented",
-      "evidence": []
+      "status": "not-accepted",
+      "evidence": [],
+      "implementationStatus": "partial-candidate",
+      "sourceReferences": [
+        "scripts/round54/rollback/rollback_control.py::main",
+        "scripts/round54/rollback/rollback_control.py::validate_bundle",
+        "scripts/round54/rollback/tests/test_rollback_control.py::test_paired_restore_preserves_exact_files_and_rows_before_launch",
+        "scripts/round54/rollback/tests/real-target-smoke-report.json::\"result\": \"PASS\""
+      ],
+      "remainingImplementation": [
+        "SQL Server provider-specific pre-start rollback gate delivery is still missing; current integrated startup isolation/launch proof is SQLite-only."
+      ],
+      "acceptanceStatus": "not-accepted",
+      "remainingAcceptance": [
+        "A2 specifies and later delivers an executable rollback controller/tool with a pre-start compatibility gate; it owns rejection, not an assumption that old binaries understand new authority.",
+        "Before restored Web or background workers start, isolate schedules, source writes and notification dispatch. Keep the gate closed until exact artifact/DB/key/config, post-backup deltas and notification dedupe are verified; failure never releases isolation.",
+        "B2 tests time-authority rollback with queued mail/jobs and replies; G3 and H recheck final artifacts including F2 purge state. No external side effects occur before gate release; unproven same-data downgrade is rejected."
+      ]
     }
   ]
 }
