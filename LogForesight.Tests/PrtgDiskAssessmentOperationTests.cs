@@ -84,6 +84,41 @@ public sealed class PrtgDiskAssessmentOperationTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => fixture.Service.CompleteAssessment(operation));
     }
 
+    [Fact]
+    public void CapturedDiskAuthorityAllowsMessageFormatRevisionChange()
+    {
+        var fixture = Seed(1);
+        var operation = fixture.Service.BeginAssessment(_completedDay, _candidateThrough,
+            capturedHostSnapshot: ((IHostStore)fixture.Hosts).CapturePrtgSnapshot());
+        var policy = new PrtgMonitoringPolicyStore(new EfJsonBlobStore(NewContext,
+            PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(value =>
+        {
+            value.Revision = "message-format-revision";
+            value.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
+            value.MessageTimeAuthorityRevision = checked(value.MessageTimeAuthorityRevision + 1);
+        });
+
+        fixture.Service.ValidateAssessmentSnapshot(operation.CandidateSnapshot, operation.MetadataSnapshot);
+    }
+
+    [Fact]
+    public void CapturedDiskAuthorityRejectsRawTimeBasisAba()
+    {
+        var fixture = Seed(1);
+        var policy = new PrtgMonitoringPolicyStore(new EfJsonBlobStore(NewContext,
+            PrtgMonitoringPolicyStore.BlobKey));
+        policy.Update(value => value.RawTimestampTimeZoneId = "UTC");
+        var operation = fixture.Service.BeginAssessment(_completedDay, _candidateThrough,
+            capturedHostSnapshot: ((IHostStore)fixture.Hosts).CapturePrtgSnapshot());
+
+        policy.Update(value => value.RawTimestampTimeZoneId = "Pacific Standard Time");
+        policy.Update(value => value.RawTimestampTimeZoneId = "UTC");
+
+        Assert.Throws<InvalidOperationException>(() =>
+            fixture.Service.ValidateAssessmentSnapshot(operation.CandidateSnapshot, operation.MetadataSnapshot));
+    }
+
     [Theory]
     [InlineData("mapping")]
     [InlineData("catalogue")]

@@ -804,18 +804,29 @@ internal sealed class PrtgDiskMetadataSnapshot
         lock (_profileFenceLock) return new Dictionary<long, string>(_profileDigests);
     }
 
-    internal bool AuthorityMatches(PrtgTrustedSamplingPolicyContext current) =>
-        string.Equals(AuthorityFingerprint(Authority), AuthorityFingerprint(current), StringComparison.Ordinal);
+    internal bool AuthorityMatches(PrtgTrustedSamplingPolicyContext current)
+    {
+        var expected = AuthorityFingerprint(Authority);
+        var actual = AuthorityFingerprint(current);
+        return expected.Length == 64 && actual.Length == 64 &&
+            string.Equals(expected, actual, StringComparison.Ordinal);
+    }
 
-    private static string AuthorityFingerprint(PrtgTrustedSamplingPolicyContext context) =>
-        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            System.Text.Json.JsonSerializer.Serialize(new { context.Policy.SourceGeneration, context.Policy.Revision,
-                context.Policy.RawTimestampTimeZoneId, context.Policy.SourceTimeZoneId, context.Policy.AnalysisTimeZoneId,
-                context.Policy.TimeBasisEvidenceReference, context.Strategy.StrategyName, context.Strategy.StrategyMinutes,
+    internal static string AuthorityFingerprint(PrtgTrustedSamplingPolicyContext context)
+    {
+        var rawAuthorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+            context.Policy, context.Strategy.StrategyName, context.Strategy.StrategyMinutes);
+        if (rawAuthorityContext.Length != 64) return string.Empty;
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                RawAuthorityContext = rawAuthorityContext,
+                context.Strategy.StrategyName, context.Strategy.StrategyMinutes,
                 context.Strategy.StrategyFingerprint, context.Strategy.EffectiveFromHourUtc,
                 StrategyRawTimestampTimeZoneId = context.Strategy.RawTimestampTimeZoneId,
                 StrategyAnalysisTimeZoneId = context.Strategy.AnalysisTimeZoneId,
                 Missing = context.Strategy.MissingFacts }))));
+    }
 
     internal static PrtgDiskMetadataSnapshot Capture(PrtgDiskSemanticEvidenceStore evidence,
         PrtgDiskVerificationResultStore? verificationResults, EfPrtgStore store,

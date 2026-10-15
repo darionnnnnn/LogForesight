@@ -166,6 +166,7 @@ public class PrtgProbeService
     private readonly IHostStore _hosts;
     private readonly ISentinelStore _sentinels;
     private readonly IAiProbeService? _aiProbe;
+    internal Func<SystemSettings, PrtgClient>? ClientFactoryForTesting { get; set; }
 
     public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState,
         StorageBackend backend, IHostStore hosts, ISentinelStore sentinels,
@@ -358,7 +359,7 @@ public class PrtgProbeService
         PrtgClient? client = null;
         try
         {
-            client = PrtgClientFactory.Create(s);
+            client = ClientFactoryForTesting is { } factory ? factory(s) : PrtgClientFactory.Create(s);
         }
         catch (Exception ex)
         {
@@ -372,8 +373,11 @@ public class PrtgProbeService
 
         _ = Task.Run(async () =>
         {
+            var scopeReader = new PrtgScopeRevisionReader(_backend, _hosts);
+            // Historic values use raw authority; the environment probe also observes messages.
             using var operation = new PrtgOperationScope(s, _settings.Get, ct,
-                new PrtgScopeRevisionReader(_backend, _hosts).Read, dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
+                dataFlow ? scopeReader.ReadRawSemantic : scopeReader.Read,
+                dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
             client.OperationCheckpoint = operation.Checkpoint;
             var runToken = operation.Token;
             var success = false;

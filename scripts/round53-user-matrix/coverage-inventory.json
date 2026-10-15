@@ -321,7 +321,7 @@
       ],
       "status": "not-accepted",
       "evidence": [],
-      "implementationStatus": "partial-candidate",
+      "implementationStatus": "implemented-awaiting-acceptance",
       "sourceReferences": [
         "LogForesight.Core/Service/PrtgFetchService.cs::FetchDayAsync",
         "LogForesight.Core/Service/PrtgDailyPipeline.cs::RunAsync",
@@ -332,10 +332,15 @@
         "LogForesight.Web/Services/Mail/MailNotificationService.cs::TryReserveRenderedMailContributions",
         "LogForesight.Core/Persistence/MailNotifyStateStore.cs::CompleteMailContributionReservation",
         "LogForesight.Web/Services/Mail/SystemNetSmtpMailSender.cs::SendAsync",
-        "LogForesight.Core/Persistence/PrtgFormalMailClaimStore.cs::Load("
+        "LogForesight.Core/Persistence/PrtgFormalMailClaimStore.cs::Load(",
+        "LogForesight.Core/Service/PrtgResourcePeriodConsumer.cs::RawAuthorityContextMatches",
+        "LogForesight.Core/Service/PrtgDiskAssessmentService.cs::AuthorityMatches",
+        "LogForesight.Web/Services/PrtgProbeService.cs::scopeReader.ReadRawSemantic",
+        "LogForesight.Web/Controllers/Api/PrtgTrustedSamplingProfilesController.cs::DurableQualificationRequired",
+        "LogForesight.Web/Services/PrtgCapacityRuntimeAdmission.cs::RawAuthorityContext",
+        "LogForesight.Core/Persistence/PrtgQualificationJobStateStore.cs::EnsureLiveRawJobAuthority"
       ],
       "remainingImplementation": [
-        "期間評估 selected fingerprint／最終重驗、磁碟評估 metadata authority、資料流探測 operation scope 及資格作業狀態提示的四處 raw-only 接線候選仍待分段驗證提交；保留 settings／source／scope／identity／permission／CAS 防護，不將 mixed message+resource 終局證據誤當 raw-only。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [

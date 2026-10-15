@@ -73,7 +73,8 @@ public sealed class PrtgResourcePeriodConsumer
         var sensors = selectedSensorObjids.Where(id => id > 0).Distinct().Order().ToArray();
         var material = JsonSerializer.Serialize(new
         {
-            policy.Revision, policy.SourceGeneration,
+            RawAuthorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+                policy, "resource-period-selection", 0),
             Hosts = hosts, Sensors = sensors
         });
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
@@ -914,7 +915,7 @@ public sealed class PrtgResourcePeriodConsumer
             PrtgFetchStrategy.Normalize(currentSettings.PrtgFetchStrategy) !=
             PrtgFetchStrategy.Normalize(expectedSettings.PrtgFetchStrategy)) return false;
         var currentPolicy = _policyStore.Get();
-        if (currentPolicy.Revision != expectedPolicy.Revision ||
+        if (!RawAuthorityContextMatches(currentPolicy, expectedPolicy, expectedStrategy) ||
             currentPolicy.SourceGeneration != expectedPolicy.SourceGeneration ||
             currentPolicy.EndpointHint != expectedPolicy.EndpointHint ||
             currentPolicy.SourceTimeZoneId != expectedPolicy.SourceTimeZoneId ||
@@ -946,6 +947,18 @@ public sealed class PrtgResourcePeriodConsumer
         if (currentProfile is null ||
             currentProfile.MetadataDigest != expectedProfile.MetadataDigest) return false;
         return true;
+    }
+
+    internal static bool RawAuthorityContextMatches(PrtgMonitoringPolicy current,
+        PrtgMonitoringPolicy expected, PrtgTrustedSamplingStrategyContext strategy)
+    {
+        if (current.RawAuthorityRevision < 0 || expected.RawAuthorityRevision < 0) return false;
+        var currentFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+            current, strategy.StrategyName, strategy.StrategyMinutes);
+        var expectedFingerprint = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
+            expected, strategy.StrategyName, strategy.StrategyMinutes);
+        return !string.IsNullOrWhiteSpace(currentFingerprint) &&
+            string.Equals(currentFingerprint, expectedFingerprint, StringComparison.Ordinal);
     }
 
     private static bool SameIdentity(PrtgResourceIdentity expected, PrtgResourceIdentity current) =>

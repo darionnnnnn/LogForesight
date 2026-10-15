@@ -25,9 +25,7 @@ AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留
 
 下列與後面的「已實作、剩驗收」分開計數。私人工作樹有候選不等於目前分支已交付。
 
-| ID／批次 | 現況、改動與下一個使用端 | 相依與客觀完成條件 |
-|---|---|---|
-| D54-01／各證據 lane 的生命週期隔離 | parser／message fingerprint／fetch／timeline／正式 finding、replay、郵件貢獻及 qualification／refresh／discovery／capacity raw context 已接線，實作待辦移除，見§8.13～8.18。再次逐consumer核對發現四處剩餘候選：期間評估 selected fingerprint／最終重驗、磁碟評估 metadata authority、資料流探測 operation scope、資格作業狀態提示；仍須完成小範圍驗證及提交。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
+原 D54-01～04 的程式／工具接線缺口已逐 consumer 補齊，實作待辦移除，分段證據見§8.13～8.20。時間基準與修復介面、真實維護登入 fixture 已有完整候選，仍在核對實際操作並準備相依提交；這些交付狀態不等於§3父驗收通過。剩餘驗收與資源限制不得刪除或改稱功能未寫。
 
 ### 2.1 時間授權的明確接線缺口
 
@@ -524,3 +522,13 @@ qualification-preparation 提供來源與磁碟預檢、live runtime owner 確�
 主代理核對腳本的真正 public API consumer、原 sealed manifest 及 receipt CAS。Resume／Check 不重寫 manifest 或政策；DateFormat-only 可續查，raw／source／scope／settings 漂移拒絕。資格帶來的 channel rotation 必須由已提交後端的 qualifiedIdentityEpoch／qualifiedChannelGeneration／binding proof 逐 sensor 證明；逐頁以 ReadStateVersion 防止同 lease 的混合快照。舊缺少 proof／read-state 欄位不得默認有效。
 
 最終 Python 24/24 與 PowerShell contract checks 再次通過，結果在 work/round54/root-e2-final-contracts.log；涵蓋 partial proof、合法 rotation、偽造 channel／binding、raw context 漂移、缺舊欄位及同 lease read-state 競爭等小型反例。這是工具實作／契約驗證，不是15,000 sensor、64.8M資料、正常全量來源的正式驗收；未啟動完整 CLI、未再 seed 固定結構、未開受保護資料庫。E2／G父驗收與 native／capacity／retention／formal acceptance 旗標仍保持未通過。
+
+### 8.20 再核對四處 raw-only 消費端（2026-10-15）
+
+期間評估的 selected sensor fingerprint 與最終 closed-day authority recheck、磁碟評估 metadata snapshot、資料流探測 operation scope、資格作業狀態提示，均改用 raw context／RawAuthorityRevision。保留 settings、來源、host/sensor membership、identity、strategy、profile、evidence／verification、permission 及交易 CAS。環境探測仍包含訊息；DailyPipeline、workflow recovery／manifest 與 silent-presence 的混合 message/resource 終局防護保留，不能因 raw 可續行而追認過期訊息。
+
+SelectedSensorFingerprint 材料變更會一次性使舊持久 closure/readiness 選取指紋不符，需重新評估，不能追認空值或舊 hash。Disk snapshot 缺有效 raw context 即拒絕。資料流測試只透過 internal client factory seam 隔離自有 SQL quota coordinator，正式預設工廠／HTTP／operation checkpoint／fetch／DB 路徑不變，沒有新增正式 API 旁路。
+
+主代理獨立查碼與驗證：r37資格作業提示4例通過；r42期間consumer25值正例／raw ABA負例、disk metadata正反例及selected fingerprint共5例通過；r43資料流真實 loopback HTTP五例全過，日期格式變更寫入單筆值，raw ABA／sensor移除／來源世代／相關settings變更均取消且零值寫入。每例最多1host／1sensor／25值。r37/r38測試缺白名單／SQL coordinator、r39臨時HttpListener埠註冊拒絕與首窗口fixture不足、r40/r42自製TCP回應連線失敗均保留，沒有宣稱失敗回合全過；最終使用標準HttpListener及有界埠重選，負例另明確斷言Cancelled，避免一般傳輸失敗冒充authority守門通過。
+
+本段移除D54-01實作待辦及R54-05 remainingImplementation；長期raw工作與當次寫入CAS分離。正式來源、所有角色／跨程序完整操作及G/H父驗收仍未通過。
