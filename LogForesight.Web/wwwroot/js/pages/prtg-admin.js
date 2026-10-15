@@ -3076,6 +3076,8 @@ let diskReadinessLoaded = false;
 let diskReadinessLoading = false;
 let diskVerificationSensor = null;
 let diskVerificationTimer = null;
+let diskCompletedAnalysisDay = null;
+let diskAnalysisTimeZoneId = null;
 const selectedDiskVerificationIds = new Set();
 let pendingDiskSingleRequest = null;
 let pendingDiskBatchRequest = null;
@@ -3092,7 +3094,7 @@ function updateDiskBatchButton() {
     const button = document.getElementById('prtg-disk-verification-batch-start');
     if (!button) return;
     button.textContent = `依序驗證所選（${selectedDiskVerificationIds.size}/5）`;
-    button.disabled = selectedDiskVerificationIds.size < 1 || selectedDiskVerificationIds.size > 5;
+    button.disabled = selectedDiskVerificationIds.size < 1 || selectedDiskVerificationIds.size > 5 || !diskCompletedAnalysisDay;
 }
 
 function activateSelectedBackfillHost(hostName) {
@@ -3268,15 +3270,27 @@ async function refreshDiskRuleTrial() {
     }
 }
 
-function renderDiskVerificationResult(result) {
+async function renderDiskVerificationResult(result) {
     const status = document.getElementById('prtg-disk-verification-status');
     const evidence = document.getElementById('prtg-disk-verification-evidence');
     const form = document.getElementById('prtg-disk-manual-form');
     if (!status || !evidence || !form) return;
     evidence.replaceChildren();
     if (!result) { status.textContent = '尚無語意驗證結果。'; form.classList.add('d-none'); return; }
-    const labels = { Verified: '語意已自動確認', NeedsManualReview: '候選需人工覆核', Mismatch: '資料不匹配', Failed: '驗證失敗，可重新驗證', TimedOut: '驗證逾時，可重新驗證', Cancelled: '驗證已取消，可重新驗證' };
-    status.textContent = `${labels[result.status] || result.status}：${result.summary || '無摘要'}${result.cancelled ? '（已取消）' : ''}`;
+    const labels = {
+        Verified: '語意已自動確認',
+        NeedsManualReview: result.valuesMatch === true && (result.comparedPointCount ?? 0) > 0
+            ? '候選需人工覆核' : '比對樣本不足，不能人工確認',
+        SourceAuthorityUnconfirmed: '來源授權尚未確認',
+        Stale: '來源或資源身分已過期',
+        RetryableFailure: '暫時性來源失敗，可重新驗證',
+        Mismatch: '資料不匹配', Failed: '驗證失敗，可重新驗證',
+        TimedOut: '驗證逾時，可重新驗證', Cancelled: '驗證已取消，可重新驗證'
+    };
+    const analysisDay = diskCompletedAnalysisDay
+        ? `已完成分析日 ${diskCompletedAnalysisDay}（${diskAnalysisTimeZoneId || '時區未確認'}）`
+        : '沒有已確認時區的完成分析日；目前不可啟動新驗證';
+    status.textContent = `${analysisDay}｜${labels[result.status] || result.status}：${result.summary || '無摘要'}${result.cancelled ? '（已取消）' : ''}`;
     const fields = [
         `驗證時間：${result.checkedAtUtc ? formatDateTime(result.checkedAtUtc) : '—'}`,
         `資料日期：${result.dataDate || '—'}`,
@@ -3287,6 +3301,30 @@ function renderDiskVerificationResult(result) {
     ];
     for (const value of fields) evidence.append(readinessText('div', value));
     const canReview = result.status === 'NeedsManualReview' && result.valuesMatch === true && (result.comparedPointCount ?? 0) > 0 && !result.cancelled;
+    if (result.status === 'NeedsManualReview' && !canReview) {
+        evidence.append(readinessText('div', '目前沒有可用的有效比對點；補足可比對的落地資料後重新驗證，人工確認表單保持停用。'));
+    }
+    if (result.status === 'SourceAuthorityUnconfirmed' || result.status === 'Stale') {
+        const guidance = readinessText('div', result.status === 'SourceAuthorityUnconfirmed'
+            ? '請核對並保存既有正式判定來源身分、時間格式及試點設定，再重新驗證。'
+            : '請重新核對既有來源身分、試點及資源設定，再重新驗證；舊結果不代表目前來源有效。');
+        evidence.append(guidance);
+        let canMaintain = false;
+        try { canMaintain = hasCapability(await getCurrentUser(), 'Maintain'); } catch { /* Keep the result readable if identity lookup is unavailable. */ }
+        if (canMaintain) {
+            const link = readinessText('button', '前往既有來源身分設定');
+            link.type = 'button';
+            link.className = 'btn btn-link btn-sm p-0 text-start';
+            link.addEventListener('click', () => {
+                const control = document.getElementById('prtg-monitoring-source-mode');
+                control?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                control?.focus();
+            });
+            evidence.append(link);
+        } else {
+            evidence.append(readinessText('div', '請聯絡維護者核對來源授權。'));
+        }
+    }
     form.classList.toggle('d-none', !canReview);
     const id = document.getElementById('prtg-manual-channel-id');
     const name = document.getElementById('prtg-manual-channel-name');
@@ -3312,20 +3350,33 @@ async function refreshDiskVerification() {
             api.get(`/api/prtg/disk-verification/${encodeURIComponent(id)}/evidence`, { silent: true })
         ]);
         const selectedRun = { ...run, selectedResult: run.results?.find(x => x.sensorObjid === id) };
+        diskCompletedAnalysisDay = run.completedAnalysisDay || null;
+        diskAnalysisTimeZoneId = run.analysisTimeZoneId || null;
         const running = run.isRunning;
         const cancel = document.getElementById('prtg-disk-verification-cancel');
         if (cancel) cancel.classList.toggle('d-none', !running);
         const start = document.getElementById('prtg-disk-verification-start');
-        if (start) start.disabled = running;
+        if (start) start.disabled = running || !diskCompletedAnalysisDay;
+        updateDiskBatchButton();
         if (running && statusEl) statusEl.textContent = run.isBatch
             ? `批次驗證進行中：${run.batchCompleted}/${run.batchTotal} 顆已完成；目前 Sensor ${run.sensorObjid ?? '—'}。`
-            : `Sensor ${run.sensorObjid ?? id} 昨天單日語意比對進行中…`;
+            : `Sensor ${run.sensorObjid ?? id} 已完成分析日的語意比對進行中…`;
         const batchResults = document.getElementById('prtg-disk-verification-batch-results');
         if (batchResults) {
             batchResults.replaceChildren();
             if (run.isBatch || run.batchTotal > 1) {
                 batchResults.append(readinessText('strong', `批次進度：${run.batchCompleted}/${run.batchTotal}；站台重啟後進度不保留。`));
-                for (const item of run.results || []) batchResults.append(readinessText('div', `Sensor ${item.sensorObjid}：${item.status} — ${item.summary}`));
+                for (const item of run.results || []) {
+                    const statusLabel = {
+                        Verified: '語意已自動確認',
+                        NeedsManualReview: item.valuesMatch === true && (item.comparedPointCount ?? 0) > 0
+                            ? '候選需人工覆核' : '比對樣本不足，不能人工確認',
+                        SourceAuthorityUnconfirmed: '來源授權尚未確認', Stale: '來源或資源身分已過期',
+                        RetryableFailure: '暫時性來源失敗，可重新驗證', Mismatch: '資料不匹配',
+                        Failed: '驗證失敗，可重新驗證', TimedOut: '驗證逾時，可重新驗證', Cancelled: '驗證已取消，可重新驗證'
+                    }[item.status] || item.status;
+                    batchResults.append(readinessText('div', `Sensor ${item.sensorObjid}：${statusLabel} — ${item.summary}`));
+                }
             }
         }
         const evidenceList = document.getElementById('prtg-disk-verification-evidence');
@@ -3340,7 +3391,7 @@ async function refreshDiskVerification() {
             if (!diskVerificationTimer) diskVerificationTimer = setInterval(refreshDiskVerification, 2500);
         } else {
             if (diskVerificationTimer) { clearInterval(diskVerificationTimer); diskVerificationTimer = null; }
-            renderDiskVerificationResult(selectedRun.selectedResult);
+            await renderDiskVerificationResult(selectedRun.selectedResult);
             if (run.requestId && pendingDiskSingleRequest?.requestId === run.requestId) pendingDiskSingleRequest = null;
             if (run.requestId && pendingDiskBatchRequest?.requestId === run.requestId) pendingDiskBatchRequest = null;
             refreshDiskRuleTrial();
@@ -3368,25 +3419,36 @@ function bindDiskVerification() {
     document.getElementById('prtg-disk-verification-start')?.addEventListener('click', async event => {
         const id = selectedDiskSensorId(); if (!id) return;
         const button = event.currentTarget; button.disabled = true;
-        const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-        const dataDate = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
-        const requestId = pendingDiskRequestId('single', `${id}|${dataDate}`);
-        try { await api.post('/api/prtg/disk-verification/start', { sensorObjid: id, dataDate, requestId }); await refreshDiskVerification(); }
-        catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `無法啟動驗證：${error?.message || '請重試。'}`; button.disabled = false; }
+        try {
+            const authority = await api.get('/api/prtg/disk-verification', { silent: true });
+            diskCompletedAnalysisDay = authority.completedAnalysisDay || null;
+            diskAnalysisTimeZoneId = authority.analysisTimeZoneId || null;
+            updateDiskBatchButton();
+            const dataDate = authority.completedAnalysisDay;
+            if (!dataDate) throw new Error('目前沒有依已保存分析時區計算的完成日期，來源權限尚未確認。');
+            const requestId = pendingDiskRequestId('single', `${id}|${dataDate}`);
+            await api.post('/api/prtg/disk-verification/start', { sensorObjid: id, dataDate, requestId });
+            await refreshDiskVerification();
+        }
+        catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `無法啟動驗證：${error?.message || '請重試。'}`; button.disabled = !diskCompletedAnalysisDay; }
     });
     document.getElementById('prtg-disk-verification-batch-start')?.addEventListener('click', async event => {
         const ids = [...selectedDiskVerificationIds].map(Number);
         if (ids.length < 1 || ids.length > 5) return;
         const button = event.currentTarget; button.disabled = true;
-        const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-        const dataDate = localDateInputValue(yesterday);
-        const requestId = pendingDiskRequestId('batch', `${ids.join(',')}|${dataDate}`);
         const status = document.getElementById('prtg-disk-verification-status');
         try {
+            const authority = await api.get('/api/prtg/disk-verification', { silent: true });
+            diskCompletedAnalysisDay = authority.completedAnalysisDay || null;
+            diskAnalysisTimeZoneId = authority.analysisTimeZoneId || null;
+            updateDiskBatchButton();
+            const dataDate = authority.completedAnalysisDay;
+            if (!dataDate) throw new Error('目前沒有依已保存分析時區計算的完成日期，來源權限尚未確認。');
+            const requestId = pendingDiskRequestId('batch', `${ids.join(',')}|${dataDate}`);
             await api.post('/api/admin/settings/prtg-disk-verification/batch/start', {
                 sensorObjids: ids, dataDate, requestId
             });
-            if (status) status.textContent = `已依序啟動 ${ids.length} 顆感測器的昨天單日語意驗證；每顆結果會分別保存。`;
+            if (status) status.textContent = `已依序啟動 ${ids.length} 顆感測器的 ${dataDate} 單日語意驗證（${authority.analysisTimeZoneId || '時區未確認'}）；每顆結果會分別保存。`;
             await refreshDiskVerification();
         } catch (error) {
             if (status) status.textContent = `批次無法啟動：${error?.message || '請確認選取項目與資料準備度。'}`;

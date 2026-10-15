@@ -801,10 +801,10 @@
     <section class="lf-card mb-4" id="prtg-disk-verification" aria-labelledby="prtg-disk-verification-title">
         <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-disk-verification-title" tabindex="-1">磁碟語意驗證</h2></div>
         <div class="lf-card__body">
-            <p class="small text-muted">可維持單顆驗證，或選取最多 5 顆已對應、未暫停、白名單內且具備 28 日可用資料的磁碟感測器依序驗證昨天單日。批次共用探測互斥、可停止後續項目，逐顆保存結果；requestId 去重記憶最多保留 512 筆／15 分鐘，站台重啟後不保留。驗證不會自動確認未知頻道／單位，也不會啟用規則或派工。</p>
+            <p class="small text-muted">可維持單顆驗證，或選取最多 5 顆已對應、未暫停、白名單內且具備 28 日可用資料的磁碟感測器，依已確認分析時區的最新完成單日依序驗證。批次共用探測互斥、可停止後續項目，逐顆保存結果；requestId 去重記憶最多保留 512 筆／15 分鐘，站台重啟後不保留。驗證不會自動確認未知頻道／單位，也不會啟用規則或派工。</p>
             <div id="prtg-disk-verification-selection" class="mb-2" aria-live="polite">請由上方感測器列選擇「驗證這顆」。</div>
             <div class="d-flex flex-wrap gap-2 mb-3">
-                <button type="button" class="btn btn-primary" id="prtg-disk-verification-start" disabled>驗證昨天語意</button>
+                <button type="button" class="btn btn-primary" id="prtg-disk-verification-start" disabled>驗證已完成分析日語意</button>
                 <button type="button" class="btn btn-outline-primary" id="prtg-disk-verification-batch-start" disabled>依序驗證所選（0/5）</button>
                 <button type="button" class="btn btn-outline-secondary" id="prtg-disk-verification-refresh" disabled>更新狀態</button>
                 <button type="button" class="btn btn-outline-danger d-none" id="prtg-disk-verification-cancel">取消驗證</button>
@@ -1047,6 +1047,61 @@
             <div class="form-text">匯入會將診斷包隔離保存，正式監控資料與判定不變；匯入內容不會搬入正式鏡像。</div>
         </div>
     </details>
+
+    <details class="lf-card d-none" id="prtg-authority-repair-panel">
+        <summary class="lf-card__header">
+            <h2 class="lf-card__title">PRTG 資格文件維護</h2>
+            <span class="small text-muted">有界檢視、明確修補與版本比對</span>
+        </summary>
+        <div class="lf-card__body">
+            <div class="mb-3">
+                <a class="btn btn-sm btn-outline-primary" id="prtg-authority-repair-time-basis-link" href="@Url.Content("~/admin/prtg/time-basis")" hidden>PRTG 資料時間基準</a>
+            </div>
+            <p class="alert alert-warning small" role="note">
+                修復只接受完整通過正式大小與資料驗證的文件，並以讀取版本執行原子更新。文字修補會使該份文件內所有既有正式資格失效；修復後須重新執行一般探測與確認，不能藉修復追認舊資格。其他文件與未選取的 JSON 欄位會保留。
+            </p>
+            <p class="small text-muted" id="prtg-authority-repair-access-note" aria-live="polite"></p>
+            <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-4">
+                    <label for="prtg-authority-repair-kind" class="form-label small">文件種類</label>
+                    <select class="form-select form-select-sm" id="prtg-authority-repair-kind">
+                        <option value="DiskSemanticEvidence">磁碟語意資格</option>
+                        <option value="DiskVerificationResults">磁碟探測結果</option>
+                        <option value="ResourcePressureMode">資源正式資格（依可見主機）</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-none" id="prtg-authority-repair-host-field">
+                    <label for="prtg-authority-repair-host" class="form-label small">可見主機 ID</label>
+                    <input type="number" min="1" step="1" class="form-control form-control-sm" id="prtg-authority-repair-host" inputmode="numeric" />
+                </div>
+                <div class="col-md-3">
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-authority-repair-load">讀取有界文件</button>
+                </div>
+            </div>
+            <div class="small mb-2" id="prtg-authority-repair-status" role="status" aria-live="polite"></div>
+            <div class="mb-3">
+                <label for="prtg-authority-repair-content" class="form-label small">目前文件內容</label>
+                <textarea class="form-control form-control-sm font-monospace" id="prtg-authority-repair-content" rows="10" readonly spellcheck="false" aria-describedby="prtg-authority-repair-content-help"></textarea>
+                <div class="form-text" id="prtg-authority-repair-content-help">內容僅在具備現有資料檢視權限且主機在可見範圍時提供；讀取上限為正式上限的兩倍。</div>
+            </div>
+            <div class="row g-3">
+                <div class="col-lg-5">
+                    <label for="prtg-authority-repair-pointer" class="form-label small">明確移除 JSON Pointer</label>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control font-monospace" id="prtg-authority-repair-pointer" placeholder="例如 /12 或 /Grants/0" autocomplete="off" />
+                        <button type="button" class="btn btn-outline-danger" id="prtg-authority-repair-remove" disabled>移除選取項目</button>
+                    </div>
+                    <div class="form-text">完整 JSON 才能使用；只移除指定節點。</div>
+                </div>
+                <div class="col-lg-7">
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="prtg-authority-repair-patch" disabled>套用目前文字修補</button>
+                        <span class="small text-muted" id="prtg-authority-repair-patch-help">僅送出文字差異；單次插入或刪除最多 4,096 個 UTF-16 字元。</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </details>
 </div>
 
 <div class="modal fade" id="prtg-assign-modal" tabindex="-1" aria-labelledby="prtg-assign-modal-title" aria-hidden="true">
@@ -1082,4 +1137,5 @@
 
 @section Scripts {
     <script type="module" src="~/js/pages/prtg-admin.js" asp-append-version="true"></script>
+    <script type="module" src="~/js/pages/prtg-authority-repair.js" asp-append-version="true"></script>
 }

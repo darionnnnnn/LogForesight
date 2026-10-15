@@ -19,19 +19,19 @@ PRTG 輔助 NetIQ 已合格的每日主機日；成功零事件父紀錄也可�
 
 AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留；不得縮分母、刪失敗、以零延遲或控制時鐘冒充容量結果。探測只取得來源事實，不在正式環境驗收。UC01–UC07為使用者確認提醒，不列開發驗收、完成率或阻塞；未確認不得宣稱現場全面通過或真實事故增益。
 
-## 2. 目前尚未完成的實作
+## 2. 本輪實作核對結果
 
 本節D54-01～04為原始缺口識別；執行拆分依§4，磁碟核驗獨立為C批次但仍回掛D54-01。§6權限調整回掛E05-T02／E08-T03，不另製造重複TODO。
 
 下列與後面的「已實作、剩驗收」分開計數。私人工作樹有候選不等於目前分支已交付。
 
-原 D54-01～04 的程式／工具接線缺口已逐 consumer 補齊，實作待辦移除，分段證據見§8.13～8.20。時間基準與修復介面、真實維護登入 fixture 已有完整候選，仍在核對實際操作並準備相依提交；這些交付狀態不等於§3父驗收通過。剩餘驗收與資源限制不得刪除或改稱功能未寫。
+原 D54-01～04 的程式／工具接線缺口已逐 consumer 補齊；時間基準、完成分析日、修復介面及真實維護登入 fixture 均已接線並完成必要小範圍核對，實作待辦移除，分段證據見§8.13～8.23。這些實作交付不等於§3父驗收通過；未執行的驗收與資源限制不得刪除或改稱功能未寫。
 
-### 2.1 時間授權的明確接線缺口
+### 2.1 已補齊的時間授權接線
 
 D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.TryParse/BuildFingerprint`、`PrtgFetchService` 的保存日期授權及 `PrtgSensorTimelineCollector` 的逐頁／游標 fingerprint 核對補齊；這些已完成實作從待辦移除。六格式、DST／錯格式／舊空指紋拒絕的有效分段證據保留，完整操作驗收仍由§3承接。
 
-磁碟正常核驗已由 `PrtgDiskVerificationService.ProbeAndSaveAsync` 接入 `TryGetSourceContract`、`AnalysisDayWindow`、有界持久樣本及正常來源 HTTP，已有正常 Verified、DST／缺 authority／漂移反例；原「無法產生 Verified」實作待辦刪除。新增時間設定、完成分析日 UI 與修復屏障已有候選及小型證據，仍須完成相依提交與受影響瀏覽器查證，不重開已完成的後端接線。
+磁碟正常核驗已由 `PrtgDiskVerificationService.ProbeAndSaveAsync` 接入 `TryGetSourceContract`、`AnalysisDayWindow`、有界持久樣本及正常來源 HTTP，已有正常 Verified、DST／缺 authority／漂移反例；原「無法產生 Verified」實作待辦刪除。時間設定、完成分析日 UI 與修復屏障已接線；正常保存、過期拒絕、明確重讀及修補的瀏覽器證據見§8.22，不重開已完成的後端接線。
 
 ### 2.2 已補齊的生成工具實作（D54-03）
 
@@ -231,7 +231,7 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 
 ### 4.10 清除與回退的四項執行補強（納入既有C54）
 
-以下ID為既有契約的必要子項，機器清單為`round54ExecutionRefinements`；不新增正式角色、不擴張權限、不新增通用工作流框架。四項均待實作，前面概括的所有權／耐久／撤權／回退須符合本節，不能只以方法存在或文字提醒驗收。
+以下ID為既有契約的必要子項，機器清單為`round54ExecutionRefinements`；不新增正式角色、不擴張權限、不新增通用工作流框架。四項已有實作及分段證據，完整所有權／耐久／撤權／回退驗收仍須符合本節，不能只以方法存在或文字提醒驗收。
 
 **C54-03-O／父子作業所有權（F2實作驗收、G3整合）。** 自動清除是在`PrtgDailyPipeline`、`PrtgStructureSyncRunner`或回填內同步尚未結束時執行。合法子步驟必須繼承可核對父作業身分，不能直接套用`ScopePurgeConflict()`的「同步／取數／回填中就拒絕」，也不能等待父作業先完成。只有該父作業可委託自己的清除；外部競爭作業仍受互斥。父作業取消或失去所有權時，子作業在安全點停止且不得繼續開新批次。驗夜間同步→清除、回填內同步→清除正常成立；人工／自動競爭拒絕，父取消及重啟後無自我等待、無殘留所有權。保留C54-03的自動縮小／範圍保護。
 
@@ -539,3 +539,21 @@ SelectedSensorFingerprint 材料變更會一次性使舊持久 closure/readiness
 主代理實跑 Test-UserMatrixApiExportAuthority：六個baseline正常登入與能力核對、真serverAdmin錯密碼401／正常登入200、Maintain=true／ViewAll=false／IsServerAdmin=true共7份觀察通過。report為work/round54/root-role-api-current-r2.log；普通clone 49dae34df1094270bbf41cf3e26faa64、rescue clone 7a0862176067478583aec5c5b209d07e 均依精確owner停止；來源DB/key SHA未變。來源為cd062561的dirty-source fingerprint、配對Web/Core及明確靜態資源SHA；這是本段API角色驗證，不能當最終clean同版凍結或全瀏覽器矩陣通過。
 
 Manifest／CoverageInventory、A2所有正反契約、Round54 recorder／initializer evidence fixture與source-pin拒絕再次通過。已修正A2「有缺口卻標完成」反例不再依賴已完成R54-05的舊狀態，改明確注入合成未完成項後驗validator拒絕，保留原門檻。R54-07／C54-01實作待辦移除；maintenanceRoleMatrix標implemented-pending-browser-acceptance，所有acceptance／browser／native／capacity／whole-round旗標仍未通過。
+
+### 8.22 時間基準、完成分析日與資格修復介面（2026-10-15）
+
+時間設定頁經既有Maintain路由，另核對ViewAll，來源未Ready或仍啟用時先鎖定編輯並指向正常維護入口。保存使用目前policy revision；失敗／未知結果清掉舊revision並鎖定，明確重讀後才可再編輯，確認勾選會重設。修復面板依伺服器canReadDetails顯示入口；救援帳號只有統計，不引向必然403的明細／時間設定。單顆與批次磁碟操作採後端completedAnalysisDay／analysisTimeZoneId／UTC邊界，不再從瀏覽器昨天推算。
+
+主代理使用owned clone正常登入、公開settings／estimate／source-preview／monitoring路徑準備1host／3sensor範圍；沒有授予來源資格。瀏覽器已確認正常時間保存、另一舊頁過期拒絕、失敗後鎖定、明確重讀保存值與取消舊勾選；再驗新增source-not-ready前置鎖定。原生window.confirm造成瀏覽器控制工具逾時，確認DB仍版本1未送出後停止重送；使用者取消視窗後續驗。新介面改用專案既有confirmAction，確認期間鎖住目標，取消保留未保存值、確認才重讀；沒有移除影響確認。
+
+同一小型79字元mode損壞文件經正常UI讀為InvalidJson，明確頁內確認一字元修補後讀回WithinLimit、版本1→2、78字元，未知FixtureNote保留，修補按鈕停用且內容唯讀。正常consumer與後端CAS／失效屏障證據沿用未變有效結果，不重跑。Node四個CRLF／混合換行／補充字元patch對位測例通過；本段Web/Core配對build成功。兩次Web clone 704f8a3e9ceb42c8a5e9a36b0dd92fa7／c9d1b3b4d45d4633bf5fa55825ffe404 均依owner停止，全部自建瀏覽器分頁已關閉，資料保留；未做大量資料測試。這是新增介面的必要分段證據，非完整瀏覽器矩陣／最終同HEAD凍結或全輪驗收。
+
+### 8.23 完整性核對及過期待辦清理（2026-10-15）
+
+主代理依§2、§4.6～4.10逐consumer核對，所有R54八項、C54五項與四個執行補強均有實作接線；remainingImplementation清空，原remainingAcceptance逐條保留。再追shared disk正式路徑：DI／daily／resource qualification／assessment使用semantic及verification store完整strict snapshot；時間變更同交易失效；diagnostic export在分頁前驗共用JSON；data-transfer經相同store。C54-02原盤點待辦已完成，不再留作功能未寫。
+
+C54-04／04-B依原§4.9／4.10交付明列目標的可執行回退控制工具，非通用跨provider／版本遷移框架。validate_bundle及verify_restore_root在讀DB與launch前要求Sqlite及空ConnectionString，launch強制隔離SQLite／writer／mail設定；未知SQL Server相容性拒絕，不建立其連線。移除把「SQL Server完整備份還原尚未驗收」混列為本工具必須新增任意provider遷移的實作待辦；G3/G4雙provider完整恢復條款原封保留、仍未通過，不宣稱SQL Server已可還原。實作sourceReferences改指向可追蹤程式／測試，移除未提交生成smoke-report JSON的必要相依，避免新checkout因缺私人產物失敗。
+
+保留27個原父驗收TODO及53條承接基線，未勾未跑項目；清掉的只有已完成或分類錯誤的實作待辦。來源／容量／完整角色矩陣、跨程序與雙provider恢復仍未驗收；此處只確認實作完整性，不執行整輪G/H或宣稱正式交付PASS。主代理為目前主模型，委派只用gpt-6-luna high／medium／low，產物均由主代理獨立查碼及選必要小型測例；本段不冒稱不同於全部實作者的換模型體檢。
+
+使用者新增測試原則：每次測試前先判斷必要性。只有新改動、已知失敗或必要證據缺口才執行最小範圍；相同程式／依賴／設定／環境已有有效結果就沿用，不因換HEAD、換模型或文件修改重跑。新介面的必要正反操作已完成；後續只核對文件／清單與Git提交，不再重跑已通過後端或展開完整矩陣。

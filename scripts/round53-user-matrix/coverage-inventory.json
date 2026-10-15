@@ -530,7 +530,7 @@
       "status": "not-accepted",
       "evidence": [],
       "refinementIds": [],
-      "implementationStatus": "partial-candidate",
+      "implementationStatus": "implemented-awaiting-acceptance",
       "sourceReferences": [
         "LogForesight.Core/Persistence/PrtgResourcePressureModeStore.cs::Find",
         "LogForesight.Core/Persistence/PrtgDiskSemanticEvidenceStore.cs::CaptureSnapshot",
@@ -539,7 +539,6 @@
         "LogForesight.Tests/PrtgAuthorityStrictJsonTests.cs::class PrtgAuthorityStrictJsonTests"
       ],
       "remainingImplementation": [
-        "仍需完成 shared disk authority 實際 consumer 的逐路徑 guard 接線盤點，確認壞文件只阻斷相依磁碟 qualification，並補齊未經 StrictAuthorityJsonDocument 驗證的正式讀寫路徑。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [
@@ -585,16 +584,15 @@
       "refinementIds": [
         "C54-04-B"
       ],
-      "implementationStatus": "partial-candidate",
+      "implementationStatus": "implemented-awaiting-acceptance",
       "sourceReferences": [
         "scripts/round54/rollback/rollback_control.py::validate_bundle",
         "scripts/round54/rollback/rollback_control.py::reconcile",
         "scripts/round54/rollback/tests/test_rollback_control.py::test_paired_restore_preserves_exact_files_and_rows_before_launch",
         "scripts/round54/rollback/tests/test_delta_reconcile.py::test_same_schema_delta_cas_backup_and_controlled_release",
-        "scripts/round54/rollback/tests/real-target-smoke-report.json::\"result\": \"PASS\""
+        "scripts/round54/rollback/rollback_control.py::def release_gate_status"
       ],
       "remainingImplementation": [
-        "目前 rollback/delta 工具與小型實證覆蓋 SQLite；SQL Server 專屬備份、還原及差額處理交付尚未完成。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [
@@ -760,15 +758,14 @@
       ],
       "status": "not-accepted",
       "evidence": [],
-      "implementationStatus": "partial-candidate",
+      "implementationStatus": "implemented-awaiting-acceptance",
       "sourceReferences": [
         "scripts/round54/rollback/rollback_control.py::main",
         "scripts/round54/rollback/rollback_control.py::validate_bundle",
         "scripts/round54/rollback/tests/test_rollback_control.py::test_paired_restore_preserves_exact_files_and_rows_before_launch",
-        "scripts/round54/rollback/tests/real-target-smoke-report.json::\"result\": \"PASS\""
+        "scripts/round54/rollback/rollback_control.py::def launch"
       ],
       "remainingImplementation": [
-        "SQL Server provider-specific pre-start rollback gate delivery is still missing; current integrated startup isolation/launch proof is SQLite-only."
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [

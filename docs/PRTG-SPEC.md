@@ -8,6 +8,10 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 
 ## 1. 定位與邊界
 
+第54輪已補齊訊息時間授權、原始資料權威隔離、正常磁碟核驗、完整有界資格讀寫、清除作業安全及受控回退工具，驗證範圍與未完成驗收見 `FEEDBACK-54-PLAN.md`。Maintain 與 ViewAll 的既有交集可在 PRTG 維護的環境探測區保存明確時間基準及修復資格文件；來源啟用時拒絕時間變更，保存只是操作者輸入。修復使用完整文件、版本 CAS 及明確影響確認，修復後舊正式資格失效，正常 probe 才能重新核驗。serverAdmin 保留無業務明細的救援能力。
+
+長期 raw 工作依 raw/source tuple 與單調 RawAuthorityRevision 防止改後改回追認；文字訊息格式變更只影響相依 message lane。當次保存／發布仍保留 settings／policy CAS，混合 message/resource 終局仍核對全部相依證據。舊缺 raw context 的 capacity plan 或缺 post-proof identity/channel/read-state 欄位的資格頁不追認；需重新取得相符證據。SQL Server 未知回退相容性在工具啟動前拒絕，現有成套還原工具只支援明列的 SQLite 目標；未宣稱 SQL Server 還原或完整容量通過。
+
 - **主檔以 NetIQ 為準**：主機身分永遠來自既有主機主檔（`lf_blobs` 的 `hosts`）。
   PRTG device 靠 IP 對應過去；**對不到就跳過，不猜測、不自動建立主機**。
 - **PRTG 不取代 NetIQ**：兩者各自取數、各自失敗隔離。一台主機有 PRTG 對應時，
