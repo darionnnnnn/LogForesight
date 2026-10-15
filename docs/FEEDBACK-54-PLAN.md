@@ -715,3 +715,11 @@ Luna high只在`PrtgSensorTimelineCollectorTests.cs`新增`CallerCancellationDur
 必要反例發現新缺陷：前端拒絕`evidence_ready=true`，offline原忽略該欄位，回exit2 INCOMPLETE；不能把這個結果說成格式合法或測試通過。已在正式verifier補「欄位若存在必須false」，偽造宣告現在exit1 `InvalidEvidenceReadyClaim`；舊文件未帶欄位仍可讀，沒有新增formal授權。修後只跑原失敗及尚未跑的4案，原5案位於未改檢查路徑沿用；合法實際下載與缺readiness欄位的舊shape各核exit2一次。原始檔、各case輸出及result見`offline-negatives/`，修前偽造案僅保留於工具回傳，沒有為補檔重跑；既有契約測試檔新增同一拒絕案例供後續回歸。
 
 檢查30秒／整輪期限時另確認一般探測前段尚沿用最高600秒設定、僅後段CompatibilityProbe有期限，依原E04-T02契約補正並另段驗收。此處暫不勾E04-T02；不能以本次5秒設定單案推論所有設定均受30秒上限。正式成品若因後續期限修正再變更，E01依既定reopenWhen處理，不重驗未受影響的browser及verifier結果。
+
+### 8.33 探測來源與整輪期限補齊
+
+實際缺口為前段一般client可用600秒，且Runner返回後的站台對照未共用截止。環境client改採min(已保存逾時,30秒)，普通取數／資料流保持原設定；Web非資料流worker從本機摘要到Runner、SiteCheck共用五分鐘linked token，沿既有operation授權檢查。storage best-effort catch後與完成點前重核checkpoint，避免吞取消或誤把超時標成功。deadline顯示失敗、cancelled=false；使用者停止／設定撤權維持原取消分類，已產生證據保留，不補來源請求。同步不可安全中斷段仍在安全點退出，未聲稱任意本機DB命令可硬中斷。
+
+必要驗證只針對新缺口：factory上限／較短設定／普通client不變、短期限TimeoutException、caller取消分類共3/3，原始TRX `work/round54/acceptance-b2b82708/probe-timeouts/reverify/probe-timeout-tests.trx` SHA `9F5FDB499E93A9CDF961BBA26D993A229927B2DB9F71C11647D8F8AB60F3458F`。主代理續查發現SiteCheck相依後再補一個正式service入口案例：Runner先產生證據，SiteCheck實際HTTP等待觸發12秒受控期限，確認失敗非caller取消、證據保留、沒有後續guard sensor請求；1/1、零skip，TRX `work/round54/acceptance-b2b82708/probe-overall-deadline/environment-probe-overall-deadline.trx` SHA `5EFAE50863A4209CAB48EF1CB04EA00ED080EB5960387C560E23FA898B9935CF`。Luna high實作，主代理讀diff、consumer及原始TRX；不為獨立覆核重跑原3案。資料只用既有tiny SQLite harness與小型loopback回應，不等實際五分鐘、不做壓測。
+
+本段修正正式成品輸入，E01重新等待乾淨候選。E04-T02只剩實際設定修訂漂移的匯出／離線鏈；§8.30–32表單、取消、逾時、截斷檔案與verifier反例有效保留，不另增來源HTTP截斷測試。§4.12已依使用者最新定案替代歷史全負載門檻，但沒有因此勾選容量或任何父驗收。

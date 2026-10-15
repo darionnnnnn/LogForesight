@@ -14,7 +14,27 @@ public static class PrtgProbeRunner
         RunAsync(client, console, null, ct, null);
 
     public static Task<bool> RunAsync(PrtgClient client, IRunConsole console, PrtgProbeEvidenceContext? context, CancellationToken ct = default, Action<string>? onEvidenceJsonProduced = null) =>
-        RunCoreAsync(client, console, TimeSpan.FromSeconds(15), context, ct, onEvidenceJsonProduced);
+        RunWithOverallDeadlineAsync(client, console, TimeSpan.FromSeconds(15), PrtgCompatibilityProbe.OverallTimeout,
+            context, ct, onEvidenceJsonProduced);
+
+    internal static async Task<bool> RunWithOverallDeadlineAsync(PrtgClient client, IRunConsole console,
+        TimeSpan dependencyBudget, TimeSpan overallBudget, PrtgProbeEvidenceContext? evidenceContext = null,
+        CancellationToken ct = default, Action<string>? onEvidenceJsonProduced = null)
+    {
+        if (overallBudget <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(overallBudget));
+        using var overall = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        overall.CancelAfter(overallBudget);
+        try
+        {
+            return await RunCoreAsync(client, console, dependencyBudget, evidenceContext, overall.Token,
+                onEvidenceJsonProduced).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (overall.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"環境探測超過整輪時間上限（{overallBudget.TotalSeconds:0.#} 秒），已停止後續請求。", ex);
+        }
+    }
 
     internal static Task<bool> RunCoreAsync(PrtgClient client, IRunConsole console,
         TimeSpan dependencyBudget, CancellationToken ct = default) =>

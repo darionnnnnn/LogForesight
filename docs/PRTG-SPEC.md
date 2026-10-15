@@ -1339,6 +1339,8 @@ scripts/prtg-workload/Initialize-QualificationMatrixRun.ps1 透過同一 authent
 
 完整環境探測於來源連線失敗、初始化失敗或取消時，保留已取得的白名單本機上下文並明示五類來源缺項；取消不追加來源請求或資料庫查詢，JSON不宣告來源就緒。Maintain可透過 `GET api/admin/settings/prtg-probe/local-evidence` 或探測頁「下載本機診斷 JSON」取得尚未設定／故障來源的本機診斷；此入口不連PRTG或AI，15秒有界，設定修訂變動拒絕輸出，不更新來源探測通過狀態。沿用64 KiB、depth32與去識別限制；可下載不代表取得正式profile、風險或容量授權。
 
+環境探測的來源client取已保存逾時與30秒的較小值；Web從非資料流作業開始共用五分鐘取消期限，包含本機摘要、來源探測及後續站台對照。截止以失敗結束，與使用者停止／設定變更取消分開，保留已產生的安全證據且不開後續請求；同步本機不可中斷段仍須返回安全點，不宣稱硬中斷任意DB命令。資料流探測及一般取數client維持原本設定。離線verifier遇到`evidence_ready`欄位只接受false，缺欄位的舊shape仍可讀；此匯出永遠不授予正式資格。
+
 
 ### 第54輪實作範圍與交付限制
 

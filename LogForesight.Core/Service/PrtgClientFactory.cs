@@ -13,7 +13,11 @@ public static class PrtgClientFactory
     /// 內部依 PrtgAuthMode 自動解密所需憑證。
     /// </summary>
     public static PrtgClient Create(SystemSettings settings, HttpMessageHandler? handler = null,
-        PrtgRequestBudget? budget = null, TimeProvider? timeProvider = null)
+        PrtgRequestBudget? budget = null, TimeProvider? timeProvider = null) =>
+        CreateCore(settings, handler, budget, timeProvider, null);
+
+    private static PrtgClient CreateCore(SystemSettings settings, HttpMessageHandler? handler,
+        PrtgRequestBudget? budget, TimeProvider? timeProvider, int? timeoutSecondsOverride)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -22,7 +26,7 @@ public static class PrtgClientFactory
         return new PrtgClient(
             baseUrl: settings.PrtgUrl ?? string.Empty,
             tokenOrEmpty: token,
-            timeoutSeconds: settings.PrtgTimeoutSeconds,
+            timeoutSeconds: timeoutSecondsOverride ?? settings.PrtgTimeoutSeconds,
             ignoreSslErrors: settings.PrtgIgnoreSslErrors,
             handler: handler,
             authMode: settings.PrtgAuthMode,
@@ -31,6 +35,19 @@ public static class PrtgClientFactory
             passhashOrEmpty: passhash,
             budget: budget ?? PrtgRequestBudget.Shared,
             timeProvider: timeProvider ?? TimeProvider.System);
+    }
+
+    /// <summary>
+    /// Creates the environment-probe client with a request timeout no greater than the
+    /// compatibility probe's per-request limit. Other PRTG clients retain the configured timeout.
+    /// </summary>
+    internal static PrtgClient CreateForEnvironmentProbe(SystemSettings settings,
+        HttpMessageHandler? handler = null, PrtgRequestBudget? budget = null, TimeProvider? timeProvider = null)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var configuredTimeout = Math.Max(settings.PrtgTimeoutSeconds, 1);
+        var probeTimeout = Math.Min(configuredTimeout, (int)PrtgCompatibilityProbe.RequestTimeout.TotalSeconds);
+        return CreateCore(settings, handler, budget, timeProvider, probeTimeout);
     }
 
     /// <summary>

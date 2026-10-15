@@ -71,6 +71,76 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
+    public void EnvironmentProbeClient_capsRequestTimeoutWithoutChangingOtherClients()
+    {
+        var settings = new LogForesight.Core.Models.SystemSettings
+        {
+            PrtgUrl = BaseUrl,
+            PrtgApiTokenEnc = SampleToken,
+            PrtgTimeoutSeconds = 600
+        };
+
+        using var probeDefault = PrtgClientFactory.CreateForEnvironmentProbe(settings);
+        Assert.Equal(PrtgCompatibilityProbe.RequestTimeout, probeDefault.Timeout);
+
+        settings.PrtgTimeoutSeconds = 5;
+        using var probeShort = PrtgClientFactory.CreateForEnvironmentProbe(settings);
+        Assert.Equal(TimeSpan.FromSeconds(5), probeShort.Timeout);
+
+        settings.PrtgTimeoutSeconds = 600;
+        using var ordinary = PrtgClientFactory.Create(settings);
+        Assert.Equal(TimeSpan.FromSeconds(600), ordinary.Timeout);
+    }
+
+    [Fact]
+    public async Task RunWithOverallDeadlineAsync_turnsShortControlledDeadlineIntoTimeoutFailure()
+    {
+        var handler = new StubHandler
+        {
+            OnSend = async (_, token) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                throw new InvalidOperationException("Unreachable after cancellation");
+            }
+        };
+        var settings = new LogForesight.Core.Models.SystemSettings
+        {
+            PrtgUrl = BaseUrl,
+            PrtgApiTokenEnc = SampleToken,
+            PrtgTimeoutSeconds = 600
+        };
+        using var client = PrtgClientFactory.Create(settings, handler);
+        var console = new TestConsole();
+
+        var error = await Assert.ThrowsAsync<TimeoutException>(() =>
+            PrtgProbeRunner.RunWithOverallDeadlineAsync(client, console, TimeSpan.FromSeconds(15),
+                TimeSpan.FromMilliseconds(40)));
+
+        Assert.Contains("整輪時間上限", error.Message);
+        Assert.Contains(handler.RequestedUrls, url => url.Contains("/api/status.json", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunWithOverallDeadlineAsync_preservesCallerCancellationClassification()
+    {
+        using var caller = new CancellationTokenSource();
+        caller.Cancel();
+        var handler = new StubHandler();
+        var settings = new LogForesight.Core.Models.SystemSettings
+        {
+            PrtgUrl = BaseUrl,
+            PrtgApiTokenEnc = SampleToken,
+            PrtgTimeoutSeconds = 600
+        };
+        using var client = PrtgClientFactory.Create(settings, handler);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            PrtgProbeRunner.RunWithOverallDeadlineAsync(client, new TestConsole(), TimeSpan.FromSeconds(15),
+                TimeSpan.FromHours(1), ct: caller.Token));
+        Assert.Empty(handler.RequestedUrls);
+    }
+
+    [Fact]
     public async Task RunAsync_正常回應時輸出type分布且回true()
     {
         var stub = new StubHandler

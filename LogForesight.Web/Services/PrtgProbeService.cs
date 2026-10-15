@@ -167,6 +167,7 @@ public class PrtgProbeService
     private readonly ISentinelStore _sentinels;
     private readonly IAiProbeService? _aiProbe;
     internal Func<SystemSettings, PrtgClient>? ClientFactoryForTesting { get; set; }
+    internal TimeSpan EnvironmentProbeOverallTimeoutForTesting { get; set; } = PrtgCompatibilityProbe.OverallTimeout;
 
     public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState,
         StorageBackend backend, IHostStore hosts, ISentinelStore sentinels,
@@ -359,7 +360,8 @@ public class PrtgProbeService
         PrtgClient? client = null;
         try
         {
-            client = ClientFactoryForTesting is { } factory ? factory(s) : PrtgClientFactory.Create(s);
+            client = ClientFactoryForTesting is { } factory ? factory(s) :
+                dataFlow ? PrtgClientFactory.Create(s) : PrtgClientFactory.CreateForEnvironmentProbe(s);
         }
         catch (Exception ex)
         {
@@ -373,9 +375,12 @@ public class PrtgProbeService
 
         _ = Task.Run(async () =>
         {
+            using var overallDeadline = dataFlow ? null : CancellationTokenSource.CreateLinkedTokenSource(ct);
+            if (overallDeadline != null)
+                overallDeadline.CancelAfter(EnvironmentProbeOverallTimeoutForTesting);
             var scopeReader = new PrtgScopeRevisionReader(_backend, _hosts);
             // Historic values use raw authority; the environment probe also observes messages.
-            using var operation = new PrtgOperationScope(s, _settings.Get, ct,
+            using var operation = new PrtgOperationScope(s, _settings.Get, overallDeadline?.Token ?? ct,
                 dataFlow ? scopeReader.ReadRawSemantic : scopeReader.Read,
                 dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
             client.OperationCheckpoint = operation.Checkpoint;
@@ -417,6 +422,9 @@ public class PrtgProbeService
                             storageProvider = "unknown";
                             efCoreProvider = null;
                         }
+                        // The local storage collector is best-effort, but its broad catch must
+                        // not swallow caller cancellation, settings revocation, or the overall deadline.
+                        operation.Checkpoint();
 
                         var localFacts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, s, _aiProbe, runToken);
                         var messageTimeEvidence = CaptureMessageTimeEvidence(s);
@@ -444,7 +452,8 @@ public class PrtgProbeService
                             MessageTimeEvidence = messageTimeEvidence,
                             ReadCurrentMessageTimeFingerprint = ReadCurrentMessageTimeFingerprint
                         };
-                        success = await PrtgProbeRunner.RunAsync(client, console, evidenceContext, runToken, json =>
+                        success = await PrtgProbeRunner.RunCoreAsync(client, console, TimeSpan.FromSeconds(15),
+                            evidenceContext, runToken, json =>
                         {
                             compatibilityEvidenceProduced = true;
                             _state.SetEvidenceJson(json);
@@ -469,15 +478,26 @@ public class PrtgProbeService
                             console.WriteLine($"站台對照發生未預期錯誤：{ex.Message}");
                         }
                     }
+                    // Some best-effort sub-stages can catch ordinary exceptions. Recheck the
+                    // operation token before marking the whole environment probe complete.
+                    operation.Checkpoint();
                     operation.CompletedStage("探測與站台對照已返回");
                 }
             }
             catch (OperationCanceledException) when (runToken.IsCancellationRequested)
             {
-                cancelled = true;
                 success = false;
                 console.WriteLine();
-                console.WriteLine(operation.SettingsChanged ? "設定或範圍變更，探測已停止。" : "探測已由使用者停止。");
+                if (overallDeadline?.IsCancellationRequested == true && !ct.IsCancellationRequested && !operation.SettingsChanged)
+                {
+                    // A probe deadline is a failed run, not a user cancellation.
+                    console.WriteLine($"環境探測超過整輪時間上限（{EnvironmentProbeOverallTimeoutForTesting.TotalSeconds:0.#} 秒），已停止後續請求。");
+                }
+                else
+                {
+                    cancelled = true;
+                    console.WriteLine(operation.SettingsChanged ? "設定或範圍變更，探測已停止。" : "探測已由使用者停止。");
+                }
             }
             catch (Exception ex)
             {

@@ -738,6 +738,84 @@ public class PrtgProbeSiteCheckTests : IDisposable
     }
 
     [Fact]
+    public async Task EnvironmentProbeOverallDeadlineIncludesSiteCheckAfterEvidenceAndStopsLaterRequests()
+    {
+        using var h = new ServiceHarness();
+        var port = GetFreePort();
+        using var listener = new HttpListener();
+        using var stopServer = new CancellationTokenSource();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        h.PointTo(port);
+        h.Service.EnvironmentProbeOverallTimeoutForTesting = TimeSpan.FromSeconds(12);
+
+        var blockedSiteCheck = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = new System.Collections.Concurrent.ConcurrentQueue<(string Url, bool EvidencePresent)>();
+        var server = Task.Run(async () =>
+        {
+            try
+            {
+                while (listener.IsListening && !stopServer.IsCancellationRequested)
+                {
+                    var context = await listener.GetContextAsync().WaitAsync(stopServer.Token);
+                    var url = context.Request.RawUrl ?? string.Empty;
+                    var evidencePresent = h.Service.GetStatus().EvidenceJson != null;
+                    requests.Enqueue((url, evidencePresent));
+                    if (evidencePresent && url.Contains("content=devices&columns=objid,device,host&count=50000", StringComparison.Ordinal))
+                    {
+                        blockedSiteCheck.TrySetResult(url);
+                        _ = Task.Run(async () =>
+                        {
+                            try { await Task.Delay(Timeout.InfiniteTimeSpan, stopServer.Token); }
+                            catch (OperationCanceledException) { }
+                            context.Response.Abort();
+                        });
+                        continue;
+                    }
+
+                    var bytes = Encoding.UTF8.GetBytes("{}");
+                    context.Response.ContentType = "application/json";
+                    context.Response.ContentLength64 = bytes.Length;
+                    await context.Response.OutputStream.WriteAsync(bytes, stopServer.Token);
+                    context.Response.Close();
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (HttpListenerException) when (stopServer.IsCancellationRequested) { }
+        });
+
+        try
+        {
+            Assert.True(h.Service.TryStart(out var error, out _), error);
+            var blockedUrl = await blockedSiteCheck.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Contains("content=devices&columns=objid,device,host&count=50000", blockedUrl, StringComparison.Ordinal);
+
+            var finishDeadline = DateTime.UtcNow.AddSeconds(10);
+            while (h.Service.GetStatus().IsRunning && DateTime.UtcNow < finishDeadline)
+                await Task.Delay(20);
+
+            var status = h.Service.GetStatus();
+            Assert.False(status.IsRunning);
+            Assert.False(status.Success);
+            Assert.False(status.Cancelled);
+            Assert.NotNull(status.EvidenceJson);
+            Assert.Contains("整輪時間上限", string.Join("\n", status.Output));
+
+            var requestCountAtFinish = requests.Count;
+            await Task.Delay(200);
+            Assert.Equal(requestCountAtFinish, requests.Count);
+            Assert.DoesNotContain(requests, request => request.EvidencePresent &&
+                request.Url.Contains("content=sensors&columns=objid,parentid,sensor,type,status&count=50000", StringComparison.Ordinal));
+        }
+        finally
+        {
+            stopServer.Cancel();
+            listener.Stop();
+            try { await server; } catch (HttpListenerException) { }
+        }
+    }
+
+    [Fact]
     public async Task 探測服務_探測成功後接站台對照且不改成敗()
     {
         using var h = new ServiceHarness();
