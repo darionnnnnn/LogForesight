@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Data;
 using System.Data.Common;
 using LogForesight.Core.Analysis;
@@ -1893,15 +1893,8 @@ public sealed class CalibrationService
     private (string? Content, long Version, int ContentLength) ReadCalibrationBlobSnapshot(string key, int maxCharacters)
     {
         using var ctx = _contextFactory();
-        var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == key)
-            .Select(b => new
-            {
-                b.Version,
-                ContentLength = b.Content.Length,
-                Content = b.Content.Substring(0, maxCharacters + 1)
-            })
-            .FirstOrDefault();
-        return row == null ? (null, 0, 0) : (row.Content, row.Version, row.ContentLength);
+        var row = EfJsonBlobStore.ReadBoundedInContext(ctx, key, maxCharacters);
+        return (row.Prefix, row.Version, row.ReportedLength);
     }
 
     private List<(long Objid, long DeviceObjid, string? Status, string SensorType, string? Category)> ReadCalibrationSensorStatuses(
@@ -2142,9 +2135,9 @@ public sealed class CalibrationService
                     MaxTimelineBlobCharactersForCalibration * 2L, "single PRTG timeline JSON input");
                 var snapshot = ReadCalibrationBlobSnapshot(PrtgSensorTimelineStore.Prefix + sensor.Objid, MaxTimelineBlobCharactersForCalibration);
                 if (snapshot.Version != timelineVersions.GetValueOrDefault(sensor.Objid)) { captureChanged = true; break; }
-                if (string.IsNullOrWhiteSpace(snapshot.Content)) { coverageGap = true; continue; }
-                if (snapshot.ContentLength > MaxTimelineBlobCharactersForCalibration || snapshot.Content.Length > MaxTimelineBlobCharactersForCalibration)
+                if (snapshot.ContentLength > MaxTimelineBlobCharactersForCalibration)
                 { capacityExceeded = true; break; }
+                if (string.IsNullOrWhiteSpace(snapshot.Content)) { coverageGap = true; continue; }
                 captureBytes += (long)snapshot.Content.Length * sizeof(char);
                 if (snapshot.Content.Length > MaxTimelineBlobCharactersForCalibration || captureBytes > MaxTimelineCaptureBytesForCalibration)
                 { capacityExceeded = true; break; }
@@ -2196,7 +2189,8 @@ public sealed class CalibrationService
                         SensorId = proof.SensorId, HostId = proof.HostId, SourceGeneration = proof.SourceGeneration,
                         ResourceGeneration = proof.ResourceGeneration, IdentityEpoch = proof.IdentityEpoch,
                         ChannelGeneration = proof.ChannelGeneration, IdentityFingerprint = proof.IdentityFingerprint,
-                        MappingRevision = proof.MappingRevision, ValidFrom = proof.ValidFrom, LastAttemptAt = proof.LastAttemptAt,
+                        MappingRevision = proof.MappingRevision, MessageTimeFingerprint = proof.MessageTimeFingerprint,
+                        ValidFrom = proof.ValidFrom, LastAttemptAt = proof.LastAttemptAt,
                         QualityReason = proof.QualityReason, Coverage = proof.Coverage.Where(c => c.From < end)
                             .Select(c => c with { Through = c.Through > end ? end : c.Through }).Where(c => c.Through > c.From).ToList(),
                         States = proof.States.Where(s => s.At <= end).ToList()

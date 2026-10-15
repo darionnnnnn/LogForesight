@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -84,6 +85,8 @@ public class CalibrationServiceTests : IDisposable
             p.SensorIds = sensorIds.ToList();
             p.SourceTimeZoneId = TimeZoneInfo.Local.Id;
             p.SourceCultureName = "en-US";
+            p.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
+            p.MessageTimeAuthorityRevision = 1;
         });
     }
 
@@ -121,6 +124,7 @@ public class CalibrationServiceTests : IDisposable
             else
                 e.Bind(sensorId, 1, "source-v1", $"resource-{sensorId}", from);
             e.MappingRevision = new EfJsonBlobStore(_fx.NewContext, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
+            e.MessageTimeFingerprint = policy.MessageTimeFingerprint(_settingsStore.Get().PrtgUrl);
             e.Accept(from, through, states.Select(s => new PrtgTimedState(sensorId, s.At, s.Status,
                 e.SourceGeneration, e.ResourceGeneration)));
         });
@@ -146,6 +150,39 @@ public class CalibrationServiceTests : IDisposable
         Assert.Empty(package.RuleThresholds.MagnitudeSamples);
         var explanations = typeof(CalibrationRuleThresholdDataset).GetProperty("Explanations")?.GetValue(package.RuleThresholds) as IEnumerable<string> ?? [];
         Assert.Contains(explanations, x => x.Contains("timeline", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RuleCalibration_PhysicalNulInPolicyOrTimelineCannotExportTrustedMagnitude(bool corruptPolicy)
+    {
+        var anchor = new DateTime(2026, 9, 1);
+        var prtg = new EfPrtgStore(_fx.NewContext);
+        prtg.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10,
+            SensorType = "Ping", Category = "availability" }], DateTime.Now);
+        prtg.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10,
+            HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
+        InstallCalibrationPolicy(anchor, [1001]);
+        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date.AddMinutes(-15)), "Down"),
+            (new DateTimeOffset(anchor.Date.AddMinutes(20)), "Up"));
+        var key = corruptPolicy ? PrtgMonitoringPolicyStore.BlobKey : PrtgSensorTimelineStore.Prefix + 1001;
+        var blob = _fx.Blob(key);
+        var invalid = blob.Read()! + "\0hidden";
+        using (var context = _fx.NewContext())
+        {
+            var bytes = Encoding.UTF8.GetBytes(invalid);
+            Assert.Equal(1, context.Database.ExecuteSqlInterpolated(
+                $"UPDATE lf_blobs SET content=CAST({bytes} AS TEXT), version=version+1 WHERE blob_key={key}"));
+        }
+        Assert.Equal(invalid, blob.Read());
+        var version = blob.ReadVersion();
+        var service = CreateService();
+        Assert.Equal(CalibrationStatus.Unavailable,
+            service.AssessStatus(anchor, forceRefresh: true).PrtgRuleThresholds.Status);
+        Assert.Empty(service.BuildExportPackage(anchor).RuleThresholds.MagnitudeSamples);
+        Assert.Equal(version, blob.ReadVersion());
+        Assert.Equal(invalid, blob.Read());
     }
 
     [Fact]

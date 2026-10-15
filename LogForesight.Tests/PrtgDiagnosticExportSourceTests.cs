@@ -16,6 +16,51 @@ public sealed class PrtgDiagnosticExportSourceTests
     private static readonly DateTime From = new(2026, 10, 1);
     private static readonly DateTime Through = new(2026, 10, 3);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SingleTimelineExportReadsCompletePhysicalTextAndRejectsEmbeddedNul(bool corrupt)
+    {
+        using var fixture = new ExportFixture();
+        using var context = fixture.OpenContext();
+        await context.Database.EnsureCreatedAsync();
+        var policy = Policy();
+        policy.SensorIds = [501];
+        var key = PrtgSensorTimelineStore.Prefix + 501;
+        var raw = JsonSerializer.Serialize(new PrtgSensorTimelineEvidence { SensorId = 501 });
+        if (corrupt) raw += "\0hidden";
+        context.Blobs.AddRange(
+            new BlobRow { BlobKey = PrtgMonitoringPolicyStore.BlobKey, Content = "{}", Version = 7, UpdatedAt = From },
+            new BlobRow { BlobKey = key, Content = "{}", Version = 1, UpdatedAt = From });
+        await context.SaveChangesAsync();
+        var bytes = Encoding.UTF8.GetBytes(raw);
+        Assert.Equal(1, await context.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE lf_blobs SET content=CAST({bytes} AS TEXT) WHERE blob_key={key}"));
+        Assert.Equal(raw, await context.Blobs.AsNoTracking().Where(row => row.BlobKey == key)
+            .Select(row => row.Content).SingleAsync());
+        await using var transaction = await context.Database.BeginTransactionAsync();
+        var rows = new List<PrtgDiagnosticExportItem>();
+        async Task Enumerate()
+        {
+            await foreach (var item in new PrtgDiagnosticExportSource().EnumerateRowsAsync(
+                context, From, Through, policy, 7, CancellationToken.None)) rows.Add(item);
+        }
+        if (corrupt)
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(Enumerate);
+            Assert.DoesNotContain(rows, item => item.PropertyName == "Timelines");
+        }
+        else
+        {
+            await Enumerate();
+            var timeline = Assert.Single(rows.Where(item => item.PropertyName == "Timelines"));
+            Assert.Equal(501, JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(timeline.JsonUtf8)!.SensorId);
+        }
+        Assert.Equal(raw, await context.Blobs.AsNoTracking().Where(row => row.BlobKey == key)
+            .Select(row => row.Content).SingleAsync());
+        Assert.Equal(1, await context.Blobs.Where(row => row.BlobKey == key).Select(row => row.Version).SingleAsync());
+    }
+
     [Fact]
     public async Task FileSqliteSnapshotOutputsAllV2RowsWithStableNamesAndDateBounds()
     {

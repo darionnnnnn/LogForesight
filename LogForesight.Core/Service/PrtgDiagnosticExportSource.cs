@@ -449,22 +449,18 @@ public sealed class PrtgDiagnosticExportSource
         command.Parameters.Add(parameter);
     }
 
-    private static async Task<T?> ReadBoundedBlobValue<T>(
+    private static Task<T?> ReadBoundedBlobValue<T>(
         LfDbContext context, string key, CancellationToken cancellationToken) where T : class
     {
-        var row = await context.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
-            .Select(blob => new
-            {
-                Prefix = blob.Content.Substring(0, MaximumPolicyCharacters + 1),
-                Length = blob.Content.Length
-            })
-            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-        if (row == null) return null;
-        if (row.Length > MaximumPolicyCharacters || row.Prefix.Length > MaximumPolicyCharacters)
+        cancellationToken.ThrowIfCancellationRequested();
+        var row = EfJsonBlobStore.ReadBoundedInContext(context, key, MaximumPolicyCharacters);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (row.Version == 0 && row.Prefix is null) return Task.FromResult<T?>(null);
+        if (row.ReportedLength > MaximumPolicyCharacters || row.Prefix is null)
             throw new InvalidDataException($"PRTG timeline blob {key} 超過單列有界讀取上限。");
         var value = JsonSerializer.Deserialize<T>(row.Prefix, LfJsonOptions.Pretty);
         if (value == null) throw new InvalidDataException($"PRTG timeline blob {key} 為 null。");
-        return value;
+        return Task.FromResult<T?>(value);
     }
 
     private static async Task<List<RowSize<TKey>>> ReadPageLengthsAsync<TEntity, TKey>(
