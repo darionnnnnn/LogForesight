@@ -15,6 +15,13 @@
         "evidence": "docs/FEEDBACK-54-PLAN.md::8.24 E01-T01",
         "scope": "Clean publish, independent DLL metadata/hash verification, isolated loaded runtime probe and static-assets equality.",
         "reopenWhen": "A production artifact input, dependency or configuration changes; documentation-only commits do not invalidate this evidence."
+      },
+      {
+        "id": "E01-T02",
+        "status": "accepted-for-candidate",
+        "evidence": "docs/FEEDBACK-54-PLAN.md::8.25 E01-T02",
+        "scope": "Actual clean artifact launch fences plus unknown-source and changed-loaded-assembly preview refusals. Reuses unchanged old-suffix identity contract.",
+        "reopenWhen": "Build/preview authorization behavior or artifact inputs change."
       }
     ]
   },

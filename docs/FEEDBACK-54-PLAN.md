@@ -54,7 +54,7 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 2026-10-15依實際程式重新核對：已完成的功能實作已從§2待辦刪除；本表保留的是尚未完成的驗收／交付，不把「已有程式但未驗」誤報成「功能未寫」，也不因已有程式而刪除未執行的驗收。E02、E08-T01、E10-T01既有完成項不重開。有效分段證據可在確認相同程式／設定／環境及母體後沿用。細部使用者劇本仍以 [coverage inventory](../scripts/round53-user-matrix/coverage-inventory.json) 逐子句追蹤；原22項AC、10項U53、6項Q、7種受控來源情境、222案與53條承接缺口保留，不以27個父項掩蓋子句。
 
 - [x] **E01-T01【承接驗收】** 乾淨 `cfa062e9` 已重新建置／publish，source commit、來源指紋、manifest、Web/Core 組件與執行中 probe 完全一致（§8.24）。後續若修改正式程式／依賴／設定／成品輸入，須重新核對受影響成品；純驗收紀錄不觸發重建。
-- [ ] **E01-T02【承接驗收】** 在最終交付上核對舊尾碼、混版 DLL、未核實來源、陳舊預覽 token 的拒絕與提示；確認舊檔不自動覆寫、未知識別不授權全量啟動。
+- [x] **E01-T02【承接驗收】** 乾淨 `cfa062e9` 成品的錯提交／偽造MVID／混版啟動拒絕已實測；未知身分／已載入組件變更後的預覽皆拒絕且零來源請求。舊尾碼拒絕沿用未改動的build identity契約證據，舊成品雜湊未變（§8.25）。
 - [ ] **E03-T01【承接驗收】** 操作明確設定→probe→proof/profile→正式採樣→期間引擎完整鏈，核對 CPU／memory／disk／ping 樣本來源、channel、unit、scale、方向與各端點時基；available-memory 25.0834% 轉 used 74.9166%，disk 90.0887% 保留剩餘方向。
 - [ ] **E03-T02【承接驗收】** 補齊錯時區、缺單位／尺度／主通道、世代變更、陳舊 proof、DST 重複／缺小時、跨午夜與無時區歷史反例；不合格輸入保持等待、零正式副作用，維持兩完成小時、28 日與 7 日20%契約。
 - [ ] **E04-T01【承接驗收】** 逐欄核對已補強的 build／設定修訂／時區 authority／scope／readiness／guard／traffic 安全診斷／NetIQ 回執與父資格／AI 小探測輸出及其正式消費端；每個 unknown 有原因與具體缺項，不把已保存可核對資料永遠標未知。
@@ -569,3 +569,14 @@ C54-04／04-B依原§4.9／4.10交付明列目標的可執行回退控制工具�
 - 原始證據在 `work/round54/acceptance-cfa062e9/`；publish manifest SHA256 `04c02a69cbe28658ae5323b3de1c3664610d8a540e4415dd97487f10b19e1165`，local-evidence.json SHA256 `dc057f64e94c0717d5da199dcaf52e96dab0e6ffe4eb6db0132e4f538531fd56`。`Verify-PrtgProbeEvidence.ps1`以目前source revision核對：正確為INCOMPLETE，沒有把成品身分通過誤當來源／風險／容量通過。
 
 E01-T01對此正式程式成品完成；E01-T02及其他來源、操作、容量、回復、完整回歸條款仍開。後續修改任何正式成品輸入就重開受影響成品核對；只改PLAN／驗收紀錄／不進成品的測試不為換HEAD重建。§3.1 N3陳舊的背景raw「仍有缺口」同步更正為已補齊，保留尚未通過的完整操作驗收。
+
+### 8.25 E01-T02及E03／E04必要接縫（2026-10-15）
+
+測試必要性：E01要求目前交付組件的真實啟動防護；E03正式binding／probe／profile publisher／raw consumer在本輪改過，舊joined證據未完整覆蓋目前接縫。只執行以下有限案例，不重跑舊139／152／51、222規則母體或全套回歸。
+
+- `Test-UserMatrixBuildFence.ps1`輸入§8.24已凍結的runtime app、同版assets、既有1.1MiB來源fixture及先前f8c97版Core，結果PASS：錯誤ExpectedSourceCommit與真正混版皆在配置run前拒絕，偽造MVID在process啟動前拒絕，ProductProcessesStarted=false；沒有啟動全量回填。log：`work/round54/acceptance-cfa062e9/build-fence.log`。原publish及舊版Core只讀使用；原始DLL沒有以新檔覆寫。
+- `PrtgFullBackfillPreviewServiceTests.TryStartFull_RejectsUnknownSourceIdentityBeforeClaimingRunOrOpeningPrtg`及`TryStartFull_RejectsPreviewWhenEitherLoadedAssemblyIdentityChanges`，同一新建測試binary定向2/2、0略過，9秒；各例2主機、3個歷史目標，沒有來源請求、沒有取得run執行權。TRX：`work/round54/acceptance-e01-refusals/build-refusals.trx`。沿用未改動的`LogForesightBuildIdentityTests.Assess_RejectsOldInformationalVersionSuffixEvenWhenBothAssembliesMatch`與第53輪既有build identity基線；`git diff 638c5843`確認該測試、Assess實作、full-preview測試檔無變更。這不把第53輪全量舊結果說成本次全量執行。
+- E03目前正式鏈：`PrtgE03ProductionProbeJoinedAcceptanceTests.ProductionBindingProbeQualificationProfilesAndExactSamplesReachPeriodConsumer`及`PrtgDiskVerificationServiceTests.NormalServiceRunUsesSavedContractAndPersistsVerifiedEvidence`合計2/2、0略過、10秒。前者3 sensors×2完成小時×4 slots，最後只保存6個hourly rows；後者保存6筆值並核正常保存及source漂移拒絕。TRX `work/round54/acceptance-e03-current/joined-current.trx`，SHA256 `733f4e7ce0fe3d4888a1dfee2356a9ddafba7abd615b06c441aab5371a13546f`。CPU25.0834%、memory available25.0834%→used74.9166%、disk free90.0887%精確值及profile／proof接線通過；Ping來源父身分／raw時基未確認時仍partial、零正式授權。E03-T01／T02整項仍開，不把Ping未知當來源合格。
+- E04當前clean frozen瀏覽器在`/browser-fixture/admin/prtg#probe`正常下載「本機診斷JSON（不連PRTG／AI）」；下載事件工具等待逾時，但實際5846-byte檔已落地，未重按。檔`C:/Users/eldar/Downloads/prtg-local-diagnostics-2026-10-15T06-21-18-309Z.json`，SHA256 `1c7c72b4277e6e6de6c2089fbeb13fb55e70d5af712a068e44123ff5061d74a0`，由離線verifier核目前commit為INCOMPLETE；source-not-configured、五類missing、saved bindings=0、qualified=0、AI not-probed，且不把本機檔當探測成功。完整saved-source探測／取消／版本漂移操作尚未因此通過；E04-T01／T02保留。
+
+唯讀盤點提出NetIQ摘要日疑點後，主代理追`AnalysisOrchestrator`→`NetiqPipelineService`→`NetiqSourceAttempt`→`RunMonitorService`核對：NetIQ依伺服器主機日D−1，與PRTG分析時區相互獨立。原`DateTime.Today.AddDays(-1)`符合正式消費端，撤回缺陷推論，不改程式也不新增測試。既有證據只有PLAN摘要而未找到原始receipt者，僅列歷史線索，不能擴大認列目前未覆蓋條款。
