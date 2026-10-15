@@ -41,7 +41,7 @@ public sealed class PrtgResourcePressureModeReplayProgressStore(EfJsonBlobStore 
     public void SetNextJobOffset(int offset)
     {
         if (offset < 0 || offset > MaximumJobsPerHost) throw new ArgumentOutOfRangeException(nameof(offset));
-        blob.Mutate(raw =>
+        blob.MutateWithContext((_, raw) =>
         {
             var document = string.IsNullOrWhiteSpace(raw)
                 ? new PrtgResourcePressureModeReplayProgressDocument()
@@ -54,7 +54,7 @@ public sealed class PrtgResourcePressureModeReplayProgressStore(EfJsonBlobStore 
             if (content.Length > MaximumCharacters)
                 throw new InvalidDataException("PRTG mode replay progress exceeds its bounded write limit.");
             return (content, true);
-        });
+        }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
     }
 
     public PrtgResourcePressureModeReplayProgress? Find(PrtgResourcePressureModeReplayJob job) =>
@@ -65,7 +65,7 @@ public sealed class PrtgResourcePressureModeReplayProgressStore(EfJsonBlobStore 
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(change);
-        blob.Mutate(raw =>
+        blob.MutateWithContext((_, raw) =>
         {
             if (raw is { Length: > MaximumCharacters })
                 throw new InvalidDataException("PRTG mode replay progress exceeds its bounded write limit.");
@@ -107,7 +107,7 @@ public sealed class PrtgResourcePressureModeReplayProgressStore(EfJsonBlobStore 
             if (content.Length > MaximumCharacters)
                 throw new InvalidDataException("PRTG mode replay progress exceeds its bounded write limit.");
             return (content, true);
-        });
+        }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
     }
 
     private static bool SameIdentity(PrtgResourcePressureModeReplayProgress item,
@@ -157,8 +157,21 @@ public sealed class PrtgResourcePressureModeReplayHostCursorStore(EfJsonBlobStor
     public void Set(string? afterKey)
     {
         if (afterKey?.Length > 256) throw new ArgumentOutOfRangeException(nameof(afterKey));
-        blob.Mutate(_ => (JsonSerializer.Serialize(new PrtgResourcePressureModeReplayHostCursor(afterKey),
-            LfJsonOptions.Pretty), true));
+        blob.MutateWithContext((_, raw) =>
+        {
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                var current = JsonSerializer.Deserialize<PrtgResourcePressureModeReplayHostCursor>(raw,
+                    LfJsonOptions.Pretty) ?? throw new JsonException("PRTG replay host cursor is null.");
+                if (current.AfterKey?.Length > 256)
+                    throw new InvalidDataException("PRTG replay host cursor is malformed.");
+            }
+            var content = JsonSerializer.Serialize(new PrtgResourcePressureModeReplayHostCursor(afterKey),
+                LfJsonOptions.Pretty);
+            if (content.Length > MaximumCharacters)
+                throw new InvalidDataException("PRTG replay host cursor exceeds its bounded write limit.");
+            return (content, true);
+        }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
     }
 }
 

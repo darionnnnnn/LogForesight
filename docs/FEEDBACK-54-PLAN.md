@@ -48,7 +48,7 @@ D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.
 
 原列 `PrtgResourcePressureModeStore.Find`、binding Save／RecordQualification、qualification ResumeExisting 及 disk semantic／verification snapshot 的有界接線已存在；不再列為完全未實作。identity／host marker、silent presence、probe local facts、formal-mail claim 的完整 physical bounded reader、CAS／逐筆隔離已有程式及小型驗證；候選提交狀態依分段紀錄。
 
-仍需補齊或核對：`PrtgSnapshotDiagnosticsStore` 的整份診斷文件讀寫／寫入邊界，以及 formal episode／pressure hint／timeline progress／strategy／mode replay progress 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。mail reservation 候選仍須完成完整性核對，不視為已交付。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
+仍需補齊或核對：`PrtgSnapshotDiagnosticsStore` 的整份診斷文件讀寫／寫入邊界，以及 formal episode／pressure hint／timeline progress／strategy 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。mail reservation 候選仍須完成完整性核對，不視為已交付。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
 
 本輪繼續逐呼叫端補齊有界projection／snapshot，保留同一transaction readset、CAS與來源authority；小型字元／超限／損壞／未知extra JSON與設定漂移反例核對等待／拒絕及零正式副作用。依使用者指示不建立33,554,432字元極限文件，雙provider邊界依官方文件及小範圍反例核對。容量export另量測，不把正式mail拒絕等同匯出吞吐通過。對應E03、E06、E07-T03、E08-T05、E10-T02。
 
@@ -456,3 +456,7 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 ### 8.10 匯出／校準 consumer 有界讀取（2026-10-15）
 
 Web診斷匯出 policy 與 Core timeline export、CalibrationService timeline/policy 讀取已改用完整 physical bounded snapshot，沿用現有交易／版本／取消檢查與字元上限，拒絕 NUL 隱藏尾端，不把有效前綴當完整證據。校準按日建立的 bounded timeline 副本補傳 `MessageTimeFingerprint`，避免合法新格式證據被清空。主代理小型 export 正／反例2/2通過（`root-mail-export-calibration-r14`），校準最終正／反例3/3通過（`root-calibration-authority-r15`）；r14先前校準正例失敗保留，已由r15驗證修正。各例1sensor／少量state，無極限payload；這些已完成實作從§2.3刪除，匯出吞吐及完整校準操作驗收仍保留。
+
+### 8.11 Mode replay progress 有界 mutation（2026-10-15）
+
+`PrtgResourcePressureModeReplayProgressStore` 的 Update／SetNextJobOffset 與 host cursor Set 均在原交易中先讀完整有界文件；維持既有 progress 128Ki、cursor 512 UTF-16字元與輸出上限。舊文件若有 NUL／損壞不會被直接覆寫。主代理檢查實際 store 與正式 consumer，隔離 checkout 的 `root-bounded-diagnostics-replay-manual-r17` 三個小型 replay progress／cursor測例通過（正常往返及兩種 physical NUL，原 bytes／Version 不變）。不代表 replay 的 raw/source 語意相依隔離已完成；該 D54-01 待辦保留。
