@@ -10,6 +10,8 @@ LogForesight 把它鏡像到本地資料庫，作為 NetIQ 離散事件之外的
 
 第54輪已補齊訊息時間授權、原始資料權威隔離、正常磁碟核驗、完整有界資格讀寫、清除作業安全及受控回退工具，驗證範圍與未完成驗收見 `FEEDBACK-54-PLAN.md`。Maintain 與 ViewAll 的既有交集可在 PRTG 維護的環境探測區保存明確時間基準及修復資格文件；來源啟用時拒絕時間變更，保存只是操作者輸入。修復使用完整文件、版本 CAS 及明確影響確認，修復後舊正式資格失效，正常 probe 才能重新核驗。serverAdmin 保留無業務明細的救援能力。
 
+共享設定與policy的正式授權讀取及mutation先拒絕重複JSON欄位與大小寫別名，不能以反序列化的最後值取得資格；合法未知擴充欄位仍保留。
+
 長期 raw 工作依 raw/source tuple 與單調 RawAuthorityRevision 防止改後改回追認；文字訊息格式變更只影響相依 message lane。當次保存／發布仍保留 settings／policy CAS，混合 message/resource 終局仍核對全部相依證據。舊缺 raw context 的 capacity plan 或缺 post-proof identity/channel/read-state 欄位的資格頁不追認；需重新取得相符證據。SQL Server 未知回退相容性在工具啟動前拒絕，現有成套還原工具只支援明列的 SQLite 目標；未宣稱 SQL Server 還原或完整容量通過。
 
 - **主檔以 NetIQ 為準**：主機身分永遠來自既有主機主檔（`lf_blobs` 的 `hosts`）。
@@ -1340,4 +1342,4 @@ scripts/prtg-workload/Initialize-QualificationMatrixRun.ps1 透過同一 authent
 
 ### 第54輪實作範圍與交付限制
 
-訊息日期授權已接入設定、歷史 fetch、timeline、finding 持久指紋及 probe；正常磁碟核驗入口已傳入 source contract，缺契約或世代漂移仍拒絕正式資格。實作及小範圍證據統一見 [第54輪 PLAN](FEEDBACK-54-PLAN.md) §§2、8；原27項驗收已有2項完成，25項仍開。全量資格與容量、雙provider完整恢復、完整角色及跨功能操作仍未驗收，不能宣告整輪交付通過。取數快照、raw時間授權與正式proof維持各自契約，不追認舊資料。
+訊息日期授權已接入設定、歷史 fetch、timeline、finding 持久指紋及 probe；正常磁碟核驗入口已傳入 source contract，缺契約或世代漂移仍拒絕正式資格。實作及小範圍證據統一見 [第54輪 PLAN](FEEDBACK-54-PLAN.md) §§2、8；原25項驗收仍開，收尾程式修正後另重開2項最終成品核對；舊候選證據保留。全量資格與容量、雙provider完整恢復、完整角色及跨功能操作仍未驗收，不能宣告整輪交付通過。取數快照、raw時間授權與正式proof維持各自契約，不追認舊資料。

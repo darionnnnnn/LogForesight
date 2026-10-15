@@ -61,6 +61,52 @@ public sealed class PrtgSharedAuthoritySnapshotTests
         Assert.Equal(1,blob.ReadVersion());
     }
 
+    [Theory]
+    [InlineData("system_settings", "{\"PrtgEnabled\":true,\"PrtgEnabled\":false}")]
+    [InlineData("system_settings", "{\"PrtgEnabled\":true,\"prtgEnabled\":false}")]
+    [InlineData("prtg_monitoring_policy", "{\"SourceGeneration\":\"first\",\"SourceGeneration\":\"second\"}")]
+    [InlineData("prtg_monitoring_policy", "{\"SourceGeneration\":\"first\",\"sourceGeneration\":\"second\"}")]
+    public void DuplicateOrAliasedAuthorityPropertiesAreUnavailable(string key, string raw)
+    {
+        var backend = NewBackend();
+        backend.Blob(key).Mutate(_ => (raw, true));
+
+        Assert.False(PrtgSharedAuthoritySnapshot.TryRead(backend, out var snapshot, out var reason));
+        Assert.Null(snapshot);
+        Assert.Equal(PrtgSharedAuthoritySnapshot.UnavailableReason, reason);
+        Assert.Equal(raw, backend.Blob(key).Read());
+    }
+
+    [Fact]
+    public void SharedAuthorityAcceptsUnknownSettingsExtensionData()
+    {
+        var backend = NewBackend();
+        const string raw = "{\"PrtgUrl\":\"https://authority.example.invalid\",\"RetentionDays\":180,\"FutureSetting\":{\"mode\":\"kept\"}}";
+        backend.Blob("system_settings").Mutate(_ => (raw, true));
+
+        var snapshot = PrtgSharedAuthoritySnapshot.Read(backend);
+
+        Assert.Equal("https://authority.example.invalid", snapshot.Settings.PrtgUrl);
+        Assert.Equal("kept", snapshot.Settings.ExtensionData!["FutureSetting"].GetProperty("mode").GetString());
+    }
+
+    [Fact]
+    public void PolicyStoreGetKeepsMissingDefaultAndRejectsAmbiguousPersistedPolicy()
+    {
+        var backend = NewBackend();
+        var store = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        Assert.Equal(string.Empty, store.Get().SourceGeneration);
+
+        const string raw = "{\"SourceGeneration\":\"first\",\"sourceGeneration\":\"second\"}";
+        var blob = backend.Blob(PrtgMonitoringPolicyStore.BlobKey);
+        blob.Mutate(_ => (raw, true));
+        var version = blob.ReadVersion();
+        Assert.Throws<JsonException>(() => store.Get());
+        Assert.Throws<JsonException>(() => store.Update(_ => { }));
+        Assert.Equal(version, blob.ReadVersion());
+        Assert.Equal(raw, blob.Read());
+    }
+
     private static StorageBackend NewBackend()
     {
         var root = Path.Combine(Path.GetTempPath(),"lf-r54-shared-authority-"+Guid.NewGuid().ToString("N"));

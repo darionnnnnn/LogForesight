@@ -1,6 +1,6 @@
 # 第 54 輪規劃：PRTG 剩餘實作與完整驗收
 
-> 狀態（2026-10-15）：實作完整性已核對，目前逐項驗收；原27項已有E01-T01／T02完成，仍開25項，逐項裁定見§8.26。使用者已授權逐段完成並驗證後commit／push；只做必要小範圍驗證，沿用有效證據，不執行大規模大量資料測試，不得已須先提出方案討論。本輪未宣告整體驗收通過。
+> 狀態（2026-10-15）：實作完整性已核對，目前逐項驗收；原27項在§8.26曾有E01-T01／T02完成；收尾修正正式程式後，兩項最終成品驗收重新待驗，目前27項仍開，歷史證據保留。使用者已授權逐段完成並驗證後commit／push；只做必要小範圍驗證，沿用有效證據，不執行大規模大量資料測試，不得已須先提出方案討論。本輪未宣告整體驗收通過。
 > 來源：2026-10-13 使用者明確要求將第53輪尚未實作項目移入下一輪，先收尾已實作部分。此為範圍移交，不代表原目標、容量、實用性或驗收已通過。
 > 本輪起點：`dev` 的 `a69fedd7`；工作分支 `feature/prtg-feedback-54`。第53輪乾淨驗證基準為 `638c58434f0bc01fe77e62365addeafd75680fb0`，至本輪起點僅README、PLAN與驗收JSON差異，正式程式未變。
 > 原始需求與契約：[第53輪 PLAN](FEEDBACK-53-PLAN.md) §§3、6、13、15–17；最新責任邊界為 §§5.7、5.9。
@@ -53,8 +53,8 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 
 2026-10-15依實際程式重新核對：已完成的功能實作已從§2待辦刪除；本表保留的是尚未完成的驗收／交付，不把「已有程式但未驗」誤報成「功能未寫」，也不因已有程式而刪除未執行的驗收。E02、E08-T01、E10-T01既有完成項不重開。有效分段證據可在確認相同程式／設定／環境及母體後沿用。細部使用者劇本仍以 [coverage inventory](../scripts/round53-user-matrix/coverage-inventory.json) 逐子句追蹤；原22項AC、10項U53、6項Q、7種受控來源情境、222案與53條承接缺口保留，不以27個父項掩蓋子句。
 
-- [x] **E01-T01【承接驗收】** 乾淨 `cfa062e9` 已重新建置／publish，source commit、來源指紋、manifest、Web/Core 組件與執行中 probe 完全一致（§8.24）。後續若修改正式程式／依賴／設定／成品輸入，須重新核對受影響成品；純驗收紀錄不觸發重建。
-- [x] **E01-T02【承接驗收】** 乾淨 `cfa062e9` 成品的錯提交／偽造MVID／混版啟動拒絕已實測；未知身分／已載入組件變更後的預覽皆拒絕且零來源請求。舊尾碼拒絕沿用未改動的build identity契約證據，舊成品雜湊未變（§8.25）。
+- [ ] **E01-T01【承接驗收】** 收尾已修改正式程式，最終候選成品待重新核對；歷史乾淨 `cfa062e9` 已重新建置／publish，source commit、來源指紋、manifest、Web/Core 組件與執行中 probe 完全一致（§8.24）。後續若修改正式程式／依賴／設定／成品輸入，須重新核對受影響成品；純驗收紀錄不觸發重建。
+- [ ] **E01-T02【承接驗收】** 收尾已修改成品輸入，最終候選拒絕防護待核對；歷史乾淨 `cfa062e9` 成品的錯提交／偽造MVID／混版啟動拒絕已實測；未知身分／已載入組件變更後的預覽皆拒絕且零來源請求。舊尾碼拒絕沿用未改動的build identity契約證據，舊成品雜湊未變（§8.25）。
 - [ ] **E03-T01【承接驗收】** 操作明確設定→probe→proof/profile→正式採樣→期間引擎完整鏈，核對 CPU／memory／disk／ping 樣本來源、channel、unit、scale、方向與各端點時基；available-memory 25.0834% 轉 used 74.9166%，disk 90.0887% 保留剩餘方向。
 - [ ] **E03-T02【承接驗收】** 補齊錯時區、缺單位／尺度／主通道、世代變更、陳舊 proof、DST 重複／缺小時、跨午夜與無時區歷史反例；不合格輸入保持等待、零正式副作用，維持兩完成小時、28 日與 7 日20%契約。
 - [ ] **E04-T01【承接驗收】** 逐欄核對已補強的 build／設定修訂／時區 authority／scope／readiness／guard／traffic 安全診斷／NetIQ 回執與父資格／AI 小探測輸出及其正式消費端；每個 unknown 有原因與具體缺項，不把已保存可核對資料永遠標未知。
@@ -79,7 +79,7 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 - [ ] **E09-T02【承接驗收】** 核對最終報表與操作結果的四基準、時間／分母／未知／排除及提前量一致，缺時間不算提前量、不得使用未來資料；保留合併未優於聯集的既有結果，不為宣告增益改真值。
 - [ ] **E10-T02【承接驗收】** 逐原需求、第52輪有效子條款、AC／U53／Q與E01–E09核對真實呼叫端、程式／脚本／文件及證據，完成可執行全範圍程式審查，記實際模型／角色与限制；代理範圍已知缺陷與必要未測清零。
 - [ ] **E10-T03【承接驗收】** 在最終凍結同版完成受影響驗證及完整全量回歸，記命令／母體／SHA／環境／結果；歷次失敗結果保留；最近全量為b77a72c7的7,978通過／1失敗／10可選略過，共7,989案，唯一失敗在638c5843已有修正後定向通過證據。正式程式未變的有效結果可沿用，最終變更須有完整有效回歸覆蓋，不冒稱最終提交曾單次全量全綠。
-- [ ] **E10-T04【承接交付】** E01、E03–E09全部必要條件通過後，同步PLAN／AC／現況規格／Help／交付限制與證據可取得性；依使用者既定逐段commit／push授權在本輪feature分支提交，確認遠端SHA；不自行合併或推dev／master。功能實作已獲授權，尚未完成的相依繼續補齊。
+- [ ] **E10-T04【承接交付】** E01、E03–E09全部必要條件通過後，同步PLAN／AC／現況規格／Help／交付限制與證據可取得性；依使用者既定逐段commit／push授權在本輪feature分支提交，確認遠端SHA；使用者已於收尾授權必要條件通過後整合dev並刪分支，目前尚未符合。功能實作已獲授權，尚未完成的相依繼續補齊。
 
 ## 3.1 全部原Phase的承接對照
 
@@ -155,7 +155,7 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 
 UC01～UC07僅限制正式站台／真實效益宣告，不是開發TODO或必要輸入；來源未知仍由產品資格守門處理。coverage inventory的AC22／Q2／Q6及U53-04皆套用本節，不得重新要求獨立使用者效益證據。全部Q的journey關聯須與user-matrix完全相同；A2逐Q、R54／C54／§4.10、維護角色能力與證據ID檢查及漏項反例已有腳本接線，實際角色操作與驗收狀態仍獨立核對。
 
-每段相依完整、檢查整體影響並適當驗證後commit／push至本輪feature分支，確認遠端SHA。不自行merge、force push或改推dev／master。不用AGY；若後續授權委派，subagent僅gpt-6-luna low／medium／high，主代理獨立核對。記實際審查角色與模型，不冒稱跨模型背書。
+每段相依完整、檢查整體影響並適當驗證後commit／push至本輪feature分支，確認遠端SHA。使用者最新授權允許收尾條件通過後整合dev並刪本輪分支；未通過前保留feature，不force push。不用AGY；若後續授權委派，subagent僅gpt-6-luna low／medium／high，主代理獨立核對。記實際審查角色與模型，不冒稱跨模型背書。
 
 ### 4.6 八項再次審查補強契約（全部本輪處理）
 
@@ -651,3 +651,15 @@ skill評估：沿用project-closeout、project-doc-hygiene、subagent-verificati
 Luna high實作、主代理逐行核對實際入口後確認：回退after-backup的`quick_check`須fetch全部結果且僅單列ok接受；Windows reparse用lstat原生attribute檢查所有祖先，launch／release／reconcile在resolve前拒絕junction；不存在的新restore末節仍可正常準備。資格工具在runtime ownership與業務API請求前各自重核descriptor原路徑及SHA，不沿用開工時hash充當當前檔案。保留既有工具及scope，不新增通用防護框架。
 
 必要驗證僅針對新缺口：主代理以舊quick_check語句行為代回tiny reconcile consumer，確認原本錯誤結果未拒絕（1個預期失敗）；同測例在修正後拒絕且未產生receipt。另驗合法小型差額還原／release、實際Windows junction經CLI launch入口拒絕，3/3通過、零skip；receipt `work/round54/closeout-review/tools-consumers.log`。descriptor小檔hash相符／漂移拒絕通過，`descriptor.log`；兩個真正HTTP呼叫之前的接線直接查碼。代理另有不存在restore路徑正例及靜態接線通過，不將其重跑以增加數量。無Web啟動、無全量source preflight、無固定結構seed、無大型payload；不替代完整恢復或資格矩陣驗收。
+
+
+### 8.29 共享授權歧義修正與最終候選狀態
+
+`system_settings`／monitoring policy的完整有界字串先經既有`StrictAuthorityJsonDocument`檢查，再反序列化。snapshot、binding保存／資格發布、job resume／持久頁授權、policy讀寫、資源綁定及profile發布／撤回、正式delivery fence一併核同一條件，重複欄位或大小寫別名不再以最後值取得正式權威。保留既有交易／CAS、缺值預設、合法未知擴充欄位與權限模型，沒有新增儲存或通用workflow。Luna high實作；主代理直接追consumer與diff、讀原始TRX/log，沒有為主代理背書重跑相同集合。
+
+收尾實際修改Core及工具後，E01-T01／T02原`cfa062e9`證據只代表該歷史成品，依既定reopenWhen重開最終候選核對；不是推翻原測試或新發現兩個bug。§3與coverage inventory同步為27項待驗（原25項加2項候選成品），不在未達整輪收尾條件時為文件更新額外publish或重跑舊成品測試。舊有效證據保留其未變範圍；最終成品仍待凍結後核對。E10-T04相依未完成，故目前不整合dev、不刪feature、不宣告整輪PASS。使用者可決定後續驗收資源或明確變更交付範圍；本次未自行降級容量／恢復／角色條款。
+
+
+本段原始驗證：authority 12/12、formal claim正常及settings／policy別名拒絕3/3，零skip。主代理已讀TRX實際case/outcome，保存至`work/round54/closeout-review/authority.trx`（SHA256 `7A7DC33A6CB9D873F5426B838D45F61940E29AC35242D8C710C164966B049840`）與`fence.trx`（`E723FFD56B0A19E0691BC4E2D049F6D0A253665622677962819D7E2D3F7C41DC`），同目錄有build/test原始log。使用Debug定向建置，既有nullable／analyzer warnings保留，不宣稱零警告或Release最終成品驗收；測試資料為少量設定／binding／父紀錄，resume沿用101個sensor識別的兩頁metadata，不寫大量數值。修前9案失敗由實作者工具輸出確認，沒有另存原始檔，不為補檔重跑。新增及修改測例直接檢查未產生binding／qualification／formal claim與保留未知欄位，不僅檢查helper回傳。清單validator在候選重開後通過（`inventory.log`，AcceptanceClaimed=false）；未執行其他整類／全量測試。
+
+本次架構核對結論限定於已查範圍：修正沿既有Core持久層、Web能力規則及隔離工具，沒有新增正式角色、權限或儲存重構；四個確認缺陷已修，兩個未成立的清除疑點撤回。G/H、完整操作矩陣及最終有效回歸仍未通過，不能保證沒有其他bug或稱全面完美整合。文件與工具修正已分段提交`cb975a6f`、`03e16f30`並確認遠端SHA；本段Core與相依清單再以完整提交推送feature，dev維持`a69fedd7`，分支保留。

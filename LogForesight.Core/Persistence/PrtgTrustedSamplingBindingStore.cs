@@ -107,6 +107,8 @@ public sealed class PrtgTrustedSamplingBindingStore
         {
             var settingsRaw = ReadAuthorityContent(ctx, "system_settings");
             var policyRaw = ReadAuthorityContent(ctx, PrtgMonitoringPolicyStore.BlobKey);
+            if (!string.IsNullOrWhiteSpace(settingsRaw)) StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRaw);
+            if (!string.IsNullOrWhiteSpace(policyRaw)) StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRaw);
             var settings = string.IsNullOrWhiteSpace(settingsRaw)
                 ? new SystemSettings()
                 : JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
@@ -240,6 +242,8 @@ public sealed class PrtgTrustedSamplingBindingStore
 
             var settingsRaw = ReadAuthorityContent(ctx, "system_settings");
             var policyRaw = ReadAuthorityContent(ctx, PrtgMonitoringPolicyStore.BlobKey);
+            if (!string.IsNullOrWhiteSpace(settingsRaw)) StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRaw);
+            if (!string.IsNullOrWhiteSpace(policyRaw)) StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRaw);
             var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("System settings invalid.");

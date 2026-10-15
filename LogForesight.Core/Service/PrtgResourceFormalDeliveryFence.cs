@@ -302,9 +302,11 @@ public sealed record PrtgResourceFormalDeliveryFence(
         if (devicePaused is not false) return false;
 
         var settingsRaw = ReadBoundedBlob(ctx, "system_settings", PrtgSharedAuthoritySnapshot.MaximumDocumentCharacters);
+        if (settingsRaw is not null) StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRaw);
         var settings = settingsRaw is null ? null : JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty);
         if (settings is not { PrtgEnabled: true } || string.IsNullOrWhiteSpace(settings.PrtgUrl)) return false;
         var policyRaw = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey, PrtgSharedAuthoritySnapshot.MaximumDocumentCharacters);
+        if (policyRaw is not null) StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRaw);
         var policy = policyRaw is null ? null : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRaw, LfJsonOptions.Pretty);
         if (policy is null || !policy.Ready(settings.PrtgUrl) || !policy.HostIds.Contains(hostId) ||
             !policy.SensorIds.Contains(sensorObjid) || policy.SourceGeneration != sourceGeneration ||

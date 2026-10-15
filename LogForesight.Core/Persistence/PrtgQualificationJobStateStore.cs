@@ -248,6 +248,8 @@ public sealed class Sensor
 
             var settingsRaw = ReadResumeAuthority(ctx, "system_settings");
             var policyRaw = ReadResumeAuthority(ctx, PrtgMonitoringPolicyStore.BlobKey);
+            if (!string.IsNullOrWhiteSpace(settingsRaw)) StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRaw);
+            if (!string.IsNullOrWhiteSpace(policyRaw)) StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRaw);
             var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("system-settings-invalid");
@@ -676,11 +678,15 @@ public sealed class Sensor
     }
     private static void EnsureLiveRawJobAuthority(LfDbContext context, Job job)
     {
-        var settings = JsonSerializer.Deserialize<SystemSettings>(ReadResumeAuthority(context, "system_settings")
-            ?? throw new InvalidDataException("qualification-settings-missing"), LfJsonOptions.Pretty)
+        var settingsRaw = ReadResumeAuthority(context, "system_settings")
+            ?? throw new InvalidDataException("qualification-settings-missing");
+        var policyRaw = ReadResumeAuthority(context, PrtgMonitoringPolicyStore.BlobKey)
+            ?? throw new InvalidDataException("qualification-policy-missing");
+        StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRaw);
+        StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRaw);
+        var settings = JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
             ?? throw new InvalidDataException("qualification-settings-invalid");
-        var policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(ReadResumeAuthority(context, PrtgMonitoringPolicyStore.BlobKey)
-            ?? throw new InvalidDataException("qualification-policy-missing"), LfJsonOptions.Pretty)
+        var policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRaw, LfJsonOptions.Pretty)
             ?? throw new InvalidDataException("qualification-policy-invalid");
         var strategy = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
         var authority = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy, strategy,

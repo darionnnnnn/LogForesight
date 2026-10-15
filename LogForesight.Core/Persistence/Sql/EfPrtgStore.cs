@@ -3674,6 +3674,7 @@ public sealed class EfPrtgStore
             PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
             "prtg-monitoring-policy-cap-exceeded")?.Content;
         if (string.IsNullOrWhiteSpace(content)) return new PrtgMonitoringPolicy();
+        StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(content);
         return JsonSerializer.Deserialize<PrtgMonitoringPolicy>(content, LfJsonOptions.Pretty)
             ?? new PrtgMonitoringPolicy();
     }
@@ -3900,6 +3901,8 @@ public sealed class EfPrtgStore
             var currentPolicyRaw = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey,
                 PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
                 "prtg-monitoring-policy-cap-exceeded")?.Content;
+            if (!string.IsNullOrWhiteSpace(currentSettingsRaw)) StrictAuthorityJsonDocument.Validate<SystemSettings>(currentSettingsRaw);
+            if (!string.IsNullOrWhiteSpace(currentPolicyRaw)) StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(currentPolicyRaw);
             var currentSettings = string.IsNullOrWhiteSpace(currentSettingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(currentSettingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("System settings invalid; profile not saved.");
@@ -4081,6 +4084,8 @@ public sealed class EfPrtgStore
             var policyRaw = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey,
                 PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
                 "prtg-monitoring-policy-cap-exceeded")?.Content;
+            if (!string.IsNullOrWhiteSpace(settingsRaw)) StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRaw);
+            if (!string.IsNullOrWhiteSpace(policyRaw)) StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRaw);
             var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("System settings invalid; refresh profile was not revoked.");

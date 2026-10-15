@@ -85,6 +85,33 @@ public sealed class PrtgFormalCaseStartClaimTests
             fixture.ParentRecordId, fixture.PressureIssue, null, out _));
     }
 
+    [Theory]
+    [InlineData("system_settings", "PrtgUrl", "http://prtg.formal-claim.test")]
+    [InlineData(PrtgMonitoringPolicyStore.BlobKey, "SourceGeneration", "source-generation-claim-test")]
+    public void AmbiguousSharedAuthorityCannotCreateFormalCaseStartClaim(string key, string property, string value)
+    {
+        using var fixture = new Fixture();
+        fixture.SeedParent([fixture.PressureIssue]);
+        fixture.AddOpenCase(fixture.PressureIssue);
+        var workflow = fixture.StartWorkflow();
+        var (coordinator, dispatch, handlings, _) = fixture.CreateCaseFlow();
+
+        var blob = fixture.Backend.Blob(key);
+        var original = blob.Read()!;
+        var alias = property.Length > 0 ? char.ToLowerInvariant(property[0]) + property[1..] : property;
+        var end = original.LastIndexOf('}');
+        Assert.True(end >= 0);
+        blob.Mutate(_ => (original.Insert(end, $",\"{alias}\":{JsonSerializer.Serialize(value)}"), true));
+
+        HostDayPostProcessor.AttachCase(coordinator, dispatch, Fixture.HostName, fixture.Day,
+            [fixture.PressureIssue], workflow: workflow, hostId: Fixture.HostId,
+            parentRecordId: fixture.ParentRecordId);
+
+        Assert.Empty(workflow.Get(Fixture.HostId, fixture.Day)!.FormalCaseStartClaims);
+        Assert.DoesNotContain(handlings.GetForDay(Fixture.HostName, fixture.Day),
+            row => row.IssueKey == IssueSignatureKey.For(fixture.PressureIssue));
+    }
+
     [Fact]
     public void CurrentStartRejectsParentCalendarDayDifferentFromSqlColumn()
     {

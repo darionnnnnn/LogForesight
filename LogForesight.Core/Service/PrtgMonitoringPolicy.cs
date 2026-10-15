@@ -102,7 +102,18 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
         return serialized;
     }
 
-    public new PrtgMonitoringPolicy Get() => ReadBoundedValueWithVersion(2 * 1024 * 1024).Value;
+    public new PrtgMonitoringPolicy Get()
+    {
+        var read = blob.ReadBoundedWithVersion(2 * 1024 * 1024);
+        if (read.Prefix is null && read.Version == 0) return new PrtgMonitoringPolicy();
+        if (read.ReportedLength > 2 * 1024 * 1024 || read.Prefix is null || read.Prefix.Length > 2 * 1024 * 1024)
+            throw new InvalidDataException("PRTG policy exceeds its bounded read limit.");
+        if (string.IsNullOrWhiteSpace(read.Prefix))
+            throw new JsonException("Persisted PRTG policy is empty.");
+        StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(read.Prefix);
+        return JsonSerializer.Deserialize<PrtgMonitoringPolicy>(read.Prefix, LfJsonOptions.Pretty)
+            ?? throw new JsonException("Persisted PRTG policy is null.");
+    }
 
     private readonly record struct RawAuthorityTuple(string? CoreSystemId, string? SourceGeneration,
         string? EndpointHint, long ValidFromUtcTicks,
@@ -128,16 +139,20 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
         policy.RawAuthorityRevision = checked(previousRevision + 1);
     }
 
+    private static PrtgMonitoringPolicy DeserializeStrictPolicy(string raw)
+    {
+        StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(raw);
+        return JsonSerializer.Deserialize<PrtgMonitoringPolicy>(raw, LfJsonOptions.Pretty)
+            ?? throw new InvalidDataException("PRTG 監看政策無效；拒絕更新。");
+    }
+
     /// <summary>Updates policy through the legacy singleton API while preserving the raw authority counter.</summary>
     public new PrtgMonitoringPolicy Update(Action<PrtgMonitoringPolicy> mutation)
     {
         ArgumentNullException.ThrowIfNull(mutation);
         return blob.MutateWithContext((_, raw) =>
         {
-            var policy = raw is null
-                ? new PrtgMonitoringPolicy()
-                : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(raw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("PRTG 監看政策無效；拒絕更新。");
+            var policy = raw is null ? new PrtgMonitoringPolicy() : DeserializeStrictPolicy(raw);
             var priorRevision = policy.RawAuthorityRevision;
             var before = RawAuthorityTuple.Capture(policy);
             mutation(policy);
@@ -170,6 +185,7 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
             var settingsRow = EfJsonBlobStore.ReadBoundedInContext(ctx, "system_settings", 2 * 1024 * 1024);
             if (settingsRow.ReportedLength > 2 * 1024 * 1024 || settingsRow.Prefix is null)
                 throw new InvalidDataException("System settings exceed their bounded read limit.");
+            StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRow.Prefix);
             var settings = JsonSerializer.Deserialize<SystemSettings>(settingsRow.Prefix, LfJsonOptions.Pretty)
                 ?? throw new InvalidDataException("System settings invalid.");
             if (!string.Equals(settings.Revision, expectedSettingsRevision, StringComparison.Ordinal))
@@ -179,8 +195,7 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
 
             var policy = raw is null
                 ? new PrtgMonitoringPolicy()
-                : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(raw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("PRTG 監看政策無效；拒絕更新。");
+                : DeserializeStrictPolicy(raw);
             if (!string.Equals(policy.Revision, expectedRevision, StringComparison.Ordinal))
                 throw new InvalidOperationException("設定已變更；重新載入後再修改。");
 
@@ -251,6 +266,7 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
                 var settingsRow = EfJsonBlobStore.ReadBoundedInContext(ctx, "system_settings", 2 * 1024 * 1024);
                 if (settingsRow.ReportedLength > 2 * 1024 * 1024 || settingsRow.Prefix is null)
                     throw new InvalidDataException("System settings exceed their bounded read limit.");
+                StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRow.Prefix);
                 var settings = JsonSerializer.Deserialize<SystemSettings>(settingsRow.Prefix, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("System settings invalid.");
                 if (!string.Equals(settings.Revision, expectedSettingsRevision, StringComparison.Ordinal))
@@ -258,8 +274,7 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
             }
             var policy = raw is null
                 ? new PrtgMonitoringPolicy()
-                : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(raw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("PRTG 監看政策無效；拒絕更新。");
+                : DeserializeStrictPolicy(raw);
             if (!string.Equals(policy.Revision, expectedRevision, StringComparison.Ordinal))
                 throw new InvalidOperationException("設定已變更；重新載入後再修改。");
 

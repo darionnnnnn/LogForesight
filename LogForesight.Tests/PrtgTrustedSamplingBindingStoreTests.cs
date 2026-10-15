@@ -67,6 +67,70 @@ public sealed class PrtgTrustedSamplingBindingStoreTests : IDisposable
         Assert.False(new PrtgTrustedSamplingProfileStore(backend).GetMany([11]).ContainsKey(11));
     }
 
+    [Theory]
+    [InlineData("system_settings", "PrtgUrl", "prtgUrl")]
+    [InlineData(PrtgMonitoringPolicyStore.BlobKey, "SourceGeneration", "sourceGeneration")]
+    public void AmbiguousSharedAuthorityCannotSaveBinding(string key, string property, string alias)
+    {
+        var beforeIdentity = backend.PrtgStore().GetResourceIdentity(11);
+        var currentSettings = settings.Get();
+        var currentPolicy = policy.Get();
+        var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + "11";
+        var beforeBindingVersion = backend.Blob(bindingKey).ReadVersion();
+        InjectConflictingAlias(key, property, alias);
+
+        Assert.Throws<System.Text.Json.JsonException>(() => new PrtgTrustedSamplingBindingStore(backend)
+            .Save(Update(currentSettings.Revision, currentPolicy.Revision, beforeIdentity.Epoch,
+                beforeIdentity.ChannelGeneration, 0)));
+
+        Assert.Equal(beforeBindingVersion, backend.Blob(bindingKey).ReadVersion());
+        var afterIdentity = backend.PrtgStore().GetResourceIdentity(11);
+        Assert.Equal(beforeIdentity.Epoch, afterIdentity.Epoch);
+        Assert.Equal(beforeIdentity.ChannelGeneration, afterIdentity.ChannelGeneration);
+        Assert.Equal(beforeIdentity.ChannelFingerprint, afterIdentity.ChannelFingerprint);
+    }
+
+    [Theory]
+    [InlineData("system_settings", "PrtgUrl", "prtgUrl")]
+    [InlineData(PrtgMonitoringPolicyStore.BlobKey, "SourceGeneration", "sourceGeneration")]
+    public void AmbiguousSharedAuthorityCannotPublishQualification(string key, string property, string alias)
+    {
+        var currentSettings = settings.Get();
+        var currentPolicy = policy.Get();
+        var identity = backend.PrtgStore().GetResourceIdentity(11);
+        var bindings = new PrtgTrustedSamplingBindingStore(backend);
+        var binding = bindings.Save(Update(currentSettings.Revision, currentPolicy.Revision,
+            identity.Epoch, identity.ChannelGeneration, 0));
+        var beforeBindingVersion = backend.Blob(PrtgTrustedSamplingBinding.StorePrefix + "11").ReadVersion();
+        var beforeIdentity = backend.PrtgStore().GetResourceIdentity(11);
+        InjectConflictingAlias(key, property, alias);
+
+        Assert.Throws<System.Text.Json.JsonException>(() => bindings.RecordQualification(11,
+            binding.BindingRevision, binding.BindingFingerprint, currentSettings.Revision,
+            currentPolicy.Revision, 91, DateTime.UtcNow.AddSeconds(-1).ToOADate(), "source-r1",
+            DateTimeOffset.UtcNow, new string('C', 64)));
+
+        Assert.Equal(beforeBindingVersion, backend.Blob(PrtgTrustedSamplingBinding.StorePrefix + "11").ReadVersion());
+        Assert.Equal(beforeIdentity.ChannelGeneration, backend.PrtgStore().GetResourceIdentity(11).ChannelGeneration);
+        Assert.Empty(bindings.Get(11)!.QualificationProofReference);
+        Assert.False(new PrtgTrustedSamplingProfileStore(backend).GetMany([11]).ContainsKey(11));
+    }
+
+    [Fact]
+    public void AmbiguousPolicyCannotBindObservedResource()
+    {
+        var before = backend.PrtgStore().GetResourceIdentity(11);
+        InjectConflictingAlias(PrtgMonitoringPolicyStore.BlobKey, "SourceGeneration", "sourceGeneration");
+
+        Assert.Throws<System.Text.Json.JsonException>(() => backend.PrtgStore().BindObservedResource(11, 7,
+            "source-r1", PrtgTimelineResourceIdentity.BuildResourceFingerprint("22", "CPU", "created", 0)));
+
+        var after = backend.PrtgStore().GetResourceIdentity(11);
+        Assert.Equal(before.Epoch, after.Epoch);
+        Assert.Equal(before.Generation, after.Generation);
+        Assert.Equal(before.ChannelFingerprint, after.ChannelFingerprint);
+    }
+
     [Fact]
     public void SavingAnExplicitBindingOnlyCreatesWaitingConfigurationAndFencesPriorAuthority()
     {
@@ -289,6 +353,17 @@ public sealed class PrtgTrustedSamplingBindingStoreTests : IDisposable
             currentSettings.Revision, currentPolicy.Revision,
             PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(currentPolicy,
                 strategyName, strategyProfile.SnapshotIntervalMinutes));
+    }
+
+    private void InjectConflictingAlias(string key, string property, string alias)
+    {
+        var blob = backend.Blob(key);
+        var current = blob.Read()!;
+        var value = key == "system_settings" ? "https://source.example" : "source-r1";
+        var marker = $"\"{property}\": \"{value}\",";
+        Assert.Contains(marker, current, StringComparison.Ordinal);
+        var replacement = $"\"{property}\": \"decoy-value\", \"{alias}\": \"{value}\",";
+        blob.Mutate(_ => (current.Replace(marker, replacement, StringComparison.Ordinal), true));
     }
 
     private static PrtgTrustedSamplingBindingUpdate Update(string settingsRevision, string policyRevision,

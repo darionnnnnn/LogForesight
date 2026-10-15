@@ -240,6 +240,30 @@ public sealed class PrtgQualificationJobStateStoreTests : IDisposable
         Assert.Equal(1, expired.InitializationCursor);
 
         var resumedAt = job.DeadlineUtc.AddMinutes(2);
+        foreach (var (key, property, alias, value) in new[]
+        {
+            ("system_settings", "PrtgUrl", "prtgUrl", url),
+            (PrtgMonitoringPolicyStore.BlobKey, "SourceGeneration", "sourceGeneration", source)
+        })
+        {
+            var authorityBlob = backend.Blob(key);
+            var originalAuthority = authorityBlob.Read()!;
+            var marker = $"\"{property}\": \"{value}\",";
+            Assert.Contains(marker, originalAuthority, StringComparison.Ordinal);
+            var ambiguousAuthority = originalAuthority.Replace(marker,
+                $"\"{property}\": \"decoy-value\", \"{alias}\": \"{value}\",", StringComparison.Ordinal);
+            authorityBlob.Mutate(_ => (ambiguousAuthority, true));
+            var beforeRejectedResume = store.ReadCurrent()!;
+            var beforeOverviewVersion = backend.Blob(PrtgHistoricAdmissionStore.BlobKey).ReadVersion();
+
+            Assert.Throws<System.Text.Json.JsonException>(() => store.ResumeExisting(job.JobId, expired.Version,
+                "worker-resumed", scope, source, settingsRevision, policyRevision, context, 0, 72, 1,
+                resumedAt, TimeSpan.FromSeconds(180)));
+
+            Assert.Equal(beforeOverviewVersion, backend.Blob(PrtgHistoricAdmissionStore.BlobKey).ReadVersion());
+            Assert.Equal(beforeRejectedResume.Wave, store.ReadCurrent()!.Wave);
+            authorityBlob.Mutate(_ => (originalAuthority, true));
+        }
         var resumed = store.ResumeExisting(job.JobId, expired.Version, "worker-resumed", scope,
             source, settingsRevision, policyRevision, context, 0, 72, 1, resumedAt, TimeSpan.FromSeconds(180));
 

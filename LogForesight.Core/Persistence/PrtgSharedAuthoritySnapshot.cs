@@ -28,6 +28,8 @@ public sealed record PrtgSharedAuthoritySnapshot(SystemSettings Settings, PrtgMo
         var policyRow = EfJsonBlobStore.ReadBoundedInContext(context,PrtgMonitoringPolicyStore.BlobKey,MaximumDocumentCharacters);
         if (settingsRow.ReportedLength > MaximumDocumentCharacters || policyRow.ReportedLength > MaximumDocumentCharacters)
             throw new InvalidDataException("PRTG shared authority document exceeds its bounded read limit.");
+        if (settingsRow.Prefix is not null) StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRow.Prefix);
+        if (policyRow.Prefix is not null) StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRow.Prefix);
         var settings = settingsRow.Prefix is null && settingsRow.Version == 0 ? new SystemSettings()
             : JsonSerializer.Deserialize<SystemSettings>(settingsRow.Prefix!, LfJsonOptions.Pretty)
                 ?? throw new JsonException("PRTG system settings authority is null.");
