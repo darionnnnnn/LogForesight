@@ -723,3 +723,9 @@ Luna high只在`PrtgSensorTimelineCollectorTests.cs`新增`CallerCancellationDur
 必要驗證只針對新缺口：factory上限／較短設定／普通client不變、短期限TimeoutException、caller取消分類共3/3，原始TRX `work/round54/acceptance-b2b82708/probe-timeouts/reverify/probe-timeout-tests.trx` SHA `9F5FDB499E93A9CDF961BBA26D993A229927B2DB9F71C11647D8F8AB60F3458F`。主代理續查發現SiteCheck相依後再補一個正式service入口案例：Runner先產生證據，SiteCheck實際HTTP等待觸發12秒受控期限，確認失敗非caller取消、證據保留、沒有後續guard sensor請求；1/1、零skip，TRX `work/round54/acceptance-b2b82708/probe-overall-deadline/environment-probe-overall-deadline.trx` SHA `5EFAE50863A4209CAB48EF1CB04EA00ED080EB5960387C560E23FA898B9935CF`。Luna high實作，主代理讀diff、consumer及原始TRX；不為獨立覆核重跑原3案。資料只用既有tiny SQLite harness與小型loopback回應，不等實際五分鐘、不做壓測。
 
 本段修正正式成品輸入，E01重新等待乾淨候選。E04-T02只剩實際設定修訂漂移的匯出／離線鏈；§8.30–32表單、取消、逾時、截斷檔案與verifier反例有效保留，不另增來源HTTP截斷測試。§4.12已依使用者最新定案替代歷史全負載門檻，但沒有因此勾選容量或任何父驗收。
+
+### 8.34 正式資源模式拒絕的最小耐久子項
+
+新增單一方法`UnconfiguredMissingStaleAndUnavailableModeAuthorityCreateNoDurableBusinessEffects`，四個極小CPU fixture分別為未授權hint、已授權但刪除兩小時值、授權後channel世代變更、正式mode文件壞掉；經`PrtgResourcePeriodConsumer.EvaluateBatch`皆無formal finding，缺資料為Insufficient、壞mode明示原因，每步核TopIssues／IssueCases／UrgentOutbox為0。1/1、零skip、9秒，TRX `work/round54/acceptance-e05-zero/e05-zero.trx` SHA `BD922CBF19707B9909C7690E829D72191CE2098C3DEA3B4AAFECC8F8A8F0F419`。第一次僅因另一runner占用共用編譯輸出而CS2012，未執行；後續改為序列執行，原log保留，沒有重跑成功案例。
+
+Luna high新增測例，主代理核diff及原始TRX。此consumer本身唯讀回傳，零DB只能證本層隔離，不能代替後續正式發布／持久化／通知完整流程；壞mode也不能冒充守門來源失聯。因此E05-T01仍開，沿用原UI與guard證據，僅補此必要缺口，不修改產品或擴張守門fail-open節流的權限語意。

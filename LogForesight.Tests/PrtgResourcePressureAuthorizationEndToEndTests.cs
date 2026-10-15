@@ -168,6 +168,75 @@ public sealed class PrtgResourcePressureAuthorizationEndToEndTests : IDisposable
     }
 
     [Fact]
+    public void UnconfiguredMissingStaleAndUnavailableModeAuthorityCreateNoDurableBusinessEffects()
+    {
+        var unconfigured = ReadyCpuAssessment(95, SensorId + 1, DeviceId + 1, HostId + 1);
+        var consumer = new PrtgResourcePeriodConsumer(_backend, unconfigured.Settings);
+        var unconfiguredResult = consumer.EvaluateBatch([SensorId + 1],
+            unconfigured.Assessment.EvidenceAsOfUtc, DateTime.UtcNow);
+        Assert.Empty(unconfiguredResult.FormalFindings);
+        Assert.Equal(PrtgResourceDecisionMode.Hint,
+            Assert.Single(unconfiguredResult.Assessments).Decision.Mode);
+        AssertNoDurableBusinessEffects();
+
+        var missing = ReadyCpuAssessment(95, SensorId + 2, DeviceId + 2, HostId + 2);
+        EnableFormalRisk(missing);
+        using (var db = _backend.CreateContext())
+        {
+            var rows = db.PrtgValues.Where(row => row.SensorObjid == SensorId + 2).ToArray();
+            Assert.NotEmpty(rows);
+            db.PrtgValues.RemoveRange(rows);
+            db.SaveChanges();
+        }
+        var missingResult = consumer.EvaluateBatch([SensorId + 2],
+            missing.Assessment.EvidenceAsOfUtc, DateTime.UtcNow);
+        Assert.Empty(missingResult.FormalFindings);
+        Assert.Equal(PrtgResourceDecisionKind.Insufficient,
+            Assert.Single(missingResult.Assessments).Decision.Kind);
+        AssertNoDurableBusinessEffects();
+
+        var stale = ReadyCpuAssessment(95, SensorId + 3, DeviceId + 3, HostId + 3);
+        EnableFormalRisk(stale);
+        stale.Store.SetObservedChannel(SensorId + 3, "source-current", "rotated-channel|resource-period-v1",
+            stale.Assessment.ResourceGeneration);
+        var staleResult = consumer.EvaluateBatch([SensorId + 3],
+            stale.Assessment.EvidenceAsOfUtc, DateTime.UtcNow);
+        Assert.Empty(staleResult.FormalFindings);
+        Assert.DoesNotContain(staleResult.Assessments,
+            item => item.Decision.Mode == PrtgResourceDecisionMode.FormalRisk);
+        AssertNoDurableBusinessEffects();
+
+        var unavailable = ReadyCpuAssessment(95, SensorId + 4, DeviceId + 4, HostId + 4);
+        EnableFormalRisk(unavailable);
+        var modeBlob = _backend.Blob(PrtgResourcePressureModeStore.BlobKey(HostId + 4));
+        modeBlob.Mutate(_ => ("not-json", true));
+        var unavailableResult = consumer.EvaluateBatch([SensorId + 4],
+            unavailable.Assessment.EvidenceAsOfUtc, DateTime.UtcNow);
+        Assert.Empty(unavailableResult.FormalFindings);
+        Assert.Equal("formal-mode-document-unavailable",
+            Assert.Single(unavailableResult.Assessments).Decision.ReasonCode);
+        AssertNoDurableBusinessEffects();
+
+        void EnableFormalRisk((StorageBackend Backend, ISystemSettingsStore Settings, EfPrtgStore Store,
+            PrtgResourcePeriodAssessment Assessment) setup)
+        {
+            var authorization = new PrtgResourcePressureAuthorizationService(setup.Backend, setup.Settings);
+            var trial = authorization.IssueSuccessfulTrial(setup.Assessment, maintainAuthorized: true, DateTime.UtcNow);
+            Assert.True(authorization.SetFormalMode(setup.Assessment, trial.TrialResultId,
+                enabled: true, maintainAuthorized: true, DateTime.UtcNow));
+        }
+
+        void AssertNoDurableBusinessEffects()
+        {
+            using var persisted = _backend.CreateContext();
+            Assert.Empty(persisted.TopIssues);
+            Assert.Empty(persisted.IssueCases);
+            Assert.Empty(new MailNotifyStateStore(_backend.Blob(MailNotifyStateStore.BlobKey))
+                .Get().UrgentOutbox);
+        }
+    }
+
+    [Fact]
     public void CurrentEnabledRuleMetadataDrivesFindingAndRuleDriftInvalidatesFormalGrant()
     {
         var (backend, settings, _, assessment) = ReadyCpuAssessment(95);
