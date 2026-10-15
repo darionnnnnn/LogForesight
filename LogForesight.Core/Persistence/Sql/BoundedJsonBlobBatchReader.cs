@@ -9,13 +9,13 @@ namespace LogForesight.Core.Persistence.Sql;
 /// <summary>Batch metadata lookup with complete bounded text, preserving the caller's transaction.</summary>
 internal static class BoundedJsonBlobBatchReader
 {
-    internal static Dictionary<string,(string? Content,long Version,int Length)> Read(
+    internal static Dictionary<string,(string? Content,long Version,int Length,DateTime UpdatedAt)> Read(
         LfDbContext context,IEnumerable<string> keys,int maximumCharacters)
     {
         if (maximumCharacters is < 1 or > int.MaxValue-1)
             throw new ArgumentOutOfRangeException(nameof(maximumCharacters));
         var requested=keys.Distinct(StringComparer.Ordinal).ToArray();
-        var output=new Dictionary<string,(string? Content,long Version,int Length)>(StringComparer.Ordinal);
+        var output=new Dictionary<string,(string? Content,long Version,int Length,DateTime UpdatedAt)>(StringComparer.Ordinal);
         if (requested.Length==0) return output;
         var connection=context.Database.GetDbConnection();
         var opened=connection.State==ConnectionState.Closed;
@@ -57,8 +57,8 @@ internal static class BoundedJsonBlobBatchReader
                     command.Parameters.Add(parameter);
                     parameters.Add(parameter.ParameterName);
                 }
-                var selection=sqlite is not null ? "blob_key,rowid,version,typeof(content)"
-                    : "blob_key,CASE WHEN DATALENGTH(content)>@bytes THEN NULL ELSE content END,version,DATALENGTH(content)";
+                var selection=sqlite is not null ? "blob_key,rowid,version,typeof(content),updated_at"
+                    : "blob_key,CASE WHEN DATALENGTH(content)>@bytes THEN NULL ELSE content END,version,DATALENGTH(content),updated_at";
                 if(sqlite is null)
                 {
                     var bytes=command.CreateParameter();
@@ -66,7 +66,7 @@ internal static class BoundedJsonBlobBatchReader
                     command.Parameters.Add(bytes);
                 }
                 command.CommandText=$"SELECT {selection} FROM lf_blobs WHERE blob_key IN ({string.Join(',',parameters)});";
-                var metadata=new List<(string Key,long Rowid,long Version,bool Text)>();
+                var metadata=new List<(string Key,long Rowid,long Version,bool Text,DateTime UpdatedAt)>();
                 using(var reader=command.ExecuteReader())
                 {
                     while(reader.Read())
@@ -74,13 +74,13 @@ internal static class BoundedJsonBlobBatchReader
                         var key=reader.GetString(0);
                         var version=Convert.ToInt64(reader.GetValue(2));
                         if(sqlite is not null)
-                            metadata.Add((key,reader.GetInt64(1),version,reader.GetString(3)=="text"));
+                            metadata.Add((key,reader.GetInt64(1),version,reader.GetString(3)=="text",reader.GetDateTime(4)));
                         else
                         {
                             var content=reader.IsDBNull(1)?null:reader.GetString(1);
                             var valid=content is not null && content.Length<=maximumCharacters && !content.Contains('\0') &&
                                 Convert.ToInt64(reader.GetValue(3))==(long)content.Length*2;
-                            output[key]=valid ? (content,version,content!.Length):(null,version,maximumCharacters+1);
+                            output[key]=valid ? (content,version,content!.Length,reader.GetDateTime(4)):(null,version,maximumCharacters+1,reader.GetDateTime(4));
                         }
                     }
                 }
@@ -88,7 +88,7 @@ internal static class BoundedJsonBlobBatchReader
                 {
                     var text=row.Text ? EfJsonBlobStore.ReadSqlitePhysicalText(sqlite!,row.Rowid,row.Version,
                         maximumCharacters,encoding!,encodingName!) : (null,row.Version,maximumCharacters+1);
-                    output[row.Key]=text;
+                    output[row.Key]=(text.Item1,text.Item2,text.Item3,row.UpdatedAt);
                 }
             }
             return output;

@@ -17,6 +17,38 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
     private readonly EfSqliteFixture _fx = new();
 
     [Fact]
+    public void TransactionIdentityReadRejectsNulAfterValidPrefixWithoutMutation()
+    {
+        const long sensorId = 54;
+        var key = PrtgResourceIdentityStore.Prefix + sensorId;
+        var blob = _fx.Blob(key);
+        var json = JsonSerializer.Serialize(new PrtgResourceIdentity { SensorId = sensorId, Epoch = 1 });
+        blob.Mutate(_ => (json + "\0hidden", true));
+        var version = blob.ReadVersion();
+        using var ctx = _fx.NewContext();
+        using var tx = ctx.Database.BeginTransaction();
+        Assert.Throws<InvalidDataException>(() => PrtgResourceIdentityStore.Read(ctx, sensorId));
+        tx.Rollback();
+        Assert.Equal(version, blob.ReadVersion());
+    }
+
+    [Fact]
+    public void HostRevisionBatchRejectsNulAfterValidPrefixAndPreservesRows()
+    {
+        var key = PrtgResourceIdentityStore.AuthorityRevisionKey(54);
+        var blob = _fx.Blob(key);
+        blob.Mutate(_ => ("{}\0hidden", true));
+        var version = blob.ReadVersion();
+        using var ctx = _fx.NewContext();
+        using var tx = ctx.Database.BeginTransaction();
+        Assert.Throws<InvalidDataException>(() => PrtgResourceIdentityStore.LoadAuthorityRevisionRows(ctx,
+            [54], new Dictionary<string, BlobRow>()));
+        tx.Rollback();
+        Assert.Equal(version, blob.ReadVersion());
+        Assert.Equal(1, ctx.Blobs.AsNoTracking().Count());
+    }
+
+    [Fact]
     public void ManualOnlyHostMapping_HostIdentityAtoBtoAInvalidatesOnlyItsSensor()
     {
         var store = new EfPrtgStore(_fx.NewContext);

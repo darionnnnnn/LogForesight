@@ -42,7 +42,9 @@ public sealed class BoundedBlobPhysicalReadTests : IDisposable
         var rows=BoundedJsonBlobBatchReader.Read(context,
             ["batch-valid","batch-nul","batch-over","batch-missing","batch-valid"],16);
         Assert.Equal(3,rows.Count);
-        Assert.Equal(("😀中 ",1L,4),rows["batch-valid"]);
+        var valid=rows["batch-valid"];
+        Assert.Equal(("😀中 ",1L,4),(valid.Content,valid.Version,valid.Length));
+        Assert.NotEqual(default,valid.UpdatedAt);
         Assert.Null(rows["batch-nul"].Content);
         Assert.Null(rows["batch-over"].Content);
         Assert.True(rows["batch-nul"].Length>16);

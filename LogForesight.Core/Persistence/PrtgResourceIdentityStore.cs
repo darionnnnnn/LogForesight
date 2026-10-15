@@ -143,15 +143,13 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
     internal static PrtgResourceIdentity Read(LfDbContext ctx, long sensorId)
     {
         var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == key)
-            .Select(b => new { b.BlobKey, Content = b.Content.Substring(0, MaxLedgerBytes + 1), Length = b.Content.Length,
-                b.Version, b.UpdatedAt })
-            .SingleOrDefault();
-        if (row is null) return new() { SensorId = sensorId };
-        if (row.Length > MaxLedgerBytes) throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
+        var row = EfJsonBlobStore.ReadBoundedInContext(ctx, key, MaxLedgerBytes);
+        if (row.Version == 0) return new() { SensorId = sensorId };
+        if (row.ReportedLength > MaxLedgerBytes || row.Prefix is null)
+            throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限或非完整文字；拒絕沿用舊涵蓋。");
         return ReadLoaded(sensorId, new BlobRow
         {
-            BlobKey = row.BlobKey, Content = row.Content, Version = row.Version, UpdatedAt = row.UpdatedAt
+            BlobKey = key, Content = row.Prefix, Version = row.Version
         });
     }
 
@@ -343,26 +341,18 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
         foreach (var keyBatch in keys.Chunk(500))
         {
             var requested = keyBatch.ToHashSet(StringComparer.Ordinal);
-            var stored = ctx.Blobs.AsNoTracking().Where(row => requested.Contains(row.BlobKey))
-                .Select(row => new
-                {
-                    row.BlobKey,
-                    Content = row.Content.Substring(0, 129),
-                    Length = row.Content.Length,
-                    row.Version,
-                    row.UpdatedAt
-                }).ToList();
+            var stored = BoundedJsonBlobBatchReader.Read(ctx, requested, 128);
             var found = new HashSet<string>(StringComparer.Ordinal);
             foreach (var item in stored)
             {
-                if (item.Length > 128 || item.Content.Length > 128)
+                if (item.Value.Length > 128 || item.Value.Content is null)
                     throw new InvalidDataException("PRTG 主機版本標記超過 128 字元；拒絕不完整更新。");
                 var row = new BlobRow
                 {
-                    BlobKey = item.BlobKey,
-                    Content = item.Content,
-                    Version = item.Version,
-                    UpdatedAt = item.UpdatedAt
+                    BlobKey = item.Key,
+                    Content = item.Value.Content,
+                    Version = item.Value.Version,
+                    UpdatedAt = item.Value.UpdatedAt
                 };
                 ctx.Blobs.Attach(row);
                 loadedRows.Add(row.BlobKey, row);

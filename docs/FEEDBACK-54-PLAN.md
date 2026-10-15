@@ -286,6 +286,12 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 主代理此前隔離整合 61/61 中 F2 store/controller/protection 43項通過，零略過；本段沿用該凍結後端。在小型自有 SQLite 網站另以1筆數值＋1筆狀態走正常 login→preview→同識別重送接受→resume→complete→durable GET，結果本作業1/1、剩餘0/0、revision3及 countsReconciled=true，work/round54/browser-small-purge-result.json。
 - 真瀏覽器於 /browser-fixture 子路徑核 Admin 非空預覽／取消不提交、零資料停用、serverAdmin 無明細摘要、Manager 無維護入口；額外同一小資料1/1核鏡像刷新從0→1/1，按鈕啟用且 console 無 error。此次 browser frozen backend 與其後單一 static JS 更新各有 fixture manifest／SHA，非最終同HEAD成品；未宣稱完整角色旅程、雙provider／跨程序 G3或父驗收完成。保留所有自有小型資料供重用。
 
+### D1有界資源身分與主機版本標記讀取（2026-10-15）
+
+- 交易內 resource identity 改讀完整有界實體文字，主機 authority／observation 版本標記沿既有批次查詢讀取，拒絕 NUL 後隱藏內容，不以 SQLite length／substring 的合法前綴當完整文件。批次 metadata 保留原 UpdatedAt 供交易內更新的並發檢查；既有 UTF-8 位元組上限不放寬。
+- 主代理隔離小型整合8/8、零略過，其中本段5項核 transaction identity、兩個 host markers、原正常重用／8KiB拒絕及 tiny Unicode/NUL/batch metadata；TRX：work/round54-mode-validation/work/round54/mail-identity-root-r5/mail-identity-root-r5.trx。通知其餘3項另段處理，未將未完成通知相容修正納入此提交。其他 reader／writer 遷移仍待核對，不勾 D1 父驗收。
+- 文件依據已重新核實：[SQLite length](https://www.sqlite.org/lang_corefunc.html#length) 以 code point 計數且止於 NUL，[incremental BLOB I/O](https://www.sqlite.org/c3ref/blob_open.html) 可讀 TEXT/BLOB；[SQL Server DATALENGTH](https://learn.microsoft.com/en-us/sql/t-sql/functions/datalength-transact-sql?view=sql-server-ver16) 回傳實體位元組，[.NET string 編碼](https://learn.microsoft.com/en-us/dotnet/standard/base-types/character-encoding-introduction) 的 Length 計 UTF-16 char 單位。以文件支持字元模型及 provider adapter；不做正式上限極限負載、不以文件當成程式已實測全容量。
+
 實作起點為`a7f2f2868c76d1af84148e40ad054d03732b1d57`，沿用feature/prtg-feedback-54。使用者授權直到全部完成、逐段驗證後commit／push；前文只規劃／待另行指示均為文件輪邊界，不撤銷本次開工。原起點a69fedd7及全部原TODO／子契約仍保留。主代理負責獨立完整性核對與驗收；委派僅gpt-6-luna low／medium／high，不用AGY。換模型額外背書依UC07，現有可執行審查仍必做。
 
 ### A1第一段：只讀容量預檢工具
