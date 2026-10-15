@@ -502,3 +502,8 @@ Snapshot operation 與兩個 backfill operation 改用 ReadRawSemantic（結構s
 ### 8.16 重啟後保留未知 SMTP 狀態（2026-10-15）
 
 補查舊 protocol consumer 發現：durable reservation 已禁止未知結果重送，但 urgent 初始化會把既有 failed-or-unknown／sending-result-unknown 改成 pending，最後顯示 not-sent。已保留未知／已接受／已撤回狀態，只有真正新收件者才初始化pending。舊 protocol fixture 補齊保存的 message authority、相同 finding／timeline fingerprint 及實際 digest，再按本輪契約核對不重送；沒有移除或跳過該反例。主代理 root-smtp-scope-identity-r31 的兩項實際 loopback SMTP 重啟案例通過（正常 mail service CPU 與 message protocol），保留 pending及精確原intent，recipient仍failed-or-unknown、只一份DATA。r31另兩個快照fixture因缺保存日期／raw時基而未到HTTP，已補為有效設定，root-qualification-attach-snapshot-r32確認來源／scope HTTP變動時均正確取消且queue保留；不把r31整套宣稱全過。
+
+
+### 8.17 回退差額輸入格式拒絕（2026-10-15）
+
+capture-delta 的唯讀 quick_check 若遇非SQLite bytes，現在關閉連線並轉為共用 Refusal，CLI一致回傳 refused-closed JSON及exit2，不產生差額輸出、不改輸入。主代理先以21-byte反例重現原exit1 traceback，再驗非SQLite、錯SQLite application identity及正常CLI差額→消費→release gate三例全過。prepare／verify／launch仍只允許已pin的SQLite配套隔離副本；SQL Server未知相容性持續拒絕，不啟動或連接其provider。這不是SQL Server恢復、全容量或G3/G4通過的證據，原條款與驗收待辦保留。

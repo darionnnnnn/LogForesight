@@ -90,12 +90,19 @@ def _readonly_db(path: Path) -> sqlite3.Connection:
     for suffix in ("-wal", "-shm", "-journal"):
         if Path(str(path) + suffix).exists():
             _refuse(f"SQLite snapshot is not checkpointed; sidecar present: {suffix}")
-    connection = sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
-    connection.row_factory = sqlite3.Row
-    if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-        connection.close()
-        _refuse("SQLite quick_check failed for delta snapshot")
-    return connection
+    connection = None
+    try:
+        connection = sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
+        connection.row_factory = sqlite3.Row
+        result = connection.execute("PRAGMA quick_check").fetchone()
+        if result is None or result[0] != "ok":
+            connection.close()
+            _refuse("SQLite quick_check failed for delta snapshot")
+        return connection
+    except sqlite3.Error:
+        if connection is not None:
+            connection.close()
+        _refuse("Delta input is not a valid checkpointed SQLite snapshot")
 
 
 def _metadata(connection: sqlite3.Connection) -> dict[str, Any]:

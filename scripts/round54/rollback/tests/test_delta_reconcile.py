@@ -471,6 +471,24 @@ class DeltaReconcileTests(unittest.TestCase):
         self.assertEqual(before_hash, sha(self.bundle["database"]))
         self.assertEqual(current_hash, sha(self.current))
 
+    def test_capture_delta_cli_refuses_non_sqlite_bytes_as_structured_result(self):
+        invalid = self.base / "not-sqlite.db"
+        invalid.write_bytes(b"not a sqlite snapshot")
+        output = self.base / "must-not-exist.json"
+        before_hash, invalid_hash = sha(self.bundle["database"]), sha(invalid)
+        rejected = subprocess.run([
+            sys.executable, str(rollback.__file__), "capture-delta",
+            "--before-db", str(self.bundle["database"]), "--current-db", str(invalid),
+            "--output", str(output),
+        ], capture_output=True, text=True, check=False)
+        self.assertEqual(2, rejected.returncode, rejected.stdout + rejected.stderr)
+        receipt = json.loads(rejected.stderr)
+        self.assertEqual("refused-closed", receipt["result"])
+        self.assertIn("valid checkpointed SQLite", receipt["reason"])
+        self.assertFalse(output.exists())
+        self.assertEqual(before_hash, sha(self.bundle["database"]))
+        self.assertEqual(invalid_hash, sha(invalid))
+
     def test_capture_delta_cli_refuses_wrong_sqlite_identity_as_structured_result(self):
         wrong_current = self.base / "wrong-application-id.db"
         shutil.copy2(self.current, wrong_current)
