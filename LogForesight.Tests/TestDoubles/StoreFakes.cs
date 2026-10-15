@@ -605,7 +605,7 @@ internal class FakeSmtpMailSender : ISmtpMailSender
     public string? ThrowOnSendForRecipient { get; set; }
 
     /// <summary>與 <see cref="ThrowOnSendForRecipient"/> 搭配：丟這個例外實例而非預設的
-    /// InvalidOperationException——「取消時已全數寄成功的 record 仍落地標記」的測試需要
+    /// SmtpFailedRecipientException——「取消時已全數寄成功的 record 仍落地標記」的測試需要
     /// 對特定收件人模擬 OperationCanceledException。</summary>
     public Exception? ThrowOnSendForRecipientError { get; set; }
 
@@ -621,7 +621,8 @@ internal class FakeSmtpMailSender : ISmtpMailSender
         if (ThrowOnSendForRecipient != null &&
             message.To.Any(to => string.Equals(to, ThrowOnSendForRecipient, StringComparison.OrdinalIgnoreCase)))
         {
-            throw ThrowOnSendForRecipientError ?? new InvalidOperationException($"smtp down for {ThrowOnSendForRecipient}");
+            throw ThrowOnSendForRecipientError ?? new System.Net.Mail.SmtpFailedRecipientException(
+                System.Net.Mail.SmtpStatusCode.MailboxUnavailable, ThrowOnSendForRecipient);
         }
         Sent.Add((connection, message));
         return Task.CompletedTask;

@@ -272,4 +272,52 @@ public class MailIssueDigestTests : IDisposable
         var row = Assert.Single(rows);
         Assert.Equal("highday", row.Source);
     }
+
+    [Fact]
+    public void LiveContributionScope_RemovesOnlyStaleHostFromMixedIssueAggregate()
+    {
+        var previous = new DateTime(2026, 8, 7);
+        var current = previous.AddDays(1);
+        var prtgHost = _hosts.Upsert(new WebHost { HostName = "current-prtg" });
+        var staleHost = _hosts.Upsert(new WebHost { HostName = "stale-prtg" });
+        var netiqHost = _hosts.Upsert(new WebHost { HostName = "netiq" });
+        LogIssueSignature PrtgIssue(string sensorId) => new()
+        {
+            LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
+            EntryType = EventLogEntryType.Warning, Category = IssueCategory.Storage,
+            Severity = IssueSeverity.High, Count = 1, EventKey = $"prtg:disk_free_trend:{sensorId}"
+        };
+        Add(prtgHost.HostId, prtgHost.HostName, previous, PrtgIssue("11"));
+        Add(staleHost.HostId, staleHost.HostName, previous, PrtgIssue("12"));
+        Add(prtgHost.HostId, prtgHost.HostName, current, PrtgIssue("11"));
+        Add(staleHost.HostId, staleHost.HostName, current, PrtgIssue("12"));
+        Add(netiqHost.HostId, netiqHost.HostName, previous, Issue("APP", 42, IssueSeverity.High));
+        Add(netiqHost.HostId, netiqHost.HostName, current, Issue("APP", 42, IssueSeverity.High));
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = staleHost.HostName, Date = current,
+            IssueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0,
+                EventLogEntryType.Warning, "prtg:disk_free_trend:12"),
+            Status = IssueHandlingStatuses.InProgress, DueDate = current.AddDays(-1)
+        });
+        var scope = new MailIssueContributionScope(
+        [
+            new("PRTG:disk_free_trend", 0, prtgHost.HostId, current, (int)IssueSeverity.High),
+            new("APP", 42, netiqHost.HostId, current, (int)IssueSeverity.High)
+        ],
+        [
+            new("PRTG:disk_free_trend", 0, prtgHost.HostId, previous, (int)IssueSeverity.High),
+            new("APP", 42, netiqHost.HostId, previous, (int)IssueSeverity.High)
+        ]);
+
+        var rows = Digest().Build(current, current, null, scope);
+
+        var disk = Assert.Single(rows.Where(row => row.Source == "PRTG:disk_free_trend"));
+        Assert.Equal(1, disk.HostCount);
+        Assert.Equal(1, disk.PreviousHostCount);
+        Assert.Equal(MailIssueBucket.OtherHighRisk, disk.Bucket);
+        var app = Assert.Single(rows.Where(row => row.Source == "APP"));
+        Assert.Equal(1, app.HostCount);
+        Assert.Equal(1, app.PreviousHostCount);
+    }
 }

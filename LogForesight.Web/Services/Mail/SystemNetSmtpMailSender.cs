@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Mail;
 
 namespace LogForesight.Web.Services.Mail;
@@ -55,6 +55,15 @@ public class SystemNetSmtpMailSender : ISmtpMailSender
         {
             throw new OperationCanceledException("SMTP send was cancelled.", ct);
         }
+        catch (SmtpException error) when (mail.To.Count == 1 && (int)error.StatusCode is >= 400 and <= 599)
+        {
+            // .NET 8 throws plain SmtpException for some RCPT replies (including 451),
+            // and for negative final DATA replies. Send() reads these before success;
+            // QUIT only flushes and cannot supply a later negative status. For this
+            // exact one-recipient envelope, a 4xx/5xx reply proves non-acceptance.
+            // Timeout/IO/cancellation has no such reply and stays an unknown outcome.
+            throw new SmtpSingleRecipientRejection(mail.To[0].Address, error);
+        }
     }
 
     private static void CancelClient(SmtpClient client)
@@ -74,4 +83,12 @@ public class SystemNetSmtpMailSender : ISmtpMailSender
             client.Dispose();
         }
     }
+}
+
+/// <summary>Only the production single-recipient synchronous SMTP sender creates this evidence.</summary>
+internal sealed class SmtpSingleRecipientRejection(string recipient, SmtpException inner)
+    : Exception("SMTP explicitly rejected the single-recipient envelope.", inner)
+{
+    internal string Recipient { get; } = recipient;
+    internal SmtpStatusCode ReplyStatus { get; } = inner.StatusCode;
 }

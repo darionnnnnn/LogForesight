@@ -27,7 +27,7 @@ AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留
 
 | ID／批次 | 現況、改動與下一個使用端 | 相依與客觀完成條件 |
 |---|---|---|
-| D54-01／各證據 lane 的生命週期隔離 | 六種明確日期格式、strict parser、message fingerprint、fetch／timeline／正式 finding 接線已完成，不再列為待實作。剩餘：replay、qualification、profile-refresh notice、channel discovery 及容量 admission 仍以整份 policy revision 阻擋 DateFormat-only 變更；郵件 summary／digest／跨次 Notify 去重候選仍須補齊有界原子 reservation 與實際正文貢獻範圍。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
+| D54-01／各證據 lane 的生命週期隔離 | 六種明確日期格式、strict parser、message fingerprint、fetch／timeline／正式 finding 接線已完成，不再列為待實作。剩餘：replay、qualification、profile-refresh notice、channel discovery 及容量 admission 仍以整份 policy revision 阻擋 DateFormat-only 變更。郵件 summary／digest／跨次 Notify 的有界原子 reservation 與實際正文貢獻範圍已完成，實作待辦移除，見§8.13。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
 | D54-02／正常HTTP資格準備交付 | `scripts/prtg-workload/qualification-preparation` 已有 Start／Resume／Check、來源預檢、磁碟與 live runtime owner 核對、正常 settings／policy／pilot／binding／job 路由及持久 receipt 候選；純契約 Python 24/24、PowerShell 通過。runtime ownership 端點已提交。剩餘是候選完整性核對、相依提交及正常入口的整合證據。 | 不增加 production 測試旁路；保留完整母體／owned listener／精確 PID、ticks、MVID、DataRoot、descriptor／reparse 防護及720h／1attempt。未執行完整容量來源，不宣稱正式資格或 E2 父驗收通過。 |
 
 ### 2.1 時間授權的明確接線缺口
@@ -48,7 +48,7 @@ D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.
 
 原列 `PrtgResourcePressureModeStore.Find`、binding Save／RecordQualification、qualification ResumeExisting 及 disk semantic／verification snapshot 的有界接線已存在；不再列為完全未實作。identity／host marker、silent presence、probe local facts、formal-mail claim 的完整 physical bounded reader、CAS／逐筆隔離已有程式及小型驗證；候選提交狀態依分段紀錄。
 
-仍需補齊或核對：formal episode／pressure hint／timeline progress／strategy 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。mail reservation 候選仍須完成完整性核對，不視為已交付。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
+仍需補齊或核對：formal episode／pressure hint／timeline progress／strategy 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。mail reservation 的有界交易及正常 SMTP consumer 接線已完成，實作待辦移除，見§8.13。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
 
 本輪繼續逐呼叫端補齊有界projection／snapshot，保留同一transaction readset、CAS與來源authority；小型字元／超限／損壞／未知extra JSON與設定漂移反例核對等待／拒絕及零正式副作用。依使用者指示不建立33,554,432字元極限文件，雙provider邊界依官方文件及小範圍反例核對。容量export另量測，不把正式mail拒絕等同匯出吞吐通過。對應E03、E06、E07-T03、E08-T05、E10-T02。
 
@@ -464,3 +464,16 @@ Web診斷匯出 policy 與 Core timeline export、CalibrationService timeline/po
 ### 8.12 快照診斷文件的有界讀寫（2026-10-15）
 
 `PrtgSnapshotDiagnosticsStore` 的 ReadHours／skip cache初始化／Record mutation 改用完整 physical bounded reader；診斷文件上限4Mi UTF-16字元，單原因4096字元，14日cutoff連同當日最多15個日曆日／360個不同wall hour，拒絕重複小時、JSON null、壞文件及寫入超限。這是 best-effort診斷的資源上限，既有 SnapshotHostedService 仍攔截診斷失敗，不將其當業務成功或取消獨立採樣。主代理 `r17` 既有四個小型sample正例與 physical NUL反例通過；`root-bounded-state-mail-r19` 以明確 InvalidDataException 斷言重驗NUL拒寫、原Version及完整原文不變。未建立4Mi上限payload。此實作從§2.3待辦移除。
+
+
+### 8.13 郵件正文貢獻與 SMTP 未知結果（2026-10-15）
+
+summary／urgent／daily／weekly 逐收件者重驗目前可見及有效證據，同一 rendered projection 決定正文、截斷範圍、接受帳本及 formal start claim。超過正文上限的問題保持待送，下次正常 Notify／digest 續送，不能提前標記整個父紀錄完成。保留既有 context key 及 legacy 接受紀錄。
+
+原 Serializable 交易先保留精確 lane／收件者／host-day／父決策／issue JSON 貢獻，接受、legacy held 及 reservation 合計最多12,000 key，mail state 完整 physical bounded read／mutation 上限4Mi UTF-16字元。只有尚未嘗試的 prepared reservation 可在5分鐘後釋放；attempted／unknown 不會因時間經過自動重寄。SMTP 成功才轉接受，明確單收件者拒收釋放，IO／逾時／取消保持未知；重建服務仍持有原 intent。
+
+正式 sender 只在已知單收件者 envelope 且收到明確4xx／5xx回覆時產生限定拒收證據，不把任意一般例外冒稱明確拒收。官方 .NET 8 [SmtpClient](https://github.com/dotnet/runtime/blob/v8.0.0/src/libraries/System.Net.Mail/src/System/Net/Mail/SmtpClient.cs)、[SmtpCommands](https://github.com/dotnet/runtime/blob/v8.0.0/src/libraries/System.Net.Mail/src/System/Net/Mail/SmtpCommands.cs) 與 [RFC5321 §4.2.5](https://www.rfc-editor.org/rfc/rfc5321#section-4.2.5) 支持：同步 Send 等候 final DATA 回覆，QUIT 不讀取後續回覆。未知結果不釋放 reservation。
+
+主代理核對 store→sender→outcome→workflow／formal 接線。小範圍證據：r19 mixed lane、實際 Notify receiver 及三種正文截斷；root-smtp-definite-refusal-r23 真實 loopback SMTP 三例通過；root-smtp-unknown-raw-rollback-r24 direct sender 遺失ACK／取消及 raw overflow 四例通過；root-smtp-unknown-r25 正常 mail service 遺失ACK後重建服務不重送一例通過；root-mail-reservations-digest-r26 原子保留／拒收及11個小型 digest 例共13例通過。各例少量主機／問題／數值，無極限文件。r20～r22初次451分類失敗及r24單收件者案例錯用雙收件者 fixture 的失敗保留，不列成功。
+
+此段從§2刪除實作待辦；R54-05 replay／qualification 等 raw 語意相依及跨consumer完整驗收仍保留，不因此勾選 B2／F3／G／H 父項。

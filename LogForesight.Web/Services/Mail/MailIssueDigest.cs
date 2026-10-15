@@ -48,9 +48,15 @@ public class MailIssueDigest
     /// 「該優先看」的理由，不需要再疊加嚴重度門檻，否則低嚴重度的新問題會被悄悄濾掉，
     /// 而「這是全新的東西」正是使用者最需要知道的事。
     /// </summary>
-    public List<MailIssueRow> Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds)
+    public List<MailIssueRow> Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
+        MailIssueContributionScope? contributionScope = null)
+        => BuildDetailed(from, to, visibleHostIds, contributionScope).Rows.ToList();
+
+    internal MailIssueDigestProjection BuildDetailed(DateTime from, DateTime to,
+        IReadOnlyCollection<long>? visibleHostIds, MailIssueContributionScope? contributionScope = null)
     {
-        if (visibleHostIds != null && visibleHostIds.Count == 0) return new List<MailIssueRow>();
+        if (visibleHostIds != null && visibleHostIds.Count == 0)
+            return new MailIssueDigestProjection([], []);
 
         var settings = _settingsStore.Get();
         var visibleSeverities = RecordRepository.ParseVisibleSeverities(
@@ -62,6 +68,12 @@ public class MailIssueDigest
 
         // 靜音排除條件本次只取一次，本期／前期／逾期三個查詢共用同一份
         var exclusion = _exclusions.Current();
+        var includedCurrent = contributionScope == null ? Array.Empty<MailIssueHostDayContribution>() :
+            FilterIncludedContributions(contributionScope.Current, exclusion, visibleSeverities, visibleHostIds).ToArray();
+        var currentContributionMap = contributionScope == null ? null : BuildContributionMap(
+            includedCurrent, exclusion, visibleSeverities, visibleHostIds);
+        var previousContributionMap = contributionScope == null ? null : BuildContributionMap(
+            contributionScope.Previous, exclusion, visibleSeverities, visibleHostIds);
 
         // 前期對比用**等長**的前一個期間——與 IssueRankingBuilder.Build 同一套規則
         var previousTo = from.Date.AddDays(-1);
@@ -76,9 +88,10 @@ public class MailIssueDigest
         var current = _aggregates.Aggregate(
             exclusion, from, to, visibleHostIds,
             visibleSeverities: visibleSeverities, riskLevels: riskLevels);
-        if (current.Count == 0) return new List<MailIssueRow>();
+        if (current.Count == 0) return new MailIssueDigestProjection([], []);
 
-        var overdueKeys = ResolveOverdueKeys(exclusion, from, to, visibleHostIds, visibleSeverities, riskLevels);
+        var overdueKeys = ResolveOverdueKeys(exclusion, from, to, visibleHostIds, visibleSeverities, riskLevels,
+            contributionScope);
 
         var rows = new List<MailIssueRow>();
         foreach (var a in current)
@@ -88,19 +101,50 @@ public class MailIssueDigest
             // cron／CRON 併存時兩邊必然可能對不上，逾期問題會靜默掉出「逾期」區
             var key = IssueProfile.KeyOf(a.Source, a.EventId);
             previous.TryGetValue(key, out var prev);
-            var previousHostCount = prev?.HostCount ?? 0;
+            MailIssueContributionSummary? currentContribution = null;
+            if (contributionScope != null &&
+                (!currentContributionMap!.TryGetValue(key, out currentContribution) || currentContribution.HostIds.Count == 0)) continue;
+            var hostCount = currentContribution?.HostIds.Count ?? a.HostCount;
+            var previousHostCount = currentContribution == null
+                ? prev?.HostCount ?? 0
+                : previousContributionMap!.TryGetValue(key, out var previousContribution)
+                    ? previousContribution.HostIds.Count : 0;
+            var severityRank = currentContribution?.MaxSeverityRank ?? a.MaxSeverityRank;
 
             string bucket;
             if (overdueKeys.Contains(key)) bucket = MailIssueBucket.Overdue;
-            else if (prev == null) bucket = MailIssueBucket.New;
-            else if (a.HostCount > previousHostCount) bucket = MailIssueBucket.Spreading;
-            else if ((IssueSeverity)a.MaxSeverityRank >= IssueSeverity.High) bucket = MailIssueBucket.OtherHighRisk;
+            else if (previousHostCount == 0) bucket = MailIssueBucket.New;
+            else if (hostCount > previousHostCount) bucket = MailIssueBucket.Spreading;
+            else if ((IssueSeverity)severityRank >= IssueSeverity.High) bucket = MailIssueBucket.OtherHighRisk;
             else continue;   // 不屬於任何一區的問題不進郵件——這是「優先」摘要，不是全量清單
 
-            rows.Add(new MailIssueRow(a.Source, a.EventId, a.Category, a.HostCount, previousHostCount, bucket, a.MaxSeverityRank));
+            rows.Add(new MailIssueRow(a.Source, a.EventId, a.Category, hostCount, previousHostCount, bucket, severityRank));
         }
 
-        return rows;
+        var rowKeys = rows.Select(row => IssueProfile.KeyOf(row.Source, row.EventId)).ToHashSet();
+        return new MailIssueDigestProjection(rows, includedCurrent.Where(item =>
+            rowKeys.Contains(IssueProfile.KeyOf(item.Source, item.EventId))).ToArray());
+    }
+
+    private static IEnumerable<MailIssueHostDayContribution> FilterIncludedContributions(
+        IReadOnlyCollection<MailIssueHostDayContribution> contributions, IssueExclusion exclusion,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlyCollection<long>? visibleHostIds)
+    {
+        var visibleHosts = visibleHostIds?.ToHashSet();
+        return contributions.Where(item => item.HostId > 0 &&
+            (visibleHosts == null || visibleHosts.Contains(item.HostId)) &&
+            (visibleSeverities == null || visibleSeverities.Contains((IssueSeverity)item.SeverityRank)) &&
+            !exclusion.IsMuted(item.Source, item.EventId, item.Date));
+    }
+
+    private static Dictionary<(string SourceUpper, int EventId), MailIssueContributionSummary> BuildContributionMap(
+        IReadOnlyCollection<MailIssueHostDayContribution> contributions, IssueExclusion exclusion,
+        IReadOnlySet<IssueSeverity>? visibleSeverities, IReadOnlyCollection<long>? visibleHostIds)
+    {
+        return FilterIncludedContributions(contributions, exclusion, visibleSeverities, visibleHostIds)
+            .GroupBy(item => IssueProfile.KeyOf(item.Source, item.EventId))
+            .ToDictionary(group => group.Key, group => new MailIssueContributionSummary(
+                group.Select(item => item.HostId).ToHashSet(), group.Max(item => item.SeverityRank)));
     }
 
     /// <summary>逾期問題的 (Source,EventId) 集合——母體與判定規則與 <see cref="IssueTodoQuery"/>
@@ -108,7 +152,7 @@ public class MailIssueDigest
     private HashSet<(string SourceUpper, int EventId)> ResolveOverdueKeys(
         IssueExclusion exclusion, DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities,
-        IReadOnlySet<string>? riskLevels)
+        IReadOnlySet<string>? riskLevels, MailIssueContributionScope? contributionScope)
     {
         var actionable = _aggregates.ActionableOccurrences(
             exclusion, from, to, visibleHostIds,
@@ -124,9 +168,39 @@ public class MailIssueDigest
         {
             if (!IssueTodoQuery.IsOverdueInProgress(r)) continue;
             var signature = IssueSignatureKey.TryParseSignature(r.Occurrence.IssueKey);
-            if (signature != null) overdue.Add(IssueProfile.KeyOf(signature.Value.Source, signature.Value.EventId));
+            if (signature == null) continue;
+            var key = IssueProfile.KeyOf(signature.Value.Source, signature.Value.EventId);
+            if (contributionScope != null && !contributionScope.Current.Any(item =>
+                    item.HostId == r.Occurrence.HostId && item.Date.Date == r.Occurrence.LastSeen.Date &&
+                    IssueProfile.KeyOf(item.Source, item.EventId) == key)) continue;
+            overdue.Add(key);
         }
         return overdue;
+    }
+}
+
+internal sealed record MailIssueDigestProjection(IReadOnlyList<MailIssueRow> Rows,
+    IReadOnlyCollection<MailIssueHostDayContribution> CountedCurrentContributions);
+
+/// <summary>Validated host contributions used to prevent an invalid lane from contaminating an
+/// aggregate row that also contains an independent current event.</summary>
+public sealed record MailIssueHostDayContribution(string Source, int EventId, long HostId, DateTime Date, int SeverityRank,
+    long RecordId = 0, string ParentAndDecision = "", string IssueEvidenceJson = "", string EventKey = "");
+
+public sealed record MailIssueContributionSummary(IReadOnlySet<long> HostIds, int MaxSeverityRank);
+
+public sealed record MailIssueContributionScope(
+    IReadOnlyCollection<MailIssueHostDayContribution> Current,
+    IReadOnlyCollection<MailIssueHostDayContribution> Previous)
+{
+    public string CacheKey()
+    {
+        static string Render(IReadOnlyCollection<MailIssueHostDayContribution> values) =>
+            string.Join(";", values.OrderBy(item => IssueProfile.KeyOf(item.Source, item.EventId).SourceUpper, StringComparer.Ordinal)
+                .ThenBy(item => item.EventId).ThenBy(item => item.HostId).ThenBy(item => item.Date)
+                .Select(item => $"{IssueProfile.KeyOf(item.Source, item.EventId).SourceUpper}|{item.EventId}|" +
+                    $"{item.HostId}|{item.Date:yyyy-MM-dd}|{item.SeverityRank}|{item.RecordId}|{item.ParentAndDecision}|{item.EventKey}|{item.IssueEvidenceJson}"));
+        return Render(Current) + "#" + Render(Previous);
     }
 }
 

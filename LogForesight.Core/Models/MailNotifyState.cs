@@ -16,6 +16,18 @@ public class MailNotifyState
     /// <summary>先落庫再寄出的緊急通知意圖；SMTP 接受不等於信箱實收。</summary>
     public Dictionary<string, MailUrgentIntent> UrgentOutbox { get; set; } = new();
 
+    /// <summary>Per-recipient SMTP-accepted finding contributions. Keys bind lane, recipient,
+    /// parent decision and exact issue evidence; legacy blobs deserialize as an empty ledger.</summary>
+    public Dictionary<string, DateTime> AcceptedMailContributionReceipts { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Legacy SMTP receipts with no issue fingerprint. These hold only the matching
+    /// recipient/lane/parent/event contribution; they are not current or formal evidence.</summary>
+    public Dictionary<string, DateTime> HeldLegacyMailContributionReceipts { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Cross-process reservations for exact mail contributions. A row in "attempted" or "unknown"
+    /// is never released automatically because the SMTP outcome may have been accepted remotely.</summary>
+    public Dictionary<string, MailContributionReservation> MailContributionReservations { get; set; } = new(StringComparer.Ordinal);
+
     /// <summary>Legacy singleton claims, retained for fail-closed migration handling; new claims live in per-host shards.</summary>
     public Dictionary<string, MailFormalStartClaim> FormalMailStartClaims { get; set; } = new(StringComparer.Ordinal);
     /// <summary>最後一次寄出每日摘要的日期（yyyy-MM-dd）；null＝從未寄過</summary>
@@ -44,6 +56,21 @@ public class MailNotifyState
 
     /// <summary>最後一次在摘要信中加入資料過期警示的日期（yyyy-MM-dd，任務 A-3）</summary>
     public string? LastFreshnessAlertDate { get; set; }
+}
+
+public sealed class MailContributionReservation
+{
+    public string ReservationId { get; set; } = string.Empty;
+    /// <summary>reserved: sender has not started; attempted: sender may have accepted; unknown: explicit uncertain result.</summary>
+    public string Status { get; set; } = "reserved";
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public enum MailContributionReservationOutcome
+{
+    Accepted,
+    DefinitelyRejected,
+    Unknown
 }
 
 public sealed class MailFormalStartClaim

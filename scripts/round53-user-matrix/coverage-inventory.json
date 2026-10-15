@@ -1,4 +1,4 @@
-{
+﻿{
   "schema": "logforesight-round53-e08-coverage-inventory-v1",
   "inventoryOnly": true,
   "browserAccepted": false,
@@ -327,11 +327,13 @@
         "LogForesight.Core/Service/PrtgDailyPipeline.cs::RunAsync",
         "LogForesight.Core/Service/PrtgSupplementReplay.cs::class PrtgSupplementReplay",
         "LogForesight.Web/Services/Mail/MailNotificationService.cs::SendUrgentNotificationsAsync",
+        "LogForesight.Web/Services/Mail/MailNotificationService.cs::TryReserveRenderedMailContributions",
+        "LogForesight.Core/Persistence/MailNotifyStateStore.cs::CompleteMailContributionReservation",
+        "LogForesight.Web/Services/Mail/SystemNetSmtpMailSender.cs::SendAsync",
         "LogForesight.Core/Persistence/PrtgFormalMailClaimStore.cs::Load("
       ],
       "remainingImplementation": [
-        "Replay、qualification、profile-refresh notice、channel discovery 與 capacity admission 尚未全部改接獨立的 raw/source authority 單調版本或等價防 ABA fence；不得以 MessageTimeAuthorityRevision 取代 raw/source fence，因 MessageDateFormat 變更本來就會遞增該 message-lane revision。MessageDateFormat-only 變更仍會取消目前依整份 policy Revision 比對的部分 raw work；message lane 則保留 MessageTimeAuthorityRevision。逐一補齊各 lane 的 fingerprint/cursor 接線並保留其他 scope fences。",
-        "Mail atomic reservation、render、formal-send 與 workflow-scope interruption 尚未完成同一端到端接線；補齊 caller integration，讓未接受的工作可安全取消，已接受的 intent 不被重送。"
+        "Replay、qualification、profile-refresh notice、channel discovery 與 capacity admission 尚未全部改接獨立的 raw/source authority 單調版本或等價防 ABA fence；不得以 MessageTimeAuthorityRevision 取代 raw/source fence，因 MessageDateFormat 變更本來就會遞增該 message-lane revision。MessageDateFormat-only 變更仍會取消目前依整份 policy Revision 比對的部分 raw work；message lane 則保留 MessageTimeAuthorityRevision。逐一補齊各 lane 的 fingerprint/cursor 接線並保留其他 scope fences。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [

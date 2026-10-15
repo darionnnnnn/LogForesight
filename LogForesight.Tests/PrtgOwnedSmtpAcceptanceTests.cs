@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -27,6 +27,43 @@ public sealed class PrtgOwnedSmtpAcceptanceTests
 {
     private const string Recipient = "formal-case@owned-smtp.invalid";
     private const string SecondRecipient = "second-case@owned-smtp.invalid";
+
+    [Fact]
+    public async Task RealSingleRecipientRefusalCanBeClassifiedAsDefinitelyUnsent()
+    {
+        await using var inbox = new OwnedSmtpInbox(refuseNextRecipient: Recipient);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var error = await Record.ExceptionAsync(() => new SystemNetSmtpMailSender().SendAsync(
+            new("127.0.0.1", inbox.Port, false, "", null),
+            new("from@owned-smtp.invalid", [Recipient], "tiny refusal", "tiny body"), deadline.Token));
+        Assert.NotNull(error);
+        Assert.True(MailNotificationService.IsExactSingleRecipientRejection(error, [Recipient]), error.ToString());
+        Assert.Empty(inbox.Messages);
+    }
+
+    [Fact]
+    public async Task LostDataAcknowledgementHoldsExactContributionsAcrossServiceRestartWithoutResending()
+    {
+        using var formal = await FormalCpuCase.CreateAsync(elevateCpuRisk: true);
+        await using var inbox = new OwnedSmtpInbox(dropNextDataAcknowledgement: true);
+        formal.ConfigureMail(inbox.Port, urgent: true, singleRecipient: true);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await formal.CreateMailService().NotifyAfterRunAsync(deadline.Token);
+        Assert.Single(inbox.Messages);
+        var before = formal.ReadMailState();
+        var intentKey = Assert.Single(before.UrgentOutbox.Keys);
+        Assert.Equal("pending", before.UrgentOutbox[intentKey].Status);
+        Assert.NotEmpty(before.MailContributionReservations);
+        Assert.All(before.MailContributionReservations.Values, reservation => Assert.Equal("unknown", reservation.Status));
+        Assert.Empty(before.PrtgUrgentAcceptedFacts);
+        await formal.CreateMailService().RetryPendingUrgentAsync(deadline.Token);
+        Assert.Single(inbox.Messages);
+        var after = formal.ReadMailState();
+        Assert.Equal(intentKey, Assert.Single(after.UrgentOutbox.Keys));
+        Assert.Equal("pending", after.UrgentOutbox[intentKey].Status);
+        Assert.Empty(after.PrtgUrgentAcceptedFacts);
+        Assert.Equal(before.MailContributionReservations.Keys.Order(), after.MailContributionReservations.Keys.Order());
+    }
 
     [Fact]
     public async Task QualifiedFormalCpuMailIsAcceptedCapturedAndDeduplicated()
@@ -640,7 +677,7 @@ public sealed class PrtgOwnedSmtpAcceptanceTests
             _mailState = new MailNotifyStateStore(_fixture.Backend.Blob("owned_smtp_mail_state"));
         }
 
-        public void ConfigureMail(int port, bool urgent = false)
+        public void ConfigureMail(int port, bool urgent = false, bool singleRecipient = false)
         {
             _settings.Update(settings =>
             {
@@ -655,7 +692,7 @@ public sealed class PrtgOwnedSmtpAcceptanceTests
                 settings.SmtpAccount = "";
                 settings.SmtpPasswordEnc = "";
                 settings.MailFrom = "logforesight@owned-smtp.invalid";
-                settings.MailRecipients = urgent
+                settings.MailRecipients = urgent && !singleRecipient
                     ? new List<string> { Recipient, SecondRecipient }
                     : new List<string> { Recipient };
                 settings.MailNotifyHostOwners = false;
@@ -799,9 +836,11 @@ public sealed class PrtgOwnedSmtpAcceptanceTests
         private readonly Task _acceptLoop;
         private readonly string? _refuseNextRecipient;
         private int _refusalAvailable;
+        private int _dropDataAcknowledgementAvailable;
 
-        public OwnedSmtpInbox(string? refuseNextRecipient = null)
+        public OwnedSmtpInbox(string? refuseNextRecipient = null, bool dropNextDataAcknowledgement = false)
         {
+            _dropDataAcknowledgementAvailable = dropNextDataAcknowledgement ? 1 : 0;
             _refuseNextRecipient = refuseNextRecipient;
             _refusalAvailable = string.IsNullOrWhiteSpace(refuseNextRecipient) ? 0 : 1;
             _listener.Start(2);
@@ -883,6 +922,13 @@ public sealed class PrtgOwnedSmtpAcceptanceTests
                     await WriteLineAsync(stream, "354 end with dot", ct).ConfigureAwait(false);
                     var mime = await ReadDataAsync(stream, MaxMessageBytes, ct).ConfigureAwait(false);
                     var acceptedRecipients = recipients.ToArray();
+                    if (Interlocked.CompareExchange(ref _dropDataAcknowledgementAvailable, 0, 1) == 1)
+                    {
+                        // Raw DATA exists in the owned sink; the client receives no acceptance reply.
+                        _messages.Enqueue(new CapturedMail(acceptedRecipients, mime));
+                        _signal.Release();
+                        return;
+                    }
                     await WriteLineAsync(stream, "250 queued", ct).ConfigureAwait(false);
                     // Capture only after the SMTP acceptance response is successfully written.
                     _messages.Enqueue(new CapturedMail(acceptedRecipients, mime));
