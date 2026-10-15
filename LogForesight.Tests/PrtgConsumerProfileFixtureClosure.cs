@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -177,7 +177,7 @@ internal static class PrtgConsumerProfileFixtureClosure
             sourceProfile.SemanticVersion,
             PrtgTrustedSamplingProfileResolver.StrategyFingerprint(seed.Policy.SourceGeneration,
                 seed.Policy.RawTimestampTimeZoneId, seed.Policy.SourceTimeZoneId,
-                seed.Policy.AnalysisTimeZoneId, normalizedStrategy, strategyMinutes),
+                seed.Policy.AnalysisTimeZoneId, normalizedStrategy, strategyMinutes, seed.Policy.RawAuthorityRevision),
             strategyMinutes, sourceProfile.StrategyEffectiveFromHourUtc, sourceProfile.ConfirmedScanInterval,
             seed.Binding.IntervalRawUnit, seed.Binding.RawTimestampTimeZoneId, seed.Policy.SourceTimeZoneId,
             seed.Binding.AnalysisTimeZoneId, sourceProfile.SourceMetadataObservedAtUtc,
@@ -262,7 +262,7 @@ internal static class PrtgConsumerProfileFixtureClosure
             sourceProfile.BindingRevision > 0 ? sourceProfile.BindingRevision : 1;
         var strategyFingerprint = PrtgTrustedSamplingProfileResolver.StrategyFingerprint(
             policy.SourceGeneration, policy.RawTimestampTimeZoneId, policy.SourceTimeZoneId,
-            policy.AnalysisTimeZoneId, normalizedStrategy, sourceProfile.StrategyMinutes);
+            policy.AnalysisTimeZoneId, normalizedStrategy, sourceProfile.StrategyMinutes, policy.RawAuthorityRevision);
         var binding = PrtgTrustedSamplingBinding.Create(identity.SensorId, channelId,
             sourceProfile.PrimaryChannelCaption, sourceProfile.Quantity, sourceProfile.Unit,
             sourceProfile.Scale, sourceProfile.Direction, sourceProfile.IntervalRawUnit,

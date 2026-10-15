@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Globalization;
@@ -28,10 +28,13 @@ public sealed class PrtgMonitoringPolicy
     public string MessageDateFormat { get; set; } = "";
     /// <summary>Monotonic confirmation generation for message timestamp interpretation only.</summary>
     public long MessageTimeAuthorityRevision { get; set; }
-    /// <summary>Explicitly probed account zone for raw OLE Automation timestamps; blank stays untrusted.</summary>
+    /// <summary>Monotonic generation for raw/source time interpretation; legacy documents default to zero.</summary>
+    public long RawAuthorityRevision { get; set; }
+    /// <summary>Operator-recorded interpretation zone for raw OLE Automation timestamps; saving it is not remote readback or native proof.</summary>
     public string RawTimestampTimeZoneId { get; set; } = "";
-    /// <summary>Analysis wall-clock zone used for fixed-slot qualification; blank stays untrusted.</summary>
+    /// <summary>Operator-selected analysis wall-clock zone used for fixed-slot qualification; blank stays untrusted.</summary>
     public string AnalysisTimeZoneId { get; set; } = "";
+    /// <summary>Bounded operator-supplied provenance reference; it does not itself qualify a source sample.</summary>
     public string TimeBasisEvidenceReference { get; set; } = "";
     public bool Ready(string url) => CoreSystemId.Length > 0 && SourceGeneration.Length > 0 &&
         ValidFrom != default && EndpointHint == EfPrtgObservationStore.SourceHintFor(url) &&
@@ -53,7 +56,7 @@ public sealed class PrtgMonitoringPolicy
     /// </summary>
     public string SourceAuthorityFingerprint(string url)
     {
-        if (!Ready(url) || string.IsNullOrWhiteSpace(RawTimestampTimeZoneId) ||
+        if (RawAuthorityRevision < 0 || !Ready(url) || string.IsNullOrWhiteSpace(RawTimestampTimeZoneId) ||
             string.IsNullOrWhiteSpace(AnalysisTimeZoneId) || string.IsNullOrWhiteSpace(TimeBasisEvidenceReference) ||
             SourceGeneration.Length > 256 || EndpointHint.Length > 256 || SourceTimeZoneId.Length > 128 ||
             SourceCultureName.Length > 128 || RawTimestampTimeZoneId.Length > 128 ||
@@ -67,12 +70,20 @@ public sealed class PrtgMonitoringPolicy
         }
         catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
         { return ""; }
-        var components = new[] { "prtg.table.json:devices+sensors:v1", SourceGeneration,
+        var components = new List<string> { "prtg.table.json:devices+sensors:v1", SourceGeneration,
             EndpointHint, SourceTimeZoneId, SourceCultureName, RawTimestampTimeZoneId,
             AnalysisTimeZoneId, TimeBasisEvidenceReference };
+        if (RawAuthorityRevision > 0)
+            components.Add(RawAuthorityRevisionComponent(RawAuthorityRevision));
         var value = string.Concat(components.Select(component =>
             component.Length.ToString(CultureInfo.InvariantCulture) + ":" + component));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    }
+
+    internal static string RawAuthorityRevisionComponent(long revision)
+    {
+        if (revision <= 0) throw new ArgumentOutOfRangeException(nameof(revision));
+        return "raw-authority-revision=" + revision.ToString(CultureInfo.InvariantCulture);
     }
 }
 
@@ -83,9 +94,142 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
     private const int MaximumAffectedSensors = 30_000;
     private const int IdentityBatchSize = 500;
 
+    private static string SerializeBoundedPolicy(PrtgMonitoringPolicy policy)
+    {
+        var serialized = JsonSerializer.Serialize(policy, LfJsonOptions.Pretty);
+        if (serialized.Length > 2 * 1024 * 1024)
+            throw new InvalidDataException("PRTG policy exceeds its UTF-16 document limit.");
+        return serialized;
+    }
+
+    public new PrtgMonitoringPolicy Get() => ReadBoundedValueWithVersion(2 * 1024 * 1024).Value;
+
+    private readonly record struct RawAuthorityTuple(string? CoreSystemId, string? SourceGeneration,
+        string? EndpointHint, long ValidFromUtcTicks,
+        string? SourceTimeZoneId, string? SourceCultureName, string? RawTimestampTimeZoneId,
+        string? AnalysisTimeZoneId, string? TimeBasisEvidenceReference)
+    {
+        public static RawAuthorityTuple Capture(PrtgMonitoringPolicy policy) => new(
+            policy.CoreSystemId, policy.SourceGeneration, policy.EndpointHint, policy.ValidFrom.UtcTicks,
+            policy.SourceTimeZoneId, policy.SourceCultureName, policy.RawTimestampTimeZoneId,
+            policy.AnalysisTimeZoneId, policy.TimeBasisEvidenceReference);
+    }
+
+    private static void AdvanceRawAuthorityRevision(PrtgMonitoringPolicy policy,
+        RawAuthorityTuple before, long previousRevision)
+    {
+        if (previousRevision < 0)
+            throw new InvalidDataException("Raw authority revision is invalid; policy update was rejected.");
+
+        policy.RawAuthorityRevision = previousRevision;
+        if (before == RawAuthorityTuple.Capture(policy)) return;
+        if (previousRevision == long.MaxValue)
+            throw new InvalidOperationException("Raw authority revision reached its maximum; raw authority cannot be reused.");
+        policy.RawAuthorityRevision = checked(previousRevision + 1);
+    }
+
+    /// <summary>Updates policy through the legacy singleton API while preserving the raw authority counter.</summary>
+    public new PrtgMonitoringPolicy Update(Action<PrtgMonitoringPolicy> mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        return blob.MutateWithContext((_, raw) =>
+        {
+            var policy = raw is null
+                ? new PrtgMonitoringPolicy()
+                : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(raw, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException("PRTG 監看政策無效；拒絕更新。");
+            var priorRevision = policy.RawAuthorityRevision;
+            var before = RawAuthorityTuple.Capture(policy);
+            mutation(policy);
+            AdvanceRawAuthorityRevision(policy, before, priorRevision);
+            return (SerializeBoundedPolicy(policy), policy);
+        }, maxCurrentCharacters: 2 * 1024 * 1024,
+            isolationLevel: System.Data.IsolationLevel.Serializable,
+            enforceCurrentUtf8ByteCap: false);
+    }
+
+    /// <summary>
+    /// CAS-saves an explicit raw/analysis time basis without advancing resource identity. In the
+    /// same transaction it revokes only existing disk evidence for affected sensors, preserving
+    /// message timeline identity and all unknown JSON fields.
+    /// </summary>
+    public PrtgMonitoringPolicy UpdateTimeBasisWithRawEvidenceInvalidation(string expectedRevision,
+        string expectedSettingsRevision, IEnumerable<long> affectedSensorIds,
+        Action<PrtgMonitoringPolicy> mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        var sensorIds = affectedSensorIds.Where(id => id > 0).Distinct()
+            .Take(MaximumAffectedSensors + 1).ToArray();
+        if (sensorIds.Length > MaximumAffectedSensors)
+            throw new ArgumentOutOfRangeException(nameof(affectedSensorIds),
+                $"Affected sensor scope exceeds {MaximumAffectedSensors} rows.");
+        var affected = sensorIds.ToHashSet();
+
+        return blob.MutateWithContext((ctx, raw) =>
+        {
+            var settingsRow = EfJsonBlobStore.ReadBoundedInContext(ctx, "system_settings", 2 * 1024 * 1024);
+            if (settingsRow.ReportedLength > 2 * 1024 * 1024 || settingsRow.Prefix is null)
+                throw new InvalidDataException("System settings exceed their bounded read limit.");
+            var settings = JsonSerializer.Deserialize<SystemSettings>(settingsRow.Prefix, LfJsonOptions.Pretty)
+                ?? throw new InvalidDataException("System settings invalid.");
+            if (!string.Equals(settings.Revision, expectedSettingsRevision, StringComparison.Ordinal))
+                throw new InvalidOperationException("System settings changed; reload before updating time basis.");
+            if (settings.PrtgEnabled)
+                throw new InvalidOperationException("time-basis-requires-disabled-source");
+
+            var policy = raw is null
+                ? new PrtgMonitoringPolicy()
+                : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(raw, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException("PRTG 監看政策無效；拒絕更新。");
+            if (!string.Equals(policy.Revision, expectedRevision, StringComparison.Ordinal))
+                throw new InvalidOperationException("設定已變更；重新載入後再修改。");
+
+            var priorRawAuthorityRevision = policy.RawAuthorityRevision;
+            var priorRawAuthority = RawAuthorityTuple.Capture(policy);
+
+            RevokeExistingDiskEvidence(ctx, PrtgDiskSemanticEvidenceStore.BlobKey,
+                PrtgDiskSemanticEvidenceStore.MaximumSnapshotCharacters,
+                content => PrtgDiskTimeBasisInvalidator.InvalidateSemantic(content, affected));
+            RevokeExistingDiskEvidence(ctx, PrtgDiskVerificationResultStore.BlobKey,
+                PrtgDiskVerificationResultStore.MaximumSnapshotCharacters,
+                content => PrtgDiskTimeBasisInvalidator.InvalidateVerification(content, affected));
+
+            mutation(policy);
+            AdvanceRawAuthorityRevision(policy, priorRawAuthority, priorRawAuthorityRevision);
+            return (SerializeBoundedPolicy(policy), policy);
+        }, maxCurrentCharacters: 2 * 1024 * 1024,
+            isolationLevel: System.Data.IsolationLevel.Serializable,
+            enforceCurrentUtf8ByteCap: false);
+    }
+
+    private static void RevokeExistingDiskEvidence(LfDbContext ctx, string key, int maximumCharacters,
+        Func<string, string> invalidate)
+    {
+        var read = EfJsonBlobStore.ReadBoundedInContext(ctx, key, maximumCharacters);
+        if (read.Version == 0 && read.Prefix is null) return;
+        if (read.ReportedLength > maximumCharacters || read.Prefix is null)
+            throw new InvalidDataException($"Blob '{key}' exceeds its bounded read limit; time basis was not changed.");
+        var candidate = invalidate(read.Prefix);
+        if (string.Equals(candidate, read.Prefix, StringComparison.Ordinal)) return;
+
+        // The bounded physical read intentionally returns only content/version. Load the
+        // already-bounded row through EF so both concurrency tokens (Version and UpdatedAt)
+        // retain their actual database originals for the transaction's update.
+        var row = ctx.Blobs.FirstOrDefault(candidate => candidate.BlobKey == key &&
+            candidate.Version == read.Version);
+        if (row is null || !string.Equals(row.Content, read.Prefix, StringComparison.Ordinal))
+            throw new Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException(
+                $"Blob '{key}' changed after its bounded read.");
+        row.Content = candidate;
+        row.Version = checked(row.Version + 1);
+        row.UpdatedAt = DateTime.UtcNow;
+    }
+
     /// <summary>以一筆 SQL transaction 執行 policy revision CAS 與受影響 sensor epoch 遞增。</summary>
     public PrtgMonitoringPolicy UpdateWithResourceEpochs(string expectedRevision,
-        IEnumerable<long> affectedSensorIds, Action<PrtgMonitoringPolicy> mutation)
+        IEnumerable<long> affectedSensorIds, Action<PrtgMonitoringPolicy> mutation,
+        string? expectedSettingsRevision = null,
+        IEnumerable<long>? rawEvidenceInvalidationSensorIds = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
         var sensorIds = affectedSensorIds.Where(id => id > 0).Distinct()
@@ -94,16 +238,44 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
             throw new ArgumentOutOfRangeException(nameof(affectedSensorIds),
                 $"Affected sensor scope exceeds {MaximumAffectedSensors} rows.");
         Array.Sort(sensorIds);
+        var rawInvalidationIds = (rawEvidenceInvalidationSensorIds ?? [])
+            .Where(id => id > 0).Distinct().Take(MaximumAffectedSensors + 1).ToArray();
+        if (rawInvalidationIds.Length > MaximumAffectedSensors)
+            throw new ArgumentOutOfRangeException(nameof(rawEvidenceInvalidationSensorIds),
+                $"Raw evidence invalidation scope exceeds {MaximumAffectedSensors} rows.");
+        var rawInvalidationSet = rawInvalidationIds.ToHashSet();
         return blob.MutateWithContext((ctx, raw) =>
         {
-            var policy = string.IsNullOrWhiteSpace(raw)
+            if (expectedSettingsRevision is not null)
+            {
+                var settingsRow = EfJsonBlobStore.ReadBoundedInContext(ctx, "system_settings", 2 * 1024 * 1024);
+                if (settingsRow.ReportedLength > 2 * 1024 * 1024 || settingsRow.Prefix is null)
+                    throw new InvalidDataException("System settings exceed their bounded read limit.");
+                var settings = JsonSerializer.Deserialize<SystemSettings>(settingsRow.Prefix, LfJsonOptions.Pretty)
+                    ?? throw new InvalidDataException("System settings invalid.");
+                if (!string.Equals(settings.Revision, expectedSettingsRevision, StringComparison.Ordinal))
+                    throw new InvalidOperationException("System settings changed; reload before updating time basis.");
+            }
+            var policy = raw is null
                 ? new PrtgMonitoringPolicy()
                 : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(raw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("PRTG 監看政策無效；拒絕更新。");
             if (!string.Equals(policy.Revision, expectedRevision, StringComparison.Ordinal))
                 throw new InvalidOperationException("設定已變更；重新載入後再修改。");
 
+            var priorRawAuthorityRevision = policy.RawAuthorityRevision;
+            var priorRawAuthority = RawAuthorityTuple.Capture(policy);
             mutation(policy);
+            AdvanceRawAuthorityRevision(policy, priorRawAuthority, priorRawAuthorityRevision);
+            if (rawInvalidationSet.Count > 0)
+            {
+                RevokeExistingDiskEvidence(ctx, PrtgDiskSemanticEvidenceStore.BlobKey,
+                    PrtgDiskSemanticEvidenceStore.MaximumSnapshotCharacters,
+                    content => PrtgDiskTimeBasisInvalidator.InvalidateSemantic(content, rawInvalidationSet));
+                RevokeExistingDiskEvidence(ctx, PrtgDiskVerificationResultStore.BlobKey,
+                    PrtgDiskVerificationResultStore.MaximumSnapshotCharacters,
+                    content => PrtgDiskTimeBasisInvalidator.InvalidateVerification(content, rawInvalidationSet));
+            }
             var now = DateTimeOffset.UtcNow;
             var revisionRows = new Dictionary<string, BlobRow>(StringComparer.Ordinal);
             foreach (var sensorBatch in sensorIds.Chunk(IdentityBatchSize))
@@ -114,24 +286,19 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
                     StringComparer.Ordinal);
                 var requestedKeys = sensorByKey.Keys.ToHashSet(StringComparer.Ordinal);
                 var loadedRows = new Dictionary<long, BlobRow>();
-                var storedRows = ctx.Blobs.AsNoTracking().Where(row => requestedKeys.Contains(row.BlobKey))
-                    .Select(row => new
-                    {
-                        row.BlobKey,
-                        Content = row.Content.Substring(0, PrtgResourceIdentityStore.MaxLedgerBytes + 1),
-                        Length = row.Content.Length,
-                        row.Version,
-                        row.UpdatedAt
-                    }).ToList();
-                foreach (var stored in storedRows)
+                var storedRows = BoundedJsonBlobBatchReader.Read(ctx, requestedKeys,
+                    PrtgResourceIdentityStore.MaxLedgerBytes);
+                foreach (var item in storedRows)
                 {
+                    var stored = item.Value;
                     if (stored.Length > PrtgResourceIdentityStore.MaxLedgerBytes ||
+                        stored.Content is null ||
                         System.Text.Encoding.UTF8.GetByteCount(stored.Content) > PrtgResourceIdentityStore.MaxLedgerBytes)
                         throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
-                    var sensorId = sensorByKey[stored.BlobKey];
+                    var sensorId = sensorByKey[item.Key];
                     var row = new BlobRow
                     {
-                        BlobKey = stored.BlobKey,
+                        BlobKey = item.Key,
                         Content = stored.Content,
                         Version = stored.Version,
                         UpdatedAt = stored.UpdatedAt
@@ -161,8 +328,10 @@ public sealed class PrtgMonitoringPolicyStore(EfJsonBlobStore blob) : JsonBlobSi
                 foreach (var changedRow in changedRows)
                     ctx.Entry(changedRow).State = EntityState.Detached;
             }
-            return (JsonSerializer.Serialize(policy, LfJsonOptions.Pretty), policy);
-        });
+            return (SerializeBoundedPolicy(policy), policy);
+        }, maxCurrentCharacters: 2 * 1024 * 1024,
+            isolationLevel: System.Data.IsolationLevel.Serializable,
+            enforceCurrentUtf8ByteCap: false);
     }
 }
 
@@ -317,7 +486,7 @@ public sealed class PrtgSensorTimelineStore(EfJsonBlobStore blob) : JsonBlobSing
     }
 
     /// <summary>
-    /// Reads at most 12 timelines per SQL page. A 256 Ki-character prefix can expand to roughly
+    /// Reads at most 12 complete bounded timelines per SQL page. A 256 Ki-character document can expand to roughly
     /// 1 MiB of UTF-8, keeping a maximally escaped/unicode page below the 16 MiB proof-query cap.
     /// </summary>
     public static IReadOnlyDictionary<long, PrtgSensorTimelineEvidence> ReadManyBoundedForSilentRule(
@@ -329,21 +498,16 @@ public sealed class PrtgSensorTimelineStore(EfJsonBlobStore blob) : JsonBlobSing
             var keys = page.ToDictionary(id => Prefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture), id => id,
                 StringComparer.Ordinal);
             using var context = contextFactory();
-            var rows = context.Blobs.AsNoTracking().Where(row => keys.Keys.Contains(row.BlobKey))
-                .Select(row => new
-                {
-                    row.BlobKey,
-                    ContentPrefix = row.Content.Substring(0, MaxSilentReadBytes + 1),
-                    CharacterLength = row.Content.Length
-                }).ToList();
-            foreach (var row in rows)
+            var rows = BoundedJsonBlobBatchReader.Read(context, keys.Keys, MaxSilentReadBytes);
+            foreach (var item in rows)
             {
-                if (row.CharacterLength > MaxSilentReadBytes ||
-                    System.Text.Encoding.UTF8.GetByteCount(row.ContentPrefix) > MaxSilentReadBytes) continue;
+                var row = item.Value;
+                if (row.Length > MaxSilentReadBytes || row.Content is null ||
+                    System.Text.Encoding.UTF8.GetByteCount(row.Content) > MaxSilentReadBytes) continue;
                 try
                 {
-                    var timeline = JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(row.ContentPrefix, LfJsonOptions.Pretty);
-                    if (timeline is not null && timeline.SensorId == keys[row.BlobKey]) result[timeline.SensorId] = timeline;
+                    var timeline = JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(row.Content, LfJsonOptions.Pretty);
+                    if (timeline is not null && timeline.SensorId == keys[item.Key]) result[timeline.SensorId] = timeline;
                 }
                 catch (JsonException) { }
             }

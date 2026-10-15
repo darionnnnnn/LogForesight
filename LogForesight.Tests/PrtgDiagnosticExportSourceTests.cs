@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using System.Data.Common;
 using LogForesight.Core.Persistence;
@@ -58,6 +58,58 @@ public sealed class PrtgDiagnosticExportSourceTests
         }
         Assert.Equal(raw, await context.Blobs.AsNoTracking().Where(row => row.BlobKey == key)
             .Select(row => row.Content).SingleAsync());
+        Assert.Equal(1, await context.Blobs.Where(row => row.BlobKey == key).Select(row => row.Version).SingleAsync());
+    }
+
+    [Theory]
+    [InlineData("valid")]
+    [InlineData("duplicate-key")]
+    [InlineData("known-alias")]
+    [InlineData("nul")]
+    public async Task SmallSemanticExportRejectsAmbiguousOrIncompleteAuthorityBeforeEmittingEvidence(string scenario)
+    {
+        using var fixture = new ExportFixture();
+        using var context = fixture.OpenContext();
+        await context.Database.EnsureCreatedAsync();
+        var policy = new PrtgMonitoringPolicy { Revision = "tiny-policy" };
+        context.Blobs.Add(new BlobRow { BlobKey = PrtgMonitoringPolicyStore.BlobKey,
+            Content = JsonSerializer.Serialize(policy), Version = 7, UpdatedAt = DateTime.UtcNow });
+        const string key = PrtgDiskSemanticEvidenceStore.BlobKey;
+        var evidence = new PrtgDiskSemanticEvidence(1, 1, 1, "disk", "free", "Free", "%", 1,
+            "descending-danger", PrtgDiskSemanticEvidenceSource.Manual, 1, "tiny", DateTime.UtcNow, "v1");
+        var entry = JsonSerializer.Serialize(evidence);
+        var raw = scenario switch
+        {
+            "duplicate-key" => "{\"1\":" + entry + ",\"1\":" + entry + "}",
+            "known-alias" => "{\"1\":" + entry.Replace("\"SensorObjid\":1", "\"SensorObjid\":1,\"sensorObjid\":2") + "}",
+            "nul" => "{\"1\":" + entry + "}\0hidden",
+            _ => "{\"1\":" + entry + "}"
+        };
+        context.Blobs.Add(new BlobRow { BlobKey = key, Content = "{}", Version = 1, UpdatedAt = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+        var bytes = Encoding.UTF8.GetBytes(raw);
+        Assert.Equal(1, await context.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE lf_blobs SET content=CAST({bytes} AS TEXT) WHERE blob_key={key}"));
+        Assert.Equal(raw, await context.Blobs.AsNoTracking().Where(row => row.BlobKey == key).Select(row => row.Content).SingleAsync());
+        await using var transaction = await context.Database.BeginTransactionAsync();
+        var emitted = new List<PrtgDiagnosticExportItem>();
+        async Task Enumerate()
+        {
+            await foreach (var item in new PrtgDiagnosticExportSource().EnumerateRowsAsync(
+                context, From, Through, policy, 7, CancellationToken.None)) emitted.Add(item);
+        }
+        if (scenario == "valid")
+        {
+            await Enumerate();
+            Assert.Single(emitted, item => item.PropertyName == "SemanticEvidence");
+        }
+        else
+        {
+            var error = await Record.ExceptionAsync(Enumerate);
+            Assert.True(error is InvalidDataException or JsonException, error?.ToString() ?? "Invalid authority was accepted.");
+            Assert.DoesNotContain(emitted, item => item.PropertyName == "SemanticEvidence");
+        }
+        Assert.Equal(raw, await context.Blobs.AsNoTracking().Where(row => row.BlobKey == key).Select(row => row.Content).SingleAsync());
         Assert.Equal(1, await context.Blobs.Where(row => row.BlobKey == key).Select(row => row.Version).SingleAsync());
     }
 

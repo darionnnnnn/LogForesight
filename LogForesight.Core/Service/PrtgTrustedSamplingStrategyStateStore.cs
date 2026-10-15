@@ -21,6 +21,7 @@ public sealed record PrtgTrustedSamplingPolicyContext(
 public sealed class PrtgTrustedSamplingStrategyStateStore(EfJsonBlobStore blob)
 {
     public const string BlobKey = "prtg_trusted_sampling_strategy_v1";
+    public const int MaximumCharacters = 8 * 1024;
     private sealed record State(string Fingerprint, string StrategyName, int StrategyMinutes,
         string RawTimestampTimeZoneId, string AnalysisTimeZoneId, DateTime EffectiveFromHourUtc);
 
@@ -29,6 +30,7 @@ public sealed class PrtgTrustedSamplingStrategyStateStore(EfJsonBlobStore blob)
         PrtgMonitoringPolicy policy, string strategyName, int strategyMinutes)
     {
         var missing = new List<string>();
+        if (policy.RawAuthorityRevision < 0) missing.Add("raw_authority_revision_invalid");
         if (string.IsNullOrWhiteSpace(policy.SourceGeneration)) missing.Add("source_generation");
         if (string.IsNullOrWhiteSpace(policy.RawTimestampTimeZoneId) ||
             string.IsNullOrWhiteSpace(policy.TimeBasisEvidenceReference)) missing.Add("raw_timestamp_timezone_probe");
@@ -41,10 +43,12 @@ public sealed class PrtgTrustedSamplingStrategyStateStore(EfJsonBlobStore blob)
 
         var fingerprint = PrtgTrustedSamplingProfileResolver.StrategyFingerprint(policy.SourceGeneration,
             policy.RawTimestampTimeZoneId, policy.SourceTimeZoneId, policy.AnalysisTimeZoneId,
-            strategyName, strategyMinutes);
-        if (string.IsNullOrWhiteSpace(serializedState))
+            strategyName, strategyMinutes, policy.RawAuthorityRevision);
+        if (serializedState is null)
             return new(strategyName, strategyMinutes, "", default, policy.RawTimestampTimeZoneId,
                 policy.AnalysisTimeZoneId, ["strategy_effective_hour_missing"]);
+        if (serializedState.Length > MaximumCharacters || string.IsNullOrWhiteSpace(serializedState))
+            throw new InvalidDataException("Existing PRTG snapshot strategy state is empty or exceeds its bounded read limit.");
         State? state;
         try { state = JsonSerializer.Deserialize<State>(serializedState, LfJsonOptions.Pretty); }
         catch (JsonException ex) { throw new InvalidDataException("PRTG snapshot strategy fence 格式損壞。", ex); }
@@ -61,6 +65,7 @@ public sealed class PrtgTrustedSamplingStrategyStateStore(EfJsonBlobStore blob)
         string strategyName, int strategyMinutes, DateTime nowUtc)
     {
         var missing = new List<string>();
+        if (policy.RawAuthorityRevision < 0) missing.Add("raw_authority_revision_invalid");
         if (string.IsNullOrWhiteSpace(policy.SourceGeneration)) missing.Add("source_generation");
         if (string.IsNullOrWhiteSpace(policy.RawTimestampTimeZoneId) ||
             string.IsNullOrWhiteSpace(policy.TimeBasisEvidenceReference)) missing.Add("raw_timestamp_timezone_probe");
@@ -73,15 +78,17 @@ public sealed class PrtgTrustedSamplingStrategyStateStore(EfJsonBlobStore blob)
 
         var fingerprint = PrtgTrustedSamplingProfileResolver.StrategyFingerprint(policy.SourceGeneration,
             policy.RawTimestampTimeZoneId, policy.SourceTimeZoneId, policy.AnalysisTimeZoneId,
-            strategyName, strategyMinutes);
+            strategyName, strategyMinutes, policy.RawAuthorityRevision);
         State? resolved = null;
-        blob.Mutate(raw =>
+        blob.MutateWithContext((_, raw) =>
         {
             State? prior = null;
-            if (!string.IsNullOrWhiteSpace(raw))
+            if (raw is not null)
             {
                 try { prior = JsonSerializer.Deserialize<State>(raw, LfJsonOptions.Pretty); }
                 catch (JsonException ex) { throw new InvalidDataException("PRTG snapshot strategy fence 格式損壞。", ex); }
+                if (prior is null)
+                    throw new InvalidDataException("PRTG snapshot strategy fence 格式損壞。");
             }
             if (prior == null || prior.Fingerprint != fingerprint || prior.StrategyName != strategyName ||
                 prior.StrategyMinutes != strategyMinutes || prior.EffectiveFromHourUtc.Kind != DateTimeKind.Utc)
@@ -89,8 +96,11 @@ public sealed class PrtgTrustedSamplingStrategyStateStore(EfJsonBlobStore blob)
                     policy.RawTimestampTimeZoneId, policy.AnalysisTimeZoneId,
                     NextWallHourUtc(nowUtc, policy.AnalysisTimeZoneId));
             else resolved = prior;
-            return (JsonSerializer.Serialize(resolved, LfJsonOptions.Pretty), resolved);
-        });
+            var content = JsonSerializer.Serialize(resolved, LfJsonOptions.Pretty);
+            if (content.Length > MaximumCharacters)
+                throw new InvalidDataException("PRTG snapshot strategy state exceeds its bounded write limit.");
+            return (content, resolved);
+        }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
         return new(strategyName, strategyMinutes, fingerprint, resolved!.EffectiveFromHourUtc,
             policy.RawTimestampTimeZoneId, policy.AnalysisTimeZoneId, Array.Empty<string>());
     }

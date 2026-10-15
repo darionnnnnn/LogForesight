@@ -604,6 +604,16 @@ public sealed class PrtgDiskVerificationService
         if (previous.Status != nameof(PrtgDiskSemanticProbeStatus.NeedsManualReview) ||
             previous.ValuesMatch != true || previous.ComparedPointCount <= 0)
             throw new InvalidOperationException("最近探測未建立可供人工覆核的成功比對候選；不匹配、無落地資料點或其他探測狀態均須重新探測。");
+        if (!string.Equals(previous.ParserSemanticVersion, ParserSemanticVersion, StringComparison.Ordinal))
+            throw new InvalidOperationException("最近探測使用的解析語意版本已失效；請先重新執行正常來源探測。");
+        var existingEvidence = _evidence.Get(request.SensorObjid);
+        if (existingEvidence?.ParserSemanticVersion == PrtgDiskSemanticEvidenceStore.RepairInvalidationMarker)
+        {
+            var repairBarrier = existingEvidence.RepairInvalidatedAtUtc;
+            if (!repairBarrier.HasValue || repairBarrier.Value.Kind != DateTimeKind.Utc ||
+                repairBarrier.Value >= now || previous.CheckedAtUtc <= repairBarrier.Value)
+                throw new InvalidOperationException("磁碟語意資料經過修復；必須先在修復後完成正常來源探測，才能人工確認。");
+        }
         var current = FindCurrentSensor(request.SensorObjid);
         if (current.Objid == 0) throw new InvalidOperationException("感測器已不再映射至啟用主機。");
         if (!TryGetSourceContract(request.SensorObjid, current.SensorType, out var currentContract,

@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Core.Persistence;
@@ -40,7 +42,15 @@ public sealed record PrtgDiskSemanticEvidence(
     string SourceGeneration = "",
     string ResourceGeneration = "",
     string ChannelGeneration = "",
-    long IdentityEpoch = 0);
+    long IdentityEpoch = 0)
+{
+    /// <summary>
+    /// Timestamp barrier for syntax repair. It is not a verification timestamp; only a later
+    /// successful normal probe may replace the invalidated evidence and clear this marker.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? RepairInvalidatedAtUtc { get; init; }
+}
 
 public sealed class PrtgDiskSemanticEvidenceValidity
 {
@@ -56,18 +66,72 @@ public sealed class PrtgDiskSemanticEvidenceValidity
 public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary<long, PrtgDiskSemanticEvidence>>
 {
     public const string BlobKey = "prtg_disk_semantic_evidence";
+    public const string RepairInvalidationMarker = "repair-invalidated";
     internal const int MaximumSnapshotCharacters = 32 * 1024 * 1024;
     private static readonly Regex SecretMarker = new(@"(?i)(password|passwd|token|api[_ -]?key|authorization|cookie)\s*[:=]", RegexOptions.Compiled);
+    private readonly EfJsonBlobStore _blob;
 
-    public PrtgDiskSemanticEvidenceStore(EfJsonBlobStore blob) : base(blob) { }
+    public PrtgDiskSemanticEvidenceStore(EfJsonBlobStore blob) : base(blob) => _blob = blob;
 
     public new Dictionary<long, PrtgDiskSemanticEvidence> Get() => CaptureSnapshot().CopyItems();
     public IReadOnlyCollection<PrtgDiskSemanticEvidence> GetAll() => CaptureSnapshot().Values();
 
     internal PrtgDiskSemanticEvidenceSnapshot CaptureSnapshot()
     {
-        var read = ReadBoundedValueWithVersion(MaximumSnapshotCharacters);
-        foreach (var (key, evidence) in read.Value)
+        var read = _blob.ReadBoundedWithVersion(MaximumSnapshotCharacters);
+        if (read.Version == 0 && read.Prefix is null)
+            return new([], 0, 0, 0);
+        if (read.ReportedLength > MaximumSnapshotCharacters || read.Prefix is null ||
+            read.Prefix.Length > MaximumSnapshotCharacters)
+            throw new InvalidDataException("Disk semantic evidence exceeds its bounded read limit.");
+        StrictAuthorityJsonDocument.Validate<Dictionary<long, PrtgDiskSemanticEvidence>>(read.Prefix);
+        var value = JsonSerializer.Deserialize<Dictionary<long, PrtgDiskSemanticEvidence>>(read.Prefix,
+            LfJsonOptions.Pretty) ?? throw new JsonException("Disk semantic document is null.");
+        ValidateDocument(value);
+        return new(value, read.Version, 1, read.Prefix.Length);
+    }
+
+    internal static void ValidateRepairDocument(string raw)
+    {
+        if (raw.Length > MaximumSnapshotCharacters)
+            throw new InvalidDataException("Disk semantic repair candidate exceeds its formal limit.");
+        StrictAuthorityJsonDocument.Validate<Dictionary<long, PrtgDiskSemanticEvidence>>(raw);
+        var document = JsonSerializer.Deserialize<Dictionary<long, PrtgDiskSemanticEvidence>>(
+            raw, LfJsonOptions.Pretty) ?? throw new JsonException("Disk semantic document is null.");
+        ValidateDocument(document);
+    }
+
+    public new Dictionary<long, PrtgDiskSemanticEvidence> Update(Action<Dictionary<long, PrtgDiskSemanticEvidence>> mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        return _blob.MutateWithContext((_, raw) =>
+        {
+            var value = DeserializeForMutation(raw);
+            mutation(value);
+            ValidateDocument(value);
+            var serialized = JsonSerializer.Serialize(value, LfJsonOptions.Pretty);
+            var content = StrictAuthorityJsonDocument.PreserveUnknownDictionaryEntryProperties<PrtgDiskSemanticEvidence>(
+                raw, serialized);
+            if (content.Length > MaximumSnapshotCharacters)
+                throw new InvalidDataException("Disk semantic evidence exceeds its bounded write limit.");
+            return (content, value);
+        }, maxCurrentCharacters: MaximumSnapshotCharacters, skipUnchangedContent: true,
+            enforceCurrentUtf8ByteCap: false);
+    }
+
+    private static Dictionary<long, PrtgDiskSemanticEvidence> DeserializeForMutation(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return [];
+        StrictAuthorityJsonDocument.Validate<Dictionary<long, PrtgDiskSemanticEvidence>>(raw);
+        var value = JsonSerializer.Deserialize<Dictionary<long, PrtgDiskSemanticEvidence>>(raw, LfJsonOptions.Pretty)
+            ?? throw new JsonException("Disk semantic document is null.");
+        ValidateDocument(value);
+        return value;
+    }
+
+    private static void ValidateDocument(Dictionary<long, PrtgDiskSemanticEvidence> document)
+    {
+        foreach (var (key, evidence) in document)
             if (key <= 0 || evidence is null || evidence.SensorObjid != key ||
                 evidence.DeviceObjid <= 0 || evidence.HostId <= 0 ||
                 string.IsNullOrWhiteSpace(evidence.SensorType) ||
@@ -77,9 +141,10 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
                 string.IsNullOrWhiteSpace(evidence.Direction) || !Enum.IsDefined(evidence.Source) ||
                 string.IsNullOrWhiteSpace(evidence.EvidenceSummary) || evidence.VerifiedAtUtc == default ||
                 evidence.VerifiedAtUtc.Kind != DateTimeKind.Utc ||
+                evidence.RepairInvalidatedAtUtc.HasValue &&
+                    (evidence.RepairInvalidatedAtUtc.Value == default || evidence.RepairInvalidatedAtUtc.Value.Kind != DateTimeKind.Utc) ||
                 string.IsNullOrWhiteSpace(evidence.ParserSemanticVersion))
                 throw new InvalidDataException("磁碟語意證據 blob 含有空白或識別不一致的紀錄；拒絕部分使用。");
-        return new(read.Value, read.Version, read.DeserializeCount, read.SourceCharacters);
     }
 
     internal bool IsSnapshotCurrent(PrtgDiskSemanticEvidenceSnapshot snapshot) =>
@@ -166,7 +231,9 @@ public sealed class PrtgDiskSemanticEvidenceStore : JsonBlobSingleton<Dictionary
         catch (ArgumentException) { return Invalid("目前 sensor 中繼資料不完整。", evidence); }
 
         string? reason = null;
-        if (evidence.SensorObjid != current.SensorObjid || evidence.DeviceObjid != current.DeviceObjid || evidence.HostId != current.HostId)
+        if (evidence.ParserSemanticVersion == PrtgDiskTimeBasisInvalidator.SemanticInvalidationMarker)
+            reason = "Raw timestamp time basis changed; disk semantic evidence requires revalidation.";
+        else if (evidence.SensorObjid != current.SensorObjid || evidence.DeviceObjid != current.DeviceObjid || evidence.HostId != current.HostId)
             reason = "主機或裝置對應已變更。";
         else if (!Same(evidence.SensorType, current.SensorType)) reason = "sensor 類型已變更。";
         else if (!Same(evidence.MainChannelIdentifier, current.MainChannelIdentifier) || !Same(evidence.MainChannelName, current.MainChannelName))
@@ -227,6 +294,7 @@ internal sealed class PrtgDiskSemanticEvidenceSnapshot
     { _items = items; Version = version; DeserializeCount = deserializeCount; SourceCharacters = sourceCharacters; }
 
     internal long Version { get; }
+    /// <summary>Number of typed dictionary deserializations; the raw structural guard is a separate parse.</summary>
     internal int DeserializeCount { get; }
     internal int SourceCharacters { get; }
     internal int Count => _items.Count;

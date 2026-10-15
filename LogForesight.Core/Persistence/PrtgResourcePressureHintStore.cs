@@ -1,6 +1,7 @@
 using LogForesight.Core.Service;
 using System.Security.Cryptography;
 using System.Text.Json;
+using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Core.Persistence;
 
@@ -13,11 +14,53 @@ public sealed class PrtgResourcePressureHintStore(EfJsonBlobStore blob)
 {
     public const int MaximumHintsPerHost = 128;
     public const int MaximumHintAgeDays = 14;
+    public const int MaximumCharacters = 2 * 1024 * 1024;
     private const int MaximumReasonLength = 96;
 
     public static string BlobKey(long hostId) => hostId > 0
         ? $"prtg_resource_pressure_hints_{hostId}"
         : throw new ArgumentOutOfRangeException(nameof(hostId));
+
+    public new PrtgResourcePressureHintDocument Get()
+    {
+        var read = blob.ReadBoundedWithVersion(MaximumCharacters);
+        if (read.Version == 0 && read.Prefix is null) return new();
+        if (read.ReportedLength > MaximumCharacters || read.Prefix is null ||
+            read.Prefix.Length > MaximumCharacters)
+            throw new InvalidDataException("PRTG resource hint document exceeds its bounded read limit.");
+        if (string.IsNullOrWhiteSpace(read.Prefix))
+            throw new JsonException("Existing PRTG resource hint document is empty.");
+        var document = JsonSerializer.Deserialize<PrtgResourcePressureHintDocument>(read.Prefix,
+            LfJsonOptions.Pretty) ?? throw new JsonException("PRTG resource hint document is null.");
+        OnDeserialized(document);
+        return document;
+    }
+
+    public new PrtgResourcePressureHintDocument Update(Action<PrtgResourcePressureHintDocument> mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        return blob.MutateWithContext((_, raw) =>
+        {
+            var document = DeserializeForMutation(raw);
+            mutation(document);
+            Touch(document);
+            var content = JsonSerializer.Serialize(document, LfJsonOptions.Pretty);
+            if (content.Length > MaximumCharacters)
+                throw new InvalidDataException("PRTG resource hint document exceeds its bounded write limit.");
+            return (content, document);
+        }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
+    }
+
+    private PrtgResourcePressureHintDocument DeserializeForMutation(string? raw)
+    {
+        if (raw is null) return new();
+        if (string.IsNullOrWhiteSpace(raw))
+            throw new JsonException("Existing PRTG resource hint document is empty.");
+        var document = JsonSerializer.Deserialize<PrtgResourcePressureHintDocument>(raw, LfJsonOptions.Pretty)
+            ?? throw new JsonException("PRTG resource hint document is null.");
+        OnDeserialized(document);
+        return document;
+    }
 
     /// <summary>Returns only bounded, validated hints for the requested host.</summary>
     public IReadOnlyList<PrtgResourcePressureHint> GetCurrent(long hostId, DateTime asOfUtc)

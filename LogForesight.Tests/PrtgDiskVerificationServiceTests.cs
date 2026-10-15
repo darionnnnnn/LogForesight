@@ -10,6 +10,7 @@ using LogForesight.Web.Auth;
 using LogForesight.Web.Controllers.Api;
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Xunit;
@@ -191,6 +192,152 @@ public sealed class PrtgDiskVerificationServiceTests : IDisposable
         Assert.True(SpinWait.SpinUntil(() => !runState.Snapshot().IsRunning, TimeSpan.FromSeconds(10)));
         Assert.Equal("Stale", _results.Get(1)?.Status);
         Assert.Equal(evidenceCount, _evidence.GetAll().Count);
+    }
+
+    [Fact]
+    public void RepairInvalidatedProbeCannotBeManuallyConfirmedUntilNormalProbeSucceeds()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var now = DateTime.UtcNow;
+        var effectiveFrom = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc).AddHours(-1);
+        ConfigureReadySourcePolicy("UTC");
+        var profile = PrtgResourceFixture.ConfigureDiskTrustedProfile(store,
+            _fx.Blob(PrtgMonitoringPolicyStore.BlobKey),
+            _fx.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey), 1, 2, 1, "snmpdiskfree",
+            effectiveFrom, sourceGeneration: "source-v1", channelIdentifier: "8");
+        var identity = store.GetResourceIdentity(1);
+        var day = PrtgDiskVerificationService.CompletedDay(now, profile.AnalysisTimeZoneId);
+        var oldCandidate = new PrtgDiskVerificationResult(1, 2, 1, "snmpdiskfree", "NeedsManualReview",
+            "candidate before repair", "8", "Free Space", "%", 1, "descending-danger", 5, true,
+            now, day.ToDateTime(TimeOnly.MinValue), PrtgDiskVerificationService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch);
+        _evidence.ConfirmManually(new(1, 2, 1, "snmpdiskfree", "8", "Free Space", "%", 1,
+                "descending-danger"), 42, "fixture evidence before repair", now.AddMinutes(-2),
+            PrtgDiskVerificationService.ParserSemanticVersion, identity.SourceGeneration,
+            identity.Generation, identity.ChannelGeneration, identity.Epoch);
+        var unrelated = oldCandidate with { SensorObjid = 2, DeviceObjid = 3, HostId = 3, Summary = "other fixture" };
+        var raw = System.Text.Json.JsonSerializer.Serialize(new Dictionary<long, PrtgDiskVerificationResult>
+        {
+            [1] = oldCandidate, [2] = unrelated
+        });
+        var secondKey = raw.IndexOf("\"2\"", StringComparison.Ordinal);
+        var comma = raw.LastIndexOf(',', secondKey);
+        Assert.True(secondKey > 0 && comma > 0);
+        var resultBlob = _backend.Blob(PrtgDiskVerificationResultStore.BlobKey);
+        resultBlob.Mutate(_ => (raw.Remove(comma, 1), true));
+        var repair = new PrtgAuthorityRepairStore(_backend);
+        var snapshot = repair.Inspect(PrtgAuthorityRepairDocumentKind.DiskVerificationResults);
+        Assert.Equal(PrtgAuthorityRepairState.InvalidJson, snapshot.State);
+        repair.ApplyTextPatches(PrtgAuthorityRepairDocumentKind.DiskVerificationResults, snapshot.Version,
+            [new(comma, 0, ",", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Empty))))]);
+
+        var semanticBlob = _backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey);
+        var semanticRaw = semanticBlob.Read()!;
+        var semanticClose = semanticRaw.LastIndexOf('}');
+        Assert.True(semanticClose > 0);
+        semanticBlob.Mutate(current => (current!.Remove(semanticClose, 1), true));
+        var semanticSnapshot = repair.Inspect(PrtgAuthorityRepairDocumentKind.DiskSemanticEvidence);
+        Assert.Equal(PrtgAuthorityRepairState.InvalidJson, semanticSnapshot.State);
+        repair.ApplyTextPatches(PrtgAuthorityRepairDocumentKind.DiskSemanticEvidence, semanticSnapshot.Version,
+            [new(semanticClose, 0, "}", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Empty))))]);
+
+        var invalidated = _results.Get(1)!;
+        Assert.Equal("Stale", invalidated.Status);
+        Assert.Equal("repair-invalidated", invalidated.ParserSemanticVersion);
+        var invalidatedEvidence = _evidence.Get(1)!;
+        Assert.Equal("repair-invalidated", invalidatedEvidence.ParserSemanticVersion);
+        Assert.Equal(now.AddMinutes(-2), invalidatedEvidence.VerifiedAtUtc);
+        Assert.True(invalidatedEvidence.RepairInvalidatedAtUtc > oldCandidate.CheckedAtUtc);
+        Assert.Throws<InvalidOperationException>(() => _service.ConfirmManually(
+            new(1, "8", "Free Space", "%", 1, "descending-danger", "must reject old candidate"), 42));
+
+        var window = PrtgDiskVerificationService.AnalysisDayWindow(day, profile.AnalysisTimeZoneId);
+        using (var db = _fx.NewContext())
+        {
+            db.PrtgValues.AddRange(Enumerable.Range(0, 6).Select(index => new PrtgValueRow
+            {
+                SensorObjid = 1,
+                PeriodStart = DateTime.SpecifyKind(window.StartUtc.AddHours(index * 4), DateTimeKind.Unspecified),
+                AvgValue = 72.5, MinValue = 72.5, MaxValue = 72.5, Coverage = 100,
+                Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.UtcNow
+            }));
+            db.SaveChanges();
+        }
+        var history = "{\"histdata\":[" + string.Join(",", Enumerable.Range(0, 5).Select(index =>
+            "{\"datetime_raw\":" + window.StartUtc.AddHours(index * 4).ToOADate().ToString("R", CultureInfo.InvariantCulture) +
+            ",\"Free Space_raw\":72.5}")) + "]}";
+        var clientFactory = new Func<SystemSettings, PrtgClient>(currentSettings =>
+            PrtgClientFactory.Create(currentSettings, new DelegateHandler((request, _) =>
+            {
+                var path = request.RequestUri!.PathAndQuery;
+                var body = path.Contains("content=sensors", StringComparison.Ordinal)
+                    ? "{\"sensors\":[{\"objid\":1,\"parentid\":2,\"type\":\"snmpdiskfree\",\"cumsince_raw\":\"fixture-created-1\"}]}"
+                    : path.Contains("content=channels", StringComparison.Ordinal)
+                        ? "{\"channels\":[{\"objid\":8,\"name\":\"Free Space\",\"unit\":\"%\",\"scaling\":1,\"primary\":true}]}"
+                        : history;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            }), new PrtgRequestBudget()));
+        var runState = new PrtgProbeRunState();
+        var normalProbe = new PrtgDiskVerificationService(_settings, store, _hosts, runState, _evidence,
+            _results, new PrtgBackfillRunState(), new PrtgStructureSyncRunState(), new SchedulerRunState(),
+            _ruleStore, clientFactory);
+        Assert.True(normalProbe.TryStart(new(1, day.ToDateTime(TimeOnly.MinValue), Guid.NewGuid().ToString()), out var error), error);
+        Assert.True(SpinWait.SpinUntil(() => _results.Get(1)?.Status == nameof(PrtgDiskSemanticProbeStatus.Verified),
+            TimeSpan.FromSeconds(10)));
+        Assert.Null(_evidence.Get(1)?.RepairInvalidatedAtUtc);
+        Assert.True(_service.CheckEvidence(1).IsValid);
+    }
+
+    [Fact]
+    public void SemanticSyntaxRepairBlocksOldManualCandidateAndFailsClosedWithoutUsableBarrier()
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var now = DateTime.UtcNow;
+        var fixtureHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
+        ConfigureReadySourcePolicy("UTC");
+        var profile = PrtgResourceFixture.ConfigureDiskTrustedProfile(store,
+            _fx.Blob(PrtgMonitoringPolicyStore.BlobKey),
+            _fx.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey), 1, 2, 1, "snmpdiskfree",
+            fixtureHour.AddHours(-1), sourceGeneration: "source-v1", channelIdentifier: "8");
+        var identity = store.GetResourceIdentity(1);
+        var day = PrtgDiskVerificationService.CompletedDay(now, profile.AnalysisTimeZoneId);
+        var evidenceAt = now.AddMinutes(-5);
+        _evidence.ConfirmManually(new(1, 2, 1, "snmpdiskfree", "8", "Free Space", "%", 1,
+                "descending-danger"), 42, "fixture evidence before semantic repair", evidenceAt,
+            PrtgDiskVerificationService.ParserSemanticVersion, identity.SourceGeneration,
+            identity.Generation, identity.ChannelGeneration, identity.Epoch);
+        _results.Save(new(1, 2, 1, "snmpdiskfree", "NeedsManualReview", "candidate before repair",
+            "8", "Free Space", "%", 1, "descending-danger", 5, true, now.AddMinutes(-1),
+            day.ToDateTime(TimeOnly.MinValue), PrtgDiskVerificationService.ParserSemanticVersion,
+            SourceGeneration: identity.SourceGeneration, ResourceGeneration: identity.Generation,
+            ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
+
+        var semanticBlob = _backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey);
+        var raw = semanticBlob.Read()!;
+        var closingBrace = raw.LastIndexOf('}');
+        Assert.True(closingBrace > 0);
+        semanticBlob.Mutate(current => (current!.Remove(closingBrace, 1), true));
+        var repair = new PrtgAuthorityRepairStore(_backend);
+        var snapshot = repair.Inspect(PrtgAuthorityRepairDocumentKind.DiskSemanticEvidence);
+        Assert.Equal(PrtgAuthorityRepairState.InvalidJson, snapshot.State);
+        repair.ApplyTextPatches(PrtgAuthorityRepairDocumentKind.DiskSemanticEvidence, snapshot.Version,
+            [new(closingBrace, 0, "}", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Empty))))]);
+
+        var repaired = _evidence.Get(1)!;
+        Assert.Equal(evidenceAt, repaired.VerifiedAtUtc);
+        Assert.Equal(PrtgDiskSemanticEvidenceStore.RepairInvalidationMarker, repaired.ParserSemanticVersion);
+        Assert.True(repaired.RepairInvalidatedAtUtc > now.AddMinutes(-1));
+        Assert.Throws<InvalidOperationException>(() => _service.ConfirmManually(
+            new(1, "8", "Free Space", "%", 1, "descending-danger", "old candidate"), 42));
+
+        _evidence.Update(all => all[1] = repaired with { RepairInvalidatedAtUtc = null });
+        Assert.Throws<InvalidOperationException>(() => _service.ConfirmManually(
+            new(1, "8", "Free Space", "%", 1, "descending-danger", "missing barrier"), 42));
+        _evidence.Update(all => all[1] = repaired with { RepairInvalidatedAtUtc = now.AddMinutes(1) });
+        Assert.Throws<InvalidOperationException>(() => _service.ConfirmManually(
+            new(1, "8", "Free Space", "%", 1, "descending-danger", "future barrier"), 42));
     }
 
     [Theory]

@@ -375,7 +375,7 @@
         "LogForesight.Core/Persistence/PrtgDiskSemanticEvidenceStore.cs::CaptureSnapshot",
         "LogForesight.Core/Persistence/PrtgDiskVerificationResultStore.cs::CaptureSnapshot",
         "LogForesight.Core/Persistence/PrtgResourcePressureModeStore.cs::Find",
-        "LogForesight.Core/Persistence/PrtgAuthorityRepairStore.cs::ValidateRepairDocument",
+        "LogForesight.Core/Persistence/PrtgAuthorityRepairStore.cs::ApplyTextPatches",
         "LogForesight.Tests/PrtgAuthorityStrictJsonTests.cs::class PrtgAuthorityStrictJsonTests",
         "LogForesight.Web/Services/PrtgSnapshotDiagnosticsStore.cs::class PrtgSnapshotDiagnosticsStore",
         "LogForesight.Web/Services/PrtgDiagnosticExportActionResult.cs::class PrtgDiagnosticExportActionResult",
@@ -386,9 +386,7 @@
         "LogForesight.Core/Persistence/PrtgResourcePressureModeReplayProgressStore.cs::class PrtgResourcePressureModeReplayProgressStore"
       ],
       "remainingImplementation": [
-        "DiagnosticStore 的完整有界讀寫接線仍未完成；盤點並替換會先完整 materialize 再檢查長度的寫入/讀取路徑，保留既有 cap 與 CAS。",
-        "ExportActionResult、Core DiagnosticExportSource、CalibrationService projection 與 ProfileRefresh interruption 仍是未完成接線候選；逐個確認正式 producer/consumer 使用有界 projection、版本 fence 及安全中斷，不以類別存在當作已接線。",
-        "尚未完成 episode、hint、timeline、strategy 與 replay progress mutation 的 producer-to-consumer 全面盤點及有界/版本保護寫入接線。"
+        "identity／qualification／binding 的有界 mutation 候選仍待完整整合提交；修復頁及實際角色操作接線另由 F1/F2 核對。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [

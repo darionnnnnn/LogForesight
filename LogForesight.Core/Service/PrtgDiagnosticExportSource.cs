@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Data;
 using System.Data.Common;
 using System.Globalization;
@@ -315,7 +315,7 @@ public sealed class PrtgDiagnosticExportSource
         LfDbContext context, string blobKey, string propertyName,
         [EnumeratorCancellation] CancellationToken cancellationToken) where T : class
     {
-        await ValidateDictionaryKeys(context, blobKey, cancellationToken).ConfigureAwait(false);
+        await ValidateDictionaryKeys<T>(context, blobKey, cancellationToken).ConfigureAwait(false);
         long afterKey = 0;
         while (true)
         {
@@ -353,13 +353,32 @@ public sealed class PrtgDiagnosticExportSource
         }
     }
 
-    private static async Task ValidateDictionaryKeys(
-        LfDbContext context, string blobKey, CancellationToken cancellationToken)
+    private static async Task ValidateDictionaryKeys<T>(
+        LfDbContext context, string blobKey, CancellationToken cancellationToken) where T : class
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateCompleteDictionaryAuthority<T>(context, blobKey);
+        cancellationToken.ThrowIfCancellationRequested();
         await using var command = CreateDictionaryValidationCommand(context, blobKey);
         var invalid = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         if (Convert.ToInt32(invalid, CultureInfo.InvariantCulture) != 0)
             throw new InvalidDataException("PRTG 語意證據 blob 有非正整數 key 或重複 key。");
+    }
+
+    // Keep the bounded raw document and validation DOM outside the async row iterator's
+    // lifetime. SQL continues paging entries; no whole typed dictionary is retained.
+    private static void ValidateCompleteDictionaryAuthority<T>(LfDbContext context, string blobKey) where T : class
+    {
+        var maximum = Math.Max(PrtgDiskSemanticEvidenceStore.MaximumSnapshotCharacters,
+            PrtgDiskVerificationResultStore.MaximumSnapshotCharacters);
+        var read = EfJsonBlobStore.ReadBoundedInContext(context, blobKey, maximum);
+        if (read.Version == 0 && read.Prefix is null) return;
+        if (read.ReportedLength > maximum || read.Prefix is null)
+            throw new InvalidDataException("PRTG semantic export document exceeds its complete physical read limit.");
+        var span = read.Prefix.AsSpan().TrimStart();
+        if (span.IsEmpty || span[0] != '{')
+            throw new InvalidDataException("PRTG semantic export document must be a JSON object.");
+        StrictAuthorityJsonDocument.Validate<Dictionary<long, T>>(read.Prefix);
     }
 
     private static DbCommand CreateDictionaryValidationCommand(LfDbContext context, string blobKey)

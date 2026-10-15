@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Persistence;
@@ -81,6 +82,7 @@ public sealed class PrtgResourceFormalEpisodeStore(EfJsonBlobStore blob)
 {
     public const int MaximumEpisodesPerHost = 128;
     public const int MaximumEvidenceWatermarksPerHost = 128;
+    public const int MaximumCharacters = 2 * 1024 * 1024;
     private static readonly HashSet<string> ReasonCodes = new(StringComparer.Ordinal)
     {
         "disk-two-hour-low-water", "disk-seven-day-low-water-trend"
@@ -89,6 +91,47 @@ public sealed class PrtgResourceFormalEpisodeStore(EfJsonBlobStore blob)
     public static string BlobKey(long hostId) => hostId > 0
         ? $"prtg_resource_formal_episodes_{hostId}"
         : throw new ArgumentOutOfRangeException(nameof(hostId));
+
+    public new PrtgResourceFormalEpisodeDocument Get()
+    {
+        var read = blob.ReadBoundedWithVersion(MaximumCharacters);
+        if (read.Version == 0 && read.Prefix is null) return new();
+        if (read.ReportedLength > MaximumCharacters || read.Prefix is null ||
+            read.Prefix.Length > MaximumCharacters)
+            throw new InvalidDataException("PRTG formal episode document exceeds its bounded read limit.");
+        if (string.IsNullOrWhiteSpace(read.Prefix))
+            throw new JsonException("Existing PRTG formal episode document is empty.");
+        var document = JsonSerializer.Deserialize<PrtgResourceFormalEpisodeDocument>(read.Prefix,
+            LfJsonOptions.Pretty) ?? throw new JsonException("PRTG formal episode document is null.");
+        OnDeserialized(document);
+        return document;
+    }
+
+    public new PrtgResourceFormalEpisodeDocument Update(Action<PrtgResourceFormalEpisodeDocument> mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        return blob.MutateWithContext((_, raw) =>
+        {
+            var document = DeserializeForMutation(raw);
+            mutation(document);
+            Touch(document);
+            var content = JsonSerializer.Serialize(document, LfJsonOptions.Pretty);
+            if (content.Length > MaximumCharacters)
+                throw new InvalidDataException("PRTG formal episode document exceeds its bounded write limit.");
+            return (content, document);
+        }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
+    }
+
+    private PrtgResourceFormalEpisodeDocument DeserializeForMutation(string? raw)
+    {
+        if (raw is null) return new();
+        if (string.IsNullOrWhiteSpace(raw))
+            throw new JsonException("Existing PRTG formal episode document is empty.");
+        var document = JsonSerializer.Deserialize<PrtgResourceFormalEpisodeDocument>(raw, LfJsonOptions.Pretty)
+            ?? throw new JsonException("PRTG formal episode document is null.");
+        OnDeserialized(document);
+        return document;
+    }
 
     public PrtgResourceFormalEpisode? GetCurrent(long hostId, long sensorObjid) =>
         hostId > 0 && sensorObjid > 0

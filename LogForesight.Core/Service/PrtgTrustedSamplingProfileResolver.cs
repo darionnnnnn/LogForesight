@@ -17,11 +17,18 @@ public static class PrtgTrustedSamplingProfileResolver
 {
     public static string StrategyFingerprint(string sourceGeneration,
         string rawTimestampTimeZoneId, string sourceApiTimeZoneId, string analysisTimeZoneId,
-        string strategyName, int strategyMinutes)
+        string strategyName, int strategyMinutes, long rawAuthorityRevision = 0)
     {
+        if (rawAuthorityRevision < 0)
+            throw new ArgumentOutOfRangeException(nameof(rawAuthorityRevision));
         var facts = string.Join("\u001f", sourceGeneration, rawTimestampTimeZoneId,
             sourceApiTimeZoneId, analysisTimeZoneId, strategyName,
             strategyMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (rawAuthorityRevision > 0)
+        {
+            var component = PrtgMonitoringPolicy.RawAuthorityRevisionComponent(rawAuthorityRevision);
+            facts += "\u001f" + component.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + component;
+        }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(facts)));
     }
 
@@ -30,11 +37,18 @@ public static class PrtgTrustedSamplingProfileResolver
         string strategyName, int strategyMinutes)
     {
         ArgumentNullException.ThrowIfNull(policy);
+        if (policy.RawAuthorityRevision < 0) return string.Empty;
         var strategy = StrategyFingerprint(policy.SourceGeneration, policy.RawTimestampTimeZoneId,
-            policy.SourceTimeZoneId, policy.AnalysisTimeZoneId, strategyName, strategyMinutes);
+            policy.SourceTimeZoneId, policy.AnalysisTimeZoneId, strategyName, strategyMinutes,
+            policy.RawAuthorityRevision);
         var facts = string.Join("\u001f", strategy, policy.EndpointHint, policy.TimeBasisEvidenceReference,
             policy.SourceCultureName, policy.ValidFrom.ToUniversalTime().ToString("O",
                 System.Globalization.CultureInfo.InvariantCulture));
+        if (policy.RawAuthorityRevision > 0)
+        {
+            var component = PrtgMonitoringPolicy.RawAuthorityRevisionComponent(policy.RawAuthorityRevision);
+            facts += "\u001f" + component.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + component;
+        }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(facts)));
     }
 
@@ -77,7 +91,7 @@ public static class PrtgTrustedSamplingProfileResolver
 
         var strategyFingerprint = StrategyFingerprint(policy.SourceGeneration,
             profile.RawTimestampTimeZoneId, profile.SourceApiTimeZoneId, profile.AnalysisTimeZoneId,
-            strategyName, strategyMinutes);
+            strategyName, strategyMinutes, policy.RawAuthorityRevision);
         var authorityContextFingerprint = AuthorityContextFingerprint(policy, strategyName, strategyMinutes);
         if (profile.SensorObjid != sensorObjid || profile.SourceGeneration != policy.SourceGeneration ||
             profile.AuthorityContextFingerprint != authorityContextFingerprint ||

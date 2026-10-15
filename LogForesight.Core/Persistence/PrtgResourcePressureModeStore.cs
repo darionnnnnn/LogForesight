@@ -17,6 +17,36 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
         ? $"prtg_resource_pressure_modes_{hostId}"
         : throw new ArgumentOutOfRangeException(nameof(hostId));
 
+    public new PrtgResourcePressureModeDocument Get()
+    {
+        var read = blob.ReadBoundedWithVersion(MaximumDocumentCharacters);
+        if (read.Version == 0 && read.Prefix is null) return new();
+        if (read.ReportedLength > MaximumDocumentCharacters || read.Prefix is null ||
+            read.Prefix.Length > MaximumDocumentCharacters)
+            throw new InvalidDataException("PRTG resource mode document exceeds its bounded read limit.");
+        if (string.IsNullOrWhiteSpace(read.Prefix))
+            throw new JsonException("Existing PRTG resource mode document is empty.");
+        StrictAuthorityJsonDocument.Validate<PrtgResourcePressureModeDocument>(read.Prefix);
+        var document = JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(read.Prefix, LfJsonOptions.Pretty)
+            ?? throw new JsonException("PRTG mode document is null.");
+        ValidateDocument(document, GetHostIdFromBlobLocation());
+        return document;
+    }
+
+    public new PrtgResourcePressureModeDocument Update(Action<PrtgResourcePressureModeDocument> mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        PrtgResourcePressureModeDocument? result = null;
+        MutateModeDocument((_, document) =>
+        {
+            mutation(document);
+            ValidateMutationDocument(document);
+            result = document;
+            return true;
+        });
+        return result!;
+    }
+
     public PrtgResourcePressureModeGrant? Find(long hostId, long sensorObjid, PrtgResourceFamily family)
     {
         if (hostId <= 0 || sensorObjid <= 0 || !Enum.IsDefined(family)) return null;
@@ -48,8 +78,38 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
             throw new InvalidDataException("PRTG resource mode document exceeds its bounded read limit.");
         if (string.IsNullOrWhiteSpace(read.Prefix))
             throw new JsonException("Existing PRTG resource mode document is empty.");
+        StrictAuthorityJsonDocument.Validate<PrtgResourcePressureModeDocument>(read.Prefix);
         var document = JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(read.Prefix, LfJsonOptions.Pretty)
             ?? throw new JsonException("PRTG mode document is null.");
+        ValidateDocument(document, hostId);
+        // Keep the off event in storage as audit history, but a later exact enabled grant
+        // supersedes its withdrawal authority for that same source/resource generation.
+        // A different generation's marker remains actionable and can withdraw only that generation.
+        var currentRevocations = document.Revocations.Where(revocation => !document.Grants.Any(grant =>
+            grant.FormalEnabled && grant.HostId == revocation.HostId &&
+            grant.SensorObjid == revocation.SensorObjid && grant.Family == revocation.Family &&
+            grant.SourceGeneration == revocation.SourceGeneration &&
+            grant.ResourceGeneration == revocation.ResourceGeneration &&
+            grant.UpdatedAtUtc > revocation.DisabledAtUtc)).ToArray();
+        return new(hostId, document.Grants.ToArray(), currentRevocations, read.Version)
+        {
+            ReplayJobs = document.ReplayJobs.ToArray()
+        };
+    }
+
+    internal static void ValidateRepairDocument(string raw, long hostId)
+    {
+        if (hostId <= 0 || raw.Length > MaximumDocumentCharacters)
+            throw new InvalidDataException("PRTG mode repair candidate is outside its formal limit.");
+        if (string.IsNullOrWhiteSpace(raw)) throw new JsonException("Existing PRTG resource mode document is empty.");
+        StrictAuthorityJsonDocument.Validate<PrtgResourcePressureModeDocument>(raw);
+        var document = JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(raw, LfJsonOptions.Pretty)
+            ?? throw new JsonException("PRTG mode document is null.");
+        ValidateDocument(document, hostId);
+    }
+
+    private static void ValidateDocument(PrtgResourcePressureModeDocument document, long hostId)
+    {
         if (document.Grants is null || document.Grants.Count > MaximumResourcesPerHost ||
             document.Grants.Any(grant => grant is null || grant.HostId != hostId || !IsValid(grant)) ||
             document.Revocations is null || document.Revocations.Count > MaximumRevocationsPerHost ||
@@ -67,10 +127,6 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
         if (document.ReplayJobs is null || document.ReplayJobs.Count > MaximumReplayJobsPerHost ||
             document.ReplayJobs.Any(job => !IsValidReplayJob(job) || job!.HostId != hostId))
             throw new InvalidDataException("PRTG mode replay queue is malformed or exceeds its bound.");
-        return new(hostId, document.Grants.ToArray(), currentRevocations, read.Version)
-        {
-            ReplayJobs = document.ReplayJobs.ToArray()
-        };
     }
 
     /// <summary>Keyset-pages hosts with persisted mode documents; replay discovery does not depend on PRTG policy.</summary>
@@ -197,8 +253,7 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
                 throw new InvalidDataException("PRTG resource mode document exceeds its bounded write limit.");
             var document = string.IsNullOrWhiteSpace(raw)
                 ? new PrtgResourcePressureModeDocument()
-                : JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(raw, LfJsonOptions.Pretty)
-                    ?? throw new JsonException("PRTG mode document is null.");
+                : DeserializeModeDocument(raw);
             document.ReplayJobs ??= [];
             if (document.Grants is null || document.Revocations is null)
                 throw new InvalidDataException("PRTG resource mode document has null grant or revocation data.");
@@ -398,15 +453,13 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
     private static bool IsTerminalTransition(LfDbContext ctx, PrtgResourcePressureModeReplayJob job)
     {
         var key = PrtgResourcePressureModeReplayProgressStore.BlobKey(job.HostId);
-        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
-            .Select(blob => new { Prefix = blob.Content.Substring(0,
-                PrtgResourcePressureModeReplayProgressStore.MaximumCharacters + 1),
-                ContentLength = blob.Content.Length })
-            .FirstOrDefault();
-        if (row is null) return false;
-        if (row.ContentLength > PrtgResourcePressureModeReplayProgressStore.MaximumCharacters)
+        var rows = Sql.BoundedJsonBlobBatchReader.Read(ctx, [key],
+            PrtgResourcePressureModeReplayProgressStore.MaximumCharacters);
+        if (!rows.TryGetValue(key, out var row)) return false;
+        if (row.Content is null || row.Length > PrtgResourcePressureModeReplayProgressStore.MaximumCharacters)
             throw new InvalidDataException("PRTG mode replay progress exceeds its bounded transaction read limit.");
-        var document = JsonSerializer.Deserialize<PrtgResourcePressureModeReplayProgressDocument>(row.Prefix,
+        StrictAuthorityJsonDocument.Validate<PrtgResourcePressureModeReplayProgressDocument>(row.Content);
+        var document = JsonSerializer.Deserialize<PrtgResourcePressureModeReplayProgressDocument>(row.Content,
             LfJsonOptions.Pretty) ?? throw new JsonException("PRTG mode replay progress is null.");
         if (document.Items is null || document.Items.Count > PrtgResourcePressureModeReplayProgressStore.MaximumJobsPerHost ||
             document.Items.Any(item => item is null || item.HostId != job.HostId))
@@ -430,21 +483,56 @@ public sealed class PrtgResourcePressureModeStore(EfJsonBlobStore blob)
                 throw new InvalidDataException("PRTG resource mode document exceeds its bounded write limit.");
             var document = string.IsNullOrWhiteSpace(raw)
                 ? new PrtgResourcePressureModeDocument()
-                : JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(raw, LfJsonOptions.Pretty)
-                    ?? throw new JsonException("PRTG mode document is null.");
+                : DeserializeModeDocument(raw);
             document.Grants ??= [];
             document.Revocations ??= [];
             document.ReplayJobs ??= [];
-            if (document.Grants.Count > MaximumResourcesPerHost || document.Revocations.Count > MaximumRevocationsPerHost ||
-                document.ReplayJobs.Count > MaximumReplayJobsPerHost)
-                throw new InvalidDataException("PRTG resource mode store exceeds its bound.");
+            ValidateMutationDocument(document);
             var changed = mutate(ctx, document);
+            ValidateMutationDocument(document);
             var content = JsonSerializer.Serialize(document, LfJsonOptions.Pretty);
             if (content.Length > MaximumDocumentCharacters)
                 throw new InvalidDataException("PRTG resource mode document exceeds its bounded write limit.");
             return (content, changed);
         }, maxCurrentCharacters: MaximumDocumentCharacters, skipUnchangedContent: true,
             enforceCurrentUtf8ByteCap: false);
+    }
+
+    private static PrtgResourcePressureModeDocument DeserializeModeDocument(string raw)
+    {
+        StrictAuthorityJsonDocument.Validate<PrtgResourcePressureModeDocument>(raw);
+        return JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(raw, LfJsonOptions.Pretty)
+            ?? throw new JsonException("PRTG mode document is null.");
+    }
+
+    private static void ValidateMutationDocument(PrtgResourcePressureModeDocument document)
+    {
+        document.Grants ??= [];
+        document.Revocations ??= [];
+        document.ReplayJobs ??= [];
+        if (document.Grants.Count > MaximumResourcesPerHost || document.Revocations.Count > MaximumRevocationsPerHost ||
+            document.ReplayJobs.Count > MaximumReplayJobsPerHost)
+            throw new InvalidDataException("PRTG resource mode store exceeds its bound.");
+        var hostIds = document.Grants.Where(item => item is not null).Select(item => item.HostId)
+            .Concat(document.Revocations.Where(item => item is not null).Select(item => item.HostId))
+            .Concat(document.ReplayJobs.Where(item => item is not null).Select(item => item.HostId))
+            .Distinct().Take(2).ToArray();
+        if (hostIds.Length > 1)
+            throw new InvalidDataException("PRTG resource mode document mixes host identities.");
+        if (hostIds.Length == 1) ValidateDocument(document, hostIds[0]);
+        else if (document.Grants.Count != 0 || document.Revocations.Count != 0 || document.ReplayJobs.Count != 0)
+            throw new InvalidDataException("PRTG resource mode document has invalid host identities.");
+    }
+
+    private long GetHostIdFromBlobLocation()
+    {
+        const string prefix = "db:prtg_resource_pressure_modes_";
+        var location = blob.Location;
+        if (!location.StartsWith(prefix, StringComparison.Ordinal) ||
+            !long.TryParse(location.AsSpan(prefix.Length), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var hostId) || hostId <= 0)
+            throw new InvalidOperationException("This mode store is not bound to a canonical host blob key.");
+        return hostId;
     }
 
     private static bool IsValidReplayJob(PrtgResourcePressureModeReplayJob? job) =>

@@ -1,4 +1,4 @@
-using LogForesight.Core.Persistence;
+﻿using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using System.Globalization;
 using System.Text.Json;
@@ -79,6 +79,22 @@ public sealed class PrtgTrustedSamplingProfileTests
         return PrtgTrustedSamplingProfileResolver.Resolve(profile, currentIdentity,
             policy ?? Policy(), 77, sensorType, strategy, minutes, effective ?? Effective,
             at.AddSeconds(-1), at);
+    }
+
+    [Fact]
+    public void RawAuthorityRevisionRejectsOldProfileAfterTimeBasisReturnsToOriginalValue()
+    {
+        var profile = Profile();
+        var policy = Policy();
+        Assert.True(Resolve(profile, policy: policy).Ready);
+        policy.RawTimestampTimeZoneId = "Pacific Standard Time";
+        policy.RawAuthorityRevision = 1;
+        Assert.False(Resolve(profile, policy: policy).Ready);
+        policy.RawTimestampTimeZoneId = "UTC";
+        policy.RawAuthorityRevision = 2;
+        var rejected = Resolve(profile, policy: policy);
+        Assert.False(rejected.Ready);
+        Assert.Equal("profile_identity_or_policy_stale", rejected.RejectionReason);
     }
 
     [Theory]

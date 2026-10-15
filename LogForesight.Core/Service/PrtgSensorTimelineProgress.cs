@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -42,6 +42,48 @@ public sealed class PrtgSensorTimelineProgressStore(EfJsonBlobStore blob)
     : JsonBlobSingleton<PrtgSensorTimelineProgress>(blob)
 {
     public const string BlobKey = "prtg_sensor_timeline_progress_v1";
+    public const int MaximumCharacters = 8 * 1024;
+
+    public new PrtgSensorTimelineProgress Get()
+    {
+        var read = blob.ReadBoundedWithVersion(MaximumCharacters);
+        if (read.Version == 0 && read.Prefix is null) return new();
+        if (read.ReportedLength > MaximumCharacters || read.Prefix is null ||
+            read.Prefix.Length > MaximumCharacters)
+            throw new InvalidDataException("PRTG timeline progress exceeds its bounded read limit.");
+        if (string.IsNullOrWhiteSpace(read.Prefix))
+            throw new JsonException("Existing PRTG timeline progress is empty.");
+        var progress = JsonSerializer.Deserialize<PrtgSensorTimelineProgress>(read.Prefix,
+            LfJsonOptions.Pretty) ?? throw new JsonException("PRTG timeline progress is null.");
+        OnDeserialized(progress);
+        return progress;
+    }
+
+    public new PrtgSensorTimelineProgress Update(Action<PrtgSensorTimelineProgress> mutation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        return blob.MutateWithContext((_, raw) =>
+        {
+            var progress = DeserializeForMutation(raw);
+            mutation(progress);
+            Touch(progress);
+            var content = JsonSerializer.Serialize(progress, LfJsonOptions.Pretty);
+            if (content.Length > MaximumCharacters)
+                throw new InvalidDataException("PRTG timeline progress exceeds its bounded write limit.");
+            return (content, progress);
+        }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
+    }
+
+    private PrtgSensorTimelineProgress DeserializeForMutation(string? raw)
+    {
+        if (raw is null) return new();
+        if (string.IsNullOrWhiteSpace(raw))
+            throw new JsonException("Existing PRTG timeline progress is empty.");
+        var progress = JsonSerializer.Deserialize<PrtgSensorTimelineProgress>(raw, LfJsonOptions.Pretty)
+            ?? throw new JsonException("PRTG timeline progress is null.");
+        OnDeserialized(progress);
+        return progress;
+    }
 
     public static string ScopeFingerprint(PrtgMonitoringPolicy policy, SystemSettings settings)
     {
@@ -77,7 +119,7 @@ public sealed class PrtgSensorTimelineProgressStore(EfJsonBlobStore blob)
         {
             blob.MutateWithContext((context, currentJson) =>
             {
-                var row = context.Blobs.SingleOrDefault(item => item.BlobKey == BlobKey);
+                var rowExists = currentJson is not null;
                 var expectedVersions = expectedFenceVersions.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
                 expectedVersions[PrtgMonitoringPolicyStore.BlobKey] = expectedPolicyVersion;
                 expectedVersions["system_settings"] = expectedSettingsVersion;
@@ -89,7 +131,7 @@ public sealed class PrtgSensorTimelineProgressStore(EfJsonBlobStore blob)
                         .Select(item => new { item.BlobKey, item.Version }).ToArray();
                     foreach (var version in rows) versions[version.BlobKey] = version.Version;
                 }
-                var current = string.IsNullOrWhiteSpace(currentJson)
+                var current = currentJson is null
                     ? new PrtgSensorTimelineProgress()
                     : JsonSerializer.Deserialize<PrtgSensorTimelineProgress>(currentJson, LfJsonOptions.Pretty)
                         ?? throw new JsonException("Timeline progress is invalid.");
@@ -98,11 +140,14 @@ public sealed class PrtgSensorTimelineProgressStore(EfJsonBlobStore blob)
                     current.BootstrapSettingsRevision != expectedSettingsRevision ||
                     expectedVersions.Any(pair => versions.GetValueOrDefault(pair.Key) != pair.Value) ||
                     precondition is not null && !precondition(current) ||
-                    row is null && (expectedCycleId.Length != 0 || expectedCycleOutcome != "not-started" || expectedSettingsRevision != 0))
+                    !rowExists && (expectedCycleId.Length != 0 || expectedCycleOutcome != "not-started" || expectedSettingsRevision != 0))
                     throw new StaleTimelineProgressException();
                 mutation(current);
-                return (JsonSerializer.Serialize(current, LfJsonOptions.Pretty), true);
-            });
+                var content = JsonSerializer.Serialize(current, LfJsonOptions.Pretty);
+                if (content.Length > MaximumCharacters)
+                    throw new InvalidDataException("PRTG timeline progress exceeds its bounded write limit.");
+                return (content, true);
+            }, maxCurrentCharacters: MaximumCharacters, enforceCurrentUtf8ByteCap: false);
             return true;
         }
         catch (StaleTimelineProgressException) { return false; }

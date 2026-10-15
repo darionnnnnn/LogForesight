@@ -48,7 +48,7 @@ D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.
 
 原列 `PrtgResourcePressureModeStore.Find`、binding Save／RecordQualification、qualification ResumeExisting 及 disk semantic／verification snapshot 的有界接線已存在；不再列為完全未實作。identity／host marker、silent presence、probe local facts、formal-mail claim 的完整 physical bounded reader、CAS／逐筆隔離已有程式及小型驗證；候選提交狀態依分段紀錄。
 
-仍需補齊或核對：formal episode／pressure hint／timeline progress／strategy 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。mail reservation 的有界交易及正常 SMTP consumer 接線已完成，實作待辦移除，見§8.13。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
+formal episode／pressure hint／timeline progress／strategy 的直接 mutation 已逐一接入原交易完整有界讀寫及輸出上限，實作待辦移除，見§8.14。identity／qualification／binding 的剩餘候選仍待整合提交與核對。mail reservation 的有界交易及正常 SMTP consumer 接線已完成，實作待辦移除，見§8.13。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
 
 本輪繼續逐呼叫端補齊有界projection／snapshot，保留同一transaction readset、CAS與來源authority；小型字元／超限／損壞／未知extra JSON與設定漂移反例核對等待／拒絕及零正式副作用。依使用者指示不建立33,554,432字元極限文件，雙provider邊界依官方文件及小範圍反例核對。容量export另量測，不把正式mail拒絕等同匯出吞吐通過。對應E03、E06、E07-T03、E08-T05、E10-T02。
 
@@ -477,3 +477,14 @@ summary／urgent／daily／weekly 逐收件者重驗目前可見及有效證據�
 主代理核對 store→sender→outcome→workflow／formal 接線。小範圍證據：r19 mixed lane、實際 Notify receiver 及三種正文截斷；root-smtp-definite-refusal-r23 真實 loopback SMTP 三例通過；root-smtp-unknown-raw-rollback-r24 direct sender 遺失ACK／取消及 raw overflow 四例通過；root-smtp-unknown-r25 正常 mail service 遺失ACK後重建服務不重送一例通過；root-mail-reservations-digest-r26 原子保留／拒收及11個小型 digest 例共13例通過。各例少量主機／問題／數值，無極限文件。r20～r22初次451分類失敗及r24單收件者案例錯用雙收件者 fixture 的失敗保留，不列成功。
 
 此段從§2刪除實作待辦；R54-05 replay／qualification 等 raw 語意相依及跨consumer完整驗收仍保留，不因此勾選 B2／F3／G／H 父項。
+
+
+### 8.14 Raw 單調版本與嚴格有界 authority 後端（2026-10-15）
+
+Policy 三個正式 writer 以同一交易舊 raw/source tuple 管理 RawAuthorityRevision，只有 raw/source 時基變更遞增；DateFormat／message revision／選取範圍不改此版本，負值與 overflow 拒寫。revision=0 保留舊 fingerprint，正值接入 SourceAuthority／Strategy／AuthorityContext，改後改回不能恢復舊 proof。時間授權儲存與既有受影響磁碟證據失效同交易，未知欄位保留。這是後端相依交付，時間設定頁與各 raw worker 接線另段核對。
+
+Mode／共用 disk authority 在 typed deserialize 前拒絕重複 JSON key、已知欄位大小寫別名及非 canonical sensor key；不部分信任壞 entry。共用文件有界讀寫保留未知欄位。修復 store／Maintain API 提供固定預算、16 edits／每 edit 4096字元、CAS／刪除文字 SHA 防護；語法修復使相依 authority 失效。serverAdmin 只能必要統計，明細需既有 Maintain＋ViewAll，不新增角色。修復後舊／未重新取得的 probe 不能人工確認復活；正常 probe 才解除屏障。瀏覽器與完整角色操作仍待驗。
+
+Episode／hint 上限各2Mi、timeline／strategy 各8Ki UTF-16字元，正常 producer／直接 mutation 及 CAS 使用完整 physical bounded read，同交易核對並檢查輸出，壞文件不覆寫。上限由既有欄位／128項結構與 JSON escaping 計算；不建立上限 payload。Diagnostic export 在 SQL 分頁前先完整有界驗共用 authority 的 JSON 不歧義，不保留完整 typed dictionary。
+
+主代理分段證據：r28 strict九例／repair六例／四種state六例共21例通過；該輪另有一個replay fixture等待案例失敗，另段修正，不算本段成功；r5／r6舊結果保留；r16 resolver拒絕 ABA 舊 profile，r17正常人工確認；r19四種 state六例；r24 overflow連同已讀磁碟證據版本／原文同交易回滾；r21共用 export valid／重複key／別名／physical NUL 四例。舊失敗結果保留，雙provider正式上限依官方文件與已留存tiny字元反例核對，未做33M極限測試。完整角色、容量及最終成品驗收不因此通過。
