@@ -12,11 +12,20 @@ namespace LogForesight.Core.Service;
 public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClient client)
 {
     public static readonly TimeSpan IncrementalOverlap = TimeSpan.FromDays(1);
-    private const int PageSize = 1000;
+    private const int ProductionPageSize = 1000;
+    private readonly int _pageSize = ProductionPageSize;
     private const int MaximumPages = PrtgSensorTimelineEvidence.MaximumBootstrapPagesPerSensor;
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan BatchLeaseDuration = TimeSpan.FromMinutes(10);
     private readonly string _leaseOwner = Guid.NewGuid().ToString("N");
+
+    internal PrtgSensorTimelineCollector(StorageBackend backend, PrtgClient client, int pageSize)
+        : this(backend, client)
+    {
+        if (pageSize is < 1 or > ProductionPageSize)
+            throw new ArgumentOutOfRangeException(nameof(pageSize));
+        _pageSize = pageSize;
+    }
 
     public async Task<PrtgSensorTimelineEvidence> CollectAsync(long sensorId, long hostId,
         PrtgMonitoringPolicy policy, CancellationToken ct,
@@ -134,9 +143,11 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             {
                 var page = firstPage + pageOffset;
                 token.ThrowIfCancellationRequested();
+                if (!MessageTimeAuthorityStillCurrent(policy, messageTimeFingerprint))
+                    throw new InvalidOperationException("message-time-authority-changed-before-page-request");
                 if (initial.LastCompleteThrough == null) bootstrapPagesRead++;
                 using var doc = JsonDocument.Parse(await client.GetJsonAsync(
-                    $"api/table.json?content=messages&id={sensorId}&columns=objid,datetime,status,message&filter_drel=12months&sortby=-datetime&start={page * PageSize}&count={PageSize}", token));
+                    $"api/table.json?content=messages&id={sensorId}&columns=objid,datetime,status,message&filter_drel=12months&sortby=-datetime&start={page * _pageSize}&count={_pageSize}", token));
                 if (!doc.RootElement.TryGetProperty("messages", out var rows) || rows.ValueKind != JsonValueKind.Array)
                     throw new InvalidOperationException("messages-array-missing");
                 var count = rows.GetArrayLength();
@@ -175,7 +186,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
                 if (pageOffset == 0 && expectedBoundary.Length > 0 && currentPageHash != expectedBoundary)
                     throw new InvalidOperationException("timeline-resume-boundary-shifted");
                 lastPageHash = currentPageHash;
-                if (boundaryReached || count < PageSize) { ended = true; break; }
+                if (boundaryReached || count < _pageSize) { ended = true; break; }
                 pendingNextPage = page + 1;
                 pendingBoundaryHash = lastPageHash;
             }
@@ -277,7 +288,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         {
             var reason = ex is InvalidOperationException ? ex.Message : "source-query-failed";
             return RecordFailure(store, leaseVersion, attemptAt, reason, scanned,
-                preservePrefix && reason is not "identity-or-scope-changed-during-query" and not "contradictory-status-at-same-time" and not "timeline-resume-boundary-shifted",
+                preservePrefix && reason is not "identity-or-scope-changed-during-query" and not "contradictory-status-at-same-time" and not "timeline-resume-boundary-shifted" and not "message-time-authority-changed-before-page-request",
                 scannedKeys, pendingNextPage, pendingBoundaryHash, bootstrapPagesRead);
         }
         finally
@@ -379,10 +390,14 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             var after = await ReadIdentityBatch(items.Select(x => x.SensorId).ToArray(), token);
             var currentPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
             var currentSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            if (currentPolicy.MessageTimeFingerprint(currentSettings.PrtgUrl) != messageTimeFingerprint)
+            {
+                MarkBatchUncommitted(stores, candidates, "message-time-authority-changed-before-page-request", preservePrefix: false);
+                return stores.Values.Select(x => x.Get()).ToArray();
+            }
             if (before.MappingRevision != after.MappingRevision ||
                 backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() != before.MappingRevision ||
                 currentPolicy.SourceGeneration != policy.SourceGeneration ||
-                currentPolicy.MessageTimeFingerprint(currentSettings.PrtgUrl) != messageTimeFingerprint ||
                 items.Any(x => currentPolicy.EffectiveSensorScope(x.SensorId, x.HostId) != policy.EffectiveSensorScope(x.SensorId, x.HostId)) ||
                 !currentSettings.PrtgEnabled ||
                 currentPolicy.EndpointHint != EfPrtgObservationStore.SourceHintFor(currentSettings.PrtgUrl) ||
@@ -580,9 +595,11 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         {
             var page = firstPage + pageOffset;
             token.ThrowIfCancellationRequested();
+            if (!MessageTimeAuthorityStillCurrent(policy, candidate.MessageTimeFingerprint))
+                throw new InvalidOperationException("message-time-authority-changed-before-page-request");
             if (candidate.Initial.LastCompleteThrough == null) candidate.BootstrapPagesRead++;
             using var doc = JsonDocument.Parse(await client.GetJsonAsync(
-                $"api/table.json?content=messages&id={candidate.Item.SensorId}&columns=objid,datetime,status,message&filter_drel=12months&sortby=-datetime&start={page * PageSize}&count={PageSize}", token));
+                $"api/table.json?content=messages&id={candidate.Item.SensorId}&columns=objid,datetime,status,message&filter_drel=12months&sortby=-datetime&start={page * _pageSize}&count={_pageSize}", token));
             if (!doc.RootElement.TryGetProperty("messages", out var rows) || rows.ValueKind != JsonValueKind.Array)
                 throw new InvalidOperationException("messages-array-missing");
             var count = rows.GetArrayLength();
@@ -627,7 +644,7 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             var hash = HashPage(pageKeys, candidate.MessageTimeFingerprint);
             if (pageOffset == 0 && expectedBoundary.Length > 0 && hash != expectedBoundary)
                 throw new InvalidOperationException("timeline-resume-boundary-shifted");
-            if (boundaryReached || count < PageSize) { ended = true; break; }
+            if (boundaryReached || count < _pageSize) { ended = true; break; }
             candidate.PendingNextPage = page + 1; candidate.PendingBoundaryHash = hash;
         }
         if (!ended)
@@ -651,6 +668,13 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
         if (previousStatus != startStatus)
             candidate.Scanned.Add(new(candidate.Item.SensorId, candidate.CapturedAt, startStatus,
                 policy.SourceGeneration, candidate.Initial.ResourceGeneration));
+    }
+
+    private bool MessageTimeAuthorityStillCurrent(PrtgMonitoringPolicy policy, string fingerprint)
+    {
+        return PrtgSharedAuthoritySnapshot.TryRead(backend, out var snapshot, out _) && snapshot is not null &&
+            snapshot.Settings.PrtgEnabled && snapshot.Policy.SourceGeneration == policy.SourceGeneration &&
+            snapshot.Policy.MessageTimeFingerprint(snapshot.Settings.PrtgUrl) == fingerprint;
     }
 
     private async Task<BatchIdentitySnapshot> ReadIdentityBatch(long[] sensorIds, CancellationToken ct)
@@ -704,7 +728,12 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             }
             if (e.LastCompleteThrough == null)
                 e.BootstrapPagesRead = Math.Max(e.BootstrapPagesRead, candidate.BootstrapPagesRead);
-            if (candidate.PendingNextPage > 0 && reason != "timeline-resume-boundary-shifted")
+            if (reason == "message-time-authority-changed-before-page-request")
+            {
+                e.PendingStates.Clear(); e.PendingEventKeys.Clear();
+                e.PendingNextPage = 0; e.PendingBoundaryHash = ""; e.PendingMessageTimeFingerprint = "";
+            }
+            else if (candidate.PendingNextPage > 0 && reason != "timeline-resume-boundary-shifted")
             { e.PendingNextPage = candidate.PendingNextPage; e.PendingBoundaryHash = candidate.PendingBoundaryHash;
                 e.PendingMessageTimeFingerprint = candidate.MessageTimeFingerprint; }
             else if (reason == "timeline-resume-boundary-shifted")
@@ -783,6 +812,9 @@ public sealed class PrtgSensorTimelineCollector(StorageBackend backend, PrtgClie
             if (preservePrefix && pendingNextPage > 0 && reason != "timeline-resume-boundary-shifted")
             { e.PendingNextPage = pendingNextPage; e.PendingBoundaryHash = pendingBoundaryHash;
                 e.PendingMessageTimeFingerprint = e.MessageTimeFingerprint; }
+            else if (reason == "message-time-authority-changed-before-page-request")
+            { e.PendingStates.Clear(); e.PendingEventKeys.Clear(); e.PendingNextPage = 0;
+                e.PendingBoundaryHash = ""; e.PendingMessageTimeFingerprint = ""; }
             else if (reason == "timeline-resume-boundary-shifted")
             { e.PendingNextPage = 0; e.PendingBoundaryHash = ""; e.PendingMessageTimeFingerprint = ""; }
             if (e.LastCompleteThrough == null)

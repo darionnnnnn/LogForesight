@@ -272,6 +272,13 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 
 ## 8. 本輪實作紀錄（2026-10-14開始）
 
+### D54-01訊息時間探測與續傳（2026-10-15）
+
+- probe schema 1.1 保存已設定的 Date Format／時區／語系、修訂與 fingerprint，並於既有 classic messages 小樣本查詢核對解析相容性；明示遠端帳號設定未讀回，不當成 qualification 或原始時間基準證明。舊 1.0 證據可讀且明示訊息時間未驗證。
+- timeline 每頁請求前重新核對保存授權；授權漂移停止下一頁並清除未提交 cursor／pending prefix，保留既有歷史正式涵蓋。tiny page seam 僅供內部測試，正式頁上限不變。
+- 主代理隔離 checkout 獨立測試 5/5＋2/2、零略過；TRX：work/round54-mode-validation/work/d54-probe-root/d54-probe-root.trx 與 work/d54-probe-context-root/d54-probe-context-root.trx。Node 匯出契約與 PowerShell 有界證據 verifier 全部通過。完整來源、容量及最終 UI／成品回歸仍未通過，不勾父驗收。
+- 依使用者最新限制，不執行 33,554,432 字元文件極限測試；SQLite incremental BLOB、SQL Server DATALENGTH 與 .NET UTF-16 字元語意以官方文件及 tiny 16/17 單位案例為依據，不宣稱正式上限已實測。
+
 實作起點為`a7f2f2868c76d1af84148e40ad054d03732b1d57`，沿用feature/prtg-feedback-54。使用者授權直到全部完成、逐段驗證後commit／push；前文只規劃／待另行指示均為文件輪邊界，不撤銷本次開工。原起點a69fedd7及全部原TODO／子契約仍保留。主代理負責獨立完整性核對與驗收；委派僅gpt-6-luna low／medium／high，不用AGY。換模型額外背書依UC07，現有可執行審查仍必做。
 
 ### A1第一段：只讀容量預檢工具

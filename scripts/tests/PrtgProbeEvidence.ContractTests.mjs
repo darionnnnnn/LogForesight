@@ -9,6 +9,19 @@ assert.equal(extractProbeEvidenceJson(json), json);
 assert.equal(isProbeEvidenceDownloadable(json, false), true);
 assert.equal(isProbeEvidenceDownloadable(json, true), false);
 assert.equal(extractProbeEvidenceJson(JSON.stringify({ ...evidence, targets: [...evidence.targets, { category: 'extra' }] })), null);
+const messageTime = { authority_status: 'saved-explicit-authority', date_format: 'ymd-24', source_timezone: 'UTC',
+    source_culture: 'en-US', authority_revision: 3, authority_fingerprint: 'a'.repeat(64),
+    sample_status: 'sample-compatible', sample_source: 'classic-content-messages-api',
+    samples_checked: 2, samples_compatible: 2, remote_account_setting_read: false };
+const currentEvidence = { ...evidence, schema_version: '1.1.0', message_time: messageTime };
+assert.ok(extractProbeEvidenceJson(JSON.stringify(currentEvidence)));
+for (const invalidTime of [
+    { ...messageTime, remote_account_setting_read: true },
+    { ...messageTime, samples_compatible: 1 },
+    { ...messageTime, date_format: 'guess' },
+    { ...messageTime, sample_status: 'accepted' }
+]) assert.equal(extractProbeEvidenceJson(JSON.stringify({ ...currentEvidence, message_time: invalidTime })), null);
+assert.equal(extractProbeEvidenceJson(JSON.stringify({ ...evidence, schema_version: '1.1.0' })), null);
 for (const status of ['unknown', 'partial', 'error', 'truncated']) {
     assert.ok(extractProbeEvidenceJson(JSON.stringify({ ...evidence, status })));
 }

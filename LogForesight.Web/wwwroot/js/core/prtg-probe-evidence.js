@@ -13,8 +13,35 @@ export function extractProbeEvidenceJson(evidenceJson) {
     try {
         const parsed = JSON.parse(rawBlock);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-        if (parsed.schema_version !== '1.0.0' || parsed.evidence_ready !== false) return null;
+        if (!['1.0.0', '1.1.0'].includes(parsed.schema_version) || parsed.evidence_ready !== false) return null;
         if (!['unknown', 'partial', 'error', 'truncated'].includes(parsed.status)) return null;
+        if (parsed.schema_version === '1.1.0') {
+            const time = parsed.message_time;
+            if (!time || typeof time !== 'object' || Array.isArray(time) ||
+                !['saved-explicit-authority', 'unconfigured'].includes(time.authority_status) ||
+                !['not-observed', 'no-samples', 'sample-compatible', 'sample-mismatch', 'authority-changed'].includes(time.sample_status) ||
+                time.remote_account_setting_read !== false ||
+                !Number.isInteger(time.samples_checked) || time.samples_checked < 0 || time.samples_checked > 500 ||
+                !Number.isInteger(time.samples_compatible) || time.samples_compatible < 0 || time.samples_compatible > time.samples_checked) return null;
+            if (time.authority_status === 'saved-explicit-authority' &&
+                (!['dmy-24', 'dmy-12', 'mdy-24', 'mdy-12', 'ymd-24', 'ymd-12'].includes(time.date_format) ||
+                    typeof time.authority_fingerprint !== 'string' || !/^[0-9a-f]{64}$/i.test(time.authority_fingerprint) ||
+                    typeof time.source_timezone !== 'string' || !time.source_timezone ||
+                    typeof time.source_culture !== 'string' || !time.source_culture ||
+                    !Number.isInteger(time.authority_revision) || time.authority_revision <= 0)) return null;
+            if (time.sample_status === 'sample-compatible' &&
+                (time.authority_status !== 'saved-explicit-authority' || time.samples_checked < 1 || time.samples_compatible !== time.samples_checked)) return null;
+            if (time.sample_status === 'sample-mismatch' &&
+                (time.authority_status !== 'saved-explicit-authority' || time.samples_checked < 1 || time.samples_compatible >= time.samples_checked)) return null;
+            if (['not-observed', 'no-samples'].includes(time.sample_status) &&
+                (time.samples_checked !== 0 || time.samples_compatible !== 0)) return null;
+            if (time.sample_status === 'authority-changed' &&
+                (time.authority_status !== 'saved-explicit-authority' || time.samples_checked < 1)) return null;
+            if (time.authority_status === 'unconfigured' &&
+                (time.date_format !== 'unknown' || time.source_timezone !== 'unknown' || time.source_culture !== 'unknown' ||
+                    time.authority_revision !== null || time.authority_fingerprint !== 'unknown' ||
+                    time.sample_status !== 'not-observed' || time.samples_checked !== 0 || time.samples_compatible !== 0)) return null;
+        }
         // CPU、memory、disk、ping、traffic；與後端五類唯讀探測範圍一致。
         if (!Array.isArray(parsed.targets) || parsed.targets.length > 5) return null;
         return rawBlock;

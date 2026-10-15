@@ -309,7 +309,10 @@ public class PrtgCompatibilityProbeTests
         var evidence = await PrtgCompatibilityProbe.ExecuteCoreAsync(getJson, console, samples, context);
 
         Assert.NotNull(evidence);
-        Assert.Equal("1.0.0", evidence.SchemaVersion);
+        Assert.Equal("1.1.0", evidence.SchemaVersion);
+        Assert.Equal("unconfigured", evidence.MessageTime.AuthorityStatus);
+        Assert.Equal("not-observed", evidence.MessageTime.SampleStatus);
+        Assert.False(evidence.MessageTime.RemoteAccountSettingRead);
         Assert.Equal("partial", evidence.Status); // 探測結果永遠不可宣稱完全就緒
         Assert.False(evidence.EvidenceReady);
         Assert.Equal(5, evidence.Targets.Count);

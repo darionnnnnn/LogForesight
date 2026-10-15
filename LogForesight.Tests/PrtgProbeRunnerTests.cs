@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using LogForesight.Core;
 using LogForesight.Core.Service;
 using Xunit;
@@ -894,7 +895,7 @@ public class PrtgProbeRunnerTests
         var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
         using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
         var root = doc.RootElement;
-        Assert.Equal("1.0.0", root.GetProperty("schema_version").GetString());
+        Assert.Equal("1.1.0", root.GetProperty("schema_version").GetString());
         Assert.True(root.TryGetProperty("summary", out _));
         Assert.False(root.GetProperty("evidence_ready").GetBoolean());
     }
@@ -1017,6 +1018,8 @@ public class PrtgProbeRunnerTests
         var root = doc.RootElement;
         Assert.Equal("1.2.3.4", root.GetProperty("build_version").GetString());
         Assert.Equal(new string('a', 64), root.GetProperty("source_fingerprint").GetString());
+        Assert.Equal("unconfigured", root.GetProperty("message_time").GetProperty("authority_status").GetString());
+        Assert.Equal("not-observed", root.GetProperty("message_time").GetProperty("sample_status").GetString());
         Assert.Equal("Sqlite", root.GetProperty("storage_provider").GetString());
         Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", root.GetProperty("ef_core_provider").GetString());
         Assert.Equal(Guid.Parse("d2719dfc-2026-4104-8000-000000000001").ToString("N"), root.GetProperty("settings_revision").GetString());
@@ -1422,7 +1425,7 @@ public class PrtgProbeRunnerTests
 
         using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
         var root = doc.RootElement;
-        Assert.Equal("1.0.0", root.GetProperty("schema_version").GetString());
+        Assert.Equal("1.1.0", root.GetProperty("schema_version").GetString());
         Assert.True(root.TryGetProperty("build_version", out _));
         Assert.True(root.TryGetProperty("source_fingerprint", out _));
         Assert.True(root.TryGetProperty("summary", out _));
@@ -1665,6 +1668,48 @@ public class PrtgProbeRunnerTests
         Assert.True(result);
         Assert.Contains(console.Lines, l => l.Contains("9d-5：裝置 objid=1 逐裝置取狀態變更") && l.Contains("✓ 含下層感測器訊息"));
         Assert.Contains(console.Lines, l => l.Contains("9d-5：結論 ✓ 逐裝置查詢狀態變更可用"));
+    }
+
+    [Theory]
+    [InlineData("2026-09-18 10:00:00", "sample-compatible", 1)]
+    [InlineData("09/18/2026 10:00:00", "sample-mismatch", 0)]
+    [InlineData("2026-09-18 10:00:00", "authority-changed", 1)]
+    public async Task RunAsync_9d5的classicMessage樣本只驗證明確保存格式相容性(
+        string sourceDateTime, string expectedSampleStatus, int expectedCompatible)
+    {
+        var stub = BuildPerfStub(SensorRows(1), url =>
+        {
+            if (url.Contains("content=sensors") && url.Contains("count=5000") && UrlHasId(url, 1))
+                return JsonResponse(HttpStatusCode.OK, @"{""sensors"":[{""objid"":101}]}");
+            if (url.Contains("content=messages") && url.Contains("count=50") && UrlHasId(url, 1))
+                return JsonResponse(HttpStatusCode.OK,
+                    JsonSerializer.Serialize(new { messages = new[] { new { objid = 101, datetime = sourceDateTime } } }));
+            return null;
+        });
+        var context = new PrtgProbeEvidenceContext
+        {
+            MessageTimeEvidence = new PrtgProbeMessageTimeEvidence
+            {
+                AuthorityStatus = "saved-explicit-authority", DateFormat = PrtgMessageDateTimeParser.Ymd24,
+                SourceTimezone = "UTC", SourceCulture = "en-US", AuthorityRevision = 4,
+                AuthorityFingerprint = new string('A', 64)
+            },
+            ReadCurrentMessageTimeFingerprint = () => new string(expectedSampleStatus == "authority-changed" ? 'B' : 'A', 64)
+        };
+        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token,
+            "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+        var console = new TestConsole();
+        var result = await PrtgProbeRunner.RunAsync(client, console, context);
+
+        Assert.True(result); // message-time incompatibility does not fail raw probe observations.
+        var begin = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
+        var end = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
+        using var evidence = System.Text.Json.JsonDocument.Parse(string.Join("\n", console.Lines.Skip(begin + 1).Take(end - begin - 1)).Trim());
+        var messageTime = evidence.RootElement.GetProperty("message_time");
+        Assert.Equal(expectedSampleStatus, messageTime.GetProperty("sample_status").GetString());
+        Assert.Equal(1, messageTime.GetProperty("samples_checked").GetInt32());
+        Assert.Equal(expectedCompatible, messageTime.GetProperty("samples_compatible").GetInt32());
+        Assert.False(messageTime.GetProperty("remote_account_setting_read").GetBoolean());
     }
 
     [Fact]

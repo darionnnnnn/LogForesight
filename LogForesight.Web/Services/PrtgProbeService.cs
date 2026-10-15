@@ -1,5 +1,6 @@
 using System.Text;
 using LogForesight.Core;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
@@ -213,12 +214,13 @@ public class PrtgProbeService
         var provider = db.Database.ProviderName;
         var storage = await PrtgStorageEnvironmentProbe.CollectAsync(db, _backend.DataRoot, token);
         var facts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, settings, null, token);
+        var messageTimeEvidence = CaptureMessageTimeEvidence(settings);
         token.ThrowIfCancellationRequested();
         if (_settings.Get().Revision != settings.Revision)
             throw new InvalidOperationException("設定已變更，請重新匯出本機診斷。");
         var context = new PrtgProbeEvidenceContext
         {
-            BuildVersion = buildVersion, GeneratedAtUtc = DateTimeOffset.UtcNow,
+            SchemaVersion = "1.1.0", BuildVersion = buildVersion, GeneratedAtUtc = DateTimeOffset.UtcNow,
             HostUtcOffset = DateTimeOffset.Now.ToString("zzz"), SettingsRevision = settings.Revision,
             SourceFingerprint = PrtgCompatibilityProbe.ComputeUrlFingerprint(settings.PrtgUrl),
             StorageProvider = provider switch
@@ -229,7 +231,9 @@ public class PrtgProbeService
             },
             EfCoreProvider = provider is "Microsoft.EntityFrameworkCore.Sqlite" or "Microsoft.EntityFrameworkCore.SqlServer" ? provider : null,
             StorageEnvironment = storage, RetentionDays = settings.PrtgRetentionDays,
-            LocalFacts = facts, BuildIdentity = PrtgProbeBuildFacts.From(build)
+            LocalFacts = facts, BuildIdentity = PrtgProbeBuildFacts.From(build),
+            MessageTimeEvidence = messageTimeEvidence,
+            ReadCurrentMessageTimeFingerprint = ReadCurrentMessageTimeFingerprint
         };
         var json = PrtgCompatibilityProbe.SerializeEvidence(
             PrtgCompatibilityProbe.CreateUnobservedEvidence(context,
@@ -241,6 +245,43 @@ public class PrtgProbeService
     }
 
     public bool TryCancel() => _state.TryCancel();
+
+    private PrtgProbeMessageTimeEvidence CaptureMessageTimeEvidence(SystemSettings settings)
+    {
+        try
+        {
+            if (!PrtgSharedAuthoritySnapshot.TryRead(_backend, out var snapshot, out _) || snapshot is null ||
+                !string.Equals(snapshot.Settings.PrtgUrl, settings.PrtgUrl, StringComparison.Ordinal))
+                return new PrtgProbeMessageTimeEvidence { AuthorityStatus = "unconfigured" };
+            var policy = snapshot.Policy;
+            var fingerprint = policy.MessageTimeFingerprint(snapshot.Settings.PrtgUrl);
+            if (fingerprint.Length == 0) return new PrtgProbeMessageTimeEvidence { AuthorityStatus = "unconfigured" };
+            return new PrtgProbeMessageTimeEvidence
+            {
+                AuthorityStatus = "saved-explicit-authority",
+                DateFormat = policy.MessageDateFormat,
+                SourceTimezone = policy.SourceTimeZoneId,
+                SourceCulture = policy.SourceCultureName,
+                AuthorityRevision = policy.MessageTimeAuthorityRevision,
+                AuthorityFingerprint = fingerprint,
+                SampleStatus = "not-observed"
+            };
+        }
+        catch
+        {
+            return new PrtgProbeMessageTimeEvidence { AuthorityStatus = "unconfigured" };
+        }
+    }
+
+    private string? ReadCurrentMessageTimeFingerprint()
+    {
+        try
+        {
+            return PrtgSharedAuthoritySnapshot.TryRead(_backend, out var snapshot, out _) && snapshot is not null
+                ? snapshot.Policy.MessageTimeFingerprint(snapshot.Settings.PrtgUrl) : null;
+        }
+        catch { return null; }
+    }
 
     public bool TryStartDataFlow(out string? error, out bool isConflict) =>
         TryStartCore(dataFlow: true, out error, out isConflict);
@@ -374,12 +415,13 @@ public class PrtgProbeService
                         }
 
                         var localFacts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, s, _aiProbe, runToken);
+                        var messageTimeEvidence = CaptureMessageTimeEvidence(s);
                         operation.Checkpoint();
                         console.WriteLine($"本機摘要：{localFacts.Status}／{localFacts.Reason}；正式設定 {localFacts.PolicyHosts} 台／{localFacts.PolicySensors} 顆；守門覆寫 {localFacts.GuardOverrideSensors} 顆。摘要不授權正式風險。");
                         console.WriteLine($"昨日 NetIQ 回執 {localFacts.NetiqReceipts} 筆、成功 {localFacts.NetiqSuccess}、等待 {localFacts.NetiqWaiting}；合格父紀錄 {localFacts.NetiqEligibleParents}／{localFacts.NetiqParentRows}。AI 小請求：{localFacts.AiProbeStatus}；不是正式服務驗收。");
                         evidenceContext = new PrtgProbeEvidenceContext
                         {
-                            SchemaVersion = "1.0.0",
+                            SchemaVersion = "1.1.0",
                             BuildVersion = buildVersion,
                             GeneratedAtUtc = DateTimeOffset.UtcNow,
                             HostUtcOffset = DateTimeOffset.Now.ToString("zzz"),
@@ -394,7 +436,9 @@ public class PrtgProbeService
                             ScopeSummary = "unknown",
                             ReadinessSummary = "unknown",
                             LocalFacts = localFacts,
-                            BuildIdentity = PrtgProbeBuildFacts.From(buildIdentity)
+                            BuildIdentity = PrtgProbeBuildFacts.From(buildIdentity),
+                            MessageTimeEvidence = messageTimeEvidence,
+                            ReadCurrentMessageTimeFingerprint = ReadCurrentMessageTimeFingerprint
                         };
                         success = await PrtgProbeRunner.RunAsync(client, console, evidenceContext, runToken, json =>
                         {

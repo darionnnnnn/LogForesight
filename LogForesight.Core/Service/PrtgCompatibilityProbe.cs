@@ -14,7 +14,7 @@ namespace LogForesight.Core.Service;
 /// </summary>
 public sealed class PrtgProbeEvidenceContext
 {
-    public string SchemaVersion { get; init; } = "1.0.0";
+    public string SchemaVersion { get; init; } = "1.1.0";
     public string? BuildVersion { get; init; }
     public string? SourcePrtgVersion { get; init; }
     public string? PrtgVersion { get => SourcePrtgVersion; init => SourcePrtgVersion = value; }
@@ -35,6 +35,25 @@ public sealed class PrtgProbeEvidenceContext
     public string? ReadinessSummary { get; init; }
     public PrtgProbeLocalFacts? LocalFacts { get; init; }
     public PrtgProbeBuildFacts? BuildIdentity { get; init; }
+    public PrtgProbeMessageTimeEvidence? MessageTimeEvidence { get; set; }
+    [JsonIgnore]
+    public Func<string?>? ReadCurrentMessageTimeFingerprint { get; init; }
+}
+
+/// <summary>Saved classic-API message timestamp contract plus bounded sample compatibility observation.</summary>
+public sealed class PrtgProbeMessageTimeEvidence
+{
+    [JsonPropertyName("authority_status")] public string AuthorityStatus { get; set; } = "unconfigured";
+    [JsonPropertyName("date_format")] public string DateFormat { get; set; } = "unknown";
+    [JsonPropertyName("source_timezone")] public string SourceTimezone { get; set; } = "unknown";
+    [JsonPropertyName("source_culture")] public string SourceCulture { get; set; } = "unknown";
+    [JsonPropertyName("authority_revision")] public long? AuthorityRevision { get; set; }
+    [JsonPropertyName("authority_fingerprint")] public string AuthorityFingerprint { get; set; } = "unknown";
+    [JsonPropertyName("sample_status")] public string SampleStatus { get; set; } = "not-observed";
+    [JsonPropertyName("sample_source")] public string SampleSource { get; set; } = "classic-content-messages-api";
+    [JsonPropertyName("samples_checked")] public int SamplesChecked { get; set; }
+    [JsonPropertyName("samples_compatible")] public int SamplesCompatible { get; set; }
+    [JsonPropertyName("remote_account_setting_read")] public bool RemoteAccountSettingRead { get; set; }
 }
 
 public sealed class PrtgCompatibilityProbeEvidence
@@ -46,7 +65,7 @@ public sealed class PrtgCompatibilityProbeEvidence
     public PrtgSnapshotBatch100Capability? SnapshotBatch100Identity { get; set; }
 
     [JsonPropertyName("schema_version")]
-    public string SchemaVersion { get; set; } = "1.0.0";
+    public string SchemaVersion { get; set; } = "1.1.0";
 
     [JsonPropertyName("generated_at_utc")]
     public string GeneratedAtUtc { get; set; } = string.Empty;
@@ -103,6 +122,9 @@ public sealed class PrtgCompatibilityProbeEvidence
     [JsonPropertyName("build_identity")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public PrtgProbeBuildFacts? BuildIdentity { get; set; }
+
+    [JsonPropertyName("message_time")]
+    public PrtgProbeMessageTimeEvidence MessageTime { get; set; } = new();
 
     [JsonPropertyName("status")]
     public string Status { get; set; } = "unknown";
@@ -1140,9 +1162,10 @@ public static class PrtgCompatibilityProbe
     private static PrtgCompatibilityProbeEvidence CreateBaseEvidence(PrtgProbeEvidenceContext? context, DateTime yesterday)
     {
         var localFacts = SanitizeLocalFacts(context?.LocalFacts);
+        var messageTime = SanitizeMessageTimeEvidence(context?.MessageTimeEvidence);
         return new PrtgCompatibilityProbeEvidence
         {
-            SchemaVersion = "1.0.0",
+            SchemaVersion = "1.1.0",
             GeneratedAtUtc = (context?.GeneratedAtUtc ?? DateTimeOffset.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
             HostUtcOffset = SafeUtcOffset(context?.HostUtcOffset),
             BuildVersion = SafeBuildVersion(context?.BuildVersion),
@@ -1163,6 +1186,7 @@ public static class PrtgCompatibilityProbe
             ReadinessSummary = localFacts is { Status: "observed" } readiness
                 ? $"sampled={readiness.ReadinessSampledSensors}; bindings={readiness.SavedBindings}; qualified-profiles={readiness.QualifiedProfiles}; not-full-scope-verdict" : "unknown (local facts unavailable)",
             LocalFacts = localFacts,
+            MessageTime = messageTime,
             BuildIdentity = SafeBuildFacts(context?.BuildIdentity),
             Status = "unknown",
             EvidenceReady = false,
@@ -1172,6 +1196,44 @@ public static class PrtgCompatibilityProbe
                 End = $"{yesterday.AddDays(1):yyyy-MM-dd} 00:00:00",
                 Limitations = "來源時區及時間欄位基準未確認"
             }
+        };
+    }
+
+    private static PrtgProbeMessageTimeEvidence SanitizeMessageTimeEvidence(PrtgProbeMessageTimeEvidence? value)
+    {
+        if (value is null) return new();
+        var format = PrtgMessageDateTimeParser.IsSupported(value.DateFormat) ? value.DateFormat : "unknown";
+        var fingerprint = value.AuthorityFingerprint is { Length: 64 } text && text.All(Uri.IsHexDigit)
+            ? text.ToUpperInvariant() : "unknown";
+        var authorityConfigured = value.AuthorityStatus == "saved-explicit-authority" && format != "unknown" &&
+            !string.IsNullOrWhiteSpace(value.SourceTimezone) && value.SourceTimezone.Length <= 128 &&
+            !string.IsNullOrWhiteSpace(value.SourceCulture) && value.SourceCulture.Length <= 64 &&
+            value.AuthorityRevision is > 0 && fingerprint != "unknown";
+        string timezone = "unknown", culture = "unknown";
+        if (authorityConfigured)
+        {
+            try
+            {
+                timezone = TimeZoneInfo.FindSystemTimeZoneById(value.SourceTimezone).Id;
+                culture = CultureInfo.GetCultureInfo(value.SourceCulture).Name;
+            }
+            catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
+            { authorityConfigured = false; }
+        }
+        return new PrtgProbeMessageTimeEvidence
+        {
+            AuthorityStatus = authorityConfigured ? "saved-explicit-authority" : "unconfigured",
+            DateFormat = authorityConfigured ? format : "unknown",
+            SourceTimezone = authorityConfigured ? timezone : "unknown",
+            SourceCulture = authorityConfigured ? culture : "unknown",
+            AuthorityRevision = authorityConfigured ? value.AuthorityRevision : null,
+            AuthorityFingerprint = authorityConfigured ? fingerprint : "unknown",
+            SampleStatus = !authorityConfigured ? "not-observed" : value.SampleStatus is "not-observed" or "no-samples" or "sample-compatible" or "sample-mismatch" or "authority-changed"
+                ? value.SampleStatus : "not-observed",
+            SampleSource = "classic-content-messages-api",
+            SamplesChecked = authorityConfigured ? Math.Clamp(value.SamplesChecked, 0, 500) : 0,
+            SamplesCompatible = authorityConfigured ? Math.Clamp(value.SamplesCompatible, 0, Math.Clamp(value.SamplesChecked, 0, 500)) : 0,
+            RemoteAccountSettingRead = false
         };
     }
 
@@ -2653,7 +2715,7 @@ public static class PrtgCompatibilityProbe
         // 第 4 級截斷：保證在病態或超大 metadata 情境下產出有效且 <= 64KiB 的 fallback JSON
         var fallback = new
         {
-            schema_version = "1.0.0",
+            schema_version = "1.1.0",
             status = "truncated",
             reason = "Evidence payload exceeded 64KiB cap even after progressive truncation",
             evidence_ready = false,
@@ -2666,6 +2728,7 @@ public static class PrtgCompatibilityProbe
                 source_prtg_version = SanitizePrtgVersion(evidence.SourcePrtgVersion) ?? "unknown",
                 storage_provider = SafeProvider(evidence.StorageProvider)
             },
+            message_time = evidence.MessageTime,
             targets_count = evidence.Targets.Count,
             targets = Array.Empty<object>()
         };
@@ -2678,6 +2741,6 @@ public static class PrtgCompatibilityProbe
         }
 
         // 極限保障：最小合法 JSON
-        return "{\"schema_version\":\"1.0.0\",\"status\":\"truncated\",\"reason\":\"Payload exceeded 64KiB cap\",\"evidence_ready\":false,\"targets\":[]}";
+        return "{\"schema_version\":\"1.1.0\",\"status\":\"truncated\",\"reason\":\"Payload exceeded 64KiB cap\",\"evidence_ready\":false,\"targets\":[],\"message_time\":{\"authority_status\":\"unconfigured\",\"date_format\":\"unknown\",\"source_timezone\":\"unknown\",\"source_culture\":\"unknown\",\"authority_revision\":null,\"authority_fingerprint\":\"unknown\",\"sample_status\":\"not-observed\",\"sample_source\":\"classic-content-messages-api\",\"samples_checked\":0,\"samples_compatible\":0,\"remote_account_setting_read\":false}}";
     }
 }

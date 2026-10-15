@@ -1,8 +1,8 @@
 #Requires -Version 7.0
 <#
-用途：核對環境探測 JSON 的版本、來源／設定修訂、保存時區 authority、readiness、raw identity 與部署／儲存 metadata。
-用法：pwsh -File .\Verify-PrtgProbeEvidence.ps1 -Path .\evidence.json [-ExpectedVersion 1.0.53.2] [-ExpectedRevision <40 位 hex>] [-ExpectedSettingsRevision <opaque revision token>]
-輸出為固定摘要；不代表來源、風險資格或 fleet capacity 驗收。需要 PowerShell 7。
+用途：核對環境探測 JSON 的版本、來源／設定修訂、保存時區與訊息時間 authority、readiness、raw identity 與部署／儲存 metadata。
+用法：pwsh -File .\Verify-PrtgProbeEvidence.ps1 -Path .\evidence.json [-ExpectedMessageTimeFormat ymd-24] [-ExpectedMessageTimeFingerprint <SHA-256>]
+舊 1.0.0 證據仍可讀，但訊息時間明確標為未驗證；樣本相容只核對保存契約，並非遠端帳號設定讀回或 qualification。需要 PowerShell 7。
 #>
 [CmdletBinding()]
 param(
@@ -10,7 +10,9 @@ param(
     [string] $Path,
     [string] $ExpectedVersion = '1.0.53.2',
     [string] $ExpectedRevision,
-    [string] $ExpectedSettingsRevision
+    [string] $ExpectedSettingsRevision,
+    [string] $ExpectedMessageTimeFormat,
+    [string] $ExpectedMessageTimeFingerprint
 )
 
 $ErrorActionPreference = 'Stop'
@@ -435,6 +437,67 @@ function Test-LocalContext {
         RevisionReason = $revisionReason; FingerprintReason = $fingerprintReason; AuthorityReason = $authorityReason }
 }
 
+function Test-MessageTimeEvidence {
+    param([System.Text.Json.JsonElement] $Root, [string] $SchemaVersion)
+    $element = Get-JsonProperty $Root 'message_time'
+    if ($SchemaVersion -eq '1.0.0') {
+        return [pscustomobject]@{ Complete=$false; Authority='legacy-unverified'; Format='unknown'; Sample='legacy-message-time-unverified'; Fingerprint='unknown'; Checked=0; Compatible=0 }
+    }
+    $names = @('authority_status','date_format','source_timezone','source_culture','authority_revision',
+        'authority_fingerprint','sample_status','sample_source','samples_checked','samples_compatible','remote_account_setting_read')
+    if ($null -eq $element -or -not (Test-AllowedJsonProperties $element $names)) { Fail-Safely 'InvalidMessageTimeEvidence' }
+    $authority = Get-JsonProperty $element 'authority_status'
+    $format = Get-JsonProperty $element 'date_format'
+    $timezone = Get-JsonProperty $element 'source_timezone'
+    $culture = Get-JsonProperty $element 'source_culture'
+    $revision = Get-JsonProperty $element 'authority_revision'
+    $fingerprint = Get-JsonProperty $element 'authority_fingerprint'
+    $sample = Get-JsonProperty $element 'sample_status'
+    $source = Get-JsonProperty $element 'sample_source'
+    $checked = Get-JsonProperty $element 'samples_checked'
+    $compatible = Get-JsonProperty $element 'samples_compatible'
+    $remote = Get-JsonProperty $element 'remote_account_setting_read'
+    $formats = @('dmy-24','dmy-12','mdy-24','mdy-12','ymd-24','ymd-12')
+    if ($null -eq $authority -or -not (Test-JsonString $authority @('saved-explicit-authority','unconfigured')) -or
+        $null -eq $format -or -not (Test-JsonString $format $($formats + @('unknown'))) -or
+        $null -eq $timezone -or -not (Test-JsonString $timezone $null) -or $timezone.GetString().Length -gt 128 -or
+        $null -eq $culture -or -not (Test-JsonString $culture $null) -or $culture.GetString().Length -gt 64 -or
+        $null -eq $revision -or -not (Test-JsonNonNegativeInteger $revision -AllowNull:$true) -or
+        $null -eq $fingerprint -or -not (Test-JsonString $fingerprint $null) -or
+        $fingerprint.GetString() -cnotmatch '^(unknown|[a-fA-F0-9]{64})$' -or
+        $null -eq $sample -or -not (Test-JsonString $sample @('not-observed','no-samples','sample-compatible','sample-mismatch','authority-changed')) -or
+        $null -eq $source -or -not (Test-JsonString $source @('classic-content-messages-api')) -or
+        $null -eq $checked -or -not (Test-JsonNonNegativeInteger $checked -Maximum 500) -or
+        $null -eq $compatible -or -not (Test-JsonNonNegativeInteger $compatible -Maximum 500) -or
+        $compatible.GetInt64() -gt $checked.GetInt64() -or
+        $null -eq $remote -or $remote.ValueKind -ne [System.Text.Json.JsonValueKind]::False) { Fail-Safely 'InvalidMessageTimeEvidence' }
+    $authorityText = $authority.GetString(); $formatText = $format.GetString(); $sampleText = $sample.GetString()
+    if ($authorityText -eq 'saved-explicit-authority') {
+        if ($formatText -notin $formats -or $timezone.GetString() -eq 'unknown' -or $culture.GetString() -eq 'unknown' -or
+            $revision.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or $revision.GetInt64() -le 0 -or
+            $fingerprint.GetString() -eq 'unknown') { Fail-Safely 'InvalidMessageTimeAuthority' }
+        try { [void][TimeZoneInfo]::FindSystemTimeZoneById($timezone.GetString()); [void][Globalization.CultureInfo]::GetCultureInfo($culture.GetString()) }
+        catch { Fail-Safely 'InvalidMessageTimeAuthority' }
+    } elseif ($formatText -ne 'unknown' -or $timezone.GetString() -ne 'unknown' -or $culture.GetString() -ne 'unknown' -or
+        $revision.ValueKind -ne [System.Text.Json.JsonValueKind]::Null -or $fingerprint.GetString() -ne 'unknown' -or
+        $sampleText -ne 'not-observed' -or $checked.GetInt64() -ne 0 -or $compatible.GetInt64() -ne 0) {
+        Fail-Safely 'InvalidUnconfiguredMessageTimeAuthority'
+    }
+    if (($sampleText -eq 'sample-compatible' -and ($authorityText -ne 'saved-explicit-authority' -or
+            $checked.GetInt64() -lt 1 -or $compatible.GetInt64() -ne $checked.GetInt64())) -or
+        ($sampleText -eq 'sample-mismatch' -and ($authorityText -ne 'saved-explicit-authority' -or
+            $checked.GetInt64() -lt 1 -or $compatible.GetInt64() -ge $checked.GetInt64())) -or
+        ($sampleText -in @('not-observed','no-samples') -and ($checked.GetInt64() -ne 0 -or $compatible.GetInt64() -ne 0)) -or
+        ($sampleText -eq 'authority-changed' -and ($authorityText -ne 'saved-explicit-authority' -or $checked.GetInt64() -lt 1))) {
+        Fail-Safely 'ContradictoryMessageTimeSamples'
+    }
+    if ($ExpectedMessageTimeFormat -and $formatText -cne $ExpectedMessageTimeFormat) { Fail-Safely 'MessageTimeFormatMismatch' }
+    if ($ExpectedMessageTimeFingerprint -and $fingerprint.GetString() -cne $ExpectedMessageTimeFingerprint) { Fail-Safely 'MessageTimeFingerprintMismatch' }
+    $complete = $authorityText -eq 'saved-explicit-authority' -and $sampleText -eq 'sample-compatible'
+    return [pscustomobject]@{ Complete=$complete; Authority=$authorityText; Format=$formatText; Sample=$sampleText;
+        Fingerprint=$fingerprint.GetString(); Checked=$checked.GetInt32(); Compatible=$compatible.GetInt32() }
+}
+
 function Test-ProbeBuildIdentity {
     param([System.Text.Json.JsonElement] $Facts, [string] $ExpectedBuild, [string] $Revision)
     $names = @('Status','Reason','SourceState','SourceCommit','SourceFingerprint','Token','WebVersion','CoreVersion',
@@ -476,6 +539,8 @@ if ($PSBoundParameters.ContainsKey('ExpectedSettingsRevision') -and
     $ExpectedSettingsRevision -cnotmatch '^[A-Za-z0-9._:-]{1,128}$') {
     Fail-Safely 'InvalidExpectedSettingsRevision'
 }
+if ($ExpectedMessageTimeFormat -and $ExpectedMessageTimeFormat -notin @('dmy-24','dmy-12','mdy-24','mdy-12','ymd-24','ymd-12')) { Fail-Safely 'InvalidExpectedMessageTimeFormat' }
+if ($ExpectedMessageTimeFingerprint -and $ExpectedMessageTimeFingerprint -notmatch '^[a-fA-F0-9]{64}$') { Fail-Safely 'InvalidExpectedMessageTimeFingerprint' }
 
 try {
     $file = Get-Item -LiteralPath $Path -ErrorAction Stop
@@ -516,7 +581,7 @@ try {
     $build = Get-JsonProperty $root 'build_version'
     $targets = Get-JsonProperty $root 'targets'
     $rootStatus = Get-JsonProperty $root 'status'
-    if ($null -eq $schema -or $schema.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $schema.GetString() -ne '1.0.0') { Fail-Safely 'UnsupportedSchema' }
+    if ($null -eq $schema -or $schema.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $schema.GetString() -notin @('1.0.0','1.1.0')) { Fail-Safely 'UnsupportedSchema' }
     if ($null -eq $build -or $build.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { Fail-Safely 'MissingBuildVersion' }
     if ($null -eq $targets -or $targets.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) { Fail-Safely 'InvalidTargetsShape' }
     if ($null -eq $rootStatus -or $rootStatus.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { Fail-Safely 'InvalidRootStatus' }
@@ -535,6 +600,8 @@ try {
     $metadataIncomplete = $null -eq $buildIdentity -or (Get-JsonProperty $buildIdentity 'Status').GetString() -ne 'verified'
     $localContext = Test-LocalContext $root $localFacts
     if (-not $localContext.Complete) { $metadataIncomplete = $true }
+    $messageTime = Test-MessageTimeEvidence $root $schema.GetString()
+    if (-not $messageTime.Complete) { $metadataIncomplete = $true }
     $deployment = Get-JsonProperty $root 'deployment_resources'
     if ($null -eq $deployment -or $deployment.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) { Fail-Safely 'InvalidDeploymentResourcesShape' }
     $processorCount = Get-JsonProperty $deployment 'processor_count'
@@ -995,6 +1062,8 @@ try {
     Write-Output "SourceFingerprintReason: $($localContext.FingerprintReason)"
     Write-Output "SavedTimeAuthority: source_timezone=$($localContext.Timezone); source_locale=$($localContext.Locale)"
     Write-Output "SavedTimeAuthorityReason: $($localContext.AuthorityReason)"
+    Write-Output "MessageTimeAuthority: authority=$($messageTime.Authority); format=$($messageTime.Format); sample=$($messageTime.Sample); compatible=$($messageTime.Compatible)/$($messageTime.Checked); fingerprint=$($messageTime.Fingerprint)"
+    Write-Output 'MessageTimeRemoteAccountSettingRead: false'
     Write-Output "LocalScopeSummary: $($localContext.Scope)"
     Write-Output "LocalReadinessSummary: $($localContext.Readiness)"
     Write-Output "LocalFactsStatus: $(if ($null -eq $localFacts) { 'missing' } else { (Get-JsonProperty $localFacts 'Status').GetString() })"

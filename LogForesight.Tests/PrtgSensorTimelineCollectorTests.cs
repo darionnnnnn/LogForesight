@@ -82,15 +82,16 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         });
     }
     private async Task<PrtgSensorTimelineEvidence> Collect(HttpMessageHandler handler,
-        PrtgSamplingActivity.BackgroundLease? admission = null, CancellationToken cancellationToken = default)
+        PrtgSamplingActivity.BackgroundLease? admission = null, CancellationToken cancellationToken = default,
+        int pageSize = 1000)
     {
         using var client = new PrtgClient("https://fixture.example", "fixture", 10, false, handler, PrtgAuthModes.Token, "", "", "");
-        return await new PrtgSensorTimelineCollector(_backend, client).CollectAsync(10, 1, _policy, cancellationToken, admission);
+        return await new PrtgSensorTimelineCollector(_backend, client, pageSize).CollectAsync(10, 1, _policy, cancellationToken, admission);
     }
-    private async Task<PrtgSensorTimelineEvidence> CollectBatch(Handler handler)
+    private async Task<PrtgSensorTimelineEvidence> CollectBatch(Handler handler, int pageSize = 1000)
     {
         using var client = new PrtgClient("https://fixture.example", "fixture", 10, false, handler, PrtgAuthModes.Token, "", "", "");
-        return Assert.Single(await new PrtgSensorTimelineCollector(_backend, client).CollectBatchAsync(
+        return Assert.Single(await new PrtgSensorTimelineCollector(_backend, client, pageSize).CollectBatchAsync(
             [new PrtgTimelineWorkItem(10, 1)], _policy, CancellationToken.None));
     }
     [Fact]
@@ -296,7 +297,9 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
             e.NextAttemptAt = DateTimeOffset.UtcNow.AddHours(5);
         });
 
-        var pageTime = DateTime.Now.AddHours(-2);
+        // Keep both rows newer than the collector's captured bootstrap boundary,
+        // while remaining within its two-minute future-clock allowance.
+        var pageTime = DateTime.Now.AddSeconds(30);
         var page = JsonSerializer.Serialize(new { messages = Enumerable.Range(0, 1000).Select(i => new
         {
             objid = 10, datetime = pageTime.AddSeconds(-i).ToString("yyyy-MM-dd HH:mm:ss"),
@@ -327,6 +330,90 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         Assert.Equal("covered", completed.QualityReason);
         Assert.Contains(retry.QueryUris, uri => uri.Contains("start=1000", StringComparison.Ordinal));
         Assert.DoesNotContain(completed.States, state => state.At == diskCheckedAt.AddMinutes(-5));
+    }
+
+    [Fact]
+    public async Task TinyPagesResumeOnlyWithTheSameMessageTimeFingerprint()
+    {
+        Seed();
+        var pageTime = DateTime.Now.AddHours(-2);
+        string Row(DateTime at, string name) => JsonSerializer.Serialize(new
+        {
+            messages = new[] { new { objid = 10, datetime = at.ToString("yyyy-MM-dd HH:mm:ss"),
+                status = "Up", status_raw = "607", message = name } }
+        });
+        var firstPage = JsonSerializer.Serialize(new
+        {
+            messages = new[]
+            {
+                new { objid = 10, datetime = pageTime.ToString("yyyy-MM-dd HH:mm:ss"), status = "Up", status_raw = "607", message = "m1" },
+                new { objid = 10, datetime = pageTime.AddSeconds(-1).ToString("yyyy-MM-dd HH:mm:ss"), status = "Up", status_raw = "607", message = "m2" }
+            }
+        });
+        var interrupted = new Handler(q => q.Contains("content=sensors") ? Sensor() :
+            q.Contains("start=0") ? firstPage : "{}");
+
+        var partial = await CollectBatch(interrupted, pageSize: 2);
+
+        Assert.Equal(1, partial.PendingNextPage);
+        Assert.Equal(_policy.MessageTimeFingerprint("https://fixture.example"), partial.PendingMessageTimeFingerprint);
+        Assert.Equal("messages-array-missing", partial.QualityReason);
+
+        var resumed = new Handler(q => q.Contains("content=sensors") ? Sensor() :
+            q.Contains("start=0") ? firstPage : Row(pageTime.AddSeconds(-2), "m3"));
+        var complete = await CollectBatch(resumed, pageSize: 2);
+
+        Assert.Equal("covered", complete.QualityReason);
+        Assert.Equal(0, complete.PendingNextPage);
+        Assert.Empty(complete.PendingStates);
+        Assert.Contains(resumed.QueryUris, uri => uri.Contains("start=0", StringComparison.Ordinal) && uri.Contains("count=2", StringComparison.Ordinal));
+        Assert.Contains(resumed.QueryUris, uri => uri.Contains("start=2", StringComparison.Ordinal) && uri.Contains("count=2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task MessageTimeAuthorityDriftStopsBeforeTheNextTinyPageAndDropsCursor()
+    {
+        Seed();
+        var baseline = Store.Get();
+        Store.Update(e => { e.DiskSemanticFingerprint = "keep-raw-disk-proof"; });
+        var pageTime = DateTime.Now.AddHours(-2);
+        var firstPage = JsonSerializer.Serialize(new
+        {
+            messages = new[]
+            {
+                new { objid = 10, datetime = pageTime.ToString("yyyy-MM-dd HH:mm:ss"), status = "Up", status_raw = "607", message = "m1" },
+                new { objid = 10, datetime = pageTime.AddSeconds(-1).ToString("yyyy-MM-dd HH:mm:ss"), status = "Up", status_raw = "607", message = "m2" }
+            }
+        });
+        var changed = false;
+        var handler = new Handler(q =>
+        {
+            if (q.Contains("content=sensors")) return Sensor();
+            if (q.Contains("content=messages", StringComparison.Ordinal) && q.Contains("start=0", StringComparison.Ordinal))
+            {
+                if (!changed)
+                {
+                    changed = true;
+                    new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
+                    { p.MessageDateFormat = PrtgMessageDateTimeParser.Dmy24; p.MessageTimeAuthorityRevision = 2; });
+                }
+                return firstPage;
+            }
+            return "{\"messages\":[]}";
+        });
+
+        var after = await CollectBatch(handler, pageSize: 2);
+
+        Assert.Equal("message-time-authority-changed-before-page-request", after.QualityReason);
+        Assert.Single(handler.QueryUris.Where(uri => uri.Contains("content=messages", StringComparison.Ordinal)));
+        Assert.Contains(handler.QueryUris, uri => uri.Contains("start=0", StringComparison.Ordinal));
+        Assert.DoesNotContain(handler.QueryUris, uri => uri.Contains("start=2", StringComparison.Ordinal));
+        Assert.Equal(0, after.PendingNextPage);
+        Assert.Equal("", after.PendingBoundaryHash);
+        Assert.Empty(after.PendingStates);
+        Assert.Equal(baseline.LastCompleteThrough, after.LastCompleteThrough);
+        Assert.Equal(baseline.Coverage, after.Coverage);
+        Assert.Equal("keep-raw-disk-proof", after.DiskSemanticFingerprint);
     }
 
     [Fact]

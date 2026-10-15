@@ -491,9 +491,24 @@ public static class PrtgProbeRunner
                     ScopeSummary = evidenceContext.ScopeSummary,
                     ReadinessSummary = evidenceContext.ReadinessSummary,
                     LocalFacts = evidenceContext.LocalFacts,
-                    BuildIdentity = evidenceContext.BuildIdentity
+                    BuildIdentity = evidenceContext.BuildIdentity,
+                    MessageTimeEvidence = evidenceContext.MessageTimeEvidence,
+                    ReadCurrentMessageTimeFingerprint = evidenceContext.ReadCurrentMessageTimeFingerprint
                 };
             }
+            try
+            {
+                await MeasureObjectQueriesAsync(client, console, sampleDeviceIds, sensorSamples, evidenceContext, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                console.WriteLine($"     9d-5：無法量測（{ex.Message}）");
+            }
+
             await PrtgCompatibilityProbe.ExecuteAsync(client, console, sensorSamples, evidenceContext, ct, onEvidenceJsonProduced);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -503,19 +518,6 @@ public static class PrtgProbeRunner
         catch (Exception ex)
         {
             console.WriteLine($"     相容性證據探測無法完成（{ex.Message}）");
-        }
-
-        try
-        {
-            await MeasureObjectQueriesAsync(client, console, sampleDeviceIds, sensorSamples, ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            console.WriteLine($"     9d-5：無法量測（{ex.Message}）");
         }
 
         console.WriteLine();
@@ -701,11 +703,20 @@ public static class PrtgProbeRunner
         IRunConsole console,
         List<long> sampleDeviceIds,
         List<SensorTypeSample> sensorSamples,
+        PrtgProbeEvidenceContext? evidenceContext,
         CancellationToken ct)
     {
+        var messageTimeEvidence = evidenceContext?.MessageTimeEvidence;
+        if (messageTimeEvidence is not null)
+        {
+            messageTimeEvidence.SampleStatus = "not-observed";
+            messageTimeEvidence.SamplesChecked = 0;
+            messageTimeEvidence.SamplesCompatible = 0;
+        }
         if (sampleDeviceIds == null || sampleDeviceIds.Count == 0)
         {
             console.WriteLine("     9d-5：略過（沒有可用的裝置樣本）");
+            FinalizeMessageTimeSampleEvidence(evidenceContext, console);
             return;
         }
 
@@ -758,6 +769,7 @@ public static class PrtgProbeRunner
                 swB.Stop();
 
                 var parsedB = ParseTable(jsonB, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
+                ObserveMessageTimeSamples(evidenceContext, parsedB.Rows.Select(row => row.DatetimeText));
                 var rowsB = parsedB.Rows.Select(r => r.Objid).ToList();
                 var subSet = rowsA.ToHashSet();
                 var nB = rowsB.Count;
@@ -780,6 +792,8 @@ public static class PrtgProbeRunner
                 console.WriteLine($"     9d-5：裝置 objid={deviceId} 無法量測（{ex.Message}）");
             }
         }
+
+        FinalizeMessageTimeSampleEvidence(evidenceContext, console);
 
         // (c) 結論行
         if (bVerdicts.Any(v => v.StartsWith("✓", StringComparison.Ordinal)))
@@ -881,6 +895,55 @@ public static class PrtgProbeRunner
         {
             console.WriteLine($"     9d-5：filter_objid 分批取值無法量測（{ex.Message}）");
         }
+    }
+
+    private static void ObserveMessageTimeSamples(PrtgProbeEvidenceContext? context, IEnumerable<string?> samples)
+    {
+        var evidence = context?.MessageTimeEvidence;
+        if (evidence is null || evidence.AuthorityStatus != "saved-explicit-authority" ||
+            !PrtgMessageDateTimeParser.IsSupported(evidence.DateFormat)) return;
+        TimeZoneInfo zone;
+        System.Globalization.CultureInfo culture;
+        try
+        {
+            zone = TimeZoneInfo.FindSystemTimeZoneById(evidence.SourceTimezone);
+            culture = System.Globalization.CultureInfo.GetCultureInfo(evidence.SourceCulture);
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
+        { evidence.SampleStatus = "sample-mismatch"; return; }
+
+        foreach (var sample in samples.Take(Math.Max(0, 500 - evidence.SamplesChecked)))
+        {
+            evidence.SamplesChecked++;
+            if (PrtgMessageDateTimeParser.TryParse(sample, evidence.DateFormat, culture, zone, out _, out _))
+                evidence.SamplesCompatible++;
+        }
+        if (evidence.SamplesChecked > 0)
+            evidence.SampleStatus = evidence.SamplesCompatible == evidence.SamplesChecked ? "sample-compatible" : "sample-mismatch";
+    }
+
+    private static void FinalizeMessageTimeSampleEvidence(PrtgProbeEvidenceContext? context, IRunConsole console)
+    {
+        var evidence = context?.MessageTimeEvidence;
+        if (evidence is null) return;
+        if (evidence.AuthorityStatus != "saved-explicit-authority")
+        {
+            evidence.AuthorityStatus = "unconfigured";
+            evidence.SampleStatus = "not-observed";
+        }
+        else if (evidence.SamplesChecked == 0)
+        {
+            evidence.SampleStatus = "no-samples";
+        }
+        else
+        {
+            string? current;
+            try { current = context?.ReadCurrentMessageTimeFingerprint?.Invoke(); }
+            catch { current = null; }
+            if (!string.Equals(current, evidence.AuthorityFingerprint, StringComparison.Ordinal))
+                evidence.SampleStatus = "authority-changed";
+        }
+        console.WriteLine($"     訊息時間樣本：saved={evidence.AuthorityStatus}; format={evidence.DateFormat}; sample={evidence.SampleStatus}; compatible={evidence.SamplesCompatible}/{evidence.SamplesChecked}; 遠端帳號設定未讀回。");
     }
 
     /// <summary>

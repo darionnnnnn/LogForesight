@@ -22,8 +22,14 @@ function New-ValidEvidence {
         NetiqReason='parent-qualification-is-separate-from-receipt-success'; AiProbeStatus='small-request-ready'; AiProbeElapsedMilliseconds=10
         AiProbeTotalTokens=2; AiProbeEvidenceOrigin='current-small-request'; AiCostReason='tokens-observed-price-not-configured'
     }
+    $messageTime = @{
+        authority_status='saved-explicit-authority'; date_format='ymd-24'; source_timezone='UTC'; source_culture='en-US'
+        authority_revision=3; authority_fingerprint=('a'*64); sample_status='sample-compatible';
+        sample_source='classic-content-messages-api'; samples_checked=2; samples_compatible=2; remote_account_setting_read=$false
+    }
     return [ordered]@{
-        schema_version = '1.0.0'
+        schema_version = '1.1.0'
+        message_time = $messageTime
         build_version = "$script:version+$script:revision"
         build_identity = @{
             Status='verified'; Reason='matching-source-and-assemblies'; SourceState='clean'; SourceCommit=$script:revision
@@ -159,7 +165,7 @@ function Set-Batch100Metadata {
 }
 
 function Invoke-ContractCase {
-    param([string] $Name, [object] $Evidence, [int] $ExpectedExitCode, [string[]] $ExpectedOutput = @(), [string] $RawJson, [string] $ExpectedSettingsRevision, [string[]] $ForbiddenOutput = @())
+    param([string] $Name, [object] $Evidence, [int] $ExpectedExitCode, [string[]] $ExpectedOutput = @(), [string] $RawJson, [string] $ExpectedSettingsRevision, [string] $ExpectedMessageTimeFormat, [string] $ExpectedMessageTimeFingerprint, [string[]] $ForbiddenOutput = @())
     $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("lf-probe-contract-$([guid]::NewGuid().ToString('N')).json")
     try {
         $json = if ($PSBoundParameters.ContainsKey('RawJson')) { $RawJson } else { ConvertTo-Json -InputObject $Evidence -Depth 20 -Compress }
@@ -177,6 +183,14 @@ function Invoke-ContractCase {
         if ($PSBoundParameters.ContainsKey('ExpectedSettingsRevision')) {
             $start.ArgumentList.Add('-ExpectedSettingsRevision')
             $start.ArgumentList.Add($ExpectedSettingsRevision)
+        }
+        if ($PSBoundParameters.ContainsKey('ExpectedMessageTimeFormat')) {
+            $start.ArgumentList.Add('-ExpectedMessageTimeFormat')
+            $start.ArgumentList.Add($ExpectedMessageTimeFormat)
+        }
+        if ($PSBoundParameters.ContainsKey('ExpectedMessageTimeFingerprint')) {
+            $start.ArgumentList.Add('-ExpectedMessageTimeFingerprint')
+            $start.ArgumentList.Add($ExpectedMessageTimeFingerprint)
         }
         $start.RedirectStandardOutput = $true
         $start.RedirectStandardError = $true
@@ -248,6 +262,19 @@ Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
 )
 
 Invoke-ContractCase 'settings-revision-can-be-checked-by-operator' $valid 0 @("SettingsRevision: $settingsRevision",'SettingsRevisionReason: matches-expected-settings-revision') -ExpectedSettingsRevision $settingsRevision
+Invoke-ContractCase 'saved-message-time-sample-is-compatibility-only' $valid 0 @('MessageTimeAuthority: authority=saved-explicit-authority; format=ymd-24; sample=sample-compatible','MessageTimeRemoteAccountSettingRead: false','HANDOFF_INTEGRITY_OK') -ExpectedMessageTimeFormat 'ymd-24' -ExpectedMessageTimeFingerprint ('a'*64)
+$legacyMessageTime = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$legacyMessageTime.schema_version = '1.0.0'; $legacyMessageTime.Remove('message_time')
+Invoke-ContractCase 'legacy-message-time-is-readable-but-unverified' $legacyMessageTime 2 @('MessageTimeAuthority: authority=legacy-unverified; format=unknown; sample=legacy-message-time-unverified','Result: INCOMPLETE')
+$noMessageSamples = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$noMessageSamples.message_time.sample_status = 'no-samples'; $noMessageSamples.message_time.samples_checked = 0; $noMessageSamples.message_time.samples_compatible = 0
+Invoke-ContractCase 'no-message-samples-remain-incomplete' $noMessageSamples 2 @('MessageTimeAuthority: authority=saved-explicit-authority; format=ymd-24; sample=no-samples','Result: INCOMPLETE')
+$claimsRemoteRead = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$claimsRemoteRead.message_time.remote_account_setting_read = $true
+Invoke-ContractCase 'probe-cannot-claim-account-setting-readback' $claimsRemoteRead 1 @('InvalidMessageTimeEvidence')
+$wrongSampleCounts = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$wrongSampleCounts.message_time.samples_compatible = 1
+Invoke-ContractCase 'sample-compatible-count-must-be-complete' $wrongSampleCounts 1 @('ContradictoryMessageTimeSamples')
 $wrongSettingsRevision = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
 $wrongSettingsRevision.settings_revision = 'ffffffffffffffffffffffffffffffff'
 Invoke-ContractCase 'settings-revision-mismatch-is-rejected' $wrongSettingsRevision 1 @('SettingsRevisionMismatch') -ExpectedSettingsRevision $settingsRevision
