@@ -6,6 +6,7 @@ using LogForesight.Core.Configuration;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -83,9 +84,9 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
         {
             e.Bind(sensorId, HostId, "presence-source-v1", identity.ResourceFingerprint, identity.Generation,
                 identity.Epoch, identity.ChannelGeneration, _sourceDate.AddDays(-1));
+            e.MessageTimeFingerprint = Policy.MessageTimeFingerprint(_url);
             e.Accept(_sourceDate.AddDays(-1), _sourceDate.AddSeconds(1),
                 [new(sensorId, enteredAt, status, e.SourceGeneration, e.ResourceGeneration)]);
-            e.MessageTimeFingerprint = Policy.MessageTimeFingerprint(_url);
         });
     }
 
@@ -349,6 +350,24 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
     }
 
     [Fact]
+    public void BoundedBatchReadSkipsNulPayloadAndKeepsValidNeighbor()
+    {
+        var day = DateTime.UtcNow.Date;
+        var asOf = new DateTimeOffset(day.AddHours(1), TimeSpan.Zero);
+        var valid = new PrtgSilentDeviceSnapshot(DeviceId, HostId, "source-v1", "policy-v1", 1,
+            "mapping", day, asOf, asOf, asOf, false, 0, "inventory", [], "complete");
+        new PrtgSilentPresenceSnapshotStore(_backend.Blob(
+            PrtgSilentPresenceSnapshotStore.BlobKey(DeviceId, day))).Save(valid);
+        WriteNulTextBlob(PrtgSilentPresenceSnapshotStore.BlobKey(DeviceId + 1, day), "{\"broken\":\0}");
+
+        var snapshots = PrtgSilentPresenceSnapshotStore.ReadManyForWindow(_backend.CreateContext,
+            [DeviceId, DeviceId + 1], [day], asOf.AddMinutes(-1), asOf.AddMinutes(1));
+
+        Assert.Equal(new[] { DeviceId }, snapshots.Keys);
+        Assert.Equal(asOf, snapshots[DeviceId].SourceAsOf);
+    }
+
+    [Fact]
     public void ElapsedSourcePointRetentionKeeps180DaysAndPrunesOlderProof()
     {
         var sourceDay = new DateTime(2026, 10, 6);
@@ -359,6 +378,7 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
         var expiredDay = sourceDay.AddDays(-181);
         SaveRetentionMarker(retainedDay);
         SaveRetentionMarker(expiredDay);
+        WriteNulTextBlob(PrtgSilentPresenceSnapshotStore.BlobKey(DeviceId, expiredDay), "{\0}");
 
         PrtgSilentPresenceSnapshotStore.PruneOlderThan(_backend.CreateContext,
             PrtgSilentPresenceSnapshotStore.OldestSourceDayToKeep(sourceDay, 180));
@@ -376,6 +396,37 @@ public sealed class PrtgSilentPresenceSourceFlowTests : IDisposable
         { ReadQuality = PrtgPresenceReadQuality.Failed };
         new PrtgSilentPresenceSnapshotStore(_backend.Blob(
             PrtgSilentPresenceSnapshotStore.BlobKey(DeviceId, sourceDay))).Save(snapshot);
+    }
+
+    private void WriteNulTextBlob(string key, string content)
+    {
+        _backend.Blob(key).Mutate(_ => ("{}", true));
+        var bytes = Encoding.UTF8.GetBytes(content);
+        Assert.Contains((byte)0, bytes);
+        using var context = _backend.CreateContext();
+        Assert.Equal(1, context.Database.ExecuteSqlInterpolated(
+            $"UPDATE lf_blobs SET content = CAST({bytes} AS TEXT) WHERE blob_key = {key}"));
+
+        var connection = context.Database.GetDbConnection();
+        var opened = connection.State == System.Data.ConnectionState.Closed;
+        if (opened) connection.Open();
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT length(CAST(content AS BLOB)), hex(content) FROM lf_blobs WHERE blob_key = @key";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@key";
+            parameter.Value = key;
+            command.Parameters.Add(parameter);
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(bytes.Length, Convert.ToInt32(reader.GetValue(0)));
+            Assert.Equal(Convert.ToHexString(bytes), reader.GetString(1));
+        }
+        finally
+        {
+            if (opened) connection.Close();
+        }
     }
 
     [Fact]

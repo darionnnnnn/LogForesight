@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
@@ -7,6 +8,7 @@ using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -67,6 +69,79 @@ public sealed class PrtgProbeLocalFactsTests : IDisposable
         Assert.Equal("failed-or-deadline", facts.AiProbeStatus);
         Assert.Equal("no-eligible-netiq-parent", facts.NetiqReason);
         Assert.DoesNotContain("secret", JsonSerializer.Serialize(facts));
+    }
+
+    [Fact]
+    public async Task PolicyWithEmbeddedNulIsRejectedWithoutGrantingLocalAuthority()
+    {
+        WriteNulTextBlob(PrtgMonitoringPolicyStore.BlobKey, "{\"SourceGeneration\":\"untrusted\"\0}");
+
+        var facts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend,
+            new SystemSettings { PrtgUrl = "https://private-source.invalid" }, null, CancellationToken.None);
+
+        Assert.Equal("unknown", facts.Status);
+        Assert.Equal("unknown", facts.AuthorityKind);
+        Assert.Equal("local-facts-unavailable-or-bounded-deadline", facts.Reason);
+    }
+
+    [Theory]
+    [InlineData("binding")]
+    [InlineData("identity")]
+    [InlineData("strategy")]
+    public async Task CorruptBoundedAuthorityBlobFailsLocalFacts(string kind)
+    {
+        const long sensorId = 601;
+        var settings = new SystemSettings { PrtgUrl = "https://private-source.invalid", PrtgEnabled = true };
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
+        {
+            policy.Revision = "bounded-read-fixture"; policy.CoreSystemId = "fixture";
+            policy.SourceGeneration = "source-v1";
+            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl);
+            policy.ValidFrom = DateTimeOffset.UtcNow.AddDays(-1); policy.HostIds = [1];
+            policy.SensorIds = [sensorId]; policy.SourceTimeZoneId = "UTC";
+            policy.RawTimestampTimeZoneId = "UTC"; policy.AnalysisTimeZoneId = "UTC";
+            policy.SourceCultureName = "en-US"; policy.TimeBasisEvidenceReference = "fixture-proof";
+        });
+        var key = kind switch
+        {
+            "binding" => PrtgTrustedSamplingBinding.StorePrefix + sensorId,
+            "identity" => PrtgResourceIdentityStore.Prefix + sensorId,
+            _ => PrtgTrustedSamplingStrategyStateStore.BlobKey
+        };
+        WriteNulTextBlob(key, "{\0}");
+
+        var facts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, settings, null, CancellationToken.None);
+
+        Assert.Equal("unknown", facts.Status);
+        Assert.Equal("unknown", facts.AuthorityKind);
+        Assert.Equal("local-facts-unavailable-or-bounded-deadline", facts.Reason);
+    }
+
+    [Fact]
+    public async Task EmbeddedNulProfileIsExcludedWithoutErasingOtherFacts()
+    {
+        const long sensorId = 501;
+        var settings = new SystemSettings { PrtgUrl = "https://private-source.invalid", PrtgEnabled = true };
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
+        {
+            policy.Revision = "nul-profile-fixture"; policy.CoreSystemId = "fixture";
+            policy.SourceGeneration = "source-v1";
+            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl);
+            policy.ValidFrom = DateTimeOffset.UtcNow.AddDays(-1); policy.HostIds = [1];
+            policy.SensorIds = [sensorId]; policy.SourceTimeZoneId = "UTC";
+            policy.RawTimestampTimeZoneId = "UTC"; policy.AnalysisTimeZoneId = "UTC";
+            policy.SourceCultureName = "en-US"; policy.TimeBasisEvidenceReference = "fixture-proof";
+        });
+        WriteNulTextBlob(PrtgTrustedSamplingProfile.StorePrefix + sensorId,
+            "{\"SensorObjid\":501,\0\"SourceGeneration\":\"old\"}");
+
+        var facts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, settings, null, CancellationToken.None);
+
+        Assert.Equal("observed", facts.Status);
+        Assert.Equal("saved-explicit-authority", facts.AuthorityKind);
+        Assert.Equal(1, facts.ReadinessSampledSensors);
+        Assert.Equal(0, facts.QualifiedProfiles);
+        Assert.Equal("sampled-profile-qualification-incomplete", facts.ReadinessReason);
     }
 
     [Fact]
@@ -232,6 +307,37 @@ public sealed class PrtgProbeLocalFactsTests : IDisposable
             current with { StrategyFingerprint = "stale-fingerprint" }, strategy));
         Assert.False(PrtgProbeLocalFactsCollector.ProfileMatchesCurrentStrategy(current,
             strategy with { MissingFacts = ["strategy_fence_stale"] }));
+    }
+
+    private void WriteNulTextBlob(string key, string content)
+    {
+        _backend.Blob(key).Mutate(_ => ("{}", true));
+        var bytes = Encoding.UTF8.GetBytes(content);
+        Assert.Contains((byte)0, bytes);
+        using var context = _backend.CreateContext();
+        Assert.Equal(1, context.Database.ExecuteSqlInterpolated(
+            $"UPDATE lf_blobs SET content = CAST({bytes} AS TEXT) WHERE blob_key = {key}"));
+
+        var connection = context.Database.GetDbConnection();
+        var opened = connection.State == System.Data.ConnectionState.Closed;
+        if (opened) connection.Open();
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT length(CAST(content AS BLOB)), hex(content) FROM lf_blobs WHERE blob_key = @key";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@key";
+            parameter.Value = key;
+            command.Parameters.Add(parameter);
+            using var reader = command.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(bytes.Length, Convert.ToInt32(reader.GetValue(0)));
+            Assert.Equal(Convert.ToHexString(bytes), reader.GetString(1));
+        }
+        finally
+        {
+            if (opened) connection.Close();
+        }
     }
 
     private static DailyRecordRow Parent(long id, string json) => new()

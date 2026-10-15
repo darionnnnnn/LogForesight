@@ -19,7 +19,7 @@ PRTG 輔助 NetIQ 已合格的每日主機日；成功零事件父紀錄也可�
 
 AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留；不得縮分母、刪失敗、以零延遲或控制時鐘冒充容量結果。探測只取得來源事實，不在正式環境驗收。UC01–UC07為使用者確認提醒，不列開發驗收、完成率或阻塞；未確認不得宣稱現場全面通過或真實事故增益。
 
-## 2. 尚未整合完成的實作
+## 2. 目前尚未完成的實作
 
 本節D54-01～04為原始缺口識別；執行拆分依§4，磁碟核驗獨立為C批次但仍回掛D54-01。§6權限調整回掛E05-T02／E08-T03，不另製造重複TODO。
 
@@ -27,32 +27,34 @@ AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留
 
 | ID／批次 | 現況、改動與下一個使用端 | 相依與客觀完成條件 |
 |---|---|---|
-| D54-01／訊息日期格式與時間授權 | 主線仍以保存culture解析messages文字日期，未記錄PRTG API帳號独立Date Format。新增明確日期格式、嚴格parser及獨立message-time fingerprint；串接設定→fetch／timeline→正式consumer→探測／離線核對。 | 保留raw OA/channel的既有授權與28日證據；空／core-default未解決時只讓文字訊息規則等待。六格式dmy/mdy/ymd×12/24時、DST gap/fold、跨午夜、錯格式、日期-only、offset文字、policy漂移／已提交頁與游標續跑皆需正反例；舊空fingerprint不能被讀側追認。對應E03-T01/T02、E04-T01/T02、E05-T03。 |
-| D54-02／全量資格準備的可重播交付 | 已提交版本尚無完整全量副本的正常HTTP準備入口。私人候選有嚴格64.8M receipt／catalog預檢、公共settings／pilot／binding／qualification routes與獨立contract launcher，尚未完成拒絕矩陣或整合。 | 不增加production測試旁路；只有owned完整副本可進production入口，listener／ancestor／exact args核對不得只比substring。驗foreign listener、舊revision、pilot拒絕／過期、部分binding／job、持久720h／1attempt；合成contract輸出不得作容量或正式資格PASS。對應E06、E07、E08-T04。 |
+| D54-01／各證據 lane 的生命週期隔離 | 六種明確日期格式、strict parser、message fingerprint、fetch／timeline／正式 finding 接線已完成，不再列為待實作。剩餘：replay、qualification、profile-refresh notice、channel discovery 及容量 admission 仍以整份 policy revision 阻擋 DateFormat-only 變更；郵件 summary／digest／跨次 Notify 去重候選仍須補齊有界原子 reservation 與實際正文貢獻範圍。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
+| D54-02／正常HTTP資格準備交付 | `scripts/prtg-workload/qualification-preparation` 已有 Start／Resume／Check、來源預檢、磁碟與 live runtime owner 核對、正常 settings／policy／pilot／binding／job 路由及持久 receipt 候選；純契約 Python 24/24、PowerShell 通過。runtime ownership 端點已提交。剩餘是候選完整性核對、相依提交及正常入口的整合證據。 | 不增加 production 測試旁路；保留完整母體／owned listener／精確 PID、ticks、MVID、DataRoot、descriptor／reparse 防護及720h／1attempt。未執行完整容量來源，不宣稱正式資格或 E2 父驗收通過。 |
 
 ### 2.1 時間授權的明確接線缺口
 
-D54-01 必須同時處理 `PrtgFetchService.FetchStateChangesRangeAsync` 的環境預設文字日期解析，以及 `PrtgSensorTimelineCollector` 單顆／批次的 saved culture/timezone 解析；兩者均缺獨立帳號 Date Format。包括逐頁保存、游標續跑、設定漂移後停止及正式讀側拒絕舊授權。
+D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.TryParse/BuildFingerprint`、`PrtgFetchService` 的保存日期授權及 `PrtgSensorTimelineCollector` 的逐頁／游標 fingerprint 核對補齊；這些已完成實作從待辦移除。六格式、DST／錯格式／舊空指紋拒絕的有效分段證據保留，完整操作驗收仍由§3承接。
 
-磁碟人工語意驗證亦有未接通的 production consumer：`PrtgDiskVerificationService.ProbeAndSaveAsync` 未向 `PrtgDiskSemanticProbe` 提供必要的 `PrtgDiskSemanticSourceContract`，因此現有入口保持 `source-contract-unconfirmed`，不能產生 Verified；持久點另仍使用本機時區轉 UTC。下一輪須將保存的端點時間授權與分析時区接入，嚴格轉換範圍／點資料，再驗正常入口能完成核驗、缺 authority／DST 歧義／設定漂移不保存正式資格。不得以略過 contract 檢查修正。對應 E03-T01/T02、E04-T01、E08-T02。
+磁碟正常核驗已由 `PrtgDiskVerificationService.ProbeAndSaveAsync` 接入 `TryGetSourceContract`、`AnalysisDayWindow`、有界持久樣本及正常來源 HTTP，已有正常 Verified、DST／缺 authority／漂移反例；原「無法產生 Verified」實作待辦刪除。新增時間設定、完成分析日 UI 與修復屏障已有候選及小型證據，仍須完成相依提交與受影響瀏覽器查證，不重開已完成的後端接線。
 
-### 2.2 容量工具尚缺的完整安全交付（D54-03）
+### 2.2 已補齊的生成工具實作（D54-03）
 
-生成工具的 Initialize／legacy adoption 尚缺跨 DB marker、manifest、checkpoint 的可重入中斷協定；resume 目前沒有完整核對已提交前綴及來源 mapping，legacy adoption 亦仍一次讀入 log。下一輪先以最小資料故障注入驗各寫入界線、已提交列／mapping竄改與大log，再補原子 DB marker、可重入意圖／恢復及有界讀取；不可只驗 checkpoint 後尾部。以上是來源審查確認的工具缺口，尚無實際損毀事故證據；不得修改既有41,140,900筆副本來做反例。對應 E07-T01/T04。
+`scripts/prtg-workload/storage-generator/Program.cs` 的 `InitializeOwnedDatabase`、`HasInitializationMarker`、`AuditOwnedStructure`、`ValidateOwnedDatabase`、`AuditOwnedRowRange`、`AdoptLegacyRun`、`ReadLastProgressLine` 與 `FinishOwnedToolUpgrade` 已實作初始化／採納／升級中斷恢復、完整已提交前綴與 mapping 核對及有界逐行 log 讀取；原對應實作待辦刪除。既有小範圍證據與兩次獲授權的固定結構 seed 記錄保留；後續只能重用 `work/e1-generator-bounded-second-20261014`，不再次建立固定結構。完整64.8M／容量／恢復驗收仍保留 E07-T01/T04，且不得開啟或修改受保護41,140,900筆副本。
 
-完整資格矩陣還須由可驗證的 listener PID／start identity／assembly／exact command tokens／runtime DataRoot與provider綁定實際服務，重新核對 descriptor hash及reparse祖先。numeric loopback或可編輯JSON宣告不足以授權 public settings／排程寫入；本輪先封住不具可驗證 ownership 的入口，下一輪 D54-02 才完成可用的 owned 正常準備與否定矩陣。
+完整資格矩陣必須由可驗證的 listener PID／start identity／assembly／exact command tokens／runtime DataRoot與provider綁定實際服務，核對 descriptor hash及reparse祖先。runtime 正常端點與獨立校驗候選已有實作；numeric loopback或可編輯JSON宣告仍不足以授權 public settings／排程寫入。D54-02在本輪完成剩餘整合，不移到下一輪。
 
-本機候選：外層工作區的 `work/e03-message-time-candidate-20261013`（訊息時間）及本輪checkout下 `work/logforesight-e07-capacity-current/scripts/prtg-workload/qualification-preparation`（HTTP資格準備）。這些不是已提交交付物；其他主機沒有候選時，仍須依本PLAN從正式分支完成，不依賴私人檔案。下一輪須先核實目前commit／檔案雜湊，不能整份覆蓋主線已完成的冷啟動或其他修正。50顆正常資格流程的局部驗證不替代15,000顆完整容量。新審查若確認其他尚未實作子句，加入本節並映回原ID，不藏在泛稱「等待探測」。
+交付來源以目前 repository 的實際程式與已提交版本為準，不再把舊私人候選目錄列為必要實作輸入。任何小型資格／契約驗證都不替代15,000顆完整容量；新缺口仍須明列並映回原ID。
 
 ### 2.3 尚未完成的有界讀取接線（D54-04）
 
-既有SQL有界讀取機制尚未覆蓋所有正式consumer：`PrtgResourcePressureModeStore.Find`仍讀完整blob，供`PrtgResourceProfileQualification.IsCurrentFormalPressure`使用；binding Save／RecordQualification與qualification ResumeExisting仍整份選取settings／policy；disk semantic／verification map的replay、mail與data-transfer路徑也有直接Get／GetAll。已存在的262,144字元 mode及33,554,432字元 disk snapshot上限不能因consumer未接線而繞過。
+原列 `PrtgResourcePressureModeStore.Find`、binding Save／RecordQualification、qualification ResumeExisting 及 disk semantic／verification snapshot 的有界接線已存在；不再列為完全未實作。identity／host marker、silent presence、probe local facts、formal-mail claim 的完整 physical bounded reader、CAS／逐筆隔離已有程式及小型驗證；候選提交狀態依分段紀錄。
 
-下一輪逐呼叫端使用有界projection／snapshot，保留同一transaction readset、CAS與來源authority；以正常大小、cap邊界、超量但選中entry仍有效、未知extra JSON及設定漂移反例驗等待／拒絕與零正式副作用。容量export另量測，不把正式mail拒絕等同匯出吞吐通過。對應E03、E06、E07-T03、E08-T05、E10-T02。此為尚缺的hardening接線，不宣稱已發生現場OOM或資料毀損。
+仍需補齊或核對：`PrtgSnapshotDiagnosticsStore` 的整份診斷文件讀寫／寫入邊界、`PrtgDiagnosticExportActionResult` 的 policy projection、Core `PrtgDiagnosticExportSource`／`CalibrationService` 的 timeline projection，以及 profile-refresh state、formal episode／pressure hint／timeline progress／strategy／mode replay progress 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。profile-refresh 與 mail reservation 的中斷候選須先完成完整性核對，不視為已交付。
 
-## 3. 承接的驗收與交付 TODO
+本輪繼續逐呼叫端補齊有界projection／snapshot，保留同一transaction readset、CAS與來源authority；小型字元／超限／損壞／未知extra JSON與設定漂移反例核對等待／拒絕及零正式副作用。依使用者指示不建立33,554,432字元極限文件，雙provider邊界依官方文件及小範圍反例核對。容量export另量測，不把正式mail拒絕等同匯出吞吐通過。對應E03、E06、E07-T03、E08-T05、E10-T02。
 
-本表是原§5.8的逐ID移交，**不表示27項程式都尚未實作**。已完成的E02與E08-T01不重開；E10-T01已勾選的文件同步保留原完成紀錄。較廣原驗收尚未通過，既有分段證據可在確認相同程式／設定／環境及母體後沿用。細部使用者劇本仍以 [coverage inventory](../scripts/round53-user-matrix/coverage-inventory.json) 逐子句追蹤；2026-10-13結構核對包含22項AC、10項U53、6項Q、7種受控來源情境及222案，53個明列覆蓋缺口由下列原E項承接，不能用27個TODO的粗粒度摘要掩蓋子句。
+## 3. 尚未完成的驗收與交付 TODO
+
+2026-10-15依實際程式重新核對：已完成的功能實作已從§2待辦刪除；本表保留的是尚未完成的驗收／交付，不把「已有程式但未驗」誤報成「功能未寫」，也不因已有程式而刪除未執行的驗收。E02、E08-T01、E10-T01既有完成項不重開。有效分段證據可在確認相同程式／設定／環境及母體後沿用。細部使用者劇本仍以 [coverage inventory](../scripts/round53-user-matrix/coverage-inventory.json) 逐子句追蹤；原22項AC、10項U53、6項Q、7種受控來源情境、222案與53條承接缺口保留，不以27個父項掩蓋子句。
 
 - [ ] **E01-T01【承接驗收】** 以最終乾淨提交重新建置／publish，核對 source commit、來源指紋、manifest、Web/Core 組件與 probe；既有 modified-tree 分段證據不代替最終成品。
 - [ ] **E01-T02【承接驗收】** 在最終交付上核對舊尾碼、混版 DLL、未核實來源、陳舊預覽 token 的拒絕與提示；確認舊檔不自動覆寫、未知識別不授權全量啟動。
@@ -80,15 +82,15 @@ D54-01 必須同時處理 `PrtgFetchService.FetchStateChangesRangeAsync` 的環�
 - [ ] **E09-T02【承接驗收】** 核對最終報表與操作結果的四基準、時間／分母／未知／排除及提前量一致，缺時間不算提前量、不得使用未來資料；保留合併未優於聯集的既有結果，不為宣告增益改真值。
 - [ ] **E10-T02【承接驗收】** 逐原需求、第52輪有效子條款、AC／U53／Q與E01–E09核對真實呼叫端、程式／脚本／文件及證據，完成可執行全範圍程式審查，記實際模型／角色与限制；代理範圍已知缺陷與必要未測清零。
 - [ ] **E10-T03【承接驗收】** 在最終凍結同版完成受影響驗證及完整全量回歸，記命令／母體／SHA／環境／結果；歷次失敗結果保留；最近全量為b77a72c7的7,978通過／1失敗／10可選略過，共7,989案，唯一失敗在638c5843已有修正後定向通過證據。正式程式未變的有效結果可沿用，最終變更須有完整有效回歸覆蓋，不冒稱最終提交曾單次全量全綠。
-- [ ] **E10-T04【承接交付】** E01、E03–E09全部必要條件通過後，同步PLAN／AC／現況規格／Help／交付限制與證據可取得性；依使用者既定逐段commit／push授權在本輪feature分支提交，確認遠端SHA；不自行合併或推dev／master。本次規劃更新不代表功能開工授權。
+- [ ] **E10-T04【承接交付】** E01、E03–E09全部必要條件通過後，同步PLAN／AC／現況規格／Help／交付限制與證據可取得性；依使用者既定逐段commit／push授權在本輪feature分支提交，確認遠端SHA；不自行合併或推dev／master。功能實作已獲授權，尚未完成的相依繼續補齊。
 
 ## 3.1 全部原Phase的承接對照
 
-| 原Phase | 本輪已有實作及仍需核對的界線 | 下一輪責任 |
+| 原Phase | 本輪已有實作及仍需核對的界線 | 本輪責任 |
 |---|---|---|
 | N1／A0 來源與版本 | build identity、來源探測及拒絕混版已有分段證據；正式來源完整核對未完成 | E01、E04；D54-01 |
 | N2 範圍與守門 | scope／guard／mapping及不誤刪防線已有實作；完整角色與衝突操作未全驗 | E05、E08-T03/T04 |
-| N3／A1 可信取數 | pager、raw/profile／proof、readiness與期間consumer已有實作；文字時間及磁碟人工核驗接線有缺口 | D54-01、E03、E04、E05-T03 |
+| N3／A1 可信取數 | pager、raw/profile／proof、readiness、文字時間與正常磁碟核驗已有實作；DateFormat-only變更的背景raw工作隔離仍有缺口，完整來源／角色操作仍待驗 | D54-01、E03、E04、E05-T03 |
 | N4／B 風險與主機日整合 | 合格父紀錄、期間規則、補充／fusion與案件通知已有分段實作；全部正常操作鏈未驗 | E08-T02/T05/T06；E09 |
 | N5／C 使用者與管理者 | 設定／probe／維護／證據及授權頁已有實作；六角色完整動線未驗 | E05、E08、E09-T01 |
 | N6／D 持續負載及恢復 | quota／admission／journal／SQL與容量工具已有實作；64.8M生成及全混合負載未完成 | D54-02/D54-03、E06、E07 |
@@ -99,7 +101,7 @@ D54-01 必須同時處理 `PrtgFetchService.FetchStateChangesRangeAsync` 的環�
 
 ## 4. 本輪批次、相依與客觀驗收
 
-全部工作保留在第54輪。27個原TODO是責任索引，不是27個等量工作，也不把53條覆蓋缺口另加成完成率分母。27／53是承接基線而非新增缺口的上限；本次另加入R54-01～08，每項包含多個必要檢查，不與原缺口混成等量完成率。每個TODO須由對應批次的全部必要子條款通過才可勾選；同一證據可以被多個ID引用，不重複執行或計功。B～H目前均待實作／驗收，A本次只完成文件與清單整理，未完成資源預檢。
+全部工作保留在第54輪。27個原TODO是責任索引，不是27個等量工作，也不把53條覆蓋缺口另加成完成率分母。27／53是承接基線而非新增缺口的上限；R54-01～08各有多個必要檢查，不混成等量完成率。功能實作與尚未完成的驗收分開追蹤；已完成實作不再留作「待寫功能」，父驗收仍須全部必要子條款通過。同一有效證據可跨ID引用，不重複執行或計功。A至F已有分段程式／工具與局部證據，G／H未完成；實際缺口依§2及逐段紀錄。
 
 | 批次 | 內容與原ID | 相依／下一個使用端 | 完成界線 |
 |---|---|---|---|
@@ -154,11 +156,11 @@ D54-01 必須同時處理 `PrtgFetchService.FetchStateChangesRangeAsync` 的環�
 
 取消自後端接受起立即禁止新請求／批次，可取消HTTP與等待≤5秒退出；正常單HTTP≤30秒是另一門檻。不可安全中斷的DB原子提交在封存有限期限內到安全點停止，不混算成可取消等待。通知意圖自合格父與必要證據耐久提交後≤15分鐘可見；SMTP恢復可用、重試具資格且排程啟用起≤5分鐘首次接受，拒收期間保留重試狀態，提交未知不保證外部郵件恰好一次。
 
-UC01～UC07僅限制正式站台／真實效益宣告，不是開發TODO或必要輸入；來源未知仍由產品資格守門處理。coverage inventory的AC22／Q2／Q6及U53-04皆套用本節，不得重新要求獨立使用者效益證據。全部Q的journey關聯須與user-matrix完全相同；A2須補逐Q、R54／C54及§4.10補強條款、維護角色能力及證據ID檢查與漏項反例，本次只修清單、未修改驗證腳本或建立角色。
+UC01～UC07僅限制正式站台／真實效益宣告，不是開發TODO或必要輸入；來源未知仍由產品資格守門處理。coverage inventory的AC22／Q2／Q6及U53-04皆套用本節，不得重新要求獨立使用者效益證據。全部Q的journey關聯須與user-matrix完全相同；A2逐Q、R54／C54／§4.10、維護角色能力與證據ID檢查及漏項反例已有腳本接線，實際角色操作與驗收狀態仍獨立核對。
 
 每段相依完整、檢查整體影響並適當驗證後commit／push至本輪feature分支，確認遠端SHA。不自行merge、force push或改推dev／master。不用AGY；若後續授權委派，subagent僅gpt-6-luna low／medium／high，主代理獨立核對。記實際審查角色與模型，不冒稱跨模型背書。
 
-### 4.6 八項再次審查補強（全部本輪處理，未實作）
+### 4.6 八項再次審查補強契約（全部本輪處理）
 
 機器可讀逐項清單為coverage inventory的`round54ReviewAdditions`；下列R54 ID與該表一對一，任何必要檢查未完成均不得以父TODO或既有測試通過代替。實作前／後都核對真正操作端，非僅檢查symbol存在。
 
@@ -188,7 +190,7 @@ UC01～UC07僅限制正式站台／真實效益宣告，不是開發TODO或必�
 | 階段 | 原ID與輸入／相依 | 交付／完成界線 |
 |---|---|---|
 | A1 | E06-T01、E07-T01；本輪基準 | 隔離engine／成本／空間預檢及證據可用性，未足不得全量啟動 |
-| A2 | E01-T01、E08-T03、E10-T02～04；R54-07/08 | 角色／R54／C54／Q與補強ID檢查、fixture／recorder、即時授權驗收及回退啟動前工具規格／接線與漏項反例；本次僅完成文件定義 |
+| A2 | E01-T01、E08-T03、E10-T02～04；R54-07/08 | 角色／R54／C54／Q與補強ID檢查、fixture／recorder、即時授權及回退啟動前接線；validator與原生回覆差額工具已有分段交付，完整角色／最終回退驗收仍待完成 |
 | B1 | D54-01、E03／E04／E05-T03；A | 格式、parser、fingerprint、兩條取數路徑及probe接線 |
 | B2 | R54-05；B1 | 舊資料／游標／案件／mail／報告／匯出升級生命週期及恢復矩陣；依A2工具驗回退啟動前隔離 |
 | C1 | D54-01磁碟、R54-02；A及B受影響時間契約 | 正常Verified及完整日期鏈、DST／漂移／缺契約反例 |
@@ -216,7 +218,7 @@ serverAdmin可見必要維護統計限定為監看裝置數、範圍外數值／
 
 ### 4.9 五項契約修正（本次定案，優先於前文概括敘述）
 
-C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別回掛既有R54，不重開原27個TODO，也不把新增檢查當已通過。以下是具體行為契約；實作方式仍由對應階段決定。本次不修改程式、fixture或validator。
+C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別回掛既有R54，不重開原27個TODO，也不把新增檢查當已通過。以下保留具體行為契約；實作現況依§2與§8，不再以開工前的規劃措辭判斷是否已有程式。
 
 **C54-01／A2／R54-07：真實角色與合成防禦分開。** `RoleCapabilityMap`的一般Maintain來自Admin且含ViewAll，角色聯集不扣除能力；serverAdmin無業務可見主機。因此四種真實情境為M54-rescue／global／readall／nomaintain。M54-scoped留在`syntheticDefenseCases`，只驗授權元件在合成能力／可見集合下不外洩，不建帳號、不注入claims冒充正常瀏覽器結果，不新增正式角色、不擴張權限模型。A2的validator／recorder後續須分開兩種證據類型，原六角色不變。
 
@@ -250,17 +252,19 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 
 第53輪已實作部分已完成收尾；本輪以a69fedd7為起點承接剩餘工作。本次規劃及清單更新不宣告功能完成、驗收通過或PRTG完整實用。功能開工前核對工作區與基準差異，先完成A剩餘資源／成本預檢；既有artifacts／docs/env未追蹤資料不納入提交。
 
-## 6. 已定案、待實作：全域清除的維護權與明細閱讀權
+## 6. 已實作的權限分離契約：全域清除與明細閱讀
 
 2026-10-14使用者依審查建議授權更新規劃：保留Maintain執行既有全域PRTG維護的能力；清除預覽中的裝置名稱等業務明細另依既有可見範圍過濾。serverAdmin維持Maintain／ViewAudit、不新增ViewAll，只顯示必要數量及不含業務明細的阻擋原因。目前一般Maintain由Admin取得且同時具ViewAll；不為測試建立受限Maintain正式角色。授權元件仍防禦性地依可見集合過濾；同時具有Maintain與ViewAll者可讀完整預覽。
 
-已核對`RoleCapabilityMap.ForServerAdmin()`明定無業務檢視權，而`SettingsController.PreviewPrtgScopePurge()`直接傳回`TopDeviceNames`。這是既有設計邊界的修正，不宣稱本輪引入漏洞或已發生外洩；正式程式尚未修改，現況規格須待實作後同步。
+`RoleCapabilityMap.ForServerAdmin()`維持無業務檢視權；`SettingsController.PreviewPrtgScopePurge()`已經由 `PrtgScopePurgeAuthorizationService`、可信全域集合及 `PreviewOutOfScopeCandidateDetails` 先依可見範圍過濾再取明細，區分全域影響數、可見數及明細受限。此實作待辦刪除，保留以下既定契約與尚未完成的全角色／跨程序驗收；不新增角色或擴張權限。
 
 - 範圍：F批次，回掛E05-T02／E08-T03；包括preview DTO、畫面、直接API及錯誤／阻擋原因，沿用既有授權單一來源，不在Core複製角色規則。
 - 輸入／輸出：可信全域清除集合與登入者權限，輸出必要全域維護數量、可見明細及安全原因；全域清除集合與既有安全閘門不因明細過濾改變。不可用先取全域前20筆再遮罩冒充完整可見前20筆。
 - 驗收：serverAdmin、具ViewAll的Maintain、具ViewAll但無Maintain、受限且無Maintain四種真實登入情境，實際API／UI核對拒絕或精確可見集合；受限Maintain僅於元件合成測例核對過濾，不冒稱真實角色操作；以不可見裝置名稱／識別作反例，確認欄位、提示與直接回應不外洩。依§4.6的預覽版本、互斥及部分恢復契約執行；相同scope下不同閱讀權的清除候選集合一致；權限不足、範圍不可信或過期狀態仍拒絕操作。清除僅在自有隔離副本驗證。
 
-## 7. 本次規劃更新的範圍
+## 7. 開工前規劃更新紀錄（歷史）
+
+以下保留規劃定案與當時的文件驗證，不代表目前仍未實作。2026-10-15重新核對後的實作缺口以§2為準；已交付及小型驗證以§8為準，尚未完成的驗收以§3為準。
 
 本次修改本PLAN、`scripts/round53-user-matrix/coverage-inventory.json`、`user-matrix.json`及同目錄README，保留原27個未勾ID、22 AC／10 U53／6 Q、7來源情境、8族222案及53條承接缺口，另列8項R54補強、5項C54契約修正、4種真實維護登入情境及1個合成元件防禦測例；不把措辭修正記為功能通過。同步Q1／Q2對照與代理操作責任，保留既有未通過旗標。全部既知缺口及§6調整在本輪處理，不另移待辦或下一輪。尚未執行功能測試、容量或恢復驗收。
 
@@ -427,3 +431,10 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 新增既有 Maintain 能力下、只接受直接 loopback 的 runtime ownership 查詢；回傳實際 PID／啟動 UTC ticks、DataRoot、SQLite DB 路徑與已載入 Web／Core MVID／路徑，沒有連線字串或憑證。未配置 descriptor hash、轉送來源、非檔案 SQLite 或無實體 assembly 均拒絕；descriptor hash 只作比對 pin，不自行等同來源資格。
 - 主代理兩次獨立定向檢查均為 4/4（包含於 `root-timebasis-owner-mail-r1` 與隔離 `root-authority-consumers-r5`），並以自有約 1.5MiB fixture 的正常登入 HTTP 核對回應與真實行程／已載入 DLL／資料路徑。HTTP receipt：`work/round54/browser-timebasis-normal-bootstrap-result.json`。fixture 已停止並保留；未啟動完整容量流程。
 - 資格準備 launcher／獨立磁碟校驗工具仍屬下一接線段；本端點完成不代表完整 E2 準備、來源資格或同 HEAD 整輪驗收通過。
+
+### D1正式消費端與實作待辦核對（2026-10-15）
+
+- `PrtgSilentPresenceSnapshotStore` 的保存／批次讀取改用完整物理有界讀取，保留64KiB／512 sensors／50 keys限制及單筆失敗隔離；過期清理只取key後刪除。`PrtgProbeLocalFactsCollector` 的policy／binding／profile／identity／strategy全部走既有bounded reader，保留原有樣本／UTF8上限與profile逐筆排除。
+- `PrtgFormalMailClaimStore` 在原交易內讀取有界完整shard，從snapshot attach並保留Version／UpdatedAt並發原值；不先載入另一份未核版本全文。prune retry重新有界核對同keyset，只認列精確匹配的已提交結果。額外重現並修正保留期bug：仍保留的smtp-accepted claim必須繼續保有其fence，直到引用claim本身到期，否則清理後ValidateShard會失敗。
+- 主代理獨立小型結果：local facts 6案通過（`root-authority-consumers-r5`子集）；silent批次NUL／過期清理2/2（`silent-bounded-consumer-r6`），原生HTTP來源至正式finding正向通過（`formal-claim-silent-r8`子集）；claim NUL／小cap／Local不一致3案通過，保留期正向修正後1/1（`claim-retention-r9`）。全部零略過，fixture最多兩sensor／單shard／單claim+fence；NUL以byte[] CAST寫入並核實實際bytes，避免provider字串截尾形成假反例。編譯錯誤與修正前失敗receipt保留，不冒稱曾整批全綠。
+- 依使用者新指令逐PLAN對照實際producer／consumer，已完成的原始實作待辦從§2刪除並修正§4、§6的陳舊現況；尚缺的背景raw工作隔離、郵件原子receipt／正文範圍、其餘D1consumer及中斷候選仍明列。§3保留未執行的驗收／交付，不把小型程式驗證當成G／H通過。

@@ -38,22 +38,25 @@ public static class PrtgFormalMailClaimStore
     {
         ArgumentNullException.ThrowIfNull(backend);
         return PruneExpiredShardsCore(backend, backend.CreateContext, recordRetentionDays, cursor, nowUtc,
-            maximumKeys, timeLimit);
+            maximumKeys, timeLimit, MaxShardCharacters);
     }
 
     internal static PruneResult PruneExpiredShardsForTesting(StorageBackend backend,
         Func<LfDbContext> contextFactory, int recordRetentionDays, string? cursor, DateTime nowUtc,
-        int maximumKeys = DefaultPruneKeyLimit, TimeSpan? timeLimit = null)
+        int maximumKeys = DefaultPruneKeyLimit, TimeSpan? timeLimit = null,
+        int maximumShardCharacters = MaxShardCharacters)
         => PruneExpiredShardsCore(backend, contextFactory, recordRetentionDays, cursor, nowUtc,
-            maximumKeys, timeLimit);
+            maximumKeys, timeLimit, maximumShardCharacters);
 
     private static PruneResult PruneExpiredShardsCore(StorageBackend backend,
         Func<LfDbContext>? contextFactory, int recordRetentionDays, string? cursor, DateTime nowUtc,
-        int maximumKeys, TimeSpan? timeLimit)
+        int maximumKeys, TimeSpan? timeLimit, int maximumShardCharacters)
     {
         ArgumentNullException.ThrowIfNull(backend);
         ArgumentNullException.ThrowIfNull(contextFactory);
         if (maximumKeys < 1) throw new ArgumentOutOfRangeException(nameof(maximumKeys));
+        if (maximumShardCharacters is < 1 or > MaxShardCharacters)
+            throw new ArgumentOutOfRangeException(nameof(maximumShardCharacters));
         var budget = timeLimit ?? DefaultPruneTimeLimit;
         if (budget <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(timeLimit));
         var clock = Stopwatch.StartNew();
@@ -70,6 +73,7 @@ public static class PrtgFormalMailClaimStore
         {
             var requested = Math.Min(PrunePageSize, maximumKeys - scanCount);
             List<ShardSnapshot>? retryPage = null;
+            var attemptCount = 0;
             PrunePageOutcome pageOutcome;
             using (var probe = contextFactory())
             {
@@ -81,6 +85,7 @@ public static class PrtgFormalMailClaimStore
                     // cursor accounting and could consume a second page in one bounded operation.
                     using var context = contextFactory();
                     using var transaction = context.Database.BeginTransaction(IsolationLevel.Serializable);
+                    var isRetry = attemptCount++ > 0;
                     var mailVersion = context.Blobs.AsNoTracking()
                         .Where(row => row.BlobKey == MailNotifyStateStore.BlobKey)
                         .Select(row => row.Version).FirstOrDefault();
@@ -90,17 +95,53 @@ public static class PrtgFormalMailClaimStore
                         return new PrunePageOutcome(0, cursor, false, RefreshOutboxSnapshot: true);
                     }
 
+                    Dictionary<string, (string? Content, long Version, int Length, DateTime UpdatedAt)> boundedRows;
                     if (retryPage == null)
                     {
                         var query = context.Blobs.AsNoTracking().Where(row =>
                             row.BlobKey.StartsWith("prtg_formal_mail_claims_v2_") ||
                             row.BlobKey.StartsWith("prtg_formal_mail_claims_v3_"));
                         if (!string.IsNullOrEmpty(cursor)) query = query.Where(row => row.BlobKey.CompareTo(cursor) > 0);
-                        retryPage = query.OrderBy(row => row.BlobKey).Take(requested)
-                            .Select(row => new ShardSnapshot(row.BlobKey,
-                                row.Content.Substring(0, MaxShardCharacters + 1), row.Content.Length,
-                                row.Version, row.UpdatedAt))
+                        var metadata = query.OrderBy(row => row.BlobKey).Take(requested)
+                            .Select(row => new ShardMetadata(row.BlobKey, row.Version, row.UpdatedAt))
                             .ToList();
+                        var eligibleKeys = metadata.Where(candidate =>
+                                TryGetShardDate(candidate.BlobKey, out var shardDate) && shardDate < cutoff &&
+                                !stateSnapshot.ReferencedShardKeys.Contains(candidate.BlobKey))
+                            .Select(candidate => candidate.BlobKey).ToArray();
+                        boundedRows = BoundedJsonBlobBatchReader.Read(context, eligibleKeys, maximumShardCharacters);
+                        retryPage = new List<ShardSnapshot>(metadata.Count);
+                        foreach (var candidate in metadata)
+                        {
+                            if (!boundedRows.TryGetValue(candidate.BlobKey, out var bounded) ||
+                                bounded.Version != candidate.Version || bounded.UpdatedAt != candidate.UpdatedAt ||
+                                bounded.Content is null || bounded.Length > maximumShardCharacters ||
+                                bounded.Content.Length > maximumShardCharacters ||
+                                Encoding.UTF8.GetByteCount(bounded.Content) > maximumShardCharacters)
+                            {
+                                retryPage.Add(new ShardSnapshot(candidate.BlobKey, null, maximumShardCharacters + 1,
+                                    candidate.Version, candidate.UpdatedAt));
+                                continue;
+                            }
+                            retryPage.Add(new ShardSnapshot(candidate.BlobKey, bounded.Content, bounded.Length,
+                                candidate.Version, candidate.UpdatedAt));
+                        }
+                    }
+                    else if (isRetry)
+                    {
+                        // The execution strategy may replay after an uncertain commit. Re-read only
+                        // the bounded physical contents for this immutable keyset page so recovery
+                        // recognition never materializes an arbitrary newer BlobRow.Content.
+                        boundedRows = BoundedJsonBlobBatchReader.Read(context,
+                            retryPage.Where(candidate => candidate.Content is not null).Select(candidate => candidate.BlobKey),
+                            maximumShardCharacters);
+                    }
+                    else
+                    {
+                        boundedRows = retryPage.Where(candidate => candidate.Content is not null)
+                            .ToDictionary(candidate => candidate.BlobKey,
+                                candidate => ((string?)candidate.Content, candidate.Version, candidate.Length, candidate.UpdatedAt),
+                                StringComparer.Ordinal);
                     }
                     if (retryPage.Count == 0)
                     {
@@ -114,8 +155,10 @@ public static class PrtgFormalMailClaimStore
                     {
                         if (!TryGetShardDate(candidate.BlobKey, out var shardDate) || shardDate >= cutoff ||
                             stateSnapshot.ReferencedShardKeys.Contains(candidate.BlobKey) ||
-                            candidate.Length > MaxShardCharacters || candidate.Content.Length > MaxShardCharacters ||
-                            Encoding.UTF8.GetByteCount(candidate.Content) > MaxShardCharacters || string.IsNullOrWhiteSpace(candidate.Content))
+                            candidate.Content is null || candidate.Length > maximumShardCharacters ||
+                            candidate.Content.Length > maximumShardCharacters ||
+                            Encoding.UTF8.GetByteCount(candidate.Content) > maximumShardCharacters ||
+                            string.IsNullOrWhiteSpace(candidate.Content))
                             continue;
 
                         PrtgFormalMailClaimShard shard;
@@ -138,8 +181,7 @@ public static class PrtgFormalMailClaimStore
                         if (!empty && StringComparer.Ordinal.Equals(before, serialized)) continue;
                         ValidateShard(shard, shard.HostId);
 
-                        var tracked = context.Blobs.FirstOrDefault(row => row.BlobKey == candidate.BlobKey);
-                        if (tracked == null)
+                        if (!boundedRows.TryGetValue(candidate.BlobKey, out var current))
                         {
                             // A previous attempt may have committed this same planned deletion before
                             // its acknowledgement was lost. Count it only when this replay independently
@@ -147,15 +189,21 @@ public static class PrtgFormalMailClaimStore
                             if (empty) pageDeleted++;
                             continue;
                         }
-                        if (tracked.Version != candidate.Version || tracked.UpdatedAt != candidate.UpdatedAt)
+                        if (current.Content is null || current.Length > maximumShardCharacters ||
+                            current.Content.Length > maximumShardCharacters ||
+                            Encoding.UTF8.GetByteCount(current.Content) > maximumShardCharacters)
+                            continue;
+                        if (current.Version != candidate.Version || current.UpdatedAt != candidate.UpdatedAt ||
+                            !StringComparer.Ordinal.Equals(current.Content, candidate.Content))
                         {
                             // Likewise, recognize only the exact one-version result of this page's
                             // intended rewrite; unrelated concurrent edits remain untouched/un-counted.
-                            if (!empty && tracked.Version == candidate.Version + 1 &&
-                                StringComparer.Ordinal.Equals(tracked.Content, serialized))
+                            if (!empty && current.Version == candidate.Version + 1 &&
+                                StringComparer.Ordinal.Equals(current.Content, serialized))
                                 pageUpdated++;
                             continue;
                         }
+                        var tracked = AttachBoundedRow(context, candidate.BlobKey, current);
                         if (empty)
                         {
                             context.Blobs.Remove(tracked);
@@ -163,7 +211,7 @@ public static class PrtgFormalMailClaimStore
                         }
                         else
                         {
-                            EnsureBoundedShard(serialized);
+                            EnsureBoundedShard(serialized, maximumShardCharacters);
                             tracked.Content = serialized;
                             tracked.UpdatedAt = DateTime.Now;
                             tracked.Version++;
@@ -213,7 +261,8 @@ public static class PrtgFormalMailClaimStore
         return new PruneResult(deleted, updated, cursor, hasMore);
     }
 
-    private sealed record ShardSnapshot(string BlobKey, string Content, int Length, long Version, DateTime UpdatedAt);
+    private sealed record ShardMetadata(string BlobKey, long Version, DateTime UpdatedAt);
+    private sealed record ShardSnapshot(string BlobKey, string? Content, int Length, long Version, DateTime UpdatedAt);
     private sealed record PrunePageOutcome(int Scanned, string? Cursor, bool HasMore,
         bool RefreshOutboxSnapshot, bool Empty = false, int Deleted = 0, int Updated = 0);
 
@@ -307,9 +356,18 @@ public static class PrtgFormalMailClaimStore
     public sealed class MutationSession
     {
         private readonly LfDbContext _context;
+        private readonly int _maximumShardCharacters;
         private readonly Dictionary<string, LoadedShard> _loaded = new(StringComparer.Ordinal);
 
-        public MutationSession(LfDbContext context) => _context = context ?? throw new ArgumentNullException(nameof(context));
+        public MutationSession(LfDbContext context) : this(context, MaxShardCharacters) { }
+
+        internal MutationSession(LfDbContext context, int maximumShardCharacters)
+        {
+            _context = context ?? throw new ArgumentNullException(nameof(context));
+            if (maximumShardCharacters is < 1 or > MaxShardCharacters)
+                throw new ArgumentOutOfRangeException(nameof(maximumShardCharacters));
+            _maximumShardCharacters = maximumShardCharacters;
+        }
 
         public PrtgResourceFormalDeliveryFence? GetFence(long hostId, string fenceKey)
         {
@@ -368,7 +426,7 @@ public static class PrtgFormalMailClaimStore
                 if (!loaded.Dirty) continue;
                 ValidateShard(loaded.Value, loaded.Value.HostId);
                 var serialized = JsonSerializer.Serialize(loaded.Value, LfJsonOptions.Pretty);
-                EnsureBoundedShard(serialized);
+                EnsureBoundedShard(serialized, _maximumShardCharacters);
                 if (loaded.Row is null)
                 {
                     _context.Blobs.Add(new BlobRow
@@ -398,31 +456,40 @@ public static class PrtgFormalMailClaimStore
                 return cached;
             }
 
-            var existing = _context.Blobs.AsNoTracking().Where(row => row.BlobKey == key)
-                .Select(row => new
-                {
-                    Content = row.Content.Substring(0, MaxShardCharacters + 1),
-                    Length = row.Content.Length
-                }).FirstOrDefault();
-            BlobRow? tracked = null;
+            var boundedRows = BoundedJsonBlobBatchReader.Read(_context, [key], _maximumShardCharacters);
+            var tracked = _context.Blobs.Local.FirstOrDefault(row => row.BlobKey == key);
             PrtgFormalMailClaimShard shard;
             var dirty = false;
-            if (existing is null)
+            if (!boundedRows.TryGetValue(key, out var existing))
             {
+                if (tracked is not null)
+                    throw new DbUpdateConcurrencyException("Formal mail claim shard disappeared after it was tracked.");
                 shard = new PrtgFormalMailClaimShard { HostId = hostId };
             }
             else
             {
-                if (existing.Length > MaxShardCharacters || existing.Content.Length > MaxShardCharacters ||
-                    Encoding.UTF8.GetByteCount(existing.Content) > MaxShardCharacters || string.IsNullOrWhiteSpace(existing.Content))
+                if (existing.Content is null || existing.Length > _maximumShardCharacters ||
+                    existing.Content.Length > _maximumShardCharacters ||
+                    Encoding.UTF8.GetByteCount(existing.Content) > _maximumShardCharacters ||
+                    string.IsNullOrWhiteSpace(existing.Content))
                     throw new InvalidDataException($"Formal mail claim shard for host {hostId} exceeds its bounded read limit.");
                 shard = JsonSerializer.Deserialize<PrtgFormalMailClaimShard>(existing.Content, LfJsonOptions.Pretty)
                     ?? throw new JsonException($"Formal mail claim shard for host {hostId} has a null root.");
                 if (shard.HostId != hostId || shard.Claims is null || shard.Fences is null)
                     throw new InvalidDataException($"Formal mail claim shard for host {hostId} has an invalid shape.");
                 ValidateShard(shard, hostId);
-                tracked = _context.Blobs.FirstOrDefault(row => row.BlobKey == key)
-                    ?? throw new InvalidDataException($"Formal mail claim shard for host {hostId} disappeared inside its transaction.");
+                tracked ??= new BlobRow
+                {
+                    BlobKey = key,
+                    Content = existing.Content,
+                    Version = existing.Version,
+                    UpdatedAt = existing.UpdatedAt
+                };
+                if (_context.Entry(tracked).State != EntityState.Detached &&
+                    !MatchesBoundedRow(_context, tracked, existing))
+                    throw new DbUpdateConcurrencyException($"Formal mail claim shard for host {hostId} changed during its bounded transaction read.");
+                if (_context.Entry(tracked).State == EntityState.Detached)
+                    _context.Blobs.Attach(tracked);
             }
 
             cached = new LoadedShard(shard, tracked, dirty);
@@ -446,7 +513,9 @@ public static class PrtgFormalMailClaimStore
                      entry.Value.UpdatedAtUtc < cutoff).Select(entry => entry.Key).ToArray())
             shard.Claims.Remove(key);
 
-        var activeFenceKeys = shard.Claims.Values.Where(claim => claim.Status is not ("revoked" or "smtp-accepted"))
+        // Retained accepted claims still require their fence for validation and durable
+        // deduplication. Prune the reference only after its referencing claim expires.
+        var activeFenceKeys = shard.Claims.Values
             .Select(claim => claim.FenceKey).Where(key => !string.IsNullOrWhiteSpace(key))
             .ToHashSet(StringComparer.Ordinal);
         foreach (var key in shard.Fences.Where(entry => !activeFenceKeys.Contains(entry.Key) &&
@@ -470,10 +539,49 @@ public static class PrtgFormalMailClaimStore
             throw new InvalidDataException($"Formal mail claim shard for host {hostId} contains an invalid fence.");
     }
 
-    internal static void EnsureBoundedShard(string serialized)
+    internal static void EnsureBoundedShard(string serialized, int maximumCharacters = MaxShardCharacters)
     {
-        if (serialized.Length > MaxShardCharacters || Encoding.UTF8.GetByteCount(serialized) > MaxShardCharacters)
-            throw new InvalidDataException($"Formal mail claim shard output exceeds its {MaxShardCharacters}-character/byte limit.");
+        if (maximumCharacters is < 1 or > MaxShardCharacters) throw new ArgumentOutOfRangeException(nameof(maximumCharacters));
+        if (serialized.Length > maximumCharacters || Encoding.UTF8.GetByteCount(serialized) > maximumCharacters)
+            throw new InvalidDataException($"Formal mail claim shard output exceeds its {maximumCharacters}-character/byte limit.");
+    }
+
+    private static BlobRow AttachBoundedRow(LfDbContext context, string key,
+        (string? Content, long Version, int Length, DateTime UpdatedAt) bounded)
+    {
+        var existing = context.Blobs.Local.FirstOrDefault(row => row.BlobKey == key);
+        if (existing is not null)
+        {
+            if (!MatchesBoundedRow(context, existing, bounded))
+                throw new DbUpdateConcurrencyException("Formal mail claim shard changed after its bounded prune read.");
+            return existing;
+        }
+
+        var row = new BlobRow
+        {
+            BlobKey = key,
+            Content = bounded.Content ?? throw new InvalidDataException("A bounded formal mail claim shard has no complete content."),
+            Version = bounded.Version,
+            UpdatedAt = bounded.UpdatedAt
+        };
+        context.Blobs.Attach(row);
+        var entry = context.Entry(row);
+        entry.Property(candidate => candidate.Version).OriginalValue = bounded.Version;
+        entry.Property(candidate => candidate.UpdatedAt).OriginalValue = bounded.UpdatedAt;
+        entry.Property(candidate => candidate.Content).OriginalValue = bounded.Content;
+        return row;
+    }
+
+    private static bool MatchesBoundedRow(LfDbContext context, BlobRow row,
+        (string? Content, long Version, int Length, DateTime UpdatedAt) bounded)
+    {
+        var entry = context.Entry(row);
+        return bounded.Content is not null && entry.State == EntityState.Unchanged &&
+            row.Version == bounded.Version && row.UpdatedAt == bounded.UpdatedAt &&
+            StringComparer.Ordinal.Equals(row.Content, bounded.Content) &&
+            entry.Property(candidate => candidate.Version).OriginalValue == bounded.Version &&
+            entry.Property(candidate => candidate.UpdatedAt).OriginalValue == bounded.UpdatedAt &&
+            StringComparer.Ordinal.Equals(entry.Property(candidate => candidate.Content).OriginalValue, bounded.Content);
     }
 
     private sealed class LoadedShard(PrtgFormalMailClaimShard value, BlobRow? row, bool dirty)

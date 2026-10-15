@@ -37,7 +37,7 @@ public static class PrtgProbeLocalFactsCollector
             using var progressDeadline = sqlite is not null
                 ? await AttachSqliteProgressDeadlineAsync(db.Database, sqlite, token)
                 : null;
-            var policy = await ReadPolicyAsync(db, token);
+            var policy = ReadPolicy(db, token);
             token.ThrowIfCancellationRequested();
             var authority = policy.SourceAuthorityFingerprint(settings.PrtgUrl);
             var hasAuthority = authority.Length == 64;
@@ -56,13 +56,13 @@ public static class PrtgProbeLocalFactsCollector
                 policy.HostIds.Where(id => id > 0).Distinct().Take(MaximumPolicyHosts + 1).Count() > MaximumPolicyHosts)
                 throw new InvalidDataException("policy-scope-exceeds-probe-bound");
             var ids = policy.SensorIds.Where(id => id > 0).Distinct().Order().Take(MaximumProfileSample).ToArray();
-            var bindings = await ReadBindingsAsync(db, ids, token);
-            var profiles = await ReadProfilesAsync(db, ids, token);
-            var identities = await ReadIdentitiesAsync(db, ids, token);
+            var bindings = ReadBindings(db, ids, token);
+            var profiles = ReadProfiles(db, ids, token);
+            var identities = ReadIdentities(db, ids, token);
             var now = DateTimeOffset.UtcNow;
             var strategy = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
             var minutes = PrtgFetchStrategy.Profile(strategy).SnapshotIntervalMinutes;
-            var strategyContext = await ReadCurrentStrategyAsync(db, policy, strategy, minutes, token);
+            var strategyContext = ReadCurrentStrategy(db, policy, strategy, minutes, token);
             var expectedAuthority = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy, strategy, minutes);
             var qualified = profiles.Count(pair => hasAuthority && settings.PrtgEnabled && strategyContext.Ready &&
                 identities.TryGetValue(pair.Key, out var identity) && policy.HostIds.Contains(identity.HostId) &&
@@ -137,14 +137,16 @@ public static class PrtgProbeLocalFactsCollector
         return facts;
     }
 
-    private static async Task<PrtgMonitoringPolicy> ReadPolicyAsync(
+    private static PrtgMonitoringPolicy ReadPolicy(
         LogForesight.Core.Persistence.Sql.LfDbContext db, CancellationToken ct)
     {
-        var row = await db.Blobs.AsNoTracking().Where(blob => blob.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-            .Select(blob => new { Prefix = blob.Content.Substring(0, MaximumPolicyCharacters + 1), Length = blob.Content.Length })
-            .FirstOrDefaultAsync(ct);
-        if (row is null) return new PrtgMonitoringPolicy();
-        if (row.Length > MaximumPolicyCharacters || Encoding.UTF8.GetByteCount(row.Prefix) > MaximumPolicyCharacters)
+        ct.ThrowIfCancellationRequested();
+        var row = EfJsonBlobStore.ReadBoundedInContext(db, PrtgMonitoringPolicyStore.BlobKey,
+            MaximumPolicyCharacters);
+        ct.ThrowIfCancellationRequested();
+        if (row.Version == 0 && row.Prefix is null) return new PrtgMonitoringPolicy();
+        if (row.ReportedLength > MaximumPolicyCharacters || row.Prefix is null ||
+            Encoding.UTF8.GetByteCount(row.Prefix) > MaximumPolicyCharacters)
             throw new InvalidDataException("policy-exceeds-probe-bound");
         // Match JsonBlobSingleton.Get(): absent/blank is default; explicit JSON null is also default.
         if (string.IsNullOrWhiteSpace(row.Prefix)) return new PrtgMonitoringPolicy();
@@ -152,23 +154,23 @@ public static class PrtgProbeLocalFactsCollector
             ?? new PrtgMonitoringPolicy();
     }
 
-    private static async Task<IReadOnlyDictionary<long, PrtgTrustedSamplingBinding>> ReadBindingsAsync(
+    private static IReadOnlyDictionary<long, PrtgTrustedSamplingBinding> ReadBindings(
         LogForesight.Core.Persistence.Sql.LfDbContext db, long[] ids, CancellationToken ct)
     {
         if (ids.Length > MaximumProfileSample) throw new InvalidDataException("binding-sample-exceeds-probe-bound");
         if (ids.Length == 0) return new Dictionary<long, PrtgTrustedSamplingBinding>();
         var keys = ids.ToDictionary(id => PrtgTrustedSamplingBinding.StorePrefix + id.ToString(CultureInfo.InvariantCulture), id => id,
             StringComparer.Ordinal);
-        var rows = await db.Blobs.AsNoTracking().Where(row => keys.Keys.Contains(row.BlobKey))
-            .Select(row => new { row.BlobKey, Content = row.Content.Substring(0,
-                PrtgTrustedSamplingBinding.MaximumSerializedBytes + 1), Length = row.Content.Length })
-            .ToListAsync(ct);
+        ct.ThrowIfCancellationRequested();
+        var rows = BoundedJsonBlobBatchReader.Read(db, keys.Keys,
+            PrtgTrustedSamplingBinding.MaximumSerializedBytes);
+        ct.ThrowIfCancellationRequested();
         var result = new Dictionary<long, PrtgTrustedSamplingBinding>();
-        foreach (var row in rows)
+        foreach (var (blobKey, row) in rows)
         {
             ct.ThrowIfCancellationRequested();
-            var id = keys[row.BlobKey];
-            if (row.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
+            var id = keys[blobKey];
+            if (row.Content is null || row.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
                 Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
                 throw new InvalidDataException("PRTG 採樣 binding 超過 8 KiB；拒絕使用截斷值。");
             var binding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(row.Content, LfJsonOptions.Pretty)
@@ -180,23 +182,23 @@ public static class PrtgProbeLocalFactsCollector
         return result;
     }
 
-    private static async Task<IReadOnlyDictionary<long, PrtgTrustedSamplingProfile>> ReadProfilesAsync(
+    private static IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> ReadProfiles(
         LogForesight.Core.Persistence.Sql.LfDbContext db, long[] ids, CancellationToken ct)
     {
         if (ids.Length > MaximumProfileSample) throw new InvalidDataException("profile-sample-exceeds-probe-bound");
         if (ids.Length == 0) return new Dictionary<long, PrtgTrustedSamplingProfile>();
         var keys = ids.ToDictionary(id => PrtgTrustedSamplingProfile.StorePrefix + id.ToString(CultureInfo.InvariantCulture), id => id,
             StringComparer.Ordinal);
-        var rows = await db.Blobs.AsNoTracking().Where(row => keys.Keys.Contains(row.BlobKey))
-            .Select(row => new { row.BlobKey, Content = row.Content.Substring(0,
-                PrtgTrustedSamplingProfile.MaximumSerializedBytes + 1), Length = row.Content.Length })
-            .ToListAsync(ct);
+        ct.ThrowIfCancellationRequested();
+        var rows = BoundedJsonBlobBatchReader.Read(db, keys.Keys,
+            PrtgTrustedSamplingProfile.MaximumSerializedBytes);
+        ct.ThrowIfCancellationRequested();
         var result = new Dictionary<long, PrtgTrustedSamplingProfile>();
-        foreach (var row in rows)
+        foreach (var (blobKey, row) in rows)
         {
             ct.ThrowIfCancellationRequested();
-            var id = keys[row.BlobKey];
-            if (row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
+            var id = keys[blobKey];
+            if (row.Content is null || row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
                 Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
                 continue; // Exclude only this untrusted profile; other bounded saved facts remain observable.
             PrtgTrustedSamplingProfile? profile;
@@ -211,23 +213,22 @@ public static class PrtgProbeLocalFactsCollector
         return result;
     }
 
-    private static async Task<IReadOnlyDictionary<long, PrtgResourceIdentity>> ReadIdentitiesAsync(
+    private static IReadOnlyDictionary<long, PrtgResourceIdentity> ReadIdentities(
         LogForesight.Core.Persistence.Sql.LfDbContext db, long[] ids, CancellationToken ct)
     {
         if (ids.Length > MaximumProfileSample) throw new InvalidDataException("identity-sample-exceeds-probe-bound");
         if (ids.Length == 0) return new Dictionary<long, PrtgResourceIdentity>();
         var keys = ids.ToDictionary(id => PrtgResourceIdentityStore.Prefix + id.ToString(CultureInfo.InvariantCulture), id => id,
             StringComparer.Ordinal);
-        var rows = await db.Blobs.AsNoTracking().Where(row => keys.Keys.Contains(row.BlobKey))
-            .Select(row => new { row.BlobKey, Content = row.Content.Substring(0,
-                PrtgResourceIdentityStore.MaxLedgerBytes + 1), Length = row.Content.Length })
-            .ToListAsync(ct);
+        ct.ThrowIfCancellationRequested();
+        var rows = BoundedJsonBlobBatchReader.Read(db, keys.Keys, PrtgResourceIdentityStore.MaxLedgerBytes);
+        ct.ThrowIfCancellationRequested();
         var result = new Dictionary<long, PrtgResourceIdentity>();
-        foreach (var row in rows)
+        foreach (var (blobKey, row) in rows)
         {
             ct.ThrowIfCancellationRequested();
-            var id = keys[row.BlobKey];
-            if (row.Length > PrtgResourceIdentityStore.MaxLedgerBytes ||
+            var id = keys[blobKey];
+            if (row.Content is null || row.Length > PrtgResourceIdentityStore.MaxLedgerBytes ||
                 Encoding.UTF8.GetByteCount(row.Content) > PrtgResourceIdentityStore.MaxLedgerBytes)
                 throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
             PrtgResourceIdentity? identity;
@@ -240,17 +241,17 @@ public static class PrtgProbeLocalFactsCollector
         return result;
     }
 
-    private static async Task<PrtgTrustedSamplingStrategyContext> ReadCurrentStrategyAsync(
+    private static PrtgTrustedSamplingStrategyContext ReadCurrentStrategy(
         LogForesight.Core.Persistence.Sql.LfDbContext db, PrtgMonitoringPolicy policy,
         string strategy, int minutes, CancellationToken ct)
     {
-        var row = await db.Blobs.AsNoTracking()
-            .Where(blob => blob.BlobKey == PrtgTrustedSamplingStrategyStateStore.BlobKey)
-            .Select(blob => new { Prefix = blob.Content.Substring(0, 8193), Length = blob.Content.Length })
-            .FirstOrDefaultAsync(ct);
-        if (row is not null && (row.Length > 8192 || Encoding.UTF8.GetByteCount(row.Prefix) > 8192))
+        ct.ThrowIfCancellationRequested();
+        var row = EfJsonBlobStore.ReadBoundedInContext(db, PrtgTrustedSamplingStrategyStateStore.BlobKey, 8192);
+        ct.ThrowIfCancellationRequested();
+        if (row.Version != 0 && (row.ReportedLength > 8192 || row.Prefix is null ||
+            Encoding.UTF8.GetByteCount(row.Prefix) > 8192))
             throw new InvalidDataException("PRTG strategy fence 超過 8 KiB 上限。");
-        return PrtgTrustedSamplingStrategyStateStore.ReadCurrent(row?.Prefix, policy, strategy, minutes);
+        return PrtgTrustedSamplingStrategyStateStore.ReadCurrent(row.Prefix, policy, strategy, minutes);
     }
 
     private static async Task<IReadOnlyList<NetiqSourceAttempt.Receipt>> ReadLatestReceiptsAsync(

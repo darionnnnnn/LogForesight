@@ -40,7 +40,7 @@ public sealed class PrtgSilentPresenceSnapshotStore(EfJsonBlobStore blob)
             snapshot = snapshot with { ReadQuality = PrtgPresenceReadQuality.Failed };
             json = JsonSerializer.Serialize(snapshot, LfJsonOptions.Pretty);
         }
-        blob.Mutate(_ => (json, true));
+        blob.MutateWithContext((_, _) => (json, true), maxCurrentCharacters: MaxSnapshotCharacters);
     }
 
     public PrtgSilentDeviceSnapshot? Get(long deviceObjid)
@@ -78,21 +78,15 @@ public sealed class PrtgSilentPresenceSnapshotStore(EfJsonBlobStore blob)
             var keys = page.ToDictionary(pair => BlobKey(pair.Id, pair.Day), pair => pair,
                 StringComparer.Ordinal);
             using var context = contextFactory();
-            var rows = context.Blobs.AsNoTracking().Where(row => keys.Keys.Contains(row.BlobKey))
-                .Select(row => new
-                {
-                    row.BlobKey,
-                    ContentPrefix = row.Content.Substring(0, MaxSnapshotCharacters + 1),
-                    CharacterLength = row.Content.Length
-                }).ToList();
-            foreach (var row in rows)
+            var rows = BoundedJsonBlobBatchReader.Read(context, keys.Keys, MaxSnapshotCharacters);
+            foreach (var (blobKey, row) in rows)
             {
-                var pair = keys[row.BlobKey];
-                if (row.CharacterLength > MaxSnapshotCharacters || Encoding.UTF8.GetByteCount(row.ContentPrefix) > MaxSnapshotBytes)
+                if (!keys.TryGetValue(blobKey, out var pair) || row.Content is null ||
+                    row.Length > MaxSnapshotCharacters || Encoding.UTF8.GetByteCount(row.Content) > MaxSnapshotBytes)
                     continue;
                 try
                 {
-                    var snapshot = JsonSerializer.Deserialize<PrtgSilentDeviceSnapshot>(row.ContentPrefix, LfJsonOptions.Pretty);
+                    var snapshot = JsonSerializer.Deserialize<PrtgSilentDeviceSnapshot>(row.Content, LfJsonOptions.Pretty);
                     if (snapshot is { Sensors.Count: <= 512 } && snapshot.DeviceObjid == pair.Id && snapshot.SourceDay == pair.Day &&
                         snapshot.SourceAsOf is { } asOf && asOf >= requestedStartUtc && asOf < requestedEndUtc &&
                         (!result.TryGetValue(pair.Id, out var previous) || !previous.SourceAsOf.HasValue || previous.SourceAsOf.Value < asOf))
@@ -124,10 +118,7 @@ public sealed class PrtgSilentPresenceSnapshotStore(EfJsonBlobStore blob)
                     string.CompareOrdinal(key[(suffix + 1)..], cutoff) < 0;
             }).ToArray();
             if (expired.Length == 0) continue;
-            var rows = context.Blobs.Where(row => expired.Contains(row.BlobKey)).ToList();
-            context.Blobs.RemoveRange(rows);
-            deleted += rows.Count;
-            context.SaveChanges();
+            deleted += context.Blobs.Where(row => expired.Contains(row.BlobKey)).ExecuteDelete();
         }
         return deleted;
     }
