@@ -1,6 +1,6 @@
 # 第 54 輪規劃：PRTG 剩餘實作與完整驗收
 
-> 狀態（2026-10-15）：原27項逐項驗收，E01-T01／T02及E04-T01／T02共4項完成，23項仍開；目前乾淨候選faeb7bca，證據見§8.35–36。使用者已授權逐段完成並驗證後commit／push；依§4.12最新定案，以程式可擴展性審查及必要小型正確性驗證取代本機全負載門檻，沿用有效證據。本輪未宣告整體驗收通過。
+> 狀態（2026-10-15）：原27項逐項驗收，E01兩項、E04兩項、E06三項及E07-T01共8項完成，19項仍開；目前乾淨候選faeb7bca，證據見§8.35–36。使用者已授權逐段完成並驗證後commit／push；依§4.12最新定案，以程式可擴展性審查及必要小型正確性驗證取代本機全負載門檻，沿用有效證據。本輪未宣告整體驗收通過。
 > 來源：2026-10-13 使用者明確要求將第53輪尚未實作項目移入下一輪，先收尾已實作部分。此為範圍移交，不代表原目標、容量、實用性或驗收已通過。
 > 本輪起點：`dev` 的 `a69fedd7`；工作分支 `feature/prtg-feedback-54`。第53輪乾淨驗證基準為 `638c58434f0bc01fe77e62365addeafd75680fb0`，至本輪起點僅README、PLAN與驗收JSON差異，正式程式未變。
 > 原始需求與契約：[第53輪 PLAN](FEEDBACK-53-PLAN.md) §§3、6、13、15–17；最新責任邊界為 §§5.7、5.9。
@@ -62,10 +62,10 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 - [ ] **E05-T01【承接驗收】** 補完未保存／缺資料／陳舊守門狀態、原因與設定入口的操作驗證；守門失聯不得視為安全，守門資料不得產生業務 finding／案件／通知。
 - [ ] **E05-T02【承接驗收】** 核對範圍縮小、鏡像差額、同步未完成與保留資料不誤刪；補齊 readonly／case-only 修改拒絕、過期寫入及其餘完整角色操作。已通過的 18成功／2衝突及保存→採樣→guard 子集合保留。
 - [ ] **E05-T03【承接驗收】** 取消→續跑的單sensor精確集合已補證（§8.31）；其餘夾末頁、messages完整前導／期間涵蓋及操作集合仍待核對；抽樣相依資料不得授權完整拓撲。分頁／預覽／保存／實際請求依§4.12查完整演算法並以最小跨批次精確集合驗證，不跑全負載。
-- [ ] **E06-T01【承接驗收】** 依§4.12逐呼叫端核對成本預覽與實際transport、quota、property/profile刷新、初始化及guard種類／數量／版本／scope；確認到期尖峰分批、預算與等待有界，沿用有效小型證據，不跑完整共同負載。
-- [ ] **E06-T02【承接驗收】** 正常、逾時、unknown、全來源拒絕及回填／刷新／NetIQ／AI／查詢的失敗隔離、排程與資源競爭查碼；必要缺口以小型受控案例補證，不量測本機p95或完整比例負載。
-- [ ] **E06-T03【承接驗收】** 核對table 2/秒、在途4、historic 5/60、72小時初始化截止及公平有限等待的實作；來源失敗不阻NetIQ、停止後零新請求、未知成本／超窗口拒擴量，既有證據有效即沿用。
-- [ ] **E07-T01【承接驗收】** 以目標規模查生成／儲存／保留／備份／匯出各路徑的批次、串流、檔案與副本生命週期及空間預檢；沿用固定結構與205值證據，不生成64.8M或開大型副本，不要求本機峰值量測。
+- [x] **E06-T01【承接驗收】** 依§4.12完成成本預覽→正式transport／quota／profile刷新／初始化的種類、數量、版本與scope程式核對；分批、等待有界，沿用r30／r33有效小型證據，見§8.38。不宣稱全負載效能。
+- [x] **E06-T02【承接驗收】** 依§4.12完成來源失敗、逾時、unknown、回填／刷新／NetIQ／AI／查詢隔離與資源邊界查碼，見§8.38；不量測本機p95或比例負載，完整業務副作用仍在E08核。
+- [x] **E06-T03【承接驗收】** table 2/秒、在途4、historic 5/60、72小時預設截止、公平有限等待、取消與unknown拒擴量的實作及呼叫端已核；既有必要小型證據沿用，見§8.38。
+- [x] **E07-T01【承接驗收】** 依§4.12完成生成／儲存／保留／備份／匯出有界路徑審查，沿用205值／12步恢復及空間預檢，見§8.38；不生成64.8M或開大型副本。完整還原正確性仍由E07-T04核。
 - [ ] **E07-T02【承接驗收】** 檢查NetIQ與PRTG共用資源、查詢路由的SQL篩選／分頁／索引、取消及有限等待；必要小型HTTP案例驗DTO與精確集合，不跑三對六輪／1200請求或p95比較。
 - [ ] **E07-T03【承接驗收】** 查額外記憶體、cache生命週期、I/O批次、交易／鎖與積壓恢復演算法有界，避免N+1、全歷史載入及無界重試；小型精確集合核耐久接受零丟失／重複，不量測本機RAM或高水位。
 - [ ] **E07-T04【承接驗收】** 保留備份還原、保留邊界、升級／回退、雙程序、提交未知、journal壞／滿後續跑正確性；沿用或補最小自有隔離資料，精確核列數／版本與writer隔離，不要求180日完整副本。
@@ -752,10 +752,27 @@ owned runtime `a3842164129848259043ab52ca9b88d4`由原有約1.1MiB合成資料�
 
 主代理直接查collector、CaptureMessageTimeEvidence、compatibility serializer與正式consumer邊界；診斷JSON不被讀入正式風險權威。§8.26、30、32及本節共同覆蓋E04兩項的操作／格式契約，不替代E03、E08來源資格與業務工作流。原始產物`{local-evidence,saved-authority-local-evidence,projection-result}.json`、offline logs及harness在§8.35同目錄；第一次harness誤期望authority_status=configured，查碼確認正式值為saved-explicit-authority，只重核同一已保存產物的剩餘斷言，沒有重送設定／來源操作。原始失敗log保留。
 
-owned Web／source已停止，原小型來源DB及key hash仍與啟動前相同，clone保留供重用。原27項現4完成／23待驗，§4.12的程式可擴展性覆核仍待逐段完成，不宣稱正式效能量測。
+owned Web／source已停止，原小型來源DB及key hash仍與啟動前相同，clone保留供重用。原27項現8完成／19待驗，§4.12的程式可擴展性覆核仍待逐段完成，不宣稱正式效能量測。
 
 ### 8.37 最小28日與七日低水位同鏈
 
 E03-T02原先只有分開的readiness／trend測例，joined receipt僅兩小時正例，缺同一正式trial service鏈。新增單一方法`RuleTrial_WithMinimumTwentyEightDayHistoryReportsExactSevenDayLowWaterAsTrialOnly`：一顆disk、28日×契約最低每天12個hourly，共336列；沿既有合法時間／磁碟語意證據及保存規則入口試算，54→27%、每天降1百分點，核28/28日Ready、latest27、exact7日到20%、predicted-low-water及ready-hit。同時規則保持停用、真實正向未觀察、結果數與336輸入列數不變，試算不冒稱正式風險命中。
 
 這是滿足28日readiness的最小單sensor輸入，不是generator固定結構或容量測試，未增加其他感測器或重跑已有邊界單元集合。只跑此方法1/1、零skip、約7秒；TRX `work/round54/acceptance-e03-lowwater/e03-lowwater.trx` SHA `EC5EC2605F29230F963C4C1507899C2138F7539B75D1D151CCE454CD6614EF02`，同目錄`dotnet-test-raw.log`。Luna high新增，主代理核實際diff、service呼叫與原始TRX，不重跑以背書。E03-T02其餘時間／semantic拒絕與正式副作用條款仍沿原證據逐條對照；此子項通過不直接勾父項，正式成品未改不再publish。
+
+### 8.38 依新準則完成E06與E07-T01程式路徑驗收
+
+兩個Luna high唯讀盤點，主代理直接讀實際consumer／SQL／預算／worker及原始receipt後裁定；零新增執行測試、零大量資料、零產品修改。以下完成的是§4.12更新後契約，未聲稱正式環境吞吐、p95、RAM、I/O或實際峰值量測。
+
+| ID | 主代理覆核的實際路徑／資源界線與裁定 |
+|---|---|
+| E06-T01 | SettingsController估算及正式snapshot resolver共用scope／版本／request shape；快照100-ID、URL／回應有界、最多3並行與固定輪次deadline；fallback才增加單sensor property/table，qualification每attempt為4 table/property＋1 historic，group refresh成本由共用契約計。未知成本／舊proof不放行擴量。r30 concurrency/retry與r33 qualification→refresh之已通過子項沿用，無新實作缺口。 |
+| E06-T02 | ProfileRefresh每頁重核settings／policy／binding／raw proof，只探測due且合格集合，單顆30秒、slice有界、heartbeat／cooldown；qualification依job deadline、版本／owner／取消停止。AnalysisOrchestrator讓local／NetIQ並行，PRTG有自己的失敗處理與依據父分析完成的接線，不把PRTG budget說成NetIQ也共用的節流器。來源失敗不被當作安全／成功，完整案件／郵件組合仍由E08承擔。 |
+| E06-T03 | Shared PrtgRequestBudget先取historic durable ticket再取在途，避免等待占滿4槽；table 2/s、historic 5/60、snapshot最多3、profile lane保留及可取消waiter。QualificationCapacityEvaluator預設72h／每顆一次attempt、25%模型餘裕；worker deadline到期與續租檢查、請求checkpoint及CT傳遞，unknown／超窗口fail closed。這是程式截止與公平性核對，不是等待72h或共同全負載實測。 |
+| E07-T01 | Generator只物化單batch，checkpoint-before-write、精確merge計數、提交後更新owned marker／checkpoint，既有205值／12步恢復PASS沿用。正式SettingsController匯出走DiagnosticExportActionResult→Source keyset頁（Values最多2000）→Writer固定有界buffer逐列flush；45分鐘取消、固定snapshot／read lease及每頁重新授權，未使用legacy一次ToList全期間helper。Prune實際共用上限200,000／每批5,000，SQL key範圍刪除；backup／副本工具有owned與空間預檢，完整還原另列E07-T04。 |
+
+原始E06收據已在舊workspace找回，不以遺失相對路徑為由重測：`C:/Users/eldar/Documents/Codex/2026-10-14/1-2-3-c-users-eldar/work/round54-mode-validation/work/root-capacity-timebasis-smtp-r30/capacity-timebasis-smtp-r30.trx` SHA `D6B67289382BCB0C71F9A54FF96CD571E836717EC55295737F046151212809F3`，整份27案為26通過／1歷史SMTP失敗，這裡只沿用其中19個capacity/concurrency/retry/discovery通過子項（9 concurrency、7 retry、3 discovery job-store），不把整份寫成全綠；SMTP後續修正／重驗見既有通知紀錄。`root-raw-qualified-page-state-r33/raw-qualified-page-state-r33.trx`同一work父路徑，11/11、零skip，SHA `E8DAC34AE162197314908C93F2B99E90E404020DA65FD754161A9CE709B39574`，覆蓋raw ABA／legacy拒絕、qualification及refresh/discovery接線。主代理實際讀了case/outcome。
+
+Generator原始`work/round54/e1-root-reused-report.json` SHA `AF2E2D8CF823CF94183053EF21926B6282E663612F64064F9729A454F2F4944A`，result=PASS、maximumValueRowsPerDatabase=205、newStructureSeeds=0、恢復exact bytes；既有失敗步驟保留，不再建立固定結構。容量預檢依§8 A1原只讀metadata結果，舊-59.6GB預估不是本機正式效能或本輪合併門檻。
+
+重複fresh catalog檢查是同小時scope變動防護，測例`同一小時重新計算容量目標時使用目前HostMap與ActiveHosts`及HTTP前scope漂移拒絕對應其必要性；沒有證據證明15k metadata是不可接受瓶頸，不為優化猜測加入快取或繞過重核。E07-T02／T03／T05的查詢／journal／provider正確性仍按各自具體缺口核對，不能由此連帶勾選。原27項目前8完成／19待驗。
