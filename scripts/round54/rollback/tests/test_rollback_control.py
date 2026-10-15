@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "rollback_control.py"
+sys.path.insert(0, str(MODULE_PATH.parent))
 spec = importlib.util.spec_from_file_location("rollback_control", MODULE_PATH)
 rollback = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rollback)

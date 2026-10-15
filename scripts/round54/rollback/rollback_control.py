@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from rollback_errors import Refusal
+
 
 SCHEMA = "lf-round54-rollback-input-v1"
 STATE_SCHEMA = "lf-round54-rollback-state-v1"
@@ -29,10 +31,6 @@ SUPPORTED_VERSIONS = {"authority": {"authority-54.1"}, "schema": {"lf-schema-53"
 REQUIRED_FILES = ("webRoot", "database", "key", "config", "authority", "preservation")
 PROTECTED_CATEGORIES = {"case", "humanReply", "notificationReceipt", "pendingTask"}
 MAIL_FLAGS = ("MailEnabled", "MailOnRunCompleted", "MailDailyEnabled", "MailWeeklyEnabled", "MailUrgentEnabled", "MailNotifyWorkOrders")
-
-
-class Refusal(RuntimeError):
-    pass
 
 
 def fail(message: str) -> None:
@@ -486,8 +484,25 @@ def verify_restore_root(root: Path, expected_commit: str) -> tuple[dict[str, Any
         "keySha256": sha256_file(data / "keys" / "lf-crypto.key"),
         "configSha256": sha256_file(app / "appsettings.json"),
     }
+    intent_valid = False
+    if "reconciliationIntentSha256" in state:
+        intent_path = root / "delta-reconcile-intent.json"
+        if not intent_path.is_file() or sha256_file(intent_path) != state["reconciliationIntentSha256"]:
+            fail("sealed delta reconciliation intent is missing or changed")
+        intent = read_json(intent_path)
+        prepared_database_hash = state.get("preparedDatabaseSha256", state["files"].get("databaseSha256"))
+        if not isinstance(intent, dict) or intent.get("schema") != "lf-round54-rollback-reconcile-intent-v1" or intent.get("root") != str(root) or intent.get("targetCommit") != state["targetCommit"] or intent.get("baseDatabaseSha256") != prepared_database_hash:
+            fail("delta reconciliation intent does not match the owned restore root")
+        intent_seal = intent.get("sealSha256")
+        intent_unsigned = dict(intent); intent_unsigned.pop("sealSha256", None)
+        if not isinstance(intent_seal, str) or hashlib.sha256(canonical_json(intent_unsigned)).hexdigest() != intent_seal:
+            fail("delta reconciliation intent seal is invalid")
+        delta_copy = root / "held-differences" / "delta-catalog.json"
+        if not delta_copy.is_file() or sha256_file(delta_copy) != state.get("deltaCatalogSha256") or sha256_file(delta_copy) != intent.get("deltaManifestSha256"):
+            fail("owned delta catalog is missing or differs from the sealed reconciliation intent")
+        intent_valid = True
     for key, value in actuals.items():
-        if value != state["files"].get(key):
+        if value != state["files"].get(key) and not (key == "databaseSha256" and intent_valid):
             fail(f"restore input changed after preparation: {key}")
     meta = db_metadata(data / "Db" / "logforesight.db")
     require_isolated_settings(meta)
@@ -503,6 +518,32 @@ def verify_restore_root(root: Path, expected_commit: str) -> tuple[dict[str, Any
         held = root / "held-differences" / item["category"] / item["id"]
         if not held.is_file() or sha256_file(held) != item["payloadSha256"]:
             fail(f"held recovery difference missing or changed: {item['category']}/{item['id']}")
+    if "deltaReconciliationSha256" in state:
+        receipt_path = root / "delta-reconciliation.json"
+        backup_path = root / "reconcile-backup" / "logforesight.after-reconcile.db"
+        if not receipt_path.is_file() or sha256_file(receipt_path) != state["deltaReconciliationSha256"]:
+            fail("sealed delta reconciliation receipt is missing or changed")
+        if not backup_path.is_file() or sha256_file(backup_path) != state.get("postReconcileBackupSha256"):
+            fail("sealed post-reconcile SQLite backup is missing or changed")
+        receipt = read_json(receipt_path)
+        if not isinstance(receipt, dict) or receipt.get("schema") != "lf-round54-rollback-reconcile-backup-v1":
+            fail("post-reconcile backup receipt schema is unknown")
+        receipt_seal = receipt.get("sealSha256")
+        unsigned_receipt = dict(receipt); unsigned_receipt.pop("sealSha256", None)
+        if not isinstance(receipt_seal, str) or hashlib.sha256(canonical_json(unsigned_receipt)).hexdigest() != receipt_seal:
+            fail("post-reconcile backup receipt seal is invalid")
+        if receipt.get("postReconcileDatabaseSha256") != sha256_file(backup_path) or receipt.get("targetCommit") != state["targetCommit"]:
+            fail("post-reconcile backup no longer matches its sealed authority")
+        if receipt.get("restoreDatabaseSha256") != sha256_file(data / "Db" / "logforesight.db"):
+            fail("reconciled restore database differs from its sealed after-backup relation")
+        if receipt.get("deltaManifestSha256") != intent.get("deltaManifestSha256"):
+            fail("reconciliation receipt differs from its sealed intent")
+        backup_meta = db_metadata(backup_path)
+        for key in ("applicationId", "userVersion", "schemaSha256"):
+            if backup_meta[key] != meta[key] or receipt.get("postReconcileMetadata", {}).get(key) != meta[key]:
+                fail(f"post-reconcile backup schema authority changed: {key}")
+        from delta_reconcile import verify_backup_projection
+        verify_backup_projection(data / "Db" / "logforesight.db", backup_path, receipt)
     return state, meta
 
 
@@ -700,6 +741,40 @@ def stop_windows_process(owner: dict[str, Any], root: Path) -> None:
         fail("exact Web process identity did not verify; no unrelated PID was stopped")
 
 
+def release_gate_status(root: Path, state: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
+    """Require every initially held payload to match a reconciled native delta item."""
+    delta_items = {(item.get("category"), str(item.get("id"))): item for item in receipt.get("items", []) if isinstance(item, dict)}
+    unresolved: list[dict[str, str]] = []
+    mail_hold = bool(receipt.get("mailUnknownOutcomes"))
+    for held_item in state.get("preservationItems", []):
+        category, item_id = held_item.get("category"), str(held_item.get("id"))
+        entry = delta_items.get((category, item_id))
+        resolved = bool(entry and entry.get("outcome") in {"applied", "already-applied"})
+        payload = root / "held-differences" / category / item_id
+        if resolved:
+            try:
+                payload_value = json.loads(payload.read_text(encoding="utf-8"))
+                delta_copy = read_json(root / "held-differences" / "delta-catalog.json")
+                source_entry = next(item for item in delta_copy["items"] if item.get("category") == category and str(item.get("id")) == item_id)
+                expected_value = source_entry.get("after")
+                if category == "notificationReceipt" and isinstance(expected_value, dict):
+                    expected_value = json.loads(str(expected_value.get("content", "")))
+                resolved = payload_value == expected_value
+            except (OSError, StopIteration, TypeError, ValueError, json.JSONDecodeError):
+                resolved = False
+        if not resolved:
+            unresolved.append({"category": str(category), "id": item_id})
+            if category == "notificationReceipt": mail_hold = True
+    held_delta = [item for item in receipt.get("items", []) if item.get("outcome") == "held-unreconciled"]
+    unresolved_data = [item for item in held_delta if item.get("category") != "notificationReceipt"]
+    mail_hold = mail_hold or bool(receipt.get("mailUnknownOutcomes")) or any(item.get("category") == "notificationReceipt" for item in held_delta)
+    return {"dataRecoveryEligible": not unresolved_data and not any(item["category"] != "notificationReceipt" for item in unresolved),
+            "mailDispatchEligible": bool(receipt.get("mailReleaseEligible")) and not mail_hold,
+            "unresolvedDataItems": unresolved_data + [item for item in unresolved if item["category"] != "notificationReceipt"],
+            "unresolvedPreservationItems": unresolved,
+            "mailHold": mail_hold}
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -718,13 +793,65 @@ def parser() -> argparse.ArgumentParser:
     halt = sub.add_parser("stop", help="stop only the exact Web process recorded by this isolated restore root")
     halt.add_argument("--restore-root", required=True)
     halt.add_argument("--expected-target-commit", required=True)
+    capture = sub.add_parser("capture-delta", help="capture exact rollback-owned business-row and mail-state differences from immutable SQLite snapshots")
+    capture.add_argument("--before-db", required=True)
+    capture.add_argument("--current-db", required=True)
+    capture.add_argument("--output", required=True)
+    reconcile_cmd = sub.add_parser("reconcile", help="CAS-reconcile a reviewed exact-schema delta in a new restore root and create a sealed after-backup")
+    reconcile_cmd.add_argument("--restore-root", required=True)
+    reconcile_cmd.add_argument("--expected-target-commit", required=True)
+    reconcile_cmd.add_argument("--delta-manifest", required=True)
+    reconcile_cmd.add_argument("--expected-delta-sha256", required=True)
+    release = sub.add_parser("release-check", help="report data recovery and SMTP dedup gates from the sealed reconciliation receipt")
+    release.add_argument("--restore-root", required=True)
+    release.add_argument("--expected-target-commit", required=True)
+    authorize = sub.add_parser("release", help="seal a controlled restore decision after data and SMTP gates; integrations remain disabled at startup")
+    authorize.add_argument("--restore-root", required=True)
+    authorize.add_argument("--expected-target-commit", required=True)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        if args.command == "prepare":
+        if args.command == "capture-delta":
+            from delta_reconcile import capture_delta
+            result = capture_delta(Path(args.before_db), Path(args.current_db), Path(args.output))
+        elif args.command == "reconcile":
+            from delta_reconcile import reconcile
+            if len(args.expected_delta_sha256) != 64 or any(c not in "0123456789abcdef" for c in args.expected_delta_sha256.lower()):
+                fail("expected delta SHA-256 must be 64 hexadecimal characters")
+            result = reconcile(Path(args.restore_root), args.expected_target_commit, Path(args.delta_manifest), args.expected_delta_sha256.lower())
+        elif args.command == "release-check":
+            state, _ = verify_restore_root(Path(args.restore_root), args.expected_target_commit)
+            receipt_path = Path(args.restore_root) / "delta-reconciliation.json"
+            if not receipt_path.is_file(): fail("no sealed delta reconciliation receipt exists")
+            receipt = read_json(receipt_path)
+            gates = release_gate_status(Path(args.restore_root), state, receipt)
+            result = {"result": "release-gates-reviewed", "restoreRoot": state["root"], "targetCommit": state["targetCommit"],
+                      "dataRecoveryEligible": gates["dataRecoveryEligible"], "mailDispatchEligible": gates["mailDispatchEligible"],
+                      "unresolvedDataItems": gates["unresolvedDataItems"], "unresolvedPreservationItems": gates["unresolvedPreservationItems"],
+                      "mailDispatch": "held" if gates["mailHold"] else "dedup-reviewed; still disabled until an operator enables through the normal settings path"}
+        elif args.command == "release":
+            root = Path(args.restore_root).resolve(strict=True)
+            state, _ = verify_restore_root(root, args.expected_target_commit)
+            receipt_path = root / "delta-reconciliation.json"
+            if not receipt_path.is_file(): fail("no sealed delta reconciliation receipt exists")
+            receipt = read_json(receipt_path)
+            gates = release_gate_status(root, state, receipt)
+            if not gates["dataRecoveryEligible"]: fail("data recovery delta remains held; no controlled restore decision was recorded")
+            if state.get("releaseDecision") is not None: fail("a controlled restore decision is already sealed")
+            mail_hold = not gates["mailDispatchEligible"]
+            new_state = dict(state); new_state.pop("sealSha256", None)
+            new_state["releaseDecision"] = {"deltaReconciliationSha256": state["deltaReconciliationSha256"],
+                                             "dataRecovery": "released", "mailDispatch": "held" if mail_hold else "dedup-reviewed-but-disabled",
+                                             "unresolvedPreservationItems": gates["unresolvedPreservationItems"],
+                                             "targetCommit": state["targetCommit"]}
+            new_state["sealSha256"] = hashlib.sha256(canonical_json(new_state)).hexdigest()
+            write_json_atomic(root / "rollback-state.json", new_state)
+            result = {"result": "controlled-restore-released", "restoreRoot": state["root"], "targetCommit": state["targetCommit"],
+                      "dataRecovery": "released", "mailDispatch": "held" if mail_hold else "dedup-reviewed-but-disabled"}
+        elif args.command == "prepare":
             result = prepare(args)
         elif args.command == "verify":
             state, meta = verify_restore_root(Path(args.restore_root), args.expected_target_commit)
@@ -733,6 +860,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "launch":
             if not 1024 <= args.port <= 65535:
                 fail("port must be 1024..65535")
+            root = Path(args.restore_root).resolve(strict=True)
+            state, _ = verify_restore_root(root, args.expected_target_commit)
+            if "reconciliationIntentSha256" in state and ("deltaReconciliationSha256" not in state or not isinstance(state.get("releaseDecision"), dict)):
+                fail("delta reconciliation has not passed the controlled restore release gate; Web was not started")
             result = launch(args)
         else:
             result = stop(args)

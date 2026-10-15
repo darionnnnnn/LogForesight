@@ -415,3 +415,9 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 每個通知／重播 operation 延遲擷取完整 semantic＋verification pair一次，逐sensor重用已解析文件並重查兩份 durable version；任一版本漂移拒絕該readset，下一operation才重新擷取。無法解析任一entry則整份pair不可用，不能跳過壞entry，也不能為每個issue重載兩份多主機共用文件。
 - 主代理隔離checkout整合61/61、零略過（3分19秒），其中readset／mixed SMTP／replay18項及F2 store/controller/protection43項。新tiny單sensor反例核重用正常pair、version變動即拒、fresh pair可重新核對、另一entry為null則全部拒且內容不變；work/round54-mode-validation/work/f2-d1-root/f2-d1-root.trx。F2另待UI／browser及提交完整相依，本段不宣稱F2父驗收完成。
 - 主代理開發時Lazy declaration先放錯其他mail closure，造成main Web編譯CS0103；已移到urgent Recheck／CurrentResource共同範圍，隔離整合通過。失敗輸出保留，不列為成功證據。
+
+### A2原生回覆差額與郵件隔離接線（2026-10-15）
+
+- 回退差額只接受同 schema、完整原生 Reply 相依圖；逐列前像 CAS、actor、父子關係、逐日與歷程一致性皆核對，保留 .NET 七位小數時間精度。單一回覆以外、未知差額、實體刪除與新清除工作表維持拒絕或 held。正式同步門檻仍為 5,000；內部測試門檻 2 只用三筆逐日列驗 pending intent 與真正消費端。
+- 主代理核對原生 SQLite before/after、恢復 DB 與 after-backup 六筆精確回讀、四份啟動保護設定、actor 竄改及一 tick 時間反例；pending intent 真正消費後為三筆逐日列與三筆歷程，來源快照雜湊未改。證據 `work/round54/a2-root/root-native-result.json`。實際 CLI 拒絕以共用 Refusal 型別回傳 structured refused-closed／exit 2。
+- 新增郵件貢獻帳本對舊版不透明時，完整保留前後原始 JSON 並持續 hold 郵件放行；資料回復另行裁定。主代理獨立 Python 小型套件 32/32 通過（零略過，32 秒）。這些證據不代表 SQL Server 回復、完整容量、正式資料無損回退或整輪驗收通過，A2／G／H 父項維持未勾。
