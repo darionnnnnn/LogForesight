@@ -53,6 +53,7 @@ public sealed class PrtgOwnedSmtpAcceptanceTests
         var before = formal.ReadMailState();
         var intentKey = Assert.Single(before.UrgentOutbox.Keys);
         Assert.Equal("pending", before.UrgentOutbox[intentKey].Status);
+        Assert.Equal("failed-or-unknown", before.UrgentOutbox[intentKey].Recipients[Recipient]);
         Assert.NotEmpty(before.MailContributionReservations);
         Assert.All(before.MailContributionReservations.Values, reservation => Assert.Equal("unknown", reservation.Status));
         Assert.Empty(before.PrtgUrgentAcceptedFacts);
@@ -61,6 +62,7 @@ public sealed class PrtgOwnedSmtpAcceptanceTests
         var after = formal.ReadMailState();
         Assert.Equal(intentKey, Assert.Single(after.UrgentOutbox.Keys));
         Assert.Equal("pending", after.UrgentOutbox[intentKey].Status);
+        Assert.Equal("failed-or-unknown", after.UrgentOutbox[intentKey].Recipients[Recipient]);
         Assert.Empty(after.PrtgUrgentAcceptedFacts);
         Assert.Equal(before.MailContributionReservations.Keys.Order(), after.MailContributionReservations.Keys.Order());
     }

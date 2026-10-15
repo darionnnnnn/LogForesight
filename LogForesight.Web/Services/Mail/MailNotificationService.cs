@@ -1231,7 +1231,8 @@ public class MailNotificationService
                 if (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked")) intent.Status = "pending";
                 intent.UpdatedAtUtc = DateTime.UtcNow;
                 foreach (var email in order.Where(e => views[e].Detail?.Any(r => r.HostId == record.HostId && r.Date == record.Date) == true))
-                    if (intent.Recipients.GetValueOrDefault(email) != "smtp-accepted")
+                    if (intent.Recipients.GetValueOrDefault(email) is not
+                        ("smtp-accepted" or "sending-result-unknown" or "failed-or-unknown" or "cancelled-formal-revoked"))
                         intent.Recipients[email] = "pending";
                 if (intent.Recipients.Count == 0) intent.Status = "no-qualified-recipient";
             }

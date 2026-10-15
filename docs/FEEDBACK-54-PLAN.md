@@ -497,3 +497,8 @@ Mode replay 將當次 raw SourceAuthority fingerprint 及 settings revision 帶�
 Snapshot operation 與兩個 backfill operation 改用 ReadRawSemantic（結構scope＋raw/source tuple／單調版本＋host/sensor membership）。原 Read／ReadStructural 演算法不改，避免改動既有 mail context／接受 key；原預覽、持久 queue 及明確請求 CAS 保留。PrtgOperationScope 的 settings 比對保留，混合回填的 message path 仍以獨立目前 message fingerprint 驗證。
 
 主代理實查 producer→batch→交易→實際後續consumer；root-raw-replay-scope-r29 八例全通過、零略過：正常日期格式變更 replay一例、raw ABA／settings／sensor範圍反例三例、formal start日期格式／raw ABA兩例及兩個小型scope測例。每個 replay fixture 單host／sensor共28筆值。r27／r28失敗保留：小型fixture未採用Upsert實際HostId造成後續報告找不到主機，已修正且r29確認完成，不以放寬進度斷言掩蓋。qualification／refresh／discovery／capacity相依候選與正常來源完整操作仍另段驗，不勾R54-05父驗收。
+
+
+### 8.16 重啟後保留未知 SMTP 狀態（2026-10-15）
+
+補查舊 protocol consumer 發現：durable reservation 已禁止未知結果重送，但 urgent 初始化會把既有 failed-or-unknown／sending-result-unknown 改成 pending，最後顯示 not-sent。已保留未知／已接受／已撤回狀態，只有真正新收件者才初始化pending。舊 protocol fixture 補齊保存的 message authority、相同 finding／timeline fingerprint 及實際 digest，再按本輪契約核對不重送；沒有移除或跳過該反例。主代理 root-smtp-scope-identity-r31 的兩項實際 loopback SMTP 重啟案例通過（正常 mail service CPU 與 message protocol），保留 pending及精確原intent，recipient仍failed-or-unknown、只一份DATA。r31另兩個快照fixture因缺保存日期／raw時基而未到HTTP，已補為有效設定，root-qualification-attach-snapshot-r32確認來源／scope HTTP變動時均正確取消且queue保留；不把r31整套宣稱全過。

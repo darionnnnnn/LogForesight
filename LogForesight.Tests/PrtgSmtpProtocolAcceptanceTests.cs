@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Mail;
 using System.Net.Mime;
@@ -230,15 +230,17 @@ public sealed class PrtgSmtpProtocolAcceptanceTests
                 await fixture.CreateService().RetryPendingUrgentAsync(retryDeadline.Token);
 
             var copies = inbox.Messages.ToArray();
-            Assert.Equal(2, copies.Length); // first DATA was accepted by the inbox before its 250 was lost.
+            Assert.Single(copies); // DATA may have been accepted; no automatic resend without a definitive outcome.
             Assert.All(copies, copy => Assert.Equal("ops@loopback.invalid", copy.EnvelopeRecipients.Single()));
-            Assert.Equal(ExtractBody(firstInboxCopy.RawMessage), ExtractBody(copies[1].RawMessage));
+            Assert.Equal(ExtractBody(firstInboxCopy.RawMessage), ExtractBody(copies[0].RawMessage));
+            Assert.NotEmpty(fixture.ReadMailState().MailContributionReservations);
+            Assert.All(fixture.ReadMailState().MailContributionReservations.Values, reservation => Assert.Equal("unknown", reservation.Status));
 
             var afterRetry = fixture.ReadMailState();
             Assert.Equal(keyBeforeRetry, Assert.Single(afterRetry.UrgentOutbox.Keys));
             Assert.Equal(keyBeforeRetry, afterRetry.UrgentOutbox[keyBeforeRetry].Key);
-            Assert.Equal("smtp-accepted", afterRetry.UrgentOutbox[keyBeforeRetry].Status);
-            Assert.Equal("smtp-accepted", afterRetry.UrgentOutbox[keyBeforeRetry].Recipients["ops@loopback.invalid"]);
+            Assert.Equal("pending", afterRetry.UrgentOutbox[keyBeforeRetry].Status);
+            Assert.Equal("failed-or-unknown", afterRetry.UrgentOutbox[keyBeforeRetry].Recipients["ops@loopback.invalid"]);
             Assert.Equal(fixture.ExpectedEventKey, Assert.Single(afterRetry.UrgentOutbox[keyBeforeRetry].ProblemKeys));
         });
     }
@@ -328,6 +330,8 @@ public sealed class PrtgSmtpProtocolAcceptanceTests
                 policy.SourceGeneration = "core";
                 policy.SourceTimeZoneId = TimeZoneInfo.Local.Id;
                 policy.SourceCultureName = "en-US";
+                policy.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
+                policy.MessageTimeAuthorityRevision = 1;
                 policy.EndpointHint = EfPrtgObservationStore.SourceHintFor("http://127.0.0.1/");
                 policy.HostIds = [HostId];
                 policy.SensorIds = [SensorId];
@@ -356,6 +360,7 @@ public sealed class PrtgSmtpProtocolAcceptanceTests
             var finding = new PrtgFinding(DeviceId, SensorId, "down", "trusted", 60, rule)
             {
                 MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
+                MessageTimeFingerprint = _policy.Get().MessageTimeFingerprint("http://127.0.0.1/"),
                 SourceGeneration = identity.SourceGeneration,
                 ResourceGeneration = identity.Generation,
                 IncidentStartedAt = new DateTimeOffset(RecordDay.AddHours(1))
@@ -366,6 +371,7 @@ public sealed class PrtgSmtpProtocolAcceptanceTests
             {
                 timeline.Bind(SensorId, HostId, identity.SourceGeneration, "smtp-acceptance-resource",
                     identity.Generation, identity.Epoch, identity.ChannelGeneration, _policy.Get().ValidFrom);
+                timeline.MessageTimeFingerprint = finding.MessageTimeFingerprint!;
                 timeline.MappingRevision = _prtgBackend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
             });
 
@@ -376,6 +382,13 @@ public sealed class PrtgSmtpProtocolAcceptanceTests
                 TopIssues = [_signature]
             };
             _records.Add(record);
+            _aggregates.AggregateOverride = (from, to) => from.Date <= RecordDay && to.Date >= RecordDay
+                ? [new IssueAggregate { Source = _signature.Source, EventId = _signature.EventId,
+                    Category = "availability", MaxSeverityRank = (int)IssueSeverity.High, ElevatesDayRisk = true,
+                    HostCount = 1, DayCount = 1, ActiveDays = 1, FirstSeen = RecordDay, LastSeen = RecordDay,
+                    IssueKeys = [_signature.EventKey] }] : [];
+            new SystemSettingsStore(_prtgBackend.Blob("system_settings")).Update(settings =>
+            { settings.PrtgEnabled = true; settings.PrtgUrl = "http://127.0.0.1/"; });
 
             _settings.Update(settings =>
             {
@@ -409,7 +422,10 @@ public sealed class PrtgSmtpProtocolAcceptanceTests
                 new ScheduleOptionsStore(_sqlite.Blob("schedule_options")));
             return new MailNotificationService(_settings, _sender, _hosts, _users,
                 _groups, _groupAccess, _records, _handlings, new MailNotifyStateStore(_sqlite.Blob("mail_notify_state")),
-                freshness, _owners, _aggregates, prtgMonitoring: _policy, prtgBackend: _prtgBackend);
+                freshness, _owners, _aggregates, prtgMonitoring: _policy, prtgBackend: _prtgBackend,
+                issueDigest: new MailIssueDigest(_aggregates,
+                    new OccurrenceStatusResolver(_hosts, new FakeIssueHandlingStore(), new FakeIssueCaseStore(), _settings),
+                    _settings, new FixedIssueExclusionSource(IssueExclusion.None)));
         }
 
         public string Diagnostics(LoopbackSmtpInbox inbox) =>
