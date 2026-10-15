@@ -1,4 +1,4 @@
-using LogForesight.Core.Models;
+﻿using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Web.Services;
 using Xunit;
@@ -7,6 +7,8 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgChannelDiscoveryJobStoreTests : IDisposable
 {
+    // Synthetic context for isolated durable-store mechanics only; not source evidence.
+    private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
     private readonly string root = Path.Combine(Path.GetTempPath(), "lf-prtg-channel-discovery-" + Guid.NewGuid().ToString("N"));
     private readonly StorageBackend backend;
     private readonly PrtgChannelDiscoveryJobStore store;
@@ -73,6 +75,7 @@ public sealed class PrtgChannelDiscoveryJobStoreTests : IDisposable
     {
         JobId = Guid.NewGuid().ToString("N"), RequesterUserId = 1, SensorObjid = sensorId,
         SettingsRevision = "settings-r1", PolicyRevision = "policy-r1", SourceGeneration = "source-r1",
+        RawAuthorityContextFingerprint = FixtureRawAuthorityContextFingerprint,
         HostSnapshotVersion = 1, ResourceGeneration = "generation-r1", IdentityEpoch = sensorId,
         ChannelGeneration = "channel-r1", QueuedAtUtc = now,
         DeadlineUtc = now + PrtgTrustedSamplingChannelDiscoveryHostedService.JobDeadline

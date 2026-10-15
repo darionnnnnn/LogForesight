@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using LogForesight.Core;
 using Xunit;
@@ -13,6 +13,8 @@ public class PrtgClientTests
 {
     private const string ValidUrl = "https://prtg.example.com";
     private const string SampleToken = "prtg-secret-token-12345";
+    // Synthetic hash for a pure client admission fixture; it is not source-policy evidence.
+    private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
 
     [Fact]
     public async Task GeneralTableClientWithAdmissionFingerprintUsesTheFencedPurposeAwareBudgetPath()
@@ -24,7 +26,7 @@ public class PrtgClientTests
         budget.SetAdmissionPlan(new PrtgCapacityAdmissionPlan(new string('A', 64), new string('B', 64),
             new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64),
             new string('1', 64), new string('2', 64), "settings", "policy", .5, .5, .5,
-            now, now.AddHours(1), "test-owner", 1));
+            now, now.AddHours(1), "test-owner", 1, FixtureRawAuthorityContextFingerprint));
         using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, handler, PrtgAuthModes.Token,
             "", "", "", budget)
         { RequestPurpose = PrtgRequestPurpose.General, AdmissionPlanFingerprint = new string('9', 64) };

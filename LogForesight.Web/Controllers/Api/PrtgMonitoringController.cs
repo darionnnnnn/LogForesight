@@ -47,6 +47,9 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             policy.SourceTimeZoneId, policy.SourceCultureName, SuggestedTimeZoneId = TimeZoneInfo.Local.Id,
             policy.MessageDateFormat, policy.MessageTimeAuthorityRevision,
             MessageTimeConfigured = policy.MessageTimeFingerprint(settings.PrtgUrl).Length > 0,
+            policy.RawTimestampTimeZoneId, policy.AnalysisTimeZoneId, policy.TimeBasisEvidenceReference,
+            TimeBasisConfigured = HasSavedTimeBasis(policy),
+            TimeBasisEvidenceStatus = HasSavedTimeBasis(policy) ? "saved-operator-input-unverified" : "unconfigured",
             Enabled = settings.PrtgEnabled, Ready = policy.Ready(settings.PrtgUrl),
             HostIds = policy.HostIds.ToArray(), SensorIds = policy.SensorIds.ToArray(),
             SavedHosts = savedHosts, CanEdit = canViewAll || policy.HostIds.All(visible.Contains), SelectedHostCount = policy.HostIds.Count,
@@ -205,6 +208,16 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             if (before.Revision != request.Revision || before.HostIds.Any(visibility.IsCaseGrantOnly) ||
                 (!user.Has(Capability.ViewAll) && !before.HostIds.All(visible.Contains)))
                 throw new InvalidOperationException("設定已變更或含不可見主機；重新載入後再修改。");
+            if (!TryResolveTimeBasis(request.RawTimestampTimeZoneId, request.AnalysisTimeZoneId,
+                request.TimeBasisEvidenceReference, before, out var rawTimeZone, out var analysisTimeZone,
+                out var timeBasisReference, out var timeBasisError))
+                throw new ArgumentException(timeBasisError);
+            var timeBasisChanged = before.RawTimestampTimeZoneId != rawTimeZone ||
+                before.AnalysisTimeZoneId != analysisTimeZone ||
+                before.TimeBasisEvidenceReference != timeBasisReference;
+            if (timeBasisChanged && settings.PrtgEnabled)
+                return Conflict(ApiResponse.Fail("time_basis_requires_disabled_source",
+                    "時間基準變更會撤回目前 raw/profile qualification；請先停用 PRTG，保存新時間基準、重跑容量 pilots 後再啟用。"));
             var identityChanged = IdentityChanged(before, request, hint);
             if (identityChanged && before.SourceGeneration.Length > 0 && request.SourceChangeMode is not ("new" or "continue" or "unknown"))
                 throw new ArgumentException("來源已變更，請先預覽影響並選擇延續、新來源或無法確認。");
@@ -232,10 +245,17 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                 SourceCultureName = request.SourceCultureName,
                 MessageDateFormat = request.MessageDateFormat,
                 MessageTimeAuthorityRevision = nextMessageTimeAuthorityRevision,
-                RawTimestampTimeZoneId = before.RawTimestampTimeZoneId,
-                AnalysisTimeZoneId = before.AnalysisTimeZoneId,
-                TimeBasisEvidenceReference = before.TimeBasisEvidenceReference
+                RawTimestampTimeZoneId = rawTimeZone,
+                AnalysisTimeZoneId = analysisTimeZone,
+                TimeBasisEvidenceReference = timeBasisReference
             };
+            proposedPolicy.RawAuthorityRevision = before.RawAuthorityRevision;
+            if (RawAuthorityTupleChanged(before, proposedPolicy))
+            {
+                if (before.RawAuthorityRevision < 0 || before.RawAuthorityRevision == long.MaxValue)
+                    throw new InvalidOperationException("Raw authority revision cannot be advanced safely.");
+                proposedPolicy.RawAuthorityRevision = checked(before.RawAuthorityRevision + 1);
+            }
             if (settings.PrtgEnabled)
             {
                 var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
@@ -303,7 +323,8 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                         profileContract.ScopeFingerprint, profileContract.StrategyFingerprint,
                         proposedTargets.RequestShapeFingerprint, profileContract.RequestShapeFingerprint,
                         profileContract.VersionFingerprint,
-                        DateTimeOffset.UtcNow, settings.Revision, proposedPolicy.Revision);
+                        DateTimeOffset.UtcNow, settings.Revision, proposedPolicy.Revision,
+                        PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, proposedPolicy));
                 }
             }
             var affectedResources = new HashSet<long>();
@@ -315,6 +336,9 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                 affectedResources.UnionWith(backend.PrtgStore().GetSensorIdsMappedToHosts(changedHosts)
                     .Intersect(before.SensorIds.Concat(request.SensorIds)));
             // Policy revision CAS、政策內容與受影響資源世代在同一 SQL transaction 發布。
+            var rawEvidenceInvalidationSensors = timeBasisChanged
+                ? before.SensorIds.Concat(request.SensorIds).Distinct().ToArray()
+                : [];
             var result = Store().UpdateWithResourceEpochs(request.Revision, affectedResources, p =>
             {
                 var writeVisible = VisibleHostIds(sourceSnapshot);
@@ -330,7 +354,7 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                     request.ContinuityEvidenceReference.Length > 1000))
                     throw new ArgumentException("延續須核對相同 Core、時區及語系，並提供來源身分核對證據；不確定請選新來源／無法確認。");
                 if ((changed && request.SourceChangeMode != "continue") || request.SourceChangeMode is "new" or "unknown")
-                { p.SourceGeneration = nextSourceGeneration; p.ValidFrom = DateTimeOffset.Now;
+                { p.SourceGeneration = nextSourceGeneration; p.ValidFrom = proposedPolicy.ValidFrom;
                     p.ContinuityEvidenceReference = ""; p.ContinuityConfirmedAtUtc = null; }
                 if (request.SourceChangeMode == "continue")
                 { p.ContinuityEvidenceReference = request.ContinuityEvidenceReference.Trim(); p.ContinuityConfirmedAtUtc = DateTimeOffset.UtcNow; }
@@ -338,9 +362,13 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                 p.SourceTimeZoneId = request.SourceTimeZoneId; p.SourceCultureName = request.SourceCultureName;
                 p.MessageDateFormat = request.MessageDateFormat;
                 p.MessageTimeAuthorityRevision = nextMessageTimeAuthorityRevision;
+                p.RawTimestampTimeZoneId = rawTimeZone;
+                p.AnalysisTimeZoneId = analysisTimeZone;
+                p.TimeBasisEvidenceReference = timeBasisReference;
                 p.HostIds = selectedHosts.ToList(); p.SensorIds = selectedSensors.ToList();
                 p.Revision = Guid.NewGuid().ToString("N"); p.ConfirmedBy = user.UserId.ToString();
-            });
+            }, expectedSettingsRevision: settings.Revision,
+                rawEvidenceInvalidationSensorIds: rawEvidenceInvalidationSensors);
             string? capacityPublishFailure = null;
             if (pendingCapacityPlan is not null)
             {
@@ -354,7 +382,9 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
                             var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
                             var latestPolicy = Store().Get();
                             if (!latestSettings.PrtgEnabled || latestSettings.Revision != settings.Revision ||
-                                latestPolicy.Revision != result.Revision) return false;
+                                latestPolicy.Revision != result.Revision ||
+                                PrtgCapacityRuntimeAdmission.RawAuthorityContext(latestSettings, latestPolicy) !=
+                                    candidatePlan.RawAuthorityContextFingerprint) return false;
                             var latestProfileIds = latestPolicy.SensorIds.Where(id => id > 0).Distinct().Order()
                                 .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
                             var latestProfileContract = PrtgProfileTransportCapacityPilot.BuildContract(backend,
@@ -388,11 +418,130 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
         catch (TimeZoneNotFoundException) { return BadRequest(ApiResponse.Fail("validation_failed", "找不到來源時區，請使用有效的 Windows 或 IANA 時區識別。")); }
         catch (InvalidTimeZoneException) { return BadRequest(ApiResponse.Fail("validation_failed", "來源時區資料無效。")); }
         catch (InvalidOperationException ex) { return Conflict(ApiResponse.Fail("conflict", ex.Message)); }
+        catch (InvalidDataException ex) { return Conflict(ApiResponse.Fail("evidence_unavailable", ex.Message)); }
     }
+
+    /// <summary>Save explicit time-basis inputs without implying that PRTG remotely reported or verified them.</summary>
+    [HttpPut("time-basis")]
+    public IActionResult UpdateTimeBasis([FromBody] PrtgSourceTimeBasisRequest request)
+    {
+        if (request is null || !request.OperatorConfirmed || string.IsNullOrWhiteSpace(request.ExpectedPolicyRevision))
+            return BadRequest(ApiResponse.Fail("validation_failed", "請確認來源時間基準及提供目前政策修訂。"));
+        var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+        var policy = Store().Get();
+        if (policy.Revision != request.ExpectedPolicyRevision)
+            return Conflict(ApiResponse.Fail("stale_policy", "政策已變更；重新載入後再保存時間基準。"));
+        if (settings.PrtgEnabled)
+            return Conflict(ApiResponse.Fail("time_basis_requires_disabled_source",
+                "時間基準變更會撤回目前 raw/profile qualification；請先停用 PRTG，保存後重跑容量 pilots 再啟用。"));
+        if (!policy.Ready(settings.PrtgUrl))
+            return Conflict(ApiResponse.Fail("source_policy_not_ready", "請先保存有效的 PRTG 來源與完整作用範圍。"));
+        if (policy.HostIds.Count > HostLimit)
+            return Conflict(ApiResponse.Fail("scope_limit_exceeded", "已保存主機範圍超過上限；拒絕部分更新。"));
+        var sourceSnapshot = hosts.CapturePrtgSnapshot();
+        var visible = VisibleHostIds(sourceSnapshot);
+        if (policy.HostIds.Any(visibility.IsCaseGrantOnly) ||
+            (!user.Has(Capability.ViewAll) && !policy.HostIds.All(visible.Contains))) return Forbid();
+        if (!TryNormalizeTimeBasis(request.RawTimestampTimeZoneId, request.AnalysisTimeZoneId,
+            request.TimeBasisEvidenceReference, out var rawTimeZone, out var analysisTimeZone,
+            out var evidenceReference, out var error))
+            return BadRequest(ApiResponse.Fail("validation_failed", error));
+        if (policy.RawTimestampTimeZoneId == rawTimeZone && policy.AnalysisTimeZoneId == analysisTimeZone &&
+            policy.TimeBasisEvidenceReference == evidenceReference)
+            return Ok(ApiResponse<object>.Ok(new { policy.Revision, TimeBasisConfigured = true,
+                TimeBasisEvidenceStatus = "saved-operator-input-unverified" }));
+
+        try
+        {
+            var ids = policy.SensorIds.Where(id => id > 0).Distinct().Take(SensorLimit + 1).ToArray();
+            if (ids.Length > SensorLimit || ids.Length != policy.SensorIds.Count)
+                return Conflict(ApiResponse.Fail("scope_limit_exceeded", "sensor 範圍無效或超過上限；拒絕部分失效。"));
+            var updated = Store().UpdateTimeBasisWithRawEvidenceInvalidation(policy.Revision,
+                settings.Revision, ids, current =>
+            {
+                var writeSnapshot = hosts.CapturePrtgSnapshot();
+                var writeVisible = VisibleHostIds(writeSnapshot);
+                if (writeSnapshot.Version != sourceSnapshot.Version ||
+                    !current.Ready(settings.PrtgUrl) || current.HostIds.Any(visibility.IsCaseGrantOnly) ||
+                    (!user.Has(Capability.ViewAll) && !current.HostIds.All(writeVisible.Contains)))
+                    throw new InvalidOperationException("source-policy-or-visible-scope-changed");
+                current.RawTimestampTimeZoneId = rawTimeZone;
+                current.AnalysisTimeZoneId = analysisTimeZone;
+                current.TimeBasisEvidenceReference = evidenceReference;
+                current.Revision = Guid.NewGuid().ToString("N");
+                current.ConfirmedBy = user.UserId.ToString();
+            });
+            audit.Record("prtg_time_basis_save",
+                "保存管理者明示輸入的 raw timestamp／analysis 時區與 provenance reference；不代表遠端帳號讀回或來源樣本已驗證。",
+                "prtg", updated.Revision);
+            stamp.Bump();
+            return Ok(ApiResponse<object>.Ok(new { updated.Revision, TimeBasisConfigured = true,
+                TimeBasisEvidenceStatus = "saved-operator-input-unverified" }));
+        }
+        catch (InvalidOperationException ex)
+        { return Conflict(ApiResponse.Fail("conflict", ex.Message)); }
+        catch (InvalidDataException)
+        { return Conflict(ApiResponse.Fail("raw_evidence_unavailable", "raw 磁碟證據無法在有界範圍內完整核對；時間基準未變更。")); }
+    }
+
+    private static bool HasSavedTimeBasis(PrtgMonitoringPolicy policy) =>
+        TryNormalizeTimeBasis(policy.RawTimestampTimeZoneId, policy.AnalysisTimeZoneId,
+            policy.TimeBasisEvidenceReference, out _, out _, out _, out _);
+
+    private static bool TryResolveTimeBasis(string? rawTimeZone, string? analysisTimeZone,
+        string? evidenceReference, PrtgMonitoringPolicy before, out string resolvedRawTimeZone,
+        out string resolvedAnalysisTimeZone, out string resolvedEvidenceReference, out string error)
+    {
+        if (string.IsNullOrWhiteSpace(rawTimeZone) && string.IsNullOrWhiteSpace(analysisTimeZone) &&
+            string.IsNullOrWhiteSpace(evidenceReference))
+        {
+            resolvedRawTimeZone = before.RawTimestampTimeZoneId;
+            resolvedAnalysisTimeZone = before.AnalysisTimeZoneId;
+            resolvedEvidenceReference = before.TimeBasisEvidenceReference;
+            error = "";
+            return true; // Legacy callers omit these fields; retain saved values without inventing defaults.
+        }
+        return TryNormalizeTimeBasis(rawTimeZone, analysisTimeZone, evidenceReference,
+            out resolvedRawTimeZone, out resolvedAnalysisTimeZone, out resolvedEvidenceReference, out error);
+    }
+
+    private static bool TryNormalizeTimeBasis(string? rawTimeZone, string? analysisTimeZone,
+        string? evidenceReference, out string normalizedRawTimeZone, out string normalizedAnalysisTimeZone,
+        out string normalizedEvidenceReference, out string error)
+    {
+        normalizedRawTimeZone = normalizedAnalysisTimeZone = normalizedEvidenceReference = "";
+        error = "Raw timestamp 時區、analysis 時區與 evidence reference 必須一併提供；這些值是操作者輸入，仍需來源樣本獨立驗證。";
+        if (string.IsNullOrWhiteSpace(rawTimeZone) || string.IsNullOrWhiteSpace(analysisTimeZone) ||
+            rawTimeZone.Length > 128 || analysisTimeZone.Length > 128 ||
+            !SafeTimeBasisReference(evidenceReference)) return false;
+        try
+        {
+            normalizedRawTimeZone = TimeZoneInfo.FindSystemTimeZoneById(rawTimeZone.Trim()).Id;
+            normalizedAnalysisTimeZone = TimeZoneInfo.FindSystemTimeZoneById(analysisTimeZone.Trim()).Id;
+        }
+        catch (TimeZoneNotFoundException)
+        { error = "找不到 raw timestamp 或 analysis 時區；請輸入有效的 Windows 或 IANA timezone ID。"; return false; }
+        catch (InvalidTimeZoneException)
+        { error = "raw timestamp 或 analysis 時區資料無效。"; return false; }
+        normalizedEvidenceReference = evidenceReference!.Trim();
+        error = "";
+        return true;
+    }
+
+    private static bool SafeTimeBasisReference(string? value) => !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= 128 && value.All(ch => !char.IsControl(ch)) && !value.Contains("://", StringComparison.Ordinal) &&
+        !value.Contains('/') && !value.Contains('\\') && !value.Contains('?') && !value.Contains('#') && !value.Contains('@');
     private PrtgMonitoringPolicyStore Store() => new(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
     private static bool IdentityChanged(PrtgMonitoringPolicy p, PrtgMonitoringRequest r, string hint) =>
         p.CoreSystemId != r.CoreSystemId.Trim() || p.EndpointHint != hint || p.SourceGeneration.Length == 0 ||
         p.SourceTimeZoneId != r.SourceTimeZoneId || p.SourceCultureName != r.SourceCultureName;
+    private static bool RawAuthorityTupleChanged(PrtgMonitoringPolicy before, PrtgMonitoringPolicy after) =>
+        before.CoreSystemId != after.CoreSystemId || before.SourceGeneration != after.SourceGeneration ||
+        before.EndpointHint != after.EndpointHint || before.ValidFrom.UtcTicks != after.ValidFrom.UtcTicks ||
+        before.SourceTimeZoneId != after.SourceTimeZoneId || before.SourceCultureName != after.SourceCultureName ||
+        before.RawTimestampTimeZoneId != after.RawTimestampTimeZoneId ||
+        before.AnalysisTimeZoneId != after.AnalysisTimeZoneId ||
+        before.TimeBasisEvidenceReference != after.TimeBasisEvidenceReference;
     private static bool CanContinue(PrtgMonitoringPolicy p, PrtgMonitoringRequest r) =>
         p.SourceGeneration.Length > 0 && p.CoreSystemId.Length > 0 && p.CoreSystemId == r.CoreSystemId.Trim() &&
         p.SourceTimeZoneId == r.SourceTimeZoneId && p.SourceCultureName == r.SourceCultureName;
@@ -676,11 +825,24 @@ public sealed class PrtgMonitoringRequest
     public string SourceTimeZoneId { get; set; } = "";
     public string SourceCultureName { get; set; } = "";
     public string MessageDateFormat { get; set; } = "";
+    /// <summary>Optional for old callers; when any is supplied, all three explicit basis inputs are required.</summary>
+    public string? RawTimestampTimeZoneId { get; set; }
+    public string? AnalysisTimeZoneId { get; set; }
+    public string? TimeBasisEvidenceReference { get; set; }
     public bool IdentityConfirmed { get; set; }
     public List<long> HostIds { get; set; } = [];
     public List<long> SensorIds { get; set; } = [];
     public string CatalogueToken { get; set; } = "";
     public string? EstimateToken { get; set; }
+}
+
+public sealed class PrtgSourceTimeBasisRequest
+{
+    public string ExpectedPolicyRevision { get; set; } = "";
+    public string RawTimestampTimeZoneId { get; set; } = "";
+    public string AnalysisTimeZoneId { get; set; } = "";
+    public string TimeBasisEvidenceReference { get; set; } = "";
+    public bool OperatorConfirmed { get; set; }
 }
 
 public sealed class PrtgMonitoringPageRequest

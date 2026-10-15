@@ -364,6 +364,41 @@ public sealed class PrtgTrustedSamplingProfilesControllerTests : IDisposable
         Assert.Null(new PrtgQualificationJobStateStore(_backend).ReadCurrent());
     }
 
+    [Theory]
+    [InlineData("date-format", true)]
+    [InlineData("raw-a-b-a", false)]
+    [InlineData("scope", false)]
+    [InlineData("legacy-context", false)]
+    public async Task DurableJobStatusUsesRawAuthorityInsteadOfMessagePolicyRevision(string change, bool matches)
+    {
+        var controller = CreateController(new TestVisibility([_host.HostId]));
+        var saved = Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingStatusDto>>(
+            Assert.IsType<OkObjectResult>(controller.SaveBinding(11, BindingRequest(11, "73"))).Value).Data!;
+        var settings = _settings.Get();
+        var policy = _policy.Get();
+        var scope = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(settings, policy,
+            _hosts.CapturePrtgSnapshot()).ScopeFingerprint;
+        var job = new PrtgQualificationJobStateStore(_backend).Start(Guid.NewGuid().ToString("N"), "owner",
+            scope, policy.SourceGeneration, settings.Revision, policy.Revision,
+            change == "legacy-context" ? new string('0', 64) : PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy),
+            2, 0, 72, DateTimeOffset.UtcNow, 1);
+        if (change == "raw-a-b-a")
+        {
+            _policy.Update(value => value.RawTimestampTimeZoneId = "Pacific Standard Time");
+            _policy.Update(value => value.RawTimestampTimeZoneId = "UTC");
+        }
+        else if (change == "scope") _policy.Update(value => value.SensorIds = [11]);
+        else _policy.Update(value => value.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24);
+
+        var response = Assert.IsType<OkObjectResult>(await controller.QualifyBinding(11,
+            new(saved.BindingRevision, saved.BindingFingerprint), CancellationToken.None));
+        var result = Assert.IsType<ApiResponse<PrtgTrustedSamplingBindingQualificationResult>>(response.Value).Data!;
+        Assert.Equal("requires-durable-qualification", result.Status);
+        Assert.Equal(matches ? job.JobId : null, result.DurableJobId);
+        Assert.Equal(!matches, result.RequiresExplicitStart);
+        Assert.Null(result.Probe);
+    }
+
     [Fact]
     public async Task Existing_raw_proof_qualify_request_returns_queued_only_after_durable_notice_is_saved()
     {

@@ -92,7 +92,8 @@ internal static class SnapshotAdmissionTestFixture
         var candidate = PrtgJointCapacityEvaluator.CreatePlan(joint, contract.SourceFingerprint,
             selection.ScopeFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
             selection.RequestShapeFingerprint, contract.RequestShapeFingerprint, contract.VersionFingerprint,
-            now, settings.Revision, policy.Revision);
+            now, settings.Revision, policy.Revision,
+            PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy));
 
         var admissionStore = new PrtgCapacityAdmissionPlanStore(
             backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
@@ -101,7 +102,9 @@ internal static class SnapshotAdmissionTestFixture
             var currentSettings = settingsStore.Get();
             var currentPolicy = policyStore.Get();
             if (!currentSettings.PrtgEnabled || currentSettings.Revision != settings.Revision ||
-                currentPolicy.Revision != policy.Revision) return false;
+                currentPolicy.Revision != policy.Revision ||
+                PrtgCapacityRuntimeAdmission.RawAuthorityContext(currentSettings, currentPolicy) !=
+                    candidate.RawAuthorityContextFingerprint) return false;
             var currentContract = PrtgProfileTransportCapacityPilot.BuildContract(
                 backend, hosts, currentSettings, currentPolicy, profileIds);
             var currentSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(

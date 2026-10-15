@@ -32,6 +32,9 @@ internal static class PrtgCapacityRuntimeAdmission
         var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         if (policy.SensorIds.Count > 15_000 || !policy.SensorIds.Any(id => id > 0) || !policy.Ready(settings.PrtgUrl))
         { reason = "profile-source-or-scope-not-ready"; return false; }
+        var rawAuthorityContext = RawAuthorityContext(settings, policy);
+        if (rawAuthorityContext.Length != 64)
+        { reason = "profile-raw-authority-context-unavailable"; return false; }
 
         PrtgProfileTransportCapacityPilot.Contract contract;
         try
@@ -71,7 +74,7 @@ internal static class PrtgCapacityRuntimeAdmission
             stored.SnapshotRequestShapeFingerprint == snapshotSelection.RequestShapeFingerprint &&
             stored.RequestShapeFingerprint == contract.RequestShapeFingerprint &&
             stored.RuntimeVersionFingerprint == contract.VersionFingerprint &&
-            stored.PolicyRevision == policy.Revision;
+            stored.RawAuthorityContextFingerprint == rawAuthorityContext;
 
         var snapshot = PrtgSnapshotCapacityEvaluator.Evaluate(snapshotSelection.SensorObjids.Count,
             PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), snapshotSelection.ScopeFingerprint,
@@ -94,7 +97,7 @@ internal static class PrtgCapacityRuntimeAdmission
         var boundedProfileRecovery = false;
         if (allowBoundedSingleBatchRecovery && joint.Status != PrtgSnapshotCapacityStatus.CapacityQualified &&
             priorContractMatches && stored is not null && stored.SettingsRevision == settings.Revision &&
-            stored.PolicyRevision == policy.Revision && snapshotSelection.SensorObjids.Count is >= 1 and <= 15_000 &&
+            snapshotSelection.SensorObjids.Count is >= 1 and <= 15_000 &&
             snapshot.Reason == "insufficient_fresh_full_batch_samples" &&
             profile.Status == PrtgSnapshotCapacityStatus.CapacityQualified &&
             PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored))
@@ -115,7 +118,8 @@ internal static class PrtgCapacityRuntimeAdmission
                     var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
                     var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
                     if (!latestSettings.PrtgEnabled || latestSettings.Revision != settings.Revision ||
-                        latestPolicy.Revision != policy.Revision || !latestPolicy.Ready(latestSettings.PrtgUrl)) return false;
+                        latestPolicy.Revision != policy.Revision || !latestPolicy.Ready(latestSettings.PrtgUrl) ||
+                        RawAuthorityContext(latestSettings, latestPolicy) != rawAuthorityContext) return false;
                     try
                     {
                         var latestContract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(
@@ -145,7 +149,7 @@ internal static class PrtgCapacityRuntimeAdmission
             // only for one <=5-sensor group. It never writes a qualified estimate or plan.
             var profileRecoveryReason = "bounded-profile-contract-mismatch";
             if (recoveryGroupSize is < 1 or > 5 || !priorContractMatches || stored is null ||
-                stored.SettingsRevision != settings.Revision || stored.PolicyRevision != policy.Revision ||
+                stored.SettingsRevision != settings.Revision ||
                 !PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored) ||
                 profile.Status == PrtgSnapshotCapacityStatus.CapacityExceeded ||
                 !PrtgJointCapacityEvaluator.CanAdmitBoundedProfileRefreshRecovery(recoveryGroupSize, usage,
@@ -160,7 +164,8 @@ internal static class PrtgCapacityRuntimeAdmission
                     var latestSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
                     var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
                     if (!latestSettings.PrtgEnabled || latestSettings.Revision != settings.Revision ||
-                        latestPolicy.Revision != policy.Revision || !latestPolicy.Ready(latestSettings.PrtgUrl)) return false;
+                        latestPolicy.Revision != policy.Revision || !latestPolicy.Ready(latestSettings.PrtgUrl) ||
+                        RawAuthorityContext(latestSettings, latestPolicy) != rawAuthorityContext) return false;
                     try
                     {
                         var latestContract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(
@@ -201,7 +206,7 @@ internal static class PrtgCapacityRuntimeAdmission
             stored.SnapshotRequestShapeFingerprint != snapshotSelection.RequestShapeFingerprint ||
             stored.RequestShapeFingerprint != contract.RequestShapeFingerprint ||
             stored.RuntimeVersionFingerprint != contract.VersionFingerprint ||
-            stored.PolicyRevision != policy.Revision)
+            stored.RawAuthorityContextFingerprint != rawAuthorityContext)
         { reason = "current-source-scope-or-strategy-plan-mismatch"; return false; }
 
         if (!boundedRecovery && !boundedProfileRecovery)
@@ -211,7 +216,7 @@ internal static class PrtgCapacityRuntimeAdmission
                 snapshotSelection.ScopeFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
                 snapshotSelection.RequestShapeFingerprint, contract.RequestShapeFingerprint,
                 contract.VersionFingerprint, now,
-                settings.Revision, policy.Revision); }
+                settings.Revision, policy.Revision, rawAuthorityContext); }
             catch (InvalidOperationException) { reason = "joint-plan-not-qualified"; return false; }
             if (stored.Fingerprint != expected.Fingerprint)
             { reason = "current-source-scope-or-strategy-plan-mismatch"; return false; }
@@ -226,7 +231,8 @@ internal static class PrtgCapacityRuntimeAdmission
                 var latest = new SystemSettingsStore(backend.Blob("system_settings")).Get();
                 var latestPolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
                 if (!latest.PrtgEnabled || latest.Revision != settings.Revision ||
-                    latestPolicy.Revision != policy.Revision) return false;
+                    latestPolicy.Revision != policy.Revision ||
+                    RawAuthorityContext(latest, latestPolicy) != rawAuthorityContext) return false;
                 try
                 {
                     var latestContract = PrtgProfileTransportCapacityPilot.BuildTransportContextContract(
@@ -276,7 +282,8 @@ internal static class PrtgCapacityRuntimeAdmission
     {
         resolved = selection;
         if (!PrtgJointCapacityEvaluator.HasCurrentPlanFingerprint(stored) ||
-            stored.SettingsRevision != settings.Revision || stored.PolicyRevision != policy.Revision ||
+            stored.SettingsRevision != settings.Revision ||
+            stored.RawAuthorityContextFingerprint != RawAuthorityContext(settings, policy) ||
             stored.SourceFingerprint != contract.SourceFingerprint ||
             stored.SnapshotScopeFingerprint != selection.ScopeFingerprint ||
             stored.ProfileScopeFingerprint != contract.ScopeFingerprint ||
@@ -332,5 +339,12 @@ internal static class PrtgCapacityRuntimeAdmission
 
         return validatedSelection.PrimaryChannelCapabilityMode == expectedSelection.PrimaryChannelCapabilityMode &&
             validatedSelection.RequestShapeFingerprint == expectedSelection.RequestShapeFingerprint;
+    }
+
+    internal static string RawAuthorityContext(SystemSettings settings, PrtgMonitoringPolicy policy)
+    {
+        var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+        var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
+        return PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy, strategyName, strategyMinutes);
     }
 }

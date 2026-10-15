@@ -504,11 +504,13 @@ public static class PrtgJointCapacityEvaluator
         string sourceFingerprint, string snapshotScopeFingerprint, string profileScopeFingerprint,
         string strategyFingerprint, string snapshotRequestShapeFingerprint,
         string requestShapeFingerprint, string runtimeVersionFingerprint,
-        DateTimeOffset nowUtc, string settingsRevision = "", string policyRevision = "")
+        DateTimeOffset nowUtc, string settingsRevision = "", string policyRevision = "",
+        string rawAuthorityContextFingerprint = "")
     {
         if (!IsHash(sourceFingerprint) || !IsHash(snapshotScopeFingerprint) || !IsHash(profileScopeFingerprint) ||
             !IsHash(strategyFingerprint) || !IsHash(snapshotRequestShapeFingerprint) ||
-            !IsHash(requestShapeFingerprint) || !IsHash(runtimeVersionFingerprint))
+            !IsHash(requestShapeFingerprint) || !IsHash(runtimeVersionFingerprint) ||
+            !IsHash(rawAuthorityContextFingerprint))
             throw new InvalidOperationException("joint-capacity-contract-fingerprint-invalid");
         if (estimate.Status != PrtgSnapshotCapacityStatus.CapacityQualified ||
             estimate.SnapshotTableRequestsPerSecond <= 0 || estimate.ProfileTableRequestsPerSecond <= 0 ||
@@ -518,29 +520,33 @@ public static class PrtgJointCapacityEvaluator
             throw new InvalidOperationException("joint-capacity-plan-not-qualified");
         var fingerprint = ComputePlanFingerprint(sourceFingerprint, snapshotScopeFingerprint, profileScopeFingerprint,
             strategyFingerprint, snapshotRequestShapeFingerprint, requestShapeFingerprint, runtimeVersionFingerprint,
-            estimate.SnapshotTableRequestsPerSecond, estimate.ProfileTableRequestsPerSecond,
+            rawAuthorityContextFingerprint, estimate.SnapshotTableRequestsPerSecond, estimate.ProfileTableRequestsPerSecond,
             estimate.GeneralResidualRequestsPerSecond);
         return new PrtgCapacityAdmissionPlan(fingerprint, sourceFingerprint,
             snapshotScopeFingerprint, profileScopeFingerprint, strategyFingerprint, snapshotRequestShapeFingerprint,
             requestShapeFingerprint,
             runtimeVersionFingerprint, settingsRevision, policyRevision,
             estimate.SnapshotTableRequestsPerSecond, estimate.ProfileTableRequestsPerSecond,
-            estimate.GeneralResidualRequestsPerSecond, nowUtc, nowUtc, "pending", 0);
+            estimate.GeneralResidualRequestsPerSecond, nowUtc, nowUtc, "pending", 0,
+            rawAuthorityContextFingerprint);
     }
 
     public static bool HasCurrentPlanFingerprint(PrtgCapacityAdmissionPlan plan) =>
+        IsHash(plan.RawAuthorityContextFingerprint) &&
         plan.Fingerprint == ComputePlanFingerprint(plan.SourceFingerprint, plan.SnapshotScopeFingerprint,
             plan.ProfileScopeFingerprint, plan.StrategyFingerprint, plan.SnapshotRequestShapeFingerprint,
-            plan.RequestShapeFingerprint, plan.RuntimeVersionFingerprint, plan.SnapshotTableRequestsPerSecond,
+            plan.RequestShapeFingerprint, plan.RuntimeVersionFingerprint, plan.RawAuthorityContextFingerprint,
+            plan.SnapshotTableRequestsPerSecond,
             plan.ProfileTableRequestsPerSecond, plan.GeneralResidualRequestsPerSecond);
 
     private static string ComputePlanFingerprint(string sourceFingerprint, string snapshotScopeFingerprint,
         string profileScopeFingerprint, string strategyFingerprint, string snapshotRequestShapeFingerprint,
-        string requestShapeFingerprint, string runtimeVersionFingerprint, double snapshotRate,
+        string requestShapeFingerprint, string runtimeVersionFingerprint, string rawAuthorityContextFingerprint, double snapshotRate,
         double profileRate, double residualRate)
     {
         var key = string.Join("|", sourceFingerprint, snapshotScopeFingerprint, profileScopeFingerprint,
             strategyFingerprint, snapshotRequestShapeFingerprint, requestShapeFingerprint, runtimeVersionFingerprint,
+            rawAuthorityContextFingerprint,
             snapshotRate.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
             profileRate.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
             residualRate.ToString("R", System.Globalization.CultureInfo.InvariantCulture));

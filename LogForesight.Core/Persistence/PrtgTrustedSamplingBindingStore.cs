@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
@@ -122,6 +122,13 @@ public sealed class PrtgTrustedSamplingBindingStore
                 throw new InvalidOperationException("binding-sensor-outside-ready-policy");
             if (!settings.PrtgEnabled)
                 throw new InvalidOperationException("binding-requires-enabled-source");
+            if (update.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
+                update.AnalysisTimeZoneId != policy.AnalysisTimeZoneId ||
+                update.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference ||
+                string.IsNullOrWhiteSpace(policy.RawTimestampTimeZoneId) ||
+                string.IsNullOrWhiteSpace(policy.AnalysisTimeZoneId) ||
+                string.IsNullOrWhiteSpace(policy.TimeBasisEvidenceReference))
+                throw new InvalidOperationException("binding-time-basis-does-not-match-current-policy");
 
             PrtgTrustedSamplingBinding? prior = null;
             if (!string.IsNullOrWhiteSpace(raw))
@@ -192,8 +199,7 @@ public sealed class PrtgTrustedSamplingBindingStore
 
             var profileKey = PrtgTrustedSamplingProfile.StorePrefix + update.SensorObjid.ToString(
                 System.Globalization.CultureInfo.InvariantCulture);
-            var profileRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == profileKey);
-            if (profileRow is not null) ctx.Blobs.Remove(profileRow);
+            ctx.Blobs.Where(row => row.BlobKey == profileKey).ExecuteDelete();
             PrtgResourceIdentityStore.IncrementAuthorityRevision(ctx, identity.HostId, now);
             return (JsonSerializer.Serialize(candidate, LfJsonOptions.Pretty), candidate);
         }, maxCurrentCharacters: PrtgTrustedSamplingBinding.MaximumSerializedBytes,
@@ -243,7 +249,8 @@ public sealed class PrtgTrustedSamplingBindingStore
             var identity = PrtgResourceIdentityStore.Read(ctx, sensorId);
             if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) || !policy.SensorIds.Contains(sensorId) ||
                 !policy.HostIds.Contains(identity.HostId) ||
-                settings.Revision != expectedSettingsRevision || policy.Revision != expectedPolicyRevision ||
+                settings.Revision != expectedSettingsRevision ||
+                (qualificationFence is null && policy.Revision != expectedPolicyRevision) ||
                 prior.RawTimestampTimeZoneId != policy.RawTimestampTimeZoneId ||
                 prior.AnalysisTimeZoneId != policy.AnalysisTimeZoneId ||
                 prior.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference ||
@@ -263,8 +270,7 @@ public sealed class PrtgTrustedSamplingBindingStore
             if (qualificationFence is not null && (qualificationFence.SensorObjid != sensorId ||
                 qualificationFence.BindingRevision != expectedBindingRevision ||
                 qualificationFence.BindingFingerprint != expectedBindingFingerprint ||
-                qualificationFence.SettingsRevision != expectedSettingsRevision ||
-                qualificationFence.PolicyRevision != expectedPolicyRevision))
+                qualificationFence.SettingsRevision != expectedSettingsRevision))
                 throw new InvalidOperationException("qualification-job-binding-fence-mismatch");
             var now = timeProvider.GetUtcNow();
             var nextIdentity = PrtgResourceIdentityStore.Set(ctx, sensorId, identity.SourceGeneration,
@@ -290,18 +296,13 @@ public sealed class PrtgTrustedSamplingBindingStore
             var refreshJson = JsonSerializer.Serialize(refreshRequest);
             if (Encoding.UTF8.GetByteCount(refreshJson) > 4096)
                 throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
-            var priorRefreshMeta = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == refreshKey)
-                .Select(row => new
-                {
-                    Prefix = row.Content.Substring(0, 4097),
-                    Length = row.Content.Length
-                }).SingleOrDefault();
-            if (priorRefreshMeta is not null &&
-                (priorRefreshMeta.Length > 4096 || Encoding.UTF8.GetByteCount(priorRefreshMeta.Prefix) > 4096))
-                throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
-            if (priorRefreshMeta is null)
+            var priorRefreshRows = EfPrtgStore.ReadBoundedBlobs(ctx, [refreshKey], 4096, 4096,
+                "profile-refresh-proof-notice-cap-exceeded");
+            var hasRefresh = priorRefreshRows.TryGetValue(refreshKey, out var priorRefresh);
+            if (!hasRefresh)
                 PrtgTrustedSamplingProofRefreshRequest.MakeRoomForNewRequest(ctx, sensorId, policy.SensorIds);
-            var refreshRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == refreshKey);
+            var refreshRow = EfPrtgStore.AttachBoundedBlobSnapshot(ctx, refreshKey,
+                hasRefresh ? priorRefresh : null, "profile-refresh-proof-notice-version-changed");
             if (refreshRow is null)
                 ctx.Blobs.Add(new BlobRow { BlobKey = refreshKey, Content = refreshJson, UpdatedAt = now.UtcDateTime, Version = 1 });
             else

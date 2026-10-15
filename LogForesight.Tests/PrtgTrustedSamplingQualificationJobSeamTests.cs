@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using System.Text.Json;
 using LogForesight.Core;
@@ -41,8 +41,13 @@ public sealed class PrtgTrustedSamplingQualificationJobSeamTests : IDisposable
             PrtgTimelineResourceIdentity.BuildResourceFingerprint("22", "CPU", "created", 0));
     }
 
-    [Fact]
-    public async Task SyntheticSaveQualificationTransactionalProofThenNormalRefreshResolverSeam_NoNativeSourceAcceptance()
+    [Theory]
+    [InlineData("none")]
+    [InlineData("date-format")]
+    [InlineData("raw-a-b-a")]
+    [InlineData("profile-date-format")]
+    [InlineData("profile-raw-a-b-a")]
+    public async Task SyntheticSaveQualificationTransactionalProofThenNormalRefreshResolverSeam_NoNativeSourceAcceptance(string mutation)
     {
         // This synthetic response validates only application wiring. It is not a claim about the
         // native response shape or readiness of any deployed PRTG source.
@@ -68,7 +73,7 @@ public sealed class PrtgTrustedSamplingQualificationJobSeamTests : IDisposable
         var admissionPlan = PrtgJointCapacityEvaluator.CreatePlan(jointEstimate, transport.SourceFingerprint,
             new string('F', 64), transport.ScopeFingerprint, transport.StrategyFingerprint,
             new string('7', 64), transport.RequestShapeFingerprint, transport.VersionFingerprint,
-            capacityAt, currentSettings.Revision, currentPolicy.Revision) with
+            capacityAt, currentSettings.Revision, currentPolicy.Revision, authority) with
         { Owner = "qualification-seam-test", Version = 1, LeaseUntilUtc = capacityAt.AddHours(1) };
         var bindings = new PrtgTrustedSamplingBindingStore(backend);
         var binding = bindings.Save(new(11, currentSettings.Revision, currentPolicy.Revision,
@@ -79,43 +84,96 @@ public sealed class PrtgTrustedSamplingQualificationJobSeamTests : IDisposable
         var jobs = new PrtgQualificationJobStateStore(backend);
         var now = DateTimeOffset.UtcNow;
         var jobId = Guid.NewGuid().ToString("N");
-        var job = jobs.Start(jobId, "synthetic-worker", new string('A', 64),
+        var job = jobs.Start(jobId, "synthetic-worker", transport.ScopeFingerprint,
             currentPolicy.SourceGeneration, currentSettings.Revision, currentPolicy.Revision,
             authority, 1, 1, 72, now, 3);
         jobs.InitializePage(jobId, job.Owner, job.Version, now, 0,
             [new PrtgQualificationJobStateStore.Sensor { SensorObjid = 11,
                 BindingRevision = binding.BindingRevision, BindingFingerprint = binding.BindingFingerprint }]);
         var (page, pageVersion) = jobs.ReadPageWithVersion(jobId, 0);
+        var stateVersionBeforeProof = jobs.ReadCurrent()!.ReadStateVersion;
         var fence = new PrtgQualificationWriteFence(jobId, job.Owner, job.Version,
-            new string('A', 64), currentPolicy.SourceGeneration, currentSettings.Revision,
+            transport.ScopeFingerprint, currentPolicy.SourceGeneration, currentSettings.Revision,
             currentPolicy.Revision, authority, 0, pageVersion, 11,
             page.Sensors[0].BindingRevision, page.Sensors[0].BindingFingerprint);
         var budget = new PrtgRequestBudget();
         budget.SetAdmissionPlan(admissionPlan);
         budget.SetHistoricCoordinator(new SqlPrtgHistoricRequestCoordinator(backend));
-        var qualifyingService = Service("synthetic-explicit-binding", budget);
+        var qualifyingService = Service("synthetic-explicit-binding", budget, () =>
+        {
+            if (mutation == "date-format") policy.Update(value =>
+            {
+                value.Revision = "changed-message-format";
+                value.MessageDateFormat = PrtgMessageDateTimeParser.Dmy24;
+                value.MessageTimeAuthorityRevision++;
+            });
+            if (mutation == "raw-a-b-a")
+            {
+                policy.Update(value => { value.Revision = "raw-b"; value.TimeBasisEvidenceReference = "basis-b"; });
+                policy.Update(value => { value.Revision = "raw-a-again"; value.TimeBasisEvidenceReference = "synthetic-time-basis"; });
+            }
+        });
 
-        var row = Assert.Single(await qualifyingService.ProbeAsync([11], CancellationToken.None,
+        var probe = qualifyingService.ProbeAsync([11], CancellationToken.None,
             allowQualification: true, requestPurpose: PrtgRequestPurpose.ProfileRefresh,
             admissionPlanFingerprint: admissionPlan.Fingerprint,
             expectedBindingRevision: binding.BindingRevision,
             expectedBindingFingerprint: binding.BindingFingerprint,
-            qualificationOnly: true, qualificationFence: fence));
+            qualificationOnly: true, qualificationFence: fence);
 
+        if (mutation == "raw-a-b-a")
+        {
+            var rejected = await Assert.ThrowsAsync<InvalidOperationException>(() => probe);
+            Assert.Equal("settings-or-policy-revision-changed", rejected.Message);
+            Assert.Empty(bindings.Get(11)!.QualificationProofReference);
+            Assert.NotEqual("qualified", jobs.ReadPage(jobId, 0).Sensors.Single().Status);
+            Assert.Equal(0, jobs.ReadCurrent()!.Qualified);
+            return;
+        }
+        var row = Assert.Single(await probe);
+        currentPolicy = policy.Get();
         Assert.Equal("qualified", row.Status);
         Assert.False(row.ProfileRecorded);
         Assert.True(row.QualificationRecorded);
         Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles([11]));
         Assert.NotEmpty(Assert.IsType<PrtgTrustedSamplingBinding>(bindings.Get(11)).QualificationProofReference);
-        Assert.Equal("qualified", jobs.ReadPage(jobId, 0).Sensors.Single().Status);
+        var qualifiedPageSensor = jobs.ReadPage(jobId, 0).Sensors.Single();
+        Assert.Equal("qualified", qualifiedPageSensor.Status);
+        Assert.Equal(bindings.Get(11)!.IdentityEpoch, qualifiedPageSensor.QualifiedIdentityEpoch);
+        Assert.Equal(bindings.Get(11)!.ChannelGeneration, qualifiedPageSensor.QualifiedChannelGeneration);
+        Assert.NotEqual(binding.ChannelGeneration, qualifiedPageSensor.QualifiedChannelGeneration);
         Assert.Equal(1, jobs.ReadCurrent()!.Qualified);
+        Assert.True(jobs.ReadCurrent()!.ReadStateVersion > stateVersionBeforeProof);
+        Assert.Equal(job.Version, jobs.ReadCurrent()!.Version);
 
         var refreshBudget = new PrtgRequestBudget();
         refreshBudget.SetAdmissionPlan(admissionPlan);
         refreshBudget.SetHistoricCoordinator(new SqlPrtgHistoricRequestCoordinator(backend));
-        var refreshed = Assert.Single(await Service("synthetic-explicit-binding", refreshBudget)
+        var profilePublication = Service("synthetic-explicit-binding", refreshBudget)
             .ProbeAsync([11], CancellationToken.None, requestPurpose: PrtgRequestPurpose.ProfileRefresh,
-                admissionPlanFingerprint: admissionPlan.Fingerprint));
+                admissionPlanFingerprint: admissionPlan.Fingerprint, profilePublisher: candidate =>
+                {
+                    if (mutation == "profile-date-format") policy.Update(value =>
+                    {
+                        value.Revision = "profile-publication-message-format";
+                        value.MessageDateFormat = PrtgMessageDateTimeParser.Dmy24;
+                        value.MessageTimeAuthorityRevision++;
+                    });
+                    if (mutation == "profile-raw-a-b-a")
+                    {
+                        policy.Update(value => value.TimeBasisEvidenceReference = "profile-basis-b");
+                        policy.Update(value => value.TimeBasisEvidenceReference = "synthetic-time-basis");
+                    }
+                    return backend.PrtgStore().RecordTrustedSamplingProfile(candidate, null, null);
+                });
+        if (mutation == "profile-raw-a-b-a")
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => profilePublication);
+            Assert.Empty(backend.PrtgStore().GetTrustedSamplingProfiles([11]));
+            return;
+        }
+        var refreshed = Assert.Single(await profilePublication);
+        currentPolicy = policy.Get();
         Assert.True(refreshed.ProfileRecorded);
         var profile = Assert.Single(backend.PrtgStore().GetTrustedSamplingProfiles([11]).Values);
         var identityAfter = backend.PrtgStore().GetResourceIdentity(11);
@@ -333,11 +391,11 @@ public sealed class PrtgTrustedSamplingQualificationJobSeamTests : IDisposable
         Assert.Equal(1, probeCalls);
     }
 
-    private PrtgTrustedSamplingProbeService Service(string scenario, PrtgRequestBudget budget) =>
+    private PrtgTrustedSamplingProbeService Service(string scenario, PrtgRequestBudget budget, Action? beforeHistoric = null) =>
         new(backend, value => PrtgClientFactory.Create(value,
-            new SyntheticPrtgHandler(scenario), budget));
+            new SyntheticPrtgHandler(scenario, beforeHistoric), budget));
 
-    private sealed class SyntheticPrtgHandler(string scenario) : HttpMessageHandler
+    private sealed class SyntheticPrtgHandler(string scenario, Action? beforeHistoric = null) : HttpMessageHandler
     {
         private readonly double measured = DateTime.UtcNow.AddSeconds(-2).ToOADate();
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -347,6 +405,7 @@ public sealed class PrtgTrustedSamplingQualificationJobSeamTests : IDisposable
                 return Xml("<prtg><result>3</result></prtg>");
             if (request.RequestUri.AbsolutePath.EndsWith("historicdata.xml", StringComparison.Ordinal))
             {
+                beforeHistoric?.Invoke();
                 var oa = measured.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
                 return Xml($"<histdata totalcount=\"1\"><prtg-version>synthetic-contract-only</prtg-version><item><datetime_raw>{oa}</datetime_raw><value_raw channel=\"Load\" channelid=\"3\">93</value_raw></item></histdata>");
             }

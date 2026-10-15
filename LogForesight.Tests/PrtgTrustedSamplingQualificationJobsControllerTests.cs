@@ -200,7 +200,8 @@ public sealed class PrtgTrustedSamplingQualificationJobsControllerTests : IDispo
         var plan = new PrtgCapacityAdmissionPlan(new string('A', 64), transport.SourceFingerprint,
             new string('C', 64), transport.ScopeFingerprint, transport.StrategyFingerprint,
             new string('D', 64), transport.RequestShapeFingerprint, transport.VersionFingerprint,
-            settingsRevision, policyRevision, 0.1, 0.1, 0.1, now, now.AddHours(1), "test-plan-owner", 1);
+            settingsRevision, policyRevision, 0.1, 0.1, 0.1, now, now.AddHours(1), "test-plan-owner", 1,
+            PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings.Get(), policy.Get()));
         new PrtgCapacityAdmissionPlanStore(backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey))
             .Publish(plan, "test-plan-owner", now, TimeSpan.FromHours(1), settingsRevision, () => true);
     }

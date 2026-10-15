@@ -154,7 +154,9 @@ public class SettingsController : ControllerBase
                     var policyCurrent = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
                     if (settingsCurrent.Revision != updated.Revision)
                     { publicationMismatch = "settings-revision-changed"; return false; }
-                    if (policyCurrent.Revision != plan.PolicyRevision)
+                    if (policyCurrent.Revision != plan.PolicyRevision ||
+                        PrtgCapacityRuntimeAdmission.RawAuthorityContext(settingsCurrent, policyCurrent) !=
+                            plan.RawAuthorityContextFingerprint)
                     { publicationMismatch = "policy-revision-changed"; return false; }
                     var profileIds = policyCurrent.SensorIds.Where(id => id > 0).Distinct().Order()
                         .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
@@ -200,6 +202,10 @@ public class SettingsController : ControllerBase
         var now = DateTimeOffset.UtcNow;
         var expected = store.ReadCurrent(now);
         if (expected is null || expected.SettingsRevision == updated.Revision) return;
+        // This is an operation-local CAS snapshot. It detects a policy write racing this rebind,
+        // while the persisted plan is matched by raw semantics rather than this older revision.
+        var policyRevisionAtRebindStart = new PrtgMonitoringPolicyStore(
+            _backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Revision;
 
         try
         {
@@ -208,7 +214,9 @@ public class SettingsController : ControllerBase
                     var settingsCurrent = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
                     var policyCurrent = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
                     if (settingsCurrent.Revision != updated.Revision || !settingsCurrent.PrtgEnabled ||
-                        policyCurrent.Revision != expected.PolicyRevision) return false;
+                        policyCurrent.Revision != policyRevisionAtRebindStart ||
+                        PrtgCapacityRuntimeAdmission.RawAuthorityContext(settingsCurrent, policyCurrent) !=
+                            expected.RawAuthorityContextFingerprint) return false;
                     var profileIds = policyCurrent.SensorIds.Distinct().Order()
                         .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
                     if (profileIds.Length == 0 || policyCurrent.SensorIds.Count > 15_000 ||
@@ -359,7 +367,8 @@ public class SettingsController : ControllerBase
         return PrtgJointCapacityEvaluator.CreatePlan(joint, contract.SourceFingerprint,
             snapshotSelection.ScopeFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
             snapshotSelection.RequestShapeFingerprint, contract.RequestShapeFingerprint, contract.VersionFingerprint,
-            DateTimeOffset.UtcNow, candidate.Revision, policy.Revision);
+            DateTimeOffset.UtcNow, candidate.Revision, policy.Revision,
+            PrtgCapacityRuntimeAdmission.RawAuthorityContext(candidate, policy));
     }
 
     private static SystemSettings CloneSettings(SystemSettings settings) =>
@@ -876,7 +885,8 @@ public class SettingsController : ControllerBase
                         admissionPlan.RequestShapeFingerprint == contract.RequestShapeFingerprint &&
                         admissionPlan.RuntimeVersionFingerprint == contract.VersionFingerprint &&
                         admissionPlan.SettingsRevision == settings.Revision &&
-                        admissionPlan.PolicyRevision == policy.Revision;
+                        admissionPlan.RawAuthorityContextFingerprint ==
+                            PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy);
                     profileContract = contract;
                     if (existingPlanMatches) matchingAdmissionPlan = admissionPlan;
                     qualificationEligibleSensors = CountQualificationEligibleSensors(_backend, policy.SensorIds);

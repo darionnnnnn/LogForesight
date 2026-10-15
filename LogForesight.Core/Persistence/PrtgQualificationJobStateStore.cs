@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
@@ -27,6 +27,9 @@ public sealed class PrtgQualificationJobStateStore(StorageBackend backend)
         public string AuthorityContextFingerprint { get; set; } = "";
         public string Owner { get; set; } = "";
         public long Version { get; set; }
+        /// <summary>Physical overview version attached to read snapshots; distinct from the lease/wave version.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+        public long ReadStateVersion { get; set; }
         public DateTimeOffset DeadlineUtc { get; set; }
         public DateTimeOffset LeaseUntilUtc { get; set; }
         public int DurationHours { get; set; }
@@ -62,6 +65,8 @@ public sealed class Sensor
         public int Attempts { get; set; }
         public int WaveAttempts { get; set; }
         public bool HasQualificationProof { get; set; }
+        public long QualifiedIdentityEpoch { get; set; }
+        public string QualifiedChannelGeneration { get; set; } = "";
         public string? PreviousReason { get; set; }
         public DateTimeOffset? NextAttemptUtc { get; set; }
         public DateTimeOffset? LastAttemptUtc { get; set; }
@@ -101,18 +106,23 @@ public sealed class Sensor
 
     public PrtgHistoricAdmissionStore.State ReadOverview()
     {
-        var (json, _, length) = overviewBlob.ReadBoundedWithVersion(MaximumOverviewBytes);
-        EnsureBounded(json, length, MaximumOverviewBytes, "qualification-job-overview-cap-exceeded");
-        return ParseOverview(json);
+        using var ctx = backend.CreateContext();
+        var rows = ReadBoundedRows(ctx, [PrtgHistoricAdmissionStore.BlobKey], MaximumOverviewBytes,
+            "qualification-job-overview-cap-exceeded");
+        var json = rows.TryGetValue(PrtgHistoricAdmissionStore.BlobKey, out var row) ? row.Content : null;
+        var state = ParseOverview(json);
+        if (state.Job is { } job) job.ReadStateVersion = row.Version;
+        return state;
     }
 
     public Page ReadPage(string jobId, int pageIndex)
     {
         if (!SafeJobId(jobId) || pageIndex < 0) throw new ArgumentOutOfRangeException(nameof(pageIndex));
-        var (json, _, length) = backend.Blob(PageKey(jobId, pageIndex)).ReadBoundedWithVersion(MaximumPageBytes);
-        EnsureBounded(json, length, MaximumPageBytes, "qualification-job-page-cap-exceeded");
-        var page = string.IsNullOrWhiteSpace(json) ? new Page() :
-            JsonSerializer.Deserialize<Page>(json) ?? throw new InvalidDataException("qualification-job-page-invalid");
+        using var ctx = backend.CreateContext();
+        var rows = ReadBoundedRows(ctx, [PageKey(jobId, pageIndex)], MaximumPageBytes,
+            "qualification-job-page-cap-exceeded");
+        var json = rows.TryGetValue(PageKey(jobId, pageIndex), out var row) ? row.Content : null;
+        var page = string.IsNullOrWhiteSpace(json) ? new Page() : ParsePage(json);
         if (page.JobId != jobId || page.Index != pageIndex || page.Sensors.Count > PageSize)
             throw new InvalidDataException("qualification-job-page-fence-invalid");
         return page;
@@ -125,10 +135,13 @@ public sealed class Sensor
     public (Page Page, long Version) ReadPageWithVersion(string jobId, int pageIndex)
     {
         if (!SafeJobId(jobId) || pageIndex < 0) throw new ArgumentOutOfRangeException(nameof(pageIndex));
-        var (json, version, length) = backend.Blob(PageKey(jobId, pageIndex)).ReadBoundedWithVersion(MaximumPageBytes);
-        EnsureBounded(json, length, MaximumPageBytes, "qualification-job-page-cap-exceeded");
-        var page = string.IsNullOrWhiteSpace(json) ? new Page() :
-            JsonSerializer.Deserialize<Page>(json) ?? throw new InvalidDataException("qualification-job-page-invalid");
+        using var ctx = backend.CreateContext();
+        var key = PageKey(jobId, pageIndex);
+        var rows = ReadBoundedRows(ctx, [key], MaximumPageBytes, "qualification-job-page-cap-exceeded");
+        var exists = rows.TryGetValue(key, out var row);
+        var json = exists ? row.Content : null;
+        var version = exists ? row.Version : 0;
+        var page = string.IsNullOrWhiteSpace(json) ? new Page() : ParsePage(json);
         if (page.JobId != jobId || page.Index != pageIndex || page.Sensors.Count > PageSize)
             throw new InvalidDataException("qualification-job-page-fence-invalid");
         return (page, version);
@@ -227,7 +240,7 @@ public sealed class Sensor
             if (job.JobId != jobId || job.Version != expectedVersion ||
                 job.Status is not ("completed" or "completed-with-waiting" or "expired" or "cancelled") ||
                 job.ScopeFingerprint != expectedScopeFingerprint || job.SourceGeneration != expectedSourceGeneration ||
-                job.SettingsRevision != expectedSettingsRevision || job.PolicyRevision != expectedPolicyRevision ||
+                job.SettingsRevision != expectedSettingsRevision ||
                 job.AuthorityContextFingerprint != expectedAuthorityContextFingerprint ||
                 job.InitializedPages < 0 || job.InitializedPages > job.PageCount ||
                 job.InitializationCursor != job.InitializedPages)
@@ -250,6 +263,8 @@ public sealed class Sensor
                 policy.SourceGeneration != expectedSourceGeneration || contextFingerprint != expectedAuthorityContextFingerprint)
                 throw new InvalidOperationException("qualification-job-resume-source-context-changed");
 
+            if (PrtgRawWorkScope.ReadInContext(ctx, policy) != expectedScopeFingerprint)
+                throw new InvalidOperationException("qualification-job-resume-scope-changed");
             var expectedIds = policy.SensorIds.Where(id => id > 0).Distinct().Order().ToArray();
             if (expectedIds.Length != job.Selected || expectedIds.Length > MaximumSensors)
                 throw new InvalidOperationException("qualification-job-resume-scope-changed");
@@ -257,10 +272,12 @@ public sealed class Sensor
             for (var pageIndex = 0; pageIndex < job.InitializedPages; pageIndex++)
             {
                 var pageKey = PageKey(jobId, pageIndex);
-                var pageRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == pageKey)
-                    ?? throw new InvalidOperationException("qualification-job-resume-page-missing");
-                if (pageRow.Content.Length > MaximumPageBytes || Encoding.UTF8.GetByteCount(pageRow.Content) > MaximumPageBytes)
-                    throw new InvalidDataException("qualification-job-page-cap-exceeded");
+                var pageRows = ReadBoundedRows(ctx, [pageKey], MaximumPageBytes,
+                    "qualification-job-page-cap-exceeded");
+                if (!pageRows.TryGetValue(pageKey, out var boundedPage))
+                    throw new InvalidOperationException("qualification-job-resume-page-missing");
+                var pageRow = AttachBoundedRow(ctx, pageKey, boundedPage, "qualification-job-page-version-changed");
+                EnsureSameBoundedRow(pageRow, boundedPage, "qualification-job-page-version-changed");
                 var page = ParsePage(pageRow.Content);
                 var expectedCount = Math.Min(PageSize, job.Selected - ordinal);
                 if (page.JobId != jobId || page.Index != pageIndex || page.Sensors.Count != expectedCount)
@@ -268,16 +285,12 @@ public sealed class Sensor
                 var pageIds = page.Sensors.Select(sensor => sensor.SensorObjid).ToArray();
                 var bindingKeys = pageIds.Select(sensorId => PrtgTrustedSamplingBinding.StorePrefix +
                     sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray();
-                var bindingRows = ctx.Blobs.AsNoTracking().Where(row => bindingKeys.Contains(row.BlobKey))
-                    .Select(row => new { row.BlobKey, Content = row.Content.Substring(0,
-                        PrtgTrustedSamplingBinding.MaximumSerializedBytes + 1), Length = row.Content.Length })
-                    .ToDictionary(row => row.BlobKey, row => row);
+                var bindingRows = ReadBoundedRows(ctx, bindingKeys, PrtgTrustedSamplingBinding.MaximumSerializedBytes,
+                    "qualification-binding-cap-exceeded");
                 var identityKeys = pageIds.Select(sensorId => PrtgResourceIdentityStore.Prefix +
                     sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray();
-                var identityRows = ctx.Blobs.AsNoTracking().Where(row => identityKeys.Contains(row.BlobKey))
-                    .Select(row => new { row.BlobKey, Content = row.Content.Substring(0,
-                        PrtgResourceIdentityStore.MaxLedgerBytes + 1), Length = row.Content.Length,
-                        row.Version, row.UpdatedAt }).ToDictionary(row => row.BlobKey, row => row);
+                var identityRows = ReadBoundedRows(ctx, identityKeys, PrtgResourceIdentityStore.MaxLedgerBytes,
+                    "qualification-identity-cap-exceeded");
                 for (var local = 0; local < page.Sensors.Count; local++, ordinal++)
                 {
                     var sensor = page.Sensors[local];
@@ -288,9 +301,7 @@ public sealed class Sensor
                     PrtgTrustedSamplingBinding? binding = null;
                     if (bindingRows.TryGetValue(bindingKey, out var bindingRow))
                     {
-                        if (bindingRow.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
-                            Encoding.UTF8.GetByteCount(bindingRow.Content) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
-                            throw new InvalidDataException("qualification-binding-cap-exceeded");
+                        if (bindingRow.Content is null) throw new InvalidDataException("qualification-binding-cap-exceeded");
                         binding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(bindingRow.Content,
                             LfJsonOptions.Pretty) ?? throw new InvalidDataException("qualification-binding-invalid");
                         if (binding.SensorObjid != sensor.SensorObjid)
@@ -310,9 +321,8 @@ public sealed class Sensor
                     BlobRow? identityBlob = null;
                     if (identityRows.TryGetValue(identityKey, out var identityRow))
                     {
-                        if (identityRow.Length > PrtgResourceIdentityStore.MaxLedgerBytes)
-                            throw new InvalidDataException("qualification-identity-cap-exceeded");
-                        identityBlob = new BlobRow { BlobKey = identityRow.BlobKey, Content = identityRow.Content,
+                        if (identityRow.Content is null) throw new InvalidDataException("qualification-identity-cap-exceeded");
+                        identityBlob = new BlobRow { BlobKey = identityKey, Content = identityRow.Content,
                             Version = identityRow.Version, UpdatedAt = identityRow.UpdatedAt };
                     }
                     var identity = PrtgResourceIdentityStore.ReadLoaded(sensor.SensorObjid, identityBlob);
@@ -441,13 +451,14 @@ public sealed class Sensor
             var job = overview.Job!;
             if (job.Status != "running" || job.ScopeFingerprint != fence.ScopeFingerprint ||
                 job.SourceGeneration != fence.SourceGeneration || job.SettingsRevision != fence.SettingsRevision ||
-                job.PolicyRevision != fence.PolicyRevision || job.AuthorityContextFingerprint != fence.AuthorityContextFingerprint)
+                job.AuthorityContextFingerprint != fence.AuthorityContextFingerprint)
                 throw new InvalidOperationException("qualification-job-contract-changed");
             var pageKey = PageKey(fence.JobId, fence.PageIndex);
-            var pageRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == pageKey)
-                ?? throw new InvalidOperationException("qualification-job-page-missing");
-            if (pageRow.Version != fence.PageVersion || pageRow.Content.Length > MaximumPageBytes)
+            var boundedRows = ReadBoundedRows(ctx, [pageKey], MaximumPageBytes, "qualification-job-page-cap-exceeded");
+            if (!boundedRows.TryGetValue(pageKey, out var boundedPage) || boundedPage.Version != fence.PageVersion)
                 throw new InvalidOperationException("qualification-job-page-version-changed");
+            var pageRow = AttachBoundedRow(ctx, pageKey, boundedPage, "qualification-job-page-version-changed");
+            EnsureSameBoundedRow(pageRow, boundedPage, "qualification-job-page-version-changed");
             var page = ParsePage(pageRow.Content);
             var sensor = page.Sensors.SingleOrDefault(row => row.SensorObjid == fence.SensorObjid)
                 ?? throw new InvalidOperationException("qualification-job-sensor-missing");
@@ -515,10 +526,15 @@ public sealed class Sensor
             var job = overview.Job!;
             if (job.Status != "initializing" || pageIndex >= job.PageCount) throw new InvalidOperationException("qualification-job-page-invalid");
             var key = PageKey(jobId, pageIndex);
-            var current = ctx.Blobs.SingleOrDefault(row => row.BlobKey == key);
+            var boundedRows = ReadBoundedRows(ctx, [key], MaximumPageBytes, "qualification-job-page-cap-exceeded");
+            var hasBoundedCurrent = boundedRows.TryGetValue(key, out var boundedCurrent);
+            var current = hasBoundedCurrent
+                ? AttachBoundedRow(ctx, key, boundedCurrent, "qualification-job-page-version-changed") : null;
             Page page;
             if (current is not null)
             {
+                if (!hasBoundedCurrent) throw new InvalidOperationException("qualification-job-page-version-changed");
+                EnsureSameBoundedRow(current, boundedCurrent, "qualification-job-page-version-changed");
                 page = ParsePage(current.Content);
                 if (page.JobId != jobId || page.Index != pageIndex ||
                 !page.Sensors.Select(row => (row.SensorObjid, row.BindingRevision, row.BindingFingerprint))
@@ -554,23 +570,28 @@ public sealed class Sensor
         // The binding proof caller takes this lock before any binding read. Reacquiring
         // in the same transaction also protects direct callers; commit releases both grants.
         EfJsonBlobStore.SerializeSqlServerWriters(db, PrtgHistoricAdmissionStore.BlobKey);
-        var overviewRow = db.Blobs.SingleOrDefault(row => row.BlobKey == PrtgHistoricAdmissionStore.BlobKey)
-            ?? throw new InvalidOperationException("qualification-job-overview-missing");
-        if (overviewRow.Content.Length > MaximumOverviewBytes || Encoding.UTF8.GetByteCount(overviewRow.Content) > MaximumOverviewBytes)
-            throw new InvalidDataException("qualification-job-overview-cap-exceeded");
+        var boundedOverviewRows = ReadBoundedRows(db, [PrtgHistoricAdmissionStore.BlobKey], MaximumOverviewBytes,
+            "qualification-job-overview-cap-exceeded");
+        if (!boundedOverviewRows.TryGetValue(PrtgHistoricAdmissionStore.BlobKey, out var boundedOverview))
+            throw new InvalidOperationException("qualification-job-overview-missing");
+        var overviewRow = AttachBoundedRow(db, PrtgHistoricAdmissionStore.BlobKey, boundedOverview,
+            "qualification-job-overview-version-changed");
+        EnsureSameBoundedRow(overviewRow, boundedOverview, "qualification-job-overview-version-changed");
         var overview = ParseOverview(overviewRow.Content);
         EnsureLease(overview.Job, fence.JobId, fence.Owner, fence.LeaseVersion, nowUtc);
         var job = overview.Job!;
         if (job.Status != "running" || job.ScopeFingerprint != fence.ScopeFingerprint ||
             job.SourceGeneration != fence.SourceGeneration || job.SettingsRevision != fence.SettingsRevision ||
-            job.PolicyRevision != fence.PolicyRevision || job.AuthorityContextFingerprint != fence.AuthorityContextFingerprint ||
+            job.AuthorityContextFingerprint != fence.AuthorityContextFingerprint ||
             fence.PageIndex < 0 || fence.PageIndex >= job.PageCount)
             throw new InvalidOperationException("qualification-job-contract-changed");
+        EnsureLiveRawJobAuthority(db, job);
         var pageKey = PageKey(fence.JobId, fence.PageIndex);
-        var pageRow = db.Blobs.SingleOrDefault(row => row.BlobKey == pageKey)
-            ?? throw new InvalidOperationException("qualification-job-page-missing");
-        if (pageRow.Version != fence.PageVersion || pageRow.Content.Length > MaximumPageBytes)
+        var boundedPageRows = ReadBoundedRows(db, [pageKey], MaximumPageBytes, "qualification-job-page-cap-exceeded");
+        if (!boundedPageRows.TryGetValue(pageKey, out var boundedPage) || boundedPage.Version != fence.PageVersion)
             throw new InvalidOperationException("qualification-job-page-version-changed");
+        var pageRow = AttachBoundedRow(db, pageKey, boundedPage, "qualification-job-page-version-changed");
+        EnsureSameBoundedRow(pageRow, boundedPage, "qualification-job-page-version-changed");
         var page = ParsePage(pageRow.Content);
         var sensor = page.Sensors.SingleOrDefault(row => row.SensorObjid == fence.SensorObjid)
             ?? throw new InvalidOperationException("qualification-job-sensor-missing");
@@ -586,6 +607,8 @@ public sealed class Sensor
         sensor.LastAttemptUtc = nowUtc;
         sensor.Status = "qualified";
         sensor.HasQualificationProof = true;
+        sensor.QualifiedIdentityEpoch = qualified.IdentityEpoch;
+        sensor.QualifiedChannelGeneration = qualified.ChannelGeneration;
         sensor.BindingFingerprint = qualified.BindingFingerprint;
         sensor.Reason = "raw-proof-recorded";
         sensor.NextAttemptUtc = null;
@@ -623,6 +646,8 @@ public sealed class Sensor
     private static PrtgHistoricAdmissionStore.State ParseOverview(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return new();
+        if (Encoding.UTF8.GetByteCount(json) > MaximumOverviewBytes)
+            throw new InvalidDataException("qualification-job-overview-cap-exceeded");
         var state = JsonSerializer.Deserialize<PrtgHistoricAdmissionStore.State>(json)
             ?? throw new InvalidDataException("qualification-job-overview-invalid");
         if (state.Job is { } job && (job.Selected is < 1 or > MaximumSensors ||
@@ -635,7 +660,12 @@ public sealed class Sensor
             throw new InvalidDataException("qualification-job-overview-fence-invalid");
         return state;
     }
-    private static Page ParsePage(string json) => JsonSerializer.Deserialize<Page>(json) ?? throw new InvalidDataException("qualification-job-page-invalid");
+    private static Page ParsePage(string json)
+    {
+        if (json.Length > MaximumPageBytes || Encoding.UTF8.GetByteCount(json) > MaximumPageBytes)
+            throw new InvalidDataException("qualification-job-page-cap-exceeded");
+        return JsonSerializer.Deserialize<Page>(json) ?? throw new InvalidDataException("qualification-job-page-invalid");
+    }
     private static string Serialize(PrtgHistoricAdmissionStore.State value) => SerializeBounded(value, MaximumOverviewBytes, "qualification-job-overview-cap-exceeded");
     private static string SerializePage(Page value) => SerializeBounded(value, MaximumPageBytes, "qualification-job-page-cap-exceeded");
     private static string SerializeBounded<T>(T value, int max, string reason)
@@ -644,8 +674,54 @@ public sealed class Sensor
         if (Encoding.UTF8.GetByteCount(json) > max) throw new InvalidDataException(reason);
         return json;
     }
-    private static void EnsureBounded(string? json, int length, int max, string reason)
-    { if (length > max || json is not null && Encoding.UTF8.GetByteCount(json) > max) throw new InvalidDataException(reason); }
+    private static void EnsureLiveRawJobAuthority(LfDbContext context, Job job)
+    {
+        var settings = JsonSerializer.Deserialize<SystemSettings>(ReadResumeAuthority(context, "system_settings")
+            ?? throw new InvalidDataException("qualification-settings-missing"), LfJsonOptions.Pretty)
+            ?? throw new InvalidDataException("qualification-settings-invalid");
+        var policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(ReadResumeAuthority(context, PrtgMonitoringPolicyStore.BlobKey)
+            ?? throw new InvalidDataException("qualification-policy-missing"), LfJsonOptions.Pretty)
+            ?? throw new InvalidDataException("qualification-policy-invalid");
+        var strategy = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
+        var authority = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(policy, strategy,
+            PrtgFetchStrategy.Profile(strategy).SnapshotIntervalMinutes);
+        if (!settings.PrtgEnabled || settings.Revision != job.SettingsRevision || !policy.Ready(settings.PrtgUrl) ||
+            policy.SourceGeneration != job.SourceGeneration || authority != job.AuthorityContextFingerprint ||
+            PrtgRawWorkScope.ReadInContext(context, policy) != job.ScopeFingerprint)
+            throw new InvalidOperationException("qualification-job-live-raw-authority-changed");
+    }
+
+    private static Dictionary<string,(string? Content,long Version,int Length,DateTime UpdatedAt)> ReadBoundedRows(
+        LfDbContext ctx, IEnumerable<string> keys, int maximumBytes, string reason)
+    {
+        var rows = BoundedJsonBlobBatchReader.Read(ctx, keys, maximumBytes);
+        foreach (var row in rows.Values)
+        {
+            if (row.Content is null || row.Length > maximumBytes ||
+                Encoding.UTF8.GetByteCount(row.Content) > maximumBytes)
+                throw new InvalidDataException(reason);
+        }
+        return rows;
+    }
+    private static BlobRow AttachBoundedRow(LfDbContext context, string key,
+        (string? Content, long Version, int Length, DateTime UpdatedAt) bounded, string reason)
+    {
+        var tracked = context.Blobs.Local.FirstOrDefault(row => row.BlobKey == key);
+        if (tracked is not null) { EnsureSameBoundedRow(tracked, bounded, reason); return tracked; }
+        if (bounded.Content is null) throw new InvalidDataException(reason);
+        var snapshot = new BlobRow { BlobKey = key, Content = bounded.Content,
+            Version = bounded.Version, UpdatedAt = bounded.UpdatedAt };
+        context.Blobs.Attach(snapshot);
+        return snapshot;
+    }
+
+    private static void EnsureSameBoundedRow(BlobRow tracked,
+        (string? Content,long Version,int Length,DateTime UpdatedAt) bounded, string reason)
+    {
+        if (bounded.Content is null || tracked.Version != bounded.Version || tracked.UpdatedAt != bounded.UpdatedAt ||
+            !StringComparer.Ordinal.Equals(tracked.Content, bounded.Content))
+            throw new InvalidOperationException(reason);
+    }
     private static bool SafeJobId(string value) => value.Length is >= 16 and <= 64 && value.All(char.IsAsciiLetterOrDigit);
     private static bool Hex64(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
     private static bool SafeOpaque(string value) => value.Length <= 128 && !string.IsNullOrWhiteSpace(value) &&

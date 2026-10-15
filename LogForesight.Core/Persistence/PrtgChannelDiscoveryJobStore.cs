@@ -32,6 +32,7 @@ public sealed class PrtgChannelDiscoveryJobStore(StorageBackend backend)
         public string Reason { get; set; } = "queued";
         public string SettingsRevision { get; set; } = "";
         public string PolicyRevision { get; set; } = "";
+        public string RawAuthorityContextFingerprint { get; set; } = "";
         public string SourceGeneration { get; set; } = "";
         public long HostSnapshotVersion { get; set; }
         public string ResourceGeneration { get; set; } = "";
@@ -70,7 +71,8 @@ public sealed class PrtgChannelDiscoveryJobStore(StorageBackend backend)
             Expire(state, nowUtc);
             var matching = state.Jobs.FirstOrDefault(row => IsActive(row) &&
                 row.RequesterUserId == job.RequesterUserId && row.SensorObjid == job.SensorObjid &&
-                row.SettingsRevision == job.SettingsRevision && row.PolicyRevision == job.PolicyRevision &&
+                row.SettingsRevision == job.SettingsRevision &&
+                row.RawAuthorityContextFingerprint == job.RawAuthorityContextFingerprint &&
                 row.SourceGeneration == job.SourceGeneration && row.HostSnapshotVersion == job.HostSnapshotVersion &&
                 row.ResourceGeneration == job.ResourceGeneration && row.IdentityEpoch == job.IdentityEpoch &&
                 row.ChannelGeneration == job.ChannelGeneration && row.BindingRevision == job.BindingRevision &&
@@ -282,6 +284,7 @@ public sealed class PrtgChannelDiscoveryJobStore(StorageBackend backend)
             job.Status != "queued" || job.QueuedAtUtc.Offset != TimeSpan.Zero || job.DeadlineUtc <= job.QueuedAtUtc ||
             job.DeadlineUtc - job.QueuedAtUtc > TimeSpan.FromMinutes(5) || job.SettingsRevision.Length is < 1 or > 128 ||
             job.PolicyRevision.Length is < 1 or > 128 || job.SourceGeneration.Length is < 1 or > 128 ||
+            job.RawAuthorityContextFingerprint.Length != 64 || !job.RawAuthorityContextFingerprint.All(Uri.IsHexDigit) ||
             job.HostSnapshotVersion < 0 || job.ResourceGeneration.Length is < 1 or > 128 || job.IdentityEpoch <= 0 ||
             job.ChannelGeneration.Length > 128 || job.BindingRevision < 0 ||
             job.BindingFingerprint.Length is > 128 || job.IdentityChannelFingerprint.Length > 128 ||

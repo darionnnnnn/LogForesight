@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Globalization;
@@ -294,6 +294,11 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             policy.SensorIds = eligibleSensors.Select(sensor => sensor.Objid).Distinct().Order().ToList();
             policy.SourceTimeZoneId = "UTC";
             policy.SourceCultureName = "en-US";
+            policy.RawTimestampTimeZoneId = "UTC";
+            policy.AnalysisTimeZoneId = "UTC";
+            policy.TimeBasisEvidenceReference = "snapshot-hosted-fixture-time-basis";
+            policy.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
+            policy.MessageTimeAuthorityRevision = Math.Max(1, policy.MessageTimeAuthorityRevision);
         });
 
         var mapByDevice = todayMaps.GroupBy(row => row.DeviceObjid).ToDictionary(group => group.Key, group => group.First());
@@ -1206,7 +1211,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var candidate = PrtgJointCapacityEvaluator.CreatePlan(joint, contract.SourceFingerprint,
             selection.ScopeFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
             selection.RequestShapeFingerprint, contract.RequestShapeFingerprint,
-            contract.VersionFingerprint, now, settings.Revision, policy.Revision);
+            contract.VersionFingerprint, now, settings.Revision, policy.Revision,
+            PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy));
         var store = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
         var published = store.Publish(candidate, "snapshot-hosted-synthetic-fixture", now, TimeSpan.FromHours(24),
             settings.Revision, () =>

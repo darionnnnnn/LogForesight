@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -55,16 +55,7 @@ public sealed class PrtgProfileTransportCapacityPilot(StorageBackend backend,
             settings.PrtgUrl.TrimEnd('/'), settings.PrtgAuthMode, settings.PrtgApiTokenEnc,
             settings.PrtgUsername, settings.PrtgPasswordEnc, settings.PrtgPasshashEnc,
             settings.PrtgTimeoutSeconds, settings.PrtgIgnoreSslErrors));
-        IEnumerable<string> selectedHostState = hostSnapshot is null ? Array.Empty<string>() :
-            hostSnapshot.Hosts.Where(host => policy.HostIds.Contains(host.HostId))
-                .OrderBy(host => host.HostId).Select(host => string.Join(":", host.HostId, host.Active, host.MergedInto));
-        // Transport cost depends on the complete selected set and current selected-host state,
-        // not which representative five IDs happened to be due. This context fingerprint is
-        // separate from the strict per-ID authorization required by native probe requests.
-        var scope = PrtgProfileTransportCapacityStore.Fingerprint(string.Join("\n",
-            policy.SourceGeneration, policy.EndpointHint, string.Join(",", policy.HostIds.Order()),
-            string.Join(",", policy.SensorIds.Where(id => id > 0).Distinct().Order()),
-            string.Join(";", selectedHostState)));
+        var scope = PrtgRawWorkScope.Fingerprint(policy, hostSnapshot);
         var strategyFingerprint = PrtgProfileTransportCapacityStore.Fingerprint(
             $"profile-transport-strategy:{strategyName}:{strategyMinutes}");
         return new(source, scope, strategyFingerprint,

@@ -666,7 +666,7 @@ public sealed class PrtgTrustedSamplingProfileRefreshHostedService(
         return binding is not null && identity is { Active: true, PendingReconciliation: false } &&
             settings.PrtgEnabled && policy.Ready(settings.PrtgUrl) && policy.SensorIds.Contains(notice.SensorObjid) &&
             policy.HostIds.Contains(identity.HostId) &&
-            settings.Revision == notice.SettingsRevision && policy.Revision == notice.PolicyRevision &&
+            settings.Revision == notice.SettingsRevision &&
             authorityContext == notice.AuthorityContextFingerprint &&
             identity.SensorId == notice.SensorObjid && identity.Epoch == notice.IdentityEpoch &&
             identity.Generation == notice.ResourceGeneration && identity.SourceGeneration == notice.SourceGeneration &&

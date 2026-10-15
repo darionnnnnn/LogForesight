@@ -195,8 +195,10 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryHostedService : Backgroun
         binding = new PrtgTrustedSamplingBindingStore(backend).Get(job.SensorObjid);
         var identities = backend.PrtgStore().GetResourceIdentities([job.SensorObjid]);
         identity = identities.GetValueOrDefault(job.SensorObjid)!;
+        var rawAuthorityContext = PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy);
         if (identity is null || !identity.Active || identity.PendingReconciliation || !settings.PrtgEnabled ||
-            settings.Revision != job.SettingsRevision || policy.Revision != job.PolicyRevision ||
+            settings.Revision != job.SettingsRevision || rawAuthorityContext.Length != 64 ||
+            rawAuthorityContext != job.RawAuthorityContextFingerprint ||
             policy.SourceGeneration != job.SourceGeneration || !policy.Ready(settings.PrtgUrl) ||
             !policy.SensorIds.Contains(job.SensorObjid) || !policy.HostIds.Contains(identity.HostId) ||
             identity.SourceGeneration != job.SourceGeneration || identity.Generation != job.ResourceGeneration ||

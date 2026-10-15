@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json;
 using LogForesight.Core;
 using LogForesight.Core.Models;
@@ -57,7 +57,7 @@ public sealed class PrtgTrustedSamplingQualificationJobHostedService : Backgroun
         (sensorObjid, fence, admissionPlanFingerprint, ct) =>
             new PrtgTrustedSamplingProbeService(backend).ProbeAsync([sensorObjid], ct,
                 allowQualification: true, requestPurpose: PrtgRequestPurpose.ProfileRefresh,
-                allowUnrelatedPolicyRevisionChanges: false,
+                allowUnrelatedPolicyRevisionChanges: true,
                 admissionPlanFingerprint: admissionPlanFingerprint,
                 expectedBindingRevision: fence.BindingRevision,
                 expectedBindingFingerprint: fence.BindingFingerprint,
@@ -163,7 +163,7 @@ public sealed class PrtgTrustedSamplingQualificationJobHostedService : Backgroun
                     job.ScopeFingerprint, job.SourceGeneration, job.SettingsRevision, job.PolicyRevision,
                     job.AuthorityContextFingerprint, pageIndex, pageVersion, sensor.SensorObjid,
                     sensor.BindingRevision, sensor.BindingFingerprint);
-                if (settings.Revision != job.SettingsRevision || policy.Revision != job.PolicyRevision ||
+                if (settings.Revision != job.SettingsRevision ||
                     policy.SourceGeneration != job.SourceGeneration || context != job.AuthorityContextFingerprint)
                 {
                     store.SetStatus(job.JobId, owner, job.Version, DateTimeOffset.UtcNow,
@@ -306,7 +306,7 @@ public sealed class PrtgTrustedSamplingQualificationJobHostedService : Backgroun
             if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(backend, hostStore, settings, snapshotSelection,
                 out var plan, out reason)) return false;
             if (plan is null || plan.SourceFingerprint.Length == 0 || plan.ProfileScopeFingerprint.Length == 0 ||
-                plan.PolicyRevision != policy.Revision || plan.SettingsRevision != settings.Revision)
+                plan.RawAuthorityContextFingerprint != PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy) || plan.SettingsRevision != settings.Revision)
             {
                 reason = "qualification-runtime-table-admission-plan-stale";
                 return false;
@@ -364,6 +364,8 @@ public sealed class PrtgTrustedSamplingQualificationJobHostedService : Backgroun
                 {
                     SensorObjid = id, BindingRevision = binding?.BindingRevision ?? 0,
                     BindingFingerprint = binding?.BindingFingerprint ?? "",
+                    QualifiedIdentityEpoch = qualified ? binding!.IdentityEpoch : 0,
+                    QualifiedChannelGeneration = qualified ? binding!.ChannelGeneration : "",
                     HasQualificationProof = binding is not null &&
                         !string.IsNullOrWhiteSpace(binding.QualificationProofReference),
                     Status = qualified ? "qualified" : binding is not null &&
@@ -440,7 +442,7 @@ public sealed class PrtgTrustedSamplingQualificationJobHostedService : Backgroun
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         if (!settings.PrtgEnabled || settings.Revision != job.SettingsRevision ||
-            policy.Revision != job.PolicyRevision || policy.SourceGeneration != job.SourceGeneration ||
+            policy.SourceGeneration != job.SourceGeneration ||
             !policy.Ready(settings.PrtgUrl) || policy.SensorIds.Count != job.Selected ||
             policy.SensorIds.Count > PrtgQualificationJobStateStore.MaximumSensors)
             return false;

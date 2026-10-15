@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json.Nodes;
 using LogForesight.Core;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -85,7 +86,8 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryWorkerAcceptanceTests : I
             .AddScoped<IVisibilityService>(_ => new TestVisibility([host.HostId]))
             .BuildServiceProvider();
         visibilityProvider = visibility;
-        plan = FixturePlan(settings.Get().Revision, policy.Get().Revision);
+        plan = FixturePlan(settings.Get().Revision, policy.Get().Revision,
+            PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings.Get(), policy.Get()));
         PrtgRequestBudget.Shared.SetAdmissionPlan(plan);
     }
 
@@ -245,6 +247,73 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryWorkerAcceptanceTests : I
     }
 
     [Fact]
+    public async Task DateFormatOnlyPolicyRevisionChangeDuringGetKeepsDiscoveryCurrent()
+    {
+        var queued = QueueDirect(NewWorker(false), 11);
+        loopback.OnRequest = _ =>
+        {
+            policy.Update(value =>
+            {
+                value.Revision = "channel-worker-policy-date-format";
+                value.MessageDateFormat = "dd/MM/yyyy";
+                value.MessageTimeAuthorityRevision++;
+            });
+            return Task.FromResult(LoopbackResponse.Json("""{"channels":[{"objid":"3","name":"Load","unit":"%","lastvalue_raw":"42"}]}"""));
+        };
+        var worker = NewWorker(true);
+        worker.AdmissionOverride = (_, _) => (plan, "fixture-only-capacity-plan");
+
+        Assert.True(await worker.RunOneAsync(CancellationToken.None));
+
+        var result = worker.Read(queued.JobId)!;
+        Assert.Equal("completed", result.Status);
+        Assert.Single(result.Channels);
+        Assert.Equal(1, loopback.RequestCount);
+        var read = NewController(worker).ReadChannelDiscovery(queued.JobId);
+        Assert.IsType<OkObjectResult>(read);
+    }
+
+    [Fact]
+    public async Task RawAuthorityAToBToADuringGetRejectsDiscoveryDespiteRestoredTuple()
+    {
+        var queued = QueueDirect(NewWorker(false), 11);
+        loopback.OnRequest = _ =>
+        {
+            policy.Update(value => value.RawTimestampTimeZoneId = "America/New_York");
+            policy.Update(value => value.RawTimestampTimeZoneId = "UTC");
+            return Task.FromResult(LoopbackResponse.Json("""{"channels":[{"objid":"3","name":"Load","unit":"%","lastvalue_raw":"42"}]}"""));
+        };
+        var worker = NewWorker(true);
+        worker.AdmissionOverride = (_, _) => (plan, "fixture-only-capacity-plan");
+
+        Assert.True(await worker.RunOneAsync(CancellationToken.None));
+
+        var result = worker.Read(queued.JobId)!;
+        Assert.Equal("failed-stale", result.Status);
+        Assert.Empty(result.Channels);
+        Assert.Equal(1, loopback.RequestCount);
+    }
+
+    [Fact]
+    public async Task LegacyJobWithoutRawAuthorityContextFailsClosedBeforeSourceRequest()
+    {
+        var queued = QueueDirect(NewWorker(false), 11);
+        var blob = backend.Blob(PrtgChannelDiscoveryJobStore.BlobKey);
+        var document = JsonNode.Parse(blob.Read()!)!.AsObject();
+        Assert.True(document["Jobs"]!.AsArray()[0]!.AsObject().Remove(nameof(
+            PrtgChannelDiscoveryJobStore.Job.RawAuthorityContextFingerprint)));
+        blob.Mutate(_ => (document.ToJsonString(), true));
+
+        var worker = NewWorker(true);
+        Assert.True(await worker.RunOneAsync(CancellationToken.None));
+
+        var result = worker.Read(queued.JobId)!;
+        Assert.Equal("failed-stale", result.Status);
+        Assert.Empty(result.Channels);
+        Assert.Equal(0, loopback.RequestCount);
+    }
+
+    [Fact]
     public async Task TwoWorkersShareOneDatabaseLeaseAndOnlyOneCanSendGeneralGet()
     {
         var first = QueueDirect(NewWorker(false), 11);
@@ -314,6 +383,7 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryWorkerAcceptanceTests : I
         {
             JobId = Guid.NewGuid().ToString("N"), RequesterUserId = requesterId, SensorObjid = sensorId,
             SettingsRevision = settings.Get().Revision, PolicyRevision = policy.Get().Revision,
+            RawAuthorityContextFingerprint = PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings.Get(), policy.Get()),
             SourceGeneration = policy.Get().SourceGeneration, HostSnapshotVersion = hosts.CapturePrtgSnapshot().Version,
             ResourceGeneration = identity.Generation, IdentityEpoch = identity.Epoch,
             ChannelGeneration = identity.ChannelGeneration, BindingRevision = binding?.BindingRevision ?? 0,
@@ -352,13 +422,15 @@ public sealed class PrtgTrustedSamplingChannelDiscoveryWorkerAcceptanceTests : I
         new UserGroupStore(backend.Blob("user_groups")).Upsert(group);
     }
 
-    private static PrtgCapacityAdmissionPlan FixturePlan(string settingsRevision, string policyRevision)
+    private static PrtgCapacityAdmissionPlan FixturePlan(string settingsRevision, string policyRevision,
+        string rawAuthorityContextFingerprint)
     {
         var now = DateTimeOffset.UtcNow;
         var version = (PrtgRequestBudget.Shared.CurrentAdmissionPlan?.Version ?? 0) + 1;
         return new(new string('A', 64), new string('B', 64), new string('C', 64), new string('D', 64),
             new string('E', 64), new string('F', 64), new string('1', 64), new string('2', 64),
-            settingsRevision, policyRevision, .5, .5, .5, now, now.AddHours(1), "channel-discovery-fixture", version);
+            settingsRevision, policyRevision, .5, .5, .5, now, now.AddHours(1), "channel-discovery-fixture", version,
+            rawAuthorityContextFingerprint);
     }
 
     private sealed class TestUser(long id) : ICurrentUser

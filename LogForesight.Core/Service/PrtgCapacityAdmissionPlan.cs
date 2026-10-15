@@ -22,7 +22,8 @@ public sealed record PrtgCapacityAdmissionPlan(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset LeaseUntilUtc,
     string Owner,
-    long Version);
+    long Version,
+    string RawAuthorityContextFingerprint = "");
 
 /// <summary>CAS publication of the one active admission contract. A stale owner cannot restore an older plan.</summary>
 public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob, TimeProvider? timeProvider = null)
@@ -190,7 +191,8 @@ public sealed class PrtgCapacityAdmissionPlanStore(EfJsonBlobStore blob, TimePro
         Hash(p.Fingerprint) && Hash(p.SourceFingerprint) && Hash(p.SnapshotScopeFingerprint) &&
         Hash(p.ProfileScopeFingerprint) && Hash(p.StrategyFingerprint) && Hash(p.SnapshotRequestShapeFingerprint) &&
         Hash(p.RequestShapeFingerprint) &&
-        Hash(p.RuntimeVersionFingerprint) && !string.IsNullOrWhiteSpace(p.SettingsRevision) &&
+        Hash(p.RuntimeVersionFingerprint) && Hash(p.RawAuthorityContextFingerprint) &&
+        !string.IsNullOrWhiteSpace(p.SettingsRevision) &&
         !string.IsNullOrWhiteSpace(p.PolicyRevision) && p.Owner is { Length: >= 1 and <= 128 } && p.Version >= 0 &&
         p.LeaseUntilUtc >= p.CreatedAtUtc &&
         double.IsFinite(p.SnapshotTableRequestsPerSecond) && p.SnapshotTableRequestsPerSecond > 0 &&

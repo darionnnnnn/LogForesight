@@ -17,6 +17,76 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
     private readonly EfSqliteFixture _fx = new();
 
     [Fact]
+    public void RepeatedIdentityMutationsReadTheTrackedTransactionStateBeforeCommit()
+    {
+        const long sensorId = 54;
+        var key = PrtgResourceIdentityStore.Prefix + sensorId;
+        _fx.Blob(key).Mutate(_ => (JsonSerializer.Serialize(new PrtgResourceIdentity
+            { SensorId = sensorId, HostId = 7, Epoch = 1, Active = true }), true));
+        using var ctx = _fx.NewContext();
+        using var transaction = ctx.Database.BeginTransaction();
+        PrtgResourceIdentityStore.MarkPending(ctx, sensorId, DateTimeOffset.UtcNow);
+        Assert.Equal(2, PrtgResourceIdentityStore.Read(ctx, sensorId).Epoch);
+        PrtgResourceIdentityStore.Advance(ctx, sensorId, DateTimeOffset.UtcNow);
+        Assert.Equal(3, PrtgResourceIdentityStore.Read(ctx, sensorId).Epoch);
+        PrtgResourceIdentityStore.Deactivate(ctx, sensorId, DateTimeOffset.UtcNow);
+        Assert.Equal(4, PrtgResourceIdentityStore.Read(ctx, sensorId).Epoch);
+        ctx.SaveChanges();
+        transaction.Commit();
+        var result = new PrtgResourceIdentityStore(_fx.Blob(key)).Get(sensorId);
+        Assert.Equal(4, result.Epoch);
+        Assert.False(result.Active);
+        Assert.False(result.PendingReconciliation);
+        Assert.Equal(4, _fx.Blob(key).ReadVersion());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SingleIdentityMutationRejectsHiddenNulInIdentityOrHostMarkerWithoutWriting(bool marker)
+    {
+        const long sensorId = 54;
+        var key = marker ? PrtgResourceIdentityStore.AuthorityRevisionKey(7)
+            : PrtgResourceIdentityStore.Prefix + sensorId;
+        var original = marker ? "{}\0hidden" : JsonSerializer.Serialize(new PrtgResourceIdentity
+            { SensorId = sensorId, HostId = 7, Epoch = 1 }) + "\0hidden";
+        _fx.Blob(key).Mutate(_ => (original, true));
+        var version = _fx.Blob(key).ReadVersion();
+        using var ctx = _fx.NewContext();
+        using var transaction = ctx.Database.BeginTransaction();
+        Assert.Throws<InvalidDataException>(() => PrtgResourceIdentityStore.Set(ctx, sensorId,
+            "source", 71, 7, "resource", "inventory", "channel", true, DateTimeOffset.UtcNow));
+        transaction.Rollback();
+        Assert.Equal(original, _fx.Blob(key).Read());
+        Assert.Equal(version, _fx.Blob(key).ReadVersion());
+        Assert.Equal(1, ctx.Blobs.AsNoTracking().Count());
+    }
+
+    [Fact]
+    public void SilentTimelineBatchRejectsHiddenNulAndRetainsTheIndependentCompleteTimeline()
+    {
+        var valid = JsonSerializer.Serialize(new PrtgSensorTimelineEvidence { SensorId = 54 });
+        _fx.Blob(PrtgSensorTimelineStore.Prefix + 54).Mutate(_ => (valid, true));
+        var bad = JsonSerializer.Serialize(new PrtgSensorTimelineEvidence { SensorId = 55 }) + "\0hidden";
+        _fx.Blob(PrtgSensorTimelineStore.Prefix + 55).Mutate(_ => (bad, true));
+        using (var context = _fx.NewContext())
+        {
+            // Preserve the actual corrupt bytes: the provider's long string binding can
+            // truncate at NUL before SQLite receives the value.
+            var bytes = System.Text.Encoding.UTF8.GetBytes(bad);
+            var key = PrtgSensorTimelineStore.Prefix + 55;
+            context.Database.ExecuteSqlInterpolated($"UPDATE lf_blobs SET content=CAST({bytes} AS TEXT) WHERE blob_key={key}");
+            var bounded = BoundedJsonBlobBatchReader.Read(context,
+                [PrtgSensorTimelineStore.Prefix + 55], PrtgSensorTimelineStore.MaxSilentReadBytes);
+            Assert.Equal(bad, _fx.Blob(key).Read());
+            Assert.Null(bounded[key].Content);
+        }
+        var rows = PrtgSensorTimelineStore.ReadManyBoundedForSilentRule(_fx.NewContext, [54, 55]);
+        Assert.Equal(54, Assert.Single(rows).Value.SensorId);
+        Assert.Equal(bad, _fx.Blob(PrtgSensorTimelineStore.Prefix + 55).Read());
+    }
+
+    [Fact]
     public void TransactionIdentityReadRejectsNulAfterValidPrefixWithoutMutation()
     {
         const long sensorId = 54;
@@ -429,6 +499,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         using var connection = new SqliteConnection("DataSource=:memory:");
         connection.Open();
         var recorder = new IdentityReadCommandRecorder();
+        using var trace = new SqliteIdentityReadTrace(connection);
         LfDbContext NewContext() => new(new DbContextOptionsBuilder<LfDbContext>()
             .UseSqlite(connection).AddInterceptors(recorder).Options);
         using (var ctx = NewContext()) ctx.Database.EnsureCreated();
@@ -439,7 +510,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         var store = new EfPrtgStore(NewContext);
         var payloads = new[]
         {
-            new string('x', 2 * 1024 * 1024),
+            new string('x', PrtgResourceIdentityStore.MaxLedgerBytes + 1),
             new string('雪', 3_000), // fewer than 8 Ki characters, more than 8 Ki UTF-8 bytes
             "{"
         };
@@ -448,26 +519,68 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         {
             blob.Mutate(_ => (payload, true));
             recorder.Clear();
+            trace.Clear();
 
             Assert.Throws<InvalidDataException>(() => store.GetResourceIdentities([sensorId]));
 
-            var read = Assert.Single(recorder.Commands.Where(sql =>
-                sql.Contains("lf_blobs", StringComparison.OrdinalIgnoreCase) &&
-                sql.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)));
-            Assert.Contains("substr", read, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("length", read, StringComparison.OrdinalIgnoreCase);
+            var read = Assert.Single(trace.Reads);
+            Assert.Equal(1, read.IdentityKeyCount);
+            Assert.True(read.IsBatchLookup);
+            Assert.True(read.MetadataOnlyProjection);
+            Assert.False(read.UsesSubstringOrContentLength);
         }
     }
 
+    [Fact]
+    public void IdentityBatchSqlTrace_UsesOneMetadataPageForTwoKeysAndNoQueryForEmptyBatch()
+    {
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+        LfDbContext NewContext() => new(new DbContextOptionsBuilder<LfDbContext>()
+            .UseSqlite(connection).Options);
+        using (var context = NewContext())
+        {
+            context.Database.EnsureCreated();
+            context.Blobs.AddRange(new[] { 91001L, 91002L }.Select(sensorId => new BlobRow
+            {
+                BlobKey = PrtgResourceIdentityStore.Prefix + sensorId,
+                Content = JsonSerializer.Serialize(new PrtgResourceIdentity
+                {
+                    SensorId = sensorId, Epoch = 1, Generation = $"generation-{sensorId}",
+                    SourceGeneration = "trace-fixture", Active = true
+                }),
+                Version = 1,
+                UpdatedAt = DateTime.UtcNow
+            }));
+            context.SaveChanges();
+        }
+
+        using var trace = new SqliteIdentityReadTrace(connection);
+        var store = new EfPrtgStore(NewContext);
+        var identities = store.GetResourceIdentities([91001, 91002]);
+        Assert.Equal(2, identities.Count);
+        var page = Assert.Single(trace.Reads);
+        Assert.Equal(2, page.IdentityKeyCount);
+        Assert.Equal(0, page.RevisionKeyCount);
+        Assert.True(page.IsBatchLookup);
+        Assert.True(page.MetadataOnlyProjection);
+        Assert.False(page.UsesSubstringOrContentLength);
+
+        trace.Clear();
+        Assert.Empty(store.GetResourceIdentities(Array.Empty<long>()));
+        Assert.Empty(trace.Reads);
+    }
+
     [Theory]
-    [InlineData(501, 2)]
-    [InlineData(5001, 11)]
+    [InlineData(501, 2, 4)]
+    [InlineData(5001, 11, 31)]
     public void SensorUpsert_LoadsIdentityRowsOncePer500SensorBatch_AndPreservesIdentityGenerations(
-        int sensorCount, int expectedIdentityBatchReads)
+        int sensorCount, int expectedCallerBatches, int expectedIdentitySqlPages)
     {
         using var connection = new SqliteConnection("DataSource=:memory:");
         connection.Open();
         var recorder = new IdentityReadCommandRecorder();
+        using var trace = new SqliteIdentityReadTrace(connection);
         LfDbContext NewContext() => new(new DbContextOptionsBuilder<LfDbContext>()
             .UseSqlite(connection).AddInterceptors(recorder).Options);
         using (var ctx = NewContext()) ctx.Database.EnsureCreated();
@@ -494,15 +607,26 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
             before.Generation, deviceId, hostId));
 
         recorder.Clear();
+        trace.Clear();
         Assert.Equal(sensorCount, store.UpsertSensors(sensors.Select(sensor => BatchSensor(
             sensor.Objid, deviceId, "snmp", "before")).ToArray(), DateTime.Now, requireAtomic: true));
-        AssertQueryCount(expectedIdentityBatchReads, CountIdentityPrefixBatchReads(recorder.CapturedCommands), recorder.CapturedCommands);
+        var identityReads = trace.Reads.Where(read => read.IdentityKeyCount > 0).ToArray();
+        Assert.Equal(expectedIdentitySqlPages, identityReads.Length);
+        Assert.Equal(sensorCount, identityReads.Sum(read => read.IdentityKeyCount));
+        Assert.All(identityReads, read =>
+        {
+            Assert.True(read.IsBatchLookup);
+            Assert.True(read.MetadataOnlyProjection);
+            Assert.False(read.UsesSubstringOrContentLength);
+            Assert.InRange(read.IdentityKeyCount, 1, 200);
+        });
         AssertQueryCount(0, CountPerResourceIdentityReads(recorder.CapturedCommands), recorder.CapturedCommands);
-        var revisionReads = GetRevisionMarkerReads(recorder.CapturedCommands).ToArray();
-        AssertQueryCount(expectedIdentityBatchReads, revisionReads.Length, recorder.CapturedCommands);
-        var revisionKeyCounts = revisionReads.Select(CountRevisionKeys).ToArray();
+        var revisionReads = trace.Reads.Where(read => read.RevisionKeyCount > 0).ToArray();
+        Assert.Equal(expectedCallerBatches, revisionReads.Length);
+        var revisionKeyCounts = revisionReads.Select(read => read.RevisionKeyCount).ToArray();
+        Assert.All(revisionReads, read => Assert.True(read.IsBatchLookup && read.MetadataOnlyProjection));
         Assert.True(revisionKeyCounts.All(count => count is >= 1 and <= 500),
-            $"Revision key counts were [{string.Join(", ", revisionKeyCounts)}].\n{DescribeBlobQueries(recorder.CapturedCommands)}");
+            $"Revision key counts were [{string.Join(", ", revisionKeyCounts)}].");
         var afterFirstIdentityChange = store.GetResourceIdentity(targetId);
         Assert.Equal(before.Epoch + 1, afterFirstIdentityChange.Epoch);
         Assert.NotEqual(before.Generation, afterFirstIdentityChange.Generation);
@@ -511,21 +635,24 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
             afterFirstIdentityChange.Generation, deviceId, hostId));
 
         recorder.Clear();
+        trace.Clear();
         Assert.Equal(sensorCount, store.UpsertSensors(sensors.Select(sensor => BatchSensor(
             sensor.Objid, deviceId, "snmp", "renamed")).ToArray(), DateTime.Now, requireAtomic: true));
-        AssertQueryCount(0, CountIdentityPrefixBatchReads(recorder.CapturedCommands), recorder.CapturedCommands);
+        Assert.Empty(trace.Reads);
         AssertQueryCount(0, CountPerResourceIdentityReads(recorder.CapturedCommands), recorder.CapturedCommands);
-        Assert.False(GetRevisionMarkerReads(recorder.CapturedCommands).Any(),
-            DescribeBlobQueries(recorder.CapturedCommands));
+        Assert.Empty(trace.Reads.Where(read => read.RevisionKeyCount > 0));
         var afterNameOnly = store.GetResourceIdentity(targetId);
         Assert.Equal(afterFirstIdentityChange.Epoch, afterNameOnly.Epoch);
         Assert.Equal(afterFirstIdentityChange.Generation, afterNameOnly.Generation);
 
         recorder.Clear();
+        trace.Clear();
         store.UpsertSensors([BatchSensor(targetId, deviceId, "http", "renamed")], DateTime.Now, requireAtomic: true);
-        AssertQueryCount(1, CountIdentityPrefixBatchReads(recorder.CapturedCommands), recorder.CapturedCommands);
+        var singleIdentityRead = Assert.Single(trace.Reads.Where(read => read.IdentityKeyCount > 0));
+        Assert.Equal(1, singleIdentityRead.IdentityKeyCount);
+        Assert.True(singleIdentityRead.IsBatchLookup && singleIdentityRead.MetadataOnlyProjection);
         AssertQueryCount(0, CountPerResourceIdentityReads(recorder.CapturedCommands), recorder.CapturedCommands);
-        AssertQueryCount(1, GetRevisionMarkerReads(recorder.CapturedCommands).Count(), recorder.CapturedCommands);
+        Assert.Single(trace.Reads.Where(read => read.RevisionKeyCount > 0));
         var afterIdentityChange = store.GetResourceIdentity(targetId);
         Assert.Equal(afterFirstIdentityChange.Epoch + 1, afterIdentityChange.Epoch);
         Assert.NotEqual(afterFirstIdentityChange.Generation, afterIdentityChange.Generation);
@@ -541,6 +668,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         using var connection = new SqliteConnection("DataSource=:memory:");
         connection.Open();
         var recorder = new IdentityReadCommandRecorder();
+        using var trace = new SqliteIdentityReadTrace(connection);
         LfDbContext NewContext() => new(new DbContextOptionsBuilder<LfDbContext>()
             .UseSqlite(connection).AddInterceptors(recorder).Options);
         using (var ctx = NewContext()) ctx.Database.EnsureCreated();
@@ -579,18 +707,21 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
 
         var store = new EfPrtgStore(NewContext);
         recorder.Clear();
+        trace.Clear();
         Assert.Equal(sensorCount, store.UpsertSensors(Enumerable.Range(0, sensorCount)
             .Select(index => BatchSensor(800_001L + index, 900_001L + index, "snmp", "after")).ToArray(),
             DateTime.Now, requireAtomic: true));
 
-        AssertQueryCount(1, CountIdentityPrefixBatchReads(recorder.CapturedCommands), recorder.CapturedCommands);
+        var identityReads = trace.Reads.Where(read => read.IdentityKeyCount > 0).ToArray();
+        Assert.Equal(new[] { 200, 51 }, identityReads.Select(read => read.IdentityKeyCount).ToArray());
+        Assert.All(identityReads, read => Assert.True(read.IsBatchLookup && read.MetadataOnlyProjection &&
+            !read.UsesSubstringOrContentLength));
         AssertQueryCount(0, CountPerResourceIdentityReads(recorder.CapturedCommands), recorder.CapturedCommands);
-        var revisionReads = GetRevisionMarkerReads(recorder.CapturedCommands).ToArray();
-        var actualRevisionKeyCounts = revisionReads.Select(CountRevisionKeys).OrderByDescending(count => count).ToArray();
-        Assert.True(new[] { 500, 2 }.SequenceEqual(actualRevisionKeyCounts),
-            $"Expected revision key counts [500, 2], got [{string.Join(", ", actualRevisionKeyCounts)}].\n{DescribeBlobQueries(recorder.CapturedCommands)}");
-        Assert.True(revisionReads.Select(CountRevisionKeys).All(count => count is >= 1 and <= 500),
-            DescribeBlobQueries(recorder.CapturedCommands));
+        var revisionReads = trace.Reads.Where(read => read.RevisionKeyCount > 0).ToArray();
+        var actualRevisionKeyCounts = revisionReads.Select(read => read.RevisionKeyCount).OrderByDescending(count => count).ToArray();
+        Assert.Equal(new[] { 200, 200, 100, 2 }, actualRevisionKeyCounts);
+        Assert.All(revisionReads, read => Assert.True(read.IsBatchLookup && read.MetadataOnlyProjection &&
+            !read.UsesSubstringOrContentLength));
     }
 
     [Fact]
@@ -735,26 +866,10 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         }));
     }
 
-    private static int CountIdentityPrefixBatchReads(IEnumerable<RecordedCommand> commands) => commands.Count(command =>
-        IsBlobSelect(command) && IsBatchBlobLookup(command) &&
-        GetReferencedBlobKeys(command).Any(value => value.StartsWith(PrtgResourceIdentityStore.Prefix,
-            StringComparison.Ordinal)));
-
     private static int CountPerResourceIdentityReads(IEnumerable<RecordedCommand> commands) => commands.Count(command =>
         IsBlobSelect(command) && GetReferencedBlobKeys(command).Any(value => value.StartsWith(
             PrtgResourceIdentityStore.Prefix, StringComparison.Ordinal)) &&
         !IsBatchBlobLookup(command));
-
-    private static IEnumerable<RecordedCommand> GetRevisionMarkerReads(IEnumerable<RecordedCommand> commands) =>
-        commands.Where(command => IsBlobSelect(command) &&
-            GetReferencedBlobKeys(command).Any(value =>
-                value.StartsWith(PrtgResourceIdentityStore.AuthorityRevisionPrefix, StringComparison.Ordinal) ||
-                value.StartsWith(PrtgResourceIdentityStore.ObservationRevisionPrefix, StringComparison.Ordinal)));
-
-    private static int CountRevisionKeys(RecordedCommand command) =>
-        GetReferencedBlobKeys(command).Distinct(StringComparer.Ordinal).Count(value =>
-            value.StartsWith(PrtgResourceIdentityStore.AuthorityRevisionPrefix, StringComparison.Ordinal) ||
-            value.StartsWith(PrtgResourceIdentityStore.ObservationRevisionPrefix, StringComparison.Ordinal));
 
     private static bool IsBlobSelect(RecordedCommand command) =>
         command.CommandText.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) &&
@@ -890,6 +1005,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         using var connection = new SqliteConnection("DataSource=:memory:");
         connection.Open();
         var recorder = new IdentityReadCommandRecorder();
+        using var trace = new SqliteIdentityReadTrace(connection);
         LfDbContext NewContext() => new(new DbContextOptionsBuilder<LfDbContext>()
             .UseSqlite(connection).AddInterceptors(recorder).Options);
         using (var setup = NewContext()) setup.Database.EnsureCreated();
@@ -907,6 +1023,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
             seed.SaveChanges();
         }
         recorder.Clear();
+        trace.Clear();
 
         var updated = policy.UpdateWithResourceEpochs("revision-before", Enumerable.Range(1, sensorCount).Select(id => (long)id), value =>
         {
@@ -915,13 +1032,16 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         });
 
         Assert.Equal("revision-after", updated.Revision);
-        AssertQueryCount(2, CountIdentityPrefixBatchReads(recorder.CapturedCommands), recorder.CapturedCommands);
+        var identityReads = trace.Reads.Where(read => read.IdentityKeyCount > 0).ToArray();
+        Assert.Equal(new[] { 200, 200, 100, 1 }, identityReads.Select(read => read.IdentityKeyCount).ToArray());
+        Assert.All(identityReads, read => Assert.True(read.IsBatchLookup && read.MetadataOnlyProjection &&
+            !read.UsesSubstringOrContentLength));
         AssertQueryCount(0, CountPerResourceIdentityReads(recorder.CapturedCommands), recorder.CapturedCommands);
-        var revisionReads = GetRevisionMarkerReads(recorder.CapturedCommands).ToArray();
-        AssertQueryCount(1, revisionReads.Length, recorder.CapturedCommands);
-        AssertQueryCount(2, CountRevisionKeys(revisionReads[0]), recorder.CapturedCommands);
-        Assert.True(revisionReads.Select(CountRevisionKeys).All(count => count is >= 1 and <= 500),
-            DescribeBlobQueries(recorder.CapturedCommands));
+        var revisionReads = trace.Reads.Where(read => read.RevisionKeyCount > 0).ToArray();
+        var revisionRead = Assert.Single(revisionReads);
+        Assert.Equal(2, revisionRead.RevisionKeyCount);
+        Assert.True(revisionRead.IsBatchLookup && revisionRead.MetadataOnlyProjection &&
+            !revisionRead.UsesSubstringOrContentLength);
 
         var store = new EfPrtgStore(NewContext);
         for (var sensorId = 1; sensorId <= sensorCount; sensorId++)
@@ -942,6 +1062,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         using var connection = new SqliteConnection("DataSource=:memory:");
         connection.Open();
         var recorder = new BlobSelectCommandRecorder();
+        using var trace = new SqliteIdentityReadTrace(connection);
         LfDbContext NewContext() => new(new DbContextOptionsBuilder<LfDbContext>()
             .UseSqlite(connection).AddInterceptors(recorder).Options);
         using (var setup = NewContext()) setup.Database.EnsureCreated();
@@ -992,6 +1113,7 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
         var newSelection = Enumerable.Range(oldSelectionCount + 1, newSelectionCount).Select(id => (long)id).ToArray();
         var affectedResources = oldSelection.Except(newSelection).Concat(newSelection.Except(oldSelection)).ToArray();
         Assert.Equal(affectedCount, affectedResources.Length);
+        trace.Clear();
         var updated = policy.UpdateWithResourceEpochs("disjoint-before", affectedResources, value =>
         {
             value.Revision = "disjoint-after";
@@ -1000,11 +1122,16 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
 
         Assert.Equal("disjoint-after", updated.Revision);
         Assert.Equal(newSource, updated.SourceGeneration);
-        AssertQueryCount(60, CountIdentityPrefixBatchReads(recorder.CapturedCommands), recorder.CapturedCommands);
+        var identityReads = trace.Reads.Where(read => read.IdentityKeyCount > 0).ToArray();
+        Assert.Equal(180, identityReads.Length);
+        Assert.Equal(affectedCount, identityReads.Sum(read => read.IdentityKeyCount));
+        Assert.All(identityReads, read => Assert.True(read.IdentityKeyCount is >= 1 and <= 200 &&
+            read.IsBatchLookup && read.MetadataOnlyProjection && !read.UsesSubstringOrContentLength));
         AssertQueryCount(0, CountPerResourceIdentityReads(recorder.CapturedCommands), recorder.CapturedCommands);
-        var revisionReads = GetRevisionMarkerReads(recorder.CapturedCommands).ToArray();
-        AssertQueryCount(1, revisionReads.Length, recorder.CapturedCommands);
-        AssertQueryCount(2, CountRevisionKeys(revisionReads[0]), recorder.CapturedCommands);
+        var revisionRead = Assert.Single(trace.Reads.Where(read => read.RevisionKeyCount > 0));
+        Assert.Equal(2, revisionRead.RevisionKeyCount);
+        Assert.True(revisionRead.IsBatchLookup && revisionRead.MetadataOnlyProjection &&
+            !revisionRead.UsesSubstringOrContentLength);
         recorder.Clear();
 
         using var verify = NewContext();
@@ -1133,6 +1260,62 @@ public sealed class PrtgResourceIdentityStoreTests : IDisposable
     }
 
     public void Dispose() => _fx.Dispose();
+
+    /// <summary>
+    /// Observes the actual SQLite statements issued by bounded raw ADO reads. SQLite's trace
+    /// callback expands bound values, so this recorder immediately discards the SQL text and
+    /// retains only fixed-shape flags and counts for resource/revision keys.
+    /// </summary>
+    private sealed class SqliteIdentityReadTrace : IDisposable
+    {
+        private static readonly Regex SubstringOrContentLength = new(
+            @"\bsubstr\s*\(|\blength\s*\(\s*content\s*\)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private readonly SqliteConnection _connection;
+        private readonly SQLitePCL.strdelegate_trace _callback;
+
+        public List<TracedIdentityRead> Reads { get; } = [];
+
+        public SqliteIdentityReadTrace(SqliteConnection connection)
+        {
+            _connection = connection;
+            _callback = (_, statement) => Capture(statement);
+            SQLitePCL.raw.sqlite3_trace(_connection.Handle, _callback, this);
+        }
+
+        public void Clear() => Reads.Clear();
+
+        private void Capture(string statement)
+        {
+            if (!statement.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) ||
+                !statement.Contains("FROM lf_blobs", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var identityKeys = CountKeys(statement, PrtgResourceIdentityStore.Prefix);
+            var authorityKeys = CountKeys(statement, PrtgResourceIdentityStore.AuthorityRevisionPrefix);
+            var observationKeys = CountKeys(statement, PrtgResourceIdentityStore.ObservationRevisionPrefix);
+            if (identityKeys + authorityKeys + observationKeys == 0) return;
+
+            var from = statement.IndexOf("FROM lf_blobs", StringComparison.OrdinalIgnoreCase);
+            var projection = from < 0 ? string.Empty : statement[..from].Trim();
+            var metadataProjection = string.Equals(projection,
+                "SELECT blob_key,rowid,version,typeof(content),updated_at", StringComparison.OrdinalIgnoreCase);
+            var batchLookup = Regex.IsMatch(statement, @"\bblob_key\s+IN\s*\(",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            Reads.Add(new TracedIdentityRead(identityKeys, authorityKeys + observationKeys,
+                batchLookup, metadataProjection, SubstringOrContentLength.IsMatch(statement)));
+        }
+
+        private static int CountKeys(string statement, string prefix) =>
+            Regex.Matches(statement, "'" + Regex.Escape(prefix) + @"\d+'",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Count;
+
+        public void Dispose() => SQLitePCL.raw.sqlite3_trace(_connection.Handle,
+            (SQLitePCL.strdelegate_trace?)null, null);
+    }
+
+    private sealed record TracedIdentityRead(int IdentityKeyCount, int RevisionKeyCount,
+        bool IsBatchLookup, bool MetadataOnlyProjection, bool UsesSubstringOrContentLength);
 
     private sealed class IdentityReadCommandRecorder : DbCommandInterceptor
     {

@@ -1,4 +1,4 @@
-using LogForesight.Core;
+﻿using LogForesight.Core;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using Xunit;
@@ -7,6 +7,8 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgCapacityAdmissionPlanConcurrencyTests
 {
+    // Synthetic hash for pure admission-plan fixtures; it is not source-policy evidence.
+    private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
     [Fact]
     public void Stale_publish_cannot_invalidate_a_newer_plan_after_final_source_check()
     {
@@ -369,6 +371,7 @@ public sealed class PrtgCapacityAdmissionPlanConcurrencyTests
             "fixture-qualified");
         string Hash(char value) => new(value, 64);
         return PrtgJointCapacityEvaluator.CreatePlan(estimate, Hash(marker), Hash(marker), Hash(marker),
-            Hash(marker), Hash(marker), Hash(marker), Hash(marker), now, "settings-r1", "policy-r1");
+            Hash(marker), Hash(marker), Hash(marker), Hash(marker), now, "settings-r1", "policy-r1",
+            FixtureRawAuthorityContextFingerprint);
     }
 }

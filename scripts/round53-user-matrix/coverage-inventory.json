@@ -335,7 +335,7 @@
         "LogForesight.Core/Persistence/PrtgFormalMailClaimStore.cs::Load("
       ],
       "remainingImplementation": [
-        "Qualification、profile-refresh notice、channel discovery 與 capacity admission 尚未全部改接獨立的 raw/source authority 單調版本或等價防 ABA fence；不得以 MessageTimeAuthorityRevision 取代 raw/source fence，因 MessageDateFormat 變更本來就會遞增該 message-lane revision。MessageDateFormat-only 變更仍會取消目前依整份 policy Revision 比對的部分 raw work；message lane 則保留 MessageTimeAuthorityRevision。逐一補齊各 lane 的 fingerprint/cursor 接線並保留其他 scope fences。"
+        "期間評估 selected fingerprint／最終重驗、磁碟評估 metadata authority、資料流探測 operation scope 及資格作業狀態提示的四處 raw-only 接線候選仍待分段驗證提交；保留 settings／source／scope／identity／permission／CAS 防護，不將 mixed message+resource 終局證據誤當 raw-only。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [
@@ -371,7 +371,7 @@
       ],
       "status": "not-accepted",
       "evidence": [],
-      "implementationStatus": "partial-candidate",
+      "implementationStatus": "implemented-awaiting-acceptance",
       "sourceReferences": [
         "LogForesight.Core/Persistence/Sql/BoundedJsonBlobBatchReader.cs::class BoundedJsonBlobBatchReader",
         "LogForesight.Core/Persistence/PrtgDiskSemanticEvidenceStore.cs::CaptureSnapshot",
@@ -385,10 +385,12 @@
         "LogForesight.Core/Service/CalibrationService.cs::ReadCalibrationBlobSnapshot",
         "LogForesight.Web/Services/PrtgTrustedSamplingProfileRefreshStateStore.cs::class PrtgTrustedSamplingProfileRefreshStateStore",
         "LogForesight.Core/Persistence/PrtgResourceFormalEpisodeStore.cs::class PrtgResourceFormalEpisodeStore",
-        "LogForesight.Core/Persistence/PrtgResourcePressureModeReplayProgressStore.cs::class PrtgResourcePressureModeReplayProgressStore"
+        "LogForesight.Core/Persistence/PrtgResourcePressureModeReplayProgressStore.cs::class PrtgResourcePressureModeReplayProgressStore",
+        "LogForesight.Core/Persistence/Sql/EfPrtgStore.cs::AttachBoundedBlobSnapshot",
+        "LogForesight.Core/Persistence/PrtgQualificationJobStateStore.cs::AttachBoundedRow",
+        "LogForesight.Core/Persistence/PrtgResourceIdentityStore.cs::LoadBoundedForMutation"
       ],
       "remainingImplementation": [
-        "identity／qualification／binding 的有界 mutation 候選仍待完整整合提交；修復頁及實際角色操作接線另由 F1/F2 核對。"
       ],
       "acceptanceStatus": "not-accepted",
       "remainingAcceptance": [

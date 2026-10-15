@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using System.Data;
 using System.Data.Common;
@@ -300,14 +300,18 @@ public sealed class EfPrtgStore
     public IReadOnlyList<PrtgRecentStateChangeQueueItem> ReadRecentStateChangeQueue()
     {
         using var ctx = _contextFactory();
-        return ReadRecentStateChangeQueueRows(ctx).Select(x => x.Item).ToArray();
+        using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+        var result = ReadRecentStateChangeQueueRows(ctx).Select(x => x.Item).ToArray();
+        tx.Commit();
+        return result;
     }
 
     public PrtgRecentStateChangeQueueStopSummary? ReadRecentStateChangeQueueStopSummary()
     {
         using var ctx = _contextFactory();
-        var content = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueStopSummaryKey)
-            .Select(b => b.Content).FirstOrDefault();
+        var content = ReadBoundedBlob(ctx, RecentStateChangeQueueStopSummaryKey,
+            RecentStateChangeQueueItemMaxBytes, RecentStateChangeQueueItemMaxBytes,
+            "recent-state-queue-stop-summary-cap-exceeded")?.Content;
         return content == null ? null : JsonSerializer.Deserialize<PrtgRecentStateChangeQueueStopSummary>(content);
     }
 
@@ -352,10 +356,11 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var tx = ctx.Database.BeginTransaction();
-            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
-                    b.Version == lease.Version).Select(b => b.Content).FirstOrDefault();
-            if (row == null) { tx.Commit(); return false; }
-            var current = DeserializeQueueItem(row);
+            var key = RecentStateChangeQueueKey(lease.Item.DeviceObjid);
+            var bounded = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+                RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+            if (bounded is null || bounded.Value.Version != lease.Version) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(bounded.Value.Content!);
             if (current.LeaseOwner != lease.Owner || current.CompletedAtUtc != null) { tx.Commit(); return false; }
             var content = SerializeQueueItem(current with { LeaseOwner = null, LeaseExpiresAtUtc = null, CompletedAtUtc = DateTime.UtcNow });
             var updated = ctx.Blobs.Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
@@ -479,7 +484,10 @@ public sealed class EfPrtgStore
         var content = JsonSerializer.Serialize(summary);
         if (Encoding.UTF8.GetByteCount(content) > RecentStateChangeQueueItemMaxBytes)
             throw new InvalidOperationException("PRTG 近期狀態佇列停止摘要超過 8 KiB。");
-        var prior = ctx.Blobs.SingleOrDefault(b => b.BlobKey == RecentStateChangeQueueStopSummaryKey);
+        var bounded = ReadBoundedBlob(ctx, RecentStateChangeQueueStopSummaryKey, RecentStateChangeQueueItemMaxBytes,
+            RecentStateChangeQueueItemMaxBytes, "recent-state-queue-stop-summary-cap-exceeded");
+        var prior = AttachBoundedBlobSnapshot(ctx, RecentStateChangeQueueStopSummaryKey, bounded,
+            "recent-state-queue-stop-summary-changed");
         if (prior == null)
             ctx.Blobs.Add(new BlobRow { BlobKey = RecentStateChangeQueueStopSummaryKey, Content = content, UpdatedAt = summary.AtUtc, Version = 1 });
         else
@@ -497,10 +505,11 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var tx = ctx.Database.BeginTransaction();
-            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
-                    b.Version == lease.Version).Select(b => new { b.Content, b.Version }).FirstOrDefault();
-            if (row == null) { tx.Commit(); return false; }
-            var current = DeserializeQueueItem(row.Content);
+            var key = RecentStateChangeQueueKey(lease.Item.DeviceObjid);
+            var row = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+                RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+            if (row is null || row.Value.Version != lease.Version) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(row.Value.Content!);
             if (current.LeaseOwner != lease.Owner) { tx.Commit(); return false; }
             var seconds = delay?.TotalSeconds ?? Math.Min(600, 15 * Math.Pow(2, Math.Min(current.Attempts, 5)));
             var retry = current with
@@ -528,10 +537,11 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var tx = ctx.Database.BeginTransaction();
-            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
-                    b.Version == lease.Version).Select(b => b.Content).FirstOrDefault();
-            if (row == null) { tx.Commit(); return false; }
-            var current = DeserializeQueueItem(row);
+            var key = RecentStateChangeQueueKey(lease.Item.DeviceObjid);
+            var row = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+                RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+            if (row is null || row.Value.Version != lease.Version) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(row.Value.Content!);
             if (current.LeaseOwner != lease.Owner || current.CompletedAtUtc != null) { tx.Commit(); return false; }
             var content = SerializeQueueItem(current with { LeaseOwner = null, LeaseExpiresAtUtc = null });
             var updated = ctx.Blobs.Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
@@ -546,7 +556,9 @@ public sealed class EfPrtgStore
     private static void EnqueueRecentStateChangeInTransaction(LfDbContext ctx, PrtgRecentStateChangeQueueItem item)
     {
         var key = RecentStateChangeQueueKey(item.DeviceObjid);
-        var existing = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
+        var bounded = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+            RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+        var existing = AttachBoundedBlobSnapshot(ctx, key, bounded, "recent-state-queue-item-changed");
         if (existing == null)
         {
             var count = ctx.Blobs.Count(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix));
@@ -575,16 +587,19 @@ public sealed class EfPrtgStore
 
     private static List<(BlobRow Row, PrtgRecentStateChangeQueueItem Item)> ReadRecentStateChangeQueueRows(LfDbContext ctx)
     {
-        var rows = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix))
-            .OrderBy(b => b.BlobKey).Take(RecentStateChangeQueueCapacity + 1).ToList();
-        if (rows.Count > RecentStateChangeQueueCapacity)
+        var keys = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix))
+            .OrderBy(b => b.BlobKey).Take(RecentStateChangeQueueCapacity + 1)
+            .Select(b => b.BlobKey).ToList();
+        if (keys.Count > RecentStateChangeQueueCapacity)
             throw new InvalidOperationException($"PRTG 近期狀態佇列超過 {RecentStateChangeQueueCapacity} 筆容量上限。");
-        var result = new List<(BlobRow, PrtgRecentStateChangeQueueItem)>(rows.Count);
-        foreach (var row in rows)
+        var bounded = ReadBoundedBlobs(ctx, keys, RecentStateChangeQueueItemMaxBytes,
+            RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+        var result = new List<(BlobRow, PrtgRecentStateChangeQueueItem)>(keys.Count);
+        foreach (var key in keys)
         {
-            if (Encoding.UTF8.GetByteCount(row.Content) > RecentStateChangeQueueItemMaxBytes)
-                throw new InvalidOperationException($"PRTG 近期狀態佇列資料列 {row.BlobKey} 超過 8 KiB。");
-            result.Add((row, DeserializeQueueItem(row.Content)));
+            if (!bounded.TryGetValue(key, out var item)) continue;
+            var row = new BlobRow { BlobKey = key, Content = item.Content!, Version = item.Version, UpdatedAt = item.UpdatedAt };
+            result.Add((row, DeserializeQueueItem(item.Content!)));
         }
         return result;
     }
@@ -596,6 +611,63 @@ public sealed class EfPrtgStore
         JsonSerializer.Deserialize<PrtgRecentStateChangeQueueItem>(content) ??
         throw new InvalidOperationException("PRTG 近期狀態佇列資料列無效。");
     private static bool FitsQueueContent(string content) => Encoding.UTF8.GetByteCount(content) <= RecentStateChangeQueueItemMaxBytes;
+
+    internal static Dictionary<string,(string? Content,long Version,int Length,DateTime UpdatedAt)> ReadBoundedBlobs(
+        LfDbContext ctx, IEnumerable<string> keys, int maximumCharacters, int? maximumUtf8Bytes, string reason)
+    {
+        var rows = BoundedJsonBlobBatchReader.Read(ctx, keys, maximumCharacters);
+        foreach (var row in rows.Values)
+        {
+            if (row.Content is null || row.Length > maximumCharacters ||
+                maximumUtf8Bytes.HasValue && Encoding.UTF8.GetByteCount(row.Content) > maximumUtf8Bytes.Value)
+                throw new InvalidDataException(reason);
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Attach the already bounded content snapshot instead of issuing a second tracked query that
+    /// could materialize a concurrently enlarged blob. Version and UpdatedAt remain EF concurrency
+    /// tokens; callers also compare the complete snapshot content before making any mutation.
+    /// </summary>
+    internal static BlobRow? AttachBoundedBlobSnapshot(LfDbContext ctx, string key,
+        (string? Content,long Version,int Length,DateTime UpdatedAt)? bounded, string changedReason)
+    {
+        var tracked = ctx.Blobs.Local.SingleOrDefault(row => StringComparer.Ordinal.Equals(row.BlobKey, key));
+        if (tracked is not null)
+        {
+            var state = ctx.Entry(tracked).State;
+            if (bounded is null)
+            {
+                if (state == EntityState.Added) return tracked;
+                throw new InvalidOperationException(changedReason);
+            }
+            if (state == EntityState.Deleted || tracked.Version != bounded.Value.Version ||
+                tracked.UpdatedAt != bounded.Value.UpdatedAt ||
+                !StringComparer.Ordinal.Equals(tracked.Content, bounded.Value.Content))
+                throw new InvalidOperationException(changedReason);
+            return tracked;
+        }
+
+        if (bounded is null) return null;
+        if (bounded.Value.Content is null) throw new InvalidDataException(changedReason);
+        var snapshot = new BlobRow
+        {
+            BlobKey = key,
+            Content = bounded.Value.Content,
+            Version = bounded.Value.Version,
+            UpdatedAt = bounded.Value.UpdatedAt
+        };
+        ctx.Blobs.Attach(snapshot);
+        return snapshot;
+    }
+
+    private static (string? Content,long Version,int Length,DateTime UpdatedAt)? ReadBoundedBlob(
+        LfDbContext ctx, string key, int maximumCharacters, int? maximumUtf8Bytes, string reason)
+    {
+        var rows = ReadBoundedBlobs(ctx, [key], maximumCharacters, maximumUtf8Bytes, reason);
+        return rows.TryGetValue(key, out var row) ? row : null;
+    }
 
     /// <summary>
     /// 依補充對照表＋內建對照表（<see cref="PrtgSensorTypeCategoryMap.Resolve"/>）重算自動分類。
@@ -3264,21 +3336,17 @@ public sealed class EfPrtgStore
             var keys = ids.Skip(offset).Take(500).ToDictionary(
                 id => PrtgTrustedSamplingProfile.StorePrefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(blob => keys.Keys.Contains(blob.BlobKey))
-                .Select(blob => new { blob.BlobKey, Prefix = blob.Content.Substring(0, PrtgTrustedSamplingProfile.MaximumSerializedBytes + 1), Length = blob.Content.Length })
-                .ToList();
+            var rows = ReadBoundedBlobs(ctx, keys.Keys, PrtgTrustedSamplingProfile.MaximumSerializedBytes,
+                PrtgTrustedSamplingProfile.MaximumSerializedBytes, "trusted-profile-cap-exceeded");
             var foundSensors = new HashSet<long>();
-            foreach (var row in rows)
+            foreach (var (blobKey, row) in rows)
             {
-                var sensorId = keys[row.BlobKey];
+                var sensorId = keys[blobKey];
                 foundSensors.Add(sensorId);
-                if (row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                    Encoding.UTF8.GetByteCount(row.Prefix) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                    throw new InvalidDataException("可信採樣 profile 超過 8 KiB；拒絕沿用期限資格。");
                 PrtgTrustedSamplingProfile profile;
                 try
                 {
-                    profile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Prefix, LfJsonOptions.Pretty)
+                    profile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Content!, LfJsonOptions.Pretty)
                         ?? throw new InvalidDataException("可信採樣 profile 為空；拒絕沿用期限資格。");
                     profile.Validate();
                 }
@@ -3340,14 +3408,14 @@ public sealed class EfPrtgStore
 
     private static void IncrementPrtgCatalogueDataRevision(LfDbContext ctx)
     {
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == CatalogueDataRevisionBlobKey);
-        if (row is null)
+        var version = ctx.Blobs.Where(b => b.BlobKey == CatalogueDataRevisionBlobKey)
+            .Select(b => (long?)b.Version).FirstOrDefault();
+        if (!version.HasValue)
             ctx.Blobs.Add(new BlobRow { BlobKey = CatalogueDataRevisionBlobKey, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
-        else
-        {
-            row.Version++;
-            row.UpdatedAt = DateTime.Now;
-        }
+        else if (ctx.Blobs.Where(b => b.BlobKey == CatalogueDataRevisionBlobKey && b.Version == version.Value)
+            .ExecuteUpdate(setters => setters.SetProperty(b => b.Version, b => b.Version + 1)
+                .SetProperty(b => b.UpdatedAt, DateTime.Now)) != 1)
+            throw new DbUpdateConcurrencyException("PRTG catalogue revision changed concurrently.");
     }
 
     /// <summary>讀取與正式日映射寫入同交易遞增的版本。</summary>
@@ -3360,8 +3428,9 @@ public sealed class EfPrtgStore
 
     private static void IncrementHostMapDataRevision(LfDbContext ctx)
     {
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == HostMapDataRevisionBlobKey);
-        if (row is null)
+        var version = ctx.Blobs.Where(b => b.BlobKey == HostMapDataRevisionBlobKey)
+            .Select(b => (long?)b.Version).FirstOrDefault();
+        if (!version.HasValue)
         {
             ctx.Blobs.Add(new BlobRow
             {
@@ -3373,10 +3442,10 @@ public sealed class EfPrtgStore
             ctx.SaveChanges();
             return;
         }
-
-        row.Version++;
-        row.UpdatedAt = DateTime.Now;
-        ctx.SaveChanges();
+        if (ctx.Blobs.Where(b => b.BlobKey == HostMapDataRevisionBlobKey && b.Version == version.Value)
+            .ExecuteUpdate(setters => setters.SetProperty(b => b.Version, b => b.Version + 1)
+                .SetProperty(b => b.UpdatedAt, DateTime.Now)) != 1)
+            throw new DbUpdateConcurrencyException("PRTG host-map revision changed concurrently.");
     }
 
     // 範圍修改及其版本在同一交易提交；其他程序不會看見新對應卻仍讀到舊版本。
@@ -3388,17 +3457,17 @@ public sealed class EfPrtgStore
             using var ctx = _contextFactory();
             using var transaction = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
             PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
-            var stamp = ctx.Blobs.SingleOrDefault(b => b.BlobKey == ScopeRevisionBlobKey);
-            if (expectedRevision.HasValue && (stamp?.Version ?? 0) != expectedRevision.Value)
+            var stampVersion = ctx.Blobs.Where(b => b.BlobKey == ScopeRevisionBlobKey)
+                .Select(b => (long?)b.Version).FirstOrDefault();
+            if (expectedRevision.HasValue && stampVersion.GetValueOrDefault() != expectedRevision.Value)
                 throw new PrtgScopeConflictException();
             var result = change(ctx);
-            if (stamp == null)
+            if (!stampVersion.HasValue)
                 ctx.Blobs.Add(new BlobRow { BlobKey = ScopeRevisionBlobKey, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
-            else
-            {
-                stamp.Version++;
-                stamp.UpdatedAt = DateTime.Now;
-            }
+            else if (ctx.Blobs.Where(b => b.BlobKey == ScopeRevisionBlobKey && b.Version == stampVersion.Value)
+                .ExecuteUpdate(setters => setters.SetProperty(b => b.Version, b => b.Version + 1)
+                    .SetProperty(b => b.UpdatedAt, DateTime.Now)) != 1)
+                throw new PrtgScopeConflictException();
             ctx.SaveChanges();
             transaction.Commit();
             return result;
@@ -3525,34 +3594,30 @@ public sealed class EfPrtgStore
         var sensorIdByKey = keyBySensorId.ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
 
         foreach (var localRow in ctx.Blobs.Local.Where(row => keys.Contains(row.BlobKey)))
+        {
+            if (localRow.Content.Length > PrtgResourceIdentityStore.MaxLedgerBytes ||
+                Encoding.UTF8.GetByteCount(localRow.Content) > PrtgResourceIdentityStore.MaxLedgerBytes)
+                throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
             result[sensorIdByKey[localRow.BlobKey]] = localRow;
+        }
 
         var loadedKeys = result.Values.Select(row => row.BlobKey).ToHashSet(StringComparer.Ordinal);
         var missingKeys = keys.Where(key => !loadedKeys.Contains(key)).ToArray();
         if (missingKeys.Length > 0)
         {
-            var storedRows = ctx.Blobs.AsNoTracking().Where(row => missingKeys.Contains(row.BlobKey))
-                .Select(row => new
-                {
-                    row.BlobKey,
-                    Content = row.Content.Substring(0, PrtgResourceIdentityStore.MaxLedgerBytes + 1),
-                    Length = row.Content.Length,
-                    row.Version,
-                    row.UpdatedAt
-                }).ToList();
-            foreach (var stored in storedRows)
+            var storedRows = ReadBoundedBlobs(ctx, missingKeys, PrtgResourceIdentityStore.MaxLedgerBytes,
+                PrtgResourceIdentityStore.MaxLedgerBytes, "resource-identity-cap-exceeded");
+            foreach (var (key, stored) in storedRows)
             {
-                if (stored.Length > PrtgResourceIdentityStore.MaxLedgerBytes)
-                    throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
                 var row = new BlobRow
                 {
-                    BlobKey = stored.BlobKey,
-                    Content = stored.Content,
+                    BlobKey = key,
+                    Content = stored.Content!,
                     Version = stored.Version,
                     UpdatedAt = stored.UpdatedAt
                 };
                 ctx.Blobs.Attach(row);
-                result[sensorIdByKey[stored.BlobKey]] = row;
+                result[sensorIdByKey[key]] = row;
             }
         }
 
@@ -3585,14 +3650,16 @@ public sealed class EfPrtgStore
         string after = "";
         while (true)
         {
-            var rows = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(PrtgResourceIdentityStore.Prefix) && b.BlobKey.CompareTo(after) > 0)
-                .OrderBy(b => b.BlobKey).Take(500).Select(b => new { b.BlobKey, b.Content }).ToList();
-            if (rows.Count == 0) return;
+            var keys = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(PrtgResourceIdentityStore.Prefix) && b.BlobKey.CompareTo(after) > 0)
+                .OrderBy(b => b.BlobKey).Take(500).Select(b => b.BlobKey).ToList();
+            if (keys.Count == 0) return;
+            var rows = ReadBoundedBlobs(ctx, keys, PrtgResourceIdentityStore.MaxLedgerBytes,
+                PrtgResourceIdentityStore.MaxLedgerBytes, "resource-identity-cap-exceeded");
             var pending = new List<long>();
-            foreach (var row in rows)
+            foreach (var key in keys)
             {
-                after = row.BlobKey;
-                var value = JsonSerializer.Deserialize<PrtgResourceIdentity>(row.Content, LfJsonOptions.Pretty);
+                after = key;
+                var value = JsonSerializer.Deserialize<PrtgResourceIdentity>(rows[key].Content!, LfJsonOptions.Pretty);
                 if (value is null || value.SensorId <= 0)
                     throw new InvalidDataException("PRTG 資源身分紀錄無效；拒絕完成不完整對應重整。");
                 if (value.PendingReconciliation) pending.Add(value.SensorId);
@@ -3603,8 +3670,9 @@ public sealed class EfPrtgStore
 
     private static PrtgMonitoringPolicy ReadPolicy(LfDbContext ctx)
     {
-        var content = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-            .Select(b => b.Content).FirstOrDefault();
+        var content = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey,
+            PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
+            "prtg-monitoring-policy-cap-exceeded")?.Content;
         if (string.IsNullOrWhiteSpace(content)) return new PrtgMonitoringPolicy();
         return JsonSerializer.Deserialize<PrtgMonitoringPolicy>(content, LfJsonOptions.Pretty)
             ?? new PrtgMonitoringPolicy();
@@ -3663,7 +3731,9 @@ public sealed class EfPrtgStore
                 current.DeviceId, current.HostId, current.ResourceFingerprint, current.InventoryFingerprint,
                 channelFingerprint, current.Active, DateTimeOffset.UtcNow);
             var timelineKey = PrtgSensorTimelineStore.Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var timelineRow = ctx.Blobs.SingleOrDefault(b => b.BlobKey == timelineKey);
+            var boundedTimeline = ReadBoundedBlob(ctx, timelineKey, PrtgSensorTimelineStore.MaxSilentReadBytes,
+                PrtgSensorTimelineStore.MaxSilentReadBytes, "timeline-evidence-cap-exceeded");
+            var timelineRow = AttachBoundedBlobSnapshot(ctx, timelineKey, boundedTimeline, "timeline-evidence-changed");
             if (timelineRow is not null && !string.IsNullOrWhiteSpace(timelineRow.Content))
             {
                 var timeline = JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(timelineRow.Content, LfJsonOptions.Pretty)
@@ -3707,23 +3777,15 @@ public sealed class EfPrtgStore
             var keys = ids.Skip(offset).Take(500).ToDictionary(
                 id => PrtgResourceIdentityStore.Prefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(b => keys.Keys.Contains(b.BlobKey))
-                .Select(b => new
-                {
-                    b.BlobKey,
-                    ContentPrefix = b.Content.Substring(0, PrtgResourceIdentityStore.MaxLedgerBytes + 1),
-                    CharacterLength = b.Content.Length
-                }).ToList();
-            foreach (var row in rows)
+            var rows = ReadBoundedBlobs(ctx, keys.Keys, PrtgResourceIdentityStore.MaxLedgerBytes,
+                PrtgResourceIdentityStore.MaxLedgerBytes, "resource-identity-cap-exceeded");
+            foreach (var (blobKey, row) in rows)
             {
-                var sensorId = keys[row.BlobKey];
-                if (row.CharacterLength > PrtgResourceIdentityStore.MaxLedgerBytes ||
-                    System.Text.Encoding.UTF8.GetByteCount(row.ContentPrefix) > PrtgResourceIdentityStore.MaxLedgerBytes)
-                    throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
+                var sensorId = keys[blobKey];
                 PrtgResourceIdentity? value;
                 try
                 {
-                    value = JsonSerializer.Deserialize<PrtgResourceIdentity>(row.ContentPrefix, LfJsonOptions.Pretty);
+                    value = JsonSerializer.Deserialize<PrtgResourceIdentity>(row.Content!, LfJsonOptions.Pretty);
                 }
                 catch (JsonException ex)
                 {
@@ -3743,12 +3805,9 @@ public sealed class EfPrtgStore
     {
         using var ctx = _contextFactory();
         var policy = ReadPolicy(ctx);
-        var strategyState = ctx.Blobs.AsNoTracking()
-            .Where(b => b.BlobKey == PrtgTrustedSamplingStrategyStateStore.BlobKey)
-            .Select(b => new { Prefix = b.Content.Substring(0, 8193), Length = b.Content.Length }).FirstOrDefault();
-        if (strategyState is not null && (strategyState.Length > 8192 || Encoding.UTF8.GetByteCount(strategyState.Prefix) > 8192))
-            throw new InvalidDataException("PRTG strategy fence 超過 8 KiB 上限。");
-        var strategy = PrtgTrustedSamplingStrategyStateStore.ReadCurrent(strategyState?.Prefix,
+        var strategyState = ReadBoundedBlob(ctx, PrtgTrustedSamplingStrategyStateStore.BlobKey, 8192, 8192,
+            "trusted-strategy-state-cap-exceeded");
+        var strategy = PrtgTrustedSamplingStrategyStateStore.ReadCurrent(strategyState?.Content,
             policy, strategyName, strategyMinutes);
         return new(policy, strategy);
     }
@@ -3764,17 +3823,15 @@ public sealed class EfPrtgStore
             var keys = ids.Skip(offset).Take(500).ToDictionary(
                 id => PrtgTrustedSamplingProfile.StorePrefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(b => keys.Keys.Contains(b.BlobKey))
-                .Select(b => new { b.BlobKey, Prefix = b.Content.Substring(0, PrtgTrustedSamplingProfile.MaximumSerializedBytes + 1), Length = b.Content.Length })
-                .ToList();
-            foreach (var row in rows)
+            var rows = BoundedJsonBlobBatchReader.Read(ctx, keys.Keys, PrtgTrustedSamplingProfile.MaximumSerializedBytes);
+            foreach (var (blobKey, row) in rows)
             {
-                var id = keys[row.BlobKey];
-                if (row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                    System.Text.Encoding.UTF8.GetByteCount(row.Prefix) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                    continue; // An invalid persisted profile is not authority; omit it so consumers can report unknown.
+                var id = keys[blobKey];
+                if (row.Content is null || row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
+                    Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
+                    continue; // Invalid persisted profiles are not authority; report unknown to the caller.
                 PrtgTrustedSamplingProfile? profile;
-                try { profile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Prefix, LfJsonOptions.Pretty); }
+                try { profile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Content!, LfJsonOptions.Pretty); }
                 catch (JsonException) { continue; }
                 if (profile is null || profile.SensorObjid != id)
                     continue;
@@ -3830,18 +3887,19 @@ public sealed class EfPrtgStore
                 throw new InvalidOperationException("管理員 binding 或來源 primarychannel 證據已變更；profile 未保存。");
             var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + attemptProfile.SensorObjid.ToString(
                 System.Globalization.CultureInfo.InvariantCulture);
-            var bindingRow = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == bindingKey)
-                .Select(row => new { row.Content, row.Version, row.UpdatedAt }).SingleOrDefault();
-            if (bindingRow is null || bindingRow.Content.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
-                Encoding.UTF8.GetByteCount(bindingRow.Content) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
+            var bindingRow = ReadBoundedBlob(ctx, bindingKey, PrtgTrustedSamplingBinding.MaximumSerializedBytes,
+                PrtgTrustedSamplingBinding.MaximumSerializedBytes, "binding-cap-exceeded");
+            if (bindingRow is null)
                 throw new InvalidOperationException("管理員 binding 已移除或超出上限；profile 未保存。");
-            var currentBinding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(bindingRow.Content, LfJsonOptions.Pretty)
+            var currentBinding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(bindingRow.Value.Content!, LfJsonOptions.Pretty)
                 ?? throw new InvalidDataException("管理員 binding 無效；profile 未保存。");
             currentBinding.Validate();
-            var currentSettingsRaw = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == "system_settings")
-                .Select(blob => blob.Content).SingleOrDefault();
-            var currentPolicyRaw = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(blob => blob.Content).SingleOrDefault();
+            var currentSettingsRaw = ReadBoundedBlob(ctx, "system_settings",
+                PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
+                "system-settings-cap-exceeded")?.Content;
+            var currentPolicyRaw = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey,
+                PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
+                "prtg-monitoring-policy-cap-exceeded")?.Content;
             var currentSettings = string.IsNullOrWhiteSpace(currentSettingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(currentSettingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("System settings invalid; profile not saved.");
@@ -3853,7 +3911,7 @@ public sealed class EfPrtgStore
             var currentAuthorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
                 currentPolicy, strategyName, strategyMinutes);
             if (!currentSettings.PrtgEnabled || currentSettings.Revision != attemptProfile.BindingSettingsRevision ||
-                currentPolicy.Revision != attemptProfile.BindingPolicyRevision ||
+                string.IsNullOrWhiteSpace(currentPolicy.Revision) ||
                 currentPolicy.SourceGeneration != currentBinding.SourceGeneration ||
                 !currentPolicy.Ready(currentSettings.PrtgUrl) || !currentPolicy.SensorIds.Contains(attemptProfile.SensorObjid) ||
                 !currentPolicy.HostIds.Contains(identity.HostId) ||
@@ -3880,7 +3938,11 @@ public sealed class EfPrtgStore
                 throw new InvalidOperationException("管理員 binding 已變更；profile 未保存。");
 
             var key = PrtgTrustedSamplingProfile.StorePrefix + attemptProfile.SensorObjid.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
+            var boundedProfile = ReadBoundedBlob(ctx, key, PrtgTrustedSamplingProfile.MaximumSerializedBytes,
+                PrtgTrustedSamplingProfile.MaximumSerializedBytes, "trusted-profile-cap-exceeded");
+            var row = AttachBoundedBlobSnapshot(ctx, key, boundedProfile, "trusted-profile-changed-after-bounded-read");
+            if ((row is null) != (boundedProfile is null))
+                throw new InvalidOperationException("既有可信採樣 profile 在有界檢查後改變；拒絕覆寫。");
             if (System.Text.Encoding.UTF8.GetByteCount(content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
                 throw new InvalidDataException("可信採樣 profile 超過 8 KiB 上限。");
             if (row is null)
@@ -3890,9 +3952,10 @@ public sealed class EfPrtgStore
             }
             else
             {
-                if (row.Content.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                    Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                    throw new InvalidDataException("既有可信採樣 profile 超過 8 KiB；拒絕覆寫。");
+                if (boundedProfile is null || row.Version != boundedProfile.Value.Version ||
+                    row.UpdatedAt != boundedProfile.Value.UpdatedAt ||
+                    !StringComparer.Ordinal.Equals(row.Content, boundedProfile.Value.Content))
+                    throw new InvalidOperationException("既有 trusted profile 在有界檢查後改變；拒絕覆寫。");
                 if (StringComparer.Ordinal.Equals(row.Content, content))
                 {
                     // Idempotent no-op for a retry whose first commit succeeded but acknowledgement was lost.
@@ -3953,9 +4016,19 @@ public sealed class EfPrtgStore
 
             var profileKey = PrtgTrustedSamplingProfile.StorePrefix + expectedProfile.SensorObjid.ToString(
                 System.Globalization.CultureInfo.InvariantCulture);
-            var profileRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == profileKey);
-            if (profileRow is null || profileRow.Content.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                Encoding.UTF8.GetByteCount(profileRow.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
+            (string? Content,long Version,int Length,DateTime UpdatedAt)? boundedProfile;
+            try
+            {
+                boundedProfile = ReadBoundedBlob(ctx, profileKey, PrtgTrustedSamplingProfile.MaximumSerializedBytes,
+                    PrtgTrustedSamplingProfile.MaximumSerializedBytes, "trusted-profile-cap-exceeded");
+            }
+            catch (InvalidDataException) { return false; }
+            BlobRow? profileRow;
+            try { profileRow = AttachBoundedBlobSnapshot(ctx, profileKey, boundedProfile, "trusted-profile-changed-after-bounded-read"); }
+            catch (InvalidOperationException) { return false; }
+            if (profileRow is null || boundedProfile is null || profileRow.Version != boundedProfile.Value.Version ||
+                profileRow.UpdatedAt != boundedProfile.Value.UpdatedAt ||
+                !StringComparer.Ordinal.Equals(profileRow.Content, boundedProfile.Value.Content))
                 return false;
 
             PrtgTrustedSamplingProfile currentProfile;
@@ -3986,10 +4059,9 @@ public sealed class EfPrtgStore
 
             var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + currentProfile.SensorObjid.ToString(
                 System.Globalization.CultureInfo.InvariantCulture);
-            var bindingRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == bindingKey)
-                .Select(row => row.Content).SingleOrDefault();
-            if (string.IsNullOrWhiteSpace(bindingRaw) ||
-                Encoding.UTF8.GetByteCount(bindingRaw) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
+            var bindingRaw = ReadBoundedBlob(ctx, bindingKey, PrtgTrustedSamplingBinding.MaximumSerializedBytes,
+                PrtgTrustedSamplingBinding.MaximumSerializedBytes, "binding-cap-exceeded")?.Content;
+            if (string.IsNullOrWhiteSpace(bindingRaw))
                 return false;
             PrtgTrustedSamplingBinding currentBinding;
             try
@@ -4003,10 +4075,12 @@ public sealed class EfPrtgStore
                 return false;
             }
 
-            var settingsRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == "system_settings")
-                .Select(row => row.Content).SingleOrDefault();
-            var policyRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(row => row.Content).SingleOrDefault();
+            var settingsRaw = ReadBoundedBlob(ctx, "system_settings",
+                PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
+                "system-settings-cap-exceeded")?.Content;
+            var policyRaw = ReadBoundedBlob(ctx, PrtgMonitoringPolicyStore.BlobKey,
+                PrtgTrustedSamplingBindingStore.MaximumAuthorityCharacters, null,
+                "prtg-monitoring-policy-cap-exceeded")?.Content;
             var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
                 JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
                     ?? throw new InvalidDataException("System settings invalid; refresh profile was not revoked.");
@@ -4080,14 +4154,18 @@ public sealed class EfPrtgStore
     {
         const string key = "prtg_trusted_profile_refresh_v1";
         const int maximumProgressBytes = 16 * 1024;
-        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
-            .Select(blob => new { Prefix = blob.Content.Substring(0, maximumProgressBytes + 1), Length = blob.Content.Length })
-            .SingleOrDefault();
-        if (row is null || row.Length > maximumProgressBytes || Encoding.UTF8.GetByteCount(row.Prefix) > maximumProgressBytes)
+        (string? Content,long Version,int Length,DateTime UpdatedAt)? row;
+        try
+        {
+            row = ReadBoundedBlob(ctx, key, maximumProgressBytes, maximumProgressBytes,
+                "trusted-profile-refresh-progress-cap-exceeded");
+        }
+        catch (InvalidDataException) { return false; }
+        if (row is null)
             return false;
         try
         {
-            using var document = JsonDocument.Parse(row.Prefix, new JsonDocumentOptions { MaxDepth = 16 });
+            using var document = JsonDocument.Parse(row.Value.Content!, new JsonDocumentOptions { MaxDepth = 16 });
             var root = document.RootElement;
             return root.TryGetProperty("LeaseOwner", out var leaseOwner) && leaseOwner.ValueKind == JsonValueKind.String &&
                 leaseOwner.GetString() == owner && root.TryGetProperty("LeaseVersion", out var leaseVersion) &&

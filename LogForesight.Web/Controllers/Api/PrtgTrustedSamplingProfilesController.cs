@@ -83,7 +83,9 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         var identity = backend.PrtgStore().GetResourceIdentity(sensorObjid);
         var binding = new PrtgTrustedSamplingBindingStore(backend).Get(sensorObjid);
+        var rawAuthorityContext = PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy);
         if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) ||
+            rawAuthorityContext.Length != 64 ||
             request.ExpectedSettingsRevision != settings.Revision || request.ExpectedPolicyRevision != policy.Revision ||
             request.ExpectedHostSnapshotVersion != hostSnapshot.Version || request.ExpectedIdentityEpoch != identity.Epoch ||
             request.ExpectedChannelGeneration != identity.ChannelGeneration ||
@@ -99,7 +101,8 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
             JobId = Guid.NewGuid().ToString("N"), RequesterUserId = user.UserId,
             RequesterWasServerAdmin = user.IsServerAdmin, SensorObjid = sensorObjid,
             Status = "queued", Reason = "queued", SettingsRevision = settings.Revision,
-            PolicyRevision = policy.Revision, SourceGeneration = policy.SourceGeneration,
+            PolicyRevision = policy.Revision, RawAuthorityContextFingerprint = rawAuthorityContext,
+            SourceGeneration = policy.SourceGeneration,
             HostSnapshotVersion = hostSnapshot.Version, ResourceGeneration = identity.Generation,
             IdentityEpoch = identity.Epoch, ChannelGeneration = identity.ChannelGeneration,
             IdentityChannelFingerprint = identity.ChannelFingerprint,
@@ -131,8 +134,10 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
             var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
             var identity = backend.PrtgStore().GetResourceIdentity(job.SensorObjid);
             var binding = new PrtgTrustedSamplingBindingStore(backend).Get(job.SensorObjid);
+            var rawAuthorityContext = PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy);
             if (hostSnapshot.Version != job.HostSnapshotVersion || settings.Revision != job.SettingsRevision ||
-                policy.Revision != job.PolicyRevision || policy.SourceGeneration != job.SourceGeneration ||
+                rawAuthorityContext.Length != 64 || rawAuthorityContext != job.RawAuthorityContextFingerprint ||
+                policy.SourceGeneration != job.SourceGeneration ||
                 identity.SourceGeneration != job.SourceGeneration || identity.Generation != job.ResourceGeneration ||
                 identity.Epoch != job.IdentityEpoch || identity.ChannelGeneration != job.ChannelGeneration ||
                 !identity.Active || identity.PendingReconciliation ||
@@ -609,7 +614,8 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
             var current = jobs.ReadCurrent();
             if (current is not null && current.ScopeFingerprint == contract.ScopeFingerprint &&
                 current.SourceGeneration == policy.SourceGeneration && current.SettingsRevision == settings.Revision &&
-                current.PolicyRevision == policy.Revision && current.Selected == selectedSensors)
+                current.AuthorityContextFingerprint == PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy) &&
+                current.Selected == selectedSensors)
                 matchingJob = current;
         }
         catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or ArgumentException)
@@ -642,7 +648,8 @@ public sealed class PrtgTrustedSamplingProfilesController(StorageBackend backend
             if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(backend, hosts, settings, snapshotSelection,
                 out var plan, out reason) || plan is null)
                 return false;
-            if (plan.SettingsRevision != settings.Revision || plan.PolicyRevision != policy.Revision ||
+            if (plan.SettingsRevision != settings.Revision ||
+                plan.RawAuthorityContextFingerprint != PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy) ||
                 plan.LeaseUntilUtc <= DateTimeOffset.UtcNow)
             { reason = "capacity-admission-plan-settings-scope-or-lease-stale"; return false; }
             fingerprint = plan.Fingerprint;

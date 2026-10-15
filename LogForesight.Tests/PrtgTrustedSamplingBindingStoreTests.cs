@@ -93,6 +93,35 @@ public sealed class PrtgTrustedSamplingBindingStoreTests : IDisposable
     }
 
     [Fact]
+    public void MismatchedPolicyTimeBasisIsRejectedBeforeBindingIdentityOrProfileMutation()
+    {
+        var identityBefore = backend.PrtgStore().GetResourceIdentity(11);
+        var settingsBefore = settings.Get();
+        var policyBefore = policy.Get();
+        policy.Update(value =>
+        {
+            value.Revision = "policy-time-basis-changed";
+            value.RawTimestampTimeZoneId = "Pacific Standard Time";
+        });
+        var currentPolicy = policy.Get();
+        var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + "11";
+        var bindingVersionBefore = backend.Blob(bindingKey).ReadVersion();
+        var store = new PrtgTrustedSamplingBindingStore(backend);
+
+        var error = Assert.Throws<InvalidOperationException>(() => store.Save(Update(settingsBefore.Revision,
+            currentPolicy.Revision, identityBefore.Epoch, identityBefore.ChannelGeneration, 0)));
+
+        Assert.Equal("binding-time-basis-does-not-match-current-policy", error.Message);
+        Assert.Equal(bindingVersionBefore, backend.Blob(bindingKey).ReadVersion());
+        var identityAfter = backend.PrtgStore().GetResourceIdentity(11);
+        Assert.Equal(identityBefore.Epoch, identityAfter.Epoch);
+        Assert.Equal(identityBefore.Generation, identityAfter.Generation);
+        Assert.Equal(identityBefore.ChannelGeneration, identityAfter.ChannelGeneration);
+        Assert.Equal(identityBefore.ChannelFingerprint, identityAfter.ChannelFingerprint);
+        Assert.False(new PrtgTrustedSamplingProfileStore(backend).GetMany([11]).ContainsKey(11));
+    }
+
+    [Fact]
     public void SnapshotCostCandidateAndFingerprintStayStableAcrossInitialRawQualification()
     {
         var identity = backend.PrtgStore().GetResourceIdentity(11);

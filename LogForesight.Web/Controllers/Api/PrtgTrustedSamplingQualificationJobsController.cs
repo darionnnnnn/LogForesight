@@ -158,7 +158,7 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
             PrtgFetchStrategy.Normalize(capturedSettings!.PrtgFetchStrategy),
             PrtgFetchStrategy.Profile(PrtgFetchStrategy.Normalize(capturedSettings.PrtgFetchStrategy)).SnapshotIntervalMinutes);
         if (current.SourceGeneration != capturedPolicy!.SourceGeneration ||
-            current.SettingsRevision != capturedSettings.Revision || current.PolicyRevision != capturedPolicy.Revision ||
+            current.SettingsRevision != capturedSettings.Revision ||
             current.ScopeFingerprint != contract!.ScopeFingerprint ||
             current.AuthorityContextFingerprint != authorityContext)
             return Conflict(ApiResponse.Fail("source_context_changed", "來源、設定、作用範圍或採樣語意已變更；請明確開始新作業。"));
@@ -169,7 +169,7 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
             plan.ProfileScopeFingerprint != contract.ScopeFingerprint ||
             plan.StrategyFingerprint != contract.StrategyFingerprint ||
             plan.RequestShapeFingerprint != contract.RequestShapeFingerprint ||
-            plan.RuntimeVersionFingerprint != contract.VersionFingerprint || plan.PolicyRevision != capturedPolicy.Revision)
+            plan.RuntimeVersionFingerprint != contract.VersionFingerprint || plan.RawAuthorityContextFingerprint != authorityContext)
             return Ok(ApiResponse<PrtgQualificationStartResult>.Ok(new("waiting-capacity",
                 "shared-table-plan-missing-or-stale", null, current)));
 
@@ -274,7 +274,8 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
         if (!user.Has(Capability.Maintain) || !CanManageScope(currentPolicy)) return Forbid();
         if (currentScope != job.ScopeFingerprint)
             return Conflict(ApiResponse.Fail("stale_job_scope", "作業範圍已變更；sensor 分頁不提供。"));
-        if (jobs.ReadCurrent() is not { } latest || latest.JobId != jobId || latest.Version != job.Version)
+        if (jobs.ReadCurrent() is not { } latest || latest.JobId != jobId || latest.Version != job.Version ||
+            latest.ReadStateVersion != job.ReadStateVersion)
             return Conflict(ApiResponse.Fail("stale_job", "作業狀態在讀取期間已變更，請重新載入。"));
         return Ok(ApiResponse<QualificationJobPage>.Ok(new(job.Status, job.Selected, offset, limit, next, rows)));
     }
@@ -332,7 +333,8 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
             plan.ProfileScopeFingerprint != contract.ScopeFingerprint ||
             plan.StrategyFingerprint != contract.StrategyFingerprint ||
             plan.RequestShapeFingerprint != contract.RequestShapeFingerprint ||
-            plan.RuntimeVersionFingerprint != contract.VersionFingerprint || plan.PolicyRevision != policy.Revision)
+            plan.RuntimeVersionFingerprint != contract.VersionFingerprint ||
+            plan.RawAuthorityContextFingerprint != PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy))
             return Ok(ApiResponse<PrtgQualificationStartResult>.Ok(new("waiting-capacity",
                 "shared-table-plan-missing-or-stale", null, null)));
 
@@ -414,7 +416,7 @@ public sealed class PrtgTrustedSamplingQualificationJobsController(StorageBacken
                 plan.StrategyFingerprint != contract.StrategyFingerprint ||
                 plan.RequestShapeFingerprint != contract.RequestShapeFingerprint ||
                 plan.RuntimeVersionFingerprint != contract.VersionFingerprint ||
-                plan.PolicyRevision != policy.Revision || plan.SettingsRevision != settings.Revision ||
+                plan.RawAuthorityContextFingerprint != PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy) || plan.SettingsRevision != settings.Revision ||
                 plan.LeaseUntilUtc <= DateTimeOffset.UtcNow)
             {
                 reason = "qualification-runtime-table-admission-plan-stale";

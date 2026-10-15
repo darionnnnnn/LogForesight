@@ -27,7 +27,7 @@ AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留
 
 | ID／批次 | 現況、改動與下一個使用端 | 相依與客觀完成條件 |
 |---|---|---|
-| D54-01／各證據 lane 的生命週期隔離 | 六種明確日期格式、strict parser、message fingerprint、fetch／timeline／正式 finding 接線已完成，不再列為待實作。剩餘：qualification、profile-refresh notice、channel discovery 及容量 admission 仍以整份 policy revision 阻擋 DateFormat-only 變更。郵件 summary／digest／跨次 Notify 的有界原子 reservation 與實際正文貢獻範圍已完成，實作待辦移除，見§8.13。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
+| D54-01／各證據 lane 的生命週期隔離 | parser／message fingerprint／fetch／timeline／正式 finding、replay、郵件貢獻及 qualification／refresh／discovery／capacity raw context 已接線，實作待辦移除，見§8.13～8.18。再次逐consumer核對發現四處剩餘候選：期間評估 selected fingerprint／最終重驗、磁碟評估 metadata authority、資料流探測 operation scope、資格作業狀態提示；仍須完成小範圍驗證及提交。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
 | D54-02／正常HTTP資格準備交付 | `scripts/prtg-workload/qualification-preparation` 已有 Start／Resume／Check、來源預檢、磁碟與 live runtime owner 核對、正常 settings／policy／pilot／binding／job 路由及持久 receipt 候選；純契約 Python 24/24、PowerShell 通過。runtime ownership 端點已提交。剩餘是候選完整性核對、相依提交及正常入口的整合證據。 | 不增加 production 測試旁路；保留完整母體／owned listener／精確 PID、ticks、MVID、DataRoot、descriptor／reparse 防護及720h／1attempt。未執行完整容量來源，不宣稱正式資格或 E2 父驗收通過。 |
 
 ### 2.1 時間授權的明確接線缺口
@@ -48,7 +48,7 @@ D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.
 
 原列 `PrtgResourcePressureModeStore.Find`、binding Save／RecordQualification、qualification ResumeExisting 及 disk semantic／verification snapshot 的有界接線已存在；不再列為完全未實作。identity／host marker、silent presence、probe local facts、formal-mail claim 的完整 physical bounded reader、CAS／逐筆隔離已有程式及小型驗證；候選提交狀態依分段紀錄。
 
-formal episode／pressure hint／timeline progress／strategy 的直接 mutation 已逐一接入原交易完整有界讀寫及輸出上限，實作待辦移除，見§8.14。identity／qualification／binding 的剩餘候選仍待整合提交與核對。mail reservation 的有界交易及正常 SMTP consumer 接線已完成，實作待辦移除，見§8.13。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
+formal episode／pressure hint／timeline progress／strategy 的直接 mutation 已逐一接入原交易完整有界讀寫及輸出上限，實作待辦移除，見§8.14。identity／qualification／binding 的剩餘 mutation 已直接 attach 完整 physical bounded snapshot，保留原 Version／UpdatedAt CAS 及同交易 readset，實作待辦移除；小型 NUL／Unicode／過期 snapshot、重複 identity mutation 與正式資格提交證據見§8.18。mail reservation 的有界交易及正常 SMTP consumer 接線已完成，見§8.13。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線。
 
 本輪繼續逐呼叫端補齊有界projection／snapshot，保留同一transaction readset、CAS與來源authority；小型字元／超限／損壞／未知extra JSON與設定漂移反例核對等待／拒絕及零正式副作用。依使用者指示不建立33,554,432字元極限文件，雙provider邊界依官方文件及小範圍反例核對。容量export另量測，不把正式mail拒絕等同匯出吞吐通過。對應E03、E06、E07-T03、E08-T05、E10-T02。
 
@@ -116,14 +116,14 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 
 ### 4.1 B／C：可信時間與磁碟資格
 
-- 已核對：`PrtgFetchService.FetchStateChangesRangeAsync`仍有環境預設日期解析；`PrtgSensorTimelineCollector`單顆與批次依saved culture解析。兩條路徑及逐頁保存／游標恢復一起納入B，不能只更換其中一個parser。
-- 已核對：`PrtgDiskVerificationService.ProbeAndSaveAsync`未提供`PrtgDiskSemanticSourceContract`，且以Local轉UTC；`PrtgDiskSemanticProbe`缺契約時回傳`source-contract-unconfirmed`。C修正真實入口的接線與嚴格時區轉換，不取消守門。
+- 原始缺口已補齊：`PrtgFetchService.FetchStateChangesRangeAsync`及`PrtgSensorTimelineCollector`單顆／批次均使用保存的嚴格文字日期授權，逐頁保存／游標恢復核對 fingerprint。有效分段證據依§8沿用。
+- 原始缺口已補齊：`PrtgDiskVerificationService.ProbeAndSaveAsync`提供`PrtgDiskSemanticSourceContract`，使用分析時區相鄰日期邊界；缺契約仍回傳`source-contract-unconfirmed`。正常入口與 DST／漂移反例見§8，完整操作驗收保留。
 - 輸入：保存的來源／分析時區、帳號Date Format、來源樣本及世代。輸出：具版本的訊息時間證據或磁碟核驗結果；下一端是正式profile、期間規則與probe，而非只停在測試helper。
 - 驗收：明確正常值與歧義反例並存，核對API、持久版本、讀側判定及零非法finding／案件／通知；CPU／memory、NetIQ父資格及既有28日raw證據不得被文字日期設定誤傷。取消期限依§4.5。
 
 ### 4.2 D：所有正式消費路徑的有界讀取
 
-- 已核對`PrtgResourcePressureModeStore.Find()`仍經`Get()`讀完整文件。§2.3列出的binding、qualification、disk map、replay、mail及data-transfer逐呼叫端核對，不能以新增一個有界方法宣稱完成。
+- 原始缺口已補齊：`PrtgResourcePressureModeStore.Find()`經完整有界快照取得選中資料；§2.3列出的binding、qualification、disk map、replay、mail及data-transfer依實際呼叫端核對，分段證據見§8。
 - 輸入／輸出須保留相同transaction readset、blob version、CAS與來源authority；沒有有效資料時明確等待／拒絕，正常選中資料不得被任意截斷後當完整授權。
 - 驗收涵蓋正常大小、cap邊界、超量但選中entry有效、未知extra JSON、設定漂移、並行保存；精確核對拒絕原因與正式副作用為0。262,144字元 mode／33,554,432字元 disk snapshot的既定字元限制不提高；編碼位元組與程序記憶體另量測；export吞吐另由G量測。
 
@@ -507,3 +507,13 @@ Snapshot operation 與兩個 backfill operation 改用 ReadRawSemantic（結構s
 ### 8.17 回退差額輸入格式拒絕（2026-10-15）
 
 capture-delta 的唯讀 quick_check 若遇非SQLite bytes，現在關閉連線並轉為共用 Refusal，CLI一致回傳 refused-closed JSON及exit2，不產生差額輸出、不改輸入。主代理先以21-byte反例重現原exit1 traceback，再驗非SQLite、錯SQLite application identity及正常CLI差額→消費→release gate三例全過。prepare／verify／launch仍只允許已pin的SQLite配套隔離副本；SQL Server未知相容性持續拒絕，不啟動或連接其provider。這不是SQL Server恢復、全容量或G3/G4通過的證據，原條款與驗收待辦保留。
+
+### 8.18 資格作業、容量與有界 mutation 的相依交付（2026-10-15）
+
+Qualification、profile refresh notice、channel discovery 與 capacity admission 長期工作改用含 RawAuthorityRevision 的 raw context；保存／發布／重綁的當次請求仍核對目前 settings／policy CAS。資格結果在同一 Serializable 交易重讀完整有界 settings、policy、canonical host/sensor scope，拒絕 raw ABA、來源／範圍變更及已停用來源後才可更新 binding proof／identity／job page。正式 profile publisher 同樣比較完整 raw context，移除多餘的歷史 BindingPolicyRevision 相等要求。舊 capacity plan 缺 raw context 不能沿用。
+
+Identity／binding／qualification／queue／timeline／profile mutation 直接 attach 完整 physical bounded snapshot，保留原 Version／UpdatedAt concurrency token，不在有界檢查後重新讀取無界 Content。新資格頁持久化 qualifiedIdentityEpoch／qualifiedChannelGeneration，讓正常 HTTP 準備工具識別資格提交造成的合法 channel rotation；ReadStateVersion 是 overview 實體版本，逐頁前後同時核對它及 lease version／wave，避免 lease 未變但提交中的 proof 頁被混讀。舊缺欄位頁面不能追認新證據。
+
+正常 monitoring PUT 及獨立 time-basis PUT 明確保存 raw／analysis zone／reference；來源啟用時拒絕時間變更，保存設定及受影響 disk 失效同交易。操作者輸入只標 saved-operator-input-unverified，不當作遠端帳號或 native 資格證明。binding 輸入需與目前保存時間基準完全一致。
+
+主代理小型分段證據：r30 capacity concurrency／retry／job store18例及 time-basis／binding6例通過；r31 identity五例通過；r32 attach snapshot兩例及資格三例通過；r33資格／capacity／refresh／discovery共11例通過；r34 physical Unicode／NUL四例及 permission／disabled／bounded input三例通過；r36真實 profile publisher 日期格式正例／raw ABA負例兩例通過。均使用單／少量 host、sensor 及值；UTF-8 byte[] CAST AS TEXT 建立 physical NUL，避免字串參數截斷造成假陽性。r27／r30舊失敗、r35 publisher 額外 policy revision 阻擋的重現保留，不宣稱整套失敗回合全過。後續補查期間／磁碟／資料流／資格作業提示四處接線仍另段列明，正式來源、全角色、完整容量及父驗收未通過。

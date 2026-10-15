@@ -65,7 +65,7 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
     {
         if (sensorId <= 0) throw new ArgumentOutOfRangeException(nameof(sensorId));
         var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
+        var row = LoadBoundedForMutation(ctx, key, MaxLedgerBytes);
         return SetCore(ctx, sensorId, sourceGeneration, deviceId, hostId, resourceFingerprint,
             inventoryFingerprint, channelFingerprint, active, nowUtc, row, reconciled, null);
     }
@@ -91,7 +91,7 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
         var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (row is not null && !string.Equals(row.BlobKey, key, StringComparison.Ordinal))
             throw new InvalidDataException("PRTG 資源身分紀錄識別不一致；拒絕沿用舊涵蓋。");
-        if (row is not null && !string.IsNullOrWhiteSpace(row.Content)) EnsureBounded(row.Content);
+        if (row is not null) EnsureBounded(row.Content);
         var current = row is null || string.IsNullOrWhiteSpace(row.Content)
             ? new PrtgResourceIdentity { SensorId = sensorId }
             : JsonSerializer.Deserialize<PrtgResourceIdentity>(row.Content, LfJsonOptions.Pretty)
@@ -143,6 +143,8 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
     internal static PrtgResourceIdentity Read(LfDbContext ctx, long sensorId)
     {
         var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var tracked = ctx.Blobs.Local.FirstOrDefault(candidate => candidate.BlobKey == key);
+        if (tracked is not null) return ReadLoaded(sensorId, tracked);
         var row = EfJsonBlobStore.ReadBoundedInContext(ctx, key, MaxLedgerBytes);
         if (row.Version == 0) return new() { SensorId = sensorId };
         if (row.ReportedLength > MaxLedgerBytes || row.Prefix is null)
@@ -161,8 +163,8 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
         var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (!string.Equals(row.BlobKey, key, StringComparison.Ordinal))
             throw new InvalidDataException("PRTG 資源身分紀錄識別不一致；拒絕沿用舊涵蓋。");
-        if (string.IsNullOrWhiteSpace(row.Content)) return new() { SensorId = sensorId };
         EnsureBounded(row.Content);
+        if (string.IsNullOrWhiteSpace(row.Content)) return new() { SensorId = sensorId };
         var value = JsonSerializer.Deserialize<PrtgResourceIdentity>(row.Content, LfJsonOptions.Pretty);
         if (value is null || value.SensorId != sensorId || value.Epoch < 0)
             throw new InvalidDataException("PRTG 資源身分紀錄無效；拒絕沿用舊涵蓋。");
@@ -173,7 +175,9 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
     internal static PrtgResourceIdentity Advance(LfDbContext ctx, long sensorId, DateTimeOffset nowUtc,
         string? newSourceGeneration = null)
     {
-        var current = Read(ctx, sensorId);
+        var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var row = LoadBoundedForMutation(ctx, key, MaxLedgerBytes);
+        var current = ReadLoaded(sensorId, row);
         current.Epoch++;
         current.Generation = Guid.NewGuid().ToString("N");
         if (newSourceGeneration is not null)
@@ -182,8 +186,6 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
             current.PendingReconciliation = true;
         }
         current.ChangedAtUtc = nowUtc;
-        var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
         var content = SerializeBounded(current);
         if (row is null) ctx.Blobs.Add(new BlobRow { BlobKey = key, Content = content, Version = 1, UpdatedAt = nowUtc.LocalDateTime });
         else { row.Content = content; row.Version++; row.UpdatedAt = nowUtc.LocalDateTime; }
@@ -236,13 +238,13 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
 
     internal static PrtgResourceIdentity MarkPending(LfDbContext ctx, long sensorId, DateTimeOffset nowUtc)
     {
-        var current = Read(ctx, sensorId);
+        var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var row = LoadBoundedForMutation(ctx, key, MaxLedgerBytes);
+        var current = ReadLoaded(sensorId, row);
         current.Epoch++;
         current.Generation = Guid.NewGuid().ToString("N");
         current.PendingReconciliation = true;
         current.ChangedAtUtc = nowUtc;
-        var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
         var content = SerializeBounded(current);
         if (row is null) ctx.Blobs.Add(new BlobRow { BlobKey = key, Content = content, Version = 1, UpdatedAt = nowUtc.LocalDateTime });
         else { row.Content = content; row.Version++; row.UpdatedAt = nowUtc.LocalDateTime; }
@@ -252,14 +254,14 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
 
     internal static PrtgResourceIdentity Deactivate(LfDbContext ctx, long sensorId, DateTimeOffset nowUtc)
     {
-        var current = Read(ctx, sensorId);
+        var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var row = LoadBoundedForMutation(ctx, key, MaxLedgerBytes);
+        var current = ReadLoaded(sensorId, row);
         current.Epoch++;
         current.Generation = Guid.NewGuid().ToString("N");
         current.Active = false;
         current.PendingReconciliation = false;
         current.ChangedAtUtc = nowUtc;
-        var key = Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
         var content = SerializeBounded(current);
         if (row is null) ctx.Blobs.Add(new BlobRow { BlobKey = key, Content = content, Version = 1, UpdatedAt = nowUtc.LocalDateTime });
         else { row.Content = content; row.Version++; row.UpdatedAt = nowUtc.LocalDateTime; }
@@ -304,8 +306,7 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
         }
         else
         {
-            row = ctx.Blobs.Local.FirstOrDefault(blob => blob.BlobKey == key) ??
-                ctx.Blobs.SingleOrDefault(blob => blob.BlobKey == key);
+            row = LoadBoundedForMutation(ctx, key, 128);
         }
         if (row is null)
         {
@@ -401,9 +402,30 @@ public sealed class PrtgResourceIdentityStore(EfJsonBlobStore blob)
         return content;
     }
 
+    private static BlobRow? LoadBoundedForMutation(LfDbContext ctx, string key, int maximumCharacters)
+    {
+        var tracked = ctx.Blobs.Local.FirstOrDefault(candidate => candidate.BlobKey == key);
+        if (tracked is not null)
+        {
+            if (tracked.Content.Length > maximumCharacters || tracked.Content.Contains('\0'))
+                throw new InvalidDataException("PRTG authority row is not complete bounded text.");
+            if (maximumCharacters == MaxLedgerBytes) EnsureBounded(tracked.Content);
+            return tracked;
+        }
+        var rows = BoundedJsonBlobBatchReader.Read(ctx, [key], maximumCharacters);
+        if (!rows.TryGetValue(key, out var read)) return null;
+        if (read.Content is null || read.Length > maximumCharacters)
+            throw new InvalidDataException("PRTG authority row is not complete bounded text.");
+        if (maximumCharacters == MaxLedgerBytes) EnsureBounded(read.Content);
+        var row = new BlobRow { BlobKey = key, Content = read.Content,
+            Version = read.Version, UpdatedAt = read.UpdatedAt };
+        ctx.Blobs.Attach(row);
+        return row;
+    }
+
     private static void EnsureBounded(string content)
     {
-        if (Encoding.UTF8.GetByteCount(content) > MaxLedgerBytes)
+        if (content.Contains('\0') || Encoding.UTF8.GetByteCount(content) > MaxLedgerBytes)
             throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用或寫入舊涵蓋。");
     }
 }

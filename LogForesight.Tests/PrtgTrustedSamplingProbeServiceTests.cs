@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using System.Text.Json;
 using LogForesight.Core;
@@ -326,7 +326,8 @@ public sealed class PrtgTrustedSamplingProbeServiceTests : IDisposable
         var plan = PrtgJointCapacityEvaluator.CreatePlan(joint, contract.SourceFingerprint,
             new string('F', 64), contract.ScopeFingerprint, contract.StrategyFingerprint,
             new string('7', 64), contract.RequestShapeFingerprint, contract.VersionFingerprint, now,
-            currentSettings.Revision, currentPolicy.Revision) with
+            currentSettings.Revision, currentPolicy.Revision,
+            PrtgCapacityRuntimeAdmission.RawAuthorityContext(currentSettings, currentPolicy)) with
         { Owner = "probe-test", Version = 1, LeaseUntilUtc = now.AddHours(1) };
         var clock = new AdvancingClock(now);
         var budget = new PrtgRequestBudget(clock);

@@ -1,4 +1,4 @@
-using LogForesight.Core.Service;
+﻿using LogForesight.Core.Service;
 using LogForesight.Core.Persistence;
 using LogForesight.Web.Services;
 using System.Text.Json;
@@ -8,6 +8,8 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgCapacityPurposeAndProfileTransportTests
 {
+    // Synthetic hash for pure admission-plan fixtures; it is not source-policy evidence.
+    private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
     [Fact]
     public void Fifteen_thousand_scope_qualifies_only_with_fresh_batch100_evidence_and_slow_batches_fail()
     {
@@ -358,7 +360,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         var joint = PrtgJointCapacityEvaluator.Evaluate(snapshot, profile, usage, 30);
         var plan = PrtgJointCapacityEvaluator.CreatePlan(joint, new string('A', 64),
             new string('B', 64), new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64), new string('7', 64), DateTimeOffset.UtcNow,
-            "settings-r1", "policy-r1");
+            "settings-r1", "policy-r1", FixtureRawAuthorityContextFingerprint);
 
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, joint.Status);
         Assert.True(plan.SnapshotTableRequestsPerSecond > 0);
@@ -383,12 +385,12 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
         var slowerRecentSampleEstimate = PrtgJointCapacityEvaluator.Evaluate(snapshot,
             profile with { P95SensorSeconds = .3 }, idle, 30);
         var idlePlan = PrtgJointCapacityEvaluator.CreatePlan(idleEstimate, new string('A', 64),
-            new string('B', 64), new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64), new string('7', 64), now, "settings-r1", "policy-r1");
+            new string('B', 64), new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64), new string('7', 64), now, "settings-r1", "policy-r1", FixtureRawAuthorityContextFingerprint);
         var busyPlan = PrtgJointCapacityEvaluator.CreatePlan(busyEstimate, new string('A', 64),
-            new string('B', 64), new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64), new string('7', 64), now, "settings-r1", "policy-r1");
+            new string('B', 64), new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64), new string('7', 64), now, "settings-r1", "policy-r1", FixtureRawAuthorityContextFingerprint);
         var slowerRecentSamplePlan = PrtgJointCapacityEvaluator.CreatePlan(slowerRecentSampleEstimate,
             new string('A', 64), new string('B', 64), new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64), new string('7', 64), now,
-            "settings-r1", "policy-r1");
+            "settings-r1", "policy-r1", FixtureRawAuthorityContextFingerprint);
 
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, idleEstimate.Status);
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, busyEstimate.Status);
@@ -465,7 +467,8 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
             strategy, profileShape, runtimeVersion, initialSamples, now);
         var initialJoint = PrtgJointCapacityEvaluator.Evaluate(snapshot, initialProfile, usage, 30);
         var published = PrtgJointCapacityEvaluator.CreatePlan(initialJoint, source, snapshotScope,
-            profileScope, strategy, snapshotShape, profileShape, runtimeVersion, now, "settings-r1", "policy-r1");
+            profileScope, strategy, snapshotShape, profileShape, runtimeVersion, now, "settings-r1", "policy-r1",
+            FixtureRawAuthorityContextFingerprint);
 
         var oneFreshSafeSample = new PrtgProfileTransportSample(source, profileScope, strategy, profileShape,
             now, 1_050, 5, 12, 12, "success", null, runtimeVersion);
@@ -482,7 +485,7 @@ public sealed class PrtgCapacityPurposeAndProfileTransportTests
             published.ProfileTableRequestsPerSecond);
         var refreshedPlan = PrtgJointCapacityEvaluator.CreatePlan(refreshedJoint, source, snapshotScope,
             profileScope, strategy, snapshotShape, profileShape, runtimeVersion, now.AddMinutes(1),
-            "settings-r1", "policy-r1");
+            "settings-r1", "policy-r1", FixtureRawAuthorityContextFingerprint);
         Assert.Equal(PrtgSnapshotCapacityStatus.CapacityQualified, refreshedJoint.Status);
         Assert.Equal(published.Fingerprint, refreshedPlan.Fingerprint);
 

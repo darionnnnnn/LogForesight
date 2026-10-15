@@ -1,4 +1,4 @@
-using LogForesight.Core.Service;
+﻿using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -6,6 +6,8 @@ namespace LogForesight.Tests;
 
 public sealed class PrtgMaintenanceCapacityPreflightTests
 {
+    // Synthetic hash for a pure preflight fixture; it is not source-policy evidence.
+    private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
     [Theory]
     [InlineData(1, 4)]
     [InlineData(5, 12)]
@@ -117,7 +119,8 @@ public sealed class PrtgMaintenanceCapacityPreflightTests
         var now = DateTimeOffset.UtcNow;
         var hash = new string('A', 64);
         return new PrtgCapacityAdmissionPlan(hash, hash, hash, hash, hash, hash, hash, hash,
-            "settings", "policy", .6, .6, generalRate, now, now.AddSeconds(leaseSeconds), "test", 1);
+            "settings", "policy", .6, .6, generalRate, now, now.AddSeconds(leaseSeconds), "test", 1,
+            FixtureRawAuthorityContextFingerprint);
     }
 
     private sealed class TestClock : IPrtgClock
