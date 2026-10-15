@@ -1,6 +1,6 @@
 # 第 54 輪規劃：PRTG 剩餘實作與完整驗收
 
-> 狀態（2026-10-15）：目前逐項驗收並補齊新發現的探測期限缺口；正式程式變更後，原27項中的E01-T01／T02重新等待新候選成品核對，§8.30的b2b82708證據保留其歷史範圍。使用者已授權逐段完成並驗證後commit／push；只做必要小範圍驗證，沿用有效證據，不執行大規模大量資料測試，不得已須先提出方案討論。本輪未宣告整體驗收通過。
+> 狀態（2026-10-15）：原27項逐項驗收，E01-T01／T02及E04-T01／T02共4項完成，23項仍開；目前乾淨候選faeb7bca，證據見§8.35–36。使用者已授權逐段完成並驗證後commit／push；依§4.12最新定案，以程式可擴展性審查及必要小型正確性驗證取代本機全負載門檻，沿用有效證據。本輪未宣告整體驗收通過。
 > 來源：2026-10-13 使用者明確要求將第53輪尚未實作項目移入下一輪，先收尾已實作部分。此為範圍移交，不代表原目標、容量、實用性或驗收已通過。
 > 本輪起點：`dev` 的 `a69fedd7`；工作分支 `feature/prtg-feedback-54`。第53輪乾淨驗證基準為 `638c58434f0bc01fe77e62365addeafd75680fb0`，至本輪起點僅README、PLAN與驗收JSON差異，正式程式未變。
 > 原始需求與契約：[第53輪 PLAN](FEEDBACK-53-PLAN.md) §§3、6、13、15–17；最新責任邊界為 §§5.7、5.9。
@@ -53,12 +53,12 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 
 2026-10-15依實際程式重新核對：已完成的功能實作已從§2待辦刪除；本表保留的是尚未完成的驗收／交付，不把「已有程式但未驗」誤報成「功能未寫」，也不因已有程式而刪除未執行的驗收。E02、E08-T01、E10-T01既有完成項不重開。有效分段證據可在確認相同程式／設定／環境及母體後沿用。細部使用者劇本仍以 [coverage inventory](../scripts/round53-user-matrix/coverage-inventory.json) 逐子句追蹤；原22項AC、10項U53、6項Q、7種受控來源情境、222案與53條承接缺口保留，不以27個父項掩蓋子句。
 
-- [ ] **E01-T01【承接驗收】** 探測期限修正後等待新候選成品核對；乾淨`b2b82708`已publish、獨立核組件及執行中probe／assets一致（§8.30），歷史`cfa062e9`見§8.24。正式程式／依賴／設定／成品輸入變更須重新核受影響成品；純驗收紀錄不觸發重建。
-- [ ] **E01-T02【承接驗收】** 新候選須核對啟動身分防護；乾淨`b2b82708`的錯提交、偽造manifest／MVID及混版皆於啟動前拒絕（§8.30）。未改的preview／舊尾碼契約沿用§8.25有效證據；歷史成品反例不冒稱新成品已驗。
+- [x] **E01-T01【承接驗收】** 探測期限修正後乾淨`faeb7bca`已publish、獨立核組件及執行中probe／assets一致（§8.35）；歷史`b2b82708`及`cfa062e9`見§8.30／24。正式程式／依賴／設定／成品輸入變更須重新核受影響成品；純驗收紀錄不觸發重建。
+- [x] **E01-T02【承接驗收】** 乾淨`faeb7bca`的錯提交、偽造manifest／MVID及混版均在啟動前拒絕（§8.35）；未改的preview／舊尾碼契約沿用§8.25有效證據。
 - [ ] **E03-T01【承接驗收】** 操作明確設定→probe→proof/profile→正式採樣→期間引擎完整鏈，核對 CPU／memory／disk／ping 樣本來源、channel、unit、scale、方向與各端點時基；available-memory 25.0834% 轉 used 74.9166%，disk 90.0887% 保留剩餘方向。
 - [ ] **E03-T02【承接驗收】** 補齊錯時區、缺單位／尺度／主通道、世代變更、陳舊 proof、DST 重複／缺小時、跨午夜與無時區歷史反例；不合格輸入保持等待、零正式副作用，維持兩完成小時、28 日與 7 日20%契約。
-- [ ] **E04-T01【承接驗收】** 逐欄核對已補強的 build／設定修訂／時區 authority／scope／readiness／guard／traffic 安全診斷／NetIQ 回執與父資格／AI 小探測輸出及其正式消費端；每個 unknown 有原因與具體缺項，不把已保存可核對資料永遠標未知。
-- [ ] **E04-T02【承接驗收】** 完整操作目前表單與已保存來源的匯出→離線核對，涵蓋取消、截斷、逾時、無設定、版本不符及防偽／敏感資料反例；維持 64 KiB、depth32、取消≤5秒、單 HTTP≤30秒與整輪截止。
+- [x] **E04-T01【承接驗收】** build／設定修訂／時區authority／scope／readiness／guard／traffic／NetIQ回執及父資格／AI逐欄對照實作與產物；已保存時間基準正向投影及未知原因見§8.36。診斷不授予正式資格，正式consumer仍受E03／E08驗收。
+- [x] **E04-T02【承接驗收】** 目前表單／已保存來源的匯出→離線鏈，取消、截斷檔案、逾時、無設定、修訂／版本不符、防偽及敏感資料反例見§8.26、30、32、36；64KiB／depth32與期限實作及必要小型證據見§8.32–33。不重跑未變的瀏覽器／verifier組合。
 - [ ] **E05-T01【承接驗收】** 補完未保存／缺資料／陳舊守門狀態、原因與設定入口的操作驗證；守門失聯不得視為安全，守門資料不得產生業務 finding／案件／通知。
 - [ ] **E05-T02【承接驗收】** 核對範圍縮小、鏡像差額、同步未完成與保留資料不誤刪；補齊 readonly／case-only 修改拒絕、過期寫入及其餘完整角色操作。已通過的 18成功／2衝突及保存→採樣→guard 子集合保留。
 - [ ] **E05-T03【承接驗收】** 取消→續跑的單sensor精確集合已補證（§8.31）；其餘夾末頁、messages完整前導／期間涵蓋及操作集合仍待核對；抽樣相依資料不得授權完整拓撲。分頁／預覽／保存／實際請求依§4.12查完整演算法並以最小跨批次精確集合驗證，不跑全負載。
@@ -729,3 +729,27 @@ Luna high只在`PrtgSensorTimelineCollectorTests.cs`新增`CallerCancellationDur
 新增單一方法`UnconfiguredMissingStaleAndUnavailableModeAuthorityCreateNoDurableBusinessEffects`，四個極小CPU fixture分別為未授權hint、已授權但刪除兩小時值、授權後channel世代變更、正式mode文件壞掉；經`PrtgResourcePeriodConsumer.EvaluateBatch`皆無formal finding，缺資料為Insufficient、壞mode明示原因，每步核TopIssues／IssueCases／UrgentOutbox為0。1/1、零skip、9秒，TRX `work/round54/acceptance-e05-zero/e05-zero.trx` SHA `BD922CBF19707B9909C7690E829D72191CE2098C3DEA3B4AAFECC8F8A8F0F419`。第一次僅因另一runner占用共用編譯輸出而CS2012，未執行；後續改為序列執行，原log保留，沒有重跑成功案例。
 
 Luna high新增測例，主代理核diff及原始TRX。此consumer本身唯讀回傳，零DB只能證本層隔離，不能代替後續正式發布／持久化／通知完整流程；壞mode也不能冒充守門來源失聯。因此E05-T01仍開，沿用原UI與guard證據，僅補此必要缺口，不修改產品或擴張守門fail-open節流的權限語意。
+
+### 8.35 期限修正後的乾淨成品
+
+只因正式成品輸入已變更而重新publish一次乾淨`faeb7bca4e125664b17cd72bd3a9b979669af2cb`；不是重跑b2b82708。Release publish及獨立DLL metadata verifier通過，來源指紋`f1fb3f697b17cca4c10fce83036489e8ee2191e6e3f8691b8eecb61670e4ec11`；Web SHA `18992d57b9536ce875ccca2f83ddc4456afc046fb9fda9c5416d3dca9853f9d2`／MVID `7896ed9d-0ecc-41bd-918c-bd42faa35576`，Core SHA `e80b6031f890ddfe02804f7e47026f8ab0ae8e26b68bc3d5e3e97026b57e4950`／MVID `91c70d88-66b1-4072-872d-a8cfbee06901`。既有nullable警告保留。
+
+owned runtime `a3842164129848259043ab52ca9b88d4`由原有約1.1MiB合成資料複製啟動，正常登入及local-evidence回傳的已載入Web/Core SHA、MVID、clean commit逐一比對publish；runtime與來源assets hash相同`ba5f1ab5da0c9041faf95f4b8ebfd6980faa618671443ca8d5eb72f07d2b9722`。本候選錯提交、偽MVID、混版在程序啟動前拒絕，ProductProcessesStarted=false；未改preview／舊尾碼沿用§8.25。原始manifest、publish log、`build-runtime-result.json`及`build-fence.log`在`work/round54/acceptance-faeb7bca/`。E01兩項完成，不代表整輪通過。
+
+### 8.36 診斷逐欄對照與設定修訂漂移
+
+先以目前正常API取得本機匯出，再透過PRTG設定及monitoring estimate→save入口保存自有loopback來源、停用狀態、1host／3sensor範圍、UTC／en-US／ymd-24及明示raw／analysis UTC基準。再次取得本機匯出6063bytes，確認saved-explicit-authority、格式／時區／culture及指紋如實投影，settings revision由`0cfaa11c2b414862a662a3bcfcfcfe67`變`ccd2ba0a3cf1409aa9fbe86f64fe711d`；qualified profiles=0、status=unknown、evidence_ready=false，沒有來源請求。舊實際匯出以新修訂offline核對為exit1 SettingsRevisionMismatch；新實際匯出以同版／新修訂為exit2 INCOMPLETE。未偽造文件修訂、未重新跑取消／逾時或瀏覽器下載。
+
+| 欄位／下一端 | 實際來源與裁定 |
+|---|---|
+| build／settings | 執行中identity與目前保存修訂；§8.35及本次新舊檔拒絕鏈，不接受編輯manifest的自我宣告 |
+| timezone／message authority | policy及SharedAuthoritySnapshot；本次正例不再永遠unknown，但saved operator input未當成remote/native時間確認；E03正式讀側另核profile／proof |
+| scope／readiness | collector有界policy、SQL數量及最多100個profile樣本；1host／3sensor、qualified=0及sampled-profile-qualification-incomplete，不宣稱完整範圍就緒 |
+| guard | override與mirror相交數量；0是已觀察設定數，不是「守門健康」；正式guard/admission另核來源，不由此診斷授權 |
+| traffic／其他來源樣本 | 前次timeout與此次local-only各明示source-observations-unavailable／not-started；missing不是宣稱不支援該來源 |
+| NetIQ | 昨日receipt ledger與daily parent分開SQL核；0筆及no-eligible-netiq-parent是已觀察空結果，不將receipt成功直接算合格父 |
+| AI | local-only不呼叫AI為not-probed；full timeout前次為not-configured，成本not-observed；不藉診斷啟動正式AI分析 |
+
+主代理直接查collector、CaptureMessageTimeEvidence、compatibility serializer與正式consumer邊界；診斷JSON不被讀入正式風險權威。§8.26、30、32及本節共同覆蓋E04兩項的操作／格式契約，不替代E03、E08來源資格與業務工作流。原始產物`{local-evidence,saved-authority-local-evidence,projection-result}.json`、offline logs及harness在§8.35同目錄；第一次harness誤期望authority_status=configured，查碼確認正式值為saved-explicit-authority，只重核同一已保存產物的剩餘斷言，沒有重送設定／來源操作。原始失敗log保留。
+
+owned Web／source已停止，原小型來源DB及key hash仍與啟動前相同，clone保留供重用。原27項現4完成／23待驗，§4.12的程式可擴展性覆核仍待逐段完成，不宣稱正式效能量測。
