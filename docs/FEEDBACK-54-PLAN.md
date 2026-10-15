@@ -1,4 +1,4 @@
-﻿# 第 54 輪規劃：PRTG 剩餘實作與完整驗收
+# 第 54 輪規劃：PRTG 剩餘實作與完整驗收
 
 > 狀態（2026-10-15）：實作完整性已核對，目前逐項驗收；原27項已有E01-T01／T02完成，仍開25項，逐項裁定見§8.26。使用者已授權逐段完成並驗證後commit／push；只做必要小範圍驗證，沿用有效證據，不執行大規模大量資料測試，不得已須先提出方案討論。本輪未宣告整體驗收通過。
 > 來源：2026-10-13 使用者明確要求將第53輪尚未實作項目移入下一輪，先收尾已實作部分。此為範圍移交，不代表原目標、容量、實用性或驗收已通過。
@@ -126,8 +126,8 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 
 ### 4.3 E：先安全續跑，再正常全量準備
 
-- E1以自有最小資料在DB marker、manifest、checkpoint各寫入界線注入中斷，核對可重入恢復、已提交前綴、mapping竄改與大型log有界讀取。已核對legacy adoption仍`File.ReadAllText`，且marker／manifest／checkpoint分次寫入；不宣稱已有現場毀損。
-- E1完成後才能續跑既有完整目標。41,140,900筆是移交文件記錄的暫停水位，本次未重開資料庫核實；先驗manifest、checkpoint、pending batch與tool identity，再以原root續至64,800,000，不修改checkpoint或縮分母。故障反例不得使用該既有副本。
+- E1以自有最小資料在DB marker、manifest、checkpoint各寫入界線注入中斷，核對可重入恢復、已提交前綴、mapping竄改與log有界讀取。legacy adoption現已使用`ReadLastProgressLine`逐行有界讀取，分次寫入的恢復接線及有效證據見§2.2與§8；不再列為待實作。
+- 完整64,800,000筆目標仍屬G批次未驗收項。41,140,900筆是移交文件記錄的暫停水位，該既有副本依使用者限制禁止開啟或修改；本輪授權不包含續跑。後續若確有必要，須先討論資源與執行方案；目前僅重用已獲授權的小型資料，不再次seed固定結構，不修改checkpoint或縮分母。
 - E2從完整receipt與catalog核對進入public settings／pilot／binding／qualification入口；服務ownership須綁PID、start identity、assembly、exact command tokens、runtime DataRoot／provider、descriptor hash及reparse祖先。
 - 驗收foreign listener、舊revision、pilot拒絕／過期、部分binding／job、720h／每顆一次attempt；合成contract與50顆功能證據不代替15,000顆實跑。E1、E2各在相依完整且驗證後提交，完整負載結果由G裁定。
 
@@ -622,3 +622,25 @@ E01-T01對此正式程式成品完成；E01-T02及其他來源、操作、容量
 測試決策結束條件：已補上述必要缺口，未重跑相同程式的有效集合；沒有新production缺陷就不為製造修正而改碼。其餘25項的下一步已具體列明；大母體項仍須先討論合適資源與可行方案，小範圍操作項仍維持原契約待驗，不被改稱不可能或排除。工具本身沒有受保護路徑denylist，故任何generator/capacity/highwater命令均不得指向既定受保護副本；本次沒有呼叫這些資料工具。測試站保留小資料供後續重用，收尾停止owned Web/來源行程。
 
 清單驗證只針對本次新增狀態：validator逐一核原27個ID唯一且完整、已接受項須有證據/範圍/重開條件、pending須有明確缺口，並與PLAN checkbox一致。正常清單通過；兩個純JSON反例「重複ID」與「未勾PLAN卻標accepted」均依預期拒絕，零DB/HTTP/產品測試，receipt `work/round54/acceptance-todo-review/result.json`。既有22AC/10U/6Q/222case/53gap分母及aggregate flags不變。owned fixture `4f36b9ed6fc24ad896117a4702de4e5c` 已停止，來源DB/key最後再次hash核對不變，保留clone供重用。
+
+
+### 8.27 收尾體檢範圍與文件同步（2026-10-15）
+
+本次從原始起點 `a69fedd7` 回查至 `d4304a9d`，共48個提交、220個變更檔案，包含後期修正，不以最後一個commit取代整輪範圍。遠端dev仍是起點，feature遠端與該基準一致；未追蹤工作證據、環境及大型資料均保留未提交。使用者最新授權為「沒問題才整合dev並刪分支」，已取代先前禁止自行整合的授權界線，但不等於取消下列驗收條件。
+
+| Phase／批次 | 提交及實際接線核對 | 收尾判定 |
+|---|---|---|
+| A／A2 | 規劃30807f82～a7f2f286、preflight f25cadd3、清單71eea7d8、角色df66dcf5、最終逐項d4304a9d；validator／launcher／recorder相互銜接 | 工具與清單已接線；全角色操作待驗 |
+| B | 時間格式、raw分離、finding／mail持久化從7e49c4a3、13e592c4至38c4b902、f8c97b84、cfa062e9；對照§8.13～23的修正串 | 功能及局部證據存在，完整跨來源／通知操作待驗 |
+| C | 620ee7f4及後續disk/readset修正，正常核驗服務傳source contract並重核世代 | 正常入口小型Verified證據存在；完整來源資格待驗 |
+| D | 45fb7c14、0dec7085、f23a2e53及efbd4f28～24a57854、7feabc96、dd7babbc、86be5386與後續bounded修正；讀取到mutation／consumer均核對 | 共享authority歧義欄位另發現修正缺口，不能只憑舊通過紀錄收尾 |
+| E | 38e9ca74生成恢復、03b65d1d runtime ownership、cd062561正常HTTP準備 | 工具已交付；descriptor漂移防護另修，完整母體未驗 |
+| F／回退 | 8ee07fd3 purge、7a80b185啟動防護、49f7d878差額、0dac20c7郵件hold、24850cf3拒絕、df66dcf5角色及cfa062e9介面 | purge交易／撤權接線存在；回退完整性及Windows reparse另修，完整操作仍開 |
+| G | f25cadd3僅資源預檢工具；沒有可宣告共同負載／恢復通過的提交 | 未完成，不能用工具存在或小樣本推算 |
+| H | e9aa0569／aa304fa4成品子項、d4304a9d逐項核對 | 父驗收仍受E03～09相依阻擋，尚不可正式交付 |
+
+主代理直接覆核交易柵欄、授權、訊息解析／持久化、修復與schema／現況文件；三個 `gpt-6-luna high` 分查Core、Web／mail及工具，其摘要只作線索。收尾發現回退quick_check回傳未檢查、Windows junction防線、descriptor逐次漂移及shared authority重複欄位四項，另段修正並記前後反例。清除設定競爭疑點未成立：RunBatch對scope相依blob在交易內鎖定，允許舊批先提交、設定後提交、下批停止，符合§4.9安全點契約；本人進度仍須當前讀取權，不以撤Maintain為由擴張權限。
+
+文件整理沿用現有PLAN／規格，不另建重複報告或搬入archive。PRTG-SPEC與WEB-SPEC回收「已接線卻仍待實作」的日期／磁碟／owned入口描述；角色工具README移除過期planning-only／validator未實作說法；DB-SPEC補清除表、索引、交易及訊息時間欄位，保留完整容量／恢復未驗限制。修正§4.3舊續跑指示，受保護大型副本禁止開啟或修改。11份本輪變更Markdown本地連結核對無缺檔（archive不讀），diff whitespace核對通過；文件修改不重跑產品測試。
+
+skill評估：沿用project-closeout、project-doc-hygiene、subagent-verification-policy及delegated-implementation；現有規則已要求重用有效證據、主代理獨立覆核、反例及實際consumer驗證，本次無需新增流程或改寫共用skill。不可為了完成整合移除25項必要驗收。歷史主代理實際模型型號無完整可信紀錄，且Luna也參與過實作；本次不冒稱「不同於全部實作者」的獨立換模型背書。修正由Luna high實作、主代理查碼及核驗的範圍另記，技能要求的整輪獨立體檢資格尚未成立。

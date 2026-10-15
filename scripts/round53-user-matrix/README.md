@@ -110,9 +110,9 @@ For U53-08, through the normal Runs controls, capture NetIQ success/zero events,
 
 `Test-ControlledSources.ps1` makes actual HTTP requests to verify wrong IDs and filter intersections return no sensors, pagination selects the expected row, and all three resource IDs preserve primary-channel/value/time coherence across sensors, channels, property XML, historic XML, and historic JSON. It also checks malformed history times fail, a current one-hour window returns one row, and a past window returns none. It then verifies 12 risk events plus one synthetic audit-clear event while PRTG requests succeed in that same mode. All source records remain synthetic and loopback-only. These protocol checks do not set up a PRTG binding, provide timezone or other time-basis authority, create a qualification proof/job/outcome, write application data, establish two completed analysis hours, or provide 28-day value history.
 
-## Round 54 review additions and maintenance roles (planned only)
+## Round 54 review additions and maintenance roles
 
-The original six roles, 22 AC, 10 journeys, six Q, seven source scenarios and 222 fixed rule cases remain. The 53 inherited uncovered entries are a baseline, not a maximum. `coverage-inventory.json.round54ReviewAdditions` adds R54-01 through R54-08 and linked C54-01 through C54-05 contract corrections, each with original TODO IDs, AC/journey links, required checks and pending evidence. The authoritative behavior is in `docs/FEEDBACK-54-PLAN.md` §§4.6–4.8. No new role is provisioned and no validator/launcher/recorder is implemented by this planning update. Existing consistency scripts cover only their existing schema checks; supplementary checks must be implemented in A2 before claiming the new matrix is executable.
+The original six roles, 22 AC, 10 journeys, six Q, seven source scenarios and 222 fixed rule cases remain. The 53 inherited uncovered entries are a baseline, not a maximum. `coverage-inventory.json.round54ReviewAdditions` adds R54-01 through R54-08 and linked C54-01 through C54-05 contract corrections, each with original TODO IDs, AC/journey links, required checks and pending evidence. The authoritative behavior is in `docs/FEEDBACK-54-PLAN.md` §§4.6–4.8. No new formal role is added. A2 validator, launcher and recorder support is implemented as described below; executable fixtures and schema consistency do not establish complete role acceptance.
 
 Use the current Round 54 frozen clean build and exact expected commit, matching Web/Core/static assets and owned fixture/environment hashes. Do not select a Round 53 build merely because the directory/schema retains its historical name. Reuse historical evidence only after verifying unchanged code/configuration/environment and the exact covered subset. No external site or subjective user confirmation is required.
 
@@ -136,7 +136,7 @@ Each of the four real-login scenarios uses an isolated session; test direct APIs
 | R54-07 | A2 | Supplementary role identity and frozen Round 54 build/evidence |
 | R54-08 | A2 | Substage traceability and mandatory omission-repair loop |
 
-### Corrected contract boundaries (planning only)
+### Corrected contract boundaries
 
 Four maintenance scenarios are real-login acceptance: M54-rescue, M54-global, M54-readall and M54-nomaintain. `maintenanceRoleMatrix.syntheticDefenseCases` retains M54-scoped solely as a synthetic authorization-component defense. Ordinary Maintain currently implies ViewAll; do not provision this impossible account, inject claims for browser acceptance, add a role or expand the authorization model. The original six-role matrix is unchanged.
 
@@ -144,9 +144,9 @@ C54-01 maps to R54-07/A2; C54-02 to R54-06/D1; C54-03 and C54-05 to R54-01/F2; C
 
 Manual purge and both automatic callers (PrtgDailyPipeline, PrtgStructureSyncRunner) share ownership and durable partial-progress protection. Automatic purge binds the successful sync generation and keeps existing scope/shrink guards, without requiring manual preview. A manual preview lasts five minutes from server creation and binds actor/permission version, source/mapping/keep-set and candidate data boundary. Duplicate accepted confirmation returns the same operation. Permission loss before acceptance means zero deletion; during execution it stops at the next safe point before any new batch. Resume needs current Maintain and unchanged accepted scope/generation; otherwise obtain a new preview and operation linked to previous partial results. Never silently add newly eligible data to a prior approval.
 
-A2 freezes an exact previous artifact and paired pre-upgrade DB/key/config backup for B2 rollback. Setting restoration is distinct from binary rollback. Same-data downgrade is allowed only with explicit compatibility evidence; otherwise reject it and use paired restore. Verify cases/replies/jobs and mail dedupe, account for changes after the backup and never blindly resend externally accepted mail after restore. PLAN §4.9 specifies authoritative details. No feature, fixture or validation script is implemented by this update.
+A2 freezes an exact previous artifact and paired pre-upgrade DB/key/config backup for B2 rollback. Setting restoration is distinct from binary rollback. Same-data downgrade is allowed only with explicit compatibility evidence; otherwise reject it and use paired restore. Verify cases/replies/jobs and mail dedupe, account for changes after the backup and never blindly resend externally accepted mail after restore. PLAN §4.9 specifies authoritative details. The paired restore tool is implemented in `../round54/rollback`; its README defines supported targets and refusal gates. Complete recovery acceptance remains pending.
 
-### Execution refinements linked to existing C54 contracts (planned only)
+### Execution refinements linked to existing C54 contracts
 
 | Refinement | Contracts | Stages | Required evidence |
 |---|---|---|---|
@@ -155,7 +155,7 @@ A2 freezes an exact previous artifact and paired pre-upgrade DB/key/config backu
 | C54-03-T | C54-03, C54-05 | F2, G3 | Atomic or equivalently recoverable delete/progress; commit-unknown restart; precise own-deleted versus otherwise-removed versus remaining sets |
 | C54-04-B | C54-04 | A2, B2, G3, H1, H2 | Executable pre-start rollback gate, all side effects isolated until compatibility/delta/dedupe checks pass, final purge-state rollback included |
 
-The canonical pending checks and evidence slots are `coverage-inventory.json.round54ExecutionRefinements`; PLAN §4.10 defines the contracts. The maintenance matrix adds live-authority acceptance metadata, not accounts or a new authorization model. Existing validators do not yet validate these new fields; A2 implements that support later. These additions do not implement purge, rollback, fixtures or validators.
+The canonical pending checks and evidence slots are `coverage-inventory.json.round54ExecutionRefinements`; PLAN §4.10 defines the contracts. The maintenance matrix adds live-authority acceptance metadata, not accounts or a new authorization model. A2 validates these fields and records per-check evidence as described below. Purge and rollback implementation evidence is tracked in PLAN; pending acceptance is not an implementation backlog.
 
 ### Round 54 A2 contract evidence
 

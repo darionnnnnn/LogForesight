@@ -3144,6 +3144,12 @@ Maintain 的 CPU／記憶體試算及正式模式依同版不透明一次性授�
 NetIQ 新嘗試的耐久回執與父列資格在同一交易更新，排程總表、日常補跑預覽與 PRTG 正式補強因此讀取一致狀態。空／截斷重試保留既有分析且顯示警告；只有完整成功分析重建才能恢復合格父列。停止不阻止後續只補跑失敗或未執行。NetIQ 成功仍明列 PRTG、AI、案件與郵件各自的待補原因，不把來源成功等同完整工作流完成。
 
 
-### 2026-10-13 資格操作與隔離工具限制
+### 資格操作與隔離工具限制
 
-PRTG來源停用或資格契約不可讀時，start／resume／pilot按鈕停用並提示來源前置條件；仍可唯讀載入契約與現有作業，取消依原作業狀態授權。隔離QualificationMatrix的Start／Resume／Matrix目前安全拒絕，因尚無actual listener／process／runtime DB擁有權核對；loopback或receipt-shaped JSON不能授權寫入。補齊可用owned入口列 [第54輪 PLAN](FEEDBACK-54-PLAN.md) D54-02；正常管理者production資格API並未因此停用。
+PRTG來源停用或資格契約不可讀時，start／resume／pilot按鈕停用並提示來源前置條件；仍可唯讀載入契約與現有作業，取消依原作業狀態授權。隔離資格準備現由 `scripts/prtg-workload/qualification-preparation/Prepare-Qualification.ps1` 提供 Start／Resume／Check，透過 loopback Maintain 端點 `api/admin/prtg-runtime-ownership/status` 核對 listener／PID／啟動身分／組件／DataRoot／provider／descriptor；單憑 loopback 或 receipt-shaped JSON 仍不能授權寫入。舊 QualificationMatrix 不因此取得新授權，完整母體準備尚未驗收，詳 [第54輪 PLAN](FEEDBACK-54-PLAN.md)。
+
+### PRTG 時間基準、資格修復及清除作業
+
+PRTG 維護頁的時間基準入口沿用 Maintain；讀取與修復業務資格文件另外要求 ViewAll，單主機文件仍核可見集合。serverAdmin 僅取得必要統計。來源啟用中禁止修改時間基準；保存核設定版本，過期後須明確重讀。修復使用既有頁內確認及文件 CAS；文字修補撤回該文件正式資格，不能用修好 JSON 代替一般 probe。日期及資格語意以 PRTG-SPEC 為單一規格來源。
+
+清除 preview 五分鐘內由原操作者確認，重送已接受識別只讀回同一作業；`api/admin/settings/prtg-scope-purge/jobs/{jobId}` 提供本人且仍具讀取權者的耐久進度，resume 每批重驗目前 Maintain、權限版本及 scope。撤權後不新增批次；已開始的原子提交到安全點，保留已刪／其他流程已刪／剩餘計數及停止原因。沒有讀取能力或停用的帳號不因曾建立作業而取得額外權限。

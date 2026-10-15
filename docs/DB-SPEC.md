@@ -40,7 +40,7 @@
 `lf_issue_handling`、`lf_issue_cases`、`lf_work_orders`、`lf_work_order_events`、
 `lf_record_handling`、`lf_issue_first_seen`、`lf_risky_events`、`lf_permission_changes`、
 `lf_reports`、`lf_prtg_devices`、`lf_prtg_sensors`、`lf_prtg_state_changes`、
-`lf_prtg_values`、`lf_prtg_sampled_batches`、`lf_prtg_host_map`、`lf_prtg_manual_map`、`lf_prtg_ip_excludes`。
+`lf_prtg_values`、`lf_prtg_scope_purge_jobs`、`lf_prtg_sampled_batches`、`lf_prtg_host_map`、`lf_prtg_manual_map`、`lf_prtg_ip_excludes`。
 
 ### 主機與授權（Web「只看自己負責的主機」的基礎）
 
@@ -892,3 +892,24 @@ RetentionPruner 按 key 的来源主機日與 RetentionDays 清理，不依 Crea
 NetIQ 回執與既存父紀錄的資格失效由 RecordBatch 在同一 Serializable 交易提交，整筆交易在 execution strategy 內以新 context 重試。只處理已接受的新嘗試；500 個鍵分批回執，父列以 RecordId keyset 每頁 16 筆投影 scalar metadata，既存 ContentJson／OriginalRiskContentJson 不由 reader 回傳，SQLite json_set／SQL Server JSON_MODIFY 在資料庫內更新兩個嘗試欄位並以 WriteRevision 守門，任一後續 chunk 失敗回滾全部先前寫入。success 回執不修改父資格，必須由成功完整分析替換父列；stopped 回執將父資格標為 failed，沿用 MissingOnly 重試判斷。只更動 LatestNetiqAttemptStatus／AtUtc 與 WriteRevision，保留既有風險、案件與人工處置。
 
 更新前核對有效 JSON object、0／1／2 的 numeric LogSource 及來源／嘗試欄位無重複鍵；損壞或歧義時整輪回滾。EF Raw SQL 的 JSON literal 大括號先作 composite-format escaping，status／UTC O-format 時間及 key／revision 均用參數。保留未知欄位及原始風險 payload；SQLite engine 仍會在行程內解析完整 JSON，因此此投影不能替代 N6 固定全負載的 ≤1GiB 額外記憶體驗收。
+
+
+## PRTG 範圍清除與授權持久化（第54輪）
+
+`lf_prtg_scope_purge_jobs` 由既有 `LfDbContext`／`SchemaUpgrader` 建立與冪等補欄，SQLite／SQL Server 保持相同語意。欄位如下；字串及UTC日期依現有 provider 映射，所有計數／watermark／cursor／revision 為64位整數。
+
+| 欄位 | 用途 |
+|---|---|
+| `job_id`（PK，36） | 耐久預覽／作業識別 |
+| `actor_id`、`parent_job_id`（可空，100）、`previous_job_id`（可空，36）、`source`（24） | 操作者、自動父作業、先前部分作業與入口種類 |
+| `status`（24）、`active_owner`（可空，24）、`lease_expires_at_utc`（可空） | 狀態、跨程序唯一執行槽與租約 |
+| `keep_set_json`、`candidate_sensor_ids_json`、`scope_fence_json`（可空）、`scope_fingerprint`（128） | 固定保留／候選集合及來源版本柵欄 |
+| `accepted_at_utc`、`updated_at_utc` | 伺服器建立／接受基準及最後更新時間 |
+| `values_watermark`、`state_changes_watermark`、`values_cursor`、`state_changes_cursor` | 接受邊界與分批游標，新資料不加入舊確認 |
+| `candidate_values`、`candidate_state_changes`、`deleted_values`、`deleted_state_changes` | 候選及本作業已刪計數 |
+| `remaining_values`、`remaining_state_changes`、`otherwise_removed_values`、`otherwise_removed_state_changes`、`counts_reconciled`（bool） | 剩餘、其他流程刪除及核對狀態 |
+| `monitored_devices`（int）、`permission_revision`、`auth_fingerprint`（可空，128）、`stop_reason`（可空）、`revision` | 基準、授權／救援設定、原因及EF併發權杖 |
+
+`UX_lf_prtg_scope_purge_active_owner` 對非NULL執行槽唯一，`IX_lf_prtg_scope_purge_status` 索引狀態／更新時間；values與state_changes各新增 `(sensor_objid,id)` 清除索引。scope gate使用既有 `prtg_scope_revision` blob；每批的刪除、游標、進度及完成時基準同交易提交，並鎖定範圍／權限相依版本。不能以租約時間或記憶體 IsRunning 取代持久所有權。
+
+`lf_top_issues.prtg_message_time_fingerprint` 為可空文字，與分析紀錄、案件／交辦證據保存的訊息時間指紋一致；舊NULL不回填猜測值。`mail_notify_state` 的已接受貢獻、保留舊回執及每收件者 reservation 仍存既有 blob，並非新SQL表；SMTP明確拒絕才釋放，接受或結果未知保留去重／等待狀態。回退必須使用成套DB／key／設定與差額核對，工具目前僅支援明列SQLite目標，未驗完整SQL Server恢復。
