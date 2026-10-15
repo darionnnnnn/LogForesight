@@ -7,6 +7,7 @@ using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
+using LogForesight.Web.Configuration;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -227,7 +228,21 @@ public class PrtgScopeProtectionTests : IDisposable
     }
 
     private PrtgFetchService FetchService(PrtgClient client, IRunConsole console) =>
-        new(client, Store, new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+        new(client, Store, new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
+            new Dictionary<string, string>(), messageTimeAuthorityProvider: () =>
+            (new PrtgMonitoringPolicy
+            {
+                CoreSystemId = "scope-protection-test-core",
+                SourceGeneration = "scope-protection-test-source",
+                EndpointHint = EfPrtgObservationStore.SourceHintFor("https://prtg.example.com"),
+                ValidFrom = DateTimeOffset.UtcNow.AddDays(-1),
+                HostIds = [1],
+                SensorIds = [201],
+                SourceTimeZoneId = TimeZoneInfo.Local.Id,
+                SourceCultureName = "en-US",
+                MessageDateFormat = PrtgMessageDateTimeParser.Ymd24,
+                MessageTimeAuthorityRevision = 1
+            }, "https://prtg.example.com"));
 
     private void SeedOldSensors(params (long Objid, long Device)[] sensors) =>
         Store.UpsertSensors(sensors.Select(s => new PrtgSensorRow
@@ -343,7 +358,8 @@ public class PrtgScopeProtectionTests : IDisposable
         var before = Counts();
         var console = new TestConsole();
 
-        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: protection != "裝置鏡像未更新", console);
+        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: protection != "裝置鏡像未更新",
+            verifiedParentJobId: "scope-test-parent", console, CancellationToken.None, () => true);
 
         Assert.False(purged);
         Assert.Equal(before, Counts());
@@ -365,7 +381,8 @@ public class PrtgScopeProtectionTests : IDisposable
         var scope = Compute(Settings(guardEnabled: false), hostIds: null);
         SetBaseline(scope.DeviceObjids.Count + 50); // 恰等於門檻不擋
 
-        Assert.True(PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true, new TestConsole()));
+        Assert.True(PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true,
+            "scope-test-parent", new TestConsole(), CancellationToken.None, () => true));
     }
 
     [Fact]
@@ -378,7 +395,8 @@ public class PrtgScopeProtectionTests : IDisposable
         Store.ScopeBaseline().Update(b => b.BlockedReason = "舊的擋下原因");
         var startedAt = DateTime.Now;
 
-        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true, new TestConsole());
+        var purged = PrtgScopePurge.RunAfterStructureSync(Store, scope, devicesRefreshed: true,
+            "scope-test-parent", new TestConsole(), CancellationToken.None, () => true);
 
         Assert.True(purged);
         Assert.Equal(new long[] { 201, 201, 801 }, Store.GetValues(From, To).Select(v => v.SensorObjid).OrderBy(x => x).ToArray());
@@ -406,9 +424,19 @@ public class PrtgScopeProtectionTests : IDisposable
         var store = Store;
 
         var status = await PrtgStructureSyncRunner.RunAsync(service, store, _hosts, new PrtgAddressResolver(), 2, console,
-            CancellationToken.None, new PrtgMirrorGuardSource(store), settings, Sentinels);
+            CancellationToken.None, new PrtgMirrorGuardSource(store), settings, Sentinels,
+            verifiedParentJobId: "sync-test-parent", parentOwnsRun: id => id == "sync-test-parent");
 
         Assert.True(status.Success, status.ErrorMessage);
+        using var purgeContext = _backend.CreateContext();
+        var purgeJobs = purgeContext.PrtgScopePurgeJobs.Where(x => x.ParentJobId == "sync-test-parent").ToList();
+        Assert.True(purgeJobs.Count == 1, string.Join(Environment.NewLine, console.Lines));
+        var purge = purgeJobs[0];
+        var capturedSensorIds = System.Text.Json.JsonSerializer.Deserialize<HashSet<long>>(purge.CandidateSensorIdsJson)!;
+        Assert.Contains(901L, capturedSensorIds);
+        Assert.Contains(777L, capturedSensorIds);
+        Assert.Equal(3, purge.DeletedValues);
+        Assert.Equal(2, purge.DeletedStateChanges);
         Assert.DoesNotContain(901L, Store.GetValues(From, To).Select(v => v.SensorObjid));
         Assert.DoesNotContain(777L, Store.GetValues(From, To).Select(v => v.SensorObjid));
         Assert.Contains(201L, Store.GetValues(From, To).Select(v => v.SensorObjid));
@@ -416,9 +444,32 @@ public class PrtgScopeProtectionTests : IDisposable
         Assert.Contains(console.Lines, l => l.StartsWith("[範圍外清除] 已清除"));
     }
 
+    [Fact]
+    public void 自動清除_父作業取消後暫停並保留精確已提交進度()
+    {
+        SeedMirror(_hostA);
+        SeedData();
+        var scope = Compute(Settings(guardEnabled: false), hostIds: null);
+        SetBaseline(scope.DeviceObjids.Count);
+        var before = Counts();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => PrtgScopePurge.RunAfterStructureSync(Store, scope,
+            devicesRefreshed: true, "cancelled-parent", new TestConsole(), cancellation.Token, () => true));
+
+        using var context = _backend.CreateContext();
+        var job = context.PrtgScopePurgeJobs.Single(x => x.ParentJobId == "cancelled-parent");
+        Assert.Equal("paused", job.Status);
+        Assert.Equal("parent-cancelled", job.StopReason);
+        Assert.Null(job.ActiveOwner);
+        Assert.Equal(before, Counts());
+    }
+
     // ── 預覽與確認 ──
 
-    private (SettingsController Controller, RecordingAuditService Audit, SchedulerRunState Scheduler) NewController()
+    private (SettingsController Controller, PrtgScopePurgeJobsController JobsController,
+        RecordingAuditService Audit, SchedulerRunState Scheduler) NewController()
     {
         var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
         settingsStore.Update(s =>
@@ -431,9 +482,19 @@ public class PrtgScopeProtectionTests : IDisposable
             _hosts, scheduler, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
             new PrtgStructureSyncService(settingsStore, _backend, new PrtgStructureSyncRunState(), scheduler, _hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
         var audit = new RecordingAuditService();
+        var users = new UserStore(_backend.Blob("purge-test-users"), _backend.Blob("purge-test-user-last-login"));
+        var groups = new UserGroupStore(_backend.Blob("purge-test-user-groups"));
+        var adminGroup = groups.Upsert(new UserGroup { GroupName = "purge-test-admin", Role = UserRole.Admin, Active = true });
+        var user = users.Upsert(new WebUser { Account = "purge-test-admin", DisplayName = "Purge Test Admin", Active = true });
+        users.SetGroups(user.UserId, new[] { adminGroup.GroupId });
+        var currentUser = FakeCurrentUser.ForUser(user.UserId);
+        var purgeAuthorization = new PrtgScopePurgeAuthorizationService(users,
+            new UserCapabilityResolver(groups, _hosts), currentUser, new WebAppSettings(), _backend);
         var controller = new SettingsController(
             new StubSettingsService(), new AiUsageStore(_backend.Blob("ai_usage")), audit,
-            prtgBackfill: backfill, backend: _backend, hosts: _hosts);
+            prtgBackfill: backfill, backend: _backend, hosts: _hosts,
+            currentUser: currentUser, scopePurgeAuthorization: purgeAuthorization);
+        var jobsController = new PrtgScopePurgeJobsController(_backend, currentUser, purgeAuthorization, audit, backfill);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -445,7 +506,99 @@ public class PrtgScopeProtectionTests : IDisposable
                 }, "TestAuth"))
             }
         };
-        return (controller, audit, scheduler);
+        return (controller, jobsController, audit, scheduler);
+    }
+
+    private PrtgScopePurgeJobsController NewPurgeJobsController(UserRole role,
+        out UserStore users, out UserGroupStore groups, out FakeCurrentUser currentUser, out long userId)
+    {
+        groups = new UserGroupStore(_backend.Blob("purge-jobs-test-groups"));
+        users = new UserStore(_backend.Blob("purge-jobs-test-users"), _backend.Blob("purge-jobs-test-user-last-login"));
+        var group = groups.Upsert(new UserGroup { GroupName = "purge-jobs-test", Role = role, Active = true });
+        var user = users.Upsert(new WebUser { Account = "purge-jobs-test", DisplayName = "Purge Jobs Test", Active = true });
+        users.SetGroups(user.UserId, new[] { group.GroupId });
+        userId = user.UserId;
+        currentUser = FakeCurrentUser.ForUser(userId, Capability.Maintain);
+        var authorization = new PrtgScopePurgeAuthorizationService(users,
+            new UserCapabilityResolver(groups, _hosts), currentUser, new WebAppSettings(), _backend);
+        return new PrtgScopePurgeJobsController(_backend, currentUser, authorization, new RecordingAuditService());
+    }
+
+    [Fact]
+    public void Server_admin_id_zero_cannot_read_confirm_or_resume_automatic_child_job()
+    {
+        var automatic = Store.ScopePurgeJobs().CreateAutomatic("server-admin-collision-parent", "scope",
+            new HashSet<long> { 1 }, 1, DateTimeOffset.UtcNow);
+        var users = new UserStore(_backend.Blob("automatic-route-users"), _backend.Blob("automatic-route-login"));
+        var groups = new UserGroupStore(_backend.Blob("automatic-route-groups"));
+        var serverAdmin = FakeCurrentUser.ServerAdmin();
+        var authorization = new PrtgScopePurgeAuthorizationService(users,
+            new UserCapabilityResolver(groups, _hosts), serverAdmin, new WebAppSettings(), _backend);
+        var controller = new PrtgScopePurgeJobsController(_backend, serverAdmin, authorization,
+            new RecordingAuditService());
+
+        Assert.Throws<DomainException>(() => controller.Get(automatic.JobId));
+        Assert.Throws<DomainException>(() => controller.Resume(automatic.JobId,
+            new PrtgScopePurgeResumeRequest { ExpectedRevision = automatic.Revision }, CancellationToken.None));
+        Assert.Throws<DomainException>(() => controller.Confirm(
+            new PrtgScopePurgeAcceptRequest { PreviewId = automatic.JobId }));
+    }
+
+    [Fact]
+    public void 清除作業讀取與續跑路由在撤銷Maintain後可讀並耐久暫停()
+    {
+        var controller = NewPurgeJobsController(UserRole.Admin, out var users, out var groups, out _, out var actorId);
+        var store = Store.ScopePurgeJobs();
+        var now = DateTimeOffset.UtcNow.AddMinutes(-6);
+        var preview = store.CreatePreview(actorId, 1, null, "scope-fingerprint", new HashSet<long> { 1 }, 1, now);
+        var accepted = store.Accept(preview.JobId, actorId, 1, null, "scope-fingerprint", now.AddMinutes(4));
+
+        // 管理員降為全域唯讀。進度仍可查，且下一批必須依目前群組權限停止。
+        var readOnlyGroup = groups.Upsert(new UserGroup { GroupName = "purge-jobs-readonly", Role = UserRole.Manager, Active = true });
+        users.SetGroups(actorId, new[] { readOnlyGroup.GroupId });
+        var replay = controller.Confirm(new PrtgScopePurgeAcceptRequest { PreviewId = preview.JobId }).Data!;
+        Assert.Equal(accepted.JobId, replay.JobId); // Expired/scope-changed unknown confirm remains a read-only replay after Maintain revocation.
+        Assert.Equal("accepted", replay.Status);
+        Assert.Equal("accepted", controller.Get(accepted.JobId).Data!.Status);
+        var after = controller.Resume(accepted.JobId,
+            new PrtgScopePurgeResumeRequest { ExpectedRevision = accepted.Revision }, CancellationToken.None).Data!;
+
+        Assert.Equal("paused", after.Status);
+        Assert.Equal("permission-revoked", after.StopReason);
+        var persisted = store.Get(accepted.JobId)!;
+        Assert.Equal("paused", persisted.Status);
+        Assert.Null(persisted.ActiveOwner);
+        Assert.Null(persisted.LeaseExpiresAtUtc);
+    }
+
+    [Fact]
+    public void 清除作業progress路由不繼承SettingsController的Maintain類別篩選器()
+    {
+        var route = typeof(PrtgScopePurgeJobsController).GetCustomAttributes(typeof(RouteAttribute), inherit: true)
+            .Cast<RouteAttribute>().Single().Template;
+        Assert.Equal("api/admin/settings/prtg-scope-purge/jobs", route);
+        Assert.DoesNotContain(typeof(PrtgScopePurgeJobsController).GetCustomAttributes(inherit: true),
+            x => x.GetType().Name == "PermissionAttribute");
+        var confirm = typeof(PrtgScopePurgeJobsController).GetMethod(nameof(PrtgScopePurgeJobsController.Confirm))!;
+        Assert.Contains(confirm.GetCustomAttributes(typeof(HttpPostAttribute), inherit: true).Cast<HttpPostAttribute>(),
+            attribute => attribute.Template == "~/api/admin/settings/prtg-scope-purge/confirm");
+    }
+
+    [Fact]
+    public void 全域唯讀只能查回已接受確認不能接受preview()
+    {
+        var controller = NewPurgeJobsController(UserRole.Manager, out _, out _, out _, out var actorId);
+        SeedData();
+        var before = Counts();
+        var preview = Store.ScopePurgeJobs().CreatePreview(actorId, 1, null, "scope-fingerprint",
+            new HashSet<long> { 1 }, 1, DateTimeOffset.UtcNow);
+
+        var error = Assert.Throws<DomainException>(() => controller.Confirm(
+            new PrtgScopePurgeAcceptRequest { PreviewId = preview.JobId }));
+
+        Assert.Equal(ApiErrorCodes.Forbidden, error.Code);
+        Assert.Equal("preview", Store.ScopePurgeJobs().Get(preview.JobId)!.Status);
+        Assert.Equal(before, Counts());
     }
 
     [Fact]
@@ -453,11 +606,20 @@ public class PrtgScopeProtectionTests : IDisposable
     {
         SeedMirror(_hostA);
         SeedData();
-        var (controller, audit, _) = NewController();
+        var (controller, jobsController, audit, _) = NewController();
         var before = Counts();
 
         var preview = controller.PreviewPrtgScopePurge().Data!;
-        var result = controller.ConfirmPrtgScopePurge().Data!;
+        var accepted = jobsController.Confirm(new PrtgScopePurgeAcceptRequest { PreviewId = preview.PreviewId! }).Data!;
+        Assert.Equal("accepted", accepted.Status);
+        Assert.Equal(before, Counts()); // Accept only reserves the job; deletion is a separate resumable step.
+        var duplicate = jobsController.Confirm(new PrtgScopePurgeAcceptRequest { PreviewId = preview.PreviewId! }).Data!;
+        Assert.Equal(accepted.JobId, duplicate.JobId);
+        Assert.Equal(before, Counts()); // Replaying the accepted ID never starts a second delete.
+        var result = accepted;
+        while (result.Status is "accepted" or "running")
+            result = jobsController.Resume(result.JobId!, new PrtgScopePurgeResumeRequest { ExpectedRevision = result.Revision },
+                CancellationToken.None).Data!;
         var after = Counts();
 
         Assert.True(preview.Success, preview.ErrorMessage);
@@ -484,11 +646,13 @@ public class PrtgScopeProtectionTests : IDisposable
     {
         SeedMirror(_hostA);
         SeedData();
-        var (controller, _, scheduler) = NewController();
+        var (controller, jobsController, _, scheduler) = NewController();
         Assert.True(scheduler.TryBeginRun("manual", out _));
         var before = Counts();
 
-        var ex = Assert.Throws<DomainException>(() => controller.ConfirmPrtgScopePurge());
+        var preview = controller.PreviewPrtgScopePurge().Data!;
+        var ex = Assert.Throws<DomainException>(() => jobsController.Confirm(
+            new PrtgScopePurgeAcceptRequest { PreviewId = preview.PreviewId! }));
 
         Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
         Assert.Equal(before, Counts());

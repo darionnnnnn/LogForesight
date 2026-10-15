@@ -120,6 +120,9 @@ public class LfDbContext : DbContext
     public DbSet<PrtgTransferSessionRow> PrtgTransferSessions => Set<PrtgTransferSessionRow>();
     public DbSet<PrtgTransferChunkRow> PrtgTransferChunks => Set<PrtgTransferChunkRow>();
 
+    /// <summary>PRTG scope purge accepted jobs: singleton active-owner slot plus durable batch progress.</summary>
+    public DbSet<PrtgScopePurgeJobRow> PrtgScopePurgeJobs => Set<PrtgScopePurgeJobRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         var isSqlite = Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
@@ -628,6 +631,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
             e.HasIndex(x => new { x.SensorObjid, x.ChangedAt }).HasDatabaseName("IX_lf_prtg_state_ch_sensor");
+            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_state_purge_sensor_id");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_state_ch_created");
         });
 
@@ -648,7 +652,49 @@ public class LfDbContext : DbContext
             e.Property(x => x.TrustedProof).HasColumnName("trusted_proof");
 
             e.HasIndex(x => new { x.SensorObjid, x.PeriodStart }).IsUnique().HasDatabaseName("IX_lf_prtg_values_uniq");
+            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_values_purge_sensor_id");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_values_created");
+        });
+
+        b.Entity<PrtgScopePurgeJobRow>(e =>
+        {
+            e.ToTable("lf_prtg_scope_purge_jobs");
+            e.HasKey(x => x.JobId);
+            e.Property(x => x.JobId).HasColumnName("job_id").HasMaxLength(36);
+            e.Property(x => x.ActorId).HasColumnName("actor_id");
+            e.Property(x => x.ParentJobId).HasColumnName("parent_job_id").HasMaxLength(100);
+            e.Property(x => x.PreviousJobId).HasColumnName("previous_job_id").HasMaxLength(36);
+            e.Property(x => x.Source).HasColumnName("source").HasMaxLength(24);
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(24);
+            e.Property(x => x.ActiveOwner).HasColumnName("active_owner").HasMaxLength(24);
+            e.Property(x => x.LeaseExpiresAtUtc).HasColumnName("lease_expires_at_utc");
+            e.Property(x => x.KeepSetJson).HasColumnName("keep_set_json");
+            e.Property(x => x.CandidateSensorIdsJson).HasColumnName("candidate_sensor_ids_json");
+            e.Property(x => x.ScopeFenceJson).HasColumnName("scope_fence_json");
+            e.Property(x => x.ScopeFingerprint).HasColumnName("scope_fingerprint").HasMaxLength(128);
+            e.Property(x => x.AcceptedAtUtc).HasColumnName("accepted_at_utc");
+            e.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+            e.Property(x => x.ValuesWatermark).HasColumnName("values_watermark");
+            e.Property(x => x.StateChangesWatermark).HasColumnName("state_changes_watermark");
+            e.Property(x => x.ValuesCursor).HasColumnName("values_cursor");
+            e.Property(x => x.StateChangesCursor).HasColumnName("state_changes_cursor");
+            e.Property(x => x.CandidateValues).HasColumnName("candidate_values");
+            e.Property(x => x.CandidateStateChanges).HasColumnName("candidate_state_changes");
+            e.Property(x => x.DeletedValues).HasColumnName("deleted_values");
+            e.Property(x => x.DeletedStateChanges).HasColumnName("deleted_state_changes");
+            e.Property(x => x.RemainingValues).HasColumnName("remaining_values");
+            e.Property(x => x.RemainingStateChanges).HasColumnName("remaining_state_changes");
+            e.Property(x => x.OtherwiseRemovedValues).HasColumnName("otherwise_removed_values");
+            e.Property(x => x.OtherwiseRemovedStateChanges).HasColumnName("otherwise_removed_state_changes");
+            e.Property(x => x.CountsReconciled).HasColumnName("counts_reconciled");
+            e.Property(x => x.MonitoredDevices).HasColumnName("monitored_devices");
+            e.Property(x => x.PermissionRevision).HasColumnName("permission_revision");
+            e.Property(x => x.AuthFingerprint).HasColumnName("auth_fingerprint").HasMaxLength(128);
+            e.Property(x => x.StopReason).HasColumnName("stop_reason");
+            e.Property(x => x.Revision).HasColumnName("revision").IsConcurrencyToken();
+            e.HasIndex(x => new { x.Status, x.UpdatedAtUtc }).HasDatabaseName("IX_lf_prtg_scope_purge_status");
+            e.HasIndex(x => x.ActiveOwner).IsUnique().HasFilter("active_owner IS NOT NULL")
+                .HasDatabaseName("UX_lf_prtg_scope_purge_active_owner");
         });
 
         b.Entity<PrtgSampledBatchRow>(e =>
@@ -1184,6 +1230,44 @@ public class PrtgValueRow
     /// <summary>0 表示舊／診斷資料；只有明確 typed proof 可寫入版本 1。</summary>
     public int TrustVersion { get; set; }
     public string? TrustedProof { get; set; }
+}
+
+/// <summary>Durable scope purge acceptance and progress; each batch updates this row in the delete transaction.</summary>
+public class PrtgScopePurgeJobRow
+{
+    public string JobId { get; set; } = string.Empty;
+    public long ActorId { get; set; }
+    public string? ParentJobId { get; set; }
+    public string? PreviousJobId { get; set; }
+    public string Source { get; set; } = "manual";
+    public string Status { get; set; } = "accepted";
+    /// <summary>Non-null only while this job owns the global purge slot; a unique index enforces cross-process exclusion.</summary>
+    public string? ActiveOwner { get; set; }
+    public DateTime? LeaseExpiresAtUtc { get; set; }
+    public string KeepSetJson { get; set; } = "[]";
+    public string CandidateSensorIdsJson { get; set; } = "[]";
+    public string? ScopeFenceJson { get; set; }
+    public string ScopeFingerprint { get; set; } = string.Empty;
+    public DateTime AcceptedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+    public long ValuesWatermark { get; set; }
+    public long StateChangesWatermark { get; set; }
+    public long ValuesCursor { get; set; }
+    public long StateChangesCursor { get; set; }
+    public long CandidateValues { get; set; }
+    public long CandidateStateChanges { get; set; }
+    public long DeletedValues { get; set; }
+    public long DeletedStateChanges { get; set; }
+    public long RemainingValues { get; set; }
+    public long RemainingStateChanges { get; set; }
+    public long OtherwiseRemovedValues { get; set; }
+    public long OtherwiseRemovedStateChanges { get; set; }
+    public bool CountsReconciled { get; set; }
+    public int MonitoredDevices { get; set; }
+    public long PermissionRevision { get; set; }
+    public string? AuthFingerprint { get; set; }
+    public string? StopReason { get; set; }
+    public long Revision { get; set; }
 }
 
 /// <summary>PRTG sampled 整批寫入的冪等識別。↔ lf_prtg_sampled_batches</summary>

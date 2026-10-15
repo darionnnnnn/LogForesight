@@ -105,12 +105,33 @@ public sealed class EfPrtgStore
         return total;
     }
 
+    /// <summary>Writes scope-defining catalogue pages while holding the same database transaction as the purge-slot check.</summary>
+    private int BatchWriteScope<T>(IReadOnlyList<T> items, Func<LfDbContext, List<T>, int> writeBatch)
+    {
+        if (items == null || items.Count == 0) return 0;
+        var list = items as List<T> ?? items.ToList();
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            var total = 0;
+            for (var offset = 0; offset < list.Count; offset += UpsertBatchSize)
+            {
+                using var ctx = _contextFactory();
+                using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
+                total += writeBatch(ctx, list.GetRange(offset, Math.Min(UpsertBatchSize, list.Count - offset)));
+                tx.Commit();
+            }
+            return total;
+        });
+    }
+
     /// <summary>
     /// 快照整點列必須整批提交。若前 500 列已寫而後一批失敗，呼叫端會保留整份清單重試；
     /// 分批獨立提交會把前一批的 sampled coverage 再合併一次。
     /// </summary>
     private int BatchWriteAtomic<T>(IReadOnlyList<T> items, Func<LfDbContext, List<T>, int> writeBatch,
-        string? sampledBatchId = null, Action<LfDbContext>? beforeCommit = null)
+        string? sampledBatchId = null, Action<LfDbContext>? beforeCommit = null, Action<LfDbContext>? beforeWrite = null)
     {
         if (items == null || items.Count == 0) return 0;
 
@@ -120,7 +141,8 @@ public sealed class EfPrtgStore
         return strategy.Execute(() =>
         {
             using var ctx = _contextFactory();
-            using var transaction = ctx.Database.BeginTransaction();
+            using var transaction = ctx.Database.BeginTransaction(beforeWrite == null ? IsolationLevel.Unspecified : IsolationLevel.Serializable);
+            beforeWrite?.Invoke(ctx);
             if (sampledBatchId != null)
             {
                 if (ctx.PrtgSampledBatches.Any(b => b.BatchId == sampledBatchId)) return 0;
@@ -150,7 +172,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public int UpsertDevices(IReadOnlyList<PrtgDeviceRow> devices, DateTime syncedAt)
     {
-        return BatchWrite(devices, (ctx, batch) =>
+        return BatchWriteScope(devices, (ctx, batch) =>
         {
             var ids = batch.Select(d => d.Objid).ToList();
             var existing = ctx.PrtgDevices.Where(d => ids.Contains(d.Objid)).ToDictionary(d => d.Objid);
@@ -268,8 +290,11 @@ public sealed class EfPrtgStore
 
         if (queueItem != null)
             return BatchWriteAtomic(sensors, (ctx, batch) => WriteBatch(ctx, batch),
-                beforeCommit: ctx => EnqueueRecentStateChangeInTransaction(ctx, queueItem));
-        return requireAtomic ? BatchWriteAtomic(sensors, WriteBatch) : BatchWrite(sensors, WriteBatch);
+                beforeCommit: ctx => EnqueueRecentStateChangeInTransaction(ctx, queueItem),
+                beforeWrite: PrtgScopePurgeStore.EnsureScopeMutationSlotFree);
+        return requireAtomic
+            ? BatchWriteAtomic(sensors, WriteBatch, beforeWrite: PrtgScopePurgeStore.EnsureScopeMutationSlotFree)
+            : BatchWriteScope(sensors, WriteBatch);
     }
 
     public IReadOnlyList<PrtgRecentStateChangeQueueItem> ReadRecentStateChangeQueue()
@@ -295,7 +320,7 @@ public sealed class EfPrtgStore
         return probe.Database.CreateExecutionStrategy().Execute(() =>
         {
             using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction();
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
             var due = ReadRecentStateChangeQueueRows(ctx)
                 .Where(x => x.Item.CompletedAtUtc == null && x.Item.NextAttemptAtUtc <= nowUtc &&
                     (!x.Item.LeaseExpiresAtUtc.HasValue || x.Item.LeaseExpiresAtUtc.Value <= nowUtc))
@@ -938,7 +963,8 @@ public sealed class EfPrtgStore
         return strategy.Execute(() =>
         {
             ctx.ChangeTracker.Clear();
-            using var tx = ctx.Database.BeginTransaction();
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
             var priorLatestDate = ctx.PrtgHostMaps.Select(m => (DateTime?)m.MapDate).Max();
             var oldRows = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == targetDate)
                 .ToDictionary(m => m.DeviceObjid);
@@ -1049,7 +1075,8 @@ public sealed class EfPrtgStore
                     return strategy.Execute(() =>
                     {
                         ctx.ChangeTracker.Clear();
-                        using var tx = ctx.Database.BeginTransaction();
+                        using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                        PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
                         var deleted = 0;
                         foreach (var g in keys.GroupBy(k => k.MapDate))
                         {
@@ -1115,7 +1142,8 @@ public sealed class EfPrtgStore
         var deleted = probe.Database.CreateExecutionStrategy().Execute(() =>
         {
             using var write = _contextFactory();
-            using var transaction = write.Database.BeginTransaction();
+            using var transaction = write.Database.BeginTransaction(IsolationLevel.Serializable);
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(write);
             var count = write.PrtgDevices.Where(d => d.SyncedAt < syncStartedAt).ExecuteDelete();
             if (count > 0)
             {
@@ -1153,7 +1181,8 @@ public sealed class EfPrtgStore
         return probe.Database.CreateExecutionStrategy().Execute(() =>
         {
             using var ctx = _contextFactory();
-            using var transaction = ctx.Database.BeginTransaction();
+            using var transaction = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
             var stale = ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt);
             // 守門裝置數量級很小（幾台），IN 清單不會撞參數上限。
             if (preserveDeviceObjids.Count > 0)
@@ -1188,102 +1217,50 @@ public sealed class EfPrtgStore
     public PrtgScopeBaselineStore ScopeBaseline() =>
         new(new EfJsonBlobStore(_contextFactory, PrtgScopeBaselineStore.BlobKey, _performance));
 
+    /// <summary>Durable preview ownership and bounded progress for scope purge operations.</summary>
+    public PrtgScopePurgeStore ScopePurgeJobs() => new(_contextFactory);
+
     /// <summary>
-    /// 範圍外清除要刪的 sensor objid：數值與狀態變更表出現過、且對不到 <paramref name="keepDeviceObjids"/> 的 sensor。
-    /// 兩表沒有裝置欄位，以感測器鏡像的 sensor→裝置 判斷；鏡像中已沒有的 sensor（先前已被清出感測器鏡像的範圍外裝置、
-    /// 或 PRTG 端已刪除）視為範圍外。objid 本身就是保留裝置的列（裝置層級訊息）不刪。
+    /// Projects only the frozen candidate sensor set of a durable purge preview. Callers must
+    /// create the capped preview first; this prevents preview details from scanning/materializing
+    /// a live, unbounded history set or drifting beyond its captured row watermarks.
     /// </summary>
-    private static (List<long> Sensors, Dictionary<long, long> SensorDevice) OutOfScopeSensorObjids(
-        LfDbContext ctx, IReadOnlySet<long> keepDeviceObjids)
+    public PrtgOutOfScopePreview PreviewOutOfScopeCandidateDetails(IReadOnlyCollection<long> candidateSensorObjids,
+        int topDevices, IReadOnlySet<long>? visibleDeviceObjids = null)
     {
-        if (keepDeviceObjids.Count == 0)
-            throw new ArgumentException("保留裝置集合不得為空（等於清光全部數值與狀態變更）。", nameof(keepDeviceObjids));
+        const int maximumCapturedSensors = 100_000;
+        const int queryBatchSize = 500;
+        if (candidateSensorObjids.Count > maximumCapturedSensors)
+            throw new InvalidOperationException($"候選感測器超過預覽上限 {maximumCapturedSensors}，未提供清除詳情。");
+        if (topDevices < 0) throw new ArgumentOutOfRangeException(nameof(topDevices));
 
-        var sensorDevice = ctx.PrtgSensors.AsNoTracking()
-            .Select(s => new { s.Objid, s.DeviceObjid })
-            .ToList()
-            .GroupBy(s => s.Objid)
-            .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
-
-        var candidates = ctx.PrtgValues.Select(v => v.SensorObjid).Distinct().ToList();
-        candidates.AddRange(ctx.PrtgStateChanges.Select(c => c.SensorObjid).Distinct().ToList());
-
-        var sensors = candidates
-            .Distinct()
-            .Where(id => !keepDeviceObjids.Contains(id)
-                         && !(sensorDevice.TryGetValue(id, out var dev) && keepDeviceObjids.Contains(dev)))
-            .OrderBy(id => id)
-            .ToList();
-        return (sensors, sensorDevice);
-    }
-
-    /// <summary>範圍外清除的預覽（只用 COUNT，不讀回資料列）</summary>
-    public PrtgOutOfScopePreview PreviewOutOfScopeData(IReadOnlySet<long> keepDeviceObjids, int topDevices)
-    {
-        using var __perf = _performance.Measure("prtg:PreviewOutOfScope");
+        using var __perf = _performance.Measure("prtg:PreviewOutOfScopeFrozenCandidates");
         using var ctx = _contextFactory();
-        var (sensors, sensorDevice) = OutOfScopeSensorObjids(ctx, keepDeviceObjids);
-
-        var values = 0;
-        var stateChanges = 0;
-        for (var offset = 0; offset < sensors.Count; offset += DeviceQueryBatchSize)
+        var sensors = candidateSensorObjids.Distinct().ToArray();
+        var sensorDevice = new Dictionary<long, long>();
+        foreach (var batch in sensors.Chunk(queryBatchSize))
         {
-            var batch = sensors.GetRange(offset, Math.Min(DeviceQueryBatchSize, sensors.Count - offset));
-            values += ctx.PrtgValues.Count(v => batch.Contains(v.SensorObjid));
-            stateChanges += ctx.PrtgStateChanges.Count(c => batch.Contains(c.SensorObjid));
+            var rows = ctx.PrtgSensors.AsNoTracking().Where(s => batch.Contains(s.Objid))
+                .Select(s => new { s.Objid, s.DeviceObjid }).ToList();
+            foreach (var row in rows) sensorDevice.TryAdd(row.Objid, row.DeviceObjid);
         }
 
-        var devices = sensors
-            .Where(sensorDevice.ContainsKey)
-            .Select(id => sensorDevice[id])
-            .Distinct()
-            .OrderBy(id => id)
-            .ToList();
-        var knownSensors = sensors.Count(sensorDevice.ContainsKey);
-
-        var top = devices.Take(topDevices).ToList();
+        var devices = sensors.Where(sensorDevice.ContainsKey).Select(id => sensorDevice[id])
+            .Distinct().OrderBy(id => id).ToList();
+        var visibleDevices = visibleDeviceObjids == null
+            ? devices
+            : devices.Where(visibleDeviceObjids.Contains).ToList();
+        var top = visibleDevices.Take(topDevices).ToList();
         var names = GetDeviceNamesByObjids(top);
         return new PrtgOutOfScopePreview(
-            values, stateChanges, devices.Count,
-            top.Select(id => names.TryGetValue(id, out var n) ? $"{n}（{id}）" : id.ToString()).ToList(),
-            sensors.Count - knownSensors);
-    }
-
-    /// <summary>
-    /// 刪除 <c>lf_prtg_values</c> 與 <c>lf_prtg_state_changes</c> 中裝置不在 <paramref name="keepDeviceObjids"/> 的列（判定見
-    /// <see cref="OutOfScopeSensorObjids"/>），分批刪、不設單次上限，回傳各表筆數。
-    /// 呼叫端必須先確認範圍可信（<see cref="PrtgScopePurge.CheckScope"/>）。
-    /// </summary>
-    public (int Values, int StateChanges) DeleteOutOfScopeData(IReadOnlySet<long> keepDeviceObjids)
-    {
-        using var __perf = _performance.Measure("prtg:DeleteOutOfScope");
-        List<long> sensors;
-        using (var ctx = _contextFactory())
+            Values: 0,
+            StateChanges: 0,
+            AffectedDevices: devices.Count,
+            TopDeviceNames: top.Select(id => names.TryGetValue(id, out var name) ? $"{name}（{id}）" : id.ToString()).ToList(),
+            UnknownSensors: sensors.Length - sensorDevice.Count)
         {
-            sensors = OutOfScopeSensorObjids(ctx, keepDeviceObjids).Sensors;
-        }
-
-        var values = 0;
-        var stateChanges = 0;
-        for (var offset = 0; offset < sensors.Count; offset += DeviceQueryBatchSize)
-        {
-            var batch = sensors.GetRange(offset, Math.Min(DeviceQueryBatchSize, sensors.Count - offset));
-            values += BatchedPrune.Run<long>(
-                _contextFactory,
-                (ctx, take) => ctx.PrtgValues.Where(v => batch.Contains(v.SensorObjid))
-                    .OrderBy(v => v.Id).Select(v => v.Id).Take(take).ToList(),
-                (ctx, ids) => ctx.PrtgValues.Where(v => ids.Contains(v.Id)).ExecuteDelete(),
-                _ => 0,
-                "PRTG 監看範圍外數值", int.MaxValue);
-            stateChanges += BatchedPrune.Run<long>(
-                _contextFactory,
-                (ctx, take) => ctx.PrtgStateChanges.Where(c => batch.Contains(c.SensorObjid))
-                    .OrderBy(c => c.Id).Select(c => c.Id).Take(take).ToList(),
-                (ctx, ids) => ctx.PrtgStateChanges.Where(c => ids.Contains(c.Id)).ExecuteDelete(),
-                _ => 0,
-                "PRTG 監看範圍外狀態變更", int.MaxValue);
-        }
-        return (values, stateChanges);
+            VisibleAffectedDevices = visibleDevices.Count
+        };
     }
 
     /// <summary>
@@ -3410,6 +3387,7 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var transaction = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
             var stamp = ctx.Blobs.SingleOrDefault(b => b.BlobKey == ScopeRevisionBlobKey);
             if (expectedRevision.HasValue && (stamp?.Version ?? 0) != expectedRevision.Value)
                 throw new PrtgScopeConflictException();
@@ -4760,7 +4738,10 @@ public sealed record PrtgResourcePressureSensorMetadata(long SensorObjid, long D
 /// <paramref name="UnknownSensors"/>＝感測器鏡像已沒有、對不到裝置的 sensor 數（它們的列同樣會被刪）。
 /// </summary>
 public sealed record PrtgOutOfScopePreview(
-    int Values, int StateChanges, int AffectedDevices, IReadOnlyList<string> TopDeviceNames, int UnknownSensors);
+    int Values, int StateChanges, int AffectedDevices, IReadOnlyList<string> TopDeviceNames, int UnknownSensors)
+{
+    public int VisibleAffectedDevices { get; init; } = AffectedDevices;
+}
 
 
 public sealed class PrtgScopeConflictException : Exception

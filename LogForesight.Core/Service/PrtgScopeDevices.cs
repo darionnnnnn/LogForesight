@@ -1,6 +1,9 @@
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace LogForesight.Core.Service;
 
@@ -10,6 +13,10 @@ namespace LogForesight.Core.Service;
 /// <param name="DeviceObjids">監看裝置：感測器與狀態變更同步、快照都只處理這些裝置</param>
 public sealed record PrtgScopeResult(IReadOnlySet<long> DeviceObjids, int Mapped, int Conflict, int Manual, int Guard)
 {
+    /// <summary>Fingerprint of the source/mapping inputs used to form this exact scope.</summary>
+    public string SourceGeneration { get; init; } = string.Empty;
+    /// <summary>Version snapshot bracketing the source reads used to compute this scope.</summary>
+    public string ScopeFenceJson { get; init; } = string.Empty;
     /// <summary>
     /// 不在監看範圍、但清除時必須保留的裝置（資源守門未啟用時的守門裝置與 corehealth 裝置）。
     /// 守門目標是從感測器鏡像反推的——清掉之後就再也偵測不到，日後無法重新啟用守門。
@@ -43,6 +50,8 @@ public static class PrtgScopeDevices
         IRunConsole console, IPrtgAddressResolver resolver,
         IReadOnlyCollection<long>? hostIds, bool includeGuardInPartial = false)
     {
+        var purgeStore = store.ScopePurgeJobs();
+        var scopeFenceBefore = purgeStore.CaptureScopeFenceJson();
         var wanted = hostIds?.ToHashSet();
         bool HostWanted(long hostId) => wanted == null || wanted.Contains(hostId);
 
@@ -68,13 +77,15 @@ public static class PrtgScopeDevices
                 conflict.Add(row.DeviceObjid);
         }
 
-        var liveHostIds = hostStore.GetAll()
+        var hostRows = hostStore.GetAll();
+        var liveHostIds = hostRows
             .Where(h => h.Active && h.MergedInto == null)
             .Select(h => h.HostId)
             .ToHashSet();
         var manual = new HashSet<long>();
         var manualExcluded = 0;
-        foreach (var m in store.GetManualMaps())
+        var manualRows = store.GetManualMaps();
+        foreach (var m in manualRows)
         {
             if (!liveHostIds.Contains(m.HostId))
             {
@@ -107,12 +118,34 @@ public static class PrtgScopeDevices
         else
             preserve.UnionWith(guard);
 
+        var scopeFenceAfter = purgeStore.CaptureScopeFenceJson();
+        if (!string.Equals(scopeFenceBefore, scopeFenceAfter, StringComparison.Ordinal))
+            throw new InvalidOperationException("計算監看範圍期間來源或對應已變更，請重新執行。");
         return new PrtgScopeResult(all, mapped.Count, conflict.Count, manual.Count, guardInScope ? guard.Count : 0)
         {
             PreserveDeviceObjids = preserve,
             IsPartial = wanted != null,
-            ManualExcluded = manualExcluded
+            ManualExcluded = manualExcluded,
+            ScopeFenceJson = scopeFenceAfter,
+            SourceGeneration = SourceGenerationFingerprint(mapRows, manualRows, hostRows, guard,
+                settings.PrtgResourceGuardEnabled, wanted)
         };
+    }
+
+    private static string SourceGenerationFingerprint(IReadOnlyList<PrtgHostMapRow> maps,
+        IReadOnlyList<PrtgManualMapRow> manual, IReadOnlyList<WebHost> hosts, IReadOnlySet<long> guard,
+        bool guardEnabled, IReadOnlySet<long>? requestedHosts)
+    {
+        var material = JsonSerializer.Serialize(new
+        {
+            guardEnabled,
+            requestedHosts = requestedHosts?.OrderBy(x => x),
+            maps = maps.OrderBy(x => x.DeviceObjid).Select(x => new { x.DeviceObjid, x.HostId, x.Ip, x.MapStatus }),
+            manual = manual.OrderBy(x => x.DeviceObjid).Select(x => new { x.DeviceObjid, x.HostId, x.Note }),
+            hosts = hosts.OrderBy(x => x.HostId).Select(x => new { x.HostId, x.Active, x.MergedInto, x.IpAddress }),
+            guard = guard.OrderBy(x => x)
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 }
 
@@ -192,7 +225,9 @@ public static class PrtgScopePurge
     /// 結構同步全部成功後的自動清除。呼叫端只在同步全部成功時呼叫；這裡再檢查三道保護。
     /// 清除失敗不擲出（只輸出），不影響同步結果。回傳是否實際執行了清除。
     /// </summary>
-    public static bool RunAfterStructureSync(EfPrtgStore store, PrtgScopeResult? scope, bool devicesRefreshed, IRunConsole console)
+    public static bool RunAfterStructureSync(EfPrtgStore store, PrtgScopeResult? scope, bool devicesRefreshed,
+        string verifiedParentJobId, IRunConsole console, CancellationToken cancellationToken = default,
+        Func<bool>? parentOwnsRun = null)
     {
         var reason = CheckScope(scope, devicesRefreshed);
         if (reason != null)
@@ -201,6 +236,8 @@ public static class PrtgScopePurge
             return false;
         }
 
+        PrtgScopePurgeStore? jobs = null;
+        PrtgScopePurgeJobRow? job = null;
         try
         {
             var baselineStore = store.ScopeBaseline();
@@ -216,20 +253,71 @@ public static class PrtgScopePurge
                 return false;
             }
 
-            var (values, stateChanges) = store.DeleteOutOfScopeData(KeepSet(scope));
-            RecordBaseline(store, scope.DeviceObjids.Count);
-            console.WriteLine($"[範圍外清除] 已清除監看範圍外的數值 {values} 筆、狀態變更 {stateChanges} 筆（監看裝置 {scope.DeviceObjids.Count} 台）。");
-            return true;
+            if (string.IsNullOrWhiteSpace(verifiedParentJobId))
+                throw new InvalidOperationException("缺少成功同步父作業識別，拒絕自動清除。");
+            if (parentOwnsRun == null || !parentOwnsRun())
+                throw new InvalidOperationException("同步父作業已失去所有權，拒絕自動清除。");
+            jobs = store.ScopePurgeJobs();
+            var fingerprint = ComputeFingerprint(store, scope);
+            job = jobs.CreateAutomatic(verifiedParentJobId, fingerprint, KeepSet(scope), scope.DeviceObjids.Count,
+                DateTimeOffset.UtcNow, scope.ScopeFenceJson);
+            while (job.Status is "accepted" or "running" or "paused")
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!parentOwnsRun())
+                {
+                    job = jobs.Stop(job.JobId, "parent-ownership-lost", DateTimeOffset.UtcNow);
+                    break;
+                }
+                job = jobs.RunBatch(job.JobId, job.Revision, fingerprint, DateTimeOffset.UtcNow,
+                    cancellationToken, ownershipCheck: parentOwnsRun);
+            }
+            if (job.Status == "complete")
+            {
+                console.WriteLine($"[範圍外清除] 已清除本作業數值 {job.DeletedValues} 筆、狀態變更 {job.DeletedStateChanges} 筆；其他清理已移除 {job.OtherwiseRemovedValues}／{job.OtherwiseRemovedStateChanges} 筆（作業 {job.JobId}）。");
+                return true;
+            }
+            console.WriteLine(job.CountsReconciled
+                ? $"[範圍外清除] 未完成，作業 {job.JobId}，狀態 {job.Status}，已核對剩餘 {job.RemainingValues}／{job.RemainingStateChanges} 筆。"
+                : $"[範圍外清除] 處理中，作業 {job.JobId}，本作業已刪 {job.DeletedValues}／{job.DeletedStateChanges} 筆；預估尚餘 {job.RemainingValues}／{job.RemainingStateChanges} 筆，暫未核對其他清理。");
+            return false;
         }
         catch (OperationCanceledException)
         {
+            if (jobs != null && job != null)
+            {
+                try { jobs.Stop(job.JobId, "parent-cancelled", DateTimeOffset.UtcNow); }
+                catch { /* The committed batch remains authoritative if storage is unavailable. */ }
+            }
             throw;
         }
         catch (Exception ex)
         {
+            if (jobs != null && job != null)
+            {
+                try { jobs.Stop(job.JobId, "batch-failed", DateTimeOffset.UtcNow); }
+                catch { /* Keep the last durable progress if storage itself failed. */ }
+            }
             console.WriteLine($"[範圍外清除] ✗ 清除失敗：{ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>Fingerprint of the exact purge keep set and current mapping generation.</summary>
+    public static string ComputeFingerprint(EfPrtgStore store, PrtgScopeResult scope)
+    {
+        var maps = store.GetLatestHostMap().OrderBy(x => x.DeviceObjid)
+            .Select(x => new { x.DeviceObjid, x.HostId, x.MapStatus }).ToArray();
+        var manual = store.GetManualMaps().OrderBy(x => x.DeviceObjid)
+            .Select(x => new { x.DeviceObjid, x.HostId }).ToArray();
+        var summary = store.GetMirrorSummary();
+        var material = JsonSerializer.Serialize(new
+        {
+            keep = KeepSet(scope).OrderBy(x => x), scope.DeviceObjids.Count,
+            scope.SourceGeneration,
+            summary.LastDeviceSync, summary.LastSensorSync, maps, manual
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 
     /// <summary>成功清除後更新基準並清掉擋下提示（自動與人工確認共用）</summary>

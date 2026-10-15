@@ -157,6 +157,20 @@ public class PrtgScopePurgePreviewDto
     /// <summary>基準（上次成功清除）時間；null＝尚無基準</summary>
     public DateTime? BaselineAt { get; set; }
     public int BaselineDeviceCount { get; set; }
+    public string? PreviewId { get; set; }
+    public DateTimeOffset? ExpiresAtUtc { get; set; }
+    public int VisibleAffectedDevices { get; set; }
+    public bool DetailsRestricted { get; set; }
+    public string? PreviousJobId { get; set; }
+    public long PreviousDeletedValues { get; set; }
+    public long PreviousDeletedStateChanges { get; set; }
+    public long PreviousRemainingValues { get; set; }
+    public long PreviousRemainingStateChanges { get; set; }
+}
+
+public class PrtgScopePurgeAcceptRequest
+{
+    public string PreviewId { get; set; } = string.Empty;
 }
 
 /// <summary>監看範圍外資料清除的結果</summary>
@@ -165,6 +179,20 @@ public class PrtgScopePurgeResultDto
     public int Values { get; set; }
     public int StateChanges { get; set; }
     public int MonitoredDevices { get; set; }
+    public string JobId { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public long OtherwiseRemovedValues { get; set; }
+    public long OtherwiseRemovedStateChanges { get; set; }
+    public long RemainingValues { get; set; }
+    public long RemainingStateChanges { get; set; }
+    public bool CountsReconciled { get; set; }
+    public string? StopReason { get; set; }
+    public long Revision { get; set; }
+}
+
+public class PrtgScopePurgeResumeRequest
+{
+    public long ExpectedRevision { get; set; }
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>

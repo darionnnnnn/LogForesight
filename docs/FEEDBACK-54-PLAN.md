@@ -279,6 +279,13 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - 主代理隔離 checkout 獨立測試 5/5＋2/2、零略過；TRX：work/round54-mode-validation/work/d54-probe-root/d54-probe-root.trx 與 work/d54-probe-context-root/d54-probe-context-root.trx。Node 匯出契約與 PowerShell 有界證據 verifier 全部通過。完整來源、容量及最終 UI／成品回歸仍未通過，不勾父驗收。
 - 依使用者最新限制，不執行 33,554,432 字元文件極限測試；SQLite incremental BLOB、SQL Server DATALENGTH 與 .NET UTF-16 字元語意以官方文件及 tiny 16/17 單位案例為依據，不宣稱正式上限已實測。
 
+### F2耐久範圍清除與正常入口（2026-10-15）
+
+- 預覽凍結保留／候選 sensor 與原資料水位，同一預覽冪等接受；父子作業保存真實所有權、自動作業不得經人工續跑路由接手，每批前讀取持久帳號／群組／設定授權。小批刪除、游標、精確本作業計數與耐久進度同交易提交；完成才更新基準，安全暫停／停止可讀取部分結果。範圍 writer 共用交易序列鎖與版本 fence。
+- UI 以操作者隔離 sessionStorage 的已嘗試預覽／作業 ID 保存未知結果，明確操作才繼續；維護摘要不回傳不可見裝置名稱。鏡像重新整理現在同步重新預覽，避免舊數量與過期權杖留在畫面。
+- 主代理此前隔離整合 61/61 中 F2 store/controller/protection 43項通過，零略過；本段沿用該凍結後端。在小型自有 SQLite 網站另以1筆數值＋1筆狀態走正常 login→preview→同識別重送接受→resume→complete→durable GET，結果本作業1/1、剩餘0/0、revision3及 countsReconciled=true，work/round54/browser-small-purge-result.json。
+- 真瀏覽器於 /browser-fixture 子路徑核 Admin 非空預覽／取消不提交、零資料停用、serverAdmin 無明細摘要、Manager 無維護入口；額外同一小資料1/1核鏡像刷新從0→1/1，按鈕啟用且 console 無 error。此次 browser frozen backend 與其後單一 static JS 更新各有 fixture manifest／SHA，非最終同HEAD成品；未宣稱完整角色旅程、雙provider／跨程序 G3或父驗收完成。保留所有自有小型資料供重用。
+
 實作起點為`a7f2f2868c76d1af84148e40ad054d03732b1d57`，沿用feature/prtg-feedback-54。使用者授權直到全部完成、逐段驗證後commit／push；前文只規劃／待另行指示均為文件輪邊界，不撤銷本次開工。原起點a69fedd7及全部原TODO／子契約仍保留。主代理負責獨立完整性核對與驗收；委派僅gpt-6-luna low／medium／high，不用AGY。換模型額外背書依UC07，現有可執行審查仍必做。
 
 ### A1第一段：只讀容量預檢工具

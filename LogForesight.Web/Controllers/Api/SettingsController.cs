@@ -39,6 +39,7 @@ public class SettingsController : ControllerBase
     private readonly IVisibilityService? _visibility;
     private readonly ICurrentUser? _currentUser;
     private readonly IPrtgTransferCapacityProvider? _transferCapacity;
+    private readonly PrtgScopePurgeAuthorizationService? _scopePurgeAuthorization;
     internal Func<SystemSettings, PrtgClient>? SnapshotCapacityClientFactory { get; set; }
 
     public SettingsController(
@@ -54,7 +55,8 @@ public class SettingsController : ControllerBase
         PrtgSnapshotHostedService? snapshot = null,
         PrtgDeviceIndexCache? deviceIndexCache = null,
         PrtgDiskVerificationService? diskVerification = null, IVisibilityService? visibility = null, ICurrentUser? currentUser = null,
-        IPrtgTransferCapacityProvider? transferCapacity = null)
+        IPrtgTransferCapacityProvider? transferCapacity = null,
+        PrtgScopePurgeAuthorizationService? scopePurgeAuthorization = null)
     {
         _hosts = hosts;
         _settings = settings;
@@ -71,6 +73,7 @@ public class SettingsController : ControllerBase
         _visibility = visibility;
         _currentUser = currentUser;
         _transferCapacity = transferCapacity;
+        _scopePurgeAuthorization = scopePurgeAuthorization;
     }
 
     [HttpGet]
@@ -80,6 +83,7 @@ public class SettingsController : ControllerBase
     [HttpPut]
     public ApiResponse<SystemSettingsDto> Update([FromBody] UpdateSystemSettingsRequest request)
     {
+        EnsureNoActiveScopePurge();
         // 使用者名稱顯示規則是自由文字的正則表達式，資料註解擋不住語法錯誤——
         // 存檔前先驗一次，訊息指出是第幾行（回饋三十四輪 B1）
         if (!AccountDisplayFormatter.TryValidateRules(request.AccountDisplayRules, out var error))
@@ -115,6 +119,7 @@ public class SettingsController : ControllerBase
     [HttpPut("prtg")]
     public ApiResponse<SystemSettingsDto> UpdatePrtg([FromBody] UpdatePrtgSettingsRequest request)
     {
+        EnsureNoActiveScopePurge();
         lock (AdmissionPublicationLock)
         {
             var plan = EnsureSnapshotCapacityAdmission(request);
@@ -1419,6 +1424,11 @@ public class SettingsController : ControllerBase
             });
         }
 
+        if (_scopePurgeAuthorization == null || _currentUser == null)
+            throw DomainException.Validation("清除的即時授權服務未啟用。");
+        var authorization = _scopePurgeAuthorization.Check(_currentUser.UserId);
+        if (!authorization.Allowed) throw DomainException.Forbidden(authorization.DenialReason ?? "目前沒有維護權限。");
+
         var (store, scope, blocked) = ComputeScopeForPurge(_backend);
         var baseline = store.ScopeBaseline().Get();
         var dto = new PrtgScopePurgePreviewDto
@@ -1435,49 +1445,71 @@ public class SettingsController : ControllerBase
             return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
         }
 
-        var preview = store.PreviewOutOfScopeData(PrtgScopePurge.KeepSet(scope!), ScopePurgeTopDevices);
+        var capabilities = _scopePurgeAuthorization.CurrentCapabilities();
+        var detailsRestricted = !capabilities.Contains(Capability.ViewAll);
+        IReadOnlySet<long>? visibleDevices = null;
+        if (detailsRestricted)
+        {
+            var visibleHosts = _currentUser.IsServerAdmin
+                ? new HashSet<long>()
+                : _visibility?.GetVisibleHostIds() ?? new HashSet<long>();
+            var visible = store.GetLatestHostMap().Where(x => x.HostId.HasValue && visibleHosts.Contains(x.HostId.Value))
+                .Select(x => x.DeviceObjid).ToHashSet();
+            visible.UnionWith(store.GetManualMaps().Where(x => visibleHosts.Contains(x.HostId)).Select(x => x.DeviceObjid));
+            visibleDevices = visible;
+        }
+        var keepSet = PrtgScopePurge.KeepSet(scope!);
+        var fingerprint = PrtgScopePurge.ComputeFingerprint(store, scope!);
+        var jobs = store.ScopePurgeJobs();
+        var previous = jobs.GetLatestStoppedPartial(_currentUser.UserId, authorization.AuthFingerprint);
+        PrtgScopePurgeJobRow purgePreview;
+        try
+        {
+            purgePreview = jobs.CreatePreview(_currentUser.UserId,
+                authorization.PermissionRevision, authorization.AuthFingerprint, fingerprint, keepSet,
+                scope!.DeviceObjids.Count, DateTimeOffset.UtcNow, previous?.JobId, scope.ScopeFenceJson);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw DomainException.Validation(ex.Message);
+        }
+        PrtgOutOfScopePreview preview;
+        try
+        {
+            var boundary = jobs.GetPreviewBoundary(purgePreview.JobId, _currentUser.UserId);
+            preview = store.PreviewOutOfScopeCandidateDetails(boundary.CandidateSensorIds, ScopePurgeTopDevices,
+                visibleDevices);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw DomainException.Validation(ex.Message);
+        }
+        // The detail projection runs after the candidate/watermark snapshot. If scope, mapping,
+        // or source generation moved while details were read, do not return a preview that could
+        // only be rejected at confirmation time.
+        if (!jobs.IsCurrentScopeFence(purgePreview.JobId, _currentUser.UserId) ||
+            !string.Equals(fingerprint, PrtgScopePurge.ComputeFingerprint(store, scope!), StringComparison.Ordinal))
+            throw DomainException.Conflict("監看範圍或對應在預覽期間已變更，請重新預覽。");
+
         dto.Success = true;
-        dto.Values = preview.Values;
-        dto.StateChanges = preview.StateChanges;
+        dto.Values = checked((int)purgePreview.CandidateValues);
+        dto.StateChanges = checked((int)purgePreview.CandidateStateChanges);
         dto.AffectedDevices = preview.AffectedDevices;
         dto.TopDeviceNames = preview.TopDeviceNames.ToList();
         dto.UnknownSensors = preview.UnknownSensors;
-        return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
-    }
-
-    [HttpPost("prtg-scope-purge/confirm")]
-    public ApiResponse<PrtgScopePurgeResultDto> ConfirmPrtgScopePurge()
-    {
-        if (_backend == null)
-            throw DomainException.Validation("資料存放區未啟用，無法清除。");
-        if (_prtgBackfill == null)
-            throw DomainException.Validation("PRTG 回填服務未啟用，無法判斷是否有其他 PRTG 作業執行中。");
-
-        // 與取數、結構同步、回填互斥：它們正在寫鏡像，範圍與資料都還在變
-        var conflict = _prtgBackfill.ScopePurgeConflict();
-        if (conflict != null)
-            throw DomainException.Conflict(conflict);
-
-        var (store, scope, blocked) = ComputeScopeForPurge(_backend);
-        if (blocked != null)
-            throw DomainException.Validation($"{blocked}，目前不能清除範圍外資料。");
-
-        var (values, stateChanges) = store.DeleteOutOfScopeData(PrtgScopePurge.KeepSet(scope!));
-        PrtgScopePurge.RecordBaseline(store, scope!.DeviceObjids.Count);
-
-        _audit.Record(
-            action: AuditActions.PrtgScopePurge,
-            summary: $"清除監看範圍外的 PRTG 資料：數值 {values} 筆、狀態變更 {stateChanges} 筆",
-            targetKind: "system_settings",
-            targetId: "prtg_scope_purge",
-            detail: new { values, stateChanges, monitoredDevices = scope.DeviceObjids.Count });
-
-        return ApiResponse<PrtgScopePurgeResultDto>.Ok(new PrtgScopePurgeResultDto
+        dto.PreviewId = purgePreview.JobId;
+        dto.ExpiresAtUtc = purgePreview.AcceptedAtUtc.AddMinutes(5);
+        dto.VisibleAffectedDevices = preview.VisibleAffectedDevices;
+        dto.DetailsRestricted = detailsRestricted;
+        if (previous != null)
         {
-            Values = values,
-            StateChanges = stateChanges,
-            MonitoredDevices = scope.DeviceObjids.Count
-        });
+            dto.PreviousJobId = previous.JobId;
+            dto.PreviousDeletedValues = previous.DeletedValues;
+            dto.PreviousDeletedStateChanges = previous.DeletedStateChanges;
+            dto.PreviousRemainingValues = previous.RemainingValues;
+            dto.PreviousRemainingStateChanges = previous.RemainingStateChanges;
+        }
+        return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
     }
 
     /// <summary>PRTG 主機對應衝突清單分頁</summary>
@@ -1644,10 +1676,17 @@ public class SettingsController : ControllerBase
 
     private static long RequireScopeRevision(long? revision) => revision is >= 0 ? revision.Value
         : throw DomainException.Validation("缺少 PRTG 範圍版本，請重新載入頁面再儲存。");
-    private static T SavePrtgScope<T>(Func<T> action)
+    private T SavePrtgScope<T>(Func<T> action)
     {
+        EnsureNoActiveScopePurge();
         try { return action(); }
         catch (PrtgScopeConflictException ex) { throw DomainException.Conflict(ex.Message); }
+    }
+
+    private void EnsureNoActiveScopePurge()
+    {
+        if (_backend != null && _backend.PrtgStore().ScopePurgeJobs().HasActiveOwner())
+            throw DomainException.Conflict("監看範圍外清除作業進行中，請等待它完成或停止後再改變 PRTG 範圍設定。");
     }
 
     [HttpGet("prtg-manual-map")]
@@ -1772,6 +1811,7 @@ public class SettingsController : ControllerBase
     public ApiResponse<PrtgManualMapBatchResultDto> SetPrtgManualMapBatch([FromBody] SetPrtgManualMapBatchRequest request)
     {
         RequireFullPrtgTransferAccess();
+        EnsureNoActiveScopePurge();
         if (_backend == null)
             throw DomainException.Validation("PRTG 鏡像服務未啟用。");
 

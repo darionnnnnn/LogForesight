@@ -246,7 +246,22 @@ internal static class PrtgDailyPipeline
             // 本趟自己的結構同步與主機對應全部成功，才考慮清除監看範圍外的數值與狀態變更（其餘保護在 PrtgScopePurge 內）
             if (!skipStructureSync && !syncFailed && fetchResult is { Failures: 0 } && mapResult != null)
             {
-                PrtgScopePurge.RunAfterStructureSync(backend.PrtgStore(), fetchResult.Scope, fetchResult.DevicesRefreshed, prtgConsole);
+                var parentRunId = runRecorder.RunId;
+                PrtgScopeResult? finalScope = fetchResult.Scope;
+                if (fetchResult.DevicesRefreshed && finalScope is { IsPartial: false })
+                {
+                    // FetchDayAsync computes the scope between device and sensor sync. Re-read it only
+                    // after all successful stages so the automatic purge fence includes this parent's
+                    // final sensor/resource mirror and preserve set.
+                    var purgeStore = backend.PrtgStore();
+                    finalScope = PrtgScopeDevices.Compute(purgeStore, hostStore, new PrtgMirrorGuardSource(purgeStore),
+                        new SystemSettingsStore(backend.Blob("system_settings")).Get(),
+                        new SentinelStore(backend.Blob("sentinels")).GetAll(), prtgConsole,
+                        new PrtgAddressResolver(), hostIds: null);
+                }
+                PrtgScopePurge.RunAfterStructureSync(backend.PrtgStore(), finalScope, fetchResult.DevicesRefreshed,
+                    parentRunId.ToString(System.Globalization.CultureInfo.InvariantCulture), prtgConsole, ct,
+                    () => runRecorder.OwnsRun(parentRunId));
             }
 
             // 日期範圍訊號（不是進度）：Web 端據此擋住本趟範圍內的 AI 待補、顯示第 i／N 天。迴圈前先送一次「尚未開始逐日」

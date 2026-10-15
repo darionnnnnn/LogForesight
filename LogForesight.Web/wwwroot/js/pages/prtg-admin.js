@@ -2692,7 +2692,7 @@ function bindAssignForm() {
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
                 refreshUnmatched(unmatchedPage),
-
+                refreshScopePurge()
             ]);
         } catch (error) {
             toast(error && error.message ? error.message : '指派失敗', 'danger');
@@ -2903,6 +2903,15 @@ async function refreshPrtgMirrorCore() {
 
 // ── 監看範圍外資料（預覽＋確認清除）────────────────────────────────────
 
+let scopePurgeStorageKey = null;
+
+function scopePurgeJobStorageKey(user) {
+    const actor = user?.isServerAdmin
+        ? `server-admin:${String(user.account || '').toLocaleLowerCase()}`
+        : `user:${user?.userId ?? 'unknown'}`;
+    return `lf-prtg-scope-purge:${actor}`;
+}
+
 function renderScopePurge(preview) {
     const btn = document.getElementById('prtg-scope-purge-btn');
     const blockedEl = document.getElementById('prtg-scope-purge-blocked');
@@ -2930,15 +2939,27 @@ function renderScopePurge(preview) {
         + `狀態變更 ${formatNumber(preview.stateChanges)} 筆，涉及 ${formatNumber(preview.affectedDevices)} 台裝置`
         + (preview.unknownSensors > 0 ? `及 ${formatNumber(preview.unknownSensors)} 顆鏡像已無的感測器` : '')
         + `。${baseline}`;
+    if (preview.previousJobId) {
+        summaryEl.textContent += `；前次部分作業 ${preview.previousJobId.slice(0, 8)} 已刪除數值 ${formatNumber(preview.previousDeletedValues)} 筆、狀態變更 ${formatNumber(preview.previousDeletedStateChanges)} 筆，尚餘數值 ${formatNumber(preview.previousRemainingValues)} 筆、狀態變更 ${formatNumber(preview.previousRemainingStateChanges)} 筆（已由伺服器連結）`;
+    }
     const names = Array.isArray(preview.topDeviceNames) ? preview.topDeviceNames : [];
+    const affectedDevices = preview.detailsRestricted
+        ? preview.visibleAffectedDevices
+        : preview.affectedDevices;
     devicesEl.textContent = names.length > 0
-        ? `裝置：${names.join('、')}${preview.affectedDevices > names.length ? ' 等' : ''}`
+        ? `裝置：${names.join('、')}${affectedDevices > names.length ? ' 等' : ''}`
         : '';
-    btn.disabled = preview.values + preview.stateChanges === 0;
+    btn.dataset.previewId = preview.previewId || '';
+    btn.dataset.expiresAtUtc = preview.expiresAtUtc || '';
+    const pendingJob = scopePurgeStorageKey && sessionStorage.getItem(`${scopePurgeStorageKey}:job-id`);
+    const pendingPreview = scopePurgeStorageKey && sessionStorage.getItem(`${scopePurgeStorageKey}:preview-id`);
+    btn.textContent = pendingJob || pendingPreview ? '檢查／繼續清除' : '確認清除';
+    btn.disabled = pendingJob || pendingPreview ? false : (preview.values + preview.stateChanges === 0 || !btn.dataset.previewId);
 }
 
 async function refreshScopePurge() {
     try {
+        scopePurgeStorageKey = scopePurgeJobStorageKey(await getCurrentUser());
         renderScopePurge(await api.get('/api/admin/settings/prtg-scope-purge/preview', { silent: true }));
     } catch {
         // 失敗時不干擾整體頁面
@@ -2948,16 +2969,77 @@ async function refreshScopePurge() {
 function bindScopePurge() {
     const btn = document.getElementById('prtg-scope-purge-btn');
     btn?.addEventListener('click', async () => {
+        if (!scopePurgeStorageKey) scopePurgeStorageKey = scopePurgeJobStorageKey(await getCurrentUser());
+        const jobStorageKey = `${scopePurgeStorageKey}:job-id`;
+        const previewStorageKey = `${scopePurgeStorageKey}:preview-id`;
+        const expiryStorageKey = `${scopePurgeStorageKey}:preview-expires`;
+        const savedJobId = sessionStorage.getItem(jobStorageKey);
+        const savedPreviewId = sessionStorage.getItem(previewStorageKey);
         const confirmed = await confirmAction({
-            message: '確定要清除監看範圍外的 PRTG 數值與狀態變更嗎？刪除後無法復原（重新納入監看的裝置只能靠回填補回保留期內的資料）。'
+            message: savedJobId || savedPreviewId
+                ? '要繼續這個已接受的範圍外清除作業嗎？只會處理原預覽時的資料集合。'
+                : '確定要清除監看範圍外的 PRTG 數值與狀態變更嗎？刪除後無法復原（重新納入監看的裝置只能靠回填補回保留期內的資料）。'
         });
         if (!confirmed) return;
         const restore = withBusy(btn, '清除中');
         try {
-            const res = await api.post('/api/admin/settings/prtg-scope-purge/confirm', {});
-            toast(`已清除數值 ${formatNumber(res.values)} 筆、狀態變更 ${formatNumber(res.stateChanges)} 筆`, 'success');
-        } catch {
-            // 錯誤已由 api.js 顯示
+            let job;
+            if (savedJobId) {
+                job = await api.get(`/api/admin/settings/prtg-scope-purge/jobs/${encodeURIComponent(savedJobId)}`);
+                if (job.status === 'paused') {
+                    // A paused job advances only after a fresh, explicit user action.
+                    job = await api.post(`/api/admin/settings/prtg-scope-purge/jobs/${encodeURIComponent(job.jobId)}/resume`,
+                        { expectedRevision: job.revision });
+                }
+            } else {
+                const previewId = savedPreviewId || btn.dataset.previewId;
+                const expiresAtUtc = savedPreviewId
+                    ? sessionStorage.getItem(expiryStorageKey)
+                    : btn.dataset.expiresAtUtc;
+                // Once POST may have been attempted, the same preview ID is an idempotency key.
+                // Retry it even after local expiry so an accepted response lost in transit can be recovered.
+                if (!previewId || (!savedPreviewId && (!expiresAtUtc || Date.parse(expiresAtUtc) <= Date.now()))) {
+                    sessionStorage.removeItem(previewStorageKey);
+                    sessionStorage.removeItem(expiryStorageKey);
+                    throw new Error('預覽已逾期，請重新預覽後再確認。');
+                }
+                if (!savedPreviewId) {
+                    sessionStorage.setItem(previewStorageKey, previewId);
+                    sessionStorage.setItem(expiryStorageKey, expiresAtUtc);
+                }
+                job = await api.post('/api/admin/settings/prtg-scope-purge/confirm', { previewId });
+                sessionStorage.removeItem(previewStorageKey);
+                sessionStorage.removeItem(expiryStorageKey);
+                sessionStorage.setItem(jobStorageKey, job.jobId);
+            }
+            while (job.status === 'accepted' || job.status === 'running') {
+                job = await api.post(`/api/admin/settings/prtg-scope-purge/jobs/${encodeURIComponent(job.jobId)}/resume`,
+                    { expectedRevision: job.revision });
+                if (!job.countsReconciled) {
+                    const summaryEl = document.getElementById('prtg-scope-purge-summary');
+                    if (summaryEl) summaryEl.textContent = `清除進行中：本作業已刪數值 ${formatNumber(job.values)} 筆、狀態變更 ${formatNumber(job.stateChanges)} 筆；預估尚餘數值 ${formatNumber(job.remainingValues)} 筆、狀態變更 ${formatNumber(job.remainingStateChanges)} 筆。其他清理的影響會在安全暫停或完成時核對。`;
+                }
+            }
+            if (job.status === 'complete') {
+                sessionStorage.removeItem(jobStorageKey);
+                toast(`清除完成：本作業刪除數值 ${formatNumber(job.values)} 筆、狀態變更 ${formatNumber(job.stateChanges)} 筆`, 'success');
+            } else if (job.status === 'stopped') {
+                sessionStorage.setItem(`${scopePurgeStorageKey}:stopped-job-id`, job.jobId);
+                sessionStorage.removeItem(jobStorageKey);
+                toast(`清除已停止（${job.stopReason || '範圍已變更'}）；可重新預覽，前次部分進度仍保留。`, 'warning');
+            } else {
+                toast(`清除已暫停（${job.stopReason || job.status}）；確認目前權限與範圍後，再明確選擇繼續。`, 'warning');
+            }
+        } catch (error) {
+            if (error?.name === 'ApiError' && ['validation_failed', 'conflict'].includes(error.code)) {
+                // These business responses mean the server rejected this operation. Auth/read
+                // failures and transport errors keep the durable preview key for safe recovery.
+                sessionStorage.removeItem(previewStorageKey);
+                sessionStorage.removeItem(expiryStorageKey);
+            } else if (error instanceof Error && error.name !== 'ApiError') {
+                toast(`範圍外清除未完成：${error.message}`, 'danger');
+            }
+            // A request with unknown outcome keeps its preview/job key for idempotent recovery.
         } finally {
             restore();
         }
@@ -2974,7 +3056,7 @@ function bindPrtgMirror() {
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
                 refreshUnmatched(unmatchedPage),
-
+                refreshScopePurge()
             ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
         } catch {

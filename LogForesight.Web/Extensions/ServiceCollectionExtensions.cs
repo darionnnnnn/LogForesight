@@ -261,6 +261,7 @@ public static class ServiceCollectionExtensions
         // 能力解析的單一事實來源（體檢 H1／H3）：登入、使用者詳細頁、指派前檢查共用同一份規則
         services.AddScoped<UserCapabilityResolver>();
         services.AddScoped<IdentityService>();
+        services.AddScoped<PrtgScopePurgeAuthorizationService>();
         services.AddScoped<IVisibilityService, VisibilityService>();
         services.AddScoped<UserAdminService>();
         services.AddScoped<HostAdminService>();

@@ -39,6 +39,24 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_blobs", "version",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
 
+        // A pre-existing durable serialization row shared by purge acceptance/batches and every
+        // scope writer. The row is deliberately part of the existing blob ledger so both providers
+        // can take the same transaction-scoped write lock without a generic lease framework.
+        if (!ctx.Blobs.Any(row => row.BlobKey == EfPrtgStore.ScopeRevisionBlobKey))
+        {
+            ctx.Blobs.Add(new BlobRow
+            {
+                BlobKey = EfPrtgStore.ScopeRevisionBlobKey, Content = "{}", UpdatedAt = DateTime.UtcNow, Version = 1
+            });
+            try { ctx.SaveChanges(); }
+            catch (DbUpdateException)
+            {
+                foreach (var row in ctx.ChangeTracker.Entries<BlobRow>()
+                             .Where(entry => entry.Entity.BlobKey == EfPrtgStore.ScopeRevisionBlobKey).ToArray())
+                    row.State = EntityState.Detached;
+            }
+        }
+
         // P1-2：問題查詢頁分頁排序需要的抽出欄（見 LfDbContext.DailyRecordRow.HasCorrelation 註解）。
         // 舊資料補上後預設為 0/false，下次批次重新分析同一天會自然更新為正確值。
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "has_correlation",
@@ -248,6 +266,8 @@ internal static class SchemaUpgrader
         // 取捨是「夜間批次多付一點、白天使用者查詢快很多」。
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
             "IX_lf_prtg_state_ch_changed", "changed_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
+            "IX_lf_prtg_state_purge_sensor_id", "sensor_objid, id");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_values",
             isSqlite ? SqliteCreatePrtgValues : SqlServerCreatePrtgValues);
@@ -263,6 +283,61 @@ internal static class SchemaUpgrader
         // 寫入成本同上：這是全站資料量最大的一張表、夜間批次整批寫，索引維護成本換白天查詢速度。
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_period", "period_start");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
+            "IX_lf_prtg_values_purge_sensor_id", "sensor_objid, id");
+
+        // Durable PRTG scope-purge ownership and batch progress. Progress is written in the
+        // same transaction as each bounded delete so a lost response is safely replayable.
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", isSqlite ? """
+            CREATE TABLE lf_prtg_scope_purge_jobs (
+                job_id TEXT NOT NULL PRIMARY KEY, actor_id INTEGER NOT NULL,
+                parent_job_id TEXT NULL, previous_job_id TEXT NULL, source TEXT NOT NULL, status TEXT NOT NULL,
+                active_owner TEXT NULL, lease_expires_at_utc TEXT NULL,
+                keep_set_json TEXT NOT NULL, candidate_sensor_ids_json TEXT NOT NULL, scope_fingerprint TEXT NOT NULL,
+                accepted_at_utc TEXT NOT NULL, updated_at_utc TEXT NOT NULL,
+                values_watermark INTEGER NOT NULL, state_changes_watermark INTEGER NOT NULL,
+                values_cursor INTEGER NOT NULL, state_changes_cursor INTEGER NOT NULL,
+                candidate_values INTEGER NOT NULL, candidate_state_changes INTEGER NOT NULL,
+                deleted_values INTEGER NOT NULL, deleted_state_changes INTEGER NOT NULL,
+                remaining_values INTEGER NOT NULL, remaining_state_changes INTEGER NOT NULL,
+                otherwise_removed_values INTEGER NOT NULL, otherwise_removed_state_changes INTEGER NOT NULL,
+                counts_reconciled INTEGER NOT NULL DEFAULT 1,
+                monitored_devices INTEGER NOT NULL, permission_revision INTEGER NOT NULL,
+                auth_fingerprint TEXT NULL, scope_fence_json TEXT NULL,
+                stop_reason TEXT NULL, revision INTEGER NOT NULL
+            );
+            """ : """
+            CREATE TABLE lf_prtg_scope_purge_jobs (
+                job_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_scope_purge_jobs PRIMARY KEY,
+                actor_id bigint NOT NULL, parent_job_id nvarchar(100) NULL, previous_job_id nvarchar(36) NULL,
+                source nvarchar(24) NOT NULL, status nvarchar(24) NOT NULL,
+                active_owner nvarchar(24) NULL, lease_expires_at_utc datetime2 NULL,
+                keep_set_json nvarchar(max) NOT NULL, candidate_sensor_ids_json nvarchar(max) NOT NULL, scope_fingerprint nvarchar(128) NOT NULL,
+                accepted_at_utc datetime2 NOT NULL, updated_at_utc datetime2 NOT NULL,
+                values_watermark bigint NOT NULL, state_changes_watermark bigint NOT NULL,
+                values_cursor bigint NOT NULL, state_changes_cursor bigint NOT NULL,
+                candidate_values bigint NOT NULL, candidate_state_changes bigint NOT NULL,
+                deleted_values bigint NOT NULL, deleted_state_changes bigint NOT NULL,
+                remaining_values bigint NOT NULL, remaining_state_changes bigint NOT NULL,
+                otherwise_removed_values bigint NOT NULL, otherwise_removed_state_changes bigint NOT NULL,
+                counts_reconciled bit NOT NULL CONSTRAINT DF_lf_prtg_scope_purge_counts_reconciled DEFAULT 1,
+                monitored_devices int NOT NULL, permission_revision bigint NOT NULL,
+                auth_fingerprint nvarchar(128) NULL, scope_fence_json nvarchar(max) NULL,
+                stop_reason nvarchar(max) NULL, revision bigint NOT NULL
+            );
+            """);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs",
+            "IX_lf_prtg_scope_purge_status", "status, updated_at_utc");
+        AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs",
+            "UX_lf_prtg_scope_purge_active_owner", "active_owner", "active_owner IS NOT NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "values_cursor", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "state_changes_cursor", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "auth_fingerprint", isSqlite ? "TEXT NULL" : "nvarchar(128) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "scope_fence_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "candidate_sensor_ids_json", isSqlite ? "TEXT NOT NULL DEFAULT '[]'" : "nvarchar(max) NOT NULL DEFAULT '[]'");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "previous_job_id", isSqlite ? "TEXT NULL" : "nvarchar(36) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "lease_expires_at_utc", isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "counts_reconciled", isSqlite ? "INTEGER NOT NULL DEFAULT 1" : "bit NOT NULL DEFAULT 1");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_sampled_batches",
             isSqlite ? SqliteCreatePrtgSampledBatches : SqlServerCreatePrtgSampledBatches);
