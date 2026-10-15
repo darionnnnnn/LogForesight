@@ -123,6 +123,43 @@ public sealed class PrtgProfileRefreshStateBoundaryTests : IDisposable
     }
 
     [Fact]
+    public void BoundedSavePageAndEarliestAttemptUseTheSameSingleSensorAndLease()
+    {
+        const string scope = "tiny-bounded";
+        var now = DateTimeOffset.UtcNow;
+        Assert.True(store.TryAcquire("tiny-writer", now, TimeSpan.FromMinutes(5), out var version));
+        SeedOverview(scope, "tiny-writer", version, now.AddMinutes(5));
+        var due = now.AddMinutes(2);
+        store.SavePage(scope, 0, [Sensor(41, "waiting", due)], "tiny-writer", version, requestDelta: 1);
+        Assert.Equal(41, Assert.Single(store.ReadPage(scope, 0).Sensors).SensorObjid);
+        Assert.Equal(due, store.EarliestNextAttempt(scope, 1));
+    }
+
+    [Fact]
+    public void PhysicalNulInOneRefreshPageIsRejectedWithoutRewritingEitherPage()
+    {
+        const string scope = "tiny-nul";
+        var validKey = PrtgTrustedSamplingProfileRefreshStateStore.PageKey(scope, 0);
+        var badKey = PrtgTrustedSamplingProfileRefreshStateStore.PageKey(scope, 1);
+        var valid = JsonSerializer.Serialize(Page([Sensor(41, "waiting", DateTimeOffset.UtcNow)]));
+        var bad = JsonSerializer.Serialize(Page([Sensor(42, "waiting", DateTimeOffset.UtcNow)])) + "\0hidden";
+        InsertBlob(validKey, valid, DateTime.UtcNow);
+        InsertBlob(badKey, "{}", DateTime.UtcNow);
+        using (var context = backend.CreateContext())
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(bad);
+            Assert.Equal(1, context.Database.ExecuteSqlInterpolated(
+                $"UPDATE lf_blobs SET content=CAST({bytes} AS TEXT) WHERE blob_key={badKey}"));
+        }
+        Assert.Equal(bad, backend.Blob(badKey).Read());
+        var version = backend.Blob(badKey).ReadVersion();
+        Assert.Throws<InvalidDataException>(() => store.EarliestNextAttempt(scope, 2));
+        Assert.Equal(version, backend.Blob(badKey).ReadVersion());
+        Assert.Equal(bad, backend.Blob(badKey).Read());
+        Assert.Equal(valid, backend.Blob(validKey).Read());
+    }
+
+    [Fact]
     public void EarliestNextAttempt_reads_all_150_pages_of_100_rows_and_returns_the_minimum_due_time()
     {
         const string scope = "large-scope";

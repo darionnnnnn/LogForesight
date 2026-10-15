@@ -77,16 +77,14 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
                 return (current!, false);
             if (prior is null)
             {
-                var policyMeta = ctx.Blobs.AsNoTracking()
-                    .Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                    .Select(row => new { Prefix = row.Content.Substring(0, 512 * 1024 + 1), Length = row.Content.Length })
-                    .SingleOrDefault();
-                if (policyMeta is null || policyMeta.Length > 512 * 1024 ||
-                    Encoding.UTF8.GetByteCount(policyMeta.Prefix) > 512 * 1024)
+                var policyRows = BoundedJsonBlobBatchReader.Read(ctx, [PrtgMonitoringPolicyStore.BlobKey],
+                    PrtgSharedAuthoritySnapshot.MaximumDocumentCharacters);
+                if (!policyRows.TryGetValue(PrtgMonitoringPolicyStore.BlobKey, out var policyMeta) ||
+                    policyMeta.Content is null || policyMeta.Length > PrtgSharedAuthoritySnapshot.MaximumDocumentCharacters)
                     throw new InvalidDataException("profile-refresh-policy-size-invalid");
-                using var policyDocument = JsonDocument.Parse(policyMeta.Prefix,
+                using var policyDocument = JsonDocument.Parse(policyMeta.Content,
                     new JsonDocumentOptions { MaxDepth = 32 });
-                var policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyMeta.Prefix)
+                var policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyMeta.Content)
                     ?? throw new InvalidDataException("profile-refresh-policy-invalid");
                 if (policyDocument.RootElement.ValueKind != JsonValueKind.Object ||
                     policy.Revision != notice.PolicyRevision || !policy.SensorIds.Contains(notice.SensorObjid) ||
@@ -104,14 +102,14 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
         // The notice itself is durable. This overview nudge makes it visible immediately and also
         // survives a process restart if the in-memory wake signal is lost.
         var now = DateTimeOffset.UtcNow;
-        overviewBlob.Mutate(raw =>
+        overviewBlob.MutateWithContext((_, raw) =>
         {
             var overview = ParseOverview(raw);
             overview.Cursor = 0;
             overview.NextSweepAtUtc = now;
             overview.UpdatedAtUtc = now;
             return (SerializeBounded(overview, MaximumOverviewBytes, "profile-refresh-overview-cap-exceeded"), true);
-        });
+        }, MaximumOverviewBytes);
     }
 
     public IReadOnlyDictionary<long, PrtgTrustedSamplingProofRefreshRequest> ReadProofRefreshNotices(IReadOnlyCollection<long> sensorIds)
@@ -120,15 +118,14 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
             throw new ArgumentOutOfRangeException(nameof(sensorIds));
         var keys = sensorIds.Distinct().Select(ProofRefreshNoticeKey).ToArray();
         using var ctx = backend.CreateContext();
-        var rows = ctx.Blobs.AsNoTracking().Where(row => keys.Contains(row.BlobKey))
-            .Select(row => new { row.BlobKey,
-                Prefix = row.Content.Substring(0, MaximumProofRefreshNoticeBytes + 1),
-                Length = row.Content.Length }).ToArray();
+        var rows = BoundedJsonBlobBatchReader.Read(ctx, keys, MaximumProofRefreshNoticeBytes);
         var result = new Dictionary<long, PrtgTrustedSamplingProofRefreshRequest>();
         foreach (var row in rows)
         {
-            var notice = ParseNotice(row.Prefix, row.Length);
-            if (row.BlobKey != ProofRefreshNoticeKey(notice.SensorObjid) || !sensorIds.Contains(notice.SensorObjid))
+            if (row.Value.Content is null)
+                throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
+            var notice = ParseNotice(row.Value.Content, row.Value.Length);
+            if (row.Key != ProofRefreshNoticeKey(notice.SensorObjid) || !sensorIds.Contains(notice.SensorObjid))
                 throw new InvalidDataException("profile-refresh-proof-notice-key-invalid");
             result[notice.SensorObjid] = notice;
         }
@@ -156,14 +153,13 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
         foreach (var batch in ids.Chunk(100))
         {
             var keys = batch.Select(ProofRefreshNoticeKey).ToArray();
-            var rows = ctx.Blobs.AsNoTracking().Where(row => keys.Contains(row.BlobKey))
-                .Select(row => new { row.BlobKey,
-                    Prefix = row.Content.Substring(0, MaximumProofRefreshNoticeBytes + 1),
-                    Length = row.Content.Length }).ToArray();
+            var rows = BoundedJsonBlobBatchReader.Read(ctx, keys, MaximumProofRefreshNoticeBytes);
             foreach (var row in rows)
             {
-                var notice = ParseNotice(row.Prefix, row.Length);
-                if (row.BlobKey != ProofRefreshNoticeKey(notice.SensorObjid) || !batch.Contains(notice.SensorObjid))
+                if (row.Value.Content is null)
+                    throw new InvalidDataException("profile-refresh-proof-notice-cap-exceeded");
+                var notice = ParseNotice(row.Value.Content, row.Value.Length);
+                if (row.Key != ProofRefreshNoticeKey(notice.SensorObjid) || !batch.Contains(notice.SensorObjid))
                     throw new InvalidDataException("profile-refresh-proof-notice-key-invalid");
                 if (earliest is null || notice.NotBeforeUtc < earliest) earliest = notice.NotBeforeUtc;
             }
@@ -362,29 +358,33 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
         {
             using var ctx = backend.CreateContext();
             using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
-            var overviewMeta = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == OverviewKey)
-                .Select(row => new
-                {
-                    Prefix = row.Content.Substring(0, MaximumOverviewBytes + 1),
-                    Length = row.Content.Length
-                }).SingleOrDefault();
-            if (overviewMeta is not null)
-                EnsureBounded(overviewMeta.Prefix, overviewMeta.Length, MaximumOverviewBytes, "profile-refresh-overview-cap-exceeded");
-            var overviewRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == OverviewKey);
-            if (overviewRow is null) throw new InvalidDataException("profile-refresh-overview-missing");
-            var overview = ParseOverview(overviewRow?.Content);
+            var overviewRows = BoundedJsonBlobBatchReader.Read(ctx, [OverviewKey], MaximumOverviewBytes);
+            if (!overviewRows.TryGetValue(OverviewKey, out var overviewSnapshot))
+                throw new InvalidDataException("profile-refresh-overview-missing");
+            if (overviewSnapshot.Content is null)
+                throw new InvalidDataException("profile-refresh-overview-cap-exceeded");
+            EnsureBounded(overviewSnapshot.Content, overviewSnapshot.Length, MaximumOverviewBytes,
+                "profile-refresh-overview-cap-exceeded");
+            var overviewRow = AttachBoundedRow(ctx, OverviewKey, overviewSnapshot);
+            var overview = ParseOverview(overviewRow.Content);
             EnsureLease(overview, owner, version);
             if (overview.ScopeFingerprint != scope) throw new OperationCanceledException("profile-refresh-scope-lost");
-            var pageMeta = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == pageKey)
-                .Select(row => new
-                {
-                    Prefix = row.Content.Substring(0, MaximumPageBytes + 1),
-                    Length = row.Content.Length
-                }).SingleOrDefault();
-            if (pageMeta is not null)
-                EnsureBounded(pageMeta.Prefix, pageMeta.Length, MaximumPageBytes, "profile-refresh-page-cap-exceeded");
-            var pageRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == pageKey);
-            var oldPage = ParsePage(pageRow?.Content);
+            var pageRows = BoundedJsonBlobBatchReader.Read(ctx, [pageKey], MaximumPageBytes);
+            BlobRow? pageRow = null;
+            SensorPage oldPage;
+            if (pageRows.TryGetValue(pageKey, out var pageSnapshot))
+            {
+                if (pageSnapshot.Content is null)
+                    throw new InvalidDataException("profile-refresh-page-cap-exceeded");
+                EnsureBounded(pageSnapshot.Content, pageSnapshot.Length, MaximumPageBytes,
+                    "profile-refresh-page-cap-exceeded");
+                pageRow = AttachBoundedRow(ctx, pageKey, pageSnapshot);
+                oldPage = ParsePage(pageRow.Content);
+            }
+            else
+            {
+                oldPage = new SensorPage();
+            }
             if (oldPage.Sensors.Count > 100) throw new InvalidDataException("profile-refresh-page-count-exceeded");
             var newPage = new SensorPage { UpdatedAtUtc = DateTimeOffset.UtcNow, Sensors = sensors.ToList() };
             var serialized = SerializeBounded(newPage, MaximumPageBytes, "profile-refresh-page-cap-exceeded");
@@ -427,33 +427,54 @@ public sealed class PrtgTrustedSamplingProfileRefreshStateStore(StorageBackend b
         if (pageCount is < 0 or > 150) throw new InvalidDataException("profile-refresh-page-count-invalid");
         var prefix = $"prtg_profile_page_{scope}_";
         using var ctx = backend.CreateContext();
-        var boundedRows = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey.StartsWith(prefix))
-            .OrderBy(row => row.BlobKey)
-            .Select(row => new
-            {
-                row.BlobKey,
-                Prefix = row.Content.Substring(0, MaximumPageBytes + 1),
-                Length = row.Content.Length
-            }).Take(Math.Clamp(pageCount, 0, 150) + 1).ToArray();
-        if (boundedRows.Length != pageCount)
+        using var transaction = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+        var keys = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey.StartsWith(prefix))
+            .OrderBy(row => row.BlobKey).Select(row => row.BlobKey)
+            .Take(Math.Clamp(pageCount, 0, 150) + 1).ToArray();
+        if (keys.Length != pageCount)
             throw new InvalidDataException("profile-refresh-pages-incomplete");
+        var boundedRows = BoundedJsonBlobBatchReader.Read(ctx, keys, MaximumPageBytes);
         var due = new List<DateTimeOffset>();
-        for (var index = 0; index < boundedRows.Length; index++)
+        for (var index = 0; index < keys.Length; index++)
         {
-            var row = boundedRows[index];
-            EnsureBounded(row.Prefix, row.Length, MaximumPageBytes, "profile-refresh-page-cap-exceeded");
-            if (row.BlobKey != PageKey(scope, index))
+            var key = keys[index];
+            if (key != PageKey(scope, index))
                 throw new InvalidDataException("profile-refresh-page-index-invalid");
-            var page = ParsePage(row.Prefix);
+            if (!boundedRows.TryGetValue(key, out var row) || row.Content is null)
+                throw new InvalidDataException("profile-refresh-page-cap-exceeded");
+            EnsureBounded(row.Content, row.Length, MaximumPageBytes, "profile-refresh-page-cap-exceeded");
+            var page = ParsePage(row.Content);
             if (page.Sensors.Count > 100) throw new InvalidDataException("profile-refresh-page-count-exceeded");
             due.AddRange(page.Sensors.Where(sensor => sensor.NextAttemptAtUtc.HasValue)
                 .Select(sensor => sensor.NextAttemptAtUtc!.Value));
         }
+        transaction.Commit();
         return due.Count == 0 ? null : due.Min();
     }
 
     public static string PageKey(string scope, int pageIndex) =>
         $"prtg_profile_page_{scope}_{pageIndex:D4}";
+
+    private static BlobRow AttachBoundedRow(LfDbContext context, string key,
+        (string? Content, long Version, int Length, DateTime UpdatedAt) snapshot)
+    {
+        var content = snapshot.Content ?? throw new InvalidDataException("profile-refresh-bounded-row-missing");
+        var row = context.Blobs.Local.FirstOrDefault(candidate => candidate.BlobKey == key);
+        if (row is not null)
+        {
+            var entry = context.Entry(row);
+            if (entry.State != EntityState.Unchanged || row.Version != snapshot.Version ||
+                row.UpdatedAt != snapshot.UpdatedAt || !StringComparer.Ordinal.Equals(row.Content, content) ||
+                entry.Property(candidate => candidate.Version).OriginalValue != snapshot.Version ||
+                entry.Property(candidate => candidate.UpdatedAt).OriginalValue != snapshot.UpdatedAt)
+                throw new DbUpdateConcurrencyException("profile-refresh-bounded-row-changed");
+            return row;
+        }
+        row = new BlobRow { BlobKey = key, Content = content, Version = snapshot.Version,
+            UpdatedAt = snapshot.UpdatedAt };
+        context.Blobs.Attach(row);
+        return row;
+    }
 
     private static Overview ParseOverview(string? content) => string.IsNullOrWhiteSpace(content)
         ? new() : JsonSerializer.Deserialize<Overview>(content) ?? new();

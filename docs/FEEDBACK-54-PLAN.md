@@ -48,7 +48,7 @@ D54-01 的 fetch／timeline 原始接線缺口已由 `PrtgMessageDateTimeParser.
 
 原列 `PrtgResourcePressureModeStore.Find`、binding Save／RecordQualification、qualification ResumeExisting 及 disk semantic／verification snapshot 的有界接線已存在；不再列為完全未實作。identity／host marker、silent presence、probe local facts、formal-mail claim 的完整 physical bounded reader、CAS／逐筆隔離已有程式及小型驗證；候選提交狀態依分段紀錄。
 
-仍需補齊或核對：`PrtgSnapshotDiagnosticsStore` 的整份診斷文件讀寫／寫入邊界、`PrtgDiagnosticExportActionResult` 的 policy projection、Core `PrtgDiagnosticExportSource`／`CalibrationService` 的 timeline projection，以及 profile-refresh state、formal episode／pressure hint／timeline progress／strategy／mode replay progress 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。profile-refresh 與 mail reservation 的中斷候選須先完成完整性核對，不視為已交付。
+仍需補齊或核對：`PrtgSnapshotDiagnosticsStore` 的整份診斷文件讀寫／寫入邊界、`PrtgDiagnosticExportActionResult` 的 policy projection、Core `PrtgDiagnosticExportSource`／`CalibrationService` 的 timeline projection，以及 formal episode／pressure hint／timeline progress／strategy／mode replay progress 的直接 mutation。逐一核對實際讀取、追蹤列、交易及寫入上限，不以 helper 存在當作 consumer 已接完。mail reservation 候選仍須完成完整性核對，不視為已交付。profile-refresh state 的 physical bounded reader、SavePage lease／版本雙token追蹤列、earliest頁面完整性核對已接線；raw notice 的語意相依隔離仍由 D54-01 承接。
 
 本輪繼續逐呼叫端補齊有界projection／snapshot，保留同一transaction readset、CAS與來源authority；小型字元／超限／損壞／未知extra JSON與設定漂移反例核對等待／拒絕及零正式副作用。依使用者指示不建立33,554,432字元極限文件，雙provider邊界依官方文件及小範圍反例核對。容量export另量測，不把正式mail拒絕等同匯出吞吐通過。對應E03、E06、E07-T03、E08-T05、E10-T02。
 
@@ -448,3 +448,7 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 ### 8.8 回退郵件 reservation 相容防護（2026-10-15）
 
 回退工具將新的 `MailContributionReservations` 與兩份 contribution ledger 一同視為舊版不可理解的耐久證據。完整原文保留於還原及備份，資料可獨立釋放，郵件保持 held，避免未知 SMTP 結果被舊版重送。主代理只跑自有小型 `test_nonempty_new_contribution_ledgers_preserve_raw_state_and_hold_only_mail`，1/1 通過；不代表 SQL Server／全量恢復驗收。
+
+### 8.9 Profile-refresh 有界狀態接線（2026-10-15）
+
+`PrtgTrustedSamplingProfileRefreshStateStore` 的 notice／policy／SavePage／EarliestNextAttempt 均採完整 physical bounded reader；SavePage 在 Serializable 交易以相同 bounded snapshot 附加 EF 追蹤列，核對 Version／UpdatedAt 及既存 local state，不再有界預讀後無條件全讀。沿用原頁面／notice／overview 上限及 lease；policy 對齊共用 2Mi UTF-16 契約。主代理在隔離 checkout 的 `root-interrupted-candidates-r13` 六個小型 profile-refresh 案例通過（1sensor正常往返、真實 NUL頁面拒絕、lease過期／owner/version與缺頁），不執行既有150頁×100 sensors案例。raw notice 因 Date Format-only取消的 D54-01 接線仍未完成，不因此移除該待辦。
