@@ -61,7 +61,7 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 - [ ] **E04-T02【承接驗收】** 完整操作目前表單與已保存來源的匯出→離線核對，涵蓋取消、截斷、逾時、無設定、版本不符及防偽／敏感資料反例；維持 64 KiB、depth32、取消≤5秒、單 HTTP≤30秒與整輪截止。
 - [ ] **E05-T01【承接驗收】** 補完未保存／缺資料／陳舊守門狀態、原因與設定入口的操作驗證；守門失聯不得視為安全，守門資料不得產生業務 finding／案件／通知。
 - [ ] **E05-T02【承接驗收】** 核對範圍縮小、鏡像差額、同步未完成與保留資料不誤刪；補齊 readonly／case-only 修改拒絕、過期寫入及其餘完整角色操作。已通過的 18成功／2衝突及保存→採樣→guard 子集合保留。
-- [ ] **E05-T03【承接驗收】** 補齊夾末頁、messages 完整前導／期間涵蓋、取消與剩餘集合核對；抽樣相依資料不得授權完整拓撲。全量預覽／保存／实际請求集合核對合併由 E07、E08 執行。
+- [ ] **E05-T03【承接驗收】** 取消→續跑的單sensor精確集合已補證（§8.31）；其餘夾末頁、messages 完整前導／期間涵蓋及完整操作集合仍待核對；抽樣相依資料不得授權完整拓撲。全量預覽／保存／实际請求集合核對合併由 E07、E08 執行。
 - [ ] **E06-T01【承接驗收】** 在完整共同負載中核對成本預覽與實際 transport、quota 等待、property/profile 核驗刷新、歷史初始化及 guard 的種類／數量／版本／scope 一致，並量測資格到期尖峰與日常額度。
 - [ ] **E06-T02【承接驗收】** 完成正常、10%逾時＋10%unknown、全來源拒絕及回填＋profile刷新＋NetIQ＋AI＋查詢情境；核對 15分鐘輪≤10分鐘／age p95≤30分鐘、5分鐘輪≤3分鐘／age≤10分鐘與≥25%餘裕。
 - [ ] **E06-T03【承接驗收】** 核對 table 2/秒、在途4、historic 5/60、72小時初始化期限及公平有限等待；來源失敗不阻 NetIQ，停止後不開新請求，未知成本／超窗口拒絕擴量。既有 fallback/admission 定向通過不代替共同全負載。
@@ -687,3 +687,10 @@ owned小型fixture `7226860943fb42f9b20c198390f3bf2c`正常登入後讀公開loc
 §4.11 descriptor原有hash小檔／靜態證據不重跑；新增`test_descriptor_dispatch.ps1`直接取正式腳本的Invoke-Api與Assert-NoReparse函式，使用計數HttpMessageHandler及固定owner替身，專驗ownership核對後、業務派送前的接線。正常值送1次；在owner核對返回前令descriptor漂移，拒絕且新增請求0，PASS（`descriptor-dispatch.log`）。沒有開DB／listener、沒有全量preflight／metadata，這不宣稱runtime owner本身或完整資格流程通過。
 
 E04-T02／AC07–08補未保存表單操作：維護帳號在瀏覽器PRTG連線表單填自有loopback與合成token、不保存，切至探測按完整探測，顯示「尚未設定PRTG連線位址，無法執行探測」。公開API核對保存URL仍空、PRTG停用且probe沒有StartedAt/isRunning；source request log尚未建立。透過同頁本機診斷按鈕實際下載5846bytes，沒有未保存token，SHA `596B22CDE36A0653DF4BA0997EF7B4EABEBEF75D650F3D862F0549267D561B80`；正常offline verifier使用當前commit／settings revision回INCOMPLETE（exit2）而非來源就緒。`unsaved-form-result.json`、`unsaved-local-download.json`、`unsaved-offline.log`保存原檔與核對。首次offline命令參數名稱誤寫未執行verifier，修正為實際Path／ExpectedRevision後執行一次，沒有重送下載或探測。E04-T02其餘timeout／truncation／revision操作缺口仍保留；§8.26已驗取消／保存來源證據不重跑。
+
+
+### 8.31 E05-T03：取消後續跑精確集合
+
+Luna high只在`PrtgSensorTimelineCollectorTests.cs`新增`CallerCancellationDuringBootstrapDiscardsPartialPageAndResumeReplaysExactMessages`，主代理查完整diff與原始TRX，沒有重跑已通過測例。1sensor、3則messages、pageSize2；第一頁收到2筆後，第二頁請求受控阻塞並caller取消。契約是bootstrap未完成不持久化局部頁：States／Coverage／PendingStates／PendingEventKeys／游標／邊界hash均空、watermark null，已用請求預算2。resume從start=0重新讀未保存第一頁，再讀start=2，累計預算4；精確3則事件＋目前Down錨點、3個右開period，沒有漏失或重複。
+
+定向單方法最終1/1、0skip，TRX `work/round54/acceptance-b2b82708/timeline-cancel/timeline-cancel-final.trx` SHA `6E43DD28C281F70319EAD8F3B2CF67E58B0E96A998B427CD000E3CB9D3821B71`。先前兩次fixture錯誤結果保留：先誤用非狀態raw碼5，改為正式Down碼608；再修正Through右開不產生額外末段period的斷言。沒有據此修改產品程式，不把修測例誤稱修bug；編譯等待不重開第二個runner。此子項完成，完整前導、其餘分頁操作及全母體拓撲仍在原E05-T03／E07／E08待驗。

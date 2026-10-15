@@ -30,7 +30,7 @@
       { "id": "E04-T02", "status": "pending-operation", "remaining": "Unsaved-form refusal and local browser download/offline validation completed under PLAN 8.30; complete timeout/truncation/revision-drift operations using unchanged verifier evidence where valid." },
       { "id": "E05-T01", "status": "pending-operation", "remaining": "Unconfigured/missing/stale/guard-unreachable UI reasons and exact zero finding/case/notification effects." },
       { "id": "E05-T02", "status": "pending-operation", "remaining": "Exact retained/deleted sets through reduced scope and incomplete sync, stale write and read-only/case-only denial; complete roles under E08-T03." },
-      { "id": "E05-T03", "status": "pending-coverage", "remaining": "Current cancellation cursor/remainder and complete predecessor/period coverage; full preview/save/request sets stay with E07/E08." },
+      { "id": "E05-T03", "status": "pending-coverage", "remaining": "PLAN 8.31 verifies a 3-message cancellation/resume exact set and cumulative request budget. Remaining: complete predecessor/period and last-page operation coverage; full preview/save/request sets stay with E07/E08." },
       { "id": "E06-T01", "status": "pending-workload", "remaining": "Full joint-workload preview/actual transport, quota, scope/version and qualification-expiry peak measurements." },
       { "id": "E06-T02", "status": "pending-workload", "remaining": "Original combined-load success/fault scenarios, cadence/freshness p95 and 25 percent headroom; no bulk run authorized now." },
       { "id": "E06-T03", "status": "pending-workload", "remaining": "Joint-work continuity, 72-hour initialization, fairness, cancellation and independent NetIQ evidence beyond existing quota subchecks." },

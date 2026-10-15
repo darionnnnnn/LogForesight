@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -368,6 +369,103 @@ public sealed class PrtgSensorTimelineCollectorTests : IDisposable
         Assert.Empty(complete.PendingStates);
         Assert.Contains(resumed.QueryUris, uri => uri.Contains("start=0", StringComparison.Ordinal) && uri.Contains("count=2", StringComparison.Ordinal));
         Assert.Contains(resumed.QueryUris, uri => uri.Contains("start=2", StringComparison.Ordinal) && uri.Contains("count=2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CallerCancellationDuringBootstrapDiscardsPartialPageAndResumeReplaysExactMessages()
+    {
+        Seed();
+        Store.Update(e => e.MessageStatusSemanticVersion = 0);
+
+        var latest = DateTime.Now.AddHours(-2);
+        latest = new DateTime(latest.Year, latest.Month, latest.Day, latest.Hour, latest.Minute,
+            latest.Second, DateTimeKind.Unspecified);
+        var messageTimes = new[] { latest, latest.AddMinutes(-1), latest.AddMinutes(-2) };
+        string Message(DateTime at, string status, string name) => JsonSerializer.Serialize(new
+        {
+            objid = 10,
+            datetime = at.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            status,
+            status_raw = status == "Up" ? 607 : 608,
+            message = name
+        });
+        string Page(params string[] messages) => "{\"messages\":[" + string.Join(",", messages) + "]}";
+        var firstPage = Page(
+            Message(messageTimes[0], "Up", "message-1"),
+            Message(messageTimes[1], "Down", "message-2"));
+        var secondPage = Page(Message(messageTimes[2], "Up", "message-3"));
+
+        var secondPageStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelledQueries = new List<string>();
+        using var cancellation = new CancellationTokenSource();
+        var interrupted = new CancellableHandler(async (query, token) =>
+        {
+            cancelledQueries.Add(query);
+            if (query.Contains("content=sensors", StringComparison.Ordinal)) return Sensor();
+            if (query.Contains("start=0", StringComparison.Ordinal)) return firstPage;
+            if (query.Contains("start=2", StringComparison.Ordinal))
+            {
+                secondPageStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+            throw new InvalidOperationException($"Unexpected source query: {query}");
+        });
+
+        var interruptedCollect = Collect(interrupted, cancellationToken: cancellation.Token, pageSize: 2);
+        await secondPageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => interruptedCollect);
+
+        var afterCancellation = Store.Get();
+        Assert.Null(afterCancellation.LastCompleteThrough);
+        Assert.Empty(afterCancellation.Coverage);
+        Assert.Empty(afterCancellation.States);
+        Assert.Empty(afterCancellation.PendingStates);
+        Assert.Empty(afterCancellation.PendingEventKeys);
+        Assert.Equal(0, afterCancellation.PendingNextPage);
+        Assert.Empty(afterCancellation.PendingBoundaryHash);
+        Assert.Equal(2, afterCancellation.BootstrapPagesRead);
+        Assert.Contains(cancelledQueries, query => query.Contains("start=0", StringComparison.Ordinal));
+        Assert.Contains(cancelledQueries, query => query.Contains("start=2", StringComparison.Ordinal));
+
+        var resumedQueries = new List<string>();
+        var resumed = new CancellableHandler((query, _) =>
+        {
+            resumedQueries.Add(query);
+            if (query.Contains("content=sensors", StringComparison.Ordinal)) return Task.FromResult(Sensor());
+            if (query.Contains("start=0", StringComparison.Ordinal)) return Task.FromResult(firstPage);
+            if (query.Contains("start=2", StringComparison.Ordinal)) return Task.FromResult(secondPage);
+            throw new InvalidOperationException($"Unexpected source query: {query}");
+        });
+
+        var complete = await Collect(resumed, pageSize: 2);
+
+        Assert.Equal(new[] { 0, 2 }, resumedQueries
+            .Where(query => query.Contains("content=messages", StringComparison.Ordinal))
+            .Select(query => query.Contains("start=0", StringComparison.Ordinal) ? 0 : 2));
+        Assert.Equal(4, complete.BootstrapPagesRead);
+        Assert.Equal("covered", complete.QualityReason);
+        Assert.True(complete.LastCompleteThrough.HasValue);
+        Assert.Equal(0, complete.PendingNextPage);
+        Assert.Empty(complete.PendingStates);
+        Assert.Empty(complete.PendingEventKeys);
+        Assert.Single(complete.Coverage);
+
+        var parsedMessageTimes = messageTimes.Select(textTime =>
+        {
+            var text = textTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            Assert.True(PrtgMessageDateTimeParser.TryParse(text, _policy.MessageDateFormat,
+                CultureInfo.GetCultureInfo(_policy.SourceCultureName),
+                TimeZoneInfo.FindSystemTimeZoneById(_policy.SourceTimeZoneId), out var parsed, out var reason), reason);
+            return parsed;
+        }).Reverse().ToArray();
+        var expectedStates = new[] { "Up", "Down", "Up", "Down" };
+        Assert.Equal(expectedStates, complete.States.Select(state => state.Status));
+        Assert.Equal(parsedMessageTimes, complete.States.Take(3).Select(state => state.At));
+
+        var periods = complete.Periods(parsedMessageTimes[0], complete.LastCompleteThrough!.Value);
+        Assert.Equal(expectedStates.Take(3), periods.Select(period => period.Status));
+        Assert.Equal(parsedMessageTimes, periods.Take(3).Select(period => period.EnteredAt));
     }
 
     [Fact]
