@@ -301,6 +301,7 @@ class DeltaReconcileTests(unittest.TestCase):
             "UrgentOutbox": {},
             "AcceptedMailContributionReceipts": {"disk|recipient-a|host-1|2026-10-14": "2026-10-14T01:00:00Z"},
             "HeldLegacyMailContributionReceipts": {"disk|recipient-b|host-2|2026-10-13": "2026-10-13T01:00:00Z"},
+            "MailContributionReservations": {"opaque-key": {"ReservationId": "owned-attempt", "Status": "unknown"}},
         }
         raw = json.dumps(state, separators=(",", ":"))
         connection = sqlite3.connect(self.current)
@@ -319,6 +320,8 @@ class DeltaReconcileTests(unittest.TestCase):
         self.assertTrue(any("AcceptedMailContributionReceipts:unsupported-legacy-ledger" in item
                             for item in reconciliation["mailUnknownOutcomes"]))
         self.assertTrue(any("HeldLegacyMailContributionReceipts:unsupported-legacy-ledger" in item
+                            for item in reconciliation["mailUnknownOutcomes"]))
+        self.assertTrue(any("MailContributionReservations:unsupported-legacy-ledger" in item
                             for item in reconciliation["mailUnknownOutcomes"]))
         restored_db = self.root / "data" / "Db" / "logforesight.db"
         backup_db = self.root / "reconcile-backup" / "logforesight.after-reconcile.db"

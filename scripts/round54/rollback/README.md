@@ -1,4 +1,4 @@
-# Round 54 controlled SQLite rollback
+﻿# Round 54 controlled SQLite rollback
 
 `rollback_control.py` is the C54-04-B startup gate. It accepts one exact, operator-pinned Web/Core release and its paired SQLite database, key, configuration, schema/authority manifest, and preservation catalog. It creates a new restore root and never edits an input or an existing restore root. SQL Server is explicitly unsupported by this first delivery.
 
@@ -108,3 +108,5 @@ python scripts/round54/rollback/tests/smoke_real_target.py --release-root $Relea
 ```
 
 This runtime check first calls the repository's `Verify-BuildIdentity.ps1`, uses the actual Round-53 app to create the production SQLite schema and key paths in a temporary directory, then runs `prepare` → `verify` → `launch` → `stop`. It checks a small exact case/reply/task/notification-state fixture, durable sentinel/settings rows, a local external-connection trap, input DB/key hashes, and the target release tree hash. Its report is evidence for this target build and fixture only; it is not a SQL Server or production-reconciliation test.
+
+Mail release also remains held when `AcceptedMailContributionReceipts`, `HeldLegacyMailContributionReceipts`, or `MailContributionReservations` is non-empty or malformed. Reconciliation preserves the exact JSON in the restored database and backup; an old binary cannot infer acceptance or safely retry an unresolved reservation. Data release is independent of this mail hold.

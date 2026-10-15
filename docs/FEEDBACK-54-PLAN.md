@@ -1,4 +1,4 @@
-# 第 54 輪規劃：PRTG 剩餘實作與完整驗收
+﻿# 第 54 輪規劃：PRTG 剩餘實作與完整驗收
 
 > 狀態：2026-10-14使用者已授權全部實作及逐段驗證後commit／push；實作中。同日最新限制：開發期間只做分段小範圍驗證，不執行大規模大量資料測試；不得已須先提出方案討論。本輪未宣告整體驗收通過。
 > 來源：2026-10-13 使用者明確要求將第53輪尚未實作項目移入下一輪，先收尾已實作部分。此為範圍移交，不代表原目標、容量、實用性或驗收已通過。
@@ -444,3 +444,7 @@ C54-01～05以coverage inventory的`round54ContractCorrections`追蹤，分別�
 - R54八項、C54五項與四項執行補強共17項，分別記錄 `implementationStatus`、實際 `sourceReferences`、`remainingImplementation` 與 `remainingAcceptance`；原必要檢查、ID、AC／journey／Q關係不刪除。已實作項的實作待辦留空，仍未通過的驗收維持 `not-accepted`，不再一律誤寫 `planned-not-implemented`。
 - validator核對檔案與精確source locator、禁止有已知程式缺口卻標實作完成，且逐字保留原驗收檢查。主代理獨立CoverageInventory及A2 baseline＋12個否定案例通過；22 AC／10 journeys／6 Q／7來源情境／222案／53承接缺口及原27責任索引不變。這是清單一致性證據，不是17項功能全通過。
 - 四種維護情境的真登入fixture接線另行補齊；仍保留原六角色與一個合成防禦測例，未實際登入前不宣稱browser accepted。
+
+### 8.8 回退郵件 reservation 相容防護（2026-10-15）
+
+回退工具將新的 `MailContributionReservations` 與兩份 contribution ledger 一同視為舊版不可理解的耐久證據。完整原文保留於還原及備份，資料可獨立釋放，郵件保持 held，避免未知 SMTP 結果被舊版重送。主代理只跑自有小型 `test_nonempty_new_contribution_ledgers_preserve_raw_state_and_hold_only_mail`，1/1 通過；不代表 SQL Server／全量恢復驗收。

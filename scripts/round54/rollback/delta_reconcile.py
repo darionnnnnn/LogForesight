@@ -790,8 +790,9 @@ def _mail_unknown_states(raw: str | None) -> list[str]:
     # These ledgers were added after the rollback target was released. The
     # older application cannot reason about their deduplication semantics.
     # Preserve the complete JSON blob, but keep the mail lane held whenever
-    # either opaque ledger is present with a non-empty or unexpected value.
-    for ledger_name in ("AcceptedMailContributionReceipts", "HeldLegacyMailContributionReceipts"):
+    # any opaque ledger is present with a non-empty or unexpected value.
+    for ledger_name in ("AcceptedMailContributionReceipts", "HeldLegacyMailContributionReceipts",
+                        "MailContributionReservations"):
         if ledger_name in state and state[ledger_name] != {}:
             unknown.append(f"{ledger_name}:unsupported-legacy-ledger")
     for key, intent in outbox.items():
