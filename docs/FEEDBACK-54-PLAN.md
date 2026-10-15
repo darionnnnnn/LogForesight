@@ -93,18 +93,21 @@
 
 ### 作業 0:環境探測(使用者執行,結果回傳後更新 §5 暫定值)
 
-在現行部署版本的「系統管理 > PRTG 維護 > 環境探測」執行「完整環境探測」與「驗證小範圍資料流」,下載兩份文字輸出。分享前遮蔽主機名稱、IP、PRTG 訊息。本輪要從輸出讀的是:
+**不需新寫探測程式**:現行程式已具備本輪需要的輸出;步驟 9 的「相容性證據探測」在 B1 才刪,探測先用它取事實。用 `feature/prtg-feedback-54` 的乾淨候選(`faeb7bca` 或本分支最新)建置部署;若現場仍是舊版(1.0.53.x),步驟 9 可能缺 Ping／Traffic 兩類或 `unit` 欄位,屆時先更新部署再探測。
+
+操作:「系統管理 > PRTG 維護 > 環境探測」先確認連線設定已儲存,依序按「驗證小範圍資料流」→「完整環境探測」,完成後按「下載探測結果」(文字)與「下載去識別相容性證據 (JSON)」。文字輸出含主機名稱、IP、PRTG 訊息,分享前遮蔽;JSON 已去識別。另請截一張鏡像狀態頁籤「未對應」清單前 20 筆的 device 名稱欄(可遮蔽成前三字),供 C1 判斷 hostname 命中空間。
 
 | 要回答的問題 | 看哪一段 | 決定什麼 |
 |---|---|---|
-| 各 type 的 `lastvalue_raw` 與 historicdata 末列長什麼樣、單位是什麼(CPU 是 %?記憶體是可用 % 還是已用 %?磁碟是剩餘 %?ping 是 ms?) | 9d-1、9d-2 | C3 單位對照表(暫定值轉定案) |
-| sensor table 的 `unit` 欄有沒有值 | 步驤 3 type 分布的 unit 樣本 | B1 「單位可判」用 unit 欄還是 type 對照 |
-| device 的 `host` 欄有幾台是 DNS 名稱、幾台無法判定 | 步驤 6 IP 覆蓋概要 | C1 hostname 退路的實際命中空間 |
-| 目前對應結果:ok／unmatched／conflict 各幾台 | 站台對照 [S1] | C1 要補多少 |
-| 時間字串格式與時區 | 9d-2 末列 `datetime`、探測標頭 | C3 日序列的時間基準 |
-| 逐裝置 messages 是否含子 sensor | 9d-5 | 狀態型規則資料路徑是否要改(維持現狀即可則不動) |
+| CPU／記憶體／磁碟／Ping／Traffic 各一顆的頻道、`unit`、數值長相(記憶體是可用 % 還是已用 %?磁碟是剩餘 %?ping 是 ms?) | 相容性 JSON `targets[]` 的 `channels`(`unit`／`unit_type`／`scaling_type`)、`snapshot`、`identity_preserving_raw_history` | B1 單位對照表、C3 方向(暫定轉定案) |
+| sensor table 的 `unit` 欄全站有沒有值 | 文字輸出步驟 3 type 分布的 unit 樣本 | B1「單位可判」以 unit 欄還是 type 對照為主 |
+| device 的 `host` 欄有幾台是 DNS 名稱、幾台無法判定 | 步驟 6 IP 覆蓋概要 | C1 hostname 退路的範圍 |
+| 目前對應 ok／unmatched／conflict 各幾台;未對應 device 名稱與 NetIQ 主機名的相似度 | 站台對照 [S1]、未對應清單截圖 | C1 比對字串取 `host` 欄還是裝置名稱 |
+| PRTG 帳號 Date Format 與時區 | 相容性 JSON `message_time.date_format`／`source_timezone`、探測標頭 | B1 是否需要 `PrtgSourceTimeZoneId` 預設值 |
+| 逐裝置 messages 是否含子 sensor | 文字輸出 9d-5 結論 | 狀態型規則資料路徑是否要改(✓ 就不動) |
+| 小範圍資料流是否寫入讀回 ≥1 筆 `ok` | 小範圍資料流輸出 | historicdata 路徑在現場可用 |
 
-探測結果**不授予**任何資格,只回答上表。沒有結果前,C1／C3 的數值與對照表一律標「暫定」。
+探測結果**不授予**任何資格,只回答上表。沒有結果前,C1／C3 的數值與對照表一律標「暫定」;探測不阻擋 A／B 系列開工。
 
 ### 作業 A:止血與基線
 
