@@ -694,3 +694,14 @@ E04-T02／AC07–08補未保存表單操作：維護帳號在瀏覽器PRTG連線
 Luna high只在`PrtgSensorTimelineCollectorTests.cs`新增`CallerCancellationDuringBootstrapDiscardsPartialPageAndResumeReplaysExactMessages`，主代理查完整diff與原始TRX，沒有重跑已通過測例。1sensor、3則messages、pageSize2；第一頁收到2筆後，第二頁請求受控阻塞並caller取消。契約是bootstrap未完成不持久化局部頁：States／Coverage／PendingStates／PendingEventKeys／游標／邊界hash均空、watermark null，已用請求預算2。resume從start=0重新讀未保存第一頁，再讀start=2，累計預算4；精確3則事件＋目前Down錨點、3個右開period，沒有漏失或重複。
 
 定向單方法最終1/1、0skip，TRX `work/round54/acceptance-b2b82708/timeline-cancel/timeline-cancel-final.trx` SHA `6E43DD28C281F70319EAD8F3B2CF67E58B0E96A998B427CD000E3CB9D3821B71`。先前兩次fixture錯誤結果保留：先誤用非狀態raw碼5，改為正式Down碼608；再修正Through右開不產生額外末段period的斷言。沒有據此修改產品程式，不把修測例誤稱修bug；編譯等待不重開第二個runner。此子項完成，完整前導、其餘分頁操作及全母體拓撲仍在原E05-T03／E07／E08待驗。
+
+
+### 8.32 E04-T02：逾時匯出及離線交接反例
+
+同一owned fixture在正常瀏覽器保存loopback來源及合成憑證，PRTG、排程、AI及通知維持停用；公開settings把來源timeout設5秒，受控來源`prtg-hold-503`只在第一個請求延遲8秒。瀏覽器啟動一次正常環境探測，5.297秒後isRunning=false／success=false／cancelled=false，畫面明示未通過並可下載JSON。下載5966bytes，SHA `6121F9DAF72E3DC13C1143A5BB958D97ABD88DF56C1794DC9154BB753C15B7D1`；無測試憑證，offline核對當前build／settings回INCOMPLETE。原始status、下載、result、offline log及畫面分別在`work/round54/acceptance-b2b82708/timeout-*`，沒有重送同一probe或跑成功來源／取消舊測例。
+
+未找到既有verifier契約測試的原始執行收據，故只對同一下載的最小副本補必要負例，未重跑109項整套：錯expected commit、錯version、不同settings revision、檔案截斷、重複JSON property均拒絕；注入revision不回顯sentinel、depth超32、65537-byte檔案亦拒絕。前端既有小型JS契約一次通過，確認running禁下載、完整/truncated狀態、超五類／偽正式宣告／malformed及ASCII／UTF8 64KiB邊界，最大反例約66KiB，不是33M文件或負載測試。舊cfa與b2的verifier／下載JS／頁面逐檔比對均未變，既有實際取消165ms／保存來源回執保留其適用範圍。
+
+必要反例發現新缺陷：前端拒絕`evidence_ready=true`，offline原忽略該欄位，回exit2 INCOMPLETE；不能把這個結果說成格式合法或測試通過。已在正式verifier補「欄位若存在必須false」，偽造宣告現在exit1 `InvalidEvidenceReadyClaim`；舊文件未帶欄位仍可讀，沒有新增formal授權。修後只跑原失敗及尚未跑的4案，原5案位於未改檢查路徑沿用；合法實際下載與缺readiness欄位的舊shape各核exit2一次。原始檔、各case輸出及result見`offline-negatives/`，修前偽造案僅保留於工具回傳，沒有為補檔重跑；既有契約測試檔新增同一拒絕案例供後續回歸。
+
+檢查30秒／整輪期限時另確認一般探測前段尚沿用最高600秒設定、僅後段CompatibilityProbe有期限，依原E04-T02契約補正並另段驗收。此處暫不勾E04-T02；不能以本次5秒設定單案推論所有設定均受30秒上限。正式成品若因後續期限修正再變更，E01依既定reopenWhen處理，不重驗未受影響的browser及verifier結果。

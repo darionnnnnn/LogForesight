@@ -585,6 +585,12 @@ try {
     if ($null -eq $build -or $build.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { Fail-Safely 'MissingBuildVersion' }
     if ($null -eq $targets -or $targets.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) { Fail-Safely 'InvalidTargetsShape' }
     if ($null -eq $rootStatus -or $rootStatus.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { Fail-Safely 'InvalidRootStatus' }
+    # Older handoff documents omitted this field. If it is present, a read-only
+    # compatibility export must explicitly deny formal readiness, as the UI does.
+    $evidenceReady = Get-JsonProperty $root 'evidence_ready'
+    if ($null -ne $evidenceReady -and $evidenceReady.ValueKind -ne [System.Text.Json.JsonValueKind]::False) {
+        Fail-Safely 'InvalidEvidenceReadyClaim'
+    }
 
     $buildText = $build.GetString()
     if ($buildText -notmatch '^(?<version>\d+\.\d+(?:\.\d+){0,2})\+(?<revision>[0-9a-fA-F]{40})$') { Fail-Safely 'MissingOrInvalidBuildSuffix' }

@@ -262,6 +262,9 @@ Invoke-ContractCase 'sqlite-complete-and-distinguishes-owned-volume' $valid 0 @(
 )
 
 Invoke-ContractCase 'settings-revision-can-be-checked-by-operator' $valid 0 @("SettingsRevision: $settingsRevision",'SettingsRevisionReason: matches-expected-settings-revision') -ExpectedSettingsRevision $settingsRevision
+$forgedReady = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
+$forgedReady.evidence_ready = $true
+Invoke-ContractCase 'compatibility-export-cannot-claim-formal-readiness' $forgedReady 1 @('InvalidEvidenceReadyClaim')
 Invoke-ContractCase 'saved-message-time-sample-is-compatibility-only' $valid 0 @('MessageTimeAuthority: authority=saved-explicit-authority; format=ymd-24; sample=sample-compatible','MessageTimeRemoteAccountSettingRead: false','HANDOFF_INTEGRITY_OK') -ExpectedMessageTimeFormat 'ymd-24' -ExpectedMessageTimeFingerprint ('a'*64)
 $legacyMessageTime = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $valid -Depth 24 -Compress) -AsHashtable
 $legacyMessageTime.schema_version = '1.0.0'; $legacyMessageTime.Remove('message_time')
