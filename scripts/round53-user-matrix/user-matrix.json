@@ -1,6 +1,14 @@
 {
   "schema": "logforesight-round53-user-matrix-v1",
   "readiness": "prepared-not-browser-accepted",
+  "round54TestPolicy": {
+    "decidedAt": "2026-10-15",
+    "reference": "README.md#開發測試與驗收準則; docs/FEEDBACK-54-PLAN.md section 4.12",
+    "precedence": "Overrides inherited full-workload performance and full-volume execution requirements, including quality-objective and journey associations; role and data-correctness requirements remain unchanged.",
+    "method": "Review actual code paths for bounded resource usage and source correctness; reuse valid evidence and test only necessary small gaps.",
+    "bulkExecutionRequiredForCloseout": false,
+    "productionPerformanceMeasured": false
+  },
   "sourcePolicy": {
     "required": "current Round 54 frozen clean build output; exact source commit and matching Web/Core/static assets required",
     "identity": "scripts/Verify-BuildIdentity.ps1 must pass for the exact Web output used by the browser run; record source revision, Web/Core assembly hashes, static asset hashes and fixture DB/key hashes in the run manifest",

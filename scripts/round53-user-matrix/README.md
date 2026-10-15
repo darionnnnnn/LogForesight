@@ -1,5 +1,7 @@
 # Round 54 acceptance using inherited Round 53 user matrix (not browser accepted)
 
+Testing policy (2026-10-15): [project testing rules](../../README.md#開發測試與驗收準則) and [PLAN §4.12](../../docs/FEEDBACK-54-PLAN.md#412-測試與容量驗收準則2026-10-15最新定案) override inherited full-volume and performance-run gates in this matrix. Review bounded production paths and reuse valid evidence; run only necessary small correctness checks. Roles, authority, durability and recovery contracts remain required. The policy itself grants no acceptance and makes no measured production-performance claim.
+
 The four maintenance scenarios now map to existing fixture identities. Rescue uses the actual password-required `serverAdmin` branch in an owned `Ad` clone, with a one-run credential supplied through `-ServerAdminFixturePassword`; the launcher stores only its hash fingerprint in the manifest. It does not create a production role or grant business visibility. `Test-UserMatrixApiExportAuthority.ps1` checks the six baseline roles and the rescue login, including rejection of a wrong password. These API checks do not establish browser acceptance. Use the normal build `bin` directory containing the static-assets runtime manifest, rather than a publish directory that omits it.
 
 `user-matrix.json` is the fixed inventory for 22 AC, 10 user journeys, 6 quality objectives, six roles, and four synthetic source kinds. Run its integrity check with:

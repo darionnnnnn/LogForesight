@@ -1,5 +1,7 @@
 # Isolated qualification workload matrix
 
+Round54 policy (2026-10-15): these workload tools remain available, but running them is **not a development or closeout prerequisite**. Follow [project testing rules](../../README.md#開發測試與驗收準則) and [PLAN §4.12](../../docs/FEEDBACK-54-PLAN.md#412-測試與容量驗收準則2026-10-15最新定案): code scalability review plus necessary small correctness checks, without bulk generation or local performance certification. Do not execute the full commands below merely to satisfy an inherited checklist.
+
 These scripts run the saved qualification-job workflow and six fixed workload cells through the authenticated public Web API. They require PowerShell 7 and numeric-loopback URLs for Web, PRTG, and Sentinel. They do not create source bindings or proofs, and they keep native-source, formal-acceptance, retention-acceptance, and whole-round flags false.
 
 ## Prepare the exact sensor manifest
