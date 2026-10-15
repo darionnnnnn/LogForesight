@@ -34,6 +34,31 @@ public sealed class PrtgFormalMailStartClaimTests
     }
 
     [Fact]
+    public async Task DuplicateModePropertiesCannotPassTheFormalMailBeginFence()
+    {
+        using var fixture = await Fixture.CreateAsync(urgent: true, elevateCpuFormalRisk: true);
+        var modeBlob = fixture.Backend.Blob(PrtgResourcePressureModeStore.BlobKey(fixture.Host.HostId));
+        var raw = modeBlob.Read()!;
+        const string grantsProperty = "\"Grants\":";
+        var grantsStart = raw.IndexOf(grantsProperty, StringComparison.Ordinal);
+        Assert.True(grantsStart >= 0);
+        var grantsValueStart = grantsStart + grantsProperty.Length;
+        while (grantsValueStart < raw.Length && char.IsWhiteSpace(raw[grantsValueStart])) grantsValueStart++;
+        Assert.True(grantsValueStart < raw.Length);
+        Assert.Equal('[', raw[grantsValueStart]);
+        modeBlob.Mutate(_ => (raw.Insert(grantsStart, "\"Grants\":[],"), true));
+
+        await fixture.Service.NotifyAfterRunAsync();
+
+        Assert.Empty(fixture.Sender.Attempts);
+        Assert.Empty(fixture.MailState.Get().FormalMailStartClaims);
+        var intent = Assert.Single(fixture.MailState.Get().UrgentOutbox.Values);
+        Assert.Empty(intent.FormalStartFenceRefs);
+        Assert.Contains(intent.FormalIssueStates, item => item.Value == "revoked");
+        Assert.Contains(fixture.ReadShardIfPresent()!.Claims.Values, claim => claim.Status == "revoked");
+    }
+
+    [Fact]
     public async Task ModeOffBeforeUrgentStartRevokesOnlyTheFormalFindingAndKeepsBaselineRecord()
     {
         using var fixture = await Fixture.CreateAsync(urgent: true, elevateCpuFormalRisk: true, highRiskNetIqBaseline: true);

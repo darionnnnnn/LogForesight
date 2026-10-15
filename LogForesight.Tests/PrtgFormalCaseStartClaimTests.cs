@@ -102,6 +102,43 @@ public sealed class PrtgFormalCaseStartClaimTests
     }
 
     [Fact]
+    public void CurrentStartAllowsDateFormatOnlyPolicyRevisionWhenRawProfileAuthorityIsCurrent()
+    {
+        using var fixture = new Fixture();
+        fixture.SeedParent([fixture.PressureIssue]);
+        var policyStore = new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        var before = policyStore.Get();
+        policyStore.Update(policy =>
+        {
+            policy.Revision = "policy-claim-date-format-only";
+            policy.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
+            policy.MessageTimeAuthorityRevision++;
+        });
+        Assert.Equal(before.RawAuthorityRevision, policyStore.Get().RawAuthorityRevision);
+
+        using var ctx = fixture.Backend.CreateContext();
+        Assert.True(PrtgResourceFormalDeliveryFence.TryValidateCurrentStart(ctx, Fixture.HostId,
+            fixture.ParentRecordId, fixture.PressureIssue, null, out _));
+    }
+
+    [Fact]
+    public void CurrentStartRejectsOldProfileAfterRawAuthorityAtoBtoA()
+    {
+        using var fixture = new Fixture();
+        fixture.SeedParent([fixture.PressureIssue]);
+        var policyStore = new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        var before = policyStore.Get();
+        policyStore.Update(policy => policy.RawTimestampTimeZoneId = "Pacific Standard Time");
+        policyStore.Update(policy => policy.RawTimestampTimeZoneId = before.RawTimestampTimeZoneId);
+        Assert.Equal(before.RawTimestampTimeZoneId, policyStore.Get().RawTimestampTimeZoneId);
+        Assert.True(policyStore.Get().RawAuthorityRevision >= before.RawAuthorityRevision + 2);
+
+        using var ctx = fixture.Backend.CreateContext();
+        Assert.False(PrtgResourceFormalDeliveryFence.TryValidateCurrentStart(ctx, Fixture.HostId,
+            fixture.ParentRecordId, fixture.PressureIssue, null, out _));
+    }
+
+    [Fact]
     public void ReenabledModeDoesNotReviveUnclaimedIssueFromOlderManifestVersion()
     {
         using var fixture = new Fixture();

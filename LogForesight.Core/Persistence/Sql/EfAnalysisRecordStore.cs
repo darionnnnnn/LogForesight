@@ -1,9 +1,11 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Data;
 using System.Linq.Expressions;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Configuration;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -632,6 +634,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 manifest.ResourceModeBlobVersion != reconciliation.ResourceModeBlobVersion)
                 return;
             if (modeFenceRequired && !ModeRevisionMatches(ctx, hostId, modeVersion)) return;
+            if (reconciliation is { ExpectedRawAuthorityFingerprint.Length: > 0 } rawAuthorityBatch &&
+                !RawAuthorityMatches(ctx, hostId, rawAuthorityBatch)) return;
             if (manifest != null)
             {
                 var currentParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record);
@@ -958,6 +962,30 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         expectedVersion >= 0 && ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey ==
                 PrtgResourcePressureModeStore.BlobKey(hostId))
             .Select(blob => blob.Version).FirstOrDefault() == expectedVersion;
+
+    private static bool RawAuthorityMatches(LfDbContext ctx, long hostId, PrtgStateReconciliationBatch batch)
+    {
+        var expectedFingerprint = batch.ExpectedRawAuthorityFingerprint;
+        const int maximumCharacters = PrtgSharedAuthoritySnapshot.MaximumDocumentCharacters;
+        if (expectedFingerprint is not { Length: 64 } || !expectedFingerprint.All(Uri.IsHexDigit)) return false;
+        var settingsRow = EfJsonBlobStore.ReadBoundedInContext(ctx, "system_settings", maximumCharacters);
+        if (settingsRow.Prefix is null || settingsRow.ReportedLength > maximumCharacters ||
+            settingsRow.Prefix.Length > maximumCharacters) return false;
+        StrictAuthorityJsonDocument.Validate<SystemSettings>(settingsRow.Prefix);
+        var settings = JsonSerializer.Deserialize<SystemSettings>(settingsRow.Prefix, LfJsonOptions.Pretty);
+        if (settings is not { PrtgEnabled: true } || string.IsNullOrWhiteSpace(settings.PrtgUrl) ||
+            settings.Revision != batch.ExpectedRawSettingsRevision) return false;
+
+        var policyRow = EfJsonBlobStore.ReadBoundedInContext(ctx, PrtgMonitoringPolicyStore.BlobKey, maximumCharacters);
+        if (policyRow.Prefix is null || policyRow.ReportedLength > maximumCharacters ||
+            policyRow.Prefix.Length > maximumCharacters) return false;
+        StrictAuthorityJsonDocument.Validate<PrtgMonitoringPolicy>(policyRow.Prefix);
+        var policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRow.Prefix, LfJsonOptions.Pretty);
+        return policy is not null && policy.Ready(settings.PrtgUrl) && policy.HostIds.Contains(hostId) &&
+            batch.ResourcePressureGenerations.All(resource => policy.SensorIds.Contains(resource.SensorObjid)) &&
+            string.Equals(policy.SourceAuthorityFingerprint(settings.PrtgUrl), expectedFingerprint,
+                StringComparison.Ordinal);
+    }
 
     private static IReadOnlyList<string> ReconcilePrtgStateFindings(LfDbContext ctx, DailyRecordRow row,
         DailyAnalysisRecord record, string sourceGeneration, IReadOnlyDictionary<long, string> resources,

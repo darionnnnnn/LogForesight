@@ -1,4 +1,4 @@
-using LogForesight.Core.Analysis;
+﻿using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -472,6 +472,75 @@ public sealed partial class PrtgDiskFormalFlowTests
     }
 
     [Fact]
+    public void EnableRunOnceAllowsDateFormatOnlyChangeBeforeRawFindingCommit()
+    {
+        var setup = PrepareSmallFormalCpuReplay();
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        var capturedRawRevision = policyStore.Get().RawAuthorityRevision;
+        var worker = ReplayWorker(setup.Settings);
+        var raced = false;
+        worker.BeforeReconciliationForTesting = () =>
+        {
+            if (raced) return;
+            raced = true;
+            policyStore.Update(policy =>
+            {
+                policy.Revision = "mode-replay-message-format-race";
+                policy.MessageDateFormat = PrtgMessageDateTimeParser.Dmy24;
+                policy.MessageTimeAuthorityRevision++;
+            });
+        };
+
+        worker.RunOnce(CancellationToken.None);
+
+        Assert.True(raced);
+        Assert.Equal(capturedRawRevision, policyStore.Get().RawAuthorityRevision);
+        Assert.Contains(Parent().TopIssues, issue =>
+            issue.Source == "PRTG:" + PrtgRuleEvaluator.RuleResourceCpuPressure);
+        Assert.NotNull(Parent().PrtgManifest);
+        Assert.Equal(PrtgModeReplayStatus.Completed, ReplayProgress().Find(setup.Job)?.Status);
+    }
+
+    [Theory]
+    [InlineData("raw-a-b-a")]
+    [InlineData("settings")]
+    [InlineData("sensor-scope")]
+    public void EnableRunOnceRejectsRawAuthorityAtoBtoARaceBeforeFindingCommit(string mutation)
+    {
+        var setup = PrepareSmallFormalCpuReplay();
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        var captured = policyStore.Get();
+        var worker = ReplayWorker(setup.Settings);
+        var raced = false;
+        worker.BeforeReconciliationForTesting = () =>
+        {
+            if (raced) return;
+            raced = true;
+            if (mutation == "raw-a-b-a")
+            {
+                policyStore.Update(policy => policy.RawTimestampTimeZoneId = "Pacific Standard Time");
+                policyStore.Update(policy => policy.RawTimestampTimeZoneId = captured.RawTimestampTimeZoneId);
+            }
+            else if (mutation == "settings")
+                ((SystemSettingsStore)setup.Settings).Update(settings => settings.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive);
+            else
+                policyStore.Update(policy => policy.SensorIds.Remove(ModeReplayCpuPressureSensorId));
+        };
+
+        worker.RunOnce(CancellationToken.None);
+
+        Assert.True(raced);
+        var currentPolicy = policyStore.Get();
+        Assert.Equal(captured.RawTimestampTimeZoneId, currentPolicy.RawTimestampTimeZoneId);
+        if (mutation == "raw-a-b-a")
+            Assert.True(currentPolicy.RawAuthorityRevision >= captured.RawAuthorityRevision + 2);
+        Assert.DoesNotContain(Parent().TopIssues, issue =>
+            issue.Source == "PRTG:" + PrtgRuleEvaluator.RuleResourceCpuPressure);
+        Assert.Null(Parent().PrtgManifest);
+        Assert.NotEqual(PrtgModeReplayStatus.Completed, ReplayProgress().Find(setup.Job)?.Status);
+    }
+
+    [Fact]
     public void EnableRunOnceRejectsParentFingerprintRaceBeforePublishingFindingOrManifest()
     {
         var setup = PrepareFormalCpuReplay(includeClosedDayEvidence: true);
@@ -640,6 +709,76 @@ public sealed partial class PrtgDiskFormalFlowTests
 
         var mode = new PrtgResourcePressureModeStore(_backend.Blob(
             PrtgResourcePressureModeStore.BlobKey(HostId)));
+        return (profile, settings, mode, Assert.Single(mode.ReadHostSnapshot(HostId).ReplayJobs));
+    }
+
+    private (PrtgTrustedSamplingProfile Profile, ISystemSettingsStore Settings,
+        PrtgResourcePressureModeStore Mode, PrtgResourcePressureModeReplayJob Job)
+        PrepareSmallFormalCpuReplay()
+    {
+        var now = DateTime.UtcNow;
+        HostId = _hosts.Upsert(new WebHost
+        {
+            HostId = HostId, HostName = "DISK-HOST", Source = "netiq", Active = true, IpAddress = "192.0.2.81"
+        }).HostId;
+        _backend.PrtgStore().UpsertDevices([new PrtgDeviceRow
+        { Objid = DeviceId, Name = "DISK-HOST", Ip = "192.0.2.81" }], now);
+        var rules = KnownIssueSeed.CreateRules().Select(rule =>
+            rule.Id == "builtin-prtg-resource-cpu-pressure" ? rule.CloneForSeedOverwrite(true) : rule).ToList();
+        new KnownIssueRuleStore(_backend.Blob("rules")).Save(new RuleFileContent
+        { SeedVersion = KnownIssueSeed.Version, Rules = rules });
+        KnownIssueCatalog.Initialize(rules);
+        ModeReplayEnableResourceConsumerSettings();
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
+            policy.SourceGeneration = Guid.NewGuid().ToString("N"));
+        var profile = ModeReplaySeedPressureSensor(ModeReplayCpuPressureSensorId, "CPU Usage",
+            PrtgSensorCategories.Cpu, PrtgTrustedQuantitySemantic.CpuLoadPercent);
+
+        var pressureSignature = CpuPressureSignature(_completedDay, profile);
+        new IssueOwnerStore(_backend.Blob("issue_owners")).Upsert(new IssueProfile
+        {
+            SourceName = pressureSignature.Source, EventId = pressureSignature.EventId, OwnerUserIds = [99_001]
+        });
+
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
+        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
+        policyStore.Update(policy =>
+        {
+            policy.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
+            policy.MessageTimeAuthorityRevision = Math.Max(1, policy.MessageTimeAuthorityRevision);
+        });
+        var store = _backend.PrtgStore();
+        var currentCutoff = ModeReplayFloorUtcHour(now);
+        store.MergeSampledValues(new[] { currentCutoff.AddHours(-2), currentCutoff.AddHours(-1) }
+            .Select(hour => PrtgResourceFixture.TrustedDiskHour(ModeReplayCpuPressureSensorId, hour, profile, 95)).ToArray());
+
+        var startUtc = TimeZoneInfo.ConvertTimeToUtc(
+            DateTime.SpecifyKind(_completedDay.Date, DateTimeKind.Unspecified), TimeZoneInfo.Local);
+        store.MergeSampledValues(Enumerable.Range(0, 26)
+            .Select(index => PrtgResourceFixture.TrustedDiskHour(ModeReplayCpuPressureSensorId,
+                startUtc.AddHours(index - 1), profile, 95)).ToArray());
+
+        var assessment = Assert.Single(new PrtgResourcePeriodConsumer(_backend, settings)
+            .EvaluateBatch([ModeReplayCpuPressureSensorId], currentCutoff, DateTime.UtcNow,
+                diskReasonObservations: null, evaluationHostIds: [HostId]).Assessments);
+        Assert.Equal(PrtgResourceDecisionKind.Hit, assessment.Decision.Kind);
+        var authorization = new PrtgResourcePressureAuthorizationService(_backend, settings);
+        var trial = authorization.IssueSuccessfulTrial(assessment, maintainAuthorized: true, DateTime.UtcNow);
+        Assert.True(authorization.SetFormalMode(assessment, trial.TrialResultId,
+            enabled: true, maintainAuthorized: true, DateTime.UtcNow));
+
+        _backend.RecordStore(new HostKey { HostId = HostId, HostName = "DISK-HOST" }).Append(new DailyAnalysisRecord
+        {
+            LogSource = AnalysisLogSource.Netiq, LatestNetiqAttemptStatus = "success", AiAnalyzed = false,
+            Date = _completedDay, HostId = HostId, Host = "DISK-HOST", RiskLevel = RiskLevels.Low,
+            TopIssues = [], AuditEventCount = 0
+        });
+        var finding = CpuPressureSignature(_completedDay, profile);
+        new IssueOwnerStore(_backend.Blob("issue_owners")).Upsert(new IssueProfile
+        {
+            SourceName = finding.Source, EventId = finding.EventId, OwnerUserIds = [99_001]
+        });
+        var mode = new PrtgResourcePressureModeStore(_backend.Blob(PrtgResourcePressureModeStore.BlobKey(HostId)));
         return (profile, settings, mode, Assert.Single(mode.ReadHostSnapshot(HostId).ReplayJobs));
     }
 

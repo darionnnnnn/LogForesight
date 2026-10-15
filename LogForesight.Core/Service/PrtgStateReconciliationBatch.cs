@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Service;
+﻿namespace LogForesight.Core.Service;
 
 /// <summary>Bounded in-memory instructions for atomically reconciling the qualified PRTG families of one host-day.</summary>
 public sealed class PrtgStateReconciliationBatch
@@ -15,6 +15,9 @@ public sealed class PrtgStateReconciliationBatch
     public long ExpectedParentRecordId { get; }
     public string ExpectedParentFingerprint { get; }
     public string ExpectedParentFindingFingerprint { get; }
+    /// <summary>Optional raw-source authority captured by a producer and checked in the attach transaction.</summary>
+    public string ExpectedRawAuthorityFingerprint { get; }
+    public string ExpectedRawSettingsRevision { get; }
 
     public PrtgStateReconciliationBatch(string sourceGeneration,
         IReadOnlyDictionary<long, string> stateResourceGenerationsBySensor,
@@ -23,7 +26,8 @@ public sealed class PrtgStateReconciliationBatch
         IReadOnlyCollection<PrtgResourceGenerationFence>? resourcePressureGenerations = null,
         long resourceModeBlobVersion = 0, bool resourceModeFenceRequired = false,
         long expectedParentRecordId = 0, string expectedParentFingerprint = "",
-        string expectedParentFindingFingerprint = "")
+        string expectedParentFindingFingerprint = "", string expectedRawAuthorityFingerprint = "",
+        string expectedRawSettingsRevision = "")
     {
         SourceGeneration = sourceGeneration ?? string.Empty;
         StateResourceGenerationsBySensor = new Dictionary<long, string>(stateResourceGenerationsBySensor ??
@@ -37,6 +41,8 @@ public sealed class PrtgStateReconciliationBatch
         ExpectedParentRecordId = expectedParentRecordId;
         ExpectedParentFingerprint = expectedParentFingerprint ?? string.Empty;
         ExpectedParentFindingFingerprint = expectedParentFindingFingerprint ?? string.Empty;
+        ExpectedRawAuthorityFingerprint = expectedRawAuthorityFingerprint ?? string.Empty;
+        ExpectedRawSettingsRevision = expectedRawSettingsRevision ?? string.Empty;
     }
 
     public bool IsValid()
@@ -49,6 +55,8 @@ public sealed class PrtgStateReconciliationBatch
             ResourceModeFenceRequired && ResourceModeBlobVersion < 0 ||
             ExpectedParentRecordId < 0 || ExpectedParentFingerprint.Length > 128 ||
             ExpectedParentFindingFingerprint.Length > 128 ||
+            ExpectedRawAuthorityFingerprint.Length != 0 && (!IsSha256(ExpectedRawAuthorityFingerprint) ||
+                string.IsNullOrWhiteSpace(ExpectedRawSettingsRevision) || ExpectedRawSettingsRevision.Length > 128) ||
             ExpectedParentRecordId > 0 && (ExpectedParentFingerprint.Length == 0 ||
                 ExpectedParentFindingFingerprint.Length == 0))
             return false;
@@ -67,6 +75,8 @@ public sealed class PrtgStateReconciliationBatch
             ValidResources(DiskResourceGenerationsBySensor) && sharedSensorsHaveSameGeneration &&
             ValidKeys(CurrentEventKeys);
     }
+
+    private static bool IsSha256(string value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 }
 
 public sealed record PrtgResourceGenerationFence(long SensorObjid, string SourceGeneration, string ResourceGeneration);

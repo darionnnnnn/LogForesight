@@ -27,7 +27,7 @@ AC01–AC22、U53-01–10、Q1–Q6及八規則族固定222正反例全部保留
 
 | ID／批次 | 現況、改動與下一個使用端 | 相依與客觀完成條件 |
 |---|---|---|
-| D54-01／各證據 lane 的生命週期隔離 | 六種明確日期格式、strict parser、message fingerprint、fetch／timeline／正式 finding 接線已完成，不再列為待實作。剩餘：replay、qualification、profile-refresh notice、channel discovery 及容量 admission 仍以整份 policy revision 阻擋 DateFormat-only 變更。郵件 summary／digest／跨次 Notify 的有界原子 reservation 與實際正文貢獻範圍已完成，實作待辦移除，見§8.13。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
+| D54-01／各證據 lane 的生命週期隔離 | 六種明確日期格式、strict parser、message fingerprint、fetch／timeline／正式 finding 接線已完成，不再列為待實作。剩餘：qualification、profile-refresh notice、channel discovery 及容量 admission 仍以整份 policy revision 阻擋 DateFormat-only 變更。郵件 summary／digest／跨次 Notify 的有界原子 reservation 與實際正文貢獻範圍已完成，實作待辦移除，見§8.13。 | 不移除來源／raw 時基／範圍／權限／交易 CAS 防護；raw/source 改後改回仍不得追認在途舊工作。只有相依 message lane 失效，獨立 NetIQ／未變 raw 工作可繼續。對應 R54-05、B2、E03／E08。 |
 | D54-02／正常HTTP資格準備交付 | `scripts/prtg-workload/qualification-preparation` 已有 Start／Resume／Check、來源預檢、磁碟與 live runtime owner 核對、正常 settings／policy／pilot／binding／job 路由及持久 receipt 候選；純契約 Python 24/24、PowerShell 通過。runtime ownership 端點已提交。剩餘是候選完整性核對、相依提交及正常入口的整合證據。 | 不增加 production 測試旁路；保留完整母體／owned listener／精確 PID、ticks、MVID、DataRoot、descriptor／reparse 防護及720h／1attempt。未執行完整容量來源，不宣稱正式資格或 E2 父驗收通過。 |
 
 ### 2.1 時間授權的明確接線缺口
@@ -488,3 +488,12 @@ Mode／共用 disk authority 在 typed deserialize 前拒絕重複 JSON key、�
 Episode／hint 上限各2Mi、timeline／strategy 各8Ki UTF-16字元，正常 producer／直接 mutation 及 CAS 使用完整 physical bounded read，同交易核對並檢查輸出，壞文件不覆寫。上限由既有欄位／128項結構與 JSON escaping 計算；不建立上限 payload。Diagnostic export 在 SQL 分頁前先完整有界驗共用 authority 的 JSON 不歧義，不保留完整 typed dictionary。
 
 主代理分段證據：r28 strict九例／repair六例／四種state六例共21例通過；該輪另有一個replay fixture等待案例失敗，另段修正，不算本段成功；r5／r6舊結果保留；r16 resolver拒絕 ABA 舊 profile，r17正常人工確認；r19四種 state六例；r24 overflow連同已讀磁碟證據版本／原文同交易回滾；r21共用 export valid／重複key／別名／physical NUL 四例。舊失敗結果保留，雙provider正式上限依官方文件與已留存tiny字元反例核對，未做33M極限測試。完整角色、容量及最終成品驗收不因此通過。
+
+
+### 8.15 Replay 提交前 raw 防護與長期作業 scope（2026-10-15）
+
+Mode replay 將當次 raw SourceAuthority fingerprint 及 settings revision 帶至 reconciliation batch；EfAnalysisRecordStore 在原 Serializable attach 交易、任何 finding／manifest／reconcile 副作用之前，完整有界重讀 settings／policy，核對 enabled／Ready、settings revision、主機／sensor選取及 raw fingerprint。raw/source A→B→A、設定及 sensor移除競爭均不寫 finding／manifest、不完成進度；DateFormat-only 可完成 finding→報告→案件及 replay progress。正式 case／mail start 保留 parent、mode grant、identity、scope、settings 及實際 profile resolver 的 RawAuthorityRevision context，只移除多餘的長期整份 PolicyRevision 相等要求，仍要求目前 revision 非空。
+
+Snapshot operation 與兩個 backfill operation 改用 ReadRawSemantic（結構scope＋raw/source tuple／單調版本＋host/sensor membership）。原 Read／ReadStructural 演算法不改，避免改動既有 mail context／接受 key；原預覽、持久 queue 及明確請求 CAS 保留。PrtgOperationScope 的 settings 比對保留，混合回填的 message path 仍以獨立目前 message fingerprint 驗證。
+
+主代理實查 producer→batch→交易→實際後續consumer；root-raw-replay-scope-r29 八例全通過、零略過：正常日期格式變更 replay一例、raw ABA／settings／sensor範圍反例三例、formal start日期格式／raw ABA兩例及兩個小型scope測例。每個 replay fixture 單host／sensor共28筆值。r27／r28失敗保留：小型fixture未採用Upsert實際HostId造成後續報告找不到主機，已修正且r29確認完成，不以放寬進度斷言掩蓋。qualification／refresh／discovery／capacity相依候選與正常來源完整操作仍另段驗，不勾R54-05父驗收。

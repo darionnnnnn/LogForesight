@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Diagnostics;
 using LogForesight.Core.Analysis;
@@ -430,6 +430,8 @@ public sealed class PrtgResourcePressureModeReplayHostedService(StorageBackend b
                 !policy.Ready(system.PrtgUrl) || !policy.HostIds.Contains(job.HostId) ||
                 !policy.SensorIds.Contains(job.SensorObjid) || policy.SourceGeneration != job.SourceGeneration)
                 return false;
+            var rawAuthorityFingerprint = policy.SourceAuthorityFingerprint(system.PrtgUrl);
+            if (rawAuthorityFingerprint.Length != 64 || !rawAuthorityFingerprint.All(Uri.IsHexDigit)) return false;
             var consumption = new PrtgResourcePeriodConsumer(backend, settings).EvaluateClosedHostDayBatch(
                 [job.SensorObjid], parent.Date.Date, DateTime.UtcNow, evaluationHostIds: [job.HostId]);
             var closed = consumption.ClosedDay;
@@ -461,7 +463,9 @@ public sealed class PrtgResourcePressureModeReplayHostedService(StorageBackend b
                 modeVersion, resourceModeFenceRequired: true,
                 expectedParentRecordId: parent.RecordId,
                 expectedParentFingerprint: HostDayWorkflowFingerprint.ForParentRecord(parent),
-                expectedParentFindingFingerprint: PrtgFindingMapper.Fingerprint(parent.TopIssues.Where(PrtgFindingMapper.IsPrtg)));
+                expectedParentFindingFingerprint: PrtgFindingMapper.Fingerprint(parent.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
+                expectedRawAuthorityFingerprint: rawAuthorityFingerprint,
+                expectedRawSettingsRevision: system.Revision);
 
             PrtgDecisionManifest? manifest = null;
             if (signatures.Length > 0)

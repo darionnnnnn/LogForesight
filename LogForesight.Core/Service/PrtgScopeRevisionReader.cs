@@ -25,6 +25,33 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
     /// <summary>Structural fence for consumers that independently revalidate each policy-dependent issue.</summary>
     public string ReadStructural() => ReadCore(includePolicyRevision: false);
 
+    /// <summary>
+    /// Long-lived raw/value work fence. It retains structural scope and policy host/sensor membership,
+    /// but replaces the whole-policy blob version with raw-source semantics and their monotonic revision.
+    /// Message timestamp format is intentionally checked by the message lane itself.
+    /// </summary>
+    public string ReadRawSemantic()
+    {
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var rawScope = JsonSerializer.Serialize(new
+        {
+            policy.CoreSystemId,
+            policy.SourceGeneration,
+            policy.EndpointHint,
+            ValidFromUtcTicks = policy.ValidFrom.UtcTicks,
+            policy.SourceTimeZoneId,
+            policy.SourceCultureName,
+            policy.RawTimestampTimeZoneId,
+            policy.AnalysisTimeZoneId,
+            policy.TimeBasisEvidenceReference,
+            policy.RawAuthorityRevision,
+            HostIds = policy.HostIds.Order().ToArray(),
+            SensorIds = policy.SensorIds.Order().ToArray()
+        });
+        var rawFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawScope)));
+        return $"{ReadStructural()}:{rawFingerprint}";
+    }
+
     private string ReadCore(bool includePolicyRevision)
     {
         lock (_gate)

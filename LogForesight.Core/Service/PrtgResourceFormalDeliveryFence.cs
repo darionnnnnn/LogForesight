@@ -95,7 +95,7 @@ public sealed record PrtgResourceFormalDeliveryFence(
                 return false;
 
             if (!CurrentIdentityAndProfileMatch(ctx, hostId, sensorObjid, family, sourceGeneration,
-                    resourceGeneration, channelGeneration, manifest.ResourceAuthorityRevision, manifest.PolicyRevision, out var profile,
+                    resourceGeneration, channelGeneration, manifest.ResourceAuthorityRevision, out var profile,
                     out var identity)) return false;
 
             var modeRow = EfJsonBlobStore.ReadBoundedInContext(ctx,PrtgResourcePressureModeStore.BlobKey(hostId),
@@ -104,6 +104,7 @@ public sealed record PrtgResourceFormalDeliveryFence(
                 modeRow.Version < 1 || string.IsNullOrWhiteSpace(modeRow.Prefix) ||
                 modeRow.ReportedLength > PrtgResourcePressureModeStore.MaximumDocumentCharacters) return false;
 
+            StrictAuthorityJsonDocument.Validate<PrtgResourcePressureModeDocument>(modeRow.Prefix!);
             var mode = JsonSerializer.Deserialize<PrtgResourcePressureModeDocument>(modeRow.Prefix!, LfJsonOptions.Pretty);
             if (mode?.Grants is null || mode.Revocations is null ||
                 mode.Grants.Count > PrtgResourcePressureModeStore.MaximumResourcesPerHost ||
@@ -274,7 +275,7 @@ public sealed record PrtgResourceFormalDeliveryFence(
 
     private static bool CurrentIdentityAndProfileMatch(LfDbContext ctx, long hostId, long sensorObjid,
         PrtgResourceFamily family, string sourceGeneration, string resourceGeneration, string channelGeneration,
-        long expectedAuthorityRevision, string expectedPolicyRevision, out PrtgTrustedSamplingProfile profile,
+        long expectedAuthorityRevision, out PrtgTrustedSamplingProfile profile,
         out PrtgResourceIdentity identity)
     {
         profile = null!;
@@ -307,7 +308,7 @@ public sealed record PrtgResourceFormalDeliveryFence(
         var policy = policyRaw is null ? null : JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRaw, LfJsonOptions.Pretty);
         if (policy is null || !policy.Ready(settings.PrtgUrl) || !policy.HostIds.Contains(hostId) ||
             !policy.SensorIds.Contains(sensorObjid) || policy.SourceGeneration != sourceGeneration ||
-            string.IsNullOrWhiteSpace(policy.Revision) || policy.Revision != expectedPolicyRevision) return false;
+            string.IsNullOrWhiteSpace(policy.Revision)) return false;
         var strategyRaw = ReadBoundedBlob(ctx, PrtgTrustedSamplingStrategyStateStore.BlobKey, 16 * 1024);
         var strategyProfile = PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy);
         var strategy = PrtgTrustedSamplingStrategyStateStore.ReadCurrent(strategyRaw, policy,

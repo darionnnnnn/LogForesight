@@ -484,7 +484,8 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private async Task WithOperationScopeAsync(SystemSettings settings, CancellationToken parent, Func<CancellationToken, Task> work)
     {
-        using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent, new PrtgScopeRevisionReader(_backend, _hosts).Read, "快照與範圍補抓");
+        using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent,
+            new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "快照與範圍補抓");
         _operationCheckpoint = operation.Checkpoint;
         try
         {

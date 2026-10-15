@@ -567,7 +567,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
     private async Task ExecuteSelectedAsync(PreparedRun run, DateTime from, DateTime to, IReadOnlyCollection<long> hostIds)
     {
-        using var operation = new PrtgOperationScope(run.Settings, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read, "歷史補值");
+        using var operation = new PrtgOperationScope(run.Settings, _settings.Get, run.Token,
+            new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "歷史補值");
         run.Client.OperationCheckpoint = operation.Checkpoint;
         var success = false;
         var cancelled = false;
@@ -767,7 +768,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
     private async Task<bool> ExecuteAsync(PreparedRun run, IRunConsole console, IReadOnlyCollection<long>? hostIds)
     {
         var s = run.Settings;
-        using var operation = new PrtgOperationScope(s, _settings.Get, run.Token, new PrtgScopeRevisionReader(_backend, _hosts).Read, "歷史補值");
+        using var operation = new PrtgOperationScope(s, _settings.Get, run.Token,
+            new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "歷史補值");
         var runToken = operation.Token;
         run.Client.OperationCheckpoint = operation.Checkpoint;
         var prtgStore = _backend.PrtgStore();
