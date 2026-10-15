@@ -17,6 +17,13 @@ function ConvertTo-E2Sha256([object]$Value,[string]$Label='SHA-256') {
     return $text.ToUpperInvariant()
 }
 
+function Assert-E2DescriptorUnchanged([string]$Path,[string]$ExpectedSha256) {
+    $expected=ConvertTo-E2Sha256 $ExpectedSha256 'provider descriptor SHA-256'
+    if(-not(Test-Path -LiteralPath $Path -PathType Leaf)){throw 'Provider descriptor file changed since preflight; no further API requests are permitted.'}
+    $actual=(Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
+    if($actual -cne $expected){throw 'Provider descriptor file changed since preflight; no further API requests are permitted.'}
+}
+
 function Get-E2ListenerProcessId([object]$Listener) {
     $listenerProcessId=[int]$Listener.OwningProcess
     if($listenerProcessId -le 0){throw 'Listener process identity is invalid.'}
@@ -332,4 +339,4 @@ function New-E2QualificationResumeRequest([long]$ExpectedVersion) {
     return @{expectedVersion=$ExpectedVersion;durationHours=720;maximumAttempts=1}
 }
 
-Export-ModuleMember -Function Test-E2SafeTimeBasisReference,ConvertTo-E2Sha256,Get-E2ListenerProcessId,Set-E2ReceiptRevisionFence,Get-E2SettingsWriteDecision,Test-E2BootstrapRequired,Assert-E2ActionMayWrite,Assert-E2BootstrapReadback,Test-E2SettingsFieldsMatch,Test-E2MonitoringPolicyMatches,Test-E2IdSequenceMatches,New-E2MonitoringRequest,Invoke-E2JsonApi,Test-E2ProfileBindingMatches,Get-E2BindingBatchOutcome,Set-E2BindingBatchReceipt,Assert-E2ResumeBindingsComplete,Assert-E2SealedResumeManifest,Assert-E2ResumeProfileProgress,Assert-E2StableJobSnapshot,Assert-E2PilotMayProceed,Assert-E2PilotQualified,Assert-E2JobIdentity,New-E2QualificationJobRequest,New-E2QualificationResumeRequest
+Export-ModuleMember -Function Test-E2SafeTimeBasisReference,ConvertTo-E2Sha256,Assert-E2DescriptorUnchanged,Get-E2ListenerProcessId,Set-E2ReceiptRevisionFence,Get-E2SettingsWriteDecision,Test-E2BootstrapRequired,Assert-E2ActionMayWrite,Assert-E2BootstrapReadback,Test-E2SettingsFieldsMatch,Test-E2MonitoringPolicyMatches,Test-E2IdSequenceMatches,New-E2MonitoringRequest,Invoke-E2JsonApi,Test-E2ProfileBindingMatches,Get-E2BindingBatchOutcome,Set-E2BindingBatchReceipt,Assert-E2ResumeBindingsComplete,Assert-E2SealedResumeManifest,Assert-E2ResumeProfileProgress,Assert-E2StableJobSnapshot,Assert-E2PilotMayProceed,Assert-E2PilotQualified,Assert-E2JobIdentity,New-E2QualificationJobRequest,New-E2QualificationResumeRequest

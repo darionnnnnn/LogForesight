@@ -80,6 +80,17 @@ class PreparationScriptContractTests(unittest.TestCase):
             with self.subTest(operation=operation):
                 self.assertIn(f"Assert-E2ActionMayWrite $Action '{operation}'", SCRIPT)
 
+    def test_descriptor_hash_and_reparse_state_are_rechecked_before_each_web_request(self):
+        owner_check = SCRIPT[SCRIPT.index("function Assert-OwnedListener"):SCRIPT.index("function Write-Receipt")]
+        self.assertIn("Assert-NoReparse $descriptor 'Provider descriptor'", owner_check)
+        self.assertIn("Assert-E2DescriptorUnchanged $descriptor $DescriptorHash", owner_check)
+        self.assertLess(owner_check.index("Assert-E2DescriptorUnchanged"), owner_check.index("Invoke-E2JsonApi $client $runtimeRequest"))
+        invoke_api = SCRIPT[SCRIPT.index("function Invoke-Api"):SCRIPT.index("function Assert-E2CurrentJobPages")]
+        self.assertIn("$currentOwner=Assert-OwnedListener", invoke_api)
+        self.assertIn("Assert-NoReparse $descriptor 'Provider descriptor'", invoke_api)
+        self.assertIn("Assert-E2DescriptorUnchanged $descriptor $descriptorHash", invoke_api)
+        self.assertLess(invoke_api.index("Assert-E2DescriptorUnchanged"), invoke_api.index("return Invoke-E2JsonApi $client $req"))
+
     def test_runtime_verifier_binds_loaded_process_config_and_disk_metadata(self):
         verifier = Path(__file__).with_name("verify_runtime_owner.py").read_text(encoding="utf-8")
         for field in ("runtimeMetadata", "databasePath", "descriptorSha256", "webAssemblyLocation",

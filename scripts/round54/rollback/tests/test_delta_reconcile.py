@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta
 from argparse import Namespace
 from pathlib import Path
@@ -109,6 +110,57 @@ class DeltaReconcileTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_backup_quick_check_rejects_returned_error_rows(self):
+        class FakeQuickCheck:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def fetchall(self):
+                return self.rows
+
+        class FakeConnection:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def execute(self, sql):
+                if sql != "PRAGMA quick_check":
+                    raise AssertionError(f"unexpected SQL: {sql}")
+                return FakeQuickCheck(self.rows)
+
+        with self.assertRaisesRegex(rollback.Refusal, "quick_check"):
+            delta.assert_sqlite_quick_check(FakeConnection([("row 7 missing from index",)]))
+        delta.assert_sqlite_quick_check(FakeConnection([("ok",)]))
+
+    def test_reconcile_quick_check_error_does_not_create_receipt(self):
+        self._mutate_current()
+        delta_path = self.base / "quick-check-delta.json"
+        delta.capture_delta(self.bundle["database"], self.current, delta_path)
+        self._clear_preservation()
+        rollback.prepare(prepare_args(self.bundle, self.root))
+
+        real_connect = sqlite3.connect
+
+        class ErrorQuickCheckConnection(sqlite3.Connection):
+            def execute(self, sql, parameters=(), /):
+                if sql == "PRAGMA quick_check":
+                    return ErrorCursor()
+                return super().execute(sql, parameters)
+
+        class ErrorCursor:
+            def fetchall(self):
+                return [("row 7 missing from index",)]
+
+        def connect_with_bad_backup_check(database, *args, **kwargs):
+            if str(database).endswith("logforesight.after-reconcile.db"):
+                kwargs["factory"] = ErrorQuickCheckConnection
+            return real_connect(database, *args, **kwargs)
+
+        with patch.object(delta.sqlite3, "connect", side_effect=connect_with_bad_backup_check):
+            with self.assertRaisesRegex(rollback.Refusal, "quick_check"):
+                delta.reconcile(self.root, COMMIT, delta_path, sha(delta_path))
+        self.assertFalse((self.root / "delta-reconciliation.json").exists())
+
 
     def _clear_preservation(self):
         counts = {category: 0 for category in rollback.PROTECTED_CATEGORIES}

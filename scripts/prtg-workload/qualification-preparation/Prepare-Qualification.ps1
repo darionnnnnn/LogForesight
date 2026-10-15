@@ -65,6 +65,8 @@ function Assert-OwnedListener([string]$ExpectedRoot,[string]$ExpectedDatabase,[s
     $coreAssemblyHash=(Get-FileHash -LiteralPath $coreAssembly -Algorithm SHA256).Hash
     $runtimeRequest=$null;$runtimeCts=[Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(10))
     try {
+        Assert-NoReparse $descriptor 'Provider descriptor'
+        Assert-E2DescriptorUnchanged $descriptor $DescriptorHash
         $runtimeRequest=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get,[uri]::new([uri]($BaseUri.AbsoluteUri.TrimEnd('/')+'/'),'api/admin/prtg-runtime-ownership/status'))
         $runtimeElement=Invoke-E2JsonApi $client $runtimeRequest $runtimeCts.Token 32KB
         $runtimeMetadata=$runtimeElement.GetRawText()|ConvertFrom-Json -Depth 8 -AsHashtable
@@ -145,6 +147,8 @@ function Invoke-Api([string]$Method,[string]$Path,[object]$Body=$null,[int]$Cap=
         foreach($name in @('processId','processStartUtcTicks','assemblyPath','assemblySha256','webAssemblyMvid','coreAssemblyPath','coreAssemblySha256','coreAssemblyMvid','commandTokenCount','commandTokensSha256','dataRoot','provider','databasePath','descriptorSha256','localAddress','port')){
             if([string]$currentOwner[$name] -cne [string]$owner[$name]){throw 'Owned Web listener identity changed during the preparation run; refusing to continue against a replacement process.'}
         }
+        Assert-NoReparse $descriptor 'Provider descriptor'
+        Assert-E2DescriptorUnchanged $descriptor $descriptorHash
         $req=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method),[uri]::new([uri]($BaseUri.AbsoluteUri.TrimEnd('/')+'/'),$Path))
         if($Method -ne 'GET'){$req.Headers.Add('X-Requested-By','LogForesight')}
         if($null -ne $Body){$req.Content=[Net.Http.StringContent]::new(($Body|ConvertTo-Json -Depth 12 -Compress),[Text.Encoding]::UTF8,'application/json')}

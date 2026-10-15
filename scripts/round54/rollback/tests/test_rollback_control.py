@@ -1,5 +1,7 @@
 import hashlib
+import contextlib
 import importlib.util
+import io
 import json
 import socket
 import sqlite3
@@ -150,6 +152,39 @@ class RollbackControlTests(unittest.TestCase):
                                    "--expected-target-commit", COMMIT], capture_output=True, text=True, check=False)
         self.assertEqual(0, verified.returncode, verified.stderr)
         self.assertEqual("verified-closed", json.loads(verified.stdout)["result"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows reparse attributes")
+    def test_reparse_guard_allows_a_not_yet_created_restore_root(self):
+        destination = self.base / "new-restore-root"
+        self.assertFalse(destination.exists())
+        self.assertEqual(destination, rollback.safe_restore_root(destination, {}))
+        self.assertFalse(destination.exists())
+
+    @unittest.skipUnless(sys.platform == "win32", "actual Windows junction attributes")
+    def test_cli_launch_refuses_junction_restore_root_before_startup(self):
+        rollback.prepare(prepare_args(self.bundle, self.root))
+        junction = self.base / "restore-junction"
+        completed = subprocess.run(
+            ["cmd.exe", "/c", "mklink", "/J", str(junction), str(self.root)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        try:
+            stderr = io.StringIO()
+            with patch.object(rollback, "port_is_free", return_value=True), \
+                 patch.object(rollback.shutil, "which", return_value=None), \
+                 contextlib.redirect_stderr(stderr):
+                result = rollback.main([
+                    "launch", "--restore-root", str(junction),
+                    "--expected-target-commit", COMMIT, "--port", "51974",
+                ])
+            self.assertEqual(2, result)
+            self.assertIn("reparse", stderr.getvalue())
+            self.assertTrue(self.root.exists())
+        finally:
+            junction.rmdir()
 
     def test_identity_mismatch_is_rejected_before_root_creation(self):
         web = self.bundle["app"] / "LogForesight.Web.dll"

@@ -15,6 +15,7 @@ import re
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -52,7 +53,20 @@ def sha256_file(path: Path) -> str:
 def reject_reparse(path: Path) -> None:
     current = path
     while True:
-        if current.is_symlink():
+        is_reparse = current.is_symlink()
+        if os.name == "nt":
+            # Windows junctions and other reparse points are not reported by
+            # Path.is_symlink(); inspect the native attribute on every path
+            # component so aliases cannot escape the pinned tree.
+            try:
+                attributes = current.lstat().st_file_attributes
+            except FileNotFoundError:
+                # A not-yet-created restore root is valid; its existing parent
+                # components are still checked on subsequent loop iterations.
+                attributes = 0
+            if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                is_reparse = True
+        if is_reparse:
             fail(f"reparse/symlink input refused: {current}")
         if current.parent == current:
             return
@@ -562,8 +576,9 @@ def port_is_free(port: int) -> bool:
 
 
 def launch(args: argparse.Namespace) -> dict[str, Any]:
-    root = Path(args.restore_root).resolve(strict=True)
+    root = Path(args.restore_root).absolute()
     state, meta = verify_restore_root(root, args.expected_target_commit)
+    root = root.resolve(strict=True)
     if not port_is_free(args.port):
         fail(f"loopback port {args.port} is already owned or unavailable; Web was not started")
     dotnet = shutil.which("dotnet")
@@ -833,8 +848,9 @@ def main(argv: list[str] | None = None) -> int:
                       "unresolvedDataItems": gates["unresolvedDataItems"], "unresolvedPreservationItems": gates["unresolvedPreservationItems"],
                       "mailDispatch": "held" if gates["mailHold"] else "dedup-reviewed; still disabled until an operator enables through the normal settings path"}
         elif args.command == "release":
-            root = Path(args.restore_root).resolve(strict=True)
+            root = Path(args.restore_root).absolute()
             state, _ = verify_restore_root(root, args.expected_target_commit)
+            root = root.resolve(strict=True)
             receipt_path = root / "delta-reconciliation.json"
             if not receipt_path.is_file(): fail("no sealed delta reconciliation receipt exists")
             receipt = read_json(receipt_path)
@@ -860,7 +876,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "launch":
             if not 1024 <= args.port <= 65535:
                 fail("port must be 1024..65535")
-            root = Path(args.restore_root).resolve(strict=True)
+            root = Path(args.restore_root).absolute()
             state, _ = verify_restore_root(root, args.expected_target_commit)
             if "reconciliationIntentSha256" in state and ("deltaReconciliationSha256" not in state or not isinstance(state.get("releaseDecision"), dict)):
                 fail("delta reconciliation has not passed the controlled restore release gate; Web was not started")

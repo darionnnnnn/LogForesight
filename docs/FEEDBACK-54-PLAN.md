@@ -644,3 +644,10 @@ E01-T01對此正式程式成品完成；E01-T02及其他來源、操作、容量
 文件整理沿用現有PLAN／規格，不另建重複報告或搬入archive。PRTG-SPEC與WEB-SPEC回收「已接線卻仍待實作」的日期／磁碟／owned入口描述；角色工具README移除過期planning-only／validator未實作說法；DB-SPEC補清除表、索引、交易及訊息時間欄位，保留完整容量／恢復未驗限制。修正§4.3舊續跑指示，受保護大型副本禁止開啟或修改。11份本輪變更Markdown本地連結核對無缺檔（archive不讀），diff whitespace核對通過；文件修改不重跑產品測試。
 
 skill評估：沿用project-closeout、project-doc-hygiene、subagent-verification-policy及delegated-implementation；現有規則已要求重用有效證據、主代理獨立覆核、反例及實際consumer驗證，本次無需新增流程或改寫共用skill。不可為了完成整合移除25項必要驗收。歷史主代理實際模型型號無完整可信紀錄，且Luna也參與過實作；本次不冒稱「不同於全部實作者」的獨立換模型背書。修正由Luna high實作、主代理查碼及核驗的範圍另記，技能要求的整輪獨立體檢資格尚未成立。
+
+
+### 8.28 收尾工具缺陷修正
+
+Luna high實作、主代理逐行核對實際入口後確認：回退after-backup的`quick_check`須fetch全部結果且僅單列ok接受；Windows reparse用lstat原生attribute檢查所有祖先，launch／release／reconcile在resolve前拒絕junction；不存在的新restore末節仍可正常準備。資格工具在runtime ownership與業務API請求前各自重核descriptor原路徑及SHA，不沿用開工時hash充當當前檔案。保留既有工具及scope，不新增通用防護框架。
+
+必要驗證僅針對新缺口：主代理以舊quick_check語句行為代回tiny reconcile consumer，確認原本錯誤結果未拒絕（1個預期失敗）；同測例在修正後拒絕且未產生receipt。另驗合法小型差額還原／release、實際Windows junction經CLI launch入口拒絕，3/3通過、零skip；receipt `work/round54/closeout-review/tools-consumers.log`。descriptor小檔hash相符／漂移拒絕通過，`descriptor.log`；兩個真正HTTP呼叫之前的接線直接查碼。代理另有不存在restore路徑正例及靜態接線通過，不將其重跑以增加數量。無Web啟動、無全量source preflight、無固定結構seed、無大型payload；不替代完整恢復或資格矩陣驗收。

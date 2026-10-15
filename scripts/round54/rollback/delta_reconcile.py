@@ -82,6 +82,16 @@ def _refuse(message: str) -> None:
     raise Refusal(message)
 
 
+def assert_sqlite_quick_check(connection: sqlite3.Connection) -> None:
+    """Require SQLite's complete integrity result, not merely a non-throwing PRAGMA."""
+    try:
+        rows = connection.execute("PRAGMA quick_check").fetchall()
+    except sqlite3.Error as exc:
+        _refuse(f"SQLite quick_check could not complete: {exc}")
+    if rows != [("ok",)]:
+        _refuse("SQLite quick_check failed for post-reconcile backup")
+
+
 def _readonly_db(path: Path) -> sqlite3.Connection:
     from rollback_control import reject_reparse
     path = path.absolute()
@@ -952,8 +962,9 @@ def _apply_row(connection: sqlite3.Connection, category: str, item: dict[str, An
 def reconcile(root: Path, expected_commit: str, delta_path: Path, expected_delta_sha256: str) -> dict[str, Any]:
     """CAS-reconcile an exact-schema delta in a prepared restore root and back it up."""
     from rollback_control import verify_restore_root, write_json_atomic, canonical_json
-    root = Path(root).resolve(strict=True)
+    root = Path(root).absolute()
     state, meta = verify_restore_root(root, expected_commit)
+    root = root.resolve(strict=True)
     if state.get("phase") != "prepared-isolated":
         _refuse("reconciliation is permitted only before any Web process starts")
     database = root / "data" / "Db" / "logforesight.db"
@@ -1100,7 +1111,7 @@ def reconcile(root: Path, expected_commit: str, delta_path: Path, expected_delta
     dest = sqlite3.connect(after_db)
     try:
         src.backup(dest)
-        dest.execute("PRAGMA quick_check")
+        assert_sqlite_quick_check(dest)
     finally:
         dest.close(); src.close()
     backup_connection = _readonly_db(after_db)
