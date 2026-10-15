@@ -53,7 +53,7 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 
 2026-10-15依實際程式重新核對：已完成的功能實作已從§2待辦刪除；本表保留的是尚未完成的驗收／交付，不把「已有程式但未驗」誤報成「功能未寫」，也不因已有程式而刪除未執行的驗收。E02、E08-T01、E10-T01既有完成項不重開。有效分段證據可在確認相同程式／設定／環境及母體後沿用。細部使用者劇本仍以 [coverage inventory](../scripts/round53-user-matrix/coverage-inventory.json) 逐子句追蹤；原22項AC、10項U53、6項Q、7種受控來源情境、222案與53條承接缺口保留，不以27個父項掩蓋子句。
 
-- [ ] **E01-T01【承接驗收】** 以最終乾淨提交重新建置／publish，核對 source commit、來源指紋、manifest、Web/Core 組件與 probe；既有 modified-tree 分段證據不代替最終成品。
+- [x] **E01-T01【承接驗收】** 乾淨 `cfa062e9` 已重新建置／publish，source commit、來源指紋、manifest、Web/Core 組件與執行中 probe 完全一致（§8.24）。後續若修改正式程式／依賴／設定／成品輸入，須重新核對受影響成品；純驗收紀錄不觸發重建。
 - [ ] **E01-T02【承接驗收】** 在最終交付上核對舊尾碼、混版 DLL、未核實來源、陳舊預覽 token 的拒絕與提示；確認舊檔不自動覆寫、未知識別不授權全量啟動。
 - [ ] **E03-T01【承接驗收】** 操作明確設定→probe→proof/profile→正式採樣→期間引擎完整鏈，核對 CPU／memory／disk／ping 樣本來源、channel、unit、scale、方向與各端點時基；available-memory 25.0834% 轉 used 74.9166%，disk 90.0887% 保留剩餘方向。
 - [ ] **E03-T02【承接驗收】** 補齊錯時區、缺單位／尺度／主通道、世代變更、陳舊 proof、DST 重複／缺小時、跨午夜與無時區歷史反例；不合格輸入保持等待、零正式副作用，維持兩完成小時、28 日與 7 日20%契約。
@@ -87,7 +87,7 @@ formal episode／pressure hint／timeline progress／strategy 的直接 mutation
 |---|---|---|
 | N1／A0 來源與版本 | build identity、來源探測及拒絕混版已有分段證據；正式來源完整核對未完成 | E01、E04；D54-01 |
 | N2 範圍與守門 | scope／guard／mapping及不誤刪防線已有實作；完整角色與衝突操作未全驗 | E05、E08-T03/T04 |
-| N3／A1 可信取數 | pager、raw/profile／proof、readiness、文字時間與正常磁碟核驗已有實作；DateFormat-only變更的背景raw工作隔離仍有缺口，完整來源／角色操作仍待驗 | D54-01、E03、E04、E05-T03 |
+| N3／A1 可信取數 | pager、raw/profile／proof、readiness、文字時間與正常磁碟核驗已有實作；DateFormat-only變更的背景raw工作隔離已依§8.18～8.20補齊，完整來源／角色操作仍待驗 | D54-01、E03、E04、E05-T03 |
 | N4／B 風險與主機日整合 | 合格父紀錄、期間規則、補充／fusion與案件通知已有分段實作；全部正常操作鏈未驗 | E08-T02/T05/T06；E09 |
 | N5／C 使用者與管理者 | 設定／probe／維護／證據及授權頁已有實作；六角色完整動線未驗 | E05、E08、E09-T01 |
 | N6／D 持續負載及恢復 | quota／admission／journal／SQL與容量工具已有實作；64.8M生成及全混合負載未完成 | D54-02/D54-03、E06、E07 |
@@ -557,3 +557,15 @@ C54-04／04-B依原§4.9／4.10交付明列目標的可執行回退控制工具�
 保留27個原父驗收TODO及53條承接基線，未勾未跑項目；清掉的只有已完成或分類錯誤的實作待辦。來源／容量／完整角色矩陣、跨程序與雙provider恢復仍未驗收；此處只確認實作完整性，不執行整輪G/H或宣稱正式交付PASS。主代理為目前主模型，委派只用gpt-6-luna high／medium／low，產物均由主代理獨立查碼及選必要小型測例；本段不冒稱不同於全部實作者的換模型體檢。
 
 使用者新增測試原則：每次測試前先判斷必要性。只有新改動、已知失敗或必要證據缺口才執行最小範圍；相同程式／依賴／設定／環境已有有效結果就沿用，不因換HEAD、換模型或文件修改重跑。新介面的必要正反操作已完成；後續只核對文件／清單與Git提交，不再重跑已通過後端或展開完整矩陣。
+
+### 8.24 E01-T01：乾淨成品及實際載入組件核對（2026-10-15）
+
+測試必要性：先前 publish 為 modified tree，缺乏乾淨目前程式的成品證據；只補一次建置、離線身分核對與執行中本機診斷，不重跑後端測例、不生成數值或裝置。起點 `cfa062e90bc835189d703c83b0aeec34f66fc5b6` tracked 工作樹乾淨。
+
+- `dotnet publish LogForesight.Web/LogForesight.Web.csproj -c Release --no-restore -o work/round54/acceptance-cfa062e9/publish` exit0；既有 nullable／captured-field warnings保留，未列為零警告。
+- `Verify-BuildIdentity.ps1 -Directory work/round54/acceptance-cfa062e9/publish`：PASS。兩組件版本同為 `1.0.53.2+cfa062e90bc835189d703c83b0aeec34f66fc5b6`，clean source fingerprint `3474dfc02d9b2384a8c640d3a5ccb29cf9804c6a2220b236ca4cfa65b661e912`。
+- Web SHA256 `86d74fefaf8e5cd4f03dc1ebd1f245f67a5a7201f7d187306688fab0f22930f0`、MVID `6bdac346-e2b0-4643-aecd-b5f47fe7c516`；Core SHA256 `01b51eef376971e47aa1d9d3eafdace6f94988039ebd138b5ee6e32dfebbdbf9`、MVID `a2ecf001-761f-4b32-adb3-d826c6b465e9`。
+- 自有1.1MiB隔離站 `4f36b9ed6fc24ad896117a4702de4e5c`，正常維護登入後 GET `/browser-fixture/api/admin/settings/prtg-probe/local-evidence`。回應 build_identity=verified／clean；程式逐欄斷言 publish manifest 與實際 probe 的兩個 DLL SHA/MVID完全相等。runtime assets來源及副本SHA同為 `ba5f1ab5da0c9041faf95f4b8ebfd6980faa618671443ca8d5eb72f07d2b9722`；來源DB/key前後SHA不變。
+- 原始證據在 `work/round54/acceptance-cfa062e9/`；publish manifest SHA256 `04c02a69cbe28658ae5323b3de1c3664610d8a540e4415dd97487f10b19e1165`，local-evidence.json SHA256 `dc057f64e94c0717d5da199dcaf52e96dab0e6ffe4eb6db0132e4f538531fd56`。`Verify-PrtgProbeEvidence.ps1`以目前source revision核對：正確為INCOMPLETE，沒有把成品身分通過誤當來源／風險／容量通過。
+
+E01-T01對此正式程式成品完成；E01-T02及其他來源、操作、容量、回復、完整回歸條款仍開。後續修改任何正式成品輸入就重開受影響成品核對；只改PLAN／驗收紀錄／不進成品的測試不為換HEAD重建。§3.1 N3陳舊的背景raw「仍有缺口」同步更正為已補齊，保留尚未通過的完整操作驗收。

@@ -1,6 +1,23 @@
 ﻿{
   "schema": "logforesight-round53-e08-coverage-inventory-v1",
   "inventoryOnly": true,
+  "round54TodoReview": {
+    "reviewedAt": "2026-10-15",
+    "originalTodoCount": 27,
+    "candidateCommit": "cfa062e90bc835189d703c83b0aeec34f66fc5b6",
+    "sourceFingerprint": "3474dfc02d9b2384a8c640d3a5ccb29cf9804c6a2220b236ca4cfa65b661e912",
+    "wholeRoundAccepted": false,
+    "testPolicy": "Reuse evidence only for unchanged covered code, dependencies, settings and environment; run only necessary bounded gaps. No fleet or boundary-size payload tests.",
+    "items": [
+      {
+        "id": "E01-T01",
+        "status": "accepted-for-candidate",
+        "evidence": "docs/FEEDBACK-54-PLAN.md::8.24 E01-T01",
+        "scope": "Clean publish, independent DLL metadata/hash verification, isolated loaded runtime probe and static-assets equality.",
+        "reopenWhen": "A production artifact input, dependency or configuration changes; documentation-only commits do not invalidate this evidence."
+      }
+    ]
+  },
   "browserAccepted": false,
   "nativeSourceQualified": false,
   "statusMeaning": {
