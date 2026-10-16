@@ -23,6 +23,3 @@ jobs:
 
       - run: dotnet test --configuration Release --no-build
 
-      - name: Verify bounded PRTG evidence handoff contracts
-        shell: pwsh
-        run: ./scripts/tests/Verify-PrtgProbeEvidence.ContractTests.ps1

@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using LogForesight.Core;
 using LogForesight.Core.Models;
@@ -240,13 +241,10 @@ public class PrtgProbeService
         var console = new PrtgProbeConsole(_state);
         console.WriteLine($"探測模式：{(dataFlow ? "小範圍資料流" : "完整環境探測")}");
         console.WriteLine($"開始時間：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
-        var assembly = typeof(PrtgProbeService).Assembly;
-        var buildVersion = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
-            ?? assembly.GetName().Version?.ToString() ?? "unknown";
+        var buildVersion = typeof(PrtgProbeService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(PrtgProbeService).Assembly.GetName().Version?.ToString()
+            ?? "unknown";
         console.WriteLine($"程式版本：{buildVersion}");
-        var buildIdentity = LogForesightBuildIdentity.ReadCurrent(assembly, typeof(PrtgClient).Assembly);
-        console.WriteLine($"建置識別：{buildIdentity.Status}／{buildIdentity.Reason}；來源 {buildIdentity.SourceCommit}；指紋 {buildIdentity.SourceFingerprint}。若不一致，請部署同一份 Web/Core 與 build-identity.json 後重新探測。");
         if (s.Revision == "legacy") console.WriteLine("設定修訂 legacy：既有設定可能仍有效，但缺少可追溯修訂；請由管理者檢視並明確儲存，不自動改設定。");
         console.WriteLine($"設定版本：{s.Revision}；PRTG 啟用：{(s.PrtgEnabled ? "是" : "否")}；取數策略：{s.PrtgFetchStrategy}");
         console.WriteLine("輸出可能含主機名稱、IP 或 PRTG 訊息；分享前請先檢視並遮蔽。");
