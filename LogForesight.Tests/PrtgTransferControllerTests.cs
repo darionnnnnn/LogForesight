@@ -556,7 +556,9 @@ public sealed class PrtgTransferControllerTests
         public HostStore Hosts { get; }
         public SystemSettingsStore Settings { get; }
         public FixtureUser User { get; } = new();
-        public PrtgTransferCapacityProbe Capacity { get; }
+        /// <summary>傳輸流程測試不該依賴執行機器的實際磁碟餘裕（CI 主機的資料碟常低於 25% 保留門檻）；
+        /// 容量探測本身的行為另有專屬測試。</summary>
+        public IPrtgTransferCapacityProvider Capacity { get; } = new FixedTransferCapacity();
         public PrtgTransferController Controller { get; }
 
         public TransferFixture()
@@ -574,7 +576,6 @@ public sealed class PrtgTransferControllerTests
                 value.HostIds = [1, 2];
                 value.SensorIds = [11];
             });
-            Capacity = new PrtgTransferCapacityProbe(Backend);
             Controller = new PrtgTransferController(Backend, Capacity, Hosts, new FixtureVisibility(Hosts), User, Settings);
         }
 
@@ -653,5 +654,11 @@ public sealed class PrtgTransferControllerTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class FixedTransferCapacity : IPrtgTransferCapacityProvider
+    {
+        public PrtgTransferCapacitySnapshot Capture() =>
+            new(true, 512L * 1024 * 1024, "test-fixed-capacity", null);
     }
 }
