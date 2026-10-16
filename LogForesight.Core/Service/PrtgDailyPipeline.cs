@@ -545,6 +545,7 @@ internal static class PrtgDailyPipeline
 
                     prtgFindings.Publish(day, findingsByHost.ToDictionary(
                         pair => pair.Key, pair => (IReadOnlyList<LogIssueSignature>)pair.Value), suppressedPatternIdsByHost);
+                    if (plan.DayEvaluated) prtgFindings.MarkEvaluated(day);
 
                     try
                     {

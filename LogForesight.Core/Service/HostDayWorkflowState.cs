@@ -12,8 +12,6 @@ using NLog;
 namespace LogForesight.Core.Service;
 
 public enum WorkflowLegState { Waiting, Running, Succeeded, Failed, Disabled, Degraded, Deferred, Overdue }
-public enum PrtgWorkflowResourceFamily { Cpu, Memory, Disk, Traffic, CoreHealth }
-public enum PrtgWorkflowAssessment { Hit, NoHit, Recovery, Insufficient }
 
 /// <summary>Durable workflow summary for one host and analysis date. Payload is deliberately metadata only.</summary>
 public sealed class HostDayWorkflowState
@@ -36,19 +34,6 @@ public sealed class HostDayWorkflowState
     public DateTime? PrtgEvidenceReadyAt { get; set; }
     public DateTime? SupplementDueAt { get; set; }
     /// <summary>Scope of a whole Daily-qualified evidence pass, persisted before formal manifest attachment.</summary>
-    public string? PrtgWholeEvidenceScopeFingerprint { get; set; }
-    public long? PrtgWholeEvidenceParentRecordId { get; set; }
-    public string? PrtgWholeEvidenceParentFingerprint { get; set; }
-    public string? PrtgWholeEvidenceSourceGeneration { get; set; }
-    public string? PrtgWholeEvidencePolicyRevision { get; set; }
-    public string? PrtgWholeEvidenceStrategyFingerprint { get; set; }
-    public string? PrtgWholeEvidenceHostMappingFingerprint { get; set; }
-    public string? PrtgWholeEvidenceRuleFingerprint { get; set; }
-    public long? PrtgWholeEvidenceResourceAuthorityRevision { get; set; }
-    public long? PrtgWholeEvidenceResourceModeBlobVersion { get; set; }
-    public string PrtgReadinessEpoch { get; set; } = string.Empty;
-    public long? PrtgReadinessParentRecordId { get; set; }
-    public string? PrtgReadinessParentFingerprint { get; set; }
     public long? RecoveryWaitingRecordId { get; set; }
     public long? RecoveryWaitingWriteRevision { get; set; }
     public string? RecoveryWaitingReason { get; set; }
@@ -56,12 +41,6 @@ public sealed class HostDayWorkflowState
     public DateTime? RecoveryWaitingCapturedAtUtc { get; set; }
     /// <summary>標記恢復等待前的 PRTG 腿；恢復只負責解除等待，不重判 PRTG，解除時還原這個狀態。</summary>
     public WorkflowLegState? PrtgBeforeRecoveryWaiting { get; set; }
-    public string? PrtgSelectedSensorsFingerprint { get; set; }
-    public bool PrtgSelectedSensorsClosed { get; set; }
-    public PrtgWorkflowResourceFamily[] PrtgExpectedResourceFamilies { get; set; } = [];
-    public Dictionary<PrtgWorkflowResourceFamily, PrtgWorkflowAssessment> PrtgResourceAssessments { get; set; } = new();
-    public Dictionary<PrtgWorkflowResourceFamily, int> PrtgExpectedSensorCounts { get; set; } = new();
-    public Dictionary<PrtgWorkflowResourceFamily, int> PrtgAssessedSensorCounts { get; set; } = new();
     public WorkflowLegState Ai { get; set; } = WorkflowLegState.Waiting;
     public long? AiInputVersion { get; set; }
     public long? AiResultVersion { get; set; }
@@ -96,10 +75,6 @@ public sealed class HostDayWorkflowState
     public bool IsRecoveryWaiting => RecoveryWaitingRecordId.HasValue &&
         RecoveryWaitingWriteRevision.HasValue && !string.IsNullOrWhiteSpace(RecoveryWaitingReason);
 
-    public bool PrtgReadinessComplete => PrtgSelectedSensorsClosed &&
-        PrtgExpectedResourceFamilies.All(family => PrtgResourceAssessments.TryGetValue(family, out var result) &&
-            result is (PrtgWorkflowAssessment.Hit or PrtgWorkflowAssessment.NoHit or PrtgWorkflowAssessment.Recovery) &&
-            PrtgAssessedSensorCounts.GetValueOrDefault(family) >= PrtgExpectedSensorCounts.GetValueOrDefault(family, 1));
     /// <summary>PRTG 腿的就緒狀態：該主機日的 PRTG 評估完成即就緒（資料不足的 sensor 原因另見數值就緒度，不阻擋主機日）。</summary>
     public string PrtgReadinessState => IsRecoveryWaiting ? "recovery-waiting" : Prtg == WorkflowLegState.Disabled ? "not-required" :
         Prtg is WorkflowLegState.Succeeded or WorkflowLegState.Degraded ? "ready" : "waiting";
@@ -167,32 +142,6 @@ public sealed class HostDayWorkflowStore(StorageBackend backend)
             result.Add(new HostDayWorkflowKey(key, hostId, date.Date));
         }
         return new HostDayWorkflowKeyPage(result, keys.LastOrDefault(), keys.Count);
-    }
-
-    /// <summary>Returns a bounded snapshot of persisted host-days that currently carry whole-evidence deadlines.</summary>
-    public IReadOnlyCollection<long> WholeEvidenceHostIdsForDay(DateTime date)
-    {
-        const int MaximumRows = 10_000;
-        var suffix = "_" + date.Date.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
-        const string NonNullScopeMarker = "\"PrtgWholeEvidenceScopeFingerprint\": \"";
-        using var ctx = backend.CreateContext();
-        var keys = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey.StartsWith("workflow_") &&
-                row.BlobKey.EndsWith(suffix) && row.Content.Contains(NonNullScopeMarker))
-            .OrderBy(row => row.BlobKey).Take(MaximumRows + 1)
-            .Select(row => row.BlobKey).ToList();
-        if (keys.Count > MaximumRows)
-            throw new InvalidDataException("Whole-evidence day scope exceeded its bounded recovery limit.");
-
-        var hostIds = new HashSet<long>();
-        foreach (var key in keys)
-        {
-            var parts = key.AsSpan("workflow_".Length).ToString().Split('_');
-            if (parts.Length != 2 || !long.TryParse(parts[0], out var hostId) || hostId <= 0) continue;
-            // Only the bounded key scan is used here. The actual state is loaded later through Get(),
-            // which enforces the existing 64 KiB metadata limit before deserialization.
-            hostIds.Add(hostId);
-        }
-        return hostIds;
     }
 
     public HostDayWorkflowState Update(long hostId, DateTime date, Action<HostDayWorkflowState> change)
@@ -438,16 +387,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 ResetDelivery(state);
                 state.PrtgFailure = null;
                 state.PrtgAttemptAtUtc = null;
-                state.PrtgSelectedSensorsClosed = false;
-                state.PrtgSelectedSensorsFingerprint = null;
-                state.PrtgReadinessEpoch = string.Empty;
-                state.PrtgReadinessParentRecordId = null;
-                state.PrtgReadinessParentFingerprint = null;
-                state.PrtgExpectedResourceFamilies = [];
-                state.PrtgResourceAssessments.Clear();
-                state.PrtgExpectedSensorCounts.Clear();
-                state.PrtgAssessedSensorCounts.Clear();
-                ClearWholeEvidenceDeadline(state);
+                ClearPrtgEvidenceDeadline(state);
                 state.Prtg = !prtgEnabled ? WorkflowLegState.Disabled
                     : state.PrtgFingerprint is null ? WorkflowLegState.Waiting : state.Prtg;
                 if (!prtgEnabled) state.PrtgEvidenceReadyAt = state.ParentCompletedAt;
@@ -466,8 +406,6 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
     {
         lock (_touchedGate) return _touched.TryGetValue(date.Date, out var hosts) ? hosts.ToArray() : Array.Empty<long>();
     }
-
-    public IReadOnlyCollection<long> WholeEvidenceHostIdsForDay(DateTime date) => store.WholeEvidenceHostIdsForDay(date);
 
     public void ReleaseTouchedDays(IEnumerable<DateTime> dates)
     {
@@ -494,16 +432,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
             state.PrtgFingerprint = null;
             state.PrtgEvidenceReadyAt = null;
             state.SupplementDueAt = null;
-            ClearWholeEvidenceDeadline(state);
-            state.PrtgSelectedSensorsClosed = false;
-            state.PrtgSelectedSensorsFingerprint = null;
-            state.PrtgReadinessEpoch = string.Empty;
-            state.PrtgReadinessParentRecordId = null;
-            state.PrtgReadinessParentFingerprint = null;
-            state.PrtgExpectedResourceFamilies = [];
-            state.PrtgResourceAssessments.Clear();
-            state.PrtgExpectedSensorCounts.Clear();
-            state.PrtgAssessedSensorCounts.Clear();
+            ClearPrtgEvidenceDeadline(state);
         });
 
     public HostDayWorkflowState ParentDeleted(long hostId, DateTime date) =>
@@ -537,156 +466,18 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         state.PrtgEvidenceVersion = 0;
         state.PrtgEvidenceReadyAt = null;
         state.SupplementDueAt = null;
-        ClearWholeEvidenceDeadline(state);
-        state.PrtgReadinessEpoch = string.Empty;
-        state.PrtgReadinessParentRecordId = null;
-        state.PrtgReadinessParentFingerprint = null;
-        state.PrtgSelectedSensorsClosed = false;
-        state.PrtgSelectedSensorsFingerprint = null;
-        state.PrtgExpectedResourceFamilies = [];
-        state.PrtgResourceAssessments.Clear();
-        state.PrtgExpectedSensorCounts.Clear();
-        state.PrtgAssessedSensorCounts.Clear();
+        ClearPrtgEvidenceDeadline(state);
     }
-
-    /// <summary>Starts a new finite R07 pass. Call once per host/day before processing all pages.</summary>
-    public HostDayWorkflowState BeginPrtgReadiness(long hostId, DateTime date, string epoch,
-        string selectedSensorsFingerprint, IEnumerable<PrtgWorkflowResourceFamily> enabledFamilies,
-        IReadOnlyDictionary<PrtgWorkflowResourceFamily, int>? expectedSensorCounts = null) =>
-        store.Update(hostId, date, state =>
-        {
-            if (state.Parent != WorkflowLegState.Succeeded || !IsSha256(epoch) || !IsSha256(selectedSensorsFingerprint))
-            {
-                state.PrtgSelectedSensorsClosed = false;
-                state.PrtgFailure = "readiness-parent-or-selection-invalid";
-                return;
-            }
-            var families = enabledFamilies.Distinct().Order().ToArray();
-            if (families.Length > Enum.GetValues<PrtgWorkflowResourceFamily>().Length ||
-                families.Any(family => !Enum.IsDefined(family)))
-                throw new ArgumentOutOfRangeException(nameof(enabledFamilies));
-            var sameResourceScope = StringComparer.Ordinal.Equals(state.PrtgReadinessEpoch, epoch) &&
-                StringComparer.Ordinal.Equals(state.PrtgSelectedSensorsFingerprint, selectedSensorsFingerprint) &&
-                state.PrtgReadinessParentRecordId == state.ParentRecordId &&
-                StringComparer.Ordinal.Equals(state.PrtgReadinessParentFingerprint, state.DecisionFingerprint);
-            if (!sameResourceScope) ClearWholeEvidenceDeadline(state);
-            state.PrtgReadinessEpoch = epoch;
-            state.PrtgReadinessParentRecordId = state.ParentRecordId;
-            state.PrtgReadinessParentFingerprint = state.DecisionFingerprint;
-            state.PrtgSelectedSensorsFingerprint = selectedSensorsFingerprint;
-            state.PrtgSelectedSensorsClosed = false;
-            state.PrtgExpectedResourceFamilies = families;
-            state.PrtgResourceAssessments.Clear();
-            state.PrtgAssessedSensorCounts = new();
-            state.PrtgExpectedSensorCounts = families.ToDictionary(family => family,
-                family => expectedSensorCounts?.GetValueOrDefault(family) ?? 1);
-            if (state.PrtgExpectedSensorCounts.Values.Any(count => count < 1))
-                throw new ArgumentOutOfRangeException(nameof(expectedSensorCounts));
-            state.PrtgAttemptAtUtc = DateTime.UtcNow;
-            state.Prtg = WorkflowLegState.Running;
-        });
-
-    /// <summary>
-    /// Starts the supplement timer only after Daily has passed its whole-evidence predicate and
-    /// the final source/rule/host-map/parent publication fence. The complete manifest is the
-    /// compact proof of that producer decision; a resource Close alone cannot call this successfully.
-    /// </summary>
-    public bool RecordWholePrtgEvidenceReady(long hostId, DateTime date,
-        LogForesight.Core.Models.PrtgDecisionManifest manifest, DateTime readyAt)
-    {
-        ArgumentNullException.ThrowIfNull(manifest);
-        if (hostId <= 0 || date != date.Date || readyAt == default ||
-            manifest.Version != 1 || manifest.Outcome != "complete" || manifest.WaitReasonCodes is not { Count: 0 } ||
-            manifest.ParentRecordId <= 0 || string.IsNullOrWhiteSpace(manifest.PolicyRevision) ||
-            string.IsNullOrWhiteSpace(manifest.SourceGeneration) || manifest.ResourceAuthorityRevision <= 0 ||
-            !IsSha256(manifest.ParentFingerprint) || !IsSha256(manifest.ResourceFingerprint) ||
-            !IsSha256(manifest.SemanticFingerprint) ||
-            !IsSha256(manifest.StrategyFingerprint) || !IsSha256(manifest.HostMappingFingerprint) ||
-            !IsSha256(manifest.RuleFingerprint) || !IsSha256(manifest.EvidenceFingerprint)) return false;
-
-        var qualified = false;
-        store.Update(hostId, date, state =>
-        {
-            if (state.Parent != WorkflowLegState.Succeeded || state.ParentRecordId != manifest.ParentRecordId ||
-                state.ParentCompletedAt is null || !StringComparer.Ordinal.Equals(state.DecisionFingerprint, manifest.ParentFingerprint) ||
-                !state.PrtgReadinessComplete || !IsSha256(state.PrtgReadinessEpoch) ||
-                !IsSha256(state.PrtgSelectedSensorsFingerprint ?? string.Empty) ||
-                state.PrtgReadinessParentRecordId != manifest.ParentRecordId ||
-                !StringComparer.Ordinal.Equals(state.PrtgReadinessParentFingerprint, manifest.ParentFingerprint)) return;
-
-            qualified = true;
-            var scope = WholeEvidenceScopeFingerprint(state, manifest);
-            if (!StringComparer.Ordinal.Equals(state.PrtgWholeEvidenceScopeFingerprint, scope))
-                SetWholeEvidenceScope(state, manifest, scope);
-            state.PrtgEvidenceReadyAt ??= readyAt;
-            state.SupplementDueAt ??= (state.ParentCompletedAt.Value > state.PrtgEvidenceReadyAt.Value
-                ? state.ParentCompletedAt.Value : state.PrtgEvidenceReadyAt.Value) + SupplementGrace;
-            state.PrtgFailure = null;
-        });
-        return qualified;
-    }
-
-    /// <summary>Invalidates a timer when a later Daily pass fails any whole-evidence or publication fence.</summary>
-    public HostDayWorkflowState InvalidateWholePrtgEvidence(long hostId, DateTime date, string? reason = null) =>
-        store.Update(hostId, date, state =>
-        {
-            if (state.PrtgWholeEvidenceScopeFingerprint == null && state.PrtgEvidenceReadyAt == null && state.SupplementDueAt == null)
-                return;
-            ClearWholeEvidenceDeadline(state);
-            if (state.Prtg != WorkflowLegState.Disabled) state.Prtg = WorkflowLegState.Waiting;
-            state.PrtgFailure = reason;
-        });
-
-    public HostDayWorkflowState ClosePrtgSelectedSensors(long hostId, DateTime date, string epoch,
-        string selectedSensorsFingerprint) => store.Update(hostId, date, state =>
-        {
-            if (!IsSha256(epoch) || !IsSha256(selectedSensorsFingerprint) ||
-                state.PrtgReadinessEpoch != epoch || state.PrtgSelectedSensorsFingerprint != selectedSensorsFingerprint)
-            {
-                state.PrtgSelectedSensorsClosed = false;
-                return;
-            }
-            state.PrtgSelectedSensorsClosed = true;
-            state.PrtgAttemptAtUtc = DateTime.UtcNow;
-        });
-
-    public HostDayWorkflowState PublishPrtgResourceAssessment(long hostId, DateTime date, string epoch,
-        string selectedSensorsFingerprint, PrtgWorkflowResourceFamily family, PrtgWorkflowAssessment assessment,
-        int assessedSensorCount = 1) =>
-        store.Update(hostId, date, state =>
-        {
-            if (!IsSha256(epoch) || !IsSha256(selectedSensorsFingerprint) ||
-                state.PrtgReadinessEpoch != epoch || state.PrtgSelectedSensorsFingerprint != selectedSensorsFingerprint ||
-                !state.PrtgExpectedResourceFamilies.Contains(family)) return;
-            state.PrtgAttemptAtUtc = DateTime.UtcNow;
-            var current = state.PrtgResourceAssessments.GetValueOrDefault(family);
-            if (assessedSensorCount < 1) throw new ArgumentOutOfRangeException(nameof(assessedSensorCount));
-            state.PrtgAssessedSensorCounts[family] = checked(state.PrtgAssessedSensorCounts.GetValueOrDefault(family) + assessedSensorCount);
-            var aggregate = current == PrtgWorkflowAssessment.Insufficient || assessment == PrtgWorkflowAssessment.Insufficient
-                ? PrtgWorkflowAssessment.Insufficient
-                : current == PrtgWorkflowAssessment.Hit || assessment == PrtgWorkflowAssessment.Hit
-                    ? PrtgWorkflowAssessment.Hit
-                    : current == PrtgWorkflowAssessment.Recovery || assessment == PrtgWorkflowAssessment.Recovery
-                        ? PrtgWorkflowAssessment.Recovery : PrtgWorkflowAssessment.NoHit;
-            state.PrtgResourceAssessments[family] = aggregate;
-            if (aggregate == PrtgWorkflowAssessment.Insufficient)
-            {
-                state.Prtg = WorkflowLegState.Waiting;
-                state.PrtgFailure = "resource-assessment-insufficient";
-            }
-        });
 
     public HostDayWorkflowState SetPrtg(long hostId, DateTime date, WorkflowLegState result,
         bool evidenceReady, string? evidenceFingerprint = null, DateTime? now = null, string? failure = null) =>
         store.Update(hostId, date, state =>
         {
             var instant = now ?? DateTime.Now;
-            var preserveWholeEvidenceDeadline = result == WorkflowLegState.Waiting && !evidenceReady &&
-                HasCurrentWholeEvidenceDeadline(state);
             state.PrtgAttemptAtUtc = DateTime.UtcNow;
             state.PrtgFailure = result is WorkflowLegState.Failed or WorkflowLegState.Degraded or WorkflowLegState.Waiting
                 ? failure : null;
-            if (result == WorkflowLegState.Waiting && !evidenceReady && !preserveWholeEvidenceDeadline)
+            if (result == WorkflowLegState.Waiting && !evidenceReady)
             {
                 if (state.PrtgFingerprint != null || state.PrtgEvidenceReadyAt != null || state.Prtg is WorkflowLegState.Succeeded or WorkflowLegState.Degraded)
                 {
@@ -698,7 +489,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                     state.AiFailure = null;
                 }
                 state.PrtgFingerprint = null;
-                ClearWholeEvidenceDeadline(state);
+                ClearPrtgEvidenceDeadline(state);
             }
             if (evidenceFingerprint != null && !string.Equals(state.PrtgFingerprint, evidenceFingerprint, StringComparison.Ordinal))
             {
@@ -711,12 +502,6 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 state.AiResultVersion = null;
                 state.AiFailure = null;
             }
-            if (result == WorkflowLegState.Degraded && !evidenceReady && evidenceFingerprint != null)
-            {
-                // Qualified partial evidence advances the decision, while unfinished families
-                // cannot inherit a prior whole-work readiness deadline.
-                ClearWholeEvidenceDeadline(state);
-            }
             state.Prtg = result;
             if (evidenceReady)
             {
@@ -727,18 +512,6 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                     state.Prtg = state.Parent == WorkflowLegState.Succeeded && state.SupplementDueAt is { } due
                         ? instant >= due ? WorkflowLegState.Overdue : WorkflowLegState.Deferred
                         : WorkflowLegState.Waiting;
-            }
-            else if (preserveWholeEvidenceDeadline)
-            {
-                state.Prtg = state.SupplementDueAt is { } due && instant >= due
-                    ? WorkflowLegState.Overdue : WorkflowLegState.Deferred;
-            }
-            if (result == WorkflowLegState.Succeeded && !string.IsNullOrEmpty(state.PrtgReadinessEpoch) &&
-                !state.PrtgReadinessComplete)
-            {
-                state.Prtg = WorkflowLegState.Waiting;
-                state.PrtgFailure = state.PrtgResourceAssessments.Values.Contains(PrtgWorkflowAssessment.Insufficient)
-                    ? "resource-assessment-insufficient" : "resource-assessment-not-ready";
             }
         });
 
@@ -1051,79 +824,6 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
             waiting.CapturedWriteRevision, waiting.CapturedAtUtc, waiting.ReasonCode,
             waiting.ReportedPayloadCharacters);
 
-    public void ReconcileAuthority(IEnumerable<LogForesight.Core.Models.DailyAnalysisRecord> authoritativeRecords,
-        DateTime from, DateTime to, bool prtgEnabled, bool aiEnabled)
-    {
-        foreach (var record in authoritativeRecords.Where(record => record.HostId > 0 && record.Date.Date >= from.Date && record.Date.Date <= to.Date))
-        {
-            if (record.LatestNetiqAttemptStatus == "failed")
-                ParentFailed(record.HostId, record.Host, record.Date, null, HostDayWorkflowFingerprint.ForRecord(record));
-            else
-                RestoreFromRecord(record, aiEnabled, prtgEnabled);
-
-            var manifest = record.PrtgManifest;
-            var prtgEvidenceFingerprint = PrtgFindingMapper.Fingerprint(
-                record.TopIssues.Where(PrtgFindingMapper.IsPrtg));
-            var sidecar = store.Get(record.HostId, record.Date);
-            var newerFailureAttempt = sidecar?.Prtg is WorkflowLegState.Failed or WorkflowLegState.Degraded &&
-                sidecar.PrtgAttemptAtUtc is { } attemptAt && manifest?.CompletedAtUtc is { } manifestAt &&
-                attemptAt > manifestAt;
-            var eligibleParent = record.RecordId > 0 && record.CanSupplementWithPrtg();
-            if (record.LatestNetiqAttemptStatus != "failed" && eligibleParent && prtgEnabled && !newerFailureAttempt &&
-                HostDayWorkflowFingerprint.HasValidPrtgManifest(record))
-            {
-                if (manifest!.Outcome == "complete")
-                {
-                    // This legacy entry point has no current source/rule/map/resource authority input.
-                    // Preserve the formal manifest, but never mint a whole-evidence deadline from it.
-                    store.Update(record.HostId, record.Date, state =>
-                    {
-                        ClearWholeEvidenceDeadline(state);
-                        state.Prtg = WorkflowLegState.Waiting;
-                        state.PrtgFingerprint = manifest.EvidenceFingerprint;
-                        state.PrtgAttemptAtUtc = manifest.CompletedAtUtc;
-                        state.PrtgFailure = "whole-evidence-current-authority-unavailable";
-                    });
-                }
-                else
-                    SetPrtg(record.HostId, record.Date, WorkflowLegState.Degraded,
-                        evidenceReady: false, manifest.EvidenceFingerprint,
-                        now: manifest.CompletedAtUtc.ToLocalTime(),
-                        failure: string.Join(",", manifest.WaitReasonCodes));
-            }
-            else if (record.LatestNetiqAttemptStatus != "failed")
-            {
-                // A persisted degraded/waiting attempt is still useful workflow state when it belongs
-                // to this exact parent. Only a sidecar success needs the authoritative manifest proof.
-                if (!eligibleParent || !prtgEnabled)
-                    SetPrtg(record.HostId, record.Date, prtgEnabled ? WorkflowLegState.Waiting : WorkflowLegState.Disabled,
-                        evidenceReady: false, failure: eligibleParent ? null : "parent-not-eligible-for-prtg");
-                else if (!newerFailureAttempt && (sidecar?.Prtg == WorkflowLegState.Succeeded ||
-                    !prtgEnabled && sidecar?.Prtg != WorkflowLegState.Disabled))
-                    SetPrtg(record.HostId, record.Date, prtgEnabled ? WorkflowLegState.Waiting : WorkflowLegState.Disabled,
-                        evidenceReady: false, failure: prtgEnabled ? "formal-manifest-missing-or-stale" : null);
-            }
-
-            if (record.AiAnalyzed)
-                store.Update(record.HostId, record.Date, state =>
-                {
-                    state.Ai = WorkflowLegState.Succeeded;
-                    state.AiInputVersion = state.DecisionVersion;
-                    state.AiResultVersion = state.DecisionVersion;
-                    state.AiFailure = null;
-                });
-            else
-                store.Update(record.HostId, record.Date, state =>
-                {
-                    var candidate = aiEnabled && !record.DetailPruned && record.RiskLevel != RiskLevels.Low;
-                    state.Ai = candidate ? WorkflowLegState.Waiting : WorkflowLegState.Disabled;
-                    state.AiInputVersion = null;
-                    state.AiResultVersion = null;
-                    state.AiFailure = null;
-                });
-        }
-    }
-
     /// <summary>Recovery variant: one host-day mutation fenced by the exact SQL parent revision.</summary>
     internal bool ReconcileAuthorityRecord(LogForesight.Core.Models.DailyAnalysisRecord record,
         long capturedWriteRevision, bool prtgEnabled, bool aiEnabled)
@@ -1176,17 +876,8 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         state.AiResultVersion = null;
         state.AiFailure = null;
         state.PrtgFingerprint = null;
-        ClearWholeEvidenceDeadline(state);
+        ClearPrtgEvidenceDeadline(state);
         state.PrtgEvidenceVersion = 0;
-        state.PrtgSelectedSensorsClosed = false;
-        state.PrtgSelectedSensorsFingerprint = null;
-        state.PrtgReadinessEpoch = string.Empty;
-        state.PrtgReadinessParentRecordId = null;
-        state.PrtgReadinessParentFingerprint = null;
-        state.PrtgExpectedResourceFamilies = [];
-        state.PrtgResourceAssessments.Clear();
-        state.PrtgExpectedSensorCounts.Clear();
-        state.PrtgAssessedSensorCounts.Clear();
     }
 
     private static void ApplyRecoveredParentSuccess(HostDayWorkflowState state,
@@ -1210,16 +901,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         ResetDelivery(state);
         state.PrtgFailure = null;
         state.PrtgAttemptAtUtc = null;
-        state.PrtgSelectedSensorsClosed = false;
-        state.PrtgSelectedSensorsFingerprint = null;
-        state.PrtgReadinessEpoch = string.Empty;
-        state.PrtgReadinessParentRecordId = null;
-        state.PrtgReadinessParentFingerprint = null;
-        state.PrtgExpectedResourceFamilies = [];
-        state.PrtgResourceAssessments.Clear();
-        state.PrtgExpectedSensorCounts.Clear();
-        state.PrtgAssessedSensorCounts.Clear();
-        ClearWholeEvidenceDeadline(state);
+        ClearPrtgEvidenceDeadline(state);
         state.Prtg = !prtgEnabled ? WorkflowLegState.Disabled : state.PrtgFingerprint is null ? WorkflowLegState.Waiting : state.Prtg;
         if (!prtgEnabled) state.PrtgEvidenceReadyAt = state.ParentCompletedAt;
         state.SupplementDueAt = null;
@@ -1238,13 +920,6 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         state.PrtgAttemptAtUtc = DateTime.UtcNow;
         state.PrtgFailure = result is WorkflowLegState.Failed or WorkflowLegState.Degraded or WorkflowLegState.Waiting
             ? failure : null;
-        if (result == WorkflowLegState.Waiting && !evidenceReady && HasCurrentWholeEvidenceDeadline(state))
-        {
-            state.Prtg = state.SupplementDueAt is { } due && instant >= due
-                ? WorkflowLegState.Overdue : WorkflowLegState.Deferred;
-            state.PrtgFailure = null;
-            return;
-        }
         if (result == WorkflowLegState.Waiting && !evidenceReady)
         {
             if (state.PrtgFingerprint != null || state.PrtgEvidenceReadyAt != null || state.Prtg is WorkflowLegState.Succeeded or WorkflowLegState.Degraded)
@@ -1257,7 +932,7 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
                 state.AiFailure = null;
             }
             state.PrtgFingerprint = null;
-            ClearWholeEvidenceDeadline(state);
+            ClearPrtgEvidenceDeadline(state);
         }
         if (evidenceFingerprint != null && !StringComparer.Ordinal.Equals(state.PrtgFingerprint, evidenceFingerprint))
         {
@@ -1270,22 +945,12 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
             state.AiResultVersion = null;
             state.AiFailure = null;
         }
-        if (result == WorkflowLegState.Degraded && !evidenceReady && evidenceFingerprint != null)
-        {
-            ClearWholeEvidenceDeadline(state);
-        }
         state.Prtg = result;
         if (evidenceReady)
         {
             state.PrtgEvidenceReadyAt ??= instant;
             if (state.ParentCompletedAt is { } parentAt)
                 state.SupplementDueAt ??= (parentAt > state.PrtgEvidenceReadyAt.Value ? parentAt : state.PrtgEvidenceReadyAt.Value) + SupplementGrace;
-        }
-        if (result == WorkflowLegState.Succeeded && !string.IsNullOrEmpty(state.PrtgReadinessEpoch) && !state.PrtgReadinessComplete)
-        {
-            state.Prtg = WorkflowLegState.Waiting;
-            state.PrtgFailure = state.PrtgResourceAssessments.Values.Contains(PrtgWorkflowAssessment.Insufficient)
-                ? "resource-assessment-insufficient" : "resource-assessment-not-ready";
         }
     }
 
@@ -1344,100 +1009,12 @@ public sealed class HostDayWorkflowService(HostDayWorkflowStore store)
         return state.Ai == WorkflowLegState.Disabled && state.AiInputVersion == null && state.AiResultVersion == null;
     }
 
-    private static bool HasCurrentPrtgReadinessEpoch(HostDayWorkflowState state,
-        LogForesight.Core.Models.DailyAnalysisRecord record) =>
-        !string.IsNullOrEmpty(state.PrtgReadinessEpoch) &&
-        state.PrtgReadinessParentRecordId == record.RecordId &&
-        StringComparer.Ordinal.Equals(state.PrtgReadinessParentFingerprint,
-            HostDayWorkflowFingerprint.ForParentRecord(record));
-
-    private static bool HasCurrentWholeEvidenceDeadline(HostDayWorkflowState state) =>
-        IsSha256(state.PrtgWholeEvidenceScopeFingerprint ?? string.Empty) &&
-        !string.IsNullOrWhiteSpace(state.PrtgWholeEvidencePolicyRevision) &&
-        !string.IsNullOrWhiteSpace(state.PrtgWholeEvidenceSourceGeneration) &&
-        state.PrtgWholeEvidenceResourceAuthorityRevision is > 0 &&
-        state.PrtgWholeEvidenceResourceModeBlobVersion is >= 0 &&
-        IsSha256(state.PrtgWholeEvidenceStrategyFingerprint ?? string.Empty) &&
-        IsSha256(state.PrtgWholeEvidenceHostMappingFingerprint ?? string.Empty) &&
-        IsSha256(state.PrtgWholeEvidenceRuleFingerprint ?? string.Empty) &&
-        state.PrtgEvidenceReadyAt.HasValue && state.SupplementDueAt.HasValue &&
-        state.Parent == WorkflowLegState.Succeeded && state.ParentRecordId > 0 &&
-        state.PrtgWholeEvidenceParentRecordId == state.ParentRecordId &&
-        StringComparer.Ordinal.Equals(state.PrtgWholeEvidenceParentFingerprint, state.DecisionFingerprint);
-
-    private static bool HasWholeEvidenceDeadlineState(HostDayWorkflowState state) =>
-        state.PrtgWholeEvidenceScopeFingerprint != null || state.PrtgEvidenceReadyAt.HasValue ||
-        state.SupplementDueAt.HasValue;
-
-    private static bool HasStalePrtgReadinessEpoch(HostDayWorkflowState state,
-        LogForesight.Core.Models.DailyAnalysisRecord record) =>
-        !string.IsNullOrEmpty(state.PrtgReadinessEpoch) && !HasCurrentPrtgReadinessEpoch(state, record);
-
-    private static void ClearPrtgReadinessEpoch(HostDayWorkflowState state)
+    private static void ClearPrtgEvidenceDeadline(HostDayWorkflowState state)
     {
-        state.PrtgReadinessEpoch = string.Empty;
-        state.PrtgReadinessParentRecordId = null;
-        state.PrtgReadinessParentFingerprint = null;
-        state.PrtgSelectedSensorsFingerprint = null;
-        state.PrtgSelectedSensorsClosed = false;
-        state.PrtgExpectedResourceFamilies = [];
-        state.PrtgResourceAssessments.Clear();
-        state.PrtgExpectedSensorCounts.Clear();
-        state.PrtgAssessedSensorCounts.Clear();
-    }
-
-    private static void ClearWholeEvidenceDeadline(HostDayWorkflowState state)
-    {
-        state.PrtgWholeEvidenceScopeFingerprint = null;
-        state.PrtgWholeEvidenceParentRecordId = null;
-        state.PrtgWholeEvidenceParentFingerprint = null;
-        state.PrtgWholeEvidenceSourceGeneration = null;
-        state.PrtgWholeEvidencePolicyRevision = null;
-        state.PrtgWholeEvidenceStrategyFingerprint = null;
-        state.PrtgWholeEvidenceHostMappingFingerprint = null;
-        state.PrtgWholeEvidenceRuleFingerprint = null;
-        state.PrtgWholeEvidenceResourceAuthorityRevision = null;
-        state.PrtgWholeEvidenceResourceModeBlobVersion = null;
         state.PrtgEvidenceReadyAt = null;
         state.SupplementDueAt = null;
         if (state.Prtg == WorkflowLegState.Overdue) state.Prtg = WorkflowLegState.Waiting;
     }
-
-    private static string WholeEvidenceScopeFingerprint(HostDayWorkflowState state,
-        LogForesight.Core.Models.PrtgDecisionManifest manifest) => HostDayWorkflowFingerprint.HashParts([
-            state.ParentRecordId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            manifest.ParentFingerprint,
-            state.PrtgReadinessEpoch,
-            state.PrtgSelectedSensorsFingerprint,
-            manifest.PolicyRevision,
-            manifest.SourceGeneration,
-            manifest.ResourceAuthorityRevision.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            manifest.SemanticFingerprint,
-            manifest.ResourceFingerprint,
-            manifest.StrategyFingerprint,
-            manifest.HostMappingFingerprint,
-            manifest.RuleFingerprint
-        ]);
-
-    private static void SetWholeEvidenceScope(HostDayWorkflowState state,
-        LogForesight.Core.Models.PrtgDecisionManifest manifest, string scopeFingerprint)
-    {
-        if (!StringComparer.Ordinal.Equals(state.PrtgWholeEvidenceScopeFingerprint, scopeFingerprint))
-            ClearWholeEvidenceDeadline(state);
-        state.PrtgWholeEvidenceScopeFingerprint = scopeFingerprint;
-        state.PrtgWholeEvidenceParentRecordId = manifest.ParentRecordId;
-        state.PrtgWholeEvidenceParentFingerprint = manifest.ParentFingerprint;
-        state.PrtgWholeEvidenceSourceGeneration = manifest.SourceGeneration;
-        state.PrtgWholeEvidencePolicyRevision = manifest.PolicyRevision;
-        state.PrtgWholeEvidenceStrategyFingerprint = manifest.StrategyFingerprint;
-        state.PrtgWholeEvidenceHostMappingFingerprint = manifest.HostMappingFingerprint;
-        state.PrtgWholeEvidenceRuleFingerprint = manifest.RuleFingerprint;
-        state.PrtgWholeEvidenceResourceAuthorityRevision = manifest.ResourceAuthorityRevision;
-        state.PrtgWholeEvidenceResourceModeBlobVersion = manifest.ResourceModeBlobVersion;
-    }
-
-    private static string PartialManifestReason(LogForesight.Core.Models.PrtgDecisionManifest manifest) =>
-        "formal-manifest-partial:" + string.Join(",", manifest.WaitReasonCodes);
 
     private static string[] Merge(IEnumerable<string> existing, IEnumerable<string> added, int limit = 256)
     {
@@ -1489,37 +1066,10 @@ public static class HostDayWorkflowFingerprint
         SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", parts.Select(value => value ?? string.Empty)))));
 
     public static string PrtgInputFingerprint(LogForesight.Core.Models.DailyAnalysisRecord record) => HashParts([
-        record.PrtgManifest?.EvidenceFingerprint,
+        // 原為已移除的 PRTG manifest 指紋；保留空位讓既有紀錄的指紋值不變。
+        (string?)null,
         PrtgFindingMapper.Fingerprint(record.TopIssues)
     ]);
-
-    public static bool HasValidPrtgManifest(LogForesight.Core.Models.DailyAnalysisRecord record)
-    {
-        var manifest = record.PrtgManifest;
-        if (manifest is not { Version: 1 } || !record.CanSupplementWithPrtg() || record.RecordId <= 0 ||
-            manifest.ParentRecordId != record.RecordId || manifest.CompletedAtUtc == default ||
-            manifest.CompletedAtUtc.Kind != DateTimeKind.Utc ||
-            !HasValidPrtgOutcome(manifest, record.TopIssues.Any(PrtgFindingMapper.IsPrtg)) ||
-            string.IsNullOrWhiteSpace(manifest.SourceGeneration) || manifest.SourceGeneration.Length > 256 ||
-            !HasSha256(manifest.ParentFingerprint) || !HasSha256(manifest.ParentFindingFingerprint) ||
-            !HasSha256(manifest.ResourceFingerprint) ||
-            !HasSha256(manifest.SemanticFingerprint) || !HasSha256(manifest.StrategyFingerprint) ||
-            !HasSha256(manifest.RuleFingerprint) || !HasSha256(manifest.EvidenceFingerprint) ||
-            !HasSha256(manifest.FindingFingerprint) ||
-            !StringComparer.Ordinal.Equals(manifest.ParentFingerprint, ForParentRecord(record)) ||
-            !StringComparer.Ordinal.Equals(manifest.FindingFingerprint,
-                PrtgFindingMapper.Fingerprint(record.TopIssues.Where(PrtgFindingMapper.IsPrtg))))
-            return false;
-        return Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(manifest)) <= 4096;
-    }
-
-    public static bool HasValidPrtgOutcome(LogForesight.Core.Models.PrtgDecisionManifest manifest, bool hasQualifiedFinding) =>
-        HasSha256(manifest.HostMappingFingerprint) &&
-        manifest.WaitReasonCodes is { Count: <= 16 } reasons &&
-        reasons.All(reason => reason is { Length: > 0 and <= 128 } && !reason.Any(char.IsControl)) &&
-        reasons.Distinct(StringComparer.Ordinal).Count() == reasons.Count &&
-        (manifest.Outcome == "complete" && reasons.Count == 0 ||
-            manifest.Outcome == "partial" && reasons.Count > 0 && hasQualifiedFinding);
 
     private static bool HasSha256(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
@@ -1555,7 +1105,8 @@ public static class HostDayWorkflowFingerprint
             record.RiskLevel,
             record.RiskBasis,
             record.RiskReview,
-            PrtgEvidenceFingerprint = record.PrtgManifest?.EvidenceFingerprint,
+            // 原為已移除的 PRTG manifest 指紋；保留同名空欄讓既有紀錄的指紋值不變。
+            PrtgEvidenceFingerprint = (string?)null,
             record.DataIncomplete,
             record.SecurityLogAvailable,
             record.ChannelsRead,

@@ -988,16 +988,12 @@ public class AnalysisOrchestrator
                         workflow?.ParentSucceeded(currentHostId, currentHost, date, runRecorder.RunId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             logs.Count, HostDayWorkflowFingerprint.ForParentRecord(record), prtgEnabled: prtgEnabled,
                             aiEnabled: localUseAi, parentRecordId: record.RecordId > 0 ? record.RecordId : null);
-                        if (prtgFindings.IsPublished(date))
+                        // PRTG 腿與每日管線同一個判準：該日評估完整跑完＝成功，否則等待（停用時 ParentSucceeded 已記為停用）。
+                        if (prtgEnabled && prtgFindings.IsPublished(date))
                         {
-                            if (HostDayWorkflowFingerprint.HasValidPrtgManifest(record))
-                                workflow?.SetPrtg(currentHostId, date, record.PrtgManifest!.Outcome == "complete" ? WorkflowLegState.Succeeded : WorkflowLegState.Degraded,
-                                    evidenceReady: record.PrtgManifest.Outcome == "complete",
-                                    record.PrtgManifest.EvidenceFingerprint,
-                                    failure: record.PrtgManifest.Outcome == "partial" ? string.Join(",", record.PrtgManifest.WaitReasonCodes) : null);
-                            else
-                                workflow?.SetPrtg(currentHostId, date, WorkflowLegState.Waiting, evidenceReady: false,
-                                    failure: "formal-manifest-missing-or-stale");
+                            var evaluated = prtgFindings.IsEvaluated(date);
+                            workflow?.SetPrtg(currentHostId, date, evaluated ? WorkflowLegState.Succeeded : WorkflowLegState.Waiting,
+                                evidenceReady: evaluated, failure: evaluated ? null : "prtg-day-not-evaluated");
                         }
                     }
                     catch (Exception ex)

@@ -46,9 +46,6 @@ public class DailyAnalysisRecord
     public int AuditEventCount { get; set; }
     public List<LogIssueSignature> TopIssues { get; set; } = new();
 
-    /// <summary>Authoritative per-parent PRTG evaluation identity, including successful zero-finding evaluations.</summary>
-    public PrtgDecisionManifest? PrtgManifest { get; set; }
-
     /// <summary>程式比對歷史後偵測到的頻率異常（首次出現、頻率上升、整體錯誤量突增）。
     /// 已排除本機抑制設定關掉的項目（回饋十五輪 A）——被抑制的仍照算趨勢欄位與嚴重度升級，
     /// 只是不出現在這份清單，語意邊界見 docs/RULES-SPEC.md。</summary>
@@ -236,34 +233,6 @@ public sealed record AiOutcome(
     string? InputPrtgFingerprint = null,
     string? ReportPrtgEvidenceFingerprint = null,
     LogForesight.Core.Persistence.PreparedRiskReport? ReportDraft = null);
-
-/// <summary>Bounded identity of one completed PRTG decision for a single NetIQ parent row.</summary>
-public sealed class PrtgDecisionManifest
-{
-    public int Version { get; set; } = 1;
-    public long ParentRecordId { get; set; }
-    public string ParentFingerprint { get; set; } = string.Empty;
-    /// <summary>Captured PRTG rows on the exact parent before this run's state reconciliation and finding attach.</summary>
-    public string ParentFindingFingerprint { get; set; } = string.Empty;
-    public string PolicyRevision { get; set; } = string.Empty;
-    public string SourceGeneration { get; set; } = string.Empty;
-    /// <summary>Monotonic fence for trusted resource identity, channel and sampling-profile changes.</summary>
-    public long ResourceAuthorityRevision { get; set; }
-    /// <summary>Exact per-host formal resource-mode blob revision captured with its grant snapshot.</summary>
-    public long ResourceModeBlobVersion { get; set; }
-    /// <summary>Legacy manifests may omit the mode fence; new daily resource evaluations require it even at version zero.</summary>
-    public bool ResourceModeFenceRequired { get; set; }
-    public string ResourceFingerprint { get; set; } = string.Empty;
-    public string SemanticFingerprint { get; set; } = string.Empty;
-    public string StrategyFingerprint { get; set; } = string.Empty;
-    public string HostMappingFingerprint { get; set; } = string.Empty;
-    public List<string> WaitReasonCodes { get; set; } = new();
-    public string RuleFingerprint { get; set; } = string.Empty;
-    public string EvidenceFingerprint { get; set; } = string.Empty;
-    public string FindingFingerprint { get; set; } = string.Empty;
-    public DateTime CompletedAtUtc { get; set; }
-    public string Outcome { get; set; } = "complete";
-}
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive

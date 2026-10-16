@@ -497,8 +497,6 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             if (attemptOutcome.UncoveredChecksAddendum is { Count: > 0 })
             {
                 // Repeated successful AI work must not change the parent again for an identical note.
-                if (canCarryPrtgParent && record.PrtgManifest is { } manifest)
-                    manifest.ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record);
             }
             row.ContentJson = JsonSerializer.Serialize(record);
 

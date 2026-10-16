@@ -1675,6 +1675,8 @@ public class PrtgDailyPipelineTests : IDisposable
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == PrtgEventKey("down", 2001));
         Assert.Equal("builtin-prtg-down", sig.RuleId);
         Assert.False(sig.ElevatesDayRisk);
+        // 完整評估的那天要標記，分析路徑才會把 PRTG 腿記為成功（與每日管線同一個判準）。
+        Assert.True(registry.IsEvaluated(day));
         Assert.Equal(RiskLevels.Medium, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
     }
 

@@ -158,19 +158,6 @@ public class RecordStorageShaperTests
             LatestNetiqAttemptStatus = "success",
             PrtgBaselineRiskLevel = "低",
             PrtgBaselineRiskBasis = "netiq-rule",
-            PrtgManifest = new PrtgDecisionManifest
-            {
-                ParentRecordId = 4201,
-                ParentFingerprint = "parent-fingerprint",
-                SourceGeneration = "source-generation",
-                ResourceFingerprint = "resource-fingerprint",
-                SemanticFingerprint = "semantic-fingerprint",
-                StrategyFingerprint = "strategy-fingerprint",
-                RuleFingerprint = "rule-fingerprint",
-                EvidenceFingerprint = "evidence-fingerprint",
-                FindingFingerprint = "finding-fingerprint",
-                CompletedAtUtc = new DateTime(2026, 7, 20, 1, 0, 0, DateTimeKind.Utc)
-            },
             LatestNetiqAttemptAtUtc = new DateTime(2026, 7, 20, 0, 0, 0, DateTimeKind.Utc),
             RiskReview = new HistoricalRiskReview { Version = 1, Reason = "review" },
             ErrorCount = 3,
@@ -201,8 +188,6 @@ public class RecordStorageShaperTests
             DetailPruned = true,
             TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 1, SampleMessages = new() { "x" } } }
         };
-        original.PrtgManifest!.ParentFindingFingerprint = PrtgFindingMapper.Fingerprint(
-            original.TopIssues.Where(PrtgFindingMapper.IsPrtg));
 
         // fixture 自我檢查：每個頂層欄位都必須被上面設成「非預設值」，否則下面的比對對該欄位是盲的
         // （original 與 shaped 兩邊都是預設值，漏複製也比不出差異——ChannelsRead 曾因此漏網，

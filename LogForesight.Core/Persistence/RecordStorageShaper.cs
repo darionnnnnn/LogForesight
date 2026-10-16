@@ -27,7 +27,6 @@ internal static class RecordStorageShaper
             LatestNetiqAttemptStatus = record.LatestNetiqAttemptStatus,
             LatestNetiqAttemptAtUtc = record.LatestNetiqAttemptAtUtc,
             // The immutable decision manifest is parent-level metadata needed to validate later PRTG supplements.
-            PrtgManifest = record.PrtgManifest,
             HostId = record.HostId,
             Host = record.Host,
             ErrorCount = record.ErrorCount,
