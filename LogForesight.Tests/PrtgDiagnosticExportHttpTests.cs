@@ -64,7 +64,7 @@ public sealed class PrtgDiagnosticExportHttpTests
             Assert.Equal(JsonValueKind.Object, root.GetProperty("SourcePolicy").ValueKind);
             var firstDevice = root.GetProperty("Devices").EnumerateArray().First();
             Assert.Equal("診斷🧪", firstDevice.GetProperty("Name").GetString());
-            Assert.Equal(777, root.GetProperty("Timelines").EnumerateArray().Single().GetProperty("SensorId").GetInt64());
+            Assert.Empty(root.GetProperty("Timelines").EnumerateArray());
 
             var manifest = root.GetProperty("Manifest");
             var marker = Encoding.UTF8.GetBytes(",\"Manifest\":");
@@ -89,9 +89,10 @@ public sealed class PrtgDiagnosticExportHttpTests
             Assert.Equal(1, validation.Counts["HostMaps"]);
             Assert.Equal(1, validation.Counts["ManualMaps"]);
             Assert.Equal(1, validation.Counts["Observations"]);
-            Assert.Equal(1, validation.Counts["Timelines"]);
-            Assert.Equal(1, validation.Counts["SemanticEvidence"]);
-            Assert.Equal(1, validation.Counts["SemanticResults"]);
+            // 這三組陣列名稱保留給舊匯入相容，內容固定為空。
+            Assert.Equal(0, validation.Counts["Timelines"]);
+            Assert.Equal(0, validation.Counts["SemanticEvidence"]);
+            Assert.Equal(0, validation.Counts["SemanticResults"]);
             foreach (var (name, count) in validation.Counts.Where(pair => PrtgDiagnosticExportSource.V2ArrayProperties.Contains(pair.Key)))
                 Assert.Equal(count, manifest.GetProperty("rowCounts").GetProperty(name).GetInt64());
 
@@ -238,12 +239,6 @@ public sealed class PrtgDiagnosticExportHttpTests
             new PrtgMonitoringPolicyStore(Backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
             {
                 policy.Revision = "http-fixture-r1";
-                policy.CoreSystemId = "fixture-core";
-                policy.SourceGeneration = "fixture-source-generation";
-                policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(_sourceUrl);
-                policy.ValidFrom = DateTimeOffset.Parse("2026-10-01T00:00:00Z");
-                policy.SourceTimeZoneId = "UTC";
-                policy.SourceCultureName = "en-US";
                 policy.HostIds = HostIds.ToList();
                 policy.SensorIds = [777];
             });
@@ -359,13 +354,6 @@ public sealed class PrtgDiagnosticExportHttpTests
                 RecordedAtUtc = DateTime.SpecifyKind(From, DateTimeKind.Utc), SupplementStatus = "shadow"
             });
             await db.SaveChangesAsync();
-
-            new PrtgDiskSemanticEvidenceStore(Backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).Update(rows =>
-                rows[500] = new PrtgDiskSemanticEvidence(500, 1, HostIds[0], "disk", "used", "Used", "%", 1,
-                    "up", PrtgDiskSemanticEvidenceSource.Manual, 73, "fixture evidence", DateTime.UtcNow, "v1"));
-            new PrtgDiskVerificationResultStore(Backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Update(rows =>
-                rows[500] = new PrtgDiskVerificationResult(500, 1, HostIds[0], "disk", "matched", "fixture result",
-                    "used", "Used", "%", 1, "up", 1, true, DateTime.UtcNow, From, "v1"));
         }
 
         public string FormalSnapshot()
@@ -384,9 +372,7 @@ public sealed class PrtgDiagnosticExportHttpTests
                 IpExcludes = db.PrtgIpExcludes.AsNoTracking().OrderBy(row => row.Ip).ToList(),
                 Policy = Backend.Blob(PrtgMonitoringPolicyStore.BlobKey).Read(),
                 Settings = Backend.Blob(SystemSettingsStoreBlobKey).Read(),
-                Hosts = Backend.Blob("hosts").Read(),
-                Evidence = Backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey).Read(),
-                Results = Backend.Blob(PrtgDiskVerificationResultStore.BlobKey).Read()
+                Hosts = Backend.Blob("hosts").Read()
             });
         }
 

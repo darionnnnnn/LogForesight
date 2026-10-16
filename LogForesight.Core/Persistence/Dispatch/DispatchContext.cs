@@ -183,7 +183,7 @@ public sealed class DispatchContext
     {
         if (!PrtgFindingMapper.IsPrtg(trend)
             || !PrtgFindingMapper.TryGetRuleCode(trend.Source, out var code)
-            || !string.Equals(code, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(code, PrtgRuleEvaluator.RuleDiskFreeTrend, StringComparison.OrdinalIgnoreCase)
             || !TryPrtgSensorId(trend.EventKey, code, out var sensorId)) return null;
 
         foreach (var c in CasesFor(hostName))

@@ -45,13 +45,17 @@ public sealed class PrtgScopePurgeStore
     /// <summary>Checks a preview against current source versions while holding the shared scope gate.</summary>
     public bool IsCurrentScopeFence(string jobId, long actorId)
     {
-        using var ctx = _contextFactory();
-        using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
-        LockScopeMutationGate(ctx);
-        var row = ctx.PrtgScopePurgeJobs.AsNoTracking().SingleOrDefault(x => x.JobId == jobId && x.ActorId == actorId);
-        var current = row != null && LockScopeFence(ctx, row.ScopeFenceJson);
-        tx.Commit();
-        return current;
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+            LockScopeMutationGate(ctx);
+            var row = ctx.PrtgScopePurgeJobs.AsNoTracking().SingleOrDefault(x => x.JobId == jobId && x.ActorId == actorId);
+            var current = row != null && LockScopeFence(ctx, row.ScopeFenceJson);
+            tx.Commit();
+            return current;
+        });
     }
 
     public PrtgScopePurgeJobRow CreatePreview(long actorId, long permissionRevision, string? authFingerprint,
@@ -347,19 +351,23 @@ public sealed class PrtgScopePurgeStore
 
     public PrtgScopePurgeJobRow Stop(string jobId, string reason, DateTimeOffset now)
     {
-        using var ctx = _contextFactory();
-        using var tx = ctx.Database.BeginTransaction();
-        var row = ctx.PrtgScopePurgeJobs.Single(x => x.JobId == jobId);
-        if (row.Status != "complete")
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
         {
-            row.Status = "paused"; row.ActiveOwner = null; row.LeaseExpiresAtUtc = null; row.StopReason = reason;
-            row.UpdatedAtUtc = now.UtcDateTime;
-            RefreshFinalCounts(ctx, row);
-            row.Revision++;
-            ctx.SaveChanges();
-        }
-        tx.Commit();
-        return row;
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+            var row = ctx.PrtgScopePurgeJobs.Single(x => x.JobId == jobId);
+            if (row.Status != "complete")
+            {
+                row.Status = "paused"; row.ActiveOwner = null; row.LeaseExpiresAtUtc = null; row.StopReason = reason;
+                row.UpdatedAtUtc = now.UtcDateTime;
+                RefreshFinalCounts(ctx, row);
+                row.Revision++;
+                ctx.SaveChanges();
+            }
+            tx.Commit();
+            return row;
+        });
     }
 
     private static void RefreshFinalCounts(LfDbContext ctx, PrtgScopePurgeJobRow row)

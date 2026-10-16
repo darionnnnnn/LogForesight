@@ -66,8 +66,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         return new(_backend, _hosts, visibility, currentUser, _audit, new DataVersionStamp(), _protection);
     }
     private static PrtgMonitoringRequest Request(string revision = "") => new()
-    { Revision = revision, IdentityConfirmed = true, CoreSystemId = "fixture-core", SourceTimeZoneId = TimeZoneInfo.Local.Id,
-        SourceCultureName = "en-US", MessageDateFormat = PrtgMessageDateTimeParser.Ymd24, HostIds = [1], SensorIds = [100] };
+    { Revision = revision, HostIds = [1], SensorIds = [100] };
 
     private static string DataString(IActionResult result, string name)
     {
@@ -100,522 +99,18 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     }
 
     [Fact]
-    public void TimeBasisApiRecordsExplicitInputsAndLegacyMonitoringPutPreservesThem()
-    {
-        var controller = Controller(new Visible(1));
-        Assert.IsType<OkObjectResult>(Save(controller, Request()));
-        var before = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var messageFingerprint = before.MessageTimeFingerprint("https://fixture.example");
-        var rawAuthorityBefore = before.SourceAuthorityFingerprint("https://fixture.example");
-        var identityBefore = _backend.PrtgStore().GetResourceIdentity(100);
-        var semanticVersionBefore = _backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey).ReadVersion();
-        var verificationVersionBefore = _backend.Blob(PrtgDiskVerificationResultStore.BlobKey).ReadVersion();
-
-        var saved = controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = before.Revision,
-            RawTimestampTimeZoneId = "UTC",
-            AnalysisTimeZoneId = "Asia/Taipei",
-            TimeBasisEvidenceReference = "ticket-2026-1042",
-            OperatorConfirmed = true
-        });
-
-        Assert.IsType<OkObjectResult>(saved);
-        var after = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        Assert.NotEqual(before.Revision, after.Revision);
-        Assert.Equal("UTC", after.RawTimestampTimeZoneId);
-        Assert.Equal(TimeZoneInfo.FindSystemTimeZoneById("Asia/Taipei").Id, after.AnalysisTimeZoneId);
-        Assert.Equal("ticket-2026-1042", after.TimeBasisEvidenceReference);
-        Assert.Equal(messageFingerprint, after.MessageTimeFingerprint("https://fixture.example"));
-        Assert.NotEqual(rawAuthorityBefore, after.SourceAuthorityFingerprint("https://fixture.example"));
-        var identityAfter = _backend.PrtgStore().GetResourceIdentity(100);
-        Assert.Equal(identityBefore.Epoch, identityAfter.Epoch);
-        Assert.Equal(identityBefore.Generation, identityAfter.Generation);
-        Assert.Equal(identityBefore.ChannelGeneration, identityAfter.ChannelGeneration);
-        Assert.Equal(semanticVersionBefore, _backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey).ReadVersion());
-        Assert.Equal(verificationVersionBefore, _backend.Blob(PrtgDiskVerificationResultStore.BlobKey).ReadVersion());
-        Assert.Equal("saved-operator-input-unverified", DataElement(controller.Get(), "TimeBasisEvidenceStatus").GetString());
-
-        // A normal caller that does not know about the additive fields must retain the saved tuple.
-        var legacyRequest = Request(after.Revision);
-        Assert.IsType<OkObjectResult>(Save(controller, legacyRequest));
-        var retained = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        Assert.Equal(after.RawTimestampTimeZoneId, retained.RawTimestampTimeZoneId);
-        Assert.Equal(after.AnalysisTimeZoneId, retained.AnalysisTimeZoneId);
-        Assert.Equal(after.TimeBasisEvidenceReference, retained.TimeBasisEvidenceReference);
-        Assert.Equal(messageFingerprint, retained.MessageTimeFingerprint("https://fixture.example"));
-    }
-
-    [Fact]
-    public void TimeBasisChangePreservesMessageTimelineButRevokesOnlyAffectedRawDiskEvidence()
-    {
-        var controller = Controller(new Visible(1));
-        Assert.IsType<OkObjectResult>(Save(controller, Request()));
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        var initialPolicy = policyStore.Get();
-        Assert.IsType<OkObjectResult>(controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = initialPolicy.Revision,
-            RawTimestampTimeZoneId = "UTC",
-            AnalysisTimeZoneId = "UTC",
-            TimeBasisEvidenceReference = "ticket-before-basis-change",
-            OperatorConfirmed = true
-        }));
-        initialPolicy = policyStore.Get();
-
-        var identityBefore = _backend.PrtgStore().GetResourceIdentity(100);
-        var messageFingerprint = initialPolicy.MessageTimeFingerprint("https://fixture.example");
-        var rawContextBefore = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
-            initialPolicy, PrtgFetchStrategy.Conservative, 15);
-        var timelineBlob = _backend.Blob(PrtgSensorTimelineStore.Prefix + 100);
-        var timeline = new PrtgSensorTimelineStore(timelineBlob);
-        var observedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
-        timeline.Update(evidence =>
-        {
-            evidence.Bind(100, 1, initialPolicy.SourceGeneration, "timeline-identity-fingerprint",
-                identityBefore.Generation, identityBefore.Epoch, identityBefore.ChannelGeneration, observedAt);
-            evidence.MessageTimeFingerprint = messageFingerprint;
-            evidence.QualityReason = "covered-state-v1";
-            evidence.BootstrapStatus = "complete";
-            evidence.States = [new(100, observedAt, "Down", initialPolicy.SourceGeneration, identityBefore.Generation)];
-            evidence.Coverage = [new(100, observedAt, observedAt.AddMinutes(1),
-                initialPolicy.SourceGeneration, identityBefore.Generation)];
-            evidence.LastCompleteThrough = observedAt.AddMinutes(1);
-        });
-        var timelineVersion = timelineBlob.ReadVersion();
-        var timelineBefore = timelineBlob.Read();
-
-        var diskContext = new PrtgDiskSemanticContext(100, identityBefore.DeviceId, 1,
-            "Disk", "free-space", "Free Space", "%", 1, "descending-danger");
-        var semantic = new PrtgDiskSemanticEvidence(100, identityBefore.DeviceId, 1,
-            "Disk", "free-space", "Free Space", "%", 1, "descending-danger",
-            PrtgDiskSemanticEvidenceSource.Manual, 7, "reviewed disk meaning", DateTime.UtcNow,
-            "disk-semantic-v1", initialPolicy.SourceGeneration, identityBefore.Generation,
-            identityBefore.ChannelGeneration, identityBefore.Epoch);
-        var unaffectedSemantic = semantic with { SensorObjid = 999, DeviceObjid = 998, HostId = 2 };
-        var semanticJson = JsonSerializer.Serialize(new Dictionary<long, PrtgDiskSemanticEvidence>
-            { [100] = semantic, [999] = unaffectedSemantic });
-        var semanticRoot = JsonNode.Parse(semanticJson)!.AsObject();
-        semanticRoot["100"]!["futureEvidenceField"] = JsonNode.Parse("{\"preserve\":true}");
-        semanticRoot["999"]!["futureEvidenceField"] = JsonNode.Parse("{\"other\":1}");
-        var semanticOtherBefore = semanticRoot["999"]!.ToJsonString();
-        _backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey).Mutate(_ => (semanticRoot.ToJsonString(), true));
-
-        var verification = new PrtgDiskVerificationResult(100, identityBefore.DeviceId, 1,
-            "Disk", "Verified", "prior physical comparison", "free-space", "Free Space", "%", 1,
-            "descending-danger", 4, true, DateTime.UtcNow, DateTime.Today, "disk-semantic-v1",
-            false, initialPolicy.SourceGeneration, identityBefore.Generation, identityBefore.ChannelGeneration,
-            identityBefore.Epoch);
-        var unaffectedVerification = verification with { SensorObjid = 999, DeviceObjid = 998, HostId = 2 };
-        var verificationJson = JsonSerializer.Serialize(new Dictionary<long, PrtgDiskVerificationResult>
-            { [100] = verification, [999] = unaffectedVerification });
-        var verificationRoot = JsonNode.Parse(verificationJson)!.AsObject();
-        verificationRoot["100"]!["futureVerificationField"] = JsonNode.Parse("{\"preserve\":true}");
-        verificationRoot["999"]!["futureVerificationField"] = JsonNode.Parse("{\"other\":2}");
-        var verificationOtherBefore = verificationRoot["999"]!.ToJsonString();
-        _backend.Blob(PrtgDiskVerificationResultStore.BlobKey).Mutate(_ => (verificationRoot.ToJsonString(), true));
-
-        var changed = controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = initialPolicy.Revision,
-            RawTimestampTimeZoneId = "Pacific Standard Time",
-            AnalysisTimeZoneId = "Asia/Taipei",
-            TimeBasisEvidenceReference = "ticket-after-basis-change",
-            OperatorConfirmed = true
-        });
-
-        Assert.IsType<OkObjectResult>(changed);
-        var afterPolicy = policyStore.Get();
-        Assert.Equal(messageFingerprint, afterPolicy.MessageTimeFingerprint("https://fixture.example"));
-        Assert.NotEqual(rawContextBefore, PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
-            afterPolicy, PrtgFetchStrategy.Conservative, 15));
-        var identityAfter = _backend.PrtgStore().GetResourceIdentity(100);
-        Assert.Equal(identityBefore.Epoch, identityAfter.Epoch);
-        Assert.Equal(identityBefore.Generation, identityAfter.Generation);
-        Assert.Equal(identityBefore.ChannelGeneration, identityAfter.ChannelGeneration);
-        Assert.Equal(timelineVersion, timelineBlob.ReadVersion());
-        Assert.Equal(timelineBefore, timelineBlob.Read());
-
-        var semanticAfter = JsonNode.Parse(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey).Read()!)!.AsObject();
-        Assert.Equal(PrtgDiskTimeBasisInvalidator.SemanticInvalidationMarker,
-            semanticAfter["100"]!["ParserSemanticVersion"]!.GetValue<string>());
-        Assert.Equal("{\"preserve\":true}", semanticAfter["100"]!["futureEvidenceField"]!.ToJsonString());
-        Assert.Equal(semanticOtherBefore, semanticAfter["999"]!.ToJsonString());
-        var validity = new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey))
-            .CheckValidity(100, diskContext, PrtgDiskTimeBasisInvalidator.SemanticInvalidationMarker);
-        Assert.False(validity.IsValid);
-        Assert.Contains("time basis changed", validity.InvalidReason, StringComparison.OrdinalIgnoreCase);
-
-        var verificationAfter = JsonNode.Parse(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey).Read()!)!.AsObject();
-        Assert.Equal("Stale", verificationAfter["100"]!["Status"]!.GetValue<string>());
-        Assert.Null(verificationAfter["100"]!["ValuesMatch"]);
-        Assert.Equal(0, verificationAfter["100"]!["ComparedPointCount"]!.GetValue<int>());
-        Assert.Equal("prior physical comparison", verificationAfter["100"]!["Summary"]!.GetValue<string>());
-        Assert.Equal("{\"preserve\":true}", verificationAfter["100"]!["futureVerificationField"]!.ToJsonString());
-        Assert.Equal(verificationOtherBefore, verificationAfter["999"]!.ToJsonString());
-    }
-
-    [Fact]
-    public void NormalMonitoringPutRawTimeBasisOnlyKeepsTimelineIdentityAndRevokesRawEvidence()
-    {
-        var controller = Controller(new Visible(1));
-        Assert.IsType<OkObjectResult>(Save(controller, Request()));
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        var initial = policyStore.Get();
-        Assert.IsType<OkObjectResult>(controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = initial.Revision,
-            RawTimestampTimeZoneId = "UTC",
-            AnalysisTimeZoneId = "UTC",
-            TimeBasisEvidenceReference = "normal-put-before",
-            OperatorConfirmed = true
-        }));
-        initial = policyStore.Get();
-
-        var identityBefore = _backend.PrtgStore().GetResourceIdentity(100);
-        var messageFingerprint = initial.MessageTimeFingerprint("https://fixture.example");
-        var timelineBlob = _backend.Blob(PrtgSensorTimelineStore.Prefix + 100);
-        var timeline = new PrtgSensorTimelineStore(timelineBlob);
-        var observedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
-        timeline.Update(evidence =>
-        {
-            evidence.Bind(100, 1, initial.SourceGeneration, "normal-put-timeline-fingerprint",
-                identityBefore.Generation, identityBefore.Epoch, identityBefore.ChannelGeneration, observedAt);
-            evidence.MessageTimeFingerprint = messageFingerprint;
-            evidence.QualityReason = "covered-state-v1";
-            evidence.States = [new(100, observedAt, "Up", initial.SourceGeneration, identityBefore.Generation)];
-        });
-        var timelineVersion = timelineBlob.ReadVersion();
-        var timelineBefore = timelineBlob.Read();
-
-        var semantic = new PrtgDiskSemanticEvidence(100, identityBefore.DeviceId, 1,
-            "Disk", "free-space", "Free Space", "%", 1, "descending-danger",
-            PrtgDiskSemanticEvidenceSource.Manual, 7, "reviewed meaning", DateTime.UtcNow,
-            "disk-semantic-v1", initial.SourceGeneration, identityBefore.Generation,
-            identityBefore.ChannelGeneration, identityBefore.Epoch);
-        var verification = new PrtgDiskVerificationResult(100, identityBefore.DeviceId, 1,
-            "Disk", "Verified", "prior physical comparison", "free-space", "Free Space", "%", 1,
-            "descending-danger", 4, true, DateTime.UtcNow, DateTime.Today, "disk-semantic-v1",
-            false, initial.SourceGeneration, identityBefore.Generation, identityBefore.ChannelGeneration,
-            identityBefore.Epoch);
-        _backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey).Mutate(_ =>
-            (JsonSerializer.Serialize(new Dictionary<long, PrtgDiskSemanticEvidence> { [100] = semantic }), true));
-        _backend.Blob(PrtgDiskVerificationResultStore.BlobKey).Mutate(_ =>
-            (JsonSerializer.Serialize(new Dictionary<long, PrtgDiskVerificationResult> { [100] = verification }), true));
-
-        var request = Request(initial.Revision);
-        request.RawTimestampTimeZoneId = "Pacific Standard Time";
-        request.AnalysisTimeZoneId = "Asia/Taipei";
-        request.TimeBasisEvidenceReference = "normal-put-after";
-        Assert.IsType<OkObjectResult>(Save(controller, request));
-
-        var after = policyStore.Get();
-        Assert.Equal("Pacific Standard Time", after.RawTimestampTimeZoneId);
-        Assert.Equal("Asia/Taipei", after.AnalysisTimeZoneId);
-        Assert.NotEqual(initial.SourceAuthorityFingerprint("https://fixture.example"),
-            after.SourceAuthorityFingerprint("https://fixture.example"));
-        Assert.Equal(messageFingerprint, after.MessageTimeFingerprint("https://fixture.example"));
-        var identityAfter = _backend.PrtgStore().GetResourceIdentity(100);
-        Assert.Equal(identityBefore.Epoch, identityAfter.Epoch);
-        Assert.Equal(identityBefore.Generation, identityAfter.Generation);
-        Assert.Equal(identityBefore.ChannelGeneration, identityAfter.ChannelGeneration);
-        Assert.Equal(timelineVersion, timelineBlob.ReadVersion());
-        Assert.Equal(timelineBefore, timelineBlob.Read());
-
-        using var semanticDoc = JsonDocument.Parse(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey).Read()!);
-        Assert.Equal(PrtgDiskTimeBasisInvalidator.SemanticInvalidationMarker,
-            semanticDoc.RootElement.GetProperty("100").GetProperty("ParserSemanticVersion").GetString());
-        using var verificationDoc = JsonDocument.Parse(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey).Read()!);
-        var stale = verificationDoc.RootElement.GetProperty("100");
-        Assert.Equal("Stale", stale.GetProperty("Status").GetString());
-        Assert.Equal(JsonValueKind.Null, stale.GetProperty("ValuesMatch").ValueKind);
-        Assert.Equal(0, stale.GetProperty("ComparedPointCount").GetInt32());
-        Assert.Equal("prior physical comparison", stale.GetProperty("Summary").GetString());
-    }
-
-    [Fact]
-    public void TimeBasisApiRejectsPartialInputAndStalePolicyWithoutChangingRows()
-    {
-        var controller = Controller(new Visible(1));
-        Assert.IsType<OkObjectResult>(Save(controller, Request()));
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var policyVersion = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion();
-        var identity = _backend.PrtgStore().GetResourceIdentity(100);
-        var partial = controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = policy.Revision,
-            RawTimestampTimeZoneId = "UTC",
-            OperatorConfirmed = true
-        });
-        Assert.IsType<BadRequestObjectResult>(partial);
-        Assert.Equal(policyVersion, _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion());
-        Assert.Equal(identity.Epoch, _backend.PrtgStore().GetResourceIdentity(100).Epoch);
-
-        var stale = controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = "stale-revision",
-            RawTimestampTimeZoneId = "UTC",
-            AnalysisTimeZoneId = "UTC",
-            TimeBasisEvidenceReference = "ticket-2026-1042",
-            OperatorConfirmed = true
-        });
-        Assert.IsType<ConflictObjectResult>(stale);
-        Assert.Equal(policyVersion, _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion());
-        Assert.Equal(identity.Epoch, _backend.PrtgStore().GetResourceIdentity(100).Epoch);
-    }
-
-    [Fact]
-    public void TimeBasisChangeRejectsMalformedVerificationDocumentWithoutCommittingPolicyOrSemanticRevocation()
-    {
-        var controller = Controller(new Visible(1));
-        Assert.IsType<OkObjectResult>(Save(controller, Request()));
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        var before = policyStore.Get();
-        Assert.IsType<OkObjectResult>(controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = before.Revision,
-            RawTimestampTimeZoneId = "UTC",
-            AnalysisTimeZoneId = "UTC",
-            TimeBasisEvidenceReference = "ticket-before-malformed",
-            OperatorConfirmed = true
-        }));
-        before = policyStore.Get();
-        var identity = _backend.PrtgStore().GetResourceIdentity(100);
-        var semantic = new PrtgDiskSemanticEvidence(100, identity.DeviceId, 1,
-            "Disk", "free-space", "Free Space", "%", 1, "descending-danger",
-            PrtgDiskSemanticEvidenceSource.Manual, 7, "reviewed disk meaning", DateTime.UtcNow,
-            "disk-semantic-v1", before.SourceGeneration, identity.Generation,
-            identity.ChannelGeneration, identity.Epoch);
-        var semanticBlob = _backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey);
-        var originalSemantic = JsonSerializer.Serialize(new Dictionary<long, PrtgDiskSemanticEvidence> { [100] = semantic });
-        semanticBlob.Mutate(_ => (originalSemantic, true));
-        var verificationBlob = _backend.Blob(PrtgDiskVerificationResultStore.BlobKey);
-        verificationBlob.Mutate(_ => ("{malformed", true));
-        var policyVersion = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion();
-        var semanticVersion = semanticBlob.ReadVersion();
-        var verificationVersion = verificationBlob.ReadVersion();
-
-        var result = controller.UpdateTimeBasis(new PrtgSourceTimeBasisRequest
-        {
-            ExpectedPolicyRevision = before.Revision,
-            RawTimestampTimeZoneId = "Pacific Standard Time",
-            AnalysisTimeZoneId = "Asia/Taipei",
-            TimeBasisEvidenceReference = "ticket-after-malformed",
-            OperatorConfirmed = true
-        });
-
-        Assert.IsType<ConflictObjectResult>(result);
-        Assert.Equal(before.Revision, policyStore.Get().Revision);
-        Assert.Equal(policyVersion, _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion());
-        Assert.Equal(semanticVersion, semanticBlob.ReadVersion());
-        Assert.Equal(originalSemantic, semanticBlob.Read());
-        Assert.Equal(verificationVersion, verificationBlob.ReadVersion());
-        Assert.Equal(identity.Epoch, _backend.PrtgStore().GetResourceIdentity(100).Epoch);
-    }
-    [Fact]
-    public void 合併可行動時間不能只填空白證據_拒絕不保存()
-    {
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        var at = DateTimeOffset.UtcNow.AddDays(-1);
-        var incident = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "blank-evidence", OccurredAt = at,
-            ConfirmedPositive = true, CombinedActionableAt = at.AddHours(-1), CombinedEvidenceAvailableAt = at.AddHours(-2), EvidenceReference = " \t" };
-        Assert.IsType<BadRequestObjectResult>(api.Save(incident));
-        Assert.Null(_backend.Blob("prtg_acceptance_labels_1").Read());
-        incident.EvidenceReference = "independent incident ticket";
-        Assert.IsType<OkObjectResult>(api.Save(incident));
-        Assert.Contains("blank-evidence", _backend.Blob("prtg_acceptance_labels_1").Read());
-    }
-
-    [Fact]
-    public void 預設事故分組包含新採樣語意_日常核對時間不切段()
-    {
-        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100)).Update(p =>
-        { p.HostId = 1; p.SensorId = 100; p.SourceGeneration = "source"; p.ResourceGeneration = "resource"; });
-        string Segment(string id)
-        {
-            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = id, Outcome = "unknown" };
-            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
-        }
-        PrtgTrustedSamplingBinding Binding(double scale, long revision) => PrtgTrustedSamplingBinding.Create(
-            100, "3", "CPU", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", scale, "direct", "seconds",
-            "UTC", "UTC", "synthetic-time-basis", "settings", "policy", new string('A', 64), "source", "resource", 1, "channel", revision);
-        void Persist(PrtgTrustedSamplingBinding binding) => _backend.Blob(binding.StoreKey).Mutate(_ => (JsonSerializer.Serialize(binding), true));
-        var original = Segment("original");
-        var binding = Binding(1, 1); Persist(binding);
-        var configured = Segment("configured"); Assert.NotEqual(original, configured);
-        Persist(binding with { UpdatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(1) });
-        Assert.Equal(configured, Segment("routine-observation"));
-        Persist(Binding(0.5, 2));
-        Assert.NotEqual(configured, Segment("new-scale"));
-        // Existing labels retain the comparison segment from their original configuration.
-        var labels = JsonSerializer.Deserialize<List<PrtgAcceptanceIncident>>(_backend.Blob("prtg_acceptance_labels_1").Read()!)!;
-        Assert.Equal(configured, labels.Single(row => row.IncidentId == "configured").Segment);
-    }
-
-    [Fact]
-    public void 預設事故分組隨正式模式切段_試算更新及不可見主機不影響()
-    {
-        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
-        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100)).Update(p =>
-        { p.HostId = 1; p.SensorId = 100; });
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        string Segment()
-        {
-            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "mode-label", Outcome = "unknown" };
-            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
-        }
-        var at = DateTime.UtcNow;
-        var grant = new PrtgResourcePressureModeGrant(1, 100, PrtgResourceFamily.Cpu, new string('A', 64),
-            PrtgResourcePressureEvaluator.RulesVersion, "source", "resource", "channel", "epoch", "semantic",
-            "strategy", "rule", new string('B', 64), new string('C', 64), true, false, at, at.AddHours(1));
-        void Persist(PrtgResourcePressureModeGrant g) => new PrtgResourcePressureModeStore(
-            _backend.Blob(PrtgResourcePressureModeStore.BlobKey(g.HostId))).Update(d => d.Grants = [g]);
-        var hint = Segment(); Persist(grant);
-        Assert.Equal(hint, Segment());
-        Persist(grant with { FormalEnabled = true, ModeTransitionId = "activation-1" });
-        var formal = Segment(); Assert.NotEqual(hint, formal);
-        Persist(grant with { FormalEnabled = true, ModeTransitionId = "activation-1", UpdatedAtUtc = at.AddMinutes(1),
-            TrialExpiresAtUtc = at.AddHours(2), TrialResultHash = new string('D', 64) });
-        Assert.Equal(formal, Segment());
-        // A malformed inaccessible mode document must not even be read.
-        _backend.Blob(PrtgResourcePressureModeStore.BlobKey(2)).Mutate(_ => ("not-json", true));
-        Assert.Equal(formal, Segment());
-        Persist(grant with { FormalEnabled = false, ModeTransitionId = "disabled-1" });
-        Assert.Equal(hint, Segment());
-        Persist(grant with { FormalEnabled = true, ModeTransitionId = "activation-2" });
-        Assert.NotEqual(formal, Segment());
-    }
-
-    [Fact]
-    public void 預設事故分組以現有資源權威限制可見範圍_舊時間線不洩漏()
-    {
-        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
-        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100)).Update(p =>
-        { p.HostId = 1; p.SensorId = 100; });
-        var identity = new PrtgResourceIdentity { SensorId = 100, HostId = 2, Epoch = 1, Generation = "private" };
-        _backend.Blob(PrtgResourceIdentityStore.Prefix + 100).Mutate(_ => (JsonSerializer.Serialize(identity), true));
-        _backend.Blob(PrtgTrustedSamplingBinding.StorePrefix + 100).Mutate(_ => ("not-json", true));
-        _backend.Blob(PrtgResourcePressureModeStore.BlobKey(2)).Mutate(_ => ("not-json", true));
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        string Segment()
-        {
-            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "scope-label", Outcome = "unknown" };
-            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
-        }
-        var before = Segment();
-        identity.Epoch++;
-        _backend.Blob(PrtgResourceIdentityStore.Prefix + 100).Mutate(_ => (JsonSerializer.Serialize(identity), true));
-        Assert.Equal(before, Segment());
-    }
-
-    [Fact]
-    public void 預設事故分組分頁讀取超過一百個Binding_未知時間線不冒用()
-    {
-        Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
-        var ids = Enumerable.Range(100, 101).Select(id => (long)id).ToArray();
-        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => p.SensorIds = ids.ToList());
-        foreach (var id in ids)
-        {
-            var identity = new PrtgResourceIdentity { SensorId = id, HostId = 1, Epoch = 1, Generation = "resource", SourceGeneration = "source" };
-            _backend.Blob(PrtgResourceIdentityStore.Prefix + id).Mutate(_ => (JsonSerializer.Serialize(identity), true));
-            var binding = PrtgTrustedSamplingBinding.Create(id, "3", "CPU", PrtgTrustedQuantitySemantic.CpuLoadPercent,
-                "%", 1, "direct", "seconds", "UTC", "UTC", "synthetic-time-basis", "settings", "policy",
-                new string('A', 64), "source", "resource", 1, "channel", 1);
-            _backend.Blob(binding.StoreKey).Mutate(_ => (JsonSerializer.Serialize(binding), true));
-        }
-        // Existing oversized evidence remains unknown; the summary never reads an unbounded blob.
-        _backend.Blob(PrtgSensorTimelineStore.Prefix + 100).Mutate(_ =>
-            (new string('x', PrtgSensorTimelineStore.MaxSilentReadBytes + 1), true));
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "paged-label", Outcome = "unknown" };
-        Assert.IsType<OkObjectResult>(api.Save(label));
-        var before = label.Segment;
-        _backend.Blob(PrtgResourceIdentityStore.Prefix + 200).Mutate(raw =>
-        {
-            var identity = JsonSerializer.Deserialize<PrtgResourceIdentity>(raw!)!;
-            identity.ChannelGeneration = "changed-last-page";
-            return (JsonSerializer.Serialize(identity), true);
-        });
-        label.Segment = "";
-        Assert.IsType<OkObjectResult>(api.Save(label));
-        Assert.NotEqual(before, label.Segment);
-    }
-
-    [Fact]
-    public void 預設驗收分組隨資源語意修訂改變_日常探測時間不切段()
-    {
-        Save(Controller(), Request());
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        var proof = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100));
-        proof.Update(p => { p.HostId = 1; p.SensorId = 100; p.ResourceGeneration = "r1"; p.DiskSemanticFingerprint = "semantic1"; });
-        string Segment()
-        {
-            var label = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "label", Outcome = "unknown" };
-            Assert.IsType<OkObjectResult>(api.Save(label)); return label.Segment;
-        }
-        var first = Segment();
-        proof.Update(p => p.DiskSemanticCheckedAt = DateTimeOffset.Now);
-        Assert.Equal(first, Segment());
-        proof.Update(p => p.DiskSemanticFingerprint = "semantic2");
-        var semantic = Segment(); Assert.NotEqual(first, semantic);
-        proof.Update(p => p.ResourceGeneration = "r2");
-        Assert.NotEqual(semantic, Segment());
-    }
-
-    [Fact]
-    public void 預防事故可以不填未發生時間_必填介入與前後量測_不能冒稱實際發生()
-    {
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        var incident = new PrtgAcceptanceIncident { HostId = 1, IncidentId = "prevented", Outcome = "prevented" };
-        Assert.IsType<BadRequestObjectResult>(api.Save(incident));
-        incident.DispositionAt = DateTimeOffset.Now.AddHours(-1); incident.ActionDetails = "擴容";
-        incident.BeforeMeasurement = "磁碟 5%"; incident.AfterMeasurement = "同磁碟 50%"; incident.EvidenceReference = "維護工單";
-        Assert.IsType<OkObjectResult>(api.Save(incident));
-        incident.OccurredAt = DateTimeOffset.Now.AddMinutes(-1);
-        Assert.IsType<BadRequestObjectResult>(api.Save(incident));
-    }
-    [Fact]
-    public void 樂觀版本防覆蓋_只改範圍保留來源_換時區重設暖機()
+    public void 樂觀版本防覆蓋_舊版次不能覆寫新範圍()
     {
         Assert.IsType<OkObjectResult>(Save(Controller(), Request()));
         var store = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)); var initial = store.Get();
-        Assert.True(initial.Ready("https://fixture.example"));
+        Assert.Equal(new long[] { 1 }, initial.HostIds);
         Assert.IsType<ConflictObjectResult>(Save(Controller(), Request()));
         Assert.Equal(initial.Revision, store.Get().Revision);
-        Assert.IsType<OkObjectResult>(Save(Controller(), Request(initial.Revision)));
-        Assert.Equal(initial.SourceGeneration, store.Get().SourceGeneration);
-        var next = Request(store.Get().Revision); next.SourceCultureName = "zh-TW"; next.SourceChangeMode = "new";
-        Assert.IsType<OkObjectResult>(Save(Controller(), next));
-        Assert.NotEqual(initial.SourceGeneration, store.Get().SourceGeneration);
-    }
-
-    [Fact]
-    public void 同Core搬址必須明確選擇_延續要證據_新Core與未知不能冒稱延續()
-    {
-        var controller = Controller(); Assert.IsType<OkObjectResult>(Save(controller, Request()));
-        var store = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)); var old = store.Get();
-        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgUrl = "https://moved.example");
-        var request = Request(old.Revision);
-        Assert.IsType<OkObjectResult>(Estimate(controller, request));
-        Assert.IsType<OkObjectResult>(controller.SourcePreview(request));
-        Assert.IsType<BadRequestObjectResult>(Save(controller, request));
-        request.SourceChangeMode = "continue";
-        Assert.IsType<BadRequestObjectResult>(Save(controller, request));
-        request.ContinuityConfirmed = true; request.ContinuityEvidenceReference = "管理者搬遷核對工單 123";
-        Assert.IsType<OkObjectResult>(Save(controller, request));
-        Assert.Equal(old.SourceGeneration, store.Get().SourceGeneration); Assert.Equal(old.ValidFrom, store.Get().ValidFrom);
-        Assert.Equal(request.ContinuityEvidenceReference, store.Get().ContinuityEvidenceReference);
-        request.Revision = store.Get().Revision; request.CoreSystemId = "replacement-core";
-        Assert.IsType<BadRequestObjectResult>(Save(controller, request));
-        request.SourceChangeMode = "new";
-        Assert.IsType<OkObjectResult>(Save(controller, request));
-        Assert.NotEqual(old.SourceGeneration, store.Get().SourceGeneration);
-        request.Revision = store.Get().Revision; request.SourceChangeMode = "unknown"; request.CoreSystemId = "";
-        Assert.IsType<OkObjectResult>(Save(controller, request));
-        Assert.False(store.Get().Ready("https://moved.example"));
-        Assert.IsType<ConflictObjectResult>(controller.SourcePreview(Request()));
+        var clear = Request(initial.Revision); clear.HostIds = []; clear.SensorIds = [];
+        Assert.IsType<OkObjectResult>(Save(Controller(), clear));
+        Assert.Empty(store.Get().HostIds);
+        Assert.Empty(store.Get().SensorIds);
+        Assert.NotEqual(initial.Revision, store.Get().Revision);
     }
 
     [Fact]
@@ -626,7 +121,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         var preview = Assert.IsType<OkObjectResult>(controller.Preview());
         var json = JsonSerializer.Serialize(preview.Value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         Assert.Contains("尚無有效主機對應", json);
-        Assert.Contains("感測器未納入試點", json);
+        Assert.Contains("感測器不在監看範圍清單", json);
         Assert.Contains("等待目標日 NetIQ 成功分析", json);
         var restricted = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(Controller(new(1)).Preview()).Value);
         Assert.DoesNotContain("Unmapped", restricted); Assert.DoesNotContain("PRIVATE", restricted);
@@ -673,12 +168,9 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         _hosts.Upsert(new() { HostName = "LOCAL-ONLY", Source = "local", Active = true });
         var local = _hosts.FindByName("LOCAL-ONLY")!;
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        var endpoint = EfPrtgObservationStore.SourceHintFor("https://fixture.example");
         policy.Update(p =>
         {
-            p.Revision = "recoverable-revision"; p.CoreSystemId = "fixture-core"; p.SourceGeneration = "existing-generation";
-            p.EndpointHint = endpoint; p.ValidFrom = DateTimeOffset.Now; p.SourceTimeZoneId = TimeZoneInfo.Local.Id;
-            p.SourceCultureName = "en-US"; p.HostIds = [1, 2, merged.HostId, local.HostId, 9999]; p.SensorIds = [100];
+            p.Revision = "recoverable-revision"; p.HostIds = [1, 2, merged.HostId, local.HostId, 9999]; p.SensorIds = [100];
         });
 
         var adminUser = FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll);
@@ -717,9 +209,11 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         Assert.Equal(beforeDeniedSave.SensorIds, policy.Get().SensorIds);
     }
     [Fact]
-    public void 空清單或錯Sensor拒絕_不覆寫原設定()
+    public void 錯Sensor或缺清單拒絕_不覆寫原設定()
     {
         var request = Request(); request.SensorIds = [999];
+        Assert.IsType<BadRequestObjectResult>(Save(Controller(), request));
+        request = Request(); request.HostIds = []; request.SensorIds = [100];
         Assert.IsType<BadRequestObjectResult>(Save(Controller(), request));
         request.SensorIds = null!;
         Assert.IsType<BadRequestObjectResult>(Save(Controller(), request));
@@ -869,32 +363,5 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         Assert.IsType<BadRequestObjectResult>(Estimate(controller, Request()));
     }
 
-    [Fact]
-    public void V1匯入隔離跨站主機與人工對應_重複匯入不啟用正式判定()
-    {
-        Save(Controller(), Request());
-        var package = PrtgDataTransfer.Export(_backend, DateTime.Today, DateTime.Today); package.FormatVersion = 1;
-        package.ManualMaps = [new() { DeviceObjid = 10, HostId = 2 }];
-        var beforePolicy = JsonSerializer.Serialize(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get());
-        var beforeMaps = JsonSerializer.Serialize(_backend.PrtgStore().GetHostMapForDate(DateTime.Today));
-        var beforeManualMaps = JsonSerializer.Serialize(_backend.PrtgStore().GetManualMaps());
-        PrtgDataTransfer.Import(_backend, package); PrtgDataTransfer.Import(_backend, package);
-        Assert.Equal(beforeMaps, JsonSerializer.Serialize(_backend.PrtgStore().GetHostMapForDate(DateTime.Today)));
-        Assert.Equal(beforeManualMaps, JsonSerializer.Serialize(_backend.PrtgStore().GetManualMaps()));
-        Assert.Equal(beforePolicy, JsonSerializer.Serialize(new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get()));
-        using var db = _backend.CreateContext(); Assert.Empty(db.PrtgObservations); Assert.Empty(db.IssueCases); Assert.Empty(db.WorkOrders);
-        Assert.Single(db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_import_diagnostic_")));
-    }
-    [Fact]
-    public void 驗收證據匯出與人工標籤依主機授權_不能偷標私有主機()
-    {
-        Save(Controller(), Request());
-        var api = new PrtgAcceptanceController(_backend, new Visible(1), FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
-        Assert.IsType<ForbidResult>(api.Save(new() { HostId = 2 }));
-        var file = Assert.IsType<FileContentResult>(api.Export(DateTime.Today.AddDays(-1), DateTime.Today));
-        var json = System.Text.Encoding.UTF8.GetString(file.FileContents);
-        Assert.DoesNotContain("PRIVATE", json); Assert.Contains("ScopeComplete", json);
-        Assert.Contains("manual-site-acceptance", json);
-    }
     public void Dispose() { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); Directory.Delete(_dir, true); }
 }

@@ -132,10 +132,6 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Prtg() => View();
 
-    [HttpGet("/admin/prtg/time-basis")]
-    [Permission(Capability.Maintain)]
-    public IActionResult PrtgTimeBasis() => View();
-
     [HttpGet("/admin/calibration")]
     [Permission(Capability.Maintain)]
     public IActionResult Calibration() => RedirectPermanent(Url.Content("~/admin/prtg") + "#probe");

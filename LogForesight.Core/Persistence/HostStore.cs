@@ -236,13 +236,6 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
         MutateWithContext((ctx, before, after) =>
         {
             var result = mutation(after);
-            var beforeById = before.ToDictionary(h => h.HostId);
-            var changed = after.Where(host => !beforeById.TryGetValue(host.HostId, out var prior) ||
-                    MappingIdentityChanged(prior, host))
-                .Select(host => host.HostId)
-                .Concat(before.Where(prior => !after.Any(host => host.HostId == prior.HostId)).Select(prior => prior.HostId))
-                .Distinct().ToArray();
-            PrtgResourceIdentityStore.MarkPendingForHosts(ctx, changed, DateTimeOffset.UtcNow);
             return result;
         }, System.Data.IsolationLevel.Serializable,
             beforeRead: LogForesight.Core.Persistence.Sql.PrtgScopePurgeStore.EnsureScopeMutationSlotFree);

@@ -73,12 +73,16 @@ public sealed class PrtgTransferControllerTests
     public async Task LegacyJsonParserAcceptsFullUnmanifestedV2PackageAsUntrustedLegacy()
     {
         var validator = new PrtgLegacyJsonTransferValidator();
-        var json = JsonSerializer.Serialize(LegacyPackage(2));
+        // 舊版匯出檔仍可能帶 Timelines／SemanticEvidence／SemanticResults；現行套件型別已不含這三組，以原始 JSON 補上。
+        var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(LegacyPackage(2)))!.AsObject();
+        node["Timelines"] = System.Text.Json.Nodes.JsonNode.Parse(LegacyTimelinesJson);
+        node["SemanticEvidence"] = System.Text.Json.Nodes.JsonNode.Parse(LegacySemanticEvidenceJson);
+        node["SemanticResults"] = System.Text.Json.Nodes.JsonNode.Parse(LegacySemanticResultsJson);
+        var json = node.ToJsonString();
         var roundTrip = JsonSerializer.Deserialize<PrtgDataPackage>(json)!;
         Assert.All(new[] { roundTrip.Devices.Count, roundTrip.Sensors.Count, roundTrip.StateChanges.Count,
             roundTrip.Values.Count, roundTrip.HostMaps.Count, roundTrip.ManualMaps.Count,
-            roundTrip.Observations.Count, roundTrip.Timelines.Count, roundTrip.SemanticEvidence.Count,
-            roundTrip.SemanticResults.Count }, count => Assert.Equal(1, count));
+            roundTrip.Observations.Count }, count => Assert.Equal(1, count));
 
         var bytes = Encoding.UTF8.GetBytes(json);
         var split = bytes.Length / 2;
@@ -99,6 +103,15 @@ public sealed class PrtgTransferControllerTests
         Assert.Contains("legacy-v2-unmanifested", nullPolicyResult.ResultManifestJson, StringComparison.Ordinal);
     }
 
+    /// <summary>舊版 V2 封套必定帶三組舊陣列；現行套件型別已不含它們，序列化後補上空陣列。</summary>
+    private static byte[] LegacyV2Bytes(PrtgDataPackage package)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(package))!.AsObject();
+        foreach (var name in new[] { "Timelines", "SemanticEvidence", "SemanticResults" })
+            node[name] = new System.Text.Json.Nodes.JsonArray();
+        return Encoding.UTF8.GetBytes(node.ToJsonString());
+    }
+
     private static PrtgDataPackage LegacyPackage(int formatVersion) => new()
     {
         FormatVersion = formatVersion,
@@ -112,11 +125,12 @@ public sealed class PrtgTransferControllerTests
         HostMaps = [new() { MapDate = new DateTime(2026, 10, 2), DeviceObjid = 17, HostId = 23, MapStatus = "ok", CreatedAt = new DateTime(2026, 10, 2) }],
         ManualMaps = [new() { DeviceObjid = 17, HostId = 23, CreatedAt = new DateTime(2026, 10, 2) }],
         Observations = [new() { SnapshotId = "snapshot", DecisionKey = "decision", HostId = 23, RecordDate = new DateTime(2026, 10, 2), DeviceObjid = 17, RuleCode = "rule", EventKey = "event", SourceName = "source", Category = "category", SeverityRank = 1, ElevatesDayRisk = false, Suppressed = false, SourceHint = "hint", QualityReason = "quality", FormatVersion = 1, ContentJson = "{}", RecordedAtUtc = new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc) }],
-        Timelines = [new() { SensorId = 18, HostId = 23, SourceGeneration = "source-generation", ResourceGeneration = "resource-generation", IdentityFingerprint = "identity", ValidFrom = DateTimeOffset.Parse("2026-10-01T00:00:00Z"), Coverage = [new(18, DateTimeOffset.Parse("2026-10-01T00:00:00Z"), DateTimeOffset.Parse("2026-10-02T00:00:00Z"), "source-generation", "resource-generation")], States = [new(18, DateTimeOffset.Parse("2026-10-01T12:00:00Z"), "Up", "source-generation", "resource-generation")] }],
-        SemanticEvidence = [new(18, 17, 23, "disk", "used", "Used", "%", 1, "up", PrtgDiskSemanticEvidenceSource.Manual, 7, "confirmed", new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc), "v1")],
-        SemanticResults = [new(18, 17, 23, "disk", "ok", "matched", "used", "Used", "%", 1, "up", 1, true, new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 10, 2), "v1")],
-        SourcePolicy = new PrtgMonitoringPolicy { Revision = "r1", CoreSystemId = "core", SourceGeneration = "source-generation", EndpointHint = "hint", ValidFrom = DateTimeOffset.Parse("2026-10-01T00:00:00Z"), HostIds = [23], SensorIds = [18], ConfirmedBy = "admin", SourceTimeZoneId = "UTC", SourceCultureName = "en-US" }
+        SourcePolicy = new PrtgMonitoringPolicy { Revision = "r1", HostIds = [23], SensorIds = [18] }
     };
+
+    private const string LegacyTimelinesJson = """[{"SensorId":18,"HostId":23,"SourceGeneration":"source-generation","ResourceGeneration":"resource-generation","Coverage":[{"SensorObjid":18,"From":"2026-10-01T00:00:00+00:00","Through":"2026-10-02T00:00:00+00:00","SourceGeneration":"source-generation","ResourceGeneration":"resource-generation"}],"States":[{"SensorObjid":18,"At":"2026-10-01T12:00:00+00:00","Status":"Up","SourceGeneration":"source-generation","ResourceGeneration":"resource-generation"}]}]""";
+    private const string LegacySemanticEvidenceJson = """[{"SensorObjid":18,"DeviceObjid":17,"SensorType":"disk"}]""";
+    private const string LegacySemanticResultsJson = """[{"SensorObjid":18,"DeviceObjid":17,"Status":"ok"}]""";
 
     [Fact]
     public async Task LegacyJsonParserAllowsRealV1WithoutPurposeAndRejectsMinimalV2AndDuplicateKeys()
@@ -335,7 +349,7 @@ public sealed class PrtgTransferControllerTests
         Assert.Equal(403, Assert.IsType<ObjectResult>(fixture.Controller.GetStatus(secondId)).StatusCode);
 
         var policyStore = new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy => policy.SourceGeneration = "new-local-generation");
+        policyStore.Update(policy => policy.SensorIds = [11, 12]);
         Assert.Equal(403, Assert.IsType<ObjectResult>(fixture.Controller.GetStatus(secondId)).StatusCode);
     }
 
@@ -364,7 +378,7 @@ public sealed class PrtgTransferControllerTests
     public async Task RealPackageConsumerCompletesIsolatedPayloadAndFreshOwnerCanAbandonOldContext()
     {
         using var fixture = new TransferFixture();
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(LegacyPackage(2));
+        var bytes = LegacyV2Bytes(LegacyPackage(2));
         var policyBefore = fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadWithVersion();
         var id = fixture.CreateTransfer(bytes);
         var context = new DefaultHttpContext();
@@ -557,12 +571,6 @@ public sealed class PrtgTransferControllerTests
             policy.Update(value =>
             {
                 value.Revision = "policy-r1";
-                value.CoreSystemId = "local-core";
-                value.SourceGeneration = "local-generation";
-                value.EndpointHint = "local-hint";
-                value.ValidFrom = DateTimeOffset.Parse("2026-10-01T00:00:00Z");
-                value.SourceTimeZoneId = "UTC";
-                value.SourceCultureName = "en-US";
                 value.HostIds = [1, 2];
                 value.SensorIds = [11];
             });

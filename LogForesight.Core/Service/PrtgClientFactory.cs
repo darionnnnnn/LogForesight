@@ -38,15 +38,15 @@ public static class PrtgClientFactory
     }
 
     /// <summary>
-    /// Creates the environment-probe client with a request timeout no greater than the
-    /// compatibility probe's per-request limit. Other PRTG clients retain the configured timeout.
+    /// 環境探測用的 client：單次請求逾時不超過 <see cref="PrtgProbeRunner.RequestTimeout"/>，
+    /// 一個卡住的請求不會吃掉整輪探測的時間上限。其他 PRTG client 沿用設定的逾時。
     /// </summary>
     internal static PrtgClient CreateForEnvironmentProbe(SystemSettings settings,
         HttpMessageHandler? handler = null, PrtgRequestBudget? budget = null, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         var configuredTimeout = Math.Max(settings.PrtgTimeoutSeconds, 1);
-        var probeTimeout = Math.Min(configuredTimeout, (int)PrtgCompatibilityProbe.RequestTimeout.TotalSeconds);
+        var probeTimeout = Math.Min(configuredTimeout, (int)PrtgProbeRunner.RequestTimeout.TotalSeconds);
         return CreateCore(settings, handler, budget, timeProvider, probeTimeout);
     }
 

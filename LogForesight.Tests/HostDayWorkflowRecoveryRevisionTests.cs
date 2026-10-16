@@ -142,77 +142,39 @@ public sealed class HostDayWorkflowRecoveryRevisionTests : IDisposable
     }
 
     [Fact]
-    public void CompleteManifest_clearsUnboundLegacyReadinessEpochWithoutGuessingAcrossEpochs()
+    public void Recovery_keepsPrtgLegWrittenByDailyEvaluation()
     {
+        // 每日評估直接把 PRTG 腿寫成 Succeeded；恢復不再要求舊 manifest，不得把它退回 Waiting。
         var day = new DateTime(2026, 10, 5);
-        var record = AppendAndReadParent(95, day, "legacy-epoch");
+        var record = AppendAndReadParent(95, day, "prtg-evaluated");
         var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
-        workflow.ParentSucceeded(record.HostId, record.Host, day, "parent", 0,
-            HostDayWorkflowFingerprint.ForParentRecord(record), true, false, parentRecordId: record.RecordId);
-        var epoch = Hash("legacy-incomplete-epoch");
-        var selected = Hash("legacy-selected-set");
-        workflow.BeginPrtgReadiness(record.HostId, day, epoch, selected, [PrtgWorkflowResourceFamily.Cpu]);
-        workflow.PublishPrtgResourceAssessment(record.HostId, day, epoch, selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.Insufficient);
-        workflow.ClosePrtgSelectedSensors(record.HostId, day, epoch, selected);
-        // Simulate a pre-association sidecar from before readiness epochs captured their exact parent.
-        new HostDayWorkflowStore(_backend).Update(record.HostId, day, state =>
-        {
-            state.PrtgReadinessParentRecordId = null;
-            state.PrtgReadinessParentFingerprint = null;
-        });
-        var currentAuthority = TestWholeEvidenceAuthority();
-        record.PrtgManifest = Manifest(record, currentAuthority);
+        workflow.ParentSucceeded(record.HostId, record.Host, day, record.LatestNetiqAttemptAtUtc?.ToString("O"),
+            record.AuditEventCount, HostDayWorkflowFingerprint.ForParentRecord(record), true, false,
+            parentRecordId: record.RecordId);
+        workflow.SetPrtg(record.HostId, day, WorkflowLegState.Succeeded, evidenceReady: true);
         var page = _backend.RecordStore().QueryWorkflowRecoveryPage(day, day, 0, 10);
-        var persisted = Assert.Single(page.Records);
 
         Assert.True(workflow.ReconcileAuthorityRecord(record,
-            page.CapturedWriteRevisions![record.RecordId], prtgEnabled: true, aiEnabled: false,
-            currentWholeEvidenceAuthority: currentAuthority));
-        var reconciled = workflow.Get(record.HostId, day)!;
-        Assert.Equal(WorkflowLegState.Succeeded, reconciled.Prtg);
-        Assert.Equal(string.Empty, reconciled.PrtgReadinessEpoch);
-        Assert.Null(reconciled.PrtgReadinessParentRecordId);
-        Assert.False(reconciled.PrtgReadinessComplete);
-        Assert.Equal(persisted.RecordId, reconciled.ParentRecordId);
+            page.CapturedWriteRevisions![record.RecordId], prtgEnabled: true, aiEnabled: false));
+        Assert.Equal(WorkflowLegState.Succeeded, workflow.Get(record.HostId, day)!.Prtg);
     }
 
     [Fact]
-    public void CompleteManifest_keepsIncompleteReadinessForTheExactCurrentParentEpoch()
+    public void Recovery_marksPrtgDisabledWhenSourceIsOff()
     {
         var day = new DateTime(2026, 10, 5);
-        var record = AppendAndReadParent(96, day, "same-epoch");
+        var record = AppendAndReadParent(96, day, "prtg-off");
         var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
-        workflow.ParentSucceeded(record.HostId, record.Host, day, "parent", 0,
-            HostDayWorkflowFingerprint.ForParentRecord(record), true, false, parentRecordId: record.RecordId);
-        var epoch = Hash("same-parent-incomplete-epoch");
-        var selected = Hash("same-parent-selected-set");
-        workflow.BeginPrtgReadiness(record.HostId, day, epoch, selected, [PrtgWorkflowResourceFamily.Cpu]);
-        workflow.PublishPrtgResourceAssessment(record.HostId, day, epoch, selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.Insufficient);
-        workflow.ClosePrtgSelectedSensors(record.HostId, day, epoch, selected);
-        var currentAuthority = TestWholeEvidenceAuthority();
-        record.PrtgManifest = Manifest(record, currentAuthority);
+        workflow.ParentSucceeded(record.HostId, record.Host, day, record.LatestNetiqAttemptAtUtc?.ToString("O"),
+            record.AuditEventCount, HostDayWorkflowFingerprint.ForParentRecord(record), true, false,
+            parentRecordId: record.RecordId);
+        workflow.SetPrtg(record.HostId, day, WorkflowLegState.Succeeded, evidenceReady: true);
         var page = _backend.RecordStore().QueryWorkflowRecoveryPage(day, day, 0, 10);
 
         Assert.True(workflow.ReconcileAuthorityRecord(record,
-            page.CapturedWriteRevisions![record.RecordId], prtgEnabled: true, aiEnabled: false,
-            currentWholeEvidenceAuthority: currentAuthority));
-        var waiting = workflow.Get(record.HostId, day)!;
-        Assert.Equal(WorkflowLegState.Waiting, waiting.Prtg);
-        Assert.Equal("resource-assessment-insufficient", waiting.PrtgFailure);
-        Assert.Equal(epoch, waiting.PrtgReadinessEpoch);
-        Assert.True(workflow.ReconcileAuthorityRecord(record,
-            page.CapturedWriteRevisions![record.RecordId], prtgEnabled: true, aiEnabled: false));
-        Assert.Equal(epoch, workflow.Get(record.HostId, day)!.PrtgReadinessEpoch);
+            page.CapturedWriteRevisions![record.RecordId], prtgEnabled: false, aiEnabled: false));
+        Assert.Equal(WorkflowLegState.Disabled, workflow.Get(record.HostId, day)!.Prtg);
     }
-
-    private static PrtgWholeEvidenceAuthority TestWholeEvidenceAuthority() => new(
-        "policy-revision-test", "source", 7, Hash("strategy"), Hash("host-mapping"), Hash("rules"), true)
-    {
-        ResourceModeBlobVersion = 0,
-        ResourceModeFenceRequired = true
-    };
 
     private DailyAnalysisRecord AppendAndReadParent(long hostId, DateTime day, string host)
     {
@@ -224,24 +186,6 @@ public sealed class HostDayWorkflowRecoveryRevisionTests : IDisposable
         });
         return Assert.Single(_backend.RecordStore().QueryWorkflowRecoveryPage(day, day, 0, 10).Records);
     }
-
-    private static PrtgDecisionManifest Manifest(DailyAnalysisRecord record,
-        PrtgWholeEvidenceAuthority authority) => new()
-    {
-        Version = 1, ParentRecordId = record.RecordId,
-        ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record),
-        ParentFindingFingerprint = PrtgFindingMapper.Fingerprint(record.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
-        PolicyRevision = authority.PolicyRevision, SourceGeneration = authority.SourceGeneration,
-        ResourceAuthorityRevision = authority.ResourceAuthorityRevision,
-        HostMappingFingerprint = authority.HostMappingFingerprint,
-        StrategyFingerprint = authority.StrategyFingerprint, RuleFingerprint = authority.RuleFingerprint,
-        EvidenceFingerprint = Hash("evidence"), ResourceFingerprint = Hash("resource"),
-        SemanticFingerprint = Hash("semantic"),
-        ResourceModeBlobVersion = authority.ResourceModeBlobVersion,
-        ResourceModeFenceRequired = authority.ResourceModeFenceRequired,
-        FindingFingerprint = PrtgFindingMapper.Fingerprint(record.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
-        CompletedAtUtc = DateTime.UtcNow, Outcome = "complete"
-    };
 
     private static string Hash(string value) => HostDayWorkflowFingerprint.HashParts([value]);
 

@@ -377,10 +377,7 @@ public static class KnownIssueCatalog
     {
         if (string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase))
             return PrtgFindingMapper.TryGetRuleCode(source, out var code) &&
-                   (string.Equals(code, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase) ||
-                    rule.Id == "builtin-prtg-resource-disk-pressure" &&
-                    string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleResourceDiskPressure, StringComparison.Ordinal) &&
-                    string.Equals(code, PrtgRuleEvaluator.RuleDiskFreeTrend, StringComparison.Ordinal));
+                   string.Equals(code, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(rule.Platform, "linux", StringComparison.OrdinalIgnoreCase))
             return source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase);

@@ -15,7 +15,7 @@ public sealed class PrtgDiagnosticExportWriterTests
     private static readonly DateTime Through = new(2026, 10, 3);
 
     [Fact]
-    public async Task RealSourceStreamsLargeV2PackageWithEmptyArraysUtf8AndFallbackTimeline()
+    public async Task RealSourceStreamsLargeV2PackageWithEmptyArraysAndUtf8()
     {
         using var fixture = new WriterFixture();
         using var context = fixture.OpenContext();
@@ -47,8 +47,7 @@ public sealed class PrtgDiagnosticExportWriterTests
         Assert.True(package.Length > EfPrtgTransferStore.MaxChunkBytes);
         Assert.InRange(output.MaxSingleWrite, 1, EfPrtgTransferStore.MaxChunkBytes);
         Assert.Equal(48, result.Counts["Devices"]);
-        Assert.Equal(1, result.Counts["Timelines"]);
-        Assert.All(PrtgDiagnosticExportSource.V2ArrayProperties.Where(name => name != "Devices" && name != "Timelines"),
+        Assert.All(PrtgDiagnosticExportSource.V2ArrayProperties.Where(name => name != "Devices"),
             name => Assert.Equal(0, result.Counts[name]));
         Assert.InRange(result.ManifestUtf8Bytes, 1, PrtgDiagnosticExportWriter.MaximumManifestUtf8Bytes);
 
@@ -66,7 +65,7 @@ public sealed class PrtgDiagnosticExportWriterTests
         Assert.Equal(2, validation.FormatVersion);
         Assert.Contains("manifest-verified", validation.ResultManifestJson, StringComparison.Ordinal);
         Assert.Equal(48, validation.Counts["Devices"]);
-        Assert.Equal(1, validation.Counts["Timelines"]);
+        Assert.Equal(0, validation.Counts["Timelines"]);
         Assert.Equal(0, validation.Counts["Sensors"]);
         Assert.Equal(0, validation.Counts["SemanticEvidence"]);
         using var document = JsonDocument.Parse(package);
@@ -74,10 +73,7 @@ public sealed class PrtgDiagnosticExportWriterTests
         Assert.Equal("diagnostic-only", document.RootElement.GetProperty("Purpose").GetString());
         Assert.Equal(PrtgDiagnosticExportWriter.IntegrityContract,
             document.RootElement.GetProperty("IntegrityContract").GetString());
-        var timeline = document.RootElement.GetProperty("Timelines").EnumerateArray().Single();
-        Assert.Equal(777, timeline.GetProperty("SensorId").GetInt64());
-        Assert.Equal(0, timeline.GetProperty("Coverage").GetArrayLength());
-        Assert.Equal(0, timeline.GetProperty("States").GetArrayLength());
+        Assert.Equal(0, document.RootElement.GetProperty("Timelines").GetArrayLength());
         Assert.Equal(0, document.RootElement.GetProperty("Sensors").GetArrayLength());
         Assert.Equal(PrtgDiagnosticExportSource.V2ArrayProperties.Count,
             PrtgDiagnosticExportSource.V2ArrayProperties.Count(name => document.RootElement.TryGetProperty(name, out _)));
@@ -154,9 +150,7 @@ public sealed class PrtgDiagnosticExportWriterTests
 
     private static PrtgMonitoringPolicy Policy() => new()
     {
-        Revision = "r1", CoreSystemId = "core", SourceGeneration = "source", EndpointHint = "endpoint",
-        ValidFrom = DateTimeOffset.Parse("2026-10-01T00:00:00Z"), HostIds = [11], SensorIds = [],
-        ConfirmedBy = "admin", SourceTimeZoneId = "UTC", SourceCultureName = "en-US"
+        Revision = "r1", HostIds = [11], SensorIds = []
     };
 
     private sealed class WriterFixture : IDisposable

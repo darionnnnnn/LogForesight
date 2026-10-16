@@ -42,7 +42,6 @@ public sealed class PrtgSelectedBackfillUiTests
         Assert.Contains("status.runKind !== 'selected'", js);
         Assert.Contains("{ runId: status.runId }", js);
         Assert.DoesNotContain("selectedBackfillStartedHere", js);
-        Assert.Contains("分類可重疊，不能相加；資料/語意就緒為前100抽樣。", js);
         Assert.Contains("confirmAction", js);
         Assert.Contains("preview.estimatedRequests", js);
         Assert.Contains("preview.estimatedSampledRowsToReplace ?? 0", js);

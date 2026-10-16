@@ -42,7 +42,7 @@ internal static class SchemaUpgrader
         // A pre-existing durable serialization row shared by purge acceptance/batches and every
         // scope writer. The row is deliberately part of the existing blob ledger so both providers
         // can take the same transaction-scoped write lock without a generic lease framework.
-        if (!ctx.Blobs.Any(row => row.BlobKey == EfPrtgStore.ScopeRevisionBlobKey))
+        if (TableExists(ctx, isSqlite, "lf_blobs") && !ctx.Blobs.Any(row => row.BlobKey == EfPrtgStore.ScopeRevisionBlobKey))
         {
             ctx.Blobs.Add(new BlobRow
             {
@@ -267,7 +267,7 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
             "IX_lf_prtg_state_ch_changed", "changed_at");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
-            "IX_lf_prtg_state_purge_sensor_id", "sensor_objid, id");
+            "IX_lf_prtg_sc_purge_sensor", "sensor_objid, id");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_values",
             isSqlite ? SqliteCreatePrtgValues : SqlServerCreatePrtgValues);
@@ -284,7 +284,7 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_period", "period_start");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
-            "IX_lf_prtg_values_purge_sensor_id", "sensor_objid, id");
+            "IX_lf_prtg_val_purge_sensor", "sensor_objid, id");
 
         // Durable PRTG scope-purge ownership and batch progress. Progress is written in the
         // same transaction as each bounded delete so a lost response is safely replayable.
@@ -538,6 +538,17 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
             "IX_lf_issue_cases_day_sync_pending", "day_sync_pending");
 
+        // 已移除的 PRTG 機制留下的 blob（可信採樣、容量准入、時間軸、資源壓力、正式郵件 claim…）。
+        // 沒有任何程式再讀寫它們；刪除不可回復，升級前請先備份資料庫（README 部署章節）。
+        try
+        {
+            if (TableExists(ctx, isSqlite, "lf_blobs")) RemoveRetiredPrtgBlobs(ctx);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[SQL] 退役 PRTG 資料清理失敗（不影響站台運作，下次啟動再試）：{0}", ex.Message);
+        }
+
         // 最後一步：EF 預設命名與升級器命名並存時留下的重複索引（必須在所有 AddIndexIfMissing 之後，名稱才登記齊）。
         // 這是空間與寫入效能的整理、不是正確性前提——任何失敗（特別是尚未實機驗證的 SQL Server 系統目錄查詢）只記 Warn，不得擋住站台啟動
         try
@@ -548,6 +559,38 @@ internal static class SchemaUpgrader
         {
             Log.Warn(ex, "[SQL] 重複索引整理失敗（不影響站台運作，下次啟動再試）：{0}", ex.Message);
         }
+    }
+
+    /// <summary>已移除機制的 blob key（完全相符）。</summary>
+    internal static readonly string[] RetiredPrtgBlobKeys =
+    [
+        "prtg_capacity_admission_plan_v1", "prtg_capacity_reservation_v1", "prtg_profile_transport_capacity_v1",
+        "prtg_snapshot_capacity_evidence", "prtg_qualification_capacity_pilot_v1", "prtg_historic_admission_v1",
+        "prtg_channel_discovery_jobs_v1", "prtg_disk_semantic_evidence", "prtg_disk_verification_results",
+        "prtg_sensor_timeline_progress_v1", "prtg_silent_presence_cursor", "prtg_trusted_profile_refresh_v1",
+        "prtg_trusted_sampling_strategy_v1", "prtg_resource_pressure_replay_host_cursor",
+        "prtg_resource_generation_revision", "mail_urgent_retry_cursor_v1"
+    ];
+
+    /// <summary>已移除機制的 blob key 前綴（逐 sensor／逐主機的分片）。</summary>
+    internal static readonly string[] RetiredPrtgBlobPrefixes =
+    [
+        "prtg_timeline_", "prtg_trusted_sampling_binding_", "prtg_trusted_sampling_profile_", "prtg_profile_page_",
+        "prtg_trusted_profile_refresh_proof_", "prtg_resource_identity_", "prtg_resource_authority_host_",
+        "prtg_resource_observation_host_", "prtg_resource_pressure_modes_", "prtg_resource_pressure_hints_",
+        "prtg_resource_formal_episodes_", "prtg_resource_pressure_replay_progress_", "prtg_silent_presence_",
+        "prtg_formal_mail_claims_v2_", "prtg_formal_mail_claims_v3_", "prtg_qualjob_", "prtg_acceptance_labels_"
+    ];
+
+    /// <summary>刪除退役 PRTG blob（冪等）；每個前綴各一道 DELETE，沒有符合的列時不做任何寫入。</summary>
+    internal static int RemoveRetiredPrtgBlobs(LfDbContext ctx)
+    {
+        var removed = ctx.Blobs.Where(row => RetiredPrtgBlobKeys.Contains(row.BlobKey)).ExecuteDelete();
+        foreach (var prefix in RetiredPrtgBlobPrefixes)
+            removed += ctx.Blobs.Where(row => row.BlobKey.StartsWith(prefix)).ExecuteDelete();
+        if (removed > 0)
+            Log.Info("[SQL] 已清除 {0} 筆已移除 PRTG 機制的 blob 資料。", removed);
+        return removed;
     }
 
     /// <summary>索引的比對形狀：欄位（含順序）＋唯一性</summary>

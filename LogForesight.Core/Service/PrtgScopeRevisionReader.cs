@@ -26,25 +26,14 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
     public string ReadStructural() => ReadCore(includePolicyRevision: false);
 
     /// <summary>
-    /// Long-lived raw/value work fence. It retains structural scope and policy host/sensor membership,
-    /// but replaces the whole-policy blob version with raw-source semantics and their monotonic revision.
-    /// Message timestamp format is intentionally checked by the message lane itself.
+    /// 長時間取值工作（快照、範圍補抓）的範圍柵欄：結構範圍＋監看政策的主機／sensor 縮圈。
+    /// 不含整份政策的 blob 版本，政策裡與縮圈無關的編輯不會打斷進行中的取值。
     /// </summary>
     public string ReadRawSemantic()
     {
         var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         var rawScope = JsonSerializer.Serialize(new
         {
-            policy.CoreSystemId,
-            policy.SourceGeneration,
-            policy.EndpointHint,
-            ValidFromUtcTicks = policy.ValidFrom.UtcTicks,
-            policy.SourceTimeZoneId,
-            policy.SourceCultureName,
-            policy.RawTimestampTimeZoneId,
-            policy.AnalysisTimeZoneId,
-            policy.TimeBasisEvidenceReference,
-            policy.RawAuthorityRevision,
             HostIds = policy.HostIds.Order().ToArray(),
             SensorIds = policy.SensorIds.Order().ToArray()
         });

@@ -179,7 +179,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var report = new EfReportStore(_fx.NewContext).Read(
             new HostKey { HostId = 42, HostName = "SRV-NETIQ-07" }, day, ReportKinds.DailyRisk);
         Assert.NotNull(report);
-        Assert.Contains("正式資源原因：兩個完整小時皆處於磁碟低水位", report.Content);
+        Assert.False(string.IsNullOrWhiteSpace(report.Content));
         Assert.Equal(saved.ReportFile, record.ReportFile);
         Assert.Equal(saved.PrtgReportEvidenceFingerprint, record.PrtgReportEvidenceFingerprint);
         Assert.Equal(0, ai.Calls);

@@ -70,23 +70,14 @@ public class CalibrationServiceTests : IDisposable
         Impact = "Valid calibration fixture impact", LikelyCauses = ["fixture"], NextSteps = ["fixture"]
     };
 
-    private void InstallCalibrationPolicy(DateTime anchor, long[] sensorIds, string sourceGeneration = "source-v1")
+    private void InstallCalibrationPolicy(DateTime anchor, long[] sensorIds)
     {
         const string url = "https://prtg.example.invalid/";
         _settingsStore.Update(s => s.PrtgUrl = url);
-        var scopeRevision = new EfJsonBlobStore(_fx.NewContext, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
         new PrtgMonitoringPolicyStore(new EfJsonBlobStore(_fx.NewContext, PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
         {
-            p.CoreSystemId = "fixture-core";
-            p.SourceGeneration = sourceGeneration;
-            p.EndpointHint = EfPrtgObservationStore.SourceHintFor(url);
-            p.ValidFrom = new DateTimeOffset(anchor.Date.AddDays(-60));
             p.HostIds = [1];
             p.SensorIds = sensorIds.ToList();
-            p.SourceTimeZoneId = TimeZoneInfo.Local.Id;
-            p.SourceCultureName = "en-US";
-            p.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
-            p.MessageTimeAuthorityRevision = 1;
         });
     }
 
@@ -97,41 +88,21 @@ public class CalibrationServiceTests : IDisposable
         InstallTimelineWindow(sensorId, from, through, states);
     }
 
+    /// <summary>以狀態變更訊息模擬一段時間內的狀態；from／through 只用來界定要寫入的樣本。</summary>
     private void InstallTimelineWindow(long sensorId, DateTimeOffset from, DateTimeOffset through,
         params (DateTimeOffset At, string Status)[] states)
     {
-        var policy = new PrtgMonitoringPolicyStore(new EfJsonBlobStore(_fx.NewContext,
-            PrtgMonitoringPolicyStore.BlobKey)).Get();
-        PrtgResourceIdentity? identity = null;
-        if (policy.SensorIds.Contains(sensorId) && policy.HostIds.Contains(1) && policy.SourceGeneration.Length > 0)
-        {
-            try
+        new EfPrtgStore(_fx.NewContext).AppendStateChanges(states
+            .Where(state => state.At >= from && state.At < through)
+            .Select(state => new PrtgStateChangeRow
             {
-                identity = new EfPrtgStore(_fx.NewContext).BindObservedResource(sensorId, 1,
-                    policy.SourceGeneration, $"calibration-resource-{sensorId}");
-            }
-            catch (InvalidOperationException)
-            {
-                // 沒有目前有效鏡像對應時，保留無權威世代的診斷 fixture。
-            }
-        }
-        var store = new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + sensorId));
-        store.Update(e =>
-        {
-            if (identity is not null)
-                e.Bind(sensorId, 1, identity.SourceGeneration, $"calibration-resource-{sensorId}",
-                    identity.Generation, identity.Epoch, identity.ChannelGeneration, from);
-            else
-                e.Bind(sensorId, 1, "source-v1", $"resource-{sensorId}", from);
-            e.MappingRevision = new EfJsonBlobStore(_fx.NewContext, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
-            e.MessageTimeFingerprint = policy.MessageTimeFingerprint(_settingsStore.Get().PrtgUrl);
-            e.Accept(from, through, states.Select(s => new PrtgTimedState(sensorId, s.At, s.Status,
-                e.SourceGeneration, e.ResourceGeneration)));
-        });
+                SensorObjid = sensorId, ChangedAt = state.At.LocalDateTime, Status = state.Status,
+                Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.Now
+            }).ToList());
     }
 
     [Fact]
-    public void RuleCalibration_RawStateChangesWithoutReadyPolicy_IsUnavailableAndExportsNoMagnitude()
+    public void RuleCalibration_PrtgDisabled_IsUnavailableAndExportsNoMagnitude()
     {
         var anchor = new DateTime(2026, 9, 1);
         var store = new EfPrtgStore(_fx.NewContext);
@@ -146,218 +117,10 @@ public class CalibrationServiceTests : IDisposable
         var package = service.BuildExportPackage(anchor);
 
         Assert.Equal(CalibrationStatus.Unavailable, summary.Status);
-        Assert.Contains(summary.Explanations, x => x.Contains("timeline", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(summary.Explanations, x => x.Contains("校準不可用", StringComparison.Ordinal));
         Assert.Empty(package.RuleThresholds.MagnitudeSamples);
         var explanations = typeof(CalibrationRuleThresholdDataset).GetProperty("Explanations")?.GetValue(package.RuleThresholds) as IEnumerable<string> ?? [];
-        Assert.Contains(explanations, x => x.Contains("timeline", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void RuleCalibration_PhysicalNulInPolicyOrTimelineCannotExportTrustedMagnitude(bool corruptPolicy)
-    {
-        var anchor = new DateTime(2026, 9, 1);
-        var prtg = new EfPrtgStore(_fx.NewContext);
-        prtg.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10,
-            SensorType = "Ping", Category = "availability" }], DateTime.Now);
-        prtg.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10,
-            HostId = 1, HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        InstallCalibrationPolicy(anchor, [1001]);
-        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date.AddMinutes(-15)), "Down"),
-            (new DateTimeOffset(anchor.Date.AddMinutes(20)), "Up"));
-        var key = corruptPolicy ? PrtgMonitoringPolicyStore.BlobKey : PrtgSensorTimelineStore.Prefix + 1001;
-        var blob = _fx.Blob(key);
-        var invalid = blob.Read()! + "\0hidden";
-        using (var context = _fx.NewContext())
-        {
-            var bytes = Encoding.UTF8.GetBytes(invalid);
-            Assert.Equal(1, context.Database.ExecuteSqlInterpolated(
-                $"UPDATE lf_blobs SET content=CAST({bytes} AS TEXT), version=version+1 WHERE blob_key={key}"));
-        }
-        Assert.Equal(invalid, blob.Read());
-        var version = blob.ReadVersion();
-        var service = CreateService();
-        Assert.Equal(CalibrationStatus.Unavailable,
-            service.AssessStatus(anchor, forceRefresh: true).PrtgRuleThresholds.Status);
-        Assert.Empty(service.BuildExportPackage(anchor).RuleThresholds.MagnitudeSamples);
-        Assert.Equal(version, blob.ReadVersion());
-        Assert.Equal(invalid, blob.Read());
-    }
-
-    [Fact]
-    public void RuleCalibration_TrustedTimelineCrossMidnight_UsesContinuousThresholdMagnitudeAndDayMagnitude()
-    {
-        var anchor = new DateTime(2026, 9, 1);
-        var store = new EfPrtgStore(_fx.NewContext);
-        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability", Paused = false }], DateTime.Now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
-            HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        InstallCalibrationPolicy(anchor, [1001]);
-        InstallTimeline(1001, anchor,
-            (new DateTimeOffset(anchor.Date.AddMinutes(-15)), "Down"),
-            (new DateTimeOffset(anchor.Date.AddMinutes(20)), "Up"));
-        new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001)).Update(e =>
-        {
-            e.States.Add(new PrtgTimedState(1001, new DateTimeOffset(anchor.Date.AddDays(2)), "Down",
-                e.SourceGeneration, e.ResourceGeneration));
-            e.LastAttemptAt = new DateTimeOffset(anchor.Date.AddDays(3));
-        });
-        _ruleStore.Content = new RuleFileContent { Rules =
-        [
-            ValidPrtgRule("down-global", "down", 60),
-            ValidPrtgRule("down-availability", "down", 30, "availability")
-        ] };
-
-        var service = CreateService();
-        var package = service.BuildExportPackage(anchor);
-        var down = Assert.Single(package.RuleThresholds.MagnitudeSamples.Where(s => s.RuleCode == PrtgRuleEvaluator.RuleDown));
-        var thresholdMagnitude = (int?)typeof(CalibrationRuleMagnitudeRow).GetProperty("ThresholdMagnitude")?.GetValue(down);
-        var dayMagnitude = (int?)typeof(CalibrationRuleMagnitudeRow).GetProperty("DayMagnitude")?.GetValue(down);
-
-        Assert.Equal(35, down.Magnitude);
-        Assert.Equal(35, thresholdMagnitude);
-        Assert.Equal(20, dayMagnitude);
-        var formalRule = ValidPrtgRule("down-availability", "down", 30, "availability");
-        var evidence = new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001)).Get();
-        var formal = PrtgCoveredRuleEvaluator.Evaluate(anchor, [new(1001, 10, "Up", "Ping", "availability")],
-            new Dictionary<long, PrtgSensorTimelineEvidence> { [1001] = evidence }, [formalRule]);
-        var finding = Assert.Single(formal);
-        Assert.Equal(dayMagnitude, finding.Magnitude);
-        Assert.Equal(thresholdMagnitude, (int?)typeof(PrtgFinding).GetProperty("ThresholdMagnitude")?.GetValue(finding));
-        var categoryHit = Assert.Single(package.RuleThresholds.FormalCurrentHitCounts.Where(h => h.RuleId == "down-availability"));
-        Assert.Equal(1, categoryHit.FindingCount);
-        var globalDistribution = Assert.Single(package.RuleThresholds.MagnitudeSummaries.Where(h => h.RuleCode == PrtgRuleEvaluator.RuleDown));
-        Assert.Equal(0, globalDistribution.HitsAtCurrentThreshold); // 35-minute sample is below global 60-minute threshold
-        Assert.Contains(package.RuleThresholds.Explanations, x => x.Contains("不代表正式 finding 命中數", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(3, package.FormatVersion);
-        var basis = typeof(CalibrationRuleThresholdDataset).GetProperty("MagnitudeBasis")?.GetValue(package.RuleThresholds) as string;
-        Assert.Contains("covered", basis, StringComparison.OrdinalIgnoreCase);
-        using (var json = JsonDocument.Parse(JsonSerializer.Serialize(package)))
-        {
-            var jsonDown = json.RootElement.GetProperty("RuleThresholds").GetProperty("MagnitudeSamples")
-                .EnumerateArray().Single(s => s.GetProperty("RuleCode").GetString() == PrtgRuleEvaluator.RuleDown);
-            Assert.Equal(35, jsonDown.GetProperty("Magnitude").GetInt32());
-            Assert.Equal(35, jsonDown.GetProperty("ThresholdMagnitude").GetInt32());
-            Assert.Equal(20, jsonDown.GetProperty("DayMagnitude").GetInt32());
-        }
-
-        var timelineStore = new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001));
-        timelineStore.Update(e => e.States.Add(new PrtgTimedState(1001, new DateTimeOffset(anchor.Date.AddMinutes(5)), "Up",
-            e.SourceGeneration, e.ResourceGeneration)));
-        var afterTimelineMutation = service.BuildExportPackage(anchor);
-        var revisedSample = Assert.Single(afterTimelineMutation.RuleThresholds.MagnitudeSamples.Where(s => s.RuleCode == PrtgRuleEvaluator.RuleDown));
-        Assert.NotEqual(package.RuleThresholds.EvidenceFingerprint, afterTimelineMutation.RuleThresholds.EvidenceFingerprint);
-        Assert.Equal(20, revisedSample.Magnitude);
-        Assert.Equal(5, revisedSample.DayMagnitude);
-
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 2,
-            HostName = "OTHER-HOST", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        var afterMapMutation = service.BuildExportPackage(anchor);
-        Assert.NotEqual(afterTimelineMutation.RuleThresholds.EvidenceFingerprint, afterMapMutation.RuleThresholds.EvidenceFingerprint);
-        Assert.Empty(afterMapMutation.RuleThresholds.MagnitudeSamples);
-        Assert.Contains(afterMapMutation.RuleThresholds.Explanations, x => x.Contains("主機對應", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void RuleCalibration_TimelineWithChangedResourceGeneration_IsNotTrusted()
-    {
-        var anchor = new DateTime(2026, 9, 1);
-        var store = new EfPrtgStore(_fx.NewContext);
-        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability", Paused = false }], DateTime.Now);
-        InstallCalibrationPolicy(anchor, [1001]);
-        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date.AddHours(8)), "Down"));
-        new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001))
-            .Update(e => e.ResourceGeneration = "different-resource-generation");
-
-        var package = CreateService().BuildExportPackage(anchor);
-
-        Assert.Empty(package.RuleThresholds.MagnitudeSamples);
-        var explanations = typeof(CalibrationRuleThresholdDataset).GetProperty("Explanations")?.GetValue(package.RuleThresholds) as IEnumerable<string> ?? [];
-        Assert.Contains(explanations, x => x.Contains("generation", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void RuleCalibration_PartialTrustedDownWindow_MatchesFormalFindingButDoesNotCountFullCoverageDay()
-    {
-        var anchor = new DateTime(2026, 9, 1);
-        var store = new EfPrtgStore(_fx.NewContext);
-        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability", Paused = false }], DateTime.Now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
-            HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        InstallCalibrationPolicy(anchor, [1001]);
-        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date), "Down"));
-        new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001)).Update(e =>
-        {
-            e.Coverage = [new PrtgSensorCoverage(1001, new DateTimeOffset(anchor.Date), new DateTimeOffset(anchor.Date.AddHours(1)),
-                e.SourceGeneration, e.ResourceGeneration)];
-            e.States = e.States.Where(s => s.At <= new DateTimeOffset(anchor.Date.AddHours(1))).ToList();
-            e.QualityReason = "query-time-budget-exceeded";
-            e.LastAttemptAt = new DateTimeOffset(anchor.AddDays(2));
-        });
-        _ruleStore.Content = new RuleFileContent { Rules =
-        [ValidPrtgRule("down-availability", "down", 30, "availability")] };
-
-        var package = CreateService().BuildExportPackage(anchor);
-        var sample = Assert.Single(package.RuleThresholds.MagnitudeSamples.Where(s => s.RuleCode == PrtgRuleEvaluator.RuleDown));
-        var formalHit = Assert.Single(package.RuleThresholds.FormalCurrentHitCounts);
-
-        Assert.Equal(60, sample.Magnitude);
-        Assert.Equal(60, sample.ThresholdMagnitude);
-        Assert.Equal(1, formalHit.FindingCount);
-        Assert.Contains("DistinctCoverageDays", package.Summary.PrtgRuleThresholds.KeyMetrics.Keys);
-        Assert.Equal(0, (int)package.Summary.PrtgRuleThresholds.KeyMetrics["DistinctCoverageDays"]);
-        Assert.Contains(package.RuleThresholds.Explanations, x => x.Contains("已涵蓋區間仍依正式 evaluator", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void RuleCalibration_TrustedFullUpTimeline_HasCoverageButInsufficientAndEmptyDistribution()
-    {
-        var anchor = new DateTime(2026, 9, 1);
-        var store = new EfPrtgStore(_fx.NewContext);
-        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability", Status = "Up", Paused = false }], DateTime.Now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
-            HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        InstallCalibrationPolicy(anchor, [1001]);
-        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date.AddDays(-1)), "Up"));
-        _ruleStore.Content = new RuleFileContent { Rules =
-        [ValidPrtgRule("down-availability", "down", 30, "availability")] };
-
-        var package = CreateService().BuildExportPackage(anchor);
-
-        Assert.Empty(package.RuleThresholds.MagnitudeSamples);
-        Assert.Equal(CalibrationStatus.Insufficient, package.Summary.PrtgRuleThresholds.Status);
-        Assert.True((int)package.Summary.PrtgRuleThresholds.KeyMetrics["DistinctCoverageDays"] > 0);
-        Assert.Contains(package.RuleThresholds.Explanations, x => x.Contains("涵蓋存在", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(package.RuleThresholds.Explanations, x => x.Contains("沒有可評估的可信保存 timeline", StringComparison.OrdinalIgnoreCase));
-
-        var timeline = new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001));
-        timeline.Update(e => e.States = e.States.Select(s => s with { Status = "UnrecognizedState" }).ToList());
-        var unknownStatusPackage = CreateService().BuildExportPackage(anchor);
-        Assert.Equal(0, (int)unknownStatusPackage.Summary.PrtgRuleThresholds.KeyMetrics["DistinctCoverageDays"]);
-    }
-
-    [Fact]
-    public void RuleCalibration_TodayEvidenceIsCroppedAtCapturedAsOf()
-    {
-        var anchor = DateTime.Today;
-        var store = new EfPrtgStore(_fx.NewContext);
-        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability", Status = "Up", Paused = false }], DateTime.Now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
-            HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        InstallCalibrationPolicy(anchor, [1001]);
-        var futureAt = DateTimeOffset.Now.AddHours(1);
-        InstallTimelineWindow(1001, new DateTimeOffset(anchor.AddDays(-1)), futureAt.AddHours(1),
-            (new DateTimeOffset(anchor.AddDays(-1)), "Up"), (futureAt, "Down"));
-        _ruleStore.Content = new RuleFileContent { Rules =
-        [ValidPrtgRule("down-availability", "down", 1, "availability")] };
-
-        var package = CreateService().BuildExportPackage(anchor);
-
-        Assert.Empty(package.RuleThresholds.MagnitudeSamples);
-        Assert.True(package.RuleThresholds.AsOf <= DateTimeOffset.Now);
-        Assert.True(package.RuleThresholds.AsOf < futureAt);
-        Assert.Equal(0, (int)package.Summary.PrtgRuleThresholds.KeyMetrics["DistinctCoverageDays"]);
+        Assert.Contains(explanations, x => x.Contains("校準不可用", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -375,7 +138,8 @@ public class CalibrationServiceTests : IDisposable
 
         var package = CreateService().BuildExportPackage(anchor);
 
-        Assert.Single(package.RuleThresholds.MagnitudeSamples, s => s.RuleCode == PrtgRuleEvaluator.RuleDown);
+        // 前一天開始的 Down 延續到錨定日：兩天各一筆門檻探索樣本；停用規則不計正式命中。
+        Assert.Single(package.RuleThresholds.MagnitudeSamples, s => s.RuleCode == PrtgRuleEvaluator.RuleDown && s.Date == anchor);
         Assert.Empty(package.RuleThresholds.FormalCurrentHitCounts);
     }
 
@@ -400,7 +164,11 @@ public class CalibrationServiceTests : IDisposable
 
         Assert.DoesNotContain(package.RuleThresholds.CurrentRules, r => r.RuleCode == "down" && r.Threshold == 1);
         Assert.Empty(package.RuleThresholds.FormalCurrentHitCounts);
-        Assert.Single(package.RuleThresholds.MagnitudeSamples, s => s.RuleCode == "down" && s.Magnitude == 35);
+        // 與正式每日評估同一個判定：「持續 Down」只認日終仍 Down 的段落，跨午夜的 Down 在前一天記 15 分鐘，
+        // 當天 00:20 已恢復不成立。
+        var sample = Assert.Single(package.RuleThresholds.MagnitudeSamples, s => s.RuleCode == "down");
+        Assert.Equal(anchor.AddDays(-1), sample.Date);
+        Assert.Equal(15, sample.Magnitude);
     }
 
     [Fact]
@@ -492,59 +260,6 @@ public class CalibrationServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("policy")]
-    [InlineData("timeline")]
-    [InlineData("resource-identity")]
-    [InlineData("settings")]
-    public void RuleCalibration_AuthorityMutationAtDailyHitsConsumerBoundaryRejectsMixedSnapshot(string source)
-    {
-        var anchor = new DateTime(2026, 9, 1);
-        var store = new EfPrtgStore(_fx.NewContext);
-        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping",
-            Category = "availability", Paused = false }], DateTime.Now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10,
-            HostId = 1, MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        InstallCalibrationPolicy(anchor, [1001]);
-        InstallTimeline(1001, anchor,
-            (new DateTimeOffset(anchor.Date.AddMinutes(-15)), "Down"),
-            (new DateTimeOffset(anchor.Date.AddMinutes(20)), "Up"));
-        _ruleStore.Content = new RuleFileContent { Rules =
-            [ValidPrtgRule("down-availability", "down", 30, "availability")] };
-        var mutationObserved = false;
-        var queryProxy = System.Reflection.DispatchProxy.Create<IIssueAggregateQuery, RuleMutationIssueQueryProxy>();
-        var proxy = (RuleMutationIssueQueryProxy)(object)queryProxy;
-        proxy.Inner = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
-        proxy.BeforeAggregateRuleHits = () =>
-        {
-            mutationObserved = true;
-            switch (source)
-            {
-                case "policy":
-                    new PrtgMonitoringPolicyStore(new EfJsonBlobStore(_fx.NewContext,
-                        PrtgMonitoringPolicyStore.BlobKey)).Update(policy => policy.SourceGeneration = "source-v2");
-                    break;
-                case "timeline":
-                    InstallTimeline(1001, anchor,
-                        (new DateTimeOffset(anchor.Date.AddMinutes(-10)), "Up"));
-                    break;
-                case "resource-identity":
-                    store.BindObservedResource(1001, 1, "source-v1", "changed-resource-fingerprint");
-                    break;
-                case "settings":
-                    _settingsStore.Update(settings => settings.PrtgSensorTypeWhitelist = ["SNMP CPU Load"]);
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(source));
-            }
-        };
-
-        var service = CreateService(issueQueryOverride: queryProxy);
-        var exception = Assert.Throws<InvalidOperationException>(() => service.BuildExportPackage(anchor));
-        Assert.Contains("校準來源版本或設定在匯出組裝期間變更", exception.Message);
-        Assert.True(mutationObserved);
-    }
-
-    [Theory]
     [InlineData("sensor-status")]
     [InlineData("map-status")]
     public void BuildExportPackage_LegacyOversizedStatusFieldsRejectFullAndSummary(string field)
@@ -617,26 +332,6 @@ public class CalibrationServiceTests : IDisposable
         public int SaveCount { get; private set; }
         public RuleLoadOutcome Load() { LoadCount++; return outcome; }
         public void Save(RuleFileContent content) => SaveCount++;
-    }
-
-    [Fact]
-    public void RuleCalibration_OversizedTimelineBlobIsRejectedWithoutPartialSamples()
-    {
-        var anchor = new DateTime(2026, 9, 1);
-        var store = new EfPrtgStore(_fx.NewContext);
-        store.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Status = "Down", Paused = false }], DateTime.Now);
-        store.ReplaceHostMapForDate(anchor, [new PrtgHostMapRow { MapDate = anchor, DeviceObjid = 10, HostId = 1,
-            MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
-        InstallCalibrationPolicy(anchor, [1001]);
-        InstallTimeline(1001, anchor, (new DateTimeOffset(anchor.Date.AddDays(-1)), "Down"));
-        new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext, PrtgSensorTimelineStore.Prefix + 1001))
-            .Update(e => e.States = e.States.Select(s => s with { Status = new string('x', 4 * 1024 * 1024 + 1) }).ToList());
-
-        var package = CreateService().BuildExportPackage(anchor);
-
-        Assert.Empty(package.RuleThresholds.MagnitudeSamples);
-        Assert.Equal(CalibrationStatus.Unavailable, package.Summary.PrtgRuleThresholds.Status);
-        Assert.Contains(package.RuleThresholds.Explanations, x => x.Contains("容量上限", StringComparison.OrdinalIgnoreCase));
     }
 
     // ── 1. PRTG 值型基線：四種狀態測試 ─────────────────────────────────
@@ -955,11 +650,11 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal(CalibrationStatus.Unavailable, summary.PrtgRuleThresholds.Status);
         Assert.Equal(0, Convert.ToInt32(summary.PrtgRuleThresholds.KeyMetrics["DistinctCoverageDays"]));
         Assert.Equal(0, Convert.ToInt32(summary.PrtgRuleThresholds.KeyMetrics["TotalRuleHits"]));
-        Assert.Contains(summary.PrtgRuleThresholds.Explanations, x => x.Contains("timeline", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(summary.PrtgRuleThresholds.Explanations, x => x.Contains("校準不可用", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void AssessStatus_規則門檻_可信Timeline涵蓋30天且正式命中30筆_可用()
+    public void AssessStatus_規則門檻_狀態變更涵蓋30天且正式命中30筆_可用()
     {
         var store = new EfPrtgStore(_fx.NewContext);
         var anchor = new DateTime(2026, 8, 31);
@@ -972,8 +667,9 @@ public class CalibrationServiceTests : IDisposable
         InstallCalibrationPolicy(anchor, [1001]);
         var states = Enumerable.Range(0, 30).SelectMany(i =>
         {
+            // 「持續 Down」只認日終仍 Down：每天 23:50 進入 Down、隔天 00:05 恢復，每天各一筆正式命中。
             var day = from.AddDays(i);
-            return new[] { (new DateTimeOffset(day.AddHours(8)), "Down"), (new DateTimeOffset(day.AddHours(8).AddMinutes(10)), "Up") };
+            return new[] { (new DateTimeOffset(day.AddHours(23).AddMinutes(50)), "Down"), (new DateTimeOffset(day.AddDays(1).AddMinutes(5)), "Up") };
         }).ToArray();
         InstallTimelineWindow(1001, new DateTimeOffset(from), new DateTimeOffset(through), states);
         _ruleStore.Content = new RuleFileContent { Rules =
@@ -983,7 +679,7 @@ public class CalibrationServiceTests : IDisposable
 
         Assert.Equal(CalibrationStatus.Available, summary.Status);
         Assert.Equal("可用", summary.StatusText);
-        Assert.Equal(29, Convert.ToInt32(summary.KeyMetrics["DistinctCoverageDays"]));
+        Assert.Equal(30, Convert.ToInt32(summary.KeyMetrics["DistinctCoverageDays"]));
         Assert.Equal(30, Convert.ToInt32(summary.KeyMetrics["DownSensorDays"]));
         Assert.Equal(30, Convert.ToInt32(summary.KeyMetrics["TotalRuleHits"]));
     }
@@ -1019,27 +715,11 @@ public class CalibrationServiceTests : IDisposable
         _settingsStore.Update(s => { s.PrtgUrl = url; s.PrtgEnabled = true; });
         new PrtgMonitoringPolicyStore(new EfJsonBlobStore(_fx.NewContext, PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
         {
-            p.CoreSystemId = "fixture-core"; p.SourceGeneration = "source-v1";
-            p.EndpointHint = EfPrtgObservationStore.SourceHintFor(url); p.ValidFrom = new DateTimeOffset(anchor.AddDays(-60));
-            p.HostIds = [1]; p.SensorIds = [1001]; p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
+            p.HostIds = [1]; p.SensorIds = [1001];
         });
-        var start = new DateTimeOffset(anchor.Date.AddDays(-1)); var end = new DateTimeOffset(anchor.Date.AddDays(1));
         primary.ApplyAutoCategories(new Dictionary<string, string>());
-        PrtgResourceIdentity primaryIdentity;
-        using (var db = _fx.NewContext())
-        {
-            primaryIdentity = PrtgResourceIdentityStore.Set(db, 1001, "source-v1", 10, 1,
-                "cache-primary-resource", "Ping|availability|auto", "", true, start.ToUniversalTime());
-            db.SaveChanges();
-        }
-        new PrtgSensorTimelineStore(new EfJsonBlobStore(_fx.NewContext,
-            PrtgSensorTimelineStore.Prefix + 1001)).Update(e =>
-        {
-            e.Bind(1001, 1, primaryIdentity.SourceGeneration, "cache-primary-resource",
-                primaryIdentity.Generation, primaryIdentity.Epoch, primaryIdentity.ChannelGeneration, start);
-            e.Accept(start, end, [new PrtgTimedState(1001, new DateTimeOffset(anchor.Date.AddHours(8)),
-                "Down", e.SourceGeneration, e.ResourceGeneration)]);
-        });
+        primary.AppendStateChanges([new PrtgStateChangeRow { SensorObjid = 1001, ChangedAt = anchor.Date.AddHours(8),
+            Status = "Down", Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.Now }]);
         var primarySummary = CreateService().AssessStatus(anchor).PrtgRuleThresholds;
 
         using var otherFx = new EfSqliteFixture();
@@ -1058,23 +738,10 @@ public class CalibrationServiceTests : IDisposable
             HostName = "HOST-1", MapStatus = PrtgMapStatus.Ok, CreatedAt = DateTime.Now }]);
         new PrtgMonitoringPolicyStore(new EfJsonBlobStore(otherFx.NewContext, PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
         {
-            p.CoreSystemId = "fixture-core"; p.SourceGeneration = "source-v1";
-            p.EndpointHint = EfPrtgObservationStore.SourceHintFor(url); p.ValidFrom = new DateTimeOffset(anchor.AddDays(-60));
-            p.HostIds = [1]; p.SensorIds = [1001]; p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
+            p.HostIds = [1]; p.SensorIds = [1001];
         });
-        PrtgResourceIdentity otherIdentity;
-        using (var db = otherFx.NewContext())
-        {
-            otherIdentity = PrtgResourceIdentityStore.Set(db, 1001, "source-v1", 10, 1,
-                "cache-separation-resource", "Ping|availability|auto", "", true, start.ToUniversalTime());
-            db.SaveChanges();
-        }
-        new PrtgSensorTimelineStore(new EfJsonBlobStore(otherFx.NewContext, PrtgSensorTimelineStore.Prefix + 1001)).Update(e =>
-        {
-            e.Bind(1001, 1, otherIdentity.SourceGeneration, "cache-separation-resource",
-                otherIdentity.Generation, otherIdentity.Epoch, otherIdentity.ChannelGeneration, start);
-            e.Accept(start, end, [new PrtgTimedState(1001, start, "Up", e.SourceGeneration, e.ResourceGeneration)]);
-        });
+        otherPrtg.AppendStateChanges([new PrtgStateChangeRow { SensorObjid = 1001, ChangedAt = anchor.Date.AddDays(-1),
+            Status = "Up", Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.Now }]);
         var otherService = new CalibrationService(otherFx.NewContext, otherPrtg,
             new EfIssueAggregateQuery(otherFx.NewContext, _hostStore), otherSettings, new FakeRuleStore());
         var otherSummary = otherService.AssessStatus(anchor).PrtgRuleThresholds;
@@ -1150,7 +817,7 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal(0, summary.PrtgRuleThresholds.KeyMetrics["DownSensorDays"]);
         Assert.Equal(0, summary.PrtgRuleThresholds.KeyMetrics["FlappingSensorDays"]);
         Assert.Equal(0, summary.PrtgRuleThresholds.KeyMetrics["TotalRuleHits"]);
-        Assert.Contains(summary.PrtgRuleThresholds.Explanations, x => x.Contains("timeline", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(summary.PrtgRuleThresholds.Explanations, x => x.Contains("校準不可用", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1208,7 +875,7 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal(CalibrationStatus.Unavailable, summary.PrtgRuleThresholds.Status);
         Assert.Equal(0, summary.PrtgRuleThresholds.KeyMetrics["DistinctCoverageDays"]);
         Assert.Equal(0, summary.PrtgRuleThresholds.KeyMetrics["DownSensorDays"]);
-        Assert.Contains(summary.PrtgRuleThresholds.Explanations, x => x.Contains("timeline", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(summary.PrtgRuleThresholds.Explanations, x => x.Contains("校準不可用", StringComparison.Ordinal));
     }
 
     // ── 3. 數值取得量級：四種狀態測試 ─────────────────────────────────
@@ -2367,10 +2034,10 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal("SNMP Disk Free", vb.SensorType);
         Assert.Equal(55.0, vb.AvgValue);
 
-        // 規則門檻資料集（預設 12 條：4 條不限分類＋4 條分類規則＋3 條資源規則＋1 條停用磁碟趨勢範本）
+        // 規則門檻資料集（預設 9 條：4 條不限分類＋4 條分類規則＋1 條停用磁碟趨勢範本）
         Assert.NotNull(package.RuleThresholds);
-        Assert.Equal(2, package.RuleThresholds.MagnitudeSemanticsVersion);
-        Assert.Equal(12, package.RuleThresholds.CurrentRules.Count);
+        Assert.Equal(3, package.RuleThresholds.MagnitudeSemanticsVersion);
+        Assert.Equal(9, package.RuleThresholds.CurrentRules.Count);
         Assert.Equal(4, package.RuleThresholds.CurrentRules.Count(r => r.SensorCategory == null));
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "disk_free_trend" && r.SensorCategory == "disk");
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "down" && r.SensorCategory == "availability" && r.Threshold == 30);
@@ -2380,25 +2047,14 @@ public class CalibrationServiceTests : IDisposable
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "silent");
         Assert.Contains(package.RuleThresholds.Explanations, text => text.Contains("RuleEnabled", StringComparison.Ordinal));
 
-        // Resource-period rules have no scalar threshold. The serialized export must state exactly
-        // which rules its covered-state evaluator can recompute and which it cannot evaluate.
-        var resourceCodes = new[]
-        {
-            "resource_cpu_sustained_pressure",
-            "resource_memory_sustained_pressure",
-            "resource_disk_pressure"
-        };
-        foreach (var code in resourceCodes)
-        {
-            var resourceRule = Assert.Single(package.RuleThresholds.CurrentRules, r => r.RuleCode == code);
-            Assert.Null((object?)resourceRule.Threshold);
-        }
+        // 三條資源壓力規則已退役，匯出的規則目錄不再列出。
+        Assert.DoesNotContain(package.RuleThresholds.CurrentRules, r => PrtgRuleCatalog.IsRetired(r.RuleCode));
 
         using (var exported = JsonDocument.Parse(JsonSerializer.Serialize(package)))
         {
             var dataset = exported.RootElement.GetProperty("RuleThresholds");
             Assert.True(dataset.TryGetProperty("FormalEvaluationScope", out var scope));
-            Assert.Equal("trusted-status-timeline-only", scope.GetString());
+            Assert.Equal("state-change-messages", scope.GetString());
             Assert.True(dataset.TryGetProperty("FormalEvaluationSupportedRuleCodes", out var supportedCodes));
             Assert.Equal(new[] { "down", "flapping", "warning" },
                 supportedCodes.EnumerateArray()
@@ -2409,24 +2065,6 @@ public class CalibrationServiceTests : IDisposable
                 .EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal);
             Assert.Contains("silent", unsupportedCodes);
             Assert.Contains("disk_free_trend", unsupportedCodes);
-            Assert.Contains("resource_cpu_sustained_pressure", unsupportedCodes);
-            Assert.Contains("resource_memory_sustained_pressure", unsupportedCodes);
-            Assert.Contains("resource_disk_pressure", unsupportedCodes);
-
-            var serializedResourceRules = dataset.GetProperty("CurrentRules").EnumerateArray()
-                .Where(row => resourceCodes.Contains(row.GetProperty("RuleCode").GetString(), StringComparer.Ordinal)).ToArray();
-            Assert.Equal(resourceCodes.Length, serializedResourceRules.Length);
-            foreach (var code in resourceCodes)
-            {
-                var serializedResourceRule = Assert.Single(serializedResourceRules,
-                    row => row.GetProperty("RuleCode").GetString() == code);
-                Assert.True(serializedResourceRule.TryGetProperty("Threshold", out var serializedThreshold));
-                Assert.Equal(JsonValueKind.Null, serializedThreshold.ValueKind);
-                Assert.True(serializedResourceRule.TryGetProperty("ThresholdKind", out var thresholdKind));
-                Assert.Equal("resource-period-profile", thresholdKind.GetString());
-                Assert.True(serializedResourceRule.TryGetProperty("RuleEnabled", out var ruleEnabled));
-                Assert.True(ruleEnabled.GetBoolean());
-            }
 
             var serializedDiskTrendRule = Assert.Single(dataset.GetProperty("CurrentRules").EnumerateArray(),
                 row => row.GetProperty("RuleCode").GetString() == "disk_free_trend");

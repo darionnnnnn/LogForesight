@@ -10,24 +10,24 @@ namespace LogForesight.Core.Service;
 /// </summary>
 public static class PrtgProbeRunner
 {
-    public static Task<bool> RunAsync(PrtgClient client, IRunConsole console, CancellationToken ct = default) =>
-        RunAsync(client, console, null, ct, null);
+    /// <summary>整輪探測的時間上限：超過就停止後續請求，不讓探測無限期佔住 PRTG 配額。</summary>
+    public static readonly TimeSpan OverallTimeout = TimeSpan.FromMinutes(10);
 
-    public static Task<bool> RunAsync(PrtgClient client, IRunConsole console, PrtgProbeEvidenceContext? context, CancellationToken ct = default, Action<string>? onEvidenceJsonProduced = null) =>
-        RunWithOverallDeadlineAsync(client, console, TimeSpan.FromSeconds(15), PrtgCompatibilityProbe.OverallTimeout,
-            context, ct, onEvidenceJsonProduced);
+    /// <summary>探測單次請求的逾時上限（設定值更短時用設定值）。</summary>
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+
+    public static Task<bool> RunAsync(PrtgClient client, IRunConsole console, CancellationToken ct = default) =>
+        RunWithOverallDeadlineAsync(client, console, OverallTimeout, ct);
 
     internal static async Task<bool> RunWithOverallDeadlineAsync(PrtgClient client, IRunConsole console,
-        TimeSpan dependencyBudget, TimeSpan overallBudget, PrtgProbeEvidenceContext? evidenceContext = null,
-        CancellationToken ct = default, Action<string>? onEvidenceJsonProduced = null)
+        TimeSpan overallBudget, CancellationToken ct = default)
     {
         if (overallBudget <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(overallBudget));
         using var overall = CancellationTokenSource.CreateLinkedTokenSource(ct);
         overall.CancelAfter(overallBudget);
         try
         {
-            return await RunCoreAsync(client, console, dependencyBudget, evidenceContext, overall.Token,
-                onEvidenceJsonProduced).ConfigureAwait(false);
+            return await RunCoreAsync(client, console, overall.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex) when (overall.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -36,15 +36,8 @@ public static class PrtgProbeRunner
         }
     }
 
-    internal static Task<bool> RunCoreAsync(PrtgClient client, IRunConsole console,
-        TimeSpan dependencyBudget, CancellationToken ct = default) =>
-        RunCoreAsync(client, console, dependencyBudget, null, ct, null);
-
-    internal static async Task<bool> RunCoreAsync(PrtgClient client, IRunConsole console,
-        TimeSpan dependencyBudget, PrtgProbeEvidenceContext? evidenceContext, CancellationToken ct = default,
-        Action<string>? onEvidenceJsonProduced = null)
+    internal static async Task<bool> RunCoreAsync(PrtgClient client, IRunConsole console, CancellationToken ct = default)
     {
-        if (dependencyBudget <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(dependencyBudget));
         console.WriteLine("══════════ PRTG 環境探測（Probe） ══════════");
         console.WriteLine("唯讀呼叫 PRTG API，產出環境結構統計供後續分析層設計參考。");
         console.WriteLine();
@@ -203,105 +196,6 @@ public static class PrtgProbeRunner
             return false;
         }
 
-        // 步驟 4：相依性（dependency）使用程度
-        allOk &= await StepAsync(console, 4, "相依性（Dependency）使用程度", async () =>
-        {
-            // 相依性只供環境概況。小批查詢逐批報進度；即使 PRTG 長時間不回應，
-            // 時間／頁數上限也讓後面的資料能力探測能繼續。
-            const int pageSize = 100;
-            const int maxPages = 10;
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            var total = 0;
-            var withDep = 0;
-            var incomplete = false;
-            var timedOut = false;
-            var seenSensorIds = new HashSet<long>();
-            console.WriteLine($"     每批 {pageSize} 顆，最多 {maxPages} 批／{dependencyBudget.TotalSeconds:0.#} 秒；超出會標示部分樣本。");
-            for (var page = 0; page < maxPages && (sensorCount <= 0 || total < sensorCount); page++)
-            {
-                ct.ThrowIfCancellationRequested();
-                var remaining = dependencyBudget - watch.Elapsed;
-                if (remaining <= TimeSpan.Zero) { timedOut = true; break; }
-                var requestBudget = remaining < TimeSpan.FromSeconds(8) ? remaining : TimeSpan.FromSeconds(8);
-                using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                budget.CancelAfter(requestBudget);
-                string depJson;
-                try
-                {
-                    depJson = await client.GetJsonAsync(
-                        $"/api/table.json?content=sensors&columns=objid,dependency&count={pageSize}&start={page * pageSize}",
-                        budget.Token).WaitAsync(requestBudget.Add(TimeSpan.FromSeconds(1)), ct);
-                }
-                catch (Exception ex) when (!ct.IsCancellationRequested &&
-                                           (budget.IsCancellationRequested || ex is TimeoutException) &&
-                                           ex is OperationCanceledException or PrtgClientException or TimeoutException)
-                {
-                    budget.Cancel();
-                    timedOut = true;
-                    break;
-                }
-                catch (PrtgClientException ex) when (ex.Message.Contains("400") || ex.Message.Contains("dependency", StringComparison.OrdinalIgnoreCase))
-                {
-                    console.WriteLine("     此 PRTG 版本不支援 dependency 欄位查詢，略過此步驟");
-                    return;
-                }
-
-                // 沒設 dependency 的 sensor 這一欄是缺的：保留在分母中。
-                var parsedDeps = ParseTable(depJson, "sensors", el => new PrtgDependencySample(
-                    long.TryParse(GetStringProperty(el, "objid"), out var id) ? id : null,
-                    GetStringProperty(el, "dependency") ?? string.Empty));
-                if (parsedDeps.CorruptedCount > 0)
-                    console.WriteLine($"     ⚠ 第 {page + 1} 批有 {parsedDeps.CorruptedCount} 筆無法解析");
-                if (parsedDeps.Rows.Count == 0 && parsedDeps.CorruptedCount >= 1)
-                {
-                    console.WriteLine($"     ⚠ 回應無法解析：長度 {System.Text.Encoding.UTF8.GetByteCount(depJson)} bytes，開頭：{Head200(depJson)}");
-                    incomplete = true;
-                    break;
-                }
-                var duplicateIds = 0;
-                foreach (var row in parsedDeps.Rows)
-                {
-                    if (row.SensorObjid is long id && !seenSensorIds.Add(id))
-                    {
-                        duplicateIds++;
-                        continue;
-                    }
-                    if (row.SensorObjid == null) incomplete = true;
-                    total++;
-                    if (HasDependency(row.Dependency)) withDep++;
-                }
-                console.WriteLine($"     相依性進度：已查 {page + 1} 批、{total}/{sensorCount} 顆。");
-                if (parsedDeps.CorruptedCount > 0) incomplete = true;
-                if (duplicateIds > 0)
-                {
-                    console.WriteLine($"     ⚠ 第 {page + 1} 批與前批有 {duplicateIds} 筆重複 objid，分頁可能被忽略；停止相依性取樣。");
-                    incomplete = true;
-                    break;
-                }
-                if (parsedDeps.Rows.Count < pageSize) break;
-            }
-
-            if (timedOut)
-                console.WriteLine("     ⚠ 相依性樣本查詢逾時，結果標為未驗證；繼續後續探測。");
-            if (sensorCount > 0 && total < sensorCount)
-            {
-                if (total == pageSize * maxPages && !incomplete && !timedOut)
-                    console.WriteLine($"     前 {total} 顆樣本／全站 {sensorCount} 顆；下列比例不代表全站。");
-                else
-                    console.WriteLine($"     ⚠ 警告：Sensor 總數為 {sensorCount} 筆，本次查詢僅取樣到 {total} 筆，下列比例僅供參考");
-            }
-            var pct = total > 0 ? (withDep * 100.0 / total) : 0.0;
-            console.WriteLine($"     有設定相依性的 Sensor 數：{withDep} / {total}（佔比 {pct:F1}%）{(total < sensorCount || incomplete || timedOut ? "；部分樣本／未驗證" : "")}");
-            console.WriteLine("     （註：PRTG 預設每個 sensor 相依於父物件，此比例含預設值，不代表人工維護的相依拓撲）");
-        }, ct);
-
-        if (!allOk)
-        {
-            console.WriteLine();
-            console.WriteLine("══════════ 探測失敗 ══════════");
-            return false;
-        }
-
         // 步驟 5：群組樹概要
         allOk &= await StepAsync(console, 5, "群組樹概要", async () =>
         {
@@ -337,7 +231,6 @@ public static class PrtgProbeRunner
         }
 
         // 步驟 6：IP 覆蓋概要（供主機對應評估）
-        var ipv4DeviceIds = new HashSet<int>();
         allOk &= await StepAsync(console, 6, "IP 覆蓋概要（供主機對應評估）", async () =>
         {
             var devHostJson = await client.GetJsonAsync("/api/table.json?content=devices&columns=objid,device,host,group&count=50000", ct);
@@ -375,14 +268,10 @@ public static class PrtgProbeRunner
                 if (normalized != null && IPAddress.TryParse(normalized, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
                 {
                     ipv4Count++;
-                    if (d.Objid.HasValue)
-                    {
-                        ipv4DeviceIds.Add(d.Objid.Value);
-                    }
                 }
                 else if (normalized != null)
                 {
-                    // 合法 IPv6：主機對應比得到，但步驟 7 的「IPv4 覆蓋」不算它
+                    // 合法 IPv6：主機對應比得到
                     ipv6Count++;
                 }
                 else if (PrtgAddress.IsDnsCandidate(PrtgAddress.HostToken(d.Host)))
@@ -430,106 +319,37 @@ public static class PrtgProbeRunner
             return false;
         }
 
-        // 步驟 7：type × IPv4 覆蓋交叉統計（重用步驟 3 與 6 的資料，不另打 API）——
-        // 回答「各 type 有多少 sensor 落在可做主機對應（IPv4）的 device 上」，供擷取縮圈規劃使用
-        allOk &= await StepAsync(console, 7, "Type × IPv4 覆蓋（sensor 位於 IPv4 device 上的比例）", () =>
-        {
-            var withParent = sensorSamples.Where(s => s.ParentId.HasValue).ToList();
-            if (withParent.Count == 0 || ipv4DeviceIds.Count == 0)
-            {
-                console.WriteLine("     無 parentid 或 IPv4 device 資料，略過此統計（舊版 PRTG 可能不支援 parentid 欄位）");
-                return Task.CompletedTask;
-            }
-
-            var crossGroups = withParent
-                .GroupBy(s => s.Type, StringComparer.OrdinalIgnoreCase)
-                .Select(g => new
-                {
-                    Type = g.Key,
-                    Total = g.Count(),
-                    OnIpv4 = g.Count(s => ipv4DeviceIds.Contains(s.ParentId!.Value))
-                })
-                .OrderByDescending(g => g.Total)
-                .ThenBy(g => g.Type, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            foreach (var g in crossGroups)
-            {
-                var pct = g.Total > 0 ? (g.OnIpv4 * 100.0 / g.Total) : 0.0;
-                console.WriteLine($"       {g.Type} | {g.OnIpv4}/{g.Total} | {pct:F1}%");
-            }
-
-            return Task.CompletedTask;
-        }, ct);
-
         var sampleDeviceIds = PickSampleDevices(sensorSamples);
 
-        // 步驟 8：分頁語意診斷（不影響探測成敗）——回答「這台 PRTG 的 table.json 遵不遵守 start 位移」。
-        // 結構同步與資源守門的分頁迴圈都以「遵守 start」為前提；忽略 start 或超出範圍時夾回某一頁的
-        // 環境會讓分頁永遠收不斂。這一步每個 content 只做四次 count=5 的小查詢（三次位移＋一次排序對照），
-        // messages 以單一裝置查詢（因為 id=0 在大型環境會逾時），結果純供人工判讀，任何一筆失敗
-        // 都只印出原因、不把整趟探測算失敗。
+        // 步驟 7：分頁語意（不影響探測成敗）——結構同步與狀態變更的分頁迴圈以「遵守 start、順序穩定」為前提，
+        // PrtgTablePager 的三道停止條件已處理「超界夾末頁／回第一頁」；這裡只印一行結論供核對。
+        // messages 以單一裝置查詢（id=0 在大型環境會逾時）。
         ct.ThrowIfCancellationRequested();
-        console.WriteLine("[8] 分頁語意診斷（table.json 的 start 位移是否被遵守）");
-        await DiagnosePagingAsync(client, console, "devices", "", ct);
-        await DiagnosePagingAsync(client, console, "sensors", "", ct);
-        if (sampleDeviceIds.Count > 0)
+        var pagingVerdicts = new List<string>
         {
-            await DiagnosePagingAsync(client, console, "messages", $"&id={sampleDeviceIds[0]}&filter_drel=7days", ct);
-        }
-        else
+            await DiagnosePagingAsync(client, "devices", "", ct),
+            await DiagnosePagingAsync(client, "sensors", "", ct),
+            sampleDeviceIds.Count > 0
+                ? await DiagnosePagingAsync(client, "messages", $"&id={sampleDeviceIds[0]}&filter_drel=7days", ct)
+                : "messages 略過（沒有可用的裝置樣本）"
+        };
+        console.WriteLine("[7] 分頁語意：" + string.Join("；", pagingVerdicts));
+
+        // 步驟 8：數值單位判定（不影響探測成敗）——四類內建對照（CPU／記憶體／磁碟／Ping）各挑一顆，
+        // 讀它的頻道表，印頻道 0（historicdata 的第一組 value_raw）名稱與目前值、對照語意與值是否合理。
+        ct.ThrowIfCancellationRequested();
+        console.WriteLine("[8] 數值單位判定（四類各一顆，看頻道 0 與對照語意是否吻合）");
+        foreach (var type in PrtgValueSemantics.BuiltinTypes)
         {
-            console.WriteLine("     messages：略過（沒有可用的裝置樣本，無法以單一裝置診斷）");
+            await DescribeSemanticSampleAsync(client, console, type, sensorSamples, ct);
         }
 
-        // 步驟 9：相容性證據探測與逐物件查詢（不影響探測成敗）——
-        // 對代表性感測器執行有限度相容性探測（最多 3 顆，各發一次快照、頻道與昨天歷史數值，產出去識別 JSON 證據區塊），
-        // 並執行逐物件查詢驗證（9d-5）。
+        // 步驟 9：逐物件查詢驗證（9d-5，不影響探測成敗）
         ct.ThrowIfCancellationRequested();
-        console.WriteLine("[9] 相容性證據探測與逐物件查詢驗證");
-        console.WriteLine("     本步驟對最多 3 顆代表感測器（CPU／Memory／Disk 各 1）依序查詢快照、頻道與昨日歷史數值，產出去識別相容性證據，並驗證逐物件查詢");
-
+        console.WriteLine("[9] 逐物件查詢驗證");
         try
         {
-            if (evidenceContext != null && string.IsNullOrWhiteSpace(evidenceContext.SourcePrtgVersion) && !string.IsNullOrWhiteSpace(prtgVersion))
-            {
-                evidenceContext = new PrtgProbeEvidenceContext
-                {
-                    SchemaVersion = evidenceContext.SchemaVersion,
-                    BuildVersion = evidenceContext.BuildVersion,
-                    SourcePrtgVersion = prtgVersion,
-                    GeneratedAtUtc = evidenceContext.GeneratedAtUtc,
-                    HostUtcOffset = evidenceContext.HostUtcOffset,
-                    SourceFingerprint = evidenceContext.SourceFingerprint,
-                    SettingsRevision = evidenceContext.SettingsRevision,
-                    SourceTimezone = evidenceContext.SourceTimezone,
-                    SourceLocale = evidenceContext.SourceLocale,
-                    StorageProvider = evidenceContext.StorageProvider,
-                    EfCoreProvider = evidenceContext.EfCoreProvider,
-                    RetentionDays = evidenceContext.RetentionDays,
-                    StorageEnvironment = evidenceContext.StorageEnvironment,
-                    ScopeSummary = evidenceContext.ScopeSummary,
-                    ReadinessSummary = evidenceContext.ReadinessSummary,
-                    LocalFacts = evidenceContext.LocalFacts,
-                    BuildIdentity = evidenceContext.BuildIdentity,
-                    MessageTimeEvidence = evidenceContext.MessageTimeEvidence,
-                    ReadCurrentMessageTimeFingerprint = evidenceContext.ReadCurrentMessageTimeFingerprint
-                };
-            }
-            try
-            {
-                await MeasureObjectQueriesAsync(client, console, sampleDeviceIds, sensorSamples, evidenceContext, ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                console.WriteLine($"     9d-5：無法量測（{ex.Message}）");
-            }
-
-            await PrtgCompatibilityProbe.ExecuteAsync(client, console, sensorSamples, evidenceContext, ct, onEvidenceJsonProduced);
+            await MeasureObjectQueriesAsync(client, console, sampleDeviceIds, sensorSamples, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -537,7 +357,7 @@ public static class PrtgProbeRunner
         }
         catch (Exception ex)
         {
-            console.WriteLine($"     相容性證據探測無法完成（{ex.Message}）");
+            console.WriteLine($"     9d-5：無法量測（{ex.Message}）");
         }
 
         console.WriteLine();
@@ -555,10 +375,9 @@ public static class PrtgProbeRunner
 
     /// <summary>
     /// 對單一 content 發三次 count=5 查詢（start=0、start=5、start=999999）比較各頁 objid 集合，
-    /// 再發一次 start=0&amp;sortby=objid 當排序對照，
-    /// 歸納這台 PRTG 對 start 位移的處理方式。判讀結果與分頁迴圈的影響一起印出。
+    /// 再發一次 start=0&amp;sortby=objid 當排序對照，歸納成一句結論（順序是否穩定、超界時怎麼處理）。
     /// </summary>
-    private static async Task DiagnosePagingAsync(PrtgClient client, IRunConsole console, string content, string extraQuery, CancellationToken ct)
+    private static async Task<string> DiagnosePagingAsync(PrtgClient client, string content, string extraQuery, CancellationToken ct)
     {
         const int probeCount = 5;
         const int farOffset = 999999;
@@ -571,78 +390,33 @@ public static class PrtgProbeRunner
             var page0 = rows0.Select(r => r.Objid).ToList();
             var page1 = rows1.Select(r => r.Objid).ToList();
             var pageFar = rowsFar.Select(r => r.Objid).ToList();
+            if (page0.Count == 0) return $"{content} 無資料，無法判定";
 
-            string Show(List<long> ids) => ids.Count == 0 ? "（空）" : string.Join(",", ids);
-            console.WriteLine($"     {content}：start=0 → [{Show(page0)}]；start={probeCount} → [{Show(page1)}]；start={farOffset} → [{Show(pageFar)}]");
-
-            if (page0.Count == 0)
-            {
-                console.WriteLine($"     {content}：第一頁就沒有資料，無法判定");
-                return;
-            }
-
-            // 排序穩定性：分頁的前提除了「遵守 start」，還有「兩次查詢之間順序一致」。
-            // 順序不穩定時同一筆會重複出現、另一筆從沒被讀到，而且完全靜默——
-            // 分頁的去重擋得住重複，擋不住漏列。sortby=objid 是讓順序固定的手段，
-            // 這裡實測它在這台 PRTG 上有沒有效（不支援時 PRTG 會忽略參數而非報錯）。
-            var sortedRows = await ReadPagingRowsAsync(client, content, extraQuery + "&sortby=objid", 0, probeCount, isMessages, ct);
-            var sorted = sortedRows.Select(r => r.Objid).ToList();
-            var naturalAscending = IsAscending(page0);
-            var sortedAscending = IsAscending(sorted);
-            // messages 的列鍵含時間，objid 不是它的排序依據：用 objid 判順序會把「依時間遞減」誤判成順序不穩
-            var messagesMonotonic = false;
-            var datetimeUndeterminable = false;
+            // 排序穩定性：分頁的去重擋得住重複，擋不住漏列；sortby=objid 是讓順序固定的手段。
+            // messages 的列鍵含時間，以 datetime 判順序。
+            var sorted = (await ReadPagingRowsAsync(client, content, extraQuery + "&sortby=objid", 0, probeCount, isMessages, ct))
+                .Select(r => r.Objid).ToList();
+            string order;
             if (isMessages)
             {
                 var (dtText, dtMonotonic) = DescribeDatetimeMonotonicity(rows0);
-                messagesMonotonic = dtMonotonic;
-                datetimeUndeterminable = dtText.StartsWith("無法判定", StringComparison.Ordinal);
-                console.WriteLine($"     messages：頁內 datetime 單調＝{dtText}");
-            }
-            console.WriteLine($"     {content}：頁內 objid 遞增＝{(naturalAscending ? "是" : "否")}；" +
-                              $"帶 sortby=objid → [{Show(sorted)}]，遞增＝{(sortedAscending ? "是" : "否")}");
-            if (isMessages)
-            {
-                if (messagesMonotonic)
-                    console.WriteLine($"     messages：✓ 依時間排序、順序穩定，分頁可行（列鍵含時間）；sortby=objid {(sortedAscending ? "有效" : "無效")}，不影響結論");
-                else if (datetimeUndeterminable)
-                    // 解析不了時間不代表順序壞了，只是這台 PRTG 的日期格式本機讀不懂——不能印成漏列警告
-                    console.WriteLine("     messages：？ datetime 欄位本機解析失敗，無法判定順序；請對照上一行的樣本與 PRTG 的日期格式設定");
-                else
-                    console.WriteLine("     messages：⚠ 頁內順序不依時間也不依 objid，分頁可能漏列");
-            }
-            else if (!naturalAscending && sortedAscending)
-                console.WriteLine($"     {content}：✓ sortby=objid 有效（預設順序不穩定，分頁必須帶它才不會漏列）");
-            else if (!naturalAscending && !sortedAscending)
-                console.WriteLine($"     {content}：✗ sortby=objid 無效，且預設順序非遞增——分頁可能漏列，只能改用單次大 count");
-            else if (naturalAscending && !sortedAscending)
-                console.WriteLine($"     {content}：⚠ 預設已遞增，但帶 sortby=objid 後反而不是——不要帶這個參數");
-            else
-                console.WriteLine($"     {content}：✓ 預設順序已遞增，sortby=objid 不改變結果");
-
-            var sameAsFirst = page1.SequenceEqual(page0);
-            var farSameAsFirst = pageFar.SequenceEqual(page0);
-
-            if (page0.Count < probeCount)
-            {
-                console.WriteLine($"     {content}：總筆數不足 {probeCount} 筆，無法判定 start 語意（資料太少，分頁本來就只有一頁）");
-            }
-            else if (sameAsFirst)
-            {
-                console.WriteLine($"     {content}：✗ 完全忽略 start——第二頁與第一頁相同。分頁在這個環境抓不到第一頁以外的資料，只能靠單次大 count 抓完");
-            }
-            else if (pageFar.Count == 0)
-            {
-                console.WriteLine($"     {content}：✓ 遵守 start，超出範圍回空頁（分頁迴圈可正常收斂）");
-            }
-            else if (farSameAsFirst)
-            {
-                console.WriteLine($"     {content}：⚠ 遵守 start，但超出範圍時回到第一頁——總筆數剛好是頁大小整數倍時，分頁迴圈會在最後多讀一次第一頁；需要「本頁無新 objid 即停」的保險絲");
+                order = dtMonotonic ? "依時間排序" : dtText.StartsWith("無法判定", StringComparison.Ordinal)
+                    ? "時間欄位無法解析" : "⚠ 順序不依時間（可能漏列）";
             }
             else
             {
-                console.WriteLine($"     {content}：⚠ 遵守 start，但超出範圍時夾到最後一頁（非空、與第一頁不同）——總筆數剛好是頁大小整數倍時會重讀末頁；需要「本頁無新 objid 即停」的保險絲");
+                var naturalAscending = IsAscending(page0);
+                var sortedAscending = IsAscending(sorted);
+                order = naturalAscending ? "順序穩定" : sortedAscending ? "需帶 sortby=objid" : "✗ 順序不穩（可能漏列）";
             }
+
+            string start;
+            if (page0.Count < probeCount) start = "資料不足以判定 start";
+            else if (page1.SequenceEqual(page0)) start = "✗ 忽略 start（只能單次大 count）";
+            else if (pageFar.Count == 0) start = "超界回空頁";
+            else if (pageFar.SequenceEqual(page0)) start = "超界回第一頁（分頁保險絲已處理）";
+            else start = "超界夾末頁（分頁保險絲已處理）";
+            return $"{content} {order}、{start}";
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -650,7 +424,61 @@ public static class PrtgProbeRunner
         }
         catch (Exception ex)
         {
-            console.WriteLine($"     {content}：無法判定（{ex.Message}）");
+            return $"{content} 無法判定（{ex.Message}）";
+        }
+    }
+
+    /// <summary>
+    /// 步驟 8：挑一顆指定 type 的感測器（優先狀態 Up），讀頻道表印頻道 0 的名稱與目前值，
+    /// 以及內建對照的語意與值是否落在合理範圍。環境沒有這個 type 就印略過。
+    /// </summary>
+    private static async Task DescribeSemanticSampleAsync(PrtgClient client, IRunConsole console, string type,
+        List<SensorTypeSample> sensorSamples, CancellationToken ct)
+    {
+        var sample = sensorSamples
+            .Where(s => s.Objid.HasValue && string.Equals(s.Type, type, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(s => s.Status?.StartsWith("Up", StringComparison.OrdinalIgnoreCase) == true)
+            .ThenBy(s => s.Objid)
+            .FirstOrDefault();
+        if (sample is null)
+        {
+            console.WriteLine($"     {type}：略過（環境沒有這個 type）");
+            return;
+        }
+        PrtgValueSemantics.TryResolve(type, out var semantic);
+        try
+        {
+            var json = await client.GetJsonAsync(
+                $"/api/table.json?content=channels&columns=objid,name,lastvalue&count=100&id={sample.Objid}", ct);
+            using var doc = JsonDocument.Parse(json);
+            JsonElement? primary = null;
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("channels", out var channels) && channels.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var channel in channels.EnumerateArray())
+                {
+                    if (GetStringProperty(channel, "objid") == "0") { primary = channel.Clone(); break; }
+                }
+            }
+            if (primary is not { } row)
+            {
+                console.WriteLine($"     {type}（sensor {sample.Objid}）：⚠ 頻道表沒有頻道 0；對照語意 {semantic}，取值會選錯頻道，請回報");
+                return;
+            }
+            var name = GetStringProperty(row, "name") ?? "（無名稱）";
+            var rawText = GetStringProperty(row, "lastvalue_raw");
+            var plausible = double.TryParse(rawText, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var raw) && PrtgValueSemantics.IsPlausible(semantic, raw);
+            console.WriteLine($"     {type}（sensor {sample.Objid}）：頻道 0「{name}」＝{rawText ?? "無值"}；對照語意 {semantic}；" +
+                              (plausible ? "值合理 ✓" : "⚠ 值不在語意範圍內（感測器停用中或頻道語意不符）"));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            console.WriteLine($"     {type}（sensor {sample.Objid}）：無法讀取頻道（{ex.Message}）");
         }
     }
 
@@ -723,20 +551,11 @@ public static class PrtgProbeRunner
         IRunConsole console,
         List<long> sampleDeviceIds,
         List<SensorTypeSample> sensorSamples,
-        PrtgProbeEvidenceContext? evidenceContext,
         CancellationToken ct)
     {
-        var messageTimeEvidence = evidenceContext?.MessageTimeEvidence;
-        if (messageTimeEvidence is not null)
-        {
-            messageTimeEvidence.SampleStatus = "not-observed";
-            messageTimeEvidence.SamplesChecked = 0;
-            messageTimeEvidence.SamplesCompatible = 0;
-        }
         if (sampleDeviceIds == null || sampleDeviceIds.Count == 0)
         {
             console.WriteLine("     9d-5：略過（沒有可用的裝置樣本）");
-            FinalizeMessageTimeSampleEvidence(evidenceContext, console);
             return;
         }
 
@@ -789,7 +608,6 @@ public static class PrtgProbeRunner
                 swB.Stop();
 
                 var parsedB = ParseTable(jsonB, "messages", el => long.TryParse(GetStringProperty(el, "objid"), out var id) ? new PagingRow(id, GetStringProperty(el, "datetime")) : null);
-                ObserveMessageTimeSamples(evidenceContext, parsedB.Rows.Select(row => row.DatetimeText));
                 var rowsB = parsedB.Rows.Select(r => r.Objid).ToList();
                 var subSet = rowsA.ToHashSet();
                 var nB = rowsB.Count;
@@ -812,8 +630,6 @@ public static class PrtgProbeRunner
                 console.WriteLine($"     9d-5：裝置 objid={deviceId} 無法量測（{ex.Message}）");
             }
         }
-
-        FinalizeMessageTimeSampleEvidence(evidenceContext, console);
 
         // (c) 結論行
         if (bVerdicts.Any(v => v.StartsWith("✓", StringComparison.Ordinal)))
@@ -915,55 +731,6 @@ public static class PrtgProbeRunner
         {
             console.WriteLine($"     9d-5：filter_objid 分批取值無法量測（{ex.Message}）");
         }
-    }
-
-    private static void ObserveMessageTimeSamples(PrtgProbeEvidenceContext? context, IEnumerable<string?> samples)
-    {
-        var evidence = context?.MessageTimeEvidence;
-        if (evidence is null || evidence.AuthorityStatus != "saved-explicit-authority" ||
-            !PrtgMessageDateTimeParser.IsSupported(evidence.DateFormat)) return;
-        TimeZoneInfo zone;
-        System.Globalization.CultureInfo culture;
-        try
-        {
-            zone = TimeZoneInfo.FindSystemTimeZoneById(evidence.SourceTimezone);
-            culture = System.Globalization.CultureInfo.GetCultureInfo(evidence.SourceCulture);
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
-        { evidence.SampleStatus = "sample-mismatch"; return; }
-
-        foreach (var sample in samples.Take(Math.Max(0, 500 - evidence.SamplesChecked)))
-        {
-            evidence.SamplesChecked++;
-            if (PrtgMessageDateTimeParser.TryParse(sample, evidence.DateFormat, culture, zone, out _, out _))
-                evidence.SamplesCompatible++;
-        }
-        if (evidence.SamplesChecked > 0)
-            evidence.SampleStatus = evidence.SamplesCompatible == evidence.SamplesChecked ? "sample-compatible" : "sample-mismatch";
-    }
-
-    private static void FinalizeMessageTimeSampleEvidence(PrtgProbeEvidenceContext? context, IRunConsole console)
-    {
-        var evidence = context?.MessageTimeEvidence;
-        if (evidence is null) return;
-        if (evidence.AuthorityStatus != "saved-explicit-authority")
-        {
-            evidence.AuthorityStatus = "unconfigured";
-            evidence.SampleStatus = "not-observed";
-        }
-        else if (evidence.SamplesChecked == 0)
-        {
-            evidence.SampleStatus = "no-samples";
-        }
-        else
-        {
-            string? current;
-            try { current = context?.ReadCurrentMessageTimeFingerprint?.Invoke(); }
-            catch { current = null; }
-            if (!string.Equals(current, evidence.AuthorityFingerprint, StringComparison.Ordinal))
-                evidence.SampleStatus = "authority-changed";
-        }
-        console.WriteLine($"     訊息時間樣本：saved={evidence.AuthorityStatus}; format={evidence.DateFormat}; sample={evidence.SampleStatus}; compatible={evidence.SamplesCompatible}/{evidence.SamplesChecked}; 遠端帳號設定未讀回。");
     }
 
     /// <summary>

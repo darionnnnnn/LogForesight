@@ -111,12 +111,7 @@ public static class PrtgFindingMapper
     public static LogIssueSignature ToSignature(PrtgFinding finding, DateTime day, long? verifiedHostId = null)
     {
         var targetObjid = finding.SensorObjid ?? finding.DeviceObjid;
-        var governedDiskAlias = IsGovernedDiskIdentityAlias(finding);
-        var governedPressure = finding.RuleCode is PrtgRuleEvaluator.RuleResourceCpuPressure or
-            PrtgRuleEvaluator.RuleResourceMemoryPressure or PrtgRuleEvaluator.RuleResourceDiskPressure &&
-            finding.Rule.PrtgRuleCode == finding.RuleCode;
-        var identityRuleCode = governedDiskAlias
-            ? PrtgRuleEvaluator.RuleDiskFreeTrend : finding.RuleCode;
+        var identityRuleCode = finding.RuleCode;
 
         var observations = SourceEvidence.BoundObservations(finding.EvidenceWindows
             .Where(window => window.StartUtc.Offset == TimeSpan.Zero && window.EndUtc.Offset == TimeSpan.Zero &&
@@ -171,28 +166,9 @@ public static class PrtgFindingMapper
             ElevatesDayRisk = finding.Rule.ElevatesDayRisk,
             KnownIssue = finding.Rule.Description,
             RuleId = finding.Rule.Id,
-            PrtgDisplayLabel = governedDiskAlias ? finding.DisplayLabel : null,
-            PrtgResourceReasonCodes = governedDiskAlias && finding.ResourceReasonCodes is { Count: > 0 and <= 2 } reasons &&
-                reasons.All(code => code is "disk-two-hour-low-water" or "disk-seven-day-low-water-trend")
-                ? reasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList() : null,
-            PrtgRuleAdmissionFingerprint = governedPressure && finding.RuleAdmissionFingerprint is { Length: 64 } fingerprint &&
-                fingerprint.All(Uri.IsHexDigit) ? fingerprint : null,
-            PrtgTrendSourceRuleId = governedDiskAlias ? finding.TrendSourceRuleId : null,
-            PrtgTrendSourceRuleFingerprint = governedDiskAlias && finding.TrendSourceRuleFingerprint is { Length: 64 } trendFingerprint &&
-                trendFingerprint.All(Uri.IsHexDigit) ? trendFingerprint : null,
-            PrtgChannelGeneration = governedPressure ? finding.ChannelGeneration : null,
             // 跨來源佐證（PrtgCorroboration）靠它分辨 sensor 類型；silent（device 層）為 null
             PrtgSensorCategory = finding.SensorCategory
         };
     }
 
-    private static bool IsGovernedDiskIdentityAlias(PrtgFinding finding) =>
-        finding.EventIdentityRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend &&
-        finding.RuleCode == PrtgRuleEvaluator.RuleResourceDiskPressure &&
-        finding.Rule.Id == "builtin-prtg-resource-disk-pressure" &&
-        finding.SensorCategory == PrtgSensorCategories.Disk &&
-        !string.IsNullOrWhiteSpace(finding.DisplayLabel) &&
-        finding.RuleAdmissionFingerprint is { Length: 64 } admissionFingerprint && admissionFingerprint.All(Uri.IsHexDigit) &&
-        finding.ResourceReasonCodes is { Count: > 0 and <= 2 } reasons &&
-        reasons.All(code => code is "disk-two-hour-low-water" or "disk-seven-day-low-water-trend");
 }

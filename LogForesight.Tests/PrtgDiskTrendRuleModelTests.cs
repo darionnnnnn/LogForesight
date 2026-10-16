@@ -11,7 +11,7 @@ public sealed class PrtgDiskTrendRuleModelTests
     [Fact]
     public void Seed新增停用磁碟趨勢規則並使用獨立暫定門檻()
     {
-        Assert.Equal(9, KnownIssueSeed.Version);
+        Assert.Equal(10, KnownIssueSeed.Version);
         var rule = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-disk-free-trend");
 
         Assert.False(rule.Enabled);

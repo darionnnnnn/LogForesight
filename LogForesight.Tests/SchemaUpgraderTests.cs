@@ -185,8 +185,8 @@ public class SchemaUpgraderTests : IDisposable
 
         using (var ctx = NewContext())
         {
-            var row = ctx.Blobs.Single();
-            Assert.Equal("hosts", row.BlobKey);
+            // 升級器另外預建 PRTG 範圍互斥列；這裡只看既有列有沒有補上 version。
+            var row = ctx.Blobs.Single(b => b.BlobKey == "hosts");
             Assert.Equal(0, row.Version); // 預設值為 0
 
             ctx.Blobs.Add(new BlobRow { BlobKey = "new_store", Content = "[]", Version = 42 });

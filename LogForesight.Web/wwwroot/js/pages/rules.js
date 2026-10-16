@@ -433,6 +433,7 @@ function statusCell(rule) {
     wrap.className = 'd-flex flex-column gap-1 align-items-start';
 
     wrap.appendChild(statusBadge(rule.enabled ? '啟用' : '停用', rule.enabled ? 'success' : 'neutral'));
+    if (rule.retiredNote) wrap.appendChild(statusBadge('已移除', 'warning', { title: rule.retiredNote }));
 
     if (rule.origin === 'custom') {
         wrap.appendChild(statusBadge('自訂', 'info'));

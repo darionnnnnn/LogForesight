@@ -25,9 +25,6 @@ public sealed class PrtgDataPackage
     public string Purpose { get; set; } = "diagnostic-only";
     public PrtgMonitoringPolicy? SourcePolicy { get; set; }
     public List<PrtgObservationRow> Observations { get; set; } = [];
-    public List<PrtgSensorTimelineEvidence> Timelines { get; set; } = [];
-    public List<PrtgDiskSemanticEvidence> SemanticEvidence { get; set; } = [];
-    public List<PrtgDiskVerificationResult> SemanticResults { get; set; } = [];
 }
 
 public sealed record PrtgImportResult(
@@ -43,20 +40,10 @@ public static class PrtgDataTransfer
 
     public static PrtgDataPackage Export(StorageBackend backend, DateTime fromDate, DateTime toDate)
     {
-        var semanticStore = new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
-        var resultStore = new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey));
-        var semantic = semanticStore.CaptureSnapshot();
-        var results = resultStore.CaptureSnapshot();
         var package = Export(backend.PrtgStore(), fromDate, toDate);
         package.SourcePolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         using var db = backend.CreateContext();
         package.Observations = db.PrtgObservations.AsNoTracking().Where(o => o.RecordDate >= fromDate.Date && o.RecordDate <= toDate.Date).ToList();
-        package.Timelines = package.SourcePolicy.SensorIds.Select(id =>
-            new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + id)).Get()).ToList();
-        package.SemanticEvidence = semantic.Values().ToList();
-        package.SemanticResults = results.Values().ToList();
-        if (!semanticStore.IsSnapshotCurrent(semantic) || !resultStore.IsSnapshotCurrent(results))
-            throw new InvalidOperationException("disk-metadata-changed-during-export");
         return package;
     }
 

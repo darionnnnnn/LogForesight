@@ -434,7 +434,7 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
         using var reader = command.ExecuteReader();
         var plan = new List<string>();
         while (reader.Read()) plan.Add(reader.GetString(3));
-        Assert.Contains(plan, line => line.Contains("IX_lf_prtg_values_purge_sensor_id", StringComparison.Ordinal));
+        Assert.Contains(plan, line => line.Contains("IX_lf_prtg_val_purge_sensor", StringComparison.Ordinal));
         Assert.DoesNotContain(plan, line => line.Contains("SCAN lf_prtg_values", StringComparison.OrdinalIgnoreCase));
     }
 

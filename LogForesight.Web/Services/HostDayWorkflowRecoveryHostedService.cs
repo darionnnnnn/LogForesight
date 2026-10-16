@@ -25,7 +25,6 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     private readonly BackgroundWorkGate? _gate;
     private readonly IAiService? _reportAiService;
     private readonly RecoveryBudget _budget;
-    private readonly Func<DateTime, (DateTime? MapDate, List<PrtgHostMapAuthorityRow> Rows)> _readWholeEvidenceHostMap;
     private readonly NamedMutexGate _lease = new(LeaseName);
     private const int MaxPendingReportsPerPage = 4;
 
@@ -37,7 +36,6 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
 
     internal HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
         ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, RecoveryBudget budget,
-        Func<DateTime, (DateTime? MapDate, List<PrtgHostMapAuthorityRow> Rows)>? readWholeEvidenceHostMap = null,
         BackgroundWorkGate? gate = null, IAiService? reportAiService = null)
     {
         if (budget.PageSize is < 1 or > WorkflowRecoveryPage.MaximumRows || budget.HotPagesPerSlice < 0 ||
@@ -52,8 +50,6 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         _gate = gate;
         _reportAiService = reportAiService;
         _budget = budget;
-        _readWholeEvidenceHostMap = readWholeEvidenceHostMap ?? (date =>
-            _backend.PrtgStore().GetLatestHostMapAuthorityWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, date));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -265,7 +261,6 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                 Log.Info("Workflow recovery waiting snapshot was stale; preserved the newer workflow: recordId={RecordId} hostId={HostId} date={Date:yyyy-MM-dd}",
                     waiting.RecordId, waiting.HostId, waiting.Date);
         }
-        var currentAuthorities = CaptureCurrentWholeEvidenceAuthorities(page.Records);
         foreach (var record in page.Records)
         {
             if (page.CapturedWriteRevisions == null || !page.CapturedWriteRevisions.TryGetValue(record.RecordId, out var revision))
@@ -273,8 +268,7 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                 Log.Warn("Workflow recovery skipped row without its captured SQL revision: recordId={RecordId}", record.RecordId);
                 continue;
             }
-            currentAuthorities.TryGetValue(record.RecordId, out var currentAuthority);
-            if (!_workflow.ReconcileAuthorityRecord(record, revision, prtgEnabled, aiEnabled, currentAuthority))
+            if (!_workflow.ReconcileAuthorityRecord(record, revision, prtgEnabled, aiEnabled))
                 Log.Warn("Workflow recovery row changed after bounded read; it will be retried on a later pass: recordId={RecordId}", record.RecordId);
         }
         RetryPendingReports(page.Records, cancellationToken, retryPassNumber);
@@ -346,141 +340,6 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
             selected[index] = pending[(first + index) % pending.Length];
         return selected;
     }
-
-    internal IReadOnlyDictionary<long, PrtgWholeEvidenceAuthority?> CaptureCurrentWholeEvidenceAuthorities(
-        IReadOnlyList<LogForesight.Core.Models.DailyAnalysisRecord> records)
-    {
-        var candidates = records.Where(record => record.PrtgManifest is { Outcome: "complete" } ||
-                _workflow.Get(record.HostId, record.Date)?.PrtgWholeEvidenceScopeFingerprint != null)
-            .ToArray();
-        var result = new Dictionary<long, PrtgWholeEvidenceAuthority?>();
-        foreach (var record in records) result[record.RecordId] = null;
-        if (candidates.Length == 0) return result;
-
-        try
-        {
-            var hostStore = new HostStore(_backend.Blob("hosts"));
-            var scopeReader = new PrtgScopeRevisionReader(_backend, hostStore);
-            var scopeRevisionBefore = scopeReader.Read();
-            var settingsVersionBefore = _backend.Blob("system_settings").ReadVersion();
-            var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
-            var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-            var policyVersionBefore = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion();
-            if (!settings.PrtgEnabled || string.IsNullOrWhiteSpace(settings.PrtgUrl) || !policy.Ready(settings.PrtgUrl))
-                return result;
-
-            var hostSnapshot = hostStore.CapturePrtgSnapshot();
-            var eligibleHostIds = hostSnapshot.Hosts
-                .Select(host => host.ToWebHost())
-                .Where(host => PrtgFormalEligibility.HostAllowed(host, settings, policy))
-                .Select(host => host.HostId).ToHashSet();
-            var sourceAuthority = policy.SourceAuthorityFingerprint(settings.PrtgUrl);
-            if (string.IsNullOrWhiteSpace(sourceAuthority)) return result;
-            var strategy = PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy);
-            var ruleFingerprint = CurrentEnabledPrtgRuleFingerprint();
-            var resourceRuleCatalog = PrtgResourceCurrentRuleCatalog.Load(_backend);
-            var enabledValueCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (resourceRuleCatalog.For(PrtgResourceFamily.Cpu) is not null) enabledValueCategories.Add(PrtgSensorCategories.Cpu);
-            if (resourceRuleCatalog.For(PrtgResourceFamily.Memory) is not null) enabledValueCategories.Add(PrtgSensorCategories.Memory);
-            if (resourceRuleCatalog.For(PrtgResourceFamily.Disk) is not null) enabledValueCategories.Add(PrtgSensorCategories.Disk);
-            var prtgStore = _backend.PrtgStore();
-            var hostMapRevisionBefore = prtgStore.ReadHostMapDataRevision();
-            var resourceAuthorityRevisionsBefore = prtgStore.ReadResourceAuthorityRevisions(
-                candidates.Select(record => record.HostId));
-            var resourceModeVersionsBefore = candidates.Select(record => record.HostId).Distinct().ToDictionary(
-                hostId => hostId, hostId => new PrtgResourcePressureModeStore(_backend.Blob(
-                    PrtgResourcePressureModeStore.BlobKey(hostId))).ReadHostSnapshot(hostId).BlobVersion);
-            var resourceObservationRevisionsBefore = prtgStore.ReadResourceObservationRevisions(
-                candidates.Select(record => record.HostId));
-            foreach (var dateRecords in candidates.GroupBy(record => record.Date.Date))
-            {
-                var currentHostMap = _readWholeEvidenceHostMap(dateRecords.Key).Rows
-                    .Where(row => row.HostId.HasValue && eligibleHostIds.Contains(row.HostId.Value))
-                    .GroupBy(row => row.DeviceObjid)
-                    .ToDictionary(group => group.Key, group => group.Last().HostId!.Value);
-                var hostFingerprints = currentHostMap
-                    .GroupBy(pair => pair.Value)
-                    .ToDictionary(group => group.Key, group => HostDayWorkflowFingerprint.HashParts(
-                        group.OrderBy(pair => pair.Key)
-                            .Select(pair => PrtgSilentPresenceMappingFingerprint.Compute(pair.Key, pair.Value))));
-                var candidateHostIds = dateRecords.Select(record => record.HostId).Distinct().ToArray();
-                var sensorIdsByHost = prtgStore.GetResourceSensorIdsByHost(currentHostMap, candidateHostIds,
-                    policy.SensorIds.ToHashSet(), enabledValueCategories);
-                var sensorToHost = sensorIdsByHost.SelectMany(pair => pair.Value
-                        .Select(sensorId => (SensorId: sensorId, HostId: pair.Key)))
-                    .ToDictionary(pair => pair.SensorId, pair => pair.HostId);
-                var invalidProfileHosts = prtgStore.HostsWithInvalidTrustedProfiles(sensorToHost, DateTimeOffset.UtcNow);
-                foreach (var record in dateRecords)
-                {
-                    var hostMappingFingerprint = hostFingerprints.TryGetValue(record.HostId, out var fingerprint)
-                        ? fingerprint
-                        : HostDayWorkflowFingerprint.HashParts(Array.Empty<string>());
-                    var strategyFingerprint = HostDayWorkflowFingerprint.HashParts([
-                        settings.PrtgFetchStrategy, policy.SourceTimeZoneId, policy.SourceCultureName,
-                        (!strategy.NightlyExactValues).ToString(), sourceAuthority, hostMappingFingerprint]);
-                    var resourceAuthorityRevision = resourceAuthorityRevisionsBefore.GetValueOrDefault(record.HostId);
-                    var authority = new PrtgWholeEvidenceAuthority(policy.Revision, policy.SourceGeneration,
-                        resourceAuthorityRevision, strategyFingerprint, hostMappingFingerprint, ruleFingerprint,
-                        !invalidProfileHosts.Contains(record.HostId))
-                    {
-                        ResourceModeBlobVersion = resourceModeVersionsBefore.GetValueOrDefault(record.HostId, -1),
-                        ResourceModeFenceRequired = resourceModeVersionsBefore.ContainsKey(record.HostId)
-                    };
-                    result[record.RecordId] = authority.IsValid ? authority : null;
-                }
-            }
-
-            var settingsAfter = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
-            var policyAfter = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-            var currentSourceAuthority = policyAfter.SourceAuthorityFingerprint(settingsAfter.PrtgUrl);
-            var policyVersionAfter = _backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion();
-            var hostMapRevisionAfter = prtgStore.ReadHostMapDataRevision();
-            var resourceAuthorityRevisionsAfter = prtgStore.ReadResourceAuthorityRevisions(
-                candidates.Select(record => record.HostId));
-            var resourceModeVersionsAfter = candidates.Select(record => record.HostId).Distinct().ToDictionary(
-                hostId => hostId, hostId => new PrtgResourcePressureModeStore(_backend.Blob(
-                    PrtgResourcePressureModeStore.BlobKey(hostId))).ReadHostSnapshot(hostId).BlobVersion);
-            var resourceObservationRevisionsAfter = prtgStore.ReadResourceObservationRevisions(
-                candidates.Select(record => record.HostId));
-            var scopeRevisionAfter = scopeReader.Read();
-            var settingsVersionAfter = _backend.Blob("system_settings").ReadVersion();
-            if (scopeRevisionBefore != scopeRevisionAfter || settingsVersionBefore != settingsVersionAfter ||
-                policyVersionBefore != policyVersionAfter || hostSnapshot.Version != hostStore.DataVersion ||
-                hostMapRevisionBefore != hostMapRevisionAfter ||
-                !resourceModeVersionsBefore.OrderBy(pair => pair.Key).SequenceEqual(
-                    resourceModeVersionsAfter.OrderBy(pair => pair.Key)) ||
-                !settingsAfter.PrtgEnabled || !string.Equals(settings.PrtgUrl, settingsAfter.PrtgUrl, StringComparison.Ordinal) ||
-                policy.Revision != policyAfter.Revision || policy.SourceGeneration != policyAfter.SourceGeneration ||
-                !StringComparer.Ordinal.Equals(sourceAuthority, currentSourceAuthority) ||
-                !StringComparer.Ordinal.Equals(ruleFingerprint, CurrentEnabledPrtgRuleFingerprint()))
-            {
-                Log.Warn("Current PRTG authority changed during one bounded recovery page; whole-evidence deadlines fail closed for this page");
-                foreach (var record in candidates) result[record.RecordId] = null;
-            }
-            else
-            {
-                foreach (var record in candidates)
-                    if (resourceAuthorityRevisionsBefore.GetValueOrDefault(record.HostId) <= 0 ||
-                        resourceAuthorityRevisionsBefore.GetValueOrDefault(record.HostId) !=
-                        resourceAuthorityRevisionsAfter.GetValueOrDefault(record.HostId) ||
-                        resourceObservationRevisionsBefore.GetValueOrDefault(record.HostId) !=
-                        resourceObservationRevisionsAfter.GetValueOrDefault(record.HostId))
-                        result[record.RecordId] = null;
-            }
-            return result;
-        }
-        catch (Exception ex)
-        {
-            Log.Warn(ex, "Workflow recovery could not verify current PRTG whole-evidence authority; deadlines remain unqualified for this page");
-            foreach (var record in candidates) result[record.RecordId] = null;
-            return result;
-        }
-    }
-
-    private static string CurrentEnabledPrtgRuleFingerprint() => HostDayWorkflowFingerprint.HashParts(KnownIssueCatalog.Rules
-        .Where(rule => string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && rule.Enabled)
-        .OrderBy(rule => rule.Id, StringComparer.Ordinal)
-        .Select(rule => JsonSerializer.Serialize(rule)));
 
     private static void EnsureCursor(WorkflowRecoveryCursor cursor, DateTime hotFrom, DateTime hotTo,
         DateTime retentionFrom, DateTime deepTo)

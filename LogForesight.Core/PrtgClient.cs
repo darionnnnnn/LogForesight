@@ -68,8 +68,6 @@ public sealed class PrtgClient : IDisposable
     public PrtgRequestBudget? Budget { get; }
     /// <summary>Workload lane used when acquiring the shared in-flight slot.</summary>
     public PrtgRequestPurpose RequestPurpose { get; set; } = PrtgRequestPurpose.General;
-    /// <summary>Exact admission plan captured by snapshot/profile workers before this request sequence.</summary>
-    public string? AdmissionPlanFingerprint { get; set; }
     /// <summary>Optional diagnostic hook invoked when a shared-budgeted Table request is admitted to transport.</summary>
     public Action? TableRequestSent { get; set; }
     /// <summary>Table quota/permit/lane waiting only; excludes authentication exchange, HTTP and response reads.</summary>
@@ -218,9 +216,8 @@ public sealed class PrtgClient : IDisposable
             var uri = new Uri($"{_baseUrl}/api/getpasshash.htm?{query}", UriKind.Absolute);
 
             Checkpoint(ct);
-            using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General
-                ? await Budget.AcquireAsync(PrtgEndpointCategory.Other, ct)
-                : await Budget.AcquireAsync(PrtgEndpointCategory.Other, ct, RequestPurpose, AdmissionPlanFingerprint);
+            using var lease = Budget == null ? null
+                : await Budget.AcquireAsync(PrtgEndpointCategory.Other, ct, RequestPurpose);
 
             HttpResponseMessage resp;
             try
@@ -372,10 +369,7 @@ public sealed class PrtgClient : IDisposable
 
         Checkpoint(ct);
         var admissionTimer = Stopwatch.StartNew();
-        using var lease = Budget == null ? null : RequestPurpose == PrtgRequestPurpose.General &&
-            string.IsNullOrWhiteSpace(AdmissionPlanFingerprint)
-            ? await Budget.AcquireAsync(category, ct)
-            : await Budget.AcquireAsync(category, ct, RequestPurpose, AdmissionPlanFingerprint);
+        using var lease = Budget == null ? null : await Budget.AcquireAsync(category, ct, RequestPurpose);
         admissionTimer?.Stop();
         var quotaWait = admissionTimer?.Elapsed ?? TimeSpan.Zero;
         var totalBudgetWait = quotaWait;

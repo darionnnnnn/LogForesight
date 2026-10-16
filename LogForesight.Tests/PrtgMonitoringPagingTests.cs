@@ -147,14 +147,6 @@ public sealed class PrtgMonitoringPagingTests : IDisposable
         var phase = Stopwatch.StartNew();
         SeedFullScaleMirror();
         LogPhase($"paging-stage fixture-seed complete elapsedMs={phase.Elapsed.TotalMilliseconds:F1}");
-        var identityStore = _backend.PrtgStore();
-        var authorityRevisions = identityStore.ReadResourceAuthorityRevisions([1, HostCount]);
-        var observationRevisions = identityStore.ReadResourceObservationRevisions([1, HostCount]);
-        Assert.Equal(10, authorityRevisions[1]);
-        Assert.Equal(10, authorityRevisions[HostCount]);
-        Assert.Equal(10, observationRevisions[1]);
-        Assert.Equal(10, observationRevisions[HostCount]);
-        LogPhase("paging-stage revision-semantics verified sampledHosts=2 revisionsPerHost=10");
         var controller = Controller();
         phase.Restart();
         LogPhase("paging-stage initial-read begin");
@@ -242,8 +234,7 @@ public sealed class PrtgMonitoringPagingTests : IDisposable
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         var request = new PrtgMonitoringRequest
         {
-            Revision = policy.Revision, IdentityConfirmed = true, CoreSystemId = "large-fixture-core",
-            SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US",
+            Revision = policy.Revision,
             HostIds = selectedHosts, SensorIds = selectedSensors, CatalogueToken = catalogueToken
         };
         phase.Restart();

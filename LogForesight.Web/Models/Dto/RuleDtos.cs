@@ -9,6 +9,9 @@ public class RuleDto
     public string Origin { get; set; } = string.Empty;
     public bool Enabled { get; set; }
 
+    /// <summary>規則代碼已移除時的說明（只能保持停用）；一般規則為 null。</summary>
+    public string? RetiredNote { get; set; }
+
     /// <summary>'windows'（預設）| 'linux'——決定下面用哪組比對欄位（docs/LINUX-RULES.md）</summary>
     public string Platform { get; set; } = "windows";
 

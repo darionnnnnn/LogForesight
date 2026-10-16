@@ -113,13 +113,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
     private PrtgRequestBudget CreateFixtureBudget()
     {
-        // Production publishes the verified joint plan to Shared. These isolated clients use
-        // the same persisted plan, so switching off Shared's Historic fallback does not remove
-        // the snapshot lane authorization from a request-count or cancellation fixture.
+        // 每個測試 client 用自己的加速時鐘配額，避免共用 Shared 讓請求數或取消案例互相等待。
         var budget = new PrtgRequestBudget(new SnapshotFixtureBudgetClock());
-        var plan = new PrtgCapacityAdmissionPlanStore(
-            _backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(DateTimeOffset.UtcNow);
-        if (plan is not null) budget.SetAdmissionPlan(plan);
         _fixtureBudgets.Add(budget);
         return budget;
     }
@@ -203,7 +198,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         return host;
     }
 
-    private void SeedCurrentMappedJointAdmission(long? witnessDeviceObjid = null)
+    private void SeedCurrentMappedSensors(long? witnessDeviceObjid = null)
     {
         var store = _backend.PrtgStore();
         var (_, mapRows) = store.GetLatestHostMapWithDate(30, DateTime.Today);
@@ -233,7 +228,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             {
                 Objid = sensorObjid,
                 DeviceObjid = deviceObjid,
-                Name = $"Joint-admission fixture witness {deviceObjid}",
+                Name = $"Snapshot fixture witness {deviceObjid}",
                 SensorType = "ping",
                 Status = "Up",
                 Paused = false
@@ -242,43 +237,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             eligibleSensors.Add(witness);
         }
 
-        var settings = _settingsStore.Get();
-        var sourceGeneration = "snapshot-hosted-fixture-source";
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy =>
-        {
-            policy.Revision = Guid.NewGuid().ToString("N");
-            policy.CoreSystemId = "snapshot-hosted-fixture";
-            policy.SourceGeneration = sourceGeneration;
-            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl);
-            policy.ValidFrom = DateTimeOffset.UtcNow;
-            policy.HostIds = todayMaps.Select(row => row.HostId!.Value).Distinct().Order().ToList();
-            policy.SensorIds = eligibleSensors.Select(sensor => sensor.Objid).Distinct().Order().ToList();
-            policy.SourceTimeZoneId = "UTC";
-            policy.SourceCultureName = "en-US";
-            policy.RawTimestampTimeZoneId = "UTC";
-            policy.AnalysisTimeZoneId = "UTC";
-            policy.TimeBasisEvidenceReference = "snapshot-hosted-fixture-time-basis";
-            policy.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
-            policy.MessageTimeAuthorityRevision = Math.Max(1, policy.MessageTimeAuthorityRevision);
-        });
-
-        var mapByDevice = todayMaps.GroupBy(row => row.DeviceObjid).ToDictionary(group => group.Key, group => group.First());
-        foreach (var sensor in eligibleSensors.OrderBy(sensor => sensor.Objid)
-                     .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds))
-        {
-            var map = mapByDevice[sensor.DeviceObjid];
-            store.BindObservedResource(sensor.Objid, map.HostId!.Value, sourceGeneration,
-                PrtgTimelineResourceIdentity.BuildResourceFingerprint(
-                    sensor.DeviceObjid.ToString(CultureInfo.InvariantCulture), sensor.SensorType, "created", 0));
-        }
-
-        var policySnapshot = policyStore.Get();
-        var selection = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
-            settings, Array.Empty<Sentinel>(), policySnapshot);
-        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
-            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
-        SeedSyntheticCapacityEvidence(9_000, selection);
     }
 
 
@@ -313,7 +271,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         const long deviceId = 702;
         SeedManualBusinessDevice(deviceId);
         SetupOkDevices(new long[] { 10 });
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         var today = DateTime.Today;
         var store = _backend.PrtgStore();
         // Reconciliation creates a queue row for every mirrored business device. Seed
@@ -382,7 +340,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         SeedManualBusinessDevice(firstDevice);
         SeedManualBusinessDevice(secondDevice);
         SetupOkDevices(new long[] { 10 });
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         SeedCompletedMappedQueueRows(DateTime.Today);
         var today = DateTime.Today;
         var items = new[] { NewRecentStateQueueItem(firstDevice, today), NewRecentStateQueueItem(secondDevice, today) };
@@ -419,7 +377,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         const long deviceId = 730;
         var host = SeedManualBusinessDevice(deviceId);
         SetupOkDevices(new long[] { 10 });
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         SeedCompletedMappedQueueRows(DateTime.Today);
         _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
         {
@@ -440,7 +398,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         host.Active = true;
         _hostStore.Upsert(host);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         SeedCompletedMappedQueueRows(DateTime.Today);
         var service = CreateService();
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
@@ -458,14 +416,14 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         const long deviceId = 750;
         SeedManualBusinessDevice(deviceId);
         SetupOkDevices(new long[] { 10 });
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         SeedCompletedMappedQueueRows(DateTime.Today);
         _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
         {
             new PrtgSensorRow { Objid = 751, DeviceObjid = deviceId, Name = "Ping", SensorType = "ping" }
         }, DateTime.Now, NewRecentStateQueueItem(deviceId, DateTime.Today));
         _settingsStore.Update(s => s.PrtgUrl = "https://new-source.example.com");
-        SeedCurrentMappedJointAdmission(); // Explicitly re-identify the synthetic source for the next two passes.
+        SeedCurrentMappedSensors(); // Explicitly re-identify the synthetic source for the next two passes.
         SeedCompletedMappedQueueRows(DateTime.Today);
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
         var service = CreateService();
@@ -488,7 +446,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         const long deviceId = 740;
         SeedManualBusinessDevice(deviceId);
         SetupOkDevices(new long[] { 10 });
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         SeedCompletedMappedQueueRows(DateTime.Today);
         _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
         {
@@ -518,7 +476,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         const long deviceId = 760;
         var host = SeedManualBusinessDevice(deviceId);
         SetupOkDevices(new long[] { 10 });
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         SeedCompletedMappedQueueRows(DateTime.Today);
         _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
         {
@@ -549,7 +507,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         const long deviceId = 770;
         SeedManualBusinessDevice(deviceId);
         SetupOkDevices(new long[] { 10 });
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         SeedCompletedMappedQueueRows(DateTime.Today);
         _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
         {
@@ -604,119 +562,12 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Tick先做快照再回填_依是否屬於快照映射範圍保留Queue等待(bool includeDeviceInSnapshotMap)
-    {
-        const long deviceId = 710;
-        const long sensorId = 711;
-        const string resourceSince = "created";
-        SetupOkDevices(new long[] { 10 });
-        var mappedHost = SeedManualBusinessDevice(deviceId);
-        // A manual map alone admits device 710 to backfill/queue business scope. Snapshot
-        // targets also require the active daily host map, so this toggles a real expansion.
-        if (includeDeviceInSnapshotMap) SetupOkDevices(new long[] { 10, deviceId });
-        SeedCurrentMappedJointAdmission();
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy =>
-        {
-            policy.Revision = Guid.NewGuid().ToString("N");
-            policy.SensorIds = policy.SensorIds.Append(sensorId).Distinct().Order().ToList();
-        });
-        // Authorize the sensor that the bounded mirror backfill will discover while keeping
-        // the old mirror selection admitted for this first pass.
-        SeedSyntheticCapacityEvidence(9_000);
-        _stubHandler.OnSend = (request, _) =>
-        {
-            var url = request.RequestUri!.ToString();
-            if (url.Contains("content=messages", StringComparison.Ordinal))
-                return Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
-            if (IsBackfillUrl(url))
-                return Task.FromResult(JsonResponse(
-                    $"{{\"treesize\":1,\"sensors\":[{{\"objid\":{sensorId},\"parentid\":{deviceId},\"sensor\":\"Ping\",\"type\":\"ping\",\"cumsince\":\"{resourceSince}\",\"status\":\"Up\",\"paused\":false}}]}}"));
-            if (IsSnapshotUrl(url))
-                return Task.FromResult(CapacityValidFilteredValues(url));
-            return Task.FromResult(JsonResponse("{\"treesize\":0,\"sensors\":[]}"));
-        };
-        var service = CreateService();
-        service.Now = () => DateTime.Today.AddHours(12);
-        var resolveSelection = typeof(PrtgSnapshotHostedService).GetMethod("ResolveSnapshotCapacitySelection",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        PrtgSnapshotTargetSelection CurrentSelection()
-        {
-            var selection = Assert.IsType<PrtgSnapshotTargetSelection>(
-                resolveSelection.Invoke(service, new object[] { _settingsStore.Get(), service.Now() }));
-            return PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
-                PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
-        }
-        var selectionBeforeBackfill = CurrentSelection();
-        Assert.DoesNotContain(sensorId, selectionBeforeBackfill.SensorObjids);
-        await service.TickAsync();
-
-        Assert.Contains(_backend.PrtgStore().GetAllSensors(), row => row.Objid == sensorId && row.DeviceObjid == deviceId);
-        var selectionAfterBackfill = CurrentSelection();
-        Assert.Equal(includeDeviceInSnapshotMap, selectionAfterBackfill.SensorObjids.Contains(sensorId));
-        Assert.Equal(includeDeviceInSnapshotMap,
-            selectionBeforeBackfill.ScopeFingerprint != selectionAfterBackfill.ScopeFingerprint);
-        var backfilledSensor = _backend.PrtgStore().GetAllSensors().Single(row => row.Objid == sensorId);
-        var currentPolicy = policyStore.Get();
-        if (includeDeviceInSnapshotMap)
-            _backend.PrtgStore().BindObservedResource(sensorId, mappedHost.HostId, currentPolicy.SourceGeneration,
-                PrtgTimelineResourceIdentity.BuildResourceFingerprint(
-                    deviceId.ToString(CultureInfo.InvariantCulture), backfilledSensor.SensorType, resourceSince, 0));
-        var requests = _stubHandler.RequestedUrls.ToArray();
-        var firstSnapshotRequest = Array.FindIndex(requests, IsSnapshotUrl);
-        var mirrorRequest = Array.FindIndex(requests, IsBackfillUrl);
-        var stateRequest = Array.FindIndex(requests, url => url.Contains("content=messages", StringComparison.Ordinal));
-        Assert.True(firstSnapshotRequest >= 0 && firstSnapshotRequest < mirrorRequest,
-            $"snapshotIndex={firstSnapshotRequest}; mirrorBackfillIndex={mirrorRequest}; requestCount={requests.Length}");
-        Assert.Equal(-1, stateRequest);
-        Assert.Null(QueueItemForDevice(deviceId).CompletedAtUtc);
-        if (includeDeviceInSnapshotMap)
-            Assert.Contains("容量判定後有效範圍已變更", service.GetStatus().LastSkipReason);
-        else
-        {
-            Assert.DoesNotContain(sensorId, selectionAfterBackfill.SensorObjids);
-            Assert.Contains("未送出 messages 請求", service.GetStatus().LastSkipReason);
-            Assert.Contains("保留至下一輪", service.GetStatus().LastSkipReason);
-        }
-
-        // Publish evidence for the exact post-backfill selection. The durable queue item
-        // was enqueued after mirror commit, so the next admitted pass can resume it.
-        SeedSyntheticCapacityEvidence(9_000, selectionAfterBackfill);
-        Assert.True(PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hostStore,
-            _settingsStore.Get(), selectionAfterBackfill, out _, out var admissionReason), admissionReason);
-        service.Now = () => DateTime.Today.AddHours(12).AddMinutes(15);
-        await service.TickAsync();
-
-        Assert.Equal(includeDeviceInSnapshotMap,
-            SnapshotUrls().Any(url => FilterObjids(url).Contains(sensorId)));
-
-        requests = _stubHandler.RequestedUrls.ToArray();
-        stateRequest = Array.FindIndex(requests, url => url.Contains("content=messages", StringComparison.Ordinal));
-        var currentSettings = _settingsStore.Get();
-        var currentSelection = CurrentSelection();
-        var currentAdmission = PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hostStore,
-            currentSettings, currentSelection, out var currentPlan, out var currentAdmissionReason);
-        var queue = QueueItemForDevice(deviceId);
-        var safeSkipReason = SafeBoundedDiagnostic(service.GetStatus().LastSkipReason);
-        var gateDiagnostic = $"LastSkipReason={safeSkipReason}; currentAdmission={currentAdmission}:{currentAdmissionReason}; " +
-            $"currentPlanPresent={currentPlan is not null}; snapshotCount={SnapshotUrls().Count}; " +
-            $"snapshotIndex={Array.FindIndex(requests, IsSnapshotUrl)}; " +
-            $"stateRequestIndex={stateRequest}; queueCompleted={queue.CompletedAtUtc.HasValue}; " +
-            $"queueLeased={queue.LeaseOwner is not null}; requestCount={requests.Length}";
-        Assert.True(currentAdmission, gateDiagnostic);
-        Assert.True(stateRequest >= 0, gateDiagnostic);
-        Assert.NotNull(queue.CompletedAtUtc);
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
     public async Task 實際Tick僅在有效採樣區段中止背景歷史且結束後釋放優先權(bool enabled)
     {
         SeedManualBusinessDevice(720);
         SetupOkDevices(new long[] { 10 });
         _settingsStore.Update(s => s.PrtgEnabled = enabled);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         var activity = new PrtgSamplingActivity();
         Assert.True(activity.TryBeginBackground(out var background));
         using (background)
@@ -829,197 +680,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(original, after);
     }
 
-    [Fact]
-    public async Task 首次恢復後sourceGeneration在operationScope前變更_保留journal並停止任何HTTP()
-    {
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policy.Update(value => value.SourceGeneration = "source-before-operation-a");
-        var settings = _settingsStore.Get();
-        var bindingA = PrtgSnapshotJournal.Binding(_backend, settings.PrtgUrl);
-        var clock = DateTime.Now;
-        var now = new DateTime(clock.Year, clock.Month, clock.Day, clock.Hour, 0, 0, clock.Kind);
-        using (var seed = new PrtgSnapshotJournal(_backend))
-        {
-            seed.Save(bindingA,
-                [new PrtgSnapshotAccumulator.CheckpointRow(now, 501, 10, 1, 10, 10)], [], now);
-            seed.Load(bindingA, now);
-            seed.EnableIncremental(bindingA, now);
-        }
-
-        var journal = new PrtgSnapshotJournal(_backend);
-        var journalRoot = Path.GetDirectoryName(journal.FilePath)!;
-        var before = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories)
-            .Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
-            .ToDictionary(path => Path.GetRelativePath(journalRoot, path),
-                path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
-        var service = CreateService();
-        service.Now = () => now;
-        service.BeforeOperationScopeCapture = () =>
-            policy.Update(value => value.SourceGeneration = "source-before-operation-b");
-
-        await service.TickAsync();
-
-        Assert.Empty(_stubHandler.RequestedUrls);
-        Assert.Contains("保留", service.GetStatus().LastSkipReason);
-        var after = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories)
-            .Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
-            .ToDictionary(path => Path.GetRelativePath(journalRoot, path),
-                path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
-        Assert.Equal(before, after);
-        using var recovered = new PrtgSnapshotJournal(_backend);
-        Assert.Equal(10, Assert.Single(recovered.Load(bindingA, now)!.Accumulator).Sum);
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(3)]
-    [InlineData(5)]
-    public void HostedRestore_全域scope與resource修訂變動仍保留兩顆sensor既有trustedcheckpoint(int receivedSecond)
-    {
-        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
-            .Update(value => value.SourceGeneration = "source-r03-local-scope");
-        var settings = _settingsStore.Get();
-        var binding = PrtgSnapshotJournal.Binding(_backend, settings.PrtgUrl);
-        var clock = DateTime.UtcNow;
-        var received = new DateTime(clock.Year, clock.Month, clock.Day, clock.Hour, 0, receivedSecond, DateTimeKind.Utc);
-        var measured = received.AddSeconds(-5);
-        // At the first five seconds of an hour the physical sample belongs to the prior hour.
-        // Its strategy must already be effective then; do not weaken the production time guard.
-        var effective = new DateTime(measured.Year, measured.Month, measured.Day, measured.Hour, 0, 0,
-            DateTimeKind.Utc);
-        var accumulator = new PrtgSnapshotAccumulator();
-        foreach (var sensor in new[] { (Id: 501L, Resource: "resource-a", Epoch: "epoch-a"),
-                     (Id: 502L, Resource: "resource-b", Epoch: "epoch-b") })
-        {
-            var sample = new PrtgTrustedSample(sensor.Id, sensor.Id, "source-r03-local-scope",
-                sensor.Resource, $"channel-{sensor.Id}", sensor.Epoch, "semantic-v1", "strategy-v1", 15,
-                effective, measured, received, TimeSpan.FromMinutes(1),
-                PrtgTrustedSampleQuality.Good, $"physical-{sensor.Id}", "UTC", "UTC");
-            Assert.Equal(PrtgTrustedSampleDisposition.Accepted, accumulator.AddTrusted(sample, received));
-        }
-        using (var seed = new PrtgSnapshotJournal(_backend))
-            seed.Save(binding, accumulator.Capture(), [], DateTime.Now);
-        var before = new PrtgSnapshotJournal(_backend).Load(binding, DateTime.Now)!.Accumulator
-            .OrderBy(row => row.SensorObjid).ToArray();
-        Assert.Equal(2, before.Length);
-
-        // Simulate an unrelated mapping/resource change after these rows were accepted.
-        _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).Mutate(_ => ("1", 0));
-        _backend.Blob("prtg_resource_generation_revision").Mutate(_ => ("1", 0));
-        Assert.Equal(binding, PrtgSnapshotJournal.Binding(_backend, settings.PrtgUrl));
-
-        var restarted = CreateService();
-        Assert.True(RestoreJournal(restarted, _settingsStore.Get()));
-        var restored = ServiceAccumulator(restarted).Capture().OrderBy(row => row.SensorObjid).ToArray();
-        Assert.Equal(before.Length, restored.Length);
-        Assert.Equal(before.Select(row => row.SensorObjid), restored.Select(row => row.SensorObjid));
-        Assert.Equal(before.Select(row => row.Trusted!.ContextHash), restored.Select(row => row.Trusted!.ContextHash));
-        Assert.Equal(before.Select(row => row.Trusted!.ResourceEpoch), restored.Select(row => row.Trusted!.ResourceEpoch));
-    }
-
-    [Fact]
-    public void 空journal來源切換耐久發布新generation後可保存並重載新樣本()
-    {
-        var now = DateTime.Today.AddHours(10);
-        var service = CreateService();
-        service.Now = () => now;
-        var settingsA = _settingsStore.Get();
-        var endpointA = PrtgSnapshotJournal.Binding(_backend, settingsA.PrtgUrl);
-        Assert.True(RestoreJournal(service, settingsA));
-        Assert.Equal(endpointA, JournalEndpoint(service));
-
-        _settingsStore.Update(settings => settings.PrtgUrl = "https://prtg-b.example.com");
-        var settingsB = _settingsStore.Get();
-        var endpointB = PrtgSnapshotJournal.Binding(_backend, settingsB.PrtgUrl);
-        Assert.NotEqual(endpointA, endpointB);
-        Assert.True(RestoreJournal(service, settingsB));
-        Assert.Equal(endpointB, JournalEndpoint(service));
-
-        ServiceAccumulator(service).Add(501, now, 12, 25);
-        Assert.True(SaveJournal(service));
-        using var firstRead = new PrtgSnapshotJournal(_backend);
-        var firstState = firstRead.Load(endpointB, now)!;
-        var firstRow = Assert.Single(firstState.Accumulator);
-        Assert.Equal(endpointB, firstState.SourceEndpoint);
-        Assert.Equal(1, firstRow.Count);
-        Assert.Equal(12, firstRow.Sum);
-
-        using var retryRead = new PrtgSnapshotJournal(_backend);
-        var retryState = retryRead.Load(endpointB, now)!;
-        var retryRow = Assert.Single(retryState.Accumulator);
-        Assert.Equal(firstRow, retryRow);
-        Assert.Empty(retryState.Pending);
-    }
-
-    [Fact]
-    public void 有RAM樣本時來源切換拒絕且journal檔案與舊binding保持()
-    {
-        var now = DateTime.Today.AddHours(10);
-        var service = CreateService();
-        service.Now = () => now;
-        var settingsA = _settingsStore.Get();
-        var endpointA = PrtgSnapshotJournal.Binding(_backend, settingsA.PrtgUrl);
-        Assert.True(RestoreJournal(service, settingsA));
-        ServiceAccumulator(service).Add(501, now, 12, 25);
-        Assert.True(SaveJournal(service));
-
-        var journal = ServiceJournal(service);
-        var journalRoot = Path.GetDirectoryName(journal.FilePath)!;
-        var original = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories)
-            .Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
-            .ToDictionary(path => Path.GetRelativePath(journalRoot, path),
-                path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
-        _settingsStore.Update(settings => settings.PrtgUrl = "https://prtg-b.example.com");
-        var endpointB = PrtgSnapshotJournal.Binding(_backend, _settingsStore.Get().PrtgUrl);
-
-        Assert.False(RestoreJournal(service, _settingsStore.Get()));
-
-        Assert.Equal(endpointA, JournalEndpoint(service));
-        var after = Directory.GetFiles(journalRoot, "*", SearchOption.AllDirectories)
-            .Where(path => !path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
-            .ToDictionary(path => Path.GetRelativePath(journalRoot, path),
-                path => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
-        Assert.Equal(original, after);
-        using var oldRead = new PrtgSnapshotJournal(_backend);
-        Assert.Equal(1, Assert.Single(oldRead.Load(endpointA, now)!.Accumulator).Count);
-        using var newRead = new PrtgSnapshotJournal(_backend);
-        Assert.Throws<InvalidDataException>(() => newRead.Load(endpointB, now));
-    }
-
-    [Fact]
-    public void generation發布失敗保留舊binding_故障清除後可安全重試()
-    {
-        var now = DateTime.Today.AddHours(10);
-        var service = CreateService();
-        service.Now = () => now;
-        var settingsA = _settingsStore.Get();
-        var endpointA = PrtgSnapshotJournal.Binding(_backend, settingsA.PrtgUrl);
-        Assert.True(RestoreJournal(service, settingsA));
-        var journal = ServiceJournal(service);
-        var originalManifest = File.ReadAllBytes(journal.ManifestFilePath);
-        journal.FaultPoint = point =>
-        {
-            if (point == "before-generation-switch") throw new IOException("simulated generation publication failure");
-        };
-        _settingsStore.Update(settings => settings.PrtgUrl = "https://prtg-b.example.com");
-        var settingsB = _settingsStore.Get();
-        var endpointB = PrtgSnapshotJournal.Binding(_backend, settingsB.PrtgUrl);
-
-        Assert.False(RestoreJournal(service, settingsB));
-        Assert.Equal(endpointA, JournalEndpoint(service));
-        Assert.Equal(originalManifest, File.ReadAllBytes(journal.ManifestFilePath));
-
-        journal.FaultPoint = null;
-        Assert.True(RestoreJournal(service, settingsB));
-        Assert.Equal(endpointB, JournalEndpoint(service));
-        ServiceAccumulator(service).Add(501, now, 12, 25);
-        Assert.True(SaveJournal(service));
-        using var recovered = new PrtgSnapshotJournal(_backend);
-        var state = recovered.Load(endpointB, now)!;
-        Assert.Equal(1, Assert.Single(state.Accumulator).Count);
-        Assert.Empty(state.Pending);
-    }
-
     private void SetupTargetSensors(
         IEnumerable<(long Objid, string SensorType)> targets,
         IEnumerable<(long Objid, string SensorType)>? nonTargets = null)
@@ -1071,330 +731,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         }
 
         store.UpsertSensors(sensors, DateTime.Now);
-        var settings = _settingsStore.Get();
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        var sourceGeneration = "snapshot-hosted-fixture-source";
-        // This is resolver/admission fixture state only. The rows are synthetic and do not
-        // represent native PRTG authority or trusted sample history.
-        policyStore.Update(policy =>
+        // 監看政策可選縮圈：明列主機 1 與目標 sensor，非目標裝置本來就沒有對應。
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(policy =>
         {
             policy.Revision = Guid.NewGuid().ToString("N");
-            policy.CoreSystemId = "snapshot-hosted-fixture";
-            policy.SourceGeneration = sourceGeneration;
-            policy.EndpointHint = EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl);
-            policy.ValidFrom = DateTimeOffset.UtcNow;
             policy.HostIds = [1];
             policy.SensorIds = targetSensors.Select(sensor => sensor.Objid).Distinct().Order().ToList();
-            policy.SourceTimeZoneId = "UTC";
-            policy.SourceCultureName = "en-US";
         });
-
-        foreach (var sensor in targetSensors.OrderBy(sensor => sensor.Objid)
-                     .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds))
-            store.BindObservedResource(sensor.Objid, 1, sourceGeneration,
-                PrtgTimelineResourceIdentity.BuildResourceFingerprint(
-                    sensor.DeviceObjid.ToString(CultureInfo.InvariantCulture), sensor.SensorType, "created", 0));
-
-        var policySnapshot = policyStore.Get();
-        var selection = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
-            settings, Array.Empty<Sentinel>(), policySnapshot);
-        SeedSyntheticCapacityEvidence(9_000, selection);
-    }
-
-    private void SeedSyntheticCapacityEvidence(long elapsedMilliseconds,
-        PrtgSnapshotTargetSelection? supplied = null, long? profileElapsedMilliseconds = null,
-        string primaryChannelMode = PrtgSnapshotTargetResolver.PrimaryChannelModeProvided)
-    {
-        var settings = _settingsStore.Get();
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var selection = supplied ?? PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
-            settings, Array.Empty<Sentinel>(), policy);
-        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection, primaryChannelMode);
-        if (selection.CapacitySampleBatchSize == 0) return;
-        var store = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
-        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
-            store.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
-                selection.EndpointFingerprint, selection.RequestShapeFingerprint,
-                DateTimeOffset.UtcNow.AddMinutes(-5).AddMilliseconds(index), elapsedMilliseconds,
-                selection.CapacitySampleBatchSize, "success", selection.PrimaryChannelCapabilityMode));
-
-        SeedSyntheticJointAdmissionPlan(settings, policy, selection, profileElapsedMilliseconds);
-    }
-
-    private void SeedSyntheticJointAdmissionPlan(SystemSettings settings, PrtgMonitoringPolicy policy,
-        PrtgSnapshotTargetSelection selection, long? profileElapsedMilliseconds = null,
-        Func<PrtgSnapshotTargetSelection>? currentSelectionResolver = null)
-    {
-        if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) || policy.Revision.Length == 0 ||
-            selection.SensorObjids.Count == 0) return;
-
-        var now = DateTimeOffset.UtcNow;
-        var prtgStore = _backend.PrtgStore();
-        var mirroredSensors = prtgStore.GetAllSensors().ToDictionary(sensor => sensor.Objid);
-        var candidateIds = policy.SensorIds.Where(id => id > 0).Distinct().Order()
-            .Where(mirroredSensors.ContainsKey).ToArray();
-        var identities = prtgStore.GetResourceIdentities(candidateIds);
-        var profileIds = candidateIds.Where(id => identities.TryGetValue(id, out var identity) &&
-                mirroredSensors[id].DeviceObjid == identity.DeviceId && identity.Epoch > 0 && identity.Active &&
-                !identity.PendingReconciliation && identity.SourceGeneration == policy.SourceGeneration &&
-                !string.IsNullOrWhiteSpace(identity.ResourceFingerprint) && policy.HostIds.Contains(identity.HostId))
-            .Take(PrtgProfileTransportCapacityPilot.MaximumSensorIds).ToArray();
-        if (profileIds.Length == 0) return;
-        var profileSensorCount = Math.Min(policy.SensorIds.Where(id => id > 0).Distinct().Count(),
-            PrtgProfileTransportCapacityPilot.MaximumSensorIds);
-        if (profileSensorCount == 0) return;
-        var contract = PrtgProfileTransportCapacityPilot.BuildContract(
-            _backend, _hostStore, settings, policy, profileIds);
-        var profileStore = new PrtgProfileTransportCapacityStore(
-            _backend.Blob(PrtgProfileTransportCapacityStore.BlobKey));
-        // These are synthetic capacity samples for the bounded policy workload. BuildContract
-        // still validates each representative against a real mirrored current identity.
-        var profileElapsed = profileElapsedMilliseconds ?? profileSensorCount * 500L;
-        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
-            profileStore.Record(new PrtgProfileTransportSample(contract.SourceFingerprint,
-                contract.ScopeFingerprint, contract.StrategyFingerprint, contract.RequestShapeFingerprint,
-                now.AddMinutes(-5).AddMilliseconds(index), profileElapsed, profileSensorCount,
-                PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileSensorCount),
-                PrtgProfileTransportCapacityEvaluator.ExpectedRequests(profileSensorCount), "success", null, contract.VersionFingerprint));
-
-        var snapshot = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count,
-            PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy), selection.ScopeFingerprint,
-            selection.EndpointFingerprint, selection.RequestShapeFingerprint,
-            new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(), now,
-            selection.PrimaryChannelCapabilityMode, selection.PotentialQualifiedSensorCount,
-            selection.PotentialQualifiedBatchCount, selection.PotentialQualifiedFallbackSampleSize);
-        var profile = PrtgProfileTransportCapacityEvaluator.Evaluate(policy.SensorIds.Distinct().Count(),
-            contract.SourceFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
-            contract.RequestShapeFingerprint, contract.VersionFingerprint, profileStore.Read(), now);
-        var joint = PrtgJointCapacityEvaluator.Evaluate(snapshot, profile,
-            PrtgRequestBudget.Shared.ReadUsage(), settings.PrtgTimeoutSeconds);
-        if (joint.Status != PrtgSnapshotCapacityStatus.CapacityQualified) return;
-
-        var candidate = PrtgJointCapacityEvaluator.CreatePlan(joint, contract.SourceFingerprint,
-            selection.ScopeFingerprint, contract.ScopeFingerprint, contract.StrategyFingerprint,
-            selection.RequestShapeFingerprint, contract.RequestShapeFingerprint,
-            contract.VersionFingerprint, now, settings.Revision, policy.Revision,
-            PrtgCapacityRuntimeAdmission.RawAuthorityContext(settings, policy));
-        var store = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
-        var published = store.Publish(candidate, "snapshot-hosted-synthetic-fixture", now, TimeSpan.FromHours(24),
-            settings.Revision, () =>
-            {
-                var currentSettings = _settingsStore.Get();
-                var currentPolicy = new PrtgMonitoringPolicyStore(
-                    _backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-                if (!currentSettings.PrtgEnabled || currentSettings.Revision != settings.Revision ||
-                    currentPolicy.Revision != policy.Revision) return false;
-                var currentContract = PrtgProfileTransportCapacityPilot.BuildContract(
-                    _backend, _hostStore, currentSettings, currentPolicy, profileIds);
-                var currentSelection = currentSelectionResolver?.Invoke() ??
-                    PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
-                        currentSettings, Array.Empty<Sentinel>(), currentPolicy);
-                currentSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(currentSelection,
-                    selection.PrimaryChannelCapabilityMode);
-                return currentContract == contract &&
-                    currentSelection.ScopeFingerprint == selection.ScopeFingerprint &&
-                    currentSelection.RequestShapeFingerprint == selection.RequestShapeFingerprint;
-            });
-        // Production renews Shared before using a cached client. Keep each isolated fixture
-        // budget on the same published plan when this helper changes scope or strategy.
-        foreach (var budget in _fixtureBudgets) budget.SetAdmissionPlan(published);
-    }
-
-    private PrtgTrustedSamplingProfile SeedFallbackQualifiedProfile(long sensorId)
-    {
-        var settings = _settingsStore.Get();
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy =>
-        {
-            policy.RawTimestampTimeZoneId = "UTC";
-            policy.AnalysisTimeZoneId = "UTC";
-            policy.TimeBasisEvidenceReference = "synthetic-fallback-integration-time-basis";
-        });
-        var policy = policyStore.Get();
-        var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
-        var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
-        var strategy = new PrtgTrustedSamplingStrategyStateStore(
-            _backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey)).GetCurrent(
-                policy, strategyName, strategyMinutes, DateTime.UtcNow.AddHours(-3));
-        Assert.True(strategy.Ready);
-
-        var store = _backend.PrtgStore();
-        var identity = store.GetResourceIdentity(sensorId);
-        identity = store.SetObservedChannel(sensorId, policy.SourceGeneration,
-            "53001", identity.Generation);
-        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, identity,
-            "SNMP CPU Load", "1", "SNMP CPU Load", PrtgTrustedQuantitySemantic.CpuLoadPercent, "%", 1,
-            "direct", "synthetic-fallback-integration-v1", strategy.StrategyFingerprint,
-            strategy.StrategyMinutes, strategy.EffectiveFromHourUtc,
-            TimeSpan.FromMinutes(strategy.StrategyMinutes), "seconds", "UTC", "UTC", "UTC",
-            DateTimeOffset.UtcNow, "synthetic-source-metadata-reference",
-            "synthetic-physical-sample-reference", true, 50, 50,
-            DateTime.UtcNow.AddSeconds(-10).ToOADate(), DateTime.UtcNow.AddSeconds(-10).ToOADate());
-        return PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
-    }
-
-    private PrtgSnapshotTargetSelection ResolveHostedSelection(PrtgSnapshotHostedService service)
-    {
-        var selection = (PrtgSnapshotTargetSelection)typeof(PrtgSnapshotHostedService).GetMethod(
-            "ResolveSnapshotCapacitySelection",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(service,
-                new object[] { _settingsStore.Get(), DateTime.UtcNow })!;
-        return selection;
-    }
-
-    private void SeedFallbackModeCapacityEvidence(PrtgSnapshotHostedService service)
-    {
-        var settings = _settingsStore.Get();
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var selection = ResolveHostedSelection(service);
-        selection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selection,
-            PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
-        SeedSyntheticCapacityEvidence(9_000, selection,
-            primaryChannelMode: PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
-        var store = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
-        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
-        {
-            store.Record(new PrtgSnapshotCapacitySample(selection.ScopeFingerprint,
-                selection.EndpointFingerprint, selection.RequestShapeFingerprint,
-                DateTimeOffset.UtcNow.AddMinutes(-3).AddMilliseconds(index), 0,
-                selection.PotentialQualifiedFallbackSampleSize, "success",
-                PrtgSnapshotTargetResolver.PrimaryChannelModeFallback,
-                selection.PotentialQualifiedFallbackSampleSize,
-                2 * selection.PotentialQualifiedFallbackSampleSize + 1, 100,
-                "fallback-group"));
-        }
-        // The mode is not inferable until all five fallback-group samples exist, so publish
-        // the matching synthetic plan only after the complete shape evidence is present.
-        SeedSyntheticJointAdmissionPlan(settings, policy, selection,
-            currentSelectionResolver: () => ResolveHostedSelection(service));
-    }
-
-    [Fact]
-    public async Task HostedFallbackUsesFreshPropertySnapshotPropertyBracketForTrustedRow()
-    {
-        const long sensorId = 501;
-        SetupTargetSensors(new[] { (sensorId, "SNMP CPU Load") });
-        var profile = SeedFallbackQualifiedProfile(sensorId);
-        var interval = profile.ConfirmedScanInterval.TotalSeconds.ToString("R", CultureInfo.InvariantCulture) + " s";
-        var binding = new PrtgTrustedSamplingBindingStore(_backend).Get(sensorId)!;
-        var channelId = binding.ChannelObjectId;
-        Assert.True(long.TryParse(channelId, NumberStyles.None, CultureInfo.InvariantCulture, out var numericChannelId));
-        var service = CreateService();
-        var testNowUtc = DateTime.UtcNow;
-        service.Now = () => testNowUtc;
-        SeedFallbackModeCapacityEvidence(service);
-
-        var selected = ResolveHostedSelection(service);
-        var fallbackSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(selected,
-            PrtgSnapshotTargetResolver.PrimaryChannelModeFallback);
-        Assert.Equal(PrtgSnapshotTargetResolver.PrimaryChannelModeFallback,
-            selected.PrimaryChannelCapabilityMode);
-        var measuredAt = testNowUtc.AddSeconds(-10).ToOADate().ToString("R", CultureInfo.InvariantCulture);
-        var displayedLastCheck = testNowUtc.AddSeconds(-10).ToString("O", CultureInfo.InvariantCulture);
-        var propertyReads = 0;
-        _stubHandler.OnSend = (request, _) =>
-        {
-            var uri = request.RequestUri!;
-            if (uri.AbsolutePath.EndsWith("getobjectproperty.htm", StringComparison.Ordinal))
-            {
-                Interlocked.Increment(ref propertyReads);
-                return Task.FromResult(XmlResponse($"<prtg><result>{channelId}</result></prtg>"));
-            }
-            return Task.FromResult(JsonResponse($"{{\"treesize\":1,\"sensors\":[{{\"objid\":{sensorId},\"lastvalue_raw\":50,\"interval\":\"{interval}\",\"status\":\"Up\",\"lastcheck\":\"{displayedLastCheck}\",\"lastcheck_raw\":{measuredAt}}}]}}"));
-        };
-
-        var tickStartedAtUtc = DateTimeOffset.UtcNow;
-        await service.TickAsync();
-        var tickStatus = service.GetStatus();
-
-        Assert.Equal(2, propertyReads);
-        var urls = _stubHandler.RequestedUrls.ToArray();
-        Assert.Equal(4, urls.Length);
-        Assert.Contains("getobjectproperty.htm", urls[1], StringComparison.Ordinal);
-        Assert.Contains("table.json", urls[2], StringComparison.Ordinal);
-        Assert.Contains("getobjectproperty.htm", urls[3], StringComparison.Ordinal);
-        Assert.NotNull(tickStatus.LastSuccessAt);
-        Assert.Equal(0, tickStatus.ConsecutiveFailures);
-        Assert.Equal(1, tickStatus.LastSensorCount);
-        var journalError = typeof(PrtgSnapshotHostedService).GetField("_journalError",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(service);
-        Assert.Null(journalError);
-        var row = Assert.Single(ServiceAccumulator(service).Capture());
-        Assert.Equal(sensorId, row.SensorObjid);
-        Assert.NotNull(row.Trusted);
-        Assert.Equal(1, row.Trusted!.Slots.Count);
-        Assert.Equal(testNowUtc.Hour, row.Trusted.Slots.Single().MeasuredAt.Hour);
-        var sourceBinding = PrtgSnapshotJournal.CaptureBindingPair(_backend, _settingsStore.Get().PrtgUrl);
-        using var recoveredJournal = new PrtgSnapshotJournal(_backend);
-        var recovered = recoveredJournal.Load(sourceBinding.Current, DateTime.Now, sourceBinding.Legacy);
-        Assert.NotNull(recovered);
-        var recoveredRow = Assert.Single(recovered!.Accumulator);
-        Assert.Equal(sensorId, recoveredRow.SensorObjid);
-        Assert.NotNull(recoveredRow.Trusted);
-        Assert.Single(recoveredRow.Trusted!.Slots);
-        var freshFallbackGroup = Assert.Single(new PrtgSnapshotCapacityStore(
-                _backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read()
-            .Where(sample => sample.ScopeFingerprint == fallbackSelection.ScopeFingerprint &&
-                sample.EvidenceKind == "fallback-group" && sample.Outcome == "success" &&
-                sample.PrimaryChannelCapabilityMode == "fallback" &&
-                sample.CompletedAtUtc >= tickStartedAtUtc));
-        Assert.Equal(0, freshFallbackGroup.ElapsedMilliseconds);
-        Assert.True(freshFallbackGroup.FallbackGroupElapsedMilliseconds > 0);
-        Assert.Equal(3, freshFallbackGroup.FallbackGroupRequestCount);
-    }
-
-    [Theory]
-    [InlineData("after-property-id-mismatch")]
-    [InlineData("identity-changed-after-bracket")]
-    public async Task HostedFallbackDefersWholeGroupAfterBracketOrIdentityChange(string mutation)
-    {
-        const long sensorId = 501;
-        SetupTargetSensors(new[] { (sensorId, "SNMP CPU Load") });
-        var profile = SeedFallbackQualifiedProfile(sensorId);
-        var interval = profile.ConfirmedScanInterval.TotalSeconds.ToString("R", CultureInfo.InvariantCulture) + " s";
-        var binding = new PrtgTrustedSamplingBindingStore(_backend).Get(sensorId)!;
-        var channelId = binding.ChannelObjectId;
-        Assert.True(long.TryParse(channelId, NumberStyles.None, CultureInfo.InvariantCulture, out var numericChannelId));
-        var changedChannelId = checked(numericChannelId + 1).ToString(CultureInfo.InvariantCulture);
-        var service = CreateService();
-        var testNowUtc = DateTime.UtcNow;
-        service.Now = () => testNowUtc;
-        SeedFallbackModeCapacityEvidence(service);
-
-        var measuredAt = testNowUtc.AddSeconds(-10).ToOADate().ToString("R", CultureInfo.InvariantCulture);
-        var displayedLastCheck = testNowUtc.AddSeconds(-10).ToString("O", CultureInfo.InvariantCulture);
-        var propertyReads = 0;
-        _stubHandler.OnSend = (request, _) =>
-        {
-            var uri = request.RequestUri!;
-            if (uri.AbsolutePath.EndsWith("getobjectproperty.htm", StringComparison.Ordinal))
-            {
-                var read = Interlocked.Increment(ref propertyReads);
-                if (read == 2 && mutation == "identity-changed-after-bracket")
-                {
-                    var store = _backend.PrtgStore();
-                    var identity = store.GetResourceIdentity(sensorId);
-                    store.SetObservedChannel(sensorId, identity.SourceGeneration,
-                        changedChannelId, identity.Generation);
-                }
-                var channel = read == 2 && mutation == "after-property-id-mismatch" ? changedChannelId : channelId;
-                return Task.FromResult(XmlResponse($"<prtg><result>{channel}</result></prtg>"));
-            }
-            return Task.FromResult(JsonResponse($"{{\"treesize\":1,\"sensors\":[{{\"objid\":{sensorId},\"lastvalue_raw\":50,\"interval\":\"{interval}\",\"status\":\"Up\",\"lastcheck\":\"{displayedLastCheck}\",\"lastcheck_raw\":{measuredAt}}}]}}"));
-        };
-
-        var tickStartedAtUtc = DateTimeOffset.UtcNow;
-        await service.TickAsync();
-
-        Assert.Equal(2, propertyReads);
-        Assert.Equal(4, _stubHandler.RequestedUrls.Count);
-        Assert.All(ServiceAccumulator(service).Capture(), checkpoint => Assert.Null(checkpoint.Trusted));
-        Assert.DoesNotContain(new PrtgSnapshotCapacityStore(
-                _backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(),
-            sample => sample.ScopeFingerprint == ResolveHostedSelection(service).ScopeFingerprint &&
-                sample.EvidenceKind == "fallback-group" && sample.Outcome == "success" &&
-                sample.CompletedAtUtc >= tickStartedAtUtc);
     }
 
     [Fact]
@@ -1793,7 +1136,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     {
         SetupTargetSensors(new[] { (101L, "Ping"), (102L, "SNMP Traffic 64bit") });
         _settingsStore.Update(s => s.PrtgSensorTypeWhitelist = new List<string> { "Ping", "SNMP Traffic 64bit" });
-        SeedSyntheticCapacityEvidence(9_000);
         _stubHandler.OnSend = (req, _) => Task.FromResult(FilteredValues(req.RequestUri!.ToString()));
         var service = CreateService();
         var clock = DateTime.Today.AddHours(10);
@@ -1805,7 +1147,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _settingsStore.Update(s => s.PrtgSensorTypeWhitelist = new List<string> { "ping" });
         // A settings revision changes the immutable admission contract. Rebuild matching
         // synthetic evidence for the narrowed target scope before exercising the next tick.
-        SeedSyntheticCapacityEvidence(9_000);
         clock = clock.AddMinutes(15);
         await service.TickAsync();
 
@@ -1985,76 +1326,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Contains(service.ExecutionOutputs, l => l.Contains("無法解析") && l.Contains("以 60 秒計"));
     }
 
-    [Fact]
-    public async Task TickAsync_傳輸失敗後須以五批實際容量試測重新准入再恢復()
-    {
-        SetupTargetSensors(new[] { (401L, "Ping") });
-        var service = CreateService();
-        // A failed live request invalidates full admission. A one-sensor scope may make one
-        // timeout-bounded recovery attempt per ordinary tick using the same lease and qualified
-        // profile evidence; it remains unqualified until five real full-batch successes.
-        var clock = DateTime.Today.AddHours(10);
-        service.Now = () => clock;
-
-        var originalInterval = service.GetStatus().IntervalMinutes;
-        Assert.Equal(15, originalInterval);
-
-        _stubHandler.OnSend = (_, _) => throw new HttpRequestException("Simulated HTTP failure");
-
-        await service.TickAsync();
-        Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
-        Assert.Equal(15, service.GetStatus().IntervalMinutes);
-        Assert.Single(SnapshotUrls());
-
-        clock = clock.AddMinutes(15);
-        await service.TickAsync();
-        Assert.Equal(2, service.GetStatus().ConsecutiveFailures);
-        Assert.Equal(15, service.GetStatus().IntervalMinutes);
-        Assert.Equal(2, SnapshotUrls().Count);
-        var selection = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore, _settingsStore.Get(), Array.Empty<Sentinel>());
-        Assert.False(PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hostStore, _settingsStore.Get(),
-            selection, out _, out _));
-        Assert.All(SnapshotUrls(), url => Assert.Contains("filter_objid=401", url));
-
-        var successJson = "{\"treesize\":1,\"sensors\":[{\"objid\":401,\"lastvalue_raw\":50,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\",\"primarychannel\":1}]}";
-        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(successJson));
-        var settings = _settingsStore.Get();
-        var planStore = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
-        var currentPlan = planStore.ReadCurrent(DateTimeOffset.UtcNow);
-        Assert.NotNull(currentPlan);
-        var originalPlanFingerprint = currentPlan!.Fingerprint;
-        var policyRevision = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Revision;
-        var existingValues = _backend.PrtgStore().GetValues(clock.Date, clock.Date.AddDays(1)).Count;
-        var requestsBeforePilot = SnapshotUrls().Count;
-        var pilot = new PrtgSnapshotCapacityPilot(_backend, _ =>
-            new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler,
-                PrtgAuthModes.Token, "", "", "", CreateFixtureBudget()));
-        var pilotResult = await pilot.RunAsync(_hostStore, settings, Array.Empty<Sentinel>(), CancellationToken.None);
-        Assert.Equal("capacity-qualified", pilotResult.Status);
-        Assert.Equal(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples, pilotResult.RequestsSent);
-        Assert.Equal(PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples,
-            pilotResult.MatchingFullBatchSamples);
-        Assert.Equal(requestsBeforePilot + PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples,
-            SnapshotUrls().Count);
-        Assert.Equal(settings.Revision, _settingsStore.Get().Revision);
-        Assert.Equal(policyRevision, new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().Revision);
-        Assert.Equal(existingValues, _backend.PrtgStore().GetValues(clock.Date, clock.Date.AddDays(1)).Count);
-        Assert.Equal(originalPlanFingerprint, planStore.ReadCurrent(DateTimeOffset.UtcNow)?.Fingerprint);
-
-        // The capacity pilot does not count as a live snapshot attempt. Wait the strategy's
-        // ordinary interval from the bounded runtime recovery attempt, then verify the same current plan
-        // admits a successful production snapshot and clears both real transport failures.
-        clock = clock.AddMinutes(30);
-        await service.TickAsync();
-        var recovered = service.GetStatus();
-        Assert.Equal(0, recovered.ConsecutiveFailures);
-        Assert.Equal(originalInterval, recovered.IntervalMinutes);
-        Assert.Equal(clock, recovered.LastSuccessAt);
-        Assert.Equal(requestsBeforePilot + PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples + 1,
-            SnapshotUrls().Count);
-        Assert.Equal(originalPlanFingerprint, planStore.ReadCurrent(DateTimeOffset.UtcNow)?.Fingerprint);
-    }
-
     /// <summary>
     /// PRTG 呼叫成功但整點寫入資料庫失敗：取出的列已不在累積器，必須留著下次再寫，
     /// 而且這不是 PRTG 的失敗，不能推進退避。
@@ -2131,7 +1402,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             await service.TickAsync();
             // The failed transport invalidates the prior capacity proof. Supply fresh
             // synthetic pilot evidence so the next scheduled attempt reaches backoff logic.
-            SeedSyntheticCapacityEvidence(9_000);
             clock = clock.AddMinutes(15);
         }
         Assert.Equal(30, service.GetStatus().IntervalMinutes);
@@ -2205,7 +1475,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         await service.TickAsync();
         Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
-        SeedSyntheticCapacityEvidence(9_000);
 
         // 一分鐘後，遠小於保守策略的 15 分鐘：不得再打
         clock = clock.AddMinutes(1);
@@ -2301,47 +1570,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(0, service.GetStatus().PendingSamples);
         Assert.Single(_backend.PrtgStore().GetValues(hour, hour.AddHours(1)));
         Assert.Empty(_stubHandler.RequestedUrls);
-    }
-
-    [Fact]
-    public async Task 正式responseconsumer_15000個感測器以兩個durable局部delta保存()
-    {
-        var service = CreateService();
-        var now = DateTime.Today.AddHours(10);
-        service.Now = () => now;
-        await service.TickAsync(); // RestoreJournal / EnableIncremental 在正式 worker 路徑啟動。
-
-        var parse = typeof(PrtgSnapshotHostedService).GetMethod("ParseAndCheckpoint",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var tallyType = typeof(PrtgSnapshotHostedService).GetNestedType("SnapshotTally",
-            System.Reflection.BindingFlags.NonPublic)!;
-        for (var start = 1; start <= 15_000; start += 7_500)
-        {
-            var sensors = Enumerable.Range(start, 7_500).Select(id => new
-            {
-                objid = id,
-                lastvalue_raw = (double)id,
-                interval = "60 s"
-            });
-            var json = System.Text.Json.JsonSerializer.Serialize(new { sensors });
-            var tally = Activator.CreateInstance(tallyType, nonPublic: true)!;
-            var accepted = Enumerable.Range(start, 7_500).Select(id => (long)id).ToHashSet();
-            var policy = new PrtgMonitoringPolicy();
-            var strategy = new PrtgTrustedSamplingStrategyContext("conservative", 15, "", default,
-                "", "", ["current_strategy_contract_missing"]);
-            parse.Invoke(service, new object[] { json, now, tally, accepted, false, policy,
-                new Dictionary<long, PrtgTrustedSamplingProfile>(), new Dictionary<long, PrtgResourceIdentity>(),
-                strategy, DateTime.UtcNow, null });
-        }
-
-        var endpoint = PrtgSnapshotJournal.Binding(_backend, _settingsStore.Get().PrtgUrl);
-        var journal = new PrtgSnapshotJournal(_backend);
-        var restored = journal.Load(endpoint, now)!;
-        Assert.Equal(15_000, restored.Accumulator.Count);
-        var segmentDirectory = Directory.GetDirectories(Path.Combine(_dir, "pending", "prtg-snapshot"), "checkpoint.g.*")
-            .Select(path => Path.Combine(path, "segments")).Single();
-        Assert.Equal(3, Directory.GetFiles(segmentDirectory, "*.json").Length); // snapshot base + two response deltas
-        Assert.False(File.Exists(journal.FilePath));
     }
 
     [Fact]
@@ -2535,47 +1763,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 歷史工作用滿配額仍可透過同一正式budget完成到期採樣()
-    {
-        SetupTargetSensors(new[] { (905L, "Ping") });
-        _stubHandler.OnSend = (request, _) => Task.FromResult(FilteredValues(request.RequestUri!.ToString()));
-        Assert.True(_backfillState.TryBeginRun(out _));
-        var clock = DateTime.Today.AddHours(8);
-        var budgetClock = new PrtgRequestBudgetTests.TestPrtgClock(new DateTimeOffset(clock));
-        var budget = new PrtgRequestBudget(budgetClock);
-        var admissionPlan = Assert.IsType<PrtgCapacityAdmissionPlan>(new PrtgCapacityAdmissionPlanStore(
-            _backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(DateTimeOffset.UtcNow));
-        budget.SetAdmissionPlan(admissionPlan);
-        using var historicalClient = PrtgClientFactory.Create(_settingsStore.Get(), _stubHandler, budget);
-        for (var i = 1; i <= 5; i++)
-            await historicalClient.GetJsonAsync($"api/historicdata.json?id={i}");
-        using var pendingCancellation = new CancellationTokenSource();
-        var pending = historicalClient.GetJsonAsync("api/historicdata.json?id=6", pendingCancellation.Token);
-        var service = CreateService();
-        service.ClientFactory = () => PrtgClientFactory.Create(_settingsStore.Get(), _stubHandler, budget);
-        service.Now = () => clock;
-        try
-        {
-            await WaitUntilAsync(() => budget.WaiterCount == 1);
-            await service.TickAsync();
-            clock = clock.AddMinutes(15);
-            await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(clock, service.GetStatus().LastSuccessAt);
-            Assert.Single(SnapshotUrls());
-            Assert.False(pending.IsCompleted);
-            Assert.Equal(5, _stubHandler.RequestedUrls.Count(url => url.Contains("historicdata.json")));
-            Assert.Equal(0, budget.InFlightCount);
-            Assert.True(_backfill.GetStatus().IsRunning);
-        }
-        finally
-        {
-            pendingCancellation.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                await pending.WaitAsync(TimeSpan.FromSeconds(5)));
-        }
-    }
-
-    [Fact]
     public async Task 真實服務迴圈有待處理範圍更新時仍按期限採樣()
     {
         SetupTargetSensors(new[] { (904L, "Ping") });
@@ -2616,7 +1803,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         _stubHandler.OnSend = async (request, ct) =>
         {
             if (IsBackfillUrl(request.RequestUri!.ToString()))
@@ -2647,7 +1834,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         _stubHandler.OnSend = async (request, ct) =>
         {
             if (IsBackfillUrl(request.RequestUri!.ToString()))
@@ -2691,19 +1878,17 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         var backfilledSensorIds = Enumerable.Range(2000, 5000).Select(id => (long)id)
             .Append(9001L).ToArray();
         var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
         policyStore.Update(policy =>
         {
             policy.Revision = Guid.NewGuid().ToString("N");
-            policy.SensorIds = policy.SensorIds.Concat(backfilledSensorIds).Distinct().Order().ToList();
+            policy.SensorIds = policy.SensorIds.Concat(_backend.PrtgStore().GetAllSensors().Select(sensor => sensor.Objid))
+                .Concat(backfilledSensorIds).Distinct().Order().ToList();
         });
-        // The first admitted pass still targets only the mirrored sensor on device 10.
-        // Capacity evidence uses this current bound identity as its representative; the
-        // unmirrored policy IDs do not receive fabricated resource identities.
-        SeedSyntheticCapacityEvidence(9_000);
+        // 第一輪仍只快照已有鏡像的 device 10 sensor；尚未鏡像的政策 ID 由補抓帶進來。
         var clock = DateTime.Today.AddHours(8);
         var pageTwoReached = false;
         var first = true;
@@ -2763,11 +1948,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(4, BackfillUrls().Count);
         Assert.Equal(clock, service.GetStatus().LastSuccessAt);
         Assert.Equal(2, SnapshotUrls().Count); // This pass sampled the current small scope before backfill expanded to 5002 sensors.
-        Assert.Contains("完整快照容量尚未驗證", service.GetStatus().LastSkipReason);
-        Assert.Contains("5002 顆", service.GetStatus().LastSkipReason);
-        Assert.DoesNotContain(_stubHandler.RequestedUrls,
-            url => url.Contains("content=messages", StringComparison.Ordinal));
-        Assert.Null(QueueItemForDevice(20).CompletedAtUtc);
     }
 
     [Theory]
@@ -2780,7 +1960,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         var invalid = oversized
             ? System.Text.Json.JsonSerializer.Serialize(new { treesize = 1, sensors = new[]
                 { new { objid = 201, parentid = 20, sensor = "S", type = "ping", tags = new string('x', 4 * 1024 * 1024 + 1) } } })
@@ -2815,7 +1995,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         store.ApplyAutoCategories(new Dictionary<string, string>());
         var revision = store.ReadCatalogueDataRevision();
         using (var context = _backend.CreateContext())
@@ -2862,20 +2042,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(2, snapshotUrlsAfterRetry.Count);
         Assert.Equal(new long[] { 101, 101 }, snapshotIdsAfterRetry);
         Assert.DoesNotContain(snapshotIdsAfterRetry, id => id >= 2000);
-
-        // Expanding the selected policy is a separate operator action and must
-        // invalidate the prior one-sensor capacity evidence before any new HTTP.
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy =>
-        {
-            policy.Revision = Guid.NewGuid().ToString("N");
-            policy.SensorIds = store.GetAllSensors().Select(sensor => sensor.Objid).Order().ToList();
-        });
-        clock = clock.AddMinutes(15);
-        await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(35));
-        Assert.Equal(clock.AddMinutes(-15), service.GetStatus().LastSuccessAt);
-        Assert.Equal(2, SnapshotUrls().Count);
-        Assert.Contains("Joint PRTG admission", service.GetStatus().LastSkipReason);
     }
 
     [Fact]
@@ -2886,7 +2052,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         var requestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _stubHandler.OnSend = async (_, ct) =>
         {
@@ -2933,7 +2099,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Enumerable.Range(0, count).Select(i => (start + i, "Ping"));
 
     /// <summary>快照請求（查目前值）；補抓請求帶 parentid 欄位，兩者以欄位區分。</summary>
-    private static bool IsSnapshotUrl(string url) => url.Contains("columns=objid,lastvalue,interval,lastcheck,status,primarychannel");
+    private static bool IsSnapshotUrl(string url) => url.Contains("columns=" + PrtgSnapshotTargetResolver.SnapshotColumns + "&");
 
     private static bool IsBackfillUrl(string url) => url.Contains("content=sensors") && url.Contains("parentid");
 
@@ -2958,14 +2124,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     private static HttpResponseMessage FilteredValues(string url, ISet<long>? omit = null)
     {
         var ids = FilterObjids(url).Where(id => omit == null || !omit.Contains(id)).ToList();
-        var lastCheck = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-        var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"{lastCheck}\",\"primarychannel\":1}}"));
-        return JsonResponse($"{{\"treesize\":{ids.Count},\"sensors\":[{rows}]}}");
-    }
-
-    private static HttpResponseMessage CapacityValidFilteredValues(string url)
-    {
-        var ids = FilterObjids(url);
         var lastCheck = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"{lastCheck}\",\"primarychannel\":1}}"));
         return JsonResponse($"{{\"treesize\":{ids.Count},\"sensors\":[{rows}]}}");
@@ -3116,13 +2274,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(3, exited);
         Assert.Equal(0, service.GetStatus().PendingSamples);
         Assert.Equal(0, _sqlDiagnostics.SensorSelectCount);
-        var evidence = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read();
-        Assert.NotEmpty(evidence);
-        Assert.All(evidence, sample =>
-        {
-            Assert.Equal("failed", sample.Outcome);
-            Assert.Equal(100, sample.RequestedSensorCount);
-        });
     }
 
     [Fact]
@@ -3169,267 +2320,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(2001, service.GetStatus().LastSensorCount);
     }
 
-    [Fact]
-    public async Task 大範圍容量未知時只執行一批有界恢復並保留既有累積列()
-    {
-        SetupTargetSensors(ManyTargets(1001, 120));
-        _backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
-        _stubHandler.OnSend = (request, _) => Task.FromResult(CapacityValidFilteredValues(request.RequestUri!.ToString()));
-        var service = CreateService();
-        var hour = DateTime.Today.AddHours(10);
-        service.Now = () => hour.AddMinutes(5);
-        service.Accumulator.Add(90001, hour, 8, 100);
-
-        await service.TickAsync();
-
-        var recoveryUrl = Assert.Single(SnapshotUrls());
-        Assert.Equal(100, FilterObjids(recoveryUrl).Count);
-        Assert.NotNull(service.GetStatus().LastSuccessAt);
-        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
-        Assert.Equal(101, service.GetStatus().PendingSamples);
-        Assert.Contains("容量證據恢復中", service.GetStatus().LastSkipReason);
-    }
-
-    [Fact]
-    public async Task 大範圍容量已驗證時執行實際快照請求()
-    {
-        SetupTargetSensors(ManyTargets(1001, 120));
-        _stubHandler.OnSend = (request, _) => Task.FromResult(CapacityValidFilteredValues(request.RequestUri!.ToString()));
-        var service = CreateService();
-
-        await service.TickAsync();
-
-        Assert.Equal(2, SnapshotUrls().Count);
-        Assert.NotNull(service.GetStatus().LastSuccessAt);
-        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
-        Assert.Equal(120, service.GetStatus().LastSensorCount);
-    }
-
-    [Fact]
-    public async Task 同一來源計畫更新後重用快照Client時刷新SharedAdmissionFingerprint()
-    {
-        PrtgRequestBudget.Shared.ClearAdmissionPlan();
-        try
-        {
-            _settingsStore.Update(settings => settings.PrtgSensorTypeWhitelist = new List<string> { "Ping" });
-            // 本例驗 cached client 的同來源計畫換版；大量資源容量另由完整矩陣測試。
-            SetupTargetSensors(Enumerable.Range(1, 1)
-                .Select(id => ((long)id, id == 1 ? "Ping" : "Other")));
-            SeedSyntheticCapacityEvidence(1_000, profileElapsedMilliseconds: 2_500);
-
-            var planStore = new PrtgCapacityAdmissionPlanStore(_backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey));
-            var firstPlan = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
-            var service = CreateService();
-            service.ClientFactory = () => new PrtgClient(_settingsStore.Get().PrtgUrl!, "token123", 30, true,
-                _stubHandler, PrtgAuthModes.Token, "", "", "", PrtgRequestBudget.Shared);
-            var clientField = typeof(PrtgSnapshotHostedService).GetField("_client",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-            var clock = DateTime.Today.AddHours(10).AddMinutes(5);
-            service.Now = () => clock;
-            _stubHandler.OnSend = (request, _) => Task.FromResult(FilteredValues(request.RequestUri!.ToString()));
-
-            await service.TickAsync();
-
-            Assert.Single(SnapshotUrls());
-            var cachedClient = Assert.IsType<PrtgClient>(clientField.GetValue(service));
-            Assert.Equal(firstPlan.Fingerprint, cachedClient.AdmissionPlanFingerprint);
-
-            // 測量更新但配額配置不變時 fingerprint 刻意保持穩定；改採樣策略才真正改變同來源計畫。
-            _settingsStore.Update(settings => settings.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive);
-            SeedSyntheticCapacityEvidence(1_000, profileElapsedMilliseconds: 5_000);
-            var renewedPlan = Assert.IsType<PrtgCapacityAdmissionPlan>(planStore.ReadCurrent(DateTimeOffset.UtcNow));
-            Assert.Equal(firstPlan.SourceFingerprint, renewedPlan.SourceFingerprint);
-            Assert.NotEqual(firstPlan.StrategyFingerprint, renewedPlan.StrategyFingerprint);
-            Assert.NotEqual(firstPlan.SnapshotTableRequestsPerSecond, renewedPlan.SnapshotTableRequestsPerSecond);
-            Assert.NotEqual(firstPlan.Fingerprint, renewedPlan.Fingerprint);
-            Assert.True(renewedPlan.Version > firstPlan.Version);
-
-            clock = clock.AddMinutes(15);
-            await service.TickAsync();
-
-            Assert.Equal(2, SnapshotUrls().Count);
-            Assert.Same(cachedClient, clientField.GetValue(service));
-            Assert.Equal(renewedPlan.Fingerprint, cachedClient.AdmissionPlanFingerprint);
-            Assert.Equal(clock, service.GetStatus().LastSuccessAt);
-        }
-        finally
-        {
-            PrtgRequestBudget.Shared.ClearAdmissionPlan();
-        }
-    }
-
-    [Fact]
-    public async Task TickAsync_前次Admission不可授權已變更scope的補抓()
-    {
-        SetupTargetSensors(new[] { (101L, "Ping") });
-        var service = CreateService();
-        var clock = DateTime.Today.AddHours(10).AddMinutes(5);
-        service.Now = () => clock;
-        _stubHandler.OnSend = (request, _) =>
-        {
-            var url = request.RequestUri!.ToString();
-            if (url.Contains("content=messages", StringComparison.Ordinal))
-                return Task.FromResult(JsonResponse("{\"treesize\":0,\"messages\":[]}"));
-            return Task.FromResult(IsBackfillUrl(url)
-                ? DeviceSensors(url, new Dictionary<long, long>())
-                : FilteredValues(url));
-        };
-
-        await service.TickAsync();
-        Assert.Single(SnapshotUrls());
-        _stubHandler.RequestedUrls.Clear();
-
-        // Keep an actually selected sensor while changing the admitted target set and
-        // leaving a third mapped business device without mirror sensors for backfill.
-        SetupOkDevices(new long[] { 10, 20, 30 });
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(policy =>
-        {
-            policy.Revision = Guid.NewGuid().ToString("N");
-            policy.HostIds = new List<long> { 1, 2, 3 };
-            policy.SensorIds = new List<long> { 101, 102 };
-        });
-        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
-        {
-            new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "Ping", SensorType = "ping", Status = "Up" },
-            new PrtgSensorRow { Objid = 102, DeviceObjid = 20, Name = "Ping", SensorType = "ping", Status = "Up" }
-        }, DateTime.Now, NewRecentStateQueueItem(10, DateTime.Today));
-        _backend.PrtgStore().BindObservedResource(102, 2, "snapshot-hosted-fixture-source",
-            PrtgTimelineResourceIdentity.BuildResourceFingerprint("20", "ping", "created", 0));
-        // Keep the snapshot-only prerequisite valid for the changed exact selection so
-        // this negative exercises joint admission, without creating a replacement plan.
-        var changedSelection = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore,
-            _settingsStore.Get(), Array.Empty<Sentinel>(), policyStore.Get());
-        changedSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(changedSelection,
-            PrtgSnapshotTargetResolver.PrimaryChannelModeProvided);
-        var snapshotCapacity = new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey));
-        for (var index = 0; index < PrtgSnapshotCapacityEvaluator.RequiredFullBatchSamples; index++)
-            snapshotCapacity.Record(new PrtgSnapshotCapacitySample(changedSelection.ScopeFingerprint,
-                changedSelection.EndpointFingerprint, changedSelection.RequestShapeFingerprint,
-                DateTimeOffset.UtcNow.AddMinutes(-5).AddMilliseconds(index), 9_000,
-                changedSelection.CapacitySampleBatchSize, "success"));
-        clock = clock.AddMinutes(15);
-
-        await service.TickAsync();
-
-        Assert.Empty(_stubHandler.RequestedUrls);
-        Assert.Contains("Joint PRTG admission is Waiting", service.GetStatus().LastSkipReason);
-        var admissionField = typeof(PrtgSnapshotHostedService).GetField("_admissionPlanFingerprint",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        Assert.Null(admissionField.GetValue(service));
-
-        // A newly published plan for the actual current scope allows work again.
-        SeedCurrentMappedJointAdmission();
-        clock = clock.AddMinutes(15);
-        await service.TickAsync();
-
-        Assert.NotEmpty(_stubHandler.RequestedUrls);
-        Assert.NotEmpty(SnapshotUrls());
-    }
-
-    [Fact]
-    public async Task 大範圍範圍補抓容量未知時保留請求並在同形樣本驗證後續行()
-    {
-        SetupTargetSensors(ManyTargets(1001, 120));
-        _backend.Blob(PrtgSnapshotCapacityStore.BlobKey).Mutate(_ => ("[]", true));
-        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
-        {
-            new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, Name = "Ping", SensorType = "ping" }
-        }, DateTime.Now, NewRecentStateQueueItem(10, DateTime.Today));
-        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(
-            "{\"treesize\":0,\"sensors\":[],\"messages\":[]}"));
-        var service = CreateService();
-
-        await service.ScopeRefreshTickAsync();
-
-        Assert.Empty(_stubHandler.RequestedUrls);
-        Assert.Null(service.GetStatus().LastSuccessAt);
-        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
-        Assert.Contains("容量尚未驗證", service.GetStatus().LastSkipReason);
-        Assert.Null(QueueItemForDevice(10).CompletedAtUtc);
-
-        SeedSyntheticCapacityEvidence(9_000);
-        await service.ScopeRefreshTickAsync();
-
-        Assert.Contains(_stubHandler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
-        Assert.NotNull(QueueItemForDevice(10).CompletedAtUtc);
-    }
-
-    [Fact]
-    public async Task 大範圍範圍補抓容量已知超窗時保留Queue且不啟動HTTP()
-    {
-        _settingsStore.Update(settings => settings.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive);
-        SetupTargetSensors(ManyTargets(1001, 120));
-        _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(new[]
-        {
-            new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, Name = "Ping", SensorType = "ping" }
-        }, DateTime.Now, NewRecentStateQueueItem(10, DateTime.Today));
-        SeedSyntheticCapacityEvidence(300_000);
-        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("已知超窗時範圍補抓不得啟動HTTP");
-        var service = CreateService();
-
-        await service.ScopeRefreshTickAsync();
-
-        Assert.Empty(_stubHandler.RequestedUrls);
-        Assert.Null(service.GetStatus().LastSuccessAt);
-        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
-        Assert.Contains("估算超出", service.GetStatus().LastSkipReason);
-        Assert.Null(QueueItemForDevice(10).CompletedAtUtc);
-    }
-
-    [Fact]
-    public void 同一小時重新計算容量目標時使用目前HostMap與ActiveHosts()
-    {
-        SetupTargetSensors(ManyTargets(1001, 120));
-        var service = CreateService();
-        var resolve = typeof(PrtgSnapshotHostedService).GetMethod("ResolveSnapshotCapacitySelection",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var settings = _settingsStore.Get();
-        var beforeChange = Assert.IsType<PrtgSnapshotTargetSelection>(resolve.Invoke(service,
-            new object[] { settings, DateTime.Now }));
-        Assert.Equal(120, beforeChange.SensorObjids.Count);
-
-        var host = _hostStore.Get(1)!;
-        host.Active = false;
-        _hostStore.Upsert(host);
-
-        // Also cover mapping changes not delivered through RequestScopeRefresh: capacity scope
-        // must still equal the shared resolver's current active-map result.
-        var refreshed = Assert.IsType<PrtgSnapshotTargetSelection>(resolve.Invoke(service,
-            new object[] { settings, DateTime.Now }));
-        var shared = PrtgSnapshotTargetResolver.Resolve(_backend, _hostStore, settings,
-            Array.Empty<Sentinel>());
-        Assert.Empty(refreshed.SensorObjids);
-        Assert.Equal(shared.SensorObjids, refreshed.SensorObjids);
-        Assert.Equal(shared.ActiveMappedDeviceCount, refreshed.ActiveMappedDeviceCount);
-
-        host.Active = true;
-        _hostStore.Upsert(host);
-        service.RequestScopeRefresh();
-        var requestedRefresh = Assert.IsType<PrtgSnapshotTargetSelection>(resolve.Invoke(service,
-            new object[] { settings, DateTime.Now }));
-        Assert.Equal(beforeChange.SensorObjids, requestedRefresh.SensorObjids);
-    }
-
-
-    [Fact]
-    public async Task 大範圍同形樣本已知超窗時拒絕完整快照()
-    {
-        _settingsStore.Update(settings => settings.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive);
-        SetupTargetSensors(ManyTargets(1001, 120));
-        SeedSyntheticCapacityEvidence(300_000);
-        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("已知超窗時不得開啟完整快照請求");
-        var service = CreateService();
-
-        await service.TickAsync();
-
-        Assert.Empty(_stubHandler.RequestedUrls);
-        Assert.Null(service.GetStatus().LastSuccessAt);
-        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
-        Assert.Contains("估算超出", service.GetStatus().LastSkipReason);
-        var diagnostic = Assert.Single(service.Diagnostics.ReadRecent(DateTime.Now.AddHours(1), 1));
-        Assert.Equal(1, diagnostic.ReasonCodes["snapshot-capacity-exceeded"]);
-    }
 
     [Fact]
     public async Task 分批快照_目標50顆_恰1個filter請求且無全站查詢()
@@ -3478,29 +2368,30 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var service = CreateService();
         await service.TickAsync();
 
-        Assert.Empty(_stubHandler.RequestedUrls);
+        Assert.True(_stubHandler.RequestedUrls.Count == 0, string.Join(" | ", _stubHandler.RequestedUrls));
         Assert.NotNull(service.GetStatus().LastSuccessAt);
         Assert.Equal(0, service.GetStatus().LastSensorCount);
-        Assert.Contains("有效快照範圍為空", service.GetStatus().LastSkipReason);
+        Assert.Contains("目前快照範圍為空", service.GetStatus().LastSkipReason);
     }
 
     [Fact]
-    public async Task 分批快照_零有效sensor但映射裝置有待處理queue_只整理本機狀態()
+    public async Task 分批快照_零有效sensor時只補抓未鏡像裝置_不發快照與狀態請求()
     {
         SetupOkDevices(new long[] { 10, 20 });
         _settingsStore.Update(settings => settings.PrtgSensorTypeWhitelist = new List<string> { "Ping" });
         _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(
             new[] { new PrtgSensorRow { Objid = 901, DeviceObjid = 10, Name = "Other", SensorType = "other", Status = "Up" } },
             DateTime.Now, NewRecentStateQueueItem(20, DateTime.Today));
-        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("空有效範圍不得啟動補抓或狀態 HTTP");
+        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("模擬 PRTG 無回應");
         var service = CreateService();
 
         await service.TickAsync();
 
-        Assert.Empty(_stubHandler.RequestedUrls);
+        // 有效範圍為空時不快照、不查狀態變更；但已對應卻尚未鏡像 sensor 的裝置仍要補抓，
+        // 否則新進範圍的裝置永遠沒有 sensor、範圍永遠是空的。
+        Assert.All(_stubHandler.RequestedUrls, url => Assert.True(IsBackfillUrl(url) && url.Contains("id=20"), url));
         Assert.NotNull(service.GetStatus().LastSuccessAt);
         Assert.Equal(0, service.GetStatus().LastSensorCount);
-        Assert.Contains("有效快照範圍為空", service.GetStatus().LastSkipReason);
         var pending = _backend.PrtgStore().ReadRecentStateChangeQueue()
             .OrderBy(item => item.DeviceObjid).ToArray();
         Assert.Equal(new long[] { 10, 20 }, pending.Select(item => item.DeviceObjid));
@@ -3559,31 +2450,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 分批快照_兩批全500清除容量證據_後續等待容量驗證()
-    {
-        SetupTargetSensors(ManyTargets(1001, 150));
-        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{}", HttpStatusCode.InternalServerError));
-
-        var service = CreateService();
-        var clock = DateTime.Today.AddHours(10);
-        service.Now = () => clock;
-
-        await service.TickAsync();
-        Assert.Equal(2, SnapshotUrls().Count);
-        Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
-        Assert.Null(service.GetStatus().LastSuccessAt);
-
-        clock = clock.AddMinutes(15);
-        await service.TickAsync();
-        clock = clock.AddMinutes(15);
-        await service.TickAsync();
-        var status = service.GetStatus();
-        Assert.Equal(4, SnapshotUrls().Count); // Each later tick is limited to one bounded recovery batch.
-        Assert.Equal(3, status.ConsecutiveFailures); // Recovery attempts are real requests and failures.
-        Assert.Equal(30, status.IntervalMinutes);
-    }
-
-    [Fact]
     public void 組filter查詢字串_共用方法格式()
     {
         Assert.Equal("&filter_objid=3&filter_objid=12", PrtgResourceGuardProbe.BuildObjidFilter(new long[] { 3, 12 }));
@@ -3598,7 +2464,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         _stubHandler.OnSend = (req, _) =>
         {
             var url = req.RequestUri!.ToString();
@@ -3627,7 +2493,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now.AddMinutes(-30));
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         _stubHandler.OnSend = (req, _) =>
         {
             var url = req.RequestUri!.ToString();
@@ -3668,7 +2534,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now.AddMinutes(-30));
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         _stubHandler.OnSend = (req, _) =>
         {
             var url = req.RequestUri!.ToString();
@@ -3706,7 +2572,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     public async Task 範圍補抓_環境探測執行中_零補抓請求但快照照常()
     {
         SetupOkDevices(new long[] { 10, 20 });
-        SeedCurrentMappedJointAdmission(10);
+        SeedCurrentMappedSensors(10);
         _stubHandler.OnSend = (req, _) =>
         {
             var url = req.RequestUri!.ToString();
@@ -3753,7 +2619,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     {
         var devices = Enumerable.Range(1, 60).Select(i => (long)(5000 + i)).ToList();
         SetupOkDevices(devices);
-        SeedCurrentMappedJointAdmission(5_060);
+        SeedCurrentMappedSensors(5_060);
         _stubHandler.OnSend = (req, _) =>
         {
             var url = req.RequestUri!.ToString();
@@ -3791,7 +2657,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now.AddMinutes(-30));
         _settingsStore.Update(s => s.PrtgResourceGuardSensorObjids = overrideObjids.ToList());
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
     }
 
     [Fact]
@@ -3827,7 +2693,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         const long deviceId = 702;
         SeedManualBusinessDevice(deviceId);
         SetupOkDevices([10]);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         var today = DateTime.Today;
         SeedCompletedMappedQueueRows(today);
         _backend.PrtgStore().UpsertSensorsAndEnqueueRecentStateChanges(
@@ -3906,7 +2772,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var devices = Enumerable.Range(1, 60).Select(i => (long)(5000 + i)).ToList();
         SetupOkDevices(devices);
         _settingsStore.Update(s => s.PrtgResourceGuardSensorObjids = new List<string> { "9001" });
-        SeedCurrentMappedJointAdmission(5_060);
+        SeedCurrentMappedSensors(5_060);
         _stubHandler.OnSend = (req, _) =>
         {
             var url = req.RequestUri!.ToString();
@@ -3979,7 +2845,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "S", SensorType = "ping", Status = "Up" }
         }, DateTime.Now);
-        SeedCurrentMappedJointAdmission();
+        SeedCurrentMappedSensors();
         _stubHandler.OnSend = (req, _) => IsBackfillUrl(req.RequestUri!.ToString())
             ? throw new InvalidOperationException("模擬補抓失敗")
             : Task.FromResult(FilteredValues(req.RequestUri!.ToString()));

@@ -207,31 +207,13 @@ public class MailNotificationService
                                 ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }
                         })
                         : new List<DailyAnalysisRecord>();
-                    currentRecords = RemoveStaleMessageStatusFindings(
-                        currentRecords.Where(record => CurrentWorkflowVersion(record, mailVersions)));
-                    if (_prtgBackend != null)
-                    {
-                        if (!PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out var currentAuthority, out _) || currentAuthority is null)
-                            currentRecords = RemovePrtgLanesTransiently(currentRecords);
-                        else
-                        {
-                            var diskChannelAuthority = new Lazy<PrtgDiskChannelAuthoritySnapshot?>(() =>
-                                PrtgResourceQualification.CaptureDiskChannelAuthority(_prtgBackend));
-                            currentRecords = FilterCurrentPrtgLanes(currentRecords, currentSettings, currentAuthority.Settings,
-                                currentAuthority.Policy, currentAuthority.Policy.MessageTimeFingerprint(currentAuthority.Settings.PrtgUrl),
-                                true, (hostId, sensorId, issue, date, authoritySettings, fingerprint) =>
-                                    IsCurrentPrtgResource(hostId, sensorId, issue, date, authoritySettings, fingerprint,
-                                        diskChannelAuthority));
-                        }
-                    }
+                    currentRecords = currentRecords.Where(record => CurrentWorkflowVersion(record, mailVersions)).ToList();
                     var currentContext = BuildContext();
                     var summaryRecords = currentSettings.MailEnabled && currentSettings.MailOnRunCompleted
                         ? currentRecords.Where(record => RiskLevels.Rank(record.RiskLevel) >= RiskLevels.Rank(currentSettings.MailMinRiskLevel)).ToList()
                         : new List<DailyAnalysisRecord>();
                     var urgentRecords = currentSettings.MailEnabled && currentSettings.MailUrgentEnabled
-                        ? currentRecords.Where(record => QualifiesForUrgentRisk(record) &&
-                            (!record.TopIssues.Any(PrtgFindingMapper.IsPrtg) || record.CanSupplementWithPrtg()) &&
-                            (!record.TopIssues.Any(PrtgFindingMapper.IsPrtg) || record.Date.Date == DateTime.Today.AddDays(-1))).ToList()
+                        ? RemovePrtgLanesTransiently(currentRecords).Where(QualifiesForUrgentRisk).ToList()
                         : new List<DailyAnalysisRecord>();
                     var (_, summaryViews) = ResolvePerRecipient(currentSettings, summaryRecords, currentContext);
                     var (_, urgentViews) = ResolvePerRecipient(currentSettings, urgentRecords, currentContext, includeSuspended: true);
@@ -271,28 +253,21 @@ public class MailNotificationService
                 var riskFilter = settings.MailOnRunCompleted
                     ? RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
                     : new[] { RiskLevels.High };
-                var records = RemoveStaleMessageStatusFindings(
-                    _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = riskFilter }));
+                var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = riskFilter });
                 if (recoveryWaitingRecordIds.Count > 0)
                     records = records.Where(record => !recoveryWaitingRecordIds.Contains(record.RecordId)).ToList();
                 var ctx = BuildContext();
-                // Summary and urgent mail share one full-window target lookup. Both lanes need
-                // the same broader set to suppress stale pressure aggregates for each recipient.
-                IReadOnlyList<DailyAnalysisRecord> formalMailScopeRecords = settings.MailOnRunCompleted || settings.MailUrgentEnabled
-                    ? ReadFormalMailScopeRecords(from, to)
-                    : Array.Empty<DailyAnalysisRecord>();
 
                 if (settings.MailOnRunCompleted)
                 {
                     await SendRunSummaryAsync(settings, records, ctx, from, to, ct, mailVersions, mailContextFingerprint,
-                        settingsFingerprint, formalMailScopeRecords);
+                        settingsFingerprint);
                 }
 
                 if (settings.MailUrgentEnabled)
                 {
                     await SendUrgentNotificationsAsync(settings, records, ctx, from, to, ct, mailVersions, mailContextFingerprint,
-                        settingsFingerprint, formalMailScopeRecords);
-                    await RetryOldPendingUrgentPageAsync(settings, ctx, from, to, ct, mailContextFingerprint, settingsFingerprint);
+                        settingsFingerprint);
                 }
                 ct.ThrowIfCancellationRequested();
                 ClosePlans();
@@ -348,154 +323,6 @@ public class MailNotificationService
         intent.Status == "no-qualified-recipient" && intent.Recipients.Values.Any(status =>
             status is "failed-or-unknown" or "sending-result-unknown");
 
-    private async Task RetryOldPendingUrgentPageAsync(SystemSettings settings, MailContext context,
-        DateTime currentFrom, DateTime currentTo, CancellationToken ct, string? mailContextFingerprint,
-        string settingsFingerprint)
-    {
-        if (_prtgBackend == null || !settings.MailEnabled || !settings.MailUrgentEnabled) return;
-        const int pageSize = 100;
-        var state = _state.Get();
-        var eligible = state.UrgentOutbox.Values.Where(intent => intent.RecordDate.Date < currentFrom.Date &&
-                (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient") ||
-                 IsRetryableLegacyNoQualifiedIntent(intent)))
-            .OrderBy(intent => intent.Key, StringComparer.Ordinal).ToArray();
-        var cursorStore = new MailUrgentRetryCursorStore(_prtgBackend.Blob(MailUrgentRetryCursorStore.BlobKey));
-        var cursor = cursorStore.Get().LastIntentKey;
-        var page = eligible.Where(intent => string.IsNullOrEmpty(cursor) ||
-                StringComparer.Ordinal.Compare(intent.Key, cursor) > 0)
-            .Take(pageSize).ToArray();
-        if (page.Length == 0)
-        {
-            cursor = null;
-            page = eligible.Take(pageSize).ToArray();
-        }
-        if (page.Length == 0)
-        {
-            if (cursorStore.Get().LastIntentKey != null)
-                cursorStore.Update(value => { value.LastIntentKey = null; value.UpdatedAtUtc = DateTime.UtcNow; });
-            return;
-        }
-        cursorStore.Update(value =>
-        {
-            value.LastIntentKey = page[^1].Key;
-            value.UpdatedAtUtc = DateTime.UtcNow;
-        });
-
-        var records = new List<DailyAnalysisRecord>();
-        var intentKeysByRecordId = new Dictionary<long, string>();
-        Dictionary<string, HostDayWorkflowVersion>? versions = _workflow == null
-            ? null : new Dictionary<string, HostDayWorkflowVersion>(StringComparer.Ordinal);
-        foreach (var intent in page)
-        {
-            ct.ThrowIfCancellationRequested();
-            var parentId = intent.ParentRecordId > 0 ? intent.ParentRecordId : ParentRecordIdFromIntentKey(intent.Key);
-            if (parentId <= 0)
-            {
-                MarkUrgentIntentWaiting(intent.Key, "parent-record-id-unavailable");
-                continue;
-            }
-
-            ExactAnalysisRecordLookup lookup;
-            try
-            {
-                lookup = _records.LookupByRecordId(parentId);
-            }
-            catch (NotSupportedException)
-            {
-                MarkUrgentIntentWaiting(intent.Key, "bounded-parent-lookup-unavailable");
-                continue;
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "[Mail] urgent intent {0}: exact parent lookup failed; intent remains queued.", intent.Key);
-                MarkUrgentIntentWaiting(intent.Key, "parent-record-read-failed");
-                continue;
-            }
-
-            var reason = !lookup.Exists ? "parent-record-missing" :
-                lookup.PayloadTooLarge ? "parent-record-over-128kib" :
-                lookup.DetailPruned ? "parent-record-details-pruned" :
-                lookup.Malformed ? "parent-record-malformed" :
-                lookup.IdentityMismatch ? "parent-record-identity-mismatch" :
-                lookup.Record is null ? "parent-record-unavailable" :
-                lookup.HostId != intent.HostId || lookup.Date.Date != intent.RecordDate.Date ? "parent-record-identity-mismatch" :
-                intent.ParentRecordId > 0 && intent.ParentRecordId != lookup.RecordId ? "parent-record-id-mismatch" :
-                ParentRecordIdFromIntentKey(intent.Key) is var keyedParent && keyedParent > 0 && keyedParent != lookup.RecordId
-                    ? "parent-record-key-mismatch" :
-                intent.SettingsRevision != settings.Revision ? "settings-revision-changed" :
-                lookup.Record.RiskLevel != RiskLevels.High ? "parent-no-longer-high-risk" :
-                !lookup.Record.CanSupplementWithPrtg() ? "parent-no-longer-supplementable" :
-                !lookup.Record.TopIssues.Any(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)
-                    ? "parent-formal-finding-missing" :
-                intent.ProblemKeys.Any(key => !lookup.Record.TopIssues.Any(issue => issue.EventKey == key))
-                    ? "parent-findings-changed" : null;
-            if (reason != null)
-            {
-                MarkUrgentIntentWaiting(intent.Key, reason);
-                continue;
-            }
-
-            var record = lookup.Record!;
-            if (_workflow != null)
-            {
-                var version = _workflow.CaptureDeliveryVersion(record.HostId, record.Date, record.RecordId, out var recoveryWaiting);
-                if (recoveryWaiting || version == null || version.ParentRecordId != record.RecordId)
-                {
-                    MarkUrgentIntentWaiting(intent.Key, "parent-workflow-not-current");
-                    continue;
-                }
-                versions![RecordKey(record)] = version;
-            }
-            records.Add(record);
-            intentKeysByRecordId[record.RecordId] = intent.Key;
-        }
-
-        if (records.Count == 0) return;
-        ClearUrgentIntentWaiting(intentKeysByRecordId);
-        await SendUrgentNotificationsAsync(settings, records, context, currentFrom, currentTo, ct, versions,
-            mailContextFingerprint, settingsFingerprint, records, intentKeysByRecordId);
-    }
-
-    private static long ParentRecordIdFromIntentKey(string key)
-    {
-        const string marker = "|parent:";
-        var start = key.IndexOf(marker, StringComparison.Ordinal);
-        if (start < 0) return 0;
-        start += marker.Length;
-        var end = key.IndexOf('|', start);
-        var value = end < 0 ? key[start..] : key[start..end];
-        return long.TryParse(value, System.Globalization.NumberStyles.None,
-            System.Globalization.CultureInfo.InvariantCulture, out var recordId) ? recordId : 0;
-    }
-
-    private void MarkUrgentIntentWaiting(string key, string reason)
-    {
-        _state.Update(state =>
-        {
-            if (!state.UrgentOutbox.TryGetValue(key, out var intent)) return;
-            if (intent.WaitingReasonCode != reason) intent.WaitingSinceUtc = DateTime.UtcNow;
-            intent.WaitingReasonCode = reason;
-            intent.UpdatedAtUtc = DateTime.UtcNow;
-        });
-    }
-
-    private void ClearUrgentIntentWaiting(IReadOnlyDictionary<long, string> intentKeysByRecordId)
-    {
-        var parentByKey = intentKeysByRecordId.ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
-        _state.Update(state =>
-        {
-            foreach (var (key, parentId) in parentByKey)
-                if (state.UrgentOutbox.TryGetValue(key, out var intent))
-                {
-                    if (intent.ParentRecordId == 0) intent.ParentRecordId = parentId;
-                    if (intent.CreatedAtUtc == default)
-                        intent.CreatedAtUtc = intent.UpdatedAtUtc == default ? DateTime.UtcNow : intent.UpdatedAtUtc;
-                    intent.WaitingReasonCode = null;
-                    intent.WaitingSinceUtc = null;
-                }
-        });
-    }
-
     public async Task CheckAndSendDailyWeeklyAsync(DateTime now, CancellationToken ct = default)
     {
         try
@@ -518,21 +345,15 @@ public class MailNotificationService
                 Enum.TryParse<DayOfWeek>(settings.MailWeeklyDayOfWeek, ignoreCase: true, out var weeklyDay) &&
                 now.DayOfWeek == weeklyDay && TimeSpan.TryParse(settings.MailWeeklyTime, out var weeklyTime) &&
                 now.TimeOfDay >= weeklyTime && _state.Get().LastWeeklySentDate != today;
-            IReadOnlyList<DailyAnalysisRecord> formalScopeRecords = dailyDue || weeklyDue
-                ? ReadFormalMailScopeRecords(weeklyDue ? weeklyFrom : dailyFrom, to)
-                : Array.Empty<DailyAnalysisRecord>();
-
             if (dailyDue)
             {
-                if (await SendDigestAsync(settings, now, windowDays: 1, isWeekly: false, ct,
-                    formalScopeRecords.Where(record => record.Date.Date >= dailyFrom && record.Date.Date <= to).ToArray()))
+                if (await SendDigestAsync(settings, now, windowDays: 1, isWeekly: false, ct))
                 _state.Update(s => s.LastDailySentDate = today);
             }
 
             if (weeklyDue)
             {
-                if (await SendDigestAsync(settings, now, windowDays: 7, isWeekly: true, ct,
-                    formalScopeRecords.Where(record => record.Date.Date >= weeklyFrom && record.Date.Date <= to).ToArray()))
+                if (await SendDigestAsync(settings, now, windowDays: 7, isWeekly: true, ct))
                 _state.Update(s => s.LastWeeklySentDate = today);
             }
         }
@@ -790,11 +611,7 @@ public class MailNotificationService
                 {
                     foreach (var key in keys) s.UrgentSentKeys.Add(key);
                     foreach (var record in _records.Query(new RecordQueryFilter { From = from, To = to }))
-                    {
                         s.UrgentSentKeys.Add(UrgentRecordKey(record));
-                        foreach (var fact in PrtgUrgentFacts(record))
-                        { s.PrtgUrgentAcceptedFacts[fact.Key] = fact.Value; s.PrtgUrgentFactSeenAtUtc[fact.Key] = DateTime.UtcNow; }
-                    }
                 }
             });
         }
@@ -894,7 +711,7 @@ public class MailNotificationService
     /// 問題優先區塊比照統計行以外的明細一樣整段留空。
     /// </summary>
     private sealed record RecipientView(List<DailyAnalysisRecord>? Detail, IReadOnlySet<long>? VisibleHostIds,
-        List<DailyAnalysisRecord>? ApprovedRecords = null, HashSet<string>? SuppressedPressurePairs = null,
+        List<DailyAnalysisRecord>? ApprovedRecords = null,
         string? Recipient = null, MailIssueContributionScope? IssueScope = null);
 
     /// <summary>
@@ -1004,10 +821,8 @@ public class MailNotificationService
     private async Task SendRunSummaryAsync(
         SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? mailVersions = null, string? mailContextFingerprint = null,
-        string? expectedSettingsFingerprint = null,
-        IReadOnlyCollection<DailyAnalysisRecord>? formalScopeRecords = null)
+        string? expectedSettingsFingerprint = null)
     {
-        records = RemoveStaleMessageStatusFindings(records);
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var state = _state.Get();
         var candidates = records.Where(r => RiskLevels.Rank(r.RiskLevel) >= minRank).ToList();
@@ -1028,16 +843,11 @@ public class MailNotificationService
         if (order.Count == 0) return;
 
         var settingsFingerprint = expectedSettingsFingerprint ?? HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
-        var diskChannelAuthority = new Lazy<PrtgDiskChannelAuthoritySnapshot?>(() =>
-            _prtgBackend is null ? null : PrtgResourceQualification.CaptureDiskChannelAuthority(_prtgBackend));
 
         var issueRowsCache = new Dictionary<string, MailIssueDigestProjection>();
         var attemptedSummaryDetails = new Dictionary<string, List<DailyAnalysisRecord>>(StringComparer.OrdinalIgnoreCase);
-        var attemptedFormalSummaryDetails = new Dictionary<string, List<DailyAnalysisRecord>>(StringComparer.OrdinalIgnoreCase);
         var attemptedSummaryRendered = new Dictionary<string, RenderedMailContributions>(StringComparer.OrdinalIgnoreCase);
         var summaryKeys = qualifying.Select(RecordKey).ToHashSet(StringComparer.Ordinal);
-        var formalRecords = qualifying.Concat(formalScopeRecords ?? ReadFormalMailScopeRecords(from, to))
-            .GroupBy(RecordKey, StringComparer.Ordinal).Select(group => group.Last()).ToList();
         (string Subject, string Body) BuildMessage(RecipientView view)
         {
             var count = (view.ApprovedRecords ?? qualifying).Count(record => summaryKeys.Contains(RecordKey(record)) &&
@@ -1046,13 +856,13 @@ public class MailNotificationService
             var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", DateTime.Today.ToString("yyyy-MM-dd"),
                 settings.MailMinRiskLevel, "執行摘要", statsLine);
             var (rows, issueScope) = BuildRecipientIssueRows(issueRowsCache, "summary", view.Recipient ?? string.Empty,
-                from, to, view.VisibleHostIds, view.SuppressedPressurePairs, view.IssueScope);
+                from, to, view.VisibleHostIds, view.IssueScope);
             if (view.Recipient is { } recipient)
                 attemptedSummaryRendered[recipient] = CreateRenderedMailContributions(view.Detail, rows, issueScope, SummaryBodyLineLimit);
             var renderedRows = view.Recipient is { } key && attemptedSummaryRendered.TryGetValue(key, out var rendered)
                 ? rendered.Rows?.ToList() : null;
             return (subject, BuildStatsAndDetailBody(settings, statsLine,
-                renderedRows));
+                renderedRows, rows?.Count ?? 0));
         }
 
         // 標記放在 SendPerRecipientAsync 的 finally 裡執行（見其文件說明）：取消例外會讓
@@ -1064,27 +874,13 @@ public class MailNotificationService
             if (HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(currentSettings)]) != settingsFingerprint ||
                 !currentSettings.MailEnabled || !currentSettings.MailOnRunCompleted) return null;
             var currentRisk = RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel);
-            var currentRecords = RemoveStaleMessageStatusFindings(_records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = currentRisk })
+            var currentRecords = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = currentRisk })
                 .Where(record => qualifying.Any(candidate => RecordKey(candidate) == RecordKey(record)) && CurrentWorkflowVersion(record, mailVersions))
-                .ToList());
+                .ToList();
             var allowedIssueKeys = qualifying.ToDictionary(RecordKey,
                 record => record.TopIssues.Select(issue => issue.EventKey).ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
-            PrtgSharedAuthoritySnapshot? currentAuthority = null;
-            var sharedAuthorityAvailable = _prtgBackend == null ||
-                PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out currentAuthority, out _);
-            if (_prtgBackend != null)
-            {
-                if (!sharedAuthorityAvailable || currentAuthority is null)
-                    currentRecords = RemovePrtgLanesTransiently(currentRecords);
-                else
-                    currentRecords = FilterCurrentPrtgLanes(currentRecords, currentSettings, currentAuthority.Settings,
-                        currentAuthority.Policy, currentAuthority.Policy.MessageTimeFingerprint(currentAuthority.Settings.PrtgUrl),
-                        true, (hostId, sensorId, issue, date, authoritySettings, fingerprint) =>
-                            IsCurrentPrtgResource(hostId, sensorId, issue, date, authoritySettings, fingerprint, diskChannelAuthority));
-            }
             currentRecords = RestrictMailIssues(currentRecords, allowedIssueKeys);
-            var issueScope = CaptureMailIssueContributionScope(from, to, currentSettings, currentAuthority,
-                sharedAuthorityAvailable, diskChannelAuthority, mailVersions);
+            var issueScope = CaptureMailIssueContributionScope(from, to, currentSettings, withoutPrtg: false, mailVersions);
             var (currentOrder, currentViews) = ResolvePerRecipient(currentSettings, currentRecords, BuildContext());
             foreach (var oldRecipient in views.Keys.ToArray()) views.Remove(oldRecipient);
             foreach (var entry in currentViews) views[entry.Key] = entry.Value;
@@ -1095,13 +891,13 @@ public class MailNotificationService
                     !IsWorkflowMailPartAccepted("summary", email, record, mailVersions, mailContextFingerprint)).ToList();
                 if (original.Detail != null || (!recordingOutcome && unresolvedStats.Count == 0)) return null;
                 var (statsRows, filteredStatsScope) = BuildRecipientIssueRows(issueRowsCache, "summary", email,
-                    from, to, live.VisibleHostIds, live.SuppressedPressurePairs, issueScope);
+                    from, to, live.VisibleHostIds, issueScope);
                 return live with { IssueScope = filteredStatsScope };
             }
             var candidatesNow = live.Detail ?? new List<DailyAnalysisRecord>();
             var unresolved = recordingOutcome ? candidatesNow : FilterUnresolvedWorkflowMail("summary", email, new RecipientView(candidatesNow, live.VisibleHostIds), mailVersions, mailContextFingerprint);
             var (rows, filteredIssueScope) = BuildRecipientIssueRows(issueRowsCache, "summary", email, from, to,
-                live.VisibleHostIds, live.SuppressedPressurePairs, issueScope);
+                live.VisibleHostIds, issueScope);
             if (original.Detail is { Count: > 0 } && unresolved.Count == 0) return null;
             return live.Detail == null ? live : new RecipientView(unresolved, live.VisibleHostIds,
                 IssueScope: filteredIssueScope);
@@ -1114,27 +910,20 @@ public class MailNotificationService
             onRecipientStarting: (email, detail) =>
             {
                 attemptedSummaryDetails[email] = detail?.Select(item => qualifying.FirstOrDefault(record => record.RecordId == item.RecordId && RecordKey(record) == RecordKey(item)) ?? item).ToList() ?? qualifying;
-                attemptedFormalSummaryDetails[email] = attemptedSummaryRendered.GetValueOrDefault(email)?.Records.ToList() ?? [];
             },
             onRecipientResult: (email, success) =>
             {
                 var current = views.GetValueOrDefault(email);
                 var checkedView = current == null ? null : Recheck(email, current, recordingOutcome: true);
                 var attempted = attemptedSummaryDetails.GetValueOrDefault(email) ?? new List<DailyAnalysisRecord>();
-                CompleteFormalStartClaims("summary", email,
-                    attemptedFormalSummaryDetails.GetValueOrDefault(email) ?? [], success);
                 if ((!success || attemptedSummaryRendered.GetValueOrDefault(email)?.IsComplete != false) && checkedView != null && (checkedView.Detail == null
                         ? attempted.All(record => CurrentWorkflowVersion(record, mailVersions))
                         : attempted.All(record => checkedView.Detail.Any(live =>
                             RecordKey(live) == RecordKey(record) && live.RecordId == record.RecordId &&
                             SameWorkflowMailContent("summary", live, record, mailVersions, mailContextFingerprint)))) )
                     TrackWorkflowMail("summary", attempted, email, success, views, mailVersions, mailContextFingerprint);
-                if (success)
-                {
-                }
             },
             recheck: (email, view) => Recheck(email, view),
-            authorizeStart: (email, view) => AuthorizeFormalStart(email, view, "summary", formalRecords),
             reserveMailContributions: email => TryReserveRenderedMailContributions("summary", email,
                 attemptedSummaryRendered.GetValueOrDefault(email), mailVersions),
             isDeliveryComplete: email => attemptedSummaryRendered.GetValueOrDefault(email)?.IsComplete != false);
@@ -1143,72 +932,35 @@ public class MailNotificationService
     /// <summary>
     /// 高風險即時通知：**按收件人聚合**（回饋十六輪批次A-1）——一位收件人一次執行最多只收
     /// 一封信。回饋十七輪批次B-4 疊加可見範圍過濾：對應到帳號的收件人只看見自己可見範圍內的
-    /// 主機，對應不到帳號的收件人只收統計行。
+    /// 主機，對應不到帳號的收件人只收統計行。PRTG 問題只進每日／每週摘要：這裡先拿掉 PRTG
+    /// finding 與其依據，剩下的仍是高風險才寄，信件內容也只含非 PRTG 問題（docs/PRTG-SPEC.md §10）。
     /// </summary>
     private async Task SendUrgentNotificationsAsync(
         SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? mailVersions = null, string? mailContextFingerprint = null,
-        string? expectedSettingsFingerprint = null,
-        IReadOnlyCollection<DailyAnalysisRecord>? formalScopeRecords = null,
-        IReadOnlyDictionary<long, string>? durableRetryIntentKeys = null)
+        string? expectedSettingsFingerprint = null)
     {
-        records = RemoveStaleMessageStatusFindings(records);
+        records = RemovePrtgLanesTransiently(records);
         // 固定本輪起點，避免 store 回傳共用物件時設定修改連帶改掉比較基準。
         settings = JsonSerializer.Deserialize<SystemSettings>(JsonSerializer.Serialize(settings))!;
         var settingsFingerprint = expectedSettingsFingerprint ?? HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
         var state = _state.Get();
-        var scopeReader = _prtgBackend == null ? null : new PrtgScopeRevisionReader(_prtgBackend, _hosts);
-        var scopeRevision = scopeReader?.ReadStructural();
         _state.Update(s =>
         {
             var cutoff = DateTime.UtcNow.AddDays(-Math.Max(14, settings.RetentionDays));
-            foreach (var fact in records.SelectMany(PrtgUrgentFacts)) s.PrtgUrgentFactSeenAtUtc[fact.Key] = DateTime.UtcNow;
             foreach (var key in s.UrgentOutbox.Where(p => p.Value.RecordDate < cutoff.Date &&
                          (p.Value.Status is "smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
                      .Select(p => p.Key).ToArray())
                 s.UrgentOutbox.Remove(key);
-            foreach (var key in s.PrtgUrgentAcceptedFacts.Keys.Where(k =>
-                !s.PrtgUrgentFactSeenAtUtc.TryGetValue(k, out var seen) || seen < cutoff).ToArray())
-            { s.PrtgUrgentAcceptedFacts.Remove(key); s.PrtgUrgentFactSeenAtUtc.Remove(key); }
         });
-        var candidates = records.Where(QualifiesForUrgentRisk)
-            .Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg) || r.CanSupplementWithPrtg())
-            .ToList();
+        var candidates = records.Where(QualifiesForUrgentRisk).ToList();
         var (_, candidateViews) = ResolvePerRecipient(settings, candidates, ctx);
-        string IntentKey(DailyAnalysisRecord record) => durableRetryIntentKeys?.GetValueOrDefault(record.RecordId) ??
+        string IntentKey(DailyAnalysisRecord record) =>
             UrgentRecordKey(record, mailVersions, candidateViews, mailContextFingerprint);
-        candidates = candidates.Where(record => !record.TopIssues.Any(PrtgFindingMapper.IsPrtg) ||
-            record.Date.Date == DateTime.Today.AddDays(-1) ||
-            durableRetryIntentKeys?.ContainsKey(record.RecordId) == true ||
-            state.UrgentOutbox.TryGetValue(IntentKey(record), out var existingIntent) &&
-                (existingIntent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient") ||
-                 IsRetryableLegacyNoQualifiedIntent(existingIntent)))
-            .ToList(); // Late PRTG delivery is eligible only as a retry of the exact durable parent/fence intent.
-        var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r)))
-            .Where(r => !state.UrgentOutbox.TryGetValue(IntentKey(r), out var priorIntent) ||
-                priorIntent.Status != "cancelled-formal-revoked")
-            .Where(r => mailVersions != null && mailVersions.TryGetValue(RecordKey(r), out var version) && version.ParentRecordId == r.RecordId ||
-                PrtgUrgentFacts(r).Count == 0 ||
-                PrtgUrgentFacts(r).Any(f => f.Value > state.PrtgUrgentAcceptedFacts.GetValueOrDefault(f.Key)) ||
-                r.TopIssues.Any(i => !PrtgFindingMapper.IsPrtg(i) && !i.Suppressed && i.ElevatesDayRisk))
-            .ToList();
+        var pending = candidates.Where(r => !state.UrgentSentKeys.Contains(IntentKey(r))).ToList();
         if (pending.Count == 0) return;
         var (order, views) = ResolvePerRecipient(settings, pending, ctx);
         MigrateLegacyAcceptedNetIqContributions("urgent", pending, views, mailVersions);
-        if (durableRetryIntentKeys is { Count: > 0 })
-        {
-            foreach (var email in views.Keys.ToArray())
-            {
-                var view = views[email];
-                var detail = view.Detail?.Where(record => durableRetryIntentKeys.TryGetValue(record.RecordId, out var key) &&
-                    state.UrgentOutbox.TryGetValue(key, out var intent) && intent.Recipients.ContainsKey(email) &&
-                    intent.Recipients.GetValueOrDefault(email) != "smtp-accepted").ToList();
-                views[email] = view with { Detail = detail };
-            }
-            order.RemoveAll(email => views[email].Detail is not { Count: > 0 });
-        }
-        if (pending.All(r => r.TopIssues.Any(PrtgFindingMapper.IsPrtg)))
-            order.RemoveAll(email => views[email].Detail is not { Count: > 0 });
         PlanWorkflowMail("urgent", pending, views, mailVersions, mailContextFingerprint);
         _state.Update(s =>
         {
@@ -1228,11 +980,11 @@ public class MailNotificationService
                     intent.CreatedAtUtc = intent.UpdatedAtUtc == default ? DateTime.UtcNow : intent.UpdatedAtUtc;
                 intent.WaitingReasonCode = null;
                 intent.WaitingSinceUtc = null;
-                if (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked")) intent.Status = "pending";
+                if (intent.Status != "smtp-accepted") intent.Status = "pending";
                 intent.UpdatedAtUtc = DateTime.UtcNow;
                 foreach (var email in order.Where(e => views[e].Detail?.Any(r => r.HostId == record.HostId && r.Date == record.Date) == true))
                     if (intent.Recipients.GetValueOrDefault(email) is not
-                        ("smtp-accepted" or "sending-result-unknown" or "failed-or-unknown" or "cancelled-formal-revoked"))
+                        ("smtp-accepted" or "sending-result-unknown" or "failed-or-unknown"))
                         intent.Recipients[email] = "pending";
                 if (intent.Recipients.Count == 0) intent.Status = "no-qualified-recipient";
             }
@@ -1240,61 +992,38 @@ public class MailNotificationService
         if (order.Count == 0) return;
         var attemptedKeys = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var attemptedDetails = new Dictionary<string, List<DailyAnalysisRecord>>(StringComparer.OrdinalIgnoreCase);
-        var attemptedFormalDetails = new Dictionary<string, List<DailyAnalysisRecord>>(StringComparer.OrdinalIgnoreCase);
         var attemptedUrgentRendered = new Dictionary<string, RenderedMailContributions>(StringComparer.OrdinalIgnoreCase);
         var issueRowsCache = new Dictionary<string, MailIssueDigestProjection>();
         var urgentKeys = pending.Select(RecordKey).ToHashSet(StringComparer.Ordinal);
-        var formalRecords = pending.Concat(formalScopeRecords ?? ReadFormalMailScopeRecords(from, to))
-            .GroupBy(RecordKey, StringComparer.Ordinal).Select(group => group.Last()).ToList();
         (string Subject, string Body) BuildMessage(RecipientView view)
         {
             var count = (view.ApprovedRecords ?? pending).Count(record => urgentKeys.Contains(RecordKey(record)) && QualifiesForUrgentRisk(record));
             var globalStatsLine = $"本次執行共 {count} 筆高風險主機日達門檻";
             var (rows, issueScope) = BuildRecipientIssueRows(issueRowsCache, "urgent", view.Recipient ?? string.Empty,
-                from, to, view.VisibleHostIds, view.SuppressedPressurePairs, view.IssueScope);
+                from, to, view.VisibleHostIds, view.IssueScope);
             if (view.Recipient is { } recipient)
                 attemptedUrgentRendered[recipient] = CreateRenderedMailContributions(view.Detail,
                     view.Detail is { Count: > 0 } ? rows : null, issueScope, UrgentBodyLineLimit);
             var renderedRows = view.Recipient is { } key && attemptedUrgentRendered.TryGetValue(key, out var rendered)
                 ? rendered.Rows?.ToList() : null;
             return BuildUrgentMessage(settings, globalStatsLine, view.Detail,
-                renderedRows, BuildContext());
+                renderedRows, rows?.Count ?? 0, BuildContext());
         }
 
-        var diskChannelAuthority = new Lazy<PrtgDiskChannelAuthoritySnapshot?>(() =>
-            _prtgBackend is null ? null : PrtgResourceQualification.CaptureDiskChannelAuthority(_prtgBackend));
         RecipientView? Recheck(string email, RecipientView original, bool recordingOutcome = false)
         {
             var currentSettings = _settingsStore.Get();
-            PrtgSharedAuthoritySnapshot? sharedAuthority = null;
-            var sharedAuthorityAvailable = _prtgBackend is null ||
-                PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out sharedAuthority, out _);
-            var authoritySettings = sharedAuthority?.Settings ?? new SystemSettings();
-            var policy = sharedAuthority?.Policy ?? (_prtgBackend is null ? _prtgMonitoring?.Get() : null);
-            var currentMessageFingerprint = policy?.MessageTimeFingerprint(authoritySettings.PrtgUrl) ?? string.Empty;
             if (!currentSettings.MailEnabled || !currentSettings.MailUrgentEnabled ||
                 currentSettings.SmtpServer != settings.SmtpServer || currentSettings.SmtpPort != settings.SmtpPort ||
                 currentSettings.SmtpUseTls != settings.SmtpUseTls || currentSettings.SmtpAccount != settings.SmtpAccount ||
                 currentSettings.SmtpPasswordEnc != settings.SmtpPasswordEnc || currentSettings.MailFrom != settings.MailFrom ||
                 GetSuspendedRecipients().Contains(email, StringComparer.OrdinalIgnoreCase)) return null;
             var liveContext = BuildContext();
-            // Retain the persisted transport intent's context key. Settings are fenced in
-            // full; structural scope and each PRTG authority are rechecked independently.
-            // A policy-only Date Format edit cannot cancel unrelated lanes on this parent.
             if (HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(currentSettings)]) != settingsFingerprint) return null;
-            var currentRecords = RemoveStaleMessageStatusFindings(
+            var currentRecords = RemovePrtgLanesTransiently(
                 _records.Query(new RecordQueryFilter { From = from, To = to, Hosts = null, RiskLevels = (currentSettings.MailOnRunCompleted ? RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel) : new[] { RiskLevels.High }) }));
-            if (_prtgBackend is not null)
-                currentRecords = FilterCurrentPrtgLanes(currentRecords, currentSettings, authoritySettings,
-                    policy, currentMessageFingerprint, sharedAuthorityAvailable, CurrentResource);
-            var issueScope = CaptureMailIssueContributionScope(from, to, currentSettings, sharedAuthority,
-                sharedAuthorityAvailable, diskChannelAuthority, mailVersions);
-            if (durableRetryIntentKeys is { Count: > 0 })
-                currentRecords = currentRecords.Concat(records.Where(record => durableRetryIntentKeys.ContainsKey(record.RecordId)))
-                    .GroupBy(record => record.RecordId).Select(group => group.Last()).ToList();
-            // Recheck may legitimately narrow a mixed record after one PRTG lane loses
-            // authority. Keep the original parent/event envelope as the upper bound so
-            // refreshed current lanes can survive without admitting newly appeared issues.
+            var issueScope = CaptureMailIssueContributionScope(from, to, currentSettings, withoutPrtg: true, mailVersions);
+            // 以原本的主機日／事件範圍為上限：重核只會縮小，不會帶進寄送後才出現的新問題。
             var allowedIssueKeysByRecord = (original.Detail ?? new()).GroupBy(RecordKey, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key,
                     group => group.SelectMany(record => record.TopIssues).Select(issue => issue.EventKey)
@@ -1307,7 +1036,7 @@ public class MailNotificationService
                     !IsWorkflowMailPartAccepted("urgent", email, record, mailVersions, mailContextFingerprint)).ToList();
                 if (original.Detail != null || (!recordingOutcome && unresolvedStats.Count == 0)) return null;
                 var (statsRows, filteredStatsScope) = BuildRecipientIssueRows(issueRowsCache, "urgent", email,
-                    from, to, liveView.VisibleHostIds, liveView.SuppressedPressurePairs, issueScope);
+                    from, to, liveView.VisibleHostIds, issueScope);
                 return liveView with { IssueScope = filteredStatsScope };
             }
             var visible = liveView.VisibleHostIds;
@@ -1325,106 +1054,16 @@ public class MailNotificationService
                     RecomputeTransientMailRisk(r, narrowed);
                     return narrowed;
                 })
-                .Select(r => PrtgOperationScope.SameSettings(settings, currentSettings) &&
-                     (scopeReader == null || scopeReader.ReadStructural() == scopeRevision) &&
-                     r.CanSupplementWithPrtg() && liveContext.Host(r.HostId) is { Active: true, MergedInto: null }
-                    ? r : RemovePrtgLanesTransiently([r]).Single())
                 .Where(QualifiesForUrgentRisk)
                 .ToList();
             var liveFiltered = recordingOutcome ? detail : FilterUnresolvedWorkflowMail("urgent", email, new RecipientView(detail, visible), mailVersions, mailContextFingerprint);
-            if (_prtgBackend is not null)
-            {
-                if (!PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out var finalAuthority, out _) || finalAuthority is null)
-                    liveFiltered = RemovePrtgLanesTransiently(liveFiltered).Where(QualifiesForUrgentRisk).ToList();
-                else if (sharedAuthority is null || finalAuthority.SettingsBlobVersion != sharedAuthority.SettingsBlobVersion ||
-                    finalAuthority.PolicyBlobVersion != sharedAuthority.PolicyBlobVersion)
-                    liveFiltered = FilterCurrentPrtgLanes(liveFiltered, currentSettings, finalAuthority.Settings,
-                        finalAuthority.Policy, finalAuthority.Policy.MessageTimeFingerprint(finalAuthority.Settings.PrtgUrl),
-                        true, CurrentResource).Where(QualifiesForUrgentRisk).ToList();
-            }
             var (liveRows, filteredIssueScope) = BuildRecipientIssueRows(issueRowsCache, "urgent", email, from, to,
-                visible, liveView.SuppressedPressurePairs, issueScope);
+                visible, issueScope);
             foreach (var oldRecipient in views.Keys.ToArray()) views.Remove(oldRecipient);
             foreach (var entry in liveViews) views[entry.Key] = entry.Value;
             return liveFiltered.Count == 0 && original.Detail?.Count > 0 ? null :
                 new RecipientView(liveFiltered, visible, IssueScope: filteredIssueScope);
         }
-        bool CurrentResource(long hostId, long sensorId, LogIssueSignature issue, DateTime recordDate,
-            SystemSettings authoritySettings, string currentMessageFingerprint)
-        {
-            if (_prtgBackend == null)
-                return !PrtgFindingMapper.RequiresMessageTimeAuthority(issue) && !IsStaleMessageStatusFinding(issue, "");
-            if (IsStaleMessageStatusFinding(issue, currentMessageFingerprint)) return false;
-            var host = _hosts.GetAll().FirstOrDefault(h => h.HostId == hostId);
-            if (host == null || host.Source != "netiq") return false;
-            var rules = new KnownIssueRuleStore(_prtgBackend.Blob("rules"));
-            if (!rules.Exists) return false;
-            KnownIssueRule? capturedRule;
-            {
-                var current = rules.Load().Content?.Rules.FirstOrDefault(r => r.Id == issue.RuleId && r.Enabled && r.Platform == "prtg");
-                if (current == null) return false;
-                using var db = _prtgBackend.CreateContext();
-                var json = db.PrtgObservations.Where(o => o.ActiveKey != null && o.HostId == hostId && o.EventKey == issue.EventKey)
-                    .OrderByDescending(o => o.RecordDate).Select(o => o.ContentJson).FirstOrDefault();
-                if (json == null) return false;
-                using var doc = System.Text.Json.JsonDocument.Parse(json);
-                capturedRule = doc.RootElement.GetProperty("Finding").GetProperty("Rule").Deserialize<KnownIssueRule>();
-                if (System.Text.Json.JsonSerializer.Serialize(capturedRule) != System.Text.Json.JsonSerializer.Serialize(current)) return false;
-            }
-            var suppressionStore = new MuteAwareSuppressionStore(new SuppressionStore(_prtgBackend.Blob("suppressions")), _issueOwners ?? new IssueOwnerStore(_prtgBackend.Blob("issue_owners")));
-            var suppressions = suppressionStore.LoadAll();
-            var copy = System.Text.Json.JsonSerializer.Deserialize<LogIssueSignature>(System.Text.Json.JsonSerializer.Serialize(issue))!;
-            SuppressionFilter.MarkSuppressed([copy], SuppressionFilter.ActiveForHost(suppressions, host.HostName, host.GroupIds, DateTime.Now),
-                SuppressionFilter.MutesOf(suppressions), DateTime.Today.AddDays(-1));
-            if (copy.Suppressed) return false;
-            if (issue.EventKey.Split(':') is { Length: >= 2 } keyParts && keyParts[1] == PrtgRuleEvaluator.RuleSilent)
-                return PrtgSilentDeviceProofRevalidator.IsCurrent(_prtgBackend, hostId,
-                    recordDate, issue, capturedRule, authoritySettings.PrtgUrl);
-            var identity = _prtgBackend.PrtgStore().GetResourceIdentity(sensorId);
-            if (PrtgResourceProfileQualification.IsCpuOrMemoryPressure(issue))
-                return PrtgResourceProfileQualification.IsCurrentFormalPressure(_prtgBackend, hostId, sensorId,
-                    issue, DateTime.UtcNow);
-            if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-                return diskChannelAuthority.Value?.IsCurrent(sensorId, identity) == true;
-            if (issue.RuleId != "builtin-prtg-resource-disk-pressure" &&
-                PrtgFindingMapper.RequiresMessageTimeAuthority(issue))
-            {
-                var evidence = new PrtgSensorTimelineStore(_prtgBackend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Get();
-                if (evidence.HostId != hostId || evidence.SourceGeneration != issue.PrtgSourceGeneration ||
-                    evidence.ResourceGeneration != issue.PrtgResourceGeneration ||
-                    !PrtgResourceQualification.IsCurrent(evidence, identity, issue.PrtgSourceGeneration,
-                        sensorId, identity.DeviceId, hostId, currentMessageFingerprint)) return false;
-            }
-            else if (issue.RuleId != "builtin-prtg-resource-disk-pressure" &&
-                     issue.RuleId is not ("disk_free_trend" or "builtin-prtg-disk-free-trend"))
-            {
-                // Unknown PRTG lanes need an explicit independent authority contract.
-                return false;
-            }
-            if (issue.RuleId == "builtin-prtg-resource-disk-pressure")
-            {
-                var resourceRules = PrtgResourceCurrentRuleCatalog.Load(_prtgBackend);
-                if (!PrtgResourceProfileQualification.IsCurrentDiskProfile(_prtgBackend, hostId, sensorId,
-                        DateTime.UtcNow, issue.PrtgSourceGeneration, issue.PrtgResourceGeneration,
-                        issue.PrtgChannelGeneration) ||
-                    issue.PrtgRuleAdmissionFingerprint != resourceRules.AdmissionFingerprintFor(PrtgResourceFamily.Disk) ||
-                    issue.PrtgResourceReasonCodes is not { Count: > 0 } reasons)
-                    return false;
-                if (reasons.Contains("disk-seven-day-low-water-trend") &&
-                    (!resourceRules.DiskTrendEnabled || issue.PrtgTrendSourceRuleId != resourceRules.DiskTrendRuleId ||
-                     issue.PrtgTrendSourceRuleFingerprint != resourceRules.DiskTrendRuleFingerprint ||
-                     diskChannelAuthority.Value?.IsCurrent(sensorId, identity) != true)) return false;
-            }
-            else if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-            {
-                return diskChannelAuthority.Value?.IsCurrent(sensorId, identity) == true;
-            }
-            return true;
-        }
-        // Formal authorization may remove a revoked pressure finding while preserving
-        // an independent NetIQ risk. Transport coverage belongs to the immutable intent
-        // created for that exact parent, not to the narrowed rendering's content hash.
-        // Recheck above still validates live content/version before authorization.
         string DeliveryIntentKey(DailyAnalysisRecord rendered)
         {
             var original = pending.FirstOrDefault(record => record.RecordId == rendered.RecordId &&
@@ -1435,10 +1074,7 @@ public class MailNotificationService
             DeliveryIntentKey, ct,
             onComplete: (success, coverage) =>
             {
-                MarkSent(settings, pending.Where(r => r.TopIssues.Any(PrtgFindingMapper.IsPrtg)).ToList(), success, coverage,
-                    s => s.UrgentSentKeys, IntentKey, allowZeroCoverage: false);
-                MarkSent(settings, pending.Where(r => !r.TopIssues.Any(PrtgFindingMapper.IsPrtg)).ToList(), success, coverage,
-                    s => s.UrgentSentKeys, IntentKey);
+                MarkSent(settings, pending, success, coverage, s => s.UrgentSentKeys, IntentKey);
                 _state.Update(s =>
                 {
                     foreach (var record in pending)
@@ -1457,7 +1093,7 @@ public class MailNotificationService
                             // A sender callback marks recipients before/after transport. Keep the
                             // attempted state: a missing final SMTP response can mean DATA was
                             // accepted remotely, while recipients that never started remain not-sent.
-                            if (intent.Recipients.GetValueOrDefault(email) is not ("sending-result-unknown" or "failed-or-unknown" or "cancelled-formal-revoked"))
+                            if (intent.Recipients.GetValueOrDefault(email) is not ("sending-result-unknown" or "failed-or-unknown"))
                                 intent.Recipients[email] = "not-sent";
                         }
                         var attemptedRecipients = attemptedKeys
@@ -1472,34 +1108,13 @@ public class MailNotificationService
                             : expected.All(e => success.GetValueOrDefault(e) ||
                                 intent.Recipients.GetValueOrDefault(e) == "smtp-accepted" ||
                                 intent.SmtpAcceptedAtUtc.ContainsKey(e)) ? "smtp-accepted" : "pending";
-                        var targetIssues = record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue).ToArray();
-                        if (expected.Count == 0 && targetIssues.Length > 0 && intent.Recipients.Count > 0 &&
-                            intent.Recipients.Keys.All(email => targetIssues.All(issue =>
-                                intent.FormalIssueStates.GetValueOrDefault(FormalRecipientIssueKey(email, issue)) is "revoked" or "smtp-accepted")) &&
-                            intent.Recipients.Keys.Any(email => targetIssues.Any(issue =>
-                                intent.FormalIssueStates.GetValueOrDefault(FormalRecipientIssueKey(email, issue)) == "revoked")))
-                            intent.Status = "cancelled-formal-revoked";
                         intent.UpdatedAtUtc = DateTime.UtcNow;
-                        // A statistics-only global recipient can receive an accepted NetIQ
-                        // urgent message without coverage of its PRTG details. That delivery
-                        // must not become formal PRTG acceptance evidence.
-                        if (intent.Status == "smtp-accepted" && expected.Count > 0)
-                        {
-                            var deliveredIssueKeys = expected.Select(email => attemptedFormalDetails
-                                    .GetValueOrDefault(email)?.FirstOrDefault(delivered => RecordKey(delivered) == RecordKey(record)))
-                                .Select(delivered => delivered is null ? new HashSet<string>(StringComparer.Ordinal)
-                                    : PrtgUrgentFacts(delivered).Keys.ToHashSet(StringComparer.Ordinal))
-                                .Aggregate((left, right) => { left.IntersectWith(right); return left; });
-                            foreach (var fact in PrtgUrgentFactsForAcceptedIntent(record, intent, deliveredIssueKeys))
-                                s.PrtgUrgentAcceptedFacts[fact.Key] = fact.Value;
-                        }
                     }
                 });
             }, recheck: (email, view) => Recheck(email, view),
             onRecipientStarting: (email, detail) =>
             {
                 attemptedDetails[email] = detail?.Select(item => pending.FirstOrDefault(record => record.RecordId == item.RecordId && RecordKey(record) == RecordKey(item)) ?? item).ToList() ?? pending;
-                attemptedFormalDetails[email] = attemptedUrgentRendered.GetValueOrDefault(email)?.Records.ToList() ?? [];
                 attemptedKeys[email] = (detail ?? pending).Select(record =>
                 {
                     var original = pending.FirstOrDefault(candidate => RecordKey(candidate) == RecordKey(record)) ?? record;
@@ -1511,8 +1126,7 @@ public class MailNotificationService
                         if (state.UrgentOutbox.TryGetValue(key, out var intent) && intent.Recipients.GetValueOrDefault(email) != "smtp-accepted")
                         {
                             intent.Recipients[email] = "sending-result-unknown";
-                            if (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked"))
-                                intent.Status = "pending";
+                            if (intent.Status != "smtp-accepted") intent.Status = "pending";
                             intent.UpdatedAtUtc = DateTime.UtcNow;
                         }
                 });
@@ -1523,8 +1137,6 @@ public class MailNotificationService
                 var current = views.GetValueOrDefault(email);
                 var checkedView = current == null ? null : Recheck(email, current, recordingOutcome: true);
                 var attempted = attemptedDetails.GetValueOrDefault(email) ?? new List<DailyAnalysisRecord>();
-                CompleteFormalStartClaims("urgent", email,
-                    attemptedFormalDetails.GetValueOrDefault(email) ?? [], accepted);
                 if ((!accepted || attemptedUrgentRendered.GetValueOrDefault(email)?.IsComplete != false) && checkedView != null && (checkedView.Detail == null
                         ? attempted.All(record => CurrentWorkflowVersion(record, mailVersions))
                         : attempted.All(record => checkedView.Detail.Any(live =>
@@ -1539,448 +1151,23 @@ public class MailNotificationService
                         var complete = attemptedUrgentRendered.GetValueOrDefault(email)?.IsComplete != false;
                         intent.Recipients[email] = accepted ? complete ? "smtp-accepted" : "not-sent" : "failed-or-unknown";
                         if (accepted && complete) intent.SmtpAcceptedAtUtc[email] = DateTime.UtcNow;
-                        foreach (var record in attemptedFormalDetails.GetValueOrDefault(email) ?? [])
-                            foreach (var issue in record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue))
-                            {
-                                var issueStateKey = FormalRecipientIssueKey(email, issue);
-                                if (intent.FormalIssueStates.GetValueOrDefault(issueStateKey) == "revoked") continue;
-                                intent.FormalIssueStates[issueStateKey] = accepted ? "smtp-accepted" : "failed-or-unknown";
-                            }
                         intent.UpdatedAtUtc = DateTime.UtcNow;
                     }
                 });
             },
-            authorizeStart: (email, view) => AuthorizeFormalStart(email, view, "urgent", formalRecords,
-                IntentKey),
             reserveMailContributions: email => TryReserveRenderedMailContributions("urgent", email,
                 attemptedUrgentRendered.GetValueOrDefault(email), mailVersions),
             isDeliveryComplete: email => attemptedUrgentRendered.GetValueOrDefault(email)?.IsComplete != false);
     }
 
+    /// <summary>即時信門檻：呼叫端已拿掉 PRTG finding 並重算風險（<see cref="RemovePrtgLanesTransiently"/>），剩下的仍是高風險才寄。</summary>
     private static bool QualifiesForUrgentRisk(DailyAnalysisRecord record) =>
         record.RiskLevel == RiskLevels.High && record.RiskReview?.Status != "pending";
 
-    private static Dictionary<string, int> PrtgUrgentFacts(DailyAnalysisRecord record) => record.TopIssues
-        .Where(i => PrtgFindingMapper.IsPrtg(i) && !i.Suppressed && i.ElevatesDayRisk)
-        .GroupBy(i => $"{record.HostId}|{i.EventKey}|{i.PrtgIncidentStartedAt:O}")
-        .ToDictionary(g => g.Key, g => g.Max(i => (int)i.Severity + 10));
-
-    private static Dictionary<string, int> PrtgUrgentFactsForAcceptedIntent(DailyAnalysisRecord record, MailUrgentIntent intent,
-        IReadOnlySet<string>? deliveredIssueKeys = null)
-    {
-        var accepted = record.TopIssues.Where(issue => PrtgFindingMapper.IsPrtg(issue) && !issue.Suppressed && issue.ElevatesDayRisk)
-            .Where(issue => deliveredIssueKeys == null || deliveredIssueKeys.Contains(
-                $"{record.HostId}|{issue.EventKey}|{issue.PrtgIncidentStartedAt:O}"))
-            .Where(issue => !PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(issue) ||
-                intent.Recipients.Count > 0 && intent.Recipients.Keys.All(email =>
-                    (intent.FormalStartFenceRefs?.ContainsKey(FormalRecipientIssueKey(email, issue)) == true ||
-                     intent.FormalStartFenceRefs?.ContainsKey(FormalIssueKey(issue)) == true) &&
-                    intent.FormalIssueStates.GetValueOrDefault(FormalRecipientIssueKey(email, issue)) == "smtp-accepted") ||
-                intent.FormalStartFences?.ContainsKey(FormalIssueKey(issue)) == true && intent.Recipients.Count > 0 &&
-                    intent.Recipients.Keys.All(email => intent.Recipients.GetValueOrDefault(email) == "smtp-accepted" ||
-                        intent.SmtpAcceptedAtUtc.ContainsKey(email)));
-        return accepted.GroupBy(issue => $"{record.HostId}|{issue.EventKey}|{issue.PrtgIncidentStartedAt:O}")
-            .ToDictionary(group => group.Key, group => group.Max(issue => (int)issue.Severity + 10));
-    }
-
-    private static string FormalIssueKey(LogIssueSignature issue) =>
-        IssueSignatureKey.For(issue) + "|" + issue.EventKey + "|" + issue.PrtgChannelGeneration;
-
-    private static string FormalRecipientIssueKey(string recipient, LogIssueSignature issue) =>
-        recipient.Trim().ToLowerInvariant() + "|" + FormalIssueKey(issue);
-
-    private static string LegacyFormalClaimKey(string lane, string recipient, DailyAnalysisRecord record, LogIssueSignature issue) =>
-        $"{lane}|{recipient.Trim().ToLowerInvariant()}|{record.RecordId}|mode:{record.PrtgManifest?.ResourceModeBlobVersion ?? -1}|{FormalIssueKey(issue)}";
-
-    private static string FormalFenceKey(DailyAnalysisRecord record, LogIssueSignature issue) =>
-        $"{record.RecordId}|mode:{record.PrtgManifest?.ResourceModeBlobVersion ?? -1}|{FormalIssueKey(issue)}";
-
-    private static string FormalClaimKey(string lane, string recipient, string fenceKey) =>
-        $"{lane}|{recipient.Trim().ToLowerInvariant()}|{fenceKey}";
-
-    private static string FormalFenceHash(PrtgResourceFormalDeliveryFence fence) => Convert.ToHexString(
-        SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(fence, LfJsonOptions.Pretty))));
-
-    private void CompleteFormalStartClaims(string lane, string recipient,
-        IEnumerable<DailyAnalysisRecord> records, bool smtpAccepted)
-    {
-        var targetRecords = records.Where(record => record.TopIssues.Any(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)).ToArray();
-        if (targetRecords.Length == 0) return;
-
-        _state.MutateWithContext((db, state) =>
-        {
-            var shards = new PrtgFormalMailClaimStore.MutationSession(db);
-            foreach (var record in targetRecords)
-                foreach (var issue in record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue))
-                {
-                    var fenceKey = FormalFenceKey(record, issue);
-                    var key = FormalClaimKey(lane, recipient, fenceKey);
-                    var issueKey = FormalIssueKey(issue);
-                    var intent = lane == "urgent" ? state.UrgentOutbox.Values.FirstOrDefault(candidate =>
-                        candidate.HostId == record.HostId && candidate.RecordDate.Date == record.Date.Date &&
-                        (candidate.FormalStartFenceRefs?.ContainsKey(FormalRecipientIssueKey(recipient, issue)) == true ||
-                         candidate.FormalStartFenceRefs?.ContainsKey(issueKey) == true)) : null;
-                    var recipientIssueKey = FormalRecipientIssueKey(recipient, issue);
-                    var shardKey = intent?.FormalStartFenceRefs?.GetValueOrDefault(recipientIssueKey)?.ShardKey ??
-                        intent?.FormalStartFenceRefs?.GetValueOrDefault(issueKey)?.ShardKey ??
-                        PrtgFormalMailClaimStore.BlobKey(record.HostId, record.Date, lane, fenceKey, recipient);
-                    var claim = shards.GetClaim(record.HostId, shardKey, key);
-                    if (claim == null ||
-                        claim.Status is "revoked" or "smtp-accepted") continue;
-                    claim.Status = smtpAccepted ? "smtp-accepted" : "failed-or-unknown";
-                    claim.UpdatedAtUtc = DateTime.UtcNow;
-                    if (smtpAccepted) claim.SmtpAcceptedAtUtc = DateTime.UtcNow;
-                    shards.SetClaim(record.HostId, shardKey, key, claim);
-                }
-            shards.Persist();
-            return true;
-        });
-    }
-
-    /// <summary>
-    /// Creates the durable recipient start claim and an approved mail snapshot in one
-    /// serializable transaction. Formal CPU/memory findings are copied into the message only
-    /// when the persisted parent, mode revision, rule and grant all still match at claim time.
-    /// </summary>
-    private RecipientView? AuthorizeFormalStart(string recipient, RecipientView view, string lane,
-        IReadOnlyCollection<DailyAnalysisRecord> sourceRecords,
-        Func<DailyAnalysisRecord, string>? urgentIntentKey = null)
-    {
-        var records = sourceRecords.Concat(view.Detail ?? [])
-            .GroupBy(RecordKey, StringComparer.Ordinal).Select(group => group.Last()).ToList();
-        if (!records.Any(record => record.TopIssues.Any(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)))
-            return view;
-
-        // Statistics-only recipients have no detailed finding to deliver and therefore create no
-        // durable start claim. Validate current formal contributions read-only so a full global
-        // outbox blob cannot suppress otherwise deliverable NetIQ/other-pressure statistics.
-        if (view.Detail == null)
-        {
-            var allowed = new HashSet<string>(StringComparer.Ordinal);
-            var suppressed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (_prtgBackend != null)
-            {
-                using var db = _prtgBackend.CreateContext();
-                foreach (var record in records)
-                foreach (var issue in record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue))
-                {
-                    if (record.RecordId > 0 && PrtgResourceFormalDeliveryFence.TryValidateCurrentStart(
-                            db, record.HostId, record.RecordId, issue, null, out _))
-                        allowed.Add(RecordKey(record) + "|" + FormalIssueKey(issue));
-                    else
-                        suppressed.Add(PressureContributionKey(record, issue));
-                }
-            }
-            else
-            {
-                foreach (var record in records)
-                foreach (var issue in record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue))
-                    suppressed.Add(PressureContributionKey(record, issue));
-            }
-
-            var approved = records.Select(record => FilterFormalIssues(record, allowed, suppressed)).ToList();
-            return view with { ApprovedRecords = approved, SuppressedPressurePairs =
-                suppressed.Select(key => key.Split('\0', 4)).Where(parts => parts.Length == 4)
-                    .Select(parts => $"{parts[0]}\0{parts[2]}").ToHashSet(StringComparer.OrdinalIgnoreCase) };
-        }
-
-        FormalStartSnapshot authorization;
-        try
-        {
-            authorization = _state.MutateWithContext((db, state) =>
-        {
-            var shards = new PrtgFormalMailClaimStore.MutationSession(db);
-            var allowed = new HashSet<string>(StringComparer.Ordinal);
-            var suppressedContributions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var record in records)
-            {
-                foreach (var issue in record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue))
-                {
-                    var issueKey = FormalIssueKey(issue);
-                    var isRecipientFinding = view.Detail?.Any(candidate => RecordKey(candidate) == RecordKey(record) &&
-                        candidate.TopIssues.Any(candidateIssue => FormalIssueKey(candidateIssue) == issueKey)) == true;
-                    if (!isRecipientFinding)
-                    {
-                        // Scope-only records can suppress an aggregate row, but need no shard IO
-                        // or recipient claim. Prove their current status directly in this context.
-                        if (record.RecordId > 0 && PrtgResourceFormalDeliveryFence.TryValidateCurrentStart(
-                                db, record.HostId, record.RecordId, issue, null, out _))
-                            allowed.Add(RecordKey(record) + "|" + issueKey);
-                        else
-                            suppressedContributions.Add(PressureContributionKey(record, issue));
-                        continue;
-                    }
-
-                    var fenceKey = FormalFenceKey(record, issue);
-                    var claimKey = FormalClaimKey(lane, recipient, fenceKey);
-                    var legacyClaimKey = LegacyFormalClaimKey(lane, recipient, record, issue);
-                    state.FormalMailStartClaims.TryGetValue(legacyClaimKey, out var legacyClaim);
-                    MailUrgentIntent? intent = null;
-                    string? recipientIssueKey = null;
-                    if (lane == "urgent" && urgentIntentKey != null)
-                        state.UrgentOutbox.TryGetValue(urgentIntentKey(record), out intent);
-                    var recipientReferenceKey = FormalRecipientIssueKey(recipient, issue);
-                    var shardKey = intent?.FormalStartFenceRefs?.GetValueOrDefault(recipientReferenceKey)?.ShardKey ??
-                        intent?.FormalStartFenceRefs?.GetValueOrDefault(issueKey)?.ShardKey ??
-                        PrtgFormalMailClaimStore.BlobKey(record.HostId, record.Date, lane, fenceKey, recipient);
-                    var priorClaim = shards.GetClaim(record.HostId, shardKey, claimKey);
-                    var expected = shards.GetFence(record.HostId, shardKey, fenceKey);
-
-                    if (legacyClaim != null)
-                    {
-                        // Older releases stored full fences in the singleton. Keep that evidence
-                        // intact, but never reinterpret or recapture it into the new shard format.
-                        if (intent != null && intent.Recipients.GetValueOrDefault(recipient) != "smtp-accepted" &&
-                            !intent.SmtpAcceptedAtUtc.ContainsKey(recipient))
-                        {
-                            recipientIssueKey = FormalRecipientIssueKey(recipient, issue);
-                            intent.FormalIssueStates[recipientIssueKey] = "revoked";
-                            intent.UpdatedAtUtc = DateTime.UtcNow;
-                        }
-                        suppressedContributions.Add(PressureContributionKey(record, issue));
-                        continue;
-                    }
-                    if (priorClaim?.FenceKey != null && priorClaim.FenceKey != fenceKey)
-                        throw new InvalidDataException("Formal mail claim key resolved to a different immutable fence key.");
-                    if (priorClaim?.Status is "revoked" or "smtp-accepted")
-                    {
-                        if (priorClaim.Status == "smtp-accepted" && intent != null)
-                        {
-                            recipientIssueKey ??= FormalRecipientIssueKey(recipient, issue);
-                            if (intent.FormalIssueStates.GetValueOrDefault(recipientIssueKey) != "revoked")
-                                intent.FormalIssueStates[recipientIssueKey] = "smtp-accepted";
-                            if (intent.Recipients.GetValueOrDefault(recipient) != "smtp-accepted")
-                            {
-                                intent.Recipients[recipient] = "smtp-accepted";
-                                intent.SmtpAcceptedAtUtc[recipient] = priorClaim.SmtpAcceptedAtUtc ?? DateTime.UtcNow;
-                            }
-                            intent.UpdatedAtUtc = DateTime.UtcNow;
-                        }
-                        suppressedContributions.Add(PressureContributionKey(record, issue));
-                        continue;
-                    }
-                    if (priorClaim != null && expected == null)
-                    {
-                        // An active claim without its immutable shard fence is ambiguous. Keep
-                        // the unknown state and fail closed instead of recapturing a newer proof.
-                            suppressedContributions.Add(PressureContributionKey(record, issue));
-                        continue;
-                    }
-                    if (lane == "urgent")
-                    {
-                        if (intent == null)
-                        {
-                            // Aggregate rows may contain other current formal occurrences in the
-                            // window. They have no urgent outbox intent, so prove their current
-                            // parent authority afresh; never let them bypass the start fence.
-                            if (record.RecordId > 0 && PrtgResourceFormalDeliveryFence.TryValidateCurrentStart(
-                                    db, record.HostId, record.RecordId, issue, expected, out _))
-                                allowed.Add(RecordKey(record) + "|" + issueKey);
-                            else
-                            suppressedContributions.Add(PressureContributionKey(record, issue));
-                            continue;
-                        }
-                        intent.FormalStartFenceRefs ??= new Dictionary<string, PrtgFormalMailFenceReference>(StringComparer.Ordinal);
-                        if (intent.FormalStartFences?.ContainsKey(issueKey) == true)
-                        {
-                            if (intent.Recipients.GetValueOrDefault(recipient) != "smtp-accepted" &&
-                                !intent.SmtpAcceptedAtUtc.ContainsKey(recipient))
-                            {
-                                intent.FormalIssueStates[FormalRecipientIssueKey(recipient, issue)] = "revoked";
-                                intent.UpdatedAtUtc = DateTime.UtcNow;
-                            }
-                            suppressedContributions.Add(PressureContributionKey(record, issue));
-                            continue;
-                        }
-                        recipientIssueKey = FormalRecipientIssueKey(recipient, issue);
-                        var priorIssueState = intent.FormalIssueStates.GetValueOrDefault(recipientIssueKey);
-                        if (priorIssueState is "revoked" or "smtp-accepted" ||
-                            intent.Recipients.GetValueOrDefault(recipient) == "smtp-accepted")
-                        {
-                            suppressedContributions.Add(PressureContributionKey(record, issue));
-                            continue;
-                        }
-                        if ((intent.FormalStartFenceRefs.TryGetValue(recipientIssueKey, out var reference) ||
-                             intent.FormalStartFenceRefs.TryGetValue(issueKey, out reference)) &&
-                            (reference.HostId != record.HostId || reference.ShardKey != shardKey ||
-                             reference.FenceKey != fenceKey || expected == null || reference.FenceHash != FormalFenceHash(expected)))
-                        {
-                            intent.FormalIssueStates[recipientIssueKey] = "revoked";
-                            intent.UpdatedAtUtc = DateTime.UtcNow;
-                            suppressedContributions.Add(PressureContributionKey(record, issue));
-                            continue;
-                        }
-                        if (expected == null && (priorIssueState is "sending-result-unknown" or "failed-or-unknown" or "smtp-accepted" ||
-                            intent.Recipients.GetValueOrDefault(recipient) is "sending-result-unknown" or "failed-or-unknown" or "smtp-accepted"))
-                        {
-                            intent.FormalIssueStates[recipientIssueKey] = "revoked";
-                            suppressedContributions.Add(PressureContributionKey(record, issue));
-                            continue;
-                        }
-                    }
-
-                    if (record.RecordId > 0 && PrtgResourceFormalDeliveryFence.TryValidateCurrentStart(
-                            db, record.HostId, record.RecordId, issue, expected, out var fence))
-                    {
-                        if (expected == null)
-                            shards.SetFence(record.HostId, shardKey, fenceKey, fence, DateTime.UtcNow);
-                        if (intent != null)
-                        {
-                            var reference = new PrtgFormalMailFenceReference(record.HostId, shardKey, fenceKey, FormalFenceHash(fence));
-                            if (intent.FormalStartFenceRefs.TryGetValue(recipientIssueKey, out var existingReference) && existingReference != reference)
-                                throw new InvalidDataException("Urgent mail retry fence reference changed inside its immutable intent.");
-                            intent.FormalStartFenceRefs[recipientIssueKey] = reference;
-                            if (recipientIssueKey != null) intent.FormalIssueStates[recipientIssueKey] = "sending-result-unknown";
-                            if (intent.Recipients.GetValueOrDefault(recipient) != "smtp-accepted")
-                                intent.Recipients[recipient] = "sending-result-unknown";
-                            intent.UpdatedAtUtc = DateTime.UtcNow;
-                        }
-                        if (priorClaim == null)
-                            priorClaim = new MailFormalStartClaim { FenceKey = fenceKey };
-                        priorClaim.FenceKey = fenceKey;
-                        priorClaim.Status = "sending-result-unknown";
-                        priorClaim.UpdatedAtUtc = DateTime.UtcNow;
-                        shards.SetClaim(record.HostId, shardKey, claimKey, priorClaim);
-                        allowed.Add(RecordKey(record) + "|" + issueKey);
-                    }
-                    else
-                    {
-                        suppressedContributions.Add(PressureContributionKey(record, issue));
-                        if (priorClaim == null)
-                            priorClaim = new MailFormalStartClaim { FenceKey = fenceKey };
-                        priorClaim.Status = "revoked";
-                        priorClaim.UpdatedAtUtc = DateTime.UtcNow;
-                        shards.SetClaim(record.HostId, shardKey, claimKey, priorClaim);
-                        if (intent != null && recipientIssueKey != null)
-                        {
-                            intent.FormalIssueStates[recipientIssueKey] = "revoked";
-                            intent.UpdatedAtUtc = DateTime.UtcNow;
-                        }
-                    }
-                }
-            }
-
-            shards.Persist();
-            var approvedRecords = records.Select(record => FilterFormalIssues(record, allowed, suppressedContributions)).ToList();
-            var contributionsByHostAndPair = records.SelectMany(record => record.TopIssues.Select(issue => new
-                {
-                    Key = PressureHostPairKey(record.HostId, issue),
-                    Contribution = PressureContributionKey(record, issue)
-                }))
-                .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Select(item => item.Contribution).ToArray(),
-                    StringComparer.OrdinalIgnoreCase);
-            var suppressedPairs = contributionsByHostAndPair
-                .Where(group => group.Value.Length > 0 && group.Value.All(suppressedContributions.Contains))
-                .Select(group => group.Key)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (lane == "urgent" && urgentIntentKey != null && view.Detail != null)
-            {
-                foreach (var original in view.Detail)
-                {
-                    var approved = approvedRecords.FirstOrDefault(record => RecordKey(record) == RecordKey(original));
-                    if (approved == null || approved.TopIssues.Count != 0 ||
-                        !original.TopIssues.Any(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)) continue;
-                    if (state.UrgentOutbox.TryGetValue(urgentIntentKey(original), out var intent) &&
-                        intent.Recipients.GetValueOrDefault(recipient) != "smtp-accepted")
-                    {
-                        intent.Recipients[recipient] = "cancelled-formal-revoked";
-                        intent.UpdatedAtUtc = DateTime.UtcNow;
-                    }
-                }
-            }
-            return new FormalStartSnapshot(approvedRecords, suppressedPairs);
-            });
-        }
-        catch (Exception ex)
-        {
-            // A failed durable formal-claim transaction fails closed for the formal subset only.
-            // Keep unrelated NetIQ/PRTG pressure content, and never report SMTP acceptance for a claim we did not commit.
-            Log.Warn(ex, "[Mail] recipient {0}: formal claim transaction failed; suppressing formal pressure findings for this recipient.", recipient);
-            var suppressed = records.SelectMany(record => record.TopIssues
-                    .Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)
-                    .Select(issue => PressureContributionKey(record, issue)))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var allowed = new HashSet<string>(StringComparer.Ordinal);
-            var approved = records.Select(record => FilterFormalIssues(record, allowed, suppressed)).ToList();
-            var suppressedPairs = records.SelectMany(record => record.TopIssues.Select(issue => new
-                {
-                    Key = PressureHostPairKey(record.HostId, issue),
-                    Contribution = PressureContributionKey(record, issue)
-                }))
-                .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
-                .Where(group => group.All(item => suppressed.Contains(item.Contribution)))
-                .Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            authorization = new FormalStartSnapshot(approved, suppressedPairs);
-        }
-
-        var approvedByKey = authorization.Records.ToDictionary(RecordKey, StringComparer.Ordinal);
-        List<DailyAnalysisRecord>? detail = null;
-        if (view.Detail != null)
-        {
-            detail = view.Detail.Where(record => approvedByKey.ContainsKey(RecordKey(record)))
-                .Select(record => approvedByKey[RecordKey(record)])
-                .Where(record => lane != "urgent" || QualifiesForUrgentRisk(record))
-                .Where(record => record.TopIssues.Count > 0 ||
-                    !view.Detail.Any(original => RecordKey(original) == RecordKey(record) &&
-                        original.TopIssues.Any(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)))
-                .ToList();
-            if (view.Detail.Count > 0 && detail.Count == 0) return null;
-        }
-        return view with { Detail = detail, ApprovedRecords = authorization.Records,
-            SuppressedPressurePairs = authorization.SuppressedPairs };
-    }
-
-    private static DailyAnalysisRecord FilterFormalIssues(DailyAnalysisRecord record,
-        HashSet<string> allowed, HashSet<string> suppressedContributions)
-    {
-        var invalidPressure = record.TopIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)
-            .Where(issue => !allowed.Contains(RecordKey(record) + "|" + FormalIssueKey(issue))).ToArray();
-        if (invalidPressure.Length == 0) return record;
-
-        foreach (var issue in invalidPressure) suppressedContributions.Add(PressureContributionKey(record, issue));
-        var copy = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(record))!;
-        copy.RecordId = record.RecordId;
-        copy.TopIssues = copy.TopIssues.Where(issue => !PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(issue) ||
-            allowed.Contains(RecordKey(record) + "|" + FormalIssueKey(issue))).ToList();
-        var baselineRisk = record.PrtgBaselineRiskLevel ?? RiskLevels.Low;
-        copy.RiskLevel = RiskLevels.MoreSevere(baselineRisk, PrtgFindingMapper.RiskFromFindings(copy.TopIssues));
-        copy.RiskBasis = copy.RiskLevel == baselineRisk
-            ? record.PrtgBaselineRiskBasis
-            : PrtgFindingMapper.RiskBasisFrom(copy.TopIssues);
-        return copy;
-    }
-
-    private static string PressurePair(LogIssueSignature issue) =>
-        $"{IssueProfile.KeyOf(issue.Source, issue.EventId).SourceUpper}|{issue.EventId}";
-
-    private static string PressureContributionKey(DailyAnalysisRecord record, LogIssueSignature issue) =>
-        $"{record.HostId.ToString(System.Globalization.CultureInfo.InvariantCulture)}\0{record.RecordId.ToString(System.Globalization.CultureInfo.InvariantCulture)}\0{PressurePair(issue)}\0{FormalIssueKey(issue)}";
-
-    private static string PressureHostPairKey(long hostId, LogIssueSignature issue) =>
-        $"{hostId.ToString(System.Globalization.CultureInfo.InvariantCulture)}\0{PressurePair(issue)}";
-
-    private List<DailyAnalysisRecord> ReadFormalMailScopeRecords(DateTime from, DateTime to) =>
-        _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to })
-            .Where(record => record.TopIssues.Any(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue))
-            .ToList();
-
-    private sealed record FormalStartSnapshot(List<DailyAnalysisRecord> Records, HashSet<string> SuppressedPairs);
-
     private static string UrgentRecordKey(DailyAnalysisRecord record,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions = null,
-        IReadOnlyDictionary<string, RecipientView>? views = null, string? mailContextFingerprint = null)
-    {
-        var facts = PrtgUrgentFacts(record);
-        var parentVersion = WorkflowRecordKey("urgent", record, versions, views, mailContextFingerprint);
-        if (facts.Count == 0) return parentVersion;
-        var value = string.Join(";", facts.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => $"{f.Key}:{f.Value}"));
-        var modeVersion = record.TopIssues.Any(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue)
-            ? record.PrtgManifest?.ResourceModeBlobVersion ?? -1 : -1;
-        return parentVersion + (modeVersion >= 0 ? $"|mode:{modeVersion}" : string.Empty) +
-            "|prtg:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)));
-    }
+        IReadOnlyDictionary<string, RecipientView>? views = null, string? mailContextFingerprint = null) =>
+        WorkflowRecordKey("urgent", record, versions, views, mailContextFingerprint);
 
     /// <summary>涵蓋此 record 的收件人全部成功才標記；coverage 為空（沒有任何收件人可見這台
     /// 主機的明細）的 record 隨「本輪至少一封信寄成功」一併標記，否則會永遠卡在 pending
@@ -2025,7 +1212,6 @@ public class MailNotificationService
         Action<Dictionary<string, bool>, Dictionary<string, List<string>>>? onComplete = null,
         Func<string, RecipientView, RecipientView?>? recheck = null, Action<string, bool>? onRecipientResult = null,
         Action<string, List<DailyAnalysisRecord>?>? onRecipientStarting = null,
-        Func<string, RecipientView, RecipientView?>? authorizeStart = null,
         Func<string, MailContributionReservationAttempt?>? reserveMailContributions = null,
         Func<string, bool>? isDeliveryComplete = null)
     {
@@ -2076,14 +1262,8 @@ public class MailNotificationService
                 if (_workflow != null && checkedView.Detail?.Any(record =>
                         _workflow.IsRecoveryWaiting(record.HostId, record.Date, record.RecordId)) == true)
                     continue;
-                checkedView = authorizeStart == null ? checkedView : authorizeStart(email, checkedView);
-                if (checkedView == null)
-                {
-                    recipientSuccess[email] = false;
-                    continue;
-                }
-                // Recheck and formal-start authorization both narrow what this recipient may see.
-                if (recheck != null || authorizeStart != null)
+                // Recheck narrows what this recipient may see.
+                if (recheck != null)
                 {
                     var keysNow = (checkedView.Detail ?? new()).Select(recordKey).ToHashSet(StringComparer.Ordinal);
                     foreach (var pair in coverage.Where(p => p.Value.Contains(email) && !keysNow.Contains(p.Key)))
@@ -2186,7 +1366,8 @@ public class MailNotificationService
     /// （沿用回饋十七輪批次B-4 的既有原則）。主機日逐日明細不再列出，改成一行站台連結——
     /// 問題優先區塊已經回答「該看哪個問題」，逐日列表留給站台的問題查詢頁展開。
     /// </summary>
-    private string BuildStatsAndDetailBody(SystemSettings settings, string statsLine, List<MailIssueRow>? issueRows)
+    private string BuildStatsAndDetailBody(SystemSettings settings, string statsLine, List<MailIssueRow>? issueRows,
+        int issueRowTotal)
     {
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
@@ -2195,7 +1376,7 @@ public class MailNotificationService
         if (issueRows == null) return body.ToString();
 
         body.AppendLine();
-        AppendIssueRows(body, issueRows, SummaryBodyLineLimit);
+        AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
         body.AppendLine();
         body.AppendLine("如需查看逐主機逐日明細，請至站台的問題查詢頁。");
         return body.ToString();
@@ -2205,7 +1386,8 @@ public class MailNotificationService
     /// 彙整）：內容整段改為問題優先區塊——窗口動輒涵蓋 7 天，「這個問題新出現／擴散中／逾期」
     /// 比「哪些主機累計了幾天」更能回答「這週該先處理哪個」。<paramref name="issueRows"/> 為 null
     /// 時（同 <see cref="BuildStatsAndDetailBody"/>）不附任何明細。</summary>
-    private string BuildDigestBody(SystemSettings settings, string windowText, List<MailIssueRow>? issueRows)
+    private string BuildDigestBody(SystemSettings settings, string windowText, List<MailIssueRow>? issueRows,
+        int issueRowTotal)
     {
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
@@ -2214,7 +1396,7 @@ public class MailNotificationService
         if (issueRows == null) return body.ToString();
 
         body.AppendLine();
-        AppendIssueRows(body, issueRows, SummaryBodyLineLimit);
+        AppendIssueRows(body, issueRows, SummaryBodyLineLimit, issueRowTotal);
         return body.ToString();
     }
 
@@ -2228,7 +1410,7 @@ public class MailNotificationService
     /// </summary>
     private (string Subject, string Body) BuildUrgentMessage(
         SystemSettings settings, string globalStatsLine, List<DailyAnalysisRecord>? detail,
-        List<MailIssueRow>? issueRows, MailContext ctx)
+        List<MailIssueRow>? issueRows, int issueRowTotal, MailContext ctx)
     {
         var dateText = DateTime.Today.ToString("yyyy-MM-dd");
         var records = detail ?? new List<DailyAnalysisRecord>();
@@ -2254,7 +1436,7 @@ public class MailNotificationService
 
         if (issueRows != null)
         {
-            AppendIssueRows(body, issueRows, UrgentBodyLineLimit);
+            AppendIssueRows(body, issueRows, UrgentBodyLineLimit, issueRowTotal);
             body.AppendLine();
         }
 
@@ -2285,7 +1467,8 @@ public class MailNotificationService
     /// 空清單時明講「目前沒有」，不留空白讓人誤以為漏印或信件壞掉。<paramref name="limit"/>
     /// 語意由舊版「主機日行數上限」改為「問題行數上限」，數值沿用（規劃原文明定）。
     /// </summary>
-    private static void AppendIssueRows(StringBuilder body, List<MailIssueRow> rows, int limit)
+    /// <param name="totalRows">截斷前的問題總數；呼叫端的 <paramref name="rows"/> 可能已截在上限內。</param>
+    private static void AppendIssueRows(StringBuilder body, List<MailIssueRow> rows, int limit, int totalRows)
     {
         if (rows.Count == 0)
         {
@@ -2298,9 +1481,10 @@ public class MailNotificationService
         {
             body.AppendLine($"  - {row.FormatLine()}");
         }
-        if (ordered.Count > limit)
+        var total = Math.Max(totalRows, ordered.Count);
+        if (total > limit)
         {
-            body.AppendLine($"  ……其餘 {ordered.Count - limit} 個問題請至站台的問題查詢頁檢視。");
+            body.AppendLine($"  ……其餘 {total - limit} 個問題請至站台的問題查詢頁檢視。");
         }
     }
 
@@ -2322,16 +1506,11 @@ public class MailNotificationService
     /// null（無法判定可見範圍）與 _issueDigest 未注入（測試／功能未啟用）都回 null，
     /// 呼叫端據此整段略過問題優先區塊，不是顯示「查無問題」。
     /// </summary>
-    private MailIssueDigestProjection? BuildIssueRowsCached(
-        Dictionary<string, MailIssueDigestProjection> cache, DateTime from, DateTime to, IReadOnlySet<long>? visibleHostIds,
-        HashSet<string>? suppressedPressurePairs = null) =>
-        BuildIssueRowsCached(cache, from, to, visibleHostIds, suppressedPressurePairs, null);
-
     private (List<MailIssueRow>? Rows, MailIssueContributionScope? Scope) BuildRecipientIssueRows(
         Dictionary<string, MailIssueDigestProjection> cache, string kind, string recipient, DateTime from, DateTime to,
-        IReadOnlySet<long>? visibleHostIds, HashSet<string>? suppressedPressurePairs, MailIssueContributionScope? scope)
+        IReadOnlySet<long>? visibleHostIds, MailIssueContributionScope? scope)
     {
-        if (scope == null) return (BuildIssueRowsCached(cache, from, to, visibleHostIds, suppressedPressurePairs)?.Rows.ToList(), null);
+        if (scope == null) return (BuildIssueRowsCached(cache, from, to, visibleHostIds, null)?.Rows.ToList(), null);
         var state = _state.Get();
         var accepted = state.AcceptedMailContributionReceipts;
         var held = state.HeldLegacyMailContributionReceipts;
@@ -2346,7 +1525,7 @@ public class MailNotificationService
                 !held.ContainsKey(HeldLegacyMailContributionKey(kind, recipient, item.HostId, item.Date,
                     item.ParentAndDecision, item.EventKey))).ToArray()
         };
-        var projection = BuildIssueRowsCached(cache, from, to, visibleHostIds, suppressedPressurePairs, filtered);
+        var projection = BuildIssueRowsCached(cache, from, to, visibleHostIds, filtered);
         return (projection?.Rows.ToList(), filtered with
         {
             Current = projection?.CountedCurrentContributions ?? Array.Empty<MailIssueHostDayContribution>()
@@ -2355,62 +1534,21 @@ public class MailNotificationService
 
     private MailIssueDigestProjection? BuildIssueRowsCached(
         Dictionary<string, MailIssueDigestProjection> cache, DateTime from, DateTime to, IReadOnlySet<long>? visibleHostIds,
-        HashSet<string>? suppressedPressurePairs, MailIssueContributionScope? issueScope)
+        MailIssueContributionScope? issueScope)
     {
         if (_issueDigest == null || visibleHostIds == null) return null;
 
-        var key = (visibleHostIds.Count == 0 ? "∅" : string.Join(",", visibleHostIds.OrderBy(x => x))) + "|" +
-            string.Join(",", (suppressedPressurePairs ?? new HashSet<string>()).OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) +
+        var key = (visibleHostIds.Count == 0 ? "∅" : string.Join(",", visibleHostIds.OrderBy(x => x))) +
             "|" + (issueScope?.CacheKey() ?? "legacy-unscoped");
         if (cache.TryGetValue(key, out var cached)) return cached;
 
         var projection = _issueDigest.BuildDetailed(from, to, visibleHostIds, issueScope);
-        var rows = projection.Rows.ToList();
-        var countedCurrent = projection.CountedCurrentContributions;
-        if (suppressedPressurePairs is { Count: > 0 })
-        {
-            var suppressedByPair = suppressedPressurePairs.Select(key => key.Split('\0', 2))
-                .Where(parts => parts.Length == 2 && long.TryParse(parts[0], out _))
-                .GroupBy(parts => parts[1], StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Select(parts => long.Parse(parts[0],
-                    System.Globalization.CultureInfo.InvariantCulture)).ToHashSet(), StringComparer.OrdinalIgnoreCase);
-            var pairByIssueKey = rows.ToDictionary(row => IssueProfile.KeyOf(row.Source, row.EventId), row =>
-                $"{IssueProfile.KeyOf(row.Source, row.EventId).SourceUpper}|{row.EventId}");
-            countedCurrent = countedCurrent.Where(item =>
-            {
-                var issueKey = IssueProfile.KeyOf(item.Source, item.EventId);
-                return !pairByIssueKey.TryGetValue(issueKey, out var pair) ||
-                    !suppressedByPair.TryGetValue(pair, out var hiddenHosts) || !hiddenHosts.Contains(item.HostId);
-            }).ToArray();
-            var remainingHostCounts = countedCurrent.GroupBy(item => IssueProfile.KeyOf(item.Source, item.EventId))
-                .ToDictionary(group => group.Key, group => group.Select(item => item.HostId).Distinct().Count());
-            rows = rows.Select(row =>
-                {
-                    var issueKey = IssueProfile.KeyOf(row.Source, row.EventId);
-                    var pair = $"{issueKey.SourceUpper}|{row.EventId}";
-                    var visibleCount = issueScope != null
-                        ? remainingHostCounts.GetValueOrDefault(issueKey)
-                        : suppressedByPair.TryGetValue(pair, out var hiddenHosts)
-                            ? Math.Max(0, row.HostCount - hiddenHosts.Count) : row.HostCount;
-                    var bucket = row.Bucket;
-                    if (bucket == MailIssueBucket.Spreading && visibleCount <= row.PreviousHostCount)
-                        bucket = row.MaxSeverityRank >= (int)IssueSeverity.High
-                            ? MailIssueBucket.OtherHighRisk : string.Empty;
-                    return row with { HostCount = visibleCount, Bucket = bucket };
-                })
-                .Where(row => row.HostCount > 0 && row.Bucket.Length > 0)
-                .ToList();
-        }
-        var survivingKeys = rows.Select(row => IssueProfile.KeyOf(row.Source, row.EventId)).ToHashSet();
-        projection = new MailIssueDigestProjection(rows, countedCurrent.Where(item =>
-            survivingKeys.Contains(IssueProfile.KeyOf(item.Source, item.EventId))).ToArray());
         cache[key] = projection;
         return projection;
     }
 
     private MailIssueContributionScope CaptureMailIssueContributionScope(DateTime from, DateTime to,
-        SystemSettings mailSettings, PrtgSharedAuthoritySnapshot? authority, bool sharedAuthorityAvailable,
-        Lazy<PrtgDiskChannelAuthoritySnapshot?> diskChannelAuthority,
+        SystemSettings mailSettings, bool withoutPrtg,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions = null)
     {
         var visibleRiskLevels = RecordRepository.ResolveDayRiskLevels(
@@ -2422,12 +1560,7 @@ public class MailNotificationService
             {
                 Hosts = null, From = windowFrom, To = windowTo, RiskLevels = visibleRiskLevels?.ToArray()
             });
-            if (_prtgBackend == null) return RemoveStaleMessageStatusFindings(records);
-            if (!sharedAuthorityAvailable || authority == null) return RemovePrtgLanesTransiently(records);
-            return FilterCurrentPrtgLanes(records, mailSettings, authority.Settings, authority.Policy,
-                authority.Policy.MessageTimeFingerprint(authority.Settings.PrtgUrl), true,
-                (hostId, sensorId, issue, date, settings, fingerprint) =>
-                    IsCurrentPrtgResource(hostId, sensorId, issue, date, settings, fingerprint, diskChannelAuthority));
+            return withoutPrtg ? RemovePrtgLanesTransiently(records) : records;
         }
 
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
@@ -2444,8 +1577,7 @@ public class MailNotificationService
         return new MailIssueContributionScope(Flatten(ReadWindow(from, to)), Flatten(ReadWindow(previousFrom, previousTo)));
     }
 
-    private async Task<bool> SendDigestAsync(SystemSettings settings, DateTime now, int windowDays, bool isWeekly, CancellationToken ct,
-        IReadOnlyCollection<DailyAnalysisRecord>? formalScopeRecords = null)
+    private async Task<bool> SendDigestAsync(SystemSettings settings, DateTime now, int windowDays, bool isWeekly, CancellationToken ct)
     {
         // 窗口右移一天（回饋十七輪批次A-3）：分析永遠只產出到昨天，每日摘要的語意本來就是
         // 「昨天發生了什麼」；週報＝近七個完整日（昨天往回 7 天）。
@@ -2453,10 +1585,10 @@ public class MailNotificationService
         var from = to.AddDays(-(windowDays - 1));
         // RiskLevels 下推（回饋十八輪批次A-3，與 NotifyAfterRunAsync 同一手法）：記憶體 Rank 過濾
         // 保留（雙保險，語意不變），下推只是收窄 DB 端回傳的列數。
-        var records = RemoveStaleMessageStatusFindings(_records.Query(new RecordQueryFilter
+        var records = _records.Query(new RecordQueryFilter
         {
             Hosts = null, From = from, To = to, RiskLevels = RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
-        }));
+        });
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var qualifying = records.Where(r => RiskLevels.Rank(r.RiskLevel) >= minRank).ToList();
 
@@ -2556,16 +1688,10 @@ public class MailNotificationService
 
         var issueRowsCache = new Dictionary<string, MailIssueDigestProjection>();
         var digestKeys = qualifying.Select(RecordKey).ToHashSet(StringComparer.Ordinal);
-        var formalRecords = qualifying.Concat(formalScopeRecords ?? ReadFormalMailScopeRecords(from, to))
-            .GroupBy(RecordKey, StringComparer.Ordinal).Select(group => group.Last()).ToList();
         var digestLane = (isWeekly ? "weekly-digest:" : "daily-digest:") + now.ToString("yyyyMMdd");
-        var attemptedDigestDetails = new Dictionary<string, List<DailyAnalysisRecord>>(StringComparer.OrdinalIgnoreCase);
-        var attemptedFormalDigestDetails = new Dictionary<string, List<DailyAnalysisRecord>>(StringComparer.OrdinalIgnoreCase);
         var attemptedDigestRendered = new Dictionary<string, RenderedMailContributions>(StringComparer.OrdinalIgnoreCase);
         var completedDigestRecipients = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var digestSettingsFingerprint = HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(settings)]);
-        var digestDiskAuthority = new Lazy<PrtgDiskChannelAuthoritySnapshot?>(() =>
-            _prtgBackend is null ? null : PrtgResourceQualification.CaptureDiskChannelAuthority(_prtgBackend));
         var allowedDigestIssues = qualifying.ToDictionary(RecordKey,
             record => record.TopIssues.Select(issue => issue.EventKey).ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
         (string Subject, string Body) BuildMessage(RecipientView view)
@@ -2578,14 +1704,14 @@ public class MailNotificationService
             var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, settings.MailMinRiskLevel, type, statsLine);
             var windowText = $"{type}（{from:yyyy-MM-dd} ~ {to:yyyy-MM-dd}）：{statsLine}";
             var (issueRows, issueScope) = BuildRecipientIssueRows(issueRowsCache, digestLane,
-                view.Recipient ?? string.Empty, from, to, view.VisibleHostIds, view.SuppressedPressurePairs, view.IssueScope);
+                view.Recipient ?? string.Empty, from, to, view.VisibleHostIds, view.IssueScope);
             if (view.Recipient is { } recipient)
                 attemptedDigestRendered[recipient] = CreateRenderedMailContributions(view.Detail, issueRows, issueScope, SummaryBodyLineLimit);
             var renderedRows = view.Recipient is { } key && attemptedDigestRendered.TryGetValue(key, out var rendered)
                 ? rendered.Rows?.ToList() : null;
             var body = new StringBuilder();
             if (freshnessAlert != null) body.AppendLine(freshnessAlert).AppendLine();
-            body.Append(BuildDigestBody(settings, windowText, renderedRows));
+            body.Append(BuildDigestBody(settings, windowText, renderedRows, issueRows?.Count ?? 0));
             if (unresolvedLine != null) body.AppendLine().AppendLine(unresolvedLine);
             if (mutedSection != null) body.AppendLine().AppendLine(mutedSection);
             return (subject, body.ToString());
@@ -2597,42 +1723,28 @@ public class MailNotificationService
             if (!currentSettings.MailEnabled || HostDayWorkflowFingerprint.HashParts([JsonSerializer.Serialize(currentSettings)]) != digestSettingsFingerprint ||
                 !(isWeekly ? currentSettings.MailWeeklyEnabled : currentSettings.MailDailyEnabled) ||
                 GetSuspendedRecipients().Contains(email, StringComparer.OrdinalIgnoreCase)) return null;
-            var currentRecords = RemoveStaleMessageStatusFindings(_records.Query(new RecordQueryFilter
+            var currentRecords = _records.Query(new RecordQueryFilter
             {
                 Hosts = null, From = from, To = to, RiskLevels = RiskLevels.AtOrAbove(currentSettings.MailMinRiskLevel)
-            }).Where(record => digestKeys.Contains(RecordKey(record))).ToList());
-            PrtgSharedAuthoritySnapshot? currentAuthority = null;
-            var sharedAuthorityAvailable = _prtgBackend == null ||
-                PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend, out currentAuthority, out _);
-            if (_prtgBackend != null)
-            {
-                if (!sharedAuthorityAvailable || currentAuthority is null)
-                    currentRecords = RemovePrtgLanesTransiently(currentRecords);
-                else
-                    currentRecords = FilterCurrentPrtgLanes(currentRecords, currentSettings, currentAuthority.Settings,
-                        currentAuthority.Policy, currentAuthority.Policy.MessageTimeFingerprint(currentAuthority.Settings.PrtgUrl), true,
-                        (hostId, sensorId, issue, date, authoritySettings, fingerprint) =>
-                            IsCurrentPrtgResource(hostId, sensorId, issue, date, authoritySettings, fingerprint, digestDiskAuthority));
-            }
+            }).Where(record => digestKeys.Contains(RecordKey(record))).ToList();
             currentRecords = RestrictMailIssues(currentRecords, allowedDigestIssues);
-            var issueScope = CaptureMailIssueContributionScope(from, to, currentSettings, currentAuthority,
-                sharedAuthorityAvailable, digestDiskAuthority);
+            var issueScope = CaptureMailIssueContributionScope(from, to, currentSettings, withoutPrtg: false);
             var (currentOrder, currentViews) = ResolvePerRecipient(currentSettings, currentRecords, BuildContext());
             if (!currentOrder.Contains(email, StringComparer.OrdinalIgnoreCase) || !currentViews.TryGetValue(email, out var live)) return null;
             if (live.Detail == null)
             {
                 if (original.Detail != null || currentRecords.Count == 0) return null;
                 var (statsRows, filteredStatsScope) = BuildRecipientIssueRows(issueRowsCache, digestLane, email,
-                    from, to, live.VisibleHostIds, live.SuppressedPressurePairs, issueScope);
+                    from, to, live.VisibleHostIds, issueScope);
                 return live with { ApprovedRecords = currentRecords, IssueScope = filteredStatsScope };
             }
             var unresolved = FilterAcceptedMailContributions(digestLane, email, live.Detail, null);
             if (original.Detail is { Count: > 0 } && unresolved.Count == 0)
                 completedDigestRecipients.Add(email);
             var (rows, filteredIssueScope) = BuildRecipientIssueRows(issueRowsCache, digestLane, email, from, to,
-                live.VisibleHostIds, live.SuppressedPressurePairs, issueScope);
+                live.VisibleHostIds, issueScope);
             if (original.Detail is { Count: > 0 } && unresolved.Count == 0) return null;
-            return new RecipientView(unresolved, live.VisibleHostIds, currentRecords, live.SuppressedPressurePairs,
+            return new RecipientView(unresolved, live.VisibleHostIds, currentRecords,
                 IssueScope: filteredIssueScope);
         }
 
@@ -2640,17 +1752,7 @@ public class MailNotificationService
         // LastDailySentDate／LastWeeklySentDate），所以不需要 coverage 標記——只借用
         // SendPerRecipientAsync 的熔斷與跨輪失敗 streak 追蹤（回饋十七輪批次B-1 對三路一視同仁）。
         var delivery = await SendPerRecipientAsync(settings, order, views, BuildMessage, RecordKey, ct,
-            onRecipientStarting: (email, detail) =>
-            {
-                attemptedDigestDetails[email] = detail ?? qualifying;
-                attemptedFormalDigestDetails[email] = attemptedDigestRendered.GetValueOrDefault(email)?.Records.ToList() ?? [];
-            },
-            onRecipientResult: (email, accepted) =>
-            {
-                CompleteFormalStartClaims(digestLane, email, attemptedFormalDigestDetails.GetValueOrDefault(email) ?? [], accepted);
-            },
             recheck: RecheckDigest,
-            authorizeStart: (email, view) => AuthorizeFormalStart(email, view, digestLane, formalRecords),
             reserveMailContributions: email => TryReserveRenderedMailContributions(digestLane, email,
                 attemptedDigestRendered.GetValueOrDefault(email), null),
             isDeliveryComplete: email => attemptedDigestRendered.GetValueOrDefault(email)?.IsComplete != false);
@@ -3055,113 +2157,6 @@ public class MailNotificationService
         return parts.Length >= 2 && DateTime.TryParse(parts[1], out var date) && date < cutoff;
     }
 
-    private static bool IsStaleMessageStatusFinding(LogIssueSignature issue, string expectedFingerprint) =>
-        PrtgFindingMapper.RequiresMessageTimeAuthority(issue) &&
-        (issue.PrtgMessageStatusSemanticVersion != PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent ||
-         !PrtgFindingMapper.HasCurrentMessageTimeAuthority(issue, expectedFingerprint));
-
-    private List<DailyAnalysisRecord> RemoveStaleMessageStatusFindings(IEnumerable<DailyAnalysisRecord> records)
-    {
-        var expectedFingerprint = string.Empty;
-        if (_prtgBackend is not null && PrtgSharedAuthoritySnapshot.TryRead(_prtgBackend,
-                out var sharedAuthority, out _))
-            expectedFingerprint = sharedAuthority!.Policy.MessageTimeFingerprint(sharedAuthority.Settings.PrtgUrl);
-        var result = new List<DailyAnalysisRecord>();
-        foreach (var record in records)
-        {
-            if (!record.TopIssues.Any(issue => IsStaleMessageStatusFinding(issue, expectedFingerprint)))
-            {
-                result.Add(record);
-                continue;
-            }
-
-            var copy = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(record))!;
-            copy.RecordId = record.RecordId;
-            copy.TopIssues = copy.TopIssues.Where(issue => !IsStaleMessageStatusFinding(issue, expectedFingerprint)).ToList();
-            PrtgCorroboration.Refresh(copy);
-            var baseline = record.PrtgBaselineRiskLevel;
-            if (baseline != null)
-            {
-                copy.RiskLevel = RiskLevels.MoreSevere(baseline, PrtgFindingMapper.RiskFromFindings(copy.TopIssues));
-                copy.RiskBasis = copy.RiskLevel == baseline
-                    ? record.PrtgBaselineRiskBasis : PrtgFindingMapper.RiskBasisFrom(copy.TopIssues);
-            }
-            else
-            {
-                var correlations = copy.CorrelationAlerts.Select((description, index) => new CorrelationFinding
-                {
-                    Description = description,
-                    PatternId = index < copy.CorrelationAlertRefs.Count ? copy.CorrelationAlertRefs[index].PatternId : string.Empty,
-                    Severity = IssueSeverity.High,
-                    // Persisted daily records do not carry this flag. Match the existing reload
-                    // reconstruction contract: correlations remain a medium signal unless an
-                    // independently persisted baseline establishes a higher risk.
-                    ElevatesDayRisk = false
-                }).ToList();
-                copy.RiskLevel = LogAnalysisService.ComputeRuleBasedRisk(copy.TopIssues, copy.TrendAlerts, correlations);
-                copy.RiskBasis = record.RiskBasis?.Contains("PRTG", StringComparison.OrdinalIgnoreCase) == true
-                    ? null : record.RiskBasis;
-            }
-            result.Add(copy);
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Filters stale PRTG evidence per issue lane on a transient mail projection. A bad
-    /// message or raw-channel proof must not suppress an independent NetIQ finding (or a
-    /// separately current PRTG lane) on the same host-day. Durable records remain untouched.
-    /// </summary>
-    private static List<DailyAnalysisRecord> FilterCurrentPrtgLanes(IEnumerable<DailyAnalysisRecord> records,
-        SystemSettings mailSettings, SystemSettings authoritySettings, PrtgMonitoringPolicy? policy,
-        string messageFingerprint, bool sharedAuthorityAvailable,
-        Func<long, long, LogIssueSignature, DateTime, SystemSettings, string, bool> currentResource)
-    {
-        var result = new List<DailyAnalysisRecord>();
-        foreach (var record in records)
-        {
-            if (!record.TopIssues.Any(PrtgFindingMapper.IsPrtg))
-            {
-                result.Add(record);
-                continue;
-            }
-
-            bool IsCurrentLane(LogIssueSignature issue)
-            {
-                if (!PrtgFindingMapper.IsPrtg(issue)) return true;
-                // Target-pressure findings are governed by the separate formal recipient
-                // fence immediately before transport; keep that independent lane here.
-                if (PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(issue)) return true;
-                if (!sharedAuthorityAvailable || policy is null ||
-                    !authoritySettings.PrtgEnabled || !mailSettings.PrtgEnabled ||
-                    !PrtgOperationScope.SameSettings(authoritySettings, mailSettings) ||
-                    !policy.Ready(authoritySettings.PrtgUrl) || !policy.HostIds.Contains(record.HostId) ||
-                    issue.PrtgSourceGeneration != policy.SourceGeneration ||
-                    issue.EventKey.Split(':') is not { Length: >= 3 } parts ||
-                    !long.TryParse(parts[2], out var sensorId)) return false;
-                var rulePart = parts[1];
-                if (rulePart != PrtgRuleEvaluator.RuleSilent && !policy.SensorIds.Contains(sensorId)) return false;
-                return currentResource(record.HostId, sensorId, issue, record.Date,
-                    authoritySettings, messageFingerprint);
-            }
-
-            var retained = record.TopIssues.Where(IsCurrentLane).ToList();
-            if (retained.Count == record.TopIssues.Count)
-            {
-                result.Add(record);
-                continue;
-            }
-
-            var copy = JsonSerializer.Deserialize<DailyAnalysisRecord>(JsonSerializer.Serialize(record))!;
-            copy.RecordId = record.RecordId;
-            copy.TopIssues = retained;
-            PrtgCorroboration.Refresh(copy);
-            RecomputeTransientMailRisk(record, copy);
-            result.Add(copy);
-        }
-        return result;
-    }
-
     private static List<DailyAnalysisRecord> RestrictMailIssues(IEnumerable<DailyAnalysisRecord> records,
         IReadOnlyDictionary<string, HashSet<string>> allowedIssueKeysByRecord)
     {
@@ -3179,70 +2174,6 @@ public class MailNotificationService
             result.Add(copy);
         }
         return result;
-    }
-
-    private bool IsCurrentPrtgResource(long hostId, long sensorId, LogIssueSignature issue, DateTime recordDate,
-        SystemSettings authoritySettings, string currentMessageFingerprint,
-        Lazy<PrtgDiskChannelAuthoritySnapshot?> diskChannelAuthority)
-    {
-        if (_prtgBackend == null)
-            return !PrtgFindingMapper.RequiresMessageTimeAuthority(issue) && !IsStaleMessageStatusFinding(issue, "");
-        if (IsStaleMessageStatusFinding(issue, currentMessageFingerprint)) return false;
-        var host = _hosts.GetAll().FirstOrDefault(candidate => candidate.HostId == hostId);
-        if (host == null || host.Source != "netiq") return false;
-        var rules = new KnownIssueRuleStore(_prtgBackend.Blob("rules"));
-        if (!rules.Exists) return false;
-        KnownIssueRule? capturedRule;
-        {
-            var current = rules.Load().Content?.Rules.FirstOrDefault(rule => rule.Id == issue.RuleId && rule.Enabled && rule.Platform == "prtg");
-            if (current == null) return false;
-            using var db = _prtgBackend.CreateContext();
-            var json = db.PrtgObservations.Where(observation => observation.ActiveKey != null && observation.HostId == hostId && observation.EventKey == issue.EventKey)
-                .OrderByDescending(observation => observation.RecordDate).Select(observation => observation.ContentJson).FirstOrDefault();
-            if (json == null) return false;
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            capturedRule = doc.RootElement.GetProperty("Finding").GetProperty("Rule").Deserialize<KnownIssueRule>();
-            if (System.Text.Json.JsonSerializer.Serialize(capturedRule) != System.Text.Json.JsonSerializer.Serialize(current)) return false;
-        }
-        var suppressionStore = new MuteAwareSuppressionStore(new SuppressionStore(_prtgBackend.Blob("suppressions")),
-            _issueOwners ?? new IssueOwnerStore(_prtgBackend.Blob("issue_owners")));
-        var suppressions = suppressionStore.LoadAll();
-        var copy = JsonSerializer.Deserialize<LogIssueSignature>(JsonSerializer.Serialize(issue))!;
-        SuppressionFilter.MarkSuppressed([copy], SuppressionFilter.ActiveForHost(suppressions, host.HostName, host.GroupIds, DateTime.Now),
-            SuppressionFilter.MutesOf(suppressions), DateTime.Today.AddDays(-1));
-        if (copy.Suppressed) return false;
-        if (issue.EventKey.Split(':') is { Length: >= 2 } keyParts && keyParts[1] == PrtgRuleEvaluator.RuleSilent)
-            return PrtgSilentDeviceProofRevalidator.IsCurrent(_prtgBackend, hostId, recordDate, issue, capturedRule, authoritySettings.PrtgUrl);
-        var identity = _prtgBackend.PrtgStore().GetResourceIdentity(sensorId);
-        if (PrtgResourceProfileQualification.IsCpuOrMemoryPressure(issue))
-            return PrtgResourceProfileQualification.IsCurrentFormalPressure(_prtgBackend, hostId, sensorId, issue, DateTime.UtcNow);
-        if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-            return diskChannelAuthority.Value?.IsCurrent(sensorId, identity) == true;
-        if (issue.RuleId != "builtin-prtg-resource-disk-pressure" && PrtgFindingMapper.RequiresMessageTimeAuthority(issue))
-        {
-            var evidence = new PrtgSensorTimelineStore(_prtgBackend.Blob(PrtgSensorTimelineStore.Prefix + sensorId)).Get();
-            if (evidence.HostId != hostId || evidence.SourceGeneration != issue.PrtgSourceGeneration ||
-                evidence.ResourceGeneration != issue.PrtgResourceGeneration ||
-                !PrtgResourceQualification.IsCurrent(evidence, identity, issue.PrtgSourceGeneration,
-                    sensorId, identity.DeviceId, hostId, currentMessageFingerprint)) return false;
-        }
-        else if (issue.RuleId != "builtin-prtg-resource-disk-pressure" && issue.RuleId is not ("disk_free_trend" or "builtin-prtg-disk-free-trend"))
-            return false;
-        if (issue.RuleId == "builtin-prtg-resource-disk-pressure")
-        {
-            var resourceRules = PrtgResourceCurrentRuleCatalog.Load(_prtgBackend);
-            if (!PrtgResourceProfileQualification.IsCurrentDiskProfile(_prtgBackend, hostId, sensorId,
-                    DateTime.UtcNow, issue.PrtgSourceGeneration, issue.PrtgResourceGeneration, issue.PrtgChannelGeneration) ||
-                issue.PrtgRuleAdmissionFingerprint != resourceRules.AdmissionFingerprintFor(PrtgResourceFamily.Disk) ||
-                issue.PrtgResourceReasonCodes is not { Count: > 0 } reasons) return false;
-            if (reasons.Contains("disk-seven-day-low-water-trend") &&
-                (!resourceRules.DiskTrendEnabled || issue.PrtgTrendSourceRuleId != resourceRules.DiskTrendRuleId ||
-                 issue.PrtgTrendSourceRuleFingerprint != resourceRules.DiskTrendRuleFingerprint ||
-                 diskChannelAuthority.Value?.IsCurrent(sensorId, identity) != true)) return false;
-        }
-        else if (issue.RuleId is "disk_free_trend" or "builtin-prtg-disk-free-trend")
-            return diskChannelAuthority.Value?.IsCurrent(sensorId, identity) == true;
-        return true;
     }
 
     private static List<DailyAnalysisRecord> RemovePrtgLanesTransiently(IEnumerable<DailyAnalysisRecord> records)

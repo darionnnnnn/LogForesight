@@ -31,7 +31,6 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
     [Fact]
     public void Import_只隔離診斷包且重複內容同一識別()
     {
-        const string sourceUrl = "https://fixture.example/prtg";
         var store = _backend.PrtgStore();
         store.UpsertDevices([new() { Objid = 10, Name = "formal" }], DateTime.Today);
         store.UpsertSensors([new() { Objid = 100, DeviceObjid = 10, Name = "formal sensor" }], DateTime.Today);
@@ -40,12 +39,7 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         store.ReplaceHostMapForDate(DateTime.Today, [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 77, HostName = "formal", MapStatus = PrtgMapStatus.Ok }]);
         store.UpsertManualMap(new() { DeviceObjid = 10, HostId = 77 });
         var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(p => { p.CoreSystemId = "fixture-core"; p.SourceGeneration = "generation"; p.Revision = "revision"; p.EndpointHint = EfPrtgObservationStore.SourceHintFor(sourceUrl); p.ValidFrom = DateTime.Today; p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US"; p.HostIds = [77]; p.SensorIds = [100]; });
-        Assert.True(policyStore.Get().Ready(sourceUrl));
-        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 100)).Update(t =>
-        { t.SensorId = 100; t.HostId = 77; t.SourceGeneration = "generation"; t.ResourceGeneration = "resource"; t.IdentityFingerprint = "identity"; t.ValidFrom = DateTime.Today; t.QualityReason = "covered"; });
-        new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).Update(all =>
-            all[100] = new PrtgDiskSemanticEvidence(100, 10, 77, "disk", "used", "Used", "%", 1, "up", PrtgDiskSemanticEvidenceSource.Manual, 1, "confirmed", DateTime.UtcNow, "v1"));
+        policyStore.Update(p => { p.Revision = "revision"; p.HostIds = [77]; p.SensorIds = [100]; });
         var policyBefore = System.Text.Json.JsonSerializer.Serialize(policyStore.Get());
         var devicesBefore = System.Text.Json.JsonSerializer.Serialize(store.GetAllDevices());
         var sensorsBefore = System.Text.Json.JsonSerializer.Serialize(store.GetAllSensors());
@@ -70,7 +64,7 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         }
         var blobsBefore = ExistingBlobSnapshot();
         var evidenceBefore = EvidenceSnapshot();
-        var pkg = new PrtgDataPackage { FormatVersion = 2, Devices = [new() { Objid = 10, Name = "foreign" }], Sensors = [new() { Objid = 100, DeviceObjid = 10, Name = "foreign" }], StateChanges = [new() { SensorObjid = 100, ChangedAt = DateTime.Today.AddHours(2), Status = "Down", Quality = PrtgDataQuality.Ok }], Values = [new() { SensorObjid = 100, PeriodStart = DateTime.Today, AvgValue = 99, Quality = PrtgDataQuality.Sampled }], HostMaps = [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 999, HostName = "foreign", MapStatus = PrtgMapStatus.Ok }], ManualMaps = [new() { DeviceObjid = 10, HostId = 999 }], Observations = [new() { SnapshotId = "foreign", HostId = 999 }], Timelines = [new() { SensorId = 100, HostId = 999, SourceGeneration = "foreign" }], SemanticEvidence = [new(100, 10, 999, "disk", "used", "Used", "%", 1, "up", PrtgDiskSemanticEvidenceSource.Manual, 1, "foreign", DateTime.UtcNow, "v2")] };
+        var pkg = new PrtgDataPackage { FormatVersion = 2, Devices = [new() { Objid = 10, Name = "foreign" }], Sensors = [new() { Objid = 100, DeviceObjid = 10, Name = "foreign" }], StateChanges = [new() { SensorObjid = 100, ChangedAt = DateTime.Today.AddHours(2), Status = "Down", Quality = PrtgDataQuality.Ok }], Values = [new() { SensorObjid = 100, PeriodStart = DateTime.Today, AvgValue = 99, Quality = PrtgDataQuality.Sampled }], HostMaps = [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 999, HostName = "foreign", MapStatus = PrtgMapStatus.Ok }], ManualMaps = [new() { DeviceObjid = 10, HostId = 999 }], Observations = [new() { SnapshotId = "foreign", HostId = 999 }] };
         var rawJson = System.Text.Json.JsonSerializer.Serialize(pkg);
         var first = PrtgDataTransfer.Import(_backend, pkg);
         var second = PrtgDataTransfer.Import(_backend, pkg);
@@ -86,7 +80,6 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         Assert.Equal(mapsBefore, System.Text.Json.JsonSerializer.Serialize(store.GetHostMapForDate(DateTime.Today)));
         Assert.Equal(manualBefore, System.Text.Json.JsonSerializer.Serialize(store.GetManualMaps()));
         Assert.Equal(policyBefore, System.Text.Json.JsonSerializer.Serialize(policyStore.Get()));
-        Assert.True(policyStore.Get().Ready(sourceUrl));
         Assert.Equal(blobsBefore, ExistingBlobSnapshot());
         Assert.Equal(evidenceBefore, EvidenceSnapshot());
         using var db = _backend.CreateContext();
@@ -108,7 +101,7 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
     }
 
     [Fact]
-    public void LegacyEfImport_拒絕且Ready正式資料不變()
+    public void LegacyEfImport_拒絕且正式資料不變()
     {
         SeedFormalSnapshot();
         var store = _backend.PrtgStore();
@@ -116,12 +109,8 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         store.AppendStateChanges([new() { SensorObjid = 6, ChangedAt = DateTime.Today, Status = "Up", Quality = PrtgDataQuality.Ok }]);
         store.ReplaceHostMapForDate(DateTime.Today, [new() { MapDate = DateTime.Today, DeviceObjid = 5, HostId = 1, HostName = "existing", MapStatus = PrtgMapStatus.Ok }]);
         store.UpsertManualMap(new() { DeviceObjid = 5, HostId = 1 });
-        const string sourceUrl = "https://fixture.example/prtg";
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policy.Update(p => { p.EndpointHint = EfPrtgObservationStore.SourceHintFor(sourceUrl); p.HostIds = [1]; p.SensorIds = [6]; p.SourceTimeZoneId = "UTC"; p.SourceCultureName = "en-US"; });
-        Assert.True(policy.Get().Ready(sourceUrl));
-        new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 6)).Update(t =>
-        { t.SensorId = 6; t.HostId = 1; t.SourceGeneration = "ready"; t.ValidFrom = DateTime.Today; });
+        policy.Update(p => { p.HostIds = [1]; p.SensorIds = [6]; });
         var before = FormalSnapshot();
 
         var ex = Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(store,
@@ -148,7 +137,7 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
     {
         _backend.PrtgStore().UpsertDevices([new() { Objid = 5, Name = "existing" }], DateTime.Today);
         _backend.PrtgStore().UpsertValues([new() { SensorObjid = 6, PeriodStart = DateTime.Today, AvgValue = 8, Quality = PrtgDataQuality.Ok }]);
-        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => { p.CoreSystemId = "valid"; p.SourceGeneration = "valid-generation"; p.Revision = "valid-revision"; p.ValidFrom = DateTime.Today; p.EndpointHint = "hint"; p.HostIds = [1]; p.SensorIds = [6]; p.SourceTimeZoneId = "UTC"; p.SourceCultureName = "en-US"; });
+        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => { p.Revision = "valid-revision"; p.HostIds = [1]; p.SensorIds = [6]; });
     }
 
     private string FormalSnapshot()
@@ -161,7 +150,6 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
             Values = _backend.PrtgStore().GetValues(DateTime.Today, DateTime.Today.AddDays(1)),
             HostMaps = _backend.PrtgStore().GetHostMapForDate(DateTime.Today), ManualMaps = _backend.PrtgStore().GetManualMaps(),
             Policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get(),
-            Timeline = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 6)).Get(),
             Blobs = db.Blobs.Where(b => !b.BlobKey.StartsWith("prtg_import_diagnostic_")).OrderBy(b => b.BlobKey).ToList()
         });
     }

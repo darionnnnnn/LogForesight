@@ -14,7 +14,7 @@ public class PrtgAdminPageUiTests
         Assert.Contains("id=\"prtg-monitoring-selection-limits\"", content);
         Assert.Contains("3,000 台主機", content);
         Assert.Contains("15,000 顆 sensor", content);
-        Assert.Contains("不會截斷選取或保存部分範圍", content);
+        Assert.Contains("超過上限會明確拒絕，不會截斷", content);
         foreach (var id in new[]
         {
             "prtg-monitoring-host-select-page", "prtg-monitoring-host-clear-page",

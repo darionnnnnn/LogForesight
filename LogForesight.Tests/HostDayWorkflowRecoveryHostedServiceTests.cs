@@ -184,22 +184,14 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
             IpAddress = "192.0.2.65"
         });
         var record = AppendParent(host.HostId, day, host.HostName);
-        var currentAuthority = ConfigureCurrentAuthority(record);
         var page = _backend.RecordStore().QueryWorkflowRecoveryPage(day, day, 0, 10);
         var authoritative = Assert.Single(page.Records);
-        authoritative.PrtgManifest = CompleteManifest(authoritative, currentAuthority);
-        authoritative.PrtgManifest.PolicyRevision = currentAuthority.PolicyRevision;
-        authoritative.PrtgManifest.SourceGeneration = currentAuthority.SourceGeneration;
-        authoritative.PrtgManifest.ResourceAuthorityRevision = currentAuthority.ResourceAuthorityRevision;
-        authoritative.PrtgManifest.StrategyFingerprint = currentAuthority.StrategyFingerprint;
-        authoritative.PrtgManifest.HostMappingFingerprint = currentAuthority.HostMappingFingerprint;
-        authoritative.PrtgManifest.RuleFingerprint = currentAuthority.RuleFingerprint;
-        Assert.True(currentAuthority.IsValid);
         var revision = page.CapturedWriteRevisions![authoritative.RecordId];
         var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
         workflow.ParentSucceeded(authoritative.HostId, authoritative.Host, day, "parent", 0,
             HostDayWorkflowFingerprint.ForParentRecord(authoritative), prtgEnabled: true, aiEnabled: false,
             parentRecordId: authoritative.RecordId);
+        workflow.SetPrtg(authoritative.HostId, day, WorkflowLegState.Succeeded, evidenceReady: true);
         var waitCapturedAt = DateTime.UtcNow;
         var query = WaitingQuery(authoritative, revision, "recovery-payload-invalid", waitCapturedAt);
         var settings = RecoverySettings();
@@ -500,78 +492,6 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
 
     private static WorkflowRecoveryPage EmptyPage() => new([], [], 0, null, 0,
         new Dictionary<long, long>());
-
-    private static PrtgDecisionManifest CompleteManifest(DailyAnalysisRecord record,
-        PrtgWholeEvidenceAuthority? authority = null) => new()
-    {
-        Version = 1, ParentRecordId = record.RecordId,
-        ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record),
-        ParentFindingFingerprint = PrtgFindingMapper.Fingerprint(record.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
-        SourceGeneration = "recovery-test", HostMappingFingerprint = Hash("host-map"),
-        ResourceFingerprint = Hash("resource"), SemanticFingerprint = Hash("semantic"),
-        StrategyFingerprint = Hash("strategy"), RuleFingerprint = Hash("rules"),
-        EvidenceFingerprint = Hash("evidence"),
-        ResourceModeBlobVersion = authority?.ResourceModeBlobVersion ?? -1,
-        ResourceModeFenceRequired = authority?.ResourceModeFenceRequired ?? false,
-        FindingFingerprint = PrtgFindingMapper.Fingerprint(record.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
-        CompletedAtUtc = DateTime.UtcNow, Outcome = "complete"
-    };
-
-    private PrtgWholeEvidenceAuthority ConfigureCurrentAuthority(DailyAnalysisRecord record)
-    {
-        const string url = "https://prtg-recovery.example.invalid/";
-        const long deviceId = 6501;
-        const long sensorId = 6502;
-        new SystemSettingsStore(_backend.Blob("system_settings")).Update(settings =>
-        {
-            settings.PrtgEnabled = true;
-            settings.PrtgUrl = url;
-        });
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policy.Update(value =>
-        {
-            value.Revision = "recovery-policy-v1";
-            value.CoreSystemId = "recovery-core";
-            value.SourceGeneration = "recovery-test";
-            value.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(url);
-            value.ValidFrom = new DateTimeOffset(record.Date.Date.AddDays(-30));
-            value.HostIds = [record.HostId];
-            value.SensorIds = [sensorId];
-            value.SourceTimeZoneId = "UTC";
-            value.SourceCultureName = "en-US";
-            value.RawTimestampTimeZoneId = "UTC";
-            value.AnalysisTimeZoneId = "UTC";
-            value.TimeBasisEvidenceReference = "recovery-authority-fixture";
-        });
-        var prtgStore = _backend.PrtgStore();
-        var now = DateTime.Now;
-        prtgStore.UpsertDevices([new LogForesight.Core.Persistence.Sql.PrtgDeviceRow
-        {
-            Objid = deviceId, Name = record.Host, Ip = "192.0.2.65"
-        }], now);
-        prtgStore.UpsertSensors([new LogForesight.Core.Persistence.Sql.PrtgSensorRow
-        {
-            Objid = sensorId, DeviceObjid = deviceId, Name = "recovery-ping", SensorType = "ping",
-            Category = PrtgSensorCategories.Availability
-        }], now);
-        prtgStore.ReplaceHostMapForDate(record.Date,
-            [new LogForesight.Core.Persistence.Sql.PrtgHostMapRow
-            {
-                DeviceObjid = deviceId, MapDate = record.Date.Date, HostId = record.HostId,
-                MapStatus = PrtgMapStatus.Ok
-            }]);
-        prtgStore.EnsureResourceAuthorityRevisions([record.HostId]);
-
-        var currentService = new HostDayWorkflowRecoveryHostedService(
-            (IAnalysisRecordQuery)_backend.RecordStore(), _backend, RecoverySettings(),
-            new RecoveryFakeAiService(), new HostDayWorkflowService(new HostDayWorkflowStore(_backend)),
-            new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 1, 0, 0,
-                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)));
-        var candidate = CompleteManifest(record);
-        record.PrtgManifest = candidate;
-        var authority = currentService.CaptureCurrentWholeEvidenceAuthorities([record])[record.RecordId];
-        return authority ?? throw new InvalidOperationException("Test fixture did not establish current PRTG whole-evidence authority.");
-    }
 
     private static string Hash(string value) => HostDayWorkflowFingerprint.HashParts([value]);
 

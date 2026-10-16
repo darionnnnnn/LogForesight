@@ -202,13 +202,13 @@ public class KnownIssueCatalogTests : IDisposable
     // ── C1（seed v5 補強）：規則涵蓋驗證 ───────────────────────────────────
 
     [Fact]
-    public void 種子版本為9()
+    public void 種子版本為10()
     {
-        Assert.Equal(9, KnownIssueSeed.Version);
+        Assert.Equal(10, KnownIssueSeed.Version);
     }
 
     [Fact]
-    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共12條_總計104條()
+    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共9條_總計101條()
     {
         var rules = KnownIssueSeed.CreateRules();
         var windows = rules.Where(r => r.Platform == "windows").ToList();
@@ -217,8 +217,8 @@ public class KnownIssueCatalogTests : IDisposable
 
         Assert.Equal(64, windows.Count);
         Assert.Equal(28, linux.Count);
-        Assert.Equal(12, prtg.Count);
-        Assert.Equal(104, rules.Count);
+        Assert.Equal(9, prtg.Count);
+        Assert.Equal(101, rules.Count);
     }
 
     [Fact]
@@ -481,7 +481,8 @@ public class KnownIssueCatalogTests : IDisposable
         var rules = KnownIssueSeed.CreateRules();
         var prtgRules = rules.Where(r => r.Platform == "prtg").ToList();
 
-        Assert.Equal(12, prtgRules.Count);
+        Assert.Equal(9, prtgRules.Count);
+        Assert.DoesNotContain(prtgRules, r => PrtgRuleCatalog.IsRetired(r.PrtgRuleCode));
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-down" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && r.PrtgThreshold == 60);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-flapping" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping && r.PrtgThreshold == 5);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-warning" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleWarning && r.PrtgThreshold == 240);
@@ -495,7 +496,7 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(PrtgDiskTrendThresholds.Provisional, diskTrend.PrtgDiskTrendThresholds);
 
         var outcome = RuleValidator.Validate(prtgRules);
-        Assert.Equal(12, outcome.ValidRules.Count);
+        Assert.Equal(9, outcome.ValidRules.Count);
         Assert.Empty(outcome.SkippedRules);
         Assert.Empty(outcome.ShadowWarnings);
     }

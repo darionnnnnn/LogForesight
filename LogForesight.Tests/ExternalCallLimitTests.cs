@@ -179,28 +179,26 @@ public class ExternalCallLimitTests : IDisposable
     private sealed class CountingSnapshotService : PrtgSnapshotHostedService
     {
         private readonly HttpMessageHandler _handler;
-        private readonly SnapshotRequestBudgetFixture _budgetFixture;
+        private readonly PrtgRequestBudget _budget;
         public int CreateCount { get; private set; }
 
         public CountingSnapshotService(
             ISystemSettingsStore settingsStore, StorageBackend backend, SchedulerRunState schedulerRunState,
             PrtgStructureSyncService structureSync, PrtgBackfillService backfill, IHostStore hosts,
             ISentinelStore sentinels, PrtgProbeRunState probeState, IHostApplicationLifetime lifetime,
-            HttpMessageHandler handler, SnapshotRequestBudgetFixture budgetFixture)
+            HttpMessageHandler handler, PrtgRequestBudget budget)
             : base(settingsStore, backend, schedulerRunState, structureSync, backfill, hosts, sentinels, probeState, lifetime)
         {
             _handler = handler;
-            _budgetFixture = budgetFixture;
+            _budget = budget;
         }
 
         internal override PrtgClient CreateClient(SystemSettings settings)
         {
             CreateCount++;
             return new PrtgClient(settings.PrtgUrl, "token123", 30, false, _handler, PrtgAuthModes.Token, "", "", "",
-                _budgetFixture.Budget);
+                _budget);
         }
-
-        public void RefreshFixtureAdmission(StorageBackend backend) => _budgetFixture.RefreshAdmission(backend);
     }
 
     private sealed class FakeHostApplicationLifetime : IHostApplicationLifetime
@@ -255,8 +253,7 @@ public class ExternalCallLimitTests : IDisposable
         {
             new PrtgSensorRow { Objid = 101, DeviceObjid = 10, Name = "Sensor-101", SensorType = "Ping", Status = "Up", Paused = false }
         }, DateTime.Now);
-        SnapshotAdmissionTestFixture.Seed(backend, hostStore, settingsStore, host.HostId, 10, (101, "Ping"));
-        var budgetFixture = new SnapshotRequestBudgetFixture(backend);
+        var budget = new PrtgRequestBudget();
 
         var handler = new CountingHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -266,7 +263,7 @@ public class ExternalCallLimitTests : IDisposable
         }));
 
         var service = new CountingSnapshotService(settingsStore, backend, schedulerRunState, structureSync, backfill,
-            hostStore, new FakeSentinelStore(), probeState, lifetime, handler, budgetFixture);
+            hostStore, new FakeSentinelStore(), probeState, lifetime, handler, budget);
         return (service, settingsStore, handler, backend, hostStore, host.HostId);
     }
 
@@ -300,7 +297,7 @@ public class ExternalCallLimitTests : IDisposable
     [Fact]
     public async Task 快照_舊來源樣本清空後改PRTG網址會重建client()
     {
-        var (service, settings, handler, backend, hosts, hostId) = NewSnapshotService();
+        var (service, settings, handler, _, _, _) = NewSnapshotService();
         var clock = DateTime.Today.AddHours(10);
         service.Now = () => clock;
         try
@@ -314,9 +311,6 @@ public class ExternalCallLimitTests : IDisposable
             Assert.Equal(0, service.GetStatus().PendingSamples);
             settings.Update(s => s.PrtgUrl = "https://prtg2.example.com");
             settings.Update(s => s.PrtgEnabled = true);
-            // The source-bound policy and capacity proof must describe the replacement endpoint.
-            SnapshotAdmissionTestFixture.Seed(backend, hosts, settings, hostId, 10, (101, "Ping"));
-            service.RefreshFixtureAdmission(backend);
             clock = clock.AddHours(1);
             await TickWithinDeadlineAsync(service);
 

@@ -30,6 +30,8 @@ public sealed class PrtgDiagnosticExportSource
     private const int MaximumPolicyCharacters = MaximumRowBytes;
     private const int MaximumPolicySensors = 15000;
     private const int MaximumSerializerScratchBytes = MaximumRowBytes * 4;
+    /// <summary>舊版可信樣本 proof 欄位的讀取上限（新資料不再寫入此欄，舊列照原值匯出）。</summary>
+    private const int MaximumLegacyProofBytes = 4 * 1024;
 
     private static readonly string[] ArrayProperties =
     [
@@ -73,20 +75,7 @@ public sealed class PrtgDiagnosticExportSource
         await foreach (var item in ReadManualMaps(context, cancellationToken).ConfigureAwait(false)) yield return item;
         yield return new PrtgDiagnosticExportItem("SourcePolicy", SerializeBounded(sourcePolicy));
         await foreach (var item in ReadObservations(context, fromDate.Date, toDate.Date, cancellationToken).ConfigureAwait(false)) yield return item;
-
-        foreach (var sensorId in sourcePolicy.SensorIds)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var blobKey = PrtgSensorTimelineStore.Prefix + sensorId.ToString(CultureInfo.InvariantCulture);
-            var timeline = await ReadBoundedBlobValue<PrtgSensorTimelineEvidence>(context, blobKey, cancellationToken)
-                .ConfigureAwait(false) ?? new PrtgSensorTimelineEvidence { SensorId = sensorId };
-            yield return Item("Timelines", timeline);
-        }
-
-        await foreach (var item in ReadDictionary<PrtgDiskSemanticEvidence>(context,
-            PrtgDiskSemanticEvidenceStore.BlobKey, "SemanticEvidence", cancellationToken).ConfigureAwait(false)) yield return item;
-        await foreach (var item in ReadDictionary<PrtgDiskVerificationResult>(context,
-            PrtgDiskVerificationResultStore.BlobKey, "SemanticResults", cancellationToken).ConfigureAwait(false)) yield return item;
+        // Timelines／SemanticEvidence／SemanticResults 保留在 V2 封套裡維持新舊匯入檔相容，內容一律為空陣列。
     }
 
     public static IReadOnlyList<string> V2ArrayProperties => Array.AsReadOnly(ArrayProperties);
@@ -232,14 +221,14 @@ public sealed class PrtgDiagnosticExportSource
                 .Take(lengths.Count).ToListAsync(cancellationToken).ConfigureAwait(false);
             if (proofLengths.Count != lengths.Count || proofLengths.Where((row, index) => row.Id != lengths[index].Key).Any())
                 throw new InvalidDataException("Values proof 長度頁與資料 key 不一致。");
-            if (proofLengths.Any(row => row.Length > Models.PrtgTrustedSampleProof.MaximumSerializedBytes))
+            if (proofLengths.Any(row => row.Length > MaximumLegacyProofBytes))
                 throw new InvalidDataException("Values proof 超過 4 KiB 讀取前上限。");
             var page = await ordered.Take(lengths.Count).ToListAsync(cancellationToken).ConfigureAwait(false);
             EnsurePageKeysMatch(page, lengths, row => row.Id, "Values");
             foreach (var row in page)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (row.TrustedProof != null && System.Text.Encoding.UTF8.GetByteCount(row.TrustedProof) > Models.PrtgTrustedSampleProof.MaximumSerializedBytes)
+                if (row.TrustedProof != null && System.Text.Encoding.UTF8.GetByteCount(row.TrustedProof) > MaximumLegacyProofBytes)
                     throw new InvalidDataException("Values proof 超過 4 KiB UTF8 上限。");
                 hasCursor = true; afterSensor = row.SensorObjid; afterPeriod = row.PeriodStart; afterId = row.Id;
                 yield return Item("Values", row);
@@ -311,148 +300,6 @@ public sealed class PrtgDiagnosticExportSource
         }
     }
 
-    private static async IAsyncEnumerable<PrtgDiagnosticExportItem> ReadDictionary<T>(
-        LfDbContext context, string blobKey, string propertyName,
-        [EnumeratorCancellation] CancellationToken cancellationToken) where T : class
-    {
-        await ValidateDictionaryKeys<T>(context, blobKey, cancellationToken).ConfigureAwait(false);
-        long afterKey = 0;
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await using var command = CreateDictionaryPageCommand(context, blobKey, afterKey);
-            await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken)
-                .ConfigureAwait(false);
-            var pageCount = 0;
-            long lastKey = afterKey;
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var key = reader.GetString(0);
-                var type = reader.GetString(1);
-                if (!long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= lastKey)
-                    throw new InvalidDataException($"{propertyName} blob 的 key 無效或重複。");
-                if (!string.Equals(type, "object", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException($"{propertyName} blob 項目必須是 JSON object。");
-                var rawBytes = Convert.ToInt64(reader.GetValue(2), CultureInfo.InvariantCulture);
-                if (rawBytes > MaximumBlobValueBytes)
-                    throw new InvalidDataException($"{propertyName} 單筆原始 JSON 超過有界讀取上限。");
-                if (reader.IsDBNull(3))
-                    throw new InvalidDataException($"{propertyName} JSON 項目缺少內容。");
-                var json = reader.GetString(3);
-                if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumBlobValueBytes)
-                    throw new InvalidDataException($"{propertyName} 單筆原始 JSON 超過有界讀取上限。");
-                var value = JsonSerializer.Deserialize<T>(json, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException($"{propertyName} JSON 項目無法解析。");
-                lastKey = id;
-                pageCount++;
-                yield return Item(propertyName, value);
-            }
-            if (pageCount == 0) yield break;
-            afterKey = lastKey;
-        }
-    }
-
-    private static async Task ValidateDictionaryKeys<T>(
-        LfDbContext context, string blobKey, CancellationToken cancellationToken) where T : class
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        ValidateCompleteDictionaryAuthority<T>(context, blobKey);
-        cancellationToken.ThrowIfCancellationRequested();
-        await using var command = CreateDictionaryValidationCommand(context, blobKey);
-        var invalid = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        if (Convert.ToInt32(invalid, CultureInfo.InvariantCulture) != 0)
-            throw new InvalidDataException("PRTG 語意證據 blob 有非正整數 key 或重複 key。");
-    }
-
-    // Keep the bounded raw document and validation DOM outside the async row iterator's
-    // lifetime. SQL continues paging entries; no whole typed dictionary is retained.
-    private static void ValidateCompleteDictionaryAuthority<T>(LfDbContext context, string blobKey) where T : class
-    {
-        var maximum = Math.Max(PrtgDiskSemanticEvidenceStore.MaximumSnapshotCharacters,
-            PrtgDiskVerificationResultStore.MaximumSnapshotCharacters);
-        var read = EfJsonBlobStore.ReadBoundedInContext(context, blobKey, maximum);
-        if (read.Version == 0 && read.Prefix is null) return;
-        if (read.ReportedLength > maximum || read.Prefix is null)
-            throw new InvalidDataException("PRTG semantic export document exceeds its complete physical read limit.");
-        var span = read.Prefix.AsSpan().TrimStart();
-        if (span.IsEmpty || span[0] != '{')
-            throw new InvalidDataException("PRTG semantic export document must be a JSON object.");
-        StrictAuthorityJsonDocument.Validate<Dictionary<long, T>>(read.Prefix);
-    }
-
-    private static DbCommand CreateDictionaryValidationCommand(LfDbContext context, string blobKey)
-    {
-        var command = CreateCommand(context);
-        if (context.Database.IsSqlite())
-        {
-            command.CommandText = """
-                SELECT CASE WHEN EXISTS (
-                    SELECT 1 FROM json_each(COALESCE(
-                        (SELECT content FROM lf_blobs WHERE blob_key = $key), '{}')) AS item
-                    GROUP BY item.key
-                    HAVING CAST(item.key AS INTEGER) <= 0
-                        OR CAST(CAST(item.key AS INTEGER) AS TEXT) <> CAST(item.key AS TEXT)
-                        OR COUNT(*) > 1
-                ) THEN 1 ELSE 0 END
-                """;
-            AddParameter(command, "$key", blobKey);
-        }
-        else if (context.Database.IsSqlServer())
-        {
-            command.CommandText = """
-                SELECT CASE WHEN EXISTS (
-                    SELECT 1 FROM OPENJSON(COALESCE(
-                        (SELECT content FROM lf_blobs WHERE blob_key = @key), N'{}')) AS item
-                    GROUP BY item.[key]
-                    HAVING TRY_CONVERT(bigint, item.[key]) IS NULL
-                        OR TRY_CONVERT(bigint, item.[key]) <= 0
-                        OR CONVERT(varchar(20), TRY_CONVERT(bigint, item.[key])) <> item.[key]
-                        OR COUNT(*) > 1
-                ) THEN 1 ELSE 0 END
-                """;
-            AddParameter(command, "@key", blobKey);
-        }
-        else throw new NotSupportedException("此資料庫 provider 不支援有界 JSON dictionary 匯出。");
-        return command;
-    }
-
-    private static DbCommand CreateDictionaryPageCommand(LfDbContext context, string blobKey, long afterKey)
-    {
-        var command = CreateCommand(context);
-        if (context.Database.IsSqlite())
-        {
-            command.CommandText = """
-                SELECT CAST(item.key AS TEXT), item.type,
-                       length(CAST(item.value AS BLOB)),
-                       CASE WHEN length(CAST(item.value AS BLOB)) <= $maxBytes THEN json(item.value) ELSE NULL END
-                FROM lf_blobs AS b, json_each(COALESCE(b.content, '{}')) AS item
-                WHERE b.blob_key = $key AND CAST(item.key AS INTEGER) > $afterKey
-                ORDER BY CAST(item.key AS INTEGER) LIMIT 100
-                """;
-            AddParameter(command, "$maxBytes", MaximumBlobValueBytes);
-            AddParameter(command, "$key", blobKey);
-            AddParameter(command, "$afterKey", afterKey);
-        }
-        else if (context.Database.IsSqlServer())
-        {
-            command.CommandText = """
-                SELECT item.[key], CASE item.[type] WHEN 5 THEN N'object' ELSE N'other' END,
-                       DATALENGTH(item.[value]),
-                       CASE WHEN DATALENGTH(item.[value]) <= @maxBytes THEN item.[value] ELSE NULL END
-                FROM lf_blobs AS b
-                CROSS APPLY OPENJSON(COALESCE(b.content, N'{}')) AS item
-                WHERE b.blob_key = @key AND TRY_CONVERT(bigint, item.[key]) > @afterKey
-                ORDER BY TRY_CONVERT(bigint, item.[key]) OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY
-                """;
-            AddParameter(command, "@maxBytes", MaximumBlobValueBytes);
-            AddParameter(command, "@key", blobKey);
-            AddParameter(command, "@afterKey", afterKey);
-        }
-        else throw new NotSupportedException("此資料庫 provider 不支援有界 JSON dictionary 匯出。");
-        return command;
-    }
-
     private static DbCommand CreateCommand(LfDbContext context)
     {
         var command = context.Database.GetDbConnection().CreateCommand();
@@ -466,20 +313,6 @@ public sealed class PrtgDiagnosticExportSource
         parameter.ParameterName = name;
         parameter.Value = value;
         command.Parameters.Add(parameter);
-    }
-
-    private static Task<T?> ReadBoundedBlobValue<T>(
-        LfDbContext context, string key, CancellationToken cancellationToken) where T : class
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var row = EfJsonBlobStore.ReadBoundedInContext(context, key, MaximumPolicyCharacters);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (row.Version == 0 && row.Prefix is null) return Task.FromResult<T?>(null);
-        if (row.ReportedLength > MaximumPolicyCharacters || row.Prefix is null)
-            throw new InvalidDataException($"PRTG timeline blob {key} 超過單列有界讀取上限。");
-        var value = JsonSerializer.Deserialize<T>(row.Prefix, LfJsonOptions.Pretty);
-        if (value == null) throw new InvalidDataException($"PRTG timeline blob {key} 為 null。");
-        return Task.FromResult<T?>(value);
     }
 
     private static async Task<List<RowSize<TKey>>> ReadPageLengthsAsync<TEntity, TKey>(

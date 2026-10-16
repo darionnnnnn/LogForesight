@@ -137,9 +137,7 @@ public sealed class RuleAdminHostSnapshotAuthorizationTests
         var seedStore = new FakeRuleSeedStore();
         seedStore.Sync(rules, KnownIssueSeed.Version);
         var settings = new FakeSystemSettingsStore();
-        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings,
-            new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
-            new PrtgDiskVerificationResultStore(fx.Blob(PrtgDiskVerificationResultStore.BlobKey)));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
         return new RuleAdminService(ruleStore, seedStore, new FakeSuppressionStore(), new FakeUserStore(),
             currentUser, audit ?? new RecordingAuditService(), new FakeHostGroupStore(), hosts,
             new FakeIssueAggregateQuery(), assessment, settings, visibility);

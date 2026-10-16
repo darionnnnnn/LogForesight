@@ -29,30 +29,6 @@ public class IssueCaseCoordinatorTests
 
     private IssueCaseCoordinator Create() => new(_cases, _issueHandlings, _handlingLog, _records, _hosts, _issueProfiles);
 
-    [Fact]
-    public void CapturePrtgEvidence_legacyMessageFindingIsLabeledUnverifiedWithoutChangingItsHistory()
-    {
-        var date = DateTime.Today.AddDays(-1);
-        var host = _hosts.FindByName(Host)!;
-        var issue = new LogIssueSignature
-        {
-            LogName = "PRTG", Source = "PRTG:down", EventId = 0,
-            EventKey = "prtg:down:11:source-v1:resource-v1", RuleId = "down",
-            PrtgSourceGeneration = "source-v1", PrtgResourceGeneration = "resource-v1",
-            PrtgMessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent
-        };
-        var record = new DailyAnalysisRecord
-        { HostId = host.HostId, Host = Host, Date = date, RiskLevel = RiskLevels.High, TopIssues = [issue] };
-        _records.Add(record);
-
-        var captured = Create().CapturePrtgEvidence(Host, date, IssueSignatureKey.For(issue));
-
-        Assert.NotNull(captured);
-        Assert.Equal("legacy-message-time-unverified", captured.Quality);
-        Assert.Null(captured.PrtgMessageTimeFingerprint);
-        Assert.Same(record, _records.GetOne([new HostKey { HostId = host.HostId, HostName = Host }], date));
-    }
-
     /// <summary>某天的分析紀錄，TopIssues 帶入固定的 disk 153 問題簽章</summary>
     private void AddRecord(DateTime date)
     {

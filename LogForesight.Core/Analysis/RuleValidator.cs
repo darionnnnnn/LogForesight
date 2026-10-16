@@ -233,16 +233,17 @@ public static class RuleValidator
             return "prtg 規則不可填 SourcePattern/EventIds/MatchAllEventIds/ProgramPattern/EventNamePattern/MessagePatterns（Windows/Linux 專用欄位）";
         }
 
+        // 已移除的代碼：停用的舊規則照常載入（規則頁顯示原因），啟用就拒絕——沒有任何評估器會處理它。
+        if (PrtgRuleCatalog.IsRetired(rule.PrtgRuleCode))
+            return rule.Enabled ? $"PRTG 規則代碼「{rule.PrtgRuleCode}」已移除，只能保持停用" : null;
+
         if (rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDown &&
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleFlapping &&
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleWarning &&
             rule.PrtgRuleCode != PrtgRuleEvaluator.RuleSilent &&
-            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDiskFreeTrend &&
-            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleResourceCpuPressure &&
-            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleResourceMemoryPressure &&
-            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleResourceDiskPressure)
+            rule.PrtgRuleCode != PrtgRuleEvaluator.RuleDiskFreeTrend)
         {
-            return $"PrtgRuleCode 必須是 {PrtgRuleEvaluator.RuleDown}、{PrtgRuleEvaluator.RuleFlapping}、{PrtgRuleEvaluator.RuleWarning}、{PrtgRuleEvaluator.RuleSilent}、{PrtgRuleEvaluator.RuleDiskFreeTrend}、{PrtgRuleEvaluator.RuleResourceCpuPressure}、{PrtgRuleEvaluator.RuleResourceMemoryPressure} 或 {PrtgRuleEvaluator.RuleResourceDiskPressure}，實際為「{rule.PrtgRuleCode}」";
+            return $"PrtgRuleCode 必須是 {PrtgRuleEvaluator.RuleDown}、{PrtgRuleEvaluator.RuleFlapping}、{PrtgRuleEvaluator.RuleWarning}、{PrtgRuleEvaluator.RuleSilent} 或 {PrtgRuleEvaluator.RuleDiskFreeTrend}，實際為「{rule.PrtgRuleCode}」";
         }
 
         if (PrtgRuleCatalog.FormalConsumerFor(rule.PrtgRuleCode) is null)
@@ -259,20 +260,6 @@ public static class RuleValidator
         else if (rule.PrtgDiskTrendThresholds != null)
         {
             return "PrtgDiskTrendThresholds 僅 disk_free_trend 可填";
-        }
-
-        if (rule.PrtgRuleCode is PrtgRuleEvaluator.RuleResourceCpuPressure or
-            PrtgRuleEvaluator.RuleResourceMemoryPressure or PrtgRuleEvaluator.RuleResourceDiskPressure)
-        {
-            var expectedCategory = rule.PrtgRuleCode switch
-            {
-                PrtgRuleEvaluator.RuleResourceCpuPressure => PrtgSensorCategories.Cpu,
-                PrtgRuleEvaluator.RuleResourceMemoryPressure => PrtgSensorCategories.Memory,
-                _ => PrtgSensorCategories.Disk
-            };
-            if (rule.PrtgThreshold != 0) return "resource pressure 規則的 PrtgThreshold 必須為 0；量測門檻由可信兩小時評估固定";
-            if (rule.PrtgSensorCategory != expectedCategory)
-                return $"{rule.PrtgRuleCode} 的 PrtgSensorCategory 必須是 {expectedCategory}";
         }
 
         if (rule.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && rule.PrtgThreshold < 1)

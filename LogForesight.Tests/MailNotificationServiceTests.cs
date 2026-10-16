@@ -71,6 +71,13 @@ public class MailNotificationServiceTests : IDisposable
             new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness, _issueOwners, _issueAggregates, issueDigest);
     }
 
+    /// <summary>主機日上的一筆問題列；問題優先區塊只統計郵件範圍內主機日真的帶有的問題。</summary>
+    private static LogIssueSignature DigestIssue(string source, int eventId) => new()
+    {
+        LogName = "System", Source = source, EventId = eventId, EventKey = $"{source}/{eventId}",
+        Category = IssueCategory.Other, Severity = IssueSeverity.High, Count = 1
+    };
+
     private static DailyAnalysisRecord Record(long hostId, string host, DateTime date, string riskLevel,
         string headline = "", string? riskBasis = null, params LogIssueSignature[] issues) => new()
     {
@@ -93,34 +100,6 @@ public class MailNotificationServiceTests : IDisposable
             s.MailRecipients = new List<string> { "ops@test.local" };
             configure?.Invoke(s);
         });
-
-    [Fact]
-    public void AggregateSuppressionForOneRevokedHostKeepsSameCpuFindingFromAnotherHost()
-    {
-        var source = "CPU";
-        const int eventId = 7;
-        _issueAggregates.AggregateOverride = (from, _) =>
-        [new IssueAggregate
-        {
-            Source = source, EventId = eventId, Category = "Hardware", MaxSeverityRank = (int)IssueSeverity.High,
-            HostCount = from.Date == Yesterday.Date ? 2 : 1, DayCount = 1, ActiveDays = 1,
-            FirstSeen = Yesterday, LastSeen = Yesterday
-        }];
-        var service = CreateWithIssueDigest();
-        var method = typeof(MailNotificationService).GetMethod("BuildIssueRowsCached",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var pair = IssueProfile.KeyOf(source, eventId);
-        var suppressed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { $"101\0{pair.SourceUpper}|{eventId}" };
-
-        var rows = (List<MailIssueRow>)method.Invoke(service,
-            [new Dictionary<string, List<MailIssueRow>>(), Yesterday, Yesterday,
-                (IReadOnlySet<long>)new HashSet<long> { 101, 202 }, suppressed])!;
-
-        var cpu = Assert.Single(rows);
-        Assert.Equal(1, cpu.HostCount);
-        Assert.Equal(MailIssueBucket.OtherHighRisk, cpu.Bucket);
-    }
 
     /// <summary>建一個看得到所有主機的啟用帳號（ViewAll 角色），email 與參數相同——供需要
     /// 「收件人能解析到帳號、且可見範圍涵蓋全部」的測試使用（回饋十七輪批次B-4）。</summary>
@@ -200,140 +179,6 @@ public class MailNotificationServiceTests : IDisposable
             Assert.Equal(2, _sender.Sent.Count);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
-    }
-
-    [Fact]
-    public async Task Summary_DateFormatRevisionKeepsIndependentAcceptedContributionsAndAllowsNewOnes()
-    {
-        const string firstRecipient = "a@test.local";
-        const string secondRecipient = "b@test.local";
-        const string newRecipient = "c@test.local";
-        CreateViewAllAccount(firstRecipient);
-        CreateViewAllAccount(secondRecipient);
-        var host = _hosts.Upsert(new WebHost { HostName = "mail-date-format", Active = true, Source = "netiq" });
-        EnableMail(settings =>
-        {
-            settings.MailOnRunCompleted = true;
-            settings.MailUrgentEnabled = false;
-            settings.MailMinRiskLevel = RiskLevels.Medium;
-            settings.MailRecipients = [firstRecipient, secondRecipient];
-        });
-
-        var original = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High,
-            issues: new LogIssueSignature
-            {
-                LogName = "Application", Source = "APP", EventId = 42, EventKey = "APP|42",
-                Severity = IssueSeverity.High, ElevatesDayRisk = true
-            });
-        original.RecordId = 5101;
-        original.LogSource = AnalysisLogSource.Netiq;
-        _records.Add(original);
-        _issueAggregates.AggregateOverride = (from, to) =>
-        {
-            if (from.Date > Yesterday.Date || to.Date < Yesterday.Date) return [];
-            return _records.Query(new RecordQueryFilter { Hosts = null, From = Yesterday, To = Yesterday })
-                .SelectMany(record => record.TopIssues.Select(issue => (record, issue)))
-                .GroupBy(pair => IssueProfile.KeyOf(pair.issue.Source, pair.issue.EventId))
-                .Select(group => new IssueAggregate
-                {
-                    Source = group.First().issue.Source,
-                    EventId = group.First().issue.EventId,
-                    Category = "Application",
-                    MaxSeverityRank = group.Max(pair => (int)pair.issue.Severity),
-                    ElevatesDayRisk = group.Any(pair => pair.issue.ElevatesDayRisk),
-                    HostCount = group.Select(pair => pair.record.HostId).Distinct().Count(),
-                    DayCount = group.Select(pair => (pair.record.HostId, pair.record.Date.Date)).Distinct().Count(),
-                    ActiveDays = group.Select(pair => pair.record.Date.Date).Distinct().Count(),
-                    FirstSeen = group.Min(pair => pair.record.Date),
-                    LastSeen = group.Max(pair => pair.record.Date),
-                    IssueKeys = group.Select(pair => pair.issue.EventKey).Distinct().ToArray()
-                }).ToList();
-        };
-        var workflowBackendPath = Path.Combine(Path.GetTempPath(), "lf-mail-date-format-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            var workflowBackend = new StorageBackend(
-                new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" },
-                workflowBackendPath);
-            var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(workflowBackend));
-            workflow.RestoreFromRecord(original, aiEnabled: false, prtgEnabled: false);
-            var policy = new PrtgMonitoringPolicyStore(_fx.Blob(PrtgMonitoringPolicyStore.BlobKey));
-            policy.Update(current =>
-            {
-                current.Revision = "mail-date-format-v1";
-                current.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24;
-                current.MessageTimeAuthorityRevision = 1;
-            });
-            var issueDigest = new MailIssueDigest(_issueAggregates,
-                new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore),
-                _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
-            var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups,
-                _groupAccess, _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
-                _freshness, _issueOwners, _issueAggregates, issueDigest: issueDigest,
-                prtgMonitoring: policy, workflow: workflow);
-            _sender.OnSend = _ => policy.Update(current =>
-            {
-                current.Revision = "mail-date-format-v2";
-                current.MessageDateFormat = PrtgMessageDateTimeParser.Mdy24;
-                current.MessageTimeAuthorityRevision++;
-            });
-
-            await service.NotifyAfterRunAsync();
-
-            Assert.Equal(2, _sender.Sent.Count);
-            Assert.All(_sender.Sent, sent => Assert.Contains("APP/42", sent.Message.Body));
-            Assert.True(workflow.Get(host.HostId, Yesterday)!.MailIsComplete,
-                "A Date Format-only revision must not leave an unrelated NetIQ mail plan open.");
-
-            _sender.OnSend = null;
-            await service.NotifyAfterRunAsync();
-            Assert.Equal(2, _sender.Sent.Count);
-
-            CreateViewAllAccount(newRecipient);
-            _settingsStore.Update(settings => settings.MailRecipients.Add(newRecipient));
-            var secondHost = _hosts.Upsert(new WebHost { HostName = "mail-new-event", Active = true, Source = "netiq" });
-            var repeatedIssue = Record(secondHost.HostId, secondHost.HostName, Yesterday, RiskLevels.High,
-                issues: new LogIssueSignature
-                {
-                    LogName = "Application", Source = "APP", EventId = 42, EventKey = "APP|42",
-                    Severity = IssueSeverity.High, ElevatesDayRisk = true
-                });
-            repeatedIssue.RecordId = 5103;
-            repeatedIssue.LogSource = AnalysisLogSource.Netiq;
-            var newRecord = Record(secondHost.HostId, secondHost.HostName, Yesterday, RiskLevels.High,
-                issues: new LogIssueSignature
-                {
-                    LogName = "System", Source = "NEW", EventId = 77, EventKey = "NEW|77",
-                    Severity = IssueSeverity.High, ElevatesDayRisk = true
-                });
-            newRecord.RecordId = 5104;
-            newRecord.TopIssues.Insert(0, repeatedIssue.TopIssues.Single());
-            newRecord.LogSource = AnalysisLogSource.Netiq;
-            _records.Add(newRecord);
-            workflow.RestoreFromRecord(newRecord, aiEnabled: false, prtgEnabled: false);
-
-            await service.NotifyAfterRunAsync();
-
-            Assert.Equal(5, _sender.Sent.Count);
-            var followup = _sender.Sent.Skip(2).ToList();
-            Assert.Equal(3, followup.Count);
-            Assert.Contains(followup, sent => sent.Message.To.Contains(firstRecipient) &&
-                sent.Message.Body.Contains("NEW/77", StringComparison.Ordinal) &&
-                sent.Message.Body.Contains("APP/42", StringComparison.Ordinal) &&
-                sent.Message.Body.Contains("影響 1 台", StringComparison.Ordinal));
-            Assert.Contains(followup, sent => sent.Message.To.Contains(secondRecipient) &&
-                sent.Message.Body.Contains("NEW/77", StringComparison.Ordinal) &&
-                sent.Message.Body.Contains("APP/42", StringComparison.Ordinal) &&
-                sent.Message.Body.Contains("影響 1 台", StringComparison.Ordinal));
-            Assert.Contains(followup, sent => sent.Message.To.Contains(newRecipient) &&
-                sent.Message.Body.Contains("APP/42", StringComparison.Ordinal) &&
-                sent.Message.Body.Contains("NEW/77", StringComparison.Ordinal) &&
-                sent.Message.Body.Contains("影響 2 台", StringComparison.Ordinal));
-        }
-        finally
-        {
-            if (Directory.Exists(workflowBackendPath)) Directory.Delete(workflowBackendPath, recursive: true);
-        }
     }
 
     [Theory]
@@ -579,7 +424,8 @@ public class MailNotificationServiceTests : IDisposable
         CreateViewAllAccount("ops@test.local");
         EnableMail(s => { s.MailOnRunCompleted = true; s.MailMinRiskLevel = RiskLevels.Medium; });
         var host = _hosts.Upsert(new WebHost { HostName = "host1" });
-        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High));
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High,
+            issues: Enumerable.Range(0, 55).Select(i => DigestIssue($"issue{i}", i)).ToArray()));
         for (var i = 0; i < 55; i++)
         {
             _issueAggregates.Result.Add(new IssueAggregate
@@ -667,10 +513,12 @@ public class MailNotificationServiceTests : IDisposable
         var body = new StringBuilder();
         var append = typeof(MailNotificationService).GetMethod("AppendIssueRows",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        append.Invoke(null, [body, rendered.Rows.ToList(), 2]);
+        append.Invoke(null, [body, rendered.Rows.ToList(), 2, rows.Length]);
         Assert.Contains("EV0/1", body.ToString());
         Assert.Contains("EV1/2", body.ToString());
         Assert.DoesNotContain("EV2/3", body.ToString());
+        // 渲染列已截在上限內，截斷前的總數仍要告訴收件人還有幾個沒列出。
+        Assert.Contains("其餘 1 個問題", body.ToString());
     }
 
     [Fact]
@@ -739,7 +587,7 @@ public class MailNotificationServiceTests : IDisposable
         CreateViewAllAccount("ops@test.local");
         EnableMail(s => s.MailUrgentEnabled = true);
         var host = _hosts.Upsert(new WebHost { HostName = "host1" });
-        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High));
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: DigestIssue("disk", 153)));
         _issueAggregates.Result.Add(new IssueAggregate
         {
             Source = "disk", EventId = 153, Category = "Storage",
@@ -919,7 +767,7 @@ public class MailNotificationServiceTests : IDisposable
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
         _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
-        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: DigestIssue("disk", 153)));
 
         await Create().NotifyAfterRunAsync();
 
@@ -937,7 +785,7 @@ public class MailNotificationServiceTests : IDisposable
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
         _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { hostOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
-        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: DigestIssue("disk", 153)));
 
         await Create().NotifyAfterRunAsync();
 
@@ -1003,7 +851,7 @@ public class MailNotificationServiceTests : IDisposable
         var host2 = _hosts.Upsert(new WebHost { HostName = "host2", OwnerUserIds = new List<long> { hostOwner.UserId } });
         _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
-        _records.Add(Record(host1.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+        _records.Add(Record(host1.HostId, "host1", Yesterday, RiskLevels.High, issues: DigestIssue("disk", 153)));
         _records.Add(Record(host2.HostId, "host2", Yesterday, RiskLevels.High, issues: Issue("network", 999)));
 
         await Create().NotifyAfterRunAsync();
@@ -1024,7 +872,7 @@ public class MailNotificationServiceTests : IDisposable
         var host = _hosts.Upsert(new WebHost { HostName = "host1" });
         _issueAggregates.HostIdsForResult = new HashSet<long> { host.HostId };
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailRecipients = new List<string> { "issueowner@test.local" }; });
-        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: DigestIssue("disk", 153)));
 
         await Create().NotifyAfterRunAsync();
 
@@ -1566,7 +1414,7 @@ public class MailNotificationServiceTests : IDisposable
         var to = now.Date.AddDays(-1);
         var host1 = _hosts.Upsert(new WebHost { HostName = "host1" });
         _records.Add(Record(host1.HostId, "host1", to.AddDays(-1), RiskLevels.High));
-        _records.Add(Record(host1.HostId, "host1", to, RiskLevels.Medium));
+        _records.Add(Record(host1.HostId, "host1", to, RiskLevels.Medium, issues: DigestIssue("disk", 153)));
         _records.Add(Record(host1.HostId, "host1", to.AddDays(-9), RiskLevels.High));   // 窗口外，不計入
         _handlings.Save(new RecordHandling { HostName = "host1", Date = to.AddDays(-1), Status = HandlingStatuses.Open });
         _issueAggregates.Result.Add(new IssueAggregate
@@ -2197,129 +2045,8 @@ public class MailNotificationServiceTests : IDisposable
         PrtgIncidentStartedAt = start ?? new DateTimeOffset(Yesterday.AddHours(1))
     };
 
-    private static LogIssueSignature ActionableMessagePrtg() => new()
-    {
-        LogName = "PRTG", Source = "PRTG:down", EventId = 0,
-        EventKey = "prtg:down:10:core:resource", ElevatesDayRisk = true,
-        Severity = IssueSeverity.High, PrtgSourceGeneration = "core", PrtgResourceGeneration = "resource",
-        PrtgMessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
-        PrtgIncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1))
-    };
-
     [Fact]
-    public void MixedMailProjectionDropsOnlyStaleRawTrendAndPreservesNetiqMessageAndCurrentRawLanes()
-    {
-        var settings = new SystemSettings { PrtgEnabled = true, PrtgUrl = "https://fixture.example" };
-        var hostId = 17L;
-        var policy = new PrtgMonitoringPolicy
-        {
-            CoreSystemId = "core", SourceGeneration = "core", ValidFrom = DateTimeOffset.UtcNow.AddDays(-3),
-            EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(settings.PrtgUrl),
-            SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US",
-            HostIds = [hostId], SensorIds = [11, 12, 13]
-        };
-        var netiq = new LogIssueSignature
-        {
-            LogName = "Application", Source = "APP", EventId = 42, EventKey = "APP|42",
-            Severity = IssueSeverity.Low, ElevatesDayRisk = false
-        };
-        LogIssueSignature Prtg(string rule, long sensor, bool elevates) => new()
-        {
-            LogName = "PRTG", Source = "PRTG:" + rule, EventId = 0,
-            EventKey = $"prtg:{rule}:{sensor}:core:resource-{sensor}", RuleId = rule,
-            PrtgSourceGeneration = "core", PrtgResourceGeneration = "resource-" + sensor,
-            Severity = elevates ? IssueSeverity.High : IssueSeverity.Low, ElevatesDayRisk = elevates
-        };
-        var message = Prtg("down", 11, false);
-        message.PrtgMessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent;
-        message.PrtgMessageTimeFingerprint = "message-fp";
-        var staleTrend = Prtg("disk_free_trend", 12, true);
-        var currentTrend = Prtg("disk_free_trend", 13, false);
-        var record = Record(hostId, "host", Yesterday, RiskLevels.High, issues: [netiq, message, staleTrend, currentTrend]);
-        record.LogSource = AnalysisLogSource.Netiq;
-        record.PrtgBaselineRiskLevel = RiskLevels.Low;
-
-        var filter = typeof(MailNotificationService).GetMethod("FilterCurrentPrtgLanes",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        var projected = (List<DailyAnalysisRecord>)filter.Invoke(null, [new[] { record }, settings, settings,
-            policy, "message-fp", true,
-            (Func<long, long, LogIssueSignature, DateTime, SystemSettings, string, bool>)((_, sensorId, issue, _, _, fp) =>
-                issue.RuleId == "down" ? fp == "message-fp" &&
-                    issue.PrtgMessageStatusSemanticVersion == PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent &&
-                    issue.PrtgMessageTimeFingerprint == fp : sensorId == 13 && issue.RuleId == "disk_free_trend")])!;
-
-        var result = Assert.Single(projected);
-        Assert.NotSame(record, result);
-        Assert.Equal(new[] { "APP|42", message.EventKey, currentTrend.EventKey }, result.TopIssues.Select(issue => issue.EventKey));
-        Assert.Equal(4, record.TopIssues.Count); // Filtering is a transient mail projection.
-        Assert.Equal(RiskLevels.Low, result.RiskLevel); // Removed PRTG risk is recalculated; NetIQ facts remain.
-    }
-
-    [Theory]
-    [InlineData("rule")]
-    [InlineData("mute")]
-    [InlineData("transport")]
-    public async Task 正式來源寄第一人後改規則靜音或SMTP_第二人安全停止且恢復後可重試(string change)
-    {
-        var directory = Path.Combine(Path.GetTempPath(), "lf-mail-live-" + Guid.NewGuid());
-        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, directory);
-        CreateViewAllAccount("ops@test.local"); CreateViewAllAccount("second@test.local");
-        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
-        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.PrtgUrl = "https://fixture.example"; s.MailRecipients.Add("second@test.local"); });
-        new SystemSettingsStore(backend.Blob("system_settings")).Update(s =>
-        { s.PrtgEnabled = true; s.PrtgUrl = "https://fixture.example"; });
-        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policy.Update(p => { p.Revision = "policy"; p.CoreSystemId = "core"; p.SourceGeneration = "core";
-            p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
-            p.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24; p.MessageTimeAuthorityRevision = 1;
-            p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor("https://fixture.example");
-            p.HostIds = [host.HostId]; p.SensorIds = [10]; p.ValidFrom = DateTimeOffset.Now.AddDays(-3); });
-        var prtgStore = backend.PrtgStore();
-        prtgStore.UpsertDevices([new PrtgDeviceRow { Objid = 1, Name = "host" }], DateTime.Now);
-        prtgStore.UpsertSensors([new PrtgSensorRow { Objid = 10, DeviceObjid = 1,
-            SensorType = "ping", Category = "availability", Paused = false }], DateTime.Now);
-        prtgStore.ReplaceHostMapForDate(Yesterday, [new PrtgHostMapRow { DeviceObjid = 1,
-            MapDate = Yesterday, HostId = host.HostId, HostName = "host", MapStatus = PrtgMapStatus.Ok }]);
-        var identity = prtgStore.BindObservedResource(10, host.HostId, "core", "mail-resource-10");
-        var rules = new KnownIssueRuleStore(backend.Blob("rules"));
-        var rule = new KnownIssueRule { Id = "down", Platform = "prtg", PrtgRuleCode = "down", Enabled = true,
-            Severity = IssueSeverity.High, ElevatesDayRisk = true };
-        rules.Save(new RuleFileContent { Rules = [rule] });
-        var finding = new PrtgFinding(1, 10, "down", "trusted", 60, rule)
-        { SourceGeneration = identity.SourceGeneration, ResourceGeneration = identity.Generation,
-            IncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1)),
-            MessageStatusSemanticVersion = PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
-            MessageTimeFingerprint = policy.Get().MessageTimeFingerprint("https://fixture.example") };
-        var signature = PrtgFindingMapper.ToSignature(finding, Yesterday);
-        backend.PrtgObservationStore().Capture(host.HostId, Yesterday, "r1", [(finding, signature)]);
-        new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + 10)).Update(e =>
-        { e.Bind(10, host.HostId, identity.SourceGeneration, "mail-fixture", identity.Generation,
-            identity.Epoch, identity.ChannelGeneration, policy.Get().ValidFrom);
-            e.MessageTimeFingerprint = finding.MessageTimeFingerprint!;
-            e.MappingRevision = backend.Blob(LogForesight.Core.Persistence.Sql.EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(); });
-        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: signature);
-        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
-        var owners = new IssueOwnerStore(backend.Blob("issue_owners"));
-        var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness, owners, _issueAggregates,
-            prtgMonitoring: policy, prtgBackend: backend);
-        _sender.OnSend = _ => {
-            if (change == "rule") { rules.Save(new RuleFileContent { Rules = [new KnownIssueRule { Id = "down", Platform = "prtg", PrtgRuleCode = "down", Enabled = true,
-                Severity = IssueSeverity.High, ElevatesDayRisk = true, PrtgThreshold = 999 }] }); }
-            if (change == "mute") owners.Upsert(new IssueProfile { SourceName = signature.Source, EventId = 0,
-                Mutes = [new() { From = Yesterday, To = Yesterday }] });
-            if (change == "transport") _settingsStore.Update(s => s.SmtpServer = "changed.test.local");
-        };
-        await service.NotifyAfterRunAsync();
-        Assert.Single(_sender.Sent);
-        _sender.OnSend = null; rules.Save(new RuleFileContent { Rules = [rule] });
-        owners.Delete(signature.Source, 0); _settingsStore.Update(s => s.SmtpServer = "smtp.test.local");
-        await service.RetryPendingUrgentAsync();
-        Assert.Contains(_sender.Sent, sent => sent.Message.To.Contains("second@test.local"));
-    }
-
-    [Fact]
-    public async Task PRTG晚到高風險不被同主機日先前已寄旗標遮住()
+    public async Task PRTG晚到finding不重寄即時通知_只進摘要()
     {
         CreateViewAllAccount("ops@test.local");
         var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
@@ -2332,15 +2059,12 @@ public class MailNotificationServiceTests : IDisposable
         record.TopIssues.Add(ActionablePrtg());
         await service.NotifyAfterRunAsync();
         await service.NotifyAfterRunAsync();
-        Assert.Equal(2, _sender.Sent.Count);
-        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
-        var sentIntent = state.UrgentOutbox.Values.Single(i => i.ProblemKeys.Count > 0);
-        Assert.Equal("smtp-accepted", sentIntent.Status);
-        Assert.Single(sentIntent.SmtpAcceptedAtUtc); Assert.All(sentIntent.SmtpAcceptedAtUtc.Values, at => Assert.Equal(DateTimeKind.Utc, at.Kind));
+        // PRTG finding 只進摘要信：即時通知的判斷先剔除 PRTG，同一主機日不因晚到的 PRTG 重寄。
+        Assert.Single(_sender.Sent);
     }
 
     [Fact]
-    public async Task PRTG無合格明細收件人不能以統計信標記完成()
+    public async Task 只有PRTG撐起的高風險不建立即時通知()
     {
         var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
         EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
@@ -2349,227 +2073,8 @@ public class MailNotificationServiceTests : IDisposable
         await Create().NotifyAfterRunAsync();
         var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
         Assert.Empty(state.UrgentSentKeys);
-        var intent = Assert.Single(state.UrgentOutbox.Values);
-        Assert.Equal("no-qualified-recipient", intent.Status);
-        Assert.Equal("no-qualified-recipient", MailNotificationService.EffectiveUrgentStatusForRead(intent, state.UrgentSentKeys));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task MixedUrgentMail_DeliveredNetiqAndCurrentMessage_DoNotAcceptStaleRawTrendFact(bool formatDriftsBetweenRecipients)
-    {
-        var directory = Path.Combine(Path.GetTempPath(), "lf-mail-mixed-lanes-" + Guid.NewGuid().ToString("N"));
-        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, directory);
-        try
-        {
-            CreateViewAllAccount("ops@test.local");
-            if (formatDriftsBetweenRecipients) CreateViewAllAccount("ops2@test.local");
-            var host = _hosts.Upsert(new WebHost { HostName = "mixed-host", Active = true, Source = "netiq" });
-            const string url = "https://fixture.example";
-            EnableMail(s =>
-            {
-                s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.PrtgUrl = url;
-                if (formatDriftsBetweenRecipients) s.MailRecipients.Add("ops2@test.local");
-            });
-            new SystemSettingsStore(backend.Blob("system_settings")).Update(s =>
-            { s.PrtgEnabled = true; s.PrtgUrl = url; });
-
-            var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-            policy.Update(p =>
-            {
-                p.Revision = "mixed-policy"; p.CoreSystemId = "core"; p.SourceGeneration = "core";
-                p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
-                p.MessageDateFormat = PrtgMessageDateTimeParser.Ymd24; p.MessageTimeAuthorityRevision = 1;
-                p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(url);
-                p.HostIds = [host.HostId]; p.SensorIds = [11, 12, 13]; p.ValidFrom = DateTimeOffset.UtcNow.AddDays(-3);
-            });
-            var store = backend.PrtgStore();
-            store.UpsertDevices([new PrtgDeviceRow { Objid = 1, Name = host.HostName }], DateTime.Now);
-            store.UpsertSensors([
-                new PrtgSensorRow { Objid = 11, DeviceObjid = 1, SensorType = "ping", Category = "availability", Paused = false },
-                new PrtgSensorRow { Objid = 12, DeviceObjid = 1, SensorType = "disk", Category = "disk", Paused = false },
-                new PrtgSensorRow { Objid = 13, DeviceObjid = 1, SensorType = "disk", Category = "disk", Paused = false }
-            ], DateTime.Now);
-            store.ReplaceHostMapForDate(Yesterday, [new PrtgHostMapRow { DeviceObjid = 1, MapDate = Yesterday,
-                HostId = host.HostId, HostName = host.HostName, MapStatus = PrtgMapStatus.Ok }]);
-            var identities = new[]
-            {
-                store.BindObservedResource(11, host.HostId, "core", "mail-mixed-11"),
-                store.BindObservedResource(12, host.HostId, "core", "mail-mixed-12"),
-                store.BindObservedResource(13, host.HostId, "core", "mail-mixed-13")
-            };
-            identities[2] = store.SetObservedChannel(13, identities[2].SourceGeneration,
-                "primary-disk-channel|resource-period-v1", identities[2].Generation);
-            var rules = new KnownIssueRuleStore(backend.Blob("rules"));
-            var messageRule = new KnownIssueRule { Id = "down", Platform = "prtg", PrtgRuleCode = "down", Enabled = true,
-                Severity = IssueSeverity.High, ElevatesDayRisk = true };
-            var trendRule = new KnownIssueRule { Id = "disk_free_trend", Platform = "prtg", PrtgRuleCode = "disk_free_trend", Enabled = true,
-                Severity = IssueSeverity.High, ElevatesDayRisk = true };
-            rules.Save(new RuleFileContent { Rules = [messageRule, trendRule] });
-            var messageFingerprint = policy.Get().MessageTimeFingerprint(url);
-            PrtgFinding Finding(long sensorId, string code, KnownIssueRule rule, int identityIndex, bool message = false) =>
-                new(1, sensorId, code, "trusted", 60, rule)
-                {
-                    SourceGeneration = identities[identityIndex].SourceGeneration,
-                    ResourceGeneration = identities[identityIndex].Generation,
-                    ChannelGeneration = identities[identityIndex].ChannelGeneration,
-                    IncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(1)),
-                    MessageStatusSemanticVersion = message ? PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent : null,
-                    MessageTimeFingerprint = message ? messageFingerprint : null
-                };
-            var messageFinding = Finding(11, "down", messageRule, 0, message: true);
-            var staleTrendFinding = Finding(12, "disk_free_trend", trendRule, 1);
-            var currentTrendFinding = Finding(13, "disk_free_trend", trendRule, 2);
-            var findings = new[] { messageFinding, staleTrendFinding, currentTrendFinding }
-                .Select(finding => (finding, PrtgFindingMapper.ToSignature(finding, Yesterday))).ToArray();
-            backend.PrtgObservationStore().Capture(host.HostId, Yesterday, policy.Get().Revision, findings, url);
-
-            var timeline = new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + 11));
-            timeline.Update(e =>
-            {
-                e.Bind(11, host.HostId, identities[0].SourceGeneration, "mail-mixed-11", identities[0].Generation,
-                    identities[0].Epoch, identities[0].ChannelGeneration, policy.Get().ValidFrom);
-                e.MessageTimeFingerprint = messageFinding.MessageTimeFingerprint!;
-                e.MappingRevision = backend.Blob(LogForesight.Core.Persistence.Sql.EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
-            });
-            var diskEvidence = new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
-            var diskVerification = new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey));
-            var identity = identities[2];
-            diskEvidence.Update(all => all[13] = new PrtgDiskSemanticEvidence(13, 1, host.HostId, "disk", "free", "Free",
-                "%", 1, "descending-danger", PrtgDiskSemanticEvidenceSource.Manual, 1, "confirmed for mixed test",
-                DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion, identity.SourceGeneration,
-                identity.Generation, identity.ChannelGeneration, identity.Epoch));
-            diskVerification.Save(new PrtgDiskVerificationResult(13, 1, host.HostId, "disk", "Verified", "current channel proof",
-                "free", "Free", "%", 1, "descending-danger", 1, true, DateTime.UtcNow, Yesterday,
-                PrtgDiskAssessmentService.ParserSemanticVersion, false, identity.SourceGeneration, identity.Generation,
-                identity.ChannelGeneration, identity.Epoch));
-            Assert.False(PrtgFindingMapper.RequiresMessageTimeAuthority(findings[2].Item2));
-            Assert.True(PrtgResourceQualification.IsCurrentDiskChannel(backend, 13, store.GetResourceIdentity(13)),
-                "The current raw trend lane must have a complete, live semantic and verification channel proof.");
-
-            var netiq = new LogIssueSignature { LogName = "Application", Source = "APP", EventId = 42,
-                EventKey = "APP|42", Severity = formatDriftsBetweenRecipients ? IssueSeverity.High : IssueSeverity.Low,
-                ElevatesDayRisk = formatDriftsBetweenRecipients };
-            var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High, issues: [netiq,
-                findings[0].Item2, findings[1].Item2, findings[2].Item2]);
-            record.LogSource = AnalysisLogSource.Netiq;
-            record.PrtgBaselineRiskLevel = formatDriftsBetweenRecipients ? RiskLevels.High : RiskLevels.Low;
-            _records.Add(record);
-            _issueAggregates.AggregateOverride = (from, to) => from.Date <= Yesterday && to.Date >= Yesterday
-                ? record.TopIssues.GroupBy(issue => IssueProfile.KeyOf(issue.Source, issue.EventId)).Select(group => new IssueAggregate
-                {
-                    Source = group.First().Source, EventId = group.First().EventId, Category = "Application",
-                    MaxSeverityRank = group.Max(issue => (int)issue.Severity), ElevatesDayRisk = group.Any(issue => issue.ElevatesDayRisk),
-                    HostCount = 1, DayCount = 1, ActiveDays = 1, FirstSeen = Yesterday, LastSeen = Yesterday,
-                    IssueKeys = group.Select(issue => issue.EventKey).ToArray()
-                }).ToList() : [];
-            var digest = new MailIssueDigest(_issueAggregates,
-                new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore),
-                _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
-            var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
-                _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-                _issueOwners, _issueAggregates, issueDigest: digest, prtgMonitoring: policy, prtgBackend: backend);
-
-            if (formatDriftsBetweenRecipients)
-                _sender.OnSend = _ => policy.Update(p =>
-                {
-                    p.MessageDateFormat = PrtgMessageDateTimeParser.Mdy24;
-                    p.MessageTimeAuthorityRevision++;
-                    p.Revision = "changed-only-message-format";
-                });
-
-            await service.NotifyAfterRunAsync();
-
-            var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
-            Assert.True(_sender.Sent.Count == (formatDriftsBetweenRecipients ? 2 : 1),
-                $"sent={_sender.Sent.Count}; intents={string.Join(',', state.UrgentOutbox.Values.Select(i => $"{i.Status}:{i.WaitingReasonCode}:{i.ProblemKeys.Count}"))}; accepted={state.PrtgUrgentAcceptedFacts.Count}");
-            Assert.All(_sender.Sent, sent => Assert.Contains(findings[2].Item2.Source, sent.Message.Body));
-            var accepted = state.PrtgUrgentAcceptedFacts.Keys.ToArray();
-            if (formatDriftsBetweenRecipients)
-                Assert.DoesNotContain(accepted, key => key.Contains(findings[0].Item2.EventKey, StringComparison.Ordinal));
-            else
-                Assert.Contains(accepted, key => key.Contains(findings[0].Item2.EventKey, StringComparison.Ordinal));
-            Assert.Contains(accepted, key => key.Contains(findings[2].Item2.EventKey, StringComparison.Ordinal));
-            Assert.DoesNotContain(accepted, key => key.Contains(findings[1].Item2.EventKey, StringComparison.Ordinal));
-            Assert.Equal(4, _records.Query(new RecordQueryFilter { Hosts = null, From = Yesterday, To = Yesterday })
-                .Single().TopIssues.Count); // The source record retains its full unfiltered evidence.
-        }
-        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData(0)]
-    [InlineData(2)]
-    public async Task LegacyOrUnsupportedStatusFinding_IsNotMailed(int? version)
-    {
-        CreateViewAllAccount("ops@test.local");
-        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true, Source = "netiq" });
-        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
-        var issue = ActionableMessagePrtg();
-        issue.RuleId = PrtgRuleEvaluator.RuleDown;
-        issue.PrtgMessageStatusSemanticVersion = version;
-        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: issue);
-        record.LogSource = AnalysisLogSource.Netiq;
-        _records.Add(record);
-
-        await Create().NotifyAfterRunAsync();
-
-        Assert.Empty(_sender.Sent);
-    }
-
-    [Fact]
-    public async Task StaleStatusFindingDoesNotInflateHighRiskCountButNetiqBaselineRemains()
-    {
-        CreateViewAllAccount("ops@test.local");
-        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
-        var staleHost = _hosts.Upsert(new WebHost { HostName = "stale-host", Active = true, Source = "netiq" });
-        var netiqHost = _hosts.Upsert(new WebHost { HostName = "netiq-host", Active = true, Source = "netiq" });
-        var staleIssue = ActionableMessagePrtg();
-        staleIssue.RuleId = PrtgRuleEvaluator.RuleDown;
-        staleIssue.PrtgMessageStatusSemanticVersion = null;
-        var staleRecord = Record(staleHost.HostId, staleHost.HostName, Yesterday, RiskLevels.High, issues: staleIssue);
-        staleRecord.LogSource = AnalysisLogSource.Netiq;
-        _records.Add(staleRecord);
-
-        var correlationHost = _hosts.Upsert(new WebHost { HostName = "correlation-host", Active = true, Source = "netiq" });
-        var correlatedStatus = ActionableMessagePrtg();
-        correlatedStatus.PrtgMessageStatusSemanticVersion = null;
-        var correlationRecord = Record(correlationHost.HostId, correlationHost.HostName, Yesterday, RiskLevels.High,
-            issues: correlatedStatus);
-        correlationRecord.LogSource = AnalysisLogSource.Netiq;
-        correlationRecord.CorrelationAlerts = ["NetIQ correlation remains independently medium"];
-        correlationRecord.CorrelationAlertRefs = [new() { Text = correlationRecord.CorrelationAlerts[0], PatternId = "netiq-test-medium" }];
-        _records.Add(correlationRecord);
-
-        var mediumHost = _hosts.Upsert(new WebHost { HostName = "medium-host", Active = true, Source = "netiq" });
-        var mediumStatus = ActionableMessagePrtg();
-        mediumStatus.PrtgMessageStatusSemanticVersion = null;
-        var ordinaryMedium = new LogIssueSignature { LogName = "System", Source = "Service", EventId = 7036,
-            EventKey = "netiq-medium", Count = 1, Severity = IssueSeverity.High, ElevatesDayRisk = false };
-        var mediumRecord = Record(mediumHost.HostId, mediumHost.HostName, Yesterday, RiskLevels.High,
-            issues: [ordinaryMedium, mediumStatus]);
-        mediumRecord.LogSource = AnalysisLogSource.Netiq;
-        _records.Add(mediumRecord);
-
-        var independentIssue = new LogIssueSignature { LogName = "System", Source = "Service", EventId = 7036,
-            EventKey = "netiq-service", Count = 1, Severity = IssueSeverity.High, ElevatesDayRisk = true };
-        var netiqRecord = Record(netiqHost.HostId, netiqHost.HostName, Yesterday, RiskLevels.High, issues: independentIssue);
-        netiqRecord.LogSource = AnalysisLogSource.Netiq;
-        netiqRecord.PrtgBaselineRiskLevel = RiskLevels.High;
-        netiqRecord.PrtgBaselineRiskBasis = "NetIQ baseline";
-        var staleDuplicate = ActionableMessagePrtg();
-        staleDuplicate.PrtgMessageStatusSemanticVersion = null;
-        netiqRecord.TopIssues.Add(staleDuplicate);
-        _records.Add(netiqRecord);
-
-        await Create().NotifyAfterRunAsync();
-
-        var message = Assert.Single(_sender.Sent).Message;
-        Assert.Contains("共 1 筆高風險主機日達門檻", message.Body);
-        Assert.DoesNotContain(staleIssue.Source, message.Body);
-        Assert.DoesNotContain(staleIssue.EventKey, message.Body);
+        Assert.Empty(state.UrgentOutbox);
+        Assert.Empty(_sender.Attempts);
     }
 
     [Theory]
@@ -2642,7 +2147,6 @@ public class MailNotificationServiceTests : IDisposable
         Assert.True(workflowAfterAccept.MailIsComplete);
         Assert.Single(workflowAfterAccept.MailDeliveredPartsByIntent.Values.Single());
         Assert.Empty(workflowAfterAccept.MailFailedPartsByIntent.Values.Single());
-        Assert.Empty(acceptedState.PrtgUrgentAcceptedFacts);
         var deliveryVersion = workflow.CaptureDeliveryVersion(host.HostId, Yesterday, record.RecordId)!;
         workflow.ReplaceMailPlan(host.HostId, Yesterday, "urgent",
             new Dictionary<string, IReadOnlyCollection<string>>(), deliveryVersion);
@@ -2698,7 +2202,6 @@ public class MailNotificationServiceTests : IDisposable
         Assert.True(workflow.Get(host.HostId, Yesterday)!.MailIsComplete);
         Assert.Equal(2, _sender.Attempts.Count);
         Assert.Single(_sender.Sent);
-        Assert.Empty(stateStore.Get().PrtgUrgentAcceptedFacts);
         }
         finally
         {
@@ -2738,7 +2241,6 @@ public class MailNotificationServiceTests : IDisposable
             Assert.Empty(replaced.MailIntents);
             Assert.False(replaced.MailIsComplete);
             Assert.Single(_sender.Sent); // SMTP accepted after the concurrent parent replacement.
-            Assert.Empty(new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get().PrtgUrgentAcceptedFacts);
         }
         finally
         {
@@ -2780,10 +2282,9 @@ public class MailNotificationServiceTests : IDisposable
             Assert.Single(_sender.Sent);
             Assert.DoesNotContain("PRTG-HOST", _sender.Sent[0].Message.Body);
             var notifyState = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
-            Assert.Empty(notifyState.PrtgUrgentAcceptedFacts);
-            Assert.Equal(2, notifyState.UrgentOutbox.Count);
-            Assert.All(notifyState.UrgentOutbox.Values, intent => Assert.Equal("smtp-accepted", intent.Status));
-            Assert.True(workflow.Get(prtgHost.HostId, Yesterday)!.MailIsComplete);
+            // 只有 PRTG 撐起高風險的主機日不進即時通知（PRTG 只進摘要），只剩 NetIQ 那筆。
+            var intent = Assert.Single(notifyState.UrgentOutbox.Values);
+            Assert.Equal("smtp-accepted", intent.Status);
             Assert.True(workflow.Get(netiqHost.HostId, Yesterday)!.MailIsComplete);
         }
         finally
@@ -2814,7 +2315,6 @@ public class MailNotificationServiceTests : IDisposable
         var key = Assert.Single(sentState.UrgentOutbox.Keys);
         Assert.Contains(key, sentState.UrgentSentKeys);
         Assert.Equal(DateTimeKind.Utc, sentState.UrgentOutbox[key].SmtpAcceptedAtUtc["ops@test.local"].Kind);
-        Assert.Empty(sentState.PrtgUrgentAcceptedFacts);
 
         // Model the old persisted inconsistency without changing any durable acceptance facts.
         stateStore.Update(s => s.UrgentOutbox[key].Status = "no-qualified-recipient");
@@ -2837,7 +2337,6 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Equal("no-qualified-recipient", afterRetry.UrgentOutbox[key].Status);
         Assert.Equal(1, _sender.Attempts.Count);
         Assert.Single(_sender.Sent);
-        Assert.Empty(afterRetry.PrtgUrgentAcceptedFacts);
     }
 
     [Fact]
@@ -2871,7 +2370,7 @@ public class MailNotificationServiceTests : IDisposable
             new SystemSettingsStore(backend.Blob("system_settings")).Update(settings => settings.Revision = "fixture-revision");
             var beforeRawState = backend.Blob("mail_notify_state").Read();
             var controller = new PrtgOperationsController(backend, new FixedVisibility(hosts, visibleHost.HostId),
-                stateStore, Create(), null!, null!, new DataVersionStamp(), new RecordingAuditService(), hosts, null!);
+                stateStore);
 
             var response = Assert.IsType<OkObjectResult>(controller.Get());
             using var json = JsonDocument.Parse(JsonSerializer.Serialize(response.Value));
@@ -2882,7 +2381,6 @@ public class MailNotificationServiceTests : IDisposable
             Assert.DoesNotContain(notifications, row => row.GetProperty("HostId").GetInt64() == privateHost.HostId);
 
             Assert.Equal(beforeRawState, backend.Blob("mail_notify_state").Read());
-            Assert.Empty(stateStore.Get().PrtgUrgentAcceptedFacts);
             Assert.Empty(_sender.Attempts);
             Assert.Empty(_sender.Sent);
         }
@@ -2916,56 +2414,6 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Equal("no-qualified-recipient", MailNotificationService.EffectiveUrgentStatusForRead(intent, state.UrgentSentKeys));
         Assert.Empty(_sender.Attempts);
         Assert.Empty(state.UrgentSentKeys);
-    }
-
-    [Fact]
-    public async Task PRTG部分SMTP接受後重試保留相同意圖且不漏第二人()
-    {
-        CreateViewAllAccount("ops@test.local"); CreateViewAllAccount("second@test.local");
-        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
-        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.MailRecipients.Add("second@test.local"); });
-        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: ActionablePrtg());
-        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
-        _sender.ThrowOnSendForRecipient = "second@test.local";
-        var service = Create(); await service.NotifyAfterRunAsync();
-        var before = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
-        var key = Assert.Single(before.UrgentOutbox.Keys);
-        Assert.Empty(before.UrgentSentKeys);
-        Assert.Equal("smtp-accepted", before.UrgentOutbox[key].Recipients["ops@test.local"]);
-        _sender.ThrowOnSendForRecipient = null; await service.RetryPendingUrgentAsync();
-        var after = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
-        Assert.Equal(key, Assert.Single(after.UrgentOutbox.Keys));
-        Assert.Equal("smtp-accepted", after.UrgentOutbox[key].Status);
-        Assert.Equal(3, _sender.Sent.Count);
-    }
-
-    [Fact]
-    public async Task PRTG寄送前撤銷第二人帳號不洩漏且不冒稱全部完成()
-    {
-        CreateViewAllAccount("ops@test.local"); var second = CreateViewAllAccount("second@test.local");
-        var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
-        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; s.MailRecipients.Add("second@test.local"); });
-        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: ActionablePrtg());
-        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
-        _sender.OnSend = _ => { second.Active = false; _users.Upsert(second); };
-        await Create().NotifyAfterRunAsync();
-        Assert.Single(_sender.Attempts);
-        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get();
-        Assert.Empty(state.UrgentSentKeys);
-    }
-
-    [Fact]
-    public async Task PRTG可信恢復再發有新通知版本()
-    {
-        CreateViewAllAccount("ops@test.local"); var host = _hosts.Upsert(new WebHost { HostName = "host", Active = true });
-        EnableMail(s => { s.MailUrgentEnabled = true; s.PrtgEnabled = true; });
-        var record = Record(host.HostId, "host", Yesterday, RiskLevels.High, issues: ActionablePrtg());
-        record.LogSource = AnalysisLogSource.Netiq; _records.Add(record);
-        var service = Create(); await service.NotifyAfterRunAsync();
-        record.TopIssues[0].PrtgIncidentStartedAt = new DateTimeOffset(Yesterday.AddHours(10));
-        await service.NotifyAfterRunAsync();
-        Assert.Equal(2, _sender.Sent.Count);
-        Assert.Equal(2, new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get().UrgentOutbox.Count);
     }
 
     private sealed class FixedVisibility(IHostStore hosts, params long[] visibleIds) : IVisibilityService

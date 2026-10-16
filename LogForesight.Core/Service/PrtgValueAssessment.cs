@@ -31,6 +31,9 @@ public static class PrtgValueSemantics
             ["Ping"] = PrtgValueSemantic.PingMs
         };
 
+    /// <summary>內建對照的 type（探測步驟 8 逐一核對）。</summary>
+    public static IReadOnlyCollection<string> BuiltinTypes => (IReadOnlyCollection<string>)Builtin.Keys;
+
     public static bool TryResolve(string? sensorType, out PrtgValueSemantic semantic)
     {
         semantic = default;
@@ -117,9 +120,16 @@ public sealed class PrtgValueAssessment
     /// 可再以分類與監看政策的 sensor 清單（空＝不限）縮圈。依 objid 排序，分頁穩定。
     /// </summary>
     public IReadOnlyList<PrtgValueSensor> Candidates(IReadOnlyDictionary<long, long> deviceToHost,
-        IReadOnlySet<long> evaluationHostIds, IReadOnlySet<long> policySensorIds, string? category = null)
+        IReadOnlySet<long> evaluationHostIds, IReadOnlySet<long> policySensorIds, string? category = null) =>
+        Candidates(_store.GetSensorStatuses(), deviceToHost, evaluationHostIds, policySensorIds, category);
+
+    /// <summary>同上，但沿用呼叫端已讀出的 sensor 鏡像（逐日試算時只讀一次）。</summary>
+    public static IReadOnlyList<PrtgValueSensor> Candidates(
+        IEnumerable<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)> sensors,
+        IReadOnlyDictionary<long, long> deviceToHost, IReadOnlySet<long> evaluationHostIds,
+        IReadOnlySet<long> policySensorIds, string? category = null)
     {
-        return _store.GetSensorStatuses()
+        return sensors
             .Where(s => deviceToHost.TryGetValue(s.DeviceObjid, out var hostId) && evaluationHostIds.Contains(hostId) &&
                 (policySensorIds.Count == 0 || policySensorIds.Contains(s.Objid)) &&
                 (category is null || string.Equals(s.Category, category, StringComparison.OrdinalIgnoreCase)))
@@ -128,6 +138,25 @@ public sealed class PrtgValueAssessment
             .Select(s => new PrtgValueSensor(s.Objid, s.DeviceObjid, deviceToHost[s.DeviceObjid], s.SensorName,
                 s.SensorType, s.Category))
             .ToList();
+    }
+
+    /// <summary>sensor 鏡像（候選來源）；逐日試算時讀一次後交給靜態的 Candidates 多載。</summary>
+    public List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)> SensorMirror() =>
+        _store.GetSensorStatuses();
+
+    /// <summary>
+    /// 某個已完成日的 device → 主機：取該日或之前 <see cref="MapLookbackDays"/> 日內最近一份對應，只認 ok
+    /// （人工對應也以 ok 寫入），且主機在 <paramref name="evaluationHostIds"/> 內。與每日管線過去日的取法相同。
+    /// </summary>
+    public Dictionary<long, long> DeviceToHostOn(DateOnly day, IReadOnlySet<long> evaluationHostIds)
+    {
+        var deviceToHost = new Dictionary<long, long>();
+        foreach (var row in _store.GetLatestHostMapWithDate(MapLookbackDays, day.ToDateTime(TimeOnly.MinValue)).Rows)
+        {
+            if (row.MapStatus == PrtgMapStatus.Ok && row.HostId is { } hostId && evaluationHostIds.Contains(hostId))
+                deviceToHost[row.DeviceObjid] = hostId;
+        }
+        return deviceToHost;
     }
 
     /// <summary>評估一頁候選（≤ <see cref="PageSize"/> 顆）在 <paramref name="completedDay"/> 往回 <paramref name="windowDays"/> 日的數值。</summary>

@@ -374,8 +374,6 @@ public static class ServiceCollectionExtensions
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
         // 本身也可以是 Singleton——沒有請求範圍狀態
         services.AddSingleton<IssueCaseCoordinator>();
-        services.AddSingleton<PrtgSupplementReplay>();
-        services.AddHostedService<PrtgSupplementHostedService>();
 
         // 交辦單協調器：相依的 store 與 IssueCaseCoordinator 皆為 Singleton，本身沒有請求範圍狀態
         services.AddSingleton<WorkOrderCoordinator>();
@@ -401,20 +399,18 @@ public static class ServiceCollectionExtensions
 
         // 規則維護與執行監控
         services.AddScoped<RuleAdminService>();
-        services.AddScoped<PrtgDiskAssessmentService>();
+        // 數值評估只讀已落盤資料（docs/PRTG-SPEC.md §9b），規則頁的磁碟趨勢試算與啟用檢查共用
+        services.AddScoped(sp => new PrtgValueAssessment(sp.GetRequiredService<EfPrtgStore>()));
         services.AddScoped<RunMonitorService>();
 
         // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。
         services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
-        // 郵件問題優先摘要只納入具目前 message-status parser 版本的 PRTG 狀態列；
-        // 其他頁面保留一般 IIssueAggregateQuery 的完整歷史語意。
         services.AddSingleton<MailIssueDigest>(sp => new MailIssueDigest(
             sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(
                 sp.GetRequiredService<IHostStore>(),
-                () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady,
-                requireCurrentPrtgMessageStatus: true),
+                () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady),
             sp.GetRequiredService<OccurrenceStatusResolver>(),
             sp.GetRequiredService<ISystemSettingsStore>(),
             sp.GetRequiredService<IIssueExclusionSource>()));
@@ -448,7 +444,6 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<HostDayWorkflowService>(),
             sp.GetRequiredService<BackgroundWorkGate>()));
         services.AddHostedService(sp => sp.GetRequiredService<HostDayWorkflowRecoveryHostedService>());
-        services.AddHostedService<PrtgResourcePressureModeReplayHostedService>();
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
@@ -517,13 +512,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<PrtgProbeRunState>();
         services.AddSingleton<PrtgProbeService>();
 
-        // PRTG 磁碟語意驗證：與所有 PRTG 探測／回填／同步／快照共用執行 gate。
-        services.AddSingleton(sp => new PrtgDiskSemanticEvidenceStore(
-            sp.GetRequiredService<StorageBackend>().Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
-        services.AddSingleton(sp => new PrtgDiskVerificationResultStore(
-            sp.GetRequiredService<StorageBackend>().Blob(PrtgDiskVerificationResultStore.BlobKey)));
-        services.AddSingleton<PrtgDiskVerificationService>();
-
         // PRTG 歷史回填（PRTG 第 1 輪批次E）：狀態單例與背景執行入口
         services.AddSingleton<PrtgBackfillRunState>();
         services.AddSingleton<PrtgBackfillService>();
@@ -548,14 +536,6 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IHostApplicationLifetime>(),
             TimeSpan.FromSeconds(60)));
         services.AddHostedService(sp => sp.GetRequiredService<PrtgSnapshotHostedService>());
-
-        // Durable fair refresh of current selected resource profiles, separate from daily analysis.
-        services.AddSingleton<PrtgTrustedSamplingProfileRefreshHostedService>();
-        services.AddHostedService(sp => sp.GetRequiredService<PrtgTrustedSamplingProfileRefreshHostedService>());
-
-        // Native per-device PRTG status cross-sections for the formal silent-monitoring rule.
-        // This is a fair background queue; daily analysis only consumes already persisted proofs.
-        services.AddHostedService<PrtgSilentPresenceHostedService>();
 
         // 「重算今天的 PRTG 對應」的共用入口（docs/PRTG-SPEC.md §4）：
         // 人工對應／IP 排除／主機主檔變更三條路徑共用同一份實作

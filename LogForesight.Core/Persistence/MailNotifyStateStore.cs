@@ -190,8 +190,6 @@ public class MailNotifyStateStore : JsonBlobSingleton<MailNotifyState>
     {
         if (intent.Status is not ("smtp-accepted" or "cancelled-formal-revoked" or "no-qualified-recipient"))
             return false;
-        if (intent.Recipients.Values.Any(status => status is not ("smtp-accepted" or "cancelled-formal-revoked")))
-            return false;
-        return intent.FormalIssueStates.Values.All(status => status is "smtp-accepted" or "revoked");
+        return intent.Recipients.Values.All(status => status is "smtp-accepted" or "cancelled-formal-revoked");
     }
 }

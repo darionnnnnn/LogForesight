@@ -202,9 +202,7 @@ public class RuleAdminServiceTests
         var settings = new FakeSystemSettingsStore();
         var hosts = new FakeHostStore();
         hosts.Upsert(new WebHost { HostId = 1, HostName = "preview-host", Active = true });
-        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings,
-            new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
-            new PrtgDiskVerificationResultStore(fx.Blob(PrtgDiskVerificationResultStore.BlobKey)));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
         var service = new RuleAdminService(ruleStore, seedStore, new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(), hosts,
             new FakeIssueAggregateQuery(), assessment, settings, new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
@@ -240,14 +238,11 @@ public class RuleAdminServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void 草稿預覽有27個可信歷史日但完成日明確無資料時標示Insufficient且不命中(bool prewarning)
+    public void 草稿預覽有27個有效日但完成日明確無資料時標示資料不足且不命中(bool prewarning)
     {
         using var fx = new EfSqliteFixture();
         var previewDay = new DateOnly(2026, 9, 30);
         const long deviceId = 3101, sensorId = 4101;
-        var localZone = TimeZoneInfo.Local;
-        // Profile metadata is freshly observed at preview time; historical sample slots remain bounded by previewDay.
-        var profileObservedAtUtc = DateTimeOffset.UtcNow;
         using (var db = fx.NewContext())
         {
             db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
@@ -263,72 +258,29 @@ public class RuleAdminServiceTests
         }
 
         var prtgStore = new EfPrtgStore(fx.NewContext);
-        var effectiveFrom = DateTime.SpecifyKind(previewDay.ToDateTime(TimeOnly.MinValue).AddDays(-35), DateTimeKind.Utc);
-        var profile = PrtgResourceFixture.ConfigureDiskTrustedProfile(prtgStore,
-            fx.Blob(PrtgMonitoringPolicyStore.BlobKey), fx.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey),
-            sensorId, deviceId, 1, "SNMP Disk Free", effectiveFrom, observedAtUtc: profileObservedAtUtc,
-            sourceGeneration: "preview-source", channelCaption: "Free");
-        var identity = prtgStore.GetResourceIdentity(sensorId);
-        var trustedRows = new List<PrtgValueRow>();
+        var rows = new List<PrtgValueRow>();
         for (var offset = -27; offset <= -1; offset++)
         {
-            var localDay = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+            var day = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(offset);
             var dailyPercent = (prewarning ? 25 : 18) - offset;
-            var insertedHours = 0;
-            for (var localHour = 0; localHour < 24 && insertedHours < PrtgValueReadiness.MinDailyUsableHours; localHour++)
-            {
-                var localWall = DateTime.SpecifyKind(localDay.AddHours(localHour), DateTimeKind.Unspecified);
-                if (localZone.IsInvalidTime(localWall) || localZone.IsAmbiguousTime(localWall)) continue;
-                var utcHour = TimeZoneInfo.ConvertTimeToUtc(localWall, localZone);
-                var analysisWallHour = DateTime.SpecifyKind(utcHour, DateTimeKind.Unspecified);
-                trustedRows.Add(PrtgResourceFixture.TrustedDiskHour(sensorId, analysisWallHour, profile, dailyPercent));
-                insertedHours++;
-            }
-            Assert.Equal(PrtgValueReadiness.MinDailyUsableHours, insertedHours);
+            for (var hour = 0; hour < PrtgValueAssessment.MinDailyUsableHours; hour++)
+                rows.Add(new PrtgValueRow { SensorObjid = sensorId, PeriodStart = day.AddHours(hour),
+                    AvgValue = dailyPercent, Quality = PrtgDataQuality.Ok, CreatedAt = DateTime.UtcNow });
         }
-        prtgStore.MergeSampledValues(trustedRows);
+        // 完成日當天只有 NoData 列：不算有效日。
+        for (var hour = 0; hour < PrtgValueAssessment.MinDailyUsableHours; hour++)
+            rows.Add(new PrtgValueRow { SensorObjid = sensorId,
+                PeriodStart = previewDay.ToDateTime(TimeOnly.MinValue).AddHours(hour), Quality = PrtgDataQuality.NoData,
+                Coverage = 0, CreatedAt = DateTime.UtcNow });
+        prtgStore.UpsertValues(rows);
 
-        // Keep an older fully trusted host day outside the 28-day readiness window.
-        var olderLocalDay = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(-28);
-        var olderRows = Enumerable.Range(0, 12).Select(localHour =>
-        {
-            var localWall = DateTime.SpecifyKind(olderLocalDay.AddHours(localHour), DateTimeKind.Unspecified);
-            var utcHour = TimeZoneInfo.ConvertTimeToUtc(localWall, localZone);
-            return PrtgResourceFixture.TrustedDiskHour(sensorId,
-                DateTime.SpecifyKind(utcHour, DateTimeKind.Unspecified), profile, 55);
-        }).ToArray();
-        prtgStore.MergeSampledValues(olderRows);
-
-        // The completed local day has explicit NoData mirror rows, with no slots or trusted proof.
-        var completedLocalDay = previewDay.ToDateTime(TimeOnly.MinValue);
-        var noDataRows = Enumerable.Range(0, 12).Select(localHour =>
-        {
-            var localWall = DateTime.SpecifyKind(completedLocalDay.AddHours(localHour), DateTimeKind.Unspecified);
-            var utcHour = TimeZoneInfo.ConvertTimeToUtc(localWall, localZone);
-            return new PrtgValueRow { SensorObjid = sensorId,
-                PeriodStart = DateTime.SpecifyKind(utcHour, DateTimeKind.Unspecified), AvgValue = null,
-                MinValue = null, MaxValue = null, Coverage = 0, Quality = PrtgDataQuality.NoData,
-                CreatedAt = DateTime.UtcNow, TrustVersion = 0, TrustedProof = null };
-        }).ToArray();
-        prtgStore.UpsertValues(noDataRows);
-
-        var evidence = new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey));
-        evidence.ConfirmManually(new PrtgDiskSemanticContext(sensorId, deviceId, 1, "SNMP Disk Free", "free", "Free", "%", 1,
-            "descending-danger"), 9, "Manually confirmed percent free channel.", profileObservedAtUtc.UtcDateTime,
-            PrtgDiskAssessmentService.ParserSemanticVersion, identity.SourceGeneration, identity.Generation,
-            identity.ChannelGeneration, identity.Epoch);
-        var verifications = new PrtgDiskVerificationResultStore(fx.Blob(PrtgDiskVerificationResultStore.BlobKey));
-        verifications.Save(new PrtgDiskVerificationResult(sensorId, deviceId, 1, "SNMP Disk Free", "Verified",
-            "Typed channel values matched.", "free", "Free", "%", 1, "descending-danger", 1, true,
-            profileObservedAtUtc.UtcDateTime, previewDay.ToDateTime(TimeOnly.MinValue), PrtgDiskAssessmentService.ParserSemanticVersion, SourceGeneration: identity.SourceGeneration,
-            ResourceGeneration: identity.Generation, ChannelGeneration: identity.ChannelGeneration, IdentityEpoch: identity.Epoch));
         var hosts = new FakeHostStore();
         hosts.Upsert(new WebHost { HostName = "active", Active = true });
         var settings = new FakeSystemSettingsStore();
         settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
         var rules = KnownIssueSeed.CreateRules();
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = rules } };
-        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings, evidence, verifications);
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
             hosts, new FakeIssueAggregateQuery(), assessment, settings,
@@ -350,12 +302,12 @@ public class RuleAdminServiceTests
 
         var row = Assert.Single(preview.Rows);
         Assert.Equal(27, row.ValidDayCount);
-        Assert.Equal(27 * PrtgValueReadiness.MinDailyUsableHours, row.UsableHours);
+        Assert.Equal(27 * PrtgValueAssessment.MinDailyUsableHours, row.UsableHours);
         Assert.False(row.DataReady);
         Assert.True(row.SemanticReady);
         Assert.False(row.Eligible);
         Assert.False(row.WouldHit);
-        Assert.Equal("InsufficientData", row.ExclusionReason);
+        Assert.Equal(nameof(PrtgValueReason.InsufficientDays), row.ExclusionReason);
         Assert.Equal(0, preview.HitCount);
         Assert.Equal(0, preview.UniqueHitHostCount);
         Assert.Equal(0, preview.UnsuppressedHitRowCount);
@@ -391,8 +343,7 @@ public class RuleAdminServiceTests
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = seedRules } };
         var seeds = new FakeRuleSeedStore();
         seeds.Sync(seedRules, KnownIssueSeed.Version);
-        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings,
-            new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
         var service = new RuleAdminService(ruleStore, seeds, new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
             hosts, new FakeIssueAggregateQuery(), assessment, settings,
@@ -441,8 +392,7 @@ public class RuleAdminServiceTests
         settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
         var rules = KnownIssueSeed.CreateRules();
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = rules } };
-        var assessment = new PrtgDiskAssessmentService(new EfPrtgStore(fx.NewContext), hosts, settings,
-            new PrtgDiskSemanticEvidenceStore(fx.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
             hosts, new FakeIssueAggregateQuery(), assessment, settings,

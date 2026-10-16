@@ -800,8 +800,9 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
 
         if (!double.IsFinite(sampleValue)) return;
-        if (_accumulator.TryAddDiagnostic(objid.Value, now, sampleValue,
-            _expectedSamplesPerHour > 0 ? 100.0 / _expectedSamplesPerHour : null)) tally.Added++;
+        _accumulator.Add(objid.Value, now, sampleValue,
+            _expectedSamplesPerHour > 0 ? 100.0 / _expectedSamplesPerHour : null);
+        tally.Added++;
     }
 
     /// <summary>一輪快照的計數。欄位而非屬性：間隔解析以 ref 累加。</summary>
@@ -1282,10 +1283,9 @@ public class PrtgSnapshotHostedService : BackgroundService
         lock (_pendingWrite)
         {
             var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-            var asOfUtc = DateTime.UtcNow;
             var rows = all ? _accumulator.PreviewDrainAll(_expectedSamplesPerHour, now)
-                : _accumulator.PreviewDrainBeforeSources(hour, asOfUtc, _expectedSamplesPerHour, now);
-            var keys = all ? _accumulator.KeysForDrainAll() : _accumulator.KeysForDrainBeforeSources(hour, asOfUtc);
+                : _accumulator.PreviewDrainBefore(hour, _expectedSamplesPerHour, now);
+            var keys = all ? _accumulator.KeysForDrainAll() : _accumulator.KeysForDrainBefore(hour);
             WriteSampledRowsCore(rows, keys);
         }
     }

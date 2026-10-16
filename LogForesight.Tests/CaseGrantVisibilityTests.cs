@@ -317,10 +317,6 @@ public class CaseGrantVisibilityTests : IDisposable
         Assert.All(detail.Timeline, day => Assert.False(day.HasRecord));
         Assert.Empty(detail.TopSignatures);
         Assert.Null(detail.LatestCheckup);
-        Assert.Null(detail.ResourcePressureAvailability);
-        Assert.Empty(detail.ResourcePressureHints);
-        Assert.Empty(detail.ResourcePressureModes);
-        Assert.False(detail.CanManageResourcePressure);
 
         var day = Assert.Single(detail.Timeline, item => item.Date == Day.ToString("yyyy-MM-dd"));
         Assert.Null(day.RiskReportPending);

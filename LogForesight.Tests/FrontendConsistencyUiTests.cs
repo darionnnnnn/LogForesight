@@ -381,7 +381,6 @@ public class FrontendConsistencyUiTests
         Assert.Contains("if (detail.caseGrantOnly === true)", ExtractBody(hostJs, @"function renderTimeline\(detail\)"));
         Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。", hostJs);
         Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。", hostJs);
-        Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示主機層級的資源觀察或維護控制。", hostJs);
         var load = ExtractBody(hostJs, @"async function load\(\)");
         Assert.Contains("if (detail.caseGrantOnly === true)", load);
         Assert.Contains("loadPrtgMapping();", load);

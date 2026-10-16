@@ -631,7 +631,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
             e.HasIndex(x => new { x.SensorObjid, x.ChangedAt }).HasDatabaseName("IX_lf_prtg_state_ch_sensor");
-            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_state_purge_sensor_id");
+            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_sc_purge_sensor");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_state_ch_created");
         });
 
@@ -652,7 +652,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.TrustedProof).HasColumnName("trusted_proof");
 
             e.HasIndex(x => new { x.SensorObjid, x.PeriodStart }).IsUnique().HasDatabaseName("IX_lf_prtg_values_uniq");
-            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_values_purge_sensor_id");
+            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_val_purge_sensor");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_values_created");
         });
 

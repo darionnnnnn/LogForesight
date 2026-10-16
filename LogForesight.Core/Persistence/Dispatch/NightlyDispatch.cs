@@ -199,7 +199,7 @@ public sealed class NightlyDispatch
 
     private static bool IsDiskTrend(LogIssueSignature issue) => PrtgFindingMapper.IsPrtg(issue)
         && PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code)
-        && string.Equals(code, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase);
+        && string.Equals(code, PrtgRuleEvaluator.RuleDiskFreeTrend, StringComparison.OrdinalIgnoreCase);
 
     private static bool SameSensor(LogIssueSignature warning, LogIssueSignature trend) =>
         PrtgFindingMapper.TryGetRuleCode(warning.Source, out var warningCode)

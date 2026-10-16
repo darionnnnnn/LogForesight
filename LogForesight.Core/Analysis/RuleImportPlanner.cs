@@ -120,6 +120,20 @@ public static class RuleImportPlanner
             });
         }
 
+        // 已移除的 PRTG 規則代碼：種子不再提供，舊 builtin 列保留供查閱但一律改為停用。
+        for (int i = 0; i < plan.ResultingRules.Count; i++)
+        {
+            var rule = plan.ResultingRules[i];
+            if (rule.Origin != "builtin" || !rule.Enabled || !Service.PrtgRuleCatalog.IsRetired(rule.PrtgRuleCode)) continue;
+            plan.ResultingRules[i] = rule.CloneForSeedOverwrite(enabled: false);
+            plan.Items.Add(new RuleImportItem
+            {
+                Id = rule.Id,
+                Action = RuleImportAction.UpdatedBuiltin,
+                Detail = Service.PrtgRuleCatalog.RetiredRuleNote
+            });
+        }
+
         return plan;
     }
 

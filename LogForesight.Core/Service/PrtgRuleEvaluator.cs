@@ -45,15 +45,6 @@ public sealed record PrtgFinding(
     public string? PresenceInventoryFingerprint { get; init; }
     /// <summary>規則門檻實際使用的量值；跨日 Down 為完整可信 episode，Magnitude 仍保留當日重疊分鐘。</summary>
     public int? ThresholdMagnitude { get; init; }
-    /// <summary>Server-selected compatibility identity; mapper accepts this only for the governed disk aggregate rule.</summary>
-    public string? EventIdentityRuleCode { get; init; }
-    /// <summary>Accurate reason-based label, carried with the signature while retaining its established event identity.</summary>
-    public string? DisplayLabel { get; init; }
-    public IReadOnlyList<string>? ResourceReasonCodes { get; init; }
-    public string? RuleAdmissionFingerprint { get; init; }
-    public string? TrendSourceRuleId { get; init; }
-    public string? TrendSourceRuleFingerprint { get; init; }
-    public string? ChannelGeneration { get; init; }
 }
 
 /// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>
@@ -90,9 +81,6 @@ public static class PrtgRuleEvaluator
     public const string RuleFlapping = "flapping";
     public const string RuleWarning = "warning";
     public const string RuleSilent = "silent";
-    public const string RuleResourceCpuPressure = "resource_cpu_sustained_pressure";
-    public const string RuleResourceMemoryPressure = "resource_memory_sustained_pressure";
-    public const string RuleResourceDiskPressure = "resource_disk_pressure";
 
     public static PrtgEvaluationResult Evaluate(
         DateTime day,
