@@ -56,17 +56,6 @@ public sealed class PrtgMaintenanceCapacityPreflightTests
         Assert.False(stale.Admitted);
     }
 
-    [Fact]
-    public async Task General_table_send_with_a_plan_fingerprint_is_fenced_by_the_live_budget()
-    {
-        var budget = new PrtgRequestBudget(new TestClock());
-        var plan = TestPlan(generalRate: .5);
-        budget.SetAdmissionPlan(plan);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            budget.AcquireAsync(PrtgEndpointCategory.Table, default, PrtgRequestPurpose.General,
-                new string('B', 64)));
-    }
 
     [Fact]
     public void Stale_or_expired_plan_fails_closed()

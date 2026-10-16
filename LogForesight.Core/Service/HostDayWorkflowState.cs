@@ -103,7 +103,6 @@ public sealed class HostDayWorkflowState
         Prtg is WorkflowLegState.Succeeded or WorkflowLegState.Disabled or WorkflowLegState.Degraded &&
         Ai is WorkflowLegState.Succeeded or WorkflowLegState.Disabled or WorkflowLegState.Failed &&
         CaseIsComplete &&
-        (Prtg == WorkflowLegState.Disabled || PrtgReadinessComplete) &&
         MailIsComplete && !IsRecoveryWaiting;
 
     public bool IsRecoveryWaiting => RecoveryWaitingRecordId.HasValue &&
@@ -113,9 +112,9 @@ public sealed class HostDayWorkflowState
         PrtgExpectedResourceFamilies.All(family => PrtgResourceAssessments.TryGetValue(family, out var result) &&
             result is (PrtgWorkflowAssessment.Hit or PrtgWorkflowAssessment.NoHit or PrtgWorkflowAssessment.Recovery) &&
             PrtgAssessedSensorCounts.GetValueOrDefault(family) >= PrtgExpectedSensorCounts.GetValueOrDefault(family, 1));
+    /// <summary>PRTG 腿的就緒狀態：該主機日的 PRTG 評估完成即就緒（資料不足的 sensor 原因另見數值就緒度，不阻擋主機日）。</summary>
     public string PrtgReadinessState => IsRecoveryWaiting ? "recovery-waiting" : Prtg == WorkflowLegState.Disabled ? "not-required" :
-        PrtgResourceAssessments.Values.Any(result => result == PrtgWorkflowAssessment.Insufficient) ? "insufficient" :
-        PrtgReadinessComplete ? "ready" : "waiting";
+        Prtg is WorkflowLegState.Succeeded or WorkflowLegState.Degraded ? "ready" : "waiting";
 
     public bool CaseIsComplete => CasePlanClosed && !CaseTrackingIncomplete && CaseState != WorkflowLegState.Failed &&
         (CaseIntents.Length == 0 || CaseIntents.All(intent =>

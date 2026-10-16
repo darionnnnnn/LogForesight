@@ -330,8 +330,9 @@ public static class PrtgRuleEvaluator
             }
         }
 
-        // 4. 沉默 device（RuleSilent）
-        // 沉默的依據是 sensor 目前狀態，不是狀態變更；對過去日評估等於把今天的沉默套到過去，是假訊號。
+        // 4. 沉默 device（RuleSilent）：主機活著（availability 類 sensor 全部 Up）但其餘監測全部失聲（全部 Unknown／無狀態）——
+        // SNMP 服務停了、帳密失效、代理掛了的典型形狀。主機整台斷線是 down 的事，不算沉默。
+        // 依據是鏡像的 sensor 目前狀態，不是狀態變更；對過去日評估等於把今天的沉默套到過去，是假訊號。
         // silent 以 device 為單位，只用不限分類的規則（傳入 null 分類即只會挑到 PrtgSensorCategory == null 者）
         if (includeSilent && SelectRule(RuleSilent, null) is { } silentRule)
         {
@@ -339,15 +340,19 @@ public static class PrtgRuleEvaluator
             foreach (var group in deviceGroups)
             {
                 var deviceObjid = group.Key;
-                var sensors = group.ToList();
-                if (sensors.Count == 0)
+                var availability = group.Where(s => string.Equals(s.Category, PrtgSensorCategories.Availability,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+                var others = group.Except(availability).ToList();
+                if (availability.Count == 0 || others.Count == 0)
                 {
                     continue;
                 }
 
-                if (sensors.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)))
+                if (availability.All(s => PrtgSensorStatuses.IsUp(s.Status)) &&
+                    others.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)))
                 {
-                    var detail = $"[{GetDeviceName(deviceObjid)}] 底下全部 {sensors.Count} 個未暫停 sensor 皆為 Unknown 或無狀態";
+                    var sensors = others;
+                    var detail = $"[{GetDeviceName(deviceObjid)}] 連線檢查正常，但其餘 {sensors.Count} 個未暫停 sensor 皆為 Unknown 或無狀態";
                     findings.Add(new PrtgFinding(
                         deviceObjid,
                         null,

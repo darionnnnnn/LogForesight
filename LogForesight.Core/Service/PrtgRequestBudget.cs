@@ -190,7 +190,6 @@ public class PrtgRequestBudget
                 plan.Fingerprint != _admissionPlan.Fingerprint) return;
             _admissionPlan = plan;
             _nextPurposeTableSlot.Clear();
-            FailStaleAdmissionWaitersUnderLock();
             EvaluateWaitersUnderLock();
         }
     }
@@ -201,7 +200,6 @@ public class PrtgRequestBudget
         {
             _admissionPlan = null;
             _nextPurposeTableSlot.Clear();
-            FailStaleAdmissionWaitersUnderLock();
             EvaluateWaitersUnderLock();
         }
     }
@@ -351,7 +349,6 @@ public class PrtgRequestBudget
         Waiter? waiter = null;
         lock (_lock)
         {
-            ValidateAdmissionPlanUnderLock(purpose, admissionPlanFingerprint, category);
             var now = Clock.Elapsed;
             CleanExpiredReservationsUnderLock(now);
 
@@ -479,13 +476,6 @@ public class PrtgRequestBudget
         for (int i = 0; i < _waiters.Count; i++)
         {
             var waiter = _waiters[i];
-            try { ValidateAdmissionPlanUnderLock(waiter.Purpose, waiter.AdmissionPlanFingerprint, waiter.Category); }
-            catch (InvalidOperationException ex)
-            {
-                _waiters.RemoveAt(i--);
-                waiter.Tcs.TrySetException(ex);
-                continue;
-            }
             if (HasInFlightCapacityUnderLock(waiter.Purpose) && HasCapacityUnderLock(waiter.Category))
             {
                 _waiters.RemoveAt(i);
@@ -530,18 +520,6 @@ public class PrtgRequestBudget
         return true;
     }
 
-    private void ValidateAdmissionPlanUnderLock(PrtgRequestPurpose purpose, string? fingerprint,
-        PrtgEndpointCategory category)
-    {
-        if (category != PrtgEndpointCategory.Table ||
-            purpose is not (PrtgRequestPurpose.Snapshot or PrtgRequestPurpose.ProfileRefresh) &&
-            !(purpose == PrtgRequestPurpose.General && fingerprint is not null))
-            return;
-        if (_admissionPlan is null || _admissionPlan.LeaseUntilUtc <= DateTimeOffset.UtcNow ||
-            string.IsNullOrWhiteSpace(fingerprint) || _admissionPlan.Fingerprint != fingerprint)
-            throw new InvalidOperationException("prtg-capacity-admission-plan-missing-or-stale");
-    }
-
     private async Task PacePurposeTableSendAsync(PrtgEndpointCategory category, PrtgRequestPurpose purpose,
         string? fingerprint, CancellationToken ct)
     {
@@ -554,7 +532,6 @@ public class PrtgRequestBudget
             TimeSpan? last;
             lock (_lock)
             {
-                ValidateAdmissionPlanUnderLock(purpose, fingerprint, category);
                 plan = _admissionPlan;
                 if (plan is null) return;
                 if (plan.LeaseUntilUtc <= DateTimeOffset.UtcNow)
@@ -577,7 +554,6 @@ public class PrtgRequestBudget
             }
             lock (_lock)
             {
-                ValidateAdmissionPlanUnderLock(purpose, fingerprint, category);
                 if (_admissionPlan?.Fingerprint != plan?.Fingerprint || _admissionPlan?.Version != plan?.Version)
                     throw new InvalidOperationException("prtg-capacity-admission-plan-superseded");
                 _lastPurposeTableSent[purpose] = Clock.Elapsed;
@@ -604,7 +580,6 @@ public class PrtgRequestBudget
                 TimeSpan delay;
                 lock (_lock)
                 {
-                    ValidateAdmissionPlanUnderLock(purpose, fingerprint, category);
                     var plan = _admissionPlan;
                     if (plan is null) return;
                     var rate = purpose switch
@@ -633,20 +608,6 @@ public class PrtgRequestBudget
             }
         }
         finally { _purposeSendGates[purpose].Release(); }
-    }
-
-    private void FailStaleAdmissionWaitersUnderLock()
-    {
-        for (var i = _waiters.Count - 1; i >= 0; i--)
-        {
-            var waiter = _waiters[i];
-            try { ValidateAdmissionPlanUnderLock(waiter.Purpose, waiter.AdmissionPlanFingerprint, waiter.Category); }
-            catch (InvalidOperationException ex)
-            {
-                _waiters.RemoveAt(i);
-                waiter.Tcs.TrySetException(ex);
-            }
-        }
     }
 
     private void IncrementPurposeUnderLock(PrtgRequestPurpose purpose) =>

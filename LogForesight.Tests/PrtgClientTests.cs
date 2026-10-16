@@ -16,25 +16,6 @@ public class PrtgClientTests
     // Synthetic hash for a pure client admission fixture; it is not source-policy evidence.
     private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
 
-    [Fact]
-    public async Task GeneralTableClientWithAdmissionFingerprintUsesTheFencedPurposeAwareBudgetPath()
-    {
-        var budget = new PrtgRequestBudget();
-        var handler = new StubHandler { OnSend = (_, _) =>
-            Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"channels\":[]}")) };
-        var now = DateTimeOffset.UtcNow;
-        budget.SetAdmissionPlan(new PrtgCapacityAdmissionPlan(new string('A', 64), new string('B', 64),
-            new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64),
-            new string('1', 64), new string('2', 64), "settings", "policy", .5, .5, .5,
-            now, now.AddHours(1), "test-owner", 1, FixtureRawAuthorityContextFingerprint));
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, handler, PrtgAuthModes.Token,
-            "", "", "", budget)
-        { RequestPurpose = PrtgRequestPurpose.General, AdmissionPlanFingerprint = new string('9', 64) };
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetBoundedJsonAsync(
-            "api/table.json?content=channels&id=77&count=100", 4096));
-        Assert.Empty(handler.Requests);
-    }
 
     [Fact]
     public async Task BoundedXmlSharesAuthenticationAndRetainsHttpClockSeparatelyFromBody()

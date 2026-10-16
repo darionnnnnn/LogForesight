@@ -229,20 +229,7 @@ public class PrtgScopeProtectionTests : IDisposable
 
     private PrtgFetchService FetchService(PrtgClient client, IRunConsole console) =>
         new(client, Store, new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-            new Dictionary<string, string>(), messageTimeAuthorityProvider: () =>
-            (new PrtgMonitoringPolicy
-            {
-                CoreSystemId = "scope-protection-test-core",
-                SourceGeneration = "scope-protection-test-source",
-                EndpointHint = EfPrtgObservationStore.SourceHintFor("https://prtg.example.com"),
-                ValidFrom = DateTimeOffset.UtcNow.AddDays(-1),
-                HostIds = [1],
-                SensorIds = [201],
-                SourceTimeZoneId = TimeZoneInfo.Local.Id,
-                SourceCultureName = "en-US",
-                MessageDateFormat = PrtgMessageDateTimeParser.Ymd24,
-                MessageTimeAuthorityRevision = 1
-            }, "https://prtg.example.com"));
+            new Dictionary<string, string>());
 
     private void SeedOldSensors(params (long Objid, long Device)[] sensors) =>
         Store.UpsertSensors(sensors.Select(s => new PrtgSensorRow

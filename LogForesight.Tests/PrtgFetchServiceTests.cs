@@ -21,127 +21,58 @@ public class PrtgFetchServiceTests : IDisposable
 
     private EfPrtgStore CreateStore() => new(_fx.NewContext);
 
-    private static PrtgMonitoringPolicy MessagePolicy => new()
-    {
-        CoreSystemId = "fetch-test-core", SourceGeneration = "fetch-test-source",
-        EndpointHint = EfPrtgObservationStore.SourceHintFor("https://prtg.example.com"),
-        ValidFrom = DateTimeOffset.Now.AddDays(-1), HostIds = [1], SensorIds = [1],
-        SourceTimeZoneId = TimeZoneInfo.Local.Id, SourceCultureName = "en-US",
-        MessageDateFormat = PrtgMessageDateTimeParser.Ymd24, MessageTimeAuthorityRevision = 1
-    };
-
     private PrtgFetchService NewFetchService(PrtgClient client, EfPrtgStore store,
         PrtgFreshnessStore freshness, IRunConsole console, IReadOnlyDictionary<string, string> categoryOverrides,
-        PrtgResourceGuard? guard = null) => new(client, store, freshness, console, categoryOverrides, guard,
-        () => (MessagePolicy, "https://prtg.example.com"));
+        PrtgResourceGuard? guard = null) => new(client, store, freshness, console, categoryOverrides, guard);
+
+    /// <summary>PRTG 的 *_raw 時間是 UTC 的 OLE 日期；落盤時換成服務主機本地時間（測試機時區不同也成立）。</summary>
+    private static DateTime RawLocal(double oaDate) => DateTime.SpecifyKind(
+        DateTime.SpecifyKind(DateTime.FromOADate(oaDate), DateTimeKind.Utc).ToLocalTime(), DateTimeKind.Unspecified);
 
     [Fact]
-    public async Task 未設定訊息時間格式時略過messages但仍獨立寫入數值()
-    {
-        var (client, handler) = CreateClient(req =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (url.Contains("historicdata.json"))
-                return JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":12.5,\"coverage\":100}]}");
-            return JsonResponse("{}", HttpStatusCode.NotFound);
-        });
-        var store = CreateStore();
-        SeedOldSensors(store, (201, 1));
-        var service = new PrtgFetchService(client, store,
-            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
-            new TestConsole(), new Dictionary<string, string>());
-
-        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 1, CancellationToken.None,
-            ScopeOf(1), syncStructure: false, fetchValues: true);
-
-        Assert.DoesNotContain(handler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
-        Assert.Contains(handler.RequestedUrls, url => url.Contains("historicdata.json", StringComparison.Ordinal));
-        Assert.Equal(1, result.Values);
-        using var db = _fx.NewContext();
-        Assert.Equal(12.5, await db.PrtgValues.Where(row => row.SensorObjid == 201)
-            .Select(row => row.AvgValue).SingleAsync());
-    }
-
-    [Fact]
-    public async Task Range拒絕與已儲存格式不符的訊息列且不授予完成指紋()
-    {
-        var (client, handler) = CreateClient(_ => JsonResponse(
-            "{\"treesize\":1,\"messages\":[{\"objid\":201,\"datetime\":\"12/31/2026 11:59 PM\",\"status\":\"Down\",\"message\":\"fixture\"}]}"));
-        var store = CreateStore();
-        var service = NewFetchService(client, store,
-            new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
-            new TestConsole(), new Dictionary<string, string>());
-
-        var result = await service.FetchStateChangesRangeAsync(DateTime.Today, DateTime.Today,
-            [1], 1, CancellationToken.None);
-
-        Assert.False(result.Converged);
-        Assert.Null(result.MessageTimeFingerprint);
-        Assert.Contains(handler.RequestedUrls, url => url.Contains("content=messages", StringComparison.Ordinal));
-        using var db = _fx.NewContext();
-        Assert.Empty(await db.PrtgStateChanges.ToListAsync());
-    }
-
-    [Fact]
-    public async Task Range成功時攜帶原始savedAuthorityFingerprint()
+    public async Task Range_messages以datetime_raw的UTC時間落盤_不需任何時區或格式設定()
     {
         var today = DateTime.Today;
+        var changedLocal = today.AddHours(9);
+        var raw = changedLocal.ToUniversalTime().ToOADate();
+        var console = new TestConsole();
         var (client, _) = CreateMessagesClient(new Dictionary<long, string>
-        { [1] = MessagesJson((201, today.AddHours(1))) });
+        {
+            [1] = "{\"messages\":[{\"objid\":201,\"datetime\":\"顯示字串不重要\",\"datetime_raw\":" +
+                  raw.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                  ",\"status\":\"Down\",\"message\":\"m\"}]}"
+        });
         var service = NewFetchService(client, CreateStore(),
             new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
-            new TestConsole(), new Dictionary<string, string>());
+            console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(today, today, [1], 1, CancellationToken.None);
 
         Assert.True(result.Converged);
-        Assert.Equal(MessagePolicy.MessageTimeFingerprint("https://prtg.example.com"), result.MessageTimeFingerprint);
+        using var db = _fx.NewContext();
+        var row = Assert.Single(await db.PrtgStateChanges.ToListAsync());
+        Assert.Equal(RawLocal(raw), row.ChangedAt);
+        Assert.Equal(changedLocal, row.ChangedAt, TimeSpan.FromSeconds(1));
+        Assert.DoesNotContain(console.Lines, line => line.Contains("缺 datetime_raw"));
     }
 
     [Fact]
-    public async Task Range收到頁面期間savedAuthority漂移時不提交該頁message列()
+    public async Task Range_messages缺datetime_raw時退顯示字串並出聲()
     {
         var today = DateTime.Today;
-        var livePolicy = MessagePolicy;
-        var handler = new StubHandler
-        {
-            OnSend = (request, _) =>
-            {
-                var url = request.RequestUri!.ToString();
-                if (!url.Contains("content=messages", StringComparison.Ordinal))
-                    return Task.FromResult(JsonResponse("{}", HttpStatusCode.NotFound));
-
-                livePolicy = new PrtgMonitoringPolicy
-                {
-                    CoreSystemId = MessagePolicy.CoreSystemId,
-                    SourceGeneration = MessagePolicy.SourceGeneration,
-                    EndpointHint = MessagePolicy.EndpointHint,
-                    ValidFrom = MessagePolicy.ValidFrom,
-                    HostIds = [.. MessagePolicy.HostIds],
-                    SensorIds = [.. MessagePolicy.SensorIds],
-                    SourceTimeZoneId = MessagePolicy.SourceTimeZoneId,
-                    SourceCultureName = MessagePolicy.SourceCultureName,
-                    MessageDateFormat = PrtgMessageDateTimeParser.Dmy24,
-                    MessageTimeAuthorityRevision = MessagePolicy.MessageTimeAuthorityRevision + 1
-                };
-                return Task.FromResult(JsonResponse(MessagesJson((201, today.AddHours(1)))));
-            }
-        };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler,
-            PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
-        var store = CreateStore();
-        var service = new PrtgFetchService(client, store,
+        var console = new TestConsole();
+        var (client, _) = CreateMessagesClient(new Dictionary<long, string>
+        { [1] = MessagesJson((201, today.AddHours(1))) });
+        var service = NewFetchService(client, CreateStore(),
             new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)),
-            new TestConsole(), new Dictionary<string, string>(), null,
-            () => (livePolicy, "https://prtg.example.com"));
+            console, new Dictionary<string, string>());
 
         var result = await service.FetchStateChangesRangeAsync(today, today, [1], 1, CancellationToken.None);
 
-        Assert.False(result.Converged);
-        Assert.Null(result.MessageTimeFingerprint);
-        Assert.Contains("授權在分頁期間變更", result.Error);
+        Assert.True(result.Converged);
         using var db = _fx.NewContext();
-        Assert.Empty(await db.PrtgStateChanges.ToListAsync());
+        Assert.Equal(today.AddHours(1), Assert.Single(await db.PrtgStateChanges.ToListAsync()).ChangedAt);
+        Assert.Contains(console.Lines, line => line.Contains("1 筆缺 datetime_raw"));
     }
 
     private static HttpResponseMessage JsonResponse(string json, HttpStatusCode code = HttpStatusCode.OK)
@@ -202,8 +133,22 @@ public class PrtgFetchServiceTests : IDisposable
         {
             OnSend = (req, _) => Task.FromResult(responder(req))
         };
-        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+        var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "",
+            new PrtgRequestBudget(new AcceleratedClock()));
         return (client, handler);
+    }
+
+    /// <summary>
+    /// 時間加速 1000 倍的配額時鐘：共享配額（table 2 次／秒）照常生效，但逐裝置查詢數百台的測試不必真的等幾分鐘。
+    /// </summary>
+    private sealed class AcceleratedClock : IPrtgClock
+    {
+        private const int Factor = 1000;
+        private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
+        public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
+        public TimeSpan Elapsed => TimeSpan.FromTicks(_watch.Elapsed.Ticks * Factor);
+        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) =>
+            Task.Delay(TimeSpan.FromTicks(Math.Max(1, delay.Ticks / Factor)), cancellationToken);
     }
 
     [Fact]
@@ -884,14 +829,18 @@ public class PrtgFetchServiceTests : IDisposable
         return (result, rows, console);
     }
 
+    private const double RealRowRaw = 46275.6666666667;
+
+    /// <summary>實機一列的時段起點：raw 是 UTC 的時段結束（9/10 16:00 UTC），起點＝本地時間減一小時。</summary>
+    private static DateTime RealRowStart => RawLocal(RealRowRaw).AddHours(-1);
+
     /// <summary>
-    /// PRTG 24.1.92 繁中實機的一列原文。關鍵事實：同一列的 datetime_raw（OLE 46275.6666666667
-    /// ＝2026-09-10 16:00）與顯示字串（下午 11:00＝23:00）**差 7 小時**，兩者不是同一個時間基準。
-    /// 鏡像要跟管理者在 PRTG 畫面上看到的時間對齊，所以顯示字串優先；拿 raw 當主要來源會讓
-    /// 整份基線整體平移數小時而毫無徵兆。value／value_raw 重複是多頻道，取第一組（主要頻道）。
+    /// PRTG 24.1.92 繁中實機的一列原文。同一列 datetime_raw（OLE 46275.6666666667＝2026-09-10 16:00 UTC）是
+    /// 該小時的**結束**時刻；顯示字串「下午 11:00:00 - 上午 12:00:00」是 +08 帳號時區的 23:00～00:00。
+    /// 時段以 raw 為準（不必設定帳號時區或文化）；value／value_raw 重複是多頻道，取第一組（主要頻道）。
     /// </summary>
     [Fact]
-    public async Task FetchDayAsync_實機形狀_顯示字串優先於datetime_raw()
+    public async Task FetchDayAsync_實機形狀_以datetime_raw為準()
     {
         var histJson = "{\"histdata\":[" +
                        "{\"datetime\":\"2026/9/10 下午 11:00:00 - 上午 12:00:00\",\"datetime_raw\":46275.6666666667," +
@@ -899,39 +848,61 @@ public class PrtgFetchServiceTests : IDisposable
                        "\"coverage\":\"100 %\",\"coverage_raw\":10000}" +
                        "]}";
 
-        var (result, rows, console) = await RunHistWithCultureAsync(histJson, "zh-TW");
+        var (result, rows, _) = await RunHistWithCultureAsync(histJson, "zh-TW");
 
         Assert.Equal(1, result.Values);
         var row = Assert.Single(rows);
-        // 用 raw 會得到 16:00；必須是顯示字串的 23:00
-        Assert.Equal(new DateTime(2026, 9, 10, 23, 0, 0), row.PeriodStart);
+        Assert.Equal(RealRowStart, row.PeriodStart);
         Assert.Equal(3.5593, row.AvgValue!.Value, 4);
         Assert.Equal(PrtgDataQuality.Ok, row.Quality);
         Assert.Equal(100.0, row.Coverage!.Value, 6);
-        // 走的是顯示字串，不該出現退路警告
-        Assert.DoesNotContain(console.Lines, l => l.Contains("原始日期數值推得"));
+    }
+
+    /// <summary>顯示字串與 raw 換算一致（帳號時區＝服務主機時區）時不出任何時間警告。</summary>
+    [Fact]
+    public async Task FetchDayAsync_顯示字串與raw一致時不警告()
+    {
+        var display = $"{RealRowStart:yyyy-MM-dd HH:mm:ss} - {RealRowStart.AddHours(1):yyyy-MM-dd HH:mm:ss}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"" + display + "\",\"datetime_raw\":46275.6666666667," +
+                       "\"value_raw\":3.5593,\"coverage_raw\":10000}]}";
+
+        var (_, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(RealRowStart, Assert.Single(rows).PeriodStart);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("差 30 分鐘以上"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("缺 datetime_raw"));
+    }
+
+    /// <summary>帳號時區與服務主機不同：顯示字串與 raw 差好幾小時。數值仍依 raw 落在正確的小時，並出聲提醒。</summary>
+    [Fact]
+    public async Task FetchDayAsync_帳號時區與服務主機不同時依raw落盤並警告()
+    {
+        var shifted = RealRowStart.AddHours(-1);
+        var display = $"{shifted:yyyy-MM-dd HH:mm:ss} - {shifted.AddHours(1):yyyy-MM-dd HH:mm:ss}";
+        var histJson = "{\"histdata\":[{\"datetime\":\"" + display + "\",\"datetime_raw\":46275.6666666667," +
+                       "\"value_raw\":3.5593,\"coverage_raw\":10000}]}";
+
+        var (_, rows, console) = await RunHistAsync(histJson);
+
+        Assert.Equal(RealRowStart, Assert.Single(rows).PeriodStart);
+        Assert.Contains(console.Lines, l => l.Contains("1 筆數值的顯示字串與 datetime_raw 換算結果差 30 分鐘以上"));
     }
 
     /// <summary>
-    /// d/M 格式的 PRTG（如 en-GB）配上 M/d 或 y/M/d 的站台文化：「10/09/2026」會被解析成 10 月 9 日，
-    /// 而且解析成功、不報錯。datetime_raw 與顯示字串同一天（只差幾小時），差超過一天就是月日讀反了，
-    /// 這時要退到 raw 並回報，不能讓錯的日期靜默進基線。
+    /// d/M 格式的 PRTG 配上 M/d 的站台文化，「10/09/2026」字串會被讀成 10 月 9 日；以 raw 為準就不受影響。
     /// </summary>
     [Fact]
-    public async Task FetchDayAsync_顯示字串月日對調時_以datetime_raw擋下並回報()
+    public async Task FetchDayAsync_顯示字串月日對調時_仍以datetime_raw落在正確日期()
     {
-        // raw 46275.6666666667 ＝ 2026-09-10 16:00；字串 10/09/2026 在 M/d 文化會讀成 2026-10-09
         var histJson = "{\"histdata\":[" +
                        "{\"datetime\":\"10/09/2026 23:00:00 - 11/09/2026 00:00:00\",\"datetime_raw\":46275.6666666667," +
                        "\"value_raw\":3.5593,\"coverage_raw\":10000}" +
                        "]}";
 
-        var (result, rows, console) = await RunHistWithCultureAsync(histJson, "en-US");
+        var (result, rows, _) = await RunHistWithCultureAsync(histJson, "en-US");
 
         Assert.Equal(1, result.Values);
-        var row = Assert.Single(rows);
-        Assert.Equal(new DateTime(2026, 9, 10), row.PeriodStart.Date);
-        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+        Assert.Equal(RealRowStart, Assert.Single(rows).PeriodStart);
     }
 
     /// <summary>
@@ -952,31 +923,23 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(4.0, row.AvgValue!.Value, 6);
     }
 
-    /// <summary>
-    /// 不依賴機器文化的版本：顯示字串用 ISO 形式，raw 指向完全不同的時間。
-    /// 這一條在任何文化的機器上都必須通過，是「顯示字串優先」的主要守門。
-    /// </summary>
+    /// <summary>缺 datetime_raw 時才退顯示字串（依服務主機文化），並出聲——帳號時區不同時這些列會落錯小時。</summary>
     [Fact]
-    public async Task FetchDayAsync_顯示字串可解析時不採用datetime_raw()
+    public async Task FetchDayAsync_缺datetime_raw時退顯示字串並警告()
     {
         var histJson = "{\"histdata\":[" +
-                       "{\"datetime\":\"2026-09-10 23:00:00 - 2026-09-11 00:00:00\",\"datetime_raw\":46275.6666666667," +
-                       "\"value_raw\":3.5593,\"coverage_raw\":10000}" +
+                       "{\"datetime\":\"2026-09-10 23:00:00 - 2026-09-11 00:00:00\",\"value_raw\":12.5,\"coverage_raw\":10000}" +
                        "]}";
 
-        var (_, rows, console) = await RunHistAsync(histJson);
+        var (result, rows, console) = await RunHistAsync(histJson);
 
-        var row = Assert.Single(rows);
-        Assert.Equal(new DateTime(2026, 9, 10, 23, 0, 0), row.PeriodStart);
-        Assert.DoesNotContain(console.Lines, l => l.Contains("原始日期數值推得"));
+        Assert.Equal(1, result.Values);
+        Assert.Equal(new DateTime(2026, 9, 10, 23, 0, 0), Assert.Single(rows).PeriodStart);
+        Assert.Contains(console.Lines, l => l.Contains("1 筆數值缺 datetime_raw"));
     }
 
-    /// <summary>
-    /// 顯示字串解析不了（PRTG 的地區格式與站台文化不合）時才退回 OLE 日期，
-    /// 並且要出聲——走退路的資料落在哪個小時不可靠，靜默接受等於讓基線悄悄錯位。
-    /// </summary>
     [Fact]
-    public async Task FetchDayAsync_顯示字串不可解析時退回datetime_raw並警告()
+    public async Task FetchDayAsync_顯示字串不可解析時以datetime_raw落盤且不警告()
     {
         var histJson = "{\"histdata\":[" +
                        "{\"datetime\":\"完全不是日期\",\"datetime_raw\":46275.6666666667,\"value_raw\":12.5,\"coverage_raw\":10000}" +
@@ -986,10 +949,10 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Equal(1, result.Values);
         var row = Assert.Single(rows);
-        Assert.Equal(new DateTime(2026, 9, 10, 16, 0, 0), row.PeriodStart);
+        Assert.Equal(RealRowStart, row.PeriodStart);
         Assert.Equal(12.5, row.AvgValue!.Value, 6);
-        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
         Assert.DoesNotContain(console.Lines, l => l.Contains("時間欄位無法解析"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("差 30 分鐘以上"));
     }
 
     [Fact]
@@ -999,12 +962,10 @@ public class PrtgFetchServiceTests : IDisposable
                        "{\"datetime_raw\":46275.6666666667,\"value_\":7,\"coverage\":100}" +
                        "]}";
 
-        var (result, rows, console) = await RunHistAsync(histJson);
+        var (result, rows, _) = await RunHistAsync(histJson);
 
         Assert.Equal(1, result.Values);
-        var row = Assert.Single(rows);
-        Assert.Equal(new DateTime(2026, 9, 10, 16, 0, 0), row.PeriodStart);
-        Assert.Contains(console.Lines, l => l.Contains("原始日期數值推得"));
+        Assert.Equal(RealRowStart, Assert.Single(rows).PeriodStart);
     }
 
     [Fact]

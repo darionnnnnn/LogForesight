@@ -144,44 +144,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             .GetMethod("RestoreJournal", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .Invoke(service, new object[] { settings })!;
 
-    [Fact]
-    public async Task 背景timeline等待不阻擋下一輪快照且關閉會取消並等待timeline()
-    {
-        SetupTargetSensors(new[] { (601L, "SNMP Traffic 64bit") });
-        var service = CreateService(pollInterval: TimeSpan.FromMilliseconds(1));
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var secondSnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var calls = 0;
-        var clockReads = 0;
-        service.Now = () => DateTime.Today.AddMinutes(60 + 15 * Interlocked.Increment(ref clockReads));
-        service.TimelineTick = async token =>
-        {
-            entered.TrySetResult();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
-            finally { cancelled.TrySetResult(); }
-            return new PrtgSensorTimelineTick(TimeSpan.FromSeconds(5), false, "fixture");
-        };
-        _stubHandler.OnSend = (_, _) =>
-        {
-            if (Interlocked.Increment(ref calls) >= 2) secondSnapshot.TrySetResult();
-            return Task.FromResult(JsonResponse("{\"sensors\":[{\"objid\":601,\"lastvalue_raw\":50,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}"));
-        };
-        await service.StartAsync(CancellationToken.None);
-        try
-        {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await secondSnapshot.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.False(cancelled.Task.IsCompleted);
-        }
-        finally
-        {
-            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await service.StopAsync(stop.Token);
-        }
-        Assert.True(cancelled.Task.IsCompleted);
-    }
-
     private static bool SaveJournal(PrtgSnapshotHostedService service) =>
         (bool)typeof(PrtgSnapshotHostedService)
             .GetMethod("SaveJournal", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
@@ -3449,26 +3411,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(beforeChange.SensorObjids, requestedRefresh.SensorObjids);
     }
 
-    [Fact]
-    public async Task 容量核准後HostMap在操作Scope捕捉前變更時拒絕舊證據且不送HTTP()
-    {
-        SetupTargetSensors(ManyTargets(1001, 120));
-        SeedSyntheticCapacityEvidence(9_000);
-        _stubHandler.OnSend = (_, _) => throw new InvalidOperationException("範圍在容量核准後改變時不得啟動舊範圍HTTP");
-        var service = CreateService();
-        var host = _hostStore.Get(1)!;
-        service.ScopeRefreshAdmissionAccepted = () =>
-        {
-            host.Active = false;
-            _hostStore.Upsert(host);
-            service.RequestScopeRefresh();
-        };
-
-        await service.ScopeRefreshTickAsync();
-
-        Assert.Empty(_stubHandler.RequestedUrls);
-        Assert.Contains("容量判定後有效範圍已變更", service.GetStatus().LastSkipReason);
-    }
 
     [Fact]
     public async Task 大範圍同形樣本已知超窗時拒絕完整快照()

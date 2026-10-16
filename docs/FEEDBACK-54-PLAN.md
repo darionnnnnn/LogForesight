@@ -228,6 +228,14 @@
 - 頻道選取:記憶體 historicdata 三個頻道欄順序打亂 → 仍取 `Percent Available Memory`;欄名全對不上 → 退第一組並計數 1。
 - 就緒度卡:固定小集合四類各 1 顆＋1 顆範圍外＋1 顆對照外 → 母體 4、分組計數相加等於母體、範圍外那顆不出現、對照外那顆在「單位未知」;執行輸出同一組數字;分母為零案例印指定文字。探測文字輸出不含「相依性」「Type × IPv4」字樣,步驟 8 恰一行。
 
+**B1 實作修正(2026-10-16,實作時查碼確認;取代上文相衝突的敘述)**:
+1. **狀態型規則改回 messages 路徑**:`down`／`warning`／`flapping` 讀 `lf_prtg_state_changes`(逐裝置 messages,作業 0 9d-5 ✓)交 `PrtgRuleEvaluator`,即第 46～51 輪現場用過的路徑。53 輪 sensor timeline(`PrtgSensorTimelineCollector`／`Consumer`／`Store`、`PrtgCoveredRuleEvaluator`、`PrtgTimelineProgressController`、「狀態涵蓋進度」頁籤)整組刪除,不併入鏡像狀態。原因:timeline 證據以來源世代、資源世代、訊息時間指紋與帳號 Date Format 為鍵,B1 拆掉這些授權後等於重寫一套;作業 0 的提問本來就以 messages 為前提。
+2. **頻道選取不改**:historicdata.json 一列不帶頻道名稱(多頻道是重複的 `value`／`value_raw` 鍵),「依欄名關鍵字選欄」做不到。保留「第一組 `value_raw`＝主頻道」(現場四類 raw history 驗算皆為頻道 0);選錯頻道由合理性檢查擋下(例如選到磁碟總容量 bytes,整顆 sensor 會變「值不合理」而不是靜默進趨勢)。
+3. **小時列 `datetime_raw` 是時段結束**:R43 現場同一列 raw＝9/10 16:00 UTC,顯示字串為 +08 的 23:00～00:00,結束時刻相符。起點＝raw 轉本地時間減一個聚合間隔(`avg=3600`)。
+4. **快照容量准入一併在 B1-1 解除**:保守策略下快照是唯一數值來源,`PrtgCapacityRuntimeAdmission` 與共享配額的准入計畫驗證不拆,B1 做完數值仍進不來。快照只依策略間隔、共享配額(table 2／秒、在途 4)與退避;每輪以一個採樣間隔為完成期限。
+5. **silent**:鏡像狀態中 availability 類 sensor 全部 Up、其餘未暫停 sensor 全部 Unknown／無狀態才成立;只評最新一天。
+6. **數值評估服務**:`PrtgValueAssessment`(三條件＋值不合理＋固定值,原因列舉 `PrtgValueReason` 供就緒度卡、規則頁、主機詳情、執行輸出共用);每日管線的 `disk_free_trend` 改由它挑候選與算每日代表值,C3 擴成四類。
+
 ### 作業 B2:拆 PRTG 即時郵件
 
 **目標行為**:PRTG finding 只透過既有每日／每週摘要寄出,與 NetIQ 問題同列;不觸發高風險即時信。NetIQ 既有高風險即時信、per-recipient outbox、SMTP 接受狀態與重試**不動**。
@@ -379,6 +387,7 @@
 |---|---|---|---|---|
 | 規劃 | Claude(Fable,Mac) | 本文件與審查報告 | 待使用者定案 | — |
 | A | Claude(Opus,Windows) | 52／52-ROUND2／53 三份規劃 `git mv` 進 archive 並補索引;README 頁首與準則段、CLAUDE.md 測試基線、BACKLOG 舊路徑改指本文件 | 舊 TODO 代號 grep 除本文件外零命中;`docs/` 主目錄只剩本 PLAN(`FEEDBACK-53-ACCEPTANCE.json` 由 B4 刪) | 純文件,未建置 |
+| B1-1 | Claude(Opus,Windows) | 取值時間改 raw(UTC)為主、刪訊息時間授權閘;新增 `PrtgValueAssessment`(三條件＋值不合理＋固定值);每日管線評估段改回 messages＋`PrtgRuleEvaluator`、磁碟趨勢走新評估、移除 manifest／fence／資源期間 consumer 呼叫;silent 改「availability Up＋其餘 Unknown」;快照服務拆容量准入、trusted 解析與 timeline 迴圈;共享配額拆准入計畫驗證;workflow 的 PRTG 腿以「該日評估完成」為就緒 | `dotnet build` 0 錯;PRTG＋HostDayWorkflow 定向 2,793 筆:33 失敗中 26 筆屬將刪機制(測試檔一併刪除)、2 筆准入 fence 測試刪除、5 筆在 HEAD 同樣失敗(既有,非本段造成);新增 `PrtgValueAssessmentTests` 9 筆全綠;`PrtgFetchServiceTests`／`PrtgRuleEvaluatorTests` 全綠 | 實作修正 6 條記於 §5 B1;既有失敗 `SchemaUpgraderPrtgTests` 表名清單、`PrtgDiskCandidatePagingTests.HostMapDataRevision` 列入 B7 查;受影響的舊類別(timeline、資源期間 consumer 等)本段只停止呼叫,B1-2／B1-3 刪 |
 
 ## 8. 規劃複檢(2026-10-15)
 
