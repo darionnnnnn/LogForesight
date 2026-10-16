@@ -181,12 +181,6 @@ internal static class SchemaUpgrader
             isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_observations_truncated",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
-        // Null is deliberate for existing rows: their PRTG message-status parser version is unknown.
-        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "prtg_message_status_semantic_version",
-            isSqlite ? "INTEGER NULL" : "int NULL");
-        // Null is deliberate for legacy rows: message-time authority was not captured for them.
-        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "prtg_message_time_fingerprint",
-            isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
         // 來源名稱的寫入時計算鍵；舊列保留 NULL 供背景分批補齊，不在啟動閘掃全表。
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_key",
             isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
@@ -271,8 +265,6 @@ internal static class SchemaUpgrader
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_values",
             isSqlite ? SqliteCreatePrtgValues : SqlServerCreatePrtgValues);
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_values", "trust_version", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_values", "trusted_proof", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_uniq", "sensor_objid, period_start", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",

@@ -229,9 +229,11 @@ public class SchemaUpgraderPrtgTests : IDisposable
         var valColumns = GetColumnNames(ctx, "lf_prtg_values");
         var expectedVal = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "id", "sensor_objid", "period_start", "avg_value", "min_value", "max_value", "coverage", "quality", "created_at", "trust_version", "trusted_proof"
+            "id", "sensor_objid", "period_start", "avg_value", "min_value", "max_value", "coverage", "quality", "created_at"
         };
         Assert.True(expectedVal.SetEquals(valColumns), $"lf_prtg_values 欄位不符。實際: {string.Join(", ", valColumns)}");
+        Assert.DoesNotContain("trust_version", valColumns);
+        Assert.DoesNotContain("trusted_proof", valColumns);
 
         // 表五：lf_prtg_host_map
         var mapColumns = GetColumnNames(ctx, "lf_prtg_host_map");
@@ -251,7 +253,7 @@ public class SchemaUpgraderPrtgTests : IDisposable
     }
 
     [Fact]
-    public void 舊lfPrtgValues升級後既有樣本保持trustVersion零()
+    public void 舊lfPrtgValues升級後不新增信任欄位且既有樣本可讀()
     {
         using (var ctx = _fx.NewContext())
         {
@@ -270,8 +272,9 @@ public class SchemaUpgraderPrtgTests : IDisposable
         }
         using var read = _fx.NewContext();
         var row = Assert.Single(read.PrtgValues);
-        Assert.Equal(0, row.TrustVersion);
-        Assert.Null(row.TrustedProof);
+        var columns = GetColumnNames(read, "lf_prtg_values");
+        Assert.DoesNotContain("trust_version", columns);
+        Assert.DoesNotContain("trusted_proof", columns);
         Assert.Equal(75.0, row.Coverage!.Value);
     }
 

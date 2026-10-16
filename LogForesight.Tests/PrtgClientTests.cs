@@ -17,26 +17,6 @@ public class PrtgClientTests
     private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
 
 
-    [Fact]
-    public async Task BoundedXmlSharesAuthenticationAndRetainsHttpClockSeparatelyFromBody()
-    {
-        var at = new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero);
-        const string xml = "<histdata totalcount=\"0\"/>";
-        var stub = new StubHandler { OnSend = (request, _) =>
-        {
-            Assert.Contains("apitoken=", request.RequestUri!.Query);
-            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(xml, Encoding.UTF8, "application/xml") };
-            response.Headers.Date = at;
-            return Task.FromResult(response);
-        } };
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var response = await client.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64);
-        Assert.Equal(xml, response.Content);
-        Assert.Equal(at, response.HttpDateUtc);
-        Assert.Equal(TimeSpan.Zero, response.ReceivedAtUtc.Offset);
-        Assert.Equal(PrtgEndpointCategory.HistoricData, PrtgRequestBudget.Classify("api/historicdata.xml?id=77"));
-        Assert.Throws<InvalidDataException>(() => PrtgHistoricXmlReader.Parse("<html>login</html>"));
-    }
 
     [Fact]
     public async Task BoundedXmlRejectsUndeclaredOversizeAndSticky401WithoutAnotherLogin()

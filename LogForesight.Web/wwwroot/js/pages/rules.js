@@ -350,19 +350,11 @@ function applyPrtgSensorCategoryLock() {
     const code = document.getElementById('rule-prtg-code').value;
     const isSilent = code === 'silent';
     const isDiskTrend = code === 'disk_free_trend';
-    const resourceCategory = {
-        resource_cpu_sustained_pressure: 'cpu',
-        resource_memory_sustained_pressure: 'memory',
-        resource_disk_pressure: 'disk'
-    }[code];
-    const isResourcePressure = Boolean(resourceCategory);
     if (isSilent) select.value = '';
     if (isDiskTrend) select.value = 'disk';
-    if (isResourcePressure) select.value = resourceCategory;
-    select.disabled = isSilent || isDiskTrend || isResourcePressure;
+    select.disabled = isSilent || isDiskTrend;
     document.getElementById('rule-prtg-disk-trend-fields').classList.toggle('d-none', !isDiskTrend);
-    document.getElementById('rule-match-prtg-threshold').classList.toggle('d-none', isDiskTrend || isResourcePressure);
-    if (isResourcePressure) document.getElementById('rule-prtg-threshold').value = '0';
+    document.getElementById('rule-match-prtg-threshold').classList.toggle('d-none', isDiskTrend);
 }
 
 function matchCell(rule) {

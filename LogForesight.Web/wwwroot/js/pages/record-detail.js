@@ -1413,8 +1413,6 @@ function issueCell(issue) {
     wrap.appendChild(meta);
 
     wrap.appendChild(sourceEvidenceBlock(issue));
-    const prtgResourceEvidence = prtgResourceEvidenceBlock(issue);
-    if (prtgResourceEvidence) wrap.appendChild(prtgResourceEvidence);
 
     if (issue.knownIssue) {
         const text = document.createElement('div');
@@ -1453,28 +1451,6 @@ function issueCell(issue) {
     return wrap;
 }
 
-function prtgResourceEvidenceBlock(issue) {
-    const evidence = issue.prtgResourceVersionEvidence;
-    if (!evidence) return null;
-    const block = document.createElement('div');
-    block.className = 'small text-muted mt-1';
-    const recorded = value => value === 'recorded' ? '已保存' : '未知';
-    const versions = document.createElement('div');
-    const reference = value => typeof value === 'string' && /^sha256:[0-9A-F]{64}$/.test(value) ? value : '未知';
-    versions.textContent = `紀錄中的版本依據：來源世代 ${recorded(evidence.sourceGeneration)}；資源世代 ${recorded(evidence.resourceGeneration)}；頻道世代 ${recorded(evidence.channelGeneration)}；規則准入指紋 ${recorded(evidence.ruleAdmissionFingerprint)}。保存版本參照 ${reference(evidence.evidenceVersionReference)}；規則准入版本參照 ${reference(evidence.ruleAdmissionVersionReference)}。參照只供比對已保存紀錄，不是原生識別或目前授權證明。`;
-    block.appendChild(versions);
-    const reasonNames = {
-        'disk-two-hour-low-water': '兩個完整小時皆處於磁碟低水位',
-        'disk-seven-day-low-water-trend': '七日趨勢預估將到達低水位'
-    };
-    const reasons = (issue.prtgResourceReasonCodes || []).filter(code => Object.hasOwn(reasonNames, code));
-    if (reasons.length) {
-        const line = document.createElement('div');
-        line.textContent = `保存的結構化資源理由：${reasons.map(code => reasonNames[code]).join('；')}`;
-        block.appendChild(line);
-    }
-    return block;
-}
 
 /** Bounded provenance disclosure. Every external value is rendered as text, never as markup or a link. */
 function sourceEvidenceBlock(issue) {

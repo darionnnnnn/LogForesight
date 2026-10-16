@@ -36,17 +36,16 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
                 item.Finding.RuleCode.Length > 100)
                 throw new ArgumentException("觀察必須包含有效的 PRTG 資源與規則。", nameof(findings));
             // 不把 mapper 產生的 00:00／23:59 宣稱為來源時間；缺少來源區間的狀態明列於品質欄。
-            var covered = item.Finding.SourceGeneration != null && item.Finding.ResourceGeneration != null && item.Finding.IncidentStartedAt != null;
-            var quality = covered ? CoveredQuality : PendingQuality;
+            var quality = PendingQuality;
             var content = JsonSerializer.Serialize(new
             {
-                FormatVersion = covered ? 2 : FormatVersion, HostId = hostId, Day = day, SettingsRevision = settingsRevision, SourceHint = sourceHint,
+                FormatVersion = FormatVersion, HostId = hostId, Day = day, SettingsRevision = settingsRevision, SourceHint = sourceHint,
                 QualityReason = quality, Finding = item.Finding, Decision = item.Signature,
                 TransitionId = transitionId
             });
             var resource = item.Finding.SensorObjid.HasValue
                 ? $"sensor:{item.Finding.SensorObjid.Value}" : $"device:{item.Finding.DeviceObjid}";
-            var decisionParts = $"{item.Finding.SourceGeneration ?? sourceHint}|{hostId}|{resource}|{item.Finding.ResourceGeneration}|{item.Finding.RuleCode.ToLowerInvariant()}|{day:yyyy-MM-dd}";
+            var decisionParts = $"{sourceHint}|{hostId}|{resource}||{item.Finding.RuleCode.ToLowerInvariant()}|{day:yyyy-MM-dd}";
             var decisionKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(decisionParts)));
             return new PrtgObservationRow
             {
@@ -58,9 +57,9 @@ public sealed class EfPrtgObservationStore(Func<LfDbContext> contextFactory)
                 Category = item.Signature.Category.ToString(), SeverityRank = (int)item.Signature.Severity,
                 ElevatesDayRisk = item.Signature.ElevatesDayRisk, Suppressed = item.Signature.Suppressed,
                 SourceHint = sourceHint,
-                SourceGeneration = item.Finding.SourceGeneration, ResourceGeneration = item.Finding.ResourceGeneration,
-                SupplementStatus = covered ? "pending" : "shadow",
-                FormatVersion = covered ? 2 : FormatVersion, QualityReason = quality, ContentJson = content,
+                SourceGeneration = null, ResourceGeneration = null,
+                SupplementStatus = "shadow",
+                FormatVersion = FormatVersion, QualityReason = quality, ContentJson = content,
                 RecordedAtUtc = DateTime.UtcNow
             };
         }).DistinctBy(r => r.SnapshotId).ToArray();

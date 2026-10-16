@@ -33,23 +33,6 @@ public class LogIssueSignature
     /// 未命中規則的 Linux 事件維持空字串，跟四元組聚合成 Other 類，語意與 Windows Other 一致。
     /// </summary>
     public string EventKey { get; set; } = string.Empty;
-    public string? PrtgSourceGeneration { get; set; }
-    public string? PrtgResourceGeneration { get; set; }
-    /// <summary>隨狀態風險保存的解析版本，防止舊結果在時間軸重建後重新獲准。</summary>
-    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    public int? PrtgMessageStatusSemanticVersion { get; set; }
-    /// <summary>Message timestamp parser authority captured when a text/status finding was produced.</summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? PrtgMessageTimeFingerprint { get; set; }
-    public DateTimeOffset? PrtgIncidentStartedAt { get; set; }
-    /// <summary>Server-authored resource reason label; event/source identity remains the governed legacy key.</summary>
-    public string? PrtgDisplayLabel { get; set; }
-    public List<string>? PrtgResourceReasonCodes { get; set; }
-    public string? PrtgRuleAdmissionFingerprint { get; set; }
-    public string? PrtgTrendSourceRuleId { get; set; }
-    public string? PrtgTrendSourceRuleFingerprint { get; set; }
-    public string? PrtgChannelGeneration { get; set; }
-    public DateTime? PrtgPresenceSourceDay { get; set; }
     public DateTimeOffset? PrtgPresenceSourceAsOf { get; set; }
     public DateTimeOffset? PrtgPresenceDeviceStatusAsOf { get; set; }
     public string? PrtgPresenceSourceAuthorityFingerprint { get; set; }
@@ -69,8 +52,7 @@ public class LogIssueSignature
     /// 避免另存一份可能漂移的值（同 <see cref="DailyAnalysisRecord.HasCoverageGap"/> 的既有慣例）。
     /// </summary>
     [JsonIgnore]
-    public string SourceEventLabel => LogName.Equals("PRTG", StringComparison.OrdinalIgnoreCase) &&
-        !string.IsNullOrWhiteSpace(PrtgDisplayLabel) ? PrtgDisplayLabel! :
+    public string SourceEventLabel =>
         LogName.Equals("PRTG", StringComparison.OrdinalIgnoreCase) &&
         EventKey.Split(':') is { Length: >= 5 } parts
         ? $"PRTG {parts[1] switch { "down" => "持續故障", "warning" => "持續警告", "flapping" => "反覆故障", "disk_free_trend" => "磁碟容量趨勢", _ => parts[1] }}（感測器 #{parts[2]}）"

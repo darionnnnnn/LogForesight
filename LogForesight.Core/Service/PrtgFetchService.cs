@@ -28,11 +28,7 @@ public sealed record PrtgStateChangeRangeResult(
     string? Error,
     int QueriedObjects, // 逐一查詢的物件數
     int FailedObjects,  // 例外或分頁未收斂的物件數
-    int EmptyObjects)  // 本趟區間內一筆都沒取到的物件數
-{
-    /// <summary>Authority used to parse this completed range; empty on missing/drifted authority.</summary>
-    public string? MessageTimeFingerprint { get; init; }
-}
+    int EmptyObjects);
 
 /// <summary>範圍補抓結果：寫入的感測器數、取得失敗的裝置、查詢成功但 PRTG 端一顆感測器都沒有的裝置。</summary>
 public sealed record PrtgSensorBackfillResult(

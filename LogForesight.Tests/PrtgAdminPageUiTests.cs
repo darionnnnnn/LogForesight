@@ -1016,7 +1016,8 @@ public class PrtgAdminPageUiTests
         Assert.True(categoryChangeEnd > categoryChangeStart, "change callback 應完整閉合");
         Assert.Contains("applyPrtgSensorCategoryLock();", js[categoryChangeStart..categoryChangeEnd]);
         Assert.Matches(@"if \(isSilent\)\s*select\.value = '';", js);
-        Assert.Contains("select.disabled = isSilent || isDiskTrend || isResourcePressure;", js);
+        Assert.Contains("select.disabled = isSilent || isDiskTrend;", js);
+        Assert.DoesNotContain("resource_cpu_sustained_pressure", js);
     }
 
     [Fact]

@@ -1820,8 +1820,7 @@ public class PrtgDailyPipelineTests : IDisposable
                 {
                     LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:warning", EventId = 0,
                     EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = PrtgEventKey("warning", 2001),
-                    Count = 1, Severity = IssueSeverity.Medium,
-                    PrtgIncidentStartedAt = new DateTimeOffset(day2.Date)
+                    Count = 1, Severity = IssueSeverity.Medium
                 }
             }
         });

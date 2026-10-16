@@ -738,9 +738,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             KnownIssue = issue.KnownIssue,
             EventKey = issue.EventKey,
             SourceObservationsJson = sourceObservationsJson,
-            SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated,
-            PrtgMessageStatusSemanticVersion = issue.PrtgMessageStatusSemanticVersion,
-            PrtgMessageTimeFingerprint = issue.PrtgMessageTimeFingerprint
+            SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated
         };
     }
 
@@ -1107,9 +1105,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 string.Equals(i.Source, "PRTG:disk_free_trend", StringComparison.Ordinal)
                 && string.Equals(i.LogName, "PRTG", StringComparison.Ordinal)
                 && i.EventId == 0 && i.EntryType == System.Diagnostics.EventLogEntryType.Warning
-                && string.Equals(i.EventKey, latest.EventKey, StringComparison.Ordinal)
-                && (i.RuleId != "builtin-prtg-resource-disk-pressure" ||
-                    i.PrtgResourceReasonCodes?.Contains("disk-seven-day-low-water-trend", StringComparer.Ordinal) == true));
+                && string.Equals(i.EventKey, latest.EventKey, StringComparison.Ordinal));
             if (issue == null) continue;
             var detail = issue.SampleMessages?.FirstOrDefault()?.Trim();
             results.Add(new DiskTrendEvidenceRecord(pair.HostId, row.RecordDate, pair.SensorId,
@@ -1692,8 +1688,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             {
                 t.RecordId, t.LogName, t.SourceName, t.EventId, t.Category, t.SeverityRank,
                 t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey,
-                t.SourceObservationsJson, t.SourceObservationsTruncated, t.PrtgMessageStatusSemanticVersion,
-                t.PrtgMessageTimeFingerprint
+                t.SourceObservationsJson, t.SourceObservationsTruncated
             })
             .ToList()
             .GroupBy(t => t.RecordId)
@@ -1713,9 +1708,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 Severity = (IssueSeverity)t.SeverityRank,
                 Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
                 ElevatesDayRisk = t.ElevatesDayRisk,
-                KnownIssue = t.KnownIssue,
-                PrtgMessageStatusSemanticVersion = t.PrtgMessageStatusSemanticVersion,
-                PrtgMessageTimeFingerprint = t.PrtgMessageTimeFingerprint
+                KnownIssue = t.KnownIssue
             }).ToList());
     }
 

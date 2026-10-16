@@ -74,11 +74,6 @@ internal static class RecordStorageShaper
                 // 精簡後遺失 EventKey，「同 program 不同規則」併回同一組——同 KnownIssue/RuleId
                 // 那一類「新增欄位漏抄進精簡投影」的既有教訓
                 EventKey = i.EventKey,
-                PrtgSourceGeneration = i.PrtgSourceGeneration,
-                PrtgResourceGeneration = i.PrtgResourceGeneration,
-                PrtgMessageStatusSemanticVersion = i.PrtgMessageStatusSemanticVersion,
-                PrtgIncidentStartedAt = i.PrtgIncidentStartedAt,
-                PrtgPresenceSourceDay = i.PrtgPresenceSourceDay,
                 PrtgPresenceSourceAsOf = i.PrtgPresenceSourceAsOf,
                 PrtgPresenceDeviceStatusAsOf = i.PrtgPresenceDeviceStatusAsOf,
                 PrtgPresenceSourceAuthorityFingerprint = i.PrtgPresenceSourceAuthorityFingerprint,

@@ -28,16 +28,9 @@ public sealed record PrtgFinding(
     public IReadOnlyList<PrtgEvidenceWindow> EvidenceWindows { get; init; } = Array.Empty<PrtgEvidenceWindow>();
     public string EvidenceWindowResolution { get; init; } = "來源覆蓋狀態區間";
     public string? SensorCategory { get; init; }
-    public string? SourceGeneration { get; init; }
-    public string? ResourceGeneration { get; init; }
     /// <summary>產生狀態風險時的訊息解析版本；舊資料與非狀態規則不補猜。</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public int? MessageStatusSemanticVersion { get; init; }
-    /// <summary>Saved message timestamp authority that produced this text/status finding.</summary>
-    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    public string? MessageTimeFingerprint { get; init; }
-    public DateTimeOffset? IncidentStartedAt { get; init; }
-    public DateTime? PresenceSourceDay { get; init; }
     public DateTimeOffset? PresenceSourceAsOf { get; init; }
     public DateTimeOffset? PresenceDeviceStatusAsOf { get; init; }
     public string? PresenceSourceAuthorityFingerprint { get; init; }

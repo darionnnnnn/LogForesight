@@ -156,30 +156,6 @@ public sealed class PrtgDiagnosticExportSourceTests
         Assert.Equal(0, fixture.Counter.ObservationEntityPages);
     }
 
-    [Theory]
-    [InlineData(4097)]
-    [InlineData(1000000)]
-    public async Task TrustedProofLobIsRejectedBeforeAnyValueEntityIsLoaded(int proofCharacters)
-    {
-        using var fixture = new ExportFixture();
-        using var context = fixture.OpenContext();
-        await context.Database.EnsureCreatedAsync();
-        SeedV2(context);
-        var value = context.PrtgValues.Local.First();
-        value.TrustVersion = 1;
-        value.TrustedProof = new string('p', proofCharacters);
-        await context.SaveChangesAsync();
-        await using var transaction = await context.Database.BeginTransactionAsync();
-        fixture.Counter.Reset();
-        var error = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-        {
-            await foreach (var _ in new PrtgDiagnosticExportSource().EnumerateRowsAsync(
-                context, From, Through, Policy(), 7, CancellationToken.None)) { }
-        });
-        Assert.Contains("4 KiB", error.Message);
-        Assert.True(fixture.Counter.ValueLengthPages > 0);
-        Assert.Equal(0, fixture.Counter.ValueEntityPages);
-    }
 
     [Fact]
     public async Task StalePolicyVersionAndPreCancelledEnumerationIssueNoDataQueries()

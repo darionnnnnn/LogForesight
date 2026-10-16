@@ -502,6 +502,24 @@ public class KnownIssueCatalogTests : IDisposable
     }
 
     [Fact]
+    public void 退役PRTG規則代碼的歷史問題說明回規則已移除_不沿用停用列舊說明()
+    {
+        var stale = new KnownIssueRule
+        {
+            Id = "builtin-prtg-resource-cpu-pressure", Platform = "prtg", Enabled = false,
+            PrtgRuleCode = "resource_cpu_sustained_pressure", PlainExplanation = "舊的兩小時壓力說明"
+        };
+
+        var text = KnownIssueCatalog.PlainExplanationFor([stale], "PRTG:resource_cpu_sustained_pressure", 0);
+
+        Assert.Equal(PrtgRuleCatalog.RetiredRuleNote, text);
+        Assert.Contains("已移除", text);
+        // 現行規則照舊回自己的說明
+        var current = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down");
+        Assert.Equal(current.PlainExplanation, KnownIssueCatalog.PlainExplanationFor([current], "PRTG:down", 0));
+    }
+
+    [Fact]
     public void CloneForSeedOverwrite_保留PRTG欄位_突變防護()
     {
         var original = new KnownIssueRule

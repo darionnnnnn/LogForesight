@@ -2037,12 +2037,11 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Contains("超過 48 小時沒有成功更新", sent7.Message.Body);
     }
 
-    private static LogIssueSignature ActionablePrtg(DateTimeOffset? start = null) => new()
+    private static LogIssueSignature ActionablePrtg() => new()
     {
         LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
         EventKey = "prtg:disk_free_trend:10:core:resource", ElevatesDayRisk = true,
-        Severity = IssueSeverity.High, PrtgSourceGeneration = "core", PrtgResourceGeneration = "resource",
-        PrtgIncidentStartedAt = start ?? new DateTimeOffset(Yesterday.AddHours(1))
+        Severity = IssueSeverity.High
     };
 
     [Fact]

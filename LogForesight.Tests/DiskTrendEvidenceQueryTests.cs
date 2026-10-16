@@ -40,7 +40,7 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
         Append(11, "HOST-A", today, "123", "forged source", source: "PRTG:warning");
         Append(33, "HOST-C", today, "789", "actual disk trend");
         Append(33, "HOST-C", today.AddDays(1), "789", "low-water only",
-            ruleId: "builtin-prtg-resource-disk-pressure", reasons: ["disk-two-hour-low-water"]);
+            ruleId: "builtin-prtg-resource-disk-pressure");
 
         // 30 日的無關資料故意放入無效 JSON：若查詢載入並 Deserialize 這些列，測試會直接失敗。
         using (var ctx = _fx.NewContext())
@@ -84,8 +84,7 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
     }
 
     private void Append(long hostId, string host, DateTime date, string sensor, string detail,
-        string source = "PRTG:disk_free_trend", string? ruleId = null,
-        List<string>? reasons = null) =>
+        string source = "PRTG:disk_free_trend", string? ruleId = null) =>
         new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory").Append(new DailyAnalysisRecord
         {
             HostId = hostId,
@@ -101,7 +100,6 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
                     EntryType = EventLogEntryType.Warning,
                     EventKey = $"prtg:disk_free_trend:{sensor}",
                     RuleId = ruleId,
-                    PrtgResourceReasonCodes = reasons,
                     SampleMessages = new() { detail }
                 }
             }

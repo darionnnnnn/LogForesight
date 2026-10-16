@@ -390,6 +390,8 @@ public static class KnownIssueCatalog
     {
         if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))
         {
+            // 已退役的規則代碼：歷史 finding 保留可讀，說明一律回「規則已移除」，不沿用停用列的舊說明。
+            if (PrtgRuleCatalog.IsRetired(prtgCode)) return PrtgRuleCatalog.RetiredRuleNote;
             var prtgRule = FindPrtgRuleByCode(rules, prtgCode);
             return string.IsNullOrWhiteSpace(prtgRule?.PlainExplanation) ? null : prtgRule.PlainExplanation;
         }

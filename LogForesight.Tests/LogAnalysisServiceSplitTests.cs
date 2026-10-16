@@ -161,11 +161,6 @@ public class LogAnalysisServiceSplitTests : IDisposable
             Count = 1,
             FirstSeen = "10:00",
             LastSeen = "10:00",
-            PrtgSourceGeneration = "saved-source-generation",
-            PrtgResourceGeneration = "saved-resource-generation",
-            PrtgChannelGeneration = "saved-channel-generation",
-            PrtgRuleAdmissionFingerprint = new string('A', 64),
-            PrtgResourceReasonCodes = ["disk-two-hour-low-water"],
             SampleMessages = ["兩小時可用空間均值 4.2%，合格涵蓋 120 分鐘"]
         };
         record.TopIssues.Add(resourceFinding);

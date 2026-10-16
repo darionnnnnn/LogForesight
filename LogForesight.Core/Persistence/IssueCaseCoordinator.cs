@@ -54,13 +54,10 @@ public class IssueCaseCoordinator
         var issue = record?.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == issueKey);
         if (issue == null) return null;
         var text = issue.SampleMessages.FirstOrDefault() ?? issue.KnownIssue ?? "";
-        return new(day.Date, issue.EventKey, issue.PrtgSourceGeneration, issue.PrtgResourceGeneration,
-            issue.PrtgIncidentStartedAt, issue.PrtgSourceGeneration == null ? "legacy-unverified" :
-                PrtgFindingMapper.RequiresMessageTimeAuthority(issue) &&
-                string.IsNullOrWhiteSpace(issue.PrtgMessageTimeFingerprint) ? "legacy-message-time-unverified" :
-                issue.RuleId == "builtin-prtg-resource-disk-pressure" ? "trusted-resource-profile-v1" :
-                PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code) && code == "disk_free_trend" ? "typed-disk-semantic-v1" : "covered-state-v1",
-            text.Length <= 1000 ? text : text[..1000], issue.PrtgMessageTimeFingerprint);
+        var quality = PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code) && code == "disk_free_trend"
+            ? "value-trend-v1"
+            : "state-change-v1";
+        return new(day.Date, issue.EventKey, quality, text.Length <= 1000 ? text : text[..1000]);
     }
 
     public IssueCaseCoordinator(

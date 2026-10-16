@@ -285,8 +285,7 @@ public class WorkOrderQueryServiceTests
         var orderId = AddOrder(_alice.UserId, "PRTG:warning", 0);
         var issueCase = AddPrtgMember(orderId, "HOST-EVIDENCE", "warning", "sensor-1");
         const string expectedEventKey = "prtg:warning:sensor-1";
-        issueCase.PrtgEvidence = new PrtgCaseEvidence(D2, expectedEventKey, "source-v1", "resource-v1",
-            null, "legacy-message-time-unverified", "bounded summary");
+        issueCase.PrtgEvidence = new PrtgCaseEvidence(D2, expectedEventKey, "state-change-v1", "bounded summary");
         _cases.Save(issueCase);
         var host = _hosts.FindByName("HOST-EVIDENCE")!;
 
@@ -305,8 +304,7 @@ public class WorkOrderQueryServiceTests
 
         var service = Service(As(_alice.UserId, Capability.Handle), host.HostId);
         var member = Assert.Single(service.Members(orderId, "all", 1, 50).Items);
-        Assert.Null(member.PrtgEvidence!.PrtgMessageTimeFingerprint);
-        Assert.Equal("legacy-message-time-unverified", member.PrtgEvidence.Quality);
+        Assert.Equal("state-change-v1", member.PrtgEvidence!.Quality);
         Assert.Equal("reanalysed-without-finding", member.PrtgEvidenceParentStatus);
         Assert.Equal($"/records/{host.HostId}/{D2:yyyy-MM-dd}", member.PrtgEvidenceRecordPath);
 

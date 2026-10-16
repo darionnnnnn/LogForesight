@@ -263,8 +263,6 @@ public class LfDbContext : DbContext
             e.Property(x => x.RecordDate).HasColumnName("record_date");
             e.Property(x => x.EventCount).HasColumnName("event_count").HasDefaultValue(0);
             e.Property(x => x.ElevatesDayRisk).HasColumnName("elevates_day_risk").HasDefaultValue(false);
-            e.Property(x => x.PrtgMessageStatusSemanticVersion).HasColumnName("prtg_message_status_semantic_version");
-            e.Property(x => x.PrtgMessageTimeFingerprint).HasColumnName("prtg_message_time_fingerprint");
             // 完整簽章的另外兩段：依問題視角以 (Source, EventId) 分組，但處理狀態是以
             // **完整簽章**（LogName|Source|EventId|EntryType）為鍵——少了這兩欄就 join 不到
             // 處理狀態，§10.6「排除已有結論的問題」也就做不出來（規劃 §8.1 缺陷 1）
@@ -648,8 +646,6 @@ public class LfDbContext : DbContext
             e.Property(x => x.Coverage).HasColumnName("coverage");
             e.Property(x => x.Quality).HasColumnName("quality").HasMaxLength(16);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
-            e.Property(x => x.TrustVersion).HasColumnName("trust_version").HasDefaultValue(0);
-            e.Property(x => x.TrustedProof).HasColumnName("trusted_proof");
 
             e.HasIndex(x => new { x.SensorObjid, x.PeriodStart }).IsUnique().HasDatabaseName("IX_lf_prtg_values_uniq");
             e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_val_purge_sensor");
@@ -875,12 +871,6 @@ public class TopIssueRow
 
     /// <summary>命中「重大」旗標（規劃 §10.2 維度 1 的既有缺口：這個旗標過去只在詳情頁看得到）</summary>
     public bool ElevatesDayRisk { get; set; }
-
-    /// <summary>PRTG message-status interpretation version; null for legacy and non-status issue rows.</summary>
-    public int? PrtgMessageStatusSemanticVersion { get; set; }
-
-    /// <summary>Saved PRTG message-time authority fingerprint; null means the legacy row is untrusted.</summary>
-    public string? PrtgMessageTimeFingerprint { get; set; }
 
     /// <summary>完整簽章的第一段——與 <see cref="EntryType"/> 一起才能組回 IssueSignatureKey 去 join 處理狀態</summary>
     public string LogName { get; set; } = string.Empty;
@@ -1227,9 +1217,6 @@ public class PrtgValueRow
     public double? Coverage { get; set; }
     public string Quality { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
-    /// <summary>0 表示舊／診斷資料；只有明確 typed proof 可寫入版本 1。</summary>
-    public int TrustVersion { get; set; }
-    public string? TrustedProof { get; set; }
 }
 
 /// <summary>Durable scope purge acceptance and progress; each batch updates this row in the delete transaction.</summary>

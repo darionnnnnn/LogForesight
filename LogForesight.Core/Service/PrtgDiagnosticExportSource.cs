@@ -30,8 +30,6 @@ public sealed class PrtgDiagnosticExportSource
     private const int MaximumPolicyCharacters = MaximumRowBytes;
     private const int MaximumPolicySensors = 15000;
     private const int MaximumSerializerScratchBytes = MaximumRowBytes * 4;
-    /// <summary>舊版可信樣本 proof 欄位的讀取上限（新資料不再寫入此欄，舊列照原值匯出）。</summary>
-    private const int MaximumLegacyProofBytes = 4 * 1024;
 
     private static readonly string[] ArrayProperties =
     [
@@ -211,25 +209,14 @@ public sealed class PrtgDiagnosticExportSource
                      (row.PeriodStart == afterPeriod && row.Id > afterId))));
             var ordered = query.OrderBy(row => row.SensorObjid).ThenBy(row => row.PeriodStart).ThenBy(row => row.Id);
             var lengths = await ReadPageLengthsAsync(ordered, row => row.Id, context.Database.IsSqlServer(), cancellationToken,
-                row => row.Quality, row => row.TrustedProof).ConfigureAwait(false);
+                row => row.Quality).ConfigureAwait(false);
             ValidatePageLengths(lengths, "Values");
             if (lengths.Count == 0) yield break;
-            // A newly added proof LOB must participate in preflight bounds too.
-            // Only scalar lengths cross SQL before any value entity is loaded.
-            var proofLengths = await ordered.Select(row => new { row.Id,
-                Length = row.TrustedProof == null ? 0 : row.TrustedProof.Length })
-                .Take(lengths.Count).ToListAsync(cancellationToken).ConfigureAwait(false);
-            if (proofLengths.Count != lengths.Count || proofLengths.Where((row, index) => row.Id != lengths[index].Key).Any())
-                throw new InvalidDataException("Values proof 長度頁與資料 key 不一致。");
-            if (proofLengths.Any(row => row.Length > MaximumLegacyProofBytes))
-                throw new InvalidDataException("Values proof 超過 4 KiB 讀取前上限。");
             var page = await ordered.Take(lengths.Count).ToListAsync(cancellationToken).ConfigureAwait(false);
             EnsurePageKeysMatch(page, lengths, row => row.Id, "Values");
             foreach (var row in page)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (row.TrustedProof != null && System.Text.Encoding.UTF8.GetByteCount(row.TrustedProof) > MaximumLegacyProofBytes)
-                    throw new InvalidDataException("Values proof 超過 4 KiB UTF8 上限。");
                 hasCursor = true; afterSensor = row.SensorObjid; afterPeriod = row.PeriodStart; afterId = row.Id;
                 yield return Item("Values", row);
             }
