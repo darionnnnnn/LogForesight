@@ -1,6 +1,6 @@
 # 第 54 輪規劃(重寫版):PRTG 回歸正軌
 
-> 狀態(2026-10-15):規劃完成、待使用者討論定案;**本輪只規劃不實作**,實作授權另行取得。
+> 狀態(2026-10-16):作業 0 環境探測已執行(1.0.53.2 現場),結果已回寫本文件——暫定值轉定案見 §3 D8–D14、§5 作業 0;**本輪只規劃不實作**,實作授權另行取得。
 > 來源:使用者 2026-10-15 要求重新審視 51～54 輪,移除不符目標、多餘、過度設計、難以使用的內容,讓 PRTG 資料順利加入專案並達到輔助判斷的目的,整體可靠性達企業級。審查過程與逐項裁定見 [ROUNDS-51-54-REVIEW.md](archive/ROUNDS-51-54-REVIEW.md);原版 54 輪 PLAN 封存為 [FEEDBACK-54-PLAN-v1.md](archive/FEEDBACK-54-PLAN-v1.md)。
 > 起點:`feature/prtg-feedback-54` HEAD(`0985be90`),測試基線 7,978 通過／1 失敗(已修)／10 可選略過(`b77a72c7`,Windows)。本輪延續此分支,不另開。
 > 原 27 項 E01–E10 TODO、AC01–AC22、U53、Q1–Q6、R54、C54、coverage inventory 與 user-matrix **全部廢止**,不再追蹤;以本文件 §6 的目標導向驗收取代。
@@ -47,6 +47,22 @@
 | PRTG 測試 213 檔 84K 行,25 處以上讀前端原始碼做字串斷言 | B7 |
 | 三個專案皆 `net8.0-windows`;本機 Mac 無法建置 | 實作與驗證在 Windows |
 
+**作業 0 探測事實(2026-10-16,現場 PRTG 24.1.92、程式 1.0.53.2、SQLite)**:
+
+| 事實 | 影響 |
+|---|---|
+| 磁碟就緒度 43 顆全部 0／28 日,原因一律「可信採樣的 AnalysisTimeZoneId 缺失或無效」(`PrtgDiskAssessmentService` 的 trusted sampling 閘);小範圍資料流卻成功寫入並讀回 24 筆 `ok` CPU 數值 | 數值路徑現場可用,卡點正是 B1 要拆的閘——B1 方向確認 |
+| `lastcheck_raw`／`datetime_raw`／raw history 的 OLE 數值換算後**恰等於 UTC**(10/15 00:00 +08 的列 raw 為 10/14 16:00);顯示字串是 zh-TW 上午／下午格式,探測端以 Invariant 解析失敗,正式路徑靠 `CurrentCulture` 才解得開 | 時間基準改以 raw(UTC)為主(D9),刪 `PrtgSourceTimeZoneId`;51 輪「raw 不可靠、差 7 小時」的註解是時區基準誤判 |
+| sensor／channel 表**不回傳** `unit`、`scaling`、`primary` 欄;snapshot 無 `primarychannel` 欄;`getobjectproperty primarychannel` 四類皆回 0;raw history 可由各頻道數值互相驗算(disk 頻道 0＝頻道 1÷頻道 2＝90.0%;memory 頻道 0＝24.55%＝available÷total) | 單位對照只能依 type,且四類語意已可定案(D10);「以 unit 欄為準」那條路不存在 |
+| Traffic 的 raw history 取值失敗(`raw-channel-source-shape-or-transport-invalid`)、`primarychannel` 回 `invalid_property_value` | Traffic 不在四類規則內,從對照表與白名單移除(D10) |
+| device `host` 欄 6,604 台中 6,596 台是 IPv4、2 台 DNS 名稱、5 台打壞;裝置**名稱**格式固定如 `U(O-stkomsdb1)216.45.101`、`W(VM-GFYQ-AIS002)_216.11.10` | C1 hostname 候選改取裝置名稱括號內字串(D11);`host` 欄幾乎無 hostname 命中空間 |
+| 站台對照:範圍 20 台(對應 18、衝突 2),鏡像卻有 42,998 顆 sensor、42,872 顆在範圍外(首次基準／縮小保護擋下自動清除);就緒度卡片以 9,782 顆全鏡像磁碟 sensor 當母體 | 一次性人工「確認清除」(作業 0 後續);就緒度母體改為範圍內已對應(D8) |
+| 資源守門比對到的 3 台裝置(PRTG core、Sentinel ×2)不在取數範圍,要人工按「自動偵測並填入」 | C6 自動偵測(D12) |
+| 逐裝置 messages 含下層 sensor 訊息(9d-5 ✓,平均 253 ms／台);`filter_objid` 分批取值精確相符 | 狀態型規則資料路徑不動 |
+| sensor 表單次查詢固定耗時 7–8 秒,與 objid 數(1 或 100)無關;全站 sensor 全表約 1 分鐘 | 作業 D 容量估算用這個常數 |
+| 探測步驟 4 相依性查 800 顆即逾時、且 100% 為預設父物件相依;步驟 7 Type×IPv4 幾乎全 100%;步驟 8 分頁語意結論已固化為 pager 保險絲 | 探測輸出瘦身併入 B1(D13) |
+| 小範圍資料流印「對應日期 2026-09-22」——`GetLatestHostMapWithDate` 回看 30 日內最近一筆 `lf_prtg_host_map`,表示 9/22 之後對應表沒再寫入,即 PRTG 夜間取數或同步 24 天沒成功 | 現場狀態問題,非規劃問題;列為作業 0 後續查項,B1 完成後就緒度仍會是 0 直到取數恢復 |
+
 ## 3. 決策(2026-10-15 使用者定案)
 
 | 編號 | 決策 |
@@ -59,11 +75,23 @@
 | D6 | 環境探測由使用者先執行(§4 作業 0),結果決定單位對照表與 hostname 退路的實際形狀;探測不阻擋移除類批次開工。 |
 | D7 | GitHub CI(`windows-latest`,build＋test)是每段 push 後的第二道驗證通道;本機 Mac 不建置。 |
 
+**2026-10-16 依作業 0 結果追加**(規劃者依探測事實定案,使用者尚未逐條確認;與 D1–D7 不衝突):
+
+| 編號 | 決策 |
+|---|---|
+| D8 | 探測頁「磁碟值型資料準備度」整張重做為「數值資料就緒度」:四類共用、母體＝取數範圍內已對應 sensor、依不足原因分組計數＋精簡表格;每列「驗證這顆」「到指定主機補值」與整張「磁碟語意驗證」卡(批次驗證、規則試算、人工覆核)刪除。歸 B1-2。 |
+| D9 | PRTG 時間基準改以 `*_raw`(OLE,現場證實為 UTC)為主,轉服務主機本地時間落盤;顯示字串只做交叉檢查與帳號時區偵測。**取消** `PrtgSourceTimeZoneId`——本輪新增設定鍵歸零。 |
+| D10 | 單位對照只依 sensor type,不讀 `unit` 欄;CPU／記憶體／磁碟／Ping 四類語意定案(見 B1 對照表);Traffic 自對照表與預設白名單移除;`SNMP Linux Meminfo`、`WMI Free Disk Space (Multi Disk)` 現場未驗,先標「單位未知」排除,待實際資料再補對照。 |
+| D11 | C1 hostname 候選字串＝裝置名稱括號內字串(含「去掉開頭單一字母＋`-`」變體)＋ `host` 欄非 IP 值;不以 `host` 欄為主。 |
+| D12 | 新增小作業 C6:資源守門目標在覆寫清單為空時由夜間快照自動偵測並存入,人工填寫優先。 |
+| D13 | 「完整環境探測」文字輸出瘦身:刪步驟 4(相依性)、步驟 7(Type×IPv4),步驟 8(分頁語意)縮為一行結論;併入 B1 的 probe 階段。 |
+| D14 | 作業 0 後續三件使用者操作(清除範圍外鏡像、查執行紀錄為何 9/22 起無對應、到 PRTG 修 5 台壞 IP)不寫程式,列在 §5 作業 0 由使用者完成;未對應清單截圖仍待提供,C1 命中空間估算待補。 |
+
 ## 4. 作業總覽
 
 | 作業 | 主題 | 性質 | 相依 | 規模(估) |
 |---|---|---|---|---|
-| 0 | 環境探測(使用者執行) | 取事實 | 無;與 A／B 並行 | 使用者 30 分 |
+| 0 | 環境探測(使用者執行)——**已執行 2026-10-16**,剩三件後續操作 | 取事實 | 無;與 A／B 並行 | 使用者 30 分 |
 | A | 止血與基線 | 文件 | 無 | 小 |
 | B1 | 拆 trusted sampling 鏈,簡化數值可信條件 | 移除＋重構 | A | **特大**(四段) |
 | B2 | 拆 PRTG 即時郵件 | 移除 | A | 中 |
@@ -75,12 +103,13 @@
 | C3 | 三類趨勢規則共用引擎 | 新增 | B1、作業 0 | 大 |
 | C4 | finding 證據欄位與「資料不足」狀態 | 補強 | C3 | 中 |
 | C5 | 有用／誤報標記 | 新增 | C2 | 小 |
+| C6 | 資源守門目標自動偵測 | 新增 | B1 | 小 |
 | B5 | 收斂 lf_blobs JSON store | 重構 | B1、B2、B6、C2 | 中 |
 | B7 | 測試瘦身 | 移除 | B1–B6 | 中 |
 | D | 容量設計審查(§4.12 方式) | 審查 | C3、B5 | 中 |
 | E | 文件瘦身與收尾 | 文件 | 全部 | 中 |
 
-**建議順序**:0 ∥ A → B1 → B2 → B6 → B3 → B4 → C1 → C2 → C3 → C4 → C5 → B5 → B7 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
+**建議順序**:0 ∥ A → B1 → B2 → B6 → B3 → B4 → C1 → C2 → C3 → C4 → C5 → C6 → B5 → B7 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
 
 **委派與驗收方式**:
 - 實作端在 Windows(待定:使用者機器上的 Claude Code 或 agy);整輪只用一種,中途切換註明起點。Mac 端(本規劃者)不寫程式,只寫階段規格與獨立審查 diff。
@@ -109,6 +138,23 @@
 
 探測結果**不授予**任何資格,只回答上表。沒有結果前,C1／C3 的數值與對照表一律標「暫定」;探測不阻擋 A／B 系列開工。
 
+**2026-10-16 探測回答**(原始輸出見使用者提供的文字與相容性 JSON;事實摘要在 §2 第二表):
+
+| 問題 | 回答 | 落地 |
+|---|---|---|
+| 四類頻道、單位、數值長相 | CPU 頻道 0「Total」已用 %;記憶體頻道 0「Percent Available Memory」**可用 %**(頻道 1 available bytes、頻道 2 total bytes 可驗算);磁碟頻道 0 **剩餘 %**(頻道 1 free bytes ÷ 頻道 2 total bytes＝90.0% 吻合);Ping 頻道 0「Ping Time」ms、頻道 3「Packet Loss」%;Traffic raw history 取值失敗 | B1 對照表定案(D10) |
+| `unit` 欄全站有沒有值 | channel 表不回 `unit`／`scaling`／`primary`,snapshot 無 `primarychannel` 欄;type 分布的 unit 樣本只來自 sensor 表 `lastvalue` 的單位字尾 | 單位可判只依 type(D10) |
+| `host` 欄 DNS 名稱幾台、無法判定幾台 | 2 台 DNS、5 台打壞(objid 130033、130039、130045、153861、153866) | C1 候選改裝置名稱(D11);壞 IP 由使用者到 PRTG 修 |
+| 對應 ok／unmatched／conflict;未對應名稱相似度 | 範圍 20 台:ok 18、conflict 2;未對應清單截圖**未提供** | C1 命中空間估算待補 |
+| 帳號 Date Format 與時區 | JSON `source_timezone`／`source_locale` 皆 unknown;顯示字串為 zh-TW 上午／下午;raw 換算等於 UTC,與 +08 顯示差 8 小時 | 時間基準改 raw(D9),不需設定鍵 |
+| 逐裝置 messages 是否含子 sensor | ✓(9d-5,三台皆含下層感測器訊息) | 狀態型規則資料路徑不動 |
+| 小範圍資料流 ≥1 筆 `ok` | ✓ 24 筆 `ok`(CPU,00:00＝0.75) | historicdata 路徑現場可用 |
+
+**作業 0 後續(使用者操作,不寫程式)**:
+1. 維護頁「監看範圍外資料」預覽後按「確認清除」,把 42,872 顆範圍外 sensor 鏡像清掉(守門保留集合與首次基準保護仍生效;清完後就緒度母體與站台對照的數字才有意義)。
+2. 查「執行紀錄」與鏡像狀態頁:為何 `lf_prtg_host_map` 最後一筆是 2026-09-22——夜間取數沒跑、跑了失敗、還是對應步驟被擋。此事不解,B1 做完就緒度仍是 0／28。
+3. 到 PRTG 修正 5 台壞 IP 的裝置 host 欄;提供鏡像狀態頁「未對應」清單前 20 筆裝置名稱(可遮蔽)供 C1 估命中空間。
+
 ### 作業 A:止血與基線
 
 - 廢止原 27 項 TODO 與全部驗收矩陣(已在本文件頁首宣告);`README.md` 頁首「PRTG 整合進度」一段改指本文件。
@@ -119,11 +165,27 @@
 
 **目標行為**:一顆 sensor 的小時數值要被趨勢／狀態規則採信,只需同時滿足:(1) 該日有 `ok` 對應(或人工對應)的主機;(2) 該小時列為可用列(`ok` 或 `sampled` 且 coverage≥75);(3) 單位可判(§B1 單位對照)。不需要任何綁定、proof、資格作業、profile。
 
-**單位對照**(暫定,作業 0 後定案):依 sensor `type` 查內建對照 → 得「量測語意」:`cpu-percent-used`、`memory-percent-free`／`memory-percent-used`、`disk-percent-free`、`ping-ms`、`traffic-bytes`;sensor table 的 `unit` 欄有值且與對照矛盾時以 `unit` 為準並在執行輸出警告一次;兩者都判不出 → 該 sensor「單位未知」,所有數值規則跳過它並計入「排除:單位未知」。既有 `PrtgSensorTypeCategoryOverrides` 擴成可同時覆寫語意(`type=分類[:語意]`),不新增第二張設定表。
+**單位對照**(2026-10-16 定案,D10):只依 sensor `type` 查內建對照 → 得「量測語意」與「取值頻道」;PRTG 的 sensor／channel 表不回 `unit`／`scaling`／`primary`,不存在「以 unit 欄為準」的路徑。對照外的 type → 該 sensor「單位未知」,所有數值規則跳過它並計入「排除:單位未知」。既有 `PrtgSensorTypeCategoryOverrides` 擴成可同時覆寫語意(`type=分類[:語意]`),不新增第二張設定表。
+
+| sensor type | 語意 | 取值頻道(historicdata 欄名關鍵字) | 現場驗證 |
+|---|---|---|---|
+| `SNMP CPU Load` | `cpu-percent-used` | `Total` | ✓ 頻道 0,4% |
+| `SNMP Memory` | `memory-percent-free`(規則端轉已用 %) | `Percent Available Memory` | ✓ 頻道 0,24.55%＝available÷total |
+| `SNMP Disk Free` | `disk-percent-free` | 第一個顯示為 % 的頻道(頻道 0) | ✓ 90.0%＝free bytes÷total bytes |
+| `Ping` | `ping-ms` | `Ping Time` | ✓ 頻道 0;`Packet Loss` 不取 |
+| `WMI Free Disk Space (Multi Disk)`(18 顆)、`SNMP Linux Meminfo`(797 顆) | 暫「單位未知」 | — | 未驗;Linux Meminfo 待實際資料補對照,Multi Disk 多碟合一不適合單值趨勢 |
+| `SNMP Traffic 32bit／64bit` | 移除 | — | raw history 取值失敗,且不在四類規則內;自預設白名單移除 |
+
+**頻道選取**:`PrtgFetchService` 現行「取第一組 `value_raw`」在四類現場都剛好是對的頻道,但沒有核對;B1 改為「依對照表的欄名關鍵字選欄,選不到才退第一組 `value_raw`」,退路筆數在執行輸出計數(與既有「原始日期數值推得」同一段)。欄名關鍵字比對不分大小寫、容許前後綴(PRTG 可能帶 drive letter 或語系翻譯)。
 
 **數值合理性檢查**(取代 proof 的最後一道防線):百分比語意的值必須在 0–100、ping 毫秒 ≥0,否則該小時列標 `unknown` 並計入「排除:值不合理」;同一顆 sensor 連續 7 日(暫定)每小時值完全相同視為「固定值」,趨勢規則不評估它(PRTG 端卡住或 sensor 失效的常見形狀)。檢查在寫入後、評估前做,不改寫原始 `avg_value`。
 
-**時區**:移除 policy 的時區／文化欄位後,PRTG 時間字串沿用 51 輪行為(以服務主機文化與時區解析,失敗退 OLE 日期並計數)。另保留**一個**可選設定 `PrtgSourceTimeZoneId`(空＝與服務主機相同),消費端是 historicdata 與 messages 的時間解析;現場 PRTG 與服務主機不同時區時才填。這是本輪唯一新增的設定鍵。
+**時間基準**(2026-10-16 定案,D9):現場證實 `datetime_raw`／`lastcheck_raw`／raw history 的 OLE 數值是 **UTC**(10/15 00:00 +08 的列 raw 為 10/14 16:00),51 輪「raw 與字串差 7 小時、不可靠」是把 UTC 當成本地時間的誤判。B1 改為:
+- `historicdata` 與 `messages` 的時段起點以 `*_raw` 為主:`DateTime.FromOADate` → 視為 UTC → 轉服務主機本地時間落盤。既有「依文化解析字串、失敗退 raw」的順序反過來;字串不再是主來源,月日對調的風險整個消失。
+- 顯示字串只做兩件事:(1) 交叉檢查——字串解析成功且與 raw 換算的本地時間差 >30 分鐘時,計數並在執行輸出印一行「PRTG 帳號時區與服務主機差 N 小時」;(2) 字串解析失敗(非 zh-TW 服務主機碰到上午／下午格式)不影響落盤,只計數。
+- 取值請求的 `sdate`／`edate` 仍以服務主機本地日送出;PRTG 以帳號時區解讀,兩者不同時回來的列會跨日,既有「寫入前再次限制資料日期」把範圍外的列丟掉,丟掉筆數計入上面那一行警告。處置是把 PRTG 帳號時區設成與服務主機相同,寫進 HelpContent,不加設定鍵。
+- **取消** `PrtgSourceTimeZoneId`;本輪新增設定鍵歸零。移除 policy 的時區／文化欄位照舊。
+- B1-1 第一步先用現場一列 hourly 驗算(raw＋8h 是否等於字串起點)釘住這個事實,再動解析順序;若現場帳號時區不是 +08,上面交叉檢查那一行就是驗收案例。
 
 **移除的機制與依賴方處置**(階段規格須逐一列 production 呼叫端):
 
@@ -135,7 +197,8 @@
 | `PrtgAuthorityRepairStore`／`PrtgAuthorityRepairController`／RawAuthorityContext／authority fingerprint／`RawAuthorityRevision`／message-time fingerprint | `PrtgResourcePeriodConsumer` 前後快照比對、`PrtgSensorTimelineCollector`、`PrtgFetchService`、`PrtgMessageDateTimeParser`、probe | 時間解析保留「依帳號 Date Format 與 source 時區解析、失敗計數出聲」;fingerprint／revision／authority 全刪 |
 | `PrtgCapacityRuntimeAdmission`／`PrtgCapacityAdmissionPlan`／`PrtgSnapshotCapacityPilot`／request-shape fingerprint(含 build MVID)／五份新鮮樣本／25% 餘裕准入 | `PrtgSnapshotHostedService`、`PrtgMonitoringController`、`SettingsController` 容量試測、`PrtgQualificationJobsController` | 快照只依策略間隔、配額、退避採樣;刪容量試測按鈕與設定鍵 |
 | `PrtgDiskSemanticEvidenceStore`／`PrtgDiskVerificationService`／`DiskVerificationResultStore`／`PrtgDiskTimeBasisInvalidator`／人工語意確認 | `PrtgDiskAssessmentService` readiness、`disk_free_trend` 啟用條件、探測頁「驗證昨天語意」卡 | readiness 的「語意已驗證」條件改為「單位可判」;刪語意驗證卡與人工確認;規則啟用條件改為 §C3 |
-| `PrtgCompatibilityProbe`(2,746 行)、`PrtgStorageEnvironmentProbe`、`scripts/Verify-PrtgProbeEvidence.ps1`、本機診斷 JSON 端點 | `PrtgProbeRunner`、`PrtgProbeService`、`PrtgClientFactory` | 保留原「完整環境探測」文字輸出與下載;安全 JSON 整組刪 |
+| `PrtgCompatibilityProbe`(2,746 行)、`PrtgStorageEnvironmentProbe`、`scripts/Verify-PrtgProbeEvidence.ps1`、本機診斷 JSON 端點 | `PrtgProbeRunner`、`PrtgProbeService`、`PrtgClientFactory` | 保留原「完整環境探測」文字輸出與下載;安全 JSON 整組刪。**同時瘦身文字輸出**(D13):刪步驟 4 相依性(800 顆即逾時、100% 是預設父物件相依,無資訊量)、刪步驟 7 Type×IPv4(幾乎全 100%);步驟 8 分頁語意縮為一行「devices／sensors 遵守 start、超界夾末頁(pager 保險絲已處理);messages 依時間排序、超界回空」;步驟 9 改為「四類各一顆:頻道名稱、頻道 0 raw 值、對照表語意、單位判定結果」四行,不再印 JSON。9d-5 與站台對照保留 |
+| 探測頁「磁碟值型資料準備度」卡(`PrtgDiskAssessmentService` readiness 查詢、每列「驗證這顆」「到指定主機補值」、`prtg-readiness-*` 區塊)與「磁碟語意驗證」卡(`prtg-disk-verification-*`、批次驗證、同一感測器規則試算、人工覆核表單) | `PrtgDiskReadinessQuery`、`PrtgDiskVerificationService`(上列已刪)、`prtg-admin.js` 對應區段、HelpContent 兩版「磁碟值型資料準備度」段 | 重做為「數值資料就緒度」(D8,見下段);舊卡整組刪 |
 | `PrtgMonitoringPolicy.Ready` 的 CoreSystemId／SourceGeneration／ValidFrom／EndpointHint／時區／文化必填;來源變更「延續／新來源／無法確認」三選一 | `PrtgDailyPipeline.pilotReady`、`PrtgMonitoringController.Put`、試點範圍表單、`PrtgFormalEligibility`／`preview` 端點 | `Ready`＝PRTG 啟用且有連線;試點主機／sensor 清單保留為**可選**縮圈(空＝全部 ok 對應主機);改 URL 只重算對應,數值歷史不變;刪 Core 身分、時區、文化欄位(時區見上段);作用範圍預覽(52 輪 A04)保留,資格改用三條件 |
 | 校準匯出的 `FormalEvaluationScope`／`MagnitudeSemanticsVersion`／trusted timeline 欄位 | `CalibrationService` | 匯出改以簡化後的 timeline 與規則重算;欄位名改回中性,`FormatVersion` 遞增 |
 
@@ -145,15 +208,25 @@
 
 **資料**:刪除機制的 lf_blobs key 前綴(階段規格列出)由一次性 `SchemaUpgrader` 步驧刪除——**不可逆**,升級步驧前先寫入「請先備份資料庫」的啟動期提示並在 HelpContent 與版本說明明寫;SQLite 與 SQL Server 兩後端各驗一次。`lf_prtg_observations` 停止寫入,表保留一輪(BACKLOG 記下輪 drop)。
 
-**頁籤結果**:`Prtg.cshtml` 由 8 個頁籤縮為 6 個:連線、擷取參數、鏡像狀態(含衝突處理與狀態時間軸同步進度)、環境探測(含 readiness)、歷史回填、使用效果。「Trusted profile 進度」刪;「狀態涵蓋進度」併入鏡像狀態。
+**頁籤結果**:`Prtg.cshtml` 由 8 個頁籤縮為 6 個:連線、擷取參數、鏡像狀態(含衝突處理與狀態時間軸同步進度)、環境探測(含就緒度)、歷史回填、使用效果。「Trusted profile 進度」刪;「狀態涵蓋進度」併入鏡像狀態。
 
-**階段切分**(每段獨立 build＋定向測試):B1-1 consumer 的閘直接換成三條件(不留 feature flag——留旗標就是「有設定無行為」),舊閘的呼叫一併移除,舊類別暫時保留讓編譯通過 → B1-2 刪 controllers／hosted services／JS 頁籤／DI → B1-3 刪 stores、設定鍵、blob 清理、時區設定鍵 → B1-4 刪對應測試(與 B7 合併計)。
+**「數值資料就緒度」卡**(D8,取代「磁碟值型資料準備度」＋「磁碟語意驗證」兩張卡;行為契約如下,視覺實作前依全域規則先問是否套用 `ui-ux-pro-max`):
+- 母體＝**取數範圍內、最新對應為 `ok`(含人工)、未暫停、type 在對照表內**的 sensor;四類(CPU／記憶體／磁碟／Ping)共用一張,不再只算磁碟。全鏡像顆數、未對應顆數、白名單顆數不再出現在這張卡——那些是鏡像狀態頁籤的事。
+- 上半:一行母體總數,之後**依不足原因分組計數**(就緒／有效日不足／單位未知／coverage 不足／值不合理／固定值／對應無效,與 C4 同一個列舉),每組可點開展開該組的列;分母為零印「範圍內無可評估 sensor」並指回鏡像狀態。
+- 下半:精簡表格(主機／sensor／類別／有效日 X／28／最新有效日／原因),每頁 100 列,分頁;**不**逐顆放按鈕、不逐顆一張卡、不展開 bitmask。
+- 卡頂只有兩顆鈕:「重新整理」與「前往歷史回填」(後者只在存在「有效日不足」且最早有效日距今 <28 日時顯示;回填頁本身不動)。
+- 唯讀、不呼叫 PRTG、不啟動探測;每日管線評估 C3 規則前算一次同樣的分組並寫進執行輸出,卡片與執行輸出的數字必須相同(同一個查詢)。
+
+**階段切分**(每段獨立 build＋定向測試):B1-1 時間基準改 raw(先驗算現場一列)＋頻道選取改對照表,consumer 的閘直接換成三條件(不留 feature flag——留旗標就是「有設定無行為」),舊閘的呼叫一併移除,舊類別暫時保留讓編譯通過 → B1-2 刪 controllers／hosted services／JS 頁籤／DI,就緒度卡重做,探測輸出瘦身 → B1-3 刪 stores、設定鍵、blob 清理 → B1-4 刪對應測試(與 B7 合併計)。
 
 **驗收**(全部必要):
 - 固定小集合(2 主機、各 1 顆 CPU／記憶體／磁碟 sensor、3 日 `ok` 列)跑每日管線,三顆都進入規則評估母體;把其中一顆 coverage 改 60 → 排除且執行輸出記「品質不足 1」;把一顆 type 改成對照外 → 排除且記「單位未知 1」。分母為零(範圍內無 sensor)→ 執行輸出寫「無可評估 sensor」,不顯示 0 命中為正常。
 - 刪除符號在 Core／Web／Tests／scripts 零命中;無新增同名或相容替身;Prtg* 設定鍵每一個都有消費端(反射測試既有)。
 - 快照服務在無 profile 情況下按策略間隔採樣,配額與退避行為測試照舊全綠。
 - 升級既有 SQLite／SQL Server 測試庫:刪除的 blob key 清空,`lf_prtg_values`／對應表內容不變(前後 hash 比對)。
+- 時間基準:固定一列 historicdata JSON(`datetime_raw`＝46309.6670、字串「2026/10/15 上午 12:00:00 - 上午 01:00:00」)在服務主機 +08 下落盤為 10/15 00:00;把服務主機文化換成 en-US 重跑,落盤時間不變、字串解析失敗計數 1;把字串改成 +07 的寫法 → 落盤仍依 raw、時區差警告計數 1。
+- 頻道選取:記憶體 historicdata 三個頻道欄順序打亂 → 仍取 `Percent Available Memory`;欄名全對不上 → 退第一組並計數 1。
+- 就緒度卡:固定小集合四類各 1 顆＋1 顆範圍外＋1 顆對照外 → 母體 4、分組計數相加等於母體、範圍外那顆不出現、對照外那顆在「單位未知」;執行輸出同一組數字;分母為零案例印指定文字。探測文字輸出不含「相依性」「Type × IPv4」字樣,步驟 8 恰一行。
 
 ### 作業 B2:拆 PRTG 即時郵件
 
@@ -188,13 +261,13 @@
 
 **目標行為**:`PrtgHostMapper.MapForDate` 對每台 device 的判定順序:人工對應 → IP 排除 → **IP 比對**(既有)→ IP 無法命中任何主機(含 device 無 IP、IP unmatched)時 → **hostname 比對** → 仍無則 unmatched。
 
-**hostname 比對**(暫定,作業 0 後定案):候選字串＝device `host` 欄(非 IP 時)與 device 名稱;兩邊都正規化為短主機名(去 scheme／port／域名尾、小寫、trim)後與主機主檔 `HostName` 的短名比對。恰一台活躍主機命中 → `ok`,Note 標「hostname」;多台 → `conflict`(不填主機);同一短名多台 device → `conflict`。hostname 命中的 device 仍受既有「同 IP 已有人工指定」規則約束(以其解析 IP 分組,若有)。
+**hostname 比對**(2026-10-16 定案,D11):現場 6,604 台裝置的 `host` 欄只有 2 台是 DNS 名稱,拿它比對幾乎無命中空間;裝置**名稱**格式固定為 `<代號>(<主機名>)<IP 片段>`,如 `U(O-stkomsdb1)216.45.101`、`W(VM-GFYQ-AIS002)_216.11.10`、`U(L-TP-Sentinel-SRVS05)216.7.117`。候選字串依序:(a) 裝置名稱第一對括號內的字串;(b) 該字串去掉「開頭單一字母＋`-`」的變體(`O-stkomsdb1`→`stkomsdb1`、`L-TP-Sentinel-SRVS05`→`TP-Sentinel-SRVS05`;`VM-` 兩個字母不去,`vm-idc-eosm02` 本身就是主機名);(c) `host` 欄非 IP 時的值;無括號的裝置名稱整串當 (a)。每個候選與主機主檔 `HostName` 都正規化為短主機名(去 scheme／port／域名尾、小寫、trim)後比對;命中集合取三個候選的聯集。括號規則寫成一個可測的純函式,現場名稱格式變了只改它。恰一台活躍主機命中 → `ok`,Note 標「hostname」;多台 → `conflict`(不填主機);同一短名多台 device → `conflict`。hostname 命中的 device 仍受既有「同 IP 已有人工指定」規則約束(以其解析 IP 分組,若有)。
 
 **不變**:IP 命中結果不因 hostname 改變;hostname 只在 IP 路徑完全無結果時啟用;衝突清單與指派 UI 不改,新增 `conflictKind=hostname-multi`／`hostname-host-taken` 的標籤文字。
 
 **同主機兩台 device**:hostname 命中的主機若當日已有 IP 命中(或人工對應)的 device → 該 device 標 `conflict`(`hostname-host-taken`),不填主機——同一台主機掛兩台 PRTG device 多半是舊裝置未清,猜了會把舊裝置的數值混進來;管理者在衝突清單可指派或排除。
 
-**驗收**:固定夾具 6 台 device:IP 命中、IP 衝突、無 IP＋名稱命中、無 IP＋名稱多主機、名稱與 IP 指不同主機(IP 優先)、名稱大小寫／帶域名差異命中;各得預期狀態與 Note;執行摘要「hostname 命中 N」獨立計數,N＝0 時仍顯示 0。既有 `PrtgHostMapperTests` 全綠。
+**驗收**:固定夾具 8 台 device:IP 命中、IP 衝突、無 IP＋括號名稱命中、無 IP＋去單字母前綴後命中、無 IP＋名稱多主機、名稱與 IP 指不同主機(IP 優先)、名稱大小寫／帶域名差異命中、`VM-` 開頭不被去前綴;各得預期狀態與 Note;執行摘要「hostname 命中 N」獨立計數,N＝0 時仍顯示 0。括號解析純函式對現場三種名稱格式與無括號、多對括號、空括號各一案。既有 `PrtgHostMapperTests` 全綠。
 
 ### 作業 C2:PRTG 獨立風險(`LogSource=Prtg` 主機日)
 
@@ -232,7 +305,8 @@
 
 - **解除與再發**(每規則都要):命中後若最新有效日的值已回到門檻安全側、且近 7 日(暫定)斜率不再惡化 → 該 sensor 當日不再命中;既有簽章去重與處理狀態機制處理「同一問題仍在」與「已處理後再發」,趨勢規則不另造事故概念。管理者清完磁碟後隔天就不會再被報。
 - **慢性 vs 突發**:趨勢規則只抓慢性惡化;一夜塞滿的突發由 PRTG 自己的閾值告警經狀態型 `warning`／`down` 承接。這句寫進規則說明與 HelpContent,避免使用者以為趨勢規則會抓所有磁碟滿。
-- ping 的 type(`Ping`)加入預設數值白名單(快照目標數因此約增加「有 ok 對應的主機數」顆,仍在 15,000 設計內,D 作業核);ping 反覆中斷不另立規則(既有 down／flapping ＋ `PrtgCrossDay` 連續／累計升級)。
+- 記憶體規則吃 B1 對照的 `memory-percent-free`,在引擎輸入前轉成已用 %(100 − 值);轉向只在這一處做,測試釘住(§驗收「方向寫反」案)。`SNMP Linux Meminfo` 在補對照前不進此規則。
+- ping 的 type(`Ping`)加入預設數值白名單、Traffic 兩型自白名單移除(快照目標數因此約增加「有 ok 對應的主機數」顆、減少 traffic 顆數,仍在 15,000 設計內,D 作業核);ping 反覆中斷不另立規則(既有 down／flapping ＋ `PrtgCrossDay` 連續／累計升級)。
 - 規則平台 `prtg`、`ThresholdKind` 沿用 `disk_free_trend` 的專用門檻結構;`RuleValidator`／規則 DTO／編輯頁／seed／匯入差異一路打通;seed 版本遞增(B6 的移除與 C3 的新增若在同一次發佈,只遞增一次,升級橫幅只出現一次)。
 - 啟用條件(後端強制):至少一顆對應有效、單位可判且達最少有效日的 sensor;否則拒絕啟用並指回探測頁 readiness。
 - 評估時點:沿用 `disk_free_trend`——只讀評估前已落盤的完整日,不等當趟取值;每顆每日最多一筆 finding;`EventKey=prtg:{代碀}:{objid}`;跨日由 `PrtgCrossDay` 統一處理。
@@ -253,6 +327,13 @@
 - 使用效果面板新增「標記誤報 N／已處理 M」,並**按規則代碼分列**——哪條規則誤報多,就是下一輪調門檻的依據;分母寫明是「已標記的 PRTG 問題」。
 - 驗收:標記後摘要郵件與排行不再列該簽章;取消標記後恢復;30 日邊界前後各一案;計數分母為零時顯示「尚無標記」。
 
+### 作業 C6:資源守門目標自動偵測(D12)
+
+- **目標行為**:守門覆寫清單為空時,夜間快照開跑前以既有「直接查 PRTG」偵測(PRTG 位址比對＋Sentinel 位址比對＋corehealth)跑一次,結果存入覆寫清單並註記「自動偵測 {日期}」;之後每趟只在清單為空或偵測到的裝置不在範圍時重跑。人工填寫過的清單(註記非自動)**不覆寫**;設定頁「自動偵測並填入」鈕保留為手動入口。範圍補抓(PRTG-SPEC §3c)照舊把這些裝置帶進鏡像。
+- 有界:偵測沿用探測 [S3] 的查法(裝置全表一次、sensor 以 `filter_objid`),共用配額,15 秒逾時,逾時就這趟不守門並在執行輸出出聲,不阻擋取數。
+- **不變**:守門的判定與退避邏輯不動;覆寫清單仍是唯一的守門目標來源,自動偵測只是替使用者填它。
+- 驗收:清單為空＋PRTG 位址命中 → 清單被填、註記自動、當晚守門監看到 cpu／memory 感測器;清單非空且無自動註記 → 不動;偵測逾時 → 清單仍空、執行輸出一行警告、取數照跑;重跑三次清單內容相同。
+
 ### 作業 B5:收斂 lf_blobs JSON store
 
 - B1／B2／B6／C2 完成後盤點仍在使用的 PRTG blob key:`PrtgResourceIdentityStore`(sensor↔主機身分)、`prtg_sync_status`、`prtg_scope_revision`、監看政策、快照 checkpoint 相關。逐一判定:多列關聯資料(identity)→ 改正式表 `lf_prtg_resource_identity`(雙 provider DDL);單例狀態(sync status、scope revision、policy)→ 保留 blob。`ReadBoundedWithVersion` 字元上限保留為一般防護。
@@ -266,7 +347,7 @@
 
 ### 作業 D:容量設計審查(README 準則)
 
-逐環節查碼並以小集合驗:`lf_prtg_values` 索引 `(sensor_objid, period_start)` 覆蓋 C3 的「每顆 35 日」查詞;C3 逐 sensor 分頁(每頁 ≤100 顆)且每顆查詞點數有界;快照每批 ≤100 顆、在途 ≤3,ping 納入白名單後的目標數估算;`DailyAnalysisRecord` 建立路徑無 N+1;`log_source` 索引覆蓋排除查詞;保留期清理 `BatchedPrune`;hostname 比對不在迴圈內做 DNS。順手修:`PrtgDailyPipeline` 直接 `new PrtgFetchService`、`PrtgHostMapper` 無 DI 註冊 → 改走 DI,讓測試替身與正式路徑一致。輸出一張「已排除的程式風險／殘餘環境限制」表,不宣稱量測正式容量。
+逐環節查碼並以小集合驗:`lf_prtg_values` 索引 `(sensor_objid, period_start)` 覆蓋 C3 的「每顆 35 日」查詞;C3 逐 sensor 分頁(每頁 ≤100 顆)且每顆查詞點數有界;快照每批 ≤100 顆、在途 ≤3,ping 納入、traffic 移出白名單後的目標數估算——**現場常數**:sensor 表單次查詢固定 7–8 秒、與 objid 數無關,15,000 顆＝150 批,在途 3 約需 6–7 分鐘一輪,必須放得進快照策略間隔(保守策略現行間隔多少、放不下時策略怎麼降批,D 要給數字);`DailyAnalysisRecord` 建立路徑無 N+1;`log_source` 索引覆蓋排除查詞;保留期清理 `BatchedPrune`;hostname 比對不在迴圈內做 DNS。順手修:`PrtgDailyPipeline` 直接 `new PrtgFetchService`、`PrtgHostMapper` 無 DI 註冊 → 改走 DI,讓測試替身與正式路徑一致。輸出一張「已排除的程式風險／殘餘環境限制」表,不宣稱量測正式容量。
 
 ### 作業 E:文件瘦身與收尾
 
@@ -274,13 +355,14 @@
 - `DB-SPEC`／`DETECTION-SPEC`／`WEB-SPEC`／`BACKLOG`／**兩版 HelpContent**(刪 trusted profile／綁定／授權步驤,補「≤4 步啟用」「趨勢規則 28 日後才有」「慢性 vs 突發」「升級前備份」)同步;`CLAUDE.md` 測試基線與「不要做」條目更新(刪 trusted sampling 相關、補「數值可信＝三條件,不再加閘」)。
 - 版本說明(release note)明寫:升級不可逆(刪 blob key)、先備份;三條壓力規則停用;PRTG 不再即時寄信;設定鍵刪除清單。
 - `FEEDBACK-52-PLAN.md`、`FEEDBACK-52-ROUND2-PLAN.md`、`FEEDBACK-53-PLAN.md` 與本文件 `git mv` 進 archive 並補索引。
+- HelpContent 補「PRTG 帳號時區請與服務主機相同;不同時執行輸出會有警告與丟列計數」;`PRTG-SPEC` §時間解析段改寫為 raw(UTC)為主,刪「datetime_raw 只當退路」與 7 小時敘述。
 - 依 `project-closeout`:體檢、併 dev、刪分支。
 
 ## 6. 本輪驗收(取代原 27 項)
 
 全部必要,AND 通過:
 
-1. 新站台從零到第一個 PRTG 風險的操作 ≤4 步:連線→同步結構與對應(背景作業;衝突可事後在清單處理)→啟用規則→等每日排程。無 Core 身分、時區、文化、profile、綁定、授權任何一項。**時程明寫**:狀態型 finding(down／warning)隔日第一次排程就有;趨勢型最早 28 個有效日後;readiness 頁與主機詳情全程顯示 X／28。
+1. 新站台從零到第一個 PRTG 風險的操作 ≤4 步:連線→同步結構與對應(背景作業;衝突可事後在清單處理)→啟用規則→等每日排程。無 Core 身分、時區、文化、profile、綁定、授權、守門手動偵測任何一項;本輪新增設定鍵為零。**時程明寫**:狀態型 finding(down／warning)隔日第一次排程就有;趨勢型最早 28 個有效日後;readiness 頁與主機詳情全程顯示 X／28。
 2. 一顆 CPU sensor 從取數到趨勢 finding 的路徑可在小集合上端到端重現,中間沒有「等待／證據不足」以外的第三種卡點;每個「不足」有原因。
 3. 四主機日矩陣(C2)與五次重跑冪等。
 4. 四類趨勢規則各 5 正例、各類反例;同資料重算結果相同。
@@ -289,6 +371,7 @@
 7. 刪除清單(B1–B6)符號零命中;Prtg* 設定鍵每個有消費端;blob key 每個有讀寫端。
 8. 全量測試綠(Windows),建置 0 警告,無 pwsh 可建置。
 9. 容量審查表產出;`PRTG-SPEC` ≤500 行且無敘事字眼。
+10. 就緒度卡以取數範圍內已對應 sensor 為母體、四類共用、分組計數與執行輸出一致;探測頁無逐顆按鈕;時間基準三案例(B1 驗收)通過。
 
 ## 7. 執行紀錄
 
@@ -312,4 +395,17 @@
 
 **管理者**:升級刪 blob 不可逆 → B1 補啟動期備份提示、E 補版本說明;頁籤由 8 縮 6 明寫;版本可追溯由 InformationalVersion 承接(B3);CI windows-latest 列為第二驗證通道(D7)。
 
-**上帝視角**:C2 動 `HostDayPostProcessor` 是 NetIQ 共用路徑 → 每段都要 NetIQ 測試全綠(§4);ping 進白名單讓快照目標數增加 → D 核;B6 與 C3 兩次 seed 遞增合併為一次;HelpContent 兩版與 CLAUDE.md「不要做」條目在 E 同步,否則文件會教使用者去做已刪的步驤。本輪新增的 schema／設定只有三項:`log_source` 欄、identity 表(B5)、`PrtgSourceTimeZoneId`,其餘全是刪除。無其他新增事項。
+**上帝視角**:C2 動 `HostDayPostProcessor` 是 NetIQ 共用路徑 → 每段都要 NetIQ 測試全綠(§4);ping 進白名單讓快照目標數增加 → D 核;B6 與 C3 兩次 seed 遞增合併為一次;HelpContent 兩版與 CLAUDE.md「不要做」條目在 E 同步,否則文件會教使用者去做已刪的步驤。本輪新增的 schema／設定只有三項:`log_source` 欄、identity 表(B5)、`PrtgSourceTimeZoneId`,其餘全是刪除。無其他新增事項。(10-16 更正:`PrtgSourceTimeZoneId` 取消,見第三次複檢。)
+
+### 第三次複檢(2026-10-16,作業 0 結果回寫)
+
+**為什麼改**:探測把三個「暫定」變成事實——(1) 數值路徑現場可用、卡點就是 trusted sampling 閘,B1 不需保留任何過渡;(2) PRTG 不回 `unit`,單位只能依 type,而四類頻道都能用 raw history 互相驗算出語意,所以對照表可以直接定案而不是等資料;(3) raw 時間是 UTC,原本要加的 `PrtgSourceTimeZoneId` 變成多餘——用 raw 落盤比用字串更穩,還能自動偵測帳號時區差。
+
+**取捨**:
+- 就緒度卡重做(D8)而不是只刪按鈕:只刪按鈕留下的仍是「一顆一張卡、全鏡像當母體」,使用者看到 9,782 顆裡 0 顆就緒,得到的結論是「壞了」而不是「資料累積中」。四類共用一張、按原因分組,才對得上 §6-1「全程顯示 X／28」。這是本輪唯一的 UI 重做,其餘都是刪。
+- 時間基準改 raw(D9)動到 51 輪的正式路徑,風險在「現場帳號時區其實不是 +08」——所以 B1-1 第一步是驗算現場一列再改,驗收加 en-US 文化與 +07 字串兩個反例。不改的代價是:en-US 服務主機解析 zh-TW 上午／下午必失敗、退 raw 當本地時間、整份基線靜默平移 8 小時——那是比改更大的風險。
+- Traffic 移除(D10)是因為現場 raw 取值失敗且四類規則用不到;不是永久排除,BACKLOG 記「traffic 進規則前先補 historicdata 形狀探測」。
+- C6(D12)是新增,違反「先砍再加」的傾向,但不做的話 §6-1 的 ≤4 步要加一步「到設定頁按自動偵測」,而且 3 台守門裝置不在範圍就是現場現況。規模小、有界、有退路。
+- 範圍外 42,872 顆鏡像不寫程式自動清(D14):PRTG-SPEC §3c 的首次基準與縮小保護是刻意設計,現場這批是基準建立前留下的;人工確認清一次就收斂,寫自動清反而要再開一個「什麼情況可以自動」的判定。
+
+**仍待使用者**:D8–D14 逐條確認;作業 0 後續三件操作;未對應清單截圖。9/22 起對應表未寫入這件事如果是取數排程壞了,要先修現場再進 B1,否則 B1 驗收的「就緒度數字」在現場看不到變化。
