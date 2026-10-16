@@ -48,8 +48,6 @@ public readonly record struct PrtgCalibrationDailyAggregation(
 /// </summary>
 public sealed class EfPrtgStore
 {
-    public const int WholeEvidenceHostMapMaximumRows = 10_000;
-    public const int WholeEvidenceHostMapMaximumBytes = 16 * 1024 * 1024;
     private static readonly SemaphoreSlim CalibrationCaptureAdmission = new(1, 1);
     public static PrtgCalibrationCaptureLimits DefaultCalibrationCaptureLimits { get; } = new();
     private const int CandidateSnapshotSensorTypeMaxChars = 256;
@@ -2535,37 +2533,6 @@ public sealed class EfPrtgStore
         return (latestDate.Value, rows);
     }
 
-    /// <summary>
-    /// Bounded authority-only variant used by workflow recovery. It deliberately projects only the
-    /// device id, host id and status needed for the current host-mapping fingerprint.
-    /// </summary>
-    public (DateTime? MapDate, List<PrtgHostMapAuthorityRow> Rows) GetLatestHostMapAuthorityWithDate(
-        int maxLookbackDays = 30, DateTime? anchor = null)
-    {
-        using var ctx = _contextFactory();
-        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor);
-        if (latestDate == null) return (null, new List<PrtgHostMapAuthorityRow>());
-
-        var projected = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == latestDate.Value && m.MapStatus == PrtgMapStatus.Ok)
-            .OrderBy(m => m.DeviceObjid)
-            .Take(WholeEvidenceHostMapMaximumRows + 1)
-            .Select(m => new { m.DeviceObjid, m.HostId })
-            .ToList();
-        if (projected.Count > WholeEvidenceHostMapMaximumRows)
-            throw new InvalidDataException("Whole-evidence host map exceeded its bounded row limit.");
-
-        long projectedBytes = 0;
-        var rows = new List<PrtgHostMapAuthorityRow>(projected.Count);
-        foreach (var row in projected)
-        {
-            projectedBytes = checked(projectedBytes + sizeof(long) + sizeof(long));
-            if (projectedBytes > WholeEvidenceHostMapMaximumBytes)
-                throw new InvalidDataException("Whole-evidence host map exceeded its bounded payload limit.");
-            rows.Add(new PrtgHostMapAuthorityRow(row.DeviceObjid, row.HostId));
-        }
-        return (latestDate.Value, rows);
-    }
-
     /// <summary>只讀取最新全域映射日期，不載入該日期的映射列。</summary>
     public DateTime? GetLatestHostMapDate(int maxLookbackDays = 30)
     {
@@ -3255,8 +3222,6 @@ public sealed class EfPrtgStore
                 g.Sum(v => v.Quality == PrtgDataQuality.Ok ||
                     v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0)));
 }
-
-public sealed record PrtgHostMapAuthorityRow(long DeviceObjid, long? HostId);
 
 /// <summary>
 /// PRTG 鏡像表統計摘要
