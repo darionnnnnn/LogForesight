@@ -643,6 +643,31 @@
         </div>
     </div>
 
+    <section class="lf-card mb-4" id="prtg-value-readiness" aria-labelledby="prtg-value-readiness-title">
+        <div class="lf-card__header d-flex align-items-center flex-wrap gap-2">
+            <h2 class="lf-card__title me-auto" id="prtg-value-readiness-title">數值資料就緒度</h2>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-value-readiness-refresh">重新整理</button>
+            <button type="button" class="btn btn-sm btn-outline-primary d-none" id="prtg-value-readiness-backfill">前往歷史回填</button>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted small mb-2">取數範圍內、最新對應正常的 CPU／記憶體／磁碟／Ping sensor，近 28 天有幾天可用於數值規則。唯讀，不呼叫 PRTG。</p>
+            <div id="prtg-value-readiness-status" class="small mb-2" role="status" aria-live="polite"></div>
+            <div id="prtg-value-readiness-groups" class="d-flex flex-wrap gap-2 mb-3"></div>
+            <div class="table-responsive" id="prtg-value-readiness-table-region" role="region" aria-labelledby="prtg-value-readiness-title" tabindex="0">
+                <table class="table table-sm align-middle mb-2">
+                    <caption class="visually-hidden">數值資料就緒度明細</caption>
+                    <thead><tr><th scope="col">主機</th><th scope="col">Sensor</th><th scope="col">類別</th><th scope="col">有效日</th><th scope="col">最新有效日</th><th scope="col">原因</th></tr></thead>
+                    <tbody id="prtg-value-readiness-body"></tbody>
+                </table>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-value-readiness-prev">上一頁</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-value-readiness-next">下一頁</button>
+                <span class="small text-muted" id="prtg-value-readiness-page-info"></span>
+            </div>
+        </div>
+    </section>
+
     <details class="lf-card mb-4" id="prtg-calibration-advanced">
         <summary class="lf-card__header">
             <h2 class="lf-card__title">校準數值匯出</h2>
