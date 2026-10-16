@@ -378,6 +378,7 @@
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | 規劃 | Claude(Fable,Mac) | 本文件與審查報告 | 待使用者定案 | — |
+| A | Claude(Opus,Windows) | 52／52-ROUND2／53 三份規劃 `git mv` 進 archive 並補索引;README 頁首與準則段、CLAUDE.md 測試基線、BACKLOG 舊路徑改指本文件 | 舊 TODO 代號 grep 除本文件外零命中;`docs/` 主目錄只剩本 PLAN(`FEEDBACK-53-ACCEPTANCE.json` 由 B4 刪) | 純文件,未建置 |
 
 ## 8. 規劃複檢(2026-10-15)
 

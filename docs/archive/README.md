@@ -14,6 +14,9 @@
 |---|---|
 | [FEEDBACK-54-PLAN-v1.md](FEEDBACK-54-PLAN-v1.md) | 第 54 輪原版規劃(承接 53 輪 27 項驗收 TODO、R54／C54 契約、§8 分段紀錄);2026-10-15 經審查後由重寫版取代,依據見 ROUNDS-51-54-REVIEW.md。 |
 | [ROUNDS-51-54-REVIEW.md](ROUNDS-51-54-REVIEW.md) | 2026-10-15 對 51～54 輪規劃與程式的全面審查:偏離目標、過度設計、逐輪保留／刪除／簡化裁定與根因;第 54 輪重寫版 PLAN 的依據。 |
+| [FEEDBACK-53-PLAN.md](FEEDBACK-53-PLAN.md) | 第 53 輪規劃：PRTG trusted sampling、資格作業、兩小時壓力規則與驗收矩陣;2026-10-15 審查後多數機制由第 54 輪重寫版移除,依據見 ROUNDS-51-54-REVIEW |
+| [FEEDBACK-52-ROUND2-PLAN.md](FEEDBACK-52-ROUND2-PLAN.md) | 第 52 輪第二段:A01–A05 子條款補強與驗收紀錄 |
+| [FEEDBACK-52-PLAN.md](FEEDBACK-52-PLAN.md) | 第 52 輪規劃:PRTG 正式 finding 契約、NetIQ 主體(排除 PRTG-only,第 54 輪推翻)、即時郵件 |
 | [FEEDBACK-51-PLAN.md](FEEDBACK-51-PLAN.md) | PRTG 磁碟趨勢的品質診斷、逐顆就緒、局部回填、規則與現場驗證工作台；正式環境證據與待驗邊界見終檢輪。 |
 | [FEEDBACK-50-PLAN.md](FEEDBACK-50-PLAN.md) | 初期設定與日常處理動線、穩定性、安全及 PRTG 範圍保護；5351 通過、10 略過，實機驗證限制見終檢輪。 |
 | `HISTORY.md` | 2026-07-20～07-28 期間 10 份規劃案的逐字彙整（初版擴充規劃、AI 角色、NetIQ 主機清單／Web 設定、SQL 儲存後端、規模化 2000 台、Web 回饋一二輪、共用標準、維運強化）。 |
