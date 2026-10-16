@@ -2,97 +2,72 @@ using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
-public enum PrtgValueReadinessStatus
-{
-    InsufficientData,
-    Ready,
-    Unknown
-}
+public sealed record PrtgValueReadinessSummary(
+    DateOnly CompletedDay,
+    int Population,
+    IReadOnlyDictionary<PrtgValueReason, int> Counts,     // 每個 PrtgValueReason 都有鍵（含 0）
+    IReadOnlyList<PrtgValueAssessmentRow> Rows);           // 依 HostId、SensorObjid 排序
 
-public sealed record PrtgReadinessHour(DateTime PeriodStart, string Quality, double? Coverage, bool Trusted = false);
-
-/// <summary>供值型 readiness 計算使用的單顆磁碟候選與其有限窗口資料。</summary>
-public sealed record PrtgValueReadinessInput(
-    long SensorObjid,
-    long DeviceObjid,
-    string Category,
-    bool HostMapped,
-    bool HostEnabled,
-    bool SensorPaused,
-    bool DevicePaused,
-    bool Whitelisted,
-    string? Unit,
-    string? MainChannel,
-    bool SemanticVerified,
-    IReadOnlyList<PrtgReadinessHour> Hours,
-    IReadOnlyDictionary<DateTime, long?> DailyMappedHostIds);
-
-public sealed record PrtgValueReadinessResult(
-    long SensorObjid,
-    PrtgValueReadinessStatus Status,
-    int UsableDays,
-    int RequiredDays,
-    int UsableHours,
-    int RequiredHoursPerDay,
-    DateTime? LatestUsableHour,
-    bool SemanticReady,
-    string Reason);
-
-/// <summary>逐 sensor 計算暫定磁碟值型資料門檻；不查詢、不修改持久資料。</summary>
 public static class PrtgValueReadiness
 {
     public const int WindowDays = 28;
-    public const int MinDailyUsableHours = 12;
-
-    public static PrtgValueReadinessResult Evaluate(PrtgValueReadinessInput input, DateTime asOf)
-    {
-        ArgumentNullException.ThrowIfNull(input);
-        var empty = new PrtgValueReadinessResult(input.SensorObjid, PrtgValueReadinessStatus.InsufficientData,
-            0, WindowDays, 0, MinDailyUsableHours, null, false, "資料不足");
-        if (!string.Equals(input.Category, PrtgSensorCategories.Disk, StringComparison.OrdinalIgnoreCase))
-            return empty with { Status = PrtgValueReadinessStatus.Unknown, Reason = "非磁碟候選" };
-        if (!input.HostMapped || !input.HostEnabled || input.SensorPaused || input.DevicePaused || !input.Whitelisted)
-            return empty with { Status = PrtgValueReadinessStatus.Unknown, Reason = "主機／感測器停用、暫停、未對應或白名單不符" };
-
-        var endDate = asOf.Date;
-        var startDate = endDate.AddDays(-WindowDays);
-        var usableByDay = input.Hours
-            .Where(h => h.PeriodStart >= startDate && h.PeriodStart < endDate)
-            .Where(IsUsable)
-            .GroupBy(h => h.PeriodStart.Date)
-            .ToDictionary(g => g.Key, g => g.Select(h => h.PeriodStart).Distinct().Count());
-        var usableDays = usableByDay.Count(x => x.Value >= MinDailyUsableHours);
-        var usableHours = usableByDay.Values.Sum();
-
-        // Provenance is required only where usable values exist. Empty historical days
-        // still contribute no coverage, but do not make a partially populated window unknown.
-        var mappingIds = new HashSet<long>();
-        foreach (var date in usableByDay.Keys)
+    public const int RequiredDays = 28;
+    /// <summary>四類：cpu、memory、disk、availability（用 PrtgSensorCategories 常數）</summary>
+    public static readonly IReadOnlySet<string> Categories =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            if (!input.DailyMappedHostIds.TryGetValue(date, out var hostId) || !hostId.HasValue)
-                return empty with { UsableDays = usableDays, UsableHours = usableHours,
-                    Status = PrtgValueReadinessStatus.Unknown, Reason = "有資料日的歷史主機對應無法證明" };
-            mappingIds.Add(hostId.Value);
-        }
-        if (mappingIds.Count > 1)
-            return empty with { UsableDays = usableDays, UsableHours = usableHours,
-                Status = PrtgValueReadinessStatus.Unknown, Reason = "有資料日的窗口內主機對應曾變更" };
+            PrtgSensorCategories.Cpu,
+            PrtgSensorCategories.Memory,
+            PrtgSensorCategories.Disk,
+            PrtgSensorCategories.Availability
+        };
 
-        var latest = input.Hours.Where(h => h.PeriodStart >= startDate && h.PeriodStart < endDate && IsUsable(h))
-            .Select(h => (DateTime?)h.PeriodStart).Max();
-        var semanticReady = input.SemanticVerified
-            && !string.IsNullOrWhiteSpace(input.Unit)
-            && !string.IsNullOrWhiteSpace(input.MainChannel);
-        var dataReady = usableDays == WindowDays && usableByDay.Count == WindowDays;
-        var status = dataReady ? PrtgValueReadinessStatus.Ready : PrtgValueReadinessStatus.InsufficientData;
-        var reason = !dataReady ? "資料不足" : semanticReady ? "資料與量測語意已確認" : "資料足夠；單位／主頻道語意待確認";
-        return new PrtgValueReadinessResult(input.SensorObjid, status, usableDays, WindowDays,
-            usableHours, MinDailyUsableHours, latest, semanticReady, reason);
+    public static PrtgValueReadinessSummary Compute(PrtgValueAssessment assessment,
+        IReadOnlyDictionary<long, long> deviceToHost, IReadOnlySet<long> evaluationHostIds,
+        IReadOnlySet<long> policySensorIds, DateOnly completedDay, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var mirror = assessment.SensorMirror()
+            .Where(s => s.Category != null && Categories.Contains(s.Category.Trim()));
+
+        var candidates = PrtgValueAssessment.Candidates(
+            mirror, deviceToHost, evaluationHostIds, policySensorIds, category: null);
+
+        var allRows = new List<PrtgValueAssessmentRow>(candidates.Count);
+        foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
+        {
+            ct.ThrowIfCancellationRequested();
+            var evaluated = assessment.AssessPage(page, completedDay, WindowDays, RequiredDays);
+            allRows.AddRange(evaluated);
+        }
+
+        var sortedRows = allRows
+            .OrderBy(r => r.Sensor.HostId)
+            .ThenBy(r => r.Sensor.SensorObjid)
+            .ToList();
+
+        var counts = Enum.GetValues<PrtgValueReason>().ToDictionary(r => r, _ => 0);
+        foreach (var row in allRows)
+        {
+            counts[row.Reason]++;
+        }
+
+        return new PrtgValueReadinessSummary(completedDay, candidates.Count, counts, sortedRows);
     }
 
-    public static bool IsUsable(PrtgReadinessHour hour) => hour.Trusted &&
-        (string.Equals(hour.Quality, PrtgDataQuality.Ok, StringComparison.OrdinalIgnoreCase)
-        || (string.Equals(hour.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase)
-            && hour.Coverage.HasValue
-            && hour.Coverage.Value >= PrtgValueUsability.SampledMinCoverage));
+    /// <summary>執行輸出用的一行文字</summary>
+    public static string FormatLine(PrtgValueReadinessSummary summary)
+    {
+        if (summary.Population == 0)
+        {
+            return $"數值資料就緒度（{summary.CompletedDay:yyyy-MM-dd}）：範圍內無可評估 sensor（請確認鏡像狀態頁籤的對應）。";
+        }
+
+        var parts = Enum.GetValues<PrtgValueReason>()
+            .Where(reason => summary.Counts.TryGetValue(reason, out var count) && count > 0)
+            .Select(reason => $"{PrtgValueReasonText.Label(reason)} {summary.Counts[reason]}");
+
+        return $"數值資料就緒度（{summary.CompletedDay:yyyy-MM-dd}）：母體 {summary.Population} 顆；{string.Join("、", parts)}。";
+    }
 }

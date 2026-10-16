@@ -2014,4 +2014,45 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.StartsWith("【關機與監測異常同日訊號】", Assert.Single(record.SuppressedCorrelationAlerts));
         Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("跨來源佐證（補追加階段）0 筆"));
     }
+
+    [Fact]
+    public async Task 每日管線執行時輸出數值資料就緒度且與Compute計算結果一致()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://127.0.0.1:1";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 1;
+        });
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-READY", Active = true, IpAddress = "192.168.1.123" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-READY", Ip = "192.168.1.123" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 3001, DeviceObjid = 1, Name = "CPU", SensorType = "SNMP CPU Load", Status = "Up", Category = PrtgSensorCategories.Cpu }
+        }, now);
+        MapDeviceToHost(day, 1, host);
+
+        var (ctx, console, _, _) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        var line = Assert.Single(console.Lines, l => l.Contains("數值資料就緒度（"));
+
+        var assessment = new PrtgValueAssessment(prtgStore);
+        var deviceToHost = new Dictionary<long, long> { [1] = host.HostId };
+        var evaluationHostIds = new HashSet<long> { host.HostId };
+        var policySensorIds = new HashSet<long>();
+        var expectedSummary = PrtgValueReadiness.Compute(assessment, deviceToHost, evaluationHostIds, policySensorIds, DateOnly.FromDateTime(day), CancellationToken.None);
+        var expectedLine = PrtgValueReadiness.FormatLine(expectedSummary);
+
+        Assert.Equal($"[PRTG] {expectedLine}", line);
+    }
 }
+

@@ -396,6 +396,26 @@ internal static class PrtgDailyPipeline
                 }
             }
 
+            // 數值資料就緒度：與維護頁就緒度卡同一個計算與同一種對應取法（DeviceToHostOn），兩處數字才會相同。
+            if (newest < DateTime.Today)
+            {
+                try
+                {
+                    var readinessAssessment = new PrtgValueAssessment(prtgStore);
+                    var readinessDay = DateOnly.FromDateTime(newest);
+                    var readiness = PrtgValueReadiness.Compute(readinessAssessment,
+                        readinessAssessment.DeviceToHostOn(readinessDay, evaluationHostIds), evaluationHostIds,
+                        policySensorIds, readinessDay, ct);
+                    prtgConsole.WriteLine(PrtgValueReadiness.FormatLine(readiness));
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "數值資料就緒度計算失敗");
+                    prtgConsole.WriteLine("數值資料就緒度計算失敗：" + ex.Message);
+                }
+            }
+
             // 數值規則（目前為 disk_free_trend）只讀評估前已落盤的完整日，只評估最新的已完成日；
             // 不等待本趟觸發式取數、不接觸 PRTG API；每頁最多 100 顆（docs/PRTG-SPEC.md §9b）。
             var diskRule = SelectSingleRule(prtgRules, PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgSensorCategories.Disk, prtgConsole);
