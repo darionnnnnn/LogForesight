@@ -610,3 +610,10 @@
   **觸發時機**：處理人反映被立即派工卻沒收到通知。
 - **明確不做（本輪定案）**：交辦單處理人變更歷史查詢、站內即時通知、負載加權與個人容量上限、後端 CSV 匯出端點、
   靜音的主機群組範圍（群組範圍用抑制）。
+
+## 第 54 輪遞延：停用的 PRTG 觀察表與殘留欄位
+
+- **`lf_prtg_observations` 下一輪 DROP**：第 54 輪起不再寫入（`EfPrtgObservationStore.Capture` 已無呼叫端），保留期清理照舊把殘列清掉；
+  表與 store 保留一輪讓既有站台升級後仍可讀舊列。**觸發時機**：下一輪開工時連同 `Capture`、`PendingQuality` 等死碼一起刪，SchemaUpgrader 補冪等 DROP。
+- **已停寫的欄位**：`lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`
+  程式已不讀寫，既有資料庫欄位保留（不寫 DROP COLUMN，避免 SQL Server 端的相依約束風險）。**觸發時機**：與上一條同一輪處理。

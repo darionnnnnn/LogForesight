@@ -92,15 +92,11 @@
 | 作業 | 主題 | 性質 | 相依 | 規模(估) |
 |---|---|---|---|---|
 | 0 | 環境探測(使用者執行)——**已執行 2026-10-16**,剩三件後續操作 | 取事實 | 無;與 A／B 並行 | 使用者 30 分 |
-| A | 止血與基線 | 文件 | 無 | 小 |
-| B1 | 拆 trusted sampling 鏈,簡化數值可信條件 | 移除＋重構 | A | **特大**(四段) |
-| B2 | 拆 PRTG 即時郵件 | 移除 | A | 中 |
-| B6 | 拆兩小時壓力規則與提示→正式授權 | 移除 | B1 | 中 |
 | B3 | 拆 build identity 閘與建置腳本依賴 | 移除 | A | 小 |
 | B4 | 刪驗收基建目錄與 JSON | 移除 | B3 | 小 |
 | C1 | 對應補 hostname 退路 | 新增 | 作業 0 | 小 |
 | C2 | PRTG 獨立風險(`LogSource=Prtg` 主機日) | 導正 | B1、B6 | 大 |
-| C3 | 三類趨勢規則共用引擎 | 新增 | B1、作業 0 | 大 |
+| C3 | 三類趨勢規則共用引擎(含 B1 移入的覆寫語意 `type=分類[:語意]`、Ping 進／Traffic 出預設白名單) | 新增 | B1、作業 0 | 大 |
 | C4 | finding 證據欄位與「資料不足」狀態 | 補強 | C3 | 中 |
 | C5 | 有用／誤報標記 | 新增 | C2 | 小 |
 | C6 | 資源守門目標自動偵測 | 新增 | B1 | 小 |
@@ -109,7 +105,9 @@
 | D | 容量設計審查(§4.12 方式) | 審查 | C3、B5 | 中 |
 | E | 文件瘦身與收尾 | 文件 | 全部 | 中 |
 
-**建議順序**:0 ∥ A → B1 → B2 → B6 → B3 → B4 → C1 → C2 → C3 → C4 → C5 → C6 → B5 → B7 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
+**已完成**(2026-10-16,逐條比對程式碼後自本表刪除,紀錄見 §7):A、B1(含 D8 就緒度卡、B1-4 殘留清除)、B2、B6。B1 唯一未做的「`PrtgSensorTypeCategoryOverrides` 擴成 `type=分類[:語意]`」與 C3 共用同一個評估入口,移入 C3 一起做(C3 列已註記)。
+
+**建議順序**:0 → B3 → B4 → C1 → C2 → C3 → C4 → C5 → C6 → B5 → B7 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
 
 **委派與驗收方式**:
 - 實作端在 Windows(待定:使用者機器上的 Claude Code 或 agy);整輪只用一種,中途切換註明起點。Mac 端(本規劃者)不寫程式,只寫階段規格與獨立審查 diff。
@@ -389,6 +387,9 @@
 | A | Claude(Opus,Windows) | 52／52-ROUND2／53 三份規劃 `git mv` 進 archive 並補索引;README 頁首與準則段、CLAUDE.md 測試基線、BACKLOG 舊路徑改指本文件 | 舊 TODO 代號 grep 除本文件外零命中;`docs/` 主目錄只剩本 PLAN(`FEEDBACK-53-ACCEPTANCE.json` 由 B4 刪) | 純文件,未建置 |
 | B1-1 | Claude(Opus,Windows) | 取值時間改 raw(UTC)為主、刪訊息時間授權閘;新增 `PrtgValueAssessment`(三條件＋值不合理＋固定值);每日管線評估段改回 messages＋`PrtgRuleEvaluator`、磁碟趨勢走新評估、移除 manifest／fence／資源期間 consumer 呼叫;silent 改「availability Up＋其餘 Unknown」;快照服務拆容量准入、trusted 解析與 timeline 迴圈;共享配額拆准入計畫驗證;workflow 的 PRTG 腿以「該日評估完成」為就緒 | `dotnet build` 0 錯;PRTG＋HostDayWorkflow 定向 2,793 筆:33 失敗中 26 筆屬將刪機制(測試檔一併刪除)、2 筆准入 fence 測試刪除、5 筆在 HEAD 同樣失敗(既有,非本段造成);新增 `PrtgValueAssessmentTests` 9 筆全綠;`PrtgFetchServiceTests`／`PrtgRuleEvaluatorTests` 全綠 | 實作修正 6 條記於 §5 B1;既有失敗 `SchemaUpgraderPrtgTests` 表名清單、`PrtgDiskCandidatePagingTests.HostMapDataRevision` 列入 B7 查;受影響的舊類別(timeline、資源期間 consumer 等)本段只停止呼叫,B1-2／B1-3 刪 |
 | B1-2／B1-3／B6／B2 | Claude(Opus,Windows) | 刪 trusted sampling／容量准入／磁碟語意驗證／資源壓力／正式郵件 claim 全鏈(stores、hosted services、controllers、JS 頁籤與模組、DI、約 150 個測試檔);探測輸出瘦身(刪步驟 4 相依性、步驟 7 Type×IPv4,分頁語意縮成一行);監看政策只剩可選 HostIds／SensorIds 縮圈;B6 三條資源規則退役(seed v10、`PrtgRuleCatalog.RetiredRuleCodes`、匯入時停用內建列、規則頁「已移除」標記);B2 即時通知先剔除 PRTG 再判是否仍 High,PRTG 只進摘要;升級時清除退役 blob(`SchemaUpgrader.RemoveRetiredPrtgBlobs`) | `dotnet build` 0 錯;整體 `dotnet test` **6,215 通過／10 略過／0 失敗**(本段新基線,刪測試後總數 6,225) | 保留 `MailContributionReservation` 與 `MailContextFingerprint`(NetIQ 郵件仍用);預覽不套政策 sensor 縮圈;順手修:`PrtgScopePurgeStore` 三處交易補執行策略、兩個超過 30 字元的索引更名(`IX_lf_prtg_sc_purge_sensor`／`IX_lf_prtg_val_purge_sensor`,只存在本輪分支)、`TryAttachAiResult` 對已不建立的 manifest 解參考(AI 補寫全數失敗)、同一份 PRTG finding 重跑回傳值、恢復等待解除後還原 PRTG 腿、監看範圍 PUT 交易內重核可見權限、校準覆蓋天數把空對應日算進去、摘要信截斷後「其餘 N 個問題」不再出現、PRTG-only 主機日不進即時通知;校準匯出 `MagnitudeSemanticsVersion` 3、`FormalEvaluationScope=state-change-messages`;清除退役 blob 不可逆,升級說明在 E 補 |
+| D8 | Claude＋agy(flash-high／medium,Windows) | 就緒度後端 `PrtgValueReadiness`(母體＝已對應主機上四類 sensor,沿用 `PrtgValueAssessment` 判定)、每日執行輸出一行、`GET api/prtg/value-readiness`(可見主機、排除案件授與、原因篩選、每頁 100);環境探測頁籤新卡片(分組按鈕、精簡表格、重新整理／前往歷史回填) | 定向 63＋68 通過;本機預覽登入後卡片 API 200、空母體狀態正確 | 規格「母體 4 且對照外歸單位未知」自相矛盾,改依類別定母體;有資料的畫面未實測(本機無 PRTG 資料) |
+| B1-4／B6 尾差／CI | Claude＋agy(flash-high,Windows) | 刪三個死檔、`LogIssueSignature`／`PrtgFinding` 12 個 trusted 欄位、案件證據世代欄位、`lf_prtg_values` trusted 欄位映射;退役規則說明回「規則已移除」、規則編輯頁移除退役選項;`NuGet.Config` 補 `*`(CI 自 9 月起還原失敗) | 定向 2,165＋368 通過 | 既有 DB 欄位保留不 DROP |
+| B1 收尾(workflow) | Claude(Opus,Windows) | `HostDayWorkflowState` 刪 whole-evidence／readiness 19 欄位與 7 方法;`PrtgManifest` 刪除;登錄簿改「該日評估完成」旗標,分析路徑與每日管線同判準 | 定向 279 通過 | 修正實際缺陷:晚到 NetIQ 分析會把已評估日的 PRTG 腿記成 manifest 缺失等待;指紋保留空位不讓既有報告失效 |
 
 ## 8. 規劃複檢(2026-10-15)
 
