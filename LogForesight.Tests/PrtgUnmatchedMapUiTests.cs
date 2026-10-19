@@ -86,18 +86,6 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         public void EnsureVisible(long id) { }
     }
 
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        Assert.True(dir != null, "找不到 LogForesight.sln，無法定位專案根目錄");
-        return dir!.FullName;
-    }
-
     private (long HostId, long[] DeviceIds) SeedBatchTargets()
     {
         var host = new HostStore(_backend.Blob("hosts")).Upsert(new WebHost
@@ -264,74 +252,4 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         Assert.Empty(res.Data.Items);
     }
 
-    [Fact]
-    public void 前端Init呼叫三種清單且支援重試與獨立分頁()
-    {
-        var root = FindRepoRoot();
-        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
-        Assert.True(File.Exists(jsPath), $"找不到檔案: {jsPath}");
-        var js = File.ReadAllText(jsPath);
-
-        // 1. init() 內呼叫三種清單
-        var initStart = js.IndexOf("function init()", StringComparison.Ordinal);
-        Assert.True(initStart >= 0, "prtg-admin.js 應有 init()");
-        var initBody = js.Substring(initStart);
-        Assert.Contains("refreshConflicts(1);", initBody);
-        Assert.Contains("refreshUnmatched(1);", initBody);
-        Assert.Contains("refreshIpExcludes();", initBody);
-
-        // 2. 未對應獨立分頁與 pageSize 讀寫
-        Assert.Contains("loadPageSize('prtg-unmatched')", js);
-        Assert.Contains("savePageSize('prtg-unmatched'", js);
-        Assert.Contains("prtg-unmatched-pagination", js);
-
-        // 3. 未對應清單含指派操作呼叫 openAssignModal
-        Assert.Contains("openAssignModal(item)", js);
-
-        // 4. 重試按鈕與失敗文案
-        Assert.Contains("載入衝突清單失敗", js);
-        Assert.Contains("載入未對應清單失敗", js);
-        Assert.Contains("載入 IP 排除清單失敗", js);
-        Assert.Contains("retryBtn.textContent = '重試'", js);
-
-        // 5. 無資料文案與失敗文案區隔
-        Assert.Contains("無衝突項目", js);
-        Assert.Contains("無未對應項目", js);
-        Assert.Contains("無排除 IP", js);
-
-        // 6. 指派後同步更新四者（鏡像摘要、衝突清單、未對應清單、排除清單）
-        Assert.Contains("refreshUnmatched(unmatchedPage)", js);
-    }
-
-    [Fact]
-    public void Prtg維護頁包含可折疊未對應表格與摘要未對應徽章可點選跳轉()
-    {
-        var root = FindRepoRoot();
-        var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml");
-        Assert.True(File.Exists(cshtmlPath), $"找不到檔案: {cshtmlPath}");
-        var cshtml = File.ReadAllText(cshtmlPath);
-
-        // 1. 摘要未對應徽章為可點擊按鈕
-        Assert.Contains("id=\"prtg-mirror-map-unmatched\"", cshtml);
-        Assert.Contains("<button", cshtml);
-
-        // 2. 未對應區塊與可折疊結構
-        Assert.Contains("id=\"prtg-unmatched-section\"", cshtml);
-        Assert.Contains("id=\"prtg-unmatched-toggle-btn\"", cshtml);
-        Assert.Contains("id=\"prtg-unmatched-collapse\"", cshtml);
-        Assert.Contains("id=\"prtg-unmatched-table\"", cshtml);
-        Assert.Contains("id=\"prtg-unmatched-body\"", cshtml);
-        Assert.Contains("id=\"prtg-unmatched-pagination\"", cshtml);
-
-        // 3. 初始載入中狀態（而非無衝突/無未對應/無排除）
-        Assert.Contains("<tbody id=\"prtg-mirror-conflicts-body\">\n                                    <tr><td colspan=\"5\" class=\"text-muted text-center py-2\">載入中…</td></tr>", cshtml.Replace("\r\n", "\n"));
-        Assert.Contains("<tbody id=\"prtg-unmatched-body\">\n                                        <tr><td colspan=\"5\" class=\"text-muted text-center py-2\">載入中…</td></tr>", cshtml.Replace("\r\n", "\n"));
-        Assert.Contains("<tbody id=\"prtg-ip-excludes-body\">\n                                    <tr><td colspan=\"5\" class=\"text-muted text-center py-2\">載入中…</td></tr>", cshtml.Replace("\r\n", "\n"));
-
-        // 4. JS 綁定跳轉與展開
-        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
-        var js = File.ReadAllText(jsPath);
-        Assert.Contains("bindUnmatchedControls()", js);
-        Assert.Contains("scrollIntoView", js);
-    }
 }

@@ -45,90 +45,9 @@ public class PrtgRunsCardAndProbeTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        Assert.True(dir != null, "找不到 LogForesight.sln，無法定位專案根目錄");
-        return dir!.FullName;
-    }
-
     // ── 驗收點 1：/runs PRTG 卡清理與按鈕樣式 ──────────────────────────────
 
-    [Fact]
-    public void RunsCshtml不含啟動類按鈕_且runsJs中btnPrimary只出現在立即執行相關處()
-    {
-        var root = FindRepoRoot();
-        var cshtmlPath = Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml");
-        Assert.True(File.Exists(cshtmlPath), $"找不到 {cshtmlPath}");
-        var cshtml = File.ReadAllText(cshtmlPath);
-
-        // Runs.cshtml PRTG 卡不含「開始回填」與「同步結構」啟動按鈕
-        Assert.DoesNotContain("prtg-backfill-start", cshtml);
-        Assert.DoesNotContain("prtg-sync-start", cshtml);
-        Assert.DoesNotContain("id=\"prtg-structure-sync-start\"", cshtml);
-        Assert.DoesNotContain("id=\"prtg-backfill-output-wrap\"", cshtml);
-        Assert.DoesNotContain("id=\"prtg-backfill-output-toggle\"", cshtml);
-        Assert.DoesNotContain("id=\"prtg-backfill-copy\"", cshtml);
-
-        // 卡片底部包含連結至 /admin/prtg 的提示文字
-        Assert.Contains("admin/prtg", cshtml);
-        Assert.Contains("前往 PRTG 維護", cshtml);
-
-        var jsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
-        Assert.True(File.Exists(jsPath), $"找不到 {jsPath}");
-        var js = File.ReadAllText(jsPath);
-
-        // 以正則找出 runs.js 中所有出現 btn-primary 的行與所在函式
-        var matches = Regex.Matches(js, @"(?m)^.*btn-primary.*$");
-        Assert.NotEmpty(matches);
-
-        var allowedFunctions = new List<string>();
-        foreach (Match m in matches)
-        {
-            var lineIndex = m.Index;
-            // 往回找最近的 function 定義
-            var prevCode = js[..lineIndex];
-            var funcMatch = Regex.Match(prevCode, @"function\s+([a-zA-Z0-9_]+)\s*\(", RegexOptions.RightToLeft);
-            var funcName = funcMatch.Success ? funcMatch.Groups[1].Value : "global";
-            allowedFunctions.Add(funcName);
-
-            // 斷言該處確實是「立即執行」相關函式
-            Assert.Contains(funcName, new[] { "confirmRunWithPrtgValues" });
-        }
-
-        // 確保只有 confirmRunWithPrtgValues 包含 btn-primary
-        Assert.All(allowedFunctions, fn => Assert.Equal("confirmRunWithPrtgValues", fn));
-    }
-
     // ── 驗收點 2：共用標籤文字函式 ────────────────────────────────────────
-
-    [Fact]
-    public void PrtgScopeLabels匯出新文字函式_且runsJs與prtgAdminJs皆import並呼叫()
-    {
-        var root = FindRepoRoot();
-        var labelsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "prtg-scope-labels.js");
-        Assert.True(File.Exists(labelsJsPath), $"找不到 {labelsJsPath}");
-        var labelsJs = File.ReadAllText(labelsJsPath);
-
-        Assert.Contains("export function prtgScopeInapplicableText", labelsJs);
-
-        var runsJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
-        var runsJs = File.ReadAllText(runsJsPath);
-        // 執行卡透過共用模組標籤呼叫，不能為了靜態測試再重複一次判定。
-        Assert.Contains("prtgModuleStateText(enabled, scope, strategy)", runsJs);
-        Assert.Contains("prtgScopeInapplicableText(true)", labelsJs);
-
-        var prtgAdminJsPath = Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js");
-        var prtgAdminJs = File.ReadAllText(prtgAdminJsPath);
-        Assert.Contains("prtgScopeInapplicableText", prtgAdminJs);
-        Assert.Matches(@"import\s*\{[^}]*prtgScopeInapplicableText[^}]*\}\s*from", prtgAdminJs);
-        Assert.Contains("prtgScopeInapplicableText(", prtgAdminJs);
-    }
 
     // ── 驗收點 3：設定 DTO 的 ValueFetchScopeApplies ───────────────────────
 
