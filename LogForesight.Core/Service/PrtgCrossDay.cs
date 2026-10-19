@@ -28,7 +28,7 @@ public static class PrtgCrossDay
         {
             if (!PrtgFindingMapper.IsPrtg(sig)) continue;
             if (PrtgFindingMapper.TryGetRuleCode(sig.Source, out var ruleCode)
-                && string.Equals(ruleCode, PrtgRuleEvaluator.RuleDiskFreeTrend, StringComparison.OrdinalIgnoreCase))
+                && PrtgRuleCatalog.IsValueTrend(ruleCode))
                 continue;
 
             var window = new HashSet<DateTime>();

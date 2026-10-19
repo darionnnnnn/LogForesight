@@ -2057,5 +2057,77 @@ public class PrtgDailyPipelineTests : IDisposable
 
         Assert.Equal($"[PRTG] {expectedLine}", line);
     }
+
+    [Fact]
+    public async Task 啟用Memory規則且28個完整日可用下降時輸出記憶體使用趨勢評估且產生Finding()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://127.0.0.1:1";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 1;
+        });
+
+        var rules = KnownIssueSeed.CreateRules().ToList();
+        var memRule = rules.Single(r => r.Id == "builtin-prtg-memory-used-trend");
+        rules.Remove(memRule);
+        rules.Add(memRule.CloneForSeedOverwrite(enabled: true));
+        KnownIssueCatalog.Initialize(rules);
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-MEM-TREND", Active = true, IpAddress = "192.168.1.124" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        const long deviceId = 10;
+        const long sensorId = 4001;
+
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = deviceId, Name = "SRV-MEM-TREND", Ip = "192.168.1.124" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow
+            {
+                Objid = sensorId,
+                DeviceObjid = deviceId,
+                Name = "Memory",
+                SensorType = "SNMP Memory",
+                Status = "Up",
+                Category = PrtgSensorCategories.Memory
+            }
+        }, now);
+
+        var valueRows = new List<PrtgValueRow>();
+        for (var d = 0; d < 28; d++)
+        {
+            var date = day.AddDays(-d);
+            MapDeviceToHost(date, deviceId, host);
+            var availPercent = 25.0 - (27 - d) * 0.5;
+            for (var h = 0; h < 24; h++)
+            {
+                valueRows.Add(new PrtgValueRow
+                {
+                    SensorObjid = sensorId,
+                    PeriodStart = date.Date.AddHours(h),
+                    AvgValue = availPercent,
+                    Coverage = 100,
+                    Quality = PrtgDataQuality.Ok,
+                    CreatedAt = now
+                });
+            }
+        }
+        prtgStore.UpsertValues(valueRows);
+
+        var (ctx, console, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        Assert.Contains(console.Lines, l => l.Contains("記憶體使用趨勢評估"));
+
+        var findings = registry.For(host.HostId, day);
+        var expectedEventKey = $"prtg:memory_used_trend:{sensorId}";
+        Assert.Contains(findings, f => f.EventKey == expectedEventKey);
+    }
 }
 

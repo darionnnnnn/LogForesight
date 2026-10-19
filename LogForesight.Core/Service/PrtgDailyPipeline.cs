@@ -464,6 +464,71 @@ internal static class PrtgDailyPipeline
                 }
             }
 
+            // 數值趨勢規則（記憶體／CPU／Ping）
+            if (newest < DateTime.Today && planned.TryGetValue(newest, out var trendPlan) && trendPlan.DeviceToHost.Count > 0)
+            {
+                var otherTrendCodes = new[]
+                {
+                    PrtgRuleEvaluator.RuleMemoryUsedTrend,
+                    PrtgRuleEvaluator.RuleCpuLoadTrend,
+                    PrtgRuleEvaluator.RulePingLatencyTrend
+                };
+
+                foreach (var code in otherTrendCodes)
+                {
+                    var category = PrtgRuleCatalog.TrendSensorCategory(code);
+                    if (category is null) continue;
+                    var rule = SelectSingleRule(prtgRules, code, category, prtgConsole);
+                    if (rule?.PrtgTrendThresholds is not { } thresholds) continue;
+
+                    var label = code switch
+                    {
+                        PrtgRuleEvaluator.RuleMemoryUsedTrend => "記憶體使用",
+                        PrtgRuleEvaluator.RuleCpuLoadTrend => "CPU 負載",
+                        PrtgRuleEvaluator.RulePingLatencyTrend => "Ping 延遲",
+                        _ => code
+                    };
+
+                    try
+                    {
+                        var assessment = new PrtgValueAssessment(prtgStore);
+                        var completedDay = DateOnly.FromDateTime(newest);
+                        var candidates = assessment.Candidates(trendPlan.DeviceToHost, evaluationHostIds, policySensorIds, category);
+                        var reasons = new Dictionary<PrtgValueReason, int>();
+                        var added = 0;
+                        foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
+                        {
+                            operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
+                            foreach (var row in assessment.AssessPage(page, completedDay,
+                                         thresholds.WindowDays, thresholds.MinimumValidDays))
+                            {
+                                reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
+                                if (PrtgValueAssessment.TrendFinding(row, rule, completedDay, out _) is not { } finding) continue;
+                                trendPlan.FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
+                                AddFinding(trendPlan.FindingsByHost, row.Sensor.HostId,
+                                    PrtgFindingMapper.ToSignature(finding, newest, row.Sensor.HostId));
+                                dayStates[newest].TriggerHosts.Add(row.Sensor.HostId);
+                                added++;
+                            }
+                        }
+                        trendPlan.FindingCount += added;
+                        dayStates[newest].Findings += added;
+                        dayStates[newest].AttributedHosts = trendPlan.FindingsByHost?.Count ?? 0;
+                        prtgConsole.WriteLine(candidates.Count == 0
+                            ? $"{label}趨勢評估（{newest:yyyy-MM-dd}）：無可評估 sensor（範圍內沒有已對應的 {category} sensor）。"
+                            : $"{label}趨勢評估（{newest:yyyy-MM-dd}）：{candidates.Count} 顆，" +
+                              string.Join("、", reasons.OrderBy(pair => pair.Key).Select(pair =>
+                                  $"{PrtgValueReasonText.Label(pair.Key)} {pair.Value}")) + $"；新增 finding {added} 筆。");
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "PRTG {Label}趨勢評估失敗；既有 findings 照常發布", label);
+                        prtgConsole.WriteLine($"  ⚠ {label}趨勢評估失敗，既有 findings 照常發布：" + ex.Message);
+                    }
+                }
+            }
+
             // 跨日歷史：本趟全部日期的 EventKey 合併後一次查詢（查詢內部依 500 分批），各日再切自己的窗口。
             // 查詢失敗只影響標註與升級，不影響發佈與追加。
             var dbHitDates = new Dictionary<string, HashSet<DateTime>>(StringComparer.Ordinal);

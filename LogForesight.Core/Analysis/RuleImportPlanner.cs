@@ -174,6 +174,7 @@ public static class RuleImportPlanner
         a.PrtgRuleCode == b.PrtgRuleCode &&
         a.PrtgThreshold == b.PrtgThreshold &&
         Equals(a.PrtgDiskTrendThresholds, b.PrtgDiskTrendThresholds) &&
+        Equals(a.PrtgTrendThresholds, b.PrtgTrendThresholds) &&
         a.PrtgSensorCategory == b.PrtgSensorCategory &&
         a.Category == b.Category &&
         a.Severity == b.Severity &&

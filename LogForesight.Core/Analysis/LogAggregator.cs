@@ -55,7 +55,7 @@ public class LogIssueSignature
     public string SourceEventLabel =>
         LogName.Equals("PRTG", StringComparison.OrdinalIgnoreCase) &&
         EventKey.Split(':') is { Length: >= 5 } parts
-        ? $"PRTG {parts[1] switch { "down" => "持續故障", "warning" => "持續警告", "flapping" => "反覆故障", "disk_free_trend" => "磁碟容量趨勢", _ => parts[1] }}（感測器 #{parts[2]}）"
+        ? $"PRTG {parts[1] switch { "down" => "持續故障", "warning" => "持續警告", "flapping" => "反覆故障", "disk_free_trend" => "磁碟容量趨勢", "memory_used_trend" => "記憶體使用趨勢", "cpu_load_trend" => "CPU 負載趨勢", "ping_latency_trend" => "Ping 延遲趨勢", _ => parts[1] }}（感測器 #{parts[2]}）"
         : EventId == 0 && EventKey.Length > 0 ? $"{Source}（{EventKey}）" : $"{Source} EventId {EventId}";
 
     public int Count { get; set; }

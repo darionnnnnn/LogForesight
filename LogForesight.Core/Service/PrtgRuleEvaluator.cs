@@ -70,6 +70,9 @@ public sealed class PrtgEvaluationResult : List<PrtgFinding>
 public static class PrtgRuleEvaluator
 {
     public const string RuleDiskFreeTrend = "disk_free_trend";
+    public const string RuleMemoryUsedTrend = "memory_used_trend";
+    public const string RuleCpuLoadTrend = "cpu_load_trend";
+    public const string RulePingLatencyTrend = "ping_latency_trend";
     public const string RuleDown = "down";
     public const string RuleFlapping = "flapping";
     public const string RuleWarning = "warning";

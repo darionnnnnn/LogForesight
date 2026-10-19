@@ -30,7 +30,8 @@ public static class KnownIssueSeed
     /// 既有 PRTG 規則 Description 移除門檻數字（門檻可調，寫死在文字裡會與實際值不符）。</summary>
     /// v8 新增預設停用的磁碟可用空間趨勢規則，使用獨立 PrtgDiskTrendThresholds 暫定門檻。
     /// v9 新增 CPU、記憶體與磁碟資源壓力規則；磁碟兩小時低水位使用獨立規則，不受磁碟趨勢 28 日啟用守門。
-    public const int Version = 10;
+    /// v11 新增預設停用的記憶體／CPU／Ping 趨勢規則
+    public const int Version = 11;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -1158,5 +1159,32 @@ public static class KnownIssueSeed
                 Impact = "磁碟空間耗盡會使服務、資料庫與日誌寫入失敗。",
                 LikelyCauses = new[] { "日誌或資料持續成長", "備份或暫存檔累積", "磁碟容量不足" },
                 NextSteps = new[] { "確認磁碟可用百分比與趨勢資料", "找出近期成長目錄並清理可移除資料", "評估擴充容量或調整資料保留策略" } },
+        new() { Id = "builtin-prtg-memory-used-trend", Origin = "builtin", Enabled = false, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleMemoryUsedTrend, PrtgThreshold = 0,
+                PrtgTrendThresholds = PrtgTrendThresholds.MemoryProvisional, PrtgSensorCategory = PrtgSensorCategories.Memory,
+                Category = IssueCategory.Resource, Severity = IssueSeverity.High, ElevatesDayRisk = false,
+                Description = "記憶體使用率持續攀升，可能即將不足",
+                PlainExplanation = "記憶體使用率近期持續攀升，依目前趨勢估計可能即將不足；趨勢規則只抓慢性惡化；一夜之間的突發由 PRTG 自身告警經狀態規則（warning／down）處理。門檻暫定待校準。",
+                Impact = "記憶體不足可能導致應用程式運作變慢、觸發 OOM 或系統當機。",
+                LikelyCauses = new[] { "應用程式或服務存在記憶體流失（Memory Leak）", "工作負載或連線數隨時間持續成長", "快取或暫存資料持續累積未適時釋放" },
+                NextSteps = new[] { "確認記憶體使用趨勢與佔用最多記憶體的程序", "檢查近期應用程式更新或負載變化", "評估重啟服務、調整快取設定或擴充實體記憶體" } },
+        new() { Id = "builtin-prtg-cpu-load-trend", Origin = "builtin", Enabled = false, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleCpuLoadTrend, PrtgThreshold = 0,
+                PrtgTrendThresholds = PrtgTrendThresholds.CpuProvisional, PrtgSensorCategory = PrtgSensorCategories.Cpu,
+                Category = IssueCategory.Resource, Severity = IssueSeverity.Medium, ElevatesDayRisk = false,
+                Description = "CPU 使用率長期上升且已偏高",
+                PlainExplanation = "CPU 使用率長期上升且近期平均已偏高；趨勢規則只抓慢性惡化；一夜之間的突發由 PRTG 自身告警經狀態規則（warning／down）處理。門檻暫定待校準。",
+                Impact = "CPU 長期處於高負載會導致系統回應遲緩、處理佇列堆積甚至服務超時。",
+                LikelyCauses = new[] { "背景作業或排程負載逐步累積增加", "特定常駐程序運算負擔隨資料量提升", "運算資源已接近硬體承載上限" },
+                NextSteps = new[] { "檢查長期高 CPU 使用率的程序與執行緒清單", "確認批次排程或背景工作執行時段與頻率", "優化程式效能或評估擴充 CPU 運算資源" } },
+        new() { Id = "builtin-prtg-ping-latency-trend", Origin = "builtin", Enabled = false, Scope = "all", Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RulePingLatencyTrend, PrtgThreshold = 0,
+                PrtgTrendThresholds = PrtgTrendThresholds.PingProvisional, PrtgSensorCategory = PrtgSensorCategories.Availability,
+                Category = IssueCategory.Service, Severity = IssueSeverity.Medium, ElevatesDayRisk = false,
+                Description = "Ping 回應時間持續惡化",
+                PlainExplanation = "Ping 回應延遲呈現持續惡化趨勢；趨勢規則只抓慢性惡化；一夜之間的突發由 PRTG 自身告警經狀態規則（warning／down）處理。門檻暫定待校準。",
+                Impact = "網路回應延遲持續增加會造成連線品質低落、傳輸變慢或應用程式連線逾時。",
+                LikelyCauses = new[] { "網路頻寬漸進式飽和或線路擁塞", "路由器、交換器等中繼網路設備負載上升", "連線路由異動或傳輸品質慢性劣化" },
+                NextSteps = new[] { "確認網路流量與頻寬使用率趨勢", "檢查網路設備狀態、介面封包遺失與路由節點", "評估流量分流、QoS 頻寬管理或升級線路頻寬" } },
     };
 }

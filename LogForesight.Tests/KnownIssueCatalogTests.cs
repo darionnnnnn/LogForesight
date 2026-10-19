@@ -161,8 +161,8 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(ids.Count, ids.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.All(rules, r => Assert.StartsWith("builtin-", r.Id));
         Assert.All(rules, r => Assert.Equal("builtin", r.Origin));
-        Assert.All(rules.Where(r => r.Id != "builtin-prtg-disk-free-trend"), r => Assert.True(r.Enabled));
-        Assert.False(rules.Single(r => r.Id == "builtin-prtg-disk-free-trend").Enabled);
+        Assert.All(rules.Where(r => !PrtgRuleCatalog.IsValueTrend(r.PrtgRuleCode)), r => Assert.True(r.Enabled));
+        Assert.All(rules.Where(r => PrtgRuleCatalog.IsValueTrend(r.PrtgRuleCode)), r => Assert.False(r.Enabled));
         Assert.All(rules, r => Assert.Equal("all", r.Scope));
         Assert.All(rules, r => Assert.Null(r.MatchFilter));
     }
@@ -202,13 +202,13 @@ public class KnownIssueCatalogTests : IDisposable
     // ── C1（seed v5 補強）：規則涵蓋驗證 ───────────────────────────────────
 
     [Fact]
-    public void 種子版本為10()
+    public void 種子版本為11()
     {
-        Assert.Equal(10, KnownIssueSeed.Version);
+        Assert.Equal(11, KnownIssueSeed.Version);
     }
 
     [Fact]
-    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共9條_總計101條()
+    public void 規則總數正確_Windows共64條_Linux共28條_PRTG共12條_總計104條()
     {
         var rules = KnownIssueSeed.CreateRules();
         var windows = rules.Where(r => r.Platform == "windows").ToList();
@@ -217,8 +217,8 @@ public class KnownIssueCatalogTests : IDisposable
 
         Assert.Equal(64, windows.Count);
         Assert.Equal(28, linux.Count);
-        Assert.Equal(9, prtg.Count);
-        Assert.Equal(101, rules.Count);
+        Assert.Equal(12, prtg.Count);
+        Assert.Equal(104, rules.Count);
     }
 
     [Fact]
@@ -476,12 +476,12 @@ public class KnownIssueCatalogTests : IDisposable
             .ToList();
 
     [Fact]
-    public void 種子含九條PRTG規則且全部通過RuleValidator()
+    public void 種子含十二條PRTG規則且全部通過RuleValidator()
     {
         var rules = KnownIssueSeed.CreateRules();
         var prtgRules = rules.Where(r => r.Platform == "prtg").ToList();
 
-        Assert.Equal(9, prtgRules.Count);
+        Assert.Equal(12, prtgRules.Count);
         Assert.DoesNotContain(prtgRules, r => PrtgRuleCatalog.IsRetired(r.PrtgRuleCode));
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-down" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && r.PrtgThreshold == 60);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-flapping" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping && r.PrtgThreshold == 5);
@@ -496,7 +496,7 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(PrtgDiskTrendThresholds.Provisional, diskTrend.PrtgDiskTrendThresholds);
 
         var outcome = RuleValidator.Validate(prtgRules);
-        Assert.Equal(9, outcome.ValidRules.Count);
+        Assert.Equal(12, outcome.ValidRules.Count);
         Assert.Empty(outcome.SkippedRules);
         Assert.Empty(outcome.ShadowWarnings);
     }

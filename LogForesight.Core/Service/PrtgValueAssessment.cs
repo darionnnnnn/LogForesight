@@ -257,4 +257,66 @@ public sealed class PrtgValueAssessment
         return new PrtgFinding(row.Sensor.DeviceObjid, row.Sensor.SensorObjid, PrtgRuleEvaluator.RuleDiskFreeTrend,
             detail, trend.ValidDayCount, rule, Acknowledged: false) { SensorCategory = PrtgSensorCategories.Disk };
     }
+
+    /// <summary>
+    /// 記憶體／CPU／Ping 趨勢：就緒的 sensor 以每日代表值跑趨勢評估；命中才回 finding。
+    /// 資料不足或未命中回 null（原因留在 <paramref name="row"/> 與回傳的 explanation）。
+    /// </summary>
+    public static PrtgFinding? TrendFinding(PrtgValueAssessmentRow row, KnownIssueRule rule, DateOnly completedDay,
+        out string explanation)
+    {
+        var code = rule.PrtgRuleCode;
+        if (code is not (PrtgRuleEvaluator.RuleMemoryUsedTrend or PrtgRuleEvaluator.RuleCpuLoadTrend or PrtgRuleEvaluator.RulePingLatencyTrend))
+        {
+            explanation = "非趨勢規則";
+            return null;
+        }
+
+        explanation = PrtgValueReasonText.Label(row.Reason);
+        if (row.Reason != PrtgValueReason.Ready || rule.PrtgTrendThresholds is null) return null;
+
+        PrtgTrendResult result;
+        string metricLabel;
+        string unit;
+
+        if (code == PrtgRuleEvaluator.RuleMemoryUsedTrend)
+        {
+            if (row.Semantic != PrtgValueSemantic.MemoryPercentFree) return null;
+            var dailyUsed = row.Daily.Select(d => (d.Day, 100 - d.Value)).ToArray();
+            result = PrtgTrendEngine.EvaluateMemoryUsed(dailyUsed, rule.PrtgTrendThresholds);
+            metricLabel = "記憶體使用率";
+            unit = "%";
+        }
+        else if (code == PrtgRuleEvaluator.RuleCpuLoadTrend)
+        {
+            if (row.Semantic != PrtgValueSemantic.CpuPercentUsed) return null;
+            var dailyCpu = row.Daily.Select(d => (d.Day, d.Value)).ToArray();
+            result = PrtgTrendEngine.EvaluateCpuLoad(dailyCpu, rule.PrtgTrendThresholds);
+            metricLabel = "CPU 使用率";
+            unit = "%";
+        }
+        else
+        {
+            if (row.Semantic != PrtgValueSemantic.PingMs) return null;
+            var dailyPing = row.Daily.Select(d => (d.Day, d.Value)).ToArray();
+            result = PrtgTrendEngine.EvaluatePingLatency(dailyPing, rule.PrtgTrendThresholds);
+            metricLabel = "Ping 回應時間";
+            unit = " ms";
+        }
+
+        explanation = result.Explanation;
+        if (result.Outcome != PrtgTrendOutcome.Hit || result.LatestDay != completedDay) return null;
+
+        var detail = string.Format(CultureInfo.InvariantCulture,
+            "{0}：{1} {2:F1}{3}；近 {4} 日有效 {5} 日；資料截至 {6:yyyy-MM-dd}。{7}",
+            row.Sensor.SensorName, metricLabel, result.CurrentValue, unit,
+            rule.PrtgTrendThresholds.WindowDays, result.ValidDayCount,
+            result.LatestDay, result.Explanation);
+
+        return new PrtgFinding(row.Sensor.DeviceObjid, row.Sensor.SensorObjid, rule.PrtgRuleCode!,
+            detail, result.ValidDayCount, rule, Acknowledged: false)
+        {
+            SensorCategory = PrtgRuleCatalog.TrendSensorCategory(code)
+        };
+    }
 }

@@ -1,4 +1,5 @@
 using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -30,7 +31,8 @@ public static class PrtgRuleCatalog
     {
         PrtgRuleEvaluator.RuleDown or PrtgRuleEvaluator.RuleFlapping or PrtgRuleEvaluator.RuleWarning or
             PrtgRuleEvaluator.RuleSilent => nameof(PrtgRuleEvaluator),
-        PrtgRuleEvaluator.RuleDiskFreeTrend => nameof(PrtgValueAssessment),
+        PrtgRuleEvaluator.RuleDiskFreeTrend or PrtgRuleEvaluator.RuleMemoryUsedTrend or
+            PrtgRuleEvaluator.RuleCpuLoadTrend or PrtgRuleEvaluator.RulePingLatencyTrend => nameof(PrtgValueAssessment),
         _ => null
     };
 
@@ -76,6 +78,18 @@ public static class PrtgRuleCatalog
         [PrtgRuleEvaluator.RuleDiskFreeTrend] = new(
             IssueCategory.Storage, IssueSeverity.High, false,
             "磁碟可用空間持續下降，可能在處理期間內耗盡", 0),
+
+        [PrtgRuleEvaluator.RuleMemoryUsedTrend] = new(
+            IssueCategory.Resource, IssueSeverity.High, false,
+            "記憶體使用率持續攀升，可能即將不足", 0),
+
+        [PrtgRuleEvaluator.RuleCpuLoadTrend] = new(
+            IssueCategory.Resource, IssueSeverity.Medium, false,
+            "CPU 使用率長期上升且已偏高", 0),
+
+        [PrtgRuleEvaluator.RulePingLatencyTrend] = new(
+            IssueCategory.Service, IssueSeverity.Medium, false,
+            "Ping 回應時間持續惡化", 0),
     };
 
     /// <summary>
@@ -98,4 +112,24 @@ public static class PrtgRuleCatalog
     /// <summary>取得指定規則資訊（僅供已知規則代碼常數呼叫；未知代碼擲例外，代表程式錯誤）</summary>
     public static PrtgRuleInfo GetRule(string ruleCode) =>
         Rules[ruleCode];
+
+    /// <summary>判斷是否為數值趨勢規則代碼（disk_free_trend 與三個新趨勢代碼，不分大小寫）</summary>
+    public static bool IsValueTrend(string? ruleCode) => ruleCode?.ToLowerInvariant() switch
+    {
+        PrtgRuleEvaluator.RuleDiskFreeTrend or
+        PrtgRuleEvaluator.RuleMemoryUsedTrend or
+        PrtgRuleEvaluator.RuleCpuLoadTrend or
+        PrtgRuleEvaluator.RulePingLatencyTrend => true,
+        _ => false
+    };
+
+    /// <summary>依數值趨勢規則代碼查詢對應的 sensor 語意分類（不分大小寫）</summary>
+    public static string? TrendSensorCategory(string? ruleCode) => ruleCode?.ToLowerInvariant() switch
+    {
+        PrtgRuleEvaluator.RuleDiskFreeTrend => PrtgSensorCategories.Disk,
+        PrtgRuleEvaluator.RuleMemoryUsedTrend => PrtgSensorCategories.Memory,
+        PrtgRuleEvaluator.RuleCpuLoadTrend => PrtgSensorCategories.Cpu,
+        PrtgRuleEvaluator.RulePingLatencyTrend => PrtgSensorCategories.Availability,
+        _ => null
+    };
 }
