@@ -475,4 +475,8 @@
 
 **未採納(記錄理由)**:自動偵測 PRTG 離線時每晚 15 秒(有上限、規格已定);人工清單碰巧等於 blob(無來源旗標,行為無害);`requiredDays>windowDays`(`IsValid` 擋在儲存與匯入);對應回望 31 日(規格設計);`SelectSingleRule` 未查 Enabled(呼叫端已濾);排行誤報母體以 sensor 出現點計(比主機數更嚴格,方向一致);摘要郵件當期全被排除整列消失(規格明文);`EnsureTrendCanBeEnabled` 未查全站可見(與磁碟規則同型、不洩漏資料,記 BACKLOG 候選);主機詳情 `GetSensorsByDevice` 逐裝置查詢(既有);趨勢中文標籤三處各自維護(語境不同:管線標籤、finding 白話、簽章標籤)。
 
-**測試**:整套結果見 §7 末列(併 dev 後全量)。建置 0 警告 0 錯誤。
+**測試**:併 dev 後整套 **6,241 通過／0 失敗／10 略過**(刪 `PrtgRuntimeOwnershipTests` 3 筆、新增 5 筆);建置 0 警告 0 錯誤;交接時偶發的 Kestrel socket 測試本次通過。
+
+## 終檢輪
+
+終檢無新發現:體檢修正 commit 單獨再掃一次(守門 `_targets` 只在 `ReplaceTargets` 寫入、五個讀取點不變;`EnsureAsync` 五個早退全改回 null;`aiConfigured` 推導只在 Append 一處),規劃比對不變,文件無敘事字眼。
