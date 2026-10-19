@@ -93,6 +93,37 @@ public class MailIssueDigest
         var overdueKeys = ResolveOverdueKeys(exclusion, from, to, visibleHostIds, visibleSeverities, riskLevels,
             contributionScope);
 
+        var prtgIssues = current
+            .Where(a => Core.Service.PrtgFindingMapper.TryGetRuleCode(a.Source, out _))
+            .Select(a => (a.Source, a.EventId))
+            .Distinct()
+            .ToList();
+
+        var inheritedFpHostsByIssue = new Dictionary<(string SourceUpper, int EventId), HashSet<long>>();
+        if (prtgIssues.Count > 0)
+        {
+            var prtgOccurrences = _aggregates.LatestOccurrences(
+                exclusion, prtgIssues, from, to, visibleHostIds,
+                visibleSeverities: visibleSeverities, riskLevels: riskLevels);
+            if (prtgOccurrences.Count > 0)
+            {
+                var resolvedPrtg = _statusResolver.Resolve(prtgOccurrences, from, to);
+                foreach (var r in resolvedPrtg)
+                {
+                    if (!r.InheritedFalsePositive) continue;
+                    var sig = IssueSignatureKey.TryParseSignature(r.Occurrence.IssueKey);
+                    if (sig == null) continue;
+                    var key = IssueProfile.KeyOf(sig.Value.Source, sig.Value.EventId);
+                    if (!inheritedFpHostsByIssue.TryGetValue(key, out var hostSet))
+                    {
+                        hostSet = new HashSet<long>();
+                        inheritedFpHostsByIssue[key] = hostSet;
+                    }
+                    hostSet.Add(r.Occurrence.HostId);
+                }
+            }
+        }
+
         var rows = new List<MailIssueRow>();
         foreach (var a in current)
         {
@@ -104,7 +135,13 @@ public class MailIssueDigest
             MailIssueContributionSummary? currentContribution = null;
             if (contributionScope != null &&
                 (!currentContributionMap!.TryGetValue(key, out currentContribution) || currentContribution.HostIds.Count == 0)) continue;
-            var hostCount = currentContribution?.HostIds.Count ?? a.HostCount;
+
+            inheritedFpHostsByIssue.TryGetValue(key, out var excludedFpHosts);
+            var hostCount = currentContribution != null
+                ? (excludedFpHosts != null ? currentContribution.HostIds.Except(excludedFpHosts).Count() : currentContribution.HostIds.Count)
+                : (excludedFpHosts != null ? Math.Max(0, a.HostCount - excludedFpHosts.Count) : a.HostCount);
+            if (hostCount <= 0) continue;
+
             var previousHostCount = currentContribution == null
                 ? prev?.HostCount ?? 0
                 : previousContributionMap!.TryGetValue(key, out var previousContribution)
@@ -123,7 +160,13 @@ public class MailIssueDigest
 
         var rowKeys = rows.Select(row => IssueProfile.KeyOf(row.Source, row.EventId)).ToHashSet();
         return new MailIssueDigestProjection(rows, includedCurrent.Where(item =>
-            rowKeys.Contains(IssueProfile.KeyOf(item.Source, item.EventId))).ToArray());
+        {
+            var key = IssueProfile.KeyOf(item.Source, item.EventId);
+            if (!rowKeys.Contains(key)) return false;
+            if (inheritedFpHostsByIssue.TryGetValue(key, out var excludedHosts) && excludedHosts.Contains(item.HostId))
+                return false;
+            return true;
+        }).ToArray());
     }
 
     private static IEnumerable<MailIssueHostDayContribution> FilterIncludedContributions(

@@ -93,6 +93,7 @@ function renderEffectiveness(summary) {
     const status = document.getElementById('prtg-effectiveness-status');
     const semantics = document.getElementById('prtg-effectiveness-semantics');
     const limitations = document.getElementById('prtg-effectiveness-limitations');
+    const ruleMarks = document.getElementById('prtg-effectiveness-rule-marks');
     if (!metrics || !status || !semantics || !limitations) return;
     metrics.replaceChildren();
     const definitions = [
@@ -125,6 +126,79 @@ function renderEffectiveness(summary) {
         metrics.appendChild(column);
     }
     metrics.classList.remove('d-none');
+
+    if (ruleMarks) {
+        ruleMarks.replaceChildren();
+        const marks = summary.ruleMarks || [];
+        const totalFp = summary.totalFalsePositiveMarks ?? 0;
+        const totalHandled = summary.totalHandledMarks ?? 0;
+        const totalMarks = totalFp + totalHandled;
+        if (marks.length === 0 || totalMarks === 0) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'small text-muted mt-3';
+            emptyEl.textContent = '尚無標記';
+            ruleMarks.appendChild(emptyEl);
+        } else {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'mt-3';
+            const note = document.createElement('p');
+            note.className = 'small text-muted mb-2';
+            note.textContent = '分母是已標記的 PRTG 問題';
+            wrapper.appendChild(note);
+
+            const responsive = document.createElement('div');
+            responsive.className = 'table-responsive';
+            const table = document.createElement('table');
+            table.className = 'table table-sm table-bordered align-middle mb-0';
+            const caption = document.createElement('caption');
+            caption.className = 'visually-hidden';
+            caption.textContent = '分母是已標記的 PRTG 問題';
+            table.appendChild(caption);
+
+            const thead = document.createElement('thead');
+            const trHead = document.createElement('tr');
+            for (const col of ['規則代碼', '標記誤報', '已處理']) {
+                const th = document.createElement('th');
+                th.scope = 'col';
+                th.textContent = col;
+                trHead.appendChild(th);
+            }
+            thead.appendChild(trHead);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            for (const item of marks) {
+                const tr = document.createElement('tr');
+                const tdRule = document.createElement('td');
+                tdRule.textContent = item.ruleCode || '(未分類)';
+                const tdFp = document.createElement('td');
+                tdFp.textContent = formatNumber(item.falsePositive ?? 0);
+                const tdHandled = document.createElement('td');
+                tdHandled.textContent = formatNumber(item.handled ?? 0);
+                tr.append(tdRule, tdFp, tdHandled);
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+
+            const tfoot = document.createElement('tfoot');
+            const trFoot = document.createElement('tr');
+            trFoot.className = 'fw-semibold table-light';
+            const tdTotalLabel = document.createElement('td');
+            tdTotalLabel.textContent = '總計';
+            const tdTotalFp = document.createElement('td');
+            tdTotalFp.textContent = formatNumber(totalFp);
+            const tdTotalHandled = document.createElement('td');
+            tdTotalHandled.textContent = formatNumber(totalHandled);
+            trFoot.append(tdTotalLabel, tdTotalFp, tdTotalHandled);
+            tfoot.appendChild(trFoot);
+            table.appendChild(tfoot);
+
+            responsive.appendChild(table);
+            wrapper.appendChild(responsive);
+            ruleMarks.appendChild(wrapper);
+        }
+    }
+
     status.textContent = `${summary.from?.slice(0, 10) ?? ''} 至 ${summary.through?.slice(0, 10) ?? ''}，共 ${formatNumber(summary.windowDays)} 天。指標使用不同計算對象，請依各項說明解讀，彼此不共用分母。`;
     semantics.textContent = summary.metricSemantics || '指標依各自的資料列與日期定義計算，彼此沒有共同分母。';
     limitations.textContent = summary.limitations || '';
@@ -163,6 +237,8 @@ async function loadPrtgEffectiveness() {
         status.className = 'small mb-3 text-muted';
     } catch (exception) {
         metrics.classList.add('d-none');
+        const ruleMarks = document.getElementById('prtg-effectiveness-rule-marks');
+        if (ruleMarks) ruleMarks.replaceChildren();
         status.textContent = '使用效果載入失敗。';
         status.className = 'small mb-3 text-danger';
         const alert = document.createElement('div');

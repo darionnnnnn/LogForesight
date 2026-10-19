@@ -40,7 +40,8 @@ public class OccurrenceStatusResolver
             .ToList();
         if (hostNames.Count == 0) return new List<ResolvedOccurrence>();
 
-        var handlingsByHost = _issueHandlings.GetMany(hostNames, from, to)
+        var queryFrom = from.AddDays(-PrtgFalsePositiveWindow.Days);
+        var handlingsByHost = _issueHandlings.GetMany(hostNames, queryFrom, to)
             .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
         var openCasesByHost = _cases.GetMany(hostNames)
@@ -59,15 +60,27 @@ public class OccurrenceStatusResolver
             var openCase = openCasesByHost.TryGetValue(host.HostName, out var cases)
                 ? cases.FirstOrDefault(c => IssueSignatureKeyComparer.Instance.Equals(c.IssueKey, occurrence.IssueKey))
                 : null;
-            var handling = openCase == null && handlingsByHost.TryGetValue(host.HostName, out var rows)
-                ? rows.FirstOrDefault(h =>
-                    h.Date.Date == occurrence.LastSeen.Date && IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, occurrence.IssueKey))
+            var rows = openCase == null && handlingsByHost.TryGetValue(host.HostName, out var hostRows)
+                ? hostRows
                 : null;
+            var handling = rows?.FirstOrDefault(h =>
+                h.Date.Date == occurrence.LastSeen.Date && IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, occurrence.IssueKey));
+
+            var inheritedFalsePositive = false;
+            if (handling == null && rows != null)
+            {
+                var covering = PrtgFalsePositiveWindow.Covering(occurrence.IssueKey, occurrence.LastSeen, rows);
+                if (covering != null)
+                {
+                    handling = covering;
+                    inheritedFalsePositive = true;
+                }
+            }
 
             var status = IssueGroupStatusResolver.Resolve(
                 openCase, handling, (IssueSeverity)occurrence.SeverityRank, unhandledSeverities, today);
 
-            result.Add(new ResolvedOccurrence(occurrence, host, status, openCase, handling));
+            result.Add(new ResolvedOccurrence(occurrence, host, status, openCase, handling, inheritedFalsePositive));
         }
 
         return result;
@@ -76,4 +89,5 @@ public class OccurrenceStatusResolver
 
 /// <summary>單一 (存活主機, 完整簽章) 出現快照的處理概況判定結果</summary>
 public sealed record ResolvedOccurrence(
-    HostIssueOccurrence Occurrence, WebHost Host, HostIssueStatus Status, IssueCase? OpenCase, IssueHandling? Handling);
+    HostIssueOccurrence Occurrence, WebHost Host, HostIssueStatus Status, IssueCase? OpenCase, IssueHandling? Handling,
+    bool InheritedFalsePositive);

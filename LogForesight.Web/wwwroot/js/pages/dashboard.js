@@ -523,6 +523,13 @@ function issueNameCell(issue) {
         badge.title = '前一個等長期間完全沒有出現過';
         title.appendChild(badge);
     }
+
+    if (issue.markedFalsePositive) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-secondary';
+        badge.textContent = '已標誤報';
+        title.appendChild(badge);
+    }
     wrap.appendChild(title);
 
     const category = document.createElement('div');

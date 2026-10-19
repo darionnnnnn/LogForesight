@@ -245,4 +245,77 @@ public class MailIssueDigestTests : IDisposable
         Assert.Equal(1, app.HostCount);
         Assert.Equal(1, app.PreviousHostCount);
     }
+
+    [Fact]
+    public void PRTG問題第1天標誤報_第5天出現不進摘要列_第40天出現進摘要()
+    {
+        var day1 = new DateTime(2026, 8, 1);
+        var day5 = new DateTime(2026, 8, 5);
+        var day40 = new DateTime(2026, 9, 10);
+        var host = _hosts.Upsert(new WebHost { HostName = "h1" });
+
+        LogIssueSignature PrtgIssue() => new()
+        {
+            LogName = "PRTG",
+            Source = "PRTG:disk_free_trend",
+            EventId = 0,
+            EntryType = EventLogEntryType.Warning,
+            Category = IssueCategory.Storage,
+            Severity = IssueSeverity.High,
+            Count = 1,
+            EventKey = "prtg:disk_free_trend:sensor-1"
+        };
+
+        var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
+
+        // Day 1: 標記誤報
+        Add(host.HostId, host.HostName, day1, RiskLevels.High, PrtgIssue());
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            IssueKey = issueKey,
+            Date = day1,
+            Status = IssueHandlingStatuses.FalsePositive,
+            UpdatedAt = day1
+        });
+
+        // Day 5: 無標記再出現（在 30 日誤報窗內）
+        Add(host.HostId, host.HostName, day5, RiskLevels.High, PrtgIssue());
+        var rowsDay5 = Digest().Build(day5, day5, null);
+        Assert.DoesNotContain(rowsDay5, r => r.Source == "PRTG:disk_free_trend");
+
+        // Day 40: 無標記再出現（超過 30 日誤報窗）
+        Add(host.HostId, host.HostName, day40, RiskLevels.High, PrtgIssue());
+        var rowsDay40 = Digest().Build(day40, day40, null);
+        var prtgRow = Assert.Single(rowsDay40, r => r.Source == "PRTG:disk_free_trend");
+        Assert.Equal(1, prtgRow.HostCount);
+    }
+
+    [Fact]
+    public void 非PRTG問題標誤報後隔天出現_照常進摘要()
+    {
+        var day1 = new DateTime(2026, 8, 1);
+        var day2 = new DateTime(2026, 8, 2);
+        var host = _hosts.Upsert(new WebHost { HostName = "h1" });
+
+        var issue = Issue("disk", 153, severity: IssueSeverity.High);
+        var issueKey = IssueSignatureKey.For(issue);
+
+        // Day 1: 標記誤報
+        Add(host.HostId, host.HostName, day1, RiskLevels.High, issue);
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            IssueKey = issueKey,
+            Date = day1,
+            Status = IssueHandlingStatuses.FalsePositive,
+            UpdatedAt = day1
+        });
+
+        // Day 2: 再出現無標記
+        Add(host.HostId, host.HostName, day2, RiskLevels.High, issue);
+        var rows = Digest().Build(day2, day2, null);
+        var row = Assert.Single(rows, r => r.Source == "disk" && r.EventId == 153);
+        Assert.Equal(1, row.HostCount);
+    }
 }

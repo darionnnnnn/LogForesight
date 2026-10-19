@@ -144,6 +144,9 @@ public class IssueRankingDto
     /// <summary>已有結論的主機數</summary>
     public int ResolvedHostCount { get; set; }
 
+    /// <summary>PRTG 問題：期間內每台主機的最近一次出現都在 30 日誤報窗內（<see cref="LogForesight.Core.Models.PrtgFalsePositiveWindow"/>）</summary>
+    public bool MarkedFalsePositive { get; set; }
+
     // ── 機房級基準線（回饋十九輪批次G1）──────────────────────────────────────
     //
     // 基準＝過去 30 天出現日台數中位數；偏離倍數＝最近出現日台數 ÷ 基準。

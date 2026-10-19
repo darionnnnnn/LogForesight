@@ -45,4 +45,22 @@ public sealed class PrtgEffectivenessUiTests
         Assert.DoesNotContain("resolution rate", js, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("conversion rate", js, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void 使用效果呈現PRTG問題處理標記按規則統計與尚無標記說明()
+    {
+        var root = FindRepoRoot();
+        var view = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Prtg.cshtml"));
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
+
+        Assert.Contains("id=\"prtg-effectiveness-rule-marks\"", view);
+        Assert.Contains("分母是已標記的 PRTG 問題", js);
+        Assert.Contains("尚無標記", js);
+        Assert.Contains("規則代碼", js);
+        Assert.Contains("標記誤報", js);
+        Assert.Contains("已處理", js);
+        Assert.Contains("summary.ruleMarks", js);
+        Assert.Contains("summary.totalFalsePositiveMarks", js);
+        Assert.Contains("summary.totalHandledMarks", js);
+    }
 }
