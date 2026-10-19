@@ -356,6 +356,8 @@ public class PrtgResourceGuardPreviewResultDto
     public string? ErrorMessage { get; set; }
     /// <summary>清單來源：override（覆寫清單）或 auto（自動偵測）</summary>
     public string Source { get; set; } = "auto";
+    /// <summary>自動偵測填入時間（由 Describe 取得）</summary>
+    public DateTime? AutoDetectedAt { get; set; }
     public IReadOnlyList<string> Warnings { get; set; } = Array.Empty<string>();
     public IReadOnlyList<PrtgResourceGuardSensorPreviewDto> Sensors { get; set; } = Array.Empty<PrtgResourceGuardSensorPreviewDto>();
 }

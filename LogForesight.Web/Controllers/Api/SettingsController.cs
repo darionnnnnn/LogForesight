@@ -621,6 +621,7 @@ public class SettingsController : ControllerBase
 
         var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
         var settings = settingsStore.Get();
+        var (_, autoDetectedAt) = PrtgResourceGuardAutoDetect.Describe(_backend, settings);
 
         var isOverride = !forceAuto
             && settings.PrtgResourceGuardSensorObjids != null
@@ -634,6 +635,7 @@ public class SettingsController : ControllerBase
                 Success = false,
                 ErrorMessage = "尚未設定 PRTG 連線位址或認證資訊，無法預覽受監看感測器。",
                 Source = source,
+                AutoDetectedAt = autoDetectedAt,
                 Warnings = Array.Empty<string>(),
                 Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
             });
@@ -696,6 +698,7 @@ public class SettingsController : ControllerBase
                 Success = false,
                 ErrorMessage = $"解析受監看目標失敗：{ex.Message}",
                 Source = source,
+                AutoDetectedAt = autoDetectedAt,
                 Warnings = console.Messages,
                 Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
             });
@@ -717,6 +720,7 @@ public class SettingsController : ControllerBase
                     Success = false,
                     ErrorMessage = probeResult.FailureReason ?? "PRTG 取值失敗。",
                     Source = source,
+                    AutoDetectedAt = autoDetectedAt,
                     Warnings = console.Messages,
                     Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
                 });
@@ -744,6 +748,7 @@ public class SettingsController : ControllerBase
             {
                 Success = true,
                 Source = source,
+                AutoDetectedAt = autoDetectedAt,
                 Warnings = console.Messages,
                 Sensors = sensors
             });
@@ -759,6 +764,7 @@ public class SettingsController : ControllerBase
                 Success = false,
                 ErrorMessage = $"PRTG 預覽失敗：{ex.Message}",
                 Source = source,
+                AutoDetectedAt = autoDetectedAt,
                 Warnings = console.Messages,
                 Sensors = Array.Empty<PrtgResourceGuardSensorPreviewDto>()
             });

@@ -92,6 +92,31 @@ internal static class PrtgDailyPipeline
                 return;
             }
 
+            try
+            {
+                var guardObjidsBefore = systemSettings.PrtgResourceGuardSensorObjids;
+                await PrtgResourceGuardAutoDetect.EnsureAsync(
+                    backend,
+                    systemSettings,
+                    new SentinelStore(backend.Blob("sentinels")).GetAll(),
+                    prtgConsole,
+                    () => PrtgClientFactory.Create(systemSettings, budget: requestBudget),
+                    parentToken);
+                var reloadedSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+                if (!PrtgResourceGuardAutoDetect.SetEquals(reloadedSettings.PrtgResourceGuardSensorObjids, guardObjidsBefore))
+                {
+                    systemSettings = reloadedSettings;
+                }
+            }
+            catch (OperationCanceledException) when (parentToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                prtgConsole.WriteLine($"[PRTG資源守門] 自動偵測未完成（{ex.Message}），本趟不守門，取數照常進行。");
+            }
+
             using var operationScope = new PrtgOperationScope(systemSettings,
                 () => new SystemSettingsStore(backend.Blob("system_settings")).Get(), parentToken, new PrtgScopeRevisionReader(backend, hostStore).Read, "每日評估");
             operation = operationScope;
