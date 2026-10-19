@@ -21,9 +21,9 @@ public class DailyAnalysisRecord
     public string? LatestNetiqAttemptStatus { get; set; }
     public DateTime? LatestNetiqAttemptAtUtc { get; set; }
 
-    /// <summary>只有明確由 NetIQ 分析產生且保有詳情的主機日可接受 PRTG 補充。</summary>
-    public bool CanSupplementWithPrtg() => LogSource == AnalysisLogSource.Netiq && !DetailPruned &&
-        (LatestNetiqAttemptStatus == null || LatestNetiqAttemptStatus == "success");
+    /// <summary>NetIQ 分析產生、或只因 PRTG 而建立、且保有詳情的主機日可接受 PRTG 補充。</summary>
+    public bool CanSupplementWithPrtg() => !DetailPruned && (LogSource == AnalysisLogSource.Prtg ||
+        LogSource == AnalysisLogSource.Netiq && (LatestNetiqAttemptStatus == null || LatestNetiqAttemptStatus == "success"));
 
     /// <summary>
     /// 產生本筆紀錄的主機 PK（↔ lf_daily_records.host_id）。**這是紀錄與主機的關聯鍵**——
@@ -45,9 +45,6 @@ public class DailyAnalysisRecord
     public int WarningCount { get; set; }
     public int AuditEventCount { get; set; }
     public List<LogIssueSignature> TopIssues { get; set; } = new();
-
-    /// <summary>Authoritative per-parent PRTG evaluation identity, including successful zero-finding evaluations.</summary>
-    public PrtgDecisionManifest? PrtgManifest { get; set; }
 
     /// <summary>程式比對歷史後偵測到的頻率異常（首次出現、頻率上升、整體錯誤量突增）。
     /// 已排除本機抑制設定關掉的項目（回饋十五輪 A）——被抑制的仍照算趨勢欄位與嚴重度升級，
@@ -237,34 +234,6 @@ public sealed record AiOutcome(
     string? ReportPrtgEvidenceFingerprint = null,
     LogForesight.Core.Persistence.PreparedRiskReport? ReportDraft = null);
 
-/// <summary>Bounded identity of one completed PRTG decision for a single NetIQ parent row.</summary>
-public sealed class PrtgDecisionManifest
-{
-    public int Version { get; set; } = 1;
-    public long ParentRecordId { get; set; }
-    public string ParentFingerprint { get; set; } = string.Empty;
-    /// <summary>Captured PRTG rows on the exact parent before this run's state reconciliation and finding attach.</summary>
-    public string ParentFindingFingerprint { get; set; } = string.Empty;
-    public string PolicyRevision { get; set; } = string.Empty;
-    public string SourceGeneration { get; set; } = string.Empty;
-    /// <summary>Monotonic fence for trusted resource identity, channel and sampling-profile changes.</summary>
-    public long ResourceAuthorityRevision { get; set; }
-    /// <summary>Exact per-host formal resource-mode blob revision captured with its grant snapshot.</summary>
-    public long ResourceModeBlobVersion { get; set; }
-    /// <summary>Legacy manifests may omit the mode fence; new daily resource evaluations require it even at version zero.</summary>
-    public bool ResourceModeFenceRequired { get; set; }
-    public string ResourceFingerprint { get; set; } = string.Empty;
-    public string SemanticFingerprint { get; set; } = string.Empty;
-    public string StrategyFingerprint { get; set; } = string.Empty;
-    public string HostMappingFingerprint { get; set; } = string.Empty;
-    public List<string> WaitReasonCodes { get; set; } = new();
-    public string RuleFingerprint { get; set; } = string.Empty;
-    public string EvidenceFingerprint { get; set; } = string.Empty;
-    public string FindingFingerprint { get; set; } = string.Empty;
-    public DateTime CompletedAtUtc { get; set; }
-    public string Outcome { get; set; } = "complete";
-}
-
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive
 {
@@ -319,5 +288,7 @@ public enum AnalysisLogSource
 {
     Unknown = 0,
     Local = 1,
-    Netiq = 2
+    Netiq = 2,
+    /// <summary>當日沒有日誌分析、只因 PRTG finding 而建立的主機日（事件統計全零）。NetIQ 或本機分析晚到時原地更新為該來源。</summary>
+    Prtg = 3
 }

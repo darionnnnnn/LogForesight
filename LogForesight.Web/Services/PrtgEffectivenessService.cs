@@ -86,8 +86,48 @@ public sealed class PrtgEffectivenessService
         var mutedProfiles = _issueOwners.GetAll().Count(profile =>
             profile.SourceName.StartsWith("PRTG:", StringComparison.OrdinalIgnoreCase)
             && profile.Mutes.Any(mute => mute.From.Date <= end && mute.To.Date >= start));
+
+        // PRTG 逐日標記統計（按規則代碼分列，誤報與結案類）
+        var handlingsQuery = ctx.IssueHandlings.AsNoTracking()
+            .Where(h => h.RecordDate >= start && h.RecordDate < endExclusive);
+        var handlingRows = handlingsQuery
+            .Select(h => new { h.IssueKey, h.Status })
+            .ToList();
+
+        var ruleMarkDict = new Dictionary<string, (int FalsePositive, int Handled)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in handlingRows)
+        {
+            var parsed = IssueSignatureKey.TryParseFull(h.IssueKey);
+            if (parsed == null || !string.Equals(parsed.Value.LogName, PrtgFindingMapper.PrtgLogName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (!PrtgFindingMapper.TryGetRuleCode(parsed.Value.Source, out var ruleCode))
+                continue;
+
+            var isFp = string.Equals(h.Status, IssueHandlingStatuses.FalsePositive, StringComparison.OrdinalIgnoreCase);
+            var isHandled = string.Equals(h.Status, IssueHandlingStatuses.Resolved, StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(h.Status, IssueHandlingStatuses.WontFix, StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(h.Status, IssueHandlingStatuses.KnownNoise, StringComparison.OrdinalIgnoreCase);
+
+            if (!isFp && !isHandled) continue;
+
+            ruleMarkDict.TryGetValue(ruleCode, out var counts);
+            if (isFp) counts.FalsePositive++;
+            if (isHandled) counts.Handled++;
+            ruleMarkDict[ruleCode] = counts;
+        }
+
+        var ruleMarks = ruleMarkDict
+            .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kv => new PrtgRuleMarkCount(kv.Key, kv.Value.FalsePositive, kv.Value.Handled))
+            .ToList();
+
+        var totalFpMarks = ruleMarks.Sum(r => r.FalsePositive);
+        var totalHandledMarks = ruleMarks.Sum(r => r.Handled);
+
         return new PrtgEffectivenessSummary(start, end, days, findingCount, lowCoverageSampledHours, cases, workOrderCount, replied,
             suppressed, mutedProfiles, payloadsReadable ? prtgOnlyHostDays : null, payloadsReadable ? corroboratedDays : null,
+            ruleMarks, totalFpMarks, totalHandledMarks,
             "Findings count indexed PRTG TopIssue rows per host-day/signature. LowCoverageSampledHours counts observed lf_prtg_values hourly rows in the selected period with quality=sampled and coverage below the usable threshold; it does not count all missing values, missing hourly periods, disk sensor-days, or findings. Cases and work orders count rows created within the selected dates and whose normalized source begins PRTG:. Replied counts those same work orders with LastReplyAt set, regardless of reply date. Suppressed counts PRTG signatures flagged Suppressed in the dated DailyAnalysisRecord payload. MutedPrtgProfiles counts distinct PRTG issue profiles with a mute interval overlapping the selected dates; it does not imply any finding occurred. PrtgOnlyHostDays counts dated host-day payloads with at least one TopIssue and every TopIssue from PRTG; lower-priority log evidence may still exist. Corroborated counts host-day records with a stored PRTG corroboration reference or suppressed corroboration text. These are separate denominators and are not a conversion funnel or resolution rate.",
             payloadsReadable
                 ? "Corroboration is counted per host-day, not per finding. Current suppression configuration is not used to reconstruct historical state."
@@ -104,6 +144,10 @@ public sealed class PrtgEffectivenessService
         || text.StartsWith("【失聯獲 PRTG 證實】", StringComparison.Ordinal);
 }
 
+public sealed record PrtgRuleMarkCount(string RuleCode, int FalsePositive, int Handled);
+
 public sealed record PrtgEffectivenessSummary(DateTime From, DateTime Through, int WindowDays,
     int PrtgFindings, int LowCoverageSampledHours, int CasesCreated, int WorkOrdersCreated, int WorkOrdersReplied,
-    int? SuppressedFindings, int MutedPrtgProfiles, int? PrtgOnlyHostDays, int? CorroboratedHostDays, string MetricSemantics, string Limitations);
+    int? SuppressedFindings, int MutedPrtgProfiles, int? PrtgOnlyHostDays, int? CorroboratedHostDays,
+    IReadOnlyList<PrtgRuleMarkCount> RuleMarks, int TotalFalsePositiveMarks, int TotalHandledMarks,
+    string MetricSemantics, string Limitations);

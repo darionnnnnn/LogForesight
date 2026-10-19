@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using LogForesight.Core;
 using LogForesight.Core.Service;
 using Xunit;
@@ -43,30 +44,80 @@ public class PrtgProbeRunnerTests
         }
     }
 
-    [Fact]
-    public async Task CompatibilityProbe_keeps_one_id_identity_but_never_claims_full_batch100()
-    {
-        var samples = new[] { new PrtgProbeRunner.SensorTypeSample("fixture", null, null, 78123, "Up") };
-        string? requestedUrl = null;
-        var result = await PrtgCompatibilityProbe.ExecuteCoreAsync((_, _) => Task.FromResult("{}"), new TestConsole(), samples, null,
-            getSnapshotBatch100Json: (url, _) =>
-            {
-                requestedUrl = url;
-                return Task.FromResult("{\"sensors\":[{\"objid\":78123,\"status\":\"Up\",\"lastcheck\":1728547323}]}");
-            });
-
-        Assert.Contains("&filter_objid=78123&count=2", requestedUrl);
-        Assert.True(result.SnapshotBatch100Identity!.ExactRequestedSet);
-        Assert.True(result.SnapshotBatch100Identity.RuntimeResponseCompatible);
-        Assert.False(result.SnapshotBatch100Identity.FullBatch100Observed);
-        Assert.False(result.SnapshotBatch100Identity.CapacityAccepted);
-    }
-
     private readonly Xunit.Abstractions.ITestOutputHelper _output;
 
     public PrtgProbeRunnerTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         _output = output;
+    }
+
+    [Fact]
+    public void EnvironmentProbeClient_capsRequestTimeoutWithoutChangingOtherClients()
+    {
+        var settings = new LogForesight.Core.Models.SystemSettings
+        {
+            PrtgUrl = BaseUrl,
+            PrtgApiTokenEnc = SampleToken,
+            PrtgTimeoutSeconds = 600
+        };
+
+        using var probeDefault = PrtgClientFactory.CreateForEnvironmentProbe(settings);
+        Assert.Equal(PrtgProbeRunner.RequestTimeout, probeDefault.Timeout);
+
+        settings.PrtgTimeoutSeconds = 5;
+        using var probeShort = PrtgClientFactory.CreateForEnvironmentProbe(settings);
+        Assert.Equal(TimeSpan.FromSeconds(5), probeShort.Timeout);
+
+        settings.PrtgTimeoutSeconds = 600;
+        using var ordinary = PrtgClientFactory.Create(settings);
+        Assert.Equal(TimeSpan.FromSeconds(600), ordinary.Timeout);
+    }
+
+    [Fact]
+    public async Task RunWithOverallDeadlineAsync_turnsShortControlledDeadlineIntoTimeoutFailure()
+    {
+        var handler = new StubHandler
+        {
+            OnSend = async (_, token) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                throw new InvalidOperationException("Unreachable after cancellation");
+            }
+        };
+        var settings = new LogForesight.Core.Models.SystemSettings
+        {
+            PrtgUrl = BaseUrl,
+            PrtgApiTokenEnc = SampleToken,
+            PrtgTimeoutSeconds = 600
+        };
+        using var client = PrtgClientFactory.Create(settings, handler);
+        var console = new TestConsole();
+
+        var error = await Assert.ThrowsAsync<TimeoutException>(() =>
+            PrtgProbeRunner.RunWithOverallDeadlineAsync(client, console, TimeSpan.FromMilliseconds(40)));
+
+        Assert.Contains("整輪時間上限", error.Message);
+        Assert.Contains(handler.RequestedUrls, url => url.Contains("/api/status.json", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunWithOverallDeadlineAsync_preservesCallerCancellationClassification()
+    {
+        using var caller = new CancellationTokenSource();
+        caller.Cancel();
+        var handler = new StubHandler();
+        var settings = new LogForesight.Core.Models.SystemSettings
+        {
+            PrtgUrl = BaseUrl,
+            PrtgApiTokenEnc = SampleToken,
+            PrtgTimeoutSeconds = 600
+        };
+        using var client = PrtgClientFactory.Create(settings, handler);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            PrtgProbeRunner.RunWithOverallDeadlineAsync(client, new TestConsole(), TimeSpan.FromHours(1),
+                ct: caller.Token));
+        Assert.Empty(handler.RequestedUrls);
     }
 
     [Fact]
@@ -279,42 +330,6 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_dependency欄位不支援時跳過但不算失敗()
-    {
-        var stub = new StubHandler
-        {
-            OnSend = (req, _) =>
-            {
-                var url = req.RequestUri!.ToString();
-                if (url.Contains("/api/status.json"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""20.1""}"));
-                if (url.Contains("count=1&"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": [], ""sensors"": []}"));
-                if (url.Contains("columns=objid,device,sensor,type,tags,unit"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1, ""type"": ""ping""}]}"));
-                if (url.Contains("columns=objid,dependency"))
-                {
-                    // 模擬 PRTG 舊版不支援 dependency 欄位回傳 HTTP 400 Bad Request
-                    return Task.FromResult(JsonResponse(HttpStatusCode.BadRequest, @"{""error"": ""Invalid column: dependency""}"));
-                }
-                if (url.Contains("content=groups"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""groups"": []}"));
-                if (url.Contains("content=devices") && url.Contains("columns=objid,device,host,group"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""devices"": []}"));
-
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
-            }
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result, "即使 dependency 欄位不支援，整個 probe 仍應回 true");
-        Assert.Contains(console.Lines, l => l.Contains("此 PRTG 版本不支援 dependency 欄位查詢"));
-    }
-
-    [Fact]
     public async Task RunAsync_髒資料容錯()
     {
         // 3 筆 sensor，其中 1 筆缺 type，1 筆 type 為 null，1 筆正常
@@ -356,114 +371,6 @@ public class PrtgProbeRunnerTests
         Assert.True(result, "遇到髒資料不應擲例外");
         Assert.Contains(console.Lines, l => l.Contains("有 2 筆 sensor 無法解析"));
         Assert.Contains(console.Lines, l => l.Contains("ping | 1 | 100.0%"));
-    }
-
-    [Fact]
-    public async Task RunAsync_unit樣本可自lastvalue推導且輸出TypeIPv4交叉統計()
-    {
-        // PRTG sensors 表沒有 unit 欄位：樣本只給 lastvalue，unit 應由 lastvalue 萃取。
-        // 純文字狀態（OK）與「-」不得被當成單位。
-        // parentid：101/102 → device 1（IPv4），103 → device 2（DNS）。
-        var stub = new StubHandler
-        {
-            OnSend = (req, _) =>
-            {
-                var url = req.RequestUri!.ToString();
-                if (url.Contains("/api/status.json"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.1""}"));
-                if (url.Contains("content=devices") && url.Contains("count=1&"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 2, ""devices"": []}"));
-                if (url.Contains("content=sensors") && url.Contains("count=1&"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 4, ""sensors"": []}"));
-                if (url.Contains("columns=objid,device,sensor,type,tags,unit,lastvalue,parentid"))
-                {
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
-                        ""treesize"": 4,
-                        ""sensors"": [
-                            {""objid"": 101, ""type"": ""ping"", ""lastvalue"": ""12 msec"", ""parentid"": 1},
-                            {""objid"": 102, ""type"": ""ping"", ""lastvalue"": ""<1 ms"", ""parentid"": 1},
-                            {""objid"": 103, ""type"": ""ping"", ""lastvalue"": ""-"", ""parentid"": 2},
-                            {""objid"": 104, ""type"": ""http"", ""lastvalue"": ""OK"", ""parentid"": 1}
-                        ]
-                    }"));
-                }
-                if (url.Contains("columns=objid,dependency"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 101, ""dependency"": ""200""}]}"));
-                if (url.Contains("content=groups"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""groups"": []}"));
-                if (url.Contains("content=devices") && url.Contains("columns=objid,device,host,group"))
-                {
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{
-                        ""treesize"": 2,
-                        ""devices"": [
-                            {""objid"": 1, ""device"": ""Router"", ""host"": ""192.168.1.1""},
-                            {""objid"": 2, ""device"": ""WebServer"", ""host"": ""web.corp.local""}
-                        ]
-                    }"));
-                }
-
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
-            }
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        foreach (var line in console.Lines)
-        {
-            _output.WriteLine(line);
-        }
-
-        Assert.True(result);
-
-        // unit 樣本自 lastvalue 推導：ping 應含 msec 與 ms；http 的 OK 不是單位 → 無
-        var pingLine = console.Lines.First(l => l.Contains("ping | 3 |"));
-        Assert.Contains("msec", pingLine);
-        Assert.Contains("ms", pingLine);
-        var httpLine = console.Lines.First(l => l.Contains("http | 1 |"));
-        Assert.Contains("unit 樣本：無", httpLine);
-
-        // dependency 預設值註記
-        Assert.Contains(console.Lines, l => l.Contains("此比例含預設值"));
-
-        // 步驟 7：type × IPv4 交叉統計（ping：2/3 在 IPv4 device 上；http：1/1）
-        Assert.Contains(console.Lines, l => l.Contains("Type × IPv4 覆蓋"));
-        Assert.Contains(console.Lines, l => l.Contains("ping | 2/3 | 66.7%"));
-        Assert.Contains(console.Lines, l => l.Contains("http | 1/1 | 100.0%"));
-    }
-
-    [Fact]
-    public async Task RunAsync_無parentid資料時步驟7略過但不算失敗()
-    {
-        var stub = new StubHandler
-        {
-            OnSend = (req, _) =>
-            {
-                var url = req.RequestUri!.ToString();
-                if (url.Contains("/api/status.json"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""20.1""}"));
-                if (url.Contains("count=1&"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 1, ""devices"": [], ""sensors"": []}"));
-                if (url.Contains("columns=objid,device,sensor,type,tags,unit,lastvalue,parentid"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": [{""objid"": 1, ""type"": ""ping""}]}"));
-                if (url.Contains("columns=objid,dependency"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""sensors"": []}"));
-                if (url.Contains("content=groups"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""groups"": []}"));
-                if (url.Contains("content=devices") && url.Contains("columns=objid,device,host,group"))
-                    return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""devices"": []}"));
-
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
-            }
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("略過此統計"));
     }
 
     [Fact]
@@ -545,11 +452,10 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("devices：✓ 遵守 start，超出範圍回空頁"));
-        Assert.Contains(console.Lines, l => l.Contains("sensors：✓ 遵守 start"));
-        Assert.Contains(console.Lines, l => l.Contains("messages：✓ 遵守 start"));
-        // messages 的診斷必須帶相對日期過濾，否則是整台訊息歷史的查詢
-        Assert.Contains(stub.RequestedUrls, u => u.Contains("content=messages") && u.Contains("count=5&start=0") && u.Contains("filter_drel=7days"));
+        Assert.Contains(console.Lines, l => l.Contains("devices 順序穩定、超界回空頁"));
+        Assert.Contains(console.Lines, l => l.Contains("sensors 順序穩定、超界回空頁"));
+        // messages 的診斷必須以單一裝置＋相對日期過濾查詢，否則是整台訊息歷史的查詢
+        Assert.Contains(stub.RequestedUrls, u => u.Contains("content=messages") && u.Contains("filter_drel=7days") && !u.Contains("id=0&"));
     }
 
     [Fact]
@@ -561,8 +467,8 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
-        Assert.True(result, "步驟 8 是診斷，結論不影響探測成敗");
-        Assert.Contains(console.Lines, l => l.Contains("devices：✗ 完全忽略 start"));
+        Assert.True(result, "分頁語意是診斷，結論不影響探測成敗");
+        Assert.Contains(console.Lines, l => l.Contains("devices 順序穩定、✗ 忽略 start（只能單次大 count）"));
     }
 
     [Fact]
@@ -580,8 +486,8 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
-        Assert.Contains(console.Lines, l => l.Contains("devices：⚠ 遵守 start，但超出範圍時回到第一頁"));
-        Assert.Contains(console.Lines, l => l.Contains("sensors：⚠ 遵守 start，但超出範圍時夾到最後一頁"));
+        Assert.Contains(console.Lines, l => l.Contains("devices 順序穩定、超界回第一頁（分頁保險絲已處理）"));
+        Assert.Contains(console.Lines, l => l.Contains("sensors 順序穩定、超界夾末頁（分頁保險絲已處理）"));
     }
 
     [Fact]
@@ -596,8 +502,8 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("messages：無法判定（"));
-        Assert.Contains(console.Lines, l => l.Contains("devices：總筆數不足 5 筆"));
+        Assert.Contains(console.Lines, l => l.Contains("messages 無法判定（"));
+        Assert.Contains(console.Lines, l => l.Contains("devices 順序穩定、資料不足以判定 start"));
     }
 
     [Fact]
@@ -612,8 +518,7 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
-        Assert.Contains(console.Lines, l => l.Contains("devices：頁內 objid 遞增＝否") && l.Contains("遞增＝是"));
-        Assert.Contains(console.Lines, l => l.Contains("devices：✓ sortby=objid 有效"));
+        Assert.Contains(console.Lines, l => l.Contains("devices 需帶 sortby=objid"));
         Assert.Contains(stub.RequestedUrls, u => u.Contains("content=devices") && u.Contains("sortby=objid"));
         // messages 的 sortby 查詢必須保留相對日期過濾，否則是整台訊息歷史的查詢
         Assert.Contains(stub.RequestedUrls, u => u.Contains("content=messages") && u.Contains("sortby=objid") && u.Contains("filter_drel=7days"));
@@ -632,7 +537,7 @@ public class PrtgProbeRunnerTests
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
         Assert.True(result, "排序診斷不影響探測成敗");
-        Assert.Contains(console.Lines, l => l.Contains("sensors：✗ sortby=objid 無效，且預設順序非遞增"));
+        Assert.Contains(console.Lines, l => l.Contains("sensors ✗ 順序不穩（可能漏列）"));
     }
 
     [Fact]
@@ -649,120 +554,7 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
-        Assert.Contains(console.Lines, l => l.Contains("devices：✓ 預設順序已遞增，sortby=objid 不改變結果"));
-    }
-
-    /// <summary>
-    /// 沒設 dependency 的 sensor 這一欄是缺的。mapper 若把它當損壞列剔除，分母會縮水，
-    /// 截斷警告就會在明明沒截斷時誤報——探測輸出裡出現一句錯的警告比沒有警告更糟。
-    /// </summary>
-    [Fact]
-    public async Task RunAsync_步驟4_sensor沒有dependency欄位時不誤報截斷()
-    {
-        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
-        var inner = stub.OnSend;
-        stub.OnSend = (req, ct) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (url.Contains("content=sensors") && url.Contains("count=1&"))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"": 3, ""sensors"": [{""objid"": 10}]}"));
-            if (url.Contains("columns=objid,dependency"))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
-                    @"{""treesize"": 3, ""sensors"": [{""objid"": 1, ""dependency"": ""200""}, {""objid"": 2}, {""objid"": 3}]}"));
-            return inner(req, ct);
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.Contains(console.Lines, l => l.Contains("有設定相依性的 Sensor 數：1 / 3"));
-        Assert.DoesNotContain(console.Lines, l => l.Contains("僅取樣到") && l.Contains("下列比例僅供參考"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟4逾時後繼續後續探測且不查全站五萬顆()
-    {
-        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
-        var inner = stub.OnSend;
-        stub.OnSend = async (req, ct) =>
-        {
-            if (req.RequestUri!.ToString().Contains("columns=objid,dependency"))
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
-                throw new InvalidOperationException("不應回到此處");
-            }
-            return await inner(req, ct);
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunCoreAsync(client, console, TimeSpan.FromMilliseconds(80));
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("相依性樣本查詢逾時") && l.Contains("未驗證"));
-        Assert.Contains(console.Lines, l => l.StartsWith("[5] 群組樹概要"));
-        Assert.Contains(stub.RequestedUrls, u => u.Contains("columns=objid,dependency&count=100&start=0"));
-        Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("columns=objid,dependency&count=50000"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟4分批查詢並回報每批進度()
-    {
-        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
-        var inner = stub.OnSend;
-        stub.OnSend = (req, ct) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (url.Contains("content=sensors") && url.Contains("count=1&"))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"":250,""sensors"":[{""objid"":1}]}"));
-            if (url.Contains("columns=objid,dependency"))
-            {
-                var start = int.Parse(url.Split("start=")[1].Split('&')[0]);
-                var count = Math.Min(100, 250 - start);
-                var rows = Enumerable.Range(start + 1, count)
-                    .Select(id => $"{{\"objid\":{id},\"dependency\":\"{(id == 1 ? "200" : "0")}\"}}");
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
-                    $"{{\"treesize\":250,\"sensors\":[{string.Join(',', rows)}]}}"));
-            }
-            return inner(req, ct);
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        Assert.True(await PrtgProbeRunner.RunAsync(client, console));
-        Assert.Contains(console.Lines, l => l.Contains("相依性進度：已查 1 批、100/250"));
-        Assert.Contains(console.Lines, l => l.Contains("相依性進度：已查 2 批、200/250"));
-        Assert.Contains(console.Lines, l => l.Contains("相依性進度：已查 3 批、250/250"));
-        Assert.Contains(console.Lines, l => l.Contains("有設定相依性的 Sensor 數：1 / 250"));
-        Assert.Equal(3, stub.RequestedUrls.Count(u => u.Contains("columns=objid,dependency&count=100&start=")));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟4忽略start時停止重複取樣()
-    {
-        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
-        var inner = stub.OnSend;
-        stub.OnSend = (req, ct) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (url.Contains("content=sensors") && url.Contains("count=1&"))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, @"{""treesize"":250,""sensors"":[{""objid"":1}]}"));
-            if (url.Contains("columns=objid,dependency"))
-            {
-                var rows = Enumerable.Range(1, 100).Select(id => $"{{\"objid\":{id},\"dependency\":\"0\"}}");
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
-                    $"{{\"treesize\":250,\"sensors\":[{string.Join(',', rows)}]}}"));
-            }
-            return inner(req, ct);
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        Assert.True(await PrtgProbeRunner.RunAsync(client, console));
-        Assert.Contains(console.Lines, l => l.Contains("分頁可能被忽略"));
-        Assert.Contains(console.Lines, l => l.Contains("有設定相依性的 Sensor 數：0 / 100") && l.Contains("未驗證"));
-        Assert.Equal(2, stub.RequestedUrls.Count(u => u.Contains("columns=objid,dependency&count=100&start=")));
+        Assert.Contains(console.Lines, l => l.Contains("devices 順序穩定、超界回空頁"));
     }
 
     [Fact]
@@ -868,84 +660,6 @@ public class PrtgProbeRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_步驟9_相容性探測產出BeginEnd區塊且包含有效JSON()
-    {
-        var stub = BuildPerfStub(SensorRows(5, type: "SNMP CPU Load"), url =>
-        {
-            if (url.Contains("/api/historicdata.json"))
-                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 15.5}]}");
-            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
-                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""15%""}]}");
-            return null;
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l == PrtgCompatibilityProbe.BeginMarker);
-        Assert.Contains(console.Lines, l => l == PrtgCompatibilityProbe.EndMarker);
-
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        Assert.True(endIdx > beginIdx + 1);
-
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var root = doc.RootElement;
-        Assert.Equal("1.0.0", root.GetProperty("schema_version").GetString());
-        Assert.True(root.TryGetProperty("summary", out _));
-        Assert.False(root.GetProperty("evidence_ready").GetBoolean());
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_採樣上限最多五類且歷史查詢共用預算()
-    {
-        var sensors = TypedSensorRows(
-            ("SNMP CPU Load", 5),
-            ("SNMP Memory", 5),
-            ("SNMP Disk Free", 5),
-            ("Ping", 10),
-            ("SNMP Traffic 64bit", 10));
-
-        var stub = BuildPerfStub(sensors, url =>
-        {
-            if (url.Contains("/api/historicdata.json"))
-                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
-            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
-                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""12%""}]}");
-            return null;
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var root = doc.RootElement;
-        Assert.Equal(5, root.GetProperty("summary").GetProperty("target_categories_count").GetInt32());
-        Assert.Equal(5, root.GetProperty("summary").GetProperty("targeted_sensors_count").GetInt32());
-        Assert.Equal(0, root.GetProperty("summary").GetProperty("targets_missing").GetInt32());
-        Assert.Collection(root.GetProperty("targets").EnumerateArray(),
-            t => { Assert.Equal("s1", t.GetProperty("alias").GetString()); Assert.Equal("cpu", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s2", t.GetProperty("alias").GetString()); Assert.Equal("memory", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s3", t.GetProperty("alias").GetString()); Assert.Equal("disk", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s4", t.GetProperty("alias").GetString()); Assert.Equal("ping", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s5", t.GetProperty("alias").GetString()); Assert.Equal("traffic", t.GetProperty("category").GetString()); Assert.NotEqual("missing", t.GetProperty("status").GetString()); });
-
-        var hourlyJsonCalls = stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.json"));
-        var rawXmlCalls = stub.RequestedUrls.Count(u => u.Contains("/api/historicdata.xml"));
-        Assert.Equal(5, hourlyJsonCalls);
-        Assert.Equal(5, rawXmlCalls);
-        Assert.Equal(10, hourlyJsonCalls + rawXmlCalls);
-    }
-
-    [Fact]
     public async Task RunAsync_步驟9_不發出舊版壓測請求()
     {
         var stub = BuildPerfStub(SensorRows(10));
@@ -959,314 +673,6 @@ public class PrtgProbeRunnerTests
         Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("content=messages") && (u.Contains("id=0&") || u.Contains("id=0")));
         Assert.DoesNotContain(console.Lines, l => l.Contains("9a：") || l.Contains("9b：") || l.Contains("9c："));
         Assert.DoesNotContain(console.Lines, l => l.Contains("本步驟會發 87 次 historicdata"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_無可用目標感測器時略過且探測仍回true()
-    {
-        // An unselected sensor type leaves all five exact target categories absent.
-        var stub = BuildPerfStub(SensorRows(3, type: "HTTP"));
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l == PrtgCompatibilityProbe.BeginMarker);
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var root = doc.RootElement;
-        Assert.Equal("unknown", root.GetProperty("status").GetString());
-        Assert.Equal(5, root.GetProperty("summary").GetProperty("target_categories_count").GetInt32());
-        Assert.Equal(0, root.GetProperty("summary").GetProperty("targeted_sensors_count").GetInt32());
-        Assert.Equal(5, root.GetProperty("summary").GetProperty("targets_missing").GetInt32());
-        var targets = root.GetProperty("targets");
-        Assert.Collection(targets.EnumerateArray(),
-            t => { Assert.Equal("s1", t.GetProperty("alias").GetString()); Assert.Equal("cpu", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s2", t.GetProperty("alias").GetString()); Assert.Equal("memory", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s3", t.GetProperty("alias").GetString()); Assert.Equal("disk", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s4", t.GetProperty("alias").GetString()); Assert.Equal("ping", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); },
-            t => { Assert.Equal("s5", t.GetProperty("alias").GetString()); Assert.Equal("traffic", t.GetProperty("category").GetString()); Assert.Equal("missing", t.GetProperty("status").GetString()); });
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_支援傳入證據環境Context()
-    {
-        var stub = BuildPerfStub(SensorRows(3, type: "Ping"));
-        var context = new PrtgProbeEvidenceContext
-        {
-            BuildVersion = "1.2.3.4",
-            PrtgBaseUrlFingerprint = new string('a', 64),
-            StorageEngine = "sqlite",
-            EfCoreProvider = "Microsoft.EntityFrameworkCore.Sqlite",
-            SettingsRevision = Guid.Parse("d2719dfc-2026-4104-8000-000000000001").ToString("N"),
-            DataRetentionDays = 30
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console, context);
-
-        Assert.True(result);
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var root = doc.RootElement;
-        Assert.Equal("1.2.3.4", root.GetProperty("build_version").GetString());
-        Assert.Equal(new string('a', 64), root.GetProperty("source_fingerprint").GetString());
-        Assert.Equal("Sqlite", root.GetProperty("storage_provider").GetString());
-        Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", root.GetProperty("ef_core_provider").GetString());
-        Assert.Equal(Guid.Parse("d2719dfc-2026-4104-8000-000000000001").ToString("N"), root.GetProperty("settings_revision").GetString());
-        Assert.Equal(30, root.GetProperty("retention_days").GetInt32());
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_帶尾端加號版本與caption欄位關係且保留未知時間基準()
-    {
-        var sensors = TypedSensorRows(("SNMP CPU Load", 1), ("SNMP Memory", 1), ("SNMP Disk Free", 1));
-        var stub = BuildPerfStub(sensors, url =>
-        {
-            if (url.Contains("/api/status.json"))
-                return JsonResponse(HttpStatusCode.OK, @"{""prtg-version"": ""24.1.92.1554+""}");
-
-            if (url.Contains("content=sensors") && url.Contains("filter_objid="))
-            {
-                var id = url.Split("filter_objid=")[1].Split('&')[0];
-                var lastcheck = id switch
-                {
-                    "1" => "2026-10-04T06:02:03+02:00",
-                    "2" => "CUSTOMER_SECRET_TIMESTAMP",
-                    _ => "2026-10-04 01:02:03 CUSTOMER_SECRET"
-                };
-                return JsonResponse(HttpStatusCode.OK, $@"{{""sensors"": [{{
-                    ""objid"": {id}, ""type"": ""SNMP CPU Load"", ""status"": ""Up"", ""status_raw"": 3,
-                    ""lastvalue_raw"": 42.5, ""lastcheck"": ""{lastcheck}"", ""lastcheck_raw"": 46300.04309,
-                    ""interval"": ""60 s"", ""interval_raw"": 60, ""primarychannel"": 7, ""private_metadata"": ""CUSTOMER_SECRET""
-                }}]}}");
-            }
-
-            if (url.Contains("content=channels"))
-                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [
-                    {""objid"": 7, ""name"": ""CPU Total""},
-                    {""objid"": 8, ""name"": ""CPU Load""},
-                    {""objid"": 9, ""name"": ""CPU Cores""},
-                    {""objid"": 10, ""name"": ""Percent Available Memory""},
-                    {""objid"": 11, ""name"": ""Free Disk""},
-                    {""objid"": 12, ""name"": ""private-host-name""},
-                    {""objid"": 13, ""name"": ""Host 192.168.1.5""}
-                ]}");
-
-            if (url.Contains("/api/historicdata.json"))
-                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{
-                    ""datetime"": ""10/4/2026 12:00:00 AM - 1:00:00 AM"", ""datetime_raw"": 46300.04167,
-                    ""CPU Total"": 42, ""CPU Total_raw"": 42.5,
-                    ""Percent Available Memory"": 24, ""Percent Available Memory_raw"": 24.5,
-                    ""coverage_raw"": 10000
-                }, {
-                    ""datetime"": ""<span title='2026-10-04 01:00:00'>CUSTOMER_SECRET</span>"", ""value"": 1, ""value_raw"": 1.1,
-                    ""value"": 2, ""value_raw"": 2.2, ""coverage_raw"": 10000
-                }, {
-                    ""datetime"": ""2026/10/4 上午 1:00:00 - 下午 2:00:00"", ""datetime_raw"": 46300.04167,
-                    ""coverage_raw"": 10000
-                }]}");
-
-            return null;
-        });
-        var context = new PrtgProbeEvidenceContext
-        {
-            BuildVersion = "1.0.53.1+332e879117ec9e0c555f8747a14fff432f5be856",
-            SourceFingerprint = new string('b', 64),
-            StorageProvider = "Sqlite",
-            EfCoreProvider = "Microsoft.EntityFrameworkCore.Sqlite",
-            SettingsRevision = "d2719dfc202641048000000000000001",
-            RetentionDays = 180,
-            ScopeSummary = "unknown (bounded scope withheld)",
-            ReadinessSummary = "unknown (not authoritative)"
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console, context);
-
-        Assert.True(result);
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var root = doc.RootElement;
-        Assert.Equal("24.1.92.1554+", root.GetProperty("source_prtg_version").GetString());
-        Assert.Equal("Sqlite", root.GetProperty("storage_provider").GetString());
-        Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", root.GetProperty("ef_core_provider").GetString());
-        Assert.Equal(180, root.GetProperty("retention_days").GetInt32());
-        Assert.True(root.TryGetProperty("deployment_resources", out _));
-        Assert.False(root.GetProperty("evidence_ready").GetBoolean());
-        Assert.Contains("時間欄位基準未確認", root.GetProperty("historical_date_boundary").GetProperty("limitations").GetString());
-
-        const string batchColumns = "columns=objid,lastvalue,interval,lastcheck,status,primarychannel";
-        var batchUrls = stub.RequestedUrls.Where(u => u.Contains(batchColumns, StringComparison.Ordinal)).ToList();
-        var legacyBatchUrls = stub.RequestedUrls.Where(u => u.Contains("columns=objid,parentid,type,status,lastvalue,lastcheck,interval,cumsince", StringComparison.Ordinal)).ToList();
-        var snapshotUrls = stub.RequestedUrls.Where(u => u.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval,primarychannel", StringComparison.Ordinal)).ToList();
-        Assert.Single(batchUrls);
-        Assert.Contains("count=4", batchUrls[0]);
-        Assert.Single(legacyBatchUrls);
-        Assert.Contains("count=4", legacyBatchUrls[0]);
-        Assert.False(root.GetProperty("sensor_batch_identity").GetProperty("authorizes_formal_profile").GetBoolean());
-        Assert.True(root.GetProperty("sensor_batch_identity").GetProperty("exact_requested_set").ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False);
-        Assert.False(root.GetProperty("snapshot_batch100_identity").GetProperty("capacity_accepted").GetBoolean());
-        Assert.False(root.GetProperty("snapshot_batch100_identity").GetProperty("profile_authorized").GetBoolean());
-        Assert.False(root.GetProperty("snapshot_batch100_identity").GetProperty("full_batch100_observed").GetBoolean());
-        Assert.Equal(3, snapshotUrls.Count);
-        Assert.All(snapshotUrls, u => Assert.Contains("columns=objid,type,status,lastvalue_raw,lastcheck,interval,primarychannel", u));
-        Assert.All(snapshotUrls, u => Assert.DoesNotContain("status_raw", u));
-        Assert.All(snapshotUrls, u => Assert.DoesNotContain("lastcheck_raw", u));
-        Assert.All(snapshotUrls, u => Assert.DoesNotContain("interval_raw", u));
-        Assert.All(stub.RequestedUrls.Where(u => u.Contains("content=channels")), u => Assert.Contains("columns=objid,name,", u));
-        Assert.All(stub.RequestedUrls.Where(u => u.Contains("/api/historicdata.json")), u => Assert.Contains("usecaption=1", u));
-
-        var cpu = root.GetProperty("targets").EnumerateArray().Single(t => t.GetProperty("category").GetString() == "cpu");
-        Assert.Equal("global-compatibility-sample", cpu.GetProperty("selection_scope").GetString());
-        var snapshot = cpu.GetProperty("snapshot");
-        Assert.True(snapshot.GetProperty("status").GetString() == "ok",
-            $"Expected a successful snapshot response; bounded evidence was: {snapshot.GetRawText()}");
-        Assert.Equal(1, snapshot.GetProperty("returned_fields").EnumerateArray().Count(f => f.GetString() == "status"));
-        Assert.Equal(1, snapshot.GetProperty("fields").EnumerateArray().Count(f => f.GetProperty("field").GetString() == "lastcheck_raw"));
-        var snapshotRawDate = snapshot.GetProperty("fields").EnumerateArray()
-            .Single(f => f.GetProperty("field").GetString() == "lastcheck_raw");
-        Assert.Equal("unknown", snapshotRawDate.GetProperty("timestamp_basis").GetString());
-        Assert.Equal("prtg-raw-date-time", snapshotRawDate.GetProperty("timestamp_candidates")[0].GetProperty("format").GetString());
-        Assert.Equal(snapshotRawDate.GetProperty("timestamp_components").GetString(),
-            snapshotRawDate.GetProperty("timestamp_candidates")[0].GetProperty("start_components").GetString());
-        var snapshotDate = snapshot.GetProperty("fields").EnumerateArray()
-            .Single(f => f.GetProperty("field").GetString() == "lastcheck");
-        Assert.Equal("2026-10-04T06:02:03.000", snapshotDate.GetProperty("timestamp_components").GetString());
-        Assert.Equal("+02:00", snapshotDate.GetProperty("timestamp_candidates")[0].GetProperty("reported_offset").GetString());
-
-        var channels = cpu.GetProperty("channels").GetProperty("rows").EnumerateArray().ToList();
-        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "cpu total" && c.GetProperty("semantic_known").GetBoolean());
-        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "percent available memory" && c.GetProperty("semantic_known").GetBoolean());
-        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "free disk" && c.GetProperty("semantic_known").GetBoolean());
-        Assert.Contains(channels, c => c.GetProperty("semantic_name").GetString() == "[redacted]" && !c.GetProperty("semantic_known").GetBoolean());
-        Assert.All(channels, c => Assert.Contains("unit", c.GetProperty("missing_fields").EnumerateArray().Select(f => f.GetString())));
-        Assert.All(channels, c => Assert.Contains("scaling", c.GetProperty("missing_fields").EnumerateArray().Select(f => f.GetString())));
-        Assert.All(channels, c => Assert.Contains("primary", c.GetProperty("missing_fields").EnumerateArray().Select(f => f.GetString())));
-
-        var history = cpu.GetProperty("history");
-        Assert.Equal("partial", history.GetProperty("status").GetString());
-        var entries = history.GetProperty("rows")[0].GetProperty("entries").EnumerateArray().ToList();
-        Assert.Contains(entries, e => e.GetProperty("name").GetString() == "channel_value_raw" &&
-            e.GetProperty("semantic_label").GetString() == "cpu total" && e.GetProperty("semantic_known").GetBoolean());
-        Assert.Contains(entries, e => e.GetProperty("name").GetString() == "datetime_raw" &&
-            e.GetProperty("timestamp_basis").GetString() == "unknown");
-        var ambiguousRange = entries.Single(e => e.GetProperty("name").GetString() == "datetime");
-        Assert.Equal("datetime_candidates", ambiguousRange.GetProperty("type").GetString());
-        Assert.Equal(2, ambiguousRange.GetProperty("timestamp_candidates").GetArrayLength());
-        Assert.Contains(ambiguousRange.GetProperty("timestamp_candidates").EnumerateArray(),
-            candidate => candidate.GetProperty("format").GetString()!.StartsWith("mdy-range", StringComparison.Ordinal));
-        Assert.Contains(ambiguousRange.GetProperty("timestamp_candidates").EnumerateArray(),
-            candidate => candidate.GetProperty("format").GetString()!.StartsWith("dmy-range", StringComparison.Ordinal));
-        var uncaptionedValues = history.GetProperty("rows")[1].GetProperty("entries").EnumerateArray()
-            .Where(e => e.GetProperty("name").GetString() == "value_raw").ToList();
-        Assert.Equal(2, uncaptionedValues.Count);
-        Assert.All(uncaptionedValues, e =>
-        {
-            Assert.Equal("[unknown]", e.GetProperty("semantic_label").GetString());
-            Assert.False(e.GetProperty("semantic_known").GetBoolean());
-        });
-        var chineseRange = history.GetProperty("rows")[2].GetProperty("entries").EnumerateArray()
-            .Single(e => e.GetProperty("name").GetString() == "datetime");
-        var chineseCandidate = chineseRange.GetProperty("timestamp_candidates")[0];
-        Assert.Equal("2026-10-04T01:00:00.000", chineseCandidate.GetProperty("start_components").GetString());
-        Assert.Equal("14:00:00.000", chineseCandidate.GetProperty("end_components").GetString());
-        var targets = root.GetProperty("targets").EnumerateArray().ToList();
-        Assert.Equal(5, root.GetProperty("summary").GetProperty("target_categories_count").GetInt32());
-        Assert.Equal(3, root.GetProperty("summary").GetProperty("targeted_sensors_count").GetInt32());
-        Assert.Equal(2, root.GetProperty("summary").GetProperty("targets_missing").GetInt32());
-        Assert.Collection(targets,
-            target => { Assert.Equal("s1", target.GetProperty("alias").GetString()); Assert.Equal("cpu", target.GetProperty("category").GetString()); Assert.NotEqual("missing", target.GetProperty("status").GetString()); },
-            target => { Assert.Equal("s2", target.GetProperty("alias").GetString()); Assert.Equal("memory", target.GetProperty("category").GetString()); Assert.NotEqual("missing", target.GetProperty("status").GetString()); },
-            target => { Assert.Equal("s3", target.GetProperty("alias").GetString()); Assert.Equal("disk", target.GetProperty("category").GetString()); Assert.NotEqual("missing", target.GetProperty("status").GetString()); },
-            target => { Assert.Equal("s4", target.GetProperty("alias").GetString()); Assert.Equal("ping", target.GetProperty("category").GetString()); Assert.Equal("missing", target.GetProperty("status").GetString()); },
-            target => { Assert.Equal("s5", target.GetProperty("alias").GetString()); Assert.Equal("traffic", target.GetProperty("category").GetString()); Assert.Equal("missing", target.GetProperty("status").GetString()); });
-
-        var nonCpuAcquired = targets.Where(t =>
-            t.GetProperty("category").GetString() != "cpu" &&
-            t.GetProperty("status").GetString() != "missing").ToList();
-        Assert.Equal(2, nonCpuAcquired.Count);
-        Assert.All(nonCpuAcquired, target => Assert.Contains("invalid_datetime_string",
-            target.GetProperty("snapshot").GetProperty("fields").EnumerateArray()
-                .Single(f => f.GetProperty("field").GetString() == "lastcheck").GetProperty("value_type").GetString()));
-        var missingTargets = targets.Where(t => t.GetProperty("status").GetString() == "missing").ToList();
-        Assert.Equal(2, missingTargets.Count);
-        Assert.All(missingTargets, target =>
-        {
-            Assert.False(target.TryGetProperty("snapshot", out var missingSnapshot) &&
-                missingSnapshot.ValueKind != System.Text.Json.JsonValueKind.Null);
-            Assert.False(target.TryGetProperty("channels", out var missingChannels) &&
-                missingChannels.ValueKind != System.Text.Json.JsonValueKind.Null);
-            Assert.False(target.TryGetProperty("history", out var missingHistory) &&
-                missingHistory.ValueKind != System.Text.Json.JsonValueKind.Null);
-            Assert.False(target.TryGetProperty("identity_preserving_raw_history", out var missingRawHistory) &&
-                missingRawHistory.ValueKind != System.Text.Json.JsonValueKind.Null);
-        });
-        var cpuRawHistory = cpu.GetProperty("identity_preserving_raw_history");
-        Assert.Equal("unknown", cpuRawHistory.GetProperty("RawTimestampBasis").GetString());
-        Assert.False(cpuRawHistory.GetProperty("AuthorizesFormalProfile").GetBoolean());
-        Assert.DoesNotContain("CUSTOMER_SECRET", jsonText);
-        Assert.DoesNotContain("CUSTOMER_SECRET_TIMESTAMP", jsonText);
-        Assert.DoesNotContain("private-host-name", jsonText);
-        Assert.DoesNotContain("192.168.1.5", jsonText);
-        Assert.DoesNotContain("2026-10-04T01:00:00.000Z", jsonText);
-    }
-    /// <summary>
-    /// 相依性查詢回非 JSON（錯誤頁、登入頁）時，只印「無法解析」看不出回了什麼；
-    /// 長度與開頭是實機唯一能判斷對方到底回什麼的線索。
-    /// </summary>
-    [Fact]
-    public async Task RunAsync_步驟4_回應無法解析時印長度與開頭()
-    {
-        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
-        var inner = stub.OnSend;
-        stub.OnSend = (req, ct) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (url.Contains("columns=objid,dependency"))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "not json at all"));
-            return inner(req, ct);
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("回應無法解析：長度") && l.Contains("bytes"));
-        Assert.Contains(console.Lines, l => l.Contains("開頭：not json at all"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟4_回應HTML時擲例外且步驟失敗()
-    {
-        const string html = @"<HTML><BODY class=""no-content""><B class=""no-content"">OK</B></BODY></HTML>";
-        var stub = BuildPagingStub((_, _) => Array.Empty<long>());
-        var inner = stub.OnSend;
-        stub.OnSend = (req, ct) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (url.Contains("columns=objid,dependency"))
-                return Task.FromResult(JsonResponse(HttpStatusCode.OK, html));
-            return inner(req, ct);
-        };
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.False(result);
-        Assert.Contains(console.Lines, l => l.Contains("失敗：PRTG 回傳 HTML 而非 JSON") && l.Contains("no-content"));
-        Assert.Contains(console.Lines, l => l.Contains("探測失敗"));
     }
 
     [Fact]
@@ -1356,13 +762,9 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         var result = await PrtgProbeRunner.RunAsync(client, console);
 
-        foreach (var line in console.Lines.Where(l => l.Contains("messages：")))
-            _output.WriteLine(line);
-
         Assert.True(result);
-        Assert.Contains(console.Lines, l => l.Contains("messages：頁內 datetime 單調＝是（遞減）"));
-        Assert.Contains(console.Lines, l => l.Contains("messages：✓ 依時間排序、順序穩定，分頁可行（列鍵含時間）"));
-        Assert.DoesNotContain(console.Lines, l => l.Contains("messages：✗ sortby=objid 無效"));
+        Assert.Contains(console.Lines, l => l.Contains("messages 依時間排序"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("messages ⚠ 順序不依時間"));
         // messages 要多帶 datetime；devices／sensors 不能多帶一個它們沒有的欄位
         Assert.Contains(stub.RequestedUrls, u => u.Contains("content=messages") && u.Contains("columns=objid,datetime"));
         Assert.DoesNotContain(stub.RequestedUrls, u => u.Contains("content=devices") && u.Contains("datetime"));
@@ -1387,130 +789,7 @@ public class PrtgProbeRunnerTests
         var console = new TestConsole();
         await PrtgProbeRunner.RunAsync(client, console);
 
-        Assert.Contains(console.Lines, l => l.Contains("messages：頁內 datetime 單調＝否（不單調）"));
-        Assert.Contains(console.Lines, l => l.Contains("messages：⚠ 頁內順序不依時間也不依 objid，分頁可能漏列"));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_產出JSON體積小於64KiB且符合架構約束()
-    {
-        var sensors = TypedSensorRows(
-            ("SNMP CPU Load", 1),
-            ("SNMP Memory", 1),
-            ("SNMP Disk Free", 1));
-
-        var stub = BuildPerfStub(sensors, url =>
-        {
-            if (url.Contains("/api/historicdata.json"))
-                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
-            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
-                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""12%""}]}");
-            return null;
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-
-        var byteCount = Encoding.UTF8.GetByteCount(jsonText);
-        Assert.True(byteCount <= 64 * 1024, $"JSON byte count {byteCount} exceeds 64KiB");
-
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var root = doc.RootElement;
-        Assert.Equal("1.0.0", root.GetProperty("schema_version").GetString());
-        Assert.True(root.TryGetProperty("build_version", out _));
-        Assert.True(root.TryGetProperty("source_fingerprint", out _));
-        Assert.True(root.TryGetProperty("summary", out _));
-        Assert.True(root.TryGetProperty("targets", out _));
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_感測器ID使用別名且不外洩原始objid()
-    {
-        var customSensors = @"{""sensors"": [
-            {""objid"": 777777, ""type"": ""SNMP CPU Load"", ""status"": ""Up"", ""parentid"": 1},
-            {""objid"": 888888, ""type"": ""SNMP Memory"", ""status"": ""Up"", ""parentid"": 1},
-            {""objid"": 999999, ""type"": ""SNMP Disk Free"", ""status"": ""Up"", ""parentid"": 1}
-        ]}";
-
-        var stub = BuildPerfStub(customSensors, url =>
-        {
-            if (url.Contains("/api/historicdata.json"))
-                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
-            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
-                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [{""channel"": ""Total"", ""lastvalue"": ""12%""}]}");
-            return null;
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-
-        Assert.DoesNotContain("777777", jsonText);
-        Assert.DoesNotContain("888888", jsonText);
-        Assert.DoesNotContain("999999", jsonText);
-
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var targets = doc.RootElement.GetProperty("targets");
-        var aliases = targets.EnumerateArray().Select(t => t.GetProperty("alias").GetString()).ToList();
-        Assert.Contains("s1", aliases);
-        Assert.Contains("s2", aliases);
-        Assert.Contains("s3", aliases);
-    }
-
-    [Fact]
-    public async Task RunAsync_步驟9_通道名稱嚴格過濾非白名單文字()
-    {
-        var sensors = TypedSensorRows(("SNMP CPU Load", 1));
-
-        var stub = BuildPerfStub(sensors, url =>
-        {
-            if (url.Contains("/api/historicdata.json"))
-                return JsonResponse(HttpStatusCode.OK, @"{""histdata"": [{""datetime"": ""2026-10-01 10:00:00"", ""value_raw"": 12.0}]}");
-            if (url.Contains("/api/table.json") && url.Contains("content=channels"))
-            {
-                return JsonResponse(HttpStatusCode.OK, @"{""channels"": [
-                    {""channel"": ""Confidential Customer Host Core"", ""lastvalue"": ""12%""},
-                    {""channel"": ""Total Memory"", ""lastvalue"": ""16 GB""}
-                ]}");
-            }
-            return null;
-        });
-
-        using var client = new PrtgClient(BaseUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var console = new TestConsole();
-        var result = await PrtgProbeRunner.RunAsync(client, console);
-
-        Assert.True(result);
-        var beginIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.BeginMarker);
-        var endIdx = console.Lines.IndexOf(PrtgCompatibilityProbe.EndMarker);
-        var jsonText = string.Join("\n", console.Lines.Skip(beginIdx + 1).Take(endIdx - beginIdx - 1)).Trim();
-
-        Assert.DoesNotContain("Confidential", jsonText);
-        Assert.DoesNotContain("Customer Host", jsonText);
-
-        using var doc = System.Text.Json.JsonDocument.Parse(jsonText);
-        var targets = doc.RootElement.GetProperty("targets");
-        var s1 = targets.EnumerateArray().First(t => t.GetProperty("alias").GetString() == "s1");
-        var channels = s1.GetProperty("channels").GetProperty("rows");
-
-        var firstRow = channels[0];
-        Assert.Equal("[redacted]", firstRow.GetProperty("semantic_name").GetString());
-        Assert.False(firstRow.GetProperty("semantic_known").GetBoolean());
-
-        var secondRow = channels[1];
-        Assert.Equal("total memory", secondRow.GetProperty("semantic_name").GetString());
-        Assert.True(secondRow.GetProperty("semantic_known").GetBoolean());
+        Assert.Contains(console.Lines, l => l.Contains("messages ⚠ 順序不依時間（可能漏列）"));
     }
 
     [Fact]
@@ -1635,7 +914,7 @@ public class PrtgProbeRunnerTests
 
         Assert.True(result);
         Assert.DoesNotContain(stub.RequestedUrls, IsStep8MessagesUrl);
-        Assert.Contains(console.Lines, l => l.Contains("messages：略過（沒有可用的裝置樣本，無法以單一裝置診斷）"));
+        Assert.Contains(console.Lines, l => l.Contains("messages 略過（沒有可用的裝置樣本）"));
         Assert.Contains(console.Lines, l => l.Contains("9d-5：略過（沒有可用的裝置樣本）"));
     }
 

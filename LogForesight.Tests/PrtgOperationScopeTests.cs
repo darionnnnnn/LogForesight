@@ -17,7 +17,7 @@ public class PrtgOperationScopeTests
         using var scope = new PrtgOperationScope(initial, () => current, default, () => scopeRevision, kind);
         scope.Checkpoint(); scope.CompletedStage("第一批提交完成");
         scopeRevision = "new-scope"; current.Revision = "after";
-        var version = Assert.Single(PrtgOperationScope.ReadVersions().Where(v => v.Kind == kind));
+        var version = Assert.Single(PrtgOperationScope.ReadVersions(), v => v.Kind == kind);
         Assert.Equal("before", version.AdoptedSettingsRevision); Assert.Equal("after", version.ExpectedSettingsRevision);
         Assert.NotEqual(version.AdoptedScopeRevision, version.ExpectedScopeRevision);
         Assert.Equal("等待安全取消點", version.State); Assert.Equal("第一批提交完成", version.LastCompletedStage);
@@ -25,7 +25,7 @@ public class PrtgOperationScopeTests
         Assert.DoesNotContain("PRIVATE-TOKEN", json); Assert.DoesNotContain("private.example", json);
         Assert.Throws<OperationCanceledException>(scope.Checkpoint);
         scope.Dispose();
-        version = Assert.Single(PrtgOperationScope.ReadVersions().Where(v => v.Kind == kind));
+        version = Assert.Single(PrtgOperationScope.ReadVersions(), v => v.Kind == kind);
         Assert.NotNull(version.EndedAtUtc); Assert.Contains("已取消", version.State);
     }
     [Fact]

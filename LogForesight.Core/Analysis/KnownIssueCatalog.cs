@@ -132,6 +132,9 @@ public class KnownIssueRule
     /// <summary>磁碟可用空間趨勢專用門檻；只供 disk_free_trend 使用，與分鐘／次數門檻完全分離。</summary>
     public PrtgDiskTrendThresholds? PrtgDiskTrendThresholds { get; init; }
 
+    /// <summary>趨勢專用門檻（只供三條趨勢規則）。</summary>
+    public PrtgTrendThresholds? PrtgTrendThresholds { get; init; }
+
     /// <summary>PRTG 規則適用的 sensor 語意分類（見 <see cref="PrtgSensorCategories"/>）；null＝不限分類。
     /// 同一代碼可同時有不限分類的規則與分類規則，評估時分類相符者優先（見 PrtgRuleEvaluator）。
     /// silent 規則與非 prtg 規則恆為 null（由 RuleValidator 把關）。</summary>
@@ -215,6 +218,7 @@ public class KnownIssueRule
         PrtgRuleCode = PrtgRuleCode,
         PrtgThreshold = PrtgThreshold,
         PrtgDiskTrendThresholds = PrtgDiskTrendThresholds,
+        PrtgTrendThresholds = PrtgTrendThresholds,
         PrtgSensorCategory = PrtgSensorCategory,
         Category = Category,
         Severity = Severity,
@@ -377,10 +381,7 @@ public static class KnownIssueCatalog
     {
         if (string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase))
             return PrtgFindingMapper.TryGetRuleCode(source, out var code) &&
-                   (string.Equals(code, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase) ||
-                    rule.Id == "builtin-prtg-resource-disk-pressure" &&
-                    string.Equals(rule.PrtgRuleCode, PrtgRuleEvaluator.RuleResourceDiskPressure, StringComparison.Ordinal) &&
-                    string.Equals(code, PrtgRuleEvaluator.RuleDiskFreeTrend, StringComparison.Ordinal));
+                   string.Equals(code, rule.PrtgRuleCode, StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(rule.Platform, "linux", StringComparison.OrdinalIgnoreCase))
             return source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase);
@@ -393,6 +394,8 @@ public static class KnownIssueCatalog
     {
         if (PrtgFindingMapper.TryGetRuleCode(source, out var prtgCode))
         {
+            // 已退役的規則代碼：歷史 finding 保留可讀，說明一律回「規則已移除」，不沿用停用列的舊說明。
+            if (PrtgRuleCatalog.IsRetired(prtgCode)) return PrtgRuleCatalog.RetiredRuleNote;
             var prtgRule = FindPrtgRuleByCode(rules, prtgCode);
             return string.IsNullOrWhiteSpace(prtgRule?.PlainExplanation) ? null : prtgRule.PlainExplanation;
         }

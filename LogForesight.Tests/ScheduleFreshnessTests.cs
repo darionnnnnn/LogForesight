@@ -41,11 +41,11 @@ public class ScheduleFreshnessTests
             "排程未啟用",
             false, // scheduleEnabled
             100,   // scheduleUpdatedHoursAgo
-            null,  // ackedDaysFromNow
+            null!, // ackedDaysFromNow
             Array.Empty<RunSpec>(),
             false, // expectedStale
             false, // expectedAcked
-            null   // expectedLastSuccessHoursAgo
+            null!  // expectedLastSuccessHoursAgo
         };
 
         // 2. 最近成功在 30 小時前 → Stale=false, Acked=false, LastSuccessAt = now-30h
@@ -54,7 +54,7 @@ public class ScheduleFreshnessTests
             "最近成功在 30 小時前",
             true,
             100,
-            null,
+            null!,
             new[] { new RunSpec(31, 30) },
             false,
             false,
@@ -67,7 +67,7 @@ public class ScheduleFreshnessTests
             "最近成功在 72 小時前",
             true,
             100,
-            null,
+            null!,
             new[] { new RunSpec(73, 72) },
             true,
             false,
@@ -80,7 +80,7 @@ public class ScheduleFreshnessTests
             "最近一筆是 72 小時前成功、但 10 小時前有一筆 JobType=ai 的成功",
             true,
             100,
-            null,
+            null!,
             new[]
             {
                 new RunSpec(73, 72),
@@ -97,7 +97,7 @@ public class ScheduleFreshnessTests
             "最近一筆 status=warning（WarnCount>0）在 10 小時前",
             true,
             100,
-            null,
+            null!,
             new[] { new RunSpec(11, 10, WarnCount: 1) },
             false,
             false,
@@ -110,7 +110,7 @@ public class ScheduleFreshnessTests
             "最近一筆 failed 在 10 小時前、成功在 72 小時前",
             true,
             100,
-            null,
+            null!,
             new[]
             {
                 new RunSpec(73, 72),
@@ -127,11 +127,11 @@ public class ScheduleFreshnessTests
             "近 14 天無紀錄、排程啟用於 72 小時前",
             true,
             72,
-            null,
+            null!,
             Array.Empty<RunSpec>(),
             true,
             false,
-            null
+            null!
         };
 
         // 8. 近 14 天無紀錄、排程啟用於 10 小時前 → Stale=false, Acked=false, LastSuccessAt = null
@@ -140,11 +140,11 @@ public class ScheduleFreshnessTests
             "近 14 天無紀錄、排程啟用於 10 小時前",
             true,
             10,
-            null,
+            null!,
             Array.Empty<RunSpec>(),
             false,
             false,
-            null
+            null!
         };
 
         // 9. Stale 且 AckedUntil 為明天 → Stale=true, Acked=true
@@ -173,6 +173,7 @@ public class ScheduleFreshnessTests
         bool expectedAcked,
         int? expectedLastSuccessHoursAgo)
     {
+        _ = scenario;
         using var fx = new EfSqliteFixture();
         var optionsBlob = fx.Blob("schedule_options");
         var runs = new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs"));

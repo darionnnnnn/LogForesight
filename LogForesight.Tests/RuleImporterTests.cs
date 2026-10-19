@@ -178,6 +178,7 @@ public class RuleImporterTests
             LikelyCauses = new[] { "舊c" }, NextSteps = new[] { "舊s" },
             PrtgRuleCode = PrtgRuleEvaluator.RuleDown, PrtgThreshold = 60, PrtgSensorCategory = "hardware",
             PrtgDiskTrendThresholds = new PrtgDiskTrendThresholds(11, 0.6, 31, 29, 36, 0.71),
+            PrtgTrendThresholds = new PrtgTrendThresholds(35, 28, 0.4, 0.75, 85, 8, 8, 1.2),
             ModifiedBy = 99, ModifiedAt = new DateTime(2020, 1, 1)
         };
         var seed = new KnownIssueRule
@@ -189,7 +190,9 @@ public class RuleImporterTests
             Description = "新", CountThreshold = 7, PlainExplanation = "新p", Impact = "新i",
             LikelyCauses = new[] { "新c" }, NextSteps = new[] { "新s" },
             PrtgRuleCode = PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgThreshold = 45,
-            PrtgDiskTrendThresholds = new PrtgDiskTrendThresholds(10, 5, 30, 28, 35, 0.70), PrtgSensorCategory = "disk"
+            PrtgDiskTrendThresholds = new PrtgDiskTrendThresholds(10, 5, 30, 28, 35, 0.70),
+            PrtgTrendThresholds = new PrtgTrendThresholds(35, 28, 0.3, 0.70, 90, 7, 7, 1.0),
+            PrtgSensorCategory = "disk"
         };
 
         var plan = RuleImportPlanner.BuildPlan(
@@ -505,6 +508,11 @@ public class RuleImporterTests
         {
             var thresholds = current as PrtgDiskTrendThresholds ?? PrtgDiskTrendThresholds.Provisional;
             return thresholds with { LowWaterPercent = thresholds.LowWaterPercent + 1 };
+        }
+        if (type == typeof(PrtgTrendThresholds))
+        {
+            var thresholds = current as PrtgTrendThresholds ?? PrtgTrendThresholds.MemoryProvisional;
+            return thresholds with { TargetValue = thresholds.TargetValue + 1 };
         }
         throw new InvalidOperationException($"未支援的欄位型別 {type}，請在測試補上差異值產生方式");
     }

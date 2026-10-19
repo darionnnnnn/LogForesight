@@ -1,3 +1,5 @@
+using LogForesight.Core.Service;
+
 namespace LogForesight.Core.Persistence;
 
 /// <summary>夜間派工一趟的彙總（E-1 郵件用 <see cref="PerHandler"/>）</summary>
@@ -75,7 +77,7 @@ public sealed class NightlyDispatch
             // 只有成功寫入的 Warning 才能影響後續趨勢判斷。
             var pairedWarnings = unassigned
                 .Where(IsPrtgWarning)
-                .Where(w => unassigned.Any(t => IsDiskTrend(t) && SameSensor(w, t)))
+                .Where(w => unassigned.Any(t => IsValueTrend(t) && SameSensor(w, t)))
                 .ToList();
             if (pairedWarnings.Count > 0)
             {
@@ -197,9 +199,9 @@ public sealed class NightlyDispatch
         && PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code)
         && string.Equals(code, "warning", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsDiskTrend(LogIssueSignature issue) => PrtgFindingMapper.IsPrtg(issue)
+    private static bool IsValueTrend(LogIssueSignature issue) => PrtgFindingMapper.IsPrtg(issue)
         && PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code)
-        && string.Equals(code, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase);
+        && PrtgRuleCatalog.IsValueTrend(code);
 
     private static bool SameSensor(LogIssueSignature warning, LogIssueSignature trend) =>
         PrtgFindingMapper.TryGetRuleCode(warning.Source, out var warningCode)

@@ -12,746 +12,12 @@ import {
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
-import { initializePrtgQualificationJobs } from '../prtg-qualification-jobs.js';
-import { trustedQualificationOutcome } from '../prtg-maintenance-outcomes.js';
-import { canonicalPrtgChannelId } from '../prtg-channel-identity.js';
-import { applyReadOnlyChannelDiscovery, channelDiscoveryPollOutcome, resumableChannelDiscovery } from '../prtg-channel-discovery-outcomes.js';
+import { initValueReadiness } from './prtg-value-readiness.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
-import { extractProbeEvidenceJson, isProbeEvidenceDownloadable } from '../core/prtg-probe-evidence.js';
 import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
 
-bindTabs(document.getElementById('prtg-tabs'), { hash: true, onChange: name => {
-    if (name === 'probe') queueMicrotask(loadDiskReadiness);
-    if (name === 'timeline-progress') queueMicrotask(loadTimelineProgress);
-    if (name === 'profile-refresh') { queueMicrotask(loadTrustedProfileRefresh); queueMicrotask(loadTrustedProfileBindings); }
-} });
-
-let trustedProfileOffset = 0;
-let trustedBindingOffset = 0;
-async function loadTrustedProfileRefresh() {
-    const status = document.getElementById('prtg-profile-refresh-progress');
-    const rowsRoot = document.getElementById('prtg-profile-refresh-rows');
-    if (!status || !rowsRoot) return;
-    status.textContent = '正在讀取背景進度與 100 筆 profile 狀態…';
-    try {
-        const [progress, page] = await Promise.all([
-            api.get('/api/prtg/monitoring/trusted-sampling/refresh-progress', { silent: true }),
-            api.get(`/api/prtg/monitoring/trusted-sampling/refresh-sensors?offset=${trustedProfileOffset}&limit=100`, { silent: true })
-        ]);
-        const p = progress || {};
-        status.textContent = `所選 ${p.selectedSensors || 0} 顆｜符合條件 ${p.eligibleSensors || 0}｜游標 ${p.cursor || 0}｜符合 ${p.qualified || 0}、等待 ${p.waiting || 0}、不可用 ${p.unavailable || 0}、失敗 ${p.failed || 0}｜表格請求 ${p.rawRequestCount || 0}｜實際請求耗時 ${formatNumber(p.observedRequestSeconds || 0)} 秒｜最近結果 ${p.lastOutcome || '尚未執行'}${p.lastWaitingReason ? `（${p.lastWaitingReason}）` : ''}${p.running ? '｜工作進行中' : ''}${p.nextSweepAtUtc ? `｜下次巡覽 ${p.nextSweepAtUtc}` : ''}`;
-        const rows = Array.isArray(page?.rows) ? page.rows : [];
-        rowsRoot.replaceChildren();
-        for (const row of rows) {
-            const line = document.createElement('div');
-            line.className = 'small py-1 border-bottom';
-            line.textContent = `Sensor #${row.sensorObjid}｜${row.eligible ? '符合巡覽條件' : '目前排除'}｜${row.status || 'waiting'}｜${row.reason || '等待更新'}${row.nextAttemptAtUtc ? `｜下次嘗試 ${row.nextAttemptAtUtc}` : ''}`;
-            rowsRoot.append(line);
-        }
-        const next = page?.nextOffset;
-        document.getElementById('prtg-profile-refresh-page').textContent = `第 ${Math.floor(trustedProfileOffset / 100) + 1} 頁｜目前進度列 ${page?.total || 0}`;
-        document.getElementById('prtg-profile-refresh-prev').disabled = trustedProfileOffset === 0;
-        document.getElementById('prtg-profile-refresh-next').disabled = next == null;
-    } catch (error) {
-        rowsRoot.replaceChildren();
-        status.textContent = `Trusted profile 進度無法讀取：${error?.message || '請重新載入。'}`;
-        document.getElementById('prtg-profile-refresh-page').textContent = '';
-        document.getElementById('prtg-profile-refresh-prev').disabled = true;
-        document.getElementById('prtg-profile-refresh-next').disabled = true;
-    }
-}
-document.getElementById('prtg-profile-refresh-reload')?.addEventListener('click', loadTrustedProfileRefresh);
-document.getElementById('prtg-profile-refresh-prev')?.addEventListener('click', () => { trustedProfileOffset = Math.max(0, trustedProfileOffset - 100); loadTrustedProfileRefresh(); });
-
-document.getElementById('prtg-profile-refresh-next')?.addEventListener('click', () => { trustedProfileOffset += 100; loadTrustedProfileRefresh(); });
-
-const trustedBindingBase = '/api/prtg/monitoring/trusted-sampling';
-let trustedBindingSelectedSensor = null;
-let trustedBindingVersions = null;
-let trustedBindingProbe = null;
-let trustedBindingSaved = null;
-let trustedBindingDraftDirty = false;
-let trustedBindingBusy = false;
-const trustedBindingBatchDrafts = new Map();
-const trustedQuantityValues = {
-    CpuLoadPercent: '1', MemoryUsedPercent: '2', MemoryAvailablePercent: '3',
-    DiskFreePercent: '4', DiskUsedPercent: '5'
-};
-const bindingFieldIds = {
-    channelObjectId: 'prtg-profile-binding-channel', quantity: 'prtg-profile-binding-quantity', unit: 'prtg-profile-binding-unit',
-    scale: 'prtg-profile-binding-scale', direction: 'prtg-profile-binding-direction', intervalRawUnit: 'prtg-profile-binding-interval-unit',
-    rawTimestampTimeZoneId: 'prtg-profile-binding-raw-zone', analysisTimeZoneId: 'prtg-profile-binding-analysis-zone',
-    timeBasisEvidenceReference: 'prtg-profile-binding-time-evidence'
-};
-const trustedBindingEditorDrafts = new Map();
-
-function trustedChannelObjectId(value) {
-    return canonicalPrtgChannelId(value);
-}
-
-function sameTrustedBindingFence(left, right) {
-    const keys = ['expectedSettingsRevision', 'expectedPolicyRevision', 'expectedIdentityEpoch', 'expectedChannelGeneration', 'expectedBindingRevision', 'expectedHostSnapshotVersion'];
-    return !!left && !!right && keys.every(key => left[key] != null && right[key] != null && left[key] === right[key]);
-}
-
-const trustedChannelDiscoveryStorageKey = 'prtg-trusted-channel-discovery-v1';
-function storedTrustedChannelDiscovery() {
-    try { return JSON.parse(sessionStorage.getItem(trustedChannelDiscoveryStorageKey) || 'null'); }
-    catch { return null; }
-}
-function saveTrustedChannelDiscovery(jobId, sensorId, deadlineUtc) {
-    sessionStorage.setItem(trustedChannelDiscoveryStorageKey, JSON.stringify({ jobId, sensorId, deadlineUtc }));
-}
-function clearTrustedChannelDiscovery(jobId) {
-    const saved = storedTrustedChannelDiscovery();
-    if (saved?.jobId === jobId) sessionStorage.removeItem(trustedChannelDiscoveryStorageKey);
-}
-async function applyTrustedChannelDiscovery(discovery, sensorId) {
-    const applied = applyReadOnlyChannelDiscovery({ doc: document, discovery, requestedSensorId: sensorId,
-        selectedSensorId: trustedBindingSelectedSensor });
-    if (!applied) return false;
-    trustedBindingProbe = { ...discovery, channels: applied.channels,
-        channelsTruncated: applied.channelsTruncated };
-    return true;
-}
-async function pollTrustedChannelDiscovery(jobId, sensorId, deadlineUtc) {
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    const hardDeadline = Date.parse(deadlineUtc);
-    let checkedAfterDeadline = false;
-    while (Number.isFinite(hardDeadline) && String(trustedBindingSelectedSensor) === String(sensorId)) {
-        const atDeadline = Date.now() >= hardDeadline;
-        if (atDeadline && checkedAfterDeadline) break;
-        if (atDeadline) checkedAfterDeadline = true;
-        let job;
-        try { job = await api.get(`${trustedBindingBase}/channel-discovery/${encodeURIComponent(jobId)}`, { silent: true, timeoutMs: 10000 }); }
-        catch (error) {
-            action.textContent = `唯讀探索作業 ${jobId} 已耐久接受，但進度讀取暫時失敗（${error?.message || '連線錯誤'}）；不會視為成功，重新載入此 sensor 可繼續查詢。`;
-            return false;
-        }
-        if (String(trustedBindingSelectedSensor) !== String(sensorId)) return false;
-        const outcome = channelDiscoveryPollOutcome(job);
-        if (outcome === 'read-only-complete') {
-            if (String(trustedBindingSelectedSensor) !== String(sensorId)) return false;
-            clearTrustedChannelDiscovery(jobId);
-            return applyTrustedChannelDiscovery(job, sensorId);
-        }
-        if (outcome === 'invalid-completion') {
-            action.textContent = '探索回應缺少唯讀授權標記；拒絕把它當成完成結果。';
-            return false;
-        }
-        if (outcome === 'terminal') {
-            clearTrustedChannelDiscovery(jobId);
-            action.textContent = `唯讀來源探索${job.status === 'failed-stale' ? '已因來源 fence 改變而停止' : job.status === 'expired' ? '已超過 5 分鐘期限' : '未完成'}（${job.reason || 'unknown'}）；未建立資格證據或 profile。請重新載入 fence 後再試。`;
-            return false;
-        }
-        action.textContent = `唯讀 channel discovery 已耐久接受，狀態 ${job.status}（${job.reason || '等待中'}）；期限 ${job.deadlineUtc}。這不是資格核驗。重新載入頁面後可繼續讀取此作業。`;
-        if (checkedAfterDeadline) break;
-        await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    if (String(trustedBindingSelectedSensor) === String(sensorId))
-        action.textContent = '唯讀來源探索的 5 分鐘期限已到；未收到終態時仍保留已接受的 job，重新載入後可再查詢，但不會把缺少的頻道當成核驗結果。';
-    return false;
-}
-
-function updateTrustedBindingBatchStatus(message) {
-    const count = trustedBindingBatchDrafts.size;
-    document.getElementById('prtg-profile-binding-batch-status').textContent = message ||
-        (count ? `目前有 ${count} 筆待送批次草稿；最多 100 筆。逐筆核對後才會送出。` : '尚無批次草稿。');
-    document.getElementById('prtg-profile-binding-batch-submit').disabled = trustedBindingBusy || count < 1;
-    document.getElementById('prtg-profile-binding-batch-clear').disabled = trustedBindingBusy || count < 1;
-}
-
-async function loadTrustedProfileBindings() {
-    const status = document.getElementById('prtg-profile-binding-status');
-    const root = document.getElementById('prtg-profile-binding-rows');
-    if (!status || !root) return;
-    status.textContent = '正在讀取目前正式範圍的 Trusted profiles…';
-    try {
-        const page = await api.get(`${trustedBindingBase}/profiles?offset=${trustedBindingOffset}&limit=100`, { silent: true });
-        const rows = Array.isArray(page?.rows) ? page.rows : [];
-        root.replaceChildren();
-        for (const row of rows) {
-            const line = document.createElement('div');
-            line.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2 small py-2 border-bottom';
-            const summary = document.createElement('span');
-            const sensorKey = String(row.sensorObjid);
-            const queued = trustedBindingBatchDrafts.has(sensorKey) ? '｜待批次提交' : '';
-            summary.textContent = `Sensor #${row.sensorObjid}｜profile ${row.status || 'unknown'}／binding ${row.bindingStatus || 'unbound'}｜綁定 ${row.bindingRevision ?? '—'}｜頻道 ${row.boundChannelObjectId ?? '未選'} ${row.boundChannelCaption || ''}｜語意 ${row.bindingQuantity || row.quantity || '未設定'} ${row.unit || ''}｜資格 ${row.qualificationProofReference ? '有證據參考' : '尚無核驗證據'}${queued}${Array.isArray(row.missingFacts) && row.missingFacts.length ? `｜缺項 ${row.missingFacts.join(', ')}` : ''}`;
-            const inspect = document.createElement('button');
-            inspect.type = 'button'; inspect.className = 'btn btn-sm btn-outline-primary'; inspect.textContent = '設定此 sensor';
-            inspect.addEventListener('click', () => openTrustedBinding(row.sensorObjid));
-            line.append(summary, inspect); root.append(line);
-        }
-        const next = page?.nextOffset;
-        document.getElementById('prtg-profile-binding-page').textContent = `offset ${page?.offset ?? trustedBindingOffset}｜共 ${page?.total ?? 0}`;
-        document.getElementById('prtg-profile-binding-prev').disabled = trustedBindingOffset === 0;
-        document.getElementById('prtg-profile-binding-next').disabled = next == null;
-        status.textContent = `已載入 ${rows.length} 筆 profile｜總數 ${page?.total ?? 0}`;
-    } catch (error) {
-        root.replaceChildren();
-        document.getElementById('prtg-profile-binding-page').textContent = '';
-        document.getElementById('prtg-profile-binding-prev').disabled = true;
-        document.getElementById('prtg-profile-binding-next').disabled = true;
-        status.textContent = `Trusted profile 綁定資料無法讀取：${error?.message || '請重新載入。'}`;
-    }
-}
-
-function setTrustedBindingPending(pending) {
-    trustedBindingBusy = pending;
-    for (const id of ['prtg-profile-binding-probe', 'prtg-profile-binding-reload', 'prtg-profile-binding-channel', ...Object.values(bindingFieldIds), 'prtg-profile-binding-save', 'prtg-profile-binding-queue', 'prtg-profile-binding-qualify', 'prtg-profile-binding-batch-submit', 'prtg-profile-binding-batch-clear']) {
-        const control = document.getElementById(id);
-        if (control) control.disabled = pending;
-    }
-    if (!pending) updateTrustedBindingBatchStatus();
-    renderTrustedBindingQualificationControl();
-}
-
-function renderTrustedBindingQualificationControl() {
-    const control = document.getElementById('prtg-profile-binding-qualify');
-    if (control) control.disabled = trustedBindingBusy || trustedBindingDraftDirty ||
-        (trustedBindingSelectedSensor != null && trustedBindingBatchDrafts.has(trustedBindingSelectedSensor)) ||
-        !trustedBindingSaved?.bindingFingerprint || !!trustedBindingSaved.qualificationProofReference;
-}
-
-function fillTrustedBindingDraft(binding) {
-    const channel = document.getElementById(bindingFieldIds.channelObjectId);
-    if (channel && binding?.channelObjectId != null && ![...channel.options].some(option => option.value === String(binding.channelObjectId))) {
-        const option = document.createElement('option'); option.value = String(binding.channelObjectId); option.textContent = `已保存頻道 #${binding.channelObjectId}（需重新 probe 確認）`; channel.append(option);
-    }
-    for (const [key, id] of Object.entries(bindingFieldIds)) {
-        const control = document.getElementById(id);
-        if (!control) continue;
-        const field = key === 'channelObjectId' ? 'channelObjectId' : key;
-        let value = binding?.[field];
-        if (key === 'quantity' && typeof value === 'string') value = trustedQuantityValues[value] || '';
-        if (value !== undefined && value !== null) control.value = String(value);
-    }
-    trustedBindingDraftDirty = false;
-}
-
-function captureTrustedBindingEditorDraft(sensorId) {
-    if (!sensorId || !trustedBindingDraftDirty) return;
-    const channel = document.getElementById(bindingFieldIds.channelObjectId);
-    trustedBindingEditorDrafts.set(sensorId, {
-        fields: Object.fromEntries(Object.entries(bindingFieldIds).map(([key, id]) => [key,
-            document.getElementById(id)?.value ?? ''])),
-        channelOptions: channel ? [...channel.options].map(option => ({ value: option.value, text: option.textContent || '', disabled: option.disabled })) : [],
-        selectedChannel: channel?.value || '',
-        versions: trustedBindingVersions,
-        probe: trustedBindingProbe
-    });
-}
-
-function restoreTrustedBindingEditorDraft(draft) {
-    const channel = document.getElementById(bindingFieldIds.channelObjectId);
-    if (channel) {
-        channel.replaceChildren(...(draft.channelOptions || []).map(item => {
-            const option = new Option(item.text, item.value);
-            option.disabled = item.disabled === true || String(item.value).startsWith('-');
-            return option;
-        }));
-        channel.value = draft.selectedChannel || '';
-    }
-    for (const [key, id] of Object.entries(bindingFieldIds)) {
-        const control = document.getElementById(id);
-        if (control) control.value = draft.fields?.[key] ?? '';
-    }
-    trustedBindingVersions = draft.versions;
-    trustedBindingProbe = draft.probe || null;
-    trustedBindingDraftDirty = true;
-    renderTrustedBindingQualificationControl();
-}
-
-function isTrustedBindingCommitReceipt(value) {
-    return value?.committed === true && value?.reloadRequired === true &&
-        Array.isArray(value?.committedSensorObjids);
-}
-
-function clearTrustedBindingOperationAuthority() {
-    trustedBindingSaved = null;
-    trustedBindingProbe = null;
-    trustedBindingVersions = null;
-    renderTrustedBindingQualificationControl();
-}
-
-function bindingEditorFieldsMatchBody(fields, body) {
-    if (!fields || !body) return false;
-    const channelId = trustedChannelObjectId(fields.channelObjectId);
-    return channelId !== null && channelId === trustedChannelObjectId(body.channelObjectId) &&
-        Number(fields.quantity) === Number(body.quantity) && fields.unit === body.unit &&
-        Number(fields.scale) === Number(body.scale) && fields.direction === body.direction &&
-        fields.intervalRawUnit === body.intervalRawUnit &&
-        fields.rawTimestampTimeZoneId === body.rawTimestampTimeZoneId &&
-        fields.analysisTimeZoneId === body.analysisTimeZoneId &&
-        fields.timeBasisEvidenceReference === body.timeBasisEvidenceReference;
-}
-
-function cachedTrustedBindingEditorMatchesBody(sensorId, body) {
-    const draft = trustedBindingEditorDrafts.get(String(sensorId));
-    return !!draft && bindingEditorFieldsMatchBody(draft.fields, body);
-}
-
-function removeCommittedTrustedBindingDraft(sensorId, body) {
-    const key = String(sensorId);
-    if (body && trustedBindingBatchDrafts.has(key) &&
-        bindingEditorFieldsMatchBody(trustedBindingBatchDrafts.get(key), body))
-        trustedBindingBatchDrafts.delete(key);
-    if (cachedTrustedBindingEditorMatchesBody(key, body)) trustedBindingEditorDrafts.delete(key);
-}
-
-async function openTrustedBinding(sensorObjid) {
-    if (trustedBindingBusy) return;
-    captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
-    trustedBindingSelectedSensor = String(sensorObjid);
-    trustedBindingProbe = null;
-    trustedBindingSaved = null;
-    trustedBindingVersions = null;
-    const form = document.getElementById('prtg-profile-binding-form');
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    const current = document.getElementById('prtg-profile-binding-current');
-    const channel = document.getElementById('prtg-profile-binding-channel');
-    form?.classList.remove('d-none');
-    form?.reset();
-    document.getElementById('prtg-profile-binding-sensor-label').textContent = `#${trustedBindingSelectedSensor}`;
-    action.textContent = '正在載入最新 CAS 版本…';
-    current.textContent = '';
-    channel.replaceChildren(new Option('請先 probe 並人工選取頻道', ''));
-    document.getElementById('prtg-profile-binding-qualify').disabled = true;
-    trustedBindingDraftDirty = false;
-    await reloadTrustedBinding(false);
-    const editorDraft = trustedBindingEditorDrafts.get(trustedBindingSelectedSensor);
-    if (editorDraft) {
-        const freshVersions = trustedBindingVersions;
-        restoreTrustedBindingEditorDraft(editorDraft);
-        action.textContent = sameTrustedBindingFence(freshVersions, editorDraft.versions)
-            ? '已恢復此 sensor 尚未提交的本機草稿；草稿仍使用原始 fence，核驗已停用。'
-            : '已恢復未提交草稿，但來源 fence 已過期；草稿不會自動升級版本，請重新載入並 probe 後再送出。';
-        const pendingDiscovery = storedTrustedChannelDiscovery();
-        if (resumableChannelDiscovery(pendingDiscovery, trustedBindingSelectedSensor))
-            await pollTrustedChannelDiscovery(pendingDiscovery.jobId, pendingDiscovery.sensorId, pendingDiscovery.deadlineUtc);
-        return;
-    }
-    const queuedDraft = trustedBindingBatchDrafts.get(trustedBindingSelectedSensor);
-    if (queuedDraft) {
-        fillTrustedBindingDraft(queuedDraft);
-        action.textContent = '已載入此 sensor 的本機批次草稿；它保留原始 fence，重新 probe 並加入批次可更新 fence。';
-    }
-    const pendingDiscovery = storedTrustedChannelDiscovery();
-    if (resumableChannelDiscovery(pendingDiscovery, trustedBindingSelectedSensor))
-        await pollTrustedChannelDiscovery(pendingDiscovery.jobId, pendingDiscovery.sensorId, pendingDiscovery.deadlineUtc);
-}
-
-async function reloadTrustedBinding(preserveDraft = true, allowPending = false) {
-    if (!trustedBindingSelectedSensor || (trustedBindingBusy && !allowPending)) return;
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    const current = document.getElementById('prtg-profile-binding-current');
-    setTrustedBindingPending(true);
-    try {
-        const response = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
-        const originalVersions = trustedBindingDraftDirty ? trustedBindingVersions : null;
-        trustedBindingVersions = originalVersions || response || null;
-        trustedBindingSaved = response?.binding || null;
-        const b = trustedBindingSaved;
-        current.textContent = b
-            ? `目前狀態：${b.status || 'unknown'}｜revision ${b.bindingRevision ?? '—'}｜頻道 #${b.channelObjectId ?? '未設定'} ${b.expectedCaption || ''}｜資格證據 ${b.qualificationProofReference ? '已保存參考' : '無'}｜${Array.isArray(b.missingFacts) ? b.missingFacts.join(', ') : '無已知缺項'}`
-            : '尚無已保存綁定。保存後狀態仍為 waiting，需另行執行來源核驗。';
-        if (!preserveDraft || !trustedBindingDraftDirty) fillTrustedBindingDraft(b);
-        action.textContent = preserveDraft && trustedBindingDraftDirty
-            ? (sameTrustedBindingFence(response, originalVersions)
-                ? '已重新讀取目前版本；保留原始 fence 與尚未提交草稿。'
-                : '目前版本已變更；保留尚未提交草稿與舊 fence，請重新載入並 probe 後再送出。')
-            : '已載入目前版本。';
-        document.getElementById('prtg-profile-binding-qualify').disabled = !b || !!b.qualificationProofReference || !b.bindingFingerprint;
-    } catch (error) {
-        action.textContent = `目前版本無法讀取，草稿保留：${error?.message || '請稍後重試。'}`;
-    } finally { setTrustedBindingPending(false); }
-}
-
-for (const id of Object.values(bindingFieldIds)) document.getElementById(id)?.addEventListener('input', () => { trustedBindingDraftDirty = true; renderTrustedBindingQualificationControl(); });
-document.getElementById('prtg-profile-binding-channel')?.addEventListener('change', () => { trustedBindingDraftDirty = true; renderTrustedBindingQualificationControl(); });
-document.getElementById('prtg-profile-binding-reload')?.addEventListener('click', () => reloadTrustedBinding(true));
-document.getElementById('prtg-profile-refresh-reload')?.addEventListener('click', loadTrustedProfileBindings);
-document.getElementById('prtg-profile-binding-prev')?.addEventListener('click', () => { trustedBindingOffset = Math.max(0, trustedBindingOffset - 100); loadTrustedProfileBindings(); });
-document.getElementById('prtg-profile-binding-next')?.addEventListener('click', () => { trustedBindingOffset += 100; loadTrustedProfileBindings(); });
-document.getElementById('prtg-profile-binding-probe')?.addEventListener('click', async () => {
-    if (!trustedBindingSelectedSensor || trustedBindingBusy) return;
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    if (!trustedBindingVersions) { action.textContent = '目前沒有最新 source/binding fence；請重新載入。'; return; }
-    setTrustedBindingPending(true); action.textContent = '正在耐久排入唯讀 channel discovery…';
-    try {
-        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
-        if (!sameTrustedBindingFence(latest, trustedBindingVersions)) {
-            action.textContent = '來源、政策或綁定 fence 已改變；尚未建立探索作業。請重新載入後再試。'; return;
-        }
-        const accepted = await api.post(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}/channel-discovery`, {
-            expectedSettingsRevision: latest.expectedSettingsRevision,
-            expectedPolicyRevision: latest.expectedPolicyRevision,
-            expectedHostSnapshotVersion: latest.expectedHostSnapshotVersion,
-            expectedIdentityEpoch: latest.expectedIdentityEpoch,
-            expectedChannelGeneration: latest.expectedChannelGeneration,
-            expectedBindingRevision: latest.expectedBindingRevision,
-            expectedBindingFingerprint: latest.binding?.bindingFingerprint || ''
-        }, { silent: true });
-        saveTrustedChannelDiscovery(accepted.jobId, trustedBindingSelectedSensor, accepted.deadlineUtc);
-        await pollTrustedChannelDiscovery(accepted.jobId, trustedBindingSelectedSensor, accepted.deadlineUtc);
-    } catch (error) {
-        action.textContent = error?.code === 'channel_discovery_capacity_full'
-            ? `${error.message}尚未建立作業，也沒有發送來源 GET。`
-            : error?.code === 'channel_discovery_fence_changed'
-                ? `${error.message}尚未發送來源 GET。`
-                : `唯讀來源探索未確認；不會當成已完成。${error?.message || '請重新載入 fence 後再試。'}`;
-    }
-    finally { setTrustedBindingPending(false); }
-});
-
-document.getElementById('prtg-profile-binding-queue')?.addEventListener('click', async () => {
-    if (!trustedBindingSelectedSensor || !trustedBindingProbe || trustedBindingBusy) return;
-    if (!document.getElementById('prtg-profile-binding-form').reportValidity()) return;
-    if (trustedBindingBatchDrafts.size >= 100 && !trustedBindingBatchDrafts.has(trustedBindingSelectedSensor)) {
-        document.getElementById('prtg-profile-binding-action-status').textContent = '批次已達 100 筆上限；先提交或清除這批草稿。';
-        return;
-    }
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    const selectedId = document.getElementById(bindingFieldIds.channelObjectId).value;
-    const selected = trustedBindingProbe.channels?.find(item => trustedChannelObjectId(item.channelObjectId) === selectedId);
-    if (!selected || trustedBindingProbe.channelsTruncated) { action.textContent = '請重新 probe，並從未截斷的來源頻道中明確選擇一個 Channel ID。'; return; }
-    if (!String(selected.caption || '').trim()) { action.textContent = '所選頻道缺少來源 caption；無法建立要求 exact caption 的 binding。'; return; }
-    const scale = Number(document.getElementById(bindingFieldIds.scale).value);
-    if (!Number.isFinite(scale) || scale <= 0) { action.textContent = 'Scale 必須是有限正數。'; return; }
-    setTrustedBindingPending(true); action.textContent = '正在讀取目前 fence，建立一筆本機批次草稿…';
-    try {
-        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
-        if (!sameTrustedBindingFence(latest, trustedBindingVersions) || trustedBindingProbe.identityEpoch == null || trustedBindingProbe.channelGeneration == null ||
-            latest.expectedIdentityEpoch !== trustedBindingProbe.identityEpoch || latest.expectedChannelGeneration !== trustedBindingProbe.channelGeneration) {
-            action.textContent = '設定、政策、綁定或來源 fence 已改變；草稿未加入。請明確重新載入並 probe。'; return;
-        }
-        const body = {
-            sensorObjid: Number(trustedBindingSelectedSensor), expectedSettingsRevision: latest.expectedSettingsRevision,
-            expectedPolicyRevision: latest.expectedPolicyRevision, expectedIdentityEpoch: trustedBindingProbe.identityEpoch,
-            expectedChannelGeneration: trustedBindingProbe.channelGeneration, expectedBindingRevision: latest.expectedBindingRevision,
-            channelObjectId: selectedId, expectedCaption: selected.caption || '',
-            quantity: Number(document.getElementById(bindingFieldIds.quantity).value),
-            unit: document.getElementById(bindingFieldIds.unit).value, scale,
-            direction: document.getElementById(bindingFieldIds.direction).value,
-            intervalRawUnit: document.getElementById(bindingFieldIds.intervalRawUnit).value,
-            rawTimestampTimeZoneId: document.getElementById(bindingFieldIds.rawTimestampTimeZoneId).value,
-            analysisTimeZoneId: document.getElementById(bindingFieldIds.analysisTimeZoneId).value,
-            timeBasisEvidenceReference: document.getElementById(bindingFieldIds.timeBasisEvidenceReference).value
-        };
-        trustedBindingBatchDrafts.set(trustedBindingSelectedSensor, body);
-        trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
-        trustedBindingDraftDirty = false;
-        renderTrustedBindingQualificationControl();
-        action.textContent = `已將 sensor #${trustedBindingSelectedSensor} 加入批次草稿；尚未送到伺服器。`;
-        updateTrustedBindingBatchStatus();
-        await loadTrustedProfileBindings();
-    } catch (error) {
-        action.textContent = `無法建立批次草稿：${error?.message || '請稍後重試。'}`;
-    } finally { setTrustedBindingPending(false); updateTrustedBindingBatchStatus(); }
-});
-
-document.getElementById('prtg-profile-binding-batch-clear')?.addEventListener('click', () => {
-    if (trustedBindingSelectedSensor && trustedBindingBatchDrafts.has(trustedBindingSelectedSensor) && !trustedBindingDraftDirty) {
-        trustedBindingDraftDirty = true;
-        captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
-    }
-    trustedBindingBatchDrafts.clear();
-    document.getElementById('prtg-profile-binding-batch-results').replaceChildren();
-    renderTrustedBindingQualificationControl();
-    updateTrustedBindingBatchStatus('已清除明確排入的批次草稿；目前編輯器內容保留為未提交草稿。');
-});
-
-document.getElementById('prtg-profile-binding-batch-submit')?.addEventListener('click', async () => {
-    if (trustedBindingBusy || trustedBindingBatchDrafts.size < 1 || trustedBindingBatchDrafts.size > 100) return;
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    const resultsRoot = document.getElementById('prtg-profile-binding-batch-results');
-    const rows = [...trustedBindingBatchDrafts.values()];
-    const submittedBySensor = new Map(rows.map(row => [String(row.sensorObjid), row]));
-    const acceptedSensorIds = new Set();
-    let committedReceiptReceived = false;
-    setTrustedBindingPending(true); updateTrustedBindingBatchStatus(`正在送出 ${rows.length} 筆逐 row fence 批次…`);
-    action.textContent = '批次保存進行中；每列會各自接受或拒絕，語意變更後須重新核驗。';
-    resultsRoot.replaceChildren();
-    try {
-        const results = await api.post(`${trustedBindingBase}/bindings/batch`, { rows }, { silent: true, timeoutMs: 60000 });
-        if (isTrustedBindingCommitReceipt(results)) {
-            committedReceiptReceived = true;
-            for (const sensorId of results.committedSensorObjids) {
-                const key = String(sensorId);
-                removeCommittedTrustedBindingDraft(key, submittedBySensor.get(key));
-                trustedBindingBatchDrafts.delete(key);
-                acceptedSensorIds.add(key);
-            }
-            action.textContent = `已提交 sensor ${results.committedSensorObjids.map(id => `#${id}`).join(', ')}；目錄已變更，請重新載入核對，不要直接重送。`;
-            for (const sensorId of results.committedSensorObjids) {
-                const line = document.createElement('div');
-                line.textContent = `Sensor #${sensorId}｜已提交｜目錄已變更，請重新載入核對。`;
-                resultsRoot.append(line);
-            }
-            await loadTrustedProfileBindings();
-            return;
-        }
-        if (!Array.isArray(results)) throw new Error('伺服器未回傳逐列結果。');
-        for (const result of results) {
-            const sensorKey = String(result.sensorObjid);
-            const line = document.createElement('div');
-            line.textContent = `Sensor #${sensorKey}｜${result.status || 'unknown'}${result.status === 'waiting' ? '｜已保存但仍需逐筆核驗' : result.status === 'qualified' ? '｜語意未變，保留既有核驗資格；目前採樣狀態請查看清單' : `｜${result.rejectionReason || (Array.isArray(result.missingFacts) ? result.missingFacts.join(', ') : '請重新載入與核對')}`}`;
-            resultsRoot.append(line);
-            if (result.status === 'waiting' || result.status === 'qualified') {
-                removeCommittedTrustedBindingDraft(sensorKey, submittedBySensor.get(sensorKey));
-                trustedBindingBatchDrafts.delete(sensorKey);
-                acceptedSensorIds.add(sensorKey);
-            }
-        }
-        action.textContent = `批次完成 ${results.length} 筆；新／變更列等待核驗，語意未變列保留資格；拒絕列保留草稿供核對。`;
-        await loadTrustedProfileBindings();
-    } catch (error) {
-        action.textContent = error?.status === 409
-            ? '版本或目錄已改變；批次結果未確認，草稿保留。請先重新載入核對已保存版本，再決定是否重送。'
-            : '批次結果未確認；草稿保留。請先重新載入核對已保存版本，再決定是否重送。';
-    } finally {
-        setTrustedBindingPending(false);
-        updateTrustedBindingBatchStatus();
-        if (trustedBindingSelectedSensor && acceptedSensorIds.has(trustedBindingSelectedSensor)) {
-            const submitted = submittedBySensor.get(trustedBindingSelectedSensor);
-            const currentFields = Object.fromEntries(Object.entries(bindingFieldIds).map(([key, id]) => [key,
-                document.getElementById(id)?.value ?? '']));
-            const hasNewerEditorDraft = trustedBindingDraftDirty && submitted &&
-                !bindingEditorFieldsMatchBody(currentFields, submitted);
-            if (hasNewerEditorDraft) {
-                captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
-                document.getElementById('prtg-profile-binding-action-status').textContent =
-                    '批次中先前排入的版本已提交；較新的編輯草稿已保留，仍使用原始 fence，請核對並重新 probe。';
-            } else if (committedReceiptReceived) {
-                trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
-                trustedBindingDraftDirty = false;
-                clearTrustedBindingOperationAuthority();
-            } else {
-                trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
-                trustedBindingDraftDirty = false;
-                await reloadTrustedBinding(false);
-            }
-        }
-        renderTrustedBindingQualificationControl();
-    }
-});
-
-document.getElementById('prtg-profile-binding-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!trustedBindingSelectedSensor || !trustedBindingProbe || trustedBindingBusy) return;
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    const selectedId = document.getElementById(bindingFieldIds.channelObjectId).value;
-    const selected = trustedBindingProbe.channels?.find(item => trustedChannelObjectId(item.channelObjectId) === selectedId);
-    if (!selected || trustedBindingProbe.channelsTruncated) { action.textContent = '請重新 probe，並從未截斷的來源頻道中明確選擇一個 Channel ID。'; return; }
-    if (!String(selected.caption || '').trim()) { action.textContent = '所選頻道缺少來源 caption；無法保存要求 exact caption 的 binding。'; return; }
-    setTrustedBindingPending(true); action.textContent = '正在重新讀取 CAS 版本並保存…';
-    try {
-        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
-        const expected = latest || {};
-        if (!sameTrustedBindingFence(expected, trustedBindingVersions) || trustedBindingProbe.identityEpoch == null || trustedBindingProbe.channelGeneration == null || expected.expectedIdentityEpoch !== trustedBindingProbe.identityEpoch || expected.expectedChannelGeneration !== trustedBindingProbe.channelGeneration) {
-            action.textContent = '設定、政策、綁定或來源 fence 已改變；草稿保留。請明確重新載入並執行 probe 後再保存。'; return;
-        }
-        const number = id => Number(document.getElementById(id).value);
-        const scale = number(bindingFieldIds.scale);
-        if (!Number.isFinite(scale) || scale <= 0) { action.textContent = 'Scale 必須是有限正數。'; return; }
-        const body = {
-            sensorObjid: Number(trustedBindingSelectedSensor), expectedSettingsRevision: expected.expectedSettingsRevision,
-            expectedPolicyRevision: expected.expectedPolicyRevision, expectedIdentityEpoch: trustedBindingProbe.identityEpoch,
-            expectedChannelGeneration: trustedBindingProbe.channelGeneration, expectedBindingRevision: expected.expectedBindingRevision,
-            channelObjectId: selectedId, expectedCaption: selected.caption || '',
-            quantity: Number(document.getElementById(bindingFieldIds.quantity).value), unit: document.getElementById(bindingFieldIds.unit).value,
-            scale, direction: document.getElementById(bindingFieldIds.direction).value,
-            intervalRawUnit: document.getElementById(bindingFieldIds.intervalRawUnit).value,
-            rawTimestampTimeZoneId: document.getElementById(bindingFieldIds.rawTimestampTimeZoneId).value,
-            analysisTimeZoneId: document.getElementById(bindingFieldIds.analysisTimeZoneId).value,
-            timeBasisEvidenceReference: document.getElementById(bindingFieldIds.timeBasisEvidenceReference).value
-        };
-        const saved = await api.put(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, body, { silent: true });
-        if (isTrustedBindingCommitReceipt(saved)) {
-            const committedIds = new Set(saved.committedSensorObjids.map(String));
-            if (committedIds.has(trustedBindingSelectedSensor)) {
-                const currentFields = Object.fromEntries(Object.entries(bindingFieldIds).map(([key, id]) => [key,
-                    document.getElementById(id)?.value ?? '']));
-                const editorStillMatchesSubmitted = bindingEditorFieldsMatchBody(currentFields, body);
-                removeCommittedTrustedBindingDraft(trustedBindingSelectedSensor, body);
-                if (editorStillMatchesSubmitted) {
-                    trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
-                    trustedBindingDraftDirty = false;
-                    clearTrustedBindingOperationAuthority();
-                } else {
-                    trustedBindingDraftDirty = true;
-                    captureTrustedBindingEditorDraft(trustedBindingSelectedSensor);
-                }
-            }
-            updateTrustedBindingBatchStatus();
-            action.textContent = trustedBindingDraftDirty
-                ? `已提交 sensor #${trustedBindingSelectedSensor}；較新的編輯草稿仍保留。目錄已變更，請重新載入核對後再 probe，不要直接重送。`
-                : `已提交 sensor #${trustedBindingSelectedSensor}；目錄已變更，請重新載入核對，不要直接重送。`;
-            await loadTrustedProfileBindings();
-            return;
-        }
-        trustedBindingSaved = saved?.binding || saved;
-        trustedBindingDraftDirty = false;
-        removeCommittedTrustedBindingDraft(trustedBindingSelectedSensor, body);
-        trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
-        updateTrustedBindingBatchStatus();
-        action.textContent = `已保存 binding revision ${trustedBindingSaved?.bindingRevision ?? '未知'}；狀態 ${trustedBindingSaved?.status || saved?.status || 'waiting'}；語意未變可保留既有資格，新／變更設定仍需來源核驗。`;
-        document.getElementById('prtg-profile-binding-qualify').disabled = !trustedBindingSaved?.bindingFingerprint;
-        await loadTrustedProfileBindings();
-        await reloadTrustedBinding(true, true);
-    } catch (error) {
-        action.textContent = error?.status === 409
-            ? '版本或目錄已改變；保存結果未確認，草稿保留。請先重新載入核對已保存版本，再決定是否重送。'
-            : '保存結果未確認；草稿保留。請先重新載入核對已保存版本，再決定是否重送。';
-    } finally { setTrustedBindingPending(false); }
-});
-
-document.getElementById('prtg-profile-binding-qualify')?.addEventListener('click', async () => {
-    if (!trustedBindingSelectedSensor || trustedBindingBusy) return;
-    if (trustedBindingDraftDirty) { document.getElementById('prtg-profile-binding-action-status').textContent = '目前草稿尚未保存；先保存並重新核對綁定版本，再執行核驗。'; return; }
-    const action = document.getElementById('prtg-profile-binding-action-status');
-    setTrustedBindingPending(true); action.textContent = '正在重新讀取 binding 並執行單次有界來源核驗…';
-    try {
-        const latest = await api.get(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}`, { silent: true });
-        const binding = latest?.binding;
-        if (!sameTrustedBindingFence(latest, trustedBindingVersions) || !binding?.bindingFingerprint ||
-            binding.bindingRevision !== trustedBindingSaved?.bindingRevision ||
-            binding.bindingFingerprint !== trustedBindingSaved?.bindingFingerprint) {
-            action.textContent = '設定、政策、來源或綁定 fence 已改變；未執行核驗，草稿保留。請明確重新載入並核對。'; return;
-        }
-        const result = await api.post(`${trustedBindingBase}/bindings/${encodeURIComponent(trustedBindingSelectedSensor)}/qualify`, {
-            expectedBindingRevision: binding.bindingRevision, expectedBindingFingerprint: binding.bindingFingerprint
-        }, { silent: true, timeoutMs: 30000 });
-        if (isTrustedBindingCommitReceipt(result)) {
-            trustedBindingDraftDirty = false;
-            trustedBindingEditorDrafts.delete(trustedBindingSelectedSensor);
-            clearTrustedBindingOperationAuthority();
-            action.textContent = `已提交核驗 sensor #${trustedBindingSelectedSensor}；目錄已變更，請重新載入核對，不要直接重送。`;
-            await loadTrustedProfileBindings();
-            return;
-        }
-        trustedBindingSaved = result?.binding || result;
-        const durableOutcome = trustedQualificationOutcome(result, trustedBindingSelectedSensor);
-        if (durableOutcome) {
-            action.textContent = durableOutcome.message;
-            document.getElementById(durableOutcome.destination)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            return;
-        }
-        const qualificationMessage = `核驗結果：${result?.status || trustedBindingSaved?.status || 'unknown'}｜${Array.isArray(result?.missingFacts) ? result.missingFacts.join(', ') : '請查看缺項'}｜來源版本 ${result?.probe?.sourceVersion || trustedBindingSaved?.qualificationSourceVersion || 'unknown'}。`;
-        await loadTrustedProfileBindings(); await reloadTrustedBinding(true, true);
-        action.textContent = qualificationMessage;
-    } catch (error) {
-        action.textContent = error?.status === 409
-            ? '版本或目錄已改變；核驗結果未確認。請先重新載入核對目前綁定與資格狀態，再決定是否重送。'
-            : '核驗結果未確認。請先重新載入核對目前綁定與資格狀態，再決定是否重送。';
-    } finally { setTrustedBindingPending(false); }
-});
-
-let timelineProgressPage = 1;
-let timelineProgressController = null;
-let timelineProgressRevision = null;
-async function loadTimelineProgress() {
-    const root = document.getElementById('prtg-timeline-progress-rows');
-    if (!root) return;
-    timelineProgressController?.abort();
-    const controller = new AbortController();
-    timelineProgressController = controller;
-    const status = document.getElementById('prtg-timeline-progress-status');
-    const cancel = document.getElementById('prtg-timeline-progress-cancel');
-    const previous = document.getElementById('prtg-timeline-progress-prev');
-    const next = document.getElementById('prtg-timeline-progress-next');
-    const pageLabel = document.getElementById('prtg-timeline-progress-page');
-    cancel.disabled = false;
-    status.textContent = '正在讀取一頁，最多 50 顆 sensor…';
-    try {
-        const data = await api.get(`/api/prtg/timeline-progress?page=${timelineProgressPage}&pageSize=50`,
-            { signal: controller.signal, silent: true });
-        if (controller.signal.aborted) return;
-        timelineProgressRevision = data.revision || null;
-        const hours = document.getElementById('prtg-timeline-bootstrap-hours');
-        const resume = document.getElementById('prtg-timeline-bootstrap-resume');
-        if (hours) hours.value = String(data.bootstrapDeadlineHours ?? 72);
-        if (resume) resume.disabled = data.bootstrapCycleOutcome !== 'deadline-exceeded';
-        root.replaceChildren();
-        const rows = Array.isArray(data?.rows) ? data.rows : [];
-        const labels = {
-            complete: '31天歷史狀態涵蓋已累積', 'capacity-unverified': '歷史狀態涵蓋尚未完整驗證', 'capacity-shortfall': '歷史頁數上限不足',
-            'waiting-identity': '等待目前資源身分', 'source-scope-stale': '來源範圍待更新',
-            'waiting-message-status-refresh': '升級後等待重建訊息狀態歷史',
-            malformed: '進度資料無效', 'not-started': '尚未開始'
-        };
-        for (const row of rows) {
-            const line = document.createElement('div');
-            line.className = 'small py-1 border-bottom';
-            const label = labels[row.bootstrapStatus] || '等待更新';
-            const reason = ({
-                'message-status-semantics-stale': '舊解析版本的狀態證據暫不使用，系統將重新收集',
-                'message-status-semantics-warmup': '正在重建訊息狀態歷史，數值歷史仍保留',
-                'message-status-code-unrecognized': '來源訊息代碼無法核對，請以環境探測取得來源資訊',
-                'message-status-text-unrecognized': '來源訊息狀態文字無法核對，請以環境探測取得來源資訊'
-            })[row.qualityReason] || row.qualityReason || '狀態待核對';
-            const watermark = row.lastCompleteThrough ? `｜完整水位 ${row.lastCompleteThrough}` : '';
-            const retry = row.nextAttemptAt ? `｜下次嘗試 ${row.nextAttemptAt}` : '';
-            const initial = row.initialCollectionCaptured ? '｜本週期初始查詢完成' : '｜本週期初始查詢待完成';
-            line.textContent = `Sensor #${row.sensorId}｜${label}${initial}${watermark}${retry}｜${reason}`;
-            root.append(line);
-        }
-        pageLabel.textContent = `第 ${data.page} / ${data.totalPages} 頁｜選取 ${data.selectedSensors} 顆｜版本 ${data.revision || '已核對'}`;
-        previous.disabled = data.page <= 1;
-        next.disabled = data.page >= data.totalPages;
-        const remaining = Number.isFinite(Number(data.bootstrapCycleRemainingSeconds))
-            ? Math.ceil(Number(data.bootstrapCycleRemainingSeconds) / 3600) : null;
-        const cycleOutcome = data.bootstrapCycleOutcome === 'waiting-message-status-refresh'
-            ? '升級後等待重建訊息狀態歷史' : data.bootstrapCycleOutcome;
-        const cycleReason = data.bootstrapCycleReason === 'message-status-semantics-stale'
-            ? '舊解析版本的狀態證據暫不使用，系統將重新收集' : data.bootstrapCycleReason;
-        const cycle = data.bootstrapCycleOutcome === 'running' && remaining !== null
-            ? `週期 ${data.bootstrapCycleOutcome}，期限 ${data.bootstrapCycleDeadlineAtUtc}（剩餘約${remaining}小時）`
-            : `週期 ${cycleOutcome || '尚未開始'}${cycleReason ? `：${cycleReason}` : ''}`;
-        const prior = data.previousBootstrapCycle
-            ? `；前一週期 ${data.previousBootstrapCycle.outcome}（${data.previousBootstrapCycle.deadlineAtUtc || '無期限資料'}）` : '';
-        status.textContent = `${cycle}${prior}；目前頁已完成初始收集 ${data.bootstrapCycleCapturedOnPage ?? 0} 顆，選取總數 ${data.bootstrapCycleSelectedSensors || data.selectedSensors} 顆，公平游標 sensor #${data.lastServedSensorId || 0}；成本基準估算 ${Number(data.estimatedBootstrapBaselineHours || 0).toFixed(1)} 小時，預算遙測 ${data.budgetTelemetryStatus || 'unknown'}；最近一輪 ${data.lastRoundOutcome || '尚未執行'}，完成時間 ${data.lastRoundCompletedAt || '尚無'}。估算不是容量保證；各規則品質與暖機條件另行判定。`;
-    } catch (error) {
-        if (error?.name === 'AbortError') return;
-        root.replaceChildren();
-        status.textContent = `進度無法讀取：${error?.message || '請重新載入。'} 範圍變更會取消舊頁結果。`;
-        pageLabel.textContent = '';
-        previous.disabled = true; next.disabled = true;
-    } finally {
-        if (timelineProgressController === controller) {
-            timelineProgressController = null;
-            cancel.disabled = true;
-        }
-    }
-}
-document.getElementById('prtg-timeline-progress-refresh')?.addEventListener('click', () => loadTimelineProgress());
-document.getElementById('prtg-timeline-progress-cancel')?.addEventListener('click', () => timelineProgressController?.abort());
-document.getElementById('prtg-timeline-progress-prev')?.addEventListener('click', () => { timelineProgressPage = Math.max(1, timelineProgressPage - 1); loadTimelineProgress(); });
-document.getElementById('prtg-timeline-progress-next')?.addEventListener('click', () => { timelineProgressPage++; loadTimelineProgress(); });
-document.getElementById('prtg-timeline-bootstrap-save')?.addEventListener('click', async () => {
-    const hours = Number(document.getElementById('prtg-timeline-bootstrap-hours')?.value);
-    if (!Number.isInteger(hours) || hours < 1 || hours > 720 || !timelineProgressRevision) {
-        toast('期限需為1至720小時，請重新載入目前週期。', 'warning'); return;
-    }
-    try {
-        await api.put('/api/prtg/timeline-progress/configuration', {
-            deadlineHours: hours, expectedRevision: timelineProgressRevision, page: timelineProgressPage, pageSize: 50
-        }, { silent: true });
-        toast('期限設定已保存，套用於下一個新週期或明確續行。', 'success');
-        await loadTimelineProgress();
-    } catch (error) { toast(error?.message || '期限設定未保存；請重新載入。', 'danger'); }
-});
-document.getElementById('prtg-timeline-bootstrap-resume')?.addEventListener('click', async () => {
-    if (!timelineProgressRevision) { toast('請先重新載入目前週期。', 'warning'); return; }
-    try {
-        await api.post('/api/prtg/timeline-progress/resume', {
-            expectedRevision: timelineProgressRevision, page: timelineProgressPage, pageSize: 50
-        }, { silent: true });
-        toast('已明確續行保存的週期、游標與逐 sensor 前導。', 'success');
-        await loadTimelineProgress();
-    } catch (error) { toast(error?.message || '週期未續行；請重新載入。', 'danger'); }
-});
+bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
 let scopeRevision = null;
 const setupState = { settings: null, settingsLoading: true, connectionTest: null, probe: null, sync: null, rules: null, schedule: null };
@@ -827,6 +93,7 @@ function renderEffectiveness(summary) {
     const status = document.getElementById('prtg-effectiveness-status');
     const semantics = document.getElementById('prtg-effectiveness-semantics');
     const limitations = document.getElementById('prtg-effectiveness-limitations');
+    const ruleMarks = document.getElementById('prtg-effectiveness-rule-marks');
     if (!metrics || !status || !semantics || !limitations) return;
     metrics.replaceChildren();
     const definitions = [
@@ -859,6 +126,79 @@ function renderEffectiveness(summary) {
         metrics.appendChild(column);
     }
     metrics.classList.remove('d-none');
+
+    if (ruleMarks) {
+        ruleMarks.replaceChildren();
+        const marks = summary.ruleMarks || [];
+        const totalFp = summary.totalFalsePositiveMarks ?? 0;
+        const totalHandled = summary.totalHandledMarks ?? 0;
+        const totalMarks = totalFp + totalHandled;
+        if (marks.length === 0 || totalMarks === 0) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'small text-muted mt-3';
+            emptyEl.textContent = '尚無標記';
+            ruleMarks.appendChild(emptyEl);
+        } else {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'mt-3';
+            const note = document.createElement('p');
+            note.className = 'small text-muted mb-2';
+            note.textContent = '分母是已標記的 PRTG 問題';
+            wrapper.appendChild(note);
+
+            const responsive = document.createElement('div');
+            responsive.className = 'table-responsive';
+            const table = document.createElement('table');
+            table.className = 'table table-sm table-bordered align-middle mb-0';
+            const caption = document.createElement('caption');
+            caption.className = 'visually-hidden';
+            caption.textContent = '分母是已標記的 PRTG 問題';
+            table.appendChild(caption);
+
+            const thead = document.createElement('thead');
+            const trHead = document.createElement('tr');
+            for (const col of ['規則代碼', '標記誤報', '已處理']) {
+                const th = document.createElement('th');
+                th.scope = 'col';
+                th.textContent = col;
+                trHead.appendChild(th);
+            }
+            thead.appendChild(trHead);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            for (const item of marks) {
+                const tr = document.createElement('tr');
+                const tdRule = document.createElement('td');
+                tdRule.textContent = item.ruleCode || '(未分類)';
+                const tdFp = document.createElement('td');
+                tdFp.textContent = formatNumber(item.falsePositive ?? 0);
+                const tdHandled = document.createElement('td');
+                tdHandled.textContent = formatNumber(item.handled ?? 0);
+                tr.append(tdRule, tdFp, tdHandled);
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+
+            const tfoot = document.createElement('tfoot');
+            const trFoot = document.createElement('tr');
+            trFoot.className = 'fw-semibold table-light';
+            const tdTotalLabel = document.createElement('td');
+            tdTotalLabel.textContent = '總計';
+            const tdTotalFp = document.createElement('td');
+            tdTotalFp.textContent = formatNumber(totalFp);
+            const tdTotalHandled = document.createElement('td');
+            tdTotalHandled.textContent = formatNumber(totalHandled);
+            trFoot.append(tdTotalLabel, tdTotalFp, tdTotalHandled);
+            tfoot.appendChild(trFoot);
+            table.appendChild(tfoot);
+
+            responsive.appendChild(table);
+            wrapper.appendChild(responsive);
+            ruleMarks.appendChild(wrapper);
+        }
+    }
+
     status.textContent = `${summary.from?.slice(0, 10) ?? ''} 至 ${summary.through?.slice(0, 10) ?? ''}，共 ${formatNumber(summary.windowDays)} 天。指標使用不同計算對象，請依各項說明解讀，彼此不共用分母。`;
     semantics.textContent = summary.metricSemantics || '指標依各自的資料列與日期定義計算，彼此沒有共同分母。';
     limitations.textContent = summary.limitations || '';
@@ -897,6 +237,8 @@ async function loadPrtgEffectiveness() {
         status.className = 'small mb-3 text-muted';
     } catch (exception) {
         metrics.classList.add('d-none');
+        const ruleMarks = document.getElementById('prtg-effectiveness-rule-marks');
+        if (ruleMarks) ruleMarks.replaceChildren();
         status.textContent = '使用效果載入失敗。';
         status.className = 'small mb-3 text-danger';
         const alert = document.createElement('div');
@@ -936,7 +278,6 @@ let prtgStructureConfigured = false;
 /** 結構同步是否執行中：開關的閘與執行中的灰掉是同一顆按鈕的兩個理由，任一成立就不能按。 */
 let structureSyncRunning = false;
 let selectedBackfillTimer = null;
-let currentProbeEvidenceJson = null;
 let selectedBackfillPreview = null;
 const selectedBackfillHostIds = new Set();
 let pendingBackfillHostId = null;
@@ -1468,10 +809,8 @@ function bindScopeControls() {
             // 估算的是「目前選的模式」而非已儲存的模式——管理者是在決定要不要改設定。
             const scope = document.getElementById('prtg-value-fetch-scope')?.value ?? 'triggered';
             const strategy = document.getElementById('prtg-fetch-strategy')?.value ?? 'conservative';
-            const qualificationDuration = document.getElementById('prtg-qualification-duration')?.value ?? '72';
-            const qualificationAttempts = document.getElementById('prtg-qualification-attempts')?.value ?? '1';
             const res = await api.get(
-                `/api/admin/settings/prtg-fetch-scope/estimate?scope=${encodeURIComponent(scope)}&strategy=${encodeURIComponent(strategy)}&qualificationDurationHours=${encodeURIComponent(qualificationDuration)}&qualificationMaximumAttempts=${encodeURIComponent(qualificationAttempts)}`,
+                `/api/admin/settings/prtg-fetch-scope/estimate?scope=${encodeURIComponent(scope)}`,
                 { silent: true });
 
             if (!res.success) {
@@ -1482,45 +821,20 @@ function bindScopeControls() {
 
             if (snapshotResult) {
                 const snapBase = `快照（不受數值取數對象影響）：${formatNumber(res.snapshotTargets)} 顆感測器，每天約 ${formatNumber(res.snapshotRowsPerDay)} 列，保留 ${res.snapshotRetentionDays} 天約 ${formatNumber(res.snapshotRowsAtRetention)} 列`;
-                const model = res.snapshotCapacityEstimatedSeconds == null
-                    ? '尚無足夠同形新樣本' : `p95 ${Number(res.snapshotCapacityP95BatchSeconds).toFixed(1)} 秒/批，估計 ${Number(res.snapshotCapacityEstimatedSeconds).toFixed(0)} 秒`;
-                const age = res.snapshotCapacityOldestSampleAgeSeconds == null
-                    ? '無樣本時間' : `最舊樣本 ${Number(res.snapshotCapacityOldestSampleAgeSeconds).toFixed(0)} 秒前`;
-                const primaryModeText = res.snapshotCapacityPrimaryChannelMode === 'provided' ? 'bulk 提供 primarychannel'
-                    : res.snapshotCapacityPrimaryChannelMode === 'fallback' ? 'property fallback' : 'primarychannel 成本模式未核實';
-                const fallbackEvidence = res.snapshotCapacityPrimaryChannelMode === 'fallback' && res.snapshotCapacityPotentialQualifiedSensors > 0
-                    ? `；fallback bracket ${formatNumber(res.snapshotCapacityFallbackSamples)}/5 組，p95 ${res.snapshotCapacityP95FallbackGroupSeconds == null ? '—' : Number(res.snapshotCapacityP95FallbackGroupSeconds).toFixed(1) + ' 秒/組'}` : '';
-                const capacity = `快照分項量測 ${res.snapshotCapacityStatus}（${res.snapshotCapacityStrategy}，${formatNumber(res.snapshotTargets)} 顆/${formatNumber(res.snapshotCapacityBatchCount)} 批；預期 ${formatNumber(res.snapshotCapacityExpectedTableRequests)} 次 Table GET；${primaryModeText}，${formatNumber(res.snapshotCapacityPotentialQualifiedSensors)} 個有效 trusted profile／${formatNumber(res.snapshotCapacityFallbackGroups)} 組最多 5 顆；${formatNumber(res.snapshotCapacitySamples)} 個新鮮 ${formatNumber(res.snapshotCapacitySampleBatchSize)}-ID 樣本（至少 5 個）${fallbackEvidence}；${model}；${age}；原因 ${res.snapshotCapacityReason}；模型 ${res.snapshotCapacityModel}；請求形式 ${res.snapshotCapacityRequestShape}）`;
-                const profileCapacity = `Profile 分項量測 ${res.profileCapacityStatus}（範圍 ${formatNumber(res.profileCapacityTargetSensors)} 顆，預期 ${formatNumber(res.profileCapacityExpectedTableRequests)} 次 Table GET；目前有效的新鮮樣本 ${formatNumber(res.profileCapacitySamples)} 筆；首次核准及失敗後恢復需 5 筆；p95 ${res.profileCapacityP95SensorSeconds == null ? '—' : Number(res.profileCapacityP95SensorSeconds).toFixed(2) + ' 秒／sensor'}；${res.profileCapacityEstimatedSeconds == null ? '尚無僅傳輸估算' : '僅傳輸試測估算 ' + formatNumber(res.profileCapacityEstimatedSeconds) + ' 秒'}／${formatNumber(res.profileCapacityWindowSeconds)} 秒可用期限；原因 ${res.profileCapacityReason}；請求形式 ${res.profileCapacityRequestShape}）`;
-                const qualificationStatus = res.qualificationCapacityStatus === 'capacity-qualified' ? '成本已核可'
-                    : res.qualificationCapacityStatus === 'capacity-exceeded' ? '超出初始化期限' : '成本未核實';
-                const qualificationTime = res.qualificationRequiredSeconds == null
-                    ? '所需時間未知' : `預估 ${formatNumber(res.qualificationRequiredSeconds)}／${formatNumber(res.qualificationAvailableSeconds)} 秒`;
-                const qualificationCapacity = `初次 raw 資格初始化 ${qualificationStatus}（目前有 binding 且缺 raw proof ${formatNumber(res.qualificationEligibleSensors)} 顆；${formatNumber(res.qualificationWorstCaseTableRequests)} 次 Table/property GET + ${formatNumber(res.qualificationWorstCaseHistoricRequests)} 次 Historic GET；${qualificationTime}；${formatNumber(res.qualificationDurationHours)} 小時、以 ${formatNumber(res.qualificationAttemptsAssumed)} 次嘗試估算、保留 25%；原因 ${res.qualificationCapacityReason}）`;
-                const jointStatusText = res.jointCapacityStatus === 'capacity-qualified' ? '符合容量條件'
-                    : res.jointCapacityStatus === 'capacity-exceeded' ? '超出期限或共享額度' : '待驗證';
-                const jointPlanText = res.jointAdmissionPlanMatched
-                    ? '符合目前已核准方案' : '候選設定共同試算，儲存或啟用時會重新驗證';
-                const jointSeconds = value => value == null || !Number.isFinite(Number(value))
-                    ? '—' : formatNumber(Number(value).toFixed(0));
-                const jointRate = value => value == null || !Number.isFinite(Number(value))
-                    ? '—' : Number(value).toFixed(3);
-                const jointCapacity = `共同容量 ${jointStatusText}（${jointPlanText}；原因 ${res.jointCapacityReason}；Table API 共享配額 ${jointRate(res.jointSharedTableRequestsPerSecond)}/秒；快照保留 ${jointRate(res.jointSnapshotTableRequestsPerSecond)}/秒、Profile 保留 ${jointRate(res.jointProfileTableRequestsPerSecond)}/秒、一般請求餘額 ${jointRate(res.jointGeneralResidualTableRequestsPerSecond)}/秒；快照完成估算 ${jointSeconds(res.jointSnapshotEstimatedSeconds)}/${jointSeconds(res.jointSnapshotWindowSeconds)} 秒；Profile 完成估算 ${jointSeconds(res.jointProfileEstimatedSeconds)}/${jointSeconds(res.jointProfileWindowSeconds)} 秒）`;
+                const batches = `每輪 ${formatNumber(res.snapshotBatchCount)} 批（每批最多 100 顆）`;
                 if (res.snapshotWarning) {
                     snapshotResult.className = 'text-warning small d-block';
-                    snapshotResult.textContent = `⚠ ${snapBase}——${res.snapshotWarning}；${capacity}；${profileCapacity}；${qualificationCapacity}；${jointCapacity}`;
+                    snapshotResult.textContent = `⚠ ${snapBase}，${batches}——${res.snapshotWarning}`;
                 } else {
-                    snapshotResult.className = res.jointCapacityStatus === 'capacity-qualified'
-                        ? 'text-success small d-block'
-                        : res.jointCapacityStatus === 'capacity-exceeded' ? 'text-danger small d-block' : 'text-warning small d-block';
-                    snapshotResult.textContent = `${snapBase}；${capacity}；${profileCapacity}；${qualificationCapacity}；${jointCapacity}`;
+                    snapshotResult.className = 'text-muted small d-block';
+                    snapshotResult.textContent = `${snapBase}，${batches}`;
                 }
             }
 
             if (scope === 'triggered') {
                 if (strategy !== 'aggressive') {
                     result.className = 'text-muted small';
-                    result.textContent = '保守策略不執行夜間逐 sensor 取數；快照容量估算已列於上方。';
+                    result.textContent = '保守策略不執行夜間逐 sensor 取數；快照規模已列於上方。';
                     return;
                 }
                 result.className = 'text-muted small';
@@ -1530,7 +844,7 @@ function bindScopeControls() {
 
             if (strategy !== 'aggressive') {
                 result.className = 'text-muted small';
-                result.textContent = '保守策略不執行夜間逐 sensor 取數；快照容量估算已列於上方。';
+                result.textContent = '保守策略不執行夜間逐 sensor 取數；快照規模已列於上方。';
                 return;
             }
 
@@ -1618,51 +932,6 @@ function bindPrtgTest() {
         } finally {
             restore();
         }
-    });
-
-    const pilotButton = document.getElementById('prtg-capacity-pilot-btn');
-    const pilotResult = document.getElementById('prtg-capacity-pilot-result');
-    pilotButton?.addEventListener('click', async () => {
-        const restore = withBusy(pilotButton, '試測中');
-        pilotResult?.replaceChildren();
-        pilotResult?.classList.remove('text-danger', 'text-success', 'text-warning');
-        try {
-            const res = await api.post('/api/admin/settings/prtg-capacity-pilot', {}, { silent: true });
-            if (pilotResult) {
-                const model = res.estimatedSeconds == null ? '尚無可用估算' : `估計 ${Number(res.estimatedSeconds).toFixed(0)} 秒`;
-                pilotResult.classList.add(res.status === 'capacity-qualified' ? 'text-success' : 'text-warning');
-                const fallbackProgress = res.primaryChannelCapabilityMode === 'fallback' && res.potentialQualifiedSensors > 0
-                    ? `；fallback brackets ${formatNumber(res.matchingFallbackGroupSamples)}/${formatNumber(res.requiredFallbackGroupSamples)} 組，p95 ${res.p95FallbackGroupSeconds == null ? '—' : Number(res.p95FallbackGroupSeconds).toFixed(1) + ' 秒/組'}` : '';
-                pilotResult.textContent = `${res.status}：${formatNumber(res.targetCount)} 個目前目標、送出 ${res.requestsSent}/${res.requestsAttempted} 個 GET（本次最多 ${formatNumber(res.maximumRequestsPerRun)} 個；fallback 單組最多 12 個），${formatNumber(res.matchingFullBatchSamples)} 個新鮮 ${formatNumber(res.capacitySampleBatchSize)}-ID 樣本（至少 5 個）${fallbackProgress}，p95 ${res.p95BatchSeconds == null ? '—' : Number(res.p95BatchSeconds).toFixed(1) + ' 秒'}；${model}；覆蓋 ${res.coverage}；形狀 ${res.requestShape}（${res.reason}）。`;
-            }
-        } catch (error) {
-            if (pilotResult) {
-                pilotResult.classList.add('text-danger');
-                pilotResult.textContent = error?.message || '容量試測失敗。';
-            }
-        } finally { restore(); }
-    });
-
-    const profilePilotButton = document.getElementById('prtg-profile-capacity-pilot-btn');
-    const profilePilotResult = document.getElementById('prtg-profile-capacity-pilot-result');
-    profilePilotButton?.addEventListener('click', async () => {
-        const restore = withBusy(profilePilotButton, '測量中');
-        profilePilotResult?.replaceChildren();
-        profilePilotResult?.classList.remove('text-danger', 'text-success', 'text-warning');
-        try {
-            const res = await api.post('/api/prtg/monitoring/trusted-sampling/profile-capacity-pilot', {}, { silent: true });
-            if (profilePilotResult) {
-                const p95 = res.p95SensorSeconds == null ? '—' : `${Number(res.p95SensorSeconds).toFixed(2)} 秒／sensor`;
-                const estimate = res.estimatedSeconds == null ? '尚無可用估算' : `估計 ${formatNumber(res.estimatedSeconds)} 秒`;
-                profilePilotResult.classList.add(res.status === 'capacity-qualified' ? 'text-success' : 'text-warning');
-                profilePilotResult.textContent = `${res.status}：範圍 ${formatNumber(res.targetSensorCount)} 顆；已發送 ${res.requestsSent}/${res.requestsAttempted} 個 GET；成功樣本 ${res.matchingFreshSuccessfulSamples}/5；p95 ${p95}；${estimate}／${formatNumber(res.completionWindowSeconds)} 秒期限；耗時 ${formatNumber(res.elapsedMilliseconds / 1000)} 秒；${res.reason}。`;
-            }
-        } catch (error) {
-            if (profilePilotResult) {
-                profilePilotResult.classList.add('text-danger');
-                profilePilotResult.textContent = error?.message || 'Profile 傳輸測量失敗。';
-            }
-        } finally { restore(); }
     });
 }
 
@@ -2091,6 +1360,12 @@ function renderConflicts(items) {
         } else if (item.conflictKind === 'multi-host') {
             kindBadge.className = 'badge bg-info text-dark';
             kindBadge.textContent = 'IP 對多主機';
+        } else if (item.conflictKind === 'hostname-multi') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱對多主機';
+        } else if (item.conflictKind === 'hostname-host-taken') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱命中已對應主機';
         } else {
             kindBadge.className = 'badge bg-secondary';
             kindBadge.textContent = item.conflictKind || '-';
@@ -2257,6 +1532,12 @@ function renderUnmatched(items) {
         } else if (item.conflictKind === 'multi-host') {
             kindBadge.className = 'badge bg-info text-dark';
             kindBadge.textContent = 'IP 對多主機';
+        } else if (item.conflictKind === 'hostname-multi') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱對多主機';
+        } else if (item.conflictKind === 'hostname-host-taken') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱命中已對應主機';
         } else if (item.conflictKind === 'unmatched' || item.mapStatus === 'unmatched') {
             kindBadge.className = 'badge bg-secondary';
             kindBadge.textContent = '未對應';
@@ -2692,7 +1973,7 @@ function bindAssignForm() {
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
                 refreshUnmatched(unmatchedPage),
-
+                refreshScopePurge()
             ]);
         } catch (error) {
             toast(error && error.message ? error.message : '指派失敗', 'danger');
@@ -2889,19 +2170,19 @@ async function refreshPrtgMirrorCore() {
             finally { restore(); }
         };
     }
-    const readinessEl = document.getElementById('prtg-observation-readiness');
-    if (readinessEl) {
-        try {
-            const preview = await api.get('/api/prtg/observation-readiness', { silent: true });
-            readinessEl.textContent = `PRTG 證據核對（近 30 日）：有效快照 ${formatNumber(preview.activeSnapshots)} 筆、尚無日誌附掛對照 ${formatNumber(preview.independentSnapshots)} 筆、與日誌附掛重疊 ${formatNumber(preview.legacyOverlaps)} 筆。來源待確認 ${formatNumber(preview.unknownSourceGenerations)} 筆、資源待確認 ${formatNumber(preview.unknownResourceGenerations)} 筆。快照本身不代表正式問題；只有可信證據與成功 NetIQ 主機日才可補追加，進度請看補追加與通知處理狀態。`;
-        } catch {
-            readinessEl.textContent = '獨立 PRTG 問題準備度目前無法讀取，請稍後重試。';
-        }
-    }
     await refreshScopePurge();
 }
 
 // ── 監看範圍外資料（預覽＋確認清除）────────────────────────────────────
+
+let scopePurgeStorageKey = null;
+
+function scopePurgeJobStorageKey(user) {
+    const actor = user?.isServerAdmin
+        ? `server-admin:${String(user.account || '').toLocaleLowerCase()}`
+        : `user:${user?.userId ?? 'unknown'}`;
+    return `lf-prtg-scope-purge:${actor}`;
+}
 
 function renderScopePurge(preview) {
     const btn = document.getElementById('prtg-scope-purge-btn');
@@ -2930,15 +2211,27 @@ function renderScopePurge(preview) {
         + `狀態變更 ${formatNumber(preview.stateChanges)} 筆，涉及 ${formatNumber(preview.affectedDevices)} 台裝置`
         + (preview.unknownSensors > 0 ? `及 ${formatNumber(preview.unknownSensors)} 顆鏡像已無的感測器` : '')
         + `。${baseline}`;
+    if (preview.previousJobId) {
+        summaryEl.textContent += `；前次部分作業 ${preview.previousJobId.slice(0, 8)} 已刪除數值 ${formatNumber(preview.previousDeletedValues)} 筆、狀態變更 ${formatNumber(preview.previousDeletedStateChanges)} 筆，尚餘數值 ${formatNumber(preview.previousRemainingValues)} 筆、狀態變更 ${formatNumber(preview.previousRemainingStateChanges)} 筆（已由伺服器連結）`;
+    }
     const names = Array.isArray(preview.topDeviceNames) ? preview.topDeviceNames : [];
+    const affectedDevices = preview.detailsRestricted
+        ? preview.visibleAffectedDevices
+        : preview.affectedDevices;
     devicesEl.textContent = names.length > 0
-        ? `裝置：${names.join('、')}${preview.affectedDevices > names.length ? ' 等' : ''}`
+        ? `裝置：${names.join('、')}${affectedDevices > names.length ? ' 等' : ''}`
         : '';
-    btn.disabled = preview.values + preview.stateChanges === 0;
+    btn.dataset.previewId = preview.previewId || '';
+    btn.dataset.expiresAtUtc = preview.expiresAtUtc || '';
+    const pendingJob = scopePurgeStorageKey && sessionStorage.getItem(`${scopePurgeStorageKey}:job-id`);
+    const pendingPreview = scopePurgeStorageKey && sessionStorage.getItem(`${scopePurgeStorageKey}:preview-id`);
+    btn.textContent = pendingJob || pendingPreview ? '檢查／繼續清除' : '確認清除';
+    btn.disabled = pendingJob || pendingPreview ? false : (preview.values + preview.stateChanges === 0 || !btn.dataset.previewId);
 }
 
 async function refreshScopePurge() {
     try {
+        scopePurgeStorageKey = scopePurgeJobStorageKey(await getCurrentUser());
         renderScopePurge(await api.get('/api/admin/settings/prtg-scope-purge/preview', { silent: true }));
     } catch {
         // 失敗時不干擾整體頁面
@@ -2948,16 +2241,77 @@ async function refreshScopePurge() {
 function bindScopePurge() {
     const btn = document.getElementById('prtg-scope-purge-btn');
     btn?.addEventListener('click', async () => {
+        if (!scopePurgeStorageKey) scopePurgeStorageKey = scopePurgeJobStorageKey(await getCurrentUser());
+        const jobStorageKey = `${scopePurgeStorageKey}:job-id`;
+        const previewStorageKey = `${scopePurgeStorageKey}:preview-id`;
+        const expiryStorageKey = `${scopePurgeStorageKey}:preview-expires`;
+        const savedJobId = sessionStorage.getItem(jobStorageKey);
+        const savedPreviewId = sessionStorage.getItem(previewStorageKey);
         const confirmed = await confirmAction({
-            message: '確定要清除監看範圍外的 PRTG 數值與狀態變更嗎？刪除後無法復原（重新納入監看的裝置只能靠回填補回保留期內的資料）。'
+            message: savedJobId || savedPreviewId
+                ? '要繼續這個已接受的範圍外清除作業嗎？只會處理原預覽時的資料集合。'
+                : '確定要清除監看範圍外的 PRTG 數值與狀態變更嗎？刪除後無法復原（重新納入監看的裝置只能靠回填補回保留期內的資料）。'
         });
         if (!confirmed) return;
         const restore = withBusy(btn, '清除中');
         try {
-            const res = await api.post('/api/admin/settings/prtg-scope-purge/confirm', {});
-            toast(`已清除數值 ${formatNumber(res.values)} 筆、狀態變更 ${formatNumber(res.stateChanges)} 筆`, 'success');
-        } catch {
-            // 錯誤已由 api.js 顯示
+            let job;
+            if (savedJobId) {
+                job = await api.get(`/api/admin/settings/prtg-scope-purge/jobs/${encodeURIComponent(savedJobId)}`);
+                if (job.status === 'paused') {
+                    // A paused job advances only after a fresh, explicit user action.
+                    job = await api.post(`/api/admin/settings/prtg-scope-purge/jobs/${encodeURIComponent(job.jobId)}/resume`,
+                        { expectedRevision: job.revision });
+                }
+            } else {
+                const previewId = savedPreviewId || btn.dataset.previewId;
+                const expiresAtUtc = savedPreviewId
+                    ? sessionStorage.getItem(expiryStorageKey)
+                    : btn.dataset.expiresAtUtc;
+                // Once POST may have been attempted, the same preview ID is an idempotency key.
+                // Retry it even after local expiry so an accepted response lost in transit can be recovered.
+                if (!previewId || (!savedPreviewId && (!expiresAtUtc || Date.parse(expiresAtUtc) <= Date.now()))) {
+                    sessionStorage.removeItem(previewStorageKey);
+                    sessionStorage.removeItem(expiryStorageKey);
+                    throw new Error('預覽已逾期，請重新預覽後再確認。');
+                }
+                if (!savedPreviewId) {
+                    sessionStorage.setItem(previewStorageKey, previewId);
+                    sessionStorage.setItem(expiryStorageKey, expiresAtUtc);
+                }
+                job = await api.post('/api/admin/settings/prtg-scope-purge/confirm', { previewId });
+                sessionStorage.removeItem(previewStorageKey);
+                sessionStorage.removeItem(expiryStorageKey);
+                sessionStorage.setItem(jobStorageKey, job.jobId);
+            }
+            while (job.status === 'accepted' || job.status === 'running') {
+                job = await api.post(`/api/admin/settings/prtg-scope-purge/jobs/${encodeURIComponent(job.jobId)}/resume`,
+                    { expectedRevision: job.revision });
+                if (!job.countsReconciled) {
+                    const summaryEl = document.getElementById('prtg-scope-purge-summary');
+                    if (summaryEl) summaryEl.textContent = `清除進行中：本作業已刪數值 ${formatNumber(job.values)} 筆、狀態變更 ${formatNumber(job.stateChanges)} 筆；預估尚餘數值 ${formatNumber(job.remainingValues)} 筆、狀態變更 ${formatNumber(job.remainingStateChanges)} 筆。其他清理的影響會在安全暫停或完成時核對。`;
+                }
+            }
+            if (job.status === 'complete') {
+                sessionStorage.removeItem(jobStorageKey);
+                toast(`清除完成：本作業刪除數值 ${formatNumber(job.values)} 筆、狀態變更 ${formatNumber(job.stateChanges)} 筆`, 'success');
+            } else if (job.status === 'stopped') {
+                sessionStorage.setItem(`${scopePurgeStorageKey}:stopped-job-id`, job.jobId);
+                sessionStorage.removeItem(jobStorageKey);
+                toast(`清除已停止（${job.stopReason || '範圍已變更'}）；可重新預覽，前次部分進度仍保留。`, 'warning');
+            } else {
+                toast(`清除已暫停（${job.stopReason || job.status}）；確認目前權限與範圍後，再明確選擇繼續。`, 'warning');
+            }
+        } catch (error) {
+            if (error?.name === 'ApiError' && ['validation_failed', 'conflict'].includes(error.code)) {
+                // These business responses mean the server rejected this operation. Auth/read
+                // failures and transport errors keep the durable preview key for safe recovery.
+                sessionStorage.removeItem(previewStorageKey);
+                sessionStorage.removeItem(expiryStorageKey);
+            } else if (error instanceof Error && error.name !== 'ApiError') {
+                toast(`範圍外清除未完成：${error.message}`, 'danger');
+            }
+            // A request with unknown outcome keeps its preview/job key for idempotent recovery.
         } finally {
             restore();
         }
@@ -2974,7 +2328,7 @@ function bindPrtgMirror() {
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
                 refreshUnmatched(unmatchedPage),
-
+                refreshScopePurge()
             ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
         } catch {
@@ -2989,29 +2343,6 @@ function bindPrtgMirror() {
 
 let prtgProbePollTimer = null;
 
-let diskReadinessPage = 1;
-let diskReadinessLoaded = false;
-let diskReadinessLoading = false;
-let diskVerificationSensor = null;
-let diskVerificationTimer = null;
-const selectedDiskVerificationIds = new Set();
-let pendingDiskSingleRequest = null;
-let pendingDiskBatchRequest = null;
-
-function pendingDiskRequestId(kind, signature) {
-    const slot = kind === 'batch' ? pendingDiskBatchRequest : pendingDiskSingleRequest;
-    if (slot?.signature === signature) return slot.requestId;
-    const next = { signature, requestId: crypto.randomUUID() };
-    if (kind === 'batch') pendingDiskBatchRequest = next; else pendingDiskSingleRequest = next;
-    return next.requestId;
-}
-
-function updateDiskBatchButton() {
-    const button = document.getElementById('prtg-disk-verification-batch-start');
-    if (!button) return;
-    button.textContent = `依序驗證所選（${selectedDiskVerificationIds.size}/5）`;
-    button.disabled = selectedDiskVerificationIds.size < 1 || selectedDiskVerificationIds.size > 5;
-}
 
 function activateSelectedBackfillHost(hostName) {
     const name = String(hostName || '');
@@ -3044,338 +2375,12 @@ function activateSelectedBackfillHost(hostName) {
         .find(item => item.value === String(host.hostId))?.focus();
 }
 
-function readinessText(tag, value, className = '') {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    node.textContent = value == null || value === '' ? '—' : String(value);
-    return node;
-}
-
-function renderDiskReadiness(page) {
-    const summary = document.getElementById('prtg-readiness-summary');
-    const rows = document.getElementById('prtg-readiness-rows');
-    const reasons = document.getElementById('prtg-readiness-reasons');
-    if (!summary || !rows || !reasons) return;
-    summary.replaceChildren();
-    rows.replaceChildren();
-    reasons.replaceChildren();
-
-    const progress = readinessText('strong', `全局鏡像磁碟候選 ${page.globalMirrorCandidates} 顆`);
-    summary.append(progress,
-        readinessText('div', `目前映射至啟用主機 ${page.globallyMappedActive} 顆；白名單內 ${page.globallyWhitelisted} 顆；sensor/device 暫停 ${page.globallyPaused} 顆；最新對應衝突 ${page.globallyConflicted} 顆、未對應 ${page.globallyUnmapped} 顆、指向停用或合併主機 ${page.globallyDisabledHost} 顆。`),
-        readinessText('div', '分類可重疊，不能相加；資料/語意就緒為前100抽樣。'),
-        readinessText('div', page.readinessSummaryComputed
-            ? `${page.readinessSummaryCapped ? `資料就緒度（Sensor Objid 順序前 ${page.readinessSummaryCandidateCount} 顆候選抽樣）：` : `資料就緒度（全部 ${page.readinessSummaryCandidateCount} 顆已映射候選）：`}每日有效小時與 28 日均達標 ${page.dataReadyCount} 顆；語意已驗證 ${page.semanticVerifiedCount} 顆；可供試算 ${page.previewReadyCount} 顆。`
-            : '資料就緒、語意驗證與可試算摘要只在第 1 頁計算；返回第 1 頁可重新整理摘要。'),
-        readinessText('div', `目前逐列分頁 ${page.page} / ${page.pageCount}；本頁 ${page.dataReadyOnPage} 顆資料就緒、${page.semanticVerifiedOnPage} 顆語意已驗證。`));
-    if (page.readinessSummaryComputed)
-        summary.append(readinessText('div', `資料就緒度與可試算數依目前已映射候選計算；${page.readinessSummaryCapped ? `僅為前 ${page.readinessSummaryCandidateCount} 顆候選抽樣，不代表全局。` : '本次覆蓋全部已映射候選。'}`));
-    if (page.globalMirrorCandidates === 0) summary.append(readinessText('p', '全站鏡像目前沒有磁碟分類候選；請檢查結構同步與磁碟分類。', 'alert alert-info mt-2 mb-0'));
-    else if (page.candidateSensors === 0) summary.append(readinessText('p', page.emptyState || '目前沒有映射到啟用主機的磁碟候選；請檢查主機對應。', 'alert alert-info mt-2 mb-0'));
-
-    const reasonEntries = Object.entries(page.reasonCountsOnPage ?? {});
-    if (reasonEntries.length) {
-        reasons.append(readinessText('strong', '本頁逐列原因統計：'));
-        for (const [reason, count] of reasonEntries) reasons.append(readinessText('span', ` ${reason} ${count} 筆；`, 'me-2'));
-    }
-
-    for (const row of page.rows ?? []) {
-        const article = document.createElement('article');
-        article.className = 'border rounded p-3';
-        const title = document.createElement('h3');
-        title.className = 'h6 mb-2';
-        title.textContent = `${row.sensorName} (Sensor ${row.sensorObjid})`;
-        const details = document.createElement('div');
-        details.className = 'small d-grid gap-1';
-        const latest = row.latestUsableHour ? formatDateTime(row.latestUsableHour) : '尚無可用小時';
-        const mapped = Array.isArray(row.mappedHosts) && row.mappedHosts.length ? row.mappedHosts.join('、') : '未取得有效主機對應';
-        const values = [
-            `資料進度：${row.usableDays} / ${row.requiredDays} 天（每日至少 ${row.requiredHoursPerDay} 個可用小時；目前 ${row.usableHours} 小時）`,
-            `最新可用小時：${latest}`,
-            `映射主機：${mapped}；感測器類型 ${row.sensorType}（白名單資格依資料狀態與原因判讀）`,
-            `資料狀態：${row.status}；語意狀態：${row.semanticVerified ? '已驗證' : row.semanticLabel}`,
-            `原因：${row.reason}`
-        ];
-        for (const value of values) details.append(readinessText('div', value));
-        const missingDetails = document.createElement('details');
-        missingDetails.className = 'mt-1';
-        const missingSummary = document.createElement('summary');
-        missingSummary.textContent = '展開缺少的小時';
-        const missingList = readinessText('div', '展開後載入…', 'mt-1');
-        missingDetails.append(missingSummary, missingList);
-        missingDetails.addEventListener('toggle', () => {
-            if (!missingDetails.open || missingDetails.dataset.decoded === 'true') return;
-            const masks = Array.isArray(row.missingHourMasks) ? row.missingHourMasks : [];
-            const missing = [];
-            for (let dayIndex = 0; dayIndex < masks.length; dayIndex++) {
-                const mask = Number(masks[dayIndex]) >>> 0;
-                for (let hour = 0; hour < 24; hour++) {
-                    if ((mask & (1 << hour)) === 0) continue;
-                    const date = missingHourDate(row.missingHourWindowStart, dayIndex, hour);
-                    missing.push(formatDateTime(date));
-                }
-            }
-            missingList.textContent = missing.length ? `缺少 ${missing.length} 個小時：${missing.join('、')}` : '28 日窗口內沒有缺少的小時。';
-            missingDetails.dataset.decoded = 'true';
-        });
-        details.append(missingDetails);
-        const verify = document.createElement('button');
-        verify.type = 'button';
-        verify.className = 'btn btn-sm btn-outline-primary mt-2 align-self-start';
-        verify.textContent = '驗證這顆';
-        verify.setAttribute('aria-label', `選取 ${row.sensorName}（Sensor ${row.sensorObjid}）進行語意驗證`);
-        verify.addEventListener('click', () => selectDiskVerificationSensor(row));
-        const actions = document.createElement('div');
-        actions.className = 'd-flex flex-wrap align-items-center gap-2 mt-2';
-        actions.append(verify);
-        if (row.status === 'Ready') {
-            const label = document.createElement('label'); label.className = 'form-check d-flex align-items-center gap-2 mb-0';
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox'; checkbox.className = 'form-check-input m-0';
-            checkbox.value = String(row.sensorObjid); checkbox.checked = selectedDiskVerificationIds.has(checkbox.value);
-            checkbox.disabled = !checkbox.checked && selectedDiskVerificationIds.size >= 5;
-            checkbox.setAttribute('aria-label', `加入批次驗證：${row.sensorName}（Sensor ${row.sensorObjid}）`);
-            checkbox.addEventListener('change', () => {
-                if (checkbox.checked) selectedDiskVerificationIds.add(checkbox.value); else selectedDiskVerificationIds.delete(checkbox.value);
-                updateDiskBatchButton();
-                renderDiskReadiness(page);
-            });
-            label.append(checkbox, readinessText('span', '加入批次驗證（最多 5 顆）'));
-            actions.append(label);
-        }
-        const backfill = document.createElement('button');
-        backfill.type = 'button'; backfill.className = 'btn btn-sm btn-link p-0'; backfill.textContent = '到指定主機補值';
-        backfill.setAttribute('aria-label', `前往指定主機補值：${row.mappedHosts?.[0] || '對應主機'}`);
-        backfill.addEventListener('click', () => activateSelectedBackfillHost(row.mappedHosts?.[0]));
-        actions.append(backfill);
-        article.append(title, details, actions);
-        rows.append(article);
-    }
-
-    const label = document.getElementById('prtg-readiness-page-label');
-    if (label) label.textContent = `第 ${page.page} / ${Math.max(page.pageCount, 1)} 頁；候選感測器共 ${page.candidateSensors} 筆（總數），上方資料與原因計數僅統計本頁。`;
-    const prev = document.getElementById('prtg-readiness-prev');
-    const next = document.getElementById('prtg-readiness-next');
-    if (prev) prev.disabled = page.page <= 1;
-    if (next) next.disabled = page.page >= page.pageCount;
-}
-
-function selectedDiskSensorId() { return diskVerificationSensor?.sensorObjid ?? null; }
-
-async function refreshDiskRuleTrial() {
-    const id = selectedDiskSensorId();
-    const panel = document.getElementById('prtg-disk-rule-trial');
-    if (!panel || !id) return;
-    panel.textContent = '正在以最新完成日的已落地資料進行唯讀試算…';
-    try {
-        const trial = await api.get(`/api/prtg/disk-verification/${encodeURIComponent(id)}/rule-trial`, { silent: true });
-        const lines = [
-            trial.message,
-            `試算時間：${formatDateTime(trial.assessedAtUtc)}；設定版本：${trial.settingsRevision}；規則摘要：${trial.rulesFingerprint}；語意版本：${trial.semanticVersion}。設定或資料變更後請重算。`,
-            '這是已儲存門檻與資料的試算；正式判定另須通過 NetIQ 父紀錄、試點身分、來源／資源與語意暖機，試算命中不代表已派工或已通知。',
-            `完成日：${trial.completedDay}；資料品質：${trial.dataQuality}（${trial.usableDays}/${trial.requiredDays} 天，${trial.usableHours} 個可用小時；每日需 ${trial.requiredHoursPerDay} 小時）`,
-            `語意：${trial.semanticVerified ? '已驗證' : '未驗證'}；排除原因：${trial.exclusion || '無'}`,
-            trial.ruleId ? `規則：${trial.ruleId}（${trial.ruleEnabled ? '啟用' : '停用；試算仍使用已儲存門檻'}）` : '規則：未設定',
-            trial.lowWaterPercent != null ? `門檻：低水位 ${trial.lowWaterPercent}%；下降至少 ${trial.minimumDeclinePerDay} 百分點／日；預估耗盡 ${trial.maximumDaysToDepletion} 日內；到低水位 ${trial.maximumDaysToLowWater ?? 7} 日內` : null,
-            trial.currentAvailablePercent != null ? `趨勢：目前 ${trial.currentAvailablePercent}%；穩健下降 ${trial.declinePerDay ?? '—'} 百分點／日；預估 ${trial.estimatedDaysToDepletion ?? '—'} 日耗盡、${trial.estimatedDaysToLowWater ?? '—'} 日到低水位；預測命中：${trial.predictedHit ? '是' : '否'}` : '趨勢：目前沒有可用的完整趨勢估計',
-            `真實效果：${trial.message?.includes('real effect pending') ? '待觀察（尚無已證實的真實正向案例）' : trial.realPositiveStatus}`
-        ].filter(Boolean);
-        panel.replaceChildren(...lines.map(line => readinessText('div', line)));
-    } catch (error) {
-        panel.textContent = `唯讀規則試算失敗：${error?.message || '請重試。'}`;
-    }
-}
-
-function renderDiskVerificationResult(result) {
-    const status = document.getElementById('prtg-disk-verification-status');
-    const evidence = document.getElementById('prtg-disk-verification-evidence');
-    const form = document.getElementById('prtg-disk-manual-form');
-    if (!status || !evidence || !form) return;
-    evidence.replaceChildren();
-    if (!result) { status.textContent = '尚無語意驗證結果。'; form.classList.add('d-none'); return; }
-    const labels = { Verified: '語意已自動確認', NeedsManualReview: '候選需人工覆核', Mismatch: '資料不匹配', Failed: '驗證失敗，可重新驗證', TimedOut: '驗證逾時，可重新驗證', Cancelled: '驗證已取消，可重新驗證' };
-    status.textContent = `${labels[result.status] || result.status}：${result.summary || '無摘要'}${result.cancelled ? '（已取消）' : ''}`;
-    const fields = [
-        `驗證時間：${result.checkedAtUtc ? formatDateTime(result.checkedAtUtc) : '—'}`,
-        `資料日期：${result.dataDate || '—'}`,
-        `主頻道：${result.channelName || '—'}（ID ${result.channelIdentifier || '—'}）`,
-        `單位／尺度／方向：${result.unit || '—'}／${result.scale ?? '—'}／${result.direction || '—'}`,
-        `落地資料比對：${result.comparedPointCount ?? 0} 點；${result.valuesMatch === true ? '相符' : result.valuesMatch === false ? '不相符' : '未完成比對'}`,
-        `解析語意版本：${result.parserSemanticVersion || '—'}`
-    ];
-    for (const value of fields) evidence.append(readinessText('div', value));
-    const canReview = result.status === 'NeedsManualReview' && result.valuesMatch === true && (result.comparedPointCount ?? 0) > 0 && !result.cancelled;
-    form.classList.toggle('d-none', !canReview);
-    const id = document.getElementById('prtg-manual-channel-id');
-    const name = document.getElementById('prtg-manual-channel-name');
-    const unit = document.getElementById('prtg-manual-unit');
-    const scale = document.getElementById('prtg-manual-scale');
-    if (canReview) {
-        if (id) id.value = result.channelIdentifier || '';
-        if (name) name.value = result.channelName || '';
-        if (unit) unit.value = result.unit || '%';
-        if (scale) scale.value = result.scale ?? 1;
-    }
-    const confirm = document.getElementById('prtg-manual-confirm');
-    if (confirm) confirm.disabled = !canReview;
-}
-
-async function refreshDiskVerification() {
-    const id = selectedDiskSensorId();
-    if (!id) return;
-    const statusEl = document.getElementById('prtg-disk-verification-status');
-    try {
-        const [run, evidence] = await Promise.all([
-            api.get('/api/prtg/disk-verification', { silent: true }),
-            api.get(`/api/prtg/disk-verification/${encodeURIComponent(id)}/evidence`, { silent: true })
-        ]);
-        const selectedRun = { ...run, selectedResult: run.results?.find(x => x.sensorObjid === id) };
-        const running = run.isRunning;
-        const cancel = document.getElementById('prtg-disk-verification-cancel');
-        if (cancel) cancel.classList.toggle('d-none', !running);
-        const start = document.getElementById('prtg-disk-verification-start');
-        if (start) start.disabled = running;
-        if (running && statusEl) statusEl.textContent = run.isBatch
-            ? `批次驗證進行中：${run.batchCompleted}/${run.batchTotal} 顆已完成；目前 Sensor ${run.sensorObjid ?? '—'}。`
-            : `Sensor ${run.sensorObjid ?? id} 昨天單日語意比對進行中…`;
-        const batchResults = document.getElementById('prtg-disk-verification-batch-results');
-        if (batchResults) {
-            batchResults.replaceChildren();
-            if (run.isBatch || run.batchTotal > 1) {
-                batchResults.append(readinessText('strong', `批次進度：${run.batchCompleted}/${run.batchTotal}；站台重啟後進度不保留。`));
-                for (const item of run.results || []) batchResults.append(readinessText('div', `Sensor ${item.sensorObjid}：${item.status} — ${item.summary}`));
-            }
-        }
-        const evidenceList = document.getElementById('prtg-disk-verification-evidence');
-        if (running) evidenceList?.replaceChildren();
-        const valid = evidence.semantic;
-        const semantic = readinessText('div', `持久語意證據：${valid?.isValid ? '有效' : valid?.invalidReason || '尚未確認'}`);
-        evidenceList?.append(semantic);
-        if (running) {
-            document.getElementById('prtg-disk-manual-form')?.classList.add('d-none');
-            const manualConfirm = document.getElementById('prtg-manual-confirm');
-            if (manualConfirm) manualConfirm.disabled = true;
-            if (!diskVerificationTimer) diskVerificationTimer = setInterval(refreshDiskVerification, 2500);
-        } else {
-            if (diskVerificationTimer) { clearInterval(diskVerificationTimer); diskVerificationTimer = null; }
-            renderDiskVerificationResult(selectedRun.selectedResult);
-            if (run.requestId && pendingDiskSingleRequest?.requestId === run.requestId) pendingDiskSingleRequest = null;
-            if (run.requestId && pendingDiskBatchRequest?.requestId === run.requestId) pendingDiskBatchRequest = null;
-            refreshDiskRuleTrial();
-        }
-    } catch (error) {
-        if (statusEl) statusEl.textContent = `讀取驗證狀態失敗：${error?.message || '請重試。'}`;
-    }
-}
-
-function selectDiskVerificationSensor(row) {
-    diskVerificationSensor = row;
-    const selection = document.getElementById('prtg-disk-verification-selection');
-    if (selection) selection.textContent = `目前選取：${row.sensorName}（Sensor ${row.sensorObjid}；資料狀態：${row.status}；${row.usableDays}/${row.requiredDays} 天）`;
-    for (const id of ['prtg-disk-verification-start', 'prtg-disk-verification-refresh']) {
-        const button = document.getElementById(id); if (button) button.disabled = false;
-    }
-    const status = document.getElementById('prtg-disk-verification-status');
-    if (status) status.textContent = '正在讀取此感測器的持久驗證結果…';
-    refreshDiskVerification();
-    refreshDiskRuleTrial();
-    document.getElementById('prtg-disk-verification-title')?.focus();
-}
-
-function bindDiskVerification() {
-    document.getElementById('prtg-disk-verification-start')?.addEventListener('click', async event => {
-        const id = selectedDiskSensorId(); if (!id) return;
-        const button = event.currentTarget; button.disabled = true;
-        const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-        const dataDate = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
-        const requestId = pendingDiskRequestId('single', `${id}|${dataDate}`);
-        try { await api.post('/api/prtg/disk-verification/start', { sensorObjid: id, dataDate, requestId }); await refreshDiskVerification(); }
-        catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `無法啟動驗證：${error?.message || '請重試。'}`; button.disabled = false; }
-    });
-    document.getElementById('prtg-disk-verification-batch-start')?.addEventListener('click', async event => {
-        const ids = [...selectedDiskVerificationIds].map(Number);
-        if (ids.length < 1 || ids.length > 5) return;
-        const button = event.currentTarget; button.disabled = true;
-        const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-        const dataDate = localDateInputValue(yesterday);
-        const requestId = pendingDiskRequestId('batch', `${ids.join(',')}|${dataDate}`);
-        const status = document.getElementById('prtg-disk-verification-status');
-        try {
-            await api.post('/api/admin/settings/prtg-disk-verification/batch/start', {
-                sensorObjids: ids, dataDate, requestId
-            });
-            if (status) status.textContent = `已依序啟動 ${ids.length} 顆感測器的昨天單日語意驗證；每顆結果會分別保存。`;
-            await refreshDiskVerification();
-        } catch (error) {
-            if (status) status.textContent = `批次無法啟動：${error?.message || '請確認選取項目與資料準備度。'}`;
-            updateDiskBatchButton();
-        }
-    });
-    document.getElementById('prtg-disk-verification-refresh')?.addEventListener('click', () => { refreshDiskVerification(); refreshDiskRuleTrial(); });
-    document.getElementById('prtg-disk-verification-cancel')?.addEventListener('click', async event => {
-        const button = event.currentTarget; button.disabled = true;
-        try { await api.post('/api/prtg/disk-verification/cancel', {}); const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = '已送出取消要求；正在等待 PRTG 請求中止並保存取消結果…'; await refreshDiskVerification(); }
-        catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `取消失敗：${error?.message || '請重試。'}`; }
-        finally { button.disabled = false; }
-    });
-    document.getElementById('prtg-disk-manual-form')?.addEventListener('submit', async event => {
-        event.preventDefault();
-        const id = selectedDiskSensorId(); const submit = document.getElementById('prtg-manual-confirm');
-        if (!id || !submit || submit.disabled) return;
-        submit.disabled = true;
-        const value = selector => document.querySelector(selector)?.value?.trim() || '';
-        try {
-            await api.post('/api/prtg/disk-verification/confirm', { sensorObjid: id, channelIdentifier: value('#prtg-manual-channel-id'), channelName: value('#prtg-manual-channel-name'), unit: value('#prtg-manual-unit'), scale: Number(value('#prtg-manual-scale')), direction: value('#prtg-manual-direction'), reason: value('#prtg-manual-reason') });
-            const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = '人工語意確認已保存並稽核；值型規則仍須在規則頁另行管理。';
-            await refreshDiskVerification();
-            await refreshDiskRuleTrial();
-        } catch (error) { const status = document.getElementById('prtg-disk-verification-status'); if (status) status.textContent = `人工確認未保存：${error?.message || '請修正欄位或重新驗證。'}`; submit.disabled = false; }
-    });
-}
-
-async function loadDiskReadiness(force = false) {
-    if (diskReadinessLoading || (diskReadinessLoaded && !force)) return;
-    const root = document.getElementById('prtg-disk-readiness');
-    if (!root) return;
-    diskReadinessLoading = true;
-    const retry = document.getElementById('prtg-readiness-retry');
-    if (retry) retry.disabled = true;
-    document.getElementById('prtg-readiness-summary').textContent = '正在讀取已儲存的磁碟資料…';
-    try {
-        const result = await api.get(`/api/prtg/disk-readiness?page=${diskReadinessPage}&pageSize=20`, { silent: true });
-        renderDiskReadiness(result);
-        diskReadinessLoaded = true;
-    } catch (error) {
-        const summary = document.getElementById('prtg-readiness-summary');
-        summary.replaceChildren(readinessText('span', error?.message || '讀取磁碟資料準備度失敗。', 'text-danger'));
-        diskReadinessLoaded = false;
-    } finally {
-        diskReadinessLoading = false;
-        if (retry) retry.disabled = false;
-    }
-}
-
-function bindDiskReadiness() {
-    document.getElementById('prtg-readiness-retry')?.addEventListener('click', () => {
-        diskReadinessPage = 1;
-        loadDiskReadiness(true);
-    });
-    document.getElementById('prtg-readiness-prev')?.addEventListener('click', () => {
-        if (diskReadinessPage > 1) { diskReadinessPage--; diskReadinessLoaded = false; loadDiskReadiness(); }
-    });
-    document.getElementById('prtg-readiness-next')?.addEventListener('click', () => {
-        diskReadinessPage++; diskReadinessLoaded = false; loadDiskReadiness();
-    });
-}
-
 function renderPrtgProbeStatus(status) {
-    currentProbeEvidenceJson = status.evidenceJson ?? null;
     setupState.probe = status.isRunning ? null : (status.completedAt ? status.success === true && !status.cancelled : null);
     renderSetupSummary();
     const outputEl = document.getElementById('prtg-probe-output');
     const copyButton = document.getElementById('prtg-probe-copy');
     const downloadButton = document.getElementById('prtg-probe-download');
-    const downloadEvidenceButton = document.getElementById('prtg-probe-download-evidence');
     const startButton = document.getElementById('prtg-probe-start');
     const flowButton = document.getElementById('prtg-probe-flow-start');
     const cancelBtn = document.getElementById('prtg-probe-cancel');
@@ -3395,7 +2400,6 @@ function renderPrtgProbeStatus(status) {
     }
     copyButton.disabled = !outputText;
     if (downloadButton) downloadButton.disabled = !outputText || status.isRunning;
-    if (downloadEvidenceButton) downloadEvidenceButton.disabled = !isProbeEvidenceDownloadable(status.evidenceJson, status.isRunning);
 
     if (status.isRunning) {
         startButton.disabled = true;
@@ -3421,9 +2425,6 @@ async function refreshPrtgProbeStatus() {
     try {
         status = await api.get('/api/admin/settings/prtg-probe/status', { silent: true });
     } catch {
-        currentProbeEvidenceJson = null;
-        const evidenceButton = document.getElementById('prtg-probe-download-evidence');
-        if (evidenceButton) evidenceButton.disabled = true;
         setupState.probe = null;
         renderSetupSummary();
         return;
@@ -3449,7 +2450,6 @@ function bindPrtgProbe() {
     const cancelBtn = document.getElementById('prtg-probe-cancel');
     const copyButton = document.getElementById('prtg-probe-copy');
     const downloadButton = document.getElementById('prtg-probe-download');
-    const downloadEvidenceButton = document.getElementById('prtg-probe-download-evidence');
     const outputEl = document.getElementById('prtg-probe-output');
     if (!startButton || !copyButton || !outputEl) return;
 
@@ -3463,9 +2463,6 @@ function bindPrtgProbe() {
         // 不用 withBusy：啟動成功後按鈕的 disabled 狀態交給輪詢狀態接管
         startButton.disabled = true;
         if (flowButton) flowButton.disabled = true;
-        currentProbeEvidenceJson = null;
-        const evidenceButton = document.getElementById('prtg-probe-download-evidence');
-        if (evidenceButton) evidenceButton.disabled = true;
         try {
             const path = dataFlow ? '/api/admin/settings/prtg-probe/data-flow/start' : '/api/admin/settings/prtg-probe/start';
             await api.post(path, {}, { silent: true });
@@ -3509,38 +2506,6 @@ function bindPrtgProbe() {
         const anchor = document.createElement('a');
         anchor.href = url;
         anchor.download = `prtg-probe-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-        anchor.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
-    const downloadLocalButton = document.getElementById('prtg-probe-download-local');
-    downloadLocalButton?.addEventListener('click', async () => {
-        const restore = withBusy(downloadLocalButton, '讀取本機診斷');
-        try {
-            const evidence = await api.get('/api/admin/settings/prtg-probe/local-evidence');
-            const jsonText = extractProbeEvidenceJson(evidence);
-            if (!jsonText) throw new Error('本機診斷未符合有界去識別證據契約，請重新匯出。');
-            const url = URL.createObjectURL(new Blob([jsonText + '\n'], { type: 'application/json;charset=utf-8' }));
-            const anchor = document.createElement('a');
-            anchor.href = url;
-            anchor.download = `prtg-local-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-            anchor.click();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch (error) {
-            toast(error?.message || '無法匯出本機診斷。', 'danger');
-        } finally { restore(); }
-    });
-    downloadEvidenceButton?.addEventListener('click', () => {
-        if (downloadEvidenceButton.disabled) return;
-        const jsonText = extractProbeEvidenceJson(currentProbeEvidenceJson);
-        if (!jsonText) {
-            toast('尚未取得合法去識別相容性證據 JSON。', 'warning');
-            return;
-        }
-        const blob = new Blob([jsonText + '\n'], { type: 'application/json;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `prtg-compatibility-evidence-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         anchor.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
@@ -3983,8 +2948,6 @@ function init() {
     bindPrtgMirror();
     bindScopePurge();
     bindPrtgProbe();
-    bindDiskReadiness();
-    bindDiskVerification();
     bindProbeWhitelistFill();
     bindAssignForm();
     bindPrtgDataTransfer();
@@ -3995,7 +2958,7 @@ function init() {
     bindConflictBatchControls();
     bindUnmatchedControls();
     initCalibration();
-    initializePrtgQualificationJobs();
+    initValueReadiness();
     loadSettings();
     ensureBatchHostsLoaded();
     refreshPrtgMirror();
@@ -4022,7 +2985,6 @@ if (monitoringForm) {
     const savedHostBox = document.getElementById('prtg-monitoring-saved-hosts');
     const savedHostSearch = document.getElementById('prtg-monitoring-saved-host-search');
     const selectedSensorSearch = document.getElementById('prtg-monitoring-selected-sensor-search');
-    const sourceMode = document.getElementById('prtg-monitoring-source-mode');
     const hostSearch = document.getElementById('prtg-monitoring-host-search');
     const sensorSearch = document.getElementById('prtg-monitoring-sensor-search');
     const hostBatchStatus = document.getElementById('prtg-monitoring-host-batch-status');
@@ -4034,8 +2996,7 @@ if (monitoringForm) {
     let sensorCursors = [null], sensorPageIndex = 0, sensorPage = null;
     let savedHostRows = [], savedHostPageIndex = 0, selectedSensorPageIndex = 0;
     let estimateToken = null, estimateFingerprint = null, baselineFingerprint = null;
-    let sourcePreviewSignature = null;
-    let draftVersion = 0, estimateSequence = 0, sourcePreviewSequence = 0;
+    let draftVersion = 0, estimateSequence = 0;
     let hostPageSequence = 0, sensorPageSequence = 0, monitoringLoadSequence = 0, previewSequence = 0;
     let hostPageController = null, sensorPageController = null;
     let hostSearchTimer = null, sensorSearchTimer = null;
@@ -4043,9 +3004,8 @@ if (monitoringForm) {
     const selectionBatchTimeoutMs = 5 * 60 * 1000;
     function sortedIds(values) { return [...values].map(Number).filter(Number.isSafeInteger).sort((a, b) => a - b); }
     function scopeFingerprint(request) {
-        return JSON.stringify([request.revision, request.catalogueToken, request.coreSystemId, request.sourceTimeZoneId, request.sourceCultureName,
-            request.sourceChangeMode, request.continuityConfirmed, request.continuityEvidenceReference,
-            request.identityConfirmed, sortedIds(new Set(request.hostIds)), sortedIds(new Set(request.sensorIds))]);
+        return JSON.stringify([request.revision, request.catalogueToken,
+            sortedIds(new Set(request.hostIds)), sortedIds(new Set(request.sensorIds))]);
     }
     function cancelMonitoringPageRequest(kind, clearSearchTimer = true) {
         if (kind === 'host') {
@@ -4061,11 +3021,11 @@ if (monitoringForm) {
         }
     }
     function invalidateEstimate() {
-        draftVersion++; estimateSequence++; sourcePreviewSequence++;
+        draftVersion++; estimateSequence++;
         if (activeSelectionBatch) cancelSelectionBatch(activeSelectionBatch.kind, '範圍草稿已變更，批次已拒絕套用');
         cancelMonitoringPageRequest('host', false); cancelMonitoringPageRequest('sensor', false);
-        estimateToken = null; estimateFingerprint = null; sourcePreviewSignature = null;
-        document.getElementById('prtg-monitoring-estimate-result').textContent = '範圍或來源資料已變更，請重新估算。';
+        estimateToken = null; estimateFingerprint = null;
+        document.getElementById('prtg-monitoring-estimate-result').textContent = '範圍已變更，請重新估算。';
         updateSaveButton();
     }
     function updateSaveButton() {
@@ -4073,20 +3033,8 @@ if (monitoringForm) {
     }
     function monitoringRequest() {
         return { revision: monitoring.revision,
-            coreSystemId: document.getElementById('prtg-monitoring-core').value,
-            sourceTimeZoneId: document.getElementById('prtg-monitoring-zone').value,
-            sourceCultureName: document.getElementById('prtg-monitoring-culture').value,
-            sourceChangeMode: sourceMode.value,
-            continuityConfirmed: document.getElementById('prtg-monitoring-continuity-confirm').checked,
-            continuityEvidenceReference: document.getElementById('prtg-monitoring-continuity-evidence').value,
-            identityConfirmed: document.getElementById('prtg-monitoring-confirm').checked,
             hostIds: sortedIds(hostSelection), sensorIds: sortedIds(sensorSelection),
             catalogueToken: monitoring.catalogueToken, estimateToken };
-    }
-    function sourceSignature(request) {
-        return JSON.stringify([request.revision, request.coreSystemId, request.sourceTimeZoneId,
-            request.sourceCultureName, request.sourceChangeMode, request.continuityConfirmed, request.continuityEvidenceReference,
-            sortedIds(new Set(request.hostIds)), sortedIds(new Set(request.sensorIds))]);
     }
     async function estimateScope() {
         const request = monitoringRequest();
@@ -4101,39 +3049,9 @@ if (monitoringForm) {
         document.getElementById('prtg-monitoring-estimate-result').textContent =
             `已估算 ${estimate.hostCount} 台主機、${estimate.selectedSensorCount} 顆已選 sensor；候選 ${estimate.availableSensorCount} 顆。` +
             `最低工作量 ${estimate.minimumQueryWork} 次查詢工作。${estimate.queryCost}`;
-        sourcePreviewSignature = null; updateSaveButton();
+        updateSaveButton();
         return estimate;
     }
-    async function previewSource(request, sequence = ++sourcePreviewSequence) {
-        const requestFingerprint = scopeFingerprint(request);
-        const requestVersion = draftVersion;
-        const isCurrentRequest = () => sequence === sourcePreviewSequence && requestVersion === draftVersion &&
-            requestFingerprint === scopeFingerprint(monitoringRequest());
-        try {
-            if (!request.estimateToken || estimateFingerprint !== requestFingerprint) {
-                const estimate = await estimateScope();
-                if (!estimate) throw new Error('範圍在估算期間已變更，請重新預覽目前範圍。');
-            }
-            if (!isCurrentRequest()) return null;
-            request = monitoringRequest();
-            const impact = await api.post('/api/prtg/monitoring/source-preview', request);
-            if (!isCurrentRequest()) return null;
-            document.getElementById('prtg-monitoring-source-impact').textContent =
-                `${impact.message} 影響 ${impact.affectedHosts} 台／${impact.affectedSensors} 顆；保存觀察 ${impact.existingObservations} 筆，` +
-                `磁碟暖機 ${impact.warmingSensors} 顆，未結 PRTG 交辦 ${impact.openPrtgCases} 件。` +
-                `延續資格：${impact.continuationAllowed ? '可提出身分核對證據' : '不符合相同 Core／時間語意，禁止延續'}。`;
-            sourcePreviewSignature = sourceSignature(request);
-            return impact;
-        } catch (error) {
-            // A superseded preview must not display its success or failure over the newer draft/request.
-            if (!isCurrentRequest()) return null;
-            throw error;
-        }
-    }
-    sourceMode.addEventListener('change', () => {
-        document.getElementById('prtg-monitoring-core').required = sourceMode.value !== 'unknown';
-        invalidateEstimate();
-    });
     document.getElementById('prtg-monitoring-estimate').addEventListener('click', async () => {
         if (!monitoring) return;
         const requestVersion = draftVersion;
@@ -4142,21 +3060,6 @@ if (monitoringForm) {
         catch (error) {
             if (requestVersion === draftVersion && sequence === estimateSequence) {
                 estimateToken = null; updateSaveButton(); document.getElementById('prtg-monitoring-estimate-result').textContent = `估算遭拒：${error.message}`;
-            }
-        }
-    });
-    document.getElementById('prtg-monitoring-source-preview').addEventListener('click', async () => {
-        if (!monitoring) return;
-        const requestVersion = draftVersion;
-        const sequence = ++sourcePreviewSequence;
-        const requestFingerprint = scopeFingerprint(monitoringRequest());
-        document.getElementById('prtg-monitoring-source-impact').textContent = '正在估算目前選取範圍的來源影響…';
-        try { await previewSource(monitoringRequest(), sequence); }
-        catch (error) {
-            if (sequence === sourcePreviewSequence && requestVersion === draftVersion &&
-                requestFingerprint === scopeFingerprint(monitoringRequest())) {
-                sourcePreviewSignature = null;
-                document.getElementById('prtg-monitoring-source-impact').textContent = `影響預覽失敗：${error.message}`;
             }
         }
     });
@@ -4540,10 +3443,9 @@ if (monitoringForm) {
         try {
             const response = await api.get('/api/prtg/monitoring');
             if (sequence !== monitoringLoadSequence || draftVersionAtStart !== draftVersion) return null;
-            monitoring = response; draftVersion++; estimateSequence++; sourcePreviewSequence++;
+            monitoring = response; draftVersion++; estimateSequence++;
             hostPageSequence++; sensorPageSequence++;
             const initializedDraftVersion = draftVersion;
-            sourceMode.value = ''; sourcePreviewSignature = null;
             estimateToken = null; estimateFingerprint = null;
             hostSelection.clear(); monitoring.hostIds.forEach(id => hostSelection.add(Number(id)));
             sensorSelection.clear(); monitoring.sensorIds.forEach(id => sensorSelection.add(Number(id)));
@@ -4551,21 +3453,10 @@ if (monitoringForm) {
                 throw new Error('已保存主機超過 3,000 筆修復清單上限；拒絕部分載入。');
             savedHostRows = Array.isArray(monitoring.savedHosts) ? monitoring.savedHosts.slice() : [];
             savedHostPageIndex = 0; selectedSensorPageIndex = 0;
-            document.getElementById('prtg-monitoring-core').required = true;
-            document.getElementById('prtg-monitoring-core').value = monitoring.coreSystemId;
-            document.getElementById('prtg-monitoring-zone').value = monitoring.sourceTimeZoneId || monitoring.suggestedTimeZoneId;
-            document.getElementById('prtg-monitoring-culture').value = monitoring.sourceCultureName || 'zh-TW';
-            const acceptanceHosts = document.getElementById('prtg-acceptance-host');
-            acceptanceHosts?.replaceChildren();
-            if (acceptanceHosts) for (const hostId of monitoring.hostIds) {
-                const entry = document.createElement('option'); entry.value = String(hostId);
-                entry.textContent = String(hostId); acceptanceHosts.append(entry);
-            }
             for (const input of monitoringForm.querySelectorAll('input,select,button')) input.disabled = !monitoring.canEdit;
-            status.textContent = !monitoring.canEdit ? '範圍含不可見主機，請由可見全部試點的管理者修改。'
-                : !monitoring.enabled ? 'PRTG 擷取已停用；保留既有來源確認與證據，不發布新判定。'
-                : monitoring.ready ? '身分與範圍已確認；個別 sensor 的涵蓋仍需查證，首次確認會開始暖機。'
-                : '正式判定未就緒：請核對 Core 身分與明列試點，未確認不能發布 PRTG 風險。';
+            status.textContent = !monitoring.canEdit ? '範圍含不可見主機，請由可見全部範圍的管理者修改。'
+                : !monitoring.enabled ? 'PRTG 擷取已停用；儲存的範圍保留，啟用後才評估。'
+                : `目前範圍：主機 ${monitoring.hostIds.length ? monitoring.hostIds.length + ' 台' : '全部已對應'}、sensor ${monitoring.sensorIds.length ? monitoring.sensorIds.length + ' 顆' : '不限'}。`;
             // 已保存選取的修復不依賴新候選目錄成功；停用／移除主機仍保留完整已選 ID。
             renderSavedHosts(); renderSelectedSensors();
             baselineFingerprint = scopeFingerprint(monitoringRequest());
@@ -4641,11 +3532,6 @@ if (monitoringForm) {
             resetMonitoringSensorPages(); loadMonitoringSensorPage().catch(showSensorError);
         }, 250);
     });
-    for (const id of ['prtg-monitoring-core', 'prtg-monitoring-zone', 'prtg-monitoring-culture',
-        'prtg-monitoring-continuity-confirm', 'prtg-monitoring-continuity-evidence', 'prtg-monitoring-confirm']) {
-        const input = document.getElementById(id);
-        input.addEventListener('input', invalidateEstimate); input.addEventListener('change', invalidateEstimate);
-    }
     window.addEventListener('beforeunload', event => {
         if (monitoring && baselineFingerprint !== scopeFingerprint(monitoringRequest())) {
             event.preventDefault(); event.returnValue = '';
@@ -4657,7 +3543,7 @@ if (monitoringForm) {
         let submitDraftVersion = null;
         try {
             let request = monitoringRequest();
-            if (!request.hostIds.length || !request.sensorIds.length) throw new Error('請至少選取一台主機與一顆 sensor。');
+            if (request.sensorIds.length && !request.hostIds.length) throw new Error('指定 sensor 時須同時勾選所屬主機。');
             const requestVersion = draftVersion;
             submitDraftVersion = requestVersion;
             const requestFingerprint = scopeFingerprint(request);
@@ -4668,14 +3554,6 @@ if (monitoringForm) {
             request = monitoringRequest();
             if (requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(request))
                 throw new Error('範圍在估算期間已變更，未送出保存。');
-            if (sourcePreviewSignature !== sourceSignature(request)) {
-                const impact = await previewSource(request);
-                if (!impact || requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(monitoringRequest()))
-                    throw new Error('範圍在影響預覽期間已變更，未送出保存。');
-                if (impact.changed) {
-                    status.textContent = '已列出來源變更影響；請核對處理方式及證據後再次儲存。'; return;
-                }
-            }
             const putRequest = monitoringRequest();
             if (requestVersion !== draftVersion || requestFingerprint !== scopeFingerprint(putRequest))
                 throw new Error('範圍在保存前已變更，未送出保存。');
@@ -4707,13 +3585,12 @@ if (operationsStatus) {
         'no-qualified-recipient': '無合格收件人', 'sending-result-unknown': '寄送結果未知',
         'failed-or-unknown': '未收到 SMTP 確認，可能已送達；重試可能重複',
         'failed-or-not-sent': '寄送未完成（舊狀態）', 'not-sent': '本輪未送出' };
-    async function showOperations(retry = false) {
-        const button = document.getElementById(retry ? 'prtg-operations-retry' : 'prtg-operations-refresh');
+    async function showOperations() {
+        const button = document.getElementById('prtg-operations-refresh');
         button.disabled = true;
-        operationsStatus.textContent = retry ? '正在重試，仍會核對目前範圍與權限…' : '正在讀取處理狀態…';
+        operationsStatus.textContent = '正在讀取處理狀態…';
         try {
-            const data = retry ? await api.post('/api/prtg/operations/retry', {}) : await api.get('/api/prtg/operations');
-            document.getElementById('prtg-operations-retry').disabled = !data.canRetry;
+            const data = await api.get('/api/prtg/operations');
             operationsStatus.replaceChildren();
             const list = document.createElement('ul');
             for (const operation of data.operationVersions || []) {
@@ -4724,9 +3601,6 @@ if (operationsStatus) {
                     `最後完成：${operation.lastCompletedStage}。`;
                 list.append(row);
             }
-            for (const group of data.supplements) {
-                const row = document.createElement('li'); row.textContent = `補追加：${labels[group.status] || group.status} ${group.count} 筆`; list.append(row);
-            }
             for (const intent of data.notifications) {
                 const row = document.createElement('li');
                 row.textContent = `主機 #${intent.hostId}｜${intent.recordDate.slice(0, 10)}｜${labels[intent.status] || intent.status}｜` +
@@ -4734,123 +3608,11 @@ if (operationsStatus) {
                     intent.recipients.map(r => `${labels[r.status] || r.status} ${r.count} 位`).join('、');
                 list.append(row);
             }
-            if (!list.childElementCount) operationsStatus.textContent = '可見範圍內尚無補追加或通知意圖。';
+            if (!list.childElementCount) operationsStatus.textContent = '可見範圍內尚無通知意圖。';
             else operationsStatus.append(list);
-        } catch (error) { operationsStatus.textContent = `查詢／重試失敗：${error.message}`; }
-        finally { if (!retry) button.disabled = false; }
+        } catch (error) { operationsStatus.textContent = `查詢失敗：${error.message}`; }
+        finally { button.disabled = false; }
     }
     document.getElementById('prtg-operations-refresh').addEventListener('click', () => showOperations());
-    document.getElementById('prtg-operations-retry').addEventListener('click', () => showOperations(true));
     showOperations();
-}
-
-const acceptanceExport = document.getElementById('prtg-acceptance-export');
-if (acceptanceExport) {
-    const status = document.getElementById('prtg-acceptance-status');
-    let acceptanceLabels = [];
-    const existing = document.getElementById('prtg-acceptance-existing');
-    let acceptanceLabelRequest = 0;
-    async function refreshAcceptanceLabels() {
-        const requestId = ++acceptanceLabelRequest;
-        const hostId = document.getElementById('prtg-acceptance-host')?.value;
-        if (!hostId) {
-            acceptanceLabels = []; existing.replaceChildren();
-            const empty = document.createElement('option'); empty.value = ''; empty.textContent = '新增查證'; existing.append(empty);
-            status.textContent = '請先選擇主機，再載入該主機完整查證清單。'; return null;
-        }
-        try {
-            const data = await api.get(`/api/prtg/acceptance/incidents?hostId=${encodeURIComponent(hostId)}`);
-            if (requestId !== acceptanceLabelRequest || hostId !== document.getElementById('prtg-acceptance-host')?.value) return null;
-            acceptanceLabels = Array.isArray(data.items) ? data.items : [];
-            existing.replaceChildren();
-            const empty = document.createElement('option'); empty.value = ''; empty.textContent = '新增查證'; existing.append(empty);
-            acceptanceLabels.forEach((item, index) => {
-                const option = document.createElement('option'); option.value = String(index);
-                const outcomeLabel = { occurred: '已發生', prevented: '已介入預防', unknown: '結果未知' }[item.outcome || 'occurred'] || '結果未知';
-                option.textContent = `${item.incidentId}｜主機 #${item.hostId}｜${item.confirmedPositive == null ? '待查證' : item.confirmedPositive ? '需要處理' : '誤報'}｜${outcomeLabel}`;
-                existing.append(option);
-            });
-            status.textContent = data.scopeComplete === false
-                ? `主機 #${hostId} 的查證清單不完整（${data.scopeStatus || '資料上限或格式錯誤'}）；統計已停用。`
-                : `主機 #${hostId} 已載入 ${data.itemsTotal ?? acceptanceLabels.length} 筆完整查證。`;
-            return data;
-        } catch (error) {
-            if (requestId !== acceptanceLabelRequest || hostId !== document.getElementById('prtg-acceptance-host')?.value) return null;
-            acceptanceLabels = []; existing.replaceChildren();
-            const empty = document.createElement('option'); empty.value = ''; empty.textContent = '新增查證'; existing.append(empty);
-            status.textContent = `查證清單讀取失敗：${error.message}`; return null;
-        }
-    }
-    document.getElementById('prtg-acceptance-host')?.addEventListener('change', () => {
-        existing.value = ''; const form = document.getElementById('prtg-acceptance-label-form'); const hostId = document.getElementById('prtg-acceptance-host').value;
-        form.reset(); document.getElementById('prtg-acceptance-host').value = hostId; refreshAcceptanceLabels();
-    });
-    existing.addEventListener('change', () => {
-        const form = document.getElementById('prtg-acceptance-label-form');
-        if (existing.value === '') { const hostId = document.getElementById('prtg-acceptance-host').value; form.reset(); document.getElementById('prtg-acceptance-host').value = hostId; return; }
-        const item = acceptanceLabels[Number(existing.value)];
-        const set = (id, value) => { document.getElementById(`prtg-acceptance-${id}`).value = value ?? ''; };
-        for (const [id, key] of Object.entries({ 'incident-id': 'incidentId', host: 'hostId', evidence: 'evidenceReference', reason: 'reason',
-            segment: 'segment', outcome: 'outcome', action: 'actionDetails', before: 'beforeMeasurement', after: 'afterMeasurement',
-            'cost-netiq': 'netiqVerificationMinutes', 'cost-native': 'nativePrtgVerificationMinutes', 'cost-union': 'simpleUnionVerificationMinutes',
-            'cost-combined': 'combinedVerificationMinutes' })) set(id, item[key]);
-        set('outcome', item.outcome || 'occurred'); set('result', item.confirmedPositive == null ? '' : String(item.confirmedPositive));
-        for (const [id, key] of Object.entries({ occurred: 'occurredAt', predicted: 'predictedImpactAt', netiq: 'netiqActionableAt',
-            native: 'nativePrtgActionableAt', union: 'simpleUnionActionableAt', combined: 'combinedActionableAt',
-            available: 'combinedEvidenceAvailableAt', disposition: 'dispositionAt' })) {
-            const at = item[key] ? new Date(item[key]) : null;
-            set(id, at ? `${localDateInputValue(at)}T${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : '');
-        }
-        status.textContent = '已載入既有查證；修改後按保存，會更新同主機／事故識別。';
-    });
-    document.getElementById('prtg-acceptance-labels-refresh').addEventListener('click', refreshAcceptanceLabels);
-    if (document.getElementById('prtg-acceptance-host')?.value) refreshAcceptanceLabels();
-    acceptanceExport.addEventListener('click', async () => {
-        const from = document.getElementById('prtg-effectiveness-from').value;
-        const through = document.getElementById('prtg-effectiveness-through').value;
-        if (!from || !through || from > through) { status.textContent = '請先選擇有效的起訖日期。'; return; }
-        acceptanceExport.disabled = true;
-        status.textContent = '正在準備證據包，完成傳輸後才會提供下載。';
-        try {
-            const blob = await api.downloadJson(`/api/prtg/acceptance/export?from=${encodeURIComponent(from)}&through=${encodeURIComponent(through)}`,
-                { timeoutMs: 120000 });
-            const objectUrl = URL.createObjectURL(blob);
-            try {
-                const link = document.createElement('a');
-                link.href = objectUrl; link.download = `prtg-acceptance-${from}-${through}.json`; link.click();
-            } finally { setTimeout(() => URL.revokeObjectURL(objectUrl), 1000); }
-            status.textContent = '證據包已備妥並交給瀏覽器下載；包內 ScopeComplete 為 false 時代表有資料超限、缺失或無法驗證，請依 ScopeStatus 核對後再使用。';
-        } catch (error) { status.textContent = `下載失敗：${error.message}`; }
-        finally { acceptanceExport.disabled = false; }
-    });
-    document.getElementById('prtg-acceptance-label-form').addEventListener('submit', async event => {
-        event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
-        const submittedHostId = document.getElementById('prtg-acceptance-host').value;
-        const isSubmittedHostCurrent = () => submittedHostId === document.getElementById('prtg-acceptance-host').value;
-        try {
-            const value = id => document.getElementById(`prtg-acceptance-${id}`).value;
-            const cost = id => value(`cost-${id}`) === '' ? null : Number(value(`cost-${id}`));
-            const time = id => value(id) ? new Date(value(id)).toISOString() : null;
-            const incident = { incidentId: value('incident-id'), hostId: Number(value('host')),
-                outcome: value('outcome'), predictedImpactAt: time('predicted'), actionDetails: value('action'),
-                beforeMeasurement: value('before'), afterMeasurement: value('after'), occurredAt: time('occurred'), confirmedPositive: value('result') === '' ? null : value('result') === 'true',
-                evidenceReference: value('evidence'), reason: value('reason'), segment: value('segment'),
-                netiqActionableAt: time('netiq'), nativePrtgActionableAt: time('native'),
-                simpleUnionActionableAt: time('union'), combinedActionableAt: time('combined'),
-                combinedEvidenceAvailableAt: time('available'), dispositionAt: time('disposition'),
-                netiqVerificationMinutes: cost('netiq'), nativePrtgVerificationMinutes: cost('native'),
-                simpleUnionVerificationMinutes: cost('union'), combinedVerificationMinutes: cost('combined') };
-            const data = await api.put('/api/prtg/acceptance/incidents', incident);
-            if (!isSubmittedHostCurrent()) return;
-            await refreshAcceptanceLabels();
-            if (!isSubmittedHostCurrent()) return;
-            const c = data.comparison;
-            if (data.scopeComplete !== true || !c) {
-                status.textContent = `已保存；主機查證範圍不完整（${data.scopeStatus || '未知'}），不顯示部分統計。`;
-            } else {
-                status.textContent = `已保存。主機查證 ${c.incidents} 筆、待查證 ${c.unreviewed} 筆、預防案例 ${c.prevented} 筆、結果未知 ${c.outcomeUnknown} 筆、真陽性 ${c.confirmedPositive} 筆、誤報 ${c.confirmedFalsePositive} 筆；具當時證據 ${c.evidenceQualified} 筆、完整基準 ${c.fullyCompared} 筆、比全部基準提早 ${c.incrementalBeforeAllBaselines} 筆。${c.limitations}`;
-            }
-        } catch (error) { if (isSubmittedHostCurrent()) status.textContent = `保存失敗：${error.message}`; }
-        finally { button.disabled = false; }
-    });
 }

@@ -1,4 +1,6 @@
-﻿namespace LogForesight.Core.Persistence;
+﻿using LogForesight.Core.Service;
+
+namespace LogForesight.Core.Persistence;
 
 /// <summary>建案結果：Created=false 時代表該問題已有他人的進行中案件，未變更（2.1「只由一個人處理」）</summary>
 public readonly record struct CaseBuildResult(bool Created, string? CaseId, long? ExistingHandlerId, int LinkedDayCount);
@@ -54,11 +56,10 @@ public class IssueCaseCoordinator
         var issue = record?.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == issueKey);
         if (issue == null) return null;
         var text = issue.SampleMessages.FirstOrDefault() ?? issue.KnownIssue ?? "";
-        return new(day.Date, issue.EventKey, issue.PrtgSourceGeneration, issue.PrtgResourceGeneration,
-            issue.PrtgIncidentStartedAt, issue.PrtgSourceGeneration == null ? "legacy-unverified" :
-                issue.RuleId == "builtin-prtg-resource-disk-pressure" ? "trusted-resource-profile-v1" :
-                PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code) && code == "disk_free_trend" ? "typed-disk-semantic-v1" : "covered-state-v1",
-            text.Length <= 1000 ? text : text[..1000]);
+        var quality = PrtgFindingMapper.TryGetRuleCode(issue.Source, out var code) && PrtgRuleCatalog.IsValueTrend(code)
+            ? "value-trend-v1"
+            : "state-change-v1";
+        return new(day.Date, issue.EventKey, quality, text.Length <= 1000 ? text : text[..1000]);
     }
 
     public IssueCaseCoordinator(

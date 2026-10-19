@@ -1,4 +1,5 @@
 using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -140,5 +141,114 @@ public class PrtgSensorCategoryMapTests
     public void IsValid_六個合法值不分大小寫(string? value, bool expected)
     {
         Assert.Equal(expected, PrtgSensorCategories.IsValid(value));
+    }
+
+    [Fact]
+    public void ParseOverrides_帶語意代碼合法_Map只含分類()
+    {
+        var (map, errors) = PrtgSensorTypeCategoryMap.ParseOverrides(new[]
+        {
+            "SNMP Linux Meminfo=memory:memory-percent-free"
+        });
+
+        Assert.Empty(errors);
+        Assert.Single(map);
+        Assert.Equal(PrtgSensorCategories.Memory, map["SNMP Linux Meminfo"]);
+    }
+
+    [Fact]
+    public void ParseOverrides_語意代碼不合法_回報錯誤含語意與可用值且略過該行()
+    {
+        var (map, errors) = PrtgSensorTypeCategoryMap.ParseOverrides(new[]
+        {
+            "foo=memory:bogus"
+        });
+
+        Assert.Empty(map);
+        var err = Assert.Single(errors);
+        Assert.StartsWith("第 1 行「foo=memory:bogus」：", err);
+        Assert.Contains("語意", err);
+        Assert.Contains("bogus", err);
+        foreach (var code in PrtgValueSemantics.Codes)
+        {
+            Assert.Contains(code, err);
+        }
+    }
+
+    [Fact]
+    public void ParseOverrides_舊格式無語意代碼_照舊合法()
+    {
+        var (map, errors) = PrtgSensorTypeCategoryMap.ParseOverrides(new[]
+        {
+            "Custom Disk=disk"
+        });
+
+        Assert.Empty(errors);
+        Assert.Single(map);
+        Assert.Equal(PrtgSensorCategories.Disk, map["custom disk"]);
+    }
+
+    [Fact]
+    public void ParseSemanticOverrides_只收含語意的行且大小寫不敏感()
+    {
+        var semantics = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(new[]
+        {
+            "SNMP Linux Meminfo=memory:memory-percent-free",
+            "Custom Ping = availability:ping-ms ",
+            "plain-disk = disk",
+            "broken = memory:invalid-code"
+        });
+
+        Assert.Equal(2, semantics.Count);
+        Assert.Equal(PrtgValueSemantic.MemoryPercentFree, semantics["snmp linux meminfo"]);
+        Assert.Equal(PrtgValueSemantic.PingMs, semantics["CUSTOM PING"]);
+        Assert.False(semantics.ContainsKey("plain-disk"));
+        Assert.False(semantics.ContainsKey("broken"));
+    }
+
+    [Theory]
+    [InlineData("cpu-percent-used", PrtgValueSemantic.CpuPercentUsed)]
+    [InlineData("CPU-PERCENT-USED", PrtgValueSemantic.CpuPercentUsed)]
+    [InlineData(" memory-percent-free ", PrtgValueSemantic.MemoryPercentFree)]
+    [InlineData("disk-percent-free", PrtgValueSemantic.DiskPercentFree)]
+    [InlineData("ping-ms", PrtgValueSemantic.PingMs)]
+    public void TryParseCode_合法代碼不分大小寫與空白(string code, PrtgValueSemantic expected)
+    {
+        Assert.True(PrtgValueSemantics.TryParseCode(code, out var semantic));
+        Assert.Equal(expected, semantic);
+    }
+
+    [Theory]
+    [InlineData("bogus")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void TryParseCode_不合法代碼回傳false(string? code)
+    {
+        Assert.False(PrtgValueSemantics.TryParseCode(code, out _));
+    }
+
+    [Fact]
+    public void TryResolve_覆寫優先且不分大小寫()
+    {
+        // 覆寫字典的不分大小寫由 ParseSemanticOverrides 提供（正式路徑唯一來源），測試比照建立
+        var overrides = new Dictionary<string, PrtgValueSemantic>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["snmp linux meminfo"] = PrtgValueSemantic.MemoryPercentFree,
+            ["Ping"] = PrtgValueSemantic.CpuPercentUsed // 覆寫內建對照
+        };
+
+        Assert.True(PrtgValueSemantics.TryResolve("SNMP Linux Meminfo", overrides, out var sem1));
+        Assert.Equal(PrtgValueSemantic.MemoryPercentFree, sem1);
+
+        Assert.True(PrtgValueSemantics.TryResolve("ping", overrides, out var sem2));
+        Assert.Equal(PrtgValueSemantic.CpuPercentUsed, sem2);
+
+        // 內建對照
+        Assert.True(PrtgValueSemantics.TryResolve("SNMP CPU Load", overrides, out var sem3));
+        Assert.Equal(PrtgValueSemantic.CpuPercentUsed, sem3);
+
+        // 未知
+        Assert.False(PrtgValueSemantics.TryResolve("Unknown Type", overrides, out _));
     }
 }

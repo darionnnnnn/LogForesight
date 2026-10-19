@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using System.Data;
 using System.Data.Common;
@@ -48,8 +48,6 @@ public readonly record struct PrtgCalibrationDailyAggregation(
 /// </summary>
 public sealed class EfPrtgStore
 {
-    public const int WholeEvidenceHostMapMaximumRows = 10_000;
-    public const int WholeEvidenceHostMapMaximumBytes = 16 * 1024 * 1024;
     private static readonly SemaphoreSlim CalibrationCaptureAdmission = new(1, 1);
     public static PrtgCalibrationCaptureLimits DefaultCalibrationCaptureLimits { get; } = new();
     private const int CandidateSnapshotSensorTypeMaxChars = 256;
@@ -105,12 +103,33 @@ public sealed class EfPrtgStore
         return total;
     }
 
+    /// <summary>Writes scope-defining catalogue pages while holding the same database transaction as the purge-slot check.</summary>
+    private int BatchWriteScope<T>(IReadOnlyList<T> items, Func<LfDbContext, List<T>, int> writeBatch)
+    {
+        if (items == null || items.Count == 0) return 0;
+        var list = items as List<T> ?? items.ToList();
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            var total = 0;
+            for (var offset = 0; offset < list.Count; offset += UpsertBatchSize)
+            {
+                using var ctx = _contextFactory();
+                using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
+                total += writeBatch(ctx, list.GetRange(offset, Math.Min(UpsertBatchSize, list.Count - offset)));
+                tx.Commit();
+            }
+            return total;
+        });
+    }
+
     /// <summary>
     /// 快照整點列必須整批提交。若前 500 列已寫而後一批失敗，呼叫端會保留整份清單重試；
     /// 分批獨立提交會把前一批的 sampled coverage 再合併一次。
     /// </summary>
     private int BatchWriteAtomic<T>(IReadOnlyList<T> items, Func<LfDbContext, List<T>, int> writeBatch,
-        string? sampledBatchId = null, Action<LfDbContext>? beforeCommit = null)
+        string? sampledBatchId = null, Action<LfDbContext>? beforeCommit = null, Action<LfDbContext>? beforeWrite = null)
     {
         if (items == null || items.Count == 0) return 0;
 
@@ -120,7 +139,8 @@ public sealed class EfPrtgStore
         return strategy.Execute(() =>
         {
             using var ctx = _contextFactory();
-            using var transaction = ctx.Database.BeginTransaction();
+            using var transaction = ctx.Database.BeginTransaction(beforeWrite == null ? IsolationLevel.Unspecified : IsolationLevel.Serializable);
+            beforeWrite?.Invoke(ctx);
             if (sampledBatchId != null)
             {
                 if (ctx.PrtgSampledBatches.Any(b => b.BatchId == sampledBatchId)) return 0;
@@ -150,7 +170,7 @@ public sealed class EfPrtgStore
     /// </summary>
     public int UpsertDevices(IReadOnlyList<PrtgDeviceRow> devices, DateTime syncedAt)
     {
-        return BatchWrite(devices, (ctx, batch) =>
+        return BatchWriteScope(devices, (ctx, batch) =>
         {
             var ids = batch.Select(d => d.Objid).ToList();
             var existing = ctx.PrtgDevices.Where(d => ids.Contains(d.Objid)).ToDictionary(d => d.Objid);
@@ -260,7 +280,6 @@ public sealed class EfPrtgStore
                 }
             }
 
-            RefreshResourceIdentities(ctx, identityChanged);
             IncrementPrtgCatalogueDataRevision(ctx);
             ctx.SaveChanges();
             return batch.Count;
@@ -268,21 +287,33 @@ public sealed class EfPrtgStore
 
         if (queueItem != null)
             return BatchWriteAtomic(sensors, (ctx, batch) => WriteBatch(ctx, batch),
-                beforeCommit: ctx => EnqueueRecentStateChangeInTransaction(ctx, queueItem));
-        return requireAtomic ? BatchWriteAtomic(sensors, WriteBatch) : BatchWrite(sensors, WriteBatch);
+                beforeCommit: ctx => EnqueueRecentStateChangeInTransaction(ctx, queueItem),
+                beforeWrite: PrtgScopePurgeStore.EnsureScopeMutationSlotFree);
+        return requireAtomic
+            ? BatchWriteAtomic(sensors, WriteBatch, beforeWrite: PrtgScopePurgeStore.EnsureScopeMutationSlotFree)
+            : BatchWriteScope(sensors, WriteBatch);
     }
 
     public IReadOnlyList<PrtgRecentStateChangeQueueItem> ReadRecentStateChangeQueue()
     {
-        using var ctx = _contextFactory();
-        return ReadRecentStateChangeQueueRows(ctx).Select(x => x.Item).ToArray();
+        // 自開交易一律包在執行策略裡：SQL Server 啟用重試策略時，未包的交易會直接擲例外。
+        using var probe = _contextFactory();
+        return probe.Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+            var result = ReadRecentStateChangeQueueRows(ctx).Select(x => x.Item).ToArray();
+            tx.Commit();
+            return (IReadOnlyList<PrtgRecentStateChangeQueueItem>)result;
+        });
     }
 
     public PrtgRecentStateChangeQueueStopSummary? ReadRecentStateChangeQueueStopSummary()
     {
         using var ctx = _contextFactory();
-        var content = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueStopSummaryKey)
-            .Select(b => b.Content).FirstOrDefault();
+        var content = ReadBoundedBlob(ctx, RecentStateChangeQueueStopSummaryKey,
+            RecentStateChangeQueueItemMaxBytes, RecentStateChangeQueueItemMaxBytes,
+            "recent-state-queue-stop-summary-cap-exceeded")?.Content;
         return content == null ? null : JsonSerializer.Deserialize<PrtgRecentStateChangeQueueStopSummary>(content);
     }
 
@@ -295,7 +326,7 @@ public sealed class EfPrtgStore
         return probe.Database.CreateExecutionStrategy().Execute(() =>
         {
             using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction();
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
             var due = ReadRecentStateChangeQueueRows(ctx)
                 .Where(x => x.Item.CompletedAtUtc == null && x.Item.NextAttemptAtUtc <= nowUtc &&
                     (!x.Item.LeaseExpiresAtUtc.HasValue || x.Item.LeaseExpiresAtUtc.Value <= nowUtc))
@@ -327,10 +358,11 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var tx = ctx.Database.BeginTransaction();
-            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
-                    b.Version == lease.Version).Select(b => b.Content).FirstOrDefault();
-            if (row == null) { tx.Commit(); return false; }
-            var current = DeserializeQueueItem(row);
+            var key = RecentStateChangeQueueKey(lease.Item.DeviceObjid);
+            var bounded = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+                RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+            if (bounded is null || bounded.Value.Version != lease.Version) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(bounded.Value.Content!);
             if (current.LeaseOwner != lease.Owner || current.CompletedAtUtc != null) { tx.Commit(); return false; }
             var content = SerializeQueueItem(current with { LeaseOwner = null, LeaseExpiresAtUtc = null, CompletedAtUtc = DateTime.UtcNow });
             var updated = ctx.Blobs.Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
@@ -454,7 +486,10 @@ public sealed class EfPrtgStore
         var content = JsonSerializer.Serialize(summary);
         if (Encoding.UTF8.GetByteCount(content) > RecentStateChangeQueueItemMaxBytes)
             throw new InvalidOperationException("PRTG 近期狀態佇列停止摘要超過 8 KiB。");
-        var prior = ctx.Blobs.SingleOrDefault(b => b.BlobKey == RecentStateChangeQueueStopSummaryKey);
+        var bounded = ReadBoundedBlob(ctx, RecentStateChangeQueueStopSummaryKey, RecentStateChangeQueueItemMaxBytes,
+            RecentStateChangeQueueItemMaxBytes, "recent-state-queue-stop-summary-cap-exceeded");
+        var prior = AttachBoundedBlobSnapshot(ctx, RecentStateChangeQueueStopSummaryKey, bounded,
+            "recent-state-queue-stop-summary-changed");
         if (prior == null)
             ctx.Blobs.Add(new BlobRow { BlobKey = RecentStateChangeQueueStopSummaryKey, Content = content, UpdatedAt = summary.AtUtc, Version = 1 });
         else
@@ -472,10 +507,11 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var tx = ctx.Database.BeginTransaction();
-            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
-                    b.Version == lease.Version).Select(b => new { b.Content, b.Version }).FirstOrDefault();
-            if (row == null) { tx.Commit(); return false; }
-            var current = DeserializeQueueItem(row.Content);
+            var key = RecentStateChangeQueueKey(lease.Item.DeviceObjid);
+            var row = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+                RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+            if (row is null || row.Value.Version != lease.Version) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(row.Value.Content!);
             if (current.LeaseOwner != lease.Owner) { tx.Commit(); return false; }
             var seconds = delay?.TotalSeconds ?? Math.Min(600, 15 * Math.Pow(2, Math.Min(current.Attempts, 5)));
             var retry = current with
@@ -503,10 +539,11 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var tx = ctx.Database.BeginTransaction();
-            var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
-                    b.Version == lease.Version).Select(b => b.Content).FirstOrDefault();
-            if (row == null) { tx.Commit(); return false; }
-            var current = DeserializeQueueItem(row);
+            var key = RecentStateChangeQueueKey(lease.Item.DeviceObjid);
+            var row = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+                RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+            if (row is null || row.Value.Version != lease.Version) { tx.Commit(); return false; }
+            var current = DeserializeQueueItem(row.Value.Content!);
             if (current.LeaseOwner != lease.Owner || current.CompletedAtUtc != null) { tx.Commit(); return false; }
             var content = SerializeQueueItem(current with { LeaseOwner = null, LeaseExpiresAtUtc = null });
             var updated = ctx.Blobs.Where(b => b.BlobKey == RecentStateChangeQueueKey(lease.Item.DeviceObjid) &&
@@ -521,7 +558,9 @@ public sealed class EfPrtgStore
     private static void EnqueueRecentStateChangeInTransaction(LfDbContext ctx, PrtgRecentStateChangeQueueItem item)
     {
         var key = RecentStateChangeQueueKey(item.DeviceObjid);
-        var existing = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
+        var bounded = ReadBoundedBlob(ctx, key, RecentStateChangeQueueItemMaxBytes,
+            RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+        var existing = AttachBoundedBlobSnapshot(ctx, key, bounded, "recent-state-queue-item-changed");
         if (existing == null)
         {
             var count = ctx.Blobs.Count(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix));
@@ -550,16 +589,19 @@ public sealed class EfPrtgStore
 
     private static List<(BlobRow Row, PrtgRecentStateChangeQueueItem Item)> ReadRecentStateChangeQueueRows(LfDbContext ctx)
     {
-        var rows = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix))
-            .OrderBy(b => b.BlobKey).Take(RecentStateChangeQueueCapacity + 1).ToList();
-        if (rows.Count > RecentStateChangeQueueCapacity)
+        var keys = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(RecentStateChangeQueuePrefix))
+            .OrderBy(b => b.BlobKey).Take(RecentStateChangeQueueCapacity + 1)
+            .Select(b => b.BlobKey).ToList();
+        if (keys.Count > RecentStateChangeQueueCapacity)
             throw new InvalidOperationException($"PRTG 近期狀態佇列超過 {RecentStateChangeQueueCapacity} 筆容量上限。");
-        var result = new List<(BlobRow, PrtgRecentStateChangeQueueItem)>(rows.Count);
-        foreach (var row in rows)
+        var bounded = ReadBoundedBlobs(ctx, keys, RecentStateChangeQueueItemMaxBytes,
+            RecentStateChangeQueueItemMaxBytes, "recent-state-queue-item-cap-exceeded");
+        var result = new List<(BlobRow, PrtgRecentStateChangeQueueItem)>(keys.Count);
+        foreach (var key in keys)
         {
-            if (Encoding.UTF8.GetByteCount(row.Content) > RecentStateChangeQueueItemMaxBytes)
-                throw new InvalidOperationException($"PRTG 近期狀態佇列資料列 {row.BlobKey} 超過 8 KiB。");
-            result.Add((row, DeserializeQueueItem(row.Content)));
+            if (!bounded.TryGetValue(key, out var item)) continue;
+            var row = new BlobRow { BlobKey = key, Content = item.Content!, Version = item.Version, UpdatedAt = item.UpdatedAt };
+            result.Add((row, DeserializeQueueItem(item.Content!)));
         }
         return result;
     }
@@ -571,6 +613,63 @@ public sealed class EfPrtgStore
         JsonSerializer.Deserialize<PrtgRecentStateChangeQueueItem>(content) ??
         throw new InvalidOperationException("PRTG 近期狀態佇列資料列無效。");
     private static bool FitsQueueContent(string content) => Encoding.UTF8.GetByteCount(content) <= RecentStateChangeQueueItemMaxBytes;
+
+    internal static Dictionary<string,(string? Content,long Version,int Length,DateTime UpdatedAt)> ReadBoundedBlobs(
+        LfDbContext ctx, IEnumerable<string> keys, int maximumCharacters, int? maximumUtf8Bytes, string reason)
+    {
+        var rows = BoundedJsonBlobBatchReader.Read(ctx, keys, maximumCharacters);
+        foreach (var row in rows.Values)
+        {
+            if (row.Content is null || row.Length > maximumCharacters ||
+                maximumUtf8Bytes.HasValue && Encoding.UTF8.GetByteCount(row.Content) > maximumUtf8Bytes.Value)
+                throw new InvalidDataException(reason);
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Attach the already bounded content snapshot instead of issuing a second tracked query that
+    /// could materialize a concurrently enlarged blob. Version and UpdatedAt remain EF concurrency
+    /// tokens; callers also compare the complete snapshot content before making any mutation.
+    /// </summary>
+    internal static BlobRow? AttachBoundedBlobSnapshot(LfDbContext ctx, string key,
+        (string? Content,long Version,int Length,DateTime UpdatedAt)? bounded, string changedReason)
+    {
+        var tracked = ctx.Blobs.Local.SingleOrDefault(row => StringComparer.Ordinal.Equals(row.BlobKey, key));
+        if (tracked is not null)
+        {
+            var state = ctx.Entry(tracked).State;
+            if (bounded is null)
+            {
+                if (state == EntityState.Added) return tracked;
+                throw new InvalidOperationException(changedReason);
+            }
+            if (state == EntityState.Deleted || tracked.Version != bounded.Value.Version ||
+                tracked.UpdatedAt != bounded.Value.UpdatedAt ||
+                !StringComparer.Ordinal.Equals(tracked.Content, bounded.Value.Content))
+                throw new InvalidOperationException(changedReason);
+            return tracked;
+        }
+
+        if (bounded is null) return null;
+        if (bounded.Value.Content is null) throw new InvalidDataException(changedReason);
+        var snapshot = new BlobRow
+        {
+            BlobKey = key,
+            Content = bounded.Value.Content,
+            Version = bounded.Value.Version,
+            UpdatedAt = bounded.Value.UpdatedAt
+        };
+        ctx.Blobs.Attach(snapshot);
+        return snapshot;
+    }
+
+    private static (string? Content,long Version,int Length,DateTime UpdatedAt)? ReadBoundedBlob(
+        LfDbContext ctx, string key, int maximumCharacters, int? maximumUtf8Bytes, string reason)
+    {
+        var rows = ReadBoundedBlobs(ctx, [key], maximumCharacters, maximumUtf8Bytes, reason);
+        return rows.TryGetValue(key, out var row) ? row : null;
+    }
 
     /// <summary>
     /// 依補充對照表＋內建對照表（<see cref="PrtgSensorTypeCategoryMap.Resolve"/>）重算自動分類。
@@ -623,7 +722,6 @@ public sealed class EfPrtgStore
 
             if (changed > 0)
             {
-                RefreshResourceIdentities(ctx, rows.Where(row => map.ContainsKey(row.Objid)).Select(row => row.Objid));
                 IncrementPrtgCatalogueDataRevision(ctx);
             }
             ctx.SaveChanges();
@@ -690,8 +788,6 @@ public sealed class EfPrtgStore
     /// </summary>
     public int UpsertValues(IReadOnlyList<PrtgValueRow> values)
     {
-        if (values.Any(v => v.TrustVersion != 0 || v.TrustedProof != null))
-            throw new ArgumentException("可信快照必須走具批次冪等的 sampled merge。", nameof(values));
         var now = DateTime.Now;
         return BatchWrite(values, (ctx, batch) =>
         {
@@ -712,17 +808,12 @@ public sealed class EfPrtgStore
 
                 if (existing.TryGetValue(key, out var row))
                 {
-                    if (row.TrustVersion == 1 && item.TrustVersion == 0 &&
-                        string.Equals(item.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase))
-                        continue;
                     row.AvgValue = item.AvgValue;
                     row.MinValue = item.MinValue;
                     row.MaxValue = item.MaxValue;
                     row.Coverage = item.Coverage;
                     row.Quality = item.Quality;
                     row.CreatedAt = writeTime; // 每次覆蓋都更新，保留期依它清理
-                    row.TrustVersion = item.TrustVersion;
-                    row.TrustedProof = item.TrustedProof;
                 }
                 else
                 {
@@ -735,9 +826,7 @@ public sealed class EfPrtgStore
                         MaxValue = item.MaxValue,
                         Coverage = item.Coverage,
                         Quality = item.Quality,
-                        CreatedAt = writeTime,
-                        TrustVersion = item.TrustVersion,
-                        TrustedProof = item.TrustedProof
+                        CreatedAt = writeTime
                     };
                     ctx.PrtgValues.Add(newRow);
                     existing[key] = newRow;
@@ -759,23 +848,6 @@ public sealed class EfPrtgStore
     /// </summary>
     public int MergeSampledValues(IReadOnlyList<PrtgValueRow> values, string? sampledBatchId = null)
     {
-        foreach (var value in values)
-        {
-            var trustedProof = value.TrustVersion == 1 && !string.IsNullOrWhiteSpace(value.TrustedProof)
-                ? PrtgTrustedSampleProof.Deserialize(value.TrustedProof)
-                : null;
-            if (value.TrustVersion is < 0 or > 1 || value.TrustVersion == 1 &&
-                (trustedProof == null || !trustedProof.IsStructurallyValid() ||
-                 System.Text.Encoding.UTF8.GetByteCount(value.TrustedProof!) > PrtgTrustedSampleProof.MaximumSerializedBytes ||
-                 !trustedProof.MatchesHour(value.PeriodStart) ||
-                 !string.Equals(value.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase) ||
-                 !value.Coverage.HasValue || Math.Abs(value.Coverage.Value - trustedProof.Slots.Count * 100.0 / (60 / trustedProof.StrategyMinutes)) > 1e-8 ||
-                 !value.AvgValue.HasValue || Math.Abs(value.AvgValue.Value - trustedProof.Slots.Average(s => s.Value)) > 1e-8 ||
-                 !value.MinValue.HasValue || Math.Abs(value.MinValue.Value - trustedProof.Slots.Min(s => s.Value)) > 1e-8 ||
-                 !value.MaxValue.HasValue || Math.Abs(value.MaxValue.Value - trustedProof.Slots.Max(s => s.Value)) > 1e-8) ||
-                value.TrustVersion == 0 && value.TrustedProof != null)
-                throw new ArgumentException("可信樣本版本與 proof 不相符。", nameof(values));
-        }
         if (sampledBatchId != null)
         {
             if (!Guid.TryParse(sampledBatchId, out var id))
@@ -813,37 +885,11 @@ public sealed class EfPrtgStore
                         MaxValue = item.MaxValue,
                         Coverage = item.Coverage,
                         Quality = !string.IsNullOrEmpty(item.Quality) ? item.Quality : PrtgDataQuality.Sampled,
-                        CreatedAt = writeTime,
-                        TrustVersion = item.TrustVersion,
-                        TrustedProof = item.TrustedProof
+                        CreatedAt = writeTime
                     };
                     ctx.PrtgValues.Add(newRow);
                     existing[key] = newRow;
                     writtenOrMergedCount++;
-                }
-                else if (item.TrustVersion == 1 && string.Equals(row.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase))
-                {
-                    // 可信 slot proof 以唯一時槽合併並替換；絕不再以 coverage 代理權重重複累加。
-                    var incomingProof = PrtgTrustedSampleProof.Deserialize(item.TrustedProof!);
-                    if (row.TrustVersion == 1)
-                    {
-                        if (string.IsNullOrWhiteSpace(row.TrustedProof)) throw new InvalidDataException("資料庫可信樣本缺少 proof");
-                        incomingProof = PrtgTrustedSampleProof.Merge(PrtgTrustedSampleProof.Deserialize(row.TrustedProof), incomingProof);
-                    }
-                    var slots = incomingProof.Slots;
-                    row.AvgValue = slots.Average(s => s.Value);
-                    row.MinValue = slots.Min(s => s.Value);
-                    row.MaxValue = slots.Max(s => s.Value);
-                    row.Coverage = slots.Count * 100.0 / (60 / incomingProof.StrategyMinutes);
-                    row.Quality = PrtgDataQuality.Sampled;
-                    row.TrustVersion = 1;
-                    row.TrustedProof = PrtgTrustedSampleProof.Serialize(incomingProof);
-                    row.CreatedAt = writeTime;
-                    writtenOrMergedCount++;
-                }
-                else if (row.TrustVersion == 1)
-                {
-                    // 舊 diagnostic Add 不可改寫已可信的小時列。
                 }
                 else if (string.Equals(row.Quality, PrtgDataQuality.Sampled, StringComparison.OrdinalIgnoreCase))
                 {
@@ -938,7 +984,8 @@ public sealed class EfPrtgStore
         return strategy.Execute(() =>
         {
             ctx.ChangeTracker.Clear();
-            using var tx = ctx.Database.BeginTransaction();
+            using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
             var priorLatestDate = ctx.PrtgHostMaps.Select(m => (DateTime?)m.MapDate).Max();
             var oldRows = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == targetDate)
                 .ToDictionary(m => m.DeviceObjid);
@@ -978,8 +1025,6 @@ public sealed class EfPrtgStore
             }
 
             IncrementHostMapDataRevision(ctx);
-            RefreshResourceIdentitiesForDevices(ctx, changedDevices);
-            RefreshPendingResourceIdentities(ctx);
             ctx.SaveChanges();
             tx.Commit();
             return written;
@@ -1049,7 +1094,8 @@ public sealed class EfPrtgStore
                     return strategy.Execute(() =>
                     {
                         ctx.ChangeTracker.Clear();
-                        using var tx = ctx.Database.BeginTransaction();
+                        using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                        PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
                         var deleted = 0;
                         foreach (var g in keys.GroupBy(k => k.MapDate))
                         {
@@ -1115,7 +1161,8 @@ public sealed class EfPrtgStore
         var deleted = probe.Database.CreateExecutionStrategy().Execute(() =>
         {
             using var write = _contextFactory();
-            using var transaction = write.Database.BeginTransaction();
+            using var transaction = write.Database.BeginTransaction(IsolationLevel.Serializable);
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(write);
             var count = write.PrtgDevices.Where(d => d.SyncedAt < syncStartedAt).ExecuteDelete();
             if (count > 0)
             {
@@ -1153,7 +1200,8 @@ public sealed class EfPrtgStore
         return probe.Database.CreateExecutionStrategy().Execute(() =>
         {
             using var ctx = _contextFactory();
-            using var transaction = ctx.Database.BeginTransaction();
+            using var transaction = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
             var stale = ctx.PrtgSensors.Where(s => s.SyncedAt < syncStartedAt);
             // 守門裝置數量級很小（幾台），IN 清單不會撞參數上限。
             if (preserveDeviceObjids.Count > 0)
@@ -1169,9 +1217,6 @@ public sealed class EfPrtgStore
             {
                 var batch = toDelete.OrderBy(s => s.Objid).Select(s => s.Objid).Take(500).ToArray();
                 if (batch.Length == 0) break;
-                foreach (var sensorId in batch)
-                    PrtgResourceIdentityStore.Deactivate(ctx, sensorId, DateTimeOffset.UtcNow);
-                ctx.SaveChanges();
                 deleted += ctx.PrtgSensors.Where(s => batch.Contains(s.Objid)).ExecuteDelete();
             }
             if (deleted > 0)
@@ -1188,102 +1233,50 @@ public sealed class EfPrtgStore
     public PrtgScopeBaselineStore ScopeBaseline() =>
         new(new EfJsonBlobStore(_contextFactory, PrtgScopeBaselineStore.BlobKey, _performance));
 
+    /// <summary>Durable preview ownership and bounded progress for scope purge operations.</summary>
+    public PrtgScopePurgeStore ScopePurgeJobs() => new(_contextFactory);
+
     /// <summary>
-    /// 範圍外清除要刪的 sensor objid：數值與狀態變更表出現過、且對不到 <paramref name="keepDeviceObjids"/> 的 sensor。
-    /// 兩表沒有裝置欄位，以感測器鏡像的 sensor→裝置 判斷；鏡像中已沒有的 sensor（先前已被清出感測器鏡像的範圍外裝置、
-    /// 或 PRTG 端已刪除）視為範圍外。objid 本身就是保留裝置的列（裝置層級訊息）不刪。
+    /// Projects only the frozen candidate sensor set of a durable purge preview. Callers must
+    /// create the capped preview first; this prevents preview details from scanning/materializing
+    /// a live, unbounded history set or drifting beyond its captured row watermarks.
     /// </summary>
-    private static (List<long> Sensors, Dictionary<long, long> SensorDevice) OutOfScopeSensorObjids(
-        LfDbContext ctx, IReadOnlySet<long> keepDeviceObjids)
+    public PrtgOutOfScopePreview PreviewOutOfScopeCandidateDetails(IReadOnlyCollection<long> candidateSensorObjids,
+        int topDevices, IReadOnlySet<long>? visibleDeviceObjids = null)
     {
-        if (keepDeviceObjids.Count == 0)
-            throw new ArgumentException("保留裝置集合不得為空（等於清光全部數值與狀態變更）。", nameof(keepDeviceObjids));
+        const int maximumCapturedSensors = 100_000;
+        const int queryBatchSize = 500;
+        if (candidateSensorObjids.Count > maximumCapturedSensors)
+            throw new InvalidOperationException($"候選感測器超過預覽上限 {maximumCapturedSensors}，未提供清除詳情。");
+        if (topDevices < 0) throw new ArgumentOutOfRangeException(nameof(topDevices));
 
-        var sensorDevice = ctx.PrtgSensors.AsNoTracking()
-            .Select(s => new { s.Objid, s.DeviceObjid })
-            .ToList()
-            .GroupBy(s => s.Objid)
-            .ToDictionary(g => g.Key, g => g.First().DeviceObjid);
-
-        var candidates = ctx.PrtgValues.Select(v => v.SensorObjid).Distinct().ToList();
-        candidates.AddRange(ctx.PrtgStateChanges.Select(c => c.SensorObjid).Distinct().ToList());
-
-        var sensors = candidates
-            .Distinct()
-            .Where(id => !keepDeviceObjids.Contains(id)
-                         && !(sensorDevice.TryGetValue(id, out var dev) && keepDeviceObjids.Contains(dev)))
-            .OrderBy(id => id)
-            .ToList();
-        return (sensors, sensorDevice);
-    }
-
-    /// <summary>範圍外清除的預覽（只用 COUNT，不讀回資料列）</summary>
-    public PrtgOutOfScopePreview PreviewOutOfScopeData(IReadOnlySet<long> keepDeviceObjids, int topDevices)
-    {
-        using var __perf = _performance.Measure("prtg:PreviewOutOfScope");
+        using var __perf = _performance.Measure("prtg:PreviewOutOfScopeFrozenCandidates");
         using var ctx = _contextFactory();
-        var (sensors, sensorDevice) = OutOfScopeSensorObjids(ctx, keepDeviceObjids);
-
-        var values = 0;
-        var stateChanges = 0;
-        for (var offset = 0; offset < sensors.Count; offset += DeviceQueryBatchSize)
+        var sensors = candidateSensorObjids.Distinct().ToArray();
+        var sensorDevice = new Dictionary<long, long>();
+        foreach (var batch in sensors.Chunk(queryBatchSize))
         {
-            var batch = sensors.GetRange(offset, Math.Min(DeviceQueryBatchSize, sensors.Count - offset));
-            values += ctx.PrtgValues.Count(v => batch.Contains(v.SensorObjid));
-            stateChanges += ctx.PrtgStateChanges.Count(c => batch.Contains(c.SensorObjid));
+            var rows = ctx.PrtgSensors.AsNoTracking().Where(s => batch.Contains(s.Objid))
+                .Select(s => new { s.Objid, s.DeviceObjid }).ToList();
+            foreach (var row in rows) sensorDevice.TryAdd(row.Objid, row.DeviceObjid);
         }
 
-        var devices = sensors
-            .Where(sensorDevice.ContainsKey)
-            .Select(id => sensorDevice[id])
-            .Distinct()
-            .OrderBy(id => id)
-            .ToList();
-        var knownSensors = sensors.Count(sensorDevice.ContainsKey);
-
-        var top = devices.Take(topDevices).ToList();
+        var devices = sensors.Where(sensorDevice.ContainsKey).Select(id => sensorDevice[id])
+            .Distinct().OrderBy(id => id).ToList();
+        var visibleDevices = visibleDeviceObjids == null
+            ? devices
+            : devices.Where(visibleDeviceObjids.Contains).ToList();
+        var top = visibleDevices.Take(topDevices).ToList();
         var names = GetDeviceNamesByObjids(top);
         return new PrtgOutOfScopePreview(
-            values, stateChanges, devices.Count,
-            top.Select(id => names.TryGetValue(id, out var n) ? $"{n}（{id}）" : id.ToString()).ToList(),
-            sensors.Count - knownSensors);
-    }
-
-    /// <summary>
-    /// 刪除 <c>lf_prtg_values</c> 與 <c>lf_prtg_state_changes</c> 中裝置不在 <paramref name="keepDeviceObjids"/> 的列（判定見
-    /// <see cref="OutOfScopeSensorObjids"/>），分批刪、不設單次上限，回傳各表筆數。
-    /// 呼叫端必須先確認範圍可信（<see cref="PrtgScopePurge.CheckScope"/>）。
-    /// </summary>
-    public (int Values, int StateChanges) DeleteOutOfScopeData(IReadOnlySet<long> keepDeviceObjids)
-    {
-        using var __perf = _performance.Measure("prtg:DeleteOutOfScope");
-        List<long> sensors;
-        using (var ctx = _contextFactory())
+            Values: 0,
+            StateChanges: 0,
+            AffectedDevices: devices.Count,
+            TopDeviceNames: top.Select(id => names.TryGetValue(id, out var name) ? $"{name}（{id}）" : id.ToString()).ToList(),
+            UnknownSensors: sensors.Length - sensorDevice.Count)
         {
-            sensors = OutOfScopeSensorObjids(ctx, keepDeviceObjids).Sensors;
-        }
-
-        var values = 0;
-        var stateChanges = 0;
-        for (var offset = 0; offset < sensors.Count; offset += DeviceQueryBatchSize)
-        {
-            var batch = sensors.GetRange(offset, Math.Min(DeviceQueryBatchSize, sensors.Count - offset));
-            values += BatchedPrune.Run<long>(
-                _contextFactory,
-                (ctx, take) => ctx.PrtgValues.Where(v => batch.Contains(v.SensorObjid))
-                    .OrderBy(v => v.Id).Select(v => v.Id).Take(take).ToList(),
-                (ctx, ids) => ctx.PrtgValues.Where(v => ids.Contains(v.Id)).ExecuteDelete(),
-                _ => 0,
-                "PRTG 監看範圍外數值", int.MaxValue);
-            stateChanges += BatchedPrune.Run<long>(
-                _contextFactory,
-                (ctx, take) => ctx.PrtgStateChanges.Where(c => batch.Contains(c.SensorObjid))
-                    .OrderBy(c => c.Id).Select(c => c.Id).Take(take).ToList(),
-                (ctx, ids) => ctx.PrtgStateChanges.Where(c => ids.Contains(c.Id)).ExecuteDelete(),
-                _ => 0,
-                "PRTG 監看範圍外狀態變更", int.MaxValue);
-        }
-        return (values, stateChanges);
+            VisibleAffectedDevices = visibleDevices.Count
+        };
     }
 
     /// <summary>
@@ -2014,252 +2007,6 @@ public sealed class EfPrtgStore
             });
     }
 
-    /// <summary>
-    /// 為多頁評估擷取有界且不可變的候選集合。SQL 總數只計一次，完整排序列也受上限保護，避免大量清單被載入記憶體。
-    /// 有序列查詢定義實際捕獲集合，COUNT 僅核對筆數；這不代表資料庫整體同一時間點快照。評估各頁沿用同一批不可變列，
-    /// 並在使用歷史資料前逐頁核對捕獲的最新映射日期、狀態與主機。
-    /// </summary>
-    internal (int Total, List<(long Objid, long DeviceObjid, long HostId, DateTime MappingDate, string Name, string SensorType, string Category, string? Unit, bool Paused, bool DevicePaused)> Rows)
-        GetLatestMappedReadinessSensorSnapshot(IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate,
-            int maximumCandidates, IReadOnlyCollection<long>? selectedSensorObjids = null)
-    {
-        if (maximumCandidates <= 0 || maximumCandidates > PrtgDiskAssessmentService.MaximumCandidateSnapshotSize)
-            throw new ArgumentOutOfRangeException(nameof(maximumCandidates), "候選快照上限只能是 1 到 15,000。");
-        if (activeHostIds.Count == 0) return (0, new());
-        long[]? filterSensorIds = selectedSensorObjids?.Where(id => id > 0).Distinct().OrderBy(id => id).ToArray();
-        if (selectedSensorObjids is not null && filterSensorIds!.Length == 0) return (0, new());
-
-        return PrtgSqlServerIdScope.Execute(_contextFactory, activeHostIds, filterSensorIds,
-            (ctx, hosts, sensors, hostScope, sensorScope) =>
-            {
-                var query = BuildLatestMappedReadinessSensorsQuery(ctx, hosts, throughDate, fromDate,
-                    sensors, hostScope, sensorScope);
-                var total = query.Select(x => x.Sensor.Objid).Distinct().LongCount();
-                if (total > maximumCandidates)
-                    throw new InvalidOperationException($"PRTG 磁碟候選數 {total} 超過單次評估上限 {maximumCandidates}，已拒絕建立候選快照。");
-                if (total == 0) return (0, new());
-
-                var rows = query.OrderBy(x => x.Sensor.Objid).Take(maximumCandidates + 1)
-                    .Select(x => new
-                    {
-                        x.Sensor.Objid,
-                        x.Sensor.DeviceObjid,
-                        x.HostId,
-                        x.MapDate,
-                        SensorTypeLength = x.Sensor.SensorType == null ? 0 : x.Sensor.SensorType.Length,
-                        SensorType = x.Sensor.SensorType == null ? "" : x.Sensor.SensorType.Length > CandidateSnapshotSensorTypeMaxChars
-                            ? x.Sensor.SensorType.Substring(0, CandidateSnapshotSensorTypeMaxChars) : x.Sensor.SensorType,
-                        UnitLength = x.Sensor.Unit == null ? 0 : x.Sensor.Unit.Length,
-                        Unit = x.Sensor.Unit == null ? null : x.Sensor.Unit.Length > CandidateSnapshotUnitMaxChars
-                            ? x.Sensor.Unit.Substring(0, CandidateSnapshotUnitMaxChars) : x.Sensor.Unit,
-                        SensorPaused = x.Sensor.Paused,
-                        DevicePaused = x.Device.Paused
-                    }).ToList();
-                if (rows.Count > maximumCandidates || rows.Count != total || rows.Select(x => x.Objid).Distinct().Count() != rows.Count)
-                    throw new InvalidOperationException("建立 PRTG 磁碟候選快照時集合筆數或唯一鍵改變；請重新開始評估。");
-                if (rows.Any(x => x.SensorTypeLength > CandidateSnapshotSensorTypeMaxChars || x.UnitLength > CandidateSnapshotUnitMaxChars))
-                    throw new InvalidOperationException("PRTG 磁碟候選 metadata 超過快照欄位上限；已拒絕建立快照。");
-                var textBytes = rows.Sum(x => (long)Encoding.UTF8.GetByteCount(x.SensorType) +
-                    (x.Unit is null ? 0 : Encoding.UTF8.GetByteCount(x.Unit)));
-                if (textBytes > CandidateSnapshotTextMaxBytes)
-                    throw new InvalidOperationException("PRTG 磁碟候選快照超過文字資料容量上限；已拒絕建立快照。");
-
-                return ((int)total, rows.Select(x => (x.Objid, x.DeviceObjid, x.HostId, x.MapDate, Name: "", x.SensorType,
-                    Category: PrtgSensorCategories.Disk, x.Unit, x.SensorPaused, x.DevicePaused)).ToList());
-            });
-    }
-
-    /// <summary>
-    /// Captures one range's candidate denominator with a single grouped sensor/map stream. A map row
-    /// owns its day through the earlier of the next row or its inclusive 30-day lookback expiry.
-    /// Rows with non-OK status or no host remain barriers; filtering them before interval construction
-    /// would incorrectly resurrect older successful mappings.
-    /// </summary>
-    internal int[] GetReadinessRangeCandidateCounts(DateOnly fromDate, DateOnly throughDate,
-        IReadOnlySet<long> activeHostIds, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(activeHostIds);
-        var dayCount = throughDate.DayNumber - fromDate.DayNumber + 1;
-        if (dayCount is < 1 or > 730)
-            throw new ArgumentOutOfRangeException(nameof(throughDate), "候選日期範圍只能是 1 到 730 日。");
-
-        var counts = new int[dayCount];
-
-        var rangeStart = fromDate.ToDateTime(TimeOnly.MinValue);
-        var rangeEnd = throughDate.AddDays(1).ToDateTime(TimeOnly.MinValue);
-        var mapStart = fromDate.AddDays(-PrtgDiskAssessmentService.CandidateMappingLookbackDays).ToDateTime(TimeOnly.MinValue);
-        var differences = new long[dayCount + 1];
-        var maximumRows = checked((long)PrtgDiskAssessmentService.MaximumCandidateSnapshotSize *
-            (dayCount + PrtgDiskAssessmentService.CandidateMappingLookbackDays));
-        long rowsRead = 0;
-        long previousDeviceId = 0;
-        RangeCandidateMapRow? previous = null;
-
-        using var context = _contextFactory();
-        var sensorCounts =
-            from sensor in context.PrtgSensors.AsNoTracking()
-            join device in context.PrtgDevices.AsNoTracking() on sensor.DeviceObjid equals device.Objid
-            where sensor.Category == PrtgSensorCategories.Disk
-            group sensor by sensor.DeviceObjid into groupRows
-            select new { DeviceObjid = groupRows.Key, SensorCount = groupRows.LongCount() };
-
-        var stream =
-            from map in context.PrtgHostMaps.AsNoTracking()
-            join sensorCount in sensorCounts on map.DeviceObjid equals sensorCount.DeviceObjid
-            where map.MapDate >= mapStart && map.MapDate < rangeEnd
-            orderby map.DeviceObjid, map.MapDate
-            select new RangeCandidateMapRow(map.DeviceObjid, map.MapDate, map.MapStatus, map.HostId,
-                sensorCount.SensorCount);
-
-        foreach (var current in stream)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            rowsRead = checked(rowsRead + 1);
-            if (rowsRead > maximumRows)
-                throw new InvalidOperationException("PRTG 磁碟範圍映射列超過有限掃描上限；已拒絕預覽。");
-            if (current.MapDate.TimeOfDay != TimeSpan.Zero || current.MapDate < mapStart || current.MapDate >= rangeEnd)
-                throw new InvalidOperationException("PRTG 磁碟範圍包含非午夜或超界日映射；已拒絕推定日期。");
-            if (current.SensorCount <= 0)
-                throw new InvalidOperationException("PRTG 磁碟範圍 sensor/device 分組筆數無效。");
-
-            if (previous is not null)
-            {
-                if (current.DeviceObjid < previousDeviceId)
-                    throw new InvalidOperationException("PRTG 磁碟範圍映射排序或唯一鍵無效。");
-                if (current.DeviceObjid == previousDeviceId)
-                {
-                    if (current.MapDate <= previous.MapDate)
-                        throw new InvalidOperationException("PRTG 磁碟範圍映射排序或唯一鍵無效。");
-                    AddCandidateInterval(previous, current.MapDate);
-                }
-                else
-                {
-                    AddCandidateInterval(previous, rangeEnd);
-                    previousDeviceId = current.DeviceObjid;
-                }
-            }
-            else
-            {
-                previousDeviceId = current.DeviceObjid;
-            }
-            previous = current;
-        }
-        if (previous is not null) AddCandidateInterval(previous, rangeEnd);
-
-        long running = 0;
-        long total = 0;
-        for (var index = 0; index < dayCount; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            running = checked(running + differences[index]);
-            if (running < 0 || running > PrtgDiskAssessmentService.MaximumCandidateSnapshotSize)
-                throw new InvalidOperationException($"PRTG 磁碟候選單日數量 {running} 超過上限 {PrtgDiskAssessmentService.MaximumCandidateSnapshotSize}。");
-            counts[index] = checked((int)running);
-            total = checked(total + running);
-        }
-        running = checked(running + differences[dayCount]);
-        if (running != 0 || total > checked((long)PrtgDiskAssessmentService.MaximumCandidateSnapshotSize * 730))
-            throw new InvalidOperationException("PRTG 磁碟範圍候選差分計數不一致。");
-        return counts;
-
-        void AddCandidateInterval(RangeCandidateMapRow row, DateTime nextMapDate)
-        {
-            if (!string.Equals(row.MapStatus, PrtgMapStatus.Ok, StringComparison.Ordinal) ||
-                !row.HostId.HasValue || !activeHostIds.Contains(row.HostId.Value)) return;
-
-            var start = row.MapDate < rangeStart ? rangeStart : row.MapDate;
-            var expiry = row.MapDate.AddDays(PrtgDiskAssessmentService.CandidateMappingLookbackDays + 1);
-            var end = nextMapDate < expiry ? nextMapDate : expiry;
-            if (end > rangeEnd) end = rangeEnd;
-            if (start >= end) return;
-            var startIndex = DateOnly.FromDateTime(start).DayNumber - fromDate.DayNumber;
-            var endIndex = DateOnly.FromDateTime(end).DayNumber - fromDate.DayNumber;
-            differences[startIndex] = checked(differences[startIndex] + row.SensorCount);
-            differences[endIndex] = checked(differences[endIndex] - row.SensorCount);
-        }
-    }
-
-    /// <summary>Reads only the page's per-day slices in one candidate SELECT; counts are supplied by Core's private range operation.</summary>
-    internal List<RangeReadinessCandidateRow> GetReadinessRangeCandidateRows(
-        IReadOnlyCollection<long> activeHostIds, IReadOnlyList<RangeReadinessCandidateSlice> slices,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(activeHostIds);
-        ArgumentNullException.ThrowIfNull(slices);
-        if (slices.Count > PrtgDiskAssessmentService.MaximumBatchSize || slices.Sum(x => x.Take) > PrtgDiskAssessmentService.MaximumBatchSize ||
-            slices.Select(x => x.CompletedDay).Distinct().Count() != slices.Count ||
-            slices.Any(x => x.Total is < 0 or > PrtgDiskAssessmentService.MaximumCandidateSnapshotSize || x.Offset < 0 || x.Take <= 0 || x.Take > PrtgDiskAssessmentService.MaximumBatchSize || (long)x.Offset + x.Take > x.Total))
-            throw new ArgumentOutOfRangeException(nameof(slices), "範圍候選頁必須是總數不超過 100 的 Core 私有分頁切片。");
-        if (activeHostIds.Count == 0 || slices.Count == 0) return new();
-
-        return PrtgSqlServerIdScope.Execute(_contextFactory, activeHostIds, null,
-            (context, hosts, _, hostIdScope, _) =>
-            {
-                IQueryable<RangeReadinessCandidateProjection>? combined = null;
-                foreach (var slice in slices)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var through = slice.CompletedDay.ToDateTime(TimeOnly.MinValue);
-                    var from = through.AddDays(-PrtgDiskAssessmentService.CandidateMappingLookbackDays);
-                    var branch = BuildLatestMappedReadinessSensorsQuery(context, hosts, through, from,
-                            selectedSensorObjids: null, hostIdScopeQuery: hostIdScope)
-                        .OrderBy(x => x.Sensor.Objid).Skip(slice.Offset).Take(slice.Take)
-                        .Select(x => new RangeReadinessCandidateProjection
-                        {
-                            CompletedDay = through,
-                            Objid = x.Sensor.Objid,
-                            DeviceObjid = x.Sensor.DeviceObjid,
-                            HostId = x.HostId,
-                            MappingDate = x.MapDate,
-                            NameLength = x.Sensor.Name == null ? 0 : x.Sensor.Name.Length,
-                            Name = x.Sensor.Name == null ? "" : x.Sensor.Name.Substring(0, CandidateSnapshotNameMaxChars + 1),
-                            SensorTypeLength = x.Sensor.SensorType == null ? 0 : x.Sensor.SensorType.Length,
-                            SensorType = x.Sensor.SensorType == null ? "" : x.Sensor.SensorType.Substring(0, CandidateSnapshotSensorTypeFieldMaxChars + 1),
-                            CategoryLength = x.Sensor.Category == null ? 0 : x.Sensor.Category.Length,
-                            Category = x.Sensor.Category == null ? "" : x.Sensor.Category.Substring(0, CandidateSnapshotCategoryMaxChars + 1),
-                            UnitLength = x.Sensor.Unit == null ? 0 : x.Sensor.Unit.Length,
-                            Unit = x.Sensor.Unit == null ? null : x.Sensor.Unit.Substring(0, CandidateSnapshotUnitFieldMaxChars + 1),
-                            Paused = x.Sensor.Paused,
-                            DevicePaused = x.Device.Paused
-                        });
-                    combined = combined is null ? branch : combined.Concat(branch);
-                }
-
-                if (combined is null) return new List<RangeReadinessCandidateRow>();
-                var projected = combined.OrderBy(x => x.CompletedDay).ThenBy(x => x.Objid).ToList();
-                cancellationToken.ThrowIfCancellationRequested();
-                var result = projected.Select(x =>
-                {
-                    if (x.NameLength > CandidateSnapshotNameMaxChars ||
-                        x.Name.Length > CandidateSnapshotNameMaxChars ||
-                        x.SensorTypeLength > CandidateSnapshotSensorTypeFieldMaxChars || x.SensorType.Length > CandidateSnapshotSensorTypeFieldMaxChars ||
-                        x.CategoryLength > CandidateSnapshotCategoryMaxChars || x.Category.Length > CandidateSnapshotCategoryMaxChars ||
-                        x.UnitLength > CandidateSnapshotUnitFieldMaxChars ||
-                        x.Unit is { Length: > CandidateSnapshotUnitFieldMaxChars })
-                        throw new InvalidOperationException("PRTG 磁碟範圍候選 metadata 超過正式欄位上限；已拒絕建立頁面。");
-                    return new RangeReadinessCandidateRow(DateOnly.FromDateTime(x.CompletedDay), x.Objid,
-                        x.DeviceObjid, x.HostId, x.MappingDate, x.Name, x.SensorType, x.Category,
-                        x.Unit, x.Paused, x.DevicePaused);
-                }).ToList();
-                foreach (var slice in slices)
-                {
-                    var sliceRows = result.Where(row => row.CompletedDay == slice.CompletedDay).ToArray();
-                    if (sliceRows.Length != slice.Take || sliceRows.Select(row => row.Objid).Distinct().Count() != sliceRows.Length ||
-                        !sliceRows.Select(row => row.Objid).SequenceEqual(sliceRows.Select(row => row.Objid).OrderBy(id => id)))
-                        throw new InvalidOperationException("PRTG 磁碟範圍候選頁筆數或排序於擷取期間改變；已拒絕整頁。");
-                }
-                var textBytes = result.Sum(row => (long)Encoding.UTF8.GetByteCount(row.Name) +
-                    Encoding.UTF8.GetByteCount(row.SensorType) + Encoding.UTF8.GetByteCount(row.Category) +
-                    (row.Unit is null ? 0 : Encoding.UTF8.GetByteCount(row.Unit)));
-                if (textBytes > CandidateSnapshotTextMaxBytes)
-                    throw new InvalidOperationException("PRTG 磁碟範圍候選頁文字資料超過容量上限；已拒絕整頁。");
-                return result;
-            });
-    }
-
-    private sealed record RangeCandidateMapRow(long DeviceObjid, DateTime MapDate, string MapStatus,
-        long? HostId, long SensorCount);
-
     private sealed class RangeReadinessCandidateProjection
     {
         public DateTime CompletedDay { get; init; }
@@ -2278,12 +2025,6 @@ public sealed class EfPrtgStore
         public bool Paused { get; init; }
         public bool DevicePaused { get; init; }
     }
-
-    internal sealed record RangeReadinessCandidateRow(DateOnly CompletedDay, long Objid, long DeviceObjid,
-        long HostId, DateTime MappingDate, string Name, string SensorType, string Category, string? Unit,
-        bool Paused, bool DevicePaused);
-
-    internal sealed record RangeReadinessCandidateSlice(DateOnly CompletedDay, int Total, int Offset, int Take);
 
     internal static IQueryable<PrtgReadinessCandidateQueryRow> BuildLatestMappedReadinessSensorsQuery(
         LfDbContext ctx, IReadOnlyCollection<long> activeHostIds, DateTime throughDate, DateTime fromDate,
@@ -2436,256 +2177,6 @@ public sealed class EfPrtgStore
         using var ctx = _contextFactory();
         return ctx.PrtgValues.AsNoTracking().Where(v => sensorObjids.Contains(v.SensorObjid)
             && v.PeriodStart >= from && v.PeriodStart < to).OrderBy(v => v.SensorObjid).ThenBy(v => v.PeriodStart).ToList();
-    }
-
-    /// <summary>
-    /// Bounded resource-pressure read: at most 100 sensors, exactly two completed hours, and a
-    /// 201-row sentinel. Large LOBs never leave SQL; callers receive only complete, byte-bounded proofs.
-    /// </summary>
-    public PrtgResourcePressureValuesResult GetResourcePressureValues(
-        IReadOnlyCollection<long> sensorObjids, DateTime fromInclusive, DateTime toExclusive)
-    {
-        ArgumentNullException.ThrowIfNull(sensorObjids);
-        const int maximumSensors = 100;
-        const int maximumRows = 200;
-        const int rowSentinel = maximumRows + 1;
-        const int maximumQualityCharacters = 64;
-        const int maximumProofCharacters = 4096;
-        if (fromInclusive.Kind != DateTimeKind.Unspecified || toExclusive.Kind != DateTimeKind.Unspecified ||
-            toExclusive - fromInclusive != TimeSpan.FromHours(2))
-            throw new ArgumentException("資源期間查詢必須是兩個連續完成的小時。", nameof(toExclusive));
-        var ids = sensorObjids.Where(id => id > 0).Distinct().Order().ToArray();
-        if (ids.Length is < 1 or > maximumSensors)
-            throw new ArgumentOutOfRangeException(nameof(sensorObjids), $"每次最多查詢 {maximumSensors} 個 sensor。");
-
-        using var ctx = _contextFactory();
-        var selected = ctx.PrtgValues.AsNoTracking()
-            .Where(v => ids.Contains(v.SensorObjid) && v.PeriodStart >= fromInclusive && v.PeriodStart < toExclusive)
-            .OrderBy(v => v.SensorObjid).ThenBy(v => v.PeriodStart)
-            .Take(rowSentinel)
-            .Select(v => new
-            {
-                v.Id, v.SensorObjid, v.PeriodStart, v.AvgValue, v.MinValue, v.MaxValue, v.Coverage,
-                v.CreatedAt, v.TrustVersion,
-                QualityPrefix = v.Quality.Substring(0, maximumQualityCharacters),
-                // Appending a non-space sentinel makes SQL Server LEN retain trailing spaces too.
-                QualityLength = (v.Quality + "#").Length - 1,
-                TrustedProofPrefix = v.TrustVersion == 1 && v.TrustedProof != null
-                    ? v.TrustedProof.Substring(0, maximumProofCharacters + 1) : null,
-                TrustedProofLength = v.TrustVersion == 1 && v.TrustedProof != null
-                    ? (v.TrustedProof + "#").Length - 1 : 0
-            }).ToList();
-
-        if (selected.Count > maximumRows)
-            return new([], true, ids.ToHashSet());
-
-        var utf8 = new System.Text.UTF8Encoding(false, true);
-        var rows = new List<PrtgValueRow>(selected.Count);
-        var rejected = new HashSet<long>();
-        foreach (var item in selected)
-        {
-            string? fullProof = null;
-            if (item.TrustVersion == 1)
-            {
-                var proof = item.TrustedProofPrefix;
-                if (item.TrustedProofLength is < 1 or > maximumProofCharacters || proof is null ||
-                    proof.Length != item.TrustedProofLength)
-                {
-                    rejected.Add(item.SensorObjid);
-                    continue;
-                }
-                try
-                {
-                    if (utf8.GetByteCount(proof) > maximumProofCharacters)
-                    {
-                        rejected.Add(item.SensorObjid);
-                        continue;
-                    }
-                }
-                catch (System.Text.EncoderFallbackException)
-                {
-                    rejected.Add(item.SensorObjid);
-                    continue;
-                }
-                fullProof = proof;
-            }
-            if (item.QualityLength is < 1 or > maximumQualityCharacters ||
-                item.QualityPrefix.Length != item.QualityLength)
-            {
-                rejected.Add(item.SensorObjid);
-                continue;
-            }
-            rows.Add(new PrtgValueRow
-            {
-                Id = item.Id, SensorObjid = item.SensorObjid, PeriodStart = item.PeriodStart,
-                AvgValue = item.AvgValue, MinValue = item.MinValue, MaxValue = item.MaxValue,
-                Coverage = item.Coverage, CreatedAt = item.CreatedAt, TrustVersion = item.TrustVersion,
-                Quality = item.QualityPrefix, TrustedProof = fullProof
-            });
-        }
-        return new(rows, false, rejected);
-    }
-
-    /// <summary>
-    /// Bounded read for one closed analysis-zone calendar day. This is deliberately separate
-    /// from the live two-hour query so its existing contract remains unchanged.
-    /// </summary>
-    public PrtgResourcePressureValuesResult GetResourcePressureValuesForClosedDay(
-        IReadOnlyCollection<long> sensorObjids, DateTime dayStartInclusive, DateTime dayEndExclusive)
-    {
-        ArgumentNullException.ThrowIfNull(sensorObjids);
-        const int maximumSensors = 100;
-        const int maximumRowsPerSensor = 27; // covers the longest mapped day plus the preceding hour
-        const int maximumQualityCharacters = 64;
-        const int maximumProofCharacters = 4096;
-        if (dayStartInclusive.Kind != DateTimeKind.Unspecified || dayEndExclusive.Kind != DateTimeKind.Unspecified ||
-            dayEndExclusive <= dayStartInclusive || dayEndExclusive - dayStartInclusive > TimeSpan.FromHours(27) ||
-            dayStartInclusive.Minute != 0 || dayStartInclusive.Second != 0 ||
-            dayEndExclusive.Minute != 0 || dayEndExclusive.Second != 0)
-            throw new ArgumentException("資源歷史期間必須是 27 小時內的整點邊界。", nameof(dayEndExclusive));
-        var ids = sensorObjids.Where(id => id > 0).Distinct().Order().ToArray();
-        if (ids.Length is < 1 or > maximumSensors)
-            throw new ArgumentOutOfRangeException(nameof(sensorObjids), $"每次最多查詢 {maximumSensors} 個 sensor。");
-        var maximumRows = ids.Length * maximumRowsPerSensor;
-
-        using var ctx = _contextFactory();
-        var selected = ctx.PrtgValues.AsNoTracking()
-            .Where(v => ids.Contains(v.SensorObjid) && v.PeriodStart >= dayStartInclusive && v.PeriodStart < dayEndExclusive)
-            .OrderBy(v => v.SensorObjid).ThenBy(v => v.PeriodStart)
-            .Take(maximumRows + 1)
-            .Select(v => new
-            {
-                v.Id, v.SensorObjid, v.PeriodStart, v.AvgValue, v.MinValue, v.MaxValue, v.Coverage,
-                v.CreatedAt, v.TrustVersion,
-                QualityPrefix = v.Quality.Substring(0, maximumQualityCharacters),
-                QualityLength = (v.Quality + "#").Length - 1,
-                TrustedProofPrefix = v.TrustVersion == 1 && v.TrustedProof != null
-                    ? v.TrustedProof.Substring(0, maximumProofCharacters + 1) : null,
-                TrustedProofLength = v.TrustVersion == 1 && v.TrustedProof != null
-                    ? (v.TrustedProof + "#").Length - 1 : 0
-            }).ToList();
-
-        if (selected.Count > maximumRows)
-            return new([], true, ids.ToHashSet());
-
-        var oversizedSensors = selected.GroupBy(row => row.SensorObjid)
-            .Where(group => group.Count() > maximumRowsPerSensor).Select(group => group.Key).ToHashSet();
-        var utf8 = new System.Text.UTF8Encoding(false, true);
-        var rows = new List<PrtgValueRow>(selected.Count);
-        var rejected = new HashSet<long>(oversizedSensors);
-        foreach (var item in selected)
-        {
-            if (oversizedSensors.Contains(item.SensorObjid)) continue;
-            string? fullProof = null;
-            if (item.TrustVersion == 1)
-            {
-                var proof = item.TrustedProofPrefix;
-                if (item.TrustedProofLength is < 1 or > maximumProofCharacters || proof is null ||
-                    proof.Length != item.TrustedProofLength)
-                { rejected.Add(item.SensorObjid); continue; }
-                try
-                {
-                    if (utf8.GetByteCount(proof) > maximumProofCharacters)
-                    { rejected.Add(item.SensorObjid); continue; }
-                }
-                catch (System.Text.EncoderFallbackException)
-                { rejected.Add(item.SensorObjid); continue; }
-                fullProof = proof;
-            }
-            if (item.QualityLength is < 1 or > maximumQualityCharacters ||
-                item.QualityPrefix.Length != item.QualityLength)
-            { rejected.Add(item.SensorObjid); continue; }
-            rows.Add(new PrtgValueRow
-            {
-                Id = item.Id, SensorObjid = item.SensorObjid, PeriodStart = item.PeriodStart,
-                AvgValue = item.AvgValue, MinValue = item.MinValue, MaxValue = item.MaxValue,
-                Coverage = item.Coverage, CreatedAt = item.CreatedAt, TrustVersion = item.TrustVersion,
-                Quality = item.QualityPrefix, TrustedProof = fullProof
-            });
-        }
-        return new(rows, false, rejected);
-    }
-
-    public sealed record PrtgResourcePressureValuesResult(
-        IReadOnlyList<PrtgValueRow> Rows, bool ExceededRowBound, IReadOnlySet<long> RejectedSensorObjids);
-
-    /// <summary>Read bounded current category/type/paused metadata for the requested pressure resources.</summary>
-    public List<PrtgResourcePressureSensorMetadata> GetResourcePressureSensorMetadata(
-        IReadOnlyCollection<long> sensorObjids)
-    {
-        const int maxRequested = 100;
-        if (sensorObjids.Count == 0) return [];
-        var ids = sensorObjids.Where(id => id > 0).Distinct().ToArray();
-        if (ids.Length > maxRequested)
-            throw new ArgumentOutOfRangeException(nameof(sensorObjids), $"每次最多查詢 {maxRequested} 個 sensor。");
-        using var ctx = _contextFactory();
-        return (from s in ctx.PrtgSensors.AsNoTracking()
-                join d in ctx.PrtgDevices.AsNoTracking() on s.DeviceObjid equals d.Objid
-                where ids.Contains(s.Objid)
-                orderby s.Objid
-                select new PrtgResourcePressureSensorMetadata(s.Objid, s.DeviceObjid,
-                    s.SensorType, s.Category, s.Paused, d.Paused))
-            .ToList();
-    }
-
-    /// <summary>
-    /// Reads readiness rows as capped proof prefixes and immediately reduces them to scalar values.
-    /// A page is refused if its SQL projection would exceed 16 MiB or its row cap; callers must
-    /// shrink the candidate batch and retry rather than treating a partial history as complete.
-    /// </summary>
-    internal List<PrtgDiskReadinessValue> GetTrustedReadinessValues(IReadOnlyCollection<long> sensorObjids,
-        DateTime from, DateTime to, int maximumRows, Func<PrtgDiskReadinessProofProjection, bool> proofValidator)
-    {
-        ArgumentNullException.ThrowIfNull(proofValidator);
-        if (sensorObjids.Count == 0) return new();
-        // Keep every provider read small even when SQL contains near-maximum proofs. The total
-        // page remains bounded separately below; callers reduce candidate batches on overflow.
-        const int chunkRows = 256;
-        const int scalarReserveBytes = 512;
-        const long maximumProjectionBytes = 16L * 1024 * 1024;
-        if (maximumRows is < 1 or > 100_000) throw new ArgumentOutOfRangeException(nameof(maximumRows));
-        using var ctx = _contextFactory();
-        var sensorIds = sensorObjids.Where(id => id > 0).Distinct().ToArray();
-        if (sensorIds.Length > 100)
-            throw new PrtgReadinessCapacityException("readiness_sensor_id_cap_exceeded");
-        var result = new List<PrtgDiskReadinessValue>(Math.Min(maximumRows, 4096));
-        long cursor = 0;
-        long estimatedBytes = 0;
-        while (result.Count <= maximumRows)
-        {
-            var take = Math.Min(chunkRows, maximumRows - result.Count + 1);
-            var projected = ctx.PrtgValues.AsNoTracking().Where(v => sensorIds.Contains(v.SensorObjid) &&
-                    v.PeriodStart >= from && v.PeriodStart < to && v.Id > cursor)
-                .OrderBy(v => v.Id)
-                .Select(v => new PrtgDiskReadinessProofProjection(v.Id, v.SensorObjid, v.PeriodStart,
-                    v.AvgValue, v.MinValue, v.MaxValue, v.Coverage, v.Quality.Substring(0, 64), v.TrustVersion,
-                    v.TrustVersion == 1 && v.TrustedProof != null
-                        ? v.TrustedProof.Substring(0, PrtgTrustedSampleProof.MaximumSerializedBytes + 1) : null,
-                    v.TrustVersion == 1 && v.TrustedProof != null ? v.TrustedProof.Length : 0))
-                .Take(take).ToList();
-            if (projected.Count == 0) break;
-            if (result.Count + projected.Count > maximumRows)
-                throw new PrtgReadinessCapacityException("readiness_row_cap_exceeded");
-            cursor = projected[^1].Id;
-            foreach (var row in projected)
-            {
-                var proofBytes = row.ProofPrefix is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(row.ProofPrefix);
-                estimatedBytes += scalarReserveBytes;
-                if (estimatedBytes + chunkRows * (long)(PrtgTrustedSampleProof.MaximumSerializedBytes + 1) * 3 > maximumProjectionBytes)
-                    throw new PrtgReadinessCapacityException("readiness_projection_16mib_cap_exceeded");
-                var trusted = row.ProofLength <= PrtgTrustedSampleProof.MaximumSerializedBytes &&
-                    row.ProofPrefix is not null && row.ProofPrefix.Length == row.ProofLength &&
-                    proofBytes <= PrtgTrustedSampleProof.MaximumSerializedBytes && proofValidator(row);
-                result.Add(new(row.Id, row.SensorObjid, row.PeriodStart, row.AvgValue, row.MinValue,
-                    row.MaxValue, row.Coverage, row.Quality, trusted)
-                {
-                    EvidenceFingerprint = trusted ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(row))) : string.Empty
-                });
-            }
-            if (projected.Count < take) break;
-        }
-        return result;
     }
 
     /// <summary>讀取指定 sensor 頁面所在 device 的歷史每日 mapping，沒有日期列時維持缺席。</summary>
@@ -3042,37 +2533,6 @@ public sealed class EfPrtgStore
         return (latestDate.Value, rows);
     }
 
-    /// <summary>
-    /// Bounded authority-only variant used by workflow recovery. It deliberately projects only the
-    /// device id, host id and status needed for the current host-mapping fingerprint.
-    /// </summary>
-    public (DateTime? MapDate, List<PrtgHostMapAuthorityRow> Rows) GetLatestHostMapAuthorityWithDate(
-        int maxLookbackDays = 30, DateTime? anchor = null)
-    {
-        using var ctx = _contextFactory();
-        var latestDate = FindLatestHostMapDate(ctx, maxLookbackDays, anchor);
-        if (latestDate == null) return (null, new List<PrtgHostMapAuthorityRow>());
-
-        var projected = ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == latestDate.Value && m.MapStatus == PrtgMapStatus.Ok)
-            .OrderBy(m => m.DeviceObjid)
-            .Take(WholeEvidenceHostMapMaximumRows + 1)
-            .Select(m => new { m.DeviceObjid, m.HostId })
-            .ToList();
-        if (projected.Count > WholeEvidenceHostMapMaximumRows)
-            throw new InvalidDataException("Whole-evidence host map exceeded its bounded row limit.");
-
-        long projectedBytes = 0;
-        var rows = new List<PrtgHostMapAuthorityRow>(projected.Count);
-        foreach (var row in projected)
-        {
-            projectedBytes = checked(projectedBytes + sizeof(long) + sizeof(long));
-            if (projectedBytes > WholeEvidenceHostMapMaximumBytes)
-                throw new InvalidDataException("Whole-evidence host map exceeded its bounded payload limit.");
-            rows.Add(new PrtgHostMapAuthorityRow(row.DeviceObjid, row.HostId));
-        }
-        return (latestDate.Value, rows);
-    }
-
     /// <summary>只讀取最新全域映射日期，不載入該日期的映射列。</summary>
     public DateTime? GetLatestHostMapDate(int maxLookbackDays = 30)
     {
@@ -3162,175 +2622,6 @@ public sealed class EfPrtgStore
     public const string ScopeRevisionBlobKey = "prtg_scope_revision";
     public const string HostMapDataRevisionBlobKey = "prtg_host_map_data_revision";
     public const string CatalogueDataRevisionBlobKey = "prtg_catalogue_data_revision";
-    /// <summary>Reads one host's monotonic resource identity/channel/profile fence.</summary>
-    public long ReadResourceAuthorityRevision(long hostId) =>
-        ReadResourceAuthorityRevisions([hostId]).GetValueOrDefault(hostId);
-
-    /// <summary>Reads bounded host authority revisions in keyed SQL batches; no profile payloads are scanned.</summary>
-    public IReadOnlyDictionary<long, long> ReadResourceAuthorityRevisions(IEnumerable<long> hostIds)
-    {
-        var ids = hostIds.Where(id => id > 0).Distinct().Order().ToArray();
-        if (ids.Length > 30_000) throw new ArgumentOutOfRangeException(nameof(hostIds), "Resource authority revision reads are bounded to 30,000 hosts.");
-        var result = ids.ToDictionary(id => id, _ => 0L);
-        using var ctx = _contextFactory();
-        for (var offset = 0; offset < ids.Length; offset += 500)
-        {
-            var keys = ids.Skip(offset).Take(500).ToDictionary(
-                PrtgResourceIdentityStore.AuthorityRevisionKey, id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(blob => keys.Keys.Contains(blob.BlobKey))
-                .Select(blob => new { blob.BlobKey, blob.Version }).ToList();
-            foreach (var row in rows)
-                if (keys.TryGetValue(row.BlobKey, out var hostId)) result[hostId] = row.Version;
-        }
-        return result;
-    }
-
-    /// <summary>Reads volatile resource/profile observation revisions used only as an in-run race fence.</summary>
-    public IReadOnlyDictionary<long, long> ReadResourceObservationRevisions(IEnumerable<long> hostIds)
-    {
-        var ids = hostIds.Where(id => id > 0).Distinct().Order().ToArray();
-        if (ids.Length > 30_000) throw new ArgumentOutOfRangeException(nameof(hostIds), "Resource observation revision reads are bounded to 30,000 hosts.");
-        var result = ids.ToDictionary(id => id, _ => 0L);
-        using var ctx = _contextFactory();
-        for (var offset = 0; offset < ids.Length; offset += 500)
-        {
-            var keys = ids.Skip(offset).Take(500).ToDictionary(
-                PrtgResourceIdentityStore.ObservationRevisionKey, id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(blob => keys.Keys.Contains(blob.BlobKey))
-                .Select(blob => new { blob.BlobKey, blob.Version }).ToList();
-            foreach (var row in rows)
-                if (keys.TryGetValue(row.BlobKey, out var hostId)) result[hostId] = row.Version;
-        }
-        return result;
-    }
-
-    /// <summary>Maps a bounded daily host-map snapshot to selected enabled value-resource sensors with capped projections.</summary>
-    public IReadOnlyDictionary<long, long[]> GetResourceSensorIdsByHost(
-        IReadOnlyDictionary<long, long> currentDeviceToHost, IReadOnlyCollection<long> hostIds,
-        IReadOnlySet<long> selectedSensorIds, IReadOnlySet<string> enabledValueCategories)
-    {
-        ArgumentNullException.ThrowIfNull(currentDeviceToHost);
-        ArgumentNullException.ThrowIfNull(hostIds);
-        ArgumentNullException.ThrowIfNull(selectedSensorIds);
-        ArgumentNullException.ThrowIfNull(enabledValueCategories);
-        const int maximumDevices = 10_000;
-        const int maximumSelectedSensors = 30_000;
-        var selectedHosts = hostIds.Where(id => id > 0).ToHashSet();
-        var devicePairs = currentDeviceToHost.Where(pair => selectedHosts.Contains(pair.Value))
-            .OrderBy(pair => pair.Key).ToArray();
-        if (devicePairs.Length > maximumDevices)
-            throw new ArgumentOutOfRangeException(nameof(currentDeviceToHost), "Resource profile freshness checks are bounded to 10,000 mapped devices.");
-        var sensorIds = selectedSensorIds.Where(id => id > 0).Distinct().Order().ToArray();
-        if (sensorIds.Length > maximumSelectedSensors)
-            throw new ArgumentOutOfRangeException(nameof(selectedSensorIds), "Resource profile freshness checks are bounded to 30,000 selected sensors.");
-
-        var result = selectedHosts.ToDictionary(hostId => hostId, _ => new List<long>());
-        if (devicePairs.Length == 0 || sensorIds.Length == 0 || enabledValueCategories.Count == 0)
-            return result.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray());
-        var categoryNames = enabledValueCategories.Where(category => !string.IsNullOrWhiteSpace(category))
-            .Select(category => category.ToUpperInvariant())
-            .Distinct(StringComparer.Ordinal).ToArray();
-        if (categoryNames.Length == 0)
-            return result.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray());
-        var hostByDevice = devicePairs.ToDictionary(pair => pair.Key, pair => pair.Value);
-        using var ctx = _contextFactory();
-        for (var offset = 0; offset < sensorIds.Length; offset += 500)
-        {
-            var batch = sensorIds.Skip(offset).Take(500).ToArray();
-            var rows = ctx.PrtgSensors.AsNoTracking()
-                .Where(sensor => batch.Contains(sensor.Objid) && sensor.Category != null &&
-                    categoryNames.Contains(sensor.Category.ToUpper()))
-                .OrderBy(sensor => sensor.Objid)
-                .Select(sensor => new { sensor.Objid, sensor.DeviceObjid }).ToList();
-            foreach (var row in rows)
-                if (hostByDevice.TryGetValue(row.DeviceObjid, out var hostId))
-                    result[hostId].Add(row.Objid);
-        }
-        return result.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray());
-    }
-
-    /// <summary>Returns hosts with missing or expired required profiles; each page reads at most 500 capped blobs.</summary>
-    public HashSet<long> HostsWithInvalidTrustedProfiles(IReadOnlyDictionary<long, long> sensorToHost,
-        DateTimeOffset nowUtc)
-    {
-        ArgumentNullException.ThrowIfNull(sensorToHost);
-        if (nowUtc.Offset != TimeSpan.Zero) throw new ArgumentException("Profile freshness must be checked in UTC.", nameof(nowUtc));
-        const int maximumSensors = 30_000;
-        var ids = sensorToHost.Keys.Where(id => id > 0).Distinct().Order().ToArray();
-        if (ids.Length > maximumSensors)
-            throw new ArgumentOutOfRangeException(nameof(sensorToHost), "Trusted profile freshness reads are bounded to 30,000 sensors.");
-        var invalidHosts = new HashSet<long>();
-        using var ctx = _contextFactory();
-        for (var offset = 0; offset < ids.Length; offset += 500)
-        {
-            var keys = ids.Skip(offset).Take(500).ToDictionary(
-                id => PrtgTrustedSamplingProfile.StorePrefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(blob => keys.Keys.Contains(blob.BlobKey))
-                .Select(blob => new { blob.BlobKey, Prefix = blob.Content.Substring(0, PrtgTrustedSamplingProfile.MaximumSerializedBytes + 1), Length = blob.Content.Length })
-                .ToList();
-            var foundSensors = new HashSet<long>();
-            foreach (var row in rows)
-            {
-                var sensorId = keys[row.BlobKey];
-                foundSensors.Add(sensorId);
-                if (row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                    Encoding.UTF8.GetByteCount(row.Prefix) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                    throw new InvalidDataException("可信採樣 profile 超過 8 KiB；拒絕沿用期限資格。");
-                PrtgTrustedSamplingProfile profile;
-                try
-                {
-                    profile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Prefix, LfJsonOptions.Pretty)
-                        ?? throw new InvalidDataException("可信採樣 profile 為空；拒絕沿用期限資格。");
-                    profile.Validate();
-                }
-                catch (Exception ex) when (ex is JsonException or InvalidDataException)
-                {
-                    throw new InvalidDataException("可信採樣 profile 無效；拒絕沿用期限資格。", ex);
-                }
-                if (profile.SensorObjid != sensorId)
-                    throw new InvalidDataException("可信採樣 profile 識別不一致；拒絕沿用期限資格。");
-                if (profile.SourceMetadataObservedAtUtc > nowUtc ||
-                    nowUtc - profile.SourceMetadataObservedAtUtc > TimeSpan.FromHours(24))
-                    invalidHosts.Add(sensorToHost[sensorId]);
-            }
-            foreach (var sensorId in keys.Values)
-                if (!foundSensors.Contains(sensorId)) invalidHosts.Add(sensorToHost[sensorId]);
-        }
-        return invalidHosts;
-    }
-
-    /// <summary>Creates one-time per-host revision baselines before Daily captures its evidence snapshot.</summary>
-    public void EnsureResourceAuthorityRevisions(IEnumerable<long> hostIds)
-    {
-        var ids = hostIds.Where(id => id > 0).Distinct().Order().ToArray();
-        if (ids.Length > 30_000) throw new ArgumentOutOfRangeException(nameof(hostIds), "Resource authority initialization is bounded to 30,000 hosts.");
-        if (ids.Length == 0) return;
-        using var probe = _contextFactory();
-        probe.Database.CreateExecutionStrategy().Execute(() =>
-        {
-            using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
-            // Two keys per host; keep the provider's parameter count within the existing 500-key SQL bound.
-            for (var offset = 0; offset < ids.Length; offset += 250)
-            {
-                var batch = ids.Skip(offset).Take(250).ToArray();
-                var keys = batch.SelectMany(id => new[]
-                {
-                    PrtgResourceIdentityStore.AuthorityRevisionKey(id),
-                    PrtgResourceIdentityStore.ObservationRevisionKey(id)
-                }).ToHashSet(StringComparer.Ordinal);
-                var existing = ctx.Blobs.AsNoTracking().Where(blob => keys.Contains(blob.BlobKey))
-                    .Select(blob => blob.BlobKey).ToHashSet(StringComparer.Ordinal);
-                var tracked = ctx.Blobs.Local.Select(blob => blob.BlobKey).ToHashSet(StringComparer.Ordinal);
-                foreach (var key in keys)
-                    if (!existing.Contains(key) && !tracked.Contains(key))
-                        ctx.Blobs.Add(new BlobRow { BlobKey = key, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
-            }
-            ctx.SaveChanges();
-            tx.Commit();
-        });
-    }
 
     /// <summary>讀取與裝置、感測器、分類正式寫入同交易遞增的版本。</summary>
     public long ReadCatalogueDataRevision()
@@ -3342,14 +2633,14 @@ public sealed class EfPrtgStore
 
     private static void IncrementPrtgCatalogueDataRevision(LfDbContext ctx)
     {
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == CatalogueDataRevisionBlobKey);
-        if (row is null)
+        var version = ctx.Blobs.Where(b => b.BlobKey == CatalogueDataRevisionBlobKey)
+            .Select(b => (long?)b.Version).FirstOrDefault();
+        if (!version.HasValue)
             ctx.Blobs.Add(new BlobRow { BlobKey = CatalogueDataRevisionBlobKey, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
-        else
-        {
-            row.Version++;
-            row.UpdatedAt = DateTime.Now;
-        }
+        else if (ctx.Blobs.Where(b => b.BlobKey == CatalogueDataRevisionBlobKey && b.Version == version.Value)
+            .ExecuteUpdate(setters => setters.SetProperty(b => b.Version, b => b.Version + 1)
+                .SetProperty(b => b.UpdatedAt, DateTime.Now)) != 1)
+            throw new DbUpdateConcurrencyException("PRTG catalogue revision changed concurrently.");
     }
 
     /// <summary>讀取與正式日映射寫入同交易遞增的版本。</summary>
@@ -3362,8 +2653,9 @@ public sealed class EfPrtgStore
 
     private static void IncrementHostMapDataRevision(LfDbContext ctx)
     {
-        var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == HostMapDataRevisionBlobKey);
-        if (row is null)
+        var version = ctx.Blobs.Where(b => b.BlobKey == HostMapDataRevisionBlobKey)
+            .Select(b => (long?)b.Version).FirstOrDefault();
+        if (!version.HasValue)
         {
             ctx.Blobs.Add(new BlobRow
             {
@@ -3375,10 +2667,10 @@ public sealed class EfPrtgStore
             ctx.SaveChanges();
             return;
         }
-
-        row.Version++;
-        row.UpdatedAt = DateTime.Now;
-        ctx.SaveChanges();
+        if (ctx.Blobs.Where(b => b.BlobKey == HostMapDataRevisionBlobKey && b.Version == version.Value)
+            .ExecuteUpdate(setters => setters.SetProperty(b => b.Version, b => b.Version + 1)
+                .SetProperty(b => b.UpdatedAt, DateTime.Now)) != 1)
+            throw new DbUpdateConcurrencyException("PRTG host-map revision changed concurrently.");
     }
 
     // 範圍修改及其版本在同一交易提交；其他程序不會看見新對應卻仍讀到舊版本。
@@ -3389,715 +2681,22 @@ public sealed class EfPrtgStore
         {
             using var ctx = _contextFactory();
             using var transaction = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
-            var stamp = ctx.Blobs.SingleOrDefault(b => b.BlobKey == ScopeRevisionBlobKey);
-            if (expectedRevision.HasValue && (stamp?.Version ?? 0) != expectedRevision.Value)
+            PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
+            var stampVersion = ctx.Blobs.Where(b => b.BlobKey == ScopeRevisionBlobKey)
+                .Select(b => (long?)b.Version).FirstOrDefault();
+            if (expectedRevision.HasValue && stampVersion.GetValueOrDefault() != expectedRevision.Value)
                 throw new PrtgScopeConflictException();
             var result = change(ctx);
-            if (stamp == null)
+            if (!stampVersion.HasValue)
                 ctx.Blobs.Add(new BlobRow { BlobKey = ScopeRevisionBlobKey, Content = "{}", Version = 1, UpdatedAt = DateTime.Now });
-            else
-            {
-                stamp.Version++;
-                stamp.UpdatedAt = DateTime.Now;
-            }
+            else if (ctx.Blobs.Where(b => b.BlobKey == ScopeRevisionBlobKey && b.Version == stampVersion.Value)
+                .ExecuteUpdate(setters => setters.SetProperty(b => b.Version, b => b.Version + 1)
+                    .SetProperty(b => b.UpdatedAt, DateTime.Now)) != 1)
+                throw new PrtgScopeConflictException();
             ctx.SaveChanges();
             transaction.Commit();
             return result;
         });
-    }
-
-    /// <summary>明確來源／試點變更先推進指定資源世代；每批受限，避免 provider 參數上限。</summary>
-    public void AdvanceResourceEpochs(IEnumerable<long> sensorIds)
-    {
-        var ids = sensorIds.Where(id => id > 0).Distinct().Order().ToArray();
-        for (var offset = 0; offset < ids.Length; offset += 500)
-        {
-            var batch = ids.Skip(offset).Take(500).ToArray();
-            using var probe = _contextFactory();
-            probe.Database.CreateExecutionStrategy().Execute(() =>
-            {
-                using var ctx = _contextFactory();
-                using var tx = ctx.Database.BeginTransaction();
-                foreach (var id in batch) PrtgResourceIdentityStore.Advance(ctx, id, DateTimeOffset.UtcNow);
-                ctx.SaveChanges();
-                tx.Commit();
-            });
-        }
-    }
-
-    public void MarkResourceEpochsPendingForHosts(IEnumerable<long> hostIds)
-    {
-        var ids = GetSensorIdsMappedToHosts(hostIds);
-        for (var offset = 0; offset < ids.Length; offset += 500)
-        {
-            var batch = ids.Skip(offset).Take(500).ToArray();
-            using var probe = _contextFactory();
-            probe.Database.CreateExecutionStrategy().Execute(() =>
-            {
-                using var ctx = _contextFactory();
-                using var tx = ctx.Database.BeginTransaction();
-                foreach (var id in batch) PrtgResourceIdentityStore.MarkPending(ctx, id, DateTimeOffset.UtcNow);
-                ctx.SaveChanges();
-                tx.Commit();
-            });
-        }
-    }
-
-    public long[] GetSensorIdsMappedToHosts(IEnumerable<long> hostIds)
-    {
-        var hosts = hostIds.Where(id => id > 0).Distinct().ToArray();
-        if (hosts.Length == 0) return [];
-        using var ctx = _contextFactory();
-        var latest = ctx.PrtgHostMaps.AsNoTracking().Select(m => (DateTime?)m.MapDate).Max();
-        var result = new HashSet<long>();
-        for (var offset = 0; offset < hosts.Length; offset += 500)
-        {
-            var batch = hosts.Skip(offset).Take(500).ToArray();
-            if (latest.HasValue)
-                result.UnionWith((from sensor in ctx.PrtgSensors.AsNoTracking()
-                                  join map in ctx.PrtgHostMaps.AsNoTracking() on sensor.DeviceObjid equals map.DeviceObjid
-                                  where map.MapDate == latest.Value && map.MapStatus == PrtgMapStatus.Ok && map.HostId.HasValue &&
-                                        batch.Contains(map.HostId.Value)
-                                  select sensor.Objid).Distinct().ToArray());
-            result.UnionWith((from sensor in ctx.PrtgSensors.AsNoTracking()
-                              join map in ctx.PrtgManualMaps.AsNoTracking() on sensor.DeviceObjid equals map.DeviceObjid
-                              where batch.Contains(map.HostId)
-                              select sensor.Objid).Distinct().ToArray());
-        }
-        return result.Order().ToArray();
-    }
-
-    private static void RefreshResourceIdentities(LfDbContext ctx, IEnumerable<long> sensorIds,
-        Dictionary<string, BlobRow>? authorityRevisionRows = null)
-    {
-        var ids = sensorIds.Distinct().ToArray();
-        if (ids.Length == 0) return;
-        authorityRevisionRows ??= PrtgResourceIdentityStore.CaptureLoadedAuthorityRevisionRows(ctx);
-        var policy = ReadPolicy(ctx);
-        var latest = ctx.PrtgHostMaps.AsNoTracking().Select(m => (DateTime?)m.MapDate).Max();
-        var maps = latest.HasValue
-            ? ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == latest.Value)
-                .ToList().GroupBy(m => m.DeviceObjid).ToDictionary(g => g.Key, g => g.Last())
-            : new Dictionary<long, PrtgHostMapRow>();
-        var manualMaps = ctx.PrtgManualMaps.AsNoTracking().ToDictionary(m => m.DeviceObjid);
-        for (var offset = 0; offset < ids.Length; offset += UpsertBatchSize)
-        {
-            var batchIds = ids.Skip(offset).Take(UpsertBatchSize).ToArray();
-            var sensors = ctx.PrtgSensors.Where(sensor => batchIds.Contains(sensor.Objid)).ToList();
-            var identityRows = LoadResourceIdentityRows(ctx, sensors.Select(sensor => sensor.Objid).ToArray());
-            var updates = new List<(PrtgSensorRow Sensor, BlobRow IdentityRow, PrtgResourceIdentity Previous,
-                long HostId, bool Active, string InventoryFingerprint)>(sensors.Count);
-            foreach (var sensor in sensors)
-            {
-                maps.TryGetValue(sensor.DeviceObjid, out var map);
-                manualMaps.TryGetValue(sensor.DeviceObjid, out var manual);
-                var hostId = manual?.HostId ?? (map?.HostId ?? 0);
-                var active = hostId > 0 && (manual is not null || map?.MapStatus == PrtgMapStatus.Ok);
-                var identityRow = identityRows[sensor.Objid];
-                var previous = PrtgResourceIdentityStore.ReadLoaded(sensor.Objid, identityRow);
-                updates.Add((sensor, identityRow, previous, hostId, active,
-                    $"{sensor.SensorType}|{sensor.Category}|{sensor.CategorySource}"));
-            }
-            PrtgResourceIdentityStore.LoadAuthorityRevisionRows(ctx,
-                updates.SelectMany(update => new[] { update.Previous.HostId, update.HostId }), authorityRevisionRows);
-            foreach (var update in updates)
-            {
-                PrtgResourceIdentityStore.SetLoaded(ctx, update.Sensor.Objid, policy.SourceGeneration, update.Sensor.DeviceObjid,
-                    update.HostId, update.Previous.ResourceFingerprint, update.InventoryFingerprint,
-                    update.Previous.ChannelFingerprint, update.Active, DateTimeOffset.UtcNow, update.IdentityRow,
-                    authorityRevisionRows: authorityRevisionRows);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Preloads no more than one upsert batch of identity ledgers. Existing content is projected
-    /// to the same bounded prefix used by the single-row reader, then attached so the subsequent
-    /// identity update keeps the original optimistic concurrency values without another SELECT.
-    /// </summary>
-    private static Dictionary<long, BlobRow> LoadResourceIdentityRows(LfDbContext ctx, IReadOnlyCollection<long> sensorIds)
-    {
-        var result = new Dictionary<long, BlobRow>();
-        if (sensorIds.Count == 0) return result;
-        var keyBySensorId = sensorIds.Distinct().ToDictionary(
-            sensorId => sensorId,
-            sensorId => PrtgResourceIdentityStore.Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        var keys = keyBySensorId.Values.ToHashSet(StringComparer.Ordinal);
-        var sensorIdByKey = keyBySensorId.ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
-
-        foreach (var localRow in ctx.Blobs.Local.Where(row => keys.Contains(row.BlobKey)))
-            result[sensorIdByKey[localRow.BlobKey]] = localRow;
-
-        var loadedKeys = result.Values.Select(row => row.BlobKey).ToHashSet(StringComparer.Ordinal);
-        var missingKeys = keys.Where(key => !loadedKeys.Contains(key)).ToArray();
-        if (missingKeys.Length > 0)
-        {
-            var storedRows = ctx.Blobs.AsNoTracking().Where(row => missingKeys.Contains(row.BlobKey))
-                .Select(row => new
-                {
-                    row.BlobKey,
-                    Content = row.Content.Substring(0, PrtgResourceIdentityStore.MaxLedgerBytes + 1),
-                    Length = row.Content.Length,
-                    row.Version,
-                    row.UpdatedAt
-                }).ToList();
-            foreach (var stored in storedRows)
-            {
-                if (stored.Length > PrtgResourceIdentityStore.MaxLedgerBytes)
-                    throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
-                var row = new BlobRow
-                {
-                    BlobKey = stored.BlobKey,
-                    Content = stored.Content,
-                    Version = stored.Version,
-                    UpdatedAt = stored.UpdatedAt
-                };
-                ctx.Blobs.Attach(row);
-                result[sensorIdByKey[stored.BlobKey]] = row;
-            }
-        }
-
-        foreach (var (sensorId, key) in keyBySensorId)
-        {
-            if (result.ContainsKey(sensorId)) continue;
-            var row = new BlobRow { BlobKey = key, Content = string.Empty, Version = 0 };
-            ctx.Blobs.Add(row);
-            result.Add(sensorId, row);
-        }
-        return result;
-    }
-
-    private static void RefreshResourceIdentitiesForDevices(LfDbContext ctx, IEnumerable<long> deviceIds)
-    {
-        var devices = deviceIds.Distinct().ToArray();
-        if (devices.Length == 0) return;
-        var authorityRevisionRows = PrtgResourceIdentityStore.CaptureLoadedAuthorityRevisionRows(ctx);
-        for (var offset = 0; offset < devices.Length; offset += 500)
-        {
-            var batch = devices.Skip(offset).Take(500).ToArray();
-            var sensorIds = ctx.PrtgSensors.AsNoTracking().Where(s => batch.Contains(s.DeviceObjid))
-                .Select(s => s.Objid).ToArray();
-            RefreshResourceIdentities(ctx, sensorIds, authorityRevisionRows);
-        }
-    }
-
-    private static void RefreshPendingResourceIdentities(LfDbContext ctx)
-    {
-        string after = "";
-        while (true)
-        {
-            var rows = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey.StartsWith(PrtgResourceIdentityStore.Prefix) && b.BlobKey.CompareTo(after) > 0)
-                .OrderBy(b => b.BlobKey).Take(500).Select(b => new { b.BlobKey, b.Content }).ToList();
-            if (rows.Count == 0) return;
-            var pending = new List<long>();
-            foreach (var row in rows)
-            {
-                after = row.BlobKey;
-                var value = JsonSerializer.Deserialize<PrtgResourceIdentity>(row.Content, LfJsonOptions.Pretty);
-                if (value is null || value.SensorId <= 0)
-                    throw new InvalidDataException("PRTG 資源身分紀錄無效；拒絕完成不完整對應重整。");
-                if (value.PendingReconciliation) pending.Add(value.SensorId);
-            }
-            RefreshResourceIdentities(ctx, pending);
-        }
-    }
-
-    private static PrtgMonitoringPolicy ReadPolicy(LfDbContext ctx)
-    {
-        var content = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-            .Select(b => b.Content).FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(content)) return new PrtgMonitoringPolicy();
-        return JsonSerializer.Deserialize<PrtgMonitoringPolicy>(content, LfJsonOptions.Pretty)
-            ?? new PrtgMonitoringPolicy();
-    }
-
-    /// <summary>收集器完成來源身分查詢後，僅在目前鏡像對應仍相符時提交已觀察的資源指紋。</summary>
-    public PrtgResourceIdentity BindObservedResource(long sensorId, long hostId, string sourceGeneration,
-        string resourceFingerprint)
-    {
-        using var probe = _contextFactory();
-        return probe.Database.CreateExecutionStrategy().Execute(() =>
-        {
-            using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
-            var sensor = ctx.PrtgSensors.AsNoTracking().SingleOrDefault(s => s.Objid == sensorId)
-                ?? throw new InvalidOperationException("sensor-identity-unavailable");
-            var latestDate = ctx.PrtgHostMaps.Select(m => (DateTime?)m.MapDate).Max();
-            var map = latestDate.HasValue ? ctx.PrtgHostMaps.AsNoTracking()
-                .SingleOrDefault(m => m.MapDate == latestDate.Value && m.DeviceObjid == sensor.DeviceObjid) : null;
-            var policy = ReadPolicy(ctx);
-            var manualMap = ctx.PrtgManualMaps.AsNoTracking().SingleOrDefault(m => m.DeviceObjid == sensor.DeviceObjid);
-            var effectiveHostId = manualMap?.HostId ?? (map?.MapStatus == PrtgMapStatus.Ok ? map.HostId : null);
-            if (effectiveHostId != hostId ||
-                policy.SourceGeneration != sourceGeneration || !policy.HostIds.Contains(hostId) ||
-                !policy.SensorIds.Contains(sensorId))
-                throw new InvalidOperationException("identity-changed");
-            var current = PrtgResourceIdentityStore.Read(ctx, sensorId);
-            var identity = PrtgResourceIdentityStore.Set(ctx, sensorId, sourceGeneration, sensor.DeviceObjid,
-                hostId, resourceFingerprint, $"{sensor.SensorType}|{sensor.Category}|{sensor.CategorySource}",
-                current.ChannelFingerprint, true, DateTimeOffset.UtcNow, reconciled: true);
-            ctx.SaveChanges();
-            tx.Commit();
-            return identity;
-        });
-    }
-
-    public PrtgResourceIdentity SetObservedChannel(long sensorId, string sourceGeneration, string channelFingerprint,
-        string? expectedResourceGeneration = null, string? expectedLeaseOwner = null, long? expectedLeaseVersion = null)
-    {
-        if ((expectedLeaseOwner is null) != (expectedLeaseVersion is null) ||
-            expectedLeaseOwner is not null && string.IsNullOrWhiteSpace(expectedLeaseOwner))
-            throw new ArgumentException("Profile refresh lease owner and version must be supplied together.");
-        using var probe = _contextFactory();
-        return probe.Database.CreateExecutionStrategy().Execute(() =>
-        {
-            using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
-            if (expectedLeaseOwner is not null && expectedLeaseVersion is not null &&
-                !OwnsTrustedProfileRefreshLease(ctx, expectedLeaseOwner, expectedLeaseVersion.Value, DateTimeOffset.UtcNow))
-                throw new InvalidOperationException("profile-refresh-lease-lost");
-            var current = PrtgResourceIdentityStore.Read(ctx, sensorId);
-            if (!current.Active || current.SourceGeneration != sourceGeneration ||
-                expectedResourceGeneration is not null && current.Generation != expectedResourceGeneration)
-                throw new InvalidOperationException("identity-changed");
-            var identity = PrtgResourceIdentityStore.Set(ctx, sensorId, current.SourceGeneration,
-                current.DeviceId, current.HostId, current.ResourceFingerprint, current.InventoryFingerprint,
-                channelFingerprint, current.Active, DateTimeOffset.UtcNow);
-            var timelineKey = PrtgSensorTimelineStore.Prefix + sensorId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var timelineRow = ctx.Blobs.SingleOrDefault(b => b.BlobKey == timelineKey);
-            if (timelineRow is not null && !string.IsNullOrWhiteSpace(timelineRow.Content))
-            {
-                var timeline = JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(timelineRow.Content, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("PRTG 時間軸證據無效；拒絕沿用舊頻道暖機。");
-                if (timeline.ResourceGeneration == identity.Generation && timeline.SourceGeneration == identity.SourceGeneration)
-                {
-                    var channelChanged = timeline.ChannelGeneration != identity.ChannelGeneration ||
-                        timeline.DiskSemanticFingerprint != channelFingerprint;
-                    timeline.ChannelGeneration = identity.ChannelGeneration;
-                    if (channelChanged)
-                    {
-                        timeline.DiskSemanticFingerprint = channelFingerprint;
-                        timeline.DiskSemanticValidFrom = DateTimeOffset.UtcNow;
-                        timeline.DiskSemanticCheckedAt = DateTimeOffset.UtcNow;
-                        timeline.DiskIncidentStartedAt = null;
-                    }
-                    timelineRow.Content = JsonSerializer.Serialize(timeline, LfJsonOptions.Pretty);
-                    timelineRow.Version++;
-                    timelineRow.UpdatedAt = DateTime.Now;
-                }
-            }
-            ctx.SaveChanges();
-            tx.Commit();
-            return identity;
-        });
-    }
-
-    public PrtgResourceIdentity GetResourceIdentity(long sensorId)
-    {
-        using var ctx = _contextFactory();
-        return PrtgResourceIdentityStore.Read(ctx, sensorId);
-    }
-
-    public IReadOnlyDictionary<long, PrtgResourceIdentity> GetResourceIdentities(IEnumerable<long> sensorIds)
-    {
-        var ids = sensorIds.Where(id => id > 0).Distinct().Order().ToArray();
-        var result = new Dictionary<long, PrtgResourceIdentity>();
-        using var ctx = _contextFactory();
-        for (var offset = 0; offset < ids.Length; offset += 500)
-        {
-            var keys = ids.Skip(offset).Take(500).ToDictionary(
-                id => PrtgResourceIdentityStore.Prefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(b => keys.Keys.Contains(b.BlobKey))
-                .Select(b => new
-                {
-                    b.BlobKey,
-                    ContentPrefix = b.Content.Substring(0, PrtgResourceIdentityStore.MaxLedgerBytes + 1),
-                    CharacterLength = b.Content.Length
-                }).ToList();
-            foreach (var row in rows)
-            {
-                var sensorId = keys[row.BlobKey];
-                if (row.CharacterLength > PrtgResourceIdentityStore.MaxLedgerBytes ||
-                    System.Text.Encoding.UTF8.GetByteCount(row.ContentPrefix) > PrtgResourceIdentityStore.MaxLedgerBytes)
-                    throw new InvalidDataException("PRTG 資源身分紀錄超過 8 KiB 上限；拒絕沿用舊涵蓋。");
-                PrtgResourceIdentity? value;
-                try
-                {
-                    value = JsonSerializer.Deserialize<PrtgResourceIdentity>(row.ContentPrefix, LfJsonOptions.Pretty);
-                }
-                catch (JsonException ex)
-                {
-                    throw new InvalidDataException("PRTG 資源身分紀錄無效；拒絕沿用舊涵蓋。", ex);
-                }
-                if (value is null || value.SensorId != sensorId || value.Epoch < 0)
-                    throw new InvalidDataException("PRTG 資源身分紀錄無效；拒絕沿用舊涵蓋。");
-                result[sensorId] = value;
-            }
-        }
-        return result;
-    }
-
-    /// <summary>Reads the current source policy and persisted strategy fence without initializing or mutating it.</summary>
-    public PrtgTrustedSamplingPolicyContext GetTrustedSamplingPolicyContext(string strategyName,
-        int strategyMinutes)
-    {
-        using var ctx = _contextFactory();
-        var policy = ReadPolicy(ctx);
-        var strategyState = ctx.Blobs.AsNoTracking()
-            .Where(b => b.BlobKey == PrtgTrustedSamplingStrategyStateStore.BlobKey)
-            .Select(b => new { Prefix = b.Content.Substring(0, 8193), Length = b.Content.Length }).FirstOrDefault();
-        if (strategyState is not null && (strategyState.Length > 8192 || Encoding.UTF8.GetByteCount(strategyState.Prefix) > 8192))
-            throw new InvalidDataException("PRTG strategy fence 超過 8 KiB 上限。");
-        var strategy = PrtgTrustedSamplingStrategyStateStore.ReadCurrent(strategyState?.Prefix,
-            policy, strategyName, strategyMinutes);
-        return new(policy, strategy);
-    }
-
-    /// <summary>讀取逐 sensor trusted sampling profiles；每筆 8 KiB、每個 SQL 查詢最多 500 keys。</summary>
-    public IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> GetTrustedSamplingProfiles(IEnumerable<long> sensorIds)
-    {
-        var ids = sensorIds.Where(id => id > 0).Distinct().Order().ToArray();
-        var result = new Dictionary<long, PrtgTrustedSamplingProfile>();
-        using var ctx = _contextFactory();
-        for (var offset = 0; offset < ids.Length; offset += 500)
-        {
-            var keys = ids.Skip(offset).Take(500).ToDictionary(
-                id => PrtgTrustedSamplingProfile.StorePrefix + id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                id => id, StringComparer.Ordinal);
-            var rows = ctx.Blobs.AsNoTracking().Where(b => keys.Keys.Contains(b.BlobKey))
-                .Select(b => new { b.BlobKey, Prefix = b.Content.Substring(0, PrtgTrustedSamplingProfile.MaximumSerializedBytes + 1), Length = b.Content.Length })
-                .ToList();
-            foreach (var row in rows)
-            {
-                var id = keys[row.BlobKey];
-                if (row.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                    System.Text.Encoding.UTF8.GetByteCount(row.Prefix) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                    continue; // An invalid persisted profile is not authority; omit it so consumers can report unknown.
-                PrtgTrustedSamplingProfile? profile;
-                try { profile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Prefix, LfJsonOptions.Pretty); }
-                catch (JsonException) { continue; }
-                if (profile is null || profile.SensorObjid != id)
-                    continue;
-                try { profile.Validate(); }
-                catch (InvalidDataException) { continue; }
-                result[id] = profile;
-            }
-        }
-        return result;
-    }
-
-    /// <summary>在一筆交易內確認 probe profile 仍綁定 current active resource identity。</summary>
-    internal void RecordTrustedSamplingProfile(PrtgTrustedSamplingProfile profile)
-    {
-        _ = RecordTrustedSamplingProfile(profile, null, null);
-    }
-
-    internal bool RecordTrustedSamplingProfile(PrtgTrustedSamplingProfile profile,
-        string? expectedLeaseOwner, long? expectedLeaseVersion)
-    {
-        if ((expectedLeaseOwner is null) != (expectedLeaseVersion is null) ||
-            expectedLeaseOwner is not null && string.IsNullOrWhiteSpace(expectedLeaseOwner))
-            throw new ArgumentException("Profile refresh lease owner and version must be supplied together.");
-        profile.Validate();
-        // The profile is immutable, but snapshot its validated JSON so every strategy replay uses
-        // the exact same source evidence and metadata timestamps.
-        var content = JsonSerializer.Serialize(profile, LfJsonOptions.Pretty);
-        using var probe = _contextFactory();
-        var strategy = probe.Database.CreateExecutionStrategy();
-        return strategy.Execute(() =>
-        {
-            var attemptProfile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(content, LfJsonOptions.Pretty)
-                ?? throw new InvalidDataException("Trusted sampling profile snapshot could not be restored for SQL retry.");
-            attemptProfile.Validate();
-            using var ctx = _contextFactory();
-            // The identity/binding/settings rows and the profile blob are one publication
-            // fence. ReadCommitted lets a concurrent binding save clear the old profile after
-            // these reads and before this writer inserts it again, so both publication paths
-            // must hold the same serializable boundary.
-            using var tx = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
-            if (expectedLeaseOwner is not null && expectedLeaseVersion is not null &&
-                !OwnsTrustedProfileRefreshLease(ctx, expectedLeaseOwner, expectedLeaseVersion.Value, DateTimeOffset.UtcNow))
-                return false;
-
-            var identity = PrtgResourceIdentityStore.Read(ctx, attemptProfile.SensorObjid);
-            if (!identity.Active || identity.PendingReconciliation || identity.Epoch != attemptProfile.IdentityEpoch ||
-                identity.SourceGeneration != attemptProfile.SourceGeneration || identity.Generation != attemptProfile.ResourceGeneration ||
-                identity.ChannelGeneration != attemptProfile.ChannelGeneration)
-                throw new InvalidOperationException("資源身分已在 probe 後變更；profile 未保存。");
-
-            if (attemptProfile.AuthorityKind != PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind ||
-                identity.ChannelFingerprint != attemptProfile.BindingFingerprint)
-                throw new InvalidOperationException("管理員 binding 或來源 primarychannel 證據已變更；profile 未保存。");
-            var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + attemptProfile.SensorObjid.ToString(
-                System.Globalization.CultureInfo.InvariantCulture);
-            var bindingRow = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == bindingKey)
-                .Select(row => new { row.Content, row.Version, row.UpdatedAt }).SingleOrDefault();
-            if (bindingRow is null || bindingRow.Content.Length > PrtgTrustedSamplingBinding.MaximumSerializedBytes ||
-                Encoding.UTF8.GetByteCount(bindingRow.Content) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
-                throw new InvalidOperationException("管理員 binding 已移除或超出上限；profile 未保存。");
-            var currentBinding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(bindingRow.Content, LfJsonOptions.Pretty)
-                ?? throw new InvalidDataException("管理員 binding 無效；profile 未保存。");
-            currentBinding.Validate();
-            var currentSettingsRaw = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == "system_settings")
-                .Select(blob => blob.Content).SingleOrDefault();
-            var currentPolicyRaw = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(blob => blob.Content).SingleOrDefault();
-            var currentSettings = string.IsNullOrWhiteSpace(currentSettingsRaw) ? new SystemSettings() :
-                JsonSerializer.Deserialize<SystemSettings>(currentSettingsRaw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("System settings invalid; profile not saved.");
-            var currentPolicy = string.IsNullOrWhiteSpace(currentPolicyRaw) ? new PrtgMonitoringPolicy() :
-                JsonSerializer.Deserialize<PrtgMonitoringPolicy>(currentPolicyRaw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("PRTG policy invalid; profile not saved.");
-            var strategyName = PrtgFetchStrategy.Normalize(currentSettings.PrtgFetchStrategy);
-            var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
-            var currentAuthorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
-                currentPolicy, strategyName, strategyMinutes);
-            if (!currentSettings.PrtgEnabled || currentSettings.Revision != attemptProfile.BindingSettingsRevision ||
-                currentPolicy.Revision != attemptProfile.BindingPolicyRevision ||
-                currentPolicy.SourceGeneration != currentBinding.SourceGeneration ||
-                !currentPolicy.Ready(currentSettings.PrtgUrl) || !currentPolicy.SensorIds.Contains(attemptProfile.SensorObjid) ||
-                !currentPolicy.HostIds.Contains(identity.HostId) ||
-                currentPolicy.RawTimestampTimeZoneId != currentBinding.RawTimestampTimeZoneId ||
-                currentPolicy.AnalysisTimeZoneId != currentBinding.AnalysisTimeZoneId ||
-                currentPolicy.TimeBasisEvidenceReference != currentBinding.TimeBasisEvidenceReference ||
-                currentAuthorityContext != currentBinding.AuthorityContextFingerprint ||
-                currentAuthorityContext != attemptProfile.AuthorityContextFingerprint)
-                throw new InvalidOperationException("管理員 binding 的來源設定或政策 revision 已變更；profile 未保存。");
-            if (currentBinding.BindingRevision != attemptProfile.BindingRevision ||
-                currentBinding.BindingFingerprint != attemptProfile.BindingFingerprint ||
-                !currentBinding.Matches(attemptProfile.SensorObjid, currentAuthorityContext,
-                    identity.SourceGeneration, identity.Generation,
-                    identity.Epoch, identity.ChannelGeneration) ||
-                string.IsNullOrWhiteSpace(currentBinding.QualificationProofReference) ||
-                currentBinding.ChannelObjectId != attemptProfile.PrimaryChannelId ||
-                currentBinding.ExpectedCaption != attemptProfile.PrimaryChannelCaption ||
-                currentBinding.Quantity != attemptProfile.Quantity || currentBinding.Unit != attemptProfile.Unit ||
-                currentBinding.Scale != attemptProfile.Scale || currentBinding.Direction != attemptProfile.Direction ||
-                currentBinding.IntervalRawUnit != attemptProfile.IntervalRawUnit ||
-                currentBinding.RawTimestampTimeZoneId != attemptProfile.RawTimestampTimeZoneId ||
-                currentBinding.AnalysisTimeZoneId != attemptProfile.AnalysisTimeZoneId ||
-                currentBinding.QualificationProofReference != attemptProfile.QualificationProofReference)
-                throw new InvalidOperationException("管理員 binding 已變更；profile 未保存。");
-
-            var key = PrtgTrustedSamplingProfile.StorePrefix + attemptProfile.SensorObjid.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var row = ctx.Blobs.SingleOrDefault(b => b.BlobKey == key);
-            if (System.Text.Encoding.UTF8.GetByteCount(content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                throw new InvalidDataException("可信採樣 profile 超過 8 KiB 上限。");
-            if (row is null)
-            {
-                ctx.Blobs.Add(new BlobRow { BlobKey = key, Content = content, Version = 1, UpdatedAt = DateTime.UtcNow });
-                PrtgResourceIdentityStore.IncrementStableAuthorityRevision(ctx, identity.HostId, DateTimeOffset.UtcNow);
-            }
-            else
-            {
-                if (row.Content.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                    Encoding.UTF8.GetByteCount(row.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                    throw new InvalidDataException("既有可信採樣 profile 超過 8 KiB；拒絕覆寫。");
-                if (StringComparer.Ordinal.Equals(row.Content, content))
-                {
-                    // Idempotent no-op for a retry whose first commit succeeded but acknowledgement was lost.
-                    tx.Commit();
-                    return true;
-                }
-                PrtgTrustedSamplingProfile prior;
-                try
-                {
-                    prior = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(row.Content, LfJsonOptions.Pretty)
-                        ?? throw new InvalidDataException("既有可信採樣 profile 為空；拒絕覆寫。");
-                    prior.Validate();
-                }
-                catch (Exception ex) when (ex is JsonException or InvalidDataException)
-                {
-                    throw new InvalidDataException("既有可信採樣 profile 無效；拒絕覆寫並沿用授權。", ex);
-                }
-                if (prior.SourceMetadataObservedAtUtc > attemptProfile.SourceMetadataObservedAtUtc)
-                    throw new InvalidOperationException("較新的 source metadata profile 已存在；拒絕舊 probe 覆寫。");
-                row.Content = content;
-                row.Version++;
-                row.UpdatedAt = DateTime.UtcNow;
-                if (!SameTrustedSamplingAuthority(prior, attemptProfile))
-                    PrtgResourceIdentityStore.IncrementStableAuthorityRevision(ctx, identity.HostId, DateTimeOffset.UtcNow);
-            }
-            PrtgResourceIdentityStore.IncrementObservationRevision(ctx, identity.HostId, DateTimeOffset.UtcNow);
-            ctx.SaveChanges();
-            tx.Commit();
-            return true;
-        });
-    }
-
-    /// <summary>
-    /// Remove only the exact profile whose completed scheduled refresh observed missing or
-    /// conflicting source authority. A transport failure never calls this method. The expected
-    /// profile digest and current lease/resource/binding fences prevent an old refresh result
-    /// from deleting a newer successful publisher or a newly configured binding.
-    /// </summary>
-    internal bool RevokeTrustedSamplingProfileAfterObservedRefreshFailure(
-        PrtgTrustedSamplingProfile expectedProfile, string leaseOwner, long leaseVersion)
-    {
-        ArgumentNullException.ThrowIfNull(expectedProfile);
-        if (string.IsNullOrWhiteSpace(leaseOwner) || leaseVersion <= 0)
-            throw new ArgumentException("A live refresh lease is required.");
-        expectedProfile.Validate();
-        if (expectedProfile.AuthorityKind != PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind)
-            return false;
-
-        using var probe = _contextFactory();
-        var strategy = probe.Database.CreateExecutionStrategy();
-        return strategy.Execute(() =>
-        {
-            using var ctx = _contextFactory();
-            using var tx = ctx.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
-            var now = DateTimeOffset.UtcNow;
-            if (!OwnsTrustedProfileRefreshLease(ctx, leaseOwner, leaseVersion, now))
-                return false;
-
-            var profileKey = PrtgTrustedSamplingProfile.StorePrefix + expectedProfile.SensorObjid.ToString(
-                System.Globalization.CultureInfo.InvariantCulture);
-            var profileRow = ctx.Blobs.SingleOrDefault(row => row.BlobKey == profileKey);
-            if (profileRow is null || profileRow.Content.Length > PrtgTrustedSamplingProfile.MaximumSerializedBytes ||
-                Encoding.UTF8.GetByteCount(profileRow.Content) > PrtgTrustedSamplingProfile.MaximumSerializedBytes)
-                return false;
-
-            PrtgTrustedSamplingProfile currentProfile;
-            try
-            {
-                currentProfile = JsonSerializer.Deserialize<PrtgTrustedSamplingProfile>(
-                    profileRow.Content, LfJsonOptions.Pretty) ?? throw new InvalidDataException();
-                currentProfile.Validate();
-            }
-            catch (Exception ex) when (ex is JsonException or InvalidDataException)
-            {
-                return false;
-            }
-            // MetadataDigest covers the complete typed source/profile payload, including its
-            // source observation time and native-primary comparison. It is the old-profile CAS.
-            if (currentProfile.SensorObjid != expectedProfile.SensorObjid ||
-                !StringComparer.Ordinal.Equals(currentProfile.MetadataDigest, expectedProfile.MetadataDigest))
-                return false;
-
-            var identity = PrtgResourceIdentityStore.Read(ctx, currentProfile.SensorObjid);
-            if (!identity.Active || identity.PendingReconciliation ||
-                identity.Epoch != currentProfile.IdentityEpoch ||
-                identity.SourceGeneration != currentProfile.SourceGeneration ||
-                identity.Generation != currentProfile.ResourceGeneration ||
-                identity.ChannelGeneration != currentProfile.ChannelGeneration ||
-                identity.ChannelFingerprint != currentProfile.BindingFingerprint)
-                return false;
-
-            var bindingKey = PrtgTrustedSamplingBinding.StorePrefix + currentProfile.SensorObjid.ToString(
-                System.Globalization.CultureInfo.InvariantCulture);
-            var bindingRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == bindingKey)
-                .Select(row => row.Content).SingleOrDefault();
-            if (string.IsNullOrWhiteSpace(bindingRaw) ||
-                Encoding.UTF8.GetByteCount(bindingRaw) > PrtgTrustedSamplingBinding.MaximumSerializedBytes)
-                return false;
-            PrtgTrustedSamplingBinding currentBinding;
-            try
-            {
-                currentBinding = JsonSerializer.Deserialize<PrtgTrustedSamplingBinding>(bindingRaw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException();
-                currentBinding.Validate();
-            }
-            catch (Exception ex) when (ex is JsonException or InvalidDataException)
-            {
-                return false;
-            }
-
-            var settingsRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == "system_settings")
-                .Select(row => row.Content).SingleOrDefault();
-            var policyRaw = ctx.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(row => row.Content).SingleOrDefault();
-            var settings = string.IsNullOrWhiteSpace(settingsRaw) ? new SystemSettings() :
-                JsonSerializer.Deserialize<SystemSettings>(settingsRaw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("System settings invalid; refresh profile was not revoked.");
-            var policy = string.IsNullOrWhiteSpace(policyRaw) ? new PrtgMonitoringPolicy() :
-                JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRaw, LfJsonOptions.Pretty)
-                    ?? throw new InvalidDataException("PRTG policy invalid; refresh profile was not revoked.");
-            var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
-            var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
-            var authorityContext = PrtgTrustedSamplingProfileResolver.AuthorityContextFingerprint(
-                policy, strategyName, strategyMinutes);
-            if (!settings.PrtgEnabled || !policy.Ready(settings.PrtgUrl) ||
-                policy.SourceGeneration != currentProfile.SourceGeneration ||
-                !policy.SensorIds.Contains(currentProfile.SensorObjid) || !policy.HostIds.Contains(identity.HostId) ||
-                currentBinding.TimeBasisEvidenceReference != policy.TimeBasisEvidenceReference ||
-                authorityContext != currentProfile.AuthorityContextFingerprint ||
-                currentBinding.BindingRevision != currentProfile.BindingRevision ||
-                currentBinding.BindingFingerprint != currentProfile.BindingFingerprint ||
-                !currentBinding.Matches(currentProfile.SensorObjid, authorityContext,
-                    identity.SourceGeneration, identity.Generation, identity.Epoch, identity.ChannelGeneration) ||
-                currentBinding.ChannelObjectId != currentProfile.PrimaryChannelId ||
-                currentBinding.ExpectedCaption != currentProfile.PrimaryChannelCaption ||
-                currentBinding.Quantity != currentProfile.Quantity || currentBinding.Unit != currentProfile.Unit ||
-                currentBinding.Scale != currentProfile.Scale || currentBinding.Direction != currentProfile.Direction ||
-                currentBinding.IntervalRawUnit != currentProfile.IntervalRawUnit ||
-                currentBinding.RawTimestampTimeZoneId != currentProfile.RawTimestampTimeZoneId ||
-                currentBinding.AnalysisTimeZoneId != currentProfile.AnalysisTimeZoneId ||
-                currentBinding.QualificationProofReference != currentProfile.QualificationProofReference)
-                return false;
-
-            ctx.Blobs.Remove(profileRow);
-            PrtgResourceIdentityStore.IncrementStableAuthorityRevision(ctx, identity.HostId, now);
-            ctx.SaveChanges();
-            tx.Commit();
-            return true;
-        });
-    }
-
-    private static bool SameTrustedSamplingAuthority(PrtgTrustedSamplingProfile left,
-        PrtgTrustedSamplingProfile right) =>
-        left.SensorObjid == right.SensorObjid &&
-        StringComparer.Ordinal.Equals(left.SourceGeneration, right.SourceGeneration) &&
-        StringComparer.Ordinal.Equals(left.ResourceGeneration, right.ResourceGeneration) &&
-        left.IdentityEpoch == right.IdentityEpoch &&
-        StringComparer.Ordinal.Equals(left.ChannelGeneration, right.ChannelGeneration) &&
-        StringComparer.Ordinal.Equals(left.SensorType, right.SensorType) &&
-        StringComparer.Ordinal.Equals(left.PrimaryChannelId, right.PrimaryChannelId) &&
-        StringComparer.Ordinal.Equals(left.PrimaryChannelCaption, right.PrimaryChannelCaption) &&
-        left.Quantity == right.Quantity &&
-        StringComparer.Ordinal.Equals(left.Unit, right.Unit) &&
-        left.Scale == right.Scale &&
-        StringComparer.Ordinal.Equals(left.Direction, right.Direction) &&
-        StringComparer.Ordinal.Equals(left.SemanticVersion, right.SemanticVersion) &&
-        StringComparer.Ordinal.Equals(left.StrategyFingerprint, right.StrategyFingerprint) &&
-        left.StrategyMinutes == right.StrategyMinutes &&
-        left.StrategyEffectiveFromHourUtc == right.StrategyEffectiveFromHourUtc &&
-        left.ConfirmedScanInterval == right.ConfirmedScanInterval &&
-        StringComparer.Ordinal.Equals(left.IntervalRawUnit, right.IntervalRawUnit) &&
-        StringComparer.Ordinal.Equals(left.RawTimestampTimeZoneId, right.RawTimestampTimeZoneId) &&
-        StringComparer.Ordinal.Equals(left.SourceApiTimeZoneId, right.SourceApiTimeZoneId) &&
-        StringComparer.Ordinal.Equals(left.AnalysisTimeZoneId, right.AnalysisTimeZoneId) &&
-        left.SourceMarkedPrimary == right.SourceMarkedPrimary &&
-        StringComparer.Ordinal.Equals(left.AuthorityKind, right.AuthorityKind) &&
-        left.BindingRevision == right.BindingRevision &&
-        StringComparer.Ordinal.Equals(left.BindingFingerprint, right.BindingFingerprint) &&
-        StringComparer.Ordinal.Equals(left.NativePrimaryChannelPropertyId, right.NativePrimaryChannelPropertyId) &&
-        StringComparer.Ordinal.Equals(left.AuthorityContextFingerprint, right.AuthorityContextFingerprint) &&
-        StringComparer.Ordinal.Equals(left.QualificationProofReference, right.QualificationProofReference);
-
-    private static bool OwnsTrustedProfileRefreshLease(LfDbContext ctx, string owner, long version,
-        DateTimeOffset nowUtc)
-    {
-        const string key = "prtg_trusted_profile_refresh_v1";
-        const int maximumProgressBytes = 16 * 1024;
-        var row = ctx.Blobs.AsNoTracking().Where(blob => blob.BlobKey == key)
-            .Select(blob => new { Prefix = blob.Content.Substring(0, maximumProgressBytes + 1), Length = blob.Content.Length })
-            .SingleOrDefault();
-        if (row is null || row.Length > maximumProgressBytes || Encoding.UTF8.GetByteCount(row.Prefix) > maximumProgressBytes)
-            return false;
-        try
-        {
-            using var document = JsonDocument.Parse(row.Prefix, new JsonDocumentOptions { MaxDepth = 16 });
-            var root = document.RootElement;
-            return root.TryGetProperty("LeaseOwner", out var leaseOwner) && leaseOwner.ValueKind == JsonValueKind.String &&
-                leaseOwner.GetString() == owner && root.TryGetProperty("LeaseVersion", out var leaseVersion) &&
-                leaseVersion.TryGetInt64(out var currentVersion) && currentVersion == version &&
-                root.TryGetProperty("LeaseUntilUtc", out var leaseUntil) && leaseUntil.ValueKind == JsonValueKind.String &&
-                DateTimeOffset.TryParse(leaseUntil.GetString(), System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.RoundtripKind, out var currentExpiry) && currentExpiry > nowUtc;
-        }
-        catch (JsonException) { return false; }
     }
 
     /// <summary>讀取全部人工對應（device_objid → 列）</summary>
@@ -4134,7 +2733,6 @@ public sealed class EfPrtgStore
                 };
                 ctx.PrtgManualMaps.Add(newRow);
             }
-            RefreshResourceIdentitiesForDevices(ctx, [row.DeviceObjid]);
             return 0;
         }, expectedRevision);
     }
@@ -4143,9 +2741,7 @@ public sealed class EfPrtgStore
     public int DeleteManualMap(long deviceObjid, long? expectedRevision = null) =>
         WriteScopeChange(ctx =>
         {
-            var deleted = ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete();
-            if (deleted > 0) RefreshResourceIdentitiesForDevices(ctx, [deviceObjid]);
-            return deleted;
+            return ctx.PrtgManualMaps.Where(m => m.DeviceObjid == deviceObjid).ExecuteDelete();
         }, expectedRevision);
 
     /// <summary>讀取全部 IP 排除清單</summary>
@@ -4627,8 +3223,6 @@ public sealed class EfPrtgStore
                     v.Quality == PrtgDataQuality.Sampled && v.Coverage >= PrtgValueUsability.SampledMinCoverage ? 1 : 0)));
 }
 
-public sealed record PrtgHostMapAuthorityRow(long DeviceObjid, long? HostId);
-
 /// <summary>
 /// PRTG 鏡像表統計摘要
 /// </summary>
@@ -4731,15 +3325,15 @@ public sealed record PrtgMonitoringHostRow(long HostId, string HostName);
 public sealed record PrtgMonitoringEvaluationPage(int Total, List<PrtgMonitoringEvaluationRow> Rows);
 public sealed record PrtgMonitoringEvaluationRow(long SensorId, long DeviceObjid, string Name, string SensorType,
     string? Category, long? HostId, string? HostName, string? MapStatus);
-public sealed record PrtgResourcePressureSensorMetadata(long SensorObjid, long DeviceObjid,
-    string SensorType, string? Category, bool Paused, bool DevicePaused);
-
 /// <summary>
 /// 範圍外清除預覽：將刪除的數值列數、狀態變更列數、受影響裝置數（感測器鏡像對得到的）與前幾台裝置名稱；
 /// <paramref name="UnknownSensors"/>＝感測器鏡像已沒有、對不到裝置的 sensor 數（它們的列同樣會被刪）。
 /// </summary>
 public sealed record PrtgOutOfScopePreview(
-    int Values, int StateChanges, int AffectedDevices, IReadOnlyList<string> TopDeviceNames, int UnknownSensors);
+    int Values, int StateChanges, int AffectedDevices, IReadOnlyList<string> TopDeviceNames, int UnknownSensors)
+{
+    public int VisibleAffectedDevices { get; init; } = AffectedDevices;
+}
 
 
 public sealed class PrtgScopeConflictException : Exception

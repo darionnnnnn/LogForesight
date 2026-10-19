@@ -120,6 +120,9 @@ public class LfDbContext : DbContext
     public DbSet<PrtgTransferSessionRow> PrtgTransferSessions => Set<PrtgTransferSessionRow>();
     public DbSet<PrtgTransferChunkRow> PrtgTransferChunks => Set<PrtgTransferChunkRow>();
 
+    /// <summary>PRTG scope purge accepted jobs: singleton active-owner slot plus durable batch progress.</summary>
+    public DbSet<PrtgScopePurgeJobRow> PrtgScopePurgeJobs => Set<PrtgScopePurgeJobRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         var isSqlite = Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
@@ -223,6 +226,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.WarningCount).HasColumnName("warning_count").HasDefaultValue(0);
             e.Property(x => x.AiAnalyzed).HasColumnName("ai_analyzed").HasDefaultValue(false);
             e.Property(x => x.AiPending).HasColumnName("ai_pending").HasDefaultValue(false);
+            // 日誌來源（AnalysisLogSource 數值）：NetIQ 涵蓋類統計要以 SQL 排除只有 PRTG 的主機日。
+            e.Property(x => x.LogSource).HasColumnName("log_source").HasDefaultValue((short)0);
             // 存量回填的判定欄（取代 lf_top_issues 沿用的「record_date 是否為 MinValue」哨兵手法——
             // 這幾個欄位本身的合法值就含 0/false/空字串，沒有哪個值能安全地當「還沒回填」的訊號）。
             // 本輪寫入＝1；舊列預設 0，DailyRecordBackfiller 掃 &lt;1。has_correlation（P1-2 既有欄）
@@ -234,6 +239,7 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.HostId, x.RecordDate });
             e.HasIndex(x => x.ExtractVersion).HasDatabaseName("IX_lf_daily_records_extract_version");   // DailyRecordBackfiller 的候選查詢
             e.HasIndex(x => new { x.AiPending, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_ai_pending_record_date"); // 全域待補查詢（批次C）
+            e.HasIndex(x => new { x.LogSource, x.RecordDate }).HasDatabaseName("IX_lf_daily_src_date"); // 排除只有 PRTG 的主機日
             // 可行動快照（ActionableOccurrences）的日層級篩選：risk_level IN (高/中) + 日期範圍。
             // 等值前導欄在前，範圍欄在後——只有 record_date 索引時整段期間都得逐列過濾 risk_level
             e.HasIndex(x => new { x.RiskLevel, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_risk_date");
@@ -260,7 +266,6 @@ public class LfDbContext : DbContext
             e.Property(x => x.RecordDate).HasColumnName("record_date");
             e.Property(x => x.EventCount).HasColumnName("event_count").HasDefaultValue(0);
             e.Property(x => x.ElevatesDayRisk).HasColumnName("elevates_day_risk").HasDefaultValue(false);
-            e.Property(x => x.PrtgMessageStatusSemanticVersion).HasColumnName("prtg_message_status_semantic_version");
             // 完整簽章的另外兩段：依問題視角以 (Source, EventId) 分組，但處理狀態是以
             // **完整簽章**（LogName|Source|EventId|EntryType）為鍵——少了這兩欄就 join 不到
             // 處理狀態，§10.6「排除已有結論的問題」也就做不出來（規劃 §8.1 缺陷 1）
@@ -627,6 +632,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
             e.HasIndex(x => new { x.SensorObjid, x.ChangedAt }).HasDatabaseName("IX_lf_prtg_state_ch_sensor");
+            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_sc_purge_sensor");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_state_ch_created");
         });
 
@@ -643,11 +649,51 @@ public class LfDbContext : DbContext
             e.Property(x => x.Coverage).HasColumnName("coverage");
             e.Property(x => x.Quality).HasColumnName("quality").HasMaxLength(16);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
-            e.Property(x => x.TrustVersion).HasColumnName("trust_version").HasDefaultValue(0);
-            e.Property(x => x.TrustedProof).HasColumnName("trusted_proof");
 
             e.HasIndex(x => new { x.SensorObjid, x.PeriodStart }).IsUnique().HasDatabaseName("IX_lf_prtg_values_uniq");
+            e.HasIndex(x => new { x.SensorObjid, x.Id }).HasDatabaseName("IX_lf_prtg_val_purge_sensor");
             e.HasIndex(x => x.CreatedAt).HasDatabaseName("IX_lf_prtg_values_created");
+        });
+
+        b.Entity<PrtgScopePurgeJobRow>(e =>
+        {
+            e.ToTable("lf_prtg_scope_purge_jobs");
+            e.HasKey(x => x.JobId);
+            e.Property(x => x.JobId).HasColumnName("job_id").HasMaxLength(36);
+            e.Property(x => x.ActorId).HasColumnName("actor_id");
+            e.Property(x => x.ParentJobId).HasColumnName("parent_job_id").HasMaxLength(100);
+            e.Property(x => x.PreviousJobId).HasColumnName("previous_job_id").HasMaxLength(36);
+            e.Property(x => x.Source).HasColumnName("source").HasMaxLength(24);
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(24);
+            e.Property(x => x.ActiveOwner).HasColumnName("active_owner").HasMaxLength(24);
+            e.Property(x => x.LeaseExpiresAtUtc).HasColumnName("lease_expires_at_utc");
+            e.Property(x => x.KeepSetJson).HasColumnName("keep_set_json");
+            e.Property(x => x.CandidateSensorIdsJson).HasColumnName("candidate_sensor_ids_json");
+            e.Property(x => x.ScopeFenceJson).HasColumnName("scope_fence_json");
+            e.Property(x => x.ScopeFingerprint).HasColumnName("scope_fingerprint").HasMaxLength(128);
+            e.Property(x => x.AcceptedAtUtc).HasColumnName("accepted_at_utc");
+            e.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+            e.Property(x => x.ValuesWatermark).HasColumnName("values_watermark");
+            e.Property(x => x.StateChangesWatermark).HasColumnName("state_changes_watermark");
+            e.Property(x => x.ValuesCursor).HasColumnName("values_cursor");
+            e.Property(x => x.StateChangesCursor).HasColumnName("state_changes_cursor");
+            e.Property(x => x.CandidateValues).HasColumnName("candidate_values");
+            e.Property(x => x.CandidateStateChanges).HasColumnName("candidate_state_changes");
+            e.Property(x => x.DeletedValues).HasColumnName("deleted_values");
+            e.Property(x => x.DeletedStateChanges).HasColumnName("deleted_state_changes");
+            e.Property(x => x.RemainingValues).HasColumnName("remaining_values");
+            e.Property(x => x.RemainingStateChanges).HasColumnName("remaining_state_changes");
+            e.Property(x => x.OtherwiseRemovedValues).HasColumnName("otherwise_removed_values");
+            e.Property(x => x.OtherwiseRemovedStateChanges).HasColumnName("otherwise_removed_state_changes");
+            e.Property(x => x.CountsReconciled).HasColumnName("counts_reconciled");
+            e.Property(x => x.MonitoredDevices).HasColumnName("monitored_devices");
+            e.Property(x => x.PermissionRevision).HasColumnName("permission_revision");
+            e.Property(x => x.AuthFingerprint).HasColumnName("auth_fingerprint").HasMaxLength(128);
+            e.Property(x => x.StopReason).HasColumnName("stop_reason");
+            e.Property(x => x.Revision).HasColumnName("revision").IsConcurrencyToken();
+            e.HasIndex(x => new { x.Status, x.UpdatedAtUtc }).HasDatabaseName("IX_lf_prtg_scope_purge_status");
+            e.HasIndex(x => x.ActiveOwner).IsUnique().HasFilter("active_owner IS NOT NULL")
+                .HasDatabaseName("UX_lf_prtg_scope_purge_active_owner");
         });
 
         b.Entity<PrtgSampledBatchRow>(e =>
@@ -791,6 +837,8 @@ public class DailyRecordRow
     public int WarningCount { get; set; }
     public bool AiAnalyzed { get; set; }
     public bool AiPending { get; set; }
+    /// <summary><see cref="LogForesight.Core.Models.AnalysisLogSource"/> 的數值；舊列由 DailyRecordBackfiller 依 ContentJson 回填。</summary>
+    public short LogSource { get; set; }
 
     /// <summary>存量回填的版本號：本輪寫入＝1，舊列預設 0。不是布林是因為未來若再擴充抽出欄，
     /// 版本號可以往上加而不必再想一個新的哨兵值。</summary>
@@ -828,9 +876,6 @@ public class TopIssueRow
 
     /// <summary>命中「重大」旗標（規劃 §10.2 維度 1 的既有缺口：這個旗標過去只在詳情頁看得到）</summary>
     public bool ElevatesDayRisk { get; set; }
-
-    /// <summary>PRTG message-status interpretation version; null for legacy and non-status issue rows.</summary>
-    public int? PrtgMessageStatusSemanticVersion { get; set; }
 
     /// <summary>完整簽章的第一段——與 <see cref="EntryType"/> 一起才能組回 IssueSignatureKey 去 join 處理狀態</summary>
     public string LogName { get; set; } = string.Empty;
@@ -1177,9 +1222,44 @@ public class PrtgValueRow
     public double? Coverage { get; set; }
     public string Quality { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
-    /// <summary>0 表示舊／診斷資料；只有明確 typed proof 可寫入版本 1。</summary>
-    public int TrustVersion { get; set; }
-    public string? TrustedProof { get; set; }
+}
+
+/// <summary>Durable scope purge acceptance and progress; each batch updates this row in the delete transaction.</summary>
+public class PrtgScopePurgeJobRow
+{
+    public string JobId { get; set; } = string.Empty;
+    public long ActorId { get; set; }
+    public string? ParentJobId { get; set; }
+    public string? PreviousJobId { get; set; }
+    public string Source { get; set; } = "manual";
+    public string Status { get; set; } = "accepted";
+    /// <summary>Non-null only while this job owns the global purge slot; a unique index enforces cross-process exclusion.</summary>
+    public string? ActiveOwner { get; set; }
+    public DateTime? LeaseExpiresAtUtc { get; set; }
+    public string KeepSetJson { get; set; } = "[]";
+    public string CandidateSensorIdsJson { get; set; } = "[]";
+    public string? ScopeFenceJson { get; set; }
+    public string ScopeFingerprint { get; set; } = string.Empty;
+    public DateTime AcceptedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+    public long ValuesWatermark { get; set; }
+    public long StateChangesWatermark { get; set; }
+    public long ValuesCursor { get; set; }
+    public long StateChangesCursor { get; set; }
+    public long CandidateValues { get; set; }
+    public long CandidateStateChanges { get; set; }
+    public long DeletedValues { get; set; }
+    public long DeletedStateChanges { get; set; }
+    public long RemainingValues { get; set; }
+    public long RemainingStateChanges { get; set; }
+    public long OtherwiseRemovedValues { get; set; }
+    public long OtherwiseRemovedStateChanges { get; set; }
+    public bool CountsReconciled { get; set; }
+    public int MonitoredDevices { get; set; }
+    public long PermissionRevision { get; set; }
+    public string? AuthFingerprint { get; set; }
+    public string? StopReason { get; set; }
+    public long Revision { get; set; }
 }
 
 /// <summary>PRTG sampled 整批寫入的冪等識別。↔ lf_prtg_sampled_batches</summary>

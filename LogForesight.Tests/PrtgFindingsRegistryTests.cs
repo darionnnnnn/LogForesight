@@ -706,4 +706,19 @@ public class PrtgFindingsRegistryTests : IDisposable
         using var ctx = _fx.NewContext();
         Assert.False(ctx.DailyRecords.Single(r => r.HostId == 101).HasCorrelation);
     }
+
+    [Fact]
+    public void 發佈不等於評估完成_只有標記的日期才算已評估()
+    {
+        var registry = new PrtgFindingsRegistry();
+        var day = new DateTime(2026, 9, 1, 13, 0, 0);
+        registry.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
+
+        Assert.True(registry.IsPublished(day));
+        Assert.False(registry.IsEvaluated(day)); // 停用、評估失敗、回補缺漏日只發佈空結果
+
+        registry.MarkEvaluated(day);
+        Assert.True(registry.IsEvaluated(day.Date));
+        Assert.False(registry.IsEvaluated(day.AddDays(1)));
+    }
 }

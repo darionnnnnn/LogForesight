@@ -179,6 +179,45 @@ public class IssueRankingBuilder
         // ResolvedHostCount 維持 0，不影響其餘欄位。
         var handlingByIssue = _rollup?.Build(exclusion, current, from, to, visibleHostIds);
 
+        // PRTG 30 日誤報窗：該簽章在期間內每台主機的最近一次出現都被誤報窗涵蓋，才標註 MarkedFalsePositive
+        //（只有部分主機標了誤報時，其餘主機仍是未處理的出現，不得整列顯示「已標誤報」）
+        var prtgIssues = current.Where(a => Core.Service.PrtgFindingMapper.TryGetRuleCode(a.Source, out _)).ToList();
+        var prtgOccurrenceCounts = new Dictionary<(string SourceUpper, int EventId), (int Total, int Covered)>();
+        if (prtgIssues.Count > 0 && _backend != null)
+        {
+            var prtgKeys = prtgIssues.Select(a => (a.Source, a.EventId)).Distinct().ToList();
+            var occurrences = _aggregates.LatestOccurrences(exclusion, prtgKeys, from, to, visibleHostIds);
+            if (occurrences.Count > 0)
+            {
+                var hostsById = (hostSnapshot ?? _hosts.GetAll()).ToDictionary(h => h.HostId);
+                var hostNames = occurrences
+                    .Select(o => hostsById.TryGetValue(o.HostId, out var h) ? h.HostName : null)
+                    .Where(n => n != null)
+                    .Select(n => n!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (hostNames.Count > 0)
+                {
+                    var queryFrom = PrtgFalsePositiveWindow.HandlingLookbackFrom(from);
+                    var handlingsByHost = _backend.IssueHandlingStore().GetMany(hostNames, queryFrom, to)
+                        .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var occurrence in occurrences)
+                    {
+                        if (IssueSignatureKey.TryParseSignature(occurrence.IssueKey) is not { } sig) continue;
+                        var key = IssueProfile.KeyOf(sig.Source, sig.EventId);
+                        var covered = hostsById.TryGetValue(occurrence.HostId, out var host)
+                            && handlingsByHost.TryGetValue(host.HostName, out var hostHandlings)
+                            && PrtgFalsePositiveWindow.Covering(occurrence.IssueKey, occurrence.LastSeen, hostHandlings) != null;
+                        var counts = prtgOccurrenceCounts.GetValueOrDefault(key);
+                        prtgOccurrenceCounts[key] = (counts.Total + 1, counts.Covered + (covered ? 1 : 0));
+                    }
+                }
+            }
+        }
+
         // 距今天數以查詢期間的 to 為準，不是另外抓一次真實今天（回饋十九輪批次C）：
         // 分析資料只到昨天，呼叫端（Dashboard/Report）傳的 to 本來就是「現在能看到的最後一天」；
         // 用真實 DateTime.Today 算距今天數，在 to=昨天 時會讓每個問題的天數多算一天，
@@ -209,6 +248,9 @@ public class IssueRankingBuilder
                     HostCount: a.HostCount,
                     HighestAffectedTier: highestTier));
 
+                var markedFalsePositive = prtgOccurrenceCounts.TryGetValue(IssueProfile.KeyOf(a.Source, a.EventId), out var fpCounts)
+                    && fpCounts.Total > 0 && fpCounts.Covered == fpCounts.Total;
+
                 return new IssueRankingDto
                 {
                     Source = a.Source,
@@ -234,6 +276,7 @@ public class IssueRankingBuilder
 
                     OpenHostCount = rollup?.OpenHostCount ?? 0,
                     ResolvedHostCount = rollup?.ResolvedHostCount ?? 0,
+                    MarkedFalsePositive = markedFalsePositive,
 
                     BaselineMedianHostCount = baseline.MedianHostCount,
                     BaselineLatestHostCount = baseline.LatestHostCount,

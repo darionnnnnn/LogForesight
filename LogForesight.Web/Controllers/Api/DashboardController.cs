@@ -1,3 +1,4 @@
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -134,12 +135,21 @@ public class HostDetailController : ControllerBase
     private readonly RecordDetailQueryService _service;
     private readonly EfPrtgStore _prtgStore;
     private readonly IVisibilityService _visibility;
+    private readonly PrtgValueAssessment _valueAssessment;
+    private readonly IKnownIssueRuleStore _rules;
 
-    public HostDetailController(RecordDetailQueryService service, EfPrtgStore prtgStore, IVisibilityService visibility)
+    public HostDetailController(
+        RecordDetailQueryService service,
+        EfPrtgStore prtgStore,
+        IVisibilityService visibility,
+        PrtgValueAssessment valueAssessment,
+        IKnownIssueRuleStore rules)
     {
         _service = service;
         _prtgStore = prtgStore;
         _visibility = visibility;
+        _valueAssessment = valueAssessment;
+        _rules = rules;
     }
 
     [HttpGet("{hostId:long}")]
@@ -200,6 +210,8 @@ public class HostDetailController : ControllerBase
         var deviceNames = store.GetDeviceNamesByObjids(targetRows.Select(r => r.DeviceObjid).Distinct().ToList());
 
         var devices = new List<HostPrtgDeviceDto>();
+        var allSensorsWithDevice = new List<(long DeviceObjid, HostPrtgSensorDto Dto)>();
+
         foreach (var r in targetRows)
         {
             var sensors = store.GetSensorsByDevice(r.DeviceObjid)
@@ -213,6 +225,11 @@ public class HostDetailController : ControllerBase
                     Status = s.Status
                 }).ToList();
 
+            foreach (var s in sensors)
+            {
+                allSensorsWithDevice.Add((r.DeviceObjid, s));
+            }
+
             devices.Add(new HostPrtgDeviceDto
             {
                 DeviceObjid = r.DeviceObjid,
@@ -223,6 +240,58 @@ public class HostDetailController : ControllerBase
                 Sensors = sensors,
                 SensorCount = sensors.Count
             });
+        }
+
+        var yesterday = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
+        // 讀規則庫而非 KnownIssueCatalog.Rules：Web 行程不呼叫 Initialize（Program.cs），後者在夜間執行前是 seed、
+        // 之後是上一趟的快照，管理者改過的窗口／最少有效日會對不上規則頁與下一趟管線
+        var allRules = KnownIssueCatalog.ResolveRules(_rules);
+
+        foreach (var code in PrtgRuleCatalog.ValueTrendCodes)
+        {
+            var category = PrtgRuleCatalog.TrendSensorCategory(code)!;
+            var matching = allSensorsWithDevice
+                .Where(x => string.Equals(x.Dto.Category, category, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (matching.Count == 0) continue;
+
+            int windowDays;
+            int requiredDays;
+
+            var rule = allRules.FirstOrDefault(r => string.Equals(r.PrtgRuleCode, code, StringComparison.OrdinalIgnoreCase));
+            if (code == PrtgRuleEvaluator.RuleDiskFreeTrend)
+            {
+                var thresholds = rule?.PrtgDiskTrendThresholds ?? PrtgDiskTrendThresholds.Provisional;
+                windowDays = thresholds.RecentWindowDays;
+                requiredDays = thresholds.MinimumValidDays;
+            }
+            else
+            {
+                var thresholds = rule?.PrtgTrendThresholds ?? PrtgTrendThresholds.ProvisionalFor(code);
+                windowDays = thresholds.WindowDays;
+                requiredDays = thresholds.MinimumValidDays;
+            }
+
+            var dtosByObjid = matching.ToDictionary(x => x.Dto.Objid, x => x.Dto);
+            var valueSensors = matching
+                .Select(x => new PrtgValueSensor(x.Dto.Objid, x.DeviceObjid, hostId, x.Dto.Name, x.Dto.SensorType, x.Dto.Category))
+                .ToList();
+
+            foreach (var chunk in valueSensors.Chunk(PrtgValueAssessment.PageSize))
+            {
+                var rows = _valueAssessment.AssessPage(chunk, yesterday, windowDays, requiredDays);
+                foreach (var row in rows)
+                {
+                    if (dtosByObjid.TryGetValue(row.Sensor.SensorObjid, out var dto))
+                    {
+                        dto.ValueReasonCode = row.Reason.ToString();
+                        dto.ValueReason = PrtgValueReasonText.Label(row.Reason);
+                        dto.ValidDays = row.ValidDays;
+                        dto.RequiredDays = row.RequiredDays;
+                    }
+                }
+            }
         }
 
         return ApiResponse<HostPrtgMappingDto>.Ok(new HostPrtgMappingDto

@@ -1,5 +1,6 @@
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
@@ -65,8 +66,12 @@ public class HostDetailPrtgScopedQueryTests : IDisposable
         public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => GetVisibleHostIds();
     }
 
-    private HostDetailController CreateController(long visibleHostId) =>
-        new(null!, new EfPrtgStore(NewContext), new OnlyVisible(visibleHostId));
+    private HostDetailController CreateController(long visibleHostId)
+    {
+        var store = new EfPrtgStore(NewContext);
+        var assessment = new PrtgValueAssessment(store, new Dictionary<string, PrtgValueSemantic>());
+        return new(null!, store, new OnlyVisible(visibleHostId), assessment, new FakeRuleStore());
+    }
 
     /// <summary>今天的對應：hostId 10 有兩台 device、hostId 11 有一台、另外 50 台是別人的</summary>
     private DateTime SeedMap()

@@ -42,7 +42,7 @@ public sealed class SourceEvidenceTests
         Assert.Single(selected);
         Assert.True(selected[0].Message.Length < originalMessage.Length);
         Assert.Equal(mapped.SourceEvidence.ProjectionFingerprint, selected[0].SourceEvidence!.ProjectionFingerprint);
-        Assert.Null(selected[0].SourceEvidence.SourceReference);
+        Assert.Null(selected[0].SourceEvidence!.SourceReference);
 
         var retained = RiskyEventSelector.Select(new() { signature }, new() { mapped }, hostId: 4, DateTime.Today);
         Assert.Single(retained);

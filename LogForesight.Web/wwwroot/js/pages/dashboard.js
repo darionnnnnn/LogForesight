@@ -174,7 +174,8 @@ function renderBanner(data, user) {
         return;
     }
 
-    if (data.totalHosts === 0 || data.analyzedHostDays === 0) {
+    // 只有 PRTG 訊號的主機日（當日沒有日誌分析）不算分析主機日，但有風險時仍要往下顯示
+    if (data.totalHosts === 0 || (data.analyzedHostDays === 0 && !(data.prtgOnlyHostDays > 0))) {
         const hint = document.createElement('div');
         hint.className = 'lf-hint mb-3'; hint.setAttribute('role', 'status');
         hint.textContent = data.totalHosts === 0 ? '尚無可見主機，請先設定 NetIQ 主機與授權。'
@@ -520,6 +521,13 @@ function issueNameCell(issue) {
         badge.className = 'lf-badge lf-badge--warning';
         badge.textContent = '新';
         badge.title = '前一個等長期間完全沒有出現過';
+        title.appendChild(badge);
+    }
+
+    if (issue.markedFalsePositive) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-secondary';
+        badge.textContent = '已標誤報';
         title.appendChild(badge);
     }
     wrap.appendChild(title);

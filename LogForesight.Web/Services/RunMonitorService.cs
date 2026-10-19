@@ -97,7 +97,7 @@ public class RunMonitorService
         // 分析紀錄窗口：本頁日期 D 對應 D-1 的分析紀錄，多帶一天
         var recordFrom = pageFrom.AddDays(-1);
         var recordTo = pageEnd.AddDays(-1);
-        var recordDates = _records.ListHostDates(recordFrom, recordTo);
+        var recordDates = _records.ListHostDates(recordFrom, recordTo, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordFrom, recordTo, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
 
@@ -187,7 +187,7 @@ public class RunMonitorService
         var hosts = AllHosts(runs);
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
         var recordDate = date.AddDays(-1);
-        var recordDates = _records.ListHostDates(recordDate, recordDate);
+        var recordDates = _records.ListHostDates(recordDate, recordDate, logAnalysisOnly: true);
         var attempts = ReadAttempts(recordDate, recordDate, out var attemptsAvailable);
         var runsById = runs.ToDictionary(run => run.RunId);
 

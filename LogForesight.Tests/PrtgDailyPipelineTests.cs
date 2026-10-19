@@ -22,10 +22,8 @@ namespace LogForesight.Tests;
 [Collection("KnownIssueCatalogState")]
 public class PrtgDailyPipelineTests : IDisposable
 {
-    private const string FixtureSourceGeneration = "1234567890abcdef1234567890abcdef";
     private readonly string _dir;
     private readonly StorageBackend _backend;
-    private readonly Dictionary<long, PrtgResourceIdentity> _fixtureIdentities = new();
 
     public PrtgDailyPipelineTests()
     {
@@ -113,68 +111,12 @@ public class PrtgDailyPipelineTests : IDisposable
     private (AnalysisRunContext Ctx, CollectingConsole Console, CollectingProgress Progress, PrtgFindingsRegistry Registry)
         CreateContext(CancellationToken ct = default, HostDayWorkflowService? workflow = null)
     {
-        _fixtureIdentities.Clear();
-        // 此組測試原本只造訊息列；正式判定現在需另外明列來源、資源及涵蓋。
-        // 固定樣本的涵蓋是測試輸入，不宣稱失敗的 HTTP 查詢提供了它。
+        // 監看政策兩份清單都空＝全部已對應主機；fixture 只需要套用自動分類。
         var prtgStore = _backend.PrtgStore();
-        var fixtureHosts = new HostStore(_backend.Blob("hosts")).GetAll();
         var fixtureSettings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
-        var fixtureSensors = prtgStore.GetSensorStatuses();
-        if (fixtureSensors.Count > 0 && Uri.TryCreate(fixtureSettings.PrtgUrl, UriKind.Absolute, out var fixtureUri) &&
-            fixtureUri.Scheme is "http" or "https")
-        {
+        if (prtgStore.GetSensorStatuses().Count > 0)
             prtgStore.ApplyAutoCategories(PrtgSensorTypeCategoryMap.ParseOverrides(
                 fixtureSettings.PrtgSensorTypeCategoryOverrides).Map);
-            fixtureSensors = prtgStore.GetSensorStatuses();
-            var latestMapDate = prtgStore.GetLatestHostMapDate();
-            var latestMaps = latestMapDate.HasValue
-                ? prtgStore.GetHostMapForDate(latestMapDate.Value).GroupBy(m => m.DeviceObjid)
-                    .ToDictionary(g => g.Key, g => g.Last())
-                : new Dictionary<long, PrtgHostMapRow>();
-            var manualMaps = prtgStore.GetManualMaps().ToDictionary(m => m.DeviceObjid);
-            new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p =>
-            {
-                p.CoreSystemId = "fixture-core"; p.SourceGeneration = FixtureSourceGeneration;
-                p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
-                p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(fixtureSettings.PrtgUrl);
-                if (p.ValidFrom == default) p.ValidFrom = DateTimeOffset.Now.AddDays(-31);
-                p.Revision = "fixture";
-                p.HostIds = fixtureHosts.Select(h => h.HostId).ToList(); p.SensorIds = fixtureSensors.Select(s => s.Objid).ToList();
-            });
-            var fixtureChanges = prtgStore.GetStateChanges(DateTime.Today.AddDays(-30), DateTime.Today.AddDays(1));
-            foreach (var sensor in fixtureSensors)
-            {
-                latestMaps.TryGetValue(sensor.DeviceObjid, out var map);
-                manualMaps.TryGetValue(sensor.DeviceObjid, out var manualMap);
-                var effectiveHostId = manualMap?.HostId ??
-                    (map?.MapStatus == PrtgMapStatus.Ok ? map.HostId : null);
-                var host = effectiveHostId.HasValue
-                    ? fixtureHosts.FirstOrDefault(h => h.HostId == effectiveHostId.Value)
-                    : null;
-                if (host == null) continue;
-                PrtgResourceIdentity identity;
-                try
-                {
-                    identity = prtgStore.BindObservedResource(sensor.Objid, host.HostId, FixtureSourceGeneration,
-                        $"fixture-resource-{sensor.Objid}");
-                }
-                catch (InvalidOperationException)
-                {
-                    // 沒有現行有效對應的 fixture 不得偽造正式涵蓋。
-                    continue;
-                }
-                _fixtureIdentities[sensor.Objid] = identity;
-                new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensor.Objid)).Update(e =>
-                {
-                    e.Bind(sensor.Objid, host.HostId, identity.SourceGeneration, "fixture",
-                        identity.Generation, identity.Epoch, identity.ChannelGeneration,
-                        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get().ValidFrom);
-                    e.Accept(new DateTimeOffset(DateTime.Today.AddDays(-30)), DateTimeOffset.Now,
-                        fixtureChanges.Where(c => c.SensorObjid == sensor.Objid).Select(c =>
-                            new PrtgTimedState(sensor.Objid, new DateTimeOffset(c.ChangedAt), c.Status, e.SourceGeneration, e.ResourceGeneration)));
-                });
-            }
-        }
         var console = new CollectingConsole();
         var progress = new CollectingProgress();
         var registry = new PrtgFindingsRegistry();
@@ -221,49 +163,7 @@ public class PrtgDailyPipelineTests : IDisposable
         });
     }
 
-    private void SeedCompleteSilentPresenceProof(WebHost host, long deviceId, long sensorId, DateTime day,
-        IReadOnlyList<PrtgSilentSensorSnapshot>? inventorySensors = null, bool updatePolicyTimeBasis = true)
-    {
-        var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        if (updatePolicyTimeBasis)
-        {
-            policyStore.Update(policy =>
-            {
-                policy.RawTimestampTimeZoneId = "UTC";
-                policy.AnalysisTimeZoneId = "UTC";
-                policy.TimeBasisEvidenceReference = "whole-readiness-test-fixture";
-            });
-        }
-        var policy = policyStore.Get();
-        var sourceZone = TimeZoneInfo.FindSystemTimeZoneById(policy.SourceTimeZoneId);
-        var localEnd = DateTime.SpecifyKind(day.Date.AddDays(1).AddTicks(-1), DateTimeKind.Unspecified);
-        var sourceAsOfUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(localEnd, TimeZoneInfo.Local));
-        var sourceDay = TimeZoneInfo.ConvertTime(sourceAsOfUtc, sourceZone).Date;
-        var sensors = inventorySensors ?? [
-            new PrtgSilentSensorSnapshot(sensorId, deviceId, "Ping", PrtgSensorCategories.Availability, "Up", false)
-        ];
-        var inventory = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(string.Join("\n", sensors.OrderBy(sensor => sensor.SensorObjid)
-                .Select(sensor => $"{sensor.SensorObjid}|{sensor.DeviceObjid}|{sensor.SensorType}|{sensor.Category}|{sensor.SourceStatus}|{sensor.Paused}")))));
-        var snapshot = new PrtgSilentDeviceSnapshot(deviceId, host.HostId, policy.SourceGeneration,
-            policy.Revision, _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion(),
-            PrtgSilentPresenceMappingFingerprint.Compute(deviceId, host.HostId), sourceDay,
-            sourceAsOfUtc, sourceAsOfUtc, sourceAsOfUtc, false, sensors.Count, inventory, sensors)
-        {
-            ReadQuality = PrtgPresenceReadQuality.Complete,
-            SourceAuthorityFingerprint = policy.SourceAuthorityFingerprint(settings.PrtgUrl)
-        };
-        new PrtgSilentPresenceSnapshotStore(_backend.Blob(
-            PrtgSilentPresenceSnapshotStore.BlobKey(deviceId, sourceDay))).Save(snapshot);
-    }
-
-    private string PrtgEventKey(string ruleCode, long sensorId)
-    {
-        Assert.True(_fixtureIdentities.TryGetValue(sensorId, out var identity),
-            $"Fixture sensor {sensorId} must have a producer-confirmed current identity before asserting its event key.");
-        return $"prtg:{ruleCode}:{sensorId}:{identity!.SourceGeneration}:{identity.Generation}";
-    }
+    private static string PrtgEventKey(string ruleCode, long sensorId) => $"prtg:{ruleCode}:{sensorId}";
 
     /// <summary>
     /// PRTG 未啟用時整條路徑短路，但**仍要宣告就緒**——
@@ -316,7 +216,7 @@ public class PrtgDailyPipelineTests : IDisposable
             .GetRun(ctx.RunRecorder.RunId);
         Assert.Equal(BatchRun.PrtgOutcomePartial, run!.PrtgOutcome);
         Assert.Equal(new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) }, run.PrtgDays!.Select(stat => stat.Date));
-        Assert.All(run.PrtgDays, stat =>
+        Assert.All(run.PrtgDays!, stat =>
         {
             Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
             Assert.Equal(0, stat.Findings);
@@ -368,7 +268,7 @@ public class PrtgDailyPipelineTests : IDisposable
             .GetRun(ctx.RunRecorder.RunId)!;
         Assert.Equal(BatchRun.PrtgOutcomePartial, run.PrtgOutcome);
         Assert.Equal(days, run.PrtgDays!.Select(stat => stat.Date));
-        Assert.All(run.PrtgDays, stat =>
+        Assert.All(run.PrtgDays!, stat =>
         {
             Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
             Assert.Contains("作業已取消", stat.Note);
@@ -437,9 +337,9 @@ public class PrtgDailyPipelineTests : IDisposable
     public async Task 停用磁碟趨勢規則時不產生正式finding且仍正常宣告就緒()
     {
         Assert.DoesNotContain(KnownIssueCatalog.Rules, r =>
-            r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode && r.PrtgSensorCategory == PrtgSensorCategories.Disk);
+            r.PrtgRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend && r.PrtgSensorCategory == PrtgSensorCategories.Disk);
         Assert.Contains(KnownIssueSeed.CreateRules(), r =>
-            r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode && r.PrtgSensorCategory == PrtgSensorCategories.Disk && !r.Enabled);
+            r.PrtgRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend && r.PrtgSensorCategory == PrtgSensorCategories.Disk && !r.Enabled);
 
         // 無效 scheme 讓結構擷取階段立即失敗，後續規則與發布流程仍會繼續，不呼叫 PRTG。
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
@@ -1169,21 +1069,16 @@ public class PrtgDailyPipelineTests : IDisposable
         SeedNetiqParent(host, day);
 
         var (ctx, _, _, registry) = CreateContext();
-        SeedCompleteSilentPresenceProof(host, deviceId, availabilitySensorId, day,
-        [
-            new PrtgSilentSensorSnapshot(availabilitySensorId, deviceId, "Ping", PrtgSensorCategories.Availability, "Up", false),
-            new PrtgSilentSensorSnapshot(unknownSensorId, deviceId, "Custom Sensor", PrtgSensorCategories.Hardware, "Unknown", false)
-        ]);
         await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, [day], Task.CompletedTask, hostIds: null, guard: null);
 
         var silentFindings = registry.For(host.HostId, day)
-            .Where(finding => finding.EventKey.StartsWith($"prtg:{PrtgRuleEvaluator.RuleSilent}:{deviceId}:", StringComparison.Ordinal))
+            .Where(finding => finding.EventKey == $"prtg:{PrtgRuleEvaluator.RuleSilent}:{deviceId}")
             .ToArray();
         var finding = Assert.Single(silentFindings);
         var persisted = Assert.Single(_backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName })
             .ReadRecent(day, 1));
-        var persistedSilent = Assert.Single(persisted.TopIssues.Where(issue =>
-            issue.EventKey.StartsWith($"prtg:{PrtgRuleEvaluator.RuleSilent}:{deviceId}:", StringComparison.Ordinal)));
+        var persistedSilent = Assert.Single(persisted.TopIssues, issue =>
+            issue.EventKey == $"prtg:{PrtgRuleEvaluator.RuleSilent}:{deviceId}");
         Assert.Equal(finding.EventKey, persistedSilent.EventKey);
         Assert.Equal(1, persistedSilent.Count);
     }
@@ -1661,308 +1556,6 @@ public class PrtgDailyPipelineTests : IDisposable
         });
     }
 
-    [Theory]
-    [InlineData("mapping")]
-    [InlineData("evidence")]
-    [InlineData("verification")]
-    [InlineData("host")]
-    public async Task 磁碟候選第二頁映射或metadata改變_丟棄前頁結果且標記部分完成(string mutationKind)
-    {
-        EnableConservativePrtgWithDefaultWhitelist();
-        var candidateRules = KnownIssueSeed.CreateRules().Select(r =>
-            r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode && r.PrtgSensorCategory == PrtgSensorCategories.Disk
-                ? r.CloneForSeedOverwrite(enabled: true) : r).ToList();
-        KnownIssueCatalog.Initialize(candidateRules);
-        new KnownIssueRuleStore(_backend.Blob("rules")).Save(new RuleFileContent
-        {
-            SeedVersion = KnownIssueSeed.Version,
-            Rules = candidateRules
-        });
-        var day = DateTime.Today.AddDays(-1);
-        var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-DISK-PAGE", Active = true, IpAddress = "192.168.1.141" });
-        var changedHost = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-DISK-PAGE-CHANGED", Active = true, IpAddress = "192.168.1.142" });
-
-        var portProbe = new TcpListener(IPAddress.Loopback, 0);
-        portProbe.Start();
-        var port = ((IPEndPoint)portProbe.LocalEndpoint).Port;
-        portProbe.Stop();
-        var baseUrl = $"http://127.0.0.1:{port}/";
-        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s => s.PrtgUrl = baseUrl);
-        var prtgStore = _backend.PrtgStore();
-        var now = DateTime.Now;
-        var deviceRows = Enumerable.Range(1, 2).Select(id => new PrtgDeviceRow
-        {
-            Objid = id, Name = $"SRV-DISK-PAGE-{id}", Ip = id == 1 ? host.IpAddress : null
-        }).ToArray();
-        prtgStore.UpsertDevices(deviceRows, now);
-        var sensors = new List<PrtgSensorRow>
-        {
-            new() { Objid = 4000, DeviceObjid = 1, Name = "Disk C:", SensorType = "SNMP Disk Free", Unit = "%", Status = "Up", Category = PrtgSensorCategories.Disk }
-        };
-        sensors.AddRange(Enumerable.Range(1, 99).Select(i => new PrtgSensorRow
-        {
-            Objid = 4000 + i, DeviceObjid = 1, Name = $"Disk {i}", SensorType = "SNMP Disk Free",
-            Status = "Up", Category = PrtgSensorCategories.Disk
-        }));
-        // 第二頁候選使用另一台裝置；第一頁裝置映射變更不能被第二頁的局部查詢掩蓋。
-        sensors.Add(new PrtgSensorRow { Objid = 4100, DeviceObjid = 2, Name = "Disk C: duplicate candidate", SensorType = "SNMP Disk Free", Unit = "%", Status = "Up", Category = PrtgSensorCategories.Disk });
-        prtgStore.UpsertSensors(sensors, now);
-        prtgStore.UpsertManualMap(new PrtgManualMapRow
-        {
-            DeviceObjid = 2, HostId = host.HostId, CreatedBy = "candidate-page fixture",
-            Note = "Explicit current mapping for a bounded candidate-page fixture", CreatedAt = now
-        });
-
-        var persistedPoints = new List<PrtgValueRow>();
-        var hostMapDates = new List<PrtgHostMapRow>();
-        for (var offset = -27; offset <= 0; offset++)
-        {
-            var mapDay = day.AddDays(offset);
-            hostMapDates.Add(new PrtgHostMapRow
-            {
-                MapDate = mapDay, DeviceObjid = 1, HostId = host.HostId, HostName = host.HostName,
-                MapStatus = PrtgMapStatus.Ok, CreatedAt = now
-            });
-            hostMapDates.Add(new PrtgHostMapRow
-            {
-                MapDate = mapDay, DeviceObjid = 2, HostId = host.HostId,
-                HostName = host.HostName, MapStatus = PrtgMapStatus.Ok, CreatedAt = now
-            });
-            var available = Math.Max(0.5, 95.0 - (offset + 27) * 3.5);
-            for (var hour = 0; hour < 24; hour++)
-                persistedPoints.Add(new PrtgValueRow
-                {
-                    SensorObjid = 4000, PeriodStart = mapDay.AddHours(hour), AvgValue = available,
-                    MinValue = available, MaxValue = available, Coverage = 100, Quality = PrtgDataQuality.Ok, CreatedAt = now
-                });
-        }
-        for (var offset = -27; offset <= 0; offset++)
-            prtgStore.ReplaceHostMapForDate(day.AddDays(offset), hostMapDates.Where(m => m.MapDate == day.AddDays(offset)).ToArray());
-        prtgStore.UpsertValues(persistedPoints);
-
-        var (ctx, console, _, registry) = CreateContext();
-        SeedNetiqParent(host, day);
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(p =>
-        {
-            p.CoreSystemId = "fixture-core"; p.SourceGeneration = FixtureSourceGeneration;
-            p.SourceTimeZoneId = TimeZoneInfo.Local.Id; p.SourceCultureName = "en-US";
-            p.EndpointHint = LogForesight.Core.Persistence.Sql.EfPrtgObservationStore.SourceHintFor(baseUrl);
-            p.ValidFrom = DateTimeOffset.Now.AddDays(-31); p.Revision = "candidate-page-failure";
-            p.HostIds = new List<long> { host.HostId }; p.SensorIds = sensors.Select(s => s.Objid).ToList();
-        });
-
-        const long deviceId = 1;
-        var timeline = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + 4000));
-        var diskFingerprint = JsonSerializer.Serialize(new
-        { ChannelIdentifier = "5", ChannelName = "Free", Unit = "%", Scale = (double?)1.0, Direction = "descending-danger" }) +
-            "|" + PrtgDiskAssessmentService.ParserSemanticVersion;
-        prtgStore.BindObservedResource(4000, host.HostId, FixtureSourceGeneration,
-            "1|SNMP Disk Free|2000");
-        PrtgResourceFixture.AuthorizeSeededDiskHistory(_backend.CreateContext, 4000, deviceId, host.HostId,
-            "SNMP Disk Free", FixtureSourceGeneration, caption: "Free", channelIdentifier: "5");
-        // The closure helper installs the current qualified binding and may rotate channel generation.
-        // Build all typed semantic fixtures only after that fence is final.
-        var resourceIdentity = prtgStore.GetResourceIdentity(4000);
-        var currentMappingRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
-        timeline.Update(e =>
-        {
-            e.Bind(4000, host.HostId, resourceIdentity.SourceGeneration,
-                $"{deviceId}|SNMP Disk Free|2000|map:{currentMappingRevision}", resourceIdentity.Generation,
-                resourceIdentity.Epoch, resourceIdentity.ChannelGeneration, policyStore.Get().ValidFrom);
-            e.MappingRevision = currentMappingRevision;
-            e.Accept(policyStore.Get().ValidFrom, DateTimeOffset.Now, Array.Empty<PrtgTimedState>());
-            e.DiskSemanticValidFrom = DateTimeOffset.Now.AddDays(-31); e.DiskSemanticCheckedAt = DateTimeOffset.Now;
-            e.DiskSemanticFingerprint = diskFingerprint;
-        });
-        new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).ConfirmManually(
-            new PrtgDiskSemanticContext(4000, deviceId, host.HostId, "SNMP Disk Free", "5", "Free", "%", 1, "descending-danger"),
-            1, "R10 consumer failure fixture", DateTime.UtcNow, PrtgDiskAssessmentService.ParserSemanticVersion,
-            resourceIdentity.SourceGeneration, resourceIdentity.Generation, resourceIdentity.ChannelGeneration, resourceIdentity.Epoch);
-        new PrtgDiskVerificationResultStore(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Save(
-            new PrtgDiskVerificationResult(4000, deviceId, host.HostId, "SNMP Disk Free", "Verified", "fixture",
-                "5", "Free", "%", 1, "descending-danger", 5, true, DateTime.UtcNow, day, PrtgDiskAssessmentService.ParserSemanticVersion,
-                SourceGeneration: resourceIdentity.SourceGeneration, ResourceGeneration: resourceIdentity.Generation,
-                ChannelGeneration: resourceIdentity.ChannelGeneration, IdentityEpoch: resourceIdentity.Epoch));
-        // The helper narrows its proof fixture to sensor 4000. Restore the actual pilot policy
-        // scope so DailyPipeline's production consumer assesses the same 101 selected sensors.
-        var selectedPilotSensors = sensors.Select(sensor => sensor.Objid).Order().ToArray();
-        policyStore.Update(policy => policy.SensorIds = selectedPilotSensors.ToList());
-        var persistedPolicy = policyStore.Get();
-        Assert.Equal(101, persistedPolicy.SensorIds.Count);
-        Assert.Equal(selectedPilotSensors, persistedPolicy.SensorIds.Order().ToArray());
-
-        var persistedCatalog = PrtgResourceCurrentRuleCatalog.Load(_backend);
-        Assert.True(persistedCatalog.DiskTrendEnabled, "The production current-rule catalog must load the persisted enabled disk trend rule.");
-        var persistedRules = new KnownIssueRuleStore(_backend.Blob("rules")).Load();
-        Assert.True(persistedRules.Success, persistedRules.Error);
-        var diskRule = Assert.Single(persistedRules.Content.Rules, r => r.PrtgRuleCode == PrtgDiskRuleDecision.RuleCode &&
-            r.PrtgSensorCategory == PrtgSensorCategories.Disk && r.Enabled);
-        Assert.Equal(persistedCatalog.DiskTrendRuleId, diskRule.Id);
-        var diskAssessment = new PrtgDiskAssessmentService(prtgStore, hostStore,
-            new SystemSettingsStore(_backend.Blob("system_settings")),
-            new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)),
-            new PrtgDiskVerificationResultStore(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey)));
-        var candidateOperation = diskAssessment.BeginAssessment(DateOnly.FromDateTime(day), day, diskRule,
-            PrtgDiskDecisionMode.Formal, [host.HostId], sensors.Select(s => s.Objid).ToArray(), hostStore.CapturePrtgSnapshot());
-        Assert.Equal(101, candidateOperation.CandidateCount);
-        diskAssessment.CompleteAssessment(candidateOperation);
-        var baselineBatch = diskAssessment.Assess(DateOnly.FromDateTime(day), diskRule, PrtgDiskDecisionMode.Formal, 100, 0,
-            selectedHostIds: [host.HostId], selectedSensorObjids: sensors.Select(s => s.Objid).ToArray());
-        var baselineFinding = Assert.Single(baselineBatch.Rows, r => r.SensorObjid == 4000);
-        Assert.True(baselineFinding.Decision.Finding is not null,
-            $"Baseline candidate did not hit: exclusion={baselineFinding.Decision.Exclusion}; reason={baselineFinding.Decision.Reason}; readiness={baselineFinding.Readiness.Status}/{baselineFinding.Readiness.Reason}; semantic={baselineFinding.EvidenceValidity?.InvalidReason}; trend={baselineFinding.Decision.Trend?.Explanation}");
-        var scopeRevisionBeforeRun = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
-
-        using var listener = new HttpListener();
-        listener.Prefixes.Add(baseUrl);
-        listener.Start();
-        using var serverStop = new CancellationTokenSource();
-        var serverTask = Task.Run(async () =>
-        {
-            while (!serverStop.IsCancellationRequested)
-            {
-                HttpListenerContext request;
-                try { request = await listener.GetContextAsync().WaitAsync(serverStop.Token); }
-                catch (OperationCanceledException) { break; }
-                catch (HttpListenerException) { break; }
-                var content = request.Request.QueryString["content"];
-                var id = long.TryParse(request.Request.QueryString["id"], out var parsedId) ? parsedId : 0;
-                object response = content switch
-                {
-                    "sensors" => new { sensors = new[] { new { objid = id.ToString(), parentid = sensors.FirstOrDefault(s => s.Objid == id)?.DeviceObjid.ToString() ?? "1", type = "SNMP Disk Free", status = "Up", cumsince_raw = "2000" } } },
-                    "messages" => new { messages = Array.Empty<object>() },
-                    "channels" => new { channels = new[] { new { objid = "5", channel = "Free", unit = "%", scaling = 1 } } },
-                    _ when request.Request.Url?.AbsolutePath.EndsWith("historicdata.json", StringComparison.OrdinalIgnoreCase) == true => new
-                    {
-                        histdata = id == 4000
-                            ? persistedPoints.Where(p => p.PeriodStart.Date == day).Take(12)
-                                .Select(p => (object)new { datetime_raw = p.PeriodStart.ToOADate(), value_raw = new[] { p.AvgValue!.Value } }).ToArray()
-                            : Array.Empty<object>()
-                    },
-                    _ => new { sensors = Array.Empty<object>(), devices = Array.Empty<object>(), messages = Array.Empty<object>() }
-                };
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
-                request.Response.ContentType = "application/json";
-                request.Response.ContentLength64 = bytes.Length;
-                await request.Response.OutputStream.WriteAsync(bytes, serverStop.Token);
-                request.Response.Close();
-            }
-        });
-
-        var pageCallbacks = 0;
-        var trackedHostStore = new TrackingHostStore(hostStore);
-        var getAllCallsAfterFirstCandidatePage = -1;
-        var getAllCallsAtFinalCandidatePage = -1;
-        var getAllCallsAfterHostMutation = -1;
-        var getAllCallsAtRejectedCandidateFence = -1;
-        console.OnWriteLine = message =>
-        {
-            if (message.Contains("磁碟趨勢證據未完整：", StringComparison.Ordinal))
-                getAllCallsAtRejectedCandidateFence = trackedHostStore.GetAllCalls;
-            var firstPage = message.Contains("磁碟候選評估 100/101；已有趨勢 finding 1 筆，尚未提交判定。", StringComparison.Ordinal);
-            var finalPage = message.Contains("磁碟候選評估 101/101；已有趨勢 finding 1 筆，尚未提交判定。", StringComparison.Ordinal);
-            var finalPageBeforeFence = mutationKind == "host" && finalPage;
-            if (firstPage) getAllCallsAfterFirstCandidatePage = trackedHostStore.GetAllCalls;
-            if (finalPage) getAllCallsAtFinalCandidatePage = trackedHostStore.GetAllCalls;
-            if (firstPage && mutationKind != "host" || finalPageBeforeFence)
-            {
-                pageCallbacks++;
-                switch (mutationKind)
-                {
-                    case "mapping":
-                        MapDeviceToHost(day, 1, changedHost);
-                        break;
-                    case "evidence":
-                        new PrtgDiskSemanticEvidenceStore(_backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).ConfirmManually(
-                            new PrtgDiskSemanticContext(4000, deviceId, host.HostId, "SNMP Disk Free", "5", "Free", "%", 1, "descending-danger"),
-                            1, "Metadata changed after first page.", DateTime.UtcNow,
-                            PrtgDiskAssessmentService.ParserSemanticVersion);
-                        break;
-                    case "verification":
-                        new PrtgDiskVerificationResultStore(_backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Save(
-                            new PrtgDiskVerificationResult(4000, deviceId, host.HostId, "SNMP Disk Free", "Failed",
-                                "Metadata changed after first page.", null, null, null, null, null, 0, null,
-                                DateTime.UtcNow, day, PrtgDiskAssessmentService.ParserSemanticVersion));
-                        break;
-                    case "host":
-                        host.Active = false;
-                        hostStore.Upsert(host);
-                        getAllCallsAfterHostMutation = trackedHostStore.GetAllCalls;
-                        break;
-                    default:
-                        throw new InvalidOperationException($"Unexpected test mutation: {mutationKind}");
-                }
-            }
-        };
-        try
-        {
-            await PrtgDailyPipeline.RunAsync(ctx, _backend, trackedHostStore, new[] { day }, Task.CompletedTask,
-                hostIds: null, guard: null, structureSyncGate: new FakeStructureSyncGate(running: true) { ResultToReturn = true },
-                requestBudget: new PrtgRequestBudget());
-        }
-        finally
-        {
-            serverStop.Cancel();
-            listener.Close();
-            try { await serverTask.WaitAsync(TimeSpan.FromSeconds(2)); } catch (TimeoutException) { }
-        }
-
-        Assert.True(pageCallbacks == 1, string.Join(Environment.NewLine, console.Lines));
-        var finalPageObserved = console.Lines.Any(line => line.Contains("磁碟候選評估 101/101；已有趨勢 finding 1 筆，尚未提交判定。", StringComparison.Ordinal));
-        Assert.Equal(mutationKind != "mapping", finalPageObserved);
-        var expectedFence = mutationKind == "mapping"
-            ? "PRTG 日映射於候選快照建立後改變；已拒絕使用新映射重算本頁，請重新開始評估。"
-            : mutationKind == "host"
-                ? "PRTG 資源世代於磁碟候選評估期間改變；已拒絕整批結果，請重新開始評估。"
-                : "PRTG 語意 metadata 於候選評估期間改變；已拒絕整批結果，請重新開始評估。";
-        Assert.True(console.Lines.Any(line => line.Contains("磁碟趨勢證據未完整：" + expectedFence, StringComparison.Ordinal)),
-            string.Join(Environment.NewLine, console.Lines));
-        Assert.Equal(1, trackedHostStore.CapturePrtgSnapshotCalls); // one bounded immutable host capture for all disk pages
-        Assert.True(getAllCallsAfterFirstCandidatePage >= 0);
-        Assert.True(getAllCallsAtRejectedCandidateFence >= 0);
-        Assert.Equal(getAllCallsAfterFirstCandidatePage, getAllCallsAtRejectedCandidateFence); // no GetAll across candidate pages or their rejection fence
-        if (mutationKind != "mapping")
-        {
-            Assert.True(getAllCallsAtFinalCandidatePage >= 0);
-            Assert.Equal(getAllCallsAfterFirstCandidatePage, getAllCallsAtFinalCandidatePage);
-        }
-        if (mutationKind == "host")
-            Assert.Equal(getAllCallsAtFinalCandidatePage, getAllCallsAfterHostMutation);
-        Assert.True(registry.IsPublished(day));
-        Assert.Empty(registry.For(host.HostId, day));
-        Assert.Empty(registry.For(changedHost.HostId, day));
-        Assert.Null(timeline.Get().DiskIncidentStartedAt);
-        var persistedParent = Assert.Single(_backend.RecordStore(new HostKey
-            { HostId = host.HostId, HostName = host.HostName }).ReadRecent(day, 1));
-        Assert.Empty(persistedParent.TopIssues.Where(issue => issue.LogName == PrtgFindingMapper.PrtgLogName));
-        Assert.Equal(RiskLevels.Low, persistedParent.RiskLevel);
-        Assert.Equal(resourceIdentity.Generation, timeline.Get().ResourceGeneration);
-        Assert.Equal(FixtureSourceGeneration, timeline.Get().SourceGeneration);
-        if (mutationKind != "mapping")
-            Assert.Equal(scopeRevisionBeforeRun, _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion());
-
-        ctx.RunRecorder.Finish(0);
-        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
-            .GetRun(ctx.RunRecorder.RunId);
-        Assert.Equal(BatchRun.PrtgOutcomePartial, run!.PrtgOutcome);
-        var affectedDay = Assert.Single(run.PrtgDays!);
-        Assert.Equal(day, affectedDay.Date);
-        Assert.Equal(BatchRun.PrtgOutcomePartial, affectedDay.Outcome);
-        Assert.Contains(mutationKind == "host" ? "未完成評估" : "磁碟趨勢證據未完整", affectedDay.Note);
-        var expectedHostReadsByCaller = new Dictionary<string, int>(StringComparer.Ordinal)
-        {
-            ["PrtgScopeRevisionReader.Read"] = mutationKind == "host" ? 2 : 1,
-            ["PrtgHostMapper.MapForDate"] = 1,
-            ["PrtgHostMapper.BuildActiveHostIpLookup"] = 2,
-            ["PrtgScopeDevices.Compute"] = 1
-        };
-        Assert.Equal(expectedHostReadsByCaller.OrderBy(x => x.Key),
-            trackedHostStore.GetAllCallsByCaller.OrderBy(x => x.Key));
-        Assert.Equal(expectedHostReadsByCaller.Values.Sum(), trackedHostStore.GetAllCalls);
-    }
-
     private void MapDeviceToHost(DateTime day, long deviceObjid, WebHost host)
     {
         _backend.PrtgStore().ReplaceHostMapForDate(day, new[]
@@ -1983,11 +1576,13 @@ public class PrtgDailyPipelineTests : IDisposable
     [InlineData(true, false)]
     [InlineData(false, false)]
     [InlineData(false, true)]
-    public async Task 預設白名單不含Ping_PingDown仍進規則評估產生Down(bool hasLogRecord, bool outsideSelectedScope)
+    public async Task 預設白名單含Ping_PingDown仍進規則評估產生Down(bool hasLogRecord, bool outsideSelectedScope)
     {
         EnableConservativePrtgWithDefaultWhitelist();
-        Assert.DoesNotContain(SystemSettings.DefaultPrtgSensorTypeWhitelist,
+        Assert.Contains(SystemSettings.DefaultPrtgSensorTypeWhitelist,
             t => string.Equals(t, "Ping", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(SystemSettings.DefaultPrtgSensorTypeWhitelist,
+            t => t.Contains("Traffic", StringComparison.OrdinalIgnoreCase));
 
         var today = DateTime.Today;
         var day = today.AddDays(-1);
@@ -2030,10 +1625,12 @@ public class PrtgDailyPipelineTests : IDisposable
 
         if (!hasLogRecord)
         {
-            // A qualified sensor result cannot be published as a host-day decision without its
-            // exact NetIQ parent. The pipeline leaves the parent absent rather than synthesizing it.
-            Assert.Empty(registry.For(host.HostId, day));
-            Assert.Empty(hostRecordStore.ReadRecent(day, 1));
+            // 當日沒有日誌分析：PRTG 自己成立一筆主機日（LogSource=Prtg），風險依 PRTG 規則；日誌分析晚到時原地更新。
+            Assert.Single(registry.For(host.HostId, day), f => f.EventKey == PrtgEventKey("down", 2001));
+            var prtgOnly = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+            Assert.Equal(AnalysisLogSource.Prtg, prtgOnly.LogSource);
+            Assert.Equal(RiskLevels.High, prtgOnly.RiskLevel);
+            Assert.Contains(prtgOnly.TopIssues, issue => issue.EventKey == PrtgEventKey("down", 2001));
             return;
         }
 
@@ -2042,390 +1639,7 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.Equal("builtin-prtg-down-availability", sig.RuleId);
         var persisted = Assert.Single(hostRecordStore.ReadRecent(day, 1));
         Assert.Equal(RiskLevels.High, persisted.RiskLevel);
-        Assert.Equal("partial", persisted.PrtgManifest!.Outcome);
-        Assert.Contains(persisted.PrtgManifest.WaitReasonCodes, reason => reason.StartsWith("silent-presence-", StringComparison.Ordinal));
-        Assert.Equal(persisted.RecordId, persisted.PrtgManifest.ParentRecordId);
-        Assert.Equal(PrtgFindingMapper.Fingerprint(Array.Empty<LogIssueSignature>()),
-            persisted.PrtgManifest.ParentFindingFingerprint);
-        Assert.Equal(HostDayWorkflowFingerprint.ForParentRecord(persisted), persisted.PrtgManifest.ParentFingerprint);
-        Assert.Equal(PrtgFindingMapper.Fingerprint(persisted.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
-            persisted.PrtgManifest.FindingFingerprint);
-        Assert.True(HostDayWorkflowFingerprint.HasValidPrtgManifest(persisted));
-        var observation = Assert.Single(_backend.PrtgObservationStore().ReadPage([host.HostId], day, day, 0, 100));
-        Assert.Equal(2001, observation.SensorObjid);
-        Assert.Equal(FixtureSourceGeneration, observation.SourceGeneration);
-    }
-
-    [Fact]
-    public async Task 無合格finding且原生靜默快照缺漏時不發布零finding完整manifest()
-    {
-        EnableConservativePrtgWithDefaultWhitelist();
-        var today = DateTime.Today;
-        var day = today.AddDays(-1);
-        var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-ZERO-WAIT", Active = true, IpAddress = "192.168.1.113" });
-        var prtgStore = _backend.PrtgStore();
-        var now = DateTime.Now;
-        prtgStore.UpsertDevices([new PrtgDeviceRow { Objid = 1, Name = "SRV-ZERO-WAIT", Ip = "192.168.1.113" }], now);
-        prtgStore.UpsertSensors([new PrtgSensorRow
-        {
-            Objid = 2002, DeviceObjid = 1, Name = "Ping", SensorType = "Ping", Status = "Up",
-            Category = PrtgSensorCategories.Availability
-        }], now);
-        prtgStore.AppendStateChanges([new PrtgStateChangeRow
-        {
-            SensorObjid = 2002, ChangedAt = day.Date.AddDays(-5), Status = "Up"
-        }]);
-        MapDeviceToHost(day, 1, host);
-        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
-        hostRecordStore.Append(new DailyAnalysisRecord
-        {
-            LogSource = AnalysisLogSource.Netiq, Date = day, HostId = host.HostId, Host = host.HostName,
-            RiskLevel = RiskLevels.Low, RiskBasis = "baseline"
-        });
-
-        var parent = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
-        workflow.ParentSucceeded(host.HostId, host.HostName, day, "fixture-parent", parent.AuditEventCount,
-            HostDayWorkflowFingerprint.ForParentRecord(parent), true, false, parentRecordId: parent.RecordId);
-        var (ctx, _, _, registry) = CreateContext(workflow: workflow);
-        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, [day], Task.CompletedTask, hostIds: null, guard: null);
-
-        Assert.Empty(registry.For(host.HostId, day));
-        var record = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-        Assert.Null(record.PrtgManifest);
-        var waiting = workflow.Get(host.HostId, day)!;
-        Assert.True(waiting.PrtgReadinessComplete); // the finite state/resource pass closed, but the silent gate did not
-        Assert.Null(waiting.PrtgEvidenceReadyAt);
-        Assert.Null(waiting.SupplementDueAt);
-        ctx.RunRecorder.Finish(0);
-        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
-            .GetRun(ctx.RunRecorder.RunId);
-        Assert.Equal(BatchRun.PrtgOutcomePartial, run!.PrtgOutcome);
-    }
-
-    [Fact]
-    public async Task WholeDailyGateStartsDeadlineBeforeCompleteManifestAttachmentAndReplayKeepsOriginalDeadline()
-    {
-        EnableConservativePrtgWithDefaultWhitelist();
-        var day = DateTime.Today.AddDays(-1);
-        var hostStore = new HostStore(_backend.Blob("hosts"));
-        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-WHOLE-READY", Active = true, IpAddress = "192.168.1.114" });
-        var prtgStore = _backend.PrtgStore();
-        var now = DateTime.Now;
-        const long deviceId = 1;
-        const long sensorId = 2004;
-        prtgStore.UpsertDevices([new PrtgDeviceRow { Objid = deviceId, Name = host.HostName, Ip = host.IpAddress }], now);
-        prtgStore.UpsertSensors([new PrtgSensorRow
-        {
-            Objid = sensorId, DeviceObjid = deviceId, Name = "Ping", SensorType = "Ping", Status = "Up",
-            Category = PrtgSensorCategories.Availability
-        }], now);
-        prtgStore.AppendStateChanges([new PrtgStateChangeRow
-        {
-            SensorObjid = sensorId, ChangedAt = day.Date.AddDays(-5), Status = "Up"
-        }]);
-        MapDeviceToHost(day, deviceId, host);
-        SeedNetiqParent(host, day, aiAnalyzed: false);
-
-        var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
-        var parent = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
-        workflow.ParentSucceeded(host.HostId, host.HostName, day, "fixture-parent", parent.AuditEventCount,
-            HostDayWorkflowFingerprint.ForParentRecord(parent), true, false, parentRecordId: parent.RecordId);
-        var (ctx, _, _, registry) = CreateContext(workflow: workflow);
-        SeedCompleteSilentPresenceProof(host, deviceId, sensorId, day);
-        var profilePolicyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        var profilePolicy = profilePolicyStore.Get();
-        var currentIdentityForProfile = prtgStore.GetResourceIdentity(sensorId);
-        currentIdentityForProfile = prtgStore.SetObservedChannel(sensorId, profilePolicy.SourceGeneration,
-            "whole-ready-profile-channel", currentIdentityForProfile.Generation);
-        var profileSettings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
-        var profileStrategy = new PrtgTrustedSamplingStrategyStateStore(
-            _backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey)).GetCurrent(profilePolicy,
-            PrtgFetchStrategy.Normalize(profileSettings.PrtgFetchStrategy), 15,
-            DateTime.SpecifyKind(day.Date.AddDays(-30), DateTimeKind.Utc));
-        Assert.True(profileStrategy.Ready);
-        var sourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, currentIdentityForProfile,
-            "Ping", "ping-profile", "Ping", PrtgTrustedQuantitySemantic.DiskFreePercent,
-            "%", 1, "direct", PrtgDiskAssessmentService.ParserSemanticVersion,
-            profileStrategy.StrategyFingerprint, profileStrategy.StrategyMinutes,
-            profileStrategy.EffectiveFromHourUtc, TimeSpan.FromMinutes(15), "minutes",
-            profilePolicy.RawTimestampTimeZoneId, profilePolicy.SourceTimeZoneId,
-            profilePolicy.AnalysisTimeZoneId, DateTimeOffset.UtcNow,
-            "typed-source-metadata-reference", "same-physical-sample-compared", true,
-            50, 50, new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate(),
-            new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).ToOADate());
-        var profile = PrtgConsumerProfileFixtureClosure.Publish(_backend, sourceProfile);
-        var profileIdentity = prtgStore.GetResourceIdentity(sensorId);
-        var timeline = new PrtgSensorTimelineStore(_backend.Blob(PrtgSensorTimelineStore.Prefix + sensorId));
-        var stateChanges = prtgStore.GetStateChanges(DateTime.Today.AddDays(-30), DateTime.Today.AddDays(1));
-        timeline.Update(e =>
-        {
-            e.Bind(sensorId, host.HostId, profileIdentity.SourceGeneration, "fixture",
-                profileIdentity.Generation, profileIdentity.Epoch, profileIdentity.ChannelGeneration,
-                profilePolicyStore.Get().ValidFrom);
-            e.Accept(new DateTimeOffset(DateTime.Today.AddDays(-30)), DateTimeOffset.Now,
-                stateChanges.Where(change => change.SensorObjid == sensorId).Select(change =>
-                    new PrtgTimedState(sensorId, new DateTimeOffset(change.ChangedAt), change.Status,
-                        e.SourceGeneration, e.ResourceGeneration)));
-        });
-        SeedCompleteSilentPresenceProof(host, deviceId, sensorId, day, updatePolicyTimeBasis: false);
-
-        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, [day], Task.CompletedTask, hostIds: null, guard: null);
-
-        Assert.Empty(registry.For(host.HostId, day));
-        var complete = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-        Assert.NotNull(complete.PrtgManifest);
-        Assert.Equal("complete", complete.PrtgManifest!.Outcome);
-        Assert.Equal(prtgStore.ReadResourceAuthorityRevision(host.HostId),
-            complete.PrtgManifest.ResourceAuthorityRevision);
-        var actualHostMapReads = 0;
-        var captureProbe = new HostDayWorkflowRecoveryHostedService((IAnalysisRecordQuery)_backend.RecordStore(), _backend,
-            new FakeSystemSettingsStore(), new FakeWebAi { Available = false }, workflow,
-            new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 1, 0, 0,
-                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)), date =>
-                {
-                    actualHostMapReads++;
-                    return prtgStore.GetLatestHostMapAuthorityWithDate(
-                        PrtgTriggeredValueFetcher.HostMapLookbackDays, date);
-                });
-        var sameDayAuthorityRows = Enumerable.Range(1, 4).Select(index => new DailyAnalysisRecord
-        {
-            RecordId = complete.RecordId + index,
-            HostId = host.HostId,
-            Host = host.HostName,
-            Date = day,
-            PrtgManifest = complete.PrtgManifest
-        }).ToArray();
-        var capturedAuthorities = captureProbe.CaptureCurrentWholeEvidenceAuthorities(sameDayAuthorityRows);
-        Assert.Equal(sameDayAuthorityRows.Length, capturedAuthorities.Count);
-        Assert.Equal(1, actualHostMapReads);
-        var ready = workflow.Get(host.HostId, day)!;
-        Assert.True(ready.PrtgReadinessComplete);
-        Assert.NotNull(ready.PrtgEvidenceReadyAt);
-        Assert.NotNull(ready.SupplementDueAt);
-        Assert.True(ready.PrtgEvidenceReadyAt < complete.PrtgManifest.CompletedAtUtc.ToLocalTime(),
-            "Whole readiness must start its supplement deadline before the formal manifest is attached.");
-        var firstReadyAt = ready.PrtgEvidenceReadyAt;
-        var firstDueAt = ready.SupplementDueAt;
-
-        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, [day], Task.CompletedTask, hostIds: null, guard: null);
-        var replayed = workflow.Get(host.HostId, day)!;
-        Assert.Equal(firstReadyAt, replayed.PrtgEvidenceReadyAt);
-        Assert.Equal(firstDueAt, replayed.SupplementDueAt);
-
-        var changedEpoch = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes("whole-ready-new-source-epoch")));
-        var changedSelection = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes("whole-ready-new-selection")));
-        workflow.BeginPrtgReadiness(host.HostId, day, changedEpoch, changedSelection, []);
-        var invalidated = workflow.Get(host.HostId, day)!;
-        Assert.Null(invalidated.PrtgEvidenceReadyAt);
-        Assert.Null(invalidated.SupplementDueAt);
-
-        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, [day], Task.CompletedTask, hostIds: null, guard: null);
-        var requalified = workflow.Get(host.HostId, day)!;
-        Assert.NotNull(requalified.PrtgEvidenceReadyAt);
-        Assert.NotNull(requalified.SupplementDueAt);
-
-        var deliveryVersion = workflow.CaptureDeliveryVersion(host.HostId, day, parent.RecordId)!;
-        workflow.RecordCaseIntents(host.HostId, day, ["incident:whole-ready"], deliveryVersion);
-        workflow.RecordMail(host.HostId, day, ["summary:whole-ready"],
-            new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.Ordinal)
-            { ["summary:whole-ready"] = ["recipient-part"] }, [], [], deliveryVersion);
-
-        using (var db = _backend.CreateContext())
-        {
-            var row = Assert.Single(db.DailyRecords.Where(candidate => candidate.RecordId == parent.RecordId));
-            var stored = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson)!;
-            Assert.Equal("complete", stored.PrtgManifest?.Outcome);
-            stored.PrtgManifest = null;
-            row.ContentJson = JsonSerializer.Serialize(stored);
-            db.SaveChanges();
-        }
-        var expiredReadyAt = DateTime.Now.AddMinutes(-20);
-        var expiredDueAt = DateTime.Now.AddMinutes(-5);
-        new HostDayWorkflowStore(_backend).Update(host.HostId, day, state =>
-        {
-            state.PrtgEvidenceReadyAt = expiredReadyAt;
-            state.SupplementDueAt = expiredDueAt;
-        }); // move only the timer issued by the real whole-gate producer
-        var beforeRecovery = workflow.Get(host.HostId, day)!;
-        var decisionVersion = beforeRecovery.DecisionVersion;
-        var aiState = beforeRecovery.Ai;
-        var caseIntents = beforeRecovery.CaseIntents.ToArray();
-        var mailIntents = beforeRecovery.MailIntents.ToArray();
-
-        var restartedWorkflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
-        var recoverySettings = new FakeSystemSettingsStore();
-        recoverySettings.Update(value => { value.RetentionDays = 30; value.PrtgEnabled = true; });
-        var recovery = new HostDayWorkflowRecoveryHostedService((IAnalysisRecordQuery)_backend.RecordStore(), _backend,
-            recoverySettings, new FakeWebAi { Available = false }, restartedWorkflow,
-            new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 1, 0, 0,
-                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)));
-        await recovery.RunSliceAsync(CancellationToken.None, day.AddDays(1));
-
-        var overdue = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Equal(WorkflowLegState.Overdue, overdue.Prtg);
-        Assert.Equal(expiredReadyAt, overdue.PrtgEvidenceReadyAt);
-        Assert.Equal(expiredDueAt, overdue.SupplementDueAt);
-        Assert.Equal(decisionVersion, overdue.DecisionVersion);
-        Assert.Equal(aiState, overdue.Ai);
-        Assert.Equal(caseIntents, overdue.CaseIntents);
-        Assert.Equal(mailIntents, overdue.MailIntents);
-
-        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey))
-            .Update(policy => policy.Revision += "-authority-drift");
-        var wrapSlice = await recovery.RunSliceAsync(CancellationToken.None, day.AddDays(1));
-        Assert.Equal(0, wrapSlice.HotRows); // the prior page cursor must wrap before this row is revisited
-        var driftReconcileSlice = await recovery.RunSliceAsync(CancellationToken.None, day.AddDays(1));
-        Assert.True(driftReconcileSlice.HotRows > 0, "The strict policy-authority reset assertion requires a consumed recovery row.");
-        var driftedAuthority = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Equal(WorkflowLegState.Waiting, driftedAuthority.Prtg);
-        Assert.Null(driftedAuthority.PrtgEvidenceReadyAt);
-        Assert.Null(driftedAuthority.SupplementDueAt);
-        Assert.Equal(decisionVersion, driftedAuthority.DecisionVersion);
-        Assert.Equal(aiState, driftedAuthority.Ai);
-        Assert.Equal(caseIntents, driftedAuthority.CaseIntents);
-        Assert.Equal(mailIntents, driftedAuthority.MailIntents);
-
-        async Task RecoverRevisitedRow()
-        {
-            var slice = await recovery.RunSliceAsync(CancellationToken.None, day.AddDays(1));
-            if (slice.HotRows == 0)
-                slice = await recovery.RunSliceAsync(CancellationToken.None, day.AddDays(1));
-            Assert.True(slice.HotRows > 0, "The authority assertion requires an actual bounded row revisit.");
-        }
-
-        async Task RequalifyWithTheRealDailyProducer()
-        {
-            var (freshContext, _, _, _) = CreateContext(workflow: restartedWorkflow);
-            await PrtgDailyPipeline.RunAsync(freshContext, _backend, hostStore, [day], Task.CompletedTask,
-                hostIds: null, guard: null);
-            var currentRecord = Assert.Single(hostRecordStore.ReadRecent(day, 1));
-            Assert.Equal("complete", currentRecord.PrtgManifest?.Outcome);
-            Assert.NotNull(restartedWorkflow.Get(host.HostId, day)?.PrtgEvidenceReadyAt);
-        }
-
-        await RequalifyWithTheRealDailyProducer();
-        using (var db = _backend.CreateContext())
-        {
-            var row = Assert.Single(db.DailyRecords.Where(candidate => candidate.RecordId == parent.RecordId));
-            var stored = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson)!;
-            stored.PrtgManifest = null;
-            row.ContentJson = JsonSerializer.Serialize(stored);
-            db.SaveChanges();
-        }
-        var currentIdentity = prtgStore.GetResourceIdentity(sensorId);
-        var readyBeforeMetadataRefresh = restartedWorkflow.Get(host.HostId, day)!;
-        var stableReadyAt = readyBeforeMetadataRefresh.PrtgEvidenceReadyAt;
-        var stableDueAt = readyBeforeMetadataRefresh.SupplementDueAt;
-        var profileRevisionBeforeMetadataRefresh = prtgStore.ReadResourceAuthorityRevision(host.HostId);
-        var observationRevisionBeforeMetadataRefresh = prtgStore.ReadResourceObservationRevisions([host.HostId])[host.HostId];
-        var refreshedSourceProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, currentIdentity,
-            profile.SensorType, profile.PrimaryChannelId, profile.PrimaryChannelCaption, profile.Quantity,
-            profile.Unit, profile.Scale, profile.Direction, profile.SemanticVersion,
-            profile.StrategyFingerprint, profile.StrategyMinutes, profile.StrategyEffectiveFromHourUtc,
-            profile.ConfirmedScanInterval, profile.IntervalRawUnit, profile.RawTimestampTimeZoneId,
-            profile.SourceApiTimeZoneId, profile.AnalysisTimeZoneId, DateTimeOffset.UtcNow,
-            profile.SourceMetadataReference, profile.PhysicalSampleReference,
-            false, 49, 49,
-            DateTime.SpecifyKind(new DateTime(2026, 9, 1, 0, 5, 0), DateTimeKind.Utc).ToOADate(),
-            DateTime.SpecifyKind(new DateTime(2026, 9, 1, 0, 5, 0), DateTimeKind.Utc).ToOADate(),
-            PrtgTrustedSamplingProfile.ExplicitBindingAuthorityKind, profile.BindingRevision,
-            profile.BindingFingerprint, profile.NativePrimaryChannelPropertyId,
-            profile.QualificationProofReference, profile.BindingSettingsRevision,
-            profile.BindingPolicyRevision, profile.AuthorityContextFingerprint);
-        var refreshedProfile = PrtgConsumerProfileFixtureClosure.Publish(_backend, refreshedSourceProfile);
-        Assert.Equal(profileRevisionBeforeMetadataRefresh, prtgStore.ReadResourceAuthorityRevision(host.HostId));
-        Assert.True(prtgStore.ReadResourceObservationRevisions([host.HostId])[host.HostId] > observationRevisionBeforeMetadataRefresh);
-        await RecoverRevisitedRow();
-        var metadataRefreshed = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Equal(stableReadyAt, metadataRefreshed.PrtgEvidenceReadyAt);
-        Assert.Equal(stableDueAt, metadataRefreshed.SupplementDueAt);
-        Assert.Equal(decisionVersion, metadataRefreshed.DecisionVersion);
-        Assert.Equal(aiState, metadataRefreshed.Ai);
-
-        var profileRevisionBeforeChange = prtgStore.ReadResourceAuthorityRevision(host.HostId);
-        var driftedProfile = PrtgTrustedSamplingProfile.FromProbe(sensorId, currentIdentity,
-            refreshedProfile.SensorType, refreshedProfile.PrimaryChannelId, refreshedProfile.PrimaryChannelCaption, refreshedProfile.Quantity,
-            refreshedProfile.Unit, refreshedProfile.Scale, refreshedProfile.Direction, refreshedProfile.SemanticVersion + "-changed",
-            refreshedProfile.StrategyFingerprint, refreshedProfile.StrategyMinutes, refreshedProfile.StrategyEffectiveFromHourUtc,
-            refreshedProfile.ConfirmedScanInterval, refreshedProfile.IntervalRawUnit, refreshedProfile.RawTimestampTimeZoneId,
-            refreshedProfile.SourceApiTimeZoneId, refreshedProfile.AnalysisTimeZoneId, DateTimeOffset.UtcNow,
-            refreshedProfile.SourceMetadataReference + "-semantic-change", refreshedProfile.PhysicalSampleReference + "-semantic-change",
-            true, refreshedProfile.ComparedSnapshotValue, refreshedProfile.ComparedPrimaryChannelValue,
-            refreshedProfile.ComparedSnapshotMeasurementOaDate, refreshedProfile.ComparedPrimaryChannelMeasurementOaDate);
-        driftedProfile = PrtgConsumerProfileFixtureClosure.Publish(_backend, driftedProfile);
-        Assert.True(prtgStore.ReadResourceAuthorityRevision(host.HostId) > profileRevisionBeforeChange);
-        Assert.Equal(driftedProfile.SemanticVersion,
-            Assert.Single(prtgStore.GetTrustedSamplingProfiles([sensorId])).Value.SemanticVersion);
-        await RecoverRevisitedRow();
-        var profileDrift = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Equal(WorkflowLegState.Waiting, profileDrift.Prtg);
-        Assert.Null(profileDrift.PrtgEvidenceReadyAt);
-        Assert.Null(profileDrift.SupplementDueAt);
-        Assert.Equal(decisionVersion, profileDrift.DecisionVersion);
-        Assert.Equal(aiState, profileDrift.Ai);
-        Assert.Equal(caseIntents, profileDrift.CaseIntents);
-        Assert.Equal(mailIntents, profileDrift.MailIntents);
-
-        var liveSettings = new SystemSettingsStore(_backend.Blob("system_settings"));
-        await RequalifyWithTheRealDailyProducer();
-        liveSettings.Update(value => value.PrtgUrl = string.Empty);
-        await RecoverRevisitedRow();
-        var missingUrl = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Null(missingUrl.PrtgEvidenceReadyAt);
-        Assert.Null(missingUrl.SupplementDueAt);
-        Assert.Equal(decisionVersion, missingUrl.DecisionVersion);
-        Assert.Equal(aiState, missingUrl.Ai);
-        liveSettings.Update(value => value.PrtgUrl = "https://prtg.invalid.example");
-
-        await RequalifyWithTheRealDailyProducer();
-        var generationPolicyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        var originalSourceGeneration = generationPolicyStore.Get().SourceGeneration;
-        generationPolicyStore.Update(policy => policy.SourceGeneration += "-authority-drift");
-        await RecoverRevisitedRow();
-        var changedGeneration = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Null(changedGeneration.PrtgEvidenceReadyAt);
-        Assert.Null(changedGeneration.SupplementDueAt);
-        Assert.Equal(decisionVersion, changedGeneration.DecisionVersion);
-        Assert.Equal(aiState, changedGeneration.Ai);
-        generationPolicyStore.Update(policy => policy.SourceGeneration = originalSourceGeneration);
-
-        await RequalifyWithTheRealDailyProducer();
-        var priorRules = KnownIssueCatalog.Rules;
-        var changedRules = priorRules.Select(rule =>
-            string.Equals(rule.Platform, "prtg", StringComparison.OrdinalIgnoreCase) && rule.Enabled
-                ? rule.CloneForSeedOverwrite(enabled: false)
-                : rule).ToList();
-        KnownIssueCatalog.Initialize(changedRules);
-        await RecoverRevisitedRow();
-        var changedRule = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Null(changedRule.PrtgEvidenceReadyAt);
-        Assert.Null(changedRule.SupplementDueAt);
-        Assert.Equal(decisionVersion, changedRule.DecisionVersion);
-        Assert.Equal(aiState, changedRule.Ai);
-        KnownIssueCatalog.Initialize(priorRules);
-
-        await RequalifyWithTheRealDailyProducer();
-        prtgStore.ReplaceHostMapForDate(day, []);
-        var (mappingRemovedContext, _, _, _) = CreateContext(workflow: restartedWorkflow);
-        await PrtgDailyPipeline.RunAsync(mappingRemovedContext, _backend, hostStore, [day], Task.CompletedTask,
-            hostIds: null, guard: null);
-        var removedMapping = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Null(removedMapping.PrtgEvidenceReadyAt);
-        Assert.Null(removedMapping.SupplementDueAt);
-        Assert.Equal(decisionVersion, removedMapping.DecisionVersion);
-        Assert.Equal(aiState, removedMapping.Ai);
-
-        workflow.ParentSucceeded(host.HostId, host.HostName, day, "replacement-parent", parent.AuditEventCount,
-            HostDayWorkflowFingerprint.HashParts(["changed-parent-decision"]), true, false,
-            now: DateTime.Now, parentRecordId: parent.RecordId + 1);
-        var changedParent = restartedWorkflow.Get(host.HostId, day)!;
-        Assert.Null(changedParent.PrtgEvidenceReadyAt);
-        Assert.Null(changedParent.SupplementDueAt);
+        Assert.Contains(persisted.TopIssues, issue => issue.EventKey == PrtgEventKey("down", 2001));
     }
 
     [Fact]
@@ -2465,11 +1679,13 @@ public class PrtgDailyPipelineTests : IDisposable
         var sig = Assert.Single(registry.For(host.HostId, day), f => f.EventKey == PrtgEventKey("down", 2001));
         Assert.Equal("builtin-prtg-down", sig.RuleId);
         Assert.False(sig.ElevatesDayRisk);
+        // 完整評估的那天要標記，分析路徑才會把 PRTG 腿記為成功（與每日管線同一個判準）。
+        Assert.True(registry.IsEvaluated(day));
         Assert.Equal(RiskLevels.Medium, Assert.Single(hostRecordStore.ReadRecent(day, 1)).RiskLevel);
     }
 
     [Fact]
-    public async Task 同裝置Ping與TrafficDown保留各sensor世代證據()
+    public async Task 同裝置Ping與TrafficDown_TrafficDown併入連通性Down()
     {
         EnableConservativePrtgWithDefaultWhitelist();
 
@@ -2503,10 +1719,11 @@ public class PrtgDailyPipelineTests : IDisposable
             new[] { today, day }, Task.CompletedTask, hostIds: null, guard: null);
 
         var signatures = registry.For(host.HostId, day);
-        Assert.Contains(signatures, f => f.EventKey == PrtgEventKey("down", 2001));
-        Assert.Contains(signatures, f => f.EventKey == PrtgEventKey("down", 2002));
-        Assert.Contains(signatures, f => f.EventKey == PrtgEventKey("down", 2003));
-        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("已合併 0 筆"));
+        var anchor = Assert.Single(signatures, f => f.EventKey == PrtgEventKey("down", 2001));
+        Assert.Contains("同裝置另有 2 顆 sensor 同時 Down 或震盪（已合併）", string.Join(" ", anchor.SampleMessages));
+        Assert.DoesNotContain(signatures, f => f.EventKey == PrtgEventKey("down", 2002));
+        Assert.DoesNotContain(signatures, f => f.EventKey == PrtgEventKey("down", 2003));
+        Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("已合併 2 筆"));
     }
 
     /// <summary>
@@ -2598,7 +1815,6 @@ public class PrtgDailyPipelineTests : IDisposable
 
         // 上一趟在 day2 留下的 warning（門檻或狀態改過後這一趟已不成立）
         var hostRecordStore = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
-        var existingIdentity = _fixtureIdentities[2001];
         SeedNetiqParent(host, day1);
         hostRecordStore.Append(new DailyAnalysisRecord
         {
@@ -2610,10 +1826,7 @@ public class PrtgDailyPipelineTests : IDisposable
                 {
                     LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:warning", EventId = 0,
                     EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = PrtgEventKey("warning", 2001),
-                    Count = 1, Severity = IssueSeverity.Medium,
-                    PrtgSourceGeneration = existingIdentity.SourceGeneration,
-                    PrtgResourceGeneration = existingIdentity.Generation,
-                    PrtgIncidentStartedAt = new DateTimeOffset(day2.Date)
+                    Count = 1, Severity = IssueSeverity.Medium
                 }
             }
         });
@@ -2806,4 +2019,117 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.StartsWith("【關機與監測異常同日訊號】", Assert.Single(record.SuppressedCorrelationAlerts));
         Assert.Contains(console.Lines, l => l.Contains($"PRTG 規則評估完成（{day:yyyy-MM-dd}）") && l.Contains("跨來源佐證（補追加階段）0 筆"));
     }
+
+    [Fact]
+    public async Task 每日管線執行時輸出數值資料就緒度且與Compute計算結果一致()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://127.0.0.1:1";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 1;
+        });
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-READY", Active = true, IpAddress = "192.168.1.123" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-READY", Ip = "192.168.1.123" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 3001, DeviceObjid = 1, Name = "CPU", SensorType = "SNMP CPU Load", Status = "Up", Category = PrtgSensorCategories.Cpu }
+        }, now);
+        MapDeviceToHost(day, 1, host);
+
+        var (ctx, console, _, _) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        var line = Assert.Single(console.Lines, l => l.Contains("數值資料就緒度（"));
+
+        var assessment = new PrtgValueAssessment(prtgStore, new Dictionary<string, PrtgValueSemantic>());
+        var deviceToHost = new Dictionary<long, long> { [1] = host.HostId };
+        var evaluationHostIds = new HashSet<long> { host.HostId };
+        var policySensorIds = new HashSet<long>();
+        var expectedSummary = PrtgValueReadiness.Compute(assessment, deviceToHost, evaluationHostIds, policySensorIds, DateOnly.FromDateTime(day), CancellationToken.None);
+        var expectedLine = PrtgValueReadiness.FormatLine(expectedSummary);
+
+        Assert.Equal($"[PRTG] {expectedLine}", line);
+    }
+
+    [Fact]
+    public async Task 啟用Memory規則且28個完整日可用下降時輸出記憶體使用趨勢評估且產生Finding()
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://127.0.0.1:1";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 1;
+        });
+
+        var rules = KnownIssueSeed.CreateRules().ToList();
+        var memRule = rules.Single(r => r.Id == "builtin-prtg-memory-used-trend");
+        rules.Remove(memRule);
+        rules.Add(memRule.CloneForSeedOverwrite(enabled: true));
+        KnownIssueCatalog.Initialize(rules);
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-MEM-TREND", Active = true, IpAddress = "192.168.1.124" });
+
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        const long deviceId = 10;
+        const long sensorId = 4001;
+
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = deviceId, Name = "SRV-MEM-TREND", Ip = "192.168.1.124" } }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow
+            {
+                Objid = sensorId,
+                DeviceObjid = deviceId,
+                Name = "Memory",
+                SensorType = "SNMP Memory",
+                Status = "Up",
+                Category = PrtgSensorCategories.Memory
+            }
+        }, now);
+
+        var valueRows = new List<PrtgValueRow>();
+        for (var d = 0; d < 28; d++)
+        {
+            var date = day.AddDays(-d);
+            MapDeviceToHost(date, deviceId, host);
+            var availPercent = 25.0 - (27 - d) * 0.5;
+            for (var h = 0; h < 24; h++)
+            {
+                valueRows.Add(new PrtgValueRow
+                {
+                    SensorObjid = sensorId,
+                    PeriodStart = date.Date.AddHours(h),
+                    AvgValue = availPercent,
+                    Coverage = 100,
+                    Quality = PrtgDataQuality.Ok,
+                    CreatedAt = now
+                });
+            }
+        }
+        prtgStore.UpsertValues(valueRows);
+
+        var (ctx, console, _, registry) = CreateContext();
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        Assert.Contains(console.Lines, l => l.Contains("記憶體使用趨勢評估"));
+
+        var findings = registry.For(host.HostId, day);
+        var expectedEventKey = $"prtg:memory_used_trend:{sensorId}";
+        Assert.Contains(findings, f => f.EventKey == expectedEventKey);
+    }
 }
+

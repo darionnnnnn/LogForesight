@@ -29,10 +29,9 @@ public class MailIssueDigestTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private MailIssueDigest Digest(bool requireCurrentPrtgMessageStatus = false)
+    private MailIssueDigest Digest()
     {
-        var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts,
-            requireCurrentPrtgMessageStatus: requireCurrentPrtgMessageStatus);
+        var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
         return new MailIssueDigest(aggregates, statusResolver, _settings, new FixedIssueExclusionSource(IssueExclusion.None));
     }
@@ -74,80 +73,6 @@ public class MailIssueDigestTests : IDisposable
         var rows = Digest().Build(new DateTime(2026, 8, 1), new DateTime(2026, 8, 1), null);
 
         Assert.Empty(rows);
-    }
-
-    [Fact]
-    public void Mail專用聚合只保留目前Parser版本且逐列篩選_預設查詢仍保留歷史()
-    {
-        var previous = new DateTime(2026, 8, 8);
-        var current = previous.AddDays(1);
-        LogIssueSignature StatusIssue(int? version, string eventKey) => new()
-        {
-            LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = EventLogEntryType.Warning,
-            Category = IssueCategory.Other, Severity = IssueSeverity.High, Count = 1,
-            EventKey = eventKey, PrtgMessageStatusSemanticVersion = version
-        };
-
-        var previousHost = _hosts.Upsert(new WebHost { HostName = "legacy-previous" });
-        Add(previousHost.HostId, previousHost.HostName, previous, StatusIssue(null, "prtg:down:101"));
-
-        var legacyHost = _hosts.Upsert(new WebHost { HostName = "legacy-current" });
-        var zeroHost = _hosts.Upsert(new WebHost { HostName = "zero-current" });
-        var futureHost = _hosts.Upsert(new WebHost { HostName = "future-current" });
-        var currentHost = _hosts.Upsert(new WebHost { HostName = "current-parser" });
-        var netIqHost = _hosts.Upsert(new WebHost { HostName = "netiq-current" });
-        Add(legacyHost.HostId, legacyHost.HostName, current, StatusIssue(null, "prtg:down:101"));
-        Add(zeroHost.HostId, zeroHost.HostName, current, StatusIssue(0, "prtg:down:102"));
-        Add(futureHost.HostId, futureHost.HostName, current, StatusIssue(2, "prtg:down:103"));
-        Add(currentHost.HostId, currentHost.HostName, current, StatusIssue(
-            PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, "prtg:down:104"));
-        Add(netIqHost.HostId, netIqHost.HostName, current, Issue("Security-Auditing", 4719, IssueSeverity.High));
-
-        // The exact per-issue version survives both the SQL projection and ordinary record readback.
-        using (var ctx = _fx.NewContext())
-        {
-            var projected = ctx.TopIssues.Where(row => row.RecordDate == current)
-                .OrderBy(row => row.HostId).Select(row => row.PrtgMessageStatusSemanticVersion).ToList();
-            Assert.Equal(new int?[] { null, 0, 2, PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent, null }, projected);
-        }
-        var readBack = Assert.Single(_records.Query(new RecordQueryFilter
-        {
-            Hosts = new[] { HostKey.Of(currentHost) }, From = current, To = current
-        }));
-        Assert.Equal(PrtgSensorTimelineEvidence.MessageStatusSemanticVersionCurrent,
-            Assert.Single(readBack.TopIssues).PrtgMessageStatusSemanticVersion);
-
-        var allHistory = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
-        var defaultDown = Assert.Single(allHistory.Aggregate(IssueExclusion.None, previous, current, null)
-            .Where(row => row.Source == "PRTG:down"));
-        Assert.Equal(5, defaultDown.HostCount);
-        var mailQuery = new EfIssueAggregateQuery(_fx.NewContext, _hosts,
-            requireCurrentPrtgMessageStatus: true);
-        var mailPrevious = mailQuery.Aggregate(IssueExclusion.None, previous, previous, null)
-            .Where(row => row.Source == "PRTG:down").ToList();
-        var mailCurrent = mailQuery.Aggregate(IssueExclusion.None, current, current, null)
-            .Where(row => row.Source == "PRTG:down").ToList();
-        Assert.Empty(mailPrevious);
-        Assert.Equal(1, Assert.Single(mailCurrent).HostCount);
-        Assert.Single(mailQuery.Aggregate(IssueExclusion.None, current, current, null)
-            .Where(row => row.Source == "Security-Auditing"));
-        Assert.Empty(mailQuery.ActionableOccurrences(IssueExclusion.None, previous, previous, null));
-        var actionable = mailQuery.ActionableOccurrences(IssueExclusion.None, current, current, null);
-        Assert.Contains(actionable, row => row.HostId == currentHost.HostId && row.IssueKey.Contains("PRTG:down", StringComparison.Ordinal));
-        Assert.DoesNotContain(actionable, row => row.HostId == legacyHost.HostId || row.HostId == zeroHost.HostId || row.HostId == futureHost.HostId);
-
-        // Historical previous rows cannot turn the valid current finding into an overdue issue.
-        var overdueKey = IssueSignatureKey.For("PRTG", "PRTG:down", 0, EventLogEntryType.Warning, "prtg:down:101");
-        _issueHandlings.Save(new IssueHandling
-        {
-            HostName = legacyHost.HostName, Date = current, IssueKey = overdueKey,
-            Status = IssueHandlingStatuses.InProgress, DueDate = current.AddDays(-1)
-        });
-        var mailRow = Assert.Single(Digest(requireCurrentPrtgMessageStatus: true)
-            .Build(current, current, null).Where(row => row.Source == "PRTG:down"));
-        Assert.Equal(MailIssueBucket.New, mailRow.Bucket);
-        Assert.Equal(0, mailRow.PreviousHostCount);
-        Assert.Equal(1, mailRow.HostCount);
     }
 
     /// <summary>新出現＝等長前期完全沒有這個簽章（與 IssueRankingBuilder.IsNew 同一套判定式）</summary>
@@ -271,5 +196,126 @@ public class MailIssueDigestTests : IDisposable
 
         var row = Assert.Single(rows);
         Assert.Equal("highday", row.Source);
+    }
+
+    [Fact]
+    public void LiveContributionScope_RemovesOnlyStaleHostFromMixedIssueAggregate()
+    {
+        var previous = new DateTime(2026, 8, 7);
+        var current = previous.AddDays(1);
+        var prtgHost = _hosts.Upsert(new WebHost { HostName = "current-prtg" });
+        var staleHost = _hosts.Upsert(new WebHost { HostName = "stale-prtg" });
+        var netiqHost = _hosts.Upsert(new WebHost { HostName = "netiq" });
+        LogIssueSignature PrtgIssue(string sensorId) => new()
+        {
+            LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
+            EntryType = EventLogEntryType.Warning, Category = IssueCategory.Storage,
+            Severity = IssueSeverity.High, Count = 1, EventKey = $"prtg:disk_free_trend:{sensorId}"
+        };
+        Add(prtgHost.HostId, prtgHost.HostName, previous, PrtgIssue("11"));
+        Add(staleHost.HostId, staleHost.HostName, previous, PrtgIssue("12"));
+        Add(prtgHost.HostId, prtgHost.HostName, current, PrtgIssue("11"));
+        Add(staleHost.HostId, staleHost.HostName, current, PrtgIssue("12"));
+        Add(netiqHost.HostId, netiqHost.HostName, previous, Issue("APP", 42, IssueSeverity.High));
+        Add(netiqHost.HostId, netiqHost.HostName, current, Issue("APP", 42, IssueSeverity.High));
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = staleHost.HostName, Date = current,
+            IssueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0,
+                EventLogEntryType.Warning, "prtg:disk_free_trend:12"),
+            Status = IssueHandlingStatuses.InProgress, DueDate = current.AddDays(-1)
+        });
+        var scope = new MailIssueContributionScope(
+        [
+            new("PRTG:disk_free_trend", 0, prtgHost.HostId, current, (int)IssueSeverity.High),
+            new("APP", 42, netiqHost.HostId, current, (int)IssueSeverity.High)
+        ],
+        [
+            new("PRTG:disk_free_trend", 0, prtgHost.HostId, previous, (int)IssueSeverity.High),
+            new("APP", 42, netiqHost.HostId, previous, (int)IssueSeverity.High)
+        ]);
+
+        var rows = Digest().Build(current, current, null, scope);
+
+        var disk = Assert.Single(rows, row => row.Source == "PRTG:disk_free_trend");
+        Assert.Equal(1, disk.HostCount);
+        Assert.Equal(1, disk.PreviousHostCount);
+        Assert.Equal(MailIssueBucket.OtherHighRisk, disk.Bucket);
+        var app = Assert.Single(rows, row => row.Source == "APP");
+        Assert.Equal(1, app.HostCount);
+        Assert.Equal(1, app.PreviousHostCount);
+    }
+
+    [Fact]
+    public void PRTG問題第1天標誤報_第5天出現不進摘要列_第40天出現進摘要()
+    {
+        var day1 = new DateTime(2026, 8, 1);
+        var day5 = new DateTime(2026, 8, 5);
+        var day40 = new DateTime(2026, 9, 10);
+        var host = _hosts.Upsert(new WebHost { HostName = "h1" });
+
+        LogIssueSignature PrtgIssue() => new()
+        {
+            LogName = "PRTG",
+            Source = "PRTG:disk_free_trend",
+            EventId = 0,
+            EntryType = EventLogEntryType.Warning,
+            Category = IssueCategory.Storage,
+            Severity = IssueSeverity.High,
+            Count = 1,
+            EventKey = "prtg:disk_free_trend:sensor-1"
+        };
+
+        var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
+
+        // Day 1: 標記誤報
+        Add(host.HostId, host.HostName, day1, RiskLevels.High, PrtgIssue());
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            IssueKey = issueKey,
+            Date = day1,
+            Status = IssueHandlingStatuses.FalsePositive,
+            UpdatedAt = day1
+        });
+
+        // Day 5: 無標記再出現（在 30 日誤報窗內）
+        Add(host.HostId, host.HostName, day5, RiskLevels.High, PrtgIssue());
+        var rowsDay5 = Digest().Build(day5, day5, null);
+        Assert.DoesNotContain(rowsDay5, r => r.Source == "PRTG:disk_free_trend");
+
+        // Day 40: 無標記再出現（超過 30 日誤報窗）
+        Add(host.HostId, host.HostName, day40, RiskLevels.High, PrtgIssue());
+        var rowsDay40 = Digest().Build(day40, day40, null);
+        var prtgRow = Assert.Single(rowsDay40, r => r.Source == "PRTG:disk_free_trend");
+        Assert.Equal(1, prtgRow.HostCount);
+    }
+
+    [Fact]
+    public void 非PRTG問題標誤報後隔天出現_照常進摘要()
+    {
+        var day1 = new DateTime(2026, 8, 1);
+        var day2 = new DateTime(2026, 8, 2);
+        var host = _hosts.Upsert(new WebHost { HostName = "h1" });
+
+        var issue = Issue("disk", 153, severity: IssueSeverity.High);
+        var issueKey = IssueSignatureKey.For(issue);
+
+        // Day 1: 標記誤報
+        Add(host.HostId, host.HostName, day1, RiskLevels.High, issue);
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            IssueKey = issueKey,
+            Date = day1,
+            Status = IssueHandlingStatuses.FalsePositive,
+            UpdatedAt = day1
+        });
+
+        // Day 2: 再出現無標記
+        Add(host.HostId, host.HostName, day2, RiskLevels.High, issue);
+        var rows = Digest().Build(day2, day2, null);
+        var row = Assert.Single(rows, r => r.Source == "disk" && r.EventId == 153);
+        Assert.Equal(1, row.HostCount);
     }
 }

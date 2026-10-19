@@ -17,7 +17,7 @@ public sealed class PrtgResourceGuard : IDisposable
     private readonly PrtgClient _client;
     private readonly bool _ownsClient;
     private readonly SystemSettings _settings;
-    private readonly PrtgResourceGuardTargetResult _targets;
+    private PrtgResourceGuardTargetResult _targets;
     private readonly BatchRunRecorder _recorder;
     private readonly IRunConsole _console;
     private readonly IRunProgress? _progress;
@@ -68,6 +68,21 @@ public sealed class PrtgResourceGuard : IDisposable
         _recorder = recorder ?? throw new ArgumentNullException(nameof(recorder));
         _console = console ?? throw new ArgumentNullException(nameof(console));
         _progress = progress;
+    }
+
+    /// <summary>目前監看的目標（測試與執行輸出用）。</summary>
+    public PrtgResourceGuardTargetResult Targets => _targets;
+
+    /// <summary>
+    /// 換上新的監看目標：守門在批次啟動時以鏡像建立，夜間自動偵測（直接查 PRTG）寫入清單後，
+    /// 當晚就要改監看偵測到的 sensor，不等下一趟或鏡像補抓。只換目標，不重設暫停計數。
+    /// </summary>
+    public void ReplaceTargets(PrtgResourceGuardTargetResult targets)
+    {
+        _targets = targets ?? throw new ArgumentNullException(nameof(targets));
+        var msg = $"[PRTG資源守門] 改監看自動偵測到的 {targets.SensorObjids.Count} 顆 sensor。";
+        _recorder.Milestone(msg);
+        _console.WriteLine(msg);
     }
 
     /// <summary>

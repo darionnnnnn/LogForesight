@@ -10,6 +10,11 @@ namespace LogForesight.Core.Service;
 /// </summary>
 public sealed class PrtgHostMapper
 {
+    public const string NoteHostnameMultiHostsPrefix = "hostname 比對到";
+    public const string NoteHostnameSameHostPrefix = "hostname 比對：同一主機名";
+    public const string NoteHostnameHostTakenPrefix = "hostname 命中主機";
+    public const string NoteHostnameOk = "hostname";
+
     private readonly EfPrtgStore _store;
     private readonly IHostStore _hostStore;
     private readonly IRunConsole _console;
@@ -53,6 +58,38 @@ public sealed class PrtgHostMapper
 
         var hostLookup = BuildActiveHostIpLookup(_hostStore, _resolver);
 
+        // 主機主檔短名索引：對 activeHosts（已排除停用與合併）以 PrtgHostnameCandidates.ShortName(h.HostName) 為鍵，
+        // 值為主機清單（依 HostId 排序）；null 鍵略過。
+        var hostByShortName = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var host in activeHosts)
+        {
+            var shortName = PrtgHostnameCandidates.ShortName(host.HostName);
+            if (shortName == null) continue;
+            if (!hostByShortName.TryGetValue(shortName, out var list))
+            {
+                list = new List<WebHost>();
+                hostByShortName[shortName] = list;
+            }
+            list.Add(host);
+        }
+
+        List<WebHost> MatchHostsByHostname(PrtgDeviceRow dev)
+        {
+            var candidates = PrtgHostnameCandidates.Extract(dev.Name, dev.Ip);
+            var matchedDict = new Dictionary<long, WebHost>();
+            foreach (var cand in candidates)
+            {
+                if (hostByShortName.TryGetValue(cand, out var hosts))
+                {
+                    foreach (var h in hosts)
+                    {
+                        matchedDict.TryAdd(h.HostId, h);
+                    }
+                }
+            }
+            return matchedDict.Values.OrderBy(h => h.HostId).ToList();
+        }
+
         // 規則二預備：分組前先算出本次有哪些正規化 IP，其底下至少有一台 device 走了人工對應
         var manualMappedIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var dev in devices)
@@ -75,6 +112,28 @@ public sealed class PrtgHostMapper
         var skippedNoIp = 0;
         var skippedExcluded = 0;
         var skippedManualSibling = 0;
+        var hostnameCount = 0;
+        var pendingHostnameCandidates = new List<(PrtgDeviceRow Device, WebHost Host)>();
+
+        // hostname 比對到多台主機：不猜，標 Conflict 並列出候選主機名（最多 5 個）。無 IP 與 IP 查無主機兩條路共用。
+        void AddHostnameMultiHostConflict(PrtgDeviceRow dev, List<WebHost> matched)
+        {
+            conflictCount++;
+            var candidateNames = matched.Count <= 5
+                ? string.Join("、", matched.Select(h => h.HostName))
+                : string.Join("、", matched.Take(5).Select(h => h.HostName)) + $" 等 {matched.Count} 台";
+            rows.Add(new PrtgHostMapRow
+            {
+                MapDate = targetDate,
+                DeviceObjid = dev.Objid,
+                Ip = dev.Ip,
+                HostId = null,
+                HostName = null,
+                MapStatus = PrtgMapStatus.Conflict,
+                Note = TrimNote($"{NoteHostnameMultiHostsPrefix} {matched.Count} 台主機：{candidateNames}"),
+                CreatedAt = now
+            });
+        }
 
         // 3. 裝置分流：人工對應優先；無 IP 者跳過；排除清單跳過；同 IP 已有人工指定跳過；有 IP 者按正規化 IP 分組
         var devicesWithResolvedIp = new List<(PrtgDeviceRow Device, string ResolvedIp)>();
@@ -113,10 +172,22 @@ public sealed class PrtgHostMapper
                 }
             }
 
-            // 3.2 無 IP 者跳過
+            // 3.2 無 IP 者：若沒有生效中的人工對應，進入 hostname 退路
             if (normIp == null)
             {
-                skippedNoIp++;
+                var matchedByHostname = MatchHostsByHostname(device);
+                if (matchedByHostname.Count == 0)
+                {
+                    skippedNoIp++;
+                }
+                else if (matchedByHostname.Count >= 2)
+                {
+                    AddHostnameMultiHostConflict(device, matchedByHostname);
+                }
+                else
+                {
+                    pendingHostnameCandidates.Add((device, matchedByHostname[0]));
+                }
                 continue;
             }
 
@@ -173,18 +244,30 @@ public sealed class PrtgHostMapper
             var singleDev = groupItems[0].Device;
             if (!hostLookup.TryGetValue(ip, out var matchedHosts) || matchedHosts.Count == 0)
             {
-                unmatchedCount++;
-                rows.Add(new PrtgHostMapRow
+                var matchedByHostname = MatchHostsByHostname(singleDev);
+                if (matchedByHostname.Count == 0)
                 {
-                    MapDate = targetDate,
-                    DeviceObjid = singleDev.Objid,
-                    Ip = singleDev.Ip,
-                    HostId = null,
-                    HostName = null,
-                    MapStatus = PrtgMapStatus.Unmatched,
-                    Note = "PRTG 有此 device，主機主檔查無對應 IP",
-                    CreatedAt = now
-                });
+                    unmatchedCount++;
+                    rows.Add(new PrtgHostMapRow
+                    {
+                        MapDate = targetDate,
+                        DeviceObjid = singleDev.Objid,
+                        Ip = singleDev.Ip,
+                        HostId = null,
+                        HostName = null,
+                        MapStatus = PrtgMapStatus.Unmatched,
+                        Note = "PRTG 有此 device，主機主檔查無對應 IP",
+                        CreatedAt = now
+                    });
+                }
+                else if (matchedByHostname.Count >= 2)
+                {
+                    AddHostnameMultiHostConflict(singleDev, matchedByHostname);
+                }
+                else
+                {
+                    pendingHostnameCandidates.Add((singleDev, matchedByHostname[0]));
+                }
             }
             else if (matchedHosts.Count == 1)
             {
@@ -227,6 +310,77 @@ public sealed class PrtgHostMapper
             }
         }
 
+        // 全部裝置處理完後，處理暫存的 hostname 候選對應：
+        // - 若該主機在本次結果中已有 Ok 列（IP 命中或人工對應）
+        //   → 該裝置 Conflict、HostId／HostName null、Note＝hostname 命中主機 {主機名}，但該主機已有 IP 或人工對應的裝置
+        // - 若有 ≥2 台裝置的 hostname 候選對應到同一台主機
+        //   → 這幾台全部 Conflict、HostId／HostName null、Note＝hostname 比對：同一主機名有 {N} 台 PRTG device
+        // - 否則 Ok，HostId／HostName 填該主機，Note＝hostname
+        var okHostIds = rows
+            .Where(r => r.MapStatus == PrtgMapStatus.Ok && r.HostId.HasValue)
+            .Select(r => r.HostId!.Value)
+            .ToHashSet();
+
+        foreach (var group in pendingHostnameCandidates.GroupBy(x => x.Host.HostId))
+        {
+            var targetHost = group.First().Host;
+            var groupList = group.ToList();
+
+            if (okHostIds.Contains(targetHost.HostId))
+            {
+                foreach (var item in groupList)
+                {
+                    conflictCount++;
+                    rows.Add(new PrtgHostMapRow
+                    {
+                        MapDate = targetDate,
+                        DeviceObjid = item.Device.Objid,
+                        Ip = item.Device.Ip,
+                        HostId = null,
+                        HostName = null,
+                        MapStatus = PrtgMapStatus.Conflict,
+                        Note = TrimNote($"{NoteHostnameHostTakenPrefix} {targetHost.HostName}，但該主機已有 IP 或人工對應的裝置"),
+                        CreatedAt = now
+                    });
+                }
+            }
+            else if (groupList.Count >= 2)
+            {
+                foreach (var item in groupList)
+                {
+                    conflictCount++;
+                    rows.Add(new PrtgHostMapRow
+                    {
+                        MapDate = targetDate,
+                        DeviceObjid = item.Device.Objid,
+                        Ip = item.Device.Ip,
+                        HostId = null,
+                        HostName = null,
+                        MapStatus = PrtgMapStatus.Conflict,
+                        Note = TrimNote($"{NoteHostnameSameHostPrefix}有 {groupList.Count} 台 PRTG device"),
+                        CreatedAt = now
+                    });
+                }
+            }
+            else
+            {
+                var item = groupList[0];
+                okCount++;
+                hostnameCount++;
+                rows.Add(new PrtgHostMapRow
+                {
+                    MapDate = targetDate,
+                    DeviceObjid = item.Device.Objid,
+                    Ip = item.Device.Ip,
+                    HostId = targetHost.HostId,
+                    HostName = TrimHostName(targetHost.HostName),
+                    MapStatus = PrtgMapStatus.Ok,
+                    Note = NoteHostnameOk,
+                    CreatedAt = now
+                });
+            }
+        }
+
         // 依 DeviceObjid 排序以求寫入決定性
         // （TrimNote 定義見本類別下方）
         rows.Sort((a, b) => a.DeviceObjid.CompareTo(b.DeviceObjid));
@@ -235,7 +389,7 @@ public sealed class PrtgHostMapper
         _store.ReplaceHostMapForDate(targetDate, rows);
 
         // 5. Console 摘要與異常明細（前 20 筆）
-        _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：ok={okCount}, manual={manualCount}, conflict={conflictCount}, unmatched={unmatchedCount}, skipped_no_ip={skippedNoIp}, skipped_excluded={skippedExcluded}, skipped_manual_sibling={skippedManualSibling}");
+        _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：ok={okCount}, manual={manualCount}, conflict={conflictCount}, unmatched={unmatchedCount}, skipped_no_ip={skippedNoIp}, skipped_excluded={skippedExcluded}, skipped_manual_sibling={skippedManualSibling}, hostname={hostnameCount}");
 
         var auditRows = rows.Where(r => r.MapStatus != PrtgMapStatus.Ok).Take(20).ToList();
         if (auditRows.Count > 0)
@@ -247,7 +401,7 @@ public sealed class PrtgHostMapper
             }
         }
 
-        return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount, skippedExcluded, skippedManualSibling);
+        return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount, skippedExcluded, skippedManualSibling, hostnameCount);
     }
 
     /// <summary>
@@ -310,4 +464,5 @@ public sealed record PrtgHostMapResult(
     int SkippedNoIp,
     int Manual = 0,
     int SkippedExcluded = 0,
-    int SkippedManualSibling = 0);
+    int SkippedManualSibling = 0,
+    int Hostname = 0);

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Web.Services;
@@ -8,6 +8,11 @@ internal sealed class PrtgSnapshotDiagnosticsStore
 {
     private const string BlobKey = "prtg_snapshot_diagnostics_v1";
     private const int RetentionDays = 14;
+    // Four Mi UTF-16 characters bounds this best-effort diagnostic document. Fifteen
+    // calendar dates (cutoff through today) contain at most 360 distinct wall hours.
+    internal const int MaximumDocumentCharacters = 4 * 1024 * 1024;
+    private const int MaximumHours = (RetentionDays + 1) * 24;
+    private const int MaximumReasonCharacters = 4096;
     private readonly EfJsonBlobStore _blob;
     private readonly Func<int> _retentionDays;
     private readonly object _gate = new();
@@ -20,6 +25,8 @@ internal sealed class PrtgSnapshotDiagnosticsStore
     internal void Record(DateTime at, string outcome, string? reason = null, int targets = 0, int sampled = 0,
         string? reasonCode = null)
     {
+        if (reason?.Length > MaximumReasonCharacters || reasonCode?.Length > MaximumReasonCharacters)
+            throw new InvalidDataException("snapshot-diagnostics-reason-cap-exceeded");
         var hour = new DateTime(at.Year, at.Month, at.Day, at.Hour, 0, 0);
         var retentionDays = Math.Clamp(_retentionDays(), 1, RetentionDays);
         lock (_gate)
@@ -31,7 +38,7 @@ internal sealed class PrtgSnapshotDiagnosticsStore
                 if (_recordedSkips.Contains((hour, skipKey))) return;
             }
 
-            _blob.Mutate(raw =>
+            _blob.MutateWithContext((_, raw) =>
             {
                 var doc = Read(raw);
                 var row = doc.Hours.FirstOrDefault(x => x.Hour == hour);
@@ -56,8 +63,12 @@ internal sealed class PrtgSnapshotDiagnosticsStore
                     row.ReasonCodes[reasonCode] = row.ReasonCodes.GetValueOrDefault(reasonCode) + 1;
                 var cutoff = at.Date.AddDays(-retentionDays);
                 doc.Hours.RemoveAll(x => x.Hour < cutoff);
-                return (JsonSerializer.Serialize(doc), true);
-            });
+                Validate(doc);
+                var serialized = JsonSerializer.Serialize(doc);
+                if (serialized.Length > MaximumDocumentCharacters)
+                    throw new InvalidDataException("snapshot-diagnostics-document-cap-exceeded");
+                return (serialized, true);
+            }, MaximumDocumentCharacters, enforceCurrentUtf8ByteCap: false);
             if (outcome == "skip" && !string.IsNullOrWhiteSpace(skipKey))
                 _recordedSkips.Add((hour, skipKey));
         }
@@ -66,7 +77,7 @@ internal sealed class PrtgSnapshotDiagnosticsStore
     private void LoadRecordedSkips()
     {
         if (_recordedSkipsLoaded) return;
-        foreach (var row in Read(_blob.Read()).Hours)
+        foreach (var row in ReadBounded().Hours)
             foreach (var reason in row.SkipReasons)
                 _recordedSkips.Add((row.Hour, reason));
         _recordedSkipsLoaded = true;
@@ -74,14 +85,37 @@ internal sealed class PrtgSnapshotDiagnosticsStore
 
     internal IReadOnlyList<PrtgSnapshotDiagnosticHour> ReadHours()
     {
-        lock (_gate) return Read(_blob.Read()).Hours.OrderBy(x => x.Hour).ToArray();
+        lock (_gate) return ReadBounded().Hours.OrderBy(x => x.Hour).ToArray();
+    }
+
+    private PrtgSnapshotDiagnosticsDocument ReadBounded()
+    {
+        var read = _blob.ReadBoundedWithVersion(MaximumDocumentCharacters);
+        if (read.Version == 0 && read.Prefix is null) return new();
+        if (read.ReportedLength > MaximumDocumentCharacters || read.Prefix is null ||
+            string.IsNullOrWhiteSpace(read.Prefix))
+            throw new InvalidDataException("snapshot-diagnostics-document-invalid");
+        return Read(read.Prefix);
+    }
+
+    private static void Validate(PrtgSnapshotDiagnosticsDocument document)
+    {
+        if (document.Hours is null || document.Hours.Count > MaximumHours ||
+            document.Hours.Select(hour => hour.Hour).Distinct().Count() != document.Hours.Count ||
+            document.Hours.Any(hour => hour.Hour.Minute != 0 || hour.Hour.Second != 0 ||
+                hour.Reasons.Keys.Concat(hour.ReasonCodes.Keys).Concat(hour.SkipReasons)
+                    .Any(reason => reason.Length > MaximumReasonCharacters)))
+            throw new InvalidDataException("snapshot-diagnostics-structure-invalid");
     }
 
     private static PrtgSnapshotDiagnosticsDocument Read(string? json)
     {
         var document = string.IsNullOrWhiteSpace(json)
             ? new PrtgSnapshotDiagnosticsDocument()
-            : JsonSerializer.Deserialize<PrtgSnapshotDiagnosticsDocument>(json) ?? new();
+            : JsonSerializer.Deserialize<PrtgSnapshotDiagnosticsDocument>(json)
+                ?? throw new InvalidDataException("snapshot-diagnostics-document-null");
+        if (document.Hours is null || document.Hours.Any(hour => hour is null))
+            throw new InvalidDataException("snapshot-diagnostics-hours-invalid");
         foreach (var hour in document.Hours)
         {
             hour.Reasons ??= new Dictionary<string, int>(StringComparer.Ordinal);
@@ -100,6 +134,7 @@ internal sealed class PrtgSnapshotDiagnosticsStore
                 hour.SkipReasons.Add(code);
             }
         }
+        Validate(document);
         return document;
     }
 

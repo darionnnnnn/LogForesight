@@ -113,6 +113,12 @@ public class DashboardService
         {
             var fullIds = visibleHostIds.Where(id => !_visibility.IsCaseGrantOnly(id)).ToArray();
             using var db = _backend.CreateContext();
+            // 只有 PRTG finding 的主機日照常出現在風險與問題統計，但不是「日誌分析過的主機日」：另列，並自分析數扣除
+            var prtgOnly = (short)AnalysisLogSource.Prtg;
+            dto.PrtgOnlyHostDays = nothingVisible ? 0 : db.DailyRecords.AsNoTracking().Count(r => visibleHostIds.Contains(r.HostId) &&
+                r.RecordDate >= from && r.RecordDate <= anchor && r.LogSource == prtgOnly &&
+                (riskLevels == null || riskLevels.Contains(r.RiskLevel)));
+            dto.AnalyzedHostDays = Math.Max(0, dto.AnalyzedHostDays - dto.PrtgOnlyHostDays);
             dto.PendingRiskReviewDays = db.DailyRecords.AsNoTracking().Count(r => fullIds.Contains(r.HostId) &&
                 r.RecordDate >= from && r.RecordDate <= anchor && (r.RiskReviewStatus == "pending" || r.RiskReviewStatus == "unavailable"));
         }

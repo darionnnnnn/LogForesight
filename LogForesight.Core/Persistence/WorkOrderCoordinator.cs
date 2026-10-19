@@ -43,6 +43,7 @@ public class WorkOrderCoordinator
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRecordHandlingStore _handlingLog;
     private readonly IHostStore _hosts;
+    private readonly int _caseDayInlineRowLimit;
 
     public WorkOrderCoordinator(
         IWorkOrderStore orders,
@@ -58,6 +59,23 @@ public class WorkOrderCoordinator
         _caseCoordinator = caseCoordinator;
         _handlingLog = handlingLog;
         _hosts = hosts;
+        _caseDayInlineRowLimit = IssueCaseCoordinator.CaseDayInlineRowLimit;
+    }
+
+    /// <summary>Internal-only seam for tiny producer/consumer contract fixtures; production callers use the fixed public default.</summary>
+    internal WorkOrderCoordinator(
+        IWorkOrderStore orders,
+        IIssueCaseStore cases,
+        IIssueHandlingStore issueHandlings,
+        IssueCaseCoordinator caseCoordinator,
+        IRecordHandlingStore handlingLog,
+        IHostStore hosts,
+        int caseDayInlineRowLimit)
+        : this(orders, cases, issueHandlings, caseCoordinator, handlingLog, hosts)
+    {
+        if (caseDayInlineRowLimit < 0 || caseDayInlineRowLimit >= IssueCaseCoordinator.CaseDayInlineRowLimit)
+            throw new ArgumentOutOfRangeException(nameof(caseDayInlineRowLimit));
+        _caseDayInlineRowLimit = caseDayInlineRowLimit;
     }
 
     // ── 建單／追加 ───────────────────────────────────────────────────────────
@@ -232,7 +250,7 @@ public class WorkOrderCoordinator
             Note = order.Note, DueDate = order.DueDate,
             ActorId = actor.ActorId, ActorAccount = actor.ActorAccount, OccurredAt = actor.OccurredAt,
             TriggerDate = null
-        }, IssueCaseCoordinator.CaseDayInlineRowLimit);
+        }, _caseDayInlineRowLimit);
 
         // 改連不動逐日列（狀態沒變），只存案件
         if (relinked.Count > 0) _cases.SaveMany(relinked);
@@ -641,7 +659,7 @@ public class WorkOrderCoordinator
         {
             Mode = CaseDayModes.Cancel, Status = IssueHandlingStatuses.Open, Note = reason,
             ActorId = actor.ActorId, ActorAccount = actor.ActorAccount, OccurredAt = actor.OccurredAt
-        }, IssueCaseCoordinator.CaseDayInlineRowLimit);
+        }, _caseDayInlineRowLimit);
 
         CloseOrder(workOrderId, WorkOrderCloseReasons.Cancelled, WorkOrderEventActions.Cancelled, actor, -members.Count, reason);
         return new WorkOrderCloseResult { ClosedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
@@ -799,7 +817,7 @@ public class WorkOrderCoordinator
             Mode = CaseDayModes.Sync, Status = status, Note = effectiveNote, DueDate = effectiveDueDate, Clearing = clearing,
             ActorId = actor.ActorId, ActorAccount = actor.ActorAccount, OccurredAt = actor.OccurredAt,
             TriggerDate = null
-        }, IssueCaseCoordinator.CaseDayInlineRowLimit);
+        }, _caseDayInlineRowLimit);
     }
 
     // ── 結案推導 ─────────────────────────────────────────────────────────────

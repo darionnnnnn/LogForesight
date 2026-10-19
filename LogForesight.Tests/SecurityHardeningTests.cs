@@ -270,8 +270,8 @@ public class SecurityHardeningTests
         Assert.True(await rig.Invoke(context, currentUser));
 
         var refreshedCookie = context.Response.Headers.SetCookie
-            .First(value => value.StartsWith(rig.Settings.Jwt.CookieName + "=ey", StringComparison.Ordinal));
-        var refreshedToken = refreshedCookie[(rig.Settings.Jwt.CookieName.Length + 1)..].Split(';')[0];
+            .First(value => value!.StartsWith(rig.Settings.Jwt.CookieName + "=ey", StringComparison.Ordinal));
+        var refreshedToken = refreshedCookie![(rig.Settings.Jwt.CookieName.Length + 1)..].Split(';')[0];
         var handler = new JwtSecurityTokenHandler();
         var refreshedJwt = handler.ReadJwtToken(refreshedToken);
         var refreshedExpiry = long.Parse(

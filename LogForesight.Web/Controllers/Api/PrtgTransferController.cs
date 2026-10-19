@@ -234,9 +234,7 @@ public sealed class PrtgTransferController : ControllerBase
         var policyHosts = string.Join(",", policy.HostIds.Order().Select(x => x.ToString(CultureInfo.InvariantCulture)));
         var policySensors = string.Join(",", policy.SensorIds.Order().Select(x => x.ToString(CultureInfo.InvariantCulture)));
         var sourceText = $"url:{settings.PrtgUrl?.Trim() ?? ""}|enabled:{settings.PrtgEnabled}|" +
-                         $"policy-version:{policyVersion}|revision:{policy.Revision}|core:{policy.CoreSystemId}|" +
-                         $"generation:{policy.SourceGeneration}|endpoint:{policy.EndpointHint}|" +
-                         $"valid-from:{policy.ValidFrom.UtcDateTime.Ticks}|zone:{policy.SourceTimeZoneId}|culture:{policy.SourceCultureName}|" +
+                         $"policy-version:{policyVersion}|revision:{policy.Revision}|" +
                          $"policy-hosts:{policyHosts}|policy-sensors:{policySensors}";
         var ownerText = $"user:{_currentUser.UserId}|server-admin:{_currentUser.IsServerAdmin}|account:{_currentUser.Account}";
         return new PrtgTransferBinding(Hash(Encoding.UTF8.GetBytes(ownerText)),

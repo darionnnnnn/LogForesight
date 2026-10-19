@@ -226,9 +226,21 @@ const RULE_COLUMNS = [
     },
     {
         title: '門檻', className: 'text-end', sortKey: 'threshold', sortDefaultDir: 'desc',
-        sortValue: r => r.platform === 'prtg' ? (r.prtgRuleCode === 'disk_free_trend' ? (r.prtgDiskTrendThresholds?.lowWaterPercent ?? 0) : r.prtgRuleCode?.startsWith('resource_') ? 90 : r.prtgThreshold) : r.countThreshold,
+        sortValue: r => r.platform === 'prtg'
+            ? (r.prtgRuleCode === 'disk_free_trend'
+                ? (r.prtgDiskTrendThresholds?.lowWaterPercent ?? 0)
+                : (r.prtgRuleCode === 'memory_used_trend' || r.prtgRuleCode === 'cpu_load_trend' || r.prtgRuleCode === 'ping_latency_trend'
+                    ? (r.prtgTrendThresholds?.targetValue ?? 0)
+                    : (r.prtgRuleCode?.startsWith('resource_') ? 90 : r.prtgThreshold)))
+            : r.countThreshold,
         render: r => r.platform === 'prtg'
-            ? (r.prtgRuleCode === 'disk_free_trend' ? `低水位 ${r.prtgDiskTrendThresholds?.lowWaterPercent ?? '—'}%` : r.prtgRuleCode === 'silent' ? '-' : r.prtgRuleCode?.startsWith('resource_') ? '可信完成小時規則' : `${r.prtgThreshold} ${r.prtgRuleCode === 'flapping' ? '次' : '分'}${prtgSensorCategorySuffix(r)}`)
+            ? (r.prtgRuleCode === 'disk_free_trend'
+                ? `低水位 ${r.prtgDiskTrendThresholds?.lowWaterPercent ?? '—'}%`
+                : (r.prtgRuleCode === 'memory_used_trend' || r.prtgRuleCode === 'cpu_load_trend'
+                    ? `目標 ${r.prtgTrendThresholds?.targetValue ?? '—'}%`
+                    : (r.prtgRuleCode === 'ping_latency_trend'
+                        ? `目標 ${r.prtgTrendThresholds?.targetValue ?? '—'}ms`
+                        : (r.prtgRuleCode === 'silent' ? '-' : r.prtgRuleCode?.startsWith('resource_') ? '可信完成小時規則' : `${r.prtgThreshold} ${r.prtgRuleCode === 'flapping' ? '次' : '分'}${prtgSensorCategorySuffix(r)}`))))
             : String(r.countThreshold)
     },
     { title: '狀態', render: r => statusCell(r) },
@@ -344,25 +356,67 @@ function prtgSensorCategorySuffix(rule) {
     return `（${PRTG_SENSOR_CATEGORY_LABELS[category] ?? category}）`;
 }
 
+// 三條趨勢規則新建時的暫定門檻（與 Core PrtgTrendThresholds.*Provisional 相同）
+const VALUE_TREND_DEFAULTS = {
+    memory_used_trend: { windowDays: 35, minimumValidDays: 28, minimumSlopePerDay: 0.3, minimumWorseningDayRatio: 0.70, targetValue: 90, horizonDays: 7, recentDays: 7, baselineMultiplier: 1 },
+    cpu_load_trend: { windowDays: 35, minimumValidDays: 28, minimumSlopePerDay: 0.3, minimumWorseningDayRatio: 0.70, targetValue: 70, horizonDays: 7, recentDays: 7, baselineMultiplier: 1 },
+    ping_latency_trend: { windowDays: 35, minimumValidDays: 28, minimumSlopePerDay: 0, minimumWorseningDayRatio: 0.60, targetValue: 50, horizonDays: 7, recentDays: 7, baselineMultiplier: 1.5 }
+};
+
+function fillValueTrendFields(t) {
+    document.getElementById('rule-prtg-vtrend-window').value = t.windowDays;
+    document.getElementById('rule-prtg-vtrend-min-days').value = t.minimumValidDays;
+    document.getElementById('rule-prtg-vtrend-slope').value = t.minimumSlopePerDay;
+    document.getElementById('rule-prtg-vtrend-ratio').value = Math.round(t.minimumWorseningDayRatio * 100);
+    document.getElementById('rule-prtg-vtrend-target').value = t.targetValue;
+    document.getElementById('rule-prtg-vtrend-horizon').value = t.horizonDays;
+    document.getElementById('rule-prtg-vtrend-recent').value = t.recentDays;
+    document.getElementById('rule-prtg-vtrend-multiplier').value = t.baselineMultiplier;
+}
+
+function isTrendRuleCode(code) {
+    return code === 'memory_used_trend' || code === 'cpu_load_trend' || code === 'ping_latency_trend';
+}
+function isAnyTrendRuleCode(code) {
+    return code === 'disk_free_trend' || isTrendRuleCode(code);
+}
+
 // silent 規則不可指定分類：代碼選 silent 時鎖住下拉並清成「全部分類」。
 function applyPrtgSensorCategoryLock() {
     const select = document.getElementById('rule-prtg-sensor-category');
     const code = document.getElementById('rule-prtg-code').value;
     const isSilent = code === 'silent';
     const isDiskTrend = code === 'disk_free_trend';
-    const resourceCategory = {
-        resource_cpu_sustained_pressure: 'cpu',
-        resource_memory_sustained_pressure: 'memory',
-        resource_disk_pressure: 'disk'
-    }[code];
-    const isResourcePressure = Boolean(resourceCategory);
+    const isTrend = isTrendRuleCode(code);
+    const isAnyTrend = isDiskTrend || isTrend;
+
     if (isSilent) select.value = '';
     if (isDiskTrend) select.value = 'disk';
-    if (isResourcePressure) select.value = resourceCategory;
-    select.disabled = isSilent || isDiskTrend || isResourcePressure;
+    if (code === 'memory_used_trend') select.value = 'memory';
+    if (code === 'cpu_load_trend') select.value = 'cpu';
+    if (code === 'ping_latency_trend') select.value = 'availability';
+
+    select.disabled = isSilent || isDiskTrend;
+    if (isTrend) select.disabled = true;
+
     document.getElementById('rule-prtg-disk-trend-fields').classList.toggle('d-none', !isDiskTrend);
-    document.getElementById('rule-match-prtg-threshold').classList.toggle('d-none', isDiskTrend || isResourcePressure);
-    if (isResourcePressure) document.getElementById('rule-prtg-threshold').value = '0';
+    document.getElementById('rule-prtg-value-trend-fields').classList.toggle('d-none', !isTrend);
+    document.getElementById('rule-prtg-trend-preview-container').classList.toggle('d-none', !isAnyTrend);
+    document.getElementById('rule-match-prtg-threshold').classList.toggle('d-none', isAnyTrend);
+
+    const targetUnit = document.getElementById('rule-prtg-vtrend-target-unit');
+    if (targetUnit) {
+        targetUnit.textContent = code === 'ping_latency_trend' ? 'ms' : '%';
+    }
+
+    const descEl = document.getElementById('rule-disk-preview-description');
+    if (descEl) {
+        if (code === 'disk_free_trend') {
+            descEl.textContent = '預覽只讀已完成日資料，不會儲存或改變規則狀態；最多選 730 日，每頁最多 100 組，評估會依預期歷史點數分批。候選以「完成日 × sensor」配對計數，同一 sensor 跨日會重複計入；本頁就緒與命中數只涵蓋目前頁面。6 日資料不等於已驗證；資料超過 28 日也不等於語意已驗證。啟用時後端會再次檢查 28 日證據，目前正式站真實 28 日證據仍待確認。';
+        } else {
+            descEl.textContent = '預覽只讀已完成日資料，不會儲存或改變規則狀態；最多選 730 日，每頁最多 100 組，評估會依預期歷史點數分批。候選以「完成日 × sensor」配對計數，同一 sensor 跨日會重複計入；本頁就緒與命中數只涵蓋目前頁面。有效日數不足或語意未確認時不評估。啟用時後端會再次檢查就緒證據。';
+        }
+    }
 }
 
 function matchCell(rule) {
@@ -379,6 +433,10 @@ function matchCell(rule) {
         if (rule.prtgRuleCode === 'disk_free_trend') {
             const t = rule.prtgDiskTrendThresholds;
             threshold.textContent = t ? `低水位 ${t.lowWaterPercent}% · ${t.minimumDeclinePercentagePointsPerDay} 百分點／日 · ${t.maximumDaysToDepletion} 日內耗盡 · ${t.maximumDaysToLowWater ?? 7} 日內降到低水位` : '磁碟趨勢門檻未設定';
+        } else if (isTrendRuleCode(rule.prtgRuleCode)) {
+            const t = rule.prtgTrendThresholds;
+            const unit = rule.prtgRuleCode === 'ping_latency_trend' ? 'ms' : '%';
+            threshold.textContent = t ? `目標 ${t.targetValue}${unit} · 近 ${t.windowDays} 日 (最少 ${t.minimumValidDays} 日)` : '趨勢門檻未設定';
         } else if (rule.prtgRuleCode?.startsWith('resource_')) {
             threshold.textContent = '可信完成小時規則';
         } else if (rule.prtgRuleCode === 'silent') {
@@ -433,6 +491,7 @@ function statusCell(rule) {
     wrap.className = 'd-flex flex-column gap-1 align-items-start';
 
     wrap.appendChild(statusBadge(rule.enabled ? '啟用' : '停用', rule.enabled ? 'success' : 'neutral'));
+    if (rule.retiredNote) wrap.appendChild(statusBadge('已移除', 'warning', { title: rule.retiredNote }));
 
     if (rule.origin === 'custom') {
         wrap.appendChild(statusBadge('自訂', 'info'));
@@ -597,7 +656,12 @@ function openRuleModal(rule, { asTemplate = false } = {}) {
     document.getElementById('rule-prtg-trend-min-days').value = trend.minimumValidDays;
     document.getElementById('rule-prtg-trend-window').value = trend.recentWindowDays;
     document.getElementById('rule-prtg-trend-ratio').value = trend.minimumDecliningDayRatio * 100;
+
+    fillValueTrendFields(rule?.prtgTrendThresholds
+        ?? VALUE_TREND_DEFAULTS[rule?.prtgRuleCode] ?? VALUE_TREND_DEFAULTS.memory_used_trend);
+
     if (asTemplate && rule?.prtgRuleCode === 'disk_free_trend') document.getElementById('rule-enabled').checked = false;
+    if (asTemplate && isTrendRuleCode(rule?.prtgRuleCode)) document.getElementById('rule-enabled').checked = false;
     applyPrtgSensorCategoryLock();
 
     // 處置知識庫預設收合（漸進揭露）；已填內容的規則自動展開，摘要行顯示填了幾欄
@@ -645,7 +709,7 @@ function collectRule() {
         eventNamePattern: document.getElementById('rule-event-name').value.trim(),
         messagePatterns: splitLines(document.getElementById('rule-message-patterns').value),
         prtgRuleCode: platform === 'prtg' ? document.getElementById('rule-prtg-code').value : null,
-        prtgThreshold: platform === 'prtg' && document.getElementById('rule-prtg-code').value !== 'disk_free_trend' ? (Number(document.getElementById('rule-prtg-threshold').value) || 0) : 0,
+        prtgThreshold: platform === 'prtg' && document.getElementById('rule-prtg-code').value !== 'disk_free_trend' && !isTrendRuleCode(document.getElementById('rule-prtg-code').value) ? (Number(document.getElementById('rule-prtg-threshold').value) || 0) : 0,
         prtgSensorCategory: platform === 'prtg' ? (document.getElementById('rule-prtg-sensor-category').value || null) : null,
         prtgDiskTrendThresholds: platform === 'prtg' && document.getElementById('rule-prtg-code').value === 'disk_free_trend' ? {
             lowWaterPercent: Number(document.getElementById('rule-prtg-trend-low-water').value),
@@ -655,6 +719,16 @@ function collectRule() {
             minimumValidDays: Number(document.getElementById('rule-prtg-trend-min-days').value),
             recentWindowDays: Number(document.getElementById('rule-prtg-trend-window').value),
             minimumDecliningDayRatio: Number(document.getElementById('rule-prtg-trend-ratio').value) / 100
+        } : null,
+        prtgTrendThresholds: platform === 'prtg' && isTrendRuleCode(document.getElementById('rule-prtg-code').value) ? {
+            windowDays: Number(document.getElementById('rule-prtg-vtrend-window').value),
+            minimumValidDays: Number(document.getElementById('rule-prtg-vtrend-min-days').value),
+            minimumSlopePerDay: Number(document.getElementById('rule-prtg-vtrend-slope').value),
+            minimumWorseningDayRatio: Number(document.getElementById('rule-prtg-vtrend-ratio').value) / 100,
+            targetValue: Number(document.getElementById('rule-prtg-vtrend-target').value),
+            horizonDays: Number(document.getElementById('rule-prtg-vtrend-horizon').value),
+            recentDays: Number(document.getElementById('rule-prtg-vtrend-recent').value),
+            baselineMultiplier: Number(document.getElementById('rule-prtg-vtrend-multiplier').value)
         } : null,
         category: document.getElementById('rule-category').value,
         severity: document.getElementById('rule-severity').value,
@@ -673,9 +747,14 @@ function splitLines(text) {
 }
 
 document.getElementById('rule-prtg-code').addEventListener('change', () => {
+    const code = document.getElementById('rule-prtg-code').value;
     applyPrtgSensorCategoryLock();
     if (!editingRule && document.getElementById('rule-prtg-code').value === 'disk_free_trend') {
         document.getElementById('rule-enabled').checked = false;
+    }
+    if (!editingRule && isTrendRuleCode(code)) {
+        document.getElementById('rule-enabled').checked = false;
+        fillValueTrendFields(VALUE_TREND_DEFAULTS[code]);
     }
 });
 
@@ -716,12 +795,13 @@ document.getElementById('rule-form').addEventListener('input', event => {
         return;
     }
     if (event.target.id.startsWith('rule-disk-preview-') || event.target.id === 'rule-prtg-trend-clear') return;
-    if (document.getElementById('rule-prtg-code').value !== 'disk_free_trend' || !diskPreviewSummary.textContent) return;
+    const prtgCode = document.getElementById('rule-prtg-code').value;
+    if ((prtgCode !== 'disk_free_trend' && !isTrendRuleCode(prtgCode)) || !diskPreviewSummary.textContent) return;
     clearDiskPreview('草稿已變更，請重新試算。');
 });
 
 async function runDiskPreview(event) {
-    const thresholdError = diskTrendThresholdError();
+    const thresholdError = diskTrendThresholdError() || valueTrendThresholdError();
     if (thresholdError) { toast(thresholdError, 'warning'); return; }
     const daysInput = document.getElementById('rule-disk-preview-days');
     const limitInput = document.getElementById('rule-disk-preview-limit');
@@ -778,7 +858,10 @@ async function runDiskPreview(event) {
                 ? `排除：${exclusionReasonLabel(row.exclusionReason)}`
                 : row.applicable ? '具備適用條件' : '尚未符合適用條件';
             const outcome = row.wouldHit ? `草稿條件命中${row.suppressedByCurrentSettings ? '／符合當前抑制估計' : ''}` : row.eligible ? '已評估，未達命中條件' : row.dataReady ? '資料有就緒但本列不可評估' : '沒有足夠資料，無法判斷是否命中';
-            const metrics = [row.currentAvailablePercent == null ? null : `目前可用 ${row.currentAvailablePercent}%`, `有效日 ${row.validDayCount}`, `可用時數 ${row.usableHours}`, row.estimatedDaysToDepletion == null ? null : `預估耗盡 ${row.estimatedDaysToDepletion} 日`, row.estimatedDaysToLowWater == null ? null : `預估到低水位 ${row.estimatedDaysToLowWater} 日`].filter(Boolean).join('；');
+            const valueMetric = row.currentAvailablePercent != null
+                ? `目前可用 ${row.currentAvailablePercent}%`
+                : (row.currentValue != null ? `目前值 ${row.currentValue}${row.valueUnit ? `${row.valueUnit}` : ''}` : null);
+            const metrics = [valueMetric, `有效日 ${row.validDayCount}`, `可用時數 ${row.usableHours}`, row.estimatedDaysToDepletion == null ? null : `預估耗盡 ${row.estimatedDaysToDepletion} 日`, row.estimatedDaysToLowWater == null ? null : `預估到低水位 ${row.estimatedDaysToLowWater} 日`].filter(Boolean).join('；');
             item.textContent = `${row.completedDate} × Sensor ${row.sensorObjid}／Device ${row.deviceObjid}／Host ${row.hostId} · ${flags} · ${readiness} · ${outcome}${row.reason ? `（${row.reason}）` : ''}${metrics ? ` · ${metrics}` : ''}`;
             list.appendChild(item);
         }
@@ -819,11 +902,11 @@ function exclusionReasonLabel(reason) {
 }
 
 document.getElementById('rule-prtg-code').addEventListener('change', event => {
-    document.getElementById('rule-disk-enable-guard').classList.toggle('d-none', event.target.value !== 'disk_free_trend');
+    document.getElementById('rule-disk-enable-guard').classList.toggle('d-none', !isAnyTrendRuleCode(event.target.value));
 });
 
 document.getElementById('rule-modal').addEventListener('shown.bs.modal', () => {
-    document.getElementById('rule-disk-enable-guard').classList.toggle('d-none', document.getElementById('rule-prtg-code').value !== 'disk_free_trend');
+    document.getElementById('rule-disk-enable-guard').classList.toggle('d-none', !isAnyTrendRuleCode(document.getElementById('rule-prtg-code').value));
 });
 
 function diskTrendThresholdError() {
@@ -847,8 +930,31 @@ function diskTrendThresholdError() {
     return null;
 }
 
+function valueTrendThresholdError() {
+    if (!isTrendRuleCode(document.getElementById('rule-prtg-code').value)) return null;
+    const windowDays = Number(document.getElementById('rule-prtg-vtrend-window').value);
+    const minDays = Number(document.getElementById('rule-prtg-vtrend-min-days').value);
+    const slope = Number(document.getElementById('rule-prtg-vtrend-slope').value);
+    const ratio = Number(document.getElementById('rule-prtg-vtrend-ratio').value);
+    const target = Number(document.getElementById('rule-prtg-vtrend-target').value);
+    const horizon = Number(document.getElementById('rule-prtg-vtrend-horizon').value);
+    const recent = Number(document.getElementById('rule-prtg-vtrend-recent').value);
+    const multiplier = Number(document.getElementById('rule-prtg-vtrend-multiplier').value);
+
+    if (!Number.isFinite(minDays) || minDays < 2) return '最少有效日必須介於 2–400 日。';
+    if (!Number.isFinite(windowDays) || windowDays < minDays || windowDays > 400) return '觀察窗必須介於最少有效日與 400 日之間。';
+    if (!Number.isFinite(slope) || slope < 0) return '每日最小斜率必須大於或等於 0。';
+    if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 100) return '惡化日比例必須大於 0% 且不超過 100%。';
+    if (!Number.isFinite(target) || target < 0) return '門檻目標值必須大於或等於 0。';
+    if (!Number.isFinite(horizon) || horizon < 1 || horizon > 365) return '預測期必須介於 1–365 日。';
+    if (!Number.isFinite(recent) || recent < 1 || recent > minDays) return '近期天數必須介於 1 與最少有效日之間。';
+    if (!Number.isFinite(multiplier) || multiplier < 1) return '基準倍數必須大於或等於 1。';
+
+    return null;
+}
+
 document.getElementById('rule-validate').addEventListener('click', async () => {
-    const thresholdError = diskTrendThresholdError();
+    const thresholdError = diskTrendThresholdError() || valueTrendThresholdError();
     if (thresholdError) { toast(thresholdError, 'warning'); return; }
     // 驗證要打後端，慢的時候可以連點送出多次請求（同檔其他長時間動作都有 withBusy，這裡原本漏了）
     const restore = withBusy(document.getElementById('rule-validate'), '驗證中');
@@ -904,7 +1010,7 @@ function alertBox(variant, title, items) {
 
 document.getElementById('rule-form').addEventListener('submit', async event => {
     event.preventDefault();
-    const thresholdError = diskTrendThresholdError();
+    const thresholdError = diskTrendThresholdError() || valueTrendThresholdError();
     if (thresholdError) { toast(thresholdError, 'warning'); return; }
 
     const saveButton = document.getElementById('rule-save');
@@ -927,6 +1033,27 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         }
         const previewResult = await confirmAction({
             title: '確認啟用磁碟趨勢規則',
+            message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${new Date(latestDiskPreview.latestPreviewAt).toLocaleString()}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
+            confirmText: '確認啟用', confirmVariant: 'warning'
+        });
+        if (!previewResult) { restore(); return; }
+    } else if (draft.platform === 'prtg' && isTrendRuleCode(draft.prtgRuleCode) && draft.enabled) {
+        const days = Number(document.getElementById('rule-disk-preview-days').value);
+        const limit = Number(document.getElementById('rule-disk-preview-limit').value);
+        const through = new Date();
+        through.setDate(through.getDate() - 1);
+        through.setHours(12, 0, 0, 0);
+        const from = new Date(through);
+        from.setDate(from.getDate() - (days - 1));
+        const dateText = value => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+        const currentFingerprint = JSON.stringify({ fromDate: dateText(from), throughDate: dateText(through), offset: diskPreviewOffset, limit, rule: draft });
+        if (!diskPreviewHasResult || currentFingerprint !== diskPreviewFingerprint) {
+            restore();
+            toast('啟用趨勢規則前，請先對目前草稿與頁面執行試算。', 'warning');
+            return;
+        }
+        const previewResult = await confirmAction({
+            title: '確認啟用趨勢規則',
             message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${new Date(latestDiskPreview.latestPreviewAt).toLocaleString()}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
             confirmText: '確認啟用', confirmVariant: 'warning'
         });
@@ -969,6 +1096,11 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
 
 async function toggleEnabled(rule) {
     if (!rule.enabled && rule.platform === 'prtg' && rule.prtgRuleCode === 'disk_free_trend') {
+        openRuleModal(rule);
+        toast('已開啟編輯預覽；請確認目前門檻與日期頁面、完成草稿試算後再儲存啟用。', 'info');
+        return;
+    }
+    if (!rule.enabled && rule.platform === 'prtg' && isTrendRuleCode(rule.prtgRuleCode)) {
         openRuleModal(rule);
         toast('已開啟編輯預覽；請確認目前門檻與日期頁面、完成草稿試算後再儲存啟用。', 'info');
         return;

@@ -113,8 +113,8 @@ public class PrtgCorroborationTests
         PrtgCorroboration.Apply(record, NoSuppression);
         issue.SampleMessages = ["新明細"];
         Assert.Equal(0, PrtgCorroboration.Refresh(record, NoSuppression).Added);
-        Assert.Contains("新明細", Assert.Single(record.CorrelationAlertRefs.Where(
-            reference => reference.PatternId == CorrelationPatternIds.PrtgStorageCorroborated)).Text);
+        Assert.Contains("新明細", Assert.Single(record.CorrelationAlertRefs,
+            reference => reference.PatternId == CorrelationPatternIds.PrtgStorageCorroborated).Text);
         PrtgCorroboration.Refresh(record, new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated });
         Assert.Contains("原事件關聯", record.CorrelationAlerts);
         Assert.Contains(record.CorrelationAlertRefs, reference => reference.PatternId == CorrelationPatternIds.StorageChain);
@@ -524,7 +524,7 @@ public class PrtgCorroborationTests
         prtgIssue.SourceObservations[0].SourceReference = null;
         prtgIssue.SourceObservations[0].SourceReferenceQuality = SourceReferenceQuality.Unknown;
         PrtgCorroboration.Refresh(record, new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated });
-        Assert.Empty(record.CorrelationAlertRefs.Where(reference => reference.PatternId == CorrelationPatternIds.PrtgStorageEvidenceAligned));
+        Assert.DoesNotContain(record.CorrelationAlertRefs, reference => reference.PatternId == CorrelationPatternIds.PrtgStorageEvidenceAligned);
         Assert.DoesNotContain(record.CorrelationAlertRefs, reference => reference.PatternId == CorrelationPatternIds.PrtgStorageCorroborated);
         Assert.Contains(weakText, record.SuppressedCorrelationAlerts);
         Assert.DoesNotContain(record.SuppressedCorrelationAlerts, text => text.StartsWith("【儲存異常來源對齊】", StringComparison.Ordinal));
@@ -544,7 +544,7 @@ public class PrtgCorroborationTests
             new HashSet<string> { CorrelationPatternIds.PrtgStorageCorroborated });
 
         Assert.Equal((null, null, 0), result);
-        Assert.Empty(record.CorrelationAlertRefs.Where(reference => reference.PatternId == CorrelationPatternIds.PrtgStorageCorroborated));
+        Assert.DoesNotContain(record.CorrelationAlertRefs, reference => reference.PatternId == CorrelationPatternIds.PrtgStorageCorroborated);
         Assert.Contains(record.SuppressedCorrelationAlerts, text => text.StartsWith("【儲存異常同日訊號】", StringComparison.Ordinal));
         Assert.Contains(record.SuppressedCorrelationAlerts, text => text.StartsWith("【儲存異常來源對齊】", StringComparison.Ordinal));
         Assert.Empty(record.CorrelationAlertRefs);

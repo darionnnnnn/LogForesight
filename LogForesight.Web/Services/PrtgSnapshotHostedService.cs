@@ -56,7 +56,6 @@ public class PrtgSnapshotHostedService : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
 
     private readonly PrtgSnapshotAccumulator _accumulator = new();
-    private readonly PrtgTrustedSnapshotParser _trustedSnapshotParser = new();
 
     /// <summary>每次 Drain 都有獨立穩定 ID；提交結果不明時原批重試，不能把新列混入同一 ID。</summary>
     private readonly PrtgSnapshotJournal _journal;
@@ -108,12 +107,9 @@ public class PrtgSnapshotHostedService : BackgroundService
     private readonly IHostStore _hosts;
     private readonly ISentinelStore _sentinels;
     private readonly PrtgProbeRunState _probeState;
-    private readonly PrtgSensorTimelineConsumer _timelineConsumer;
-    internal Func<CancellationToken, Task<PrtgSensorTimelineTick>> TimelineTick { get; set; }
     internal Action? BeforeOperationScopeCapture { get; set; }
     private readonly PrtgSnapshotDiagnosticsStore _diagnosticsStore;
     public PrtgSnapshotDiagnosticsService Diagnostics { get; }
-    internal Action? ScopeRefreshAdmissionAccepted { get; set; }
 
     /// <summary>服務持有的單一實例：DNS 快取跨輪有效，取數範圍計算不必每輪重新解析。</summary>
     private readonly PrtgAddressResolver _addressResolver = new();
@@ -139,7 +135,6 @@ public class PrtgSnapshotHostedService : BackgroundService
     private PrtgClient? _client;
     private Action? _operationCheckpoint;
     private string? _clientFingerprint;
-    private string? _admissionPlanFingerprint;
     internal IRunConsole? Console { get; set; }
     internal Func<DateTime> Now { get; set; } = () => DateTime.Now;
     internal PrtgSnapshotAccumulator Accumulator => _accumulator;
@@ -181,18 +176,10 @@ public class PrtgSnapshotHostedService : BackgroundService
         _sentinels = sentinelStore ?? throw new ArgumentNullException(nameof(sentinelStore));
         _settingsStore = systemSettingsStore ?? throw new ArgumentNullException(nameof(systemSettingsStore));
         _backend = storageBackend ?? throw new ArgumentNullException(nameof(storageBackend));
-        var persistedAdmission = new PrtgCapacityAdmissionPlanStore(
-            _backend.Blob(PrtgCapacityAdmissionPlanStore.BlobKey)).ReadCurrent(DateTimeOffset.UtcNow);
-        if (persistedAdmission is not null) PrtgRequestBudget.Shared.SetAdmissionPlan(persistedAdmission);
         _journal = new PrtgSnapshotJournal(_backend);
         _schedulerRunState = schedulerRunState ?? throw new ArgumentNullException(nameof(schedulerRunState));
         _structureSync = structureSyncService ?? throw new ArgumentNullException(nameof(structureSyncService));
         _backfill = backfillService ?? throw new ArgumentNullException(nameof(backfillService));
-        _timelineConsumer = new PrtgSensorTimelineConsumer(_settingsStore, _backend,
-            () => _schedulerRunState.IsRunning || _probeState.Snapshot().IsRunning ||
-                _structureSync.IsRunning || _backfill.GetStatus().IsRunning,
-            settings => PrtgClientFactory.Create(settings), SamplingActivity);
-        TimelineTick = _timelineConsumer.TickAsync;
         _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
         _diagnosticsStore = new PrtgSnapshotDiagnosticsStore(_backend.Blob("prtg_snapshot_diagnostics_v1"), () =>
         {
@@ -267,7 +254,6 @@ public class PrtgSnapshotHostedService : BackgroundService
             return;
         }
 
-        var timelineTask = RunTimelineAsync(stoppingToken);
         try
         {
         // A refresh requested before the hosted loop starts may include a new device
@@ -315,24 +301,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
         finally
         {
-            await timelineTask;
             _journal.Dispose(); // 所有輪詢確實結束後才釋放跨程序擁有權。
-        }
-    }
-
-    private async Task RunTimelineAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            var delay = TimeSpan.FromSeconds(5);
-            using var slice = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            slice.CancelAfter(TimelineSliceDeadline);
-            try { delay = (await TimelineTick(slice.Token)).Delay; }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-            catch (OperationCanceledException) { Log.Warn("PRTG timeline 本輪達五分鐘上限；已提交水位保留供下輪續行"); }
-            catch (Exception ex) { Log.Warn(ex, "PRTG timeline 背景工作本輪失敗；保留已提交逐 sensor 水位"); }
-            try { await Task.Delay(delay < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : delay, stoppingToken); }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         }
     }
 
@@ -385,58 +354,16 @@ public class PrtgSnapshotHostedService : BackgroundService
             return;
         }
 
-        var capacitySelection = ResolveSnapshotCapacitySelection(settings, DateTime.Now);
-        if (!SnapshotCapacityAllows(capacitySelection, settings, out var capacityEstimate))
-        {
-            // Scope discovery/backfill and recent-state collection also issue snapshot-shaped
-            // table calls. Keep the request pending until the same measured capacity gate used
-            // by the regular snapshot cadence admits this effective scope.
-            _scopeRefreshRequested = true;
-            NoteCapacitySkip(capacitySelection, capacityEstimate);
-            return;
-        }
-        if (capacitySelection.SensorObjids.Count == 0)
-        {
-            _admissionPlanFingerprint = null;
-            _scopeRefreshRequested = true;
-            NoteSkip("snapshot-empty-scope-idle", "目前有效快照範圍為空；本輪只完成本機 Queue 整理，沒有啟動 HTTP。", trackPause: false, targetCount: 0);
-            return;
-        }
-        if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hosts, settings, capacitySelection,
-            out var admission, out var admissionReason))
+        if (ResolveTargets(settings, DateTime.Now).Count == 0)
         {
             _scopeRefreshRequested = true;
-            NoteJointCapacitySkip(capacitySelection, admissionReason);
+            NoteSkip("snapshot-empty-scope-idle", "目前快照範圍為空；本輪只完成本機 Queue 整理，沒有發出 PRTG 請求。", trackPause: false, targetCount: 0);
             return;
         }
-        _admissionPlanFingerprint = admission!.Fingerprint;
 
-        ScopeRefreshAdmissionAccepted?.Invoke();
         await WithOperationScopeAsync(settings, ct, async token =>
         {
-            // Admission happened before the operation captured its cancellation/version fence.
-            // Re-resolve inside that fence and require the exact admitted proof to still match.
             _operationCheckpoint?.Invoke();
-            var operationSelection = ResolveSnapshotCapacitySelection(settings, DateTime.Now);
-            if (!SameCapacitySelection(capacitySelection, operationSelection))
-            {
-                _scopeRefreshRequested = true;
-                NoteCapacityScopeChanged(operationSelection);
-                return;
-            }
-            if (!SnapshotCapacityAllows(operationSelection, settings, out var operationEstimate))
-            {
-                _scopeRefreshRequested = true;
-                NoteCapacitySkip(operationSelection, operationEstimate);
-                return;
-            }
-            if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hosts, settings, operationSelection,
-                out var operationAdmission, out var operationAdmissionReason) || operationAdmission?.Fingerprint != admission?.Fingerprint)
-            {
-                _scopeRefreshRequested = true;
-                NoteJointCapacitySkip(operationSelection, operationAdmissionReason);
-                return;
-            }
             var currentQueueContextMatches = queueContext is not null &&
                 queueContext.SourceIdentityHash == SourceIdentityHash(settings) &&
                 queueContext.ScopeVersionHash == ScopeVersionHash(new PrtgScopeRevisionReader(_backend, _hosts).Read()) &&
@@ -444,22 +371,13 @@ public class PrtgSnapshotHostedService : BackgroundService
             if (!currentQueueContextMatches)
             {
                 _scopeRefreshRequested = true;
-                NoteCapacityScopeChanged(operationSelection);
                 return;
             }
-            _admissionPlanFingerprint = operationAdmission!.Fingerprint;
 
             await RunBoundedScopeWorkAsync(token, async slice =>
             {
                 await BackfillScopeSensorsAsync(settings, queueContext!, slice);
                 _operationCheckpoint?.Invoke();
-                var refreshedSelection = ResolveSnapshotCapacitySelection(settings, DateTime.Now);
-                if (!SnapshotCapacityAllows(refreshedSelection, settings, out var refreshedEstimate))
-                {
-                    _scopeRefreshRequested = true;
-                    NoteCapacitySkip(refreshedSelection, refreshedEstimate);
-                    return;
-                }
                 // Startup preparation exists to make newly mapped sensors visible before the
                 // first sample. Leave the message queue drain to that sampling pass so the
                 // pre-sample turn cannot consume its one-pass queue deferral.
@@ -484,7 +402,8 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private async Task WithOperationScopeAsync(SystemSettings settings, CancellationToken parent, Func<CancellationToken, Task> work)
     {
-        using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent, new PrtgScopeRevisionReader(_backend, _hosts).Read, "快照與範圍補抓");
+        using var operation = new PrtgOperationScope(settings, _settingsStore.Get, parent,
+            new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "快照與範圍補抓");
         _operationCheckpoint = operation.Checkpoint;
         try
         {
@@ -579,9 +498,6 @@ public class PrtgSnapshotHostedService : BackgroundService
         BeforeOperationScopeCapture?.Invoke();
         await WithOperationScopeAsync(settings, ct, async token =>
         {
-            // A prior tick's proof is never reusable as authority for this tick's work.
-            // Every HTTP path below needs admission for the current fenced selection.
-            _admissionPlanFingerprint = null;
             // Re-read the source binding after PrtgOperationScope captures settings/revisions.
             // A source generation change after the first restore must stop before any PRTG HTTP.
             if (!RestoreJournal(settings)) return;
@@ -589,52 +505,10 @@ public class PrtgSnapshotHostedService : BackgroundService
             var queueContext = ReconcileRecentStateChangesForCurrentScope(settings);
             _operationCheckpoint?.Invoke();
 
-            PrtgSnapshotTargetSelection preflightSelection;
-            PrtgSnapshotCapacityEstimate preflightEstimate;
+            var sampled = false;
             try
             {
-                preflightSelection = ResolveSnapshotCapacitySelection(settings, now);
-                if (!SnapshotCapacityAllows(preflightSelection, settings, out preflightEstimate) &&
-                    preflightEstimate.Status != PrtgSnapshotCapacityStatus.CapacityUnverified)
-                {
-                    NoteCapacitySkip(preflightSelection, preflightEstimate);
-                    return;
-                }
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-            catch (JournalWriteException) { return; }
-            catch (Exception ex) { RecordFailure(ex); return; }
-
-            if (preflightSelection.SensorObjids.Count == 0)
-            {
-                // Empty effective scope is an idle, local-only pass: reconcile queue metadata
-                // and let ExecuteSnapshot flush any completed accumulator without HTTP.
-                _admissionPlanFingerprint = null;
-                await ExecuteSnapshotAsync(settings, now, token, preflightSelection);
-                return;
-            }
-
-            if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hosts, settings, preflightSelection,
-                out var preflightAdmission, out var admissionReason, out var admittedPreflightSelection,
-                allowBoundedSingleBatchRecovery: true))
-            {
-                _admissionPlanFingerprint = null;
-                _scopeRefreshRequested = true;
-                NoteJointCapacitySkip(preflightSelection, admissionReason);
-                return;
-            }
-            preflightSelection = admittedPreflightSelection;
-            _operationCheckpoint?.Invoke();
-            _admissionPlanFingerprint = preflightAdmission!.Fingerprint;
-            var boundedRecovery = admissionReason == PrtgCapacityRuntimeAdmission.BoundedSingleBatchRecoveryReason;
-
-            // Sample the exact, already-admitted mirror scope first. A bounded backfill can
-            // expand that scope; it cannot borrow this pass's capacity proof for later work.
-            var snapshotAllowed = false;
-            try
-            {
-                snapshotAllowed = await ExecuteSnapshotAsync(settings, now, token, preflightSelection,
-                    preflightAdmission.Fingerprint, allowBoundedSingleBatchRecovery: boundedRecovery);
+                sampled = await ExecuteSnapshotAsync(settings, now, token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -645,52 +519,19 @@ public class PrtgSnapshotHostedService : BackgroundService
             {
                 RecordFailure(ex);
             }
-            if (!snapshotAllowed) return;
-            if (boundedRecovery)
-            {
-                NoteBoundedSnapshotRecovery(preflightSelection);
-                return;
-            }
+            if (!sampled) return;
 
             if (maintenance is null && !_probeState.Snapshot().IsRunning)
             {
                 await RunBoundedScopeWorkAsync(token, async slice =>
                 {
-                    // The successful snapshot used the admitted mirror selection. Any sensor
-                    // rows added here are eligible only after a fresh pass proves their scope.
+                    // 補抓進來的 sensor 下一輪才進快照範圍：先清掉目標快取，下一輪重算。
                     _targetRefreshHour = null;
                     _targetWhitelistFingerprint = null;
                     _targetObjids = null;
                     _sensorTypes = null;
                     await BackfillScopeSensorsAsync(settings, queueContext, slice);
                     _operationCheckpoint?.Invoke();
-
-                    var refreshedSelection = ResolveSnapshotCapacitySelection(settings, Now());
-                    if (!SameCapacitySelection(preflightSelection, refreshedSelection))
-                    {
-                        _scopeRefreshRequested = true;
-                        if (!SnapshotCapacityAllows(refreshedSelection, settings, out var refreshedEstimate))
-                            NoteCapacitySkip(refreshedSelection, refreshedEstimate);
-                        else
-                            NoteCapacityScopeChanged(refreshedSelection);
-                        return;
-                    }
-                    if (!SnapshotCapacityAllows(refreshedSelection, settings, out var estimate))
-                    {
-                        _scopeRefreshRequested = true;
-                        NoteCapacitySkip(refreshedSelection, estimate);
-                        return;
-                    }
-                    if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hosts, settings,
-                        refreshedSelection, out var currentAdmission, out var currentAdmissionReason) ||
-                        currentAdmission?.Fingerprint != preflightAdmission.Fingerprint)
-                    {
-                        _scopeRefreshRequested = true;
-                        NoteJointCapacitySkip(refreshedSelection, currentAdmissionReason);
-                        return;
-                    }
-
-                    _admissionPlanFingerprint = currentAdmission!.Fingerprint;
                     await FetchRecentStateChangesAsync(settings, slice);
                 });
             }
@@ -744,53 +585,11 @@ public class PrtgSnapshotHostedService : BackgroundService
         return prtgPhase != null && prtgPhase.StartsWith("prtg-", StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<bool> ExecuteSnapshotAsync(SystemSettings settings, DateTime now, CancellationToken ct,
-        PrtgSnapshotTargetSelection? expectedSelection = null, string? expectedAdmissionFingerprint = null,
-        bool allowBoundedSingleBatchRecovery = false)
+    private async Task<bool> ExecuteSnapshotAsync(SystemSettings settings, DateTime now, CancellationToken ct)
     {
-        var capacitySelection = ResolveSnapshotCapacitySelection(settings, now);
-        string? admissionFingerprint = null;
-        var emptyScope = capacitySelection.SensorObjids.Count == 0;
-        if (!emptyScope)
-        {
-            if (!PrtgCapacityRuntimeAdmission.TryGetCurrent(_backend, _hosts, settings, capacitySelection,
-                out var admission, out var admissionReason, out var admittedCapacitySelection,
-                allowBoundedSingleBatchRecovery))
-            {
-                _scopeRefreshRequested = true;
-                NoteJointCapacitySkip(capacitySelection, admissionReason);
-                return false;
-            }
-            capacitySelection = admittedCapacitySelection;
-            if (expectedAdmissionFingerprint is not null && admission!.Fingerprint != expectedAdmissionFingerprint)
-            {
-                _scopeRefreshRequested = true;
-                NoteJointCapacitySkip(capacitySelection, "admitted-plan-changed");
-                return false;
-            }
-            admissionFingerprint = admission!.Fingerprint;
-        }
-        if (expectedSelection is not null && !SameCapacitySelection(expectedSelection, capacitySelection))
-        {
-            _scopeRefreshRequested = true;
-            NoteCapacityScopeChanged(capacitySelection);
-            return false;
-        }
-        if (!SnapshotCapacityAllows(capacitySelection, settings, out var capacityEstimate) &&
-            !(allowBoundedSingleBatchRecovery &&
-              capacityEstimate.Status == PrtgSnapshotCapacityStatus.CapacityUnverified))
-        {
-            _scopeRefreshRequested = true;
-            NoteCapacitySkip(capacitySelection, capacityEstimate);
-            return false;
-        }
-        var targets = allowBoundedSingleBatchRecovery
-            ? capacitySelection.SensorObjids.Take(PrtgSnapshotCapacityEvaluator.BatchSize).ToArray()
-            : capacitySelection.SensorObjids;
-        _admissionPlanFingerprint = admissionFingerprint;
-        if (emptyScope)
-            NoteSkip("snapshot-empty-scope-idle", "目前有效快照範圍為空；已完成無 HTTP 的空閒快照。", trackPause: false, targetCount: 0);
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var targets = ResolveTargets(settings, now);
+        if (targets.Count == 0)
+            NoteSkip("snapshot-empty-scope-idle", "目前快照範圍為空（沒有已對應主機的白名單 sensor）；本輪未發出 PRTG 請求。", trackPause: false, targetCount: 0);
         lock (_pendingWrite)
         {
             if (_accumulator.EntryCount + _pendingRows + targets.Count > PrtgSnapshotJournal.MaxRows ||
@@ -801,22 +600,9 @@ public class PrtgSnapshotHostedService : BackgroundService
             }
         }
         var tally = new SnapshotTally();
-        var strategyName = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
-        var strategyMinutes = PrtgFetchStrategy.Profile(strategyName).SnapshotIntervalMinutes;
-        var trustStrategy = new PrtgTrustedSamplingStrategyStateStore(
-            _backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey))
-            .GetCurrent(policy, strategyName, strategyMinutes, DateTime.UtcNow);
-
-        // Only each in-flight batch reads its profiles/identities. No fleet-sized
-        // profile dictionary or per-sensor metadata HTTP requests enter this cadence.
-
-        if (targets.Count == 0)
+        if (targets.Count > 0)
         {
-            // 沒有目標：不打 PRTG，照樣記成功並寫出已到整點的列
-        }
-        else
-        {
-            await FetchFilteredAsync(settings, targets, now, tally, policy, trustStrategy, capacitySelection, ct);
+            await FetchFilteredAsync(settings, targets, now, tally, ct);
         }
 
         if (tally.UnparsedIntervals > 0)
@@ -831,109 +617,43 @@ public class PrtgSnapshotHostedService : BackgroundService
         return true;
     }
 
-    private void NoteBoundedSnapshotRecovery(PrtgSnapshotTargetSelection selection)
+    /// <summary>
+    /// 快照目標（docs/PRTG-SPEC.md §3b）：最近 30 日內最近一次 ok 對應、主機啟用中的裝置上，
+    /// 型別在取數白名單內的未暫停 sensor，加上資源守門監看的 sensor；監看政策的 sensor 清單非空時再縮圈。
+    /// </summary>
+    private IReadOnlyList<long> ResolveTargets(SystemSettings settings, DateTime now)
     {
-        _lastSkipReason = "容量證據恢復中：本輪只執行一個 100-ID 以下的 timeout-bounded 快照；一般範圍工作須等 5 筆新鮮同形成功樣本。";
-        RecordDiagnostic(Now(), "recovery", _lastSkipReason, selection.SensorObjids.Count,
-            reasonCode: "snapshot-capacity-bounded-recovery");
-    }
-
-    private PrtgSnapshotTargetSelection ResolveSnapshotCapacitySelection(SystemSettings settings, DateTime now)
-    {
-        // Target scope can change within an hour. Refresh the shared base target cache and sensor
-        // types on every admission check so pilots and executing work use current mappings.
         var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-        var activeMappedDeviceCount = RefreshTargets(settings, now, currentHour);
-
-        var baseTargets = (_targetObjids ?? new HashSet<long>()).OrderBy(id => id).ToArray();
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var store = _backend.PrtgStore();
-        var guardSensors = policy.Ready(settings.PrtgUrl) && settings.PrtgResourceGuardEnabled
-            ? PrtgResourceGuardTargets.Resolve(new PrtgMirrorGuardSource(store), settings,
+        RefreshTargets(settings, now, currentHour);
+        var guardSensors = settings.PrtgResourceGuardEnabled
+            ? PrtgResourceGuardTargets.Resolve(new PrtgMirrorGuardSource(_backend.PrtgStore()), settings,
                 _sentinels.GetAll(), SilentConsole, _addressResolver).SensorObjids
             : Array.Empty<long>();
-        var targets = PrtgSnapshotTargetResolver.SelectEffectiveTargets(baseTargets, policy, settings, guardSensors);
-        return PrtgSnapshotTargetResolver.CreateSelection(targets, activeMappedDeviceCount, _backend, settings, policy);
-    }
-
-    private static bool SameCapacitySelection(PrtgSnapshotTargetSelection left,
-        PrtgSnapshotTargetSelection right) =>
-        string.Equals(left.ScopeFingerprint, right.ScopeFingerprint, StringComparison.Ordinal) &&
-        string.Equals(left.EndpointFingerprint, right.EndpointFingerprint, StringComparison.Ordinal) &&
-        string.Equals(left.RequestShapeFingerprint, right.RequestShapeFingerprint, StringComparison.Ordinal);
-
-    private void NoteCapacityScopeChanged(PrtgSnapshotTargetSelection selection) =>
-        NoteSkip("snapshot-capacity-scope-changed",
-            $"容量判定後有效範圍已變更：目前 {selection.SensorObjids.Count} 顆；本輪未啟動HTTP，保留補抓請求，下一輪會按新範圍重估。",
-            trackPause: false, targetCount: selection.SensorObjids.Count);
-
-    private bool SnapshotCapacityAllows(PrtgSnapshotTargetSelection selection, SystemSettings settings,
-        out PrtgSnapshotCapacityEstimate estimate)
-    {
-        var strategy = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy);
-        estimate = PrtgSnapshotCapacityEvaluator.Evaluate(selection.SensorObjids.Count, strategy,
-            selection.ScopeFingerprint, selection.EndpointFingerprint, selection.RequestShapeFingerprint,
-            new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Read(), DateTimeOffset.UtcNow,
-            selection.PrimaryChannelCapabilityMode, selection.PotentialQualifiedSensorCount,
-            selection.PotentialQualifiedBatchCount, selection.PotentialQualifiedFallbackSampleSize);
-        // Up to one real 100-ID batch remains an intentionally bounded cold-start pilot path.
-        return selection.SensorObjids.Count <= PrtgSnapshotCapacityEvaluator.BatchSize ||
-            estimate.Status == PrtgSnapshotCapacityStatus.CapacityQualified;
-    }
-
-    private void NoteCapacitySkip(PrtgSnapshotTargetSelection selection, PrtgSnapshotCapacityEstimate estimate)
-    {
-        var exceeded = estimate.Status == PrtgSnapshotCapacityStatus.CapacityExceeded;
-        var estimateText = estimate.EstimatedSeconds is { } seconds
-            ? $"目前模型估算 {seconds:0.0} 秒／{estimate.CompletionWindowSeconds:0} 秒視窗，需保留 25% 餘裕。"
-            : $"目前沒有足夠的同形新鮮樣本（{estimate.FreshMatchingFullBatchSamples}/5）。";
-        var reason = exceeded ? "容量估算超出固定完成期限" : "完整快照容量尚未驗證";
-        NoteSkip(exceeded ? "snapshot-capacity-exceeded" : "snapshot-capacity-unverified",
-            $"{reason}：目前有效範圍 {selection.SensorObjids.Count} 顆；{estimateText}正式全範圍快照與範圍補抓已暫停，已接收樣本與待寫佇列保留。請縮小有效範圍或先停用正式取數，以目前來源、策略與範圍完成 5 筆同形 100-ID pilot，再確認模型可行後重新啟用。",
-            trackPause: false, targetCount: selection.SensorObjids.Count);
-    }
-
-    private void NoteJointCapacitySkip(PrtgSnapshotTargetSelection selection, string reason)
-    {
-        var message = $"Joint PRTG admission is Waiting ({reason}); snapshot/profile evidence and the current source/scope plan must match before requests resume.";
-        _lastSkipReason = message;
-        RecordDiagnostic(Now(), "skip", message, selection.SensorObjids.Count,
-            reasonCode: "joint-capacity-admission-waiting");
-        _skipSince ??= Now();
+        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        return PrtgSnapshotTargetResolver.SelectEffectiveTargets(_targetObjids ?? new HashSet<long>(), policy, guardSensors);
     }
 
     /// <summary>
-    /// 分批模式：依 objid 排序後每 100 顆一個 filter_objid 請求；其他資源守門仍使用 50 顆批次。
+    /// 分批模式：依 objid 排序後每 100 顆一個 filter_objid 請求，最多 3 批並行（共享配額另有在途上限）。
     /// 單批失敗（非取消）只記數、其餘照做；全部批次都失敗才往外擲，交給既有退避。
+    /// 一輪必須在一個採樣間隔內完成，否則下一輪又疊上來。
     /// </summary>
-    // Match the shared snapshot lane so workers do not occupy the profile's reserved slot.
     internal const int MaximumConcurrentSnapshotBatches = 3;
     internal const int MaximumSnapshotBatchResponseBytes = PrtgSnapshotResponseContract.MaximumResponseBytes;
 
     private async Task FetchFilteredAsync(
-        SystemSettings settings, IReadOnlyList<long> targets, DateTime now, SnapshotTally tally,
-        PrtgMonitoringPolicy trustPolicy,
-        PrtgTrustedSamplingStrategyContext trustStrategy, PrtgSnapshotTargetSelection capacitySelection,
-        CancellationToken ct)
+        SystemSettings settings, IReadOnlyList<long> targets, DateTime now, SnapshotTally tally, CancellationToken ct)
     {
-        var batchSize = PrtgSnapshotCapacityEvaluator.BatchSize;
+        var batchSize = PrtgSnapshotTargetResolver.BatchSize;
         var batchCount = (targets.Count + batchSize - 1) / batchSize;
-        // Admission may temporarily restore the retained plan's mode while the resolver has
-        // fewer than five fresh samples. Treat that mode as observational only until inference
-        // independently agrees; it can never enable trusted parsing during requalification.
-        var freshlyResolvedSelection = ResolveSnapshotCapacitySelection(settings, now);
-        var modeRequalificationInProgress = capacitySelection.PrimaryChannelCapabilityMode ==
-                PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown ||
-            freshlyResolvedSelection.PrimaryChannelCapabilityMode != capacitySelection.PrimaryChannelCapabilityMode;
         var failedBatches = 0;
         var requested = 0;
         Exception? lastError = null;
 
         var client = GetClient(settings);
+        var window = TimeSpan.FromMinutes(Math.Max(1, PrtgFetchStrategy.Profile(settings.PrtgFetchStrategy).SnapshotIntervalMinutes));
         using var roundDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var fixedWindow = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy) == PrtgFetchStrategy.Aggressive
-            ? PrtgSnapshotCapacityEvaluator.AggressiveWindow : PrtgSnapshotCapacityEvaluator.ConservativeWindow;
-        roundDeadline.CancelAfter(fixedWindow);
+        roundDeadline.CancelAfter(window);
         try
         {
             await Parallel.ForEachAsync(Enumerable.Range(0, batchCount), new ParallelOptions
@@ -943,201 +663,19 @@ public class PrtgSnapshotHostedService : BackgroundService
             }, async (batchIndex, batchToken) =>
             {
                 var batch = targets.Skip(batchIndex * batchSize).Take(batchSize).ToList();
-                long capacityStartedTimestamp = 0;
-                long capacityCompletedTimestamp = 0;
-                var capacityOutcome = "failed";
-                var capacityResponseValid = false;
-                var primaryChannelModeMatches = true;
-                var bootstrapProvidedModeObserved = false;
-                var bootstrapFallbackModeObserved = false;
-                var fallbackBrackets = new Dictionary<long, PrtgNativePrimaryChannelBracket>();
-                var fallbackResults = new List<PrtgSnapshotPrimaryChannelFallback.Result>();
                 try
                 {
-                    var candidateIds = capacitySelection.PotentialQualifiedSensorObjids
-                        .Where(batch.Contains).ToArray();
-                    var beforeBindings = candidateIds.Length == 0
-                        ? new Dictionary<long, PrtgTrustedSamplingBinding>()
-                        : new PrtgTrustedSamplingBindingStore(_backend).GetMany(candidateIds)
-                            .ToDictionary(pair => pair.Key, pair => pair.Value);
-                    var beforeProfiles = trustStrategy.Ready
-                        ? new PrtgTrustedSamplingProfileStore(_backend).GetMany(batch)
-                        : new Dictionary<long, PrtgTrustedSamplingProfile>();
-                    var beforeIdentities = beforeProfiles.Count == 0 ? new Dictionary<long, PrtgResourceIdentity>()
-                        : _backend.PrtgStore().GetResourceIdentities(beforeProfiles.Keys);
                     RecordDiagnostic(now, "attempt", targets: targets.Count);
-                    capacityStartedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-                    var relativeUrl = PrtgSnapshotTargetResolver.BuildSnapshotRelativeUrl(batch);
-                    var json = await client.GetBoundedJsonAsync(relativeUrl, MaximumSnapshotBatchResponseBytes, batchToken);
-                    capacityCompletedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-                    // count=batch+1 is a sentinel contract: exact-set failure rejects the entire
-                    // batch before any snapshot rows are published.
+                    var json = await client.GetBoundedJsonAsync(PrtgSnapshotTargetResolver.BuildSnapshotRelativeUrl(batch),
+                        MaximumSnapshotBatchResponseBytes, batchToken);
+                    // count=batch+1 是哨兵：回應不是恰好要求的那一組 objid（例如 PRTG 忽略 filter_objid 回整站）就整批不收。
                     PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
-                    capacityResponseValid = true;
-                    var receivedAtUtc = DateTime.UtcNow;
-                    if (candidateIds.Length > 0 || batchCount == 1 && modeRequalificationInProgress)
-                    {
-                        var providedFieldCount = CountRowsWithPrimaryChannel(json, candidateIds);
-                        switch (capacitySelection.PrimaryChannelCapabilityMode)
-                        {
-                            case PrtgSnapshotTargetResolver.PrimaryChannelModeProvided:
-                                // This request shape was qualified only with a native snapshot field.
-                                // A missing field invalidates that evidence; never silently add unbudgeted calls.
-                                primaryChannelModeMatches = providedFieldCount == candidateIds.Length &&
-                                    (!modeRequalificationInProgress ||
-                                     CountRowsWithPrimaryChannel(json, batch) == batch.Count &&
-                                     CountRowsWithValidNativePrimaryChannel(json, batch) == batch.Count);
-                                break;
-                            case PrtgSnapshotTargetResolver.PrimaryChannelModeFallback:
-                                // The selected source shape omits the field. Keep this first bounded bulk
-                                // as the diagnostic sample, then gather one strict fresh bracket per group.
-                                primaryChannelModeMatches = providedFieldCount == 0 &&
-                                    (!modeRequalificationInProgress || candidateIds.Length > 0 &&
-                                     CountRowsWithPrimaryChannel(json, batch) == 0);
-                                if (primaryChannelModeMatches)
-                                {
-                                    var replacements = new Dictionary<long, JsonElement>();
-                                    try
-                                    {
-                                        foreach (var group in candidateIds.Chunk(PrtgSnapshotPrimaryChannelFallback.MaximumSensorsPerGroup))
-                                        {
-                                            var fallback = await PrtgSnapshotPrimaryChannelFallback.ReadGroupAsync(
-                                                client, group, batchToken);
-                                            fallbackResults.Add(fallback);
-                                            foreach (var pair in fallback.Rows) replacements.Add(pair.Key, pair.Value);
-                                            foreach (var pair in fallback.Brackets)
-                                            {
-                                                beforeBindings.TryGetValue(pair.Key, out var expectedBinding);
-                                                beforeProfiles.TryGetValue(pair.Key, out var expectedProfile);
-                                                if (!PrtgSnapshotPrimaryChannelFallback.MatchesCapturedBinding(
-                                                    pair.Value, expectedBinding, expectedProfile))
-                                                    throw new InvalidDataException("primarychannel-fallback-binding-mismatch");
-                                                fallbackBrackets.Add(pair.Key, pair.Value);
-                                            }
-                                        }
-                                        json = MergeSnapshotRows(json, replacements);
-                                        PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
-                                    }
-                                    catch (OperationCanceledException) { throw; }
-                                    catch (Exception ex) when (ex is PrtgClientException or InvalidDataException or
-                                        System.Text.Json.JsonException or HttpRequestException)
-                                    {
-                                        // Preserve only the original diagnostic snapshot. The complete set
-                                        // of trusted rows remains deferred if any bracket group fails.
-                                        primaryChannelModeMatches = false;
-                                        fallbackBrackets.Clear();
-                                        fallbackResults.Clear();
-                                    }
-                                }
-                                break;
-                            default:
-                                // A single already-bounded recovery batch can seed a *mode* sample
-                                // when every qualified candidate has the same native shape. For
-                                // omitted fields, require the normal bounded property/table/property
-                                // brackets and exact row replacement before recording fallback evidence.
-                                if (batchCount == 1 &&
-                                    capacitySelection.PrimaryChannelCapabilityMode == PrtgSnapshotTargetResolver.PrimaryChannelModeUnknown &&
-                                    batch.Count > 0)
-                                {
-                                    var batchProvidedFieldCount = CountRowsWithPrimaryChannel(json, batch);
-                                    if (batchProvidedFieldCount == batch.Count &&
-                                        CountRowsWithValidNativePrimaryChannel(json, batch) == batch.Count &&
-                                        (candidateIds.Length == 0 || providedFieldCount == candidateIds.Length))
-                                        bootstrapProvidedModeObserved = true;
-                                    else if (candidateIds.Length > 0 && providedFieldCount == 0 &&
-                                        batchProvidedFieldCount == 0)
-                                    {
-                                        var replacements = new Dictionary<long, JsonElement>();
-                                        try
-                                        {
-                                            foreach (var group in candidateIds.Chunk(PrtgSnapshotPrimaryChannelFallback.MaximumSensorsPerGroup))
-                                            {
-                                                var fallback = await PrtgSnapshotPrimaryChannelFallback.ReadGroupAsync(
-                                                    client, group, batchToken);
-                                                fallbackResults.Add(fallback);
-                                                foreach (var pair in fallback.Rows) replacements.Add(pair.Key, pair.Value);
-                                                foreach (var pair in fallback.Brackets)
-                                                {
-                                                    beforeBindings.TryGetValue(pair.Key, out var expectedBinding);
-                                                    beforeProfiles.TryGetValue(pair.Key, out var expectedProfile);
-                                                    if (!PrtgSnapshotPrimaryChannelFallback.MatchesCapturedBinding(
-                                                        pair.Value, expectedBinding, expectedProfile))
-                                                        throw new InvalidDataException("primarychannel-fallback-binding-mismatch");
-                                                    fallbackBrackets.Add(pair.Key, pair.Value);
-                                                }
-                                            }
-                                            json = MergeSnapshotRows(json, replacements);
-                                            PrtgSnapshotCapacityResponseValidator.Validate(json, batch);
-                                            bootstrapFallbackModeObserved = fallbackBrackets.Count == candidateIds.Length;
-                                        }
-                                        catch (OperationCanceledException) { throw; }
-                                        catch (Exception ex) when (ex is PrtgClientException or InvalidDataException or
-                                            System.Text.Json.JsonException or HttpRequestException)
-                                        {
-                                            // A partial or stale bracket set cannot establish source mode.
-                                            fallbackBrackets.Clear();
-                                            fallbackResults.Clear();
-                                        }
-                                    }
-                                }
-                                primaryChannelModeMatches = false;
-                                break;
-                        }
-                    }
                     RecordDiagnostic(now, "success", targets: targets.Count);
-                    // 只收本批要求的 objid：PRTG 若忽略 filter_objid 會每批都回整站，
-                    // 不擋的話同一顆感測器一輪會被重複累加幾十次，而「取回少於要求」的警告也不會響
-                    var profileIds = batch.Where(beforeProfiles.ContainsKey).ToArray();
-                    var currentProfiles = profileIds.Length == 0
-                        ? new Dictionary<long, PrtgTrustedSamplingProfile>()
-                        : new PrtgTrustedSamplingProfileStore(_backend).GetMany(profileIds);
-                    var currentBindings = candidateIds.Length == 0
-                        ? new Dictionary<long, PrtgTrustedSamplingBinding>()
-                        : new PrtgTrustedSamplingBindingStore(_backend).GetMany(candidateIds);
-                    var currentIdentities = profileIds.Length == 0
-                        ? new Dictionary<long, PrtgResourceIdentity>()
-                        : _backend.PrtgStore().GetResourceIdentities(profileIds);
-                    var currentPolicy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-                    var currentSettings = _settingsStore.Get();
-                    var currentStrategy = new PrtgTrustedSamplingStrategyStateStore(
-                        _backend.Blob(PrtgTrustedSamplingStrategyStateStore.BlobKey)).GetCurrent(
-                            currentPolicy, PrtgFetchStrategy.Normalize(currentSettings.PrtgFetchStrategy),
-                            PrtgFetchStrategy.Profile(currentSettings.PrtgFetchStrategy).SnapshotIntervalMinutes,
-                            DateTime.UtcNow);
-                    var trustFence = SameTrustedPolicyInputs(trustPolicy, currentPolicy) &&
-                        !modeRequalificationInProgress &&
-                        primaryChannelModeMatches &&
-                        candidateIds.All(id => beforeBindings.TryGetValue(id, out var beforeBinding) &&
-                            currentBindings.TryGetValue(id, out var currentBinding) && beforeBinding == currentBinding &&
-                            (!beforeProfiles.TryGetValue(id, out var candidateProfile) ||
-                                candidateProfile.PrimaryChannelId == beforeBinding.ChannelObjectId &&
-                                candidateProfile.BindingRevision == beforeBinding.BindingRevision &&
-                                candidateProfile.QualificationProofReference == beforeBinding.QualificationProofReference) &&
-                            (!currentProfiles.TryGetValue(id, out var currentCandidateProfile) ||
-                                currentCandidateProfile.PrimaryChannelId == currentBinding.ChannelObjectId &&
-                                currentCandidateProfile.BindingRevision == currentBinding.BindingRevision &&
-                                currentCandidateProfile.QualificationProofReference == currentBinding.QualificationProofReference)) &&
-                        profileIds.All(id => beforeProfiles[id].MetadataDigest == currentProfiles.GetValueOrDefault(id)?.MetadataDigest &&
-                            beforeIdentities.GetValueOrDefault(id)?.Epoch == currentIdentities.GetValueOrDefault(id)?.Epoch &&
-                            beforeIdentities.GetValueOrDefault(id)?.Generation == currentIdentities.GetValueOrDefault(id)?.Generation &&
-                            beforeIdentities.GetValueOrDefault(id)?.ChannelGeneration == currentIdentities.GetValueOrDefault(id)?.ChannelGeneration &&
-                            beforeIdentities.ContainsKey(id) && currentIdentities.ContainsKey(id)) &&
-                        trustPolicy.Ready(currentSettings.PrtgUrl) &&
-                        trustStrategy.Ready && currentStrategy.Ready &&
-                        trustStrategy.StrategyFingerprint == currentStrategy.StrategyFingerprint &&
-                        trustStrategy.EffectiveFromHourUtc == currentStrategy.EffectiveFromHourUtc;
-                    ParseAndCheckpoint(json, now, tally, batch.ToHashSet(), trustFence,
-                        trustPolicy, currentProfiles, currentIdentities, currentStrategy,
-                        receivedAtUtc, fallbackBrackets);
-                    capacityOutcome = capacityResponseValid && (primaryChannelModeMatches || bootstrapProvidedModeObserved ||
-                        bootstrapFallbackModeObserved)
-                        ? "success" : "failed";
+                    ParseAndCheckpoint(json, now, tally, batch.ToHashSet());
                     Interlocked.Add(ref requested, batch.Count);
                 }
                 catch (OperationCanceledException) when (batchToken.IsCancellationRequested)
                 {
-                    capacityOutcome = !ct.IsCancellationRequested ? "timeout" : "failed";
-                    capacityCompletedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
                     throw;
                 }
                 catch (JournalWriteException) { throw; }
@@ -1145,74 +683,14 @@ public class PrtgSnapshotHostedService : BackgroundService
                 {
                     Interlocked.Increment(ref failedBatches);
                     lastError = ex;
-                    if (capacityStartedTimestamp != 0)
-                        capacityCompletedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-                }
-                finally
-                {
-                    // Only real full 100-ID requests of the exact runtime shape can qualify capacity.
-                    // Partial final batches remain useful work but cannot masquerade as full-batch evidence.
-                    if (batch.Count == capacitySelection.CapacitySampleBatchSize && capacityStartedTimestamp != 0)
-                    {
-                        try
-                        {
-                            // Cancellation records only a failed sample for the captured contract.
-                            // It cannot promote capacity, so do not rebuild the fleet catalogue
-                            // during cancellation cleanup for every in-flight batch.
-                            var cancelled = ct.IsCancellationRequested;
-                            var currentSelection = cancelled ? null :
-                                ResolveSnapshotCapacitySelection(_settingsStore.Get(), Now());
-                            var sampleMode = bootstrapProvidedModeObserved
-                                ? PrtgSnapshotTargetResolver.PrimaryChannelModeProvided
-                                : bootstrapFallbackModeObserved
-                                    ? PrtgSnapshotTargetResolver.PrimaryChannelModeFallback
-                                    : capacitySelection.PrimaryChannelCapabilityMode;
-                            var sampleSelection = PrtgSnapshotTargetResolver.WithPrimaryChannelMode(
-                                capacitySelection, sampleMode);
-                            var normalizedCurrentShapeMatches = !cancelled && modeRequalificationInProgress &&
-                                PrtgSnapshotTargetResolver.WithPrimaryChannelMode(currentSelection!, sampleMode)
-                                    .RequestShapeFingerprint == sampleSelection.RequestShapeFingerprint;
-                            if (cancelled || currentSelection!.ScopeFingerprint == capacitySelection.ScopeFingerprint &&
-                                currentSelection.EndpointFingerprint == capacitySelection.EndpointFingerprint &&
-                                (currentSelection.RequestShapeFingerprint == capacitySelection.RequestShapeFingerprint ||
-                                 normalizedCurrentShapeMatches))
-                            {
-                                var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(capacityStartedTimestamp,
-                                    capacityCompletedTimestamp == 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : capacityCompletedTimestamp).TotalMilliseconds;
-                                new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Record(
-                                    new PrtgSnapshotCapacitySample(sampleSelection.ScopeFingerprint,
-                                        sampleSelection.EndpointFingerprint, sampleSelection.RequestShapeFingerprint,
-                                        DateTimeOffset.UtcNow, (long)Math.Ceiling(Math.Max(0, elapsed)), batch.Count,
-                                        cancelled ? "failed" : capacityOutcome,
-                                        sampleSelection.PrimaryChannelCapabilityMode));
-                                if (!cancelled && capacityOutcome == "success" &&
-                                    sampleSelection.PrimaryChannelCapabilityMode == PrtgSnapshotTargetResolver.PrimaryChannelModeFallback)
-                                {
-                                    foreach (var fallback in fallbackResults)
-                                        new PrtgSnapshotCapacityStore(_backend.Blob(PrtgSnapshotCapacityStore.BlobKey)).Record(
-                                            new PrtgSnapshotCapacitySample(sampleSelection.ScopeFingerprint,
-                                                sampleSelection.EndpointFingerprint, sampleSelection.RequestShapeFingerprint,
-                                                DateTimeOffset.UtcNow, 0,
-                                                fallback.Brackets.Count, "success",
-                                                PrtgSnapshotTargetResolver.PrimaryChannelModeFallback,
-                                                fallback.Brackets.Count, fallback.RequestsSent,
-                                                fallback.ElapsedMilliseconds, "fallback-group"));
-                                }
-                            }
-                        }
-                        catch (Exception evidenceError)
-                        {
-                            Log.Warn(evidenceError, "[PRTG快照] 容量樣本無法保存；不影響此輪快照結果。");
-                        }
-                    }
                 }
             });
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && roundDeadline.IsCancellationRequested)
         {
-            RecordDiagnostic(now, "skip", "capacity-window-incomplete", targets.Count,
-                reasonCode: "snapshot-capacity-window-incomplete");
-            throw new PrtgClientException($"PRTG 快照未能在固定 {fixedWindow.TotalMinutes:0} 分鐘容量窗口內完成；已接受批次保留，未完成範圍保持資料缺口。請先以估算與同形實測樣本確認容量。");
+            RecordDiagnostic(now, "skip", "snapshot-window-incomplete", targets.Count,
+                reasonCode: "snapshot-window-incomplete");
+            throw new PrtgClientException($"PRTG 快照未能在一個採樣間隔（{window.TotalMinutes:0} 分鐘）內完成；已取得的批次保留，未完成的 sensor 本小時涵蓋率會偏低。");
         }
 
         if (failedBatches == batchCount && lastError != null)
@@ -1237,12 +715,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// 解析一份 table.json 回應並逐列累積（分批模式唯一解析入口）。
     /// </summary>
     /// <returns>回應的 treesize（沒有時 null）與 sensors 陣列長度</returns>
-    private (long? TreeSize, int Total) ParseSnapshotResponse(string json, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept,
-        bool trustFence, PrtgMonitoringPolicy trustPolicy,
-        IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> trustProfiles,
-        IReadOnlyDictionary<long, PrtgResourceIdentity> currentIdentities,
-        PrtgTrustedSamplingStrategyContext trustStrategy, DateTime receivedAtUtc,
-        IReadOnlyDictionary<long, PrtgNativePrimaryChannelBracket>? primaryChannelBrackets)
+    private (long? TreeSize, int Total) ParseSnapshotResponse(string json, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -1267,108 +740,14 @@ public class PrtgSnapshotHostedService : BackgroundService
 
         foreach (var el in sensorsArr.EnumerateArray())
         {
-            AccumulateSensorRow(el, now, tally, accept, trustFence, trustPolicy,
-                trustProfiles, currentIdentities, trustStrategy, receivedAtUtc, primaryChannelBrackets);
+            AccumulateSensorRow(el, now, tally, accept);
         }
 
         return (treeSize, sensorsArr.GetArrayLength());
     }
 
-    private static int CountRowsWithPrimaryChannel(string json, IReadOnlyCollection<long> candidateIds)
-    {
-        var candidates = candidateIds.ToHashSet();
-        using var document = JsonDocument.Parse(json,
-            new JsonDocumentOptions { MaxDepth = PrtgSnapshotResponseContract.MaximumDepth });
-        if (document.RootElement.ValueKind != JsonValueKind.Object ||
-            !document.RootElement.TryGetProperty("sensors", out var sensors) || sensors.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException("snapshot-primarychannel-shape-invalid");
-        var count = 0;
-        foreach (var row in sensors.EnumerateArray())
-        {
-            if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("objid", out var idToken) ||
-                !TrySnapshotSensorId(idToken, out var id) || !candidates.Contains(id)) continue;
-            if (row.EnumerateObject().Any(property =>
-                property.Name.Equals(PrtgTrustedSnapshotParser.NativePrimaryChannelIdField, StringComparison.OrdinalIgnoreCase) ||
-                property.Name.Equals(PrtgTrustedSnapshotParser.NativePrimaryChannelIdRawField, StringComparison.OrdinalIgnoreCase)))
-                count++;
-        }
-        return count;
-    }
-
-    private static int CountRowsWithValidNativePrimaryChannel(string json, IReadOnlyCollection<long> expectedIds)
-    {
-        var expected = expectedIds.ToHashSet();
-        using var document = JsonDocument.Parse(json,
-            new JsonDocumentOptions { MaxDepth = PrtgSnapshotResponseContract.MaximumDepth });
-        if (document.RootElement.ValueKind != JsonValueKind.Object ||
-            !document.RootElement.TryGetProperty("sensors", out var sensors) || sensors.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException("snapshot-primarychannel-shape-invalid");
-        var count = 0;
-        foreach (var row in sensors.EnumerateArray())
-        {
-            if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("objid", out var idToken) ||
-                !TrySnapshotSensorId(idToken, out var id) || !expected.Contains(id)) continue;
-            if (PrtgTrustedSnapshotParser.TryNativePrimaryChannelId(row, out _)) count++;
-        }
-        return count;
-    }
-
-    private static string MergeSnapshotRows(string originalJson,
-        IReadOnlyDictionary<long, JsonElement> replacementRows)
-    {
-        using var original = JsonDocument.Parse(originalJson,
-            new JsonDocumentOptions { MaxDepth = PrtgSnapshotResponseContract.MaximumDepth });
-        if (original.RootElement.ValueKind != JsonValueKind.Object ||
-            !original.RootElement.TryGetProperty("sensors", out var originalRows) ||
-            originalRows.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException("snapshot-primarychannel-merge-shape-invalid");
-
-        using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer))
-        {
-            writer.WriteStartObject();
-            foreach (var property in original.RootElement.EnumerateObject())
-            {
-                if (!property.NameEquals("sensors"))
-                {
-                    writer.WritePropertyName(property.Name);
-                    property.Value.WriteTo(writer);
-                    continue;
-                }
-                writer.WritePropertyName(property.Name);
-                writer.WriteStartArray();
-                foreach (var row in originalRows.EnumerateArray())
-                {
-                    if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty("objid", out var idToken) ||
-                        !TrySnapshotSensorId(idToken, out var id))
-                        throw new InvalidDataException("snapshot-primarychannel-merge-id-invalid");
-                    if (replacementRows.TryGetValue(id, out var replacement)) replacement.WriteTo(writer);
-                    else row.WriteTo(writer);
-                }
-                writer.WriteEndArray();
-            }
-            writer.WriteEndObject();
-        }
-        if (buffer.Length > MaximumSnapshotBatchResponseBytes)
-            throw new InvalidDataException("snapshot-primarychannel-merge-response-limit");
-        return Encoding.UTF8.GetString(buffer.ToArray());
-    }
-
-    private static bool TrySnapshotSensorId(JsonElement token, out long id)
-    {
-        id = 0;
-        if (token.ValueKind == JsonValueKind.Number) return token.TryGetInt64(out id) && id > 0;
-        return token.ValueKind == JsonValueKind.String &&
-            long.TryParse(token.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
-    }
-
     /// <summary>單列：只收 accept 內的感測器（本批要求的 objid），換算（流量類轉每小時量）後進累積器。</summary>
-    private void AccumulateSensorRow(JsonElement el, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept,
-        bool trustFence, PrtgMonitoringPolicy trustPolicy,
-        IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> trustProfiles,
-        IReadOnlyDictionary<long, PrtgResourceIdentity> currentIdentities,
-        PrtgTrustedSamplingStrategyContext trustStrategy, DateTime receivedAtUtc,
-        IReadOnlyDictionary<long, PrtgNativePrimaryChannelBracket>? primaryChannelBrackets)
+    private void AccumulateSensorRow(JsonElement el, DateTime now, SnapshotTally tally, IReadOnlySet<long> accept)
     {
         long? objid = null;
         if (el.TryGetProperty("objid", out var objidProp))
@@ -1409,9 +788,8 @@ public class PrtgSnapshotHostedService : BackgroundService
         double intervalSeconds = ParseIntervalSeconds(intervalStr, ref tally.UnparsedIntervals);
 
         double sampleValue;
-        string? sensorType = null;
         if (_sensorTypes != null &&
-            _sensorTypes.TryGetValue(objid.Value, out sensorType) &&
+            _sensorTypes.TryGetValue(objid.Value, out var sensorType) &&
             PrtgVolumeSensorTypes.IsVolume(sensorType))
         {
             sampleValue = lastValueRaw.Value * 3600.0 / intervalSeconds;
@@ -1422,33 +800,9 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
 
         if (!double.IsFinite(sampleValue)) return;
-        if (trustFence && trustProfiles.TryGetValue(objid.Value, out var profile) &&
-            currentIdentities.TryGetValue(objid.Value, out var currentIdentity) &&
-            trustPolicy.SensorIds.Contains(objid.Value))
-        {
-            var asOfUtc = DateTime.UtcNow;
-            var resolution = PrtgTrustedSamplingProfileResolver.Resolve(profile, currentIdentity,
-                trustPolicy, objid.Value, sensorType ?? "", trustStrategy, receivedAtUtc, asOfUtc);
-            if (resolution.Context is { } trustedContext)
-            {
-                PrtgNativePrimaryChannelBracket? primaryChannelBracket = null;
-                if (primaryChannelBrackets != null)
-                    primaryChannelBrackets.TryGetValue(objid.Value, out primaryChannelBracket);
-                if (primaryChannelBracket != null)
-                    trustedContext = trustedContext with { ReceivedAt = primaryChannelBracket.SnapshotObservedAtUtc };
-                var trustedDisposition = _trustedSnapshotParser.AddToAccumulator(el.GetRawText(), trustedContext,
-                    _accumulator, primaryChannelBracket, out _);
-                if (trustedDisposition is PrtgTrustedSampleDisposition.Accepted or
-                    PrtgTrustedSampleDisposition.Replaced or PrtgTrustedSampleDisposition.Duplicate)
-                {
-                    if (trustedDisposition != PrtgTrustedSampleDisposition.Duplicate) tally.Added++;
-                    return;
-                }
-                return; // Deferred／rejected 樣本不可落入診斷 Add 而清掉既有可信 slot。
-            }
-        }
-        if (_accumulator.TryAddDiagnostic(objid.Value, now, sampleValue,
-            _expectedSamplesPerHour > 0 ? 100.0 / _expectedSamplesPerHour : null)) tally.Added++;
+        _accumulator.Add(objid.Value, now, sampleValue,
+            _expectedSamplesPerHour > 0 ? 100.0 / _expectedSamplesPerHour : null);
+        tally.Added++;
     }
 
     /// <summary>一輪快照的計數。欄位而非屬性：間隔解析以 ref 累加。</summary>
@@ -1533,9 +887,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     .ToList();
                 if (pending.Count == 0) return newlyBackfilled;
 
-                var fetch = new PrtgFetchService(client, store,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+                var fetch = PrtgFetchService.Create(client, _backend, store, settings, SilentConsole, guard: null);
                 var queueItems = pending.Where(queueContext.BusinessDeviceObjids.Contains).Distinct().ToDictionary(id => id,
                     id => new PrtgRecentStateChangeQueueItem(id, queueContext.LocalToday.AddDays(-1), queueContext.LocalToday,
                         queueContext.SourceIdentityHash, queueContext.ScopeVersionHash,
@@ -1683,9 +1035,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     _operationCheckpoint?.Invoke();
                     Checkpoint();
                 };
-                var fetch = new PrtgFetchService(client, store,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+                var fetch = PrtgFetchService.Create(client, _backend, store, settings, SilentConsole, guard: null);
                 var result = await fetch.FetchStateChangesRangeAsync(lease.Item.FromLocalDate, lease.Item.ToLocalDate,
                     new[] { lease.Item.DeviceObjid }, settings.PrtgFetchConcurrency, operationToken.Token);
                 Checkpoint();
@@ -1929,26 +1279,19 @@ public class PrtgSnapshotHostedService : BackgroundService
         lock (_pendingWrite)
         {
             var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-            var asOfUtc = DateTime.UtcNow;
             var rows = all ? _accumulator.PreviewDrainAll(_expectedSamplesPerHour, now)
-                : _accumulator.PreviewDrainBeforeSources(hour, asOfUtc, _expectedSamplesPerHour, now);
-            var keys = all ? _accumulator.KeysForDrainAll() : _accumulator.KeysForDrainBeforeSources(hour, asOfUtc);
+                : _accumulator.PreviewDrainBefore(hour, _expectedSamplesPerHour, now);
+            var keys = all ? _accumulator.KeysForDrainAll() : _accumulator.KeysForDrainBefore(hour);
             WriteSampledRowsCore(rows, keys);
         }
     }
 
     private (long? TreeSize, int Total) ParseAndCheckpoint(string json, DateTime now, SnapshotTally tally,
-        IReadOnlySet<long> accept, bool trustFence, PrtgMonitoringPolicy trustPolicy,
-        IReadOnlyDictionary<long, PrtgTrustedSamplingProfile> trustProfiles,
-        IReadOnlyDictionary<long, PrtgResourceIdentity> currentIdentities,
-        PrtgTrustedSamplingStrategyContext trustStrategy, DateTime receivedAtUtc,
-        IReadOnlyDictionary<long, PrtgNativePrimaryChannelBracket>? primaryChannelBrackets = null)
+        IReadOnlySet<long> accept)
     {
         lock (_pendingWrite)
         {
-            var result = ParseSnapshotResponse(json, now, tally, accept, trustFence,
-                trustPolicy, trustProfiles, currentIdentities, trustStrategy, receivedAtUtc,
-                primaryChannelBrackets);
+            var result = ParseSnapshotResponse(json, now, tally, accept);
             if (!SaveJournal()) throw new JournalWriteException();
             return result;
         }
@@ -2050,15 +1393,6 @@ public class PrtgSnapshotHostedService : BackgroundService
             .Where(value => value.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(value => value, StringComparer.Ordinal));
-
-    private static bool SameTrustedPolicyInputs(PrtgMonitoringPolicy left, PrtgMonitoringPolicy right) =>
-        left.SourceGeneration == right.SourceGeneration && left.EndpointHint == right.EndpointHint &&
-        left.RawTimestampTimeZoneId == right.RawTimestampTimeZoneId &&
-        left.AnalysisTimeZoneId == right.AnalysisTimeZoneId &&
-        left.TimeBasisEvidenceReference == right.TimeBasisEvidenceReference &&
-        left.SourceTimeZoneId == right.SourceTimeZoneId && left.SourceCultureName == right.SourceCultureName &&
-        left.HostIds.Order().SequenceEqual(right.HostIds.Order()) &&
-        left.SensorIds.Order().SequenceEqual(right.SensorIds.Order());
 
     private static double ParseIntervalSeconds(string? intervalStr, ref int unparsedCount)
     {
@@ -2203,17 +1537,12 @@ public class PrtgSnapshotHostedService : BackgroundService
         {
             var created = CreateClient(settings);
             created.RequestPurpose = purpose;
-            created.AdmissionPlanFingerprint = _admissionPlanFingerprint;
             _client?.Dispose();
             _client = created;
             _clientFingerprint = fingerprint;
         }
-        // Connection reuse is keyed by transport settings, while shared admission is renewed
-        // independently. Refresh the authorization proof for every use of the cached client.
-        // Scope discovery and messages consume residual capacity, preserving the dedicated
-        // snapshot cadence. Refresh purpose even when the same transport client is reused.
+        // Scope discovery and messages use the general purpose; refresh it on every use of the cached client.
         _client.RequestPurpose = purpose;
-        _client.AdmissionPlanFingerprint = _admissionPlanFingerprint;
         _client.OperationCheckpoint = _operationCheckpoint;
         return _client;
     }

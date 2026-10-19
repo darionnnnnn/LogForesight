@@ -1834,13 +1834,14 @@ public class SystemSettingsServiceTests : IDisposable
     }
 
     [Fact]
-    public void PRTG白名單出廠預設含8個type且不含Ping()
+    public void PRTG白名單出廠預設含7個type且含Ping不含Traffic()
     {
         var settings = new SystemSettings();
 
-        Assert.Equal(8, settings.PrtgSensorTypeWhitelist.Count);
+        Assert.Equal(7, settings.PrtgSensorTypeWhitelist.Count);
         Assert.Contains("SNMP Disk Free", settings.PrtgSensorTypeWhitelist);
-        Assert.DoesNotContain(settings.PrtgSensorTypeWhitelist, s => string.Equals(s, "Ping", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(settings.PrtgSensorTypeWhitelist, s => string.Equals(s, "Ping", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(settings.PrtgSensorTypeWhitelist, s => s.Contains("Traffic", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

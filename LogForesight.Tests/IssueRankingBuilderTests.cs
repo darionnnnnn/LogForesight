@@ -430,4 +430,158 @@ public class IssueRankingBuilderTests : IDisposable
         var unknown = rows.Single(r => r.Source == "CustomApp" && r.EventId == 9999);
         Assert.Null(unknown.PlainExplanation);
     }
+
+    [Fact]
+    public void MarkedFalsePositive_PRTG問題最近一次出現被30日誤報窗涵蓋時為true()
+    {
+        var dataRoot = Path.Combine(Path.GetTempPath(), "lf-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataRoot);
+        try
+        {
+            var dbPath = Path.Combine(dataRoot, "test.db");
+            var backend = new StorageBackend(new StorageSettings
+            {
+                Type = "Sqlite",
+                ConnectionString = $"Data Source={dbPath}"
+            }, dataRoot);
+
+            using (var initCtx = backend.CreateContext())
+            {
+                initCtx.Database.EnsureCreated();
+            }
+
+            var hosts = new FakeHostStore();
+            var host = hosts.Upsert(new WebHost { HostName = "host1" });
+
+            var records = new EfAnalysisRecordStore(backend.CreateContext, "test");
+            var aggregates = new EfIssueAggregateQuery(backend.CreateContext, hosts);
+
+            var day1 = new DateTime(2026, 8, 1);
+            var day5 = new DateTime(2026, 8, 5);
+
+            var prtgIssue = new LogIssueSignature
+            {
+                LogName = "PRTG",
+                Source = "PRTG:disk_free_trend",
+                EventId = 0,
+                EntryType = EventLogEntryType.Warning,
+                Category = IssueCategory.Storage,
+                Severity = IssueSeverity.High,
+                Count = 1,
+                EventKey = "prtg:disk_free_trend:sensor-1"
+            };
+
+            records.Append(new DailyAnalysisRecord
+            {
+                HostId = host.HostId,
+                Host = host.HostName,
+                Date = day5,
+                RiskLevel = RiskLevels.High,
+                TopIssues = new List<LogIssueSignature> { prtgIssue }
+            });
+
+            var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
+            backend.IssueHandlingStore().Save(new IssueHandling
+            {
+                HostName = host.HostName,
+                IssueKey = issueKey,
+                Date = day1,
+                Status = IssueHandlingStatuses.FalsePositive,
+                UpdatedAt = day1
+            });
+
+            var builder = new IssueRankingBuilder(aggregates, hosts, new FixedIssueExclusionSource(IssueExclusion.None), backend: backend);
+            var rows = builder.Build(day5, day5, null, totalHosts: 1);
+
+            var row = Assert.Single(rows);
+            Assert.Equal("PRTG:disk_free_trend", row.Source);
+            Assert.True(row.MarkedFalsePositive);
+        }
+        finally
+        {
+            if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MarkedFalsePositive_只有部分主機標誤報時為false()
+    {
+        var dataRoot = Path.Combine(Path.GetTempPath(), "lf-ranking-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataRoot);
+        try
+        {
+            var dbPath = Path.Combine(dataRoot, "test.db");
+            var backend = new StorageBackend(new StorageSettings
+            {
+                Type = "Sqlite",
+                ConnectionString = $"Data Source={dbPath}"
+            }, dataRoot);
+
+            using (var initCtx = backend.CreateContext())
+            {
+                initCtx.Database.EnsureCreated();
+            }
+
+            var hosts = new FakeHostStore();
+            var host = hosts.Upsert(new WebHost { HostName = "host1" });
+            var host2 = hosts.Upsert(new WebHost { HostName = "host2" });
+
+            var records = new EfAnalysisRecordStore(backend.CreateContext, "test");
+            var aggregates = new EfIssueAggregateQuery(backend.CreateContext, hosts);
+
+            var day1 = new DateTime(2026, 8, 1);
+            var day5 = new DateTime(2026, 8, 5);
+
+            var prtgIssue = new LogIssueSignature
+            {
+                LogName = "PRTG",
+                Source = "PRTG:disk_free_trend",
+                EventId = 0,
+                EntryType = EventLogEntryType.Warning,
+                Category = IssueCategory.Storage,
+                Severity = IssueSeverity.High,
+                Count = 1,
+                EventKey = "prtg:disk_free_trend:sensor-1"
+            };
+
+            records.Append(new DailyAnalysisRecord
+            {
+                HostId = host.HostId,
+                Host = host.HostName,
+                Date = day5,
+                RiskLevel = RiskLevels.High,
+                TopIssues = new List<LogIssueSignature> { prtgIssue }
+            });
+            records.Append(new DailyAnalysisRecord
+            {
+                HostId = host2.HostId,
+                Host = host2.HostName,
+                Date = day5,
+                RiskLevel = RiskLevels.High,
+                TopIssues = new List<LogIssueSignature> { prtgIssue }
+            });
+
+            var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
+            backend.IssueHandlingStore().Save(new IssueHandling
+            {
+                HostName = host.HostName,
+                IssueKey = issueKey,
+                Date = day1,
+                Status = IssueHandlingStatuses.FalsePositive,
+                UpdatedAt = day1
+            });
+
+            var builder = new IssueRankingBuilder(aggregates, hosts, new FixedIssueExclusionSource(IssueExclusion.None), backend: backend);
+            var rows = builder.Build(day5, day5, null, totalHosts: 2);
+
+            var row = Assert.Single(rows);
+            Assert.Equal("PRTG:disk_free_trend", row.Source);
+            Assert.Equal(2, row.HostCount);
+            Assert.False(row.MarkedFalsePositive);
+        }
+        finally
+        {
+            if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+        }
+    }
 }

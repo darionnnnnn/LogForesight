@@ -270,7 +270,9 @@ public class LogAnalysisService
 
         // 錨定在被分析的那一天：回補中間缺漏日時，檔案裡已經有該日之後的紀錄，
         // 而 TrendAnalyzer 不自行過濾日期——不錨定就等於拿後來發生的事去判斷這一天
-        var history = _historyService.ReadRecent(targetDate, historyDays);
+        // 只有 PRTG finding 的主機日事件數全零，不能進日誌基線（會壓低中位數、冒充「多數日無錯誤」）
+        var history = _historyService.ReadRecent(targetDate, historyDays)
+            .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
 
         // 基準一律排除被分析日自己：ReadRecent 窗口含錨定日，正常缺日分析時該日沒有紀錄、
         // 這行是 no-op；但重新分析既有日（replaceExisting）時舊紀錄要到寫入前才刪，不排除的話
@@ -601,7 +603,8 @@ public class LogAnalysisService
     internal async Task<AiOutcome> CompleteAiAsync(AiWorkItem item, CancellationToken ct = default)
     {
         var inputPrtgFingerprint = PrtgFindingMapper.Fingerprint(item.Issues);
-        var history = _historyService.ReadRecent(item.TargetDate, item.HistoryDays);
+        var history = _historyService.ReadRecent(item.TargetDate, item.HistoryDays)
+            .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
         var tailIssues = AnalysisPromptBuilder.GetTailIssues(item.Issues);
         bool lowRisk = item.RuleRisk == RiskLevels.Low;
 
@@ -684,7 +687,8 @@ public class LogAnalysisService
     public async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
     {
         var inputPrtgFingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(pendingRecord);
-        var history = _historyService.ReadRecent(pendingRecord.Date, historyDays);
+        var history = _historyService.ReadRecent(pendingRecord.Date, historyDays)
+            .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
         // PatternId 重建不出來：持久化時只留描述文字（同 Severity/ElevatesDayRisk 的既有簡化，
         // 見本方法 XML 文件），空字串不影響 prompt 組裝，也不會被誤判成任何已知模式（不落在
         // CorrelationPatternIds.All 內，Web 層驗證與抑制比對都用得到這個目錄，這裡只是重建輸入不比對）

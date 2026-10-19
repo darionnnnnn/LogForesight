@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using LogForesight.Core;
 using Xunit;
@@ -13,47 +13,10 @@ public class PrtgClientTests
 {
     private const string ValidUrl = "https://prtg.example.com";
     private const string SampleToken = "prtg-secret-token-12345";
+    // Synthetic hash for a pure client admission fixture; it is not source-policy evidence.
+    private static readonly string FixtureRawAuthorityContextFingerprint = new('A', 64);
 
-    [Fact]
-    public async Task GeneralTableClientWithAdmissionFingerprintUsesTheFencedPurposeAwareBudgetPath()
-    {
-        var budget = new PrtgRequestBudget();
-        var handler = new StubHandler { OnSend = (_, _) =>
-            Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"channels\":[]}")) };
-        var now = DateTimeOffset.UtcNow;
-        budget.SetAdmissionPlan(new PrtgCapacityAdmissionPlan(new string('A', 64), new string('B', 64),
-            new string('C', 64), new string('D', 64), new string('E', 64), new string('F', 64),
-            new string('1', 64), new string('2', 64), "settings", "policy", .5, .5, .5,
-            now, now.AddHours(1), "test-owner", 1));
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, handler, PrtgAuthModes.Token,
-            "", "", "", budget)
-        { RequestPurpose = PrtgRequestPurpose.General, AdmissionPlanFingerprint = new string('9', 64) };
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetBoundedJsonAsync(
-            "api/table.json?content=channels&id=77&count=100", 4096));
-        Assert.Empty(handler.Requests);
-    }
-
-    [Fact]
-    public async Task BoundedXmlSharesAuthenticationAndRetainsHttpClockSeparatelyFromBody()
-    {
-        var at = new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero);
-        const string xml = "<histdata totalcount=\"0\"/>";
-        var stub = new StubHandler { OnSend = (request, _) =>
-        {
-            Assert.Contains("apitoken=", request.RequestUri!.Query);
-            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(xml, Encoding.UTF8, "application/xml") };
-            response.Headers.Date = at;
-            return Task.FromResult(response);
-        } };
-        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
-        var response = await client.GetBoundedXmlAsync("api/historicdata.xml?id=77", 64);
-        Assert.Equal(xml, response.Content);
-        Assert.Equal(at, response.HttpDateUtc);
-        Assert.Equal(TimeSpan.Zero, response.ReceivedAtUtc.Offset);
-        Assert.Equal(PrtgEndpointCategory.HistoricData, PrtgRequestBudget.Classify("api/historicdata.xml?id=77"));
-        Assert.Throws<InvalidDataException>(() => PrtgHistoricXmlReader.Parse("<html>login</html>"));
-    }
 
     [Fact]
     public async Task BoundedXmlRejectsUndeclaredOversizeAndSticky401WithoutAnotherLogin()

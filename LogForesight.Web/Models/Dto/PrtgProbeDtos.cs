@@ -13,7 +13,6 @@ public class PrtgProbeStatusDto
     public string? LatestMessage { get; set; }
     public IReadOnlyList<string> Output { get; set; } = Array.Empty<string>();
     public bool Cancelled { get; set; }
-    public string? EvidenceJson { get; set; }
 }
 
 public class CancelPrtgSelectedBackfillRequest
@@ -157,6 +156,20 @@ public class PrtgScopePurgePreviewDto
     /// <summary>基準（上次成功清除）時間；null＝尚無基準</summary>
     public DateTime? BaselineAt { get; set; }
     public int BaselineDeviceCount { get; set; }
+    public string? PreviewId { get; set; }
+    public DateTimeOffset? ExpiresAtUtc { get; set; }
+    public int VisibleAffectedDevices { get; set; }
+    public bool DetailsRestricted { get; set; }
+    public string? PreviousJobId { get; set; }
+    public long PreviousDeletedValues { get; set; }
+    public long PreviousDeletedStateChanges { get; set; }
+    public long PreviousRemainingValues { get; set; }
+    public long PreviousRemainingStateChanges { get; set; }
+}
+
+public class PrtgScopePurgeAcceptRequest
+{
+    public string PreviewId { get; set; } = string.Empty;
 }
 
 /// <summary>監看範圍外資料清除的結果</summary>
@@ -165,6 +178,20 @@ public class PrtgScopePurgeResultDto
     public int Values { get; set; }
     public int StateChanges { get; set; }
     public int MonitoredDevices { get; set; }
+    public string JobId { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public long OtherwiseRemovedValues { get; set; }
+    public long OtherwiseRemovedStateChanges { get; set; }
+    public long RemainingValues { get; set; }
+    public long RemainingStateChanges { get; set; }
+    public bool CountsReconciled { get; set; }
+    public string? StopReason { get; set; }
+    public long Revision { get; set; }
+}
+
+public class PrtgScopePurgeResumeRequest
+{
+    public long ExpectedRevision { get; set; }
 }
 
 /// <summary>設定 PRTG 人工主機對應請求</summary>
@@ -308,6 +335,10 @@ public class HostPrtgSensorDto
     public bool Paused { get; set; }
     /// <summary>PRTG sensor 狀態字串（例如 Up、Down、Down (Acknowledged)）</summary>
     public string? Status { get; set; }
+    public string? ValueReasonCode { get; set; }
+    public string? ValueReason { get; set; }
+    public int? ValidDays { get; set; }
+    public int? RequiredDays { get; set; }
 }
 
 /// <summary>PRTG 資源守門受監看感測器預覽項目</summary>
@@ -329,6 +360,8 @@ public class PrtgResourceGuardPreviewResultDto
     public string? ErrorMessage { get; set; }
     /// <summary>清單來源：override（覆寫清單）或 auto（自動偵測）</summary>
     public string Source { get; set; } = "auto";
+    /// <summary>自動偵測填入時間（由 Describe 取得）</summary>
+    public DateTime? AutoDetectedAt { get; set; }
     public IReadOnlyList<string> Warnings { get; set; } = Array.Empty<string>();
     public IReadOnlyList<PrtgResourceGuardSensorPreviewDto> Sensors { get; set; } = Array.Empty<PrtgResourceGuardSensorPreviewDto>();
 }
@@ -376,84 +409,8 @@ public class PrtgValueFetchScopeEstimateDto
     /// <summary>快照規模警示（白名單為空或累積列數超標時提示）</summary>
     public string? SnapshotWarning { get; set; }
 
-    /// <summary>快照容量評估：capacity-unverified／capacity-qualified／capacity-exceeded。</summary>
-    public string SnapshotCapacityStatus { get; set; } = "capacity-unverified";
-    public string SnapshotCapacityReason { get; set; } = "capacity_evidence_not_available";
-    public string SnapshotCapacityStrategy { get; set; } = "conservative";
-    public int SnapshotCapacitySamples { get; set; }
-    public int SnapshotCapacitySampleBatchSize { get; set; }
-    public int SnapshotCapacityBatchCount { get; set; }
-    public long SnapshotCapacityExpectedTableRequests { get; set; }
-    public string SnapshotCapacityPrimaryChannelMode { get; set; } = "unknown";
-    public int SnapshotCapacityPotentialQualifiedSensors { get; set; }
-    public int SnapshotCapacityFallbackGroups { get; set; }
-    public int SnapshotCapacityFallbackSampleGroupSize { get; set; }
-    public int SnapshotCapacityFallbackSamples { get; set; }
-    public double? SnapshotCapacityP95FallbackGroupSeconds { get; set; }
-    public double? SnapshotCapacityP95BatchSeconds { get; set; }
-    public double? SnapshotCapacityEstimatedSeconds { get; set; }
-    public double SnapshotCapacityWindowSeconds { get; set; }
-    public DateTimeOffset? SnapshotCapacityOldestSampleAtUtc { get; set; }
-    public double? SnapshotCapacityOldestSampleAgeSeconds { get; set; }
-    public string SnapshotCapacityModel { get; set; } = "max(shared 2 Table GET/s floor, measured worker completion, fallback group work) with 25% headroom";
-    public string SnapshotCapacityRequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status,primarychannel; sorted exact-size ID filter; response cap 512 KiB";
-    public string ProfileCapacityStatus { get; set; } = "capacity-unverified";
-    public string ProfileCapacityReason { get; set; } = "profile_transport_evidence_not_available";
-    public int ProfileCapacitySamples { get; set; }
-    public int ProfileCapacityTargetSensors { get; set; }
-    public long ProfileCapacityExpectedTableRequests { get; set; }
-    public double? ProfileCapacityP95SensorSeconds { get; set; }
-    public double? ProfileCapacityEstimatedSeconds { get; set; }
-    public double ProfileCapacityWindowSeconds { get; set; }
-    public string ProfileCapacityRequestShape { get; set; } = "sensor + channels table GET, sequential, max 5 sensors, 512 KiB each, 30 seconds";
-    /// <summary>Separate initial raw qualification workload; it does not belong to recurring profile refresh.</summary>
-    public string QualificationCapacityStatus { get; set; } = "capacity-unverified";
-    public string QualificationCapacityReason { get; set; } = "qualification_capacity_not_available";
-    public int QualificationEligibleSensors { get; set; }
-    public int QualificationDurationHours { get; set; } = 72;
-    public int QualificationAttemptsAssumed { get; set; } = 1;
-    public long QualificationWorstCaseTableRequests { get; set; }
-    public long QualificationWorstCaseHistoricRequests { get; set; }
-    public double? QualificationRequiredSeconds { get; set; }
-    public double QualificationAvailableSeconds { get; set; } = 72 * 3600d;
-    public string QualificationCapacityRequestShape { get; set; } = "per eligible sensor and attempt: 4 Table/property GETs + 1 Historic XML GET; 25% headroom";
-    /// <summary>Joint snapshot/profile capacity result; component pilots alone do not grant admission.</summary>
-    public string JointCapacityStatus { get; set; } = "capacity-unverified";
-    public string JointCapacityReason { get; set; } = "joint_capacity_evidence_not_available";
-    public bool JointAdmissionPlanMatched { get; set; }
-    public double? JointSharedTableRequestsPerSecond { get; set; }
-    public double? JointSnapshotTableRequestsPerSecond { get; set; }
-    public double? JointProfileTableRequestsPerSecond { get; set; }
-    public double? JointGeneralResidualTableRequestsPerSecond { get; set; }
-    public double? JointSnapshotEstimatedSeconds { get; set; }
-    public double? JointSnapshotWindowSeconds { get; set; }
-    public double? JointProfileEstimatedSeconds { get; set; }
-    public double? JointProfileWindowSeconds { get; set; }
-}
-
-public sealed class PrtgSnapshotCapacityPilotDto
-{
-    public string Status { get; set; } = "capacity-unverified";
-    public string Reason { get; set; } = "pilot_not_run";
-    public int TargetCount { get; set; }
-    public int CapacitySampleBatchSize { get; set; }
-    public int RequestsAttempted { get; set; }
-    public int RequestsSent { get; set; }
-    public int MaximumRequestsPerRun { get; set; } = 5;
-    public int UniqueSensorsSampled { get; set; }
-    public string Coverage { get; set; } = "";
-    public string RequestShape { get; set; } = "table.json sensors; columns=objid,lastvalue,interval,lastcheck,status,primarychannel; sorted exact-size ID filter; response cap 512 KiB";
-    public int MatchingFullBatchSamples { get; set; }
-    public string PrimaryChannelCapabilityMode { get; set; } = "unknown";
-    public long ExpectedTableRequests { get; set; }
-    public int PotentialQualifiedSensors { get; set; }
-    public int PotentialFallbackGroups { get; set; }
-    public int MatchingFallbackGroupSamples { get; set; }
-    public int RequiredFallbackGroupSamples { get; set; }
-    public double? P95FallbackGroupSeconds { get; set; }
-    public double? P95BatchSeconds { get; set; }
-    public double? EstimatedSeconds { get; set; }
-    public double CompletionWindowSeconds { get; set; }
+    /// <summary>快照每輪的請求批數（每批最多 100 顆 objid）</summary>
+    public int SnapshotBatchCount { get; set; }
 }
 
 /// <summary>「同步結構與對應」的狀態（docs/PRTG-SPEC.md §5a）。Last* 全為 null 代表從未執行過。</summary>

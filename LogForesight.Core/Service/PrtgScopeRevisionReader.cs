@@ -20,7 +20,28 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
     private const string SentinelsBlobKey = "sentinels";
     private const string RulesBlobKey = "rules";
 
-    public string Read()
+    public string Read() => ReadCore(includePolicyRevision: true);
+
+    /// <summary>Structural fence for consumers that independently revalidate each policy-dependent issue.</summary>
+    public string ReadStructural() => ReadCore(includePolicyRevision: false);
+
+    /// <summary>
+    /// 長時間取值工作（快照、範圍補抓）的範圍柵欄：結構範圍＋監看政策的主機／sensor 縮圈。
+    /// 不含整份政策的 blob 版本，政策裡與縮圈無關的編輯不會打斷進行中的取值。
+    /// </summary>
+    public string ReadRawSemantic()
+    {
+        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
+        var rawScope = JsonSerializer.Serialize(new
+        {
+            HostIds = policy.HostIds.Order().ToArray(),
+            SensorIds = policy.SensorIds.Order().ToArray()
+        });
+        var rawFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawScope)));
+        return $"{ReadStructural()}:{rawFingerprint}";
+    }
+
+    private string ReadCore(bool includePolicyRevision)
     {
         lock (_gate)
         {
@@ -68,7 +89,8 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
                     .OrderBy(s => s.SentinelId).Select(s => new { s.SentinelId, s.Active, s.BaseUrl }));
                 _sentinelVersion = sentinelVersion;
             }
-            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{versions.GetValueOrDefault(PrtgMonitoringPolicyStore.BlobKey)}:{versions.GetValueOrDefault(RulesBlobKey)}:{_sentinelFingerprint}:{_hostFingerprint}";
+            var policyVersion = includePolicyRevision ? versions.GetValueOrDefault(PrtgMonitoringPolicyStore.BlobKey) : 0;
+            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{policyVersion}:{versions.GetValueOrDefault(RulesBlobKey)}:{_sentinelFingerprint}:{_hostFingerprint}";
         }
     }
 }

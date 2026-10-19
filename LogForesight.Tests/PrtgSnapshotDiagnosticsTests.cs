@@ -1,4 +1,4 @@
-using LogForesight.Core.Persistence;
+﻿using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Services;
@@ -27,6 +27,28 @@ public sealed class PrtgSnapshotDiagnosticsTests : IDisposable
     private PrtgSnapshotDiagnosticsStore NewStore() => new(_backend.Blob("prtg_snapshot_diagnostics_v1"));
     private PrtgSnapshotDiagnosticsService NewReader() => new(NewStore(),
         (from, to) => _backend.PrtgStore().GetSnapshotValueCoverage(from, to));
+
+    [Fact]
+    public void PhysicalNulInDiagnosticsRejectsReadAndMutationWithoutLosingTheOriginalDocument()
+    {
+        const string key = "prtg_snapshot_diagnostics_v1";
+        var at = new DateTime(2026, 10, 15, 8, 0, 0);
+        NewStore().Record(at, "attempt", targets: 1);
+        Assert.Equal(1, Assert.Single(NewStore().ReadHours()).Attempts);
+        var raw = _backend.Blob(key).Read()! + "\0hidden";
+        using (var context = _backend.CreateContext())
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(raw);
+            Assert.Equal(1, context.Database.ExecuteSqlInterpolated(
+                $"UPDATE lf_blobs SET content=CAST({bytes} AS TEXT) WHERE blob_key={key}"));
+        }
+        Assert.Equal(raw, _backend.Blob(key).Read());
+        var version = _backend.Blob(key).ReadVersion();
+        Assert.Throws<InvalidDataException>(() => NewStore().ReadHours());
+        Assert.Throws<InvalidDataException>(() => NewStore().Record(at, "attempt", targets: 1));
+        Assert.Equal(version, _backend.Blob(key).ReadVersion());
+        Assert.Equal(raw, _backend.Blob(key).Read());
+    }
 
     [Fact]
     public void 四次取樣達標而單次低coverage不達標()

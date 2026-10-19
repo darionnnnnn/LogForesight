@@ -564,6 +564,14 @@ function headlineCell(record) {
         wrap.appendChild(badge);
     }
 
+    if (record.prtgOnly) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--info me-1';
+        badge.textContent = 'PRTG';
+        badge.title = '當日沒有日誌分析，只有 PRTG 訊號';
+        wrap.appendChild(badge);
+    }
+
     const text = document.createElement('span');
     text.textContent = record.headline || '（無 AI 摘要）';
     if (!record.aiAnalyzed && !record.aiPending) text.className = 'text-muted';

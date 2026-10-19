@@ -1,5 +1,7 @@
+using System.Reflection;
 using System.Text;
 using LogForesight.Core;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Models.Dto;
@@ -10,7 +12,7 @@ namespace LogForesight.Web.Services;
 public record PrtgProbeSnapshot(
     bool IsRunning, DateTime? StartedAt, DateTime? CompletedAt,
     bool? Success, string? LatestMessage, IReadOnlyList<string> Output,
-    bool Cancelled = false, string? EvidenceJson = null);
+    bool Cancelled = false);
 
 /// <summary>
 /// PRTG probe 的行程內單例執行狀態＋併發 1 的 gate。
@@ -25,7 +27,6 @@ public class PrtgProbeRunState
     private DateTime? _completedAt;
     private bool? _success;
     private string? _latestMessage;
-    private string? _evidenceJson;
 
     private CancellationTokenSource? _cts;
     private bool _cancelled;
@@ -61,19 +62,17 @@ public class PrtgProbeRunState
         lock (_lock)
         {
             if (_cts == null || !_isRunning) return false;
-            _evidenceJson = null;
             _cts.Cancel();
             return true;
         }
     }
 
     /// <summary>結束本趟：記住是否被停止、釋放並清空取消來源，再結束執行狀態。</summary>
-    public void FinishRun(bool success, bool cancelled, string? cancelledEvidenceJson = null)
+    public void FinishRun(bool success, bool cancelled)
     {
         lock (_lock)
         {
             _cancelled = cancelled;
-            if (cancelled) _evidenceJson = cancelledEvidenceJson;
             _cts?.Dispose();
             _cts = null;
         }
@@ -91,7 +90,6 @@ public class PrtgProbeRunState
             _success = null;
             _latestMessage = null;
             _output.Clear();
-            _evidenceJson = null;
             return true;
         }
     }
@@ -103,14 +101,6 @@ public class PrtgProbeRunState
             if (!_isRunning) return;
             _output.Add(message);
             if (!string.IsNullOrWhiteSpace(message)) _latestMessage = message;
-        }
-    }
-
-    public void SetEvidenceJson(string? evidenceJson)
-    {
-        lock (_lock)
-        {
-            if (_isRunning) _evidenceJson = evidenceJson;
         }
     }
 
@@ -130,7 +120,7 @@ public class PrtgProbeRunState
         {
             return new PrtgProbeSnapshot(
                 _isRunning, _startedAt, _completedAt, _success,
-                _latestMessage, _output.ToList(), _cancelled, _evidenceJson);
+                _latestMessage, _output.ToList(), _cancelled);
         }
     }
 }
@@ -164,18 +154,18 @@ public class PrtgProbeService
     private readonly StorageBackend _backend;
     private readonly IHostStore _hosts;
     private readonly ISentinelStore _sentinels;
-    private readonly IAiProbeService? _aiProbe;
+    internal Func<SystemSettings, PrtgClient>? ClientFactoryForTesting { get; set; }
+    internal TimeSpan EnvironmentProbeOverallTimeoutForTesting { get; set; } = PrtgProbeRunner.OverallTimeout;
 
     public PrtgProbeService(ISystemSettingsStore settings, PrtgProbeRunState state, PrtgBackfillRunState backfillState,
         StorageBackend backend, IHostStore hosts, ISentinelStore sentinels,
-        SchedulerRunState schedulerState, PrtgStructureSyncRunState structureState, IAiProbeService? aiProbe = null)
+        SchedulerRunState schedulerState, PrtgStructureSyncRunState structureState)
     {
         _settings = settings;
         _state = state;
         _backfillState = backfillState;
         _schedulerState = schedulerState;
         _structureState = structureState;
-        _aiProbe = aiProbe;
         _backend = backend;
         _hosts = hosts;
         _sentinels = sentinels;
@@ -192,52 +182,8 @@ public class PrtgProbeService
             Success = s.Success,
             LatestMessage = s.LatestMessage,
             Output = s.Output,
-            Cancelled = s.Cancelled,
-            EvidenceJson = s.EvidenceJson
+            Cancelled = s.Cancelled
         };
-    }
-
-    /// <summary>Read-only local diagnostics; does not create a client, contact PRTG/AI, or update probe readiness.</summary>
-    public async Task<string> GetLocalEvidenceAsync(CancellationToken ct)
-    {
-        var settings = _settings.Get();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(TimeSpan.FromSeconds(15));
-        var token = deadline.Token;
-        var assembly = typeof(PrtgProbeService).Assembly;
-        var buildVersion = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
-            ?? assembly.GetName().Version?.ToString() ?? "unknown";
-        var build = LogForesightBuildIdentity.ReadCurrent(assembly, typeof(PrtgClient).Assembly);
-        using var db = _backend.CreateContext();
-        var provider = db.Database.ProviderName;
-        var storage = await PrtgStorageEnvironmentProbe.CollectAsync(db, _backend.DataRoot, token);
-        var facts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, settings, null, token);
-        token.ThrowIfCancellationRequested();
-        if (_settings.Get().Revision != settings.Revision)
-            throw new InvalidOperationException("設定已變更，請重新匯出本機診斷。");
-        var context = new PrtgProbeEvidenceContext
-        {
-            BuildVersion = buildVersion, GeneratedAtUtc = DateTimeOffset.UtcNow,
-            HostUtcOffset = DateTimeOffset.Now.ToString("zzz"), SettingsRevision = settings.Revision,
-            SourceFingerprint = PrtgCompatibilityProbe.ComputeUrlFingerprint(settings.PrtgUrl),
-            StorageProvider = provider switch
-            {
-                "Microsoft.EntityFrameworkCore.Sqlite" => "Sqlite",
-                "Microsoft.EntityFrameworkCore.SqlServer" => "SqlServer",
-                _ => "unknown"
-            },
-            EfCoreProvider = provider is "Microsoft.EntityFrameworkCore.Sqlite" or "Microsoft.EntityFrameworkCore.SqlServer" ? provider : null,
-            StorageEnvironment = storage, RetentionDays = settings.PrtgRetentionDays,
-            LocalFacts = facts, BuildIdentity = PrtgProbeBuildFacts.From(build)
-        };
-        var json = PrtgCompatibilityProbe.SerializeEvidence(
-            PrtgCompatibilityProbe.CreateUnobservedEvidence(context,
-                string.IsNullOrWhiteSpace(settings.PrtgUrl) || !PrtgClientFactory.HasUsableCredentials(settings)
-                    ? "source-not-configured" : "source-observations-not-started"));
-        if (System.Text.Encoding.UTF8.GetByteCount(json) > 64 * 1024)
-            throw new InvalidDataException("本機診斷超過有界匯出上限。");
-        return json;
     }
 
     public bool TryCancel() => _state.TryCancel();
@@ -295,35 +241,23 @@ public class PrtgProbeService
         var console = new PrtgProbeConsole(_state);
         console.WriteLine($"探測模式：{(dataFlow ? "小範圍資料流" : "完整環境探測")}");
         console.WriteLine($"開始時間：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
-        var assembly = typeof(PrtgProbeService).Assembly;
-        var buildVersion = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion
-            ?? assembly.GetName().Version?.ToString() ?? "unknown";
+        var buildVersion = typeof(PrtgProbeService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(PrtgProbeService).Assembly.GetName().Version?.ToString()
+            ?? "unknown";
         console.WriteLine($"程式版本：{buildVersion}");
-        var buildIdentity = LogForesightBuildIdentity.ReadCurrent(assembly, typeof(PrtgClient).Assembly);
-        console.WriteLine($"建置識別：{buildIdentity.Status}／{buildIdentity.Reason}；來源 {buildIdentity.SourceCommit}；指紋 {buildIdentity.SourceFingerprint}。若不一致，請部署同一份 Web/Core 與 build-identity.json 後重新探測。");
         if (s.Revision == "legacy") console.WriteLine("設定修訂 legacy：既有設定可能仍有效，但缺少可追溯修訂；請由管理者檢視並明確儲存，不自動改設定。");
         console.WriteLine($"設定版本：{s.Revision}；PRTG 啟用：{(s.PrtgEnabled ? "是" : "否")}；取數策略：{s.PrtgFetchStrategy}");
         console.WriteLine("輸出可能含主機名稱、IP 或 PRTG 訊息；分享前請先檢視並遮蔽。");
         console.WriteLine();
-        var evidenceContext = new PrtgProbeEvidenceContext
-        {
-            BuildVersion = buildVersion, GeneratedAtUtc = DateTimeOffset.UtcNow,
-            HostUtcOffset = DateTimeOffset.Now.ToString("zzz"),
-            SourceFingerprint = PrtgCompatibilityProbe.ComputeUrlFingerprint(s.PrtgUrl),
-            SettingsRevision = s.Revision, RetentionDays = s.PrtgRetentionDays,
-            BuildIdentity = PrtgProbeBuildFacts.From(buildIdentity)
-        };
         PrtgClient? client = null;
         try
         {
-            client = PrtgClientFactory.Create(s);
+            client = ClientFactoryForTesting is { } factory ? factory(s) :
+                dataFlow ? PrtgClientFactory.Create(s) : PrtgClientFactory.CreateForEnvironmentProbe(s);
         }
         catch (Exception ex)
         {
             _state.AppendLine($"初始化 PRTG 連線失敗：{ex.Message}");
-            if (!dataFlow) _state.SetEvidenceJson(PrtgCompatibilityProbe.SerializeEvidence(
-                PrtgCompatibilityProbe.CreateUnobservedEvidence(evidenceContext, "client-initialization-failed")));
             _state.FinishRun(false, false);
             error = $"初始化 PRTG 連線失敗：{ex.Message}";
             return false;
@@ -331,13 +265,17 @@ public class PrtgProbeService
 
         _ = Task.Run(async () =>
         {
-            using var operation = new PrtgOperationScope(s, _settings.Get, ct,
-                new PrtgScopeRevisionReader(_backend, _hosts).Read, dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
+            using var overallDeadline = dataFlow ? null : CancellationTokenSource.CreateLinkedTokenSource(ct);
+            if (overallDeadline != null)
+                overallDeadline.CancelAfter(EnvironmentProbeOverallTimeoutForTesting);
+            var scopeReader = new PrtgScopeRevisionReader(_backend, _hosts);
+            using var operation = new PrtgOperationScope(s, _settings.Get, overallDeadline?.Token ?? ct,
+                dataFlow ? scopeReader.ReadRawSemantic : scopeReader.Read,
+                dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
             client.OperationCheckpoint = operation.Checkpoint;
             var runToken = operation.Token;
             var success = false;
             var cancelled = false;
-            var compatibilityEvidenceProduced = false;
             try
             {
                 using (client)
@@ -349,58 +287,7 @@ public class PrtgProbeService
                     }
                     else
                     {
-                        string storageProvider = "unknown";
-                        string? efCoreProvider = null;
-                        var storageEnvironment = new PrtgStorageEnvironmentFacts();
-                        try
-                        {
-                            using var db = _backend.CreateContext();
-                            var pName = db.Database.ProviderName;
-                            // Export only the actual, known provider identity. It describes this
-                            // service's storage; it does not establish remote PRTG host resources.
-                            (storageProvider, efCoreProvider) = pName switch
-                            {
-                                "Microsoft.EntityFrameworkCore.SqlServer" => ("SqlServer", pName),
-                                "Microsoft.EntityFrameworkCore.Sqlite" => ("Sqlite", pName),
-                                _ => ("unknown", null)
-                            };
-                            storageEnvironment = await PrtgStorageEnvironmentProbe
-                                .CollectAsync(db, _backend.DataRoot, runToken).ConfigureAwait(false);
-                        }
-                        catch
-                        {
-                            storageProvider = "unknown";
-                            efCoreProvider = null;
-                        }
-
-                        var localFacts = await PrtgProbeLocalFactsCollector.CollectAsync(_backend, s, _aiProbe, runToken);
-                        operation.Checkpoint();
-                        console.WriteLine($"本機摘要：{localFacts.Status}／{localFacts.Reason}；正式設定 {localFacts.PolicyHosts} 台／{localFacts.PolicySensors} 顆；守門覆寫 {localFacts.GuardOverrideSensors} 顆。摘要不授權正式風險。");
-                        console.WriteLine($"昨日 NetIQ 回執 {localFacts.NetiqReceipts} 筆、成功 {localFacts.NetiqSuccess}、等待 {localFacts.NetiqWaiting}；合格父紀錄 {localFacts.NetiqEligibleParents}／{localFacts.NetiqParentRows}。AI 小請求：{localFacts.AiProbeStatus}；不是正式服務驗收。");
-                        evidenceContext = new PrtgProbeEvidenceContext
-                        {
-                            SchemaVersion = "1.0.0",
-                            BuildVersion = buildVersion,
-                            GeneratedAtUtc = DateTimeOffset.UtcNow,
-                            HostUtcOffset = DateTimeOffset.Now.ToString("zzz"),
-                            SourceFingerprint = PrtgCompatibilityProbe.ComputeUrlFingerprint(s.PrtgUrl),
-                            SettingsRevision = s.Revision,
-                            SourceTimezone = "unknown",
-                            SourceLocale = "unknown",
-                            StorageProvider = storageProvider,
-                            EfCoreProvider = efCoreProvider,
-                            StorageEnvironment = storageEnvironment,
-                            RetentionDays = s.PrtgRetentionDays,
-                            ScopeSummary = "unknown",
-                            ReadinessSummary = "unknown",
-                            LocalFacts = localFacts,
-                            BuildIdentity = PrtgProbeBuildFacts.From(buildIdentity)
-                        };
-                        success = await PrtgProbeRunner.RunAsync(client, console, evidenceContext, runToken, json =>
-                        {
-                            compatibilityEvidenceProduced = true;
-                            _state.SetEvidenceJson(json);
-                        });
+                        success = await PrtgProbeRunner.RunCoreAsync(client, console, runToken);
                     }
 
                     // 站台對照只在探測本身成功後才做（連線都不通時對照不出東西），
@@ -421,15 +308,26 @@ public class PrtgProbeService
                             console.WriteLine($"站台對照發生未預期錯誤：{ex.Message}");
                         }
                     }
+                    // Some best-effort sub-stages can catch ordinary exceptions. Recheck the
+                    // operation token before marking the whole environment probe complete.
+                    operation.Checkpoint();
                     operation.CompletedStage("探測與站台對照已返回");
                 }
             }
             catch (OperationCanceledException) when (runToken.IsCancellationRequested)
             {
-                cancelled = true;
                 success = false;
                 console.WriteLine();
-                console.WriteLine(operation.SettingsChanged ? "設定或範圍變更，探測已停止。" : "探測已由使用者停止。");
+                if (overallDeadline?.IsCancellationRequested == true && !ct.IsCancellationRequested && !operation.SettingsChanged)
+                {
+                    // A probe deadline is a failed run, not a user cancellation.
+                    console.WriteLine($"環境探測超過整輪時間上限（{EnvironmentProbeOverallTimeoutForTesting.TotalSeconds:0.#} 秒），已停止後續請求。");
+                }
+                else
+                {
+                    cancelled = true;
+                    console.WriteLine(operation.SettingsChanged ? "設定或範圍變更，探測已停止。" : "探測已由使用者停止。");
+                }
             }
             catch (Exception ex)
             {
@@ -438,17 +336,7 @@ public class PrtgProbeService
             }
             finally
             {
-                // Failed/cancelled source work still exports the captured, sanitized local context.
-                // Never start extra transport or repeat database reads during cancellation cleanup.
-                string? incompleteEvidence = null;
-                if (!dataFlow && (cancelled || !compatibilityEvidenceProduced))
-                {
-                    incompleteEvidence = PrtgCompatibilityProbe.SerializeEvidence(
-                        PrtgCompatibilityProbe.CreateUnobservedEvidence(evidenceContext,
-                            cancelled ? "probe-cancelled" : "source-observations-unavailable"));
-                    if (!cancelled) _state.SetEvidenceJson(incompleteEvidence);
-                }
-                _state.FinishRun(success, cancelled, cancelled ? incompleteEvidence : null);
+                _state.FinishRun(success, cancelled);
             }
         });
 

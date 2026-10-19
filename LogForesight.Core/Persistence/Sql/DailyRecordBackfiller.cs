@@ -30,8 +30,10 @@ public sealed class DailyRecordBackfiller
     /// 只把 AiPending 寫進 ContentJson、沒有同步抽出欄，導致「AI 已完成」的舊列欄位永遠
     /// 停在 1。欄位在此之前沒有任何查詢端，漂移因此無聲；批次C 起 AI 排程改以欄位為事實
     /// 來源，不校正就會把整庫已完成的紀錄全當成待補而重跑一遍。
+    ///
+    /// 版本 3（第 54 輪 C2）：新增 <c>log_source</c> 抽出欄，NetIQ 涵蓋類統計以它排除只有 PRTG 的主機日。
     /// </summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     private readonly Func<LfDbContext> _contextFactory;
 
@@ -110,6 +112,7 @@ public sealed class DailyRecordBackfiller
             row.WarningCount = record.WarningCount;
             row.AiAnalyzed = record.AiAnalyzed;
             row.AiPending = record.AiPending;
+            row.LogSource = (short)record.LogSource;
             row.HasCorrelation = record.CorrelationAlerts.Count > 0;
             row.ExtractVersion = CurrentVersion;
         }

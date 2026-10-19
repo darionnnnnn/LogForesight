@@ -1188,64 +1188,6 @@ public class AnalysisRecordStoreContractTests : IDisposable
     }
 
     [Fact]
-    public void AttachPrtgFindings_零FindingManifest原子持久_支援舊JSON及父版本拒絕()
-    {
-        var store = CreateStore();
-        var hostId = 991L;
-        var date = new DateTime(2026, 10, 3);
-        var appended = new DailyAnalysisRecord
-        {
-            HostId = hostId, Host = "manifest-host", Date = date,
-            LogSource = AnalysisLogSource.Netiq, RiskLevel = "低", ErrorCount = 0,
-            TopIssues = new List<LogIssueSignature>()
-        };
-        store.Append(appended);
-        Assert.True(appended.RecordId > 0);
-        var parent = Assert.Single(store.ReadRecent(date, 1));
-        Assert.Null(parent.PrtgManifest); // old ContentJson omits the additive field
-
-        var manifest = new PrtgDecisionManifest
-        {
-            ParentRecordId = parent.RecordId,
-            ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(parent),
-            ParentFindingFingerprint = PrtgFindingMapper.Fingerprint(parent.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
-            SourceGeneration = "source-v1",
-            ResourceFingerprint = new string('a', 64),
-            SemanticFingerprint = new string('b', 64),
-            StrategyFingerprint = new string('c', 64),
-            HostMappingFingerprint = new string('f', 64),
-            RuleFingerprint = new string('d', 64),
-            EvidenceFingerprint = new string('e', 64),
-            FindingFingerprint = PrtgFindingMapper.Fingerprint(Array.Empty<LogIssueSignature>()),
-            CompletedAtUtc = DateTime.UtcNow,
-            Outcome = "complete"
-        };
-
-        Assert.False(store.AttachPrtgFindings(hostId, date, Array.Empty<LogIssueSignature>(), NoPatternIds,
-            out _, aiConfigured: true, manifest: manifest)); // no finding delta; manifest is still committed
-        var persisted = Assert.Single(store.ReadRecent(date, 1));
-        Assert.Empty(persisted.TopIssues);
-        Assert.NotNull(persisted.PrtgManifest);
-        Assert.True(persisted.PrtgManifest!.ParentRecordId > 0);
-        Assert.Equal(manifest.EvidenceFingerprint, persisted.PrtgManifest.EvidenceFingerprint);
-        Assert.Equal(PrtgFindingMapper.Fingerprint(Array.Empty<LogIssueSignature>()), persisted.PrtgManifest.FindingFingerprint);
-        Assert.Equal(manifest.ParentFingerprint, HostDayWorkflowFingerprint.ForParentRecord(persisted));
-        Assert.True(HostDayWorkflowFingerprint.HasValidPrtgManifest(persisted));
-
-        var changedParent = new DailyAnalysisRecord
-        {
-            HostId = persisted.HostId, Date = persisted.Date, LogSource = persisted.LogSource,
-            LatestNetiqAttemptStatus = "success", LatestNetiqAttemptAtUtc = DateTime.UtcNow,
-            ErrorCount = 1, TopIssues = persisted.TopIssues
-        };
-        Assert.NotEqual(persisted.PrtgManifest.ParentFingerprint,
-            HostDayWorkflowFingerprint.ForParentRecord(changedParent));
-        changedParent.RecordId = persisted.RecordId;
-        changedParent.PrtgManifest = persisted.PrtgManifest;
-        Assert.False(HostDayWorkflowFingerprint.HasValidPrtgManifest(changedParent));
-    }
-
-    [Fact]
     public void AttachPrtgFindings_同一天重複追加依EventKey去重不重複寫入()
     {
         var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");

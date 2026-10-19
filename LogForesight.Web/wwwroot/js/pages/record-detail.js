@@ -294,7 +294,11 @@ function renderHeader(detail) {
     }
 
     body.appendChild(top);
-    if (detail.logSource) {
+    if (detail.logSource === 'Prtg') {
+        const source = document.createElement('p'); source.className = 'small text-muted';
+        source.textContent = '日誌來源：PRTG。當日沒有日誌分析，這一天只有 PRTG 訊號；之後若補到日誌分析，會更新為同一筆紀錄並保留這些 PRTG 問題。';
+        body.appendChild(source);
+    } else if (detail.logSource) {
         const source = document.createElement('p'); source.className = 'small text-muted';
         const status = detail.latestNetiqAttemptStatus ?? '已保存的分析結果';
         source.textContent = `日誌來源：${detail.logSource}；最新 NetIQ 嘗試：${status}。${detail.prtgSupplementEligible
@@ -1413,8 +1417,6 @@ function issueCell(issue) {
     wrap.appendChild(meta);
 
     wrap.appendChild(sourceEvidenceBlock(issue));
-    const prtgResourceEvidence = prtgResourceEvidenceBlock(issue);
-    if (prtgResourceEvidence) wrap.appendChild(prtgResourceEvidence);
 
     if (issue.knownIssue) {
         const text = document.createElement('div');
@@ -1447,34 +1449,14 @@ function issueCell(issue) {
             wrap.appendChild(distinct);
         }
 
+        if (issue.prtgTrendEvidence) wrap.appendChild(prtgTrendEvidenceBlock(issue.prtgTrendEvidence));
+
         if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
     }
 
     return wrap;
 }
 
-function prtgResourceEvidenceBlock(issue) {
-    const evidence = issue.prtgResourceVersionEvidence;
-    if (!evidence) return null;
-    const block = document.createElement('div');
-    block.className = 'small text-muted mt-1';
-    const recorded = value => value === 'recorded' ? '已保存' : '未知';
-    const versions = document.createElement('div');
-    const reference = value => typeof value === 'string' && /^sha256:[0-9A-F]{64}$/.test(value) ? value : '未知';
-    versions.textContent = `紀錄中的版本依據：來源世代 ${recorded(evidence.sourceGeneration)}；資源世代 ${recorded(evidence.resourceGeneration)}；頻道世代 ${recorded(evidence.channelGeneration)}；規則准入指紋 ${recorded(evidence.ruleAdmissionFingerprint)}。保存版本參照 ${reference(evidence.evidenceVersionReference)}；規則准入版本參照 ${reference(evidence.ruleAdmissionVersionReference)}。參照只供比對已保存紀錄，不是原生識別或目前授權證明。`;
-    block.appendChild(versions);
-    const reasonNames = {
-        'disk-two-hour-low-water': '兩個完整小時皆處於磁碟低水位',
-        'disk-seven-day-low-water-trend': '七日趨勢預估將到達低水位'
-    };
-    const reasons = (issue.prtgResourceReasonCodes || []).filter(code => Object.hasOwn(reasonNames, code));
-    if (reasons.length) {
-        const line = document.createElement('div');
-        line.textContent = `保存的結構化資源理由：${reasons.map(code => reasonNames[code]).join('；')}`;
-        block.appendChild(line);
-    }
-    return block;
-}
 
 /** Bounded provenance disclosure. Every external value is rendered as text, never as markup or a link. */
 function sourceEvidenceBlock(issue) {
@@ -1754,6 +1736,41 @@ function sampleMessagesTrigger(issue) {
     });
 
     return trigger;
+}
+
+function prtgTrendEvidenceBlock(evidence) {
+    const dl = document.createElement('dl');
+    dl.className = 'row small mb-2 mt-2';
+    const slopeStr = evidence.slopePerDay != null
+        ? `${evidence.slopePerDay >= 0 ? '+' : ''}${evidence.slopePerDay.toFixed(2)}${evidence.unit || ''}`
+        : '—';
+    const currentStr = evidence.currentValue != null
+        ? `${evidence.currentValue.toFixed(1)}${evidence.unit || ''}`
+        : '—';
+    const targetStr = evidence.targetValue != null
+        ? `${evidence.targetValue.toFixed(1)}${evidence.unit || ''}`
+        : '—';
+
+    const items = [
+        ['規則', evidence.ruleCode],
+        ['窗口起訖', `${evidence.windowStart} ～ ${evidence.windowEnd}`],
+        ['有效日／窗口日', `${evidence.validDays}／${evidence.windowDays} 日`],
+        ['目前值', currentStr],
+        ['每日斜率', slopeStr],
+        ['門檻', targetStr],
+        ['預估到達日', evidence.projectedDate || '未預估'],
+        ['來源 sensor objid', String(evidence.sensorObjid)]
+    ];
+    for (const [dtText, ddText] of items) {
+        const dt = document.createElement('dt');
+        dt.className = 'col-sm-3 text-muted';
+        dt.textContent = dtText;
+        const dd = document.createElement('dd');
+        dd.className = 'col-sm-9 mb-1';
+        dd.textContent = ddText;
+        dl.append(dt, dd);
+    }
+    return dl;
 }
 
 /** 逐則訊息各自成段落（等寬字型、保留原始換行）；textContent 純文字組裝，訊息是攻擊者可控字串，不解析 HTML */

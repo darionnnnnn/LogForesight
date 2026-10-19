@@ -13,6 +13,21 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class PrtgStructureSyncRunState : PrtgProbeRunState
 {
+    private readonly object _identityLock = new();
+    private string? _runId;
+
+    public string? CurrentRunId { get { lock (_identityLock) return _runId; } }
+
+    public string BeginIdentifiedRun()
+    {
+        lock (_identityLock) return _runId = Guid.NewGuid().ToString("N");
+    }
+
+    public bool OwnsRun(string runId)
+    {
+        lock (_identityLock) return Snapshot().IsRunning && string.Equals(_runId, runId, StringComparison.Ordinal);
+    }
+
     private readonly object _progressLock = new();
 
     private string? _phase;
@@ -319,6 +334,13 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
         // TryBegin 與指派之間仍有兩個指令的窗口，要完全關掉得讓執行狀態自己持有 cts
         //（SchedulerRunState.TryBeginRun 的做法），這裡的後果只是「再按一次」，不為此重構。
         cts = new CancellationTokenSource();
+        if (_backend.PrtgStore().ScopePurgeJobs().HasActiveOwner())
+        {
+            cts.Dispose();
+            error = "範圍外清除作業正在執行，請稍後再同步結構。";
+            isConflict = true;
+            return false;
+        }
         if (!_state.TryBegin())
         {
             cts.Dispose();
@@ -326,6 +348,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             isConflict = true;
             return false;
         }
+        _state.BeginIdentifiedRun();
         _cts = cts;
 
         // 「上一趟成功」的旗標同時歸零：下面任何一條 early return 都不能讓閘門沿用舊結果，
@@ -367,15 +390,15 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             using (client)
             {
                 operation.Checkpoint();
-                var fetchService = new PrtgFetchService(client, prtgStore,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
+                var fetchService = PrtgFetchService.Create(client, _backend, prtgStore, s, console, guard: null);
 
                 var status = await PrtgStructureSyncRunner.RunAsync(
                     fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
                     s.PrtgFetchConcurrency, console, operation.Token,
                     new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
-                    progress: (phase, done, total) => _state.UpdateProgress(phase, done, total));
+                    progress: (phase, done, total) => _state.UpdateProgress(phase, done, total),
+                    verifiedParentJobId: _state.CurrentRunId!,
+                    parentOwnsRun: _state.OwnsRun);
 
                 Persist(status);
                 operation.CompletedStage("結構同步結果已保存");

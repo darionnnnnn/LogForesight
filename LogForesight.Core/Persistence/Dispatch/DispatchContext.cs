@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Persistence;
 
@@ -183,7 +184,7 @@ public sealed class DispatchContext
     {
         if (!PrtgFindingMapper.IsPrtg(trend)
             || !PrtgFindingMapper.TryGetRuleCode(trend.Source, out var code)
-            || !string.Equals(code, PrtgDiskRuleDecision.RuleCode, StringComparison.OrdinalIgnoreCase)
+            || !PrtgRuleCatalog.IsValueTrend(code)
             || !TryPrtgSensorId(trend.EventKey, code, out var sensorId)) return null;
 
         foreach (var c in CasesFor(hostName))

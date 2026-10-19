@@ -429,12 +429,10 @@ public class SystemSettings
     /// 優先於內建對照表；結構同步後依此重算自動分類，人工指定的分類不受影響。預設空清單。</summary>
     public List<string> PrtgSensorTypeCategoryOverrides { get; set; } = new();
 
-    /// <summary>白名單出廠預設：實機探測確認的分析型 type（涵蓋約 79% 的 sensor）。
-    /// 刻意不含 Ping（雜訊高且量大），需要時由使用者自行加入。</summary>
+    /// <summary>出廠預設：四類數值規則用得到的 type（CPU／記憶體／磁碟／Ping）與網卡、多碟可用空間等分析型 type；Traffic 取值不可靠且不在數值規則內，不列入。</summary>
     public static readonly string[] DefaultPrtgSensorTypeWhitelist =
     {
-        "SNMP Traffic 64bit",
-        "SNMP Traffic 32bit",
+        "Ping",
         "SNMP Disk Free",
         "SNMP CPU Load",
         "SNMP Memory",

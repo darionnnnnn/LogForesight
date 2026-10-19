@@ -151,4 +151,23 @@ public sealed class DiskFreeTrendRuleEditorUiTests
         Assert.Contains("enabled: document.getElementById('rule-enabled').checked", js);
         Assert.Contains("if (!editingRule && document.getElementById('rule-prtg-code').value === 'disk_free_trend')", js);
     }
+
+    [Fact]
+    public void PrtgTrendRulesAreSupportedInWebViewsAndScripts()
+    {
+        var root = FindRepoRoot();
+        var view = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Rules.cshtml"));
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "rules.js"));
+
+        Assert.Contains("value=\"memory_used_trend\"", view);
+        Assert.Contains("value=\"cpu_load_trend\"", view);
+        Assert.Contains("value=\"ping_latency_trend\"", view);
+        Assert.Contains("rule-prtg-value-trend-fields", view);
+        Assert.DoesNotContain("可信完成小時", view);
+
+        Assert.Contains("memory_used_trend", js);
+        Assert.Contains("cpu_load_trend", js);
+        Assert.Contains("ping_latency_trend", js);
+        Assert.Contains("prtgTrendThresholds", js);
+    }
 }

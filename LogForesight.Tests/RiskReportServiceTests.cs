@@ -113,39 +113,6 @@ public class RiskReportServiceTests
     }
 
     [Fact]
-    public async Task 正式PRTG資源報告包含允許的原因與保存版本參照但不輸出原始世代值()
-    {
-        var sink = new FakeReportSink();
-        var service = MakeService(sink);
-        var issue = MakeStorageIssue();
-        issue.LogName = "PRTG";
-        issue.Source = "PRTG:disk_free_trend";
-        issue.EventId = 0;
-        issue.EventKey = "prtg:disk_free_trend:17";
-        issue.RuleId = "builtin-prtg-resource-disk-pressure";
-        issue.PrtgSourceGeneration = "private-source-generation";
-        issue.PrtgResourceGeneration = "private-resource-generation";
-        issue.PrtgChannelGeneration = "private-channel-generation";
-        issue.PrtgRuleAdmissionFingerprint = new string('A', 64);
-        issue.PrtgResourceReasonCodes = ["disk-two-hour-low-water"];
-        var record = MakeRecord(issue);
-        var expectedReference = HostDayWorkflowFingerprint.PrtgInputFingerprint(record);
-
-        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
-
-        Assert.Contains("正式資源原因：兩個完整小時皆處於磁碟低水位", draft.Content);
-        Assert.Contains($"已保存 PRTG 證據版本比對參照：sha256:{expectedReference}", draft.Content);
-        Assert.Contains("已保存資源證據版本參照（僅供比對）：sha256:", draft.Content);
-        Assert.Contains("已保存規則准入版本參照（僅供比對）：sha256:", draft.Content);
-        Assert.Equal(expectedReference, draft.PrtgEvidenceFingerprint);
-        Assert.DoesNotContain("private-source-generation", draft.Content);
-        Assert.DoesNotContain("private-resource-generation", draft.Content);
-        Assert.DoesNotContain("private-channel-generation", draft.Content);
-        Assert.Null(record.ReportFile);
-        Assert.Null(record.PrtgReportEvidenceFingerprint);
-    }
-
-    [Fact]
     public async Task PRTG報告清理並限制不可信顯示字串且不輸出credential樣式內容()
     {
         var sink = new FakeReportSink();

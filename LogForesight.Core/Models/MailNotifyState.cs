@@ -9,15 +9,21 @@ using LogForesight.Core.Service;
 /// </summary>
 public class MailNotifyState
 {
-    /// <summary>PRTG 可行動問題的最後 SMTP 接受等級；持續故障不因換日重寄。</summary>
-    public Dictionary<string, int> PrtgUrgentAcceptedFacts { get; set; } = new();
-    public Dictionary<string, DateTime> PrtgUrgentFactSeenAtUtc { get; set; } = new();
-
     /// <summary>先落庫再寄出的緊急通知意圖；SMTP 接受不等於信箱實收。</summary>
     public Dictionary<string, MailUrgentIntent> UrgentOutbox { get; set; } = new();
 
-    /// <summary>Legacy singleton claims, retained for fail-closed migration handling; new claims live in per-host shards.</summary>
-    public Dictionary<string, MailFormalStartClaim> FormalMailStartClaims { get; set; } = new(StringComparer.Ordinal);
+    /// <summary>Per-recipient SMTP-accepted finding contributions. Keys bind lane, recipient,
+    /// parent decision and exact issue evidence; legacy blobs deserialize as an empty ledger.</summary>
+    public Dictionary<string, DateTime> AcceptedMailContributionReceipts { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Legacy SMTP receipts with no issue fingerprint. These hold only the matching
+    /// recipient/lane/parent/event contribution; they are not current or formal evidence.</summary>
+    public Dictionary<string, DateTime> HeldLegacyMailContributionReceipts { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Cross-process reservations for exact mail contributions. A row in "attempted" or "unknown"
+    /// is never released automatically because the SMTP outcome may have been accepted remotely.</summary>
+    public Dictionary<string, MailContributionReservation> MailContributionReservations { get; set; } = new(StringComparer.Ordinal);
+
     /// <summary>最後一次寄出每日摘要的日期（yyyy-MM-dd）；null＝從未寄過</summary>
     public string? LastDailySentDate { get; set; }
 
@@ -46,14 +52,19 @@ public class MailNotifyState
     public string? LastFreshnessAlertDate { get; set; }
 }
 
-public sealed class MailFormalStartClaim
+public sealed class MailContributionReservation
 {
-    /// <summary>Legacy singleton fence retained for safe deserialization; new claims store only FenceKey in host shards.</summary>
-    public PrtgResourceFormalDeliveryFence Fence { get; set; } = null!;
-    public string FenceKey { get; set; } = string.Empty;
-    public string Status { get; set; } = "pending";
-    public DateTime UpdatedAtUtc { get; set; }
-    public DateTime? SmtpAcceptedAtUtc { get; set; }
+    public string ReservationId { get; set; } = string.Empty;
+    /// <summary>reserved: sender has not started; attempted: sender may have accepted; unknown: explicit uncertain result.</summary>
+    public string Status { get; set; } = "reserved";
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public enum MailContributionReservationOutcome
+{
+    Accepted,
+    DefinitelyRejected,
+    Unknown
 }
 
 public sealed class MailUrgentIntent
@@ -71,21 +82,5 @@ public sealed class MailUrgentIntent
     public Dictionary<string, DateTime> SmtpAcceptedAtUtc { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> Recipients { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> ProblemKeys { get; set; } = new();
-
-    /// <summary>Immutable start authority captured on first formal CPU/memory send attempt, by issue signature.</summary>
-    /// <remarks>Legacy full-fence payload retained for deserialization. New intents use the compact shard references below.</remarks>
-    public Dictionary<string, PrtgResourceFormalDeliveryFence> FormalStartFences { get; set; } = new(StringComparer.Ordinal);
-
-    /// <summary>Host-shard pointers for new intents; immutable fence payloads remain in the shard.</summary>
-    public Dictionary<string, PrtgFormalMailFenceReference> FormalStartFenceRefs { get; set; } = new(StringComparer.Ordinal);
-
-    /// <summary>Per-issue revocation/claim outcome. A revoked issue is not revived by an old outbox retry.</summary>
-    public Dictionary<string, string> FormalIssueStates { get; set; } = new(StringComparer.Ordinal);
 }
 
-/// <summary>Stable keyset cursor for bounded retries of old durable urgent intents.</summary>
-public sealed class MailUrgentRetryCursorState
-{
-    public string? LastIntentKey { get; set; }
-    public DateTime UpdatedAtUtc { get; set; }
-}

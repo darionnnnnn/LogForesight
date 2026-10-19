@@ -1,5 +1,6 @@
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
@@ -48,10 +49,12 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
         public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => GetVisibleHostIds();
     }
 
-    // RecordDetailQueryService 在 /prtg 這條路徑完全用不到，傳 null 只為了建構 controller；
-    // 這不是替身假值進斷言——斷言的是授權例外與回應內容，與 service 無關。
-    private HostDetailController CreateController(long visibleHostId, string? ipAddress = null, bool caseGrantOnly = false) =>
-        new(null!, new EfPrtgStore(_fx.NewContext), new OnlyVisible(visibleHostId, ipAddress, caseGrantOnly));
+    private HostDetailController CreateController(long visibleHostId, string? ipAddress = null, bool caseGrantOnly = false)
+    {
+        var store = new EfPrtgStore(_fx.NewContext);
+        var assessment = new PrtgValueAssessment(store, new Dictionary<string, PrtgValueSemantic>());
+        return new(null!, store, new OnlyVisible(visibleHostId, ipAddress, caseGrantOnly), assessment, new FakeRuleStore());
+    }
 
     [Fact]
     public void 不可見的主機_查詢PRTG對應擲NotFound()

@@ -564,7 +564,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
         public SchedulerRunState Scheduler { get; } = new();
         public PrtgStructureSyncRunState Structure { get; } = new();
 
-        public ServiceHarness(IAiProbeService? aiProbe = null)
+        public ServiceHarness()
         {
             _dir = Path.Combine(Path.GetTempPath(), "lf-probe-site-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_dir);
@@ -573,7 +573,7 @@ public class PrtgProbeSiteCheckTests : IDisposable
                 _dir);
             Settings = new SystemSettingsStore(Backend.Blob("system_settings"));
             Service = new PrtgProbeService(Settings, new PrtgProbeRunState(), new PrtgBackfillRunState(),
-                Backend, new FakeHostStore(), new FakeSentinelStore(), Scheduler, Structure, aiProbe);
+                Backend, new FakeHostStore(), new FakeSentinelStore(), Scheduler, Structure);
         }
 
         public void PointTo(int port) => Settings.Update(s =>
@@ -641,55 +641,6 @@ public class PrtgProbeSiteCheckTests : IDisposable
 
         Assert.False(result.Success);
         Assert.DoesNotContain("站台對照", result.Text);
-        AssertUnobservedEvidence(h.Service.GetStatus().EvidenceJson, "source-observations-unavailable", h.DataRoot);
-    }
-
-    private static void AssertUnobservedEvidence(string? json, string reason, string dataRoot)
-    {
-        Assert.NotNull(json);
-        Assert.InRange(Encoding.UTF8.GetByteCount(json!), 1, 64 * 1024);
-        using var document = System.Text.Json.JsonDocument.Parse(json!);
-        var root = document.RootElement;
-        Assert.False(root.GetProperty("evidence_ready").GetBoolean());
-        Assert.Equal("unknown", root.GetProperty("source_prtg_version").GetString());
-        var targets = root.GetProperty("targets").EnumerateArray().ToArray();
-        Assert.Equal(5, targets.Length);
-        Assert.All(targets, target =>
-        {
-            Assert.Equal("missing", target.GetProperty("status").GetString());
-            Assert.Contains(reason, target.GetProperty("reason").GetString());
-        });
-        Assert.DoesNotContain(dataRoot, json!, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("SENTINEL_PROBE_CREDENTIAL_20261013", json!, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task LocalDiagnosticsWithoutSourcePreservesProbeStateAndSettings()
-    {
-        using var h = new ServiceHarness();
-        var revision = h.Settings.Get().Revision;
-        var before = h.Service.GetStatus();
-        var json = await h.Service.GetLocalEvidenceAsync(CancellationToken.None);
-        AssertUnobservedEvidence(json, "source-not-configured", h.DataRoot);
-        Assert.Equal(revision, h.Settings.Get().Revision);
-        Assert.Equal(before.StartedAt, h.Service.GetStatus().StartedAt);
-        Assert.Equal(before.CompletedAt, h.Service.GetStatus().CompletedAt);
-        Assert.Null(h.Service.GetStatus().EvidenceJson);
-        Assert.False(h.Service.GetStatus().IsRunning);
-    }
-
-    [Fact]
-    public async Task LocalDiagnosticsWithConfiguredUnreachableSourceDoesNotStartTransport()
-    {
-        var ai = new RejectAiProbe();
-        using var h = new ServiceHarness(ai);
-        h.PointTo(GetFreePort());
-        var json = await h.Service.GetLocalEvidenceAsync(CancellationToken.None);
-        AssertUnobservedEvidence(json, "source-observations-not-started", h.DataRoot);
-        Assert.Null(h.Service.GetStatus().StartedAt);
-        using var document = System.Text.Json.JsonDocument.Parse(json);
-        Assert.Equal("Sqlite", document.RootElement.GetProperty("storage_provider").GetString());
-        Assert.Equal(0, ai.Calls);
     }
 
     private sealed class RejectAiProbe : IAiProbeService
@@ -701,17 +652,6 @@ public class PrtgProbeSiteCheckTests : IDisposable
             Calls++;
             throw new InvalidOperationException("AI must not be called by local diagnostics");
         }
-    }
-
-    [Fact]
-    public async Task LocalDiagnosticsHonorsCallerCancellationWithoutPublishingEvidence()
-    {
-        using var h = new ServiceHarness();
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => h.Service.GetLocalEvidenceAsync(cancellation.Token));
-        Assert.Null(h.Service.GetStatus().StartedAt);
-        Assert.Null(h.Service.GetStatus().EvidenceJson);
     }
 
     [Fact]
@@ -732,9 +672,84 @@ public class PrtgProbeSiteCheckTests : IDisposable
         Assert.False(h.Service.GetStatus().IsRunning);
         Assert.True(h.Service.GetStatus().Cancelled);
         Assert.False(h.Service.GetStatus().Success);
-        AssertUnobservedEvidence(h.Service.GetStatus().EvidenceJson, "probe-cancelled", h.DataRoot);
         request.Response.Abort();
         listener.Stop();
+    }
+
+    [Fact]
+    public async Task EnvironmentProbeOverallDeadlineIncludesSiteCheckAndStopsLaterRequests()
+    {
+        using var h = new ServiceHarness();
+        var port = GetFreePort();
+        using var listener = new HttpListener();
+        using var stopServer = new CancellationTokenSource();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        h.PointTo(port);
+        // 單次請求逾時要長於整輪上限，卡住的站台對照才是被整輪上限停下、而不是自己逾時後當作附加資訊略過。
+        h.Settings.Update(s => s.PrtgTimeoutSeconds = 60);
+        h.Service.EnvironmentProbeOverallTimeoutForTesting = TimeSpan.FromSeconds(12);
+
+        var blockedSiteCheck = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var server = Task.Run(async () =>
+        {
+            try
+            {
+                while (listener.IsListening && !stopServer.IsCancellationRequested)
+                {
+                    var context = await listener.GetContextAsync().WaitAsync(stopServer.Token);
+                    var url = context.Request.RawUrl ?? string.Empty;
+                    requests.Enqueue(url);
+                    if (url.Contains("content=devices&columns=objid,device,host&count=50000", StringComparison.Ordinal))
+                    {
+                        blockedSiteCheck.TrySetResult(url);
+                        _ = Task.Run(async () =>
+                        {
+                            try { await Task.Delay(Timeout.InfiniteTimeSpan, stopServer.Token); }
+                            catch (OperationCanceledException) { }
+                            context.Response.Abort();
+                        });
+                        continue;
+                    }
+
+                    var bytes = Encoding.UTF8.GetBytes("{}");
+                    context.Response.ContentType = "application/json";
+                    context.Response.ContentLength64 = bytes.Length;
+                    await context.Response.OutputStream.WriteAsync(bytes, stopServer.Token);
+                    context.Response.Close();
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (HttpListenerException) when (stopServer.IsCancellationRequested) { }
+        });
+
+        try
+        {
+            Assert.True(h.Service.TryStart(out var error, out _), error);
+            var blockedUrl = await blockedSiteCheck.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Contains("content=devices&columns=objid,device,host&count=50000", blockedUrl, StringComparison.Ordinal);
+
+            var finishDeadline = DateTime.UtcNow.AddSeconds(10);
+            while (h.Service.GetStatus().IsRunning && DateTime.UtcNow < finishDeadline)
+                await Task.Delay(20);
+
+            var status = h.Service.GetStatus();
+            Assert.False(status.IsRunning);
+            Assert.False(status.Success);
+            Assert.False(status.Cancelled);
+            Assert.Contains("整輪時間上限", string.Join("\n", status.Output));
+
+            var requestCountAtFinish = requests.Count;
+            await Task.Delay(200);
+            Assert.Equal(requestCountAtFinish, requests.Count);
+        }
+        finally
+        {
+            stopServer.Cancel();
+            listener.Stop();
+            try { await server; } catch (HttpListenerException) { }
+        }
     }
 
     [Fact]
@@ -771,20 +786,5 @@ public class PrtgProbeSiteCheckTests : IDisposable
         Assert.Contains("PRTG 環境探測完成", result.Text);
         Assert.Contains("══════════ 站台對照 ══════════", result.Text);
         Assert.Contains("鏡像尚未同步", result.Text);
-        var evidenceJson = h.Service.GetStatus().EvidenceJson;
-        Assert.NotNull(evidenceJson);
-        using var evidence = System.Text.Json.JsonDocument.Parse(evidenceJson!);
-        Assert.Equal("Sqlite", evidence.RootElement.GetProperty("storage_provider").GetString());
-        Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite",
-            evidence.RootElement.GetProperty("ef_core_provider").GetString());
-        var storage = evidence.RootElement.GetProperty("storage_environment");
-        Assert.Equal("measured", storage.GetProperty("status").GetString());
-        Assert.Equal("Sqlite", storage.GetProperty("provider").GetString());
-        Assert.InRange(storage.GetProperty("queries_attempted").GetInt32(), 1,
-            PrtgStorageEnvironmentProbe.MaximumMetadataQueries);
-        Assert.Equal("measured", storage.GetProperty("file_status").GetString());
-        Assert.Equal("measured", storage.GetProperty("local_file_status").GetString());
-        Assert.NotEmpty(storage.GetProperty("file_capacities").EnumerateArray());
-        Assert.DoesNotContain(h.DataRoot, evidenceJson, StringComparison.OrdinalIgnoreCase);
     }
 }

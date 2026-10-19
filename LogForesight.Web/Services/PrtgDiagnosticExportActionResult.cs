@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using LogForesight.Core;
@@ -59,13 +59,13 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
 
             await using var transaction = await db.Database.BeginTransactionAsync(
                 db.Database.IsSqlServer() ? IsolationLevel.Snapshot : IsolationLevel.Serializable, token);
-            var policyRow = await db.Blobs.AsNoTracking().Where(row => row.BlobKey == PrtgMonitoringPolicyStore.BlobKey)
-                .Select(row => new { Prefix = row.Content.Substring(0, 4 * 1024 * 1024 + 1), Length = row.Content.Length, row.Version })
-                .SingleOrDefaultAsync(token);
-            if (policyRow is { Length: > 4 * 1024 * 1024 })
+            token.ThrowIfCancellationRequested();
+            var policyRow = EfJsonBlobStore.ReadBoundedInContext(db, PrtgMonitoringPolicyStore.BlobKey, 4 * 1024 * 1024);
+            token.ThrowIfCancellationRequested();
+            if (policyRow.ReportedLength > 4 * 1024 * 1024 || policyRow.Version != 0 && policyRow.Prefix is null)
                 throw new InvalidDataException("來源政策超過有界讀取上限。");
-            var policy = policyRow == null ? new PrtgMonitoringPolicy() :
-                JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRow.Prefix, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            var policy = policyRow.Version == 0 ? new PrtgMonitoringPolicy() :
+                JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRow.Prefix!, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                     ?? throw new InvalidDataException("來源政策格式無效。");
             if (captureBinding() != binding)
                 throw new PrtgTransferStoreException("transfer_context_changed", "匯出來源或授權已變更，請重新開始下載。", 409);
@@ -73,7 +73,7 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
             response.ContentType = "application/json; charset=utf-8";
             response.Headers.ContentDisposition = $"attachment; filename=prtg-export-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.json";
             response.Headers.CacheControl = "no-store";
-            var rows = new PrtgDiagnosticExportSource().EnumerateRowsAsync(db, fromDate, toDate, policy, policyRow?.Version ?? 0, token);
+            var rows = new PrtgDiagnosticExportSource().EnumerateRowsAsync(db, fromDate, toDate, policy, policyRow.Version, token);
             var result = await new PrtgDiagnosticExportWriter().WriteAsync(FencedRows(rows, binding, token),
                 response.Body, new(DateTime.UtcNow, fromDate.Date, toDate.Date), token);
             token.ThrowIfCancellationRequested();

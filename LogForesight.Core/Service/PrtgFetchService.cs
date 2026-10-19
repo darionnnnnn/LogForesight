@@ -28,7 +28,7 @@ public sealed record PrtgStateChangeRangeResult(
     string? Error,
     int QueriedObjects, // 逐一查詢的物件數
     int FailedObjects,  // 例外或分頁未收斂的物件數
-    int EmptyObjects);  // 本趟區間內一筆都沒取到的物件數
+    int EmptyObjects);
 
 /// <summary>範圍補抓結果：寫入的感測器數、取得失敗的裝置、查詢成功但 PRTG 端一顆感測器都沒有的裝置。</summary>
 public sealed record PrtgSensorBackfillResult(
@@ -90,6 +90,15 @@ public sealed class PrtgFetchService
         _categoryOverrides = categoryOverrides;
         _guard = guard;
     }
+
+    /// <summary>
+    /// 正式路徑唯一的組裝點：新鮮度 blob 與分類補充對照都由這裡依當下設定決定，
+    /// 每日管線、快照、回填、結構同步與探測不再各自組建構參數（測試可直接用建構子傳替身）。
+    /// </summary>
+    public static PrtgFetchService Create(PrtgClient client, StorageBackend backend, EfPrtgStore store,
+        SystemSettings settings, IRunConsole console, PrtgResourceGuard? guard) =>
+        new(client, store, new PrtgFreshnessStore(backend.Blob(PrtgFreshnessStore.BlobKey)), console,
+            PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map, guard);
 
     /// <summary>
     /// 記錄某類 PRTG 資料成功完成一次擷取（見 <see cref="PrtgFreshnessStore"/>）。
@@ -766,6 +775,7 @@ public sealed class PrtgFetchService
         var emptyObjects = 0;
         var failed = new List<long>();
         var completed = 0;
+        var stringFallback = 0;
 
         _console.WriteLine($"[階段 3/4] 開始同步 PRTG 狀態變更（{from:yyyy-MM-dd} ～ {to:yyyy-MM-dd}，逐裝置查詢 {totalObjects} 台，併發 {maxConcurrency}）...");
         progress?.Invoke(PrtgSyncMessagesPhase, 0, totalObjects);
@@ -788,12 +798,12 @@ public sealed class PrtgFetchService
                     extraQuery: StateChangesQuery(objid, from),
                     mapper: el =>
                     {
-                        var dtStr = GetStringProperty(el, "datetime");
-                        if (string.IsNullOrWhiteSpace(dtStr) || !DateTime.TryParse(dtStr, out var changedAt))
+                        if (!TryParseMessageTime(el, out var changedAt, out var fromString))
                         {
                             Interlocked.Increment(ref unparseableCount);
                             return null;
                         }
+                        if (fromString) Interlocked.Increment(ref stringFallback);
 
                         // 區間以日期計、含兩端：fromDate.Date <= changedAt.Date <= toDate.Date 的列寫入
                         if (changedAt.Date < from || changedAt.Date > to)
@@ -851,8 +861,7 @@ public sealed class PrtgFetchService
                         var dts = new List<DateTime>(pageElements.Count);
                         foreach (var el in pageElements)
                         {
-                            var dtStr = GetStringProperty(el, "datetime");
-                            if (string.IsNullOrWhiteSpace(dtStr) || !DateTime.TryParse(dtStr, out var dt))
+                            if (!TryParseMessageTime(el, out var dt, out _))
                             {
                                 return false;
                             }
@@ -899,7 +908,11 @@ public sealed class PrtgFetchService
 
         if (unparseableCount > 0)
         {
-            _console.WriteLine($"  ⚠ 狀態變更中有 {unparseableCount} 筆紀錄無法解析時間，已略過。");
+            _console.WriteLine($"  ⚠ 狀態變更中有 {unparseableCount} 筆紀錄無法解析時間（缺 datetime_raw 且顯示字串也解析不了），已略過。");
+        }
+        if (stringFallback > 0)
+        {
+            _console.WriteLine($"  ⚠ 狀態變更中有 {stringFallback} 筆缺 datetime_raw，改以顯示字串依服務主機地區設定解析；若 PRTG 帳號時區與服務主機不同，這些列的時間會偏移。");
         }
 
         var converged = failed.Count == 0;
@@ -986,7 +999,8 @@ public sealed class PrtgFetchService
         var totalValues = 0;
         var totalUnparsed = 0;
         var totalOutsideDay = 0;
-        var totalOaFallback = 0;
+        var totalStringFallback = 0;
+        var totalZoneDrift = 0;
         var failedSensors = 0;
         var timedOutSensors = 0;
         var completedSensors = 0;
@@ -999,14 +1013,15 @@ public sealed class PrtgFetchService
             {
                 ct.ThrowIfCancellationRequested();
                 if (_guard != null) await _guard.WaitIfBusyAsync(ct);
-                var query = $"api/historicdata.json?id={target.Objid}&avg=3600&sdate={sdate}&edate={edate}";
+                var query = $"api/historicdata.json?id={target.Objid}&avg={HistoricAverageSeconds}&sdate={sdate}&edate={edate}";
                 var json = await _client.GetJsonAsync(query, ct);
-                var rows = ParseHistoricData(json, target.Objid, out var unparsed, out var oaFallback);
+                var rows = ParseHistoricData(json, target.Objid, out var unparsed, out var stringFallback, out var zoneDrift);
                 // 有些 PRTG 版本可能忽略 sdate/edate；不能因為 API 回了更多列就寫入請求日以外的資料。
                 var outsideDay = rows.RemoveAll(r => r.PeriodStart < day.Date || r.PeriodStart >= day.Date.AddDays(1));
                 if (outsideDay > 0) Interlocked.Add(ref totalOutsideDay, outsideDay);
                 if (unparsed > 0) Interlocked.Add(ref totalUnparsed, unparsed);
-                if (oaFallback > 0) Interlocked.Add(ref totalOaFallback, oaFallback);
+                if (stringFallback > 0) Interlocked.Add(ref totalStringFallback, stringFallback);
+                if (zoneDrift > 0) Interlocked.Add(ref totalZoneDrift, zoneDrift);
                 if (rows.Count > 0)
                 {
                     // 逐 sensor 寫入資料庫後立即釋放記憶體，絕不累積成大清單一次寫入
@@ -1047,19 +1062,24 @@ public sealed class PrtgFetchService
                 + $"首則錯誤：{firstFailureMessage}");
         }
 
-        // 時間改用 OLE 日期退路的筆數：實機證實 datetime_raw 與顯示字串可能差好幾個小時，
-        // 走退路的資料落在哪個小時並不可靠，必須看得見而不是靜默接受。
-        if (totalOaFallback > 0)
+        // 時間以 datetime_raw（UTC）為準；下面兩種情況都要看得見，不能靜默接受。
+        if (totalStringFallback > 0)
         {
-            _console.WriteLine($"  ⚠ 有 {totalOaFallback} 筆數值的時間是以 PRTG 的原始日期數值推得"
-                + "（顯示字串無法解析）。該數值的時間可能與 PRTG 畫面上的時間不同，"
-                + "請比對 PRTG 的地區與時間顯示設定。");
+            _console.WriteLine($"  ⚠ 有 {totalStringFallback} 筆數值缺 datetime_raw，改以顯示字串依服務主機地區設定推得時段；"
+                + "若 PRTG 帳號時區與服務主機不同，這些列會落在錯的小時。");
+        }
+
+        if (totalZoneDrift > 0)
+        {
+            _console.WriteLine($"  ⚠ 有 {totalZoneDrift} 筆數值的顯示字串與 datetime_raw 換算結果差 30 分鐘以上——"
+                + "PRTG 帳號時區與服務主機不同。數值已依 datetime_raw 落在正確的小時；請把 PRTG 帳號時區設成與服務主機相同，"
+                + "否則取數日期邊界會與 PRTG 畫面錯開。");
         }
 
         if (totalUnparsed > 0)
         {
             _console.WriteLine($"  ⚠ 有 {totalUnparsed} 筆數值的時間欄位無法解析而略過"
-                + "（多半是 PRTG 伺服器的地區日期格式與本機不符，請比對 PRTG 的時間顯示設定）。");
+                + "（缺 datetime_raw，顯示字串也無法以服務主機地區設定解析）。");
         }
 
         if (totalOutsideDay > 0)
@@ -1105,13 +1125,16 @@ public sealed class PrtgFetchService
     /// 5. Unknown 與 NoData 的列仍然寫入資料庫（AvgValue 為 null），保留該時段無可信資料之事實。
     /// </summary>
     /// <param name="unparsedCount">
-    /// 時間欄位無法解析而被略過的筆數。PRTG 依伺服器地區設定輸出時間字串，格式與本機不符時
-    /// 整段資料會解析失敗——這種缺口必須被看見，不能靜默略過（無聲的洞會讓後續基線以為那段本來就沒資料）。
+    /// 時間欄位無法解析而被略過的筆數（缺 datetime_raw 且顯示字串也解析不了）——這種缺口必須被看見，
+    /// 不能靜默略過（無聲的洞會讓後續基線以為那段本來就沒資料）。
     /// </param>
+    /// <param name="stringFallbackCount">缺 datetime_raw、改用顯示字串推得時段的筆數。</param>
+    /// <param name="zoneDriftCount">顯示字串與 datetime_raw 換算差 30 分鐘以上（帳號時區與服務主機不同）的筆數。</param>
     private static List<PrtgValueRow> ParseHistoricData(
-        string json, long sensorObjid, out int unparsedCount, out int oaFallbackCount)
+        string json, long sensorObjid, out int unparsedCount, out int stringFallbackCount, out int zoneDriftCount)
     {
-        oaFallbackCount = 0;
+        stringFallbackCount = 0;
+        zoneDriftCount = 0;
         var rows = new List<PrtgValueRow>();
         var now = DateTime.Now;
         unparsedCount = 0;
@@ -1129,12 +1152,13 @@ public sealed class PrtgFetchService
         {
             if (item.ValueKind != JsonValueKind.Object) continue;
 
-            if (!TryResolvePeriodStart(item, out var periodStart, out var usedOaDate))
+            if (!TryResolvePeriodStart(item, out var periodStart, out var usedString, out var zoneDrift))
             {
                 unparsedCount++;
                 continue;
             }
-            if (usedOaDate) oaFallbackCount++;
+            if (usedString) stringFallbackCount++;
+            if (zoneDrift) zoneDriftCount++;
 
             // 判定 Coverage 是否為 0
             double? coverage = null;
@@ -1243,73 +1267,40 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>
-    /// 從 historicdata 的一列取出時段起點。
-    /// 以 datetime 顯示字串為準（只取「起 - 訖」區間的前段），datetime_raw（OLE Automation 日期數字）
-    /// 只用來驗證字串解析沒有讀錯月日，以及在字串解析不了時當退路。兩者皆不可用時回 false，由呼叫端計入略過筆數。
+    /// 從 historicdata 的一小時聚合列取出時段起點（服務主機本地時間）。
+    /// <c>datetime_raw</c> 為主：它是 UTC 的**時段結束**時刻——現場 PRTG 24.1.92 同一列 raw 46275.6666666667
+    /// ＝9/10 16:00 UTC，顯示字串「下午 11:00:00 - 上午 12:00:00」是 +08 的 23:00～00:00，結束時刻正好相符。
+    /// 起點＝raw 換成本地時間再減一個聚合間隔（請求固定 <c>avg=3600</c>）。
+    /// 顯示字串只用來交叉檢查（差 30 分鐘以上計 <paramref name="zoneDrift"/>）與 raw 缺席時的退路。
     /// </summary>
-    private static bool TryResolvePeriodStart(JsonElement item, out DateTime periodStart, out bool usedOaDate)
+    private static bool TryResolvePeriodStart(JsonElement item, out DateTime periodStart, out bool usedString, out bool zoneDrift)
     {
-        periodStart = default;
-        usedOaDate = false;
-
-        // datetime_raw 與顯示字串不是同一個時間基準：實機（PRTG 24.1.92）同一列的 raw 46275.6666666667＝16:00，
-        // 字串是「下午 11:00:00 - 上午 12:00:00」＝23:00，差 7 小時。字串是管理者在 PRTG 畫面上看到的那個時間，
-        // 鏡像要跟它對齊，否則整份基線會整體平移數小時而沒有任何徵兆。
-        // raw 仍然有用：兩者同一天，所以拿它驗證字串解析有沒有把月與日對調——
-        // 「10/09/2026」在 d/M 的 PRTG 配上 M/d 的站台文化會被讀成 10 月 9 日，而且解析成功、什麼都不會報。
-        DateTime? oaDate = null;
-        if (TryGetFirstProperty(item, "datetime_raw", out var rawProp) && TryReadNumber(rawProp, out var oaNumber))
+        usedString = false;
+        zoneDrift = false;
+        var hasDisplay = TryParseDisplayTime(DisplayPeriodHead(item), out var displayStart);
+        if (TryReadRawUtcAsLocal(item, "datetime_raw", out var periodEnd))
         {
-            try
-            {
-                oaDate = DateTime.FromOADate(oaNumber);
-            }
-            catch (ArgumentException)
-            {
-                // OLE 日期超出合法範圍：視為不可用。
-            }
-        }
-
-        if (item.TryGetProperty("datetime", out var dtProp) && dtProp.ValueKind == JsonValueKind.String)
-        {
-            var dtStr = dtProp.GetString();
-            if (!string.IsNullOrWhiteSpace(dtStr))
-            {
-                // 「起 - 訖」區間字串只取前段（＝小時起點）
-                var sepIndex = dtStr.IndexOf(" - ", StringComparison.Ordinal);
-                var head = (sepIndex >= 0 ? dtStr[..sepIndex] : dtStr).Trim();
-                if (head.Length > 0)
-                {
-                    foreach (var culture in new[] { CultureInfo.CurrentCulture, CultureInfo.InvariantCulture })
-                    {
-                        if (!DateTime.TryParse(head, culture, DateTimeStyles.None, out var parsed)) continue;
-                        // 有 raw 可對照時，字串結果必須落在 raw 的一天之內；差超過一天就是月日讀反了，換下一個文化再試。
-                        if (oaDate.HasValue && Math.Abs((parsed - oaDate.Value).TotalHours) > MaxDisplayVsRawDriftHours) continue;
-                        periodStart = parsed;
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // 退路：字串解析不了、或每種文化解出來的日期都對不上 raw 時才用 OLE 日期。
-        // 呼叫端會把用到退路的筆數回報出來——時間可能與 PRTG 畫面差幾小時，要看得見。
-        if (oaDate.HasValue)
-        {
-            periodStart = oaDate.Value;
-            usedOaDate = true;
+            periodStart = periodEnd.AddSeconds(-HistoricAverageSeconds);
+            zoneDrift = hasDisplay && Math.Abs((displayStart - periodStart).TotalMinutes) > 30;
             return true;
         }
-
-        periodStart = default;
-        return false;
+        usedString = hasDisplay;
+        periodStart = hasDisplay ? displayStart : default;
+        return hasDisplay;
     }
 
-    /// <summary>
-    /// 顯示字串與 datetime_raw 允許的最大差距（小時）。實機兩者差 7 小時（時區基準不同），
-    /// 月日對調的錯誤至少差一天；取 24 小時能放過前者、擋下後者。
-    /// </summary>
-    private const double MaxDisplayVsRawDriftHours = 24;
+    /// <summary>historicdata 顯示字串「起 - 訖」的前段（＝時段起點）。</summary>
+    private static string? DisplayPeriodHead(JsonElement item)
+    {
+        if (!item.TryGetProperty("datetime", out var dtProp) || dtProp.ValueKind != JsonValueKind.String) return null;
+        var dtStr = dtProp.GetString();
+        if (string.IsNullOrWhiteSpace(dtStr)) return null;
+        var sepIndex = dtStr.IndexOf(" - ", StringComparison.Ordinal);
+        return (sepIndex >= 0 ? dtStr[..sepIndex] : dtStr).Trim();
+    }
+
+    /// <summary>historicdata 請求的聚合間隔（秒）；與查詢字串的 <c>avg=</c> 同一個值。</summary>
+    private const int HistoricAverageSeconds = 3600;
 
     /// <summary>
     /// 取出同名屬性中的「第一個」。PRTG 的 historicdata 一列會為每個頻道重複 value／value_raw，
@@ -1358,6 +1349,52 @@ public sealed class PrtgFetchService
     private sealed record PagedStageResult(PrtgPagerResult? Result, string? Error, PrtgPagingNotConvergedException? Exception = null);
 
     /// <summary>
+    /// 讀 PRTG 的 <c>*_raw</c> 時間（OLE 日期）並轉成服務主機本地時間。現場 PRTG 24.1.92 驗算：
+    /// raw 的基準是 **UTC**（<c>lastcheck_raw</c> 與請求當下同為 UTC；顯示字串則依帳號時區與 Date Format）。
+    /// 以 raw 為主就不必設定帳號時區、文化或日期格式，也不會有月日對調。
+    /// </summary>
+    private static bool TryReadRawUtcAsLocal(JsonElement item, string property, out DateTime local)
+    {
+        local = default;
+        if (!TryGetFirstProperty(item, property, out var raw) || !TryReadNumber(raw, out var oaNumber)) return false;
+        try
+        {
+            var utc = DateTime.SpecifyKind(DateTime.FromOADate(oaNumber), DateTimeKind.Utc);
+            local = DateTime.SpecifyKind(utc.ToLocalTime(), DateTimeKind.Unspecified);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>以服務主機文化、再以 InvariantCulture 解析 PRTG 的顯示時間字串（raw 缺席時的退路）。</summary>
+    private static bool TryParseDisplayTime(string? text, out DateTime parsed)
+    {
+        parsed = default;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        foreach (var culture in new[] { CultureInfo.CurrentCulture, CultureInfo.InvariantCulture })
+        {
+            if (DateTime.TryParse(text.Trim(), culture, DateTimeStyles.None, out parsed))
+            {
+                parsed = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>messages 一列的發生時間：<c>datetime_raw</c>（UTC）為主，缺席才退顯示字串。</summary>
+    private static bool TryParseMessageTime(JsonElement el, out DateTime changedAt, out bool fromString)
+    {
+        fromString = false;
+        if (TryReadRawUtcAsLocal(el, "datetime_raw", out changedAt)) return true;
+        fromString = TryParseDisplayTime(GetStringProperty(el, "datetime"), out changedAt);
+        return fromString;
+    }
+
+    /// <summary>
     /// 執行一次分頁讀取，把「分頁未收斂」轉成可回報的結果而不是例外——
     /// 它與連線失敗不同，前面已經寫進鏡像的資料是有效的，不該讓整個階段的數字歸零。
     /// 其他例外照樣往外擲，由呼叫端的既有 catch 處理。
@@ -1397,10 +1434,11 @@ public sealed class PrtgFetchService
         Action<string, int, int>? progress = null,
         string? stageLabel = null,
         Func<JsonElement, string?>? rowKey = null,
-        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null,
+        Func<int, bool>? beforePageRequest = null)
         => PrtgTablePager.FetchAsync(
             _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel,
-            rowKey: rowKey, stopAfterPage: stopAfterPage);
+            rowKey: rowKey, stopAfterPage: stopAfterPage, beforePageRequest: beforePageRequest);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。

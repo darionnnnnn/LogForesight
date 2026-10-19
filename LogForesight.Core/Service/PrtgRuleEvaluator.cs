@@ -28,13 +28,12 @@ public sealed record PrtgFinding(
     public IReadOnlyList<PrtgEvidenceWindow> EvidenceWindows { get; init; } = Array.Empty<PrtgEvidenceWindow>();
     public string EvidenceWindowResolution { get; init; } = "來源覆蓋狀態區間";
     public string? SensorCategory { get; init; }
-    public string? SourceGeneration { get; init; }
-    public string? ResourceGeneration { get; init; }
     /// <summary>產生狀態風險時的訊息解析版本；舊資料與非狀態規則不補猜。</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public int? MessageStatusSemanticVersion { get; init; }
-    public DateTimeOffset? IncidentStartedAt { get; init; }
-    public DateTime? PresenceSourceDay { get; init; }
+    /// <summary>數值趨勢 finding 的結構化證據；非數值趨勢規則為 null。</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public PrtgTrendEvidence? TrendEvidence { get; init; }
     public DateTimeOffset? PresenceSourceAsOf { get; init; }
     public DateTimeOffset? PresenceDeviceStatusAsOf { get; init; }
     public string? PresenceSourceAuthorityFingerprint { get; init; }
@@ -42,15 +41,6 @@ public sealed record PrtgFinding(
     public string? PresenceInventoryFingerprint { get; init; }
     /// <summary>規則門檻實際使用的量值；跨日 Down 為完整可信 episode，Magnitude 仍保留當日重疊分鐘。</summary>
     public int? ThresholdMagnitude { get; init; }
-    /// <summary>Server-selected compatibility identity; mapper accepts this only for the governed disk aggregate rule.</summary>
-    public string? EventIdentityRuleCode { get; init; }
-    /// <summary>Accurate reason-based label, carried with the signature while retaining its established event identity.</summary>
-    public string? DisplayLabel { get; init; }
-    public IReadOnlyList<string>? ResourceReasonCodes { get; init; }
-    public string? RuleAdmissionFingerprint { get; init; }
-    public string? TrendSourceRuleId { get; init; }
-    public string? TrendSourceRuleFingerprint { get; init; }
-    public string? ChannelGeneration { get; init; }
 }
 
 /// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>
@@ -83,13 +73,13 @@ public sealed class PrtgEvaluationResult : List<PrtgFinding>
 public static class PrtgRuleEvaluator
 {
     public const string RuleDiskFreeTrend = "disk_free_trend";
+    public const string RuleMemoryUsedTrend = "memory_used_trend";
+    public const string RuleCpuLoadTrend = "cpu_load_trend";
+    public const string RulePingLatencyTrend = "ping_latency_trend";
     public const string RuleDown = "down";
     public const string RuleFlapping = "flapping";
     public const string RuleWarning = "warning";
     public const string RuleSilent = "silent";
-    public const string RuleResourceCpuPressure = "resource_cpu_sustained_pressure";
-    public const string RuleResourceMemoryPressure = "resource_memory_sustained_pressure";
-    public const string RuleResourceDiskPressure = "resource_disk_pressure";
 
     public static PrtgEvaluationResult Evaluate(
         DateTime day,
@@ -327,8 +317,9 @@ public static class PrtgRuleEvaluator
             }
         }
 
-        // 4. 沉默 device（RuleSilent）
-        // 沉默的依據是 sensor 目前狀態，不是狀態變更；對過去日評估等於把今天的沉默套到過去，是假訊號。
+        // 4. 沉默 device（RuleSilent）：主機活著（availability 類 sensor 全部 Up）但其餘監測全部失聲（全部 Unknown／無狀態）——
+        // SNMP 服務停了、帳密失效、代理掛了的典型形狀。主機整台斷線是 down 的事，不算沉默。
+        // 依據是鏡像的 sensor 目前狀態，不是狀態變更；對過去日評估等於把今天的沉默套到過去，是假訊號。
         // silent 以 device 為單位，只用不限分類的規則（傳入 null 分類即只會挑到 PrtgSensorCategory == null 者）
         if (includeSilent && SelectRule(RuleSilent, null) is { } silentRule)
         {
@@ -336,15 +327,19 @@ public static class PrtgRuleEvaluator
             foreach (var group in deviceGroups)
             {
                 var deviceObjid = group.Key;
-                var sensors = group.ToList();
-                if (sensors.Count == 0)
+                var availability = group.Where(s => string.Equals(s.Category, PrtgSensorCategories.Availability,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+                var others = group.Except(availability).ToList();
+                if (availability.Count == 0 || others.Count == 0)
                 {
                     continue;
                 }
 
-                if (sensors.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)))
+                if (availability.All(s => PrtgSensorStatuses.IsUp(s.Status)) &&
+                    others.All(s => PrtgSensorStatuses.IsUnknownOrEmpty(s.Status)))
                 {
-                    var detail = $"[{GetDeviceName(deviceObjid)}] 底下全部 {sensors.Count} 個未暫停 sensor 皆為 Unknown 或無狀態";
+                    var sensors = others;
+                    var detail = $"[{GetDeviceName(deviceObjid)}] 連線檢查正常，但其餘 {sensors.Count} 個未暫停 sensor 皆為 Unknown 或無狀態";
                     findings.Add(new PrtgFinding(
                         deviceObjid,
                         null,

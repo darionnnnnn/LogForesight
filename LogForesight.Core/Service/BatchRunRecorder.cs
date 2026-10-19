@@ -26,7 +26,7 @@ public class BatchRunRecorder : IDisposable
     private readonly BatchRun _run;
     private readonly BatchRunNLogTarget? _target;
     private readonly CancellationToken _ct;
-    private bool _finished;
+    private volatile bool _finished;
     private IDisposable? _scope;
 
     /// <summary>
@@ -102,6 +102,9 @@ public class BatchRunRecorder : IDisposable
     private readonly object _countLock = new();
 
     public long RunId => _run.RunId;
+
+    /// <summary>Whether this recorder still owns the live parent run with the supplied durable id.</summary>
+    public bool OwnsRun(long runId) => _store != null && runId > 0 && _run.RunId == runId && !_finished && !_ct.IsCancellationRequested;
 
     public int DaysAnalyzed
     {

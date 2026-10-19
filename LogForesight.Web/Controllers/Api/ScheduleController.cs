@@ -194,7 +194,9 @@ public class ScheduleController : ControllerBase
         var to = DateTime.Today.AddDays(-1);
         // 走輕量查詢：這裡只需要 HostId／Date／AiAnalyzed／AiPending 四個欄位，
         // Query 會反序列化整份分析內容，三千台 × 14 天在預覽這種互動路徑上代價過高
-        var recentRecords = _records.QueryLightweight(new RecordQueryFilter { From = from, To = to });
+        // 只有 PRTG finding 的主機日仍是待日誌分析的缺日，不算進「回望窗口已有紀錄」
+        var recentRecords = _records.QueryLightweight(new RecordQueryFilter { From = from, To = to })
+            .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
 
         HashSet<long> retryAttemptHostIds = new();
         if (_storageBackend != null && hostIds is { Count: > 0 })

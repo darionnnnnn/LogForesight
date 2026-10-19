@@ -717,16 +717,12 @@ public class NetiqPipelineService
 
             try
             {
-                if (_prtgFindings.IsPublished(date))
+                // PRTG 腿與每日管線同一個判準：該日評估完整跑完＝成功，否則等待（停用時 ParentSucceeded 已記為停用）。
+                if (_prtgEnabled && _prtgFindings.IsPublished(date))
                 {
-                    if (HostDayWorkflowFingerprint.HasValidPrtgManifest(record))
-                        _workflow?.SetPrtg(target.HostId, date, record.PrtgManifest!.Outcome == "complete" ? WorkflowLegState.Succeeded : WorkflowLegState.Degraded,
-                                    evidenceReady: record.PrtgManifest.Outcome == "complete",
-                                    record.PrtgManifest.EvidenceFingerprint,
-                                    failure: record.PrtgManifest.Outcome == "partial" ? string.Join(",", record.PrtgManifest.WaitReasonCodes) : null);
-                    else
-                        _workflow?.SetPrtg(target.HostId, date, WorkflowLegState.Waiting, evidenceReady: false,
-                            failure: "formal-manifest-missing-or-stale");
+                    var evaluated = _prtgFindings.IsEvaluated(date);
+                    _workflow?.SetPrtg(target.HostId, date, evaluated ? WorkflowLegState.Succeeded : WorkflowLegState.Waiting,
+                        evidenceReady: evaluated, failure: evaluated ? null : "prtg-day-not-evaluated");
                 }
             }
             catch (Exception workflowError)

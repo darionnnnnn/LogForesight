@@ -195,6 +195,65 @@ public sealed class PrtgEffectivenessServiceTests
         }
     }
 
+    [Fact]
+    public void CountsRuleMarksGroupedByRuleCodeWithTotals()
+    {
+        using var fixture = new EfSqliteFixture();
+        var day = new DateTime(2026, 9, 10);
+        using (var db = fixture.NewContext())
+        {
+            var keyDown = IssueSignatureKey.For(new LogIssueSignature
+            {
+                LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = System.Diagnostics.EventLogEntryType.Error, EventKey = "s1"
+            });
+            var keyDisk = IssueSignatureKey.For(new LogIssueSignature
+            {
+                LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0, EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "s2"
+            });
+            var keySys = IssueSignatureKey.For(new LogIssueSignature
+            {
+                LogName = "System", Source = "Kernel", EventId = 1, EntryType = System.Diagnostics.EventLogEntryType.Error
+            });
+
+            db.IssueHandlings.AddRange(
+                new IssueHandlingRow { HostName = "h1", HostNameKey = "H1", RecordDate = day, IssueKey = keyDown, Status = IssueHandlingStatuses.FalsePositive },
+                new IssueHandlingRow { HostName = "h2", HostNameKey = "H2", RecordDate = day, IssueKey = keyDown, Status = IssueHandlingStatuses.Resolved },
+                new IssueHandlingRow { HostName = "h1", HostNameKey = "H1", RecordDate = day, IssueKey = keyDisk, Status = IssueHandlingStatuses.FalsePositive },
+                new IssueHandlingRow { HostName = "h2", HostNameKey = "H2", RecordDate = day, IssueKey = keyDisk, Status = IssueHandlingStatuses.FalsePositive },
+                new IssueHandlingRow { HostName = "h3", HostNameKey = "H3", RecordDate = day, IssueKey = keyDisk, Status = IssueHandlingStatuses.Open },
+                new IssueHandlingRow { HostName = "h1", HostNameKey = "H1", RecordDate = day, IssueKey = keySys, Status = IssueHandlingStatuses.FalsePositive },
+                new IssueHandlingRow { HostName = "h1", HostNameKey = "H1", RecordDate = day.AddDays(5), IssueKey = keyDown, Status = IssueHandlingStatuses.FalsePositive }
+            );
+            db.SaveChanges();
+        }
+
+        var result = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore()).Get(day, day);
+
+        Assert.Equal(2, result.RuleMarks.Count);
+        var disk = Assert.Single(result.RuleMarks, r => r.RuleCode == "disk_free_trend");
+        Assert.Equal(2, disk.FalsePositive);
+        Assert.Equal(0, disk.Handled);
+
+        var down = Assert.Single(result.RuleMarks, r => r.RuleCode == "down");
+        Assert.Equal(1, down.FalsePositive);
+        Assert.Equal(1, down.Handled);
+
+        Assert.Equal(3, result.TotalFalsePositiveMarks);
+        Assert.Equal(1, result.TotalHandledMarks);
+    }
+
+    [Fact]
+    public void ReturnsEmptyRuleMarksWhenNoMarkingsExist()
+    {
+        using var fixture = new EfSqliteFixture();
+        var day = new DateTime(2026, 9, 10);
+        var result = new PrtgEffectivenessService(fixture.NewContext, new FakeIssueOwnerStore()).Get(day, day);
+
+        Assert.Empty(result.RuleMarks);
+        Assert.Equal(0, result.TotalFalsePositiveMarks);
+        Assert.Equal(0, result.TotalHandledMarks);
+    }
+
     private static LogIssueSignature PrtgIssue(string source, string eventKey, bool suppressed) => new()
     {
         LogName = "PRTG", Source = source, EventId = 0, EventKey = eventKey,

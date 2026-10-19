@@ -117,7 +117,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public WebHost? TouchNetiq(long hostId, string? displayName, DateTime reportedAt)
     {
-        return Mutate(hosts =>
+        return MutateWithResourceFence(hosts =>
         {
             var existing = hosts.FirstOrDefault(h => h.HostId == hostId);
             if (existing == null) return null;
@@ -133,7 +133,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public void SetGroups(long hostId, IEnumerable<long> groupIds)
     {
-        Mutate(hosts =>
+        MutateWithResourceFence(hosts =>
         {
             var host = hosts.FirstOrDefault(h => h.HostId == hostId);
             if (host == null) return;
@@ -143,7 +143,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public void SetHighVolume(long hostId, bool isHighVolume)
     {
-        Mutate(hosts =>
+        MutateWithResourceFence(hosts =>
         {
             var host = hosts.FirstOrDefault(h => h.HostId == hostId);
             if (host == null) return;
@@ -155,7 +155,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
     {
         var wanted = groupIds.Distinct().ToList();
 
-        return Mutate(hosts =>
+        return MutateWithResourceFence(hosts =>
         {
             var result = new HostGroupsBatchResult();
 
@@ -180,7 +180,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public void SetOwners(long hostId, IEnumerable<long> userIds)
     {
-        Mutate(hosts =>
+        MutateWithResourceFence(hosts =>
         {
             var host = hosts.FirstOrDefault(h => h.HostId == hostId);
             if (host == null) return;
@@ -236,15 +236,9 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
         MutateWithContext((ctx, before, after) =>
         {
             var result = mutation(after);
-            var beforeById = before.ToDictionary(h => h.HostId);
-            var changed = after.Where(host => !beforeById.TryGetValue(host.HostId, out var prior) ||
-                    MappingIdentityChanged(prior, host))
-                .Select(host => host.HostId)
-                .Concat(before.Where(prior => !after.Any(host => host.HostId == prior.HostId)).Select(prior => prior.HostId))
-                .Distinct().ToArray();
-            PrtgResourceIdentityStore.MarkPendingForHosts(ctx, changed, DateTimeOffset.UtcNow);
             return result;
-        });
+        }, System.Data.IsolationLevel.Serializable,
+            beforeRead: LogForesight.Core.Persistence.Sql.PrtgScopePurgeStore.EnsureScopeMutationSlotFree);
 
     /// <summary>
     /// 目標的空欄位以來源填補（見 <see cref="IHostStore.Merge"/> 的契約說明）。

@@ -33,7 +33,9 @@ public static class PrtgStructureSyncRunner
         SystemSettings settings,
         IReadOnlyList<Sentinel> sentinels,
         Action<string, int, int>? progress = null,
-        DateTime? today = null)
+        DateTime? today = null,
+        string? verifiedParentJobId = null,
+        Func<string, bool>? parentOwnsRun = null)
     {
         var mapDate = (today ?? DateTime.Today).Date;
         var stopwatch = Stopwatch.StartNew();
@@ -164,7 +166,16 @@ public static class PrtgStructureSyncRunner
             else
             {
                 // 同步與對應全部成功才考慮清除監看範圍外的數值與狀態變更（其餘保護在 PrtgScopePurge 內）
-                PrtgScopePurge.RunAfterStructureSync(prtgStore, syncResult!.Scope, syncResult.DevicesRefreshed, console);
+                // FetchDayAsync computes its fetch scope after device sync but before sensor catalogue sync.
+                // Recompute after every successful stage so the purge fence and preserve set include the
+                // final sensor/resource mirror written by this same parent operation.
+                var finalScope = syncResult!.DevicesRefreshed
+                    ? PrtgScopeDevices.Compute(prtgStore, hostStore, guardSource, settings, sentinels,
+                        console, resolver, hostIds: null)
+                    : syncResult.Scope;
+                PrtgScopePurge.RunAfterStructureSync(prtgStore, finalScope, syncResult.DevicesRefreshed,
+                    verifiedParentJobId ?? string.Empty, console, ct,
+                    verifiedParentJobId == null || parentOwnsRun == null ? null : () => parentOwnsRun(verifiedParentJobId));
             }
         }
 

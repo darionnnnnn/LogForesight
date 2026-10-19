@@ -249,7 +249,6 @@ public sealed class TopIssueBackfiller
                 {
                     row.SourceObservationsJson = SourceEvidence.SerializeObservations(exactMatch[0].SourceObservations, out var serializationTruncated);
                     row.SourceObservationsTruncated = exactMatch[0].SourceObservationsTruncated || serializationTruncated;
-                    row.PrtgMessageStatusSemanticVersion = exactMatch[0].PrtgMessageStatusSemanticVersion;
                 }
             }
         }

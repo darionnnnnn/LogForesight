@@ -83,43 +83,7 @@ public sealed class HostDayWorkflowTests : IDisposable
     }
 
     [Fact]
-    public void LegacyRecoveryWithoutCurrentAuthorityRejectsZeroFindingManifestAndChangedParent()
-    {
-        var workflow = Service();
-        var record = new DailyAnalysisRecord
-        {
-            RecordId = 781, HostId = 78, Host = "manifest-zero", Date = _day,
-            LogSource = AnalysisLogSource.Netiq, LatestNetiqAttemptStatus = "success",
-            LatestNetiqAttemptAtUtc = DateTime.UtcNow.AddMinutes(-20), AuditEventCount = 0,
-            RiskLevel = "低", TopIssues = []
-        };
-        record.PrtgManifest = new PrtgDecisionManifest
-        {
-            Version = 1, ParentRecordId = record.RecordId,
-            ParentFingerprint = HostDayWorkflowFingerprint.ForParentRecord(record),
-            ParentFindingFingerprint = PrtgFindingMapper.Fingerprint(record.TopIssues.Where(PrtgFindingMapper.IsPrtg)),
-            SourceGeneration = "source",
-            StrategyFingerprint = Hash("strategy"), HostMappingFingerprint = Hash("mapping"),
-            RuleFingerprint = Hash("rules"), EvidenceFingerprint = Hash("evidence-v1"),
-            ResourceFingerprint = Hash("resource"), SemanticFingerprint = Hash("semantic"),
-            FindingFingerprint = PrtgFindingMapper.Fingerprint(record.TopIssues),
-            CompletedAtUtc = DateTime.UtcNow, Outcome = "complete"
-        };
-        workflow.ReconcileAuthority([record], _day, _day, prtgEnabled: true, aiEnabled: true);
-        Assert.Equal(WorkflowLegState.Succeeded, workflow.Get(record.HostId, _day)!.Parent);
-        Assert.Equal(WorkflowLegState.Waiting, workflow.Get(record.HostId, _day)!.Prtg);
-        Assert.Equal("whole-evidence-current-authority-unavailable",
-            workflow.Get(record.HostId, _day)!.PrtgFailure);
-        Assert.Equal(0, workflow.Get(record.HostId, _day)!.ParentEventCount);
-
-        record.ErrorCount = 1;
-        workflow.ReconcileAuthority([record], _day, _day, prtgEnabled: true, aiEnabled: true);
-        Assert.Equal(WorkflowLegState.Waiting, workflow.Get(record.HostId, _day)!.Prtg);
-        Assert.Empty(workflow.ParentHostIdsForDay(_day)); // recovery must not retain the live-run touched map
-    }
-
-    [Fact]
-    public void ReplayingSameParentPreservesSupplementDeadline_RecoveryUsesRecordCompletionTime()
+    public void ReplayingSameParentPreservesSupplementDeadline()
     {
         var workflow = Service();
         var completedAt = DateTime.Today.AddDays(-1).AddHours(21);
@@ -136,14 +100,6 @@ public sealed class HostDayWorkflowTests : IDisposable
         Assert.Equal(original.ParentCompletedAt, replayed.ParentCompletedAt);
         Assert.Equal(original.SupplementDueAt, replayed.SupplementDueAt);
 
-        var record = new DailyAnalysisRecord
-        {
-            RecordId = 811, HostId = 82, Host = "recover-deadline", Date = _day,
-            LogSource = AnalysisLogSource.Netiq, LatestNetiqAttemptStatus = "success",
-            LatestNetiqAttemptAtUtc = completedAt.ToUniversalTime(), AuditEventCount = 0, RiskLevel = "低"
-        };
-        workflow.ReconcileAuthority([record], _day, _day, prtgEnabled: true, aiEnabled: false);
-        Assert.Equal(completedAt, workflow.Get(82, _day)!.ParentCompletedAt);
         Assert.Empty(workflow.ParentHostIdsForDay(_day));
     }
 
@@ -311,141 +267,6 @@ public sealed class HostDayWorkflowTests : IDisposable
     }
 
     [Fact]
-    public void PrtgReadinessRequiresClosedCurrentSelectionAndEveryExpectedFamily()
-    {
-        var workflow = Service();
-        workflow.ParentSucceeded(901, "readiness", _day, "run", 0, "parent", true, false,
-            parentRecordId: 901);
-        workflow.SetPrtg(901, _day, WorkflowLegState.Succeeded, evidenceReady: true, evidenceFingerprint: Hash("manifest"));
-        var initial = workflow.Get(901, _day)!;
-        Assert.False(initial.IsComplete);
-
-        var epoch = Hash("epoch-11");
-        var selected = Hash("sensor-set-11");
-        workflow.BeginPrtgReadiness(901, _day, epoch, selected,
-            [PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowResourceFamily.Disk]);
-        workflow.ClosePrtgSelectedSensors(901, _day, Hash("epoch-10"), selected);
-        workflow.PublishPrtgResourceAssessment(901, _day, Hash("epoch-10"), selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.NoHit);
-        Assert.False(workflow.Get(901, _day)!.PrtgReadinessComplete);
-
-        workflow.ClosePrtgSelectedSensors(901, _day, epoch, selected);
-        workflow.PublishPrtgResourceAssessment(901, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.NoHit);
-        workflow.PublishPrtgResourceAssessment(901, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Disk, PrtgWorkflowAssessment.Insufficient);
-        Assert.False(workflow.Get(901, _day)!.PrtgReadinessComplete);
-        Assert.Equal(WorkflowLegState.Waiting, workflow.Get(901, _day)!.Prtg);
-
-        workflow.BeginPrtgReadiness(901, _day, epoch, selected,
-            [PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowResourceFamily.Disk]);
-        workflow.PublishPrtgResourceAssessment(901, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.NoHit);
-        workflow.PublishPrtgResourceAssessment(901, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Disk, PrtgWorkflowAssessment.Recovery);
-        workflow.ClosePrtgSelectedSensors(901, _day, epoch, selected);
-        Assert.True(workflow.Get(901, _day)!.PrtgReadinessComplete);
-        workflow.SetPrtg(901, _day, WorkflowLegState.Succeeded, evidenceReady: true, evidenceFingerprint: Hash("manifest"));
-        Assert.Equal(WorkflowLegState.Succeeded, workflow.Get(901, _day)!.Prtg);
-    }
-
-    [Fact]
-    public void PrtgReadinessWaitsUntilEveryExpectedSensorWasAssessed()
-    {
-        var workflow = Service();
-        workflow.ParentSucceeded(904, "sensor-count", _day, "run", 0, "parent", true, false,
-            parentRecordId: 904);
-        var epoch = Hash("epoch-sensor-count");
-        var selected = Hash("selected-sensor-count");
-        workflow.BeginPrtgReadiness(904, _day, epoch, selected,
-            [PrtgWorkflowResourceFamily.Cpu], new Dictionary<PrtgWorkflowResourceFamily, int>
-            { [PrtgWorkflowResourceFamily.Cpu] = 2 });
-        workflow.PublishPrtgResourceAssessment(904, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.NoHit);
-        workflow.ClosePrtgSelectedSensors(904, _day, epoch, selected);
-        Assert.False(workflow.Get(904, _day)!.PrtgReadinessComplete);
-
-        workflow.PublishPrtgResourceAssessment(904, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.Recovery);
-        Assert.True(workflow.Get(904, _day)!.PrtgReadinessComplete);
-    }
-
-    [Fact]
-    public void CompletedResourceReadinessAloneDoesNotStartWholeEvidenceSupplementDeadline()
-    {
-        var workflow = Service();
-        var parentAt = DateTime.Now.AddMinutes(-30);
-        workflow.ParentSucceeded(905, "readiness-deadline", _day, "run", 0, "parent-v1", true, false,
-            now: parentAt, parentRecordId: 905);
-        var epoch = Hash("deadline-epoch-1");
-        var selected = Hash("deadline-selection-1");
-        PublishCompleteReadiness(workflow, 905, epoch, selected);
-
-        var ready = workflow.Get(905, _day)!;
-        Assert.True(ready.PrtgReadinessComplete);
-        Assert.Null(ready.PrtgEvidenceReadyAt);
-        Assert.Null(ready.SupplementDueAt);
-        Assert.Equal(WorkflowLegState.Running, ready.Prtg);
-        var restarted = Service();
-        PublishCompleteReadiness(restarted, 905, epoch, selected);
-        var replayed = restarted.Get(905, _day)!;
-
-        Assert.True(replayed.PrtgReadinessComplete);
-        Assert.Null(replayed.PrtgEvidenceReadyAt);
-        Assert.Null(replayed.SupplementDueAt);
-    }
-
-    [Fact]
-    public void ResourcePassSelectionEpochAndParentChangesNeverInventAWholeEvidenceDeadline()
-    {
-        var workflow = Service();
-        workflow.ParentSucceeded(906, "readiness-fence", _day, "run", 0, "parent-v1", true, false,
-            now: DateTime.Now.AddMinutes(-30), parentRecordId: 906);
-        var epoch = Hash("fenced-epoch-1");
-        var selected = Hash("fenced-selection-1");
-        PublishCompleteReadiness(workflow, 906, epoch, selected);
-        var original = workflow.Get(906, _day)!;
-        Assert.Null(original.PrtgEvidenceReadyAt);
-        Assert.Null(original.SupplementDueAt);
-
-        var changedSelection = Hash("fenced-selection-2");
-        workflow.BeginPrtgReadiness(906, _day, epoch, changedSelection,
-            [PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowResourceFamily.Disk]);
-        workflow.PublishPrtgResourceAssessment(906, _day, epoch, changedSelection,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.NoHit);
-        workflow.ClosePrtgSelectedSensors(906, _day, epoch, changedSelection);
-
-        var incomplete = workflow.Get(906, _day)!;
-        Assert.False(incomplete.PrtgReadinessComplete);
-        Assert.Null(incomplete.PrtgEvidenceReadyAt);
-        Assert.Null(incomplete.SupplementDueAt);
-
-        PublishCompleteReadiness(workflow, 906, epoch, changedSelection);
-        Assert.Null(workflow.Get(906, _day)!.SupplementDueAt);
-
-        var changedEpoch = Hash("fenced-epoch-2");
-        workflow.BeginPrtgReadiness(906, _day, changedEpoch, changedSelection,
-            [PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowResourceFamily.Disk]);
-        workflow.PublishPrtgResourceAssessment(906, _day, changedEpoch, changedSelection,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.NoHit);
-        workflow.ClosePrtgSelectedSensors(906, _day, changedEpoch, changedSelection);
-        var changedSource = workflow.Get(906, _day)!;
-        Assert.False(changedSource.PrtgReadinessComplete);
-        Assert.Null(changedSource.PrtgEvidenceReadyAt);
-        Assert.Null(changedSource.SupplementDueAt);
-
-        PublishCompleteReadiness(workflow, 906, changedEpoch, changedSelection);
-        Assert.Null(workflow.Get(906, _day)!.SupplementDueAt);
-        workflow.ParentSucceeded(906, "readiness-fence", _day, "new-run", 0, "parent-v2", true, false,
-            now: DateTime.Now, parentRecordId: 907);
-        var changedParent = workflow.Get(906, _day)!;
-        Assert.Equal(907, changedParent.ParentRecordId);
-        Assert.Empty(changedParent.PrtgReadinessEpoch);
-        Assert.Null(changedParent.PrtgEvidenceReadyAt);
-        Assert.Null(changedParent.SupplementDueAt);
-    }
-
-    [Fact]
     public void SuccessfulOrDisabledPrtgIsNotReclassifiedAsOverdue()
     {
         var workflow = Service();
@@ -527,15 +348,4 @@ public sealed class HostDayWorkflowTests : IDisposable
 
     private static string Hash(string value) => HostDayWorkflowFingerprint.HashParts([value]);
 
-    private void PublishCompleteReadiness(HostDayWorkflowService workflow, long hostId,
-        string epoch, string selected)
-    {
-        workflow.BeginPrtgReadiness(hostId, _day, epoch, selected,
-            [PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowResourceFamily.Disk]);
-        workflow.PublishPrtgResourceAssessment(hostId, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Cpu, PrtgWorkflowAssessment.NoHit);
-        workflow.PublishPrtgResourceAssessment(hostId, _day, epoch, selected,
-            PrtgWorkflowResourceFamily.Disk, PrtgWorkflowAssessment.Recovery);
-        workflow.ClosePrtgSelectedSensors(hostId, _day, epoch, selected);
-    }
 }

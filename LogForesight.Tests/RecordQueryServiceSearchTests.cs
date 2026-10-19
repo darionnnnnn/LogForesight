@@ -118,6 +118,27 @@ public class RecordQueryServiceSearchTests : IDisposable
             result.Items.Select(i => DateTime.Parse(i.Date)));
     }
 
+    /// <summary>只有 PRTG 訊號的主機日在清單標 PrtgOnly（畫面「PRTG」徽章）；日誌分析主機日不標</summary>
+    [Fact]
+    public void Search_PRTG獨立主機日標PrtgOnly_日誌分析主機日不標()
+    {
+        var log = AddHost("HOST-LOG");
+        var prtg = AddHost("HOST-PRTG");
+        AddRecord(log, Yesterday, "中");
+        Assert.True(_recordStore.AppendPrtgOnlyIfAbsent(prtg.HostId, prtg.HostName, Yesterday,
+            [new LogIssueSignature
+            {
+                LogName = "PRTG", Source = "PRTG:down", EventId = 0,
+                EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:down:2001",
+                Severity = IssueSeverity.High, Count = 1
+            }], aiConfigured: false));
+
+        var result = _service.Search(new RecordSearchRequest { Page = 1, PageSize = 50 });
+
+        Assert.True(Assert.Single(result.Items, i => i.HostName == "HOST-PRTG").PrtgOnly);
+        Assert.False(Assert.Single(result.Items, i => i.HostName == "HOST-LOG").PrtgOnly);
+    }
+
     [Fact]
     public void Search_無篩選條件_分頁正確()
     {

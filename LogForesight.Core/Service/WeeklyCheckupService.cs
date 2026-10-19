@@ -79,7 +79,10 @@ internal class WeeklyCheckupService
     /// 「未完成不寫入歷史、下次執行自動補跑」語意——AI 設定好之後這期的體檢會自動補上。</param>
     public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", HostKey? host = null, bool useAi = true)
     {
-        var window = _historyReader.ReadRecent(checkupDate, intervalDays);
+        // 週檢是「日誌分析過的日子」的回顧：只有 PRTG 訊號的主機日（當日沒有日誌分析）不算分析天數、
+        // 也不拿它的風險觸發 AI 敘事（docs/PRTG-SPEC.md §9）
+        var window = _historyReader.ReadRecent(checkupDate, intervalDays)
+            .Where(record => record.LogSource != AnalysisLogSource.Prtg).ToList();
 
         // 確定性閘門：窗口內三層（風險等級/趨勢異常/關聯訊號）皆無訊號時，不呼叫 AI——
         // 安靜的期間沒有故事可講，直接寫固定結論。TrendAlerts 已含 SlowTrendAnalyzer 的慢速惡化告警，

@@ -161,8 +161,8 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(ids.Count, ids.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.All(rules, r => Assert.StartsWith("builtin-", r.Id));
         Assert.All(rules, r => Assert.Equal("builtin", r.Origin));
-        Assert.All(rules.Where(r => r.Id != "builtin-prtg-disk-free-trend"), r => Assert.True(r.Enabled));
-        Assert.False(rules.Single(r => r.Id == "builtin-prtg-disk-free-trend").Enabled);
+        Assert.All(rules.Where(r => !PrtgRuleCatalog.IsValueTrend(r.PrtgRuleCode)), r => Assert.True(r.Enabled));
+        Assert.All(rules.Where(r => PrtgRuleCatalog.IsValueTrend(r.PrtgRuleCode)), r => Assert.False(r.Enabled));
         Assert.All(rules, r => Assert.Equal("all", r.Scope));
         Assert.All(rules, r => Assert.Null(r.MatchFilter));
     }
@@ -202,9 +202,9 @@ public class KnownIssueCatalogTests : IDisposable
     // ── C1（seed v5 補強）：規則涵蓋驗證 ───────────────────────────────────
 
     [Fact]
-    public void 種子版本為9()
+    public void 種子版本為11()
     {
-        Assert.Equal(9, KnownIssueSeed.Version);
+        Assert.Equal(11, KnownIssueSeed.Version);
     }
 
     [Fact]
@@ -476,12 +476,13 @@ public class KnownIssueCatalogTests : IDisposable
             .ToList();
 
     [Fact]
-    public void 種子含九條PRTG規則且全部通過RuleValidator()
+    public void 種子含十二條PRTG規則且全部通過RuleValidator()
     {
         var rules = KnownIssueSeed.CreateRules();
         var prtgRules = rules.Where(r => r.Platform == "prtg").ToList();
 
         Assert.Equal(12, prtgRules.Count);
+        Assert.DoesNotContain(prtgRules, r => PrtgRuleCatalog.IsRetired(r.PrtgRuleCode));
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-down" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleDown && r.PrtgThreshold == 60);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-flapping" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleFlapping && r.PrtgThreshold == 5);
         Assert.Contains(prtgRules, r => r.Id == "builtin-prtg-warning" && r.PrtgRuleCode == PrtgRuleEvaluator.RuleWarning && r.PrtgThreshold == 240);
@@ -498,6 +499,24 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Equal(12, outcome.ValidRules.Count);
         Assert.Empty(outcome.SkippedRules);
         Assert.Empty(outcome.ShadowWarnings);
+    }
+
+    [Fact]
+    public void 退役PRTG規則代碼的歷史問題說明回規則已移除_不沿用停用列舊說明()
+    {
+        var stale = new KnownIssueRule
+        {
+            Id = "builtin-prtg-resource-cpu-pressure", Platform = "prtg", Enabled = false,
+            PrtgRuleCode = "resource_cpu_sustained_pressure", PlainExplanation = "舊的兩小時壓力說明"
+        };
+
+        var text = KnownIssueCatalog.PlainExplanationFor([stale], "PRTG:resource_cpu_sustained_pressure", 0);
+
+        Assert.Equal(PrtgRuleCatalog.RetiredRuleNote, text);
+        Assert.Contains("已移除", text);
+        // 現行規則照舊回自己的說明
+        var current = KnownIssueSeed.CreateRules().Single(r => r.Id == "builtin-prtg-down");
+        Assert.Equal(current.PlainExplanation, KnownIssueCatalog.PlainExplanationFor([current], "PRTG:down", 0));
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Data;
 using System.Data.Common;
 using LogForesight.Core.Analysis;
@@ -157,9 +157,9 @@ public sealed class CalibrationRuleThresholdDataset
 {
     public List<PrtgRuleHitAggregate> DailyRuleHits { get; init; } = new();
     public List<CalibrationPrtgRuleThresholdInfo> CurrentRules { get; init; } = new();
-    public int MagnitudeSemanticsVersion { get; init; } = 2;
-    public string MagnitudeBasis { get; init; } = "trusted-covered-timeline-v1; Down Magnitude/ThresholdMagnitude is continuous trusted episode minutes and DayMagnitude is daily overlap minutes; Warning is daily cumulative minutes; Flapping is daily Down-to-Up transitions.";
-    public string FormalEvaluationScope { get; init; } = "trusted-status-timeline-only";
+    public int MagnitudeSemanticsVersion { get; init; } = 3;
+    public string MagnitudeBasis { get; init; } = "state-change-messages-v1; Down Magnitude is minutes still Down at the end of the day (clipped to the day); Warning is daily cumulative minutes; Flapping is daily Down-to-Up transitions.";
+    public string FormalEvaluationScope { get; init; } = "state-change-messages";
     public List<string> FormalEvaluationSupportedRuleCodes { get; init; } = new()
     {
         PrtgRuleEvaluator.RuleDown,
@@ -337,10 +337,6 @@ public sealed class CalibrationService
     private const int CalibrationSensorStatusMaxChars = 64;
     private const int CalibrationCategoryMaxChars = 64;
     private const int CalibrationMapStatusMaxChars = 16;
-    private const int MaxTimelineBlobRowsForCalibration = 30000;
-    private const int MaxPolicyBlobCharactersForCalibration = 4 * 1024 * 1024;
-    private const int MaxTimelineBlobCharactersForCalibration = 4 * 1024 * 1024;
-    private const long MaxTimelineCaptureBytesForCalibration = 128L * 1024 * 1024;
     private const int MaxMapRowsForCalibration = 250000;
     private const int MaxMagnitudeSamplesForCalibration = 100000;
 
@@ -389,7 +385,6 @@ public sealed class CalibrationService
 
     private sealed record RuleMagnitudeAnalysis(string SourceFingerprint, string Fingerprint, string RuleStamp,
         long HostMapDataRevision, long PolicyVersion, long ScopeVersion, long[] PolicySensorIds,
-        string ResourceIdentityStamp, string ResourceIdentityVersionStamp, string TimelineStamp,
         string SensorStamp, string SettingsStamp, DateTimeOffset AsOf,
         List<CalibrationRuleMagnitudeRow> Samples, List<CalibrationRuleMagnitudeSummary> Summaries,
         List<CalibrationFormalRuleHitCount> FormalHits, List<string> Explanations,
@@ -837,13 +832,8 @@ public sealed class CalibrationService
             new EfJsonBlobStore(_contextFactory, PrtgMonitoringPolicyStore.BlobKey).ReadVersion() != captured.PolicyVersion)
             return false;
 
-        var statuses = ReadCalibrationSensorStatuses(captured.PolicySensorIds, out var sensorLimit);
-        var timelineVersions = ReadCalibrationTimelineVersions(captured.PolicySensorIds, out var timelineLimit);
-        var identityVersions = ReadCalibrationResourceIdentityVersions(captured.PolicySensorIds, out var identityLimit);
-        return !sensorLimit && !timelineLimit && !identityLimit &&
-            CalibrationSensorStamp(statuses) == captured.SensorStamp &&
-            CalibrationVersionStamp(timelineVersions) == captured.TimelineStamp &&
-            CalibrationVersionStamp(identityVersions) == captured.ResourceIdentityVersionStamp;
+        var statuses = ReadCalibrationSensorScope(captured.PolicySensorIds, out var sensorLimit);
+        return !sensorLimit && CalibrationSensorStamp(statuses) == captured.SensorStamp;
     }
 
     private static long EstimateExportDtoBytes(CalibrationExportPackage package) => checked(
@@ -1893,15 +1883,8 @@ public sealed class CalibrationService
     private (string? Content, long Version, int ContentLength) ReadCalibrationBlobSnapshot(string key, int maxCharacters)
     {
         using var ctx = _contextFactory();
-        var row = ctx.Blobs.AsNoTracking().Where(b => b.BlobKey == key)
-            .Select(b => new
-            {
-                b.Version,
-                ContentLength = b.Content.Length,
-                Content = b.Content.Substring(0, maxCharacters + 1)
-            })
-            .FirstOrDefault();
-        return row == null ? (null, 0, 0) : (row.Content, row.Version, row.ContentLength);
+        var row = EfJsonBlobStore.ReadBoundedInContext(ctx, key, maxCharacters);
+        return (row.Prefix, row.Version, row.ReportedLength);
     }
 
     private List<(long Objid, long DeviceObjid, string? Status, string SensorType, string? Category)> ReadCalibrationSensorStatuses(
@@ -1944,53 +1927,18 @@ public sealed class CalibrationService
         return statuses;
     }
 
-    private Dictionary<long, long> ReadCalibrationTimelineVersions(IReadOnlyCollection<long> selectedIds, out bool exceeded)
+    /// <summary>
+    /// 校準的 sensor 母體：監看政策的 sensor 清單有值時取清單內，空的時候取鏡像中全部未暫停 sensor
+    /// （與每日管線的狀態型規則母體一致）。超過上限即拒絕，不輸出部分結果。
+    /// </summary>
+    private List<(long Objid, long DeviceObjid, string? Status, string SensorType, string? Category)> ReadCalibrationSensorScope(
+        IReadOnlyCollection<long> policySensorIds, out bool exceeded)
     {
-        var versions = selectedIds.ToDictionary(id => id, _ => 0L);
-        exceeded = false;
-        foreach (var chunk in selectedIds.Chunk(1000))
-        {
-            using var ctx = _contextFactory();
-            var keys = chunk.Select(id => PrtgSensorTimelineStore.Prefix + id).ToArray();
-            var rows = ctx.Blobs.AsNoTracking()
-                .Where(b => keys.Contains(b.BlobKey))
-                .Select(b => new { b.BlobKey, b.Version })
-                .Take(MaxTimelineBlobRowsForCalibration + 1)
-                .ToList();
-            if (rows.Count > MaxTimelineBlobRowsForCalibration) { exceeded = true; return versions; }
-            foreach (var row in rows)
-                if (long.TryParse(row.BlobKey.AsSpan(PrtgSensorTimelineStore.Prefix.Length), out var sensorId) && versions.ContainsKey(sensorId))
-                    versions[sensorId] = row.Version;
-        }
-        return versions;
+        if (policySensorIds.Count > 0) return ReadCalibrationSensorStatuses(policySensorIds, out exceeded);
+        var all = _prtgStore.GetSensorStatuses();
+        exceeded = all.Count > MaxPolicySensorsForCalibration;
+        return exceeded ? [] : all.Select(s => (s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category)).ToList();
     }
-
-    private Dictionary<long, long> ReadCalibrationResourceIdentityVersions(IReadOnlyCollection<long> selectedIds,
-        out bool exceeded)
-    {
-        var versions = selectedIds.ToDictionary(id => id, _ => 0L);
-        exceeded = false;
-        foreach (var chunk in selectedIds.Chunk(1000))
-        {
-            using var ctx = _contextFactory();
-            var keys = chunk.Select(id => PrtgResourceIdentityStore.Prefix +
-                id.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray();
-            var rows = ctx.Blobs.AsNoTracking().Where(blob => keys.Contains(blob.BlobKey))
-                .Select(blob => new { blob.BlobKey, blob.Version })
-                .Take(1001).ToList();
-            if (rows.Count > 1000) { exceeded = true; return versions; }
-            foreach (var row in rows)
-            {
-                var suffix = row.BlobKey.AsSpan(PrtgResourceIdentityStore.Prefix.Length);
-                if (long.TryParse(suffix, out var sensorId) && versions.ContainsKey(sensorId))
-                    versions[sensorId] = row.Version;
-            }
-        }
-        return versions;
-    }
-
-    private static string CalibrationVersionStamp(IReadOnlyDictionary<long, long> versions) =>
-        string.Join("|", versions.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
 
     private static string CalibrationRuleSettingsStamp(SystemSettings settings)
     {
@@ -2040,70 +1988,40 @@ public sealed class CalibrationService
         return new ValidatedPrtgRuleSnapshot(validated, stamp);
     }
 
+    /// <summary>
+    /// 規則門檻校準：以 messages（<c>lf_prtg_state_changes</c>）逐日重放狀態型規則（down／flapping／warning），
+    /// 取得 (1) 最低門檻下每 sensor-日的量值分佈（決定門檻用）與 (2) 目前規則的命中數。
+    /// 與每日管線同一個評估器與母體；silent 依現況判定、逐日重放沒有意義，不納入。
+    /// </summary>
     private RuleMagnitudeAnalysis GetRuleMagnitudeAnalysis(DateTime anchor, SystemSettings settings, bool forceRefresh,
         PrtgCalibrationCaptureBudget budget)
     {
         var hostMapDataRevision = _prtgStore.ReadHostMapDataRevision();
-        budget.Charge(16L * 1024 * 1024, "bounded monitoring policy and parsed arrays");
-        var policySnapshot = ReadCalibrationBlobSnapshot(PrtgMonitoringPolicyStore.BlobKey, MaxPolicyBlobCharactersForCalibration);
-        var capacityExceeded = policySnapshot.ContentLength > MaxPolicyBlobCharactersForCalibration ||
-            (policySnapshot.Content?.Length ?? 0) > MaxPolicyBlobCharactersForCalibration;
-        if (!capacityExceeded && !string.IsNullOrWhiteSpace(policySnapshot.Content))
-        {
-            var policyGraphBytes = budget.ValidatePolicyJson(policySnapshot.Content, "PRTG monitoring policy");
-            budget.Charge(policyGraphBytes, "parsed PRTG policy object graph");
-        }
-        var policy = new PrtgMonitoringPolicy();
-        if (!capacityExceeded && !string.IsNullOrWhiteSpace(policySnapshot.Content))
-        {
-            try { policy = JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policySnapshot.Content, LogForesight.Core.Persistence.LfJsonOptions.Pretty) ?? new PrtgMonitoringPolicy(); }
-            catch (JsonException) { }
-        }
+        var policyVersion = new EfJsonBlobStore(_contextFactory, PrtgMonitoringPolicyStore.BlobKey).ReadVersion();
+        var policy = new PrtgMonitoringPolicyStore(new EfJsonBlobStore(_contextFactory, PrtgMonitoringPolicyStore.BlobKey)).Get();
         var scopeVersion = new EfJsonBlobStore(_contextFactory, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
         var from = anchor.Date.AddDays(-(CalibrationConstants.RuleThresholdWindowDays - 1));
         var to = anchor.Date;
-        var rawPolicySensorIds = policy.SensorIds ?? [];
-        var policySensorIds = rawPolicySensorIds.Distinct().OrderBy(x => x).Take(MaxPolicySensorsForCalibration + 1).ToArray();
-        if (policySensorIds.Length > MaxPolicySensorsForCalibration) capacityExceeded = true;
-        var policyReady = !capacityExceeded && settings.PrtgEnabled && !string.IsNullOrWhiteSpace(settings.PrtgUrl) &&
-            policy.HostIds is { Count: > 0 } && policySensorIds.Length > 0 &&
-            !string.IsNullOrWhiteSpace(policy.CoreSystemId) && !string.IsNullOrWhiteSpace(policy.SourceGeneration) &&
-            !string.IsNullOrWhiteSpace(policy.EndpointHint) && policy.ValidFrom != default &&
-            !string.IsNullOrWhiteSpace(policy.SourceTimeZoneId) && !string.IsNullOrWhiteSpace(policy.SourceCultureName) &&
-            policy.Ready(settings.PrtgUrl);
+        var policySensorIds = policy.SensorIds.Distinct().Order().ToArray();
+        var capacityExceeded = policySensorIds.Length > MaxPolicySensorsForCalibration;
         var ruleSnapshot = GetValidatedPrtgRuleSnapshot(budget);
         var allPrtgRules = ruleSnapshot.Rules;
         var allRules = allPrtgRules
             .Where(r => r.Enabled && !string.IsNullOrWhiteSpace(r.PrtgRuleCode))
             .ToList();
-        var statuses = ReadCalibrationSensorStatuses(policySensorIds, out var sensorLimit);
-        budget.Charge(statuses.Count * 256L, "policy sensor status rows");
+        var sensorLimit = false;
+        var statuses = capacityExceeded ? [] : ReadCalibrationSensorScope(policySensorIds, out sensorLimit);
+        budget.Charge(statuses.Count * 256L, "calibration sensor status rows");
         if (sensorLimit) capacityExceeded = true;
-        var resourceIdentityVersions = ReadCalibrationResourceIdentityVersions(policySensorIds, out var resourceVersionLimit);
-        budget.Charge(resourceIdentityVersions.Count * 48L, "resource identity version tokens");
-        var resourceIdentityVersionStamp = CalibrationVersionStamp(resourceIdentityVersions);
-        budget.Charge(policySensorIds.Length * 256L, "resource identity rows");
-        var resourceIdentities = _prtgStore.GetResourceIdentities(policySensorIds);
-        var resourceIdentityStamp = string.Join("|", resourceIdentities.OrderBy(p => p.Key)
-            .Select(p => $"{p.Key}:{p.Value.Epoch}:{p.Value.Generation}:{p.Value.ChannelGeneration}"));
         var mapLimit = false;
-        var mapsByDay = policyReady && !capacityExceeded
+        var mapsByDay = !capacityExceeded
             ? ReadCalibrationHostMaps(from, to, statuses, budget, out mapLimit)
             : new Dictionary<DateTime, List<PrtgHostMapRow>>();
-        if (policyReady && !capacityExceeded && mapLimit) capacityExceeded = true;
-        var timelineRowsLimit = false;
-        var timelineVersions = policyReady && !capacityExceeded
-            ? ReadCalibrationTimelineVersions(policySensorIds, out timelineRowsLimit)
-            : policySensorIds.ToDictionary(id => id, _ => 0L);
-        if (policyReady && !capacityExceeded && timelineRowsLimit) capacityExceeded = true;
-        if (resourceVersionLimit) capacityExceeded = true;
-        var mapStamp = string.Join("|", mapsByDay.OrderBy(day => day.Key).SelectMany(day => day.Value.OrderBy(m => m.DeviceObjid)
-            .Select(m => $"{day.Key:yyyy-MM-dd}:{m.DeviceObjid}:{m.HostId}:{m.MapStatus}")));
+        if (mapLimit) capacityExceeded = true;
         var ruleStamp = ruleSnapshot.Stamp;
-        var timelineStamp = string.Join("|", timelineVersions.OrderBy(p => p.Key).Select(p => $"{p.Key}:{p.Value}"));
         var sensorStamp = CalibrationSensorStamp(statuses);
         var settingsStamp = CalibrationRuleSettingsStamp(settings);
-        var fingerprintInput = $"{_backendCacheIdentity}|{anchor.Date:O}|{policySnapshot.Version}|{scopeVersion}|map-data:{hostMapDataRevision}|resource-identity:{resourceIdentityStamp}|resource-identity-versions:{resourceIdentityVersionStamp}|settings:{settingsStamp}|{ruleStamp}|{timelineStamp}|{mapStamp}|{sensorStamp}|capacity:{capacityExceeded}";
+        var fingerprintInput = $"{_backendCacheIdentity}|{anchor.Date:O}|{policyVersion}|{scopeVersion}|map-data:{hostMapDataRevision}|settings:{settingsStamp}|{ruleStamp}|{sensorStamp}|capacity:{capacityExceeded}";
         var sourceFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(fingerprintInput)));
         lock (_ruleMagnitudeLock)
             if (!forceRefresh && _cachedRuleMagnitudeAnalysis is { } cached && cached.SourceFingerprint == sourceFingerprint && DateTime.Now - _cachedRuleMagnitudeAt < CacheTtl)
@@ -2115,20 +2033,21 @@ public sealed class CalibrationService
         var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
             $"{sourceFingerprint}|asof:{evaluationAsOf:O}")));
         var explanations = new List<string>();
-        if (!policyReady && !capacityExceeded) explanations.Add("校準不可用：尚無已確認且符合目前端點的 PRTG 監控政策。");
+        var prtgReady = settings.PrtgEnabled && !string.IsNullOrWhiteSpace(settings.PrtgUrl);
+        if (!prtgReady) explanations.Add("校準不可用：PRTG 未啟用或尚未設定連線。");
         var samples = new List<CalibrationRuleMagnitudeRow>();
         var formalHits = new Dictionary<(string Code, string Id, string? Category, int Threshold), int>();
         var coveredDays = new HashSet<DateTime>();
-        var totalHits = 0; var downHits = 0; var flapHits = 0; var warningHits = 0; var silentHits = 0;
-        var sourceMismatch = false; var mappingMismatch = false; var generationMismatch = false; var coverageGap = false;
-        var captureBytes = 0L;
-        var captureChanged = false;
-        if (policyReady && !capacityExceeded)
+        var totalHits = 0; var downHits = 0; var flapHits = 0; var warningHits = 0;
+        if (prtgReady && !capacityExceeded && statuses.Count > 0)
         {
             budget.Charge(MaxMagnitudeSamplesForCalibration * 320L + allRules.Count * 1024L,
-                "timeline finding samples and formal hit aggregates");
-            var selected = policySensorIds.ToHashSet();
-            var sensorRows = statuses.Where(s => selected.Contains(s.Objid)).OrderBy(s => s.Objid).ToArray();
+                "state-change finding samples and formal hit aggregates");
+            var selected = statuses.Select(s => s.Objid).ToHashSet();
+            var sensorToDevice = statuses.GroupBy(s => s.Objid).ToDictionary(g => g.Key, g => g.First().DeviceObjid);
+            // 分佈不做同裝置折疊（分類給 null）；正式命中用真實分類，與每日管線相同
+            var magnitudeInputs = statuses.Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, null)).ToList();
+            var formalInputs = statuses.Select(s => new PrtgSensorStatusInput(s.Objid, s.DeviceObjid, s.Status, s.SensorType, s.Category)).ToList();
             // 門檻探索分佈獨立於規則啟用狀態；升級或管理者停用規則後，仍保留相同的低門檻事件樣本。
             var lowRules = new[] { PrtgRuleEvaluator.RuleDown, PrtgRuleEvaluator.RuleFlapping, PrtgRuleEvaluator.RuleWarning }
                 .Select(code => new KnownIssueRule
@@ -2136,149 +2055,61 @@ public sealed class CalibrationService
                     Id = $"calibration-{code}", Platform = "prtg", Enabled = true,
                     PrtgRuleCode = code, PrtgThreshold = 1
                 }).ToList();
-            foreach (var sensor in sensorRows)
+            var emptyNames = new Dictionary<long, string>();
+            for (var day = from; day <= to; day = day.AddDays(1))
             {
-                using var timelineInputBudget = budget.ReserveTransient(
-                    MaxTimelineBlobCharactersForCalibration * 2L, "single PRTG timeline JSON input");
-                var snapshot = ReadCalibrationBlobSnapshot(PrtgSensorTimelineStore.Prefix + sensor.Objid, MaxTimelineBlobCharactersForCalibration);
-                if (snapshot.Version != timelineVersions.GetValueOrDefault(sensor.Objid)) { captureChanged = true; break; }
-                if (string.IsNullOrWhiteSpace(snapshot.Content)) { coverageGap = true; continue; }
-                if (snapshot.ContentLength > MaxTimelineBlobCharactersForCalibration || snapshot.Content.Length > MaxTimelineBlobCharactersForCalibration)
-                { capacityExceeded = true; break; }
-                captureBytes += (long)snapshot.Content.Length * sizeof(char);
-                if (snapshot.Content.Length > MaxTimelineBlobCharactersForCalibration || captureBytes > MaxTimelineCaptureBytesForCalibration)
-                { capacityExceeded = true; break; }
-                var timelineGraphBytes = budget.ValidateTimelineJson(snapshot.Content, "PRTG timeline");
-                using var timelineGraphBudget = budget.ReserveTransient(timelineGraphBytes, "deserialized timeline object graph and evaluator state");
-                PrtgSensorTimelineEvidence? proof;
-                try { proof = JsonSerializer.Deserialize<PrtgSensorTimelineEvidence>(snapshot.Content, LogForesight.Core.Persistence.LfJsonOptions.Pretty); }
-                catch (JsonException) { proof = null; }
-                if (proof == null || proof.Coverage.Count > 20000 || proof.States.Count > 20000)
-                { generationMismatch = true; continue; }
-                if (proof.SensorId != sensor.Objid || string.IsNullOrWhiteSpace(proof.ResourceGeneration) ||
-                    proof.Coverage.Any(c => c.SensorObjid != proof.SensorId || c.SourceGeneration != proof.SourceGeneration || c.ResourceGeneration != proof.ResourceGeneration) ||
-                    proof.Coverage.Any(c => c.From < proof.ValidFrom) ||
-                    proof.States.Any(s => s.SensorObjid != proof.SensorId || s.SourceGeneration != proof.SourceGeneration ||
-                        s.ResourceGeneration != proof.ResourceGeneration || s.At < proof.ValidFrom))
-                { generationMismatch = true; continue; }
-                if (proof.SourceGeneration != policy.SourceGeneration) { sourceMismatch = true; continue; }
-                if (!policy.HostIds.Contains(proof.HostId) || !resourceIdentities.TryGetValue(sensor.Objid, out var resourceIdentity) ||
-                    !PrtgResourceQualification.IsCurrent(proof, resourceIdentity, policy.SourceGeneration,
-                        sensor.Objid, sensor.DeviceObjid, proof.HostId)) { mappingMismatch = true; continue; }
-                var proofDays = false;
-                for (var day = from; day <= to; day = day.AddDays(1))
+                if (mapsByDay.TryGetValue(day, out var dayMaps) && dayMaps.Count > 0) coveredDays.Add(day);
+                var changes = _prtgStore.GetStateChanges(day.AddDays(-1), day.AddDays(1))
+                    .Where(change => selected.Contains(change.SensorObjid)).ToList();
+                if (changes.Count == 0) continue;
+                foreach (var finding in PrtgRuleEvaluator.Evaluate(day, changes, sensorToDevice, magnitudeInputs, lowRules,
+                             emptyNames, emptyNames, includeSilent: false))
                 {
-                    var start = new DateTimeOffset(DateTime.SpecifyKind(day, DateTimeKind.Local));
-                    var dayEnd = new DateTimeOffset(DateTime.SpecifyKind(day.AddDays(1), DateTimeKind.Local));
-                    var end = dayEnd < evaluationAsOf ? dayEnd : evaluationAsOf;
-                    if (end <= start) continue;
-                    if (proof.ValidFrom > end) { coverageGap = true; continue; }
-                    var spans = proof.Coverage.Where(c => c.SensorObjid == sensor.Objid && c.SourceGeneration == proof.SourceGeneration &&
-                        c.ResourceGeneration == proof.ResourceGeneration && c.From < end && c.Through > start)
-                        .Select(c => (From: c.From < start ? start : c.From, Through: c.Through > end ? end : c.Through))
-                        .OrderBy(c => c.From).ToArray();
-                    var cursor = start;
-                    foreach (var span in spans)
-                    {
-                        if (span.From > cursor) break;
-                        if (span.Through > cursor) cursor = span.Through;
-                    }
-                    var fullCoverage = cursor >= end;
-                    if (!fullCoverage) coverageGap = true;
-                    if (spans.Length == 0) continue;
-                    if (!mapsByDay.TryGetValue(day, out var mapRows)) { mappingMismatch = true; continue; }
-                    var mappedHost = mapRows.Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && m.DeviceObjid == sensor.DeviceObjid)
-                        .Select(m => (long?)m.HostId).FirstOrDefault();
-                    if (mappedHost != proof.HostId) { mappingMismatch = true; continue; }
-                    var bounded = new PrtgSensorTimelineEvidence
-                    {
-                        SensorId = proof.SensorId, HostId = proof.HostId, SourceGeneration = proof.SourceGeneration,
-                        ResourceGeneration = proof.ResourceGeneration, IdentityEpoch = proof.IdentityEpoch,
-                        ChannelGeneration = proof.ChannelGeneration, IdentityFingerprint = proof.IdentityFingerprint,
-                        MappingRevision = proof.MappingRevision, ValidFrom = proof.ValidFrom, LastAttemptAt = proof.LastAttemptAt,
-                        QualityReason = proof.QualityReason, Coverage = proof.Coverage.Where(c => c.From < end)
-                            .Select(c => c with { Through = c.Through > end ? end : c.Through }).Where(c => c.Through > c.From).ToList(),
-                        States = proof.States.Where(s => s.At <= end).ToList()
-                    };
-                    var statusInput = new PrtgSensorStatusInput(sensor.Objid, sensor.DeviceObjid, sensor.Status, sensor.SensorType, sensor.Category);
-                    var evidence = new Dictionary<long, PrtgSensorTimelineEvidence> { [sensor.Objid] = bounded };
-                    var coveredPeriods = bounded.Periods(start, end);
-                    if (coveredPeriods.Count > 0) proofDays = true;
-                    var knownCursor = start;
-                    var fullKnownDay = fullCoverage && end == dayEnd && coveredPeriods.Count > 0;
-                    foreach (var period in coveredPeriods.OrderBy(p => p.From))
-                    {
-                        if (period.From > knownCursor || !IsCalibrationKnownStatus(period.Status)) fullKnownDay = false;
-                        if (period.Through > knownCursor) knownCursor = period.Through;
-                    }
-                    if (knownCursor < end) fullKnownDay = false;
-                    if (fullKnownDay) coveredDays.Add(day);
-                    var minimum = PrtgCoveredRuleEvaluator.Evaluate(day, [statusInput], evidence, lowRules);
-                    foreach (var finding in minimum)
-                    {
-                        if (samples.Count >= MaxMagnitudeSamplesForCalibration) { capacityExceeded = true; break; }
-                        samples.Add(new CalibrationRuleMagnitudeRow(finding.RuleCode, day, finding.DeviceObjid, finding.SensorObjid,
-                            finding.ThresholdMagnitude ?? finding.Magnitude)
-                        { ThresholdMagnitude = finding.ThresholdMagnitude, DayMagnitude = finding.Magnitude });
-                    }
-                    if (capacityExceeded) break;
-                    var formal = PrtgCoveredRuleEvaluator.Evaluate(day, [statusInput], evidence, allRules);
-                    foreach (var finding in formal)
-                    {
-                        totalHits++;
-                        if (finding.RuleCode == PrtgRuleEvaluator.RuleDown) downHits++;
-                        else if (finding.RuleCode == PrtgRuleEvaluator.RuleFlapping) flapHits++;
-                        else if (finding.RuleCode == PrtgRuleEvaluator.RuleWarning) warningHits++;
-                        else if (finding.RuleCode == PrtgRuleEvaluator.RuleSilent) silentHits++;
-                        var key = (finding.RuleCode, finding.Rule.Id, finding.SensorCategory, finding.Rule.PrtgThreshold);
-                        formalHits[key] = formalHits.GetValueOrDefault(key) + 1;
-                    }
+                    if (samples.Count >= MaxMagnitudeSamplesForCalibration) { capacityExceeded = true; break; }
+                    samples.Add(new CalibrationRuleMagnitudeRow(finding.RuleCode, day, finding.DeviceObjid, finding.SensorObjid,
+                        finding.Magnitude));
                 }
-                if (proofDays == false && proof.Coverage.Count > 0) coverageGap = true;
                 if (capacityExceeded) break;
+                foreach (var finding in PrtgRuleEvaluator.Evaluate(day, changes, sensorToDevice, formalInputs, allRules,
+                             emptyNames, emptyNames, includeSilent: false))
+                {
+                    totalHits++;
+                    if (finding.RuleCode == PrtgRuleEvaluator.RuleDown) downHits++;
+                    else if (finding.RuleCode == PrtgRuleEvaluator.RuleFlapping) flapHits++;
+                    else if (finding.RuleCode == PrtgRuleEvaluator.RuleWarning) warningHits++;
+                    var key = (finding.RuleCode, finding.Rule.Id, finding.SensorCategory, finding.Rule.PrtgThreshold);
+                    formalHits[key] = formalHits.GetValueOrDefault(key) + 1;
+                }
             }
-            var finalVersions = ReadCalibrationTimelineVersions(policySensorIds, out var finalRowsLimit);
-            var finalStatuses = ReadCalibrationSensorStatuses(policySensorIds, out var finalSensorLimit);
-            var finalSensorStamp = CalibrationSensorStamp(finalStatuses);
-            var finalResourceIdentityVersions = ReadCalibrationResourceIdentityVersions(policySensorIds, out var finalResourceVersionLimit);
-            if (finalRowsLimit || finalSensorLimit || finalSensorStamp != sensorStamp ||
-                finalVersions.Any(v => timelineVersions.GetValueOrDefault(v.Key) != v.Value) ||
-                finalResourceVersionLimit || resourceIdentityVersionStamp != CalibrationVersionStamp(finalResourceIdentityVersions) ||
-                scopeVersion != new EfJsonBlobStore(_contextFactory, EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() ||
-                policySnapshot.Version != new EfJsonBlobStore(_contextFactory, PrtgMonitoringPolicyStore.BlobKey).ReadVersion()) captureChanged = true;
         }
-        if (!string.Equals(ruleStamp, GetValidatedPrtgRuleSnapshot(budget).Stamp, StringComparison.Ordinal)) captureChanged = true;
-        if (hostMapDataRevision != _prtgStore.ReadHostMapDataRevision()) captureChanged = true;
-        if (captureChanged) explanations.Add("校準不可用：收集期間來源版本或主機對應變更；已拒絕混合版本結果。");
-        if (sourceMismatch) explanations.Add("校準不可用：timeline 來源世代與目前政策不一致。");
-        if (mappingMismatch) explanations.Add("校準不可用：timeline 範圍修訂或該日主機對應已變更。");
-        if (generationMismatch) explanations.Add("校準不可用：timeline resource generation、coverage 或 state 身分不一致，可信品質無效。");
-        if (coverageGap) explanations.Add("可信 timeline 的已涵蓋區間仍依正式 evaluator 計入 finding 與分佈；不完整或含 Unknown 的 sensor-day 不計入完整涵蓋日數，缺口不以 state-change 或鏡像資料補足。");
-        explanations.Add("本次重算的 FormalCurrentHitCounts 與 MagnitudeSamples 僅涵蓋可信 status timeline 的 down、flapping、warning 三種規則。DailyRuleHits 是既有持久化歷史彙總，可能包含其他規則族群，不能當成本次重算結果。");
-        explanations.Add("未支援規則代碼會列在 UnsupportedByMagnitudeAnalysisRuleCodes；這代表本分析未評估，不能解讀為零命中或符合規則。silent 所需的 presence 證據不在本分析輸入中；磁碟趨勢與資源時段規則也不由 status timeline evaluator 重算。");
-        explanations.Add("CurrentRules 的 RuleEnabled 僅表示規則目錄開關；本匯出不證明資源規則具有有效 profile 或來源資格，也不證明 CPU／記憶體正式規則具備同版 trial 與 Maintain 授權。");
-        explanations.Add("MagnitudeSummaries.HitsAtCurrentThreshold 是不限分類規則門檻對可信樣本的分佈對照，不代表正式 finding 命中數；正式命中依 rule id/category 列於 FormalCurrentHitCounts。");
-        explanations.Add("每個 sensor timeline 目前最多保存 31 天；超過此窗的 56 天充足門檻不以 raw state-change 或舊鏡像補足。");
+        var captureChanged = !string.Equals(ruleStamp, GetValidatedPrtgRuleSnapshot(budget).Stamp, StringComparison.Ordinal) ||
+            hostMapDataRevision != _prtgStore.ReadHostMapDataRevision();
+        if (captureChanged) explanations.Add("校準不可用：收集期間規則或主機對應變更；已拒絕混合版本結果。");
+        explanations.Add("FormalCurrentHitCounts 與 MagnitudeSamples 以 messages 逐日重放 down、flapping、warning 三種狀態型規則；DailyRuleHits 是既有持久化歷史彙總，可能包含其他規則，不能當成本次重算結果。");
+        explanations.Add("未支援規則代碼列在 UnsupportedByMagnitudeAnalysisRuleCodes，代表本分析未評估，不能解讀為零命中；silent 依現況判定、趨勢規則依數值判定，都不在本分析內。");
+        explanations.Add("MagnitudeSummaries.HitsAtCurrentThreshold 是不限分類規則門檻對樣本的分佈對照，不代表正式 finding 命中數；正式命中依 rule id／分類列於 FormalCurrentHitCounts。");
+        explanations.Add("CoveredDays 是窗口內有主機對應紀錄（當夜結構同步成功）的天數。");
+        explanations.Add("CurrentRules 的 RuleEnabled 是規則目錄開關；停用規則仍列出門檻與樣本分佈，但不計入 FormalCurrentHitCounts。");
         if (capacityExceeded || captureChanged)
         {
             samples.Clear(); formalHits.Clear(); coveredDays.Clear();
-            totalHits = downHits = flapHits = warningHits = silentHits = 0;
+            totalHits = downHits = flapHits = warningHits = 0;
             if (capacityExceeded)
-                explanations.Add("校準不可用：可信 timeline 輸入超出校準明確容量上限；已拒收整份分析，沒有輸出部分結果。");
+                explanations.Add($"校準不可用：sensor 母體或樣本超出校準上限（{MaxPolicySensorsForCalibration} 顆／{MaxMagnitudeSamplesForCalibration} 筆）；請先清除監看範圍外的鏡像或以監看政策縮圈。");
         }
         var summaries = samples.GroupBy(r => r.RuleCode, StringComparer.OrdinalIgnoreCase).Select(g =>
         {
-            var values = g.Select(r => r.ThresholdMagnitude ?? r.Magnitude).OrderBy(v => v).ToList();
+            var values = g.Select(r => r.Magnitude).OrderBy(v => v).ToList();
             var global = allRules.Where(r => r.PrtgRuleCode == g.Key && r.PrtgSensorCategory == null).OrderBy(r => r.Id, StringComparer.Ordinal).FirstOrDefault();
             var threshold = global?.PrtgThreshold ?? 0;
             return new CalibrationRuleMagnitudeSummary(g.Key, values.Count, values[0], Percentile(values, .50), Percentile(values, .90),
                 Percentile(values, .99), values[^1], threshold == 0 ? 0 : values.Count(v => v >= threshold), threshold);
         }).OrderBy(r => r.RuleCode, StringComparer.Ordinal).ToList();
-        var blocked = !policyReady || capacityExceeded || captureChanged || (coveredDays.Count == 0 && samples.Count == 0);
-        if (blocked && policyReady && !explanations.Any(x => x.Contains("不可用：", StringComparison.Ordinal)))
-            explanations.Add("校準不可用：as-of 視窗沒有可評估的可信保存 timeline 區間。");
+        var blocked = !prtgReady || capacityExceeded || captureChanged || (coveredDays.Count == 0 && samples.Count == 0);
+        if (blocked && prtgReady && !explanations.Any(x => x.Contains("不可用：", StringComparison.Ordinal)))
+            explanations.Add("校準不可用：窗口內沒有主機對應紀錄，也沒有狀態變更樣本。");
         else if (!blocked && samples.Count == 0)
-            explanations.Add("可信 timeline 涵蓋存在，但本視窗沒有正式 finding 樣本；門檻分佈仍不足。");
+            explanations.Add("窗口內有主機對應紀錄，但沒有狀態變更樣本；門檻分佈仍不足。");
         var currentRules = allPrtgRules.Where(r => !string.IsNullOrWhiteSpace(r.PrtgRuleCode))
             .Select(r =>
             {
@@ -2289,22 +2120,17 @@ public sealed class CalibrationService
                     PrtgRuleEvaluator.RuleFlapping => "state-transitions",
                     PrtgRuleEvaluator.RuleSilent => "days",
                     PrtgRuleEvaluator.RuleDiskFreeTrend => "disk-trend-profile",
-                    PrtgRuleEvaluator.RuleResourceCpuPressure or PrtgRuleEvaluator.RuleResourceMemoryPressure or
-                        PrtgRuleEvaluator.RuleResourceDiskPressure => "resource-period-profile",
                     _ => "unspecified"
                 };
-                int? threshold = code is PrtgRuleEvaluator.RuleDiskFreeTrend or
-                    PrtgRuleEvaluator.RuleResourceCpuPressure or PrtgRuleEvaluator.RuleResourceMemoryPressure or
-                    PrtgRuleEvaluator.RuleResourceDiskPressure ? null : r.PrtgThreshold;
+                int? threshold = code is PrtgRuleEvaluator.RuleDiskFreeTrend ? null : r.PrtgThreshold;
                 return new CalibrationPrtgRuleThresholdInfo(
                     code, threshold, r.Category.ToString(), r.Severity.ToString(),
                     r.ElevatesDayRisk, r.Description, r.PrtgSensorCategory, thresholdKind, r.Enabled);
             }).ToList();
         var result = new RuleMagnitudeAnalysis(sourceFingerprint, fingerprint, ruleStamp, hostMapDataRevision,
-            policySnapshot.Version, scopeVersion, policySensorIds, resourceIdentityStamp, resourceIdentityVersionStamp,
-            timelineStamp, sensorStamp, settingsStamp, evaluationAsOf,
+            policyVersion, scopeVersion, policySensorIds, sensorStamp, settingsStamp, evaluationAsOf,
             samples, summaries, formalHits.Select(kv => new CalibrationFormalRuleHitCount(kv.Key.Code, kv.Key.Id, kv.Key.Category, kv.Key.Threshold, kv.Value)).ToList(),
-            explanations, currentRules, coveredDays.Count, totalHits, downHits, flapHits, warningHits, silentHits, blocked);
+            explanations, currentRules, coveredDays.Count, totalHits, downHits, flapHits, warningHits, 0, blocked);
         lock (_ruleMagnitudeLock) { _cachedRuleMagnitudeAnalysis = result; _cachedRuleMagnitudeAt = DateTime.Now; }
         return result;
     }

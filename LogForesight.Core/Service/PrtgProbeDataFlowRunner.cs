@@ -49,9 +49,7 @@ public static class PrtgProbeDataFlowRunner
         console.WriteLine($"      此裝置鏡像共有 {sensors.Count(s => s.DeviceObjid == map.DeviceObjid)} 顆 sensor，本次只驗 1 顆；不代表每台只會抓 1 顆。");
 
         var startedAt = DateTime.Now;
-        var fetch = new PrtgFetchService(client, store,
-            new PrtgFreshnessStore(backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-            new Dictionary<string, string>());
+        var fetch = PrtgFetchService.Create(client, backend, store, settings, console, guard: null);
         var (written, failed) = await fetch.FetchValuesForSensorsAsync(day, new[] { sensor.Objid }, 1, ct);
         if (failed != 0 || written == 0)
         {

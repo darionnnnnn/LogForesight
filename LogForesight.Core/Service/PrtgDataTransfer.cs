@@ -25,9 +25,6 @@ public sealed class PrtgDataPackage
     public string Purpose { get; set; } = "diagnostic-only";
     public PrtgMonitoringPolicy? SourcePolicy { get; set; }
     public List<PrtgObservationRow> Observations { get; set; } = [];
-    public List<PrtgSensorTimelineEvidence> Timelines { get; set; } = [];
-    public List<PrtgDiskSemanticEvidence> SemanticEvidence { get; set; } = [];
-    public List<PrtgDiskVerificationResult> SemanticResults { get; set; } = [];
 }
 
 public sealed record PrtgImportResult(
@@ -47,10 +44,6 @@ public static class PrtgDataTransfer
         package.SourcePolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
         using var db = backend.CreateContext();
         package.Observations = db.PrtgObservations.AsNoTracking().Where(o => o.RecordDate >= fromDate.Date && o.RecordDate <= toDate.Date).ToList();
-        package.Timelines = package.SourcePolicy.SensorIds.Select(id =>
-            new PrtgSensorTimelineStore(backend.Blob(PrtgSensorTimelineStore.Prefix + id)).Get()).ToList();
-        package.SemanticEvidence = new PrtgDiskSemanticEvidenceStore(backend.Blob(PrtgDiskSemanticEvidenceStore.BlobKey)).GetAll().ToList();
-        package.SemanticResults = new PrtgDiskVerificationResultStore(backend.Blob(PrtgDiskVerificationResultStore.BlobKey)).Get().Values.ToList();
         return package;
     }
 

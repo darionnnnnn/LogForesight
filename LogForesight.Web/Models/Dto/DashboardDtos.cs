@@ -8,6 +8,8 @@ public class DashboardDto
 
     public int TotalHosts { get; set; }
     public int AnalyzedHostDays { get; set; }
+    /// <summary>只有 PRTG finding、當日沒有日誌分析的主機日數（不計入 <see cref="AnalyzedHostDays"/>）。</summary>
+    public int PrtgOnlyHostDays { get; set; }
     public int PendingRiskReviewDays { get; set; }
     public int HighRiskDays { get; set; }
     public int MediumRiskDays { get; set; }
@@ -141,6 +143,9 @@ public class IssueRankingDto
 
     /// <summary>已有結論的主機數</summary>
     public int ResolvedHostCount { get; set; }
+
+    /// <summary>PRTG 問題：期間內每台主機的最近一次出現都在 30 日誤報窗內（<see cref="LogForesight.Core.Models.PrtgFalsePositiveWindow"/>）</summary>
+    public bool MarkedFalsePositive { get; set; }
 
     // ── 機房級基準線（回饋十九輪批次G1）──────────────────────────────────────
     //

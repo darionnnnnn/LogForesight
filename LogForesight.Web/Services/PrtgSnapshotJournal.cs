@@ -114,19 +114,9 @@ internal sealed class PrtgSnapshotJournal : IDisposable
     /// <summary>Capture one immutable policy value and use it for both current and legacy bindings.</summary>
     internal static BindingPair CaptureBindingPair(StorageBackend backend, string? url)
     {
-        var policy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        var source = policy.SourceGeneration ?? "";
+        // 綁定只描述連線來源（連線位址指紋）；改連線位址時舊 journal 不重播到新來源。
         var endpoint = Endpoint(url);
-        if (source.Length == 0) return new BindingPair(endpoint, endpoint, source);
-        var scopeRevision = backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
-        var resourceRevision = backend.Blob("prtg_resource_generation_revision").ReadVersion();
-        // Durable binding describes the source, not the selected-resource scope.
-        // Scope/resource revisions remain per-operation cancellation fences, while
-        // every trusted sample carries its own resource/channel generation and epoch.
-        var current = $"v3|{endpoint}|{Convert.ToBase64String(Encoding.UTF8.GetBytes(source))}";
-        var epoch = $"{endpoint}|{source}|{scopeRevision}|{resourceRevision}";
-        var legacy = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(epoch)));
-        return new BindingPair(current, legacy, source);
+        return new BindingPair(endpoint, endpoint, "");
     }
 
     /// <summary>Exact pre-v3 digest, used only to verify and migrate an untouched legacy journal.</summary>
@@ -394,36 +384,17 @@ internal sealed class PrtgSnapshotJournal : IDisposable
             (row.Coverage.HasValue && (!double.IsFinite(row.Coverage.Value) || row.Coverage < 0)) ||
             row.Hour < now.AddDays(-ReplayDays))
             throw new InvalidDataException("快照增量樣本無效或超過 30 日安全重播期限");
-        if (row.Trusted is { } proof && (!proof.IsStructurallyValid() || !proof.MatchesHour(row.Hour) ||
-            proof.Slots.Count != row.Count || proof.Slots.Count == 0 || proof.Slots.Count > 12 ||
-            proof.Slots.Select(s => s.Slot).Distinct().Count() != proof.Slots.Count ||
-            proof.Slots.Select(s => s.PhysicalIdHash).Distinct(StringComparer.Ordinal).Count() != proof.Slots.Count ||
-            proof.Slots.Any(s => s.Slot < 0 || s.Slot >= 60 / proof.StrategyMinutes || !double.IsFinite(s.Value))))
-            throw new InvalidDataException("可信樣本 journal slot proof 無效");
     }
 
     private void ValidateValueRow(PrtgValueRow row, DateTime now)
     {
-        if (row == null || row.Quality != PrtgDataQuality.Sampled || row.TrustVersion is < 0 or > 1 ||
-            row.TrustVersion == 1 && string.IsNullOrWhiteSpace(row.TrustedProof) ||
-            row.TrustVersion == 0 && row.TrustedProof != null ||
+        if (row == null || row.Quality != PrtgDataQuality.Sampled ||
             (row.AvgValue.HasValue && !double.IsFinite(row.AvgValue.Value)) ||
             (row.MinValue.HasValue && !double.IsFinite(row.MinValue.Value)) ||
             (row.MaxValue.HasValue && !double.IsFinite(row.MaxValue.Value)) ||
             (row.Coverage.HasValue && (!double.IsFinite(row.Coverage.Value) || row.Coverage < 0 || row.Coverage > 100)) ||
             row.PeriodStart < now.AddDays(-ReplayDays))
             throw new InvalidDataException("快照待寫樣本無效或超過 30 日安全重播期限");
-        if (row.TrustVersion == 1)
-        {
-            var proof = PrtgTrustedSampleProof.Deserialize(row.TrustedProof!);
-            if (!proof.IsStructurallyValid() || !proof.MatchesHour(row.PeriodStart) ||
-                proof.Slots.Count == 0 || proof.Slots.Count > 12 ||
-                Math.Abs((row.Coverage ?? -1) - proof.Slots.Count * 100.0 / (60 / proof.StrategyMinutes)) > 1e-8 ||
-                !row.AvgValue.HasValue || Math.Abs(row.AvgValue.Value - proof.Slots.Average(s => s.Value)) > 1e-8 ||
-                !row.MinValue.HasValue || Math.Abs(row.MinValue.Value - proof.Slots.Min(s => s.Value)) > 1e-8 ||
-                !row.MaxValue.HasValue || Math.Abs(row.MaxValue.Value - proof.Slots.Max(s => s.Value)) > 1e-8)
-                throw new InvalidDataException("待寫可信樣本 proof 無效");
-        }
     }
 
     private void CleanupUncommittedTail(long sequence, string path, string temp)

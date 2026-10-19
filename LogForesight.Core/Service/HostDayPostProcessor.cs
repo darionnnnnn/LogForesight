@@ -18,7 +18,9 @@ internal static class MissingDateFinder
     public static MissingDateScanResult FindWithExistingDates(
         IAnalysisRecordReader store, int lookbackDays, bool requireAi = false, bool useAi = true)
     {
-        var recent = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays);
+        // 只有 PRTG finding 的主機日不算「已分析」：日誌分析仍要補這一天，寫入時原地更新那一列。
+        var recent = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
+            .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
         var existingRecordDates = recent.Select(r => r.Date.Date).ToHashSet();
         var existingNetiqDates = recent.Where(r => r.LogSource == AnalysisLogSource.Netiq)
             .Select(r => r.Date.Date).ToHashSet();
@@ -167,8 +169,7 @@ public static class HostDayPostProcessor
         if (!record.CanSupplementWithPrtg()) return 0;
 
         var findings = registry.For(hostId, record.Date);
-        var manifest = registry.ManifestFor(hostId, record.Date);
-        if (findings.Count == 0 && manifest == null) return 0;
+        if (findings.Count == 0) return 0;
 
         try
         {
@@ -178,12 +179,12 @@ public static class HostDayPostProcessor
                 .ToHashSet(StringComparer.Ordinal);
 
             var added = findings.Where(f => existingKeys.Add(f.EventKey)).ToList();
-            if (added.Count == 0 && manifest == null) return 0;
+            if (added.Count == 0) return 0;
 
             // 與 PRTG 路徑的補追加對同一主機日序列化（見 PrtgFindingsRegistry.AttachExclusive）。
             var attachedNow = registry.AttachExclusive(hostId, record.Date,
                 () => store.AttachPrtgFindings(hostId, record.Date, added,
-                    registry.SuppressedPatternIdsFor(hostId, record.Date), out _, aiConfigured, manifest));
+                    registry.SuppressedPatternIdsFor(hostId, record.Date), out _, aiConfigured));
 
             // **先看資料庫端做了沒**：查無該主機當日列、或詳情已被保留期精簡（detail_pruned）時
             // 資料庫完全不動，記憶體這邊也不能改——否則呼叫端用來組執行摘要的 record.RiskLevel
@@ -198,11 +199,6 @@ public static class HostDayPostProcessor
                 if (persisted == null || !persisted.CanSupplementWithPrtg()) return 0;
                 var persistedKeys = persisted.TopIssues.Select(i => i.EventKey).ToHashSet(StringComparer.Ordinal);
                 if (added.Any(i => !persistedKeys.Contains(i.EventKey))) return 0;
-                record.PrtgManifest = persisted.PrtgManifest;
-            }
-            else if (manifest != null)
-            {
-                record.PrtgManifest = manifest;
             }
 
             record.TopIssues.AddRange(added);
@@ -246,38 +242,7 @@ public static class HostDayPostProcessor
     {
         var version = workflow?.CaptureDeliveryVersion(hostId, date, parentRecordId);
         var hasWorkflow = workflow != null && hostId > 0 && version != null;
-        var pressureIssues = topIssues.Where(PrtgResourceFormalDeliveryFence.IsTargetPressureIssue).ToArray();
-        var authorizedPressureKeys = new HashSet<string>(StringComparer.Ordinal);
-        var pressureClaimFailed = false;
-        if (pressureIssues.Length > 0 && hasWorkflow)
-        {
-            try
-            {
-                authorizedPressureKeys = workflow!.ClaimFormalPressureCaseStarts(hostId, date, version!, pressureIssues)
-                    .ToHashSet(StringComparer.Ordinal);
-            }
-            catch (Exception ex)
-            {
-                // The durable-start transaction is the linearization point. A failed claim must
-                // never fall through to CaseAttach or NightlyDispatch for these pressure findings.
-                // Independent non-pressure findings in the same parent still proceed below.
-                Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} formal PRTG pressure case start claim failed closed", logContext, date);
-                pressureClaimFailed = true;
-            }
-        }
-        var distinctPressureKeys = pressureIssues.Select(IssueSignatureKey.For)
-            .Distinct(StringComparer.Ordinal).ToArray();
-        // Every targeted pressure finding must have a current durable start claim before replay
-        // can complete, even when unrelated findings in the same parent can still be dispatched.
-        pressureClaimFailed |= distinctPressureKeys.Length > 0 &&
-            (!hasWorkflow || distinctPressureKeys.Any(key => !authorizedPressureKeys.Contains(key)));
-        var deliveryIssues = topIssues.Where(issue =>
-            !PrtgResourceFormalDeliveryFence.IsTargetPressureIssue(issue) ||
-            authorizedPressureKeys.Contains(IssueSignatureKey.For(issue))).ToList();
-        // With no safe parent/workflow fence, targeted CPU/memory pressure remains deferred.
-        // A replay caller must retry until a current durable claim is available; otherwise it could
-        // mark the parent job complete after committing a finding but before its case starts.
-        if (pressureIssues.Length > 0 && deliveryIssues.Count == 0) return false;
+        var deliveryIssues = topIssues;
 
         var expectedCaseKeys = deliveryIssues.Select(IssueSignatureKey.For).Distinct(StringComparer.Ordinal).ToArray();
         var workflowTrackingFailed = false;
@@ -325,7 +290,7 @@ public static class HostDayPostProcessor
                         Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} dispatch workflow tracking failed", logContext, date);
                     }
                 } : null);
-            return !pressureClaimFailed && !workflowTrackingFailed && !retryableDispatchOutcome;
+            return !workflowTrackingFailed && !retryableDispatchOutcome;
         }
         catch (Exception ex)
         {

@@ -548,19 +548,6 @@ public class RiskReportService
                 sb.Append($"原生來源引用：{(proof.HasExactReference ? KnownOrUnknown(proof.SourceReference, 128) : "未確認")}");
             }
 
-            var resourceEvidence = PrtgResourceEvidencePresentation.From(i);
-            if (resourceEvidence != null)
-            {
-                if (resourceEvidence.ReasonText.Count > 0)
-                {
-                    sb.AppendLine();
-                    sb.Append($"  正式資源原因：{string.Join("；", resourceEvidence.ReasonText)}");
-                }
-                sb.AppendLine();
-                sb.Append($"  已保存資源證據版本參照（僅供比對）：{resourceEvidence.EvidenceVersionReference}");
-                sb.AppendLine();
-                sb.Append($"  已保存規則准入版本參照（僅供比對）：{resourceEvidence.RuleAdmissionVersionReference}");
-            }
         }
         return sb.ToString();
     }

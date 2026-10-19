@@ -707,12 +707,12 @@ public class RuleValidatorTests
     }
 
     [Fact]
-    public void PRTG規則_silent保留原欄位並宣告正式presenceConsumer()
+    public void PRTG規則_silent保留原欄位並由狀態型評估器處理()
     {
         var silent = PrtgRule(prtgRuleCode: PrtgRuleEvaluator.RuleSilent, prtgThreshold: 0);
         var outcome = RuleValidator.Validate(new List<KnownIssueRule> { silent });
 
-        Assert.Equal(nameof(PrtgSilentAbsenceEvaluator),
+        Assert.Equal(nameof(PrtgRuleEvaluator),
             PrtgRuleCatalog.FormalConsumerFor(PrtgRuleEvaluator.RuleSilent));
         Assert.Same(silent, Assert.Single(outcome.ValidRules));
         Assert.Empty(outcome.SkippedRules);

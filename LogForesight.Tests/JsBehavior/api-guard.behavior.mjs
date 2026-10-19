@@ -6,7 +6,6 @@
  */
 
 import { installDom } from './mini-dom.mjs';
-import { readFile } from 'node:fs/promises';
 
 const dom = installDom();
 window.LF_BASE = '/lf';
@@ -16,27 +15,6 @@ const ui = await import('../../LogForesight.Web/wwwroot/js/core/ui.js');
 
 function assert(condition, message) {
     if (!condition) throw new Error(message);
-}
-
-async function downloadPageHarness(downloadJson) {
-    const source = await readFile(new URL('../../LogForesight.Web/wwwroot/js/pages/prtg-admin.js', import.meta.url), 'utf8');
-    const start = source.indexOf("    acceptanceExport.addEventListener('click',");
-    const end = source.indexOf("    document.getElementById('prtg-acceptance-label-form')", start);
-    assert(start >= 0 && end > start, '必須載入實際頁面下載 handler');
-    let click;
-    const button = { disabled: false, addEventListener(_name, handler) { click = handler; } };
-    const status = { textContent: '' };
-    const links = [];
-    const revoked = [];
-    const doc = {
-        getElementById(id) { return { value: id.endsWith('through') ? '2026-10-10' : '2026-10-09' }; },
-        createElement() { const link = { click() { links.push(this); } }; return link; }
-    };
-    const url = { createObjectURL(blob) { assert(blob instanceof Blob, '只允許完整 Blob'); return 'blob:evidence'; },
-        revokeObjectURL(value) { revoked.push(value); } };
-    new Function('acceptanceExport', 'status', 'document', 'api', 'URL', 'setTimeout', source.slice(start, end))(
-        button, status, doc, { downloadJson }, url, callback => callback());
-    return { button, status, links, revoked, click };
 }
 
 /** 永不自行結束的假 fetch：只有被 AbortController 中止時才 reject */
@@ -89,24 +67,6 @@ const cases = {
             new Promise(resolve => setTimeout(() => resolve(null), 100))
         ]);
         assert(caught?.code === 'download_invalid_response', '非 JSON 必須立即拒絕，不能卡在取消確認');
-    },
-    async JSON下載頁面失敗不交付檔案且恢復按鈕() {
-        const page = await downloadPageHarness(async () => {
-            throw new ApiError('export_output_byte_cap', '超過上限；請縮小日期範圍。', 413);
-        });
-        await page.click();
-        assert(page.links.length === 0 && page.revoked.length === 0, '拒絕時不可下載錯誤或部分檔案');
-        assert(!page.button.disabled && page.status.textContent.includes('請縮小日期範圍'), '明確原因及重試按鈕須保留');
-    },
-    async JSON下載頁面等待完成才交付且釋放資源() {
-        let complete;
-        const page = await downloadPageHarness(() => new Promise(resolve => { complete = resolve; }));
-        const work = page.click();
-        assert(page.button.disabled && page.links.length === 0, '等待本文完成期間不應交付檔案');
-        complete(new Blob(['{}'], { type: 'application/json' }));
-        await work;
-        assert(!page.button.disabled && page.links.length === 1 && page.links[0].download === 'prtg-acceptance-2026-10-09-2026-10-10.json', '完成後提供日期檔名並恢復按鈕');
-        assert(page.revoked[0] === 'blob:evidence' && page.status.textContent.includes('ScopeComplete'), '釋放資源且保留完整性說明');
     },
     async JSON下載ContentLength超限不讀取本文() {
         let canceled = false;

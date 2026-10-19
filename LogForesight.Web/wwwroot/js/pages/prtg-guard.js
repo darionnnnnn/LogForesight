@@ -39,6 +39,8 @@ export function loadGuardFields(settings) {
     if (guardMaxPause) guardMaxPause.value = settings.prtgResourceGuardMaxPauseMinutes ?? 120;
     const guardSensors = document.getElementById('prtg-guard-sensor-objids');
     if (guardSensors) guardSensors.value = (settings.prtgResourceGuardSensorObjids ?? []).join('\n');
+    const noteEl = document.getElementById('prtg-guard-autodetect-note');
+    if (noteEl) noteEl.textContent = '';
     document.getElementById('prtg-guard-preview-result')?.replaceChildren();
 }
 
@@ -74,6 +76,16 @@ export function bindGuardPreview() {
                 ? '/api/admin/settings/prtg-resource-guard/preview?forceAuto=true'
                 : '/api/admin/settings/prtg-resource-guard/preview';
             const res = await api.get(url, { silent: true });
+
+            const noteEl = document.getElementById('prtg-guard-autodetect-note');
+            if (noteEl) {
+                if (res.autoDetectedAt) {
+                    const dateStr = String(res.autoDetectedAt).slice(0, 10);
+                    noteEl.textContent = `自動偵測 ${dateStr}`;
+                } else {
+                    noteEl.textContent = '';
+                }
+            }
 
             if (!res.success) {
                 const errEl = document.createElement('div');

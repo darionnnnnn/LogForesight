@@ -39,6 +39,24 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_blobs", "version",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
 
+        // A pre-existing durable serialization row shared by purge acceptance/batches and every
+        // scope writer. The row is deliberately part of the existing blob ledger so both providers
+        // can take the same transaction-scoped write lock without a generic lease framework.
+        if (TableExists(ctx, isSqlite, "lf_blobs") && !ctx.Blobs.Any(row => row.BlobKey == EfPrtgStore.ScopeRevisionBlobKey))
+        {
+            ctx.Blobs.Add(new BlobRow
+            {
+                BlobKey = EfPrtgStore.ScopeRevisionBlobKey, Content = "{}", UpdatedAt = DateTime.UtcNow, Version = 1
+            });
+            try { ctx.SaveChanges(); }
+            catch (DbUpdateException)
+            {
+                foreach (var row in ctx.ChangeTracker.Entries<BlobRow>()
+                             .Where(entry => entry.Entity.BlobKey == EfPrtgStore.ScopeRevisionBlobKey).ToArray())
+                    row.State = EntityState.Detached;
+            }
+        }
+
         // P1-2：問題查詢頁分頁排序需要的抽出欄（見 LfDbContext.DailyRecordRow.HasCorrelation 註解）。
         // 舊資料補上後預設為 0/false，下次批次重新分析同一天會自然更新為正確值。
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "has_correlation",
@@ -144,6 +162,10 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_extract_version", "extract_version");
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records",
             "IX_lf_daily_records_ai_pending_record_date", "ai_pending, record_date");
+        // 日誌來源抽出欄：舊列預設 0（Unknown），DailyRecordBackfiller 版本 3 依 ContentJson 回填。
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "log_source",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "smallint NOT NULL DEFAULT 0");
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_src_date", "log_source, record_date");
         // 慢查詢修正（回饋三十六輪批次B）：可行動快照的「risk_level IN + 日期範圍」篩選
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_risk_date", "risk_level, record_date");
 
@@ -163,9 +185,6 @@ internal static class SchemaUpgrader
             isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_observations_truncated",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
-        // Null is deliberate for existing rows: their PRTG message-status parser version is unknown.
-        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "prtg_message_status_semantic_version",
-            isSqlite ? "INTEGER NULL" : "int NULL");
         // 來源名稱的寫入時計算鍵；舊列保留 NULL 供背景分批補齊，不在啟動閘掃全表。
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "source_key",
             isSqlite ? "TEXT NULL" : "nvarchar(255) NULL");
@@ -245,11 +264,11 @@ internal static class SchemaUpgrader
         // 取捨是「夜間批次多付一點、白天使用者查詢快很多」。
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
             "IX_lf_prtg_state_ch_changed", "changed_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_state_changes",
+            "IX_lf_prtg_sc_purge_sensor", "sensor_objid, id");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_values",
             isSqlite ? SqliteCreatePrtgValues : SqlServerCreatePrtgValues);
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_values", "trust_version", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_values", "trusted_proof", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_uniq", "sensor_objid, period_start", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
@@ -260,6 +279,61 @@ internal static class SchemaUpgrader
         // 寫入成本同上：這是全站資料量最大的一張表、夜間批次整批寫，索引維護成本換白天查詢速度。
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
             "IX_lf_prtg_values_period", "period_start");
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_values",
+            "IX_lf_prtg_val_purge_sensor", "sensor_objid, id");
+
+        // Durable PRTG scope-purge ownership and batch progress. Progress is written in the
+        // same transaction as each bounded delete so a lost response is safely replayable.
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", isSqlite ? """
+            CREATE TABLE lf_prtg_scope_purge_jobs (
+                job_id TEXT NOT NULL PRIMARY KEY, actor_id INTEGER NOT NULL,
+                parent_job_id TEXT NULL, previous_job_id TEXT NULL, source TEXT NOT NULL, status TEXT NOT NULL,
+                active_owner TEXT NULL, lease_expires_at_utc TEXT NULL,
+                keep_set_json TEXT NOT NULL, candidate_sensor_ids_json TEXT NOT NULL, scope_fingerprint TEXT NOT NULL,
+                accepted_at_utc TEXT NOT NULL, updated_at_utc TEXT NOT NULL,
+                values_watermark INTEGER NOT NULL, state_changes_watermark INTEGER NOT NULL,
+                values_cursor INTEGER NOT NULL, state_changes_cursor INTEGER NOT NULL,
+                candidate_values INTEGER NOT NULL, candidate_state_changes INTEGER NOT NULL,
+                deleted_values INTEGER NOT NULL, deleted_state_changes INTEGER NOT NULL,
+                remaining_values INTEGER NOT NULL, remaining_state_changes INTEGER NOT NULL,
+                otherwise_removed_values INTEGER NOT NULL, otherwise_removed_state_changes INTEGER NOT NULL,
+                counts_reconciled INTEGER NOT NULL DEFAULT 1,
+                monitored_devices INTEGER NOT NULL, permission_revision INTEGER NOT NULL,
+                auth_fingerprint TEXT NULL, scope_fence_json TEXT NULL,
+                stop_reason TEXT NULL, revision INTEGER NOT NULL
+            );
+            """ : """
+            CREATE TABLE lf_prtg_scope_purge_jobs (
+                job_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_scope_purge_jobs PRIMARY KEY,
+                actor_id bigint NOT NULL, parent_job_id nvarchar(100) NULL, previous_job_id nvarchar(36) NULL,
+                source nvarchar(24) NOT NULL, status nvarchar(24) NOT NULL,
+                active_owner nvarchar(24) NULL, lease_expires_at_utc datetime2 NULL,
+                keep_set_json nvarchar(max) NOT NULL, candidate_sensor_ids_json nvarchar(max) NOT NULL, scope_fingerprint nvarchar(128) NOT NULL,
+                accepted_at_utc datetime2 NOT NULL, updated_at_utc datetime2 NOT NULL,
+                values_watermark bigint NOT NULL, state_changes_watermark bigint NOT NULL,
+                values_cursor bigint NOT NULL, state_changes_cursor bigint NOT NULL,
+                candidate_values bigint NOT NULL, candidate_state_changes bigint NOT NULL,
+                deleted_values bigint NOT NULL, deleted_state_changes bigint NOT NULL,
+                remaining_values bigint NOT NULL, remaining_state_changes bigint NOT NULL,
+                otherwise_removed_values bigint NOT NULL, otherwise_removed_state_changes bigint NOT NULL,
+                counts_reconciled bit NOT NULL CONSTRAINT DF_lf_prtg_scope_purge_counts_reconciled DEFAULT 1,
+                monitored_devices int NOT NULL, permission_revision bigint NOT NULL,
+                auth_fingerprint nvarchar(128) NULL, scope_fence_json nvarchar(max) NULL,
+                stop_reason nvarchar(max) NULL, revision bigint NOT NULL
+            );
+            """);
+        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs",
+            "IX_lf_prtg_scope_purge_status", "status, updated_at_utc");
+        AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs",
+            "UX_lf_prtg_scope_purge_active_owner", "active_owner", "active_owner IS NOT NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "values_cursor", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "state_changes_cursor", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "auth_fingerprint", isSqlite ? "TEXT NULL" : "nvarchar(128) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "scope_fence_json", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "candidate_sensor_ids_json", isSqlite ? "TEXT NOT NULL DEFAULT '[]'" : "nvarchar(max) NOT NULL DEFAULT '[]'");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "previous_job_id", isSqlite ? "TEXT NULL" : "nvarchar(36) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "lease_expires_at_utc", isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", "counts_reconciled", isSqlite ? "INTEGER NOT NULL DEFAULT 1" : "bit NOT NULL DEFAULT 1");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_sampled_batches",
             isSqlite ? SqliteCreatePrtgSampledBatches : SqlServerCreatePrtgSampledBatches);
@@ -460,6 +534,17 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
             "IX_lf_issue_cases_day_sync_pending", "day_sync_pending");
 
+        // 已移除的 PRTG 機制留下的 blob（可信採樣、容量准入、時間軸、資源壓力、正式郵件 claim…）。
+        // 沒有任何程式再讀寫它們；刪除不可回復，升級前請先備份資料庫（README 部署章節）。
+        try
+        {
+            if (TableExists(ctx, isSqlite, "lf_blobs")) RemoveRetiredPrtgBlobs(ctx);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[SQL] 退役 PRTG 資料清理失敗（不影響站台運作，下次啟動再試）：{0}", ex.Message);
+        }
+
         // 最後一步：EF 預設命名與升級器命名並存時留下的重複索引（必須在所有 AddIndexIfMissing 之後，名稱才登記齊）。
         // 這是空間與寫入效能的整理、不是正確性前提——任何失敗（特別是尚未實機驗證的 SQL Server 系統目錄查詢）只記 Warn，不得擋住站台啟動
         try
@@ -470,6 +555,39 @@ internal static class SchemaUpgrader
         {
             Log.Warn(ex, "[SQL] 重複索引整理失敗（不影響站台運作，下次啟動再試）：{0}", ex.Message);
         }
+    }
+
+    /// <summary>已移除機制的 blob key（完全相符）。</summary>
+    internal static readonly string[] RetiredPrtgBlobKeys =
+    [
+        "prtg_capacity_admission_plan_v1", "prtg_capacity_reservation_v1", "prtg_profile_transport_capacity_v1",
+        "prtg_snapshot_capacity_evidence", "prtg_qualification_capacity_pilot_v1", "prtg_historic_admission_v1",
+        "prtg_channel_discovery_jobs_v1", "prtg_disk_semantic_evidence", "prtg_disk_verification_results",
+        "prtg_sensor_timeline_progress_v1", "prtg_silent_presence_cursor", "prtg_trusted_profile_refresh_v1",
+        "prtg_trusted_sampling_strategy_v1", "prtg_resource_pressure_replay_host_cursor",
+        "prtg_resource_generation_revision", "mail_urgent_retry_cursor_v1"
+    ];
+
+    /// <summary>已移除機制的 blob key 前綴（逐 sensor／逐主機的分片）。</summary>
+    internal static readonly string[] RetiredPrtgBlobPrefixes =
+    [
+        "prtg_timeline_", "prtg_trusted_sampling_binding_", "prtg_trusted_sampling_profile_", "prtg_profile_page_",
+        "prtg_trusted_profile_refresh_proof_", "prtg_resource_identity_", "prtg_resource_authority_host_",
+        "prtg_resource_observation_host_", "prtg_resource_pressure_modes_", "prtg_resource_pressure_hints_",
+        "prtg_resource_formal_episodes_", "prtg_resource_pressure_replay_progress_", "prtg_silent_presence_",
+        "prtg_formal_mail_claims_v2_", "prtg_formal_mail_claims_v3_", "prtg_qualjob_", "prtg_acceptance_labels_"
+    ];
+
+    /// <summary>刪除退役 PRTG blob（冪等）；每個前綴各一道 DELETE，沒有符合的列時不做任何寫入。</summary>
+    internal static int RemoveRetiredPrtgBlobs(LfDbContext ctx)
+    {
+        var removed = ctx.Blobs.Where(row => RetiredPrtgBlobKeys.Contains(row.BlobKey)).ExecuteDelete();
+        foreach (var prefix in RetiredPrtgBlobPrefixes)
+            removed += ctx.Blobs.Where(row => row.BlobKey.StartsWith(prefix)).ExecuteDelete();
+        // 不可逆：以 Warn 寫進啟動紀錄，管理者從 log 看得到這次升級刪了什麼、回退舊版要先還原備份
+        if (removed > 0)
+            Log.Warn("[SQL] 升級已刪除 {0} 筆已移除 PRTG 機制的設定資料（不可回復）。如需回退舊版，必須先還原升級前的資料庫備份。", removed);
+        return removed;
     }
 
     /// <summary>索引的比對形狀：欄位（含順序）＋唯一性</summary>

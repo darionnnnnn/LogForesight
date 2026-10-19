@@ -213,18 +213,20 @@ public class PrtgRuleEvaluatorTests
     }
 
     [Fact]
-    public void 沉默Device_全部未暫停sensor皆Unknown成立_其中一個為Up不成立()
+    public void 沉默Device_連線檢查Up其餘皆Unknown成立_其餘有一個Up不成立()
     {
         var sensorStatuses = new List<PrtgSensorStatusInput>
         {
-            // Device 1: 全部未暫停 sensor 皆為 Unknown 或空值 -> 成立
-            new(101, 1, "Unknown", "ping", null),
-            new(102, 1, "", "ping", null),
-            new(103, 1, null, "ping", null),
+            // Device 1: availability Up，其餘未暫停 sensor 皆為 Unknown 或空值 -> 成立
+            new(100, 1, "Up", "Ping", PrtgSensorCategories.Availability),
+            new(101, 1, "Unknown", "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            new(102, 1, "", "SNMP Memory", PrtgSensorCategories.Memory),
+            new(103, 1, null, "SNMP Disk Free", PrtgSensorCategories.Disk),
 
-            // Device 2: 其中一個 sensor 為 Up -> 不成立
-            new(201, 2, "Unknown", "ping", null),
-            new(202, 2, "Up", "ping", null)
+            // Device 2: 其餘 sensor 中有一個為 Up -> 不成立
+            new(200, 2, "Up", "Ping", PrtgSensorCategories.Availability),
+            new(201, 2, "Unknown", "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            new(202, 2, "Up", "SNMP Memory", PrtgSensorCategories.Memory)
         };
 
         var findings = PrtgRuleEvaluator.Evaluate(
@@ -418,7 +420,8 @@ public class PrtgRuleEvaluatorTests
 
         var sensorStatuses = new List<PrtgSensorStatusInput>
         {
-            new(201, 2, "Unknown", "ping", null) // Device 2 全 Unknown -> 觸發 Silent
+            new(200, 2, "Up", "Ping", PrtgSensorCategories.Availability),
+            new(201, 2, "Unknown", "SNMP CPU Load", PrtgSensorCategories.Cpu) // Device 2 連線 Up、其餘 Unknown -> 觸發 Silent
         };
 
         // includeSilent: true (預設)
@@ -699,13 +702,15 @@ public class PrtgRuleEvaluatorTests
     }
 
     [Fact]
-    public void 沉默Device_PingUp其餘Unknown_不算沉默()
+    public void 沉默Device_整台斷線或沒有連線檢查_不算沉默()
     {
+        // 整台斷線（Ping Down、其餘 Unknown）是 down 的事；沒有 availability sensor 的裝置無從判斷主機是否活著。
         var sensorStatuses = new List<PrtgSensorStatusInput>
         {
-            new(101, 1, "Up", "Ping", PrtgSensorCategories.Availability),
+            new(101, 1, "Down", "Ping", PrtgSensorCategories.Availability),
             new(102, 1, "Unknown", "SNMP Traffic 64bit", PrtgSensorCategories.Traffic),
-            new(103, 1, null, "SNMP Disk Free", PrtgSensorCategories.Disk)
+            new(201, 2, "Unknown", "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            new(202, 2, null, "SNMP Disk Free", PrtgSensorCategories.Disk)
         };
 
         var findings = PrtgRuleEvaluator.Evaluate(
@@ -824,6 +829,7 @@ public class PrtgRuleEvaluatorTests
         };
         var statuses = new List<PrtgSensorStatusInput>
         {
+            new(100, 1, "Up", "Ping", PrtgSensorCategories.Availability),
             new(101, 1, "Unknown", "IPMI", PrtgSensorCategories.Hardware),
         };
 
