@@ -1385,6 +1385,376 @@ public class RuleAdminServiceTests
         Assert.Equal("availability", diff.Current);
         Assert.Equal("hardware", diff.Seed);
     }
+
+    [Fact]
+    public void 沒有就緒sensor時記憶體使用趨勢規則啟用被拒()
+    {
+        var rule = new KnownIssueRule
+        {
+            Id = "builtin-memory-used-trend", Origin = "builtin", Enabled = false, Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleMemoryUsedTrend, PrtgSensorCategory = PrtgSensorCategories.Memory,
+            PrtgTrendThresholds = PrtgTrendThresholds.MemoryProvisional,
+            Category = IssueCategory.Resource, Severity = IssueSeverity.Medium,
+            Description = "memory trend", CountThreshold = 1
+        };
+        _rules.Content.Rules.Add(rule);
+        var controller = new RulesController(Create());
+
+        var ex = Assert.Throws<DomainException>(() => controller.SetEnabled(rule.Id,
+            new SetRuleEnabledRequest { Enabled = true }));
+
+        Assert.Contains("無法啟用", ex.Message);
+        Assert.Contains("PRTG 維護", ex.Message);
+        Assert.False(_rules.Content.Rules.Single(r => r.Id == rule.Id).Enabled);
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 沒有就緒sensor時CPU負載趨勢規則啟用被拒()
+    {
+        var rule = new KnownIssueRule
+        {
+            Id = "builtin-cpu-load-trend", Origin = "builtin", Enabled = false, Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleCpuLoadTrend, PrtgSensorCategory = PrtgSensorCategories.Cpu,
+            PrtgTrendThresholds = PrtgTrendThresholds.CpuProvisional,
+            Category = IssueCategory.Resource, Severity = IssueSeverity.Medium,
+            Description = "cpu trend", CountThreshold = 1
+        };
+        _rules.Content.Rules.Add(rule);
+        var controller = new RulesController(Create());
+
+        var ex = Assert.Throws<DomainException>(() => controller.SetEnabled(rule.Id,
+            new SetRuleEnabledRequest { Enabled = true }));
+
+        Assert.Contains("無法啟用", ex.Message);
+        Assert.Contains("PRTG 維護", ex.Message);
+        Assert.False(_rules.Content.Rules.Single(r => r.Id == rule.Id).Enabled);
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 沒有就緒sensor時Ping延遲趨勢規則啟用被拒()
+    {
+        var rule = new KnownIssueRule
+        {
+            Id = "builtin-ping-latency-trend", Origin = "builtin", Enabled = false, Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RulePingLatencyTrend, PrtgSensorCategory = PrtgSensorCategories.Availability,
+            PrtgTrendThresholds = PrtgTrendThresholds.PingProvisional,
+            Category = IssueCategory.Service, Severity = IssueSeverity.Medium,
+            Description = "ping trend", CountThreshold = 1
+        };
+        _rules.Content.Rules.Add(rule);
+        var controller = new RulesController(Create());
+
+        var ex = Assert.Throws<DomainException>(() => controller.SetEnabled(rule.Id,
+            new SetRuleEnabledRequest { Enabled = true }));
+
+        Assert.Contains("無法啟用", ex.Message);
+        Assert.Contains("PRTG 維護", ex.Message);
+        Assert.False(_rules.Content.Rules.Single(r => r.Id == rule.Id).Enabled);
+        Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public void 記憶體趨勢規則有28個完整日就緒sensor時啟用成功()
+    {
+        using var fx = new EfSqliteFixture();
+        var yesterday = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
+        const long deviceId = 3201, sensorId = 4201;
+        using (var db = fx.NewContext())
+        {
+            db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
+            db.PrtgSensors.Add(new PrtgSensorRow
+            {
+                Objid = sensorId,
+                DeviceObjid = deviceId,
+                Category = PrtgSensorCategories.Memory,
+                SensorType = "SNMP Memory",
+                Name = "Memory Total"
+            });
+            for (var offset = -35; offset <= 0; offset++)
+            {
+                var date = yesterday.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+                db.PrtgHostMaps.Add(new PrtgHostMapRow
+                {
+                    DeviceObjid = deviceId,
+                    MapDate = date.Date,
+                    HostId = 1,
+                    MapStatus = PrtgMapStatus.Ok
+                });
+            }
+            db.SaveChanges();
+        }
+
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+        var rows = new List<PrtgValueRow>();
+        for (var offset = -27; offset <= 0; offset++)
+        {
+            var day = yesterday.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+            for (var hour = 0; hour < PrtgValueAssessment.MinDailyUsableHours; hour++)
+            {
+                rows.Add(new PrtgValueRow
+                {
+                    SensorObjid = sensorId,
+                    PeriodStart = day.AddHours(hour),
+                    AvgValue = 25.0 + (offset + 30) * 0.1,
+                    Quality = PrtgDataQuality.Ok,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+        }
+        prtgStore.UpsertValues(rows);
+
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostId = 1, HostName = "active-host", Active = true });
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
+        var memoryRule = new KnownIssueRule
+        {
+            Id = "builtin-memory-used-trend",
+            Origin = "builtin",
+            Enabled = false,
+            Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleMemoryUsedTrend,
+            PrtgSensorCategory = PrtgSensorCategories.Memory,
+            PrtgTrendThresholds = PrtgTrendThresholds.MemoryProvisional,
+            Category = IssueCategory.Resource,
+            Severity = IssueSeverity.Medium,
+            Description = "memory trend",
+            CountThreshold = 1,
+            PlainExplanation = "記憶體持續上升",
+            Impact = "可能 OOM",
+            LikelyCauses = new[] { "記憶體洩漏" },
+            NextSteps = new[] { "檢查程式" }
+        };
+        var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = 1, Rules = new List<KnownIssueRule> { memoryRule } } };
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var audit = new RecordingAuditService();
+        var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(),
+            hosts, new FakeIssueAggregateQuery(), assessment, settings,
+            new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
+
+        service.SetEnabled(memoryRule.Id, true);
+
+        Assert.True(ruleStore.Content.Rules.Single(r => r.Id == memoryRule.Id).Enabled);
+        Assert.Single(audit.Entries, e => e.Action == AuditActions.RuleEnable);
+    }
+
+    [Fact]
+    public void 記憶體趨勢規則只有27個完整日時啟用被拒_守門走真實評估()
+    {
+        using var fx = new EfSqliteFixture();
+        var yesterday = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
+        const long deviceId = 3201, sensorId = 4201;
+        using (var db = fx.NewContext())
+        {
+            db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
+            db.PrtgSensors.Add(new PrtgSensorRow
+            {
+                Objid = sensorId,
+                DeviceObjid = deviceId,
+                Category = PrtgSensorCategories.Memory,
+                SensorType = "SNMP Memory",
+                Name = "Memory Total"
+            });
+            for (var offset = -35; offset <= 0; offset++)
+            {
+                var date = yesterday.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+                db.PrtgHostMaps.Add(new PrtgHostMapRow
+                {
+                    DeviceObjid = deviceId,
+                    MapDate = date.Date,
+                    HostId = 1,
+                    MapStatus = PrtgMapStatus.Ok
+                });
+            }
+            db.SaveChanges();
+        }
+
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+        var rows = new List<PrtgValueRow>();
+        for (var offset = -26; offset <= 0; offset++)
+        {
+            var day = yesterday.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+            for (var hour = 0; hour < PrtgValueAssessment.MinDailyUsableHours; hour++)
+            {
+                rows.Add(new PrtgValueRow
+                {
+                    SensorObjid = sensorId,
+                    PeriodStart = day.AddHours(hour),
+                    AvgValue = 25.0 + (offset + 30) * 0.1,
+                    Quality = PrtgDataQuality.Ok,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+        }
+        prtgStore.UpsertValues(rows);
+
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostId = 1, HostName = "active-host", Active = true });
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
+        var memoryRule = new KnownIssueRule
+        {
+            Id = "builtin-memory-used-trend",
+            Origin = "builtin",
+            Enabled = false,
+            Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleMemoryUsedTrend,
+            PrtgSensorCategory = PrtgSensorCategories.Memory,
+            PrtgTrendThresholds = PrtgTrendThresholds.MemoryProvisional,
+            Category = IssueCategory.Resource,
+            Severity = IssueSeverity.Medium,
+            Description = "memory trend",
+            CountThreshold = 1,
+            PlainExplanation = "記憶體持續上升",
+            Impact = "可能 OOM",
+            LikelyCauses = new[] { "記憶體洩漏" },
+            NextSteps = new[] { "檢查程式" }
+        };
+        var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = 1, Rules = new List<KnownIssueRule> { memoryRule } } };
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var audit = new RecordingAuditService();
+        var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(),
+            hosts, new FakeIssueAggregateQuery(), assessment, settings,
+            new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
+
+        var ex = Assert.Throws<DomainException>(() => service.SetEnabled(memoryRule.Id, true));
+
+        Assert.Contains("無法啟用", ex.Message);
+        Assert.False(ruleStore.Content.Rules.Single(r => r.Id == memoryRule.Id).Enabled);
+        Assert.Empty(audit.Entries);
+    }
+
+    [Fact]
+    public void 趨勢規則門檻無效時儲存被拒()
+    {
+        var service = Create();
+        var request = new SaveRuleRequest
+        {
+            Id = "custom-memory-trend",
+            Enabled = false,
+            Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleMemoryUsedTrend,
+            PrtgSensorCategory = PrtgSensorCategories.Memory,
+            PrtgTrendThresholds = new PrtgTrendThresholds(
+                WindowDays: 20,
+                MinimumValidDays: 28,
+                MinimumSlopePerDay: 0.3,
+                MinimumWorseningDayRatio: 0.70,
+                TargetValue: 90,
+                HorizonDays: 7,
+                RecentDays: 7,
+                BaselineMultiplier: 1),
+            Category = "Resource",
+            Severity = "Medium",
+            Description = "memory trend invalid",
+            CountThreshold = 1,
+            PlainExplanation = "測試說明",
+            Impact = "測試影響",
+            LikelyCauses = new() { "測試原因" },
+            NextSteps = new() { "測試步驟" }
+        };
+
+        var ex = Assert.Throws<DomainException>(() => service.SaveRule(request));
+        Assert.Contains("趨勢規則門檻無效", ex.Message);
+    }
+
+    [Fact]
+    public void 試算記憶體趨勢草稿回傳CurrentValue與百分比單位()
+    {
+        using var fx = new EfSqliteFixture();
+        var previewDay = new DateOnly(2026, 9, 30);
+        const long deviceId = 3301, sensorId = 4301;
+        using (var db = fx.NewContext())
+        {
+            db.PrtgDevices.Add(new PrtgDeviceRow { Objid = deviceId });
+            db.PrtgSensors.Add(new PrtgSensorRow
+            {
+                Objid = sensorId,
+                DeviceObjid = deviceId,
+                Category = PrtgSensorCategories.Memory,
+                SensorType = "SNMP Memory",
+                Name = "Memory Total"
+            });
+            for (var offset = -35; offset <= 0; offset++)
+            {
+                var date = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+                db.PrtgHostMaps.Add(new PrtgHostMapRow
+                {
+                    DeviceObjid = deviceId,
+                    MapDate = date.Date,
+                    HostId = 1,
+                    MapStatus = PrtgMapStatus.Ok
+                });
+            }
+            db.SaveChanges();
+        }
+
+        var prtgStore = new EfPrtgStore(fx.NewContext);
+        var rows = new List<PrtgValueRow>();
+        for (var offset = -27; offset <= 0; offset++)
+        {
+            var day = previewDay.ToDateTime(TimeOnly.MinValue).AddDays(offset);
+            for (var hour = 0; hour < PrtgValueAssessment.MinDailyUsableHours; hour++)
+            {
+                rows.Add(new PrtgValueRow
+                {
+                    SensorObjid = sensorId,
+                    PeriodStart = day.AddHours(hour),
+                    AvgValue = 30.0 + offset * 0.1, // 30% free -> 70% used on latest day (offset 0)
+                    Quality = PrtgDataQuality.Ok,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+        }
+        prtgStore.UpsertValues(rows);
+
+        var hosts = new FakeHostStore();
+        hosts.Upsert(new WebHost { HostId = 1, HostName = "active-host", Active = true });
+        var settings = new FakeSystemSettingsStore();
+        settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
+        var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = KnownIssueSeed.CreateRules() } };
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
+            hosts, new FakeIssueAggregateQuery(), assessment, settings,
+            new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
+
+        var request = new DiskTrendRulePreviewRequest
+        {
+            FromDate = previewDay,
+            ThroughDate = previewDay,
+            Rule = new SaveRuleRequest
+            {
+                Id = "custom-memory-preview",
+                Enabled = false,
+                Platform = "prtg",
+                PrtgRuleCode = PrtgRuleEvaluator.RuleMemoryUsedTrend,
+                PrtgSensorCategory = PrtgSensorCategories.Memory,
+                PrtgTrendThresholds = PrtgTrendThresholds.MemoryProvisional,
+                Category = "Resource",
+                Severity = "Medium",
+                Description = "preview memory",
+                CountThreshold = 1,
+                PlainExplanation = "記憶體草稿試算",
+                Impact = "草稿試算",
+                LikelyCauses = new() { "草稿試算" },
+                NextSteps = new() { "草稿試算" }
+            }
+        };
+
+        var preview = service.PreviewDiskTrend(request);
+        var row = Assert.Single(preview.Rows);
+        Assert.True(row.DataReady);
+        Assert.True(row.SemanticReady);
+        Assert.True(row.Applicable);
+        Assert.True(row.Eligible);
+        Assert.Equal(70.0, row.CurrentValue);
+        Assert.Equal("%", row.ValueUnit);
+    }
 }
 
 // ── 測試替身 ─────────────────────────────────────────────────────────────────

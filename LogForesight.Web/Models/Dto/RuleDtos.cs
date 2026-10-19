@@ -37,6 +37,7 @@ public class RuleDto
     /// <summary>PRTG 規則適用的 sensor 分類；null＝不限分類</summary>
     public string? PrtgSensorCategory { get; set; }
     public PrtgDiskTrendThresholds? PrtgDiskTrendThresholds { get; set; }
+    public PrtgTrendThresholds? PrtgTrendThresholds { get; set; }
 
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
@@ -111,6 +112,7 @@ public class SaveRuleRequest
     /// <summary>PRTG 規則適用的 sensor 分類；null＝不限分類</summary>
     public string? PrtgSensorCategory { get; set; }
     public PrtgDiskTrendThresholds? PrtgDiskTrendThresholds { get; set; }
+    public PrtgTrendThresholds? PrtgTrendThresholds { get; set; }
 
     [Required]
     public string Category { get; set; } = string.Empty;
@@ -196,6 +198,8 @@ public sealed class DiskTrendPreviewSensorDto
     public string? ExclusionReason { get; set; }
     public string Reason { get; set; } = string.Empty;
     public double? CurrentAvailablePercent { get; set; }
+    public double? CurrentValue { get; set; }
+    public string? ValueUnit { get; set; }
     public int ValidDayCount { get; set; }
     public int UsableHours { get; set; }
     public double? EstimatedDaysToDepletion { get; set; }

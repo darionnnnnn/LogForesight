@@ -194,6 +194,9 @@
                                 <option value="warning">持續 Warning (warning)</option>
                                 <option value="silent">沉默裝置 (silent)</option>
                                 <option value="disk_free_trend">磁碟可用空間趨勢 (disk_free_trend)</option>
+                                <option value="memory_used_trend">記憶體使用趨勢 (memory_used_trend)</option>
+                                <option value="cpu_load_trend">CPU 負載趨勢 (cpu_load_trend)</option>
+                                <option value="ping_latency_trend">Ping 延遲趨勢 (ping_latency_trend)</option>
                             </select>
                         </div>
                         <div class="col-12 d-none" id="rule-prtg-disk-trend-fields" data-platform-block="prtg">
@@ -209,9 +212,26 @@
                                 <div class="col-md-4"><label for="rule-prtg-trend-window" class="form-label">近期分析視窗（日）</label><input type="number" class="form-control" id="rule-prtg-trend-window" min="2" max="730" step="1" /><div class="form-text">不得小於最低有效資料天數，最多 730 日。</div></div>
                                 <div class="col-md-4"><label for="rule-prtg-trend-ratio" class="form-label">最低下降日比例（%）</label><input type="number" class="form-control" id="rule-prtg-trend-ratio" min="0.01" max="100" step="0.1" /><div class="form-text">大於 0 且不超過 100%；暫定 70%。</div></div>
                             </div>
+                        </div>
+                        <div class="col-12 d-none" id="rule-prtg-value-trend-fields" data-platform-block="prtg">
+                            <div class="alert alert-warning py-2 mb-2" id="rule-prtg-value-trend-info">
+                                此規則預設停用；只評估對應有效、單位可判且資料足夠的 sensor。趨勢規則只抓慢性惡化，一夜之間的突發由 PRTG 告警經狀態規則處理。門檻暫定，尚待實機校準。
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-window" class="form-label">觀察窗（日）</label><input type="number" class="form-control" id="rule-prtg-vtrend-window" min="2" max="400" step="1" /><div class="form-text">最少有效日至 400 日；預設 35 日。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-min-days" class="form-label">最少有效日（日）</label><input type="number" class="form-control" id="rule-prtg-vtrend-min-days" min="2" max="400" step="1" /><div class="form-text">大於等於 2 日；預設 28 日。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-slope" class="form-label">最小穩健斜率（每日）</label><input type="number" class="form-control" id="rule-prtg-vtrend-slope" min="0" step="0.01" /><div class="form-text">≥ 0；百分點／日（記憶體、CPU）或 ms／日（Ping 設 0）。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-ratio" class="form-label">惡化日比例（%）</label><input type="number" class="form-control" id="rule-prtg-vtrend-ratio" min="0.01" max="100" step="0.1" /><div class="form-text">大於 0 且不超過 100%；以 % 輸入。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-target" class="form-label">目標值（<span id="rule-prtg-vtrend-target-unit">%</span>）</label><input type="number" class="form-control" id="rule-prtg-vtrend-target" min="0" step="0.1" /><div class="form-text">≥ 0；單位依代碼為 % 或 ms。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-horizon" class="form-label">預測期（日）</label><input type="number" class="form-control" id="rule-prtg-vtrend-horizon" min="1" max="365" step="1" /><div class="form-text">1–365 日；記憶體規則預測達到目標天數。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-recent" class="form-label">近期天數（日）</label><input type="number" class="form-control" id="rule-prtg-vtrend-recent" min="1" max="400" step="1" /><div class="form-text">1 至最少有效日；CPU 平均與 Ping 中位數使用。</div></div>
+                                <div class="col-md-4"><label for="rule-prtg-vtrend-multiplier" class="form-label">基準倍數</label><input type="number" class="form-control" id="rule-prtg-vtrend-multiplier" min="1" step="0.1" /><div class="form-text">≥ 1；Ping 近期中位數需達基準期之倍數。</div></div>
+                            </div>
+                        </div>
+                        <div class="col-12 d-none" id="rule-prtg-trend-preview-container" data-platform-block="prtg">
                             <section class="border rounded p-3 mt-3" aria-labelledby="rule-disk-preview-title">
                                 <h3 class="h6" id="rule-disk-preview-title">未儲存門檻預覽</h3>
-                                <p class="small mb-2">預覽只讀已完成日資料，不會儲存或改變規則狀態；最多選 730 日，每頁最多 100 組，評估會依預期歷史點數分批。候選以「完成日 × sensor」配對計數，同一 sensor 跨日會重複計入；本頁就緒與命中數只涵蓋目前頁面。6 日資料不等於已驗證；資料超過 28 日也不等於語意已驗證。啟用時後端會再次檢查 28 日證據，目前正式站真實 28 日證據仍待確認。</p>
+                                <p class="small mb-2" id="rule-disk-preview-description">預覽只讀已完成日資料，不會儲存或改變規則狀態；最多選 730 日，每頁最多 100 組，評估會依預期歷史點數分批。候選以「完成日 × sensor」配對計數，同一 sensor 跨日會重複計入；本頁就緒與命中數只涵蓋目前頁面。6 日資料不等於已驗證；資料超過 28 日也不等於語意已驗證。啟用時後端會再次檢查 28 日證據，目前正式站真實 28 日證據仍待確認。</p>
                                 <div class="row g-2 align-items-end">
                                     <div class="col-6 col-sm-3"><label class="form-label" for="rule-disk-preview-days">日期範圍（日）</label><input class="form-control" type="number" id="rule-disk-preview-days" min="1" max="730" value="6" /></div>
                                     <div class="col-6 col-sm-3"><label class="form-label" for="rule-disk-preview-limit">每頁配對數</label><input class="form-control" type="number" id="rule-disk-preview-limit" min="1" max="100" value="25" /></div>
@@ -231,7 +251,7 @@
                         <div class="col-md-6" id="rule-match-prtg-threshold" data-platform-block="prtg">
                             <label for="rule-prtg-threshold" class="form-label">門檻值</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                    data-bs-content="門檻語意依規則代碼而定：down / warning 為分鐘數（>=1），flapping 為往返次數（>=2）；資源壓力使用可信完成小時規則，不填此值；silent 不使用（填 0）。未達門檻不成立。">
+                                    data-bs-content="門檻語意依規則代碼而定：down / warning 為分鐘數（>=1），flapping 為往返次數（>=2）；四條數值趨勢規則使用各自的趨勢門檻，不填此值；silent 不使用（填 0）。未達門檻不成立。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="number" class="form-control" id="rule-prtg-threshold" min="0" value="0" />
