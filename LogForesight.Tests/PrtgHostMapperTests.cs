@@ -946,4 +946,173 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(1, result.SkippedNoIp);
         Assert.Empty(dnsCalls);
     }
+
+    [Fact]
+    public void MapForDate_固定夾具八種情境逐台驗證與hostname統計()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 1, HostName = "srv-ip01", IpAddress = "10.0.1.1", Active = true });
+            hosts.Add(new WebHost { HostId = 2, HostName = "srv-ip02", IpAddress = "10.0.2.1", Active = true });
+            hosts.Add(new WebHost { HostId = 3, HostName = "srv-name01", IpAddress = "10.0.3.1", Active = true });
+            hosts.Add(new WebHost { HostId = 4, HostName = "srv-prefix", IpAddress = "10.0.4.1", Active = true });
+            hosts.Add(new WebHost { HostId = 51, HostName = "srv-multi", IpAddress = "10.0.5.1", Active = true });
+            hosts.Add(new WebHost { HostId = 52, HostName = "srv-multi.corp.local", IpAddress = "10.0.5.2", Active = true });
+            hosts.Add(new WebHost { HostId = 6, HostName = "srv-ip-win", IpAddress = "10.0.6.1", Active = true });
+            hosts.Add(new WebHost { HostId = 60, HostName = "srv-name-lose", IpAddress = "10.0.6.2", Active = true });
+            hosts.Add(new WebHost { HostId = 7, HostName = "SRV-X.corp.local", IpAddress = "10.0.7.1", Active = true });
+            hosts.Add(new WebHost { HostId = 8, HostName = "vm-idc-eosm02", IpAddress = "10.0.8.1", Active = true });
+        });
+
+        SeedDevices(
+            // 1. IP 命中 → Ok（Note null）
+            new PrtgDeviceRow { Objid = 101, Name = "Dev-IP-Hit", Ip = "10.0.1.1" },
+            // 2. IP 衝突（同 IP 兩台裝置）→ 兩台都 Conflict（原本行為）
+            new PrtgDeviceRow { Objid = 201, Name = "Dev-Conflict-A", Ip = "10.0.2.1" },
+            new PrtgDeviceRow { Objid = 202, Name = "Dev-Conflict-B", Ip = "10.0.2.1" },
+            // 3. 無 IP＋括號名稱命中 → Ok、Note「hostname」
+            new PrtgDeviceRow { Objid = 301, Name = "U(srv-name01)216.45.101", Ip = null },
+            // 4. 無 IP＋去單字母前綴後命中 → Ok
+            new PrtgDeviceRow { Objid = 401, Name = "U(O-srv-prefix)216.45.101", Ip = null },
+            // 5. 無 IP＋名稱命中多台主機 → Conflict hostname 多主機
+            new PrtgDeviceRow { Objid = 501, Name = "U(srv-multi)216.45.101", Ip = null },
+            // 6. 有 IP 且 IP 命中主機 A、名稱指向主機 B → 仍是 A（IP 優先）
+            new PrtgDeviceRow { Objid = 601, Name = "U(srv-name-lose)216.45.101", Ip = "10.0.6.1" },
+            // 7. 名稱大小寫不同且帶域名（主機主檔 HostName＝SRV-X.corp.local、裝置名稱 U(srv-x)1.2.3）→ 命中
+            new PrtgDeviceRow { Objid = 701, Name = "U(srv-x)1.2.3", Ip = null },
+            // 8. VM- 開頭不去前綴（主機叫 vm-idc-eosm02）→ 命中
+            new PrtgDeviceRow { Objid = 801, Name = "W(VM-IDC-EOSM02)_216.11.10", Ip = null }
+        );
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var mapper = CreateMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        var rows = store.GetHostMapForDate(mapDate).ToDictionary(r => r.DeviceObjid);
+
+        // 1. IP 命中 → Ok（Note null）
+        Assert.Equal(PrtgMapStatus.Ok, rows[101].MapStatus);
+        Assert.Equal(1, rows[101].HostId);
+        Assert.Null(rows[101].Note);
+
+        // 2. IP 衝突（同 IP 兩台裝置）→ 兩台都 Conflict（原本行為）
+        Assert.Equal(PrtgMapStatus.Conflict, rows[201].MapStatus);
+        Assert.Null(rows[201].HostId);
+        Assert.Equal("此 IP 同時有 2 個 PRTG device", rows[201].Note);
+        Assert.Equal(PrtgMapStatus.Conflict, rows[202].MapStatus);
+        Assert.Null(rows[202].HostId);
+        Assert.Equal("此 IP 同時有 2 個 PRTG device", rows[202].Note);
+
+        // 3. 無 IP＋括號名稱命中 → Ok、Note「hostname」
+        Assert.Equal(PrtgMapStatus.Ok, rows[301].MapStatus);
+        Assert.Equal(3, rows[301].HostId);
+        Assert.Equal("hostname", rows[301].Note);
+
+        // 4. 無 IP＋去單字母前綴後命中 → Ok
+        Assert.Equal(PrtgMapStatus.Ok, rows[401].MapStatus);
+        Assert.Equal(4, rows[401].HostId);
+        Assert.Equal("hostname", rows[401].Note);
+
+        // 5. 無 IP＋名稱命中多台主機 → Conflict hostname 多主機
+        Assert.Equal(PrtgMapStatus.Conflict, rows[501].MapStatus);
+        Assert.Null(rows[501].HostId);
+        Assert.NotNull(rows[501].Note);
+        Assert.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, rows[501].Note);
+
+        // 6. 有 IP 且 IP 命中主機 A、名稱指向主機 B → 仍是 A（IP 優先）
+        Assert.Equal(PrtgMapStatus.Ok, rows[601].MapStatus);
+        Assert.Equal(6, rows[601].HostId);
+        Assert.Null(rows[601].Note);
+
+        // 7. 名稱大小寫不同且帶域名（主機主檔 HostName＝SRV-X.corp.local、裝置名稱 U(srv-x)1.2.3）→ 命中
+        Assert.Equal(PrtgMapStatus.Ok, rows[701].MapStatus);
+        Assert.Equal(7, rows[701].HostId);
+        Assert.Equal("hostname", rows[701].Note);
+
+        // 8. VM- 開頭不去前綴（主機叫 vm-idc-eosm02）→ 命中
+        Assert.Equal(PrtgMapStatus.Ok, rows[801].MapStatus);
+        Assert.Equal(8, rows[801].HostId);
+        Assert.Equal("hostname", rows[801].Note);
+
+        // 另斷言 console 摘要行含 hostname=4
+        Assert.Equal(4, result.Hostname);
+        Assert.Contains(console.Lines, l => l.Contains("hostname=4"));
+    }
+
+    [Fact]
+    public void MapForDate_主機已被IP命中且另一無IP裝置指向該主機_該裝置標Conflict()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 10, HostName = "srv-alpha", IpAddress = "10.10.10.10", Active = true });
+        });
+
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1, Name = "Dev-IP", Ip = "10.10.10.10" },
+            new PrtgDeviceRow { Objid = 2, Name = "U(srv-alpha)", Ip = null }
+        );
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var mapper = CreateMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        var rows = store.GetHostMapForDate(mapDate).ToDictionary(r => r.DeviceObjid);
+
+        Assert.Equal(PrtgMapStatus.Ok, rows[1].MapStatus);
+        Assert.Equal(10, rows[1].HostId);
+
+        Assert.Equal(PrtgMapStatus.Conflict, rows[2].MapStatus);
+        Assert.Null(rows[2].HostId);
+        Assert.NotNull(rows[2].Note);
+        Assert.StartsWith(PrtgHostMapper.NoteHostnameHostTakenPrefix, rows[2].Note);
+        Assert.Contains("srv-alpha", rows[2].Note);
+    }
+
+    [Fact]
+    public void MapForDate_無任何hostname命中時摘要含hostname0且計數維持原有()
+    {
+        // Arrange
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 1, HostName = "srv-beta", IpAddress = "10.20.20.20", Active = true });
+        });
+
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1, Name = "Dev-IP", Ip = "10.20.20.20" },
+            new PrtgDeviceRow { Objid = 2, Name = "U(srv-unknown)", Ip = "10.30.30.30" },
+            new PrtgDeviceRow { Objid = 3, Name = "U(srv-unknown2)", Ip = null }
+        );
+
+        var store = CreateStore();
+        var console = new TestConsole();
+        var mapper = CreateMapper(store, hostStore, console);
+        var mapDate = new DateTime(2026, 8, 30);
+
+        // Act
+        var result = mapper.MapForDate(mapDate);
+
+        // Assert
+        Assert.Equal(1, result.Ok);
+        Assert.Equal(0, result.Conflict);
+        Assert.Equal(1, result.Unmatched);
+        Assert.Equal(1, result.SkippedNoIp);
+        Assert.Equal(0, result.Hostname);
+
+        Assert.Contains(console.Lines, l => l.Contains("hostname=0"));
+    }
 }

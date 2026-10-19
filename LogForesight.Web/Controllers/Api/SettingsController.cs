@@ -1041,7 +1041,17 @@ public class SettingsController : ControllerBase
 
             var isMultiDevice = sameDevices.Count > 1;
             string conflictKind;
-            if (isUnmatched)
+            var note = row.Note ?? "";
+            if (note.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, StringComparison.Ordinal) ||
+                note.StartsWith(PrtgHostMapper.NoteHostnameSameHostPrefix, StringComparison.Ordinal))
+            {
+                conflictKind = "hostname-multi";
+            }
+            else if (note.StartsWith(PrtgHostMapper.NoteHostnameHostTakenPrefix, StringComparison.Ordinal))
+            {
+                conflictKind = "hostname-host-taken";
+            }
+            else if (isUnmatched)
             {
                 conflictKind = "unmatched";
             }

@@ -1284,6 +1284,12 @@ function renderConflicts(items) {
         } else if (item.conflictKind === 'multi-host') {
             kindBadge.className = 'badge bg-info text-dark';
             kindBadge.textContent = 'IP 對多主機';
+        } else if (item.conflictKind === 'hostname-multi') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱對多主機';
+        } else if (item.conflictKind === 'hostname-host-taken') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱命中已對應主機';
         } else {
             kindBadge.className = 'badge bg-secondary';
             kindBadge.textContent = item.conflictKind || '-';
@@ -1450,6 +1456,12 @@ function renderUnmatched(items) {
         } else if (item.conflictKind === 'multi-host') {
             kindBadge.className = 'badge bg-info text-dark';
             kindBadge.textContent = 'IP 對多主機';
+        } else if (item.conflictKind === 'hostname-multi') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱對多主機';
+        } else if (item.conflictKind === 'hostname-host-taken') {
+            kindBadge.className = 'badge bg-warning text-dark';
+            kindBadge.textContent = '名稱命中已對應主機';
         } else if (item.conflictKind === 'unmatched' || item.mapStatus === 'unmatched') {
             kindBadge.className = 'badge bg-secondary';
             kindBadge.textContent = '未對應';
