@@ -37,6 +37,9 @@ public class RecordListItemDto
 
     public bool AiAnalyzed { get; set; }
 
+    /// <summary>當日沒有日誌分析、只有 PRTG 訊號的主機日（<c>AnalysisLogSource.Prtg</c>），清單標「PRTG」徽章</summary>
+    public bool PrtgOnly { get; set; }
+
     /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
     /// 與 AiAnalyzed=false 不同：那是「AI 已定案不需要或已嘗試但失敗」，這是「還沒定案」。
     /// 前端顯示「AI 分析中」而非「統計模式」，避免看起來像失敗。</summary>

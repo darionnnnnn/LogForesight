@@ -584,8 +584,9 @@ internal static class SchemaUpgrader
         var removed = ctx.Blobs.Where(row => RetiredPrtgBlobKeys.Contains(row.BlobKey)).ExecuteDelete();
         foreach (var prefix in RetiredPrtgBlobPrefixes)
             removed += ctx.Blobs.Where(row => row.BlobKey.StartsWith(prefix)).ExecuteDelete();
+        // 不可逆：以 Warn 寫進啟動紀錄，管理者從 log 看得到這次升級刪了什麼、回退舊版要先還原備份
         if (removed > 0)
-            Log.Info("[SQL] 已清除 {0} 筆已移除 PRTG 機制的 blob 資料。", removed);
+            Log.Warn("[SQL] 升級已刪除 {0} 筆已移除 PRTG 機制的設定資料（不可回復）。如需回退舊版，必須先還原升級前的資料庫備份。", removed);
         return removed;
     }
 
