@@ -887,9 +887,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     .ToList();
                 if (pending.Count == 0) return newlyBackfilled;
 
-                var fetch = new PrtgFetchService(client, store,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+                var fetch = PrtgFetchService.Create(client, _backend, store, settings, SilentConsole, guard: null);
                 var queueItems = pending.Where(queueContext.BusinessDeviceObjids.Contains).Distinct().ToDictionary(id => id,
                     id => new PrtgRecentStateChangeQueueItem(id, queueContext.LocalToday.AddDays(-1), queueContext.LocalToday,
                         queueContext.SourceIdentityHash, queueContext.ScopeVersionHash,
@@ -1037,9 +1035,7 @@ public class PrtgSnapshotHostedService : BackgroundService
                     _operationCheckpoint?.Invoke();
                     Checkpoint();
                 };
-                var fetch = new PrtgFetchService(client, store,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), SilentConsole,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map);
+                var fetch = PrtgFetchService.Create(client, _backend, store, settings, SilentConsole, guard: null);
                 var result = await fetch.FetchStateChangesRangeAsync(lease.Item.FromLocalDate, lease.Item.ToLocalDate,
                     new[] { lease.Item.DeviceObjid }, settings.PrtgFetchConcurrency, operationToken.Token);
                 Checkpoint();

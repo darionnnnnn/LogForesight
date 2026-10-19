@@ -572,9 +572,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
             {
                 operation.Checkpoint();
                 var store = _backend.PrtgStore();
-                var fetch = new PrtgFetchService(run.Client, store,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(run.Settings.PrtgSensorTypeCategoryOverrides).Map);
+                var fetch = PrtgFetchService.Create(run.Client, _backend, store, run.Settings, console, guard: null);
                 console.WriteLine($"開始指定主機 PRTG 數值回填（{from:yyyy-MM-dd}～{to:yyyy-MM-dd}，主機 {hostIds.Count} 台）；不回填狀態、不補派歷史 finding。");
                 success = await PrtgBackfillRunner.RunValuesForHostsAsync(
                     fetch, from, to, hostIds, run.Settings.PrtgFetchConcurrency,
@@ -783,9 +781,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     console.WriteLine("結構同步完成，開始回填。");
                 }
 
-                var fetchService = new PrtgFetchService(run.Client, prtgStore,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
+                var fetchService = PrtgFetchService.Create(run.Client, _backend, prtgStore, s, console, guard: null);
 
                 // 數值取數對象與排程取數共用同一份設定與判定（docs/PRTG-SPEC.md §3a）
                 var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(

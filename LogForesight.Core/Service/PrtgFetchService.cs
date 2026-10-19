@@ -92,6 +92,15 @@ public sealed class PrtgFetchService
     }
 
     /// <summary>
+    /// 正式路徑唯一的組裝點：新鮮度 blob 與分類補充對照都由這裡依當下設定決定，
+    /// 每日管線、快照、回填、結構同步與探測不再各自組建構參數（測試可直接用建構子傳替身）。
+    /// </summary>
+    public static PrtgFetchService Create(PrtgClient client, StorageBackend backend, EfPrtgStore store,
+        SystemSettings settings, IRunConsole console, PrtgResourceGuard? guard) =>
+        new(client, store, new PrtgFreshnessStore(backend.Blob(PrtgFreshnessStore.BlobKey)), console,
+            PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map, guard);
+
+    /// <summary>
     /// 記錄某類 PRTG 資料成功完成一次擷取（見 <see cref="PrtgFreshnessStore"/>）。
     /// 觸發式取數與歷史回填沿用本服務的 store，不各自另建。
     /// </summary>

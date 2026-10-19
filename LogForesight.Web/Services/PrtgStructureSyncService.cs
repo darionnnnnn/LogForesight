@@ -390,9 +390,7 @@ public class PrtgStructureSyncService : IPrtgStructureSyncGate
             using (client)
             {
                 operation.Checkpoint();
-                var fetchService = new PrtgFetchService(client, prtgStore,
-                    new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-                    PrtgSensorTypeCategoryMap.ParseOverrides(s.PrtgSensorTypeCategoryOverrides).Map);
+                var fetchService = PrtgFetchService.Create(client, _backend, prtgStore, s, console, guard: null);
 
                 var status = await PrtgStructureSyncRunner.RunAsync(
                     fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
