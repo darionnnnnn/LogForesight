@@ -92,10 +92,6 @@
 | 作業 | 主題 | 性質 | 相依 | 規模(估) |
 |---|---|---|---|---|
 | 0 | 環境探測(使用者執行)——**已執行 2026-10-16**,剩三件後續操作 | 取事實 | 無;與 A／B 並行 | 使用者 30 分 |
-| B3 | 拆 build identity 閘與建置腳本依賴 | 移除 | A | 小 |
-| B4 | 刪驗收基建目錄與 JSON | 移除 | B3 | 小 |
-| C1 | 對應補 hostname 退路 | 新增 | 作業 0 | 小 |
-| C2 | PRTG 獨立風險(`LogSource=Prtg` 主機日) | 導正 | B1、B6 | 大 |
 | C3 | 三類趨勢規則共用引擎(含 B1 移入的覆寫語意 `type=分類[:語意]`、Ping 進／Traffic 出預設白名單) | 新增 | B1、作業 0 | 大 |
 | C4 | finding 證據欄位與「資料不足」狀態 | 補強 | C3 | 中 |
 | C5 | 有用／誤報標記 | 新增 | C2 | 小 |
@@ -105,9 +101,9 @@
 | D | 容量設計審查(§4.12 方式) | 審查 | C3、B5 | 中 |
 | E | 文件瘦身與收尾 | 文件 | 全部 | 中 |
 
-**已完成**(2026-10-16,逐條比對程式碼後自本表刪除,紀錄見 §7):A、B1(含 D8 就緒度卡、B1-4 殘留清除)、B2、B6。B1 唯一未做的「`PrtgSensorTypeCategoryOverrides` 擴成 `type=分類[:語意]`」與 C3 共用同一個評估入口,移入 C3 一起做(C3 列已註記)。
+**已完成**(逐條比對程式碼後自本表刪除,紀錄見 §7):A、B1(含 D8 就緒度卡、B1-4 殘留清除)、B2、B6、B3、B4、C1、C2。B1 唯一未做的「`PrtgSensorTypeCategoryOverrides` 擴成 `type=分類[:語意]`」與 C3 共用同一個評估入口,移入 C3 一起做(C3 列已註記)。
 
-**建議順序**:0 → B3 → B4 → C1 → C2 → C3 → C4 → C5 → C6 → B5 → B7 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
+**建議順序**:0 → C3 → C4 → C5 → C6 → B5 → B7 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
 
 **委派與驗收方式**:
 - 實作端在 Windows(待定:使用者機器上的 Claude Code 或 agy);整輪只用一種,中途切換註明起點。Mac 端(本規劃者)不寫程式,只寫階段規格與獨立審查 diff。
@@ -390,6 +386,11 @@
 | D8 | Claude＋agy(flash-high／medium,Windows) | 就緒度後端 `PrtgValueReadiness`(母體＝已對應主機上四類 sensor,沿用 `PrtgValueAssessment` 判定)、每日執行輸出一行、`GET api/prtg/value-readiness`(可見主機、排除案件授與、原因篩選、每頁 100);環境探測頁籤新卡片(分組按鈕、精簡表格、重新整理／前往歷史回填) | 定向 63＋68 通過;本機預覽登入後卡片 API 200、空母體狀態正確 | 規格「母體 4 且對照外歸單位未知」自相矛盾,改依類別定母體;有資料的畫面未實測(本機無 PRTG 資料) |
 | B1-4／B6 尾差／CI | Claude＋agy(flash-high,Windows) | 刪三個死檔、`LogIssueSignature`／`PrtgFinding` 12 個 trusted 欄位、案件證據世代欄位、`lf_prtg_values` trusted 欄位映射;退役規則說明回「規則已移除」、規則編輯頁移除退役選項;`NuGet.Config` 補 `*`(CI 自 9 月起還原失敗) | 定向 2,165＋368 通過 | 既有 DB 欄位保留不 DROP |
 | B1 收尾(workflow) | Claude(Opus,Windows) | `HostDayWorkflowState` 刪 whole-evidence／readiness 19 欄位與 7 方法;`PrtgManifest` 刪除;登錄簿改「該日評估完成」旗標,分析路徑與每日管線同判準 | 定向 279 通過 | 修正實際缺陷:晚到 NetIQ 分析會把已評估日的 PRTG 腿記成 manifest 缺失等待;指紋保留空位不讓既有報告失效 |
+| B3＋B4 | Claude＋agy(flash-medium,Windows) | 刪 `Directory.Build.targets`、建置身分腳本與 `LogForesightBuildIdentity`;全量回填拿掉建置身分閘;探測標頭改印 InformationalVersion;刪 `scripts/` 全部、`FEEDBACK-53-ACCEPTANCE.json`、兩個驗收 fixture;CI 移除 pwsh 步驟 | 建置輸出無 powershell／build-identity;定向 303 通過 | `scripts/` 底下未受版控的舊執行產物(約 890 MB)留在使用者磁碟,未刪 |
+| CI | Claude(Opus,Windows) | `NuGet.Config` 補 `*`(只列 OpenCC 讓乾淨主機套件全部 NU1100,dev 自 9 月起紅燈);傳輸流程測試改用固定容量替身(CI 資料碟低於 25% 保留門檻) | `ac25990` 起 CI 綠 | — |
+| C2 | Claude(Opus,Windows) | `AnalysisLogSource.Prtg`、`log_source` 抽出欄與索引(回填器 v3);PRTG 獨立主機日建立(至少一筆未抑制 finding、同主機日無紀錄);日誌分析晚到原地更新同一 record id 並併回 PRTG finding;缺日、重跑、首次回望、週檢、趨勢歷史、執行監看、排程預覽、儀表板分析主機日排除 PRTG 獨立主機日;NetIQ 嘗試紀錄來源合法值補 3 | 新測試 8(含 SQL Server 翻譯、突變有抓);定向 716 通過 | 摘要郵件沒有「已分析主機 N 台」字樣,該項不適用;消費端盤點由唯讀子代理完成 |
+| C1 | Claude＋agy(flash-high,Windows) | `PrtgHostnameCandidates` 純函式＋`PrtgHostMapper` 在無 IP／IP 查無主機時以名稱比對;多主機、同主機多裝置、主機已被對應各標 conflict;摘要 hostname=N;衝突清單兩種新標籤 | 定向 174 通過(候選 27 案、8 台裝置夾具) | Claude 把重複的衝突列組裝抽成函式 |
+| C3-1 | Claude＋agy(flash-high,Windows) | `PrtgTrendEngine`(記憶體／CPU／Ping 判定與暫定門檻);磁碟趨勢改用共用斜率與下降比例 | 新測試 64;定向 116 通過;反轉方向突變被 7 筆抓到 | — |
 
 ## 8. 規劃複檢(2026-10-15)
 
