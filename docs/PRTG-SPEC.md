@@ -117,7 +117,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
   最多 3 批在途；一輪必須在一個採樣間隔內完成，否則已取得批次保留、該輪計失敗並說明涵蓋率偏低。單批失敗只記數，全部失敗才進退避。
 - **退避**：連續失敗每滿三次間隔加倍（上限 60 分鐘），成功即恢復；從最近一次嘗試起算。
 - **待寫與重啟恢復**（`PrtgSnapshotJournal`，`DataRoot/pending/prtg-snapshot`）：每批追加 journal 段與固定 ID 待寫批次，SQL 提交後才確認。
-  上限 20 萬列／64 MiB；不足或損壞時保留原資料並停止新採集。DB 批次鍵至少保留 32 日。
+  上限 20 萬列／64 MiB；本機待寫批次超過 30 日（`ReplayDays`）不再重播；不足或損壞時保留原資料並停止新採集。DB 批次鍵至少保留 32 日。
 - 每輪通過前置條件後補抓「範圍內但鏡像沒有感測器」的裝置（每輪最多 50 台，§3c），守門覆寫清單中鏡像找不到的 sensor 所在裝置排最前。
 
 ## 3c. 取數範圍
@@ -306,7 +306,9 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 | `GET prtg-resource-guard/preview[?forceAuto=]` | 守門 sensor 與當下值；`source`＝`override`／`live`／`mirror-fallback`／`auto`；帶 `autoDetectedAt` |
 | `GET prtg-fetch-scope/estimate?scope=` | 取數範圍規模估算 |
 
-其他：`GET api/prtg/value-readiness`（§6）、`GET api/prtg/effectiveness`（使用效果，§11）、`prtg-import-transfers`（§10）、
+同一前綴下另有：`POST prtg-backfill/selected/preview`、`POST prtg-backfill/selected/start`（指定主機補值，§5）、`POST prtg-scope-purge/confirm`、`GET prtg-scope-purge/jobs/{jobId}`（範圍外資料清除，§3c）、
+`GET prtg-export`、`prtg-import-transfers`（§10）。其他前綴（皆 Maintain）：`api/prtg/value-readiness`（§6）、`api/prtg/effectiveness`（§11）、`api/prtg/monitoring`（監看範圍）、
+`api/prtg/operations`（補追加重播）、`api/prtg/risk-review`（待重評清單）、`api/prtg-snapshot-diagnostics`（快照診斷）；
 主機詳情 `GET api/host-detail/{hostId}/prtg`（device、sensor 與數值資料狀態，§9b；可見性在 controller 檢查，案件授與回 403）。
 連線失敗不是例外，回 `Success=false` 讓畫面就地顯示。
 
@@ -413,7 +415,8 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 - **每日評估**（`PrtgDailyPipeline`）：只評估最新的已完成日、只讀已落盤資料，不等當趟取數、不呼叫 PRTG；候選依分類分頁（每頁 100 顆），
   每顆每日最多一筆 finding。每條規則印一行「{標籤}趨勢評估（日期）：N 顆，原因分組計數；新增 finding M 筆」，母體 0 印「無可評估 sensor」。
 - **Detail 固定格式**（`PrtgTrendEvidence.Describe()`，唯一出口）：
-  `{裝置}／{sensor}：{規則白話}；近 {N} 日有效 {M} 日；目前 {值}{單位}，每日 {斜率}{單位}；預估 {日期} 達 {門檻}{單位}；資料截至 {日}`。
+  `{裝置}／{sensor}：{規則白話}；近 {N} 日有效 {M} 日；目前 {值}{單位}，每日 {斜率}{單位}；預估 {日期} 達 {門檻}{單位}；資料截至 {日}`；
+  引擎沒給預估天數、或天數超過 `PrtgValueAssessment.MaxProjectionDays`（3,650）時「預估…」段改為「未預估到達 {門檻}{單位} 的日期」。
   簽章同時帶結構化 `PrtgTrendEvidence`（規則、窗口起訖、有效日、目前值、單位、斜率、門檻、預估日、來源 objid），詳情頁直接讀欄位，不解析文字。
 - **啟用條件（後端強制）**：至少一顆對應有效、單位可判且達最少有效日、語意相符的 sensor；否則拒絕並指回環境探測的數值資料就緒度。匯入、儲存、啟用三處都檢查門檻與條件。
 - **草稿試算**（規則頁，`RulesController` 的 `disk-trend-preview`）：四條共用同一個「完成日 × sensor」分頁骨架，判一列依規則選擇；只讀、不寫業務資料。
@@ -483,7 +486,8 @@ PRTG 獨立主機日、佐證主機日，以及按規則代碼分列的「標記
 `PrtgResourceGuardAutoDetect.EnsureAsync` 在每日管線建立作業範圍**之前**執行（守門啟用時）：
 - 清單為空，或清單等於上次自動偵測結果且其中有 sensor 已不在鏡像 → 以直接查 PRTG 的來源偵測（15 秒逾時）。
 - 結果寫回清單（objid 遞增排序）並記 blob `prtg_resource_guard_autodetect`（`DetectedAt`、`Objids`）；人工填寫的清單（不等於 blob）一律不覆寫。
-- 逾時或失敗印「自動偵測未完成（原因），本趟不守門，取數照常進行」、不改清單；結果為空只印一行。
+- 逾時或失敗印「自動偵測未完成（原因），本趟不守門，取數照常進行」、不改清單；結果為空印「自動偵測沒有找到守門目標」。
+- 偵測到的目標直接換上本趟已建立的守門實例（`PrtgResourceGuard.ReplaceTargets`），當晚就守得到，不等鏡像補抓。
 - 設定頁守門預覽回傳 `autoDetectedAt`（`PrtgResourceGuardAutoDetect.Describe`），清單上方顯示「自動偵測 yyyy-MM-dd」。「自動偵測並填入」鈕保留為手動入口（帶 `forceAuto=true`，結果寫回輸入框、需按儲存）。
 
 ### 判定方向

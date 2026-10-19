@@ -158,6 +158,10 @@ public sealed class PrtgValueAssessment
     public const int PageSize = 100;
     public const int MinDailyUsableHours = 12;
     public const int FixedValueDays = 7;
+    /// <summary>固定值判定的容差：快照 sampled 列加權合併後同一個值會差到 1e-17，不能用相等比。</summary>
+    public const double FixedValueTolerance = 1e-6;
+    /// <summary>預估到達門檻的日期上限：斜率極小時引擎算出的天數可到 1e9，超過這個數就不給日期（DateOnly 會溢位，也沒有意義）。</summary>
+    public const int MaxProjectionDays = 3650;
     /// <summary>過去日的對應取「該日或之前最近一日」，往回看這麼多天（與每日管線同一個視窗）。</summary>
     public const int MapLookbackDays = 31;
 
@@ -278,8 +282,9 @@ public sealed class PrtgValueAssessment
             var daily = validDays.Select(pair => new PrtgDailyValue(pair.Key, pair.Value.Average(), pair.Value.Count)).ToList();
             var latest = daily.Count > 0 ? daily[^1].Day : (DateOnly?)null;
             PrtgValueReason reason;
-            if (validDays.Count >= FixedValueDays &&
-                validDays.TakeLast(FixedValueDays).SelectMany(pair => pair.Value).Distinct().Count() == 1)
+            var recentHours = validDays.Count >= FixedValueDays
+                ? validDays.TakeLast(FixedValueDays).SelectMany(pair => pair.Value).ToList() : null;
+            if (recentHours != null && recentHours.Max() - recentHours.Min() < FixedValueTolerance)
                 reason = PrtgValueReason.FixedValue;
             else if (daily.Count >= requiredDays)
                 reason = PrtgValueReason.Ready;
@@ -315,9 +320,7 @@ public sealed class PrtgValueAssessment
         var windowEnd = completedDay;
         var windowStart = windowEnd.AddDays(-(windowDays - 1));
         var targetValue = rule.PrtgDiskTrendThresholds.LowWaterPercent;
-        var projectedDate = trend.EstimatedDaysToLowWater.HasValue
-            ? windowEnd.AddDays((int)Math.Ceiling(trend.EstimatedDaysToLowWater.Value))
-            : (DateOnly?)null;
+        var projectedDate = ProjectedDate(windowEnd, trend.EstimatedDaysToLowWater);
 
         var evidence = new PrtgTrendEvidence(
             PrtgRuleEvaluator.RuleDiskFreeTrend,
@@ -342,6 +345,16 @@ public sealed class PrtgValueAssessment
             TrendEvidence = evidence
         };
     }
+
+    /// <summary>finding 證據用的裝置名稱：鏡像查不到名稱時以 objid 代替（管線、試算共用，不各寫一份）。</summary>
+    public static string DeviceDisplayName(IReadOnlyDictionary<long, string> names, long deviceObjid) =>
+        names.GetValueOrDefault(deviceObjid) ?? $"PRTG Device {deviceObjid}";
+
+    /// <summary>預估到達日：天數為 null、非有限數、負數或超過 <see cref="MaxProjectionDays"/> 時不給日期。</summary>
+    public static DateOnly? ProjectedDate(DateOnly windowEnd, double? estimatedDays) =>
+        estimatedDays is { } days && double.IsFinite(days) && days >= 0 && days <= MaxProjectionDays
+            ? windowEnd.AddDays((int)Math.Ceiling(days))
+            : null;
 
     /// <summary>三條趨勢規則各自需要的量測語意；其他代碼為 null。</summary>
     public static PrtgValueSemantic? TrendSemantic(string? ruleCode) => ruleCode switch
@@ -399,9 +412,7 @@ public sealed class PrtgValueAssessment
         var windowEnd = completedDay;
         var windowStart = windowEnd.AddDays(-(windowDays - 1));
         var targetValue = thresholds.TargetValue;
-        var projectedDate = result.EstimatedDaysToTarget.HasValue
-            ? windowEnd.AddDays((int)Math.Ceiling(result.EstimatedDaysToTarget.Value))
-            : (DateOnly?)null;
+        var projectedDate = ProjectedDate(windowEnd, result.EstimatedDaysToTarget);
 
         var evidence = new PrtgTrendEvidence(
             code,

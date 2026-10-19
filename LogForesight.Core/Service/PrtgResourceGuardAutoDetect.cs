@@ -34,7 +34,7 @@ public static class PrtgResourceGuardAutoDetect
     /// <summary>
     /// 確保夜間取數前 PRTG 資源守門目標已完成自動偵測並填入清單。
     /// </summary>
-    public static async Task EnsureAsync(
+    public static async Task<PrtgResourceGuardTargetResult?> EnsureAsync(
         StorageBackend backend,
         SystemSettings settings,
         IReadOnlyList<Sentinel> sentinels,
@@ -47,7 +47,7 @@ public static class PrtgResourceGuardAutoDetect
         // 1. settings.PrtgResourceGuardEnabled 為 false → 直接 return（不偵測、不出聲）。
         if (!settings.PrtgResourceGuardEnabled)
         {
-            return;
+            return null;
         }
 
         // 2. 讀 blob。清單非空且不等於 blob 的 Objids（順序無關比較）→ 視為人工清單，return。
@@ -59,7 +59,7 @@ public static class PrtgResourceGuardAutoDetect
 
         if (hasCurrent && !equalsBlob)
         {
-            return;
+            return null;
         }
 
         // 3. 需要偵測的條件：清單為空；或清單等於 blob（自動偵測的結果）且其中有任何 objid 已不在 sensor 鏡像（backend.PrtgStore() 的 sensor 清單）中。都不成立 → return。
@@ -81,7 +81,7 @@ public static class PrtgResourceGuardAutoDetect
 
         if (!needDetect)
         {
-            return;
+            return null;
         }
 
         // 4. 建 client（clientFactory()，using），以 CancellationTokenSource.CreateLinkedTokenSource(ct) 並 CancelAfter(15s) 呼叫
@@ -109,14 +109,14 @@ public static class PrtgResourceGuardAutoDetect
         catch (Exception ex)
         {
             console.WriteLine($"[PRTG資源守門] 自動偵測未完成（{ex.Message}），本趟不守門，取數照常進行。");
-            return;
+            return null;
         }
 
         // 5. 偵測結果為空 → 印一行「自動偵測沒有找到守門目標」，不改清單。
         if (result.SensorObjids == null || result.SensorObjids.Count == 0)
         {
             console.WriteLine("[PRTG資源守門] 自動偵測沒有找到守門目標");
-            return;
+            return null;
         }
 
         // 6. 否則：以 SystemSettingsStore 更新 PrtgResourceGuardSensorObjids 設為結果（objid 字串、遞增排序）；
@@ -139,6 +139,7 @@ public static class PrtgResourceGuardAutoDetect
         });
 
         console.WriteLine($"[PRTG資源守門] 自動偵測並填入 {sortedObjids.Count} 顆守門目標（{now:yyyy-MM-dd}）");
+        return result;
     }
 
     /// <summary>

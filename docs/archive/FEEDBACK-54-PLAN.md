@@ -1,6 +1,6 @@
 # 第 54 輪規劃(重寫版):PRTG 回歸正軌
 
-> 狀態(2026-10-19):**實作完成,待體檢**(見文末「體檢交接」)。作業 A、B1–B7、C1–C6、D、E 已推送 `feature/prtg-feedback-54`;尚未併 dev。
+> 狀態(2026-10-19):**全案完成**——實作(Opus 5.5＋agy)、體檢(Fable 5.1)皆畢,體檢修正見文末「體檢輪修正」;已併 dev。
 > 來源:使用者 2026-10-15 要求重新審視 51～54 輪,移除不符目標、多餘、過度設計、難以使用的內容,讓 PRTG 資料順利加入專案並達到輔助判斷的目的,整體可靠性達企業級。審查過程與逐項裁定見 [ROUNDS-51-54-REVIEW.md](archive/ROUNDS-51-54-REVIEW.md);原版 54 輪 PLAN 封存為 [FEEDBACK-54-PLAN-v1.md](archive/FEEDBACK-54-PLAN-v1.md)。
 > 起點:`feature/prtg-feedback-54` HEAD(`0985be90`),測試基線 7,978 通過／1 失敗(已修)／10 可選略過(`b77a72c7`,Windows)。本輪延續此分支,不另開。
 > 原 27 項 E01–E10 TODO、AC01–AC22、U53、Q1–Q6、R54、C54、coverage inventory 與 user-matrix **全部廢止**,不再追蹤;以本文件 §6 的目標導向驗收取代。
@@ -455,3 +455,24 @@
   5. **D 的 `PrtgFetchService.Create`** 取代了規劃寫的「改走 DI」——這是判斷調整,請確認可接受。
   6. **B7 刪掉的前端原始碼字串斷言**(約 1,300 行)有沒有連帶拿掉了唯一守住某個行為的測試。
   7. 文件:PRTG-SPEC 從 1,347 行壓到 500 行,有沒有刪掉仍為真的契約(尤其 §3b 快照、§5 回填、§12 守門)。
+
+## 體檢輪修正(2026-10-19,Fable 5.1)
+
+體檢方 Fable 5.1;規劃比對親做,三區探針掃描派 agy gemini-3.8-flash-high(唯讀 worktree,報告回報 31 條,採納 10 條、其餘為既有設計或規格已定)。每條附迴歸測試與突變驗證。
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| 1 | `HostDetailController.Prtg` | 讀 `KnownIssueCatalog.Rules`,但 Web 行程不呼叫 `Initialize`(Program.cs 刻意),第一次夜間執行前是 seed、之後是上一趟快照——管理者改的窗口／最少有效日對不上規則頁與管線(「有設定無行為」變體) | 改走其他 Web 服務同一條 `ResolveRules(IKnownIssueRuleStore)` | `PrtgTrendEvidenceTests` 規則庫最少有效日改 10 → `RequiredDays=10` 且就緒;改回舊寫法轉紅 |
+| 2 | `AnalysisOrchestrator`→`PrtgDailyPipeline`(C6) | 守門實例在批次啟動時以舊清單(空)建好;自動偵測寫入清單後當晚守門仍用舊目標,規劃驗收「當晚守門監看到」不成立 | `EnsureAsync` 回傳本趟偵測結果,管線以 `PrtgResourceGuard.ReplaceTargets` 當場換上(不等鏡像補抓) | `PrtgResourceGuardAutoDetectTests` 斷言回傳目標 201／202 |
+| 3 | `PrtgValueAssessment.AssessPage` | 固定值判定用 `Distinct().Count()==1` 比 double,快照 sampled 加權合併後同值差 1e-17 → 漏判(agy 實測) | `Max-Min < FixedValueTolerance(1e-6)` | `PrtgValueAssessmentTests` 近七日只差 1e-12 仍計固定值 |
+| 4 | `DiskTrendFinding`／`TrendFinding` | `windowEnd.AddDays(Ceiling(estimatedDays))` 對極大天數(斜率極小時可到 1e9)擲 `ArgumentOutOfRange`,整條規則當日評估失敗(agy 實測) | `ProjectedDate()` 單一出口:null／非有限／負數／>3,650 日不給日期 | `PrtgValueAssessmentTests` 七個邊界值 |
+| 5 | `WeeklyCheckupService.RunAsync` | 窗口 `ReadRecent` 未排除 `LogSource=Prtg`,PRTG 獨立主機日的高風險會觸發 AI 敘事、也算進分析天數(C2 消費端矩陣漏的一格) | 窗口過濾 Prtg | `WeeklyCheckupServiceTests` 只有 PRTG 獨立主機日的高風險→無訊號;拿掉過濾轉紅 |
+| 6 | `EfAnalysisRecordStore.Append`(NetIQ 晚到合併) | `aiConfigured: shaped.AiPending`——低風險 NetIQ 的 AiPending 本來就 false,併回 PRTG 高風險後永遠不標 AI 待補;合併後 `AiPending`／`RiskReportPending` 也沒同步回記憶體物件(agy 實測) | `aiConfigured = PRTG 獨立列的 AiPending ‖ shaped.AiPending`(兩筆待補旗標推回 AI 有無設定);回讀抽出欄同步 | `PrtgOnlyHostDayTests` 合併後 `AiPending=true`、`AiAnalyzed=false`、記憶體物件同步 |
+| 7 | 死碼 | `PrtgChannelIdPolicy`(零呼叫端)、`PrtgRuntimeOwnershipController`(唯一消費端是 B4 已刪的 `Prepare-Qualification.ps1` loopback)與其測試 | 刪除 | 建置 0 警告 |
+| 8 | 重複邏輯 | 裝置名稱退路 `?? $"PRTG Device {objid}"` 三處;主機詳情自建趨勢代碼→分類表與暫定門檻 switch | `PrtgValueAssessment.DeviceDisplayName`、`PrtgRuleCatalog.ValueTrendCodes`、`PrtgTrendThresholds.ProvisionalFor` 各一處 | 既有測試 |
+| 9 | 文件 | PRTG-SPEC §8 漏列 `prtg-backfill/selected/*`、`prtg-scope-purge/*`、`api/prtg/monitoring|operations|risk-review`、`api/prtg-snapshot-diagnostics`;§9a 無預估日期的 Detail 變體;§3b journal 30 日;§12 自動偵測空結果字串 | 補齊 | — |
+| 10 | 說明書 | 「資料累積中」只在主機詳情、就緒度卡是「有效日不足」;按鈕名「試算草稿」「預估全量工作量」「預覽工作量」;卡片名「診斷資料搬運」「指定主機歷史數值補值」 | 校準為畫面全名 | `HelpContentServiceTests` |
+
+**未採納(記錄理由)**:自動偵測 PRTG 離線時每晚 15 秒(有上限、規格已定);人工清單碰巧等於 blob(無來源旗標,行為無害);`requiredDays>windowDays`(`IsValid` 擋在儲存與匯入);對應回望 31 日(規格設計);`SelectSingleRule` 未查 Enabled(呼叫端已濾);排行誤報母體以 sensor 出現點計(比主機數更嚴格,方向一致);摘要郵件當期全被排除整列消失(規格明文);`EnsureTrendCanBeEnabled` 未查全站可見(與磁碟規則同型、不洩漏資料,記 BACKLOG 候選);主機詳情 `GetSensorsByDevice` 逐裝置查詢(既有);趨勢中文標籤三處各自維護(語境不同:管線標籤、finding 白話、簽章標籤)。
+
+**測試**:整套結果見 §7 末列(併 dev 後全量)。建置 0 警告 0 錯誤。

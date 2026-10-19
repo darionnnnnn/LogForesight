@@ -95,7 +95,7 @@ internal static class PrtgDailyPipeline
             try
             {
                 var guardObjidsBefore = systemSettings.PrtgResourceGuardSensorObjids;
-                await PrtgResourceGuardAutoDetect.EnsureAsync(
+                var autoDetected = await PrtgResourceGuardAutoDetect.EnsureAsync(
                     backend,
                     systemSettings,
                     new SentinelStore(backend.Blob("sentinels")).GetAll(),
@@ -107,6 +107,8 @@ internal static class PrtgDailyPipeline
                 {
                     systemSettings = reloadedSettings;
                 }
+                // 守門實例在批次啟動時就以舊清單（空）建好了：偵測到的目標直接換上，當晚就守得到
+                if (autoDetected != null) guard?.ReplaceTargets(autoDetected);
             }
             catch (OperationCanceledException) when (parentToken.IsCancellationRequested)
             {
@@ -462,7 +464,7 @@ internal static class PrtgDailyPipeline
                                      diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays))
                         {
                             reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
-                            var deviceName = pageDeviceNames.GetValueOrDefault(row.Sensor.DeviceObjid) ?? $"PRTG Device {row.Sensor.DeviceObjid}";
+                            var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
                             if (PrtgValueAssessment.DiskTrendFinding(row, diskRule, deviceName, completedDay, out _) is not { } finding) continue;
                             newestPlan.FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
                             AddFinding(newestPlan.FindingsByHost, row.Sensor.HostId,
@@ -530,7 +532,7 @@ internal static class PrtgDailyPipeline
                                          thresholds.WindowDays, thresholds.MinimumValidDays))
                             {
                                 reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
-                                var deviceName = pageDeviceNames.GetValueOrDefault(row.Sensor.DeviceObjid) ?? $"PRTG Device {row.Sensor.DeviceObjid}";
+                                var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
                                 if (PrtgValueAssessment.TrendFinding(row, rule, deviceName, completedDay, out _) is not { } finding) continue;
                                 trendPlan.FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
                                 AddFinding(trendPlan.FindingsByHost, row.Sensor.HostId,

@@ -243,20 +243,13 @@ public class HostDetailController : ControllerBase
         }
 
         var yesterday = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
-        var trendRules = new (string Code, string Category)[]
-        {
-            (PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgSensorCategories.Disk),
-            (PrtgRuleEvaluator.RuleMemoryUsedTrend, PrtgSensorCategories.Memory),
-            (PrtgRuleEvaluator.RuleCpuLoadTrend, PrtgSensorCategories.Cpu),
-            (PrtgRuleEvaluator.RulePingLatencyTrend, PrtgSensorCategories.Availability)
-        };
-
         // 讀規則庫而非 KnownIssueCatalog.Rules：Web 行程不呼叫 Initialize（Program.cs），後者在夜間執行前是 seed、
         // 之後是上一趟的快照，管理者改過的窗口／最少有效日會對不上規則頁與下一趟管線
         var allRules = KnownIssueCatalog.ResolveRules(_rules);
 
-        foreach (var (code, category) in trendRules)
+        foreach (var code in PrtgRuleCatalog.ValueTrendCodes)
         {
+            var category = PrtgRuleCatalog.TrendSensorCategory(code)!;
             var matching = allSensorsWithDevice
                 .Where(x => string.Equals(x.Dto.Category, category, StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -275,13 +268,7 @@ public class HostDetailController : ControllerBase
             }
             else
             {
-                var provisional = code switch
-                {
-                    PrtgRuleEvaluator.RuleMemoryUsedTrend => PrtgTrendThresholds.MemoryProvisional,
-                    PrtgRuleEvaluator.RuleCpuLoadTrend => PrtgTrendThresholds.CpuProvisional,
-                    _ => PrtgTrendThresholds.PingProvisional
-                };
-                var thresholds = rule?.PrtgTrendThresholds ?? provisional;
+                var thresholds = rule?.PrtgTrendThresholds ?? PrtgTrendThresholds.ProvisionalFor(code);
                 windowDays = thresholds.WindowDays;
                 requiredDays = thresholds.MinimumValidDays;
             }

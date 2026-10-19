@@ -100,6 +100,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 同主機日已有「只因 PRTG 建立」的紀錄時，日誌分析晚到要原地更新那一列（record id 不變：
         // 問題子列、案件成員、郵件連結都掛在 id 上），再把原本的 PRTG finding 併回來。
         List<LogIssueSignature>? carriedPrtgFindings = null;
+        var carriedAiPending = false;
 
         // 主列與問題子列必須同進退——分兩次 SaveChanges 但不包交易時，子列寫入失敗會留下
         // 一筆「沒有問題列」的紀錄，SQL 聚合（IIssueAggregateQuery）會靜默漏算這一天。
@@ -115,12 +116,14 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             using var tx = ctx.Database.BeginTransaction();
 
             carriedPrtgFindings = null;
+            carriedAiPending = false;
             var prtgOnly = shaped.LogSource == AnalysisLogSource.Prtg ? null : ctx.DailyRecords
                 .FirstOrDefault(r => r.HostId == shaped.HostId && r.RecordDate == shaped.Date.Date &&
                     r.LogSource == (short)AnalysisLogSource.Prtg);
             if (prtgOnly != null)
             {
                 carriedPrtgFindings = Deserialize(prtgOnly).TopIssues.Where(PrtgFindingMapper.IsPrtg).ToList();
+                carriedAiPending = prtgOnly.AiPending;
                 FillRow(prtgOnly, shaped);
                 ctx.TopIssues.Where(t => t.RecordId == prtgOnly.RecordId).ExecuteDelete();
                 foreach (var issue in shaped.TopIssues)
@@ -172,8 +175,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             // 走與 PRTG 補追加同一條合併邏輯（NetIQ 下限、只升不降、跨來源佐證、子列）；
             // 關聯抑制模式在這裡拿不到，佐證以空集合計，下一趟每日評估補追加時會再校正。
+            // 這裡拿不到「AI 有沒有設定」，用兩筆紀錄的待補旗標推回去：PRTG 獨立主機日非低風險且 AI 有設定時
+            // 它的 AiPending 為 true；NetIQ 這筆非低風險時 shaped.AiPending 為 true。兩者皆 false 代表合併後的風險
+            // 不需要 AI（兩邊都低）或 AI 未設定。只看 shaped.AiPending 會漏掉「低風險 NetIQ 併回 PRTG 高風險」。
             AttachPrtgFindings(shaped.HostId, shaped.Date, carriedPrtgFindings, new HashSet<string>(), out _,
-                aiConfigured: shaped.AiPending);
+                aiConfigured: carriedAiPending || shaped.AiPending);
             using var readBack = _contextFactory();
             if (readBack.DailyRecords.AsNoTracking().FirstOrDefault(r => r.RecordId == appendedRecordId) is { } mergedRow &&
                 Deserialize(mergedRow) is var merged)
@@ -183,6 +189,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 record.RiskBasis = merged.RiskBasis;
                 record.PrtgBaselineRiskLevel = merged.PrtgBaselineRiskLevel;
                 record.PrtgBaselineRiskBasis = merged.PrtgBaselineRiskBasis;
+                record.AiPending = mergedRow.AiPending;   // 抽出欄才是 AI 排程看的那份
+                record.RiskReportPending = merged.RiskReportPending;
             }
         }
 

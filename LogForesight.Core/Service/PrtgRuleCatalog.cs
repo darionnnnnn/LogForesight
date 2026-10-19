@@ -113,6 +113,13 @@ public static class PrtgRuleCatalog
     public static PrtgRuleInfo GetRule(string ruleCode) =>
         Rules[ruleCode];
 
+    /// <summary>四條數值趨勢規則代碼（依評估順序）；分類對應見 <see cref="TrendSensorCategory"/>。</summary>
+    public static readonly IReadOnlyList<string> ValueTrendCodes =
+    [
+        PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgRuleEvaluator.RuleMemoryUsedTrend,
+        PrtgRuleEvaluator.RuleCpuLoadTrend, PrtgRuleEvaluator.RulePingLatencyTrend
+    ];
+
     /// <summary>判斷是否為數值趨勢規則代碼（disk_free_trend 與三個新趨勢代碼，不分大小寫）</summary>
     public static bool IsValueTrend(string? ruleCode) => ruleCode?.ToLowerInvariant() switch
     {

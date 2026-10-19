@@ -95,7 +95,7 @@ public sealed class PrtgOnlyHostDayTests : IDisposable
     public void NetIQ晚到原地更新同一列_來源改為NetIQ_PRTG_finding保留且風險只升不降()
     {
         var store = Store();
-        Assert.True(store.AppendPrtgOnlyIfAbsent(12, "host-12", Day, [Down(2001)], aiConfigured: false));
+        Assert.True(store.AppendPrtgOnlyIfAbsent(12, "host-12", Day, [Down(2001)], aiConfigured: true));
         var prtgOnlyId = Assert.Single(Rows(12)).RecordId;
 
         var late = Netiq(12);
@@ -112,6 +112,9 @@ public sealed class PrtgOnlyHostDayTests : IDisposable
         Assert.Single(merged.TopIssues, PrtgFindingMapper.IsPrtg);
         Assert.Equal(RiskLevels.High, merged.RiskLevel);          // NetIQ 低、PRTG 高 → 取高
         Assert.Equal(RiskLevels.Low, merged.PrtgBaselineRiskLevel); // NetIQ 下限保留，PRTG 判定被取代時可還原
+        Assert.True(merged.AiPending);                              // 低風險 NetIQ 併回 PRTG 高風險（AI 有設定）→ 標 AI 待補
+        Assert.False(merged.AiAnalyzed);
+        Assert.True(late.AiPending);                                // 記憶體物件同步，呼叫端的執行摘要才一致
         using var ctx = _fx.NewContext();
         Assert.Equal(2, ctx.TopIssues.Count(t => t.RecordId == prtgOnlyId));
 

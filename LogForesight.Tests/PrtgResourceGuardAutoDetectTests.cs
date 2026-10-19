@@ -93,13 +93,17 @@ public class PrtgResourceGuardAutoDetectTests : IDisposable
         var console = new TestConsole();
         var handler = new StubPrtgHandler();
 
-        await PrtgResourceGuardAutoDetect.EnsureAsync(
+        var detected = await PrtgResourceGuardAutoDetect.EnsureAsync(
             _backend,
             settings,
             Array.Empty<Sentinel>(),
             console,
             () => CreateClient(handler),
             CancellationToken.None);
+
+        // 回傳本趟偵測結果，讓已建好的守門實例當晚直接換上
+        Assert.NotNull(detected);
+        Assert.Equal(new long[] { 201, 202 }, detected!.SensorObjids.OrderBy(id => id));
 
         var reloadedSettings = settingsStore.Get();
         Assert.Equal(new[] { "201", "202" }, reloadedSettings.PrtgResourceGuardSensorObjids);

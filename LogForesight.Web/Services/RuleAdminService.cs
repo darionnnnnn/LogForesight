@@ -428,7 +428,7 @@ public class RuleAdminService
             foreach (var row in _valueAssessment.AssessPage(groupSensors, day,
                          windowDays, minValidDays))
             {
-                var deviceName = deviceNames.GetValueOrDefault(row.Sensor.DeviceObjid) ?? $"PRTG Device {row.Sensor.DeviceObjid}";
+                var deviceName = PrtgValueAssessment.DeviceDisplayName(deviceNames, row.Sensor.DeviceObjid);
                 var previewRow = evaluateRow(row, day, deviceName);
                 if (previewRow.WouldHit)
                 {

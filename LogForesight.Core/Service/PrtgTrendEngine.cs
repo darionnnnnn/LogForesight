@@ -18,6 +18,15 @@ public sealed record PrtgTrendThresholds(
     public static PrtgTrendThresholds CpuProvisional { get; } = new(35, 28, 0.3, 0.70, 70, 7, 7, 1);
     public static PrtgTrendThresholds PingProvisional { get; } = new(35, 28, 0, 0.60, 50, 7, 7, 1.5);
 
+    /// <summary>三條趨勢規則各自的暫定門檻（規則庫沒有該規則時的退路；seed 與規則頁新建同一份）。</summary>
+    public static PrtgTrendThresholds ProvisionalFor(string ruleCode) => ruleCode switch
+    {
+        PrtgRuleEvaluator.RuleMemoryUsedTrend => MemoryProvisional,
+        PrtgRuleEvaluator.RuleCpuLoadTrend => CpuProvisional,
+        PrtgRuleEvaluator.RulePingLatencyTrend => PingProvisional,
+        _ => throw new ArgumentOutOfRangeException(nameof(ruleCode), ruleCode, "不是三條趨勢規則的代碼")
+    };
+
     public bool IsValid() =>
         WindowDays >= MinimumValidDays
         && MinimumValidDays >= 2

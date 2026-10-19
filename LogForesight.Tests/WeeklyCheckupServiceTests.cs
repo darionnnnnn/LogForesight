@@ -86,6 +86,23 @@ public class WeeklyCheckupServiceTests
         Assert.False(sink.Called); // 沒有輸出報告檔——不消耗任何 I/O 或 AI 資源
     }
 
+    /// <summary>只有 PRTG 訊號的主機日（當日沒有日誌分析）不算體檢窗口：它的高風險不能觸發 AI 敘事</summary>
+    [Fact]
+    public async Task 窗口內只有PRTG獨立主機日的高風險_視為無訊號()
+    {
+        var window = new List<DailyAnalysisRecord>
+        {
+            new() { Date = DateTime.Today.AddDays(-1), RiskLevel = "高", LogSource = AnalysisLogSource.Prtg }
+        };
+        var service = MakeService(new FakeReader(window), out var sink);
+
+        var outcome = await service.RunAsync(DateTime.Today, intervalDays: 7);
+
+        Assert.True(outcome.Completed);
+        Assert.Equal("本期無累積性異常，程式比對通過。", outcome.Conclusion);
+        Assert.False(sink.Called);
+    }
+
     [Fact]
     public async Task 窗口內有風險日時嘗試呼叫AI而非直接判定無訊號()
     {

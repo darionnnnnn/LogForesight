@@ -160,6 +160,32 @@ public sealed class PrtgValueAssessmentTests : IDisposable
         Assert.Equal(PrtgValueReason.FixedValue, row.Reason);
     }
 
+    /// <summary>快照 sampled 列加權合併後同一個值會差到 1e-17；固定值判定用容差，不用相等比</summary>
+    [Fact]
+    public void 近七個有效日每小時只差浮點誤差_仍計固定值()
+    {
+        SeedSensors((101, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu));
+        MapDays(7, (1, 11));
+        SeedHours(101, 7, (d, h) => 3 + (h % 2 == 0 ? 1e-12 : -1e-12));
+
+        var row = Assert.Single(Assess(window: 7, required: 7));
+
+        Assert.Equal(PrtgValueReason.FixedValue, row.Reason);
+    }
+
+    [Fact]
+    public void 預估到達日_極大或非有限天數不給日期_合理天數進位()
+    {
+        var end = new DateOnly(2026, 10, 18);
+        Assert.Equal(new DateOnly(2026, 10, 21), PrtgValueAssessment.ProjectedDate(end, 2.1));
+        Assert.Equal(end, PrtgValueAssessment.ProjectedDate(end, 0));
+        Assert.Null(PrtgValueAssessment.ProjectedDate(end, null));
+        Assert.Null(PrtgValueAssessment.ProjectedDate(end, 1e9));
+        Assert.Null(PrtgValueAssessment.ProjectedDate(end, double.PositiveInfinity));
+        Assert.Null(PrtgValueAssessment.ProjectedDate(end, double.NaN));
+        Assert.Null(PrtgValueAssessment.ProjectedDate(end, -1));
+    }
+
     [Fact]
     public void 評估日對應不是同一台主機_計對應無效()
     {
