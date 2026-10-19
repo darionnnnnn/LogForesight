@@ -457,11 +457,13 @@ internal static class PrtgDailyPipeline
                     foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                     {
                         operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
+                        var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                         foreach (var row in assessment.AssessPage(page, completedDay,
                                      diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays))
                         {
                             reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
-                            if (PrtgValueAssessment.DiskTrendFinding(row, diskRule, completedDay, out _) is not { } finding) continue;
+                            var deviceName = pageDeviceNames.GetValueOrDefault(row.Sensor.DeviceObjid) ?? $"PRTG Device {row.Sensor.DeviceObjid}";
+                            if (PrtgValueAssessment.DiskTrendFinding(row, diskRule, deviceName, completedDay, out _) is not { } finding) continue;
                             newestPlan.FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
                             AddFinding(newestPlan.FindingsByHost, row.Sensor.HostId,
                                 PrtgFindingMapper.ToSignature(finding, newest, row.Sensor.HostId));
@@ -523,11 +525,13 @@ internal static class PrtgDailyPipeline
                         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                         {
                             operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
+                            var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                             foreach (var row in assessment.AssessPage(page, completedDay,
                                          thresholds.WindowDays, thresholds.MinimumValidDays))
                             {
                                 reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
-                                if (PrtgValueAssessment.TrendFinding(row, rule, completedDay, out _) is not { } finding) continue;
+                                var deviceName = pageDeviceNames.GetValueOrDefault(row.Sensor.DeviceObjid) ?? $"PRTG Device {row.Sensor.DeviceObjid}";
+                                if (PrtgValueAssessment.TrendFinding(row, rule, deviceName, completedDay, out _) is not { } finding) continue;
                                 trendPlan.FindingsByHost ??= new Dictionary<long, List<LogIssueSignature>>();
                                 AddFinding(trendPlan.FindingsByHost, row.Sensor.HostId,
                                     PrtgFindingMapper.ToSignature(finding, newest, row.Sensor.HostId));

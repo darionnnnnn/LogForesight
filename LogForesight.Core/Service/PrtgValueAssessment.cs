@@ -118,6 +118,35 @@ public sealed record PrtgValueAssessmentRow(
     IReadOnlyList<PrtgDailyValue> Daily,
     int ImplausibleHours);
 
+/// <summary>數值趨勢 finding 的結構化證據；Detail 文字由 <see cref="Describe"/> 從同一份資料產生，不另寫第二份格式。</summary>
+public sealed record PrtgTrendEvidence(
+    string RuleCode, long DeviceObjid, long SensorObjid, string DeviceName, string SensorName,
+    DateOnly WindowStart, DateOnly WindowEnd, int WindowDays, int ValidDays,
+    double CurrentValue, string Unit, double SlopePerDay, double TargetValue, DateOnly? ProjectedDate)
+{
+    public string Describe()
+    {
+        var ruleText = RuleCode switch
+        {
+            PrtgRuleEvaluator.RuleDiskFreeTrend => "磁碟可用空間持續下降",
+            PrtgRuleEvaluator.RuleMemoryUsedTrend => "記憶體使用率持續攀升",
+            PrtgRuleEvaluator.RuleCpuLoadTrend => "CPU 使用率長期上升且已偏高",
+            PrtgRuleEvaluator.RulePingLatencyTrend => "Ping 回應時間持續惡化",
+            _ => RuleCode
+        };
+
+        var currentStr = CurrentValue.ToString("F1", CultureInfo.InvariantCulture);
+        var targetStr = TargetValue.ToString("F1", CultureInfo.InvariantCulture);
+        var slopeStr = SlopePerDay.ToString("+0.00;-0.00", CultureInfo.InvariantCulture);
+
+        var projectionPart = ProjectedDate.HasValue
+            ? $"預估 {ProjectedDate.Value:yyyy-MM-dd} 達 {targetStr}{Unit}"
+            : $"未預估到達 {targetStr}{Unit} 的日期";
+
+        return $"{DeviceName}／{SensorName}：{ruleText}；近 {WindowDays} 日有效 {ValidDays} 日；目前 {currentStr}{Unit}，每日 {slopeStr}{Unit}；{projectionPart}；資料截至 {WindowEnd:yyyy-MM-dd}";
+    }
+}
+
 /// <summary>
 /// 數值可信＝三條件：(1) 該日 sensor 所在裝置有 ok 或人工對應、且是評估日的同一台主機；
 /// (2) 該小時是可用列（<c>ok</c>，或 <c>sampled</c> 且 coverage ≥ 75）；(3) 單位可判（<see cref="PrtgValueSemantics"/>）。
@@ -169,6 +198,9 @@ public sealed class PrtgValueAssessment
     /// <summary>sensor 鏡像（候選來源）；逐日試算時讀一次後交給靜態的 Candidates 多載。</summary>
     public List<(long Objid, long DeviceObjid, string? Status, string SensorType, string SensorName, string? Category)> SensorMirror() =>
         _store.GetSensorStatuses();
+
+    public Dictionary<long, string> GetDeviceNamesByObjids(IReadOnlyCollection<long> objids) =>
+        _store.GetDeviceNamesByObjids(objids);
 
     /// <summary>
     /// 某個已完成日的 device → 主機：取該日或之前 <see cref="MapLookbackDays"/> 日內最近一份對應，只認 ok
@@ -266,7 +298,7 @@ public sealed class PrtgValueAssessment
     /// <c>disk_free_trend</c>：就緒的磁碟剩餘 % sensor 以每日代表值跑既有趨勢評估；命中才回 finding。
     /// 資料不足或未命中回 null（原因留在 <paramref name="row"/> 與回傳的 explanation）。
     /// </summary>
-    public static PrtgFinding? DiskTrendFinding(PrtgValueAssessmentRow row, KnownIssueRule rule, DateOnly completedDay,
+    public static PrtgFinding? DiskTrendFinding(PrtgValueAssessmentRow row, KnownIssueRule rule, string deviceName, DateOnly completedDay,
         out string explanation)
     {
         explanation = PrtgValueReasonText.Label(row.Reason);
@@ -276,12 +308,39 @@ public sealed class PrtgValueAssessment
             row.Daily.Select(d => new PrtgDiskTrendDay(d.Day, d.Value)).ToArray(), rule.PrtgDiskTrendThresholds);
         explanation = trend.Explanation;
         if (trend.Outcome != PrtgDiskTrendOutcome.Hit || trend.LatestDay != completedDay) return null;
-        var detail = string.Format(CultureInfo.InvariantCulture,
-            "{0}：磁碟可用空間 {1:F1}%；近 {2} 日有效 {3} 日；資料截至 {4:yyyy-MM-dd}。{5}",
-            row.Sensor.SensorName, trend.CurrentAvailablePercent, rule.PrtgDiskTrendThresholds.RecentWindowDays,
-            trend.ValidDayCount, trend.LatestDay, trend.Explanation);
+        if (trend.CurrentAvailablePercent is not { } currentValue ||
+            trend.RobustDeclinePercentagePointsPerDay is not { } declineRate) return null;
+
+        var windowDays = rule.PrtgDiskTrendThresholds.RecentWindowDays;
+        var windowEnd = completedDay;
+        var windowStart = windowEnd.AddDays(-(windowDays - 1));
+        var targetValue = rule.PrtgDiskTrendThresholds.LowWaterPercent;
+        var projectedDate = trend.EstimatedDaysToLowWater.HasValue
+            ? windowEnd.AddDays((int)Math.Ceiling(trend.EstimatedDaysToLowWater.Value))
+            : (DateOnly?)null;
+
+        var evidence = new PrtgTrendEvidence(
+            PrtgRuleEvaluator.RuleDiskFreeTrend,
+            row.Sensor.DeviceObjid,
+            row.Sensor.SensorObjid,
+            deviceName,
+            row.Sensor.SensorName,
+            windowStart,
+            windowEnd,
+            windowDays,
+            trend.ValidDayCount,
+            currentValue,
+            "%",
+            -declineRate,
+            targetValue,
+            projectedDate);
+
         return new PrtgFinding(row.Sensor.DeviceObjid, row.Sensor.SensorObjid, PrtgRuleEvaluator.RuleDiskFreeTrend,
-            detail, trend.ValidDayCount, rule, Acknowledged: false) { SensorCategory = PrtgSensorCategories.Disk };
+            evidence.Describe(), trend.ValidDayCount, rule, Acknowledged: false)
+        {
+            SensorCategory = PrtgSensorCategories.Disk,
+            TrendEvidence = evidence
+        };
     }
 
     /// <summary>三條趨勢規則各自需要的量測語意；其他代碼為 null。</summary>
@@ -315,7 +374,7 @@ public sealed class PrtgValueAssessment
     /// 記憶體／CPU／Ping 趨勢：就緒的 sensor 以每日代表值跑趨勢評估；命中才回 finding。
     /// 資料不足或未命中回 null（原因留在 <paramref name="row"/> 與回傳的 explanation）。
     /// </summary>
-    public static PrtgFinding? TrendFinding(PrtgValueAssessmentRow row, KnownIssueRule rule, DateOnly completedDay,
+    public static PrtgFinding? TrendFinding(PrtgValueAssessmentRow row, KnownIssueRule rule, string deviceName, DateOnly completedDay,
         out string explanation)
     {
         var code = rule.PrtgRuleCode;
@@ -327,26 +386,44 @@ public sealed class PrtgValueAssessment
 
         explanation = PrtgValueReasonText.Label(row.Reason);
         if (EvaluateTrend(row, rule) is not { } result) return null;
-        var (metricLabel, unit) = code switch
-        {
-            PrtgRuleEvaluator.RuleMemoryUsedTrend => ("記憶體使用率", "%"),
-            PrtgRuleEvaluator.RuleCpuLoadTrend => ("CPU 使用率", "%"),
-            _ => ("Ping 回應時間", " ms")
-        };
+        if (rule.PrtgTrendThresholds is not { } thresholds) return null;
+
+        var unit = code == PrtgRuleEvaluator.RulePingLatencyTrend ? " ms" : "%";
 
         explanation = result.Explanation;
         if (result.Outcome != PrtgTrendOutcome.Hit || result.LatestDay != completedDay) return null;
+        if (result.CurrentValue is not { } currentValue ||
+            result.WorseningSlopePerDay is not { } slope) return null;
 
-        var detail = string.Format(CultureInfo.InvariantCulture,
-            "{0}：{1} {2:F1}{3}；近 {4} 日有效 {5} 日；資料截至 {6:yyyy-MM-dd}。{7}",
-            row.Sensor.SensorName, metricLabel, result.CurrentValue, unit,
-            rule.PrtgTrendThresholds.WindowDays, result.ValidDayCount,
-            result.LatestDay, result.Explanation);
+        var windowDays = thresholds.WindowDays;
+        var windowEnd = completedDay;
+        var windowStart = windowEnd.AddDays(-(windowDays - 1));
+        var targetValue = thresholds.TargetValue;
+        var projectedDate = result.EstimatedDaysToTarget.HasValue
+            ? windowEnd.AddDays((int)Math.Ceiling(result.EstimatedDaysToTarget.Value))
+            : (DateOnly?)null;
+
+        var evidence = new PrtgTrendEvidence(
+            code,
+            row.Sensor.DeviceObjid,
+            row.Sensor.SensorObjid,
+            deviceName,
+            row.Sensor.SensorName,
+            windowStart,
+            windowEnd,
+            windowDays,
+            result.ValidDayCount,
+            currentValue,
+            unit,
+            slope,
+            targetValue,
+            projectedDate);
 
         return new PrtgFinding(row.Sensor.DeviceObjid, row.Sensor.SensorObjid, rule.PrtgRuleCode!,
-            detail, result.ValidDayCount, rule, Acknowledged: false)
+            evidence.Describe(), result.ValidDayCount, rule, Acknowledged: false)
         {
-            SensorCategory = PrtgRuleCatalog.TrendSensorCategory(code)
+            SensorCategory = PrtgRuleCatalog.TrendSensorCategory(code),
+            TrendEvidence = evidence
         };
     }
 }

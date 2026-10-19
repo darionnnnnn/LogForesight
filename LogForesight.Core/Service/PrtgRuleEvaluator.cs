@@ -31,6 +31,9 @@ public sealed record PrtgFinding(
     /// <summary>產生狀態風險時的訊息解析版本；舊資料與非狀態規則不補猜。</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public int? MessageStatusSemanticVersion { get; init; }
+    /// <summary>數值趨勢 finding 的結構化證據；非數值趨勢規則為 null。</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public PrtgTrendEvidence? TrendEvidence { get; init; }
     public DateTimeOffset? PresenceSourceAsOf { get; init; }
     public DateTimeOffset? PresenceDeviceStatusAsOf { get; init; }
     public string? PresenceSourceAuthorityFingerprint { get; init; }

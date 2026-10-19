@@ -1449,6 +1449,8 @@ function issueCell(issue) {
             wrap.appendChild(distinct);
         }
 
+        if (issue.prtgTrendEvidence) wrap.appendChild(prtgTrendEvidenceBlock(issue.prtgTrendEvidence));
+
         if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
     }
 
@@ -1734,6 +1736,41 @@ function sampleMessagesTrigger(issue) {
     });
 
     return trigger;
+}
+
+function prtgTrendEvidenceBlock(evidence) {
+    const dl = document.createElement('dl');
+    dl.className = 'row small mb-2 mt-2';
+    const slopeStr = evidence.slopePerDay != null
+        ? `${evidence.slopePerDay >= 0 ? '+' : ''}${evidence.slopePerDay.toFixed(2)}${evidence.unit || ''}`
+        : '—';
+    const currentStr = evidence.currentValue != null
+        ? `${evidence.currentValue.toFixed(1)}${evidence.unit || ''}`
+        : '—';
+    const targetStr = evidence.targetValue != null
+        ? `${evidence.targetValue.toFixed(1)}${evidence.unit || ''}`
+        : '—';
+
+    const items = [
+        ['規則', evidence.ruleCode],
+        ['窗口起訖', `${evidence.windowStart} ～ ${evidence.windowEnd}`],
+        ['有效日／窗口日', `${evidence.validDays}／${evidence.windowDays} 日`],
+        ['目前值', currentStr],
+        ['每日斜率', slopeStr],
+        ['門檻', targetStr],
+        ['預估到達日', evidence.projectedDate || '未預估'],
+        ['來源 sensor objid', String(evidence.sensorObjid)]
+    ];
+    for (const [dtText, ddText] of items) {
+        const dt = document.createElement('dt');
+        dt.className = 'col-sm-3 text-muted';
+        dt.textContent = dtText;
+        const dd = document.createElement('dd');
+        dd.className = 'col-sm-9 mb-1';
+        dd.textContent = ddText;
+        dl.append(dt, dd);
+    }
+    return dl;
 }
 
 /** 逐則訊息各自成段落（等寬字型、保留原始換行）；textContent 純文字組裝，訊息是攻擊者可控字串，不解析 HTML */

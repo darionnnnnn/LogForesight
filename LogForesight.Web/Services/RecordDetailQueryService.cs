@@ -718,6 +718,7 @@ public class RecordDetailQueryService
             ResidualCredentialRetry = issue.ResidualCredentialRetry,
             ResidualCredentialBasis = issue.ResidualCredentialBasis,
             SampleMessages = issue.SampleMessages,
+            PrtgTrendEvidence = issue.PrtgTrendEvidence,
             Suppressed = issue.Suppressed,
             Trend = issue.Trend.ToString(),
             TrendText = BuildTrendText(issue),

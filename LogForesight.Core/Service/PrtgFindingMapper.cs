@@ -129,7 +129,8 @@ public static class PrtgFindingMapper
             KnownIssue = finding.Rule.Description,
             RuleId = finding.Rule.Id,
             // 跨來源佐證（PrtgCorroboration）靠它分辨 sensor 類型；silent（device 層）為 null
-            PrtgSensorCategory = finding.SensorCategory
+            PrtgSensorCategory = finding.SensorCategory,
+            PrtgTrendEvidence = finding.TrendEvidence
         };
     }
 

@@ -323,7 +323,7 @@ public class RuleAdminService
         int windowDays;
         int minValidDays;
         string? category;
-        Func<PrtgValueAssessmentRow, DateOnly, DiskTrendPreviewSensorDto> evaluateRow;
+        Func<PrtgValueAssessmentRow, DateOnly, string, DiskTrendPreviewSensorDto> evaluateRow;
 
         if (isDisk)
         {
@@ -332,14 +332,14 @@ public class RuleAdminService
             windowDays = thresholds.RecentWindowDays;
             minValidDays = thresholds.MinimumValidDays;
             category = PrtgSensorCategories.Disk;
-            evaluateRow = (row, day) =>
+            evaluateRow = (row, day, deviceName) =>
             {
                 var dataReady = row.Reason == PrtgValueReason.Ready;
                 var semanticReady = row.Semantic == PrtgValueSemantic.DiskPercentFree;
                 var trend = dataReady && semanticReady
                     ? PrtgDiskTrendEvaluator.Evaluate(row.Daily.Select(d => new PrtgDiskTrendDay(d.Day, d.Value)).ToArray(), thresholds)
                     : null;
-                var wouldHit = PrtgValueAssessment.DiskTrendFinding(row, draft, day, out var explanation) is not null;
+                var wouldHit = PrtgValueAssessment.DiskTrendFinding(row, draft, deviceName, day, out var explanation) is not null;
                 return new DiskTrendPreviewSensorDto
                 {
                     SensorObjid = row.Sensor.SensorObjid, DeviceObjid = row.Sensor.DeviceObjid, HostId = row.Sensor.HostId,
@@ -368,12 +368,12 @@ public class RuleAdminService
             var expectedSemantic = PrtgValueAssessment.TrendSemantic(draft.PrtgRuleCode);
             var valueUnit = draft.PrtgRuleCode == PrtgRuleEvaluator.RulePingLatencyTrend ? "ms" : "%";
 
-            evaluateRow = (row, day) =>
+            evaluateRow = (row, day, deviceName) =>
             {
                 var dataReady = row.Reason == PrtgValueReason.Ready;
                 var semanticReady = expectedSemantic.HasValue && row.Semantic == expectedSemantic.Value;
                 var result = PrtgValueAssessment.EvaluateTrend(row, draft);
-                var wouldHit = PrtgValueAssessment.TrendFinding(row, draft, day, out var explanation) is not null;
+                var wouldHit = PrtgValueAssessment.TrendFinding(row, draft, deviceName, day, out var explanation) is not null;
                 return new DiskTrendPreviewSensorDto
                 {
                     SensorObjid = row.Sensor.SensorObjid, DeviceObjid = row.Sensor.DeviceObjid, HostId = row.Sensor.HostId,
@@ -423,10 +423,13 @@ public class RuleAdminService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var day = group.Key;
-            foreach (var row in _valueAssessment.AssessPage(group.Select(item => item.Sensor).ToList(), day,
+            var groupSensors = group.Select(item => item.Sensor).ToList();
+            var deviceNames = _valueAssessment!.GetDeviceNamesByObjids(groupSensors.Select(s => s.DeviceObjid).Distinct().ToList());
+            foreach (var row in _valueAssessment.AssessPage(groupSensors, day,
                          windowDays, minValidDays))
             {
-                var previewRow = evaluateRow(row, day);
+                var deviceName = deviceNames.GetValueOrDefault(row.Sensor.DeviceObjid) ?? $"PRTG Device {row.Sensor.DeviceObjid}";
+                var previewRow = evaluateRow(row, day, deviceName);
                 if (previewRow.WouldHit)
                 {
                     if (!hostsById.TryGetValue(row.Sensor.HostId, out var host))

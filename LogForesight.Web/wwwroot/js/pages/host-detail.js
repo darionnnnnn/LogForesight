@@ -745,7 +745,7 @@ function renderPrtgDevices(container, data) {
         } else {
             const table = document.createElement('table');
             table.className = 'table table-sm table-hover mb-0 small';
-            table.innerHTML = '<thead><tr><th>Sensor ID</th><th>名稱</th><th>類型</th><th>分類</th><th>狀態</th></tr></thead>';
+            table.innerHTML = '<thead><tr><th>Sensor ID</th><th>名稱</th><th>類型</th><th>分類</th><th>狀態</th><th>數值資料</th></tr></thead>';
             const tbody = document.createElement('tbody');
             for (const s of device.sensors) {
                 const tr = document.createElement('tr');
@@ -765,6 +765,19 @@ function renderPrtgDevices(container, data) {
                 const statusTd = document.createElement('td');
                 statusTd.appendChild(badge(status.text, status.variant));
                 tr.appendChild(statusTd);
+
+                const valueTd = document.createElement('td');
+                if (!s.valueReasonCode) {
+                    valueTd.textContent = '—';
+                } else if (s.valueReasonCode === 'Ready') {
+                    valueTd.appendChild(badge('就緒', 'success'));
+                } else if (s.valueReasonCode === 'InsufficientDays') {
+                    valueTd.appendChild(badge(`資料累積中 ${s.validDays ?? 0}／${s.requiredDays ?? 0} 日`, 'secondary'));
+                } else {
+                    valueTd.appendChild(badge(s.valueReason || s.valueReasonCode, 'warning'));
+                }
+                tr.appendChild(valueTd);
+
                 tbody.appendChild(tr);
             }
             table.appendChild(tbody);
@@ -772,6 +785,17 @@ function renderPrtgDevices(container, data) {
         }
 
         container.appendChild(devCard);
+    }
+
+    if (canMaintainHost) {
+        const linkRow = document.createElement('div');
+        linkRow.className = 'mt-2';
+        const link = document.createElement('a');
+        link.href = appUrl('/admin/prtg#probe');
+        link.className = 'small';
+        link.textContent = '查看數值資料就緒度';
+        linkRow.appendChild(link);
+        container.appendChild(linkRow);
     }
 }
 

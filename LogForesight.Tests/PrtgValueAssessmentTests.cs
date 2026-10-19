@@ -207,7 +207,7 @@ public sealed class PrtgValueAssessmentTests : IDisposable
         };
 
         var row = Assert.Single(Assess(window: 35, required: 28, category: PrtgSensorCategories.Disk));
-        var finding = PrtgValueAssessment.DiskTrendFinding(row, rule, Completed, out var explanation);
+        var finding = PrtgValueAssessment.DiskTrendFinding(row, rule, "SRV-01", Completed, out var explanation);
 
         Assert.NotNull(finding);
         Assert.Equal(201, finding!.SensorObjid);

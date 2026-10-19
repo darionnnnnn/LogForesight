@@ -2,6 +2,7 @@
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Analysis;
 
@@ -146,6 +147,13 @@ public class LogIssueSignature
     /// 分類未知的 sensor，以及加入這個欄位之前寫入的舊紀錄一律為 null。
     /// </summary>
     public string? PrtgSensorCategory { get; set; }
+
+    /// <summary>
+    /// 數值趨勢 finding 的結構化證據，由 <c>PrtgFindingMapper.ToSignature</c> 帶入。
+    /// 只有數值趨勢 finding 有值，舊紀錄為 null。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PrtgTrendEvidence? PrtgTrendEvidence { get; set; }
 
     // 以下由 TrendAnalyzer.Apply 填入（與歷史紀錄比對後的頻率趨勢）
     [JsonConverter(typeof(JsonStringEnumConverter))]

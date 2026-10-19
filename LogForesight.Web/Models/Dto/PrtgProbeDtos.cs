@@ -335,6 +335,10 @@ public class HostPrtgSensorDto
     public bool Paused { get; set; }
     /// <summary>PRTG sensor 狀態字串（例如 Up、Down、Down (Acknowledged)）</summary>
     public string? Status { get; set; }
+    public string? ValueReasonCode { get; set; }
+    public string? ValueReason { get; set; }
+    public int? ValidDays { get; set; }
+    public int? RequiredDays { get; set; }
 }
 
 /// <summary>PRTG 資源守門受監看感測器預覽項目</summary>

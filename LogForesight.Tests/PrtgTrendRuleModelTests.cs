@@ -117,7 +117,7 @@ public sealed class PrtgTrendRuleModelTests
         var memRow = new PrtgValueAssessmentRow(memSensor, PrtgValueSemantic.MemoryPercentFree, PrtgValueReason.Ready, 28, 28, completedDay, memDaily, 0);
 
         // 1. memory 命中且 detail 含「%」
-        var memFinding = PrtgValueAssessment.TrendFinding(memRow, memRule, completedDay, out var memExplanation);
+        var memFinding = PrtgValueAssessment.TrendFinding(memRow, memRule, "SRV-01", completedDay, out var memExplanation);
         Assert.NotNull(memFinding);
         Assert.Contains("%", memFinding!.Detail);
         Assert.Equal(PrtgRuleEvaluator.RuleMemoryUsedTrend, memFinding.RuleCode);
@@ -125,7 +125,7 @@ public sealed class PrtgTrendRuleModelTests
 
         // 2. 把同一列的語意改成 CpuPercentUsed 但規則是 memory → null
         var mismatchedRow = memRow with { Semantic = PrtgValueSemantic.CpuPercentUsed };
-        var mismatchedFinding = PrtgValueAssessment.TrendFinding(mismatchedRow, memRule, completedDay, out _);
+        var mismatchedFinding = PrtgValueAssessment.TrendFinding(mismatchedRow, memRule, "SRV-01", completedDay, out _);
         Assert.Null(mismatchedFinding);
 
         // 3. Ping: 28 天前段 21 天基準 20ms，近 7 天惡化升至 55~61ms
@@ -139,14 +139,14 @@ public sealed class PrtgTrendRuleModelTests
         var pingSensor = new PrtgValueSensor(2001, 102, 12, "Ping Sensor", "Ping", PrtgSensorCategories.Availability);
         var pingRow = new PrtgValueAssessmentRow(pingSensor, PrtgValueSemantic.PingMs, PrtgValueReason.Ready, 28, 28, completedDay, pingDaily, 0);
 
-        var pingFinding = PrtgValueAssessment.TrendFinding(pingRow, pingRule, completedDay, out var pingExplanation);
+        var pingFinding = PrtgValueAssessment.TrendFinding(pingRow, pingRule, "SRV-01", completedDay, out var pingExplanation);
         Assert.NotNull(pingFinding);
         Assert.Contains(" ms", pingFinding!.Detail);
         Assert.Equal(PrtgRuleEvaluator.RulePingLatencyTrend, pingFinding.RuleCode);
         Assert.Equal(PrtgSensorCategories.Availability, pingFinding.SensorCategory);
 
         // 4. LatestDay 不是評估日 → null
-        var outdatedFinding = PrtgValueAssessment.TrendFinding(memRow, memRule, completedDay.AddDays(1), out _);
+        var outdatedFinding = PrtgValueAssessment.TrendFinding(memRow, memRule, "SRV-01", completedDay.AddDays(1), out _);
         Assert.Null(outdatedFinding);
     }
 

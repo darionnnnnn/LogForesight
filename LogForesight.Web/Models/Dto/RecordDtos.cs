@@ -1,4 +1,6 @@
-﻿namespace LogForesight.Web.Models.Dto;
+﻿using LogForesight.Core.Service;
+
+namespace LogForesight.Web.Models.Dto;
 
 /// <summary>
 /// 問題查詢「依問題」視角的分頁結果（回饋二十輪 B2）：在既有分頁結果上附加去重主機總數，
@@ -371,6 +373,7 @@ public class IssueDto
     /// <summary>殘留憑證重試（或 4740 由殘留觸發）的白話判定依據，未命中為 null。</summary>
     public string? ResidualCredentialBasis { get; set; }
     public List<string> SampleMessages { get; set; } = new();
+    public PrtgTrendEvidence? PrtgTrendEvidence { get; set; }
     public bool Suppressed { get; set; }
 
     /// <summary>趨勢的白話描述（含比對數字），前端直接顯示不再自行組裝</summary>
