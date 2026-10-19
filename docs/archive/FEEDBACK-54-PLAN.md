@@ -92,15 +92,10 @@
 | 作業 | 主題 | 性質 | 相依 | 規模(估) |
 |---|---|---|---|---|
 | 0 | 環境探測(使用者執行)——**已執行 2026-10-16**,剩三件後續操作 | 取事實 | 無;與 A／B 並行 | 使用者 30 分 |
-| C3 | 三類趨勢規則共用引擎(含 B1 移入的覆寫語意 `type=分類[:語意]`、Ping 進／Traffic 出預設白名單) | 新增 | B1、作業 0 | 大 |
-| C4 | finding 證據欄位與「資料不足」狀態 | 補強 | C3 | 中 |
-| B5 | 收斂 lf_blobs JSON store | 重構 | B1、B2、B6、C2 | 中 |
-| D | 容量設計審查(§4.12 方式) | 審查 | C3、B5 | 中 |
-| E | 文件瘦身與收尾 | 文件 | 全部 | 中 |
 
-**已完成**(逐條比對程式碼後自本表刪除,紀錄見 §7):A、B1(含 D8 就緒度卡、B1-4 殘留清除)、B2、B6、B3、B4、C1、C2、C5、C6、B7。B1 唯一未做的「`PrtgSensorTypeCategoryOverrides` 擴成 `type=分類[:語意]`」與 C3 共用同一個評估入口,移入 C3 一起做(C3 列已註記)。
+**已完成**(逐條比對程式碼後自本表刪除,紀錄見 §7):A、B1(含 D8 就緒度卡、B1-4 殘留清除)、B2、B6、B3、B4、C1、C2、C3、C4、C5、C6、B5、B7、D、E。B1 唯一未做的「`PrtgSensorTypeCategoryOverrides` 擴成 `type=分類[:語意]`」與 C3 共用同一個評估入口,移入 C3 一起做(C3 列已註記)。
 
-**建議順序**:0 → C3 → C4 → B5 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
+**建議順序**:全部完成;剩作業 0 的使用者後續操作。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
 
 **委派與驗收方式**:
 - 實作端在 Windows(待定:使用者機器上的 Claude Code 或 agy);整輪只用一種,中途切換註明起點。Mac 端(本規劃者)不寫程式,只寫階段規格與獨立審查 diff。
@@ -348,6 +343,20 @@
 
 逐環節查碼並以小集合驗:`lf_prtg_values` 索引 `(sensor_objid, period_start)` 覆蓋 C3 的「每顆 35 日」查詞;C3 逐 sensor 分頁(每頁 ≤100 顆)且每顆查詞點數有界;快照每批 ≤100 顆、在途 ≤3,ping 納入、traffic 移出白名單後的目標數估算——**現場常數**:sensor 表單次查詢固定 7–8 秒、與 objid 數無關,15,000 顆＝150 批,在途 3 約需 6–7 分鐘一輪,必須放得進快照策略間隔(保守策略現行間隔多少、放不下時策略怎麼降批,D 要給數字);`DailyAnalysisRecord` 建立路徑無 N+1;`log_source` 索引覆蓋排除查詞;保留期清理 `BatchedPrune`;hostname 比對不在迴圈內做 DNS。順手修:`PrtgDailyPipeline` 直接 `new PrtgFetchService`、`PrtgHostMapper` 無 DI 註冊 → 改走 DI,讓測試替身與正式路徑一致。輸出一張「已排除的程式風險／殘餘環境限制」表,不宣稱量測正式容量。
 
+**審查結果**(查碼＋定向測試,未量測正式容量):
+
+| 環節 | 查碼事實 | 已排除的程式風險 | 殘餘環境限制 |
+|---|---|---|---|
+| 數值評估查詢 | `GetReadinessValues` 以 sensor IN(≤100)＋`period_start` 區間查,唯一索引 `(sensor_objid, period_start)` 覆蓋;每頁 ≤100 顆 × 35 日 × 24 時 = 84,000 列上限 | 無全表掃描、每頁點數有界 | SQL Server 實機計畫未量測 |
+| 趨勢評估分頁 | 四條規則各自依分類取候選、`PageSize=100` 分頁,只評估最新已完成日 | 不隨回望天數放大 | — |
+| 快照 | 每批 100 顆、在途 3、一輪期限＝採樣間隔;逾時保留已取批次、計失敗,連續 3 次失敗間隔加倍(上限 60 分) | 一輪不會疊到下一輪 | 7.5 秒／批時:保守 15 分鐘一輪容納約 36,000 顆;激進 5 分鐘約 12,000 顆,超過即每輪逾時;**無自動降批**(BACKLOG) |
+| Ping 進／Traffic 出 | 只改出廠白名單,既有站台已存清單不變 | 升級不會突然增加快照目標 | 管理者自行加 Ping 時目標數增加「有 ok 對應主機的 Ping 顆數」 |
+| PRTG 獨立主機日建立 | 有 finding 的主機各一次 `AttachExclusive` → `AppendPrtgOnlyIfAbsent`(一次存在查詢＋一次寫入) | 不是逐 finding 查詢;數量上限＝當日有未抑制 finding 的主機數 | — |
+| `log_source` 排除查詢 | 索引 `IX_lf_daily_src_date (log_source, record_date)`;逐主機查詢沿用 `(host_id, record_date)` | 排除條件不造成全表掃描 | — |
+| 保留期清理 | `EfPrtgStore.Prune` 對數值、狀態變更、對應、殘留 observations 皆走 `BatchedPrune` | 不一次刪大量列 | — |
+| hostname 退路 | `PrtgHostnameCandidates` 純字串;DNS 只在 IP 欄是名稱時由 `PrtgAddressResolver` 做(同實例快取、1 秒逾時) | 名稱比對迴圈內沒有 DNS | — |
+| 建構一致性 | 7 處 `new PrtgFetchService` 改由 `PrtgFetchService.Create` 組裝;探測資料流原本傳空分類對照 | 測試替身用建構子、正式路徑用同一個工廠,不再各自組參數 | `PrtgHostMapper` 三處建構參數一致(store、主機、console、resolver),不另加工廠 |
+
 ### 作業 E:文件瘦身與收尾
 
 - `PRTG-SPEC.md` 重寫為現況(預估從 1,347 行縮到 ≤500):定位、資料表、擷取、對應(含 hostname)、回填、探測、設定、API、狀態規則、趨勢規則、跨來源佐證、資源守門、匯出。掃「原本／後來／第 N 輪」敘事字眼。
@@ -393,6 +402,12 @@
 | C5 | Claude＋agy(flash-high,Windows) | `PrtgFalsePositiveWindow` 單一判定(同主機同簽章最近一筆明確標記為誤報且 ≤30 日);狀態判定套用並標 `InheritedFalsePositive`、標記查詢往前多撈 30 日;摘要排除;排行「已標誤報」;使用效果按規則代碼分列 | 定向 345 通過;停用繼承、窗口 +1 兩個突變 3 筆轉紅 | Claude 收緊排行語意:每台主機的最近一次出現都在窗內才標(agy 版只要任一台就標),補「部分主機標記為 false」測試;`ResolvedOccurrence` 新參數拿掉預設值 |
 | B7 | Claude(Opus,Windows) | 刪 4 個純原始碼字串斷言檔(PrtgAdminPage／Effectiveness／SelectedBackfill／ValueReadiness UiTests,約 1,300 行);3 個混合檔只刪字串斷言方法,控制器與服務行為測試保留 | 受影響三檔＋FrontendConsistency 定向 33 通過 | fixture JSON 結構測試已在 B4 隨 fixture 刪除,無殘留 |
 | C3-2b | Claude＋agy(flash-high,Windows) | 規則 DTO／儲存／複製／seed 差異帶趨勢門檻;門檻驗證三處;後端啟用守門(至少一顆就緒且語意相符);草稿試算共用分頁骨架、判一列改委派;規則頁三選項、門檻欄、分類鎖定、列表門檻、試算說明 | 定向 577 通過 | Claude 補 Core `EvaluateTrend`／`TrendSemantic` 讓試算不再複製引擎呼叫與記憶體轉向;拿掉啟用守門的 fallback 門檻;JS 暫定值合併為一份;原三筆拒絕測試只走到相依缺漏分支,補 27 日真實路徑拒絕測試(突變有抓) |
+| C3-3 | Claude＋agy(flash-high,Windows) | 補充對照擴成 `type=分類[:語意]`(`TryParseCode`／`Codes`、`ParseSemanticOverrides`,逐行解析共用);`TryResolve` 必傳覆寫字典;`PrtgValueAssessment` 建構子必填語意覆寫,管線／就緒度 API／監看控制器／DI 傳當下設定;預設白名單加 Ping、移除兩種 Traffic | 定向 598 通過;評估忽略覆寫的突變讓覆寫測試轉紅 | Claude 拿掉 `TryResolve` 的 null 檢查與逐鍵掃描(契約是 `ParseSemanticOverrides` 給不分大小寫字典),測試改用同樣的比較子 |
+| D | Claude(Opus,Windows) | 容量審查表(§5 作業 D);7 處 `new PrtgFetchService` 改由 `PrtgFetchService.Create` 組裝,探測資料流不再傳空分類對照 | Fetch／Backfill／Snapshot／StructureSync／ProbeDataFlow／DailyPipeline 定向 412 通過 | 「改走 DI」改成單一工廠:fetch service 依每趟 client／console 建立,DI 化要另造工廠介面,實際落差只在參數各自組裝;`PrtgHostMapper` 三處參數已一致,不動 |
+| C4 | Claude＋agy(flash-high,Windows) | `PrtgTrendEvidence` 與 `Describe()`(Detail 唯一出口);finding／簽章帶結構化證據並經紀錄 JSON 保存;紀錄詳情顯示證據清單;主機詳情對趨勢分類 sensor 回原因代碼／標籤／有效日／所需日,新增「數值資料」欄與 Maintain 就緒度連結 | 定向 510 通過;斜率單位與有效日兩個突變 3 筆轉紅 | Claude 移除 `loadPrtgMapping` 多餘的使用者查詢(載入時已設 `canMaintainHost`) |
+| B5 | Claude(Opus,Windows) | 盤點 PRTG blob key:11 個仍在用的 key 與讀寫端寫進 DB-SPEC「PRTG 相關儲存」;單例狀態維持 blob。原規劃的 `PrtgResourceIdentityStore` 已隨 B1 刪除,無需改正式表 | 每個 key 以 grep 對到讀寫端 | 退役 key 清單(升級時不可逆刪除)同列於 DB-SPEC |
+| E | Claude(Opus,Windows) | PRTG-SPEC 重寫為現況(1,347 → 500 行,保留被程式碼引用的 § 編號,新增 §9a 四條趨勢規則、§9b 數值評估與就緒度);DB-SPEC「PRTG 相關儲存」(blob key 讀寫端、退役 key、log_source);DETECTION-SPEC、WEB-SPEC(維護頁、主機詳情、規則頁、尾段刪可信取樣時期段落)、BACKLOG、兩版 HelpContent 重寫;README 升級說明;CLAUDE.md 新增「數值不再加閘」與新基線 | 說明書定向 58 通過;PRTG-SPEC 掃敘事字眼零命中 | — |
+| 整套 | Claude(Opus,Windows) | 第一次全量 27 筆失敗:C5 的誤報窗往前 30 天遇 `DateTime.MinValue` 溢位(依問題視角整批丟例外)、校準匯出測試仍斷言 9 條規則;修正並補邊界測試 | **6,241 通過／10 略過**;Core／Web 建置 0 警告,測試專案 43 筆分析器警告為本輪之前既有(本輪新增 2 筆已修) | 教訓:定向篩選只涵蓋規格點名的類別,改共用判定(狀態解析骨架)時要 grep 全部呼叫端並把它們的測試類別納入篩選 |
 
 ## 8. 規劃複檢(2026-10-15)
 

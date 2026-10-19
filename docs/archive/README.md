@@ -12,6 +12,7 @@
 
 | 檔案 | 內容一行摘要 |
 |---|---|
+| [FEEDBACK-54-PLAN.md](FEEDBACK-54-PLAN.md) | 第 54 輪重寫版:移除可信取樣／資格／容量准入／資源壓力等機制,數值可信改為三條件;新增四條數值趨勢規則、hostname 退路、PRTG 獨立主機日、標記誤報 30 日窗、守門自動偵測;PRTG-SPEC 重寫;6,241 通過／10 略過 |
 | [FEEDBACK-54-PLAN-v1.md](FEEDBACK-54-PLAN-v1.md) | 第 54 輪原版規劃(承接 53 輪 27 項驗收 TODO、R54／C54 契約、§8 分段紀錄);2026-10-15 經審查後由重寫版取代,依據見 ROUNDS-51-54-REVIEW.md。 |
 | [ROUNDS-51-54-REVIEW.md](ROUNDS-51-54-REVIEW.md) | 2026-10-15 對 51～54 輪規劃與程式的全面審查:偏離目標、過度設計、逐輪保留／刪除／簡化裁定與根因;第 54 輪重寫版 PLAN 的依據。 |
 | [FEEDBACK-53-PLAN.md](FEEDBACK-53-PLAN.md) | 第 53 輪規劃：PRTG trusted sampling、資格作業、兩小時壓力規則與驗收矩陣;2026-10-15 審查後多數機制由第 54 輪重寫版移除,依據見 ROUNDS-51-54-REVIEW |
