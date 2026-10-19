@@ -237,11 +237,11 @@ public class MailIssueDigestTests : IDisposable
 
         var rows = Digest().Build(current, current, null, scope);
 
-        var disk = Assert.Single(rows.Where(row => row.Source == "PRTG:disk_free_trend"));
+        var disk = Assert.Single(rows, row => row.Source == "PRTG:disk_free_trend");
         Assert.Equal(1, disk.HostCount);
         Assert.Equal(1, disk.PreviousHostCount);
         Assert.Equal(MailIssueBucket.OtherHighRisk, disk.Bucket);
-        var app = Assert.Single(rows.Where(row => row.Source == "APP"));
+        var app = Assert.Single(rows, row => row.Source == "APP");
         Assert.Equal(1, app.HostCount);
         Assert.Equal(1, app.PreviousHostCount);
     }

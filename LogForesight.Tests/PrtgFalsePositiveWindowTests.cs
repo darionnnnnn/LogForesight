@@ -154,4 +154,12 @@ public class PrtgFalsePositiveWindowTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public void 標記查詢起點_一般日期往前30天_不限起點時維持MinValue不溢位()
+    {
+        Assert.Equal(new DateTime(2026, 7, 2), PrtgFalsePositiveWindow.HandlingLookbackFrom(new DateTime(2026, 8, 1)));
+        Assert.Equal(DateTime.MinValue, PrtgFalsePositiveWindow.HandlingLookbackFrom(DateTime.MinValue));
+        Assert.Equal(DateTime.MinValue, PrtgFalsePositiveWindow.HandlingLookbackFrom(DateTime.MinValue.AddDays(10)));
+    }
 }

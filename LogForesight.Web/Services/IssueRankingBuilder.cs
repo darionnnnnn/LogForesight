@@ -199,7 +199,7 @@ public class IssueRankingBuilder
 
                 if (hostNames.Count > 0)
                 {
-                    var queryFrom = from.AddDays(-PrtgFalsePositiveWindow.Days);
+                    var queryFrom = PrtgFalsePositiveWindow.HandlingLookbackFrom(from);
                     var handlingsByHost = _backend.IssueHandlingStore().GetMany(hostNames, queryFrom, to)
                         .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
                         .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);

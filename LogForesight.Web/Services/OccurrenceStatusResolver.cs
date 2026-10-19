@@ -40,7 +40,7 @@ public class OccurrenceStatusResolver
             .ToList();
         if (hostNames.Count == 0) return new List<ResolvedOccurrence>();
 
-        var queryFrom = from.AddDays(-PrtgFalsePositiveWindow.Days);
+        var queryFrom = PrtgFalsePositiveWindow.HandlingLookbackFrom(from);
         var handlingsByHost = _issueHandlings.GetMany(hostNames, queryFrom, to)
             .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);

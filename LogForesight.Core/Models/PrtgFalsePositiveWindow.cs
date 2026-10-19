@@ -9,6 +9,13 @@ public static class PrtgFalsePositiveWindow
     public const int Days = 30;
 
     /// <summary>
+    /// 讀取標記時的查詢起點：往前多撈 <see cref="Days"/> 天，窗口起點的誤報標記才讀得到。
+    /// 呼叫端以 <see cref="DateTime.MinValue"/> 表示「不限起點」時維持原值（往前扣會溢位）。
+    /// </summary>
+    public static DateTime HandlingLookbackFrom(DateTime from) =>
+        from <= DateTime.MinValue.AddDays(Days) ? DateTime.MinValue : from.AddDays(-Days);
+
+    /// <summary>
     /// 該主機該問題的逐日標記中，找「日期 ≤ occurrenceDate」的最近一筆明確標記；
     /// 若它是 FalsePositive 且 occurrenceDate ≤ 該標記日期 + Days → 回傳那筆標記（視同誤報），否則 null。
     /// 只對 PRTG 問題生效（issueKey 的 LogName 為 PrtgFindingMapper.PrtgLogName）；非 PRTG 一律 null。

@@ -2034,10 +2034,10 @@ public class CalibrationServiceTests : IDisposable
         Assert.Equal("SNMP Disk Free", vb.SensorType);
         Assert.Equal(55.0, vb.AvgValue);
 
-        // 規則門檻資料集（預設 9 條：4 條不限分類＋4 條分類規則＋1 條停用磁碟趨勢範本）
+        // 規則門檻資料集（預設 12 條：4 條不限分類＋4 條分類規則＋4 條停用數值趨勢規則）
         Assert.NotNull(package.RuleThresholds);
         Assert.Equal(3, package.RuleThresholds.MagnitudeSemanticsVersion);
-        Assert.Equal(9, package.RuleThresholds.CurrentRules.Count);
+        Assert.Equal(12, package.RuleThresholds.CurrentRules.Count);
         Assert.Equal(4, package.RuleThresholds.CurrentRules.Count(r => r.SensorCategory == null));
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "disk_free_trend" && r.SensorCategory == "disk");
         Assert.Contains(package.RuleThresholds.CurrentRules, r => r.RuleCode == "down" && r.SensorCategory == "availability" && r.Threshold == 30);
