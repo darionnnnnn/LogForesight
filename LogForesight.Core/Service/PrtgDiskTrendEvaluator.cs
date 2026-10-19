@@ -86,25 +86,11 @@ public static class PrtgDiskTrendEvaluator
             || recent[^1].Day.DayNumber - recent[0].Day.DayNumber < thresholds.MinimumValidDays - 1)
             return Insufficient($"近期有效日不足：{recent.Length}/{thresholds.MinimumValidDays} 日。", recent.Length, latest);
 
-        var values = recent.Select(x => x.AvailablePercent!.Value).ToArray();
-        var deltas = new List<double>();
-        for (var i = 1; i < recent.Length; i++)
-        {
-            var gap = recent[i].Day.DayNumber - recent[i - 1].Day.DayNumber;
-            if (gap > 0) deltas.Add((values[i] - values[i - 1]) / gap);
-        }
-        var fallingRatio = deltas.Count == 0 ? 0 : deltas.Count(x => x < 0) / (double)deltas.Count;
-        var slopes = new List<double>();
-        for (var i = 0; i < recent.Length; i++)
-        for (var j = i + 1; j < recent.Length; j++)
-        {
-            var days = recent[j].Day.DayNumber - recent[i].Day.DayNumber;
-            if (days > 0) slopes.Add((values[j] - values[i]) / days);
-        }
-
-        var slope = Median(slopes);
+        var points = recent.Select(x => (x.Day, x.AvailablePercent!.Value)).ToArray();
+        var fallingRatio = PrtgTrendEngine.WorseningRatio(points, PrtgTrendDirection.LowerIsWorse);
+        var slope = PrtgTrendEngine.TheilSenSlope(points);
         var decline = -slope;
-        var current = values[^1];
+        var current = points[^1].Item2;
         var depletionDays = decline > 0 ? current / decline : (double?)null;
         var lowWaterDays = decline > 0 ? Math.Max(0, current - thresholds.LowWaterPercent) / decline : (double?)null;
         var evidence = new PrtgDiskTrendResult(PrtgDiskTrendOutcome.NoHit, "", recent.Length, latest,
@@ -145,13 +131,6 @@ public static class PrtgDiskTrendEvaluator
         && double.IsFinite(t.MaximumDaysToLowWater) && t.MaximumDaysToLowWater is > 0 and <= 3650
         && t.MinimumValidDays >= 2 && t.RecentWindowDays >= t.MinimumValidDays
         && double.IsFinite(t.MinimumDecliningDayRatio) && t.MinimumDecliningDayRatio is > 0 and <= 1;
-
-    private static double Median(List<double> values)
-    {
-        values.Sort();
-        var middle = values.Count / 2;
-        return values.Count % 2 == 0 ? (values[middle - 1] + values[middle]) / 2 : values[middle];
-    }
 
     private static PrtgDiskTrendResult Insufficient(string reason, int count, DateOnly? latest) =>
         new(PrtgDiskTrendOutcome.InsufficientData, reason, count, latest, null, null, null, null);
