@@ -422,11 +422,12 @@ internal static class PrtgDailyPipeline
             }
 
             // 數值資料就緒度：與維護頁就緒度卡同一個計算與同一種對應取法（DeviceToHostOn），兩處數字才會相同。
+            var semanticOverrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(systemSettings.PrtgSensorTypeCategoryOverrides);
             if (newest < DateTime.Today)
             {
                 try
                 {
-                    var readinessAssessment = new PrtgValueAssessment(prtgStore);
+                    var readinessAssessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                     var readinessDay = DateOnly.FromDateTime(newest);
                     var readiness = PrtgValueReadiness.Compute(readinessAssessment,
                         readinessAssessment.DeviceToHostOn(readinessDay, evaluationHostIds), evaluationHostIds,
@@ -449,7 +450,7 @@ internal static class PrtgDailyPipeline
             {
                 try
                 {
-                    var assessment = new PrtgValueAssessment(prtgStore);
+                    var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                     var completedDay = DateOnly.FromDateTime(newest);
                     var candidates = assessment.Candidates(newestPlan.DeviceToHost, evaluationHostIds, policySensorIds,
                         PrtgSensorCategories.Disk);
@@ -516,7 +517,7 @@ internal static class PrtgDailyPipeline
 
                     try
                     {
-                        var assessment = new PrtgValueAssessment(prtgStore);
+                        var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                         var completedDay = DateOnly.FromDateTime(newest);
                         var candidates = assessment.Candidates(trendPlan.DeviceToHost, evaluationHostIds, policySensorIds, category);
                         var reasons = new Dictionary<PrtgValueReason, int>();

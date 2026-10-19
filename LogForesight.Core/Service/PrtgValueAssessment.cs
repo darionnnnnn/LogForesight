@@ -31,13 +31,37 @@ public static class PrtgValueSemantics
             ["Ping"] = PrtgValueSemantic.PingMs
         };
 
+    private static readonly Dictionary<string, PrtgValueSemantic> CodeToSemantic =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["cpu-percent-used"] = PrtgValueSemantic.CpuPercentUsed,
+            ["memory-percent-free"] = PrtgValueSemantic.MemoryPercentFree,
+            ["disk-percent-free"] = PrtgValueSemantic.DiskPercentFree,
+            ["ping-ms"] = PrtgValueSemantic.PingMs
+        };
+
+    public static IReadOnlyList<string> Codes { get; } =
+        new[] { "cpu-percent-used", "memory-percent-free", "disk-percent-free", "ping-ms" };
+
+    public static bool TryParseCode(string? code, out PrtgValueSemantic semantic)
+    {
+        if (code != null && CodeToSemantic.TryGetValue(code.Trim(), out semantic))
+            return true;
+
+        semantic = default;
+        return false;
+    }
+
     /// <summary>內建對照的 type（探測步驟 8 逐一核對）。</summary>
     public static IReadOnlyCollection<string> BuiltinTypes => (IReadOnlyCollection<string>)Builtin.Keys;
 
-    public static bool TryResolve(string? sensorType, out PrtgValueSemantic semantic)
+    /// <summary>站台覆寫（<see cref="PrtgSensorTypeCategoryMap.ParseSemanticOverrides"/>，鍵不分大小寫）優先，其次內建對照。</summary>
+    public static bool TryResolve(string? sensorType, IReadOnlyDictionary<string, PrtgValueSemantic> overrides, out PrtgValueSemantic semantic)
     {
         semantic = default;
-        return !string.IsNullOrWhiteSpace(sensorType) && Builtin.TryGetValue(sensorType.Trim(), out semantic);
+        if (string.IsNullOrWhiteSpace(sensorType)) return false;
+        var key = sensorType.Trim();
+        return overrides.TryGetValue(key, out semantic) || Builtin.TryGetValue(key, out semantic);
     }
 
     public static bool IsPercent(PrtgValueSemantic semantic) => semantic != PrtgValueSemantic.PingMs;
@@ -109,10 +133,12 @@ public sealed class PrtgValueAssessment
     public const int MapLookbackDays = 31;
 
     private readonly EfPrtgStore _store;
+    private readonly IReadOnlyDictionary<string, PrtgValueSemantic> _semanticOverrides;
 
-    public PrtgValueAssessment(EfPrtgStore store)
+    public PrtgValueAssessment(EfPrtgStore store, IReadOnlyDictionary<string, PrtgValueSemantic> semanticOverrides)
     {
-        _store = store;
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        _semanticOverrides = semanticOverrides ?? throw new ArgumentNullException(nameof(semanticOverrides));
     }
 
     /// <summary>
@@ -171,7 +197,7 @@ public sealed class PrtgValueAssessment
 
         var windowStart = completedDay.AddDays(-(windowDays - 1)).ToDateTime(TimeOnly.MinValue);
         var windowEnd = completedDay.AddDays(1).ToDateTime(TimeOnly.MinValue);
-        var known = sensors.Where(s => PrtgValueSemantics.TryResolve(s.SensorType, out _)).ToList();
+        var known = sensors.Where(s => PrtgValueSemantics.TryResolve(s.SensorType, _semanticOverrides, out _)).ToList();
         var valuesBySensor = _store.GetReadinessValues(known.Select(s => s.SensorObjid).ToArray(), windowStart, windowEnd)
             .GroupBy(v => v.SensorObjid).ToDictionary(g => g.Key, g => g.ToList());
         var mapsByDevice = _store.GetReadinessMaps(known.Select(s => s.DeviceObjid).Distinct().ToArray(),
@@ -182,7 +208,7 @@ public sealed class PrtgValueAssessment
         var result = new List<PrtgValueAssessmentRow>(sensors.Count);
         foreach (var sensor in sensors)
         {
-            if (!PrtgValueSemantics.TryResolve(sensor.SensorType, out var semantic))
+            if (!PrtgValueSemantics.TryResolve(sensor.SensorType, _semanticOverrides, out var semantic))
             {
                 result.Add(new(sensor, null, PrtgValueReason.UnknownUnit, 0, requiredDays, null, [], 0));
                 continue;

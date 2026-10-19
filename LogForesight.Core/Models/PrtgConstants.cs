@@ -1,4 +1,5 @@
 using System.Globalization;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Models;
 
@@ -194,47 +195,117 @@ public static class PrtgSensorTypeCategoryMap
     }
 
     /// <summary>
-    /// 解析補充對照表設定（一行一筆「type=分類」）。全站唯一的解析與驗證實作。
+    /// 解析補充對照表設定（一行一筆「type=分類[:語意]」）。全站唯一的解析與驗證實作。
     /// 空白行略過；同 type 重複時後者覆蓋前者。回傳的 Map 不分大小寫，分類值一律轉小寫；
     /// 錯誤行不進 Map，錯誤訊息格式「第 N 行「原文」：原因」。
     /// </summary>
     public static (Dictionary<string, string> Map, List<string> Errors) ParseOverrides(IEnumerable<string>? lines)
     {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var (categoryMap, _, errors) = ParseCore(lines);
+        return (categoryMap, errors);
+    }
+
+    /// <summary>
+    /// 解析補充對照表中的量測語意覆寫（只收含合法語意「type=分類:語意」的行）。
+    /// 重用同一段解析邏輯，鍵不分大小寫。
+    /// </summary>
+    public static Dictionary<string, PrtgValueSemantic> ParseSemanticOverrides(IEnumerable<string>? lines)
+    {
+        var (_, semanticMap, _) = ParseCore(lines);
+        return semanticMap;
+    }
+
+    private static (Dictionary<string, string> CategoryMap, Dictionary<string, PrtgValueSemantic> SemanticMap, List<string> Errors) ParseCore(IEnumerable<string>? lines)
+    {
+        var categoryMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var semanticMap = new Dictionary<string, PrtgValueSemantic>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
-        if (lines == null) return (map, errors);
+        if (lines == null) return (categoryMap, semanticMap, errors);
 
         var validList = string.Join("、", PrtgSensorCategories.All);
+        var validCodes = string.Join("、", PrtgValueSemantics.Codes);
         var lineNo = 0;
         foreach (var raw in lines)
         {
             lineNo++;
             if (string.IsNullOrWhiteSpace(raw)) continue;
 
-            var eq = raw.IndexOf('=');
-            if (eq < 0)
-            {
-                errors.Add($"第 {lineNo} 行「{raw}」：缺少「=」，格式應為「type=分類」，分類可用 {validList}");
+            if (!TryParseLine(lineNo, raw, validList, validCodes, errors, out var type, out var category, out var semantic))
                 continue;
-            }
 
-            var type = raw[..eq].Trim();
-            var category = raw[(eq + 1)..].Trim();
-            if (type.Length == 0)
-            {
-                errors.Add($"第 {lineNo} 行「{raw}」：「=」左邊的 sensor type 不可空白，分類可用 {validList}");
-                continue;
-            }
-            if (!PrtgSensorCategories.IsValid(category))
-            {
-                errors.Add($"第 {lineNo} 行「{raw}」：分類「{category}」不合法，可用 {validList}");
-                continue;
-            }
-
-            map[type] = category.ToLowerInvariant();
+            categoryMap[type] = category;
+            if (semantic.HasValue)
+                semanticMap[type] = semantic.Value;
+            else
+                semanticMap.Remove(type);
         }
 
-        return (map, errors);
+        return (categoryMap, semanticMap, errors);
+    }
+
+    private static bool TryParseLine(
+        int lineNo,
+        string raw,
+        string validList,
+        string validCodes,
+        List<string> errors,
+        out string type,
+        out string category,
+        out PrtgValueSemantic? semantic)
+    {
+        type = string.Empty;
+        category = string.Empty;
+        semantic = null;
+
+        var eq = raw.IndexOf('=');
+        if (eq < 0)
+        {
+            errors.Add($"第 {lineNo} 行「{raw}」：缺少「=」，格式應為「type=分類[:語意]」，分類可用 {validList}");
+            return false;
+        }
+
+        type = raw[..eq].Trim();
+        if (type.Length == 0)
+        {
+            errors.Add($"第 {lineNo} 行「{raw}」：「=」左邊的 sensor type 不可空白，分類可用 {validList}");
+            return false;
+        }
+
+        var right = raw[(eq + 1)..].Trim();
+        var colon = right.IndexOf(':');
+        if (colon >= 0)
+        {
+            var cat = right[..colon].Trim();
+            var code = right[(colon + 1)..].Trim();
+
+            if (!PrtgSensorCategories.IsValid(cat))
+            {
+                errors.Add($"第 {lineNo} 行「{raw}」：分類「{cat}」不合法，可用 {validList}");
+                return false;
+            }
+
+            if (!PrtgValueSemantics.TryParseCode(code, out var parsedSemantic))
+            {
+                errors.Add($"第 {lineNo} 行「{raw}」：語意「{code}」不合法，可用 {validCodes}");
+                return false;
+            }
+
+            category = cat.ToLowerInvariant();
+            semantic = parsedSemantic;
+            return true;
+        }
+        else
+        {
+            if (!PrtgSensorCategories.IsValid(right))
+            {
+                errors.Add($"第 {lineNo} 行「{raw}」：分類「{right}」不合法，可用 {validList}");
+                return false;
+            }
+
+            category = right.ToLowerInvariant();
+            semantic = null;
+            return true;
+        }
     }
 }
 

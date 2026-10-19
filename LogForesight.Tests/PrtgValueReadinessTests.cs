@@ -102,7 +102,7 @@ public sealed class PrtgValueReadinessTests : IDisposable
     public void 固定集合_母體5顆_理由合計等於母體_單位未知1顆_排除traffic與未對應()
     {
         SeedStandardFixedSet();
-        var assessment = new PrtgValueAssessment(_store);
+        var assessment = new PrtgValueAssessment(_store, new Dictionary<string, PrtgValueSemantic>());
         var deviceToHost = new Dictionary<long, long> { [1] = _testHostId };
         var evaluationHostIds = new HashSet<long> { _testHostId };
         var policySensorIds = new HashSet<long>();
@@ -124,7 +124,7 @@ public sealed class PrtgValueReadinessTests : IDisposable
         MapDays(28, (1, _testHostId));
         SeedHours(101, 28, (d, h) => 10 + d + (h * 0.1));
 
-        var assessment = new PrtgValueAssessment(_store);
+        var assessment = new PrtgValueAssessment(_store, new Dictionary<string, PrtgValueSemantic>());
         var deviceToHost = new Dictionary<long, long> { [1] = _testHostId };
         var evaluationHostIds = new HashSet<long> { _testHostId };
         var policySensorIds = new HashSet<long>();
@@ -150,7 +150,7 @@ public sealed class PrtgValueReadinessTests : IDisposable
         Assert.Equal($"數值資料就緒度（{Completed:yyyy-MM-dd}）：範圍內無可評估 sensor（請確認鏡像狀態頁籤的對應）。", lineEmpty);
 
         SeedStandardFixedSet();
-        var assessment = new PrtgValueAssessment(_store);
+        var assessment = new PrtgValueAssessment(_store, new Dictionary<string, PrtgValueSemantic>());
         var deviceToHost = new Dictionary<long, long> { [1] = _testHostId };
         var evaluationHostIds = new HashSet<long> { _testHostId };
         var summary5 = PrtgValueReadiness.Compute(assessment, deviceToHost, evaluationHostIds, new HashSet<long>(), Completed, CancellationToken.None);
@@ -165,7 +165,7 @@ public sealed class PrtgValueReadinessTests : IDisposable
     public void 政策縮圈限制sensor_母體僅剩指定一顆()
     {
         SeedStandardFixedSet();
-        var assessment = new PrtgValueAssessment(_store);
+        var assessment = new PrtgValueAssessment(_store, new Dictionary<string, PrtgValueSemantic>());
         var deviceToHost = new Dictionary<long, long> { [1] = _testHostId };
         var evaluationHostIds = new HashSet<long> { _testHostId };
         var policySensorIds = new HashSet<long> { 101 };

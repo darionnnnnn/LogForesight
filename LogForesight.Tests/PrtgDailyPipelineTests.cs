@@ -1576,11 +1576,13 @@ public class PrtgDailyPipelineTests : IDisposable
     [InlineData(true, false)]
     [InlineData(false, false)]
     [InlineData(false, true)]
-    public async Task 預設白名單不含Ping_PingDown仍進規則評估產生Down(bool hasLogRecord, bool outsideSelectedScope)
+    public async Task 預設白名單含Ping_PingDown仍進規則評估產生Down(bool hasLogRecord, bool outsideSelectedScope)
     {
         EnableConservativePrtgWithDefaultWhitelist();
-        Assert.DoesNotContain(SystemSettings.DefaultPrtgSensorTypeWhitelist,
+        Assert.Contains(SystemSettings.DefaultPrtgSensorTypeWhitelist,
             t => string.Equals(t, "Ping", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(SystemSettings.DefaultPrtgSensorTypeWhitelist,
+            t => t.Contains("Traffic", StringComparison.OrdinalIgnoreCase));
 
         var today = DateTime.Today;
         var day = today.AddDays(-1);
@@ -2048,7 +2050,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         var line = Assert.Single(console.Lines, l => l.Contains("數值資料就緒度（"));
 
-        var assessment = new PrtgValueAssessment(prtgStore);
+        var assessment = new PrtgValueAssessment(prtgStore, new Dictionary<string, PrtgValueSemantic>());
         var deviceToHost = new Dictionary<long, long> { [1] = host.HostId };
         var evaluationHostIds = new HashSet<long> { host.HostId };
         var policySensorIds = new HashSet<long>();

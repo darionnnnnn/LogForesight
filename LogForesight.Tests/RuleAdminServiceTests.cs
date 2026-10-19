@@ -202,7 +202,7 @@ public class RuleAdminServiceTests
         var settings = new FakeSystemSettingsStore();
         var hosts = new FakeHostStore();
         hosts.Upsert(new WebHost { HostId = 1, HostName = "preview-host", Active = true });
-        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext), new Dictionary<string, PrtgValueSemantic>());
         var service = new RuleAdminService(ruleStore, seedStore, new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(), hosts,
             new FakeIssueAggregateQuery(), assessment, settings, new FixedVisibilityService(hosts.GetAll().Select(h => h.HostId)));
@@ -280,7 +280,7 @@ public class RuleAdminServiceTests
         settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
         var rules = KnownIssueSeed.CreateRules();
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = rules } };
-        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext), new Dictionary<string, PrtgValueSemantic>());
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
             hosts, new FakeIssueAggregateQuery(), assessment, settings,
@@ -343,7 +343,7 @@ public class RuleAdminServiceTests
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = seedRules } };
         var seeds = new FakeRuleSeedStore();
         seeds.Sync(seedRules, KnownIssueSeed.Version);
-        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext), new Dictionary<string, PrtgValueSemantic>());
         var service = new RuleAdminService(ruleStore, seeds, new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
             hosts, new FakeIssueAggregateQuery(), assessment, settings,
@@ -392,7 +392,7 @@ public class RuleAdminServiceTests
         settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
         var rules = KnownIssueSeed.CreateRules();
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = rules } };
-        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext), new Dictionary<string, PrtgValueSemantic>());
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
             hosts, new FakeIssueAggregateQuery(), assessment, settings,
@@ -1528,7 +1528,7 @@ public class RuleAdminServiceTests
             NextSteps = new[] { "檢查程式" }
         };
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = 1, Rules = new List<KnownIssueRule> { memoryRule } } };
-        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext), new Dictionary<string, PrtgValueSemantic>());
         var audit = new RecordingAuditService();
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(),
@@ -1614,7 +1614,7 @@ public class RuleAdminServiceTests
             NextSteps = new[] { "檢查程式" }
         };
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = 1, Rules = new List<KnownIssueRule> { memoryRule } } };
-        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext), new Dictionary<string, PrtgValueSemantic>());
         var audit = new RecordingAuditService();
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), audit, new FakeHostGroupStore(),
@@ -1717,7 +1717,7 @@ public class RuleAdminServiceTests
         var settings = new FakeSystemSettingsStore();
         settings.Update(s => { s.RetentionDays = 730; s.PrtgRetentionDays = 730; });
         var ruleStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = KnownIssueSeed.CreateRules() } };
-        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext));
+        var assessment = new PrtgValueAssessment(new EfPrtgStore(fx.NewContext), new Dictionary<string, PrtgValueSemantic>());
         var service = new RuleAdminService(ruleStore, new FakeRuleSeedStore(), new FakeSuppressionStore(), new FakeUserStore(),
             FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(), new FakeHostGroupStore(),
             hosts, new FakeIssueAggregateQuery(), assessment, settings,

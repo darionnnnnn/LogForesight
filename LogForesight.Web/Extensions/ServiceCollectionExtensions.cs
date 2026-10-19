@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text;
 
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
@@ -400,7 +401,13 @@ public static class ServiceCollectionExtensions
         // 規則維護與執行監控
         services.AddScoped<RuleAdminService>();
         // 數值評估只讀已落盤資料（docs/PRTG-SPEC.md §9b），規則頁的磁碟趨勢試算與啟用檢查共用
-        services.AddScoped(sp => new PrtgValueAssessment(sp.GetRequiredService<EfPrtgStore>()));
+        services.AddScoped(sp =>
+        {
+            var store = sp.GetRequiredService<EfPrtgStore>();
+            var settings = sp.GetRequiredService<ISystemSettingsStore>().Get();
+            var semanticOverrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(settings.PrtgSensorTypeCategoryOverrides);
+            return new PrtgValueAssessment(store, semanticOverrides);
+        });
         services.AddScoped<RunMonitorService>();
 
         // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，

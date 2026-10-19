@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Persistence;
+﻿using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
@@ -333,6 +334,7 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
         var settingsBlob = backend.Blob("system_settings");
         var settingsStoreVersion = settingsBlob.ReadVersion();
         var settings = new SystemSettingsStore(settingsBlob).Get();
+        var semanticOverrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(settings.PrtgSensorTypeCategoryOverrides);
         var policyStoreVersion = backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion();
         var policy = Store().Get();
         var scopeRevisionVersion = backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
@@ -390,7 +392,7 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             if (policySensors.Count > 0 && !policySensors.Contains(sensor.SensorId)) reasons.Add("感測器不在監看範圍清單");
             if (matching.Length == 0) reasons.Add("沒有適用且啟用的規則");
             if (matching.Any(r => r.PrtgRuleCode == PrtgRuleEvaluator.RuleDiskFreeTrend) &&
-                !PrtgValueSemantics.TryResolve(sensorTypes.GetValueOrDefault(sensor.SensorId), out _))
+                !PrtgValueSemantics.TryResolve(sensorTypes.GetValueOrDefault(sensor.SensorId), semanticOverrides, out _))
                 reasons.Add("數值單位無法判定（sensor type 不在對照表），磁碟趨勢不評估");
             var configured = reasons.Count == 0;
             var parent = host == null ? null : backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName }).ReadRecent(targetDay, 1).FirstOrDefault(r => r.Date == targetDay);

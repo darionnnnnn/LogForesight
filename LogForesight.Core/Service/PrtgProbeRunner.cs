@@ -445,7 +445,8 @@ public static class PrtgProbeRunner
             console.WriteLine($"     {type}：略過（環境沒有這個 type）");
             return;
         }
-        PrtgValueSemantics.TryResolve(type, out var semantic);
+        // 探測輸出內建對照，無站台覆寫設定，傳空字典
+        PrtgValueSemantics.TryResolve(type, new Dictionary<string, PrtgValueSemantic>(), out var semantic);
         try
         {
             var json = await client.GetJsonAsync(

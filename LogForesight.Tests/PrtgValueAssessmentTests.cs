@@ -61,9 +61,10 @@ public sealed class PrtgValueAssessmentTests : IDisposable
         _store.UpsertValues(rows);
     }
 
-    private IReadOnlyList<PrtgValueAssessmentRow> Assess(int window = 3, int required = 3, string? category = null)
+    private IReadOnlyList<PrtgValueAssessmentRow> Assess(int window = 3, int required = 3, string? category = null,
+        IReadOnlyDictionary<string, PrtgValueSemantic>? overrides = null)
     {
-        var assessment = new PrtgValueAssessment(_store);
+        var assessment = new PrtgValueAssessment(_store, overrides ?? new Dictionary<string, PrtgValueSemantic>());
         var deviceToHost = new Dictionary<long, long> { [1] = 11, [2] = 12 };
         var candidates = assessment.Candidates(deviceToHost, new HashSet<long> { 11, 12 }, new HashSet<long>(), category);
         return assessment.AssessPage(candidates.ToList(), Completed, window, required);
@@ -114,6 +115,23 @@ public sealed class PrtgValueAssessmentTests : IDisposable
 
         Assert.Equal(PrtgValueReason.UnknownUnit, row.Reason);
         Assert.Null(row.Semantic);
+    }
+
+    [Fact]
+    public void 覆寫語意後_原先對照外的type可識別語意且可評估()
+    {
+        SeedSensors((101, 1, "SNMP Linux Meminfo", PrtgSensorCategories.Memory));
+        MapDays(3, (1, 11));
+        SeedHours(101, 3, (d, h) => 20);
+
+        var overrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(new[]
+        {
+            "SNMP Linux Meminfo=memory:memory-percent-free"
+        });
+        var row = Assert.Single(Assess(overrides: overrides));
+
+        Assert.Equal(PrtgValueReason.Ready, row.Reason);
+        Assert.Equal(PrtgValueSemantic.MemoryPercentFree, row.Semantic);
     }
 
     [Fact]

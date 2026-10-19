@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
@@ -55,7 +56,9 @@ public sealed class PrtgValueReadinessController : ControllerBase
         }
 
         var policySensorIds = (policy.SensorIds ?? []).ToHashSet();
-        var assessment = new PrtgValueAssessment(_backend.PrtgStore());
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
+        var semanticOverrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(settings.PrtgSensorTypeCategoryOverrides);
+        var assessment = new PrtgValueAssessment(_backend.PrtgStore(), semanticOverrides);
         var deviceToHost = assessment.DeviceToHostOn(completedDay, evaluationHostIds);
         var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
 
