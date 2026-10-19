@@ -94,16 +94,13 @@
 | 0 | 環境探測(使用者執行)——**已執行 2026-10-16**,剩三件後續操作 | 取事實 | 無;與 A／B 並行 | 使用者 30 分 |
 | C3 | 三類趨勢規則共用引擎(含 B1 移入的覆寫語意 `type=分類[:語意]`、Ping 進／Traffic 出預設白名單) | 新增 | B1、作業 0 | 大 |
 | C4 | finding 證據欄位與「資料不足」狀態 | 補強 | C3 | 中 |
-| C5 | 有用／誤報標記 | 新增 | C2 | 小 |
-| C6 | 資源守門目標自動偵測 | 新增 | B1 | 小 |
 | B5 | 收斂 lf_blobs JSON store | 重構 | B1、B2、B6、C2 | 中 |
-| B7 | 測試瘦身 | 移除 | B1–B6 | 中 |
 | D | 容量設計審查(§4.12 方式) | 審查 | C3、B5 | 中 |
 | E | 文件瘦身與收尾 | 文件 | 全部 | 中 |
 
-**已完成**(逐條比對程式碼後自本表刪除,紀錄見 §7):A、B1(含 D8 就緒度卡、B1-4 殘留清除)、B2、B6、B3、B4、C1、C2。B1 唯一未做的「`PrtgSensorTypeCategoryOverrides` 擴成 `type=分類[:語意]`」與 C3 共用同一個評估入口,移入 C3 一起做(C3 列已註記)。
+**已完成**(逐條比對程式碼後自本表刪除,紀錄見 §7):A、B1(含 D8 就緒度卡、B1-4 殘留清除)、B2、B6、B3、B4、C1、C2、C5、C6、B7。B1 唯一未做的「`PrtgSensorTypeCategoryOverrides` 擴成 `type=分類[:語意]`」與 C3 共用同一個評估入口,移入 C3 一起做(C3 列已註記)。
 
-**建議順序**:0 → C3 → C4 → C5 → C6 → B5 → B7 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
+**建議順序**:0 → C3 → C4 → B5 → D → E。先砍再加:C2／C3 要接的 consumer 會被 B1 簡化,先加會做兩次。
 
 **委派與驗收方式**:
 - 實作端在 Windows(待定:使用者機器上的 Claude Code 或 agy);整輪只用一種,中途切換註明起點。Mac 端(本規劃者)不寫程式,只寫階段規格與獨立審查 diff。
@@ -391,6 +388,11 @@
 | C2 | Claude(Opus,Windows) | `AnalysisLogSource.Prtg`、`log_source` 抽出欄與索引(回填器 v3);PRTG 獨立主機日建立(至少一筆未抑制 finding、同主機日無紀錄);日誌分析晚到原地更新同一 record id 並併回 PRTG finding;缺日、重跑、首次回望、週檢、趨勢歷史、執行監看、排程預覽、儀表板分析主機日排除 PRTG 獨立主機日;NetIQ 嘗試紀錄來源合法值補 3 | 新測試 8(含 SQL Server 翻譯、突變有抓);定向 716 通過 | 摘要郵件沒有「已分析主機 N 台」字樣,該項不適用;消費端盤點由唯讀子代理完成 |
 | C1 | Claude＋agy(flash-high,Windows) | `PrtgHostnameCandidates` 純函式＋`PrtgHostMapper` 在無 IP／IP 查無主機時以名稱比對;多主機、同主機多裝置、主機已被對應各標 conflict;摘要 hostname=N;衝突清單兩種新標籤 | 定向 174 通過(候選 27 案、8 台裝置夾具) | Claude 把重複的衝突列組裝抽成函式 |
 | C3-1 | Claude＋agy(flash-high,Windows) | `PrtgTrendEngine`(記憶體／CPU／Ping 判定與暫定門檻);磁碟趨勢改用共用斜率與下降比例 | 新測試 64;定向 116 通過;反轉方向突變被 7 筆抓到 | — |
+| C3-2a | Claude＋agy(flash-high,Windows) | 三條趨勢規則接上規則常數、目錄(`IsValueTrend`／`TrendSensorCategory`)、`KnownIssueRule.PrtgTrendThresholds`、驗證、seed v11(預設停用)、匯入比對;跨日／派工／建案品質改認四條數值趨勢;每日管線在磁碟趨勢後逐條評估;`TrendFinding` 為記憶體轉向唯一點 | 定向 850 通過;移除轉向的突變讓 2 筆轉紅 | — |
+| C6 | Claude＋agy(flash-high,Windows) | `PrtgResourceGuardAutoDetect`:清單為空或自動結果有 sensor 已不在鏡像時,作業範圍建立前直接查 PRTG 偵測(15 秒),寫回清單與 blob `prtg_resource_guard_autodetect`;人工清單不覆寫;設定頁預覽回傳並顯示「自動偵測 {日期}」 | 新測試 7;定向 288 通過;取消人工保護的突變 2 筆轉紅 | 註記只在按「預覽」後顯示(設定讀取 DTO 不帶,未新增欄位) |
+| C5 | Claude＋agy(flash-high,Windows) | `PrtgFalsePositiveWindow` 單一判定(同主機同簽章最近一筆明確標記為誤報且 ≤30 日);狀態判定套用並標 `InheritedFalsePositive`、標記查詢往前多撈 30 日;摘要排除;排行「已標誤報」;使用效果按規則代碼分列 | 定向 345 通過;停用繼承、窗口 +1 兩個突變 3 筆轉紅 | Claude 收緊排行語意:每台主機的最近一次出現都在窗內才標(agy 版只要任一台就標),補「部分主機標記為 false」測試;`ResolvedOccurrence` 新參數拿掉預設值 |
+| B7 | Claude(Opus,Windows) | 刪 4 個純原始碼字串斷言檔(PrtgAdminPage／Effectiveness／SelectedBackfill／ValueReadiness UiTests,約 1,300 行);3 個混合檔只刪字串斷言方法,控制器與服務行為測試保留 | 受影響三檔＋FrontendConsistency 定向 33 通過 | fixture JSON 結構測試已在 B4 隨 fixture 刪除,無殘留 |
+| C3-2b | Claude＋agy(flash-high,Windows) | 規則 DTO／儲存／複製／seed 差異帶趨勢門檻;門檻驗證三處;後端啟用守門(至少一顆就緒且語意相符);草稿試算共用分頁骨架、判一列改委派;規則頁三選項、門檻欄、分類鎖定、列表門檻、試算說明 | 定向 577 通過 | Claude 補 Core `EvaluateTrend`／`TrendSemantic` 讓試算不再複製引擎呼叫與記憶體轉向;拿掉啟用守門的 fallback 門檻;JS 暫定值合併為一份;原三筆拒絕測試只走到相依缺漏分支,補 27 日真實路徑拒絕測試(突變有抓) |
 
 ## 8. 規劃複檢(2026-10-15)
 
