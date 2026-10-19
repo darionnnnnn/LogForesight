@@ -481,9 +481,10 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 
     /// <summary>與 EfAnalysisRecordStore.ListHostDates 同語意（回饋十八輪批次C 測試所需）：
     /// 窗口內 HostId／Date 的輕量投影，HostId=0（無主機識別的舊列）不列入。</summary>
-    public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to) =>
+    public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly = false) =>
         _records
-            .Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date && r.HostId != 0)
+            .Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date && r.HostId != 0 &&
+                (!logAnalysisOnly || r.LogSource != AnalysisLogSource.Prtg))
             .Select(r => (r.HostId, r.Date.Date))
             .ToHashSet();
 

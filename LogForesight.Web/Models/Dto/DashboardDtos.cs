@@ -8,6 +8,8 @@ public class DashboardDto
 
     public int TotalHosts { get; set; }
     public int AnalyzedHostDays { get; set; }
+    /// <summary>只有 PRTG finding、當日沒有日誌分析的主機日數（不計入 <see cref="AnalyzedHostDays"/>）。</summary>
+    public int PrtgOnlyHostDays { get; set; }
     public int PendingRiskReviewDays { get; set; }
     public int HighRiskDays { get; set; }
     public int MediumRiskDays { get; set; }

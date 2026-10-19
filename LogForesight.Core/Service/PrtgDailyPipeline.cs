@@ -552,6 +552,7 @@ internal static class PrtgDailyPipeline
                         var involvedHosts = findingsByHost.Count;
                         var appendedHosts = 0;
                         var pendingHosts = 0;
+                        var prtgOnlyHosts = 0;
                         var corroboratedCount = 0;
 
                         foreach (var (hostId, hostFindings) in findingsByHost)
@@ -568,11 +569,18 @@ internal static class PrtgDailyPipeline
                                 corroboratedCount += hostCorroborated;
                                 HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
                             }
+                            // 當日沒有任何紀錄（沒有日誌分析）：PRTG 自己成立一筆主機日，日誌分析晚到時原地更新為該來源。
+                            else if (prtgFindings.AttachExclusive(hostId, day, () => hostRecordStore.AppendPrtgOnlyIfAbsent(
+                                         hostId, hostName, day, hostFindings, useAi)))
+                            {
+                                prtgOnlyHosts++;
+                                HostDayPostProcessor.AttachCase(caseCoordinator, dispatch, hostName, day, hostFindings.ToList(), "[PRTG] ");
+                            }
                             else pendingHosts++;
                         }
 
                         var summary = $"PRTG 規則評估完成（{day:yyyy-MM-dd}）：finding {plan.FindingCount} 筆（其中已抑制 {suppressedCount} 筆、已於 PRTG 確認 {plan.AcknowledgedCount} 筆、已合併 {plan.MergedCount} 筆、跨日升級 {escalatedCount} 筆、長期 Down {chronicCount} 筆、跨來源佐證（補追加階段）{corroboratedCount} 筆）、涉及主機 {involvedHosts} 台、" +
-                                      $"本階段追加 {appendedHosts} 台（其餘 {pendingHosts} 台當日尚無分析紀錄，由分析路徑就地處理）";
+                                      $"本階段追加 {appendedHosts} 台、PRTG 獨立主機日 {prtgOnlyHosts} 台（其餘 {pendingHosts} 台無變動：finding 已在紀錄中，或只剩被抑制的 finding）";
                         prtgConsole.WriteLine(summary);
                         runRecorder.Milestone(summary);
                     }

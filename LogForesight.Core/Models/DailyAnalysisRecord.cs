@@ -21,9 +21,9 @@ public class DailyAnalysisRecord
     public string? LatestNetiqAttemptStatus { get; set; }
     public DateTime? LatestNetiqAttemptAtUtc { get; set; }
 
-    /// <summary>只有明確由 NetIQ 分析產生且保有詳情的主機日可接受 PRTG 補充。</summary>
-    public bool CanSupplementWithPrtg() => LogSource == AnalysisLogSource.Netiq && !DetailPruned &&
-        (LatestNetiqAttemptStatus == null || LatestNetiqAttemptStatus == "success");
+    /// <summary>NetIQ 分析產生、或只因 PRTG 而建立、且保有詳情的主機日可接受 PRTG 補充。</summary>
+    public bool CanSupplementWithPrtg() => !DetailPruned && (LogSource == AnalysisLogSource.Prtg ||
+        LogSource == AnalysisLogSource.Netiq && (LatestNetiqAttemptStatus == null || LatestNetiqAttemptStatus == "success"));
 
     /// <summary>
     /// 產生本筆紀錄的主機 PK（↔ lf_daily_records.host_id）。**這是紀錄與主機的關聯鍵**——
@@ -288,5 +288,7 @@ public enum AnalysisLogSource
 {
     Unknown = 0,
     Local = 1,
-    Netiq = 2
+    Netiq = 2,
+    /// <summary>當日沒有日誌分析、只因 PRTG finding 而建立的主機日（事件統計全零）。NetIQ 或本機分析晚到時原地更新為該來源。</summary>
+    Prtg = 3
 }

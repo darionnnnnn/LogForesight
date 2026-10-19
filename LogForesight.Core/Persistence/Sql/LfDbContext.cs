@@ -226,6 +226,8 @@ public class LfDbContext : DbContext
             e.Property(x => x.WarningCount).HasColumnName("warning_count").HasDefaultValue(0);
             e.Property(x => x.AiAnalyzed).HasColumnName("ai_analyzed").HasDefaultValue(false);
             e.Property(x => x.AiPending).HasColumnName("ai_pending").HasDefaultValue(false);
+            // 日誌來源（AnalysisLogSource 數值）：NetIQ 涵蓋類統計要以 SQL 排除只有 PRTG 的主機日。
+            e.Property(x => x.LogSource).HasColumnName("log_source").HasDefaultValue((short)0);
             // 存量回填的判定欄（取代 lf_top_issues 沿用的「record_date 是否為 MinValue」哨兵手法——
             // 這幾個欄位本身的合法值就含 0/false/空字串，沒有哪個值能安全地當「還沒回填」的訊號）。
             // 本輪寫入＝1；舊列預設 0，DailyRecordBackfiller 掃 &lt;1。has_correlation（P1-2 既有欄）
@@ -237,6 +239,7 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.HostId, x.RecordDate });
             e.HasIndex(x => x.ExtractVersion).HasDatabaseName("IX_lf_daily_records_extract_version");   // DailyRecordBackfiller 的候選查詢
             e.HasIndex(x => new { x.AiPending, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_ai_pending_record_date"); // 全域待補查詢（批次C）
+            e.HasIndex(x => new { x.LogSource, x.RecordDate }).HasDatabaseName("IX_lf_daily_src_date"); // 排除只有 PRTG 的主機日
             // 可行動快照（ActionableOccurrences）的日層級篩選：risk_level IN (高/中) + 日期範圍。
             // 等值前導欄在前，範圍欄在後——只有 record_date 索引時整段期間都得逐列過濾 risk_level
             e.HasIndex(x => new { x.RiskLevel, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_risk_date");
@@ -834,6 +837,8 @@ public class DailyRecordRow
     public int WarningCount { get; set; }
     public bool AiAnalyzed { get; set; }
     public bool AiPending { get; set; }
+    /// <summary><see cref="LogForesight.Core.Models.AnalysisLogSource"/> 的數值；舊列由 DailyRecordBackfiller 依 ContentJson 回填。</summary>
+    public short LogSource { get; set; }
 
     /// <summary>存量回填的版本號：本輪寫入＝1，舊列預設 0。不是布林是因為未來若再擴充抽出欄，
     /// 版本號可以往上加而不必再想一個新的哨兵值。</summary>

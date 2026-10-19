@@ -1623,10 +1623,12 @@ public class PrtgDailyPipelineTests : IDisposable
 
         if (!hasLogRecord)
         {
-            // 狀態規則照常發佈到 registry（分析路徑寫入當日紀錄時就地附上）；
-            // 沒有 NetIQ 父紀錄時管線不自己造一筆。
+            // 當日沒有日誌分析：PRTG 自己成立一筆主機日（LogSource=Prtg），風險依 PRTG 規則；日誌分析晚到時原地更新。
             Assert.Single(registry.For(host.HostId, day), f => f.EventKey == PrtgEventKey("down", 2001));
-            Assert.Empty(hostRecordStore.ReadRecent(day, 1));
+            var prtgOnly = Assert.Single(hostRecordStore.ReadRecent(day, 1));
+            Assert.Equal(AnalysisLogSource.Prtg, prtgOnly.LogSource);
+            Assert.Equal(RiskLevels.High, prtgOnly.RiskLevel);
+            Assert.Contains(prtgOnly.TopIssues, issue => issue.EventKey == PrtgEventKey("down", 2001));
             return;
         }
 

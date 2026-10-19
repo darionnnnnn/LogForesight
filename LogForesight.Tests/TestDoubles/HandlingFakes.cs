@@ -182,7 +182,7 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
     PagedResult<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey, bool ascending) =>
         throw new NotImplementedException();
 
-    HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to) =>
+    HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly) =>
         throw new NotImplementedException();
 
     List<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPendingAi(int batchSize)

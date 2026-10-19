@@ -162,6 +162,10 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_extract_version", "extract_version");
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records",
             "IX_lf_daily_records_ai_pending_record_date", "ai_pending, record_date");
+        // 日誌來源抽出欄：舊列預設 0（Unknown），DailyRecordBackfiller 版本 3 依 ContentJson 回填。
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "log_source",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "smallint NOT NULL DEFAULT 0");
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_src_date", "log_source, record_date");
         // 慢查詢修正（回饋三十六輪批次B）：可行動快照的「risk_level IN + 日期範圍」篩選
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_risk_date", "risk_level, record_date");
 

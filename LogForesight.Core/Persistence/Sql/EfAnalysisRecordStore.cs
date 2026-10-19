@@ -97,6 +97,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var sw = Stopwatch.StartNew();
         var shaped = RecordStorageShaper.ForStorage(record);
         long appendedRecordId = 0;
+        // 同主機日已有「只因 PRTG 建立」的紀錄時，日誌分析晚到要原地更新那一列（record id 不變：
+        // 問題子列、案件成員、郵件連結都掛在 id 上），再把原本的 PRTG finding 併回來。
+        List<LogIssueSignature>? carriedPrtgFindings = null;
 
         // 主列與問題子列必須同進退——分兩次 SaveChanges 但不包交易時，子列寫入失敗會留下
         // 一筆「沒有問題列」的紀錄，SQL 聚合（IIssueAggregateQuery）會靜默漏算這一天。
@@ -110,6 +113,23 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             using var ctx = _contextFactory();
             using var tx = ctx.Database.BeginTransaction();
+
+            carriedPrtgFindings = null;
+            var prtgOnly = shaped.LogSource == AnalysisLogSource.Prtg ? null : ctx.DailyRecords
+                .FirstOrDefault(r => r.HostId == shaped.HostId && r.RecordDate == shaped.Date.Date &&
+                    r.LogSource == (short)AnalysisLogSource.Prtg);
+            if (prtgOnly != null)
+            {
+                carriedPrtgFindings = Deserialize(prtgOnly).TopIssues.Where(PrtgFindingMapper.IsPrtg).ToList();
+                FillRow(prtgOnly, shaped);
+                ctx.TopIssues.Where(t => t.RecordId == prtgOnly.RecordId).ExecuteDelete();
+                foreach (var issue in shaped.TopIssues)
+                    ctx.TopIssues.Add(MapToTopIssueRow(prtgOnly.RecordId, shaped.HostId, shaped.Date, issue));
+                ctx.SaveChanges();
+                tx.Commit();
+                appendedRecordId = prtgOnly.RecordId;
+                return;
+            }
 
             var row = new DailyRecordRow
             {
@@ -133,6 +153,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 WarningCount = shaped.WarningCount,
                 AiAnalyzed = shaped.AiAnalyzed,
                 AiPending = shaped.AiPending,
+                LogSource = (short)shaped.LogSource,
                 ExtractVersion = DailyRecordBackfiller.CurrentVersion
             };
             ctx.DailyRecords.Add(row);
@@ -147,6 +168,23 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             tx.Commit();
         });
         record.RecordId = appendedRecordId;
+        if (carriedPrtgFindings is { Count: > 0 })
+        {
+            // 走與 PRTG 補追加同一條合併邏輯（NetIQ 下限、只升不降、跨來源佐證、子列）；
+            // 關聯抑制模式在這裡拿不到，佐證以空集合計，下一趟每日評估補追加時會再校正。
+            AttachPrtgFindings(shaped.HostId, shaped.Date, carriedPrtgFindings, new HashSet<string>(), out _,
+                aiConfigured: shaped.AiPending);
+            using var readBack = _contextFactory();
+            if (readBack.DailyRecords.AsNoTracking().FirstOrDefault(r => r.RecordId == appendedRecordId) is { } mergedRow &&
+                Deserialize(mergedRow) is var merged)
+            {
+                record.TopIssues = merged.TopIssues;
+                record.RiskLevel = merged.RiskLevel;
+                record.RiskBasis = merged.RiskBasis;
+                record.PrtgBaselineRiskLevel = merged.PrtgBaselineRiskLevel;
+                record.PrtgBaselineRiskBasis = merged.PrtgBaselineRiskBasis;
+            }
+        }
 
         // 機房首見日（回饋十九輪批次B）：獨立於主交易之外——這是輔助的呈現用資料，
         // 不該因為它偶發的並發競態（見 UpsertFirstSeen）而讓當天的分析結果整筆遺失。
@@ -154,6 +192,58 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
         Log.Info("[SQL] Append 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，{Ms}ms",
             shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count, sw.ElapsedMilliseconds);
+    }
+
+    /// <summary>新列與原地更新共用的欄位填寫（抽出欄必須與 ContentJson 同步）。</summary>
+    private static void FillRow(DailyRecordRow row, DailyAnalysisRecord shaped)
+    {
+        row.HostName = shaped.Host;
+        row.RiskLevel = shaped.RiskLevel;
+        row.HasCorrelation = shaped.CorrelationAlerts.Count > 0;
+        row.WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date;
+        row.ContentJson = JsonSerializer.Serialize(shaped);
+        row.RiskProjectionVersion = PrtgHistoricalRiskReview.Version;
+        row.RiskReviewStatus = shaped.RiskReview?.Status ?? "current";
+        row.Headline = shaped.Headline;
+        row.DataIncomplete = shaped.DataIncomplete;
+        row.SecurityLogAvailable = shaped.SecurityLogAvailable;
+        row.ErrorCount = shaped.ErrorCount;
+        row.WarningCount = shaped.WarningCount;
+        row.AiAnalyzed = shaped.AiAnalyzed;
+        row.AiPending = shaped.AiPending;
+        row.LogSource = (short)shaped.LogSource;
+        row.ExtractVersion = DailyRecordBackfiller.CurrentVersion;
+    }
+
+    /// <summary>
+    /// 只有 PRTG finding、當日沒有日誌分析的主機日（<see cref="AnalysisLogSource.Prtg"/>）：同主機日已有任何紀錄時不建立、回 false
+    /// （呼叫端改走一般的補追加）。至少要有一筆未抑制的 finding 才建——只剩被抑制的 finding 沒有理由造一筆主機日。
+    /// </summary>
+    public bool AppendPrtgOnlyIfAbsent(long hostId, string hostName, DateTime date,
+        IReadOnlyList<LogIssueSignature> findings, bool aiConfigured)
+    {
+        if (hostId <= 0 || !findings.Any(f => PrtgFindingMapper.IsPrtg(f) && !f.Suppressed)) return false;
+        var prtgFindings = findings.Where(PrtgFindingMapper.IsPrtg).ToList();
+        lock (LockFor(hostId, date))
+        {
+            using (var probe = _contextFactory())
+                if (probe.DailyRecords.Any(r => r.HostId == hostId && r.RecordDate == date.Date)) return false;
+            var risk = PrtgFindingMapper.RiskFromFindings(prtgFindings);
+            var record = new DailyAnalysisRecord
+            {
+                HostId = hostId,
+                Host = hostName,
+                Date = date.Date,
+                LogSource = AnalysisLogSource.Prtg,
+                TopIssues = prtgFindings,
+                RiskLevel = risk,
+                RiskBasis = PrtgFindingMapper.RiskBasisFrom(prtgFindings),
+                PrtgBaselineRiskLevel = RiskLevels.Low,
+                AiPending = aiConfigured && risk != RiskLevels.Low
+            };
+            Append(record);
+            return true;
+        }
     }
 
     /// <summary>
@@ -958,13 +1048,15 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     public bool HasAnyRecord()
     {
         using var ctx = _contextFactory();
-        return OwnedRows(ctx).Any();
+        // 只有 PRTG finding 的主機日不是日誌分析過的日子：首次回望長度與週檢都以日誌分析為準。
+        return OwnedRows(ctx).Any(r => r.LogSource != (short)AnalysisLogSource.Prtg);
     }
 
+    /// <summary>該日是否已有日誌分析紀錄（重跑候選）；只有 PRTG finding 的主機日不算——它是待分析的缺日，不是重跑對象。</summary>
     public bool HasRecord(DateTime date)
     {
         using var ctx = _contextFactory();
-        return OwnedRows(ctx).Any(r => r.RecordDate == date.Date);
+        return OwnedRows(ctx).Any(r => r.RecordDate == date.Date && r.LogSource != (short)AnalysisLogSource.Prtg);
     }
 
     public DateTime? LastWeeklyCheckupDate()
@@ -1177,7 +1269,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             {
                 r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.HasCorrelation,
                 r.Headline, r.ErrorCount, r.WarningCount, r.DataIncomplete, r.SecurityLogAvailable,
-                r.AiAnalyzed, r.AiPending, r.DetailPruned
+                r.AiAnalyzed, r.AiPending, r.DetailPruned, r.LogSource
             })
             .ToList();
 
@@ -1199,6 +1291,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             AiAnalyzed = r.AiAnalyzed,
             AiPending = r.AiPending,
             DetailPruned = r.DetailPruned,
+            LogSource = (AnalysisLogSource)r.LogSource,
             // 輕量列沒有整份關聯訊號內容（那要整份 blob）——呼叫端（RecordListQueryService.ToListItem）
             // 只檢查 Count > 0，用單一佔位元素表達「有」就夠，內容本身不會被讀取
             CorrelationAlerts = r.HasCorrelation ? new List<string> { "(lightweight)" } : new List<string>(),
@@ -1499,14 +1592,15 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         };
     }
 
-    public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to)
+    public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly = false)
     {
         var f = from.Date;
         var t = to.Date;
 
         using var ctx = _contextFactory();
         return ctx.DailyRecords
-            .Where(r => r.RecordDate >= f && r.RecordDate <= t && r.HostId != 0)
+            .Where(r => r.RecordDate >= f && r.RecordDate <= t && r.HostId != 0 &&
+                (!logAnalysisOnly || r.LogSource != (short)AnalysisLogSource.Prtg))
             .Select(r => new { r.HostId, r.RecordDate })
             .ToList()
             .Select(x => (x.HostId, x.RecordDate))
@@ -1749,6 +1843,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 Date = row.RecordDate,
                 RiskLevel = row.RiskLevel,
                 AiPending = row.AiPending,
+                // 詳情已清的列沒有 ContentJson，來源只剩抽出欄（涵蓋類統計要靠它排除 PRTG 獨立主機日）
+                LogSource = (AnalysisLogSource)row.LogSource,
                 RiskReview = row.RiskReviewStatus is "pending" or "unavailable" ? new HistoricalRiskReview
                 { Version = row.RiskProjectionVersion, Status = "pending", Reason = "歷史風險待重評：詳情已精簡，無法重建獨立證據。" } : null,
                 DetailPruned = true

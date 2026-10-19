@@ -294,7 +294,11 @@ function renderHeader(detail) {
     }
 
     body.appendChild(top);
-    if (detail.logSource) {
+    if (detail.logSource === 'Prtg') {
+        const source = document.createElement('p'); source.className = 'small text-muted';
+        source.textContent = '日誌來源：PRTG。當日沒有日誌分析，這一天只有 PRTG 訊號；之後若補到日誌分析，會更新為同一筆紀錄並保留這些 PRTG 問題。';
+        body.appendChild(source);
+    } else if (detail.logSource) {
         const source = document.createElement('p'); source.className = 'small text-muted';
         const status = detail.latestNetiqAttemptStatus ?? '已保存的分析結果';
         source.textContent = `日誌來源：${detail.logSource}；最新 NetIQ 嘗試：${status}。${detail.prtgSupplementEligible

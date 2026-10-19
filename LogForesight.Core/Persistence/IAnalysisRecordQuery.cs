@@ -117,7 +117,8 @@ public interface IAnalysisRecordQuery
     /// 只投影 HostId／RecordDate，不反序列化整份 ContentJson——避免逐格查詢在兩千台規模下退化成
     /// 全量載入。HostId=0（舊列／無主機識別）不列入，NetIQ 紀錄必有真實 HostId。
     /// </summary>
-    HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to);
+    /// <param name="logAnalysisOnly">true＝排除只有 PRTG finding 的主機日（執行監看、涵蓋類統計用）。</param>
+    HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly = false);
 
     /// <summary>
     /// 取一批待補 AI 的主機日（批次C）：條件 ai_pending = true，依日期新到舊排序。

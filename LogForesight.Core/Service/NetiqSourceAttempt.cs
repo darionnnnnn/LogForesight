@@ -149,7 +149,7 @@ public static class NetiqSourceAttempt
             : "CASE WHEN source.source_count > 1 THEN 2 ELSE CONVERT(int, source.source_count) END";
         var sourceValid = sqlite
             ? $"CASE WHEN {sourceCount} = 1 AND json_type({safeJson}, '$.LogSource') = 'integer' " +
-              $"AND json_extract({safeJson}, '$.LogSource') IN (0, 1, 2) THEN 1 ELSE 0 END"
+              $"AND json_extract({safeJson}, '$.LogSource') IN (0, 1, 2, 3) THEN 1 ELSE 0 END"
             : "COALESCE(source.source_valid, 0)";
         var sourceEnum = sqlite
             ? $"CASE WHEN {sourceValid} = 1 THEN CAST(json_extract({safeJson}, '$.LogSource') AS INTEGER) END"
@@ -163,8 +163,8 @@ public static class NetiqSourceAttempt
         var sourceApply = sqlite
             ? ""
             : " OUTER APPLY (SELECT COUNT_BIG(CASE WHEN [key] = N'LogSource' THEN 1 END) AS source_count, " +
-              "MAX(CASE WHEN [key] = N'LogSource' AND [type] = 2 AND [value] IN (N'0', N'1', N'2') THEN TRY_CONVERT(int, [value]) END) AS source_enum, " +
-              "MAX(CASE WHEN [key] = N'LogSource' AND [type] = 2 AND [value] IN (N'0', N'1', N'2') THEN 1 ELSE 0 END) AS source_valid, " +
+              "MAX(CASE WHEN [key] = N'LogSource' AND [type] = 2 AND [value] IN (N'0', N'1', N'2', N'3') THEN TRY_CONVERT(int, [value]) END) AS source_enum, " +
+              "MAX(CASE WHEN [key] = N'LogSource' AND [type] = 2 AND [value] IN (N'0', N'1', N'2', N'3') THEN 1 ELSE 0 END) AS source_valid, " +
               "COUNT_BIG(CASE WHEN [key] = N'LatestNetiqAttemptStatus' THEN 1 END) AS attempt_status_count, " +
               "COUNT_BIG(CASE WHEN [key] = N'LatestNetiqAttemptAtUtc' THEN 1 END) AS attempt_at_count " +
               $"FROM OPENJSON({safeJson})) source";

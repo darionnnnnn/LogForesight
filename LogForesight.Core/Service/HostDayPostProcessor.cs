@@ -18,7 +18,9 @@ internal static class MissingDateFinder
     public static MissingDateScanResult FindWithExistingDates(
         IAnalysisRecordReader store, int lookbackDays, bool requireAi = false, bool useAi = true)
     {
-        var recent = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays);
+        // 只有 PRTG finding 的主機日不算「已分析」：日誌分析仍要補這一天，寫入時原地更新那一列。
+        var recent = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
+            .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
         var existingRecordDates = recent.Select(r => r.Date.Date).ToHashSet();
         var existingNetiqDates = recent.Where(r => r.LogSource == AnalysisLogSource.Netiq)
             .Select(r => r.Date.Date).ToHashSet();
