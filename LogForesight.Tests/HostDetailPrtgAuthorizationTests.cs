@@ -53,7 +53,7 @@ public class HostDetailPrtgAuthorizationTests : IDisposable
     {
         var store = new EfPrtgStore(_fx.NewContext);
         var assessment = new PrtgValueAssessment(store, new Dictionary<string, PrtgValueSemantic>());
-        return new(null!, store, new OnlyVisible(visibleHostId, ipAddress, caseGrantOnly), assessment);
+        return new(null!, store, new OnlyVisible(visibleHostId, ipAddress, caseGrantOnly), assessment, new FakeRuleStore());
     }
 
     [Fact]

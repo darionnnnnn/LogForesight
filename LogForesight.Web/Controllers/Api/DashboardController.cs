@@ -136,17 +136,20 @@ public class HostDetailController : ControllerBase
     private readonly EfPrtgStore _prtgStore;
     private readonly IVisibilityService _visibility;
     private readonly PrtgValueAssessment _valueAssessment;
+    private readonly IKnownIssueRuleStore _rules;
 
     public HostDetailController(
         RecordDetailQueryService service,
         EfPrtgStore prtgStore,
         IVisibilityService visibility,
-        PrtgValueAssessment valueAssessment)
+        PrtgValueAssessment valueAssessment,
+        IKnownIssueRuleStore rules)
     {
         _service = service;
         _prtgStore = prtgStore;
         _visibility = visibility;
         _valueAssessment = valueAssessment;
+        _rules = rules;
     }
 
     [HttpGet("{hostId:long}")]
@@ -248,7 +251,9 @@ public class HostDetailController : ControllerBase
             (PrtgRuleEvaluator.RulePingLatencyTrend, PrtgSensorCategories.Availability)
         };
 
-        var allRules = KnownIssueCatalog.Rules;
+        // 讀規則庫而非 KnownIssueCatalog.Rules：Web 行程不呼叫 Initialize（Program.cs），後者在夜間執行前是 seed、
+        // 之後是上一趟的快照，管理者改過的窗口／最少有效日會對不上規則頁與下一趟管線
+        var allRules = KnownIssueCatalog.ResolveRules(_rules);
 
         foreach (var (code, category) in trendRules)
         {

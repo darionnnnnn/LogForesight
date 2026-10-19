@@ -337,7 +337,7 @@ public sealed class PrtgTrendEvidenceTests : IDisposable
 
         var store = new EfPrtgStore(NewContext);
         var assessment = new PrtgValueAssessment(store, new Dictionary<string, PrtgValueSemantic>());
-        var controller = new HostDetailController(null!, store, new StubVisibility(hostId), assessment);
+        var controller = new HostDetailController(null!, store, new StubVisibility(hostId), assessment, new FakeRuleStore());
 
         var result = controller.Prtg(hostId).Data;
         Assert.NotNull(result);
@@ -364,6 +364,22 @@ public sealed class PrtgTrendEvidenceTests : IDisposable
         Assert.Equal("單位未知", cpuSensor.ValueReason);
         Assert.Equal(0, cpuSensor.ValidDays);
         Assert.Equal(28, cpuSensor.RequiredDays);
+
+        // 主機詳情要讀規則庫（管理者改過的門檻），不是 KnownIssueCatalog 的 seed 快照：
+        // 規則庫把記憶體規則的最少有效日改成 10 → 同一顆 sensor 就緒、RequiredDays 跟著變
+        var edited = KnownIssueSeed.CreateRules().Where(r => r.PrtgRuleCode != PrtgRuleEvaluator.RuleMemoryUsedTrend).ToList();
+        edited.Add(new KnownIssueRule
+        {
+            Id = "builtin-prtg-memory-used-trend", Origin = "builtin", Enabled = true, Scope = "all", Platform = "prtg",
+            PrtgRuleCode = PrtgRuleEvaluator.RuleMemoryUsedTrend, PrtgSensorCategory = PrtgSensorCategories.Memory,
+            PrtgTrendThresholds = PrtgTrendThresholds.MemoryProvisional with { MinimumValidDays = 10 },
+            Category = IssueCategory.Resource, Severity = IssueSeverity.High, Description = "edited", CountThreshold = 1
+        });
+        var editedStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = edited } };
+        var editedController = new HostDetailController(null!, store, new StubVisibility(hostId), assessment, editedStore);
+        var editedMem = Assert.Single(editedController.Prtg(hostId).Data!.Devices).Sensors.Single(s => s.Objid == 2001);
+        Assert.Equal(10, editedMem.RequiredDays);
+        Assert.Equal(nameof(PrtgValueReason.Ready), editedMem.ValueReasonCode);
     }
 
     [Fact]
