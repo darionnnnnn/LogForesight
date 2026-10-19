@@ -188,8 +188,8 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     private PrtgRecentStateChangeQueueItem QueueItemForDevice(long deviceObjid) =>
-        Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue()
-            .Where(item => item.DeviceObjid == deviceObjid));
+        Assert.Single(_backend.PrtgStore().ReadRecentStateChangeQueue(),
+            item => item.DeviceObjid == deviceObjid);
 
     private WebHost SeedManualBusinessDevice(long deviceObjid)
     {
@@ -295,7 +295,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             url.Contains($"id={deviceId}", StringComparison.Ordinal));
         var queueRows = _backend.PrtgStore().ReadRecentStateChangeQueue();
         Assert.Equal(2, queueRows.Count);
-        var queued = Assert.Single(queueRows.Where(item => item.DeviceObjid == deviceId));
+        var queued = Assert.Single(queueRows, item => item.DeviceObjid == deviceId);
         Assert.NotNull(queued.CompletedAtUtc);
         Assert.Equal(today.AddDays(-1), queued.FromLocalDate);
         Assert.Equal(today, queued.ToLocalDate);
@@ -2678,7 +2678,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             return Task.FromResult(FilteredValues(url));
         };
         await service.TickAsync();
-        Assert.Single(purposes.Where(p => IsSnapshotUrl(p.Url)));
+        Assert.Single(purposes, p => IsSnapshotUrl(p.Url));
         Assert.All(purposes.Where(p => IsSnapshotUrl(p.Url)), p => Assert.Equal(PrtgRequestPurpose.Snapshot, p.Purpose));
         var backfill = purposes.Where(p => IsParentLookupUrl(p.Url) || IsBackfillUrl(p.Url)).ToArray();
         Assert.True(backfill.Length >= 2);

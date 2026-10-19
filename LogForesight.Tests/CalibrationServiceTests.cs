@@ -729,7 +729,7 @@ public class CalibrationServiceTests : IDisposable
         {
             s.PrtgEnabled = currentSettings.PrtgEnabled; s.PrtgUrl = currentSettings.PrtgUrl;
             s.PrtgRetentionDays = currentSettings.PrtgRetentionDays; s.PrtgFetchStrategy = currentSettings.PrtgFetchStrategy;
-            s.PrtgSensorTypeWhitelist = currentSettings.PrtgSensorTypeWhitelist?.ToList();
+            s.PrtgSensorTypeWhitelist = currentSettings.PrtgSensorTypeWhitelist?.ToList()!;
         });
         var otherPrtg = new EfPrtgStore(otherFx.NewContext);
         otherPrtg.UpsertSensors([new PrtgSensorRow { Objid = 1001, DeviceObjid = 10, SensorType = "Ping", Category = "availability", Status = "Up", Paused = false }], DateTime.Now);
@@ -1502,7 +1502,7 @@ public class CalibrationServiceTests : IDisposable
             .Select(r => r.SensorObjid)
             .OrderBy(x => x)
             .ToList();
-        Assert.Equal(new long[] { 2001, 2002 }, downSensors.Select(x => (long)x).ToArray());
+        Assert.Equal(new long[] { 2001, 2002 }, downSensors.Select(x => (long)x!).ToArray());
     }
 
     /// <summary>

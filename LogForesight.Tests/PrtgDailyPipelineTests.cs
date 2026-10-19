@@ -216,7 +216,7 @@ public class PrtgDailyPipelineTests : IDisposable
             .GetRun(ctx.RunRecorder.RunId);
         Assert.Equal(BatchRun.PrtgOutcomePartial, run!.PrtgOutcome);
         Assert.Equal(new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) }, run.PrtgDays!.Select(stat => stat.Date));
-        Assert.All(run.PrtgDays, stat =>
+        Assert.All(run.PrtgDays!, stat =>
         {
             Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
             Assert.Equal(0, stat.Findings);
@@ -268,7 +268,7 @@ public class PrtgDailyPipelineTests : IDisposable
             .GetRun(ctx.RunRecorder.RunId)!;
         Assert.Equal(BatchRun.PrtgOutcomePartial, run.PrtgOutcome);
         Assert.Equal(days, run.PrtgDays!.Select(stat => stat.Date));
-        Assert.All(run.PrtgDays, stat =>
+        Assert.All(run.PrtgDays!, stat =>
         {
             Assert.Equal(BatchRun.PrtgOutcomePartial, stat.Outcome);
             Assert.Contains("作業已取消", stat.Note);
@@ -1077,8 +1077,8 @@ public class PrtgDailyPipelineTests : IDisposable
         var finding = Assert.Single(silentFindings);
         var persisted = Assert.Single(_backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName })
             .ReadRecent(day, 1));
-        var persistedSilent = Assert.Single(persisted.TopIssues.Where(issue =>
-            issue.EventKey == $"prtg:{PrtgRuleEvaluator.RuleSilent}:{deviceId}"));
+        var persistedSilent = Assert.Single(persisted.TopIssues, issue =>
+            issue.EventKey == $"prtg:{PrtgRuleEvaluator.RuleSilent}:{deviceId}");
         Assert.Equal(finding.EventKey, persistedSilent.EventKey);
         Assert.Equal(1, persistedSilent.Count);
     }

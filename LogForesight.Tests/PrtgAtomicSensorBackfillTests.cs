@@ -81,7 +81,7 @@ public sealed class PrtgAtomicSensorBackfillTests : IDisposable
         using (var context = NewContext()) context.Database.ExecuteSqlRaw("DROP TRIGGER fail_sensor_second_batch_with_queue;");
         Assert.Equal(501, store.UpsertSensorsAndEnqueueRecentStateChanges(sensors, DateTime.Now, item));
         Assert.Equal(501, store.GetAllSensors().Count);
-        Assert.Equal(1, store.ReadRecentStateChangeQueue().Count);
+        Assert.Single(store.ReadRecentStateChangeQueue());
         Assert.Equal(2, store.ReadCatalogueDataRevision());
     }
 

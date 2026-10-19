@@ -157,7 +157,7 @@ public class NetiqEvidenceMetadataProbeTests
                 "sev:[0 TO 5]", DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow,
                 PageSize: 2, MaxResults: 4, RawFields: true, MaxPages: 1)));
             Assert.Equal("page-limit", exception.SafeCode);
-            Assert.Single(handler.Requests.Where(request => request.Url.Contains("page=1", StringComparison.Ordinal)));
+            Assert.Single(handler.Requests, request => request.Url.Contains("page=1", StringComparison.Ordinal));
             Assert.DoesNotContain(handler.Requests, request => request.Url.Contains("page=2", StringComparison.Ordinal));
         }
         finally
@@ -215,6 +215,7 @@ public class NetiqEvidenceMetadataProbeTests
     public async Task BoundedProbeRejectsResponseProvidedCrossOriginOrDowngradeUris(
         string source, string jobLocation, string resultsHref)
     {
+        _ = source;
         var handler = new ProbeHandler(PageResponse("[]"),
             jobLocation: string.IsNullOrEmpty(jobLocation) ? null : new Uri(jobLocation),
             resultsHref: string.IsNullOrEmpty(resultsHref) ? null : resultsHref);

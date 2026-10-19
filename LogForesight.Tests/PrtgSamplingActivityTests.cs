@@ -54,7 +54,7 @@ public sealed class PrtgSamplingActivityTests
             });
             start.Set();
             await Task.WhenAll(admit, sample);
-            using (sample.Result)
+            using (await sample)
             {
                 Assert.False(activity.TryBeginBackground(out _));
                 if (background != null) Assert.True(background.WasPreempted);

@@ -2334,7 +2334,7 @@ public class MailNotificationServiceTests : IDisposable
 
         var afterRetry = stateStore.Get();
         Assert.Equal("no-qualified-recipient", afterRetry.UrgentOutbox[key].Status);
-        Assert.Equal(1, _sender.Attempts.Count);
+        Assert.Single(_sender.Attempts);
         Assert.Single(_sender.Sent);
     }
 

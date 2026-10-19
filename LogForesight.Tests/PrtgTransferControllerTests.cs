@@ -292,7 +292,7 @@ public sealed class PrtgTransferControllerTests
     }
 
     [Fact]
-    public void UploadDoesNotReadBodyBeforeDurableAdmissionAndBindingChangesRejectOldTransfer()
+    public async Task UploadDoesNotReadBodyBeforeDurableAdmissionAndBindingChangesRejectOldTransfer()
     {
         using var fixture = new TransferFixture();
         var transferId = fixture.CreateTransfer();
@@ -309,7 +309,7 @@ public sealed class PrtgTransferControllerTests
         http.Request.ContentType = "application/octet-stream";
         var controller = fixture.Controller;
         controller.ControllerContext = new ControllerContext { HttpContext = http };
-        var denied = Assert.IsType<ObjectResult>(controller.PutChunk(transferId, 0, CancellationToken.None).GetAwaiter().GetResult());
+        var denied = Assert.IsType<ObjectResult>(await controller.PutChunk(transferId, 0, CancellationToken.None));
         Assert.Equal(409, denied.StatusCode);
         Assert.Equal(0, body.ReadCount);
         store.ReleaseChunkWrite(held, binding, DateTimeOffset.UtcNow);
@@ -322,7 +322,7 @@ public sealed class PrtgTransferControllerTests
         truncatedHttp.Request.ContentType = "application/octet-stream";
         controller.ControllerContext = new ControllerContext { HttpContext = truncatedHttp };
         var truncated = Assert.IsType<BadRequestObjectResult>(
-            controller.PutChunk(transferId, 0, CancellationToken.None).GetAwaiter().GetResult());
+            await controller.PutChunk(transferId, 0, CancellationToken.None));
         Assert.Equal(400, truncated.StatusCode);
         Assert.True(truncatedBody.ReadCount > 0);
         Assert.Equal(0, store.GetStatus(transferId, binding).ReceivedBytes);
@@ -333,8 +333,8 @@ public sealed class PrtgTransferControllerTests
         cancelledHttp.Request.ContentLength = expectedBytes;
         cancelledHttp.Request.ContentType = "application/octet-stream";
         controller.ControllerContext = new ControllerContext { HttpContext = cancelledHttp };
-        var cancelled = Assert.IsType<ObjectResult>(controller.PutChunk(transferId, 0,
-            new CancellationToken(canceled: true)).GetAwaiter().GetResult());
+        var cancelled = Assert.IsType<ObjectResult>(await controller.PutChunk(transferId, 0,
+            new CancellationToken(canceled: true)));
         Assert.Equal(499, cancelled.StatusCode);
         Assert.Equal(0, store.GetStatus(transferId, binding).ReceivedBytes);
 

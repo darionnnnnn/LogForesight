@@ -353,11 +353,13 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
                 .Select(record => record.RecordId));
 
         using (var context = _backend.CreateContext())
-            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(context.Database, $"""
-                CREATE TRIGGER fail_first_four_report_parents BEFORE UPDATE ON lf_daily_records
-                WHEN OLD.record_id IN ({string.Join(",", persisted.Take(4).Select(record => record.RecordId))})
-                BEGIN SELECT RAISE(ABORT, 'fixture keeps first report rows failing'); END;
-                """);
+        {
+            // ID 來源為測試 fixture 常數，SQLite CREATE TRIGGER 不支援參數化，故改用字串串接
+            var triggerSql = "CREATE TRIGGER fail_first_four_report_parents BEFORE UPDATE ON lf_daily_records\n" +
+                "WHEN OLD.record_id IN (" + string.Join(",", persisted.Take(4).Select(record => record.RecordId)) + ")\n" +
+                "BEGIN SELECT RAISE(ABORT, 'fixture keeps first report rows failing'); END;";
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(context.Database, triggerSql);
+        }
 
         HostDayWorkflowRecoveryHostedService CreateWorker() => new(
             (IAnalysisRecordQuery)_backend.RecordStore(), _backend, RecoverySettings(),

@@ -32,12 +32,12 @@ public sealed class PrtgDiagnosticExportSourceTests
             items.Add(item);
 
         Assert.Equal(205, items.Count(item => item.PropertyName == "Devices"));
-        Assert.Single(items.Where(item => item.PropertyName == "Sensors"));
-        Assert.Single(items.Where(item => item.PropertyName == "StateChanges"));
-        Assert.Single(items.Where(item => item.PropertyName == "Values"));
-        Assert.Single(items.Where(item => item.PropertyName == "HostMaps"));
-        Assert.Single(items.Where(item => item.PropertyName == "ManualMaps"));
-        Assert.Single(items.Where(item => item.PropertyName == "Observations"));
+        Assert.Single(items, item => item.PropertyName == "Sensors");
+        Assert.Single(items, item => item.PropertyName == "StateChanges");
+        Assert.Single(items, item => item.PropertyName == "Values");
+        Assert.Single(items, item => item.PropertyName == "HostMaps");
+        Assert.Single(items, item => item.PropertyName == "ManualMaps");
+        Assert.Single(items, item => item.PropertyName == "Observations");
         // 三組舊陣列名稱保留給舊匯入檔相容，現行匯出不輸出任何列。
         Assert.DoesNotContain(items, item => item.PropertyName is "Timelines" or "SemanticEvidence" or "SemanticResults");
         Assert.Equal("ManualMaps", items[items.FindIndex(item => item.PropertyName == "SourcePolicy") - 1].PropertyName);
