@@ -408,6 +408,7 @@
 | B5 | Claude(Opus,Windows) | 盤點 PRTG blob key:11 個仍在用的 key 與讀寫端寫進 DB-SPEC「PRTG 相關儲存」;單例狀態維持 blob。原規劃的 `PrtgResourceIdentityStore` 已隨 B1 刪除,無需改正式表 | 每個 key 以 grep 對到讀寫端 | 退役 key 清單(升級時不可逆刪除)同列於 DB-SPEC |
 | E | Claude(Opus,Windows) | PRTG-SPEC 重寫為現況(1,347 → 500 行,保留被程式碼引用的 § 編號,新增 §9a 四條趨勢規則、§9b 數值評估與就緒度);DB-SPEC「PRTG 相關儲存」(blob key 讀寫端、退役 key、log_source);DETECTION-SPEC、WEB-SPEC(維護頁、主機詳情、規則頁、尾段刪可信取樣時期段落)、BACKLOG、兩版 HelpContent 重寫;README 升級說明;CLAUDE.md 新增「數值不再加閘」與新基線 | 說明書定向 58 通過;PRTG-SPEC 掃敘事字眼零命中 | — |
 | 整套 | Claude(Opus,Windows) | 第一次全量 27 筆失敗:C5 的誤報窗往前 30 天遇 `DateTime.MinValue` 溢位(依問題視角整批丟例外)、校準匯出測試仍斷言 9 條規則;修正並補邊界測試 | **6,241 通過／10 略過**;Core／Web 建置 0 警告,測試專案 43 筆分析器警告為本輪之前既有(本輪新增 2 筆已修) | 教訓:定向篩選只涵蓋規格點名的類別,改共用判定(狀態解析骨架)時要 grep 全部呼叫端並把它們的測試類別納入篩選 |
+| 收尾複檢 | Claude＋agy(flash-high,Windows) | 依 §5 逐條比對程式碼補三個落差:(1) C2 消費端矩陣的紀錄清單「PRTG」徽章(`RecordListItemDto.PrtgOnly`);(2) B1 資料條款的啟動期提示——升級刪退役 blob 改寫 Warn(筆數、不可回復、回退須還原備份);(3) 每段驗收的「建置 0 警告」——測試專案 45 筆既有分析器／可空性警告清除(agy) | `dotnet build --no-incremental` 0 警告 0 錯誤;定向 115＋102 通過;新增 PrtgOnly 清單測試 | 未再跑整套:改動為清單 DTO／JS、一行 log 層級與測試檔機械修正,受影響類別已定向驗證;基線 6,241＋1 新測試 |
 
 ## 8. 規劃複檢(2026-10-15)
 
