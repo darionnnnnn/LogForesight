@@ -419,6 +419,20 @@ public class FrontendConsistencyUiTests
     }
 
     [Fact]
+    public void 回覆與交辦modal_即時檢查預計完成日_派工成功帶單號連結_取消交辦文字依通知開關()
+    {
+        foreach (var page in new[] { "issue-status-reply.js", "records.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.Contains("預計完成日不可早於今天", js);
+            Assert.Contains("aria-live", js);
+        }
+
+        Assert.Contains("/work-orders/", ReadJs("pages", "records.js"));
+        Assert.Contains("mailWorkOrdersEnabled", ReadJs("pages", "work-order-detail.js"));
+    }
+
+    [Fact]
     public void 日層級指派改為預覽後確認一次送出_下拉變更不直接寫入()
     {
         var js = ReadJs("pages", "handling-panel.js");

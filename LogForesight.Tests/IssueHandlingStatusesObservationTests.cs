@@ -82,6 +82,19 @@ public class IssueHandlingStatusesObservationTests
     }
 
     [Fact]
+    public void 回覆驗證_open被擋_管理視角的Validate清除open仍可用()
+    {
+        var ex = Assert.Throws<LogForesight.Web.Models.DomainException>(() =>
+            LogForesight.Web.Services.IssueStatusValidation.ValidateReply(IssueHandlingStatuses.Open, null, null));
+        Assert.Contains("未處理", ex.Message);
+
+        // 詳情頁逐筆標記走 Validate：調回未處理（clearing）是既有功能，不受回覆限制影響
+        LogForesight.Web.Services.IssueStatusValidation.Validate(IssueHandlingStatuses.Open, null, clearing: true, null);
+        // 其餘狀態回覆仍照共用規則
+        LogForesight.Web.Services.IssueStatusValidation.ValidateReply(IssueHandlingStatuses.Resolved, null, null);
+    }
+
+    [Fact]
     public void ComposeLogNote_非觀察中狀態原樣回傳不加後綴()
     {
         Assert.Equal("已聯絡機房", IssueHandlingStatuses.ComposeLogNote(

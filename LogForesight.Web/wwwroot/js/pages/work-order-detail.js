@@ -3,7 +3,8 @@
  * 包含單號標頭、成員清單、處理歷程時間軸與管理動作（改派、取消交辦、代為結案、拆出主機、複製 CSV）。
  */
 
-import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, canViewHandlerPage, getDisplaySettings } from '../core/api.js';
+import { HANDLING_STATUSES, statusesWhere } from '../core/handling-statuses.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable,
@@ -51,17 +52,9 @@ const ORIGIN_LABELS = {
     day_assign: '詳情頁指派'
 };
 
-// 問題層級狀態對照（同 issue-status-reply.js）
-const MEMBER_STATUS_META = {
-    open: { label: '未處理', variant: 'danger' },
-    in_progress: { label: '處理中', variant: 'primary' },
-    observing: { label: '觀察中', variant: 'primary' },
-    escalated: { label: '無法處理（上報）', variant: 'warning' },
-    resolved: { label: '已處理', variant: 'success' },
-    wont_fix: { label: '不處理', variant: 'success' },
-    false_positive: { label: '誤報', variant: 'success' },
-    known_noise: { label: '已知雜訊', variant: 'success' }
-};
+// 問題層級狀態對照：名稱與顏色由 core/handling-statuses.js 衍生（唯一來源）
+const MEMBER_STATUS_META = Object.fromEntries(
+    HANDLING_STATUSES.map(s => [s.value, { label: s.shortLabel, variant: s.variant }]));
 
 let currentUser = null;
 let currentDetail = null;
@@ -295,12 +288,7 @@ function openAdminCloseModal() {
 
     const statusSelect = document.createElement('select');
     statusSelect.className = 'form-select form-select-sm mb-3';
-    const closeStatuses = [
-        { value: 'resolved', label: '已處理' },
-        { value: 'wont_fix', label: '不處理' },
-        { value: 'false_positive', label: '誤報' },
-        { value: 'known_noise', label: '已知雜訊' }
-    ];
+    const closeStatuses = statusesWhere(s => s.closed).map(s => ({ value: s.value, label: s.shortLabel }));
     for (const opt of closeStatuses) {
         const option = document.createElement('option');
         option.value = opt.value;
@@ -458,9 +446,14 @@ function renderActions(detail, user) {
     cancelBtn.className = 'btn btn-sm btn-outline-danger';
     cancelBtn.textContent = '取消交辦';
     cancelBtn.addEventListener('click', async () => {
+        // 交辦通知預設關閉：依 mailWorkOrdersEnabled 說實話，避免承諾一封不會寄的信
+        const { mailWorkOrdersEnabled } = await getDisplaySettings();
+        const notifyText = mailWorkOrdersEnabled
+            ? '處理人會在下一封交辦摘要收到取消通知。'
+            : '目前未啟用交辦通知，請自行告知處理人。';
         const reason = await confirmActionWithReason({
             title: '取消交辦',
-            message: '取消後這張單的進行中主機會調回未處理，處理人會收到通知。',
+            message: `取消後這張單的進行中主機會調回未處理，${notifyText}`,
             reasonLabel: '取消原因',
             confirmText: '確定取消',
             confirmVariant: 'danger'

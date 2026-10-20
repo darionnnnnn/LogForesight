@@ -16,8 +16,9 @@ import { appUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
-    headerWithHelp, icon
+    headerWithHelp, icon, bindPastDateCheck
 } from '../core/ui.js';
+import { statusesWhere } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, CATEGORY_ORDER, severityName, formatNumber,
     formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
@@ -1319,12 +1320,7 @@ function renderBulkCloseForm(body, group, preview) {
     statusLabel.textContent = '結論';
     const statusSelect = document.createElement('select');
     statusSelect.className = 'form-select form-select-sm mb-3';
-    for (const option of [
-        { value: 'resolved', label: '已處理' },
-        { value: 'wont_fix', label: '不處理' },
-        { value: 'false_positive', label: '誤報' },
-        { value: 'known_noise', label: '已知雜訊' }
-    ]) {
+    for (const option of statusesWhere(s => s.closed).map(s => ({ value: s.value, label: s.shortLabel }))) {
         const el = document.createElement('option');
         el.value = option.value;
         el.textContent = option.label;
@@ -1661,11 +1657,16 @@ function renderWorkOrderForm(body, group, users, groups) {
 
     const dueLabel = document.createElement('label');
     dueLabel.className = 'form-label small text-muted';
-    dueLabel.textContent = '期限（選填）';
+    dueLabel.textContent = '預計完成日（選填）';
     const dueInput = document.createElement('input');
     dueInput.type = 'date';
-    dueInput.className = 'form-control form-control-sm mb-3';
-    form.append(dueLabel, dueInput);
+    dueInput.className = 'form-control form-control-sm';
+    // 預計完成日不可早於今天：change／blur 即時檢查，送出前再檢查一次（後端另有同一條防線）
+    const dueError = document.createElement('div');
+    dueError.className = 'invalid-feedback d-block mb-3';
+    dueError.setAttribute('aria-live', 'polite');
+    const dueCheck = bindPastDateCheck(dueInput, dueError, { message: '預計完成日不可早於今天' });
+    form.append(dueLabel, dueInput, dueError);
 
     // 4. 衝突處理
     const conflictWrap = document.createElement('div');
@@ -1933,6 +1934,11 @@ function renderWorkOrderForm(body, group, users, groups) {
             return;
         }
 
+        if (!dueCheck.validate()) {
+            dueInput.focus();
+            return;
+        }
+
         const payload = buildWorkOrderPayload(1);
         const restore = withBusy(submitBtn, '建立中');
 
@@ -1945,7 +1951,17 @@ function renderWorkOrderForm(body, group, users, groups) {
             const totalCases = orders.reduce((sum, o) => sum + (o.newCases || 0) + (o.linkedExisting || 0) + (o.reassigned || 0), 0);
 
             const noEmailNote = result.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : '';
-            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success');
+            // 單號連結：1 張直接「查看單號 #N」；多張列前 3 張，其餘以「等 N 張」連到第一張
+            const orderIds = [...new Set(orders.map(o => o.workOrderId))];
+            const orderHref = id => appUrl('/work-orders/' + id);
+            let orderLinks = [];
+            if (orderIds.length === 1) {
+                orderLinks = [{ href: orderHref(orderIds[0]), text: `查看單號 #${orderIds[0]}` }];
+            } else if (orderIds.length > 1) {
+                orderLinks = orderIds.slice(0, 3).map(id => ({ href: orderHref(id), text: `#${id}` }));
+                if (orderIds.length > 3) orderLinks.push({ href: orderHref(orderIds[0]), text: `等 ${orderIds.length} 張` });
+            }
+            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success', 8000, { link: orderLinks });
 
             if (result.daySyncPendingCases > 0) {
                 toast('逐日同步在背景進行，儀表板數字會在數分鐘內更新', 'info');

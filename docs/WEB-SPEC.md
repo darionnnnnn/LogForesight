@@ -709,7 +709,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    （篩選結果可以複製網址給同事）——彙總視角切換時排序重設，因為欄位命名空間不同（見 records.js）。
 3. 破壞性操作（刪除規則、套用匯入、合併主機）一律二次確認，確認框內**具體描述影響**
    （「將刪除規則 custom-xxx 及其 3 筆抑制設定」，不是「確定嗎？」）
-4. 表單錯誤顯示在欄位旁（Bootstrap validation style），API 錯誤 message 直接顯示，不轉譯
+4. 表單錯誤顯示在欄位旁（Bootstrap validation style），API 錯誤 message 直接顯示，不轉譯。
+   問題處理狀態的名稱、顏色、是否結案與說明欄規則只在 `core/handling-statuses.js` 定義一次，
+   各頁的狀態清單由它衍生（`HandlingStatusCatalogUiTests` 守門值域與後端 `IssueHandlingStatuses` 一致）
 5. 空狀態要有指引（「尚無資料。請先於『CSV 匯入』建立使用者與主機」），不留白畫面
 6. 載入中一律有視覺回饋（表格 skeleton 列或 spinner），按鈕送出後 disable 防連點。
    **等待動畫只有三種出口，不要再長出第四種寫法**：
@@ -1502,6 +1504,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 被改派走的原處理人可唯讀開啟原單（`lf_work_orders.previous_handler_id`，只記最近一位；整張改派時記在被改派的單，
 併入既有單時記在原單；拆出不記），標頭下方提示「此單已移交給 {目前處理人}，你只能檢視」且不顯示動作鈕。
 回覆鈕依詳情 DTO 的 `ViewerCanReply`（本人、具 `Handle`、單未結案，後端單點決定）。
+處理人回覆不能選「未處理」（`IssueStatusValidation.ValidateReply` 擋下，要退回由管理者處理；詳情頁逐筆標記的「調回未處理」不受影響）。
+回覆與交辦 modal 的預計完成日在 `change`／`blur` 即時檢查「不可早於今天」，送出前有錯誤則 focus 到第一個錯誤欄位。
+交辦建單成功的 toast 帶單號連結（1 張「查看單號 #N」；多張列前 3 張，其餘寫「等 N 張」連到第一張）。
+上報信（無法處理）在單一交辦單轉入 `escalated` 時多一行「交辦單：單號 N」。
+取消交辦的確認文字依 `GET api/settings/display` 的 `mailWorkOrdersEnabled`（`MailEnabled` 且 `MailNotifyWorkOrders`）切換：
+開啟時「處理人會在下一封交辦摘要收到取消通知」，關閉時「目前未啟用交辦通知，請自行告知處理人」。
 
 **逐日同步**：改案件狀態的操作（建單、回覆、取消、代為結案、改派）先改案件列，再估算逐日寫入量——
 不超過 5000 列就地展開（回應 `synced=true`），超過就標 `DaySyncPending` 交背景 `CaseDaySyncHostedService`

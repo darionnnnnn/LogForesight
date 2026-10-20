@@ -27,6 +27,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
+import { HANDLING_STATUSES } from '../core/handling-statuses.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -61,17 +62,9 @@ const ORIGIN_LABELS = {
     day_assign: '詳情頁指派'
 };
 
-// 成員狀態對照（同 work-order-detail.js）
-const MEMBER_STATUS_META = {
-    open: { label: '未處理', variant: 'danger' },
-    in_progress: { label: '處理中', variant: 'primary' },
-    observing: { label: '觀察中', variant: 'primary' },
-    escalated: { label: '無法處理（上報）', variant: 'warning' },
-    resolved: { label: '已處理', variant: 'success' },
-    wont_fix: { label: '不處理', variant: 'success' },
-    false_positive: { label: '誤報', variant: 'success' },
-    known_noise: { label: '已知雜訊', variant: 'success' }
-};
+// 成員狀態對照：名稱與顏色由 core/handling-statuses.js 衍生（唯一來源，與 work-order-detail.js 相同）
+const MEMBER_STATUS_META = Object.fromEntries(
+    HANDLING_STATUSES.map(s => [s.value, { label: s.shortLabel, variant: s.variant }]));
 
 const MEMBER_STATUS_OPTIONS = [
     { value: 'active', label: '進行中' },

@@ -418,6 +418,8 @@ public class MailNotificationService
                 body.AppendLine($"  原因：{notice.Reason}");
             }
             body.AppendLine();
+            if (notice.WorkOrderId is { } workOrderId)
+                body.AppendLine($"交辦單：單號 {workOrderId}（請至站台『交辦單』頁檢視，可改派或代為結案）");
             body.AppendLine("請至站台的問題查詢頁（依問題視角）檢視並處理。");
 
             await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
@@ -2376,6 +2378,7 @@ public class MailNotificationService
 /// <paramref name="IssueLabel"/>＝問題顯示文字（「Source EventId」，與案件的反正規化快照同源）；
 /// <paramref name="HostLabel"/>＝主機標籤（單台為主機名，多台為「N 台主機」）；
 /// <paramref name="ActorAccount"/>＝回覆無法處理的人（由呼叫端自 ICurrentUser 取出傳入）；
-/// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）。
+/// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）；
+/// <paramref name="WorkOrderId"/>＝觸發上報的交辦單號（單一張單才帶；其他呼叫點為 null）。
 /// </summary>
-public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason);
+public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason, long? WorkOrderId = null);

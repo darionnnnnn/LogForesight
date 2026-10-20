@@ -13,7 +13,7 @@
 // formatUserName 是使用者顯示的單一格式出口（§9）。format.js 也 import 本檔的 icon()，
 // 形成循環——但雙方都只在「函式體內」使用彼此、非模組初始化期求值，ESM 的 live binding
 // 在此安全（searchableUserSelect 於執行期才呼叫 formatUserName）。
-import { formatUserName } from './format.js';
+import { formatUserName, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
@@ -291,8 +291,40 @@ function buildPageNav(page, totalPages, onPage) {
     return nav;
 }
 
-/** 右下角提示。type: success | danger | warning | info */
-export function toast(message, type = 'info', delay = 4000) {
+/**
+ * 預計完成日即時檢查（回覆 modal 與交辦 modal 共用，規則只寫這一份）：
+ * change／blur 時早於今天就加 is-invalid，並在欄位下方顯示 invalid-feedback（aria-live="polite"）。
+ * 後端另有同一條防線，這裡只是讓使用者在按送出前就看到。
+ * @param {HTMLInputElement} input type="date" 的欄位
+ * @param {HTMLElement} feedback 錯誤訊息容器（呼叫端建立並放在欄位下方，需帶 aria-live="polite"）
+ * @param {{message: string, isActive?: () => boolean}} options message＝錯誤文字；
+ *        isActive 回 false（例如狀態不需要日期）時視同通過
+ * @returns {{validate: () => boolean, clear: () => void}} validate 會順便更新畫面；回 false 代表有錯
+ */
+export function bindPastDateCheck(input, feedback, { message, isActive = () => true }) {
+    function clear() {
+        input.classList.remove('is-invalid');
+        feedback.textContent = '';
+    }
+    function validate() {
+        if (!isActive() || !input.value || input.value >= todayLocal()) {
+            clear();
+            return true;
+        }
+        input.classList.add('is-invalid');
+        feedback.textContent = message;
+        return false;
+    }
+    input.addEventListener('change', validate);
+    input.addEventListener('blur', validate);
+    return { validate, clear };
+}
+
+/**
+ * 右下角提示。type: success | danger | warning | info
+ * options.link：{ href, text } 或其陣列——訊息後面附上連結（以 DOM 建立、textContent 填字）。
+ */
+export function toast(message, type = 'info', delay = 4000, options = {}) {
     let container = document.getElementById('lf-toast-container');
     if (!container) {
         container = document.createElement('div');
@@ -317,6 +349,15 @@ export function toast(message, type = 'info', delay = 4000) {
     const bodyEl = el.querySelector('.toast-body');
     if (message instanceof Node) bodyEl.appendChild(message);
     else bodyEl.textContent = message;
+    const links = options.link ? [].concat(options.link) : [];
+    links.forEach((item, index) => {
+        bodyEl.append(index === 0 ? '　' : '、');
+        const a = document.createElement('a');
+        a.href = item.href;
+        a.className = 'text-reset fw-semibold';
+        a.textContent = item.text;
+        bodyEl.appendChild(a);
+    });
     container.appendChild(el);
 
     const toastInstance = new bootstrap.Toast(el, { delay });

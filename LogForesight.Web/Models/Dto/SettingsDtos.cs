@@ -746,4 +746,7 @@ public class DisplaySettingsDto
 
     /// <summary>顯示中的問題嚴重度清單（回饋二十輪 B2，SiteHidden 模式下的可見嚴重度；未限制時為完整清單）</summary>
     public List<string> VisibleSeverities { get; set; } = new();
+
+    /// <summary>交辦通知是否會寄出（MailEnabled 且 MailNotifyWorkOrders）；前端取消交辦的確認文字依此切換</summary>
+    public bool MailWorkOrdersEnabled { get; set; }
 }

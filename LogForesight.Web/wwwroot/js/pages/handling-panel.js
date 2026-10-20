@@ -14,46 +14,30 @@ import { appUrl } from '../core/paths.js';
 import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
+import { statusMeta, statusesWhere } from '../core/handling-statuses.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
     return actorAccount ? formatUserName(actorDisplayName, actorAccount) : '（系統）';
 }
 
-// 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域。
-// escalated（回饋十八輪批次G）：處理人回覆「我處理不了，需要上報」——非結案，
-// 轉入時後端會即時通知 admin 群組決定結案或重新指派
-const STATUS_CHIPS = [
-    { value: 'open', text: '未處理' },
-    { value: 'in_progress', text: '處理中' },
-    { value: 'resolved', text: '已處理' },
-    { value: 'wont_fix', text: '不處理（評估後決定）' },
-    { value: 'false_positive', text: '誤報' },
-    { value: 'known_noise', text: '已知雜訊' },
-    { value: 'escalated', text: '無法處理（上報管理員）' }
-];
+// 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域，名稱與顏色只在
+// core/handling-statuses.js 定義。「觀察中」只在問題層級（批次模式）提供
+// （docs/archive/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses 沒有這個值域，觀察的對象是
+// 「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API 回一個看不懂的驗證錯誤
+const toChip = s => ({ value: s.value, text: s.label });
+const DAY_CHIPS = statusesWhere(s => s.value !== 'observing').map(toChip);
+const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
 
-// 「觀察中」只在問題層級（批次模式）提供（docs/archive/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses
-// 沒有這個值域，觀察的對象是「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API
-// 回一個看不懂的驗證錯誤
-const OBSERVING_CHIP = { value: 'observing', text: '觀察中' };
+/** 說明欄標籤與必填規則：由目錄衍生 */
+function noteFieldOf(status) {
+    const meta = statusMeta(status);
+    return meta ? { label: meta.noteLabel, required: meta.noteRequired } : { label: '說明（選填）', required: false };
+}
 
-const NOTE_FIELD_BY_STATUS = {
-    open: { label: '說明（選填）', required: false },
-    in_progress: { label: '處理說明（選填）', required: false },
-    observing: { label: '觀察備註（選填）', required: false },
-    resolved: { label: '處理說明（選填）', required: false },
-    wont_fix: { label: '不處理原因（必填）', required: true },
-    false_positive: { label: '備註（選填）', required: false },
-    known_noise: { label: '備註（選填，供日後回頭確認判斷依據）', required: false },
-    escalated: { label: '無法處理原因（必填，管理員將據此決定結案或改派）', required: true }
-};
-
-const STATUS_VARIANTS = {
-    open: 'danger', in_progress: 'primary', observing: 'info', resolved: 'success',
-    wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary',
-    escalated: 'warning'
-};
+function statusVariantOf(status) {
+    return statusMeta(status)?.variant ?? 'secondary';
+}
 
 /** 目前面板的狀態：initHandlingPanel 之後才有值，refreshSelection 靠這份重繪 */
 let state = null;
@@ -370,8 +354,8 @@ function handlingForm() {
 
     // 狀態直選（取代下拉）：批次模式不預選，逼使用者明確選一個；日層級模式預選推導出的
     // 目前狀態（#6）——不用存的日層級快照，避免使用者一進面板就看到跟「目前狀態」欄位對不上的預選
-    // 觀察中只在批次模式提供，見 OBSERVING_CHIP 的宣告理由
-    const availableChips = batchMode ? [...STATUS_CHIPS, OBSERVING_CHIP] : STATUS_CHIPS;
+    // 觀察中只在批次模式提供，見 DAY_CHIPS／BATCH_CHIPS 的宣告理由
+    const availableChips = batchMode ? BATCH_CHIPS : DAY_CHIPS;
     let selectedStatus = draft && availableChips.some(chip => chip.value === draft.status)
         ? draft.status
         : (batchMode ? null : (handling.derivedStatus ?? handling.status));
@@ -553,7 +537,7 @@ function handlingForm() {
         forgetNoiseWrap.classList.toggle('d-none', selectedStatus !== 'open');
         ruleHint.classList.toggle('d-none', !(selectedStatus === 'false_positive' && state.options.canMaintainRules));
 
-        const field = NOTE_FIELD_BY_STATUS[selectedStatus] ?? { label: '說明（選填）', required: false };
+        const field = noteFieldOf(selectedStatus);
         noteLabel.textContent = field.label;
         noteInput.classList.remove('is-invalid');
     }
@@ -574,7 +558,7 @@ function handlingForm() {
             toast('請選擇處理狀態', 'warning');
             return;
         }
-        const field = NOTE_FIELD_BY_STATUS[selectedStatus] ?? { required: false };
+        const field = noteFieldOf(selectedStatus);
         if (field.required && !noteInput.value.trim()) {
             // 「不處理（評估後決定）」→「不處理」、「不處理原因（必填）」→「不處理原因」
             const statusText = availableChips.find(chip => chip.value === selectedStatus).text.replace(/（.*）$/, '');
@@ -732,7 +716,7 @@ function renderLogItem(log) {
     }
 
     const status = document.createElement('span');
-    status.className = `lf-badge lf-badge--${STATUS_VARIANTS[log.status] ?? 'secondary'}`;
+    status.className = `lf-badge lf-badge--${statusVariantOf(log.status)}`;
     status.textContent = log.statusText;
     head.appendChild(status);
 
@@ -776,7 +760,7 @@ function renderGroupSummary(group) {
 
     if (group.action === 'issue_status') {
         const status = document.createElement('span');
-        status.className = `lf-badge lf-badge--${STATUS_VARIANTS[group.logs[0].status] ?? 'secondary'}`;
+        status.className = `lf-badge lf-badge--${statusVariantOf(group.logs[0].status)}`;
         status.textContent = group.logs[0].statusText;
         head.appendChild(status);
     }

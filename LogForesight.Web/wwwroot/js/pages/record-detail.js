@@ -14,6 +14,7 @@ import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 import { reportCard } from '../core/report-view.js';
+import { statusesWhere } from '../core/handling-statuses.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -99,8 +100,8 @@ let currentScope = 'pending';
 let currentUserId = null;
 let currentUser = null;
 
-/** 結案類：與後端 IssueHandlingStatuses.IsClosed 同一組值 */
-const CLOSED_STATUSES = new Set(['resolved', 'wont_fix', 'false_positive', 'known_noise']);
+/** 結案類：由 core/handling-statuses.js 衍生（與後端 IssueHandlingStatuses.Closed 以測試對照） */
+const CLOSED_STATUSES = new Set(statusesWhere(s => s.closed).map(s => s.value));
 
 /** 單一問題屬於哪個桶（四桶互斥，判定順序即優先序：已完成 → 誰在處理 → 未處理） */
 function issueBucket(issue) {
@@ -499,9 +500,9 @@ function priorHandlingTrigger(issue) {
     return trigger;
 }
 
-const ISSUE_HISTORY_STATUS_VARIANTS = {
-    resolved: 'success', wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary'
-};
+/** 結案歷程的徽章顏色：由 core/handling-statuses.js 衍生 */
+const ISSUE_HISTORY_STATUS_VARIANTS = Object.fromEntries(
+    statusesWhere(s => s.closed).map(s => [s.value, s.variant]));
 
 /** modal 內容：已結案案件摘要（較接近「上次怎麼解的」）＋逐日結案標記，兩者可能重疊，分開呈現不強行去重 */
 function issueHistoryBody(history) {
