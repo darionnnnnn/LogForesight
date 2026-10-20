@@ -133,7 +133,8 @@ public class ScheduleController : ControllerBase
         string? prtgLastIssueOutcome = null;
         string? prtgLastIssueNote = null;
 
-        if (!_runState.IsRunning)
+        // 單元測試以 scheduler: null! 建控制器（只測狀態欄位），與本控制器其他可省略相依同一慣例；正式 DI 一定有值
+        if (!_runState.IsRunning && _scheduler is not null)
         {
             var (healthPending, healthLastIssue) = _scheduler.PrtgRunHealth();
             prtgPendingDays = healthPending.Select(d => d.ToString("yyyy-MM-dd")).ToList();
