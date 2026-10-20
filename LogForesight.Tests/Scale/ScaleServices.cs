@@ -123,6 +123,7 @@ internal sealed class ScaleServices
             recordHandling,
             mailState,
             freshness,
+            new WorkOrderOutboxStore(backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
             issueOwners,
             aggregates);
 

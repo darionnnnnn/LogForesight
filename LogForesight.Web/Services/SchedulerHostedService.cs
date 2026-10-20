@@ -1,3 +1,5 @@
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Services.Mail;
 using NLog;
@@ -38,6 +40,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly MailNotificationService _mail;
     private readonly IHostApplicationLifetime _lifetime;
     private Task? _lastMailTask;
+    private Task? _lastWorkOrderMailTask;
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -80,6 +83,24 @@ public class SchedulerHostedService : BackgroundService
         catch (OperationCanceledException)
         {
             return;
+        }
+
+        try
+        {
+            var closed = CloseInterruptedRuns(_mutexGate, _batchRunStore, DateTime.Now,
+                System.Diagnostics.Process.GetCurrentProcess().StartTime);
+            if (closed == null)
+            {
+                Log.Info("另一個執行個體仍持有執行鎖，略過中斷執行的關閉");
+            }
+            else if (closed > 0)
+            {
+                Log.Warn("站台啟動時關閉了 {Count} 筆未正常結束的執行（標記為異常中斷）", closed.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "關閉中斷執行時發生例外（不影響排程）");
         }
 
         while (!stoppingToken.IsCancellationRequested)
@@ -126,6 +147,20 @@ public class SchedulerHostedService : BackgroundService
             }
         }
 
+        // 交辦摘要（第 55 輪 C-1b）：寄出 outbox 內到期的交辦通知，節流與上限同上；內部自行 try/catch 到底。
+        if (_lastWorkOrderMailTask == null || _lastWorkOrderMailTask.IsCompleted)
+        {
+            _lastWorkOrderMailTask = _mail.CheckAndSendWorkOrderDigestAsync(DateTime.Now, stoppingToken);
+            try
+            {
+                await _lastWorkOrderMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            catch (TimeoutException)
+            {
+                Log.Warn("交辦摘要寄送超過 5 分鐘未返回，本次輪詢不再等待");
+            }
+        }
+
         var options = _scheduleOptionsStore.Get();
 
         if (_runState.IsRunning)
@@ -155,7 +190,8 @@ public class SchedulerHostedService : BackgroundService
         var now = DateTime.Now;
         var recentScheduleTriggerTimes = GetScheduleTriggerTimes(
             _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
-            _runState.RecentScheduleAttempts);
+            _runState.RecentScheduleAttempts,
+            options.Windows);
 
         if (ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes))
         {
@@ -171,7 +207,8 @@ public class SchedulerHostedService : BackgroundService
             var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_systemSettingsStore.Get().RetentionDays);
             var longTriggerTimes = GetScheduleTriggerTimes(
                     _batchRunStore.GetRecentRuns(effectiveLimit + 1, null),
-                    _runState.RecentScheduleAttempts)
+                    _runState.RecentScheduleAttempts,
+                    options.Windows)
                 .ToList();
             recentScheduleTriggerTimes = longTriggerTimes;
             var missed = ScheduleCalculator.FindMissedWindow(now, options.Windows, longTriggerTimes, ScheduleCalculator.AutoCatchUpMaxDelay);
@@ -230,7 +267,8 @@ public class SchedulerHostedService : BackgroundService
         // 少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
         var scheduledTriggerTimes = GetScheduleTriggerTimes(
             _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
-            _runState.RecentScheduleAttempts);
+            _runState.RecentScheduleAttempts,
+            options.Windows);
 
         if (ScheduleCalculator.WindowAlreadyTriggered(now, windowStart.Value, scheduledTriggerTimes)) return;
 
@@ -246,18 +284,39 @@ public class SchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的 StartedAt，
+    /// 站台啟動時嘗試取得執行鎖並關閉未正常結束的執行。
+    /// 拿不到鎖（例如另一個執行個體正在跑）時回傳 null；拿到鎖時回傳關閉筆數。
+    /// 只關 <paramref name="processStartedAt"/> 之前開始的執行——本行程自己的執行仍在跑。
+    /// </summary>
+    internal static int? CloseInterruptedRuns(NamedMutexGate gate, BatchRunStore store, DateTime now, DateTime processStartedAt)
+    {
+        int? closedCount = null;
+        var acquired = gate.RunExclusive(() =>
+        {
+            closedCount = store.CloseUnfinishedRuns(now, 7, processStartedAt);
+        }, TimeSpan.Zero, runActionWhenNotAcquired: false);
+
+        return acquired ? closedCount : null;
+    }
+
+    /// <summary>
+    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的執行，
+    /// 交由 <see cref="ScheduleCalculator.EffectiveScheduleTriggerTimes"/> 計算有效觸發時間（中斷執行允許同窗口補跑一次），
     /// 並與記憶體中最近的排程觸發嘗試時間聯集。
     /// </summary>
     internal static IEnumerable<DateTime> GetScheduleTriggerTimes(
         IEnumerable<BatchRun> runs,
-        IEnumerable<DateTime> inMemoryTriggerTimes)
+        IEnumerable<DateTime> inMemoryTriggerTimes,
+        IEnumerable<ScheduleWindow> windows)
     {
-        var persistentTimes = runs
+        var scheduledRuns = runs
             .Where(r => r.Trigger == "schedule" && r.JobType != BatchRun.JobTypeAi)
-            .Select(r => r.StartedAt);
+            .Select(r => (r.StartedAt, r.Interrupted));
 
-        return persistentTimes.Union(inMemoryTriggerTimes);
+        return ScheduleCalculator.EffectiveScheduleTriggerTimes(
+            scheduledRuns,
+            inMemoryTriggerTimes,
+            windows);
     }
 
     /// <summary>
@@ -400,7 +459,7 @@ public class SchedulerHostedService : BackgroundService
             // 郵件方法內部自行 try/catch 到底，不影響本次執行的成敗判定。
             if (dispatchSummary is { PerHandler.Count: > 0 })
             {
-                await _mail.NotifyWorkOrderDigestAsync(dispatchSummary, _lifetime.ApplicationStopping);
+                _mail.EnqueueNightlyDispatch(dispatchSummary);
             }
         });
 
@@ -473,6 +532,31 @@ public class SchedulerHostedService : BackgroundService
         catch (Exception ex)
         {
             Log.Warn(ex, "單獨保留清除失敗（下次輪詢再試）：{0}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// PRTG 運作健全度摘要（供 DevMonitor 檢視待補評估日與上一趟異常）。
+    /// </summary>
+    public (IReadOnlyList<DateTime> PendingDays, PrtgDayStat? LastIssue) PrtgRunHealth()
+    {
+        var settings = _systemSettingsStore.Get();
+        if (!settings.PrtgEnabled)
+        {
+            return (Array.Empty<DateTime>(), null);
+        }
+
+        try
+        {
+            var runs = _batchRunStore.GetRecentRuns(PrtgReevaluationPlanner.LookbackDays + 1, null);
+            var pending = PrtgReevaluationPlanner.Select(runs, DateTime.Today, settings.RetentionDays);
+            var lastIssue = PrtgReevaluationPlanner.LastRunIssue(runs);
+            return (pending, lastIssue);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "讀取 PRTG 運作健全度失敗");
+            return (Array.Empty<DateTime>(), null);
         }
     }
 

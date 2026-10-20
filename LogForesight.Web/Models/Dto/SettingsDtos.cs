@@ -136,6 +136,9 @@ public class SystemSettingsDto
     /// <summary>交辦單郵件：建立／改派／取消時通知處理人，並於夜間派工後寄每位處理人的摘要。需同時開啟 MailEnabled。</summary>
     public bool MailNotifyWorkOrders { get; set; }
 
+    /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組</summary>
+    public List<string> MailWorkOrderDigestTimes { get; set; } = new();
+
     /// <summary>夜間自動派工總開關：夜間分析後自動指派交辦單處理人</summary>
     public bool AutoDispatchEnabled { get; set; }
 
@@ -425,6 +428,9 @@ public class UpdateSystemSettingsRequest
     public bool MailDigestSkipEmpty { get; set; }
 
     public bool MailNotifyWorkOrders { get; set; }
+
+    /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組</summary>
+    public List<string> MailWorkOrderDigestTimes { get; set; } = new();
 
     public bool AutoDispatchEnabled { get; set; }
 

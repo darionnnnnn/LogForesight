@@ -2131,5 +2131,148 @@ public class PrtgDailyPipelineTests : IDisposable
         var expectedEventKey = $"prtg:memory_used_trend:{sensorId}";
         Assert.Contains(findings, f => f.EventKey == expectedEventKey);
     }
-}
+    [Fact]
+    public void ResolvePrtgDays_ScheduleFullPrtgEnabled_含待補日且順序由近到遠()
+    {
+        var today = new DateTime(2026, 10, 20);
+        var retention = new RetentionOptions { RetentionDays = 180 };
+        var request = new RunRequest { Trigger = "schedule", Scope = RunScope.Full };
 
+        var d2 = today.AddDays(-2);
+        var d4 = today.AddDays(-4);
+        var recentRuns = new[]
+        {
+            new BatchRun
+            {
+                RunId = 1,
+                StartedAt = today.AddDays(-1),
+                Trigger = "schedule",
+                FinishedAt = today.AddDays(-1).AddMinutes(30),
+                PrtgDays = new List<PrtgDayStat>
+                {
+                    new(d4, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, NeedsReevaluation: true),
+                    new(d2, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, NeedsReevaluation: true)
+                }
+            }
+        };
+
+        var resolved = AnalysisOrchestrator.ResolvePrtgDays(request, retention, today, recentRuns, prtgEnabled: true);
+
+        Assert.Equal(new[] { today.AddDays(-1), d2, d4 }, resolved);
+    }
+
+    [Fact]
+    public void ResolvePrtgDays_手動觸發_不含待補日()
+    {
+        var today = new DateTime(2026, 10, 20);
+        var retention = new RetentionOptions { RetentionDays = 180 };
+        var request = new RunRequest { Trigger = "manual:admin", Scope = RunScope.Full };
+
+        var d2 = today.AddDays(-2);
+        var recentRuns = new[]
+        {
+            new BatchRun
+            {
+                RunId = 1,
+                StartedAt = today.AddDays(-1),
+                PrtgDays = new List<PrtgDayStat>
+                {
+                    new(d2, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, NeedsReevaluation: true)
+                }
+            }
+        };
+
+        var resolved = AnalysisOrchestrator.ResolvePrtgDays(request, retention, today, recentRuns, prtgEnabled: true);
+
+        Assert.Equal(new[] { today.AddDays(-1) }, resolved);
+        Assert.DoesNotContain(d2, resolved);
+    }
+
+    [Fact]
+    public void ResolvePrtgDays_Prtg停用_不含待補日()
+    {
+        var today = new DateTime(2026, 10, 20);
+        var retention = new RetentionOptions { RetentionDays = 180 };
+        var request = new RunRequest { Trigger = "schedule", Scope = RunScope.Full };
+
+        var d2 = today.AddDays(-2);
+        var recentRuns = new[]
+        {
+            new BatchRun
+            {
+                RunId = 1,
+                StartedAt = today.AddDays(-1),
+                PrtgDays = new List<PrtgDayStat>
+                {
+                    new(d2, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, NeedsReevaluation: true)
+                }
+            }
+        };
+
+        var resolved = AnalysisOrchestrator.ResolvePrtgDays(request, retention, today, recentRuns, prtgEnabled: false);
+
+        Assert.Equal(new[] { today.AddDays(-1) }, resolved);
+        Assert.DoesNotContain(d2, resolved);
+    }
+
+    [Fact]
+    public void ResolvePrtgDays_RecentRuns為Null_不含待補日()
+    {
+        var today = new DateTime(2026, 10, 20);
+        var retention = new RetentionOptions { RetentionDays = 180 };
+        var request = new RunRequest { Trigger = "schedule", Scope = RunScope.Full };
+
+        var resolved = AnalysisOrchestrator.ResolvePrtgDays(request, retention, today, recentRuns: null, prtgEnabled: true);
+
+        Assert.Equal(new[] { today.AddDays(-1) }, resolved);
+    }
+
+    [Fact]
+    public async Task 取消情境下尚未評估的日子_NeedsReevaluation為True()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        using var cancellation = new CancellationTokenSource();
+        var (ctx, _, progress, _) = CreateContext(cancellation.Token);
+        progress.OnReport = (phase, _, total) =>
+        {
+            if (phase == RunPhases.PrtgDateRange && total == 0) cancellation.Cancel();
+        };
+        var days = new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => PrtgDailyPipeline.RunAsync(ctx, _backend,
+            new HostStore(_backend.Blob("hosts")), days, Task.CompletedTask, hostIds: null));
+        ctx.RunRecorder.Finish(1);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId)!;
+        Assert.NotNull(run.PrtgDays);
+        Assert.Equal(2, run.PrtgDays!.Count);
+        Assert.All(run.PrtgDays, stat =>
+        {
+            Assert.True(stat.NeedsReevaluation);
+        });
+    }
+
+    [Fact]
+    public async Task 逐日評估完但發佈前被取消_已進入評估的日子仍標NeedsReevaluation()
+    {
+        // 第一段逐日評估在最後一天回報進度時觸發取消：兩天都已進入 dayStates（評估過），
+        // 但第二段發佈與 MarkEvaluated 還沒做——這兩天必須標記需要重評，不能被當成完成。
+        EnableConservativePrtgWithDefaultWhitelist();
+        using var cancellation = new CancellationTokenSource();
+        var (ctx, _, progress, _) = CreateContext(cancellation.Token);
+        var days = new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) };
+        progress.OnReport = (phase, _, total) =>
+        {
+            if (phase == RunPhases.PrtgDateRange && total == days.Length) cancellation.Cancel();
+        };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => PrtgDailyPipeline.RunAsync(ctx, _backend,
+            new HostStore(_backend.Blob("hosts")), days, Task.CompletedTask, hostIds: null));
+        ctx.RunRecorder.Finish(1);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId)!;
+        Assert.NotNull(run.PrtgDays);
+        Assert.Equal(2, run.PrtgDays!.Count);
+        // 兩天都走 dayStates 路徑（不是「尚未進入評估」的補列），原因欄不是中斷補列的文字
+        Assert.All(run.PrtgDays, stat => Assert.DoesNotContain("未完成評估", stat.Note ?? string.Empty));
+        Assert.All(run.PrtgDays, stat => Assert.True(stat.NeedsReevaluation));
+    }
+}

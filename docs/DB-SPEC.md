@@ -367,7 +367,7 @@ AI 問答已降為未來選項（決策：先把報告顯示與查詢做好，�
 ### 索引
 
 ```
-lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢；(log_source, record_date) `IX_lf_daily_src_date` — 排除 PRTG 獨立主機日
+lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢；(ai_pending, detail_pruned) `IX_lf_daily_records_ai_pending_pruned` — 待補筆數的覆蓋索引；(log_source, record_date) `IX_lf_daily_src_date` — 排除 PRTG 獨立主機日
 lf_issue_first_seen: PK(source_key, event_id)
 lf_top_issues:     (record_id)；(source_key, event_id, record_date) — 來源問題聚合
                    (event_id, source_name) — 舊相容路徑的跨主機查詢
@@ -568,6 +568,9 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 > PRTG 的「同步結構與對應」最近一次結果存在 `lf_blobs` 的 `prtg_sync_status`（單一物件型，
 > 見 `docs/PRTG-SPEC.md` §5a），零 DDL 異動——**從未執行過時整份不存在**，
 > 讀取端據此分辨「尚未同步」與「同步過但零筆」，不可用零值代表未執行。
+
+> 交辦通知的待寄項目存在 `lf_blobs` 的 `work_order_outbox`（單一物件型，與 `mail_notify_state` 分開以免撐爆單列上限；
+> 只存識別與操作資訊，上限 2 萬筆，入列時間為本地時間），零 DDL 異動；寄送規則見 WEB-SPEC §9.4b「通知」。
 
 `LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
 對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併那一輪（`Sentinel`／`SentinelId`／

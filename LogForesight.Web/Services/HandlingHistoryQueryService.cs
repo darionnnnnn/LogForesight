@@ -124,10 +124,19 @@ public class HandlingHistoryQueryService
         var actionable = records.Where(r => RiskLevels.IsActionable(r.RiskLevel)).ToList();
         if (actionable.Count == 0) return new List<DailyAnalysisRecord>();
 
-        var lookup = new HostLookup(_hosts.GetAll());
-        string NameOf(DailyAnalysisRecord record) => lookup.For(record)?.HostName ?? record.Host;
+        return FilterByScope(exclusion, actionable, scope, LoadScopeContext(actionable));
+    }
 
-        var hostNames = actionable.Select(NameOf).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    /// <summary>
+    /// 一次載入範圍過濾需要的主機索引與三張處理表。呼叫端要對多組紀錄（例如報表的本期與前期）
+    /// 套同一個範圍時，先以涵蓋全部紀錄的集合載入一次，再逐組傳入多載的 FilterByScope，
+    /// 避免每組各載一次處理表。<paramref name="actionable"/> 應只含高／中風險紀錄且不為空。
+    /// </summary>
+    internal ScopeContext LoadScopeContext(IReadOnlyCollection<DailyAnalysisRecord> actionable)
+    {
+        var lookup = new HostLookup(_hosts.GetAll());
+
+        var hostNames = actionable.Select(r => lookup.For(r)?.HostName ?? r.Host).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var from = actionable.Min(r => r.Date);
         var to = actionable.Max(r => r.Date);
         var handlings = _store.GetMany(hostNames, from, to);
@@ -146,6 +155,50 @@ public class HandlingHistoryQueryService
         var openCasesDict = openCases
             .GroupBy(c => HostNameKey.Of(c.HostName))
             .ToDictionary(g => g.Key, g => g.ToList());
+
+        return new ScopeContext(lookup, handlingDict, issueHandlingDict, openCasesDict, unhandledSeverities);
+    }
+
+    /// <summary>範圍過濾所需的預載資料（見 <see cref="LoadScopeContext"/>）。</summary>
+    internal sealed class ScopeContext
+    {
+        internal ScopeContext(
+            HostLookup lookup,
+            Dictionary<(string, DateTime), RecordHandling> handlingDict,
+            Dictionary<(string, DateTime), List<IssueHandling>> issueHandlingDict,
+            Dictionary<string, List<IssueCase>> openCasesDict,
+            HashSet<IssueSeverity> unhandledSeverities)
+        {
+            Lookup = lookup;
+            HandlingDict = handlingDict;
+            IssueHandlingDict = issueHandlingDict;
+            OpenCasesDict = openCasesDict;
+            UnhandledSeverities = unhandledSeverities;
+        }
+
+        internal HostLookup Lookup { get; }
+        internal Dictionary<(string, DateTime), RecordHandling> HandlingDict { get; }
+        internal Dictionary<(string, DateTime), List<IssueHandling>> IssueHandlingDict { get; }
+        internal Dictionary<string, List<IssueCase>> OpenCasesDict { get; }
+        internal HashSet<IssueSeverity> UnhandledSeverities { get; }
+    }
+
+    /// <summary>以預載的 <paramref name="ctx"/> 做逐筆判定（逐筆規則只在這裡一份）；只處理高／中風險日。</summary>
+    internal List<DailyAnalysisRecord> FilterByScope(
+        IssueExclusion exclusion, IReadOnlyCollection<DailyAnalysisRecord> records, string scope, ScopeContext ctx)
+    {
+        scope = HandlingScopes.Normalize(scope);
+        if (scope == HandlingScopes.All) return records.ToList();
+
+        var actionable = records.Where(r => RiskLevels.IsActionable(r.RiskLevel)).ToList();
+        if (actionable.Count == 0) return new List<DailyAnalysisRecord>();
+
+        var lookup = ctx.Lookup;
+        string NameOf(DailyAnalysisRecord record) => lookup.For(record)?.HostName ?? record.Host;
+        var handlingDict = ctx.HandlingDict;
+        var issueHandlingDict = ctx.IssueHandlingDict;
+        var openCasesDict = ctx.OpenCasesDict;
+        var unhandledSeverities = ctx.UnhandledSeverities;
 
         return actionable.Where(record =>
         {

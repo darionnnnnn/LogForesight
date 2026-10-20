@@ -60,7 +60,8 @@ public class PrtgRunsCardAndProbeTests : IDisposable
                 new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
                 new MailNotifyStateStore(_backend.Blob("mail_notify_state")),
                 new ScheduleFreshnessService(new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
-                    new ScheduleOptionsStore(_backend.Blob("schedule_options")))), new FakeReportUsageQuery());
+                    new ScheduleOptionsStore(_backend.Blob("schedule_options"))),
+                new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         store.Update(s =>
         {

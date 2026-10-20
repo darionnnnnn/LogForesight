@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using System.Diagnostics;
 using System.Reflection;
 using LogForesight.Web.Auth;
@@ -38,6 +40,7 @@ public class WorkOrderCommandServiceTests : IDisposable
     private readonly FakeRuleStore _ruleStore = new();
     private readonly FakeSmtpMailSender _mailSender = new();
     private readonly MailNotificationService _mail;
+    private readonly WorkOrderOutboxStore _outbox;
     private readonly WorkOrderCommandService _service;
     private readonly UserGroup _handlerRole;
 
@@ -61,10 +64,12 @@ public class WorkOrderCommandServiceTests : IDisposable
 
         _handlerRole = _userGroups.Upsert(new UserGroup { GroupName = "處理人", Role = UserRole.User, Active = true });
 
+        _outbox = new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey));
         _mail = new MailNotificationService(
             _settingsStore, _mailSender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
             new ScheduleFreshnessService(new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")), new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
+            new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
             new FakeIssueOwnerStore());
 
         _service = new WorkOrderCommandService(
@@ -740,10 +745,10 @@ public class WorkOrderCommandServiceTests : IDisposable
     // ── 郵件通知 ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Create_每張單寄一封給處理人且含主機數()
+    public void Create_每張單入列一筆給處理人()
     {
         _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
-        _mailSender.Sent.Clear();
+        _outbox.Update(b => b.Items.Clear());
 
         var team = AddTeam();
         var alice = AddUser("alice", "愛麗絲", groupId: team.GroupId, email: "alice@test.local");
@@ -755,21 +760,21 @@ public class WorkOrderCommandServiceTests : IDisposable
         var result = _service.Create(Group(team.GroupId, "roundRobin"));
 
         Assert.Equal(2, result.Orders.Count);
-        Assert.Equal(2, _mailSender.Sent.Count);
+        var items = _outbox.Get().Items.Values.ToList();
+        Assert.Equal(2, items.Count);
 
-        var aliceMail = _mailSender.Sent.Single(s => s.Message.To.Contains("alice@test.local")).Message;
-        Assert.Contains("交辦", aliceMail.Subject);
-        Assert.Contains("主機數：1", aliceMail.Body);
+        var aliceNotice = items.Single(s => s.RecipientUserId == alice.UserId);
+        Assert.Equal(WorkOrderOutboxKinds.Created, aliceNotice.Kind);
 
-        var bobMail = _mailSender.Sent.Single(s => s.Message.To.Contains("bob@test.local")).Message;
-        Assert.Contains("交辦", bobMail.Subject);
-        Assert.Contains("主機數：1", bobMail.Body);
+        var bobNotice = items.Single(s => s.RecipientUserId == bob.UserId);
+        Assert.Equal(WorkOrderOutboxKinds.Created, bobNotice.Kind);
     }
 
     [Fact]
     public void Create_處理人是操作者本人時不寄()
     {
         _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        _outbox.Update(b => b.Items.Clear());
         // 操作者本人為處理人（FakeCurrentUser 預設 UserId = 999）
         var me = AddUser("test-user", "本人", email: "me@test.local");
         me.UserId = 999;
@@ -779,7 +784,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         var result = _service.Create(Single(me.UserId));
 
         Assert.Single(result.Orders);
-        Assert.Empty(_mailSender.Sent);
+        Assert.Empty(_outbox.Get().Items);
     }
 
     [Fact]
@@ -794,18 +799,70 @@ public class WorkOrderCommandServiceTests : IDisposable
         var created = _service.Create(Single(alice.UserId));
         var orderId = Assert.Single(created.Orders).WorkOrderId;
 
-        _mailSender.Sent.Clear();
+        _outbox.Update(b => b.Items.Clear());
 
         _service.Reassign(orderId, new ReassignWorkOrderRequest { HandlerId = bob.UserId });
 
-        Assert.Equal(2, _mailSender.Sent.Count);
+        var items = _outbox.Get().Items.Values.ToList();
+        Assert.Equal(2, items.Count);
 
-        var newHandlerMail = _mailSender.Sent.Single(s => s.Message.To.Contains("bob@test.local")).Message;
-        Assert.Contains("交辦", newHandlerMail.Subject);
-        Assert.DoesNotContain("交辦移交", newHandlerMail.Subject);
+        var newHandlerMail = items.Single(s => s.RecipientUserId == bob.UserId);
+        Assert.Equal(WorkOrderOutboxKinds.Created, newHandlerMail.Kind);
 
-        var oldHandlerMail = _mailSender.Sent.Single(s => s.Message.To.Contains("alice@test.local")).Message;
-        Assert.Contains("交辦移交", oldHandlerMail.Subject);
+        var oldHandlerMail = items.Single(s => s.RecipientUserId == alice.UserId);
+        Assert.Equal(WorkOrderOutboxKinds.Transferred, oldHandlerMail.Kind);
+    }
+
+    [Theory]
+    [InlineData("alice@test.local", false)]
+    [InlineData("  ", true)]
+    [InlineData(null, true)]
+    public void Create_處理人沒有email時回報HandlerHasNoEmail(string? email, bool expected)
+    {
+        var alice = AddUser("alice", "愛麗絲", email: email);
+        AddHost("H1");
+
+        var result = _service.Create(Single(alice.UserId));
+
+        Assert.Equal(expected, result.HandlerHasNoEmail);
+    }
+
+    [Theory]
+    [InlineData("bob@test.local", false)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    public void Reassign_新處理人沒有email時回報HandlerHasNoEmail(string? email, bool expected)
+    {
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        var bob = AddUser("bob", "鮑伯", email: email);
+        AddHost("H1");
+        var orderId = Assert.Single(_service.Create(Single(alice.UserId)).Orders).WorkOrderId;
+
+        var result = _service.Reassign(orderId, new ReassignWorkOrderRequest { HandlerId = bob.UserId });
+
+        Assert.Equal(expected, result.HandlerHasNoEmail);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Create與Reassign_NotifyNow決定入列項目是否立即(bool notifyNow)
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        var bob = AddUser("bob", "鮑伯", email: "bob@test.local");
+        AddHost("H1");
+
+        var request = Single(alice.UserId);
+        request.NotifyNow = notifyNow;
+        var orderId = Assert.Single(_service.Create(request).Orders).WorkOrderId;
+        Assert.Equal(notifyNow, Assert.Single(_outbox.Get().Items.Values).Immediate);
+
+        _outbox.Update(b => b.Items.Clear());
+        _service.Reassign(orderId, new ReassignWorkOrderRequest { HandlerId = bob.UserId, NotifyNow = notifyNow });
+        var items = _outbox.Get().Items.Values.ToList();
+        Assert.Equal(2, items.Count);
+        Assert.All(items, i => Assert.Equal(notifyNow, i.Immediate));
     }
 
     [Fact]
@@ -818,14 +875,14 @@ public class WorkOrderCommandServiceTests : IDisposable
         var created = _service.Create(Single(alice.UserId));
         var orderId = Assert.Single(created.Orders).WorkOrderId;
 
-        _mailSender.Sent.Clear();
+        _outbox.Update(b => b.Items.Clear());
 
         _service.Cancel(orderId, new CancelWorkOrderRequest { Reason = "誤派工單取消" });
 
-        var sent = Assert.Single(_mailSender.Sent).Message;
-        Assert.Contains("alice@test.local", sent.To);
-        Assert.Contains("交辦取消", sent.Subject);
-        Assert.Contains("誤派工單取消", sent.Body);
+        var sent = Assert.Single(_outbox.Get().Items.Values);
+        Assert.Equal(alice.UserId, sent.RecipientUserId);
+        Assert.Equal(WorkOrderOutboxKinds.Cancelled, sent.Kind);
+        Assert.Equal("誤派工單取消", sent.Reason);
     }
 
     [Fact]
@@ -838,7 +895,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         var created = _service.Create(Single(alice.UserId));
         var orderId = Assert.Single(created.Orders).WorkOrderId;
 
-        _mailSender.Sent.Clear();
+        _outbox.Update(b => b.Items.Clear());
 
         _service.AdminClose(orderId, new AdminCloseWorkOrderRequest
         {
@@ -846,7 +903,7 @@ public class WorkOrderCommandServiceTests : IDisposable
             Reason = "管理員代為結案"
         });
 
-        Assert.Empty(_mailSender.Sent);
+        Assert.Empty(_outbox.Get().Items);
     }
 
     // ── 權限標註 ─────────────────────────────────────────────────────────────

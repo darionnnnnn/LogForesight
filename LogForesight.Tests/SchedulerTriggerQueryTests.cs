@@ -20,7 +20,7 @@ public class SchedulerTriggerQueryTests
             new BatchRun { Trigger = "schedule", JobType = BatchRun.JobTypeAi, StartedAt = time }
         };
 
-        var result = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>());
+        var result = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>(), Array.Empty<ScheduleWindow>());
 
         Assert.DoesNotContain(time, result);
     }
@@ -34,7 +34,7 @@ public class SchedulerTriggerQueryTests
             new BatchRun { Trigger = "schedule", JobType = null, StartedAt = time }
         };
 
-        var result = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>());
+        var result = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>(), Array.Empty<ScheduleWindow>());
 
         Assert.Contains(time, result);
     }
@@ -48,7 +48,7 @@ public class SchedulerTriggerQueryTests
             new BatchRun { Trigger = "manual:x", JobType = null, StartedAt = time }
         };
 
-        var result = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>());
+        var result = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>(), Array.Empty<ScheduleWindow>());
 
         Assert.DoesNotContain(time, result);
     }
@@ -64,7 +64,8 @@ public class SchedulerTriggerQueryTests
 
         var result = SchedulerHostedService.GetScheduleTriggerTimes(
             Enumerable.Empty<BatchRun>(),
-            runState.RecentScheduleAttempts).ToList();
+            runState.RecentScheduleAttempts,
+            Array.Empty<ScheduleWindow>()).ToList();
 
         Assert.Single(result);
         Assert.InRange(result[0], before, after);
@@ -80,7 +81,7 @@ public class SchedulerTriggerQueryTests
             new BatchRun { Trigger = "schedule", JobType = BatchRun.JobTypeAi, StartedAt = new DateTime(2026, 9, 19, 22, 5, 0) }
         };
 
-        var triggerTimes = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>());
+        var triggerTimes = SchedulerHostedService.GetScheduleTriggerTimes(runs, Enumerable.Empty<DateTime>(), Array.Empty<ScheduleWindow>());
         var shouldTrigger = ScheduleCalculator.ShouldTriggerNow(now, windows, triggerTimes);
 
         Assert.True(shouldTrigger);
@@ -110,7 +111,8 @@ public class SchedulerTriggerQueryTests
                 new FakeAnalysisRecordQuery(),
                 new FakeHandlingStore(),
                 mailState,
-                freshness);
+                freshness,
+                new WorkOrderOutboxStore(backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
 
             var spec = new SmtpConnectionSpec("smtp.example.com", 25, false, "user", null);
             await mailService.SendTestAsync(spec, "noreply@example.com", new List<string> { "admin@example.com" },

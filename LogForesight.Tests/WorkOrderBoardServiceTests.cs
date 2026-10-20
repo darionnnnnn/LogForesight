@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using System.Diagnostics;
 using System.Reflection;
 using LogForesight.Web.Auth;
@@ -46,6 +48,7 @@ public class WorkOrderBoardServiceTests : IDisposable
     private readonly UserDisplayNameService _displayNames;
     private readonly MailNotificationService _mail;
     private readonly FakeSmtpMailSender _sender = new();
+    private readonly WorkOrderOutboxStore _outboxStore;
 
     public WorkOrderBoardServiceTests()
     {
@@ -65,10 +68,12 @@ public class WorkOrderBoardServiceTests : IDisposable
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore());
         _coordinator = new WorkOrderCoordinator(_orderStore, _caseStore, _issueHandlingStore, caseCoordinator, _handlingStore, _hosts);
 
+        _outboxStore = new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey));
         _mail = new MailNotificationService(
             _settingsStore, _sender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
             new ScheduleFreshnessService(new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")), new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
+            _outboxStore, _orderStore, _caseStore, new FakeRuleStore(),
             new FakeIssueOwnerStore());
 
         _settingsStore.Update(s => s.AutoDispatchEnabled = false);
@@ -94,10 +99,15 @@ public class WorkOrderBoardServiceTests : IDisposable
         });
         var result = Service().RunAutoDispatch(null, null);
         Assert.Equal(3, result.CreatedOrders);
-        var mail = Assert.Single(_sender.Sent).Message;
-        Assert.Contains("handler@example.test", mail.To);
+        var items = _outboxStore.Get().Items.Values.ToList();
+        Assert.Equal(3, items.Count);
+        Assert.All(items, item =>
+        {
+            Assert.Equal(WorkOrderOutboxKinds.Created, item.Kind);
+            Assert.Equal(handler.UserId, item.RecipientUserId);
+        });
         foreach (var order in _orderStore.All)
-            Assert.Contains($"單號 {order.WorkOrderId}：", mail.Body);
+            Assert.Contains(items, item => item.WorkOrderId == order.WorkOrderId);
     }
 
     private WorkOrderBoardService Service(int maxOccurrences = WorkOrderBoardService.DefaultMaxOccurrences) => new(

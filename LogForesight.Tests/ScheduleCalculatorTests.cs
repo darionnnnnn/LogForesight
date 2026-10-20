@@ -343,4 +343,107 @@ public class ScheduleCalculatorTests
         Assert.False(ScheduleCalculator.WindowAlreadyTriggered(
             now, windowStart, new[] { now.AddMinutes(5) }));
     }
+
+    // ── MostRecentWindowStart ───────────────────────────────────────────────
+
+    [Fact]
+    public void MostRecentWindowStart_跨午夜窗口次日凌晨_取前一天開始時刻()
+    {
+        var windows = new[] { W("22:00", "06:00") };
+        var t = new DateTime(2026, 10, 21, 2, 0, 0);
+
+        var result = ScheduleCalculator.MostRecentWindowStart(t, windows);
+
+        Assert.Equal(new DateTime(2026, 10, 20, 22, 0, 0), result);
+    }
+
+    [Fact]
+    public void MostRecentWindowStart_當日尚未到開始時刻_取前一天開始時刻()
+    {
+        var windows = new[] { W("22:00", "06:00") };
+        var t = new DateTime(2026, 10, 20, 21, 0, 0);
+
+        var result = ScheduleCalculator.MostRecentWindowStart(t, windows);
+
+        Assert.Equal(new DateTime(2026, 10, 19, 22, 0, 0), result);
+    }
+
+    [Fact]
+    public void MostRecentWindowStart_多窗口取不晚於t的最近窗口()
+    {
+        var windows = new[] { W("01:00", "03:00"), W("13:00", "15:00") };
+        var t = new DateTime(2026, 10, 20, 14, 0, 0);
+
+        var result = ScheduleCalculator.MostRecentWindowStart(t, windows);
+
+        Assert.Equal(new DateTime(2026, 10, 20, 13, 0, 0), result);
+    }
+
+    // ── EffectiveScheduleTriggerTimes ───────────────────────────────────────
+
+    [Fact]
+    public void EffectiveScheduleTriggerTimes_配合ShouldTriggerNow_單筆中斷允許補跑()
+    {
+        var windows = new[] { W("22:00", "06:00") };
+        var now = new DateTime(2026, 10, 20, 23, 30, 0);
+        var scheduledRuns = new[] { (StartedAt: new DateTime(2026, 10, 20, 22, 0, 0), Interrupted: true) };
+
+        var effectiveTimes = ScheduleCalculator.EffectiveScheduleTriggerTimes(scheduledRuns, Enumerable.Empty<DateTime>(), windows);
+        var shouldTrigger = ScheduleCalculator.ShouldTriggerNow(now, windows, effectiveTimes);
+
+        Assert.True(shouldTrigger);
+    }
+
+    [Fact]
+    public void EffectiveScheduleTriggerTimes_配合ShouldTriggerNow_同窗口兩筆中斷不重複重跑()
+    {
+        var windows = new[] { W("22:00", "06:00") };
+        var now = new DateTime(2026, 10, 20, 23, 30, 0);
+        var scheduledRuns = new[]
+        {
+            (StartedAt: new DateTime(2026, 10, 20, 22, 0, 0), Interrupted: true),
+            (StartedAt: new DateTime(2026, 10, 20, 22, 40, 0), Interrupted: true)
+        };
+
+        var effectiveTimes = ScheduleCalculator.EffectiveScheduleTriggerTimes(scheduledRuns, Enumerable.Empty<DateTime>(), windows);
+        var shouldTrigger = ScheduleCalculator.ShouldTriggerNow(now, windows, effectiveTimes);
+
+        Assert.False(shouldTrigger);
+    }
+
+    [Fact]
+    public void EffectiveScheduleTriggerTimes_配合ShouldTriggerNow_中斷加正常不再觸發()
+    {
+        var windows = new[] { W("22:00", "06:00") };
+        var now = new DateTime(2026, 10, 20, 23, 30, 0);
+        var scheduledRuns = new[]
+        {
+            (StartedAt: new DateTime(2026, 10, 20, 22, 0, 0), Interrupted: true),
+            (StartedAt: new DateTime(2026, 10, 20, 22, 40, 0), Interrupted: false)
+        };
+
+        var effectiveTimes = ScheduleCalculator.EffectiveScheduleTriggerTimes(scheduledRuns, Enumerable.Empty<DateTime>(), windows);
+        var shouldTrigger = ScheduleCalculator.ShouldTriggerNow(now, windows, effectiveTimes);
+
+        Assert.False(shouldTrigger);
+    }
+
+    [Fact]
+    public void EffectiveScheduleTriggerTimes_配合FindMissedWindow_中斷窗口回傳該窗口進行補跑()
+    {
+        var windows = new[] { W("22:00", "02:00") };
+        var now = new DateTime(2026, 10, 21, 3, 30, 0);
+        var scheduledRuns = new[]
+        {
+            (StartedAt: new DateTime(2026, 10, 19, 22, 0, 0), Interrupted: false),
+            (StartedAt: new DateTime(2026, 10, 20, 22, 5, 0), Interrupted: true)
+        };
+
+        var effectiveTimes = ScheduleCalculator.EffectiveScheduleTriggerTimes(scheduledRuns, Enumerable.Empty<DateTime>(), windows);
+        var missed = ScheduleCalculator.FindMissedWindow(now, windows, effectiveTimes, ScheduleCalculator.AutoCatchUpMaxDelay);
+
+        Assert.NotNull(missed);
+        Assert.Equal(new DateTime(2026, 10, 20, 22, 0, 0), missed.Value.Start);
+        Assert.Equal(new DateTime(2026, 10, 21, 2, 0, 0), missed.Value.End);
+    }
 }

@@ -172,6 +172,11 @@ internal static class SchemaUpgrader
         // 詳情兩層保留期的標記
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "detail_pruned",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        // 全域待補筆數（CountPendingAi：ai_pending AND NOT detail_pruned）只需這兩欄：
+        // 既有 (ai_pending, record_date) 帶不到 detail_pruned，計數得回表逐列判斷而整表掃描；
+        // 兩欄覆蓋索引讓計數只掃索引、不碰帶 content_json 的資料列
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records",
+            "IX_lf_daily_records_ai_pending_pruned", "ai_pending, detail_pruned");
 
         // 依問題視角全面 SQL 化的最後兩欄（回饋十九輪批次B）：見 LfDbContext.TopIssueRow 類別註解。
         // event_key 補上後，SchemaUpgrader 這裡刻意**不**回填舊列（回填只在 TopIssueBackfiller

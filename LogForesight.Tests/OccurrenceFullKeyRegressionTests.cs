@@ -75,7 +75,7 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
         _mail = new MailNotificationService(
             _settingsStore, _mailSender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
-            freshness, _issueOwners);
+            freshness, new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), _issueOwners);
     }
 
     public void Dispose() => _fixture.Dispose();

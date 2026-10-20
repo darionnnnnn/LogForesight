@@ -180,6 +180,72 @@ public static class ScheduleCalculator
         DateTime now, DateTime windowInstanceStart, IEnumerable<DateTime> scheduledTriggerTimes) =>
         scheduledTriggerTimes.Any(t => t >= windowInstanceStart && t <= now);
 
+    /// <summary>
+    /// t 所屬的「窗口群組鍵」：全部窗口中，開始時刻不晚於 t 的最近一個窗口實例開始時刻
+    /// （今天的 Start 若晚於 t 就取昨天的同一個 Start）。窗口清單為空或全部無法解析時回 null。
+    /// </summary>
+    public static DateTime? MostRecentWindowStart(DateTime t, IEnumerable<ScheduleWindow> windows)
+    {
+        DateTime? latest = null;
+        foreach (var w in windows)
+        {
+            if (!TryParseMinutes(w.Start, out var start)) continue;
+            var cand = t.Date.AddMinutes(start);
+            var instanceStart = cand <= t ? cand : cand.AddDays(-1);
+            if (latest == null || instanceStart > latest.Value)
+            {
+                latest = instanceStart;
+            }
+        }
+        return latest;
+    }
+
+    /// <summary>
+    /// 排程觸發時間：一般排程執行一律計入；異常中斷的排程執行，同一個窗口群組鍵內「最早的那一筆」不計入
+    /// （讓該窗口可以補跑一次），第二筆起照常計入（避免反覆崩潰時無限重跑）。群組鍵為 null 的中斷執行照常計入。
+    /// 回傳值另與 inMemoryTriggerTimes 聯集。
+    /// </summary>
+    public static IEnumerable<DateTime> EffectiveScheduleTriggerTimes(
+        IEnumerable<(DateTime StartedAt, bool Interrupted)> scheduledRuns,
+        IEnumerable<DateTime> inMemoryTriggerTimes,
+        IEnumerable<ScheduleWindow> windows)
+    {
+        var windowList = windows as IReadOnlyCollection<ScheduleWindow> ?? windows.ToList();
+        var result = new List<DateTime>();
+        var interruptedWithKey = new List<(DateTime StartedAt, DateTime? Key)>();
+
+        foreach (var run in scheduledRuns)
+        {
+            if (!run.Interrupted)
+            {
+                result.Add(run.StartedAt);
+            }
+            else
+            {
+                var key = MostRecentWindowStart(run.StartedAt, windowList);
+                if (key == null)
+                {
+                    result.Add(run.StartedAt);
+                }
+                else
+                {
+                    interruptedWithKey.Add((run.StartedAt, key));
+                }
+            }
+        }
+
+        var grouped = interruptedWithKey.GroupBy(x => x.Key!.Value);
+        foreach (var g in grouped)
+        {
+            foreach (var item in g.OrderBy(x => x.StartedAt).Skip(1))
+            {
+                result.Add(item.StartedAt);
+            }
+        }
+
+        return result.Union(inMemoryTriggerTimes);
+    }
+
     /// <summary>自動補跑的最大延遲（窗口結束後 4 小時內）</summary>
     public static readonly TimeSpan AutoCatchUpMaxDelay = TimeSpan.FromHours(4);
 

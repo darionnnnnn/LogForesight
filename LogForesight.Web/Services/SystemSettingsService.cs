@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Configuration;
+﻿using System.Globalization;
+using LogForesight.Core.Configuration;
 using System.Runtime.Versioning;
 using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
@@ -301,6 +302,21 @@ public class SystemSettingsService : ISystemSettingsService
             if (!Enum.TryParse<DayOfWeek>(request.MailWeeklyDayOfWeek, ignoreCase: true, out _))
                 throw DomainException.Validation("每週摘要星期不合法。");
         }
+        if (request.MailNotifyWorkOrders)
+        {
+            var times = request.MailWorkOrderDigestTimes;
+            if (times == null || times.Count < 1 || times.Count > 4)
+                throw DomainException.Validation("交辦摘要時刻至少一組、最多四組");
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var x in times)
+            {
+                if (string.IsNullOrWhiteSpace(x) || !TimeSpan.TryParseExact(x, @"hh\:mm", CultureInfo.InvariantCulture, out _))
+                    throw DomainException.Validation($"交辦摘要時刻『{x}』格式不合法，請用 HH:mm");
+                if (!seen.Add(x))
+                    throw DomainException.Validation("交辦摘要時刻不可重複");
+            }
+        }
 
         var aiProvider = AiProviders.Normalize(request.AiProvider);
         var matchedProvider = ValidAiProviders.FirstOrDefault(p => string.Equals(p, aiProvider, StringComparison.OrdinalIgnoreCase));
@@ -428,6 +444,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.MailBodyIntro = request.MailBodyIntro?.Trim() ?? "";
             s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
             s.MailNotifyWorkOrders = request.MailNotifyWorkOrders;
+            s.MailWorkOrderDigestTimes = (request.MailWorkOrderDigestTimes ?? new List<string>()).ToList();
             s.AutoDispatchEnabled = request.AutoDispatchEnabled;
 
             // PRTG 監控系統設定（PRTG 第 1 輪批次B）
@@ -1383,6 +1400,9 @@ public class SystemSettingsService : ISystemSettingsService
         MailBodyIntro = s.MailBodyIntro,
         MailDigestSkipEmpty = s.MailDigestSkipEmpty,
         MailNotifyWorkOrders = s.MailNotifyWorkOrders,
+        MailWorkOrderDigestTimes = s.MailWorkOrderDigestTimes is { Count: > 0 }
+            ? s.MailWorkOrderDigestTimes.ToList()
+            : new List<string> { "08:00", "12:00" },
         AutoDispatchEnabled = s.AutoDispatchEnabled,
         SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
         // PRTG 監控系統設定

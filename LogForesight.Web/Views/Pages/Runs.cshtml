@@ -135,6 +135,14 @@
                 <span class="lf-kv__label">回填狀態</span>
                 <span class="lf-kv__value" id="prtg-backfill-status">閒置</span>
             </div>
+            <div class="lf-kv d-none" id="prtg-pending-reeval-row">
+                <span class="lf-kv__label">待補評估</span>
+                <span class="lf-kv__value" id="prtg-pending-reeval">—</span>
+            </div>
+            <div class="lf-kv d-none" id="prtg-last-issue-row">
+                <span class="lf-kv__label">上一趟</span>
+                <span class="lf-kv__value" id="prtg-last-issue">—</span>
+            </div>
 
             @* 兩條軌：每日擷取（取數執行的第三路）與歷史回填（手動離峰作業）。
                兩者可能同時在跑，各自預留高度。 *@

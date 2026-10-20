@@ -10,6 +10,12 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class RecordListQueryService
 {
+    /// <summary>
+    /// 處理狀態類篩選（慢速路徑）的候選上限：超過就要求使用者縮小日期或主機範圍，
+    /// 不靜默截斷（截斷會讓使用者的待辦無聲消失）。
+    /// </summary>
+    internal const int HandlingFilterCandidateLimit = 50_000;
+
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
     private readonly IUserStore _users;
@@ -125,7 +131,14 @@ public class RecordListQueryService
         // 全面 SQL 化（回饋十九輪批次E3）：這條慢速路徑必須整批撈回才能逐筆算處理狀態，
         // 不能像上面的快速路徑一樣把分頁下推給 SQL——但撈回的不必是整份 ContentJson，
         // 改用 QueryLightweight 只帶處理狀態判定/分類/風險等級需要的欄位
+        // 未指定風險等級時只查高／中風險日（與前端 DEFAULT_RISKS 一致），
+        // 避免 API 呼叫端沒帶時把含低風險的整個保留期整批撈回
+        filter.RiskLevels ??= new[] { RiskLevels.High, RiskLevels.Medium };
         var records = _repository.QueryLightweight(filter);
+        if (records.Count > HandlingFilterCandidateLimit)
+        {
+            throw DomainException.Validation($"符合條件的主機日超過 {HandlingFilterCandidateLimit:N0} 筆，請縮小日期範圍或主機範圍。");
+        }
 
         // 紀錄 → 存活主機的索引：合併過的主機，舊識別下的紀錄要歸到存活主機，
         // 處理狀態（以現行主機名稱為鍵）與清單的連結才對得上

@@ -50,6 +50,9 @@ public class MailNotifyState
 
     /// <summary>最後一次在摘要信中加入資料過期警示的日期（yyyy-MM-dd，任務 A-3）</summary>
     public string? LastFreshnessAlertDate { get; set; }
+
+    /// <summary>交辦摘要時刻（HH:mm）→ 該時刻最後寄出的日期（yyyy-MM-dd）；同一天同一時刻只寄一次。</summary>
+    public Dictionary<string, string> WorkOrderDigestLastSentSlots { get; set; } = new(StringComparer.Ordinal);
 }
 
 public sealed class MailContributionReservation

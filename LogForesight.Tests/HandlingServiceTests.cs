@@ -92,7 +92,7 @@ public class HandlingServiceTests : IDisposable
         return new MailNotificationService(
             _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
-            freshness, _issueOwners);
+            freshness, new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), _issueOwners);
     }
 
     private HandlingServiceFacade CreateWithMail(MailNotificationService mail, params Capability[] capabilities)
@@ -174,6 +174,19 @@ public class HandlingServiceTests : IDisposable
 
         Assert.Equal("小實習生", result.HandlerName);   // 指派仍然成立，不擋
         Assert.True(result.AssigneeCannotHandle);
+    }
+
+    [Theory]
+    [InlineData("intern@test.local", false)]
+    [InlineData("   ", true)]
+    [InlineData(null, true)]
+    public void 日層級指派_處理人沒有email時回報HandlerHasNoEmail(string? email, bool expected)
+    {
+        var assignee = _users.Upsert(new WebUser { Account = "mailtest", DisplayName = "信箱測試", Email = email });
+
+        var result = Create(Capability.Assign).Assign(_host.HostId, Today, assignee.UserId);
+
+        Assert.Equal(expected, result.HandlerHasNoEmail);
     }
 
     /// <summary>負責人隱含 User 角色（§2b）也算數——不該被誤報</summary>

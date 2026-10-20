@@ -1033,6 +1033,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   分開的理由：帶狀態篩選是「依狀態找案子」，把窗口切掉會讓一件開了幾個月還沒結的案子從結果裡
   消失——那是使用者的待辦不見了，比查詢慢更嚴重。前端各頁一律會帶 `from`，受影響的只有
   直接呼叫 API 與「依問題視角展開受影響主機日」時使用者手動清空日期欄位的情況。
+  帶處理狀態類篩選且未指定風險等級時只查高／中風險日；候選超過 5 萬筆時要求縮小範圍。
 - **「下一筆未處理」捷徑**：`GET api/records/next-unhandled?hostId=&date=` 只回下一筆的主機與日期
   （沒有下一筆時回 null），呼叫端要的只是一個連結。判斷「下一筆是哪一筆」在後端：
   以未結案的高＋中風險日、依預設排序取清單後找目前這筆的下一筆；目前這筆不在清單裡
@@ -1541,10 +1542,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   只想對某些主機或群組噤聲用抑制。
 - 註腳：依問題視角（§9.2）、儀表板重點問題卡（§9.1）、報表問題排行（§9.6）、我的交辦（§9.4a）。
 
-**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：依問題視角建單、改派（新處理人收建單信、舊處理人收「已移交」）、
-取消各一封；夜間續掛與自動派工**每趟每人一封**彙總，自動派工以延續性偏好派回給上次修好的人時，
-該單那一行註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。內容列前 20 台主機名，超過寫「…等 N 台」。
-詳情頁日層級指派與「立即派工」建的單不寄建單信。收件人是目前操作者時不寄；收件人沒有 email 記警告、不擲例外。站台沒有對外網址設定，信末寫「請至站台的『交辦單』頁檢視單號 N」。
+**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：交辦類通知（建單、新增成員、移交、取消，含夜間派工）一律寫入 outbox（`WorkOrderOutboxStore`，blob `work_order_outbox`，只存識別與該次操作資訊，單的內容在寄送當下才讀）；每天在「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00）各寄一封摘要給每位處理人，上午派的工 12:00 寄、之後派的工隔天 08:00 寄；站台停機跨過多個時刻時合併成一封（`WorkOrderDigestLastSentSlots` 記各時刻最後寄出日）；寄送失敗保留到下一個時刻重寄；處理人沒有 email 時項目保留並標記，派工畫面（建單、改派、拆出、日層級指派的成功提示）註明「處理人未設定 email，不會收到通知」，超過 7 天仍無 email 的項目清除。信件分「新交辦／新增成員／移交／取消」四段，每張單列問題、台數、前 20 台主機名（超過寫「…等 N 台」）、白話說明、交辦說明與期限；自動派工以延續性偏好派回給上次修好的人時，該單註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。交辦與改派可勾「立即通知處理人」（`notifyNow`），該次項目不等摘要時刻，輪詢時（約每分鐘）單獨寄出。上報信（無法處理）維持即時。收件人是目前操作者時不入列；收件人停用或不存在時項目移除。站台沒有對外網址設定，信末寫「請至站台的『交辦單』頁檢視上列單號」。
 
 **API**（`api/work-orders`）：
 | 端點 | 能力 | 說明 |
@@ -2211,7 +2209,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      無事的信同時是系統存活訊號）＋標題模板
      （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字＋
      已暫停寄送的收件人清單（見下方）＋「交辦單通知（建立／改派／取消與夜間摘要）」開關
-     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）。
+     （`MailNotifyWorkOrders`，預設關；內容見 §9.4b「通知」）＋「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00，1～4 組、不可重複）。
      同頁籤末段是**自動派工**：「夜間分析後自動派工」開關（`AutoDispatchEnabled`，預設關）、三條常駐說明
      （候選人：派工池群組成員，排除暫停接單、看不到該主機的人；負載：進行中交辦單的進行中成員數，挑最輕的人；
      不派工的情況：問題靜音中、命中抑制或已知雜訊、嚴重度未達門檻、該主機已標示不再打擾）、
@@ -2546,6 +2544,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
     整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
 - **結果語意**：主程序與 AI 各自顯示「正常結束」或「已停止」；缺省／null 結果顯示「結果未知」。正常結束不表示 PRTG／AI 待補皆完成，需同時查看來源欄與待補數。AI 取消後拒絕 provider 晚到結果，保留完成紀錄及待補；目前版本的 Running workflow 在取消／例外時收尾，版本已更新者不覆寫。
+- **異常中斷（重啟時關閉）**：站台啟動時取得執行鎖後，把本行程啟動之前開始、仍未結束的執行（取數與 AI 皆是）補一列結束紀錄並標 `Interrupted`，狀態顯示「異常中斷」（與逾 6 小時未結束的「異常中斷」同一狀態），詳情多一則「站台重啟時發現此執行未正常結束」。拿不到執行鎖（另一個行程仍在跑）時整段略過。同一個排程窗口群組（`ScheduleCalculator.MostRecentWindowStart`）內第一筆中斷的排程執行不計入「已觸發」，因此窗口內或窗口結束 4 小時內會自動補跑一次；第二次中斷不再補，避免反覆崩潰時無限重跑。
+- **PRTG 待補評估與上一趟**：閒置時 PRTG 卡多兩列（執行中不顯示）。「待補評估」列出排程下次會自動補評估的天數與最早日期，並指路「立即執行回望 N 天」可立即補；「上一趟」列出最近一趟取數第一個非成功日的結局與原因，原因為「規則庫沒有啟用中的 PRTG 規則」時附「前往規則維護」連結。資料來自 `GET status` 的 `prtgPendingDays`／`prtgLastIssue*`（`SchedulerHostedService.PrtgRunHealth`，一次讀最近 8 天執行紀錄）。
 - **PRTG 停用指引**：只向 Maintain 顯示維護入口，啟用方式是「擷取參數」勾選「啟用 PRTG 擷取」並儲存。保守策略的數值範圍選單不作啟用開關；停用時排程擷取／回填不跑，維護者仍可手動同步結構。
 - **三張卡各自承載什麼**：
   - **取數執行**：本機與 NetIQ 兩條軌、最新訊息、立即執行／停止。
@@ -2630,6 +2630,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   取數執行一發佈當日 PRTG finding（`prtg-findings-ready`），`SchedulerRunState` 就發出通知讓
   AI 立刻開跑，**不等自己的 60 秒輪詢**——否則使用者按下「立即執行」後看到的是取數在跑、AI 卻閒著。
   即時觸發**不受 AI 執行窗口限制**（跟隨取數是「取數跑到哪、判讀跟到哪」）；
+  取數執行中（finding 已就緒）與取數結束後 10 分鐘內，背景輪詢也視同跟隨取數、不看窗口；取數結束時另主動喚醒一次。
   窗口只管背景消化積壓，狀態卡那一列因此標示為「背景補跑窗口」，已在窗口內時顯示「窗口內，隨時可跑」。
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
@@ -2893,6 +2894,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `ISentinelStore` | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `NetiqOptionsStore`（介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore` | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
+| `WorkOrderOutboxStore` | blob `work_order_outbox`（單一物件：交辦通知待寄項目，key 由種類、單號、收件人、入列時間 ticks 組成；入列時間為本地時間，上限 2 萬筆；寄送規則見 §9.4b「通知」） | Web＋批次（夜間派工入列） |
 | `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；含 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |

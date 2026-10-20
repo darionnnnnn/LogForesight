@@ -72,7 +72,7 @@ public class SetupReadinessProbeTests : IDisposable
         var mailService = new MailNotificationService(
             _settings, new FakeSmtpMailSender(), _hosts, _users,
             _groups, _groupAccess, new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness);
+            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
         var health = new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mailService, freshness);
         var identity = new IdentityService(
             _users, _groups, _hosts, new StubAuthenticationProvider(),
@@ -413,7 +413,7 @@ public class SetupReadinessProbeTests : IDisposable
         var mailService = new MailNotificationService(
             countingSettings, new FakeSmtpMailSender(), _hosts, _users,
             _groups, _groupAccess, new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness);
+            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
         var health = new HealthService(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), mailService, freshness);
         var identity = new IdentityService(
             _users, _groups, _hosts, new StubAuthenticationProvider(),

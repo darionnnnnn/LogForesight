@@ -269,7 +269,8 @@ function assignField(handling, users, hostId, date) {
             if (updated.casesSkippedHandlerNames?.length) {
                 parts.push(`${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的案件涵蓋，未變更`);
             }
-            toast(parts.join('；'), 'success');
+            const noEmailNote = updated.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : '';
+            toast(parts.join('；') + noEmailNote, 'success');
 
             // 被指派者沒有這台主機的檢視權（§7）：指派成立，但對方只看得到被交辦的問題——
             // 交辦的人現在就要知道，不要等對方回報「我點進去是空的」

@@ -637,7 +637,25 @@ public class AnalysisOrchestrator
                     : Task.CompletedTask;
 
                 var analysisTask = Task.WhenAll(localTask, netiqTask);
-                var prtgDays = BuildPrtgDays(request, retention, DateTime.Today);
+                var basePrtgDays = BuildPrtgDays(request, retention, DateTime.Today);
+                IReadOnlyList<BatchRun>? recentRuns = null;
+                try
+                {
+                    recentRuns = batchRunStore?.GetRecentRuns(PrtgReevaluationPlanner.LookbackDays + 1, null);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "讀取近期批次執行失敗，略過 PRTG 補評估規劃");
+                }
+
+                var prtgDays = ResolvePrtgDays(request, retention, DateTime.Today, recentRuns, systemSettings.PrtgEnabled);
+                if (prtgDays.Count > basePrtgDays.Count)
+                {
+                    var extraDays = prtgDays.Except(basePrtgDays).OrderByDescending(d => d).ToList();
+                    var msg = $"PRTG 補評估 {extraDays.Count} 天：{string.Join("、", extraDays.Select(d => d.ToString("yyyy-MM-dd")))}（先前未完成評估）";
+                    runConsole.WriteLine(msg);
+                    runRecorder.Milestone(msg);
+                }
                 // 指定主機更新：PRTG 也只處理那幾台主機的監看裝置（partial 範圍不做任何「沒刷新到就清」）
                 var prtgHostIds = request.Scope != RunScope.Full ? request.HostIds : null;
                 var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, structureSyncGate);
@@ -1288,6 +1306,34 @@ public class AnalysisOrchestrator
             console.WriteLine(
                 "\n  📄 詳細風險報告（含 AI 深入分析與原始 log）已產生，可於 Web 的分析紀錄詳情檢視。");
         }
+    }
+
+    /// <summary>
+    /// 決定本次執行 PRTG 處理的資料日清單。
+    /// 排程執行時自動將近期未完成評估的日子與回填範圍聯集，由近到遠排序且不重複。
+    /// </summary>
+    internal static IReadOnlyList<DateTime> ResolvePrtgDays(
+        RunRequest request,
+        RetentionOptions retention,
+        DateTime today,
+        IReadOnlyList<BatchRun>? recentRuns,
+        bool prtgEnabled)
+    {
+        var baseDays = BuildPrtgDays(request, retention, today);
+        if (request.Trigger == "schedule" &&
+            request.Scope == RunScope.Full &&
+            prtgEnabled &&
+            recentRuns != null)
+        {
+            var extraDays = PrtgReevaluationPlanner.Select(recentRuns, today, retention.RetentionDays);
+            return baseDays.Concat(extraDays)
+                .Select(d => d.Date)
+                .Distinct()
+                .OrderByDescending(d => d)
+                .ToList();
+        }
+
+        return baseDays;
     }
 
     /// <summary>

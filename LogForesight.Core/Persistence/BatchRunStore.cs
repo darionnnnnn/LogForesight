@@ -45,6 +45,14 @@ public class BatchRun
     public bool Stopped { get; set; }
 
     /// <summary>
+    /// 站台重啟時發現此執行未正常結束，由啟動程序關閉；舊紀錄缺欄反序列化為 false。
+    /// </summary>
+    public bool Interrupted { get; set; }
+
+    /// <summary>異常中斷關閉時的結束代碼</summary>
+    public const int ExitCodeInterrupted = 2;
+
+    /// <summary>
     /// 錯過窗口時自動補跑標示（null＝一般執行或舊紀錄，true＝補跑）。
     /// </summary>
     public bool? CatchUp { get; set; }
@@ -118,7 +126,9 @@ public sealed record PrtgDayStat(
     int TriggerHosts,
     int TargetSensors,
     int FailedSensors,
-    string? Note = null);
+    string? Note = null,
+    /// <summary>該日 PRTG 未完整評估並發佈，或結構同步失敗；排程下次自動補評估（舊 JSON 缺欄為 false）。</summary>
+    bool NeedsReevaluation = false);
 
 /// <summary>
 /// 執行期間的診斷紀錄（↔ lf_batch_run_logs）。
@@ -221,6 +231,38 @@ public class BatchRunStore
         {
             AppendRunLine(run);
         }
+    }
+
+    /// <summary>
+    /// 關閉 lookbackDays 天內、StartedAt 早於 startedBefore 且 FinishedAt 為空的執行：追加一列同 RunId 的紀錄（FinishedAt=now、ExitCode=ExitCodeInterrupted、Interrupted=true，其餘欄位沿用最後一列），
+    /// 並為每筆追加一則診斷行（Level="Info"、Logger="Milestone"、Message="站台重啟時發現此執行未正常結束，標記為異常中斷"）。回傳關閉筆數。
+    /// <paramref name="startedBefore"/> 傳本行程的啟動時刻：本行程自己剛開始的執行（例如 AI 排程與本程序同時在啟動後開跑）
+    /// 也是 FinishedAt 為空，但它們活著，不能被當成中斷關掉。
+    /// </summary>
+    public int CloseUnfinishedRuns(DateTime now, int lookbackDays, DateTime startedBefore)
+    {
+        var unfinished = GetRecentRuns(lookbackDays, null)
+            .Where(r => r.FinishedAt == null && r.StartedAt < startedBefore)
+            .ToList();
+
+        foreach (var run in unfinished)
+        {
+            run.FinishedAt = now;
+            run.ExitCode = BatchRun.ExitCodeInterrupted;
+            run.Interrupted = true;
+            FinishRun(run);
+
+            AppendLog(new BatchRunLog
+            {
+                RunId = run.RunId,
+                LoggedAt = now,
+                Level = "Info",
+                Logger = "Milestone",
+                Message = "站台重啟時發現此執行未正常結束，標記為異常中斷"
+            });
+        }
+
+        return unfinished.Count;
     }
 
     public void AppendLog(BatchRunLog log)
@@ -378,6 +420,7 @@ public static class BatchRunStatus
     {
         if (run.FinishedAt == null)
             return now - run.StartedAt > stuckThreshold ? Stuck : Running;
+        if (run.Interrupted) return Stuck;
         if (run.Stopped) return Stopped;
         if (run.ExitCode != 0) return Failed;
         if (run.ErrorCount > 0) return Failed;

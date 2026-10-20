@@ -118,6 +118,18 @@ public class ScheduleStatusDto
     public string PrtgFetchStrategy { get; set; } = LogForesight.Core.Service.PrtgFetchStrategy.Conservative;
     public int PrtgBackfillDays { get; set; } = LogForesight.Core.Models.SystemSettings.DefaultPrtgBackfillDays;
 
+    /// <summary>PRTG 待補評估資料日清單（yyyy-MM-dd）。</summary>
+    public List<string> PrtgPendingDays { get; set; } = new();
+
+    /// <summary>最近一趟 PRTG 異常的資料日（yyyy-MM-dd）。</summary>
+    public string? PrtgLastIssueDate { get; set; }
+
+    /// <summary>最近一趟 PRTG 異常的成果狀態（failed / partial / no_output）。</summary>
+    public string? PrtgLastIssueOutcome { get; set; }
+
+    /// <summary>最近一趟 PRTG 異常的原因註記。</summary>
+    public string? PrtgLastIssueNote { get; set; }
+
     public bool? LastRunSuccess { get; set; }
     public string? LastRunMessage { get; set; }
     public string? LastRunTriggerText { get; set; }

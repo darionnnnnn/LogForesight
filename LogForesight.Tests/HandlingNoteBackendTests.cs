@@ -50,7 +50,7 @@ public class HandlingNoteBackendTests : IDisposable
         _mail = new MailNotificationService(
             _settings, new FakeSmtpMailSender(), _hosts, _users, new FakeUserGroupStore(), new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingLog, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
-            freshness, new FakeIssueOwnerStore());
+            freshness, new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), new FakeIssueOwnerStore());
 
         foreach (var host in new[] { "H1", "H2", "H3" })
         {

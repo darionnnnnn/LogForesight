@@ -13,6 +13,7 @@ import {
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
+import { appUrl } from '../core/paths.js';
 
 /* 色值對齊 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以字面值對齊：success=--lf-success、
@@ -996,6 +997,47 @@ function applyPrtgOperationalStatus(status) {
     const daysHintEl = document.getElementById('prtg-backfill-days-hint');
     if (daysHintEl && status.prtgBackfillDays) {
         daysHintEl.textContent = `往前 ${status.prtgBackfillDays} 天`;
+    }
+
+    const pendingRow = document.getElementById('prtg-pending-reeval-row');
+    const pendingVal = document.getElementById('prtg-pending-reeval');
+    const pendingDays = status.prtgPendingDays;
+    if (pendingRow && pendingVal) {
+        if (pendingDays && pendingDays.length > 0) {
+            const earliest = pendingDays[pendingDays.length - 1];
+            const [y, m, d] = earliest.split('-').map(Number);
+            const earliestDate = new Date(y, m - 1, d);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const diffDays = Math.max(1, Math.round((today - earliestDate) / (1000 * 60 * 60 * 24)));
+            pendingVal.textContent = `${pendingDays.length} 天（最早 ${earliest}），下一次排程自動補；要現在補請用「立即執行」回望 ${diffDays} 天`;
+            pendingRow.classList.remove('d-none');
+        } else {
+            pendingRow.classList.add('d-none');
+        }
+    }
+
+    const lastIssueRow = document.getElementById('prtg-last-issue-row');
+    const lastIssueVal = document.getElementById('prtg-last-issue');
+    if (lastIssueRow && lastIssueVal) {
+        if (status.prtgLastIssueOutcome) {
+            const outcomeMeta = PRTG_OUTCOME_META[status.prtgLastIssueOutcome];
+            const outcomeText = outcomeMeta ? outcomeMeta.text : status.prtgLastIssueOutcome;
+            const note = status.prtgLastIssueNote ?? '';
+            lastIssueVal.textContent = note
+                ? `${status.prtgLastIssueDate} ${outcomeText}：${note}`
+                : `${status.prtgLastIssueDate} ${outcomeText}`;
+            if (note.startsWith('規則庫沒有啟用中的 PRTG 規則')) {
+                const link = document.createElement('a');
+                link.href = appUrl('/admin/rules');
+                link.className = 'ms-1';
+                link.textContent = '前往規則維護';
+                lastIssueVal.appendChild(link);
+            }
+            lastIssueRow.classList.remove('d-none');
+        } else {
+            lastIssueRow.classList.add('d-none');
+        }
     }
 }
 

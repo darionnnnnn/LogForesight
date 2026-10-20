@@ -23,6 +23,9 @@ public class CreateWorkOrderRequest
     /// <summary>管理者在預覽取消勾選的主機（整台排除）</summary>
     public List<long>? ExcludeHostIds { get; set; }
 
+    /// <summary>勾「立即通知」：處理人的通知不等摘要時刻，下一次輪詢就寄。</summary>
+    public bool NotifyNow { get; set; }
+
     /// <summary><c>single</c>／<c>group</c></summary>
     public string AssignMode { get; set; } = string.Empty;
 
@@ -131,6 +134,9 @@ public class CreateWorkOrderResultDto
     public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
     public int AssigneeNoAccessTotal { get; set; }
     public List<AssigneeCannotHandleDto> AssigneeCannotHandle { get; set; } = new();
+
+    /// <summary>有處理人沒有設定 email（不會收到通知）。</summary>
+    public bool HandlerHasNoEmail { get; set; }
 }
 
 public class WorkOrderCreatedDto
@@ -182,6 +188,9 @@ public class AppendWorkOrderResultDto
 public class ReassignWorkOrderRequest
 {
     public long HandlerId { get; set; }
+
+    /// <summary>勾「立即通知」：新處理人的通知不等摘要時刻。</summary>
+    public bool NotifyNow { get; set; }
 }
 
 public class SplitWorkOrderRequest
@@ -199,6 +208,9 @@ public class WorkOrderMoveResultDto
     public int MovedCases { get; set; }
     public long PreviousHandlerId { get; set; }
     public List<AssigneeCannotHandleDto> AssigneeCannotHandle { get; set; } = new();
+
+    /// <summary>新處理人沒有設定 email（不會收到通知）。</summary>
+    public bool HandlerHasNoEmail { get; set; }
 }
 
 public class CancelWorkOrderRequest
