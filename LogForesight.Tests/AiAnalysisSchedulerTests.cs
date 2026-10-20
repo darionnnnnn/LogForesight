@@ -1125,4 +1125,147 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(recYesterday!.AiPending);
         Assert.False(recThree!.AiPending);
     }
+
+    [Fact]
+    public async Task 跟隨取數_取數執行中且Finding就緒後呼叫TickAsync開跑()
+    {
+        var now = DateTime.Now;
+        var options = new ScheduleOptions
+        {
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(options);
+
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ai.Behavior = async (_, _) =>
+        {
+            await gate.Task;
+            return new AiResponse { Success = true, Content = _ai.NextContent };
+        };
+
+        schedulerState.TryBeginRun("schedule", out _);
+        // 先送 finding 就緒（此時無待補，OnFetchFollowUp 不會搶跑）
+        schedulerState.ReportProgress(RunPhases.PrtgFindingsReady, 0, 0);
+
+        // NetIQ 落地待補紀錄
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        // 呼叫 TickAsync
+        await service.TickAsync();
+
+        try
+        {
+            Assert.True(runState.IsRunning);
+            Assert.Equal("fetch-followup", runState.Snapshot().Trigger);
+        }
+        finally
+        {
+            gate.TrySetResult(true);
+            await WaitUntilAsync(() => !runState.IsRunning, TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Fact]
+    public async Task 跟隨取數_取數執行中但Finding未就緒呼叫TickAsync不開跑()
+    {
+        var now = DateTime.Now;
+        var options = new ScheduleOptions
+        {
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(options);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        // 取數執行中但未發送 finding 就緒
+        schedulerState.TryBeginRun("schedule", out _);
+
+        await service.TickAsync();
+
+        Assert.False(runState.IsRunning);
+        Assert.Equal(AiIdleReasons.OutsideWindow, runState.Snapshot().IdleReason);
+    }
+
+    [Fact]
+    public async Task 跟隨取數_取數結束後立即呼叫TickAsync開跑()
+    {
+        var now = DateTime.Now;
+        var options = new ScheduleOptions
+        {
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(options);
+
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ai.Behavior = async (_, _) =>
+        {
+            await gate.Task;
+            return new AiResponse { Success = true, Content = _ai.NextContent };
+        };
+
+        schedulerState.TryBeginRun("schedule", out _);
+        // 取數結束（此時無待補，RunEnded 事件觸發的 OnFetchFollowUp 不會搶跑）
+        schedulerState.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+
+        // NetIQ 落地待補紀錄
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+
+        // 立即呼叫 TickAsync
+        await service.TickAsync();
+
+        try
+        {
+            Assert.True(runState.IsRunning);
+            Assert.Equal("fetch-followup", runState.Snapshot().Trigger);
+        }
+        finally
+        {
+            gate.TrySetResult(true);
+            await WaitUntilAsync(() => !runState.IsRunning, TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Fact]
+    public void 跟隨取數_超過寬限期IsNotFollowingFetch為False()
+    {
+        var state = new SchedulerRunState();
+        state.TryBeginRun("schedule", out _);
+        state.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+
+        Assert.NotNull(state.LastRunEndedAt);
+        var checkTime = state.LastRunEndedAt.Value.AddMinutes(11);
+        Assert.False(state.IsFollowingFetch(checkTime));
+        Assert.True(state.IsFollowingFetch(state.LastRunEndedAt.Value));
+        Assert.True(state.IsFollowingFetch(state.LastRunEndedAt.Value.AddMinutes(5)));
+    }
+
+    [Fact]
+    public void 跟隨取數_EndRun空結果不觸發RunEnded_有結果觸發一次()
+    {
+        var state = new SchedulerRunState();
+        int count = 0;
+        state.RunEnded += () => Interlocked.Increment(ref count);
+
+        // 未真正開始的結束
+        state.EndRun(null);
+        Assert.Equal(0, count);
+        Assert.Null(state.LastRunEndedAt);
+
+        // 正常結束
+        state.TryBeginRun("schedule", out _);
+        state.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+        Assert.Equal(1, count);
+        Assert.NotNull(state.LastRunEndedAt);
+    }
 }

@@ -72,7 +72,8 @@ public class AiAnalysisHostedService : BackgroundService
 
         // 取數執行一發佈當日 PRTG finding 就立刻開跑（回饋第 40 輪批次E）：
         // 不等自己下一輪 60 秒輪詢，使用者按下「立即執行」後兩邊才是真的同時在動。
-        _schedulerRunState.PrtgFindingsBecameReady += OnPrtgFindingsBecameReady;
+        _schedulerRunState.PrtgFindingsBecameReady += OnFetchFollowUp;
+        _schedulerRunState.RunEnded += OnFetchFollowUp;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -110,14 +111,14 @@ public class AiAnalysisHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 當日 PRTG finding 到齊時的即時觸發（取數執行發的訊號）。
+    /// 取數發佈 PRTG finding 或取數結束時的即時觸發（跟隨取數訊號來源：PrtgFindingsBecameReady 與 RunEnded）。
     ///
     /// 這裡刻意**不看 AI 執行窗口**：跟隨取數是「取數跑到哪、判讀跟到哪」，
     /// 窗口是給背景消化積壓用的。窗口內外都要跟上，否則使用者手動執行一趟，
     /// AI 得等到窗口開了才動。
     /// 其餘前置條件（AI 已設定、存量校正完成、有待補、沒有正在跑）照樣要成立。
     /// </summary>
-    private void OnPrtgFindingsBecameReady()
+    private void OnFetchFollowUp()
     {
         // 事件在取數執行的執行緒上發出，這裡不能同步等 AI 跑完。
         _ = Task.Run(async () =>
@@ -185,8 +186,9 @@ public class AiAnalysisHostedService : BackgroundService
             return;
         }
 
-        // 必須在執行窗口內
-        if (!ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows))
+        var inWindow = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows);
+        var following = _schedulerRunState.IsFollowingFetch(DateTime.Now);
+        if (!inWindow && !following)
         {
             _runState.SetIdleReason(AiIdleReasons.OutsideWindow);
             return;
@@ -202,7 +204,7 @@ public class AiAnalysisHostedService : BackgroundService
 
         _runState.SetIdleReason(null);
 
-        await TriggerRunAsync(forceRerun: false, trigger: "schedule", externalCt: stoppingToken);
+        await TriggerRunAsync(forceRerun: false, trigger: inWindow ? "schedule" : "fetch-followup", externalCt: stoppingToken);
     }
 
     /// <summary>

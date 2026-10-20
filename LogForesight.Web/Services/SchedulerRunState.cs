@@ -196,6 +196,30 @@ public class SchedulerRunState
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
     public RunOutcome? LastOutcome { get; private set; }
 
+    /// <summary>最近一次執行完畢的時刻；站台重啟後歸零。</summary>
+    public DateTime? LastRunEndedAt { get; private set; }
+
+    /// <summary>取數結束後的跟隨寬限期（10 分鐘）。</summary>
+    public static readonly TimeSpan FollowUpGrace = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// AI 是否處於「跟隨取數」狀態：取數執行中且 PRTG finding 已就緒，或取數結束後 FollowUpGrace 內。
+    /// </summary>
+    public bool IsFollowingFetch(DateTime now)
+    {
+        lock (_lock)
+        {
+            if (IsRunning)
+            {
+                return PrtgFindingsReady;
+            }
+
+            return LastRunEndedAt.HasValue
+                && now >= LastRunEndedAt.Value
+                && (now - LastRunEndedAt.Value) <= FollowUpGrace;
+        }
+    }
+
     /// <summary>已在執行中時回 false（呼叫端據此直接拒絕，不排隊）；成功開始時回 true 並給出可用於停止的 CancellationTokenSource</summary>
     public bool TryBeginRun(string trigger, out CancellationTokenSource cts)
     {
@@ -291,6 +315,12 @@ public class SchedulerRunState
     /// 不必等自己的輪詢週期。訂閱者的例外由發佈端吞掉——通知失敗不能反過來弄壞取數執行。
     /// </summary>
     public event Action? PrtgFindingsBecameReady;
+
+    /// <summary>
+    /// 取數執行結束時觸發（outcome != null）。AI 分析服務據此再次開跑跟隨取數，
+    /// 不必等自己的輪詢週期。訂閱者的例外由發佈端吞掉——通知失敗不能反過來弄壞取數執行。
+    /// </summary>
+    public event Action? RunEnded;
 
     public void ReportProgress(string phase, int done, int total)
     {
@@ -391,6 +421,7 @@ public class SchedulerRunState
     /// 維持上一筆 LastOutcome 不變，不用「沒開始」蓋掉「上次真的跑過的結果」。</param>
     public void EndRun(RunOutcome? outcome = null)
     {
+        var shouldNotify = false;
         lock (_lock)
         {
             IsRunning = false;
@@ -405,7 +436,24 @@ public class SchedulerRunState
             PausedReason = null;
             _cts?.Dispose();
             _cts = null;
-            if (outcome != null) LastOutcome = outcome;
+            if (outcome != null)
+            {
+                LastOutcome = outcome;
+                LastRunEndedAt = DateTime.Now;
+                shouldNotify = true;
+            }
+        }
+
+        if (shouldNotify)
+        {
+            try
+            {
+                RunEnded?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "通知 AI 分析「取數結束」時發生例外（不影響取數執行）");
+            }
         }
     }
 
