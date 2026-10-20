@@ -75,7 +75,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         _service = new WorkOrderCommandService(
             _query, aggregates, coordinator, _orderStore, _caseStore, _noiseMarks, _hosts, _users, _visibility,
             new UserCapabilityResolver(_userGroups, _hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            _audit, displayNames, _ruleStore, _mail);
+            _audit, displayNames, _mail);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -727,6 +727,104 @@ public class WorkOrderCommandServiceTests : IDisposable
         Assert.Equal(WorkOrderCloseReasons.Cancelled, _orderStore.Get(orderId)!.ClosedReason);
         Assert.Null(OpenCase("HOST-A"));
         Assert.Equal(orderId.ToString(), SingleAudit(AuditActions.WorkOrderCancel).TargetId);
+    }
+
+    // ── 退回處理人 ───────────────────────────────────────────────────────────
+
+    private void Escalate(string hostName)
+    {
+        var member = OpenCase(hostName)!;
+        member.Status = IssueHandlingStatuses.Escalated;
+        member.Note = "我處理不了";
+        _caseStore.Save(member);
+    }
+
+    [Fact]
+    public void 退回_escalated成員回處理中_事件稽核與通知各一筆_不推進LastReplyAt()
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        AddHost("H1");
+        AddHost("H2");
+        var orderId = Assert.Single(_service.Create(Single(alice.UserId)).Orders).WorkOrderId;
+        Escalate("H1");
+        var escalated = OpenCase("H1")!;
+        escalated.DueDate = DateTime.Today.AddDays(5);   // 上報前處理人填的預計完成日，退回後要保留（逾期判定繼續有效）
+        _caseStore.Save(escalated);
+        var replyBefore = _orderStore.Get(orderId)!.LastReplyAt;
+        _outbox.Update(b => b.Items.Clear());
+        _audit.Entries.Clear();
+
+        var result = _service.Return(orderId, new ReturnWorkOrderRequest { Note = "請再試一次，磁碟已換新" });
+
+        Assert.Equal(1, result.ReturnedCases);
+        Assert.Equal(IssueHandlingStatuses.InProgress, OpenCase("H1")!.Status);
+        Assert.Equal(DateTime.Today.AddDays(5), OpenCase("H1")!.DueDate);
+        Assert.NotEqual(IssueHandlingStatuses.Escalated, OpenCase("H2")!.Status);
+        Assert.Equal(replyBefore, _orderStore.Get(orderId)!.LastReplyAt);
+        Assert.False(_orderStore.Get(orderId)!.HasUnreadReply);
+
+        var evt = Assert.Single(_orderStore.ListEvents(orderId), e => e.Action == WorkOrderEventActions.Returned);
+        Assert.Equal("請再試一次，磁碟已換新", evt.Note);
+
+        var audit = SingleAudit(AuditActions.WorkOrderReturn);
+        Assert.Equal(orderId.ToString(), audit.TargetId);
+        Assert.Contains("請再試一次，磁碟已換新", audit.Summary);
+
+        var notice = Assert.Single(_outbox.Get().Items.Values);
+        Assert.Equal(WorkOrderOutboxKinds.Returned, notice.Kind);
+        Assert.Equal(alice.UserId, notice.RecipientUserId);
+        Assert.Equal("請再試一次，磁碟已換新", notice.Reason);
+    }
+
+    [Fact]
+    public void 退回_沒有escalated成員_驗證錯誤且零寫入()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A");
+        _audit.Entries.Clear();
+
+        var error = Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" }));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, error.Code);
+        Assert.Empty(_audit.Entries);
+        Assert.DoesNotContain(_orderStore.ListEvents(orderId), e => e.Action == WorkOrderEventActions.Returned);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void 退回_說明空白_驗證錯誤_成員維持escalated(string? note)
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A");
+        Escalate("HOST-A");
+
+        var error = Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = note }));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, error.Code);
+        Assert.Equal(IssueHandlingStatuses.Escalated, OpenCase("HOST-A")!.Status);
+    }
+
+    [Fact]
+    public void 退回_說明超過500字_驗證錯誤()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A");
+        Escalate("HOST-A");
+
+        var error = Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = new string('字', 501) }));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, error.Code);
+    }
+
+    [Fact]
+    public void 退回_單已結案_驗證錯誤()
+    {
+        var (orderId, _) = CreateOneOrder("HOST-A");
+        Escalate("HOST-A");
+        _service.Cancel(orderId, new CancelWorkOrderRequest { Reason = "誤派" });
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed,
+            Assert.Throws<DomainException>(() => _service.Return(orderId, new ReturnWorkOrderRequest { Note = "退回" })).Code);
     }
 
     [Fact]

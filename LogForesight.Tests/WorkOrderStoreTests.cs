@@ -835,6 +835,107 @@ public class WorkOrderStoreTests : IDisposable
         }
     }
 
+    // ── 未讀回覆：SQL 端條件與 WorkOrder.HasUnreadReply 同義 ─────────────────────────
+
+    private long InsertUnreadCase(EfWorkOrderStore store, string source, DateTime created, DateTime? reply, DateTime? seen, DateTime? closed = null)
+    {
+        var order = NewOrder(1, source);
+        order.CreatedAt = created;
+        order.LastReplyAt = reply;
+        order.AdminSeenAt = seen;
+        order.ClosedAt = closed;
+        return store.Insert(order);
+    }
+
+    [Fact]
+    public void 未讀回覆_SQL條件逐案對照C屬性_含相等邊界與COALESCE兩側()
+    {
+        var store = Store();
+        var t = new DateTime(2026, 10, 1, 8, 0, 0);
+        // 以來源名稱區分各案；期望值由 HasUnreadReply（C# 單點定義）算出，SQL 結果必須逐案一致
+        var cases = new (string Source, DateTime? Reply, DateTime? Seen, DateTime? Closed, bool Expected)[]
+        {
+            ("NoReply", null, null, null, false),
+            ("ReplyAfterCreatedNeverSeen", t.AddHours(1), null, null, true),
+            ("ReplyEqualsCreatedNeverSeen", t, null, null, false),
+            ("ReplyBeforeCreatedNeverSeen", t.AddHours(-1), null, null, false),
+            ("ReplyAfterSeen", t.AddHours(3), t.AddHours(2), null, true),
+            ("ReplyEqualsSeen", t.AddHours(2), t.AddHours(2), null, false),
+            ("ReplyBeforeSeen", t.AddHours(1), t.AddHours(2), null, false),
+            ("SeenBeforeCreatedReplyBetween", t.AddMinutes(30), t.AddHours(-5), null, true),
+            ("ClosedWithReply", t.AddHours(1), null, t.AddHours(2), false)
+        };
+        var ids = new Dictionary<string, long>();
+        foreach (var c in cases) ids[c.Source] = InsertUnreadCase(store, c.Source, t, c.Reply, c.Seen, c.Closed);
+
+        foreach (var c in cases)
+            Assert.Equal(c.Expected, store.Get(ids[c.Source])!.HasUnreadReply);
+
+        var unread = store.QueryOrders(new WorkOrderQuery { Status = "all", UnreadOnly = true, PageSize = 100 });
+        var expectedIds = cases.Where(c => c.Expected).Select(c => ids[c.Source]).OrderBy(x => x).ToList();
+        Assert.Equal(expectedIds, unread.Items.Select(o => o.WorkOrderId).OrderBy(x => x).ToList());
+        Assert.Equal(expectedIds.Count, unread.Total);
+        Assert.Equal(expectedIds.Count, store.CountUnreadReplies());
+        Assert.Equal(cases.Length, store.QueryOrders(new WorkOrderQuery { Status = "all", PageSize = 100 }).Total);
+    }
+
+    [Fact]
+    public void Save不會用舊複本蓋掉MarkAdminSeen寫入的已讀時間()
+    {
+        var store = Store();
+        var id = InsertUnreadCase(store, "Disk", DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-1), null);
+        var stale = store.Get(id)!;   // 讀到 AdminSeenAt = null 的複本（改派、續掛都是先讀後寫）
+        // 已讀時間晚於最後回覆（秒級截斷，避免 provider 的時間精度差異）
+        var seenAt = new DateTime(DateTime.Now.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond).AddSeconds(1);
+        store.MarkAdminSeen(id, seenAt);
+
+        stale.Note = "先讀、已讀後才存";
+        store.Save(stale);
+
+        var after = store.Get(id)!;
+        Assert.Equal("先讀、已讀後才存", after.Note);
+        Assert.Equal(seenAt, after.AdminSeenAt);
+        Assert.False(after.HasUnreadReply);
+    }
+
+    [Fact]
+    public void MarkAdminSeen只寫AdminSeenAt_不動UpdatedAt_單不存在不擲()
+    {
+        var store = Store();
+        var id = InsertUnreadCase(store, "Disk", DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-1), null);
+        var before = store.Get(id)!;
+        var seenAt = new DateTime(2026, 10, 2, 9, 30, 0);
+
+        store.MarkAdminSeen(id, seenAt);
+        store.MarkAdminSeen(987654, seenAt);
+
+        var after = store.Get(id)!;
+        Assert.Equal(seenAt, after.AdminSeenAt);
+        Assert.Equal(before.UpdatedAt, after.UpdatedAt);
+        // 併發權杖沒變：先前讀到的複本仍可存檔
+        before.Note = "仍可存";
+        store.Save(before);
+        Assert.Equal("仍可存", store.Get(id)!.Note);
+    }
+
+    [Theory]
+    [InlineData("sqlserver")]
+    [InlineData("sqlite")]
+    public void QueryOrders未讀回覆兩後端都翻譯成COALESCE比較(string provider)
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        if (provider == "sqlserver") builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        else builder.UseSqlite("Data Source=:memory:");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var sql = EfWorkOrderStore.BuildOrderFilterQuery(ctx,
+            new WorkOrderQuery { Status = "all", UnreadOnly = true }, DateTime.Today).ToQueryString();
+
+        Assert.Contains("COALESCE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("admin_seen_at", sql);
+        Assert.Contains("last_reply_at", sql);
+    }
+
     [Theory]
     [InlineData("sqlserver")]
     [InlineData("sqlite")]

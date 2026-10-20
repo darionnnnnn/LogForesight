@@ -51,7 +51,7 @@
 </section>
 
 <!-- 群組編輯對話框 -->
-<div class="modal fade" id="group-modal" tabindex="-1">
+<div class="modal fade" id="group-modal" tabindex="-1" aria-labelledby="group-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
@@ -83,8 +83,8 @@
                         </div>
                     </div>
                     <div class="mb-3" id="group-host-access-field">
-                        <label class="form-label">可檢視的主機群組</label>
-                        <div id="group-host-access-checks" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;"></div>
+                        <span class="form-label d-inline-block" id="group-host-access-label">可檢視的主機群組</span>
+                        <div id="group-host-access-checks" role="group" aria-labelledby="group-host-access-label" class="border rounded p-2 lf-scroll-sm"></div>
                         <div class="text-muted small d-none" id="group-host-access-viewall">
                             此角色可檢視全部主機，不受主機群組授權限制。
                         </div>
@@ -104,11 +104,11 @@
 </div>
 
 <!-- 主機群組成員：目前成員／加入成員 -->
-<div class="modal fade" id="members-modal" tabindex="-1">
+<div class="modal fade" id="members-modal" tabindex="-1" aria-labelledby="members-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">「<span id="members-group-name"></span>」的成員</h5>
+                <h5 class="modal-title" id="members-modal-title">「<span id="members-group-name"></span>」的成員</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <div class="modal-body">

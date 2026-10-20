@@ -11,7 +11,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad } from '../core/ui.js';
+import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad, renderPageHeader } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
 
@@ -34,6 +34,18 @@ let rules = [];
 let recentIssues = [];
 let users = [];
 let editingRule = null;   // null＝新增；否則正在編輯的既有規則（鍵不可改，只能改負責人／備註）
+
+// 頁首：用途副標＋說明＋頁面主要動作「新增規則」。必須排在檔案下方 getElementById('issue-owner-new')
+// 綁定之前（模組由上而下執行），否則按鈕還不存在、綁定會失效。
+const newRuleButton = button('新增規則', { variant: 'primary', icon: 'plus-lg' });
+newRuleButton.id = 'issue-owner-new';
+renderPageHeader(document.getElementById('page-header'), {
+    subtitle: '以問題為單位記錄負責人與機房結論，跨主機生效。',
+    help: {
+        content: '以「問題（來源＋Event ID）」為單位記錄負責人與機房結論，跨主機生效。負責人是長期負責人：該問題之後每天出現時會自動建立案件並指派給第一位負責人（進「我的交辦」）；郵件通知路由也優先問題負責人，並自動取得曾出現其負責問題之主機的檢視權。機房結論勾選「自動套用」後，之後新出現的主機日會沿用同一個結論，不必每次重新標記。'
+    },
+    actions: [newRuleButton]
+});
 
 async function load() {
     renderLoading(listContainer, 4);
@@ -132,7 +144,7 @@ function renderList() {
         rows: rules,
         empty: {
             title: '尚未指派任何問題負責人',
-            hint: '按右上角「新增規則」開始指派——問題負責人是長期負責人，該問題之後每天出現時會自動建案指派給他，郵件通知也優先看這裡。'
+            hint: '按「新增規則」開始指派——問題負責人是長期負責人，該問題之後每天出現時會自動建案指派給他，郵件通知也優先看這裡。'
         },
         stickyLastColumn: true,
         onRowExpand: (rule, cell) => {

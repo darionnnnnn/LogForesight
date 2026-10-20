@@ -10,7 +10,7 @@
 
 import { api, getCurrentUser } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderTable, renderLoading, statCard, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, statCard, guardLoad, renderPageHeader } from '../core/ui.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge } from '../core/format.js';
 
 const root = document.getElementById('user-detail');
@@ -58,11 +58,6 @@ function renderHeader(detail) {
     const titleRow = document.createElement('div');
     titleRow.className = 'd-flex align-items-center flex-wrap gap-2';
 
-    const title = document.createElement('div');
-    title.className = 'fs-5 fw-semibold';
-    title.textContent = formatUserName(user.displayName, user.account);
-    titleRow.appendChild(title);
-
     titleRow.appendChild(badge(user.active ? '啟用' : '停用', user.active ? 'success' : 'secondary'));
 
     for (const group of detail.groups) {
@@ -74,10 +69,17 @@ function renderHeader(detail) {
     }
 
     const workLink = document.createElement('a');
-    workLink.className = 'btn btn-sm btn-outline-primary ms-auto';
+    workLink.className = 'btn btn-sm btn-outline-primary';
     workLink.href = appUrl(`/handlers/${user.userId}`);
     workLink.textContent = '開啟工作頁';
-    titleRow.appendChild(workLink);
+
+    // 頁首（renderPageHeader）：副標開頭以強調文字放使用者名稱，「開啟工作頁」是頁面層級動作
+    const name = document.createElement('strong');
+    name.textContent = formatUserName(user.displayName, user.account);
+    renderPageHeader(document.getElementById('page-header'), {
+        subtitle: [name, ' 的帳號、授權與工作全貌（管理視角）'],
+        actions: [workLink]
+    });
 
     body.appendChild(titleRow);
 
@@ -166,7 +168,7 @@ function renderVisibleHosts(hosts) {
 
     renderTable(document.getElementById('user-visible-hosts'), {
         columns: [
-            { title: '主機', render: h => h.hostName },
+            { title: '主機', truncate: true, render: h => h.hostName },
             { title: 'IP', render: h => h.ipAddress ?? '' },
             { title: '作業系統', render: h => (h.os === 'linux' ? 'Linux' : 'Windows') },
             { title: '群組', render: h => h.groupNames.join('、') },
@@ -218,8 +220,8 @@ function renderOpenWork(workload) {
     container.appendChild(casesBox);
     renderTable(casesBox, {
         columns: [
-            { title: '主機', render: c => c.hostName },
-            { title: '問題', render: c => c.issueLabel },
+            { title: '主機', truncate: true, render: c => c.hostName },
+            { title: '問題', truncate: true, render: c => c.issueLabel },
             { title: '狀態', render: c => statusText(c) },
             { title: '涵蓋範圍', render: c => `${c.firstLinkedDate} ~ ${c.lastLinkedDate}` },
             { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) }
@@ -242,7 +244,7 @@ function renderOpenWork(workload) {
     renderTable(daysBox, {
         columns: [
             { title: '日期', render: d => d.date },
-            { title: '主機', render: d => d.hostName },
+            { title: '主機', truncate: true, render: d => d.hostName },
             { title: '風險', render: d => riskBadge(d.riskLevel) },
             { title: '狀態', render: d => statusText(d) },
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }
@@ -258,8 +260,8 @@ function renderClosedWork(history) {
 
     renderTable(document.getElementById('user-closed-work'), {
         columns: [
-            { title: '主機', render: h => h.hostName },
-            { title: '問題', render: h => h.issueLabel },
+            { title: '主機', truncate: true, render: h => h.hostName },
+            { title: '問題', truncate: true, render: h => h.issueLabel },
             { title: '結論', render: h => h.statusText },
             { title: '涵蓋範圍', render: h => `${h.firstLinkedDate} ~ ${h.lastLinkedDate}` },
             { title: '結案時間', className: 'text-nowrap', render: h => (h.closedAt ? formatDateTime(h.closedAt) : '') }
@@ -290,8 +292,8 @@ function renderAssignmentHistory(history) {
         columns: [
             { title: '交辦時間', className: 'text-nowrap', render: h => formatDateTime(h.createdAt) },
             { title: '交辦者', render: h => h.createdByAccount || '（系統）' },
-            { title: '主機', render: h => h.hostName },
-            { title: '問題', render: h => h.issueLabel },
+            { title: '主機', truncate: true, render: h => h.hostName },
+            { title: '問題', truncate: true, render: h => h.issueLabel },
             { title: '目前狀態', render: h => historyStatusCell(h) },
             { title: '所屬交辦單', className: 'text-nowrap', render: h => workOrderCell(h.workOrderId) },
             { title: '涵蓋範圍', render: h => `${h.firstLinkedDate} ~ ${h.lastLinkedDate}` }

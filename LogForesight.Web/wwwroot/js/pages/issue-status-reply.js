@@ -9,19 +9,17 @@
  */
 
 import { api, getCurrentUser } from '../core/api.js';
-import { toast, withBusy, showDetailModal, confirmAction } from '../core/ui.js';
+import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck } from '../core/ui.js';
 import { attachNoteEditor } from '../core/note-editor.js';
+import { statusMeta, statusesWhere } from '../core/handling-statuses.js';
+import { todayLocal } from '../core/format.js';
 
-/** escalated：「我處理不了，需要上報」——非結案，後端會即時通知 admin 群組決定結案或重新指派 */
-const STATUS_OPTIONS = [
-    { value: 'in_progress', label: '處理中' },
-    { value: 'observing', label: '觀察中' },
-    { value: 'resolved', label: '已處理' },
-    { value: 'wont_fix', label: '不處理' },
-    { value: 'false_positive', label: '誤報' },
-    { value: 'known_noise', label: '已知雜訊' },
-    { value: 'escalated', label: '無法處理（上報管理員）' }
-];
+/**
+ * 處理人可回覆的狀態：由 core/handling-statuses.js 的 replyable 衍生（不含「未處理」——
+ * 要退回請由管理者處理，後端 IssueStatusValidation.ValidateReply 也會擋）。
+ * escalated：「我處理不了，需要上報」——非結案，後端會即時通知 admin 群組決定結案或重新指派
+ */
+const STATUS_OPTIONS = statusesWhere(s => s.replyable).map(s => ({ value: s.value, label: s.label }));
 
 /**
  * @param {object} options
@@ -48,13 +46,15 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     const hint = document.createElement('div');
     hint.className = 'lf-hint mb-3';
-    hint.textContent = `套用對象：${targetText}；每台主機的案件會連同它涵蓋的日期一起更新。`;
+    hint.textContent = `套用對象：${targetText}；每台主機的交辦會連同它涵蓋的日期一起更新。`;
     form.appendChild(hint);
 
     const statusLabel = document.createElement('label');
     statusLabel.className = 'form-label small text-muted';
     statusLabel.textContent = '處理狀態';
+    statusLabel.htmlFor = 'wo-reply-status';
     const statusSelect = document.createElement('select');
+    statusSelect.id = 'wo-reply-status';
     statusSelect.className = 'form-select form-select-sm mb-3';
     for (const option of STATUS_OPTIONS) {
         const el = document.createElement('option');
@@ -70,7 +70,9 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label small text-muted';
     noteLabel.textContent = '處理說明';
+    noteLabel.htmlFor = 'wo-reply-note';
     const noteInput = document.createElement('textarea');
+    noteInput.id = 'wo-reply-note';
     noteInput.className = 'form-control form-control-sm mb-3';
     noteInput.rows = 3;
     form.append(noteLabel);
@@ -90,6 +92,25 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
         reuse: { issueKey: () => reuseIssueKey },
         phrases: true
     });
+    // 必填說明欄的即時錯誤（狀態切換時一併更新標示）；aria-live 讓讀屏軟體念出錯誤
+    const noteError = document.createElement('div');
+    noteError.className = 'invalid-feedback d-block';
+    noteError.setAttribute('aria-live', 'polite');
+    noteInput.insertAdjacentElement('afterend', noteError);
+    noteInput.addEventListener('input', () => {
+        if (noteInput.value.trim()) {
+            noteInput.classList.remove('is-invalid');
+            noteError.textContent = '';
+        }
+    });
+    function syncNoteField() {
+        const meta = statusMeta(statusSelect.value);
+        noteLabel.textContent = meta ? meta.noteLabel : '處理說明';
+        noteInput.classList.remove('is-invalid');
+        noteError.textContent = '';
+    }
+    statusSelect.addEventListener('change', syncNoteField);
+    syncNoteField();
     if (previousNoteLink) {
         previousNoteLink.addEventListener('click', () => noteEditor.setValue(previousNote));
     }
@@ -98,15 +119,24 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     const dueLabel = document.createElement('label');
     dueLabel.className = 'form-label small text-muted';
     dueLabel.textContent = '預計完成日／觀察至';
+    dueLabel.htmlFor = 'wo-reply-due';
     const dueInput = document.createElement('input');
+    dueInput.id = 'wo-reply-due';
     dueInput.type = 'date';
+    dueInput.min = todayLocal();   // 不可早於今天（本機日期；bindPastDateCheck 仍負責手打的情況）
     dueInput.className = 'form-control form-control-sm mb-3';
-    form.append(dueLabel, dueInput);
+    const dueError = document.createElement('div');
+    dueError.className = 'invalid-feedback d-block';
+    dueError.setAttribute('aria-live', 'polite');
+    form.append(dueLabel, dueInput, dueError);
 
+    const needsDue = () => statusSelect.value === 'in_progress' || statusSelect.value === 'observing';
+    // 預計完成日不可早於今天：change／blur 即時檢查，送出前再檢查一次（後端另有同一條防線）
+    const dueCheck = bindPastDateCheck(dueInput, dueError, { message: '預計完成日不可早於今天', isActive: needsDue });
     function syncDueVisibility() {
-        const needsDue = statusSelect.value === 'in_progress' || statusSelect.value === 'observing';
-        dueLabel.classList.toggle('d-none', !needsDue);
-        dueInput.classList.toggle('d-none', !needsDue);
+        dueLabel.classList.toggle('d-none', !needsDue());
+        dueInput.classList.toggle('d-none', !needsDue());
+        dueCheck.validate();
     }
     statusSelect.addEventListener('change', syncDueVisibility);
     syncDueVisibility();
@@ -134,25 +164,28 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     /** 驗證→送出→關閉；goNext＝成功後接著開下一張（失敗或必填沒過都停在原彈窗） */
     async function send(button, goNext) {
-        // 「不處理」必須說明理由——與風險日詳情的規則一致（那裡也是不處理→說明必填）
-        if (statusSelect.value === 'wont_fix' && !noteInput.value.trim()) {
-            toast('標記為「不處理」時請填寫說明', 'warning');
-            noteInput.focus();
-            return;
+        // 必填說明由目錄決定（不處理、無法處理）：管理員收到上報通知要據此決定結案或改派。
+        // 送出前把所有錯誤一次標出來，focus 到第一個錯誤欄位
+        const meta = statusMeta(statusSelect.value);
+        const errors = [];
+        if (meta?.noteRequired && !noteInput.value.trim()) {
+            const reasonText = meta.noteLabel.replace(/（.*）$/, '');
+            noteInput.classList.add('is-invalid');
+            noteError.textContent = `標記為「${meta.shortLabel}」時請填寫${reasonText}`;
+            errors.push(noteInput);
+        } else if (!noteInput.checkValidity()) {
+            noteInput.classList.add('is-invalid');
+            noteError.textContent = noteInput.validationMessage;   // 超過字數上限（attachNoteEditor 設的）
+            errors.push(noteInput);
         }
-        // 「無法處理」必填原因：管理員收到上報通知要據此決定結案或改派
-        if (statusSelect.value === 'escalated' && !noteInput.value.trim()) {
-            toast('標記為「無法處理」時請填寫原因，管理員將據此決定結案或重新指派', 'warning');
-            noteInput.focus();
-            return;
-        }
-        if (!noteInput.checkValidity()) {
-            toast(noteInput.validationMessage, 'warning');   // 超過字數上限（attachNoteEditor 設的）
-            noteInput.focus();
-            return;
-        }
+        if (!dueCheck.validate()) errors.push(dueInput);
         if (statusSelect.value === 'observing' && !dueInput.value) {
-            toast('標記為「觀察中」時請指定觀察至日期', 'warning');
+            dueInput.classList.add('is-invalid');
+            dueError.textContent = '標記為「觀察中」時請指定觀察至日期';
+            errors.push(dueInput);
+        }
+        if (errors.length > 0) {
+            errors[0].focus();
             return;
         }
 

@@ -4,6 +4,7 @@ using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -74,6 +75,8 @@ public class WorkOrderQueryServiceTests
             : _inner.GetAllActive();
         public long Insert(WorkOrder order) => _inner.Insert(order);
         public void Save(WorkOrder order) => _inner.Save(order);
+        public void MarkAdminSeen(long workOrderId, DateTime seenAt) => _inner.MarkAdminSeen(workOrderId, seenAt);
+        public int CountUnreadReplies() => _inner.CountUnreadReplies();
         public void AppendEvent(WorkOrderEvent evt) => _inner.AppendEvent(evt);
         public List<WorkOrderEvent> ListEvents(long workOrderId) => _inner.ListEvents(workOrderId);
         public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds) => _inner.CountMembers(workOrderIds);
@@ -172,6 +175,56 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.Get(id)).Code);
         Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.Members(id, "all", 1, 50)).Code);
         Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.Timeline(id)).Code);
+    }
+
+    [Fact]
+    public void ViewerCanReply_本人有Handle且進行中_為true()
+    {
+        var id = AddOrder(_alice.UserId);
+        var dto = Service(As(_alice.UserId, Capability.Handle)).Get(id);
+        Assert.True(dto.ViewerCanReply);
+        Assert.False(dto.ViewerIsPreviousHandler);
+    }
+
+    [Fact]
+    public void ViewerCanReply_本人無Handle_為false()
+    {
+        var id = AddOrder(_alice.UserId);
+        var dto = Service(As(_alice.UserId, Capability.ViewAll)).Get(id);
+        Assert.True(dto.ViewerIsHandler);
+        Assert.False(dto.ViewerCanReply);
+    }
+
+    [Fact]
+    public void ViewerCanReply_單已結案_為false()
+    {
+        var id = AddOrder(_alice.UserId, closed: DateTime.Today.AddHours(-2));
+        var dto = Service(As(_alice.UserId, Capability.Handle)).Get(id);
+        Assert.True(dto.ViewerIsHandler);
+        Assert.False(dto.ViewerCanReply);
+    }
+
+    [Fact]
+    public void 授權_原處理人改派後唯讀可開_再改派一次更早那位403()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "H1", IssueHandlingStatuses.InProgress);
+        var actor = new WorkOrderActor { ActorId = _stranger.UserId, ActorAccount = "DOMAIN\\x", OccurredAt = DateTime.Today };
+        _coordinator.Reassign(id, _bob.UserId, actor);
+
+        var dto = Service(As(_alice.UserId, Capability.Handle)).Get(id);
+        Assert.True(dto.ViewerIsPreviousHandler);
+        Assert.False(dto.ViewerIsHandler);
+        Assert.False(dto.ViewerCanReply);
+        Assert.Equal(_bob.UserId, dto.HandlerId);
+
+        var third = _users.Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "卡蘿" });
+        _coordinator.Reassign(id, third.UserId, actor);
+
+        // 只記最近一位：bob 可看，更早的 alice 403
+        Assert.True(Service(As(_bob.UserId, Capability.Handle)).Get(id).ViewerIsPreviousHandler);
+        var ex = Assert.Throws<DomainException>(() => Service(As(_alice.UserId, Capability.Handle)).Get(id));
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
     }
 
     [Fact]
@@ -653,6 +706,9 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(new[] { "建立", "追加主機", "已回覆", "改派", "追加主機" }, timeline.Select(e => e.ActionText));
         Assert.Equal("in_progress：處理中（2 台）", timeline[2].Note);
         Assert.Equal("愛麗絲(DOMAIN\\alice)", timeline[2].ActorName);
+        // 改派註記存的是 id→id，對外換成「名稱(帳號) → 名稱(帳號)」，前端不必再查人（含已停用者）
+        Assert.Matches(@"^.+\(.+\) → .+\(.+\)$", timeline[3].Note);
+        Assert.DoesNotMatch(@"^\d+→\d+$", timeline[3].Note);
         Assert.Equal("路人(DOMAIN\\x)", timeline[0].ActorName);
         Assert.Equal("系統", timeline[4].ActorName);
         Assert.Equal(timeline.Select(e => e.CreatedAt).OrderBy(x => x), timeline.Select(e => e.CreatedAt));
@@ -708,6 +764,9 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(ApiErrorCodes.Forbidden,
             Assert.Throws<DomainException>(() => svc.ListForHandler(_bob.UserId, new WorkOrderListRequest())).Code);
         Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.HandlerSummary(_bob.UserId)).Code);
+        // workload 與摘要同一道授權：控制器先過 AuthorizeHandlerView 才查工作量（403 在查詢之前擲出，所以不需要真的工作量服務）
+        Assert.Equal(ApiErrorCodes.Forbidden,
+            Assert.Throws<DomainException>(() => new HandlersController(null!, svc).Workload(_bob.UserId)).Code);
     }
 
     [Fact]
@@ -920,6 +979,109 @@ public class WorkOrderQueryServiceTests
         Assert.Null(list.Items.Single().MutedUntil);
         Assert.DoesNotContain(multi, Ids(only));
         Assert.Equal(1, svc.HandlerSummary(_alice.UserId).ActiveWorkOrders);
+    }
+
+    // ── 未讀回覆（WorkOrder.HasUnreadReply／seen／unread-count／UnreadOnly）────────────────
+
+    private void ReplyAt(long orderId, DateTime at)
+    {
+        var order = _orders.Get(orderId)!;
+        order.LastReplyAt = at;
+        _orders.Save(order);
+    }
+
+    [Fact]
+    public void 未讀回覆_回覆後為未讀_Assign開啟後清空_再回覆又變未讀()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+
+        Assert.True(_orders.Get(id)!.HasUnreadReply);
+        Assert.True(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
+        Assert.Equal(1, svc.UnreadCount().Count);
+
+        svc.MarkSeen(id);
+
+        Assert.NotNull(_orders.Get(id)!.AdminSeenAt);
+        Assert.False(_orders.Get(id)!.HasUnreadReply);
+        Assert.False(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
+        Assert.Equal(0, svc.UnreadCount().Count);
+
+        ReplyAt(id, DateTime.Now.AddMinutes(5));
+
+        Assert.True(_orders.Get(id)!.HasUnreadReply);
+        Assert.True(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
+        Assert.Equal(1, svc.UnreadCount().Count);
+    }
+
+    [Fact]
+    public void 未讀回覆_ViewAll無Assign呼叫seen_不寫入AdminSeenAt()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        Service(As(_bob.UserId, Capability.ViewAll)).MarkSeen(id);
+
+        Assert.Null(_orders.Get(id)!.AdminSeenAt);
+        Assert.True(_orders.Get(id)!.HasUnreadReply);
+    }
+
+    [Fact]
+    public void 未讀回覆_處理人本人開自己的單呼叫seen_不寫入且不擲()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        Service(As(_alice.UserId, Capability.Handle)).MarkSeen(id);
+
+        Assert.Null(_orders.Get(id)!.AdminSeenAt);
+    }
+
+    [Fact]
+    public void 未讀回覆_詳情GET不寫入任何已讀()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        var detail = Service(As(_bob.UserId, Capability.Assign)).Get(id);
+
+        Assert.True(detail.UnreadReply);
+        Assert.Null(_orders.Get(id)!.AdminSeenAt);
+    }
+
+    [Fact]
+    public void 未讀回覆_seen對不存在的單404_無權檢視403()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        Assert.Equal(ApiErrorCodes.NotFound,
+            Assert.Throws<DomainException>(() => Service(As(_bob.UserId, Capability.Assign)).MarkSeen(9999)).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden,
+            Assert.Throws<DomainException>(() => Service(As(_stranger.UserId)).MarkSeen(id)).Code);
+    }
+
+    [Fact]
+    public void 未讀回覆_UnreadOnly只回未讀的單_已結案與未回覆都不算()
+    {
+        var unread = AddOrder(_alice.UserId, "disk", 1, DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-1));
+        var seen = AddOrder(_alice.UserId, "disk", 2, DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-2));
+        _orders.MarkAdminSeen(seen, DateTime.Now.AddHours(-1));
+        AddOrder(_alice.UserId, "disk", 3, DateTime.Now.AddHours(-3));
+        AddOrder(_alice.UserId, "disk", 4, DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-1), closed: DateTime.Now);
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+
+        var list = svc.List(new WorkOrderListRequest { Status = "all", UnreadOnly = true });
+
+        Assert.Equal(new[] { unread }, Ids(list));
+        Assert.Equal(1, svc.UnreadCount().Count);
+        Assert.Equal(4, svc.List(new WorkOrderListRequest { Status = "all" }).Total);
+    }
+
+    [Fact]
+    public void 未讀回覆_從未開啟過時以建立時間為基準_回覆晚於建立才算未讀()
+    {
+        var created = DateTime.Now.AddHours(-3);
+        var replyEqualsCreated = AddOrder(_alice.UserId, "disk", 1, created, created);
+
+        Assert.False(_orders.Get(replyEqualsCreated)!.HasUnreadReply);
+        Assert.Equal(0, Service(As(_bob.UserId, Capability.Assign)).UnreadCount().Count);
     }
 
     [Fact]

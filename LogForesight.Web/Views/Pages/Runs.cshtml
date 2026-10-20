@@ -275,12 +275,12 @@
                     </button>
                 </div>
 
-                <label class="form-label small fw-semibold">執行窗口</label>
+                <span class="form-label small fw-semibold d-inline-block" id="schedule-windows-label">執行窗口</span>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
-                <div id="schedule-windows" class="mb-2"></div>
+                <div id="schedule-windows" role="group" aria-labelledby="schedule-windows-label" class="mb-2"></div>
                 <button type="button" class="btn btn-sm btn-outline-secondary mb-3 d-none" id="schedule-add-window" data-maintain-only data-maintain-action>
                     新增窗口
                 </button>
@@ -338,17 +338,17 @@
     </form>
 </div>
 
-<div class="modal fade" id="run-now-modal" tabindex="-1">
+<div class="modal fade" id="run-now-modal" tabindex="-1" aria-labelledby="run-now-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">立即執行</h5>
+                <h5 class="modal-title" id="run-now-modal-title">立即執行</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <form id="run-now-form" novalidate>
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">範圍</label>
+                    <div class="mb-3" role="group" aria-labelledby="run-now-scope-label">
+                        <span class="form-label d-inline-block" id="run-now-scope-label">範圍</span>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="run-now-scope" id="run-now-scope-all" value="all" checked />
                             <label class="form-check-label" for="run-now-scope-all">
@@ -380,8 +380,8 @@
                             <option value="All">全部重新分析（含已處理完的）</option>
                         </select>
                         <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
-                        <div class="table-responsive mt-2">
-                            <table class="table table-sm table-bordered small mb-0" aria-label="執行模式影響對照">
+                        <div class="lf-table-wrap mt-2">
+                            <table class="table table-sm table-hover align-middle mb-0" aria-label="執行模式影響對照">
                                 <thead><tr><th scope="col">模式</th><th scope="col">會重建什麼</th><th scope="col">保留什麼</th><th scope="col">何時使用</th></tr></thead>
                                 <tbody>
                                     <tr><th scope="row">只補跑失敗或未執行</th><td>缺漏或失敗日</td><td>已有的成功結果與處理結論</td><td>日常補缺</td></tr>
@@ -404,11 +404,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="schedule-ai-rerun-modal" tabindex="-1">
+<div class="modal fade" id="schedule-ai-rerun-modal" tabindex="-1" aria-labelledby="schedule-ai-rerun-modal-title">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">強制重新分析</h5>
+                <h5 class="modal-title" id="schedule-ai-rerun-modal-title">強制重新分析</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <div class="modal-body">

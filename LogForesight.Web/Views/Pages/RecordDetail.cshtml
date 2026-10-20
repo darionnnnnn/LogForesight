@@ -10,9 +10,7 @@
      data-host-id="@ViewData["HostId"]"
      data-date="@ViewData["Date"]">
 
-    <div class="d-flex justify-content-end mb-2 lf-no-print">
-        <a class="btn btn-sm btn-outline-primary d-none" id="next-unhandled">下一筆未處理 →</a>
-    </div>
+    <div id="page-header"></div>
 
     <div id="detail-header"></div>
 
@@ -53,11 +51,13 @@
                        關閉後搬回這裡——見 chat-panel.js、ui.js showDetailModal 的 onClose 說明 *@
                     <div id="chat-body">
                         <div class="text-muted small mb-2 d-none" id="chat-run-hint">分析執行中，AI 回應可能較慢。</div>
+                        <label for="chat-issue-select" class="visually-hidden">要詢問的異常項目</label>
                         <select class="form-select form-select-sm mb-2" id="chat-issue-select">
                             <option value="">請先選擇要詢問的異常項目…</option>
                         </select>
                         <div id="chat-messages" class="mb-2 lf-chat-messages"></div>
                         <form id="chat-form" class="d-flex gap-2">
+                            <label for="chat-input" class="visually-hidden">針對所選問題發問</label>
                             <input type="text" class="form-control form-control-sm" id="chat-input"
                                    placeholder="針對上面選的問題發問…" maxlength="500" disabled />
                             <button type="submit" class="btn btn-sm btn-primary" id="chat-send" disabled>送出</button>

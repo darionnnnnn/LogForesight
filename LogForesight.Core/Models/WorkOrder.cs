@@ -23,6 +23,9 @@ public class WorkOrder
 
     public long HandlerId { get; set; }
 
+    /// <summary>最近一次被改派走的處理人，可唯讀開啟此單；再次改派時覆寫（只記最近一位）</summary>
+    public long? PreviousHandlerId { get; set; }
+
     /// <summary><see cref="WorkOrderOrigins"/> 值域</summary>
     public string Origin { get; set; } = WorkOrderOrigins.Manual;
 
@@ -49,6 +52,15 @@ public class WorkOrder
     public DateTime? LastAppendedAt { get; set; }
 
     public DateTime? LastReplyAt { get; set; }
+
+    /// <summary>具 Assign 的使用者最近開啟此單詳情的時間（未讀回覆判定用）；null＝從未開啟</summary>
+    public DateTime? AdminSeenAt { get; set; }
+
+    /// <summary>
+    /// 未讀回覆（管理者尚未看過處理人的最新回覆）的唯一定義：進行中、有回覆，且最近回覆晚於「最近開啟時間（沒開過則取建立時間）」。
+    /// SQL 端的同義條件在 <c>EfWorkOrderStore.UnreadReplyPredicate</c>，兩處互相對應、改一處必改另一處。
+    /// </summary>
+    public bool HasUnreadReply => ClosedAt == null && LastReplyAt.HasValue && LastReplyAt > (AdminSeenAt ?? CreatedAt);
 
     /// <summary>結案時間快取；null＝進行中</summary>
     public DateTime? ClosedAt { get; set; }
@@ -123,6 +135,9 @@ public static class WorkOrderEventActions
     public const string Closed = "closed";
     public const string Replied = "replied";
     public const string DueDateChanged = "due_date_changed";
+
+    /// <summary>管理者把「無法處理」的成員退回給處理人（escalated → in_progress）</summary>
+    public const string Returned = "returned";
 }
 
 /// <summary>單張交辦單的成員案件計數</summary>
@@ -188,6 +203,9 @@ public sealed class WorkOrderQuery
 
     /// <summary>非 null 時只列「進行中、問題欄非 null 且組合鍵在集合內」的單；空集合＝查無</summary>
     public IReadOnlyCollection<string>? OnlyKeys { get; init; }
+
+    /// <summary>true＝只列有未讀回覆的單（判定同 <see cref="WorkOrder.HasUnreadReply"/>）</summary>
+    public bool UnreadOnly { get; init; }
 }
 
 /// <summary>交辦單清單查詢結果</summary>

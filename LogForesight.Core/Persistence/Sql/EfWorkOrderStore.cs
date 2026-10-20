@@ -124,11 +124,34 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         entry.State = EntityState.Modified;
         // 併發檢查：以呼叫端讀到的 UpdatedAt 為原值，資料庫已被別人改過就影響 0 列 → DbUpdateConcurrencyException
         entry.Property(x => x.UpdatedAt).OriginalValue = order.UpdatedAt;
+        // admin_seen_at 由 MarkAdminSeen 以單句 UPDATE 寫入、刻意不動併發權杖；整列 Save 不得用呼叫端讀到的舊值把它蓋回去
+        entry.Property(x => x.AdminSeenAt).IsModified = false;
         row.UpdatedAt = now;
 
         ctx.SaveChanges();
         order.UpdatedAt = now;
     }
+
+    public void MarkAdminSeen(long workOrderId, DateTime seenAt)
+    {
+        using var ctx = _contextFactory();
+        ctx.WorkOrders.Where(w => w.WorkOrderId == workOrderId)
+            .ExecuteUpdate(s => s.SetProperty(w => w.AdminSeenAt, seenAt));
+    }
+
+    public int CountUnreadReplies()
+    {
+        using var ctx = _contextFactory();
+        return ctx.WorkOrders.AsNoTracking().Where(UnreadReplyPredicate).Count();
+    }
+
+    /// <summary>
+    /// 未讀回覆的 SQL 條件（單點）：與 <see cref="WorkOrder.HasUnreadReply"/> 同義——
+    /// closed_at IS NULL AND last_reply_at IS NOT NULL AND last_reply_at &gt; COALESCE(admin_seen_at, created_at)。
+    /// 清單的 UnreadOnly 篩選與未讀計數共用這一份；改判定時兩處（C# 屬性與此條件）一起改。
+    /// </summary>
+    internal static readonly System.Linq.Expressions.Expression<Func<WorkOrderRow, bool>> UnreadReplyPredicate =
+        w => w.ClosedAt == null && w.LastReplyAt != null && w.LastReplyAt > (w.AdminSeenAt ?? w.CreatedAt);
 
     public void AppendEvent(WorkOrderEvent evt)
     {
@@ -276,6 +299,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
                 : query.Where(w => w.ClosedAt != null || w.SourceKey == null || w.EventId == null
                                    || !pausedKeys.Contains(w.SourceKey + IssueExclusion.CompositeKeySeparator + w.EventId.Value.ToString()));
         }
+        if (q.UnreadOnly) query = query.Where(UnreadReplyPredicate);
         if (q.OnlyKeys != null)
         {
             var onlyKeys = q.OnlyKeys.Distinct().ToList();
@@ -481,6 +505,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         row.EventId = order.EventId;
         row.IssueLabel = Truncate(order.IssueLabel, IssueLabelMaxLength);
         row.HandlerId = order.HandlerId;
+        row.PreviousHandlerId = order.PreviousHandlerId;
         row.Origin = Truncate(order.Origin, CodeMaxLength);
         row.ScopeKind = Truncate(order.ScopeKind, CodeMaxLength);
         row.ScopeGroupIds = string.Join(",", order.ScopeGroupIds);
@@ -492,6 +517,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         row.CreatedAt = order.CreatedAt;
         row.LastAppendedAt = order.LastAppendedAt;
         row.LastReplyAt = order.LastReplyAt;
+        row.AdminSeenAt = order.AdminSeenAt;
         row.ClosedAt = order.ClosedAt;
         row.ClosedReason = TruncateOrNull(order.ClosedReason, CodeMaxLength);
         row.UpdatedAt = order.UpdatedAt;
@@ -504,6 +530,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         EventId = row.EventId,
         IssueLabel = row.IssueLabel,
         HandlerId = row.HandlerId,
+        PreviousHandlerId = row.PreviousHandlerId,
         Origin = row.Origin,
         ScopeKind = row.ScopeKind,
         ScopeGroupIds = row.ScopeGroupIds.Length == 0
@@ -517,6 +544,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         CreatedAt = row.CreatedAt,
         LastAppendedAt = row.LastAppendedAt,
         LastReplyAt = row.LastReplyAt,
+        AdminSeenAt = row.AdminSeenAt,
         ClosedAt = row.ClosedAt,
         ClosedReason = row.ClosedReason,
         UpdatedAt = row.UpdatedAt

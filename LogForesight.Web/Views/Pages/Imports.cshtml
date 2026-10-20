@@ -4,14 +4,7 @@
 
 @* §2a（回饋第十一輪）：使用者／主機／群組授權三種 CSV 已退役，本頁只剩「負責人」，
    因此不再需要分頁；NetIQ 掃描匯入已整批搬到「NetIQ 維護」頁（§1）。 *@
-<div class="lf-hint mb-3">
-    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
-    <span>
-        主機的建立來源是「<a href="@Url.Content("~/admin/netiq")">NetIQ 維護 &gt; 匯入</a>」掃描匯入與批次自動登錄；
-        使用者請於「<a href="@Url.Content("~/admin/users")">使用者</a>」頁新增（支援一次多筆），
-        群組授權請於「<a href="@Url.Content("~/admin/groups")">群組與授權</a>」頁的授權矩陣設定。
-    </span>
-</div>
+<div id="page-header"></div>
 
 @* 回饋十四輪 UI-7：col-lg-6 是三種 CSV 匯入並存時期的雙欄版面殘留——§2a 退役使用者／
    主機／群組授權三種後，這裡只剩「負責人」一張卡，卻仍卡在半版寬，右半螢幕整片空白。
@@ -28,9 +21,9 @@
                     負責人會自動取得所負責主機的檢視權與處理狀態維護權限。
                 </p>
                 <details class="mb-3">
-                    <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
+                    <summary class="small text-muted mb-2 lf-pointer">欄位格式說明</summary>
                     <div class="lf-table-wrap">
-                    <table class="table table-sm small mb-0">
+                    <table class="table table-sm table-hover align-middle mb-0">
                         <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
                         <tbody>
                             <tr><td><code>host_name</code></td><td>擇一</td><td>主機名稱（與 ip_address 至少填一個）</td></tr>
@@ -41,7 +34,8 @@
                     </div>
                 </details>
                 <a class="btn btn-sm btn-outline-secondary mb-2" href="@Url.Content("~/api/imports/Owners/template")">下載範本</a>
-                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Owners" />
+                <label for="import-owners-file" class="visually-hidden">選擇要上傳的負責人 CSV 檔</label>
+                <input type="file" class="form-control form-control-sm" id="import-owners-file" accept=".csv" data-upload="Owners" />
             </div>
         </div>
     </div>

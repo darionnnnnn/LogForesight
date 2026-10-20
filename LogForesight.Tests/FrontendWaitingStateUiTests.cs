@@ -193,4 +193,16 @@ public class FrontendWaitingStateUiTests
         Assert.Contains("Math.min(ps, MAX_PAGE_SIZE)", branch);
         Assert.DoesNotContain("pageSize = ps;", branch);
     }
+
+    [Fact]
+    public void 錯誤態入口_users_rules_prtg_value_readiness包guardLoad()
+    {
+        Assert.Contains("guardLoad(listContainer, load)", ReadJs("pages", "users.js"));
+        Assert.Contains("guardLoad(document.getElementById('rule-list'), load)", ReadJs("pages", "rules.js"));
+        // prtg-guard 的預覽是動作按鈕、不是頁面載入：失敗要顯示 PRTG 回的實際原因（連線、認證），不走 guardLoad 的通用文案
+        Assert.DoesNotContain("guardLoad(", ReadJs("pages", "prtg-guard.js"));
+        var readiness = ReadJs("pages", "prtg-value-readiness.js");
+        Assert.Contains("guardLoad(statusEl, fetchAndRender)", readiness);
+        Assert.Contains("renderSpinner(statusEl)", readiness);
+    }
 }

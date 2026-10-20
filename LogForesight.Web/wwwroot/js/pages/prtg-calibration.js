@@ -5,7 +5,7 @@
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { toast, withBusy, guardLoad, renderLoading, renderSpinner } from '../core/ui.js';
-import { formatNumber } from '../core/format.js';
+import { formatNumber, formatTime } from '../core/format.js';
 
 let latestStatusData = null;
 
@@ -219,8 +219,7 @@ function renderAssessment(data) {
 
     const hint = document.getElementById('calibration-status-hint');
     if (hint) {
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString('zh-TW', { hour12: false });
+        const timeStr = formatTime(new Date());
         if (data.canExport) {
             hint.className = 'text-success small fw-semibold';
             hint.textContent = `計算完成（${timeStr}）：四項指標皆達標，可直接匯出`;

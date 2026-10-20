@@ -60,9 +60,9 @@ public class DashboardServiceTests : IDisposable
         _service = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
-            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None));
+            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), (_, _, _) => new GapsDto());
         // 兩頁一致的對照組：報表走同一組 store 與聚合
-        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -517,9 +517,9 @@ public class DashboardServiceTests : IDisposable
         var dashboard = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
-            new EfPrtgStore(_fixture.NewContext), source);
+            new EfPrtgStore(_fixture.NewContext), source, (_, _, _) => new GapsDto());
         var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates,
-            _severityVisibility, new SummaryCache(new DataVersionStamp()), source);
+            _severityVisibility, new SummaryCache(new DataVersionStamp()), source, new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
         var list = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
             _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),
@@ -589,5 +589,113 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(1, muted.MutedIssueCount);
         Assert.Equal(0, none.MutedIssueCount);
         Assert.Equal(0, outside.MutedIssueCount);
+    }
+
+    // ── 待派工問題卡（§9.1）──────────────────────────────────────────────────
+
+    /// <summary>以指定使用者與共用的快取組一個儀表板服務（其餘相依同建構子）；回報每次 gaps 呼叫的參數</summary>
+    private DashboardService ServiceFor(FakeCurrentUser user, SummaryCache cache, PendingDispatchGapsProvider gaps)
+    {
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress, aggregates,
+            new UserDisplayNameService(_settingsStore), new FixedIssueExclusionSource(IssueExclusion.None));
+        var issueRanking = new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None));
+        var permissionChanges = new PermissionChangeService(new PermissionChangeStore(_fixture.NewContext), _hosts, visibility, user,
+            new RecordingAuditService(), _users, new NullReportReader(), new FakeSystemSettingsStore());
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var issueTodo = new IssueTodoQuery(aggregates, statusResolver, new FixedIssueExclusionSource(IssueExclusion.None));
+        return new DashboardService(
+            visibility, new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit")), user, handling, permissionChanges,
+            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, cache,
+            new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), gaps);
+    }
+
+    /// <summary>120 個問題（第 1 頁 50 列），其中 4 個無法派出（由 GetGaps 的全量計數 UnassignableTotal 提供，不在第 1 頁的列上）</summary>
+    private static PendingDispatchGapsProvider PagedGaps(List<(DateTime? From, DateTime? To, int Page)> calls, bool tooLarge = false) =>
+        (from, to, page) =>
+        {
+            calls.Add((from, to, page));
+            var dto = new GapsDto { Page = page, From = from!.Value, To = to!.Value, TooLarge = tooLarge };
+            if (tooLarge) return dto;
+            dto.Total = 120;
+            dto.UnassignableTotal = 4;
+            var count = page < 3 ? 50 : 20;
+            for (var i = 0; i < count; i++)
+            {
+                var row = new GapRowDto { Source = "s", EventId = (page - 1) * 50 + i };
+                if (page == 2 && i < 3) row.Unassignable.Add(new GapUnassignableDto { Reason = "no_pool", Hosts = 1 });
+                if (page == 3 && i == 0) row.Unassignable.Add(new GapUnassignableDto { Reason = "disabled", Hosts = 2 });
+                dto.Rows.Add(row);
+            }
+            return dto;
+        };
+
+    [Fact]
+    public void GetSummary_具Assign_待派工問題以昨天往前7天試跑一次並取全量計數()
+    {
+        var calls = new List<(DateTime? From, DateTime? To, int Page)>();
+        var service = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Assign), new SummaryCache(new DataVersionStamp()), PagedGaps(calls));
+
+        var pending = service.GetSummary(7).PendingDispatch;
+
+        Assert.NotNull(pending);
+        Assert.Equal(120, pending!.IssueCount);          // 總數，不是當頁 50 列
+        Assert.Equal(4, pending.UnassignableIssueCount);  // 全量計數，不是第 1 頁列上的 0 個
+        Assert.False(pending.TooLarge);
+        Assert.Equal(Anchor.AddDays(-6).ToString("yyyy-MM-dd"), pending.From);
+        Assert.Equal(Anchor.ToString("yyyy-MM-dd"), pending.To);
+        Assert.Equal(new[] { 1 }, calls.Select(c => c.Page));   // 試跑只跑一次，不逐頁重跑
+        Assert.All(calls, c => Assert.Equal((Anchor.AddDays(-6), Anchor), (c.From, c.To)));
+    }
+
+    [Fact]
+    public void GetSummary_不具Assign_待派工問題為null且不試跑()
+    {
+        var calls = new List<(DateTime? From, DateTime? To, int Page)>();
+        var service = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Handle), new SummaryCache(new DataVersionStamp()), PagedGaps(calls));
+
+        Assert.Null(service.GetSummary(7).PendingDispatch);
+        Assert.Empty(calls);
+    }
+
+    [Fact]
+    public void GetSummary_待派試跑超過上限_TooLarge照傳且不再翻頁()
+    {
+        var calls = new List<(DateTime? From, DateTime? To, int Page)>();
+        var service = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Assign), new SummaryCache(new DataVersionStamp()), PagedGaps(calls, tooLarge: true));
+
+        var pending = service.GetSummary(7).PendingDispatch;
+
+        Assert.NotNull(pending);
+        Assert.True(pending!.TooLarge);
+        Assert.Equal(0, pending.IssueCount);
+        Assert.Single(calls);
+    }
+
+    /// <summary>
+    /// 快取鍵含 Assign 維度：同一份快取、同一組可見主機，具 Assign 者先取一次，
+    /// 無 Assign 者再取必須是 null（不得吃到前者的整包）；反向亦然。
+    /// </summary>
+    [Fact]
+    public void GetSummary_同可見主機下Assign與非Assign不共用快取()
+    {
+        var cache = new SummaryCache(new DataVersionStamp());
+        var calls = new List<(DateTime? From, DateTime? To, int Page)>();
+        var assigner = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Assign), cache, PagedGaps(calls));
+        var plain = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Handle), cache, PagedGaps(calls));
+
+        Assert.NotNull(assigner.GetSummary(7).PendingDispatch);
+        Assert.Null(plain.GetSummary(7).PendingDispatch);
+
+        // 反向：先無 Assign 再 Assign（另一份快取，避免前一段的結果遮住問題）
+        var cache2 = new SummaryCache(new DataVersionStamp());
+        var plain2 = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Handle), cache2, PagedGaps(calls));
+        var assigner2 = ServiceFor(FakeCurrentUser.WithCapabilities(Capability.Assign), cache2, PagedGaps(calls));
+        Assert.Null(plain2.GetSummary(7).PendingDispatch);
+        Assert.NotNull(assigner2.GetSummary(7).PendingDispatch);
     }
 }

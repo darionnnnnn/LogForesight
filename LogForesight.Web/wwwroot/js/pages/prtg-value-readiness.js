@@ -1,5 +1,6 @@
 import { api } from '../core/api.js';
 import { formatDate, formatNumber } from '../core/format.js';
+import { guardLoad, renderSpinner, renderTable } from '../core/ui.js';
 
 /**
  * 數值資料就緒度卡片（環境探測頁籤）
@@ -12,7 +13,8 @@ export function initValueReadiness() {
     const backfillBtn = document.getElementById('prtg-value-readiness-backfill');
     const statusEl = document.getElementById('prtg-value-readiness-status');
     const groupsEl = document.getElementById('prtg-value-readiness-groups');
-    const bodyEl = document.getElementById('prtg-value-readiness-body');
+    // 明細表由 renderTable 填入這個區域容器（區域本身保留 role=region 與 tabindex）
+    const bodyEl = document.getElementById('prtg-value-readiness-table-region');
     const prevBtn = document.getElementById('prtg-value-readiness-prev');
     const nextBtn = document.getElementById('prtg-value-readiness-next');
     const pageInfoEl = document.getElementById('prtg-value-readiness-page-info');
@@ -33,16 +35,6 @@ export function initValueReadiness() {
             case 'availability': return 'Ping';
             default: return String(category);
         }
-    }
-
-    function renderFailure(error) {
-        statusEl.textContent = '讀取失敗：' + (error?.message || '系統發生未預期的錯誤，請稍後再試。') + ' ';
-        const retryBtn = document.createElement('button');
-        retryBtn.type = 'button';
-        retryBtn.className = 'btn btn-link btn-sm p-0 align-baseline';
-        retryBtn.textContent = '重試';
-        retryBtn.addEventListener('click', () => load());
-        statusEl.appendChild(retryBtn);
     }
 
     function renderSuccess(data) {
@@ -104,32 +96,25 @@ export function initValueReadiness() {
         const rows = data.rows || [];
         if (rows.length === 0) {
             if (reason) {
-                const tr = document.createElement('tr');
-                const td = document.createElement('td');
-                td.colSpan = 6;
-                td.className = 'text-center text-muted py-3';
-                td.textContent = '此分組沒有 sensor';
-                tr.appendChild(td);
-                bodyEl.appendChild(tr);
+                renderTable(bodyEl, {
+                    columns: [],
+                    rows: [],
+                    empty: { title: '此分組沒有 sensor', hint: '換一個分組，或按「重新整理」重新評估。', icon: null }
+                });
             }
         } else {
-            for (const row of rows) {
-                const tr = document.createElement('tr');
-                const cells = [
-                    row.hostName ?? '',
-                    row.sensorName ?? '',
-                    formatCategory(row.category),
-                    `${row.validDays}／${row.requiredDays}`,
-                    row.latestValidDay ? formatDate(row.latestValidDay) : '—',
-                    row.reasonLabel ?? ''
-                ];
-                for (const val of cells) {
-                    const td = document.createElement('td');
-                    td.textContent = String(val);
-                    tr.appendChild(td);
-                }
-                bodyEl.appendChild(tr);
-            }
+            renderTable(bodyEl, {
+                caption: '數值資料就緒度明細',
+                columns: [
+                    { title: '主機', truncate: true, render: row => row.hostName ?? '' },
+                    { title: 'Sensor', truncate: true, render: row => row.sensorName ?? '' },
+                    { title: '類別', render: row => formatCategory(row.category) },
+                    { title: '有效日', render: row => `${row.validDays}／${row.requiredDays}` },
+                    { title: '最新有效日', render: row => (row.latestValidDay ? formatDate(row.latestValidDay) : '—') },
+                    { title: '原因', render: row => row.reasonLabel ?? '' }
+                ],
+                rows
+            });
         }
 
         // 翻頁
@@ -169,7 +154,8 @@ export function initValueReadiness() {
         }
     }
 
-    async function load() {
+    /** 單次讀取：自己建立 AbortController，讓 guardLoad 的「重試」重跑時也是一次全新的請求 */
+    async function fetchAndRender() {
         if (inFlight) {
             inFlight.abort();
             inFlight = null;
@@ -178,7 +164,7 @@ export function initValueReadiness() {
         const controller = new AbortController();
         inFlight = controller;
 
-        statusEl.textContent = '載入中…';
+        renderSpinner(statusEl);
         prevBtn.disabled = true;
         nextBtn.disabled = true;
 
@@ -196,8 +182,13 @@ export function initValueReadiness() {
             if (error?.name === 'AbortError' || controller.signal.aborted) {
                 return;
             }
-            renderFailure(error);
+            throw error;
         }
+    }
+
+    /** 載入入口：失敗換成錯誤態（含重試），不再自己拼讀取失敗文字 */
+    function load() {
+        return guardLoad(statusEl, fetchAndRender);
     }
 
     refreshBtn?.addEventListener('click', () => load());

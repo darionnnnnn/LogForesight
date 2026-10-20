@@ -203,6 +203,23 @@ public class WorkOrderReplyServiceTests : IDisposable
     }
 
     [Fact]
+    public void 回覆open_擲驗證例外且零寫入_單張與多單皆然()
+    {
+        var id = CreateOrder(_alice, 153, "H1", "H2");
+        var before = Snapshot(id);
+        var svc = Service(As(_alice, Capability.Handle));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed,
+            Assert.Throws<DomainException>(() => svc.Reply(id, new WorkOrderReplyRequest { Status = IssueHandlingStatuses.Open })).Code);
+        Assert.Equal(ApiErrorCodes.ValidationFailed,
+            Assert.Throws<DomainException>(() => svc.ReplyMany(new WorkOrderReplyManyRequest
+            {
+                WorkOrderIds = new List<long> { id }, Status = IssueHandlingStatuses.Open
+            })).Code);
+        Assert.Equal(before, Snapshot(id));
+    }
+
+    [Fact]
     public void Escalated_一台原本就escalated一台新轉入_通知一封且主機數1()
     {
         var id = CreateOrder(_alice, 153, "H1", "H2");
@@ -218,6 +235,7 @@ public class WorkOrderReplyServiceTests : IDisposable
 
         var sent = Assert.Single(_mailSender.Sent);
         Assert.Contains("（H2）", sent.Message.Body);
+        Assert.Contains($"單號 {id}", sent.Message.Body);
         Assert.DoesNotContain("台主機", sent.Message.Body);
         Assert.DoesNotContain("H1", sent.Message.Body);
     }

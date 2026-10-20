@@ -13,7 +13,7 @@
 // formatUserName 是使用者顯示的單一格式出口（§9）。format.js 也 import 本檔的 icon()，
 // 形成循環——但雙方都只在「函式體內」使用彼此、非模組初始化期求值，ESM 的 live binding
 // 在此安全（searchableUserSelect 於執行期才呼叫 formatUserName）。
-import { formatUserName } from './format.js';
+import { formatUserName, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
@@ -96,9 +96,20 @@ export function applyBackfillDaysLimit(inputElOrId, helpElOrId, maxDays, content
     }
 }
 
+/** 圖示按鈕缺 title 時的 aria-label 退路對照表（圖示名稱 → 螢幕閱讀器名稱）。 */
+const ICON_FALLBACK_LABELS = {
+    'x-lg': '關閉',
+    'trash': '刪除',
+    'pencil': '編輯',
+    'arrow-clockwise': '重新整理',
+    'clipboard': '複製',
+};
+
 /**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
+ * 只有圖示又沒給 title 時，以圖示名稱查 ICON_FALLBACK_LABELS 補 aria-label（查無則用圖示名稱），
+ * 並 console.warn 提醒呼叫端補 title——不擲例外，避免單一呼叫點拖垮整頁。
  */
 export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title } = {}) {
     const btn = document.createElement('button');
@@ -112,9 +123,49 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
         btn.appendChild(span);
     } else if (title) {
         btn.setAttribute('aria-label', title);
+    } else if (iconName) {
+        btn.setAttribute('aria-label', ICON_FALLBACK_LABELS[iconName] || iconName);
+        console.warn('[ui.button] 圖示按鈕缺少 title：' + iconName);
     }
     if (onClick) btn.addEventListener('click', onClick);
     return btn;
+}
+
+/**
+ * 頁首元件（WEB-SPEC §8.2）：topbar 是每頁唯一的標題（h1），頁首只放「一句話副標」與
+ * 頁面層級動作，每頁至多一個 btn-primary（DESIGN-SYSTEM §6b）。沒有動作也沒有必要副標的頁不放。
+ *
+ * - subtitle：字串（走 textContent）、Node 或 Node／字串陣列（動態主體名稱用 strong 放在開頭）；
+ *   字串一律當純文字，不會被解析成 HTML。可省略（只有動作的頁）。
+ * - actions：Node 陣列，通常是 button() 產物；保留各按鈕原本的 id 與事件綁定。
+ * - help：{ content, title }，以 helpIcon 附在副標後。
+ * container 內容會被整個取代，回傳產生的 .lf-page-header（container 不存在時回傳 null）。
+ */
+export function renderPageHeader(container, { subtitle, actions = [], help } = {}) {
+    if (!container) return null;
+
+    const header = document.createElement('div');
+    header.className = 'lf-page-header';
+
+    if (subtitle || help) {
+        const text = document.createElement('p');
+        text.className = 'lf-page-header__subtitle';
+        if (Array.isArray(subtitle)) text.append(...subtitle);
+        else if (subtitle instanceof Node) text.appendChild(subtitle);
+        else if (subtitle) text.textContent = subtitle;
+        if (help) text.appendChild(helpIcon(help.content, help.title));
+        header.appendChild(text);
+    }
+
+    if (actions.length > 0) {
+        const bar = document.createElement('div');
+        bar.className = 'lf-page-header__actions';
+        bar.append(...actions);
+        header.appendChild(bar);
+    }
+
+    container.replaceChildren(header);
+    return header;
 }
 
 /**
@@ -291,14 +342,45 @@ function buildPageNav(page, totalPages, onPage) {
     return nav;
 }
 
-/** 右下角提示。type: success | danger | warning | info */
-export function toast(message, type = 'info', delay = 4000) {
+/**
+ * 預計完成日即時檢查（回覆 modal 與交辦 modal 共用，規則只寫這一份）：
+ * change／blur 時早於今天就加 is-invalid，並在欄位下方顯示 invalid-feedback（aria-live="polite"）。
+ * 後端另有同一條防線，這裡只是讓使用者在按送出前就看到。
+ * @param {HTMLInputElement} input type="date" 的欄位
+ * @param {HTMLElement} feedback 錯誤訊息容器（呼叫端建立並放在欄位下方，需帶 aria-live="polite"）
+ * @param {{message: string, isActive?: () => boolean}} options message＝錯誤文字；
+ *        isActive 回 false（例如狀態不需要日期）時視同通過
+ * @returns {{validate: () => boolean, clear: () => void}} validate 會順便更新畫面；回 false 代表有錯
+ */
+export function bindPastDateCheck(input, feedback, { message, isActive = () => true }) {
+    function clear() {
+        input.classList.remove('is-invalid');
+        feedback.textContent = '';
+    }
+    function validate() {
+        if (!isActive() || !input.value || input.value >= todayLocal()) {
+            clear();
+            return true;
+        }
+        input.classList.add('is-invalid');
+        feedback.textContent = message;
+        return false;
+    }
+    input.addEventListener('change', validate);
+    input.addEventListener('blur', validate);
+    return { validate, clear };
+}
+
+/**
+ * 右下角提示。type: success | danger | warning | info
+ * options.link：{ href, text } 或其陣列——訊息後面附上連結（以 DOM 建立、textContent 填字）。
+ */
+export function toast(message, type = 'info', delay = 4000, options = {}) {
     let container = document.getElementById('lf-toast-container');
     if (!container) {
         container = document.createElement('div');
         container.id = 'lf-toast-container';
         container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-        container.style.zIndex = '1090';
         document.body.appendChild(container);
     }
 
@@ -317,6 +399,15 @@ export function toast(message, type = 'info', delay = 4000) {
     const bodyEl = el.querySelector('.toast-body');
     if (message instanceof Node) bodyEl.appendChild(message);
     else bodyEl.textContent = message;
+    const links = options.link ? [].concat(options.link) : [];
+    links.forEach((item, index) => {
+        bodyEl.append(index === 0 ? '　' : '、');
+        const a = document.createElement('a');
+        a.href = item.href;
+        a.className = 'text-reset fw-semibold';
+        a.textContent = item.text;
+        bodyEl.appendChild(a);
+    });
     container.appendChild(el);
 
     const toastInstance = new bootstrap.Toast(el, { delay });
@@ -333,6 +424,9 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
     return new Promise(resolve => {
         const el = document.createElement('div');
         el.className = 'modal fade';
+        // 標題與對話框的關聯：每次呼叫產生唯一 id，避免同時開多個確認框時撞號
+        const titleId = `lf-modal-title-${Math.random().toString(36).slice(2, 10)}`;
+        el.setAttribute('aria-labelledby', titleId);
         el.innerHTML = `
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
@@ -349,10 +443,12 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
             </div>`;
         // 變動值不進 innerHTML 樣板字串（FrontendConsistencyUiTests 守門）：class 以 classList 補
         el.querySelector('[data-lf-confirm]').classList.add(`btn-${confirmVariant}`);
-        el.querySelector('.modal-title').textContent = title;
+        const titleEl = el.querySelector('.modal-title');
+        titleEl.id = titleId;
+        titleEl.textContent = title;
         const body = el.querySelector('.modal-body p');
         body.textContent = message;
-        body.style.whiteSpace = 'pre-line';   // 呼叫端用換行字元排條列，textContent 不會自己換行
+        body.classList.add('lf-pre-line');   // 呼叫端用換行字元排條列，textContent 不會自己換行
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
         el.querySelector('[data-lf-cancel]').textContent = cancelText;
 
@@ -384,6 +480,9 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
     return new Promise(resolve => {
         const el = document.createElement('div');
         el.className = 'modal fade';
+        // 標題與對話框的關聯：每次呼叫產生唯一 id，避免同時開多個確認框時撞號
+        const titleId = `lf-modal-title-${Math.random().toString(36).slice(2, 10)}`;
+        el.setAttribute('aria-labelledby', titleId);
         el.innerHTML = `
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
@@ -403,7 +502,9 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
                 </div>
             </div>`;
         el.querySelector('[data-lf-confirm]').classList.add(`btn-${confirmVariant}`);
-        el.querySelector('.modal-title').textContent = title;
+        const titleEl = el.querySelector('.modal-title');
+        titleEl.id = titleId;
+        titleEl.textContent = title;
         el.querySelector('.modal-body p').textContent = message;
         el.querySelector('[data-lf-reason-label]').textContent = reasonLabel;
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
@@ -534,8 +635,14 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * sort（{key, dir}）算出下一個排序狀態（同欄切換 asc/desc，換欄回到 sortDefaultDir
  * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
+ * truncate（選填，欄位選項）：該欄儲存格加 text-truncate 並以完整文字設 title，
+ * 過長內容（主機名、問題標籤、sensor 名稱）以省略號收斂、不撐破列高；最大寬度由
+ * site.css 的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
+ * caption（選填）：螢幕閱讀器用的隱藏表格標題。
+ * footer（選填）：頁尾合計列，儲存格內容陣列（字串或 Node），數量對齊 columns。
+ * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 buildKeyValueTable。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn, caption, footer }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -547,7 +654,14 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     wrap.className = 'lf-table-wrap' + (stickyLastColumn ? ' lf-table-wrap--sticky-action' : '');
 
     const table = document.createElement('table');
-    table.className = 'table table-hover align-middle mb-0';
+    table.className = 'table table-sm table-hover align-middle mb-0';
+
+    if (caption) {
+        const captionEl = document.createElement('caption');
+        captionEl.className = 'visually-hidden';
+        captionEl.textContent = caption;
+        table.appendChild(captionEl);
+    }
 
     const thead = document.createElement('thead');
     const headRow = document.createElement('tr');
@@ -601,6 +715,13 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
                 ? content
                 : document.createTextNode(content === null || content === undefined ? '' : String(content));
 
+            // 長字串截斷：省略號收斂，完整文字放 title 供滑鼠停留查看
+            if (col.truncate) {
+                td.classList.add('text-truncate');
+                const fullText = (contentNode.textContent || '').trim();
+                if (fullText) td.title = fullText;
+            }
+
             // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示。
             // 以 flex 排版包裹箭頭與內容，確保箭頭與第一行內容同列、對齊頂端——
             // 內容是 block 元素（如 issueCell／issueGroupCell）時，箭頭原本會被擠成獨佔一行
@@ -652,10 +773,75 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
         }
     }
     table.appendChild(tbody);
+
+    if (Array.isArray(footer) && footer.length > 0) {
+        const tfoot = document.createElement('tfoot');
+        const footRow = document.createElement('tr');
+        footRow.className = 'fw-semibold table-light';
+        for (const cell of footer) {
+            const td = document.createElement('td');
+            td.appendChild(cell instanceof Node ? cell : document.createTextNode(cell === null || cell === undefined ? '' : String(cell)));
+            footRow.appendChild(td);
+        }
+        tfoot.appendChild(footRow);
+        table.appendChild(tfoot);
+    }
     wrap.appendChild(table);
 
     container.replaceChildren(wrap);
     bindScrollAffordance(wrap);
+}
+
+/**
+ * 鍵值表：兩欄（標籤／內容）的小表，外包 .lf-table-wrap，密度與 renderTable 一致（table-sm）。
+ * rows: [{ label, value }]，value 可為字串或 Node（字串一律走 textContent）。
+ * 另有兩種跨欄列供「結構化明細」使用：{ section: '標題' } 區段標題、{ text: '原文' } 整列原文。
+ * options.mono：內容欄改用等寬字並保留換行（權限異動明細的異動前／後值）。
+ * 回傳 wrap 節點，由呼叫端自行放進容器或 modal。
+ */
+export function buildKeyValueTable(rows, { mono = false } = {}) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-table-wrap';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm mb-0 lf-kv-table';
+
+    const tbody = document.createElement('tbody');
+    for (const row of rows || []) {
+        const tr = document.createElement('tr');
+        if (row.section !== undefined) {
+            tr.className = 'lf-kv-row--section';
+            const th = document.createElement('th');
+            th.colSpan = 2;
+            th.className = 'lf-kv-section-header';
+            th.textContent = row.section;
+            tr.appendChild(th);
+        } else if (row.text !== undefined) {
+            tr.className = 'lf-kv-row--asis';
+            const td = document.createElement('td');
+            td.colSpan = 2;
+            td.className = 'lf-kv-asis-cell';
+            td.textContent = row.text;
+            tr.appendChild(td);
+        } else {
+            tr.className = 'lf-kv-row--kv';
+            const key = document.createElement('td');
+            key.className = 'lf-kv-key small';
+            key.textContent = row.label ?? '';
+
+            const val = document.createElement('td');
+            val.className = (mono ? 'lf-kv-val' : 'lf-kv-val lf-kv-val--plain') + ' small';
+            const value = row.value;
+            val.appendChild(value instanceof Node
+                ? value
+                : document.createTextNode(value === null || value === undefined ? '' : String(value)));
+            tr.append(key, val);
+        }
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
 }
 
 /**
@@ -998,6 +1184,15 @@ function backLinkNode({ href, text = '返回清單' }) {
     return wrap;
 }
 
+/**
+ * 執行期讀取 CSS 變數（設計 token）：顏色只在 site.css 定義一次，圖表與 style 直塗的地方
+ * （吃不到 CSS class）一律走這裡，不再各自寫死色值。fallback 只在變數不存在時使用。
+ */
+export function cssVar(name, fallback = '') {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+}
+
 /** 載入中的骨架列（§8.6-6） */
 export function renderLoading(container, rows = 4) {
     const el = document.createElement('div');
@@ -1005,7 +1200,7 @@ export function renderLoading(container, rows = 4) {
     for (let i = 0; i < rows; i++) {
         const bar = document.createElement('div');
         bar.className = 'lf-skeleton mb-2';
-        bar.style.width = `${70 + Math.random() * 30}%`;
+        bar.style.setProperty('--lf-skeleton-width', `${70 + Math.random() * 30}%`);
         el.appendChild(bar);
     }
     container.replaceChildren(el);
@@ -1153,6 +1348,8 @@ export function checkboxList(container, items, emptyHint, options) {
  *   noneLabel   空選項文字
  *   pinnedNames 置頂並標「（負責人）」的 displayName 集合（改派最常選負責人）
  *   onChange    select 值變更時回呼（帶新的 value 字串；篩選本身不觸發）
+ * 選項物件若帶 badges（字串陣列），選項文字後以「・」接上；有帶 badges 的清單視為後端已排序，
+ * 只做「負責人置頂」的穩定排序、不再依顯示名稱重排。不帶 badges 時行為不變。
  * @returns {{ element: HTMLElement, getValue: () => string, select: HTMLSelectElement }}
  */
 export function searchableUserSelect(users, { selectedId = null, includeNone = false, noneLabel = '（未指派）', pinnedNames = [], onChange } = {}) {
@@ -1165,8 +1362,7 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
 
     const search = document.createElement('input');
     search.type = 'text';
-    search.className = 'form-control';
-    search.style.flex = '0 1 40%';
+    search.className = 'form-control lf-flex-search';
     search.placeholder = '篩選…';
     search.autocomplete = 'off';
 
@@ -1174,9 +1370,11 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
     select.className = 'form-select';
 
     const pinned = new Set(pinnedNames);
+    const serverOrdered = users.some(u => Array.isArray(u.badges));
     const sorted = [...users].filter(u => u.active).sort((a, b) => {
         const ap = pinned.has(a.displayName) ? 0 : 1;
         const bp = pinned.has(b.displayName) ? 0 : 1;
+        if (serverOrdered) return ap - bp;
         return ap - bp || a.displayName.localeCompare(b.displayName, 'zh-TW');
     });
 
@@ -1184,7 +1382,8 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
 
     function optionLabel(user) {
         const base = formatUserName(user.displayName, user.account);
-        return pinned.has(user.displayName) ? `${base}（負責人）` : base;
+        const text = pinned.has(user.displayName) ? `${base}（負責人）` : base;
+        return Array.isArray(user.badges) && user.badges.length > 0 ? `${text}・${user.badges.join('・')}` : text;
     }
 
     function renderOptions() {
@@ -1224,6 +1423,20 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
 }
 
 /**
+ * 手動派工人選（`POST /api/work-orders/candidates` 的回傳）轉成 searchableUserSelect 的選項。
+ * 後端已排序，標記規則在這裡單點定義，三個派工入口共用。
+ */
+export function candidatesToUserOptions(candidates) {
+    return (candidates || []).map(c => {
+        const badges = [];
+        if (c.recentlyResolvedSameIssue) badges.push('最近處理過');
+        if (c.hiddenHostCount > 0) badges.push(`看不到 ${c.hiddenHostCount} 台（將以案件授與補上）`);
+        if (c.paused) badges.push('暫停接單');
+        return { userId: c.userId, account: c.account, displayName: c.displayName, active: true, badges };
+    });
+}
+
+/**
  * 伺服器端搜尋型主機選取器（回饋十五輪 R2）：取代「一次拉單頁上限 200 筆」的做法——
  * 2000 台規模下這個上限讓 90% 的主機選不到，而且失敗方式是靜默的（下拉裡就是沒有那台）。
  * 與 {@link searchableUserSelect} 的差異是查詢方式：使用者清單通常不大，可以整批載入後
@@ -1245,8 +1458,7 @@ export function searchableHostSelect({ platform = 'windows', selectedHost = null
 
     const search = document.createElement('input');
     search.type = 'text';
-    search.className = 'form-control';
-    search.style.flex = '0 1 40%';
+    search.className = 'form-control lf-flex-search';
     search.placeholder = '輸入主機名稱、顯示名稱或 IP 搜尋…';
     search.autocomplete = 'off';
 

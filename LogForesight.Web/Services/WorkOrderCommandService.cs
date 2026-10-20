@@ -47,7 +47,6 @@ public class WorkOrderCommandService
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly IUserDisplayNameService _displayNames;
-    private readonly IKnownIssueRuleStore _rules;
     private readonly MailNotificationService _mail;
 
     public WorkOrderCommandService(
@@ -64,7 +63,6 @@ public class WorkOrderCommandService
         ICurrentUser currentUser,
         IAuditService audit,
         IUserDisplayNameService displayNames,
-        IKnownIssueRuleStore rules,
         MailNotificationService mail)
     {
         _query = query;
@@ -80,7 +78,6 @@ public class WorkOrderCommandService
         _currentUser = currentUser;
         _audit = audit;
         _displayNames = displayNames;
-        _rules = rules;
         _mail = mail;
     }
 
@@ -146,7 +143,7 @@ public class WorkOrderCommandService
         if (plan.Hosts.All(h => h.Resolved.Members.Count == 0))
             throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
 
-        var actor = NewActor();
+        var actor = _currentUser.ToWorkOrderActor();
         var scopeKind = req.ScopeKind;
         var scopeGroupIds = scopeKind == WorkOrderScopes.Groups ? req.GroupIds!.Distinct().ToList() : new List<long>();
         // 手動排除過主機就不續掛：被排除的主機之後再出現會被續掛加回，與排除的意圖矛盾
@@ -262,7 +259,7 @@ public class WorkOrderCommandService
         if (members.Count == 0)
             throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
 
-        var outcome = Guard(() => _coordinator.Append(id, members, req.ReassignConflicts, NewActor()));
+        var outcome = Guard(() => _coordinator.Append(id, members, req.ReassignConflicts, _currentUser.ToWorkOrderActor()));
         var noiseExcluded = resolved.Count(r => r.NoiseExcluded);
 
         _audit.Record(
@@ -303,7 +300,7 @@ public class WorkOrderCommandService
         if (handler.UserId == order.HandlerId)
             throw DomainException.Validation($"{NameOf(handler)} 已經是這張交辦單的處理人。");
 
-        var result = Guard(() => _coordinator.Reassign(id, handler.UserId, NewActor()));
+        var result = Guard(() => _coordinator.Reassign(id, handler.UserId, _currentUser.ToWorkOrderActor()));
 
         _audit.Record(
             action: AuditActions.WorkOrderReassign,
@@ -328,7 +325,7 @@ public class WorkOrderCommandService
         var order = GetOrder(id);
         var handler = ResolveActiveHandler(req.HandlerId);
 
-        var result = Guard(() => _coordinator.Split(id, req.CaseIds, handler.UserId, NewActor()));
+        var result = Guard(() => _coordinator.Split(id, req.CaseIds, handler.UserId, _currentUser.ToWorkOrderActor()));
 
         _audit.Record(
             action: AuditActions.WorkOrderSplit,
@@ -353,7 +350,7 @@ public class WorkOrderCommandService
         var reason = RequireReason(req.Reason, "取消交辦單要填原因。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.Cancel(id, reason, NewActor()));
+        var result = Guard(() => _coordinator.Cancel(id, reason, _currentUser.ToWorkOrderActor()));
 
         _audit.Record(
             action: AuditActions.WorkOrderCancel,
@@ -370,6 +367,29 @@ public class WorkOrderCommandService
         };
     }
 
+    /// <summary>退回處理人：把「無法處理」的成員退回處理中，說明必填（≤500）；通知處理人</summary>
+    public WorkOrderReturnResultDto Return(long id, ReturnWorkOrderRequest req)
+    {
+        var note = RequireReason(req.Note, "退回處理人要填說明。");
+        var order = GetOrder(id);
+
+        var result = Guard(() => _coordinator.Return(id, _currentUser.ToWorkOrderActor(), note));
+
+        _audit.Record(
+            action: AuditActions.WorkOrderReturn,
+            summary: $"退回交辦單 {id}『{order.IssueLabel}』給處理人：{result.ReturnedCases} 件改回處理中（說明：{note}）",
+            targetKind: TargetKind,
+            targetId: id.ToString(),
+            detail: new { WorkOrderId = id, result.ReturnedCases, Note = note, result.HandlerId });
+
+        NotifyHandler(WorkOrderOutboxKinds.Returned, id, result.HandlerId, reason: note);
+
+        return new WorkOrderReturnResultDto
+        {
+            WorkOrderId = id, ReturnedCases = result.ReturnedCases, DaySyncPendingCases = result.DaySync.PendingCases
+        };
+    }
+
     public WorkOrderCloseResultDto AdminClose(long id, AdminCloseWorkOrderRequest req)
     {
         if (!IssueHandlingStatuses.IsClosed(req.Status))
@@ -377,7 +397,7 @@ public class WorkOrderCommandService
         var reason = RequireReason(req.Reason, "代為結案要填原因。");
         var order = GetOrder(id);
 
-        var result = Guard(() => _coordinator.AdminClose(id, req.Status, reason, NewActor()));
+        var result = Guard(() => _coordinator.AdminClose(id, req.Status, reason, _currentUser.ToWorkOrderActor()));
 
         _audit.Record(
             action: AuditActions.WorkOrderAdminClose,
@@ -644,13 +664,6 @@ public class WorkOrderCommandService
             throw DomainException.Validation($"原因不可超過 {ReasonMaxLength} 字。");
         return trimmed;
     }
-
-    private WorkOrderActor NewActor() => new()
-    {
-        ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-        ActorAccount = _currentUser.Account,
-        OccurredAt = DateTime.Now
-    };
 
     /// <summary>協調器以 ArgumentException／InvalidOperationException 表達資料不符，轉成使用者看得懂的驗證錯誤</summary>
     private static T Guard<T>(Func<T> action)

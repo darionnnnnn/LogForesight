@@ -103,6 +103,37 @@ public class AssignHandlerRequest
     public bool Reassign { get; set; }
 }
 
+/// <summary>日層級指派預覽的請求（只讀，不寫入）</summary>
+public class AssignPreviewRequest
+{
+    public long HandlerId { get; set; }
+}
+
+/// <summary>
+/// 日層級指派預覽（docs/WEB-SPEC.md §9.3）：確認前先讓使用者看到「會建幾件、哪些已有人處理」。
+/// 數字與接著呼叫 <c>PUT .../assign</c> 的結果同源（共用 <c>PlanCasesForDay</c>）。
+/// </summary>
+public class HandlingAssignPreviewDto
+{
+    /// <summary>將新建案件的問題數</summary>
+    public int CasesToCreate { get; set; }
+
+    /// <summary>已由他人進行中案件處理的問題數（確認時帶 reassign 才會改派）</summary>
+    public int HeldByOthers { get; set; }
+
+    /// <summary>占用中的他人處理人名稱（顯示名稱(帳號)，去重）</summary>
+    public List<string> HeldByHandlerNames { get; set; } = new();
+
+    /// <summary>被指派者沒有 Handle 能力</summary>
+    public bool AssigneeCannotHandle { get; set; }
+
+    /// <summary>被指派者看不到這台主機</summary>
+    public bool AssigneeCannotSeeHost { get; set; }
+
+    /// <summary>被指派者沒有設定 email（收不到通知）</summary>
+    public bool HandlerHasNoEmail { get; set; }
+}
+
 /// <summary>設定單一問題的處理狀態（低風險預設不處理／已知雜訊自動判讀的快速動作用）</summary>
 public class SetIssueStatusRequest
 {

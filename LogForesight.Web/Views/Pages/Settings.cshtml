@@ -39,13 +39,13 @@
             </p>
             <div class="d-flex flex-wrap gap-2 mb-3" id="severity-checks"></div>
 
-            <label class="form-label small fw-semibold">未勾選層級的顯示方式</label>
-            <div class="d-flex flex-wrap gap-2 mb-1" id="severity-display-mode"></div>
+            <span class="form-label small fw-semibold d-inline-block" id="severity-display-mode-label">未勾選層級的顯示方式</span>
+            <div class="d-flex flex-wrap gap-2 mb-1" id="severity-display-mode" role="group" aria-labelledby="severity-display-mode-label"></div>
             <div class="form-text mb-3" id="severity-display-mode-hint"></div>
 
             <hr />
 
-            <label class="form-label small fw-semibold">日風險等級顯示</label>
+            <span class="form-label small fw-semibold d-inline-block" id="day-risk-level-label">日風險等級顯示</span>
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                     data-bs-content="「高風險日」為必要顯示項目，無法取消勾選。">
                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -56,7 +56,7 @@
                 不受此設定影響，兩處仍顯示完整證據——避免時間軸把「這天有分析但被藏起來」
                 誤顯示成「這天沒有分析紀錄」。
             </p>
-            <div class="d-flex flex-wrap gap-2 mb-1" id="day-risk-level-checks"></div>
+            <div class="d-flex flex-wrap gap-2 mb-1" id="day-risk-level-checks" role="group" aria-labelledby="day-risk-level-label"></div>
 
             <hr />
 
@@ -280,7 +280,7 @@
                         data-bs-content="距上次體檢達此天數即到期執行（due-date 輪巡，不綁固定星期幾）。漏跑時下次執行自動補上，體檢不會因此消失。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
-                <input type="number" class="form-control" id="checkup-interval-days" min="1" max="365" style="max-width: 12rem;" />
+                <input type="number" class="form-control lf-maxw-sm" id="checkup-interval-days" min="1" max="365" />
             </div>
 
             <div class="mb-3">
@@ -451,7 +451,7 @@
             <h2 class="lf-card__title">資料保留</h2>
         </div>
         <div class="lf-card__body">
-            <div class="alert mb-3" style="background-color: var(--lf-warning-soft); color: var(--lf-warning-text); border-color: var(--lf-warning);">
+            <div class="alert alert-warning mb-3">
                 超過保留天數的資料會在每次批次啟動時<strong>永久刪除，無法復原</strong>（不含最下方的「首次執行回補天數」，它不刪任何資料）。
             </div>
 
@@ -466,7 +466,7 @@
                     刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄與案件。不可小於首次執行回補天數。
                     （報告全文存在資料庫裡，另有下方的「報告保留天數」。）
                 </div>
-                <input type="number" class="form-control" id="retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+                <input type="number" class="form-control lf-maxw-sm" id="retention-days" min="90" max="3650" required />
             </div>
 
             <div class="mb-3">
@@ -474,7 +474,7 @@
                 <div class="text-muted small mb-2">
                     刪除原始事件文字：每日紀錄的樣本訊息，以及規則命中／趨勢異常的事件暫存（「詢問 AI」會優先取用這份暫存）。刪除後該日的統計、風險等級與問題清單仍在，只是看不到原始訊息。不可大於歷史資料保留天數。
                 </div>
-                <input type="number" class="form-control" id="raw-event-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+                <input type="number" class="form-control lf-maxw-sm" id="raw-event-retention-days" min="90" max="3650" required />
             </div>
 
             <div class="mb-3">
@@ -482,7 +482,7 @@
                 <div class="text-muted small mb-2">
                     刪除批次執行紀錄／診斷與匯入紀錄；只影響維運追蹤，不影響業務分析結果。
                 </div>
-                <input type="number" class="form-control" id="run-log-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+                <input type="number" class="form-control lf-maxw-sm" id="run-log-retention-days" min="90" max="3650" required />
             </div>
 
             <div class="mb-3">
@@ -490,7 +490,7 @@
                 <div class="text-muted small mb-2">
                     這一項同時控制三種資料：操作稽核紀錄、權限異動紀錄、處理歷程。合規與追責用途，保留期通常最長。
                 </div>
-                <input type="number" class="form-control" id="audit-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+                <input type="number" class="form-control lf-maxw-sm" id="audit-retention-days" min="90" max="3650" required />
             </div>
 
             <div class="mb-3">
@@ -501,10 +501,10 @@
                 <div class="text-muted small mb-2">
                     不可大於歷史資料保留天數：超過之後對應的分析紀錄已被清除，那些報告在網站上不再有任何入口可以點開，留著只會佔空間。
                 </div>
-                <div class="alert alert-secondary py-2 px-3 small mb-2" id="report-usage" role="status" style="max-width: 32rem;">
+                <div class="alert alert-secondary py-2 px-3 small mb-2 lf-maxw-lg" id="report-usage" role="status">
                     目前已存報告：<span id="report-usage-count">—</span> 份，佔用約 <span id="report-usage-size">—</span> MB。
                 </div>
-                <input type="number" class="form-control" id="report-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+                <input type="number" class="form-control lf-maxw-sm" id="report-retention-days" min="90" max="3650" required />
             </div>
 
             <hr />
@@ -515,7 +515,7 @@
                 <div class="text-muted small mb-2">
                     歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。此設定僅決定首次執行的回溯天數，不會刪除任何資料。
                 </div>
-                <input type="number" class="form-control" id="initial-history-days" min="90" max="3650" required style="max-width: 12rem;" />
+                <input type="number" class="form-control lf-maxw-sm" id="initial-history-days" min="90" max="3650" required />
             </div>
             <p class="text-muted small mb-0">
                 PRTG 資料保留天數在 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護</a> 頁設定。
@@ -541,7 +541,7 @@
                 <div id="health-freshness" role="status"></div>
                 <div class="d-flex flex-wrap align-items-center gap-2 mt-3 d-none" id="health-ack-row">
                     <label for="health-ack-until" class="form-label mb-0">靜音到</label>
-                    <input type="date" class="form-control" id="health-ack-until" style="max-width: 12rem;" />
+                    <input type="date" class="form-control lf-maxw-sm" id="health-ack-until" />
                     <button type="button" class="btn btn-outline-secondary" id="health-ack-btn">確認並靜音</button>
                 </div>
                 <p class="small mb-0 mt-3"><a id="health-runs-link" href="@Url.Content("~/runs")">前往排程作業</a></p>
@@ -752,7 +752,7 @@
                         data-bs-content="執行摘要與每日／每週彙總只納入達此風險等級以上的主機日；高風險即時通知固定只看「高」，不受此設定影響。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
-                <select class="form-select" id="mail-min-risk-level" style="max-width: 12rem;">
+                <select class="form-select lf-maxw-sm" id="mail-min-risk-level">
                     <option value="高">高</option>
                     <option value="中">中以上</option>
                     <option value="低">低以上</option>

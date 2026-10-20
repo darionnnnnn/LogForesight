@@ -25,8 +25,8 @@ function alignOne(block) {
 
     // 先歸零再量：上一次撐開的字距會讓這次量到的「自然寬度」偏大，
     // 視窗連續縮放時會一路把字距越撐越開
-    subtitle.style.letterSpacing = '';
-    subtitle.style.marginRight = '';
+    subtitle.style.removeProperty('--lf-brand-spacing');
+    subtitle.style.removeProperty('--lf-brand-offset');
 
     const nameWidth = name.getBoundingClientRect().width;
     const naturalWidth = measureNaturalWidth(subtitle);
@@ -41,8 +41,9 @@ function alignOne(block) {
     }
 
     const spacing = (nameWidth - naturalWidth) / (charCount - 1);
-    subtitle.style.letterSpacing = `${spacing.toFixed(3)}px`;
-    subtitle.style.marginRight = `${(-spacing).toFixed(3)}px`;
+    // 字距為依量測計算的動態量值：以 CSS 變數交給 .lf-brand__subtitle 消費
+    subtitle.style.setProperty('--lf-brand-spacing', `${spacing.toFixed(3)}px`);
+    subtitle.style.setProperty('--lf-brand-offset', `${(-spacing).toFixed(3)}px`);
 }
 
 /**
@@ -55,15 +56,13 @@ function measureNaturalWidth(subtitle) {
     const probe = document.createElement('span');
     const style = getComputedStyle(subtitle);
     probe.textContent = subtitle.textContent.trim();   // 與 charCount 同一份文字（去掉 Razor 可能留下的空白）
-    probe.style.position = 'absolute';
-    probe.style.visibility = 'hidden';
-    probe.style.whiteSpace = 'pre';
+    // 離屏、不換行、字距歸零由 .lf-brand-probe 負責；字型屬性是量測時才知道的動態量值，走 CSS 變數。
     // 逐項複製而不是 style.font 簡寫：簡寫屬性在部分引擎的 getComputedStyle 回空字串
-    probe.style.fontFamily = style.fontFamily;
-    probe.style.fontSize = style.fontSize;
-    probe.style.fontWeight = style.fontWeight;
-    probe.style.fontStyle = style.fontStyle;
-    probe.style.letterSpacing = '0';
+    probe.className = 'lf-brand-probe';
+    probe.style.setProperty('--lf-probe-font-family', style.fontFamily);
+    probe.style.setProperty('--lf-probe-font-size', style.fontSize);
+    probe.style.setProperty('--lf-probe-font-weight', style.fontWeight);
+    probe.style.setProperty('--lf-probe-font-style', style.fontStyle);
     subtitle.parentElement.appendChild(probe);
     const width = probe.getBoundingClientRect().width;
     probe.remove();

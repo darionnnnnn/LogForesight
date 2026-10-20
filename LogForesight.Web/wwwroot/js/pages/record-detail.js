@@ -6,14 +6,15 @@
  *   - 全文層：報告 txt 原樣以等寬字型呈現
  */
 
-import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 import { reportCard } from '../core/report-view.js';
+import { statusesWhere, statusVariant } from '../core/handling-statuses.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -58,6 +59,18 @@ function initRecordSections() {
 
 initRecordSections();
 
+// 頁首：用途副標＋頁面層級動作「下一筆未處理」。按鈕先以 d-none 建立（保留原 id），
+// 待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示——header 在模組頂層先渲染，
+// 一定早於 guardLoad(load) 與 setupNextUnhandled 的 getElementById。
+const nextUnhandledLink = document.createElement('a');
+nextUnhandledLink.className = 'btn btn-sm btn-outline-primary d-none lf-no-print';
+nextUnhandledLink.id = 'next-unhandled';
+nextUnhandledLink.textContent = '下一筆未處理 →';
+renderPageHeader(document.getElementById('page-header'), {
+    subtitle: '逐項處理這台主機這一天的風險問題。',
+    actions: [nextUnhandledLink]
+});
+
 // 預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
 // 未勾選層級的雜訊淹沒，真正要看的反而被推到下面（與清單頁預設排除低風險同一個取捨）。
 // 只在頁面首次載入時初始化一次：批次套用觸發的重載（onBatchSaved → load()）不能
@@ -97,9 +110,10 @@ const SCOPE_OPTIONS = [
 
 let currentScope = 'pending';
 let currentUserId = null;
+let currentUser = null;
 
-/** 結案類：與後端 IssueHandlingStatuses.IsClosed 同一組值 */
-const CLOSED_STATUSES = new Set(['resolved', 'wont_fix', 'false_positive', 'known_noise']);
+/** 結案類：由 core/handling-statuses.js 衍生（與後端 IssueHandlingStatuses.Closed 以測試對照） */
+const CLOSED_STATUSES = new Set(statusesWhere(s => s.closed).map(s => s.value));
 
 /** 單一問題屬於哪個桶（四桶互斥，判定順序即優先序：已完成 → 誰在處理 → 未處理） */
 function issueBucket(issue) {
@@ -147,6 +161,7 @@ async function load() {
     // 「這個案件是不是我的」要靠 userId 比對（§8）；ServerAdmin 沒有對應的 WebUser，
     // userId 為 0，比對永遠不成立——它本來就看不到業務資料，行為正確
     currentUserId = user.userId;
+    currentUser = user;
     aiAvailable = aiReady;
 
     const allowed = allowedSeverities();
@@ -231,7 +246,7 @@ function renderHeader(detail) {
     if (detail.caseGrantOnly) {
         const notice = document.createElement('div');
         notice.className = 'alert alert-info py-2 px-3 mb-3';
-        notice.textContent = '您以案件處理人的身分檢視這一頁：僅顯示指派給您的問題，' +
+        notice.textContent = '您以交辦單處理人的身分檢視這一頁：僅顯示指派給您的問題，' +
             '這台主機當日的其他問題、白話總覽與報告全文不在您的檢視範圍內。';
         body.appendChild(notice);
     }
@@ -497,10 +512,6 @@ function priorHandlingTrigger(issue) {
     return trigger;
 }
 
-const ISSUE_HISTORY_STATUS_VARIANTS = {
-    resolved: 'success', wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary'
-};
-
 /** modal 內容：已結案案件摘要（較接近「上次怎麼解的」）＋逐日結案標記，兩者可能重疊，分開呈現不強行去重 */
 function issueHistoryBody(history) {
     const wrap = document.createElement('div');
@@ -535,7 +546,7 @@ function issueHistoryCaseItem(c) {
     head.className = 'd-flex align-items-center gap-2 flex-wrap';
 
     const status = document.createElement('span');
-    status.className = `lf-badge lf-badge--${ISSUE_HISTORY_STATUS_VARIANTS[c.status] ?? 'secondary'}`;
+    status.className = `lf-badge lf-badge--${statusVariant(c.status)}`;
     status.textContent = c.statusText;
     head.appendChild(status);
 
@@ -566,7 +577,7 @@ function issueHistoryEntryItem(entry) {
     head.className = 'd-flex align-items-center gap-2 flex-wrap';
 
     const status = document.createElement('span');
-    status.className = `lf-badge lf-badge--${ISSUE_HISTORY_STATUS_VARIANTS[entry.status] ?? 'secondary'}`;
+    status.className = `lf-badge lf-badge--${statusVariant(entry.status)}`;
     status.textContent = entry.statusText;
     head.appendChild(status);
 
@@ -1430,9 +1441,7 @@ function issueCell(issue) {
     // 不是把內容拿掉
     if (currentDetail.detailPruned) {
         const prunedHint = document.createElement('div');
-        prunedHint.className = 'small mt-1 px-2 py-1 rounded';
-        prunedHint.style.backgroundColor = 'var(--lf-info-soft)';
-        prunedHint.style.color = 'var(--lf-info-text)';
+        prunedHint.className = 'small mt-1 px-2 py-1 rounded lf-callout-info';
         prunedHint.textContent = '這一天的詳情已超過保留期並清除，統計、風險等級與問題清單仍然保留。';
         wrap.appendChild(prunedHint);
     } else {
@@ -1529,9 +1538,7 @@ function formatSourceUtc(value) {
  */
 function residualCredentialBlock(issue) {
     const wrap = document.createElement('div');
-    wrap.className = 'small mt-1 px-2 py-1 rounded';
-    wrap.style.backgroundColor = 'var(--lf-info-soft)';
-    wrap.style.color = 'var(--lf-info-text)';
+    wrap.className = 'small mt-1 px-2 py-1 rounded lf-callout-info';
 
     const badge = document.createElement('span');
     badge.className = 'lf-badge lf-badge--secondary';
@@ -1555,60 +1562,30 @@ function loginFailureDetailsTable(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'mt-1';
 
-    const table = document.createElement('table');
-    table.className = 'table table-sm mb-0';
-
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    const headers = ['帳號', '來源', '類型', '原因', '次數'];
-    for (const h of headers) {
-        const th = document.createElement('th');
-        th.textContent = h;
-        if (h === '次數') th.className = 'text-end';
-        headerRow.appendChild(th);
-    }
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
     const maxRows = 10;
-    const displayed = details.slice(0, maxRows);
-    for (const d of displayed) {
-        const tr = document.createElement('tr');
-
-        const accountTd = document.createElement('td');
-        const accountSpan = document.createElement('span');
-        accountSpan.textContent = d.account ? d.account : '（不明）';
-        accountTd.appendChild(accountSpan);
-        if (d.isComputerAccount) {
-            const note = document.createElement('span');
-            note.className = 'text-muted small ms-1';
-            note.textContent = '（電腦帳號）';
-            accountTd.appendChild(note);
-        }
-        tr.appendChild(accountTd);
-
-        const sourceTd = document.createElement('td');
-        sourceTd.textContent = d.source ? d.source : '（不明）';
-        tr.appendChild(sourceTd);
-
-        const typeTd = document.createElement('td');
-        typeTd.textContent = d.logonTypeText ? d.logonTypeText : '—';
-        tr.appendChild(typeTd);
-
-        const reasonTd = document.createElement('td');
-        reasonTd.textContent = d.reasonText ? d.reasonText : '（不明）';
-        tr.appendChild(reasonTd);
-
-        const countTd = document.createElement('td');
-        countTd.className = 'text-end';
-        countTd.textContent = formatNumber(d.count);
-        tr.appendChild(countTd);
-
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
+    renderTable(wrap, {
+        columns: [
+            {
+                title: '帳號',
+                render: d => {
+                    const accountTd = document.createElement('span');
+                    accountTd.appendChild(document.createTextNode(d.account ? d.account : '（不明）'));
+                    if (d.isComputerAccount) {
+                        const note = document.createElement('span');
+                        note.className = 'text-muted small ms-1';
+                        note.textContent = '（電腦帳號）';
+                        accountTd.appendChild(note);
+                    }
+                    return accountTd;
+                }
+            },
+            { title: '來源', render: d => (d.source ? d.source : '（不明）') },
+            { title: '類型', render: d => (d.logonTypeText ? d.logonTypeText : '—') },
+            { title: '原因', render: d => (d.reasonText ? d.reasonText : '（不明）') },
+            { title: '次數', className: 'text-end', render: d => formatNumber(d.count) }
+        ],
+        rows: details.slice(0, maxRows)
+    });
 
     if (details.length > maxRows || issue.loginFailureDetailsTruncated) {
         const remaining = details.length - maxRows;
@@ -1636,10 +1613,12 @@ function caseBadge(issue) {
         : issue.caseStatus === 'observing' ? '觀察中' : '處理中';
     const handlerText = formatUserName(issue.caseHandlerName, issue.caseHandlerAccount);
     // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）
-    const badge = document.createElement(issue.caseHandlerId ? 'a' : 'span');
+    // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出徽章文字
+    const linkable = issue.caseHandlerId && canViewHandlerPage(currentUser, issue.caseHandlerId);
+    const badge = document.createElement(linkable ? 'a' : 'span');
     // d-inline-block + mt-1：徽章現在接在狀態文字／預計完成日之下，需要自己撐開行距
     badge.className = 'lf-badge lf-badge--primary d-inline-block mt-1';
-    if (issue.caseHandlerId) {
+    if (linkable) {
         badge.href = appUrl(`/handlers/${issue.caseHandlerId}`);
         badge.addEventListener('click', event => event.stopPropagation());
     }
@@ -1831,7 +1810,7 @@ function renderAlerts(detail) {
 
     if (detail.caseGrantOnly) {
         renderEmpty(container, {
-            title: '不在案件檢視範圍',
+            title: '不在交辦單檢視範圍',
             hint: '此頁僅顯示受交辦問題；整日關聯與趨勢訊號未提供。'
         });
         return;
@@ -2125,7 +2104,7 @@ function renderCoverage(detail) {
 
     if (detail.caseGrantOnly) {
         renderEmpty(container, {
-            title: '資料完整度不在案件檢視範圍',
+            title: '資料完整度不在交辦單檢視範圍',
             hint: '本頁不呈現整日檢查範圍；不能由此判斷資料完整、檢查已執行或沒有告警。'
         });
         return;

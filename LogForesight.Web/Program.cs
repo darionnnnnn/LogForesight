@@ -295,7 +295,13 @@ public static class DataVersionStampPolicy
         context.RequestServices.GetRequiredService<DataVersionStamp>().Bump();
     }
 
-    /// <summary>成功的非 GET／非 HEAD 請求，且路徑不在白名單時才推進版本戳</summary>
+    /// <summary>
+    /// 以 POST 承載的唯讀查詢（主機清單走 body：派工人選、日層級指派預覽）與只寫「管理者已看過」標記的 seen：
+    /// 都不改變分析資料，推進只會讓儀表板與報表的整包快取每開一次窗就失效一次。以尾碼比對，因為路徑含 id。
+    /// </summary>
+    private static readonly string[] ReadOnlyPostSuffixes = { "/candidates", "/assign/preview", "/seen" };
+
+    /// <summary>成功的非 GET／非 HEAD 請求，且路徑不在白名單（含唯讀 POST 尾碼）時才推進版本戳</summary>
     public static bool ShouldBump(HttpContext context)
     {
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
@@ -305,6 +311,9 @@ public static class DataVersionStampPolicy
         var path = context.Request.Path.Value;
         // Diagnostic chunks affect only isolated transfer tables.
         if (context.Request.Path.StartsWithSegments("/api/admin/settings/prtg-import-transfers")) return false;
-        return path == null || !Whitelist.Contains(path.TrimEnd('/'));
+        if (path == null) return true;
+        var trimmed = path.TrimEnd('/');
+        if (ReadOnlyPostSuffixes.Any(s => trimmed.EndsWith(s, StringComparison.OrdinalIgnoreCase))) return false;
+        return !Whitelist.Contains(trimmed);
     }
 }

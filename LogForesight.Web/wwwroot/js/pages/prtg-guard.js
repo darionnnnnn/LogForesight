@@ -7,7 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { withBusy, collectLines, numberOr } from '../core/ui.js';
+import { withBusy, collectLines, numberOr, renderTable } from '../core/ui.js';
 
 /**
  * 把已儲存的守門設定填進畫面欄位。
@@ -123,88 +123,41 @@ export function bindGuardPreview() {
             }
 
             // 表格：Device／Sensor／分類／狀態／目前值／說明
-            const tableResp = document.createElement('div');
-            tableResp.className = 'table-responsive mt-2';
-
-            const table = document.createElement('table');
-            table.className = 'table table-sm table-bordered mb-0 small';
-
-            const thead = document.createElement('thead');
-            thead.className = 'table-light';
-            const headRow = document.createElement('tr');
-            const headers = ['Device', 'Sensor', '分類', '狀態', '目前值', '說明'];
-            for (const h of headers) {
-                const th = document.createElement('th');
-                th.textContent = h;
-                headRow.appendChild(th);
-            }
-            thead.appendChild(headRow);
-            table.appendChild(thead);
-
-            const tbody = document.createElement('tbody');
             const sensors = res.sensors || [];
-            if (sensors.length === 0) {
-                const emptyRow = document.createElement('tr');
-                const emptyTd = document.createElement('td');
-                emptyTd.colSpan = 6;
-                emptyTd.className = 'text-muted text-center py-2';
-                emptyTd.textContent = '無受監看感測器。';
-                emptyRow.appendChild(emptyTd);
-                tbody.appendChild(emptyRow);
-            } else {
-                for (const s of sensors) {
-                    const tr = document.createElement('tr');
-
-                    // Device
-                    const tdDevice = document.createElement('td');
-                    tdDevice.textContent = s.device || '-';
-                    tr.appendChild(tdDevice);
-
-                    // Sensor
-                    const tdSensor = document.createElement('td');
-                    tdSensor.textContent = s.sensor ? `${s.sensor} (#${s.objid})` : `#${s.objid}`;
-                    tr.appendChild(tdSensor);
-
-                    // 分類
-                    const tdCat = document.createElement('td');
-                    tdCat.textContent = s.category || '-';
-                    tr.appendChild(tdCat);
-
-                    // 狀態
-                    const tdStatus = document.createElement('td');
-                    tdStatus.textContent = s.status || '-';
-                    tr.appendChild(tdStatus);
-
-                    // 目前值：有百分比就顯示 xx.x %，沒有就顯示無法判定的原因（text-muted）
-                    const tdValue = document.createElement('td');
-                    if (s.percentage != null) {
-                        tdValue.textContent = `${Number(s.percentage).toFixed(1)} %`;
-                    } else if (s.unmeasurableReason) {
-                        tdValue.className = 'text-muted';
-                        tdValue.textContent = s.unmeasurableReason;
-                    } else {
-                        tdValue.className = 'text-muted';
-                        tdValue.textContent = '-';
+            const tableResp = document.createElement('div');
+            tableResp.className = 'mt-2';
+            renderTable(tableResp, {
+                columns: [
+                    { title: 'Device', truncate: true, render: s => s.device || '-' },
+                    { title: 'Sensor', truncate: true, render: s => (s.sensor ? `${s.sensor} (#${s.objid})` : `#${s.objid}`) },
+                    { title: '分類', render: s => s.category || '-' },
+                    { title: '狀態', render: s => s.status || '-' },
+                    {
+                        // 目前值：有百分比就顯示 xx.x %，沒有就顯示無法判定的原因（text-muted）
+                        title: '目前值',
+                        render: s => {
+                            if (s.percentage != null) return `${Number(s.percentage).toFixed(1)} %`;
+                            const span = document.createElement('span');
+                            span.className = 'text-muted';
+                            span.textContent = s.unmeasurableReason || '-';
+                            return span;
+                        }
+                    },
+                    {
+                        title: '說明',
+                        render: s => {
+                            if (s.unmeasurableReason && s.percentage != null) return s.unmeasurableReason;
+                            if (s.percentage != null) return '正常量測';
+                            const span = document.createElement('span');
+                            span.className = 'text-muted';
+                            span.textContent = s.unmeasurableReason || '-';
+                            return span;
+                        }
                     }
-                    tr.appendChild(tdValue);
-
-                    // 說明
-                    const tdNote = document.createElement('td');
-                    if (s.unmeasurableReason && s.percentage != null) {
-                        tdNote.textContent = s.unmeasurableReason;
-                    } else if (s.percentage != null) {
-                        tdNote.textContent = '正常量測';
-                    } else {
-                        tdNote.className = 'text-muted';
-                        tdNote.textContent = s.unmeasurableReason || '-';
-                    }
-                    tr.appendChild(tdNote);
-
-                    tbody.appendChild(tr);
-                }
-            }
-            table.appendChild(tbody);
-            tableResp.appendChild(table);
+                ],
+                rows: sensors,
+                empty: { title: '無受監看感測器。', hint: '請確認 PRTG 連線設定與清單來源，或改用覆寫清單指定 sensor。', icon: null }
+            });
             container.appendChild(tableResp);
 
             if (fillTextarea) {

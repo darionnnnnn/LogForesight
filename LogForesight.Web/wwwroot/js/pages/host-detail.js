@@ -5,9 +5,9 @@
  * 沒有紀錄的日子刻意用不同顏色：「這天沒分析」與「這天沒風險」是完全不同的意思。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit } from '../core/ui.js';
+import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit, renderPageHeader } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
@@ -15,6 +15,7 @@ const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
 let currentDays = 30;
 let canMaintainHost = false;
+let currentUser = null;
 const hostUpdateModal = new bootstrap.Modal(document.getElementById('host-update-modal'));
 
 const LEGEND = [
@@ -49,6 +50,7 @@ async function load() {
         api.get(`/api/host-detail/${hostId}?days=${currentDays}`),
         getCurrentUser()
     ]);
+    currentUser = user;
     canMaintainHost = hasCapability(user, 'Maintain');
 
     if (canMaintainHost && detail.source === 'local') {
@@ -84,14 +86,11 @@ function renderHeader(detail) {
     const body = document.createElement('div');
     body.className = 'lf-card__body';
 
-    const titleRow = document.createElement('div');
-    titleRow.className = 'd-flex justify-content-between align-items-start mb-1';
-
-    const title = document.createElement('div');
-    title.className = 'fs-5 fw-semibold';
+    // 頁首（renderPageHeader）：副標開頭以強調文字放主機名稱，頁面層級動作放右側
+    const title = document.createElement('strong');
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     title.textContent = detail.displayName ? `${detail.hostName}（${detail.displayName}）` : detail.hostName;
-    titleRow.appendChild(title);
+    const actions = [];
 
     // 指定主機更新（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）：就近原則，看著這台主機覺得資料舊了當場按，
     // 只有 Maintain 能觸發（與排程作業頁的立即執行同一組能力）。本機主機在「分析本機主機」
@@ -103,11 +102,15 @@ function renderHeader(detail) {
         updateButton.textContent = '指定主機更新';
         updateButton.id = 'host-update-open';
         updateButton.addEventListener('click', () => openHostUpdateModal(detail));
-        titleRow.appendChild(updateButton);
-        applyRunActivityState();   // 重新渲染後補上目前狀態（按鈕是每次 load() 重建的）
+        actions.push(updateButton);
     }
 
-    body.appendChild(titleRow);
+    renderPageHeader(document.getElementById('page-header'), {
+        subtitle: [title, ' 的風險時間軸與處理狀況'],
+        actions
+    });
+    // 按鈕是每次 load() 重建的，須在頁首渲染（按鈕進 DOM）之後補上目前狀態
+    if (actions.length > 0) applyRunActivityState();
 
     if (detail.roleDesc) {
         const role = document.createElement('div');
@@ -209,7 +212,7 @@ function renderTimeline(detail) {
             const cell = document.createElement(day.hasRecord ? 'a' : 'span');
             cell.className = 'lf-calendar__cell lf-timeline-cell';
             cell.dataset.date = day.date;   // 問題發生明細展開時的高亮連動用（docs/archive/FEEDBACK-4-PLAN.md §3）
-            cell.style.backgroundColor = cellColor(day);
+            cell.style.setProperty('--lf-swatch', cellColor(day));
 
             const dayNum = parseInt(day.date.split('-')[2], 10);
             cell.textContent = String(dayNum);
@@ -263,10 +266,8 @@ function renderLegend() {
         wrap.className = 'd-flex align-items-center gap-1';
 
         const swatch = document.createElement('span');
-        swatch.className = 'rounded d-inline-block';
-        swatch.style.width = '12px';
-        swatch.style.height = '12px';
-        swatch.style.background = item.color;
+        swatch.className = 'rounded d-inline-block lf-swatch lf-swatch--md';
+        swatch.style.setProperty('--lf-swatch', item.color);
 
         const label = document.createElement('span');
         label.textContent = item.label;
@@ -452,8 +453,10 @@ function renderOccurrencePanel(container, data) {
         caseRow.className = 'lf-hint mb-3';
         const closedNote = data.case.closedAt ? '（已結案）' : '（進行中）';
         if (data.case.handlerId) {
-            const link = document.createElement('a');
-            link.href = appUrl(`/handlers/${data.case.handlerId}`);
+            // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出姓名文字
+            const linkable = canViewHandlerPage(currentUser, data.case.handlerId);
+            const link = document.createElement(linkable ? 'a' : 'span');
+            if (linkable) link.href = appUrl(`/handlers/${data.case.handlerId}`);
             link.textContent = data.case.handlerName;
             link.addEventListener('click', event => event.stopPropagation());
             caseRow.append(`案件處理人：`, link, ` ｜ 狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`);
@@ -471,46 +474,38 @@ function renderOccurrencePanel(container, data) {
         return;
     }
 
-    const table = document.createElement('table');
-    table.className = 'table table-sm mb-0';
-    const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th>日期</th><th class="text-end">當日次數</th><th>日風險</th><th>處理狀態</th></tr>';
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    for (const occurrence of [...data.occurrences].reverse()) {   // 最近的排最上面
-        const tr = document.createElement('tr');
-
-        const dateCell = document.createElement('td');
-        const link = document.createElement('a');
-        link.href = appUrl(`/records/${hostId}/${occurrence.date}`);
-        link.textContent = occurrence.date;
-        dateCell.appendChild(link);
-        tr.appendChild(dateCell);
-
-        const countCell = document.createElement('td');
-        countCell.className = 'text-end';
-        countCell.textContent = formatNumber(occurrence.count);
-        tr.appendChild(countCell);
-
-        const riskCell = document.createElement('td');
-        riskCell.appendChild(riskBadge(occurrence.riskLevel));
-        tr.appendChild(riskCell);
-
-        const statusCell = document.createElement('td');
-        statusCell.textContent = occurrence.statusText;
-        if (occurrence.fromCase) {
-            const note = document.createElement('span');
-            note.className = 'text-muted small ms-1';
-            note.textContent = '（案件同步）';
-            statusCell.appendChild(note);
-        }
-        tr.appendChild(statusCell);
-
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    container.appendChild(table);
+    const tableHost = document.createElement('div');
+    renderTable(tableHost, {
+        columns: [
+            {
+                title: '日期',
+                render: occurrence => {
+                    const link = document.createElement('a');
+                    link.href = appUrl(`/records/${hostId}/${occurrence.date}`);
+                    link.textContent = occurrence.date;
+                    return link;
+                }
+            },
+            { title: '當日次數', className: 'text-end', render: occurrence => formatNumber(occurrence.count) },
+            { title: '日風險', render: occurrence => riskBadge(occurrence.riskLevel) },
+            {
+                title: '處理狀態',
+                render: occurrence => {
+                    const statusCell = document.createElement('span');
+                    statusCell.append(document.createTextNode(occurrence.statusText ?? ''));
+                    if (occurrence.fromCase) {
+                        const note = document.createElement('span');
+                        note.className = 'text-muted small ms-1';
+                        note.textContent = '（案件同步）';
+                        statusCell.appendChild(note);
+                    }
+                    return statusCell;
+                }
+            }
+        ],
+        rows: [...data.occurrences].reverse()   // 最近的排最上面
+    });
+    container.appendChild(tableHost);
 }
 
 /** 時間軸連動高亮：這個問題出現過的日子加外框，其餘日子淡化（docs/archive/FEEDBACK-4-PLAN.md §3） */
@@ -743,45 +738,40 @@ function renderPrtgDevices(container, data) {
             noSensors.textContent = 'PRTG 資料準備中：新對應的裝置正在補抓感測器，通常幾分鐘內完成。';
             devCard.appendChild(noSensors);
         } else {
-            const table = document.createElement('table');
-            table.className = 'table table-sm table-hover mb-0 small';
-            table.innerHTML = '<thead><tr><th>Sensor ID</th><th>名稱</th><th>類型</th><th>分類</th><th>狀態</th><th>數值資料</th></tr></thead>';
-            const tbody = document.createElement('tbody');
-            for (const s of device.sensors) {
-                const tr = document.createElement('tr');
-                const status = prtgSensorStatusBadge(s);
-                const cells = [
-                    [String(s.objid), 'font-monospace'],
-                    [s.name ?? '', ''],
-                    [s.sensorType || '-', ''],
-                    [s.category || '—', '']
-                ];
-                for (const [text, className] of cells) {
-                    const td = document.createElement('td');
-                    if (className) td.className = className;
-                    td.textContent = text;
-                    tr.appendChild(td);
-                }
-                const statusTd = document.createElement('td');
-                statusTd.appendChild(badge(status.text, status.variant));
-                tr.appendChild(statusTd);
-
-                const valueTd = document.createElement('td');
-                if (!s.valueReasonCode) {
-                    valueTd.textContent = '—';
-                } else if (s.valueReasonCode === 'Ready') {
-                    valueTd.appendChild(badge('就緒', 'success'));
-                } else if (s.valueReasonCode === 'InsufficientDays') {
-                    valueTd.appendChild(badge(`資料累積中 ${s.validDays ?? 0}／${s.requiredDays ?? 0} 日`, 'secondary'));
-                } else {
-                    valueTd.appendChild(badge(s.valueReason || s.valueReasonCode, 'warning'));
-                }
-                tr.appendChild(valueTd);
-
-                tbody.appendChild(tr);
-            }
-            table.appendChild(tbody);
-            devCard.appendChild(table);
+            const sensorHost = document.createElement('div');
+            renderTable(sensorHost, {
+                columns: [
+                    { title: 'Sensor ID', className: 'font-monospace', render: s => String(s.objid) },
+                    { title: '名稱', truncate: true, render: s => s.name ?? '' },
+                    { title: '類型', render: s => s.sensorType || '-' },
+                    { title: '分類', render: s => s.category || '—' },
+                    {
+                        title: '狀態',
+                        render: s => {
+                            const status = prtgSensorStatusBadge(s);
+                            return badge(status.text, status.variant);
+                        }
+                    },
+                    {
+                        title: '數值資料',
+                        render: s => {
+                            const valueTd = document.createElement('span');
+                            if (!s.valueReasonCode) {
+                                valueTd.textContent = '—';
+                            } else if (s.valueReasonCode === 'Ready') {
+                                valueTd.appendChild(badge('就緒', 'success'));
+                            } else if (s.valueReasonCode === 'InsufficientDays') {
+                                valueTd.appendChild(badge(`資料累積中 ${s.validDays ?? 0}／${s.requiredDays ?? 0} 日`, 'secondary'));
+                            } else {
+                                valueTd.appendChild(badge(s.valueReason || s.valueReasonCode, 'warning'));
+                            }
+                            return valueTd;
+                        }
+                    }
+                ],
+                rows: device.sensors
+            });
+            devCard.appendChild(sensorHost);
         }
 
         container.appendChild(devCard);

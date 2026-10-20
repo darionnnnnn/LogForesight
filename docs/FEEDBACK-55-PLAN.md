@@ -1,6 +1,6 @@
 ﻿# 第 55 輪規劃：企業級體質——排程韌性、交辦兩段式摘要、效能
 
-> 狀態：**實作完成，待換模型體檢**（feature/feedback-55；§0 待確認項 2026-10-20 使用者以「開始實作」照建議值定案）；第 56 輪規劃見 [FEEDBACK-56-PLAN.md](FEEDBACK-56-PLAN.md)，疊在本分支之上的 feature/feedback-56 進行（使用者規則：不自行 merge）。
+> 狀態：**全案完成已併 dev**（Opus 5.5 實作、Fable 5.1 體檢；體檢與第 56 輪合併執行，見 FEEDBACK-56-PLAN §7「全面體檢」列；§0 待確認項 2026-10-20 照建議值定案）。第 56 輪規劃見 FEEDBACK-56-PLAN.md。
 > 基準：dev@fcb54d2a（6,241 通過／10 略過，Windows）
 > 來源：使用者 2026-10-20 要求以六個角度評估整體優化（排程三源順序穩定度／PRTG 實戰／告警可靠度／報表與運作速度／派工與回報流程／畫面排版）。評估結果見 §1；本輪只做角度 1～4 的後端部分，角度 5～6 另開第 56 輪。
 > 實作方式：agy `gemini-3.8-flash-high` 為主，額度不足或兩次無聲零改動時改派 `impl-low`，接手起點記進 §8 執行紀錄；每段 Claude 獨立驗收（`git diff`、重跑驗收指令、關鍵斷言突變），不採信執行端摘要。
@@ -251,6 +251,8 @@
 | D-3 | —（本輪不做） | 取消 | — | 實作前重新評估為過度設計：SQLite 已停用連線池（多一個池沒有效果）；SQL Server 預設池 100，四支背景服務峰值約 15 條連線，沒有任何量測顯示爭用；另建 `StorageBackend` 反而帶來快照 journal 綁定與快取一致性風險。改記 BACKLOG 觸發條件。|
 | D-4 | Sonnet 5.5 subagent（規格 task-55-d4） | 完成 | 八支查詢守門 8 綠；Schema 相關 50 綠；突變拿掉新索引 → `CountPendingAi` 案紅 | 改動前唯一真缺索引的是 `CountPendingAi`（`ai_pending AND NOT detail_pruned` 整表掃描），補 `IX_lf_daily_records_ai_pending_pruned (ai_pending, detail_pruned)` 覆蓋索引。另兩支（處理狀態、執行紀錄）的掃描是夾具太小／log_key 只有一種所致，加大夾具後即走既有索引，不加索引。已知：`QueryLightweight` 讀 `lf_top_issues` 那道在小表＋約 600 個 IN 值時規劃器選全表掃描（50 個時走索引），屬成本選擇，未納入守門。教訓：突變還原若沿用備份檔的舊時間戳，MSBuild 增量建置會留下突變版 dll（本段實際發生），還原工具已改為一律更新時間戳 |
 | 收官全量 | Claude | 6,326 通過／10 略過（基線 6,241，+85） | 首跑 1 紅：`RecordQueryServiceSearchTests` 的排序測試用「低風險日＋狀態篩選、未指定風險等級」，正是 D-1 刻意改變的行為 | 改用中／高風險日保留測試意圖（日期排序與預設緊急程度排序順序相反）。D-1 的定向篩選漏了這個類別——同一查詢服務的其他測試類應列入篩選 |
+| D-2 補（規劃逐條比對） | Claude | 完成 | 0 警告；報表／處理歷程／儀表板定向 72 綠；兩處突變（拿掉埋點、拿掉空集合保護）各 1 案紅 | 比對抓到兩件：(1) 規劃的 `report:scope-filter` 埋點沒做、執行紀錄也沒記偏離——`StorageBackend.Performance` 註冊進 DI、`ReportService` 必填注入並量測非全部範圍段；(2) 瀏覽器實測非全部範圍回 500：兩期相鄰的合併查詢在期間內沒有高／中風險日時把空集合交給 `LoadScopeContext` 取 Min／Max（安靜的一週、新安裝都會遇到），改為空集合回空預載。同型掃描第 55／56 輪新增的 First／Max 兩處皆已有保護 |
+| 全面體檢（與第 56 輪合併執行） | 見 FEEDBACK-56-PLAN §7「全面體檢」列 | 完成 | — | 本輪相關修正：A-1 規劃的中斷補跑說明補做（`ScheduleCalculator.InterruptedRunAllowingCatchUp`＋`ComposeScheduledRequest(catchUpNote)`）；D-1 的 5 萬筆上限對「下一筆未處理」捷徑放行；C-1 的立即派工／日層級指派改一次入列 outbox；摘要信指路改「我的交辦」 |
 
 ## 體檢交接
 

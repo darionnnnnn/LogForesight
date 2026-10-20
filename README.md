@@ -2,7 +2,7 @@
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 
-> PRTG 整合現況見 [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md)；第 54 輪重寫的規劃與執行紀錄已歸檔（docs/archive/FEEDBACK-54-PLAN.md）。
+> PRTG 整合現況見 [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md)；各輪規劃與執行紀錄歸檔於 docs/archive/（索引見其 README.md）。
 
 分析 Windows Server 的 Event Log 與 Linux 主機的 syslog（經 NetIQ Sentinel 取數，
 規則面與取數管線皆已完備，見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)），

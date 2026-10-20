@@ -57,8 +57,7 @@ function renderScanPicker(allSentinels) {
     row.className = 'd-flex align-items-center gap-2';
 
     const select = document.createElement('select');
-    select.className = 'form-select';
-    select.style.maxWidth = '240px';
+    select.className = 'form-select lf-maxw-md';
     select.id = 'scan-sentinel-select';
     for (const sentinel of discoverableSentinels) {
         select.appendChild(new Option(sentinel.name, sentinel.name));
@@ -69,26 +68,23 @@ function renderScanPicker(allSentinels) {
     // 前端先擋空值，格式細節（CIDR 位元數等）交給後端 SentinelQueryBuilder 統一驗證
     const subnetInput = document.createElement('input');
     subnetInput.type = 'text';
-    subnetInput.className = 'form-control';
-    subnetInput.style.maxWidth = '220px';
+    subnetInput.className = 'form-control lf-maxw-md';
     subnetInput.id = 'scan-subnet-input';
     subnetInput.placeholder = '網段，例：192.168.0';
     row.appendChild(subnetInput);
 
     const granularitySelect = document.createElement('select');
-    granularitySelect.className = 'form-select';
+    granularitySelect.className = 'form-select w-auto';
     // 寬度依選項內容自動撐開：Bootstrap 的 form-select 預設 width:100%，在這一列會被壓到
     // 固定上限而截斷最長的選項文字（「每段 254 台（預設）」）。改用 auto 交給瀏覽器算，
     // 換字型或使用者放大字級都不會再截斷，不必回頭調魔術數字。
-    granularitySelect.style.width = 'auto';
     granularitySelect.id = 'scan-granularity-select';
     granularitySelect.appendChild(new Option('每段 254 台（預設）', '24', true, true));
     granularitySelect.appendChild(new Option('每段 62 台（最細）', '26'));
     row.appendChild(granularitySelect);
 
     const concurrencySelect = document.createElement('select');
-    concurrencySelect.className = 'form-select';
-    concurrencySelect.style.width = 'auto';
+    concurrencySelect.className = 'form-select w-auto';
     concurrencySelect.id = 'scan-concurrency-select';
     concurrencySelect.appendChild(new Option('單一查詢（預設）', '1', true, true));
     concurrencySelect.appendChild(new Option('同時 2 個查詢', '2'));
@@ -491,8 +487,7 @@ function renderSubnetSelection() {
         details.open = subnet.hosts.length <= WIZARD_SUBNET_COLLAPSE_THRESHOLD;
 
         const summary = document.createElement('summary');
-        summary.className = 'px-2 py-1 small';
-        summary.style.cursor = 'pointer';
+        summary.className = 'px-2 py-1 small lf-pointer';
 
         const segBox = document.createElement('input');
         segBox.type = 'checkbox';
@@ -513,10 +508,7 @@ function renderSubnetSelection() {
 
         const body = document.createElement('div');
         // 多欄 grid 取代原本一台一列的直排——網段常有數十台，直排要捲很久
-        body.className = 'px-2 pb-2';
-        body.style.display = 'grid';
-        body.style.gridTemplateColumns = 'repeat(auto-fill, minmax(240px, 1fr))';
-        body.style.columnGap = '0.75rem';
+        body.className = 'px-2 pb-2 lf-wizard-host-grid';
         for (const host of subnet.hosts) {
             body.appendChild(wizardHostRow(host));
         }

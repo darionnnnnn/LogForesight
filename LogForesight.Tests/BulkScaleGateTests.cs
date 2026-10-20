@@ -85,7 +85,7 @@ public class BulkScaleGateTests : IDisposable
             query, aggregates, coordinator, workOrderStore, _caseStore, new FakeNoiseMarkStore(),
             _hosts, _users, visibility, new UserCapabilityResolver(groups, _hosts),
             FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            new RecordingAuditService(), displayNames, new FakeRuleStore(), mail);
+            new RecordingAuditService(), displayNames, mail);
     }
 
     public void Dispose() => _fixture.Dispose();

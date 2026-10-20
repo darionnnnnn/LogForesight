@@ -188,14 +188,15 @@ public class SchedulerHostedService : BackgroundService
         if (!options.Enabled) return;
 
         var now = DateTime.Now;
-        var recentScheduleTriggerTimes = GetScheduleTriggerTimes(
-            _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
-            _runState.RecentScheduleAttempts,
-            options.Windows);
+        var recentRuns = _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null);
+        var recentScheduleTriggerTimes = GetScheduleTriggerTimes(recentRuns, _runState.RecentScheduleAttempts, options.Windows);
 
         if (ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes))
         {
-            await TriggerRunAsync(ComposeScheduledRequest());
+            // 這個窗口原本跑過、但那趟被站台重啟標成異常中斷時，執行紀錄與狀態卡要看得到「為什麼又跑一次」
+            var interruptedAt = ScheduleCalculator.InterruptedRunAllowingCatchUp(now, ScheduledRunTimes(recentRuns), options.Windows);
+            await TriggerRunAsync(ComposeScheduledRequest(
+                interruptedAt is { } at ? $"補跑：上一趟排程執行（{at:HH:mm} 開始）異常中斷" : null));
             return;
         }
 
@@ -308,16 +309,11 @@ public class SchedulerHostedService : BackgroundService
         IEnumerable<BatchRun> runs,
         IEnumerable<DateTime> inMemoryTriggerTimes,
         IEnumerable<ScheduleWindow> windows)
-    {
-        var scheduledRuns = runs
-            .Where(r => r.Trigger == "schedule" && r.JobType != BatchRun.JobTypeAi)
-            .Select(r => (r.StartedAt, r.Interrupted));
+        => ScheduleCalculator.EffectiveScheduleTriggerTimes(ScheduledRunTimes(runs), inMemoryTriggerTimes, windows);
 
-        return ScheduleCalculator.EffectiveScheduleTriggerTimes(
-            scheduledRuns,
-            inMemoryTriggerTimes,
-            windows);
-    }
+    /// <summary>排程執行的唯一篩選：Trigger == "schedule" 且非 AI 背景工作（補跑說明也從這裡取）</summary>
+    internal static IEnumerable<(DateTime StartedAt, bool Interrupted)> ScheduledRunTimes(IEnumerable<BatchRun> runs) =>
+        runs.Where(r => r.Trigger == "schedule" && r.JobType != BatchRun.JobTypeAi).Select(r => (r.StartedAt, r.Interrupted));
 
     /// <summary>
     /// 觸發一次執行（排程輪詢與手動觸發 API 共用）。已有執行中時回 false（拒絕，不排隊）；
@@ -333,8 +329,8 @@ public class SchedulerHostedService : BackgroundService
     /// 刪除既有分析結果重跑是破壞性動作，只在有人看著的手動觸發發生，不在無人看管的夜間排程。
     /// 抽成獨立函式是為了讓這條契約測得到。
     /// </summary>
-    internal static RunRequest ComposeScheduledRequest() =>
-        new() { Scope = RunScope.Full, Trigger = "schedule" };
+    internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null) =>
+        new() { Scope = RunScope.Full, Trigger = "schedule", CatchUpNote = catchUpNote };
 
     /// <summary>
     /// 把呼叫端的請求與目前排程設定合成實際執行用的請求（<see cref="TriggerRunAsync"/> 的純函式部分）。

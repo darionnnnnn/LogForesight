@@ -333,6 +333,17 @@ public class FrontendConsistencyUiTests
     }
 
     [Fact]
+    public void 儀表板待派工問題卡_pendingDispatch為null不建卡_點卡進待派頁籤()
+    {
+        var js = ReadJs("pages", "dashboard.js");
+        Assert.Contains("if (data.pendingDispatch)", js);
+        Assert.Contains("'/work-orders#gaps'", js);
+        Assert.Contains("label: '待派工問題'", js);
+        Assert.Contains("'超過上限'", js);
+        Assert.Contains("無法派出（無可接單人選）", js);
+    }
+
+    [Fact]
     public void D3_儀表板未回報卡依PRTG失聯數切換提示()
     {
         var js = ReadJs("pages", "dashboard.js");
@@ -385,5 +396,196 @@ public class FrontendConsistencyUiTests
         Assert.Contains("if (detail.caseGrantOnly === true)", load);
         Assert.Contains("loadPrtgMapping();", load);
         Assert.Contains("案件授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。", hostJs);
+    }
+
+    [Fact]
+    public void 交辦單回覆旗標與處理人頁無權時不卡載入()
+    {
+        var detailJs = ReadJs("pages", "work-order-detail.js");
+        var handlerJs = ReadJs("pages", "handler-detail.js");
+        Assert.Contains("viewerCanReply", detailJs);
+        Assert.Contains("viewerCanReply", handlerJs);
+        Assert.Contains("viewerIsPreviousHandler", detailJs);
+        Assert.Contains("只能檢視自己的交辦", handlerJs);
+        Assert.Contains("canViewHandlerPage(user, userId)", ExtractBody(handlerJs, @"async function load\(\)"));
+        Assert.Contains("export function canViewHandlerPage(", ReadJs("core", "api.js"));
+        foreach (var page in new[] { "host-detail.js", "record-detail.js", "records.js", "work-order-detail.js" })
+            Assert.Contains("canViewHandlerPage(", ReadJs("pages", page));
+    }
+
+    [Fact]
+    public void 三個手動派工入口都走派工人選端點且不再拉全部使用者()
+    {
+        foreach (var page in new[] { "records.js", "work-order-detail.js", "handling-panel.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.Contains("work-orders/candidates", js);
+            Assert.DoesNotContain("api/admin/users", js);
+            Assert.Contains("candidatesToUserOptions", js);
+        }
+
+        var ui = ReadJs("core", "ui.js");
+        Assert.Contains("export function candidatesToUserOptions(", ui);
+        Assert.Contains("Array.isArray(user.badges)", ui);
+    }
+
+    [Fact]
+    public void 回覆與交辦modal_即時檢查預計完成日_派工成功帶單號連結_取消交辦文字依通知開關()
+    {
+        foreach (var page in new[] { "issue-status-reply.js", "records.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.Contains("預計完成日不可早於今天", js);
+            Assert.Contains("aria-live", js);
+        }
+
+        Assert.Contains("/work-orders/", ReadJs("pages", "records.js"));
+        Assert.Contains("mailWorkOrdersEnabled", ReadJs("pages", "work-order-detail.js"));
+    }
+
+    [Fact]
+    public void 日層級指派改為預覽後確認一次送出_下拉變更不直接寫入()
+    {
+        var js = ReadJs("pages", "handling-panel.js");
+        Assert.Contains("handling/assign/preview", js);
+
+        // select 的 change 處理函式只負責切換「指派」按鈕：起 15 行內不得出現 api.put
+        var lines = js.Split('\n');
+        var start = Array.FindIndex(lines, l => l.Contains("addEventListener('change'"));
+        Assert.True(start >= 0, "找不到 change 事件處理");
+        var window = string.Join("\n", lines.Skip(start).Take(15));
+        Assert.DoesNotMatch(@"api\.put", window);
+
+        // 整個檔案只在確認後的送出函式裡寫入一次指派
+        Assert.Single(Regex.Matches(js, @"api\.put\(base"));
+    }
+
+    /// <summary>
+    /// 側欄徽章輪詢（回饋第 56 輪）：全站唯一的徽章計時器在 core/badges.js，
+    /// 且分頁隱藏時暫停、回到前景立即刷新；各頁不得另開計時器、訂閱 lf:badges 即可。
+    /// </summary>
+    [Fact]
+    public void 徽章輪詢_badges_js恰一個setInterval且含visibilitychange_各頁不另開計時器()
+    {
+        const string timerCall = "setInterval(";
+        var badges = ReadJs("core", "badges.js");
+        Assert.Single(Regex.Matches(badges, Regex.Escape(timerCall)));
+        Assert.Contains("visibilitychange", badges);
+        Assert.Contains("document.hidden", badges);
+        Assert.Contains("'lf:badges'", badges);
+        Assert.Contains("/api/work-orders/unread-count", badges);
+        Assert.Contains("/api/handlers/me/badge", badges);
+
+        foreach (var file in new[] { new[] { "core", "layout.js" }, new[] { "pages", "work-orders.js" }, new[] { "pages", "work-order-detail.js" } })
+            Assert.DoesNotContain(timerCall, ReadJs(file));
+
+        var layout = ReadJs("core", "layout.js");
+        Assert.Contains("startBadgePolling(user)", layout);
+        Assert.Contains("badgeSource = 'unread-replies'", layout);
+        Assert.DoesNotContain("function loadMyWorkBadge", layout);
+    }
+
+    [Fact]
+    public void 未讀回覆與退回_前端接線_seen與return與unreadOnly與lf_badges訂閱()
+    {
+        var detail = ReadJs("pages", "work-order-detail.js");
+        Assert.Contains("/seen", detail);
+        Assert.Contains("/return", detail);
+        Assert.Contains("退回處理人", detail);
+        Assert.Contains("btn-outline-secondary", detail);
+
+        var orders = ReadJs("pages", "work-orders.js");
+        Assert.Contains("unreadOnly", orders);
+        Assert.Contains("lf:badges", orders);
+        Assert.Contains("有新回覆", orders);
+    }
+
+    [Fact]
+    public void 日期數字格式走format_js單一出口_pages不得直接toLocale顯示()
+    {
+        // 日期／時間／數字顯示一律走 core/format.js（formatDate／formatDateTime／formatTime／
+        // toLocalDateString／formatNumber）；toLocaleLowerCase 這類字串比對不在此限（pattern 要帶 "("）。
+        // 允許清單：目前沒有任何例外。runs.js 的 Date 運算只有 getFullYear 做計算、不呼叫 toLocale*。
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pagesDir = JsDir("pages");
+        var offenders = new List<string>();
+        foreach (var file in Directory.GetFiles(pagesDir, "*.js"))
+        {
+            if (allowed.Contains(Path.GetFileName(file))) continue;
+            var text = File.ReadAllText(file);
+            foreach (var api in new[] { "toLocaleString(", "toLocaleDateString(", "toLocaleTimeString(" })
+            {
+                if (text.Contains(api, StringComparison.Ordinal)) offenders.Add($"{Path.GetFileName(file)}: {api}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0, "以下頁面直接呼叫 toLocale*，請改走 core/format.js：" + string.Join("; ", offenders));
+    }
+
+    [Fact]
+    public void 載入中文字走renderSpinner_pages不得直接寫載入中純文字()
+    {
+        // 只允許 renderSpinner(…, '載入中…') 的呼叫；下拉選項無法放 spinner，列入允許清單（prtg-admin.js 的 new Option）。
+        var offenders = new List<string>();
+        foreach (var file in Directory.GetFiles(JsDir("pages"), "*.js"))
+        {
+            foreach (var line in File.ReadAllLines(file))
+            {
+                if (!line.Contains("'載入中…'", StringComparison.Ordinal)) continue;
+                if (line.Contains("renderSpinner(", StringComparison.Ordinal)) continue;
+                if (line.Contains("new Option('載入中…'", StringComparison.Ordinal)) continue;
+                offenders.Add($"{Path.GetFileName(file)}: {line.Trim()}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0, "以下位置直接寫「載入中…」，請改用 renderSpinner／renderLoading／withBusy：" + string.Join("; ", offenders));
+    }
+
+    [Fact]
+    public void 日期格式化只有format_js一份_handler與work_orders與prtg_admin與rules已收斂()
+    {
+        foreach (var page in new[] { "handler-detail.js", "work-orders.js", "prtg-admin.js", "rules.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.DoesNotContain("padStart(2", js);
+        }
+
+        Assert.Contains("export function formatTime(", ReadJs("core", "format.js"));
+        Assert.Contains("formatTime(", ReadJs("pages", "prtg-calibration.js"));
+    }
+
+    [Fact]
+    public void 交辦單詳情頁_改派註記由後端給姓名_前端不再用id翻譯也不自己推原處理人()
+    {
+        var js = ReadJs("pages", "work-order-detail.js");
+
+        Assert.DoesNotContain("fetchCandidates([])", js);
+        Assert.DoesNotContain("handlerNameCache", js);
+        Assert.DoesNotContain("(\\d+)→(\\d+)", js);
+        Assert.Contains("viewerIsPreviousHandler", js);
+    }
+
+    [Fact]
+    public void 交辦單詳情頁_返回連結傳純站內路徑_backLinkNode自己補站台前綴()
+    {
+        var js = ReadJs("pages", "work-order-detail.js");
+
+        Assert.DoesNotContain("backLink: { href: appUrl(", js);
+    }
+
+    [Fact]
+    public void 狀態徽章資料只有handling_statuses一份_各頁不再自己從目錄衍生()
+    {
+        var catalog = ReadJs("core", "handling-statuses.js");
+        Assert.Contains("export function statusBadgeMeta(", catalog);
+        Assert.Contains("export function statusVariant(", catalog);
+
+        foreach (var page in new[] { "handler-detail.js", "work-order-detail.js", "handling-panel.js", "record-detail.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.DoesNotContain("MEMBER_STATUS_META", js);
+            Assert.DoesNotContain("ISSUE_HISTORY_STATUS_VARIANTS", js);
+            Assert.DoesNotContain("statusVariantOf", js);
+        }
     }
 }

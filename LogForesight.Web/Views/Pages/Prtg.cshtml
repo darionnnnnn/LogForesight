@@ -32,7 +32,7 @@
                 <button class="btn btn-sm btn-outline-danger d-none" id="prtg-monitoring-host-select-cancel" type="button">停止批次</button>
                 <span class="small text-muted" id="prtg-monitoring-host-batch-status" role="status" aria-live="polite"></span>
             </div>
-            <div id="prtg-monitoring-hosts" class="border rounded p-2 mb-2" style="max-height:14rem;overflow:auto" aria-label="監看主機"></div>
+            <div id="prtg-monitoring-hosts" class="border rounded p-2 mb-2 lf-scroll-md" aria-label="監看主機"></div>
             <div class="small text-muted mb-1">已保存主機（包含停用、合併或已移除的舊項目）；只載入每頁 100 筆。移除舊項目不會自動移除 sensor，請在下方另行核對。</div>
             <label class="form-label" for="prtg-monitoring-saved-host-search">搜尋已保存主機</label>
             <input class="form-control mb-2" id="prtg-monitoring-saved-host-search" maxlength="128" autocomplete="off" />
@@ -41,7 +41,7 @@
                 <button class="btn btn-sm btn-outline-secondary" id="prtg-monitoring-saved-host-next" type="button">下一頁</button>
                 <span class="small text-muted" id="prtg-monitoring-saved-host-page-info"></span>
             </div>
-            <div id="prtg-monitoring-saved-hosts" class="border rounded p-2 mb-3" style="max-height:14rem;overflow:auto" aria-label="已保存主機管理"></div>
+            <div id="prtg-monitoring-saved-hosts" class="border rounded p-2 mb-3 lf-scroll-md" aria-label="已保存主機管理"></div>
             <label class="form-label" for="prtg-monitoring-sensor-search">搜尋所選主機的 sensor（最多 100 筆／頁）</label>
             <input class="form-control mb-2" id="prtg-monitoring-sensor-search" maxlength="128" autocomplete="off" />
             <div class="d-flex align-items-center gap-2 mb-2">
@@ -56,7 +56,7 @@
                 <button class="btn btn-sm btn-outline-danger d-none" id="prtg-monitoring-sensor-select-cancel" type="button">停止批次</button>
                 <span class="small text-muted" id="prtg-monitoring-sensor-batch-status" role="status" aria-live="polite"></span>
             </div>
-            <div id="prtg-monitoring-sensors" class="border rounded p-2 mb-2" style="max-height:18rem;overflow:auto" aria-label="監看感測器"></div>
+            <div id="prtg-monitoring-sensors" class="border rounded p-2 mb-2 lf-scroll-xl" aria-label="監看感測器"></div>
             <div class="small text-muted mb-2">已選 sensor（包含目前篩選之外及已不在目錄中的 ID）；可搜尋並逐頁移除，每頁最多顯示 100 筆。</div>
             <label class="form-label" for="prtg-monitoring-selected-sensor-search">搜尋已選 sensor ID</label>
             <input class="form-control mb-2" id="prtg-monitoring-selected-sensor-search" maxlength="32" inputmode="numeric" autocomplete="off" />
@@ -141,7 +141,7 @@
                     <label for="prtg-selected-backfill-search" class="form-label">搜尋已儲存主機</label>
                     <input id="prtg-selected-backfill-search" class="form-control" type="search" autocomplete="off" aria-controls="prtg-selected-backfill-hosts" placeholder="輸入主機名稱或 IP" />
                     <div class="form-text" id="prtg-selected-backfill-host-help">使用方向鍵、空白鍵或滑鼠選取，最多 5 台。</div>
-                    <div id="prtg-selected-backfill-hosts" class="border rounded mt-2 p-2" role="group" aria-describedby="prtg-selected-backfill-host-help" style="max-height: 16rem; overflow-y: auto;">
+                    <div id="prtg-selected-backfill-hosts" class="border rounded mt-2 p-2 lf-scroll-lg" role="group" aria-describedby="prtg-selected-backfill-host-help">
                         <span class="small text-muted">載入主機清單中…</span>
                     </div>
                     <div class="small mt-1" id="prtg-selected-backfill-selection" aria-live="polite"></div>
@@ -495,7 +495,7 @@
                     <div class="d-flex flex-wrap gap-4 small mb-2">
                         <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
                         <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
-                        <div>未對應（PRTG 獨有）：<button type="button" class="badge bg-secondary border-0 text-decoration-none" id="prtg-mirror-map-unmatched" style="cursor: pointer;" aria-label="跳至未對應清單" title="跳至未對應清單">0</button></div>
+                        <div>未對應（PRTG 獨有）：<button type="button" class="badge bg-secondary border-0 text-decoration-none lf-pointer" id="prtg-mirror-map-unmatched" aria-label="跳至未對應清單" title="跳至未對應清單">0</button></div>
                         <div>已排除 IP：<span class="badge bg-secondary" id="prtg-mirror-ip-exclude-count">0</span></div>
                         <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
@@ -512,35 +512,18 @@
                             <span class="small fw-semibold text-secondary" id="prtg-conflict-selected-count">已選 0 台</span>
                             <div class="d-flex align-items-center gap-1">
                                 <label for="prtg-conflict-batch-host" class="small text-muted mb-0">目標主機：</label>
-                                <select class="form-select form-select-sm" id="prtg-conflict-batch-host" style="width: auto; min-width: 180px;">
+                                <select class="form-select form-select-sm w-auto lf-minw-md" id="prtg-conflict-batch-host">
                                     <option value="">請選擇目標主機…</option>
                                 </select>
                             </div>
                             <div class="d-flex align-items-center gap-1">
                                 <label for="prtg-conflict-batch-note" class="small text-muted mb-0">說明：</label>
-                                <input type="text" class="form-control form-control-sm" id="prtg-conflict-batch-note" placeholder="可選說明" maxlength="512" style="width: auto; min-width: 160px;" />
+                                <input type="text" class="form-control form-control-sm w-auto lf-minw-sm" id="prtg-conflict-batch-note" placeholder="可選說明" maxlength="512" />
                             </div>
                             <button type="button" class="btn btn-sm btn-outline-primary" id="prtg-conflict-batch-submit" disabled>一次送出</button>
                         </div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-conflicts-table">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th style="width: 40px;" class="text-center">
-                                            <input type="checkbox" class="form-check-input" id="prtg-conflict-select-all" title="全選目前頁" aria-label="全選目前頁" />
-                                        </th>
-                                        <th style="width: 200px;">Device</th>
-                                        <th style="width: 140px;">IP</th>
-                                        <th style="width: 130px;">衝突型別</th>
-                                        <th>說明</th>
-                                        <th style="width: 160px;">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="prtg-mirror-conflicts-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
+                        <!-- 表格由 prtg-admin.js 以 renderTable 填入（含表頭全選 checkbox） -->
+                        <div id="prtg-mirror-conflicts-table"><div class="text-muted small text-center py-2">載入中…</div></div>
                         <div id="prtg-conflicts-pagination" class="mt-2"></div>
                     </div>
 
@@ -552,65 +535,20 @@
                             </button>
                         </div>
                         <div class="collapse show" id="prtg-unmatched-collapse">
-                            <div class="table-responsive">
-                                <table class="table table-sm table-bordered mb-0 small" id="prtg-unmatched-table">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th style="width: 200px;">Device</th>
-                                            <th style="width: 140px;">IP</th>
-                                            <th style="width: 130px;">型別</th>
-                                            <th>說明</th>
-                                            <th style="width: 160px;">操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="prtg-unmatched-body">
-                                        <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
+                            <div id="prtg-unmatched-table"><div class="text-muted small text-center py-2">載入中…</div></div>
                             <div id="prtg-unmatched-pagination" class="mt-2"></div>
                         </div>
                     </div>
 
                     <div class="mt-4">
                         <div class="small fw-semibold text-primary mb-1">人工對應清單</div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-bordered mb-0 small" id="prtg-mirror-manual-maps-table">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th style="width: 120px;">Device Objid</th>
-                                        <th style="width: 180px;">主機</th>
-                                        <th>備註</th>
-                                        <th style="width: 140px;">建立者</th>
-                                        <th style="width: 100px;">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="prtg-mirror-manual-maps-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">無人工對應項目</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
+                        <div id="prtg-mirror-manual-maps-table"><div class="text-muted small text-center py-2">無人工對應項目</div></div>
                     </div>
 
                     <div class="mt-4">
                         <div class="small fw-semibold text-danger mb-1">IP 排除清單</div>
                         <div class="form-text text-muted mb-2">排除的 IP 不會進行 PRTG 主機對應，其底下的 device 也不會取數。</div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-bordered mb-0 small" id="prtg-ip-excludes-table">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th style="width: 140px;">IP</th>
-                                        <th>備註</th>
-                                        <th style="width: 140px;">建立者</th>
-                                        <th style="width: 160px;">建立時間</th>
-                                        <th style="width: 100px;">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="prtg-ip-excludes-body">
-                                    <tr><td colspan="5" class="text-muted text-center py-2">載入中…</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
+                        <div id="prtg-ip-excludes-table"><div class="text-muted small text-center py-2">載入中…</div></div>
                     </div>
                 </div>
             </div>
@@ -654,13 +592,8 @@
             <p class="text-muted small mb-2">取數範圍內、最新對應正常的 CPU／記憶體／磁碟／Ping sensor，近 28 天有幾天可用於數值規則。唯讀，不呼叫 PRTG。</p>
             <div id="prtg-value-readiness-status" class="small mb-2" role="status" aria-live="polite"></div>
             <div id="prtg-value-readiness-groups" class="d-flex flex-wrap gap-2 mb-3"></div>
-            <div class="table-responsive" id="prtg-value-readiness-table-region" role="region" aria-labelledby="prtg-value-readiness-title" tabindex="0">
-                <table class="table table-sm align-middle mb-2">
-                    <caption class="visually-hidden">數值資料就緒度明細</caption>
-                    <thead><tr><th scope="col">主機</th><th scope="col">Sensor</th><th scope="col">類別</th><th scope="col">有效日</th><th scope="col">最新有效日</th><th scope="col">原因</th></tr></thead>
-                    <tbody id="prtg-value-readiness-body"></tbody>
-                </table>
-            </div>
+            <!-- 明細表由 prtg-value-readiness.js 以 renderTable 填入 -->
+            <div class="mb-2" id="prtg-value-readiness-table-region" role="region" aria-labelledby="prtg-value-readiness-title" tabindex="0"></div>
             <div class="d-flex align-items-center gap-2">
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-value-readiness-prev">上一頁</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-value-readiness-next">下一頁</button>

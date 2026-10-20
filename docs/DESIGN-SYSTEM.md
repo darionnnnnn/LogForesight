@@ -39,7 +39,7 @@
 | `--lf-sidebar-bg` | `#161d2e` | `#0f1d3a` | 深海軍藍，從「近黑」轉向與主色同族的深藍，品牌感更聚焦 |
 | `--lf-sidebar-fg` | `#a9b4c7` | `#9fb0cc` | 隨底色微調 |
 | `--lf-sidebar-fg-strong` | `#f1f4fa` | 不變 | |
-| `--lf-sidebar-section` | `#6f7c93` | `#68799a` | |
+| `--lf-sidebar-section` | `#6f7c93` | `#9fb0cc` | 與 `--lf-sidebar-fg` 同值，在 `--lf-sidebar-bg` 上對比 7.6:1（WCAG AA 要求 4.5:1）；分組標題的層級靠大寫、字距、字級與 600 字重表現 |
 | `--lf-sidebar-active-bg` | `rgba(99,102,241,.22)` | `rgba(59,130,246,.24)` | 換藍族 |
 | `--lf-sidebar-hover-bg` | 不變 | 不變 | |
 | `--lf-content-bg` | `#f6f7fb` | `#f8fafc` | slate-50，與中性階完全對齊 |
@@ -63,6 +63,7 @@
 | `--lf-info` / `-soft` / `-text` | `#0891b2` / `#e4f6fa` / `#155e75` | `#0284c7` / `#e0f2fe` / `#075985` | 同上歸族 |
 | `--lf-warning` 系 | `#d97706` 系 | 不變 | 本就是琥珀，與 accent 自然統一 |
 | success／danger／neutral／dark 系 | | 全部不變 | |
+| `--lf-success-muted` | — | `#65a30d` | 新增：執行紀錄「已回補」狀態（淺綠，與「當天真的有跑」的 `--lf-success` 分色） |
 
 ### 圖表 8 類固定色盤（§8.3 規則 3）
 
@@ -76,6 +77,13 @@
 | `--lf-cat-config` | `#64748b` | 不變 |
 | `--lf-cat-resource` | `#db2777` | 不變 |
 | `--lf-cat-other` | `#94a3b8` | 不變 |
+
+圖表共用 token（`core/charts.js` 以 `cssVar` 讀取，圖表內不寫死 rgba）：
+
+| token | 值 | 用途 |
+|---|---|---|
+| `--lf-chart-tooltip-bg` | `rgba(27, 42, 65, .92)` | 圖表 tooltip 背景 |
+| `--lf-chart-grid` | `rgba(0, 0, 0, .06)` | 長條／折線圖 Y 軸格線 |
 
 ### Bootstrap 5.3 對接
 
@@ -164,7 +172,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 **資訊密度**
 - 說明文字超過兩行就改用對照表、`lf-help` popover 或收合區；一個下拉有多重副作用時，把副作用做成選項旁的對照表，不寫整段散文。
 - 日常動線用不到的內容（開發工具、校準、純調校參數）收進「進階」收合區，預設收合、記住使用者的展開選擇（`localStorage`，try/catch 包起來）。
-- KPI 統計卡一列不超過 4 張（`col-6 col-xl-3`）；超過就換列，不壓縮卡寬——卡寬低於 140px 時標籤會逐字換行。
+- KPI 統計卡一列不超過 4 張（`col-6 col-lg-3`）；超過就換列，不壓縮卡寬——卡寬低於 140px 時標籤會逐字換行。
 
 **互動**
 - 送出後**就地更新**：只重繪受影響的列或區塊，保留使用者的勾選、展開與捲動位置；不整頁重載。
@@ -194,6 +202,8 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 | token | `LogForesight.Web/wwwroot/css/site.css` `:root` 區 | 本文件 §2–4 全部取值 |
 | 字型 | `wwwroot/fonts/` + site.css `@font-face` | Fira Sans ×4、Fira Code ×2（latin woff2） |
 | 元件 | `wwwroot/js/core/ui.js`、`format.js`、`charts.js` + site.css 元件區 | 列高/內距/動效/mono 套用 |
+| 頁首 | `ui.js` `renderPageHeader` + site.css `.lf-page-header` | topbar 為唯一標題；頁首只放一句副標與頁面層級動作，每頁至多一個 `btn-primary`（§6b） |
+| 鍵值小表 | `ui.js` `buildKeyValueTable` | 鍵值型小表的共用元件（兩欄 label／value，可選等寬），頁面不自建 `<table>` |
 | 版面 | `Views/Shared/_Layout.cshtml` + site.css 版面區 | 側欄/頂欄新語彙 |
 | 版面（排程作業頁） | `Views/Pages/Runs.cshtml` + site.css `.lf-run-*`／`.lf-kv` | 三張等寬狀態卡＋頁籤置頂；進度軌預留高度避免輪詢跳動 |
 | 前置 | `wwwroot/lib/bootstrap/dist/` | 5.1→5.3 升級（元件級變數 retheme 的前提） |

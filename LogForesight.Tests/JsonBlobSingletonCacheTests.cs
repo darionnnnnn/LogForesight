@@ -159,11 +159,28 @@ public class DataVersionStampPolicyTests
         Assert.Equal(0, stamp.Current);
     }
 
+    /// <summary>以 POST 承載的唯讀查詢（派工人選、日層級指派預覽）與只寫「已看過」的 seen：不推進（含尾斜線）</summary>
+    [Theory]
+    [InlineData("/api/work-orders/candidates")]
+    [InlineData("/api/records/12/2026-10-01/handling/assign/preview")]
+    [InlineData("/api/work-orders/15/seen")]
+    [InlineData("/api/work-orders/15/seen/")]
+    public void 唯讀POST與seen_不推進版本戳(string path)
+    {
+        var (context, stamp) = Request("POST", path);
+
+        DataVersionStampPolicy.BumpIfNeeded(context);
+
+        Assert.Equal(0, stamp.Current);
+    }
+
     /// <summary>驗收 6 反例：會改分析資料的端點（處理狀態寫入）必須推進</summary>
     [Theory]
     [InlineData("PUT", "/api/records/12/2026-09-16/handling")]
     [InlineData("PUT", "/api/handling/issue-cases/assign")]
     [InlineData("POST", "/api/work-orders/12/reply")]
+    [InlineData("PUT", "/api/records/12/2026-10-01/handling/assign")]
+    [InlineData("POST", "/api/work-orders/15/return")]
     public void 處理狀態寫入_推進版本戳(string method, string path)
     {
         var (context, stamp) = Request(method, path);

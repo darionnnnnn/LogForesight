@@ -11,49 +11,29 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, confirmAction } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
+import { statusMeta, statusesWhere, statusVariant } from '../core/handling-statuses.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
     return actorAccount ? formatUserName(actorDisplayName, actorAccount) : '（系統）';
 }
 
-// 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域。
-// escalated（回饋十八輪批次G）：處理人回覆「我處理不了，需要上報」——非結案，
-// 轉入時後端會即時通知 admin 群組決定結案或重新指派
-const STATUS_CHIPS = [
-    { value: 'open', text: '未處理' },
-    { value: 'in_progress', text: '處理中' },
-    { value: 'resolved', text: '已處理' },
-    { value: 'wont_fix', text: '不處理（評估後決定）' },
-    { value: 'false_positive', text: '誤報' },
-    { value: 'known_noise', text: '已知雜訊' },
-    { value: 'escalated', text: '無法處理（上報管理員）' }
-];
+// 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域，名稱與顏色只在
+// core/handling-statuses.js 定義。「觀察中」只在問題層級（批次模式）提供
+// （docs/archive/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses 沒有這個值域，觀察的對象是
+// 「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API 回一個看不懂的驗證錯誤
+const toChip = s => ({ value: s.value, text: s.label });
+const DAY_CHIPS = statusesWhere(s => s.value !== 'observing').map(toChip);
+const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
 
-// 「觀察中」只在問題層級（批次模式）提供（docs/archive/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses
-// 沒有這個值域，觀察的對象是「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API
-// 回一個看不懂的驗證錯誤
-const OBSERVING_CHIP = { value: 'observing', text: '觀察中' };
-
-const NOTE_FIELD_BY_STATUS = {
-    open: { label: '說明（選填）', required: false },
-    in_progress: { label: '處理說明（選填）', required: false },
-    observing: { label: '觀察備註（選填）', required: false },
-    resolved: { label: '處理說明（選填）', required: false },
-    wont_fix: { label: '不處理原因（必填）', required: true },
-    false_positive: { label: '備註（選填）', required: false },
-    known_noise: { label: '備註（選填，供日後回頭確認判斷依據）', required: false },
-    escalated: { label: '無法處理原因（必填，管理員將據此決定結案或改派）', required: true }
-};
-
-const STATUS_VARIANTS = {
-    open: 'danger', in_progress: 'primary', observing: 'info', resolved: 'success',
-    wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary',
-    escalated: 'warning'
-};
+/** 說明欄標籤與必填規則：由目錄衍生 */
+function noteFieldOf(status) {
+    const meta = statusMeta(status);
+    return meta ? { label: meta.noteLabel, required: meta.noteRequired } : { label: '說明（選填）', required: false };
+}
 
 /** 目前面板的狀態：initHandlingPanel 之後才有值，refreshSelection 靠這份重繪 */
 let state = null;
@@ -70,10 +50,10 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     const handling = await api.get(`/api/records/${hostId}/${date}/handling`);
 
     // 指派下拉的人選**只在有 Assign 能力時**才載入：
-    // 無條件呼叫 /api/admin/users 會讓每個 user 每次開詳情頁都產生一筆
+    // 無條件呼叫人選端點會讓每個 user 每次開詳情頁都產生一筆
     // 403＋access_denied 稽核——「權限不足被拒」是稽核上最有價值的訊號，
     // 被正常瀏覽的噪音淹沒後，真正的權限試探就再也看不出來了。
-    const users = handling.canAssign ? await loadAssignableUsers() : [];
+    const users = handling.canAssign ? await loadAssignableUsers(hostId) : [];
 
     // 表單暫存只跟著同一個風險日：409 衝突重建、指派後重載都保留使用者剛填的內容；換主機或日期才清空
     const formDraft = state?.hostId === hostId && state?.date === date ? state.formDraft : null;
@@ -87,9 +67,11 @@ export function refreshSelection() {
     if (state) render();
 }
 
-async function loadAssignableUsers() {
+async function loadAssignableUsers(hostId) {
     try {
-        return await api.get('/api/admin/users', { silent: true });
+        // 日層級指派的人選：主機＝這個風險日的這一台；沒有單一問題脈絡，不帶 source／eventId
+        const candidates = await api.post('/api/work-orders/candidates', { hostIds: [Number(hostId)] }, { silent: true });
+        return candidatesToUserOptions(candidates);
     } catch {
         return [];
     }
@@ -139,7 +121,7 @@ function render() {
     if (options?.caseGrantOnly) {
         const notice = document.createElement('div');
         notice.className = 'lf-hint mb-3';
-        notice.textContent = '您以案件處理人身分檢視：可標記指派給您的問題，這一天的整體處理狀態由主機的負責單位維護。';
+        notice.textContent = '您以交辦單處理人身分檢視：可標記指派給您的問題，這一天的整體處理狀態由主機的負責單位維護。';
         panel.appendChild(notice);
 
         // handlingForm 沒有勾選任何問題時會退回「編輯日層級狀態」，那條路對案件授與者
@@ -164,7 +146,7 @@ function render() {
     if (handling.openCaseCount > 0) {
         const hint = document.createElement('div');
         hint.className = 'lf-hint mb-3';
-        hint.textContent = `本日 ${handling.openCaseCount} 項問題屬進行中案件，狀態會跟著案件涵蓋的其他日子連動。`;
+        hint.textContent = `本日 ${handling.openCaseCount} 項問題屬進行中交辦單，狀態會跟著交辦單涵蓋的其他日子連動。`;
         panel.appendChild(hint);
     }
 
@@ -240,29 +222,58 @@ function assignField(handling, users, hostId, date) {
     });
     select.id = 'handler-select';
 
-    select.addEventListener('change', async () => {
+    // 下拉只負責「選」，不送出（預覽→確認一次送出）：選到與目前不同的處理人才出現「指派」按鈕，
+    // 避免一變更就寫入、建案、入列通知，之後有衝突才再問、取消又無法回滾
+    const assignBtn = button('指派', { variant: 'primary', onClick: () => submitAssign(assignBtn) });
+    assignBtn.classList.add('d-none');
+    const currentId = handling.handlerId ?? null;
+    select.addEventListener('change', () => {
+        const picked = select.value ? Number(select.value) : null;
+        assignBtn.classList.toggle('d-none', picked === currentId);
+    });
+
+    async function submitAssign(btn) {
+        const handlerId = select.value ? Number(select.value) : null;
+        const base = `/api/records/${hostId}/${date}/handling/assign`;
+        const done = withBusy(btn, '處理中…');
         select.disabled = true;
         try {
-            const handlerId = select.value ? Number(select.value) : null;
-            let updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, { handlerId });
-
-            // 已由他人案件處理中的問題（docs/archive/FEEDBACK-10-PLAN.md §9）：後端預設不搶走，
-            // 改回報略過清單。問過使用者要不要改派，確認後帶 reassign 重送一次——
-            // 「不問就換人」會讓原處理人手上的工作在他不知情的狀況下被抽走
-            if (updated.casesSkippedHandlerNames?.length) {
+            let reassign = false;
+            if (handlerId === null) {
+                // 取消指派：沿用確認後送出一次；講清楚會收回該日的日層級交辦單
                 const confirmed = await confirmAction({
-                    title: '這些問題已有人在處理',
-                    message: `${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的案件處理中，` +
-                        `尚未變更。要改由 ${updated.handlerName ?? '新的處理人'} 接手嗎？`,
-                    confirmText: '改派給新的處理人'
+                    title: '取消指派',
+                    message: '取消後會收回本日由日層級指派建立的交辦單：只有這台主機的單整張取消，' +
+                        '包含其他主機的單則只把這台主機移出。要繼續嗎？',
+                    confirmText: '取消指派'
                 });
-                if (confirmed) {
-                    updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, { handlerId, reassign: true });
+                if (!confirmed) return;
+            } else {
+                const preview = await api.post(`/api/records/${hostId}/${date}/handling/assign/preview`, { handlerId });
+                const name = select.selectedOptions[0]?.textContent ?? '新的處理人';
+                const lines = [`將為 ${preview.casesToCreate} 個問題建立案件並交辦給 ${name}。`];
+                if (preview.heldByOthers > 0) {
+                    const holders = preview.heldByHandlerNames?.length ? `由 ${preview.heldByHandlerNames.join('、')} ` : '';
+                    lines.push(`另有 ${preview.heldByOthers} 個問題已${holders}處理中，確認後會改派給 ${name}。`);
                 }
+                if (preview.assigneeCannotSeeHost) lines.push('注意：對方看不到這台主機，只看得到被指派的問題。');
+                if (preview.assigneeCannotHandle) lines.push('注意：對方目前的角色沒有處理能力，無法回覆處理狀態。');
+                if (preview.handlerHasNoEmail) lines.push('注意：對方未設定 email，不會收到通知。');
+                const confirmed = await confirmAction({
+                    title: '確認指派',
+                    message: lines.join('\n'),
+                    confirmText: '指派',
+                    confirmVariant: 'primary'
+                });
+                if (!confirmed) return;
+                reassign = preview.heldByOthers > 0;
             }
 
+            // 確認後只送出一次；有他人處理中的問題才帶 reassign（取消＝零寫入）
+            const updated = await api.put(base, reassign ? { handlerId, reassign: true } : { handlerId });
+
             // 建案提示（docs/archive/FEEDBACK-4-PLAN.md §2/Q1/Q2）：指派會對本日未結案問題建立案件並
-            // 回溯歷史；已有他人進行中案件的問題不搶走，讓使用者知道發生了什麼
+            // 回溯歷史；讓使用者知道發生了什麼
             const parts = [updated.handlerName ? `已指派給 ${formatUserName(updated.handlerName, updated.handlerAccount)}` : '已取消指派'];
             if (updated.casesCreated > 0) parts.push(`已為 ${updated.casesCreated} 個問題建立案件`);
             if (updated.casesReassigned > 0) parts.push(`改派 ${updated.casesReassigned} 個他人處理中的問題`);
@@ -288,19 +299,26 @@ function assignField(handling, users, hostId, date) {
 
             await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
         } catch (error) {
-            select.disabled = false;
             // 樂觀鎖衝突（D3）：別人剛改過這一天。錯誤 toast（api.js）已講原因，
             // 這裡直接把最新狀態載回來——使用者要的是「看到最新」，不是自己按 F5
             if (error?.status === 409) {
                 await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
             }
+        } finally {
+            done();
+            select.disabled = false;
         }
-    });
+    }
 
     label.classList.add('d-inline-flex', 'align-items-center', 'gap-1');
     label.appendChild(helpIcon('可指派給負責人以外的人；主機負責人不會因此改變。'));
 
-    wrap.append(label, selectWrap);
+    const row = document.createElement('div');
+    row.className = 'd-flex align-items-start gap-2';
+    selectWrap.classList.add('flex-grow-1');
+    row.append(selectWrap, assignBtn);
+
+    wrap.append(label, row);
     return wrap;
 }
 
@@ -332,8 +350,8 @@ function handlingForm() {
 
     // 狀態直選（取代下拉）：批次模式不預選，逼使用者明確選一個；日層級模式預選推導出的
     // 目前狀態（#6）——不用存的日層級快照，避免使用者一進面板就看到跟「目前狀態」欄位對不上的預選
-    // 觀察中只在批次模式提供，見 OBSERVING_CHIP 的宣告理由
-    const availableChips = batchMode ? [...STATUS_CHIPS, OBSERVING_CHIP] : STATUS_CHIPS;
+    // 觀察中只在批次模式提供，見 DAY_CHIPS／BATCH_CHIPS 的宣告理由
+    const availableChips = batchMode ? BATCH_CHIPS : DAY_CHIPS;
     let selectedStatus = draft && availableChips.some(chip => chip.value === draft.status)
         ? draft.status
         : (batchMode ? null : (handling.derivedStatus ?? handling.status));
@@ -515,7 +533,7 @@ function handlingForm() {
         forgetNoiseWrap.classList.toggle('d-none', selectedStatus !== 'open');
         ruleHint.classList.toggle('d-none', !(selectedStatus === 'false_positive' && state.options.canMaintainRules));
 
-        const field = NOTE_FIELD_BY_STATUS[selectedStatus] ?? { label: '說明（選填）', required: false };
+        const field = noteFieldOf(selectedStatus);
         noteLabel.textContent = field.label;
         noteInput.classList.remove('is-invalid');
     }
@@ -536,7 +554,7 @@ function handlingForm() {
             toast('請選擇處理狀態', 'warning');
             return;
         }
-        const field = NOTE_FIELD_BY_STATUS[selectedStatus] ?? { required: false };
+        const field = noteFieldOf(selectedStatus);
         if (field.required && !noteInput.value.trim()) {
             // 「不處理（評估後決定）」→「不處理」、「不處理原因（必填）」→「不處理原因」
             const statusText = availableChips.find(chip => chip.value === selectedStatus).text.replace(/（.*）$/, '');
@@ -694,7 +712,7 @@ function renderLogItem(log) {
     }
 
     const status = document.createElement('span');
-    status.className = `lf-badge lf-badge--${STATUS_VARIANTS[log.status] ?? 'secondary'}`;
+    status.className = `lf-badge lf-badge--${statusVariant(log.status)}`;
     status.textContent = log.statusText;
     head.appendChild(status);
 
@@ -738,7 +756,7 @@ function renderGroupSummary(group) {
 
     if (group.action === 'issue_status') {
         const status = document.createElement('span');
-        status.className = `lf-badge lf-badge--${STATUS_VARIANTS[group.logs[0].status] ?? 'secondary'}`;
+        status.className = `lf-badge lf-badge--${statusVariant(group.logs[0].status)}`;
         status.textContent = group.logs[0].statusText;
         head.appendChild(status);
     }

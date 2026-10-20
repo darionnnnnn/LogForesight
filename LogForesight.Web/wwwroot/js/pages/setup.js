@@ -172,7 +172,8 @@ function renderProgress() {
         skipped > 0 ? `已完成 ${done} 步，跳過 ${skipped} 步` : `已完成 ${done} 步`;
 
     const bar = document.getElementById('setup-progress-bar');
-    bar.style.width = `${total === 0 ? 0 : Math.round((settled / total) * 100)}%`;
+    bar.classList.add('lf-progress-fill');
+    bar.style.setProperty('--lf-progress', `${total === 0 ? 0 : Math.round((settled / total) * 100)}%`);
     bar.classList.toggle('bg-success', settled === total && total > 0);
 }
 
@@ -203,11 +204,8 @@ function renderSteps() {
         const meta = STEP_STATE_META[stepState(step)];
 
         const dot = document.createElement('span');
-        dot.className = 'rounded-circle flex-shrink-0 mt-1';
-        dot.style.width = '14px';
-        dot.style.height = '14px';
-        dot.style.display = 'inline-block';
-        dot.style.background = meta.dot;
+        dot.className = 'rounded-circle flex-shrink-0 mt-1 d-inline-block lf-swatch lf-swatch--lg';
+        dot.style.setProperty('--lf-swatch', meta.dot);
 
         const body = document.createElement('div');
         body.className = 'flex-grow-1';

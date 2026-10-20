@@ -235,6 +235,12 @@ export function hasCapability(user, capability) {
     return Array.isArray(user?.capabilities) && user.capabilities.includes(capability);
 }
 
+/** 能不能開某位處理人的工作頁：本人，或具 Assign／ViewAll（後端對其他人照樣 403，這裡只決定要不要做成連結） */
+export function canViewHandlerPage(user, handlerId) {
+    return (user?.userId != null && user.userId === handlerId)
+        || hasCapability(user, 'Assign') || hasCapability(user, 'ViewAll');
+}
+
 /**
  * 顯示層設定的公開子集（docs/archive/FEEDBACK-3-PLAN.md #8）：目前哪些日風險等級顯示中。
  * 與 getCurrentUser 同樣的快取理由——多個頁面模組（儀表板、報表、問題查詢）都需要，

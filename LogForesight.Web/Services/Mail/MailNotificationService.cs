@@ -418,6 +418,8 @@ public class MailNotificationService
                 body.AppendLine($"  原因：{notice.Reason}");
             }
             body.AppendLine();
+            if (notice.WorkOrderId is { } workOrderId)
+                body.AppendLine($"交辦單：單號 {workOrderId}（請至站台『交辦單』頁檢視，可改派或代為結案）");
             body.AppendLine("請至站台的問題查詢頁（依問題視角）檢視並處理。");
 
             await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
@@ -433,27 +435,40 @@ public class MailNotificationService
     /// </summary>
     public void EnqueueWorkOrderNotice(string kind, long workOrderId, long recipientUserId, long actorUserId, string actorAccount,
         int memberDelta = 0, string? reason = null, bool immediate = false)
+        => EnqueueWorkOrderNotices(
+            new[] { new WorkOrderNoticeRequest(kind, workOrderId, recipientUserId, memberDelta, reason, immediate) }, actorUserId, actorAccount);
+
+    /// <summary>
+    /// 多筆一次入列：outbox 是單一 blob，每次 Enqueue 都整份讀寫，建單迴圈（日層級指派、立即派工）要先收集再呼叫一次。
+    /// 開關關閉時不入列；收件人是操作者本人的項目略過；入列失敗只記 log，不影響交辦單本身。
+    /// </summary>
+    public void EnqueueWorkOrderNotices(IReadOnlyCollection<WorkOrderNoticeRequest> notices, long actorUserId, string actorAccount)
     {
         try
         {
+            if (notices.Count == 0) return;
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return;
-            if (recipientUserId == actorUserId) return;
 
-            var item = new WorkOrderOutboxItem
-            {
-                Kind = kind,
-                WorkOrderId = workOrderId,
-                RecipientUserId = recipientUserId,
-                EnqueuedAt = DateTime.Now,
-                ActorAccount = actorAccount ?? "",
-                MemberDelta = memberDelta,
-                Reason = reason,
-                Immediate = immediate,
-                NoEmail = false
-            };
+            var now = DateTime.Now;
+            var items = notices
+                .Where(n => n.RecipientUserId != actorUserId)
+                .Select(n => new WorkOrderOutboxItem
+                {
+                    Kind = n.Kind,
+                    WorkOrderId = n.WorkOrderId,
+                    RecipientUserId = n.RecipientUserId,
+                    EnqueuedAt = now,
+                    ActorAccount = actorAccount ?? "",
+                    MemberDelta = n.MemberDelta,
+                    Reason = n.Reason,
+                    Immediate = n.Immediate,
+                    NoEmail = false
+                })
+                .ToList();
+            if (items.Count == 0) return;
 
-            var dropped = _outbox.Enqueue(item);
+            var dropped = _outbox.Enqueue(items);
             if (dropped > 0)
             {
                 Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
@@ -2376,6 +2391,11 @@ public class MailNotificationService
 /// <paramref name="IssueLabel"/>＝問題顯示文字（「Source EventId」，與案件的反正規化快照同源）；
 /// <paramref name="HostLabel"/>＝主機標籤（單台為主機名，多台為「N 台主機」）；
 /// <paramref name="ActorAccount"/>＝回覆無法處理的人（由呼叫端自 ICurrentUser 取出傳入）；
-/// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）。
+/// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）；
+/// <paramref name="WorkOrderId"/>＝觸發上報的交辦單號（單一張單才帶；其他呼叫點為 null）。
 /// </summary>
-public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason);
+public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason, long? WorkOrderId = null);
+
+/// <summary>一筆交辦通知的入列參數（操作者由呼叫端統一帶入，見 <see cref="MailNotificationService.EnqueueWorkOrderNotices"/>）</summary>
+public readonly record struct WorkOrderNoticeRequest(
+    string Kind, long WorkOrderId, long RecipientUserId, int MemberDelta = 0, string? Reason = null, bool Immediate = false);

@@ -78,7 +78,13 @@ public class RecordListQueryService
         _rules = rules;
     }
 
-    public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
+    public PagedResult<RecordListItemDto> Search(RecordSearchRequest request) => Search(request, enforceCandidateLimit: true);
+
+    /// <summary>
+    /// <paramref name="enforceCandidateLimit"/>：清單頁的狀態篩選要擋住過大的候選集（使用者可縮小日期／主機範圍）；
+    /// 「下一筆未處理」捷徑的窗口是整個保留期、沒有可縮的參數，且結果跨請求快取，一律放行。
+    /// </summary>
+    private PagedResult<RecordListItemDto> Search(RecordSearchRequest request, bool enforceCandidateLimit)
     {
         var filter = BuildFilter(request);
         var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
@@ -135,7 +141,7 @@ public class RecordListQueryService
         // 避免 API 呼叫端沒帶時把含低風險的整個保留期整批撈回
         filter.RiskLevels ??= new[] { RiskLevels.High, RiskLevels.Medium };
         var records = _repository.QueryLightweight(filter);
-        if (records.Count > HandlingFilterCandidateLimit)
+        if (enforceCandidateLimit && records.Count > HandlingFilterCandidateLimit)
         {
             throw DomainException.Validation($"符合條件的主機日超過 {HandlingFilterCandidateLimit:N0} 筆，請縮小日期範圍或主機範圍。");
         }
@@ -273,7 +279,7 @@ public class RecordListQueryService
             RiskLevels = new List<string> { RiskLevels.High, RiskLevels.Medium },
             Page = 1,
             PageSize = NextUnhandledScanSize
-        }).Items.Select(i => (i.HostId, i.Date)).ToList());
+        }, enforceCandidateLimit: false).Items.Select(i => (i.HostId, i.Date)).ToList());
     }
 
     /// <summary>

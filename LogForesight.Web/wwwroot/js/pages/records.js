@@ -11,16 +11,17 @@
  * 風險層級與風險類型是即點即篩的 chip；主機／日期／Event ID 走表單套用。
  */
 
-import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad,
-    headerWithHelp, icon
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
+    headerWithHelp, icon, bindPastDateCheck
 } from '../core/ui.js';
+import { statusesWhere } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, CATEGORY_ORDER, severityName, formatNumber,
-    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
+    formatUserName, toLocalDateString, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -170,8 +171,7 @@ function renderHostChips() {
 
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.className = 'btn-close btn-close-sm';
-        remove.style.fontSize = '.6rem';
+        remove.className = 'btn-close btn-close-sm lf-close-xs';
         remove.setAttribute('aria-label', `移除主機：${name}`);
         remove.addEventListener('click', () => {
             selectedHosts.delete(id);
@@ -451,9 +451,8 @@ function renderActiveConditions(filters) {
 
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.className = 'btn-close btn-close-sm';
+        remove.className = 'btn-close btn-close-sm lf-close-xs';
         remove.setAttribute('aria-label', `移除條件：${tag.label}`);
-        remove.style.fontSize = '.6rem';
         remove.addEventListener('click', () => {
             // severity/overdue 只存在 URL，移除＝從 URL 拿掉再重查
             const params = new URLSearchParams(location.search);
@@ -507,7 +506,7 @@ function renderDetailView() {
     renderTable(listContainer, {
         columns: [
             { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => r.date },
-            { title: '主機', sortKey: 'host', render: r => r.hostName },
+            { title: '主機', sortKey: 'host', truncate: true, render: r => r.hostName },
             { title: '風險', sortKey: 'risk', render: r => riskBadge(r.riskLevel) },
             { title: '狀況', render: r => headlineCell(r) },
             { title: '類型', render: r => categoryBadges(r.categories) },
@@ -628,8 +627,10 @@ function handlerCell(record) {
     if (!record.handlerId || !record.handlerName) return record.handlerName ?? '';
 
     const suffix = record.handlerFromCase ? '（案件）' : '';
-    const link = document.createElement('a');
-    link.href = appUrl(`/handlers/${record.handlerId}`);
+    // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出姓名文字
+    const linkable = canViewHandlerPage(currentUser, record.handlerId);
+    const link = document.createElement(linkable ? 'a' : 'span');
+    if (linkable) link.href = appUrl(`/handlers/${record.handlerId}`);
     link.textContent = formatUserName(record.handlerName, record.handlerAccount) + suffix;
     link.addEventListener('click', event => event.stopPropagation());
     return link;
@@ -640,7 +641,7 @@ function handlerCell(record) {
 function renderHostView() {
     renderTable(listContainer, {
         columns: [
-            { title: '主機', sortKey: 'host', render: h => textCell(h.hostName) },
+            { title: '主機', sortKey: 'host', truncate: true, render: h => textCell(h.hostName) },
             { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: h => String(h.highRiskDays) },
             { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: h => String(h.mediumRiskDays) },
             { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => String(h.lowRiskDays) },
@@ -817,7 +818,7 @@ async function renderIssueOccurrences(cell, group) {
     const inner = document.createElement('div');
     renderTable(inner, {
         columns: [
-            { title: '主機', render: r => r.hostName },
+            { title: '主機', truncate: true, render: r => r.hostName },
             { title: '日期', render: r => r.date },
             { title: '風險', render: r => riskBadge(r.riskLevel) },
             { title: '處理狀態', render: r => handlingCell(r) },
@@ -1023,8 +1024,8 @@ function issueDensityCell(group) {
     bar.className = 'lf-density mt-1';
     bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
     const fill = document.createElement('span');
-    fill.className = 'lf-density__fill';
-    fill.style.width = `${Math.max(4, Math.round(ratio * 100))}%`;
+    fill.className = 'lf-density__fill lf-progress-fill';
+    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
     bar.appendChild(fill);
     wrap.appendChild(bar);
 
@@ -1301,7 +1302,7 @@ function renderBulkCloseForm(body, group, preview) {
     table.className = 'mb-3';
     renderTable(table, {
         columns: [
-            { title: '主機', render: h => h.hostName },
+            { title: '主機', truncate: true, render: h => h.hostName },
             { title: '將標記天數', className: 'text-end', render: h => (h.skipReason ? '—' : String(h.dayCount)) },
             { title: '覆蓋處理中', className: 'text-end', render: h => (h.overwriteDayCount > 0 ? `${h.overwriteDayCount} 天` : '') },
             { title: '已有結論', className: 'text-end', render: h => (h.alreadyClosedDayCount > 0 ? `${h.alreadyClosedDayCount} 天` : '') },
@@ -1317,12 +1318,7 @@ function renderBulkCloseForm(body, group, preview) {
     statusLabel.textContent = '結論';
     const statusSelect = document.createElement('select');
     statusSelect.className = 'form-select form-select-sm mb-3';
-    for (const option of [
-        { value: 'resolved', label: '已處理' },
-        { value: 'wont_fix', label: '不處理' },
-        { value: 'false_positive', label: '誤報' },
-        { value: 'known_noise', label: '已知雜訊' }
-    ]) {
+    for (const option of statusesWhere(s => s.closed).map(s => ({ value: s.value, label: s.shortLabel }))) {
         const el = document.createElement('option');
         el.value = option.value;
         el.textContent = option.label;
@@ -1465,10 +1461,19 @@ function openWorkOrderModal(group) {
 async function loadWorkOrderForm(group, body) {
     let users, groups;
     try {
-        [users, groups] = await Promise.all([
-            api.get('/api/admin/users', { silent: true }),
+        // 人選走派工人選端點（啟用且具 Handle，附看得到幾台／暫停／最近處理過）；
+        // 主機取自篩選列選的主機，未選主機（群組或全站）時傳空集合，不標「看不到」
+        const filters = collectFilters();
+        const [candidates, loadedGroups] = await Promise.all([
+            api.post('/api/work-orders/candidates', {
+                hostIds: filters.hostIds.map(Number),
+                source: group.source,
+                eventId: group.eventId != null ? Number(group.eventId) : null
+            }, { silent: true }),
             api.get('/api/admin/groups', { silent: true })
         ]);
+        users = candidatesToUserOptions(candidates);
+        groups = loadedGroups;
     } catch (error) {
         body.replaceChildren();
         const msg = document.createElement('div');
@@ -1650,11 +1655,16 @@ function renderWorkOrderForm(body, group, users, groups) {
 
     const dueLabel = document.createElement('label');
     dueLabel.className = 'form-label small text-muted';
-    dueLabel.textContent = '期限（選填）';
+    dueLabel.textContent = '預計完成日（選填）';
     const dueInput = document.createElement('input');
     dueInput.type = 'date';
-    dueInput.className = 'form-control form-control-sm mb-3';
-    form.append(dueLabel, dueInput);
+    dueInput.className = 'form-control form-control-sm';
+    // 預計完成日不可早於今天：change／blur 即時檢查，送出前再檢查一次（後端另有同一條防線）
+    const dueError = document.createElement('div');
+    dueError.className = 'invalid-feedback d-block mb-3';
+    dueError.setAttribute('aria-live', 'polite');
+    const dueCheck = bindPastDateCheck(dueInput, dueError, { message: '預計完成日不可早於今天' });
+    form.append(dueLabel, dueInput, dueError);
 
     // 4. 衝突處理
     const conflictWrap = document.createElement('div');
@@ -1685,8 +1695,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     const hostDetails = document.createElement('details');
     hostDetails.className = 'mb-3';
     const hostSummary = document.createElement('summary');
-    hostSummary.className = 'form-label small text-muted';
-    hostSummary.style.cursor = 'pointer';
+    hostSummary.className = 'form-label small text-muted lf-pointer';
     hostSummary.textContent = '檢視受影響主機（0 台）';
     hostDetails.appendChild(hostSummary);
 
@@ -1922,6 +1931,11 @@ function renderWorkOrderForm(body, group, users, groups) {
             return;
         }
 
+        if (!dueCheck.validate()) {
+            dueInput.focus();
+            return;
+        }
+
         const payload = buildWorkOrderPayload(1);
         const restore = withBusy(submitBtn, '建立中');
 
@@ -1934,7 +1948,17 @@ function renderWorkOrderForm(body, group, users, groups) {
             const totalCases = orders.reduce((sum, o) => sum + (o.newCases || 0) + (o.linkedExisting || 0) + (o.reassigned || 0), 0);
 
             const noEmailNote = result.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : '';
-            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success');
+            // 單號連結：1 張直接「查看單號 #N」；多張列前 3 張，其餘以「等 N 張」連到第一張
+            const orderIds = [...new Set(orders.map(o => o.workOrderId))];
+            const orderHref = id => appUrl('/work-orders/' + id);
+            let orderLinks = [];
+            if (orderIds.length === 1) {
+                orderLinks = [{ href: orderHref(orderIds[0]), text: `查看單號 #${orderIds[0]}` }];
+            } else if (orderIds.length > 1) {
+                orderLinks = orderIds.slice(0, 3).map(id => ({ href: orderHref(id), text: `#${id}` }));
+                if (orderIds.length > 3) orderLinks.push({ href: orderHref(orderIds[0]), text: `等 ${orderIds.length} 張` });
+            }
+            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success', 8000, { link: orderLinks });
 
             if (result.daySyncPendingCases > 0) {
                 toast('逐日同步在背景進行，儀表板數字會在數分鐘內更新', 'info');

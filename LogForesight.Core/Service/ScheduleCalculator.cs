@@ -246,6 +246,29 @@ public static class ScheduleCalculator
         return result.Union(inMemoryTriggerTimes);
     }
 
+    /// <summary>
+    /// 目前窗口實例內「被 <see cref="EffectiveScheduleTriggerTimes"/> 略過不計入」的那筆中斷執行的開始時間——
+    /// 也就是讓這個窗口得以再跑一次的原因；窗口外、或窗口內沒有中斷執行時為 null。補跑說明用。
+    /// </summary>
+    public static DateTime? InterruptedRunAllowingCatchUp(
+        DateTime now,
+        IEnumerable<(DateTime StartedAt, bool Interrupted)> scheduledRuns,
+        IEnumerable<ScheduleWindow> windows)
+    {
+        var windowList = windows as IReadOnlyCollection<ScheduleWindow> ?? windows.ToList();
+        var currentKey = MostRecentWindowStart(now, windowList);
+        if (currentKey == null) return null;
+
+        DateTime? earliest = null;
+        foreach (var run in scheduledRuns)
+        {
+            if (!run.Interrupted) continue;
+            if (MostRecentWindowStart(run.StartedAt, windowList) != currentKey) continue;
+            if (earliest == null || run.StartedAt < earliest) earliest = run.StartedAt;
+        }
+        return earliest;
+    }
+
     /// <summary>自動補跑的最大延遲（窗口結束後 4 小時內）</summary>
     public static readonly TimeSpan AutoCatchUpMaxDelay = TimeSpan.FromHours(4);
 

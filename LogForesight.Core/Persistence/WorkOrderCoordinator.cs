@@ -333,6 +333,17 @@ public class WorkOrderCoordinator
         return plan;
     }
 
+    /// <summary>
+    /// 指派預覽（只讀）：與建單前預判、實際寫入共用 <see cref="ClassifyMembers"/>，
+    /// 不要求改派（reassignConflicts＝false）時：無進行中案件＝新案件、同處理人＝改連、他人進行中＝衝突。
+    /// 不鎖、不寫任何資料。
+    /// </summary>
+    public WorkOrderMemberPreview PreviewMembers(List<WorkOrderMember> members, string source, int eventId, long handlerId)
+    {
+        var plan = ClassifyMembers(members, source, eventId, handlerId, null, false);
+        return new WorkOrderMemberPreview(plan.New.Count, plan.Relink.Count, plan.Skipped);
+    }
+
     // ── 改派／拆單 ───────────────────────────────────────────────────────────
 
     /// <summary>
@@ -362,6 +373,8 @@ public class WorkOrderCoordinator
 
             UpdateOrder(workOrderId, o =>
             {
+                // 併入既有單、原單結案：原處理人開的是原單，唯讀存取記在原單
+                o.PreviousHandlerId = previous;
                 o.ClosedAt = actor.OccurredAt;
                 o.ClosedReason = WorkOrderCloseReasons.Moved;
                 return true;
@@ -386,6 +399,8 @@ public class WorkOrderCoordinator
         ReassignCases(members, newHandlerId, workOrderId, actor);
         UpdateOrder(workOrderId, o =>
         {
+            // 先記下舊處理人再換人（只記最近一位，再次改派時覆寫）
+            o.PreviousHandlerId = o.HandlerId;
             o.HandlerId = newHandlerId;
             return true;
         });
@@ -645,6 +660,49 @@ public class WorkOrderCoordinator
 
         var order = GetActive(workOrderId);
         var members = ActiveMembers(workOrderId);
+        var daySync = CancelMembers(members, reason, actor);
+
+        CloseOrder(workOrderId, WorkOrderCloseReasons.Cancelled, WorkOrderEventActions.Cancelled, actor, -members.Count, reason);
+        return new WorkOrderCloseResult { ClosedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
+    }
+
+    /// <summary>
+    /// 退回處理人：把單上 escalated（處理人標了「無法處理」）的進行中成員改回 in_progress，逐日歷程同步沿用既有機制；
+    /// 寫一筆 <see cref="WorkOrderEventActions.Returned"/> 事件、<paramref name="note"/> 進事件說明並成為成員處理說明。
+    /// 不推進 LastReplyAt（退回不是處理人的回覆，不可讓單變成「有未讀回覆」）。
+    /// 單已結案、不存在，或沒有 escalated 成員 → <see cref="InvalidOperationException"/>；說明空白 → <see cref="ArgumentException"/>。
+    /// </summary>
+    public WorkOrderReturnResult Return(long workOrderId, WorkOrderActor actor, string note)
+    {
+        lock (OrderMutationLock) return ReturnLocked(workOrderId, actor, note);
+    }
+
+    private WorkOrderReturnResult ReturnLocked(long workOrderId, WorkOrderActor actor, string note)
+    {
+        if (string.IsNullOrWhiteSpace(note))
+            throw new ArgumentException("WorkOrderCoordinator：退回處理人要填說明。", nameof(note));
+
+        var order = GetActive(workOrderId);
+        var members = ActiveMembers(workOrderId).Where(c => c.Status == IssueHandlingStatuses.Escalated).ToList();
+        if (members.Count == 0)
+            throw new InvalidOperationException($"WorkOrderCoordinator：交辦單 {workOrderId} 沒有處於「無法處理」的成員可退回。");
+
+        // 退回只改狀態與說明，不動成員原本的預計完成日（逾期判定要繼續有效）：
+        // ApplyStatus 的期限是整批同一個值，依期限分組逐批套用
+        var daySync = new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0);
+        foreach (var group in members.GroupBy(m => m.DueDate))
+        {
+            var part = ApplyStatus(group.ToList(), IssueHandlingStatuses.InProgress, note, group.Key, actor);
+            daySync = new CaseDaySubmitResult(daySync.Inline && part.Inline, daySync.Rows + part.Rows, daySync.PendingCases + part.PendingCases);
+        }
+        AppendEvent(workOrderId, WorkOrderEventActions.Returned, actor, 0, EventNoteOf("", note, ""));
+
+        return new WorkOrderReturnResult { ReturnedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
+    }
+
+    /// <summary>成員取消的唯一一份（整張單取消與單獨移出成員共用）：標取消並結案，逐日列調回 open</summary>
+    private CaseDaySubmitResult CancelMembers(List<IssueCase> members, string reason, WorkOrderActor actor)
+    {
         foreach (var member in members)
         {
             member.Cancelled = true;
@@ -655,14 +713,67 @@ public class WorkOrderCoordinator
             member.UpdatedAt = actor.OccurredAt;
         }
 
-        var daySync = _caseCoordinator.SubmitCaseDays(members, new CaseDayIntent
+        return _caseCoordinator.SubmitCaseDays(members, new CaseDayIntent
         {
             Mode = CaseDayModes.Cancel, Status = IssueHandlingStatuses.Open, Note = reason,
             ActorId = actor.ActorId, ActorAccount = actor.ActorAccount, OccurredAt = actor.OccurredAt
         }, _caseDayInlineRowLimit);
+    }
 
-        CloseOrder(workOrderId, WorkOrderCloseReasons.Cancelled, WorkOrderEventActions.Cancelled, actor, -members.Count, reason);
-        return new WorkOrderCloseResult { ClosedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
+    /// <summary>
+    /// 收回某主機的日層級指派交辦單（取消日層級指派用）：<paramref name="issueKeys"/> 是該日的問題鍵。
+    /// 對每張「origin＝day_assign、進行中、成員含此主機該日問題案件」的單：
+    ///   - 單上進行中成員全都是這台主機 → 整張單取消（<see cref="WorkOrderCloseReasons.Cancelled"/>），
+    ///     呼叫端據此入列 cancelled 通知；
+    ///   - 單上還有其他主機的進行中成員 → 只把這台主機該日問題的成員取消移出，單與其他成員不動
+    ///     （移出後若單已無進行中成員，照一般推導結案）。
+    /// 「是否只剩這台主機」的判斷只寫在這一處；經協調器鎖，與建單／改派互斥。
+    /// </summary>
+    public IReadOnlyList<DayOrderRetraction> RetractDayAssignments(
+        string hostName, IReadOnlyCollection<string> issueKeys, string reason, WorkOrderActor actor)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("WorkOrderCoordinator：收回日層級交辦單要填原因。", nameof(reason));
+        lock (OrderMutationLock) return RetractDayAssignmentsLocked(hostName, issueKeys, reason, actor);
+    }
+
+    private IReadOnlyList<DayOrderRetraction> RetractDayAssignmentsLocked(
+        string hostName, IReadOnlyCollection<string> issueKeys, string reason, WorkOrderActor actor)
+    {
+        var keys = new HashSet<string>(issueKeys, IssueSignatureKeyComparer.Instance);
+        var result = new List<DayOrderRetraction>();
+        var orderIds = _cases.GetOpenForHost(hostName)
+            .Where(c => c.WorkOrderId != null && keys.Contains(c.IssueKey))
+            .Select(c => c.WorkOrderId!.Value)
+            .Distinct()
+            .ToList();
+
+        foreach (var orderId in orderIds)
+        {
+            var order = _orders.Get(orderId);
+            if (order == null || order.ClosedAt != null || order.Origin != WorkOrderOrigins.DayAssign) continue;
+
+            var active = ActiveMembers(orderId);
+            var mine = active
+                .Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && keys.Contains(c.IssueKey))
+                .ToList();
+            if (mine.Count == 0) continue;
+
+            var onlyThisHost = active.All(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase));
+            if (onlyThisHost)
+            {
+                var closed = CancelLocked(orderId, reason, actor);
+                result.Add(new DayOrderRetraction(orderId, order.HandlerId, WholeOrderCancelled: true, closed.ClosedCases));
+                continue;
+            }
+
+            CancelMembers(mine, reason, actor);
+            AppendEvent(orderId, WorkOrderEventActions.Cancelled, actor, -mine.Count, reason);
+            RecomputeClosureLocked(orderId, actor.OccurredAt);
+            result.Add(new DayOrderRetraction(orderId, order.HandlerId, WholeOrderCancelled: false, mine.Count));
+        }
+
+        return result;
     }
 
     /// <summary>代為結案（2.7）：進行中成員全部標成指定的結案狀態</summary>
@@ -1019,3 +1130,9 @@ public class WorkOrderCoordinator
                 IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
     }
 }
+
+/// <summary><see cref="WorkOrderCoordinator.PreviewMembers"/> 的結果：新案件數、改連數、被他人進行中案件占用的衝突</summary>
+public sealed record WorkOrderMemberPreview(int NewCases, int LinkedExisting, IReadOnlyList<WorkOrderConflict> Conflicts);
+
+/// <summary><see cref="WorkOrderCoordinator.RetractDayAssignments"/> 對單張單的處理結果</summary>
+public sealed record DayOrderRetraction(long WorkOrderId, long HandlerId, bool WholeOrderCancelled, int CancelledCases);

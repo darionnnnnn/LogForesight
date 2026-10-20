@@ -29,6 +29,15 @@ public interface IWorkOrderStore
     /// </summary>
     void Save(WorkOrder order);
 
+    /// <summary>
+    /// 只寫 <see cref="WorkOrder.AdminSeenAt"/>（單句 UPDATE）：不動 UpdatedAt，不與處理人回覆等寫入互搶併發權杖。
+    /// 單不存在時什麼都不做。
+    /// </summary>
+    void MarkAdminSeen(long workOrderId, DateTime seenAt);
+
+    /// <summary>有未讀回覆的單數（SQL 端 COUNT，判定同 <see cref="WorkOrder.HasUnreadReply"/>）</summary>
+    int CountUnreadReplies();
+
     void AppendEvent(WorkOrderEvent evt);
 
     /// <summary>依 CreatedAt 升冪</summary>

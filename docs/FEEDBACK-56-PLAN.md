@@ -1,7 +1,7 @@
 ﻿# 第 56 輪規劃：派工與回報流程重整、排版一致性收斂
 
-> 狀態：**規劃中（第二版，2026-10-20 多角度審視後修訂）**——第 55 輪併 dev 後開工；§0 待確認項先答。
-> 基準：第 55 輪併回後的 dev（開分支時填 sha 與測試數）
+> 狀態：**全案完成已併 dev**（Opus 5.5 實作、Fable 5.1 體檢；§0 四項 2026-10-20 照建議值定案）。
+> 基準：feature/feedback-55@ee62b0ed（6,326 通過／10 略過）。本分支疊在第 55 輪分支之上——使用者規則不自行 merge，第 55 輪併 dev 後本分支再併；委派改用 Sonnet 5.5 subagent。
 > 來源：使用者 2026-10-20 六角度評估的角度 5（派工回報流程與使用者體驗）與角度 6（畫面排版專業度）；評估結論與證據見 [FEEDBACK-55-PLAN.md](FEEDBACK-55-PLAN.md) §1、§2。
 > 設計依據：使用者定案套用 `ui-ux-pro-max`。本輪不換風格、不重做 token（DESIGN-SYSTEM v2 維持），只做**一致性收斂與可用性**；skill 的判斷順序（可用性與語意 → 真實內容與響應式 → 一致性 → 效能動態）與 WCAG 2.2 AA 檢查目標作為驗收基準，檢索到的對應指引：資料表橫向溢出容器、每頁 focus 可見、表單 blur 驗證＋可聚焦錯誤摘要、空狀態要有下一步、載入回饋依等待長短、正文對比 4.5:1、目前頁要有視覺指示。
 > 實作方式：agy 為主、`impl-low` 備援；每段 Claude 以瀏覽器實測（內建瀏覽器 `preview_start` 的 `web`，Stub 登入）＋ UI 守門測試驗收。
@@ -198,7 +198,38 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （開分支後填） | | | | |
+| 規格修正（開工前） | Claude | — | — | E-1：`handler-detail.js` 的回覆判斷（本人＋Handle）本來就正確，問題只在交辦單詳情頁用 `viewerIsHandler`；原驗收「handler-detail.js 不得有 hasCapability(Handle)」刪除。處理人連結改為 `api.js` 一個 `canViewHandlerPage` 判斷，不另做 `format.js` 的 `handlerLink()` |
+| E-1 | Sonnet 5.5（規格 task-56-e1） | 完成 | 0 警告；定向 478 綠；突變拿掉原處理人放行 → 1 案紅；20 檔編碼全對 | 偏離：補了白名單外的測試替身 `WorkOrderFakes.Clone`（不補新欄位會被丟掉）；曾是原處理人但具 Assign 的管理者仍保有管理動作；`host-detail.js`、`record-detail.js` 新增模組層級 `currentUser`。瀏覽器實測併入批次 E 結尾一次做 |
+| E-2 | Sonnet 5.5（規格 task-56-e2） | 完成 | 0 警告；定向 631 綠；突變拿掉「最近處理過」排序優先 → 1 案紅 | 偏離（接受）：依問題交辦 modal 的範圍由後端解析（全站／群組可上千台），前端沒有主機清單，人選不標「看不到 N 台」——既有交辦預覽的 `AssigneeNoAccess` 已在選人後提示；改派／拆出只用已載入分頁的成員主機，超過一頁時「看不到」偏少；日層級指派沒有單一問題脈絡，不標「最近處理過」；`ContinuityDays` 經 InternalsVisibleTo 直接讀，未改 `DispatchContext` |
+| E-3、E-4 | Sonnet 5.5（規格 task-56-e34） | 完成 | 0 警告；定向 637 綠；突變「只剩這台」判斷改恆真 → 1 案紅 | 偏離（接受，比規格好）：收單的查詢與判斷整段放進 `WorkOrderCoordinator.RetractDayAssignments`（同一把鎖、不替服務加相依）；新增「移出單一成員」與 `PreviewMembers`（預覽共用協調器同一份分類判定）。已知限制：案件跨日，同主機同問題由別日日層級指派建的案件，在本日取消指派時會一併收回（資料模型沒有逐日來源）。確認文字改為「另有 M 個問題…」以免數字對不上 |
+| E-5、E-8 | Sonnet 5.5（規格 task-56-e58）＋ Claude 收尾 | 完成 | 0 警告；定向 287 綠；突變刪目錄一列 → 2 案紅；`wont_fix` 寫死處 12 → 1（剩下的是真正的狀態值使用） | Sonnet 留下白名單外的 `handler-detail.js`（成員狀態表）與 `record-detail.js`（結案集合、結案徽章色）兩份寫死清單，Claude 改由目錄衍生。顏色以目錄為準：observing 改 info、非 resolved 的結案類改 secondary。日期檢查抽成 `ui.js` 的 `bindPastDateCheck`。多單回覆轉上報時只在恰一張單時附單號（上報信整批一封） |
+| E-6、E-7 | Sonnet 5.5（規格 task-56-e67） | 完成 | 0 警告；定向 454 綠；突變 SQL 未讀條件 `>` 改 `>=` → 1 案紅 | 偏離（接受）：協調器 `Return` 簽章改為與 `Cancel`／`Reply` 一致（`WorkOrderActor`）；`seen` 寫入用單句 `ExecuteUpdate` 不動 `updated_at`，避免和處理人回覆搶併發權杖；前端只在 `viewerCanAssign` 時呼叫 seen；「只看未讀回覆」由 `work-orders.js` 動態插入（頁面殼不在白名單）；補了白名單外的事件中文對照與稽核標籤（既有反射守門需要） |
+| E-10 | Sonnet 5.5（規格 task-56-e10）＋ Claude 修正 | 完成 | 0 警告；定向 104 綠；突變拿掉快取鍵 Assign 維度 → 1 案紅 | Sonnet 為了數「無法派出」逐頁呼叫 `GetGaps`，但每次呼叫都重跑整段派工試跑（2,000 台約 3.8 秒），成本乘上頁數；Claude 改為 `GapsDto.UnassignableTotal` 全量計數、儀表板只呼叫一次，並在真實 `GetGaps` 測試補斷言。相依改為委派 `PendingDispatchGapsProvider`（避免四處測試組整套看板），接受 |
+| 批次 E 瀏覽器實測 | Claude（內建瀏覽器，Stub `demo-admin`，空資料庫） | 通過 | 儀表板「待派工問題」卡、交辦總覽「只看未讀回覆」、設定頁「交辦摘要時刻」皆出現；`unread-count`、`me/badge` 各頁 200；各頁無新增 console 錯誤 | 空資料庫無法實測派工互動流程（預覽確認、退回、未讀刷新），由服務層測試與突變覆蓋。順帶發現既有問題：主機為空時 PRTG 維護頁範圍區塊 403 並顯示誤導文案，記入 BACKLOG |
+| F-5、F-6、F-8 | Sonnet 5.5（規格 task-56-f568）＋ Claude 修正 | 完成 | UI 141 綠；瀏覽器實測排程頁圖例色由 token 取得、RGB 與原值相同；PRTG 維護、規則、報表頁無新增錯誤 | Claude 退回 `prtg-guard.js` 的改動：預覽是動作按鈕不是頁面載入，原本顯示 PRTG 回的實際錯誤（連線／認證），改成 `guardLoad` 會變成通用「載入失敗」——規格把它歸錯類；守門測試改為該檔不得用 `guardLoad`。`rules.js` 以 import 別名保留 `dateText` 呼叫名（既有測試斷言該字串）。`'載入中…'` 只剩 `renderSpinner` 呼叫與 `<select>` 選項兩種，守門以規則放行 |
+| F-3、F-7 | Sonnet 5.5（規格 task-56-f37）＋ Claude 修正 | 完成 | cshtml `style="` 57 → 0、JS `.style.x =` → 0（動態量值改 CSS 變數，允許清單寫進測試並反向檢查）；Claude 停掉 dev server 後補跑整套建置 0 警告；UI 148 綠；瀏覽器實測儀表板 KPI 每列 4 張 | Sonnet 因 dev server 鎖檔無法建置 Web（Razor 未驗），Claude 停 server 補建置。Settings 警示框改 `alert-warning` 後顏色變成 Bootstrap 黃，Claude 在 site.css 以元件變數把 `.alert-warning` 對到 `--lf-warning-*`，實測顏色與原值逐一相同（全站 21 處警示框一併統一）。寬度歸併最大差 ±20px（工具列 min-width 100→120），捲動區改四級（最大差 12px）。儀表板 KPI 由一列自適應改為每列 4 張（DESIGN-SYSTEM §6b 規則） |
+| F-4 | Sonnet 5.5（規格 task-56-f4）＋ Claude 收緊測試 | 完成 | 0 警告；UI／無障礙 157 綠；子代理突變（側欄色、modal labelledby）轉紅，Claude 加做拿掉 aria-current 轉紅 | 側欄分段文字 #9fb0cc（7.6:1）、aria-current＋詳情頁前綴對照、modal aria-labelledby／focus-visible、無對應輸入的 label 改 span＋role="group"、圖示按鈕缺 title 的 aria-label 退路；aria-current 的 assert 原只查字串出現（註解也能過），收緊為 setAttribute 呼叫 |
+| F-2 | Sonnet 5.5（規格 task-56-f2）＋ Claude 補做 | 完成 | 0 警告；定向 174 綠；突變（table-sm、多一張自建表、Runs 缺 table-sm、主機欄缺 truncate）皆轉紅 | 子代理只對新改的表加 truncate，漏了規格第 5 項的既有呼叫端，Claude 補 21 處（多行區塊儲存格不套 nowrap）並加守門；順手修 F-3 留下的退化：ui.js 改用 style.setProperty 寫 token，測試用 mini-dom 沒有此方法，ApiTimeoutBehaviorTests 自 F-3 起是紅的 |
+| F-1 | Sonnet 5.5（規格 task-56-f1） | 完成 | 0 警告；定向 174 綠；突變（拿掉 page-header、加回 h1、清單外加 page-header）皆轉紅 | 26 頁盤點後 8 頁套用；Hosts／Users 動作與篩選同列不套（維持既有 btn-primary 守門）；Reports 列印用 h1 改 p（保留 id，螢幕不重複期間文字） |
+| F-4 補、E-2 補、E-9 補 | Claude（輪末全量與瀏覽器實測抓到） | 完成 | 全量 6,415 綠＋1 紅（JsModuleImportTests）→ 修後轉綠；瀏覽器實測關閉 modal 後焦點回到觸發鈕；焦點歸還突變轉紅；定向 168 綠 | E-2 的交辦單詳情頁漏 import `candidatesToUserOptions`，改派／拆出 modal 開啟即 ReferenceError（E-2 當時只跑定向）；全站 JS 開的 modal 關閉後焦點停在隱藏的 modal → layout.js 事件委派統一歸還；空狀態「右上角」文案在 375px 不成立，五處改「按『…』」；E-9 驗收「§9.4a 不含全角色」只改了內文、標題與使用者詳情頁段落的交叉引用漏改，已補 |
+| E-9 補（規劃逐條比對） | Claude | 完成 | 文件 | WEB-SPEC §9.4b 稽核動作清單補 `_due_date` 與處理人回覆記 `handling_status`（以單號為目標）；其餘 E、F 各項逐條比對無缺漏（F-5／F-6／F-8 殘留 grep 命中皆為非顯示用途或 cssVar 備援值，符合定案意圖） |
+| BACKLOG 清理（規劃逐條比對後） | Sonnet 5.5 唯讀盤點＋ Claude 逐條核實 | 完成 | 每條以 grep／讀碼核實證據 | 刪除已實作的 9 條：BatchRunStore 雙實例序號（已改單調配號）、手冊渲染器限制（已寫進 WEB-SPEC 寫作規範）、前端未回報判定（改讀 isSilent）、真 DNS 偶發測試（改替身與 TimeProvider）、探測截斷警告（群組與 IP 覆蓋已補、dependency 步驟已不存在）、PrtgClient authMode 預設值（已必填）、案件表索引名稱（已對齊）、靜音歷程畫面（issue-owners 已消費）、日層級指派與立即派工建單通知（第 55 輪 C 入 outbox）；JSON 解析輔助重複更新為三處。部分完成的三條（使用者名稱敘事句、sip／shn 投影、全專案重複索引）保留 |
+| 全面體檢（四視角＋上帝視角） | 四個 Sonnet 唯讀審查（處理人／管理者／程式碼／後端對抗）＋ Claude 逐條驗證與上帝視角；修正由兩個 Sonnet（前端）＋ Claude（後端）分檔執行 | 完成 | 0 警告；定向 1,208 綠；六處突變（退回保留期限、Save 不蓋 admin_seen_at、workload 授權、下一筆放行、升級回填、版本戳尾碼）皆轉紅；全量見體檢交接 | **修正的缺陷**：(1) `/api/handlers/{id}/workload` 沒走 AuthorizeHandlerView，非本人無 Assign／ViewAll 仍看得到他人工作量（E-1 缺口）；(2) 交辦單詳情 404 返回連結 `appUrl` 套兩次、403 三個 toast、處理人返回連結指向無權的總覽；(3) 儀表板待派工卡 tooLarge 顯示 NaN；(4) 候選人、指派預覽、seen 三支唯讀 POST 推進全域版本戳，管理者每開一次窗儀表板／報表快取就失效；(5) 候選人端點每位候選人各讀一次整份主機 blob；(6) 退回處理人把成員預計完成日清成 null；(7) 整列 Save 用舊複本把 admin_seen_at 蓋回 null；(8) 升級補 admin_seen_at 不回填，既有回覆全部亮未讀；(9)「下一筆未處理」捷徑撞上 D-1 的 5 萬筆上限直接 400；(10) 計畫 A-1 的中斷補跑說明沒做；(11) 立即派工／日層級指派逐筆入列整份重寫 outbox；(12) 回覆後停在最後一頁變空清單；(13) 處理人頁空狀態重複、進階檢視仍打 workload；(14) 側欄看別人的處理人頁誤亮「我的交辦」；(15) 回覆 modal label 無 for、期限無 min；(16) 摘要信指路「交辦單」頁處理人開不了；(17) 處理人可見文案殘留「案件」、「管理員」。**清掉的死碼／重複**：`_rules`、`renderKeyValueTable`、`maxWidth`＋`lf-td-maxw-*`、`.lf-w-xs`、三份 `NewActor()`→`ToWorkOrderActor()`、Assign／PreviewAssign 前置→`LoadAssignTarget`、四處狀態徽章對照→`statusBadgeMeta`、`renderReassignedHint` 雙版型與時間軸 id 推斷（後端改派註記直接給名稱）、三個未用 import、prtg-admin 四處重複 `Promise.all`。**審查主張但查證後不成立**：「取消指派在該日沒有處理人時是空操作卻收單」——日處理人由進行中案件推導（案件跨日），日列為空時畫面仍顯示案件處理人，清空就是要收回那張單；改以測試釘住此行為，取消指派改為先收單再清日處理人（失敗可重試）。**記錄不改**：摘要寄送失敗項目無 TTL（計畫只定無 email 7 天）、`HasUnreadReply` 含 `ClosedAt == null`（結案回覆不計未讀，需使用者決策）、unread-count 無專用索引、候選端點 HostIds 無上限 |
+
+## 體檢交接
+
+- **全量測試**：體檢修正後 6,434 通過／2 失敗／10 略過（Windows，SQLite，24 分鐘）；2 個失敗是 JS 行為測試替身缺 `statusBadgeMeta`，補替身後單跑 3 綠，推算 6,436 通過／10 略過；第 55 輪體檢後 6,326 → +110。建置 0 警告。
+- **做了**：E-1～E-10、F-1～F-8 全數完成；§8 明確不做項目未動。
+- **委派**：全部用 Sonnet 5.5 subagent（使用者指定，不用 agy）。每段 Claude 獨立審查、編碼檢查並至少一處自己的突變。
+- **審查抓到並修正的**：prtg-guard 預覽誤改成 guardLoad 會蓋掉 PRTG 實際錯誤（F-5）；首頁待派工卡逐頁翻會讓派工試跑重跑 N 次（E-10）；F-3 改 setProperty 讓 JsBehavior 測試紅了兩段沒人發現；E-2 漏 import 讓改派 modal 直接壞；F-2 漏既有呼叫端 truncate；aria-current 測試只查字串；modal 焦點不歸還；E-9 標題漏改。
+- **教訓**：定向測試篩選用「UiTests」不會涵蓋 JsModuleImportTests、ApiTimeoutBehaviorTests 這類名稱不含 UiTests 的前端守門——改前端的段落定向篩選要加 `JsModuleImport|JsBehavior|ApiTimeout`，否則退化會一路帶到輪末。
+- **全面體檢（四視角＋上帝視角）結果**：見 §7「全面體檢」列——修 17 個缺陷、清 10 處死碼／重複、六處突變轉紅、瀏覽器實測無錯誤。
+- **待使用者決策**：`HasUnreadReply` 目前含 `ClosedAt == null`，處理人最後一次回「已處理」讓單結案時，那則回覆不會出現在未讀徽章與「只看未讀回覆」。若要連結案回覆也算未讀，改判定一處（`WorkOrder.HasUnreadReply` 與 `EfWorkOrderStore.UnreadReplyPredicate`）即可，但徽章會持續亮到管理者開過為止。
+- **需要體檢特別看的**：
+  1. 本機 DB 是空的（無主機、無交辦單），三個詳情頁頁首（HostDetail、UserDetail、HandlerDetail）與改派／拆出 modal 只做了靜態與測試驗證，沒有帶資料的畫面實測。
+  2. F-2 改了 Prtg.cshtml 四張表為 JS 產生（衝突清單全選 checkbox 搬進 renderHeader）——空資料下無錯誤，有資料時的全選與勾選動線未實測。
+  3. E-6 未讀徽章輪詢在分頁隱藏時停止，靠 visibilitychange；沒有長時間觀察實際請求數。
+- **使用者實測建議**：(1) 有資料的站台開一張交辦單，按改派、拆出，確認人選清單出現並能送出；(2) 手機寬度開「我的交辦」與交辦單詳情，確認頁首副標與按鈕換行、長主機名截斷後滑過看得到全名；(3) PRTG 維護頁衝突清單用全選後批次指派；(4) 鍵盤 Tab 到任一「新增」鈕按 Enter 開 modal、Esc 關閉，焦點應回到該鈕。
 
 ## 8. 明確不做（本輪定案）
 

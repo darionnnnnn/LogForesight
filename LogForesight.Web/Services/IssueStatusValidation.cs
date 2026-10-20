@@ -8,6 +8,18 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public static class IssueStatusValidation
 {
+    /// <summary>
+    /// 處理人回覆交辦單專用：不得把問題設回「未處理」（會清空案件卻留在單內）。
+    /// 要退回請由管理者處理；其餘規則與 <see cref="Validate"/> 相同。
+    /// </summary>
+    public static void ValidateReply(string status, DateTime? dueDate, string? note)
+    {
+        if (status == IssueHandlingStatuses.Open)
+            throw DomainException.Validation("回覆不能把問題設回「未處理」；要退回請由管理者處理。");
+
+        Validate(status, dueDate, clearing: false, note);
+    }
+
     public static void Validate(string status, DateTime? dueDate, bool clearing, string? note)
     {
         if (!clearing && !IssueHandlingStatuses.IsValid(status))

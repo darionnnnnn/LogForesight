@@ -392,6 +392,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.IssueLabel).HasColumnName("issue_label").HasMaxLength(512);
             e.Property(x => x.HandlerId).HasColumnName("handler_id");
+            e.Property(x => x.PreviousHandlerId).HasColumnName("previous_handler_id");
             e.Property(x => x.Origin).HasColumnName("origin").HasMaxLength(30);
             e.Property(x => x.ScopeKind).HasColumnName("scope_kind").HasMaxLength(30);
             e.Property(x => x.ScopeGroupIds).HasColumnName("scope_group_ids");
@@ -403,6 +404,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
             e.Property(x => x.LastAppendedAt).HasColumnName("last_appended_at");
             e.Property(x => x.LastReplyAt).HasColumnName("last_reply_at");
+            e.Property(x => x.AdminSeenAt).HasColumnName("admin_seen_at");
             e.Property(x => x.ClosedAt).HasColumnName("closed_at");
             e.Property(x => x.ClosedReason).HasColumnName("closed_reason").HasMaxLength(30);
             e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
@@ -1010,6 +1012,9 @@ public class WorkOrderRow
     public int? EventId { get; set; }
     public string IssueLabel { get; set; } = string.Empty;
     public long HandlerId { get; set; }
+
+    /// <summary>最近一次被改派走的處理人（唯讀存取）；null＝從未被改派</summary>
+    public long? PreviousHandlerId { get; set; }
     public string Origin { get; set; } = string.Empty;
     public string ScopeKind { get; set; } = string.Empty;
 
@@ -1023,6 +1028,9 @@ public class WorkOrderRow
     public DateTime CreatedAt { get; set; }
     public DateTime? LastAppendedAt { get; set; }
     public DateTime? LastReplyAt { get; set; }
+
+    /// <summary>具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）；null＝從未開啟</summary>
+    public DateTime? AdminSeenAt { get; set; }
     public DateTime? ClosedAt { get; set; }
     public string? ClosedReason { get; set; }
     public DateTime UpdatedAt { get; set; }

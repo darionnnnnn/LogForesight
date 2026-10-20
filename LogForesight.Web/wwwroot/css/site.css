@@ -85,7 +85,7 @@
     --lf-sidebar-bg: #0f1d3a;
     --lf-sidebar-fg: #9fb0cc;
     --lf-sidebar-fg-strong: #f1f4fa;
-    --lf-sidebar-section: #68799a;
+    --lf-sidebar-section: #9fb0cc; /* 與 --lf-sidebar-fg 同值：深底對比 7.6:1（原 #68799a 僅 3.81:1），層級靠大寫／字距／字級 */
     --lf-sidebar-active-bg: rgba(59, 130, 246, .24);
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
     /* 回饋十四輪 UI-1：改用 rem，跟著 html{font-size} 的 clamp+使用者字級偏好一起縮放
@@ -171,6 +171,7 @@
     --lf-success: #16a34a;
     --lf-success-soft: #e8f6ec;
     --lf-success-text: #166534;
+    --lf-success-muted: #65a30d;
     --lf-info: #0284c7;
     --lf-info-soft: #e0f2fe;
     --lf-info-text: #075985;
@@ -191,6 +192,10 @@
     --lf-timeline-low: #bbe7c9;
     --lf-timeline-gap: #f6dca6;
     --lf-timeline-none: #e2e8f0;
+
+    /* 圖表共用：tooltip 底色與 Y 軸格線（core/charts.js 讀取）*/
+    --lf-chart-tooltip-bg: rgba(27, 42, 65, .92);
+    --lf-chart-grid: rgba(0, 0, 0, .06);
 
     /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色）*/
     --lf-cat-storage: #1d4ed8;
@@ -279,6 +284,52 @@ body {
 .lf-hint .lf-icon {
     margin-top: .15em;
     color: var(--lf-gray-400);
+}
+
+/* 頁首元件（ui.js renderPageHeader）：topbar 已是每頁唯一標題，這裡只放一句副標與頁面層級動作。
+   < md（767.98px 以下）動作換到副標下方並左對齊 */
+.lf-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--lf-space-3);
+    margin-bottom: var(--lf-space-4);
+}
+
+.lf-page-header__subtitle {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+}
+
+.lf-page-header__subtitle strong {
+    color: var(--lf-text);
+}
+
+.lf-page-header__subtitle .lf-help {
+    margin-left: var(--lf-space-2);
+}
+
+.lf-page-header__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+@media (max-width: 767.98px) {
+    .lf-page-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .lf-page-header__actions {
+        margin-left: 0;
+    }
 }
 
 /* 主機頁批次改群組的勾選欄（docs/FEEDBACK-5-PLAN.md §8）：固定窄寬，不隨內容撐開 */
@@ -408,6 +459,15 @@ input:-webkit-autofill:active {
     box-shadow: var(--lf-focus-ring);
 }
 
+/* modal 內的互動元件：鍵盤 focus 一律可見（沿用既有 focus ring token，不另造顏色） */
+.modal .btn:focus-visible,
+.modal .form-control:focus-visible,
+.modal .form-select:focus-visible,
+.modal .form-check-input:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+}
+
 .form-label {
     font-size: var(--lf-font-size-sm);
     font-weight: 500;
@@ -466,6 +526,14 @@ input:-webkit-autofill:active {
     --bs-alert-border-radius: var(--lf-radius);
     border-color: var(--lf-border);
     font-size: var(--lf-font-size-sm);
+}
+
+/* 警示框改用設計系統的琥珀語意色（原本各頁以 inline style 拼這組顏色，收斂成元件級變數）*/
+.alert-warning {
+    --bs-alert-bg: var(--lf-warning-soft);
+    --bs-alert-color: var(--lf-warning-text);
+    --bs-alert-border-color: var(--lf-warning);
+    border-color: var(--lf-warning);
 }
 
 /* 底線式頁籤（三個用 nav-tabs 的頁面零 markup 變更即生效）*/
@@ -581,7 +649,21 @@ input:-webkit-autofill:active {
     font-size: var(--lf-brand-subtitle-size);
     font-weight: 400;
     line-height: 1.05;
+    /* 字距與右側補償由 brand-align.js 依量測結果設成變數（未設＝不撐開） */
+    letter-spacing: var(--lf-brand-spacing, 0);
+    margin-right: var(--lf-brand-offset, 0);
+}
+
+/* 副標題自然寬度的離屏量測節點；字型屬性由 brand-align.js 以變數帶入 */
+.lf-brand-probe {
+    position: absolute;
+    visibility: hidden;
+    white-space: pre;
     letter-spacing: 0;
+    font-family: var(--lf-probe-font-family);
+    font-size: var(--lf-probe-font-size);
+    font-weight: var(--lf-probe-font-weight);
+    font-style: var(--lf-probe-font-style);
 }
 
 /* 圖示固定正方形＋置中：aspect-ratio 鎖住比例，align-self:center 不跟著父層 stretch
@@ -1165,7 +1247,7 @@ a.lf-stat:hover .lf-card,
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 1.25rem;
+    font-size: var(--lf-center-font-size, 1.25rem);
     font-weight: 600;
     line-height: 1;
     pointer-events: none;
@@ -1245,6 +1327,7 @@ a.lf-stat:hover .lf-card,
     height: .7em;
     border-radius: 50%;
     flex-shrink: 0;
+    background: var(--lf-swatch);
 }
 
 .lf-legend-row__label {
@@ -1961,6 +2044,12 @@ a.lf-calendar__cell:focus-visible {
     margin-bottom: 0;
 }
 
+/* 長字串截斷（renderTable 欄位選項 truncate）：主機名、問題標籤、sensor 名稱以省略號收斂，
+   完整文字放在 title。max-width 預設 18rem，不寫 inline style。 */
+.lf-table-wrap td.text-truncate {
+    max-width: 18rem;
+}
+
 /* 還有內容在右邊看不到時的提示（體檢 M2／W1）：漸層陰影＋一行文字，捲到底自動消失。
    1024×768 下依問題視角的內容寬 1512px、可視寬僅 709px，右側的動作欄整段在畫面外——
    沒有提示的話，第一次使用的人會認定「這個視角沒有指派功能」。
@@ -2042,6 +2131,7 @@ a.lf-calendar__cell:focus-visible {
 }
 
 .lf-skeleton {
+    width: var(--lf-skeleton-width, auto);
     height: 1rem;
     border-radius: var(--lf-radius-sm);
     background: linear-gradient(90deg, var(--lf-gray-100) 25%, var(--lf-gray-200) 37%, var(--lf-gray-100) 63%);
@@ -2301,6 +2391,13 @@ a.lf-calendar__cell:focus-visible {
     padding: var(--lf-space-1) var(--lf-space-2);
 }
 
+/* 鍵值表（buildKeyValueTable）的一般內容欄：不套等寬字與強制斷行，保留 .lf-kv-val 的欄寬與留白 */
+.lf-kv-val.lf-kv-val--plain {
+    font-family: inherit;
+    white-space: normal;
+    word-break: normal;
+}
+
 /* 時間輸入欄：不鎖死寬度，改以下限容納各地區設定的原生 time picker。
    12 小時制（「上午 01:00」＋時鐘圖示）比 24 小時制寬，固定寬度會把數字裁掉。 */
 .lf-time-input {
@@ -2401,3 +2498,72 @@ a.lf-calendar__cell:focus-visible {
 .lf-input-narrow {
     max-width: 7.5rem;
 }
+
+/* ==========================================================================
+   Inline style 收斂工具類（頁面與頁模組不寫 inline style）
+   - 固定量值：寬度／最小寬度／最大寬度／捲動區高度，一律用下列 class。
+   - 動態量值（進度、色塊顏色、量測結果）：JS 只設 CSS 變數，由這裡的 class 消費。
+   ========================================================================== */
+
+/* 寬度（表格欄寬提示、固定寬控制項） */
+.lf-w-xxs { width: 2.5rem; }
+.lf-w-sm { width: 6rem; }
+.lf-w-md { width: 8rem; }
+.lf-w-mdl { width: 10rem; }
+.lf-w-lg { width: 12rem; }
+
+/* 最小寬度（工具列欄位） */
+.lf-minw-xs { min-width: 7.5rem; }
+.lf-minw-sm { min-width: 10rem; }
+.lf-minw-md { min-width: 11.25rem; }
+.lf-minw-lg { min-width: 12.5rem; }
+.lf-minw-xl { min-width: 15rem; }
+.lf-minw-xxl { min-width: 16.25rem; }
+
+/* 最大寬度（.lf-input-narrow 為 7.5rem 的數字輸入） */
+.lf-maxw-sm { max-width: 12rem; }
+.lf-maxw-md { max-width: 14rem; }
+.lf-maxw-lg { max-width: 32rem; }
+.lf-maxw-xl { max-width: 40rem; }
+
+/* 捲動區：限制高度、超出時捲動 */
+.lf-scroll-sm { max-height: 12rem; overflow: auto; }
+.lf-scroll-md { max-height: 14rem; overflow: auto; }
+.lf-scroll-lg { max-height: 16rem; overflow: auto; }
+.lf-scroll-xl { max-height: 18rem; overflow: auto; }
+
+/* 雜項固定樣式 */
+.lf-pointer { cursor: pointer; }
+.lf-pre-line { white-space: pre-line; }
+.lf-pre-wrap { white-space: pre-wrap; }
+.lf-break-word { word-break: break-word; }
+.lf-text-accent { color: var(--lf-accent-text); }
+.lf-progress-thin { height: 8px; }
+.btn-close.lf-close-xs { font-size: .6rem; }
+.input-group > .lf-flex-search { flex: 0 1 40%; }
+.lf-bubble { max-width: 85%; }
+.lf-wizard-host-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    column-gap: .75rem;
+}
+
+/* 提示框（淡底色＋語意文字色） */
+.lf-callout-info {
+    background-color: var(--lf-info-soft);
+    color: var(--lf-info-text);
+}
+
+.lf-callout-warning {
+    background-color: var(--lf-warning-soft);
+    color: var(--lf-warning-text);
+}
+
+/* 動態量值：色塊顏色（--lf-swatch）、進度寬度（--lf-progress）、狀態文字色（--lf-status-color） */
+.lf-swatch { background: var(--lf-swatch); }
+.lf-swatch--sm { width: 10px; height: 10px; }
+.lf-swatch--md { width: 12px; height: 12px; }
+.lf-swatch--lg { width: 14px; height: 14px; }
+.lf-progress-fill { width: var(--lf-progress, 0); }
+.lf-status-count { color: var(--lf-status-color); font-weight: 600; }
+.lf-timeline-cell { background-color: var(--lf-swatch); }

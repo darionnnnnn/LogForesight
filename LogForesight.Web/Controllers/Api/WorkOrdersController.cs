@@ -17,11 +17,19 @@ namespace LogForesight.Web.Controllers.Api;
 public class WorkOrdersController : ControllerBase
 {
     private readonly WorkOrderCommandService _service;
+    private readonly WorkOrderCandidateService _candidates;
 
-    public WorkOrdersController(WorkOrderCommandService service)
+    public WorkOrdersController(WorkOrderCommandService service, WorkOrderCandidateService candidates)
     {
         _service = service;
+        _candidates = candidates;
     }
+
+    /// <summary>手動派工人選（交辦、改派／拆出、日層級指派共用）；能力沿用類別層 Assign</summary>
+    [HttpPost("candidates")]
+    [Permission(Capability.Assign)]
+    public ApiResponse<List<WorkOrderCandidateDto>> Candidates([FromBody] WorkOrderCandidatesRequest request) =>
+        ApiResponse<List<WorkOrderCandidateDto>>.Ok(_candidates.Get(request));
 
     [HttpPost("preview")]
     public ApiResponse<WorkOrderPreviewDto> Preview([FromBody] CreateWorkOrderRequest request) =>
@@ -42,6 +50,10 @@ public class WorkOrdersController : ControllerBase
     [HttpPost("{id:long}/split")]
     public ApiResponse<WorkOrderMoveResultDto> Split(long id, [FromBody] SplitWorkOrderRequest request) =>
         ApiResponse<WorkOrderMoveResultDto>.Ok(_service.Split(id, request));
+
+    [HttpPost("{id:long}/return")]
+    public ApiResponse<WorkOrderReturnResultDto> Return(long id, [FromBody] ReturnWorkOrderRequest request) =>
+        ApiResponse<WorkOrderReturnResultDto>.Ok(_service.Return(id, request));
 
     [HttpPost("{id:long}/cancel")]
     public ApiResponse<WorkOrderCloseResultDto> Cancel(long id, [FromBody] CancelWorkOrderRequest request) =>

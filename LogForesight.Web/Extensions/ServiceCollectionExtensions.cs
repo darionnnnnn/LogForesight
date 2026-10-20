@@ -33,6 +33,8 @@ public static class ServiceCollectionExtensions
 
         // Singleton：全站共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
         services.AddSingleton(_ => new StorageBackend(storage, dataRoot));
+        // 慢操作統計每行程一份、由 StorageBackend 持有；服務層要自行埋點（例如報表範圍篩選）時注入同一份
+        services.AddSingleton(sp => sp.GetRequiredService<StorageBackend>().Performance);
         services.AddSingleton(sp => new HostDayWorkflowStore(sp.GetRequiredService<StorageBackend>()));
         services.AddSingleton<HostDayWorkflowService>();
 
@@ -366,6 +368,8 @@ public static class ServiceCollectionExtensions
         // 可行動快照的短 TTL 跨請求快取（回饋三十六輪批次B）：機制比照 IssueRankingCache
         services.AddSingleton<ActionableSnapshotCache>(_ => new ActionableSnapshotCache());
         services.AddScoped<IssueTodoQuery>();
+        // 儀表板「待派工問題」卡取待派試跑用（§9.1）：委派指向 WorkOrderBoardService.GetGaps
+        services.AddScoped<PendingDispatchGapsProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGaps);
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
@@ -391,6 +395,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WorkOrderCommandService>();
         // 交辦單查詢 API：清單／詳情／成員／時間軸（逐單授權在服務內）
         services.AddScoped<WorkOrderQueryService>();
+        // 手動派工人選（交辦／改派／日層級指派共用；能力與可見範圍沿用既有解析器）
+        services.AddScoped<WorkOrderCandidateService>();
         // 交辦單回覆（處理人本人；授權在服務內）
         services.AddScoped<WorkOrderReplyService>();
         // 交辦單負載看板／待派清單（派工試跑）／立即派工

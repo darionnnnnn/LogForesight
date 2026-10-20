@@ -25,11 +25,15 @@ public class DisplaySettingsController : ControllerBase
     }
 
     [HttpGet]
-    public ApiResponse<DisplaySettingsDto> Get() =>
-        ApiResponse<DisplaySettingsDto>.Ok(new DisplaySettingsDto
+    public ApiResponse<DisplaySettingsDto> Get()
+    {
+        var all = _settings.Get();
+        return ApiResponse<DisplaySettingsDto>.Ok(new DisplaySettingsDto
         {
             // null（全顯示）轉為完整清單——前端要的是明確的顯示範圍，不是「不過濾」的內部語意
             VisibleDayRiskLevels = _settings.GetVisibleDayRiskLevels()?.ToList() ?? RiskLevels.All.ToList(),
-            VisibleSeverities = _settings.GetVisibleSeverities()?.ToList() ?? SystemSettingsService.ValidSeverities.ToList()
+            VisibleSeverities = _settings.GetVisibleSeverities()?.ToList() ?? SystemSettingsService.ValidSeverities.ToList(),
+            MailWorkOrdersEnabled = all.MailEnabled && all.MailNotifyWorkOrders
         });
+    }
 }

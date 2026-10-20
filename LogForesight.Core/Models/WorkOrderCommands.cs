@@ -111,6 +111,16 @@ public sealed class WorkOrderCloseResult
     public long HandlerId { get; set; }
 }
 
+/// <summary>退回處理人的結果</summary>
+public sealed class WorkOrderReturnResult
+{
+    public int ReturnedCases { get; set; }
+
+    public CaseDaySubmitResult DaySync { get; set; }
+
+    public long HandlerId { get; set; }
+}
+
 /// <summary>處理人回覆的結果</summary>
 public sealed class WorkOrderReplyResult
 {

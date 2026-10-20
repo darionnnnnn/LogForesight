@@ -124,7 +124,7 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
             { title: '', className: 'text-end', render: g => groupActions('user', g) }
         ],
         rows: groups,
-        empty: { title: '尚無群組', hint: '可透過右上角「新增群組」建立。' }
+        empty: { title: '尚無群組', hint: '可按「新增群組」建立。' }
     });
     container.appendChild(table);
 }
@@ -138,7 +138,7 @@ function renderHostGroups() {
             { title: '', className: 'text-end', render: g => groupActions('host', g) }
         ],
         rows: hostGroups,
-        empty: { title: '尚無主機群組', hint: '可於「NetIQ 維護 > 匯入」掃描匯入時建立，或用右上角的「新增群組」建立。' }
+        empty: { title: '尚無主機群組', hint: '可於「NetIQ 維護 > 匯入」掃描匯入時建立，或按「新增群組」建立。' }
     });
 }
 
@@ -190,60 +190,41 @@ function renderMatrix() {
         + '（負責人於「主機」頁維護）。';
     wrap.appendChild(note);
 
-    const tableWrap = document.createElement('div');
-    tableWrap.className = 'lf-table-wrap';
-
-    const table = document.createElement('table');
-    table.className = 'table table-bordered align-middle mb-0';
-
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-    const corner = document.createElement('th');
-    corner.textContent = '使用者群組 ＼ 主機群組';
-    headRow.appendChild(corner);
-
+    // 矩陣表頭的欄位數隨主機群組動態變動：欄位定義逐欄產生，排序／空狀態一律交給 renderTable
+    const matrixColumns = [{
+        title: '使用者群組 ＼ 主機群組',
+        render: row => {
+            const name = document.createElement('span');
+            name.className = 'fw-semibold';
+            name.textContent = row.userGroupName;
+            if (!row.active) {
+                const hint = document.createElement('span');
+                hint.className = 'lf-badge lf-badge--secondary ms-2';
+                hint.textContent = '已停用';
+                name.appendChild(hint);
+            }
+            return name;
+        }
+    }];
     for (const hostGroup of matrix.hostGroups) {
-        const th = document.createElement('th');
-        th.className = 'text-center';
-        th.textContent = hostGroup.groupName;
-        headRow.appendChild(th);
+        matrixColumns.push({
+            title: hostGroup.groupName,
+            className: 'text-center',
+            render: row => {
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'form-check-input';
+                checkbox.checked = row.grantedHostGroupIds.includes(hostGroup.groupId);
+                checkbox.setAttribute('aria-label', `${row.userGroupName} 可存取 ${hostGroup.groupName}`);
+                checkbox.addEventListener('change', () => onToggleAccess(row, hostGroup, checkbox));
+                return checkbox;
+            }
+        });
     }
-    thead.appendChild(headRow);
-    table.appendChild(thead);
 
-    const tbody = document.createElement('tbody');
-    for (const row of matrix.userGroups) {
-        const tr = document.createElement('tr');
-
-        const th = document.createElement('th');
-        th.textContent = row.userGroupName;
-        if (!row.active) {
-            const hint = document.createElement('span');
-            hint.className = 'lf-badge lf-badge--secondary ms-2';
-            hint.textContent = '已停用';
-            th.appendChild(hint);
-        }
-        tr.appendChild(th);
-
-        for (const hostGroup of matrix.hostGroups) {
-            const td = document.createElement('td');
-            td.className = 'text-center';
-
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'form-check-input';
-            checkbox.checked = row.grantedHostGroupIds.includes(hostGroup.groupId);
-            checkbox.setAttribute('aria-label', `${row.userGroupName} 可存取 ${hostGroup.groupName}`);
-            checkbox.addEventListener('change', () => onToggleAccess(row, hostGroup, checkbox));
-
-            td.appendChild(checkbox);
-            tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    tableWrap.appendChild(table);
-    wrap.appendChild(tableWrap);
+    const tableHost = document.createElement('div');
+    renderTable(tableHost, { columns: matrixColumns, rows: matrix.userGroups });
+    wrap.appendChild(tableHost);
     container.replaceChildren(wrap);
 }
 
@@ -491,8 +472,7 @@ function renderCurrentMembers() {
         details.open = true;
 
         const summary = document.createElement('summary');
-        summary.className = 'px-2 py-1 small';
-        summary.style.cursor = 'pointer';
+        summary.className = 'px-2 py-1 small lf-pointer';
         summary.textContent = `${cidr}（${members.length} 台）`;
         details.appendChild(summary);
 
@@ -634,7 +614,7 @@ function renderMembersPreview(preview) {
     renderTable(document.getElementById('members-preview'), {
         columns: [
             { title: '', className: 'text-center', render: c => memberCheckbox(c) },
-            { title: '主機', render: c => c.hostName },
+            { title: '主機', truncate: true, render: c => c.hostName },
             { title: 'IP', render: c => c.ipAddress ?? '' },
             { title: '現有群組', render: c => currentGroupsCell(c) }
         ],

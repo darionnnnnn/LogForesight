@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Service;
+﻿using System.Text.RegularExpressions;
+using LogForesight.Core.Service;
 using System.Diagnostics;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence;
@@ -118,7 +119,7 @@ public class WorkOrderQueryService
     }
 
     /// <summary>處理人視角的授權：本人，或具 Assign／ViewAll；否則 403</summary>
-    private void AuthorizeHandlerView(long userId)
+    internal void AuthorizeHandlerView(long userId)
     {
         if (userId == _currentUser.UserId) return;
         if (_currentUser.Has(Capability.Assign) || _currentUser.Has(Capability.ViewAll)) return;
@@ -166,7 +167,8 @@ public class WorkOrderQueryService
             PageSize = pageSize,
             PausedKeys = exclusion.CurrentlyMutedCompositeKeys,
             PausedMode = pausedMode,
-            OnlyKeys = req.ResumedFromMute ? ResumedFromMuteKeys(exclusion) : null
+            OnlyKeys = req.ResumedFromMute ? ResumedFromMuteKeys(exclusion) : null,
+            UnreadOnly = req.UnreadOnly
         });
 
         var counts = _orders.CountMembers(result.Items.Select(o => o.WorkOrderId).ToList());
@@ -182,6 +184,20 @@ public class WorkOrderQueryService
     }
 
     /// <summary>清單篩選用的使用者群組選項（回饋第 47 輪定案 48）：只列啟用中群組，依名稱不分大小寫排序</summary>
+    /// <summary>未讀回覆的單數（側欄徽章用；能力由 controller 標註把關）。SQL 端 COUNT，不把單拉回記憶體</summary>
+    public WorkOrderUnreadCountDto UnreadCount() => new() { Count = _orders.CountUnreadReplies() };
+
+    /// <summary>
+    /// 記錄「管理者已看過這張單」：只有具 Assign 的使用者才寫入（ViewAll 唯讀者與處理人本人開詳情不算「已讀」）。
+    /// 詳情的 GET 不寫任何東西，已讀由前端載入詳情成功後另行呼叫。單不存在 404、無權檢視 403。
+    /// </summary>
+    public void MarkSeen(long id)
+    {
+        var order = Authorize(id);
+        if (!_currentUser.Has(Capability.Assign)) return;
+        _orders.MarkAdminSeen(order.WorkOrderId, DateTime.Now);
+    }
+
     public List<HandlerGroupOptionDto> ListHandlerGroups() =>
         _userGroups.GetAll()
             .Where(g => g.Active)
@@ -208,6 +224,9 @@ public class WorkOrderQueryService
             GroupName = groups.TryGetValue(gid, out var g) ? g.GroupName : DeletedName
         }).ToList();
         dto.ViewerIsHandler = order.HandlerId == _currentUser.UserId;
+        dto.ViewerCanReply = order.HandlerId == _currentUser.UserId
+            && _currentUser.Has(Capability.Handle) && order.ClosedAt == null;
+        dto.ViewerIsPreviousHandler = order.PreviousHandlerId == _currentUser.UserId;
         dto.ViewerCanAssign = _currentUser.Has(Capability.Assign);
         return dto;
     }
@@ -424,20 +443,32 @@ public class WorkOrderQueryService
                 ActionText = WorkOrderTextHelpers.ActionText(e.Action),
                 ActorName = e.ActorId.HasValue ? NameOf(users, e.ActorId.Value) : SystemActorName,
                 MemberDelta = e.MemberDelta,
-                Note = e.Note,
+                Note = DisplayNote(e.Action, e.Note, users),
                 CreatedAt = e.CreatedAt
             })
             .ToList();
     }
 
+    /// <summary>改派事件的 note 存的是「原處理人 id→新處理人 id」；對外換成名稱（含已停用者），前端不必再查人</summary>
+    private static readonly Regex ReassignNote = new(@"^(\d+)→(\d+)$", RegexOptions.Compiled);
+
+    private string? DisplayNote(string action, string? note, Dictionary<long, WebUser> users)
+    {
+        if (action != WorkOrderEventActions.Reassigned || note == null) return note;
+        var m = ReassignNote.Match(note);
+        if (!m.Success) return note;
+        return $"{NameOf(users, long.Parse(m.Groups[1].Value))} → {NameOf(users, long.Parse(m.Groups[2].Value))}";
+    }
+
     // ── 內部 ────────────────────────────────────────────────────────────────
 
-    /// <summary>逐單授權的唯一一處：不存在 404；非 Assign／ViewAll 且非處理人 403</summary>
+    /// <summary>逐單授權的唯一一處：不存在 404；非 Assign／ViewAll 且非處理人（含最近一次被改派走的原處理人，唯讀）403</summary>
     private WorkOrder Authorize(long id)
     {
         var order = _orders.Get(id) ?? throw DomainException.NotFound("找不到這張交辦單。");
         if (_currentUser.Has(Capability.Assign) || _currentUser.Has(Capability.ViewAll)) return order;
         if (order.HandlerId == _currentUser.UserId) return order;
+        if (order.PreviousHandlerId == _currentUser.UserId) return order;
         throw DomainException.Forbidden("沒有檢視這張交辦單的權限。");
     }
 
@@ -473,6 +504,7 @@ public class WorkOrderQueryService
         dto.UnrepliedDays = o.LastReplyAt == null && o.ClosedAt == null
             ? (DateTime.Today - o.CreatedAt.Date).Days
             : null;
+        dto.UnreadReply = o.HasUnreadReply;
         dto.ClosedAt = o.ClosedAt;
         dto.ClosedReason = o.ClosedReason;
 

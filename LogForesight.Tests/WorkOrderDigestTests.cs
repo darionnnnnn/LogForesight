@@ -393,7 +393,7 @@ public class WorkOrderDigestTests : IDisposable
         Assert.Contains("說明：TLS 握手失敗", body);
         Assert.Contains("交辦說明：請優先排查", body);
         Assert.Contains("期限：2026-10-25", body);
-        Assert.Contains("請至站台的「交辦單」頁檢視上列單號。", body);
+        Assert.Contains("請至站台的「我的交辦」檢視上列單號。", body);
     }
 
     [Fact]
@@ -424,6 +424,20 @@ public class WorkOrderDigestTests : IDisposable
         Assert.Contains("原因：誤判已結案", body);
         Assert.DoesNotContain("由 admin1 取消", body);
         Assert.DoesNotContain("由 admin2 移交", body);
+    }
+
+    [Fact]
+    public void J4b_Build_退回段含單號問題操作者與說明_計入主旨()
+    {
+        var (summary, body) = WorkOrderDigestBuilder.Build(new[]
+        {
+            (Item(WorkOrderOutboxKinds.Returned, 301, actor: "admin3", reason: "磁碟已換新，請重試"), (WorkOrderDigestOrder?)Order(301, label: "Disk Full"))
+        });
+
+        Assert.Contains("退回 1", summary);
+        Assert.Contains("【退回】", body);
+        Assert.Contains("單號 301：Disk Full，由 admin3 退回：磁碟已換新，請重試", body);
+        Assert.DoesNotContain("【取消】", body);
     }
 
     [Fact]

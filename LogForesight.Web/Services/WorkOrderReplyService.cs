@@ -58,7 +58,7 @@ public class WorkOrderReplyService
         var order = RequireOwnActive(id);
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
-        var actor = NewActor();
+        var actor = _currentUser.ToWorkOrderActor();
         var newlyEscalated = NewlyEscalatedHosts(id, req.CaseIds, req.Status);
         var result = Guard(() => _coordinator.Reply(id, req.CaseIds, req.Status, req.Note, req.DueDate, actor));
 
@@ -69,7 +69,7 @@ public class WorkOrderReplyService
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, req.CaseIds, req.Status, req.Note, req.DueDate, result.Cases, result.WorkOrderClosed });
 
-        NotifyEscalation(req.Status, order.IssueLabel, newlyEscalated, req.Note);
+        NotifyEscalation(req.Status, order.IssueLabel, newlyEscalated, req.Note, id);
 
         return new WorkOrderReplyResultDto
         {
@@ -90,7 +90,7 @@ public class WorkOrderReplyService
         var orders = ids.Select(RequireOwnActive).ToList();
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
-        var actor = NewActor();
+        var actor = _currentUser.ToWorkOrderActor();
         var statusText = HandlingTextHelpers.IssueStatusText(req.Status);
 
         var succeeded = new List<WorkOrder>();
@@ -136,7 +136,7 @@ public class WorkOrderReplyService
 
         // 整批一封（不逐張各寄一封轟炸 admin），只涵蓋已成功的單
         var issueLabel = succeeded.Count == 1 ? succeeded[0].IssueLabel : $"{succeeded.Count} 張交辦單";
-        NotifyEscalation(req.Status, issueLabel, newlyEscalated, req.Note);
+        NotifyEscalation(req.Status, issueLabel, newlyEscalated, req.Note, succeeded.Count == 1 ? succeeded[0].WorkOrderId : null);
 
         return new WorkOrderReplyManyResultDto
         {
@@ -170,7 +170,7 @@ public class WorkOrderReplyService
         if (dueDate > today.AddDays(MaxDueDateDays))
             throw DomainException.Validation($"期限最多只能設在 {MaxDueDateDays} 天內。");
 
-        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, NewActor()));
+        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, _currentUser.ToWorkOrderActor()));
         if (changed)
         {
             _audit.Record(
@@ -197,9 +197,9 @@ public class WorkOrderReplyService
         return order;
     }
 
-    /// <summary>狀態驗證走共用規則；open＝清除</summary>
+    /// <summary>狀態驗證走共用規則；處理人回覆不得選「未處理」</summary>
     private static void ValidateStatus(string status, DateTime? dueDate, string? note) =>
-        IssueStatusValidation.Validate(status, dueDate, clearing: status == IssueHandlingStatuses.Open, note);
+        IssueStatusValidation.ValidateReply(status, dueDate, note);
 
     /// <summary>
     /// 寫入前讀成員舊狀態，只算「新」轉入 escalated 的主機（原本就是 escalated 的不重複通知）。
@@ -224,21 +224,14 @@ public class WorkOrderReplyService
     }
 
     /// <summary>上報通知 fire-and-forget（NotifyEscalationAsync 內部 try/catch 到底、永不拋出）</summary>
-    private void NotifyEscalation(string status, string issueLabel, List<string> newlyEscalatedHosts, string? note)
+    private void NotifyEscalation(string status, string issueLabel, List<string> newlyEscalatedHosts, string? note, long? workOrderId)
     {
         if (status != IssueHandlingStatuses.Escalated || newlyEscalatedHosts.Count == 0) return;
         _ = _mail.NotifyEscalationAsync(new EscalationNotice(
             issueLabel,
             newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
-            _currentUser.Account, note));
+            _currentUser.Account, note, workOrderId));
     }
-
-    private WorkOrderActor NewActor() => new()
-    {
-        ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-        ActorAccount = _currentUser.Account,
-        OccurredAt = DateTime.Now
-    };
 
     /// <summary>協調器的資料驗證例外（成員不屬於本單、已結案等）轉成 400</summary>
     private static T Guard<T>(Func<T> action)

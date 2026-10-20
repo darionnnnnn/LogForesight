@@ -280,6 +280,25 @@ function renderKpi(data, user, displaySettings, myBadge) {
         });
     }
 
+    // 待派工問題（具 Assign 者，後端才填 pendingDispatch）：管理者早上要知道「有多少問題沒人接」。
+    // 資料同交辦總覽待派頁籤的試跑（近 7 天）；點卡直接進該頁籤（#gaps）。null 時不建卡。
+    if (data.pendingDispatch) {
+        const pd = data.pendingDispatch;
+        const unassignable = pd.unassignableIssueCount ?? 0;
+        cards.push({
+            label: '待派工問題',
+            value: pd.tooLarge ? '超過上限' : (pd.issueCount ?? 0),   // 字串值不可進 formatNumber（渲染處只格式化數值）
+            variant: pd.tooLarge || (pd.issueCount ?? 0) > 0 ? 'warning' : 'secondary',
+            hint: pd.tooLarge
+                ? '超過上限，請到待派頁縮小期間'
+                : unassignable > 0
+                    ? `其中 ${formatNumber(unassignable)} 個無法派出（無可接單人選）`
+                    : '近 7 天沒人接的問題',
+            // statCard 內才套 appUrl（只加站台前綴、保留 hash）；work-orders 的頁籤列以 hash 選頁籤
+            url: '/work-orders#gaps'
+        });
+    }
+
     // 未回報主機計數卡（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
     // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
     // 0 台時照常顯示，不換成空狀態插圖（KPI 卡列慣例）。
@@ -316,9 +335,9 @@ function renderKpi(data, user, displaySettings, myBadge) {
 
     for (const card of cards) {
         const col = document.createElement('div');
-        col.className = 'col-6 col-lg';
+        col.className = 'col-6 col-lg-3';
         col.appendChild(statCard({
-            value: formatNumber(card.value),
+            value: typeof card.value === 'string' ? card.value : formatNumber(card.value),
             label: card.label,
             variant: card.variant,
             url: card.url,
@@ -365,7 +384,7 @@ function renderCategories(data) {
         card.innerHTML = `
             <div class="lf-card__body">
                 <div class="d-flex align-items-center gap-2 mb-2">
-                    <span class="d-inline-block rounded-circle" style="width:10px;height:10px"></span>
+                    <span class="d-inline-block rounded-circle lf-swatch lf-swatch--sm"></span>
                     <span class="fw-semibold"></span>
                 </div>
                 <div class="d-flex align-items-baseline gap-1 mb-1">
@@ -377,7 +396,7 @@ function renderCategories(data) {
                 <div class="small category-severity"></div>
             </div>`;
 
-        card.querySelector('span.rounded-circle').style.background = colors[category.category] ?? 'var(--lf-cat-other)';
+        card.querySelector('span.rounded-circle').style.setProperty('--lf-swatch', colors[category.category] ?? 'var(--lf-cat-other)');
         card.querySelector('span.fw-semibold').textContent = CATEGORY_NAMES[category.category] ?? category.category;
         // 大數字＝去重問題類型數（同一個問題不論出現在幾台主機、幾天，都只算一項）；
         // 第二行＝相異存活主機數；
@@ -661,8 +680,8 @@ function issueDensityCell(issue) {
     bar.className = 'lf-density';
     bar.title = `期間 ${issue.periodDays} 天內出現 ${issue.activeDays} 天（${Math.round(ratio * 100)}%）`;
     const fill = document.createElement('span');
-    fill.className = 'lf-density__fill';
-    fill.style.width = `${Math.max(4, Math.round(ratio * 100))}%`;
+    fill.className = 'lf-density__fill lf-progress-fill';
+    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
     bar.appendChild(fill);
     wrap.appendChild(bar);
 
@@ -710,7 +729,7 @@ function issueChangeCell(issue) {
 function renderHosts(data) {
     renderTable(document.getElementById('dashboard-hosts'), {
         columns: [
-            { title: '主機', render: h => hostLink(h) },
+            { title: '主機', truncate: true, render: h => hostLink(h) },
             { title: '高風險', className: 'text-end', render: h => String(h.highRiskDays) },
             { title: '中風險', className: 'text-end', render: h => String(h.mediumRiskDays) },
             { title: '關聯訊號', className: 'text-end', render: h => correlationCell(h) },

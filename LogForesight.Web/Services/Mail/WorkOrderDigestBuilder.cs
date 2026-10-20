@@ -8,7 +8,7 @@ internal sealed record WorkOrderDigestOrder(long WorkOrderId, string IssueLabel,
     IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate);
 
 /// <summary>
-/// 交辦摘要信的組信（純函數）：把同一位處理人的待寄項目組成一封信，分「新交辦／新增成員／移交／取消」四段，空段不輸出。
+/// 交辦摘要信的組信（純函數）：把同一位處理人的待寄項目組成一封信，分「新交辦／新增成員／移交／取消／退回」五段，空段不輸出。
 /// 單的內容（問題、主機、期限）由呼叫端在寄送當下讀好傳入，這裡不碰任何儲存。
 /// </summary>
 internal static class WorkOrderDigestBuilder
@@ -23,14 +23,17 @@ internal static class WorkOrderDigestBuilder
         var transferred = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.Transferred).OrderBy(r => r.Item.WorkOrderId).ToList();
         var cancelled = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.Cancelled).OrderBy(r => r.Item.WorkOrderId).ToList();
 
-        var subjectSummary = $"新交辦 {created.Count} 張、新增成員 {appended.Count} 張、移交 {transferred.Count}、取消 {cancelled.Count}";
+        var returned = rows.Where(r => r.Item.Kind == WorkOrderOutboxKinds.Returned).OrderBy(r => r.Item.WorkOrderId).ToList();
+
+        var subjectSummary = $"新交辦 {created.Count} 張、新增成員 {appended.Count} 張、移交 {transferred.Count}、取消 {cancelled.Count}、退回 {returned.Count}";
 
         var body = new StringBuilder();
         AppendSection(body, "【新交辦】", created);
         AppendSection(body, "【新增成員】", appended);
         AppendSection(body, "【移交】", transferred);
         AppendSection(body, "【取消】", cancelled);
-        body.AppendLine("請至站台的「交辦單」頁檢視上列單號。");
+        AppendSection(body, "【退回】", returned);
+        body.AppendLine("請至站台的「我的交辦」檢視上列單號。");
         return (subjectSummary, body.ToString());
     }
 
@@ -53,6 +56,9 @@ internal static class WorkOrderDigestBuilder
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");
                     body.AppendLine($"    由 {item.ActorAccount} 移交給其他處理人，你不需再處理這張單中移出的主機。");
                     AppendReason(body, item);
+                    break;
+                case WorkOrderOutboxKinds.Returned:
+                    body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}，由 {item.ActorAccount} 退回：{item.Reason}");
                     break;
                 case WorkOrderOutboxKinds.Cancelled:
                     body.AppendLine($"  單號 {order.WorkOrderId}：{order.IssueLabel}");

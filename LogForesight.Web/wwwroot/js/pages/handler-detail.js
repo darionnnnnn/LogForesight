@@ -3,7 +3,7 @@
  * 一批主機），主區塊只有交辦單清單，列上就能「回覆」；「依主機」與「被指派的風險日」
  * 收進下方進階檢視，第一次展開才載入（workload API 只在那時呼叫）。
  *
- * 授權：全登入角色可查看任何人，資料以**檢視者**的可見範圍過濾（後端 WorkOrderQueryService／
+ * 授權：本人，或具 Assign／ViewAll 者可查看；資料以**檢視者**的可見範圍過濾（後端 WorkOrderQueryService／
  * HandlingService.GetHandlerWorkload），與全站查詢頁同一套模型，不新增能力。
  * 回覆與改期限只有「該單處理人本人且具 Handle」能做（後端 403 把關），前端據此顯示或隱藏——
  * 見 canReply，回覆按鈕、勾選框與期限連結都吃這個旗標。
@@ -12,7 +12,7 @@
  * 保留勾選、展開與捲動位置；勾選跨頁累積，改變篩選條件才清除。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderLoading,
@@ -21,12 +21,14 @@ import {
     renderPagination,
     statCard,
     guardLoad,
+    renderPageHeader,
     loadPageSize,
     savePageSize,
     toast
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
+import { statusBadgeMeta } from '../core/handling-statuses.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -61,18 +63,6 @@ const ORIGIN_LABELS = {
     day_assign: '詳情頁指派'
 };
 
-// 成員狀態對照（同 work-order-detail.js）
-const MEMBER_STATUS_META = {
-    open: { label: '未處理', variant: 'danger' },
-    in_progress: { label: '處理中', variant: 'primary' },
-    observing: { label: '觀察中', variant: 'primary' },
-    escalated: { label: '無法處理（上報）', variant: 'warning' },
-    resolved: { label: '已處理', variant: 'success' },
-    wont_fix: { label: '不處理', variant: 'success' },
-    false_positive: { label: '誤報', variant: 'success' },
-    known_noise: { label: '已知雜訊', variant: 'success' }
-};
-
 const MEMBER_STATUS_OPTIONS = [
     { value: 'active', label: '進行中' },
     { value: 'escalated', label: '上報中' },
@@ -97,6 +87,8 @@ const selectedOrderMeta = new Map(); // 勾選中的單在勾選當下的台數�
 const handledOrderIds = new Set(); // 這次在頁上回覆過的單：「下一張」跳過
 let lastRefresh = Promise.resolve();
 let advancedLoaded = false;
+let advancedAllowed = false;       // 確認有權檢視這個人的頁之後才開放進階檢視（workload 對無權者 403）
+let advancedPending = false;       // 權限確認前進階檢視就被展開：確認後補載入
 
 async function load() {
     renderLoading(kpiEl, 1);
@@ -106,6 +98,27 @@ async function load() {
     currentUser = user;
     isSelf = user?.userId === userId;
     canReply = isSelf && hasCapability(user, 'Handle');
+    // 自己的頁在側欄與頁頭都叫「我的交辦」；看別人的頁才是「處理人員工作頁」
+    if (isSelf) {
+        const topbarTitle = document.querySelector('.lf-topbar__title');
+        if (topbarTitle) topbarTitle.textContent = '我的交辦';
+        document.title = document.title.replace('處理人員工作頁', '我的交辦');
+    }
+
+    // 只有 Handle 的人看別人的處理人頁，後端 API 會 403；先擋下來給說明，不讓頁面停在載入中
+    if (!canViewHandlerPage(user, userId)) {
+        // 空狀態只畫一次（放在主區塊）；KPI 區清空、進階檢視整塊隱藏，避免對別人呼叫 workload
+        kpiEl.replaceChildren();
+        advancedEl.classList.add('d-none');
+        renderSelfOnly(ordersEl, user);
+        return;
+    }
+
+    advancedAllowed = true;
+    if (advancedPending) {
+        advancedPending = false;
+        guardLoad([casesEl, daysEl], loadAdvanced);
+    }
 
     summary = await api.get(`/api/handlers/${userId}/work-orders/summary`);
     renderHeader(summary);
@@ -117,6 +130,22 @@ async function load() {
     const targetOrderId = orderParam ? parseInt(orderParam, 10) : null;
     if (targetOrderId && !isNaN(targetOrderId)) {
         await locateOrder(targetOrderId);
+    }
+}
+
+/** 無權檢視他人處理人頁：說明原因並帶回自己的交辦 */
+function renderSelfOnly(container, user) {
+    renderEmpty(container, {
+        title: '只能檢視自己的交辦',
+        hint: '其他處理人的交辦單只有管理者看得到。',
+        icon: 'lock'
+    });
+    if (user?.userId) {
+        const link = document.createElement('a');
+        link.className = 'btn btn-sm btn-outline-primary mt-2';
+        link.href = appUrl('/handlers/' + user.userId);
+        link.textContent = '前往我的交辦';
+        container.firstElementChild.appendChild(link);
     }
 }
 
@@ -136,7 +165,7 @@ async function locateOrder(targetOrderId) {
     } catch {
         // 不存在或無權檢視：視同不在清單中
     }
-    if (detail && detail.viewerIsHandler && !detail.closedAt) {
+    if (detail && detail.viewerCanReply) {
         statusSelect.value = 'all';
         orderPage = 1;
         await loadOrders();
@@ -169,27 +198,14 @@ function clearOrderParam() {
 }
 
 function renderHeader(data) {
-    const card = document.createElement('div');
-    card.className = 'lf-card';
-
-    const body = document.createElement('div');
-    body.className = 'lf-card__body';
-
-    const title = document.createElement('div');
-    title.className = 'fs-5 fw-semibold';
-    const name = formatUserName(data.displayName, data.account);
-    title.textContent = data.active ? name : `${name}（已停用）`;
-    body.appendChild(title);
-
-    if (!data.active) {
-        const note = document.createElement('div');
-        note.className = 'text-muted small mt-1';
-        note.textContent = '此帳號已停用；交辦紀錄是歷史事實，不因停用消失。';
-        body.appendChild(note);
-    }
-
-    card.appendChild(body);
-    document.getElementById('handler-header').replaceChildren(card);
+    // 頁首（renderPageHeader）：副標開頭以強調文字放處理人名稱；停用帳號的說明併入副標
+    const name = document.createElement('strong');
+    const displayName = formatUserName(data.displayName, data.account);
+    name.textContent = data.active ? displayName : `${displayName}（已停用）`;
+    const note = data.active
+        ? ' 的交辦單與處理進度'
+        : ' 此帳號已停用；交辦紀錄是歷史事實，不因停用消失。';
+    renderPageHeader(document.getElementById('page-header'), { subtitle: [name, note] });
 }
 
 function renderKpi(data) {
@@ -205,7 +221,7 @@ function renderKpi(data) {
 
     for (const c of cards) {
         const col = document.createElement('div');
-        col.className = 'col-6 col-md-3';
+        col.className = 'col-6 col-lg-3';
         col.appendChild(statCard({ value: formatNumber(c.value), label: c.label, variant: c.variant }));
         kpiEl.appendChild(col);
     }
@@ -249,11 +265,17 @@ async function refreshAfterReply({ keepExpandedId = null } = {}) {
     const scrollY = window.scrollY;
 
     const seq = ++ordersLoadSeq;
-    const [summaryData, data] = await Promise.all([
+    let [summaryData, data] = await Promise.all([
         api.get(`/api/handlers/${userId}/work-orders/summary`),
         api.get(ordersUrl())
     ]);
     if (seq !== ordersLoadSeq) return;
+    // 目前這一頁因結案而清空、但前面還有單：退回第一頁重取，否則會顯示「沒有進行中的交辦單」且不畫分頁
+    if ((data.items || []).length === 0 && orderPage > 1) {
+        orderPage = 1;
+        data = await api.get(ordersUrl());
+        if (seq !== ordersLoadSeq) return;
+    }
 
     summary = summaryData;
     renderKpi(summaryData);
@@ -367,6 +389,7 @@ function renderOrders(data) {
                 chk.type = 'checkbox';
                 chk.className = 'form-check-input';
                 chk.title = '全選本頁交辦單';
+                chk.setAttribute('aria-label', '全選本頁交辦單');
                 chk.checked = selectable.length > 0 && selectable.every(r => selectedOrderIds.has(r.workOrderId));
                 chk.disabled = selectable.length === 0;
                 chk.addEventListener('change', () => {
@@ -385,6 +408,7 @@ function renderOrders(data) {
                 const chk = document.createElement('input');
                 chk.type = 'checkbox';
                 chk.className = 'form-check-input handler-wo-select';
+                chk.setAttribute('aria-label', `選取單號 ${row.workOrderId}`);
                 chk.checked = selectedOrderIds.has(row.workOrderId);
                 chk.addEventListener('click', event => event.stopPropagation());
                 if (row.closedAt) {
@@ -502,6 +526,7 @@ function renderOrders(data) {
         renderTable(ordersEl, {
             columns,
             rows,
+            stickyLastColumn: true,   // 375px 寬時「回覆」動作欄固定在右緣，不被橫向捲動藏起來
             // 成員清單要另打一支 API，用 lazy 的 onRowExpand（首次展開才取），不是 rowDetail
             onRowExpand: (row, cell) => {
                 const carry = pendingReplyCarry.get(row.workOrderId) || null;
@@ -706,11 +731,6 @@ async function openNextOrder(fromId, carry) {
 
 // ── 期限就地修改 ───────────────────────────────────────────────────────────
 
-function isoDate(date) {
-    const pad = n => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 /** 期限欄：本人且未結案時可點（無期限顯示「設定期限」），點了就地換成日期欄＋儲存／取消 */
 function dueDateCell(row) {
     const wrap = document.createElement('div');
@@ -739,8 +759,8 @@ function dueDateCell(row) {
         const input = document.createElement('input');
         input.type = 'date';
         input.className = 'form-control form-control-sm w-auto';
-        input.min = isoDate(today);
-        input.max = isoDate(max);
+        input.min = toLocalDateString(today);
+        input.max = toLocalDateString(max);
         input.value = row.dueDate ? String(row.dueDate).slice(0, 10) : '';
         input.setAttribute('aria-label', '期限');
 
@@ -899,6 +919,7 @@ function buildMemberPanel(row, cell, carry = null) {
         columns.push(
             {
                 title: '主機',
+                truncate: true,
                 render: item => {
                     if (!item.hostId) {
                         const span = document.createElement('span');
@@ -915,7 +936,7 @@ function buildMemberPanel(row, cell, carry = null) {
                 title: '狀態',
                 className: 'text-nowrap',
                 render: item => {
-                    const meta = MEMBER_STATUS_META[item.status] || { label: item.status || '未知', variant: 'neutral' };
+                    const meta = statusBadgeMeta(item.status) || { label: item.status || '未知', variant: 'neutral' };
                     return statusBadge(meta.label, meta.variant);
                 }
             },
@@ -1009,8 +1030,8 @@ async function loadAdvanced() {
 function renderCases(cases) {
     renderTable(casesEl, {
         columns: [
-            { title: '主機', render: c => hostLink(c) },
-            { title: '問題', render: c => c.issueLabel },
+            { title: '主機', truncate: true, render: c => hostLink(c) },
+            { title: '問題', truncate: true, render: c => c.issueLabel },
             { title: '狀態', render: c => statusText(c) },
             { title: '涵蓋範圍', render: c => `${c.firstLinkedDate} ~ ${c.lastLinkedDate}` },
             { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) }
@@ -1026,7 +1047,7 @@ function renderDays(days) {
     renderTable(daysEl, {
         columns: [
             { title: '日期', render: d => d.date },
-            { title: '主機', render: d => hostLink(d) },
+            { title: '主機', truncate: true, render: d => hostLink(d) },
             { title: '風險', render: d => riskBadge(d.riskLevel) },
             { title: '狀態', render: d => statusText(d) },
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }
@@ -1089,7 +1110,13 @@ advancedEl.addEventListener('toggle', () => {
     } catch {
         // 本機儲存區不可用（隱私模式等）：不記住展開狀態，不影響功能
     }
-    if (advancedEl.open && !advancedLoaded) guardLoad([casesEl, daysEl], loadAdvanced);
+    if (!advancedEl.open || advancedLoaded) return;
+    // 權限尚未確認（load 還在跑）就先記著，確認有權後由 load 補載入；無權者永遠不會呼叫 workload
+    if (!advancedAllowed) {
+        advancedPending = true;
+        return;
+    }
+    guardLoad([casesEl, daysEl], loadAdvanced);
 });
 
 try {

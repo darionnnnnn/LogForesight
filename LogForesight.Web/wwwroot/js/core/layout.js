@@ -10,7 +10,20 @@ import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
+import { startBadgePolling } from './badges.js';
 import { clearAllDraftsForUser } from './note-editor.js';
+
+/**
+ * 詳情頁路徑前綴 → 父選單 href：詳情頁不在選單上，沒有這張表就沒有任何項目高亮。
+ * 比對一律用 appPath()（已去掛載前綴）；parent 以 `/` 結尾代表前綴比對
+ * （「我的交辦」的 href 帶使用者編號，是動態值），否則為完整比對。
+ */
+const DETAIL_PARENTS = [
+    { prefix: '/hosts/', parent: '/admin/hosts' },
+    { prefix: '/handlers/', parent: '/handlers/' },
+    { prefix: '/records/', parent: '/records' },
+    { prefix: '/work-orders/', parent: '/work-orders' }
+];
 
 /**
  * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
@@ -173,10 +186,19 @@ function renderNav(user) {
             label.textContent = item.label;
             link.appendChild(label);
 
-            const isActive = item.resolvedHref === '/'
-                ? currentPath === '/'
-                : currentPath.startsWith(item.resolvedHref);
-            if (isActive) link.classList.add('is-active');
+            const detail = DETAIL_PARENTS.find(d => currentPath.startsWith(d.prefix));
+            // 前綴型父層（/handlers/）只認「自己的」頁：管理者看別人的處理人頁時，「我的交辦」不亮
+            const isActive = detail
+                ? (detail.parent.endsWith('/')
+                    ? item.resolvedHref.startsWith(detail.parent) && currentPath === item.resolvedHref
+                    : item.resolvedHref === detail.parent)
+                : (item.resolvedHref === '/'
+                    ? currentPath === '/'
+                    : currentPath.startsWith(item.resolvedHref));
+            if (isActive) {
+                link.classList.add('is-active');
+                link.setAttribute('aria-current', 'page');
+            }
 
             // 「我的交辦」未結案數（體檢 M7）：一般使用者是每天用得最頻繁的角色，
             // 但過去唯一知道自己有工作的方法是主動點進去——首頁 KPI 顯示的是全站待辦，
@@ -185,13 +207,19 @@ function renderNav(user) {
                 link.dataset.badgeSource = 'my-work';
             }
 
+            // 「交辦總覽」未讀回覆數：徽章由 core/badges.js 以 data-badge-source 定位並每 60 秒刷新
+            if (item.label === '交辦總覽') {
+                link.dataset.badgeSource = 'unread-replies';
+            }
+
             itemsWrap.appendChild(link);
         }
 
         nav.appendChild(itemsWrap);
     }
 
-    loadMyWorkBadge(user);
+    // 側欄兩顆徽章（我的交辦、交辦總覽未讀）的刷新與 60 秒輪詢，全站唯一一份
+    startBadgePolling(user);
 
     if (document.querySelector('.lf-sidebar__section--toggle')) {
         autoCollapseIfNeeded();
@@ -216,42 +244,6 @@ function renderNav(user) {
  */
 function sectionStorageKey(label) {
     return `lf.sidebar.collapsed.${label}`;
-}
-
-/**
- * 側欄「我的交辦」的進行中徽章（體檢 M7）。
- *
- * 資料來自單一聚合端點 `handlers/me/badge`（`HandlerSummaryDto`）——一次拿齊單數、台數、
- * 逾期與未回覆，不必為了一顆徽章打多支 API。ServerAdmin 後端直接回全 0，這裡不另外判斷。
- * **失敗完全靜默**：徽章是加值資訊，載不到就不顯示；為了一個數字讓側欄出現錯誤提示
- * （或更糟：擋住選單渲染）是本末倒置。
- */
-async function loadMyWorkBadge(user) {
-    const link = document.querySelector('[data-badge-source="my-work"]');
-    if (!link || !user?.userId) return;
-
-    // 回饋十三輪 A4：沒有 Handle 能力的人（如只有 ViewAll 的主管角色）不載入徽章——
-    // 「我的交辦」頁本身仍可進（全角色可看任何人的處理人頁），但未結案「數字」是
-    // 處理人視角的待辦提醒，對無法動手處理的角色只是噪音
-    if (!hasCapability(user, 'Handle')) return;
-
-    try {
-        const summary = await api.get('/api/handlers/me/badge', { silent: true });
-        // 數字取「手上進行中的主機數」：一張單可能含多台，台數才是實際還有多少事要處理
-        const count = summary.activeMembers ?? 0;
-        if (count <= 0) return;
-
-        const badge = document.createElement('span');
-        badge.className = 'lf-sidebar__badge';
-        badge.textContent = String(count);
-        badge.title = `進行中交辦單 ${summary.activeWorkOrders ?? 0} 張、${count} 台；`
-            + `逾期 ${summary.overdueMembers ?? 0} 台、未回覆 ${summary.unrepliedWorkOrders ?? 0} 張`;
-        link.appendChild(badge);
-
-        if ((summary.overdueMembers ?? 0) > 0) badge.classList.add('lf-sidebar__badge--overdue');
-    } catch {
-        // 靜默：見函式註解
-    }
 }
 
 function bindSectionToggle(toggle, itemsWrap, label) {
@@ -773,8 +765,32 @@ async function loadHealthBanner(user) {
     registerAlert('health', bar);
 }
 
+/**
+ * modal 關閉後把焦點還給開啟它的元素（WCAG 2.4.3）。全站 modal 多由 JS 呼叫 show() 開啟，
+ * Bootstrap 只在 data-bs-toggle 觸發時才會歸還焦點；不補的話鍵盤使用者關掉 modal 後焦點停在
+ * 已隱藏的 modal 上，Tab 會從頁首重新走起。以事件委派一次涵蓋所有頁面，不需逐頁處理。
+ */
+function initModalFocusReturn() {
+    const openers = new WeakMap();
+    document.addEventListener('show.bs.modal', event => {
+        const active = document.activeElement;
+        if (active && active !== document.body && !event.target.contains(active)) {
+            openers.set(event.target, active);
+        }
+    });
+    document.addEventListener('hidden.bs.modal', event => {
+        const opener = openers.get(event.target);
+        openers.delete(event.target);
+        // 開啟者已被移除（例如列表重繪）就不搶焦點；焦點已被其他程式移到別處也不覆寫
+        const focusLost = !document.activeElement || document.activeElement === document.body
+            || event.target.contains(document.activeElement);
+        if (opener && opener.isConnected && focusLost) opener.focus();
+    });
+}
+
 if (typeof window !== 'undefined' && window.document) {
     initFontScale();
     initBrandAlign();
+    initModalFocusReturn();
     init();
 }

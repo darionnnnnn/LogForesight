@@ -659,6 +659,7 @@ lf_work_orders                                       -- 交辦單：一個問題
   event_id           int NULL
   issue_label        nvarchar(512) NOT NULL
   handler_id         bigint NOT NULL
+  previous_handler_id bigint NULL                    -- 最近一次被改派走的處理人（唯讀存取）
   origin             nvarchar(30) NOT NULL           -- manual | owner_rule | auto_dispatch | backfill | day_assign
   scope_kind         nvarchar(30) NOT NULL           -- All | Groups | Hosts
   scope_group_ids    text NOT NULL                   -- 主機群組 id 清單（JSON）
@@ -670,6 +671,7 @@ lf_work_orders                                       -- 交辦單：一個問題
   created_at         timestamp NOT NULL
   last_appended_at   timestamp NULL                  -- 最近加入成員時間
   last_reply_at      timestamp NULL                  -- 處理人最近回覆時間；null＝未回覆
+  admin_seen_at      timestamp NULL                  -- 具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）
   closed_at          timestamp NULL                  -- 快取：全部成員結案時落盤
   closed_reason      nvarchar(30) NULL               -- all_closed | moved | cancelled | admin_closed
   updated_at         timestamp NOT NULL              -- 併發權杖
@@ -678,7 +680,8 @@ lf_work_order_events                                 -- 交辦單事件（append
   event_id           bigint PK 自增
   work_order_id      bigint NOT NULL
   action             nvarchar(30) NOT NULL           -- created | appended | merged_in | reassigned | split_out |
-                                                     -- split_in | cancelled | admin_closed | closed | replied
+                                                     -- split_in | cancelled | admin_closed | closed | replied |
+                                                     -- due_date_changed | returned
   actor_id           bigint NULL                     -- 系統事件為 null
   actor_account      nvarchar(255) NOT NULL
   member_delta       int NOT NULL                    -- 本次增減的成員台數

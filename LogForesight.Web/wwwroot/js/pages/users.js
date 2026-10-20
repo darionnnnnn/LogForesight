@@ -4,7 +4,7 @@
 
 import { api } from '../core/api.js';
 import {
-    renderTable, renderLoading, toast, withBusy, renderChips, confirmAction, checkboxList, button,
+    renderTable, renderLoading, guardLoad, toast, withBusy, renderChips, confirmAction, checkboxList, button,
     renderPagination, sortRows, loadPageSize, savePageSize
 } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
@@ -140,7 +140,7 @@ function render() {
             render();
         },
         empty: users.length === 0
-            ? { title: '尚無使用者', hint: '用右上角的「新增使用者」建立（支援一次貼上多筆帳號）。' }
+            ? { title: '尚無使用者', hint: '按「新增使用者」建立（支援一次貼上多筆帳號）。' }
             : { title: '沒有符合搜尋條件的使用者', hint: '請調整關鍵字後再試。' }
     });
 
@@ -400,4 +400,4 @@ async function submitBatch(groupIds, active, saveButton) {
 document.getElementById('btn-new-user').addEventListener('click', () => openModal(null));
 searchInput.addEventListener('input', () => { page = 1; render(); });
 
-load();
+guardLoad(listContainer, load);

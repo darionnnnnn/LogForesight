@@ -1,9 +1,10 @@
-﻿/**
+﻿﻿/**
  * 交辦單詳情頁（回饋第 47 輪）：
  * 包含單號標頭、成員清單、處理歷程時間軸與管理動作（改派、取消交辦、代為結案、拆出主機、複製 CSV）。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, canViewHandlerPage, getDisplaySettings } from '../core/api.js';
+import { statusesWhere, statusBadgeMeta } from '../core/handling-statuses.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable,
@@ -18,9 +19,10 @@ import {
     withBusy,
     searchableUserSelect,
     labelValue,
-    icon
+    icon,
+    candidatesToUserOptions
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatUserName, statusBadge, workOrderClosedReasonText } from '../core/format.js';
+import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
 
 // DOM 元素
@@ -51,42 +53,34 @@ const ORIGIN_LABELS = {
     day_assign: '詳情頁指派'
 };
 
-// 問題層級狀態對照（同 issue-status-reply.js）
-const MEMBER_STATUS_META = {
-    open: { label: '未處理', variant: 'danger' },
-    in_progress: { label: '處理中', variant: 'primary' },
-    observing: { label: '觀察中', variant: 'primary' },
-    escalated: { label: '無法處理（上報）', variant: 'warning' },
-    resolved: { label: '已處理', variant: 'success' },
-    wont_fix: { label: '不處理', variant: 'success' },
-    false_positive: { label: '誤報', variant: 'success' },
-    known_noise: { label: '已知雜訊', variant: 'success' }
-};
-
 let currentUser = null;
 let currentDetail = null;
 let memberPage = 1;
 const selectedCaseIds = new Set();
-let assignableUsersCache = null;
+/** 目前已載入的成員：caseId → hostId（改派／拆出算人選看不看得到主機用；只含已載入的分頁） */
+const loadedMemberHosts = new Map();
 
 // ── 成員狀態文字與徽章顏色（同一件事只寫一份）─────────────────────────────
 
 function renderMemberStatusBadge(status) {
-    const meta = MEMBER_STATUS_META[status] || { label: status || '未知', variant: 'neutral' };
+    const meta = statusBadgeMeta(status) || { label: status || '未知', variant: 'neutral' };
     return statusBadge(meta.label, meta.variant);
 }
 
 // ── 處理人選單 modal（改派與拆出共用，同一件事只寫一份）───────────────────
 
-async function getAssignableUsers() {
-    if (!assignableUsersCache) {
-        assignableUsersCache = await api.get('/api/admin/users', { silent: true });
-    }
-    return assignableUsersCache || [];
+/** 派工人選（共用端點）：主機為該操作涉及的主機，問題取自這張單；回傳可直接餵 searchableUserSelect 的選項 */
+async function fetchCandidates(hostIds) {
+    const candidates = await api.post('/api/work-orders/candidates', {
+        hostIds,
+        source: currentDetail?.source ?? null,
+        eventId: currentDetail?.eventId ?? null
+    }, { silent: true });
+    return candidatesToUserOptions(candidates);
 }
 
-async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit, showNotifyNow = false }) {
-    const users = await getAssignableUsers();
+async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit, showNotifyNow = false, hostIds = [] }) {
+    const users = await fetchCandidates(hostIds);
     // 停用帳號後端一定拒絕，不擺一個必定失敗的選項
     const filteredUsers = (users || []).filter(u => u.userId !== currentHandlerId && u.active);
 
@@ -164,8 +158,9 @@ function renderHeader(detail) {
     // 處理人
     const handlerWrap = document.createElement('div');
     handlerWrap.className = 'd-flex align-items-center gap-1 flex-wrap';
-    const handlerLink = document.createElement('a');
-    handlerLink.href = appUrl('/handlers/' + detail.handlerId);
+    // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出姓名文字
+    const handlerLink = document.createElement(canViewHandlerPage(currentUser, detail.handlerId) ? 'a' : 'span');
+    if (handlerLink.tagName === 'A') handlerLink.href = appUrl('/handlers/' + detail.handlerId);
     handlerLink.textContent = detail.handlerName || '';
     handlerWrap.appendChild(handlerLink);
     if (!detail.handlerActive) {
@@ -287,12 +282,7 @@ function openAdminCloseModal() {
 
     const statusSelect = document.createElement('select');
     statusSelect.className = 'form-select form-select-sm mb-3';
-    const closeStatuses = [
-        { value: 'resolved', label: '已處理' },
-        { value: 'wont_fix', label: '不處理' },
-        { value: 'false_positive', label: '誤報' },
-        { value: 'known_noise', label: '已知雜訊' }
-    ];
+    const closeStatuses = statusesWhere(s => s.closed).map(s => ({ value: s.value, label: s.shortLabel }));
     for (const opt of closeStatuses) {
         const option = document.createElement('option');
         option.value = opt.value;
@@ -362,11 +352,16 @@ function openMemberReply(caseIds, targetText) {
 function renderActions(detail, user) {
     actionsContainer.replaceChildren();
 
+    // 原處理人唯讀：不顯示任何動作鈕
+    if (detail.viewerIsPreviousHandler && !detail.viewerIsHandler && !detail.viewerCanAssign) {
+        return;
+    }
+
     if (detail.closedAt) {
         return;
     }
 
-    if (detail.viewerIsHandler) {
+    if (detail.viewerCanReply) {
         const replyBtn = document.createElement('button');
         replyBtn.type = 'button';
         replyBtn.className = 'btn btn-sm btn-outline-primary';
@@ -414,6 +409,7 @@ function renderActions(detail, user) {
             submitText: '確定改派',
             currentHandlerId: detail.handlerId,
             showNotifyNow: true,
+            hostIds: [...new Set(loadedMemberHosts.values())],
             onSubmit: async (handlerId, closeModal, { notifyNow }) => {
                 const res = await api.post(`/api/work-orders/${workOrderId}/reassign`, { handlerId, notifyNow });
                 closeModal();
@@ -438,15 +434,53 @@ function renderActions(detail, user) {
     });
     actionsContainer.appendChild(reassignBtn);
 
+    // 退回處理人：處理人把成員標成「無法處理」後，管理者可附說明把這些成員退回同一位處理人（改回處理中）
+    if ((detail.counts?.escalated ?? 0) > 0 && !detail.closedAt) {
+        const returnBtn = document.createElement('button');
+        returnBtn.type = 'button';
+        returnBtn.className = 'btn btn-sm btn-outline-secondary';
+        returnBtn.textContent = '退回處理人';
+        returnBtn.addEventListener('click', async () => {
+            const { mailWorkOrdersEnabled } = await getDisplaySettings();
+            const notifyText = mailWorkOrdersEnabled
+                ? '處理人會在下一封交辦摘要收到退回通知。'
+                : '目前未啟用交辦通知，請自行告知處理人。';
+            const note = await confirmActionWithReason({
+                title: '退回處理人',
+                message: `把這張單中標為「無法處理」的主機退回處理人，狀態改回處理中。${notifyText}`,
+                reasonLabel: '退回說明',
+                confirmText: '確定退回',
+                confirmVariant: 'primary'
+            });
+            if (!note) return;
+
+            const restore = withBusy(returnBtn, '處理中…');
+            try {
+                const res = await api.post(`/api/work-orders/${workOrderId}/return`, { note });
+                toast(`已退回，${res.returnedCases} 台改回處理中`, 'success');
+                await reloadAll();
+            } catch {
+                // 錯誤訊息已由 api.js 顯示
+                restore();
+            }
+        });
+        actionsContainer.appendChild(returnBtn);
+    }
+
     // 取消交辦按鈕
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'btn btn-sm btn-outline-danger';
     cancelBtn.textContent = '取消交辦';
     cancelBtn.addEventListener('click', async () => {
+        // 交辦通知預設關閉：依 mailWorkOrdersEnabled 說實話，避免承諾一封不會寄的信
+        const { mailWorkOrdersEnabled } = await getDisplaySettings();
+        const notifyText = mailWorkOrdersEnabled
+            ? '處理人會在下一封交辦摘要收到取消通知。'
+            : '目前未啟用交辦通知，請自行告知處理人。';
         const reason = await confirmActionWithReason({
             title: '取消交辦',
-            message: '取消後這張單的進行中主機會調回未處理，處理人會收到通知。',
+            message: `取消後這張單的進行中主機會調回未處理，${notifyText}`,
             reasonLabel: '取消原因',
             confirmText: '確定取消',
             confirmVariant: 'danger'
@@ -492,7 +526,7 @@ function updateSplitBtn() {
 }
 
 function updateReplyBtn() {
-    const canReply = currentDetail && currentDetail.viewerIsHandler && !currentDetail.closedAt;
+    const canReply = currentDetail && currentDetail.viewerCanReply;
     if (!canReply) {
         memberReplyBtn.classList.add('d-none');
         memberReplyBtn.disabled = true;
@@ -503,6 +537,10 @@ function updateReplyBtn() {
 }
 
 function renderMembers(data) {
+    loadedMemberHosts.clear();
+    for (const m of data.items || []) {
+        if (m.hostId != null) loadedMemberHosts.set(m.caseId, m.hostId);
+    }
     if (data.hiddenMemberCount > 0) {
         memberNoteEl.textContent = `另有 ${data.hiddenMemberCount} 台主機不在您的檢視範圍，未列出`;
         memberNoteEl.classList.remove('d-none');
@@ -512,7 +550,7 @@ function renderMembers(data) {
     }
 
     const canSplit = currentDetail && currentDetail.viewerCanAssign && !currentDetail.closedAt;
-    const canReply = currentDetail && currentDetail.viewerIsHandler && !currentDetail.closedAt;
+    const canReply = currentDetail && currentDetail.viewerCanReply;
     const showCheckboxes = canSplit || canReply;
     const columns = [];
 
@@ -578,6 +616,7 @@ function renderMembers(data) {
     columns.push(
         {
             title: '主機',
+            truncate: true,
             render: item => {
                 if (item.hostId) {
                     const a = document.createElement('a');
@@ -658,7 +697,7 @@ function renderMembers(data) {
                     label.textContent = `PRTG 建案證據｜${formatDate(item.prtgEvidence.recordDate)}`;
                     const detail = document.createElement('p');
                     detail.className = 'small text-wrap';
-                    const parentLabels = { available: item.prtgEvidenceRecordPath ? '原分析仍可查閱' : '原分析仍保留；您的權限僅限此案件證據', 'host-deleted': '主機已刪除',
+                    const parentLabels = { available: item.prtgEvidenceRecordPath ? '原分析仍可查閱' : '原分析仍保留；您的權限僅限此交辦單證據', 'host-deleted': '主機已刪除',
                         'deleted-or-not-retained': '原分析已刪除或超過保留期', 'detail-pruned': '原分析詳情已精簡',
                         'reanalysed-without-finding': '原日期已重新分析，目前不含此判定' };
                     detail.textContent = `${item.prtgEvidence.summary}（品質：${item.prtgEvidence.quality}）。${parentLabels[item.prtgEvidenceParentStatus] || '原分析狀態未知'}。這是建案時保留的證據；目前狀態請查最新分析紀錄。`;
@@ -700,25 +739,14 @@ function renderMembers(data) {
 // ── 時間軸 ─────────────────────────────────────────────────────────────────
 
 /**
- * 事件註記轉畫面用語：Core 不持有顯示文字，註記裡留的是原始值——
- * 回覆與代為結案是「狀態碼：說明」，改派是「舊處理人 id→新處理人 id」。
- * 兩者都換成看得懂的文字，其餘原樣顯示。
+ * 事件註記轉畫面用語：回覆與代為結案的註記是「狀態碼：說明」，把開頭的狀態碼換成簡稱；
+ * 改派註記後端已直接給處理人姓名（「王小明(wang) → 李四(lee)」），原樣顯示。
  */
 function eventNoteText(note) {
-    const move = note.match(/^(\d+)→(\d+)$/);
-    if (move) {
-        return `${handlerNameOf(move[1])} → ${handlerNameOf(move[2])}`;
-    }
     // 「狀態碼：說明（N 台）」與不填說明的「狀態碼（N 台）」：開頭的狀態碼緊接全形冒號或左括號
     const code = note.match(/^([a-z_]+)(?=[：（])/);
-    const meta = code ? MEMBER_STATUS_META[code[1]] : null;
+    const meta = code ? statusBadgeMeta(code[1]) : null;
     return meta ? meta.label + note.slice(code[1].length) : note;
-}
-
-/** 改派註記用：使用者清單載入前（或查不到）就顯示原始 id，不擋畫面 */
-function handlerNameOf(userId) {
-    const user = (assignableUsersCache || []).find(u => String(u.userId) === String(userId));
-    return user ? formatUserName(user.displayName, user.account) : `#${userId}`;
 }
 
 function renderTimeline(timeline) {
@@ -790,6 +818,7 @@ memberSplitBtn.addEventListener('click', () => {
         title: '拆出選取的主機',
         submitText: '確定拆出',
         currentHandlerId: currentDetail?.handlerId,
+        hostIds: [...new Set([...selectedCaseIds].map(id => loadedMemberHosts.get(id)).filter(id => id != null))],
         onSubmit: async (handlerId, closeModal) => {
             const caseIds = Array.from(selectedCaseIds);
             const res = await api.post(`/api/work-orders/${workOrderId}/split`, { caseIds, handlerId });
@@ -843,7 +872,7 @@ memberCsvBtn.addEventListener('click', async () => {
 
         const rows = [header.join(',')];
         for (const item of allItems) {
-            const statusText = MEMBER_STATUS_META[item.status]?.label || item.status || '';
+            const statusText = statusBadgeMeta(item.status)?.label || item.status || '';
             const dueText = item.dueDate ? formatDate(item.dueDate) : '';
             const overdueText = item.overdue ? '是' : '否';
             const firstLinked = item.firstLinkedDate ? formatDate(item.firstLinkedDate) : '';
@@ -893,30 +922,26 @@ async function loadMembersOnly() {
 }
 
 /**
- * 檢視者曾是這張單的處理人、單已改派給別人（此時他仍能看這頁，代表另有 Assign／ViewAll）：
- * 說明這頁為什麼沒有回覆入口，並指回自己的交辦。改派事件註記是「舊處理人 id→新處理人 id」。
+ * 檢視者曾是這張單的處理人、單已改派給別人（後端 viewerIsPreviousHandler；此時他仍能看這頁，
+ * 代表另有 Assign／ViewAll）：說明這頁為什麼沒有回覆入口，並指回自己的交辦。
  * 只有 Handle 的原處理人拿到的是 403，改由拒絕畫面的提示處理（見 loadAll）。
  */
-function renderReassignedHint(detail, user, timeline) {
+function renderReassignedHint(detail, user) {
     const existing = rootEl.querySelector('.wo-reassign-hint');
     if (existing) existing.remove();
 
-    if (detail.viewerIsHandler) return;
-
-    const wasHandler = timeline.some(ev => {
-        if (ev.action !== 'reassigned') return false;
-        const move = (ev.note || '').match(/^(\d+)→(\d+)$/);
-        return move && Number(move[1]) === user.userId;
-    });
-
-    if (!wasHandler) return;
+    if (detail.viewerIsHandler || !detail.viewerIsPreviousHandler) return;
 
     const hintEl = document.createElement('div');
     hintEl.className = 'lf-hint mb-3 p-3 bg-light rounded border wo-reassign-hint';
     hintEl.appendChild(icon('info-circle'));
 
+    // 同時具 Assign 的人仍能改派這張單，不能對他說「只能檢視」
+    const target = detail.handlerName || '其他處理人';
     const span = document.createElement('span');
-    span.textContent = `這張單已改派給 ${detail.handlerName || '其他處理人'}。`;
+    span.textContent = detail.viewerCanAssign
+        ? `此單已移交給 ${target}。`
+        : `此單已移交給 ${target}，你只能檢視。`;
 
     const link = document.createElement('a');
     link.href = appUrl(`/handlers/${user.userId}`);
@@ -928,56 +953,59 @@ function renderReassignedHint(detail, user, timeline) {
     rootEl.prepend(hintEl);
 }
 
+/**
+ * 通知後端「這張單已被管理者看過」（未讀回覆判定）：載入詳情成功後只報一次，失敗靜默。
+ * 只有具 Assign 的檢視者才會被後端記錄；詳情的 GET 本身不寫任何東西。
+ */
+let seenReported = false;
+function markSeenOnce(detail) {
+    if (seenReported || !detail.viewerCanAssign) return;
+    seenReported = true;
+    api.post(`/api/work-orders/${workOrderId}/seen`, null, { silent: true }).catch(() => {
+        // 靜默：已讀只是加值資訊，失敗不打擾使用者
+    });
+}
+
 async function loadAll() {
     try {
         const [user, detail, members, timeline] = await Promise.all([
             getCurrentUser(),
-            api.get(`/api/work-orders/${workOrderId}`),
-            api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`),
-            api.get(`/api/work-orders/${workOrderId}/timeline`)
+            api.get(`/api/work-orders/${workOrderId}`, { silent: true }),
+            api.get(`/api/work-orders/${workOrderId}/members?status=${memberStatusSelect.value}&page=${memberPage}&pageSize=${PAGE_SIZE}`, { silent: true }),
+            api.get(`/api/work-orders/${workOrderId}/timeline`, { silent: true })
         ]);
 
         currentUser = user;
         currentDetail = detail;
+        markSeenOnce(detail);
 
         renderHeader(detail);
-        renderReassignedHint(detail, user, timeline);
+        renderReassignedHint(detail, user);
         renderActions(detail, user);
         renderMembers(members);
-        // 改派註記要把處理人 id 換成名字，先確保使用者清單在手（取不到就顯示 id，不擋畫面）
-        if (timeline.some(ev => /^\d+→\d+$/.test(ev.note || ''))) {
-            try {
-                await getAssignableUsers();
-            } catch {
-                // 沒有使用者清單權限時維持原始 id
-            }
-        }
         renderTimeline(timeline);
     } catch (error) {
         if (error?.status === 403) {
             renderError(headerContainer, { message: error.message || '您沒有權限檢視這張交辦單。' });
+            // 只有 Handle 的原處理人在單被改派後會落到這裡（授權只認目前處理人），而 403 拿不到歷程，
+            // 無法確認他是否曾是處理人。出口只給一條：打不開交辦總覽的人回自己的交辦
+            // （具 Handle 者附上可能原因），能開的人回交辦清單
+            const user = await getCurrentUser().catch(() => null);
+            const back = backLinkFor(user);
             const wrap = document.createElement('div');
             wrap.className = 'mt-3';
+            if (back.href !== '/work-orders' && hasCapability(user, 'Handle')) {
+                const hint = document.createElement('div');
+                hint.className = 'lf-hint mb-2 wo-reassign-hint';
+                hint.textContent = '若這張單原本交辦給你，可能已改派給其他人。';
+                wrap.appendChild(hint);
+            }
             const a = document.createElement('a');
             a.className = 'btn btn-sm btn-outline-secondary';
-            a.href = appUrl('/work-orders');
-            a.textContent = '返回交辦清單';
+            a.href = appUrl(back.href);
+            a.textContent = back.text;
             wrap.appendChild(a);
             headerContainer.appendChild(wrap);
-            // 只有 Handle 的原處理人在單被改派後會落到這裡（授權只認目前處理人），而 403 拿不到歷程，
-            // 無法確認他是否曾是處理人——對有 Handle 的檢視者一律給出可能原因與回自己交辦的路
-            const user = await getCurrentUser();
-            if (!user.isServerAdmin && user.capabilities.includes('Handle')) {
-                const hint = document.createElement('div');
-                hint.className = 'lf-hint mt-3 wo-reassign-hint';
-                hint.textContent = '若這張單原本交辦給你，可能已改派給其他人。';
-                const link = document.createElement('a');
-                link.className = 'ms-1';
-                link.href = appUrl(`/handlers/${user.userId}`);
-                link.textContent = '回到我的交辦';
-                hint.appendChild(link);
-                headerContainer.appendChild(hint);
-            }
             membersContainer.replaceChildren();
             timelineContainer.replaceChildren();
             actionsContainer.replaceChildren();
@@ -991,14 +1019,29 @@ async function reloadAll() {
     selectedCaseIds.clear();
     updateSplitBtn();
     updateReplyBtn();
-    await guardLoad([headerContainer, membersContainer, timelineContainer], loadAll, { backLink: { href: appUrl('/work-orders'), text: '返回交辦清單' } });
+    await guardedLoadAll();
+}
+
+/**
+ * 404／403 的返回出口依檢視者而定：打不開交辦總覽（無 Assign／ViewAll）的人回自己的交辦。
+ * ui.js 的 backLinkNode 自己會補站台前綴，這裡只給站內路徑，不可先 appUrl。
+ */
+function backLinkFor(user) {
+    const canOpenList = hasCapability(user, 'Assign') || hasCapability(user, 'ViewAll');
+    if (!canOpenList && user?.userId > 0) return { href: `/handlers/${user.userId}`, text: '回到我的交辦' };
+    return { href: '/work-orders', text: '返回交辦清單' };
+}
+
+async function guardedLoadAll() {
+    const user = await getCurrentUser().catch(() => null);
+    await guardLoad([headerContainer, membersContainer, timelineContainer], loadAll, { backLink: backLinkFor(user) });
 }
 
 function init() {
     renderLoading(headerContainer, 3);
     renderLoading(membersContainer, 5);
     renderLoading(timelineContainer, 3);
-    guardLoad([headerContainer, membersContainer, timelineContainer], loadAll, { backLink: { href: appUrl('/work-orders'), text: '返回交辦清單' } });
+    guardedLoadAll();
 }
 
 init();

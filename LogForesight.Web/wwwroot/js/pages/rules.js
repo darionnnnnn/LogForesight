@@ -10,10 +10,10 @@
 import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
-    renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, button, bindTabs, renderChips,
+    renderTable, renderLoading, renderSpinner, guardLoad, toast, confirmAction, withBusy, button, bindTabs, renderChips, renderPageHeader,
     renderPagination, sortRows, loadPageSize, savePageSize, searchableHostSelect
 } from '../core/ui.js';
-import { severityBadge, elevatesBadge, statusBadge, formatDate, severityName } from '../core/format.js';
+import { severityBadge, elevatesBadge, statusBadge, formatDate, formatDateTime, severityName, toLocalDateString as dateText } from '../core/format.js';
 
 const CATEGORY_NAMES = {
     Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
@@ -63,6 +63,15 @@ let hostSelectWidget = null; // 抑制 modal 的主機搜尋型選取器（回�
 let groupOptions = null;  // 抑制 modal 的主機群組下拉候選（範圍選 Group 時用），null = 尚未載入
 
 const kbCollapse = new bootstrap.Collapse(document.getElementById('rule-kb'), { toggle: false });
+
+// 頁首：一句用途副標＋規則維護說明（原 .lf-hint）；本頁的「新增規則」在規則清單工具列內，不屬頁首
+renderPageHeader(document.getElementById('page-header'), {
+    subtitle: '規則儲存前會自動驗證，不合格不會寫入。',
+    help: {
+        title: '關於規則維護',
+        content: '儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。規則由上而下依「順序」欄比對，第一條命中者生效；新規則一律加在清單最後，本頁不支援調整順序。'
+    }
+});
 
 const ruleTabsEl = document.getElementById('rule-tabs');
 bindTabs(ruleTabsEl);
@@ -814,7 +823,6 @@ async function runDiskPreview(event) {
     through.setHours(12, 0, 0, 0);
     const from = new Date(through);
     from.setDate(from.getDate() - (days - 1));
-    const dateText = value => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
     const requestBody = { fromDate: dateText(from), throughDate: dateText(through), offset, limit, rule: collectRule() };
     const fingerprint = JSON.stringify(requestBody);
     const requestId = ++diskPreviewRequestId;
@@ -827,7 +835,7 @@ async function runDiskPreview(event) {
     try {
         const result = await api.post('/api/rules/disk-trend-preview', requestBody);
         if (requestId !== diskPreviewRequestId) return;
-        const latest = result.latestPreviewAt ? new Date(result.latestPreviewAt).toLocaleString() : '—';
+        const latest = result.latestPreviewAt ? formatDateTime(result.latestPreviewAt) : '—';
         const candidateCount = Number(result.candidateCount ?? 0);
         const assessedCount = Number(result.assessedCount ?? (result.rows ?? []).length);
         const totalCount = Number(result.dateSensorAssessmentRowCount ?? candidateCount);
@@ -1024,7 +1032,6 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         through.setHours(12, 0, 0, 0);
         const from = new Date(through);
         from.setDate(from.getDate() - (days - 1));
-        const dateText = value => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
         const currentFingerprint = JSON.stringify({ fromDate: dateText(from), throughDate: dateText(through), offset: diskPreviewOffset, limit, rule: draft });
         if (!diskPreviewHasResult || currentFingerprint !== diskPreviewFingerprint) {
             restore();
@@ -1033,7 +1040,7 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         }
         const previewResult = await confirmAction({
             title: '確認啟用磁碟趨勢規則',
-            message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${new Date(latestDiskPreview.latestPreviewAt).toLocaleString()}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
+            message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${formatDateTime(latestDiskPreview.latestPreviewAt)}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
             confirmText: '確認啟用', confirmVariant: 'warning'
         });
         if (!previewResult) { restore(); return; }
@@ -1045,7 +1052,6 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         through.setHours(12, 0, 0, 0);
         const from = new Date(through);
         from.setDate(from.getDate() - (days - 1));
-        const dateText = value => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
         const currentFingerprint = JSON.stringify({ fromDate: dateText(from), throughDate: dateText(through), offset: diskPreviewOffset, limit, rule: draft });
         if (!diskPreviewHasResult || currentFingerprint !== diskPreviewFingerprint) {
             restore();
@@ -1054,7 +1060,7 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
         }
         const previewResult = await confirmAction({
             title: '確認啟用趨勢規則',
-            message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${new Date(latestDiskPreview.latestPreviewAt).toLocaleString()}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
+            message: `最近一次有效草稿試算：${latestDiskPreview.fromDate} 至 ${latestDiskPreview.throughDate}，頁面 ${Math.floor(diskPreviewOffset / limit) + 1}，完成時間 ${formatDateTime(latestDiskPreview.latestPreviewAt)}。目前樣本頁唯一命中主機 ${latestDiskPreview.uniqueHitHostCount ?? 0} 台；未受目前抑制的命中配對列 ${latestDiskPreview.unsuppressedHitRowCount ?? 0} 列。這只表示本頁未受抑制的命中配對列數，受分頁影響且一列可能涉及多位負責人，不能推算實際交辦量；資料只涵蓋目前樣本頁，不代表全站。實際派工仍受既有閘門控制。確定儲存並啟用嗎？`,
             confirmText: '確認啟用', confirmVariant: 'warning'
         });
         if (!previewResult) { restore(); return; }
@@ -1149,32 +1155,18 @@ async function openRestoreModal(rule) {
     body.appendChild(note);
 
     const wrap = document.createElement('div');
-    wrap.className = 'lf-table-wrap';
-
-    const table = document.createElement('table');
-    table.className = 'table table-sm mb-0';
-    table.innerHTML = '<thead><tr><th>欄位</th><th>目前內容</th><th>內建預設</th></tr></thead>';
-
-    const tbody = document.createElement('tbody');
-    for (const diff of preview.differences) {
-        const tr = document.createElement('tr');
-
-        const field = document.createElement('th');
-        field.textContent = diff.field;
-
-        const current = document.createElement('td');
-        current.className = 'small';
-        current.textContent = diff.current || '（空）';
-
-        const seed = document.createElement('td');
-        seed.className = 'small text-success';
-        seed.textContent = diff.seed || '（空）';
-
-        tr.append(field, current, seed);
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
+    renderTable(wrap, {
+        columns: [
+            { title: '欄位', render: diff => diff.field },
+            { title: '目前內容', className: 'small', render: diff => diff.current || '（空）' },
+            {
+                title: '內建預設',
+                className: 'small text-success',
+                render: diff => diff.seed || '（空）'
+            }
+        ],
+        rows: preview.differences
+    });
     body.appendChild(wrap);
 }
 
@@ -1457,7 +1449,7 @@ if (searchParam) document.getElementById('rule-search').value = searchParam;
 
 updateSearchPlaceholder();
 setupToolbar();
-load();
+guardLoad(document.getElementById('rule-list'), load);
 
 // ── 內建規則升級（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）──────
 
@@ -1465,9 +1457,19 @@ const ruleImportModal = new bootstrap.Modal(document.getElementById('rule-import
 
 async function checkRuleImportStatus() {
     const status = await api.get('/api/rules/import-status', { silent: true }).catch(() => null);
-    if (!status) return;
 
     const banner = document.getElementById('rule-import-banner');
+    const previewButton = document.getElementById('rule-import-preview-btn');
+    if (!status) {
+        // 取不到更新狀態不影響規則維護本身，但不能完全無聲：降級說明讓管理者知道這條資訊缺席
+        document.getElementById('rule-import-banner-text').textContent =
+            '無法取得內建規則更新狀態，其餘功能仍可使用。';
+        previewButton.classList.add('d-none');
+        banner.classList.remove('d-none');
+        return;
+    }
+
+    previewButton.classList.remove('d-none');
     if (status.hasUpdate) {
         document.getElementById('rule-import-banner-text').textContent =
             `內建規則有更新（v${status.currentSeedVersion} → v${status.latestSeedVersion}）`;
@@ -1491,7 +1493,7 @@ async function loadRuleImportPreview() {
     const itemsEl = document.getElementById('rule-import-items');
     const applyButton = document.getElementById('rule-import-apply-btn');
 
-    renderSpinner(summaryEl, '載入中…');
+    renderSpinner(summaryEl);
     itemsEl.replaceChildren();
     applyButton.disabled = true;
 

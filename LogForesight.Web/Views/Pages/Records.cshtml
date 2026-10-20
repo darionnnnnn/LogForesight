@@ -4,26 +4,26 @@
 
 <div class="lf-toolbar lf-no-print">
     <form id="filter-form" class="lf-toolbar__row">
-        <div class="lf-toolbar__field position-relative" style="min-width: 240px;">
+        <div class="lf-toolbar__field position-relative lf-minw-xl">
             <label for="filter-host-search" class="form-label small mb-1">主機</label>
             <input type="text" class="form-control form-control-sm" id="filter-host-search"
                    placeholder="輸入主機名稱搜尋…" autocomplete="off" />
-            <div id="filter-host-suggestions" class="dropdown-menu p-0" style="max-height: 260px; overflow-y: auto;"></div>
+            <div id="filter-host-suggestions" class="dropdown-menu p-0 lf-scroll-lg"></div>
             <div id="filter-host-chips" class="d-flex flex-wrap gap-1 mt-1"></div>
         </div>
-        <div class="lf-toolbar__field" style="min-width: 150px;">
+        <div class="lf-toolbar__field lf-minw-sm">
             <label for="filter-from" class="form-label small mb-1">起始日期</label>
             <input type="date" class="form-control form-control-sm" id="filter-from" />
         </div>
-        <div class="lf-toolbar__field" style="min-width: 150px;">
+        <div class="lf-toolbar__field lf-minw-sm">
             <label for="filter-to" class="form-label small mb-1">結束日期</label>
             <input type="date" class="form-control form-control-sm" id="filter-to" />
         </div>
-        <div class="lf-toolbar__field" style="min-width: 100px;">
+        <div class="lf-toolbar__field lf-minw-xs">
             <label for="filter-event-id" class="form-label small mb-1">Event ID</label>
             <input type="number" class="form-control form-control-sm" id="filter-event-id" />
         </div>
-        <div class="lf-toolbar__field" style="min-width: 120px;">
+        <div class="lf-toolbar__field lf-minw-xs">
             <label for="filter-source" class="form-label small mb-1">來源（選填）</label>
             <input type="text" class="form-control form-control-sm" id="filter-source" placeholder="如 disk" autocomplete="off" />
         </div>

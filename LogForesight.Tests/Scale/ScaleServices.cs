@@ -78,9 +78,11 @@ internal sealed class ScaleServices
         Dashboard = new DashboardService(
             Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
             settingsStore, aggregates, issueTodo, settingsService, new SummaryCache(new DataVersionStamp()),
-            backend.PrtgStore(), new FixedIssueExclusionSource(IssueExclusion.None));
+            backend.PrtgStore(), new FixedIssueExclusionSource(IssueExclusion.None),
+            // WorkOrderBoard 在本建構子稍後才組好；委派延後到呼叫時才取用
+            (from, to, page) => WorkOrderBoard!.GetGaps(from, to, page));
 
-        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
 
         WorkOrderStore = backend.WorkOrderStore();
         RecordList = new RecordListQueryService(
@@ -141,7 +143,6 @@ internal sealed class ScaleServices
             currentUser,
             auditService,
             displayNames,
-            rules,
             _mail);
 
         var candidates = new DispatchCandidateSource(
