@@ -38,10 +38,12 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **6,241 通過／10 略過**（第 54 輪體檢後併 dev 實測，Windows；移除機制與測試瘦身後由 7,978 降至此數，見 `docs/archive/FEEDBACK-54-PLAN.md` §7）；
-  略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑。文件／說明書批次可先跑定向的
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **6,436 通過／10 略過**（第 56 輪體檢後併 dev，Windows；
+  歷次基線見 `docs/archive/README.md`）；略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑。文件／說明書批次可先跑定向的
   `dotnet test --filter FullyQualifiedName~HelpContentServiceTests` 與 JSON／Markdown 結構校驗；
-  不把定向結果當成整合基線。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
+  不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|JsBehavior|ApiTimeout`——
+  後三類名稱不含 UiTests，漏掉就是漏 import、`mini-dom` 缺方法這種整頁掛掉的退化一路帶到輪末全量才紅；
+  `LogForesight.Tests/JsBehavior/*.behavior.mjs` 以切函式＋替身執行頁面模組，頁面新增匯入的共用函式要在替身補一份。SQL Server 驗證限 EF `ToQueryString` provider 翻譯，未連線實際 SQL Server；模擬整合／SQLite 結果也不代表正式站台或真實 PRTG 驗證。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
 - **設定事實來源**：可調整項以 DB「系統管理 > 設定」（`SystemSettings`）為準；
