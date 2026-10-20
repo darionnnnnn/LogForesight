@@ -480,6 +480,10 @@ public class GapsDto
 {
     public List<GapRowDto> Rows { get; set; } = new();
     public int Total { get; set; }
+
+    /// <summary>全部待派問題中有「無法派出」主機的問題數（不分頁；儀表板待派工卡只呼叫一次試跑就拿得到）</summary>
+    public int UnassignableTotal { get; set; }
+
     public int Page { get; set; }
 
     /// <summary>出現點超過上限：不做試跑，請縮小期間</summary>

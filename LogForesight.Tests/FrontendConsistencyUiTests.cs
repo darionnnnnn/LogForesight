@@ -333,6 +333,17 @@ public class FrontendConsistencyUiTests
     }
 
     [Fact]
+    public void 儀表板待派工問題卡_pendingDispatch為null不建卡_點卡進待派頁籤()
+    {
+        var js = ReadJs("pages", "dashboard.js");
+        Assert.Contains("if (data.pendingDispatch)", js);
+        Assert.Contains("'/work-orders#gaps'", js);
+        Assert.Contains("label: '待派工問題'", js);
+        Assert.Contains("'超過上限'", js);
+        Assert.Contains("無法派出（無可接單人選）", js);
+    }
+
+    [Fact]
     public void D3_儀表板未回報卡依PRTG失聯數切換提示()
     {
         var js = ReadJs("pages", "dashboard.js");

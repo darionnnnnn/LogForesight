@@ -7,6 +7,12 @@ using LogForesight.Web.Repositories;
 
 namespace LogForesight.Web.Services;
 
+/// <summary>
+/// 待派清單試跑的取得方式（對應 <c>WorkOrderBoardService.GetGaps</c>）。儀表板只需要這一支，
+/// 以委派注入（DI 於 ServiceCollectionExtensions 註冊）讓測試不必組整套交辦看板。
+/// </summary>
+public delegate GapsDto PendingDispatchGapsProvider(DateTime? from, DateTime? to, int page);
+
 /// <summary>總覽儀表板（docs/WEB-SPEC.md §9.1）</summary>
 public class DashboardService
 {
@@ -26,6 +32,7 @@ public class DashboardService
     private readonly SummaryCache _summaryCache;
     private readonly EfPrtgStore _prtgStore;
     private readonly IIssueExclusionSource _exclusions;
+    private readonly PendingDispatchGapsProvider _gaps;
 
     public DashboardService(
         IVisibilityService visibility,
@@ -41,8 +48,10 @@ public class DashboardService
         ISystemSettingsService systemSettings,
         SummaryCache summaryCache,
         EfPrtgStore prtgStore,
-        IIssueExclusionSource exclusions, StorageBackend? backend = null)
+        IIssueExclusionSource exclusions,
+        PendingDispatchGapsProvider gaps, StorageBackend? backend = null)
     {
+        _gaps = gaps;
         _backend = backend;
         _prtgStore = prtgStore;
         _visibility = visibility;
@@ -73,12 +82,40 @@ public class DashboardService
         // 靜音排除條件本次請求只取一次：快取鍵與 BuildSummary 內全部查詢（含重點問題、可行動快照、
         // 待辦）用同一份，跨午夜或設定變更時同一頁不會混用兩份規則
         var exclusion = _exclusions.Current();
+        // 鍵含 Assign 能力：PendingDispatch 只有具派工權限者會填（且是依其可見範圍試跑），
+        // 可見主機集合相同、能力不同的兩人共用同一筆就會把待派數端給無權者，或讓有權者看不到卡
+        var canAssign = _currentUser.Has(Auth.Capability.Assign);
         return _summaryCache.GetOrAdd(
-            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|{exclusion.CacheToken}", visibleHosts.Select(h => h.HostId).ToList()),
-            () => BuildSummary(days, visibleHosts, exclusion));
+            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}|assign:{canAssign}|{exclusion.CacheToken}", visibleHosts.Select(h => h.HostId).ToList()),
+            () => BuildSummary(days, visibleHosts, exclusion, canAssign));
     }
 
-    private DashboardDto BuildSummary(int days, List<WebHost> visibleHosts, IssueExclusion exclusion)
+    /// <summary>
+    /// 待派工問題（§9.1）：期間＝昨天往前 7 天（與交辦總覽待派頁籤預設期間一致，
+    /// <c>WorkOrderBoardService</c> 預設 迄日＝昨天、起日＝迄日-6）。
+    /// <c>GetGaps</c> 每頁只回 50 列、無法派出的標記在列上，所以逐頁讀完才數得出全部的「無法派出問題數」；
+    /// 結果進整包快取，不是每次請求都跑。
+    /// </summary>
+    private PendingDispatchDto BuildPendingDispatch()
+    {
+        var to = DateTime.Today.AddDays(-1);
+        var from = to.AddDays(-6);
+        var first = _gaps(from, to, 1);
+        var dto = new PendingDispatchDto
+        {
+            TooLarge = first.TooLarge,
+            From = first.From.ToString("yyyy-MM-dd"),
+            To = first.To.ToString("yyyy-MM-dd")
+        };
+        if (first.TooLarge) return dto;
+
+        // 只呼叫一次：每次 GetGaps 都會重跑整段派工試跑，逐頁翻會讓成本乘上頁數
+        dto.IssueCount = first.Total;
+        dto.UnassignableIssueCount = first.UnassignableTotal;
+        return dto;
+    }
+
+    private DashboardDto BuildSummary(int days, List<WebHost> visibleHosts, IssueExclusion exclusion, bool canAssign)
     {
         // 期間錨點＝昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
         // （AnalysisOrchestrator 固定分析 yesterday），錨在真實今天會讓「今天」按鈕查詢
@@ -92,7 +129,8 @@ public class DashboardService
             Days = days,
             From = from.ToString("yyyy-MM-dd"),
             To = anchor.ToString("yyyy-MM-dd"),
-            TotalHosts = visibleHosts.Count
+            TotalHosts = visibleHosts.Count,
+            PendingDispatch = canAssign ? BuildPendingDispatch() : null
         };
 
         // 全部走 SQL 端聚合（SCALE-3000 S4），不再把整段期間的紀錄載入記憶體。

@@ -204,6 +204,7 @@ public class WorkOrderBoardService
             .ThenBy(s => s.EventId)
             .ToList();
         dto.Total = summaries.Count;
+        dto.UnassignableTotal = summaries.Count(s => s.Unassignable.Count > 0);
 
         var pageRows = summaries.Skip((page - 1) * GapPageSize).Take(GapPageSize).ToList();
         if (pageRows.Count == 0) return dto;

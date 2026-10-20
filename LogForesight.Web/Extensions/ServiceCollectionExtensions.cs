@@ -366,6 +366,8 @@ public static class ServiceCollectionExtensions
         // 可行動快照的短 TTL 跨請求快取（回饋三十六輪批次B）：機制比照 IssueRankingCache
         services.AddSingleton<ActionableSnapshotCache>(_ => new ActionableSnapshotCache());
         services.AddScoped<IssueTodoQuery>();
+        // 儀表板「待派工問題」卡取待派試跑用（§9.1）：委派指向 WorkOrderBoardService.GetGaps
+        services.AddScoped<PendingDispatchGapsProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGaps);
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 

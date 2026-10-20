@@ -69,6 +69,28 @@ public class DashboardDto
 
     /// <summary>依主機群組的風險概況（§5.4 D-4）：兩千台規模下「先看部門、再下鑽」是主要動線</summary>
     public List<DashboardGroupRiskDto> GroupRisk { get; set; } = new();
+
+    /// <summary>待派工問題（§9.1）：僅具 Assign 者填，其餘為 null——前端據此決定要不要建卡片</summary>
+    public PendingDispatchDto? PendingDispatch { get; set; }
+}
+
+/// <summary>儀表板「待派工問題」卡：資料同交辦總覽待派頁籤的試跑（近 7 天）</summary>
+public class PendingDispatchDto
+{
+    /// <summary>待派問題分組總數（<c>GapsDto.Total</c>，不是當頁筆數）；<see cref="TooLarge"/> 時為 0 且不可信</summary>
+    public int IssueCount { get; set; }
+
+    /// <summary>其中無法派出（無可接單人選）的問題數</summary>
+    public int UnassignableIssueCount { get; set; }
+
+    /// <summary>出現點超過試跑上限：不計數，請到待派頁籤縮小期間</summary>
+    public bool TooLarge { get; set; }
+
+    /// <summary>試跑期間起日（yyyy-MM-dd）</summary>
+    public string From { get; set; } = string.Empty;
+
+    /// <summary>試跑期間迄日（yyyy-MM-dd）</summary>
+    public string To { get; set; } = string.Empty;
 }
 
 /// <summary>

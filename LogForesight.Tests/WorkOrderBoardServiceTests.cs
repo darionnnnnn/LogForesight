@@ -391,11 +391,15 @@ public class WorkOrderBoardServiceTests : IDisposable
         var host = AddHost("HOST-A");
         Candidate(h, inPool: false);
 
-        var row = RowOf(Service().GetGaps(null, null, 1), "disk");
+        var gaps = Service().GetGaps(null, null, 1);
+        var row = RowOf(gaps, "disk");
 
         Assert.Empty(row.Suggested);
         var u = Assert.Single(row.Unassignable);
         Assert.Equal((WorkOrderDispatcher.NoCandidateNoPool, 1), (u.Reason, u.Hosts));
+        // 全量計數：儀表板待派工卡只呼叫一次試跑，靠這個數字而不是逐頁翻
+        Assert.Equal(gaps.Rows.Count(r => r.Unassignable.Count > 0), gaps.UnassignableTotal);
+        Assert.True(gaps.UnassignableTotal > 0);
         Assert.Empty(row.UnseenHostGroups);
         Assert.NotEqual(0, host.HostId);
     }

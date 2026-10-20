@@ -280,6 +280,23 @@ function renderKpi(data, user, displaySettings, myBadge) {
         });
     }
 
+    // 待派工問題（具 Assign 者，後端才填 pendingDispatch）：管理者早上要知道「有多少問題沒人接」。
+    // 資料同交辦總覽待派頁籤的試跑（近 7 天）；點卡直接進該頁籤（#gaps）。null 時不建卡。
+    if (data.pendingDispatch) {
+        const pd = data.pendingDispatch;
+        const unassignable = pd.unassignableIssueCount ?? 0;
+        cards.push({
+            label: '待派工問題',
+            value: pd.tooLarge ? '超過上限' : (pd.issueCount ?? 0),
+            variant: pd.tooLarge || (pd.issueCount ?? 0) > 0 ? 'warning' : 'secondary',
+            hint: unassignable > 0
+                ? `其中 ${formatNumber(unassignable)} 個無法派出（無可接單人選）`
+                : '近 7 天沒人接的問題',
+            // statCard 內才套 appUrl（只加站台前綴、保留 hash）；work-orders 的頁籤列以 hash 選頁籤
+            url: '/work-orders#gaps'
+        });
+    }
+
     // 未回報主機計數卡（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
     // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
     // 0 台時照常顯示，不換成空狀態插圖（KPI 卡列慣例）。
