@@ -213,6 +213,7 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 | F-1 | Sonnet 5.5（規格 task-56-f1） | 完成 | 0 警告；定向 174 綠；突變（拿掉 page-header、加回 h1、清單外加 page-header）皆轉紅 | 26 頁盤點後 8 頁套用；Hosts／Users 動作與篩選同列不套（維持既有 btn-primary 守門）；Reports 列印用 h1 改 p（保留 id，螢幕不重複期間文字） |
 | F-4 補、E-2 補、E-9 補 | Claude（輪末全量與瀏覽器實測抓到） | 完成 | 全量 6,415 綠＋1 紅（JsModuleImportTests）→ 修後轉綠；瀏覽器實測關閉 modal 後焦點回到觸發鈕；焦點歸還突變轉紅；定向 168 綠 | E-2 的交辦單詳情頁漏 import `candidatesToUserOptions`，改派／拆出 modal 開啟即 ReferenceError（E-2 當時只跑定向）；全站 JS 開的 modal 關閉後焦點停在隱藏的 modal → layout.js 事件委派統一歸還；空狀態「右上角」文案在 375px 不成立，五處改「按『…』」；E-9 驗收「§9.4a 不含全角色」只改了內文、標題與使用者詳情頁段落的交叉引用漏改，已補 |
 | E-9 補（規劃逐條比對） | Claude | 完成 | 文件 | WEB-SPEC §9.4b 稽核動作清單補 `_due_date` 與處理人回覆記 `handling_status`（以單號為目標）；其餘 E、F 各項逐條比對無缺漏（F-5／F-6／F-8 殘留 grep 命中皆為非顯示用途或 cssVar 備援值，符合定案意圖） |
+| BACKLOG 清理（規劃逐條比對後） | Sonnet 5.5 唯讀盤點＋ Claude 逐條核實 | 完成 | 每條以 grep／讀碼核實證據 | 刪除已實作的 9 條：BatchRunStore 雙實例序號（已改單調配號）、手冊渲染器限制（已寫進 WEB-SPEC 寫作規範）、前端未回報判定（改讀 isSilent）、真 DNS 偶發測試（改替身與 TimeProvider）、探測截斷警告（群組與 IP 覆蓋已補、dependency 步驟已不存在）、PrtgClient authMode 預設值（已必填）、案件表索引名稱（已對齊）、靜音歷程畫面（issue-owners 已消費）、日層級指派與立即派工建單通知（第 55 輪 C 入 outbox）；JSON 解析輔助重複更新為三處。部分完成的三條（使用者名稱敘事句、sip／shn 投影、全專案重複索引）保留 |
 
 ## 體檢交接
 
