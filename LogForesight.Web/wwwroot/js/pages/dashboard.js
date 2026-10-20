@@ -333,7 +333,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
 
     for (const card of cards) {
         const col = document.createElement('div');
-        col.className = 'col-6 col-lg';
+        col.className = 'col-6 col-lg-3';
         col.appendChild(statCard({
             value: formatNumber(card.value),
             label: card.label,
@@ -382,7 +382,7 @@ function renderCategories(data) {
         card.innerHTML = `
             <div class="lf-card__body">
                 <div class="d-flex align-items-center gap-2 mb-2">
-                    <span class="d-inline-block rounded-circle" style="width:10px;height:10px"></span>
+                    <span class="d-inline-block rounded-circle lf-swatch lf-swatch--sm"></span>
                     <span class="fw-semibold"></span>
                 </div>
                 <div class="d-flex align-items-baseline gap-1 mb-1">
@@ -394,7 +394,7 @@ function renderCategories(data) {
                 <div class="small category-severity"></div>
             </div>`;
 
-        card.querySelector('span.rounded-circle').style.background = colors[category.category] ?? 'var(--lf-cat-other)';
+        card.querySelector('span.rounded-circle').style.setProperty('--lf-swatch', colors[category.category] ?? 'var(--lf-cat-other)');
         card.querySelector('span.fw-semibold').textContent = CATEGORY_NAMES[category.category] ?? category.category;
         // 大數字＝去重問題類型數（同一個問題不論出現在幾台主機、幾天，都只算一項）；
         // 第二行＝相異存活主機數；
@@ -678,8 +678,8 @@ function issueDensityCell(issue) {
     bar.className = 'lf-density';
     bar.title = `期間 ${issue.periodDays} 天內出現 ${issue.activeDays} 天（${Math.round(ratio * 100)}%）`;
     const fill = document.createElement('span');
-    fill.className = 'lf-density__fill';
-    fill.style.width = `${Math.max(4, Math.round(ratio * 100))}%`;
+    fill.className = 'lf-density__fill lf-progress-fill';
+    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
     bar.appendChild(fill);
     wrap.appendChild(bar);
 

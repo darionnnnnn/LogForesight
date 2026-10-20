@@ -149,7 +149,7 @@ function renderQueues() {
 
     for (const card of cards) {
         const col = document.createElement('div');
-        col.className = 'col-md-4';
+        col.className = 'col-12 col-md-4';
 
         const button = document.createElement('button');
         button.type = 'button';

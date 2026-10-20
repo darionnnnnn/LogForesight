@@ -170,10 +170,8 @@ function renderLegend() {
         item.className = 'd-flex align-items-center gap-1';
 
         const swatch = document.createElement('span');
-        swatch.className = 'rounded d-inline-block';
-        swatch.style.width = '12px';
-        swatch.style.height = '12px';
-        swatch.style.background = meta.color;
+        swatch.className = 'rounded d-inline-block lf-swatch lf-swatch--md';
+        swatch.style.setProperty('--lf-swatch', meta.color);
 
         const label = document.createElement('span');
         label.textContent = meta.label;
@@ -233,11 +231,17 @@ function renderSummary(summaryPage) {
     }
 }
 
+/** 進度條寬度是動態量值：設 CSS 變數，由 .lf-progress-fill 消費 */
+function setBarProgress(barEl, percent) {
+    barEl.classList.add('lf-progress-fill');
+    barEl.style.setProperty('--lf-progress', `${percent}%`);
+}
+
 function countCell(count, status) {
     if (count === 0) return document.createTextNode('');
     const span = document.createElement('span');
-    span.style.color = STATUS_META[status].color;
-    span.style.fontWeight = '600';
+    span.className = 'lf-status-count';
+    span.style.setProperty('--lf-status-color', STATUS_META[status].color);
     span.textContent = String(count);
     return span;
 }
@@ -360,10 +364,8 @@ function statusBadgeCell(status) {
     span.className = 'd-inline-flex align-items-center gap-2';
 
     const swatch = document.createElement('span');
-    swatch.className = 'rounded d-inline-block';
-    swatch.style.width = '10px';
-    swatch.style.height = '10px';
-    swatch.style.background = meta.color;
+    swatch.className = 'rounded d-inline-block lf-swatch lf-swatch--sm';
+    swatch.style.setProperty('--lf-swatch', meta.color);
 
     const text = document.createElement('span');
     text.textContent = meta.label;
@@ -470,8 +472,7 @@ function renderRunListTable() {
 
 function messageCell(group) {
     const div = document.createElement('div');
-    div.className = 'small';
-    div.style.maxWidth = '40rem';
+    div.className = 'small lf-maxw-xl';
     div.textContent = group.message;
     return div;
 }
@@ -549,8 +550,7 @@ async function showDetail(runId, retryBody = null) {
     const filterWrap = document.createElement('div');
     filterWrap.className = 'd-flex justify-content-end mb-2';
     const levelSelect = document.createElement('select');
-    levelSelect.className = 'form-select form-select-sm';
-    levelSelect.style.width = '180px';
+    levelSelect.className = 'form-select form-select-sm lf-w-lg';
     // 預設「重要紀錄」：執行輸出（Logger=Output）量大，預設隱藏，只看里程碑／警告／錯誤
     for (const [value, text] of [['important', '重要紀錄'], ['', '全部（含執行輸出）'], ['Warn', 'Warn 以上'], ['Error', 'Error 以上']]) {
         const option = document.createElement('option');
@@ -1188,7 +1188,7 @@ function applyAiScheduleStatus(status) {
     if (pendingEl) {
         if (status.pendingTotal > 0) {
             pendingEl.textContent = `${formatNumber(status.pendingTotal)} 件`;
-            pendingEl.style.color = 'var(--lf-accent-text)';
+            pendingEl.classList.add('lf-text-accent');
             pendingEl.classList.remove('text-muted');
         } else {
             // pendingTotal 只數待處理項目；目前批次可能已領走最後一件但尚未完成。
@@ -1196,7 +1196,7 @@ function applyAiScheduleStatus(status) {
             pendingEl.textContent = status.isRunning
                 ? '0 件（本次分析尚未結束）'
                 : '0 件（已全部完成）';
-            pendingEl.style.color = '';
+            pendingEl.classList.remove('lf-text-accent');
             pendingEl.classList.add('text-muted');
         }
     }
@@ -1359,7 +1359,7 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
         const label = customLabel || defaultLabel;
         barEl?.classList.remove('progress-bar-striped', 'progress-bar-animated');
         if (barEl) {
-            barEl.style.width = '100%';
+            setBarProgress(barEl, 100);
             barEl.title = label;
         }
         if (textEl) textEl.textContent = label;
@@ -1371,7 +1371,7 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
         const label = customLabel || (labelPrefix ? `${labelPrefix}　${done} / ${total} ${unit}` : `${done} / ${total} ${unit}`);
         barEl?.classList.remove('progress-bar-striped', 'progress-bar-animated');
         if (barEl) {
-            barEl.style.width = `${pct}%`;
+            setBarProgress(barEl, pct);
             barEl.title = label;
         }
         if (textEl) textEl.textContent = label;
@@ -1379,7 +1379,7 @@ function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, la
         const label = customLabel || (labelPrefix ? `${labelPrefix}　準備中…` : '準備中…');
         barEl?.classList.add('progress-bar-striped', 'progress-bar-animated');
         if (barEl) {
-            barEl.style.width = '100%';
+            setBarProgress(barEl, 100);
             barEl.title = label;
         }
         if (textEl) textEl.textContent = label;
@@ -1918,7 +1918,7 @@ function confirmRunWithPrtgValues(days, segment) {
     return new Promise(resolve => {
         const body = document.createElement('div');
         const message = document.createElement('p');
-        message.style.whiteSpace = 'pre-line';
+        message.className = 'lf-pre-line';
         message.textContent = `PRTG 會補齊這 ${days} 天的狀態變更與規則評估，讓重跑的日子也帶到 PRTG 訊號。\n\n仍要開始執行嗎？`;
 
         const check = document.createElement('div');

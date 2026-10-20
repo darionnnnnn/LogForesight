@@ -847,7 +847,7 @@ function detailView(change) {
         diffWrap.innerHTML = `
             <table class="table table-sm bg-white mb-0 border">
                 <tbody>
-                    <tr><th style="width:6rem" class="bg-light text-muted align-top">異動前</th><td class="small"></td></tr>
+                    <tr><th class="bg-light text-muted align-top lf-w-sm">異動前</th><td class="small"></td></tr>
                     <tr><th class="bg-light text-muted align-top">異動後</th><td class="small"></td></tr>
                 </tbody>
             </table>`;
@@ -883,11 +883,7 @@ function detailView(change) {
         rawWrap.appendChild(rawLabel);
 
         const rawBody = document.createElement('div');
-        rawBody.className = 'lf-mono small border rounded bg-white p-2';
-        rawBody.style.maxHeight = '18rem';
-        rawBody.style.overflowY = 'auto';
-        rawBody.style.whiteSpace = 'pre-wrap';
-        rawBody.style.wordBreak = 'break-word';
+        rawBody.className = 'lf-mono small border rounded bg-white p-2 lf-scroll-xl lf-pre-wrap lf-break-word';
         rawBody.textContent = rawText !== '' ? rawText : fallbackText;
         rawWrap.appendChild(rawBody);
 

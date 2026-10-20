@@ -630,3 +630,7 @@
   表與 store 保留一輪讓既有站台升級後仍可讀舊列。**觸發時機**：下一輪開工時連同 `Capture`、`PendingQuality` 等死碼一起刪，SchemaUpgrader 補冪等 DROP。
 - **已停寫的欄位**：`lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`
   程式已不讀寫，既有資料庫欄位保留（不寫 DROP COLUMN，避免 SQL Server 端的相依約束風險）。**觸發時機**：與上一條同一輪處理。
+
+## 深色模式（明確不做）
+
+DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案。**觸發時機**：使用者提出夜間值班需求。

@@ -221,7 +221,7 @@ function renderKpi(data) {
 
     for (const c of cards) {
         const col = document.createElement('div');
-        col.className = 'col-6 col-md-3';
+        col.className = 'col-6 col-lg-3';
         col.appendChild(statCard({ value: formatNumber(c.value), label: c.label, variant: c.variant }));
         kpiEl.appendChild(col);
     }

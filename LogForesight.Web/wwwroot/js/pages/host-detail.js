@@ -211,7 +211,7 @@ function renderTimeline(detail) {
             const cell = document.createElement(day.hasRecord ? 'a' : 'span');
             cell.className = 'lf-calendar__cell lf-timeline-cell';
             cell.dataset.date = day.date;   // 問題發生明細展開時的高亮連動用（docs/archive/FEEDBACK-4-PLAN.md §3）
-            cell.style.backgroundColor = cellColor(day);
+            cell.style.setProperty('--lf-swatch', cellColor(day));
 
             const dayNum = parseInt(day.date.split('-')[2], 10);
             cell.textContent = String(dayNum);
@@ -265,10 +265,8 @@ function renderLegend() {
         wrap.className = 'd-flex align-items-center gap-1';
 
         const swatch = document.createElement('span');
-        swatch.className = 'rounded d-inline-block';
-        swatch.style.width = '12px';
-        swatch.style.height = '12px';
-        swatch.style.background = item.color;
+        swatch.className = 'rounded d-inline-block lf-swatch lf-swatch--md';
+        swatch.style.setProperty('--lf-swatch', item.color);
 
         const label = document.createElement('span');
         label.textContent = item.label;

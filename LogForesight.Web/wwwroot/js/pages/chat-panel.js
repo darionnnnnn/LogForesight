@@ -231,22 +231,20 @@ function renderBubble(message) {
     row.className = `d-flex mb-2 ${message.role === 'user' ? 'justify-content-end' : 'justify-content-start'}`;
 
     const bubble = document.createElement('div');
-    bubble.style.maxWidth = '85%';
 
     if (message.role === 'user') {
         // 使用者自己輸入的文字，原樣呈現即可，不必解析 Markdown
-        bubble.className = 'p-2 rounded bg-primary text-white';
-        bubble.style.whiteSpace = 'pre-wrap';
+        bubble.className = 'p-2 rounded bg-primary text-white lf-bubble lf-pre-wrap';
         bubble.textContent = message.content;
     } else if (message.failed) {
-        bubble.className = 'lf-ai-block';
+        bubble.className = 'lf-ai-block lf-bubble';
         const text = document.createElement('div');
-        text.style.whiteSpace = 'pre-wrap';
+        text.className = 'lf-pre-wrap';
         text.textContent = message.content;
         bubble.appendChild(text);
     } else {
         // AI 回覆：安全子集 Markdown 渲染（**粗體**／清單等），取代原本星號原樣顯示
-        bubble.className = 'lf-ai-block';
+        bubble.className = 'lf-ai-block lf-bubble';
         if (message.fetchedLogCount > 0) {
             const note = document.createElement('div');
             note.className = 'small text-muted mb-1';
@@ -265,8 +263,7 @@ function renderThinkingBubble() {
     row.className = 'd-flex mb-2 justify-content-start';
 
     const bubble = document.createElement('div');
-    bubble.className = 'lf-ai-block';
-    bubble.style.maxWidth = '85%';
+    bubble.className = 'lf-ai-block lf-bubble';
 
     const typing = document.createElement('div');
     typing.className = 'lf-typing';

@@ -330,7 +330,6 @@ export function toast(message, type = 'info', delay = 4000, options = {}) {
         container = document.createElement('div');
         container.id = 'lf-toast-container';
         container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-        container.style.zIndex = '1090';
         document.body.appendChild(container);
     }
 
@@ -393,7 +392,7 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
         el.querySelector('.modal-title').textContent = title;
         const body = el.querySelector('.modal-body p');
         body.textContent = message;
-        body.style.whiteSpace = 'pre-line';   // 呼叫端用換行字元排條列，textContent 不會自己換行
+        body.classList.add('lf-pre-line');   // 呼叫端用換行字元排條列，textContent 不會自己換行
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
         el.querySelector('[data-lf-cancel]').textContent = cancelText;
 
@@ -1055,7 +1054,7 @@ export function renderLoading(container, rows = 4) {
     for (let i = 0; i < rows; i++) {
         const bar = document.createElement('div');
         bar.className = 'lf-skeleton mb-2';
-        bar.style.width = `${70 + Math.random() * 30}%`;
+        bar.style.setProperty('--lf-skeleton-width', `${70 + Math.random() * 30}%`);
         el.appendChild(bar);
     }
     container.replaceChildren(el);
@@ -1217,8 +1216,7 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
 
     const search = document.createElement('input');
     search.type = 'text';
-    search.className = 'form-control';
-    search.style.flex = '0 1 40%';
+    search.className = 'form-control lf-flex-search';
     search.placeholder = '篩選…';
     search.autocomplete = 'off';
 
@@ -1314,8 +1312,7 @@ export function searchableHostSelect({ platform = 'windows', selectedHost = null
 
     const search = document.createElement('input');
     search.type = 'text';
-    search.className = 'form-control';
-    search.style.flex = '0 1 40%';
+    search.className = 'form-control lf-flex-search';
     search.placeholder = '輸入主機名稱、顯示名稱或 IP 搜尋…';
     search.autocomplete = 'off';
 

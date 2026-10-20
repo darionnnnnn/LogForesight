@@ -99,7 +99,7 @@ function baseOptions({ drillTo, onDrill, type }) {
         },
         onHover: (event, elements) => {
             // 可下鑽時把游標變成手指——沒有這個提示，使用者不會知道圖是可以點的
-            event.native.target.style.cursor = drillTo && elements.length > 0 ? 'pointer' : 'default';
+            event.native.target.classList.toggle('lf-pointer', Boolean(drillTo) && elements.length > 0);
         }
     };
 
@@ -224,7 +224,7 @@ export function attachDoughnutLegend(container, items) {
 
         const dot = document.createElement('span');
         dot.className = 'lf-legend-row__dot';
-        dot.style.backgroundColor = item.color;
+        dot.style.setProperty('--lf-swatch', item.color);
 
         const label = document.createElement('span');
         label.className = 'lf-legend-row__label';
@@ -332,5 +332,5 @@ function fitCenterText(canvasWrapper, label) {
     if (shortSide <= 0) return;
     // 甜甜圈預設環寬約半徑的一半，內圈直徑約短邊的一半——字寬控制在內圈以內
     const size = Math.max(11, Math.min(20, shortSide * 0.18));
-    label.style.fontSize = `${size.toFixed(1)}px`;
+    label.style.setProperty('--lf-center-font-size', `${size.toFixed(1)}px`);
 }

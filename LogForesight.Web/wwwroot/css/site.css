@@ -473,6 +473,14 @@ input:-webkit-autofill:active {
     font-size: var(--lf-font-size-sm);
 }
 
+/* 警示框改用設計系統的琥珀語意色（原本各頁以 inline style 拼這組顏色，收斂成元件級變數）*/
+.alert-warning {
+    --bs-alert-bg: var(--lf-warning-soft);
+    --bs-alert-color: var(--lf-warning-text);
+    --bs-alert-border-color: var(--lf-warning);
+    border-color: var(--lf-warning);
+}
+
 /* 底線式頁籤（三個用 nav-tabs 的頁面零 markup 變更即生效）*/
 .nav-tabs {
     --bs-nav-tabs-border-color: var(--lf-border);
@@ -586,7 +594,21 @@ input:-webkit-autofill:active {
     font-size: var(--lf-brand-subtitle-size);
     font-weight: 400;
     line-height: 1.05;
+    /* 字距與右側補償由 brand-align.js 依量測結果設成變數（未設＝不撐開） */
+    letter-spacing: var(--lf-brand-spacing, 0);
+    margin-right: var(--lf-brand-offset, 0);
+}
+
+/* 副標題自然寬度的離屏量測節點；字型屬性由 brand-align.js 以變數帶入 */
+.lf-brand-probe {
+    position: absolute;
+    visibility: hidden;
+    white-space: pre;
     letter-spacing: 0;
+    font-family: var(--lf-probe-font-family);
+    font-size: var(--lf-probe-font-size);
+    font-weight: var(--lf-probe-font-weight);
+    font-style: var(--lf-probe-font-style);
 }
 
 /* 圖示固定正方形＋置中：aspect-ratio 鎖住比例，align-self:center 不跟著父層 stretch
@@ -1170,7 +1192,7 @@ a.lf-stat:hover .lf-card,
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 1.25rem;
+    font-size: var(--lf-center-font-size, 1.25rem);
     font-weight: 600;
     line-height: 1;
     pointer-events: none;
@@ -1250,6 +1272,7 @@ a.lf-stat:hover .lf-card,
     height: .7em;
     border-radius: 50%;
     flex-shrink: 0;
+    background: var(--lf-swatch);
 }
 
 .lf-legend-row__label {
@@ -2047,6 +2070,7 @@ a.lf-calendar__cell:focus-visible {
 }
 
 .lf-skeleton {
+    width: var(--lf-skeleton-width, auto);
     height: 1rem;
     border-radius: var(--lf-radius-sm);
     background: linear-gradient(90deg, var(--lf-gray-100) 25%, var(--lf-gray-200) 37%, var(--lf-gray-100) 63%);
@@ -2406,3 +2430,73 @@ a.lf-calendar__cell:focus-visible {
 .lf-input-narrow {
     max-width: 7.5rem;
 }
+
+/* ==========================================================================
+   Inline style 收斂工具類（頁面與頁模組不寫 inline style）
+   - 固定量值：寬度／最小寬度／最大寬度／捲動區高度，一律用下列 class。
+   - 動態量值（進度、色塊顏色、量測結果）：JS 只設 CSS 變數，由這裡的 class 消費。
+   ========================================================================== */
+
+/* 寬度（表格欄寬提示、固定寬控制項） */
+.lf-w-xxs { width: 2.5rem; }
+.lf-w-xs { width: 4rem; }
+.lf-w-sm { width: 6rem; }
+.lf-w-md { width: 8rem; }
+.lf-w-mdl { width: 10rem; }
+.lf-w-lg { width: 12rem; }
+
+/* 最小寬度（工具列欄位） */
+.lf-minw-xs { min-width: 7.5rem; }
+.lf-minw-sm { min-width: 10rem; }
+.lf-minw-md { min-width: 11.25rem; }
+.lf-minw-lg { min-width: 12.5rem; }
+.lf-minw-xl { min-width: 15rem; }
+.lf-minw-xxl { min-width: 16.25rem; }
+
+/* 最大寬度（.lf-input-narrow 為 7.5rem 的數字輸入） */
+.lf-maxw-sm { max-width: 12rem; }
+.lf-maxw-md { max-width: 14rem; }
+.lf-maxw-lg { max-width: 32rem; }
+.lf-maxw-xl { max-width: 40rem; }
+
+/* 捲動區：限制高度、超出時捲動 */
+.lf-scroll-sm { max-height: 12rem; overflow: auto; }
+.lf-scroll-md { max-height: 14rem; overflow: auto; }
+.lf-scroll-lg { max-height: 16rem; overflow: auto; }
+.lf-scroll-xl { max-height: 18rem; overflow: auto; }
+
+/* 雜項固定樣式 */
+.lf-pointer { cursor: pointer; }
+.lf-pre-line { white-space: pre-line; }
+.lf-pre-wrap { white-space: pre-wrap; }
+.lf-break-word { word-break: break-word; }
+.lf-text-accent { color: var(--lf-accent-text); }
+.lf-progress-thin { height: 8px; }
+.btn-close.lf-close-xs { font-size: .6rem; }
+.input-group > .lf-flex-search { flex: 0 1 40%; }
+.lf-bubble { max-width: 85%; }
+.lf-wizard-host-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    column-gap: .75rem;
+}
+
+/* 提示框（淡底色＋語意文字色） */
+.lf-callout-info {
+    background-color: var(--lf-info-soft);
+    color: var(--lf-info-text);
+}
+
+.lf-callout-warning {
+    background-color: var(--lf-warning-soft);
+    color: var(--lf-warning-text);
+}
+
+/* 動態量值：色塊顏色（--lf-swatch）、進度寬度（--lf-progress）、狀態文字色（--lf-status-color） */
+.lf-swatch { background: var(--lf-swatch); }
+.lf-swatch--sm { width: 10px; height: 10px; }
+.lf-swatch--md { width: 12px; height: 12px; }
+.lf-swatch--lg { width: 14px; height: 14px; }
+.lf-progress-fill { width: var(--lf-progress, 0); }
+.lf-status-count { color: var(--lf-status-color); font-weight: 600; }
+.lf-timeline-cell { background-color: var(--lf-swatch); }

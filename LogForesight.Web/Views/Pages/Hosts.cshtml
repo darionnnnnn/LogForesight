@@ -9,7 +9,7 @@
         <div class="lf-toolbar__search">
             <input type="search" class="form-control form-control-sm" id="host-search" placeholder="搜尋名稱／顯示名／IP" />
         </div>
-        <div class="lf-toolbar__field" style="min-width: 160px;">
+        <div class="lf-toolbar__field lf-minw-sm">
             <select class="form-select form-select-sm" id="sentinel-filter">
                 <option value="">所有 Sentinel</option>
             </select>
@@ -145,12 +145,12 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">主機群組</label>
-                            <div id="host-groups" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                            <div id="host-groups" class="border rounded p-2 lf-scroll-sm"></div>
                             <div class="form-text">決定哪些部門看得到這台主機。<strong>未分組時只有 admin 看得到。</strong></div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">負責人</label>
-                            <div id="host-owners" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                            <div id="host-owners" class="border rounded p-2 lf-scroll-sm"></div>
                             <div class="form-text">
                                 負責人會<strong>自動取得</strong>所負責主機的檢視權限，並具備處理狀態維護權限（等同部門群組授權的第二條路徑）。
                             </div>
@@ -264,7 +264,7 @@
                     </div>
                     <div>
                         <label class="form-label">群組</label>
-                        <div id="batch-groups-checks" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                        <div id="batch-groups-checks" class="border rounded p-2 lf-scroll-sm"></div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -337,7 +337,7 @@
                     </div>
                     <div>
                         <label class="form-label">使用者</label>
-                        <div id="batch-owners-checks" class="border rounded p-2" style="max-height: 220px; overflow-y: auto;"></div>
+                        <div id="batch-owners-checks" class="border rounded p-2 lf-scroll-md"></div>
                         <div class="form-text">負責人會自動取得所負責主機的檢視權限與處理能力。</div>
                     </div>
                 </div>

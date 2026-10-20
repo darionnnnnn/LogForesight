@@ -243,9 +243,7 @@ function renderKpi() {
         const warning = document.createElement('div');
         warning.className = 'col-12';
         const msg = document.createElement('div');
-        msg.className = 'small px-3 py-2 rounded';
-        msg.style.backgroundColor = 'var(--lf-warning-soft)';
-        msg.style.color = 'var(--lf-warning-text)';
+        msg.className = 'small px-3 py-2 rounded lf-callout-warning';
         msg.textContent = retentionWarning;
         warning.appendChild(msg);
         container.appendChild(warning);

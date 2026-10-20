@@ -1433,9 +1433,7 @@ function issueCell(issue) {
     // 不是把內容拿掉
     if (currentDetail.detailPruned) {
         const prunedHint = document.createElement('div');
-        prunedHint.className = 'small mt-1 px-2 py-1 rounded';
-        prunedHint.style.backgroundColor = 'var(--lf-info-soft)';
-        prunedHint.style.color = 'var(--lf-info-text)';
+        prunedHint.className = 'small mt-1 px-2 py-1 rounded lf-callout-info';
         prunedHint.textContent = '這一天的詳情已超過保留期並清除，統計、風險等級與問題清單仍然保留。';
         wrap.appendChild(prunedHint);
     } else {
@@ -1532,9 +1530,7 @@ function formatSourceUtc(value) {
  */
 function residualCredentialBlock(issue) {
     const wrap = document.createElement('div');
-    wrap.className = 'small mt-1 px-2 py-1 rounded';
-    wrap.style.backgroundColor = 'var(--lf-info-soft)';
-    wrap.style.color = 'var(--lf-info-text)';
+    wrap.className = 'small mt-1 px-2 py-1 rounded lf-callout-info';
 
     const badge = document.createElement('span');
     badge.className = 'lf-badge lf-badge--secondary';

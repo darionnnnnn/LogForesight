@@ -171,8 +171,7 @@ function renderHostChips() {
 
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.className = 'btn-close btn-close-sm';
-        remove.style.fontSize = '.6rem';
+        remove.className = 'btn-close btn-close-sm lf-close-xs';
         remove.setAttribute('aria-label', `移除主機：${name}`);
         remove.addEventListener('click', () => {
             selectedHosts.delete(id);
@@ -452,9 +451,8 @@ function renderActiveConditions(filters) {
 
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.className = 'btn-close btn-close-sm';
+        remove.className = 'btn-close btn-close-sm lf-close-xs';
         remove.setAttribute('aria-label', `移除條件：${tag.label}`);
-        remove.style.fontSize = '.6rem';
         remove.addEventListener('click', () => {
             // severity/overdue 只存在 URL，移除＝從 URL 拿掉再重查
             const params = new URLSearchParams(location.search);
@@ -1026,8 +1024,8 @@ function issueDensityCell(group) {
     bar.className = 'lf-density mt-1';
     bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
     const fill = document.createElement('span');
-    fill.className = 'lf-density__fill';
-    fill.style.width = `${Math.max(4, Math.round(ratio * 100))}%`;
+    fill.className = 'lf-density__fill lf-progress-fill';
+    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
     bar.appendChild(fill);
     wrap.appendChild(bar);
 
@@ -1697,8 +1695,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     const hostDetails = document.createElement('details');
     hostDetails.className = 'mb-3';
     const hostSummary = document.createElement('summary');
-    hostSummary.className = 'form-label small text-muted';
-    hostSummary.style.cursor = 'pointer';
+    hostSummary.className = 'form-label small text-muted lf-pointer';
     hostSummary.textContent = '檢視受影響主機（0 台）';
     hostDetails.appendChild(hostSummary);
 

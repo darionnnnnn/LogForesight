@@ -491,8 +491,7 @@ function renderCurrentMembers() {
         details.open = true;
 
         const summary = document.createElement('summary');
-        summary.className = 'px-2 py-1 small';
-        summary.style.cursor = 'pointer';
+        summary.className = 'px-2 py-1 small lf-pointer';
         summary.textContent = `${cidr}（${members.length} 台）`;
         details.appendChild(summary);
 
