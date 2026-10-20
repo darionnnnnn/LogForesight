@@ -212,6 +212,7 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 | F-2 | Sonnet 5.5（規格 task-56-f2）＋ Claude 補做 | 完成 | 0 警告；定向 174 綠；突變（table-sm、多一張自建表、Runs 缺 table-sm、主機欄缺 truncate）皆轉紅 | 子代理只對新改的表加 truncate，漏了規格第 5 項的既有呼叫端，Claude 補 21 處（多行區塊儲存格不套 nowrap）並加守門；順手修 F-3 留下的退化：ui.js 改用 style.setProperty 寫 token，測試用 mini-dom 沒有此方法，ApiTimeoutBehaviorTests 自 F-3 起是紅的 |
 | F-1 | Sonnet 5.5（規格 task-56-f1） | 完成 | 0 警告；定向 174 綠；突變（拿掉 page-header、加回 h1、清單外加 page-header）皆轉紅 | 26 頁盤點後 8 頁套用；Hosts／Users 動作與篩選同列不套（維持既有 btn-primary 守門）；Reports 列印用 h1 改 p（保留 id，螢幕不重複期間文字） |
 | F-4 補、E-2 補、E-9 補 | Claude（輪末全量與瀏覽器實測抓到） | 完成 | 全量 6,415 綠＋1 紅（JsModuleImportTests）→ 修後轉綠；瀏覽器實測關閉 modal 後焦點回到觸發鈕；焦點歸還突變轉紅；定向 168 綠 | E-2 的交辦單詳情頁漏 import `candidatesToUserOptions`，改派／拆出 modal 開啟即 ReferenceError（E-2 當時只跑定向）；全站 JS 開的 modal 關閉後焦點停在隱藏的 modal → layout.js 事件委派統一歸還；空狀態「右上角」文案在 375px 不成立，五處改「按『…』」；E-9 驗收「§9.4a 不含全角色」只改了內文、標題與使用者詳情頁段落的交叉引用漏改，已補 |
+| E-9 補（規劃逐條比對） | Claude | 完成 | 文件 | WEB-SPEC §9.4b 稽核動作清單補 `_due_date` 與處理人回覆記 `handling_status`（以單號為目標）；其餘 E、F 各項逐條比對無缺漏（F-5／F-6／F-8 殘留 grep 命中皆為非顯示用途或 cssVar 備援值，符合定案意圖） |
 
 ## 體檢交接
 

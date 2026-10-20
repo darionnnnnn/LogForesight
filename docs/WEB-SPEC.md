@@ -1603,8 +1603,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | `POST {id}/admin-close` | `Assign`＋`Handle` | 代為結案 |
 | `POST {id}/reply`／`POST reply-many` | `Handle`，限本人的單 | 回覆；多單回覆含別人的單時整筆 403 零寫入 |
 
-稽核動作：`work_order_create`／`_append`／`_reassign`／`_split`／`_cancel`／`_return`／`_admin_close`／`_auto_dispatch_run`，
-`targetKind="work_order"`、`targetId`＝單號。
+稽核動作：`work_order_create`／`_append`／`_reassign`／`_split`／`_cancel`／`_return`／`_due_date`／`_admin_close`／`_auto_dispatch_run`，
+`targetKind="work_order"`、`targetId`＝單號；處理人回覆（含多單一次回覆，逐張一筆）記 `handling_status`，同樣以單號為目標。
 
 **規模**（本機 SQLite 壓測，`LF_SCALE_BENCH=1` 才跑的 `WorkOrderScaleBenchmarks`）：4000 台 × 10 天交辦預覽約 0.8 秒、
 建單約 2.2 秒；4000 台 × 60 天背景逐日展開約 91 秒；750 台回覆約 0.3 秒；2000 台待派試跑約 3.8 秒；

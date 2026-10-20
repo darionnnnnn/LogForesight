@@ -45,7 +45,7 @@ public class ReportServiceTests : IDisposable
 
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None));
 
-        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -957,6 +957,43 @@ public class ReportServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetSummary_非全部範圍_期間內沒有高中風險日_回空結果不擲例外()
+    {
+        // 兩期相鄰走合併查詢；資料庫沒有任何紀錄時合併結果為空，範圍過濾不得對空集合取最早／最晚日
+        var d = DateTime.Today;
+        foreach (var scope in new[] { "open", "unresolved", "unassigned" })
+        {
+            var result = _service.GetSummary(d.AddDays(-6), d, scope);
+            Assert.Equal(0, result.Kpi.TotalIssues);
+            Assert.Equal(0, result.Kpi.AffectedHosts);
+        }
+    }
+
+    [Fact]
+    public void GetSummary_非全部範圍記錄report_scope_filter耗時_全部範圍不記()
+    {
+        SeedScopeFixture();
+        var d = DateTime.Today;
+        var visibility = new AlwaysVisibleService(_hosts);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates,
+            new UserDisplayNameService(_settingsStore), new FixedIssueExclusionSource(IssueExclusion.None));
+        // 門檻 0：每次量測都進慢操作清單，才看得到操作名稱
+        var monitor = new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor(thresholdMs: 0);
+        var service = new ReportService(_repository, _hosts, visibility, handling,
+            new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None)),
+            _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), monitor);
+
+        service.GetSummary(d.AddDays(-9), d, "all");
+        Assert.DoesNotContain(monitor.Snapshot().TopSlowOperations, o => o.Operation == "report:scope-filter");
+
+        service.GetSummary(d.AddDays(-9), d, "open");
+        Assert.Contains(monitor.Snapshot().TopSlowOperations, o => o.Operation == "report:scope-filter");
+    }
+
+    [Fact]
     public void GetSummary_scope為open_只查一次紀錄且處理表各只載入一次()
     {
         SeedScopeFixture();
@@ -975,12 +1012,12 @@ public class ReportServiceTests : IDisposable
             new UserDisplayNameService(_settingsStore), new FixedIssueExclusionSource(IssueExclusion.None));
         var service = new ReportService(repo, _hosts, visibility, handling,
             new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None)),
-            _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+            _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
 
         // 去年同期：兩期中間隔了將近一年，合併查詢會把整年撈回，必須維持兩期各查一次
         new ReportService(repo, _hosts, visibility, handling,
                 new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None)),
-                _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None))
+                _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor())
             .GetSummary(d.AddDays(-9), d, "open", "yoy");
         Assert.Equal(2, repoCount.Calls.GetValueOrDefault("QueryLightweight"));
         repoCount.Calls.Clear();

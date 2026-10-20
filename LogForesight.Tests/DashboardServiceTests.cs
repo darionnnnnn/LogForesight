@@ -62,7 +62,7 @@ public class DashboardServiceTests : IDisposable
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
             new EfPrtgStore(_fixture.NewContext), new FixedIssueExclusionSource(IssueExclusion.None), (_, _, _) => new GapsDto());
         // 兩頁一致的對照組：報表走同一組 store 與聚合
-        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None), new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -519,7 +519,7 @@ public class DashboardServiceTests : IDisposable
             _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()),
             new EfPrtgStore(_fixture.NewContext), source, (_, _, _) => new GapsDto());
         var reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates,
-            _severityVisibility, new SummaryCache(new DataVersionStamp()), source);
+            _severityVisibility, new SummaryCache(new DataVersionStamp()), source, new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
         var list = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
             _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore),

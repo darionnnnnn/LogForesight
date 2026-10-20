@@ -130,11 +130,16 @@ public class HandlingHistoryQueryService
     /// <summary>
     /// 一次載入範圍過濾需要的主機索引與三張處理表。呼叫端要對多組紀錄（例如報表的本期與前期）
     /// 套同一個範圍時，先以涵蓋全部紀錄的集合載入一次，再逐組傳入多載的 FilterByScope，
-    /// 避免每組各載一次處理表。<paramref name="actionable"/> 應只含高／中風險紀錄且不為空。
+    /// 避免每組各載一次處理表。<paramref name="actionable"/> 應只含高／中風險紀錄；
+    /// 空集合（期間內沒有高／中風險日）回傳空的預載資料，不查處理表。
     /// </summary>
     internal ScopeContext LoadScopeContext(IReadOnlyCollection<DailyAnalysisRecord> actionable)
     {
         var lookup = new HostLookup(_hosts.GetAll());
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+        // 報表合併查詢的兩期可能都沒有高／中風險日（安靜的一週、新安裝）：Min／Max 對空集合會擲例外
+        if (actionable.Count == 0)
+            return new ScopeContext(lookup, new(), new(), new(), unhandledSeverities);
 
         var hostNames = actionable.Select(r => lookup.For(r)?.HostName ?? r.Host).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var from = actionable.Min(r => r.Date);
@@ -142,7 +147,6 @@ public class HandlingHistoryQueryService
         var handlings = _store.GetMany(hostNames, from, to);
         var issueHandlings = _issueStore.GetMany(hostNames, from, to);
         var openCases = _cases.GetMany(hostNames).Where(c => c.ClosedAt == null && c.HandlerId.HasValue).ToList();
-        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
         // 迴圈外先建索引：3000 台 × 366 天下，迴圈內線性搜尋是 10^10 次字串比對。
         // 鍵一律走 HostNameKey.Of——原本是 OrdinalIgnoreCase 比對，改用字典後若自己寫大小寫

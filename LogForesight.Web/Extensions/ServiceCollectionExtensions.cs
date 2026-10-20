@@ -33,6 +33,8 @@ public static class ServiceCollectionExtensions
 
         // Singleton：全站共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
         services.AddSingleton(_ => new StorageBackend(storage, dataRoot));
+        // 慢操作統計每行程一份、由 StorageBackend 持有；服務層要自行埋點（例如報表範圍篩選）時注入同一份
+        services.AddSingleton(sp => sp.GetRequiredService<StorageBackend>().Performance);
         services.AddSingleton(sp => new HostDayWorkflowStore(sp.GetRequiredService<StorageBackend>()));
         services.AddSingleton<HostDayWorkflowService>();
 

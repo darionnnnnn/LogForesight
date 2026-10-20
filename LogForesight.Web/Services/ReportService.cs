@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 
@@ -17,12 +18,13 @@ public class ReportService
 
     private readonly SummaryCache _summaryCache;
     private readonly IIssueExclusionSource _exclusions;
+    private readonly SqlPerformanceMonitor _performance;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
         HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
         IIssueAggregateQuery aggregates, ISystemSettingsService systemSettings,
-        SummaryCache summaryCache, IIssueExclusionSource exclusions)
+        SummaryCache summaryCache, IIssueExclusionSource exclusions, SqlPerformanceMonitor performance)
     {
         _repository = repository;
         _hosts = hosts;
@@ -34,6 +36,7 @@ public class ReportService
         _systemSettings = systemSettings;
         _summaryCache = summaryCache;
         _exclusions = exclusions;
+        _performance = performance;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
@@ -126,6 +129,8 @@ public class ReportService
             // 非 actionable（低風險）紀錄，先在 SQL 端濾掉就不必把整段期間載進記憶體——
             // 90 天區間下低風險列占絕大多數。與可見等級的交集由 QueryLightweight 既有機制處理。
             var actionableLevels = new[] { RiskLevels.High, RiskLevels.Medium };
+            // 非全部範圍是報表最慢的一段（載紀錄＋三張處理表＋逐日推導），埋點讓系統健康頁的慢查詢清單看得到它
+            using var scopeFilterTiming = _performance.Measure("report:scope-filter");
             // 兩期相鄰（預設的「前一段等長期間」）時合併成一次查詢再依日期切開，處理表也只載入一次、兩期共用；
             // 兩期之間有空隔（「去年同期」）時合併會把中間整年一起撈回，反而更慢，維持兩期各查各的。
             List<DailyAnalysisRecord> records, previousRecords;
