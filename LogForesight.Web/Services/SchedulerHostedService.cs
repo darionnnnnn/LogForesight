@@ -82,6 +82,24 @@ public class SchedulerHostedService : BackgroundService
             return;
         }
 
+        try
+        {
+            var closed = CloseInterruptedRuns(_mutexGate, _batchRunStore, DateTime.Now,
+                System.Diagnostics.Process.GetCurrentProcess().StartTime);
+            if (closed == null)
+            {
+                Log.Info("另一個執行個體仍持有執行鎖，略過中斷執行的關閉");
+            }
+            else if (closed > 0)
+            {
+                Log.Warn("站台啟動時關閉了 {Count} 筆未正常結束的執行（標記為異常中斷）", closed.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "關閉中斷執行時發生例外（不影響排程）");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -155,7 +173,8 @@ public class SchedulerHostedService : BackgroundService
         var now = DateTime.Now;
         var recentScheduleTriggerTimes = GetScheduleTriggerTimes(
             _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
-            _runState.RecentScheduleAttempts);
+            _runState.RecentScheduleAttempts,
+            options.Windows);
 
         if (ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes))
         {
@@ -171,7 +190,8 @@ public class SchedulerHostedService : BackgroundService
             var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_systemSettingsStore.Get().RetentionDays);
             var longTriggerTimes = GetScheduleTriggerTimes(
                     _batchRunStore.GetRecentRuns(effectiveLimit + 1, null),
-                    _runState.RecentScheduleAttempts)
+                    _runState.RecentScheduleAttempts,
+                    options.Windows)
                 .ToList();
             recentScheduleTriggerTimes = longTriggerTimes;
             var missed = ScheduleCalculator.FindMissedWindow(now, options.Windows, longTriggerTimes, ScheduleCalculator.AutoCatchUpMaxDelay);
@@ -230,7 +250,8 @@ public class SchedulerHostedService : BackgroundService
         // 少了這道判定會報「22:00 的自動觸發被佔用」，但它明明跑完了。
         var scheduledTriggerTimes = GetScheduleTriggerTimes(
             _batchRunStore.GetRecentRuns(RecentRunsLookbackDays, null),
-            _runState.RecentScheduleAttempts);
+            _runState.RecentScheduleAttempts,
+            options.Windows);
 
         if (ScheduleCalculator.WindowAlreadyTriggered(now, windowStart.Value, scheduledTriggerTimes)) return;
 
@@ -246,18 +267,39 @@ public class SchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的 StartedAt，
+    /// 站台啟動時嘗試取得執行鎖並關閉未正常結束的執行。
+    /// 拿不到鎖（例如另一個執行個體正在跑）時回傳 null；拿到鎖時回傳關閉筆數。
+    /// 只關 <paramref name="processStartedAt"/> 之前開始的執行——本行程自己的執行仍在跑。
+    /// </summary>
+    internal static int? CloseInterruptedRuns(NamedMutexGate gate, BatchRunStore store, DateTime now, DateTime processStartedAt)
+    {
+        int? closedCount = null;
+        var acquired = gate.RunExclusive(() =>
+        {
+            closedCount = store.CloseUnfinishedRuns(now, 7, processStartedAt);
+        }, TimeSpan.Zero, runActionWhenNotAcquired: false);
+
+        return acquired ? closedCount : null;
+    }
+
+    /// <summary>
+    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的執行，
+    /// 交由 <see cref="ScheduleCalculator.EffectiveScheduleTriggerTimes"/> 計算有效觸發時間（中斷執行允許同窗口補跑一次），
     /// 並與記憶體中最近的排程觸發嘗試時間聯集。
     /// </summary>
     internal static IEnumerable<DateTime> GetScheduleTriggerTimes(
         IEnumerable<BatchRun> runs,
-        IEnumerable<DateTime> inMemoryTriggerTimes)
+        IEnumerable<DateTime> inMemoryTriggerTimes,
+        IEnumerable<ScheduleWindow> windows)
     {
-        var persistentTimes = runs
+        var scheduledRuns = runs
             .Where(r => r.Trigger == "schedule" && r.JobType != BatchRun.JobTypeAi)
-            .Select(r => r.StartedAt);
+            .Select(r => (r.StartedAt, r.Interrupted));
 
-        return persistentTimes.Union(inMemoryTriggerTimes);
+        return ScheduleCalculator.EffectiveScheduleTriggerTimes(
+            scheduledRuns,
+            inMemoryTriggerTimes,
+            windows);
     }
 
     /// <summary>
