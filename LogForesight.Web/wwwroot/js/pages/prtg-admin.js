@@ -10,7 +10,7 @@ import {
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
     collectLines, numberOr, renderTable, renderError
 } from '../core/ui.js';
-import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel } from '../core/format.js';
+import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 import { initValueReadiness } from './prtg-value-readiness.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
@@ -71,13 +71,6 @@ function missingHourDate(windowStart, dayIndex, hour) {
     date.setDate(date.getDate() + dayIndex);
     date.setHours(hour, 0, 0, 0);
     return date;
-}
-
-function localDateInputValue(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
 }
 
 function effectivenessRangeError(from, through) {
@@ -219,8 +212,7 @@ async function loadPrtgEffectiveness() {
         status.className = 'small mb-3 text-danger';
         return;
     }
-    button.disabled = true;
-    button.textContent = '載入中…';
+    const restoreButton = withBusy(button, '查詢中');
     status.className = 'small mb-3';
     status.textContent = '正在讀取使用效果…';
     error.replaceChildren();
@@ -254,8 +246,7 @@ async function loadPrtgEffectiveness() {
         alert.append(message, retry);
         error.appendChild(alert);
     } finally {
-        button.disabled = false;
-        button.textContent = '查詢';
+        restoreButton();
     }
 }
 
@@ -266,8 +257,8 @@ function bindPrtgEffectiveness() {
     if (!fromInput || !throughInput || !refresh) return;
     const today = new Date();
     const firstDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
-    fromInput.value = localDateInputValue(firstDay);
-    throughInput.value = localDateInputValue(today);
+    fromInput.value = toLocalDateString(firstDay);
+    throughInput.value = toLocalDateString(today);
     refresh.addEventListener('click', loadPrtgEffectiveness);
 }
 
@@ -1244,13 +1235,7 @@ function renderConflictsLoading() {
     const tbody = document.getElementById('prtg-mirror-conflicts-body');
     if (!tbody) return;
     tbody.replaceChildren();
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 6;
-    td.className = 'text-muted text-center py-2';
-    td.textContent = '載入中…';
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    appendLoadingRow(tbody, 6);
 }
 
 function renderConflictsError(errorMessage) {
@@ -1445,17 +1430,23 @@ function renderConflictPagination(totalPages) {
 let unmatchedPage = 1;
 let unmatchedPageSize = loadPageSize('prtg-unmatched');
 
+/** 表格載入中佔位列：spinner 置中，等待樣式與全站其他區塊一致（ui.js 的 renderSpinner） */
+function appendLoadingRow(tbody, colSpan) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = colSpan;
+    td.className = 'py-2';
+    renderSpinner(td);
+    td.firstElementChild.classList.add('justify-content-center');
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
 function renderUnmatchedLoading() {
     const tbody = document.getElementById('prtg-unmatched-body');
     if (!tbody) return;
     tbody.replaceChildren();
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 5;
-    td.className = 'text-muted text-center py-2';
-    td.textContent = '載入中…';
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    appendLoadingRow(tbody, 5);
 }
 
 function renderUnmatchedError(errorMessage) {
@@ -1619,13 +1610,7 @@ function renderIpExcludesLoading() {
     const tbody = document.getElementById('prtg-ip-excludes-body');
     if (!tbody) return;
     tbody.replaceChildren();
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 5;
-    td.className = 'text-muted text-center py-2';
-    td.textContent = '載入中…';
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    appendLoadingRow(tbody, 5);
 }
 
 function renderIpExcludesError(errorMessage) {
@@ -1893,7 +1878,7 @@ async function openAssignModal(item) {
         hostFixedEl.classList.add('d-none');
         if (hostSelectGroup) hostSelectGroup.classList.remove('d-none');
 
-        hostSelect.innerHTML = '<option value="">載入中…</option>';
+        hostSelect.replaceChildren(new Option('載入中…', ''));
         assignModal.show();
 
         try {
@@ -3141,7 +3126,7 @@ if (monitoringForm) {
         }
         if (proposed.size > maximum) {
             (isHost ? hostBatchStatus : sensorBatchStatus).textContent =
-                `本頁操作會超過 ${maximum.toLocaleString()} 筆選取上限；未變更任何選取。`;
+                `本頁操作會超過 ${formatNumber(maximum)} 筆選取上限；未變更任何選取。`;
             return;
         }
         const added = isHost ? commitHostSelection(proposed) : commitSensorSelection(proposed);
@@ -3223,7 +3208,7 @@ if (monitoringForm) {
                 if (expectedTotal === null) {
                     expectedTotal = page.total;
                     if (expectedTotal > maximum)
-                        throw new Error(`目前搜尋結果有 ${expectedTotal.toLocaleString()} 筆，超過 ${maximum.toLocaleString()} 筆批次選取上限；請縮小搜尋，未變更選取。`);
+                        throw new Error(`目前搜尋結果有 ${formatNumber(expectedTotal)} 筆，超過 ${formatNumber(maximum)} 筆批次選取上限；請縮小搜尋，未變更選取。`);
                 } else if (page.total !== expectedTotal) {
                     throw new Error('目錄總數在批次讀取期間變更；已拒絕整批，未變更選取。');
                 }
@@ -3238,8 +3223,8 @@ if (monitoringForm) {
                 pageNumber++;
                 cursor = page.nextCursor || null;
                 if (cursor && pageNumber >= Math.ceil(maximum / 100))
-                    throw new Error(`搜尋結果分頁超過 ${maximum.toLocaleString()} 筆批次上限；請縮小搜尋，未變更選取。`);
-                statusBox.textContent = `已讀取 ${Math.min(collected.size, expectedTotal).toLocaleString()}／${expectedTotal.toLocaleString()} 筆；選取尚未變更。`;
+                    throw new Error(`搜尋結果分頁超過 ${formatNumber(maximum)} 筆批次上限；請縮小搜尋，未變更選取。`);
+                statusBox.textContent = `已讀取 ${formatNumber(Math.min(collected.size, expectedTotal))}／${formatNumber(expectedTotal)} 筆；選取尚未變更。`;
             } while (cursor);
 
             if (!selectionBatchCurrent(batch)) return;
@@ -3249,11 +3234,11 @@ if (monitoringForm) {
             const proposed = new Set(current);
             collected.forEach(id => proposed.add(id));
             if (proposed.size > maximum)
-                throw new Error(`加入搜尋結果後會超過 ${maximum.toLocaleString()} 筆選取上限；已拒絕整批，未變更選取。`);
+                throw new Error(`加入搜尋結果後會超過 ${formatNumber(maximum)} 筆選取上限；已拒絕整批，未變更選取。`);
             activeSelectionBatch = null;
             updateSelectionBatchUi();
             const added = isHost ? commitHostSelection(proposed) : commitSensorSelection(proposed);
-            statusBox.textContent = `已完整加入搜尋結果 ${added.toLocaleString()} 筆；目前選取 ${proposed.size.toLocaleString()} 筆。`;
+            statusBox.textContent = `已完整加入搜尋結果 ${formatNumber(added)} 筆；目前選取 ${formatNumber(proposed.size)} 筆。`;
         } catch (error) {
             if (selectionBatchCurrent(batch)) statusBox.textContent = batch.timedOut
                 ? '批次超過 5 分鐘整體時間上限，已拒絕套用；選取保持不變。'

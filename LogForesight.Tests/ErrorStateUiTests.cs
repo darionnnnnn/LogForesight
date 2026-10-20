@@ -46,4 +46,14 @@ public class ErrorStateUiTests
         Assert.Contains("回到我的交辦", detail);
         Assert.Contains("可能已改派給其他人", detail);
     }
+
+    [Fact]
+    public void 頁面載入入口包guardLoad_users_rules_prtg_guard_prtg_value_readiness()
+    {
+        foreach (var page in new[] { "users.js", "rules.js", "prtg-value-readiness.js" })
+        {
+            var js = Read("LogForesight.Web/wwwroot/js/pages/" + page);
+            Assert.Contains("guardLoad(", js);
+        }
+    }
 }

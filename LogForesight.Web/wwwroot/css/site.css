@@ -171,6 +171,7 @@
     --lf-success: #16a34a;
     --lf-success-soft: #e8f6ec;
     --lf-success-text: #166534;
+    --lf-success-muted: #65a30d;
     --lf-info: #0284c7;
     --lf-info-soft: #e0f2fe;
     --lf-info-text: #075985;
@@ -191,6 +192,10 @@
     --lf-timeline-low: #bbe7c9;
     --lf-timeline-gap: #f6dca6;
     --lf-timeline-none: #e2e8f0;
+
+    /* 圖表共用：tooltip 底色與 Y 軸格線（core/charts.js 讀取）*/
+    --lf-chart-tooltip-bg: rgba(27, 42, 65, .92);
+    --lf-chart-grid: rgba(0, 0, 0, .06);
 
     /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色）*/
     --lf-cat-storage: #1d4ed8;

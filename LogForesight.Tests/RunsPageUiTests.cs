@@ -844,4 +844,25 @@ console.log('PASS operational status refresh');
         Assert.Contains("prtgPendingDays", js);
         Assert.Contains("prtgLastIssueOutcome", js);
     }
+
+    [Fact]
+    public void RunsJs狀態色與charts_js不寫死色值_改讀token()
+    {
+        var root = FindRepoRoot();
+        var js = Path.Combine(root, "LogForesight.Web", "wwwroot", "js");
+        var runs = File.ReadAllText(Path.Combine(js, "pages", "runs.js"));
+        var charts = File.ReadAllText(Path.Combine(js, "core", "charts.js"));
+        var css = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "css", "site.css"));
+
+        Assert.Empty(System.Text.RegularExpressions.Regex.Matches(runs, "#[0-9a-fA-F]{6}"));
+        Assert.Equal(0, CountOccurrences(charts, "rgba("));
+        foreach (var token in new[] { "--lf-success-muted", "--lf-chart-tooltip-bg", "--lf-chart-grid" })
+        {
+            Assert.Contains(token, css);
+        }
+
+        Assert.Contains("--lf-success-muted", runs);
+        Assert.Contains("--lf-chart-tooltip-bg", charts);
+        Assert.Contains("--lf-chart-grid", charts);
+    }
 }

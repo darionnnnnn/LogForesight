@@ -612,6 +612,10 @@
 - **明確不做（本輪定案）**：交辦單處理人變更歷史查詢、站內即時通知、負載加權與個人容量上限、後端 CSV 匯出端點、
   靜音的主機群組範圍（群組範圍用抑制）。
 
+## 全新安裝時 PRTG 維護頁的範圍區塊顯示「須由可見全部主機的管理者操作」
+
+`SettingsController.RequireFullPrtgTransferAccess` 在主機主檔為空時一律 403（`hosts.Count == 0`），PRTG 維護頁的鏡像、人工對應、IP 排除區塊因此載不出來，並顯示「全站 PRTG 對應、排除及搬運須由可見全部主機的管理者操作」——對全新安裝的管理者是誤導（他其實看得到全部，只是還沒有主機）。正式站台有主機後不受影響。**觸發時機**：新站台導入流程被這段文字卡住或回報。修法：主機為空時允許讀取（範圍本來就是空的），或改文案為「尚未建立主機，PRTG 對應要先有主機」。
+
 ## 背景服務與前景共用連線池
 
 `PrtgSnapshotHostedService`、`AiAnalysisHostedService`、`HostDayWorkflowRecoveryHostedService`、`PrtgRiskReviewHostedService` 注入站台的 `StorageBackend`，與前景請求共用連線池（只有分析主流程自建獨立池）。SQLite 本來就停用連線池；SQL Server 預設池 100，四支服務峰值約 15 條。**觸發時機**：系統健康頁或 SQL Server 端出現連線池耗盡／等待連線逾時。修法：以 keyed DI 註冊第二個 `StorageBackend` 給這四支服務，並逐一核對快照 journal 綁定與跨實例快取都以版本戳為鍵。

@@ -183,6 +183,16 @@ export function formatDateTime(value) {
            `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/** HH:mm:ss（24 小時制，本地時間）；無法解析回空字串。供「計算完成時間」之類只需要時分秒的顯示 */
+export function formatTime(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 /**
  * 本地日期字串 yyyy-MM-dd（docs/archive/HISTORY.md S12）。
  * **不可用 `date.toISOString().slice(0, 10)`**——那取的是 UTC 日期，在台灣（UTC+8）

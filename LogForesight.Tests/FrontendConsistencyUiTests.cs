@@ -499,4 +499,58 @@ public class FrontendConsistencyUiTests
         Assert.Contains("lf:badges", orders);
         Assert.Contains("有新回覆", orders);
     }
+
+    [Fact]
+    public void 日期數字格式走format_js單一出口_pages不得直接toLocale顯示()
+    {
+        // 日期／時間／數字顯示一律走 core/format.js（formatDate／formatDateTime／formatTime／
+        // toLocalDateString／formatNumber）；toLocaleLowerCase 這類字串比對不在此限（pattern 要帶 "("）。
+        // 允許清單：目前沒有任何例外。runs.js 的 Date 運算只有 getFullYear 做計算、不呼叫 toLocale*。
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pagesDir = JsDir("pages");
+        var offenders = new List<string>();
+        foreach (var file in Directory.GetFiles(pagesDir, "*.js"))
+        {
+            if (allowed.Contains(Path.GetFileName(file))) continue;
+            var text = File.ReadAllText(file);
+            foreach (var api in new[] { "toLocaleString(", "toLocaleDateString(", "toLocaleTimeString(" })
+            {
+                if (text.Contains(api, StringComparison.Ordinal)) offenders.Add($"{Path.GetFileName(file)}: {api}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0, "以下頁面直接呼叫 toLocale*，請改走 core/format.js：" + string.Join("; ", offenders));
+    }
+
+    [Fact]
+    public void 載入中文字走renderSpinner_pages不得直接寫載入中純文字()
+    {
+        // 只允許 renderSpinner(…, '載入中…') 的呼叫；下拉選項無法放 spinner，列入允許清單（prtg-admin.js 的 new Option）。
+        var offenders = new List<string>();
+        foreach (var file in Directory.GetFiles(JsDir("pages"), "*.js"))
+        {
+            foreach (var line in File.ReadAllLines(file))
+            {
+                if (!line.Contains("'載入中…'", StringComparison.Ordinal)) continue;
+                if (line.Contains("renderSpinner(", StringComparison.Ordinal)) continue;
+                if (line.Contains("new Option('載入中…'", StringComparison.Ordinal)) continue;
+                offenders.Add($"{Path.GetFileName(file)}: {line.Trim()}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0, "以下位置直接寫「載入中…」，請改用 renderSpinner／renderLoading／withBusy：" + string.Join("; ", offenders));
+    }
+
+    [Fact]
+    public void 日期格式化只有format_js一份_handler與work_orders與prtg_admin與rules已收斂()
+    {
+        foreach (var page in new[] { "handler-detail.js", "work-orders.js", "prtg-admin.js", "rules.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.DoesNotContain("padStart(2", js);
+        }
+
+        Assert.Contains("export function formatTime(", ReadJs("core", "format.js"));
+        Assert.Contains("formatTime(", ReadJs("pages", "prtg-calibration.js"));
+    }
 }

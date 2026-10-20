@@ -4,7 +4,7 @@
 
 import { api } from '../core/api.js';
 import {
-    renderTable, renderLoading, toast, withBusy, renderChips, confirmAction, checkboxList, button,
+    renderTable, renderLoading, guardLoad, toast, withBusy, renderChips, confirmAction, checkboxList, button,
     renderPagination, sortRows, loadPageSize, savePageSize
 } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
@@ -400,4 +400,4 @@ async function submitBatch(groupIds, active, saveButton) {
 document.getElementById('btn-new-user').addEventListener('click', () => openModal(null));
 searchInput.addEventListener('input', () => { page = 1; render(); });
 
-load();
+guardLoad(listContainer, load);

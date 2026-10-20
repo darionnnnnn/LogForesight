@@ -24,7 +24,7 @@ import {
     loadPageSize,
     savePageSize
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, statusBadge, workOrderClosedReasonText } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText } from '../core/format.js';
 import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
 
 // DOM 元素
@@ -605,17 +605,10 @@ function updateMutedTabTitle(count) {
     if (btn) btn.textContent = `靜音中（${count}）`;
 }
 
-/** 本地今天的 yyyy-MM-dd */
-function todayText() {
-    const d = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 /** 剩餘天數＝靜音至 − 今天 + 1；今天到期顯示「今天到期」 */
 function remainingDaysText(toDate) {
     if (!toDate) return '—';
-    const diff = Math.round((Date.parse(toDate + 'T00:00:00Z') - Date.parse(todayText() + 'T00:00:00Z')) / 86400000);
+    const diff = Math.round((Date.parse(toDate + 'T00:00:00Z') - Date.parse(todayLocal() + 'T00:00:00Z')) / 86400000);
     if (Number.isNaN(diff)) return '—';
     if (diff < 0) return '已到期';
     if (diff === 0) return '今天到期';

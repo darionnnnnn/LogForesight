@@ -63,6 +63,7 @@
 | `--lf-info` / `-soft` / `-text` | `#0891b2` / `#e4f6fa` / `#155e75` | `#0284c7` / `#e0f2fe` / `#075985` | 同上歸族 |
 | `--lf-warning` 系 | `#d97706` 系 | 不變 | 本就是琥珀，與 accent 自然統一 |
 | success／danger／neutral／dark 系 | | 全部不變 | |
+| `--lf-success-muted` | — | `#65a30d` | 新增：執行紀錄「已回補」狀態（淺綠，與「當天真的有跑」的 `--lf-success` 分色） |
 
 ### 圖表 8 類固定色盤（§8.3 規則 3）
 
@@ -76,6 +77,13 @@
 | `--lf-cat-config` | `#64748b` | 不變 |
 | `--lf-cat-resource` | `#db2777` | 不變 |
 | `--lf-cat-other` | `#94a3b8` | 不變 |
+
+圖表共用 token（`core/charts.js` 以 `cssVar` 讀取，圖表內不寫死 rgba）：
+
+| token | 值 | 用途 |
+|---|---|---|
+| `--lf-chart-tooltip-bg` | `rgba(27, 42, 65, .92)` | 圖表 tooltip 背景 |
+| `--lf-chart-grid` | `rgba(0, 0, 0, .06)` | 長條／折線圖 Y 軸格線 |
 
 ### Bootstrap 5.3 對接
 

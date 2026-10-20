@@ -25,7 +25,7 @@ import {
     savePageSize,
     toast
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
 import { HANDLING_STATUSES } from '../core/handling-statuses.js';
 
@@ -722,11 +722,6 @@ async function openNextOrder(fromId, carry) {
 
 // ── 期限就地修改 ───────────────────────────────────────────────────────────
 
-function isoDate(date) {
-    const pad = n => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 /** 期限欄：本人且未結案時可點（無期限顯示「設定期限」），點了就地換成日期欄＋儲存／取消 */
 function dueDateCell(row) {
     const wrap = document.createElement('div');
@@ -755,8 +750,8 @@ function dueDateCell(row) {
         const input = document.createElement('input');
         input.type = 'date';
         input.className = 'form-control form-control-sm w-auto';
-        input.min = isoDate(today);
-        input.max = isoDate(max);
+        input.min = toLocalDateString(today);
+        input.max = toLocalDateString(max);
         input.value = row.dueDate ? String(row.dueDate).slice(0, 10) : '';
         input.setAttribute('aria-label', '期限');
 

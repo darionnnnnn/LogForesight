@@ -1,5 +1,6 @@
 import { api } from '../core/api.js';
 import { formatDate, formatNumber } from '../core/format.js';
+import { guardLoad, renderSpinner } from '../core/ui.js';
 
 /**
  * 數值資料就緒度卡片（環境探測頁籤）
@@ -33,16 +34,6 @@ export function initValueReadiness() {
             case 'availability': return 'Ping';
             default: return String(category);
         }
-    }
-
-    function renderFailure(error) {
-        statusEl.textContent = '讀取失敗：' + (error?.message || '系統發生未預期的錯誤，請稍後再試。') + ' ';
-        const retryBtn = document.createElement('button');
-        retryBtn.type = 'button';
-        retryBtn.className = 'btn btn-link btn-sm p-0 align-baseline';
-        retryBtn.textContent = '重試';
-        retryBtn.addEventListener('click', () => load());
-        statusEl.appendChild(retryBtn);
     }
 
     function renderSuccess(data) {
@@ -169,7 +160,8 @@ export function initValueReadiness() {
         }
     }
 
-    async function load() {
+    /** 單次讀取：自己建立 AbortController，讓 guardLoad 的「重試」重跑時也是一次全新的請求 */
+    async function fetchAndRender() {
         if (inFlight) {
             inFlight.abort();
             inFlight = null;
@@ -178,7 +170,7 @@ export function initValueReadiness() {
         const controller = new AbortController();
         inFlight = controller;
 
-        statusEl.textContent = '載入中…';
+        renderSpinner(statusEl);
         prevBtn.disabled = true;
         nextBtn.disabled = true;
 
@@ -196,8 +188,13 @@ export function initValueReadiness() {
             if (error?.name === 'AbortError' || controller.signal.aborted) {
                 return;
             }
-            renderFailure(error);
+            throw error;
         }
+    }
+
+    /** 載入入口：失敗換成錯誤態（含重試），不再自己拼讀取失敗文字 */
+    function load() {
+        return guardLoad(statusEl, fetchAndRender);
     }
 
     refreshBtn?.addEventListener('click', () => load());

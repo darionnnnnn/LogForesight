@@ -1039,6 +1039,15 @@ function backLinkNode({ href, text = '返回清單' }) {
     return wrap;
 }
 
+/**
+ * 執行期讀取 CSS 變數（設計 token）：顏色只在 site.css 定義一次，圖表與 style 直塗的地方
+ * （吃不到 CSS class）一律走這裡，不再各自寫死色值。fallback 只在變數不存在時使用。
+ */
+export function cssVar(name, fallback = '') {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+}
+
 /** 載入中的骨架列（§8.6-6） */
 export function renderLoading(container, rows = 4) {
     const el = document.createElement('div');

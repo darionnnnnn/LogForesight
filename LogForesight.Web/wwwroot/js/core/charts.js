@@ -13,49 +13,44 @@
 
 import { appUrl } from './paths.js';
 import { formatNumber } from './format.js';
-
-/** 自 CSS 變數讀取設計 token：顏色只在 site.css 定義一次 */
-function token(name, fallback) {
-    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return value || fallback;
-}
+import { cssVar } from './ui.js';
 
 /** 8 類風險類型的固定色盤：同一類別在所有圖表中同色 */
 export function categoryColors() {
     return {
-        Storage: token('--lf-cat-storage', '#1d4ed8'),
-        Hardware: token('--lf-cat-hardware', '#7c3aed'),
-        Security: token('--lf-cat-security', '#dc2626'),
-        Service: token('--lf-cat-service', '#ea580c'),
-        Backup: token('--lf-cat-backup', '#0d9488'),
-        Config: token('--lf-cat-config', '#64748b'),
-        Resource: token('--lf-cat-resource', '#db2777'),
-        Other: token('--lf-cat-other', '#94a3b8')
+        Storage: cssVar('--lf-cat-storage', '#1d4ed8'),
+        Hardware: cssVar('--lf-cat-hardware', '#7c3aed'),
+        Security: cssVar('--lf-cat-security', '#dc2626'),
+        Service: cssVar('--lf-cat-service', '#ea580c'),
+        Backup: cssVar('--lf-cat-backup', '#0d9488'),
+        Config: cssVar('--lf-cat-config', '#64748b'),
+        Resource: cssVar('--lf-cat-resource', '#db2777'),
+        Other: cssVar('--lf-cat-other', '#94a3b8')
     };
 }
 
 /** docs/archive/HISTORY.md #1（B1 三級化）：Critical 收斂進 High，色盤剩三級 */
 export function severityColors() {
     return {
-        High: token('--lf-severity-high', '#ea580c'),
-        Medium: token('--lf-severity-medium', '#0284c7'),
-        Low: token('--lf-severity-low', '#94a3b8')
+        High: cssVar('--lf-severity-high', '#ea580c'),
+        Medium: cssVar('--lf-severity-medium', '#0284c7'),
+        Low: cssVar('--lf-severity-low', '#94a3b8')
     };
 }
 
 export function riskColors() {
     return {
-        高: token('--lf-risk-high', '#dc2626'),
-        中: token('--lf-risk-mid', '#d97706'),
-        低: token('--lf-risk-low', '#64748b')
+        高: cssVar('--lf-risk-high', '#dc2626'),
+        中: cssVar('--lf-risk-mid', '#d97706'),
+        低: cssVar('--lf-risk-low', '#64748b')
     };
 }
 
 /** 占比圖表用的中性色（docs/archive/HISTORY.md #6：受影響主機占比／處理進度） */
 export function statusColors() {
     return {
-        success: token('--lf-success', '#16a34a'),
-        neutral: token('--lf-gray-300', '#cbd5e1')
+        success: cssVar('--lf-success', '#16a34a'),
+        neutral: cssVar('--lf-gray-300', '#cbd5e1')
     };
 }
 
@@ -79,7 +74,7 @@ function baseOptions({ drillTo, onDrill, type }) {
                 labels: { font: { family: FONT_FAMILY, size: 12 }, usePointStyle: true, boxWidth: 8 }
             },
             tooltip: {
-                backgroundColor: 'rgba(27, 42, 65, .92)',
+                backgroundColor: cssVar('--lf-chart-tooltip-bg', '#1b2a41'),
                 titleFont: { family: FONT_FAMILY, size: 13 },
                 bodyFont: { family: FONT_FAMILY, size: 12 },
                 padding: 10,
@@ -113,7 +108,7 @@ function baseOptions({ drillTo, onDrill, type }) {
             x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: 11 } } },
             y: {
                 beginAtZero: true,
-                grid: { color: 'rgba(0,0,0,.06)' },
+                grid: { color: cssVar('--lf-chart-grid', '#0000000f') },
                 // 問題數是整數，Y 軸出現 0.5 這種刻度只會讓人困惑
                 ticks: { font: { family: FONT_FAMILY, size: 11 }, precision: 0 }
             }

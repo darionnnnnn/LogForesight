@@ -205,6 +205,8 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 | E-5、E-8 | Sonnet 5.5（規格 task-56-e58）＋ Claude 收尾 | 完成 | 0 警告；定向 287 綠；突變刪目錄一列 → 2 案紅；`wont_fix` 寫死處 12 → 1（剩下的是真正的狀態值使用） | Sonnet 留下白名單外的 `handler-detail.js`（成員狀態表）與 `record-detail.js`（結案集合、結案徽章色）兩份寫死清單，Claude 改由目錄衍生。顏色以目錄為準：observing 改 info、非 resolved 的結案類改 secondary。日期檢查抽成 `ui.js` 的 `bindPastDateCheck`。多單回覆轉上報時只在恰一張單時附單號（上報信整批一封） |
 | E-6、E-7 | Sonnet 5.5（規格 task-56-e67） | 完成 | 0 警告；定向 454 綠；突變 SQL 未讀條件 `>` 改 `>=` → 1 案紅 | 偏離（接受）：協調器 `Return` 簽章改為與 `Cancel`／`Reply` 一致（`WorkOrderActor`）；`seen` 寫入用單句 `ExecuteUpdate` 不動 `updated_at`，避免和處理人回覆搶併發權杖；前端只在 `viewerCanAssign` 時呼叫 seen；「只看未讀回覆」由 `work-orders.js` 動態插入（頁面殼不在白名單）；補了白名單外的事件中文對照與稽核標籤（既有反射守門需要） |
 | E-10 | Sonnet 5.5（規格 task-56-e10）＋ Claude 修正 | 完成 | 0 警告；定向 104 綠；突變拿掉快取鍵 Assign 維度 → 1 案紅 | Sonnet 為了數「無法派出」逐頁呼叫 `GetGaps`，但每次呼叫都重跑整段派工試跑（2,000 台約 3.8 秒），成本乘上頁數；Claude 改為 `GapsDto.UnassignableTotal` 全量計數、儀表板只呼叫一次，並在真實 `GetGaps` 測試補斷言。相依改為委派 `PendingDispatchGapsProvider`（避免四處測試組整套看板），接受 |
+| 批次 E 瀏覽器實測 | Claude（內建瀏覽器，Stub `demo-admin`，空資料庫） | 通過 | 儀表板「待派工問題」卡、交辦總覽「只看未讀回覆」、設定頁「交辦摘要時刻」皆出現；`unread-count`、`me/badge` 各頁 200；各頁無新增 console 錯誤 | 空資料庫無法實測派工互動流程（預覽確認、退回、未讀刷新），由服務層測試與突變覆蓋。順帶發現既有問題：主機為空時 PRTG 維護頁範圍區塊 403 並顯示誤導文案，記入 BACKLOG |
+| F-5、F-6、F-8 | Sonnet 5.5（規格 task-56-f568）＋ Claude 修正 | 完成 | UI 141 綠；瀏覽器實測排程頁圖例色由 token 取得、RGB 與原值相同；PRTG 維護、規則、報表頁無新增錯誤 | Claude 退回 `prtg-guard.js` 的改動：預覽是動作按鈕不是頁面載入，原本顯示 PRTG 回的實際錯誤（連線／認證），改成 `guardLoad` 會變成通用「載入失敗」——規格把它歸錯類；守門測試改為該檔不得用 `guardLoad`。`rules.js` 以 import 別名保留 `dateText` 呼叫名（既有測試斷言該字串）。`'載入中…'` 只剩 `renderSpinner` 呼叫與 `<select>` 選項兩種，守門以規則放行 |
 
 ## 8. 明確不做（本輪定案）
 

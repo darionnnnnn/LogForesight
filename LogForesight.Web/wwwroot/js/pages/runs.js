@@ -9,29 +9,34 @@ import { api, getAiAvailable, getCurrentUser, hasCapability } from '../core/api.
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, renderError, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 
-/* 色值對齊 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
-   是 style 直塗、吃不到 CSS class，故以字面值對齊：success=--lf-success、
-   warning=--lf-warning、failed=--lf-danger、stopped=--lf-severity-high、
-   running=--lf-primary、stuck=--lf-cat-hardware、none=--lf-gray-200 */
+/* 色值於執行期讀 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
+   是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
+   backfilled=--lf-success-muted、warning=--lf-warning、failed=--lf-danger、
+   stopped=--lf-severity-high、running=--lf-primary、stuck=--lf-cat-hardware、
+   none=--lf-gray-200、local_disabled=--lf-gray-400。color 用 getter，每次取用才讀 token */
+function statusMeta(label, tokenName) {
+    return { label, get color() { return cssVar(tokenName); } };
+}
+
 const STATUS_META = {
-    success: { label: '成功', color: '#16a34a' },
+    success: statusMeta('成功', '--lf-success'),
     // 已回補（§3）：當天沒有 BatchRun，但事後回補的分析紀錄補上了這天——與「當天真的有跑」
     // 分色（淺綠），符合本頁「沒跑不能冒充有跑」的誠實原則
-    backfilled: { label: '已回補', color: '#65a30d' },
-    warning: { label: '有警告', color: '#d97706' },
-    failed: { label: '失敗', color: '#dc2626' },
-    stopped: { label: '已停止', color: '#ea580c' },   // 優雅停止（手動或窗口結束）——不是失敗
-    running: { label: '執行中', color: '#1e40af' },
-    stuck: { label: '異常中斷', color: '#7c3aed' },
-    none: { label: '未執行', color: '#e2e8f0' },
+    backfilled: statusMeta('已回補', '--lf-success-muted'),
+    warning: statusMeta('有警告', '--lf-warning'),
+    failed: statusMeta('失敗', '--lf-danger'),
+    stopped: statusMeta('已停止', '--lf-severity-high'),   // 優雅停止（手動或窗口結束）——不是失敗
+    running: statusMeta('執行中', '--lf-primary'),
+    stuck: statusMeta('異常中斷', '--lf-cat-hardware'),
+    none: statusMeta('未執行', '--lf-gray-200'),
     // 本機分析已停用（批次D）：設定行為不是漏跑，與「未執行」分開顯示（--lf-gray-400）
-    local_disabled: { label: '本機分析已停用', color: '#94a3b8' }
+    local_disabled: statusMeta('本機分析已停用', '--lf-gray-400')
 };
 
 const PRTG_OUTCOME_META = {
