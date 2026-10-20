@@ -356,8 +356,10 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
-        AddRecord(a, Yesterday.AddDays(-1), "高");
-        AddRecord(b, Yesterday, "低");
+        // 較舊的一天風險較低、較新的一天風險較高：預設緊急程度排序會把 HOST-B 排前面，日期升冪則是 HOST-A 在前。
+        // 狀態篩選未指定風險等級時只查高／中風險日（第 55 輪 D-1），所以兩天都用高／中。
+        AddRecord(a, Yesterday.AddDays(-1), "中");
+        AddRecord(b, Yesterday, "高");
         // Statuses 非空清單強制走慢速路徑（見類別註解）；未建立處理紀錄的日一律預設 open 外部狀態
         var result = _service.Search(new RecordSearchRequest
         {
