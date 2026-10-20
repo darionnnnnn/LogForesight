@@ -367,7 +367,7 @@ AI 問答已降為未來選項（決策：先把報告顯示與查詢做好，�
 ### 索引
 
 ```
-lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢；(log_source, record_date) `IX_lf_daily_src_date` — 排除 PRTG 獨立主機日
+lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢；(ai_pending, detail_pruned) `IX_lf_daily_records_ai_pending_pruned` — 待補筆數的覆蓋索引；(log_source, record_date) `IX_lf_daily_src_date` — 排除 PRTG 獨立主機日
 lf_issue_first_seen: PK(source_key, event_id)
 lf_top_issues:     (record_id)；(source_key, event_id, record_date) — 來源問題聚合
                    (event_id, source_name) — 舊相容路徑的跨主機查詢

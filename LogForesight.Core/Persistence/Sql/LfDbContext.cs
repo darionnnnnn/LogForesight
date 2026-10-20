@@ -239,6 +239,7 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.HostId, x.RecordDate });
             e.HasIndex(x => x.ExtractVersion).HasDatabaseName("IX_lf_daily_records_extract_version");   // DailyRecordBackfiller 的候選查詢
             e.HasIndex(x => new { x.AiPending, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_ai_pending_record_date"); // 全域待補查詢（批次C）
+            e.HasIndex(x => new { x.AiPending, x.DetailPruned }).HasDatabaseName("IX_lf_daily_records_ai_pending_pruned"); // CountPendingAi 覆蓋索引
             e.HasIndex(x => new { x.LogSource, x.RecordDate }).HasDatabaseName("IX_lf_daily_src_date"); // 排除只有 PRTG 的主機日
             // 可行動快照（ActionableOccurrences）的日層級篩選：risk_level IN (高/中) + 日期範圍。
             // 等值前導欄在前，範圍欄在後——只有 record_date 索引時整段期間都得逐列過濾 risk_level
