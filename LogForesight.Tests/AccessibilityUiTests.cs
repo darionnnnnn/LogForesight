@@ -216,4 +216,15 @@ public class AccessibilityUiTests
             Assert.Contains(sel, css);
         }
     }
+
+    [Fact]
+    public void modal關閉後焦點還給開啟者()
+    {
+        // 全站 modal 多由 JS 呼叫 show()，Bootstrap 不會歸還焦點；layout.js 以事件委派統一處理
+        var js = ReadWeb("wwwroot", "js", "core", "layout.js");
+        Assert.Contains("addEventListener('show.bs.modal'", js);
+        Assert.Contains("addEventListener('hidden.bs.modal'", js);
+        Assert.Contains("opener.focus()", js);
+        Assert.Contains("initModalFocusReturn();", js);
+    }
 }

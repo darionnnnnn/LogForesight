@@ -48,7 +48,7 @@ function renderSentinels() {
             { title: '', className: 'text-end', render: s => renderSentinelActions(s) }
         ],
         rows: sentinels,
-        empty: { title: '尚無 Sentinel', hint: '用右上角的「新增 Sentinel」建立第一台，之後可在本頁的「匯入」分頁對它掃描匯入主機。' }
+        empty: { title: '尚無 Sentinel', hint: '按「新增 Sentinel」建立第一台，之後可在本頁的「匯入」分頁對它掃描匯入主機。' }
     });
 }
 

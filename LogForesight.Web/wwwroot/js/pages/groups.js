@@ -124,7 +124,7 @@ function appendUserGroupSection(container, { title, hint, groups, empty }) {
             { title: '', className: 'text-end', render: g => groupActions('user', g) }
         ],
         rows: groups,
-        empty: { title: '尚無群組', hint: '可透過右上角「新增群組」建立。' }
+        empty: { title: '尚無群組', hint: '可按「新增群組」建立。' }
     });
     container.appendChild(table);
 }
@@ -138,7 +138,7 @@ function renderHostGroups() {
             { title: '', className: 'text-end', render: g => groupActions('host', g) }
         ],
         rows: hostGroups,
-        empty: { title: '尚無主機群組', hint: '可於「NetIQ 維護 > 匯入」掃描匯入時建立，或用右上角的「新增群組」建立。' }
+        empty: { title: '尚無主機群組', hint: '可於「NetIQ 維護 > 匯入」掃描匯入時建立，或按「新增群組」建立。' }
     });
 }
 

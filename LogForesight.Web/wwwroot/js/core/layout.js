@@ -764,8 +764,32 @@ async function loadHealthBanner(user) {
     registerAlert('health', bar);
 }
 
+/**
+ * modal 關閉後把焦點還給開啟它的元素（WCAG 2.4.3）。全站 modal 多由 JS 呼叫 show() 開啟，
+ * Bootstrap 只在 data-bs-toggle 觸發時才會歸還焦點；不補的話鍵盤使用者關掉 modal 後焦點停在
+ * 已隱藏的 modal 上，Tab 會從頁首重新走起。以事件委派一次涵蓋所有頁面，不需逐頁處理。
+ */
+function initModalFocusReturn() {
+    const openers = new WeakMap();
+    document.addEventListener('show.bs.modal', event => {
+        const active = document.activeElement;
+        if (active && active !== document.body && !event.target.contains(active)) {
+            openers.set(event.target, active);
+        }
+    });
+    document.addEventListener('hidden.bs.modal', event => {
+        const opener = openers.get(event.target);
+        openers.delete(event.target);
+        // 開啟者已被移除（例如列表重繪）就不搶焦點；焦點已被其他程式移到別處也不覆寫
+        const focusLost = !document.activeElement || document.activeElement === document.body
+            || event.target.contains(document.activeElement);
+        if (opener && opener.isConnected && focusLost) opener.focus();
+    });
+}
+
 if (typeof window !== 'undefined' && window.document) {
     initFontScale();
     initBrandAlign();
+    initModalFocusReturn();
     init();
 }
