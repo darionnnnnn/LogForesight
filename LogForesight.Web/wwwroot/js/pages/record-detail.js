@@ -6,7 +6,7 @@
  *   - 全文層：報告 txt 原樣以等寬字型呈現
  */
 
-import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
@@ -97,6 +97,7 @@ const SCOPE_OPTIONS = [
 
 let currentScope = 'pending';
 let currentUserId = null;
+let currentUser = null;
 
 /** 結案類：與後端 IssueHandlingStatuses.IsClosed 同一組值 */
 const CLOSED_STATUSES = new Set(['resolved', 'wont_fix', 'false_positive', 'known_noise']);
@@ -147,6 +148,7 @@ async function load() {
     // 「這個案件是不是我的」要靠 userId 比對（§8）；ServerAdmin 沒有對應的 WebUser，
     // userId 為 0，比對永遠不成立——它本來就看不到業務資料，行為正確
     currentUserId = user.userId;
+    currentUser = user;
     aiAvailable = aiReady;
 
     const allowed = allowedSeverities();
@@ -1636,10 +1638,12 @@ function caseBadge(issue) {
         : issue.caseStatus === 'observing' ? '觀察中' : '處理中';
     const handlerText = formatUserName(issue.caseHandlerName, issue.caseHandlerAccount);
     // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）
-    const badge = document.createElement(issue.caseHandlerId ? 'a' : 'span');
+    // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出徽章文字
+    const linkable = issue.caseHandlerId && canViewHandlerPage(currentUser, issue.caseHandlerId);
+    const badge = document.createElement(linkable ? 'a' : 'span');
     // d-inline-block + mt-1：徽章現在接在狀態文字／預計完成日之下，需要自己撐開行距
     badge.className = 'lf-badge lf-badge--primary d-inline-block mt-1';
-    if (issue.caseHandlerId) {
+    if (linkable) {
         badge.href = appUrl(`/handlers/${issue.caseHandlerId}`);
         badge.addEventListener('click', event => event.stopPropagation());
     }

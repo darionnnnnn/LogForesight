@@ -516,6 +516,8 @@ internal static class SchemaUpgrader
             "IX_lf_work_orders_issue_closed", "source_key, event_id, closed_at");
         AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_work_orders",
             "IX_lf_work_orders_active_handler_issue", "handler_id, source_key, event_id", WorkOrderActiveIssueFilter);
+        // 最近一次被改派走的處理人（唯讀存取）；既有單為 NULL
+        AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "previous_handler_id", isSqlite ? "INTEGER NULL" : "bigint NULL");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_work_order_events",
             isSqlite ? SqliteCreateWorkOrderEvents : SqlServerCreateWorkOrderEvents);
@@ -713,6 +715,7 @@ internal static class SchemaUpgrader
             event_id INTEGER NULL,
             issue_label TEXT NOT NULL,
             handler_id INTEGER NOT NULL,
+            previous_handler_id INTEGER NULL,
             origin TEXT NOT NULL,
             scope_kind TEXT NOT NULL,
             scope_group_ids TEXT NOT NULL,
@@ -738,6 +741,7 @@ internal static class SchemaUpgrader
             event_id int NULL,
             issue_label nvarchar(512) NOT NULL,
             handler_id bigint NOT NULL,
+            previous_handler_id bigint NULL,
             origin nvarchar(30) NOT NULL,
             scope_kind nvarchar(30) NOT NULL,
             scope_group_ids nvarchar(max) NOT NULL,

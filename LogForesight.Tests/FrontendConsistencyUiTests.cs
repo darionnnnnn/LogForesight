@@ -386,4 +386,19 @@ public class FrontendConsistencyUiTests
         Assert.Contains("loadPrtgMapping();", load);
         Assert.Contains("案件授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。", hostJs);
     }
+
+    [Fact]
+    public void 交辦單回覆旗標與處理人頁無權時不卡載入()
+    {
+        var detailJs = ReadJs("pages", "work-order-detail.js");
+        var handlerJs = ReadJs("pages", "handler-detail.js");
+        Assert.Contains("viewerCanReply", detailJs);
+        Assert.Contains("viewerCanReply", handlerJs);
+        Assert.Contains("viewerIsPreviousHandler", detailJs);
+        Assert.Contains("只能檢視自己的交辦", handlerJs);
+        Assert.Contains("canViewHandlerPage(user, userId)", ExtractBody(handlerJs, @"async function load\(\)"));
+        Assert.Contains("export function canViewHandlerPage(", ReadJs("core", "api.js"));
+        foreach (var page in new[] { "host-detail.js", "record-detail.js", "records.js", "work-order-detail.js" })
+            Assert.Contains("canViewHandlerPage(", ReadJs("pages", page));
+    }
 }

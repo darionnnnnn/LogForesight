@@ -269,7 +269,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
     private static WorkOrder Clone(WorkOrder o) => new()
     {
         WorkOrderId = o.WorkOrderId, SourceName = o.SourceName, EventId = o.EventId, IssueLabel = o.IssueLabel,
-        HandlerId = o.HandlerId, Origin = o.Origin, ScopeKind = o.ScopeKind, ScopeGroupIds = o.ScopeGroupIds.ToList(),
+        HandlerId = o.HandlerId, PreviousHandlerId = o.PreviousHandlerId, Origin = o.Origin, ScopeKind = o.ScopeKind, ScopeGroupIds = o.ScopeGroupIds.ToList(),
         AutoAttach = o.AutoAttach, Note = o.Note, DueDate = o.DueDate, CreatedById = o.CreatedById,
         CreatedByAccount = o.CreatedByAccount, CreatedAt = o.CreatedAt, LastAppendedAt = o.LastAppendedAt,
         LastReplyAt = o.LastReplyAt, ClosedAt = o.ClosedAt, ClosedReason = o.ClosedReason, UpdatedAt = o.UpdatedAt

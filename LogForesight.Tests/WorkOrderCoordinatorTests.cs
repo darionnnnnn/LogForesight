@@ -371,6 +371,7 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(2, result.MovedCases);
         Assert.Equal(Alice, result.PreviousHandlerId);
         Assert.Equal(Bob, w.Orders.Get(id)!.HandlerId);
+        Assert.Equal(Alice, w.Orders.Get(id)!.PreviousHandlerId);
         Assert.Equal(Bob, a.HandlerId);
         Assert.Equal(Bob, b.HandlerId);
         Assert.Equal(Alice, done.HandlerId);
@@ -417,6 +418,7 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(target, result.TargetWorkOrderId);
         var old = w.Orders.Get(id)!;
         Assert.Equal(WorkOrderCloseReasons.Moved, old.ClosedReason);
+        Assert.Equal(Alice, old.PreviousHandlerId);
         var outEvt = w.Orders.ListEvents(id).Single();
         Assert.Equal(WorkOrderEventActions.Reassigned, outEvt.Action);
         Assert.Equal(-2, outEvt.MemberDelta);
@@ -458,6 +460,9 @@ public class WorkOrderCoordinatorTests
         Assert.Equal(Carol, a.HandlerId);
         Assert.Equal(result.TargetWorkOrderId, a.WorkOrderId);
         Assert.Null(w.Orders.Get(id)!.ClosedAt);
+        // 拆出不寫原單與新單的 PreviousHandlerId
+        Assert.Null(w.Orders.Get(id)!.PreviousHandlerId);
+        Assert.Null(t.PreviousHandlerId);
     }
 
     [Fact]

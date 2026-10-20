@@ -354,6 +354,12 @@ public class WorkOrderDetailDto : WorkOrderRowDto
     public string CreatedByAccount { get; set; } = string.Empty;
     public List<WorkOrderScopeGroupDto> ScopeGroups { get; set; } = new();
     public bool ViewerIsHandler { get; set; }
+
+    /// <summary>可回覆：檢視者是目前處理人本人、具 Handle 能力、且單尚未結案，三者皆成立（後端單點決定）</summary>
+    public bool ViewerCanReply { get; set; }
+
+    /// <summary>檢視者是最近一次被改派走的原處理人（只能唯讀檢視）</summary>
+    public bool ViewerIsPreviousHandler { get; set; }
     public bool ViewerCanAssign { get; set; }
 }
 

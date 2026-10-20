@@ -81,6 +81,28 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
+    public void Upgrade補上交辦單previous_handler_id可空欄_既有單為NULL()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_work_orders DROP COLUMN previous_handler_id");
+            Assert.DoesNotContain("previous_handler_id", Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')"));
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+
+        using var check = _fx.NewContext();
+        Assert.Contains("previous_handler_id", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')"));
+        var store = new EfWorkOrderStore(_fx.NewContext);
+        var id = store.Insert(new WorkOrder
+        {
+            SourceName = "Disk", EventId = 153, IssueLabel = "Disk 153", HandlerId = 1,
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "a", CreatedAt = DateTime.Now
+        });
+        Assert.Null(store.Get(id)!.PreviousHandlerId);
+    }
+
+    [Fact]
     public void Upgrade重跑不擲例外且索引不重複()
     {
         using (var ctx = _fx.NewContext()) RevertToLegacy(ctx);

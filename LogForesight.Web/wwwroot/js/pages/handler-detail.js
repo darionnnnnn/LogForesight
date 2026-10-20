@@ -12,7 +12,7 @@
  * 保留勾選、展開與捲動位置；勾選跨頁累積，改變篩選條件才清除。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderLoading,
@@ -107,6 +107,13 @@ async function load() {
     isSelf = user?.userId === userId;
     canReply = isSelf && hasCapability(user, 'Handle');
 
+    // 只有 Handle 的人看別人的處理人頁，後端 API 會 403；先擋下來給說明，不讓頁面停在載入中
+    if (!canViewHandlerPage(user, userId)) {
+        renderSelfOnly(kpiEl, user);
+        renderSelfOnly(ordersEl, user);
+        return;
+    }
+
     summary = await api.get(`/api/handlers/${userId}/work-orders/summary`);
     renderHeader(summary);
     renderKpi(summary);
@@ -117,6 +124,22 @@ async function load() {
     const targetOrderId = orderParam ? parseInt(orderParam, 10) : null;
     if (targetOrderId && !isNaN(targetOrderId)) {
         await locateOrder(targetOrderId);
+    }
+}
+
+/** 無權檢視他人處理人頁：說明原因並帶回自己的交辦 */
+function renderSelfOnly(container, user) {
+    renderEmpty(container, {
+        title: '只能檢視自己的交辦',
+        hint: '其他處理人的交辦單只有管理者看得到。',
+        icon: 'lock'
+    });
+    if (user?.userId) {
+        const link = document.createElement('a');
+        link.className = 'btn btn-sm btn-outline-primary mt-2';
+        link.href = appUrl('/handlers/' + user.userId);
+        link.textContent = '前往我的交辦';
+        container.firstElementChild.appendChild(link);
     }
 }
 
@@ -136,7 +159,7 @@ async function locateOrder(targetOrderId) {
     } catch {
         // 不存在或無權檢視：視同不在清單中
     }
-    if (detail && detail.viewerIsHandler && !detail.closedAt) {
+    if (detail && detail.viewerCanReply) {
         statusSelect.value = 'all';
         orderPage = 1;
         await loadOrders();

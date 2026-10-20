@@ -3,7 +3,7 @@
  * 包含單號標頭、成員清單、處理歷程時間軸與管理動作（改派、取消交辦、代為結案、拆出主機、複製 CSV）。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable,
@@ -164,8 +164,9 @@ function renderHeader(detail) {
     // 處理人
     const handlerWrap = document.createElement('div');
     handlerWrap.className = 'd-flex align-items-center gap-1 flex-wrap';
-    const handlerLink = document.createElement('a');
-    handlerLink.href = appUrl('/handlers/' + detail.handlerId);
+    // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出姓名文字
+    const handlerLink = document.createElement(canViewHandlerPage(currentUser, detail.handlerId) ? 'a' : 'span');
+    if (handlerLink.tagName === 'A') handlerLink.href = appUrl('/handlers/' + detail.handlerId);
     handlerLink.textContent = detail.handlerName || '';
     handlerWrap.appendChild(handlerLink);
     if (!detail.handlerActive) {
@@ -362,11 +363,16 @@ function openMemberReply(caseIds, targetText) {
 function renderActions(detail, user) {
     actionsContainer.replaceChildren();
 
+    // 原處理人唯讀：不顯示任何動作鈕
+    if (detail.viewerIsPreviousHandler && !detail.viewerIsHandler && !detail.viewerCanAssign) {
+        return;
+    }
+
     if (detail.closedAt) {
         return;
     }
 
-    if (detail.viewerIsHandler) {
+    if (detail.viewerCanReply) {
         const replyBtn = document.createElement('button');
         replyBtn.type = 'button';
         replyBtn.className = 'btn btn-sm btn-outline-primary';
@@ -492,7 +498,7 @@ function updateSplitBtn() {
 }
 
 function updateReplyBtn() {
-    const canReply = currentDetail && currentDetail.viewerIsHandler && !currentDetail.closedAt;
+    const canReply = currentDetail && currentDetail.viewerCanReply;
     if (!canReply) {
         memberReplyBtn.classList.add('d-none');
         memberReplyBtn.disabled = true;
@@ -512,7 +518,7 @@ function renderMembers(data) {
     }
 
     const canSplit = currentDetail && currentDetail.viewerCanAssign && !currentDetail.closedAt;
-    const canReply = currentDetail && currentDetail.viewerIsHandler && !currentDetail.closedAt;
+    const canReply = currentDetail && currentDetail.viewerCanReply;
     const showCheckboxes = canSplit || canReply;
     const columns = [];
 
@@ -902,6 +908,18 @@ function renderReassignedHint(detail, user, timeline) {
     if (existing) existing.remove();
 
     if (detail.viewerIsHandler) return;
+
+    // 被改派走的原處理人（後端 previous_handler_id）：唯讀提示，取代下方由歷程推得的說明
+    if (detail.viewerIsPreviousHandler) {
+        const roEl = document.createElement('div');
+        roEl.className = 'lf-hint mb-3 p-3 bg-light rounded border wo-reassign-hint';
+        roEl.appendChild(icon('info-circle'));
+        const roText = document.createElement('span');
+        roText.textContent = `此單已移交給 ${detail.handlerName || '其他處理人'}，你只能檢視。`;
+        roEl.appendChild(roText);
+        rootEl.prepend(roEl);
+        return;
+    }
 
     const wasHandler = timeline.some(ev => {
         if (ev.action !== 'reassigned') return false;

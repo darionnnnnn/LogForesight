@@ -362,6 +362,8 @@ public class WorkOrderCoordinator
 
             UpdateOrder(workOrderId, o =>
             {
+                // 併入既有單、原單結案：原處理人開的是原單，唯讀存取記在原單
+                o.PreviousHandlerId = previous;
                 o.ClosedAt = actor.OccurredAt;
                 o.ClosedReason = WorkOrderCloseReasons.Moved;
                 return true;
@@ -386,6 +388,8 @@ public class WorkOrderCoordinator
         ReassignCases(members, newHandlerId, workOrderId, actor);
         UpdateOrder(workOrderId, o =>
         {
+            // 先記下舊處理人再換人（只記最近一位，再次改派時覆寫）
+            o.PreviousHandlerId = o.HandlerId;
             o.HandlerId = newHandlerId;
             return true;
         });

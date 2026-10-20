@@ -11,7 +11,7 @@
  * 風險層級與風險類型是即點即篩的 chip；主機／日期／Event ID 走表單套用。
  */
 
-import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
@@ -628,8 +628,10 @@ function handlerCell(record) {
     if (!record.handlerId || !record.handlerName) return record.handlerName ?? '';
 
     const suffix = record.handlerFromCase ? '（案件）' : '';
-    const link = document.createElement('a');
-    link.href = appUrl(`/handlers/${record.handlerId}`);
+    // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出姓名文字
+    const linkable = canViewHandlerPage(currentUser, record.handlerId);
+    const link = document.createElement(linkable ? 'a' : 'span');
+    if (linkable) link.href = appUrl(`/handlers/${record.handlerId}`);
     link.textContent = formatUserName(record.handlerName, record.handlerAccount) + suffix;
     link.addEventListener('click', event => event.stopPropagation());
     return link;

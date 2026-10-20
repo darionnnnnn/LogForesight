@@ -208,6 +208,9 @@ public class WorkOrderQueryService
             GroupName = groups.TryGetValue(gid, out var g) ? g.GroupName : DeletedName
         }).ToList();
         dto.ViewerIsHandler = order.HandlerId == _currentUser.UserId;
+        dto.ViewerCanReply = order.HandlerId == _currentUser.UserId
+            && _currentUser.Has(Capability.Handle) && order.ClosedAt == null;
+        dto.ViewerIsPreviousHandler = order.PreviousHandlerId == _currentUser.UserId;
         dto.ViewerCanAssign = _currentUser.Has(Capability.Assign);
         return dto;
     }
@@ -432,12 +435,13 @@ public class WorkOrderQueryService
 
     // ── 內部 ────────────────────────────────────────────────────────────────
 
-    /// <summary>逐單授權的唯一一處：不存在 404；非 Assign／ViewAll 且非處理人 403</summary>
+    /// <summary>逐單授權的唯一一處：不存在 404；非 Assign／ViewAll 且非處理人（含最近一次被改派走的原處理人，唯讀）403</summary>
     private WorkOrder Authorize(long id)
     {
         var order = _orders.Get(id) ?? throw DomainException.NotFound("找不到這張交辦單。");
         if (_currentUser.Has(Capability.Assign) || _currentUser.Has(Capability.ViewAll)) return order;
         if (order.HandlerId == _currentUser.UserId) return order;
+        if (order.PreviousHandlerId == _currentUser.UserId) return order;
         throw DomainException.Forbidden("沒有檢視這張交辦單的權限。");
     }
 

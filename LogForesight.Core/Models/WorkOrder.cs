@@ -23,6 +23,9 @@ public class WorkOrder
 
     public long HandlerId { get; set; }
 
+    /// <summary>最近一次被改派走的處理人，可唯讀開啟此單；再次改派時覆寫（只記最近一位）</summary>
+    public long? PreviousHandlerId { get; set; }
+
     /// <summary><see cref="WorkOrderOrigins"/> 值域</summary>
     public string Origin { get; set; } = WorkOrderOrigins.Manual;
 

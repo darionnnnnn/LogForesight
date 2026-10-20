@@ -175,6 +175,56 @@ public class WorkOrderQueryServiceTests
     }
 
     [Fact]
+    public void ViewerCanReply_本人有Handle且進行中_為true()
+    {
+        var id = AddOrder(_alice.UserId);
+        var dto = Service(As(_alice.UserId, Capability.Handle)).Get(id);
+        Assert.True(dto.ViewerCanReply);
+        Assert.False(dto.ViewerIsPreviousHandler);
+    }
+
+    [Fact]
+    public void ViewerCanReply_本人無Handle_為false()
+    {
+        var id = AddOrder(_alice.UserId);
+        var dto = Service(As(_alice.UserId, Capability.ViewAll)).Get(id);
+        Assert.True(dto.ViewerIsHandler);
+        Assert.False(dto.ViewerCanReply);
+    }
+
+    [Fact]
+    public void ViewerCanReply_單已結案_為false()
+    {
+        var id = AddOrder(_alice.UserId, closed: DateTime.Today.AddHours(-2));
+        var dto = Service(As(_alice.UserId, Capability.Handle)).Get(id);
+        Assert.True(dto.ViewerIsHandler);
+        Assert.False(dto.ViewerCanReply);
+    }
+
+    [Fact]
+    public void 授權_原處理人改派後唯讀可開_再改派一次更早那位403()
+    {
+        var id = AddOrder(_alice.UserId);
+        AddMember(id, "H1", IssueHandlingStatuses.InProgress);
+        var actor = new WorkOrderActor { ActorId = _stranger.UserId, ActorAccount = "DOMAIN\\x", OccurredAt = DateTime.Today };
+        _coordinator.Reassign(id, _bob.UserId, actor);
+
+        var dto = Service(As(_alice.UserId, Capability.Handle)).Get(id);
+        Assert.True(dto.ViewerIsPreviousHandler);
+        Assert.False(dto.ViewerIsHandler);
+        Assert.False(dto.ViewerCanReply);
+        Assert.Equal(_bob.UserId, dto.HandlerId);
+
+        var third = _users.Upsert(new WebUser { Account = "DOMAIN\\carol", DisplayName = "卡蘿" });
+        _coordinator.Reassign(id, third.UserId, actor);
+
+        // 只記最近一位：bob 可看，更早的 alice 403
+        Assert.True(Service(As(_bob.UserId, Capability.Handle)).Get(id).ViewerIsPreviousHandler);
+        var ex = Assert.Throws<DomainException>(() => Service(As(_alice.UserId, Capability.Handle)).Get(id));
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+    }
+
+    [Fact]
     public void 授權_不存在404()
     {
         var svc = Service(As(_stranger.UserId, Capability.Assign));

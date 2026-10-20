@@ -659,6 +659,7 @@ lf_work_orders                                       -- 交辦單：一個問題
   event_id           int NULL
   issue_label        nvarchar(512) NOT NULL
   handler_id         bigint NOT NULL
+  previous_handler_id bigint NULL                    -- 最近一次被改派走的處理人（唯讀存取）
   origin             nvarchar(30) NOT NULL           -- manual | owner_rule | auto_dispatch | backfill | day_assign
   scope_kind         nvarchar(30) NOT NULL           -- All | Groups | Hosts
   scope_group_ids    text NOT NULL                   -- 主機群組 id 清單（JSON）

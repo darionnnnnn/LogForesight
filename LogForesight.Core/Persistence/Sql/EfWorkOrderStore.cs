@@ -481,6 +481,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         row.EventId = order.EventId;
         row.IssueLabel = Truncate(order.IssueLabel, IssueLabelMaxLength);
         row.HandlerId = order.HandlerId;
+        row.PreviousHandlerId = order.PreviousHandlerId;
         row.Origin = Truncate(order.Origin, CodeMaxLength);
         row.ScopeKind = Truncate(order.ScopeKind, CodeMaxLength);
         row.ScopeGroupIds = string.Join(",", order.ScopeGroupIds);
@@ -504,6 +505,7 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         EventId = row.EventId,
         IssueLabel = row.IssueLabel,
         HandlerId = row.HandlerId,
+        PreviousHandlerId = row.PreviousHandlerId,
         Origin = row.Origin,
         ScopeKind = row.ScopeKind,
         ScopeGroupIds = row.ScopeGroupIds.Length == 0

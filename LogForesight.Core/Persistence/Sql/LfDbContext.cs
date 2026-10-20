@@ -392,6 +392,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.IssueLabel).HasColumnName("issue_label").HasMaxLength(512);
             e.Property(x => x.HandlerId).HasColumnName("handler_id");
+            e.Property(x => x.PreviousHandlerId).HasColumnName("previous_handler_id");
             e.Property(x => x.Origin).HasColumnName("origin").HasMaxLength(30);
             e.Property(x => x.ScopeKind).HasColumnName("scope_kind").HasMaxLength(30);
             e.Property(x => x.ScopeGroupIds).HasColumnName("scope_group_ids");
@@ -1010,6 +1011,9 @@ public class WorkOrderRow
     public int? EventId { get; set; }
     public string IssueLabel { get; set; } = string.Empty;
     public long HandlerId { get; set; }
+
+    /// <summary>最近一次被改派走的處理人（唯讀存取）；null＝從未被改派</summary>
+    public long? PreviousHandlerId { get; set; }
     public string Origin { get; set; } = string.Empty;
     public string ScopeKind { get; set; } = string.Empty;
 

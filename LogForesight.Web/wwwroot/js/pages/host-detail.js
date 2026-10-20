@@ -5,7 +5,7 @@
  * 沒有紀錄的日子刻意用不同顏色：「這天沒分析」與「這天沒風險」是完全不同的意思。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
@@ -15,6 +15,7 @@ const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
 let currentDays = 30;
 let canMaintainHost = false;
+let currentUser = null;
 const hostUpdateModal = new bootstrap.Modal(document.getElementById('host-update-modal'));
 
 const LEGEND = [
@@ -49,6 +50,7 @@ async function load() {
         api.get(`/api/host-detail/${hostId}?days=${currentDays}`),
         getCurrentUser()
     ]);
+    currentUser = user;
     canMaintainHost = hasCapability(user, 'Maintain');
 
     if (canMaintainHost && detail.source === 'local') {
@@ -452,8 +454,10 @@ function renderOccurrencePanel(container, data) {
         caseRow.className = 'lf-hint mb-3';
         const closedNote = data.case.closedAt ? '（已結案）' : '（進行中）';
         if (data.case.handlerId) {
-            const link = document.createElement('a');
-            link.href = appUrl(`/handlers/${data.case.handlerId}`);
+            // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出姓名文字
+            const linkable = canViewHandlerPage(currentUser, data.case.handlerId);
+            const link = document.createElement(linkable ? 'a' : 'span');
+            if (linkable) link.href = appUrl(`/handlers/${data.case.handlerId}`);
             link.textContent = data.case.handlerName;
             link.addEventListener('click', event => event.stopPropagation());
             caseRow.append(`案件處理人：`, link, ` ｜ 狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`);
