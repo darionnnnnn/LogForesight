@@ -1,7 +1,7 @@
 ﻿# 第 56 輪規劃：派工與回報流程重整、排版一致性收斂
 
-> 狀態：**規劃中（第二版，2026-10-20 多角度審視後修訂）**——第 55 輪併 dev 後開工；§0 待確認項先答。
-> 基準：第 55 輪併回後的 dev（開分支時填 sha 與測試數）
+> 狀態：**實作中**（feature/feedback-56；§0 四項 2026-10-20 照建議值定案）。
+> 基準：feature/feedback-55@ee62b0ed（6,326 通過／10 略過）。本分支疊在第 55 輪分支之上——使用者規則不自行 merge，第 55 輪併 dev 後本分支再併；委派改用 Sonnet 5.5 subagent。
 > 來源：使用者 2026-10-20 六角度評估的角度 5（派工回報流程與使用者體驗）與角度 6（畫面排版專業度）；評估結論與證據見 [FEEDBACK-55-PLAN.md](FEEDBACK-55-PLAN.md) §1、§2。
 > 設計依據：使用者定案套用 `ui-ux-pro-max`。本輪不換風格、不重做 token（DESIGN-SYSTEM v2 維持），只做**一致性收斂與可用性**；skill 的判斷順序（可用性與語意 → 真實內容與響應式 → 一致性 → 效能動態）與 WCAG 2.2 AA 檢查目標作為驗收基準，檢索到的對應指引：資料表橫向溢出容器、每頁 focus 可見、表單 blur 驗證＋可聚焦錯誤摘要、空狀態要有下一步、載入回饋依等待長短、正文對比 4.5:1、目前頁要有視覺指示。
 > 實作方式：agy 為主、`impl-low` 備援；每段 Claude 以瀏覽器實測（內建瀏覽器 `preview_start` 的 `web`，Stub 登入）＋ UI 守門測試驗收。
@@ -198,7 +198,7 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （開分支後填） | | | | |
+| 規格修正（開工前） | Claude | — | — | E-1：`handler-detail.js` 的回覆判斷（本人＋Handle）本來就正確，問題只在交辦單詳情頁用 `viewerIsHandler`；原驗收「handler-detail.js 不得有 hasCapability(Handle)」刪除。處理人連結改為 `api.js` 一個 `canViewHandlerPage` 判斷，不另做 `format.js` 的 `handlerLink()` |
 
 ## 8. 明確不做（本輪定案）
 
