@@ -1435,7 +1435,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   Maintain 另看到「查看數值資料就緒度」連結，其他使用者不顯示設定入口。案件授與回 403。
 - API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`、`GET api/host-detail/{hostId}/prtg`
 
-### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
+### 9.4a `/handlers/{userId}` 處理人員工作頁（本人或具 Assign／ViewAll，資料以檢視者可見範圍過濾）
 
 本人，或具 `Assign`／`ViewAll` 的使用者，點處理人姓名（問題查詢明細／依主機／依問題視角
 的處理人欄、詳情頁處理面板、詳情頁案件徽章、交辦單詳情標頭）會連到此頁；其他角色看到的處理人姓名是純文字
@@ -1931,7 +1931,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ### 9.8a `/admin/users/{id}` 使用者詳細（`Maintain`）
 
 自使用者清單點列進入，回答「這個人是誰、看得到什麼、
-手上有什麼、被交辦過什麼」。**與 §9.4a 處理人工作頁刻意分開**：那頁是全角色頁、資料以
+手上有什麼、被交辦過什麼」。**與 §9.4a 處理人工作頁刻意分開**：那頁開放本人與具 Assign／ViewAll 者、資料以
 **檢視者**的可見範圍過濾；本頁的可見主機與上次登入以**被查看者**為準，是管理視角資訊，
 兩者混在同一頁會讓「這頁的資料以誰的範圍過濾」變成兩套規則疊在一起。頁頂有連往工作頁的連結。
 

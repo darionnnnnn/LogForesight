@@ -208,10 +208,23 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 | 批次 E 瀏覽器實測 | Claude（內建瀏覽器，Stub `demo-admin`，空資料庫） | 通過 | 儀表板「待派工問題」卡、交辦總覽「只看未讀回覆」、設定頁「交辦摘要時刻」皆出現；`unread-count`、`me/badge` 各頁 200；各頁無新增 console 錯誤 | 空資料庫無法實測派工互動流程（預覽確認、退回、未讀刷新），由服務層測試與突變覆蓋。順帶發現既有問題：主機為空時 PRTG 維護頁範圍區塊 403 並顯示誤導文案，記入 BACKLOG |
 | F-5、F-6、F-8 | Sonnet 5.5（規格 task-56-f568）＋ Claude 修正 | 完成 | UI 141 綠；瀏覽器實測排程頁圖例色由 token 取得、RGB 與原值相同；PRTG 維護、規則、報表頁無新增錯誤 | Claude 退回 `prtg-guard.js` 的改動：預覽是動作按鈕不是頁面載入，原本顯示 PRTG 回的實際錯誤（連線／認證），改成 `guardLoad` 會變成通用「載入失敗」——規格把它歸錯類；守門測試改為該檔不得用 `guardLoad`。`rules.js` 以 import 別名保留 `dateText` 呼叫名（既有測試斷言該字串）。`'載入中…'` 只剩 `renderSpinner` 呼叫與 `<select>` 選項兩種，守門以規則放行 |
 | F-3、F-7 | Sonnet 5.5（規格 task-56-f37）＋ Claude 修正 | 完成 | cshtml `style="` 57 → 0、JS `.style.x =` → 0（動態量值改 CSS 變數，允許清單寫進測試並反向檢查）；Claude 停掉 dev server 後補跑整套建置 0 警告；UI 148 綠；瀏覽器實測儀表板 KPI 每列 4 張 | Sonnet 因 dev server 鎖檔無法建置 Web（Razor 未驗），Claude 停 server 補建置。Settings 警示框改 `alert-warning` 後顏色變成 Bootstrap 黃，Claude 在 site.css 以元件變數把 `.alert-warning` 對到 `--lf-warning-*`，實測顏色與原值逐一相同（全站 21 處警示框一併統一）。寬度歸併最大差 ±20px（工具列 min-width 100→120），捲動區改四級（最大差 12px）。儀表板 KPI 由一列自適應改為每列 4 張（DESIGN-SYSTEM §6b 規則） |
-| F-4 | 無障礙：側欄分段文字 #9fb0cc（對比 7.6:1）、目前頁 aria-current＋詳情頁前綴對照、modal aria-labelledby 與 focus-visible、無對應輸入的 label 改 span＋role="group"、圖示按鈕缺 title 退路 aria-label＋console.warn；新增 AccessibilityUiTests 11 條 | Sonnet 實作；Claude 驗收：build 0 警告、UI／無障礙 157 綠；子代理突變兩條（側欄色、modal labelledby）轉紅，Claude 加做拿掉 aria-current 轉紅，並把該 assert 收緊為 setAttribute 呼叫 |
-| F-2 | 表格歸一：renderTable 改 table-sm＋truncate 欄位選項（title 看全文、max-width 18rem）＋caption／footer；新增 renderKeyValueTable；12 處自建表格與 Prtg.cshtml 四張靜態表全改用共用元件（permission-changes 的 HTML 字串表改 DOM）；Imports／Runs 兩張純說明表保留 markup 套同 class；主機／問題純文字欄 21 處補 truncate（多行區塊儲存格不套）；新增 TableConsistencyUiTests 4 條 | Sonnet 實作、Claude 補 truncate 呼叫端與守門測試；順手修 F-3 留下的退化（ui.js 以 style.setProperty 寫 token，mini-dom 缺此方法讓 ApiTimeoutBehaviorTests 紅）；build 0 警告；UI／表格／JsBehavior／SlowQuery 定向 174 綠；突變（table-sm、多一張自建表、Runs 缺 table-sm、主機欄缺 truncate）皆轉紅 |
-| F-1 | 頁首元件 renderPageHeader（副標＋help＋頁面層級動作，< md 換行）；26 頁盤點後 8 頁套用（IssueOwners、PermissionChanges、Rules、Imports、RecordDetail、HandlerDetail、HostDetail、UserDetail），其餘 18 頁為純篩選列／動作屬卡片或頁籤／獨立頁不套；Reports 的列印用 h1 改 p（保留 id）；全站 Views 無 h1；WEB-SPEC §8.2、DESIGN-SYSTEM §7 補元件；新增 PageHeaderUiTests 5 條 | Sonnet 實作；Claude 驗收：build 0 警告、定向 174 綠、編碼檢查；子代理突變三條（拿掉 page-header、加回 h1、清單外加 page-header）皆轉紅；Hosts／Users 動作與篩選同列不套（維持既有 btn-primary 守門） |
-| F-4 補 | 瀏覽器實測抓到：全站 JS 開啟的 modal 關閉後焦點停在隱藏的 modal（Bootstrap 只在 data-bs-toggle 時歸還）→ layout.js 以 show/hidden.bs.modal 事件委派統一歸還焦點給開啟者；空狀態「右上角」方位文案在窄螢幕不成立，五處改為「按『…』」 | 瀏覽器實測：關閉後焦點回到「新增規則」；AccessibilityUiTests 加 1 條，突變拿掉 focus() 轉紅；定向 168 綠 |
+| F-4 | Sonnet 5.5（規格 task-56-f4）＋ Claude 收緊測試 | 完成 | 0 警告；UI／無障礙 157 綠；子代理突變（側欄色、modal labelledby）轉紅，Claude 加做拿掉 aria-current 轉紅 | 側欄分段文字 #9fb0cc（7.6:1）、aria-current＋詳情頁前綴對照、modal aria-labelledby／focus-visible、無對應輸入的 label 改 span＋role="group"、圖示按鈕缺 title 的 aria-label 退路；aria-current 的 assert 原只查字串出現（註解也能過），收緊為 setAttribute 呼叫 |
+| F-2 | Sonnet 5.5（規格 task-56-f2）＋ Claude 補做 | 完成 | 0 警告；定向 174 綠；突變（table-sm、多一張自建表、Runs 缺 table-sm、主機欄缺 truncate）皆轉紅 | 子代理只對新改的表加 truncate，漏了規格第 5 項的既有呼叫端，Claude 補 21 處（多行區塊儲存格不套 nowrap）並加守門；順手修 F-3 留下的退化：ui.js 改用 style.setProperty 寫 token，測試用 mini-dom 沒有此方法，ApiTimeoutBehaviorTests 自 F-3 起是紅的 |
+| F-1 | Sonnet 5.5（規格 task-56-f1） | 完成 | 0 警告；定向 174 綠；突變（拿掉 page-header、加回 h1、清單外加 page-header）皆轉紅 | 26 頁盤點後 8 頁套用；Hosts／Users 動作與篩選同列不套（維持既有 btn-primary 守門）；Reports 列印用 h1 改 p（保留 id，螢幕不重複期間文字） |
+| F-4 補、E-2 補、E-9 補 | Claude（輪末全量與瀏覽器實測抓到） | 完成 | 全量 6,415 綠＋1 紅（JsModuleImportTests）→ 修後轉綠；瀏覽器實測關閉 modal 後焦點回到觸發鈕；焦點歸還突變轉紅；定向 168 綠 | E-2 的交辦單詳情頁漏 import `candidatesToUserOptions`，改派／拆出 modal 開啟即 ReferenceError（E-2 當時只跑定向）；全站 JS 開的 modal 關閉後焦點停在隱藏的 modal → layout.js 事件委派統一歸還；空狀態「右上角」文案在 375px 不成立，五處改「按『…』」；E-9 驗收「§9.4a 不含全角色」只改了內文、標題與使用者詳情頁段落的交叉引用漏改，已補 |
+
+## 體檢交接
+
+- **全量測試**：6,415 通過／1 失敗／10 略過（Windows，SQLite，23 分鐘）；失敗為 E-2 漏 import，修正後單跑轉綠。之後只多 1 條守門測試與文件修正（定向 168 綠），未再跑全量，推算 6,417 通過／10 略過；第 55 輪體檢後 6,326 → +91。建置 0 警告。
+- **做了**：E-1～E-10、F-1～F-8 全數完成；§8 明確不做項目未動。
+- **委派**：全部用 Sonnet 5.5 subagent（使用者指定，不用 agy）。每段 Claude 獨立審查、編碼檢查並至少一處自己的突變。
+- **審查抓到並修正的**：prtg-guard 預覽誤改成 guardLoad 會蓋掉 PRTG 實際錯誤（F-5）；首頁待派工卡逐頁翻會讓派工試跑重跑 N 次（E-10）；F-3 改 setProperty 讓 JsBehavior 測試紅了兩段沒人發現；E-2 漏 import 讓改派 modal 直接壞；F-2 漏既有呼叫端 truncate；aria-current 測試只查字串；modal 焦點不歸還；E-9 標題漏改。
+- **教訓**：定向測試篩選用「UiTests」不會涵蓋 JsModuleImportTests、ApiTimeoutBehaviorTests 這類名稱不含 UiTests 的前端守門——改前端的段落定向篩選要加 `JsModuleImport|JsBehavior|ApiTimeout`，否則退化會一路帶到輪末。
+- **需要體檢特別看的**：
+  1. 本機 DB 是空的（無主機、無交辦單），三個詳情頁頁首（HostDetail、UserDetail、HandlerDetail）與改派／拆出 modal 只做了靜態與測試驗證，沒有帶資料的畫面實測。
+  2. F-2 改了 Prtg.cshtml 四張表為 JS 產生（衝突清單全選 checkbox 搬進 renderHeader）——空資料下無錯誤，有資料時的全選與勾選動線未實測。
+  3. E-6 未讀徽章輪詢在分頁隱藏時停止，靠 visibilitychange；沒有長時間觀察實際請求數。
+- **使用者實測建議**：(1) 有資料的站台開一張交辦單，按改派、拆出，確認人選清單出現並能送出；(2) 手機寬度開「我的交辦」與交辦單詳情，確認頁首副標與按鈕換行、長主機名截斷後滑過看得到全名；(3) PRTG 維護頁衝突清單用全選後批次指派；(4) 鍵盤 Tab 到任一「新增」鈕按 Enter 開 modal、Esc 關閉，焦點應回到該鈕。
 
 ## 8. 明確不做（本輪定案）
 
