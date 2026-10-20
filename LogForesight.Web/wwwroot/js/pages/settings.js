@@ -933,37 +933,19 @@ export function renderSlowQueries(items, host = resolveSlowQueryHost()) {
         return host;
     }
 
-    const table = document.createElement('table');
-    table.className = 'table table-sm mb-0';
-    table.id = 'slow-query-table';
-
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-    for (const text of ['操作', '次數', '最大耗時', '最近一次']) {
-        const th = document.createElement('th');
-        th.textContent = text;
-        headRow.appendChild(th);
-    }
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    for (const item of list) {
-        const tr = document.createElement('tr');
-        for (const text of [
-            item.operation ?? '',
-            formatNumber(item.count ?? 0),
-            `${formatNumber(item.maxMs ?? 0)} ms`,
-            item.lastAt ? formatDateTime(item.lastAt) : ''
-        ]) {
-            const td = document.createElement('td');
-            td.textContent = text;
-            tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    host.appendChild(table);
+    const tableHost = document.createElement('div');
+    renderTable(tableHost, {
+        columns: [
+            { title: '操作', render: item => item.operation ?? '' },
+            { title: '次數', render: item => formatNumber(item.count ?? 0) },
+            { title: '最大耗時', render: item => `${formatNumber(item.maxMs ?? 0)} ms` },
+            { title: '最近一次', render: item => (item.lastAt ? formatDateTime(item.lastAt) : '') }
+        ],
+        rows: list
+    });
+    const slowTable = tableHost.querySelector('table');
+    if (slowTable) slowTable.id = 'slow-query-table';
+    host.appendChild(tableHost);
     return host;
 }
 

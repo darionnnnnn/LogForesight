@@ -139,55 +139,18 @@ function renderEffectiveness(summary) {
             note.textContent = '分母是已標記的 PRTG 問題';
             wrapper.appendChild(note);
 
-            const responsive = document.createElement('div');
-            responsive.className = 'table-responsive';
-            const table = document.createElement('table');
-            table.className = 'table table-sm table-bordered align-middle mb-0';
-            const caption = document.createElement('caption');
-            caption.className = 'visually-hidden';
-            caption.textContent = '分母是已標記的 PRTG 問題';
-            table.appendChild(caption);
-
-            const thead = document.createElement('thead');
-            const trHead = document.createElement('tr');
-            for (const col of ['規則代碼', '標記誤報', '已處理']) {
-                const th = document.createElement('th');
-                th.scope = 'col';
-                th.textContent = col;
-                trHead.appendChild(th);
-            }
-            thead.appendChild(trHead);
-            table.appendChild(thead);
-
-            const tbody = document.createElement('tbody');
-            for (const item of marks) {
-                const tr = document.createElement('tr');
-                const tdRule = document.createElement('td');
-                tdRule.textContent = item.ruleCode || '(未分類)';
-                const tdFp = document.createElement('td');
-                tdFp.textContent = formatNumber(item.falsePositive ?? 0);
-                const tdHandled = document.createElement('td');
-                tdHandled.textContent = formatNumber(item.handled ?? 0);
-                tr.append(tdRule, tdFp, tdHandled);
-                tbody.appendChild(tr);
-            }
-            table.appendChild(tbody);
-
-            const tfoot = document.createElement('tfoot');
-            const trFoot = document.createElement('tr');
-            trFoot.className = 'fw-semibold table-light';
-            const tdTotalLabel = document.createElement('td');
-            tdTotalLabel.textContent = '總計';
-            const tdTotalFp = document.createElement('td');
-            tdTotalFp.textContent = formatNumber(totalFp);
-            const tdTotalHandled = document.createElement('td');
-            tdTotalHandled.textContent = formatNumber(totalHandled);
-            trFoot.append(tdTotalLabel, tdTotalFp, tdTotalHandled);
-            tfoot.appendChild(trFoot);
-            table.appendChild(tfoot);
-
-            responsive.appendChild(table);
-            wrapper.appendChild(responsive);
+            const marksHost = document.createElement('div');
+            renderTable(marksHost, {
+                caption: '分母是已標記的 PRTG 問題',
+                columns: [
+                    { title: '規則代碼', render: item => item.ruleCode || '(未分類)' },
+                    { title: '標記誤報', render: item => formatNumber(item.falsePositive ?? 0) },
+                    { title: '已處理', render: item => formatNumber(item.handled ?? 0) }
+                ],
+                rows: marks,
+                footer: ['總計', formatNumber(totalFp), formatNumber(totalHandled)]
+            });
+            wrapper.appendChild(marksHost);
             ruleMarks.appendChild(wrapper);
         }
     }
@@ -472,31 +435,21 @@ function renderFullBackfillPreview(preview) {
     const heading = document.createElement('summary');
     heading.textContent = '查看逐日工作量';
     details.appendChild(heading);
-    const table = document.createElement('table');
-    table.className = 'table table-sm mt-2';
-    const caption = document.createElement('caption');
-    caption.className = 'visually-hidden';
-    caption.textContent = '全量歷史回填逐日估算的觸發主機、歷史對應、選取主機與目標感測器數';
-    table.appendChild(caption);
-    const thead = document.createElement('thead');
-    const header = document.createElement('tr');
-    for (const label of ['日期', '觸發主機', '歷史對應主機', '選取主機', '目標 sensor']) {
-        const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; header.appendChild(th);
-    }
-    thead.appendChild(header); table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    for (const day of preview.days || []) {
-        const tr = document.createElement('tr');
-        for (const value of [day.day.slice(0, 10), formatNumber(day.triggeredHosts), formatNumber(day.mappedHosts), formatNumber(day.selectedHosts), formatNumber(day.targetSensors)]) {
-            const td = document.createElement('td'); td.textContent = value; tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    const responsive = document.createElement('div');
-    responsive.className = 'table-responsive';
-    responsive.appendChild(table);
-    details.appendChild(responsive); root.appendChild(details);
+    const dayTableHost = document.createElement('div');
+    dayTableHost.className = 'mt-2';
+    renderTable(dayTableHost, {
+        caption: '全量歷史回填逐日估算的觸發主機、歷史對應、選取主機與目標感測器數',
+        columns: [
+            { title: '日期', render: day => day.day.slice(0, 10) },
+            { title: '觸發主機', render: day => formatNumber(day.triggeredHosts) },
+            { title: '歷史對應主機', render: day => formatNumber(day.mappedHosts) },
+            { title: '選取主機', render: day => formatNumber(day.selectedHosts) },
+            { title: '目標 sensor', render: day => formatNumber(day.targetSensors) }
+        ],
+        rows: preview.days || [],
+        empty: { title: '沒有逐日資料', hint: '預覽範圍內沒有可回填的日期，請調整範圍後重新預估。', icon: null }
+    });
+    details.appendChild(dayTableHost); root.appendChild(details);
     start.disabled = !preview.previewId;
 }
 
@@ -1232,30 +1185,18 @@ function updateConflictBatchBar() {
 }
 
 function renderConflictsLoading() {
-    const tbody = document.getElementById('prtg-mirror-conflicts-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
-    appendLoadingRow(tbody, 6);
+    const container = document.getElementById('prtg-mirror-conflicts-table');
+    if (!container) return;
+    renderMirrorTableLoading(container);
 }
 
 function renderConflictsError(errorMessage) {
-    const tbody = document.getElementById('prtg-mirror-conflicts-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 6;
-    td.className = 'text-danger text-center py-2';
-    const textSpan = document.createElement('span');
-    textSpan.textContent = `載入衝突清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
-    const retryBtn = document.createElement('button');
-    retryBtn.type = 'button';
-    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
-    retryBtn.textContent = '重試';
-    retryBtn.addEventListener('click', () => refreshConflicts(conflictPage));
-    td.append(textSpan, retryBtn);
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    const container = document.getElementById('prtg-mirror-conflicts-table');
+    if (!container) return;
+    renderError(container, {
+        message: `載入衝突清單失敗：${errorMessage || '網路或伺服器錯誤'}`,
+        onRetry: () => refreshConflicts(conflictPage)
+    });
     document.getElementById('prtg-conflicts-pagination')?.replaceChildren();
 }
 
@@ -1292,117 +1233,70 @@ async function refreshConflicts(page = conflictPage, options = {}) {
     }
 }
 
-function renderConflicts(items) {
-    const tbody = document.getElementById('prtg-mirror-conflicts-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
-
-    if (!items || items.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = 6;
-        td.className = 'text-muted text-center py-2';
-        td.textContent = '無衝突項目';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        return;
-    }
-
-    for (const item of items) {
-        const tr = document.createElement('tr');
-
-        const tdCheck = document.createElement('td');
-        tdCheck.className = 'text-center';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'form-check-input prtg-conflict-row-check';
-        checkbox.value = String(item.deviceObjid);
-        checkbox.dataset.objid = String(item.deviceObjid);
-        checkbox.setAttribute('aria-label', `選取裝置 ${item.deviceObjid}`);
-        checkbox.checked = selectedConflictDeviceObjids.has(item.deviceObjid);
-        checkbox.addEventListener('change', () => {
-            if (checkbox.checked) {
+/** 衝突清單表頭的全選 checkbox：每次渲染重建，id 維持不變供 updateConflictBatchBar 同步勾選狀態 */
+function buildConflictSelectAll() {
+    const selectAll = document.createElement('input');
+    selectAll.type = 'checkbox';
+    selectAll.className = 'form-check-input';
+    selectAll.id = 'prtg-conflict-select-all';
+    selectAll.title = '全選目前頁';
+    selectAll.setAttribute('aria-label', '全選目前頁');
+    selectAll.addEventListener('change', () => {
+        const shouldCheck = selectAll.checked;
+        for (const item of currentConflictItems) {
+            if (shouldCheck) {
                 selectedConflictDeviceObjids.add(item.deviceObjid);
             } else {
                 selectedConflictDeviceObjids.delete(item.deviceObjid);
             }
-            updateConflictBatchBar();
-        });
-        tdCheck.appendChild(checkbox);
-
-        const tdDevice = document.createElement('td');
-        tdDevice.textContent = item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
-
-        const tdIp = document.createElement('td');
-        tdIp.className = 'font-monospace';
-        tdIp.textContent = item.ip || '-';
-
-        const tdKind = document.createElement('td');
-        const kindBadge = document.createElement('span');
-        if (item.conflictKind === 'multi-device') {
-            kindBadge.className = 'badge bg-warning text-dark';
-            kindBadge.textContent = '同 IP 多裝置';
-        } else if (item.conflictKind === 'multi-host') {
-            kindBadge.className = 'badge bg-info text-dark';
-            kindBadge.textContent = 'IP 對多主機';
-        } else if (item.conflictKind === 'hostname-multi') {
-            kindBadge.className = 'badge bg-warning text-dark';
-            kindBadge.textContent = '名稱對多主機';
-        } else if (item.conflictKind === 'hostname-host-taken') {
-            kindBadge.className = 'badge bg-warning text-dark';
-            kindBadge.textContent = '名稱命中已對應主機';
-        } else {
-            kindBadge.className = 'badge bg-secondary';
-            kindBadge.textContent = item.conflictKind || '-';
         }
-        tdKind.appendChild(kindBadge);
+        const rowCheckboxes = document.querySelectorAll('.prtg-conflict-row-check');
+        for (const cb of rowCheckboxes) {
+            cb.checked = shouldCheck;
+        }
+        updateConflictBatchBar();
+    });
+    return selectAll;
+}
 
-        const tdNote = document.createElement('td');
-        tdNote.className = 'text-muted';
-        tdNote.textContent = item.note || '-';
+function renderConflicts(items) {
+    const container = document.getElementById('prtg-mirror-conflicts-table');
+    if (!container) return;
 
-        const tdAction = document.createElement('td');
-        const assignBtn = document.createElement('button');
-        assignBtn.type = 'button';
-        assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
-        assignBtn.textContent = '指派';
-        assignBtn.addEventListener('click', () => openAssignModal(item));
-        tdAction.appendChild(assignBtn);
-
-        const excludeBtn = document.createElement('button');
-        excludeBtn.type = 'button';
-        excludeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap ms-1';
-        excludeBtn.textContent = '排除此 IP';
-        if (!item.ip) {
-            excludeBtn.disabled = true;
-            excludeBtn.title = '此 device 沒有 IP';
-        } else {
-            excludeBtn.addEventListener('click', async () => {
-                const deviceCount = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
-                const confirmed = await confirmAction({
-                    message: `將排除 IP ${item.ip}：此 IP 底下的 ${deviceCount} 台 PRTG device 都不會再進行主機對應與取數。`
-                });
-                if (!confirmed) return;
-                try {
-                    const res = await api.put('/api/admin/settings/prtg-ip-excludes', { ip: item.ip, note: null, expectedScopeRevision: scopeRevision });
-                    toast('已排除此 IP', 'success');
-                    notifyRemapWarning(res);
-                    await Promise.all([
-                        refreshPrtgMirror(),
-                        refreshConflicts(conflictPage),
-                        refreshUnmatched(unmatchedPage),
-
-                    ]);
-                } catch (error) {
-                    toast(error && error.message ? error.message : '排除失敗', 'danger');
+    renderTable(container, {
+        columns: [
+            {
+                title: '選取',
+                className: 'text-center lf-w-xxs',
+                renderHeader: buildConflictSelectAll,
+                render: item => {
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'form-check-input prtg-conflict-row-check';
+                    checkbox.value = String(item.deviceObjid);
+                    checkbox.dataset.objid = String(item.deviceObjid);
+                    checkbox.setAttribute('aria-label', `選取裝置 ${item.deviceObjid}`);
+                    checkbox.checked = selectedConflictDeviceObjids.has(item.deviceObjid);
+                    checkbox.addEventListener('change', () => {
+                        if (checkbox.checked) {
+                            selectedConflictDeviceObjids.add(item.deviceObjid);
+                        } else {
+                            selectedConflictDeviceObjids.delete(item.deviceObjid);
+                        }
+                        updateConflictBatchBar();
+                    });
+                    return checkbox;
                 }
-            });
-        }
-        tdAction.appendChild(excludeBtn);
-
-        tr.append(tdCheck, tdDevice, tdIp, tdKind, tdNote, tdAction);
-        tbody.appendChild(tr);
-    }
+            },
+            { title: 'Device', className: 'lf-w-lg', truncate: true, render: mirrorDeviceText },
+            { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ip || '-' },
+            { title: '衝突型別', className: 'lf-w-md', render: item => mirrorKindBadge(item, false) },
+            { title: '說明', className: 'text-muted', render: item => item.note || '-' },
+            { title: '操作', className: 'lf-w-mdl', render: mirrorAssignExcludeActions }
+        ],
+        rows: items || [],
+        empty: { title: '無衝突項目', hint: '目前沒有需要人工處理的衝突；同步後若出現同 IP 多裝置等情況會列在這裡。', icon: null }
+    });
 }
 
 function renderConflictPagination(totalPages) {
@@ -1430,43 +1324,99 @@ function renderConflictPagination(totalPages) {
 let unmatchedPage = 1;
 let unmatchedPageSize = loadPageSize('prtg-unmatched');
 
-/** 表格載入中佔位列：spinner 置中，等待樣式與全站其他區塊一致（ui.js 的 renderSpinner） */
-function appendLoadingRow(tbody, colSpan) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = colSpan;
-    td.className = 'py-2';
-    renderSpinner(td);
-    td.firstElementChild.classList.add('justify-content-center');
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+/** 鏡像清單表格的載入中佔位：spinner 置中，等待樣式與全站其他區塊一致（ui.js 的 renderSpinner） */
+function renderMirrorTableLoading(container) {
+    renderSpinner(container);
+    container.firstElementChild.classList.add('justify-content-center', 'py-2');
+}
+
+/** 衝突／未對應清單共用的 Device 欄文字 */
+function mirrorDeviceText(item) {
+    return item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
+}
+
+/** 衝突／未對應清單共用的型別徽章；includeUnmatched：未對應清單多一個「未對應」分支 */
+function mirrorKindBadge(item, includeUnmatched) {
+    const kindBadge = document.createElement('span');
+    if (item.conflictKind === 'multi-device') {
+        kindBadge.className = 'badge bg-warning text-dark';
+        kindBadge.textContent = '同 IP 多裝置';
+    } else if (item.conflictKind === 'multi-host') {
+        kindBadge.className = 'badge bg-info text-dark';
+        kindBadge.textContent = 'IP 對多主機';
+    } else if (item.conflictKind === 'hostname-multi') {
+        kindBadge.className = 'badge bg-warning text-dark';
+        kindBadge.textContent = '名稱對多主機';
+    } else if (item.conflictKind === 'hostname-host-taken') {
+        kindBadge.className = 'badge bg-warning text-dark';
+        kindBadge.textContent = '名稱命中已對應主機';
+    } else if (includeUnmatched && (item.conflictKind === 'unmatched' || item.mapStatus === 'unmatched')) {
+        kindBadge.className = 'badge bg-secondary';
+        kindBadge.textContent = '未對應';
+    } else {
+        kindBadge.className = 'badge bg-secondary';
+        kindBadge.textContent = item.conflictKind || '-';
+    }
+    return kindBadge;
+}
+
+/** 衝突／未對應清單共用的操作欄：指派＋排除此 IP */
+function mirrorAssignExcludeActions(item) {
+    const actions = document.createElement('span');
+
+    const assignBtn = document.createElement('button');
+    assignBtn.type = 'button';
+    assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
+    assignBtn.textContent = '指派';
+    assignBtn.addEventListener('click', () => openAssignModal(item));
+    actions.appendChild(assignBtn);
+
+    const excludeBtn = document.createElement('button');
+    excludeBtn.type = 'button';
+    excludeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap ms-1';
+    excludeBtn.textContent = '排除此 IP';
+    if (!item.ip) {
+        excludeBtn.disabled = true;
+        excludeBtn.title = '此 device 沒有 IP';
+    } else {
+        excludeBtn.addEventListener('click', async () => {
+            const deviceCount = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
+            const confirmed = await confirmAction({
+                message: `將排除 IP ${item.ip}：此 IP 底下的 ${deviceCount} 台 PRTG device 都不會再進行主機對應與取數。`
+            });
+            if (!confirmed) return;
+            try {
+                const res = await api.put('/api/admin/settings/prtg-ip-excludes', { ip: item.ip, note: null, expectedScopeRevision: scopeRevision });
+                toast('已排除此 IP', 'success');
+                notifyRemapWarning(res);
+                await Promise.all([
+                    refreshPrtgMirror(),
+                    refreshConflicts(conflictPage),
+                    refreshUnmatched(unmatchedPage),
+
+                ]);
+            } catch (error) {
+                toast(error && error.message ? error.message : '排除失敗', 'danger');
+            }
+        });
+    }
+    actions.appendChild(excludeBtn);
+    return actions;
 }
 
 function renderUnmatchedLoading() {
-    const tbody = document.getElementById('prtg-unmatched-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
-    appendLoadingRow(tbody, 5);
+    const container = document.getElementById('prtg-unmatched-table');
+    if (!container) return;
+    renderMirrorTableLoading(container);
 }
 
 function renderUnmatchedError(errorMessage) {
-    const tbody = document.getElementById('prtg-unmatched-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 5;
-    td.className = 'text-danger text-center py-2';
-    const textSpan = document.createElement('span');
-    textSpan.textContent = `載入未對應清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
-    const retryBtn = document.createElement('button');
-    retryBtn.type = 'button';
-    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
-    retryBtn.textContent = '重試';
-    retryBtn.addEventListener('click', () => refreshUnmatched(unmatchedPage));
-    td.append(textSpan, retryBtn);
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    const container = document.getElementById('prtg-unmatched-table');
+    if (!container) return;
+    renderError(container, {
+        message: `載入未對應清單失敗：${errorMessage || '網路或伺服器錯誤'}`,
+        onRetry: () => refreshUnmatched(unmatchedPage)
+    });
     document.getElementById('prtg-unmatched-pagination')?.replaceChildren();
 }
 
@@ -1490,100 +1440,20 @@ async function refreshUnmatched(page = unmatchedPage) {
 }
 
 function renderUnmatched(items) {
-    const tbody = document.getElementById('prtg-unmatched-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
+    const container = document.getElementById('prtg-unmatched-table');
+    if (!container) return;
 
-    if (!items || items.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = 5;
-        td.className = 'text-muted text-center py-2';
-        td.textContent = '無未對應項目';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        return;
-    }
-
-    for (const item of items) {
-        const tr = document.createElement('tr');
-
-        const tdDevice = document.createElement('td');
-        tdDevice.textContent = item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
-
-        const tdIp = document.createElement('td');
-        tdIp.className = 'font-monospace';
-        tdIp.textContent = item.ip || '-';
-
-        const tdKind = document.createElement('td');
-        const kindBadge = document.createElement('span');
-        if (item.conflictKind === 'multi-device') {
-            kindBadge.className = 'badge bg-warning text-dark';
-            kindBadge.textContent = '同 IP 多裝置';
-        } else if (item.conflictKind === 'multi-host') {
-            kindBadge.className = 'badge bg-info text-dark';
-            kindBadge.textContent = 'IP 對多主機';
-        } else if (item.conflictKind === 'hostname-multi') {
-            kindBadge.className = 'badge bg-warning text-dark';
-            kindBadge.textContent = '名稱對多主機';
-        } else if (item.conflictKind === 'hostname-host-taken') {
-            kindBadge.className = 'badge bg-warning text-dark';
-            kindBadge.textContent = '名稱命中已對應主機';
-        } else if (item.conflictKind === 'unmatched' || item.mapStatus === 'unmatched') {
-            kindBadge.className = 'badge bg-secondary';
-            kindBadge.textContent = '未對應';
-        } else {
-            kindBadge.className = 'badge bg-secondary';
-            kindBadge.textContent = item.conflictKind || '-';
-        }
-        tdKind.appendChild(kindBadge);
-
-        const tdNote = document.createElement('td');
-        tdNote.className = 'text-muted';
-        tdNote.textContent = item.note || '-';
-
-        const tdAction = document.createElement('td');
-        const assignBtn = document.createElement('button');
-        assignBtn.type = 'button';
-        assignBtn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
-        assignBtn.textContent = '指派';
-        assignBtn.addEventListener('click', () => openAssignModal(item));
-        tdAction.appendChild(assignBtn);
-
-        const excludeBtn = document.createElement('button');
-        excludeBtn.type = 'button';
-        excludeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap ms-1';
-        excludeBtn.textContent = '排除此 IP';
-        if (!item.ip) {
-            excludeBtn.disabled = true;
-            excludeBtn.title = '此 device 沒有 IP';
-        } else {
-            excludeBtn.addEventListener('click', async () => {
-                const deviceCount = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
-                const confirmed = await confirmAction({
-                    message: `將排除 IP ${item.ip}：此 IP 底下的 ${deviceCount} 台 PRTG device 都不會再進行主機對應與取數。`
-                });
-                if (!confirmed) return;
-                try {
-                    const res = await api.put('/api/admin/settings/prtg-ip-excludes', { ip: item.ip, note: null, expectedScopeRevision: scopeRevision });
-                    toast('已排除此 IP', 'success');
-                    notifyRemapWarning(res);
-                    await Promise.all([
-                        refreshPrtgMirror(),
-                        refreshConflicts(conflictPage),
-                        refreshUnmatched(unmatchedPage),
-
-                    ]);
-                } catch (error) {
-                    toast(error && error.message ? error.message : '排除失敗', 'danger');
-                }
-            });
-        }
-        tdAction.appendChild(excludeBtn);
-
-        tr.append(tdDevice, tdIp, tdKind, tdNote, tdAction);
-        tbody.appendChild(tr);
-    }
+    renderTable(container, {
+        columns: [
+            { title: 'Device', className: 'lf-w-lg', truncate: true, render: mirrorDeviceText },
+            { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ip || '-' },
+            { title: '型別', className: 'lf-w-md', render: item => mirrorKindBadge(item, true) },
+            { title: '說明', className: 'text-muted', render: item => item.note || '-' },
+            { title: '操作', className: 'lf-w-mdl', render: mirrorAssignExcludeActions }
+        ],
+        rows: items || [],
+        empty: { title: '無未對應項目', hint: '所有 PRTG device 都已對應主機；之後新增且未對應的 device 會列在這裡。', icon: null }
+    });
 }
 
 function renderUnmatchedPagination(totalPages) {
@@ -1607,30 +1477,18 @@ function renderUnmatchedPagination(totalPages) {
 }
 
 function renderIpExcludesLoading() {
-    const tbody = document.getElementById('prtg-ip-excludes-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
-    appendLoadingRow(tbody, 5);
+    const container = document.getElementById('prtg-ip-excludes-table');
+    if (!container) return;
+    renderMirrorTableLoading(container);
 }
 
 function renderIpExcludesError(errorMessage) {
-    const tbody = document.getElementById('prtg-ip-excludes-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 5;
-    td.className = 'text-danger text-center py-2';
-    const textSpan = document.createElement('span');
-    textSpan.textContent = `載入 IP 排除清單失敗：${errorMessage || '網路或伺服器錯誤'} `;
-    const retryBtn = document.createElement('button');
-    retryBtn.type = 'button';
-    retryBtn.className = 'btn btn-sm btn-outline-danger py-0 ms-2';
-    retryBtn.textContent = '重試';
-    retryBtn.addEventListener('click', () => refreshIpExcludes());
-    td.append(textSpan, retryBtn);
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    const container = document.getElementById('prtg-ip-excludes-table');
+    if (!container) return;
+    renderError(container, {
+        message: `載入 IP 排除清單失敗：${errorMessage || '網路或伺服器錯誤'}`,
+        onRetry: () => refreshIpExcludes()
+    });
 }
 
 async function refreshIpExcludes() {
@@ -1638,137 +1496,109 @@ async function refreshIpExcludes() {
 }
 
 function renderIpExcludes(items) {
-    const tbody = document.getElementById('prtg-ip-excludes-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
+    const container = document.getElementById('prtg-ip-excludes-table');
+    if (!container) return;
 
-    if (!items || items.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = 5;
-        td.className = 'text-muted text-center py-2';
-        td.textContent = '無排除 IP';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        return;
-    }
+    renderTable(container, {
+        columns: [
+            { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ip || '-' },
+            { title: '備註', className: 'text-muted', render: item => item.note || '-' },
+            { title: '建立者', className: 'lf-w-md', render: item => item.createdBy || '-' },
+            { title: '建立時間', className: 'lf-w-mdl', render: item => (item.createdAt ? formatDateTime(item.createdAt) : '-') },
+            {
+                title: '操作',
+                className: 'lf-w-sm',
+                render: item => {
+                    const removeBtn = document.createElement('button');
+                    removeBtn.type = 'button';
+                    removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
+                    removeBtn.textContent = '移除';
+                    removeBtn.addEventListener('click', async () => {
+                        const confirmed = await confirmAction({
+                            message: `確定要移除 IP ${item.ip} 的排除設定嗎？移除後此 IP 會恢復自動對應。`
+                        });
+                        if (!confirmed) return;
+                        try {
+                            const res = await api.delete(`/api/admin/settings/prtg-ip-excludes/${encodeURIComponent(item.ip)}?expectedScopeRevision=${scopeRevision}`);
+                            toast('已移除 IP 排除設定', 'success');
+                            notifyRemapWarning(res);
+                            await Promise.all([
+                                refreshPrtgMirror(),
+                                refreshConflicts(conflictPage),
+                                refreshUnmatched(unmatchedPage),
 
-    for (const item of items) {
-        const tr = document.createElement('tr');
-
-        const tdIp = document.createElement('td');
-        tdIp.className = 'font-monospace';
-        tdIp.textContent = item.ip || '-';
-
-        const tdNote = document.createElement('td');
-        tdNote.className = 'text-muted';
-        tdNote.textContent = item.note || '-';
-
-        const tdCreatedBy = document.createElement('td');
-        tdCreatedBy.textContent = item.createdBy || '-';
-
-        const tdCreatedAt = document.createElement('td');
-        tdCreatedAt.textContent = item.createdAt ? formatDateTime(item.createdAt) : '-';
-
-        const tdAction = document.createElement('td');
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
-        removeBtn.textContent = '移除';
-        removeBtn.addEventListener('click', async () => {
-            const confirmed = await confirmAction({
-                message: `確定要移除 IP ${item.ip} 的排除設定嗎？移除後此 IP 會恢復自動對應。`
-            });
-            if (!confirmed) return;
-            try {
-                const res = await api.delete(`/api/admin/settings/prtg-ip-excludes/${encodeURIComponent(item.ip)}?expectedScopeRevision=${scopeRevision}`);
-                toast('已移除 IP 排除設定', 'success');
-                notifyRemapWarning(res);
-                await Promise.all([
-                    refreshPrtgMirror(),
-                    refreshConflicts(conflictPage),
-                    refreshUnmatched(unmatchedPage),
-
-                ]);
-            } catch (error) {
-                toast(error && error.message ? error.message : '移除失敗', 'danger');
+                            ]);
+                        } catch (error) {
+                            toast(error && error.message ? error.message : '移除失敗', 'danger');
+                        }
+                    });
+                    return removeBtn;
+                }
             }
-        });
-        tdAction.appendChild(removeBtn);
-
-        tr.append(tdIp, tdNote, tdCreatedBy, tdCreatedAt, tdAction);
-        tbody.appendChild(tr);
-    }
+        ],
+        rows: items || [],
+        empty: { title: '無排除 IP', hint: '需要略過某個 IP 時，可從衝突或未對應清單點「排除此 IP」。', icon: null }
+    });
 }
 
 function renderManualMaps(items) {
-    const tbody = document.getElementById('prtg-mirror-manual-maps-body');
-    if (!tbody) return;
-    tbody.replaceChildren();
+    const container = document.getElementById('prtg-mirror-manual-maps-table');
+    if (!container) return;
 
-    if (!items || items.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = 5;
-        td.className = 'text-muted text-center py-2';
-        td.textContent = '無人工對應項目';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        return;
-    }
+    renderTable(container, {
+        columns: [
+            { title: 'Device Objid', className: 'lf-w-md font-monospace', render: item => String(item.deviceObjid) },
+            { title: '主機', className: 'lf-w-lg', truncate: true, render: item => item.hostName || `Host ID: ${item.hostId}` },
+            {
+                title: '備註',
+                className: 'text-muted',
+                render: item => {
+                    const note = document.createElement('span');
+                    note.appendChild(document.createTextNode(item.note || '-'));
+                    if (item.sameIpSkippedCount && item.sameIpSkippedCount > 0) {
+                        const span = document.createElement('span');
+                        span.className = 'text-muted ms-1';
+                        span.textContent = `（同 IP 另有 ${item.sameIpSkippedCount} 台 device 已略過）`;
+                        note.appendChild(span);
+                    }
+                    return note;
+                }
+            },
+            { title: '建立者', className: 'lf-w-md', render: item => item.createdBy || '-' },
+            {
+                title: '操作',
+                className: 'lf-w-sm',
+                render: item => {
+                    const removeBtn = document.createElement('button');
+                    removeBtn.type = 'button';
+                    removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
+                    removeBtn.textContent = '移除';
+                    removeBtn.addEventListener('click', async () => {
+                        const confirmed = await confirmAction({
+                            message: `確定要移除 PRTG device ${item.deviceObjid} 的人工主機對應嗎？移除後此 device 會回到自動 IP 對應判定。`
+                        });
+                        if (!confirmed) return;
+                        try {
+                            const res = await api.delete(`/api/admin/settings/prtg-manual-map/${item.deviceObjid}?expectedScopeRevision=${scopeRevision}`);
+                            toast('已移除人工對應', 'success');
+                            notifyRemapWarning(res);
+                            await Promise.all([
+                                refreshPrtgMirror(),
+                                refreshConflicts(conflictPage),
+                                refreshUnmatched(unmatchedPage),
 
-    for (const item of items) {
-        const tr = document.createElement('tr');
-
-        const tdObjid = document.createElement('td');
-        tdObjid.className = 'font-monospace';
-        tdObjid.textContent = String(item.deviceObjid);
-
-        const tdHost = document.createElement('td');
-        tdHost.textContent = item.hostName || `Host ID: ${item.hostId}`;
-
-        const tdNote = document.createElement('td');
-        tdNote.className = 'text-muted';
-        tdNote.textContent = item.note || '-';
-        if (item.sameIpSkippedCount && item.sameIpSkippedCount > 0) {
-            const span = document.createElement('span');
-            span.className = 'text-muted ms-1';
-            span.textContent = `（同 IP 另有 ${item.sameIpSkippedCount} 台 device 已略過）`;
-            tdNote.appendChild(span);
-        }
-
-        const tdCreatedBy = document.createElement('td');
-        tdCreatedBy.textContent = item.createdBy || '-';
-
-        const tdAction = document.createElement('td');
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
-        removeBtn.textContent = '移除';
-        removeBtn.addEventListener('click', async () => {
-            const confirmed = await confirmAction({
-                message: `確定要移除 PRTG device ${item.deviceObjid} 的人工主機對應嗎？移除後此 device 會回到自動 IP 對應判定。`
-            });
-            if (!confirmed) return;
-            try {
-                const res = await api.delete(`/api/admin/settings/prtg-manual-map/${item.deviceObjid}?expectedScopeRevision=${scopeRevision}`);
-                toast('已移除人工對應', 'success');
-                notifyRemapWarning(res);
-                await Promise.all([
-                    refreshPrtgMirror(),
-                    refreshConflicts(conflictPage),
-                    refreshUnmatched(unmatchedPage),
-
-                ]);
-            } catch (error) {
-                toast(error && error.message ? error.message : '移除失敗', 'danger');
+                            ]);
+                        } catch (error) {
+                            toast(error && error.message ? error.message : '移除失敗', 'danger');
+                        }
+                    });
+                    return removeBtn;
+                }
             }
-        });
-        tdAction.appendChild(removeBtn);
-
-        tr.append(tdObjid, tdHost, tdNote, tdCreatedBy, tdAction);
-        tbody.appendChild(tr);
-    }
+        ],
+        rows: items || [],
+        empty: { title: '無人工對應項目', hint: '需要手動指定主機時，可從衝突或未對應清單點「指派」。', icon: null }
+    });
 }
 
 let assignModal = null;
@@ -1999,24 +1829,7 @@ async function ensureBatchHostsLoaded() {
 }
 
 function bindConflictBatchControls() {
-    const selectAll = document.getElementById('prtg-conflict-select-all');
-    if (selectAll) {
-        selectAll.addEventListener('change', () => {
-            const shouldCheck = selectAll.checked;
-            for (const item of currentConflictItems) {
-                if (shouldCheck) {
-                    selectedConflictDeviceObjids.add(item.deviceObjid);
-                } else {
-                    selectedConflictDeviceObjids.delete(item.deviceObjid);
-                }
-            }
-            const rowCheckboxes = document.querySelectorAll('.prtg-conflict-row-check');
-            for (const cb of rowCheckboxes) {
-                cb.checked = shouldCheck;
-            }
-            updateConflictBatchBar();
-        });
-    }
+    // 全選 checkbox 在表頭，隨每次 renderConflicts 重建並自帶 change 處理（buildConflictSelectAll）
 
     const submitBtn = document.getElementById('prtg-conflict-batch-submit');
     const hostSelect = document.getElementById('prtg-conflict-batch-host');

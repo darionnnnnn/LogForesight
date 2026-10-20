@@ -166,7 +166,7 @@ function renderVisibleHosts(hosts) {
 
     renderTable(document.getElementById('user-visible-hosts'), {
         columns: [
-            { title: '主機', render: h => h.hostName },
+            { title: '主機', truncate: true, render: h => h.hostName },
             { title: 'IP', render: h => h.ipAddress ?? '' },
             { title: '作業系統', render: h => (h.os === 'linux' ? 'Linux' : 'Windows') },
             { title: '群組', render: h => h.groupNames.join('、') },
@@ -218,8 +218,8 @@ function renderOpenWork(workload) {
     container.appendChild(casesBox);
     renderTable(casesBox, {
         columns: [
-            { title: '主機', render: c => c.hostName },
-            { title: '問題', render: c => c.issueLabel },
+            { title: '主機', truncate: true, render: c => c.hostName },
+            { title: '問題', truncate: true, render: c => c.issueLabel },
             { title: '狀態', render: c => statusText(c) },
             { title: '涵蓋範圍', render: c => `${c.firstLinkedDate} ~ ${c.lastLinkedDate}` },
             { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) }
@@ -242,7 +242,7 @@ function renderOpenWork(workload) {
     renderTable(daysBox, {
         columns: [
             { title: '日期', render: d => d.date },
-            { title: '主機', render: d => d.hostName },
+            { title: '主機', truncate: true, render: d => d.hostName },
             { title: '風險', render: d => riskBadge(d.riskLevel) },
             { title: '狀態', render: d => statusText(d) },
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }
@@ -258,8 +258,8 @@ function renderClosedWork(history) {
 
     renderTable(document.getElementById('user-closed-work'), {
         columns: [
-            { title: '主機', render: h => h.hostName },
-            { title: '問題', render: h => h.issueLabel },
+            { title: '主機', truncate: true, render: h => h.hostName },
+            { title: '問題', truncate: true, render: h => h.issueLabel },
             { title: '結論', render: h => h.statusText },
             { title: '涵蓋範圍', render: h => `${h.firstLinkedDate} ~ ${h.lastLinkedDate}` },
             { title: '結案時間', className: 'text-nowrap', render: h => (h.closedAt ? formatDateTime(h.closedAt) : '') }
@@ -290,8 +290,8 @@ function renderAssignmentHistory(history) {
         columns: [
             { title: '交辦時間', className: 'text-nowrap', render: h => formatDateTime(h.createdAt) },
             { title: '交辦者', render: h => h.createdByAccount || '（系統）' },
-            { title: '主機', render: h => h.hostName },
-            { title: '問題', render: h => h.issueLabel },
+            { title: '主機', truncate: true, render: h => h.hostName },
+            { title: '問題', truncate: true, render: h => h.issueLabel },
             { title: '目前狀態', render: h => historyStatusCell(h) },
             { title: '所屬交辦單', className: 'text-nowrap', render: h => workOrderCell(h.workOrderId) },
             { title: '涵蓋範圍', render: h => `${h.firstLinkedDate} ~ ${h.lastLinkedDate}` }

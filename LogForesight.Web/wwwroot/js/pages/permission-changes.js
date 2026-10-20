@@ -9,7 +9,7 @@
 
 import { api } from '../core/api.js';
 import {
-    renderTable, renderLoading, renderPagination, loadPageSize, savePageSize,
+    renderTable, buildKeyValueTable, renderLoading, renderPagination, loadPageSize, savePageSize,
     guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
@@ -703,48 +703,23 @@ function renderStructuredDetail(rawText, emptyFallback = '—', monoPlain = fals
         return plainWrap;
     }
 
-    // 解析成功：以雙欄表格逐列呈現
-    const table = document.createElement('table');
-    table.className = 'lf-kv-table table table-sm mb-0';
-
-    const tbody = document.createElement('tbody');
+    // 解析成功：以共用鍵值表逐列呈現（區段標題、原文列、成對欄位三種列）
+    const kvRows = [];
     for (const lineItems of parsedLines) {
         for (const item of lineItems) {
             // 原文區段之間的空行不渲染：每列有底線，空列會變成一條條無內容的分隔線
             if (item.type === 'asis' && !(item.text || '').trim()) continue;
-            const tr = document.createElement('tr');
             if (item.type === 'section') {
-                tr.className = 'lf-kv-row--section';
-                const th = document.createElement('th');
-                th.colSpan = 2;
-                th.className = 'lf-kv-section-header';
-                th.textContent = item.title ? `${item.title}${item.colonChar || '：'}` : '';
-                tr.appendChild(th);
+                kvRows.push({ section: item.title ? `${item.title}${item.colonChar || '：'}` : '' });
             } else if (item.type === 'asis') {
-                tr.className = 'lf-kv-row--asis';
-                const td = document.createElement('td');
-                td.colSpan = 2;
-                td.className = 'lf-kv-asis-cell';
-                td.textContent = item.text || '';
-                tr.appendChild(td);
+                kvRows.push({ text: item.text || '' });
             } else if (item.type === 'kv') {
-                tr.className = 'lf-kv-row--kv';
-                const tdKey = document.createElement('td');
-                tdKey.className = 'lf-kv-key small';
-                tdKey.textContent = item.key;
-
-                const tdVal = document.createElement('td');
-                tdVal.className = 'lf-kv-val small';
-                tdVal.textContent = item.value;
-
-                tr.append(tdKey, tdVal);
+                kvRows.push({ label: item.key, value: item.value });
             }
-            tbody.appendChild(tr);
         }
     }
 
-    table.appendChild(tbody);
-    return table;
+    return buildKeyValueTable(kvRows, { mono: true });
 }
 
 function detailView(change) {
@@ -842,18 +817,12 @@ function detailView(change) {
     // 彙總列與存取狀態類的異動本來就沒有前後值可比
     const hasDiff = String(change.before ?? '').trim() !== '' || String(change.after ?? '').trim() !== '';
     if (hasDiff) {
-        const diffWrap = document.createElement('div');
-        diffWrap.className = 'lf-table-wrap mb-3';
-        diffWrap.innerHTML = `
-            <table class="table table-sm bg-white mb-0 border">
-                <tbody>
-                    <tr><th class="bg-light text-muted align-top lf-w-sm">異動前</th><td class="small"></td></tr>
-                    <tr><th class="bg-light text-muted align-top">異動後</th><td class="small"></td></tr>
-                </tbody>
-            </table>`;
-        const cells = diffWrap.querySelectorAll('td');
-        cells[0].appendChild(renderStructuredDetail(change.before, '（無）', true));
-        cells[1].appendChild(renderStructuredDetail(change.after, '（無）', true));
+        // 異動前／後：共用鍵值表，內容欄放結構化明細節點（DOM 建立，不拼 HTML 字串）
+        const diffWrap = buildKeyValueTable([
+            { label: '異動前', value: renderStructuredDetail(change.before, '（無）', true) },
+            { label: '異動後', value: renderStructuredDetail(change.after, '（無）', true) }
+        ]);
+        diffWrap.classList.add('mb-3');
         wrap.appendChild(diffWrap);
     }
 

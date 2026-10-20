@@ -506,7 +506,7 @@ function renderDetailView() {
     renderTable(listContainer, {
         columns: [
             { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => r.date },
-            { title: '主機', sortKey: 'host', render: r => r.hostName },
+            { title: '主機', sortKey: 'host', truncate: true, render: r => r.hostName },
             { title: '風險', sortKey: 'risk', render: r => riskBadge(r.riskLevel) },
             { title: '狀況', render: r => headlineCell(r) },
             { title: '類型', render: r => categoryBadges(r.categories) },
@@ -641,7 +641,7 @@ function handlerCell(record) {
 function renderHostView() {
     renderTable(listContainer, {
         columns: [
-            { title: '主機', sortKey: 'host', render: h => textCell(h.hostName) },
+            { title: '主機', sortKey: 'host', truncate: true, render: h => textCell(h.hostName) },
             { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: h => String(h.highRiskDays) },
             { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: h => String(h.mediumRiskDays) },
             { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => String(h.lowRiskDays) },
@@ -818,7 +818,7 @@ async function renderIssueOccurrences(cell, group) {
     const inner = document.createElement('div');
     renderTable(inner, {
         columns: [
-            { title: '主機', render: r => r.hostName },
+            { title: '主機', truncate: true, render: r => r.hostName },
             { title: '日期', render: r => r.date },
             { title: '風險', render: r => riskBadge(r.riskLevel) },
             { title: '處理狀態', render: r => handlingCell(r) },
@@ -1302,7 +1302,7 @@ function renderBulkCloseForm(body, group, preview) {
     table.className = 'mb-3';
     renderTable(table, {
         columns: [
-            { title: '主機', render: h => h.hostName },
+            { title: '主機', truncate: true, render: h => h.hostName },
             { title: '將標記天數', className: 'text-end', render: h => (h.skipReason ? '—' : String(h.dayCount)) },
             { title: '覆蓋處理中', className: 'text-end', render: h => (h.overwriteDayCount > 0 ? `${h.overwriteDayCount} 天` : '') },
             { title: '已有結論', className: 'text-end', render: h => (h.alreadyClosedDayCount > 0 ? `${h.alreadyClosedDayCount} 天` : '') },

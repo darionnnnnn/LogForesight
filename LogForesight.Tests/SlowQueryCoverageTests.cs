@@ -233,7 +233,8 @@ public class SlowQueryCoverageTests : IDisposable
 
         // 空清單走的是「一句話」分支，不是建表
         var emptyBranch = js.IndexOf("if (list.length === 0)", StringComparison.Ordinal);
-        var tableBuild = js.IndexOf("createElement('table')", StringComparison.Ordinal);
+        // 表格已改走共用的 renderTable（TableConsistencyUiTests 守門不得再自建 <table>）
+        var tableBuild = js.IndexOf("renderTable(tableHost", StringComparison.Ordinal);
         Assert.True(emptyBranch > 0 && tableBuild > emptyBranch, "清單為空時要早退，不該走到建表");
     }
 

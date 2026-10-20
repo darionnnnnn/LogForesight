@@ -622,6 +622,7 @@ function renderMembers(data) {
     columns.push(
         {
             title: '主機',
+            truncate: true,
             render: item => {
                 if (item.hostId) {
                     const a = document.createElement('a');

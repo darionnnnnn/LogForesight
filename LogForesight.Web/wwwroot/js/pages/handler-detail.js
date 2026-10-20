@@ -910,6 +910,7 @@ function buildMemberPanel(row, cell, carry = null) {
         columns.push(
             {
                 title: '主機',
+                truncate: true,
                 render: item => {
                     if (!item.hostId) {
                         const span = document.createElement('span');
@@ -1020,8 +1021,8 @@ async function loadAdvanced() {
 function renderCases(cases) {
     renderTable(casesEl, {
         columns: [
-            { title: '主機', render: c => hostLink(c) },
-            { title: '問題', render: c => c.issueLabel },
+            { title: '主機', truncate: true, render: c => hostLink(c) },
+            { title: '問題', truncate: true, render: c => c.issueLabel },
             { title: '狀態', render: c => statusText(c) },
             { title: '涵蓋範圍', render: c => `${c.firstLinkedDate} ~ ${c.lastLinkedDate}` },
             { title: '預計完成', className: 'text-nowrap', render: c => dueCell(c) }
@@ -1037,7 +1038,7 @@ function renderDays(days) {
     renderTable(daysEl, {
         columns: [
             { title: '日期', render: d => d.date },
-            { title: '主機', render: d => hostLink(d) },
+            { title: '主機', truncate: true, render: d => hostLink(d) },
             { title: '風險', render: d => riskBadge(d.riskLevel) },
             { title: '狀態', render: d => statusText(d) },
             { title: '預計完成', className: 'text-nowrap', render: d => dueCell(d) }

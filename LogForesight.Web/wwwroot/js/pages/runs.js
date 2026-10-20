@@ -264,7 +264,7 @@ function failedHostsCell(summary) {
 }
 
 const DAY_DETAIL_COLUMNS = [
-    { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, render: h => h.hostName },
+    { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, truncate: true, render: h => h.hostName },
     { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status) },
     {
         title: '整體工作流', sortKey: 'workflowComplete', sortValue: h => h.workflowComplete == null ? -1 : Number(h.workflowComplete),
@@ -418,7 +418,7 @@ let currentRunList = [];
 let runListSort = { key: 'startedAt', dir: 'desc' };
 
 const RUN_LIST_COLUMNS = [
-    { title: '主機', sortKey: 'hostName', sortValue: r => r.hostName, render: r => r.hostName },
+    { title: '主機', sortKey: 'hostName', sortValue: r => r.hostName, truncate: true, render: r => r.hostName },
     // 作業類型（批次D）：取數分析與 AI 分析的執行同列在這張表，一眼分得出來
     { title: '作業', sortKey: 'jobTypeText', sortValue: r => r.jobTypeText, render: r => r.jobTypeText },
     { title: '狀態', sortKey: 'status', sortValue: r => r.status, render: r => statusBadgeCell(r.status) },

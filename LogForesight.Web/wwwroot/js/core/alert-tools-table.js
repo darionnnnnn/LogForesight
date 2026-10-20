@@ -6,6 +6,7 @@
  */
 
 import { appUrl } from './paths.js';
+import { renderTable } from './ui.js';
 
 const HEADERS = ['工具', '適用情境', '在哪裡設定', '範圍與期限'];
 
@@ -28,32 +29,13 @@ export function renderAlertToolsTable(container) {
     summary.textContent = '什麼情況用哪個工具？';
     details.appendChild(summary);
 
-    const table = document.createElement('table');
-    table.className = 'table table-sm small mb-1';
-
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-    for (const text of HEADERS) {
-        const th = document.createElement('th');
-        th.scope = 'col';
-        th.textContent = text;
-        headRow.appendChild(th);
-    }
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    for (const cells of ROWS) {
-        const tr = document.createElement('tr');
-        for (const text of cells) {
-            const td = document.createElement('td');
-            td.textContent = text;
-            tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    details.appendChild(table);
+    // 決策表走共用的 renderTable（密度、橫捲容器一致）；ROWS 是純文字陣列，逐欄取值
+    const tableHost = document.createElement('div');
+    renderTable(tableHost, {
+        columns: HEADERS.map((title, index) => ({ title, render: cells => cells[index] })),
+        rows: ROWS
+    });
+    details.appendChild(tableHost);
 
     const more = document.createElement('div');
     more.className = 'small';

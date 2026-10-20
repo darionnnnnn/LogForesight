@@ -473,46 +473,38 @@ function renderOccurrencePanel(container, data) {
         return;
     }
 
-    const table = document.createElement('table');
-    table.className = 'table table-sm mb-0';
-    const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th>日期</th><th class="text-end">當日次數</th><th>日風險</th><th>處理狀態</th></tr>';
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    for (const occurrence of [...data.occurrences].reverse()) {   // 最近的排最上面
-        const tr = document.createElement('tr');
-
-        const dateCell = document.createElement('td');
-        const link = document.createElement('a');
-        link.href = appUrl(`/records/${hostId}/${occurrence.date}`);
-        link.textContent = occurrence.date;
-        dateCell.appendChild(link);
-        tr.appendChild(dateCell);
-
-        const countCell = document.createElement('td');
-        countCell.className = 'text-end';
-        countCell.textContent = formatNumber(occurrence.count);
-        tr.appendChild(countCell);
-
-        const riskCell = document.createElement('td');
-        riskCell.appendChild(riskBadge(occurrence.riskLevel));
-        tr.appendChild(riskCell);
-
-        const statusCell = document.createElement('td');
-        statusCell.textContent = occurrence.statusText;
-        if (occurrence.fromCase) {
-            const note = document.createElement('span');
-            note.className = 'text-muted small ms-1';
-            note.textContent = '（案件同步）';
-            statusCell.appendChild(note);
-        }
-        tr.appendChild(statusCell);
-
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    container.appendChild(table);
+    const tableHost = document.createElement('div');
+    renderTable(tableHost, {
+        columns: [
+            {
+                title: '日期',
+                render: occurrence => {
+                    const link = document.createElement('a');
+                    link.href = appUrl(`/records/${hostId}/${occurrence.date}`);
+                    link.textContent = occurrence.date;
+                    return link;
+                }
+            },
+            { title: '當日次數', className: 'text-end', render: occurrence => formatNumber(occurrence.count) },
+            { title: '日風險', render: occurrence => riskBadge(occurrence.riskLevel) },
+            {
+                title: '處理狀態',
+                render: occurrence => {
+                    const statusCell = document.createElement('span');
+                    statusCell.append(document.createTextNode(occurrence.statusText ?? ''));
+                    if (occurrence.fromCase) {
+                        const note = document.createElement('span');
+                        note.className = 'text-muted small ms-1';
+                        note.textContent = '（案件同步）';
+                        statusCell.appendChild(note);
+                    }
+                    return statusCell;
+                }
+            }
+        ],
+        rows: [...data.occurrences].reverse()   // 最近的排最上面
+    });
+    container.appendChild(tableHost);
 }
 
 /** 時間軸連動高亮：這個問題出現過的日子加外框，其餘日子淡化（docs/archive/FEEDBACK-4-PLAN.md §3） */
@@ -745,45 +737,40 @@ function renderPrtgDevices(container, data) {
             noSensors.textContent = 'PRTG 資料準備中：新對應的裝置正在補抓感測器，通常幾分鐘內完成。';
             devCard.appendChild(noSensors);
         } else {
-            const table = document.createElement('table');
-            table.className = 'table table-sm table-hover mb-0 small';
-            table.innerHTML = '<thead><tr><th>Sensor ID</th><th>名稱</th><th>類型</th><th>分類</th><th>狀態</th><th>數值資料</th></tr></thead>';
-            const tbody = document.createElement('tbody');
-            for (const s of device.sensors) {
-                const tr = document.createElement('tr');
-                const status = prtgSensorStatusBadge(s);
-                const cells = [
-                    [String(s.objid), 'font-monospace'],
-                    [s.name ?? '', ''],
-                    [s.sensorType || '-', ''],
-                    [s.category || '—', '']
-                ];
-                for (const [text, className] of cells) {
-                    const td = document.createElement('td');
-                    if (className) td.className = className;
-                    td.textContent = text;
-                    tr.appendChild(td);
-                }
-                const statusTd = document.createElement('td');
-                statusTd.appendChild(badge(status.text, status.variant));
-                tr.appendChild(statusTd);
-
-                const valueTd = document.createElement('td');
-                if (!s.valueReasonCode) {
-                    valueTd.textContent = '—';
-                } else if (s.valueReasonCode === 'Ready') {
-                    valueTd.appendChild(badge('就緒', 'success'));
-                } else if (s.valueReasonCode === 'InsufficientDays') {
-                    valueTd.appendChild(badge(`資料累積中 ${s.validDays ?? 0}／${s.requiredDays ?? 0} 日`, 'secondary'));
-                } else {
-                    valueTd.appendChild(badge(s.valueReason || s.valueReasonCode, 'warning'));
-                }
-                tr.appendChild(valueTd);
-
-                tbody.appendChild(tr);
-            }
-            table.appendChild(tbody);
-            devCard.appendChild(table);
+            const sensorHost = document.createElement('div');
+            renderTable(sensorHost, {
+                columns: [
+                    { title: 'Sensor ID', className: 'font-monospace', render: s => String(s.objid) },
+                    { title: '名稱', truncate: true, render: s => s.name ?? '' },
+                    { title: '類型', render: s => s.sensorType || '-' },
+                    { title: '分類', render: s => s.category || '—' },
+                    {
+                        title: '狀態',
+                        render: s => {
+                            const status = prtgSensorStatusBadge(s);
+                            return badge(status.text, status.variant);
+                        }
+                    },
+                    {
+                        title: '數值資料',
+                        render: s => {
+                            const valueTd = document.createElement('span');
+                            if (!s.valueReasonCode) {
+                                valueTd.textContent = '—';
+                            } else if (s.valueReasonCode === 'Ready') {
+                                valueTd.appendChild(badge('就緒', 'success'));
+                            } else if (s.valueReasonCode === 'InsufficientDays') {
+                                valueTd.appendChild(badge(`資料累積中 ${s.validDays ?? 0}／${s.requiredDays ?? 0} 日`, 'secondary'));
+                            } else {
+                                valueTd.appendChild(badge(s.valueReason || s.valueReasonCode, 'warning'));
+                            }
+                            return valueTd;
+                        }
+                    }
+                ],
+                rows: device.sensors
+            });
+            devCard.appendChild(sensorHost);
         }
 
         container.appendChild(devCard);

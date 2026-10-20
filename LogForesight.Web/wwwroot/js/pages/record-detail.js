@@ -1554,60 +1554,30 @@ function loginFailureDetailsTable(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'mt-1';
 
-    const table = document.createElement('table');
-    table.className = 'table table-sm mb-0';
-
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    const headers = ['帳號', '來源', '類型', '原因', '次數'];
-    for (const h of headers) {
-        const th = document.createElement('th');
-        th.textContent = h;
-        if (h === '次數') th.className = 'text-end';
-        headerRow.appendChild(th);
-    }
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
     const maxRows = 10;
-    const displayed = details.slice(0, maxRows);
-    for (const d of displayed) {
-        const tr = document.createElement('tr');
-
-        const accountTd = document.createElement('td');
-        const accountSpan = document.createElement('span');
-        accountSpan.textContent = d.account ? d.account : '（不明）';
-        accountTd.appendChild(accountSpan);
-        if (d.isComputerAccount) {
-            const note = document.createElement('span');
-            note.className = 'text-muted small ms-1';
-            note.textContent = '（電腦帳號）';
-            accountTd.appendChild(note);
-        }
-        tr.appendChild(accountTd);
-
-        const sourceTd = document.createElement('td');
-        sourceTd.textContent = d.source ? d.source : '（不明）';
-        tr.appendChild(sourceTd);
-
-        const typeTd = document.createElement('td');
-        typeTd.textContent = d.logonTypeText ? d.logonTypeText : '—';
-        tr.appendChild(typeTd);
-
-        const reasonTd = document.createElement('td');
-        reasonTd.textContent = d.reasonText ? d.reasonText : '（不明）';
-        tr.appendChild(reasonTd);
-
-        const countTd = document.createElement('td');
-        countTd.className = 'text-end';
-        countTd.textContent = formatNumber(d.count);
-        tr.appendChild(countTd);
-
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
+    renderTable(wrap, {
+        columns: [
+            {
+                title: '帳號',
+                render: d => {
+                    const accountTd = document.createElement('span');
+                    accountTd.appendChild(document.createTextNode(d.account ? d.account : '（不明）'));
+                    if (d.isComputerAccount) {
+                        const note = document.createElement('span');
+                        note.className = 'text-muted small ms-1';
+                        note.textContent = '（電腦帳號）';
+                        accountTd.appendChild(note);
+                    }
+                    return accountTd;
+                }
+            },
+            { title: '來源', render: d => (d.source ? d.source : '（不明）') },
+            { title: '類型', render: d => (d.logonTypeText ? d.logonTypeText : '—') },
+            { title: '原因', render: d => (d.reasonText ? d.reasonText : '（不明）') },
+            { title: '次數', className: 'text-end', render: d => formatNumber(d.count) }
+        ],
+        rows: details.slice(0, maxRows)
+    });
 
     if (details.length > maxRows || issue.loginFailureDetailsTruncated) {
         const remaining = details.length - maxRows;

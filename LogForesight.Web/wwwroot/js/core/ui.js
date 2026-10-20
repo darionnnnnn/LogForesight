@@ -588,8 +588,14 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * sort（{key, dir}）算出下一個排序狀態（同欄切換 asc/desc，換欄回到 sortDefaultDir
  * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
+ * truncate（選填，欄位選項）：該欄儲存格加 text-truncate 並以完整文字設 title，
+ * 過長內容（主機名、問題標籤、sensor 名稱）以省略號收斂、不撐破列高；最大寬度由
+ * site.css 的 `.lf-table-wrap td.text-truncate` 決定，maxWidth 可帶 CSS class 名稱覆寫（不寫 inline）。
+ * caption（選填）：螢幕閱讀器用的隱藏表格標題。
+ * footer（選填）：頁尾合計列，儲存格內容陣列（字串或 Node），數量對齊 columns。
+ * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 renderKeyValueTable。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn, caption, footer }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -601,7 +607,14 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     wrap.className = 'lf-table-wrap' + (stickyLastColumn ? ' lf-table-wrap--sticky-action' : '');
 
     const table = document.createElement('table');
-    table.className = 'table table-hover align-middle mb-0';
+    table.className = 'table table-sm table-hover align-middle mb-0';
+
+    if (caption) {
+        const captionEl = document.createElement('caption');
+        captionEl.className = 'visually-hidden';
+        captionEl.textContent = caption;
+        table.appendChild(captionEl);
+    }
 
     const thead = document.createElement('thead');
     const headRow = document.createElement('tr');
@@ -655,6 +668,14 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
                 ? content
                 : document.createTextNode(content === null || content === undefined ? '' : String(content));
 
+            // 長字串截斷：省略號收斂，完整文字放 title 供滑鼠停留查看
+            if (col.truncate) {
+                td.classList.add('text-truncate');
+                if (col.maxWidth) td.classList.add(col.maxWidth);
+                const fullText = (contentNode.textContent || '').trim();
+                if (fullText) td.title = fullText;
+            }
+
             // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示。
             // 以 flex 排版包裹箭頭與內容，確保箭頭與第一行內容同列、對齊頂端——
             // 內容是 block 元素（如 issueCell／issueGroupCell）時，箭頭原本會被擠成獨佔一行
@@ -706,10 +727,79 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
         }
     }
     table.appendChild(tbody);
+
+    if (Array.isArray(footer) && footer.length > 0) {
+        const tfoot = document.createElement('tfoot');
+        const footRow = document.createElement('tr');
+        footRow.className = 'fw-semibold table-light';
+        for (const cell of footer) {
+            const td = document.createElement('td');
+            td.appendChild(cell instanceof Node ? cell : document.createTextNode(cell === null || cell === undefined ? '' : String(cell)));
+            footRow.appendChild(td);
+        }
+        tfoot.appendChild(footRow);
+        table.appendChild(tfoot);
+    }
     wrap.appendChild(table);
 
     container.replaceChildren(wrap);
     bindScrollAffordance(wrap);
+}
+
+/**
+ * 鍵值表：兩欄（標籤／內容）的小表，外包 .lf-table-wrap，密度與 renderTable 一致（table-sm）。
+ * rows: [{ label, value }]，value 可為字串或 Node（字串一律走 textContent）。
+ * 另有兩種跨欄列供「結構化明細」使用：{ section: '標題' } 區段標題、{ text: '原文' } 整列原文。
+ * options.mono：內容欄改用等寬字並保留換行（權限異動明細的異動前／後值）。
+ * buildKeyValueTable 回傳 wrap 節點給需要自行組裝的呼叫端；renderKeyValueTable 直接填進容器。
+ */
+export function buildKeyValueTable(rows, { mono = false } = {}) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-table-wrap';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm mb-0 lf-kv-table';
+
+    const tbody = document.createElement('tbody');
+    for (const row of rows || []) {
+        const tr = document.createElement('tr');
+        if (row.section !== undefined) {
+            tr.className = 'lf-kv-row--section';
+            const th = document.createElement('th');
+            th.colSpan = 2;
+            th.className = 'lf-kv-section-header';
+            th.textContent = row.section;
+            tr.appendChild(th);
+        } else if (row.text !== undefined) {
+            tr.className = 'lf-kv-row--asis';
+            const td = document.createElement('td');
+            td.colSpan = 2;
+            td.className = 'lf-kv-asis-cell';
+            td.textContent = row.text;
+            tr.appendChild(td);
+        } else {
+            tr.className = 'lf-kv-row--kv';
+            const key = document.createElement('td');
+            key.className = 'lf-kv-key small';
+            key.textContent = row.label ?? '';
+
+            const val = document.createElement('td');
+            val.className = (mono ? 'lf-kv-val' : 'lf-kv-val lf-kv-val--plain') + ' small';
+            const value = row.value;
+            val.appendChild(value instanceof Node
+                ? value
+                : document.createTextNode(value === null || value === undefined ? '' : String(value)));
+            tr.append(key, val);
+        }
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+}
+
+export function renderKeyValueTable(container, rows, options) {
+    container.replaceChildren(buildKeyValueTable(rows, options));
 }
 
 /**

@@ -1146,32 +1146,18 @@ async function openRestoreModal(rule) {
     body.appendChild(note);
 
     const wrap = document.createElement('div');
-    wrap.className = 'lf-table-wrap';
-
-    const table = document.createElement('table');
-    table.className = 'table table-sm mb-0';
-    table.innerHTML = '<thead><tr><th>欄位</th><th>目前內容</th><th>內建預設</th></tr></thead>';
-
-    const tbody = document.createElement('tbody');
-    for (const diff of preview.differences) {
-        const tr = document.createElement('tr');
-
-        const field = document.createElement('th');
-        field.textContent = diff.field;
-
-        const current = document.createElement('td');
-        current.className = 'small';
-        current.textContent = diff.current || '（空）';
-
-        const seed = document.createElement('td');
-        seed.className = 'small text-success';
-        seed.textContent = diff.seed || '（空）';
-
-        tr.append(field, current, seed);
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
+    renderTable(wrap, {
+        columns: [
+            { title: '欄位', render: diff => diff.field },
+            { title: '目前內容', className: 'small', render: diff => diff.current || '（空）' },
+            {
+                title: '內建預設',
+                className: 'small text-success',
+                render: diff => diff.seed || '（空）'
+            }
+        ],
+        rows: preview.differences
+    });
     body.appendChild(wrap);
 }
 

@@ -22,7 +22,8 @@ class FakeNode {
         this.tagName = String(tag).toUpperCase();
         this.children = [];
         this.attributes = {};
-        this.style = {};
+        // style.setProperty 供 CSS 變數（--lf-*）使用：ui.js 以 token 傳動態值而不寫 inline 屬性
+        this.style = { setProperty(name, value) { this[name] = String(value); }, getPropertyValue(name) { return this[name] ?? ''; } };
         this.className = '';
         this._text = '';
         this.listeners = {};

@@ -727,7 +727,7 @@ function issueChangeCell(issue) {
 function renderHosts(data) {
     renderTable(document.getElementById('dashboard-hosts'), {
         columns: [
-            { title: '主機', render: h => hostLink(h) },
+            { title: '主機', truncate: true, render: h => hostLink(h) },
             { title: '高風險', className: 'text-end', render: h => String(h.highRiskDays) },
             { title: '中風險', className: 'text-end', render: h => String(h.mediumRiskDays) },
             { title: '關聯訊號', className: 'text-end', render: h => correlationCell(h) },
