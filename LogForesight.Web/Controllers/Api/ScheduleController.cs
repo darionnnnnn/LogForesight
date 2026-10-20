@@ -128,6 +128,22 @@ public class ScheduleController : ControllerBase
         var systemSettings = _settingsStore.Get();
 
         var lastOutcome = _runState.LastOutcome;
+        var prtgPendingDays = new List<string>();
+        string? prtgLastIssueDate = null;
+        string? prtgLastIssueOutcome = null;
+        string? prtgLastIssueNote = null;
+
+        if (!_runState.IsRunning)
+        {
+            var (healthPending, healthLastIssue) = _scheduler.PrtgRunHealth();
+            prtgPendingDays = healthPending.Select(d => d.ToString("yyyy-MM-dd")).ToList();
+            if (healthLastIssue != null)
+            {
+                prtgLastIssueDate = healthLastIssue.Date.ToString("yyyy-MM-dd");
+                prtgLastIssueOutcome = healthLastIssue.Outcome;
+                prtgLastIssueNote = healthLastIssue.Note;
+            }
+        }
 
         return ApiResponse<ScheduleStatusDto>.Ok(new ScheduleStatusDto
         {
@@ -158,6 +174,10 @@ public class ScheduleController : ControllerBase
             PrtgValueFetchScope = PrtgValueFetchScope.Normalize(systemSettings.PrtgValueFetchScope),
             PrtgFetchStrategy = PrtgFetchStrategy.Normalize(systemSettings.PrtgFetchStrategy),
             PrtgBackfillDays = Math.Clamp(systemSettings.PrtgBackfillDays, 1, 365),
+            PrtgPendingDays = prtgPendingDays,
+            PrtgLastIssueDate = prtgLastIssueDate,
+            PrtgLastIssueOutcome = prtgLastIssueOutcome,
+            PrtgLastIssueNote = prtgLastIssueNote,
             LastRunSuccess = lastOutcome?.Success,
             LastRunMessage = lastOutcome?.Message,
             LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,

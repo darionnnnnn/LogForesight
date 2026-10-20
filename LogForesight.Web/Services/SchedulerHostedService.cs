@@ -1,3 +1,5 @@
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Services.Mail;
 using NLog;
@@ -515,6 +517,31 @@ public class SchedulerHostedService : BackgroundService
         catch (Exception ex)
         {
             Log.Warn(ex, "單獨保留清除失敗（下次輪詢再試）：{0}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// PRTG 運作健全度摘要（供 DevMonitor 檢視待補評估日與上一趟異常）。
+    /// </summary>
+    public (IReadOnlyList<DateTime> PendingDays, PrtgDayStat? LastIssue) PrtgRunHealth()
+    {
+        var settings = _systemSettingsStore.Get();
+        if (!settings.PrtgEnabled)
+        {
+            return (Array.Empty<DateTime>(), null);
+        }
+
+        try
+        {
+            var runs = _batchRunStore.GetRecentRuns(PrtgReevaluationPlanner.LookbackDays + 1, null);
+            var pending = PrtgReevaluationPlanner.Select(runs, DateTime.Today, settings.RetentionDays);
+            var lastIssue = PrtgReevaluationPlanner.LastRunIssue(runs);
+            return (pending, lastIssue);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "讀取 PRTG 運作健全度失敗");
+            return (Array.Empty<DateTime>(), null);
         }
     }
 

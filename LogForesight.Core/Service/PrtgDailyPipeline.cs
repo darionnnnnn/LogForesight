@@ -888,7 +888,8 @@ internal static class PrtgDailyPipeline
                         if (s.DiskAssessmentFailed && outcome == BatchRun.PrtgOutcomePartial)
                             note = "磁碟趨勢證據未完整；尚未完成風險判定。";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
-                            s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note);
+                            s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note,
+                            NeedsReevaluation: syncFailed || !prtgFindings.IsEvaluated(day));
                     })
                     .ToList();
 
@@ -908,7 +909,8 @@ internal static class PrtgDailyPipeline
             {
                 dayStats ??= [];
                 dayStats.AddRange(days.Where(day => !dayStates.ContainsKey(day))
-                    .Select(day => new PrtgDayStat(day, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, interruptedDayReason)));
+                    .Select(day => new PrtgDayStat(day, BatchRun.PrtgOutcomePartial, 0, 0, false, 0, 0, 0, interruptedDayReason,
+                        NeedsReevaluation: true)));
                 var statsByDay = dayStats.ToDictionary(stat => stat.Date.Date);
                 dayStats = days.Select(day => statsByDay[day.Date]).ToList();
             }
@@ -931,7 +933,8 @@ internal static class PrtgDailyPipeline
                 // 逐日迴圈之前就失敗（結構同步擲例外）：每一天都沒評估，整排記失敗；
                 // 不記的話總表會把這幾天當成沒有逐日統計的舊紀錄去猜
                 runRecorder.RecordPrtgDays(days
-                    .Select(day => new PrtgDayStat(day, BatchRun.PrtgOutcomeFailed, 0, 0, false, 0, 0, 0))
+                    .Select(day => new PrtgDayStat(day, BatchRun.PrtgOutcomeFailed, 0, 0, false, 0, 0, 0,
+                        NeedsReevaluation: true))
                     .ToList());
             }
 

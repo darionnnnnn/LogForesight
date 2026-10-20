@@ -833,4 +833,15 @@ console.log('PASS operational status refresh');
         }
         return count;
     }
+    [Fact]
+    public void RunsPage_PRTG待補評估與上一趟異常欄位存在()
+    {
+        var cshtml = ReadRunsCshtml();
+        Assert.Contains("prtg-pending-reeval-row", cshtml);
+        Assert.Contains("prtg-last-issue-row", cshtml);
+
+        var js = ReadRunsJs();
+        Assert.Contains("prtgPendingDays", js);
+        Assert.Contains("prtgLastIssueOutcome", js);
+    }
 }

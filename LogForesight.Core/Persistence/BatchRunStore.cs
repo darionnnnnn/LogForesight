@@ -126,7 +126,9 @@ public sealed record PrtgDayStat(
     int TriggerHosts,
     int TargetSensors,
     int FailedSensors,
-    string? Note = null);
+    string? Note = null,
+    /// <summary>該日 PRTG 未完整評估並發佈，或結構同步失敗；排程下次自動補評估（舊 JSON 缺欄為 false）。</summary>
+    bool NeedsReevaluation = false);
 
 /// <summary>
 /// 執行期間的診斷紀錄（↔ lf_batch_run_logs）。
