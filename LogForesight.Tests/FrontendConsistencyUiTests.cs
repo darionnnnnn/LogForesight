@@ -448,4 +448,44 @@ public class FrontendConsistencyUiTests
         // 整個檔案只在確認後的送出函式裡寫入一次指派
         Assert.Single(Regex.Matches(js, @"api\.put\(base"));
     }
+
+    /// <summary>
+    /// 側欄徽章輪詢（回饋第 56 輪）：全站唯一的徽章計時器在 core/badges.js，
+    /// 且分頁隱藏時暫停、回到前景立即刷新；各頁不得另開計時器、訂閱 lf:badges 即可。
+    /// </summary>
+    [Fact]
+    public void 徽章輪詢_badges_js恰一個setInterval且含visibilitychange_各頁不另開計時器()
+    {
+        const string timerCall = "setInterval(";
+        var badges = ReadJs("core", "badges.js");
+        Assert.Single(Regex.Matches(badges, Regex.Escape(timerCall)));
+        Assert.Contains("visibilitychange", badges);
+        Assert.Contains("document.hidden", badges);
+        Assert.Contains("'lf:badges'", badges);
+        Assert.Contains("/api/work-orders/unread-count", badges);
+        Assert.Contains("/api/handlers/me/badge", badges);
+
+        foreach (var file in new[] { new[] { "core", "layout.js" }, new[] { "pages", "work-orders.js" }, new[] { "pages", "work-order-detail.js" } })
+            Assert.DoesNotContain(timerCall, ReadJs(file));
+
+        var layout = ReadJs("core", "layout.js");
+        Assert.Contains("startBadgePolling(user)", layout);
+        Assert.Contains("badgeSource = 'unread-replies'", layout);
+        Assert.DoesNotContain("function loadMyWorkBadge", layout);
+    }
+
+    [Fact]
+    public void 未讀回覆與退回_前端接線_seen與return與unreadOnly與lf_badges訂閱()
+    {
+        var detail = ReadJs("pages", "work-order-detail.js");
+        Assert.Contains("/seen", detail);
+        Assert.Contains("/return", detail);
+        Assert.Contains("退回處理人", detail);
+        Assert.Contains("btn-outline-secondary", detail);
+
+        var orders = ReadJs("pages", "work-orders.js");
+        Assert.Contains("unreadOnly", orders);
+        Assert.Contains("lf:badges", orders);
+        Assert.Contains("有新回覆", orders);
+    }
 }

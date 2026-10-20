@@ -1454,6 +1454,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `GET api/handlers/{userId}/work-orders/summary`、`GET api/handlers/me/badge`（側欄徽章，單一聚合）、
   `GET api/handlers/{userId}/workload`（被指派的風險日與依主機頁籤；查無此人回 404）。
   側欄徽章顯示進行中台數，有逾期時轉警示色，`title` 寫「進行中 N 張／M 台；逾期 K 台／未回覆 J 張」。
+  側欄的兩顆徽章（「我的交辦」進行中台數、「交辦總覽」未讀回覆單數，後者具 `Assign` 或 `ViewAll` 才有、0 不顯示）
+  由 `core/badges.js` 的單一計時器每 60 秒刷新；分頁隱藏時不打 API，回到前景立即刷新一次；失敗靜默、沿用上次的數字。
+  各頁不另開計時器，要跟著更新的頁面訂閱刷新後發出的 `lf:badges` 事件（`detail: { myWork, unread }`）。
 
 ### 9.4b `/work-orders` 交辦總覽與 `/work-orders/{id}` 交辦單詳情（`Assign` 或 `ViewAll`）
 
@@ -1473,10 +1476,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 
 **總覽頁四頁籤**（`bindTabs` 啟用網址 hash，外部可直接連到 `#load`／`#gaps`／`#muted`）：
 - **進行中**：交辦單清單——單號｜問題｜處理人（停用／暫停接單徽章）｜成員（台數、狀態彙總、逐日同步中台數）｜
-  逾期｜未回覆｜期限｜來源｜建立｜最近新增（最近一次加入成員的時間）｜狀態。篩選：狀態（進行中／上報中／有逾期／未回覆／已結案／全部）、
+  逾期｜未回覆｜未讀回覆（有則顯示「有新回覆」淡色徽章）｜期限｜來源｜建立｜最近新增（最近一次加入成員的時間）｜狀態。篩選：狀態（進行中／上報中／有逾期／未回覆／已結案／全部）、
   排序、**群組**（處理人所屬的使用者群組，選項來自 `GET api/work-orders/handler-groups`，派工池群組名後加
   「（派工池）」）、「只看自靜音恢復」（問題靜音在近 7 天內結束的單）、「只看處理人已停用」（離職或停用後
-  逐單改派或代為結案用）。網址參數 `source`／`eventId`／
+  逐單改派或代為結案用）、「只看未讀回覆」（`unreadOnly`，SQL 端篩選）。側欄徽章的未讀數改變時，
+  停在「進行中」頁籤的清單依目前篩選與頁碼自動重載。網址參數 `source`／`eventId`／
   `handlerId`／`groupId` 可帶入，帶問題或處理人時上方顯示篩選橫幅與「清除篩選」。成員計數與狀態彙總以頁上
   單號一次 GROUP BY。
 - **負載看板**：每位處理人一列（含停用、暫停接單標示）——進行中單｜進行中台數｜未回覆單｜逾期台數｜
@@ -1496,11 +1500,13 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 
 **詳情頁 `/work-orders/{id}`**：標頭（單號、問題與白話說明、處理人、來源、範圍與續掛開關、期限、
 成員彙總與「逐日同步中 N 台」）；成員表（分頁 50、狀態篩選、「複製 CSV」逐頁取回全部成員）；
-時間軸（交辦單事件：建立、追加、併入、改派、拆出／拆入、回覆、取消、代為結案、結案；狀態碼與處理人 id
+時間軸（交辦單事件：建立、追加、併入、改派、拆出／拆入、回覆、退回、取消、代為結案、結案；狀態碼與處理人 id
 在前端轉成中文與人名）；管理動作：**改派**（整張單換人，目標已有同問題單時併入、原單 `moved`）、
 **拆出主機**（勾選成員給另一人）、**取消交辦**（原因必填：成員案件關閉，案件寫出的非結案日子改回明確未處理並
 記 `issue_status_cleared` 歷程，使用者自己標的日子不動）、**代為結案**（`Assign`＋`Handle`，結案四態＋原因必填，
-逐案走同一套同步）。
+逐案走同一套同步）、**退回處理人**（`Assign`；單上有 `escalated` 成員時才顯示，說明必填 ≤500：這些成員改回
+`in_progress`、逐日歷程沿用同一套同步，記事件 `returned`、稽核 `work_order_return`，通知處理人；不推進 `LastReplyAt`，
+所以退回不會讓單變成「有新回覆」）。
 被改派走的原處理人可唯讀開啟原單（`lf_work_orders.previous_handler_id`，只記最近一位；整張改派時記在被改派的單，
 併入既有單時記在原單；拆出不記），標頭下方提示「此單已移交給 {目前處理人}，你只能檢視」且不顯示動作鈕。
 回覆鈕依詳情 DTO 的 `ViewerCanReply`（本人、具 `Handle`、單未結案，後端單點決定）。
@@ -1510,6 +1516,13 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 上報信（無法處理）在單一交辦單轉入 `escalated` 時多一行「交辦單：單號 N」。
 取消交辦的確認文字依 `GET api/settings/display` 的 `mailWorkOrdersEnabled`（`MailEnabled` 且 `MailNotifyWorkOrders`）切換：
 開啟時「處理人會在下一封交辦摘要收到取消通知」，關閉時「目前未啟用交辦通知，請自行告知處理人」。
+
+**未讀回覆**：處理人回覆後管理者要能一眼看出。`lf_work_orders.admin_seen_at` 記具 `Assign` 的使用者最近開啟詳情的時間
+（不做逐人已讀）；**未讀＝進行中、有回覆，且 `last_reply_at` 晚於 `COALESCE(admin_seen_at, created_at)`**。
+判定只有一份定義：C# 端 `WorkOrder.HasUnreadReply`，SQL 端 `EfWorkOrderStore.UnreadReplyPredicate`（清單 `unreadOnly` 篩選與
+未讀計數共用），兩處互相註明。詳情的 GET 不寫任何東西；前端載入詳情成功後呼叫一次 `POST {id}/seen`（靜默），
+後端只在檢視者具 `Assign` 時寫入 `admin_seen_at`（單句 UPDATE，不動 `updated_at`），其餘一律回 204 不寫入——
+唯讀的 `ViewAll` 與處理人本人開詳情不算已讀。處理人再次回覆就又變成未讀。
 
 **逐日同步**：改案件狀態的操作（建單、回覆、取消、代為結案、改派）先改案件列，再估算逐日寫入量——
 不超過 5000 列就地展開（回應 `synced=true`），超過就標 `DaySyncPending` 交背景 `CaseDaySyncHostedService`
@@ -1559,23 +1572,26 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   只想對某些主機或群組噤聲用抑制。
 - 註腳：依問題視角（§9.2）、儀表板重點問題卡（§9.1）、報表問題排行（§9.6）、我的交辦（§9.4a）。
 
-**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：交辦類通知（建單、新增成員、移交、取消，含夜間派工）一律寫入 outbox（`WorkOrderOutboxStore`，blob `work_order_outbox`，只存識別與該次操作資訊，單的內容在寄送當下才讀）；每天在「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00）各寄一封摘要給每位處理人，上午派的工 12:00 寄、之後派的工隔天 08:00 寄；站台停機跨過多個時刻時合併成一封（`WorkOrderDigestLastSentSlots` 記各時刻最後寄出日）；寄送失敗保留到下一個時刻重寄；處理人沒有 email 時項目保留並標記，派工畫面（建單、改派、拆出、日層級指派的成功提示）註明「處理人未設定 email，不會收到通知」，超過 7 天仍無 email 的項目清除。信件分「新交辦／新增成員／移交／取消」四段，每張單列問題、台數、前 20 台主機名（超過寫「…等 N 台」）、白話說明、交辦說明與期限；自動派工以延續性偏好派回給上次修好的人時，該單註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。交辦與改派可勾「立即通知處理人」（`notifyNow`），該次項目不等摘要時刻，輪詢時（約每分鐘）單獨寄出。上報信（無法處理）維持即時。收件人是目前操作者時不入列；收件人停用或不存在時項目移除。站台沒有對外網址設定，信末寫「請至站台的『交辦單』頁檢視上列單號」。
+**通知**（`MailEnabled` 且 `MailNotifyWorkOrders`，預設關）：交辦類通知（建單、新增成員、移交、取消、退回，含夜間派工）一律寫入 outbox（`WorkOrderOutboxStore`，blob `work_order_outbox`，只存識別與該次操作資訊，單的內容在寄送當下才讀）；每天在「交辦摘要時刻」（`MailWorkOrderDigestTimes`，預設 08:00、12:00）各寄一封摘要給每位處理人，上午派的工 12:00 寄、之後派的工隔天 08:00 寄；站台停機跨過多個時刻時合併成一封（`WorkOrderDigestLastSentSlots` 記各時刻最後寄出日）；寄送失敗保留到下一個時刻重寄；處理人沒有 email 時項目保留並標記，派工畫面（建單、改派、拆出、日層級指派的成功提示）註明「處理人未設定 email，不會收到通知」，超過 7 天仍無 email 的項目清除。信件分「新交辦／新增成員／移交／取消／退回」五段（退回段每張單一行：單號 N：{問題}，由 {操作者} 退回：{說明}），其餘各段每張單列問題、台數、前 20 台主機名（超過寫「…等 N 台」）、白話說明、交辦說明與期限；自動派工以延續性偏好派回給上次修好的人時，該單註明「其中 N 台是復發」（`DispatchDecision.Recurrence` → `NightlyDispatchOrderLine.RecurrenceMembers`）。交辦與改派可勾「立即通知處理人」（`notifyNow`），該次項目不等摘要時刻，輪詢時（約每分鐘）單獨寄出。上報信（無法處理）維持即時。收件人是目前操作者時不入列；收件人停用或不存在時項目移除。站台沒有對外網址設定，信末寫「請至站台的『交辦單』頁檢視上列單號」。
 
 **API**（`api/work-orders`）：
 | 端點 | 能力 | 說明 |
 |---|---|---|
-| `GET ?handlerId&groupId&source&eventId&status&handlerInactive&paused&resumedFromMute&sort&page&pageSize` | `Assign`／`ViewAll` | 清單；`pageSize` ≤ 100 |
+| `GET ?handlerId&groupId&source&eventId&status&handlerInactive&paused&resumedFromMute&unreadOnly&sort&page&pageSize` | `Assign`／`ViewAll` | 清單；`pageSize` ≤ 100 |
 | `GET handler-groups` | `Assign`／`ViewAll` | 群組篩選選項（啟用中使用者群組） |
+| `GET unread-count` | `Assign`／`ViewAll` | 有未讀回覆的單數 `{ count }`（SQL COUNT，側欄徽章用） |
 | `GET {id}`／`{id}/members?status&page&pageSize`／`{id}/timeline` | 處理人本人／`Assign`／`ViewAll` | 詳情；成員每頁 ≤ 200 |
 | `GET load-board?groupId`／`gaps?from&to&page` | `Assign`／`ViewAll` | 負載看板、待派試跑 |
 | `POST auto-dispatch { from, to }` | `Maintain` | 立即派工；稽核 `work_order_auto_dispatch_run` |
 | `POST preview`／`POST` | `Assign` | 交辦預覽與建單（同一 request 形狀） |
 | `POST {id}/append`／`reassign`／`split`／`cancel` | `Assign` | 單操作；取消原因必填 |
+| `POST {id}/return { note }` | `Assign` | 退回處理人（`escalated` 成員改回處理中）；說明必填 ≤500；無 `escalated` 成員或單已結案回驗證錯誤 |
+| `POST {id}/seen` | 登入（僅 `Assign` 會寫入） | 標記管理者已看過（未讀回覆判定）；回 204，不具 `Assign` 時不寫入也回 204 |
 | `POST candidates { hostIds, source?, eventId? }` | `Assign` | 手動派工人選（啟用且具 Handle；附可見台數、暫停、最近處理過同問題、負載；排序：最近處理過 → 看得到全部主機 → 負載輕 → 帳號） |
 | `POST {id}/admin-close` | `Assign`＋`Handle` | 代為結案 |
 | `POST {id}/reply`／`POST reply-many` | `Handle`，限本人的單 | 回覆；多單回覆含別人的單時整筆 403 零寫入 |
 
-稽核動作：`work_order_create`／`_append`／`_reassign`／`_split`／`_cancel`／`_admin_close`／`_auto_dispatch_run`，
+稽核動作：`work_order_create`／`_append`／`_reassign`／`_split`／`_cancel`／`_return`／`_admin_close`／`_auto_dispatch_run`，
 `targetKind="work_order"`、`targetId`＝單號。
 
 **規模**（本機 SQLite 壓測，`LF_SCALE_BENCH=1` 才跑的 `WorkOrderScaleBenchmarks`）：4000 台 × 10 天交辦預覽約 0.8 秒、

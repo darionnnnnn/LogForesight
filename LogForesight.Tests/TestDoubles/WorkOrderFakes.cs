@@ -86,6 +86,14 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         _orders[index] = Clone(order);
     }
 
+    public void MarkAdminSeen(long workOrderId, DateTime seenAt)
+    {
+        var index = _orders.FindIndex(o => o.WorkOrderId == workOrderId);
+        if (index >= 0) _orders[index].AdminSeenAt = seenAt;
+    }
+
+    public int CountUnreadReplies() => _orders.Count(o => o.HasUnreadReply);
+
     public virtual void AppendEvent(WorkOrderEvent evt)
     {
         evt.EventId = _nextEventId++;
@@ -140,6 +148,7 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         else if (q.PausedKeys != null && q.PausedMode == WorkOrderQueries.PausedExclude)
             query = query.Where(o => !KeyIn(o, q.PausedKeys));
         if (q.OnlyKeys != null) query = query.Where(o => KeyIn(o, q.OnlyKeys));
+        if (q.UnreadOnly) query = query.Where(o => o.HasUnreadReply);
 
         List<IssueCase> ActiveMembers(WorkOrder o) =>
             _cases.GetByWorkOrder(o.WorkOrderId, 0, int.MaxValue).Where(c => c.ClosedAt == null).ToList();
@@ -272,6 +281,6 @@ internal class FakeWorkOrderStore : IWorkOrderStore
         HandlerId = o.HandlerId, PreviousHandlerId = o.PreviousHandlerId, Origin = o.Origin, ScopeKind = o.ScopeKind, ScopeGroupIds = o.ScopeGroupIds.ToList(),
         AutoAttach = o.AutoAttach, Note = o.Note, DueDate = o.DueDate, CreatedById = o.CreatedById,
         CreatedByAccount = o.CreatedByAccount, CreatedAt = o.CreatedAt, LastAppendedAt = o.LastAppendedAt,
-        LastReplyAt = o.LastReplyAt, ClosedAt = o.ClosedAt, ClosedReason = o.ClosedReason, UpdatedAt = o.UpdatedAt
+        LastReplyAt = o.LastReplyAt, AdminSeenAt = o.AdminSeenAt, ClosedAt = o.ClosedAt, ClosedReason = o.ClosedReason, UpdatedAt = o.UpdatedAt
     };
 }

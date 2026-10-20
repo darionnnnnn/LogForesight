@@ -203,6 +203,7 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 | E-2 | Sonnet 5.5（規格 task-56-e2） | 完成 | 0 警告；定向 631 綠；突變拿掉「最近處理過」排序優先 → 1 案紅 | 偏離（接受）：依問題交辦 modal 的範圍由後端解析（全站／群組可上千台），前端沒有主機清單，人選不標「看不到 N 台」——既有交辦預覽的 `AssigneeNoAccess` 已在選人後提示；改派／拆出只用已載入分頁的成員主機，超過一頁時「看不到」偏少；日層級指派沒有單一問題脈絡，不標「最近處理過」；`ContinuityDays` 經 InternalsVisibleTo 直接讀，未改 `DispatchContext` |
 | E-3、E-4 | Sonnet 5.5（規格 task-56-e34） | 完成 | 0 警告；定向 637 綠；突變「只剩這台」判斷改恆真 → 1 案紅 | 偏離（接受，比規格好）：收單的查詢與判斷整段放進 `WorkOrderCoordinator.RetractDayAssignments`（同一把鎖、不替服務加相依）；新增「移出單一成員」與 `PreviewMembers`（預覽共用協調器同一份分類判定）。已知限制：案件跨日，同主機同問題由別日日層級指派建的案件，在本日取消指派時會一併收回（資料模型沒有逐日來源）。確認文字改為「另有 M 個問題…」以免數字對不上 |
 | E-5、E-8 | Sonnet 5.5（規格 task-56-e58）＋ Claude 收尾 | 完成 | 0 警告；定向 287 綠；突變刪目錄一列 → 2 案紅；`wont_fix` 寫死處 12 → 1（剩下的是真正的狀態值使用） | Sonnet 留下白名單外的 `handler-detail.js`（成員狀態表）與 `record-detail.js`（結案集合、結案徽章色）兩份寫死清單，Claude 改由目錄衍生。顏色以目錄為準：observing 改 info、非 resolved 的結案類改 secondary。日期檢查抽成 `ui.js` 的 `bindPastDateCheck`。多單回覆轉上報時只在恰一張單時附單號（上報信整批一封） |
+| E-6、E-7 | Sonnet 5.5（規格 task-56-e67） | 完成 | 0 警告；定向 454 綠；突變 SQL 未讀條件 `>` 改 `>=` → 1 案紅 | 偏離（接受）：協調器 `Return` 簽章改為與 `Cancel`／`Reply` 一致（`WorkOrderActor`）；`seen` 寫入用單句 `ExecuteUpdate` 不動 `updated_at`，避免和處理人回覆搶併發權杖；前端只在 `viewerCanAssign` 時呼叫 seen；「只看未讀回覆」由 `work-orders.js` 動態插入（頁面殼不在白名單）；補了白名單外的事件中文對照與稽核標籤（既有反射守門需要） |
 
 ## 8. 明確不做（本輪定案）
 

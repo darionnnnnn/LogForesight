@@ -440,6 +440,39 @@ function renderActions(detail, user) {
     });
     actionsContainer.appendChild(reassignBtn);
 
+    // 退回處理人：處理人把成員標成「無法處理」後，管理者可附說明把這些成員退回同一位處理人（改回處理中）
+    if ((detail.counts?.escalated ?? 0) > 0 && !detail.closedAt) {
+        const returnBtn = document.createElement('button');
+        returnBtn.type = 'button';
+        returnBtn.className = 'btn btn-sm btn-outline-secondary';
+        returnBtn.textContent = '退回處理人';
+        returnBtn.addEventListener('click', async () => {
+            const { mailWorkOrdersEnabled } = await getDisplaySettings();
+            const notifyText = mailWorkOrdersEnabled
+                ? '處理人會在下一封交辦摘要收到退回通知。'
+                : '目前未啟用交辦通知，請自行告知處理人。';
+            const note = await confirmActionWithReason({
+                title: '退回處理人',
+                message: `把這張單中標為「無法處理」的主機退回處理人，狀態改回處理中。${notifyText}`,
+                reasonLabel: '退回說明',
+                confirmText: '確定退回',
+                confirmVariant: 'primary'
+            });
+            if (!note) return;
+
+            const restore = withBusy(returnBtn, '處理中…');
+            try {
+                const res = await api.post(`/api/work-orders/${workOrderId}/return`, { note });
+                toast(`已退回，${res.returnedCases} 台改回處理中`, 'success');
+                await reloadAll();
+            } catch {
+                // 錯誤訊息已由 api.js 顯示
+                restore();
+            }
+        });
+        actionsContainer.appendChild(returnBtn);
+    }
+
     // 取消交辦按鈕
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
@@ -952,6 +985,19 @@ function renderReassignedHint(detail, user, timeline) {
     rootEl.prepend(hintEl);
 }
 
+/**
+ * 通知後端「這張單已被管理者看過」（未讀回覆判定）：載入詳情成功後只報一次，失敗靜默。
+ * 只有具 Assign 的檢視者才會被後端記錄；詳情的 GET 本身不寫任何東西。
+ */
+let seenReported = false;
+function markSeenOnce(detail) {
+    if (seenReported || !detail.viewerCanAssign) return;
+    seenReported = true;
+    api.post(`/api/work-orders/${workOrderId}/seen`, null, { silent: true }).catch(() => {
+        // 靜默：已讀只是加值資訊，失敗不打擾使用者
+    });
+}
+
 async function loadAll() {
     try {
         const [user, detail, members, timeline] = await Promise.all([
@@ -963,6 +1009,7 @@ async function loadAll() {
 
         currentUser = user;
         currentDetail = detail;
+        markSeenOnce(detail);
 
         renderHeader(detail);
         renderReassignedHint(detail, user, timeline);

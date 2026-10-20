@@ -666,6 +666,33 @@ public class WorkOrderCoordinator
         return new WorkOrderCloseResult { ClosedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
     }
 
+    /// <summary>
+    /// 退回處理人：把單上 escalated（處理人標了「無法處理」）的進行中成員改回 in_progress，逐日歷程同步沿用既有機制；
+    /// 寫一筆 <see cref="WorkOrderEventActions.Returned"/> 事件、<paramref name="note"/> 進事件說明並成為成員處理說明。
+    /// 不推進 LastReplyAt（退回不是處理人的回覆，不可讓單變成「有未讀回覆」）。
+    /// 單已結案、不存在，或沒有 escalated 成員 → <see cref="InvalidOperationException"/>；說明空白 → <see cref="ArgumentException"/>。
+    /// </summary>
+    public WorkOrderReturnResult Return(long workOrderId, WorkOrderActor actor, string note)
+    {
+        lock (OrderMutationLock) return ReturnLocked(workOrderId, actor, note);
+    }
+
+    private WorkOrderReturnResult ReturnLocked(long workOrderId, WorkOrderActor actor, string note)
+    {
+        if (string.IsNullOrWhiteSpace(note))
+            throw new ArgumentException("WorkOrderCoordinator：退回處理人要填說明。", nameof(note));
+
+        var order = GetActive(workOrderId);
+        var members = ActiveMembers(workOrderId).Where(c => c.Status == IssueHandlingStatuses.Escalated).ToList();
+        if (members.Count == 0)
+            throw new InvalidOperationException($"WorkOrderCoordinator：交辦單 {workOrderId} 沒有處於「無法處理」的成員可退回。");
+
+        var daySync = ApplyStatus(members, IssueHandlingStatuses.InProgress, note, null, actor);
+        AppendEvent(workOrderId, WorkOrderEventActions.Returned, actor, 0, EventNoteOf("", note, ""));
+
+        return new WorkOrderReturnResult { ReturnedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };
+    }
+
     /// <summary>成員取消的唯一一份（整張單取消與單獨移出成員共用）：標取消並結案，逐日列調回 open</summary>
     private CaseDaySubmitResult CancelMembers(List<IssueCase> members, string reason, WorkOrderActor actor)
     {

@@ -24,6 +24,11 @@ public class WorkOrderListController : ControllerBase
     public ApiResponse<WorkOrderListDto> List([FromQuery] WorkOrderListRequest request) =>
         ApiResponse<WorkOrderListDto>.Ok(_service.List(request));
 
+    /// <summary>有未讀回覆的單數（側欄「交辦總覽」徽章用）；判定與清單 UnreadOnly 篩選同一份</summary>
+    [HttpGet("unread-count")]
+    public ApiResponse<WorkOrderUnreadCountDto> UnreadCount() =>
+        ApiResponse<WorkOrderUnreadCountDto>.Ok(_service.UnreadCount());
+
     /// <summary>清單篩選用的使用者群組選項（回饋第 47 輪定案 48）：只回啟用中群組的 id、名稱、是否派工池。
     /// 群組名稱對 Assign／ViewAll 使用者本來就可見（處理人頁、使用者名稱旁的群組標示），不是新的洩漏面。</summary>
     [HttpGet("handler-groups")]
@@ -50,6 +55,17 @@ public class WorkOrderViewController : ControllerBase
     [HttpGet("{id:long}")]
     public ApiResponse<WorkOrderDetailDto> Get(long id) =>
         ApiResponse<WorkOrderDetailDto>.Ok(_service.Get(id));
+
+    /// <summary>
+    /// 標記管理者已看過這張單（未讀回覆判定）。回 204；不具 Assign 時不寫入也回 204。
+    /// 放在這個沒有類別層能力標註的 controller 是因為處理人與 ViewAll 使用者開詳情也會呼叫，不該因此得到 403。
+    /// </summary>
+    [HttpPost("{id:long}/seen")]
+    public IActionResult Seen(long id)
+    {
+        _service.MarkSeen(id);
+        return NoContent();
+    }
 
     [HttpGet("{id:long}/members")]
     public ApiResponse<WorkOrderMemberPageDto> Members(long id, [FromQuery] string status = "all",

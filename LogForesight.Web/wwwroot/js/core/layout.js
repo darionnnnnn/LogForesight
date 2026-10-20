@@ -10,6 +10,7 @@ import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
+import { startBadgePolling } from './badges.js';
 import { clearAllDraftsForUser } from './note-editor.js';
 
 /**
@@ -185,13 +186,19 @@ function renderNav(user) {
                 link.dataset.badgeSource = 'my-work';
             }
 
+            // 「交辦總覽」未讀回覆數：徽章由 core/badges.js 以 data-badge-source 定位並每 60 秒刷新
+            if (item.label === '交辦總覽') {
+                link.dataset.badgeSource = 'unread-replies';
+            }
+
             itemsWrap.appendChild(link);
         }
 
         nav.appendChild(itemsWrap);
     }
 
-    loadMyWorkBadge(user);
+    // 側欄兩顆徽章（我的交辦、交辦總覽未讀）的刷新與 60 秒輪詢，全站唯一一份
+    startBadgePolling(user);
 
     if (document.querySelector('.lf-sidebar__section--toggle')) {
         autoCollapseIfNeeded();
@@ -216,42 +223,6 @@ function renderNav(user) {
  */
 function sectionStorageKey(label) {
     return `lf.sidebar.collapsed.${label}`;
-}
-
-/**
- * 側欄「我的交辦」的進行中徽章（體檢 M7）。
- *
- * 資料來自單一聚合端點 `handlers/me/badge`（`HandlerSummaryDto`）——一次拿齊單數、台數、
- * 逾期與未回覆，不必為了一顆徽章打多支 API。ServerAdmin 後端直接回全 0，這裡不另外判斷。
- * **失敗完全靜默**：徽章是加值資訊，載不到就不顯示；為了一個數字讓側欄出現錯誤提示
- * （或更糟：擋住選單渲染）是本末倒置。
- */
-async function loadMyWorkBadge(user) {
-    const link = document.querySelector('[data-badge-source="my-work"]');
-    if (!link || !user?.userId) return;
-
-    // 回饋十三輪 A4：沒有 Handle 能力的人（如只有 ViewAll 的主管角色）不載入徽章——
-    // 「我的交辦」頁本身仍可進（全角色可看任何人的處理人頁），但未結案「數字」是
-    // 處理人視角的待辦提醒，對無法動手處理的角色只是噪音
-    if (!hasCapability(user, 'Handle')) return;
-
-    try {
-        const summary = await api.get('/api/handlers/me/badge', { silent: true });
-        // 數字取「手上進行中的主機數」：一張單可能含多台，台數才是實際還有多少事要處理
-        const count = summary.activeMembers ?? 0;
-        if (count <= 0) return;
-
-        const badge = document.createElement('span');
-        badge.className = 'lf-sidebar__badge';
-        badge.textContent = String(count);
-        badge.title = `進行中交辦單 ${summary.activeWorkOrders ?? 0} 張、${count} 台；`
-            + `逾期 ${summary.overdueMembers ?? 0} 台、未回覆 ${summary.unrepliedWorkOrders ?? 0} 張`;
-        link.appendChild(badge);
-
-        if ((summary.overdueMembers ?? 0) > 0) badge.classList.add('lf-sidebar__badge--overdue');
-    } catch {
-        // 靜默：見函式註解
-    }
 }
 
 function bindSectionToggle(toggle, itemsWrap, label) {

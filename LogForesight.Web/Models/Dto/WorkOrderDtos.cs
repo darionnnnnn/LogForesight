@@ -226,6 +226,26 @@ public class AdminCloseWorkOrderRequest
     public string? Reason { get; set; }
 }
 
+/// <summary>退回處理人：說明必填（長度與空白由服務層驗證）</summary>
+public class ReturnWorkOrderRequest
+{
+    public string? Note { get; set; }
+}
+
+/// <summary>退回處理人的結果</summary>
+public class WorkOrderReturnResultDto
+{
+    public long WorkOrderId { get; set; }
+    public int ReturnedCases { get; set; }
+    public int DaySyncPendingCases { get; set; }
+}
+
+/// <summary>未讀回覆的單數（GET /api/work-orders/unread-count）</summary>
+public class WorkOrderUnreadCountDto
+{
+    public int Count { get; set; }
+}
+
 /// <summary>取消／代為結案的結果</summary>
 public class WorkOrderCloseResultDto
 {
@@ -268,6 +288,9 @@ public class WorkOrderListRequest
 
     /// <summary>true＝只列「靜音到期、近 7 日內恢復」問題的進行中單（見 <see cref="WorkOrderRowDto.ResumedFromMuteAt"/>）</summary>
     public bool ResumedFromMute { get; set; }
+
+    /// <summary>true＝只列有未讀回覆的單（判定見 <c>WorkOrder.HasUnreadReply</c>）</summary>
+    public bool UnreadOnly { get; set; }
 }
 
 /// <summary>清單篩選用的使用者群組選項（回饋第 47 輪定案 48）</summary>
@@ -316,6 +339,9 @@ public class WorkOrderRowDto
 
     /// <summary>進行中且從未回覆時＝今天與建立日的日數差；其餘 null</summary>
     public int? UnrepliedDays { get; set; }
+
+    /// <summary>管理者尚未看過處理人的最新回覆（<c>WorkOrder.HasUnreadReply</c>）</summary>
+    public bool UnreadReply { get; set; }
 
     public DateTime? ClosedAt { get; set; }
     public string? ClosedReason { get; set; }

@@ -103,6 +103,39 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
+    public void Upgrade補上交辦單admin_seen_at可空欄_既有單為NULL且重跑冪等()
+    {
+        using (var ctx = _fx.NewContext())
+        {
+            ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_work_orders DROP COLUMN admin_seen_at");
+            Assert.DoesNotContain("admin_seen_at", Query(ctx, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')"));
+        }
+
+        using (var ctx = _fx.NewContext()) SchemaUpgrader.Upgrade(ctx);
+        using (var ctx = _fx.NewContext())
+            Assert.Null(Record.Exception(() => SchemaUpgrader.Upgrade(ctx)));
+
+        using var check = _fx.NewContext();
+        Assert.Contains("admin_seen_at", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')"));
+        var store = new EfWorkOrderStore(_fx.NewContext);
+        var id = store.Insert(new WorkOrder
+        {
+            SourceName = "Disk", EventId = 153, IssueLabel = "Disk 153", HandlerId = 1,
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "a", CreatedAt = DateTime.Now
+        });
+        Assert.Null(store.Get(id)!.AdminSeenAt);
+        var seen = new DateTime(2026, 10, 3, 10, 0, 0);
+        store.MarkAdminSeen(id, seen);
+        Assert.Equal(seen, store.Get(id)!.AdminSeenAt);
+    }
+
+    [Fact]
+    public void SqlServer建表語句含admin_seen_at()
+    {
+        Assert.Contains("admin_seen_at datetime2 NULL", SchemaUpgrader.SqlServerCreateWorkOrders);
+    }
+
+    [Fact]
     public void Upgrade重跑不擲例外且索引不重複()
     {
         using (var ctx = _fx.NewContext()) RevertToLegacy(ctx);

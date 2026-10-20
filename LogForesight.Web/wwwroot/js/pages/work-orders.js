@@ -37,6 +37,8 @@ const activeGroupSelect = document.getElementById('wo-group');
 const activeResumedCheckbox = document.getElementById('wo-resumed');
 // 處理人離職或停用後，要逐單改派或代為結案——這個篩選把那些單一次找出來
 const activeHandlerInactiveCheckbox = document.getElementById('wo-handler-inactive');
+// 只看未讀回覆：處理人回覆後管理者尚未開過詳情的單（判定見 WorkOrder.HasUnreadReply）
+const activeUnreadOnlyCheckbox = createUnreadOnlyCheckbox();
 const activeListContainer = document.getElementById('wo-list');
 const activePagerContainer = document.getElementById('wo-pager');
 
@@ -119,6 +121,26 @@ if (hasUrlFilter) {
     }
 }
 
+/** 在「只看處理人已停用」的核取方塊之後補上「只看未讀回覆」；找不到錨點時退回附在工具列尾端 */
+function createUnreadOnlyCheckbox() {
+    const wrap = document.createElement('div');
+    wrap.className = 'form-check mb-0';
+    const input = document.createElement('input');
+    input.className = 'form-check-input';
+    input.type = 'checkbox';
+    input.id = 'wo-unread-only';
+    const label = document.createElement('label');
+    label.className = 'form-check-label small';
+    label.htmlFor = 'wo-unread-only';
+    label.textContent = '只看未讀回覆';
+    wrap.append(input, label);
+
+    const anchor = activeHandlerInactiveCheckbox?.closest('.form-check');
+    if (anchor?.parentElement) anchor.after(wrap);
+    else activeStatusSelect?.closest('.d-flex')?.appendChild(wrap);
+    return input;
+}
+
 /** 篩選橫幅：「篩選：{source} {eventId}｜處理人 {名稱}」；名稱未知時用「處理人 #{id}」 */
 function updateFilterLabel(handlerName) {
     if (!filterLabelSpan) return;
@@ -195,7 +217,8 @@ async function loadActive() {
         page: String(activePage),
         pageSize: String(pageSize),
         resumedFromMute: String(resumed),
-        handlerInactive: String(activeHandlerInactiveCheckbox.checked)
+        handlerInactive: String(activeHandlerInactiveCheckbox.checked),
+        unreadOnly: String(activeUnreadOnlyCheckbox.checked)
     });
 
     if (hasUrlFilter) {
@@ -290,6 +313,13 @@ function renderActiveTable(data) {
             title: '未回覆',
             className: 'text-end text-nowrap',
             render: r => (r.unrepliedDays == null ? '—' : `${r.unrepliedDays} 天`)
+        },
+        {
+            title: '未讀回覆',
+            className: 'text-nowrap',
+            render: r => (r.unreadReply
+                ? statusBadge('有新回覆', 'info', { title: '處理人回覆後尚未開啟過這張單的詳情' })
+                : '—')
         },
         {
             title: '期限',
@@ -770,6 +800,22 @@ activeSortSelect.addEventListener('change', onActiveFilterChange);
 activeGroupSelect.addEventListener('change', onActiveFilterChange);
 activeResumedCheckbox.addEventListener('change', onActiveFilterChange);
 activeHandlerInactiveCheckbox.addEventListener('change', onActiveFilterChange);
+activeUnreadOnlyCheckbox.addEventListener('change', onActiveFilterChange);
+
+// 側欄徽章每 60 秒刷新（core/badges.js 是唯一計時器，本頁不另開）：
+// 未讀數與上次不同且目前在「進行中」頁籤，就依目前篩選與頁碼重新載入清單。
+// 第一次事件只記基準（頁面剛載入，清單本來就是最新的）。
+let lastUnreadCount;
+window.addEventListener('lf:badges', event => {
+    const unread = event.detail?.unread;
+    if (unread == null) return;
+    const previous = lastUnreadCount;
+    lastUnreadCount = unread;
+    if (previous === undefined || previous === unread) return;
+    const activeTab = tabsEl?.querySelector('[data-tab].active')?.dataset.tab;
+    if (activeTab === 'active') guardLoad(activeListContainer, loadActive);
+    else loadedTabs.delete('active'); // 切回進行中時重查
+});
 
 // 待派查詢
 gapsQueryBtn.addEventListener('click', () => {

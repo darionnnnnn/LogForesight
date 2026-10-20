@@ -21,6 +21,9 @@ public static class WorkOrderOutboxKinds
     public const string Appended = "appended";
     public const string Transferred = "transferred";
     public const string Cancelled = "cancelled";
+
+    /// <summary>管理者把「無法處理」的成員退回給處理人（原因欄放退回說明）</summary>
+    public const string Returned = "returned";
 }
 
 public sealed class WorkOrderOutbox

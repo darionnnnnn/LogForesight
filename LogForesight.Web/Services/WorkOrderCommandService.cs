@@ -370,6 +370,29 @@ public class WorkOrderCommandService
         };
     }
 
+    /// <summary>退回處理人：把「無法處理」的成員退回處理中，說明必填（≤500）；通知處理人</summary>
+    public WorkOrderReturnResultDto Return(long id, ReturnWorkOrderRequest req)
+    {
+        var note = RequireReason(req.Note, "退回處理人要填說明。");
+        var order = GetOrder(id);
+
+        var result = Guard(() => _coordinator.Return(id, NewActor(), note));
+
+        _audit.Record(
+            action: AuditActions.WorkOrderReturn,
+            summary: $"退回交辦單 {id}『{order.IssueLabel}』給處理人：{result.ReturnedCases} 件改回處理中（說明：{note}）",
+            targetKind: TargetKind,
+            targetId: id.ToString(),
+            detail: new { WorkOrderId = id, result.ReturnedCases, Note = note, result.HandlerId });
+
+        NotifyHandler(WorkOrderOutboxKinds.Returned, id, result.HandlerId, reason: note);
+
+        return new WorkOrderReturnResultDto
+        {
+            WorkOrderId = id, ReturnedCases = result.ReturnedCases, DaySyncPendingCases = result.DaySync.PendingCases
+        };
+    }
+
     public WorkOrderCloseResultDto AdminClose(long id, AdminCloseWorkOrderRequest req)
     {
         if (!IssueHandlingStatuses.IsClosed(req.Status))

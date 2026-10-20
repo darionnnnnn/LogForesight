@@ -166,7 +166,8 @@ public class WorkOrderQueryService
             PageSize = pageSize,
             PausedKeys = exclusion.CurrentlyMutedCompositeKeys,
             PausedMode = pausedMode,
-            OnlyKeys = req.ResumedFromMute ? ResumedFromMuteKeys(exclusion) : null
+            OnlyKeys = req.ResumedFromMute ? ResumedFromMuteKeys(exclusion) : null,
+            UnreadOnly = req.UnreadOnly
         });
 
         var counts = _orders.CountMembers(result.Items.Select(o => o.WorkOrderId).ToList());
@@ -182,6 +183,20 @@ public class WorkOrderQueryService
     }
 
     /// <summary>清單篩選用的使用者群組選項（回饋第 47 輪定案 48）：只列啟用中群組，依名稱不分大小寫排序</summary>
+    /// <summary>未讀回覆的單數（側欄徽章用；能力由 controller 標註把關）。SQL 端 COUNT，不把單拉回記憶體</summary>
+    public WorkOrderUnreadCountDto UnreadCount() => new() { Count = _orders.CountUnreadReplies() };
+
+    /// <summary>
+    /// 記錄「管理者已看過這張單」：只有具 Assign 的使用者才寫入（ViewAll 唯讀者與處理人本人開詳情不算「已讀」）。
+    /// 詳情的 GET 不寫任何東西，已讀由前端載入詳情成功後另行呼叫。單不存在 404、無權檢視 403。
+    /// </summary>
+    public void MarkSeen(long id)
+    {
+        var order = Authorize(id);
+        if (!_currentUser.Has(Capability.Assign)) return;
+        _orders.MarkAdminSeen(order.WorkOrderId, DateTime.Now);
+    }
+
     public List<HandlerGroupOptionDto> ListHandlerGroups() =>
         _userGroups.GetAll()
             .Where(g => g.Active)
@@ -477,6 +492,7 @@ public class WorkOrderQueryService
         dto.UnrepliedDays = o.LastReplyAt == null && o.ClosedAt == null
             ? (DateTime.Today - o.CreatedAt.Date).Days
             : null;
+        dto.UnreadReply = o.HasUnreadReply;
         dto.ClosedAt = o.ClosedAt;
         dto.ClosedReason = o.ClosedReason;
 

@@ -74,6 +74,8 @@ public class WorkOrderQueryServiceTests
             : _inner.GetAllActive();
         public long Insert(WorkOrder order) => _inner.Insert(order);
         public void Save(WorkOrder order) => _inner.Save(order);
+        public void MarkAdminSeen(long workOrderId, DateTime seenAt) => _inner.MarkAdminSeen(workOrderId, seenAt);
+        public int CountUnreadReplies() => _inner.CountUnreadReplies();
         public void AppendEvent(WorkOrderEvent evt) => _inner.AppendEvent(evt);
         public List<WorkOrderEvent> ListEvents(long workOrderId) => _inner.ListEvents(workOrderId);
         public Dictionary<long, WorkOrderMemberCounts> CountMembers(IReadOnlyCollection<long> workOrderIds) => _inner.CountMembers(workOrderIds);
@@ -970,6 +972,109 @@ public class WorkOrderQueryServiceTests
         Assert.Null(list.Items.Single().MutedUntil);
         Assert.DoesNotContain(multi, Ids(only));
         Assert.Equal(1, svc.HandlerSummary(_alice.UserId).ActiveWorkOrders);
+    }
+
+    // ── 未讀回覆（WorkOrder.HasUnreadReply／seen／unread-count／UnreadOnly）────────────────
+
+    private void ReplyAt(long orderId, DateTime at)
+    {
+        var order = _orders.Get(orderId)!;
+        order.LastReplyAt = at;
+        _orders.Save(order);
+    }
+
+    [Fact]
+    public void 未讀回覆_回覆後為未讀_Assign開啟後清空_再回覆又變未讀()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+
+        Assert.True(_orders.Get(id)!.HasUnreadReply);
+        Assert.True(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
+        Assert.Equal(1, svc.UnreadCount().Count);
+
+        svc.MarkSeen(id);
+
+        Assert.NotNull(_orders.Get(id)!.AdminSeenAt);
+        Assert.False(_orders.Get(id)!.HasUnreadReply);
+        Assert.False(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
+        Assert.Equal(0, svc.UnreadCount().Count);
+
+        ReplyAt(id, DateTime.Now.AddMinutes(5));
+
+        Assert.True(_orders.Get(id)!.HasUnreadReply);
+        Assert.True(svc.List(new WorkOrderListRequest()).Items.Single().UnreadReply);
+        Assert.Equal(1, svc.UnreadCount().Count);
+    }
+
+    [Fact]
+    public void 未讀回覆_ViewAll無Assign呼叫seen_不寫入AdminSeenAt()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        Service(As(_bob.UserId, Capability.ViewAll)).MarkSeen(id);
+
+        Assert.Null(_orders.Get(id)!.AdminSeenAt);
+        Assert.True(_orders.Get(id)!.HasUnreadReply);
+    }
+
+    [Fact]
+    public void 未讀回覆_處理人本人開自己的單呼叫seen_不寫入且不擲()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        Service(As(_alice.UserId, Capability.Handle)).MarkSeen(id);
+
+        Assert.Null(_orders.Get(id)!.AdminSeenAt);
+    }
+
+    [Fact]
+    public void 未讀回覆_詳情GET不寫入任何已讀()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        var detail = Service(As(_bob.UserId, Capability.Assign)).Get(id);
+
+        Assert.True(detail.UnreadReply);
+        Assert.Null(_orders.Get(id)!.AdminSeenAt);
+    }
+
+    [Fact]
+    public void 未讀回覆_seen對不存在的單404_無權檢視403()
+    {
+        var id = AddOrder(_alice.UserId, createdAt: DateTime.Now.AddHours(-3), replied: DateTime.Now.AddHours(-1));
+
+        Assert.Equal(ApiErrorCodes.NotFound,
+            Assert.Throws<DomainException>(() => Service(As(_bob.UserId, Capability.Assign)).MarkSeen(9999)).Code);
+        Assert.Equal(ApiErrorCodes.Forbidden,
+            Assert.Throws<DomainException>(() => Service(As(_stranger.UserId)).MarkSeen(id)).Code);
+    }
+
+    [Fact]
+    public void 未讀回覆_UnreadOnly只回未讀的單_已結案與未回覆都不算()
+    {
+        var unread = AddOrder(_alice.UserId, "disk", 1, DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-1));
+        var seen = AddOrder(_alice.UserId, "disk", 2, DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-2));
+        _orders.MarkAdminSeen(seen, DateTime.Now.AddHours(-1));
+        AddOrder(_alice.UserId, "disk", 3, DateTime.Now.AddHours(-3));
+        AddOrder(_alice.UserId, "disk", 4, DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-1), closed: DateTime.Now);
+        var svc = Service(As(_bob.UserId, Capability.Assign));
+
+        var list = svc.List(new WorkOrderListRequest { Status = "all", UnreadOnly = true });
+
+        Assert.Equal(new[] { unread }, Ids(list));
+        Assert.Equal(1, svc.UnreadCount().Count);
+        Assert.Equal(4, svc.List(new WorkOrderListRequest { Status = "all" }).Total);
+    }
+
+    [Fact]
+    public void 未讀回覆_從未開啟過時以建立時間為基準_回覆晚於建立才算未讀()
+    {
+        var created = DateTime.Now.AddHours(-3);
+        var replyEqualsCreated = AddOrder(_alice.UserId, "disk", 1, created, created);
+
+        Assert.False(_orders.Get(replyEqualsCreated)!.HasUnreadReply);
+        Assert.Equal(0, Service(As(_bob.UserId, Capability.Assign)).UnreadCount().Count);
     }
 
     [Fact]

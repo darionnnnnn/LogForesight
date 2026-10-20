@@ -404,6 +404,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
             e.Property(x => x.LastAppendedAt).HasColumnName("last_appended_at");
             e.Property(x => x.LastReplyAt).HasColumnName("last_reply_at");
+            e.Property(x => x.AdminSeenAt).HasColumnName("admin_seen_at");
             e.Property(x => x.ClosedAt).HasColumnName("closed_at");
             e.Property(x => x.ClosedReason).HasColumnName("closed_reason").HasMaxLength(30);
             e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
@@ -1027,6 +1028,9 @@ public class WorkOrderRow
     public DateTime CreatedAt { get; set; }
     public DateTime? LastAppendedAt { get; set; }
     public DateTime? LastReplyAt { get; set; }
+
+    /// <summary>具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）；null＝從未開啟</summary>
+    public DateTime? AdminSeenAt { get; set; }
     public DateTime? ClosedAt { get; set; }
     public string? ClosedReason { get; set; }
     public DateTime UpdatedAt { get; set; }

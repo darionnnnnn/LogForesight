@@ -51,6 +51,10 @@ public class WorkOrdersController : ControllerBase
     public ApiResponse<WorkOrderMoveResultDto> Split(long id, [FromBody] SplitWorkOrderRequest request) =>
         ApiResponse<WorkOrderMoveResultDto>.Ok(_service.Split(id, request));
 
+    [HttpPost("{id:long}/return")]
+    public ApiResponse<WorkOrderReturnResultDto> Return(long id, [FromBody] ReturnWorkOrderRequest request) =>
+        ApiResponse<WorkOrderReturnResultDto>.Ok(_service.Return(id, request));
+
     [HttpPost("{id:long}/cancel")]
     public ApiResponse<WorkOrderCloseResultDto> Cancel(long id, [FromBody] CancelWorkOrderRequest request) =>
         ApiResponse<WorkOrderCloseResultDto>.Ok(_service.Cancel(id, request));
