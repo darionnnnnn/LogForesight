@@ -625,7 +625,7 @@ mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（s
 ### NetIQ 取數與 AI 判讀脫鉤（取數排程與 AI 服務）
 
 **本機分析路徑同樣適用**：本機也只算統計段、標 `AiPending`，AI 判讀交給 AI 分析排程。
-取數執行內因此沒有任何同步 AI 呼叫：行內跑 AI 會被 JSON 重試拖長本機進度軌，
+取數執行內因此除週期體檢的敘事外沒有同步 AI 呼叫：行內跑 AI 會被 JSON 重試拖長本機進度軌，
 且與 NetIQ 的 AI 策略分岔。執行紀錄的 AI 呼叫統計因此只來自 AI 分析排程這一路。唯一例外是本機主機未登記（`HostId=0`）時維持統計模式、
 不標 `AiPending`：風險 log 暫存與待補查詢都以 HostId 為鍵，標了會產生永遠沒人消化的待補件。
 
@@ -678,10 +678,7 @@ AI 的日子要等 AI 補寫完成才產出（暫代紀錄的 `ReportFile` 為 `
 同一筆）。補跑由既有紀錄重建主分析輸入，但前置掃描與深入分析報告刻意不補——兩者需要
 原始 log，事後已經回不去了；`detail_pruned`（詳情已清）的列同樣不在待補範圍。
 
-**適用範圍**：本機分析路徑（`AnalyzeDayAsync`）仍是統計＋AI 一體的組合呼叫——單機序列
-執行、多個主機日之間沒有並行搜尋主線可保護，拆分收益低，詳細評估見
-[docs/archive/FEEDBACK-12-PLAN.md](archive/FEEDBACK-12-PLAN.md) §3.9。
-本機的 AI 呼叫與 AI 分析排程共用 `AIService` 內部的序列化出口。
+**適用範圍**：本機與 NetIQ 兩條路徑都只算統計段並標 `AiPending`（`AnalyzeDayStatisticalAsync`），AI 判讀一律交給 AI 分析排程。唯一仍在取數執行內同步呼叫 AI 的是週期體檢（`WeeklyCheckupService`，窗口內有訊號才呼叫，見「體檢」一節）。
 
 ---
 
