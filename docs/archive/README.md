@@ -14,6 +14,8 @@
 |---|---|
 | [FEEDBACK-54-PLAN.md](FEEDBACK-54-PLAN.md) | 第 54 輪重寫版:移除可信取樣／資格／容量准入／資源壓力等機制,數值可信改為三條件;新增四條數值趨勢規則、hostname 退路、PRTG 獨立主機日、標記誤報 30 日窗、守門自動偵測;PRTG-SPEC 重寫;Fable 體檢修正 10 條(主機詳情讀 seed 快照、守門當晚換目標、週檢漏排除、NetIQ 晚到不標 AI 待補…) |
 | [FEEDBACK-54-PLAN-v1.md](FEEDBACK-54-PLAN-v1.md) | 第 54 輪原版規劃(承接 53 輪 27 項驗收 TODO、R54／C54 契約、§8 分段紀錄);2026-10-15 經審查後由重寫版取代,依據見 ROUNDS-51-54-REVIEW.md。 |
+| [FEEDBACK-55-PLAN.md](FEEDBACK-55-PLAN.md) | 第 55 輪:企業級體質——A 排程韌性(站台啟動關閉異常中斷的執行並允許同窗口補跑一次、PRTG 缺日自動補評估與待補呈現、AI 判讀跟隨取數到結束後 10 分鐘)、C 交辦兩段式摘要(通知改寫入持久化 outbox,每天 08:00／12:00 各寄一封、立即通知選項、無 email 提示)、D 效能(狀態篩選預設高／中並設 5 萬筆上限、報表相鄰兩期合併查詢、八支查詢計畫守門＋`CountPendingAi` 覆蓋索引);D-3 背景連線池取消。Opus 5.5 實作、Fable 5.1 體檢(與第 56 輪合併執行)。 |
+| [FEEDBACK-56-PLAN.md](FEEDBACK-56-PLAN.md) | 第 56 輪:E 派工與回覆流程(回覆權限後端單點、原處理人唯讀、候選人端點與標記、日層級指派預覽後一次送出、取消指派收單、處理狀態目錄單一來源、未讀回覆與側欄徽章、退回處理人、回饋文案、待派工卡)、F 排版一致性(頁首元件、表格歸一 table-sm＋截斷、inline style 清除、無障礙、格式單一出口、狀態回饋、KPI 欄格、runs 狀態色 token)。Fable 5.1 四視角體檢修 17 條(workload 授權、唯讀 POST 推進版本戳、退回清期限、Save 蓋回已讀、升級未回填、下一筆撞上限、中斷補跑說明、NaN 卡等)並清死碼;基線 6,436 通過／10 略過。 |
 | [ROUNDS-51-54-REVIEW.md](ROUNDS-51-54-REVIEW.md) | 2026-10-15 對 51～54 輪規劃與程式的全面審查:偏離目標、過度設計、逐輪保留／刪除／簡化裁定與根因;第 54 輪重寫版 PLAN 的依據。 |
 | [FEEDBACK-53-PLAN.md](FEEDBACK-53-PLAN.md) | 第 53 輪規劃：PRTG trusted sampling、資格作業、兩小時壓力規則與驗收矩陣;2026-10-15 審查後多數機制由第 54 輪重寫版移除,依據見 ROUNDS-51-54-REVIEW |
 | [FEEDBACK-52-ROUND2-PLAN.md](FEEDBACK-52-ROUND2-PLAN.md) | 第 52 輪第二段:A01–A05 子條款補強與驗收紀錄 |
