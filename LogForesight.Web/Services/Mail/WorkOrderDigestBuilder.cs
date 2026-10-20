@@ -33,7 +33,7 @@ internal static class WorkOrderDigestBuilder
         AppendSection(body, "【移交】", transferred);
         AppendSection(body, "【取消】", cancelled);
         AppendSection(body, "【退回】", returned);
-        body.AppendLine("請至站台的「交辦單」頁檢視上列單號。");
+        body.AppendLine("請至站台的「我的交辦」檢視上列單號。");
         return (subjectSummary, body.ToString());
     }
 

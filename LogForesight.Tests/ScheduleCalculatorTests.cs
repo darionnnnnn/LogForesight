@@ -382,6 +382,29 @@ public class ScheduleCalculatorTests
     // ── EffectiveScheduleTriggerTimes ───────────────────────────────────────
 
     [Fact]
+    public void InterruptedRunAllowingCatchUp_窗口內取最早的中斷執行_窗口外或無中斷為null()
+    {
+        var windows = new[] { W("22:00", "06:00") };
+        var now = new DateTime(2026, 10, 20, 23, 30, 0);
+
+        var one = new[] { (StartedAt: new DateTime(2026, 10, 20, 22, 0, 0), Interrupted: true) };
+        Assert.Equal(new DateTime(2026, 10, 20, 22, 0, 0), ScheduleCalculator.InterruptedRunAllowingCatchUp(now, one, windows));
+
+        var two = new[]
+        {
+            (StartedAt: new DateTime(2026, 10, 20, 22, 40, 0), Interrupted: true),
+            (StartedAt: new DateTime(2026, 10, 20, 22, 5, 0), Interrupted: true)
+        };
+        Assert.Equal(new DateTime(2026, 10, 20, 22, 5, 0), ScheduleCalculator.InterruptedRunAllowingCatchUp(now, two, windows));
+
+        var yesterday = new[] { (StartedAt: new DateTime(2026, 10, 19, 22, 0, 0), Interrupted: true) };
+        Assert.Null(ScheduleCalculator.InterruptedRunAllowingCatchUp(now, yesterday, windows));
+
+        var normal = new[] { (StartedAt: new DateTime(2026, 10, 20, 22, 0, 0), Interrupted: false) };
+        Assert.Null(ScheduleCalculator.InterruptedRunAllowingCatchUp(now, normal, windows));
+    }
+
+    [Fact]
     public void EffectiveScheduleTriggerTimes_配合ShouldTriggerNow_單筆中斷允許補跑()
     {
         var windows = new[] { W("22:00", "06:00") };

@@ -83,7 +83,7 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
     private WorkOrderCommandService CommandService() => new(
         _query, _aggregates, _coordinator, _orderStore, _caseStore, _noiseMarks, _hosts, _users, new AllVisible(_hosts),
         new UserCapabilityResolver(_userGroups, _hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-        _audit, _displayNames, _ruleStore, _mail);
+        _audit, _displayNames, _mail);
 
     private WorkOrderBoardService BoardService() => new(
         _orderStore, _caseStore, _users, _userGroups, _hosts, _hostGroups, _ruleStore, _suppressionStore, _query, _aggregates,

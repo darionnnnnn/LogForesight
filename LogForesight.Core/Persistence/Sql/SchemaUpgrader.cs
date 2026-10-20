@@ -519,7 +519,12 @@ internal static class SchemaUpgrader
         // 最近一次被改派走的處理人（唯讀存取）；既有單為 NULL
         AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "previous_handler_id", isSqlite ? "INTEGER NULL" : "bigint NULL");
         // 具 Assign 的使用者最近開啟詳情的時間（未讀回覆判定）；既有單為 NULL，判定時退回建立時間
-        AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "admin_seen_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        if (AddColumnIfMissing(ctx, isSqlite, "lf_work_orders", "admin_seen_at", isSqlite ? "TEXT NULL" : "datetime2 NULL"))
+        {
+            // 升級當下既有的回覆一律視為已看過：否則升級後第一次開站，所有有回覆的進行中單同時亮成未讀
+            ctx.Database.ExecuteSqlRaw(
+                "UPDATE lf_work_orders SET admin_seen_at = last_reply_at WHERE last_reply_at IS NOT NULL AND admin_seen_at IS NULL");
+        }
 
         CreateTableIfMissing(ctx, isSqlite, "lf_work_order_events",
             isSqlite ? SqliteCreateWorkOrderEvents : SqlServerCreateWorkOrderEvents);
@@ -1774,20 +1779,22 @@ internal static class SchemaUpgrader
         return names.Contains(table, StringComparer.OrdinalIgnoreCase);
     }
 
-    private static void AddColumnIfMissing(LfDbContext ctx, bool isSqlite, string table, string column, string columnDefinition)
+    /// <returns>這次真的補了欄位回 true（呼叫端據此做一次性的回填）</returns>
+    private static bool AddColumnIfMissing(LfDbContext ctx, bool isSqlite, string table, string column, string columnDefinition)
     {
         // 表不存在就跳過：ALTER TABLE 對不存在的表會直接拋，讓整個站台啟動失敗。
         // 正常情況下 EnsureCreated 已經建好所有表，走到這裡代表這個部署的 schema
         // 比預期更舊（或這是只建了部分表的測試情境）——缺表不是這支函式該修的問題。
-        if (!TableExists(ctx, isSqlite, table)) return;
+        if (!TableExists(ctx, isSqlite, table)) return false;
 
-        if (ColumnExists(ctx, isSqlite, table, column)) return;
+        if (ColumnExists(ctx, isSqlite, table, column)) return false;
 
         Log.Info("[SQL] schema 升級：{Table} 補 {Column} 欄", table, column);
         // 值全為內部寫死的表/欄位名稱常數（非外部輸入），且 SQL 本就不支援參數化識別字——
         // 組成一般字串變數而非直接以內插字串呼叫，EF1002（內插字串注入警告）因此不適用
         var sql = "ALTER TABLE " + table + " ADD " + (isSqlite ? "COLUMN " : "") + column + " " + columnDefinition;
         ctx.Database.ExecuteSqlRaw(sql);
+        return true;
     }
 
     private static void AddIndexIfMissing(

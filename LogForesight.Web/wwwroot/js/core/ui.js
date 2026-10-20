@@ -424,6 +424,9 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
     return new Promise(resolve => {
         const el = document.createElement('div');
         el.className = 'modal fade';
+        // 標題與對話框的關聯：每次呼叫產生唯一 id，避免同時開多個確認框時撞號
+        const titleId = `lf-modal-title-${Math.random().toString(36).slice(2, 10)}`;
+        el.setAttribute('aria-labelledby', titleId);
         el.innerHTML = `
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
@@ -440,7 +443,9 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
             </div>`;
         // 變動值不進 innerHTML 樣板字串（FrontendConsistencyUiTests 守門）：class 以 classList 補
         el.querySelector('[data-lf-confirm]').classList.add(`btn-${confirmVariant}`);
-        el.querySelector('.modal-title').textContent = title;
+        const titleEl = el.querySelector('.modal-title');
+        titleEl.id = titleId;
+        titleEl.textContent = title;
         const body = el.querySelector('.modal-body p');
         body.textContent = message;
         body.classList.add('lf-pre-line');   // 呼叫端用換行字元排條列，textContent 不會自己換行
@@ -475,6 +480,9 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
     return new Promise(resolve => {
         const el = document.createElement('div');
         el.className = 'modal fade';
+        // 標題與對話框的關聯：每次呼叫產生唯一 id，避免同時開多個確認框時撞號
+        const titleId = `lf-modal-title-${Math.random().toString(36).slice(2, 10)}`;
+        el.setAttribute('aria-labelledby', titleId);
         el.innerHTML = `
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
@@ -494,7 +502,9 @@ export function confirmActionWithReason({ title = '請確認', message, reasonLa
                 </div>
             </div>`;
         el.querySelector('[data-lf-confirm]').classList.add(`btn-${confirmVariant}`);
-        el.querySelector('.modal-title').textContent = title;
+        const titleEl = el.querySelector('.modal-title');
+        titleEl.id = titleId;
+        titleEl.textContent = title;
         el.querySelector('.modal-body p').textContent = message;
         el.querySelector('[data-lf-reason-label]').textContent = reasonLabel;
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
@@ -627,10 +637,10 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  * truncate（選填，欄位選項）：該欄儲存格加 text-truncate 並以完整文字設 title，
  * 過長內容（主機名、問題標籤、sensor 名稱）以省略號收斂、不撐破列高；最大寬度由
- * site.css 的 `.lf-table-wrap td.text-truncate` 決定，maxWidth 可帶 CSS class 名稱覆寫（不寫 inline）。
+ * site.css 的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
  * caption（選填）：螢幕閱讀器用的隱藏表格標題。
  * footer（選填）：頁尾合計列，儲存格內容陣列（字串或 Node），數量對齊 columns。
- * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 renderKeyValueTable。
+ * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 buildKeyValueTable。
  */
 export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn, caption, footer }) {
     if (!rows || rows.length === 0) {
@@ -708,7 +718,6 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             // 長字串截斷：省略號收斂，完整文字放 title 供滑鼠停留查看
             if (col.truncate) {
                 td.classList.add('text-truncate');
-                if (col.maxWidth) td.classList.add(col.maxWidth);
                 const fullText = (contentNode.textContent || '').trim();
                 if (fullText) td.title = fullText;
             }
@@ -788,7 +797,7 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
  * rows: [{ label, value }]，value 可為字串或 Node（字串一律走 textContent）。
  * 另有兩種跨欄列供「結構化明細」使用：{ section: '標題' } 區段標題、{ text: '原文' } 整列原文。
  * options.mono：內容欄改用等寬字並保留換行（權限異動明細的異動前／後值）。
- * buildKeyValueTable 回傳 wrap 節點給需要自行組裝的呼叫端；renderKeyValueTable 直接填進容器。
+ * 回傳 wrap 節點，由呼叫端自行放進容器或 modal。
  */
 export function buildKeyValueTable(rows, { mono = false } = {}) {
     const wrap = document.createElement('div');
@@ -833,10 +842,6 @@ export function buildKeyValueTable(rows, { mono = false } = {}) {
     table.appendChild(tbody);
     wrap.appendChild(table);
     return wrap;
-}
-
-export function renderKeyValueTable(container, rows, options) {
-    container.replaceChildren(buildKeyValueTable(rows, options));
 }
 
 /**

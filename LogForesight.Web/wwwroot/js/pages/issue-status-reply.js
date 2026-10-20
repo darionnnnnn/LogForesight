@@ -12,6 +12,7 @@ import { api, getCurrentUser } from '../core/api.js';
 import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck } from '../core/ui.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 import { statusMeta, statusesWhere } from '../core/handling-statuses.js';
+import { todayLocal } from '../core/format.js';
 
 /**
  * 處理人可回覆的狀態：由 core/handling-statuses.js 的 replyable 衍生（不含「未處理」——
@@ -45,13 +46,15 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
 
     const hint = document.createElement('div');
     hint.className = 'lf-hint mb-3';
-    hint.textContent = `套用對象：${targetText}；每台主機的案件會連同它涵蓋的日期一起更新。`;
+    hint.textContent = `套用對象：${targetText}；每台主機的交辦會連同它涵蓋的日期一起更新。`;
     form.appendChild(hint);
 
     const statusLabel = document.createElement('label');
     statusLabel.className = 'form-label small text-muted';
     statusLabel.textContent = '處理狀態';
+    statusLabel.htmlFor = 'wo-reply-status';
     const statusSelect = document.createElement('select');
+    statusSelect.id = 'wo-reply-status';
     statusSelect.className = 'form-select form-select-sm mb-3';
     for (const option of STATUS_OPTIONS) {
         const el = document.createElement('option');
@@ -67,7 +70,9 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label small text-muted';
     noteLabel.textContent = '處理說明';
+    noteLabel.htmlFor = 'wo-reply-note';
     const noteInput = document.createElement('textarea');
+    noteInput.id = 'wo-reply-note';
     noteInput.className = 'form-control form-control-sm mb-3';
     noteInput.rows = 3;
     form.append(noteLabel);
@@ -114,8 +119,11 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     const dueLabel = document.createElement('label');
     dueLabel.className = 'form-label small text-muted';
     dueLabel.textContent = '預計完成日／觀察至';
+    dueLabel.htmlFor = 'wo-reply-due';
     const dueInput = document.createElement('input');
+    dueInput.id = 'wo-reply-due';
     dueInput.type = 'date';
+    dueInput.min = todayLocal();   // 不可早於今天（本機日期；bindPastDateCheck 仍負責手打的情況）
     dueInput.className = 'form-control form-control-sm mb-3';
     const dueError = document.createElement('div');
     dueError.className = 'invalid-feedback d-block';

@@ -687,7 +687,14 @@ public class WorkOrderCoordinator
         if (members.Count == 0)
             throw new InvalidOperationException($"WorkOrderCoordinator：交辦單 {workOrderId} 沒有處於「無法處理」的成員可退回。");
 
-        var daySync = ApplyStatus(members, IssueHandlingStatuses.InProgress, note, null, actor);
+        // 退回只改狀態與說明，不動成員原本的預計完成日（逾期判定要繼續有效）：
+        // ApplyStatus 的期限是整批同一個值，依期限分組逐批套用
+        var daySync = new CaseDaySubmitResult(Inline: true, Rows: 0, PendingCases: 0);
+        foreach (var group in members.GroupBy(m => m.DueDate))
+        {
+            var part = ApplyStatus(group.ToList(), IssueHandlingStatuses.InProgress, note, group.Key, actor);
+            daySync = new CaseDaySubmitResult(daySync.Inline && part.Inline, daySync.Rows + part.Rows, daySync.PendingCases + part.PendingCases);
+        }
         AppendEvent(workOrderId, WorkOrderEventActions.Returned, actor, 0, EventNoteOf("", note, ""));
 
         return new WorkOrderReturnResult { ReturnedCases = members.Count, DaySync = daySync, HandlerId = order.HandlerId };

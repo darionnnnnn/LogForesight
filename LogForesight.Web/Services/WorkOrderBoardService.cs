@@ -249,12 +249,7 @@ public class WorkOrderBoardService
         if (trial.TooLarge)
             throw DomainException.Validation($"期間內尚未派出的問題出現點超過 {_maxOccurrences} 筆，請縮小期間後再派工。");
 
-        var actor = new WorkOrderActor
-        {
-            ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-            ActorAccount = _currentUser.Account,
-            OccurredAt = DateTime.Now
-        };
+        var actor = _currentUser.ToWorkOrderActor();
 
         // 掛單與建單都依（處理人, 問題）分組；掛進他人範圍單的決策交給同處理人的建單自動併入其進行中單
         var groups = trial.Gaps
@@ -350,14 +345,12 @@ public class WorkOrderBoardService
 
         var users = _users.GetAll().ToDictionary(u => u.UserId);
 
-        foreach (var (handlerId, orders) in createdOrdersByHandler)
-        {
-            if (orders.Count == 0) continue;
-            foreach (var (workOrderId, _, _) in orders)
-            {
-                _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Created, workOrderId, handlerId, _currentUser.UserId, _currentUser.Account);
-            }
-        }
+        // 一次入列：立即派工一趟可能建數百張單，逐筆入列會把整份 outbox blob 重寫數百次
+        _mail.EnqueueWorkOrderNotices(
+            createdOrdersByHandler
+                .SelectMany(p => p.Value.Select(o => new WorkOrderNoticeRequest(WorkOrderOutboxKinds.Created, o.WorkOrderId, p.Key)))
+                .ToList(),
+            _currentUser.UserId, _currentUser.Account);
         var perHandler = hostsByHandler
             .Where(p => p.Value > 0)
             .Select(p => new AutoDispatchHandlerDto { HandlerId = p.Key, Name = NameOf(users, p.Key), Hosts = p.Value })

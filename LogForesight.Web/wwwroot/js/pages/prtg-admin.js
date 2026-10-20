@@ -8,7 +8,7 @@ import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
-    collectLines, numberOr, renderTable, renderError
+    collectLines, renderTable, renderError
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
@@ -1190,14 +1190,37 @@ function renderConflictsLoading() {
     renderMirrorTableLoading(container);
 }
 
-function renderConflictsError(errorMessage) {
-    const container = document.getElementById('prtg-mirror-conflicts-table');
+// 鏡像、衝突、未對應三塊清單一起重整（人工對應、IP 排除、批次指派後共用）
+function refreshMirrorViews(conflictOptions) {
+    return Promise.all([
+        refreshPrtgMirror(),
+        refreshConflicts(conflictPage, conflictOptions),
+        refreshUnmatched(unmatchedPage)
+    ]);
+}
+
+
+// 三張清單（衝突／未對應／IP 排除）載入失敗的共用呈現：只差標籤、重試動作與是否有分頁區
+function renderListError(containerId, label, errorMessage, retry, paginationId) {
+    const container = document.getElementById(containerId);
     if (!container) return;
     renderError(container, {
-        message: `載入衝突清單失敗：${errorMessage || '網路或伺服器錯誤'}`,
-        onRetry: () => refreshConflicts(conflictPage)
+        message: `載入${label}失敗：${errorMessage || '網路或伺服器錯誤'}`,
+        onRetry: retry
     });
-    document.getElementById('prtg-conflicts-pagination')?.replaceChildren();
+    if (paginationId) document.getElementById(paginationId)?.replaceChildren();
+}
+
+function renderConflictsError(errorMessage) {
+    renderListError('prtg-mirror-conflicts-table', '衝突清單', errorMessage, () => refreshConflicts(conflictPage), 'prtg-conflicts-pagination');
+}
+
+function renderUnmatchedError(errorMessage) {
+    renderListError('prtg-unmatched-table', '未對應清單', errorMessage, () => refreshUnmatched(unmatchedPage), 'prtg-unmatched-pagination');
+}
+
+function renderIpExcludesError(errorMessage) {
+    renderListError('prtg-ip-excludes-table', ' IP 排除清單', errorMessage, () => refreshIpExcludes());
 }
 
 async function refreshConflicts(page = conflictPage, options = {}) {
@@ -1389,12 +1412,7 @@ function mirrorAssignExcludeActions(item) {
                 const res = await api.put('/api/admin/settings/prtg-ip-excludes', { ip: item.ip, note: null, expectedScopeRevision: scopeRevision });
                 toast('已排除此 IP', 'success');
                 notifyRemapWarning(res);
-                await Promise.all([
-                    refreshPrtgMirror(),
-                    refreshConflicts(conflictPage),
-                    refreshUnmatched(unmatchedPage),
-
-                ]);
+                await refreshMirrorViews();
             } catch (error) {
                 toast(error && error.message ? error.message : '排除失敗', 'danger');
             }
@@ -1410,15 +1428,6 @@ function renderUnmatchedLoading() {
     renderMirrorTableLoading(container);
 }
 
-function renderUnmatchedError(errorMessage) {
-    const container = document.getElementById('prtg-unmatched-table');
-    if (!container) return;
-    renderError(container, {
-        message: `載入未對應清單失敗：${errorMessage || '網路或伺服器錯誤'}`,
-        onRetry: () => refreshUnmatched(unmatchedPage)
-    });
-    document.getElementById('prtg-unmatched-pagination')?.replaceChildren();
-}
 
 async function refreshUnmatched(page = unmatchedPage) {
     unmatchedPage = page;
@@ -1482,14 +1491,6 @@ function renderIpExcludesLoading() {
     renderMirrorTableLoading(container);
 }
 
-function renderIpExcludesError(errorMessage) {
-    const container = document.getElementById('prtg-ip-excludes-table');
-    if (!container) return;
-    renderError(container, {
-        message: `載入 IP 排除清單失敗：${errorMessage || '網路或伺服器錯誤'}`,
-        onRetry: () => refreshIpExcludes()
-    });
-}
 
 async function refreshIpExcludes() {
     await refreshPrtgMirror();
@@ -1522,12 +1523,7 @@ function renderIpExcludes(items) {
                             const res = await api.delete(`/api/admin/settings/prtg-ip-excludes/${encodeURIComponent(item.ip)}?expectedScopeRevision=${scopeRevision}`);
                             toast('已移除 IP 排除設定', 'success');
                             notifyRemapWarning(res);
-                            await Promise.all([
-                                refreshPrtgMirror(),
-                                refreshConflicts(conflictPage),
-                                refreshUnmatched(unmatchedPage),
-
-                            ]);
+                            await refreshMirrorViews();
                         } catch (error) {
                             toast(error && error.message ? error.message : '移除失敗', 'danger');
                         }
@@ -1582,12 +1578,7 @@ function renderManualMaps(items) {
                             const res = await api.delete(`/api/admin/settings/prtg-manual-map/${item.deviceObjid}?expectedScopeRevision=${scopeRevision}`);
                             toast('已移除人工對應', 'success');
                             notifyRemapWarning(res);
-                            await Promise.all([
-                                refreshPrtgMirror(),
-                                refreshConflicts(conflictPage),
-                                refreshUnmatched(unmatchedPage),
-
-                            ]);
+                            await refreshMirrorViews();
                         } catch (error) {
                             toast(error && error.message ? error.message : '移除失敗', 'danger');
                         }
@@ -1891,12 +1882,7 @@ function bindConflictBatchControls() {
                     toast(res.auditWarning, 'warning');
                 }
 
-                await Promise.all([
-                    refreshPrtgMirror(),
-                    refreshConflicts(conflictPage, { preserveSelection: true }),
-                    refreshUnmatched(unmatchedPage),
-
-                ]);
+                await refreshMirrorViews({ preserveSelection: true });
             } catch (error) {
                 toast(error && error.message ? error.message : '批次指派失敗', 'danger');
                 await refreshConflicts(conflictPage, { preserveSelection: true });

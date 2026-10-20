@@ -14,7 +14,7 @@ import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 import { reportCard } from '../core/report-view.js';
-import { statusesWhere } from '../core/handling-statuses.js';
+import { statusesWhere, statusVariant } from '../core/handling-statuses.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -246,7 +246,7 @@ function renderHeader(detail) {
     if (detail.caseGrantOnly) {
         const notice = document.createElement('div');
         notice.className = 'alert alert-info py-2 px-3 mb-3';
-        notice.textContent = '您以案件處理人的身分檢視這一頁：僅顯示指派給您的問題，' +
+        notice.textContent = '您以交辦單處理人的身分檢視這一頁：僅顯示指派給您的問題，' +
             '這台主機當日的其他問題、白話總覽與報告全文不在您的檢視範圍內。';
         body.appendChild(notice);
     }
@@ -512,10 +512,6 @@ function priorHandlingTrigger(issue) {
     return trigger;
 }
 
-/** 結案歷程的徽章顏色：由 core/handling-statuses.js 衍生 */
-const ISSUE_HISTORY_STATUS_VARIANTS = Object.fromEntries(
-    statusesWhere(s => s.closed).map(s => [s.value, s.variant]));
-
 /** modal 內容：已結案案件摘要（較接近「上次怎麼解的」）＋逐日結案標記，兩者可能重疊，分開呈現不強行去重 */
 function issueHistoryBody(history) {
     const wrap = document.createElement('div');
@@ -550,7 +546,7 @@ function issueHistoryCaseItem(c) {
     head.className = 'd-flex align-items-center gap-2 flex-wrap';
 
     const status = document.createElement('span');
-    status.className = `lf-badge lf-badge--${ISSUE_HISTORY_STATUS_VARIANTS[c.status] ?? 'secondary'}`;
+    status.className = `lf-badge lf-badge--${statusVariant(c.status)}`;
     status.textContent = c.statusText;
     head.appendChild(status);
 
@@ -581,7 +577,7 @@ function issueHistoryEntryItem(entry) {
     head.className = 'd-flex align-items-center gap-2 flex-wrap';
 
     const status = document.createElement('span');
-    status.className = `lf-badge lf-badge--${ISSUE_HISTORY_STATUS_VARIANTS[entry.status] ?? 'secondary'}`;
+    status.className = `lf-badge lf-badge--${statusVariant(entry.status)}`;
     status.textContent = entry.statusText;
     head.appendChild(status);
 
@@ -1814,7 +1810,7 @@ function renderAlerts(detail) {
 
     if (detail.caseGrantOnly) {
         renderEmpty(container, {
-            title: '不在案件檢視範圍',
+            title: '不在交辦單檢視範圍',
             hint: '此頁僅顯示受交辦問題；整日關聯與趨勢訊號未提供。'
         });
         return;
@@ -2108,7 +2104,7 @@ function renderCoverage(detail) {
 
     if (detail.caseGrantOnly) {
         renderEmpty(container, {
-            title: '資料完整度不在案件檢視範圍',
+            title: '資料完整度不在交辦單檢視範圍',
             hint: '本頁不呈現整日檢查範圍；不能由此判斷資料完整、檢查已執行或沒有告警。'
         });
         return;

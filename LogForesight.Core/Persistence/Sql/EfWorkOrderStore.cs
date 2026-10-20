@@ -124,6 +124,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         entry.State = EntityState.Modified;
         // 併發檢查：以呼叫端讀到的 UpdatedAt 為原值，資料庫已被別人改過就影響 0 列 → DbUpdateConcurrencyException
         entry.Property(x => x.UpdatedAt).OriginalValue = order.UpdatedAt;
+        // admin_seen_at 由 MarkAdminSeen 以單句 UPDATE 寫入、刻意不動併發權杖；整列 Save 不得用呼叫端讀到的舊值把它蓋回去
+        entry.Property(x => x.AdminSeenAt).IsModified = false;
         row.UpdatedAt = now;
 
         ctx.SaveChanges();

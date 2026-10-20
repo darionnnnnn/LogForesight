@@ -393,7 +393,7 @@ public class WorkOrderDigestTests : IDisposable
         Assert.Contains("說明：TLS 握手失敗", body);
         Assert.Contains("交辦說明：請優先排查", body);
         Assert.Contains("期限：2026-10-25", body);
-        Assert.Contains("請至站台的「交辦單」頁檢視上列單號。", body);
+        Assert.Contains("請至站台的「我的交辦」檢視上列單號。", body);
     }
 
     [Fact]

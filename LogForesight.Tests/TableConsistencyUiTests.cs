@@ -5,7 +5,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// 表格歸一守門：全站表格密度統一 table-sm（列高目標 36px），
-/// 自建表格一律改走 renderTable／renderKeyValueTable，不再各自拼 class 與排序、空狀態邏輯。
+/// 自建表格一律改走 renderTable／buildKeyValueTable，不再各自拼 class 與排序、空狀態邏輯。
 /// </summary>
 public class TableConsistencyUiTests
 {
@@ -51,7 +51,7 @@ public class TableConsistencyUiTests
         }
 
         Assert.True(found.Count == AllowedHandBuiltTables.Length,
-            "自建表格請改用 ui.js 的 renderTable／renderKeyValueTable；確實做不到才加進保留清單並附理由。違規處：\n"
+            "自建表格請改用 ui.js 的 renderTable／buildKeyValueTable；確實做不到才加進保留清單並附理由。違規處：\n"
             + string.Join("\n", found));
     }
 
@@ -105,7 +105,7 @@ public class TableConsistencyUiTests
         Assert.Contains("col.truncate", body);
         Assert.Contains("text-truncate", body);
 
-        Assert.Contains("export function renderKeyValueTable(", ui);
+        Assert.Contains("export function buildKeyValueTable(", ui);
         Assert.Matches(@"table table-sm mb-0", ui);
 
         var css = File.ReadAllText(Path.Combine(WebDir(), "wwwroot", "css", "site.css"));

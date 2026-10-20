@@ -2045,17 +2045,9 @@ a.lf-calendar__cell:focus-visible {
 }
 
 /* 長字串截斷（renderTable 欄位選項 truncate）：主機名、問題標籤、sensor 名稱以省略號收斂，
-   完整文字放在 title。max-width 預設 18rem；欄位可帶 maxWidth class 覆寫，不寫 inline style。 */
+   完整文字放在 title。max-width 預設 18rem，不寫 inline style。 */
 .lf-table-wrap td.text-truncate {
     max-width: 18rem;
-}
-
-.lf-table-wrap td.text-truncate.lf-td-maxw-sm {
-    max-width: 10rem;
-}
-
-.lf-table-wrap td.text-truncate.lf-td-maxw-lg {
-    max-width: 28rem;
 }
 
 /* 還有內容在右邊看不到時的提示（體檢 M2／W1）：漸層陰影＋一行文字，捲到底自動消失。
@@ -2399,7 +2391,7 @@ a.lf-calendar__cell:focus-visible {
     padding: var(--lf-space-1) var(--lf-space-2);
 }
 
-/* 鍵值表（renderKeyValueTable）的一般內容欄：不套等寬字與強制斷行，保留 .lf-kv-val 的欄寬與留白 */
+/* 鍵值表（buildKeyValueTable）的一般內容欄：不套等寬字與強制斷行，保留 .lf-kv-val 的欄寬與留白 */
 .lf-kv-val.lf-kv-val--plain {
     font-family: inherit;
     white-space: normal;
@@ -2515,7 +2507,6 @@ a.lf-calendar__cell:focus-visible {
 
 /* 寬度（表格欄寬提示、固定寬控制項） */
 .lf-w-xxs { width: 2.5rem; }
-.lf-w-xs { width: 4rem; }
 .lf-w-sm { width: 6rem; }
 .lf-w-md { width: 8rem; }
 .lf-w-mdl { width: 10rem; }

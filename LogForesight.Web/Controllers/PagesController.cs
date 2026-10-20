@@ -41,8 +41,8 @@ public class PagesController : Controller
         return View();
     }
 
-    /// <summary>處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）：全登入角色可查看任何人，
-    /// 資料以檢視者的可見範圍過濾，不需要額外能力標註</summary>
+    /// <summary>處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）：頁殼不限能力；資料端點只放行本人或具 Assign／ViewAll
+    /// （WEB-SPEC §9.4a），其他人開到的是「只能檢視自己的交辦」空狀態</summary>
     [HttpGet("/handlers/{userId:long}")]
     public IActionResult HandlerDetail(long userId)
     {

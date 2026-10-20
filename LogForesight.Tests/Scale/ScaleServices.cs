@@ -143,7 +143,6 @@ internal sealed class ScaleServices
             currentUser,
             auditService,
             displayNames,
-            rules,
             _mail);
 
         var candidates = new DispatchCandidateSource(

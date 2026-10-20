@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Service;
+﻿using System.Text.RegularExpressions;
+using LogForesight.Core.Service;
 using System.Diagnostics;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Persistence;
@@ -118,7 +119,7 @@ public class WorkOrderQueryService
     }
 
     /// <summary>處理人視角的授權：本人，或具 Assign／ViewAll；否則 403</summary>
-    private void AuthorizeHandlerView(long userId)
+    internal void AuthorizeHandlerView(long userId)
     {
         if (userId == _currentUser.UserId) return;
         if (_currentUser.Has(Capability.Assign) || _currentUser.Has(Capability.ViewAll)) return;
@@ -442,10 +443,21 @@ public class WorkOrderQueryService
                 ActionText = WorkOrderTextHelpers.ActionText(e.Action),
                 ActorName = e.ActorId.HasValue ? NameOf(users, e.ActorId.Value) : SystemActorName,
                 MemberDelta = e.MemberDelta,
-                Note = e.Note,
+                Note = DisplayNote(e.Action, e.Note, users),
                 CreatedAt = e.CreatedAt
             })
             .ToList();
+    }
+
+    /// <summary>改派事件的 note 存的是「原處理人 id→新處理人 id」；對外換成名稱（含已停用者），前端不必再查人</summary>
+    private static readonly Regex ReassignNote = new(@"^(\d+)→(\d+)$", RegexOptions.Compiled);
+
+    private string? DisplayNote(string action, string? note, Dictionary<long, WebUser> users)
+    {
+        if (action != WorkOrderEventActions.Reassigned || note == null) return note;
+        var m = ReassignNote.Match(note);
+        if (!m.Success) return note;
+        return $"{NameOf(users, long.Parse(m.Groups[1].Value))} → {NameOf(users, long.Parse(m.Groups[2].Value))}";
     }
 
     // ── 內部 ────────────────────────────────────────────────────────────────

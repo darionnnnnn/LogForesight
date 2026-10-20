@@ -221,7 +221,7 @@ public class WorkOrderOutboxTests : IDisposable
         var cmdService = new WorkOrderCommandService(
             query, aggregates, coordinator, orderStore, caseStore, new FakeNoiseMarkStore(), _hosts, _users, visibility,
             new UserCapabilityResolver(_userGroups, _hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            new RecordingAuditService(), displayNames, new FakeRuleStore(), _mail);
+            new RecordingAuditService(), displayNames, _mail);
 
         var created = cmdService.Create(new CreateWorkOrderRequest
         {

@@ -880,6 +880,25 @@ public class WorkOrderStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save不會用舊複本蓋掉MarkAdminSeen寫入的已讀時間()
+    {
+        var store = Store();
+        var id = InsertUnreadCase(store, "Disk", DateTime.Now.AddHours(-3), DateTime.Now.AddHours(-1), null);
+        var stale = store.Get(id)!;   // 讀到 AdminSeenAt = null 的複本（改派、續掛都是先讀後寫）
+        // 已讀時間晚於最後回覆（秒級截斷，避免 provider 的時間精度差異）
+        var seenAt = new DateTime(DateTime.Now.Ticks / TimeSpan.TicksPerSecond * TimeSpan.TicksPerSecond).AddSeconds(1);
+        store.MarkAdminSeen(id, seenAt);
+
+        stale.Note = "先讀、已讀後才存";
+        store.Save(stale);
+
+        var after = store.Get(id)!;
+        Assert.Equal("先讀、已讀後才存", after.Note);
+        Assert.Equal(seenAt, after.AdminSeenAt);
+        Assert.False(after.HasUnreadReply);
+    }
+
+    [Fact]
     public void MarkAdminSeen只寫AdminSeenAt_不動UpdatedAt_單不存在不擲()
     {
         var store = Store();

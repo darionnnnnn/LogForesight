@@ -553,4 +553,39 @@ public class FrontendConsistencyUiTests
         Assert.Contains("export function formatTime(", ReadJs("core", "format.js"));
         Assert.Contains("formatTime(", ReadJs("pages", "prtg-calibration.js"));
     }
+
+    [Fact]
+    public void 交辦單詳情頁_改派註記由後端給姓名_前端不再用id翻譯也不自己推原處理人()
+    {
+        var js = ReadJs("pages", "work-order-detail.js");
+
+        Assert.DoesNotContain("fetchCandidates([])", js);
+        Assert.DoesNotContain("handlerNameCache", js);
+        Assert.DoesNotContain("(\\d+)→(\\d+)", js);
+        Assert.Contains("viewerIsPreviousHandler", js);
+    }
+
+    [Fact]
+    public void 交辦單詳情頁_返回連結傳純站內路徑_backLinkNode自己補站台前綴()
+    {
+        var js = ReadJs("pages", "work-order-detail.js");
+
+        Assert.DoesNotContain("backLink: { href: appUrl(", js);
+    }
+
+    [Fact]
+    public void 狀態徽章資料只有handling_statuses一份_各頁不再自己從目錄衍生()
+    {
+        var catalog = ReadJs("core", "handling-statuses.js");
+        Assert.Contains("export function statusBadgeMeta(", catalog);
+        Assert.Contains("export function statusVariant(", catalog);
+
+        foreach (var page in new[] { "handler-detail.js", "work-order-detail.js", "handling-panel.js", "record-detail.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.DoesNotContain("MEMBER_STATUS_META", js);
+            Assert.DoesNotContain("ISSUE_HISTORY_STATUS_VARIANTS", js);
+            Assert.DoesNotContain("statusVariantOf", js);
+        }
+    }
 }

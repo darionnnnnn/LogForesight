@@ -16,9 +16,11 @@ public class RecordListQueryServiceTests
     private readonly RecordingRecordRepository _repository = new();
     private readonly RecordListQueryService _service;
 
+    private readonly FakeHostStore _hosts = new();
+
     public RecordListQueryServiceTests()
     {
-        var hosts = new FakeHostStore();
+        var hosts = _hosts;
         var settings = new FakeSystemSettingsStore();
         var issueHandlings = new FakeIssueHandlingStore();
         var cases = new FakeIssueCaseStore();
@@ -62,6 +64,19 @@ public class RecordListQueryServiceTests
         var exception = Record.Exception(() =>
             _service.Search(new RecordSearchRequest { Statuses = new List<string> { "open" } }));
         Assert.Null(exception);
+    }
+
+    /// <summary>「下一筆未處理」捷徑的窗口是整個保留期、沒有可縮的參數，候選上限不適用（結果跨請求快取）</summary>
+    [Fact]
+    public void FindNextUnhandled_候選超過上限仍放行()
+    {
+        _hosts.Upsert(new WebHost { HostName = "H1" });   // 捷徑先看可見主機，空集合會直接回 null 不查
+        _repository.ResultCount = RecordListQueryService.HandlingFilterCandidateLimit + 1;
+
+        var exception = Record.Exception(() => _service.FindNextUnhandled(1, DateTime.Today.AddDays(-1)));
+
+        Assert.Null(exception);
+        Assert.Equal(1, _repository.QueryLightweightCount);
     }
 
     [Fact]

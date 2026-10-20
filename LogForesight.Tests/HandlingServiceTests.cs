@@ -1282,6 +1282,31 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(1, CancelledNotices());
     }
 
+    /// <summary>
+    /// 日處理人由進行中案件推導（案件跨日）：指派 dayA 建單後，隔天的紀錄才進來（日列尚無處理人），
+    /// 畫面仍顯示案件處理人；管理者在隔天按清空，收回的就是這張單——不能用日列有沒有處理人判斷是不是空操作。
+    /// </summary>
+    [Fact]
+    public void 取消指派_隔天尚未同步的紀錄_畫面顯示推導處理人_清空仍收回該單()
+    {
+        var dayA = Today.AddDays(-45);
+        var dayNext = Today.AddDays(-44);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, dayA, a);
+        _settings.Update(s => s.MailNotifyWorkOrders = true);
+        var service = CreateWithMail(CreateMail(), Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, dayA, _owner.UserId);
+        var order = Assert.Single(service.WorkOrders.All);
+
+        _repository.AddRecord(_host.HostName, dayNext, a);   // 隔天同問題的紀錄，日列尚無處理人
+        Assert.Equal(_owner.UserId, service.Get(_host.HostId, dayNext).HandlerId);   // 但畫面由案件推導出處理人
+
+        service.Assign(_host.HostId, dayNext, null);
+
+        Assert.NotNull(service.WorkOrders.Get(order.WorkOrderId)!.ClosedAt);
+        Assert.Equal(1, CancelledNotices());
+    }
+
     /// <summary>取消指派：單內還有另一台主機 → 單仍進行中，只把這台移出，不通知</summary>
     [Fact]
     public void 取消指派_單內還有別台主機_只移出這台()

@@ -103,8 +103,20 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
     }
 
     [Fact]
-    public void Upgrade補上交辦單admin_seen_at可空欄_既有單為NULL且重跑冪等()
+    public void Upgrade補上交辦單admin_seen_at可空欄_既有回覆回填為已看過_重跑冪等()
     {
+        // 升級前就有回覆的單：補欄位時 admin_seen_at 回填成 last_reply_at，升級後第一次開站不會整批亮成未讀
+        var legacyStore = new EfWorkOrderStore(_fx.NewContext);
+        var repliedId = legacyStore.Insert(new WorkOrder
+        {
+            SourceName = "Disk", EventId = 154, IssueLabel = "Disk 154", HandlerId = 1,   // 與升級後新插入的 153 單不撞進行中唯一索引
+            Origin = WorkOrderOrigins.Manual, ScopeKind = WorkOrderScopes.Hosts, CreatedByAccount = "a", CreatedAt = DateTime.Now.AddDays(-2)
+        });
+        var replied = new DateTime(2026, 9, 30, 8, 0, 0);
+        var legacy = legacyStore.Get(repliedId)!;
+        legacy.LastReplyAt = replied;
+        legacyStore.Save(legacy);
+
         using (var ctx = _fx.NewContext())
         {
             ctx.Database.ExecuteSqlRaw("ALTER TABLE lf_work_orders DROP COLUMN admin_seen_at");
@@ -118,6 +130,8 @@ public class SchemaUpgraderWorkOrderTests : IDisposable
         using var check = _fx.NewContext();
         Assert.Contains("admin_seen_at", Query(check, "SELECT name AS Value FROM pragma_table_info('lf_work_orders')"));
         var store = new EfWorkOrderStore(_fx.NewContext);
+        Assert.Equal(replied, store.Get(repliedId)!.AdminSeenAt);
+        Assert.False(store.Get(repliedId)!.HasUnreadReply);
         var id = store.Insert(new WorkOrder
         {
             SourceName = "Disk", EventId = 153, IssueLabel = "Disk 153", HandlerId = 1,

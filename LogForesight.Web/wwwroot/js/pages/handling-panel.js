@@ -14,7 +14,7 @@ import { appUrl } from '../core/paths.js';
 import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
-import { statusMeta, statusesWhere } from '../core/handling-statuses.js';
+import { statusMeta, statusesWhere, statusVariant } from '../core/handling-statuses.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
@@ -33,10 +33,6 @@ const BATCH_CHIPS = statusesWhere(() => true).map(toChip);
 function noteFieldOf(status) {
     const meta = statusMeta(status);
     return meta ? { label: meta.noteLabel, required: meta.noteRequired } : { label: '說明（選填）', required: false };
-}
-
-function statusVariantOf(status) {
-    return statusMeta(status)?.variant ?? 'secondary';
 }
 
 /** 目前面板的狀態：initHandlingPanel 之後才有值，refreshSelection 靠這份重繪 */
@@ -125,7 +121,7 @@ function render() {
     if (options?.caseGrantOnly) {
         const notice = document.createElement('div');
         notice.className = 'lf-hint mb-3';
-        notice.textContent = '您以案件處理人身分檢視：可標記指派給您的問題，這一天的整體處理狀態由主機的負責單位維護。';
+        notice.textContent = '您以交辦單處理人身分檢視：可標記指派給您的問題，這一天的整體處理狀態由主機的負責單位維護。';
         panel.appendChild(notice);
 
         // handlingForm 沒有勾選任何問題時會退回「編輯日層級狀態」，那條路對案件授與者
@@ -150,7 +146,7 @@ function render() {
     if (handling.openCaseCount > 0) {
         const hint = document.createElement('div');
         hint.className = 'lf-hint mb-3';
-        hint.textContent = `本日 ${handling.openCaseCount} 項問題屬進行中案件，狀態會跟著案件涵蓋的其他日子連動。`;
+        hint.textContent = `本日 ${handling.openCaseCount} 項問題屬進行中交辦單，狀態會跟著交辦單涵蓋的其他日子連動。`;
         panel.appendChild(hint);
     }
 
@@ -716,7 +712,7 @@ function renderLogItem(log) {
     }
 
     const status = document.createElement('span');
-    status.className = `lf-badge lf-badge--${statusVariantOf(log.status)}`;
+    status.className = `lf-badge lf-badge--${statusVariant(log.status)}`;
     status.textContent = log.statusText;
     head.appendChild(status);
 
@@ -760,7 +756,7 @@ function renderGroupSummary(group) {
 
     if (group.action === 'issue_status') {
         const status = document.createElement('span');
-        status.className = `lf-badge lf-badge--${statusVariantOf(group.logs[0].status)}`;
+        status.className = `lf-badge lf-badge--${statusVariant(group.logs[0].status)}`;
         status.textContent = group.logs[0].statusText;
         head.appendChild(status);
     }

@@ -21,7 +21,7 @@ import {
 import { statusesWhere } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, CATEGORY_ORDER, severityName, formatNumber,
-    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
+    formatUserName, toLocalDateString, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';

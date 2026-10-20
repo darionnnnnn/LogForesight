@@ -64,6 +64,15 @@ public class ComposeEffectiveRequestTests
         Assert.Equal(0, SchedulerHostedService.ComposeScheduledRequest().PrtgBackfillDays);
     }
 
+    /// <summary>同窗口因上一趟異常中斷而再跑一次時，排程請求帶補跑說明；一般排程不帶。</summary>
+    [Fact]
+    public void 排程請求帶中斷補跑說明_一般排程為null()
+    {
+        Assert.Equal("補跑：上一趟排程執行（22:00 開始）異常中斷",
+            SchedulerHostedService.ComposeScheduledRequest("補跑：上一趟排程執行（22:00 開始）異常中斷").CatchUpNote);
+        Assert.Null(SchedulerHostedService.ComposeScheduledRequest().CatchUpNote);
+    }
+
     /// <summary>DebugDump／IncludeLocal 一律以排程設定為準，覆寫呼叫端傳入的值。</summary>
     [Fact]
     public void 傾印與本機分析以排程設定為準而非呼叫端()

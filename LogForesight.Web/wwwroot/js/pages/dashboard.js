@@ -287,11 +287,13 @@ function renderKpi(data, user, displaySettings, myBadge) {
         const unassignable = pd.unassignableIssueCount ?? 0;
         cards.push({
             label: '待派工問題',
-            value: pd.tooLarge ? '超過上限' : (pd.issueCount ?? 0),
+            value: pd.tooLarge ? '超過上限' : (pd.issueCount ?? 0),   // 字串值不可進 formatNumber（渲染處只格式化數值）
             variant: pd.tooLarge || (pd.issueCount ?? 0) > 0 ? 'warning' : 'secondary',
-            hint: unassignable > 0
-                ? `其中 ${formatNumber(unassignable)} 個無法派出（無可接單人選）`
-                : '近 7 天沒人接的問題',
+            hint: pd.tooLarge
+                ? '超過上限，請到待派頁縮小期間'
+                : unassignable > 0
+                    ? `其中 ${formatNumber(unassignable)} 個無法派出（無可接單人選）`
+                    : '近 7 天沒人接的問題',
             // statCard 內才套 appUrl（只加站台前綴、保留 hash）；work-orders 的頁籤列以 hash 選頁籤
             url: '/work-orders#gaps'
         });
@@ -335,7 +337,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
         const col = document.createElement('div');
         col.className = 'col-6 col-lg-3';
         col.appendChild(statCard({
-            value: formatNumber(card.value),
+            value: typeof card.value === 'string' ? card.value : formatNumber(card.value),
             label: card.label,
             variant: card.variant,
             url: card.url,

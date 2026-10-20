@@ -218,6 +218,22 @@ public class AccessibilityUiTests
     }
 
     [Fact]
+    public void ui_js動態確認對話框都設aria_labelledby()
+    {
+        // confirmAction／confirmActionWithReason 由 JS 動態建立 modal，標題 id 需每次呼叫唯一並掛在 .modal 上
+        var js = ReadWeb("wwwroot", "js", "core", "ui.js");
+        foreach (var name in new[] { "export function confirmAction(", "export function confirmActionWithReason(" })
+        {
+            var start = js.IndexOf(name, StringComparison.Ordinal);
+            Assert.True(start >= 0, $"找不到 {name}");
+            var next = js.IndexOf("\nexport function ", start + name.Length, StringComparison.Ordinal);
+            var body = js.Substring(start, (next < 0 ? js.Length : next) - start);
+            Assert.Contains("el.setAttribute('aria-labelledby', titleId)", body);
+            Assert.Contains("titleEl.id = titleId", body);
+        }
+    }
+
+    [Fact]
     public void modal關閉後焦點還給開啟者()
     {
         // 全站 modal 多由 JS 呼叫 show()，Bootstrap 不會歸還焦點；layout.js 以事件委派統一處理
@@ -226,5 +242,28 @@ public class AccessibilityUiTests
         Assert.Contains("addEventListener('hidden.bs.modal'", js);
         Assert.Contains("opener.focus()", js);
         Assert.Contains("initModalFocusReturn();", js);
+    }
+
+    [Fact]
+    public void 交辦單回覆modal的三個label都有for_輸入有id_期限有min()
+    {
+        var js = ReadWeb("wwwroot", "js", "pages", "issue-status-reply.js");
+
+        foreach (var id in new[] { "wo-reply-status", "wo-reply-note", "wo-reply-due" })
+        {
+            Assert.Contains($"htmlFor = '{id}'", js);
+            Assert.Contains($".id = '{id}'", js);
+        }
+
+        Assert.Contains("dueInput.min = ", js);
+    }
+
+    [Fact]
+    public void 處理人工作頁的交辦單表格_動作欄固定且每列勾選框有aria_label()
+    {
+        var js = ReadWeb("wwwroot", "js", "pages", "handler-detail.js");
+
+        Assert.Contains("stickyLastColumn: true", js);
+        Assert.Contains("aria-label', `選取單號 ${row.workOrderId}`", js);
     }
 }

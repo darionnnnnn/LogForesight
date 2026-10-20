@@ -157,23 +157,20 @@ public class DayHandlingCommandService
     /// </summary>
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId, bool reassign = false)
     {
-        var host = RequireVisibleHost(hostId);
-        RequireNotCaseGrantOnly(hostId);
-        var record = _repository.GetOne(hostId, date)
-                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
-
-        WebUser? handler = null;
-        if (handlerId.HasValue)
-        {
-            handler = _users.Get(handlerId.Value)
-                      ?? throw DomainException.NotFound("找不到指定的處理人。");
-
-            if (!handler.Active)
-                throw DomainException.Validation($"{handler.DisplayName} 的帳號已停用，無法指派。");
-        }
+        var (host, record, handler) = LoadAssignTarget(hostId, date, handlerId);
 
         var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date, record);
         var previousHandler = existing.HandlerId.HasValue ? _users.Get(existing.HandlerId.Value) : null;
+
+        // 取消指派（handlerId=null）：先收回這一天問題的日層級交辦單，再清日處理人——收單失敗時日處理人仍在、可以重試。
+        // 畫面上的日處理人是由進行中案件推導的（案件跨日），所以不能用這一天的日列有沒有處理人來判斷是不是空操作：
+        // 隔天剛進來、尚未同步的紀錄日列為空，但畫面顯示案件處理人，使用者按清空就是要收回這張單。
+        // 只有這台主機的單整張取消，多台主機的單只把這台移出（判定與寫入都在協調器）
+        var retractions = handlerId.HasValue
+            ? new List<DayOrderRetraction>()
+            : _workOrders.RetractDayAssignments(
+                host.HostName, record.TopIssues.Select(i => IssueSignatureKey.For(i)).ToList(),
+                DayAssignCancelledReason, _currentUser.ToWorkOrderActor()).ToList();
 
         existing.HandlerId = handlerId;
         existing.UpdatedAt = DateTime.Now;
@@ -195,13 +192,6 @@ public class DayHandlingCommandService
         var (casesCreated, skippedHandlerNames, reassignedCount, createdOrders) = handlerId.HasValue
             ? BuildCasesForDay(host, date, record, handlerId.Value, reassign)
             : (0, new List<string>(), 0, new List<(long WorkOrderId, string IssueLabel)>());
-
-        // 取消指派（handlerId=null）：收回該日的日層級交辦單，否則處理人的「我的交辦」仍列著。
-        // 只有這台主機的單整張取消，多台主機的單只把這台移出——判定與寫入都在協調器（RetractDayAssignments）
-        var retractions = handlerId.HasValue
-            ? new List<DayOrderRetraction>()
-            : _workOrders.RetractDayAssignments(
-                host.HostName, record.TopIssues.Select(i => IssueSignatureKey.For(i)).ToList(), DayAssignCancelledReason, NewActor()).ToList();
 
         _audit.Record(
             action: AuditActions.HandlingAssign,
@@ -242,22 +232,16 @@ public class DayHandlingCommandService
             dto.HandlerHasNoEmail = warnings.NoEmail;
         }
 
-        if (_mail != null && handler != null)
-        {
-            foreach (var o in createdOrders)
-            {
-                _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Created, o.WorkOrderId, handler.UserId, _currentUser.UserId, _currentUser.Account);
-            }
-        }
-
-        // 整張取消的日層級單通知原處理人（比照 WorkOrderCommandService.Cancel）；只移出成員的單不通知
+        // 一次入列（outbox 是整份 blob，逐筆入列會每筆重寫一次）：建單通知新處理人；
+        // 整張取消的日層級單通知原處理人（比照 WorkOrderCommandService.Cancel），只移出成員的單不通知
         if (_mail != null)
         {
-            foreach (var r in retractions.Where(r => r.WholeOrderCancelled))
-            {
-                _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Cancelled, r.WorkOrderId, r.HandlerId,
-                    _currentUser.UserId, _currentUser.Account, reason: DayAssignCancelledReason);
-            }
+            var notices = new List<WorkOrderNoticeRequest>();
+            if (handler != null)
+                notices.AddRange(createdOrders.Select(o => new WorkOrderNoticeRequest(WorkOrderOutboxKinds.Created, o.WorkOrderId, handler.UserId)));
+            notices.AddRange(retractions.Where(r => r.WholeOrderCancelled)
+                .Select(r => new WorkOrderNoticeRequest(WorkOrderOutboxKinds.Cancelled, r.WorkOrderId, r.HandlerId, Reason: DayAssignCancelledReason)));
+            _mail.EnqueueWorkOrderNotices(notices, _currentUser.UserId, _currentUser.Account);
         }
 
         return dto;
@@ -265,12 +249,24 @@ public class DayHandlingCommandService
 
     private const string DayAssignCancelledReason = "日層級指派已取消";
 
-    private WorkOrderActor NewActor() => new()
+    /// <summary>指派與預覽共用的前置：可見主機、非案件授與、當日紀錄、處理人存在且啟用（handlerId 為 null 時不查處理人）</summary>
+    private (WebHost Host, DailyAnalysisRecord Record, WebUser? Handler) LoadAssignTarget(long hostId, DateTime date, long? handlerId)
     {
-        ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-        ActorAccount = _currentUser.Account,
-        OccurredAt = DateTime.Now
-    };
+        var host = RequireVisibleHost(hostId);
+        RequireNotCaseGrantOnly(hostId);
+        var record = _repository.GetOne(hostId, date)
+                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
+
+        WebUser? handler = null;
+        if (handlerId.HasValue)
+        {
+            handler = _users.Get(handlerId.Value)
+                      ?? throw DomainException.NotFound("找不到指定的處理人。");
+            if (!handler.Active)
+                throw DomainException.Validation($"{handler.DisplayName} 的帳號已停用，無法指派。");
+        }
+        return (host, record, handler);
+    }
 
     /// <summary>被指派者的三項「不擋、只提示」警示（指派與預覽共用唯一一份判定）</summary>
     private (bool CannotSeeHost, bool CannotHandle, bool NoEmail) AssigneeWarnings(WebUser handler, WebHost host) =>
@@ -284,15 +280,8 @@ public class DayHandlingCommandService
     /// </summary>
     public HandlingAssignPreviewDto PreviewAssign(long hostId, DateTime date, long handlerId)
     {
-        var host = RequireVisibleHost(hostId);
-        RequireNotCaseGrantOnly(hostId);
-        var record = _repository.GetOne(hostId, date)
-                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
-
-        var handler = _users.Get(handlerId)
-                      ?? throw DomainException.NotFound("找不到指定的處理人。");
-        if (!handler.Active)
-            throw DomainException.Validation($"{handler.DisplayName} 的帳號已停用，無法指派。");
+        var (host, record, handlerOrNull) = LoadAssignTarget(hostId, date, handlerId);
+        var handler = handlerOrNull!;
 
         var plan = PlanCasesForDay(host, date, record, handlerId);
         var warnings = AssigneeWarnings(handler, host);
@@ -385,7 +374,7 @@ public class DayHandlingCommandService
     private (int Created, List<string> SkippedHandlerNames, int Reassigned, List<(long WorkOrderId, string IssueLabel)> CreatedOrders) BuildCasesForDay(
         WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId, bool reassign)
     {
-        var actor = NewActor();
+        var actor = _currentUser.ToWorkOrderActor();
         var created = 0;
         var reassigned = 0;
         var skippedHandlerIds = new HashSet<long>();

@@ -64,6 +64,8 @@ const canReply = true;
 const MEMBER_PAGE_SIZE = 20;
 const MEMBER_STATUS_OPTIONS = [{ value: 'active', label: '進行中' }];
 const MEMBER_STATUS_META = { active: { label: '進行中', variant: 'success' } };
+// 成員狀態徽章改由 core/handling-statuses.js 的 statusBadgeMeta 衍生；替身以同一份對照回應
+const statusBadgeMeta = status => MEMBER_STATUS_META[status] ?? null;
 const api = {
     get: async () => ({
         items: [{ caseId: 501, issueKey: 'issue-a', hostName: 'SRV-A', status: 'active', closedAt: null }],

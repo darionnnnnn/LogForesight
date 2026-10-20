@@ -4,6 +4,7 @@ using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -705,6 +706,9 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(new[] { "建立", "追加主機", "已回覆", "改派", "追加主機" }, timeline.Select(e => e.ActionText));
         Assert.Equal("in_progress：處理中（2 台）", timeline[2].Note);
         Assert.Equal("愛麗絲(DOMAIN\\alice)", timeline[2].ActorName);
+        // 改派註記存的是 id→id，對外換成「名稱(帳號) → 名稱(帳號)」，前端不必再查人（含已停用者）
+        Assert.Matches(@"^.+\(.+\) → .+\(.+\)$", timeline[3].Note);
+        Assert.DoesNotMatch(@"^\d+→\d+$", timeline[3].Note);
         Assert.Equal("路人(DOMAIN\\x)", timeline[0].ActorName);
         Assert.Equal("系統", timeline[4].ActorName);
         Assert.Equal(timeline.Select(e => e.CreatedAt).OrderBy(x => x), timeline.Select(e => e.CreatedAt));
@@ -760,6 +764,9 @@ public class WorkOrderQueryServiceTests
         Assert.Equal(ApiErrorCodes.Forbidden,
             Assert.Throws<DomainException>(() => svc.ListForHandler(_bob.UserId, new WorkOrderListRequest())).Code);
         Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => svc.HandlerSummary(_bob.UserId)).Code);
+        // workload 與摘要同一道授權：控制器先過 AuthorizeHandlerView 才查工作量（403 在查詢之前擲出，所以不需要真的工作量服務）
+        Assert.Equal(ApiErrorCodes.Forbidden,
+            Assert.Throws<DomainException>(() => new HandlersController(null!, svc).Workload(_bob.UserId)).Code);
     }
 
     [Fact]

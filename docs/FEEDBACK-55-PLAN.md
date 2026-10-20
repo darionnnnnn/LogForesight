@@ -252,6 +252,7 @@
 | D-4 | Sonnet 5.5 subagent（規格 task-55-d4） | 完成 | 八支查詢守門 8 綠；Schema 相關 50 綠；突變拿掉新索引 → `CountPendingAi` 案紅 | 改動前唯一真缺索引的是 `CountPendingAi`（`ai_pending AND NOT detail_pruned` 整表掃描），補 `IX_lf_daily_records_ai_pending_pruned (ai_pending, detail_pruned)` 覆蓋索引。另兩支（處理狀態、執行紀錄）的掃描是夾具太小／log_key 只有一種所致，加大夾具後即走既有索引，不加索引。已知：`QueryLightweight` 讀 `lf_top_issues` 那道在小表＋約 600 個 IN 值時規劃器選全表掃描（50 個時走索引），屬成本選擇，未納入守門。教訓：突變還原若沿用備份檔的舊時間戳，MSBuild 增量建置會留下突變版 dll（本段實際發生），還原工具已改為一律更新時間戳 |
 | 收官全量 | Claude | 6,326 通過／10 略過（基線 6,241，+85） | 首跑 1 紅：`RecordQueryServiceSearchTests` 的排序測試用「低風險日＋狀態篩選、未指定風險等級」，正是 D-1 刻意改變的行為 | 改用中／高風險日保留測試意圖（日期排序與預設緊急程度排序順序相反）。D-1 的定向篩選漏了這個類別——同一查詢服務的其他測試類應列入篩選 |
 | D-2 補（規劃逐條比對） | Claude | 完成 | 0 警告；報表／處理歷程／儀表板定向 72 綠；兩處突變（拿掉埋點、拿掉空集合保護）各 1 案紅 | 比對抓到兩件：(1) 規劃的 `report:scope-filter` 埋點沒做、執行紀錄也沒記偏離——`StorageBackend.Performance` 註冊進 DI、`ReportService` 必填注入並量測非全部範圍段；(2) 瀏覽器實測非全部範圍回 500：兩期相鄰的合併查詢在期間內沒有高／中風險日時把空集合交給 `LoadScopeContext` 取 Min／Max（安靜的一週、新安裝都會遇到），改為空集合回空預載。同型掃描第 55／56 輪新增的 First／Max 兩處皆已有保護 |
+| 全面體檢（與第 56 輪合併執行） | 見 FEEDBACK-56-PLAN §7「全面體檢」列 | 完成 | — | 本輪相關修正：A-1 規劃的中斷補跑說明補做（`ScheduleCalculator.InterruptedRunAllowingCatchUp`＋`ComposeScheduledRequest(catchUpNote)`）；D-1 的 5 萬筆上限對「下一筆未處理」捷徑放行；C-1 的立即派工／日層級指派改一次入列 outbox；摘要信指路改「我的交辦」 |
 
 ## 體檢交接
 

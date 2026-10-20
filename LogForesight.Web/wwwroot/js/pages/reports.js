@@ -17,7 +17,7 @@ import { api, getDisplaySettings } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { statCard, toast, guardLoad, renderLoading } from '../core/ui.js';
 import {
-    formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, analysisAnchorLocal,
+    formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER,
     issueBaselineText, toLocalDateString
 } from '../core/format.js';
 import * as charts from '../core/charts.js';

@@ -75,7 +75,7 @@ public class WorkOrderCommandServiceTests : IDisposable
         _service = new WorkOrderCommandService(
             _query, aggregates, coordinator, _orderStore, _caseStore, _noiseMarks, _hosts, _users, _visibility,
             new UserCapabilityResolver(_userGroups, _hosts), FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            _audit, displayNames, _ruleStore, _mail);
+            _audit, displayNames, _mail);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -748,6 +748,9 @@ public class WorkOrderCommandServiceTests : IDisposable
         AddHost("H2");
         var orderId = Assert.Single(_service.Create(Single(alice.UserId)).Orders).WorkOrderId;
         Escalate("H1");
+        var escalated = OpenCase("H1")!;
+        escalated.DueDate = DateTime.Today.AddDays(5);   // 上報前處理人填的預計完成日，退回後要保留（逾期判定繼續有效）
+        _caseStore.Save(escalated);
         var replyBefore = _orderStore.Get(orderId)!.LastReplyAt;
         _outbox.Update(b => b.Items.Clear());
         _audit.Entries.Clear();
@@ -756,6 +759,7 @@ public class WorkOrderCommandServiceTests : IDisposable
 
         Assert.Equal(1, result.ReturnedCases);
         Assert.Equal(IssueHandlingStatuses.InProgress, OpenCase("H1")!.Status);
+        Assert.Equal(DateTime.Today.AddDays(5), OpenCase("H1")!.DueDate);
         Assert.NotEqual(IssueHandlingStatuses.Escalated, OpenCase("H2")!.Status);
         Assert.Equal(replyBefore, _orderStore.Get(orderId)!.LastReplyAt);
         Assert.False(_orderStore.Get(orderId)!.HasUnreadReply);

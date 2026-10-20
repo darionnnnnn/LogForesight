@@ -57,6 +57,9 @@ public sealed class WorkOrderCandidateService
         var recentHandlers = RecentHandlersOfSameIssue(req);
         var loads = _orders.LoadBoard().ToDictionary(l => l.HandlerId, l => l.ActiveMembers);
 
+        // 主機快照只取一次：IHostStore 多載每次都重讀整份主機 blob，乘上候選人數就是每開一次窗讀幾十份
+        var hostSnapshot = requested.Count > 0 ? _hosts.CapturePrtgSnapshot() : null;
+
         var result = new List<WorkOrderCandidateDto>();
         foreach (var user in _users.GetAll().Where(u => u.Active))
         {
@@ -65,7 +68,7 @@ public sealed class WorkOrderCandidateService
             var visibleCount = 0;
             if (requested.Count > 0)
             {
-                var visible = HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _access, user.UserId,
+                var visible = HostVisibilityResolver.GetVisibleHostIds(hostSnapshot!, _users, _userGroups, _access, user.UserId,
                     _issueOwners, _issueAggregates, retentionDays);
                 visibleCount = requested.Count(visible.Contains);
             }

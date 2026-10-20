@@ -187,9 +187,10 @@ function renderNav(user) {
             link.appendChild(label);
 
             const detail = DETAIL_PARENTS.find(d => currentPath.startsWith(d.prefix));
+            // 前綴型父層（/handlers/）只認「自己的」頁：管理者看別人的處理人頁時，「我的交辦」不亮
             const isActive = detail
                 ? (detail.parent.endsWith('/')
-                    ? item.resolvedHref.startsWith(detail.parent)
+                    ? item.resolvedHref.startsWith(detail.parent) && currentPath === item.resolvedHref
                     : item.resolvedHref === detail.parent)
                 : (item.resolvedHref === '/'
                     ? currentPath === '/'

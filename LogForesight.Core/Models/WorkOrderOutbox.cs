@@ -11,7 +11,7 @@ public sealed class WorkOrderOutboxItem
     public int MemberDelta { get; set; }             // 本次新增台數（Appended／夜間續掛用；其他為 0）
     public int RecurrenceMembers { get; set; }       // 復發台數（夜間自動派工延續性偏好）
     public string? Reason { get; set; }              // 取消／移交原因
-    public bool Immediate { get; set; }              // 立即通知（C-4；本段一律 false）
+    public bool Immediate { get; set; }              // 立即通知：交辦／改派勾「立即通知處理人」時為 true，輪詢時不等摘要時刻單獨寄出
     public bool NoEmail { get; set; }                // 收件人沒有 email（寄送段標記）
 }
 

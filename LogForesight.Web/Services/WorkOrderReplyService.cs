@@ -58,7 +58,7 @@ public class WorkOrderReplyService
         var order = RequireOwnActive(id);
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
-        var actor = NewActor();
+        var actor = _currentUser.ToWorkOrderActor();
         var newlyEscalated = NewlyEscalatedHosts(id, req.CaseIds, req.Status);
         var result = Guard(() => _coordinator.Reply(id, req.CaseIds, req.Status, req.Note, req.DueDate, actor));
 
@@ -90,7 +90,7 @@ public class WorkOrderReplyService
         var orders = ids.Select(RequireOwnActive).ToList();
         ValidateStatus(req.Status, req.DueDate, req.Note);
 
-        var actor = NewActor();
+        var actor = _currentUser.ToWorkOrderActor();
         var statusText = HandlingTextHelpers.IssueStatusText(req.Status);
 
         var succeeded = new List<WorkOrder>();
@@ -170,7 +170,7 @@ public class WorkOrderReplyService
         if (dueDate > today.AddDays(MaxDueDateDays))
             throw DomainException.Validation($"期限最多只能設在 {MaxDueDateDays} 天內。");
 
-        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, NewActor()));
+        var changed = Guard(() => _coordinator.ChangeDueDate(id, dueDate, _currentUser.ToWorkOrderActor()));
         if (changed)
         {
             _audit.Record(
@@ -232,13 +232,6 @@ public class WorkOrderReplyService
             newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
             _currentUser.Account, note, workOrderId));
     }
-
-    private WorkOrderActor NewActor() => new()
-    {
-        ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-        ActorAccount = _currentUser.Account,
-        OccurredAt = DateTime.Now
-    };
 
     /// <summary>協調器的資料驗證例外（成員不屬於本單、已結案等）轉成 400</summary>
     private static T Guard<T>(Func<T> action)
