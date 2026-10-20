@@ -1283,6 +1283,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      日層級指派（`PUT …/handling/assign`）預設維持既有的「不搶走、回報略過清單」語意，
      前端據此問使用者「要不要改派」，確認後帶 `reassign=true` 重送；依問題視角的交辦以
      衝突清單的「改派」勾選表達。整張交辦單換人走 §9.4b 的改派。
+     處理面板的指派是「選人 → 按『指派』→ 預覽（`POST …/handling/assign/preview`，只讀）→ 確認一次送出」，
+     下拉變更本身不寫入，確認取消則零寫入。取消指派（選「未指派」）會收回該日的日層級交辦單：
+     只有這台主機的單整張取消（入列 cancelled 通知），含其他主機的單只把這台主機移出。
   18. **案件徽章格式與位置**：徽章自「問題」欄移到
      **「處理狀態」欄**（誰在處理是處理狀態資訊，不是問題的識別資訊），人名改全站統一的
      「顯示名稱(帳號)」（`IssueDto.CaseHandlerAccount` 新增）。案件屬於交辦單時旁邊多一顆
@@ -1370,7 +1373,10 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   供外部 AI 客戶端」另列 docs/BACKLOG.md 觀察項。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
   `GET api/records/{key}/report`、`PUT api/records/{key}/handling`、
-  `PUT api/records/{key}/handling/assign`、`GET api/records/{key}/handling/logs`、
+  `PUT api/records/{key}/handling/assign`、`POST api/records/{key}/handling/assign/preview`
+  （body `{ handlerId }`，只讀，回 `casesToCreate`／`heldByOthers`／`heldByHandlerNames`／
+  `assigneeCannotHandle`／`assigneeCannotSeeHost`／`handlerHasNoEmail`，權限同 assign）、
+  `GET api/records/{key}/handling/logs`、
   `PUT api/records/{key}/handling/issues`（單筆問題層級狀態）、
   `PUT api/records/{key}/handling/issues/batch`（批次套用，`issueKeys` 陣列＋同一組 `status`／`note`／
   `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）、

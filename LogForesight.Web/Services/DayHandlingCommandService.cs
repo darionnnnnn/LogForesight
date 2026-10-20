@@ -196,6 +196,13 @@ public class DayHandlingCommandService
             ? BuildCasesForDay(host, date, record, handlerId.Value, reassign)
             : (0, new List<string>(), 0, new List<(long WorkOrderId, string IssueLabel)>());
 
+        // 取消指派（handlerId=null）：收回該日的日層級交辦單，否則處理人的「我的交辦」仍列著。
+        // 只有這台主機的單整張取消，多台主機的單只把這台移出——判定與寫入都在協調器（RetractDayAssignments）
+        var retractions = handlerId.HasValue
+            ? new List<DayOrderRetraction>()
+            : _workOrders.RetractDayAssignments(
+                host.HostName, record.TopIssues.Select(i => IssueSignatureKey.For(i)).ToList(), DayAssignCancelledReason, NewActor()).ToList();
+
         _audit.Record(
             action: AuditActions.HandlingAssign,
             // 摘要要說清楚「負責人不變」——這正是負責人與處理人分離的意義，
@@ -203,13 +210,15 @@ public class DayHandlingCommandService
             summary: $"將 {host.HostName} {date:yyyy-MM-dd} 的處理人由「{beforeName}」改為「{afterName}」" +
                      $"（主機負責人不變：{OwnerNames(host)}）" +
                      (casesCreated > 0 ? $"；建立 {casesCreated} 個問題案件並回溯關聯歷史" : "") +
-                     (reassignedCount > 0 ? $"；改派 {reassignedCount} 個他人進行中的問題案件" : ""),
+                     (reassignedCount > 0 ? $"；改派 {reassignedCount} 個他人進行中的問題案件" : "") +
+                     (retractions.Count > 0 ? $"；收回 {retractions.Count} 張日層級交辦單（{retractions.Count(r => r.WholeOrderCancelled)} 張整張取消）" : ""),
             targetKind: "handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
             detail: new
             {
                 Before = beforeName, After = afterName, Owners = OwnerNames(host),
-                CasesCreated = casesCreated, CasesSkipped = skippedHandlerNames, CasesReassigned = reassignedCount
+                CasesCreated = casesCreated, CasesSkipped = skippedHandlerNames, CasesReassigned = reassignedCount,
+                OrdersRetracted = retractions.Select(r => new { r.WorkOrderId, r.WholeOrderCancelled, r.CancelledCases }).ToList()
             });
 
         var dto = ToDto(host, date, existing);
@@ -221,17 +230,17 @@ public class DayHandlingCommandService
         // 被指派者看不到這台主機時告知執行指派的人（docs/archive/FEEDBACK-10-PLAN.md §7）：
         // 指派仍然成立——對方會以案件處理人的身分取得「這台主機的這些問題」的檢視權，
         // 但看不到這台主機的其他任何東西，交辦時講清楚比事後被問「我點進去是空的」好
-        if (handler != null && !_visibility.GetVisibleHostIdsFor(handler.UserId).Contains(host.HostId))
-            dto.AssigneeHasNoHostAccess = true;
-
         // 被指派者動得了嗎（回饋十三輪，體檢 H1 殘餘）：IssueHandlingCommandService 的批次指派
         // 已有這道提示，日層級指派原本沒有——同一套「不擋、只提示」決策，同一個
-        // UserCapabilityResolver 事實來源，另寫一份判斷就會變成第二份複本
-        if (handler != null && !_capabilities.Resolve(handler).Contains(Capability.Handle))
-            dto.AssigneeCannotHandle = true;
-
-        if (handler != null && string.IsNullOrWhiteSpace(handler.Email))
-            dto.HandlerHasNoEmail = true;
+        // UserCapabilityResolver 事實來源，另寫一份判斷就會變成第二份複本。
+        // 三項警示的判定只有 AssigneeWarnings 一份，預覽端點共用
+        if (handler != null)
+        {
+            var warnings = AssigneeWarnings(handler, host);
+            dto.AssigneeHasNoHostAccess = warnings.CannotSeeHost;
+            dto.AssigneeCannotHandle = warnings.CannotHandle;
+            dto.HandlerHasNoEmail = warnings.NoEmail;
+        }
 
         if (_mail != null && handler != null)
         {
@@ -241,16 +250,81 @@ public class DayHandlingCommandService
             }
         }
 
+        // 整張取消的日層級單通知原處理人（比照 WorkOrderCommandService.Cancel）；只移出成員的單不通知
+        if (_mail != null)
+        {
+            foreach (var r in retractions.Where(r => r.WholeOrderCancelled))
+            {
+                _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Cancelled, r.WorkOrderId, r.HandlerId,
+                    _currentUser.UserId, _currentUser.Account, reason: DayAssignCancelledReason);
+            }
+        }
+
         return dto;
     }
 
+    private const string DayAssignCancelledReason = "日層級指派已取消";
+
+    private WorkOrderActor NewActor() => new()
+    {
+        ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
+        ActorAccount = _currentUser.Account,
+        OccurredAt = DateTime.Now
+    };
+
+    /// <summary>被指派者的三項「不擋、只提示」警示（指派與預覽共用唯一一份判定）</summary>
+    private (bool CannotSeeHost, bool CannotHandle, bool NoEmail) AssigneeWarnings(WebUser handler, WebHost host) =>
+        (!_visibility.GetVisibleHostIdsFor(handler.UserId).Contains(host.HostId),
+         !_capabilities.Resolve(handler).Contains(Capability.Handle),
+         string.IsNullOrWhiteSpace(handler.Email));
+
     /// <summary>
-    /// 建案迴圈（Q1）：只對「未處理計算」等級內、未結案的問題建案——低風險預設不處理的問題
-    /// 不該自動變成有人要處理的案件，已結案的問題也不建案。已有進行中案件的問題保留原處理人
-    /// （Q2），回傳略過清單（去重的處理人姓名）供呼叫端提示「已由 ○○○ 的案件涵蓋」。
+    /// 指派預覽（只讀）：與 <see cref="Assign"/> 相同的權限與存在檢查，**不寫任何資料**。
+    /// 建案與衝突的判定共用 <see cref="PlanCasesForDay"/>，預覽數字與接著送出的結果一致。
     /// </summary>
-    private (int Created, List<string> SkippedHandlerNames, int Reassigned, List<(long WorkOrderId, string IssueLabel)> CreatedOrders) BuildCasesForDay(
-        WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId, bool reassign)
+    public HandlingAssignPreviewDto PreviewAssign(long hostId, DateTime date, long handlerId)
+    {
+        var host = RequireVisibleHost(hostId);
+        RequireNotCaseGrantOnly(hostId);
+        var record = _repository.GetOne(hostId, date)
+                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
+
+        var handler = _users.Get(handlerId)
+                      ?? throw DomainException.NotFound("找不到指定的處理人。");
+        if (!handler.Active)
+            throw DomainException.Validation($"{handler.DisplayName} 的帳號已停用，無法指派。");
+
+        var plan = PlanCasesForDay(host, date, record, handlerId);
+        var warnings = AssigneeWarnings(handler, host);
+        return new HandlingAssignPreviewDto
+        {
+            CasesToCreate = plan.CasesToCreate,
+            HeldByOthers = plan.HeldByOthers,
+            HeldByHandlerNames = HandlerNames(plan.HeldHandlerIds),
+            AssigneeCannotHandle = warnings.CannotHandle,
+            AssigneeCannotSeeHost = warnings.CannotSeeHost,
+            HandlerHasNoEmail = warnings.NoEmail
+        };
+    }
+
+    /// <summary>一個將建案（或改連／被占用）的問題：問題簽章與交辦成員</summary>
+    private sealed record DayCaseCandidate(LogIssueSignature Issue, string Key);
+
+    private sealed record DayCasePlan(
+        List<DayCaseCandidate> Candidates, int CasesToCreate, int HeldByOthers, HashSet<long> HeldHandlerIds);
+
+    /// <summary>成員身分：同一份組法供預覽與寫入共用</summary>
+    private static WorkOrderMember MemberOf(WebHost host, DateTime date, DayCaseCandidate c) => new()
+    {
+        HostName = host.HostName, IssueKey = c.Key, IssueLabel = HandlingTextHelpers.IssueLabel(c.Issue), TriggerDate = date
+    };
+
+    /// <summary>
+    /// 建案判定（只讀，唯一一份）：只對「未處理計算」等級內、未結案的問題建案——低風險預設不處理的問題
+    /// 不該自動變成有人要處理的案件，已結案的問題也不建案。其餘由協調器的成員分類（ClassifyMembers）
+    /// 判定：無進行中案件＝將建案；他人進行中案件＝被占用（不要求改派時保留原處理人）。
+    /// </summary>
+    private DayCasePlan PlanCasesForDay(WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId)
     {
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var dayIssueHandlings = _issueStore.GetForDay(host.HostName, date)
@@ -261,17 +335,11 @@ public class DayHandlingCommandService
                     .ThenBy(h => h.IssueKey, StringComparer.Ordinal)
                     .First(),
                 IssueSignatureKeyComparer.Instance);
-        var actor = new WorkOrderActor
-        {
-            ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-            ActorAccount = _currentUser.Account,
-            OccurredAt = DateTime.Now
-        };
 
-        var created = 0;
-        var reassigned = 0;
-        var skippedHandlerIds = new HashSet<long>();
-        var createdOrders = new List<(long WorkOrderId, string IssueLabel)>();
+        var candidates = new List<DayCaseCandidate>();
+        var toCreate = 0;
+        var held = 0;
+        var heldHandlerIds = new HashSet<long>();
 
         foreach (var issue in record.TopIssues)
         {
@@ -281,6 +349,51 @@ public class DayHandlingCommandService
             if (dayIssueHandlings.TryGetValue(key, out var existingHandling) &&
                 IssueHandlingStatuses.IsClosed(existingHandling.Status))
                 continue;
+
+            var candidate = new DayCaseCandidate(issue, key);
+            candidates.Add(candidate);
+
+            var preview = _workOrders.PreviewMembers(new List<WorkOrderMember> { MemberOf(host, date, candidate) },
+                issue.Source, issue.EventId, handlerId);
+            toCreate += preview.NewCases;
+            held += preview.Conflicts.Count;
+            foreach (var conflict in preview.Conflicts)
+            {
+                // 既有語意：進行中案件沒有處理人時不列入略過名單
+                if (conflict.HandlerId.HasValue) heldHandlerIds.Add(conflict.HandlerId.Value);
+            }
+        }
+
+        return new DayCasePlan(candidates, toCreate, held, heldHandlerIds);
+    }
+
+    private List<string> HandlerNames(IEnumerable<long> userIds) =>
+        userIds
+            .Select(id =>
+            {
+                var user = _users.Get(id);
+                return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
+            })
+            .Distinct()
+            .ToList();
+
+    /// <summary>
+    /// 建案迴圈（Q1）：對 <see cref="PlanCasesForDay"/> 判定出的問題逐一經協調器建案。
+    /// 已有進行中案件的問題保留原處理人（Q2），回傳略過清單（去重的處理人姓名）供呼叫端提示
+    /// 「已由 ○○○ 的案件涵蓋」。
+    /// </summary>
+    private (int Created, List<string> SkippedHandlerNames, int Reassigned, List<(long WorkOrderId, string IssueLabel)> CreatedOrders) BuildCasesForDay(
+        WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId, bool reassign)
+    {
+        var actor = NewActor();
+        var created = 0;
+        var reassigned = 0;
+        var skippedHandlerIds = new HashSet<long>();
+        var createdOrders = new List<(long WorkOrderId, string IssueLabel)>();
+
+        foreach (var candidate in PlanCasesForDay(host, date, record, handlerId).Candidates)
+        {
+            var issue = candidate.Issue;
 
             // 寫入走交辦單協調器（每個問題一張 day_assign 單；同處理人同問題已有進行中單時自動併入），
             // 與既有 BuildCase／ReassignCase 語意一一對應：
@@ -295,14 +408,7 @@ public class DayHandlingCommandService
                 ScopeKind = WorkOrderScopes.Hosts, ScopeGroupIds = new List<long>(), AutoAttach = false,
                 Note = null, DueDate = null,
                 ReassignConflicts = reassign,
-                Members = new List<WorkOrderMember>
-                {
-                    new()
-                    {
-                        HostName = host.HostName, IssueKey = key,
-                        IssueLabel = HandlingTextHelpers.IssueLabel(issue), TriggerDate = date
-                    }
-                },
+                Members = new List<WorkOrderMember> { MemberOf(host, date, candidate) },
                 Actor = actor
             });
 
@@ -320,15 +426,7 @@ public class DayHandlingCommandService
             }
         }
 
-        var skippedNames = skippedHandlerIds
-            .Select(id =>
-            {
-                var user = _users.Get(id);
-                return user == null ? "（已刪除）" : _displayNameService.WithAccount(user.DisplayName, user.Account);
-            })
-            .ToList();
-
-        return (created, skippedNames, reassigned, createdOrders);
+        return (created, HandlerNames(skippedHandlerIds), reassigned, createdOrders);
     }
 
     /// <summary>

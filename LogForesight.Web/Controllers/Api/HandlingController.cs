@@ -57,6 +57,13 @@ public class HandlingController : ControllerBase
         ApiResponse<HandlingDto>.Ok(
             _day.Assign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId, request.Reassign));
 
+    /// <summary>日層級指派預覽（只讀）：確認前先看將建幾件、哪些已有人處理；權限同 assign</summary>
+    [HttpPost("assign/preview")]
+    [Permission(Capability.Assign)]
+    public ApiResponse<HandlingAssignPreviewDto> PreviewAssign(long hostId, string date, [FromBody] AssignPreviewRequest request) =>
+        ApiResponse<HandlingAssignPreviewDto>.Ok(
+            _day.PreviewAssign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId));
+
     [HttpGet("logs")]
     public ApiResponse<List<HandlingLogDto>> GetLogs(long hostId, string date) =>
         ApiResponse<List<HandlingLogDto>>.Ok(_history.GetLogs(hostId, QueryStringParsing.ParseRequiredDate(date)));

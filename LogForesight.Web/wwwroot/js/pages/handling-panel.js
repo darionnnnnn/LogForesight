@@ -242,29 +242,58 @@ function assignField(handling, users, hostId, date) {
     });
     select.id = 'handler-select';
 
-    select.addEventListener('change', async () => {
+    // 下拉只負責「選」，不送出（預覽→確認一次送出）：選到與目前不同的處理人才出現「指派」按鈕，
+    // 避免一變更就寫入、建案、入列通知，之後有衝突才再問、取消又無法回滾
+    const assignBtn = button('指派', { variant: 'primary', onClick: () => submitAssign(assignBtn) });
+    assignBtn.classList.add('d-none');
+    const currentId = handling.handlerId ?? null;
+    select.addEventListener('change', () => {
+        const picked = select.value ? Number(select.value) : null;
+        assignBtn.classList.toggle('d-none', picked === currentId);
+    });
+
+    async function submitAssign(btn) {
+        const handlerId = select.value ? Number(select.value) : null;
+        const base = `/api/records/${hostId}/${date}/handling/assign`;
+        const done = withBusy(btn, '處理中…');
         select.disabled = true;
         try {
-            const handlerId = select.value ? Number(select.value) : null;
-            let updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, { handlerId });
-
-            // 已由他人案件處理中的問題（docs/archive/FEEDBACK-10-PLAN.md §9）：後端預設不搶走，
-            // 改回報略過清單。問過使用者要不要改派，確認後帶 reassign 重送一次——
-            // 「不問就換人」會讓原處理人手上的工作在他不知情的狀況下被抽走
-            if (updated.casesSkippedHandlerNames?.length) {
+            let reassign = false;
+            if (handlerId === null) {
+                // 取消指派：沿用確認後送出一次；講清楚會收回該日的日層級交辦單
                 const confirmed = await confirmAction({
-                    title: '這些問題已有人在處理',
-                    message: `${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的案件處理中，` +
-                        `尚未變更。要改由 ${updated.handlerName ?? '新的處理人'} 接手嗎？`,
-                    confirmText: '改派給新的處理人'
+                    title: '取消指派',
+                    message: '取消後會收回本日由日層級指派建立的交辦單：只有這台主機的單整張取消，' +
+                        '包含其他主機的單則只把這台主機移出。要繼續嗎？',
+                    confirmText: '取消指派'
                 });
-                if (confirmed) {
-                    updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, { handlerId, reassign: true });
+                if (!confirmed) return;
+            } else {
+                const preview = await api.post(`/api/records/${hostId}/${date}/handling/assign/preview`, { handlerId });
+                const name = select.selectedOptions[0]?.textContent ?? '新的處理人';
+                const lines = [`將為 ${preview.casesToCreate} 個問題建立案件並交辦給 ${name}。`];
+                if (preview.heldByOthers > 0) {
+                    const holders = preview.heldByHandlerNames?.length ? `由 ${preview.heldByHandlerNames.join('、')} ` : '';
+                    lines.push(`另有 ${preview.heldByOthers} 個問題已${holders}處理中，確認後會改派給 ${name}。`);
                 }
+                if (preview.assigneeCannotSeeHost) lines.push('注意：對方看不到這台主機，只看得到被指派的問題。');
+                if (preview.assigneeCannotHandle) lines.push('注意：對方目前的角色沒有處理能力，無法回覆處理狀態。');
+                if (preview.handlerHasNoEmail) lines.push('注意：對方未設定 email，不會收到通知。');
+                const confirmed = await confirmAction({
+                    title: '確認指派',
+                    message: lines.join('\n'),
+                    confirmText: '指派',
+                    confirmVariant: 'primary'
+                });
+                if (!confirmed) return;
+                reassign = preview.heldByOthers > 0;
             }
 
+            // 確認後只送出一次；有他人處理中的問題才帶 reassign（取消＝零寫入）
+            const updated = await api.put(base, reassign ? { handlerId, reassign: true } : { handlerId });
+
             // 建案提示（docs/archive/FEEDBACK-4-PLAN.md §2/Q1/Q2）：指派會對本日未結案問題建立案件並
-            // 回溯歷史；已有他人進行中案件的問題不搶走，讓使用者知道發生了什麼
+            // 回溯歷史；讓使用者知道發生了什麼
             const parts = [updated.handlerName ? `已指派給 ${formatUserName(updated.handlerName, updated.handlerAccount)}` : '已取消指派'];
             if (updated.casesCreated > 0) parts.push(`已為 ${updated.casesCreated} 個問題建立案件`);
             if (updated.casesReassigned > 0) parts.push(`改派 ${updated.casesReassigned} 個他人處理中的問題`);
@@ -290,19 +319,26 @@ function assignField(handling, users, hostId, date) {
 
             await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
         } catch (error) {
-            select.disabled = false;
             // 樂觀鎖衝突（D3）：別人剛改過這一天。錯誤 toast（api.js）已講原因，
             // 這裡直接把最新狀態載回來——使用者要的是「看到最新」，不是自己按 F5
             if (error?.status === 409) {
                 await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
             }
+        } finally {
+            done();
+            select.disabled = false;
         }
-    });
+    }
 
     label.classList.add('d-inline-flex', 'align-items-center', 'gap-1');
     label.appendChild(helpIcon('可指派給負責人以外的人；主機負責人不會因此改變。'));
 
-    wrap.append(label, selectWrap);
+    const row = document.createElement('div');
+    row.className = 'd-flex align-items-start gap-2';
+    selectWrap.classList.add('flex-grow-1');
+    row.append(selectWrap, assignBtn);
+
+    wrap.append(label, row);
     return wrap;
 }
 

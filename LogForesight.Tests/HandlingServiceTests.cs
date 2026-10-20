@@ -1188,6 +1188,125 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(0, result.CasesCreated);
     }
 
+    // ── 日層級指派：預覽（只讀）與取消指派收單 ──────────────────────────────
+
+    private (int Handlings, int Logs, int Cases, int Orders, int Events, int Audit, int Outbox) Snapshot(HandlingServiceFacade service, DateTime day)
+    {
+        var outbox = new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)).Get().Items.Count;
+        return (
+            _handlings.GetMany(_hosts.GetAll().Select(h => h.HostName), day.AddYears(-1), day.AddYears(1)).Count,
+            service.GetLogs(_host.HostId, day).Count,
+            _cases.GetMany(_hosts.GetAll().Select(h => h.HostName)).Count,
+            service.WorkOrders.All.Count,
+            service.WorkOrders.All.Sum(o => service.WorkOrders.ListEvents(o.WorkOrderId).Count),
+            _audit.Entries.Count,
+            outbox);
+    }
+
+    /// <summary>預覽是只讀的：處理狀態、案件、交辦單、稽核、outbox 的筆數前後都不變</summary>
+    [Fact]
+    public void 預覽指派_不寫任何資料()
+    {
+        var day = Today.AddDays(-40);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+        _settings.Update(s => s.MailNotifyWorkOrders = true);
+        var service = CreateWithMail(CreateMail(), Capability.Assign, Capability.Handle);
+
+        var before = Snapshot(service, day);
+        var preview = service.PreviewAssign(_host.HostId, day, _owner.UserId);
+        var after = Snapshot(service, day);
+
+        Assert.Equal(1, preview.CasesToCreate);
+        Assert.Equal(before, after);
+        Assert.Null(_handlings.Get(_host.HostName, day));
+    }
+
+    /// <summary>預覽的建案數等於接著 Assign 實際建出的件數；他人進行中案件算入 HeldByOthers 與名單</summary>
+    [Fact]
+    public void 預覽指派_數字與實際指派一致_他人進行中案件列入名單()
+    {
+        var day = Today.AddDays(-41);
+        var a = Issue("disk", 153);
+        var b = Issue("net", 4201);
+        var record = _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);   // a 由 OOO 處理中
+        record.TopIssues.Add(b);                             // 之後才出現的新問題
+
+        var preview = service.PreviewAssign(_host.HostId, day, _other.UserId);
+
+        Assert.Equal(1, preview.CasesToCreate);
+        Assert.Equal(1, preview.HeldByOthers);
+        Assert.Equal(new[] { "OOO(DOMAIN\\ooo)" }, preview.HeldByHandlerNames);
+
+        var actual = service.Assign(_host.HostId, day, _other.UserId);
+        Assert.Equal(preview.CasesToCreate, actual.CasesCreated);
+        Assert.Equal(preview.HeldByOthers, actual.CasesSkippedHandlerNames.Count);
+        Assert.Equal(preview.HeldByHandlerNames, actual.CasesSkippedHandlerNames);
+    }
+
+    [Fact]
+    public void 預覽指派_停用帳號與不存在的處理人被拒()
+    {
+        var day = Today.AddDays(-42);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+        var inactive = _users.Upsert(new WebUser { Account = "DOMAIN\\off", DisplayName = "OFF", Active = false });
+        var service = Create(Capability.Assign);
+
+        Assert.Throws<DomainException>(() => service.PreviewAssign(_host.HostId, day, inactive.UserId));
+        Assert.Throws<DomainException>(() => service.PreviewAssign(_host.HostId, day, 99999));
+    }
+
+    private int CancelledNotices() =>
+        new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)).Get().Items.Values.Count(i => i.Kind == WorkOrderOutboxKinds.Cancelled);
+
+    /// <summary>取消指派：該日 day_assign 單只有這台主機 → 整張取消並入列 cancelled 通知</summary>
+    [Fact]
+    public void 取消指派_單只有這台主機_整張單取消並通知()
+    {
+        var day = Today.AddDays(-43);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        _settings.Update(s => s.MailNotifyWorkOrders = true);
+        var service = CreateWithMail(CreateMail(), Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);
+        var order = Assert.Single(service.WorkOrders.All);
+        Assert.Null(order.ClosedAt);
+
+        service.Assign(_host.HostId, day, null);
+
+        var closed = service.WorkOrders.Get(order.WorkOrderId)!;
+        Assert.NotNull(closed.ClosedAt);
+        Assert.Equal(WorkOrderCloseReasons.Cancelled, closed.ClosedReason);
+        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(a)));
+        Assert.Equal(1, CancelledNotices());
+    }
+
+    /// <summary>取消指派：單內還有另一台主機 → 單仍進行中，只把這台移出，不通知</summary>
+    [Fact]
+    public void 取消指派_單內還有別台主機_只移出這台()
+    {
+        var day = Today.AddDays(-44);
+        var a = Issue("disk", 153);
+        var hostB = _hosts.Upsert(new WebHost { HostName = "SRV-B", OwnerUserIds = new List<long> { _owner.UserId } });
+        _repository.AddRecord(_host.HostName, day, a);
+        _repository.AddRecord(hostB.HostName, day, a);
+        _settings.Update(s => s.MailNotifyWorkOrders = true);
+        var service = CreateWithMail(CreateMail(), Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);
+        service.Assign(hostB.HostId, day, _owner.UserId);
+        var order = Assert.Single(service.WorkOrders.All);   // 同處理人同問題併入同一張單
+
+        service.Assign(_host.HostId, day, null);
+
+        var still = service.WorkOrders.Get(order.WorkOrderId)!;
+        Assert.Null(still.ClosedAt);
+        var active = _cases.GetByWorkOrder(order.WorkOrderId, 0, 50).Where(c => c.ClosedAt == null).ToList();
+        Assert.Equal(hostB.HostName, Assert.Single(active).HostName);
+        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(a)));
+        Assert.Equal(0, CancelledNotices());
+    }
+
     /// <summary>有進行中案件的問題再次標記狀態時，DTO 帶回案件同步涵蓋的天數；面板 OpenCaseCount 反映進行中案件數</summary>
     [Fact]
     public void 標記狀態_有進行中案件時DTO帶回同步天數與OpenCaseCount()

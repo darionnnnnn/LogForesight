@@ -24,6 +24,9 @@ internal class HandlingServiceFacade
     private readonly IssueHandlingCommandService _issue;
     private readonly HandlingHistoryQueryService _history;
 
+    /// <summary>門面內部組裝的交辦單 store：供測試斷言單與事件（日層級指派建單／收單）</summary>
+    public FakeWorkOrderStore WorkOrders { get; }
+
     public HandlingServiceFacade(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -47,6 +50,7 @@ internal class HandlingServiceFacade
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
         var displayNames = new UserDisplayNameService(settings);
         var workOrderStore = new FakeWorkOrderStore(cases);
+        WorkOrders = workOrderStore;
         var workOrders = new WorkOrderCoordinator(workOrderStore, cases, issueStore, caseCoordinator, store, hosts);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
@@ -65,6 +69,7 @@ internal class HandlingServiceFacade
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);
     public HandlingDto Update(long hostId, DateTime date, UpdateHandlingRequest request) => _day.Update(hostId, date, request);
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId, bool reassign = false) => _day.Assign(hostId, date, handlerId, reassign);
+    public HandlingAssignPreviewDto PreviewAssign(long hostId, DateTime date, long handlerId) => _day.PreviewAssign(hostId, date, handlerId);
     public IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request) => _issue.SetIssueStatus(hostId, date, request);
     public BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request) => _issue.SetIssueStatusBatch(hostId, date, request);
     public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewBulkClose(source, eventId, from, to);

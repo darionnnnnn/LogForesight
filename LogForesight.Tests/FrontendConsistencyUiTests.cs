@@ -417,4 +417,21 @@ public class FrontendConsistencyUiTests
         Assert.Contains("export function candidatesToUserOptions(", ui);
         Assert.Contains("Array.isArray(user.badges)", ui);
     }
+
+    [Fact]
+    public void 日層級指派改為預覽後確認一次送出_下拉變更不直接寫入()
+    {
+        var js = ReadJs("pages", "handling-panel.js");
+        Assert.Contains("handling/assign/preview", js);
+
+        // select 的 change 處理函式只負責切換「指派」按鈕：起 15 行內不得出現 api.put
+        var lines = js.Split('\n');
+        var start = Array.FindIndex(lines, l => l.Contains("addEventListener('change'"));
+        Assert.True(start >= 0, "找不到 change 事件處理");
+        var window = string.Join("\n", lines.Skip(start).Take(15));
+        Assert.DoesNotMatch(@"api\.put", window);
+
+        // 整個檔案只在確認後的送出函式裡寫入一次指派
+        Assert.Single(Regex.Matches(js, @"api\.put\(base"));
+    }
 }

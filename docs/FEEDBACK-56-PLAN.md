@@ -201,6 +201,7 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 | 規格修正（開工前） | Claude | — | — | E-1：`handler-detail.js` 的回覆判斷（本人＋Handle）本來就正確，問題只在交辦單詳情頁用 `viewerIsHandler`；原驗收「handler-detail.js 不得有 hasCapability(Handle)」刪除。處理人連結改為 `api.js` 一個 `canViewHandlerPage` 判斷，不另做 `format.js` 的 `handlerLink()` |
 | E-1 | Sonnet 5.5（規格 task-56-e1） | 完成 | 0 警告；定向 478 綠；突變拿掉原處理人放行 → 1 案紅；20 檔編碼全對 | 偏離：補了白名單外的測試替身 `WorkOrderFakes.Clone`（不補新欄位會被丟掉）；曾是原處理人但具 Assign 的管理者仍保有管理動作；`host-detail.js`、`record-detail.js` 新增模組層級 `currentUser`。瀏覽器實測併入批次 E 結尾一次做 |
 | E-2 | Sonnet 5.5（規格 task-56-e2） | 完成 | 0 警告；定向 631 綠；突變拿掉「最近處理過」排序優先 → 1 案紅 | 偏離（接受）：依問題交辦 modal 的範圍由後端解析（全站／群組可上千台），前端沒有主機清單，人選不標「看不到 N 台」——既有交辦預覽的 `AssigneeNoAccess` 已在選人後提示；改派／拆出只用已載入分頁的成員主機，超過一頁時「看不到」偏少；日層級指派沒有單一問題脈絡，不標「最近處理過」；`ContinuityDays` 經 InternalsVisibleTo 直接讀，未改 `DispatchContext` |
+| E-3、E-4 | Sonnet 5.5（規格 task-56-e34） | 完成 | 0 警告；定向 637 綠；突變「只剩這台」判斷改恆真 → 1 案紅 | 偏離（接受，比規格好）：收單的查詢與判斷整段放進 `WorkOrderCoordinator.RetractDayAssignments`（同一把鎖、不替服務加相依）；新增「移出單一成員」與 `PreviewMembers`（預覽共用協調器同一份分類判定）。已知限制：案件跨日，同主機同問題由別日日層級指派建的案件，在本日取消指派時會一併收回（資料模型沒有逐日來源）。確認文字改為「另有 M 個問題…」以免數字對不上 |
 
 ## 8. 明確不做（本輪定案）
 
