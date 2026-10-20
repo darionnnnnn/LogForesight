@@ -612,6 +612,10 @@
 - **明確不做（本輪定案）**：交辦單處理人變更歷史查詢、站內即時通知、負載加權與個人容量上限、後端 CSV 匯出端點、
   靜音的主機群組範圍（群組範圍用抑制）。
 
+## 背景服務與前景共用連線池
+
+`PrtgSnapshotHostedService`、`AiAnalysisHostedService`、`HostDayWorkflowRecoveryHostedService`、`PrtgRiskReviewHostedService` 注入站台的 `StorageBackend`，與前景請求共用連線池（只有分析主流程自建獨立池）。SQLite 本來就停用連線池；SQL Server 預設池 100，四支服務峰值約 15 條。**觸發時機**：系統健康頁或 SQL Server 端出現連線池耗盡／等待連線逾時。修法：以 keyed DI 註冊第二個 `StorageBackend` 給這四支服務，並逐一核對快照 journal 綁定與跨實例快取都以版本戳為鍵。
+
 ## PRTG sensor type 以顯示名稱比對
 
 鏡像的 `sensor_type` 取 PRTG 回應的 `type`（顯示名稱，例如「SNMP CPU Load」），取數白名單、數值語意對照、分類對照都以這個英文顯示名為鍵。PRTG 介面語系不是英文時這些對照全部對不上，數值規則與就緒度會靜默落到「單位未知」。修法：鏡像同時存 `type_raw`（語系無關），對照表改以它為鍵並做一次鏡像回填。**觸發時機**：PRTG 介面語系改為非英文，或接入第二台非英文 core server。

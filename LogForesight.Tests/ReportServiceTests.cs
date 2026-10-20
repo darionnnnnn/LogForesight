@@ -884,4 +884,117 @@ public class ReportServiceTests : IDisposable
             before.HostRanking.Select(h => h.HostName),
             after.HostRanking.Select(h => h.HostName));
     }
+
+    // ── D12：非「全部」範圍的本期＋前期合併查詢 ─────────────────────────────
+
+    /// <summary>以 DispatchProxy 記錄介面方法被呼叫的次數（只用於本區的計數替身，不改共用夾具）。</summary>
+    public class CountingProxy<T> : System.Reflection.DispatchProxy where T : class
+    {
+        public T Target { get; set; } = null!;
+        public Dictionary<string, int> Calls { get; } = new();
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            Calls[targetMethod!.Name] = Calls.GetValueOrDefault(targetMethod.Name) + 1;
+            try { return targetMethod.Invoke(Target, args); }
+            catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                throw;
+            }
+        }
+
+        public static (T Proxy, CountingProxy<T> Counter) Wrap(T target)
+        {
+            var proxy = Create<T, CountingProxy<T>>();
+            var counter = (CountingProxy<T>)(object)proxy;
+            counter.Target = target;
+            return (proxy, counter);
+        }
+    }
+
+    /// <summary>
+    /// 夾具：本期 D-9～D、前期 D-19～D-10，兩期交界日（D-10、D-9）與兩端點都放高／中風險日，
+    /// 另有一筆已結案的本期日、一筆低風險日（scope≠all 時都不計）。
+    /// </summary>
+    private void SeedScopeFixture()
+    {
+        var d = DateTime.Today;
+        var a = AddHost("HOST-S-A");
+        var b = AddHost("HOST-S-B");
+        var c = AddHost("HOST-S-C");
+        var resolvedIssue = Issue("disk", 9, IssueSeverity.High, 1);
+
+        AddRecord(a, d, "高", Issue("disk", 1, IssueSeverity.High, 1));                 // 本期終點
+        AddRecord(a, d.AddDays(-9), "中", Issue("disk", 2, IssueSeverity.Medium, 1), Issue("net", 3, IssueSeverity.Medium, 1)); // 本期起點
+        AddRecord(b, d.AddDays(-10), "高", Issue("disk", 4, IssueSeverity.High, 1));    // 前期終點（交界）
+        AddRecord(b, d.AddDays(-19), "高", Issue("disk", 5, IssueSeverity.High, 1));    // 前期起點
+        AddRecord(b, d.AddDays(-20), "高", Issue("disk", 6, IssueSeverity.High, 1));    // 前期之外
+        AddRecord(c, d.AddDays(-5), "高", resolvedIssue);                               // 本期、已結案
+        AddRecord(c, d.AddDays(-12), "中", Issue("net", 7, IssueSeverity.Medium, 1));   // 前期
+        AddRecord(c, d.AddDays(-3), "低", Issue("net", 8, IssueSeverity.Low, 1));       // 低風險
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = c.HostName, Date = d.AddDays(-5), IssueKey = IssueSignatureKey.For(resolvedIssue),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+    }
+
+    [Fact]
+    public void GetSummary_scope為unresolved_KPI本期與前期數字固定()
+    {
+        SeedScopeFixture();
+        var d = DateTime.Today;
+
+        var result = _service.GetSummary(d.AddDays(-9), d, "unresolved");
+
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        Assert.Equal(2, result.Kpi.HighRiskDaysPrevious);
+        Assert.Equal(3, result.Kpi.TotalIssues);
+        Assert.Equal(3, result.Kpi.TotalIssuesPrevious);
+        Assert.Equal(1, result.Kpi.AffectedHosts);
+        Assert.Equal(2, result.Kpi.AffectedHostsPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_scope為open_只查一次紀錄且處理表各只載入一次()
+    {
+        SeedScopeFixture();
+        var d = DateTime.Today;
+
+        var (repo, repoCount) = CountingProxy<IRecordRepository>.Wrap(_repository);
+        var (handlingStore, handlingCount) = CountingProxy<IRecordHandlingStore>.Wrap(_handlingStore);
+        var (issueStore, issueCount) = CountingProxy<IIssueHandlingStore>.Wrap(_issueHandlingStore);
+        var (caseStore, caseCount) = CountingProxy<IIssueCaseStore>.Wrap(_caseStore);
+
+        var visibility = new AlwaysVisibleService(_hosts);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var handling = new HandlingHistoryQueryService(
+            handlingStore, issueStore, caseStore, _hosts, _users, visibility, _settingsStore, repo, progress, aggregates,
+            new UserDisplayNameService(_settingsStore), new FixedIssueExclusionSource(IssueExclusion.None));
+        var service = new ReportService(repo, _hosts, visibility, handling,
+            new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None)),
+            _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None));
+
+        // 去年同期：兩期中間隔了將近一年，合併查詢會把整年撈回，必須維持兩期各查一次
+        new ReportService(repo, _hosts, visibility, handling,
+                new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(IssueExclusion.None)),
+                _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(IssueExclusion.None))
+            .GetSummary(d.AddDays(-9), d, "open", "yoy");
+        Assert.Equal(2, repoCount.Calls.GetValueOrDefault("QueryLightweight"));
+        repoCount.Calls.Clear();
+        handlingCount.Calls.Clear();
+        issueCount.Calls.Clear();
+        caseCount.Calls.Clear();
+
+        service.GetSummary(d.AddDays(-9), d, "open");
+
+        Assert.Equal(1, repoCount.Calls.GetValueOrDefault("QueryLightweight"));
+        // 日層級與問題層級處理表：範圍過濾（兩期共用）載入 1 次，加上 Handling 待辦統計（GetTodo）自己載入 1 次；
+        // 改動前是兩期各載 1 次再加待辦 1 次共 3 次。案件表只有範圍過濾會載，維持 1 次。
+        Assert.Equal(2, handlingCount.Calls.GetValueOrDefault("GetMany"));
+        Assert.Equal(2, issueCount.Calls.GetValueOrDefault("GetMany"));
+        Assert.Equal(1, caseCount.Calls.GetValueOrDefault("GetMany"));
+    }
 }

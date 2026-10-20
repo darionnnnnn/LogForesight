@@ -126,12 +126,27 @@ public class ReportService
             // 非 actionable（低風險）紀錄，先在 SQL 端濾掉就不必把整段期間載進記憶體——
             // 90 天區間下低風險列占絕大多數。與可見等級的交集由 QueryLightweight 既有機制處理。
             var actionableLevels = new[] { RiskLevels.High, RiskLevels.Medium };
-            var records = _handling.FilterByScope(
-                exclusion, _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to, RiskLevels = actionableLevels }), scope);
+            // 兩期相鄰（預設的「前一段等長期間」）時合併成一次查詢再依日期切開，處理表也只載入一次、兩期共用；
+            // 兩期之間有空隔（「去年同期」）時合併會把中間整年一起撈回，反而更慢，維持兩期各查各的。
+            List<DailyAnalysisRecord> records, previousRecords;
+            if (previousTo.Date >= from.Date.AddDays(-1))
+            {
+                var minFrom = previousFrom < from ? previousFrom : from;
+                var all = _repository.QueryLightweight(new RecordQueryFilter { From = minFrom, To = to, RiskLevels = actionableLevels });
+                var current = all.Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date).ToList();
+                var previous = all.Where(r => r.Date.Date >= previousFrom.Date && r.Date.Date <= previousTo.Date).ToList();
+                var ctx = _handling.LoadScopeContext(all);   // all 已只含高／中風險
+                records = _handling.FilterByScope(exclusion, current, scope, ctx);
+                previousRecords = _handling.FilterByScope(exclusion, previous, scope, ctx);
+            }
+            else
+            {
+                records = _handling.FilterByScope(
+                    exclusion, _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to, RiskLevels = actionableLevels }), scope);
+                previousRecords = _handling.FilterByScope(
+                    exclusion, _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo, RiskLevels = actionableLevels }), scope);
+            }
             recordsForTodo = records;
-
-            var previousRecords = _handling.FilterByScope(
-                exclusion, _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo, RiskLevels = actionableLevels }), scope);
 
             // 同上：QueryLightweight 已套可見範圍（RecordRepository.ApplyVisibility），
             // 撈回來的紀錄其主機必然在 visibleHosts 裡，不必再載一次整份主機表
