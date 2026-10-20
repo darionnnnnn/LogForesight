@@ -7,7 +7,7 @@
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit } from '../core/ui.js';
+import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit, renderPageHeader } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
@@ -86,14 +86,11 @@ function renderHeader(detail) {
     const body = document.createElement('div');
     body.className = 'lf-card__body';
 
-    const titleRow = document.createElement('div');
-    titleRow.className = 'd-flex justify-content-between align-items-start mb-1';
-
-    const title = document.createElement('div');
-    title.className = 'fs-5 fw-semibold';
+    // 頁首（renderPageHeader）：副標開頭以強調文字放主機名稱，頁面層級動作放右側
+    const title = document.createElement('strong');
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     title.textContent = detail.displayName ? `${detail.hostName}（${detail.displayName}）` : detail.hostName;
-    titleRow.appendChild(title);
+    const actions = [];
 
     // 指定主機更新（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）：就近原則，看著這台主機覺得資料舊了當場按，
     // 只有 Maintain 能觸發（與排程作業頁的立即執行同一組能力）。本機主機在「分析本機主機」
@@ -105,11 +102,15 @@ function renderHeader(detail) {
         updateButton.textContent = '指定主機更新';
         updateButton.id = 'host-update-open';
         updateButton.addEventListener('click', () => openHostUpdateModal(detail));
-        titleRow.appendChild(updateButton);
-        applyRunActivityState();   // 重新渲染後補上目前狀態（按鈕是每次 load() 重建的）
+        actions.push(updateButton);
     }
 
-    body.appendChild(titleRow);
+    renderPageHeader(document.getElementById('page-header'), {
+        subtitle: [title, ' 的風險時間軸與處理狀況'],
+        actions
+    });
+    // 按鈕是每次 load() 重建的，須在頁首渲染（按鈕進 DOM）之後補上目前狀態
+    if (actions.length > 0) applyRunActivityState();
 
     if (detail.roleDesc) {
         const role = document.createElement('div');

@@ -21,6 +21,7 @@ import {
     renderPagination,
     statCard,
     guardLoad,
+    renderPageHeader,
     loadPageSize,
     savePageSize,
     toast
@@ -185,27 +186,14 @@ function clearOrderParam() {
 }
 
 function renderHeader(data) {
-    const card = document.createElement('div');
-    card.className = 'lf-card';
-
-    const body = document.createElement('div');
-    body.className = 'lf-card__body';
-
-    const title = document.createElement('div');
-    title.className = 'fs-5 fw-semibold';
-    const name = formatUserName(data.displayName, data.account);
-    title.textContent = data.active ? name : `${name}（已停用）`;
-    body.appendChild(title);
-
-    if (!data.active) {
-        const note = document.createElement('div');
-        note.className = 'text-muted small mt-1';
-        note.textContent = '此帳號已停用；交辦紀錄是歷史事實，不因停用消失。';
-        body.appendChild(note);
-    }
-
-    card.appendChild(body);
-    document.getElementById('handler-header').replaceChildren(card);
+    // 頁首（renderPageHeader）：副標開頭以強調文字放處理人名稱；停用帳號的說明併入副標
+    const name = document.createElement('strong');
+    const displayName = formatUserName(data.displayName, data.account);
+    name.textContent = data.active ? displayName : `${displayName}（已停用）`;
+    const note = data.active
+        ? ' 的交辦單與處理進度'
+        : ' 此帳號已停用；交辦紀錄是歷史事實，不因停用消失。';
+    renderPageHeader(document.getElementById('page-header'), { subtitle: [name, note] });
 }
 
 function renderKpi(data) {

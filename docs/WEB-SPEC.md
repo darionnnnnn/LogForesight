@@ -644,6 +644,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 `question-circle` popover 收納（`layout.js` 的 `initHelpPopovers()` 統一初始化），大型表單的
 次要欄位以 Bootstrap collapse 漸進揭露（如規則頁的處置知識庫預設收合）。
 
+**頁首元件 `renderPageHeader`**（`ui.js`，樣式 `.lf-page-header`）：topbar 是每頁唯一的標題（唯一的 `<h1>`，
+頁面檔案不得再出現 `<h1`）；頁內頁首只放「一句話副標」與該頁的頁面層級動作，每頁至多一個 `btn-primary`
+（DESIGN-SYSTEM §6b）。用法 `renderPageHeader(container, { subtitle, actions, help })`：`subtitle` 為字串或
+Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textContent`／DOM），`actions` 為按鈕 Node 陣列
+（保留原 id 與事件綁定，查找按鈕的程式要排在渲染頁首之後），`help` 為 `{ content, title }` popover。
+`< md` 時動作換到副標下方。頁面頂部已是篩選工具列、或動作鈕屬於頁籤／卡片內的頁不放頁首；
+套用清單由 `PageHeaderUiTests` 守門。
+
 ### 8.3 圖表規範（Chart.js）
 
 **選型**：

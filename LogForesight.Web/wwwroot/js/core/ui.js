@@ -132,6 +132,43 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
 }
 
 /**
+ * 頁首元件（WEB-SPEC §8.2）：topbar 是每頁唯一的標題（h1），頁首只放「一句話副標」與
+ * 頁面層級動作，每頁至多一個 btn-primary（DESIGN-SYSTEM §6b）。沒有動作也沒有必要副標的頁不放。
+ *
+ * - subtitle：字串（走 textContent）、Node 或 Node／字串陣列（動態主體名稱用 strong 放在開頭）；
+ *   字串一律當純文字，不會被解析成 HTML。可省略（只有動作的頁）。
+ * - actions：Node 陣列，通常是 button() 產物；保留各按鈕原本的 id 與事件綁定。
+ * - help：{ content, title }，以 helpIcon 附在副標後。
+ * container 內容會被整個取代，回傳產生的 .lf-page-header（container 不存在時回傳 null）。
+ */
+export function renderPageHeader(container, { subtitle, actions = [], help } = {}) {
+    if (!container) return null;
+
+    const header = document.createElement('div');
+    header.className = 'lf-page-header';
+
+    if (subtitle || help) {
+        const text = document.createElement('p');
+        text.className = 'lf-page-header__subtitle';
+        if (Array.isArray(subtitle)) text.append(...subtitle);
+        else if (subtitle instanceof Node) text.appendChild(subtitle);
+        else if (subtitle) text.textContent = subtitle;
+        if (help) text.appendChild(helpIcon(help.content, help.title));
+        header.appendChild(text);
+    }
+
+    if (actions.length > 0) {
+        const bar = document.createElement('div');
+        bar.className = 'lf-page-header__actions';
+        bar.append(...actions);
+        header.appendChild(bar);
+    }
+
+    container.replaceChildren(header);
+    return header;
+}
+
+/**
  * 頁籤切換（§8.5）：抽出 rules/groups/permission-changes 重複的 [data-tab]/[data-panel] 邏輯。
  * tabsEl 內的 [data-tab] 按鈕與同層 [data-panel] 區塊以 data 值配對；點擊切換 active 與 d-none。
  * hash 為 true 時，進站依網址 hash 切換對應頁籤，切換頁籤時以 replaceState 同步 hash。

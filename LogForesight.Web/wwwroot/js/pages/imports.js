@@ -7,7 +7,8 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, toast, confirmAction, withBusy, guardLoad, renderPageHeader } from '../core/ui.js';
+import { appUrl } from '../core/paths.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 
 const previewCard = document.getElementById('preview-card');
@@ -28,6 +29,22 @@ const ACTION_META = {
 
 let currentPlan = null;
 let currentKind = null;
+
+// 頁首：說明其他資料的建立入口（含三個站內連結，連結走 appUrl 以相容子 Application 掛載）
+function pageLink(path, text) {
+    const a = document.createElement('a');
+    a.href = appUrl(path);
+    a.textContent = text;
+    return a;
+}
+renderPageHeader(document.getElementById('page-header'), {
+    subtitle: [
+        '主機的建立來源是「', pageLink('/admin/netiq', 'NetIQ 維護 > 匯入'),
+        '」掃描匯入與批次自動登錄；使用者請於「', pageLink('/admin/users', '使用者'),
+        '」頁新增（支援一次多筆），群組授權請於「', pageLink('/admin/groups', '群組與授權'),
+        '」頁的授權矩陣設定。'
+    ]
+});
 
 for (const input of document.querySelectorAll('[data-upload]')) {
     input.addEventListener('change', async () => {

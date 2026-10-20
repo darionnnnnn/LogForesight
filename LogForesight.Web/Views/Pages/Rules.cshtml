@@ -2,15 +2,7 @@
     ViewData["Title"] = "規則維護";
 }
 
-<div class="lf-hint mb-3">
-    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
-    <span>規則儲存前會自動驗證，不合格不會寫入。</span>
-    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-            data-bs-title="關於規則維護"
-            data-bs-content="儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。規則由上而下依「順序」欄比對，第一條命中者生效；新規則一律加在清單最後，本頁不支援調整順序。">
-        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-    </button>
-</div>
+<div id="page-header"></div>
 
 @* 內建規則升級橫幅（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）：只在庫內版本落後時出現 *@
 <div class="alert alert-info d-flex justify-content-between align-items-center d-none" id="rule-import-banner">

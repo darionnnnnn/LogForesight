@@ -10,7 +10,7 @@
 import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
-    renderTable, renderLoading, renderSpinner, guardLoad, toast, confirmAction, withBusy, button, bindTabs, renderChips,
+    renderTable, renderLoading, renderSpinner, guardLoad, toast, confirmAction, withBusy, button, bindTabs, renderChips, renderPageHeader,
     renderPagination, sortRows, loadPageSize, savePageSize, searchableHostSelect
 } from '../core/ui.js';
 import { severityBadge, elevatesBadge, statusBadge, formatDate, formatDateTime, severityName, toLocalDateString as dateText } from '../core/format.js';
@@ -63,6 +63,15 @@ let hostSelectWidget = null; // 抑制 modal 的主機搜尋型選取器（回�
 let groupOptions = null;  // 抑制 modal 的主機群組下拉候選（範圍選 Group 時用），null = 尚未載入
 
 const kbCollapse = new bootstrap.Collapse(document.getElementById('rule-kb'), { toggle: false });
+
+// 頁首：一句用途副標＋規則維護說明（原 .lf-hint）；本頁的「新增規則」在規則清單工具列內，不屬頁首
+renderPageHeader(document.getElementById('page-header'), {
+    subtitle: '規則儲存前會自動驗證，不合格不會寫入。',
+    help: {
+        title: '關於規則維護',
+        content: '儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。規則由上而下依「順序」欄比對，第一條命中者生效；新規則一律加在清單最後，本頁不支援調整順序。'
+    }
+});
 
 const ruleTabsEl = document.getElementById('rule-tabs');
 bindTabs(ruleTabsEl);

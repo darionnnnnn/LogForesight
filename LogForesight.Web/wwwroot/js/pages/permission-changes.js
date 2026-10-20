@@ -10,7 +10,7 @@
 import { api } from '../core/api.js';
 import {
     renderTable, buildKeyValueTable, renderLoading, renderPagination, loadPageSize, savePageSize,
-    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips
+    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openReportModal } from '../core/report-view.js';
@@ -1327,6 +1327,15 @@ document.getElementById('btn-clear-selection')
         selectedChanges.clear();
         render();
     });
+
+// 頁首：一句用途副標＋「為什麼要逐筆確認」說明（原 .lf-hint）
+renderPageHeader(document.getElementById('page-header'), {
+    subtitle: '系統負責發現異動，請逐筆確認每筆是否為授權操作。',
+    help: {
+        title: '為什麼要逐筆確認',
+        content: '自動檢查負責發現有異動，逐筆確認讓了解環境的人判斷這筆是否正常——同一筆 ACL 新增，管理員自己設定的就是正常維運，非預期出現的就是入侵訊號。'
+    }
+});
 
 initFiltersFromUrlOrStorage();
 // 先取類別清單再渲染篩選晶片，避免第一次畫面上的類別篩選是空的

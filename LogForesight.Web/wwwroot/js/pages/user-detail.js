@@ -10,7 +10,7 @@
 
 import { api, getCurrentUser } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderTable, renderLoading, statCard, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, statCard, guardLoad, renderPageHeader } from '../core/ui.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge } from '../core/format.js';
 
 const root = document.getElementById('user-detail');
@@ -58,11 +58,6 @@ function renderHeader(detail) {
     const titleRow = document.createElement('div');
     titleRow.className = 'd-flex align-items-center flex-wrap gap-2';
 
-    const title = document.createElement('div');
-    title.className = 'fs-5 fw-semibold';
-    title.textContent = formatUserName(user.displayName, user.account);
-    titleRow.appendChild(title);
-
     titleRow.appendChild(badge(user.active ? '啟用' : '停用', user.active ? 'success' : 'secondary'));
 
     for (const group of detail.groups) {
@@ -74,10 +69,17 @@ function renderHeader(detail) {
     }
 
     const workLink = document.createElement('a');
-    workLink.className = 'btn btn-sm btn-outline-primary ms-auto';
+    workLink.className = 'btn btn-sm btn-outline-primary';
     workLink.href = appUrl(`/handlers/${user.userId}`);
     workLink.textContent = '開啟工作頁';
-    titleRow.appendChild(workLink);
+
+    // 頁首（renderPageHeader）：副標開頭以強調文字放使用者名稱，「開啟工作頁」是頁面層級動作
+    const name = document.createElement('strong');
+    name.textContent = formatUserName(user.displayName, user.account);
+    renderPageHeader(document.getElementById('page-header'), {
+        subtitle: [name, ' 的帳號、授權與工作全貌（管理視角）'],
+        actions: [workLink]
+    });
 
     body.appendChild(titleRow);
 

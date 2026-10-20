@@ -286,6 +286,52 @@ body {
     color: var(--lf-gray-400);
 }
 
+/* 頁首元件（ui.js renderPageHeader）：topbar 已是每頁唯一標題，這裡只放一句副標與頁面層級動作。
+   < md（767.98px 以下）動作換到副標下方並左對齊 */
+.lf-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--lf-space-3);
+    margin-bottom: var(--lf-space-4);
+}
+
+.lf-page-header__subtitle {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+}
+
+.lf-page-header__subtitle strong {
+    color: var(--lf-text);
+}
+
+.lf-page-header__subtitle .lf-help {
+    margin-left: var(--lf-space-2);
+}
+
+.lf-page-header__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--lf-space-2);
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+@media (max-width: 767.98px) {
+    .lf-page-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .lf-page-header__actions {
+        margin-left: 0;
+    }
+}
+
 /* 主機頁批次改群組的勾選欄（docs/FEEDBACK-5-PLAN.md §8）：固定窄寬，不隨內容撐開 */
 .lf-checkbox-cell {
     width: 2.5rem;

@@ -8,7 +8,7 @@
 
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
@@ -58,6 +58,18 @@ function initRecordSections() {
 }
 
 initRecordSections();
+
+// 頁首：用途副標＋頁面層級動作「下一筆未處理」。按鈕先以 d-none 建立（保留原 id），
+// 待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示——header 在模組頂層先渲染，
+// 一定早於 guardLoad(load) 與 setupNextUnhandled 的 getElementById。
+const nextUnhandledLink = document.createElement('a');
+nextUnhandledLink.className = 'btn btn-sm btn-outline-primary d-none lf-no-print';
+nextUnhandledLink.id = 'next-unhandled';
+nextUnhandledLink.textContent = '下一筆未處理 →';
+renderPageHeader(document.getElementById('page-header'), {
+    subtitle: '逐項處理這台主機這一天的風險問題。',
+    actions: [nextUnhandledLink]
+});
 
 // 預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
 // 未勾選層級的雜訊淹沒，真正要看的反而被推到下面（與清單頁預設排除低風險同一個取捨）。
