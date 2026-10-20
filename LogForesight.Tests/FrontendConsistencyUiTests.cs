@@ -401,4 +401,20 @@ public class FrontendConsistencyUiTests
         foreach (var page in new[] { "host-detail.js", "record-detail.js", "records.js", "work-order-detail.js" })
             Assert.Contains("canViewHandlerPage(", ReadJs("pages", page));
     }
+
+    [Fact]
+    public void 三個手動派工入口都走派工人選端點且不再拉全部使用者()
+    {
+        foreach (var page in new[] { "records.js", "work-order-detail.js", "handling-panel.js" })
+        {
+            var js = ReadJs("pages", page);
+            Assert.Contains("work-orders/candidates", js);
+            Assert.DoesNotContain("api/admin/users", js);
+            Assert.Contains("candidatesToUserOptions", js);
+        }
+
+        var ui = ReadJs("core", "ui.js");
+        Assert.Contains("export function candidatesToUserOptions(", ui);
+        Assert.Contains("Array.isArray(user.badges)", ui);
+    }
 }

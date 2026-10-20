@@ -15,7 +15,7 @@ import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability,
 import { appUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad,
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
     headerWithHelp, icon
 } from '../core/ui.js';
 import {
@@ -1467,10 +1467,19 @@ function openWorkOrderModal(group) {
 async function loadWorkOrderForm(group, body) {
     let users, groups;
     try {
-        [users, groups] = await Promise.all([
-            api.get('/api/admin/users', { silent: true }),
+        // 人選走派工人選端點（啟用且具 Handle，附看得到幾台／暫停／最近處理過）；
+        // 主機取自篩選列選的主機，未選主機（群組或全站）時傳空集合，不標「看不到」
+        const filters = collectFilters();
+        const [candidates, loadedGroups] = await Promise.all([
+            api.post('/api/work-orders/candidates', {
+                hostIds: filters.hostIds.map(Number),
+                source: group.source,
+                eventId: group.eventId != null ? Number(group.eventId) : null
+            }, { silent: true }),
             api.get('/api/admin/groups', { silent: true })
         ]);
+        users = candidatesToUserOptions(candidates);
+        groups = loadedGroups;
     } catch (error) {
         body.replaceChildren();
         const msg = document.createElement('div');

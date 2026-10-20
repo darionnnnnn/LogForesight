@@ -391,6 +391,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WorkOrderCommandService>();
         // 交辦單查詢 API：清單／詳情／成員／時間軸（逐單授權在服務內）
         services.AddScoped<WorkOrderQueryService>();
+        // 手動派工人選（交辦／改派／日層級指派共用；能力與可見範圍沿用既有解析器）
+        services.AddScoped<WorkOrderCandidateService>();
         // 交辦單回覆（處理人本人；授權在服務內）
         services.AddScoped<WorkOrderReplyService>();
         // 交辦單負載看板／待派清單（派工試跑）／立即派工

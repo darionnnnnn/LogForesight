@@ -1557,6 +1557,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | `POST auto-dispatch { from, to }` | `Maintain` | 立即派工；稽核 `work_order_auto_dispatch_run` |
 | `POST preview`／`POST` | `Assign` | 交辦預覽與建單（同一 request 形狀） |
 | `POST {id}/append`／`reassign`／`split`／`cancel` | `Assign` | 單操作；取消原因必填 |
+| `POST candidates { hostIds, source?, eventId? }` | `Assign` | 手動派工人選（啟用且具 Handle；附可見台數、暫停、最近處理過同問題、負載；排序：最近處理過 → 看得到全部主機 → 負載輕 → 帳號） |
 | `POST {id}/admin-close` | `Assign`＋`Handle` | 代為結案 |
 | `POST {id}/reply`／`POST reply-many` | `Handle`，限本人的單 | 回覆；多單回覆含別人的單時整筆 403 零寫入 |
 

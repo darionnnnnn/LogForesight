@@ -622,3 +622,25 @@ public class HandlerSummaryDto
     public string Account { get; set; } = string.Empty;
     public bool Active { get; set; }
 }
+
+/// <summary>手動派工人選請求：該操作涉及的主機，以及（有的話）要判斷「最近處理過」的問題</summary>
+public class WorkOrderCandidatesRequest
+{
+    public List<long> HostIds { get; set; } = new();
+    public string? Source { get; set; }
+    public int? EventId { get; set; }
+}
+
+/// <summary>手動派工人選：啟用且具 Handle 者，附上能否看到這些主機、是否暫停、近期是否處理過同問題與目前負載</summary>
+public class WorkOrderCandidateDto
+{
+    public long UserId { get; set; }
+    public string Account { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public int VisibleHostCount { get; set; }
+    public int HiddenHostCount { get; set; }
+    public bool Paused { get; set; }
+    public bool InPool { get; set; }
+    public bool RecentlyResolvedSameIssue { get; set; }
+    public int ActiveLoad { get; set; }
+}

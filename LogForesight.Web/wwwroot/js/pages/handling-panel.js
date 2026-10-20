@@ -11,7 +11,7 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, confirmAction } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, candidatesToUserOptions, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { attachNoteEditor } from '../core/note-editor.js';
 
@@ -70,10 +70,10 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     const handling = await api.get(`/api/records/${hostId}/${date}/handling`);
 
     // 指派下拉的人選**只在有 Assign 能力時**才載入：
-    // 無條件呼叫 /api/admin/users 會讓每個 user 每次開詳情頁都產生一筆
+    // 無條件呼叫人選端點會讓每個 user 每次開詳情頁都產生一筆
     // 403＋access_denied 稽核——「權限不足被拒」是稽核上最有價值的訊號，
     // 被正常瀏覽的噪音淹沒後，真正的權限試探就再也看不出來了。
-    const users = handling.canAssign ? await loadAssignableUsers() : [];
+    const users = handling.canAssign ? await loadAssignableUsers(hostId) : [];
 
     // 表單暫存只跟著同一個風險日：409 衝突重建、指派後重載都保留使用者剛填的內容；換主機或日期才清空
     const formDraft = state?.hostId === hostId && state?.date === date ? state.formDraft : null;
@@ -87,9 +87,11 @@ export function refreshSelection() {
     if (state) render();
 }
 
-async function loadAssignableUsers() {
+async function loadAssignableUsers(hostId) {
     try {
-        return await api.get('/api/admin/users', { silent: true });
+        // 日層級指派的人選：主機＝這個風險日的這一台；沒有單一問題脈絡，不帶 source／eventId
+        const candidates = await api.post('/api/work-orders/candidates', { hostIds: [Number(hostId)] }, { silent: true });
+        return candidatesToUserOptions(candidates);
     } catch {
         return [];
     }

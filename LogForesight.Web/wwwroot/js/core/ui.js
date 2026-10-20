@@ -1153,6 +1153,8 @@ export function checkboxList(container, items, emptyHint, options) {
  *   noneLabel   空選項文字
  *   pinnedNames 置頂並標「（負責人）」的 displayName 集合（改派最常選負責人）
  *   onChange    select 值變更時回呼（帶新的 value 字串；篩選本身不觸發）
+ * 選項物件若帶 badges（字串陣列），選項文字後以「・」接上；有帶 badges 的清單視為後端已排序，
+ * 只做「負責人置頂」的穩定排序、不再依顯示名稱重排。不帶 badges 時行為不變。
  * @returns {{ element: HTMLElement, getValue: () => string, select: HTMLSelectElement }}
  */
 export function searchableUserSelect(users, { selectedId = null, includeNone = false, noneLabel = '（未指派）', pinnedNames = [], onChange } = {}) {
@@ -1174,9 +1176,11 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
     select.className = 'form-select';
 
     const pinned = new Set(pinnedNames);
+    const serverOrdered = users.some(u => Array.isArray(u.badges));
     const sorted = [...users].filter(u => u.active).sort((a, b) => {
         const ap = pinned.has(a.displayName) ? 0 : 1;
         const bp = pinned.has(b.displayName) ? 0 : 1;
+        if (serverOrdered) return ap - bp;
         return ap - bp || a.displayName.localeCompare(b.displayName, 'zh-TW');
     });
 
@@ -1184,7 +1188,8 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
 
     function optionLabel(user) {
         const base = formatUserName(user.displayName, user.account);
-        return pinned.has(user.displayName) ? `${base}（負責人）` : base;
+        const text = pinned.has(user.displayName) ? `${base}（負責人）` : base;
+        return Array.isArray(user.badges) && user.badges.length > 0 ? `${text}・${user.badges.join('・')}` : text;
     }
 
     function renderOptions() {
@@ -1221,6 +1226,20 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
     renderOptions();
     wrap.append(search, select);
     return { element: wrap, getValue: () => select.value, select };
+}
+
+/**
+ * 手動派工人選（`POST /api/work-orders/candidates` 的回傳）轉成 searchableUserSelect 的選項。
+ * 後端已排序，標記規則在這裡單點定義，三個派工入口共用。
+ */
+export function candidatesToUserOptions(candidates) {
+    return (candidates || []).map(c => {
+        const badges = [];
+        if (c.recentlyResolvedSameIssue) badges.push('最近處理過');
+        if (c.hiddenHostCount > 0) badges.push(`看不到 ${c.hiddenHostCount} 台（將以案件授與補上）`);
+        if (c.paused) badges.push('暫停接單');
+        return { userId: c.userId, account: c.account, displayName: c.displayName, active: true, badges };
+    });
 }
 
 /**

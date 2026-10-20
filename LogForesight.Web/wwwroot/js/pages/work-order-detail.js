@@ -67,7 +67,10 @@ let currentUser = null;
 let currentDetail = null;
 let memberPage = 1;
 const selectedCaseIds = new Set();
-let assignableUsersCache = null;
+/** 本頁見過的派工人選姓名（改派註記把處理人 id 換成名字用）；只收得到「啟用且具 Handle」者，其餘維持顯示 id */
+const handlerNameCache = new Map();
+/** 目前已載入的成員：caseId → hostId（改派／拆出算人選看不看得到主機用；只含已載入的分頁） */
+const loadedMemberHosts = new Map();
 
 // ── 成員狀態文字與徽章顏色（同一件事只寫一份）─────────────────────────────
 
@@ -78,15 +81,19 @@ function renderMemberStatusBadge(status) {
 
 // ── 處理人選單 modal（改派與拆出共用，同一件事只寫一份）───────────────────
 
-async function getAssignableUsers() {
-    if (!assignableUsersCache) {
-        assignableUsersCache = await api.get('/api/admin/users', { silent: true });
-    }
-    return assignableUsersCache || [];
+/** 派工人選（共用端點）：主機為該操作涉及的主機，問題取自這張單；回傳可直接餵 searchableUserSelect 的選項 */
+async function fetchCandidates(hostIds) {
+    const candidates = await api.post('/api/work-orders/candidates', {
+        hostIds,
+        source: currentDetail?.source ?? null,
+        eventId: currentDetail?.eventId ?? null
+    }, { silent: true });
+    for (const c of candidates || []) handlerNameCache.set(String(c.userId), { displayName: c.displayName, account: c.account });
+    return candidatesToUserOptions(candidates);
 }
 
-async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit, showNotifyNow = false }) {
-    const users = await getAssignableUsers();
+async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit, showNotifyNow = false, hostIds = [] }) {
+    const users = await fetchCandidates(hostIds);
     // 停用帳號後端一定拒絕，不擺一個必定失敗的選項
     const filteredUsers = (users || []).filter(u => u.userId !== currentHandlerId && u.active);
 
@@ -420,6 +427,7 @@ function renderActions(detail, user) {
             submitText: '確定改派',
             currentHandlerId: detail.handlerId,
             showNotifyNow: true,
+            hostIds: [...new Set(loadedMemberHosts.values())],
             onSubmit: async (handlerId, closeModal, { notifyNow }) => {
                 const res = await api.post(`/api/work-orders/${workOrderId}/reassign`, { handlerId, notifyNow });
                 closeModal();
@@ -509,6 +517,10 @@ function updateReplyBtn() {
 }
 
 function renderMembers(data) {
+    loadedMemberHosts.clear();
+    for (const m of data.items || []) {
+        if (m.hostId != null) loadedMemberHosts.set(m.caseId, m.hostId);
+    }
     if (data.hiddenMemberCount > 0) {
         memberNoteEl.textContent = `另有 ${data.hiddenMemberCount} 台主機不在您的檢視範圍，未列出`;
         memberNoteEl.classList.remove('d-none');
@@ -723,7 +735,7 @@ function eventNoteText(note) {
 
 /** 改派註記用：使用者清單載入前（或查不到）就顯示原始 id，不擋畫面 */
 function handlerNameOf(userId) {
-    const user = (assignableUsersCache || []).find(u => String(u.userId) === String(userId));
+    const user = handlerNameCache.get(String(userId));
     return user ? formatUserName(user.displayName, user.account) : `#${userId}`;
 }
 
@@ -796,6 +808,7 @@ memberSplitBtn.addEventListener('click', () => {
         title: '拆出選取的主機',
         submitText: '確定拆出',
         currentHandlerId: currentDetail?.handlerId,
+        hostIds: [...new Set([...selectedCaseIds].map(id => loadedMemberHosts.get(id)).filter(id => id != null))],
         onSubmit: async (handlerId, closeModal) => {
             const caseIds = Array.from(selectedCaseIds);
             const res = await api.post(`/api/work-orders/${workOrderId}/split`, { caseIds, handlerId });
@@ -965,7 +978,7 @@ async function loadAll() {
         // 改派註記要把處理人 id 換成名字，先確保使用者清單在手（取不到就顯示 id，不擋畫面）
         if (timeline.some(ev => /^\d+→\d+$/.test(ev.note || ''))) {
             try {
-                await getAssignableUsers();
+                await fetchCandidates([]);
             } catch {
                 // 沒有使用者清單權限時維持原始 id
             }
