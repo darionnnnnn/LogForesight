@@ -40,6 +40,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly MailNotificationService _mail;
     private readonly IHostApplicationLifetime _lifetime;
     private Task? _lastMailTask;
+    private Task? _lastWorkOrderMailTask;
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -143,6 +144,20 @@ public class SchedulerHostedService : BackgroundService
             catch (TimeoutException)
             {
                 Log.Warn("每日／每週彙總寄送超過 5 分鐘未返回，本次輪詢不再等待");
+            }
+        }
+
+        // 交辦摘要（第 55 輪 C-1b）：寄出 outbox 內到期的交辦通知，節流與上限同上；內部自行 try/catch 到底。
+        if (_lastWorkOrderMailTask == null || _lastWorkOrderMailTask.IsCompleted)
+        {
+            _lastWorkOrderMailTask = _mail.CheckAndSendWorkOrderDigestAsync(DateTime.Now, stoppingToken);
+            try
+            {
+                await _lastWorkOrderMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            catch (TimeoutException)
+            {
+                Log.Warn("交辦摘要寄送超過 5 分鐘未返回，本次輪詢不再等待");
             }
         }
 

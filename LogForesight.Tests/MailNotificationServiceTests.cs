@@ -59,7 +59,7 @@ public class MailNotificationServiceTests : IDisposable
     private MailNotificationService Create() =>
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
             new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _issueOwners, _issueAggregates);
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), _issueOwners, _issueAggregates);
 
     /// <summary>含問題優先摘要：串真的 OccurrenceStatusResolver（逾期判定需要），
     /// _issueAggregates 仍是 Fake——測試以 _issueAggregates.Result／AggregateOverride／
@@ -70,7 +70,7 @@ public class MailNotificationServiceTests : IDisposable
         var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
         return new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
             new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _issueOwners, _issueAggregates, issueDigest);
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), _issueOwners, _issueAggregates, issueDigest);
     }
 
     /// <summary>主機日上的一筆問題列；問題優先區塊只統計郵件範圍內主機日真的帶有的問題。</summary>
@@ -162,7 +162,7 @@ public class MailNotificationServiceTests : IDisposable
                 _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups,
                 _groupAccess, _records, _handlings, state, _freshness,
-                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _issueOwners, _issueAggregates,
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), _issueOwners, _issueAggregates,
                 issueDigest: digest, workflow: workflow);
             Task Send() => lane == "daily" ? service.CheckAndSendDailyWeeklyAsync(DateTime.Today.AddHours(9)) : service.NotifyAfterRunAsync();
             await Send();
@@ -229,7 +229,7 @@ public class MailNotificationServiceTests : IDisposable
             if (scenario == "statistics-only-failed") _sender.ThrowOnSendForRecipient = "a@test.local";
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
                 _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
                 _issueOwners, _issueAggregates, workflow: workflow);
             await service.NotifyAfterRunAsync(cts.Token);
             var restored = new HostDayWorkflowService(new HostDayWorkflowStore(backend)).Get(host.HostId, Yesterday)!;
@@ -332,7 +332,7 @@ public class MailNotificationServiceTests : IDisposable
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups,
                 _groupAccess, _records, _handlings,
                 new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
                 _issueOwners, _issueAggregates, workflow: workflow);
             await service.NotifyAfterRunAsync();
 
@@ -1833,7 +1833,7 @@ public class MailNotificationServiceTests : IDisposable
         workflow.RestoreFromRecord(record, aiEnabled: false, prtgEnabled: false);
         var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
             _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
             _issueOwners, _issueAggregates, workflow: workflow);
 
         try
@@ -1964,7 +1964,7 @@ public class MailNotificationServiceTests : IDisposable
             "replacement", 0, "changed", false, false, parentRecordId: record.RecordId + 1);
         var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
             _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
             _issueOwners, _issueAggregates, workflow: workflow);
         try
         {
@@ -2008,7 +2008,7 @@ public class MailNotificationServiceTests : IDisposable
         workflow.RestoreFromRecord(netiqRecord, aiEnabled: false, prtgEnabled: false);
         var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
             _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
-            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
             _issueOwners, _issueAggregates, workflow: workflow);
         try
         {

@@ -73,7 +73,7 @@ public class WorkOrderBoardServiceTests : IDisposable
             _settingsStore, _sender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
             new ScheduleFreshnessService(new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")), new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
-            _outboxStore,
+            _outboxStore, _orderStore, _caseStore, new FakeRuleStore(),
             new FakeIssueOwnerStore());
 
         _settingsStore.Update(s => s.AutoDispatchEnabled = false);

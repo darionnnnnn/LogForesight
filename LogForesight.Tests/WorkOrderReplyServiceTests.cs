@@ -60,7 +60,7 @@ public class WorkOrderReplyServiceTests : IDisposable
         _mail = new MailNotificationService(
             _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingLog, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
-            freshness, new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeIssueOwnerStore());
+            freshness, new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), new FakeIssueOwnerStore());
 
         foreach (var host in new[] { "H1", "H2", "H3" })
         {

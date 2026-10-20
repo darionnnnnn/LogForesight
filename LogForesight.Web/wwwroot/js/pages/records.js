@@ -1701,7 +1701,16 @@ function renderWorkOrderForm(body, group, users, groups) {
     hostDetails.appendChild(hostDetailsBody);
     form.appendChild(hostDetails);
 
-    // 7. 送出按鈕
+    // 7. 立即通知（預設不勾：通知照交辦摘要時刻寄出）
+    const notifyNowLabel = document.createElement('label');
+    notifyNowLabel.className = 'form-check-label small d-flex align-items-center gap-1 mb-3';
+    const notifyNowCheck = document.createElement('input');
+    notifyNowCheck.type = 'checkbox';
+    notifyNowCheck.className = 'form-check-input mt-0';
+    notifyNowLabel.append(notifyNowCheck, document.createTextNode('立即通知處理人（不等摘要時刻）'));
+    form.appendChild(notifyNowLabel);
+
+    // 8. 送出按鈕
     const submitBtn = document.createElement('button');
     submitBtn.type = 'submit';
     submitBtn.className = 'btn btn-sm btn-primary';
@@ -1729,6 +1738,7 @@ function renderWorkOrderForm(body, group, users, groups) {
             autoAttach: scopeKind !== 'Hosts' && autoAttachCheck.checked && excludedHostIds.size === 0,
             note: noteInput.value.trim() || null,
             dueDate: dueInput.value || null,
+            notifyNow: Boolean(notifyNowCheck.checked),
             page
         };
     }
@@ -1923,7 +1933,8 @@ function renderWorkOrderForm(body, group, users, groups) {
             const mergedCount = orders.filter(o => !o.createdOrder).length;
             const totalCases = orders.reduce((sum, o) => sum + (o.newCases || 0) + (o.linkedExisting || 0) + (o.reassigned || 0), 0);
 
-            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台`, 'success');
+            const noEmailNote = result.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : '';
+            toast(`已建立 ${createdCount} 張、併入 ${mergedCount} 張，共 ${totalCases} 台${noEmailNote}`, 'success');
 
             if (result.daySyncPendingCases > 0) {
                 toast('逐日同步在背景進行，儀表板數字會在數分鐘內更新', 'info');

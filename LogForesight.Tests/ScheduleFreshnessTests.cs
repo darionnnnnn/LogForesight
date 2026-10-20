@@ -267,7 +267,7 @@ public class ScheduleFreshnessTests
             var mailService = new MailNotificationService(
                 new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-                new MailNotifyStateStore(backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(backend.Blob(WorkOrderOutboxStore.BlobKey)));
+                new MailNotifyStateStore(backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
 
             var healthService = new HealthService(backend, new SchedulerRunState(), backend.TopIssueBackfiller(), mailService, freshness);
 

@@ -230,6 +230,9 @@ public class DayHandlingCommandService
         if (handler != null && !_capabilities.Resolve(handler).Contains(Capability.Handle))
             dto.AssigneeCannotHandle = true;
 
+        if (handler != null && string.IsNullOrWhiteSpace(handler.Email))
+            dto.HandlerHasNoEmail = true;
+
         if (_mail != null && handler != null)
         {
             foreach (var o in createdOrders)

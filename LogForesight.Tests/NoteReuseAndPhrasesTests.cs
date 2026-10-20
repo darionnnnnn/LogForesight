@@ -227,7 +227,7 @@ public class NoteReuseAndPhrasesTests : IDisposable
                 new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
                 new ScheduleFreshnessService(new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")),
                     new ScheduleOptionsStore(_fx.Blob("schedule_options"))),
-                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey))),
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()),
             new FakeReportUsageQuery());
 
         var request = SettingsRequest();

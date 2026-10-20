@@ -275,7 +275,7 @@ public class HealthSlowQueryDtoTests : IDisposable
             new MailNotificationService(
                 new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-                new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey))),
+                new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()),
             freshness);
     }
 

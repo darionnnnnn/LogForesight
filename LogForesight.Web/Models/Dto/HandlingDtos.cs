@@ -73,6 +73,9 @@ public class HandlingDto
     /// 只是執行指派的人該知道對方按下「回覆處理狀態」會被後端擋下來。
     /// </summary>
     public bool AssigneeCannotHandle { get; set; }
+
+    /// <summary>處理人沒有設定 email（不會收到交辦通知）；只在日層級指派（Assign）路徑填，其餘維持 false。</summary>
+    public bool HandlerHasNoEmail { get; set; }
 }
 
 public class UpdateHandlingRequest

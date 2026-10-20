@@ -103,7 +103,7 @@ public class HealthServiceTests : IDisposable
     private MailNotificationService NewMailService() => new(
         new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
         new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-        new MailNotifyStateStore(_backend.Blob("mail_notify_state")), NewFreshnessService(), new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)));
+        new MailNotifyStateStore(_backend.Blob("mail_notify_state")), NewFreshnessService(), new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore());
 
     [Fact]
     public void 存活檢查_資料庫可達時回ok()

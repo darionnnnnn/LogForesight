@@ -69,7 +69,7 @@ public class WorkOrderCommandServiceTests : IDisposable
             _settingsStore, _mailSender, _hosts, _users, _userGroups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
             new ScheduleFreshnessService(new BatchRunStore(_fixture.LogStore("batch_runs"), _fixture.LogStore("batch_run_logs")), new ScheduleOptionsStore(_fixture.Blob("schedule_options"))),
-            new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)),
+            new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
             new FakeIssueOwnerStore());
 
         _service = new WorkOrderCommandService(
@@ -811,6 +811,58 @@ public class WorkOrderCommandServiceTests : IDisposable
 
         var oldHandlerMail = items.Single(s => s.RecipientUserId == alice.UserId);
         Assert.Equal(WorkOrderOutboxKinds.Transferred, oldHandlerMail.Kind);
+    }
+
+    [Theory]
+    [InlineData("alice@test.local", false)]
+    [InlineData("  ", true)]
+    [InlineData(null, true)]
+    public void Create_處理人沒有email時回報HandlerHasNoEmail(string? email, bool expected)
+    {
+        var alice = AddUser("alice", "愛麗絲", email: email);
+        AddHost("H1");
+
+        var result = _service.Create(Single(alice.UserId));
+
+        Assert.Equal(expected, result.HandlerHasNoEmail);
+    }
+
+    [Theory]
+    [InlineData("bob@test.local", false)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    public void Reassign_新處理人沒有email時回報HandlerHasNoEmail(string? email, bool expected)
+    {
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        var bob = AddUser("bob", "鮑伯", email: email);
+        AddHost("H1");
+        var orderId = Assert.Single(_service.Create(Single(alice.UserId)).Orders).WorkOrderId;
+
+        var result = _service.Reassign(orderId, new ReassignWorkOrderRequest { HandlerId = bob.UserId });
+
+        Assert.Equal(expected, result.HandlerHasNoEmail);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Create與Reassign_NotifyNow決定入列項目是否立即(bool notifyNow)
+    {
+        _settingsStore.Update(s => { s.MailEnabled = true; s.MailNotifyWorkOrders = true; });
+        var alice = AddUser("alice", "愛麗絲", email: "alice@test.local");
+        var bob = AddUser("bob", "鮑伯", email: "bob@test.local");
+        AddHost("H1");
+
+        var request = Single(alice.UserId);
+        request.NotifyNow = notifyNow;
+        var orderId = Assert.Single(_service.Create(request).Orders).WorkOrderId;
+        Assert.Equal(notifyNow, Assert.Single(_outbox.Get().Items.Values).Immediate);
+
+        _outbox.Update(b => b.Items.Clear());
+        _service.Reassign(orderId, new ReassignWorkOrderRequest { HandlerId = bob.UserId, NotifyNow = notifyNow });
+        var items = _outbox.Get().Items.Values.ToList();
+        Assert.Equal(2, items.Count);
+        Assert.All(items, i => Assert.Equal(notifyNow, i.Immediate));
     }
 
     [Fact]

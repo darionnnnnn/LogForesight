@@ -85,7 +85,7 @@ async function getAssignableUsers() {
     return assignableUsersCache || [];
 }
 
-async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit }) {
+async function openSelectHandlerModal({ title, submitText, currentHandlerId, onSubmit, showNotifyNow = false }) {
     const users = await getAssignableUsers();
     // 停用帳號後端一定拒絕，不擺一個必定失敗的選項
     const filteredUsers = (users || []).filter(u => u.userId !== currentHandlerId && u.active);
@@ -108,7 +108,17 @@ async function openSelectHandlerModal({ title, submitText, currentHandlerId, onS
     submitBtn.className = 'btn btn-sm btn-primary mt-3';
     submitBtn.textContent = submitText || '確定';
 
-    form.append(label, selectWrap, submitBtn);
+    // 立即通知（預設不勾：通知照交辦摘要時刻寄出）；只有會寄通知的操作（改派）才顯示
+    const notifyNowCheck = document.createElement('input');
+    notifyNowCheck.type = 'checkbox';
+    notifyNowCheck.className = 'form-check-input mt-0';
+    const notifyNowLabel = document.createElement('label');
+    notifyNowLabel.className = 'form-check-label small d-flex align-items-center gap-1 mt-3';
+    notifyNowLabel.append(notifyNowCheck, document.createTextNode('立即通知處理人（不等摘要時刻）'));
+
+    form.append(label, selectWrap);
+    if (showNotifyNow) form.appendChild(notifyNowLabel);
+    form.appendChild(submitBtn);
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -121,7 +131,7 @@ async function openSelectHandlerModal({ title, submitText, currentHandlerId, onS
         const restore = withBusy(submitBtn, '處理中…');
         try {
             const closeModal = () => body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
-            await onSubmit(handlerId, closeModal);
+            await onSubmit(handlerId, closeModal, { notifyNow: showNotifyNow && notifyNowCheck.checked });
         } catch {
             restore();
         }
@@ -403,13 +413,15 @@ function renderActions(detail, user) {
             title: '改派交辦單',
             submitText: '確定改派',
             currentHandlerId: detail.handlerId,
-            onSubmit: async (handlerId, closeModal) => {
-                const res = await api.post(`/api/work-orders/${workOrderId}/reassign`, { handlerId });
+            showNotifyNow: true,
+            onSubmit: async (handlerId, closeModal, { notifyNow }) => {
+                const res = await api.post(`/api/work-orders/${workOrderId}/reassign`, { handlerId, notifyNow });
                 closeModal();
+                const noEmailNote = res.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : '';
                 if (res.mergedIntoExisting) {
-                    toast(`已改派 ${res.movedCases} 台，併入單號 #${res.targetWorkOrderId}`, 'success');
+                    toast(`已改派 ${res.movedCases} 台，併入單號 #${res.targetWorkOrderId}${noEmailNote}`, 'success');
                 } else {
-                    toast(`已改派 ${res.movedCases} 台`, 'success');
+                    toast(`已改派 ${res.movedCases} 台${noEmailNote}`, 'success');
                 }
                 if (res.assigneeCannotHandle && res.assigneeCannotHandle.length > 0) {
                     for (const item of res.assigneeCannotHandle) {
@@ -782,7 +794,7 @@ memberSplitBtn.addEventListener('click', () => {
             const caseIds = Array.from(selectedCaseIds);
             const res = await api.post(`/api/work-orders/${workOrderId}/split`, { caseIds, handlerId });
             closeModal();
-            toast(`已拆出 ${res.movedCases} 台到單號 #${res.targetWorkOrderId}`, 'success');
+            toast(`已拆出 ${res.movedCases} 台到單號 #${res.targetWorkOrderId}${res.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : ''}`, 'success');
             if (res.assigneeCannotHandle && res.assigneeCannotHandle.length > 0) {
                 for (const item of res.assigneeCannotHandle) {
                     toast(`${item.handlerName} 沒有處理權限（${item.hostCount} 台）`, 'warning');

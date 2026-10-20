@@ -40,7 +40,8 @@ public class WorkOrderOutboxTests : IDisposable
         _mail = new MailNotificationService(
             _settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
             _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
-            _freshness, _outbox, new FakeIssueOwnerStore());
+            _freshness, _outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
+            new FakeIssueOwnerStore());
 
         _settingsStore.Update(s =>
         {

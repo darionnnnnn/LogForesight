@@ -80,7 +80,7 @@ public class BulkScaleGateTests : IDisposable
         var mail = new MailNotificationService(
             _settingsStore, new FakeSmtpMailSender(), _hosts, _users, groups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlingStore, new MailNotifyStateStore(_fixture.Blob("mail_notify_state")),
-            freshness, new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)), new FakeIssueOwnerStore());
+            freshness, new WorkOrderOutboxStore(_fixture.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), new FakeIssueOwnerStore());
         return new WorkOrderCommandService(
             query, aggregates, coordinator, workOrderStore, _caseStore, new FakeNoiseMarkStore(),
             _hosts, _users, visibility, new UserCapabilityResolver(groups, _hosts),

@@ -224,7 +224,7 @@ public class WorkOrderCommandService
 
         foreach (var order in orders)
         {
-            NotifyHandler(WorkOrderOutboxKinds.Created, order.WorkOrderId, order.HandlerId);
+            NotifyHandler(WorkOrderOutboxKinds.Created, order.WorkOrderId, order.HandlerId, immediate: req.NotifyNow);
         }
 
         return new CreateWorkOrderResultDto
@@ -235,7 +235,8 @@ public class WorkOrderCommandService
             DaySyncPendingCases = daySyncPending,
             AssigneeNoAccess = plan.NoAccess.Take(NoAccessListLimit).ToList(),
             AssigneeNoAccessTotal = plan.NoAccess.Count,
-            AssigneeCannotHandle = plan.CannotHandle
+            AssigneeCannotHandle = plan.CannotHandle,
+            HandlerHasNoEmail = plan.Allocations.Any(a => string.IsNullOrWhiteSpace(a.Handler.Email))
         };
     }
 
@@ -316,8 +317,8 @@ public class WorkOrderCommandService
                 result.TargetWorkOrderId, result.MergedIntoExisting, result.MovedCases
             });
 
-        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId);
-        NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId);
+        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId, immediate: req.NotifyNow);
+        NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId, immediate: req.NotifyNow);
 
         return ToMoveResult(id, result, handler);
     }
@@ -618,9 +619,9 @@ public class WorkOrderCommandService
 
     // ── 共用 ────────────────────────────────────────────────────────────────
 
-    private void NotifyHandler(string kind, long workOrderId, long recipientUserId, string? reason = null)
+    private void NotifyHandler(string kind, long workOrderId, long recipientUserId, string? reason = null, bool immediate = false)
     {
-        _mail.EnqueueWorkOrderNotice(kind, workOrderId, recipientUserId, _currentUser.UserId, _currentUser.Account, reason: reason);
+        _mail.EnqueueWorkOrderNotice(kind, workOrderId, recipientUserId, _currentUser.UserId, _currentUser.Account, reason: reason, immediate: immediate);
     }
 
     private WorkOrder GetOrder(long id) =>
@@ -675,6 +676,7 @@ public class WorkOrderCommandService
         MergedIntoExisting = result.MergedIntoExisting,
         MovedCases = result.MovedCases,
         PreviousHandlerId = result.PreviousHandlerId,
+        HandlerHasNoEmail = string.IsNullOrWhiteSpace(handler.Email),
         AssigneeCannotHandle = _capabilities.Resolve(handler).Contains(Capability.Handle)
             ? new List<AssigneeCannotHandleDto>()
             : new List<AssigneeCannotHandleDto> { new() { HandlerName = NameOf(handler), HostCount = result.MovedCases } }

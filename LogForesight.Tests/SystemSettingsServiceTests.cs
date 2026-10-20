@@ -35,7 +35,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness, Outbox), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
     [Fact]
     public void PRTG設定_舊表單版本不能覆寫新範圍()
@@ -313,7 +313,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness, Outbox), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         // 存入不同的值以確認稽核抓到變更
         service.Update(ValidRequest(rawEventRetentionDays: 90));
@@ -1895,7 +1895,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                new MailNotifyStateStore(_fx.Blob("mail_state_whitelist")), Freshness, Outbox), new FakeReportUsageQuery());
+                new MailNotifyStateStore(_fx.Blob("mail_state_whitelist")), Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         var request = ValidRequest();
         request.PrtgSensorTypeWhitelist = new List<string>
@@ -1932,7 +1932,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                new MailNotifyStateStore(_fx.Blob("mail_state_dto")), Freshness, Outbox), new FakeReportUsageQuery());
+                new MailNotifyStateStore(_fx.Blob("mail_state_dto")), Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         var request = ValidRequest();
         request.PrtgSensorTypeWhitelist = new List<string> { "SNMP Memory", "SNMP Linux Meminfo" };
@@ -2684,7 +2684,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness, Outbox), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         var req = ValidRequest();
         req.PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive;
@@ -2706,7 +2706,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness, Outbox), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {
@@ -2911,7 +2911,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                new MailNotifyStateStore(_fx.Blob("mail_state_cat_overrides")), Freshness, Outbox), new FakeReportUsageQuery());
+                new MailNotifyStateStore(_fx.Blob("mail_state_cat_overrides")), Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {

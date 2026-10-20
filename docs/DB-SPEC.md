@@ -569,6 +569,9 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 > 見 `docs/PRTG-SPEC.md` §5a），零 DDL 異動——**從未執行過時整份不存在**，
 > 讀取端據此分辨「尚未同步」與「同步過但零筆」，不可用零值代表未執行。
 
+> 交辦通知的待寄項目存在 `lf_blobs` 的 `work_order_outbox`（單一物件型，與 `mail_notify_state` 分開以免撐爆單列上限；
+> 只存識別與操作資訊，上限 2 萬筆，入列時間為本地時間），零 DDL 異動；寄送規則見 WEB-SPEC §9.4b「通知」。
+
 `LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
 對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併那一輪（`Sentinel`／`SentinelId`／
 `CreatedAt` 等新增欄位）全部落在既有的 `lf_blobs` JSON 文件裡，零 DDL 異動，當時沒有
