@@ -19,7 +19,8 @@ import {
     withBusy,
     searchableUserSelect,
     labelValue,
-    icon
+    icon,
+    candidatesToUserOptions
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatUserName, statusBadge, workOrderClosedReasonText } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
