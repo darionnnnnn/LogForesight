@@ -444,7 +444,7 @@ public class SchedulerHostedService : BackgroundService
             // 郵件方法內部自行 try/catch 到底，不影響本次執行的成敗判定。
             if (dispatchSummary is { PerHandler.Count: > 0 })
             {
-                await _mail.NotifyWorkOrderDigestAsync(dispatchSummary, _lifetime.ApplicationStopping);
+                _mail.EnqueueNightlyDispatch(dispatchSummary);
             }
         });
 

@@ -92,7 +92,7 @@ public class HandlingServiceTests : IDisposable
         return new MailNotificationService(
             _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
             new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")),
-            freshness, _issueOwners);
+            freshness, new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _issueOwners);
     }
 
     private HandlingServiceFacade CreateWithMail(MailNotificationService mail, params Capability[] capabilities)

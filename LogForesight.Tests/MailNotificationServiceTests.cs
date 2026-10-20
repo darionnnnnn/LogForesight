@@ -58,7 +58,8 @@ public class MailNotificationServiceTests : IDisposable
     /// 的既有慣例，同 _issueOwners／_issueAggregates 選填）。</summary>
     private MailNotificationService Create() =>
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness, _issueOwners, _issueAggregates);
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _issueOwners, _issueAggregates);
 
     /// <summary>含問題優先摘要：串真的 OccurrenceStatusResolver（逾期判定需要），
     /// _issueAggregates 仍是 Fake——測試以 _issueAggregates.Result／AggregateOverride／
@@ -68,7 +69,8 @@ public class MailNotificationServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore);
         var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver, _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
         return new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness, _issueOwners, _issueAggregates, issueDigest);
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _issueOwners, _issueAggregates, issueDigest);
     }
 
     /// <summary>主機日上的一筆問題列；問題優先區塊只統計郵件範圍內主機日真的帶有的問題。</summary>
@@ -159,7 +161,8 @@ public class MailNotificationServiceTests : IDisposable
                 new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore),
                 _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups,
-                _groupAccess, _records, _handlings, state, _freshness, _issueOwners, _issueAggregates,
+                _groupAccess, _records, _handlings, state, _freshness,
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), _issueOwners, _issueAggregates,
                 issueDigest: digest, workflow: workflow);
             Task Send() => lane == "daily" ? service.CheckAndSendDailyWeeklyAsync(DateTime.Today.AddHours(9)) : service.NotifyAfterRunAsync();
             await Send();
@@ -226,6 +229,7 @@ public class MailNotificationServiceTests : IDisposable
             if (scenario == "statistics-only-failed") _sender.ThrowOnSendForRecipient = "a@test.local";
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
                 _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
                 _issueOwners, _issueAggregates, workflow: workflow);
             await service.NotifyAfterRunAsync(cts.Token);
             var restored = new HostDayWorkflowService(new HostDayWorkflowStore(backend)).Get(host.HostId, Yesterday)!;
@@ -328,6 +332,7 @@ public class MailNotificationServiceTests : IDisposable
             var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups,
                 _groupAccess, _records, _handlings,
                 new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
                 _issueOwners, _issueAggregates, workflow: workflow);
             await service.NotifyAfterRunAsync();
 
@@ -1573,279 +1578,6 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
-    // ── NotifyWorkOrderAsync：交辦單通知（回饋第 47 輪 E-1b）───────────────────────
-
-    private static WorkOrderNotice MakeWorkOrderNotice(
-        string kind = WorkOrderNoticeKinds.Created,
-        long workOrderId = 101,
-        string issueLabel = "Schannel 36888",
-        string? plainExplanation = "TLS 握手失敗",
-        int hostCount = 2,
-        IReadOnlyList<string>? hostNames = null,
-        string? note = "請優先排查",
-        DateTime? dueDate = null,
-        string recipientAccount = "engineer1",
-        string? recipientEmail = "eng1@test.local",
-        string actorAccount = "lead1",
-        string? reason = null) =>
-        new(kind, workOrderId, issueLabel, plainExplanation, hostCount,
-            hostNames ?? new[] { "host-a", "host-b" }, note, dueDate,
-            recipientAccount, recipientEmail, actorAccount, reason);
-
-    [Fact]
-    public async Task NotifyWorkOrderAsync_建立通知寄給處理人且內容含單號主機數與期限()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        var dueDate = DateTime.Today.AddDays(3);
-        var notice = MakeWorkOrderNotice(dueDate: dueDate);
-
-        await Create().NotifyWorkOrderAsync(notice);
-
-        var sent = Assert.Single(_sender.Sent);
-        Assert.Equal(new[] { "eng1@test.local" }, sent.Message.To);
-        Assert.Contains("交辦", sent.Message.Subject);
-        Assert.Contains("Schannel 36888（2 台）", sent.Message.Subject);
-        Assert.Contains("lead1 交辦了一張單給你：Schannel 36888", sent.Message.Body);
-        Assert.Contains("單號：101", sent.Message.Body);
-        Assert.Contains("說明：TLS 握手失敗", sent.Message.Body);
-        Assert.Contains("主機數：2", sent.Message.Body);
-        Assert.Contains("主機：host-a、host-b", sent.Message.Body);
-        Assert.Contains("交辦說明：請優先排查", sent.Message.Body);
-        Assert.Contains($"期限：{dueDate:yyyy-MM-dd}", sent.Message.Body);
-        Assert.Contains("請至站台的「交辦單」頁檢視單號 101。", sent.Message.Body);
-    }
-
-    [Fact]
-    public async Task NotifyWorkOrderAsync_超過20台只列前20台並註明總數()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        var hostNames = Enumerable.Range(1, 25).Select(i => $"host-{i:D2}").ToList();
-        var notice = MakeWorkOrderNotice(hostCount: 25, hostNames: hostNames);
-
-        await Create().NotifyWorkOrderAsync(notice);
-
-        var sent = Assert.Single(_sender.Sent);
-        var first20 = string.Join("、", hostNames.Take(20));
-        Assert.Contains($"主機：{first20}…等 25 台", sent.Message.Body);
-        Assert.DoesNotContain("host-21", sent.Message.Body);
-    }
-
-    [Fact]
-    public async Task NotifyWorkOrderAsync_移交與取消的主旨類型不同()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        var service = Create();
-
-        var transferNotice = MakeWorkOrderNotice(
-            kind: WorkOrderNoticeKinds.Transferred,
-            workOrderId: 201,
-            issueLabel: "Disk Full",
-            actorAccount: "admin1",
-            reason: "改由 DBA 處理");
-        var cancelNotice = MakeWorkOrderNotice(
-            kind: WorkOrderNoticeKinds.Cancelled,
-            workOrderId: 202,
-            issueLabel: "Memory Leak",
-            actorAccount: "admin2",
-            reason: "誤判已結案");
-
-        await service.NotifyWorkOrderAsync(transferNotice);
-        await service.NotifyWorkOrderAsync(cancelNotice);
-
-        Assert.Equal(2, _sender.Sent.Count);
-
-        var sentTransfer = _sender.Sent[0];
-        Assert.Contains("交辦移交", sentTransfer.Message.Subject);
-        Assert.Contains("Disk Full 已移交", sentTransfer.Message.Subject);
-        Assert.Contains("已由 admin1 移交給其他處理人", sentTransfer.Message.Body);
-        Assert.Contains("原因：改由 DBA 處理", sentTransfer.Message.Body);
-
-        var sentCancel = _sender.Sent[1];
-        Assert.Contains("交辦取消", sentCancel.Message.Subject);
-        Assert.Contains("Memory Leak 已取消", sentCancel.Message.Subject);
-        Assert.Contains("已由 admin2 取消，其中的主機已調回未處理", sentCancel.Message.Body);
-        Assert.Contains("原因：誤判已結案", sentCancel.Message.Body);
-    }
-
-    [Fact]
-    public async Task NotifyWorkOrderAsync_開關關閉時不寄()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = false);
-        var notice = MakeWorkOrderNotice();
-
-        await Create().NotifyWorkOrderAsync(notice);
-
-        Assert.Empty(_sender.Sent);
-    }
-
-    [Fact]
-    public async Task NotifyWorkOrderAsync_處理人沒有email時不寄也不拋例外()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        var noticeEmpty = MakeWorkOrderNotice(recipientEmail: "");
-        var noticeWhitespace = MakeWorkOrderNotice(recipientEmail: "   ");
-        var noticeNull = MakeWorkOrderNotice(recipientEmail: null);
-
-        var service = Create();
-        await service.NotifyWorkOrderAsync(noticeEmpty);
-        await service.NotifyWorkOrderAsync(noticeWhitespace);
-        await service.NotifyWorkOrderAsync(noticeNull);
-
-        Assert.Empty(_sender.Sent);
-    }
-
-    // ── NotifyWorkOrderDigestAsync：夜間交辦摘要信（回饋第 47 輪 E-1e）─────────────
-
-    [Fact]
-    public async Task NotifyWorkOrderDigestAsync_每位處理人一封且列出各自的單()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
-        _users.Upsert(new WebUser { UserId = 2, Account = "eng2", Email = "eng2@test.local", Active = true });
-
-        var summary = new NightlyDispatchSummary
-        {
-            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
-            {
-                [1] = new List<NightlyDispatchOrderLine>
-                {
-                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
-                    new(102, CreatedThisRun: false, AddedMembers: 5, IssueLabel: "DCOM 10016"),
-                },
-                [2] = new List<NightlyDispatchOrderLine>
-                {
-                    new(201, CreatedThisRun: true, AddedMembers: 2, IssueLabel: "Schannel 36888"),
-                }
-            }
-        };
-
-        await Create().NotifyWorkOrderDigestAsync(summary);
-
-        Assert.Equal(2, _sender.Sent.Count);
-
-        var sent1 = _sender.Sent[0];
-        Assert.Equal(new[] { "eng1@test.local" }, sent1.Message.To);
-        Assert.Contains("交辦摘要", sent1.Message.Subject);
-        Assert.Contains("新交辦 1 張、新增 8 台", sent1.Message.Subject);
-        Assert.Contains("昨夜的分析替你派了以下交辦單：", sent1.Message.Body);
-        Assert.Contains("單號 101：disk 153（新建，3 台）", sent1.Message.Body);
-        Assert.Contains("單號 102：DCOM 10016（新增 5 台）", sent1.Message.Body);
-        Assert.Contains("請至站台的「交辦單」頁檢視。", sent1.Message.Body);
-        Assert.DoesNotContain("201", sent1.Message.Body);
-        Assert.DoesNotContain("Schannel", sent1.Message.Body);
-
-        var sent2 = _sender.Sent[1];
-        Assert.Equal(new[] { "eng2@test.local" }, sent2.Message.To);
-        Assert.Contains("交辦摘要", sent2.Message.Subject);
-        Assert.Contains("新交辦 1 張、新增 2 台", sent2.Message.Subject);
-        Assert.Contains("昨夜的分析替你派了以下交辦單：", sent2.Message.Body);
-        Assert.Contains("單號 201：Schannel 36888（新建，2 台）", sent2.Message.Body);
-        Assert.Contains("請至站台的「交辦單」頁檢視。", sent2.Message.Body);
-        Assert.DoesNotContain("101", sent2.Message.Body);
-        Assert.DoesNotContain("102", sent2.Message.Body);
-        Assert.DoesNotContain("disk 153", sent2.Message.Body);
-    }
-
-    [Fact]
-    public async Task NotifyWorkOrderDigestAsync_開關關閉時不寄()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = false);
-        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
-
-        var summary = new NightlyDispatchSummary
-        {
-            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
-            {
-                [1] = new List<NightlyDispatchOrderLine>
-                {
-                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
-                }
-            }
-        };
-
-        await Create().NotifyWorkOrderDigestAsync(summary);
-
-        Assert.Empty(_sender.Sent);
-    }
-
-    [Fact]
-    public async Task NotifyWorkOrderDigestAsync_處理人沒有email時略過其他人照寄()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "", Active = true });
-        _users.Upsert(new WebUser { UserId = 2, Account = "eng2", Email = "eng2@test.local", Active = true });
-
-        var summary = new NightlyDispatchSummary
-        {
-            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
-            {
-                [1] = new List<NightlyDispatchOrderLine>
-                {
-                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153"),
-                },
-                [2] = new List<NightlyDispatchOrderLine>
-                {
-                    new(201, CreatedThisRun: true, AddedMembers: 2, IssueLabel: "Schannel 36888"),
-                }
-            }
-        };
-
-        await Create().NotifyWorkOrderDigestAsync(summary);
-
-        var sent = Assert.Single(_sender.Sent);
-        Assert.Equal(new[] { "eng2@test.local" }, sent.Message.To);
-        Assert.Contains("單號 201：Schannel 36888（新建，2 台）", sent.Message.Body);
-        Assert.DoesNotContain("101", sent.Message.Body);
-    }
-
-    [Fact]
-    public async Task 交辦摘要信_復發台數寫進該行()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
-
-        var summary = new NightlyDispatchSummary
-        {
-            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
-            {
-                [1] = new List<NightlyDispatchOrderLine>
-                {
-                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153") { RecurrenceMembers = 2 },
-                }
-            }
-        };
-
-        await Create().NotifyWorkOrderDigestAsync(summary);
-
-        var sent = Assert.Single(_sender.Sent);
-        Assert.Contains("其中 2 台是復發", sent.Message.Body);
-        Assert.Contains("單號 101：disk 153（新建，3 台），其中 2 台是復發：你最近 30 天內修好過的主機又出現同一個問題", sent.Message.Body);
-    }
-
-    [Fact]
-    public async Task 交辦摘要信_無復發時行文不變()
-    {
-        EnableMail(s => s.MailNotifyWorkOrders = true);
-        _users.Upsert(new WebUser { UserId = 1, Account = "eng1", Email = "eng1@test.local", Active = true });
-
-        var summary = new NightlyDispatchSummary
-        {
-            PerHandler = new Dictionary<long, IReadOnlyList<NightlyDispatchOrderLine>>
-            {
-                [1] = new List<NightlyDispatchOrderLine>
-                {
-                    new(101, CreatedThisRun: true, AddedMembers: 3, IssueLabel: "disk 153") { RecurrenceMembers = 0 },
-                }
-            }
-        };
-
-        await Create().NotifyWorkOrderDigestAsync(summary);
-
-        var sent = Assert.Single(_sender.Sent);
-        Assert.DoesNotContain("復發", sent.Message.Body);
-        Assert.Contains("單號 101：disk 153（新建，3 台）", sent.Message.Body);
-    }
-
     // ── 週報靜音中問題段（回饋第 47 輪 E-1e）─────────────────────────────────────
 
     [Fact]
@@ -2101,6 +1833,7 @@ public class MailNotificationServiceTests : IDisposable
         workflow.RestoreFromRecord(record, aiEnabled: false, prtgEnabled: false);
         var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
             _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
             _issueOwners, _issueAggregates, workflow: workflow);
 
         try
@@ -2231,6 +1964,7 @@ public class MailNotificationServiceTests : IDisposable
             "replacement", 0, "changed", false, false, parentRecordId: record.RecordId + 1);
         var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
             _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
             _issueOwners, _issueAggregates, workflow: workflow);
         try
         {
@@ -2274,6 +2008,7 @@ public class MailNotificationServiceTests : IDisposable
         workflow.RestoreFromRecord(netiqRecord, aiEnabled: false, prtgEnabled: false);
         var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
             _records, _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _freshness,
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)),
             _issueOwners, _issueAggregates, workflow: workflow);
         try
         {

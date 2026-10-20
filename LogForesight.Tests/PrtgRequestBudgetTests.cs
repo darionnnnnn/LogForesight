@@ -807,7 +807,8 @@ public class PrtgRequestBudgetTests
                     new MailNotifyStateStore(fx.Blob("mail_notify_state")),
                     new ScheduleFreshnessService(
                         new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs")),
-                        new ScheduleOptionsStore(fx.Blob("schedule_options")))),
+                        new ScheduleOptionsStore(fx.Blob("schedule_options"))),
+                    new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey))),
                 new FakeReportUsageQuery());
 
             Assert.Same(PrtgRequestBudget.Shared, service.PrtgBudget);

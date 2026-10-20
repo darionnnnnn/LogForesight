@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using System.Text.Json;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
@@ -351,34 +352,10 @@ public class WorkOrderBoardService
         foreach (var (handlerId, orders) in createdOrdersByHandler)
         {
             if (orders.Count == 0) continue;
-            if (handlerId == _currentUser.UserId) continue;
-            if (!users.TryGetValue(handlerId, out var handler) || string.IsNullOrWhiteSpace(handler.Email)) continue;
-
-            WorkOrderNotice notice;
-            if (orders.Count == 1)
+            foreach (var (workOrderId, _, _) in orders)
             {
-                var (workOrderId, issueLabel, hosts) = orders[0];
-                notice = new WorkOrderNotice(
-                    WorkOrderNoticeKinds.Created, workOrderId,
-                    issueLabel, WorkOrderScopes.Hosts,
-                    hosts.Count, hosts, AutoDispatchNote, null,
-                    handler.Account, handler.Email, _currentUser.Account, null);
+                _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Created, workOrderId, handlerId, _currentUser.UserId, _currentUser.Account);
             }
-            else
-            {
-                var allHosts = orders.SelectMany(o => o.HostNames).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                var allLabels = string.Join("、", orders.Select(o => o.IssueLabel));
-                var orderListText = string.Join("\n", orders.Select(o => $"  - 單號 {o.WorkOrderId}：{o.IssueLabel}"));
-                var note = $"{AutoDispatchNote}\n本次共建立 {orders.Count} 張交辦單：\n{orderListText}";
-
-                notice = new WorkOrderNotice(
-                    WorkOrderNoticeKinds.Created, orders[0].WorkOrderId,
-                    $"共 {orders.Count} 項問題（{allLabels}）", WorkOrderScopes.Hosts,
-                    allHosts.Count, allHosts, note, null,
-                    handler.Account, handler.Email, _currentUser.Account, null);
-            }
-
-            _ = _mail.NotifyWorkOrderAsync(notice);
         }
         var perHandler = hostsByHandler
             .Where(p => p.Value > 0)

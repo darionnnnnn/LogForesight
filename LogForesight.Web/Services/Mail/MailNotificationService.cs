@@ -96,6 +96,7 @@ public class MailNotificationService
     private readonly MailIssueDigest? _issueDigest;
     private readonly PrtgMonitoringPolicyStore? _prtgMonitoring;
     private readonly HostDayWorkflowService? _workflow;
+    private readonly WorkOrderOutboxStore _outbox;
 
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
@@ -108,6 +109,7 @@ public class MailNotificationService
         IRecordHandlingStore handlings,
         MailNotifyStateStore state,
         ScheduleFreshnessService freshness,
+        WorkOrderOutboxStore outbox,
         IIssueOwnerStore? issueOwners = null,
         IIssueAggregateQuery? issueAggregates = null,
         MailIssueDigest? issueDigest = null, PrtgMonitoringPolicyStore? prtgMonitoring = null, StorageBackend? prtgBackend = null,
@@ -124,6 +126,7 @@ public class MailNotificationService
         _issueAggregates = issueAggregates;
         _state = state;
         _freshness = freshness;
+        _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
         _issueOwners = issueOwners;
         _issueDigest = issueDigest;
         _prtgMonitoring = prtgMonitoring;
@@ -417,143 +420,78 @@ public class MailNotificationService
     }
 
     /// <summary>
-    /// 交辦單通知：建立／改派／取消時通知處理人。
-    /// 內部 try/catch 到底：通知永遠不能弄掛交辦單操作本身。
+    /// 交辦通知入列（取代即時單發）。MailEnabled 或 MailNotifyWorkOrders 關閉時不入列；收件人就是操作者時不入列。
     /// </summary>
-    public async Task NotifyWorkOrderAsync(WorkOrderNotice notice, CancellationToken ct = default)
+    public void EnqueueWorkOrderNotice(string kind, long workOrderId, long recipientUserId, long actorUserId, string actorAccount,
+        int memberDelta = 0, string? reason = null)
     {
         try
         {
             var settings = _settingsStore.Get();
             if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return;
+            if (recipientUserId == actorUserId) return;
 
-            if (string.IsNullOrWhiteSpace(notice.RecipientEmail))
+            var item = new WorkOrderOutboxItem
             {
-                Log.Warn("[Mail] 交辦單通知略過：處理人 {Account} 沒有設定 email（單號 {Id}）。", notice.RecipientAccount, notice.WorkOrderId);
-                return;
-            }
-
-            var email = notice.RecipientEmail.Trim();
-            var dateText = DateTime.Today.ToString("yyyy-MM-dd");
-
-            var (type, summary) = notice.Kind switch
-            {
-                WorkOrderNoticeKinds.Transferred => ("交辦移交", $"{notice.IssueLabel} 已移交"),
-                WorkOrderNoticeKinds.Cancelled => ("交辦取消", $"{notice.IssueLabel} 已取消"),
-                _ => ("交辦", $"{notice.IssueLabel}（{notice.HostCount} 台）"),
+                Kind = kind,
+                WorkOrderId = workOrderId,
+                RecipientUserId = recipientUserId,
+                EnqueuedAt = DateTime.Now,
+                ActorAccount = actorAccount ?? "",
+                MemberDelta = memberDelta,
+                Reason = reason,
+                Immediate = false,
+                NoEmail = false
             };
-            var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, "-", type, summary);
 
-            var body = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
-
-            var firstLine = notice.Kind switch
+            var dropped = _outbox.Enqueue(item);
+            if (dropped > 0)
             {
-                WorkOrderNoticeKinds.Transferred => $"交辦單 {notice.WorkOrderId}「{notice.IssueLabel}」已由 {notice.ActorAccount} 移交給其他處理人，你不需再處理這張單中移出的主機。",
-                WorkOrderNoticeKinds.Cancelled => $"交辦單 {notice.WorkOrderId}「{notice.IssueLabel}」已由 {notice.ActorAccount} 取消，其中的主機已調回未處理。",
-                _ => $"{notice.ActorAccount} 交辦了一張單給你：{notice.IssueLabel}",
-            };
-            body.AppendLine(firstLine);
-            body.AppendLine();
-            body.AppendLine($"  單號：{notice.WorkOrderId}");
-            if (!string.IsNullOrWhiteSpace(notice.PlainExplanation))
-            {
-                body.AppendLine($"  說明：{notice.PlainExplanation}");
+                Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
             }
-            body.AppendLine($"  主機數：{notice.HostCount}");
-            if (notice.HostNames is { Count: > 0 })
-            {
-                var hostList = string.Join("、", notice.HostNames.Take(20));
-                // 以總台數判定：呼叫端可能只傳部分主機名，名單比總數少就要註明總數
-                if (notice.HostCount > Math.Min(notice.HostNames.Count, 20))
-                {
-                    body.AppendLine($"  主機：{hostList}…等 {notice.HostCount} 台");
-                }
-                else
-                {
-                    body.AppendLine($"  主機：{hostList}");
-                }
-            }
-            if (!string.IsNullOrWhiteSpace(notice.Note))
-            {
-                body.AppendLine($"  交辦說明：{notice.Note}");
-            }
-            if (notice.DueDate.HasValue)
-            {
-                body.AppendLine($"  期限：{notice.DueDate.Value:yyyy-MM-dd}");
-            }
-            if (!string.IsNullOrWhiteSpace(notice.Reason))
-            {
-                body.AppendLine($"  原因：{notice.Reason}");
-            }
-            body.AppendLine();
-            body.AppendLine($"請至站台的「交辦單」頁檢視單號 {notice.WorkOrderId}。");
-
-            await SendSafeAsync(settings, new List<string> { email }, subject, body.ToString(), ct);
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "[Mail] 交辦單通知處理失敗（不影響交辦單本身）");
+            Log.Warn(ex, "[Mail] 交辦通知入列失敗（不影響交辦單本身）");
         }
     }
 
     /// <summary>
-    /// 夜間交辦摘要信（回饋第 47 輪 E-1）：每位處理人一封，列出昨夜為其新建或續掛的交辦單。
-    /// 內部 try/catch 到底：通知永遠不能弄掛分析流程。
+    /// 夜間派工入列：PerHandler 每一行轉成一筆（CreatedThisRun → created，否則 appended；MemberDelta=AddedMembers）。
     /// </summary>
-    public async Task NotifyWorkOrderDigestAsync(NightlyDispatchSummary summary, CancellationToken ct = default)
+    public void EnqueueNightlyDispatch(NightlyDispatchSummary summary)
     {
         try
         {
+            if (summary == null || summary.PerHandler.Count == 0) return;
             var settings = _settingsStore.Get();
-            if (!settings.MailEnabled || !settings.MailNotifyWorkOrders || summary.PerHandler.Count == 0) return;
+            if (!settings.MailEnabled || !settings.MailNotifyWorkOrders) return;
 
-            var users = _users.GetAll().ToDictionary(u => u.UserId);
-            var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+            // 一趟夜間派工一次入列：逐筆入列會讓整份 outbox blob 重寫上百次
+            var now = DateTime.Now;
+            var items = summary.PerHandler
+                .Where(pair => pair.Value != null)
+                .SelectMany(pair => pair.Value.Select(line => new WorkOrderOutboxItem
+                {
+                    Kind = line.CreatedThisRun ? WorkOrderOutboxKinds.Created : WorkOrderOutboxKinds.Appended,
+                    WorkOrderId = line.WorkOrderId,
+                    RecipientUserId = pair.Key,
+                    EnqueuedAt = now,
+                    ActorAccount = "system",
+                    MemberDelta = line.AddedMembers,
+                    RecurrenceMembers = line.RecurrenceMembers
+                }))
+                .ToList();
 
-            foreach (var (userId, orders) in summary.PerHandler.OrderBy(kv => kv.Key))
+            var dropped = _outbox.Enqueue(items);
+            if (dropped > 0)
             {
-                if (!users.TryGetValue(userId, out var user) || !user.Active)
-                {
-                    continue;
-                }
-
-                if (string.IsNullOrWhiteSpace(user.Email))
-                {
-                    Log.Warn("[Mail] 交辦摘要略過：處理人 {Account} 沒有設定 email。", user.Account);
-                    continue;
-                }
-
-                var email = user.Email.Trim();
-                var createdCount = orders.Count(o => o.CreatedThisRun);
-                var addedCount = orders.Sum(o => o.AddedMembers);
-                var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, "-", "交辦摘要", $"新交辦 {createdCount} 張、新增 {addedCount} 台");
-
-                var body = new StringBuilder();
-                if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
-
-                body.AppendLine("昨夜的分析替你派了以下交辦單：");
-                body.AppendLine();
-                foreach (var order in orders.OrderBy(o => o.WorkOrderId))
-                {
-                    var line = order.CreatedThisRun
-                        ? $"  單號 {order.WorkOrderId}：{order.IssueLabel}（新建，{order.AddedMembers} 台）"
-                        : $"  單號 {order.WorkOrderId}：{order.IssueLabel}（新增 {order.AddedMembers} 台）";
-                    if (order.RecurrenceMembers > 0)
-                    {
-                        line += $"，其中 {order.RecurrenceMembers} 台是復發：你最近 30 天內修好過的主機又出現同一個問題";
-                    }
-                    body.AppendLine(line);
-                }
-                body.AppendLine();
-                body.AppendLine("請至站台的「交辦單」頁檢視。");
-
-                await SendSafeAsync(settings, new List<string> { email }, subject, body.ToString(), ct);
+                Log.Warn("[Mail] 交辦 outbox 超過上限，已移除 {Dropped} 筆最舊項目", dropped);
             }
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "[Mail] 交辦摘要通知處理失敗（不影響分析結果）");
+            Log.Warn(ex, "[Mail] 夜間派工通知入列失敗（不影響派工本身）");
         }
     }
 
@@ -2283,15 +2221,3 @@ public class MailNotificationService
 /// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）。
 /// </summary>
 public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason);
-
-public static class WorkOrderNoticeKinds
-{
-    public const string Created = "created";
-    public const string Transferred = "transferred";
-    public const string Cancelled = "cancelled";
-}
-
-public sealed record WorkOrderNotice(
-    string Kind, long WorkOrderId, string IssueLabel, string? PlainExplanation,
-    int HostCount, IReadOnlyList<string> HostNames, string? Note, DateTime? DueDate,
-    string RecipientAccount, string? RecipientEmail, string ActorAccount, string? Reason);

@@ -222,17 +222,9 @@ public class WorkOrderCommandService
                 NoiseExcluded = plan.NoiseExcludedHosts
             });
 
-        var rules = KnownIssueCatalog.ResolveRules(_rules);
-        var allocationMap = plan.Allocations.ToDictionary(a => a.Handler.UserId);
         foreach (var order in orders)
         {
-            var hostNames = allocationMap.TryGetValue(order.HandlerId, out var alloc)
-                ? alloc.Hosts.Select(h => h.Resolved.Host.HostName).ToList()
-                : (IReadOnlyList<string>)Array.Empty<string>();
-            // 併入既有單時協調器不覆蓋單上的說明與期限，信件要寫單上實際的值
-            var (note, dueDate) = order.CreatedOrder ? (req.Note, req.DueDate) : NoteAndDueOf(order.WorkOrderId);
-            NotifyHandler(WorkOrderNoticeKinds.Created, order.WorkOrderId, plan.IssueLabel, plan.Source, plan.EventId,
-                order.HandlerId, hostNames.Count, hostNames, note, dueDate, null, rules);
+            NotifyHandler(WorkOrderOutboxKinds.Created, order.WorkOrderId, order.HandlerId);
         }
 
         return new CreateWorkOrderResultDto
@@ -284,6 +276,12 @@ public class WorkOrderCommandService
                 Skipped = outcome.SkippedConflicts.Count, NoiseExcluded = noiseExcluded, Ignored = ignored
             });
 
+        var added = outcome.NewCases + outcome.LinkedExisting + outcome.Reassigned;
+        if (added > 0)
+        {
+            _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Appended, id, order.HandlerId, _currentUser.UserId, _currentUser.Account, memberDelta: added);
+        }
+
         return new AppendWorkOrderResultDto
         {
             WorkOrderId = id,
@@ -318,11 +316,8 @@ public class WorkOrderCommandService
                 result.TargetWorkOrderId, result.MergedIntoExisting, result.MovedCases
             });
 
-        var rules = KnownIssueCatalog.ResolveRules(_rules);
-        NotifyHandler(WorkOrderNoticeKinds.Created, result.TargetWorkOrderId, order.IssueLabel, order.SourceName, order.EventId,
-            handler.UserId, result.MovedCases, Array.Empty<string>(), order.Note, order.DueDate, null, rules);
-        NotifyHandler(WorkOrderNoticeKinds.Transferred, id, order.IssueLabel, order.SourceName, order.EventId,
-            result.PreviousHandlerId, result.MovedCases, Array.Empty<string>(), null, null, null, rules);
+        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId);
+        NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId);
 
         return ToMoveResult(id, result, handler);
     }
@@ -346,11 +341,8 @@ public class WorkOrderCommandService
                 result.TargetWorkOrderId, result.MergedIntoExisting, result.MovedCases, CaseIds = req.CaseIds
             });
 
-        var rules = KnownIssueCatalog.ResolveRules(_rules);
-        NotifyHandler(WorkOrderNoticeKinds.Created, result.TargetWorkOrderId, order.IssueLabel, order.SourceName, order.EventId,
-            handler.UserId, result.MovedCases, Array.Empty<string>(), order.Note, order.DueDate, null, rules);
-        NotifyHandler(WorkOrderNoticeKinds.Transferred, id, order.IssueLabel, order.SourceName, order.EventId,
-            result.PreviousHandlerId, result.MovedCases, Array.Empty<string>(), null, null, null, rules);
+        NotifyHandler(WorkOrderOutboxKinds.Created, result.TargetWorkOrderId, handler.UserId);
+        NotifyHandler(WorkOrderOutboxKinds.Transferred, id, result.PreviousHandlerId);
 
         return ToMoveResult(id, result, handler);
     }
@@ -369,8 +361,7 @@ public class WorkOrderCommandService
             targetId: id.ToString(),
             detail: new { WorkOrderId = id, result.ClosedCases, Reason = reason, result.HandlerId });
 
-        NotifyHandler(WorkOrderNoticeKinds.Cancelled, id, order.IssueLabel, order.SourceName, order.EventId,
-            result.HandlerId, result.ClosedCases, Array.Empty<string>(), null, null, reason, KnownIssueCatalog.ResolveRules(_rules));
+        NotifyHandler(WorkOrderOutboxKinds.Cancelled, id, result.HandlerId, reason: reason);
 
         return new WorkOrderCloseResultDto
         {
@@ -627,32 +618,13 @@ public class WorkOrderCommandService
 
     // ── 共用 ────────────────────────────────────────────────────────────────
 
-    private void NotifyHandler(
-        string kind, long workOrderId, string issueLabel, string? source, int? eventId,
-        long recipientUserId, int hostCount, IReadOnlyList<string> hostNames, string? note, DateTime? dueDate, string? reason,
-        List<KnownIssueRule> resolvedRules)
+    private void NotifyHandler(string kind, long workOrderId, long recipientUserId, string? reason = null)
     {
-        if (recipientUserId == _currentUser.UserId) return;
-        var user = _users.Get(recipientUserId);
-        if (user == null) return;
-
-        var plainExplanation = source != null && eventId != null
-            ? KnownIssueCatalog.PlainExplanationFor(resolvedRules, source, eventId.Value)
-            : null;
-
-        _ = _mail.NotifyWorkOrderAsync(new WorkOrderNotice(
-            kind, workOrderId, issueLabel, plainExplanation, hostCount, hostNames,
-            note, dueDate, user.Account, user.Email, _currentUser.Account, reason));
+        _mail.EnqueueWorkOrderNotice(kind, workOrderId, recipientUserId, _currentUser.UserId, _currentUser.Account, reason: reason);
     }
 
     private WorkOrder GetOrder(long id) =>
         _orders.Get(id) ?? throw DomainException.NotFound($"找不到交辦單 {id}。");
-
-    private (string? Note, DateTime? DueDate) NoteAndDueOf(long workOrderId)
-    {
-        var existing = GetOrder(workOrderId);
-        return (existing.Note, existing.DueDate);
-    }
 
     private WebUser ResolveActiveHandler(long handlerId)
     {

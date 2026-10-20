@@ -342,6 +342,9 @@ public class SystemSettings
     /// <summary>交辦單郵件：建立／改派／取消時通知處理人，並於夜間派工後寄每位處理人的摘要。需同時開啟 MailEnabled。</summary>
     public bool MailNotifyWorkOrders { get; set; }
 
+    /// <summary>交辦摘要寄送時刻，HH:mm，1～4 組。</summary>
+    public List<string> MailWorkOrderDigestTimes { get; set; } = new() { "08:00", "12:00" };
+
     /// <summary>持久設定版本；舊資料為 legacy，成功儲存後換新識別。</summary>
     public string Revision { get; set; } = "legacy";
 

@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using System.Net.Http;
 using System.Text;
 
@@ -104,6 +105,7 @@ public static class ServiceCollectionExtensions
 
         // 郵件通知寄送狀態（回饋十五輪批次D）：每日/每週摘要的「上次寄送日」＋緊急通知的去重鍵
         services.AddSingleton<MailNotifyStateStore>(sp => new MailNotifyStateStore(sp.GetRequiredService<StorageBackend>().Blob("mail_notify_state")));
+        services.AddSingleton(sp => new WorkOrderOutboxStore(sp.GetRequiredService<StorageBackend>().Blob(WorkOrderOutboxStore.BlobKey)));
 
         // 每使用者偏好（回饋第 50 輪 C-4，目前只有個人常用語）：獨立 blob，不進使用者清單
         services.AddSingleton<UserPreferenceStore>(sp => new UserPreferenceStore(sp.GetRequiredService<StorageBackend>().Blob("user_prefs")));

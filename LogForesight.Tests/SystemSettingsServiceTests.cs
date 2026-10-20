@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
 using System.ComponentModel.DataAnnotations;
 using LogForesight.Core.Service;
 using LogForesight.Web.Controllers.Api;
@@ -23,6 +25,7 @@ public class SystemSettingsServiceTests : IDisposable
     /// MailNotifyStateStore 的預填結果——原本 Create() 內部各自新建，測試碰不到。</summary>
     private readonly FakeAnalysisRecordQuery _mailRecords = new();
     private MailNotifyStateStore MailState => new(_fx.Blob("mail_notify_state"));
+    private WorkOrderOutboxStore Outbox => new(_fx.Blob(WorkOrderOutboxStore.BlobKey));
     private ScheduleFreshnessService Freshness => new(new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")), new ScheduleOptionsStore(_fx.Blob("schedule_options")));
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
@@ -32,7 +35,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox), new FakeReportUsageQuery());
 
     [Fact]
     public void PRTG設定_舊表單版本不能覆寫新範圍()
@@ -310,7 +313,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox), new FakeReportUsageQuery());
 
         // 存入不同的值以確認稽核抓到變更
         service.Update(ValidRequest(rawEventRetentionDays: 90));
@@ -995,6 +998,46 @@ public class SystemSettingsServiceTests : IDisposable
         request.MailDailyTime = "廿五點";
 
         Assert.Throws<DomainException>(() => Create().Update(request));
+    }
+
+    [Fact]
+    public void Update_交辦摘要時刻格式不合法_拋出驗證錯誤()
+    {
+        var request = ValidMailRequest();
+        request.MailNotifyWorkOrders = true;
+        request.MailWorkOrderDigestTimes = new List<string> { "08:00", "25:00" };
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Contains("交辦摘要時刻『25:00』格式不合法，請用 HH:mm", ex.Message);
+    }
+
+    [Fact]
+    public void Update_交辦摘要時刻重複_拋出驗證錯誤()
+    {
+        var request = ValidMailRequest();
+        request.MailNotifyWorkOrders = true;
+        request.MailWorkOrderDigestTimes = new List<string> { "08:00", "08:00" };
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Contains("交辦摘要時刻不可重複", ex.Message);
+    }
+
+    [Fact]
+    public void Update_交辦摘要時刻超過四組_拋出驗證錯誤()
+    {
+        var request = ValidMailRequest();
+        request.MailNotifyWorkOrders = true;
+        request.MailWorkOrderDigestTimes = new List<string> { "08:00", "10:00", "12:00", "14:00", "16:00" };
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Contains("交辦摘要時刻至少一組、最多四組", ex.Message);
+    }
+
+    [Fact]
+    public void Get_交辦摘要時刻預設值為八點與十二點()
+    {
+        var settings = Create().Get();
+        Assert.Equal(new[] { "08:00", "12:00" }, settings.MailWorkOrderDigestTimes);
     }
 
     [Fact]
@@ -1852,7 +1895,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                new MailNotifyStateStore(_fx.Blob("mail_state_whitelist")), Freshness), new FakeReportUsageQuery());
+                new MailNotifyStateStore(_fx.Blob("mail_state_whitelist")), Freshness, Outbox), new FakeReportUsageQuery());
 
         var request = ValidRequest();
         request.PrtgSensorTypeWhitelist = new List<string>
@@ -1889,7 +1932,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                new MailNotifyStateStore(_fx.Blob("mail_state_dto")), Freshness), new FakeReportUsageQuery());
+                new MailNotifyStateStore(_fx.Blob("mail_state_dto")), Freshness, Outbox), new FakeReportUsageQuery());
 
         var request = ValidRequest();
         request.PrtgSensorTypeWhitelist = new List<string> { "SNMP Memory", "SNMP Linux Meminfo" };
@@ -2641,7 +2684,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox), new FakeReportUsageQuery());
 
         var req = ValidRequest();
         req.PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive;
@@ -2663,7 +2706,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState, Freshness), new FakeReportUsageQuery());
+                MailState, Freshness, Outbox), new FakeReportUsageQuery());
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {
@@ -2868,7 +2911,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                new MailNotifyStateStore(_fx.Blob("mail_state_cat_overrides")), Freshness), new FakeReportUsageQuery());
+                new MailNotifyStateStore(_fx.Blob("mail_state_cat_overrides")), Freshness, Outbox), new FakeReportUsageQuery());
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {

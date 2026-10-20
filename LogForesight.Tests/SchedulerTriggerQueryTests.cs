@@ -111,7 +111,8 @@ public class SchedulerTriggerQueryTests
                 new FakeAnalysisRecordQuery(),
                 new FakeHandlingStore(),
                 mailState,
-                freshness);
+                freshness,
+                new WorkOrderOutboxStore(backend.Blob(WorkOrderOutboxStore.BlobKey)));
 
             var spec = new SmtpConnectionSpec("smtp.example.com", 25, false, "user", null);
             await mailService.SendTestAsync(spec, "noreply@example.com", new List<string> { "admin@example.com" },

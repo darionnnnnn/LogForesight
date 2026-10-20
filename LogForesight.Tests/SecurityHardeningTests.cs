@@ -156,7 +156,8 @@ public class SecurityHardeningTests
                 new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
                 new MailNotifyStateStore(fx.Blob("mail_state")),
                 new ScheduleFreshnessService(new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs")),
-                    new ScheduleOptionsStore(fx.Blob("schedule_options")))),
+                    new ScheduleOptionsStore(fx.Blob("schedule_options"))),
+                new WorkOrderOutboxStore(fx.Blob(WorkOrderOutboxStore.BlobKey))),
             new FakeReportUsageQuery());
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest

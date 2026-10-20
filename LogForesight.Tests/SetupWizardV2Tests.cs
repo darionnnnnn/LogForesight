@@ -76,7 +76,7 @@ public class SetupWizardV2Tests : IDisposable
         return new(
             _settings, new FakeSmtpMailSender(), _hosts, _users,
             _groups, _groupAccess, new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness);
+            new MailNotifyStateStore(_backend.Blob("mail_notify_state")), freshness, new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)));
     }
 
     [Fact]

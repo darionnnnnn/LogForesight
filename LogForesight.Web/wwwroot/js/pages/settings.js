@@ -566,6 +566,7 @@ function renderMailFields(settings) {
     document.getElementById('mail-body-intro').value = settings.mailBodyIntro ?? '';
     document.getElementById('mail-digest-skip-empty').checked = settings.mailDigestSkipEmpty;
     document.getElementById('mail-notify-work-orders').checked = !!settings.mailNotifyWorkOrders;
+    document.getElementById('mail-work-order-digest-times').value = (settings.mailWorkOrderDigestTimes || []).join(', ');
     document.getElementById('auto-dispatch-enabled').checked = !!settings.autoDispatchEnabled;
     document.getElementById('mail-test-result').replaceChildren();
 
@@ -1414,6 +1415,7 @@ function bindForm() {
                 mailBodyIntro: document.getElementById('mail-body-intro').value.trim(),
                 mailDigestSkipEmpty: document.getElementById('mail-digest-skip-empty').checked,
                 mailNotifyWorkOrders: document.getElementById('mail-notify-work-orders').checked,
+                mailWorkOrderDigestTimes: document.getElementById('mail-work-order-digest-times').value.split(',').map(s => s.trim()).filter(Boolean),
                 autoDispatchEnabled: document.getElementById('auto-dispatch-enabled').checked,
                 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
                 brandName: document.getElementById('brand-name').value.trim(),

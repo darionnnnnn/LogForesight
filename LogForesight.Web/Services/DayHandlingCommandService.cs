@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -229,31 +230,12 @@ public class DayHandlingCommandService
         if (handler != null && !_capabilities.Resolve(handler).Contains(Capability.Handle))
             dto.AssigneeCannotHandle = true;
 
-        if (_mail != null && handler != null && handler.UserId != _currentUser.UserId && createdOrders.Count > 0 && !string.IsNullOrWhiteSpace(handler.Email))
+        if (_mail != null && handler != null)
         {
-            WorkOrderNotice notice;
-            if (createdOrders.Count == 1)
+            foreach (var o in createdOrders)
             {
-                var o = createdOrders[0];
-                notice = new WorkOrderNotice(
-                    WorkOrderNoticeKinds.Created, o.WorkOrderId, o.IssueLabel, null,
-                    1, new[] { host.HostName }, null, null,
-                    handler.Account, handler.Email, _currentUser.Account, null);
+                _mail.EnqueueWorkOrderNotice(WorkOrderOutboxKinds.Created, o.WorkOrderId, handler.UserId, _currentUser.UserId, _currentUser.Account);
             }
-            else
-            {
-                var allLabels = string.Join("、", createdOrders.Select(o => o.IssueLabel));
-                var orderListText = string.Join("\n", createdOrders.Select(o => $"  - 單號 {o.WorkOrderId}：{o.IssueLabel}"));
-                var note = $"本次共建立 {createdOrders.Count} 張交辦單：\n{orderListText}";
-
-                notice = new WorkOrderNotice(
-                    WorkOrderNoticeKinds.Created, createdOrders[0].WorkOrderId,
-                    $"共 {createdOrders.Count} 項問題（{allLabels}）", null,
-                    1, new[] { host.HostName }, note, null,
-                    handler.Account, handler.Email, _currentUser.Account, null);
-            }
-
-            _ = _mail.NotifyWorkOrderAsync(notice);
         }
 
         return dto;
