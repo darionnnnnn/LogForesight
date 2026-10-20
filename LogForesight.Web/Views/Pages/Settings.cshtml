@@ -39,13 +39,13 @@
             </p>
             <div class="d-flex flex-wrap gap-2 mb-3" id="severity-checks"></div>
 
-            <label class="form-label small fw-semibold">未勾選層級的顯示方式</label>
-            <div class="d-flex flex-wrap gap-2 mb-1" id="severity-display-mode"></div>
+            <span class="form-label small fw-semibold d-inline-block" id="severity-display-mode-label">未勾選層級的顯示方式</span>
+            <div class="d-flex flex-wrap gap-2 mb-1" id="severity-display-mode" role="group" aria-labelledby="severity-display-mode-label"></div>
             <div class="form-text mb-3" id="severity-display-mode-hint"></div>
 
             <hr />
 
-            <label class="form-label small fw-semibold">日風險等級顯示</label>
+            <span class="form-label small fw-semibold d-inline-block" id="day-risk-level-label">日風險等級顯示</span>
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                     data-bs-content="「高風險日」為必要顯示項目，無法取消勾選。">
                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -56,7 +56,7 @@
                 不受此設定影響，兩處仍顯示完整證據——避免時間軸把「這天有分析但被藏起來」
                 誤顯示成「這天沒有分析紀錄」。
             </p>
-            <div class="d-flex flex-wrap gap-2 mb-1" id="day-risk-level-checks"></div>
+            <div class="d-flex flex-wrap gap-2 mb-1" id="day-risk-level-checks" role="group" aria-labelledby="day-risk-level-label"></div>
 
             <hr />
 

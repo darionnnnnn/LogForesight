@@ -41,7 +41,8 @@
                     </div>
                 </details>
                 <a class="btn btn-sm btn-outline-secondary mb-2" href="@Url.Content("~/api/imports/Owners/template")">下載範本</a>
-                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Owners" />
+                <label for="import-owners-file" class="visually-hidden">選擇要上傳的負責人 CSV 檔</label>
+                <input type="file" class="form-control form-control-sm" id="import-owners-file" accept=".csv" data-upload="Owners" />
             </div>
         </div>
     </div>

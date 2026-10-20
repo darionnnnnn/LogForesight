@@ -96,9 +96,20 @@ export function applyBackfillDaysLimit(inputElOrId, helpElOrId, maxDays, content
     }
 }
 
+/** 圖示按鈕缺 title 時的 aria-label 退路對照表（圖示名稱 → 螢幕閱讀器名稱）。 */
+const ICON_FALLBACK_LABELS = {
+    'x-lg': '關閉',
+    'trash': '刪除',
+    'pencil': '編輯',
+    'arrow-clockwise': '重新整理',
+    'clipboard': '複製',
+};
+
 /**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
+ * 只有圖示又沒給 title 時，以圖示名稱查 ICON_FALLBACK_LABELS 補 aria-label（查無則用圖示名稱），
+ * 並 console.warn 提醒呼叫端補 title——不擲例外，避免單一呼叫點拖垮整頁。
  */
 export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title } = {}) {
     const btn = document.createElement('button');
@@ -112,6 +123,9 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
         btn.appendChild(span);
     } else if (title) {
         btn.setAttribute('aria-label', title);
+    } else if (iconName) {
+        btn.setAttribute('aria-label', ICON_FALLBACK_LABELS[iconName] || iconName);
+        console.warn('[ui.button] 圖示按鈕缺少 title：' + iconName);
     }
     if (onClick) btn.addEventListener('click', onClick);
     return btn;

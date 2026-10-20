@@ -114,7 +114,7 @@
 </section>
 
 <!-- 規則編輯 -->
-<div class="modal fade" id="rule-modal" tabindex="-1">
+<div class="modal fade" id="rule-modal" tabindex="-1" aria-labelledby="rule-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
@@ -379,11 +379,11 @@
 </div>
 
 <!-- 回復預設的前後對照 -->
-<div class="modal fade" id="restore-modal" tabindex="-1">
+<div class="modal fade" id="restore-modal" tabindex="-1" aria-labelledby="restore-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">回復為程式內建預設</h5>
+                <h5 class="modal-title" id="restore-modal-title">回復為程式內建預設</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <div class="modal-body" id="restore-body"></div>
@@ -396,11 +396,11 @@
 </div>
 
 <!-- 新增抑制 -->
-<div class="modal fade" id="suppress-modal" tabindex="-1">
+<div class="modal fade" id="suppress-modal" tabindex="-1" aria-labelledby="suppress-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">抑制此規則的告警</h5>
+                <h5 class="modal-title" id="suppress-modal-title">抑制此規則的告警</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <form id="suppress-form">
@@ -425,8 +425,8 @@
                         </div>
                         <div class="col-md-8">
                             <div id="suppress-host-wrap">
-                                <label class="form-label">主機 <span class="text-danger">*</span></label>
-                                <div id="suppress-host-select"></div>
+                                <span class="form-label d-inline-block" id="suppress-host-label">主機 <span class="text-danger">*</span></span>
+                                <div id="suppress-host-select" role="group" aria-labelledby="suppress-host-label"></div>
                             </div>
                             <div id="suppress-group-wrap" class="d-none">
                                 <label for="suppress-group" class="form-label">主機群組 <span class="text-danger">*</span></label>
@@ -464,11 +464,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="rule-import-modal" tabindex="-1">
+<div class="modal fade" id="rule-import-modal" tabindex="-1" aria-labelledby="rule-import-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">內建規則升級預覽</h5>
+                <h5 class="modal-title" id="rule-import-modal-title">內建規則升級預覽</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <div class="modal-body">

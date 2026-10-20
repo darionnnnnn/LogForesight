@@ -5,11 +5,11 @@
 <div id="host-detail" data-host-id="@ViewData["HostId"]">
     <div id="host-header"></div>
 
-    <div class="modal fade" id="host-update-modal" tabindex="-1">
+    <div class="modal fade" id="host-update-modal" tabindex="-1" aria-labelledby="host-update-modal-title">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">指定主機更新</h5>
+                    <h5 class="modal-title" id="host-update-modal-title">指定主機更新</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <form id="host-update-form" novalidate>

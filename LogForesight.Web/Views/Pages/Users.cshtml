@@ -44,7 +44,7 @@
 </div>
 
 <!-- 編輯對話框 -->
-<div class="modal fade" id="user-modal" tabindex="-1">
+<div class="modal fade" id="user-modal" tabindex="-1" aria-labelledby="user-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
@@ -94,12 +94,12 @@
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">所屬群組</label>
+                        <span class="form-label d-inline-block" id="user-groups-label">所屬群組</span>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="群組決定這個人的角色與可看見的主機。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
-                        <div id="user-groups" class="border rounded p-2 lf-scroll-sm"></div>
+                        <div id="user-groups" role="group" aria-labelledby="user-groups-label" class="border rounded p-2 lf-scroll-sm"></div>
                     </div>
                 </div>
                 <div class="modal-footer">

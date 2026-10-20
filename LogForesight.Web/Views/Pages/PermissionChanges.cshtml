@@ -89,7 +89,7 @@
 
 <nav class="mt-3" id="perm-pager"></nav>
 
-<div class="modal fade" id="confirm-modal" tabindex="-1">
+<div class="modal fade" id="confirm-modal" tabindex="-1" aria-labelledby="confirm-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
@@ -114,7 +114,7 @@
     </div>
 </div>
 
-<div class="modal fade" id="batch-confirm-modal" tabindex="-1">
+<div class="modal fade" id="batch-confirm-modal" tabindex="-1" aria-labelledby="batch-confirm-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
@@ -126,12 +126,12 @@
                     <div class="alert alert-info mb-3" id="batch-confirm-summary-text"></div>
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
-                            <label class="form-label fw-semibold">依類別摘要</label>
-                            <div id="batch-confirm-categories" class="border rounded p-2 lf-scroll-sm"></div>
+                            <span class="form-label fw-semibold d-inline-block" id="batch-confirm-categories-label">依類別摘要</span>
+                            <div id="batch-confirm-categories" role="group" aria-labelledby="batch-confirm-categories-label" class="border rounded p-2 lf-scroll-sm"></div>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label fw-semibold">依主機摘要</label>
-                            <div id="batch-confirm-hosts" class="border rounded p-2 lf-scroll-sm"></div>
+                            <span class="form-label fw-semibold d-inline-block" id="batch-confirm-hosts-label">依主機摘要</span>
+                            <div id="batch-confirm-hosts" role="group" aria-labelledby="batch-confirm-hosts-label" class="border rounded p-2 lf-scroll-sm"></div>
                         </div>
                     </div>
                     <div class="mb-2">
@@ -149,11 +149,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="batch-skipped-modal" tabindex="-1">
+<div class="modal fade" id="batch-skipped-modal" tabindex="-1" aria-labelledby="batch-skipped-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">批次處理略過清單</h5>
+                <h5 class="modal-title" id="batch-skipped-modal-title">批次處理略過清單</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <div class="modal-body">

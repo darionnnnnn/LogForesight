@@ -14,6 +14,18 @@ import { startBadgePolling } from './badges.js';
 import { clearAllDraftsForUser } from './note-editor.js';
 
 /**
+ * 詳情頁路徑前綴 → 父選單 href：詳情頁不在選單上，沒有這張表就沒有任何項目高亮。
+ * 比對一律用 appPath()（已去掛載前綴）；parent 以 `/` 結尾代表前綴比對
+ * （「我的交辦」的 href 帶使用者編號，是動態值），否則為完整比對。
+ */
+const DETAIL_PARENTS = [
+    { prefix: '/hosts/', parent: '/admin/hosts' },
+    { prefix: '/handlers/', parent: '/handlers/' },
+    { prefix: '/records/', parent: '/records' },
+    { prefix: '/work-orders/', parent: '/work-orders' }
+];
+
+/**
  * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
  * 避免管理與監控功能平鋪成一長串。空 section（例如一般使用者看不到任何系統管理項）不渲染標題。
  */
@@ -174,10 +186,18 @@ function renderNav(user) {
             label.textContent = item.label;
             link.appendChild(label);
 
-            const isActive = item.resolvedHref === '/'
-                ? currentPath === '/'
-                : currentPath.startsWith(item.resolvedHref);
-            if (isActive) link.classList.add('is-active');
+            const detail = DETAIL_PARENTS.find(d => currentPath.startsWith(d.prefix));
+            const isActive = detail
+                ? (detail.parent.endsWith('/')
+                    ? item.resolvedHref.startsWith(detail.parent)
+                    : item.resolvedHref === detail.parent)
+                : (item.resolvedHref === '/'
+                    ? currentPath === '/'
+                    : currentPath.startsWith(item.resolvedHref));
+            if (isActive) {
+                link.classList.add('is-active');
+                link.setAttribute('aria-current', 'page');
+            }
 
             // 「我的交辦」未結案數（體檢 M7）：一般使用者是每天用得最頻繁的角色，
             // 但過去唯一知道自己有工作的方法是主動點進去——首頁 KPI 顯示的是全站待辦，

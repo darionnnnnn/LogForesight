@@ -19,7 +19,7 @@
     <div class="lf-card__body p-0" id="issue-owner-list"></div>
 </section>
 
-<div class="modal fade" id="issue-owner-modal" tabindex="-1">
+<div class="modal fade" id="issue-owner-modal" tabindex="-1" aria-labelledby="issue-owner-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
@@ -29,7 +29,7 @@
             <form id="issue-owner-form" novalidate>
                 <div class="modal-body">
                     <div class="mb-3" id="issue-owner-picker-field">
-                        <label class="form-label">問題</label>
+                        <label for="issue-owner-picker" class="form-label">問題</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="從近 30 天出現過的問題挑選；若要指派的問題還沒出現過，切換到「手動輸入」。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
@@ -51,8 +51,8 @@
                     </div>
                     <div class="mb-3" id="issue-owner-selected-summary"></div>
                     <div class="mb-3">
-                        <label class="form-label">負責人</label>
-                        <div id="issue-owner-users" class="border rounded p-2 lf-scroll-md"></div>
+                        <span class="form-label d-inline-block" id="issue-owner-users-label">負責人</span>
+                        <div id="issue-owner-users" role="group" aria-labelledby="issue-owner-users-label" class="border rounded p-2 lf-scroll-md"></div>
                     </div>
                     <div class="mb-3">
                         <label for="issue-owner-note" class="form-label">備註（選填）</label>
@@ -63,7 +63,7 @@
                         <hr />
                         <div class="mb-3">
                             <div class="d-flex align-items-center justify-content-between">
-                                <label class="form-label mb-0">機房結論</label>
+                                <label for="issue-owner-conclusion-status" class="form-label mb-0">機房結論</label>
                                 <button type="button" class="btn btn-link btn-sm px-0 d-none" id="issue-owner-conclusion-clear">
                                     解除結論
                                 </button>

@@ -208,6 +208,7 @@ E 與 F 都會動 `work-orders.js`、`work-order-detail.js`、`handler-detail.js
 | 批次 E 瀏覽器實測 | Claude（內建瀏覽器，Stub `demo-admin`，空資料庫） | 通過 | 儀表板「待派工問題」卡、交辦總覽「只看未讀回覆」、設定頁「交辦摘要時刻」皆出現；`unread-count`、`me/badge` 各頁 200；各頁無新增 console 錯誤 | 空資料庫無法實測派工互動流程（預覽確認、退回、未讀刷新），由服務層測試與突變覆蓋。順帶發現既有問題：主機為空時 PRTG 維護頁範圍區塊 403 並顯示誤導文案，記入 BACKLOG |
 | F-5、F-6、F-8 | Sonnet 5.5（規格 task-56-f568）＋ Claude 修正 | 完成 | UI 141 綠；瀏覽器實測排程頁圖例色由 token 取得、RGB 與原值相同；PRTG 維護、規則、報表頁無新增錯誤 | Claude 退回 `prtg-guard.js` 的改動：預覽是動作按鈕不是頁面載入，原本顯示 PRTG 回的實際錯誤（連線／認證），改成 `guardLoad` 會變成通用「載入失敗」——規格把它歸錯類；守門測試改為該檔不得用 `guardLoad`。`rules.js` 以 import 別名保留 `dateText` 呼叫名（既有測試斷言該字串）。`'載入中…'` 只剩 `renderSpinner` 呼叫與 `<select>` 選項兩種，守門以規則放行 |
 | F-3、F-7 | Sonnet 5.5（規格 task-56-f37）＋ Claude 修正 | 完成 | cshtml `style="` 57 → 0、JS `.style.x =` → 0（動態量值改 CSS 變數，允許清單寫進測試並反向檢查）；Claude 停掉 dev server 後補跑整套建置 0 警告；UI 148 綠；瀏覽器實測儀表板 KPI 每列 4 張 | Sonnet 因 dev server 鎖檔無法建置 Web（Razor 未驗），Claude 停 server 補建置。Settings 警示框改 `alert-warning` 後顏色變成 Bootstrap 黃，Claude 在 site.css 以元件變數把 `.alert-warning` 對到 `--lf-warning-*`，實測顏色與原值逐一相同（全站 21 處警示框一併統一）。寬度歸併最大差 ±20px（工具列 min-width 100→120），捲動區改四級（最大差 12px）。儀表板 KPI 由一列自適應改為每列 4 張（DESIGN-SYSTEM §6b 規則） |
+| F-4 | 無障礙：側欄分段文字 #9fb0cc（對比 7.6:1）、目前頁 aria-current＋詳情頁前綴對照、modal aria-labelledby 與 focus-visible、無對應輸入的 label 改 span＋role="group"、圖示按鈕缺 title 退路 aria-label＋console.warn；新增 AccessibilityUiTests 11 條 | Sonnet 實作；Claude 驗收：build 0 警告、UI／無障礙 157 綠；子代理突變兩條（側欄色、modal labelledby）轉紅，Claude 加做拿掉 aria-current 轉紅，並把該 assert 收緊為 setAttribute 呼叫 |
 
 ## 8. 明確不做（本輪定案）
 

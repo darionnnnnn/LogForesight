@@ -72,7 +72,7 @@
 
 <nav class="mt-3" id="host-pager"></nav>
 
-<div class="modal fade" id="host-modal" tabindex="-1">
+<div class="modal fade" id="host-modal" tabindex="-1" aria-labelledby="host-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
@@ -144,13 +144,13 @@
                             </select>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">主機群組</label>
-                            <div id="host-groups" class="border rounded p-2 lf-scroll-sm"></div>
+                            <span class="form-label d-inline-block" id="host-groups-label">主機群組</span>
+                            <div id="host-groups" role="group" aria-labelledby="host-groups-label" class="border rounded p-2 lf-scroll-sm"></div>
                             <div class="form-text">決定哪些部門看得到這台主機。<strong>未分組時只有 admin 看得到。</strong></div>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">負責人</label>
-                            <div id="host-owners" class="border rounded p-2 lf-scroll-sm"></div>
+                            <span class="form-label d-inline-block" id="host-owners-label">負責人</span>
+                            <div id="host-owners" role="group" aria-labelledby="host-owners-label" class="border rounded p-2 lf-scroll-sm"></div>
                             <div class="form-text">
                                 負責人會<strong>自動取得</strong>所負責主機的檢視權限，並具備處理狀態維護權限（等同部門群組授權的第二條路徑）。
                             </div>
@@ -174,11 +174,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="bulk-modal" tabindex="-1">
+<div class="modal fade" id="bulk-modal" tabindex="-1" aria-labelledby="bulk-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">批次登錄 NetIQ 主機</h5>
+                <h5 class="modal-title" id="bulk-modal-title">批次登錄 NetIQ 主機</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <form id="bulk-form" novalidate>
@@ -233,11 +233,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="batch-groups-modal" tabindex="-1">
+<div class="modal fade" id="batch-groups-modal" tabindex="-1" aria-labelledby="batch-groups-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">批次設定群組</h5>
+                <h5 class="modal-title" id="batch-groups-modal-title">批次設定群組</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <form id="batch-groups-form" novalidate>
@@ -246,8 +246,8 @@
                         <div class="form-label small text-muted" id="batch-groups-hosts-label"></div>
                         <div id="batch-groups-hosts" class="lf-bulk-assign-hosts"></div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">模式</label>
+                    <div class="mb-3" role="group" aria-labelledby="batch-groups-mode-label">
+                        <span class="form-label d-inline-block" id="batch-groups-mode-label">模式</span>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="batch-groups-mode" id="batch-groups-mode-add" value="add" checked />
                             <label class="form-check-label" for="batch-groups-mode-add">
@@ -263,8 +263,8 @@
                         <div class="form-text text-danger d-none" id="batch-groups-replace-warning"></div>
                     </div>
                     <div>
-                        <label class="form-label">群組</label>
-                        <div id="batch-groups-checks" class="border rounded p-2 lf-scroll-sm"></div>
+                        <span class="form-label d-inline-block" id="batch-groups-label">群組</span>
+                        <div id="batch-groups-checks" role="group" aria-labelledby="batch-groups-label" class="border rounded p-2 lf-scroll-sm"></div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -276,11 +276,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="batch-tier-modal" tabindex="-1">
+<div class="modal fade" id="batch-tier-modal" tabindex="-1" aria-labelledby="batch-tier-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">批次設定分級</h5>
+                <h5 class="modal-title" id="batch-tier-modal-title">批次設定分級</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <form id="batch-tier-form" novalidate>
@@ -307,11 +307,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="batch-owners-modal" tabindex="-1">
+<div class="modal fade" id="batch-owners-modal" tabindex="-1" aria-labelledby="batch-owners-modal-title">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">指派負責人</h5>
+                <h5 class="modal-title" id="batch-owners-modal-title">指派負責人</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <form id="batch-owners-form" novalidate>
@@ -320,8 +320,8 @@
                         <div class="form-label small text-muted" id="batch-owners-hosts-label"></div>
                         <div id="batch-owners-hosts" class="lf-bulk-assign-hosts"></div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">模式</label>
+                    <div class="mb-3" role="group" aria-labelledby="batch-owners-mode-label">
+                        <span class="form-label d-inline-block" id="batch-owners-mode-label">模式</span>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="batch-owners-mode" id="batch-owners-mode-add" value="add" checked />
                             <label class="form-check-label" for="batch-owners-mode-add">加入（保留每台既有負責人，勾選的人加上去）</label>
@@ -336,8 +336,8 @@
                         </div>
                     </div>
                     <div>
-                        <label class="form-label">使用者</label>
-                        <div id="batch-owners-checks" class="border rounded p-2 lf-scroll-md"></div>
+                        <span class="form-label d-inline-block" id="batch-owners-label">使用者</span>
+                        <div id="batch-owners-checks" role="group" aria-labelledby="batch-owners-label" class="border rounded p-2 lf-scroll-md"></div>
                         <div class="form-text">負責人會自動取得所負責主機的檢視權限與處理能力。</div>
                     </div>
                 </div>

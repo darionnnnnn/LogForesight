@@ -85,7 +85,7 @@
     --lf-sidebar-bg: #0f1d3a;
     --lf-sidebar-fg: #9fb0cc;
     --lf-sidebar-fg-strong: #f1f4fa;
-    --lf-sidebar-section: #68799a;
+    --lf-sidebar-section: #9fb0cc; /* 與 --lf-sidebar-fg 同值：深底對比 7.6:1（原 #68799a 僅 3.81:1），層級靠大寫／字距／字級 */
     --lf-sidebar-active-bg: rgba(59, 130, 246, .24);
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
     /* 回饋十四輪 UI-1：改用 rem，跟著 html{font-size} 的 clamp+使用者字級偏好一起縮放
@@ -410,6 +410,15 @@ input:-webkit-autofill:active {
 
 .form-check-input:focus {
     border-color: var(--lf-primary-hover);
+    box-shadow: var(--lf-focus-ring);
+}
+
+/* modal 內的互動元件：鍵盤 focus 一律可見（沿用既有 focus ring token，不另造顏色） */
+.modal .btn:focus-visible,
+.modal .form-control:focus-visible,
+.modal .form-select:focus-visible,
+.modal .form-check-input:focus-visible {
+    outline: none;
     box-shadow: var(--lf-focus-ring);
 }
 

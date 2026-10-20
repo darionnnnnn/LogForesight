@@ -39,7 +39,7 @@
 | `--lf-sidebar-bg` | `#161d2e` | `#0f1d3a` | 深海軍藍，從「近黑」轉向與主色同族的深藍，品牌感更聚焦 |
 | `--lf-sidebar-fg` | `#a9b4c7` | `#9fb0cc` | 隨底色微調 |
 | `--lf-sidebar-fg-strong` | `#f1f4fa` | 不變 | |
-| `--lf-sidebar-section` | `#6f7c93` | `#68799a` | |
+| `--lf-sidebar-section` | `#6f7c93` | `#9fb0cc` | 與 `--lf-sidebar-fg` 同值，在 `--lf-sidebar-bg` 上對比 7.6:1（WCAG AA 要求 4.5:1）；分組標題的層級靠大寫、字距、字級與 600 字重表現 |
 | `--lf-sidebar-active-bg` | `rgba(99,102,241,.22)` | `rgba(59,130,246,.24)` | 換藍族 |
 | `--lf-sidebar-hover-bg` | 不變 | 不變 | |
 | `--lf-content-bg` | `#f6f7fb` | `#f8fafc` | slate-50，與中性階完全對齊 |
