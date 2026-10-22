@@ -866,6 +866,20 @@ console.log('PASS operational status refresh');
         Assert.Contains("--lf-chart-grid", charts);
     }
 
+    /// <summary>PRTG 卡「回填狀態」從未回填過時寫「尚未回填」，初值「載入中…」（第 57 輪批次C-3）。</summary>
+    [Fact]
+    public void PRTG卡回填狀態_從未回填顯示尚未回填_初值載入中()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+        var render = js[js.IndexOf("function renderPrtgBackfillStatus(status)", StringComparison.Ordinal)..];
+        render = render[..render.IndexOf("\nasync function ", StringComparison.Ordinal)];
+        Assert.Contains("statusEl.textContent = '尚未回填';", render);
+        Assert.DoesNotContain("statusEl.textContent = '';", render);
+        Assert.Contains("id=\"prtg-backfill-status\">載入中…</span>", cshtml);
+    }
+
     /// <summary>
     /// AI 卡：待補 0 件時，AI 未設定或資料校正中不得寫成「已全部完成」，且這兩種原因要顯示說明（第 57 輪批次C-2）。
     /// </summary>

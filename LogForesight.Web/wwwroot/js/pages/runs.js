@@ -2041,7 +2041,8 @@ function renderPrtgBackfillStatus(status) {
     }
 
     if (!status.completedAt) {
-        statusEl.textContent = '';
+        // 從未回填過：空白會讓人以為欄位壞了，「—」又說不出是「沒做過」還是「取不到」
+        statusEl.textContent = '尚未回填';
         return;
     }
     if (status.cancelled) {
