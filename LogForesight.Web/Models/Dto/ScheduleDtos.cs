@@ -65,6 +65,22 @@ public class SaveScheduleOptionsRequest
 /// LastRun* 系列（docs/archive/FEEDBACK-7-PLAN.md）：閒置時顯示「上次執行到底成不成功」，
 /// 不然失敗只留在 log 檔，使用者只看過「已開始執行」的 toast 就再也沒有回饋。
 /// 站台重啟後 LastRun* 全部為 null（行程內狀態），完整歷史請查執行總表。</summary>
+/// <summary>最近一趟排程取數的 PRTG 逐日結果（立即執行不計入）。</summary>
+public class PrtgLastScheduledDayDto
+{
+    /// <summary>資料日（yyyy-MM-dd）</summary>
+    public string Date { get; set; } = "";
+
+    /// <summary>該日 PRTG 結局（success / partial / failed / no_output / disabled）</summary>
+    public string Outcome { get; set; } = "";
+
+    public int Findings { get; set; }
+    public int AttributedHosts { get; set; }
+
+    /// <summary>該趟執行 id（執行詳情連結用）</summary>
+    public long RunId { get; set; }
+}
+
 public class ScheduleStatusDto
 {
     public bool IsRunning { get; set; }
@@ -129,6 +145,9 @@ public class ScheduleStatusDto
 
     /// <summary>最近一趟 PRTG 異常的原因註記。</summary>
     public string? PrtgLastIssueNote { get; set; }
+
+    /// <summary>最近一趟排程取數處理的最新 PRTG 資料日（PRTG 維護頁「最近一次排程驗收」）；近期沒有排程執行或取數執行中為 null。</summary>
+    public PrtgLastScheduledDayDto? PrtgLastScheduledDay { get; set; }
 
     public bool? LastRunSuccess { get; set; }
     public string? LastRunMessage { get; set; }

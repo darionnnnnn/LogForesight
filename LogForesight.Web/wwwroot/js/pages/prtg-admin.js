@@ -16,11 +16,57 @@ import { initValueReadiness } from './prtg-value-readiness.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
+import { evaluateScheduledAcceptance } from '../core/prtg-acceptance.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
 let scopeRevision = null;
-const setupState = { settings: null, settingsLoading: true, connectionTest: null, probe: null, sync: null, rules: null, schedule: null };
+// 最近一次排程驗收的三個來源：undefined＝讀取中、null＝讀取失敗（見 core/prtg-acceptance.js）
+const setupState = {
+    settings: null, settingsLoading: true, probe: null, sync: null, rules: null, schedule: null,
+    scheduleStatus: undefined, aiStatus: undefined, snapshotHours: undefined
+};
+
+const ACCEPTANCE_STATE_TEXT = {
+    ok: '已確認', pending: '待確認', na: '不適用', nodata: '無資料', loading: '讀取中', error: '無法讀取'
+};
+
+/** 啟用準備全部確認後才出現：用最近一趟排程的實際結果驗收，而不是只看設定齊不齊。 */
+function renderAcceptance(allConfirmed) {
+    const host = document.getElementById('prtg-acceptance');
+    if (!host) return;
+    host.hidden = !allConfirmed;
+    host.replaceChildren();
+    if (!allConfirmed) return;
+    const title = document.createElement('h3');
+    title.className = 'h6 mb-1';
+    title.textContent = '最近一次排程驗收';
+    const list = document.createElement('ul');
+    list.className = 'small mb-0';
+    for (const item of evaluateScheduledAcceptance(setupState)) {
+        const li = document.createElement('li');
+        li.dataset.acceptance = item.key;
+        li.dataset.state = item.state;
+        li.append(document.createTextNode(`${ACCEPTANCE_STATE_TEXT[item.state]}：${item.label}。${item.detail}`));
+        const link = document.createElement(item.path ? 'a' : 'button');
+        if (item.path) link.href = appUrl(item.path);
+        else { link.type = 'button'; link.className = 'btn btn-link btn-sm p-0 align-baseline'; link.addEventListener('click', () => document.querySelector(`#prtg-tabs [data-tab="${item.tab}"]`)?.click()); }
+        link.classList.add('ms-1');
+        link.textContent = item.linkText;
+        li.appendChild(link);
+        list.appendChild(li);
+    }
+    host.append(title, list);
+}
+
+async function refreshAcceptanceAi() {
+    try {
+        setupState.aiStatus = await api.get('/api/admin/schedule/ai-status', { silent: true });
+    } catch {
+        setupState.aiStatus = null;
+    }
+    renderSetupSummary();
+}
 
 function renderSetupSummary() {
     const summary = document.getElementById('prtg-setup-summary');
@@ -32,13 +78,13 @@ function renderSetupSummary() {
             ? '正在確認已儲存設定…'
             : '無法確認已儲存設定；請重新載入頁面。';
         steps.replaceChildren();
+        renderAcceptance(false);
         return;
     }
     const credential = settings.prtgAuthMode === 'password' ? settings.prtgHasPassword && settings.prtgUsername
         : settings.prtgAuthMode === 'passhash' ? settings.prtgHasPasshash && settings.prtgUsername : settings.prtgHasApiToken;
     const checks = [
         { ok: Boolean(settings.prtgUrl && credential), label: '已儲存的連線位址與認證', next: '設定連線並儲存', tab: 'connection' },
-        { ok: setupState.connectionTest === true, label: '本次頁面連線測試', next: '執行連線測試；重新載入後需再確認', tab: 'connection' },
         { ok: Boolean(settings.prtgEnabled), label: 'PRTG 擷取', next: '到擷取參數啟用並儲存', tab: 'params' },
         { ok: !setupState.sync?.isRunning && setupState.sync?.lastSuccess === true && Boolean(setupState.sync?.lastCompletedAt), label: '上次結構與主機對應同步', next: setupState.sync?.isRunning ? '同步進行中，稍後確認結果' : '同步結構並檢查主機對應', tab: 'mirror' },
         { ok: setupState.rules === true, label: 'PRTG 規則', next: '檢查並啟用 PRTG 規則', href: appUrl('/admin/rules') },
@@ -62,7 +108,8 @@ function renderSetupSummary() {
     }
     const pending = checks.filter(check => !check.ok).length;
     summary.textContent = pending ? `尚有 ${pending} 項需確認；下列步驟依已儲存設定與最近一次狀態顯示。`
-        : '設定與最近一次檢查均已確認；請再到資料準備度與使用效果核對實際涵蓋，不能據此宣稱預警已可用。';
+        : '設定與最近一次檢查均已確認；下方以最近一趟排程的實際結果驗收，資料涵蓋另見數值資料就緒度與使用效果。';
+    renderAcceptance(pending === 0);
 }
 
 function missingHourDate(windowStart, dayIndex, hour) {
@@ -665,7 +712,6 @@ async function loadPrtgSettings() {
     try {
         const settings = await api.get('/api/admin/settings');
         historyRetentionDays = settings.retentionDays;
-        if (setupState.settings?.updatedAt !== settings.updatedAt) setupState.connectionTest = null;
         renderPrtgFields(settings);
         setupState.settings = settings;
     } catch (error) {
@@ -818,15 +864,6 @@ function bindPrtgTest() {
     const button = document.getElementById('prtg-test-btn');
     if (!button) return;
 
-    for (const id of ['prtg-url', 'prtg-auth-mode', 'prtg-username', 'prtg-api-token', 'prtg-password',
-        'prtg-passhash', 'prtg-clear-token', 'prtg-clear-password', 'prtg-clear-passhash',
-        'prtg-ignore-ssl', 'prtg-timeout-seconds']) {
-        document.getElementById(id)?.addEventListener('input', () => {
-            setupState.connectionTest = null;
-            renderSetupSummary();
-        });
-    }
-
     button.addEventListener('click', async () => {
         const url = document.getElementById('prtg-url').value.trim();
         if (!url) {
@@ -861,16 +898,12 @@ function bindPrtgTest() {
                 && !document.getElementById('prtg-clear-passhash')?.checked
                 && Boolean(document.getElementById('prtg-ignore-ssl')?.checked) === Boolean(saved.prtgIgnoreSslErrors)
                 && (Number(document.getElementById('prtg-timeout-seconds')?.value) || 60) === (saved.prtgTimeoutSeconds ?? 60);
-            setupState.connectionTest = result.success === true && matchesSaved;
-            renderSetupSummary();
             resultEl.className = result.success ? 'text-success small' : 'text-danger small';
             resultEl.textContent = result.elapsedMs != null
                 ? `${mark} ${result.message}（耗時 ${result.elapsedMs}ms）`
                 : `${mark} ${result.message}`;
             if (result.success && !matchesSaved) resultEl.textContent += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
         } catch (error) {
-            setupState.connectionTest = false;
-            renderSetupSummary();
             resultEl.className = 'text-danger small';
             resultEl.textContent = `✗ ${error?.message || '測試連線失敗。'}`;
         } finally {
@@ -1124,10 +1157,13 @@ async function loadSnapshotDiagnostics() {
     if (host) renderSpinner(host, '讀取快照診斷…');
     try {
         const response = await api.get('/api/prtg-snapshot-diagnostics', { silent: true });
-        renderSnapshotDiagnostics(response?.hours ?? []);
+        setupState.snapshotHours = response?.hours ?? [];
+        renderSnapshotDiagnostics(setupState.snapshotHours);
     } catch {
+        setupState.snapshotHours = null;
         if (host) renderError(host, { message: '快照診斷讀取失敗。請重新載入；不會呼叫 PRTG。', onRetry: loadSnapshotDiagnostics });
     }
+    renderSetupSummary();
 }
 
 // ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
@@ -2335,6 +2371,7 @@ async function refreshScheduleWarning() {
     try {
         const status = await api.get('/api/admin/schedule/status', { silent: true });
         setupState.schedule = status.scheduleEnabled === true;
+        setupState.scheduleStatus = status;
         renderSetupSummary();
         banner.replaceChildren();
         if (status.scheduleEnabled) return;
@@ -2350,6 +2387,7 @@ async function refreshScheduleWarning() {
         banner.appendChild(alert);
     } catch {
         setupState.schedule = null;
+        setupState.scheduleStatus = null;
         renderSetupSummary();
         renderError(banner, { message: '無法確認排程是否啟用。', onRetry: refreshScheduleWarning });
     }
@@ -2747,6 +2785,7 @@ function init() {
     ensureBatchHostsLoaded();
     refreshPrtgMirror();
     loadSnapshotDiagnostics();
+    refreshAcceptanceAi();
     refreshConflicts(1);
     refreshUnmatched(1);
     refreshIpExcludes();

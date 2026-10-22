@@ -132,11 +132,23 @@ public class ScheduleController : ControllerBase
         string? prtgLastIssueDate = null;
         string? prtgLastIssueOutcome = null;
         string? prtgLastIssueNote = null;
+        PrtgLastScheduledDayDto? prtgLastScheduledDay = null;
 
         // 單元測試以 scheduler: null! 建控制器（只測狀態欄位），與本控制器其他可省略相依同一慣例；正式 DI 一定有值
         if (!_runState.IsRunning && _scheduler is not null)
         {
-            var (healthPending, healthLastIssue) = _scheduler.PrtgRunHealth();
+            var (healthPending, healthLastIssue, healthLastScheduled) = _scheduler.PrtgRunHealth();
+            if (healthLastScheduled is { } scheduled)
+            {
+                prtgLastScheduledDay = new PrtgLastScheduledDayDto
+                {
+                    Date = scheduled.Day.Date.ToString("yyyy-MM-dd"),
+                    Outcome = scheduled.Day.Outcome,
+                    Findings = scheduled.Day.Findings,
+                    AttributedHosts = scheduled.Day.AttributedHosts,
+                    RunId = scheduled.RunId
+                };
+            }
             prtgPendingDays = healthPending.Select(d => d.ToString("yyyy-MM-dd")).ToList();
             if (healthLastIssue != null)
             {
@@ -179,6 +191,7 @@ public class ScheduleController : ControllerBase
             PrtgLastIssueDate = prtgLastIssueDate,
             PrtgLastIssueOutcome = prtgLastIssueOutcome,
             PrtgLastIssueNote = prtgLastIssueNote,
+            PrtgLastScheduledDay = prtgLastScheduledDay,
             LastRunSuccess = lastOutcome?.Success,
             LastRunMessage = lastOutcome?.Message,
             LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,
