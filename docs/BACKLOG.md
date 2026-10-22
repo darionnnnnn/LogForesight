@@ -385,6 +385,8 @@
 - **主機清單的未回報 PRTG 提示**（畫面確認，不適合放探測）：挑一台已對應、近期未回報的主機，確認提示不是「PRTG：無資料」；
   若是，先看該裝置的感測器是否已進鏡像（主機詳情的 PRTG 區塊），新對應的裝置要等快照服務下一輪補抓。
 
+- **週檢移出取數執行**（觸發條件：AI 逾時讓 RunEnded 與通知明顯延後）：`AnalysisOrchestrator` 的週檢是取數執行內唯一同步 AI 呼叫，
+  其餘判讀已由 AI 排程處理；AI 掛了只延後一個逾時、隔趟重試，故未搬。
 - **同一份資料兩種取法**（觸發條件：單次大 `count` 在實機出現截斷或 HTML 空白頁）：環境探測與資源守門即時來源用單次大 `count`、
   結構同步用分頁（感測器與狀態變更已逐裝置查）。是一致性問題，不影響正確性。
 - **值型規則延伸**：基線偏移（相對自身歷史的偏離）尚未實作。
@@ -454,8 +456,8 @@
   （恆 `ok`，無品質判定依據）、`lf_prtg_sensors.thresholds_json`（未向 PRTG 索取閾值欄）、
   `lf_prtg_values.min_value`/`max_value`（historicdata 路徑只取平均；快照 sampled 列有寫入 min/max）、`lf_prtg_state_changes.prev_status`
   （PRTG messages 不提供前一狀態）。
-- **歷史回填沒有完成水位**：靠寫入冪等達成「重跑不重複」，但**不會跳過已完成的日期**——
-  回填 30 天中斷在第 29 天，重跑仍是 30 天全打一次 API。以目前的回填規模可接受。
+- **歷史回填的狀態變更區間不隨完成水位縮小**：續跑只跳過數值日，狀態變更仍整段取一次（冪等去重）。
+  **觸發時機**：續跑時狀態變更階段的耗時明顯高於剩餘數值日。
 - **探測／回填／同步結構與對應／取數執行的互斥是 TOCTOU**：四者各自「先看對方狀態再開始」，中間沒有
   共同的鎖，理論上兩個管理員同一秒各按一個按鈕可以同時起跑。實務上是手動觸發的低頻操作，且鏡像寫入是冪等 upsert，暫不處理。
 - **多台 PRTG core server**：本期假設單一 server（設定是 `SystemSettings` 單例）。要支援多台
@@ -594,12 +596,10 @@
 
 鏡像的 `sensor_type` 取 PRTG 回應的 `type`（顯示名稱，例如「SNMP CPU Load」），取數白名單、數值語意對照、分類對照都以這個英文顯示名為鍵。PRTG 介面語系不是英文時這些對照全部對不上，數值規則與就緒度會靜默落到「單位未知」。修法：鏡像同時存 `type_raw`（語系無關），對照表改以它為鍵並做一次鏡像回填。**觸發時機**：PRTG 介面語系改為非英文，或接入第二台非英文 core server。
 
-## 第 54 輪遞延：停用的 PRTG 觀察表與殘留欄位
+## 已停寫的 PRTG 欄位
 
-- **`lf_prtg_observations` 下一輪 DROP**：第 54 輪起不再寫入（`EfPrtgObservationStore.Capture` 已無呼叫端），保留期清理照舊把殘列清掉；
-  表與 store 保留一輪讓既有站台升級後仍可讀舊列。**觸發時機**：下一輪開工時連同 `Capture`、`PendingQuality` 等死碼一起刪，SchemaUpgrader 補冪等 DROP。
-- **已停寫的欄位**：`lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`
-  程式已不讀寫，既有資料庫欄位保留（不寫 DROP COLUMN，避免 SQL Server 端的相依約束風險）。**觸發時機**：與上一條同一輪處理。
+- `lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`
+  程式已不讀寫，既有資料庫欄位保留（不寫 DROP COLUMN，避免 SQL Server 端的相依約束風險）。**觸發時機**：下次 schema 層級的一輪一併評估。
 
 ## 深色模式（明確不做）
 

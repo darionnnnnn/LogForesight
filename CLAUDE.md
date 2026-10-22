@@ -105,6 +105,9 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要把外部系統回傳的字串直接寫進有長度上限的欄位——寫入前一律依 `HasMaxLength` 截斷。
   外部來源（PRTG、NetIQ…）沒有長度保證，超長在 SQL Server 端會讓整批寫入一起擲截斷例外、
   SQLite 端卻靜默通過——兩個後端行為分岔，測試環境永遠看不到，正式機才爆。
+- 不要另 new 一個不帶閘道的 `AIService`：所有 AI 呼叫一律經全站 `IAiRequestGate`（互動優先、背景上限隨 `AiConcurrency`），
+  建構點都要帶 `gate:`（`AiRequestGateTests` 掃 `new AIService(`）。AI 待補順序與閒置原因各只有一份判定
+  （`SelectNextBatch`、`BlockingIdleReason`），不要在控制器或畫面再算一次。
 - K 的來源鍵就緒閘門必須分開：`IIssueAggregateQuery` 等 `lf_top_issues.source_key` 回填與
   `lf_issue_first_seen` 舊鍵重整完成；`IRiskyEventStore` 只等 `lf_risky_events.source_key`
   回填完成。後者在前者回填後開始，但不是聯合讀取閘門；每批 500 列。索引完整鍵序列是
