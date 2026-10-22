@@ -35,6 +35,7 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly IHostApplicationLifetime? _lifetime;
     private readonly HostDayWorkflowService? _workflow;
     private readonly IWebAiService _webAi;
+    private readonly IAiRequestGate? _aiGate;
 
     public AiAnalysisHostedService(
         ScheduleOptionsStore optionsStore,
@@ -50,7 +51,8 @@ public class AiAnalysisHostedService : BackgroundService
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
         IHostApplicationLifetime? lifetime = null,
-        HostDayWorkflowService? workflow = null)
+        HostDayWorkflowService? workflow = null,
+        IAiRequestGate? aiGate = null)
     {
         _webAi = webAi;
         _optionsStore = optionsStore;
@@ -66,6 +68,7 @@ public class AiAnalysisHostedService : BackgroundService
         _injectedAiService = aiService;
         _lifetime = lifetime;
         _workflow = workflow;
+        _aiGate = aiGate;
 
         // 站台關閉時對進行中的 AI 執行發出優雅停止
         _lifetime?.ApplicationStopping.Register(() => _runState.TryCancel());
@@ -623,6 +626,8 @@ public class AiAnalysisHostedService : BackgroundService
     {
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
-        return new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)));
+        // 每個主機分片各自一個實例（各自的請求佇列），跨實例的併發上限與互動優先由全站閘道負責
+        return new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
+            gate: _aiGate);
     }
 }

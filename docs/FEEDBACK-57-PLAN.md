@@ -272,6 +272,7 @@ PRTG-SPEC §3 與 WEB-SPEC §9.10 加「AI 完整性保證」一段（閘門、�
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | A-1 積壓順序分塊 | Claude（Opus 5.5，邏輯精細、已逐行追過，自做比寫規格省） | `PendingAiQuery`（範圍＋方向）取代批次放大；`SelectNextBatch` 每批重算近日層→七日塊；兩個替身共用 `PendingAiFake` | AI 排程／EF 查詢／查詢計畫 64 綠；突變兩條（片內改新→舊、錨點改最舊）各紅 2 條 | **簡化**：近日層固定「今天−2」，不跟 `PrtgRangeStart`——回望多日時其餘日期落進塊、完整性閘門照擋，少一個相依。既有兩條測試（情境 4、AI 端點停止）把舊順序寫進斷言，依新契約改寫。成功者從 attempted 移除，查詢列數只需多取失敗者 |
+| A-2 全站 AI 閘道 | Claude（Opus 5.5，併發原語自做） | `IAiRequestGate`／`AiRequestGate`／`NullAiRequestGate`；`AIService` 多兩個可選參數（gate、lane）；五處建構點全接，互動兩個實例走互動車道；DI 單例，背景上限讀 `AiConcurrency` | 閘道 9 條＋AI 排程＋AIService＋WebAiService＋工作流恢復 86 綠；DI 組裝 13 綠；突變（拿掉互動優先）紅 1 條 | **設計修正**：閘道改在本實例佇列**之後**取（規劃寫外層）——排在自己佇列裡的呼叫不該佔全站許可。守門測試掃 Core／Web 的 `new AIService(` 須帶 `gate:`，鎖定 5 處 |
 
 ## 體檢交接
 

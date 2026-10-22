@@ -306,6 +306,11 @@ public static class ServiceCollectionExtensions
                 : new SentinelRestDirectoryClient(sp.GetRequiredService<NetiqOptionsStore>()));
         services.AddScoped<NetiqDiscoveryService>();
 
+        // 全站 AI 閘道（docs/WEB-SPEC.md §9.10）：所有 AIService 實例共用一道，互動優先、
+        // 背景上限＝排程設定的 AI 併發數（每次取許可時重讀，改設定即生效）
+        services.AddSingleton<IAiRequestGate>(sp =>
+            new AiRequestGate(() => sp.GetRequiredService<ScheduleOptionsStore>().Get().AiConcurrency));
+
         // AI 加值層（純加值、失敗靜默降級）。WebAiService 讀批次 appsettings 的 AI 位址、
         // 建互動情境的短逾時客戶端；Singleton 讓快取與 HttpClient 共用一份
         services.AddSingleton<IWebAiService, WebAiService>();
@@ -446,7 +451,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AnalysisOrchestrator>(sp => new AnalysisOrchestrator(
             sp.GetRequiredService<IDispatchCandidateSource>(),
             () => { sp.GetRequiredService<PermissionVersionStamp>().Bump(); },
-            sp.GetRequiredService<INetiqHostDayTimingCollector>()));
+            sp.GetRequiredService<INetiqHostDayTimingCollector>(),
+            sp.GetRequiredService<IAiRequestGate>()));
         services.AddSingleton<NamedMutexGate>();
         services.AddSingleton<SchedulerRunState>();
         // 背景回填共用節流閘：同一時間最多一支背景回填，取數排程執行中時每 30 秒檢查一次再讓路
@@ -457,7 +463,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ISystemSettingsStore>(),
             sp.GetRequiredService<IWebAiService>(),
             sp.GetRequiredService<HostDayWorkflowService>(),
-            sp.GetRequiredService<BackgroundWorkGate>()));
+            sp.GetRequiredService<BackgroundWorkGate>(),
+            aiGate: sp.GetRequiredService<IAiRequestGate>()));
         services.AddHostedService(sp => sp.GetRequiredService<HostDayWorkflowRecoveryHostedService>());
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
@@ -490,7 +497,8 @@ public static class ServiceCollectionExtensions
                 suppressionStore,
                 aiService: null,
                 lifetime: lifetime,
-                workflow: sp.GetRequiredService<HostDayWorkflowService>());
+                workflow: sp.GetRequiredService<HostDayWorkflowService>(),
+                aiGate: sp.GetRequiredService<IAiRequestGate>());
         });
         services.AddHostedService(sp => sp.GetRequiredService<AiAnalysisHostedService>());
 

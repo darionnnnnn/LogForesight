@@ -24,20 +24,22 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     private readonly HostDayWorkflowService _workflow;
     private readonly BackgroundWorkGate? _gate;
     private readonly IAiService? _reportAiService;
+    private readonly IAiRequestGate? _aiGate;
     private readonly RecoveryBudget _budget;
     private readonly NamedMutexGate _lease = new(LeaseName);
     private const int MaxPendingReportsPerPage = 4;
 
     public HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
         ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow,
-        BackgroundWorkGate? gate = null, IAiService? reportAiService = null)
+        BackgroundWorkGate? gate = null, IAiService? reportAiService = null, IAiRequestGate? aiGate = null)
         : this(records, backend, settings, ai, workflow, RecoveryBudget.Default, gate: gate,
-            reportAiService: reportAiService) { }
+            reportAiService: reportAiService, aiGate: aiGate) { }
 
     internal HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
         ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, RecoveryBudget budget,
-        BackgroundWorkGate? gate = null, IAiService? reportAiService = null)
+        BackgroundWorkGate? gate = null, IAiService? reportAiService = null, IAiRequestGate? aiGate = null)
     {
+        _aiGate = aiGate;
         if (budget.PageSize is < 1 or > WorkflowRecoveryPage.MaximumRows || budget.HotPagesPerSlice < 0 ||
             budget.DeepPagesPerSlice < 0 || budget.OrphanPagesPerSlice < 0 || budget.HotTimeBudget < TimeSpan.Zero ||
             budget.TotalTimeBudget < TimeSpan.Zero)
@@ -288,7 +290,7 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
         // The retry renderer is explicitly called with allowAiDeepDive:false; this service is only
         // a dependency for report composition and never sends an AI request.
         var aiService = _reportAiService ?? new AIService(appSettings.Ai,
-            usageMeter: new AiUsageStore(_backend.Blob(AiUsageStore.BlobKey)));
+            usageMeter: new AiUsageStore(_backend.Blob(AiUsageStore.BlobKey)), gate: _aiGate);
         var reportStore = _backend.ReportStore();
         var suppressionStore = new MuteAwareSuppressionStore(
             new SuppressionStore(_backend.Blob("suppressions")),
