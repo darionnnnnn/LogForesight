@@ -64,7 +64,10 @@ public sealed class PrtgLegacyJsonTransferValidator
                     !counts.TryGetValue(name, out var actual) || declared != actual)
                     throw Invalid("manifest_count_mismatch", "診斷包 manifest 的資料列筆數與實際內容不符。");
             }
-            if (packageManifest.RowCounts.Count != PrtgDiagnosticExportSource.V2ArrayProperties.Count)
+            var legacyDeclared = packageManifest.RowCounts.TryGetValue(LegacyIgnoredArrayProperty, out var legacyDeclaredCount);
+            if (legacyDeclared && (!counts.TryGetValue(LegacyIgnoredArrayProperty, out var legacyActual) || legacyDeclaredCount != legacyActual))
+                throw Invalid("manifest_count_mismatch", "診斷包 manifest 的資料列筆數與實際內容不符。");
+            if (packageManifest.RowCounts.Count != PrtgDiagnosticExportSource.V2ArrayProperties.Count + (legacyDeclared ? 1 : 0))
                 throw Invalid("manifest_count_mismatch", "診斷包 manifest 的資料列筆數欄位不完整或多餘。");
         }
         var manifest = JsonSerializer.Serialize(new
@@ -103,6 +106,13 @@ public sealed class PrtgLegacyJsonTransferValidator
         if (remaining != 0) throw Invalid("manifest_byte_count_invalid", "診斷包 manifest 位元組長度超出內容。");
         return Convert.ToHexString(hash.GetHashAndReset());
     }
+
+    /// <summary>
+    /// 第 57 輪前匯出的診斷包仍帶 Observations 區段（lf_prtg_observations 已移除）。舊包照常驗證列欄位與筆數，
+    /// 但新匯出不再產生、匯入也不寫入任何地方；它不在 <see cref="PrtgDiagnosticExportSource.V2ArrayProperties"/>，
+    /// 所以新包缺少此區段不算殘缺。
+    /// </summary>
+    private const string LegacyIgnoredArrayProperty = "Observations";
 
     private static InvalidDataException Invalid(string code, string message) => new($"{code}: {message}");
 
@@ -181,7 +191,8 @@ public sealed class PrtgLegacyJsonTransferValidator
 
         public StreamingParser(int maxDepth)
         {
-            foreach (var category in RequiredFields.Keys) _counts.Add(category, 0);
+            // 舊包才有的 Observations 區段不預先建立；封套真的帶它時才於陣列開始處登記筆數。
+            foreach (var category in RequiredFields.Keys.Where(name => !Names.Equals(name, LegacyIgnoredArrayProperty))) _counts.Add(category, 0);
             _counts.Add("TimelineCoverageEntries", 0);
             _counts.Add("TimelineStateEntries", 0);
             _readerState = new JsonReaderState(new JsonReaderOptions
@@ -259,7 +270,8 @@ public sealed class PrtgLegacyJsonTransferValidator
                     _manifestFormatVersion != _formatVersion || _manifestPurpose != "diagnostic-only" ||
                     _manifestBytesBefore is null || _manifestSha256 is null ||
                     _manifestSha256.Length != 64 || !_manifestSha256.All(Uri.IsHexDigit) ||
-                    _manifestRowCounts.Count != PrtgDiagnosticExportSource.V2ArrayProperties.Count ||
+                    _manifestRowCounts.Count != PrtgDiagnosticExportSource.V2ArrayProperties.Count +
+                        (_manifestRowCounts.ContainsKey(LegacyIgnoredArrayProperty) ? 1 : 0) ||
                     PrtgDiagnosticExportSource.V2ArrayProperties.Any(name => !_manifestRowCounts.ContainsKey(name)))
                     throw Invalid("manifest_invalid", "診斷包 manifest 欄位、版本或資料列筆數無效。");
                 manifest = new ParsedManifest(_manifestBytesBefore.Value, _manifestSha256,
@@ -490,7 +502,8 @@ public sealed class PrtgLegacyJsonTransferValidator
                 var name = _manifestPendingCount;
                 _manifestPendingCount = null;
                 if (token != JsonTokenType.Number || !reader.TryGetInt64(out var count) || count < 0 ||
-                    !PrtgDiagnosticExportSource.V2ArrayProperties.Contains(name, StringComparer.Ordinal))
+                    (!PrtgDiagnosticExportSource.V2ArrayProperties.Contains(name, StringComparer.Ordinal) &&
+                     !StringComparer.Ordinal.Equals(name, LegacyIgnoredArrayProperty)))
                     throw Invalid("manifest_invalid", "診斷包 manifest 資料列筆數無效。");
                 _manifestRowCounts.Add(name, count);
                 return;

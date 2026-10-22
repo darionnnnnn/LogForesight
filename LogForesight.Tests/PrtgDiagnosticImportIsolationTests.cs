@@ -57,14 +57,13 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
             using var context = _backend.CreateContext();
             return System.Text.Json.JsonSerializer.Serialize(new
             {
-                Observations = context.PrtgObservations.ToList(),
                 Cases = context.IssueCases.ToList(),
                 Orders = context.WorkOrders.ToList()
             });
         }
         var blobsBefore = ExistingBlobSnapshot();
         var evidenceBefore = EvidenceSnapshot();
-        var pkg = new PrtgDataPackage { FormatVersion = 2, Devices = [new() { Objid = 10, Name = "foreign" }], Sensors = [new() { Objid = 100, DeviceObjid = 10, Name = "foreign" }], StateChanges = [new() { SensorObjid = 100, ChangedAt = DateTime.Today.AddHours(2), Status = "Down", Quality = PrtgDataQuality.Ok }], Values = [new() { SensorObjid = 100, PeriodStart = DateTime.Today, AvgValue = 99, Quality = PrtgDataQuality.Sampled }], HostMaps = [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 999, HostName = "foreign", MapStatus = PrtgMapStatus.Ok }], ManualMaps = [new() { DeviceObjid = 10, HostId = 999 }], Observations = [new() { SnapshotId = "foreign", HostId = 999 }] };
+        var pkg = new PrtgDataPackage { FormatVersion = 2, Devices = [new() { Objid = 10, Name = "foreign" }], Sensors = [new() { Objid = 100, DeviceObjid = 10, Name = "foreign" }], StateChanges = [new() { SensorObjid = 100, ChangedAt = DateTime.Today.AddHours(2), Status = "Down", Quality = PrtgDataQuality.Ok }], Values = [new() { SensorObjid = 100, PeriodStart = DateTime.Today, AvgValue = 99, Quality = PrtgDataQuality.Sampled }], HostMaps = [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 999, HostName = "foreign", MapStatus = PrtgMapStatus.Ok }], ManualMaps = [new() { DeviceObjid = 10, HostId = 999 }] };
         var rawJson = System.Text.Json.JsonSerializer.Serialize(pkg);
         var first = PrtgDataTransfer.Import(_backend, pkg);
         var second = PrtgDataTransfer.Import(_backend, pkg);

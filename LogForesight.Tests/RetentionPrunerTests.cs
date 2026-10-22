@@ -119,7 +119,7 @@ public class RetentionPrunerTests : IDisposable
     }
 
     [Fact]
-    public void 過期匯入診斷包清理_保留未完成的判定快照()
+    public void 過期匯入診斷包清理_保留policy_blob()
     {
         var directory = Path.Combine(Path.GetTempPath(), "lf-retention-prtg-" + Guid.NewGuid());
         var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, directory);
@@ -128,15 +128,11 @@ public class RetentionPrunerTests : IDisposable
         using (var db = backend.CreateContext())
         {
             db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_")).ExecuteUpdate(u => u.SetProperty(b => b.UpdatedAt, DateTime.Now.AddDays(-100)));
-            db.PrtgObservations.Add(new() { SnapshotId = "pending", ActiveKey = "pending", SensorObjid = 11,
-                FormatVersion = 2, SupplementStatus = "waiting-netiq", RecordedAtUtc = DateTime.UtcNow.AddDays(-100) });
-            db.SaveChanges();
         }
         RetentionPruner.Run(backend, new RetentionOptions { PrtgRetentionDays = 30 }, new NullConsole(), null);
         using var result = backend.CreateContext();
         Assert.False(result.Blobs.Any(b => b.BlobKey == "prtg_import_diagnostic_test"));
         Assert.True(result.Blobs.Any(b => b.BlobKey == "prtg_monitoring_policy"));
-        Assert.Single(result.PrtgObservations);
     }
 
     private sealed class NullConsole : IRunConsole

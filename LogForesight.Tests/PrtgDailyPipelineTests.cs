@@ -1025,7 +1025,6 @@ public class PrtgDailyPipelineTests : IDisposable
         if (!hostActive)
         {
             Assert.Empty(findings);
-            Assert.Empty(_backend.PrtgObservationStore().ReadPage([host.HostId], day1, day1, 0, 100));
             return;
         }
         Assert.Single(findings);
@@ -1670,7 +1669,6 @@ public class PrtgDailyPipelineTests : IDisposable
         if (outsideSelectedScope)
         {
             Assert.Empty(registry.For(host.HostId, day));
-            Assert.Empty(_backend.PrtgObservationStore().ReadPage([host.HostId], day, day, 0, 100));
             Assert.Empty(hostRecordStore.ReadRecent(day, 1));
             return;
         }
