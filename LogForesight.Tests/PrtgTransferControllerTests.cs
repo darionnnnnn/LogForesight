@@ -75,14 +75,15 @@ public sealed class PrtgTransferControllerTests
         var validator = new PrtgLegacyJsonTransferValidator();
         // 舊版匯出檔仍可能帶 Timelines／SemanticEvidence／SemanticResults；現行套件型別已不含這三組，以原始 JSON 補上。
         var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(LegacyPackage(2)))!.AsObject();
+        // 第 57 輪前的舊包仍帶 Observations 區段（現行套件型別已不含，匯入時只驗證列形狀與筆數、不寫入任何地方）。
+        node["Observations"] = System.Text.Json.Nodes.JsonNode.Parse(LegacyObservationsJson);
         node["Timelines"] = System.Text.Json.Nodes.JsonNode.Parse(LegacyTimelinesJson);
         node["SemanticEvidence"] = System.Text.Json.Nodes.JsonNode.Parse(LegacySemanticEvidenceJson);
         node["SemanticResults"] = System.Text.Json.Nodes.JsonNode.Parse(LegacySemanticResultsJson);
         var json = node.ToJsonString();
         var roundTrip = JsonSerializer.Deserialize<PrtgDataPackage>(json)!;
         Assert.All(new[] { roundTrip.Devices.Count, roundTrip.Sensors.Count, roundTrip.StateChanges.Count,
-            roundTrip.Values.Count, roundTrip.HostMaps.Count, roundTrip.ManualMaps.Count,
-            roundTrip.Observations.Count }, count => Assert.Equal(1, count));
+            roundTrip.Values.Count, roundTrip.HostMaps.Count, roundTrip.ManualMaps.Count }, count => Assert.Equal(1, count));
 
         var bytes = Encoding.UTF8.GetBytes(json);
         var split = bytes.Length / 2;
@@ -124,10 +125,10 @@ public sealed class PrtgTransferControllerTests
         Values = [new() { Id = 20, SensorObjid = 18, PeriodStart = new DateTime(2026, 10, 2), AvgValue = 4.2, Quality = "ok", CreatedAt = new DateTime(2026, 10, 2) }],
         HostMaps = [new() { MapDate = new DateTime(2026, 10, 2), DeviceObjid = 17, HostId = 23, MapStatus = "ok", CreatedAt = new DateTime(2026, 10, 2) }],
         ManualMaps = [new() { DeviceObjid = 17, HostId = 23, CreatedAt = new DateTime(2026, 10, 2) }],
-        Observations = [new() { SnapshotId = "snapshot", DecisionKey = "decision", HostId = 23, RecordDate = new DateTime(2026, 10, 2), DeviceObjid = 17, RuleCode = "rule", EventKey = "event", SourceName = "source", Category = "category", SeverityRank = 1, ElevatesDayRisk = false, Suppressed = false, SourceHint = "hint", QualityReason = "quality", FormatVersion = 1, ContentJson = "{}", RecordedAtUtc = new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc) }],
         SourcePolicy = new PrtgMonitoringPolicy { Revision = "r1", HostIds = [23], SensorIds = [18] }
     };
 
+    private const string LegacyObservationsJson = """[{"SnapshotId":"snapshot","DecisionKey":"decision","HostId":23,"RecordDate":"2026-10-02T00:00:00","DeviceObjid":17,"RuleCode":"rule","EventKey":"event","SourceName":"source","Category":"category","SeverityRank":1,"ElevatesDayRisk":false,"Suppressed":false,"SourceHint":"hint","QualityReason":"quality","FormatVersion":1,"ContentJson":"{}","RecordedAtUtc":"2026-10-02T00:00:00Z"}]""";
     private const string LegacyTimelinesJson = """[{"SensorId":18,"HostId":23,"SourceGeneration":"source-generation","ResourceGeneration":"resource-generation","Coverage":[{"SensorObjid":18,"From":"2026-10-01T00:00:00+00:00","Through":"2026-10-02T00:00:00+00:00","SourceGeneration":"source-generation","ResourceGeneration":"resource-generation"}],"States":[{"SensorObjid":18,"At":"2026-10-01T12:00:00+00:00","Status":"Up","SourceGeneration":"source-generation","ResourceGeneration":"resource-generation"}]}]""";
     private const string LegacySemanticEvidenceJson = """[{"SensorObjid":18,"DeviceObjid":17,"SensorType":"disk"}]""";
     private const string LegacySemanticResultsJson = """[{"SensorObjid":18,"DeviceObjid":17,"Status":"ok"}]""";
@@ -231,7 +232,7 @@ public sealed class PrtgTransferControllerTests
     }
 
     private static byte[] BuildManifestPrefix() => Encoding.UTF8.GetBytes(
-        "{\"FormatVersion\":2,\"Purpose\":\"diagnostic-only\",\"IntegrityContract\":\"manifest-sha256-v1\",\"Devices\":[],\"Sensors\":[],\"StateChanges\":[],\"Values\":[],\"HostMaps\":[],\"ManualMaps\":[],\"SourcePolicy\":{},\"Observations\":[],\"Timelines\":[],\"SemanticEvidence\":[],\"SemanticResults\":[]");
+        "{\"FormatVersion\":2,\"Purpose\":\"diagnostic-only\",\"IntegrityContract\":\"manifest-sha256-v1\",\"Devices\":[],\"Sensors\":[],\"StateChanges\":[],\"Values\":[],\"HostMaps\":[],\"ManualMaps\":[],\"SourcePolicy\":{},\"Timelines\":[],\"SemanticEvidence\":[],\"SemanticResults\":[]");
 
     private static byte[] BuildManifestV2()
     {

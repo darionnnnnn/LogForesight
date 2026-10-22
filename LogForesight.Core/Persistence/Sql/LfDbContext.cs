@@ -107,8 +107,6 @@ public class LfDbContext : DbContext
     /// <summary>快照 sampled 批次提交識別，與值列在同一交易寫入。</summary>
     public DbSet<PrtgSampledBatchRow> PrtgSampledBatches => Set<PrtgSampledBatchRow>();
 
-    public DbSet<PrtgObservationRow> PrtgObservations => Set<PrtgObservationRow>();
-
     /// <summary>PRTG 主機按日映射（↔ lf_prtg_host_map）</summary>
     public DbSet<PrtgHostMapRow> PrtgHostMaps => Set<PrtgHostMapRow>();
 
@@ -126,41 +124,6 @@ public class LfDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder b)
     {
         var isSqlite = Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
-        b.Entity<PrtgObservationRow>(e =>
-        {
-            e.ToTable("lf_prtg_observations");
-            e.HasKey(x => x.SnapshotId);
-            e.Property(x => x.SnapshotId).HasColumnName("snapshot_id").HasMaxLength(64);
-            e.Property(x => x.DecisionKey).HasColumnName("decision_key").HasMaxLength(64).HasDefaultValue(string.Empty);
-            e.Property(x => x.ActiveKey).HasColumnName("active_key").HasMaxLength(64);
-            e.Property(x => x.HostId).HasColumnName("host_id");
-            e.Property(x => x.RecordDate).HasColumnName("record_date");
-            e.Property(x => x.DeviceObjid).HasColumnName("device_objid");
-            e.Property(x => x.SensorObjid).HasColumnName("sensor_objid");
-            e.Property(x => x.RuleCode).HasColumnName("rule_code").HasMaxLength(100);
-            e.Property(x => x.EventKey).HasColumnName("event_key").HasMaxLength(255).HasDefaultValue(string.Empty);
-            e.Property(x => x.SourceName).HasColumnName("source_name").HasMaxLength(255).HasDefaultValue(string.Empty);
-            e.Property(x => x.Category).HasColumnName("category").HasMaxLength(20).HasDefaultValue(string.Empty);
-            e.Property(x => x.SeverityRank).HasColumnName("severity_rank").HasDefaultValue(0);
-            e.Property(x => x.ElevatesDayRisk).HasColumnName("elevates_day_risk").HasDefaultValue(false);
-            e.Property(x => x.Suppressed).HasColumnName("suppressed").HasDefaultValue(false);
-            e.Property(x => x.SourceGeneration).HasColumnName("source_generation").HasMaxLength(100);
-            e.Property(x => x.SourceHint).HasColumnName("source_hint").HasMaxLength(64).HasDefaultValue(string.Empty);
-            e.Property(x => x.ResourceGeneration).HasColumnName("resource_generation").HasMaxLength(100);
-            e.Property(x => x.QualityReason).HasColumnName("quality_reason").HasMaxLength(255);
-            e.Property(x => x.FormatVersion).HasColumnName("format_version");
-            e.Property(x => x.ContentJson).HasColumnName("content_json");
-            e.Property(x => x.RecordedAtUtc).HasColumnName("recorded_at_utc");
-            e.Property(x => x.SupplementStatus).HasColumnName("supplement_status").HasMaxLength(32).HasDefaultValue("shadow");
-            e.Property(x => x.SupplementAttemptAtUtc).HasColumnName("supplement_attempt_at_utc");
-            e.Property(x => x.RunId).HasColumnName("run_id");
-            e.Property(x => x.SupplementParentRecordId).HasColumnName("supplement_parent_record_id");
-            e.HasIndex(x => new { x.SupplementStatus, x.SupplementAttemptAtUtc }).HasDatabaseName("IX_lf_prtg_obs_supplement");
-            e.HasIndex(x => new { x.HostId, x.RecordDate }).HasDatabaseName("IX_lf_prtg_obs_host_date");
-            e.HasIndex(x => x.RecordedAtUtc).HasDatabaseName("IX_lf_prtg_obs_recorded");
-            e.HasIndex(x => x.ActiveKey).IsUnique().HasFilter("active_key IS NOT NULL").HasDatabaseName("IX_lf_prtg_obs_active");
-        });
-
         b.Entity<BlobRow>(e =>
         {
             e.ToTable("lf_blobs");

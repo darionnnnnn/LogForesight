@@ -1085,6 +1085,11 @@ function stopElapsedTicker(elementId = 'schedule-elapsed') {
 function applyScheduleStatus(status) {
     fetchScheduleRunning = status.isRunning;
 
+    // 立即執行 modal 的提示：手動回填執行中時，這趟的 PRTG 日路徑會先等它（docs/PRTG-SPEC.md §5a）。
+    // 看排程狀態的布林而不看回填狀態端點：後者對權限只及部分主機的維護者回 403，提示會永遠不出現（體檢輪）。
+    const backfillHint = document.getElementById('run-now-prtg-backfill-hint');
+    if (backfillHint) backfillHint.hidden = !status.prtgBackfillWaiting;
+
     const pausedBadge = document.getElementById('schedule-paused-badge');
     if (pausedBadge) {
         if (status.pausedReason) {
@@ -1164,13 +1169,15 @@ function applyScheduleStatus(status) {
 // 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
 const AI_IDLE_REASON_TEXT = {
     'disabled': 'AI 服務未設定，待補不會被處理；請到「設定 > AI 服務」完成設定。',
-    'backfill-pending': '存量校正回填尚未完成，AI 分析要等它跑完才會開始。',
+    'backfill-pending': '站台啟動後正在校正既有分析資料，完成前 AI 分析不會開始；稍後重新整理即可。',
     'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
     'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。'
 };
 
 function applyAiScheduleStatus(status) {
     lastAiScheduleStatus = status;
+    // idleReason 是即時判定（docs/WEB-SPEC.md §9.10）：AI 設定狀態跟著它走，別的分頁改了設定這張卡不會一半新一半舊
+    aiAvailable = status.idleReason !== 'disabled';
     const runStateEl = document.getElementById('schedule-ai-run-state');
     if (runStateEl) {
         runStateEl.textContent = status.isRunning
@@ -1192,9 +1199,10 @@ function applyAiScheduleStatus(status) {
             pendingEl.classList.remove('text-muted');
         } else {
             // pendingTotal 只數待處理項目；目前批次可能已領走最後一件但尚未完成。
-            // 執行中時不可把零待補誤報成整輪工作已完成。
-            pendingEl.textContent = status.isRunning
-                ? '0 件（本次分析尚未結束）'
+            // 執行中時不可把零待補誤報成整輪工作已完成；AI 未設定或資料校正中時，0 件也不代表做完了。
+            pendingEl.textContent = status.isRunning ? '0 件（本次分析尚未結束）'
+                : status.idleReason === 'disabled' ? '0 件（AI 服務未設定）'
+                : status.idleReason === 'backfill-pending' ? '0 件（資料校正中，稍後再看）'
                 : '0 件（已全部完成）';
             pendingEl.classList.remove('lf-text-accent');
             pendingEl.classList.add('text-muted');
@@ -1206,8 +1214,9 @@ function applyAiScheduleStatus(status) {
         // 閒置時說明「為什麼沒在跑」：只顯示「閒置 + N 件待補」的話，
         // 使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
         let hint = '';
-        // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事
-        if (!status.isRunning && status.pendingTotal > 0) {
+        // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事。
+        // 這兩種原因即使待補 0 件也要說：0 件此時不代表做完了
+        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {
             hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
         }
 
@@ -1757,6 +1766,7 @@ document.getElementById('schedule-run-now')?.addEventListener('click', () => {
     document.getElementById('run-now-segment-field').classList.add('d-none');
     updateRerunModeUI();
     updateRunNowPreview();
+    refreshScheduleStatus();
     runNowModal.show();
 });
 
@@ -2033,7 +2043,8 @@ function renderPrtgBackfillStatus(status) {
     }
 
     if (!status.completedAt) {
-        statusEl.textContent = '';
+        // 從未回填過：空白會讓人以為欄位壞了，「—」又說不出是「沒做過」還是「取不到」
+        statusEl.textContent = '尚未回填';
         return;
     }
     if (status.cancelled) {
@@ -2107,3 +2118,7 @@ guardLoad([
     document.getElementById('run-errors'),
     document.getElementById('run-list')
 ], load);
+
+// PRTG 維護頁「最近一次排程驗收」的「檢視執行」（core/prtg-acceptance.js）：?run=<id> 直接開該趟執行詳情
+const linkedRunId = new URLSearchParams(location.search).get('run');
+if (/^\d+$/.test(linkedRunId ?? '')) showDetail(Number(linkedRunId));

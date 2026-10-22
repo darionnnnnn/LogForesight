@@ -242,6 +242,39 @@ export function savePageSize(key, size) {
 }
 
 /**
+ * 收合區記住展開狀態（DESIGN-SYSTEM §6b：日常用不到的內容預設收合、記住使用者的選擇）。
+ * 觸發鈕用 Bootstrap 的 data-bs-toggle="collapse"；這裡只負責初始狀態、按鈕文字與 aria-expanded，
+ * 以及寫回 localStorage（鍵前綴 lf.collapse.）。localStorage 不可用（隱私模式等）時從收合開始，不擲例外。
+ */
+export function bindRememberedCollapse(collapseEl, toggleEl, key, { expandText = '展開', collapseText = '收合' } = {}) {
+    if (!collapseEl || !toggleEl) return;
+    const storageKey = `lf.collapse.${key}`;
+    const sync = expanded => {
+        toggleEl.textContent = expanded ? collapseText : expandText;
+        toggleEl.setAttribute('aria-expanded', String(expanded));
+    };
+    let open = false;
+    try {
+        open = localStorage.getItem(storageKey) === 'open';
+    } catch {
+        // 讀不到就維持預設收合
+    }
+    // 直接帶 show 類別：載入時不播展開動畫，Bootstrap 依類別判斷目前狀態
+    collapseEl.classList.toggle('show', open);
+    sync(open);
+    const remember = expanded => {
+        sync(expanded);
+        try {
+            localStorage.setItem(storageKey, expanded ? 'open' : 'closed');
+        } catch {
+            // 記不住只影響下次預設，不影響本次操作
+        }
+    };
+    collapseEl.addEventListener('shown.bs.collapse', () => remember(true));
+    collapseEl.addEventListener('hidden.bs.collapse', () => remember(false));
+}
+
+/**
  * 分頁列（§8.6-7）：抽出 records.js/audit.js 幾乎相同的手搓分頁。
  * page 為 1-based；onPage(n) 由呼叫端載入該頁。
  * pageSize/onPageSize（選填）：加一個每頁筆數下拉（10/20/30/50/100）。

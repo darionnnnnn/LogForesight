@@ -7,7 +7,7 @@ import { appUrl } from '../core/paths.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
-    renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
+    renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, bindRememberedCollapse,
     collectLines, renderTable, renderError
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
@@ -16,11 +16,73 @@ import { initValueReadiness } from './prtg-value-readiness.js';
 import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
+import { evaluateScheduledAcceptance } from '../core/prtg-acceptance.js';
 
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
 let scopeRevision = null;
-const setupState = { settings: null, settingsLoading: true, connectionTest: null, probe: null, sync: null, rules: null, schedule: null };
+// 最近一次排程驗收的三個來源：undefined＝讀取中、null＝讀取失敗（見 core/prtg-acceptance.js）
+const setupState = {
+    settings: null, settingsLoading: true, probe: null, sync: null, rules: null, schedule: null,
+    scheduleStatus: undefined, aiStatus: undefined, snapshotHours: undefined
+};
+
+const ACCEPTANCE_STATE_TEXT = {
+    ok: '已確認', pending: '待確認', na: '不適用', nodata: '無資料', loading: '讀取中', error: '無法讀取'
+};
+
+/** 啟用準備全部確認後才出現：用最近一趟排程的實際結果驗收，而不是只看設定齊不齊。 */
+function renderAcceptance(allConfirmed) {
+    const host = document.getElementById('prtg-acceptance');
+    if (!host) return;
+    host.hidden = !allConfirmed;
+    host.replaceChildren();
+    if (!allConfirmed) return;
+    const title = document.createElement('h3');
+    title.className = 'h6 mb-1';
+    title.textContent = '最近一次排程驗收';
+    const list = document.createElement('ul');
+    list.className = 'small mb-0';
+    for (const item of evaluateScheduledAcceptance(setupState)) {
+        const li = document.createElement('li');
+        li.dataset.acceptance = item.key;
+        li.dataset.state = item.state;
+        li.append(document.createTextNode(`${ACCEPTANCE_STATE_TEXT[item.state]}：${item.label}。${item.detail}`));
+        const link = document.createElement(item.path ? 'a' : 'button');
+        if (item.path) link.href = appUrl(item.path);
+        else { link.type = 'button'; link.className = 'btn btn-link btn-sm p-0 align-baseline'; link.addEventListener('click', () => document.querySelector(`#prtg-tabs [data-tab="${item.tab}"]`)?.click()); }
+        link.classList.add('ms-1');
+        link.textContent = item.linkText;
+        li.appendChild(link);
+        list.appendChild(li);
+    }
+    const refresh = document.createElement('button');
+    refresh.type = 'button';
+    refresh.className = 'btn btn-outline-secondary btn-sm mt-1';
+    refresh.textContent = '重新確認';
+    refresh.addEventListener('click', refreshAcceptance);
+    host.append(title, list, refresh);
+}
+
+/** 三個來源都只在載入時讀一次；取數或 AI 跑完後按這顆重抓，不必重新整理整頁。 */
+function refreshAcceptance() {
+    setupState.scheduleStatus = undefined;
+    setupState.aiStatus = undefined;
+    setupState.snapshotHours = undefined;
+    renderSetupSummary();
+    refreshScheduleWarning();
+    loadSnapshotDiagnostics();
+    refreshAcceptanceAi();
+}
+
+async function refreshAcceptanceAi() {
+    try {
+        setupState.aiStatus = await api.get('/api/admin/schedule/ai-status', { silent: true });
+    } catch {
+        setupState.aiStatus = null;
+    }
+    renderSetupSummary();
+}
 
 function renderSetupSummary() {
     const summary = document.getElementById('prtg-setup-summary');
@@ -32,13 +94,13 @@ function renderSetupSummary() {
             ? '正在確認已儲存設定…'
             : '無法確認已儲存設定；請重新載入頁面。';
         steps.replaceChildren();
+        renderAcceptance(false);
         return;
     }
     const credential = settings.prtgAuthMode === 'password' ? settings.prtgHasPassword && settings.prtgUsername
         : settings.prtgAuthMode === 'passhash' ? settings.prtgHasPasshash && settings.prtgUsername : settings.prtgHasApiToken;
     const checks = [
         { ok: Boolean(settings.prtgUrl && credential), label: '已儲存的連線位址與認證', next: '設定連線並儲存', tab: 'connection' },
-        { ok: setupState.connectionTest === true, label: '本次頁面連線測試', next: '執行連線測試；重新載入後需再確認', tab: 'connection' },
         { ok: Boolean(settings.prtgEnabled), label: 'PRTG 擷取', next: '到擷取參數啟用並儲存', tab: 'params' },
         { ok: !setupState.sync?.isRunning && setupState.sync?.lastSuccess === true && Boolean(setupState.sync?.lastCompletedAt), label: '上次結構與主機對應同步', next: setupState.sync?.isRunning ? '同步進行中，稍後確認結果' : '同步結構並檢查主機對應', tab: 'mirror' },
         { ok: setupState.rules === true, label: 'PRTG 規則', next: '檢查並啟用 PRTG 規則', href: appUrl('/admin/rules') },
@@ -62,7 +124,8 @@ function renderSetupSummary() {
     }
     const pending = checks.filter(check => !check.ok).length;
     summary.textContent = pending ? `尚有 ${pending} 項需確認；下列步驟依已儲存設定與最近一次狀態顯示。`
-        : '設定與最近一次檢查均已確認；請再到資料準備度與使用效果核對實際涵蓋，不能據此宣稱預警已可用。';
+        : '設定與最近一次檢查均已確認；下方以最近一趟排程的實際結果驗收，資料涵蓋另見數值資料就緒度與使用效果。';
+    renderAcceptance(pending === 0);
 }
 
 function missingHourDate(windowStart, dayIndex, hour) {
@@ -412,10 +475,26 @@ function bindSelectedBackfill() {
 
 let fullBackfillPreview = null;
 
+/** 全部重做（忽略完成水位）是否勾選；沒有已完成日子時不會出現這個勾選。 */
+function fullBackfillRedoChecked() {
+    return document.getElementById('prtg-full-backfill-redo')?.checked === true;
+}
+
+/** 全部日子都已完成且沒勾全部重做：按下去後端一定拒絕，直接停用並說明。 */
+function syncFullBackfillStart(preview) {
+    const start = document.getElementById('prtg-full-backfill-start');
+    const hint = document.getElementById('prtg-full-backfill-redo-hint');
+    const allDone = preview.completedDays > 0 && preview.completedDays >= preview.dayCount && !fullBackfillRedoChecked();
+    if (start) start.disabled = !preview.previewId || allDone;
+    if (hint) hint.hidden = !allDone;
+}
+
 function renderFullBackfillPreview(preview) {
     const root = document.getElementById('prtg-full-backfill-preview-result');
     const start = document.getElementById('prtg-full-backfill-start');
     if (!root || !start) return;
+    // 重新預覽會整段重畫：先記住「全部重做」有沒有勾，不然勾了再按預覽就得再勾一次
+    const redoWas = fullBackfillRedoChecked();
     root.replaceChildren();
     const summary = document.createElement('p');
     summary.className = 'small mb-2';
@@ -431,6 +510,36 @@ function renderFullBackfillPreview(preview) {
     metadata.textContent = `預覽版本 ${preview.contractVersion} / ${preview.buildVersion}，有效至 ${formatDateTime(preview.expiresAtUtc)}；起算日 ${preview.planAnchorLocalDate.slice(0, 10)}。設定與範圍版本已綁定。`;
     root.appendChild(metadata);
 
+    // 完成水位（docs/PRTG-SPEC.md §5）：先前已完整回填、目標沒變的日子預設略過
+    if (preview.completedDays > 0) {
+        const resume = document.createElement('div');
+        resume.className = 'alert alert-info py-2 px-3 small mb-2';
+        resume.setAttribute('role', 'status');
+        const text = document.createElement('p');
+        text.className = 'mb-1';
+        text.textContent = `先前已完整回填 ${formatNumber(preview.completedDays)} 天，本次預設略過；剩餘約 ${formatNumber(preview.remainingHistoricRequests)} 次 historicdata。`;
+        const check = document.createElement('div');
+        check.className = 'form-check mb-0';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'form-check-input';
+        input.id = 'prtg-full-backfill-redo';
+        input.checked = redoWas;
+        input.addEventListener('change', () => syncFullBackfillStart(preview));
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        label.textContent = '全部重做（忽略先前完成的日子，全部重新取數）';
+        check.append(input, label);
+        const hint = document.createElement('p');
+        hint.className = 'mb-0 mt-1';
+        hint.id = 'prtg-full-backfill-redo-hint';
+        hint.hidden = true;
+        hint.textContent = '全部日子都已完整回填；要重新取數請勾選「全部重做」。';
+        resume.append(text, check, hint);
+        root.appendChild(resume);
+    }
+
     const details = document.createElement('details');
     const heading = document.createElement('summary');
     heading.textContent = '查看逐日工作量';
@@ -444,13 +553,14 @@ function renderFullBackfillPreview(preview) {
             { title: '觸發主機', render: day => formatNumber(day.triggeredHosts) },
             { title: '歷史對應主機', render: day => formatNumber(day.mappedHosts) },
             { title: '選取主機', render: day => formatNumber(day.selectedHosts) },
-            { title: '目標 sensor', render: day => formatNumber(day.targetSensors) }
+            { title: '目標 sensor', render: day => formatNumber(day.targetSensors) },
+            { title: '本次', render: day => day.alreadyCompleted ? '已完成，略過' : '回填' }
         ],
         rows: preview.days || [],
         empty: { title: '沒有逐日資料', hint: '預覽範圍內沒有可回填的日期，請調整範圍後重新預估。', icon: null }
     });
     details.appendChild(dayTableHost); root.appendChild(details);
-    start.disabled = !preview.previewId;
+    syncFullBackfillStart(preview);
 }
 
 function bindFullBackfill() {
@@ -476,10 +586,15 @@ function bindFullBackfill() {
         if (!preview?.previewId) { toast('請先取得有效的全量成本預覽。', 'warning'); return; }
         startButton.dataset.pending = 'true';
         const restore = withBusy(button, '等待確認');
+        const redo = fullBackfillRedoChecked();
+        const skipText = preview.completedDays > 0
+            ? (redo ? `已勾選全部重做：先前完成的 ${formatNumber(preview.completedDays)} 天也會重新取數。`
+                : `略過先前已完成的 ${formatNumber(preview.completedDays)} 天，剩餘約 ${formatNumber(preview.remainingHistoricRequests)} 次。`)
+            : '';
         try {
             const confirmed = await confirmAction({
                 title: '確認全量歷史回填',
-                message: `全量依目前保存的觸發主機、歷史對應、sensor 白名單與監看數值範圍執行，不代表全站所有 sensor。${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)} 預估 ${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata。` +
+                message: `全量依目前保存的觸發主機、歷史對應、sensor 白名單與監看數值範圍執行，不代表全站所有 sensor。${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)} 預估 ${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata。${skipText}` +
                     `共享配額時間下界 ${Math.ceil(preview.historicQuotaLowerBoundSeconds / 60)} 分鐘，不含來源延遲；狀態變更另有 ${formatNumber(preview.stateChangeObjects)} 個對象，分頁成本未知。` +
                     '預覽五分鐘有效；設定、範圍、歷史紀錄或對應變更時必須重新預覽。',
                 confirmText: '確認並開始', confirmVariant: 'danger'
@@ -487,7 +602,7 @@ function bindFullBackfill() {
             if (!confirmed) return;
             button.querySelector('span')?.remove();
             button.replaceChildren(document.createTextNode('啟動中'));
-            await api.post('/api/admin/settings/prtg-backfill/start', { previewId: preview.previewId, confirmed: true }, { silent: true });
+            await api.post('/api/admin/settings/prtg-backfill/start', { previewId: preview.previewId, confirmed: true, resume: !redo }, { silent: true });
             fullBackfillPreview = null;
             result.replaceChildren(document.createTextNode('已啟動全量歷史回填。執行進度與停止控制位於 Runs 頁的 PRTG 狀態卡：'));
             const runsLink = document.createElement('a');
@@ -502,7 +617,8 @@ function bindFullBackfill() {
         } finally {
             restore();
             delete startButton.dataset.pending;
-            startButton.disabled = !fullBackfillPreview;
+            if (fullBackfillPreview) syncFullBackfillStart(fullBackfillPreview);
+            else startButton.disabled = true;
         }
     });
 }
@@ -665,7 +781,6 @@ async function loadPrtgSettings() {
     try {
         const settings = await api.get('/api/admin/settings');
         historyRetentionDays = settings.retentionDays;
-        if (setupState.settings?.updatedAt !== settings.updatedAt) setupState.connectionTest = null;
         renderPrtgFields(settings);
         setupState.settings = settings;
     } catch (error) {
@@ -818,15 +933,6 @@ function bindPrtgTest() {
     const button = document.getElementById('prtg-test-btn');
     if (!button) return;
 
-    for (const id of ['prtg-url', 'prtg-auth-mode', 'prtg-username', 'prtg-api-token', 'prtg-password',
-        'prtg-passhash', 'prtg-clear-token', 'prtg-clear-password', 'prtg-clear-passhash',
-        'prtg-ignore-ssl', 'prtg-timeout-seconds']) {
-        document.getElementById(id)?.addEventListener('input', () => {
-            setupState.connectionTest = null;
-            renderSetupSummary();
-        });
-    }
-
     button.addEventListener('click', async () => {
         const url = document.getElementById('prtg-url').value.trim();
         if (!url) {
@@ -861,16 +967,12 @@ function bindPrtgTest() {
                 && !document.getElementById('prtg-clear-passhash')?.checked
                 && Boolean(document.getElementById('prtg-ignore-ssl')?.checked) === Boolean(saved.prtgIgnoreSslErrors)
                 && (Number(document.getElementById('prtg-timeout-seconds')?.value) || 60) === (saved.prtgTimeoutSeconds ?? 60);
-            setupState.connectionTest = result.success === true && matchesSaved;
-            renderSetupSummary();
             resultEl.className = result.success ? 'text-success small' : 'text-danger small';
             resultEl.textContent = result.elapsedMs != null
                 ? `${mark} ${result.message}（耗時 ${result.elapsedMs}ms）`
                 : `${mark} ${result.message}`;
             if (result.success && !matchesSaved) resultEl.textContent += '；本次測試使用未儲存的表單值，請儲存後重測以確認實際執行設定。';
         } catch (error) {
-            setupState.connectionTest = false;
-            renderSetupSummary();
             resultEl.className = 'text-danger small';
             resultEl.textContent = `✗ ${error?.message || '測試連線失敗。'}`;
         } finally {
@@ -1102,7 +1204,9 @@ function renderSnapshotDiagnostics(hours) {
         columns: [
             { title: '完整小時', render: row => formatDateTime(row.hour) },
             { title: '狀態', render: row => snapshotStateLabels[row.state] ?? '資料未知' },
-            { title: '品質達標列／目標', render: row => `${formatNumber(row.availableValues)} / ${formatNumber(row.targets)}` },
+            // 與「最近一次排程驗收」同一個數（core/prtg-acceptance.js 看 databaseUsableValues）：照表自己數要與驗收段一致
+            { title: '品質達標列／目標', render: row => `${formatNumber(row.databaseUsableValues)} / ${formatNumber(row.targets)}` },
+            { title: '快照寫入', render: row => formatNumber(row.availableValues) },
             { title: '成功／嘗試', render: row => `${formatNumber(row.successes)} / ${formatNumber(row.attempts)}` },
             { title: '跳過／寫入失敗', render: row => `${formatNumber(row.skips)} / ${formatNumber(row.writeFailures)}` },
             { title: '原因', render: row => Object.entries(row.reasons ?? {}).map(([reason, count]) => `${reason} (${formatNumber(count)})`).join('、') || '—' },
@@ -1124,10 +1228,13 @@ async function loadSnapshotDiagnostics() {
     if (host) renderSpinner(host, '讀取快照診斷…');
     try {
         const response = await api.get('/api/prtg-snapshot-diagnostics', { silent: true });
-        renderSnapshotDiagnostics(response?.hours ?? []);
+        setupState.snapshotHours = response?.hours ?? [];
+        renderSnapshotDiagnostics(setupState.snapshotHours);
     } catch {
+        setupState.snapshotHours = null;
         if (host) renderError(host, { message: '快照診斷讀取失敗。請重新載入；不會呼叫 PRTG。', onRetry: loadSnapshotDiagnostics });
     }
+    renderSetupSummary();
 }
 
 // ── PRTG 鏡像狀態與衝突處理 ──────────────────────────────────────────────
@@ -2335,6 +2442,7 @@ async function refreshScheduleWarning() {
     try {
         const status = await api.get('/api/admin/schedule/status', { silent: true });
         setupState.schedule = status.scheduleEnabled === true;
+        setupState.scheduleStatus = status;
         renderSetupSummary();
         banner.replaceChildren();
         if (status.scheduleEnabled) return;
@@ -2350,6 +2458,7 @@ async function refreshScheduleWarning() {
         banner.appendChild(alert);
     } catch {
         setupState.schedule = null;
+        setupState.scheduleStatus = null;
         renderSetupSummary();
         renderError(banner, { message: '無法確認排程是否啟用。', onRetry: refreshScheduleWarning });
     }
@@ -2738,6 +2847,9 @@ function init() {
     bindConnectionForm();
     bindParamsForm();
     bindScopeControls();
+    // 監看範圍是可選縮圈，日常用不到：放在擷取參數頁籤、預設收合並記住使用者的選擇
+    bindRememberedCollapse(document.getElementById('prtg-monitoring-body'),
+        document.getElementById('prtg-monitoring-toggle'), 'prtg-monitoring');
     bindStructureSync();
     bindConflictBatchControls();
     bindUnmatchedControls();
@@ -2747,6 +2859,7 @@ function init() {
     ensureBatchHostsLoaded();
     refreshPrtgMirror();
     loadSnapshotDiagnostics();
+    refreshAcceptanceAi();
     refreshConflicts(1);
     refreshUnmatched(1);
     refreshIpExcludes();

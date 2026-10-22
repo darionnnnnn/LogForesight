@@ -190,37 +190,8 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
     HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly) =>
         throw new NotImplementedException();
 
-    List<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPendingAi(int batchSize)
-    {
-        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
-        return _records
-            .Where(r => r.AiPending && !r.DetailPruned)
-            .OrderByDescending(r => r.Date)
-            .ThenBy(r => r.HostId)
-            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
-            .Take(batchSize)
-            // 與正式實作同形狀（體檢輪）：QueryPendingAi 是不讀 ContentJson 的輕量投影——
-            // TrendAlerts/AuditEventCount 不填、CorrelationAlerts 是佔位字串。替身若回完整
-            // 紀錄，「補跑必須先完整載入」的缺陷在測試裡就永遠測不到。
-            .Select(r => new DailyAnalysisRecord
-            {
-                HostId = r.HostId,
-                Host = r.Host,
-                Date = r.Date,
-                RiskLevel = r.RiskLevel,
-                Headline = r.Headline,
-                ErrorCount = r.ErrorCount,
-                WarningCount = r.WarningCount,
-                DataIncomplete = r.DataIncomplete,
-                SecurityLogAvailable = r.SecurityLogAvailable,
-                AiAnalyzed = r.AiAnalyzed,
-                AiPending = r.AiPending,
-                DetailPruned = r.DetailPruned,
-                CorrelationAlerts = r.CorrelationAlerts.Count > 0 ? new List<string> { "(lightweight)" } : new List<string>(),
-                TopIssues = r.TopIssues
-            })
-            .ToList();
-    }
+    List<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPendingAi(int batchSize, PendingAiQuery? query) =>
+        PendingAiFake.Query(_records, batchSize, query);
 
     int IAnalysisRecordQuery.CountPendingAi() => _records.Count(r => r.AiPending);
 

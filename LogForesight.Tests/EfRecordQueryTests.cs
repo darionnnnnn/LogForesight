@@ -225,6 +225,29 @@ public class EfRecordQueryTests : IDisposable
     }
 
     [Fact]
+    public void QueryPendingAi_日期範圍與舊到新方向_起日含迄日不含()
+    {
+        var store = Store();
+
+        var d1 = new DateTime(2026, 8, 20);
+        var d2 = new DateTime(2026, 8, 21);
+        var d3 = new DateTime(2026, 8, 22);
+        var d4 = new DateTime(2026, 8, 23);
+        foreach (var (hostId, host, date) in new[] { (2L, "HOST-B", d2), (1L, "HOST-A", d3), (1L, "HOST-A", d1), (1L, "HOST-A", d2), (1L, "HOST-A", d4) })
+        {
+            var r = Rec(hostId, host, date, "高"); r.AiPending = true; store.Append(r);
+        }
+
+        var ranged = store.QueryPendingAi(10, new PendingAiQuery(From: d2, ToExclusive: d4, OldestFirst: true));
+
+        // d1 在起日前、d4 是迄日（不含）；同日依主機 id
+        Assert.Equal(new[] { (d2, 1L), (d2, 2L), (d3, 1L) }, ranged.Select(r => (r.Date.Date, r.HostId)));
+
+        var newestFirst = store.QueryPendingAi(10, new PendingAiQuery(ToExclusive: d3));
+        Assert.Equal(new[] { d2, d2, d1 }, newestFirst.Select(r => r.Date.Date));
+    }
+
+    [Fact]
     public void CountPendingAi_計數正確且無pending時回傳0()
     {
         var store = Store();

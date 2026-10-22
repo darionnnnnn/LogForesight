@@ -865,4 +865,72 @@ console.log('PASS operational status refresh');
         Assert.Contains("--lf-chart-tooltip-bg", charts);
         Assert.Contains("--lf-chart-grid", charts);
     }
+
+    /// <summary>PRTG 卡「回填狀態」從未回填過時寫「尚未回填」，初值「載入中…」（第 57 輪批次C-3）。</summary>
+    [Fact]
+    public void PRTG卡回填狀態_從未回填顯示尚未回填_初值載入中()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+        var render = js[js.IndexOf("function renderPrtgBackfillStatus(status)", StringComparison.Ordinal)..];
+        render = render[..render.IndexOf("\nasync function ", StringComparison.Ordinal)];
+        Assert.Contains("statusEl.textContent = '尚未回填';", render);
+        Assert.DoesNotContain("statusEl.textContent = '';", render);
+        Assert.Contains("id=\"prtg-backfill-status\">載入中…</span>", cshtml);
+    }
+
+    /// <summary>
+    /// AI 卡：待補 0 件時，AI 未設定或資料校正中不得寫成「已全部完成」，且這兩種原因要顯示說明（第 57 輪批次C-2）。
+    /// </summary>
+    [Fact]
+    public void AI卡待補0件時依閒置原因說明_不把未設定或校正中寫成已完成()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains(": status.idleReason === 'disabled' ? '0 件（AI 服務未設定）'", js);
+        Assert.Contains(": status.idleReason === 'backfill-pending' ? '0 件（資料校正中，稍後再看）'", js);
+        Assert.Contains("if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {", js);
+        Assert.DoesNotContain("存量校正回填尚未完成", js);
+    }
+
+    /// <summary>
+    /// 立即執行 modal：手動回填執行中時說明這趟 PRTG 會先等它（docs/PRTG-SPEC.md §5a）。
+    /// 不另開確認框；提示跟著回填狀態輪詢切換，接續回填（tail）不提示，開 modal 時重查一次。
+    /// </summary>
+    [Fact]
+    public void 立即執行Modal在手動回填執行中顯示等待提示()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        var phases = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "run-phases.js"));
+
+        var modalStart = cshtml.IndexOf("id=\"run-now-modal\"", StringComparison.Ordinal);
+        var hintAt = cshtml.IndexOf("id=\"run-now-prtg-backfill-hint\"", StringComparison.Ordinal);
+        Assert.True(modalStart >= 0 && hintAt > modalStart, "提示必須在立即執行 modal 內");
+        Assert.Contains("最多等 30 分鐘", cshtml[hintAt..cshtml.IndexOf("</div>", hintAt, StringComparison.Ordinal)]);
+
+        // 提示看排程狀態的布林（體檢輪）：回填狀態端點對權限只及部分主機的維護者回 403，用它當依據提示永遠不出現
+        Assert.Contains("backfillHint.hidden = !status.prtgBackfillWaiting", js);
+        Assert.DoesNotContain("status.runKind !== 'tail'", js);
+        var openHandler = js[js.IndexOf("getElementById('schedule-run-now')", StringComparison.Ordinal)..];
+        Assert.True(openHandler.IndexOf("refreshScheduleStatus()", StringComparison.Ordinal) <
+                    openHandler.IndexOf("runNowModal.show()", StringComparison.Ordinal));
+        Assert.Contains("'prtg-wait-sync': '等待 PRTG 手動作業（同步／回填）結束", phases);
+
+        var dto = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Models", "Dto", "ScheduleDtos.cs"));
+        Assert.Contains("public bool PrtgBackfillWaiting", dto);
+    }
+
+    /// <summary>PRTG 維護頁「檢視該趟執行」以 ?run=id 直接開執行詳情；AI 設定狀態跟著 ai-status 即時更新。</summary>
+    [Fact]
+    public void 執行詳情深連結與AI設定狀態即時同步()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains("new URLSearchParams(location.search).get('run')", js);
+        Assert.Contains("showDetail(Number(linkedRunId))", js);
+        Assert.Contains("aiAvailable = status.idleReason !== 'disabled';", js);
+    }
 }

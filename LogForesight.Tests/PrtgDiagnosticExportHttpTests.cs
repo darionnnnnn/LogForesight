@@ -88,7 +88,10 @@ public sealed class PrtgDiagnosticExportHttpTests
             Assert.Equal(1, validation.Counts["Values"]);
             Assert.Equal(1, validation.Counts["HostMaps"]);
             Assert.Equal(1, validation.Counts["ManualMaps"]);
-            Assert.Equal(1, validation.Counts["Observations"]);
+            // 第 57 輪起新匯出不再含 Observations 區段（封套、manifest 筆數與驗證結果皆無）。
+            Assert.False(root.TryGetProperty("Observations", out _));
+            Assert.False(manifest.GetProperty("rowCounts").TryGetProperty("Observations", out _));
+            Assert.False(validation.Counts.ContainsKey("Observations"));
             // 這三組陣列名稱保留給舊匯入相容，內容固定為空。
             Assert.Equal(0, validation.Counts["Timelines"]);
             Assert.Equal(0, validation.Counts["SemanticEvidence"]);
@@ -345,14 +348,6 @@ public sealed class PrtgDiagnosticExportHttpTests
             {
                 DeviceObjid = 1, HostId = HostIds[0], CreatedBy = "fixture", CreatedAt = From
             });
-            db.PrtgObservations.Add(new PrtgObservationRow
-            {
-                SnapshotId = "fixture-snapshot", DecisionKey = "fixture-decision", HostId = HostIds[0],
-                RecordDate = From, DeviceObjid = 1, RuleCode = "disk", EventKey = "fixture-event",
-                SourceName = "fixture", Category = "disk", SourceGeneration = "fixture-source-generation",
-                SourceHint = "fixture", QualityReason = "diagnostic", FormatVersion = 2, ContentJson = "{}",
-                RecordedAtUtc = DateTime.SpecifyKind(From, DateTimeKind.Utc), SupplementStatus = "shadow"
-            });
             await db.SaveChangesAsync();
         }
 
@@ -368,7 +363,6 @@ public sealed class PrtgDiagnosticExportHttpTests
                 Batches = db.PrtgSampledBatches.AsNoTracking().OrderBy(row => row.BatchId).ToList(),
                 HostMaps = db.PrtgHostMaps.AsNoTracking().OrderBy(row => row.MapDate).ThenBy(row => row.DeviceObjid).ToList(),
                 ManualMaps = db.PrtgManualMaps.AsNoTracking().OrderBy(row => row.DeviceObjid).ToList(),
-                Observations = db.PrtgObservations.AsNoTracking().OrderBy(row => row.SnapshotId).ToList(),
                 IpExcludes = db.PrtgIpExcludes.AsNoTracking().OrderBy(row => row.Ip).ToList(),
                 Policy = Backend.Blob(PrtgMonitoringPolicyStore.BlobKey).Read(),
                 Settings = Backend.Blob(SystemSettingsStoreBlobKey).Read(),

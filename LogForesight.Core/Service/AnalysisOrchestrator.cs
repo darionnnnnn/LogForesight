@@ -161,13 +161,17 @@ public class AnalysisOrchestrator
     private readonly IDispatchCandidateSource _candidateSource;
     private readonly Action? _permissionVersionBump;
     private readonly INetiqHostDayTimingCollector? _hostDayTiming;
+    private readonly IAiRequestGate? _aiGate;
 
     /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
-    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null, INetiqHostDayTimingCollector? hostDayTiming = null)
+    /// <param name="aiGate">全站 AI 閘道；本趟的 AI 呼叫（週檢等）走背景車道</param>
+    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null,
+        INetiqHostDayTimingCollector? hostDayTiming = null, IAiRequestGate? aiGate = null)
     {
         _candidateSource = candidateSource;
         _permissionVersionBump = permissionVersionBump;
         _hostDayTiming = hostDayTiming;
+        _aiGate = aiGate;
     }
 
     internal static long? TryBeginHostDayTiming(long runId, INetiqHostDayTimingCollector? collector)
@@ -220,8 +224,8 @@ public class AnalysisOrchestrator
     private const int AnalysisMaxPoolSize =
         NetiqOptions.MaxParallelServersLimit * NetiqOptions.MaxParallelQueriesPerServerLimit + 2;
 
-    /// <param name="structureSyncGate">
-    /// 手動觸發的「同步結構與對應」的閘門（docs/PRTG-SPEC.md §5a）；未接上時為 null＝行為不變。
+    /// <param name="manualWorkGate">
+    /// 手動 PRTG 作業（同步結構與對應、歷史回填）的閘門（docs/PRTG-SPEC.md §5a）；未接上時為 null＝行為不變。
     /// 只往下傳給 PRTG 路徑，不影響本機與 NetIQ 兩路。
     /// </param>
     /// <param name="prtgBackfillTail">
@@ -230,7 +234,7 @@ public class AnalysisOrchestrator
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
         RetentionOptions retention, IRunConsole console, CancellationToken ct, IRunProgress? progress = null,
-        IPrtgStructureSyncGate? structureSyncGate = null,
+        IPrtgManualWorkGate? manualWorkGate = null,
         IPrtgBackfillTail? prtgBackfillTail = null)
     {
         var runStopwatch = Stopwatch.StartNew();
@@ -309,7 +313,7 @@ public class AnalysisOrchestrator
                 var eventLogService = new EventLogService();
                 IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
                 var aiService = new AIService(settings.Ai, dumper,
-                    new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
+                    new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)), gate: _aiGate);
                 var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
 
                 // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
@@ -658,7 +662,7 @@ public class AnalysisOrchestrator
                 }
                 // 指定主機更新：PRTG 也只處理那幾台主機的監看裝置（partial 範圍不做任何「沒刷新到就清」）
                 var prtgHostIds = request.Scope != RunScope.Full ? request.HostIds : null;
-                var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, structureSyncGate);
+                var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, manualWorkGate);
 
                 // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
                 // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，

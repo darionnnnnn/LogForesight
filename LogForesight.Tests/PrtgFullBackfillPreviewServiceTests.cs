@@ -23,6 +23,9 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
     private readonly PrtgBackfillService _service;
     private readonly List<(long SensorId, DateTime Day)> _offlineHistoricRequests = new();
 
+    /// <summary>離線來源對哪些 (sensor, 日) 回 HTTP 500；預設全部成功。</summary>
+    private Func<long, DateTime, bool> _failHistoric = (_, _) => false;
+
     public PrtgFullBackfillPreviewServiceTests()
     {
         _clock = new ManualTimeProvider(DateTime.Today.AddHours(12));
@@ -50,7 +53,8 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), _runState,
             sentinels, new DataVersionStamp());
         _service = new PrtgBackfillService(_settings, _backend, _runState, new PrtgProbeRunState(), _hosts,
-            _scheduler, syncState, sentinels, sync, _clock, _ => CreateOfflinePrtgClient(_offlineHistoricRequests));
+            _scheduler, syncState, sentinels, sync, _clock,
+            _ => CreateOfflinePrtgClient(_offlineHistoricRequests, (id, day) => _failHistoric(id, day)));
         SeedTwoDays();
     }
 
@@ -226,8 +230,140 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         Assert.False(_runState.Snapshot().IsRunning);
     }
 
-    private static PrtgFullBackfillStartRequest Confirmed(PrtgFullBackfillPreviewDto preview) => new()
-    { PreviewId = preview.PreviewId, Confirmed = true };
+    private static PrtgFullBackfillStartRequest Confirmed(PrtgFullBackfillPreviewDto preview, bool resume = true) => new()
+    { PreviewId = preview.PreviewId, Confirmed = true, Resume = resume };
+
+    private PrtgBackfillWatermarkStore Watermark() => new(_backend.Blob(PrtgBackfillWatermarkStore.BlobKey));
+
+    private async Task WaitForBackfillAsync()
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (_runState.Snapshot().IsRunning && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        Assert.False(_runState.Snapshot().IsRunning, "回填未在期限內結束");
+    }
+
+    /// <summary>預覽→確認→等它跑完；回傳本趟發出的 historicdata 請求。</summary>
+    private async Task<List<(long SensorId, DateTime Day)>> RunFullAsync(bool resume = true)
+    {
+        lock (_offlineHistoricRequests) _offlineHistoricRequests.Clear();
+        var preview = _service.PreviewFull();
+        Assert.True(_service.TryStartFull(Confirmed(preview, resume), out var error, out _), error);
+        await WaitForBackfillAsync();
+        lock (_offlineHistoricRequests) return _offlineHistoricRequests.OrderBy(r => r.Day).ThenBy(r => r.SensorId).ToList();
+    }
+
+    [Fact]
+    public async Task 完成水位_中斷或部分失敗後續跑只補剩下的日子()
+    {
+        var yesterday = DateTime.Today.AddDays(-1);
+        var twoDaysAgo = DateTime.Today.AddDays(-2);
+        // 第一趟：兩天前有一顆 sensor 失敗（該日不算完成），昨天完整
+        _failHistoric = (id, _) => id == 2001;
+        await RunFullAsync();
+
+        _failHistoric = (_, _) => false;
+        var preview = _service.PreviewFull();
+        Assert.Equal(1, preview.CompletedDays);
+        Assert.True(preview.Days.Single(d => d.Day == yesterday).AlreadyCompleted);
+        Assert.False(preview.Days.Single(d => d.Day == twoDaysAgo).AlreadyCompleted);
+        Assert.Equal(2, preview.RemainingHistoricRequests);
+        Assert.Contains("1 天先前已完整回填", preview.Message);
+
+        lock (_offlineHistoricRequests) _offlineHistoricRequests.Clear();
+        Assert.True(_service.TryStartFull(Confirmed(preview), out var error, out _), error);
+        await WaitForBackfillAsync();
+        lock (_offlineHistoricRequests)
+            Assert.Equal(new[] { (2001L, twoDaysAgo), (2002L, twoDaysAgo) },
+                _offlineHistoricRequests.OrderBy(r => r.SensorId).ToArray());
+    }
+
+    [Fact]
+    public async Task 完成水位_目標變了的日子不算完成()
+    {
+        await RunFullAsync();
+        Assert.Equal(2, _service.PreviewFull().CompletedDays);
+
+        // 昨天多一個中風險主機日：那天要取的目標換了一批
+        _backend.RecordStore().Append(new DailyAnalysisRecord
+        { HostId = 2, Host = "host-22", Date = DateTime.Today.AddDays(-1), RiskLevel = "中" });
+
+        var preview = _service.PreviewFull();
+        Assert.Equal(1, preview.CompletedDays);
+        Assert.False(preview.Days.Single(d => d.Day == DateTime.Today.AddDays(-1)).AlreadyCompleted);
+    }
+
+    [Fact]
+    public async Task 完成水位_全部完成時拒絕空跑_全部重做會清掉水位重來()
+    {
+        await RunFullAsync();
+        var allDone = _service.PreviewFull();
+        Assert.Equal(2, allDone.CompletedDays);
+        Assert.False(_service.TryStartFull(Confirmed(allDone), out var error, out _));
+        Assert.Contains("全部 2 天先前已完整回填", error);
+        Assert.False(_runState.Snapshot().IsRunning);
+
+        // 全部重做：昨天這次失敗。水位若沒有在開始時清掉，昨天仍會被當成已完成
+        _failHistoric = (id, _) => id == 1001;
+        var redo = await RunFullAsync(resume: false);
+        Assert.Equal(3, redo.Count);
+        var after = _service.PreviewFull();
+        Assert.Equal(1, after.CompletedDays);
+        Assert.False(after.Days.Single(d => d.Day == DateTime.Today.AddDays(-1)).AlreadyCompleted);
+    }
+
+    /// <summary>
+    /// 體檢輪：回填天數內較早的日子常沒有主機對應（上線前）。這種日子不記完成的話「全部完成」永遠湊不齊：
+    /// 續跑只剩它時整趟回失敗（「沒有任何一天有主機對應」）還重翻狀態變更區間，拒絕空跑的防線被繞過。
+    /// 指紋含對應，之後有了對應那天就不算完成。
+    /// </summary>
+    [Fact]
+    public async Task 完成水位_無主機對應的日子也算完成_全部完成後拒絕空跑()
+    {
+        var threeDaysAgo = DateTime.Today.AddDays(-3);
+        _settings.Update(settings => settings.PrtgBackfillDays = 3);
+        Assert.Equal(3, _service.PreviewFull().DayCount);
+
+        await RunFullAsync();
+        Assert.True(_service.GetStatus().Success, string.Join(Environment.NewLine, _service.GetStatus().Output));
+
+        var preview = _service.PreviewFull();
+        Assert.Equal(3, preview.CompletedDays);
+        Assert.True(preview.Days.Single(d => d.Day == threeDaysAgo).AlreadyCompleted);
+        Assert.False(_service.TryStartFull(Confirmed(preview), out var error, out _));
+        Assert.Contains("全部 3 天先前已完整回填", error);
+        Assert.False(_runState.Snapshot().IsRunning);
+
+        // 那天之後有了對應：目標變了，不再算完成
+        _backend.PrtgStore().ReplaceHostMapForDate(threeDaysAgo, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 100, HostId = 1, MapStatus = PrtgMapStatus.Ok }
+        });
+        _backend.RecordStore().Append(new DailyAnalysisRecord { HostId = 1, Host = "host-11", Date = threeDaysAgo, RiskLevel = "高" });
+        var changed = _service.PreviewFull();
+        Assert.Equal(2, changed.CompletedDays);
+        Assert.False(changed.Days.Single(d => d.Day == threeDaysAgo).AlreadyCompleted);
+    }
+
+    [Fact]
+    public async Task 完成水位_超過七天未更新就不採信()
+    {
+        await RunFullAsync();
+        Watermark().Update(mark => mark.UpdatedAtUtc = _clock.GetUtcNow().UtcDateTime - PrtgBackfillWatermarkStore.MaxAge - TimeSpan.FromHours(1));
+
+        Assert.Equal(0, _service.PreviewFull().CompletedDays);
+    }
+
+    [Fact]
+    public async Task 完成水位_指定主機補值不讀也不寫()
+    {
+        var yesterday = DateTime.Today.AddDays(-1);
+        Assert.True(_service.TryStartSelected(new PrtgSelectedBackfillRequest
+        { HostIds = new long[] { 1 }, FromDate = yesterday, ToDate = yesterday }, out _, out var error, out _), error);
+        await WaitForBackfillAsync();
+
+        Assert.Empty(Watermark().Get().CompletedDays);
+    }
 
     private void SeedTwoDays()
     {
@@ -274,10 +410,12 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         public void AdvanceLocalOnRead(int readsFromNow, TimeSpan value) => AdvanceUtcOnRead(readsFromNow, value);
     }
 
-    private static PrtgClient CreateOfflinePrtgClient(List<(long SensorId, DateTime Day)> historicRequests) => new("http://prtg.test", "token", 5, true,
-        new OfflinePrtgHandler(historicRequests), PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
+    private static PrtgClient CreateOfflinePrtgClient(List<(long SensorId, DateTime Day)> historicRequests,
+        Func<long, DateTime, bool> failHistoric) => new("http://prtg.test", "token", 5, true,
+        new OfflinePrtgHandler(historicRequests, failHistoric), PrtgAuthModes.Token, "", "", "", new PrtgRequestBudget());
 
-    private sealed class OfflinePrtgHandler(List<(long SensorId, DateTime Day)> historicRequests) : HttpMessageHandler
+    private sealed class OfflinePrtgHandler(List<(long SensorId, DateTime Day)> historicRequests,
+        Func<long, DateTime, bool> failHistoric) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -291,6 +429,8 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
                 var sensorId = long.Parse(query["id"], System.Globalization.CultureInfo.InvariantCulture);
                 var day = DateTime.ParseExact(query["sdate"][..10], "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
                 lock (historicRequests) historicRequests.Add((sensorId, day));
+                if (failHistoric(sensorId, day))
+                    return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError));
                 body = $"{{\"histdata\":[{{\"datetime\":\"{day:yyyy-MM-dd} 01:00:00\",\"value_\":12.5,\"coverage\":100}}]}}";
             }
             else body = "{\"treesize\":0,\"messages\":[]}";

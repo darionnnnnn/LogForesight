@@ -140,7 +140,7 @@ docs/DETECTION-SPEC.md「取數排程與 AI 服務」一節）。**讀取端一�
 ContentJson 內序列化的同名值僅為殘留，強制重新分析是整批 UPDATE 欄位、不重寫 ContentJson，
 兩者短暫分岔是設計內行為，不得把 JSON 值當判定來源。`Append` 寫入、`AttachAiResult`
 完成時清 false；複合索引 `IX_lf_daily_records_ai_pending_record_date (ai_pending, record_date)`
-支援全域待補查詢（`QueryPendingAi`／`CountPendingAi`，日期新→舊、排除 `detail_pruned`）。
+支援全域待補查詢（`QueryPendingAi`／`CountPendingAi`，`PendingAiQuery` 指定日期範圍與方向、排除 `detail_pruned`）。
 
 **`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（詳見
 docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
@@ -830,10 +830,13 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
   `prtg_trusted_sampling_profile_`、`prtg_profile_page_`、`prtg_trusted_profile_refresh_proof_`、`prtg_resource_identity_`、`prtg_resource_authority_host_`、
   `prtg_resource_observation_host_`、`prtg_resource_pressure_modes_`、`prtg_resource_pressure_hints_`、`prtg_resource_formal_episodes_`、`prtg_resource_pressure_replay_progress_`、
   `prtg_silent_presence_`、`prtg_formal_mail_claims_v2_`、`prtg_formal_mail_claims_v3_`、`prtg_qualjob_`、`prtg_acceptance_labels_`。升級前先備份資料庫。
+- `prtg_backfill_watermark`（單一物件型，`PrtgBackfillWatermarkStore`）：全量回填完成水位（docs/PRTG-SPEC.md §5），零 DDL 異動。
 
 ### 表與欄位
 
-- `lf_prtg_observations`：不再寫入（`EfPrtgObservationStore.Capture` 無呼叫端），殘列依 `PrtgRetentionDays` 清理，排定下一輪 DROP（BACKLOG）。
+- `lf_prtg_observations`：已移除。`SchemaUpgrader.DropTableIfExists` 在既有 DB 冪等刪除殘留表（索引隨表移除；SQL Server 走 `OBJECT_ID` 判斷，未在真實 SQL Server 驗證）。
+  **升級前備份**。診斷匯出不再含 `Observations` 區段，舊包匯入照驗不寫入；舊版站台匯不進新版匯出的包（docs/PRTG-SPEC.md §10）。
+  已停寫的欄位（`lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`）保留不 DROP COLUMN。
 - `lf_issue_cases.prtg_evidence_json`：案件的最小 PRTG 證據；父分析精簡或重建後仍可查。
 - `lf_daily_records.risk_projection_version`、`risk_review_status`、`original_risk_content_json`：歷史弱佐證重評（`PrtgRiskProjectionStore`）的投影版本與原始判定。
 - `lf_daily_records.write_revision`：bigint 併發權杖，SaveChanges 以原修訂比對並遞增；詳情精簡也推進修訂，過期讀改寫以 `DbUpdateConcurrencyException` 拒絕。

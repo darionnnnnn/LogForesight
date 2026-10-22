@@ -428,7 +428,6 @@ public class SchemaUpgraderPrtgTests : IDisposable
         "lf_prtg_ip_excludes",
         "lf_prtg_sampled_batches",
         "lf_prtg_scope_purge_jobs",
-        "lf_prtg_observations",
         "lf_prtg_transfer_chunks",
         "lf_prtg_transfer_sessions"
     };

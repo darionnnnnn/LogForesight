@@ -34,7 +34,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly SchedulerRunState _runState;
     private readonly DataVersionStamp _dataVersion;
     private readonly AnalysisOrchestrator _orchestrator;
-    private readonly PrtgStructureSyncService _structureSync;
+    private readonly IPrtgManualWorkGate _prtgManualWork;
     private readonly PrtgBackfillService _prtgBackfill;
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
@@ -49,7 +49,7 @@ public class SchedulerHostedService : BackgroundService
         BatchRunStore batchRunStore,
         SchedulerRunState runState,
         AnalysisOrchestrator orchestrator,
-        PrtgStructureSyncService structureSync,
+        IPrtgManualWorkGate prtgManualWork,
         PrtgBackfillService prtgBackfill,
         NamedMutexGate mutexGate,
         MailNotificationService mail,
@@ -63,7 +63,7 @@ public class SchedulerHostedService : BackgroundService
         _runState = runState;
         _dataVersion = dataVersion;
         _orchestrator = orchestrator;
-        _structureSync = structureSync;
+        _prtgManualWork = prtgManualWork;
         _prtgBackfill = prtgBackfill;
         _mutexGate = mutexGate;
         _mail = mail;
@@ -311,9 +311,28 @@ public class SchedulerHostedService : BackgroundService
         IEnumerable<ScheduleWindow> windows)
         => ScheduleCalculator.EffectiveScheduleTriggerTimes(ScheduledRunTimes(runs), inMemoryTriggerTimes, windows);
 
-    /// <summary>排程執行的唯一篩選：Trigger == "schedule" 且非 AI 背景工作（補跑說明也從這裡取）</summary>
+    /// <summary>手動回填執行中（接續回填不算）：立即執行的 PRTG 日路徑會先等它，狀態 API 據此顯示提示。</summary>
+    public bool PrtgBackfillWaiting => _prtgManualWork.Running == PrtgManualWork.Backfill;
+
+    /// <summary>排程執行的唯一判準：Trigger == "schedule" 且非 AI 背景工作（觸發判定、補跑說明、排程驗收共用）</summary>
+    internal static bool IsScheduledFetchRun(BatchRun run) => run.Trigger == "schedule" && run.JobType != BatchRun.JobTypeAi;
+
     internal static IEnumerable<(DateTime StartedAt, bool Interrupted)> ScheduledRunTimes(IEnumerable<BatchRun> runs) =>
-        runs.Where(r => r.Trigger == "schedule" && r.JobType != BatchRun.JobTypeAi).Select(r => (r.StartedAt, r.Interrupted));
+        runs.Where(IsScheduledFetchRun).Select(r => (r.StartedAt, r.Interrupted));
+
+    /// <summary>
+    /// 最近一趟已結束、有逐日 PRTG 統計的排程取數，取它處理的最新資料日（PRTG 維護頁「最近一次排程驗收」）。
+    /// 立即執行不計入：驗收要回答的是「無人看管的夜間排程有沒有跑對」。沒有符合的執行回 null，不得當成通過。
+    /// </summary>
+    internal static (long RunId, PrtgDayStat Day)? LastScheduledPrtgDay(IEnumerable<BatchRun> runs)
+    {
+        var run = runs
+            .Where(r => IsScheduledFetchRun(r) && r.FinishedAt.HasValue && r.PrtgDays is { Count: > 0 })
+            .OrderByDescending(r => r.StartedAt)
+            .ThenByDescending(r => r.RunId)
+            .FirstOrDefault();
+        return run == null ? null : (run.RunId, run.PrtgDays!.MaxBy(d => d.Date)!);
+    }
 
     /// <summary>
     /// 觸發一次執行（排程輪詢與手動觸發 API 共用）。已有執行中時回 false（拒絕，不排隊）；
@@ -391,7 +410,7 @@ public class SchedulerHostedService : BackgroundService
                     var progress = new WebRunProgress(_runState);
                     var result = await _orchestrator.RunAsync(
                         effectiveRequest, settings, dataRoot, retention, console, runCts.Token, progress,
-                        structureSyncGate: _structureSync, prtgBackfillTail: _prtgBackfill);
+                        manualWorkGate: _prtgManualWork, prtgBackfillTail: _prtgBackfill);
 
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);
@@ -534,12 +553,12 @@ public class SchedulerHostedService : BackgroundService
     /// <summary>
     /// PRTG 運作健全度摘要（供 DevMonitor 檢視待補評估日與上一趟異常）。
     /// </summary>
-    public (IReadOnlyList<DateTime> PendingDays, PrtgDayStat? LastIssue) PrtgRunHealth()
+    public (IReadOnlyList<DateTime> PendingDays, PrtgDayStat? LastIssue, (long RunId, PrtgDayStat Day)? LastScheduled) PrtgRunHealth()
     {
         var settings = _systemSettingsStore.Get();
         if (!settings.PrtgEnabled)
         {
-            return (Array.Empty<DateTime>(), null);
+            return (Array.Empty<DateTime>(), null, null);
         }
 
         try
@@ -547,12 +566,12 @@ public class SchedulerHostedService : BackgroundService
             var runs = _batchRunStore.GetRecentRuns(PrtgReevaluationPlanner.LookbackDays + 1, null);
             var pending = PrtgReevaluationPlanner.Select(runs, DateTime.Today, settings.RetentionDays);
             var lastIssue = PrtgReevaluationPlanner.LastRunIssue(runs);
-            return (pending, lastIssue);
+            return (pending, lastIssue, LastScheduledPrtgDay(runs));
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "讀取 PRTG 運作健全度失敗");
-            return (Array.Empty<DateTime>(), null);
+            return (Array.Empty<DateTime>(), null, null);
         }
     }
 

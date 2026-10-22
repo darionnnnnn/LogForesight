@@ -26,7 +26,7 @@ public sealed class PrtgDiagnosticExportWriter
     private static readonly string[] OrderedProperties =
     [
         "Devices", "Sensors", "StateChanges", "Values", "HostMaps", "ManualMaps",
-        "SourcePolicy", "Observations", "Timelines", "SemanticEvidence", "SemanticResults"
+        "SourcePolicy", "Timelines", "SemanticEvidence", "SemanticResults"
     ];
 
     public async Task<PrtgDiagnosticExportWriteResult> WriteAsync(

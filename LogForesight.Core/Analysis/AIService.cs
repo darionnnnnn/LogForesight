@@ -75,16 +75,23 @@ public class AIService : IAiService
     /// </summary>
     private readonly SemaphoreSlim _requestQueue = new(1, 1);
 
-    public AIService(AiSettings settings, IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null)
-        : this(settings, CreateDefaultHandler(), dumper, usageMeter)
+    /// <summary>全站 AI 閘道（跨實例的互動優先與併發上限）與本實例走的車道。</summary>
+    private readonly IAiRequestGate _gate;
+    private readonly AiLane _lane;
+
+    public AIService(AiSettings settings, IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null,
+        IAiRequestGate? gate = null, AiLane lane = AiLane.Background)
+        : this(settings, CreateDefaultHandler(), dumper, usageMeter, gate, lane)
     {
     }
 
     internal AIService(AiSettings settings, HttpMessageHandler handler, IPromptDumper? dumper = null,
-        IAiUsageMeter? usageMeter = null)
+        IAiUsageMeter? usageMeter = null, IAiRequestGate? gate = null, AiLane lane = AiLane.Background)
     {
         _dumper = dumper ?? new NullPromptDumper();
         _usageMeter = usageMeter;
+        _gate = gate ?? NullAiRequestGate.Instance;
+        _lane = lane;
         _httpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
@@ -234,10 +241,20 @@ public class AIService : IAiService
         Log.Debug("Chat 請求：jsonMode={JsonMode}, promptChars={PromptChars}, systemPromptChars={SystemPromptChars}",
             jsonMode, prompt.Length, systemPrompt?.Length ?? 0);
 
-        await _requestQueue.WaitAsync(ct);
+        // 互動車道（畫面上有人在等）連本實例的佇列都不無限等：排隊逾上限照一般失敗降級（體檢輪）。
+        // 閘道在佇列之後取，上限只套在閘道上等於沒限——第二個問題會在佇列裡等到前一個答完。
+        if (_lane == AiLane.Interactive && !await _requestQueue.WaitAsync(_gate.InteractiveMaxWait, ct))
+        {
+            Log.Warn("Chat 互動請求在實例佇列排隊超過 {Seconds} 秒，放棄", _gate.InteractiveMaxWait.TotalSeconds);
+            return new AiResponse { Success = false, Error = AiRequestGate.InteractiveTimeoutMessage(_gate.InteractiveMaxWait) };
+        }
+        if (_lane != AiLane.Interactive) await _requestQueue.WaitAsync(ct);
         var sw = Stopwatch.StartNew();
         try
         {
+            // 全站閘道在本實例佇列之後取：排在自己佇列裡的呼叫不佔全站許可。
+            // 互動車道排不到會擲 TimeoutException，由下方 catch 照一般失敗降級。
+            using var lease = await _gate.EnterAsync(_lane, ct);
             var content = await _retryPipeline.ExecuteAsync(async attemptCt =>
             {
                 var response = await _httpClient.PostAsJsonAsync(_requestUrl, requestNode, attemptCt);

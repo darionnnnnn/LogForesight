@@ -24,7 +24,6 @@ public sealed class PrtgDataPackage
     public List<PrtgManualMapRow> ManualMaps { get; set; } = new();
     public string Purpose { get; set; } = "diagnostic-only";
     public PrtgMonitoringPolicy? SourcePolicy { get; set; }
-    public List<PrtgObservationRow> Observations { get; set; } = [];
 }
 
 public sealed record PrtgImportResult(
@@ -38,12 +37,21 @@ public static class PrtgDataTransfer
 {
     public const int CurrentFormatVersion = 2;
 
+    /// <summary>不保存 URL、query 或 userinfo；摘要只是換端點防混淆提示，不能當 Core 世代。</summary>
+    public static string SourceHintFor(string? sourceUrl)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUrl)) return string.Empty;
+        if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("http" or "https"))
+            throw new ArgumentException("PRTG 位址格式錯誤。", nameof(sourceUrl));
+        var location = $"{uri.Scheme.ToLowerInvariant()}://{uri.IdnHost.ToLowerInvariant()}:{uri.Port}{uri.AbsolutePath.TrimEnd('/')}";
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(location)));
+    }
+
     public static PrtgDataPackage Export(StorageBackend backend, DateTime fromDate, DateTime toDate)
     {
         var package = Export(backend.PrtgStore(), fromDate, toDate);
         package.SourcePolicy = new PrtgMonitoringPolicyStore(backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        using var db = backend.CreateContext();
-        package.Observations = db.PrtgObservations.AsNoTracking().Where(o => o.RecordDate >= fromDate.Date && o.RecordDate <= toDate.Date).ToList();
         return package;
     }
 

@@ -34,7 +34,7 @@ public sealed class PrtgDiagnosticExportSource
     private static readonly string[] ArrayProperties =
     [
         "Devices", "Sensors", "StateChanges", "Values", "HostMaps", "ManualMaps",
-        "Observations", "Timelines", "SemanticEvidence", "SemanticResults"
+        "Timelines", "SemanticEvidence", "SemanticResults"
     ];
 
     public async IAsyncEnumerable<PrtgDiagnosticExportItem> EnumerateRowsAsync(
@@ -72,7 +72,6 @@ public sealed class PrtgDiagnosticExportSource
         await foreach (var item in ReadHostMaps(context, fromDate.Date, toDate.Date, cancellationToken).ConfigureAwait(false)) yield return item;
         await foreach (var item in ReadManualMaps(context, cancellationToken).ConfigureAwait(false)) yield return item;
         yield return new PrtgDiagnosticExportItem("SourcePolicy", SerializeBounded(sourcePolicy));
-        await foreach (var item in ReadObservations(context, fromDate.Date, toDate.Date, cancellationToken).ConfigureAwait(false)) yield return item;
         // Timelines／SemanticEvidence／SemanticResults 保留在 V2 封套裡維持新舊匯入檔相容，內容一律為空陣列。
     }
 
@@ -251,38 +250,6 @@ public sealed class PrtgDiagnosticExportSource
                 cancellationToken.ThrowIfCancellationRequested();
                 hasCursor = true; afterDate = row.MapDate; afterDevice = row.DeviceObjid;
                 yield return Item("HostMaps", row);
-            }
-        }
-    }
-
-    private static async IAsyncEnumerable<PrtgDiagnosticExportItem> ReadObservations(
-        LfDbContext context, DateTime from, DateTime through,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        string? afterSnapshotId = null;
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var query = context.PrtgObservations.AsNoTracking()
-                .Where(row => row.RecordDate >= from && row.RecordDate <= through);
-            if (afterSnapshotId != null)
-                query = query.Where(row => string.Compare(row.SnapshotId, afterSnapshotId) > 0);
-            var ordered = query.OrderBy(row => row.SnapshotId);
-            var lengths = await ReadPageLengthsAsync(ordered, row => row.SnapshotId, context.Database.IsSqlServer(), cancellationToken,
-                row => row.SnapshotId, row => row.DecisionKey, row => row.ActiveKey, row => row.RuleCode,
-                row => row.EventKey, row => row.SourceName, row => row.Category, row => row.SourceGeneration,
-                row => row.SourceHint, row => row.ResourceGeneration, row => row.QualityReason,
-                row => row.ContentJson, row => row.SupplementStatus)
-                .ConfigureAwait(false);
-            ValidatePageLengths(lengths, "Observations");
-            if (lengths.Count == 0) yield break;
-            var page = await ordered.Take(lengths.Count).ToListAsync(cancellationToken).ConfigureAwait(false);
-            EnsurePageKeysMatch(page, lengths, row => row.SnapshotId, "Observations");
-            foreach (var row in page)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                afterSnapshotId = row.SnapshotId;
-                yield return Item("Observations", row);
             }
         }
     }

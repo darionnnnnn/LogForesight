@@ -76,7 +76,7 @@ public class AiAnalysisSchedulerTests : IDisposable
 
     private (AiAnalysisHostedService Service, AiAnalysisRunState RunState, ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState)
         CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true,
-            HostDayWorkflowService? workflow = null)
+            HostDayWorkflowService? workflow = null, bool backfillCompleted = true)
     {
         var optionsStore = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
         if (initialOptions != null)
@@ -103,7 +103,7 @@ public class AiAnalysisSchedulerTests : IDisposable
             _settingsStore,
             new DataVersionStamp(),
             BatchRuns(),
-            CompletedBackfiller(),
+            backfillCompleted ? CompletedBackfiller() : new DailyRecordBackfiller(_contextFactory),
             new FakeWebAiService(aiAvailable),
             _suppressions,
             _ai,
@@ -179,43 +179,115 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.False(recYesterday!.AiPending);
     }
 
+    /// <summary>記錄每次 AI 呼叫處理的是哪一天（prompt 只有目標日以 yyyy-MM-dd 出現，近期歷史用 MM-dd）。</summary>
+    private List<(DateTime Date, string Prompt)> RecordProcessedDates(params DateTime[] candidates)
+    {
+        var processed = new List<(DateTime Date, string Prompt)>();
+        _ai.Behavior = (prompt, ct) =>
+        {
+            var date = candidates.FirstOrDefault(d => prompt.Contains(d.ToString("yyyy-MM-dd")));
+            lock (processed) { processed.Add((date, prompt)); }
+            return Task.FromResult(new AiResponse { Success = true, Content = _ai.NextContent });
+        };
+        return processed;
+    }
+
     [Fact]
-    public async Task 情境2_處理順序_通過閘門者依日期新到舊依序處理()
+    public async Task 情境2_處理順序_積壓層同一塊內同主機舊到新_後一天的prompt看得到前一天的AI結論()
     {
         var (service, _, _, _) = CreateTestHarness();
         var store = _backend.RecordStore();
 
-        var date10DaysAgo = DateTime.Today.AddDays(-10);
-        var date3DaysAgo = DateTime.Today.AddDays(-3);
-        var date7DaysAgo = DateTime.Today.AddDays(-7);
+        var d9 = DateTime.Today.AddDays(-9);
+        var d6 = DateTime.Today.AddDays(-6);
+        var d3 = DateTime.Today.AddDays(-3);
 
-        // 刻意打亂順序寫入
-        store.Append(CreateRecord(1, "HOST-A", date10DaysAgo, pending: true));
-        store.Append(CreateRecord(1, "HOST-A", date3DaysAgo, pending: true));
-        store.Append(CreateRecord(1, "HOST-A", date7DaysAgo, pending: true));
+        // 刻意打亂順序寫入；三天都落在同一個七日塊（D-9～D-3）
+        store.Append(CreateRecord(1, "HOST-A", d6, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", d3, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", d9, pending: true));
 
-        var processedDates = new List<DateTime>();
+        var processed = RecordProcessedDates(d3, d6, d9);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { d9, d6, d3 }, processed.Select(p => p.Date));
+        // D-6 判讀時，D-9 的 AI 結論已寫回，近期歷史帶得到
+        var d6Prompt = processed[1].Prompt;
+        Assert.Contains($"- {d9:MM-dd}", d6Prompt);
+        Assert.Contains("當日結論:AI分析完成摘要", d6Prompt);
+    }
+
+    [Fact]
+    public async Task 處理順序_近日層新到舊先處理_積壓層塊由新到舊()
+    {
+        var (service, _, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var d1 = DateTime.Today.AddDays(-1);
+        var d2 = DateTime.Today.AddDays(-2);
+        var d5 = DateTime.Today.AddDays(-5);
+        var d20 = DateTime.Today.AddDays(-20);
+
+        foreach (var d in new[] { d20, d2, d5, d1 })
+            store.Append(CreateRecord(1, "HOST-A", d, pending: true));
+
+        var processed = RecordProcessedDates(d1, d2, d5, d20);
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        // 近日層（今天−2 以內）新→舊；之後 D-5 所在的塊比 D-20 所在的塊新，先處理
+        Assert.Equal(new[] { d1, d2, d5, d20 }, processed.Select(p => p.Date));
+    }
+
+    [Fact]
+    public async Task 處理順序_同一塊內主機依最舊待補日先後_每台主機片內舊到新()
+    {
+        var (service, _, _, _) = CreateTestHarness(new ScheduleOptions { AiConcurrency = 1 });
+        var store = _backend.RecordStore();
+
+        var d3 = DateTime.Today.AddDays(-3);
+        var d4 = DateTime.Today.AddDays(-4);
+        var d6 = DateTime.Today.AddDays(-6);
+
+        store.Append(CreateRecord(1, "HOST-A", d4, pending: true));
+        store.Append(CreateRecord(2, "HOST-B", d3, pending: true));
+        store.Append(CreateRecord(2, "HOST-B", d6, pending: true));
+
+        var hosts = new List<string>();
+        var processed = RecordProcessedDates(d3, d4, d6);
+        var recordDates = _ai.Behavior;
         _ai.Behavior = (prompt, ct) =>
         {
-            // 從 prompt 或標籤推斷處理的日期
-            foreach (var d in new[] { date3DaysAgo, date7DaysAgo, date10DaysAgo })
-            {
-                if (prompt.Contains(d.ToString("yyyy-MM-dd")))
-                {
-                    processedDates.Add(d);
-                    break;
-                }
-            }
-            return Task.FromResult(new AiResponse { Success = true, Content = _ai.NextContent });
+            lock (hosts) { hosts.Add(prompt.Contains("HOST-B") ? "HOST-B" : "HOST-A"); }
+            return recordDates!(prompt, ct);
         };
 
         await service.ExecuteProcessingLoopAsync(CancellationToken.None);
 
-        // 斷言：處理順序嚴格依日期新→舊（3天前 → 7天前 → 10天前）
-        Assert.Equal(3, processedDates.Count);
-        Assert.Equal(date3DaysAgo, processedDates[0]);
-        Assert.Equal(date7DaysAgo, processedDates[1]);
-        Assert.Equal(date10DaysAgo, processedDates[2]);
+        // HOST-B 的最舊待補（D-6）比 HOST-A（D-4）舊，HOST-B 整片先跑完
+        Assert.Equal(new[] { d6, d3, d4 }, processed.Select(p => p.Date));
+        Assert.Equal(new[] { "HOST-B", "HOST-B", "HOST-A" }, hosts);
+    }
+
+    [Fact]
+    public void SelectNextBatch_近日層被完整性閘門擋住時_第一批直接取積壓層()
+    {
+        var (service, _, _, schedulerState) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var d5 = DateTime.Today.AddDays(-5);
+        store.Append(CreateRecord(1, "HOST-A", DateTime.Today, pending: true));
+        store.Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-1), pending: true));
+        store.Append(CreateRecord(1, "HOST-A", d5, pending: true));
+
+        schedulerState.TryBeginRun("schedule", out _);
+
+        var batch = service.SelectNextBatch(new HashSet<(long, string, DateTime)>());
+
+        Assert.NotNull(batch);
+        Assert.True(batch.OldestFirst);
+        Assert.Equal(new[] { d5 }, batch.Records.Select(r => r.Date.Date));
     }
 
     [Fact]
@@ -267,16 +339,17 @@ public class AiAnalysisSchedulerTests : IDisposable
         await service.ExecuteProcessingLoopAsync(cts.Token);
         Assert.Equal(3, callCount);
 
-        // 斷言第 1 次執行只完成了 2 筆，殘餘 2 筆仍為待補
+        // 四天同在一個積壓塊，處理順序舊→新（date4 → date3 → date2）：
+        // 第 1 次執行只完成最舊的 2 筆，殘餘 2 筆仍為待補
         var r1 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date1);
         var r2 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date2);
         var r3 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date3);
         var r4 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date4);
 
-        Assert.False(r1!.AiPending);
-        Assert.False(r2!.AiPending);
-        Assert.True(r3!.AiPending);
-        Assert.True(r4!.AiPending);
+        Assert.True(r1!.AiPending);
+        Assert.True(r2!.AiPending);
+        Assert.False(r3!.AiPending);
+        Assert.False(r4!.AiPending);
 
         // 重新開始執行
         var secondRunDates = new List<DateTime>();
@@ -295,18 +368,14 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         await service.ExecuteProcessingLoopAsync(CancellationToken.None);
 
-        // 斷言：第 2 次執行只處理了殘餘的 2 筆（date3 與 date4），已完成的 date1 與 date2 絕不重跑
-        Assert.Equal(2, secondRunDates.Count);
-        Assert.Contains(date3, secondRunDates);
-        Assert.Contains(date4, secondRunDates);
-        Assert.DoesNotContain(date1, secondRunDates);
-        Assert.DoesNotContain(date2, secondRunDates);
+        // 斷言：第 2 次執行只處理了殘餘的 2 筆（date2 與 date1），已完成的 date3 與 date4 絕不重跑
+        Assert.Equal(new[] { date2, date1 }, secondRunDates);
 
         // 全數完成
-        r3 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date3);
-        r4 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date4);
-        Assert.False(r3!.AiPending);
-        Assert.False(r4!.AiPending);
+        r1 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date1);
+        r2 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-A" } }, date2);
+        Assert.False(r1!.AiPending);
+        Assert.False(r2!.AiPending);
     }
 
     [Fact]
@@ -571,8 +640,9 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var (service, runState, optionsStore, _) = CreateTestHarness();
         var store = _backend.RecordStore();
-        var completedDate = DateTime.Today.AddDays(-3);
-        var cancelledDate = DateTime.Today.AddDays(-4);
+        // 同一積壓塊內舊→新：D-4 先完成，D-3 卡在呼叫內被停止
+        var completedDate = DateTime.Today.AddDays(-4);
+        var cancelledDate = DateTime.Today.AddDays(-3);
         store.Append(CreateRecord(1, "HOST-A", completedDate, pending: true));
         store.Append(CreateRecord(1, "HOST-A", cancelledDate, pending: true));
 
@@ -611,7 +681,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         var statusResp = controller.GetAiStatus();
         Assert.True(statusResp.Success);
         Assert.NotNull(statusResp.Data);
-        Assert.Equal("netiq-ai", statusResp.Data.ProgressPhase);
+        Assert.Null(statusResp.Data.ProgressPhase);   // 閒置沒有進度可畫
         Assert.Equal("件", statusResp.Data.UnitText);
         Assert.Equal(2, statusResp.Data.PendingTotal);
         Assert.False(statusResp.Data.IsRunning);
@@ -835,6 +905,62 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         Assert.False(runState.IsRunning);
         Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
+    }
+
+    private static ScheduleOptions AllDay() => new()
+    {
+        AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+    };
+
+    /// <summary>
+    /// 第 57 輪批次C-2：閒置原因在狀態 API 讀取時即時判定，與輪詢共用同一份條件
+    /// （AI 未設定 → 資料校正中 → 不在窗口 → 沒有待補），其他都成立時再看是否在等取數。
+    /// </summary>
+    [Fact]
+    public void CurrentIdleReason_依序判定且執行中為null()
+    {
+        var pendingOne = () => 1;
+        Assert.Equal(AiIdleReasons.Disabled, CreateTestHarness(AllDay(), aiAvailable: false).Service.CurrentIdleReason(pendingOne));
+        Assert.Equal(AiIdleReasons.BackfillPending, CreateTestHarness(AllDay(), backfillCompleted: false).Service.CurrentIdleReason(pendingOne));
+
+        var now = DateTime.Now;
+        var outside = new ScheduleOptions
+        {
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+        Assert.Equal(AiIdleReasons.OutsideWindow, CreateTestHarness(outside).Service.CurrentIdleReason(pendingOne));
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(AllDay());
+        Assert.Equal(AiIdleReasons.NoPending, service.CurrentIdleReason(() => 0));
+        Assert.Null(service.CurrentIdleReason(pendingOne));
+
+        // 取數執行中、PRTG finding 未到齊：不擋開跑，但畫面要說得出最近的待補在等什麼
+        schedulerState.TryBeginRun("schedule", out _);
+        Assert.Equal(AiIdleReasons.WaitingFetch, service.CurrentIdleReason(pendingOne));
+
+        Assert.True(runState.TryBeginRun("manual:admin", 1, out _));
+        Assert.Null(service.CurrentIdleReason(pendingOne));
+    }
+
+    /// <summary>上一輪輪詢記下的原因（例如資料校正中）不得在條件改變後繼續顯示。</summary>
+    [Fact]
+    public void GetAiStatus_閒置原因即時判定_不用輪詢殘值()
+    {
+        var (service, runState, optionsStore, _) = CreateTestHarness(AllDay());
+        runState.SetIdleReason(AiIdleReasons.BackfillPending);
+        var controller = new ScheduleController(
+            optionsStore, scheduler: null!, new SchedulerRunState(), hosts: new FakeHostStore(),
+            sentinels: new FakeSentinelStore(), audit: new RecordingAuditService(), currentUser: new FakeCurrentUser(),
+            users: new FakeUserStore(), records: _backend.RecordStore(), settingsStore: _settingsStore,
+            userDisplayNames: new UserDisplayNameService(_settingsStore), aiScheduler: service, aiRunState: runState);
+
+        var status = controller.GetAiStatus().Data!;
+
+        Assert.Equal(AiIdleReasons.NoPending, status.IdleReason);
+        Assert.Equal(0, status.PendingTotal);
     }
 
     /// <summary>執行中不得殘留閒置原因——畫面會同時顯示「執行中」與一句「為什麼沒在跑」。</summary>
@@ -1248,6 +1374,33 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.False(state.IsFollowingFetch(checkTime));
         Assert.True(state.IsFollowingFetch(state.LastRunEndedAt.Value));
         Assert.True(state.IsFollowingFetch(state.LastRunEndedAt.Value.AddMinutes(5)));
+    }
+
+    /// <summary>
+    /// 體檢輪：閒置原因只有一份判定（docs/WEB-SPEC.md §9.10）。跟隨取數的即時觸發曾自己抄一份 disabled／
+    /// backfill／no-pending 判斷，之後改其中一份另一份不會跟著變——守住它只能經 BlockingIdleReason。
+    /// </summary>
+    [Fact]
+    public void 跟隨取數_即時觸發的前置判定走BlockingIdleReason_不另抄一份()
+    {
+        var path = Path.Combine(FindRepoRoot(), "LogForesight.Web", "Services", "AiAnalysisHostedService.cs");
+        var source = File.ReadAllText(path);
+        var start = source.IndexOf("private void OnFetchFollowUp()", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = source.IndexOf("internal async Task TickAsync", start, StringComparison.Ordinal);
+        var body = source[start..end];
+
+        Assert.Contains("BlockingIdleReason(", body);
+        Assert.Contains("requireWindow: false", body);
+        Assert.DoesNotContain("AiIdleReasons.", body);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir!.FullName;
     }
 
     [Fact]

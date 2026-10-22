@@ -147,7 +147,7 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
         var requestHash = HashRequest(request);
         var estimate = fence with { Kind = "estimate", ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(5),
             HostHash = HashIds(selectedHosts), SensorHash = HashIds(selectedSensors), RequestHash = requestHash,
-            SourceHash = EfPrtgObservationStore.SourceHintFor(new SystemSettingsStore(backend.Blob("system_settings")).Get().PrtgUrl) };
+            SourceHash = PrtgDataTransfer.SourceHintFor(new SystemSettingsStore(backend.Blob("system_settings")).Get().PrtgUrl) };
         var hostPages = (int)Math.Ceiling(hostCandidates.Total / (double)PageSize);
         var sensorPages = (int)Math.Ceiling(available.Total / (double)PageSize);
         var validationQueries = 2;

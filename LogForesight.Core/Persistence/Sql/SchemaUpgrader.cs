@@ -345,64 +345,8 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_sampled_batches",
             "IX_lf_prtg_batch_created", "created_at");
 
-        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_observations", isSqlite ? """
-            CREATE TABLE lf_prtg_observations (
-                snapshot_id TEXT NOT NULL PRIMARY KEY, decision_key TEXT NOT NULL DEFAULT '', active_key TEXT NULL,
-                host_id INTEGER NOT NULL, record_date TEXT NOT NULL,
-                device_objid INTEGER NOT NULL, sensor_objid INTEGER NULL,
-                rule_code TEXT NOT NULL, event_key TEXT NOT NULL DEFAULT '', source_name TEXT NOT NULL DEFAULT '',
-                category TEXT NOT NULL DEFAULT '', severity_rank INTEGER NOT NULL DEFAULT 0,
-                elevates_day_risk INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0,
-                source_generation TEXT NULL, source_hint TEXT NOT NULL DEFAULT '', resource_generation TEXT NULL,
-                quality_reason TEXT NOT NULL, format_version INTEGER NOT NULL,
-                content_json TEXT NOT NULL, recorded_at_utc TEXT NOT NULL
-            )
-            """ : """
-            CREATE TABLE lf_prtg_observations (
-                snapshot_id nvarchar(64) NOT NULL PRIMARY KEY, decision_key nvarchar(64) NOT NULL DEFAULT '', active_key nvarchar(64) NULL,
-                host_id bigint NOT NULL, record_date datetime2 NOT NULL,
-                device_objid bigint NOT NULL, sensor_objid bigint NULL,
-                rule_code nvarchar(100) NOT NULL, event_key nvarchar(255) NOT NULL DEFAULT '', source_name nvarchar(255) NOT NULL DEFAULT '',
-                category nvarchar(20) NOT NULL DEFAULT '', severity_rank int NOT NULL DEFAULT 0,
-                elevates_day_risk bit NOT NULL DEFAULT 0, suppressed bit NOT NULL DEFAULT 0,
-                source_generation nvarchar(100) NULL, source_hint nvarchar(64) NOT NULL DEFAULT '', resource_generation nvarchar(100) NULL,
-                quality_reason nvarchar(255) NOT NULL, format_version int NOT NULL,
-                content_json nvarchar(max) NOT NULL, recorded_at_utc datetime2 NOT NULL
-            )
-            """);
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_status",
-            isSqlite ? "TEXT NOT NULL DEFAULT 'shadow'" : "nvarchar(32) NOT NULL DEFAULT 'shadow'");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "run_id",
-            isSqlite ? "INTEGER NULL" : "bigint NULL");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_parent_record_id",
-            isSqlite ? "INTEGER NULL" : "bigint NULL");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "supplement_attempt_at_utc",
-            isSqlite ? "TEXT NULL" : "datetime2 NULL");
-        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations", "IX_lf_prtg_obs_supplement", "supplement_status, supplement_attempt_at_utc");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "source_hint",
-            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(64) NOT NULL DEFAULT ''");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "decision_key",
-            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(64) NOT NULL DEFAULT ''");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "active_key",
-            isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "event_key",
-            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "source_name",
-            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "category",
-            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(20) NOT NULL DEFAULT ''");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "severity_rank",
-            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "elevates_day_risk",
-            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
-        AddColumnIfMissing(ctx, isSqlite, "lf_prtg_observations", "suppressed",
-            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
-        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
-            "IX_lf_prtg_obs_host_date", "host_id, record_date");
-        AddIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
-            "IX_lf_prtg_obs_recorded", "recorded_at_utc");
-        AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_prtg_observations",
-            "IX_lf_prtg_obs_active", "active_key", "active_key IS NOT NULL");
+        // 第 54 輪起 lf_prtg_observations 已停寫，第 57 輪移除其模型與死碼；舊部署的殘留表在此冪等刪除（索引隨表一併移除）。
+        DropTableIfExists(ctx, isSqlite, "lf_prtg_observations");
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_host_map",
             isSqlite ? SqliteCreatePrtgHostMap : SqlServerCreatePrtgHostMap);
@@ -1767,6 +1711,18 @@ internal static class SchemaUpgrader
 
         Log.Info("[SQL] schema 升級：建立資料表 {Table}", table);
         ctx.Database.ExecuteSqlRaw(createTableSql);
+    }
+
+    /// <summary>冪等刪表：SQLite 用 <c>DROP TABLE IF EXISTS</c>；SqlServer 先以 OBJECT_ID 判斷。表名為內部寫死常數。</summary>
+    private static void DropTableIfExists(LfDbContext ctx, bool isSqlite, string table)
+    {
+        if (!TableExists(ctx, isSqlite, table)) return;
+
+        Log.Info("[SQL] schema 升級：刪除已停用的資料表 {Table}", table);
+        var sql = isSqlite
+            ? "DROP TABLE IF EXISTS " + table
+            : "IF OBJECT_ID(N'dbo." + table + "', N'U') IS NOT NULL DROP TABLE dbo." + table + ";";
+        ctx.Database.ExecuteSqlRaw(sql);
     }
 
     /// <summary>SQLite：<c>sqlite_master</c>；SqlServer：INFORMATION_SCHEMA.TABLES</summary>

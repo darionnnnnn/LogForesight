@@ -37,11 +37,12 @@ public sealed class PrtgDiagnosticExportSourceTests
         Assert.Single(items, item => item.PropertyName == "Values");
         Assert.Single(items, item => item.PropertyName == "HostMaps");
         Assert.Single(items, item => item.PropertyName == "ManualMaps");
-        Assert.Single(items, item => item.PropertyName == "Observations");
+        // 第 57 輪起不再輸出 Observations 區段。
+        Assert.DoesNotContain(items, item => item.PropertyName == "Observations");
         // 三組舊陣列名稱保留給舊匯入檔相容，現行匯出不輸出任何列。
         Assert.DoesNotContain(items, item => item.PropertyName is "Timelines" or "SemanticEvidence" or "SemanticResults");
         Assert.Equal("ManualMaps", items[items.FindIndex(item => item.PropertyName == "SourcePolicy") - 1].PropertyName);
-        Assert.Equal(new[] { "Devices", "Sensors", "StateChanges", "Values", "HostMaps", "ManualMaps", "Observations", "Timelines", "SemanticEvidence", "SemanticResults" },
+        Assert.Equal(new[] { "Devices", "Sensors", "StateChanges", "Values", "HostMaps", "ManualMaps", "Timelines", "SemanticEvidence", "SemanticResults" },
             PrtgDiagnosticExportSource.V2ArrayProperties);
         Assert.Equal(2 * (int)Math.Ceiling(205d / PrtgDiagnosticExportSource.PageSize) + 1,
             fixture.Counter.DevicePageCommands);
@@ -57,7 +58,6 @@ public sealed class PrtgDiagnosticExportSourceTests
                 case "Values": Assert.NotNull(JsonSerializer.Deserialize<PrtgValueRow>(item.JsonUtf8)); break;
                 case "HostMaps": Assert.NotNull(JsonSerializer.Deserialize<PrtgHostMapRow>(item.JsonUtf8)); break;
                 case "ManualMaps": Assert.NotNull(JsonSerializer.Deserialize<PrtgManualMapRow>(item.JsonUtf8)); break;
-                case "Observations": Assert.NotNull(JsonSerializer.Deserialize<PrtgObservationRow>(item.JsonUtf8)); break;
                 default: throw new InvalidDataException($"未預期的 V2 匯出欄位 {item.PropertyName}。");
             }
         }
@@ -86,8 +86,7 @@ public sealed class PrtgDiagnosticExportSourceTests
             StateChanges = items.Where(item => item.PropertyName == "StateChanges").Select(item => JsonSerializer.Deserialize<PrtgStateChangeRow>(item.JsonUtf8)!).ToList(),
             Values = items.Where(item => item.PropertyName == "Values").Select(item => JsonSerializer.Deserialize<PrtgValueRow>(item.JsonUtf8)!).ToList(),
             HostMaps = items.Where(item => item.PropertyName == "HostMaps").Select(item => JsonSerializer.Deserialize<PrtgHostMapRow>(item.JsonUtf8)!).ToList(),
-            ManualMaps = items.Where(item => item.PropertyName == "ManualMaps").Select(item => JsonSerializer.Deserialize<PrtgManualMapRow>(item.JsonUtf8)!).ToList(),
-            Observations = items.Where(item => item.PropertyName == "Observations").Select(item => JsonSerializer.Deserialize<PrtgObservationRow>(item.JsonUtf8)!).ToList()
+            ManualMaps = items.Where(item => item.PropertyName == "ManualMaps").Select(item => JsonSerializer.Deserialize<PrtgManualMapRow>(item.JsonUtf8)!).ToList()
         };
         // 三組舊陣列名稱只存在於封套（現行套件型別已不含），序列化後以空陣列補上。
         var packageNode = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(package))!.AsObject();
@@ -107,12 +106,10 @@ public sealed class PrtgDiagnosticExportSourceTests
         using var context = fixture.OpenContext();
         await context.Database.EnsureCreatedAsync();
         SeedV2(context);
-        context.PrtgObservations.Add(new PrtgObservationRow
+        context.PrtgStateChanges.Add(new PrtgStateChangeRow
         {
-            SnapshotId = "large-ascii", RecordDate = From, ContentJson = new string('a', 2 * 1024 * 1024) + "診斷🧪",
-            DecisionKey = "large", HostId = 1, DeviceObjid = 1, RuleCode = "r", EventKey = "e",
-            SourceName = "source", Category = "disk", SourceHint = "hint", QualityReason = "ok",
-            FormatVersion = 2, RecordedAtUtc = DateTime.SpecifyKind(From, DateTimeKind.Utc), SupplementStatus = "shadow"
+            SensorObjid = 501, ChangedAt = From.AddHours(3), Status = "Down", Quality = "ok", CreatedAt = From,
+            Message = new string('a', 2 * 1024 * 1024) + "診斷🧪"
         });
         await context.SaveChangesAsync();
         await using var transaction = await context.Database.BeginTransactionAsync();
@@ -120,12 +117,12 @@ public sealed class PrtgDiagnosticExportSourceTests
         var row = new List<byte[]>();
         await foreach (var item in new PrtgDiagnosticExportSource().EnumerateRowsAsync(
             context, From, Through, Policy(), 7, CancellationToken.None))
-            if (item.PropertyName == "Observations") row.Add(item.JsonUtf8);
+            if (item.PropertyName == "StateChanges") row.Add(item.JsonUtf8);
         using var large = row.Select(bytes => JsonDocument.Parse(bytes)).Single(document =>
-            document.RootElement.GetProperty("SnapshotId").GetString() == "large-ascii");
+            document.RootElement.GetProperty("Message").GetString()!.StartsWith("aaaa", StringComparison.Ordinal));
         Assert.True(large.RootElement.GetRawText().Length > 2 * 1024 * 1024);
         Assert.True(Encoding.UTF8.GetByteCount(large.RootElement.GetRawText()) < PrtgDiagnosticExportSource.MaximumRowBytes);
-        Assert.EndsWith("診斷🧪", large.RootElement.GetProperty("ContentJson").GetString(), StringComparison.Ordinal);
+        Assert.EndsWith("診斷🧪", large.RootElement.GetProperty("Message").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -135,12 +132,10 @@ public sealed class PrtgDiagnosticExportSourceTests
         using var context = fixture.OpenContext();
         await context.Database.EnsureCreatedAsync();
         SeedV2(context);
-        context.PrtgObservations.Add(new PrtgObservationRow
+        context.PrtgStateChanges.Add(new PrtgStateChangeRow
         {
-            SnapshotId = "raw-oversized", RecordDate = From, ContentJson = new string(' ', 10 * 1024 * 1024),
-            DecisionKey = "large", HostId = 1, DeviceObjid = 1, RuleCode = "r", EventKey = "e",
-            SourceName = "source", Category = "disk", SourceHint = "hint", QualityReason = "ok",
-            FormatVersion = 2, RecordedAtUtc = DateTime.SpecifyKind(From, DateTimeKind.Utc), SupplementStatus = "shadow"
+            SensorObjid = 501, ChangedAt = From.AddHours(3), Status = "Down", Quality = "ok", CreatedAt = From,
+            Message = new string(' ', 10 * 1024 * 1024)
         });
         await context.SaveChangesAsync();
         await using var transaction = await context.Database.BeginTransactionAsync();
@@ -152,8 +147,8 @@ public sealed class PrtgDiagnosticExportSourceTests
                 context, From, Through, Policy(), 7, CancellationToken.None)) { }
         });
         Assert.Contains("9 MiB", error.Message, StringComparison.Ordinal);
-        Assert.Equal(1, fixture.Counter.ObservationLengthPages);
-        Assert.Equal(0, fixture.Counter.ObservationEntityPages);
+        Assert.Equal(1, fixture.Counter.StateChangeLengthPages);
+        Assert.Equal(0, fixture.Counter.StateChangeEntityPages);
     }
 
 
@@ -217,22 +212,6 @@ public sealed class PrtgDiagnosticExportSourceTests
             new PrtgHostMapRow { MapDate = From, DeviceObjid = 1, HostId = 11, HostName = "host", MapStatus = "ok", CreatedAt = From },
             new PrtgHostMapRow { MapDate = From.AddDays(5), DeviceObjid = 1, HostId = 11, HostName = "future", MapStatus = "ok", CreatedAt = From });
         context.PrtgManualMaps.Add(new PrtgManualMapRow { DeviceObjid = 1, HostId = 11, CreatedBy = "admin", CreatedAt = From });
-        context.PrtgObservations.Add(new PrtgObservationRow
-        {
-            SnapshotId = "snapshot-1", DecisionKey = "decision", HostId = 11, RecordDate = From,
-            DeviceObjid = 1, RuleCode = "rule", EventKey = "event", SourceName = "source", Category = "disk",
-            SourceHint = "hint", QualityReason = "ok", FormatVersion = 2, ContentJson = "{}",
-            RecordedAtUtc = DateTime.SpecifyKind(From, DateTimeKind.Utc), SupplementStatus = "shadow"
-        });
-        context.PrtgObservations.Add(new PrtgObservationRow
-        {
-            SnapshotId = "snapshot-outside", DecisionKey = "decision-outside", HostId = 11,
-            RecordDate = From.AddDays(5), DeviceObjid = 1, RuleCode = "rule", EventKey = "event",
-            SourceName = "source", Category = "disk", SourceHint = "hint", QualityReason = "ok",
-            FormatVersion = 2, ContentJson = "{}", RecordedAtUtc = DateTime.SpecifyKind(From, DateTimeKind.Utc),
-            SupplementStatus = "shadow"
-        });
-
         context.Blobs.Add(new BlobRow { BlobKey = PrtgMonitoringPolicyStore.BlobKey,
             Content = JsonSerializer.Serialize(Policy()), Version = 7, UpdatedAt = From });
     }
@@ -266,12 +245,12 @@ public sealed class PrtgDiagnosticExportSourceTests
     {
         public int ReaderCommands { get; private set; }
         public int DevicePageCommands { get; private set; }
-        public int ObservationLengthPages { get; private set; }
-        public int ObservationEntityPages { get; private set; }
+        public int StateChangeLengthPages { get; private set; }
+        public int StateChangeEntityPages { get; private set; }
         public int ValueLengthPages { get; private set; }
         public int ValueEntityPages { get; private set; }
 
-        public void Reset() { ReaderCommands = 0; DevicePageCommands = 0; ObservationLengthPages = 0; ObservationEntityPages = 0; ValueLengthPages = 0; ValueEntityPages = 0; }
+        public void Reset() { ReaderCommands = 0; DevicePageCommands = 0; StateChangeLengthPages = 0; StateChangeEntityPages = 0; ValueLengthPages = 0; ValueEntityPages = 0; }
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
@@ -286,11 +265,11 @@ public sealed class PrtgDiagnosticExportSourceTests
             }
             if (command.CommandText.Contains("lf_prtg_devices", StringComparison.OrdinalIgnoreCase) &&
                 command.CommandText.Contains("LIMIT", StringComparison.OrdinalIgnoreCase)) DevicePageCommands++;
-            if (command.CommandText.Contains("lf_prtg_observations", StringComparison.OrdinalIgnoreCase) &&
+            if (command.CommandText.Contains("lf_prtg_state_changes", StringComparison.OrdinalIgnoreCase) &&
                 command.CommandText.Contains("LIMIT", StringComparison.OrdinalIgnoreCase))
             {
-                if (command.CommandText.Contains("length(", StringComparison.OrdinalIgnoreCase)) ObservationLengthPages++;
-                else ObservationEntityPages++;
+                if (command.CommandText.Contains("length(", StringComparison.OrdinalIgnoreCase)) StateChangeLengthPages++;
+                else StateChangeEntityPages++;
             }
             return ValueTask.FromResult(result);
         }

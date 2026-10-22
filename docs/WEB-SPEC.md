@@ -2477,7 +2477,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**都在這一頁（模組規格見 docs/PRTG-SPEC.md）。
 排程作業頁只顯示動態狀態、進度與執行中的停止鈕；不提供同步／回填啟動按鈕。
 **總開關與夜間數值取數範圍是兩個欄位**：保守策略下範圍不適用，仍可啟用 PRTG 擷取。
-頁首「啟用準備」讀取已儲存設定、最近一次環境探測與結構同步、PRTG 規則及每日排程狀態，逐項指向下一步。連線測試只有本次頁面以已儲存的連線設定成功測過才列已確認，重新載入或改動表單後需重測；用未儲存表單值測試成功不能替代實際執行設定的驗證。未查到的狀態列為待確認；全項確認也只表示這些設定與上次檢查結果，不代表站台資料完整或預警已驗證。
+頁首「啟用準備」讀取已儲存設定、最近一次環境探測與結構同步、PRTG 規則及每日排程狀態（六項），逐項指向下一步；未查到的狀態列為待確認。
+連線測試的結果只在連線頁籤就地顯示（用未儲存表單值測試成功時附註請儲存後重測），不列入清單——重整就歸零的狀態不該當成常駐項目。
+六項皆確認後下方出現**「最近一次排程驗收」**三項（判定集中在 `core/prtg-acceptance.js`，畫面只排版；`undefined`＝讀取中、`null`＝讀取失敗）：
+① 最近一趟**排程**取數的 PRTG 結局為 `success`（`GET api/admin/schedule/status` 的 `prtgLastScheduledDay`，立即執行不計入；後端只看最近幾天已結束的排程執行，沒有時顯示「最近沒有已結束的排程執行」，不算通過；結局用詞與執行總表徽章同一套；「檢視該趟執行」以 `/runs?run=<runId>#list` 直接開該趟執行詳情）；
+② 取數結束後 AI 待補歸零且上次 AI 執行沒有失敗（`lastRunSuccess` 是行程內狀態，站台重啟後為 null 不算失敗；AI 未設定顯示「不適用」、`backfill-pending` 顯示校正中待確認）；
+③ 快照最近 24 個完整小時中有目標的小時品質達標 ≥75% 且最近一個完整小時有成功快照（沒有目標顯示「無資料」，不算通過；「品質達標」＝`databaseUsableValues`，與鏡像狀態頁快照表「品質達標列／目標」欄同一個數，快照寫入筆數另列一欄）。
+三個來源都只在載入時讀一次，段內「重新確認」鈕重抓三者。
+全項確認也只表示設定與最近一次結果，資料涵蓋另見就緒度與使用效果；逐步劇本見 docs/PRTG-SPEC.md §13。
 
 六個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）。
 `bindTabs` 的 `{ hash: true }` 選項讓切換同步網址 hash（`history.replaceState`，
@@ -2504,6 +2511,9 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
   （整包更新中的 PRTG 欄位因此一律可空、有送才更新）。
   `PrtgRetentionDays` 受「不可大於歷史資料保留天數」約束，前端先提示、後端仍驗一次，
   且該檢查以 **effective 值**（未送就取已儲存值）比較，否則只調小歷史保留天數時上限會失效。
+  **監看範圍（可選縮圈）**整卡在擷取參數表單之後（獨立表單，不得巢狀在參數表單內），Bootstrap collapse 預設收合，
+  展開狀態以 `ui.js` 的 `bindRememberedCollapse`（`localStorage` 鍵 `lf.collapse.prtg-monitoring`，讀寫皆 try/catch）記住；
+  同頁籤只有「儲存」一顆實心主要按鈕（DESIGN-SYSTEM §6b）。
 - **鏡像狀態**：**「同步結構與對應」的入口與上次結果**（docs/PRTG-SPEC.md §5a；
   執行中每 3 秒輪詢，結束後自動重載本頁的鏡像統計；從未執行過顯示「尚未同步」，成功時在時間後標來源「（夜間取數）／（手動）」；
   未啟用時本入口按鈕閘住並指路，見 docs/PRTG-SPEC.md §5a）、
@@ -2544,6 +2554,7 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
   結果含就緒、排除原因、預期命中、目前值與單位；不含問題靜音與實際派工、不寫業務資料。啟用與儲存由後端檢查至少一顆就緒且語意相符的 sensor（PRTG-SPEC §9a）。
 - **使用效果**：`GET api/prtg/effectiveness` 預設最近 30 天、最多 366 天；分開統計 PRTG finding、PRTG 獨立主機日、案件、交辦、已回覆、已抑制、靜音 profile、佐證主機日，
   以及按規則代碼分列的「標記誤報／已處理」小表（分母是已標記的 PRTG 問題，全為 0 時顯示「尚無標記」）。各指標口徑不同，不構成轉換率。
+  **通知處理狀態**卡（可見主機的 PRTG 通知意圖，`api/prtg/operations`）在此頁籤末尾。
 
 ### 9.9f 校準數值匯出（PRTG 維護頁「環境探測」頁籤，`Maintain`）
 
@@ -2598,7 +2609,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **AI 分析**：待補件數、閒置原因、背景補跑窗口、立即補跑／強制重新分析。
     **沒有啟用開關**——AI 服務設定好就一律啟用（見下方「AI 跟隨取數」）。
   - **PRTG**：模組狀態（啟用時一併顯示生效的取數範圍；未啟用時附連結指向維護頁「擷取參數」）、
-    結構同步摘要、每日擷取軌、歷史回填軌與停止狀態。啟動「同步結構與對應」與「歷史回填」的
+    結構同步摘要、每日擷取軌、歷史回填軌與停止狀態（回填狀態從未回填過顯示「尚未回填」，初值「載入中…」）。啟動「同步結構與對應」與「歷史回填」的
     操作入口在 PRTG 維護頁；本頁只保留執行中的停止鈕與前往維護頁連結，見 docs/PRTG-SPEC.md §5a。
     模組狀態與閘只在頁面載入時讀一次設定——在另一分頁改了開關，本頁要重新整理才會跟上；
     點擊時有第二道檢查、後端有第三道，所以不會誤送，只是反向（剛啟用、本頁仍灰）要重整。
@@ -2625,6 +2636,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   全檔每一個判斷點都要一致（包含輪詢寫入點與點擊時的第二道檢查）。
 - **停止鈕防連點**：取數與 AI 的停止鈕送出期間停用（同頁其他動作鈕的既有慣例），
   否則第二下會拿到「目前沒有正在執行的分析」的錯誤紅字。
+- **回填執行中的立即執行提示**：手動回填（full／selected）執行中時，立即執行 modal 的 PRTG 提示區多一行靜態提示
+  （`#run-now-prtg-backfill-hint`：這趟的 PRTG 部分最多等 30 分鐘、NetIQ 與本機照常、可先在 PRTG 卡停止回填），
+  依 `GET schedule/status` 的 `prtgBackfillWaiting`（不讀回填狀態端點：它對權限只及部分主機的維護者回 403）隨輪詢切換、開 modal 時重查一次；接續回填（tail）不提示。**不另開確認框**——modal 已有兩道 PRTG 確認。
 - **強制重新分析的 modal 防護**：後端在 AI 已執行中時會先優雅停止當前執行再整批重標重跑
   （順序與理由見 `AiAnalysisHostedService.TriggerRunAsync`）。modal 開著時狀態輪詢不會關掉它，
   因此 modal 開啟期間偵測到 AI 由「非執行中」變成「執行中」就**停用確認鈕**並說明要關閉後重新確認；
@@ -2643,7 +2657,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   「PRTG 觸發式取數　已取 N 個 sensor（等待分析結果）」。
   phase 字面值**集中在 Core 的 `RunPhases`**（Core 送出、Web 分派、前端標籤三層共用同一份；
   前端對照表的完整性由 `RunsPageUiTests` 以反射逐條核對——漏補文案時畫面會印裸 phase 給使用者）。
-  一覽：`local`／`netiq`／`prtg-wait-sync`（等手動同步結束，§5a）／`prtg-sync`／
+  一覽：`local`／`netiq`／`prtg-wait-sync`（等手動作業——同步或回填——結束，PRTG-SPEC §5a）／`prtg-sync`／
   `prtg-sync-devices`／`prtg-sync-sensors`／`prtg-sync-messages`／`prtg-values`／
   `prtg-triggered`；完工訊號 `local-done`／`netiq-done`／`prtg-done`；守門 `guard-paused`／`guard-resumed`；
   PRTG finding 就緒訊號 `prtg-findings-ready`（**不是進度**，必須顯式分支且排在 `prtg-` 前綴分支之前，
@@ -2678,11 +2692,21 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   即時觸發**不受 AI 執行窗口限制**（跟隨取數是「取數跑到哪、判讀跟到哪」）；
   取數執行中（finding 已就緒）與取數結束後 10 分鐘內，背景輪詢也視同跟隨取數、不看窗口；取數結束時另主動喚醒一次。
   窗口只管背景消化積壓，狀態卡那一列因此標示為「背景補跑窗口」，已在窗口內時顯示「窗口內，隨時可跑」。
+- **AI 待補順序**（`AiAnalysisHostedService.SelectNextBatch`，每批重算）：近日層（紀錄日 ≥ 今天−2）新→舊，跟著取數；
+  其餘為積壓層，七日一塊、塊由新到舊、塊內同主機舊→新——舊日的 AI 結論先寫回，後一天 prompt 的【近期歷史】才看得到。
+  近日層被完整性閘門擋住時直接取積壓層；查詢以 `PendingAiQuery`（日期範圍＋方向）在 SQL 端排序，不放大批次。
+  成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。完整性閘門（PRTG 證據指紋、事後追加 finding 重標待補、隔晚重判）見 docs/PRTG-SPEC.md §3。
+- **AI 呼叫節流**：全站單一 `IAiRequestGate`（Core `AiRequestGate`，DI 單例）——互動車道（`WebAiService` 的互動與對話兩個實例）
+  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每主機分片的實例、工作流恢復；取數路徑的深析關閉）
+  上限＝`AiConcurrency`（每次取許可時重讀）；互動在途時背景最多讓 30 秒。閘道在各實例自己的佇列之後取、`finally` 歸還，取消穿透。
+  每個 `AIService` 建構都要帶 `gate:`（`AiRequestGateTests` 掃 Core／Web 的 `new AIService(`）；未接時為 null 閘道＝只剩逐實例序列。
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
   `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
   `disabled`＝AI 服務未設定／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
-  由 `AiAnalysisHostedService.TickAsync` 在每個提前返回處寫入。
+  判定只有一份：`AiAnalysisHostedService.BlockingIdleReason`，輪詢、跟隨取數的即時觸發（不看窗口）與 `GET ai-status`（`CurrentIdleReason`，**讀取時即時判定**，不用上一輪輪詢留下的值）共用；AI 卡的「AI 服務未設定」判斷跟著 `idleReason` 走；
+  `waiting-fetch` 不擋開跑，只在其他條件都成立時才報。閒置時 `progressPhase` 為 null。
+  待補 0 件且原因為 `disabled`／`backfill-pending` 時，待補列寫「0 件（AI 服務未設定）」／「0 件（資料校正中，稍後再看）」而非「已全部完成」，提示列照顯示。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；
   `disabled`＝AI 服務未設定，閒置說明列出該原因並指路到設定頁、不帶件數（「背景補跑窗口」列同時顯示「AI 服務未設定」），
   `no-pending` 不需要說明（待補為 0 本身就講完了）。
@@ -2759,7 +2783,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
   **PRTG 進度軌**：PRTG 擷取與本機／NetIQ 並行，因此在 NetIQ、本機之外自成一組**互不覆蓋**的欄位
-  （`prtgProgressPhase/Done/Total`）。phase 為 `prtg-wait-sync`（等手動同步結束，§5a）／
+  （`prtgProgressPhase/Done/Total`）。phase 為 `prtg-wait-sync`（等手動作業——同步或回填——結束，PRTG-SPEC §5a）／
   `prtg-sync`（結構同步的總稱，實際回報走三個 `prtg-sync-*` 子階段）／
   `prtg-values`（每日數值）／`prtg-triggered`（觸發式取數）／`prtg-done`（放在 finally，
   成功失敗都送，**帶取數主機數與目標 sensor 數；若目標 sensor 為 0，會保留前一階段的進度數字並標記完成**）。完成畫面不可把保留下來的結構同步台數當成已取值 sensor 數；保守策略應說明數值由快照累積，實際數值筆數指向執行詳情。
@@ -2867,7 +2891,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `GET api/runs/day/{date}`、`GET api/runs/{id}`、`GET api/runs/errors?days=`、`GET api/runs/list?days=`
   （DevMonitor 或 Maintain）；排程（`api/admin/schedule`）：`GET/PUT options`（含 AI 兩欄
   `aiWindows`/`aiConcurrency`——AI 沒有啟用開關，見 §9.10）、`GET status`／`GET ai-status`（讀端 DevMonitor 或
-  Maintain；ai-status 含執行狀態、進度件數、**待補積壓總數**）、
+  Maintain；ai-status 含執行狀態、進度件數、**待補積壓總數**；status 另含 `prtgLastScheduledDay`，見 §9.9e）、
   `GET run-preview?scope=all|segment|host`、`POST run`、`POST cancel`、
   `POST ai-run`（body `{forceRerun}`，強制重新分析走「停止→取得 gate→整批重標→重新開始」）、
   `POST ai-cancel`（寫端僅 Maintain，皆寫稽核 `schedule_*`）。網段輸入語法與 NetIQ

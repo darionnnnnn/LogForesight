@@ -99,7 +99,9 @@ public class WebAiService : IWebAiService
     private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _interactiveClient;
     private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _chatClient;
 
-    public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings, AiUsageStore usageMeter)
+    /// <param name="aiGate">全站 AI 閘道；互動與對話兩個實例都走互動車道（優先於背景判讀）</param>
+    public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings, AiUsageStore usageMeter,
+        IAiRequestGate? aiGate = null)
     {
         _cache = cache;
         _systemSettings = systemSettings;
@@ -132,7 +134,7 @@ public class WebAiService : IWebAiService
                 FrequencyPenalty = advanced.FrequencyPenalty,
                 PresencePenalty = advanced.PresencePenalty,
                 ExtraRequestFields = advanced.ExtraRequestFields
-            }, usageMeter: _usageMeter);
+            }, usageMeter: _usageMeter, gate: aiGate, lane: AiLane.Interactive);
         });
 
         _chatClient = new SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService>(snapshot =>
@@ -162,7 +164,7 @@ public class WebAiService : IWebAiService
                 FrequencyPenalty = advanced.FrequencyPenalty,
                 PresencePenalty = advanced.PresencePenalty,
                 ExtraRequestFields = advanced.ExtraRequestFields
-            }, usageMeter: _usageMeter);
+            }, usageMeter: _usageMeter, gate: aiGate, lane: AiLane.Interactive);
         });
     }
 

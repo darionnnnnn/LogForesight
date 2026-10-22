@@ -158,8 +158,6 @@ public static class RetentionPruner
         try
         {
             var prtgPruned = backend.PrtgStore().Prune(retention.PrtgRetentionDays);
-            var shadowPruned = backend.PrtgObservationStore().PruneShadow(retention.PrtgRetentionDays, DateTime.UtcNow);
-            shadowPruned += backend.PrtgObservationStore().PruneCompleted(retention.PrtgRetentionDays, DateTime.UtcNow);
             using (var ctx = backend.CreateContext())
             {
                 var cutoff = DateTime.Now.AddDays(-retention.PrtgRetentionDays);
@@ -168,8 +166,6 @@ public static class RetentionPruner
                 var diagnostics = ctx.Blobs.Where(b => keys.Contains(b.BlobKey)).ExecuteDelete();
                 if (diagnostics > 0) console.WriteLine($"已清除 {diagnostics} 份過期 PRTG 匯入診斷包（單輪最多 100 份）。");
             }
-            if (shadowPruned > 0)
-                console.WriteLine($"已清除 {shadowPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 判定快照。");
             if (prtgPruned > 0)
                 console.WriteLine($"已清除 {prtgPruned} 筆超過 {retention.PrtgRetentionDays} 天的 PRTG 鏡像資料。");
         }

@@ -35,6 +35,7 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly IHostApplicationLifetime? _lifetime;
     private readonly HostDayWorkflowService? _workflow;
     private readonly IWebAiService _webAi;
+    private readonly IAiRequestGate? _aiGate;
 
     public AiAnalysisHostedService(
         ScheduleOptionsStore optionsStore,
@@ -50,7 +51,8 @@ public class AiAnalysisHostedService : BackgroundService
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
         IHostApplicationLifetime? lifetime = null,
-        HostDayWorkflowService? workflow = null)
+        HostDayWorkflowService? workflow = null,
+        IAiRequestGate? aiGate = null)
     {
         _webAi = webAi;
         _optionsStore = optionsStore;
@@ -66,6 +68,7 @@ public class AiAnalysisHostedService : BackgroundService
         _injectedAiService = aiService;
         _lifetime = lifetime;
         _workflow = workflow;
+        _aiGate = aiGate;
 
         // 站台關閉時對進行中的 AI 執行發出優雅停止
         _lifetime?.ApplicationStopping.Register(() => _runState.TryCancel());
@@ -126,23 +129,11 @@ public class AiAnalysisHostedService : BackgroundService
             try
             {
                 if (_runState.IsRunning) return;
-                if (!_webAi.Available)
-                {
-                    _runState.SetIdleReason(AiIdleReasons.Disabled);
-                    return;
-                }
-                if (!_backfiller.Progress.Completed)
-                {
-                    _runState.SetIdleReason(AiIdleReasons.BackfillPending);
-                    return;
-                }
-                if (_recordQuery.CountPendingAi() == 0)
-                {
-                    _runState.SetIdleReason(AiIdleReasons.NoPending);
-                    return;
-                }
-
-                _runState.SetIdleReason(null);
+                // 前置條件與輪詢同一份判定（docs/WEB-SPEC.md §9.10「閒置原因」），只差不看窗口
+                var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), () => _recordQuery.CountPendingAi(),
+                    out _, requireWindow: false);
+                _runState.SetIdleReason(reason);
+                if (reason != null) return;
                 await TriggerRunAsync(forceRerun: false, trigger: "fetch-followup");
             }
             catch (Exception ex)
@@ -170,41 +161,56 @@ public class AiAnalysisHostedService : BackgroundService
             return;
         }
 
-        // AI 沒有獨立的啟用開關：服務設定好就一律啟用（回饋第 40 輪批次E）。
-        if (!_webAi.Available)
+        var reason = BlockingIdleReason(DateTime.Now, options, () => _recordQuery.CountPendingAi(), out var inWindow);
+        if (reason != null)
         {
-            _runState.SetIdleReason(AiIdleReasons.Disabled);
-            return;
-        }
-
-        // 存量校正回填完成前不自動開跑（體檢輪）：ExtractVersion 推進後 ai_pending 的存量
-        // 尚未校正，這時掃到的「待補」大量是早已分析完的舊列——搶跑等於把整庫重跑一遍，
-        // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
-        if (!_backfiller.Progress.Completed)
-        {
-            _runState.SetIdleReason(AiIdleReasons.BackfillPending);
-            return;
-        }
-
-        var inWindow = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows);
-        var following = _schedulerRunState.IsFollowingFetch(DateTime.Now);
-        if (!inWindow && !following)
-        {
-            _runState.SetIdleReason(AiIdleReasons.OutsideWindow);
-            return;
-        }
-
-        // 有待補資料才自動開跑
-        var pendingCount = _recordQuery.CountPendingAi();
-        if (pendingCount == 0)
-        {
-            _runState.SetIdleReason(AiIdleReasons.NoPending);
+            _runState.SetIdleReason(reason);
             return;
         }
 
         _runState.SetIdleReason(null);
 
         await TriggerRunAsync(forceRerun: false, trigger: inWindow ? "schedule" : "fetch-followup", externalCt: stoppingToken);
+    }
+
+    /// <summary>
+    /// 自動開跑前置條件的唯一判定（輪詢與狀態 API 共用，docs/WEB-SPEC.md §9.10「閒置原因」）。
+    /// 回 null＝條件都成立、可以開跑；<paramref name="inWindow"/> 供輪詢決定觸發來源。
+    /// 待補件數延後到真的需要時才查（AI 未設定時不必碰資料庫）。
+    /// </summary>
+    private string? BlockingIdleReason(DateTime now, ScheduleOptions options, Func<int> pendingCount, out bool inWindow,
+        bool requireWindow = true)
+    {
+        inWindow = false;
+        // AI 沒有獨立的啟用開關：服務設定好就一律啟用（回饋第 40 輪批次E）。
+        if (!_webAi.Available) return AiIdleReasons.Disabled;
+
+        // 存量校正回填完成前不自動開跑（體檢輪）：ExtractVersion 推進後 ai_pending 的存量
+        // 尚未校正，這時掃到的「待補」大量是早已分析完的舊列——搶跑等於把整庫重跑一遍，
+        // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
+        if (!_backfiller.Progress.Completed) return AiIdleReasons.BackfillPending;
+
+        // 跟隨取數的即時觸發（OnFetchFollowUp）不看窗口：取數跑到哪、判讀跟到哪
+        if (requireWindow)
+        {
+            inWindow = ScheduleCalculator.IsWithinAnyWindow(now, options.AiWindows);
+            if (!inWindow && !_schedulerRunState.IsFollowingFetch(now)) return AiIdleReasons.OutsideWindow;
+        }
+
+        // 有待補資料才自動開跑
+        return pendingCount() == 0 ? AiIdleReasons.NoPending : null;
+    }
+
+    /// <summary>
+    /// 狀態 API 讀取當下的閒置原因（執行中回 null）。不用上一輪輪詢留下的值：輪詢 60 秒一次，
+    /// 中間條件變了（例如存量校正剛完成）畫面就會同時顯示互相矛盾的兩句話。
+    /// 「等取數」不擋開跑（較舊的待補照樣處理），所以只在其他條件都成立時才報。
+    /// </summary>
+    public string? CurrentIdleReason(Func<int> pendingCount)
+    {
+        if (_runState.IsRunning) return null;
+        var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), pendingCount, out _);
+        return reason ?? (_schedulerRunState.IsWaitingForFindings() ? AiIdleReasons.WaitingFetch : null);
     }
 
     /// <summary>
@@ -306,8 +312,8 @@ public class AiAnalysisHostedService : BackgroundService
     /// <summary>
     /// AI 批次處理主迴圈：
     /// 1. 完整性閘門篩選合格主機日
-    /// 2. 日期新→舊順序處理
-    /// 3. 不設回望天數上限，一批查完查下一批（批次大小 50）
+    /// 2. 近日層新→舊、積壓層七日一塊、塊由新到舊、塊內同主機舊→新（<see cref="SelectNextBatch"/>）
+    /// 3. 不設回望天數上限，每批重新選（批次大小 50）
     /// 4. 依 AiConcurrency 平行處理，同主機序列（按主機分片、片內序列、片間平行）
     /// 5. 失敗維持 ai_pending = true，不中斷整批
     /// </summary>
@@ -320,15 +326,60 @@ public class AiAnalysisHostedService : BackgroundService
 
     internal Task ExecuteProcessingLoopAsync(CancellationToken ct) => ExecuteProcessingLoopAsync(ct, new LoopCounters());
 
+    /// <summary>近日層：紀錄日 ≥ 今天減這麼多天的待補屬於「跟隨取數」，日期新→舊。</summary>
+    internal const int RecentLayerDays = 2;
+
+    /// <summary>積壓層一塊的天數：塊由新到舊、塊內同主機舊→新（docs/WEB-SPEC.md §9.10）。</summary>
+    internal const int BacklogBlockDays = 7;
+
+    /// <summary>單次查詢的列數上限：本輪失敗者仍待補，查詢要多取這麼多列才能越過它們。</summary>
+    private const int MaxQueryBatchSize = 1000;
+
+    /// <summary>下一批要處理的待補與它的處理方向（true＝同主機舊→新）。</summary>
+    internal sealed record PendingBatch(IReadOnlyList<DailyAnalysisRecord> Records, bool OldestFirst);
+
+    private static (long HostId, string Host, DateTime Date) AttemptKey(DailyAnalysisRecord r) => (r.HostId, r.Host, r.Date.Date);
+
+    /// <summary>
+    /// 選下一批待補（每批重新計算，近日層新進的待補下一批就能插隊）：
+    /// 1. **完整性閘門**：日期 ≥ <see cref="SchedulerRunState.FindingsWaitCutoff"/> 的不能判讀——PRTG finding
+    ///    會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。finding 一發佈或取數未執行時
+    ///    cutoff 為 null（全部合格），AI 因此能與取數並行。
+    /// 2. **近日層**（今天減 <see cref="RecentLayerDays"/> 天以內）日期新→舊：取數跑到哪、判讀跟到哪。
+    /// 3. **積壓層**：最新一筆合格待補所在的七日塊，塊內同主機舊→新——prompt 的【近期歷史】會引用
+    ///    前一天的 AI 結論，舊的先寫回，新的才看得到；塊由新到舊，強制重新分析時最近幾週先完成。
+    /// 本輪已嘗試而失敗的待補不再選（同一輪內不空轉，跨輪重試由下次輪詢重開一輪自然發生）。
+    /// </summary>
+    internal PendingBatch? SelectNextBatch(IReadOnlySet<(long HostId, string Host, DateTime Date)> attempted)
+    {
+        var cutoff = _schedulerRunState.FindingsWaitCutoff()?.Date;
+        var recentStart = DateTime.Today.AddDays(-RecentLayerDays);
+        var querySize = Math.Min(BatchSize + attempted.Count, MaxQueryBatchSize);
+
+        List<DailyAnalysisRecord> Eligible(PendingAiQuery query) =>
+            _recordQuery.QueryPendingAi(querySize, query).Where(r => !attempted.Contains(AttemptKey(r))).ToList();
+
+        if (cutoff is not { } blocked || blocked > recentStart)
+        {
+            var recent = Eligible(new PendingAiQuery(From: recentStart, ToExclusive: cutoff));
+            if (recent.Count > 0) return new PendingBatch(recent.Take(BatchSize).ToList(), OldestFirst: false);
+        }
+
+        var backlogEnd = cutoff is { } c && c < recentStart ? c : recentStart;
+        var anchor = Eligible(new PendingAiQuery(ToExclusive: backlogEnd)).FirstOrDefault();
+        if (anchor == null) return null;
+
+        var blockEnd = anchor.Date.Date.AddDays(1);
+        var block = Eligible(new PendingAiQuery(From: blockEnd.AddDays(-BacklogBlockDays), ToExclusive: blockEnd, OldestFirst: true));
+        return new PendingBatch(block.Take(BatchSize).ToList(), OldestFirst: true);
+    }
+
     internal async Task ExecuteProcessingLoopAsync(CancellationToken ct, LoopCounters counters)
     {
-        int currentQueryBatchSize = BatchSize;
         int totalDone = 0;
 
-        // 本輪已嘗試過的主機日（體檢輪）：QueryPendingAi 固定日期新→舊，失敗紀錄保持
-        // pending 且永遠排最前——不記住的話，每撈一批都會把同一批失敗者原樣重試，
-        // 積壓有 N 筆時永久失敗的 k 筆會被打 O(N/50 × k) 次。跨輪的重試由下次輪詢
-        // 重開一輪自然發生，這裡只擋「同一輪內的空轉」。
+        // 本輪已嘗試而未成功的主機日（體檢輪）：失敗紀錄保持 pending，不記住的話每撈一批都會把
+        // 同一批失敗者原樣重試。成功者寫回後已不是待補，從集合移除，查詢只需多取失敗者的列數。
         var attempted = new HashSet<(long HostId, string Host, DateTime Date)>();
 
         while (!ct.IsCancellationRequested)
@@ -336,51 +387,25 @@ public class AiAnalysisHostedService : BackgroundService
             var options = _optionsStore.Get();
             var concurrency = Math.Clamp(options.AiConcurrency, 1, 8);
 
-            var rawPending = _recordQuery.QueryPendingAi(currentQueryBatchSize);
-            if (rawPending.Count == 0)
+            PendingBatch? next;
+            lock (attempted) { next = SelectNextBatch(attempted); }
+            if (next == null || next.Records.Count == 0)
             {
-                // 全庫已無待補
+                // 全庫已無待補，或剩餘待補要嘛在取數當前處理範圍內、要嘛本輪已嘗試失敗——下次輪詢再重試
+                var remaining = _recordQuery.CountPendingAi();
+                if (remaining > 0)
+                    Log.Info("剩餘待補（{Count} 筆）皆為取數處理範圍內或本輪已嘗試失敗者，本輪 AI 分析結束。", remaining);
                 break;
             }
 
-            // 1. 完整性閘門：只處理「資料已完整落地」的主機日。
-            // 範圍來自取數路徑送出的 PrtgDateRange，回望重跑的舊日同樣要等 finding 到齊——PRTG finding
-            // 會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。
-            // finding 一發佈（PRTG 停用、規則評估失敗也算發佈）或取數未執行時 cutoff 為 null（全部合格），
-            // AI 因此能與取數並行，不必像過去那樣一路等到整趟取數結束。
-            var cutoff = _schedulerRunState.FindingsWaitCutoff();
-
-            var eligible = (cutoff.HasValue
-                    ? rawPending.Where(r => r.Date.Date < cutoff.Value.Date)
-                    : rawPending.AsEnumerable())
-                .Where(r => !attempted.Contains((r.HostId, r.Host, r.Date.Date)))
-                .ToList();
-
-            if (eligible.Count == 0)
-            {
-                // 當前撈取的待補全為今天/昨天。若查詢筆數達上限，加大查詢批次以尋找更舊的合格待補
-                if (rawPending.Count == currentQueryBatchSize && currentQueryBatchSize < 1000)
-                {
-                    currentQueryBatchSize += BatchSize;
-                    continue;
-                }
-
-                // 剩餘待補要嘛在取數當前處理範圍內、要嘛本輪已嘗試過（失敗保持待補）——
-                // 本輪到此為止，下次輪詢再重試
-                Log.Info("剩餘待補（{Count} 筆）皆為取數處理範圍內或本輪已嘗試失敗者，本輪 AI 分析結束。", rawPending.Count);
-                break;
-            }
-
-            currentQueryBatchSize = BatchSize;
-            var toProcess = eligible.Take(BatchSize).ToList();
-
-            // 2. 通過閘門者依 QueryPendingAi 既有的日期新→舊順序處理。
-            // 併發：依 AiConcurrency 平行處理，但同一台主機必須序列（按主機分片、片內序列、片間平行）。
-            // 理由：同一主機的隔日分析會引用前一天的 AI 摘要。
-            var hostGroups = toProcess
+            // 併發：依 AiConcurrency 平行處理，同一台主機必須序列（按主機分片、片內序列、片間平行），
+            // 片內方向跟著所屬層（見 SelectNextBatch）。
+            var oldestFirst = next.OldestFirst;
+            var groups = next.Records
                 .GroupBy(r => r.HostId != 0 ? r.HostId.ToString() : r.Host)
-                .OrderByDescending(g => g.Max(r => r.Date))
-                .ToList();
+                .Select(g => oldestFirst ? g.OrderBy(r => r.Date).ToList() : g.OrderByDescending(r => r.Date).ToList());
+            // 每片的第一筆就是該主機在這批最先處理的那天
+            var hostGroups = (oldestFirst ? groups.OrderBy(g => g[0].Date) : groups.OrderByDescending(g => g[0].Date)).ToList();
 
             var pendingTotal = _recordQuery.CountPendingAi();
             _runState.ReportProgress(totalDone, totalDone + pendingTotal, $"AI 白話分析補寫中（併發 {concurrency}）");
@@ -400,11 +425,11 @@ public class AiAnalysisHostedService : BackgroundService
                     var hostStore = _storageBackend.RecordStore(hostKey);
                     var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore);
 
-                    // 片內序列：同一主機依日期新→舊依序處理
-                    foreach (var record in group.OrderByDescending(r => r.Date))
+                    // 片內序列：方向已在分片時決定（近日層新→舊、積壓層舊→新）
+                    foreach (var record in group)
                     {
                         if (token.IsCancellationRequested) break;
-                        lock (attempted) { attempted.Add((record.HostId, record.Host, record.Date.Date)); }
+                        lock (attempted) { attempted.Add(AttemptKey(record)); }
 
                         long workflowVersion = 0;
                         try
@@ -482,6 +507,8 @@ public class AiAnalysisHostedService : BackgroundService
                                 }
                                 if (_workflow != null && workflowVersion > 0)
                                     _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: true);
+                                // 寫回後已不是待補；之後若因新證據重標，下一批照常再選得到
+                                lock (attempted) { attempted.Remove(AttemptKey(record)); }
                                 var doneNow = Interlocked.Increment(ref totalDone);
                                 Interlocked.Increment(ref counters.Done);
                                 Interlocked.Increment(ref batchSuccessCount);
@@ -602,6 +629,8 @@ public class AiAnalysisHostedService : BackgroundService
     {
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
-        return new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)));
+        // 每個主機分片各自一個實例（各自的請求佇列），跨實例的併發上限與互動優先由全站閘道負責
+        return new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
+            gate: _aiGate);
     }
 }

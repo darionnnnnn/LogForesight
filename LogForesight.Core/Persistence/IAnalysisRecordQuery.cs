@@ -1,6 +1,16 @@
 namespace LogForesight.Core.Persistence;
 
 /// <summary>
+/// 待補 AI 查詢的日期範圍與方向（AI 排程分層消化用，docs/WEB-SPEC.md §9.10）。
+/// <paramref name="From"/> 含、<paramref name="ToExclusive"/> 不含，皆以日期比較；null＝不限。
+/// </summary>
+public sealed record PendingAiQuery(DateTime? From = null, DateTime? ToExclusive = null, bool OldestFirst = false)
+{
+    /// <summary>全範圍、日期新到舊。</summary>
+    public static readonly PendingAiQuery All = new();
+}
+
+/// <summary>
 /// 查詢條件。全部欄位為選用（null／空 = 不限），組合起來就是 Web 的主篩選列
 /// （主機／日期區間／風險層級／風險類型／Event ID）。
 /// </summary>
@@ -121,10 +131,11 @@ public interface IAnalysisRecordQuery
     HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly = false);
 
     /// <summary>
-    /// 取一批待補 AI 的主機日（批次C）：條件 ai_pending = true，依日期新到舊排序。
+    /// 取一批待補 AI 的主機日（批次C）：條件 ai_pending = true，日期範圍與方向由 <paramref name="query"/> 決定
+    /// （null＝全範圍、日期新到舊）；同日依主機、紀錄 id 排序。
     /// 不反序列化 ContentJson，只回傳識別資訊與重建 AI 輸入時必要的最小欄位（沿用 QueryLightweight 投影手法）。
     /// </summary>
-    List<DailyAnalysisRecord> QueryPendingAi(int batchSize);
+    List<DailyAnalysisRecord> QueryPendingAi(int batchSize, PendingAiQuery? query = null);
 
     /// <summary>
     /// 待補總數計數（批次C）：回傳目前全庫 ai_pending = true 的筆數。

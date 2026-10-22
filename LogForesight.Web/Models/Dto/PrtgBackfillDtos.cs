@@ -20,6 +20,13 @@ public sealed class PrtgFullBackfillPreviewDto
     public string StateChangePageCost { get; init; } = "unknown_until_live_response";
     public string SettingsRevision { get; init; } = "";
     public string ScopeRevision { get; init; } = "";
+
+    /// <summary>先前已完整回填、本次會略過的天數（完成水位；勾選全部重做時不略過）。</summary>
+    public int CompletedDays { get; init; }
+
+    /// <summary>扣掉已完成日子後的數值歷史請求數。</summary>
+    public long RemainingHistoricRequests { get; init; }
+
     public IReadOnlyList<PrtgFullBackfillDayPreviewDto> Days { get; init; } = Array.Empty<PrtgFullBackfillDayPreviewDto>();
     public string Message { get; init; } = "";
 }
@@ -31,12 +38,18 @@ public sealed class PrtgFullBackfillDayPreviewDto
     public int MappedHosts { get; init; }
     public int SelectedHosts { get; init; }
     public int TargetSensors { get; init; }
+
+    /// <summary>先前已完整回填且目標沒變（本次預設略過）。</summary>
+    public bool AlreadyCompleted { get; init; }
 }
 
 public sealed class PrtgFullBackfillStartRequest
 {
     public string PreviewId { get; set; } = "";
     public bool Confirmed { get; set; }
+
+    /// <summary>true（預設）＝略過先前已完整回填的日子；false＝全部重做並清掉完成水位。</summary>
+    public bool Resume { get; set; } = true;
 }
 
 /// <summary>指定主機與日期的 PRTG 歷史數值回填要求。</summary>

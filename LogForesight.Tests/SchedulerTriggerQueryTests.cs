@@ -11,6 +11,49 @@ namespace LogForesight.Tests;
 
 public class SchedulerTriggerQueryTests
 {
+    private static PrtgDayStat Day(DateTime date, string outcome = BatchRun.PrtgOutcomeSuccess, int findings = 0) =>
+        new(date, outcome, findings, 0, true, 0, 0, 0);
+
+    [Fact]
+    public void LastScheduledPrtgDay_只取已結束的排程取數_立即執行與AI不算_取最新資料日()
+    {
+        var d1 = new DateTime(2026, 10, 20);
+        var d2 = new DateTime(2026, 10, 21);
+        var runs = new[]
+        {
+            new BatchRun { RunId = 1, Trigger = "schedule", StartedAt = d1.AddDays(1).AddHours(1), FinishedAt = d1.AddDays(1).AddHours(2),
+                PrtgDays = new() { Day(d1, findings: 3) } },
+            new BatchRun { RunId = 2, Trigger = "schedule", StartedAt = d2.AddDays(1).AddHours(1), FinishedAt = d2.AddDays(1).AddHours(2),
+                PrtgDays = new() { Day(d1), Day(d2, BatchRun.PrtgOutcomePartial, 5) } },
+            new BatchRun { RunId = 3, Trigger = "manual:x", StartedAt = d2.AddDays(1).AddHours(9), FinishedAt = d2.AddDays(1).AddHours(10),
+                PrtgDays = new() { Day(d2) } },
+            new BatchRun { RunId = 4, Trigger = "schedule", JobType = BatchRun.JobTypeAi, StartedAt = d2.AddDays(1).AddHours(11),
+                FinishedAt = d2.AddDays(1).AddHours(12), PrtgDays = new() { Day(d2) } },
+            new BatchRun { RunId = 5, Trigger = "schedule", StartedAt = d2.AddDays(1).AddHours(13), FinishedAt = null,
+                PrtgDays = new() { Day(d2) } }
+        };
+
+        var result = SchedulerHostedService.LastScheduledPrtgDay(runs);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result.Value.RunId);
+        Assert.Equal(d2, result.Value.Day.Date);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, result.Value.Day.Outcome);
+        Assert.Equal(5, result.Value.Day.Findings);
+    }
+
+    [Fact]
+    public void LastScheduledPrtgDay_沒有排程執行或沒有逐日統計時回null()
+    {
+        Assert.Null(SchedulerHostedService.LastScheduledPrtgDay(Array.Empty<BatchRun>()));
+        Assert.Null(SchedulerHostedService.LastScheduledPrtgDay(new[]
+        {
+            new BatchRun { RunId = 1, Trigger = "schedule", StartedAt = DateTime.Today, FinishedAt = DateTime.Today, PrtgDays = null },
+            new BatchRun { RunId = 2, Trigger = "manual:x", StartedAt = DateTime.Today, FinishedAt = DateTime.Today,
+                PrtgDays = new() { Day(DateTime.Today.AddDays(-1)) } }
+        }));
+    }
+
     [Fact]
     public void GetScheduleTriggerTimes_AiScheduleRun_Excluded()
     {

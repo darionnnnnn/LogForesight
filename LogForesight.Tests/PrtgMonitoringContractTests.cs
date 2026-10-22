@@ -128,7 +128,7 @@ public sealed class PrtgMonitoringContractTests : IDisposable
         var empty = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(Controller(new()).Preview()).Value);
         Assert.Contains("\"Total\":0", empty);
         Assert.IsType<BadRequestObjectResult>(controller.Preview(limit: 501));
-        using var db = _backend.CreateContext(); Assert.Empty(db.PrtgObservations); Assert.Empty(db.IssueCases); Assert.Empty(db.WorkOrders);
+        using var db = _backend.CreateContext(); Assert.Empty(db.IssueCases); Assert.Empty(db.WorkOrders);
     }
 
     [Fact]

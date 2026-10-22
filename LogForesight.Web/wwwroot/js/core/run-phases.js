@@ -15,7 +15,7 @@ export const PROGRESS_PHASE_LABEL = {
     'prtg-sync-messages': 'PRTG 狀態變更同步',
     'prtg-values': 'PRTG 數值取數',
     'prtg-triggered': 'PRTG 觸發式取數',
-    'prtg-wait-sync': '等待手動同步完成'
+    'prtg-wait-sync': '等待 PRTG 手動作業（同步／回填）結束，可在 PRTG 卡停止'
 };
 export const PROGRESS_PHASE_UNIT = {
     'prtg-sync': 'sensor',
