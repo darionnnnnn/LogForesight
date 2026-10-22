@@ -66,6 +66,39 @@ public sealed class PrtgAdminPageUiTests
         Assert.Contains("setupState.snapshotHours = response?.hours ?? [];", js);
     }
 
+    /// <summary>取出 data-panel 區塊（到下一個頂層 data-panel 為止）。</summary>
+    private static string Panel(string view, string name)
+    {
+        var start = view.IndexOf($"<div data-panel=\"{name}\"", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"找不到 data-panel={name}");
+        var next = view.IndexOf("\n<div data-panel=", start + 1, StringComparison.Ordinal);
+        return next < 0 ? view[start..] : view[start..next];
+    }
+
+    [Fact]
+    public void 版面_啟用準備與提示之後第一個區塊就是頁籤_進階區塊收在頁籤內()
+    {
+        var view = View().Replace("\r\n", "\n");
+        var tabsAt = view.IndexOf("<ul class=\"nav nav-tabs mb-3\" id=\"prtg-tabs\">", StringComparison.Ordinal);
+        var beforeTabs = view[..tabsAt];
+        Assert.Equal(1, Regex.Matches(beforeTabs, "<section").Count);
+        Assert.Contains("aria-labelledby=\"prtg-setup-title\"", beforeTabs);
+
+        var parameters = Panel(view, "params");
+        Assert.Contains("id=\"prtg-monitoring-form\"", parameters);
+        // 監看範圍是獨立表單：必須在擷取參數表單結束之後，不能巢狀
+        Assert.True(parameters.IndexOf("</form>", StringComparison.Ordinal) < parameters.IndexOf("id=\"prtg-monitoring-form\"", StringComparison.Ordinal));
+        Assert.Matches(new Regex("<div class=\"collapse\" id=\"prtg-monitoring-body\">"), parameters);
+        Assert.Contains("data-bs-target=\"#prtg-monitoring-body\" aria-expanded=\"false\" aria-controls=\"prtg-monitoring-body\"", parameters);
+        // 同一頁籤至多一個實心主要按鈕
+        Assert.Equal(1, Regex.Matches(parameters, "class=\"btn btn-primary").Count);
+
+        Assert.Contains("id=\"prtg-operations-status\"", Panel(view, "effectiveness"));
+
+        var js = Script();
+        Assert.Contains("bindRememberedCollapse(document.getElementById('prtg-monitoring-body'),", js);
+    }
+
     [Fact]
     public void 全量回填啟動帶完成水位選擇_逐日表標出略過的日子()
     {

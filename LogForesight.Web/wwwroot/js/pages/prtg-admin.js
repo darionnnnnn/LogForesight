@@ -7,7 +7,7 @@ import { appUrl } from '../core/paths.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
-    renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS,
+    renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, bindRememberedCollapse,
     collectLines, renderTable, renderError
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
@@ -2826,6 +2826,9 @@ function init() {
     bindConnectionForm();
     bindParamsForm();
     bindScopeControls();
+    // 監看範圍是可選縮圈，日常用不到：放在擷取參數頁籤、預設收合並記住使用者的選擇
+    bindRememberedCollapse(document.getElementById('prtg-monitoring-body'),
+        document.getElementById('prtg-monitoring-toggle'), 'prtg-monitoring');
     bindStructureSync();
     bindConflictBatchControls();
     bindUnmatchedControls();
