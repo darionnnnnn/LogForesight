@@ -226,6 +226,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
     private readonly TimeProvider _timeProvider;
     private readonly Func<SystemSettings, PrtgClient>? _clientFactory;
 
+    /// <summary>全量回填的完成水位（docs/PRTG-SPEC.md §5）：中斷後重跑只補剩下的日子。</summary>
+    private readonly PrtgBackfillWatermarkStore _watermark;
+
     private sealed record PendingFullBackfillPreview(DateTime AnchorDate, DateTime ExpiresAtUtc,
         string SettingsRevision, string ScopeRevision, string TargetFingerprint, string BuildVersion, string BuildRevision);
 
@@ -253,6 +256,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         _structureSync = structureSync;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _clientFactory = clientFactory;
+        _watermark = new PrtgBackfillWatermarkStore(backend.Blob(PrtgBackfillWatermarkStore.BlobKey));
     }
 
     public PrtgBackfillAccessSnapshot GetAccessSnapshot() => _state.GetAccessSnapshot();
@@ -293,7 +297,15 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
     /// <summary>回填啟動前準備好的一趟（已佔住執行狀態）。</summary>
     private sealed record PreparedRun(SystemSettings Settings, int Days, PrtgClient Client, CancellationToken Token,
-        bool NeedsStructureSync, PrtgFullBackfillPlan? ExpectedPlan = null);
+        bool NeedsStructureSync, PrtgFullBackfillPlan? ExpectedPlan = null, FullRunResume? Resume = null);
+
+    /// <summary>全量回填這一趟的完成水位脈絡：版本鍵、要不要沿用、可略過的日子。</summary>
+    private sealed record FullRunResume(string SettingsRevision, string ScopeRevision, bool Resume, IReadOnlySet<DateTime> SkipDays);
+
+    /// <summary>計畫中先前已完整回填、目標沒變的日子（預覽與啟動共用同一個判定）。</summary>
+    private IReadOnlySet<DateTime> CompletedDays(FullPreviewSnapshot snapshot) =>
+        _watermark.CompletedFor(snapshot.SettingsRevision, snapshot.ScopeRevision,
+            snapshot.Plan.Days.Select(day => (day.Day, day.TargetFingerprint)), _timeProvider.GetUtcNow().UtcDateTime);
 
     /// <summary>「近 N 天」的對應視窗：逐日迴圈以每個回填日為基準往回找 HostMapLookbackDays 天，閘門要涵蓋「最舊回填日再往回」整段。</summary>
     private static int MapGateWindow(int days) => days + PrtgTriggeredValueFetcher.HostMapLookbackDays;
@@ -323,6 +335,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
     {
         var settings = _settings.Get();
         var snapshot = BuildFullPreviewSnapshot(settings, _timeProvider.GetLocalNow().Date);
+        var completed = CompletedDays(snapshot);
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var expires = now.Add(FullBackfillPreviewLifetime);
         var previewId = Guid.NewGuid().ToString("N");
@@ -355,12 +368,15 @@ public class PrtgBackfillService : IPrtgBackfillTail
             StateChangeObjects = snapshot.Plan.StateChangeObjects,
             SettingsRevision = snapshot.SettingsRevision,
             ScopeRevision = snapshot.ScopeRevision,
+            CompletedDays = completed.Count,
+            RemainingHistoricRequests = snapshot.Plan.Days.Where(day => !completed.Contains(day.Day)).Sum(day => (long)day.TargetSensors),
             Days = snapshot.Plan.Days.Select(day => new PrtgFullBackfillDayPreviewDto
             {
                 Day = day.Day, TriggeredHosts = day.TriggeredHosts, MappedHosts = day.MappedHosts,
-                SelectedHosts = day.SelectedHosts, TargetSensors = day.TargetSensors
+                SelectedHosts = day.SelectedHosts, TargetSensors = day.TargetSensors,
+                AlreadyCompleted = completed.Contains(day.Day)
             }).ToArray(),
-            Message = FullPreviewMessage(snapshot.Plan)
+            Message = FullPreviewMessage(snapshot.Plan, completed)
         };
     }
 
@@ -402,12 +418,24 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
+        // 完成水位：預設沿用（只補剩下的日子）；全部都完成時不開一趟空跑，要重做得明確勾選「全部重做」
+        var skipDays = request.Resume ? CompletedDays(current) : new HashSet<DateTime>();
+        if (skipDays.Count >= current.Plan.DayCount)
+        {
+            error = $"全部 {current.Plan.DayCount} 天先前已完整回填；要重新取數請勾選「全部重做」。";
+            return false;
+        }
+
         if (!TryPrepare(settings, settings.PrtgBackfillDays, blockWhenSchedulerRunning: true, runKind: "full",
                 out var run, out error, out isConflict, expectedFullPreview: current,
                 expectedAnchorDate: pending.AnchorDate, expectedPreviewExpiryUtc: pending.ExpiresAtUtc))
             return false;
 
-        var prepared = run! with { ExpectedPlan = current.Plan };
+        var prepared = run! with
+        {
+            ExpectedPlan = current.Plan,
+            Resume = new FullRunResume(current.SettingsRevision, current.ScopeRevision, request.Resume, skipDays)
+        };
         _ = Task.Run(() => ExecuteAsync(prepared, new PrtgBackfillConsole(_state), hostIds: null));
         return true;
     }
@@ -440,13 +468,16 @@ public class PrtgBackfillService : IPrtgBackfillTail
         return new FullPreviewSnapshot(anchor, plan, settingsRevision, Hash(scopeAfter));
     }
 
-    private static string FullPreviewMessage(PrtgFullBackfillPlan plan)
+    private static string FullPreviewMessage(PrtgFullBackfillPlan plan, IReadOnlySet<DateTime> completed)
     {
         var lowerBound = TimeSpan.FromSeconds(plan.HistoricQuotaLowerBoundSeconds);
         var stateText = plan.StateChangeObjects == 0
             ? "沒有狀態變更查詢對象。"
             : $"另有 {plan.StateChangeObjects:N0} 個狀態變更查詢對象；其 table 分頁成本要等來源回應，預覽不估 ETA。";
-        return $"數值歷史約 {plan.HistoricRequests:N0} 次請求；依每滾動 60 秒最多 5 次，僅配額下界為 {lowerBound.TotalMinutes:N0} 分鐘，不含 PRTG 回應延遲。{stateText}";
+        var resumeText = completed.Count == 0 ? "" :
+            $"其中 {completed.Count} 天先前已完整回填，本次略過（勾選「全部重做」則全部重跑）；剩餘約 " +
+            $"{plan.Days.Where(day => !completed.Contains(day.Day)).Sum(day => (long)day.TargetSensors):N0} 次請求。";
+        return $"數值歷史約 {plan.HistoricRequests:N0} 次請求；依每滾動 60 秒最多 5 次，僅配額下界為 {lowerBound.TotalMinutes:N0} 分鐘，不含 PRTG 回應延遲。{resumeText}{stateText}";
     }
 
     private static (string Version, string Revision) CurrentBuildIdentity()
@@ -800,6 +831,14 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     console, new PrtgAddressResolver(), hostIds);
                 console.WriteLine($"監看裝置：{scopeResult.DeviceObjids.Count} 台");
 
+                var resume = run.Resume;
+                if (resume != null)
+                {
+                    _watermark.BeginRun(resume.SettingsRevision, resume.ScopeRevision, resume.Resume, _timeProvider.GetUtcNow().UtcDateTime);
+                    if (resume.SkipDays.Count > 0)
+                        console.WriteLine($"完成水位：{resume.SkipDays.Count} 天先前已完整回填，本次略過。");
+                }
+
                 success = await PrtgBackfillRunner.RunAsync(
                     fetchService, run.Days, s.PrtgFetchConcurrency, console, runToken,
                     scopeResult.DeviceObjids,
@@ -810,7 +849,10 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     extraScopeHosts: scopeHostIds,
                     stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices),
                     expectedDayFingerprints: run.ExpectedPlan?.Days.ToDictionary(day => day.Day, day => day.TargetFingerprint),
-                    expectedPlanAnchorDate: run.ExpectedPlan?.ToDate.AddDays(1));
+                    expectedPlanAnchorDate: run.ExpectedPlan?.ToDate.AddDays(1),
+                    skipDays: resume?.SkipDays,
+                    dayCompleted: resume == null ? null : (day, fingerprint) => _watermark.MarkCompleted(
+                        resume.SettingsRevision, resume.ScopeRevision, day, fingerprint, _timeProvider.GetUtcNow().UtcDateTime));
                 operation.CompletedStage("歷史補值已返回");
             }
         }

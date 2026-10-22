@@ -127,6 +127,8 @@ public static class PrtgBackfillRunner
     /// <param name="dayProgress">天數層進度回呼（已完成天數, 總天數, 當前日期），null＝不回報</param>
     /// <param name="sensorProgress">當日 sensor 進度回呼（已完成數, 總數），null＝不回報</param>
     /// <param name="stateChangeProgress">觸發式回填翻狀態變更區間的進度回呼（已完成台數, 總台數），null＝不回報</param>
+    /// <param name="skipDays">先前已完整回填、本趟略過的資料日（完成水位，docs/PRTG-SPEC.md §5）；null＝全跑</param>
+    /// <param name="dayCompleted">某日每個目標 sensor 都取到時回呼（資料日, 該日目標指紋），供呼叫端記錄完成水位</param>
     /// <returns>
     /// 全量分支：有任何一天成功回傳 true。
     /// 觸發式分支：沒有失敗日、狀態變更完整取得、且至少一天成功才回傳 true。
@@ -141,7 +143,9 @@ public static class PrtgBackfillRunner
         IReadOnlyCollection<long>? extraScopeHosts = null,
         Action<int, int>? stateChangeProgress = null,
         IReadOnlyDictionary<DateTime, string>? expectedDayFingerprints = null,
-        DateTime? expectedPlanAnchorDate = null)
+        DateTime? expectedPlanAnchorDate = null,
+        IReadOnlySet<DateTime>? skipDays = null,
+        Action<DateTime, string>? dayCompleted = null)
     {
         // 白名單為空時 all-mapped 會退回 triggered（第二道防線，見 PrtgValueFetchScope）
         var whitelistEmpty = whitelist == null || whitelist.Count == 0;
@@ -166,6 +170,7 @@ public static class PrtgBackfillRunner
         var successDays = 0;
         var failedDays = 0;
         var skippedDays = 0;
+        var completedEarlierDays = 0;
         var processedDays = 0;
         var stateChangesFailed = false;
         var totalValuesWritten = 0;
@@ -265,6 +270,14 @@ public static class PrtgBackfillRunner
                     {
                         // 觸發式回填：只回填問題主機命中白名單的 sensor（狀態變更已在迴圈前一次取完）
 
+                        // 完成水位：先前已完整回填且目標沒變的日子不再發請求
+                        if (skipDays?.Contains(day) == true)
+                        {
+                            completedEarlierDays++;
+                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）略過：先前已完整回填");
+                            continue;
+                        }
+
                         // 該日無對應時退回最近一日的對應：以回填當日為基準往回查，
                         // 單一聚合查詢取代逐日往回的多次獨立查詢（回填 N 天會放大 N 倍）
                         var targetPlan = PrtgFullBackfillPlanBuilder.ResolveDay(
@@ -310,6 +323,8 @@ public static class PrtgBackfillRunner
                             successDays++;
                             totalValuesWritten += valuesWritten;
                             console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：問題主機 {problemHostsCount} 台、sensor {targetSensorsCount} 個、數值 {valuesWritten} 筆");
+                            // 部分 sensor 失敗的日子不記完成：下次續跑要再補
+                            if (failedSensors == 0) dayCompleted?.Invoke(day, targetPlan.Fingerprint);
                         }
                     }
                 }
@@ -353,7 +368,8 @@ public static class PrtgBackfillRunner
             return successDays > 0;
         }
 
-        console.WriteLine($"回填完成：成功 {successDays} 天、失敗 {failedDays} 天、略過 {skippedDays} 天（無主機對應）");
+        console.WriteLine($"回填完成：成功 {successDays} 天、失敗 {failedDays} 天、略過 {skippedDays} 天（無主機對應）" +
+                          (completedEarlierDays > 0 ? $"、先前已完成 {completedEarlierDays} 天" : ""));
         if (stateChangesFailed)
         {
             console.WriteLine($"⚠ 狀態變更未完整取得：{stateChangesError}");
