@@ -1,6 +1,6 @@
 ﻿# LogForesight 第 57 輪規劃
 
-> 狀態：**規劃中，第二版**（2026-10-22 六項待決已照建議定案；第二版為四角度重檢後的修訂，尚未開分支、未實作）。
+> 狀態：**實作完成，待換模型體檢**（feature/feedback-57 已逐段 commit 並 push；A-1～A-3、B-1b、B-2a/b、B-3、C-1～C-4、D 皆驗收；B-1a 實機劇本與 B-4 分支刪除交使用者）。
 > 基準：dev@5d7edc7a（6,436 通過／10 略過，第 56 輪收尾後）。
 > 來源：使用者 2026-10-22 三個提問——(1) PRTG 是否已達企業級實用度與穩定度；(2) 自動／手動排程取得 NetIQ、本機 AI、PRTG 三者的穩定度與順序是否正確，避免 AI 解讀資料缺漏；(3) 使用者體驗是否良好。由 Claude 以整個專案角度核對程式碼、文件與實際啟動站台走查後提出，討論定案。
 > 設計依據：使用者定案 UX 批次套用 `ui-ux-pro-max`。本輪不換風格、不動 token（DESIGN-SYSTEM v2 維持）；判斷順序沿 skill（可用性與語意 → 真實內容與響應式 → 一致性 → 效能動態），WCAG 2.2 AA 為檢查目標。本機檢索命中：UX 指引 #79「空狀態要有訊息與下一步」、#61「送出要有載入→成功／錯誤回饋」；頁籤／漸進揭露與設定清單兩題無命中，改依 DESIGN-SYSTEM §6b「日常動線用不到的內容收進進階收合區、說明超過兩行改對照表或收合」。
@@ -281,7 +281,14 @@ PRTG-SPEC §3 與 WEB-SPEC §9.10 加「AI 完整性保證」一段（閘門、�
 | C-2 AI 卡閒置原因與待補文案 | Claude（Fable 5.1） | `AiAnalysisHostedService.BlockingIdleReason` 成為輪詢與 `CurrentIdleReason`（狀態 API 讀取時即時判定）共用的唯一判定；`ai-status` 閒置時 `progressPhase` 回 null；待補 0 件在 `disabled`／`backfill-pending` 不寫「已全部完成」、提示照顯示；文案改白話 | AI 排程／狀態碼守門／執行告示／排程頁 UI／JS 137 綠；突變（改回讀輪詢殘值）紅 2 條 | 控制器在測試以 `aiScheduler: null!` 建構時退回殘值（與 `_scheduler` 既有慣例一致）；「等取數」不擋開跑，只在其他條件都成立時才報 |
 | B-3 R54 遞延清理 | Sonnet 5.5 subagent（medium，獨立 worktree；派出後使用者改指定 Opus 5.5，本段不重派）→ Claude cherry-pick 後獨立驗收 | 刪表模型、store、DbSet、保留清除；`SchemaUpgrader.DropTableIfExists` 兩後端冪等 DROP；`SourceHintFor` 搬到 `PrtgDataTransfer`；匯出（含串流 writer 的 `OrderedProperties`，代理補抓到白名單外一檔）不再有 Observations；驗證器把 Observations 當「舊包才有的可選區段」，筆數照核對、不寫入；格式版本維持 2 | Claude 自跑：schema／診斷匯出入／搬運／保留清除／監看／管線／查詢計畫／DI 224 綠；grep 只剩 DROP 與測試表名；BOM／CRLF 逐檔核對不變；突變（驗證器不再接受舊包區段）紅 1 條 | **版本決定**：不升到 3——升了會讓既有 V2 接受檢查與舊包全部失效，與「舊包照收」衝突；代價是**舊版站台匯不進新版匯出的包**（舊驗證器要求 Observations 存在），寫進 DB-SPEC 升級注意。代理 worktree 起點是 master，自行 reset 到分支尖端再做，提交內容與分支無衝突 |
 | C-3 PRTG 卡回填狀態空值 | Claude（Fable 5.1） | 從未回填過顯示「尚未回填」、初值「載入中…」 | 排程頁 UI／前端一致性／JS 95 綠 | 一行文案，不做突變 |
+| 批次 C 瀏覽器實測 | Claude（Fable 5.1，內建瀏覽器 dev 站台） | — | PRTG 維護頁：啟用準備六項 → 兩個 banner → 頁籤，連線頁籤首屏可見；`#params` 深連結落在擷取參數、監看範圍預設收合，滑鼠／Space／Enter 皆可切換、`aria-expanded` 與按鈕文字同步、`localStorage` 記住並在重整後還原；通知處理狀態在使用效果頁籤；同頁籤只有一顆實心主要按鈕；375px 與大字級皆無橫向溢出。排程作業頁：回填狀態「尚未回填」、閒置時 `progressPhase` 為 null、`no-pending` 時「0 件（已全部完成）」、無回填時 modal 提示隱藏。dev 資料庫升級後 `lf_prtg_observations` 與其索引已不存在 | 驗不到：`disabled`／`backfill-pending` 文案（dev DB 的 AI 已設定且校正瞬間完成）、排程驗收段（dev 沒有 PRTG，六項不會全部確認）——皆有行為測試覆蓋。瀏覽器 console 的 403 是 BACKLOG 既有的「全新安裝主機為空時 PRTG 範圍端點 403」，非本輪引入 |
+| D 文件與說明書 | Claude（Fable 5.1） | PRTG-SPEC §3／§5／§5a／§7／§10／新 §13、WEB-SPEC §9.9e／§9.10、DB-SPEC、BACKLOG、CLAUDE.md、說明書四檔（含修正兩段過時敘述：AI 啟用開關、本機 AI 同步呼叫） | 說明書守門 19 綠；現行文件敘事字眼掃描無新增 | — |
+| B-4 分支清理 | Claude（只盤點，未動） | — | 七條 `feature/prtg-feedback-53-*` 皆已併入 dev（領先 0），但各自的 Codex worktree 都有**未提交的真實程式改動**（probe 7＋3 檔、r01-scope 52＋18、r06 13＋2、r09-snapshot 51＋13、r10-metadata 56＋22、r10-visibility 55＋14、r12 6＋1；修改檔含 `CryptoHelper.cs`、`HostStore.cs` 等） | 依規劃停下來問：這些 worktree 是 Codex 時期的工作副本，內容未進任何分支；要刪請使用者確認（或先把想留的改動另存）。本輪的代理 worktree `agent-aa00c1ce…` 已清除 |
 
 ## 體檢交接
 
-（實作輪收官時填：全量測試總數、全綠與否、與基線 6,436 的差。）
+- 全量 `dotnet test`（feature/feedback-57，Windows，2026-10-22）：**6,471 通過／10 略過／0 失敗**，總計 6,481；基線 6,436 → +35（新增的閘道、順序、水位、驗收、觀察表移除、UI 守門等測試）。略過的 10 條是規模壓測（`LF_SCALE_BENCH=1` 才跑）。
+- 逐段定向測試與突變結果見「執行紀錄」；每段的突變都還原並以 `cmp` 確認位元組相同、重新建置。
+- 規劃逐條比對：A-1～A-3、B-1b、B-2a/b、B-3、C-1～C-4、D 全部有程式碼錨點，該消失的東西（批次放大、舊閘門介面、`PrtgObservation`、過時說明書敘述、BACKLOG 已做條目）皆零命中；B-1a 劇本與 B-4 分支刪除交使用者。
+- 體檢時請特別看：A-2 閘道的取消路徑（`EnterAsync` 等待中取消不洩漏許可）、A-1 `SelectNextBatch` 在 cutoff 落在近日層內時的邊界（cutoff 早於 today−2 時近日層整層被擋）、B-3 的 SQL Server DROP 分支（只驗編譯）、B-2 的狀態變更區間未縮小（BACKLOG 已記）。
+- 瀏覽器實測涵蓋與驗不到的部分見「批次 C 瀏覽器實測」列。
