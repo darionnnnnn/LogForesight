@@ -1615,15 +1615,27 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             .ToHashSet();
     }
 
-    public List<DailyAnalysisRecord> QueryPendingAi(int batchSize)
+    public List<DailyAnalysisRecord> QueryPendingAi(int batchSize, PendingAiQuery? query = null)
     {
         if (batchSize <= 0) return new List<DailyAnalysisRecord>();
+        query ??= PendingAiQuery.All;
 
         var sw = Stopwatch.StartNew();
         using var ctx = _contextFactory();
 
-        var rows = WhereAiPending(ctx.DailyRecords.AsNoTracking())
-            .OrderByDescending(r => r.RecordDate)
+        var pending = WhereAiPending(ctx.DailyRecords.AsNoTracking());
+        if (query.From is { } fromDate)
+        {
+            var from = fromDate.Date;
+            pending = pending.Where(r => r.RecordDate >= from);
+        }
+        if (query.ToExclusive is { } toDate)
+        {
+            var to = toDate.Date;
+            pending = pending.Where(r => r.RecordDate < to);
+        }
+
+        var rows = (query.OldestFirst ? pending.OrderBy(r => r.RecordDate) : pending.OrderByDescending(r => r.RecordDate))
             .ThenBy(r => r.HostId)
             .ThenBy(r => r.RecordId)
             .Take(batchSize)

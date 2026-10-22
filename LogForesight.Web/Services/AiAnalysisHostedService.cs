@@ -306,8 +306,8 @@ public class AiAnalysisHostedService : BackgroundService
     /// <summary>
     /// AI 批次處理主迴圈：
     /// 1. 完整性閘門篩選合格主機日
-    /// 2. 日期新→舊順序處理
-    /// 3. 不設回望天數上限，一批查完查下一批（批次大小 50）
+    /// 2. 近日層新→舊、積壓層七日一塊、塊由新到舊、塊內同主機舊→新（<see cref="SelectNextBatch"/>）
+    /// 3. 不設回望天數上限，每批重新選（批次大小 50）
     /// 4. 依 AiConcurrency 平行處理，同主機序列（按主機分片、片內序列、片間平行）
     /// 5. 失敗維持 ai_pending = true，不中斷整批
     /// </summary>
@@ -320,15 +320,60 @@ public class AiAnalysisHostedService : BackgroundService
 
     internal Task ExecuteProcessingLoopAsync(CancellationToken ct) => ExecuteProcessingLoopAsync(ct, new LoopCounters());
 
+    /// <summary>近日層：紀錄日 ≥ 今天減這麼多天的待補屬於「跟隨取數」，日期新→舊。</summary>
+    internal const int RecentLayerDays = 2;
+
+    /// <summary>積壓層一塊的天數：塊由新到舊、塊內同主機舊→新（docs/WEB-SPEC.md §9.10）。</summary>
+    internal const int BacklogBlockDays = 7;
+
+    /// <summary>單次查詢的列數上限：本輪失敗者仍待補，查詢要多取這麼多列才能越過它們。</summary>
+    private const int MaxQueryBatchSize = 1000;
+
+    /// <summary>下一批要處理的待補與它的處理方向（true＝同主機舊→新）。</summary>
+    internal sealed record PendingBatch(IReadOnlyList<DailyAnalysisRecord> Records, bool OldestFirst);
+
+    private static (long HostId, string Host, DateTime Date) AttemptKey(DailyAnalysisRecord r) => (r.HostId, r.Host, r.Date.Date);
+
+    /// <summary>
+    /// 選下一批待補（每批重新計算，近日層新進的待補下一批就能插隊）：
+    /// 1. **完整性閘門**：日期 ≥ <see cref="SchedulerRunState.FindingsWaitCutoff"/> 的不能判讀——PRTG finding
+    ///    會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。finding 一發佈或取數未執行時
+    ///    cutoff 為 null（全部合格），AI 因此能與取數並行。
+    /// 2. **近日層**（今天減 <see cref="RecentLayerDays"/> 天以內）日期新→舊：取數跑到哪、判讀跟到哪。
+    /// 3. **積壓層**：最新一筆合格待補所在的七日塊，塊內同主機舊→新——prompt 的【近期歷史】會引用
+    ///    前一天的 AI 結論，舊的先寫回，新的才看得到；塊由新到舊，強制重新分析時最近幾週先完成。
+    /// 本輪已嘗試而失敗的待補不再選（同一輪內不空轉，跨輪重試由下次輪詢重開一輪自然發生）。
+    /// </summary>
+    internal PendingBatch? SelectNextBatch(IReadOnlySet<(long HostId, string Host, DateTime Date)> attempted)
+    {
+        var cutoff = _schedulerRunState.FindingsWaitCutoff()?.Date;
+        var recentStart = DateTime.Today.AddDays(-RecentLayerDays);
+        var querySize = Math.Min(BatchSize + attempted.Count, MaxQueryBatchSize);
+
+        List<DailyAnalysisRecord> Eligible(PendingAiQuery query) =>
+            _recordQuery.QueryPendingAi(querySize, query).Where(r => !attempted.Contains(AttemptKey(r))).ToList();
+
+        if (cutoff is not { } blocked || blocked > recentStart)
+        {
+            var recent = Eligible(new PendingAiQuery(From: recentStart, ToExclusive: cutoff));
+            if (recent.Count > 0) return new PendingBatch(recent.Take(BatchSize).ToList(), OldestFirst: false);
+        }
+
+        var backlogEnd = cutoff is { } c && c < recentStart ? c : recentStart;
+        var anchor = Eligible(new PendingAiQuery(ToExclusive: backlogEnd)).FirstOrDefault();
+        if (anchor == null) return null;
+
+        var blockEnd = anchor.Date.Date.AddDays(1);
+        var block = Eligible(new PendingAiQuery(From: blockEnd.AddDays(-BacklogBlockDays), ToExclusive: blockEnd, OldestFirst: true));
+        return new PendingBatch(block.Take(BatchSize).ToList(), OldestFirst: true);
+    }
+
     internal async Task ExecuteProcessingLoopAsync(CancellationToken ct, LoopCounters counters)
     {
-        int currentQueryBatchSize = BatchSize;
         int totalDone = 0;
 
-        // 本輪已嘗試過的主機日（體檢輪）：QueryPendingAi 固定日期新→舊，失敗紀錄保持
-        // pending 且永遠排最前——不記住的話，每撈一批都會把同一批失敗者原樣重試，
-        // 積壓有 N 筆時永久失敗的 k 筆會被打 O(N/50 × k) 次。跨輪的重試由下次輪詢
-        // 重開一輪自然發生，這裡只擋「同一輪內的空轉」。
+        // 本輪已嘗試而未成功的主機日（體檢輪）：失敗紀錄保持 pending，不記住的話每撈一批都會把
+        // 同一批失敗者原樣重試。成功者寫回後已不是待補，從集合移除，查詢只需多取失敗者的列數。
         var attempted = new HashSet<(long HostId, string Host, DateTime Date)>();
 
         while (!ct.IsCancellationRequested)
@@ -336,51 +381,25 @@ public class AiAnalysisHostedService : BackgroundService
             var options = _optionsStore.Get();
             var concurrency = Math.Clamp(options.AiConcurrency, 1, 8);
 
-            var rawPending = _recordQuery.QueryPendingAi(currentQueryBatchSize);
-            if (rawPending.Count == 0)
+            PendingBatch? next;
+            lock (attempted) { next = SelectNextBatch(attempted); }
+            if (next == null || next.Records.Count == 0)
             {
-                // 全庫已無待補
+                // 全庫已無待補，或剩餘待補要嘛在取數當前處理範圍內、要嘛本輪已嘗試失敗——下次輪詢再重試
+                var remaining = _recordQuery.CountPendingAi();
+                if (remaining > 0)
+                    Log.Info("剩餘待補（{Count} 筆）皆為取數處理範圍內或本輪已嘗試失敗者，本輪 AI 分析結束。", remaining);
                 break;
             }
 
-            // 1. 完整性閘門：只處理「資料已完整落地」的主機日。
-            // 範圍來自取數路徑送出的 PrtgDateRange，回望重跑的舊日同樣要等 finding 到齊——PRTG finding
-            // 會影響日風險與 AI 敘述，太早判讀等於讓 AI 看缺了 PRTG 訊號的半份資料。
-            // finding 一發佈（PRTG 停用、規則評估失敗也算發佈）或取數未執行時 cutoff 為 null（全部合格），
-            // AI 因此能與取數並行，不必像過去那樣一路等到整趟取數結束。
-            var cutoff = _schedulerRunState.FindingsWaitCutoff();
-
-            var eligible = (cutoff.HasValue
-                    ? rawPending.Where(r => r.Date.Date < cutoff.Value.Date)
-                    : rawPending.AsEnumerable())
-                .Where(r => !attempted.Contains((r.HostId, r.Host, r.Date.Date)))
-                .ToList();
-
-            if (eligible.Count == 0)
-            {
-                // 當前撈取的待補全為今天/昨天。若查詢筆數達上限，加大查詢批次以尋找更舊的合格待補
-                if (rawPending.Count == currentQueryBatchSize && currentQueryBatchSize < 1000)
-                {
-                    currentQueryBatchSize += BatchSize;
-                    continue;
-                }
-
-                // 剩餘待補要嘛在取數當前處理範圍內、要嘛本輪已嘗試過（失敗保持待補）——
-                // 本輪到此為止，下次輪詢再重試
-                Log.Info("剩餘待補（{Count} 筆）皆為取數處理範圍內或本輪已嘗試失敗者，本輪 AI 分析結束。", rawPending.Count);
-                break;
-            }
-
-            currentQueryBatchSize = BatchSize;
-            var toProcess = eligible.Take(BatchSize).ToList();
-
-            // 2. 通過閘門者依 QueryPendingAi 既有的日期新→舊順序處理。
-            // 併發：依 AiConcurrency 平行處理，但同一台主機必須序列（按主機分片、片內序列、片間平行）。
-            // 理由：同一主機的隔日分析會引用前一天的 AI 摘要。
-            var hostGroups = toProcess
+            // 併發：依 AiConcurrency 平行處理，同一台主機必須序列（按主機分片、片內序列、片間平行），
+            // 片內方向跟著所屬層（見 SelectNextBatch）。
+            var oldestFirst = next.OldestFirst;
+            var groups = next.Records
                 .GroupBy(r => r.HostId != 0 ? r.HostId.ToString() : r.Host)
-                .OrderByDescending(g => g.Max(r => r.Date))
-                .ToList();
+                .Select(g => oldestFirst ? g.OrderBy(r => r.Date).ToList() : g.OrderByDescending(r => r.Date).ToList());
+            // 每片的第一筆就是該主機在這批最先處理的那天
+            var hostGroups = (oldestFirst ? groups.OrderBy(g => g[0].Date) : groups.OrderByDescending(g => g[0].Date)).ToList();
 
             var pendingTotal = _recordQuery.CountPendingAi();
             _runState.ReportProgress(totalDone, totalDone + pendingTotal, $"AI 白話分析補寫中（併發 {concurrency}）");
@@ -400,11 +419,11 @@ public class AiAnalysisHostedService : BackgroundService
                     var hostStore = _storageBackend.RecordStore(hostKey);
                     var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore);
 
-                    // 片內序列：同一主機依日期新→舊依序處理
-                    foreach (var record in group.OrderByDescending(r => r.Date))
+                    // 片內序列：方向已在分片時決定（近日層新→舊、積壓層舊→新）
+                    foreach (var record in group)
                     {
                         if (token.IsCancellationRequested) break;
-                        lock (attempted) { attempted.Add((record.HostId, record.Host, record.Date.Date)); }
+                        lock (attempted) { attempted.Add(AttemptKey(record)); }
 
                         long workflowVersion = 0;
                         try
@@ -482,6 +501,8 @@ public class AiAnalysisHostedService : BackgroundService
                                 }
                                 if (_workflow != null && workflowVersion > 0)
                                     _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: true);
+                                // 寫回後已不是待補；之後若因新證據重標，下一批照常再選得到
+                                lock (attempted) { attempted.Remove(AttemptKey(record)); }
                                 var doneNow = Interlocked.Increment(ref totalDone);
                                 Interlocked.Increment(ref counters.Done);
                                 Interlocked.Increment(ref batchSuccessCount);

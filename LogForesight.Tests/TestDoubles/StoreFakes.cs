@@ -383,6 +383,46 @@ internal class FakeUserGroupStore : IUserGroupStore
 /// 最小可用的 IAnalysisRecordQuery 記憶體實作，供 IssueCaseCoordinator 之類只用得到
 /// Query() 的呼叫端測試——QueryPage／ListHostDates 目前無測試用到，故未實作。
 /// </summary>
+/// <summary>
+/// 兩個記錄查詢替身共用的待補 AI 查詢：條件、排序與輕量投影都與 <c>EfAnalysisRecordStore.QueryPendingAi</c> 同語意。
+/// </summary>
+internal static class PendingAiFake
+{
+    public static List<DailyAnalysisRecord> Query(IEnumerable<DailyAnalysisRecord> records, int batchSize, PendingAiQuery? query)
+    {
+        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
+        query ??= PendingAiQuery.All;
+        var pending = records.Where(r => r.AiPending && !r.DetailPruned &&
+            (query.From is not { } from || r.Date.Date >= from.Date) &&
+            (query.ToExclusive is not { } to || r.Date.Date < to.Date));
+        return (query.OldestFirst ? pending.OrderBy(r => r.Date.Date) : pending.OrderByDescending(r => r.Date.Date))
+            .ThenBy(r => r.HostId)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .Take(batchSize)
+            // 與正式實作同形狀（體檢輪）：QueryPendingAi 是不讀 ContentJson 的輕量投影——
+            // TrendAlerts/AuditEventCount 不填、CorrelationAlerts 是佔位字串。替身若回完整
+            // 紀錄，「補跑必須先完整載入」的缺陷在測試裡就永遠測不到。
+            .Select(r => new DailyAnalysisRecord
+            {
+                HostId = r.HostId,
+                Host = r.Host,
+                Date = r.Date,
+                RiskLevel = r.RiskLevel,
+                Headline = r.Headline,
+                ErrorCount = r.ErrorCount,
+                WarningCount = r.WarningCount,
+                DataIncomplete = r.DataIncomplete,
+                SecurityLogAvailable = r.SecurityLogAvailable,
+                AiAnalyzed = r.AiAnalyzed,
+                AiPending = r.AiPending,
+                DetailPruned = r.DetailPruned,
+                CorrelationAlerts = r.CorrelationAlerts.Count > 0 ? new List<string> { "(lightweight)" } : new List<string>(),
+                TopIssues = r.TopIssues
+            })
+            .ToList();
+    }
+}
+
 internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 {
     private readonly List<DailyAnalysisRecord> _records = new();
@@ -488,37 +528,8 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .Select(r => (r.HostId, r.Date.Date))
             .ToHashSet();
 
-    public List<DailyAnalysisRecord> QueryPendingAi(int batchSize)
-    {
-        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
-        return _records
-            .Where(r => r.AiPending && !r.DetailPruned)
-            .OrderByDescending(r => r.Date)
-            .ThenBy(r => r.HostId)
-            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
-            .Take(batchSize)
-            // 與正式實作同形狀（體檢輪）：QueryPendingAi 是不讀 ContentJson 的輕量投影——
-            // TrendAlerts/AuditEventCount 不填、CorrelationAlerts 是佔位字串。替身若回完整
-            // 紀錄，「補跑必須先完整載入」的缺陷在測試裡就永遠測不到。
-            .Select(r => new DailyAnalysisRecord
-            {
-                HostId = r.HostId,
-                Host = r.Host,
-                Date = r.Date,
-                RiskLevel = r.RiskLevel,
-                Headline = r.Headline,
-                ErrorCount = r.ErrorCount,
-                WarningCount = r.WarningCount,
-                DataIncomplete = r.DataIncomplete,
-                SecurityLogAvailable = r.SecurityLogAvailable,
-                AiAnalyzed = r.AiAnalyzed,
-                AiPending = r.AiPending,
-                DetailPruned = r.DetailPruned,
-                CorrelationAlerts = r.CorrelationAlerts.Count > 0 ? new List<string> { "(lightweight)" } : new List<string>(),
-                TopIssues = r.TopIssues
-            })
-            .ToList();
-    }
+    public List<DailyAnalysisRecord> QueryPendingAi(int batchSize, PendingAiQuery? query = null) =>
+        PendingAiFake.Query(_records, batchSize, query);
 
     public int CountPendingAi() => _records.Count(r => r.AiPending);
 
