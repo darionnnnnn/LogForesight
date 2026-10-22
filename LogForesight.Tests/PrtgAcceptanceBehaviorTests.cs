@@ -4,7 +4,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>PRTG 維護頁「最近一次排程驗收」判定（core/prtg-acceptance.js）的正式模組行為案例。</summary>
+/// <summary>PRTG 維護頁的判定行為：最近一次排程驗收（core/prtg-acceptance.js）與全量回填的完成水位按鈕。</summary>
 public sealed class PrtgAcceptanceBehaviorTests
 {
     private static string FindRepoRoot()
@@ -16,13 +16,15 @@ public sealed class PrtgAcceptanceBehaviorTests
     }
 
     [NodeTheory]
-    [InlineData("scheduledRun")]
-    [InlineData("ai")]
-    [InlineData("snapshot")]
-    public void 排程驗收三項判定(string caseName)
+    [InlineData("prtg-acceptance.behavior.mjs", "scheduledRun")]
+    [InlineData("prtg-acceptance.behavior.mjs", "ai")]
+    [InlineData("prtg-acceptance.behavior.mjs", "snapshot")]
+    [InlineData("prtg-full-backfill.behavior.mjs", "startButtonFollowsCompletionAndRedo")]
+    [InlineData("prtg-full-backfill.behavior.mjs", "noCompletedDaysHasNoRedoCheckbox")]
+    public void PRTG維護頁判定的production行為(string scriptName, string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
-        var script = Path.Combine(scriptDir, "prtg-acceptance.behavior.mjs");
+        var script = Path.Combine(scriptDir, scriptName);
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
         var psi = new ProcessStartInfo("node")
         {

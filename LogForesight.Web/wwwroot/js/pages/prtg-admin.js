@@ -459,6 +459,20 @@ function bindSelectedBackfill() {
 
 let fullBackfillPreview = null;
 
+/** 全部重做（忽略完成水位）是否勾選；沒有已完成日子時不會出現這個勾選。 */
+function fullBackfillRedoChecked() {
+    return document.getElementById('prtg-full-backfill-redo')?.checked === true;
+}
+
+/** 全部日子都已完成且沒勾全部重做：按下去後端一定拒絕，直接停用並說明。 */
+function syncFullBackfillStart(preview) {
+    const start = document.getElementById('prtg-full-backfill-start');
+    const hint = document.getElementById('prtg-full-backfill-redo-hint');
+    const allDone = preview.completedDays > 0 && preview.completedDays >= preview.dayCount && !fullBackfillRedoChecked();
+    if (start) start.disabled = !preview.previewId || allDone;
+    if (hint) hint.hidden = !allDone;
+}
+
 function renderFullBackfillPreview(preview) {
     const root = document.getElementById('prtg-full-backfill-preview-result');
     const start = document.getElementById('prtg-full-backfill-start');
@@ -478,6 +492,35 @@ function renderFullBackfillPreview(preview) {
     metadata.textContent = `預覽版本 ${preview.contractVersion} / ${preview.buildVersion}，有效至 ${formatDateTime(preview.expiresAtUtc)}；起算日 ${preview.planAnchorLocalDate.slice(0, 10)}。設定與範圍版本已綁定。`;
     root.appendChild(metadata);
 
+    // 完成水位（docs/PRTG-SPEC.md §5）：先前已完整回填、目標沒變的日子預設略過
+    if (preview.completedDays > 0) {
+        const resume = document.createElement('div');
+        resume.className = 'alert alert-info py-2 px-3 small mb-2';
+        resume.setAttribute('role', 'status');
+        const text = document.createElement('p');
+        text.className = 'mb-1';
+        text.textContent = `先前已完整回填 ${formatNumber(preview.completedDays)} 天，本次預設略過；剩餘約 ${formatNumber(preview.remainingHistoricRequests)} 次 historicdata。`;
+        const check = document.createElement('div');
+        check.className = 'form-check mb-0';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'form-check-input';
+        input.id = 'prtg-full-backfill-redo';
+        input.addEventListener('change', () => syncFullBackfillStart(preview));
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        label.textContent = '全部重做（忽略先前完成的日子，全部重新取數）';
+        check.append(input, label);
+        const hint = document.createElement('p');
+        hint.className = 'mb-0 mt-1';
+        hint.id = 'prtg-full-backfill-redo-hint';
+        hint.hidden = true;
+        hint.textContent = '全部日子都已完整回填；要重新取數請勾選「全部重做」。';
+        resume.append(text, check, hint);
+        root.appendChild(resume);
+    }
+
     const details = document.createElement('details');
     const heading = document.createElement('summary');
     heading.textContent = '查看逐日工作量';
@@ -491,13 +534,14 @@ function renderFullBackfillPreview(preview) {
             { title: '觸發主機', render: day => formatNumber(day.triggeredHosts) },
             { title: '歷史對應主機', render: day => formatNumber(day.mappedHosts) },
             { title: '選取主機', render: day => formatNumber(day.selectedHosts) },
-            { title: '目標 sensor', render: day => formatNumber(day.targetSensors) }
+            { title: '目標 sensor', render: day => formatNumber(day.targetSensors) },
+            { title: '本次', render: day => day.alreadyCompleted ? '已完成，略過' : '回填' }
         ],
         rows: preview.days || [],
         empty: { title: '沒有逐日資料', hint: '預覽範圍內沒有可回填的日期，請調整範圍後重新預估。', icon: null }
     });
     details.appendChild(dayTableHost); root.appendChild(details);
-    start.disabled = !preview.previewId;
+    syncFullBackfillStart(preview);
 }
 
 function bindFullBackfill() {
@@ -523,10 +567,15 @@ function bindFullBackfill() {
         if (!preview?.previewId) { toast('請先取得有效的全量成本預覽。', 'warning'); return; }
         startButton.dataset.pending = 'true';
         const restore = withBusy(button, '等待確認');
+        const redo = fullBackfillRedoChecked();
+        const skipText = preview.completedDays > 0
+            ? (redo ? `已勾選全部重做：先前完成的 ${formatNumber(preview.completedDays)} 天也會重新取數。`
+                : `略過先前已完成的 ${formatNumber(preview.completedDays)} 天，剩餘約 ${formatNumber(preview.remainingHistoricRequests)} 次。`)
+            : '';
         try {
             const confirmed = await confirmAction({
                 title: '確認全量歷史回填',
-                message: `全量依目前保存的觸發主機、歷史對應、sensor 白名單與監看數值範圍執行，不代表全站所有 sensor。${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)} 預估 ${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata。` +
+                message: `全量依目前保存的觸發主機、歷史對應、sensor 白名單與監看數值範圍執行，不代表全站所有 sensor。${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)} 預估 ${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata。${skipText}` +
                     `共享配額時間下界 ${Math.ceil(preview.historicQuotaLowerBoundSeconds / 60)} 分鐘，不含來源延遲；狀態變更另有 ${formatNumber(preview.stateChangeObjects)} 個對象，分頁成本未知。` +
                     '預覽五分鐘有效；設定、範圍、歷史紀錄或對應變更時必須重新預覽。',
                 confirmText: '確認並開始', confirmVariant: 'danger'
@@ -534,7 +583,7 @@ function bindFullBackfill() {
             if (!confirmed) return;
             button.querySelector('span')?.remove();
             button.replaceChildren(document.createTextNode('啟動中'));
-            await api.post('/api/admin/settings/prtg-backfill/start', { previewId: preview.previewId, confirmed: true }, { silent: true });
+            await api.post('/api/admin/settings/prtg-backfill/start', { previewId: preview.previewId, confirmed: true, resume: !redo }, { silent: true });
             fullBackfillPreview = null;
             result.replaceChildren(document.createTextNode('已啟動全量歷史回填。執行進度與停止控制位於 Runs 頁的 PRTG 狀態卡：'));
             const runsLink = document.createElement('a');
@@ -549,7 +598,8 @@ function bindFullBackfill() {
         } finally {
             restore();
             delete startButton.dataset.pending;
-            startButton.disabled = !fullBackfillPreview;
+            if (fullBackfillPreview) syncFullBackfillStart(fullBackfillPreview);
+            else startButton.disabled = true;
         }
     });
 }

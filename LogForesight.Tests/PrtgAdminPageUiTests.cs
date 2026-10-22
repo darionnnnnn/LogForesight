@@ -65,4 +65,16 @@ public sealed class PrtgAdminPageUiTests
         Assert.Contains("setupState.aiStatus = await api.get('/api/admin/schedule/ai-status'", js);
         Assert.Contains("setupState.snapshotHours = response?.hours ?? [];", js);
     }
+
+    [Fact]
+    public void 全量回填啟動帶完成水位選擇_逐日表標出略過的日子()
+    {
+        var js = Script();
+        Assert.Contains("{ previewId: preview.previewId, confirmed: true, resume: !redo }", js);
+        var render = FunctionBody(js, "function renderFullBackfillPreview(preview)");
+        Assert.Contains("if (preview.completedDays > 0)", render);
+        Assert.Contains("input.id = 'prtg-full-backfill-redo';", render);
+        Assert.Contains("day.alreadyCompleted ? '已完成，略過' : '回填'", render);
+        Assert.Contains("syncFullBackfillStart(preview);", render);
+    }
 }
