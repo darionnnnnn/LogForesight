@@ -19,15 +19,21 @@ const cases = {
         const none = only('scheduled-run', { scheduleStatus: { isRunning: false, prtgLastScheduledDay: null } });
         assert.equal(none.state, 'nodata');
         assert.match(none.detail, /立即執行不計入/);
+        assert.equal(none.path, '/runs#list');
         const ok = only('scheduled-run', { scheduleStatus: { isRunning: false, prtgLastScheduledDay: day('success') } });
         assert.equal(ok.state, 'ok');
         assert.match(ok.detail, /finding 3 筆、歸戶主機 2 台/);
+        // 「檢視該趟執行」直接開那趟執行詳情，不是只到總表
+        assert.equal(ok.path, '/runs?run=9#list');
         const partial = only('scheduled-run', { scheduleStatus: { isRunning: false, prtgLastScheduledDay: day('partial') } });
         assert.equal(partial.state, 'pending');
-        assert.match(partial.detail, /部分成功/);
+        // 與執行總表徽章同一套用詞
+        assert.match(partial.detail, /部分失敗/);
     },
     ai() {
         assert.equal(only('ai', { aiStatus: { idleReason: 'disabled', pendingTotal: 0 } }).state, 'na');
+        // 站台啟動後存量校正中：待補 0 件不算跟上（與排程頁 AI 卡同一句）
+        assert.equal(only('ai', { aiStatus: { idleReason: 'backfill-pending', isRunning: false, pendingTotal: 0 } }).state, 'pending');
         assert.equal(only('ai', { aiStatus: { isRunning: true, pendingTotal: 0 } }).state, 'pending');
         assert.equal(only('ai', { aiStatus: { isRunning: false, pendingTotal: 5 } }).state, 'pending');
         assert.equal(only('ai', { aiStatus: { isRunning: false, pendingTotal: 0, lastRunSuccess: false } }).state, 'pending');

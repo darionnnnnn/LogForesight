@@ -148,13 +148,13 @@ internal static class PrtgDailyPipeline
             if (running != PrtgManualWork.None)
             {
                 prtgConsole.WriteLine(running == PrtgManualWork.StructureSync
-                    ? "手動觸發的「同步結構與對應」進行中，等它完成後再繼續（本趟不重複同步結構）。"
+                    ? $"手動觸發的「同步結構與對應」進行中（自 {DateTime.Now:HH:mm} 起等待），等它完成後再繼續（本趟不重複同步結構）。"
                     : $"PRTG 歷史回填進行中（自 {DateTime.Now:HH:mm} 起等待），最多等 {IPrtgManualWorkGate.BackfillMaxWait.TotalMinutes:0} 分鐘；可在排程作業頁 PRTG 卡停止回填。");
                 runRecorder.Milestone(running == PrtgManualWork.StructureSync
                     ? "PRTG：等待手動同步結構與對應完成"
                     : "PRTG：等待歷史回填結束");
                 progress?.Report(RunPhases.PrtgWaitSync, 0, 0);
-                var outcome = await manualWorkGate!.WaitUntilIdleAsync(ct);
+                var outcome = await manualWorkGate!.WaitUntilIdleAsync(running, ct);
                 skipStructureSync = outcome == PrtgManualWaitOutcome.MirrorFresh;
                 switch (outcome)
                 {

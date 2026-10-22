@@ -311,6 +311,9 @@ public class SchedulerHostedService : BackgroundService
         IEnumerable<ScheduleWindow> windows)
         => ScheduleCalculator.EffectiveScheduleTriggerTimes(ScheduledRunTimes(runs), inMemoryTriggerTimes, windows);
 
+    /// <summary>手動回填執行中（接續回填不算）：立即執行的 PRTG 日路徑會先等它，狀態 API 據此顯示提示。</summary>
+    public bool PrtgBackfillWaiting => _prtgManualWork.Running == PrtgManualWork.Backfill;
+
     /// <summary>排程執行的唯一判準：Trigger == "schedule" 且非 AI 背景工作（觸發判定、補跑說明、排程驗收共用）</summary>
     internal static bool IsScheduledFetchRun(BatchRun run) => run.Trigger == "schedule" && run.JobType != BatchRun.JobTypeAi;
 

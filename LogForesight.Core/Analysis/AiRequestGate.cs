@@ -21,6 +21,12 @@ public interface IAiRequestGate
     /// 互動車道排不到時擲 <see cref="TimeoutException"/>，呼叫端照一般 AI 失敗降級。
     /// </summary>
     Task<IDisposable> EnterAsync(AiLane lane, CancellationToken ct);
+
+    /// <summary>
+    /// 互動車道排隊的上限：<see cref="AIService"/> 在自己的實例佇列也套同一個上限（閘道在佇列之後取，
+    /// 只限閘道等於沒限——畫面上的人會在佇列裡等到前一個問題答完）。不節流時為無限。
+    /// </summary>
+    TimeSpan InteractiveMaxWait { get; }
 }
 
 /// <summary>不節流（測試與未接 DI 的呼叫端）：行為等同只有各實例自己的序列化。</summary>
@@ -31,6 +37,8 @@ public sealed class NullAiRequestGate : IAiRequestGate
     private static readonly Task<IDisposable> NoLease = Task.FromResult<IDisposable>(new Nothing());
 
     public Task<IDisposable> EnterAsync(AiLane lane, CancellationToken ct) => NoLease;
+
+    public TimeSpan InteractiveMaxWait => Timeout.InfiniteTimeSpan;
 
     private sealed class Nothing : IDisposable
     {
@@ -71,6 +79,12 @@ public sealed class AiRequestGate : IAiRequestGate
         _backgroundMaxYield = backgroundMaxYield ?? DefaultBackgroundMaxYield;
     }
 
+    public TimeSpan InteractiveMaxWait => _interactiveMaxWait;
+
+    /// <summary>互動排隊逾上限的訊息（實例佇列與閘道共用同一句）。</summary>
+    public static string InteractiveTimeoutMessage(TimeSpan maxWait) =>
+        $"AI 互動請求排隊超過 {maxWait.TotalSeconds:0.#} 秒，請稍後再試。";
+
     public async Task<IDisposable> EnterAsync(AiLane lane, CancellationToken ct)
     {
         var started = Stopwatch.GetTimestamp();
@@ -94,7 +108,7 @@ public sealed class AiRequestGate : IAiRequestGate
                     }
                     wait = _interactiveMaxWait - waited;
                     if (wait <= TimeSpan.Zero)
-                        throw new TimeoutException($"AI 互動請求排隊超過 {_interactiveMaxWait.TotalSeconds:0.#} 秒，請稍後再試。");
+                        throw new TimeoutException(InteractiveTimeoutMessage(_interactiveMaxWait));
                 }
                 else
                 {

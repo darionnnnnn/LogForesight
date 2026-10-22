@@ -40,9 +40,10 @@ public sealed class PrtgManualWorkGate : IPrtgManualWorkGate
     private bool BackfillRunning =>
         _backfill.Snapshot().IsRunning && _backfill.GetRunIdentity().RunKind != "tail";
 
-    public async Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(CancellationToken ct)
+    public async Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(PrtgManualWork observed, CancellationToken ct)
     {
-        if (_sync.IsRunning)
+        // 同步已結束時 PrtgStructureSyncService.WaitUntilIdleAsync 直接回那趟成不成功，不會誤判成回填
+        if (observed == PrtgManualWork.StructureSync)
             return await _sync.WaitUntilIdleAsync(ct) ? PrtgManualWaitOutcome.MirrorFresh : PrtgManualWaitOutcome.SyncNotFresh;
 
         var deadline = DateTime.UtcNow + _backfillMaxWait;

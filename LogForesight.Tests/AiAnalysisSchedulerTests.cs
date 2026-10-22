@@ -1376,6 +1376,33 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(state.IsFollowingFetch(state.LastRunEndedAt.Value.AddMinutes(5)));
     }
 
+    /// <summary>
+    /// 體檢輪：閒置原因只有一份判定（docs/WEB-SPEC.md §9.10）。跟隨取數的即時觸發曾自己抄一份 disabled／
+    /// backfill／no-pending 判斷，之後改其中一份另一份不會跟著變——守住它只能經 BlockingIdleReason。
+    /// </summary>
+    [Fact]
+    public void 跟隨取數_即時觸發的前置判定走BlockingIdleReason_不另抄一份()
+    {
+        var path = Path.Combine(FindRepoRoot(), "LogForesight.Web", "Services", "AiAnalysisHostedService.cs");
+        var source = File.ReadAllText(path);
+        var start = source.IndexOf("private void OnFetchFollowUp()", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = source.IndexOf("internal async Task TickAsync", start, StringComparison.Ordinal);
+        var body = source[start..end];
+
+        Assert.Contains("BlockingIdleReason(", body);
+        Assert.Contains("requireWindow: false", body);
+        Assert.DoesNotContain("AiIdleReasons.", body);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir!.FullName;
+    }
+
     [Fact]
     public void 跟隨取數_EndRun空結果不觸發RunEnded_有結果觸發一次()
     {

@@ -192,6 +192,7 @@ public class ScheduleController : ControllerBase
             PrtgLastIssueOutcome = prtgLastIssueOutcome,
             PrtgLastIssueNote = prtgLastIssueNote,
             PrtgLastScheduledDay = prtgLastScheduledDay,
+            PrtgBackfillWaiting = _scheduler?.PrtgBackfillWaiting ?? false,
             LastRunSuccess = lastOutcome?.Success,
             LastRunMessage = lastOutcome?.Message,
             LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,

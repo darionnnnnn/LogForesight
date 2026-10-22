@@ -2480,9 +2480,10 @@ PRTG 整合的**靜態設定、唯讀狀態與同步／回填的啟動入口**�
 頁首「啟用準備」讀取已儲存設定、最近一次環境探測與結構同步、PRTG 規則及每日排程狀態（六項），逐項指向下一步；未查到的狀態列為待確認。
 連線測試的結果只在連線頁籤就地顯示（用未儲存表單值測試成功時附註請儲存後重測），不列入清單——重整就歸零的狀態不該當成常駐項目。
 六項皆確認後下方出現**「最近一次排程驗收」**三項（判定集中在 `core/prtg-acceptance.js`，畫面只排版；`undefined`＝讀取中、`null`＝讀取失敗）：
-① 最近一趟**排程**取數的 PRTG 結局為 `success`（`GET api/admin/schedule/status` 的 `prtgLastScheduledDay`，立即執行不計入；沒有排程執行顯示「尚未有排程執行」，不算通過；附執行紀錄連結）；
-② 取數結束後 AI 待補歸零且上次 AI 執行正常結束（AI 未設定顯示「不適用」）；
-③ 快照最近 24 個完整小時中有目標的小時品質達標 ≥75% 且最近一個完整小時有成功快照（沒有目標顯示「無資料」，不算通過）。
+① 最近一趟**排程**取數的 PRTG 結局為 `success`（`GET api/admin/schedule/status` 的 `prtgLastScheduledDay`，立即執行不計入；後端只看最近幾天已結束的排程執行，沒有時顯示「最近沒有已結束的排程執行」，不算通過；結局用詞與執行總表徽章同一套；「檢視該趟執行」以 `/runs?run=<runId>#list` 直接開該趟執行詳情）；
+② 取數結束後 AI 待補歸零且上次 AI 執行沒有失敗（`lastRunSuccess` 是行程內狀態，站台重啟後為 null 不算失敗；AI 未設定顯示「不適用」、`backfill-pending` 顯示校正中待確認）；
+③ 快照最近 24 個完整小時中有目標的小時品質達標 ≥75% 且最近一個完整小時有成功快照（沒有目標顯示「無資料」，不算通過；「品質達標」＝`databaseUsableValues`，與鏡像狀態頁快照表「品質達標列／目標」欄同一個數，快照寫入筆數另列一欄）。
+三個來源都只在載入時讀一次，段內「重新確認」鈕重抓三者。
 全項確認也只表示設定與最近一次結果，資料涵蓋另見就緒度與使用效果；逐步劇本見 docs/PRTG-SPEC.md §13。
 
 六個頁籤（`ui.js` 的 `bindTabs` 手作頁籤，非作用中頁籤初始 HTML 自帶 `d-none`）。
@@ -2637,7 +2638,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   否則第二下會拿到「目前沒有正在執行的分析」的錯誤紅字。
 - **回填執行中的立即執行提示**：手動回填（full／selected）執行中時，立即執行 modal 的 PRTG 提示區多一行靜態提示
   （`#run-now-prtg-backfill-hint`：這趟的 PRTG 部分最多等 30 分鐘、NetIQ 與本機照常、可先在 PRTG 卡停止回填），
-  隨回填狀態輪詢切換、開 modal 時重查一次；接續回填（tail）不提示。**不另開確認框**——modal 已有兩道 PRTG 確認。
+  依 `GET schedule/status` 的 `prtgBackfillWaiting`（不讀回填狀態端點：它對權限只及部分主機的維護者回 403）隨輪詢切換、開 modal 時重查一次；接續回填（tail）不提示。**不另開確認框**——modal 已有兩道 PRTG 確認。
 - **強制重新分析的 modal 防護**：後端在 AI 已執行中時會先優雅停止當前執行再整批重標重跑
   （順序與理由見 `AiAnalysisHostedService.TriggerRunAsync`）。modal 開著時狀態輪詢不會關掉它，
   因此 modal 開啟期間偵測到 AI 由「非執行中」變成「執行中」就**停用確認鈕**並說明要關閉後重新確認；
@@ -2694,16 +2695,16 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **AI 待補順序**（`AiAnalysisHostedService.SelectNextBatch`，每批重算）：近日層（紀錄日 ≥ 今天−2）新→舊，跟著取數；
   其餘為積壓層，七日一塊、塊由新到舊、塊內同主機舊→新——舊日的 AI 結論先寫回，後一天 prompt 的【近期歷史】才看得到。
   近日層被完整性閘門擋住時直接取積壓層；查詢以 `PendingAiQuery`（日期範圍＋方向）在 SQL 端排序，不放大批次。
-  成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。
+  成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。完整性閘門（PRTG 證據指紋、事後追加 finding 重標待補、隔晚重判）見 docs/PRTG-SPEC.md §3。
 - **AI 呼叫節流**：全站單一 `IAiRequestGate`（Core `AiRequestGate`，DI 單例）——互動車道（`WebAiService` 的互動與對話兩個實例）
-  同時 2 條、排隊逾 5 秒視同失敗走現行降級；背景車道（取數執行內的週檢與深析、AI 排程每主機分片的實例、工作流恢復）
+  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每主機分片的實例、工作流恢復；取數路徑的深析關閉）
   上限＝`AiConcurrency`（每次取許可時重讀）；互動在途時背景最多讓 30 秒。閘道在各實例自己的佇列之後取、`finally` 歸還，取消穿透。
   每個 `AIService` 建構都要帶 `gate:`（`AiRequestGateTests` 掃 Core／Web 的 `new AIService(`）；未接時為 null 閘道＝只剩逐實例序列。
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
   `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
   `disabled`＝AI 服務未設定／`backfill-pending`／`outside-window`／`no-pending`／`waiting-fetch`），
-  判定只有一份：`AiAnalysisHostedService.BlockingIdleReason`，輪詢與 `GET ai-status`（`CurrentIdleReason`，**讀取時即時判定**，不用上一輪輪詢留下的值）共用；
+  判定只有一份：`AiAnalysisHostedService.BlockingIdleReason`，輪詢、跟隨取數的即時觸發（不看窗口）與 `GET ai-status`（`CurrentIdleReason`，**讀取時即時判定**，不用上一輪輪詢留下的值）共用；AI 卡的「AI 服務未設定」判斷跟著 `idleReason` 走；
   `waiting-fetch` 不擋開跑，只在其他條件都成立時才報。閒置時 `progressPhase` 為 null。
   待補 0 件且原因為 `disabled`／`backfill-pending` 時，待補列寫「0 件（AI 服務未設定）」／「0 件（資料校正中，稍後再看）」而非「已全部完成」，提示列照顯示。
   前端有文案對照表，**查無對應時不顯示提示、絕不把裸值印給使用者**；

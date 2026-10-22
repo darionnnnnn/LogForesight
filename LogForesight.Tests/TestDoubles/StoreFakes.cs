@@ -380,10 +380,6 @@ internal class FakeUserGroupStore : IUserGroupStore
 }
 
 /// <summary>
-/// 最小可用的 IAnalysisRecordQuery 記憶體實作，供 IssueCaseCoordinator 之類只用得到
-/// Query() 的呼叫端測試——QueryPage／ListHostDates 目前無測試用到，故未實作。
-/// </summary>
-/// <summary>
 /// 兩個記錄查詢替身共用的待補 AI 查詢：條件、排序與輕量投影都與 <c>EfAnalysisRecordStore.QueryPendingAi</c> 同語意。
 /// </summary>
 internal static class PendingAiFake
@@ -423,6 +419,10 @@ internal static class PendingAiFake
     }
 }
 
+/// <summary>
+/// 最小可用的 IAnalysisRecordQuery 記憶體實作，供 IssueCaseCoordinator 之類只用得到
+/// Query() 的呼叫端測試——QueryPage／ListHostDates 目前無測試用到，故未實作。
+/// </summary>
 internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 {
     private readonly List<DailyAnalysisRecord> _records = new();

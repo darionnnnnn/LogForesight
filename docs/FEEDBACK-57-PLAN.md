@@ -1,6 +1,6 @@
 ﻿# LogForesight 第 57 輪規劃
 
-> 狀態：**實作完成，待換模型體檢**（feature/feedback-57 已逐段 commit 並 push；A-1～A-3、B-1b、B-2a/b、B-3、C-1～C-4、D 皆驗收；B-1a 實機劇本與 B-4 分支刪除交使用者）。
+> 狀態：**體檢完成，待實測後併 dev**（feature/feedback-57；體檢輪修正已 commit 並 push，依使用者指示先不併；B-1a 實機劇本與 B-4 分支刪除交使用者）。
 > 基準：dev@5d7edc7a（6,436 通過／10 略過，第 56 輪收尾後）。
 > 來源：使用者 2026-10-22 三個提問——(1) PRTG 是否已達企業級實用度與穩定度；(2) 自動／手動排程取得 NetIQ、本機 AI、PRTG 三者的穩定度與順序是否正確，避免 AI 解讀資料缺漏；(3) 使用者體驗是否良好。由 Claude 以整個專案角度核對程式碼、文件與實際啟動站台走查後提出，討論定案。
 > 設計依據：使用者定案 UX 批次套用 `ui-ux-pro-max`。本輪不換風格、不動 token（DESIGN-SYSTEM v2 維持）；判斷順序沿 skill（可用性與語意 → 真實內容與響應式 → 一致性 → 效能動態），WCAG 2.2 AA 為檢查目標。本機檢索命中：UX 指引 #79「空狀態要有訊息與下一步」、#61「送出要有載入→成功／錯誤回饋」；頁籤／漸進揭露與設定清單兩題無命中，改依 DESIGN-SYSTEM §6b「日常動線用不到的內容收進進階收合區、說明超過兩行改對照表或收合」。
@@ -292,3 +292,31 @@ PRTG-SPEC §3 與 WEB-SPEC §9.10 加「AI 完整性保證」一段（閘門、�
 - 規劃逐條比對：A-1～A-3、B-1b、B-2a/b、B-3、C-1～C-4、D 全部有程式碼錨點，該消失的東西（批次放大、舊閘門介面、`PrtgObservation`、過時說明書敘述、BACKLOG 已做條目）皆零命中；B-1a 劇本與 B-4 分支刪除交使用者。
 - 體檢時請特別看：A-2 閘道的取消路徑（`EnterAsync` 等待中取消不洩漏許可）、A-1 `SelectNextBatch` 在 cutoff 落在近日層內時的邊界（cutoff 早於 today−2 時近日層整層被擋）、B-3 的 SQL Server DROP 分支（只驗編譯）、B-2 的狀態變更區間未縮小（BACKLOG 已記）。
 - 瀏覽器實測涵蓋與驗不到的部分見「批次 C 瀏覽器實測」列。
+
+## 體檢輪修正
+
+體檢方 Claude（Fable 5.1；實作主要由 Opus 5.5 完成），對 `dev..feature/feedback-57`（13 commit、75 檔）做規劃逐條比對、四視角獵 bug（兩個 Opus 5.5 medium 唯讀代理：程式碼多視角＋探針、規劃與文件比對；共回報 20 條，採納 17 條、2 條記錄不改、1 條與既有設計一致不改）、架構契合與文件稽核。每條程式修正都有迴歸測試，並以突變（備份→改壞→定向紅→還原 `cmp`→重建）證明測試會咬人。
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| 1 | `PrtgBackfillRunner`（P1，代理探針重現） | 回填天數內沒有主機對應的日子永遠不記完成水位：「全部完成」湊不齊、拒絕空跑被繞過；續跑只剩這種日子時整趟回失敗（「沒有任何一天有主機對應」）還重翻狀態變更區間 | 無對應、無目標 sensor 的日子也記完成（指紋含對應，之後有對應就不算完成） | `PrtgFullBackfillPreviewServiceTests.完成水位_無主機對應的日子也算完成_全部完成後拒絕空跑`＋突變 |
+| 2 | `AIService`／`IAiRequestGate` | 規劃承諾互動排隊逾 5 秒降級，但閘道在實例佇列之後取、上限只套在閘道上：同一互動實例的第二個問題在佇列裡等到前一個答完 | 介面加 `InteractiveMaxWait`（null 閘道為無限）；互動車道的實例佇列也套同一上限，逾時回失敗不發請求；訊息共用一句 | `AiRequestGateTests.互動車道在實例佇列排隊逾上限也降級不發請求`、`背景車道的實例佇列不設上限`＋突變 |
+| 3 | `PrtgManualWorkGate.WaitUntilIdleAsync` | 管線讀到「同步進行中」後呼叫等待，等待裡重讀 `IsRunning`；同步剛好在兩次讀取之間結束就掉進回填分支：回「回填已結束」且剛成功的同步再做一次 | 簽名改 `WaitUntilIdleAsync(observed, ct)`，以呼叫端看到的種類為準 | `PrtgStructureSyncServiceTests.手動作業閘門_呼叫端看到的是同步而同步已結束_不誤判成回填`＋突變；管線替身斷言收到的種類 |
+| 4 | `AiAnalysisHostedService.OnFetchFollowUp` | CLAUDE.md 與 WEB-SPEC 都寫「閒置原因只有一份判定」，即時觸發卻自己抄一份 disabled／backfill／no-pending | `BlockingIdleReason` 加 `requireWindow`，即時觸發走它（不看窗口） | `AiAnalysisSchedulerTests.跟隨取數_即時觸發的前置判定走BlockingIdleReason_不另抄一份`（源碼守門）＋突變 |
+| 5 | `runs.js` 立即執行 modal 提示 | 提示依賴回填狀態端點，該端點對權限只及部分主機的維護者回 403，提示永遠不出現但 PRTG 日路徑照樣會等 | `ScheduleStatusDto.PrtgBackfillWaiting`（scheduler 從閘門讀），提示改看它、開 modal 重查排程狀態 | `RunsPageUiTests.立即執行Modal在手動回填執行中顯示等待提示` 改寫 |
+| 6 | `core/prtg-acceptance.js` AI 項 | `idleReason=backfill-pending` 且待補 0 件顯示「已確認」，與排程頁「0 件（資料校正中）」矛盾 | 回 pending、文案同一句 | `prtg-acceptance.behavior.mjs ai`＋突變 |
+| 7 | 同上，結局用詞 | 驗收段 `partial` 寫「部分成功」、執行總表徽章寫「部分失敗」 | 與 `PRTG_OUTCOME_META` 同一套用詞 | `prtg-acceptance.behavior.mjs scheduledRun`＋突變 |
+| 8 | 同上＋`runs.js` | 定案「檢視執行連到該趟執行詳情」只連到總表，DTO 的 `RunId` 無消費端 | 連結 `/runs?run=<id>#list`；`runs.js` 讀 `?run=` 直接開執行詳情 | 同上；`RunsPageUiTests.執行詳情深連結與AI設定狀態即時同步` |
+| 9 | 同上，無排程文案 | 「近 8 天」在前端寫死（後端是 `LookbackDays+1`），文件又寫另一句 | 文案不寫天數；WEB-SPEC 照實際 | 同上 |
+| 10 | `prtg-admin.js` 快照表 | 「品質達標列／目標」欄顯示 `availableValues`（快照寫入數，可能重複計數），驗收判定用 `databaseUsableValues`；§13 叫人看那欄會與驗收段對不上 | 欄改 `databaseUsableValues`，另加「快照寫入」欄 | `PrtgAdminPageUiTests.快照表品質達標欄與驗收同一個數_驗收段可重新確認_全部重做勾選重畫不洗掉` |
+| 11 | 同上，驗收段 | 三個來源只在載入時讀一次，取數或 AI 跑完畫面不更新、失敗也沒有重試 | 段內「重新確認」鈕重抓三者 | 同上 |
+| 12 | 同上，全量回填預覽 | 勾了「全部重做」再按重新預覽，勾選被重畫洗掉 | 重畫前記住勾選帶回 | 同上 |
+| 13 | `runs.js` AI 卡 | `aiAvailable` 只載入時讀 `/api/admin/settings`，`idleReason` 改成即時後同一張卡會一半新一半舊 | 跟著 `idleReason !== 'disabled'` 走 | `RunsPageUiTests.執行詳情深連結與AI設定狀態即時同步` |
+| 14 | `ScheduleDtos.cs`、`StoreFakes.cs` | 新類別插在既有 `<summary>` 與類別之間，兩個既有類別失去說明、新類別掛兩段 | 搬回原位 | 編譯 |
+| 15 | `PrtgDailyPipeline` | §5a 寫等待輸出附開始時刻，只有回填分支有 | 同步分支也寫 | `PrtgDailyPipelineTests` 既有 |
+| 16 | 文件 | CLAUDE.md 篩選詞 `JsBehavior` 一條都篩不到（類別名是 `*BehaviorTests`）；WEB-SPEC §9.10 把取數路徑的深析算進背景車道（實際關閉）、缺完整性保證交叉引用；PRTG-SPEC §13 第 1 步引用不存在的 BACKLOG 條目（BACKLOG 自己也引用）、第 3 步自相矛盾、第 4～6 步寫代碼而畫面顯示中文、第 7 步 AI 未設定走不到；§5 缺預覽欄位名；說明書兩處沿革字眼 | 逐條改正；說明書補「互動排隊逾 5 秒會放棄」 | `HelpContentServiceTests`、文件守門 |
+| 17 | 規劃比對差異回寫 | B-2「預覽帶 `resume=false`」沒做：前端以勾選切換，預覽同時給兩組數字，不需要參數（設計簡化，本處回寫）；C-3 的 JsBehavior 驗收只做字串測試（一行文案）；各段驗收指令的篩選詞與實際類別不符：A-1 `EfRecordQueryTests`、B-1b `PrtgAcceptanceBehaviorTests`＋`SchedulerTriggerQueryTests`、B-2 `PrtgFullBackfillPreviewServiceTests`、B-3 `LegacyObservationsRemovalTests` | 記錄，不改程式 | — |
+
+記錄不改：代理提出 `lastRunSuccess` 為 null（站台重啟後）時驗收 ② 算通過——是刻意的（行程內狀態、沒有失敗證據），寫進 WEB-SPEC；A-1 近日層固定今天−2 與 A-2 閘道在佇列之後取，皆為實作輪已回寫的設計修正，體檢只補上第 2 條的佇列上限。代理「已查過沒問題」的組合（閘道壓測、TCS 交換、cutoff 邊界、水位寫入次數、B-3 四種組合、收合初始狀態、`progressPhase` null 消費端）由主代理讀碼複核，不再列。
+
+定向測試（閘道／同步／管線／回填／AI 排程／排程頁 UI／維護頁 UI／驗收行為／觸發查詢／控制器／前端一致性／模組匯入／逾時行為／觀察表移除／AIService）：288 通過。全量 `dotnet test`（2026-10-22，Windows）：**6,478 通過／10 略過／0 失敗**，總計 6,488；實作輪 6,471 → +7（新增迴歸測試 7 條）。

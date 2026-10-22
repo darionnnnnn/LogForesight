@@ -9,9 +9,10 @@
 /** 最近 24 個完整小時中，品質達標小時占有目標小時的最低比例（暫定，與可用列門檻同值）。 */
 export const SNAPSHOT_HOUR_RATIO = 0.75;
 
+// 與執行總表 PRTG 徽章（pages/runs.js PRTG_OUTCOME_META）同一套用詞，使用者對照兩個畫面不會看到相反的說法
 const OUTCOME_TEXT = {
     success: '成功',
-    partial: '部分成功',
+    partial: '部分失敗',
     failed: '失敗',
     no_output: '無產出',
     disabled: '未啟用'
@@ -31,11 +32,13 @@ function scheduledRunItem(status) {
     if (status === null) return { ...base, state: 'error', detail: '無法讀取排程狀態。' };
     if (status.isRunning) return { ...base, state: 'pending', detail: '取數執行中，結束後再確認。' };
     const day = status.prtgLastScheduledDay;
-    if (!day) return { ...base, state: 'nodata', detail: '近 8 天沒有排程執行（立即執行不計入）。' };
+    // 後端只看最近幾天已結束的排程執行（SchedulerHostedService.PrtgRunHealth）；天數不在這裡再寫一份
+    if (!day) return { ...base, state: 'nodata', detail: '最近沒有已結束的排程執行（立即執行不計入）。' };
+    const linked = { ...base, path: `/runs?run=${encodeURIComponent(day.runId)}#list`, linkText: '檢視該趟執行' };
     const summary = `${day.date}：finding ${day.findings} 筆、歸戶主機 ${day.attributedHosts} 台`;
     return day.outcome === 'success'
-        ? { ...base, state: 'ok', detail: `${summary}。` }
-        : { ...base, state: 'pending', detail: `${summary}，結局為「${OUTCOME_TEXT[day.outcome] ?? '未知'}」。` };
+        ? { ...linked, state: 'ok', detail: `${summary}。` }
+        : { ...linked, state: 'pending', detail: `${summary}，結局為「${OUTCOME_TEXT[day.outcome] ?? '未知'}」。` };
 }
 
 function aiItem(status) {
@@ -43,9 +46,12 @@ function aiItem(status) {
     if (status === undefined) return { ...base, state: 'loading', detail: '讀取中…' };
     if (status === null) return { ...base, state: 'error', detail: '無法讀取 AI 分析狀態。' };
     if (status.idleReason === 'disabled') return { ...base, state: 'na', detail: 'AI 未設定，不需判讀。' };
+    // 與排程頁 AI 卡同一句話：站台啟動後的存量校正完成前，待補 0 件不代表判讀跟上了
+    if (status.idleReason === 'backfill-pending') return { ...base, state: 'pending', detail: '站台啟動後正在校正既有分析資料，完成後再確認。' };
     if (status.isRunning) return { ...base, state: 'pending', detail: 'AI 判讀進行中。' };
     if (status.pendingTotal > 0) return { ...base, state: 'pending', detail: `還有 ${status.pendingTotal} 件待判讀。` };
     if (status.lastRunSuccess === false) return { ...base, state: 'pending', detail: '待判讀 0 件，但上一次 AI 執行沒有正常結束。' };
+    // lastRunSuccess 是行程內狀態，站台重啟後為 null：沒有失敗證據且待補 0 件就算跟上
     return { ...base, state: 'ok', detail: '待判讀 0 件。' };
 }
 

@@ -312,6 +312,39 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         Assert.False(after.Days.Single(d => d.Day == DateTime.Today.AddDays(-1)).AlreadyCompleted);
     }
 
+    /// <summary>
+    /// 體檢輪：回填天數內較早的日子常沒有主機對應（上線前）。這種日子不記完成的話「全部完成」永遠湊不齊：
+    /// 續跑只剩它時整趟回失敗（「沒有任何一天有主機對應」）還重翻狀態變更區間，拒絕空跑的防線被繞過。
+    /// 指紋含對應，之後有了對應那天就不算完成。
+    /// </summary>
+    [Fact]
+    public async Task 完成水位_無主機對應的日子也算完成_全部完成後拒絕空跑()
+    {
+        var threeDaysAgo = DateTime.Today.AddDays(-3);
+        _settings.Update(settings => settings.PrtgBackfillDays = 3);
+        Assert.Equal(3, _service.PreviewFull().DayCount);
+
+        await RunFullAsync();
+        Assert.True(_service.GetStatus().Success, string.Join(Environment.NewLine, _service.GetStatus().Output));
+
+        var preview = _service.PreviewFull();
+        Assert.Equal(3, preview.CompletedDays);
+        Assert.True(preview.Days.Single(d => d.Day == threeDaysAgo).AlreadyCompleted);
+        Assert.False(_service.TryStartFull(Confirmed(preview), out var error, out _));
+        Assert.Contains("全部 3 天先前已完整回填", error);
+        Assert.False(_runState.Snapshot().IsRunning);
+
+        // 那天之後有了對應：目標變了，不再算完成
+        _backend.PrtgStore().ReplaceHostMapForDate(threeDaysAgo, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 100, HostId = 1, MapStatus = PrtgMapStatus.Ok }
+        });
+        _backend.RecordStore().Append(new DailyAnalysisRecord { HostId = 1, Host = "host-11", Date = threeDaysAgo, RiskLevel = "高" });
+        var changed = _service.PreviewFull();
+        Assert.Equal(2, changed.CompletedDays);
+        Assert.False(changed.Days.Single(d => d.Day == threeDaysAgo).AlreadyCompleted);
+    }
+
     [Fact]
     public async Task 完成水位_超過七天未更新就不採信()
     {

@@ -241,7 +241,14 @@ public class AIService : IAiService
         Log.Debug("Chat 請求：jsonMode={JsonMode}, promptChars={PromptChars}, systemPromptChars={SystemPromptChars}",
             jsonMode, prompt.Length, systemPrompt?.Length ?? 0);
 
-        await _requestQueue.WaitAsync(ct);
+        // 互動車道（畫面上有人在等）連本實例的佇列都不無限等：排隊逾上限照一般失敗降級（體檢輪）。
+        // 閘道在佇列之後取，上限只套在閘道上等於沒限——第二個問題會在佇列裡等到前一個答完。
+        if (_lane == AiLane.Interactive && !await _requestQueue.WaitAsync(_gate.InteractiveMaxWait, ct))
+        {
+            Log.Warn("Chat 互動請求在實例佇列排隊超過 {Seconds} 秒，放棄", _gate.InteractiveMaxWait.TotalSeconds);
+            return new AiResponse { Success = false, Error = AiRequestGate.InteractiveTimeoutMessage(_gate.InteractiveMaxWait) };
+        }
+        if (_lane != AiLane.Interactive) await _requestQueue.WaitAsync(ct);
         var sw = Stopwatch.StartNew();
         try
         {

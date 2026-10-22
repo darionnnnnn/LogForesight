@@ -375,9 +375,10 @@ public class PrtgDailyPipelineTests : IDisposable
 
         public PrtgManualWork Running => _running;
 
-        public Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(CancellationToken ct)
+        public Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(PrtgManualWork observed, CancellationToken ct)
         {
             WaitCalls++;
+            Assert.Equal(_running, observed);
             _running = PrtgManualWork.None;
             return Task.FromResult(_outcome);
         }

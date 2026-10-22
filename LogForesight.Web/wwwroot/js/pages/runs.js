@@ -1085,6 +1085,11 @@ function stopElapsedTicker(elementId = 'schedule-elapsed') {
 function applyScheduleStatus(status) {
     fetchScheduleRunning = status.isRunning;
 
+    // 立即執行 modal 的提示：手動回填執行中時，這趟的 PRTG 日路徑會先等它（docs/PRTG-SPEC.md §5a）。
+    // 看排程狀態的布林而不看回填狀態端點：後者對權限只及部分主機的維護者回 403，提示會永遠不出現（體檢輪）。
+    const backfillHint = document.getElementById('run-now-prtg-backfill-hint');
+    if (backfillHint) backfillHint.hidden = !status.prtgBackfillWaiting;
+
     const pausedBadge = document.getElementById('schedule-paused-badge');
     if (pausedBadge) {
         if (status.pausedReason) {
@@ -1171,6 +1176,8 @@ const AI_IDLE_REASON_TEXT = {
 
 function applyAiScheduleStatus(status) {
     lastAiScheduleStatus = status;
+    // idleReason 是即時判定（docs/WEB-SPEC.md §9.10）：AI 設定狀態跟著它走，別的分頁改了設定這張卡不會一半新一半舊
+    aiAvailable = status.idleReason !== 'disabled';
     const runStateEl = document.getElementById('schedule-ai-run-state');
     if (runStateEl) {
         runStateEl.textContent = status.isRunning
@@ -1759,7 +1766,7 @@ document.getElementById('schedule-run-now')?.addEventListener('click', () => {
     document.getElementById('run-now-segment-field').classList.add('d-none');
     updateRerunModeUI();
     updateRunNowPreview();
-    refreshPrtgBackfillStatus();
+    refreshScheduleStatus();
     runNowModal.show();
 });
 
@@ -1987,11 +1994,6 @@ function renderPrtgBackfillStatus(status) {
     const barEl = document.getElementById('prtg-backfill-progress-bar');
     const textEl = document.getElementById('prtg-backfill-progress-text');
 
-    // 立即執行 modal 的提示：手動回填執行中時，這趟的 PRTG 日路徑會先等它（docs/PRTG-SPEC.md §5a）。
-    // 接續回填（tail）是取數執行自己的一部分，不提示。
-    const backfillHint = document.getElementById('run-now-prtg-backfill-hint');
-    if (backfillHint) backfillHint.hidden = !(status.isRunning && status.runKind !== 'tail');
-
     if (!statusEl) return;
 
     // Capture only the authorized identity shown by this poll. A selected run requires its exact ID.
@@ -2116,3 +2118,7 @@ guardLoad([
     document.getElementById('run-errors'),
     document.getElementById('run-list')
 ], load);
+
+// PRTG 維護頁「最近一次排程驗收」的「檢視執行」（core/prtg-acceptance.js）：?run=<id> 直接開該趟執行詳情
+const linkedRunId = new URLSearchParams(location.search).get('run');
+if (/^\d+$/.test(linkedRunId ?? '')) showDetail(Number(linkedRunId));

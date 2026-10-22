@@ -74,7 +74,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
             backfillMaxWait: TimeSpan.FromSeconds(10), pollInterval: TimeSpan.FromMilliseconds(20));
         Assert.True(backfill.TryBeginIdentifiedRun("selected", out _, new long[] { 1 }));
 
-        var wait = gate.WaitUntilIdleAsync(CancellationToken.None);
+        var wait = gate.WaitUntilIdleAsync(PrtgManualWork.Backfill, CancellationToken.None);
         await Task.Delay(100);
         Assert.False(wait.IsCompleted);
         backfill.FinishRun(success: true, cancelled: false);
@@ -91,7 +91,25 @@ public class PrtgStructureSyncServiceTests : IDisposable
         Assert.True(backfill.TryBeginIdentifiedRun("full", out _));
 
         Assert.Equal(PrtgManualWaitOutcome.BackfillStillRunning,
-            await gate.WaitUntilIdleAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)));
+            await gate.WaitUntilIdleAsync(PrtgManualWork.Backfill, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    /// <summary>
+    /// 體檢輪：管線先讀到「同步進行中」，呼叫等待時同步剛好已結束。閘門不得重讀一次 IsRunning 而掉進回填分支——
+    /// 那會回「回填已結束」（訊息錯）且 skipStructureSync=false，剛成功的同步被白做一次。
+    /// 以呼叫端看到的種類為準：這個行程沒跑過成功的同步就回 SyncNotFresh，取數自己同步結構。
+    /// </summary>
+    [Fact]
+    public async Task 手動作業閘門_呼叫端看到的是同步而同步已結束_不誤判成回填()
+    {
+        var backfill = new PrtgBackfillRunState();
+        var gate = new PrtgManualWorkGate(Create(backfillState: backfill), backfill);
+        Assert.Equal(PrtgManualWork.None, gate.Running);
+
+        var outcome = await gate.WaitUntilIdleAsync(PrtgManualWork.StructureSync, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(PrtgManualWaitOutcome.SyncNotFresh, outcome);
     }
 
     private void EnablePrtg()

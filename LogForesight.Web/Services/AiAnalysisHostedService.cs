@@ -129,23 +129,11 @@ public class AiAnalysisHostedService : BackgroundService
             try
             {
                 if (_runState.IsRunning) return;
-                if (!_webAi.Available)
-                {
-                    _runState.SetIdleReason(AiIdleReasons.Disabled);
-                    return;
-                }
-                if (!_backfiller.Progress.Completed)
-                {
-                    _runState.SetIdleReason(AiIdleReasons.BackfillPending);
-                    return;
-                }
-                if (_recordQuery.CountPendingAi() == 0)
-                {
-                    _runState.SetIdleReason(AiIdleReasons.NoPending);
-                    return;
-                }
-
-                _runState.SetIdleReason(null);
+                // 前置條件與輪詢同一份判定（docs/WEB-SPEC.md §9.10「閒置原因」），只差不看窗口
+                var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), () => _recordQuery.CountPendingAi(),
+                    out _, requireWindow: false);
+                _runState.SetIdleReason(reason);
+                if (reason != null) return;
                 await TriggerRunAsync(forceRerun: false, trigger: "fetch-followup");
             }
             catch (Exception ex)
@@ -190,7 +178,8 @@ public class AiAnalysisHostedService : BackgroundService
     /// 回 null＝條件都成立、可以開跑；<paramref name="inWindow"/> 供輪詢決定觸發來源。
     /// 待補件數延後到真的需要時才查（AI 未設定時不必碰資料庫）。
     /// </summary>
-    private string? BlockingIdleReason(DateTime now, ScheduleOptions options, Func<int> pendingCount, out bool inWindow)
+    private string? BlockingIdleReason(DateTime now, ScheduleOptions options, Func<int> pendingCount, out bool inWindow,
+        bool requireWindow = true)
     {
         inWindow = false;
         // AI 沒有獨立的啟用開關：服務設定好就一律啟用（回饋第 40 輪批次E）。
@@ -201,8 +190,12 @@ public class AiAnalysisHostedService : BackgroundService
         // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
         if (!_backfiller.Progress.Completed) return AiIdleReasons.BackfillPending;
 
-        inWindow = ScheduleCalculator.IsWithinAnyWindow(now, options.AiWindows);
-        if (!inWindow && !_schedulerRunState.IsFollowingFetch(now)) return AiIdleReasons.OutsideWindow;
+        // 跟隨取數的即時觸發（OnFetchFollowUp）不看窗口：取數跑到哪、判讀跟到哪
+        if (requireWindow)
+        {
+            inWindow = ScheduleCalculator.IsWithinAnyWindow(now, options.AiWindows);
+            if (!inWindow && !_schedulerRunState.IsFollowingFetch(now)) return AiIdleReasons.OutsideWindow;
+        }
 
         // 有待補資料才自動開跑
         return pendingCount() == 0 ? AiIdleReasons.NoPending : null;

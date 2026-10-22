@@ -99,6 +99,29 @@ public sealed class PrtgAdminPageUiTests
         Assert.Contains("bindRememberedCollapse(document.getElementById('prtg-monitoring-body'),", js);
     }
 
+    /// <summary>體檢輪：§13 第 6 步叫人看快照表的「品質達標」欄，該欄要與驗收判定同一個數（databaseUsableValues）；
+    /// 三個驗收來源都只讀一次，段內要有「重新確認」重抓；全部重做勾選在重新預覽後要保留。</summary>
+    [Fact]
+    public void 快照表品質達標欄與驗收同一個數_驗收段可重新確認_全部重做勾選重畫不洗掉()
+    {
+        var js = Script();
+
+        var table = FunctionBody(js, "function renderSnapshotDiagnostics(hours)");
+        Assert.Contains("title: '品質達標列／目標', render: row => `${formatNumber(row.databaseUsableValues)} / ${formatNumber(row.targets)}`", table);
+        Assert.Contains("title: '快照寫入', render: row => formatNumber(row.availableValues)", table);
+
+        var acceptance = FunctionBody(js, "function renderAcceptance(allConfirmed)");
+        Assert.Contains("refresh.addEventListener('click', refreshAcceptance)", acceptance);
+        var refresh = FunctionBody(js, "function refreshAcceptance()");
+        foreach (var call in new[] { "refreshScheduleWarning();", "loadSnapshotDiagnostics();", "refreshAcceptanceAi();" })
+            Assert.Contains(call, refresh);
+
+        var preview = FunctionBody(js, "function renderFullBackfillPreview(preview)");
+        Assert.True(preview.IndexOf("const redoWas = fullBackfillRedoChecked();", StringComparison.Ordinal) <
+                    preview.IndexOf("root.replaceChildren();", StringComparison.Ordinal));
+        Assert.Contains("input.checked = redoWas;", preview);
+    }
+
     [Fact]
     public void 全量回填啟動帶完成水位選擇_逐日表標出略過的日子()
     {

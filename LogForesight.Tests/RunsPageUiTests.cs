@@ -910,10 +910,27 @@ console.log('PASS operational status refresh');
         Assert.True(modalStart >= 0 && hintAt > modalStart, "提示必須在立即執行 modal 內");
         Assert.Contains("最多等 30 分鐘", cshtml[hintAt..cshtml.IndexOf("</div>", hintAt, StringComparison.Ordinal)]);
 
-        Assert.Contains("backfillHint.hidden = !(status.isRunning && status.runKind !== 'tail')", js);
+        // 提示看排程狀態的布林（體檢輪）：回填狀態端點對權限只及部分主機的維護者回 403，用它當依據提示永遠不出現
+        Assert.Contains("backfillHint.hidden = !status.prtgBackfillWaiting", js);
+        Assert.DoesNotContain("status.runKind !== 'tail'", js);
         var openHandler = js[js.IndexOf("getElementById('schedule-run-now')", StringComparison.Ordinal)..];
-        Assert.True(openHandler.IndexOf("refreshPrtgBackfillStatus()", StringComparison.Ordinal) <
+        Assert.True(openHandler.IndexOf("refreshScheduleStatus()", StringComparison.Ordinal) <
                     openHandler.IndexOf("runNowModal.show()", StringComparison.Ordinal));
         Assert.Contains("'prtg-wait-sync': '等待 PRTG 手動作業（同步／回填）結束", phases);
+
+        var dto = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Models", "Dto", "ScheduleDtos.cs"));
+        Assert.Contains("public bool PrtgBackfillWaiting", dto);
+    }
+
+    /// <summary>PRTG 維護頁「檢視該趟執行」以 ?run=id 直接開執行詳情；AI 設定狀態跟著 ai-status 即時更新。</summary>
+    [Fact]
+    public void 執行詳情深連結與AI設定狀態即時同步()
+    {
+        var root = FindRepoRoot();
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Contains("new URLSearchParams(location.search).get('run')", js);
+        Assert.Contains("showDetail(Number(linkedRunId))", js);
+        Assert.Contains("aiAvailable = status.idleReason !== 'disabled';", js);
     }
 }

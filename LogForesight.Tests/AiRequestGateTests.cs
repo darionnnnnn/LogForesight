@@ -122,6 +122,44 @@ public sealed class AiRequestGateTests
         Assert.Equal(0, handler.Requests);
     }
 
+    /// <summary>
+    /// 體檢輪：閘道在實例佇列之後取，排隊上限只套在閘道上等於沒限——同一個互動實例的第二個問題
+    /// 會在佇列裡等到第一個答完。上限要涵蓋實例佇列：排不到就降級、不發請求。
+    /// </summary>
+    [Fact]
+    public async Task 互動車道在實例佇列排隊逾上限也降級不發請求()
+    {
+        var gate = new AiRequestGate(() => 1, interactiveMaxWait: TimeSpan.FromMilliseconds(200));
+        var handler = new SlowHandler(TimeSpan.FromMilliseconds(900));
+        var service = new AIService(Settings(), handler, gate: gate, lane: AiLane.Interactive);
+
+        var first = service.ChatAsync("first");
+        await Task.Delay(50);
+        var second = await service.ChatAsync("second");
+        var firstResponse = await first;
+
+        Assert.True(firstResponse.Success, firstResponse.Error);
+        Assert.False(second.Success);
+        Assert.Contains("排隊超過", second.Error);
+        Assert.Equal(1, handler.Requests);
+    }
+
+    [Fact]
+    public async Task 背景車道的實例佇列不設上限()
+    {
+        var gate = new AiRequestGate(() => 1, interactiveMaxWait: TimeSpan.FromMilliseconds(200));
+        var handler = new SlowHandler(TimeSpan.FromMilliseconds(400));
+        var service = new AIService(Settings(), handler, gate: gate, lane: AiLane.Background);
+
+        var first = service.ChatAsync("first");
+        await Task.Delay(50);
+        var second = await service.ChatAsync("second");
+
+        Assert.True((await first).Success);
+        Assert.True(second.Success, second.Error);
+        Assert.Equal(2, handler.Requests);
+    }
+
     [Fact]
     public void 正式程式碼每個AIService建構都帶全站閘道()
     {
@@ -168,6 +206,8 @@ public sealed class AiRequestGateTests
         public List<AiLane> Lanes { get; } = new();
         public int Released;
 
+        public TimeSpan InteractiveMaxWait => Timeout.InfiniteTimeSpan;
+
         public Task<IDisposable> EnterAsync(AiLane lane, CancellationToken ct)
         {
             Lanes.Add(lane);
@@ -187,11 +227,25 @@ public sealed class AiRequestGateTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref Requests);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("""{"choices":[{"message":{"role":"assistant","content":"ok"}}]}""",
-                    Encoding.UTF8, "application/json")
-            });
+            return Task.FromResult(Ok());
         }
     }
+
+    private sealed class SlowHandler(TimeSpan delay) : HttpMessageHandler
+    {
+        public int Requests;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Requests);
+            await Task.Delay(delay, cancellationToken);
+            return Ok();
+        }
+    }
+
+    private static HttpResponseMessage Ok() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("""{"choices":[{"message":{"role":"assistant","content":"ok"}}]}""",
+            Encoding.UTF8, "application/json")
+    };
 }

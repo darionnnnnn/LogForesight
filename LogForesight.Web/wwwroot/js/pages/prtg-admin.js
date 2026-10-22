@@ -56,7 +56,23 @@ function renderAcceptance(allConfirmed) {
         li.appendChild(link);
         list.appendChild(li);
     }
-    host.append(title, list);
+    const refresh = document.createElement('button');
+    refresh.type = 'button';
+    refresh.className = 'btn btn-outline-secondary btn-sm mt-1';
+    refresh.textContent = '重新確認';
+    refresh.addEventListener('click', refreshAcceptance);
+    host.append(title, list, refresh);
+}
+
+/** 三個來源都只在載入時讀一次；取數或 AI 跑完後按這顆重抓，不必重新整理整頁。 */
+function refreshAcceptance() {
+    setupState.scheduleStatus = undefined;
+    setupState.aiStatus = undefined;
+    setupState.snapshotHours = undefined;
+    renderSetupSummary();
+    refreshScheduleWarning();
+    loadSnapshotDiagnostics();
+    refreshAcceptanceAi();
 }
 
 async function refreshAcceptanceAi() {
@@ -477,6 +493,8 @@ function renderFullBackfillPreview(preview) {
     const root = document.getElementById('prtg-full-backfill-preview-result');
     const start = document.getElementById('prtg-full-backfill-start');
     if (!root || !start) return;
+    // 重新預覽會整段重畫：先記住「全部重做」有沒有勾，不然勾了再按預覽就得再勾一次
+    const redoWas = fullBackfillRedoChecked();
     root.replaceChildren();
     const summary = document.createElement('p');
     summary.className = 'small mb-2';
@@ -506,6 +524,7 @@ function renderFullBackfillPreview(preview) {
         input.type = 'checkbox';
         input.className = 'form-check-input';
         input.id = 'prtg-full-backfill-redo';
+        input.checked = redoWas;
         input.addEventListener('change', () => syncFullBackfillStart(preview));
         const label = document.createElement('label');
         label.className = 'form-check-label';
@@ -1185,7 +1204,9 @@ function renderSnapshotDiagnostics(hours) {
         columns: [
             { title: '完整小時', render: row => formatDateTime(row.hour) },
             { title: '狀態', render: row => snapshotStateLabels[row.state] ?? '資料未知' },
-            { title: '品質達標列／目標', render: row => `${formatNumber(row.availableValues)} / ${formatNumber(row.targets)}` },
+            // 與「最近一次排程驗收」同一個數（core/prtg-acceptance.js 看 databaseUsableValues）：照表自己數要與驗收段一致
+            { title: '品質達標列／目標', render: row => `${formatNumber(row.databaseUsableValues)} / ${formatNumber(row.targets)}` },
+            { title: '快照寫入', render: row => formatNumber(row.availableValues) },
             { title: '成功／嘗試', render: row => `${formatNumber(row.successes)} / ${formatNumber(row.attempts)}` },
             { title: '跳過／寫入失敗', render: row => `${formatNumber(row.skips)} / ${formatNumber(row.writeFailures)}` },
             { title: '原因', render: row => Object.entries(row.reasons ?? {}).map(([reason, count]) => `${reason} (${formatNumber(count)})`).join('、') || '—' },
