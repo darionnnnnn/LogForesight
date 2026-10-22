@@ -126,7 +126,7 @@ public class RunNowPrtgValuesTests
             var orchestrator = new AnalysisOrchestrator(new EmptyCandidateSource());
             return await orchestrator.RunAsync(
                 request, settings, dir, new RetentionOptions(), new LoggingConsole(log), CancellationToken.None,
-                new RecordingProgress(log), structureSyncGate: null, prtgBackfillTail: tail);
+                new RecordingProgress(log), manualWorkGate: null, prtgBackfillTail: tail);
         }
         finally
         {

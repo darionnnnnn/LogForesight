@@ -359,26 +359,78 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.True(progress.Phases.IndexOf(RunPhases.PrtgFindingsReady) < progress.Phases.IndexOf(RunPhases.PrtgDone));
     }
 
-    /// <summary>可控的同步閘門：回報執行中，被等待後轉為閒置並記錄呼叫次數。</summary>
-    private sealed class FakeStructureSyncGate : IPrtgStructureSyncGate
+    /// <summary>可控的手動作業閘門：回報指定作業執行中，被等待後轉為閒置並記錄呼叫次數。</summary>
+    private sealed class FakeManualWorkGate : IPrtgManualWorkGate
     {
-        private bool _running;
+        private PrtgManualWork _running;
+        private readonly PrtgManualWaitOutcome _outcome;
 
-        public FakeStructureSyncGate(bool running) => _running = running;
+        public FakeManualWorkGate(PrtgManualWork running, PrtgManualWaitOutcome outcome = PrtgManualWaitOutcome.MirrorFresh)
+        {
+            _running = running;
+            _outcome = outcome;
+        }
 
         public int WaitCalls { get; private set; }
 
-        public bool IsRunning => _running;
+        public PrtgManualWork Running => _running;
 
-        /// <summary>false＝模擬等到上限仍未結束（對方卡住）。</summary>
-        public bool ResultToReturn { get; set; } = true;
-
-        public Task<bool> WaitUntilIdleAsync(CancellationToken ct)
+        public Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(CancellationToken ct)
         {
             WaitCalls++;
-            _running = false;
-            return Task.FromResult(ResultToReturn);
+            _running = PrtgManualWork.None;
+            return Task.FromResult(_outcome);
         }
+    }
+
+    private void EnableUnreachablePrtg() =>
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgEnabled = true;
+            s.PrtgUrl = "https://prtg.invalid.example";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 5;
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Aggressive;
+        });
+
+    /// <summary>
+    /// 回填進行中時 PRTG 日路徑先等它（docs/PRTG-SPEC.md §5a），回填結束後**不跳過**結構同步——
+    /// 回填不更新結構鏡像，沿用的話這一晚的鏡像就是舊的。
+    /// </summary>
+    [Fact]
+    public async Task 回填進行中先等待並說明_結束後照常自行同步結構()
+    {
+        EnableUnreachablePrtg();
+        var (ctx, console, progress, _) = CreateContext();
+        var gate = new FakeManualWorkGate(PrtgManualWork.Backfill, PrtgManualWaitOutcome.BackfillEnded);
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: gate);
+
+        Assert.Equal(1, gate.WaitCalls);
+        Assert.Contains(RunPhases.PrtgWaitSync, progress.Phases);
+        Assert.Contains(console.Lines, l => l.Contains("PRTG 歷史回填進行中") && l.Contains("最多等 30 分鐘"));
+        Assert.Contains(console.Lines, l => l.Contains("歷史回填已結束"));
+        Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
+    }
+
+    /// <summary>回填等到上限仍在跑：本趟照常同步並明講會與回填同時查詢，不假裝等到了。</summary>
+    [Fact]
+    public async Task 回填等到上限仍在執行_本趟照常同步並警告()
+    {
+        EnableUnreachablePrtg();
+        var (ctx, console, _, _) = CreateContext();
+        var gate = new FakeManualWorkGate(PrtgManualWork.Backfill, PrtgManualWaitOutcome.BackfillStillRunning);
+
+        await PrtgDailyPipeline.RunAsync(
+            ctx, _backend, new HostStore(_backend.Blob("hosts")),
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: gate);
+
+        Assert.Contains(console.Lines, l => l.Contains("仍在執行，PRTG 查詢將與它同時進行"));
+        Assert.DoesNotContain(console.Lines, l => l.Contains("沿用剛更新的鏡像結構"));
+        Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
     }
 
     /// <summary>
@@ -399,11 +451,11 @@ public class PrtgDailyPipelineTests : IDisposable
         });
 
         var (ctx, console, _, _) = CreateContext();
-        var gate = new FakeStructureSyncGate(running: true) { ResultToReturn = false };
+        var gate = new FakeManualWorkGate(PrtgManualWork.StructureSync, PrtgManualWaitOutcome.SyncNotFresh);
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: gate);
 
         Assert.Equal(1, gate.WaitCalls);
         Assert.Contains(console.Lines, l => l.Contains("手動同步未成功結束"));
@@ -430,11 +482,11 @@ public class PrtgDailyPipelineTests : IDisposable
         });
 
         var (ctx, console, progress, _) = CreateContext();
-        var gate = new FakeStructureSyncGate(running: true);
+        var gate = new FakeManualWorkGate(PrtgManualWork.StructureSync);
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: gate);
 
         Assert.Equal(1, gate.WaitCalls);
         Assert.Contains(RunPhases.PrtgWaitSync, progress.Phases);
@@ -453,11 +505,11 @@ public class PrtgDailyPipelineTests : IDisposable
     public async Task 手動同步未執行時不等待也不送等待訊號()
     {
         var (ctx, console, progress, _) = CreateContext();
-        var gate = new FakeStructureSyncGate(running: false);
+        var gate = new FakeManualWorkGate(PrtgManualWork.None);
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: gate);
 
         Assert.Equal(0, gate.WaitCalls);
         Assert.DoesNotContain(RunPhases.PrtgWaitSync, progress.Phases);
@@ -485,7 +537,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: null);
 
         Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
     }
@@ -513,7 +565,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, hostStore,
-            new[] { newest }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: null);
+            new[] { newest }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: null);
 
         Assert.Contains(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
         var row = Assert.Single(_backend.PrtgStore().GetHostMapForDate(newest), r => r.DeviceObjid == 77);
@@ -536,11 +588,11 @@ public class PrtgDailyPipelineTests : IDisposable
         });
 
         var (ctx, console, _, _) = CreateContext();
-        var gate = new FakeStructureSyncGate(running: true);
+        var gate = new FakeManualWorkGate(PrtgManualWork.StructureSync);
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: gate);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: gate);
 
         Assert.Contains(console.Lines, l => l.Contains("對應完成"));
         Assert.DoesNotContain(console.Lines, l => l.Contains("主機對應依既有鏡像重算"));
@@ -765,7 +817,7 @@ public class PrtgDailyPipelineTests : IDisposable
 
         await PrtgDailyPipeline.RunAsync(
             ctx, _backend, new HostStore(_backend.Blob("hosts")),
-            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, structureSyncGate: null);
+            new[] { DateTime.Today.AddDays(-1) }, Task.CompletedTask, hostIds: null, guard: null, manualWorkGate: null);
 
         var after = store.GetOrNull();
         Assert.NotNull(after);

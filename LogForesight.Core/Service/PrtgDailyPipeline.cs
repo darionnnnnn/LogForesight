@@ -22,10 +22,10 @@ internal static class PrtgDailyPipeline
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    /// <param name="structureSyncGate">
-    /// 手動觸發的「同步結構與對應」的閘門（docs/PRTG-SPEC.md §5a）。Core 不認識 Web 的服務，
+    /// <param name="manualWorkGate">
+    /// 手動 PRTG 作業（同步結構與對應、歷史回填）的閘門（docs/PRTG-SPEC.md §5a）。Core 不認識 Web 的服務，
     /// 由呼叫端注入；未接上時傳 null＝行為與沒有這個機制時完全相同。
-    /// 同步正在跑時這一趟先等它結束，然後跳過自己的結構同步——鏡像剛更新過，重做一次沒有意義。
+    /// 同步成功結束時跳過本趟結構同步——鏡像剛更新過，重做一次沒有意義；回填則最多等一段時間。
     /// </param>
     /// <param name="hostIds">
     /// 監看裝置只算這些主機（指定主機更新）；null＝全站。必填——漏傳時靜默退回全站，就是對整台 PRTG 做全範圍擷取。
@@ -35,7 +35,7 @@ internal static class PrtgDailyPipeline
         AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, IReadOnlyList<DateTime> days, Task analysisTask,
         IReadOnlyCollection<long>? hostIds,
         PrtgResourceGuard? guard = null,
-        IPrtgStructureSyncGate? structureSyncGate = null,
+        IPrtgManualWorkGate? manualWorkGate = null,
         PrtgRequestBudget? requestBudget = null)
     {
         if (days == null || days.Count == 0)
@@ -141,26 +141,40 @@ internal static class PrtgDailyPipeline
             conservativeStrategy = !strategyProfile.NightlyExactValues;
             prtgConsole.WriteLine($"PRTG 取數策略：{strategyLabel}（快照間隔 {strategyProfile.SnapshotIntervalMinutes} 分鐘）。");
 
-            // 0. 手動同步佔用中就先等它（docs/PRTG-SPEC.md §5a）。等完之後鏡像是最新的，
-            //    本趟跳過自己的結構同步——重做一次要再爬一次整棵樹，沒有任何新資訊。
+            // 0. 手動 PRTG 作業佔用中就先等它（docs/PRTG-SPEC.md §5a）：同步成功結束時鏡像是最新的，
+            //    本趟跳過自己的結構同步；回填與本趟同時打同一台 PRTG 會互相拖慢，最多等一段時間。
             var skipStructureSync = false;
-            if (structureSyncGate != null && structureSyncGate.IsRunning)
+            var running = manualWorkGate?.Running ?? PrtgManualWork.None;
+            if (running != PrtgManualWork.None)
             {
-                prtgConsole.WriteLine("手動觸發的「同步結構與對應」進行中，等它完成後再繼續（本趟不重複同步結構）。");
-                runRecorder.Milestone("PRTG：等待手動同步結構與對應完成");
+                prtgConsole.WriteLine(running == PrtgManualWork.StructureSync
+                    ? "手動觸發的「同步結構與對應」進行中，等它完成後再繼續（本趟不重複同步結構）。"
+                    : $"PRTG 歷史回填進行中（自 {DateTime.Now:HH:mm} 起等待），最多等 {IPrtgManualWorkGate.BackfillMaxWait.TotalMinutes:0} 分鐘；可在排程作業頁 PRTG 卡停止回填。");
+                runRecorder.Milestone(running == PrtgManualWork.StructureSync
+                    ? "PRTG：等待手動同步結構與對應完成"
+                    : "PRTG：等待歷史回填結束");
                 progress?.Report(RunPhases.PrtgWaitSync, 0, 0);
-                skipStructureSync = await structureSyncGate.WaitUntilIdleAsync(ct);
-                if (skipStructureSync)
+                var outcome = await manualWorkGate!.WaitUntilIdleAsync(ct);
+                skipStructureSync = outcome == PrtgManualWaitOutcome.MirrorFresh;
+                switch (outcome)
                 {
-                    prtgConsole.WriteLine("手動同步已完成，沿用剛更新的鏡像結構。");
-                }
-                else
-                {
-                    // 兩種情況共用這條路：等到上限對方還沒結束（PRTG 端卡住），
-                    // 或它結束了但沒成功（被中止、有階段失敗）。兩者的鏡像都不能當成新的，
-                    // 本趟照常自己同步。寫成「已完成、沿用」會讓這一晚鏡像其實不完整卻處處顯示正常。
-                    prtgConsole.WriteLine("  ⚠ 手動同步未成功結束（卡住、被中止或有階段失敗）；本趟改為自行同步結構。");
-                    runRecorder.Milestone("PRTG：手動同步未成功結束，改為自行同步結構");
+                    case PrtgManualWaitOutcome.MirrorFresh:
+                        prtgConsole.WriteLine("手動同步已完成，沿用剛更新的鏡像結構。");
+                        break;
+                    case PrtgManualWaitOutcome.SyncNotFresh:
+                        // 兩種情況共用這條路：等到上限對方還沒結束（PRTG 端卡住），
+                        // 或它結束了但沒成功（被中止、有階段失敗）。兩者的鏡像都不能當成新的，
+                        // 本趟照常自己同步。寫成「已完成、沿用」會讓這一晚鏡像其實不完整卻處處顯示正常。
+                        prtgConsole.WriteLine("  ⚠ 手動同步未成功結束（卡住、被中止或有階段失敗）；本趟改為自行同步結構。");
+                        runRecorder.Milestone("PRTG：手動同步未成功結束，改為自行同步結構");
+                        break;
+                    case PrtgManualWaitOutcome.BackfillEnded:
+                        prtgConsole.WriteLine("歷史回填已結束，繼續本趟 PRTG 取數。");
+                        break;
+                    case PrtgManualWaitOutcome.BackfillStillRunning:
+                        prtgConsole.WriteLine($"  ⚠ 歷史回填等了 {IPrtgManualWorkGate.BackfillMaxWait.TotalMinutes:0} 分鐘仍在執行，PRTG 查詢將與它同時進行。");
+                        runRecorder.Milestone("PRTG：回填仍在執行，PRTG 查詢將與它同時進行");
+                        break;
                 }
             }
 

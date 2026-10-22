@@ -34,7 +34,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly SchedulerRunState _runState;
     private readonly DataVersionStamp _dataVersion;
     private readonly AnalysisOrchestrator _orchestrator;
-    private readonly PrtgStructureSyncService _structureSync;
+    private readonly IPrtgManualWorkGate _prtgManualWork;
     private readonly PrtgBackfillService _prtgBackfill;
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
@@ -49,7 +49,7 @@ public class SchedulerHostedService : BackgroundService
         BatchRunStore batchRunStore,
         SchedulerRunState runState,
         AnalysisOrchestrator orchestrator,
-        PrtgStructureSyncService structureSync,
+        IPrtgManualWorkGate prtgManualWork,
         PrtgBackfillService prtgBackfill,
         NamedMutexGate mutexGate,
         MailNotificationService mail,
@@ -63,7 +63,7 @@ public class SchedulerHostedService : BackgroundService
         _runState = runState;
         _dataVersion = dataVersion;
         _orchestrator = orchestrator;
-        _structureSync = structureSync;
+        _prtgManualWork = prtgManualWork;
         _prtgBackfill = prtgBackfill;
         _mutexGate = mutexGate;
         _mail = mail;
@@ -391,7 +391,7 @@ public class SchedulerHostedService : BackgroundService
                     var progress = new WebRunProgress(_runState);
                     var result = await _orchestrator.RunAsync(
                         effectiveRequest, settings, dataRoot, retention, console, runCts.Token, progress,
-                        structureSyncGate: _structureSync, prtgBackfillTail: _prtgBackfill);
+                        manualWorkGate: _prtgManualWork, prtgBackfillTail: _prtgBackfill);
 
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);

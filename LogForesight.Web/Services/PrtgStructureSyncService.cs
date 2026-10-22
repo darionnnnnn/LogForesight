@@ -79,7 +79,7 @@ public class PrtgStructureSyncConsole : IRunConsole
 /// 為什麼是背景工作而不是同步端點：實機的結構同步要分頁讀完整棵裝置與感測器樹，
 /// 可能跑上數十分鐘，塞在 HTTP 請求裡必然逾時。
 /// </summary>
-public class PrtgStructureSyncService : IPrtgStructureSyncGate
+public class PrtgStructureSyncService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 

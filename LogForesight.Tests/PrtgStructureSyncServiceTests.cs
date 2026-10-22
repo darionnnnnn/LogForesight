@@ -49,6 +49,51 @@ public class PrtgStructureSyncServiceTests : IDisposable
             new HostStore(_backend.Blob("hosts")), StatusStore(), backfillState ?? new PrtgBackfillRunState(),
             new FakeSentinelStore(), new DataVersionStamp());
 
+    // ── 手動作業閘門（同步＋回填合成，docs/PRTG-SPEC.md §5a）──────────────────
+
+    [Fact]
+    public void 手動作業閘門_閒置與接續回填都不算執行中_全量回填算()
+    {
+        var backfill = new PrtgBackfillRunState();
+        var gate = new PrtgManualWorkGate(Create(backfillState: backfill), backfill);
+        Assert.Equal(PrtgManualWork.None, gate.Running);
+
+        Assert.True(backfill.TryBeginIdentifiedRun("tail", out _));
+        Assert.Equal(PrtgManualWork.None, gate.Running);
+        backfill.FinishRun(success: true, cancelled: false);
+
+        Assert.True(backfill.TryBeginIdentifiedRun("full", out _));
+        Assert.Equal(PrtgManualWork.Backfill, gate.Running);
+    }
+
+    [Fact]
+    public async Task 手動作業閘門_回填在等待中結束回BackfillEnded()
+    {
+        var backfill = new PrtgBackfillRunState();
+        var gate = new PrtgManualWorkGate(Create(backfillState: backfill), backfill,
+            backfillMaxWait: TimeSpan.FromSeconds(10), pollInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True(backfill.TryBeginIdentifiedRun("selected", out _, new long[] { 1 }));
+
+        var wait = gate.WaitUntilIdleAsync(CancellationToken.None);
+        await Task.Delay(100);
+        Assert.False(wait.IsCompleted);
+        backfill.FinishRun(success: true, cancelled: false);
+
+        Assert.Equal(PrtgManualWaitOutcome.BackfillEnded, await wait.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task 手動作業閘門_回填等到上限仍在跑回BackfillStillRunning()
+    {
+        var backfill = new PrtgBackfillRunState();
+        var gate = new PrtgManualWorkGate(Create(backfillState: backfill), backfill,
+            backfillMaxWait: TimeSpan.FromMilliseconds(150), pollInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True(backfill.TryBeginIdentifiedRun("full", out _));
+
+        Assert.Equal(PrtgManualWaitOutcome.BackfillStillRunning,
+            await gate.WaitUntilIdleAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
     private void EnablePrtg()
     {
         _settingsStore.Update(s =>

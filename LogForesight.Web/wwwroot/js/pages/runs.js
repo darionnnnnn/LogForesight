@@ -1757,6 +1757,7 @@ document.getElementById('schedule-run-now')?.addEventListener('click', () => {
     document.getElementById('run-now-segment-field').classList.add('d-none');
     updateRerunModeUI();
     updateRunNowPreview();
+    refreshPrtgBackfillStatus();
     runNowModal.show();
 });
 
@@ -1983,6 +1984,11 @@ function renderPrtgBackfillStatus(status) {
     const wrapEl = document.getElementById('prtg-backfill-progress-wrap');
     const barEl = document.getElementById('prtg-backfill-progress-bar');
     const textEl = document.getElementById('prtg-backfill-progress-text');
+
+    // 立即執行 modal 的提示：手動回填執行中時，這趟的 PRTG 日路徑會先等它（docs/PRTG-SPEC.md §5a）。
+    // 接續回填（tail）是取數執行自己的一部分，不提示。
+    const backfillHint = document.getElementById('run-now-prtg-backfill-hint');
+    if (backfillHint) backfillHint.hidden = !(status.isRunning && status.runKind !== 'tail');
 
     if (!statusEl) return;
 

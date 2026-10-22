@@ -865,4 +865,28 @@ console.log('PASS operational status refresh');
         Assert.Contains("--lf-chart-tooltip-bg", charts);
         Assert.Contains("--lf-chart-grid", charts);
     }
+
+    /// <summary>
+    /// 立即執行 modal：手動回填執行中時說明這趟 PRTG 會先等它（docs/PRTG-SPEC.md §5a）。
+    /// 不另開確認框；提示跟著回填狀態輪詢切換，接續回填（tail）不提示，開 modal 時重查一次。
+    /// </summary>
+    [Fact]
+    public void 立即執行Modal在手動回填執行中顯示等待提示()
+    {
+        var root = FindRepoRoot();
+        var cshtml = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        var phases = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "core", "run-phases.js"));
+
+        var modalStart = cshtml.IndexOf("id=\"run-now-modal\"", StringComparison.Ordinal);
+        var hintAt = cshtml.IndexOf("id=\"run-now-prtg-backfill-hint\"", StringComparison.Ordinal);
+        Assert.True(modalStart >= 0 && hintAt > modalStart, "提示必須在立即執行 modal 內");
+        Assert.Contains("最多等 30 分鐘", cshtml[hintAt..cshtml.IndexOf("</div>", hintAt, StringComparison.Ordinal)]);
+
+        Assert.Contains("backfillHint.hidden = !(status.isRunning && status.runKind !== 'tail')", js);
+        var openHandler = js[js.IndexOf("getElementById('schedule-run-now')", StringComparison.Ordinal)..];
+        Assert.True(openHandler.IndexOf("refreshPrtgBackfillStatus()", StringComparison.Ordinal) <
+                    openHandler.IndexOf("runNowModal.show()", StringComparison.Ordinal));
+        Assert.Contains("'prtg-wait-sync': '等待 PRTG 手動作業（同步／回填）結束", phases);
+    }
 }

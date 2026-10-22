@@ -545,6 +545,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new PrtgStructureSyncStatusStore(
             sp.GetRequiredService<StorageBackend>().Blob(PrtgStructureSyncStatusStore.BlobKey)));
         services.AddSingleton<PrtgStructureSyncService>();
+        services.AddSingleton<IPrtgManualWorkGate, PrtgManualWorkGate>();
 
         // PRTG 數值快照背景服務（docs/PRTG-SPEC.md §3b）：定時對 PRTG 取即時快照並聚合寫入 lf_prtg_values
         services.AddSingleton(sp => new PrtgSnapshotHostedService(
