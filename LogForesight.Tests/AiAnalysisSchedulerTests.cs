@@ -76,7 +76,7 @@ public class AiAnalysisSchedulerTests : IDisposable
 
     private (AiAnalysisHostedService Service, AiAnalysisRunState RunState, ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState)
         CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true,
-            HostDayWorkflowService? workflow = null)
+            HostDayWorkflowService? workflow = null, bool backfillCompleted = true)
     {
         var optionsStore = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
         if (initialOptions != null)
@@ -103,7 +103,7 @@ public class AiAnalysisSchedulerTests : IDisposable
             _settingsStore,
             new DataVersionStamp(),
             BatchRuns(),
-            CompletedBackfiller(),
+            backfillCompleted ? CompletedBackfiller() : new DailyRecordBackfiller(_contextFactory),
             new FakeWebAiService(aiAvailable),
             _suppressions,
             _ai,
@@ -681,7 +681,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         var statusResp = controller.GetAiStatus();
         Assert.True(statusResp.Success);
         Assert.NotNull(statusResp.Data);
-        Assert.Equal("netiq-ai", statusResp.Data.ProgressPhase);
+        Assert.Null(statusResp.Data.ProgressPhase);   // 閒置沒有進度可畫
         Assert.Equal("件", statusResp.Data.UnitText);
         Assert.Equal(2, statusResp.Data.PendingTotal);
         Assert.False(statusResp.Data.IsRunning);
@@ -905,6 +905,62 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         Assert.False(runState.IsRunning);
         Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
+    }
+
+    private static ScheduleOptions AllDay() => new()
+    {
+        AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+    };
+
+    /// <summary>
+    /// 第 57 輪批次C-2：閒置原因在狀態 API 讀取時即時判定，與輪詢共用同一份條件
+    /// （AI 未設定 → 資料校正中 → 不在窗口 → 沒有待補），其他都成立時再看是否在等取數。
+    /// </summary>
+    [Fact]
+    public void CurrentIdleReason_依序判定且執行中為null()
+    {
+        var pendingOne = () => 1;
+        Assert.Equal(AiIdleReasons.Disabled, CreateTestHarness(AllDay(), aiAvailable: false).Service.CurrentIdleReason(pendingOne));
+        Assert.Equal(AiIdleReasons.BackfillPending, CreateTestHarness(AllDay(), backfillCompleted: false).Service.CurrentIdleReason(pendingOne));
+
+        var now = DateTime.Now;
+        var outside = new ScheduleOptions
+        {
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+        Assert.Equal(AiIdleReasons.OutsideWindow, CreateTestHarness(outside).Service.CurrentIdleReason(pendingOne));
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(AllDay());
+        Assert.Equal(AiIdleReasons.NoPending, service.CurrentIdleReason(() => 0));
+        Assert.Null(service.CurrentIdleReason(pendingOne));
+
+        // 取數執行中、PRTG finding 未到齊：不擋開跑，但畫面要說得出最近的待補在等什麼
+        schedulerState.TryBeginRun("schedule", out _);
+        Assert.Equal(AiIdleReasons.WaitingFetch, service.CurrentIdleReason(pendingOne));
+
+        Assert.True(runState.TryBeginRun("manual:admin", 1, out _));
+        Assert.Null(service.CurrentIdleReason(pendingOne));
+    }
+
+    /// <summary>上一輪輪詢記下的原因（例如資料校正中）不得在條件改變後繼續顯示。</summary>
+    [Fact]
+    public void GetAiStatus_閒置原因即時判定_不用輪詢殘值()
+    {
+        var (service, runState, optionsStore, _) = CreateTestHarness(AllDay());
+        runState.SetIdleReason(AiIdleReasons.BackfillPending);
+        var controller = new ScheduleController(
+            optionsStore, scheduler: null!, new SchedulerRunState(), hosts: new FakeHostStore(),
+            sentinels: new FakeSentinelStore(), audit: new RecordingAuditService(), currentUser: new FakeCurrentUser(),
+            users: new FakeUserStore(), records: _backend.RecordStore(), settingsStore: _settingsStore,
+            userDisplayNames: new UserDisplayNameService(_settingsStore), aiScheduler: service, aiRunState: runState);
+
+        var status = controller.GetAiStatus().Data!;
+
+        Assert.Equal(AiIdleReasons.NoPending, status.IdleReason);
+        Assert.Equal(0, status.PendingTotal);
     }
 
     /// <summary>執行中不得殘留閒置原因——畫面會同時顯示「執行中」與一句「為什麼沒在跑」。</summary>

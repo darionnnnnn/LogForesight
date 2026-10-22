@@ -497,6 +497,7 @@ public class ScheduleController : ControllerBase
         var options = _optionsStore.Get();
         var snapshot = _aiRunState.Snapshot();
         var lastOutcome = snapshot.LastOutcome;
+        var pendingTotal = _aiRunState.GetPendingAiCount(() => _records.CountPendingAi());
 
         return ApiResponse<AiScheduleStatusDto>.Ok(new AiScheduleStatusDto
         {
@@ -505,13 +506,15 @@ public class ScheduleController : ControllerBase
             StartedAt = snapshot.StartedAt,
             CompletedAt = snapshot.CompletedAt,
             LatestMessage = snapshot.LatestMessage,
-            ProgressPhase = "netiq-ai",
+            ProgressPhase = snapshot.IsRunning ? "netiq-ai" : null,
             ProgressDone = snapshot.ProgressDone,
             ProgressTotal = snapshot.ProgressTotal,
-            PendingTotal = _aiRunState.GetPendingAiCount(() => _records.CountPendingAi()),
+            PendingTotal = pendingTotal,
             UnitText = "件",
             CanStop = snapshot.IsRunning,
-            IdleReason = snapshot.IsRunning ? null : snapshot.IdleReason,
+            // 讀取當下即時判定；單元測試以 aiScheduler: null! 建控制器時退回上一輪輪詢記下的值（同 GetStatus 的 _scheduler 慣例）
+            IdleReason = snapshot.IsRunning ? null
+                : _aiScheduler is not null ? _aiScheduler.CurrentIdleReason(() => pendingTotal) : snapshot.IdleReason,
             AiConcurrency = options.AiConcurrency,
             // 「下一個背景補跑窗口」——AI 本身一律啟用，這個時間只說明積壓什麼時候會被消化。
             // 已經在窗口內時為 null（不必說「下一次」，它現在就會跑）。

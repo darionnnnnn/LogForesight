@@ -1164,7 +1164,7 @@ function applyScheduleStatus(status) {
 // 對照表查無此值時不顯示提示，絕不把裸值印給使用者。
 const AI_IDLE_REASON_TEXT = {
     'disabled': 'AI 服務未設定，待補不會被處理；請到「設定 > AI 服務」完成設定。',
-    'backfill-pending': '存量校正回填尚未完成，AI 分析要等它跑完才會開始。',
+    'backfill-pending': '站台啟動後正在校正既有分析資料，完成前 AI 分析不會開始；稍後重新整理即可。',
     'outside-window': '目前不在 AI 執行窗口內，待補會等到下一個窗口才處理。',
     'waiting-fetch': '取數執行中，最近兩天的待補要等當日 PRTG 訊號算完才會判讀。'
 };
@@ -1192,9 +1192,10 @@ function applyAiScheduleStatus(status) {
             pendingEl.classList.remove('text-muted');
         } else {
             // pendingTotal 只數待處理項目；目前批次可能已領走最後一件但尚未完成。
-            // 執行中時不可把零待補誤報成整輪工作已完成。
-            pendingEl.textContent = status.isRunning
-                ? '0 件（本次分析尚未結束）'
+            // 執行中時不可把零待補誤報成整輪工作已完成；AI 未設定或資料校正中時，0 件也不代表做完了。
+            pendingEl.textContent = status.isRunning ? '0 件（本次分析尚未結束）'
+                : status.idleReason === 'disabled' ? '0 件（AI 服務未設定）'
+                : status.idleReason === 'backfill-pending' ? '0 件（資料校正中，稍後再看）'
                 : '0 件（已全部完成）';
             pendingEl.classList.remove('lf-text-accent');
             pendingEl.classList.add('text-muted');
@@ -1206,8 +1207,9 @@ function applyAiScheduleStatus(status) {
         // 閒置時說明「為什麼沒在跑」：只顯示「閒置 + N 件待補」的話，
         // 使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
         let hint = '';
-        // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事
-        if (!status.isRunning && status.pendingTotal > 0) {
+        // 不以 aiAvailable 為前提：AI 未設定正是 `disabled` 這條原因要說的事。
+        // 這兩種原因即使待補 0 件也要說：0 件此時不代表做完了
+        if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {
             hint = AI_IDLE_REASON_TEXT[status.idleReason] ?? '';
         }
 

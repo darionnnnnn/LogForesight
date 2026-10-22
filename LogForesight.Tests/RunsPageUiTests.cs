@@ -867,6 +867,19 @@ console.log('PASS operational status refresh');
     }
 
     /// <summary>
+    /// AI 卡：待補 0 件時，AI 未設定或資料校正中不得寫成「已全部完成」，且這兩種原因要顯示說明（第 57 輪批次C-2）。
+    /// </summary>
+    [Fact]
+    public void AI卡待補0件時依閒置原因說明_不把未設定或校正中寫成已完成()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains(": status.idleReason === 'disabled' ? '0 件（AI 服務未設定）'", js);
+        Assert.Contains(": status.idleReason === 'backfill-pending' ? '0 件（資料校正中，稍後再看）'", js);
+        Assert.Contains("if (!status.isRunning && (status.pendingTotal > 0 || ['disabled', 'backfill-pending'].includes(status.idleReason))) {", js);
+        Assert.DoesNotContain("存量校正回填尚未完成", js);
+    }
+
+    /// <summary>
     /// 立即執行 modal：手動回填執行中時說明這趟 PRTG 會先等它（docs/PRTG-SPEC.md §5a）。
     /// 不另開確認框；提示跟著回填狀態輪詢切換，接續回填（tail）不提示，開 modal 時重查一次。
     /// </summary>

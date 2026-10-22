@@ -278,6 +278,7 @@ PRTG-SPEC §3 與 WEB-SPEC §9.10 加「AI 完整性保證」一段（閘門、�
 | B-2a 回填完成水位（後端） | Claude（Opus 5.5） | 新增 `PrtgBackfillWatermarkStore`（blob `prtg_backfill_watermark`）；runner 加 `skipDays`／`dayCompleted`，只有每顆目標 sensor 都取到的日子才記完成；預覽多 `CompletedDays`／`RemainingHistoricRequests`／逐日 `AlreadyCompleted`；啟動帶 `Resume`（預設 true），全部完成時拒絕空跑 | 回填相關 51 綠；突變兩條（拿掉過期判定、部分失敗也記完成）各紅 1 條 | **設計修正**：水位鍵改為「設定版本＋範圍版本＋**逐日**目標指紋」，不用規劃寫的整份計畫指紋與錨點日——整份指紋跨午夜就全失效，逐日指紋讓「目標變了的那天」單獨重跑。**拆段**：B-2 拆成 a（後端）與 b（畫面勾選與預覽顯示）。狀態變更區間仍整段取一次（冪等），未縮到剩餘日 |
 | B-2b 回填完成水位（畫面） | Claude（Opus 5.5） | 預覽有已完成日子時顯示說明與「全部重做」勾選、逐日表加「本次」欄；全部完成且未勾選時停用啟動鈕並說明（後端必拒就不讓人送）；確認框寫出略過或重做；送出帶 `resume` | PRTG 維護頁 UI／判定行為（node，含新腳本 `prtg-full-backfill.behavior.mjs`）／前端一致性／JS 匯入與行為 71 綠；突變（啟動鈕不看勾選）紅 1 條 | 瀏覽器實測：dev 站台沒有 PRTG 鏡像，預覽會回「沒有感測器」，水位區塊只能靠行為測試 |
 | C-1 PRTG 維護頁重排 | Claude（Opus 5.5） | 監看範圍整卡移到擷取參數頁籤（參數表單**之後**——它是獨立表單，不可巢狀）、Bootstrap collapse 預設收合；通知處理狀態移到使用效果頁籤末尾；`ui.js` 新增 `bindRememberedCollapse`（`lf.collapse.` 前綴、localStorage 讀寫皆 try/catch、載入時直接帶 show 類別不播動畫）；監看範圍的儲存鈕改外框樣式 | UI／JS 匯入與行為／前端一致性／無障礙等 208 綠；突變（拿掉記憶還原）紅 1 條 | **補正**：同一頁籤出現兩顆實心主要按鈕違反 DESIGN-SYSTEM §6b，監看範圍儲存改 `btn-outline-primary` 並加守門。瀏覽器實測在 C-3 後一次做 |
+| C-2 AI 卡閒置原因與待補文案 | Claude（Fable 5.1） | `AiAnalysisHostedService.BlockingIdleReason` 成為輪詢與 `CurrentIdleReason`（狀態 API 讀取時即時判定）共用的唯一判定；`ai-status` 閒置時 `progressPhase` 回 null；待補 0 件在 `disabled`／`backfill-pending` 不寫「已全部完成」、提示照顯示；文案改白話 | AI 排程／狀態碼守門／執行告示／排程頁 UI／JS 137 綠；突變（改回讀輪詢殘值）紅 2 條 | 控制器在測試以 `aiScheduler: null!` 建構時退回殘值（與 `_scheduler` 既有慣例一致）；「等取數」不擋開跑，只在其他條件都成立時才報 |
 
 ## 體檢交接
 

@@ -305,8 +305,8 @@ public class AiScheduleStatusDto
     public DateTime? CompletedAt { get; set; }
     public string? LatestMessage { get; set; }
 
-    /// <summary>進度軌名稱：netiq-ai</summary>
-    public string ProgressPhase { get; set; } = "netiq-ai";
+    /// <summary>進度軌名稱：執行中為 netiq-ai，閒置為 null（沒有進度可畫）</summary>
+    public string? ProgressPhase { get; set; }
 
     /// <summary>本輪已處理數</summary>
     public int ProgressDone { get; set; }

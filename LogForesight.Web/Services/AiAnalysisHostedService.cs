@@ -173,41 +173,51 @@ public class AiAnalysisHostedService : BackgroundService
             return;
         }
 
-        // AI 沒有獨立的啟用開關：服務設定好就一律啟用（回饋第 40 輪批次E）。
-        if (!_webAi.Available)
+        var reason = BlockingIdleReason(DateTime.Now, options, () => _recordQuery.CountPendingAi(), out var inWindow);
+        if (reason != null)
         {
-            _runState.SetIdleReason(AiIdleReasons.Disabled);
-            return;
-        }
-
-        // 存量校正回填完成前不自動開跑（體檢輪）：ExtractVersion 推進後 ai_pending 的存量
-        // 尚未校正，這時掃到的「待補」大量是早已分析完的舊列——搶跑等於把整庫重跑一遍，
-        // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
-        if (!_backfiller.Progress.Completed)
-        {
-            _runState.SetIdleReason(AiIdleReasons.BackfillPending);
-            return;
-        }
-
-        var inWindow = ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows);
-        var following = _schedulerRunState.IsFollowingFetch(DateTime.Now);
-        if (!inWindow && !following)
-        {
-            _runState.SetIdleReason(AiIdleReasons.OutsideWindow);
-            return;
-        }
-
-        // 有待補資料才自動開跑
-        var pendingCount = _recordQuery.CountPendingAi();
-        if (pendingCount == 0)
-        {
-            _runState.SetIdleReason(AiIdleReasons.NoPending);
+            _runState.SetIdleReason(reason);
             return;
         }
 
         _runState.SetIdleReason(null);
 
         await TriggerRunAsync(forceRerun: false, trigger: inWindow ? "schedule" : "fetch-followup", externalCt: stoppingToken);
+    }
+
+    /// <summary>
+    /// 自動開跑前置條件的唯一判定（輪詢與狀態 API 共用，docs/WEB-SPEC.md §9.10「閒置原因」）。
+    /// 回 null＝條件都成立、可以開跑；<paramref name="inWindow"/> 供輪詢決定觸發來源。
+    /// 待補件數延後到真的需要時才查（AI 未設定時不必碰資料庫）。
+    /// </summary>
+    private string? BlockingIdleReason(DateTime now, ScheduleOptions options, Func<int> pendingCount, out bool inWindow)
+    {
+        inWindow = false;
+        // AI 沒有獨立的啟用開關：服務設定好就一律啟用（回饋第 40 輪批次E）。
+        if (!_webAi.Available) return AiIdleReasons.Disabled;
+
+        // 存量校正回填完成前不自動開跑（體檢輪）：ExtractVersion 推進後 ai_pending 的存量
+        // 尚未校正，這時掃到的「待補」大量是早已分析完的舊列——搶跑等於把整庫重跑一遍，
+        // 正是存量校正要避免的事。手動觸發不受此限（使用者自行判斷）。
+        if (!_backfiller.Progress.Completed) return AiIdleReasons.BackfillPending;
+
+        inWindow = ScheduleCalculator.IsWithinAnyWindow(now, options.AiWindows);
+        if (!inWindow && !_schedulerRunState.IsFollowingFetch(now)) return AiIdleReasons.OutsideWindow;
+
+        // 有待補資料才自動開跑
+        return pendingCount() == 0 ? AiIdleReasons.NoPending : null;
+    }
+
+    /// <summary>
+    /// 狀態 API 讀取當下的閒置原因（執行中回 null）。不用上一輪輪詢留下的值：輪詢 60 秒一次，
+    /// 中間條件變了（例如存量校正剛完成）畫面就會同時顯示互相矛盾的兩句話。
+    /// 「等取數」不擋開跑（較舊的待補照樣處理），所以只在其他條件都成立時才報。
+    /// </summary>
+    public string? CurrentIdleReason(Func<int> pendingCount)
+    {
+        if (_runState.IsRunning) return null;
+        var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), pendingCount, out _);
+        return reason ?? (_schedulerRunState.IsWaitingForFindings() ? AiIdleReasons.WaitingFetch : null);
     }
 
     /// <summary>
