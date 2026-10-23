@@ -55,7 +55,7 @@
 - `#opt-max-results`（`maxResultsPerJob`）：單一查詢最多筆數（1~10000000），超過時截斷防爆量。
 - `#opt-timeout`（`timeoutSeconds`）：逾時秒數（1~3600 秒）。
 - `#opt-retry-count`（`retryCount`）：失敗重試次數（0~20 次）。
-- `#opt-backfill-days`（`backfillDays`）：每次執行回望天數（1~30 天），每台主機執行時往回檢查缺漏天數（已完成者略過）。正式環境建議為 1。
+- `#opt-backfill-days`（`backfillDays`）：每次執行回望天數（1 至有效上限；有效上限＝歷史資料保留天數與 365 取小，`NetiqOptions.GetEffectiveBackfillDaysLimit`，畫面提示會顯示目前上限），每台主機執行時往回檢查缺漏天數（已完成者略過）。正式環境建議為 1。
 - `#opt-max-parallel-servers`（`maxParallelServers`）：同時處理幾台 Sentinel（1~3），硬性上限為 3（同進程架構限制）。
 - `#opt-max-parallel-queries`（`maxParallelQueriesPerServer`）：單台 Sentinel 內查詢平行度（1~4）。
 - `#opt-allow-invalid-certs`（`allowInvalidCertificates`）：略過憑證驗證（核取方塊）。
@@ -71,6 +71,7 @@
 ### 1. 掃描選擇器（`#netiq-scan-picker`）
 - `#scan-sentinel-select`：Sentinel 下拉選單，過濾僅列出啟用且帳密齊備者（`active && canDiscover`）。
 - `#scan-subnet-input`：網段輸入框（必填，支援前綴如 `192.168.0` 或 CIDR `192.168.0.0/24`）。
+- 掃描前可選「掃描粒度」（「每段 254 台（預設）」／「每段 62 台（最細）」；事件量大的網段選細粒度可避免安靜主機被吵雜主機擠掉，代價是掃描較久）與「併發」（「單一查詢（預設）」／「同時 2 個查詢」／「同時 3 個查詢」）。
 - 點擊「掃描匯入」呼叫 `POST /api/admin/netiq/scan`，取得 `NetiqScanResultDto` 並開啟精靈 Modal `#netiq-wizard-modal`。
 
 ### 2. 掃描匯入精靈 Modal（`#netiq-wizard-modal`）
