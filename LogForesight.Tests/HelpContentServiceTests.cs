@@ -133,6 +133,24 @@ public class HelpContentServiceTests
         }
     }
 
+    /// <summary>
+    /// 權限異動檢核的讀者是只有確認權限的一般使用者（User 角色＝Handle＋ConfirmPermission）。
+    /// 這章不設 requires，讓他們讀得到；授權設定章仍只給維護者。
+    /// </summary>
+    [Fact]
+    public void 權限異動檢核章對只有確認權限的使用者可見_授權設定章不可見()
+    {
+        var user = new HashSet<LogForesight.Web.Auth.Capability>
+            { LogForesight.Web.Auth.Capability.Handle, LogForesight.Web.Auth.Capability.ConfirmPermission };
+        var ids = _service.GetManual(user).Chapters.Select(c => c.Id).ToList();
+
+        Assert.Contains("permission-changes", ids);
+        Assert.DoesNotContain("permissions", ids);
+        var chapter = _service.Chapters.Single(c => c.Id == "permission-changes");
+        Assert.Contains("全選符合目前篩選的權限異動", chapter.Content);
+        Assert.Contains("PermissionChangesController", chapter.ContentForAi);
+    }
+
     [Fact]
     public void PRTG說明區分來源佐證_期間提示與案件授與範圍()
     {
