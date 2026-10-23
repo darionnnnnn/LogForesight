@@ -6,7 +6,7 @@
     { "id": "overview", "title": "系統總覽與登入", "file": "01-overview.md", "aiFile": "01-overview.ai.md", "icon": "info-circle",
       "keywords": ["登入", "帳號", "密碼", "AD驗證", "救援帳號", "serverAdmin", "角色", "架構", "五層偵測", "能力", "Capability", "最低權限", "離線降級"],
       "related": ["dashboard", "permissions"] },
-    { "id": "my-work", "title": "我的交辦：三分鐘上手", "file": "16-my-work.md", "aiFile": "16-my-work.ai.md", "icon": "person-workspace",
+    { "id": "my-work", "title": "我的交辦：三分鐘上手", "file": "16-my-work.md", "aiFile": "16-my-work.ai.md", "icon": "inbox",
       "keywords": ["我的交辦", "處理人", "交辦單", "主機", "狀態", "待處理", "處理中", "已結案"],
       "related": ["dashboard", "handling"] },
     { "id": "dashboard", "title": "儀表板", "file": "02-dashboard.md", "aiFile": "02-dashboard.ai.md", "icon": "speedometer2",

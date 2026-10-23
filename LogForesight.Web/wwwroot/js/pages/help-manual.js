@@ -75,17 +75,22 @@ function selectChapter(id) {
     document.getElementById('help-chapter-content').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
+/** 章名已在卡片標題（h2）顯示，內文開頭的「# 章名」再印一次只會讓層次變平，渲染前拿掉 */
+function withoutTitleLine(content) {
+    return (content ?? '').replace(/^\s*#\s+[^\r\n]*(\r?\n)?/, '');
+}
+
 /**
  * type=link 章節（回饋十八輪批次H，目前只有啟動精靈）沒有 Markdown 內容可渲染——
  * markdown-lite 刻意不支援連結，這裡另外組一張導引卡。type=markdown（既有章節）
- * 走原本的 renderAiText。
+ * 走說明書文件排版的 renderAiText。
  */
 function renderChapterContent(chapter) {
     const container = document.getElementById('help-chapter-content');
     container.replaceChildren();
 
     if (chapter.type !== 'link') {
-        renderAiText(container, chapter.content);
+        renderAiText(container, withoutTitleLine(chapter.content), { asDocument: true });
         return;
     }
 

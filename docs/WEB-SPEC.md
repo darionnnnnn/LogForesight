@@ -2389,7 +2389,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
     選節計分（`HelpChapterScorer`）與 `HelpQaService` 組 prompt 時用的都是 `ContentForAi`。
   - 目前 24 章全數具備 `aiFile`；其中包含「PRTG 維護」、「資源守門」、「系統健康」、
     「我的交辦：三分鐘上手」與「權限異動檢核」（後者不設 `requires`，讓具確認權限的一般使用者也讀得到）。
-    使用者版的寫法依 docs/HELP-WRITING-GUIDE.md。章節內的導覽、頁籤與按鈕名稱必須以目前頁面實際文案為準。
+    使用者版的寫法依 docs/HELP-WRITING-GUIDE.md。
+  - **文件排版**：章節以 `renderAiText(..., { asDocument: true })` 渲染（只有說明書頁開啟，AI 回覆等其他呼叫端維持預設）：
+    內文開頭的 `# 章名` 先拿掉（卡片 h2 已是章名）；`#`／`##` 行輸出語意 `h3.lf-doc__heading`、段落用 `p`、清單不帶 Bootstrap 間距 class；
+    以「注意：」開頭的段落加 `.lf-doc__note` 提示框。樣式在 site.css `.lf-doc`（行高 1.7、每行約 46em、段落與清單間距、只用既有 token）。
+    章節圖示必須存在於 `icons.svg`（`HelpManualLayoutTests` 守門）。章節內的導覽、頁籤與按鈕名稱必須以目前頁面實際文案為準。
     說明書守門的基準是 `wwwroot/js/core/layout.js` 的導覽 `label`、對應 View 的
     `ViewData["Title"]`／可見標題與實際按鈕文字；測試應把 manifest `title` 當待比對值，
     不得只在 manifest 與 manifest 互相比對而放過舊名稱。`issue-owners` 的 manifest 標題是
