@@ -26,10 +26,10 @@ LogForesight 是一套專注於主機安全性與穩定性前兆偵測的分析�
 - **錯誤防護**：帳號不存在、密碼錯誤或帳號被鎖定時，後端回傳明確子錯誤代碼，登入頁直接顯示中文錯誤訊息並停留在原頁面，避免整頁跳轉導致錯誤訊息遺失。
 
 ### 2. 本地救援管理員（`serverAdmin`）
-- **定位**：獨立於 AD 的本地內建緊急應變帳號，帳號固定為 `serverAdmin`。
+- **定位**：獨立於 AD 的本地內建緊急應變帳號，帳號名稱由 `appsettings.json` 的 `Auth:ServerAdmin:Account` 設定（出廠值 `svc-lfadmin`）；`serverAdmin` 是內部角色名，不是使用者要輸入的帳號。
 - **適用情境**：當 AD 伺服器斷線、LDAP 組態設定錯誤、網路中斷或全體管理員權限被誤鎖時，提供最後一道維運防線。
 - **最小授權原則（Least Privilege）**：
-  - `serverAdmin` 僅具備維護與稽核能力（`Capability.Maintain`、`Capability.ViewAudit`、`Capability.DevMonitor`）。
+  - `serverAdmin` 僅具備維護與稽核能力（`Capability.Maintain`、`Capability.ViewAudit`；`RoleCapabilityMap.ForServerAdmin`）。
   - **刻意不具備業務資料檢視能力（無 `Capability.ViewAll`）**：登入後無法查看總覽儀表板（`/`）、問題查詢（`/records`）與報表（`/reports`）。
   - 這種設計是刻意的資安防護，確保救援帳號僅用於修復系統設定、排程與使用者帳號，不能用來窺探一般主機的業務安全日誌。
 
