@@ -8,10 +8,10 @@
   - 狀態輪詢：`GET /api/admin/schedule/status`，回傳當前執行狀態（`SchedulerRunState`）。
   - 手動觸發：`POST /api/admin/schedule/run`，觸發立即執行（`SchedulerService.TriggerNow`）。
   - 中止執行：`POST /api/admin/schedule/cancel`，發出取消訊號中斷進行中的執行。
-  - 歷程查詢：`GET /api/admin/schedule/runs?page={page}&pageSize={pageSize}`，取得歷史執行紀錄清單。
-  - 單次歷程明細：`GET /api/admin/schedule/runs/{runId}`，取得指定執行的完整輸出日誌與統計。
-  - 設定更新：`PUT /api/admin/schedule/settings`，更新排程時間窗與開關設定。
-  - 台數預覽：`POST /api/admin/schedule/preview-targets`，依選取範圍與補跑條件試算預計執行的主機台數。
+  - 執行紀錄：`GET /api/runs/list`（清單）、`GET /api/runs/summary`（執行總表）、`GET /api/runs/errors`（異常彙總）、`GET /api/runs/{runId}`（單筆明細）。
+  - 排程設定：`GET`／`PUT /api/admin/schedule/options`。
+  - 台數預覽：`GET /api/admin/schedule/run-preview`，依選取範圍與執行模式試算預計執行的主機台數。
+  - AI 排程：`GET /api/admin/schedule/ai-status`、`POST /api/admin/schedule/ai-run`（取數執行中回 409「取數執行中，AI 分析會自動跟隨取數進度」）、`POST /api/admin/schedule/ai-cancel`。
 
 ## 觸發方式與排程機制
 
@@ -27,8 +27,10 @@
   - `All`（全部主機）：包含所有 NetIQ 主機與本機主機（若本機分析已啟用）。
   - `NetiqHosts`（指定 NetIQ 主機）：可選取特定網段或全部 NetIQ 主機，不執行本機分析。
   - 單一主機：僅針對指定主機執行指定日期區間的分析。
-- **條件補跑選項（`onlyIncompleteHostDays`）**：
-  - 控制項文字：「只補跑失敗或未執行的主機（略過已成功且有 AI 分析的）」。
+- **執行模式（`RerunMode`，立即執行視窗的「執行模式」下拉）**：
+  - 「只補跑失敗或未執行（預設）」（`None`）、「重新分析未處理的日子」（`Unhandled`）、「重新分析未處理與處理中的日子」（`UnhandledAndAssigned`）、「全部重新分析（含已處理完的）」（`All`）。後三者刪除選定日子的既有分析結果（含 AI 判讀與深度分析）後以目前規則重算，處理結論保留；需二次確認。
+  - 另有「回望天數（選填）」，上限依保留天數；以及「錯過窗口時自動補跑」排程開關（窗口結束後 4 小時內補跑一次）。
+- **預設模式「只補跑失敗或未執行」的判定**：
   - **待補判定標準**：主機日資料庫中「完全無分析紀錄」，或「已有紀錄但標記為 AI 待補（`AiPending`）」。
   - **不視為失敗的例外情況**：
     1. 低風險日：系統設計上低風險日預設不主動呼叫 AI，因此沒有 AI 分析屬正常現象，不列入失敗。
@@ -88,7 +90,7 @@
 AI 補寫進度顯示在「AI 分析狀態」卡自己那條進度條（單位「件」），與取數進度各自獨立。全站的執行中告示在取數閒置時會輪到 AI 排程顯示。
 
 ### 本機主機與 AI 序列化互動
-- 本機主機的 AI 呼叫採同步執行，並與 AI 分析排程共用同一個 `AIService` 序列化出口（同一時間僅處理一個推論請求，避免地端 GPU 或雲端 API 連線被搶佔）。
+- 本機主機與機房主機一樣先寫統計、AI 由 AI 分析排程事後補寫；所有 AI 呼叫經全站 `IAiRequestGate`：互動查詢優先（同時 2 條、排隊逾 5 秒降級），背景判讀上限＝「併發數」（`AiConcurrency`，1～8，地端建議 1）。
 - 若 AI 分析排程正在消化待補，本機分析的 AI 段會排隊等待，此時本機進度條短暫停留屬正常現象。
 
 ## 分析本機主機開關（`AnalyzeLocalHost`）

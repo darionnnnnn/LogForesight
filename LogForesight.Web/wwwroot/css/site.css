@@ -933,6 +933,60 @@ input:-webkit-autofill:active {
     }
 }
 
+/* 操作說明書內文（markdown-lite 的 asDocument 模式，docs/HELP-WRITING-GUIDE.md）：讀者是非 IT 人員，
+   要能快速掃讀。行高 1.7 給中文較舒適的呼吸、每行約 46 字（max-inline-size）避免大螢幕一行過長；
+   段落標題是語意 h3（卡片標題 h2 是章名），上方大留白＋底線把章節切成一段一段；
+   「注意：」段落改成警示色提示框。字級、間距、顏色全部沿用既有 token。 */
+.lf-doc {
+    line-height: 1.7;
+    max-inline-size: 46em;
+}
+
+.lf-doc > p,
+.lf-doc > ul,
+.lf-doc > ol,
+.lf-doc > .table-responsive {
+    margin: 0 0 var(--lf-space-3);
+}
+
+.lf-doc > ul,
+.lf-doc > ol {
+    padding-left: 1.5em;
+}
+
+.lf-doc li + li {
+    margin-top: var(--lf-space-1);
+}
+
+.lf-doc li::marker {
+    color: var(--lf-text-muted);
+}
+
+.lf-doc__heading {
+    font-size: var(--lf-font-size-xl);
+    font-weight: 600;
+    line-height: var(--lf-line-tight);
+    margin: var(--lf-space-6) 0 var(--lf-space-3);
+    padding-bottom: var(--lf-space-2);
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-doc > .lf-doc__heading:first-child {
+    margin-top: var(--lf-space-3);
+}
+
+.lf-doc__note {
+    padding: var(--lf-space-2) var(--lf-space-3);
+    background: var(--lf-warning-soft);
+    color: var(--lf-warning-text);
+    border-left: 4px solid var(--lf-warning);
+    border-radius: var(--lf-radius);
+}
+
+.lf-doc__note strong {
+    color: inherit;
+}
+
 /* ── 卡片 ──────────────────────────────────────────────────────────────── */
 
 .lf-card {

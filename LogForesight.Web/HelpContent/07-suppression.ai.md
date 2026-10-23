@@ -3,7 +3,8 @@
 ## 頁面基本資訊與存取架構
 
 - **頁面路徑**：
-  - 主要管理介面：`/admin/rules` 之第三分頁「告警抑制」。
+  - 檢視與解除：`/admin/rules` 之第四分頁「告警抑制」（分頁順序：Windows規則、Linux規則、PRTG規則、告警抑制）。此分頁沒有新增按鈕。
+  - 建立入口：規則列「抑制」按鈕（規則型，可選單一主機／主機群組／全站）；風險日詳情「抑制此類告警（本主機）」（總量型）、「抑制此關聯模式」（關聯型）；標為「已知雜訊」後的「一併建立抑制規則？／一併建立簽章抑制？」詢問（規則型或簽章型）。
   - 詳情頁快捷入口：`/records/{hostId}/{date}` 各重點問題、趨勢告警與關聯訊號旁之「抑制」捷徑按鈕。
 - **存取權限**：需要 `Capability.Maintain`（`admin` 與 `serverAdmin` 角色具備）。
 - **後端端點**：
@@ -34,7 +35,7 @@ LogForesight 將「系統偵測」與「主動示警」完全解耦：
   ├─ 1. Rule（全規則型）：整條規則命中結果靜音
   ├─ 2. Signature（問題簽章型）：特定來源+EventId+類型之簽章靜音
   ├─ 3. Correlation（關聯模式型）：特定跨log攻擊鏈/故障鏈模式靜音
-  └─ 4. Volume（音量/趨勢量型）：整體錯誤量或安全稽核量突增靜音
+  └─ 4. Volume（總量型，畫面目標篩選名「總量」）：整體錯誤量或安全稽核量突增靜音
 ```
 
 | TargetType | 比對欄位 | 適用對象 | 影響的計算與防護機制 |
@@ -42,7 +43,7 @@ LogForesight 將「系統偵測」與「主動示警」完全解耦：
 | **`Rule`**（全規則型） | `RuleId` | 命中指定規則的所有事件 | 標記 `LogIssueSignature.Suppressed`，排除重大旗標與嚴重度對日風險之拉升。支援 Host／Group／Site 三種範圍。 |
 | **`Signature`**（問題簽章型） | `SignatureKey`<br>（來源＋EventId＋類型） | 未命中規則之 Other 類別事件簽章 | 針對特定未知問題簽章精準靜音，不影響同一來源的其他 Event ID。僅支援 Host 範圍。 |
 | **`Correlation`**（關聯模式型） | `CorrelationPatternId`<br>（19 種關聯 Pattern ID） | 跨 log 組合比對出之攻擊鏈與故障鏈模式 | 命中的關聯模式整批自 `correlations` 移除，不參與風險判定。**影響面極大**，建立時強制要求填寫原因並跳出強警告。僅支援 Host 範圍。 |
-| **`Volume`**（音量/趨勢量型） | `VolumeKind`<br>（`error` 或 `audit`） | 整體錯誤量或安全稽核事件量之突增趨勢 | `TrendAnalyzer` 略過對應類別的總量暴增判定，不再觸發總量趨勢告警。僅支援 Host 範圍。 |
+| **`Volume`**（總量型） | `VolumeKind`<br>（`error` 或 `audit`） | 整體錯誤量或安全稽核事件量之突增趨勢 | `TrendAnalyzer` 略過對應類別的總量暴增判定，不再觸發總量趨勢告警。僅支援 Host 範圍。 |
 
 ## 三種生效範圍（`SuppressionScopes`）與支援矩陣
 

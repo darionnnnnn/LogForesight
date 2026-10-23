@@ -84,8 +84,15 @@ function appendInline(target, line) {
     }
 }
 
-/** 逐行分块：# 標題行／- 或 1. 清單／段落（連續一般行以 <br> 相接，貼近原本 pre-wrap 的視覺效果） */
-function renderBlocks(container, text) {
+/** 文件模式下以「注意：」開頭的段落（含粗體寫法）改成提示框，讓非 IT 讀者一眼看到要小心的事 */
+const NOTE_LINE = /^\s*(\*\*)?注意：/;
+
+/**
+ * 逐行分块：# 標題行／- 或 1. 清單／段落（連續一般行以 <br> 相接，貼近原本 pre-wrap 的視覺效果）。
+ * asDocument（操作說明書）：標題改成語意 h3、段落用 p、清單不帶 Bootstrap 間距 class（交給 .lf-doc 排版），
+ * 「注意：」段落加提示框 class。AI 回覆等其他呼叫端維持預設的緊湊呈現。
+ */
+function renderBlocks(container, text, asDocument = false) {
     const lines = text.replace(/\r\n/g, '\n').split('\n');
     let i = 0;
 
@@ -147,8 +154,8 @@ function renderBlocks(container, text) {
 
         const heading = line.match(HEADING_LINE);
         if (heading) {
-            const div = document.createElement('div');
-            div.className = 'fw-semibold mb-1';
+            const div = document.createElement(asDocument ? 'h3' : 'div');
+            div.className = asDocument ? 'lf-doc__heading' : 'fw-semibold mb-1';
             appendInline(div, heading[1]);
             container.appendChild(div);
             i++;
@@ -157,7 +164,7 @@ function renderBlocks(container, text) {
 
         if (UNORDERED_ITEM.test(line)) {
             const ul = document.createElement('ul');
-            ul.className = 'mb-2 ps-3';
+            if (!asDocument) ul.className = 'mb-2 ps-3';
             while (i < lines.length) {
                 const m = lines[i].match(UNORDERED_ITEM);
                 if (!m) break;
@@ -172,7 +179,7 @@ function renderBlocks(container, text) {
 
         if (ORDERED_ITEM.test(line)) {
             const ol = document.createElement('ol');
-            ol.className = 'mb-2 ps-3';
+            if (!asDocument) ol.className = 'mb-2 ps-3';
             while (i < lines.length) {
                 const m = lines[i].match(ORDERED_ITEM);
                 if (!m) break;
@@ -185,8 +192,8 @@ function renderBlocks(container, text) {
             continue;
         }
 
-        const para = document.createElement('div');
-        para.className = 'mb-1';
+        const para = document.createElement(asDocument ? 'p' : 'div');
+        para.className = !asDocument ? 'mb-1' : NOTE_LINE.test(line) ? 'lf-doc__note' : '';
         let first = true;
         while (i < lines.length) {
             const current = lines[i];
@@ -210,10 +217,12 @@ function renderBlocks(container, text) {
  *
  * @param {HTMLElement} container
  * @param {string} text
- * @param {{ badge?: string, badgeClassName?: string }} [options]
+ * @param {{ badge?: string, badgeClassName?: string, asDocument?: boolean }} [options]
+ *        asDocument：操作說明書的文件排版（語意標題、段距、提示框，見 site.css .lf-doc）
  */
-export function renderAiText(container, text, { badge, badgeClassName = 'lf-badge lf-badge--secondary' } = {}) {
+export function renderAiText(container, text, { badge, badgeClassName = 'lf-badge lf-badge--secondary', asDocument = false } = {}) {
     container.replaceChildren();
+    container.classList.toggle('lf-doc', asDocument);
 
     if (badge) {
         const badgeEl = document.createElement('span');
@@ -222,7 +231,7 @@ export function renderAiText(container, text, { badge, badgeClassName = 'lf-badg
         container.appendChild(badgeEl);
     }
 
-    renderBlocks(container, text ?? '');
+    renderBlocks(container, text ?? '', asDocument);
 }
 
 /**
