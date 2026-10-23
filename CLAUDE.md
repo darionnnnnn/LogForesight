@@ -31,6 +31,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 | 改 NetIQ/Sentinel 取數 | `docs/NETIQ-API-REFERENCE.md` |
 | 改 PRTG 整合（鏡像表/取數範圍與過期清除/取數策略與快照/觸發式取數/主機對應/規則與分類/跨來源佐證/未回報提示/探測/回填/資料搬運/校準匯出） | `docs/PRTG-SPEC.md` |
 | 設計系統色票/字型/token | `docs/DESIGN-SYSTEM.md` |
+| 改操作說明書（`LogForesight.Web/HelpContent/`） | `docs/HELP-WRITING-GUIDE.md`（寫給非 IT 人員：骨架、句長、用詞、排版限制） |
 | 查「已知但刻意未做」 | `docs/BACKLOG.md` |
 | 追某個現況決策的來龍去脈 | `docs/archive/README.md` 索引 → 按需開**單一**檔案，**非必要不要讀、勿全掃** |
 
