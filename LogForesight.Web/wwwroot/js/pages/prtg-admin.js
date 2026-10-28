@@ -1428,7 +1428,7 @@ function renderConflicts(items) {
             { title: '操作', className: 'lf-w-mdl', render: mirrorAssignExcludeActions }
         ],
         rows: items || [],
-        empty: { title: '無衝突項目', hint: '目前沒有需要人工處理的衝突；同步後若出現同 IP 多裝置等情況會列在這裡。', icon: null }
+        empty: { title: '無衝突項目', hint: '目前沒有需要人工處理的衝突；同步後若有一個 IP 對到多台主機，或裝置名稱對到多台主機，會列在這裡。', icon: null }
     });
 }
 
