@@ -2413,26 +2413,17 @@ public sealed class EfPrtgStore
             throw new ArgumentOutOfRangeException(nameof(take), "預覽頁面超出上限。");
         if (visibleHostIds.Count == 0 && !fullScope) return new PrtgMonitoringEvaluationPage(0, []);
         using var ctx = _contextFactory();
-        // 缺裝置鏡像的感測器仍供全站診斷顯示未對應；已暫停的資源不參與評估。
+        // 只列歸戶到主機清單內主機的感測器（docs/PRTG-SPEC.md §1）：沒有對應、或對到清單外的 device 不呈現；
+        // 全站可見者看全部清單主機，其餘只看可見主機。已暫停的資源不參與評估。
         var sensors = ctx.PrtgSensors.AsNoTracking().Where(sensor => !sensor.Paused &&
             !ctx.PrtgDevices.Any(device => device.Objid == sensor.DeviceObjid && device.Paused));
-        if (!mapDate.HasValue)
-        {
-            if (!fullScope) return new PrtgMonitoringEvaluationPage(0, []);
-            var totalAll = sensors.Count();
-            var pageAll = sensors.OrderBy(s => s.Objid).Skip(offset).Take(take)
-                .Select(s => new { SensorId = s.Objid, s.DeviceObjid, s.Name, s.SensorType, s.Category })
-                .ToList();
-            var rowsAll = pageAll.Select(s => new PrtgMonitoringEvaluationRow(s.SensorId, s.DeviceObjid,
-                s.Name, s.SensorType, s.Category, null, null, null)).ToList();
-            return new PrtgMonitoringEvaluationPage(totalAll, rowsAll);
-        }
+        if (!mapDate.HasValue) return new PrtgMonitoringEvaluationPage(0, []);
         var candidates = from sensor in sensors
                          join map in ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == mapDate.Value)
                              on sensor.DeviceObjid equals map.DeviceObjid into matches
                          from map in matches.DefaultIfEmpty()
-                         where fullScope ||
-                             (map != null && map.HostId.HasValue && visibleHostIds.Contains(map.HostId.Value))
+                         where map != null && map.HostId.HasValue &&
+                             (fullScope || visibleHostIds.Contains(map.HostId.Value))
                          select new
                          {
                              SensorId = sensor.Objid,

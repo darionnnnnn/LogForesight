@@ -63,11 +63,10 @@ public sealed class PrtgStoreManagementConsumerTests : IDisposable
         var laterPage = store.GetMonitoringEvaluationPage(null, [], fullScope: true, offset: 1, take: 1);
         var restricted = store.GetMonitoringEvaluationPage(null, [], fullScope: false, offset: 0, take: 100);
 
-        Assert.Equal(2, page.Total);
-        Assert.Equal(new long[] { 401, 404 }, page.Rows.Select(row => row.SensorId));
-        Assert.All(page.Rows, row => Assert.Null(row.HostId));
-        Assert.Equal(2, laterPage.Total);
-        Assert.Equal(404, Assert.Single(laterPage.Rows).SensorId);
+        // 沒有任何主機對應時，沒有歸戶到清單主機的感測器可以預覽（不列主機清單外的 device，docs/PRTG-SPEC.md §1）
+        Assert.Equal(0, page.Total);
+        Assert.Empty(page.Rows);
+        Assert.Equal(0, laterPage.Total);
         Assert.Equal(0, restricted.Total);
         Assert.Empty(restricted.Rows);
     }

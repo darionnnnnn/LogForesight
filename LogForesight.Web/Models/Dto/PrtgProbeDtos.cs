@@ -70,16 +70,21 @@ public record PrtgHostMapItemDto(long DeviceObjid, string? Ip, string? HostName,
 /// <summary>PRTG 鏡像與主機對應狀態資訊</summary>
 public class PrtgMirrorStatusDto
 {
-    public int DeviceCount { get; set; }
+    // 主機口徑（docs/PRTG-SPEC.md §1）：不提供 PRTG 全站裝置數、主機清單外 device 的衝突／查無主機計數
+    /// <summary>最新對應中有 ok 對應的清單主機數</summary>
+    public int MappedHosts { get; set; }
+    /// <summary>啟用、未合併、沒有 ok 對應的清單主機數（<see cref="LogForesight.Core.Service.PrtgHostCoverage"/>）</summary>
+    public int UnmappedHosts { get; set; }
+    /// <summary>未對應主機中原因為「一 IP 多主機衝突」的主機數</summary>
+    public int ConflictHosts { get; set; }
+    /// <summary>IP 已對上、但 PRTG 名稱與主機清單不同的主機數（只提醒，不影響對應）</summary>
+    public int NameMismatchHosts { get; set; }
     public int SensorCount { get; set; }
     public DateTime? LastDeviceSync { get; set; }
     public DateTime? LastSensorSync { get; set; }
     public DateTime? LastValueAt { get; set; }
     public DateTime? LastStateChangeAt { get; set; }
     public DateTime? MapDate { get; set; }
-    public int MapOk { get; set; }
-    public int MapConflict { get; set; }
-    public int MapUnmatched { get; set; }
     public int WhitelistSensorCount { get; set; }
     public int OnMappedDeviceCount { get; set; }
     public int IpExcludeCount { get; set; }
@@ -264,6 +269,16 @@ public class PrtgUnmappedHostDto
 
     /// <summary>no-ip | ip-excluded | conflict | not-in-prtg（<see cref="LogForesight.Core.Service.PrtgHostCoverage"/>）</summary>
     public string Reason { get; set; } = "";
+}
+
+/// <summary>名稱不一致提醒（IP 已對上，PRTG 名稱與主機清單不同）</summary>
+public class PrtgNameMismatchDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = "";
+    public string? IpAddress { get; set; }
+    /// <summary>「名稱不一致：PRTG「…」，主機清單「…」」</summary>
+    public string Note { get; set; } = "";
 }
 
 /// <summary>人工指派時搜尋 PRTG 裝置鏡像的結果（使用者主動輸入條件，可能含主機清單外的裝置）</summary>

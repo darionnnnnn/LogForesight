@@ -365,6 +365,28 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
+    public void 名稱不一致清單_每台主機列一次_沒有提醒的主機不出現()
+    {
+        var store = _backend.PrtgStore();
+        var renamed = _hosts.Upsert(new WebHost { HostName = "srv-new", IpAddress = "10.92.0.1", Active = true });
+        var same = _hosts.Upsert(new WebHost { HostName = "srv-same", IpAddress = "10.92.0.2", Active = true });
+        store.ReplaceHostMapForDate(DateTime.Today, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = DateTime.Today, DeviceObjid = 1, HostId = renamed.HostId, MapStatus = PrtgMapStatus.Ok, Note = "名稱不一致：PRTG「srv-old」，主機清單「srv-new」" },
+            new() { MapDate = DateTime.Today, DeviceObjid = 2, HostId = renamed.HostId, MapStatus = PrtgMapStatus.Ok, Note = "名稱不一致：PRTG「srv-old2」，主機清單「srv-new」" },
+            new() { MapDate = DateTime.Today, DeviceObjid = 3, HostId = same.HostId, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var items = _controller.GetPrtgNameMismatch().Data!;
+
+        var item = Assert.Single(items);
+        Assert.Equal("srv-new", item.HostName);
+        Assert.Contains("srv-old", item.Note);
+        // 與鏡像狀態的計數同一口徑
+        Assert.Equal(1, _controller.GetPrtgMirrorStatus().Data!.NameMismatchHosts);
+    }
+
+    [Fact]
     public void 裝置搜尋_至少兩字_IP完全相同排最前_超過上限回hasMore()
     {
         var store = _backend.PrtgStore();

@@ -141,7 +141,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
     }
 
     [Fact]
-    public void GetPrtgHostMap_支援unmatched查詢_依DeviceObjid穩定排序且正確分頁()
+    public void GetPrtgHostMap_只列衝突_unmatched不再提供_主機清單外的device不上畫面()
     {
         var store = _backend.PrtgStore();
         var date = DateTime.Today;
@@ -181,43 +181,14 @@ public class PrtgUnmatchedMapUiTests : IDisposable
 
         store.ReplaceHostMapForDate(date, rows);
 
-        // Act: 查 unmatched 第 1 頁，頁大小 4
-        var resPage1 = _controller.GetPrtgHostMap("unmatched", page: 1, pageSize: 4);
+        // unmatched（PRTG 端有、主機清單沒有）不再提供查詢（docs/PRTG-SPEC.md §1）
+        var rejected = Assert.Throws<DomainException>(() => _controller.GetPrtgHostMap("unmatched", page: 1, pageSize: 4));
+        Assert.Contains("prtg-unmapped-hosts", rejected.Message);
 
-        Assert.True(resPage1.Success);
-        Assert.NotNull(resPage1.Data);
-        Assert.Equal(9, resPage1.Data.Total);
-        Assert.Equal(1, resPage1.Data.Page);
-        Assert.Equal(4, resPage1.Data.PageSize);
-        Assert.Equal(4, resPage1.Data.Items.Count);
-
-        // 依 DeviceObjid 排序：3010, 3020, 3030, 3040
-        Assert.Equal(3010, resPage1.Data.Items[0].DeviceObjid);
-        Assert.Equal(3020, resPage1.Data.Items[1].DeviceObjid);
-        Assert.Equal(3030, resPage1.Data.Items[2].DeviceObjid);
-        Assert.Equal(3040, resPage1.Data.Items[3].DeviceObjid);
-
-        // 驗證 DTO 包含 MapStatus 與 ConflictKind，且絕不能錯標為 multi-host 或 multi-device
-        foreach (var item in resPage1.Data.Items)
-        {
-            Assert.Equal(PrtgMapStatus.Unmatched, item.MapStatus);
-            Assert.Equal("unmatched", item.ConflictKind);
-            Assert.NotEqual("multi-host", item.ConflictKind);
-            Assert.NotEqual("multi-device", item.ConflictKind);
-        }
-
-        // Act: 查 unmatched 第 2 頁，頁大小 4
-        var resPage2 = _controller.GetPrtgHostMap("unmatched", page: 2, pageSize: 4);
-        Assert.Equal(4, resPage2.Data!.Items.Count);
-        Assert.Equal(3050, resPage2.Data.Items[0].DeviceObjid);
-        Assert.Equal(3060, resPage2.Data.Items[1].DeviceObjid);
-        Assert.Equal(3070, resPage2.Data.Items[2].DeviceObjid);
-        Assert.Equal(3080, resPage2.Data.Items[3].DeviceObjid);
-
-        // Act: 查 unmatched 第 3 頁，最後 1 筆
-        var resPage3 = _controller.GetPrtgHostMap("unmatched", page: 3, pageSize: 4);
-        Assert.Single(resPage3.Data!.Items);
-        Assert.Equal(3090, resPage3.Data.Items[0].DeviceObjid);
+        // 衝突照常分頁，且不混入 unmatched 與 ok 列
+        var conflicts = _controller.GetPrtgHostMap("conflict", page: 1, pageSize: 4).Data!;
+        Assert.Equal(1, conflicts.Total);
+        Assert.Equal(1001, Assert.Single(conflicts.Items).DeviceObjid);
     }
 
     [Fact]
@@ -245,7 +216,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
             _audit,
             backend: null);
 
-        var res = controller.GetPrtgHostMap("unmatched", page: 1, pageSize: 20);
+        var res = controller.GetPrtgHostMap("conflict", page: 1, pageSize: 20);
         Assert.True(res.Success);
         Assert.NotNull(res.Data);
         Assert.Equal(0, res.Data.Total);

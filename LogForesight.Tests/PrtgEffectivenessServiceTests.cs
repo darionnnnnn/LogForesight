@@ -109,7 +109,15 @@ public sealed class PrtgEffectivenessServiceTests
                 Value(from.AddHours(1), PrtgDataQuality.Sampled, PrtgValueUsability.SampledMinCoverage),
                 Value(from.AddHours(2), PrtgDataQuality.Sampled, PrtgValueUsability.SampledMinCoverage - 0.01),
                 Value(through.AddHours(23), PrtgDataQuality.Sampled, 0),
-                Value(through.AddDays(1), PrtgDataQuality.Sampled, 10));
+                Value(through.AddDays(1), PrtgDataQuality.Sampled, 10),
+                // 主機清單外的 device 上的 sensor：不計（docs/PRTG-SPEC.md §1）
+                new PrtgValueRow { SensorObjid = 2, PeriodStart = from.AddHours(3), Quality = PrtgDataQuality.Sampled, Coverage = 0 });
+            db.PrtgSensors.AddRange(
+                new PrtgSensorRow { Objid = 1, DeviceObjid = 10, Name = "mapped", SensorType = "ping" },
+                new PrtgSensorRow { Objid = 2, DeviceObjid = 20, Name = "outside", SensorType = "ping" });
+            db.PrtgHostMaps.AddRange(
+                new PrtgHostMapRow { MapDate = through, DeviceObjid = 10, HostId = 1, MapStatus = PrtgMapStatus.Ok },
+                new PrtgHostMapRow { MapDate = through, DeviceObjid = 20, MapStatus = PrtgMapStatus.Unmatched });
             db.SaveChanges();
         }
 

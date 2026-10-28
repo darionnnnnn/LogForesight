@@ -1116,9 +1116,10 @@ function renderPrtgMirror(data) {
         if (el) el.textContent = text;
     };
 
-    setTxt('prtg-mirror-device-count', formatNumber(data.deviceCount));
+    setTxt('prtg-mirror-mapped-hosts', formatNumber(data.mappedHosts));
+    setTxt('prtg-mirror-unmapped-sub', `未對應 ${formatNumber(data.unmappedHosts)} 台`);
     setTxt('prtg-mirror-sensor-count', formatNumber(data.sensorCount));
-    setTxt('prtg-mirror-last-device-sync', `最後同步：${data.lastDeviceSync ? formatDateTime(data.lastDeviceSync) : '-'}`);
+    setTxt('prtg-mirror-last-device-sync', `結構最後同步：${data.lastDeviceSync ? formatDateTime(data.lastDeviceSync) : '-'}`);
     setTxt('prtg-mirror-last-sensor-sync', `最後同步：${data.lastSensorSync ? formatDateTime(data.lastSensorSync) : '-'}`);
     setTxt('prtg-mirror-last-value-at', `數值：${data.lastValueAt ? formatDateTime(data.lastValueAt) : '-'}`);
     setTxt('prtg-mirror-last-state-change-at', `狀態變更：${data.lastStateChangeAt ? formatDateTime(data.lastStateChangeAt) : '-'}`);
@@ -1146,9 +1147,10 @@ function renderPrtgMirror(data) {
     setTxt('prtg-mirror-snapshot', snapText);
 
     setTxt('prtg-mirror-map-date', `對應基準日：${data.mapDate ? formatDate(data.mapDate) : '無'}`);
-    setTxt('prtg-mirror-map-ok', formatNumber(data.mapOk));
-    setTxt('prtg-mirror-map-conflict', formatNumber(data.mapConflict));
-    setTxt('prtg-mirror-map-unmatched', formatNumber(data.mapUnmatched));
+    setTxt('prtg-mirror-map-ok', formatNumber(data.mappedHosts));
+    setTxt('prtg-mirror-map-conflict', formatNumber(data.conflictHosts));
+    setTxt('prtg-mirror-map-unmatched', formatNumber(data.unmappedHosts));
+    setTxt('prtg-mirror-map-name-mismatch', formatNumber(data.nameMismatchHosts));
     setTxt('prtg-mirror-ip-exclude-count', formatNumber(data.ipExcludeCount || 0));
     setTxt('prtg-mirror-whitelist-count', formatNumber(data.whitelistSensorCount));
     setTxt('prtg-mirror-whitelist-mapped', formatNumber(data.onMappedDeviceCount));
@@ -1297,12 +1299,13 @@ function renderConflictsLoading() {
     renderMirrorTableLoading(container);
 }
 
-// 鏡像、衝突、未對應三塊清單一起重整（人工對應、IP 排除、批次指派後共用）
+// 鏡像、衝突、未對應主機、名稱不一致四塊一起重整（人工對應、IP 排除、批次指派後共用）
 function refreshMirrorViews(conflictOptions) {
     return Promise.all([
         refreshPrtgMirror(),
         refreshConflicts(conflictPage, conflictOptions),
-        refreshUnmatched(unmatchedPage)
+        refreshUnmappedHosts(unmappedPage),
+        refreshNameMismatch()
     ]);
 }
 
@@ -1322,8 +1325,8 @@ function renderConflictsError(errorMessage) {
     renderListError('prtg-mirror-conflicts-table', '衝突清單', errorMessage, () => refreshConflicts(conflictPage), 'prtg-conflicts-pagination');
 }
 
-function renderUnmatchedError(errorMessage) {
-    renderListError('prtg-unmatched-table', '未對應清單', errorMessage, () => refreshUnmatched(unmatchedPage), 'prtg-unmatched-pagination');
+function renderUnmappedHostsError(errorMessage) {
+    renderListError('prtg-unmatched-table', '未對應主機清單', errorMessage, () => refreshUnmappedHosts(unmappedPage), 'prtg-unmatched-pagination');
 }
 
 function renderIpExcludesError(errorMessage) {
@@ -1420,7 +1423,7 @@ function renderConflicts(items) {
             },
             { title: 'Device', className: 'lf-w-lg', truncate: true, render: mirrorDeviceText },
             { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ip || '-' },
-            { title: '衝突型別', className: 'lf-w-md', render: item => mirrorKindBadge(item, false) },
+            { title: '衝突型別', className: 'lf-w-md', render: item => mirrorKindBadge(item) },
             { title: '說明', className: 'text-muted', render: item => item.note || '-' },
             { title: '操作', className: 'lf-w-mdl', render: mirrorAssignExcludeActions }
         ],
@@ -1449,10 +1452,10 @@ function renderConflictPagination(totalPages) {
     });
 }
 
-// ── PRTG 未對應清單 ──────────────────────────────────────────────────
+// ── PRTG 未對應主機（主機清單內沒有對應到 PRTG 的主機）──────────────────
 
-let unmatchedPage = 1;
-let unmatchedPageSize = loadPageSize('prtg-unmatched');
+let unmappedPage = 1;
+let unmappedPageSize = loadPageSize('prtg-unmatched');
 
 /** 鏡像清單表格的載入中佔位：spinner 置中，等待樣式與全站其他區塊一致（ui.js 的 renderSpinner） */
 function renderMirrorTableLoading(container) {
@@ -1460,29 +1463,20 @@ function renderMirrorTableLoading(container) {
     container.firstElementChild.classList.add('justify-content-center', 'py-2');
 }
 
-/** 衝突／未對應清單共用的 Device 欄文字 */
+/** 衝突清單的 Device 欄文字 */
 function mirrorDeviceText(item) {
     return item.deviceName ? `${item.deviceObjid} ${item.deviceName}` : String(item.deviceObjid);
 }
 
-/** 衝突／未對應清單共用的型別徽章；includeUnmatched：未對應清單多一個「未對應」分支 */
-function mirrorKindBadge(item, includeUnmatched) {
+/** 衝突清單的型別徽章（衝突只剩 IP 對多主機、名稱對多主機兩種） */
+function mirrorKindBadge(item) {
     const kindBadge = document.createElement('span');
-    if (item.conflictKind === 'multi-device') {
-        kindBadge.className = 'badge bg-warning text-dark';
-        kindBadge.textContent = '同 IP 多裝置';
-    } else if (item.conflictKind === 'multi-host') {
+    if (item.conflictKind === 'multi-host') {
         kindBadge.className = 'badge bg-info text-dark';
         kindBadge.textContent = 'IP 對多主機';
     } else if (item.conflictKind === 'hostname-multi') {
         kindBadge.className = 'badge bg-warning text-dark';
         kindBadge.textContent = '名稱對多主機';
-    } else if (item.conflictKind === 'hostname-host-taken') {
-        kindBadge.className = 'badge bg-warning text-dark';
-        kindBadge.textContent = '名稱命中已對應主機';
-    } else if (includeUnmatched && (item.conflictKind === 'unmatched' || item.mapStatus === 'unmatched')) {
-        kindBadge.className = 'badge bg-secondary';
-        kindBadge.textContent = '未對應';
     } else {
         kindBadge.className = 'badge bg-secondary';
         kindBadge.textContent = item.conflictKind || '-';
@@ -1490,7 +1484,7 @@ function mirrorKindBadge(item, includeUnmatched) {
     return kindBadge;
 }
 
-/** 衝突／未對應清單共用的操作欄：指派＋排除此 IP */
+/** 衝突清單的操作欄：指派＋排除此 IP */
 function mirrorAssignExcludeActions(item) {
     const actions = document.createElement('span');
 
@@ -1510,9 +1504,9 @@ function mirrorAssignExcludeActions(item) {
         excludeBtn.title = '此 device 沒有 IP';
     } else {
         excludeBtn.addEventListener('click', async () => {
-            const deviceCount = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
+            const sameIpDeviceTotal = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
             const confirmed = await confirmAction({
-                message: `將排除 IP ${item.ip}：此 IP 底下的 ${deviceCount} 台 PRTG device 都不會再進行主機對應與取數。`
+                message: `將排除 IP ${item.ip}：此 IP 底下的 ${sameIpDeviceTotal} 台 PRTG device 都不會再進行主機對應與取數。`
             });
             if (!confirmed) return;
             try {
@@ -1529,67 +1523,126 @@ function mirrorAssignExcludeActions(item) {
     return actions;
 }
 
-function renderUnmatchedLoading() {
+const UNMAPPED_REASON_TEXT = {
+    'no-ip': '主機沒有 IP',
+    'ip-excluded': 'IP 已排除',
+    'conflict': '此 IP 由多台主機共用',
+    'not-in-prtg': 'PRTG 找不到此 IP'
+};
+
+function renderUnmappedHostsLoading() {
     const container = document.getElementById('prtg-unmatched-table');
     if (!container) return;
     renderMirrorTableLoading(container);
 }
 
-
-async function refreshUnmatched(page = unmatchedPage) {
-    unmatchedPage = page;
-    renderUnmatchedLoading();
+async function refreshUnmappedHosts(page = unmappedPage) {
+    unmappedPage = page;
+    renderUnmappedHostsLoading();
     try {
-        const res = await api.get(`/api/admin/settings/prtg-host-map?status=unmatched&page=${unmatchedPage}&pageSize=${unmatchedPageSize}`, { silent: true });
+        const res = await api.get(`/api/admin/settings/prtg-unmapped-hosts?page=${unmappedPage}&pageSize=${unmappedPageSize}`, { silent: true });
         const total = (res && res.total) ? res.total : 0;
-        const totalPages = Math.ceil(total / unmatchedPageSize);
+        const totalPages = Math.ceil(total / unmappedPageSize);
 
-        if (unmatchedPage > totalPages && totalPages > 0) {
-            return refreshUnmatched(totalPages);
+        if (unmappedPage > totalPages && totalPages > 0) {
+            return refreshUnmappedHosts(totalPages);
         }
 
-        renderUnmatched((res && res.items) ? res.items : []);
-        renderUnmatchedPagination(totalPages);
+        renderUnmappedHosts((res && res.items) ? res.items : []);
+        renderUnmappedHostsPagination(totalPages);
     } catch (error) {
-        renderUnmatchedError(error && error.message ? error.message : '載入未對應清單失敗');
+        renderUnmappedHostsError(error && error.message ? error.message : '載入未對應主機清單失敗');
     }
 }
 
-function renderUnmatched(items) {
+function renderUnmappedHosts(items) {
     const container = document.getElementById('prtg-unmatched-table');
     if (!container) return;
 
     renderTable(container, {
         columns: [
-            { title: 'Device', className: 'lf-w-lg', truncate: true, render: mirrorDeviceText },
-            { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ip || '-' },
-            { title: '型別', className: 'lf-w-md', render: item => mirrorKindBadge(item, true) },
-            { title: '說明', className: 'text-muted', render: item => item.note || '-' },
-            { title: '操作', className: 'lf-w-mdl', render: mirrorAssignExcludeActions }
+            { title: '主機', className: 'lf-w-lg', truncate: true, render: item => item.hostName || `Host ID: ${item.hostId}` },
+            { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ipAddress || '-' },
+            {
+                title: '原因',
+                render: item => {
+                    const box = document.createElement('span');
+                    box.appendChild(document.createTextNode(UNMAPPED_REASON_TEXT[item.reason] || item.reason || '-'));
+                    if (item.reason === 'conflict') {
+                        const link = document.createElement('button');
+                        link.type = 'button';
+                        link.className = 'btn btn-link btn-sm p-0 ms-2 align-baseline';
+                        link.textContent = '到衝突清單處理';
+                        link.addEventListener('click', () => {
+                            const target = document.getElementById('prtg-conflicts-section');
+                            target?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        });
+                        box.appendChild(link);
+                    }
+                    return box;
+                }
+            },
+            {
+                title: '動作',
+                className: 'lf-w-mdl',
+                render: item => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn btn-sm btn-outline-primary py-0 text-nowrap';
+                    btn.textContent = '指派 PRTG 裝置';
+                    btn.addEventListener('click', () => openHostAssignModal(item));
+                    return btn;
+                }
+            }
         ],
         rows: items || [],
-        empty: { title: '無未對應項目', hint: '所有 PRTG device 都已對應主機；之後新增且未對應的 device 會列在這裡。', icon: null }
+        empty: { title: '全部主機都已對應到 PRTG 裝置。', hint: '', icon: null }
     });
 }
 
-function renderUnmatchedPagination(totalPages) {
+function renderUnmappedHostsPagination(totalPages) {
     const container = document.getElementById('prtg-unmatched-pagination');
     if (!container) return;
 
     renderPagination(container, {
-        page: unmatchedPage,
+        page: unmappedPage,
         totalPages,
         onPage: page => {
-            refreshUnmatched(page);
+            refreshUnmappedHosts(page);
         },
-        pageSize: unmatchedPageSize,
+        pageSize: unmappedPageSize,
         onPageSize: size => {
-            unmatchedPageSize = size;
+            unmappedPageSize = size;
             savePageSize('prtg-unmatched', size);
-            refreshUnmatched(1);
+            refreshUnmappedHosts(1);
         },
         pageSizeOptions: PAGE_SIZE_OPTIONS
     });
+}
+
+// ── 名稱不一致（IP 已對上但 PRTG 名稱不同，只提醒）────────────────────────
+
+async function refreshNameMismatch() {
+    const section = document.getElementById('prtg-name-mismatch-section');
+    const container = document.getElementById('prtg-name-mismatch-table');
+    if (!section || !container) return;
+    try {
+        const items = await api.get('/api/admin/settings/prtg-name-mismatch', { silent: true });
+        const rows = Array.isArray(items) ? items : [];
+        section.classList.toggle('d-none', rows.length === 0);
+        renderTable(container, {
+            columns: [
+                { title: '主機', className: 'lf-w-lg', truncate: true, render: item => item.hostName || `Host ID: ${item.hostId}` },
+                { title: 'IP', className: 'lf-w-md font-monospace', render: item => item.ipAddress || '-' },
+                { title: '提醒', className: 'text-muted', render: item => item.note || '-' }
+            ],
+            rows,
+            empty: { title: '無名稱不一致的主機', hint: '', icon: null }
+        });
+    } catch (error) {
+        // 只是提醒資訊：失敗時隱藏整區，不干擾主流程
+        section.classList.add('d-none');
+    }
 }
 
 function renderIpExcludesLoading() {
@@ -1640,7 +1693,7 @@ function renderIpExcludes(items) {
             }
         ],
         rows: items || [],
-        empty: { title: '無排除 IP', hint: '需要略過某個 IP 時，可從衝突或未對應清單點「排除此 IP」。', icon: null }
+        empty: { title: '無排除 IP', hint: '需要略過某個 IP 時，可從衝突清單點「排除此 IP」。', icon: null }
     });
 }
 
@@ -1695,7 +1748,7 @@ function renderManualMaps(items) {
             }
         ],
         rows: items || [],
-        empty: { title: '無人工對應項目', hint: '需要手動指定主機時，可從衝突或未對應清單點「指派」。', icon: null }
+        empty: { title: '無人工對應項目', hint: '需要手動指定主機時，可從衝突清單或未對應主機清單指派。', icon: null }
     });
 }
 
@@ -1727,81 +1780,13 @@ async function openAssignModal(item) {
     const hostSelect = document.getElementById('prtg-assign-host');
     const hostSelectGroup = document.getElementById('prtg-assign-host-select-group');
 
-    // 依 conflictKind 設定裝置選擇
-    if (item.conflictKind === 'multi-device') {
-        deviceChoiceEl.replaceChildren();
-        deviceChoiceEl.classList.remove('d-none');
-
-        const choiceLabel = document.createElement('label');
-        choiceLabel.className = 'form-label fw-semibold small mb-2';
-        choiceLabel.textContent = '選擇 PRTG 裝置';
-        deviceChoiceEl.appendChild(choiceLabel);
-
-        const devices = (item.sameIpDevices && item.sameIpDevices.length > 0)
-            ? item.sameIpDevices
-            : [{ objid: item.deviceObjid, name: item.deviceName, groupPath: item.groupPath }];
-
-        for (const dev of devices) {
-            const formCheck = document.createElement('div');
-            formCheck.className = 'form-check mb-1';
-
-            const radio = document.createElement('input');
-            radio.type = 'radio';
-            radio.className = 'form-check-input';
-            radio.name = 'prtg-assign-device-radio';
-            radio.id = `prtg-assign-dev-${dev.objid}`;
-            radio.value = String(dev.objid);
-            if (Number(dev.objid) === Number(item.deviceObjid)) {
-                radio.checked = true;
-            }
-            radio.addEventListener('change', () => {
-                if (radio.checked && titleEl) {
-                    titleEl.textContent = `指派 device ${dev.objid}（${ipText}）`;
-                }
-            });
-
-            const label = document.createElement('label');
-            label.className = 'form-check-label font-monospace small';
-            label.htmlFor = `prtg-assign-dev-${dev.objid}`;
-            let text = `${dev.objid}　${dev.name || ''}`;
-            if (dev.groupPath) {
-                text += ` (${dev.groupPath})`;
-            }
-            label.textContent = text;
-
-            formCheck.append(radio, label);
-            deviceChoiceEl.appendChild(formCheck);
-        }
-
-        if (!deviceChoiceEl.querySelector('input[name="prtg-assign-device-radio"]:checked') && devices.length > 0) {
-            const firstRadio = deviceChoiceEl.querySelector('input[name="prtg-assign-device-radio"]');
-            if (firstRadio) firstRadio.checked = true;
-        }
-    } else {
-        deviceChoiceEl.replaceChildren();
-        deviceChoiceEl.classList.add('d-none');
-    }
+    deviceChoiceEl.replaceChildren();
+    deviceChoiceEl.classList.add('d-none');
 
     const candidates = item.candidateHosts || [];
 
     // 依候選主機數量決定目標主機顯示
-    if (item.conflictKind === 'multi-device' && candidates.length === 1) {
-        currentFixedHostId = candidates[0].hostId;
-        hostFixedEl.replaceChildren();
-        hostFixedEl.classList.remove('d-none');
-
-        const fixedTitle = document.createElement('label');
-        fixedTitle.className = 'form-label text-muted small mb-1';
-        fixedTitle.textContent = '目標主機';
-        const fixedVal = document.createElement('div');
-        fixedVal.className = 'fw-semibold';
-        const ch = candidates[0];
-        fixedVal.textContent = `${ch.hostName}${ch.ipAddress ? ` (${ch.ipAddress})` : ''}`;
-        hostFixedEl.append(fixedTitle, fixedVal);
-
-        if (hostSelectGroup) hostSelectGroup.classList.add('d-none');
-        assignModal.show();
-    } else if (candidates.length === 0) {
+    if (candidates.length === 0) {
         hostFixedEl.replaceChildren();
         hostFixedEl.classList.add('d-none');
         if (hostSelectGroup) hostSelectGroup.classList.remove('d-none');
@@ -1841,6 +1826,136 @@ async function openAssignModal(item) {
     }
 }
 
+// ── 依主機指派（主機端發起：選主機 → 搜尋 PRTG 裝置 → 指派）──────────────
+
+let hostAssignModal = null;
+let hostAssignTarget = null;
+let hostAssignSelectedObjid = null;
+let hostAssignSearchSeq = 0;
+
+function openHostAssignModal(host) {
+    const modalEl = document.getElementById('prtg-host-assign-modal');
+    if (!modalEl) return;
+    if (!hostAssignModal) hostAssignModal = new bootstrap.Modal(modalEl);
+
+    hostAssignTarget = host;
+    hostAssignSelectedObjid = null;
+    hostAssignSearchSeq++;
+    document.getElementById('prtg-host-assign-host').textContent = host.hostName || `Host ID: ${host.hostId}`;
+    document.getElementById('prtg-host-assign-ip').textContent = host.ipAddress || '無 IP';
+    // 使用者最常照 IP 找，預設帶入主機 IP
+    document.getElementById('prtg-host-assign-query').value = host.ipAddress || '';
+    document.getElementById('prtg-host-assign-note').value = '';
+    document.getElementById('prtg-host-assign-results').replaceChildren();
+    document.getElementById('prtg-host-assign-more').classList.add('d-none');
+    document.getElementById('prtg-host-assign-submit').disabled = true;
+    hostAssignModal.show();
+}
+
+async function searchPrtgDevicesForHost() {
+    const input = document.getElementById('prtg-host-assign-query');
+    const box = document.getElementById('prtg-host-assign-results');
+    const moreEl = document.getElementById('prtg-host-assign-more');
+    const q = (input.value || '').trim();
+    if (q.length < 2) {
+        toast('請至少輸入 2 個字再搜尋', 'warning');
+        return;
+    }
+    const seq = ++hostAssignSearchSeq;
+    hostAssignSelectedObjid = null;
+    document.getElementById('prtg-host-assign-submit').disabled = true;
+    moreEl.classList.add('d-none');
+    renderSpinner(box, '載入中…');
+    try {
+        const res = await api.get(`/api/admin/settings/prtg-devices/search?q=${encodeURIComponent(q)}`, { silent: true });
+        if (seq !== hostAssignSearchSeq) return;
+        const items = ((res && res.items) ? res.items : []).slice(0, 20);
+        box.replaceChildren();
+        if (items.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'text-muted small py-2';
+            empty.textContent = '找不到符合的 PRTG 裝置。';
+            box.appendChild(empty);
+            return;
+        }
+        const list = document.createElement('div');
+        list.className = 'list-group';
+        for (const dev of items) {
+            const label = document.createElement('label');
+            label.className = 'list-group-item list-group-item-action d-flex gap-2 align-items-start small';
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'prtg-host-assign-device';
+            radio.className = 'form-check-input mt-1';
+            radio.value = String(dev.objid);
+            radio.addEventListener('change', () => {
+                hostAssignSelectedObjid = Number(dev.objid);
+                document.getElementById('prtg-host-assign-submit').disabled = false;
+            });
+            const text = document.createElement('span');
+            const name = document.createElement('span');
+            name.className = 'fw-semibold';
+            name.textContent = dev.name || String(dev.objid);
+            const detail = document.createElement('span');
+            detail.className = 'text-muted ms-2';
+            detail.textContent = `${dev.groupPath || '-'}　${dev.ip || '無 IP'}`;
+            text.append(name, detail);
+            label.append(radio, text);
+            list.appendChild(label);
+        }
+        box.appendChild(list);
+        moreEl.classList.toggle('d-none', !(res && res.hasMore));
+    } catch (error) {
+        if (seq !== hostAssignSearchSeq) return;
+        renderError(box, {
+            message: `搜尋失敗：${error && error.message ? error.message : '網路或伺服器錯誤'}`,
+            onRetry: searchPrtgDevicesForHost
+        });
+    }
+}
+
+function bindHostAssignModal() {
+    const form = document.getElementById('prtg-host-assign-form');
+    const submitBtn = document.getElementById('prtg-host-assign-submit');
+    const searchBtn = document.getElementById('prtg-host-assign-search');
+    const input = document.getElementById('prtg-host-assign-query');
+    if (!form || !submitBtn || !searchBtn || !input) return;
+
+    searchBtn.addEventListener('click', searchPrtgDevicesForHost);
+    input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            searchPrtgDevicesForHost();
+        }
+    });
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!hostAssignTarget || hostAssignSelectedObjid == null) {
+            toast('請先搜尋並選擇一台 PRTG 裝置', 'warning');
+            return;
+        }
+        const note = document.getElementById('prtg-host-assign-note').value.trim() || null;
+        const restore = withBusy(submitBtn, '指派中');
+        try {
+            const res = await api.put('/api/admin/settings/prtg-manual-map', {
+                expectedScopeRevision: scopeRevision,
+                deviceObjid: hostAssignSelectedObjid,
+                hostId: hostAssignTarget.hostId,
+                note
+            });
+            toast('已指派', 'success');
+            notifyRemapWarning(res);
+            if (hostAssignModal) hostAssignModal.hide();
+            await Promise.all([refreshMirrorViews(), refreshScopePurge()]);
+        } catch (error) {
+            toast(error && error.message ? error.message : '指派失敗', 'danger');
+        } finally {
+            restore();
+        }
+    });
+}
+
 function bindAssignForm() {
     const form = document.getElementById('prtg-assign-form');
     const submitBtn = document.getElementById('prtg-assign-submit');
@@ -1851,13 +1966,7 @@ function bindAssignForm() {
 
         if (!currentAssignItem) return;
 
-        let targetDeviceObjid = currentAssignItem.deviceObjid;
-        if (currentAssignItem.conflictKind === 'multi-device') {
-            const checkedRadio = document.querySelector('input[name="prtg-assign-device-radio"]:checked');
-            if (checkedRadio) {
-                targetDeviceObjid = Number(checkedRadio.value);
-            }
-        }
+        const targetDeviceObjid = currentAssignItem.deviceObjid;
 
         let targetHostId = currentFixedHostId;
         if (!targetHostId) {
@@ -1885,7 +1994,8 @@ function bindAssignForm() {
             await Promise.all([
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
-                refreshUnmatched(unmatchedPage),
+                refreshUnmappedHosts(unmappedPage),
+                refreshNameMismatch(),
                 refreshScopePurge()
             ]);
         } catch (error) {
@@ -2112,6 +2222,8 @@ function renderScopePurge(preview) {
     devicesEl.textContent = names.length > 0
         ? `裝置：${names.join('、')}${affectedDevices > names.length ? ' 等' : ''}`
         : '';
+    // 範圍外的裝置名稱多半不在主機清單內：預設收合，只在確認清除前需要看時展開（docs/PRTG-SPEC.md §1）
+    devicesEl.closest('details')?.classList.toggle('d-none', names.length === 0);
     btn.dataset.previewId = preview.previewId || '';
     btn.dataset.expiresAtUtc = preview.expiresAtUtc || '';
     const pendingJob = scopePurgeStorageKey && sessionStorage.getItem(`${scopePurgeStorageKey}:job-id`);
@@ -2218,7 +2330,8 @@ function bindPrtgMirror() {
             await Promise.all([
                 refreshPrtgMirror(),
                 refreshConflicts(conflictPage),
-                refreshUnmatched(unmatchedPage),
+                refreshUnmappedHosts(unmappedPage),
+                refreshNameMismatch(),
                 refreshScopePurge()
             ]);
             toast('已重新整理 PRTG 鏡像狀態', 'success');
@@ -2850,6 +2963,9 @@ function init() {
     bindStructureSync();
     bindConflictBatchControls();
     bindUnmatchedControls();
+    bindHostAssignModal();
+    bindRememberedCollapse(document.getElementById('prtg-name-mismatch-collapse'),
+        document.getElementById('prtg-name-mismatch-toggle-btn'), 'prtg-name-mismatch');
     initCalibration();
     initValueReadiness();
     loadSettings();
@@ -2858,7 +2974,8 @@ function init() {
     loadSnapshotDiagnostics();
     refreshAcceptanceAi();
     refreshConflicts(1);
-    refreshUnmatched(1);
+    refreshUnmappedHosts(1);
+    refreshNameMismatch();
     refreshIpExcludes();
     refreshPrtgProbeStatus();
     refreshStructureSyncStatus();

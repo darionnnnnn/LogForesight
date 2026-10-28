@@ -455,14 +455,15 @@
                 <div class="row g-3 mb-3" id="prtg-mirror-stats">
                     <div class="col-md-4">
                         <div class="border rounded p-2 bg-light">
-                            <div class="text-muted small">鏡像裝置數</div>
-                            <div class="fs-5 fw-semibold" id="prtg-mirror-device-count">-</div>
-                            <div class="text-muted small" id="prtg-mirror-last-device-sync">最後同步：-</div>
+                            <div class="text-muted small">已對應主機</div>
+                            <div class="fs-5 fw-semibold" id="prtg-mirror-mapped-hosts">-</div>
+                            <div class="text-muted small" id="prtg-mirror-unmapped-sub">未對應 - 台</div>
+                            <div class="text-muted small" id="prtg-mirror-last-device-sync">結構最後同步：-</div>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="border rounded p-2 bg-light">
-                            <div class="text-muted small">鏡像感測器數（監看裝置）</div>
+                            <div class="text-muted small">監看感測器數</div>
                             <div class="fs-5 fw-semibold" id="prtg-mirror-sensor-count">-</div>
                             <div class="text-muted small" id="prtg-mirror-last-sensor-sync">最後同步：-</div>
                         </div>
@@ -492,7 +493,10 @@
                     </div>
                     <div class="small text-warning d-none" id="prtg-scope-purge-blocked" role="status"></div>
                     <div class="small" id="prtg-scope-purge-summary">載入中…</div>
-                    <div class="small text-muted" id="prtg-scope-purge-devices"></div>
+                    <details class="small text-muted mt-1 d-none" id="prtg-scope-purge-devices-details">
+                        <summary>涉及的裝置名稱（範圍外資料，多半不在主機清單內）</summary>
+                        <div id="prtg-scope-purge-devices"></div>
+                    </details>
                 </div>
 
                 <div class="border rounded p-3 mb-3">
@@ -501,9 +505,10 @@
                         <span class="text-muted small" id="prtg-mirror-map-date">對應基準日：-</span>
                     </div>
                     <div class="d-flex flex-wrap gap-4 small mb-2">
-                        <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
-                        <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
-                        <div>未對應（PRTG 獨有）：<button type="button" class="badge bg-secondary border-0 text-decoration-none lf-pointer" id="prtg-mirror-map-unmatched" aria-label="跳至未對應清單" title="跳至未對應清單">0</button></div>
+                        <div>已對應主機：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
+                        <div>衝突主機：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
+                        <div>未對應主機：<button type="button" class="badge bg-secondary border-0 text-decoration-none lf-pointer" id="prtg-mirror-map-unmatched" aria-label="跳至未對應主機清單" title="跳至未對應主機清單">0</button></div>
+                        <div>名稱不一致：<span class="badge bg-secondary" id="prtg-mirror-map-name-mismatch">0</span></div>
                         <div>已排除 IP：<span class="badge bg-secondary" id="prtg-mirror-ip-exclude-count">0</span></div>
                         <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
@@ -537,7 +542,7 @@
 
                     <div class="mt-4" id="prtg-unmatched-section" tabindex="-1">
                         <div class="d-flex align-items-center justify-content-between mb-1">
-                            <div class="small fw-semibold text-secondary">未對應清單（PRTG 獨有）</div>
+                            <div class="small fw-semibold text-secondary">未對應主機（主機清單內沒有對應到 PRTG 的主機）</div>
                             <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="prtg-unmatched-toggle-btn" aria-expanded="true" aria-controls="prtg-unmatched-collapse">
                                 收合
                             </button>
@@ -545,6 +550,17 @@
                         <div class="collapse show" id="prtg-unmatched-collapse">
                             <div id="prtg-unmatched-table"><div class="text-muted small text-center py-2">載入中…</div></div>
                             <div id="prtg-unmatched-pagination" class="mt-2"></div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 d-none" id="prtg-name-mismatch-section">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <div class="small fw-semibold text-secondary">名稱不一致（主機名稱可能已變更）</div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="prtg-name-mismatch-toggle-btn" aria-expanded="false" aria-controls="prtg-name-mismatch-collapse">展開</button>
+                        </div>
+                        <div class="collapse" id="prtg-name-mismatch-collapse">
+                            <div class="form-text text-muted mb-2">IP 已對上 PRTG 裝置，但名稱不同；僅提醒，不影響對應。</div>
+                            <div id="prtg-name-mismatch-table"></div>
                         </div>
                     </div>
 
@@ -823,6 +839,43 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
                     <button type="submit" class="btn btn-primary btn-sm" id="prtg-assign-submit">確認指派</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="prtg-host-assign-modal" tabindex="-1" aria-labelledby="prtg-host-assign-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="prtg-host-assign-title">指派 PRTG 裝置給主機</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="prtg-host-assign-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <div class="text-muted small">目標主機</div>
+                        <div><span class="fw-semibold" id="prtg-host-assign-host">-</span>
+                            <span class="font-monospace text-muted ms-2" id="prtg-host-assign-ip">-</span></div>
+                    </div>
+                    <div class="mb-2">
+                        <label for="prtg-host-assign-query" class="form-label">搜尋 PRTG 裝置（名稱或 IP，至少 2 字）</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control" id="prtg-host-assign-query" maxlength="128" autocomplete="off" />
+                            <button type="button" class="btn btn-outline-secondary" id="prtg-host-assign-search">搜尋</button>
+                        </div>
+                    </div>
+                    <div id="prtg-host-assign-results" class="mb-2"></div>
+                    <div class="small text-warning mb-2 d-none" id="prtg-host-assign-more">結果超過 20 筆，請輸入更完整的名稱或 IP</div>
+                    <div class="mb-1">
+                        <label for="prtg-host-assign-note" class="form-label">說明（選填）</label>
+                        <input type="text" class="form-control form-control-sm" id="prtg-host-assign-note" maxlength="512" placeholder="例如：手動指定對應原因" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary btn-sm" id="prtg-host-assign-submit" disabled>確認指派</button>
                 </div>
             </form>
         </div>

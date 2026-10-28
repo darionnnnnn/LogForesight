@@ -117,10 +117,12 @@ public sealed class PrtgMonitoringContractTests : IDisposable
     public void 預覽未對應與試點排除_等待Netiq_沒有副作用_空權限零筆()
     {
         var controller = Controller(); Assert.IsType<OkObjectResult>(Save(controller, Request()));
-        _backend.PrtgStore().UpsertSensors([new() { Objid = 200, DeviceObjid = 99, Name = "Unmapped", SensorType = "ping" }], DateTime.Now);
+        _backend.PrtgStore().UpsertSensors([new() { Objid = 200, DeviceObjid = 99, Name = "Unmapped", SensorType = "ping" },
+            new() { Objid = 201, DeviceObjid = 10, Name = "Mapped-extra", SensorType = "ping" }], DateTime.Now);
         var preview = Assert.IsType<OkObjectResult>(controller.Preview());
         var json = JsonSerializer.Serialize(preview.Value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-        Assert.Contains("尚無有效主機對應", json);
+        // 沒有對應到清單主機的感測器（Unmapped）不出現在預覽（docs/PRTG-SPEC.md §1）
+        Assert.DoesNotContain("Unmapped", json);
         Assert.Contains("感測器不在監看範圍清單", json);
         Assert.Contains("等待目標日 NetIQ 成功分析", json);
         var restricted = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(Controller(new(1)).Preview()).Value);

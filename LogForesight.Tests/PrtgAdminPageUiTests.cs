@@ -133,4 +133,26 @@ public sealed class PrtgAdminPageUiTests
         Assert.Contains("day.alreadyCompleted ? '已完成，略過' : '回填'", render);
         Assert.Contains("syncFullBackfillStart(preview);", render);
     }
+
+    [Fact]
+    public void E3_鏡像狀態頁只呈現主機清單內的主機_檢視殼不含舊字樣()
+    {
+        var view = View();
+        foreach (var banned in new[] { "鏡像裝置數", "PRTG 獨有", "衝突（多筆）" })
+            Assert.DoesNotContain(banned, view);
+        Assert.Contains("已對應主機", view);
+        Assert.Contains("未對應主機", view);
+    }
+
+    [Fact]
+    public void E3_鏡像狀態腳本改走主機端端點_舊分支與欄位已移除_原因都有中文()
+    {
+        var js = Script();
+        foreach (var banned in new[] { "status=unmatched", "'multi-device'", "'hostname-host-taken'", "mapUnmatched", "mapConflict", "deviceCount" })
+            Assert.DoesNotContain(banned, js);
+        foreach (var required in new[] { "prtg-unmapped-hosts", "prtg-devices/search", "prtg-name-mismatch" })
+            Assert.Contains(required, js);
+        foreach (var (key, text) in new[] { ("no-ip", "主機沒有 IP"), ("ip-excluded", "IP 已排除"), ("conflict", "此 IP 由多台主機共用"), ("not-in-prtg", "PRTG 找不到此 IP") })
+            Assert.Matches(new Regex(@"'?" + Regex.Escape(key) + @"'?\s*:\s*'" + Regex.Escape(text) + "'"), js);
+    }
 }
