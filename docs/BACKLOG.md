@@ -511,14 +511,6 @@
 兩者都要動 `IPrtgAddressResolver` 簽章。**觸發時機**：探測「IP 覆蓋概要」的 DNS 名稱台數破百、
 或同步結構與對應的執行紀錄顯示對應階段超過兩分鐘。
 
-## PRTG 衝突清單：型別與候選主機改由快照決定
-
-`GET prtg-host-map` 的 `conflictKind` 與 `candidateHosts` 用**當下**的 `lf_prtg_devices`／主機主檔推導，
-衝突列本身卻來自最近一次對應快照。快照產生後 device 被刪或改 IP，型別會從「同 IP 多裝置」翻成「IP 對多主機」，
-指派 modal 就不會列 device radio。同一判定在 `PrtgHostMapper` 與 controller 各一份。
-**修法**：在 `lf_prtg_host_map` 存 `conflict_kind` 欄，一次做對。**觸發時機**：使用者回報指派畫面型別不對；
-寫入後即時重算對應已讓快照隨操作更新，實務影響小。
-
 ## PRTG 衝突清單分頁：後端仍全表載入
 
 `GetLatestHostMapWithDate`＋主機主檔仍是全表讀進記憶體排序後才 `Skip/Take`，

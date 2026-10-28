@@ -176,8 +176,11 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 **某日用哪一份對應**（`EfPrtgStore.FindLatestHostMapDate` 唯一出口）：該日或之前最近一份（往回 31 天）；找不到時沿用該日之後最早一份，
 執行輸出與逐日說明註明「沿用 YYYY-MM-DD 的主機對應」。正式環境 IP 很少異動；代價是 IP 曾改配給別台主機時，那段舊資料會掛到現在的主機上。
 
-**對應規則升級**（`PrtgHostMapper.RuleVersion`，blob `prtg_host_map_rule_version`）：版本不符時，站台啟動以本機裝置鏡像＋主機主檔重算今天的對應（不連線 PRTG），
-寫入成功後才刪除其他日期的舊對應並記下版本；鏡像沒有裝置或任何一步失敗時不刪、不記版本，下次啟動再試（`PrtgHostMapRefresher.TryApplyRuleUpgrade`）。
+**對應規則升級**（`PrtgHostMapper.RuleVersion`，blob `prtg_host_map_rule_version`）：版本不符時，站台開始服務後在背景以本機裝置鏡像＋主機主檔重算今天的對應
+（不連線 PRTG；重算要逐台解析 DNS 名稱，不放在啟動路徑），今天至少有一筆 `ok` 對應才刪除其他日期的舊對應並記下版本——
+刪除一次一個日期、Serializable 交易、範圍異動槽檢查、刪後遞增對應資料版本，與保留期清除同一套保護。
+鏡像沒有裝置、今天沒有任何主機對上或任何一步失敗時不刪、不記版本，下次啟動再試（`PrtgHostMapRefresher.TryApplyRuleUpgrade`）。
+校準（§11）刻意不沿用之後的對應：它以「那天已有對應」判斷 PRTG 資料當天確實在收。
 
 ### 位址怎麼比對
 

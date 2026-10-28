@@ -810,6 +810,7 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 
 | key | 讀寫端 | 內容 |
 |---|---|---|
+| `prtg_host_map_rule_version` | `PrtgHostMapRefresher.TryApplyRuleUpgrade`（升級成功後寫、站台啟動後讀） | 已套用的主機對應規則版本（`PrtgHostMapper.RuleVersion`）；不符時重算今天並刪除舊規則產生的對應 |
 | `prtg_sync_status` | `PrtgStructureSyncStatusStore`（手動同步、夜間結構同步成功時寫；status API 讀） | 上次結構同步結果；從未執行為 null |
 | `prtg_scope_revision` | `EfPrtgStore`（人工對應／IP 排除同交易遞增；`PrtgOperationScope` 讀） | 範圍修改識別，供取消安全點與 `expectedScopeRevision` 比對 |
 | `prtg_scope_baseline` | `PrtgScopeDevices`（範圍清除寫基準、`CheckShrink` 讀） | 監看裝置數基準 |

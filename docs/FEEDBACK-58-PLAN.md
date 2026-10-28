@@ -28,9 +28,9 @@
 | 判定 | 唯一出口 | 不得另寫的地方 |
 |---|---|---|
 | 某日該用哪一份主機對應（往回 31 天優先、再往後） | `EfPrtgStore.FindLatestHostMapDate` | 管線、就緒度、快照、回填、校準都經 `GetLatestHostMapWithDate` |
-| 回填／接續補值的主機範圍 | `PrtgValueFetchScope.BackfillHosts(strategy, …)` | 預覽、runner、估算端點 |
-| 清單主機的 PRTG 對應狀態與未對應原因 | Web `PrtgHostCoverage`（新） | 主機頁篩選、維護頁未對應清單、排程頁 PRTG 卡計數 |
-| 擷取階段失敗的記錄 | `PrtgFetchService.RecordStageFailure`（新小函式） | 14 處 `failures++` 全改呼叫它 |
+| 回填／接續補值的主機範圍 | `PrtgValueFetchScope.BackfillScope(strategy, setting)`（實作名，規劃寫 BackfillHosts） | 預覽、runner、估算端點 |
+| 清單主機的 PRTG 對應狀態、未對應原因、名稱不一致主機 | Core `PrtgHostCoverage`（`MappedHostIds`／`Unmapped`／`NameMismatchHostIds`） | 主機頁篩選、維護頁未對應清單與統計、名稱不一致端點、對應摘要 |
+| 擷取階段失敗的記錄 | `PrtgFetchService` 內的 `Fail`（實作名，規劃寫 RecordStageFailure） | 14 處 `failures++` 全改呼叫它 |
 | KPI 卡列 | `core/ui.js` `kpiStrip` | 四頁都用，不再有 `col-6 col-lg-3`＋`statCard` |
 
 ---
@@ -297,11 +297,39 @@
 - 複檢完成，第二版新增：B-5 先算後刪、D 空白名單明確拒絕、E Coverage 單一判定、C 不加欄位、各批可機器驗證的驗收與突變。
 
 ## 升級注意（併 master 前帶給使用者）
-1. 第一次啟動重算 PRTG 主機對應（有稽核）；過去日沿用新對應；用「立即執行」回望並勾「一併補齊」補數值。
+1. 第一次啟動後在背景重算 PRTG 主機對應（記在 NLog，不寫稽核；今天沒有任何主機對上時不刪舊對應、下次啟動再試）；過去日沿用新對應；用「立即執行」回望並勾「一併補齊」補數值。
 2. 衝突數大幅下降（同 IP 多裝置自動對應）；取數範圍與快照 sensor 數會上升，到擷取參數「估算規模」確認。
 3. 之前的人工對應、IP 排除不受影響。
 4. 全量回填完成水位失效一次。
 5. 說明書對應章節有更新。
+
+## 體檢輪修正（收尾前最後體檢，2026-10-28）
+
+兩個獨立唯讀體檢代理（Sonnet 5.5：後端資料語意／前端操作與文件）＋主代理自查。每條都由主代理讀碼核實後才改；新修正各有測試與突變。
+
+| # | 嚴重度 | 發現 | 處置 |
+|---|---|---|---|
+| 1 | 高 | 名稱不一致收合鈕缺 `data-bs-toggle`／`data-bs-target`，按了展不開 | 補屬性＋守門測試（突變紅） |
+| 2 | 中 | 升級重算只看「今天有列」：主檔暫時讀不到時今天全 unmatched，會把有 ok 的歷史對應刪光 | 改為今天有 ok 才刪；測試（突變紅） |
+| 3 | 中 | 升級刪除繞過 Serializable、範圍異動槽、對應資料版本，且單句全表刪除、在啟動路徑同步執行 | 一次一日期＋三道保護；升級改站台啟動後背景執行 |
+| 4 | 中 | 最新一天這趟對應沒算出（擲例外）時，C-1 讓它被當成「沒有對應」評估完成，PRTG 腿假成功 | 最新一天沒有列時退回前一份；測試（突變紅） |
+| 5 | 中 | 校準自查對應、未走往後沿用 | **不採納修法**：實測改走沿用後涵蓋天數 30→56，會讓資料量門檻誤判可用；保留原取法並在程式與 PRTG-SPEC 註明 |
+| 6 | 中 | 一 IP 多主機只有最小 HostId 標衝突，其他主機誤標「PRTG 查無」 | Coverage 以衝突 IP 判定；測試（突變紅） |
+| 7 | 低中 | 主機頁「未對應」篩選含停用／已合併主機，與維護頁不一致 | 改用 `PrtgHostCoverage.Unmapped` 同一集合；測試 |
+| 8 | 低中 | `prtg-unmapped-hosts`、`prtg-name-mismatch` 沒有全站可見檢查 | 加 `RequireFullPrtgTransferAccess` |
+| 9 | 低中 | 白名單為空的拒絕也擋到指定主機補值 | 只擋全量與接續（實際上指定主機預覽本就自擋，屬一致性整理） |
+| 10 | 低 | 名稱不一致計數 device／主機混用 | 統一以主機計（`NameMismatchHostIds`） |
+| 11 | 低 | 規劃 C-4「共用階段失敗隔晚重評」未落實 | `NeedsReevaluation` 加 `stageFailed`，舊測試斷言對齊 |
+| 12 | 低 | KPI 標籤 title 蓋掉卡片說明、副標截斷無全文、報表說明只在 tooltip、h3 跳級、CSS 重複 | 依序修正 |
+| 13 | 低 | 確認框估算回來前可按「仍要開始」 | 估算回來或失敗前停用；守門測試 |
+| 14 | 低 | 範圍外資料預覽失敗時裝置名稱區殘留；依主機指派預設帶 IP 卻不搜尋 | 修正 |
+| 15 | 低 | 同步狀態 DTO 的 `LastDevices`（全站裝置數）與 `LastMapDate` 無消費端；`Fail(` 縮排殘留；註解疊放 | 移除／整理 |
+| 16 | 低 | BACKLOG「衝突型別由快照決定」已失效（只剩兩型、型別取自快照列的 Note） | 刪除該條 |
+| 17 | 低 | DB-SPEC blob 表缺 `prtg_host_map_rule_version`；PLAN 升級注意寫「有稽核」與實作不符 | 補表、改寫 |
+
+不採納／未處理（記錄理由）：裝置搜尋每次讀全部裝置（約 7 千筆，只在按搜尋或 Enter 時查，非逐字輸入）——量小、先不加快取；
+「裝置搜尋非 Maintain 回 403」沒有專屬測試（類別層 `[Permission(Maintain)]`＋`RequireFullPrtgTransferAccess`，與既有端點同一套）；
+Core `PrtgStructureSyncStatus` 舊 device 計數欄位保留（blob 相容，`MapOk` 仍被啟用準備讀取）；PRTG 未啟用時不跑升級，之後啟用要等下次重啟（啟用後第一次同步會寫新規則的今天對應，舊規則資料只在曾啟用過時存在）。
 
 ## 體檢交接
 
