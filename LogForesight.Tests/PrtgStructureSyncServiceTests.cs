@@ -180,7 +180,6 @@ public class PrtgStructureSyncServiceTests : IDisposable
 
         Assert.False(service.IsRunning, "結構同步背景工作應在受控回應後結束。");
         Assert.True(service.GetStatus().LastSuccess);
-        Assert.Equal(1, service.GetStatus().LastDevices);
         Assert.Equal(1, service.GetStatus().LastSensors);
         Assert.Equal(1, service.GetStatus().LastMappedHosts);
         Assert.Equal(0, service.GetStatus().LastUnmappedHosts);
@@ -312,7 +311,6 @@ public class PrtgStructureSyncServiceTests : IDisposable
 
         Assert.Equal(new DateTime(2026, 9, 9, 10, 0, 0), status.LastCompletedAt);
         Assert.True(status.LastSuccess);
-        Assert.Equal(0, status.LastDevices);
         // 畫面只拿主機口徑；device 計數（略過、衝突、查無主機）不再送到前端（docs/PRTG-SPEC.md §1）
         Assert.Equal(4, status.LastMappedHosts);
         Assert.Equal(2, status.LastUnmappedHosts);

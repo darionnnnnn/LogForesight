@@ -962,22 +962,45 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
-    /// PRTG 主機對應按日寫入。該日期的對應整份就地取代——先刪除該 map_date 的所有列，再寫入新的一批。
-    /// 傳入空清單時仍然清空該日，回傳 0。
-    /// </summary>
-    /// <summary>
     /// 刪除指定日期以外的全部主機對應列（對應規則升級用，見 <see cref="PrtgHostMapper.RuleVersion"/>）。
-    /// 呼叫端必須先成功寫入 <paramref name="keepDate"/> 的新對應；那一天沒有任何列時一律不刪，避免把對應表清空。
+    /// 呼叫端必須先成功寫入 <paramref name="keepDate"/> 的新對應；那一天**沒有任何 ok 列**時一律不刪——
+    /// 主機主檔暫時讀不到或 IP 全不命中時，新對應會是一整天的 unmatched，拿它取代舊對應等於把歷史歸戶清光（不可信範圍不清除）。
+    /// 與 <see cref="Prune(int)"/> 同一套保護：一次一個日期、Serializable 交易、範圍異動槽檢查、刪後遞增對應資料版本。
     /// </summary>
-    /// <returns>刪除列數；保留日沒有列時回 -1。</returns>
+    /// <returns>刪除列數；保留日沒有 ok 列時回 -1。</returns>
     public int DeleteHostMapsExceptDate(DateTime keepDate)
     {
         var keep = keepDate.Date;
-        using var ctx = _contextFactory();
-        if (!ctx.PrtgHostMaps.Any(m => m.MapDate == keep)) return -1;
-        return ctx.PrtgHostMaps.Where(m => m.MapDate != keep).ExecuteDelete();
+        List<DateTime> oldDates;
+        using (var probe = _contextFactory())
+        {
+            if (!probe.PrtgHostMaps.Any(m => m.MapDate == keep && m.MapStatus == PrtgMapStatus.Ok)) return -1;
+            oldDates = probe.PrtgHostMaps.Where(m => m.MapDate != keep).Select(m => m.MapDate).Distinct().ToList();
+        }
+
+        var total = 0;
+        foreach (var date in oldDates)
+        {
+            using var ctx = _contextFactory();
+            var strategy = ctx.Database.CreateExecutionStrategy();
+            total += strategy.Execute(() =>
+            {
+                ctx.ChangeTracker.Clear();
+                using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
+                var deleted = ctx.PrtgHostMaps.Where(m => m.MapDate == date).ExecuteDelete();
+                if (deleted > 0) IncrementHostMapDataRevision(ctx);
+                tx.Commit();
+                return deleted;
+            });
+        }
+        return total;
     }
 
+    /// <summary>
+    /// PRTG 主機對應按日寫入。該日期的對應整份就地取代——先刪除該 map_date 的所有列，再寫入新的一批。
+    /// 傳入空清單時仍然清空該日，回傳 0。
+    /// </summary>
     public int ReplaceHostMapForDate(DateTime mapDate, IReadOnlyList<PrtgHostMapRow> rows)
     {
         var targetDate = mapDate.Date;

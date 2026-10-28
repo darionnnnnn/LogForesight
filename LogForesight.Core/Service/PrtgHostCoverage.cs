@@ -36,28 +36,37 @@ public static class PrtgHostCoverage
         IEnumerable<WebHost> hosts, IReadOnlyCollection<PrtgHostMapRow> latestMapRows, IEnumerable<string> excludedIps)
     {
         var mapped = MappedHostIds(latestMapRows);
-        var conflictHosts = latestMapRows
-            .Where(r => r.MapStatus == PrtgMapStatus.Conflict && r.HostId.HasValue)
-            .Select(r => r.HostId!.Value)
-            .ToHashSet();
+        var conflictRows = latestMapRows.Where(r => r.MapStatus == PrtgMapStatus.Conflict).ToList();
+        // 一 IP 多主機的衝突列只把 HostId 填給最小者；共用同一 IP 的其他主機也是同一個衝突，要一起標「衝突」
+        var conflictHosts = conflictRows.Where(r => r.HostId.HasValue).Select(r => r.HostId!.Value).ToHashSet();
+        var conflictIps = conflictRows.Select(r => PrtgAddress.Normalize(r.Ip)).Where(ip => ip != null).Select(ip => ip!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var excluded = excludedIps.Select(PrtgAddress.Normalize).Where(ip => ip != null).Select(ip => ip!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return hosts
             .Where(h => h.Active && h.MergedInto == null && !mapped.Contains(h.HostId))
-            .Select(h => new PrtgUnmappedHost(h.HostId, h.HostName, h.IpAddress, ReasonFor(h, conflictHosts, excluded)))
+            .Select(h => new PrtgUnmappedHost(h.HostId, h.HostName, h.IpAddress, ReasonFor(h, conflictHosts, conflictIps, excluded)))
             .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static string ReasonFor(WebHost host, HashSet<long> conflictHosts, HashSet<string> excluded)
+    private static string ReasonFor(WebHost host, HashSet<long> conflictHosts, HashSet<string> conflictIps, HashSet<string> excluded)
     {
         if (conflictHosts.Contains(host.HostId)) return ReasonConflict;
         if (string.IsNullOrWhiteSpace(host.IpAddress)) return ReasonNoIp;
         var ip = PrtgAddress.Normalize(host.IpAddress);
+        if (ip != null && conflictIps.Contains(ip)) return ReasonConflict;
         if (ip != null && excluded.Contains(ip)) return ReasonIpExcluded;
         return ReasonNotInPrtg;
     }
+
+    /// <summary>IP 已對上、但 PRTG 名稱與主檔不同的主機（以主機計，不以 device 計）；鏡像統計、名稱不一致清單與對應摘要共用。</summary>
+    public static HashSet<long> NameMismatchHostIds(IEnumerable<PrtgHostMapRow> latestMapRows) =>
+        latestMapRows.Where(r => r.MapStatus == PrtgMapStatus.Ok && r.HostId.HasValue &&
+                                 (r.Note ?? "").StartsWith(PrtgHostMapper.NoteNameMismatchPrefix, StringComparison.Ordinal))
+            .Select(r => r.HostId!.Value)
+            .ToHashSet();
 }
 
 /// <summary>一台未對應到 PRTG 的清單主機。</summary>

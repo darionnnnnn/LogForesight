@@ -298,6 +298,50 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
+    public void 對應規則升級_今天沒有任何主機對上時不刪舊對應也不記版本()
+    {
+        var store = _backend.PrtgStore();
+        // 鏡像有裝置，但主機主檔沒有任何主機的 IP 對得上（例如主檔暫時讀不到）
+        store.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 7101, Name = "x", Ip = "10.71.0.1" } }, DateTime.Now);
+        var old = DateTime.Today.AddDays(-3);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7101, HostId = 1, MapStatus = PrtgMapStatus.Ok }
+        });
+        var revisionBefore = store.ReadHostMapDataRevision();
+        var (_, refresher) = CreateRefresher();
+
+        var warning = refresher.TryApplyRuleUpgrade();
+
+        Assert.NotNull(warning);
+        Assert.Contains("沒有任何主機對上", warning);
+        Assert.Contains(store.GetHostMapForDate(old), r => r.MapStatus == PrtgMapStatus.Ok);
+        Assert.Null(_backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
+        Assert.True(store.ReadHostMapDataRevision() >= revisionBefore);
+    }
+
+    [Fact]
+    public void 對應規則升級_刪除舊對應時遞增對應資料版本()
+    {
+        var store = _backend.PrtgStore();
+        _hosts.Upsert(new WebHost { HostName = "srv-rev", IpAddress = "10.72.0.1", Active = true });
+        store.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 7201, Name = "x", Ip = "10.72.0.1" } }, DateTime.Now);
+        var old = DateTime.Today.AddDays(-2);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7201, MapStatus = PrtgMapStatus.Conflict }
+        });
+        var (_, refresher) = CreateRefresher();
+        refresher.TryRefreshToday();
+        var revisionBefore = store.ReadHostMapDataRevision();
+
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+
+        Assert.Empty(store.GetHostMapForDate(old));
+        Assert.True(store.ReadHostMapDataRevision() > revisionBefore, "刪除舊對應後快取要能察覺（對應資料版本遞增）");
+    }
+
+    [Fact]
     public void 對應規則升級_PRTG未啟用時不動作()
     {
         var (_, refresher) = CreateRefresher(enabled: false);

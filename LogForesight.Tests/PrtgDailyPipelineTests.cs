@@ -1015,6 +1015,26 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task 最新一天這趟沒算出對應時退回前一份_不當成沒有對應()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var newest = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-FALLBACK", Active = true, IpAddress = "192.168.8.8" });
+        var prtgStore = _backend.PrtgStore();
+        // 裝置鏡像是空的：這趟對應寫出空的一天；感測器與前天的對應還在
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 8101, DeviceObjid = 81, Name = "Ping", SensorType = "Ping", Status = "Down" } }, DateTime.Now);
+        prtgStore.AppendStateChanges(new[] { new PrtgStateChangeRow { SensorObjid = 8101, ChangedAt = newest.Date.AddHours(2), Status = "Down" } });
+        MapDeviceToHost(newest.AddDays(-1), 81, host);
+        SeedNetiqParent(host, newest);
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { newest }, Task.CompletedTask, hostIds: null, guard: null);
+
+        Assert.NotEmpty(registry.For(host.HostId, newest));
+    }
+
+    [Fact]
     public async Task 完全沒有主機對應的日子算評估完成_不再每晚重評()
     {
         EnableConservativePrtgWithDefaultWhitelist();
@@ -1029,8 +1049,9 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.All(days, d => Assert.True(registry.IsEvaluated(d)));
         // 執行紀錄記下這趟的策略，畫面據此不顯示保守策略恆為 0 的 sensor 數
         Assert.Equal(PrtgFetchStrategy.Conservative, run.PrtgStrategy);
-        // 結構同步會失敗（假位址），失敗的日子照舊隔晚重評；這裡只驗「沒有對應」本身不再造成永久重評
-        Assert.All(run.PrtgDays!, stat => Assert.Equal(stat.Outcome == BatchRun.PrtgOutcomeFailed, stat.NeedsReevaluation));
+        // 假位址讓擷取失敗或部分失敗，這些日子照規則隔晚重評；「沒有對應」本身只會落成無產出，不再造成重評
+        Assert.All(run.PrtgDays!, stat => Assert.Equal(
+            stat.Outcome is BatchRun.PrtgOutcomeFailed or BatchRun.PrtgOutcomePartial, stat.NeedsReevaluation));
     }
 
     [Theory]

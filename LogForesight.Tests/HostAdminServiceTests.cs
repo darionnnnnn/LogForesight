@@ -510,6 +510,8 @@ public class HostAdminServiceTests : IDisposable
         var a = _hosts.Upsert(new WebHost { HostName = "SRV-OK", Active = true });
         var b = _hosts.Upsert(new WebHost { HostName = "SRV-CONFLICT", Active = true });
         var c = _hosts.Upsert(new WebHost { HostName = "SRV-NOMAP", Active = true });
+        // 停用主機不算「未對應」（與維護頁清單同口徑）
+        var d = _hosts.Upsert(new WebHost { HostName = "SRV-INACTIVE", Active = false });
 
         prtgStore.ReplaceHostMapForDate(now, new List<PrtgHostMapRow>
         {
@@ -525,6 +527,7 @@ public class HostAdminServiceTests : IDisposable
         Assert.DoesNotContain(a.HostId, ids);
         Assert.Contains(b.HostId, ids);
         Assert.Contains(c.HostId, ids);
+        Assert.DoesNotContain(d.HostId, ids);
         // 與 PRTG 維護頁「未對應主機」清單同一份判定（PrtgHostCoverage）：兩邊的主機集合必須一致
         var coverage = PrtgHostCoverage.Unmapped(_hosts.GetAll(), prtgStore.GetLatestHostMap(), Array.Empty<string>())
             .Select(h => h.HostId).ToHashSet();

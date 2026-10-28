@@ -481,9 +481,7 @@ public class PrtgStructureSyncStatusDto
     public bool? LastSuccess { get; set; }
     public string? LastErrorMessage { get; set; }
     public double? LastElapsedSeconds { get; set; }
-    public int? LastDevices { get; set; }
     public int? LastSensors { get; set; }
-    public DateTime? LastMapDate { get; set; }
     /// <summary>主機口徑的對應結果（null＝舊紀錄）；不提供主機清單外 device 的衝突／查無主機計數（docs/PRTG-SPEC.md §1）</summary>
     public int? LastMappedHosts { get; set; }
     public int? LastUnmappedHosts { get; set; }

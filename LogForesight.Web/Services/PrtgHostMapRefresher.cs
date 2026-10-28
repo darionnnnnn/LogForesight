@@ -89,7 +89,7 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
             var deleted = store.DeleteHostMapsExceptDate(today);
             if (deleted < 0)
             {
-                return "PRTG 主機對應規則已更新，但今天的對應沒有寫入任何列；舊對應保留，下次啟動再試。";
+                return $"PRTG 主機對應規則已更新，但今天的對應沒有任何主機對上（{result.HostSummary}）；舊對應保留，下次啟動再試。";
             }
 
             versionBlob.Mutate(_ => (PrtgHostMapper.RuleVersion.ToString(), true));

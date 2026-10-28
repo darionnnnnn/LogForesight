@@ -804,10 +804,7 @@ public class SettingsController : ControllerBase
         // 主機口徑：與「未對應主機」清單、主機頁篩選同一份判定（PrtgHostCoverage）
         var unmapped = _hosts == null ? Array.Empty<PrtgUnmappedHost>()
             : PrtgHostCoverage.Unmapped(_hosts.GetAll(), hostMaps, store.GetIpExcludes().Select(e => e.Ip));
-        var nameMismatchHosts = hostMaps
-            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue &&
-                        (m.Note ?? "").StartsWith(PrtgHostMapper.NoteNameMismatchPrefix, StringComparison.Ordinal))
-            .Select(m => m.HostId!.Value).Distinct().Count();
+        var nameMismatchHosts = PrtgHostCoverage.NameMismatchHostIds(hostMaps).Count;
 
         DateTime? snapshotLastAt = null;
         int snapshotSensors = 0;
@@ -983,7 +980,6 @@ public class SettingsController : ControllerBase
         return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
     }
 
-    /// <summary>PRTG 主機對應衝突清單分頁</summary>
     /// <summary>
     /// 未對應到 PRTG 的清單主機（啟用、未合併、沒有 ok 對應），附原因；維護頁「未對應主機」清單用。
     /// 只列主機清單內的主機（docs/PRTG-SPEC.md §1），判定與主機頁篩選同一份（<see cref="PrtgHostCoverage"/>）。
@@ -991,6 +987,8 @@ public class SettingsController : ControllerBase
     [HttpGet("prtg-unmapped-hosts")]
     public ApiResponse<PrtgUnmappedHostPageDto> GetPrtgUnmappedHosts([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
+        // 列出主機名與 IP：與人工對應、IP 排除清單同一道全站可見檢查，受限角色不得看到不可見主機
+        RequireFullPrtgTransferAccess();
         var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
         if (_backend == null || _hosts == null)
             return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto { Page = normPage, PageSize = normPageSize });
@@ -1017,6 +1015,8 @@ public class SettingsController : ControllerBase
     [HttpGet("prtg-name-mismatch")]
     public ApiResponse<List<PrtgNameMismatchDto>> GetPrtgNameMismatch()
     {
+        // 列出主機名與 IP：與人工對應、IP 排除清單同一道全站可見檢查，受限角色不得看到不可見主機
+        RequireFullPrtgTransferAccess();
         if (_backend == null) return ApiResponse<List<PrtgNameMismatchDto>>.Ok(new());
         var hostById = (_hosts?.GetAll() ?? new List<WebHost>()).ToDictionary(h => h.HostId);
         var items = _backend.PrtgStore().GetLatestHostMapWithDate(30).Rows
@@ -1069,6 +1069,7 @@ public class SettingsController : ControllerBase
         });
     }
 
+    /// <summary>PRTG 主機對應衝突清單分頁</summary>
     [HttpGet("prtg-host-map")]
     public ApiResponse<PrtgHostMapPageDto> GetPrtgHostMap(
         [FromQuery] string status,

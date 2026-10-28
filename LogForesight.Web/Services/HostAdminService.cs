@@ -313,10 +313,11 @@ public class HostAdminService
             }
             else if (prtgFilter == "unmatched")
             {
-                // 對主機清單而言，unmatched＝這台主機目前沒有任何成功（ok）的 PRTG 對應；
-                // 與 PRTG 維護頁「未對應主機」清單同一份判定（PrtgHostCoverage）
-                var mappedIds = PrtgHostCoverage.MappedHostIds(mapRows);
-                filtered = filtered.Where(h => !mappedIds.Contains(h.HostId));
+                // 對主機清單而言，unmatched＝啟用、未合併、目前沒有任何成功（ok）的 PRTG 對應；
+                // 與 PRTG 維護頁「未對應主機」清單同一份集合（PrtgHostCoverage.Unmapped），停用與已合併主機不算
+                var unmappedIds = PrtgHostCoverage.Unmapped(_hosts.GetAll(), mapRows, Array.Empty<string>())
+                    .Select(h => h.HostId).ToHashSet();
+                filtered = filtered.Where(h => unmappedIds.Contains(h.HostId));
             }
             // 無效篩選值依既有慣例當作沒篩，不回空清單
         }

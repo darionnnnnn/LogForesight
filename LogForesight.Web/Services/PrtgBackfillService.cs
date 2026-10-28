@@ -698,7 +698,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
-        if (PrtgValueFetchScope.BackfillBlockedReason(s.PrtgFetchStrategy, s.PrtgSensorTypeWhitelist) is { } blocked)
+        // 只擋「補全部已對應主機」的兩種（全量、立即執行接續）；指定主機補值只補選定的幾台，白名單為空時照舊可補
+        if (runKind is "full" or "tail" &&
+            PrtgValueFetchScope.BackfillBlockedReason(s.PrtgFetchStrategy, s.PrtgSensorTypeWhitelist) is { } blocked)
         {
             error = blocked;
             return false;

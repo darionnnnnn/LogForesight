@@ -56,6 +56,32 @@ public class PrtgHostCoverageTests
     }
 
     [Fact]
+    public void 一IP由兩台主機共用_兩台都標衝突_不是只有HostId最小那台()
+    {
+        var hosts = new[] { Host(2, "a", "10.0.0.9"), Host(5, "b", "10.0.0.9") };
+        // mapper 只把衝突列的 HostId 填給最小者（2）
+        var rows = new[] { new PrtgHostMapRow { DeviceObjid = 9, HostId = 2, Ip = "10.0.0.9", MapStatus = PrtgMapStatus.Conflict } };
+
+        var unmapped = PrtgHostCoverage.Unmapped(hosts, rows, Array.Empty<string>());
+
+        Assert.All(unmapped, h => Assert.Equal(PrtgHostCoverage.ReasonConflict, h.Reason));
+        Assert.Equal(2, unmapped.Count);
+    }
+
+    [Fact]
+    public void 名稱不一致以主機計_同主機兩台裝置只算一台()
+    {
+        var rows = new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 1, HostId = 7, MapStatus = PrtgMapStatus.Ok, Note = PrtgHostMapper.NoteNameMismatchPrefix + "：a" },
+            new PrtgHostMapRow { DeviceObjid = 2, HostId = 7, MapStatus = PrtgMapStatus.Ok, Note = PrtgHostMapper.NoteNameMismatchPrefix + "：b" },
+            new PrtgHostMapRow { DeviceObjid = 3, HostId = 8, MapStatus = PrtgMapStatus.Ok }
+        };
+
+        Assert.Equal(new long[] { 7 }, PrtgHostCoverage.NameMismatchHostIds(rows));
+    }
+
+    [Fact]
     public void 全部主機都已對應時回空清單()
     {
         var unmapped = PrtgHostCoverage.Unmapped(

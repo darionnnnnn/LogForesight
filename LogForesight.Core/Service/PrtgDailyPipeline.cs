@@ -238,7 +238,7 @@ internal static class PrtgDailyPipeline
                 // 失敗原因進「重要紀錄」：只計數的話執行詳情只看得到「部分失敗」，不知道是哪個階段
                 foreach (var failure in fetchResult.StageFailures)
                 {
-                    runRecorder.Milestone($"PRTG 擷取階段失敗：{failure}");
+                    runRecorder.Milestone($"PRTG 擷取階段失敗：{(failure.Length > 300 ? failure[..299] + "…" : failure)}");
                 }
             }
             catch (OperationCanceledException)
@@ -343,9 +343,17 @@ internal static class PrtgDailyPipeline
 
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，沒有時沿用之後最早的一份（docs/PRTG-SPEC.md §4）。
             // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。回傳的日期晚於 d 即為沿用。
-            (DateTime? MapDate, List<PrtgHostMapRow> Rows) ResolveHostMapRows(DateTime d) => d == newest
-                ? (newest, prtgStore.GetHostMapForDate(newest))
-                : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d);
+            // 最新一天的對應這趟沒算出來（對應擲例外、沒有寫入）時退回前一份，與觸發式取數同一種取法——
+            // 不退回的話這天會被當成「沒有任何對應」評估完成，PRTG 腿記為成功卻沒有證據，也不再隔晚補評。
+            (DateTime? MapDate, List<PrtgHostMapRow> Rows) ResolveHostMapRows(DateTime d)
+            {
+                if (d == newest)
+                {
+                    var todayRows = prtgStore.GetHostMapForDate(newest);
+                    if (todayRows.Count > 0) return (newest, todayRows);
+                }
+                return prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d);
+            }
 
             // 包裝層：合成問題靜音項目（以紀錄日 day 判定，見下方逐主機標記）
             var allSuppressions = new MuteAwareSuppressionStore(
@@ -923,7 +931,8 @@ internal static class PrtgDailyPipeline
                             note = (note is null ? "" : note + "；") + $"沿用 {borrowedFrom:yyyy-MM-dd} 的主機對應";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note,
-                            NeedsReevaluation: syncFailed || !prtgFindings.IsEvaluated(day));
+                            // 共用階段失敗（狀態變更、感測器結構…）時資料可能不完整：隔晚以完整資料重評（下一趟成功即收斂）
+                            NeedsReevaluation: syncFailed || stageFailed || !prtgFindings.IsEvaluated(day));
                     })
                     .ToList();
 

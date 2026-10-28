@@ -173,7 +173,7 @@ public sealed class PrtgFetchService
             }
             catch (Exception ex)
             {
-                                Fail($"[範圍] ✗ 監看裝置計算失敗：{ex.Message}");
+                Fail($"[範圍] ✗ 監看裝置計算失敗：{ex.Message}");
             }
         }
 
@@ -190,7 +190,7 @@ public sealed class PrtgFetchService
                 // 鏡像還沒有任何 sensor（例如剛設定完就按回填、每日擷取一次都沒跑過）。
                 // 不計失敗的話，接下來每一天都是「0 個 sensor 可抓 → 0 筆 → 無失敗」，
                 // 整趟回填會被報成成功——一筆資料都沒抓的成功，正是最難察覺的那種。
-                                Fail("  ✗ 鏡像尚無任何感測器結構，無法回填。請先執行一次每日擷取（或等夜間排程跑過）再回填。");
+                Fail("  ✗ 鏡像尚無任何感測器結構，無法回填。請先執行一次每日擷取（或等夜間排程跑過）再回填。");
                 return new PrtgFetchResult(0, 0, 0, 0, failures) { StageFailures = stageFailures };
             }
             _console.WriteLine($"[結構] 沿用既有鏡像的 {sensorTargets.Count} 個感測器（回填不重跑結構同步）。");
@@ -213,7 +213,7 @@ public sealed class PrtgFetchService
                 // 否則畫面會把「少了一大塊的鏡像」顯示成一次成功的同步。
                 if (!outcome.Converged)
                 {
-                                        Fail($"[階段 1/4] ✗ {outcome.Error}已寫入 {devicesCount} 台裝置，鏡像不完整。");
+                    Fail($"[階段 1/4] ✗ {outcome.Error}已寫入 {devicesCount} 台裝置，鏡像不完整。");
                 }
                 else
                 {
@@ -227,7 +227,7 @@ public sealed class PrtgFetchService
             }
             catch (Exception ex)
             {
-                                Fail($"[階段 1/4] 裝置結構同步失敗：{ex.Message}");
+                Fail($"[階段 1/4] 裝置結構同步失敗：{ex.Message}");
             }
 
             // 清除 PRTG 端已不存在的裝置：只有階段 1 無例外、分頁收斂且有寫入時，「沒刷新到」才代表「已被刪除」。
@@ -252,7 +252,7 @@ public sealed class PrtgFetchService
                 }
                 catch (Exception ex)
                 {
-                                        Fail($"[階段 1/4] 過期裝置清除失敗：{ex.Message}");
+                    Fail($"[階段 1/4] 過期裝置清除失敗：{ex.Message}");
                 }
             }
 
@@ -292,7 +292,7 @@ public sealed class PrtgFetchService
                         {
                             var shown = string.Join("、", failedDevices.OrderBy(id => id).Take(5));
                             var more = failedDevices.Count > 5 ? " 等" : "";
-                            Fail($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
+              Fail($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
                         }
                         else
                         {
@@ -312,7 +312,7 @@ public sealed class PrtgFetchService
                         _console.WriteLine($"[階段 2/4] 感測器結構同步完成：範圍內 {scopeDevices.Count} 台裝置、寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, outcome)}。");
                         if (!outcome.Converged)
                         {
-                                                        Fail($"[階段 2/4] ✗ {outcome.Error}已寫入 {sensorsCount} 個感測器，鏡像不完整。");
+                            Fail($"[階段 2/4] ✗ {outcome.Error}已寫入 {sensorsCount} 個感測器，鏡像不完整。");
                             // 感測器名單只有半套，階段 4 會照這份名單抓數值——不講的話，
                             // 數值表會安靜地少一大塊而看不出邊界在哪。
                             _console.WriteLine("[階段 2/4] ⚠ 感測器名單不完整，本趟的數值擷取只會涵蓋已取得的部分。");
@@ -330,7 +330,7 @@ public sealed class PrtgFetchService
                 }
                 catch (Exception ex)
                 {
-                                        Fail($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
+                    Fail($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
                 }
             }
 
@@ -384,7 +384,7 @@ public sealed class PrtgFetchService
                 }
                 catch (Exception ex)
                 {
-                                        Fail($"[階段 2/4] 過期感測器清除失敗：{ex.Message}");
+                    Fail($"[階段 2/4] 過期感測器清除失敗：{ex.Message}");
                 }
             }
 
@@ -398,7 +398,7 @@ public sealed class PrtgFetchService
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                                Fail($"[階段 2/4] 語意分類自動填入失敗：{ex.Message}");
+                Fail($"[階段 2/4] 語意分類自動填入失敗：{ex.Message}");
             }
         }
 
@@ -420,7 +420,7 @@ public sealed class PrtgFetchService
             stateChangesCount = rangeResult.TotalWritten;
             if (!rangeResult.Converged)
             {
-                                Fail($"[階段 3/4] ✗ {rangeResult.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
+                Fail($"[階段 3/4] ✗ {rangeResult.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
             }
             else if (scope != null)
             {
@@ -434,7 +434,7 @@ public sealed class PrtgFetchService
         }
         catch (Exception ex)
         {
-                        Fail($"[階段 3/4] 狀態變更同步失敗：{ex.Message}");
+            Fail($"[階段 3/4] 狀態變更同步失敗：{ex.Message}");
         }
 
         // 階段 4：hourly 數值（前一日）
@@ -452,7 +452,7 @@ public sealed class PrtgFetchService
                 // 代表這個階段實質上沒成功，必須計入 failures，否則回填會把整天報成成功。
                 if (failedSensorCount > 0 && written == 0)
                 {
-                                        Fail("[階段 4/4] 所有感測器的數值擷取皆失敗，本階段視為失敗。");
+                    Fail("[階段 4/4] 所有感測器的數值擷取皆失敗，本階段視為失敗。");
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -461,7 +461,7 @@ public sealed class PrtgFetchService
             }
             catch (Exception ex)
             {
-                                Fail($"[階段 4/4] 每小時數值擷取失敗：{ex.Message}");
+                Fail($"[階段 4/4] 每小時數值擷取失敗：{ex.Message}");
             }
         }
         else

@@ -135,9 +135,6 @@ try
         // appsettings.json 不再提供種子——全新環境部署後直接在維護頁新增伺服器。
         var sentinelStore = scope.ServiceProvider.GetRequiredService<ISentinelStore>();
 
-        // PRTG 主機對應規則升級：一次性，冪等；失敗不擋站台啟動（下次啟動再試），見 PrtgHostMapRefresher.TryApplyRuleUpgrade
-        var prtgMapUpgradeWarning = scope.ServiceProvider.GetRequiredService<IPrtgHostMapRefresher>().TryApplyRuleUpgrade();
-        if (prtgMapUpgradeWarning != null) logger.Warn(prtgMapUpgradeWarning);
 
         // SentinelId 回填（定案 4）：一次性遷移，冪等，見 SentinelIdBackfiller 的類別註解
         var hostStore = scope.ServiceProvider.GetRequiredService<IHostStore>();
@@ -241,6 +238,18 @@ try
 
     logger.Info("LogForesight.Web 啟動：驗證方式 {0}，資料根目錄 {1}",
         settings.Auth.Provider, settings.Storage.ResolveDataRoot());
+
+    // PRTG 主機對應規則升級：一次性、冪等，站台開始服務後才在背景執行——重算要逐台解析 DNS 名稱（每台最多 1 秒），
+    // 放在啟動路徑上可能超過 IIS 的啟動時限。失敗只記警告，下次啟動再試（PrtgHostMapRefresher.TryApplyRuleUpgrade）
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        var refresher = app.Services.GetRequiredService<IPrtgHostMapRefresher>();
+        _ = Task.Run(() =>
+        {
+            var warning = refresher.TryApplyRuleUpgrade();
+            if (warning != null) logger.Warn(warning);
+        });
+    });
 
     app.Run();
     return 0;

@@ -122,7 +122,6 @@ public sealed class PrtgHostMapper
         var skippedExcluded = 0;
         var skippedManualSibling = 0;
         var hostnameCount = 0;
-        var nameMismatchCount = 0;
         var pendingHostnameCandidates = new List<(PrtgDeviceRow Device, WebHost Host)>();
 
         // hostname 比對到多台主機：不猜，標 Conflict 並列出候選主機名（最多 5 個）。無 IP 與 IP 查無主機兩條路共用。
@@ -253,7 +252,6 @@ public sealed class PrtgHostMapper
                 {
                     okCount++;
                     var mismatch = NameMismatchNote(item.Device, h);
-                    if (mismatch != null) nameMismatchCount++;
                     rows.Add(new PrtgHostMapRow
                     {
                         MapDate = targetDate,
@@ -360,11 +358,12 @@ public sealed class PrtgHostMapper
         var mappedHosts = rows.Where(r => r.MapStatus == PrtgMapStatus.Ok && r.HostId.HasValue)
             .Select(r => r.HostId!.Value).Distinct().Count();
         var unmappedHosts = activeHosts.Count - mappedHosts;
+        var nameMismatchHosts = PrtgHostCoverage.NameMismatchHostIds(rows).Count;
         _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：已對應主機 {mappedHosts} 台（裝置 {okCount} 台，其中人工 {manualCount}、名稱退路 {hostnameCount}）、" +
-                           $"需處理衝突 {conflictCount} 筆、名稱不一致 {nameMismatchCount} 台");
+                           $"需處理衝突 {conflictCount} 筆、名稱不一致 {nameMismatchHosts} 台");
 
         return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount, skippedExcluded, skippedManualSibling, hostnameCount,
-            MappedHosts: mappedHosts, UnmappedHosts: unmappedHosts, NameMismatch: nameMismatchCount);
+            MappedHosts: mappedHosts, UnmappedHosts: unmappedHosts, NameMismatch: nameMismatchHosts);
     }
 
     /// <summary>
