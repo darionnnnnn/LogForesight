@@ -13,7 +13,7 @@ import {
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
 import { initValueReadiness } from './prtg-value-readiness.js';
-import { toScopeSelectValue, prtgScopeInapplicableText } from '../core/prtg-scope-labels.js';
+import { toScopeSelectValue, prtgScopeInapplicableText, prtgHostMapSummary } from '../core/prtg-scope-labels.js';
 import { parseProbeSensorTypes } from '../core/prtg-probe-types.js';
 import { uploadDiagnosticFile, getDiagnosticTransfer, abandonDiagnosticTransfer } from '../core/prtg-diagnostic-upload.js';
 import { evaluateScheduledAcceptance } from '../core/prtg-acceptance.js';
@@ -2664,10 +2664,7 @@ function renderStructureSyncStatus(status) {
     const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
     if (status.lastSuccess) {
         statusEl.textContent =
-            `上次同步：${when}${sourceLabel}　裝置 ${status.lastDevices ?? 0}、感測器 ${status.lastSensors ?? 0}；`
-            + `對應成功 ${status.lastMapOk ?? 0}、人工 ${status.lastMapManual ?? 0}、`
-            + `衝突 ${status.lastMapConflict ?? 0}、查無主機 ${status.lastMapUnmatched ?? 0}、`
-            + `略過 ${status.lastMapSkipped ?? 0}`;
+            `上次同步：${when}${sourceLabel}　監看感測器 ${status.lastSensors ?? 0}；${prtgHostMapSummary(status)}`;
     } else {
         // 未成功的同步＝鏡像可能只有半套，要說出後續會怎樣，否則使用者不知道該不該重跑
         statusEl.textContent = `上次同步（${when}）未成功：${status.lastErrorMessage || '原因不明'}`

@@ -12,7 +12,7 @@ import {
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
-import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
+import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 
 /* 色值於執行期讀 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
@@ -1515,9 +1515,7 @@ function renderPrtgSyncSummary(status) {
     }
 
     const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
-    el.textContent =
-        `${formatDateTime(status.lastCompletedAt)}${sourceLabel}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
-        + `（衝突 ${formatNumber(status.lastMapConflict ?? 0)}、查無主機 ${formatNumber(status.lastMapUnmatched ?? 0)}）`;
+    el.textContent = `${formatDateTime(status.lastCompletedAt)}${sourceLabel}　${prtgHostMapSummary(status)}`;
 }
 
 async function refreshPrtgSyncStatus() {

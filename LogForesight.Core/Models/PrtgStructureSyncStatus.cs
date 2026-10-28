@@ -43,6 +43,11 @@ public class PrtgStructureSyncStatus
     public int MapSkippedExcluded { get; set; }
     public int MapSkippedManualSibling { get; set; }
 
+    /// <summary>主機口徑（畫面只顯示這三個；上面的 device 計數保留給診斷，不呈現，docs/PRTG-SPEC.md §1）。null＝舊紀錄。</summary>
+    public int? MapMappedHosts { get; set; }
+    public int? MapUnmappedHosts { get; set; }
+    public int? MapNameMismatch { get; set; }
+
     /// <summary>
     /// 把另一份結果的全部欄位抄進來（手動同步與夜間取數兩個寫入點共用）。
     /// 欄位清單只在這裡維護一份：各寫一份的話，加欄位時漏改一處不會有任何編譯或測試訊號。
@@ -64,5 +69,8 @@ public class PrtgStructureSyncStatus
         MapSkippedNoIp = other.MapSkippedNoIp;
         MapSkippedExcluded = other.MapSkippedExcluded;
         MapSkippedManualSibling = other.MapSkippedManualSibling;
+        MapMappedHosts = other.MapMappedHosts;
+        MapUnmappedHosts = other.MapUnmappedHosts;
+        MapNameMismatch = other.MapNameMismatch;
     }
 }

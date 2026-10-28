@@ -246,6 +246,43 @@ public class PrtgDeleteResultDto
     public string? RemapWarning { get; set; }
 }
 
+/// <summary>未對應到 PRTG 的清單主機分頁回應（docs/PRTG-SPEC.md §4a）</summary>
+public class PrtgUnmappedHostPageDto
+{
+    public DateTime? MapDate { get; set; }
+    public int Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public List<PrtgUnmappedHostDto> Items { get; set; } = new();
+}
+
+public class PrtgUnmappedHostDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = "";
+    public string? IpAddress { get; set; }
+
+    /// <summary>no-ip | ip-excluded | conflict | not-in-prtg（<see cref="LogForesight.Core.Service.PrtgHostCoverage"/>）</summary>
+    public string Reason { get; set; } = "";
+}
+
+/// <summary>人工指派時搜尋 PRTG 裝置鏡像的結果（使用者主動輸入條件，可能含主機清單外的裝置）</summary>
+public class PrtgDeviceSearchResultDto
+{
+    public List<PrtgDeviceSearchItemDto> Items { get; set; } = new();
+
+    /// <summary>符合條件的超過回傳上限，請縮小條件</summary>
+    public bool HasMore { get; set; }
+}
+
+public class PrtgDeviceSearchItemDto
+{
+    public long Objid { get; set; }
+    public string? Name { get; set; }
+    public string? GroupPath { get; set; }
+    public string? Ip { get; set; }
+}
+
 /// <summary>PRTG 主機對應衝突清單分頁回應</summary>
 public class PrtgHostMapPageDto
 {
@@ -432,11 +469,10 @@ public class PrtgStructureSyncStatusDto
     public int? LastDevices { get; set; }
     public int? LastSensors { get; set; }
     public DateTime? LastMapDate { get; set; }
-    public int? LastMapOk { get; set; }
-    public int? LastMapManual { get; set; }
-    public int? LastMapConflict { get; set; }
-    public int? LastMapUnmatched { get; set; }
-    public int? LastMapSkipped { get; set; }
+    /// <summary>主機口徑的對應結果（null＝舊紀錄）；不提供主機清單外 device 的衝突／查無主機計數（docs/PRTG-SPEC.md §1）</summary>
+    public int? LastMappedHosts { get; set; }
+    public int? LastUnmappedHosts { get; set; }
+    public int? LastNameMismatch { get; set; }
     public string? LastSource { get; set; }
 }
 

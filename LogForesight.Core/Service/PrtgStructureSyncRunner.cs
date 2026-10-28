@@ -144,10 +144,11 @@ public static class PrtgStructureSyncRunner
             status.MapSkippedNoIp = mapResult.SkippedNoIp;
             status.MapSkippedExcluded = mapResult.SkippedExcluded;
             status.MapSkippedManualSibling = mapResult.SkippedManualSibling;
+            status.MapMappedHosts = mapResult.MappedHosts;
+            status.MapUnmappedHosts = mapResult.UnmappedHosts;
+            status.MapNameMismatch = mapResult.NameMismatch;
 
-            console.WriteLine($"主機對應完成（{mapDate:yyyy-MM-dd}）：成功 {mapResult.Ok}、人工 {mapResult.Manual}、" +
-                              $"衝突 {mapResult.Conflict}、查無主機 {mapResult.Unmatched}、" +
-                              $"略過 {mapResult.SkippedNoIp + mapResult.SkippedExcluded + mapResult.SkippedManualSibling}");
+            console.WriteLine($"主機對應完成（{mapDate:yyyy-MM-dd}）：{mapResult.HostSummary}");
 
             if (mapResult.Ok + mapResult.Manual == 0)
             {

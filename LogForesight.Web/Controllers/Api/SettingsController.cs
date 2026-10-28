@@ -980,6 +980,66 @@ public class SettingsController : ControllerBase
     }
 
     /// <summary>PRTG 主機對應衝突清單分頁</summary>
+    /// <summary>
+    /// 未對應到 PRTG 的清單主機（啟用、未合併、沒有 ok 對應），附原因；維護頁「未對應主機」清單用。
+    /// 只列主機清單內的主機（docs/PRTG-SPEC.md §1），判定與主機頁篩選同一份（<see cref="PrtgHostCoverage"/>）。
+    /// </summary>
+    [HttpGet("prtg-unmapped-hosts")]
+    public ApiResponse<PrtgUnmappedHostPageDto> GetPrtgUnmappedHosts([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
+        if (_backend == null || _hosts == null)
+            return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto { Page = normPage, PageSize = normPageSize });
+
+        var store = _backend.PrtgStore();
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip));
+        return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto
+        {
+            MapDate = mapDate,
+            Total = unmapped.Count,
+            Page = normPage,
+            PageSize = normPageSize,
+            Items = unmapped.Skip((normPage - 1) * normPageSize).Take(normPageSize)
+                .Select(h => new PrtgUnmappedHostDto { HostId = h.HostId, HostName = h.HostName, IpAddress = h.IpAddress, Reason = h.Reason })
+                .ToList()
+        });
+    }
+
+    /// <summary>人工指派用的裝置搜尋上限：一次回太多等於把全站裝置清單搬回畫面。</summary>
+    internal const int DeviceSearchLimit = 20;
+
+    /// <summary>
+    /// 人工指派時依名稱或 IP 搜尋 PRTG 裝置鏡像（至少 2 個字，最多 <see cref="DeviceSearchLimit"/> 筆）。
+    /// 這是「主機清單外的 device 可以出現在畫面」的例外之一：只在管理者主動輸入條件時回傳（docs/PRTG-SPEC.md §1）。
+    /// </summary>
+    [HttpGet("prtg-devices/search")]
+    public ApiResponse<PrtgDeviceSearchResultDto> SearchPrtgDevices([FromQuery] string? q)
+    {
+        RequireFullPrtgTransferAccess();
+        var needle = q?.Trim() ?? "";
+        if (needle.Length < 2)
+            throw DomainException.Validation("請輸入至少 2 個字（裝置名稱或 IP）。");
+        if (_backend == null)
+            return ApiResponse<PrtgDeviceSearchResultDto>.Ok(new PrtgDeviceSearchResultDto());
+
+        var matches = _backend.PrtgStore().GetAllDevices()
+            .Where(d => (d.Name ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+                        (d.Ip ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase))
+            // IP 完全相同的排最前：使用者照主機 IP 搜尋時，那一台一定看得到
+            .OrderBy(d => string.Equals(d.Ip?.Trim(), needle, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(DeviceSearchLimit + 1)
+            .ToList();
+        return ApiResponse<PrtgDeviceSearchResultDto>.Ok(new PrtgDeviceSearchResultDto
+        {
+            HasMore = matches.Count > DeviceSearchLimit,
+            Items = matches.Take(DeviceSearchLimit)
+                .Select(d => new PrtgDeviceSearchItemDto { Objid = d.Objid, Name = d.Name, GroupPath = d.GroupPath, Ip = d.Ip })
+                .ToList()
+        });
+    }
+
     [HttpGet("prtg-host-map")]
     public ApiResponse<PrtgHostMapPageDto> GetPrtgHostMap(
         [FromQuery] string status,

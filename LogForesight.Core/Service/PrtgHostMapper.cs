@@ -359,11 +359,12 @@ public sealed class PrtgHostMapper
         // 5. Console 摘要：只印主機口徑的計數，不逐筆列出主機清單外的 device（docs/PRTG-SPEC.md §1）
         var mappedHosts = rows.Where(r => r.MapStatus == PrtgMapStatus.Ok && r.HostId.HasValue)
             .Select(r => r.HostId!.Value).Distinct().Count();
+        var unmappedHosts = activeHosts.Count - mappedHosts;
         _console.WriteLine($"[主機對應] {targetDate:yyyy-MM-dd} 對應完成：已對應主機 {mappedHosts} 台（裝置 {okCount} 台，其中人工 {manualCount}、名稱退路 {hostnameCount}）、" +
                            $"需處理衝突 {conflictCount} 筆、名稱不一致 {nameMismatchCount} 台");
 
         return new PrtgHostMapResult(okCount, conflictCount, unmatchedCount, skippedNoIp, manualCount, skippedExcluded, skippedManualSibling, hostnameCount,
-            MappedHosts: mappedHosts, NameMismatch: nameMismatchCount);
+            MappedHosts: mappedHosts, UnmappedHosts: unmappedHosts, NameMismatch: nameMismatchCount);
     }
 
     /// <summary>
@@ -444,4 +445,9 @@ public sealed record PrtgHostMapResult(
     int SkippedManualSibling = 0,
     int Hostname = 0,
     int MappedHosts = 0,
-    int NameMismatch = 0);
+    int UnmappedHosts = 0,
+    int NameMismatch = 0)
+{
+    /// <summary>主機口徑的一行摘要（畫面、里程碑、同步輸出共用；不報主機清單外的 device 計數，docs/PRTG-SPEC.md §1）。</summary>
+    public string HostSummary => $"已對應主機 {MappedHosts} 台、未對應主機 {UnmappedHosts} 台、名稱不一致 {NameMismatch} 台";
+}

@@ -8,6 +8,19 @@
  * 維護頁（載入／存檔的值對應）與排程作業頁（狀態顯示）共用這一份，兩頁各寫一份就會在改字時只改到一邊。
  */
 
+import { formatNumber } from './format.js';
+
+/**
+ * 主機對應的主機口徑摘要（排程作業頁 PRTG 卡與維護頁「上次同步」共用；只談主機清單內的主機，docs/PRTG-SPEC.md §1）。
+ * 舊紀錄沒有主機口徑欄位時不顯示數字——拿 device 計數頂替會把主機清單外的 PRTG 裝置又帶回畫面。
+ */
+export function prtgHostMapSummary(status) {
+    if (status.lastMappedHosts == null) return '對應數字待下次同步後顯示';
+    let text = `已對應主機 ${formatNumber(status.lastMappedHosts)} 台、未對應 ${formatNumber(status.lastUnmappedHosts ?? 0)} 台`;
+    if ((status.lastNameMismatch ?? 0) > 0) text += `、名稱不一致 ${formatNumber(status.lastNameMismatch)} 台`;
+    return text;
+}
+
 /**
  * 值 → 顯示字串。狀態文字用它，不重寫一份。
  * 下拉的 <option> 由 Prtg.cshtml 靜態產生；`PrtgAdminPageUiTests` 鎖住兩邊的 value 集合一致。

@@ -203,7 +203,7 @@ internal static class PrtgDailyPipeline
                         {
                             var hostMapper = new PrtgHostMapper(mirrorStore, hostStore, prtgConsole, resolver);
                             mapResult = hostMapper.MapForDate(newest);
-                            runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
+                            runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：{mapResult.HostSummary}");
                         }
                         catch (OperationCanceledException)
                         {
@@ -1154,6 +1154,9 @@ internal static class PrtgDailyPipeline
             MapSkippedNoIp = mapResult.SkippedNoIp,
             MapSkippedExcluded = mapResult.SkippedExcluded,
             MapSkippedManualSibling = mapResult.SkippedManualSibling,
+            MapMappedHosts = mapResult.MappedHosts,
+            MapUnmappedHosts = mapResult.UnmappedHosts,
+            MapNameMismatch = mapResult.NameMismatch,
             Source = PrtgStructureSyncStatus.SourceNightly
         };
     }

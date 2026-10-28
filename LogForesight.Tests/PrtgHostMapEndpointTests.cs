@@ -344,6 +344,51 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
+    public void 未對應主機清單_只列主機清單內沒有ok對應的主機並附原因()
+    {
+        var store = _backend.PrtgStore();
+        var mapped = _hosts.Upsert(new WebHost { HostName = "srv-ok", IpAddress = "10.90.0.1", Active = true });
+        var noIp = _hosts.Upsert(new WebHost { HostName = "srv-noip", Active = true });
+        var missing = _hosts.Upsert(new WebHost { HostName = "srv-missing", IpAddress = "10.90.0.2", Active = true });
+        store.ReplaceHostMapForDate(DateTime.Today, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = DateTime.Today, DeviceObjid = 9001, HostId = mapped.HostId, MapStatus = PrtgMapStatus.Ok },
+            new() { MapDate = DateTime.Today, DeviceObjid = 9002, Ip = "10.99.99.99", MapStatus = PrtgMapStatus.Unmatched }
+        });
+
+        var page = _controller.GetPrtgUnmappedHosts().Data!;
+
+        Assert.Equal(DateTime.Today, page.MapDate);
+        Assert.Equal(new[] { noIp.HostId, missing.HostId }.OrderBy(x => x), page.Items.Select(i => i.HostId).OrderBy(x => x));
+        Assert.Equal(PrtgHostCoverage.ReasonNoIp, page.Items.Single(i => i.HostId == noIp.HostId).Reason);
+        Assert.Equal(PrtgHostCoverage.ReasonNotInPrtg, page.Items.Single(i => i.HostId == missing.HostId).Reason);
+    }
+
+    [Fact]
+    public void 裝置搜尋_至少兩字_IP完全相同排最前_超過上限回hasMore()
+    {
+        var store = _backend.PrtgStore();
+        var devices = Enumerable.Range(1, SettingsController.DeviceSearchLimit + 5)
+            .Select(i => new PrtgDeviceRow { Objid = 9100 + i, Name = $"web-{i:D2}", Ip = $"10.91.0.{i}" })
+            .Append(new PrtgDeviceRow { Objid = 9200, Name = "zz-exact", Ip = "10.91.0.1" })
+            .ToArray();
+        store.UpsertDevices(devices, DateTime.Now);
+        _hosts.Upsert(new WebHost { HostName = "srv-any", IpAddress = "10.91.9.9", Active = true });
+
+        var tooShort = Assert.Throws<DomainException>(() => _controller.SearchPrtgDevices("w"));
+        Assert.Contains("至少 2 個字", tooShort.Message);
+
+        var byName = _controller.SearchPrtgDevices("web").Data!;
+        Assert.Equal(SettingsController.DeviceSearchLimit, byName.Items.Count);
+        Assert.True(byName.HasMore);
+
+        var byIp = _controller.SearchPrtgDevices("10.91.0.1").Data!;
+        Assert.Contains(byIp.Items.Take(2), d => d.Objid == 9200);
+        Assert.Contains(byIp.Items.Take(2), d => d.Objid == 9101);
+        Assert.False(byIp.HasMore);
+    }
+
+    [Fact]
     public void status非conflict時回驗證例外()
     {
         var ex1 = Assert.Throws<DomainException>(() => _controller.GetPrtgHostMap("ok"));
