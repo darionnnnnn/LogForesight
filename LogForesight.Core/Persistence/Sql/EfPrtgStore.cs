@@ -965,6 +965,19 @@ public sealed class EfPrtgStore
     /// PRTG 主機對應按日寫入。該日期的對應整份就地取代——先刪除該 map_date 的所有列，再寫入新的一批。
     /// 傳入空清單時仍然清空該日，回傳 0。
     /// </summary>
+    /// <summary>
+    /// 刪除指定日期以外的全部主機對應列（對應規則升級用，見 <see cref="PrtgHostMapper.RuleVersion"/>）。
+    /// 呼叫端必須先成功寫入 <paramref name="keepDate"/> 的新對應；那一天沒有任何列時一律不刪，避免把對應表清空。
+    /// </summary>
+    /// <returns>刪除列數；保留日沒有列時回 -1。</returns>
+    public int DeleteHostMapsExceptDate(DateTime keepDate)
+    {
+        var keep = keepDate.Date;
+        using var ctx = _contextFactory();
+        if (!ctx.PrtgHostMaps.Any(m => m.MapDate == keep)) return -1;
+        return ctx.PrtgHostMaps.Where(m => m.MapDate != keep).ExecuteDelete();
+    }
+
     public int ReplaceHostMapForDate(DateTime mapDate, IReadOnlyList<PrtgHostMapRow> rows)
     {
         var targetDate = mapDate.Date;
@@ -2614,9 +2627,20 @@ public sealed class EfPrtgStore
 
         var anchorDate = (anchor ?? DateTime.Today).Date;
         var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
-        return ctx.PrtgHostMaps
+        var onOrBefore = ctx.PrtgHostMaps
             .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
             .Max(m => (DateTime?)m.MapDate);
+        if (onOrBefore != null || anchor == null)
+        {
+            return onOrBefore;
+        }
+
+        // 往回找不到時沿用該日之後最早的一份（docs/PRTG-SPEC.md §4「對應往後沿用」）：正式環境 IP 很少異動，
+        // 不沿用的話第一次同步之前的日子永遠無法歸戶與回填。呼叫端以回傳的 MapDate 晚於 anchor 判斷是沿用。
+        var today = DateTime.Today;
+        return ctx.PrtgHostMaps
+            .Where(m => m.MapDate > anchorDate && m.MapDate <= today)
+            .Min(m => (DateTime?)m.MapDate);
     }
 
     public const string ScopeRevisionBlobKey = "prtg_scope_revision";

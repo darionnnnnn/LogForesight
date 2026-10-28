@@ -37,6 +37,8 @@ public class HostAdminServiceTests : IDisposable
         /// <summary>設定後由 <see cref="TryRefreshToday"/> 回傳，用來驗警告有沒有被帶進回應。</summary>
         public string? WarningToReturn { get; set; }
 
+        public string? TryApplyRuleUpgrade() => null;
+
         public string? TryRefreshToday()
         {
             Calls++;

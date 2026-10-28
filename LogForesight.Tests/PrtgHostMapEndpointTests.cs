@@ -170,7 +170,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
-    public void ConflictKind判定_同IP兩台為multiDevice_單台對多主機為multiHost()
+    public void ConflictKind判定_非名稱退路的衝突一律為multiHost_同IP裝置仍列出()
     {
         var store = _backend.PrtgStore();
         var hostStore = new HostStore(_backend.Blob("hosts"));
@@ -220,7 +220,8 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Equal(2, res.Data.Items.Count);
 
         var itemMultiDevice = res.Data.Items.First(i => i.DeviceObjid == 2001);
-        Assert.Equal("multi-device", itemMultiDevice.ConflictKind);
+        // 同 IP 多 device 已不是衝突型別（docs/PRTG-SPEC.md §4）：舊資料留下的這種列歸為 multi-host，同 IP 裝置照樣列出供指派
+        Assert.Equal("multi-host", itemMultiDevice.ConflictKind);
         Assert.Equal(2, itemMultiDevice.SameIpDevices.Count);
         Assert.Contains(itemMultiDevice.SameIpDevices, d => d.Objid == 2001 && d.Name == "dev-app-1");
         Assert.Contains(itemMultiDevice.SameIpDevices, d => d.Objid == 2002 && d.Name == "dev-app-2");
@@ -234,6 +235,74 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Contains(itemMultiHost.CandidateHosts, h => h.HostId == host1.HostId && h.HostName == "srv-db-primary");
         Assert.Contains(itemMultiHost.CandidateHosts, h => h.HostId == host2.HostId && h.HostName == "srv-db-replica");
         Assert.Equal(host1.HostName, itemMultiHost.HostName);
+    }
+
+    private (SystemSettingsStore Settings, PrtgHostMapRefresher Refresher) CreateRefresher(bool enabled = true)
+    {
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settings.Update(x => x.PrtgEnabled = enabled);
+        return (settings, new PrtgHostMapRefresher(settings, _backend));
+    }
+
+    [Fact]
+    public void 對應規則升級_重算今天並刪除其他日期舊對應_寫入版本後再跑不再刪()
+    {
+        var store = _backend.PrtgStore();
+        var host = _hosts.Upsert(new WebHost { HostName = "srv-up", IpAddress = "10.70.0.1", Active = true });
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 7001, Name = "ping", Ip = "10.70.0.1" },
+            new PrtgDeviceRow { Objid = 7002, Name = "wmi", Ip = "10.70.0.1" }
+        }, DateTime.Now);
+        var old = DateTime.Today.AddDays(-3);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7001, Ip = "10.70.0.1", MapStatus = PrtgMapStatus.Conflict, Note = "此 IP 同時有 2 個 PRTG device" }
+        });
+        var (_, refresher) = CreateRefresher();
+
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+
+        // 舊規則的三天前那份已刪；三天前改沿用今天的新對應（兩台裝置都對到 srv-up）
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(31, old);
+        Assert.Equal(DateTime.Today, mapDate);
+        Assert.Equal(2, rows.Count(r => r.MapStatus == PrtgMapStatus.Ok && r.HostId == host.HostId));
+        Assert.Equal(PrtgHostMapper.RuleVersion.ToString(), _backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
+
+        // 冪等：已套用時不再動對應表
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7001, Ip = "10.70.0.1", HostId = host.HostId, MapStatus = PrtgMapStatus.Ok }
+        });
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+        Assert.Equal(old, store.GetLatestHostMapWithDate(31, old).MapDate);
+    }
+
+    [Fact]
+    public void 對應規則升級_鏡像沒有裝置時不刪也不記版本()
+    {
+        var store = _backend.PrtgStore();
+        var old = DateTime.Today.AddDays(-3);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 1, MapStatus = PrtgMapStatus.Ok, HostId = 1 }
+        });
+        var (_, refresher) = CreateRefresher();
+
+        var warning = refresher.TryApplyRuleUpgrade();
+
+        Assert.NotNull(warning);
+        Assert.Contains("鏡像是空的", warning);
+        Assert.Equal(old, store.GetLatestHostMapWithDate(31, old).MapDate);
+        Assert.Null(_backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
+    }
+
+    [Fact]
+    public void 對應規則升級_PRTG未啟用時不動作()
+    {
+        var (_, refresher) = CreateRefresher(enabled: false);
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+        Assert.Null(_backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
     }
 
     [Fact]

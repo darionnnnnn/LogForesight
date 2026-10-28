@@ -912,7 +912,7 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
-    public async Task 過去日查無對應表時安全跳過()
+    public async Task 過去日之前沒有對應時沿用之後的對應並註明()
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
@@ -952,14 +952,35 @@ public class PrtgDailyPipelineTests : IDisposable
             ctx, _backend, hostStore,
             new[] { day2, day1 }, Task.CompletedTask, hostIds: null, guard: null);
 
-        // prtgConsole 輸出包含「無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶」
-        Assert.Contains(console.Lines, l => l.Contains("無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶"));
-
-        // day1 的 finding 不進行主機關聯（登錄簿為空清單）
-        Assert.Empty(registry.For(host.HostId, day1));
-
-        // 但不影響 day2 正常評估
+        // day1 之前沒有對應 → 沿用 day2 的對應（docs/PRTG-SPEC.md §4），輸出與逐日說明都註明
+        Assert.Contains(console.Lines, l => l.Contains($"沿用 {day2:yyyy-MM-dd} 的對應"));
+        Assert.NotEmpty(registry.For(host.HostId, day1));
         Assert.NotEmpty(registry.For(host.HostId, day2));
+
+        ctx.RunRecorder.Finish(1);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId)!;
+        var day1Stat = run.PrtgDays!.Single(s => s.Date.Date == day1.Date);
+        Assert.True(day1Stat.MapAvailable);
+        Assert.Contains($"沿用 {day2:yyyy-MM-dd} 的主機對應", day1Stat.Note);
+        Assert.DoesNotContain("沿用", run.PrtgDays!.Single(s => s.Date.Date == day2.Date).Note ?? "");
+    }
+
+    [Fact]
+    public async Task 完全沒有主機對應的日子算評估完成_不再每晚重評()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var days = new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) };
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, new HostStore(_backend.Blob("hosts")), days, Task.CompletedTask, hostIds: null);
+
+        ctx.RunRecorder.Finish(1);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId)!;
+        Assert.All(days, d => Assert.True(registry.IsEvaluated(d)));
+        // 結構同步會失敗（假位址），失敗的日子照舊隔晚重評；這裡只驗「沒有對應」本身不再造成永久重評
+        Assert.All(run.PrtgDays!, stat => Assert.Equal(stat.Outcome == BatchRun.PrtgOutcomeFailed, stat.NeedsReevaluation));
     }
 
     [Theory]

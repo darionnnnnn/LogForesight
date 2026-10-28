@@ -506,7 +506,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         var sampledTargetsByDay = new Dictionary<DateTime, long[]>();
         for (var day = from; day <= to; day = day.AddDays(1))
         {
-            var deviceIds = maps.GetHostMapForDate(day)
+            var deviceIds = maps.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, day).Rows
                 .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && hostIds.Contains(m.HostId.Value))
                 .Select(m => m.DeviceObjid).Distinct().ToArray();
             var targets = maps.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, deviceIds);

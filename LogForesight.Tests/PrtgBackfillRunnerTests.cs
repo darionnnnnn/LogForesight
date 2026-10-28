@@ -794,9 +794,9 @@ public class PrtgBackfillRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task 觸發式回填_某日之前沒有對應_計為略過不計成功()
+    public async Task 觸發式回填_某日之前沒有對應_沿用之後的對應()
     {
-        // 對應只在昨天：第 2 天（前天）往回找不到任何對應
+        // 對應只在昨天：第 2 天（前天）往回找不到，沿用昨天那份（docs/PRTG-SPEC.md §4）
         var (store, records) = SetupTriggered(2, DateTime.Today.AddDays(-1));
         var console = new TestConsole();
         var (client, handler) = CreateClient(req =>
@@ -812,9 +812,8 @@ public class PrtgBackfillRunnerTests : IDisposable
 
         Assert.True(ok);
         var day2 = DateTime.Today.AddDays(-2);
-        Assert.Contains(console.Lines, l => l == $"回填 {day2:yyyy-MM-dd}（第 2/2 天）略過：該日之前沒有主機對應");
-        Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 1 天、失敗 0 天、略過 1 天（無主機對應）"));
-        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains($"sdate={day2:yyyy-MM-dd}"));
+        Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 2 天、失敗 0 天、略過 0 天"));
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains($"sdate={day2:yyyy-MM-dd}"));
     }
 
     [Fact]

@@ -211,7 +211,8 @@ public class PrtgHostMapCachedPagingTests : IDisposable
 
         // 第一頁一條：同 IP 兩台 → multi-device，裝置名稱與群組路徑來自索引
         var multi = page1.Items.Single(i => i.DeviceObjid == 1001);
-        Assert.Equal("multi-device", multi.ConflictKind);
+        Assert.Equal("multi-host", multi.ConflictKind);
+        Assert.Equal(2, multi.SameIpDevices.Count);
         Assert.Equal("dev-1001", multi.DeviceName);
         Assert.Equal("Root/Net", multi.GroupPath);
         Assert.Equal(new long[] { 1001, 1002 }, multi.SameIpDevices.Select(d => d.Objid).OrderBy(x => x));
@@ -233,17 +234,17 @@ public class PrtgHostMapCachedPagingTests : IDisposable
         Seed();
 
         var page1 = _controller.GetPrtgHostMap("conflict", page: 1, pageSize: 20).Data!;
-        Assert.Equal("multi-device", page1.Items.Single(i => i.DeviceObjid == 1001).ConflictKind);
+        Assert.Equal(2, page1.Items.Single(i => i.DeviceObjid == 1001).SameIpDevices.Count);
 
         // TTL 內替 1030 的 IP 補上第二台裝置：若翻頁時重讀了裝置全表，1030 會變成 multi-device
         _backend.PrtgStore().UpsertDevices(new[] { Device(1999, "192.168.9.30") }, DateTime.Now);
 
         var page2 = _controller.GetPrtgHostMap("conflict", page: 2, pageSize: 20).Data!;
-        Assert.Equal("multi-host", page2.Items.Single(i => i.DeviceObjid == 1030).ConflictKind);
+        Assert.Single(page2.Items.Single(i => i.DeviceObjid == 1030).SameIpDevices);
 
         // TTL 過後就會看見新裝置（快取不是永久的假新鮮）
         _now = _now.AddSeconds(PrtgDeviceIndexCache.TtlSeconds);
         var page2Again = _controller.GetPrtgHostMap("conflict", page: 2, pageSize: 20).Data!;
-        Assert.Equal("multi-device", page2Again.Items.Single(i => i.DeviceObjid == 1030).ConflictKind);
+        Assert.Equal(2, page2Again.Items.Single(i => i.DeviceObjid == 1030).SameIpDevices.Count);
     }
 }

@@ -19,6 +19,8 @@ public class NetiqHostServiceTests
     {
         public int Calls { get; private set; }
 
+        public string? TryApplyRuleUpgrade() => null;
+
         public string? TryRefreshToday()
         {
             Calls++;

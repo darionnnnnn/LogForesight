@@ -135,7 +135,7 @@ public class PrtgHostMapperTests : IDisposable
     }
 
     [Fact]
-    public void MapForDate_一IP多個device時全部標Conflict且不填主機()
+    public void MapForDate_一IP多個device時全部對應到該IP的主機()
     {
         // Arrange
         var hostStore = new FakeHostStore();
@@ -153,21 +153,76 @@ public class PrtgHostMapperTests : IDisposable
         // Act
         var result = mapper.MapForDate(mapDate);
 
-        // Assert
-        Assert.Equal(0, result.Ok);
-        Assert.Equal(2, result.Conflict);
+        // Assert：同一台伺服器在 PRTG 有兩個 device（Ping、SNMP），以 IP 為主全部對到 srv-web
+        Assert.Equal(2, result.Ok);
+        Assert.Equal(0, result.Conflict);
         Assert.Equal(0, result.Unmatched);
         Assert.Equal(0, result.SkippedNoIp);
+        Assert.Equal(1, result.MappedHosts);
 
         var rows = store.GetHostMapForDate(mapDate);
         Assert.Equal(2, rows.Count);
         foreach (var row in rows)
         {
-            Assert.Null(row.HostId);
-            Assert.Null(row.HostName);
-            Assert.Equal(PrtgMapStatus.Conflict, row.MapStatus);
-            Assert.Equal("此 IP 同時有 2 個 PRTG device", row.Note);
+            Assert.Equal(1, row.HostId);
+            Assert.Equal("srv-web", row.HostName);
+            Assert.Equal(PrtgMapStatus.Ok, row.MapStatus);
+            // 裝置名稱不帶括號＝PRTG 自取的顯示名，不拿來比對主機名
+            Assert.Null(row.Note);
         }
+    }
+
+    [Fact]
+    public void MapForDate_一IP多個device且IP由兩台主機共用_全部標Conflict並指向HostId最小者()
+    {
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts =>
+        {
+            hosts.Add(new WebHost { HostId = 5, HostName = "srv-b", IpAddress = "192.168.9.9", Active = true });
+            hosts.Add(new WebHost { HostId = 2, HostName = "srv-a", IpAddress = "192.168.9.9", Active = true });
+        });
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1, Name = "Ping", Ip = "192.168.9.9" },
+            new PrtgDeviceRow { Objid = 2, Name = "WMI", Ip = "192.168.9.9" });
+
+        var store = CreateStore();
+        var result = CreateMapper(store, hostStore, new TestConsole()).MapForDate(new DateTime(2026, 8, 30));
+
+        Assert.Equal(0, result.Ok);
+        Assert.Equal(2, result.Conflict);
+        var rows = store.GetHostMapForDate(new DateTime(2026, 8, 30));
+        Assert.All(rows, r =>
+        {
+            Assert.Equal(PrtgMapStatus.Conflict, r.MapStatus);
+            Assert.Equal(2, r.HostId);
+        });
+    }
+
+    [Fact]
+    public void MapForDate_IP對上但括號內主機名與主檔不同_Ok並記名稱不一致()
+    {
+        var hostStore = new FakeHostStore();
+        hostStore.Upsert(new WebHost { HostId = 1, HostName = "srv-new.corp.local", IpAddress = "10.1.1.1", Active = true });
+        hostStore.Upsert(new WebHost { HostId = 2, HostName = "srv-same", IpAddress = "10.1.1.2", Active = true });
+        hostStore.Upsert(new WebHost { HostId = 3, HostName = "srv-dns", IpAddress = "10.1.1.3", Active = true });
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1, Name = "W(srv-old)_10.1.1.1", Ip = "10.1.1.1" },
+            new PrtgDeviceRow { Objid = 2, Name = "W(SRV-SAME)_10.1.1.2", Ip = "10.1.1.2" },
+            new PrtgDeviceRow { Objid = 3, Name = "Core Switch", Ip = "10.1.1.3" });
+
+        var store = CreateStore();
+        var result = CreateMapper(store, hostStore, new TestConsole()).MapForDate(new DateTime(2026, 8, 30));
+        var rows = store.GetHostMapForDate(new DateTime(2026, 8, 30)).ToDictionary(r => r.DeviceObjid);
+
+        Assert.Equal(3, result.Ok);
+        Assert.Equal(1, result.NameMismatch);
+        Assert.Equal(PrtgMapStatus.Ok, rows[1].MapStatus);
+        Assert.Equal(1, rows[1].HostId);
+        Assert.StartsWith(PrtgHostMapper.NoteNameMismatchPrefix, rows[1].Note);
+        Assert.Contains("srv-old", rows[1].Note);
+        // 大小寫不同但同名：不提醒；不帶括號的顯示名：不比對
+        Assert.Null(rows[2].Note);
+        Assert.Null(rows[3].Note);
     }
 
     [Fact]
@@ -969,7 +1024,7 @@ public class PrtgHostMapperTests : IDisposable
         SeedDevices(
             // 1. IP 命中 → Ok（Note null）
             new PrtgDeviceRow { Objid = 101, Name = "Dev-IP-Hit", Ip = "10.0.1.1" },
-            // 2. IP 衝突（同 IP 兩台裝置）→ 兩台都 Conflict（原本行為）
+            // 2. 同 IP 兩台裝置 → 以 IP 為主兩台都對到主機 2
             new PrtgDeviceRow { Objid = 201, Name = "Dev-Conflict-A", Ip = "10.0.2.1" },
             new PrtgDeviceRow { Objid = 202, Name = "Dev-Conflict-B", Ip = "10.0.2.1" },
             // 3. 無 IP＋括號名稱命中 → Ok、Note「hostname」
@@ -1002,13 +1057,11 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(1, rows[101].HostId);
         Assert.Null(rows[101].Note);
 
-        // 2. IP 衝突（同 IP 兩台裝置）→ 兩台都 Conflict（原本行為）
-        Assert.Equal(PrtgMapStatus.Conflict, rows[201].MapStatus);
-        Assert.Null(rows[201].HostId);
-        Assert.Equal("此 IP 同時有 2 個 PRTG device", rows[201].Note);
-        Assert.Equal(PrtgMapStatus.Conflict, rows[202].MapStatus);
-        Assert.Null(rows[202].HostId);
-        Assert.Equal("此 IP 同時有 2 個 PRTG device", rows[202].Note);
+        // 2. 同 IP 兩台裝置 → 以 IP 為主兩台都對到主機 2
+        Assert.Equal(PrtgMapStatus.Ok, rows[201].MapStatus);
+        Assert.Equal(2, rows[201].HostId);
+        Assert.Equal(PrtgMapStatus.Ok, rows[202].MapStatus);
+        Assert.Equal(2, rows[202].HostId);
 
         // 3. 無 IP＋括號名稱命中 → Ok、Note「hostname」
         Assert.Equal(PrtgMapStatus.Ok, rows[301].MapStatus);
@@ -1026,10 +1079,10 @@ public class PrtgHostMapperTests : IDisposable
         Assert.NotNull(rows[501].Note);
         Assert.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, rows[501].Note);
 
-        // 6. 有 IP 且 IP 命中主機 A、名稱指向主機 B → 仍是 A（IP 優先）
+        // 6. 有 IP 且 IP 命中主機 A、名稱指向主機 B → 仍是 A（IP 優先），並提醒名稱不一致
         Assert.Equal(PrtgMapStatus.Ok, rows[601].MapStatus);
         Assert.Equal(6, rows[601].HostId);
-        Assert.Null(rows[601].Note);
+        Assert.StartsWith(PrtgHostMapper.NoteNameMismatchPrefix, rows[601].Note);
 
         // 7. 名稱大小寫不同且帶域名（主機主檔 HostName＝SRV-X.corp.local、裝置名稱 U(srv-x)1.2.3）→ 命中
         Assert.Equal(PrtgMapStatus.Ok, rows[701].MapStatus);
@@ -1041,13 +1094,13 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(8, rows[801].HostId);
         Assert.Equal("hostname", rows[801].Note);
 
-        // 另斷言 console 摘要行含 hostname=4
+        // 另斷言 console 摘要行含名稱退路 4
         Assert.Equal(4, result.Hostname);
-        Assert.Contains(console.Lines, l => l.Contains("hostname=4"));
+        Assert.Contains(console.Lines, l => l.Contains("名稱退路 4"));
     }
 
     [Fact]
-    public void MapForDate_主機已被IP命中且另一無IP裝置指向該主機_該裝置標Conflict()
+    public void MapForDate_主機已被IP命中且另一無IP裝置指向該主機_該裝置落Unmatched不列衝突()
     {
         // Arrange
         var hostStore = new FakeHostStore();
@@ -1075,15 +1128,37 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(PrtgMapStatus.Ok, rows[1].MapStatus);
         Assert.Equal(10, rows[1].HostId);
 
-        Assert.Equal(PrtgMapStatus.Conflict, rows[2].MapStatus);
+        // 名稱退路只補 IP 沒對到的主機：srv-alpha 已由 IP 對上，同名 device 不屬於它
+        Assert.Equal(PrtgMapStatus.Unmatched, rows[2].MapStatus);
         Assert.Null(rows[2].HostId);
-        Assert.NotNull(rows[2].Note);
-        Assert.StartsWith(PrtgHostMapper.NoteHostnameHostTakenPrefix, rows[2].Note);
-        Assert.Contains("srv-alpha", rows[2].Note);
+        Assert.Equal(0, result.Conflict);
     }
 
     [Fact]
-    public void MapForDate_無任何hostname命中時摘要含hostname0且計數維持原有()
+    public void MapForDate_兩台無IP裝置名稱命中同一台未對應主機_兩台都Ok()
+    {
+        var hostStore = new FakeHostStore();
+        hostStore.MutateBatch(hosts => hosts.Add(new WebHost { HostId = 10, HostName = "srv-gamma", IpAddress = "10.99.0.1", Active = true }));
+        SeedDevices(
+            new PrtgDeviceRow { Objid = 1, Name = "U(srv-gamma)ping", Ip = null },
+            new PrtgDeviceRow { Objid = 2, Name = "W(srv-gamma)wmi", Ip = "10.50.0.9" });
+
+        var store = CreateStore();
+        var result = CreateMapper(store, hostStore, new TestConsole()).MapForDate(new DateTime(2026, 8, 30));
+        var rows = store.GetHostMapForDate(new DateTime(2026, 8, 30)).ToDictionary(r => r.DeviceObjid);
+
+        Assert.Equal(0, result.Conflict);
+        Assert.Equal(2, result.Hostname);
+        Assert.All(rows.Values, r =>
+        {
+            Assert.Equal(PrtgMapStatus.Ok, r.MapStatus);
+            Assert.Equal(10, r.HostId);
+            Assert.Equal(PrtgHostMapper.NoteHostnameOk, r.Note);
+        });
+    }
+
+    [Fact]
+    public void MapForDate_無任何hostname命中時摘要含名稱退路0且計數維持原有()
     {
         // Arrange
         var hostStore = new FakeHostStore();
@@ -1113,6 +1188,8 @@ public class PrtgHostMapperTests : IDisposable
         Assert.Equal(1, result.SkippedNoIp);
         Assert.Equal(0, result.Hostname);
 
-        Assert.Contains(console.Lines, l => l.Contains("hostname=0"));
+        Assert.Contains(console.Lines, l => l.Contains("名稱退路 0"));
+        // 主控台不逐筆列出主機清單外的 device（docs/PRTG-SPEC.md §1）
+        Assert.DoesNotContain(console.Lines, l => l.Contains("Device 2") || l.Contains("10.30.30.30"));
     }
 }

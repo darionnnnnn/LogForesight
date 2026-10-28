@@ -95,7 +95,7 @@ public sealed class PrtgBackfillRangeRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task 每天只使用當日有效映射且零對應為可操作略過()
+    public async Task 每天使用該日或之前最近的對應()
     {
         var store = Store();
         var day1 = DateTime.Today.AddDays(-4);
@@ -114,16 +114,33 @@ public sealed class PrtgBackfillRangeRunnerTests : IDisposable
         var calls = handler.Urls.Where(u => u.Contains("historicdata.json")).ToList();
         Assert.Contains(calls, u => u.Contains("id=2001") && u.Contains(day1.ToString("yyyy-MM-dd")));
         Assert.Contains(calls, u => u.Contains("id=2002") && u.Contains(day2.ToString("yyyy-MM-dd")));
-        Assert.Equal(2, calls.Count);
-        Assert.Contains(output.Lines, line => line.Contains("沒有指定主機的有效對應"));
+        // 第三天沒有當日對應：取該日之前最近的一份（day2），與全量回填同一種取法
+        Assert.Contains(calls, u => u.Contains("id=2002") && u.Contains(day2.AddDays(1).ToString("yyyy-MM-dd")));
+        Assert.Equal(3, calls.Count);
     }
 
     [Fact]
-    public async Task 沒有歷史映射不套用其他日期或今日映射也不算成功()
+    public async Task 之前沒有對應時沿用之後的對應()
     {
         var store = Store();
         var day = DateTime.Today.AddDays(-5);
         AddMap(store, DateTime.Today, (1001, 11));
+        AddSensor(store, 2001, 1001);
+        var (fetch, handler) = Fetch(store, (req, _) => Task.FromResult(Json(HourFor(req.RequestUri!.ToString()))));
+        var output = new ConsoleStub();
+
+        var ok = await PrtgBackfillRunner.RunValuesForHostsAsync(fetch, day, day, new long[] { 11 }, 1,
+            new[] { "diskfree" }, store, output, CancellationToken.None);
+
+        Assert.True(ok);
+        Assert.Contains(handler.Urls, u => u.Contains("historicdata.json") && u.Contains("id=2001") && u.Contains(day.ToString("yyyy-MM-dd")));
+    }
+
+    [Fact]
+    public async Task 完全沒有對應時略過且不算成功()
+    {
+        var store = Store();
+        var day = DateTime.Today.AddDays(-5);
         AddSensor(store, 2001, 1001);
         var (fetch, handler) = Fetch(store);
         var output = new ConsoleStub();

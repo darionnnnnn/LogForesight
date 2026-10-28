@@ -135,6 +135,10 @@ try
         // appsettings.json 不再提供種子——全新環境部署後直接在維護頁新增伺服器。
         var sentinelStore = scope.ServiceProvider.GetRequiredService<ISentinelStore>();
 
+        // PRTG 主機對應規則升級：一次性，冪等；失敗不擋站台啟動（下次啟動再試），見 PrtgHostMapRefresher.TryApplyRuleUpgrade
+        var prtgMapUpgradeWarning = scope.ServiceProvider.GetRequiredService<IPrtgHostMapRefresher>().TryApplyRuleUpgrade();
+        if (prtgMapUpgradeWarning != null) logger.Warn(prtgMapUpgradeWarning);
+
         // SentinelId 回填（定案 4）：一次性遷移，冪等，見 SentinelIdBackfiller 的類別註解
         var hostStore = scope.ServiceProvider.GetRequiredService<IHostStore>();
         var backfill = SentinelIdBackfiller.Run(hostStore, sentinelStore);

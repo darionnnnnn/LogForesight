@@ -19,6 +19,13 @@ public interface IPrtgHostMapRefresher
 {
     /// <summary>重算今天的對應；成功或不需要重算時回 null，失敗回警告字串。</summary>
     string? TryRefreshToday();
+
+    /// <summary>
+    /// 對應規則升級（<see cref="PrtgHostMapper.RuleVersion"/>）：已套用、PRTG 未啟用時直接返回 null；
+    /// 否則以本機鏡像重算今天的對應，成功後刪除其他日期的舊對應並記下版本。鏡像沒有裝置或任何一步失敗時
+    /// 不刪、不記版本（下次啟動再試），回說明字串。
+    /// </summary>
+    string? TryApplyRuleUpgrade();
 }
 
 public class PrtgHostMapRefresher : IPrtgHostMapRefresher
@@ -56,6 +63,44 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
         {
             Log.Warn(ex, "重算今日 PRTG 對應失敗");
             return $"重算今日 PRTG 對應失敗: {ex.Message}";
+        }
+    }
+
+    public string? TryApplyRuleUpgrade()
+    {
+        if (_backend == null) return null;
+
+        try
+        {
+            if (!_settings.Get().PrtgEnabled) return null;
+
+            var versionBlob = _backend.Blob(PrtgHostMapper.RuleVersionBlobKey);
+            if (int.TryParse(versionBlob.Read(), out var applied) && applied >= PrtgHostMapper.RuleVersion) return null;
+
+            var store = _backend.PrtgStore();
+            if (store.GetAllDevices().Count == 0)
+            {
+                return "PRTG 主機對應規則已更新，但裝置鏡像是空的；待下次同步結構後再重算。";
+            }
+
+            var today = DateTime.Today;
+            var mapper = new PrtgHostMapper(store, new HostStore(_backend.Blob("hosts")), new SilentRunConsole(), new PrtgAddressResolver());
+            var result = mapper.MapForDate(today);
+            var deleted = store.DeleteHostMapsExceptDate(today);
+            if (deleted < 0)
+            {
+                return "PRTG 主機對應規則已更新，但今天的對應沒有寫入任何列；舊對應保留，下次啟動再試。";
+            }
+
+            versionBlob.Mutate(_ => (PrtgHostMapper.RuleVersion.ToString(), true));
+            Log.Info("PRTG 主機對應規則升級到第 {0} 版：重算 {1:yyyy-MM-dd} 對應（已對應主機 {2} 台），刪除舊規則產生的對應 {3} 列；過去日改沿用新對應。",
+                PrtgHostMapper.RuleVersion, today, result.MappedHosts, deleted);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "PRTG 主機對應規則升級失敗");
+            return $"PRTG 主機對應規則升級失敗：{ex.Message}";
         }
     }
 

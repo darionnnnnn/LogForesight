@@ -334,11 +334,11 @@ internal static class PrtgDailyPipeline
                 .ToList();
             var reportedDuplicateRuleWarnings = new HashSet<string>();
 
-            // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，不硬造（docs/PRTG-SPEC.md §5）。
-            // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。
-            List<PrtgHostMapRow> ResolveHostMapRows(DateTime d) => d == newest
-                ? prtgStore.GetHostMapForDate(newest)
-                : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d).Rows;
+            // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，沒有時沿用之後最早的一份（docs/PRTG-SPEC.md §4）。
+            // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。回傳的日期晚於 d 即為沿用。
+            (DateTime? MapDate, List<PrtgHostMapRow> Rows) ResolveHostMapRows(DateTime d) => d == newest
+                ? (newest, prtgStore.GetHostMapForDate(newest))
+                : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d);
 
             // 包裝層：合成問題靜音項目（以紀錄日 day 判定，見下方逐主機標記）
             var allSuppressions = new MuteAwareSuppressionStore(
@@ -371,7 +371,13 @@ internal static class PrtgDailyPipeline
 
                 try
                 {
-                    var deviceToHost = DeviceToHost(ResolveHostMapRows(day), evaluationHostIds);
+                    var (mapDate, mapRows) = ResolveHostMapRows(day);
+                    var deviceToHost = DeviceToHost(mapRows, evaluationHostIds);
+                    if (mapDate is { } borrowed && borrowed.Date > day.Date && deviceToHost.Count > 0)
+                    {
+                        state.MapBorrowedFrom = borrowed.Date;
+                        prtgConsole.WriteLine($"{day:yyyy-MM-dd} 之前沒有主機對應，沿用 {borrowed:yyyy-MM-dd} 的對應");
+                    }
                     plan.DeviceToHost = deviceToHost;
                     state.MapAvailable = deviceToHost.Count > 0;
 
@@ -399,8 +405,8 @@ internal static class PrtgDailyPipeline
 
                     if (!state.MapAvailable)
                     {
-                        // 用今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一樣（docs/PRTG-SPEC.md §5「回填不做主機對應」同一條線）。
-                        prtgConsole.WriteLine($"{day:yyyy-MM-dd} 無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶");
+                        // 往回與往後都沒有任何對應（從未完成過一次主機對應）
+                        prtgConsole.WriteLine($"{day:yyyy-MM-dd} 無主機對應可用（尚未完成任何一次主機對應），PRTG finding 未歸戶");
                         plan.DayEvaluated = true;
                         continue;
                     }
@@ -613,6 +619,9 @@ internal static class PrtgDailyPipeline
                     if (plan.FindingsByHost == null)
                     {
                         prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
+                        // 第一段已完整評估、只是沒有可歸戶的 finding（沒有規則、沒有任何對應）：仍是評估完成。
+                        // 不標的話 NeedsReevaluation 恆為 true，排程每晚把這些日子挑回來重評、永遠收不掉。
+                        if (plan.DayEvaluated) prtgFindings.MarkEvaluated(day);
                         continue;
                     }
 
@@ -901,6 +910,8 @@ internal static class PrtgDailyPipeline
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
                         if (s.DiskAssessmentFailed && outcome == BatchRun.PrtgOutcomePartial)
                             note = "磁碟趨勢證據未完整；尚未完成風險判定。";
+                        if (s.MapBorrowedFrom is { } borrowedFrom)
+                            note = (note is null ? "" : note + "；") + $"沿用 {borrowedFrom:yyyy-MM-dd} 的主機對應";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note,
                             NeedsReevaluation: syncFailed || !prtgFindings.IsEvaluated(day));
@@ -1075,6 +1086,8 @@ internal static class PrtgDailyPipeline
         public int Findings;
         public int AttributedHosts;
         public bool MapAvailable;
+        /// <summary>該日之前沒有對應、沿用之後那份時的對應日；逐日說明會註明。</summary>
+        public DateTime? MapBorrowedFrom;
         public bool DiskAssessmentFailed;
         /// <summary>規則命中的主機，觸發式取數會把它們併進候選（規則命中但風險未上調的主機也要取數）。</summary>
         public HashSet<long> TriggerHosts { get; } = new();

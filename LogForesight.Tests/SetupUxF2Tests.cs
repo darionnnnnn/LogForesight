@@ -143,6 +143,7 @@ public class SetupUxF2Tests : IDisposable
     private sealed class NoopMapRefresher : IPrtgHostMapRefresher
     {
         public string? TryRefreshToday() => null;
+        public string? TryApplyRuleUpgrade() => null;
     }
 
     private (long H1, long H2, long U1, long U2, long U3) SeedOwners()

@@ -1048,14 +1048,11 @@ public class SettingsController : ControllerBase
             var isMultiDevice = sameDevices.Count > 1;
             string conflictKind;
             var note = row.Note ?? "";
-            if (note.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, StringComparison.Ordinal) ||
-                note.StartsWith(PrtgHostMapper.NoteHostnameSameHostPrefix, StringComparison.Ordinal))
+            // 衝突只剩兩種（docs/PRTG-SPEC.md §4）：名稱命中多台主機、一 IP 由多台主機共用。
+            // 同 IP 多 device 已改為全部對應到該 IP 的主機，不再是衝突。
+            if (note.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, StringComparison.Ordinal))
             {
                 conflictKind = "hostname-multi";
-            }
-            else if (note.StartsWith(PrtgHostMapper.NoteHostnameHostTakenPrefix, StringComparison.Ordinal))
-            {
-                conflictKind = "hostname-host-taken";
             }
             else if (isUnmatched)
             {
@@ -1063,7 +1060,7 @@ public class SettingsController : ControllerBase
             }
             else
             {
-                conflictKind = isMultiDevice ? "multi-device" : "multi-host";
+                conflictKind = "multi-host";
             }
 
             List<PrtgConflictDeviceDto> sameIpDevices;
