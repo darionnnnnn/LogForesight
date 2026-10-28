@@ -20,6 +20,35 @@ public sealed class PrtgAdminPageUiTests
     private static string Script() =>
         File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
 
+    [Theory]
+    [InlineData("connection")]
+    [InlineData("params")]
+    [InlineData("mirror")]
+    [InlineData("probe")]
+    [InlineData("selected-backfill")]
+    [InlineData("effectiveness")]
+    public void 每個頁籤開頭都有用途說明_做什麼什麼時候來不會做什麼(string panel)
+    {
+        var view = View();
+        var marker = $"<div data-panel=\"{panel}\"";
+        var start = view.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"找不到頁籤 {panel}");
+        // 用途區必須緊接在頁籤容器開頭（第一個子元素），不是藏在頁籤底部
+        var head = view.Substring(start, Math.Min(900, view.Length - start));
+        Assert.Contains("aria-label=\"這個頁籤的用途\"", head);
+        Assert.Contains("這頁做什麼", head);
+        Assert.Contains("什麼時候來", head);
+        Assert.Contains("不會做什麼", head);
+    }
+
+    [Fact]
+    public void 環境探測與歷史回填的用途說明講清楚範圍()
+    {
+        var view = View();
+        Assert.Contains("結果包含不在主機清單內的裝置", view);
+        Assert.Contains("保守策略補全部已對應主機", view);
+    }
+
     /// <summary>從宣告處取出整個函式本體（大括號配對）。</summary>
     private static string FunctionBody(string source, string declaration)
     {

@@ -24,6 +24,13 @@
 </ul>
 
 <div data-panel="effectiveness" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">統計 PRTG 對分析的幫助：抓到幾個問題、建了多少交辦、被日誌佐證多少、被標誤報多少。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">想決定規則門檻要不要調，或要不要改用激進策略時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">各數字的分母不同，不能互相換算成比例。</dd>
+        </dl>
+    </aside>
     <section class="lf-card mb-4" id="prtg-effectiveness" aria-labelledby="prtg-effectiveness-title">
         <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
             <h2 class="lf-card__title" id="prtg-effectiveness-title">PRTG 使用效果</h2>
@@ -58,6 +65,13 @@
 </div>
 
 <div data-panel="selected-backfill" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">把過去幾天的 PRTG 逐小時數值補進來。保守策略補全部已對應主機。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用 PRTG，或想補齊過去日子的數值時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會重新判斷過去的風險；要重算請到排程作業頁用「立即執行」回望。</dd>
+        </dl>
+    </aside>
     <section class="lf-card" aria-labelledby="prtg-full-backfill-title">
         <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-full-backfill-title">全量歷史回填</h2></div>
         <div class="lf-card__body">
@@ -97,6 +111,13 @@
 </div>
 
 <div data-panel="connection">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">設定本系統連到 PRTG 的位址與認證，並測試連線。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用，或 PRTG 換位址、換帳號時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會開始取數；取數要到「擷取參數」勾選啟用。</dd>
+        </dl>
+    </aside>
     <form id="prtg-connection-form">
         <div class="lf-card">
             <div class="lf-card__header">
@@ -203,6 +224,13 @@
 </div>
 
 <div data-panel="params" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">決定要不要啟用 PRTG 擷取、多久取一次數值、取哪些類型。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用，或要調整取數頻率與監看類型時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">按「儲存」前不生效；不會補過去的數值（到「歷史回填」）。</dd>
+        </dl>
+    </aside>
     <form id="prtg-params-form">
         <div class="lf-card">
             <div class="lf-card__header">
@@ -409,6 +437,13 @@
 </div>
 
 <div data-panel="mirror" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">看 PRTG 資料有沒有完整複製過來、哪些主機還沒對應到 PRTG 裝置，並在這裡同步或指派。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">新增主機後、主機頁出現「PRTG 未對應」，或排程作業頁顯示同步失敗時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會改主機清單，也不會補過去的數值。只列主機清單內的主機。</dd>
+        </dl>
+    </aside>
     <section class="lf-card mb-3" aria-labelledby="prtg-snapshot-diagnostics-title">
         <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
             <h2 class="lf-card__title" id="prtg-snapshot-diagnostics-title">快照最近 24 個完整小時</h2>
@@ -582,6 +617,13 @@
 </div>
 
 <div data-panel="probe" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">檢查 PRTG 連得上、資料取得到，並估算取數規模。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用、調整範圍前，或取數結果異常時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">只讀取、不寫入正式資料。結果包含不在主機清單內的裝置（全站診斷用）。</dd>
+        </dl>
+    </aside>
     <div class="lf-card mb-4" id="prtg-probe">
         <div class="lf-card__header">
             <h2 class="lf-card__title">環境探測</h2>
