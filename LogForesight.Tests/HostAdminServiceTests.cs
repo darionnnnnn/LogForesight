@@ -525,6 +525,10 @@ public class HostAdminServiceTests : IDisposable
         Assert.DoesNotContain(a.HostId, ids);
         Assert.Contains(b.HostId, ids);
         Assert.Contains(c.HostId, ids);
+        // 與 PRTG 維護頁「未對應主機」清單同一份判定（PrtgHostCoverage）：兩邊的主機集合必須一致
+        var coverage = PrtgHostCoverage.Unmapped(_hosts.GetAll(), prtgStore.GetLatestHostMap(), Array.Empty<string>())
+            .Select(h => h.HostId).ToHashSet();
+        Assert.Equal(coverage, ids.ToHashSet());
     }
 
     [Fact]

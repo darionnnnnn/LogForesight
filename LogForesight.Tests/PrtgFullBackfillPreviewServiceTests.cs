@@ -90,6 +90,26 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 全量回填執行_保守策略實際補到當天沒有風險的已對應主機()
+    {
+        // 與預覽同一個範圍判定：執行端若改回只補觸發主機，sensor 3001 不會被請求
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.PrtgStore();
+        store.ReplaceHostMapForDate(yesterday, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 100, HostId = 1, MapStatus = PrtgMapStatus.Ok },
+            new PrtgHostMapRow { DeviceObjid = 300, HostId = 2, MapStatus = PrtgMapStatus.Ok }
+        });
+        store.UpsertSensors(new[] { Sensor(3001, 300) }, DateTime.Now);
+        _settings.Update(s => s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative);
+
+        var requests = await RunFullAsync();
+
+        Assert.Contains(requests, r => r.SensorId == 3001 && r.Day == yesterday);
+        Assert.Equal("全部已對應主機（保守策略）", _service.PreviewFull().HostScopeText);
+    }
+
+    [Fact]
     public void PreviewFull_保守策略白名單為空時明確拒絕()
     {
         _settings.Update(s =>

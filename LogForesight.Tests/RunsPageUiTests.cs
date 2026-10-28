@@ -85,6 +85,16 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void PRTG卡只用主機口徑_不再顯示主機清單外的衝突與查無主機計數()
+    {
+        var js = ReadRunsJs();
+        Assert.DoesNotContain("查無主機", js);
+        Assert.DoesNotContain("lastMapConflict", js);
+        Assert.DoesNotContain("lastMapUnmatched", js);
+        Assert.Contains("prtgHostMapSummary(status)", js);
+    }
+
+    [Fact]
     public void 一併補齊確認框顯示全部已對應主機估算_量大預設不勾_不能補時停用()
     {
         var body = ExtractBlock(ReadRunsJs(), "function confirmRunWithPrtgValues(");

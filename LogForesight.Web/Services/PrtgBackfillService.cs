@@ -365,6 +365,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
             EstimatedHistoricRequests = snapshot.Plan.HistoricRequests,
             HistoricQuotaLowerBoundSeconds = snapshot.Plan.HistoricQuotaLowerBoundSeconds,
             DaysWithTargets = snapshot.Plan.DaysWithTargets,
+            HostScopeText = BackfillHostScopeText(settings),
             StateChangeObjects = snapshot.Plan.StateChangeObjects,
             SettingsRevision = snapshot.SettingsRevision,
             ScopeRevision = snapshot.ScopeRevision,
@@ -468,6 +469,18 @@ public class PrtgBackfillService : IPrtgBackfillTail
         if (scopeBefore != scopeAfter || settingsRevision != settingsAfter)
             throw DomainException.Conflict("預覽時計算範圍或設定正好變更，請重新預覽。");
         return new FullPreviewSnapshot(anchor, plan, settingsRevision, Hash(scopeAfter));
+    }
+
+    /// <summary>補哪些主機的白話說明：與預覽、執行同一個範圍判定，畫面不另算一次。</summary>
+    internal static string BackfillHostScopeText(SystemSettings settings)
+    {
+        var conservative = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy) == PrtgFetchStrategy.Conservative;
+        return PrtgValueFetchScope.BackfillScope(settings.PrtgFetchStrategy, settings.PrtgValueFetchScope) switch
+        {
+            PrtgValueFetchScope.AllMapped => conservative ? "全部已對應主機（保守策略）" : "全部已對應主機",
+            PrtgValueFetchScope.TriggeredPlusList => "當天高／中風險主機＋指定清單（激進策略的夜間數值取數對象）",
+            _ => "當天高／中風險主機（激進策略的夜間數值取數對象）"
+        };
     }
 
     private static string FullPreviewMessage(PrtgFullBackfillPlan plan, IReadOnlySet<DateTime> completed)

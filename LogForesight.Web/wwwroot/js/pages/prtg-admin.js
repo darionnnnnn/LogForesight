@@ -498,7 +498,8 @@ function renderFullBackfillPreview(preview) {
     root.replaceChildren();
     const summary = document.createElement('p');
     summary.className = 'small mb-2';
-    summary.textContent = `${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)}，${formatNumber(preview.dayCount)} 天、` +
+    summary.textContent = (preview.hostScopeText ? `補：${preview.hostScopeText}。` : '') +
+        `${preview.fromDate.slice(0, 10)}～${preview.toDate.slice(0, 10)}，${formatNumber(preview.dayCount)} 天、` +
         `${formatNumber(preview.estimatedHistoricRequests)} 次 historicdata；配額時間下界 ${formatNumber(Math.ceil(preview.historicQuotaLowerBoundSeconds / 60))} 分鐘（不含回應延遲）。`;
     root.appendChild(summary);
     const limits = document.createElement('p');

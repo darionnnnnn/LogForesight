@@ -978,6 +978,43 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task 同主機兩台裝置各一顆sensor同時Down_同主機日兩筆finding不合併()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TWO", Active = true, IpAddress = "192.168.7.7" });
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 71, Name = "SRV-TWO ping", Ip = "192.168.7.7" },
+            new PrtgDeviceRow { Objid = 72, Name = "SRV-TWO wmi", Ip = "192.168.7.7" }
+        }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 7101, DeviceObjid = 71, Name = "Ping", SensorType = "Ping", Status = "Down" },
+            new PrtgSensorRow { Objid = 7201, DeviceObjid = 72, Name = "Disk", SensorType = "SNMP Disk Free", Status = "Down" }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 7101, ChangedAt = day.Date.AddHours(2), Status = "Down" },
+            new PrtgStateChangeRow { SensorObjid = 7201, ChangedAt = day.Date.AddHours(3), Status = "Down" }
+        });
+        MapDeviceToHost(day, 71, host);
+        MapDeviceToHost(day, 72, host);
+        SeedNetiqParent(host, day);
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        // 簽章帶 sensor objid：兩顆 sensor 各自一筆，不會互相覆蓋或合併
+        var findings = registry.For(host.HostId, day);
+        Assert.Contains(findings, f => f.EventKey.EndsWith(":7101", StringComparison.Ordinal));
+        Assert.Contains(findings, f => f.EventKey.EndsWith(":7201", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task 完全沒有主機對應的日子算評估完成_不再每晚重評()
     {
         EnableConservativePrtgWithDefaultWhitelist();
