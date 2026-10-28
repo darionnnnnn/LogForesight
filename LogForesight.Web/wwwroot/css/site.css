@@ -443,6 +443,18 @@ input:-webkit-autofill:active {
     font-size: 1rem !important;
 }
 
+/* 下拉選項明確指定前景與背景：選項背景預設透明時，Windows 版 Chrome 部分寬下拉的選項文字畫不出來
+   （點得到、看不到，重繪後才出現）。本站沒有深色模式，select 一併宣告淺色配色。不要當成多餘樣式刪掉。 */
+select {
+    color-scheme: light;
+}
+
+select option,
+select optgroup {
+    color: var(--lf-text);
+    background-color: var(--lf-card-bg);
+}
+
 .form-control:focus,
 .form-select:focus {
     border-color: var(--lf-primary-hover);

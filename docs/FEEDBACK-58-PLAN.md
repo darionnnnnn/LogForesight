@@ -309,4 +309,5 @@
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | 開工基準 | 主代理 | 全量 6,487／10 略過 | — | — |
+| A | 主代理（幾行 CSS） | 完成 | 前端定向 230 條綠；突變（刪 background-color）守門紅 | 未在使用者 Chrome 重現，實測交使用者 |
 | B（含 C-1） | 主代理（已持有脈絡，自己做比寫規格便宜） | 完成 | 定向 236 條＋重寫 60 條綠；突變三條（同 IP 多 device、往後沿用、C-1 MarkEvaluated）皆紅 | ① 名稱不一致提醒原寫「抽出候選即比對」，但 `Extract` 會把不帶括號的整個裝置名當候選，幾乎每台都誤報→改成只看括號內與 host 欄 DNS 名稱。② 指定主機補值（`PrtgBackfillRunner`、`PrtgBackfillService` 預覽）原本直接讀當日對應、不經唯一出口→改走 `GetLatestHostMapWithDate`，三條舊測試依新定案改寫。③ 升級重算改記 NLog（啟動時沒有稽核服務），不寫稽核。④ 主控台逐筆列出非 ok 裝置原屬 E，同檔先在 B 移除。⑤ 前端 `multi-device`／`hostname-host-taken` 分支留給 E 隨指派 modal 重寫一起刪（目前是死碼、不影響行為）。⑥ C-1（MarkEvaluated）與 B 同檔，一起提交。 |

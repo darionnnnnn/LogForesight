@@ -112,6 +112,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - **陰影**：階層不變；卡片 hover 提升維持 `xs→md`。
 - **間距**：`--lf-space-*` 不變（已是 4/8 節奏）。表格列高目標 36px、卡片內距 12–16px（skill Data-Dense 建議值，Phase 3 元件層落實）。
 - **動效**：`--lf-transition: .15s ease` 維持；較大轉場（modal、燈箱）150–300ms `ease-out`；**hover/pressed 不得位移佈局**（用透明度/陰影/色彩）；新增全站 `prefers-reduced-motion: reduce` 支援（動畫關閉、transition 降為 0）。
+- **下拉選項**：`select option／optgroup` 明確指定 `--lf-text` 與 `--lf-card-bg`、`select` 宣告 `color-scheme: light`——選項背景透明時 Windows 版 Chrome 部分寬下拉的選項文字畫不出來（`FrontendConsistencyUiTests` 守門）。
 - **focus ring**：`0 0 0 .2rem rgba(30, 64, 175, .22)`，鍵盤導覽全元件可見。
 
 ## 5. Anti-patterns（skill 檢索所得，適用本產品）

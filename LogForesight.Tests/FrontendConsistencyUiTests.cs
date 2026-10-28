@@ -30,6 +30,17 @@ public class FrontendConsistencyUiTests
         return Path.Combine(segments.ToArray());
     }
 
+    [Fact]
+    public void 下拉選項明確指定前景與背景色_避免Chrome選項文字空白()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var match = System.Text.RegularExpressions.Regex.Match(css, @"select option,\s*select optgroup\s*\{(?<body>[^}]*)\}");
+        Assert.True(match.Success, "site.css 必須有 select option／optgroup 規則");
+        Assert.Contains("color: var(--lf-text)", match.Groups["body"].Value);
+        Assert.Contains("background-color:", match.Groups["body"].Value);
+        Assert.Matches(@"select\s*\{\s*color-scheme:\s*light;", css);
+    }
+
     private static string ReadJs(params string[] parts)
     {
         var path = JsDir(parts);
