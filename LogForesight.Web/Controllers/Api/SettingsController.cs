@@ -559,6 +559,9 @@ public class SettingsController : ControllerBase
     /// <summary>粗估用的每次 historicdata 查詢平均秒數（暫定）。</summary>
     private const double PrtgValueQuerySeconds = 1.5;
 
+    /// <summary>「一併補齊」查詢次數達到這個數時，確認框的勾選預設不勾（暫定）：讓使用者看過估算再主動勾，不是閘門。</summary>
+    internal const int LargeBackfillQueryThreshold = 2000;
+
     /// <summary>
     /// 立即執行「一併補齊 PRTG 逐小時數值」的查詢量粗估：目前監看裝置上的白名單感測器數 × 天數。
     /// 帶 segment 時只算那個網段的主機（與立即執行的網段範圍同一套解析）。
@@ -575,19 +578,27 @@ public class SettingsController : ControllerBase
         var sentinels = new SentinelStore(_backend.Blob("sentinels"));
         var hostIds = segment == null ? null : ScheduleController.ResolveSegmentHostIds(segment, _hosts, sentinels);
 
+        // 與「一併補齊」實際取數同一個母體（保守策略＝全部已對應主機，PrtgValueFetchScope.BackfillScope）：
+        // 最新對應中 ok 的主機與其裝置上的白名單 sensor；帶網段時只算那些主機。
         var store = _backend.PrtgStore();
-        var scope = PrtgScopeDevices.Compute(
-            store, _hosts, new PrtgMirrorGuardSource(store), settings, sentinels.GetAll(),
-            new ResourceGuardWarningConsole(), new PrtgAddressResolver(), hostIds);
-        var sensors = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, scope.DeviceObjids.ToList()).Count;
+        var okRows = store.GetLatestHostMap()
+            .Where(row => row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue &&
+                          (hostIds == null || hostIds.Contains(row.HostId.Value)))
+            .ToList();
+        var blocked = PrtgValueFetchScope.BackfillBlockedReason(settings.PrtgFetchStrategy, settings.PrtgSensorTypeWhitelist);
+        var sensors = blocked != null ? 0 : store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist,
+            okRows.Select(row => row.DeviceObjid).Distinct().ToList()).Count;
         var queries = (long)sensors * days;
         var concurrency = Math.Max(1, settings.PrtgFetchConcurrency);
 
         return ApiResponse<PrtgValuesEstimateDto>.Ok(new PrtgValuesEstimateDto
         {
+            Hosts = okRows.Select(row => row.HostId!.Value).Distinct().Count(),
             Sensors = sensors,
             Queries = queries,
-            Minutes = (int)Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60)
+            Minutes = (int)Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60),
+            Large = queries >= LargeBackfillQueryThreshold,
+            BlockedReason = blocked
         });
     }
 

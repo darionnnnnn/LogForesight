@@ -27,6 +27,23 @@ public static class PrtgValueFetchScope
     public static string Normalize(string? value) => IsValid(value) ? value! : Triggered;
 
     /// <summary>
+    /// 歷史回填（含立即執行的「一併補齊」）用的主機範圍——唯一判定點，預覽與執行共用。
+    /// 保守策略下「夜間數值取數對象」不適用（擷取參數頁寫明），回填補的是**全部已對應主機**：
+    /// 使用者勾選補齊就是要補全，不是只補當天高／中風險的幾台。激進策略照設定值。
+    /// </summary>
+    public static string BackfillScope(string? fetchStrategy, string? scopeSetting) =>
+        PrtgFetchStrategy.Normalize(fetchStrategy) == PrtgFetchStrategy.Conservative ? AllMapped : Normalize(scopeSetting);
+
+    /// <summary>
+    /// 保守策略要補全部已對應主機，但 sensor 白名單為空時等於對全部 sensor 取數——明確拒絕，不靜默退回觸發主機
+    /// （退回的話使用者勾了「補全」實際只補幾台，正是要修掉的誤會）。回傳拒絕訊息，可以執行時回 null。
+    /// </summary>
+    public static string? BackfillBlockedReason(string? fetchStrategy, IReadOnlyCollection<string>? whitelist) =>
+        PrtgFetchStrategy.Normalize(fetchStrategy) == PrtgFetchStrategy.Conservative && (whitelist == null || whitelist.Count == 0)
+            ? "sensor 類型白名單是空的，補全部已對應主機會變成對全部 sensor 取數。請先到 PRTG 維護 → 擷取參數設定白名單。"
+            : null;
+
+    /// <summary>
     /// 依模式算出這次要取數的主機集合（三種模式的唯一判定點，取數與歷史回填共用）。
     /// </summary>
     /// <param name="scope">模式字面值；不合法時當作 <see cref="Triggered"/></param>

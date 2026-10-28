@@ -61,7 +61,7 @@
     <section class="lf-card" aria-labelledby="prtg-full-backfill-title">
         <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-full-backfill-title">全量歷史回填</h2></div>
         <div class="lf-card__body">
-            <p class="small text-muted">依已儲存的回填天數、每日高／中風險主機、歷史有效對應、sensor 白名單與監看數值範圍預估。全量表示完整執行這套已設定範圍，不代表全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。</p>
+            <p class="small text-muted">依已儲存的回填天數、各日主機對應與 sensor 白名單預估：保守策略補全部已對應主機，激進策略依「夜間數值取數對象」。只含主機清單內的主機，不是全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。</p>
             <div class="d-flex flex-wrap gap-2 mb-3">
                 <button type="button" class="btn btn-outline-primary" id="prtg-full-backfill-preview">預估全量工作量</button>
                 <button type="button" class="btn btn-danger" id="prtg-full-backfill-start" disabled>確認並開始全量回填</button>
@@ -251,7 +251,7 @@
                         <option value="triggered-plus-list">觸發主機＋指定清單</option>
                     </select>
                     <div class="form-text">
-                        保守策略下此範圍不適用；切回激進策略時保留上次設定。停用 PRTG 擷取時，夜間擷取、歷史回填與排程結構同步不執行；維護者仍可手動同步結構。環境探測與資源守門預覽不受影響。
+                        保守策略下此範圍不適用（歷史回填與立即執行的「一併補齊」會補全部已對應主機）；切回激進策略時保留上次設定。停用 PRTG 擷取時，夜間擷取、歷史回填與排程結構同步不執行；維護者仍可手動同步結構。環境探測與資源守門預覽不受影響。
                         「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
                     </div>
                 </div>

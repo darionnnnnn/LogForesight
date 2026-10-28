@@ -68,6 +68,40 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(PrtgFetchStrategy.Conservative, 2)]
+    [InlineData(PrtgFetchStrategy.Aggressive, 1)]
+    public void PreviewFull_保守策略補全部已對應主機_激進策略照取數對象(string strategy, int yesterdayTargets)
+    {
+        // 昨天另有一台已對應、但當天沒有高／中風險的主機（host 2 的 device 300）
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.PrtgStore();
+        store.ReplaceHostMapForDate(yesterday, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 100, HostId = 1, MapStatus = PrtgMapStatus.Ok },
+            new PrtgHostMapRow { DeviceObjid = 300, HostId = 2, MapStatus = PrtgMapStatus.Ok }
+        });
+        store.UpsertSensors(new[] { Sensor(3001, 300) }, DateTime.Now);
+        _settings.Update(s => s.PrtgFetchStrategy = strategy);
+
+        var preview = _service.PreviewFull();
+
+        Assert.Equal(yesterdayTargets, preview.Days.Single(day => day.Day == yesterday).TargetSensors);
+    }
+
+    [Fact]
+    public void PreviewFull_保守策略白名單為空時明確拒絕()
+    {
+        _settings.Update(s =>
+        {
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string>();
+        });
+
+        var error = Assert.Throws<DomainException>(() => _service.PreviewFull());
+        Assert.Contains("白名單", error.Message);
+    }
+
     [Fact]
     public void PreviewFull_UsesStoredDaysAndActualDailyTargetsWithoutOpeningRun()
     {

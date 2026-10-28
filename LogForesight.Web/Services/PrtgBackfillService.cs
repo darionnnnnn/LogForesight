@@ -454,13 +454,15 @@ public class PrtgBackfillService : IPrtgBackfillTail
         var store = _backend.PrtgStore();
         if (store.GetSensorTargets().Count == 0)
             throw DomainException.Validation("PRTG 結構鏡像目前沒有感測器，請先同步結構，再預覽全量回填成本。");
+        if (PrtgValueFetchScope.BackfillBlockedReason(settings.PrtgFetchStrategy, settings.PrtgSensorTypeWhitelist) is { } blocked)
+            throw DomainException.Validation(blocked);
         var scopeResult = PrtgScopeDevices.Compute(store, _hosts, new PrtgMirrorGuardSource(store), settings,
             _sentinels.GetAll(), new SilentBackfillConsole(), new PrtgAddressResolver(), hostIds: null);
         var (extraScopeHosts, _) = PrtgValueFetchScope.ResolveHostNames(settings.PrtgValueFetchExtraHosts,
             _hosts.GetAll().Select(host => (host.HostId, host.HostName, host.Active, host.MergedInto.HasValue)));
         var plan = PrtgFullBackfillPlanBuilder.Build(store, _backend.RecordStore(), anchor,
             settings.PrtgBackfillDays, scopeResult.DeviceObjids, settings.PrtgSensorTypeWhitelist,
-            settings.PrtgValueFetchScope, extraScopeHosts);
+            PrtgValueFetchScope.BackfillScope(settings.PrtgFetchStrategy, settings.PrtgValueFetchScope), extraScopeHosts);
         var scopeAfter = scopeReader.Read();
         var settingsAfter = Hash(JsonSerializer.Serialize(_settings.Get()));
         if (scopeBefore != scopeAfter || settingsRevision != settingsAfter)
@@ -683,6 +685,12 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
+        if (PrtgValueFetchScope.BackfillBlockedReason(s.PrtgFetchStrategy, s.PrtgSensorTypeWhitelist) is { } blocked)
+        {
+            error = blocked;
+            return false;
+        }
+
         if (_probeState.Snapshot().IsRunning)
         {
             error = "環境探測執行中，請稍後再試。";
@@ -845,7 +853,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     prtgStore, _backend.RecordStore(), s.PrtgSensorTypeWhitelist,
                     dayProgress: (dDone, dTotal, curDate) => _state.UpdateDay(dDone, dTotal, curDate),
                     sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),
-                    scope: s.PrtgValueFetchScope,
+                    scope: PrtgValueFetchScope.BackfillScope(s.PrtgFetchStrategy, s.PrtgValueFetchScope),
                     extraScopeHosts: scopeHostIds,
                     stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices),
                     expectedDayFingerprints: run.ExpectedPlan?.Days.ToDictionary(day => day.Day, day => day.TargetFingerprint),

@@ -1989,8 +1989,19 @@ function confirmRunWithPrtgValues(days, segment) {
         api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true })
             .then(estimate => {
                 if (!estimate || !Number.isFinite(estimate.queries)) return;
-                const minutesText = estimate.minutes > 0 ? `，約 ${formatNumber(estimate.minutes)} 分鐘` : '';
-                label.textContent = `${baseText}（約 ${formatNumber(estimate.queries)} 次查詢${minutesText}）`;
+                if (estimate.blockedReason || estimate.sensors === 0) {
+                    input.checked = false;
+                    input.disabled = true;
+                    label.textContent = estimate.blockedReason
+                        ? `${baseText}（無法補：${estimate.blockedReason}）`
+                        : `${baseText}（沒有可補的 sensor：尚無已對應主機或白名單 sensor）`;
+                    return;
+                }
+                // 保守策略補的是全部已對應主機；量大時預設不勾，讓使用者看過估算再主動勾
+                const minutesText = estimate.minutes > 0 ? `，至少約 ${formatNumber(estimate.minutes)} 分鐘` : '';
+                label.textContent = `${baseText}（全部已對應主機 ${formatNumber(estimate.hosts)} 台、`
+                    + `sensor ${formatNumber(estimate.sensors)} 顆、約 ${formatNumber(estimate.queries)} 次查詢${minutesText}）`;
+                if (estimate.large) input.checked = false;
             })
             .catch(() => {
                 // 取不到估算就不顯示數字，勾選照常可用

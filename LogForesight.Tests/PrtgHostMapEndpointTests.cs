@@ -306,6 +306,44 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
+    public void 一併補齊估算_只算已對應主機的白名單sensor_白名單為空時回拒絕原因()
+    {
+        var store = _backend.PrtgStore();
+        var mapped = _hosts.Upsert(new WebHost { HostName = "srv-mapped", IpAddress = "10.80.0.1", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "srv-unmapped", IpAddress = "10.80.0.2", Active = true });
+        store.ReplaceHostMapForDate(DateTime.Today, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = DateTime.Today, DeviceObjid = 8001, HostId = mapped.HostId, MapStatus = PrtgMapStatus.Ok },
+            new() { MapDate = DateTime.Today, DeviceObjid = 8002, MapStatus = PrtgMapStatus.Unmatched }
+        });
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 81, DeviceObjid = 8001, Name = "ping", SensorType = "Ping" },
+            new PrtgSensorRow { Objid = 82, DeviceObjid = 8002, Name = "ping", SensorType = "Ping" }
+        }, DateTime.Now);
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settings.Update(s =>
+        {
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string> { "Ping" };
+        });
+
+        var estimate = _controller.EstimatePrtgValues(days: 3).Data!;
+
+        // 主機清單外的 device 8002 不算；1 台主機 × 1 顆 × 3 天
+        Assert.Equal(1, estimate.Hosts);
+        Assert.Equal(1, estimate.Sensors);
+        Assert.Equal(3, estimate.Queries);
+        Assert.False(estimate.Large);
+        Assert.Null(estimate.BlockedReason);
+
+        settings.Update(s => s.PrtgSensorTypeWhitelist = new List<string>());
+        var blocked = _controller.EstimatePrtgValues(days: 3).Data!;
+        Assert.Equal(0, blocked.Sensors);
+        Assert.Contains("白名單", blocked.BlockedReason);
+    }
+
+    [Fact]
     public void status非conflict時回驗證例外()
     {
         var ex1 = Assert.Throws<DomainException>(() => _controller.GetPrtgHostMap("ok"));

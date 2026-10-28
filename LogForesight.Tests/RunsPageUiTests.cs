@@ -85,6 +85,16 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void 一併補齊確認框顯示全部已對應主機估算_量大預設不勾_不能補時停用()
+    {
+        var body = ExtractBlock(ReadRunsJs(), "function confirmRunWithPrtgValues(");
+        Assert.Contains("全部已對應主機 ${formatNumber(estimate.hosts)} 台", body);
+        Assert.Contains("if (estimate.large) input.checked = false;", body);
+        Assert.Contains("input.disabled = true;", body);
+        Assert.Contains("estimate.blockedReason", body);
+    }
+
+    [Fact]
     public void 保守策略的執行不顯示sensor數_逐日觸發欄顯示破折號並說明()
     {
         var js = ReadRunsJs();

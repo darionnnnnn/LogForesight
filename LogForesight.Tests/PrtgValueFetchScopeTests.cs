@@ -120,4 +120,25 @@ public class PrtgValueFetchScopeTests
         Assert.Empty(ids);
         Assert.Empty(unresolved);
     }
+
+    [Theory]
+    [InlineData("conservative", "triggered", PrtgValueFetchScope.AllMapped)]
+    [InlineData("conservative", "triggered-plus-list", PrtgValueFetchScope.AllMapped)]
+    [InlineData(null, "triggered", PrtgValueFetchScope.AllMapped)]
+    [InlineData("aggressive", "triggered", PrtgValueFetchScope.Triggered)]
+    [InlineData("aggressive", "all-mapped", PrtgValueFetchScope.AllMapped)]
+    [InlineData("aggressive", "garbage", PrtgValueFetchScope.Triggered)]
+    public void 回填範圍_保守策略一律全部已對應主機_激進策略照設定(string? strategy, string scope, string expected)
+    {
+        Assert.Equal(expected, PrtgValueFetchScope.BackfillScope(strategy, scope));
+    }
+
+    [Fact]
+    public void 回填拒絕原因_只有保守策略且白名單為空時拒絕()
+    {
+        Assert.Contains("白名單", PrtgValueFetchScope.BackfillBlockedReason("conservative", new List<string>()));
+        Assert.Contains("白名單", PrtgValueFetchScope.BackfillBlockedReason("conservative", null));
+        Assert.Null(PrtgValueFetchScope.BackfillBlockedReason("conservative", new List<string> { "ping" }));
+        Assert.Null(PrtgValueFetchScope.BackfillBlockedReason("aggressive", new List<string>()));
+    }
 }
