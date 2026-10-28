@@ -33,29 +33,31 @@ public static class PrtgHostCoverage
     /// 原因的判定順序：衝突 → 沒有 IP → IP 已排除 → PRTG 查無（先講使用者能處理的具體原因）。
     /// </summary>
     public static IReadOnlyList<PrtgUnmappedHost> Unmapped(
-        IEnumerable<WebHost> hosts, IReadOnlyCollection<PrtgHostMapRow> latestMapRows, IEnumerable<string> excludedIps)
+        IEnumerable<WebHost> hosts, IReadOnlyCollection<PrtgHostMapRow> latestMapRows, IEnumerable<string> excludedIps,
+        IPrtgAddressResolver? resolver = null)
     {
+        // 衝突列存的是 PRTG 原始位址（可能是 DNS 名稱）：與對應作業同一個解析層比對，純語法正規化對名稱會回 null
+        string? Resolve(string? value) => resolver != null ? resolver.Resolve(value) : PrtgAddress.Normalize(value);
         var mapped = MappedHostIds(latestMapRows);
         var conflictRows = latestMapRows.Where(r => r.MapStatus == PrtgMapStatus.Conflict).ToList();
         // 一 IP 多主機的衝突列只把 HostId 填給最小者；共用同一 IP 的其他主機也是同一個衝突，要一起標「衝突」
         var conflictHosts = conflictRows.Where(r => r.HostId.HasValue).Select(r => r.HostId!.Value).ToHashSet();
-        var conflictIps = conflictRows.Select(r => PrtgAddress.Normalize(r.Ip)).Where(ip => ip != null).Select(ip => ip!)
+        var conflictIps = conflictRows.Select(r => Resolve(r.Ip)).Where(ip => ip != null).Select(ip => ip!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var excluded = excludedIps.Select(PrtgAddress.Normalize).Where(ip => ip != null).Select(ip => ip!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return hosts
             .Where(h => h.Active && h.MergedInto == null && !mapped.Contains(h.HostId))
-            .Select(h => new PrtgUnmappedHost(h.HostId, h.HostName, h.IpAddress, ReasonFor(h, conflictHosts, conflictIps, excluded)))
+            .Select(h => new PrtgUnmappedHost(h.HostId, h.HostName, h.IpAddress, ReasonFor(h, Resolve(h.IpAddress), conflictHosts, conflictIps, excluded)))
             .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static string ReasonFor(WebHost host, HashSet<long> conflictHosts, HashSet<string> conflictIps, HashSet<string> excluded)
+    private static string ReasonFor(WebHost host, string? ip, HashSet<long> conflictHosts, HashSet<string> conflictIps, HashSet<string> excluded)
     {
         if (conflictHosts.Contains(host.HostId)) return ReasonConflict;
         if (string.IsNullOrWhiteSpace(host.IpAddress)) return ReasonNoIp;
-        var ip = PrtgAddress.Normalize(host.IpAddress);
         if (ip != null && conflictIps.Contains(ip)) return ReasonConflict;
         if (ip != null && excluded.Contains(ip)) return ReasonIpExcluded;
         return ReasonNotInPrtg;

@@ -975,7 +975,7 @@ public sealed class EfPrtgStore
         using (var probe = _contextFactory())
         {
             if (!probe.PrtgHostMaps.Any(m => m.MapDate == keep && m.MapStatus == PrtgMapStatus.Ok)) return -1;
-            oldDates = probe.PrtgHostMaps.Where(m => m.MapDate != keep).Select(m => m.MapDate).Distinct().ToList();
+            oldDates = probe.PrtgHostMaps.Where(m => m.MapDate != keep).Select(m => m.MapDate).Distinct().OrderBy(d => d).ToList();
         }
 
         var total = 0;

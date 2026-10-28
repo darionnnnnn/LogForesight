@@ -100,8 +100,10 @@ public class RunsPageUiTests
         var body = ExtractBlock(ReadRunsJs(), "function confirmRunWithPrtgValues(");
         Assert.Contains("全部已對應主機 ${formatNumber(estimate.hosts)} 台", body);
         Assert.Contains("if (estimate.large) input.checked = false;", body);
-        // 估算回來（或失敗）前不能按「仍要開始」
+        // 估算回來（或失敗）前不能按「仍要開始」，標籤要說在估算、且估算有自己的較短逾時
         Assert.Contains("okButton.disabled = true;", body);
+        Assert.Contains("（估算中…）", body);
+        Assert.Contains("timeoutMs: 15000", body);
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(body, @"okButton\.disabled = false;").Count);
         Assert.Contains("input.disabled = true;", body);
         Assert.Contains("estimate.blockedReason", body);

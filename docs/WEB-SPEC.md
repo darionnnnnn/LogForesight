@@ -2685,13 +2685,13 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   出現在同卡的「最新訊息」列與執行詳情（機制與取捨見 docs/PRTG-SPEC.md §12 可觀測性）。
 - **執行紀錄分欄**：列表與執行詳情各有「本機／NetIQ／PRTG」三欄
   （各為「分析 n（失敗 m）」與 PRTG 狀態徽章＋sensor 數＋觸發主機數），
-  執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 四值：`disabled` 未啟用／`success`／
+  執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 五值：`disabled` 未啟用／`success`／`no_output` 無產出／
   `partial` 結構同步成功但有 sensor 失敗／`failed` 結構同步失敗；取消執行時為 null）。
   「sensor N」是目標數扣掉失敗數，另附觸發主機數；**保守策略**（`BatchRun.PrtgStrategy`＝`conservative`）夜間不逐顆取數，改顯示「保守策略（數值由快照供應）」，
   執行詳情「PRTG 逐日」表的觸發主機／目標 sensor／失敗 sensor 顯示「—」並在表下說明；舊紀錄（null）照舊顯示數字。
   逐日「說明」欄：整趟共用階段失敗時寫出是哪個階段（`PrtgDailyPipeline.StageFailureNote`），完整訊息逐條進「重要紀錄」（「PRTG 擷取階段失敗：…」）；
   沿用之後的主機對應時註明「沿用 YYYY-MM-DD 的主機對應」（docs/PRTG-SPEC.md §4）。資料來自 `BatchRun` 的分路結構化欄位；
-  總表日期列的 PRTG 徽章依**資料日期**取：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆的結局（其餘逐日欄位尚無畫面消費，見 docs/BACKLOG.md）；舊紀錄取「開始日隔天」的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。
+  總表日期列的 PRTG 徽章依**資料日期**取：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆的結局（逐日欄位全部顯示在執行詳情的「PRTG 逐日」表）；舊紀錄取「開始日隔天」的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。
   **舊紀錄那些欄位為 null，畫面顯示「—」**，與「數字是 0」語意分開
   （0＝跑了但沒抓到，null＝這一路沒有產出）。總表主體仍是主機×日，
   **不為 PRTG 另闢一區**——PRTG 沒有主機日語意，硬拆會做出一張空表。
@@ -2749,7 +2749,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   「PRTG 尚未啟用／仍要開始」。**連線根本沒設定的站台不提示**——每次手動執行都被問一次只會讓人麻痺，
   而「連線填好了卻忘了開擷取」才是真的會讓人白跑一晚的狀態。提示不分執行範圍：
   網段範圍的手動執行一樣會走 PRTG 日路徑（它只看設定不看範圍）。前端只是提前問，
-  後端短路行為不變。PRTG 已啟用、範圍為全部主機且回望天數大於 1 時**再問一次**：激進策略提示「會對 N 天的觸發主機逐顆查詢歷史值、可能耗時數小時並明顯增加 PRTG 負載」並建議縮小天數或改保守；保守策略說明「會補齊 N 天的狀態變更與規則評估，過去日數值請用 PRTG 卡的開始回填」。網段範圍與指定主機更新的 PRTG 只處理昨天，不問）、**「分析本機主機」開關**：停用後排程與立即執行
+  後端短路行為不變。PRTG 已啟用、範圍為全部主機且回望天數大於 1 時**再問一次**：激進策略提示「會對 N 天的觸發主機逐顆查詢歷史值、可能耗時數小時並明顯增加 PRTG 負載」並建議縮小天數或改保守；保守策略開「PRTG 回望範圍」確認框：說明會補齊 N 天的狀態變更與規則評估，並有預設勾選的「一併補齊這 N 天的 PRTG 逐小時數值」（`includePrtgValues`，後端在同一趟結束前接續回填，docs/PRTG-SPEC.md §5）——勾選框旁顯示 `GET api/admin/settings/prtg-estimate` 的估算（全部已對應主機 N 台、sensor M 顆、約 K 次查詢、至少 T 分鐘；網段範圍只算該網段），估算回來前「仍要開始」停用並標「估算中…」，查詢達 2,000 次預設不勾，不能補（白名單為空、沒有 sensor）時停用勾選並說明。指定主機更新的 PRTG 只處理昨天，不問）、**「分析本機主機」開關**：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
   隱藏「指定主機更新」、指定本機主機更新回 400、執行總表本機空白日顯示「本機分析已停用」

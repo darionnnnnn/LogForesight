@@ -316,7 +316,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
         value: data.silentHostsCount,
         variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
         hint: data.silentHostsPrtgDownCount > 0
-            ? `沒回報 ≠ 沒問題；其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
+            ? `其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常；沒回報 ≠ 沒問題`
             : '沒回報 ≠ 沒問題',
         url: '/admin/hosts?status=silent'
     });
@@ -341,7 +341,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
         });
     }
 
-    // 三組：風險概況／待處理／權限與安全。原本只放 tooltip 的 hint 改成可見副標（sub），完整文字留在 title
+    // 三組：風險概況／待處理／權限與安全。說明放可見副標（sub），完整文字留在 title（DESIGN-SYSTEM §6b：說明不只藏在 tooltip）
     const groups = [
         { key: 'risk', title: '風險概況' },
         { key: 'todo', title: '待處理' },

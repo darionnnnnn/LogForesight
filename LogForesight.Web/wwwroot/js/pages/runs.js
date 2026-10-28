@@ -1956,7 +1956,7 @@ function confirmRunWithPrtgValues(days, segment) {
         label.className = 'form-check-label';
         label.htmlFor = input.id;
         const baseText = `一併補齊這 ${days} 天的 PRTG 逐小時數值`;
-        label.textContent = baseText;
+        label.textContent = `${baseText}（估算中…）`;
         check.append(input, label);
         body.append(message, check);
 
@@ -1986,9 +1986,10 @@ function confirmRunWithPrtgValues(days, segment) {
 
         const params = new URLSearchParams({ days: String(days) });
         if (segment) params.set('segment', segment);
-        api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true })
+        api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true, timeoutMs: 15000 })
             .then(estimate => {
                 okButton.disabled = false;
+                label.textContent = baseText;
                 if (!estimate || !Number.isFinite(estimate.queries)) return;
                 if (estimate.blockedReason || estimate.sensors === 0) {
                     input.checked = false;
@@ -2006,6 +2007,7 @@ function confirmRunWithPrtgValues(days, segment) {
             })
             .catch(() => {
                 okButton.disabled = false;
+                label.textContent = baseText;
                 // 取不到估算就不顯示數字，勾選照常可用
             });
     });

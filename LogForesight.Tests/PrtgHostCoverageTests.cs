@@ -68,6 +68,25 @@ public class PrtgHostCoverageTests
         Assert.Equal(2, unmapped.Count);
     }
 
+    private sealed class MapResolver(IReadOnlyDictionary<string, string> map) : IPrtgAddressResolver
+    {
+        public string? Resolve(string? value) =>
+            value != null && map.TryGetValue(value.Trim(), out var ip) ? ip : PrtgAddress.Normalize(value);
+    }
+
+    [Fact]
+    public void 衝突列是DNS名稱時_經解析層比對_共用該名稱的主機仍標衝突()
+    {
+        var hosts = new[] { Host(2, "a", "10.5.0.1"), Host(5, "b", "10.5.0.1") };
+        var rows = new[] { new PrtgHostMapRow { DeviceObjid = 9, HostId = 2, Ip = "shared.corp", MapStatus = PrtgMapStatus.Conflict } };
+        var resolver = new MapResolver(new Dictionary<string, string> { ["shared.corp"] = "10.5.0.1" });
+
+        var unmapped = PrtgHostCoverage.Unmapped(hosts, rows, Array.Empty<string>(), resolver);
+
+        Assert.Equal(2, unmapped.Count);
+        Assert.All(unmapped, h => Assert.Equal(PrtgHostCoverage.ReasonConflict, h.Reason));
+    }
+
     [Fact]
     public void 名稱不一致以主機計_同主機兩台裝置只算一台()
     {

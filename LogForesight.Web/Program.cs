@@ -135,7 +135,6 @@ try
         // appsettings.json 不再提供種子——全新環境部署後直接在維護頁新增伺服器。
         var sentinelStore = scope.ServiceProvider.GetRequiredService<ISentinelStore>();
 
-
         // SentinelId 回填（定案 4）：一次性遷移，冪等，見 SentinelIdBackfiller 的類別註解
         var hostStore = scope.ServiceProvider.GetRequiredService<IHostStore>();
         var backfill = SentinelIdBackfiller.Run(hostStore, sentinelStore);

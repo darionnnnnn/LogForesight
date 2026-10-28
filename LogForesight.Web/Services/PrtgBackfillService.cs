@@ -475,7 +475,10 @@ public class PrtgBackfillService : IPrtgBackfillTail
     internal static string BackfillHostScopeText(SystemSettings settings)
     {
         var conservative = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy) == PrtgFetchStrategy.Conservative;
-        return PrtgValueFetchScope.BackfillScope(settings.PrtgFetchStrategy, settings.PrtgValueFetchScope) switch
+        var scope = PrtgValueFetchScope.BackfillScope(settings.PrtgFetchStrategy, settings.PrtgValueFetchScope);
+        // 激進策略下「全部已對應主機」遇空白名單會退回觸發主機（EffectiveScope），文字要講實際生效的
+        if (!conservative) scope = PrtgValueFetchScope.EffectiveScope(scope, settings.PrtgSensorTypeWhitelist.Count == 0);
+        return scope switch
         {
             PrtgValueFetchScope.AllMapped => conservative ? "全部已對應主機（保守策略）" : "全部已對應主機",
             PrtgValueFetchScope.TriggeredPlusList => "當天高／中風險主機＋指定清單（激進策略的夜間數值取數對象）",
@@ -698,7 +701,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
-        // 只擋「補全部已對應主機」的兩種（全量、立即執行接續）；指定主機補值只補選定的幾台，白名單為空時照舊可補
+        // 只擋「補全部已對應主機」的兩種（全量、立即執行接續）；指定主機補值的白名單檢查在 ValidateSelectedRequest
         if (runKind is "full" or "tail" &&
             PrtgValueFetchScope.BackfillBlockedReason(s.PrtgFetchStrategy, s.PrtgSensorTypeWhitelist) is { } blocked)
         {

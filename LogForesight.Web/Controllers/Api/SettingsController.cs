@@ -803,7 +803,7 @@ public class SettingsController : ControllerBase
 
         // 主機口徑：與「未對應主機」清單、主機頁篩選同一份判定（PrtgHostCoverage）
         var unmapped = _hosts == null ? Array.Empty<PrtgUnmappedHost>()
-            : PrtgHostCoverage.Unmapped(_hosts.GetAll(), hostMaps, store.GetIpExcludes().Select(e => e.Ip));
+            : PrtgHostCoverage.Unmapped(_hosts.GetAll(), hostMaps, store.GetIpExcludes().Select(e => e.Ip), new PrtgAddressResolver());
         var nameMismatchHosts = PrtgHostCoverage.NameMismatchHostIds(hostMaps).Count;
 
         DateTime? snapshotLastAt = null;
@@ -995,7 +995,7 @@ public class SettingsController : ControllerBase
 
         var store = _backend.PrtgStore();
         var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
-        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip));
+        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip), new PrtgAddressResolver());
         return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto
         {
             MapDate = mapDate,

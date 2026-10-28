@@ -18,6 +18,12 @@ public sealed record PrtgFetchResult(int Devices, int Sensors, int StateChanges,
     /// <summary>失敗階段的原因（與 <see cref="Failures"/> 一一對應、依發生順序）；畫面與逐日說明用。</summary>
     public IReadOnlyList<string> StageFailures { get; init; } = Array.Empty<string>();
 
+    /// <summary>
+    /// 影響過去日評估資料的失敗：裝置或感測器鏡像沒取齊（未收斂、擲例外、範圍算不出來）、狀態變更沒取齊。
+    /// 隔晚要重評；單一裝置的感測器查詢失敗、分類填入失敗、數值階段失敗不影響已落地的結構與狀態變更，不標。
+    /// </summary>
+    public bool HistoryAffectingFailure { get; init; }
+
 }
 
 /// <summary>PRTG 狀態變更區間擷取結果摘要。</summary>
@@ -149,6 +155,7 @@ public sealed class PrtgFetchService
         // 各階段失敗的原因：計數之外一併留下訊息，讓逐日說明與執行詳情說得出「是哪個階段、為什麼」（docs/PRTG-SPEC.md §3）。
         // 所有失敗都經 Fail，不要再直接 failures++——直接加計數的那一處原因就不會出現在畫面上。
         var stageFailures = new List<string>();
+        var historyAffectingFailure = false;
         void Fail(string message)
         {
             failures++;
@@ -173,6 +180,7 @@ public sealed class PrtgFetchService
             }
             catch (Exception ex)
             {
+                historyAffectingFailure = true;
                 Fail($"[範圍] ✗ 監看裝置計算失敗：{ex.Message}");
             }
         }
@@ -191,7 +199,7 @@ public sealed class PrtgFetchService
                 // 不計失敗的話，接下來每一天都是「0 個 sensor 可抓 → 0 筆 → 無失敗」，
                 // 整趟回填會被報成成功——一筆資料都沒抓的成功，正是最難察覺的那種。
                 Fail("  ✗ 鏡像尚無任何感測器結構，無法回填。請先執行一次每日擷取（或等夜間排程跑過）再回填。");
-                return new PrtgFetchResult(0, 0, 0, 0, failures) { StageFailures = stageFailures };
+                return new PrtgFetchResult(0, 0, 0, 0, failures) { StageFailures = stageFailures, HistoryAffectingFailure = true };
             }
             _console.WriteLine($"[結構] 沿用既有鏡像的 {sensorTargets.Count} 個感測器（回填不重跑結構同步）。");
         }
@@ -213,6 +221,7 @@ public sealed class PrtgFetchService
                 // 否則畫面會把「少了一大塊的鏡像」顯示成一次成功的同步。
                 if (!outcome.Converged)
                 {
+                    historyAffectingFailure = true;
                     Fail($"[階段 1/4] ✗ {outcome.Error}已寫入 {devicesCount} 台裝置，鏡像不完整。");
                 }
                 else
@@ -227,6 +236,7 @@ public sealed class PrtgFetchService
             }
             catch (Exception ex)
             {
+                historyAffectingFailure = true;
                 Fail($"[階段 1/4] 裝置結構同步失敗：{ex.Message}");
             }
 
@@ -292,7 +302,7 @@ public sealed class PrtgFetchService
                         {
                             var shown = string.Join("、", failedDevices.OrderBy(id => id).Take(5));
                             var more = failedDevices.Count > 5 ? " 等" : "";
-              Fail($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
+                            Fail($"[階段 2/4] ✗ {failedDevices.Count} 台裝置的感測器取得失敗：{shown}{more}");
                         }
                         else
                         {
@@ -312,6 +322,7 @@ public sealed class PrtgFetchService
                         _console.WriteLine($"[階段 2/4] 感測器結構同步完成：範圍內 {scopeDevices.Count} 台裝置、寫入/更新 {sensorsCount} 個感測器{FormatStageStats(stopwatch, outcome)}。");
                         if (!outcome.Converged)
                         {
+                            historyAffectingFailure = true;
                             Fail($"[階段 2/4] ✗ {outcome.Error}已寫入 {sensorsCount} 個感測器，鏡像不完整。");
                             // 感測器名單只有半套，階段 4 會照這份名單抓數值——不講的話，
                             // 數值表會安靜地少一大塊而看不出邊界在哪。
@@ -330,6 +341,7 @@ public sealed class PrtgFetchService
                 }
                 catch (Exception ex)
                 {
+                    historyAffectingFailure = true;
                     Fail($"[階段 2/4] 感測器結構同步失敗：{ex.Message}");
                 }
             }
@@ -420,6 +432,7 @@ public sealed class PrtgFetchService
             stateChangesCount = rangeResult.TotalWritten;
             if (!rangeResult.Converged)
             {
+                historyAffectingFailure = true;
                 Fail($"[階段 3/4] ✗ {rangeResult.Error}已寫入 {stateChangesCount} 筆狀態變更，資料不完整。");
             }
             else if (scope != null)
@@ -434,6 +447,7 @@ public sealed class PrtgFetchService
         }
         catch (Exception ex)
         {
+            historyAffectingFailure = true;
             Fail($"[階段 3/4] 狀態變更同步失敗：{ex.Message}");
         }
 
@@ -472,6 +486,7 @@ public sealed class PrtgFetchService
         return new PrtgFetchResult(devicesCount, sensorsCount, stateChangesCount, valuesCount, failures)
         {
             StageFailures = stageFailures,
+            HistoryAffectingFailure = historyAffectingFailure,
             Scope = scope,
             DevicesRefreshed = devicesRefreshed
         };

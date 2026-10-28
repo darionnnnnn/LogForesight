@@ -39,6 +39,21 @@ public class FrontendConsistencyUiTests
         Assert.Contains("color: var(--lf-text)", match.Groups["body"].Value);
         Assert.Contains("background-color:", match.Groups["body"].Value);
         Assert.Matches(@"select\s*\{\s*color-scheme:\s*light;", css);
+        // 多選清單的已選取項目不得被上面的底色規則蓋掉
+        Assert.Matches(@"select\[multiple\] option:checked\s*\{[^}]*background-color:", css);
+    }
+
+    [Fact]
+    public void KPI副標最多兩行_空佔位保留兩行高()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var sub = Regex.Match(css, @"\.lf-kpi-card__sub\s*\{(?<body>[^}]*)\}");
+        Assert.True(sub.Success);
+        Assert.Contains("-webkit-line-clamp: 2", sub.Groups["body"].Value);
+        Assert.Contains("min-height: 2.5em", sub.Groups["body"].Value);
+        Assert.DoesNotContain("nowrap", sub.Groups["body"].Value);
+        // 大字級＋1200px 附近：組寬下限不得超過容器，否則橫向捲動
+        Assert.Matches(@"min-width:\s*min\(calc\(var\(--lf-kpi-count", css);
     }
 
     private static string ReadJs(params string[] parts)

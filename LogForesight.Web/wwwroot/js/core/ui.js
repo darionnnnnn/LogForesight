@@ -1596,7 +1596,7 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
 }
 
 /**
- * KPI 卡列（唯一出口）：分組、等高、限寬。取代原本各頁手刻的「col-6 col-lg-3 ＋ 單張卡」寫法。
+ * KPI 卡列（唯一出口）：分組、等高、限寬。各頁不得再自己用「col-6 col-lg-3 ＋ 單張卡」排 KPI（FrontendConsistencyUiTests 守門）。
  *
  * groups：`[{ title?, cards: [{ value, label, variant?, url?, sub?, title? }] }]`
  * - sub：可見副標（字串或 Node）；title：完整說明（卡片 title 屬性，副標被截斷時用）。

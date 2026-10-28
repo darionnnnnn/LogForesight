@@ -110,6 +110,25 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
     }
 
     [Fact]
+    public void 回填主機說明_激進策略全部已對應但白名單為空時寫實際生效的觸發主機()
+    {
+        var settings = new SystemSettings
+        {
+            PrtgFetchStrategy = PrtgFetchStrategy.Aggressive,
+            PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
+            PrtgSensorTypeWhitelist = new List<string>()
+        };
+        Assert.Contains("高／中風險主機", PrtgBackfillService.BackfillHostScopeText(settings));
+
+        settings.PrtgSensorTypeWhitelist = new List<string> { "diskfree" };
+        Assert.Equal("全部已對應主機", PrtgBackfillService.BackfillHostScopeText(settings));
+
+        settings.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        settings.PrtgSensorTypeWhitelist = new List<string>();
+        Assert.Equal("全部已對應主機（保守策略）", PrtgBackfillService.BackfillHostScopeText(settings));
+    }
+
+    [Fact]
     public void PreviewFull_保守策略白名單為空時明確拒絕()
     {
         _settings.Update(s =>

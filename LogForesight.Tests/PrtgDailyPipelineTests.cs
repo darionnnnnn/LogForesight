@@ -1035,6 +1035,27 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task 最新一天的對應全是unmatched時退回前一份有ok的對應()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var newest = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        // 主機主檔暫時沒有 IP：管線以鏡像重算最新日的對應會寫出一整天 unmatched，不能把它當成「有對應」
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-UNMATCHED-TODAY", Active = true, IpAddress = null });
+        var prtgStore = _backend.PrtgStore();
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 91, Name = "dev-91", Ip = "192.168.9.9" } }, DateTime.Now);
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 9101, DeviceObjid = 91, Name = "Ping", SensorType = "Ping", Status = "Down" } }, DateTime.Now);
+        prtgStore.AppendStateChanges(new[] { new PrtgStateChangeRow { SensorObjid = 9101, ChangedAt = newest.Date.AddHours(2), Status = "Down" } });
+        MapDeviceToHost(newest.AddDays(-1), 91, host);
+        SeedNetiqParent(host, newest);
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { newest }, Task.CompletedTask, hostIds: null, guard: null);
+
+        Assert.NotEmpty(registry.For(host.HostId, newest));
+    }
+
+    [Fact]
     public async Task 完全沒有主機對應的日子算評估完成_不再每晚重評()
     {
         EnableConservativePrtgWithDefaultWhitelist();

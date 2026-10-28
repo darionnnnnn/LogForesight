@@ -83,6 +83,8 @@ internal static class PrtgDailyPipeline
         try
         {
             var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            // 策略一讀到設定就定：連線建立前就失敗或取消的那趟，紀錄裡的策略才不會是預設的激進
+            conservativeStrategy = !PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy).NightlyExactValues;
             if (!systemSettings.PrtgEnabled ||
                 string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) ||
                 !PrtgClientFactory.HasUsableCredentials(systemSettings))
@@ -138,7 +140,6 @@ internal static class PrtgDailyPipeline
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
             var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";
-            conservativeStrategy = !strategyProfile.NightlyExactValues;
             prtgConsole.WriteLine($"PRTG 取數策略：{strategyLabel}（快照間隔 {strategyProfile.SnapshotIntervalMinutes} 分鐘）。");
 
             // 0. 手動 PRTG 作業佔用中就先等它（docs/PRTG-SPEC.md §5a）：同步成功結束時鏡像是最新的，
@@ -350,7 +351,11 @@ internal static class PrtgDailyPipeline
                 if (d == newest)
                 {
                     var todayRows = prtgStore.GetHostMapForDate(newest);
-                    if (todayRows.Count > 0) return (newest, todayRows);
+                    if (todayRows.Any(r => r.MapStatus == PrtgMapStatus.Ok)) return (newest, todayRows);
+                    // 最新日沒有任何 ok（這趟沒算出來、或主檔暫時讀不到而寫出一整天 unmatched）：以前一天為錨點找最近一份有列的對應；
+                    // 錨點用最新日自己會找回同一份 unmatched。主機真的被移除時由評估範圍濾掉，不會誤歸戶
+                    var prior = prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: newest.AddDays(-1));
+                    return prior.MapDate != null && prior.Rows.Any(r => r.MapStatus == PrtgMapStatus.Ok) ? prior : (newest, todayRows);
                 }
                 return prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d);
             }
@@ -915,6 +920,7 @@ internal static class PrtgDailyPipeline
             if (dayStates.Count > 0)
             {
                 var stageFailed = fetchResult != null && fetchResult.Failures > 0;
+                var historyAffectingFailure = fetchResult?.HistoryAffectingFailure ?? false;
                 dayStats = days
                     .Where(dayStates.ContainsKey)
                     .Select(day =>
@@ -931,8 +937,9 @@ internal static class PrtgDailyPipeline
                             note = (note is null ? "" : note + "；") + $"沿用 {borrowedFrom:yyyy-MM-dd} 的主機對應";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note,
-                            // 共用階段失敗（狀態變更、感測器結構…）時資料可能不完整：隔晚以完整資料重評（下一趟成功即收斂）
-                            NeedsReevaluation: syncFailed || stageFailed || !prtgFindings.IsEvaluated(day));
+                            // 只有影響過去日資料的失敗才重評：結構（裝置／感測器鏡像）沒取齊、狀態變更沒取齊（下一趟成功即收斂）。
+                            // 單一裝置的感測器查詢固定失敗這類不影響已落地資料的失敗，重評治不好，標了只會讓「待補評估」永遠掛著
+                            NeedsReevaluation: syncFailed || historyAffectingFailure || !prtgFindings.IsEvaluated(day));
                     })
                     .ToList();
 

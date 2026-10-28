@@ -85,7 +85,21 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
 
             var today = DateTime.Today;
             var mapper = new PrtgHostMapper(store, new HostStore(_backend.Blob("hosts")), new SilentRunConsole(), new PrtgAddressResolver());
-            var result = mapper.MapForDate(today);
+            // 重算要逐台解析 DNS、可能跑上幾分鐘；期間使用者若做了人工對應或 IP 排除（scope revision 會動），
+            // 這趟算出來的今天對應已經過時，寫回去會蓋掉使用者剛做的指派——範圍版本不一致就重算，最多三次
+            var scopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey);
+            PrtgHostMapResult result;
+            var attempts = 0;
+            while (true)
+            {
+                var before = scopeRevision.ReadVersion();
+                result = mapper.MapForDate(today);
+                if (scopeRevision.ReadVersion() == before || ++attempts >= 3) break;
+            }
+            if (attempts >= 3)
+            {
+                return "PRTG 主機對應規則已更新，但重算期間人工對應或 IP 排除持續變動；舊對應保留，下次啟動再試。";
+            }
             var deleted = store.DeleteHostMapsExceptDate(today);
             if (deleted < 0)
             {
@@ -100,7 +114,7 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
         catch (Exception ex)
         {
             Log.Warn(ex, "PRTG 主機對應規則升級失敗");
-            return $"PRTG 主機對應規則升級失敗：{ex.Message}";
+            return $"PRTG 主機對應規則升級失敗：{ex.Message}（舊對應可能只刪了一部分；下次啟動會接著完成，或先執行一次「同步結構與對應」）";
         }
     }
 
