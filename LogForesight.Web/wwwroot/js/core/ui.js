@@ -1618,7 +1618,7 @@ export function kpiStrip(groups) {
         section.className = `lf-kpi-group lf-kpi-group--n${Math.min(cards.length, 6)}`;
 
         if (group.title) {
-            const titleEl = document.createElement('h3');
+            const titleEl = document.createElement('h2');
             titleEl.className = 'lf-kpi-group__title';
             titleEl.textContent = group.title;
             section.appendChild(titleEl);
@@ -1631,7 +1631,8 @@ export function kpiStrip(groups) {
             const el = document.createElement(card.url ? 'a' : 'div');
             el.className = card.url ? 'lf-kpi-card lf-kpi-card--link' : 'lf-kpi-card';
             if (card.url) el.href = appUrl(card.url);
-            if (card.title) el.title = card.title;
+            const fullText = card.title || (typeof card.sub === 'string' ? card.sub : '');
+            if (fullText) el.title = fullText;
 
             const valueEl = document.createElement('div');
             valueEl.className = card.variant ? `lf-stat__value text-${card.variant}` : 'lf-stat__value';
@@ -1640,7 +1641,6 @@ export function kpiStrip(groups) {
             const labelEl = document.createElement('div');
             labelEl.className = 'lf-stat__label';
             labelEl.textContent = card.label;
-            labelEl.title = card.label;
 
             const subEl = document.createElement('div');
             subEl.className = 'lf-kpi-card__sub';

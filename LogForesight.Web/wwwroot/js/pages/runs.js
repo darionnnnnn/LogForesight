@@ -1981,11 +1981,14 @@ function confirmRunWithPrtgValues(days, segment) {
             bootstrap.Modal.getOrCreateInstance(modalEl).hide();
         });
         footer.appendChild(okButton);
+        // 估算回來前先停用「仍要開始」：查詢量大時勾選要改成預設不勾，太早按會用到預設的勾選
+        okButton.disabled = true;
 
         const params = new URLSearchParams({ days: String(days) });
         if (segment) params.set('segment', segment);
         api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true })
             .then(estimate => {
+                okButton.disabled = false;
                 if (!estimate || !Number.isFinite(estimate.queries)) return;
                 if (estimate.blockedReason || estimate.sensors === 0) {
                     input.checked = false;
@@ -2002,6 +2005,7 @@ function confirmRunWithPrtgValues(days, segment) {
                 if (estimate.large) input.checked = false;
             })
             .catch(() => {
+                okButton.disabled = false;
                 // 取不到估算就不顯示數字，勾選照常可用
             });
     });

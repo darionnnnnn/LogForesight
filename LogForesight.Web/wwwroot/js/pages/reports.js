@@ -258,10 +258,10 @@ function renderKpi() {
             // 下鑽帶上目前顯示範圍（§5）：點進去的清單與卡片數字對得上（KPI 卡本身不帶 statuses，附加不衝突）
             url: card.url ? card.url + scopeDrillParams() : null,
             title: card.hint,
-            // 與前期對比徽章放進可見副標；沒有前期資料的卡副標留空佔位
+            // 與前期對比徽章放進可見副標；沒有前期資料的卡改放說明（說明不只藏在 tooltip）
             sub: (card.previous !== null && card.previous !== undefined)
                 ? comparisonBadge(card.value, card.previous)
-                : undefined
+                : card.hint
         }))
     }]));
     container.appendChild(col);

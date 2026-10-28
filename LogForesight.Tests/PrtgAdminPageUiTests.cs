@@ -42,6 +42,26 @@ public sealed class PrtgAdminPageUiTests
     }
 
     [Fact]
+    public void 收合鈕都帶Bootstrap觸發屬性_否則按了展不開()
+    {
+        // bindRememberedCollapse 只負責初始狀態與記住，不綁 click；觸發靠 data-bs-toggle＋data-bs-target
+        var view = View();
+        foreach (var (button, target) in new[]
+                 {
+                     ("prtg-name-mismatch-toggle-btn", "#prtg-name-mismatch-collapse"),
+                     ("prtg-monitoring-toggle", "#prtg-monitoring-body")
+                 })
+        {
+            var start = view.IndexOf($"id=\"{button}\"", StringComparison.Ordinal);
+            Assert.True(start >= 0, button);
+            var tagStart = view.LastIndexOf('<', start);
+            var tag = view.Substring(tagStart, view.IndexOf('>', start) - tagStart);
+            Assert.Contains("data-bs-toggle=\"collapse\"", tag);
+            Assert.Contains($"data-bs-target=\"{target}\"", tag);
+        }
+    }
+
+    [Fact]
     public void 環境探測與歷史回填的用途說明講清楚範圍()
     {
         var view = View();

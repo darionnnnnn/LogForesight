@@ -1851,6 +1851,8 @@ function openHostAssignModal(host) {
     document.getElementById('prtg-host-assign-more').classList.add('d-none');
     document.getElementById('prtg-host-assign-submit').disabled = true;
     hostAssignModal.show();
+    // 使用者最常照主機 IP 找：有 IP 就直接搜一次，結果出來即可選
+    if ((host.ipAddress || '').trim().length >= 2) searchPrtgDevicesForHost();
 }
 
 async function searchPrtgDevicesForHost() {
@@ -2202,6 +2204,7 @@ function renderScopePurge(preview) {
     if (!preview.success) {
         summaryEl.textContent = preview.errorMessage || '目前無法預覽。';
         devicesEl.textContent = '';
+        devicesEl.closest('details')?.classList.add('d-none');
         btn.disabled = true;
         return;
     }

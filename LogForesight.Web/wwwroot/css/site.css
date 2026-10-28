@@ -1182,15 +1182,12 @@ a.lf-kpi-card--link:focus-visible {
     box-shadow: var(--lf-focus-ring);
 }
 
-/* 標籤可換行（「未處理問題（逾期 3）」截斷就看不到重點；同列卡片由 grid 拉成等高）；副標維持單行省略，完整文字在 title */
+/* 標籤可換行（「未處理問題（逾期 3）」截斷就看不到重點；同列卡片由 grid 拉成等高）。
+   副標列一定存在：沒有副標時是空佔位，仍保留一行高度（同列等高的結構前提）；單行省略，完整文字在卡片 title */
 .lf-kpi-card__sub {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-}
-
-/* 副標列一定存在：沒有副標時是空佔位，仍保留一行高度（同列等高的結構前提） */
-.lf-kpi-card__sub {
     min-height: 1.25em;
     font-size: var(--lf-font-size-sm);
     line-height: 1.25;
