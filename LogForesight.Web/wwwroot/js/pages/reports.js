@@ -15,7 +15,7 @@
 
 import { api, getDisplaySettings } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { statCard, toast, guardLoad, renderLoading } from '../core/ui.js';
+import { kpiStrip, toast, guardLoad, renderLoading } from '../core/ui.js';
 import {
     formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER,
     issueBaselineText, toLocalDateString
@@ -249,22 +249,22 @@ function renderKpi() {
         container.appendChild(warning);
     }
 
-    for (const card of cards) {
-        const col = document.createElement('div');
-        col.className = 'col-6 col-lg-3';
-        col.appendChild(statCard({
+    const col = document.createElement('div');
+    col.className = 'col-12';
+    col.appendChild(kpiStrip([{
+        cards: cards.map(card => ({
             value: formatNumber(card.value),
             label: card.label,
             // 下鑽帶上目前顯示範圍（§5）：點進去的清單與卡片數字對得上（KPI 卡本身不帶 statuses，附加不衝突）
             url: card.url ? card.url + scopeDrillParams() : null,
-            hint: card.hint,
-            centered: false,
-            extra: (card.previous !== null && card.previous !== undefined)
+            title: card.hint,
+            // 與前期對比徽章放進可見副標；沒有前期資料的卡改放說明（說明不只藏在 tooltip）
+            sub: (card.previous !== null && card.previous !== undefined)
                 ? comparisonBadge(card.value, card.previous)
-                : undefined
-        }));
-        container.appendChild(col);
-    }
+                : card.hint
+        }))
+    }]));
+    container.appendChild(col);
 }
 
 /**
@@ -273,7 +273,7 @@ function renderKpi() {
  */
 function comparisonBadge(current, previous) {
     const wrap = document.createElement('div');
-    wrap.className = 'small mt-2';
+    wrap.className = 'small';
 
     if (previous === 0 && current === 0) {
         wrap.className += ' text-muted';

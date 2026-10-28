@@ -962,6 +962,42 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
+    /// 刪除指定日期以外的全部主機對應列（對應規則升級用，見 <see cref="PrtgHostMapper.RuleVersion"/>）。
+    /// 呼叫端必須先成功寫入 <paramref name="keepDate"/> 的新對應；那一天**沒有任何 ok 列**時一律不刪——
+    /// 主機主檔暫時讀不到或 IP 全不命中時，新對應會是一整天的 unmatched，拿它取代舊對應等於把歷史歸戶清光（不可信範圍不清除）。
+    /// 與 <see cref="Prune(int)"/> 同一套保護：一次一個日期、Serializable 交易、範圍異動槽檢查、刪後遞增對應資料版本。
+    /// </summary>
+    /// <returns>刪除列數；保留日沒有 ok 列時回 -1。</returns>
+    public int DeleteHostMapsExceptDate(DateTime keepDate)
+    {
+        var keep = keepDate.Date;
+        List<DateTime> oldDates;
+        using (var probe = _contextFactory())
+        {
+            if (!probe.PrtgHostMaps.Any(m => m.MapDate == keep && m.MapStatus == PrtgMapStatus.Ok)) return -1;
+            oldDates = probe.PrtgHostMaps.Where(m => m.MapDate != keep).Select(m => m.MapDate).Distinct().OrderBy(d => d).ToList();
+        }
+
+        var total = 0;
+        foreach (var date in oldDates)
+        {
+            using var ctx = _contextFactory();
+            var strategy = ctx.Database.CreateExecutionStrategy();
+            total += strategy.Execute(() =>
+            {
+                ctx.ChangeTracker.Clear();
+                using var tx = ctx.Database.BeginTransaction(IsolationLevel.Serializable);
+                PrtgScopePurgeStore.EnsureScopeMutationSlotFree(ctx);
+                var deleted = ctx.PrtgHostMaps.Where(m => m.MapDate == date).ExecuteDelete();
+                if (deleted > 0) IncrementHostMapDataRevision(ctx);
+                tx.Commit();
+                return deleted;
+            });
+        }
+        return total;
+    }
+
+    /// <summary>
     /// PRTG 主機對應按日寫入。該日期的對應整份就地取代——先刪除該 map_date 的所有列，再寫入新的一批。
     /// 傳入空清單時仍然清空該日，回傳 0。
     /// </summary>
@@ -2400,26 +2436,17 @@ public sealed class EfPrtgStore
             throw new ArgumentOutOfRangeException(nameof(take), "預覽頁面超出上限。");
         if (visibleHostIds.Count == 0 && !fullScope) return new PrtgMonitoringEvaluationPage(0, []);
         using var ctx = _contextFactory();
-        // 缺裝置鏡像的感測器仍供全站診斷顯示未對應；已暫停的資源不參與評估。
+        // 只列歸戶到主機清單內主機的感測器（docs/PRTG-SPEC.md §1）：沒有對應、或對到清單外的 device 不呈現；
+        // 全站可見者看全部清單主機，其餘只看可見主機。已暫停的資源不參與評估。
         var sensors = ctx.PrtgSensors.AsNoTracking().Where(sensor => !sensor.Paused &&
             !ctx.PrtgDevices.Any(device => device.Objid == sensor.DeviceObjid && device.Paused));
-        if (!mapDate.HasValue)
-        {
-            if (!fullScope) return new PrtgMonitoringEvaluationPage(0, []);
-            var totalAll = sensors.Count();
-            var pageAll = sensors.OrderBy(s => s.Objid).Skip(offset).Take(take)
-                .Select(s => new { SensorId = s.Objid, s.DeviceObjid, s.Name, s.SensorType, s.Category })
-                .ToList();
-            var rowsAll = pageAll.Select(s => new PrtgMonitoringEvaluationRow(s.SensorId, s.DeviceObjid,
-                s.Name, s.SensorType, s.Category, null, null, null)).ToList();
-            return new PrtgMonitoringEvaluationPage(totalAll, rowsAll);
-        }
+        if (!mapDate.HasValue) return new PrtgMonitoringEvaluationPage(0, []);
         var candidates = from sensor in sensors
                          join map in ctx.PrtgHostMaps.AsNoTracking().Where(m => m.MapDate == mapDate.Value)
                              on sensor.DeviceObjid equals map.DeviceObjid into matches
                          from map in matches.DefaultIfEmpty()
-                         where fullScope ||
-                             (map != null && map.HostId.HasValue && visibleHostIds.Contains(map.HostId.Value))
+                         where map != null && map.HostId.HasValue &&
+                             (fullScope || visibleHostIds.Contains(map.HostId.Value))
                          select new
                          {
                              SensorId = sensor.Objid,
@@ -2614,9 +2641,20 @@ public sealed class EfPrtgStore
 
         var anchorDate = (anchor ?? DateTime.Today).Date;
         var cutoff = anchorDate.AddDays(-(maxLookbackDays - 1));
-        return ctx.PrtgHostMaps
+        var onOrBefore = ctx.PrtgHostMaps
             .Where(m => m.MapDate >= cutoff && m.MapDate <= anchorDate)
             .Max(m => (DateTime?)m.MapDate);
+        if (onOrBefore != null || anchor == null)
+        {
+            return onOrBefore;
+        }
+
+        // 往回找不到時沿用該日之後最早的一份（docs/PRTG-SPEC.md §4「對應往後沿用」）：正式環境 IP 很少異動，
+        // 不沿用的話第一次同步之前的日子永遠無法歸戶與回填。呼叫端以回傳的 MapDate 晚於 anchor 判斷是沿用。
+        var today = DateTime.Today;
+        return ctx.PrtgHostMaps
+            .Where(m => m.MapDate > anchorDate && m.MapDate <= today)
+            .Min(m => (DateTime?)m.MapDate);
     }
 
     public const string ScopeRevisionBlobKey = "prtg_scope_revision";

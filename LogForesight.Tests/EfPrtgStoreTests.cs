@@ -1032,6 +1032,66 @@ public class EfPrtgStoreTests : IDisposable
         Assert.DoesNotContain(statuses, s => s.Objid == 103);
     }
 
+    private static void SeedMap(EfPrtgStore store, DateTime day, long objid) =>
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = day, DeviceObjid = objid, HostId = 1, HostName = "SRV", MapStatus = PrtgMapStatus.Ok }
+        });
+
+    [Fact]
+    public void GetLatestHostMapWithDate_帶錨點且之前沒有對應時沿用之後最早的一份()
+    {
+        var store = CreateStore();
+        var d1 = DateTime.Today.AddDays(-1);
+        var d0 = DateTime.Today;
+        SeedMap(store, d1, 11);
+        SeedMap(store, d0, 10);
+
+        // 錨點七天前、往回 31 天沒有任何對應 → 沿用之後最早的那份（昨天），不是最新的今天
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(31, DateTime.Today.AddDays(-7));
+        Assert.Equal(d1, mapDate);
+        Assert.Equal(11, Assert.Single(rows).DeviceObjid);
+    }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_往回找得到時優先往回不沿用之後的()
+    {
+        var store = CreateStore();
+        var d8 = DateTime.Today.AddDays(-8);
+        var d1 = DateTime.Today.AddDays(-1);
+        SeedMap(store, d8, 8);
+        SeedMap(store, d1, 1);
+
+        var (mapDate, _) = store.GetLatestHostMapWithDate(31, DateTime.Today.AddDays(-5));
+        Assert.Equal(d8, mapDate);
+    }
+
+    [Fact]
+    public void GetLatestHostMapWithDate_完全沒有對應時回null()
+    {
+        var (mapDate, rows) = CreateStore().GetLatestHostMapWithDate(31, DateTime.Today.AddDays(-5));
+        Assert.Null(mapDate);
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public void DeleteHostMapsExceptDate_保留日有列才刪其他日期_保留日沒有列時不刪()
+    {
+        var store = CreateStore();
+        var today = DateTime.Today;
+        SeedMap(store, today.AddDays(-3), 3);
+        SeedMap(store, today.AddDays(-2), 2);
+
+        // 今天沒有列：一律不刪，回 -1
+        Assert.Equal(-1, store.DeleteHostMapsExceptDate(today));
+        Assert.Equal(today.AddDays(-2), store.GetLatestHostMapWithDate(31).MapDate);
+
+        SeedMap(store, today, 9);
+        Assert.Equal(2, store.DeleteHostMapsExceptDate(today));
+        Assert.Null(store.GetLatestHostMapWithDate(31, today.AddDays(-1)).MapDate is { } d && d < today ? d : null);
+        Assert.Equal(9, Assert.Single(store.GetLatestHostMapWithDate(31).Rows).DeviceObjid);
+    }
+
     [Fact]
     public void GetLatestHostMapWithDate_資料稀疏仍取得最近一日()
     {

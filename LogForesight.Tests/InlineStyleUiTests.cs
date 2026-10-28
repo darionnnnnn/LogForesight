@@ -9,7 +9,7 @@ namespace LogForesight.Tests;
 /// - cshtml 一律不得出現 <c>style="</c>（固定量值走 site.css 工具類）。
 /// - JS 不得以 <c>.style.xxx =</c> 指派；只有「動態量值」可用 <c>style.setProperty('--lf-…')</c>
 ///   設 CSS 變數，且必須列在下方允許清單（檔名＋用途），由 class 消費。
-/// - 四個頁面的 statCard 欄格統一為 <c>col-6 col-lg-3</c>。
+/// - KPI 卡列已改由 <c>kpiStrip</c> 統一產生（守門見 FrontendConsistencyUiTests）。
 /// </summary>
 public class InlineStyleUiTests
 {
@@ -136,25 +136,6 @@ public class InlineStyleUiTests
         foreach (var key in AllowedSetProperty.Keys)
         {
             Assert.True(seenFiles.Contains(key), $"允許清單的 {key} 已無 setProperty 呼叫，請移除");
-        }
-    }
-
-    [Theory]
-    [InlineData("pages/dashboard.js")]
-    [InlineData("pages/handler-detail.js")]
-    [InlineData("pages/user-detail.js")]
-    [InlineData("pages/reports.js")]
-    public void StatCard_columns_are_unified(string relative)
-    {
-        var path = WebDir("wwwroot", "js", relative.Replace('/', Path.DirectorySeparatorChar));
-        Assert.True(File.Exists(path), $"找不到檔案: {path}");
-        var text = File.ReadAllText(path);
-
-        var matches = Regex.Matches(text, @"col\.className\s*=\s*'([^']*)';(?:(?!col\.className)[\s\S])*?col\.appendChild\(statCard");
-        Assert.NotEmpty(matches);
-        foreach (Match m in matches)
-        {
-            Assert.Equal("col-6 col-lg-3", m.Groups[1].Value);
         }
     }
 }

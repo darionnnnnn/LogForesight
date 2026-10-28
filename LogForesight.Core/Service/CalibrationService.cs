@@ -1837,6 +1837,8 @@ public sealed class CalibrationService
         {
             var cutoff = day.Date.AddDays(-29);
             using var ctx = _contextFactory();
+            // 刻意不走 EfPrtgStore.FindLatestHostMapDate 的「往後沿用」（docs/PRTG-SPEC.md §4、§11）：校準以「那天已有對應」
+            // 作為 PRTG 資料當天確實在收的證據來判斷資料量夠不夠；沿用之後的對應會把還沒收資料的日子算成涵蓋，讓門檻誤判為可用。
             var latestDate = ctx.PrtgHostMaps.AsNoTracking()
                 .Where(m => m.MapDate >= cutoff && m.MapDate <= day.Date)
                 .Max(m => (DateTime?)m.MapDate);

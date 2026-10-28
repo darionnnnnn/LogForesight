@@ -212,10 +212,11 @@ public class HostDetailPrtgScopedQueryTests : IDisposable
         Assert.Equal(date, noneDate);
         Assert.Empty(noneRows);
 
-        // 窗內完全沒有資料時才是 (null, 空清單)
-        var (emptyDate, emptyRows) = store.GetLatestHostMapForHost(10, maxLookbackDays: 30, anchor: date.AddDays(-400));
-        Assert.Null(emptyDate);
-        Assert.Empty(emptyRows);
+        // 錨點之前完全沒有對應時沿用之後最早一份（docs/PRTG-SPEC.md §4，與整表版本同一個出口）
+        var (borrowedDate, borrowedRows) = store.GetLatestHostMapForHost(10, maxLookbackDays: 30, anchor: date.AddDays(-400));
+        // 夾具另有前一天的一份：沿用的是錨點之後「最早」那份，不是最新那份
+        Assert.Equal(date.AddDays(-1), borrowedDate);
+        Assert.Equal(9001, Assert.Single(borrowedRows).DeviceObjid);
 
         // 與整表版本的日期語意一致
         Assert.Equal(store.GetLatestHostMapWithDate(30).MapDate, mapDate);

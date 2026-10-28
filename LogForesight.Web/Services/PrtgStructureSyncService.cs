@@ -230,16 +230,10 @@ public class PrtgStructureSyncService
             LastSuccess = last?.Success,
             LastErrorMessage = last?.ErrorMessage,
             LastElapsedSeconds = last?.ElapsedSeconds,
-            LastDevices = last?.Devices,
             LastSensors = last?.Sensors,
-            LastMapDate = last?.MapDate,
-            LastMapOk = last?.MapOk,
-            LastMapManual = last?.MapManual,
-            LastMapConflict = last?.MapConflict,
-            LastMapUnmatched = last?.MapUnmatched,
-            LastMapSkipped = last == null
-                ? null
-                : last.MapSkippedNoIp + last.MapSkippedExcluded + last.MapSkippedManualSibling,
+            LastMappedHosts = last?.MapMappedHosts,
+            LastUnmappedHosts = last?.MapUnmappedHosts,
+            LastNameMismatch = last?.MapNameMismatch,
             LastSource = last?.Source
         };
     }

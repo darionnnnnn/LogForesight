@@ -231,12 +231,13 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    public void RecordPrtgOutcome(string outcome, int sensorsFetched, int sensorsFailed, int triggeredHosts)
+    public void RecordPrtgOutcome(string outcome, int sensorsFetched, int sensorsFailed, int triggeredHosts, string? strategy = null)
     {
         if (_store == null) return;
         lock (_countLock)
         {
             _run.PrtgOutcome = outcome;
+            _run.PrtgStrategy = strategy;
             _run.PrtgSensorsFetched = sensorsFetched;
             _run.PrtgSensorsFailed = sensorsFailed;
             _run.PrtgTriggeredHosts = triggeredHosts;

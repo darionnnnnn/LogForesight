@@ -365,6 +365,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
             EstimatedHistoricRequests = snapshot.Plan.HistoricRequests,
             HistoricQuotaLowerBoundSeconds = snapshot.Plan.HistoricQuotaLowerBoundSeconds,
             DaysWithTargets = snapshot.Plan.DaysWithTargets,
+            HostScopeText = BackfillHostScopeText(settings),
             StateChangeObjects = snapshot.Plan.StateChangeObjects,
             SettingsRevision = snapshot.SettingsRevision,
             ScopeRevision = snapshot.ScopeRevision,
@@ -454,18 +455,35 @@ public class PrtgBackfillService : IPrtgBackfillTail
         var store = _backend.PrtgStore();
         if (store.GetSensorTargets().Count == 0)
             throw DomainException.Validation("PRTG 結構鏡像目前沒有感測器，請先同步結構，再預覽全量回填成本。");
+        if (PrtgValueFetchScope.BackfillBlockedReason(settings.PrtgFetchStrategy, settings.PrtgSensorTypeWhitelist) is { } blocked)
+            throw DomainException.Validation(blocked);
         var scopeResult = PrtgScopeDevices.Compute(store, _hosts, new PrtgMirrorGuardSource(store), settings,
             _sentinels.GetAll(), new SilentBackfillConsole(), new PrtgAddressResolver(), hostIds: null);
         var (extraScopeHosts, _) = PrtgValueFetchScope.ResolveHostNames(settings.PrtgValueFetchExtraHosts,
             _hosts.GetAll().Select(host => (host.HostId, host.HostName, host.Active, host.MergedInto.HasValue)));
         var plan = PrtgFullBackfillPlanBuilder.Build(store, _backend.RecordStore(), anchor,
             settings.PrtgBackfillDays, scopeResult.DeviceObjids, settings.PrtgSensorTypeWhitelist,
-            settings.PrtgValueFetchScope, extraScopeHosts);
+            PrtgValueFetchScope.BackfillScope(settings.PrtgFetchStrategy, settings.PrtgValueFetchScope), extraScopeHosts);
         var scopeAfter = scopeReader.Read();
         var settingsAfter = Hash(JsonSerializer.Serialize(_settings.Get()));
         if (scopeBefore != scopeAfter || settingsRevision != settingsAfter)
             throw DomainException.Conflict("預覽時計算範圍或設定正好變更，請重新預覽。");
         return new FullPreviewSnapshot(anchor, plan, settingsRevision, Hash(scopeAfter));
+    }
+
+    /// <summary>補哪些主機的白話說明：與預覽、執行同一個範圍判定，畫面不另算一次。</summary>
+    internal static string BackfillHostScopeText(SystemSettings settings)
+    {
+        var conservative = PrtgFetchStrategy.Normalize(settings.PrtgFetchStrategy) == PrtgFetchStrategy.Conservative;
+        var scope = PrtgValueFetchScope.BackfillScope(settings.PrtgFetchStrategy, settings.PrtgValueFetchScope);
+        // 激進策略下「全部已對應主機」遇空白名單會退回觸發主機（EffectiveScope），文字要講實際生效的
+        if (!conservative) scope = PrtgValueFetchScope.EffectiveScope(scope, settings.PrtgSensorTypeWhitelist.Count == 0);
+        return scope switch
+        {
+            PrtgValueFetchScope.AllMapped => conservative ? "全部已對應主機（保守策略）" : "全部已對應主機",
+            PrtgValueFetchScope.TriggeredPlusList => "當天高／中風險主機＋指定清單（激進策略的夜間數值取數對象）",
+            _ => "當天高／中風險主機（激進策略的夜間數值取數對象）"
+        };
     }
 
     private static string FullPreviewMessage(PrtgFullBackfillPlan plan, IReadOnlySet<DateTime> completed)
@@ -506,7 +524,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         var sampledTargetsByDay = new Dictionary<DateTime, long[]>();
         for (var day = from; day <= to; day = day.AddDays(1))
         {
-            var deviceIds = maps.GetHostMapForDate(day)
+            var deviceIds = maps.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, day).Rows
                 .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue && hostIds.Contains(m.HostId.Value))
                 .Select(m => m.DeviceObjid).Distinct().ToArray();
             var targets = maps.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, deviceIds);
@@ -683,6 +701,14 @@ public class PrtgBackfillService : IPrtgBackfillTail
             return false;
         }
 
+        // 只擋「補全部已對應主機」的兩種（全量、立即執行接續）；指定主機補值的白名單檢查在 ValidateSelectedRequest
+        if (runKind is "full" or "tail" &&
+            PrtgValueFetchScope.BackfillBlockedReason(s.PrtgFetchStrategy, s.PrtgSensorTypeWhitelist) is { } blocked)
+        {
+            error = blocked;
+            return false;
+        }
+
         if (_probeState.Snapshot().IsRunning)
         {
             error = "環境探測執行中，請稍後再試。";
@@ -845,7 +871,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     prtgStore, _backend.RecordStore(), s.PrtgSensorTypeWhitelist,
                     dayProgress: (dDone, dTotal, curDate) => _state.UpdateDay(dDone, dTotal, curDate),
                     sensorProgress: (sDone, sTotal) => _state.UpdateSensors(sDone, sTotal),
-                    scope: s.PrtgValueFetchScope,
+                    scope: PrtgValueFetchScope.BackfillScope(s.PrtgFetchStrategy, s.PrtgValueFetchScope),
                     extraScopeHosts: scopeHostIds,
                     stateChangeProgress: (doneDevices, totalDevices) => _state.UpdateStateChanges(doneDevices, totalDevices),
                     expectedDayFingerprints: run.ExpectedPlan?.Days.ToDictionary(day => day.Day, day => day.TargetFingerprint),

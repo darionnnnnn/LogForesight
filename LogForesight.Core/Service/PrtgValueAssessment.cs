@@ -162,7 +162,7 @@ public sealed class PrtgValueAssessment
     public const double FixedValueTolerance = 1e-6;
     /// <summary>預估到達門檻的日期上限：斜率極小時引擎算出的天數可到 1e9，超過這個數就不給日期（DateOnly 會溢位，也沒有意義）。</summary>
     public const int MaxProjectionDays = 3650;
-    /// <summary>過去日的對應取「該日或之前最近一日」，往回看這麼多天（與每日管線同一個視窗）。</summary>
+    /// <summary>過去日的對應取「該日或之前最近一日」，往回看這麼多天（與每日管線同一個視窗）；找不到時沿用之後最早一份（docs/PRTG-SPEC.md §4）。</summary>
     public const int MapLookbackDays = 31;
 
     private readonly EfPrtgStore _store;
@@ -207,7 +207,7 @@ public sealed class PrtgValueAssessment
         _store.GetDeviceNamesByObjids(objids);
 
     /// <summary>
-    /// 某個已完成日的 device → 主機：取該日或之前 <see cref="MapLookbackDays"/> 日內最近一份對應，只認 ok
+    /// 某個已完成日的 device → 主機：取該日或之前 <see cref="MapLookbackDays"/> 日內最近一份對應（找不到時沿用之後最早一份），只認 ok
     /// （人工對應也以 ok 寫入），且主機在 <paramref name="evaluationHostIds"/> 內。與每日管線過去日的取法相同。
     /// </summary>
     public Dictionary<long, long> DeviceToHostOn(DateOnly day, IReadOnlySet<long> evaluationHostIds)

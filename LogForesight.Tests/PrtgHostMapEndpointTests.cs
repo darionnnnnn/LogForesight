@@ -170,7 +170,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
-    public void ConflictKind判定_同IP兩台為multiDevice_單台對多主機為multiHost()
+    public void ConflictKind判定_非名稱退路的衝突一律為multiHost_同IP裝置仍列出()
     {
         var store = _backend.PrtgStore();
         var hostStore = new HostStore(_backend.Blob("hosts"));
@@ -220,7 +220,8 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Equal(2, res.Data.Items.Count);
 
         var itemMultiDevice = res.Data.Items.First(i => i.DeviceObjid == 2001);
-        Assert.Equal("multi-device", itemMultiDevice.ConflictKind);
+        // 同 IP 多 device 已不是衝突型別（docs/PRTG-SPEC.md §4）：舊資料留下的這種列歸為 multi-host，同 IP 裝置照樣列出供指派
+        Assert.Equal("multi-host", itemMultiDevice.ConflictKind);
         Assert.Equal(2, itemMultiDevice.SameIpDevices.Count);
         Assert.Contains(itemMultiDevice.SameIpDevices, d => d.Objid == 2001 && d.Name == "dev-app-1");
         Assert.Contains(itemMultiDevice.SameIpDevices, d => d.Objid == 2002 && d.Name == "dev-app-2");
@@ -234,6 +235,223 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Contains(itemMultiHost.CandidateHosts, h => h.HostId == host1.HostId && h.HostName == "srv-db-primary");
         Assert.Contains(itemMultiHost.CandidateHosts, h => h.HostId == host2.HostId && h.HostName == "srv-db-replica");
         Assert.Equal(host1.HostName, itemMultiHost.HostName);
+    }
+
+    private (SystemSettingsStore Settings, PrtgHostMapRefresher Refresher) CreateRefresher(bool enabled = true)
+    {
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settings.Update(x => x.PrtgEnabled = enabled);
+        return (settings, new PrtgHostMapRefresher(settings, _backend));
+    }
+
+    [Fact]
+    public void 對應規則升級_重算今天並刪除其他日期舊對應_寫入版本後再跑不再刪()
+    {
+        var store = _backend.PrtgStore();
+        var host = _hosts.Upsert(new WebHost { HostName = "srv-up", IpAddress = "10.70.0.1", Active = true });
+        store.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 7001, Name = "ping", Ip = "10.70.0.1" },
+            new PrtgDeviceRow { Objid = 7002, Name = "wmi", Ip = "10.70.0.1" }
+        }, DateTime.Now);
+        var old = DateTime.Today.AddDays(-3);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7001, Ip = "10.70.0.1", MapStatus = PrtgMapStatus.Conflict, Note = "此 IP 同時有 2 個 PRTG device" }
+        });
+        var (_, refresher) = CreateRefresher();
+
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+
+        // 舊規則的三天前那份已刪；三天前改沿用今天的新對應（兩台裝置都對到 srv-up）
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(31, old);
+        Assert.Equal(DateTime.Today, mapDate);
+        Assert.Equal(2, rows.Count(r => r.MapStatus == PrtgMapStatus.Ok && r.HostId == host.HostId));
+        Assert.Equal(PrtgHostMapper.RuleVersion.ToString(), _backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
+
+        // 冪等：已套用時不再動對應表
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7001, Ip = "10.70.0.1", HostId = host.HostId, MapStatus = PrtgMapStatus.Ok }
+        });
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+        Assert.Equal(old, store.GetLatestHostMapWithDate(31, old).MapDate);
+    }
+
+    [Fact]
+    public void 對應規則升級_鏡像沒有裝置時不刪也不記版本()
+    {
+        var store = _backend.PrtgStore();
+        var old = DateTime.Today.AddDays(-3);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 1, MapStatus = PrtgMapStatus.Ok, HostId = 1 }
+        });
+        var (_, refresher) = CreateRefresher();
+
+        var warning = refresher.TryApplyRuleUpgrade();
+
+        Assert.NotNull(warning);
+        Assert.Contains("鏡像是空的", warning);
+        Assert.Equal(old, store.GetLatestHostMapWithDate(31, old).MapDate);
+        Assert.Null(_backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
+    }
+
+    [Fact]
+    public void 對應規則升級_今天沒有任何主機對上時不刪舊對應也不記版本()
+    {
+        var store = _backend.PrtgStore();
+        // 鏡像有裝置，但主機主檔沒有任何主機的 IP 對得上（例如主檔暫時讀不到）
+        store.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 7101, Name = "x", Ip = "10.71.0.1" } }, DateTime.Now);
+        var old = DateTime.Today.AddDays(-3);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7101, HostId = 1, MapStatus = PrtgMapStatus.Ok }
+        });
+        var revisionBefore = store.ReadHostMapDataRevision();
+        var (_, refresher) = CreateRefresher();
+
+        var warning = refresher.TryApplyRuleUpgrade();
+
+        Assert.NotNull(warning);
+        Assert.Contains("沒有任何主機對上", warning);
+        Assert.Contains(store.GetHostMapForDate(old), r => r.MapStatus == PrtgMapStatus.Ok);
+        Assert.Null(_backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
+        Assert.True(store.ReadHostMapDataRevision() >= revisionBefore);
+    }
+
+    [Fact]
+    public void 對應規則升級_刪除舊對應時遞增對應資料版本()
+    {
+        var store = _backend.PrtgStore();
+        _hosts.Upsert(new WebHost { HostName = "srv-rev", IpAddress = "10.72.0.1", Active = true });
+        store.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 7201, Name = "x", Ip = "10.72.0.1" } }, DateTime.Now);
+        var old = DateTime.Today.AddDays(-2);
+        store.ReplaceHostMapForDate(old, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = old, DeviceObjid = 7201, MapStatus = PrtgMapStatus.Conflict }
+        });
+        var (_, refresher) = CreateRefresher();
+        refresher.TryRefreshToday();
+        var revisionBefore = store.ReadHostMapDataRevision();
+
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+
+        Assert.Empty(store.GetHostMapForDate(old));
+        Assert.True(store.ReadHostMapDataRevision() > revisionBefore, "刪除舊對應後快取要能察覺（對應資料版本遞增）");
+    }
+
+    [Fact]
+    public void 對應規則升級_PRTG未啟用時不動作()
+    {
+        var (_, refresher) = CreateRefresher(enabled: false);
+        Assert.Null(refresher.TryApplyRuleUpgrade());
+        Assert.Null(_backend.Blob(PrtgHostMapper.RuleVersionBlobKey).Read());
+    }
+
+    [Fact]
+    public void 一併補齊估算_只算已對應主機的白名單sensor_白名單為空時回拒絕原因()
+    {
+        var store = _backend.PrtgStore();
+        var mapped = _hosts.Upsert(new WebHost { HostName = "srv-mapped", IpAddress = "10.80.0.1", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "srv-unmapped", IpAddress = "10.80.0.2", Active = true });
+        store.ReplaceHostMapForDate(DateTime.Today, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = DateTime.Today, DeviceObjid = 8001, HostId = mapped.HostId, MapStatus = PrtgMapStatus.Ok },
+            new() { MapDate = DateTime.Today, DeviceObjid = 8002, MapStatus = PrtgMapStatus.Unmatched }
+        });
+        store.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 81, DeviceObjid = 8001, Name = "ping", SensorType = "Ping" },
+            new PrtgSensorRow { Objid = 82, DeviceObjid = 8002, Name = "ping", SensorType = "Ping" }
+        }, DateTime.Now);
+        var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
+        settings.Update(s =>
+        {
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string> { "Ping" };
+        });
+
+        var estimate = _controller.EstimatePrtgValues(days: 3).Data!;
+
+        // 主機清單外的 device 8002 不算；1 台主機 × 1 顆 × 3 天
+        Assert.Equal(1, estimate.Hosts);
+        Assert.Equal(1, estimate.Sensors);
+        Assert.Equal(3, estimate.Queries);
+        Assert.False(estimate.Large);
+        Assert.Null(estimate.BlockedReason);
+
+        settings.Update(s => s.PrtgSensorTypeWhitelist = new List<string>());
+        var blocked = _controller.EstimatePrtgValues(days: 3).Data!;
+        Assert.Equal(0, blocked.Sensors);
+        Assert.Contains("白名單", blocked.BlockedReason);
+    }
+
+    [Fact]
+    public void 未對應主機清單_只列主機清單內沒有ok對應的主機並附原因()
+    {
+        var store = _backend.PrtgStore();
+        var mapped = _hosts.Upsert(new WebHost { HostName = "srv-ok", IpAddress = "10.90.0.1", Active = true });
+        var noIp = _hosts.Upsert(new WebHost { HostName = "srv-noip", Active = true });
+        var missing = _hosts.Upsert(new WebHost { HostName = "srv-missing", IpAddress = "10.90.0.2", Active = true });
+        store.ReplaceHostMapForDate(DateTime.Today, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = DateTime.Today, DeviceObjid = 9001, HostId = mapped.HostId, MapStatus = PrtgMapStatus.Ok },
+            new() { MapDate = DateTime.Today, DeviceObjid = 9002, Ip = "10.99.99.99", MapStatus = PrtgMapStatus.Unmatched }
+        });
+
+        var page = _controller.GetPrtgUnmappedHosts().Data!;
+
+        Assert.Equal(DateTime.Today, page.MapDate);
+        Assert.Equal(new[] { noIp.HostId, missing.HostId }.OrderBy(x => x), page.Items.Select(i => i.HostId).OrderBy(x => x));
+        Assert.Equal(PrtgHostCoverage.ReasonNoIp, page.Items.Single(i => i.HostId == noIp.HostId).Reason);
+        Assert.Equal(PrtgHostCoverage.ReasonNotInPrtg, page.Items.Single(i => i.HostId == missing.HostId).Reason);
+    }
+
+    [Fact]
+    public void 名稱不一致清單_每台主機列一次_沒有提醒的主機不出現()
+    {
+        var store = _backend.PrtgStore();
+        var renamed = _hosts.Upsert(new WebHost { HostName = "srv-new", IpAddress = "10.92.0.1", Active = true });
+        var same = _hosts.Upsert(new WebHost { HostName = "srv-same", IpAddress = "10.92.0.2", Active = true });
+        store.ReplaceHostMapForDate(DateTime.Today, new List<PrtgHostMapRow>
+        {
+            new() { MapDate = DateTime.Today, DeviceObjid = 1, HostId = renamed.HostId, MapStatus = PrtgMapStatus.Ok, Note = "名稱不一致：PRTG「srv-old」，主機清單「srv-new」" },
+            new() { MapDate = DateTime.Today, DeviceObjid = 2, HostId = renamed.HostId, MapStatus = PrtgMapStatus.Ok, Note = "名稱不一致：PRTG「srv-old2」，主機清單「srv-new」" },
+            new() { MapDate = DateTime.Today, DeviceObjid = 3, HostId = same.HostId, MapStatus = PrtgMapStatus.Ok }
+        });
+
+        var items = _controller.GetPrtgNameMismatch().Data!;
+
+        var item = Assert.Single(items);
+        Assert.Equal("srv-new", item.HostName);
+        Assert.Contains("srv-old", item.Note);
+        // 與鏡像狀態的計數同一口徑
+        Assert.Equal(1, _controller.GetPrtgMirrorStatus().Data!.NameMismatchHosts);
+    }
+
+    [Fact]
+    public void 裝置搜尋_至少兩字_IP完全相同排最前_超過上限回hasMore()
+    {
+        var store = _backend.PrtgStore();
+        var devices = Enumerable.Range(1, SettingsController.DeviceSearchLimit + 5)
+            .Select(i => new PrtgDeviceRow { Objid = 9100 + i, Name = $"web-{i:D2}", Ip = $"10.91.0.{i}" })
+            .Append(new PrtgDeviceRow { Objid = 9200, Name = "zz-exact", Ip = "10.91.0.1" })
+            .ToArray();
+        store.UpsertDevices(devices, DateTime.Now);
+        _hosts.Upsert(new WebHost { HostName = "srv-any", IpAddress = "10.91.9.9", Active = true });
+
+        var tooShort = Assert.Throws<DomainException>(() => _controller.SearchPrtgDevices("w"));
+        Assert.Contains("至少 2 個字", tooShort.Message);
+
+        var byName = _controller.SearchPrtgDevices("web").Data!;
+        Assert.Equal(SettingsController.DeviceSearchLimit, byName.Items.Count);
+        Assert.True(byName.HasMore);
+
+        var byIp = _controller.SearchPrtgDevices("10.91.0.1").Data!;
+        Assert.Contains(byIp.Items.Take(2), d => d.Objid == 9200);
+        Assert.Contains(byIp.Items.Take(2), d => d.Objid == 9101);
+        Assert.False(byIp.HasMore);
     }
 
     [Fact]

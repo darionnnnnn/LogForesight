@@ -285,7 +285,10 @@ public class TriggerRunRequest
 /// <summary>立即執行「一併補齊 PRTG 逐小時數值」的查詢量粗估（GET api/admin/settings/prtg-estimate）。</summary>
 public class PrtgValuesEstimateDto
 {
-    /// <summary>監看裝置上符合 sensor type 白名單的感測器數</summary>
+    /// <summary>會補的主機數（最新對應中 ok 的清單主機；帶網段時只算那些主機）</summary>
+    public int Hosts { get; set; }
+
+    /// <summary>這些主機的裝置上符合 sensor type 白名單的感測器數</summary>
     public int Sensors { get; set; }
 
     /// <summary>感測器數 × 天數（每顆每天一次 historicdata 查詢）</summary>
@@ -293,6 +296,12 @@ public class PrtgValuesEstimateDto
 
     /// <summary>以併發設定與每次查詢平均 1.5 秒粗估的分鐘數</summary>
     public int Minutes { get; set; }
+
+    /// <summary>查詢次數達到提醒門檻：確認框的勾選預設不勾</summary>
+    public bool Large { get; set; }
+
+    /// <summary>無法補（例如白名單為空）的原因；非 null 時確認框停用勾選並顯示原因</summary>
+    public string? BlockedReason { get; set; }
 }
 
 public class TriggerRunResultDto

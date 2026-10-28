@@ -68,6 +68,79 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(PrtgFetchStrategy.Conservative, 2)]
+    [InlineData(PrtgFetchStrategy.Aggressive, 1)]
+    public void PreviewFull_保守策略補全部已對應主機_激進策略照取數對象(string strategy, int yesterdayTargets)
+    {
+        // 昨天另有一台已對應、但當天沒有高／中風險的主機（host 2 的 device 300）
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.PrtgStore();
+        store.ReplaceHostMapForDate(yesterday, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 100, HostId = 1, MapStatus = PrtgMapStatus.Ok },
+            new PrtgHostMapRow { DeviceObjid = 300, HostId = 2, MapStatus = PrtgMapStatus.Ok }
+        });
+        store.UpsertSensors(new[] { Sensor(3001, 300) }, DateTime.Now);
+        _settings.Update(s => s.PrtgFetchStrategy = strategy);
+
+        var preview = _service.PreviewFull();
+
+        Assert.Equal(yesterdayTargets, preview.Days.Single(day => day.Day == yesterday).TargetSensors);
+    }
+
+    [Fact]
+    public async Task 全量回填執行_保守策略實際補到當天沒有風險的已對應主機()
+    {
+        // 與預覽同一個範圍判定：執行端若改回只補觸發主機，sensor 3001 不會被請求
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.PrtgStore();
+        store.ReplaceHostMapForDate(yesterday, new[]
+        {
+            new PrtgHostMapRow { DeviceObjid = 100, HostId = 1, MapStatus = PrtgMapStatus.Ok },
+            new PrtgHostMapRow { DeviceObjid = 300, HostId = 2, MapStatus = PrtgMapStatus.Ok }
+        });
+        store.UpsertSensors(new[] { Sensor(3001, 300) }, DateTime.Now);
+        _settings.Update(s => s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative);
+
+        var requests = await RunFullAsync();
+
+        Assert.Contains(requests, r => r.SensorId == 3001 && r.Day == yesterday);
+        Assert.Equal("全部已對應主機（保守策略）", _service.PreviewFull().HostScopeText);
+    }
+
+    [Fact]
+    public void 回填主機說明_激進策略全部已對應但白名單為空時寫實際生效的觸發主機()
+    {
+        var settings = new SystemSettings
+        {
+            PrtgFetchStrategy = PrtgFetchStrategy.Aggressive,
+            PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
+            PrtgSensorTypeWhitelist = new List<string>()
+        };
+        Assert.Contains("高／中風險主機", PrtgBackfillService.BackfillHostScopeText(settings));
+
+        settings.PrtgSensorTypeWhitelist = new List<string> { "diskfree" };
+        Assert.Equal("全部已對應主機", PrtgBackfillService.BackfillHostScopeText(settings));
+
+        settings.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+        settings.PrtgSensorTypeWhitelist = new List<string>();
+        Assert.Equal("全部已對應主機（保守策略）", PrtgBackfillService.BackfillHostScopeText(settings));
+    }
+
+    [Fact]
+    public void PreviewFull_保守策略白名單為空時明確拒絕()
+    {
+        _settings.Update(s =>
+        {
+            s.PrtgFetchStrategy = PrtgFetchStrategy.Conservative;
+            s.PrtgSensorTypeWhitelist = new List<string>();
+        });
+
+        var error = Assert.Throws<DomainException>(() => _service.PreviewFull());
+        Assert.Contains("白名單", error.Message);
+    }
+
     [Fact]
     public void PreviewFull_UsesStoredDaysAndActualDailyTargetsWithoutOpeningRun()
     {

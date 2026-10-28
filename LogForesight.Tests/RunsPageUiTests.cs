@@ -85,6 +85,51 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void PRTG卡只用主機口徑_不再顯示主機清單外的衝突與查無主機計數()
+    {
+        var js = ReadRunsJs();
+        Assert.DoesNotContain("查無主機", js);
+        Assert.DoesNotContain("lastMapConflict", js);
+        Assert.DoesNotContain("lastMapUnmatched", js);
+        Assert.Contains("prtgHostMapSummary(status)", js);
+    }
+
+    [Fact]
+    public void 一併補齊確認框顯示全部已對應主機估算_量大預設不勾_不能補時停用()
+    {
+        var body = ExtractBlock(ReadRunsJs(), "function confirmRunWithPrtgValues(");
+        Assert.Contains("全部已對應主機 ${formatNumber(estimate.hosts)} 台", body);
+        Assert.Contains("if (estimate.large) input.checked = false;", body);
+        // 估算回來（或失敗）前不能按「仍要開始」，標籤要說在估算、且估算有自己的較短逾時
+        Assert.Contains("okButton.disabled = true;", body);
+        Assert.Contains("（估算中…）", body);
+        Assert.Contains("timeoutMs: 15000", body);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(body, @"okButton\.disabled = false;").Count);
+        Assert.Contains("input.disabled = true;", body);
+        Assert.Contains("estimate.blockedReason", body);
+    }
+
+    [Fact]
+    public void 保守策略的執行不顯示sensor數_逐日觸發欄顯示破折號並說明()
+    {
+        var js = ReadRunsJs();
+        var cell = ExtractBlock(js, "function renderPrtgCell(");
+        var conservativeIdx = cell.IndexOf("strategy === 'conservative'", StringComparison.Ordinal);
+        var sensorIdx = cell.IndexOf("`sensor ${fetched ?? 0}`", StringComparison.Ordinal);
+        Assert.True(conservativeIdx >= 0 && conservativeIdx < sensorIdx, "保守策略必須在組 sensor 文字之前就返回");
+        Assert.Contains("保守策略（數值由快照供應）", cell);
+        // 兩個呼叫點都要帶策略，漏一個就有一邊照舊顯示「sensor 0」
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"renderPrtgCell\([^)]*prtgStrategy\)").Count);
+
+        var detail = ExtractBlock(js, "async function showDetail(");
+        Assert.Contains("const triggerCount = value => (conservative ? '—' : formatNumber(value));", detail);
+        Assert.Contains("render: d => triggerCount(d.triggerHosts)", detail);
+        Assert.Contains("render: d => triggerCount(d.targetSensors)", detail);
+        Assert.Contains("render: d => triggerCount(d.failedSensors)", detail);
+        Assert.Contains("觸發主機、目標 sensor、失敗 sensor 不適用", detail);
+    }
+
+    [Fact]
     public void AI待補為零時依執行狀態區分未結束與全部完成且今日執行有明確入口()
     {
         var js = ReadRunsJs();

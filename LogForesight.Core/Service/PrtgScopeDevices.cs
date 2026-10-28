@@ -33,8 +33,8 @@ public sealed record PrtgScopeResult(IReadOnlySet<long> DeviceObjids, int Mapped
 /// <summary>
 /// PRTG「監看裝置」集合的唯一出口：ok 對應、與主機有關的 conflict、人工對應、守門裝置四項聯集。
 /// <list type="bullet">
-/// <item>conflict 只收「mapper 已指到主機」或「IP 屬於某台啟用中主機」的列——同 IP 多裝置但與主機無關的
-/// conflict 在大型 PRTG 可能有數百台，整批收進來等於沒縮圈。</item>
+/// <item>conflict 只收「mapper 已指到主機」（一 IP 多主機）或「IP 屬於某台啟用中主機」的列——名稱命中多台主機（hostname-multi）
+/// 沒有 IP 可判斷時不收，等人工指派後才進範圍（docs/PRTG-SPEC.md §4）。</item>
 /// <item>人工對應只收目標主機存在、啟用中且未被合併的列；其餘計入 <see cref="PrtgScopeResult.ManualExcluded"/>。</item>
 /// <item>守門裝置與 corehealth 所在裝置只在資源守門啟用時入範圍；未啟用（或只算部分主機）時改放進
 /// <see cref="PrtgScopeResult.PreserveDeviceObjids"/>：不取數，但清除時保留它們的感測器鏡像，守門自動偵測才找得到。</item>

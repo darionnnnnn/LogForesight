@@ -1596,36 +1596,68 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
 }
 
 /**
- * KPI 統計卡（dashboard.js/reports.js 原本各自手刻一份）：col 內的可選連結卡片，
- * 大數字＋說明文字，variant 控制數字顏色、hint 當 title 提示、extra 可附加額外內容
- * （例如 reports.js 的與前期對比徽章）。centered=false 供 reports.js 的靠左版型使用。
+ * KPI 卡列（唯一出口）：分組、等高、限寬。各頁不得再自己用「col-6 col-lg-3 ＋ 單張卡」排 KPI（FrontendConsistencyUiTests 守門）。
+ *
+ * groups：`[{ title?, cards: [{ value, label, variant?, url?, sub?, title? }] }]`
+ * - sub：可見副標（字串或 Node）；title：完整說明（卡片 title 屬性，副標被截斷時用）。
+ * - 沒有卡的組不輸出；所有組都沒有卡時回傳空容器，由呼叫端決定要不要顯示。
+ * - 每張卡一律有副標列（沒有副標時是空佔位，保留一行高度）——這是「同列等高」的結構前提，
+ *   不能靠 min-height 補丁。有 url 的卡整張是 <a>（href 經 appUrl）；hover 只變陰影與邊框，不位移。
+ * 外部字串一律 textContent，不當 HTML 解析。
  */
-export function statCard({ value, label, variant, url, hint, centered = true, extra }) {
-    const inner = document.createElement(url ? 'a' : 'div');
-    inner.className = 'lf-stat';
-    if (url) inner.href = appUrl(url);
+export function kpiStrip(groups) {
+    const strip = document.createElement('div');
+    strip.className = 'lf-kpi-strip';
 
-    const box = document.createElement('div');
-    box.className = 'lf-card h-100' + (url ? ' lf-card--clickable' : '');
-    if (hint) box.title = hint;
+    for (const group of groups ?? []) {
+        const cards = (group?.cards ?? []).filter(Boolean);
+        if (cards.length === 0) continue;
 
-    const body = document.createElement('div');
-    body.className = centered ? 'lf-card__body text-center' : 'lf-card__body';
+        const section = document.createElement('section');
+        // 各組依卡片數比例分寬：以 class 帶卡數（CSS 的 --lf-kpi-count），不寫 inline style；上限 6 以上同一級
+        section.className = `lf-kpi-group lf-kpi-group--n${Math.min(cards.length, 6)}`;
 
-    const valueEl = document.createElement('div');
-    valueEl.className = variant ? `lf-stat__value text-${variant}` : 'lf-stat__value';
-    valueEl.textContent = value;
+        if (group.title) {
+            const titleEl = document.createElement('h2');
+            titleEl.className = 'lf-kpi-group__title';
+            titleEl.textContent = group.title;
+            section.appendChild(titleEl);
+        }
 
-    const labelEl = document.createElement('div');
-    labelEl.className = 'lf-stat__label';
-    labelEl.textContent = label;
+        const grid = document.createElement('div');
+        grid.className = 'lf-kpi-grid';
 
-    body.append(valueEl, labelEl);
-    if (extra) body.appendChild(extra);
+        for (const card of cards) {
+            const el = document.createElement(card.url ? 'a' : 'div');
+            el.className = card.url ? 'lf-kpi-card lf-kpi-card--link' : 'lf-kpi-card';
+            if (card.url) el.href = appUrl(card.url);
+            const fullText = card.title || (typeof card.sub === 'string' ? card.sub : '');
+            if (fullText) el.title = fullText;
 
-    box.appendChild(body);
-    inner.appendChild(box);
-    return inner;
+            const valueEl = document.createElement('div');
+            valueEl.className = card.variant ? `lf-stat__value text-${card.variant}` : 'lf-stat__value';
+            valueEl.textContent = card.value;
+
+            const labelEl = document.createElement('div');
+            labelEl.className = 'lf-stat__label';
+            labelEl.textContent = card.label;
+
+            const subEl = document.createElement('div');
+            subEl.className = 'lf-kpi-card__sub';
+            if (card.sub !== undefined && card.sub !== null && card.sub !== '') {
+                if (typeof card.sub === 'string') subEl.textContent = card.sub;
+                else subEl.appendChild(card.sub);
+            }
+
+            el.append(valueEl, labelEl, subEl);
+            grid.appendChild(el);
+        }
+
+        section.appendChild(grid);
+        strip.appendChild(section);
+    }
+
+    return strip;
 }
 
 /** 送出中的按鈕狀態：disable 防連點（§8.6-6） */

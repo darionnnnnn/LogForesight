@@ -238,6 +238,18 @@ try
     logger.Info("LogForesight.Web 啟動：驗證方式 {0}，資料根目錄 {1}",
         settings.Auth.Provider, settings.Storage.ResolveDataRoot());
 
+    // PRTG 主機對應規則升級：一次性、冪等，站台開始服務後才在背景執行——重算要逐台解析 DNS 名稱（每台最多 1 秒），
+    // 放在啟動路徑上可能超過 IIS 的啟動時限。失敗只記警告，下次啟動再試（PrtgHostMapRefresher.TryApplyRuleUpgrade）
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        var refresher = app.Services.GetRequiredService<IPrtgHostMapRefresher>();
+        _ = Task.Run(() =>
+        {
+            var warning = refresher.TryApplyRuleUpgrade();
+            if (warning != null) logger.Warn(warning);
+        });
+    });
+
     app.Run();
     return 0;
 }

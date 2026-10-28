@@ -484,6 +484,30 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchDayAsync_狀態變更階段失敗時標HistoryAffectingFailure()
+    {
+        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"paused\":false}]}";
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
+            if (url.Contains("content=sensors"))
+                return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages"))
+                return JsonResponse("{\"error\":\"boom\"}", HttpStatusCode.InternalServerError);
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 8, 30), 2, CancellationToken.None, ScopeOf(101));
+
+        Assert.True(result.HistoryAffectingFailure);
+        Assert.Contains(result.StageFailures, f => f.StartsWith("[階段 3/4]"));
+    }
+
+    [Fact]
     public async Task FetchDayAsync_某階段失敗時其餘階段照跑()
     {
         var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"paused\":false}]}";
@@ -515,6 +539,11 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(0, result.Sensors);
         Assert.Equal(1, result.StateChanges);
         Assert.True(result.Failures > 0, "Sensors 階段失敗應記錄 Failures > 0");
+        // 原因與計數一一對應，畫面才說得出是哪個階段（docs/PRTG-SPEC.md §3）
+        Assert.Equal(result.Failures, result.StageFailures.Count);
+        Assert.Contains(result.StageFailures, f => f.StartsWith("[階段 2/4]"));
+        // 單一裝置的感測器查詢失敗不影響已落地資料：不標「影響過去日的失敗」（否則每晚重評永遠收不掉）
+        Assert.False(result.HistoryAffectingFailure);
 
         using var ctx = _fx.NewContext();
         Assert.Equal(1, await ctx.PrtgDevices.CountAsync());

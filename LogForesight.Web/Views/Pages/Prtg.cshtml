@@ -24,6 +24,13 @@
 </ul>
 
 <div data-panel="effectiveness" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">統計 PRTG 對分析的幫助：抓到幾個問題、建了多少交辦、被日誌佐證多少、被標誤報多少。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">想決定規則門檻要不要調，或要不要改用激進策略時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">各數字的分母不同，不能互相換算成比例。</dd>
+        </dl>
+    </aside>
     <section class="lf-card mb-4" id="prtg-effectiveness" aria-labelledby="prtg-effectiveness-title">
         <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
             <h2 class="lf-card__title" id="prtg-effectiveness-title">PRTG 使用效果</h2>
@@ -58,10 +65,17 @@
 </div>
 
 <div data-panel="selected-backfill" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">把過去幾天的 PRTG 逐小時數值補進來。保守策略補全部已對應主機。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用 PRTG，或想補齊過去日子的數值時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會重新判斷過去的風險；要重算請到排程作業頁用「立即執行」回望。</dd>
+        </dl>
+    </aside>
     <section class="lf-card" aria-labelledby="prtg-full-backfill-title">
         <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-full-backfill-title">全量歷史回填</h2></div>
         <div class="lf-card__body">
-            <p class="small text-muted">依已儲存的回填天數、每日高／中風險主機、歷史有效對應、sensor 白名單與監看數值範圍預估。全量表示完整執行這套已設定範圍，不代表全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。</p>
+            <p class="small text-muted">依已儲存的回填天數、各日主機對應與 sensor 白名單預估：保守策略補全部已對應主機，激進策略依「夜間數值取數對象」。只含主機清單內的主機，不是全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。</p>
             <div class="d-flex flex-wrap gap-2 mb-3">
                 <button type="button" class="btn btn-outline-primary" id="prtg-full-backfill-preview">預估全量工作量</button>
                 <button type="button" class="btn btn-danger" id="prtg-full-backfill-start" disabled>確認並開始全量回填</button>
@@ -97,6 +111,13 @@
 </div>
 
 <div data-panel="connection">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">設定本系統連到 PRTG 的位址與認證，並測試連線。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用，或 PRTG 換位址、換帳號時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會開始取數；取數要到「擷取參數」勾選啟用。</dd>
+        </dl>
+    </aside>
     <form id="prtg-connection-form">
         <div class="lf-card">
             <div class="lf-card__header">
@@ -203,6 +224,13 @@
 </div>
 
 <div data-panel="params" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">決定要不要啟用 PRTG 擷取、多久取一次數值、取哪些類型。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用，或要調整取數頻率與監看類型時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">按「儲存」前不生效；不會補過去的數值（到「歷史回填」）。</dd>
+        </dl>
+    </aside>
     <form id="prtg-params-form">
         <div class="lf-card">
             <div class="lf-card__header">
@@ -251,7 +279,7 @@
                         <option value="triggered-plus-list">觸發主機＋指定清單</option>
                     </select>
                     <div class="form-text">
-                        保守策略下此範圍不適用；切回激進策略時保留上次設定。停用 PRTG 擷取時，夜間擷取、歷史回填與排程結構同步不執行；維護者仍可手動同步結構。環境探測與資源守門預覽不受影響。
+                        保守策略下此範圍不適用（歷史回填與立即執行的「一併補齊」會補全部已對應主機）；切回激進策略時保留上次設定。停用 PRTG 擷取時，夜間擷取、歷史回填與排程結構同步不執行；維護者仍可手動同步結構。環境探測與資源守門預覽不受影響。
                         「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
                     </div>
                 </div>
@@ -409,6 +437,13 @@
 </div>
 
 <div data-panel="mirror" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">看 PRTG 資料有沒有完整複製過來、哪些主機還沒對應到 PRTG 裝置，並在這裡同步或指派。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">新增主機後、主機頁出現「PRTG 未對應」，或排程作業頁顯示同步失敗時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會改主機清單，也不會補過去的數值。只列主機清單內的主機。</dd>
+        </dl>
+    </aside>
     <section class="lf-card mb-3" aria-labelledby="prtg-snapshot-diagnostics-title">
         <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
             <h2 class="lf-card__title" id="prtg-snapshot-diagnostics-title">快照最近 24 個完整小時</h2>
@@ -455,14 +490,15 @@
                 <div class="row g-3 mb-3" id="prtg-mirror-stats">
                     <div class="col-md-4">
                         <div class="border rounded p-2 bg-light">
-                            <div class="text-muted small">鏡像裝置數</div>
-                            <div class="fs-5 fw-semibold" id="prtg-mirror-device-count">-</div>
-                            <div class="text-muted small" id="prtg-mirror-last-device-sync">最後同步：-</div>
+                            <div class="text-muted small">已對應主機</div>
+                            <div class="fs-5 fw-semibold" id="prtg-mirror-mapped-hosts">-</div>
+                            <div class="text-muted small" id="prtg-mirror-unmapped-sub">未對應 - 台</div>
+                            <div class="text-muted small" id="prtg-mirror-last-device-sync">結構最後同步：-</div>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="border rounded p-2 bg-light">
-                            <div class="text-muted small">鏡像感測器數（監看裝置）</div>
+                            <div class="text-muted small">監看感測器數</div>
                             <div class="fs-5 fw-semibold" id="prtg-mirror-sensor-count">-</div>
                             <div class="text-muted small" id="prtg-mirror-last-sensor-sync">最後同步：-</div>
                         </div>
@@ -492,7 +528,10 @@
                     </div>
                     <div class="small text-warning d-none" id="prtg-scope-purge-blocked" role="status"></div>
                     <div class="small" id="prtg-scope-purge-summary">載入中…</div>
-                    <div class="small text-muted" id="prtg-scope-purge-devices"></div>
+                    <details class="small text-muted mt-1 d-none" id="prtg-scope-purge-devices-details">
+                        <summary>涉及的裝置名稱（範圍外資料，多半不在主機清單內）</summary>
+                        <div id="prtg-scope-purge-devices"></div>
+                    </details>
                 </div>
 
                 <div class="border rounded p-3 mb-3">
@@ -501,9 +540,10 @@
                         <span class="text-muted small" id="prtg-mirror-map-date">對應基準日：-</span>
                     </div>
                     <div class="d-flex flex-wrap gap-4 small mb-2">
-                        <div>成功對應：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
-                        <div>衝突（多筆）：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
-                        <div>未對應（PRTG 獨有）：<button type="button" class="badge bg-secondary border-0 text-decoration-none lf-pointer" id="prtg-mirror-map-unmatched" aria-label="跳至未對應清單" title="跳至未對應清單">0</button></div>
+                        <div>已對應主機：<span class="badge bg-success" id="prtg-mirror-map-ok">0</span></div>
+                        <div>衝突主機：<span class="badge bg-warning text-dark" id="prtg-mirror-map-conflict">0</span></div>
+                        <div>未對應主機：<button type="button" class="badge bg-secondary border-0 text-decoration-none lf-pointer" id="prtg-mirror-map-unmatched" aria-label="跳至未對應主機清單" title="跳至未對應主機清單">0</button></div>
+                        <div>名稱不一致：<span class="badge bg-secondary" id="prtg-mirror-map-name-mismatch">0</span></div>
                         <div>已排除 IP：<span class="badge bg-secondary" id="prtg-mirror-ip-exclude-count">0</span></div>
                         <div>白名單 sensor：<span class="badge bg-primary" id="prtg-mirror-whitelist-count">0</span></div>
                         <div>其中已對應主機：<span class="badge bg-info text-dark" id="prtg-mirror-whitelist-mapped">0</span></div>
@@ -537,7 +577,7 @@
 
                     <div class="mt-4" id="prtg-unmatched-section" tabindex="-1">
                         <div class="d-flex align-items-center justify-content-between mb-1">
-                            <div class="small fw-semibold text-secondary">未對應清單（PRTG 獨有）</div>
+                            <div class="small fw-semibold text-secondary">未對應主機（主機清單內沒有對應到 PRTG 的主機）</div>
                             <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="prtg-unmatched-toggle-btn" aria-expanded="true" aria-controls="prtg-unmatched-collapse">
                                 收合
                             </button>
@@ -545,6 +585,17 @@
                         <div class="collapse show" id="prtg-unmatched-collapse">
                             <div id="prtg-unmatched-table"><div class="text-muted small text-center py-2">載入中…</div></div>
                             <div id="prtg-unmatched-pagination" class="mt-2"></div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 d-none" id="prtg-name-mismatch-section">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <div class="small fw-semibold text-secondary">名稱不一致（主機名稱可能已變更）</div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0" id="prtg-name-mismatch-toggle-btn" data-bs-toggle="collapse" data-bs-target="#prtg-name-mismatch-collapse" aria-expanded="false" aria-controls="prtg-name-mismatch-collapse">展開</button>
+                        </div>
+                        <div class="collapse" id="prtg-name-mismatch-collapse">
+                            <div class="form-text text-muted mb-2">IP 已對上 PRTG 裝置，但名稱不同；僅提醒，不影響對應。</div>
+                            <div id="prtg-name-mismatch-table"></div>
                         </div>
                     </div>
 
@@ -566,6 +617,13 @@
 </div>
 
 <div data-panel="probe" class="d-none">
+    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
+        <dl class="row mb-0">
+            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">檢查 PRTG 連得上、資料取得到，並估算取數規模。</dd>
+            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用、調整範圍前，或取數結果異常時。</dd>
+            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">只讀取、不寫入正式資料。結果包含不在主機清單內的裝置（全站診斷用）。</dd>
+        </dl>
+    </aside>
     <div class="lf-card mb-4" id="prtg-probe">
         <div class="lf-card__header">
             <h2 class="lf-card__title">環境探測</h2>
@@ -823,6 +881,43 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
                     <button type="submit" class="btn btn-primary btn-sm" id="prtg-assign-submit">確認指派</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="prtg-host-assign-modal" tabindex="-1" aria-labelledby="prtg-host-assign-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="prtg-host-assign-title">指派 PRTG 裝置給主機</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="prtg-host-assign-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <div class="text-muted small">目標主機</div>
+                        <div><span class="fw-semibold" id="prtg-host-assign-host">-</span>
+                            <span class="font-monospace text-muted ms-2" id="prtg-host-assign-ip">-</span></div>
+                    </div>
+                    <div class="mb-2">
+                        <label for="prtg-host-assign-query" class="form-label">搜尋 PRTG 裝置（名稱或 IP，至少 2 字）</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control" id="prtg-host-assign-query" maxlength="128" autocomplete="off" />
+                            <button type="button" class="btn btn-outline-secondary" id="prtg-host-assign-search">搜尋</button>
+                        </div>
+                    </div>
+                    <div id="prtg-host-assign-results" class="mb-2"></div>
+                    <div class="small text-warning mb-2 d-none" id="prtg-host-assign-more">結果超過 20 筆，請輸入更完整的名稱或 IP</div>
+                    <div class="mb-1">
+                        <label for="prtg-host-assign-note" class="form-label">說明（選填）</label>
+                        <input type="text" class="form-control form-control-sm" id="prtg-host-assign-note" maxlength="512" placeholder="例如：手動指定對應原因" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary btn-sm" id="prtg-host-assign-submit" disabled>確認指派</button>
                 </div>
             </form>
         </div>

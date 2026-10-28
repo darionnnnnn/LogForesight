@@ -12,6 +12,8 @@ public sealed class PrtgFullBackfillPreviewDto
     public DateTime PlanAnchorLocalDate { get; init; }
     public DateTime FromDate { get; init; }
     public DateTime ToDate { get; init; }
+    /// <summary>這次補哪些主機（例：「全部已對應主機（保守策略）」），與執行同一個判定（PrtgValueFetchScope.BackfillScope）</summary>
+    public string HostScopeText { get; init; } = "";
     public int DayCount { get; init; }
     public long EstimatedHistoricRequests { get; init; }
     public long HistoricQuotaLowerBoundSeconds { get; init; }

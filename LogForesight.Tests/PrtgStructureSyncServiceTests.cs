@@ -180,9 +180,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
 
         Assert.False(service.IsRunning, "結構同步背景工作應在受控回應後結束。");
         Assert.True(service.GetStatus().LastSuccess);
-        Assert.Equal(1, service.GetStatus().LastDevices);
         Assert.Equal(1, service.GetStatus().LastSensors);
-        Assert.Equal(1, service.GetStatus().LastMapOk);
+        Assert.Equal(1, service.GetStatus().LastMappedHosts);
+        Assert.Equal(0, service.GetStatus().LastUnmappedHosts);
         Assert.False(_settingsStore.Get().PrtgEnabled, "手動同步不得啟用數值取樣。");
         Assert.Contains(handler.RequestedUrls, url => url.Contains("content=devices", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(handler.RequestedUrls, url => url.Contains("content=sensors", StringComparison.OrdinalIgnoreCase));
@@ -301,6 +301,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
             x.MapSkippedNoIp = 2;
             x.MapSkippedExcluded = 1;
             x.MapSkippedManualSibling = 3;
+            x.MapMappedHosts = 4;
+            x.MapUnmappedHosts = 2;
+            x.MapNameMismatch = 1;
         });
 
         // 重建服務（模擬站台重啟）後仍讀得到
@@ -308,10 +311,10 @@ public class PrtgStructureSyncServiceTests : IDisposable
 
         Assert.Equal(new DateTime(2026, 9, 9, 10, 0, 0), status.LastCompletedAt);
         Assert.True(status.LastSuccess);
-        Assert.Equal(0, status.LastDevices);
-        Assert.Equal(0, status.LastMapOk);
-        // 三種略過加總成一個數字給畫面
-        Assert.Equal(6, status.LastMapSkipped);
+        // 畫面只拿主機口徑；device 計數（略過、衝突、查無主機）不再送到前端（docs/PRTG-SPEC.md §1）
+        Assert.Equal(4, status.LastMappedHosts);
+        Assert.Equal(2, status.LastUnmappedHosts);
+        Assert.Equal(1, status.LastNameMismatch);
         Assert.Equal("manual", status.LastSource);
     }
 

@@ -189,6 +189,7 @@ public class PrtgRunsCardAndProbeTests : IDisposable
     {
         public string? WarningToReturn { get; set; }
         public string? TryRefreshToday() => WarningToReturn;
+        public string? TryApplyRuleUpgrade() => null;
     }
 
     [Fact]

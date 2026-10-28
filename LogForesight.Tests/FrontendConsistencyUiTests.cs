@@ -30,6 +30,32 @@ public class FrontendConsistencyUiTests
         return Path.Combine(segments.ToArray());
     }
 
+    [Fact]
+    public void 下拉選項明確指定前景與背景色_避免Chrome選項文字空白()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var match = System.Text.RegularExpressions.Regex.Match(css, @"select option,\s*select optgroup\s*\{(?<body>[^}]*)\}");
+        Assert.True(match.Success, "site.css 必須有 select option／optgroup 規則");
+        Assert.Contains("color: var(--lf-text)", match.Groups["body"].Value);
+        Assert.Contains("background-color:", match.Groups["body"].Value);
+        Assert.Matches(@"select\s*\{\s*color-scheme:\s*light;", css);
+        // 多選清單的已選取項目不得被上面的底色規則蓋掉
+        Assert.Matches(@"select\[multiple\] option:checked\s*\{[^}]*background-color:", css);
+    }
+
+    [Fact]
+    public void KPI副標最多兩行_空佔位保留兩行高()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var sub = Regex.Match(css, @"\.lf-kpi-card__sub\s*\{(?<body>[^}]*)\}");
+        Assert.True(sub.Success);
+        Assert.Contains("-webkit-line-clamp: 2", sub.Groups["body"].Value);
+        Assert.Contains("min-height: 2.5em", sub.Groups["body"].Value);
+        Assert.DoesNotContain("nowrap", sub.Groups["body"].Value);
+        // 大字級＋1200px 附近：組寬下限不得超過容器，否則橫向捲動
+        Assert.Matches(@"min-width:\s*min\(calc\(var\(--lf-kpi-count", css);
+    }
+
     private static string ReadJs(params string[] parts)
     {
         var path = JsDir(parts);
@@ -586,6 +612,43 @@ public class FrontendConsistencyUiTests
             Assert.DoesNotContain("MEMBER_STATUS_META", js);
             Assert.DoesNotContain("ISSUE_HISTORY_STATUS_VARIANTS", js);
             Assert.DoesNotContain("statusVariantOf", js);
+        }
+    }
+
+    [Theory]
+    [InlineData("dashboard.js")]
+    [InlineData("handler-detail.js")]
+    [InlineData("reports.js")]
+    [InlineData("user-detail.js")]
+    public void KPI卡列四頁一律走kpiStrip_不再手刻欄格(string page)
+    {
+        var js = ReadJs("pages", page);
+        Assert.DoesNotContain("col-6 col-lg-3", js);
+        Assert.DoesNotContain("statCard", js);
+        Assert.Contains("kpiStrip(", js);
+    }
+
+    [Fact]
+    public void kpiStrip只定義在coreUi_其餘JS不得另寫一份()
+    {
+        var definitions = Directory.EnumerateFiles(JsDir(), "*.js", SearchOption.AllDirectories)
+            .Where(p => Regex.IsMatch(File.ReadAllText(p), @"function\s+kpiStrip\s*\("))
+            .Select(p => Path.GetRelativePath(JsDir(), p).Replace('\\', '/'))
+            .ToList();
+        Assert.Equal(new[] { "core/ui.js" }, definitions);
+    }
+
+    [Fact]
+    public void KPI卡_hover規則只變陰影與邊框_不得位移()
+    {
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        // 所有選擇器含 lf-kpi 的規則區塊（含 hover／focus／一般狀態）都不得有 transform，transition 也不得列 transform
+        var blocks = Regex.Matches(css, @"(?<sel>[^{}]*\.lf-kpi[^{}]*)\{(?<body>[^}]*)\}");
+        Assert.NotEmpty(blocks);
+        Assert.Contains(blocks, b => b.Groups["sel"].Value.Contains(":hover"));
+        foreach (Match b in blocks)
+        {
+            Assert.DoesNotContain("transform", b.Groups["body"].Value);
         }
     }
 }

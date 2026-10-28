@@ -559,6 +559,9 @@ public class SettingsController : ControllerBase
     /// <summary>粗估用的每次 historicdata 查詢平均秒數（暫定）。</summary>
     private const double PrtgValueQuerySeconds = 1.5;
 
+    /// <summary>「一併補齊」查詢次數達到這個數時，確認框的勾選預設不勾（暫定）：讓使用者看過估算再主動勾，不是閘門。</summary>
+    internal const int LargeBackfillQueryThreshold = 2000;
+
     /// <summary>
     /// 立即執行「一併補齊 PRTG 逐小時數值」的查詢量粗估：目前監看裝置上的白名單感測器數 × 天數。
     /// 帶 segment 時只算那個網段的主機（與立即執行的網段範圍同一套解析）。
@@ -575,19 +578,27 @@ public class SettingsController : ControllerBase
         var sentinels = new SentinelStore(_backend.Blob("sentinels"));
         var hostIds = segment == null ? null : ScheduleController.ResolveSegmentHostIds(segment, _hosts, sentinels);
 
+        // 與「一併補齊」實際取數同一個母體（保守策略＝全部已對應主機，PrtgValueFetchScope.BackfillScope）：
+        // 最新對應中 ok 的主機與其裝置上的白名單 sensor；帶網段時只算那些主機。
         var store = _backend.PrtgStore();
-        var scope = PrtgScopeDevices.Compute(
-            store, _hosts, new PrtgMirrorGuardSource(store), settings, sentinels.GetAll(),
-            new ResourceGuardWarningConsole(), new PrtgAddressResolver(), hostIds);
-        var sensors = store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist, scope.DeviceObjids.ToList()).Count;
+        var okRows = store.GetLatestHostMap()
+            .Where(row => row.MapStatus == PrtgMapStatus.Ok && row.HostId.HasValue &&
+                          (hostIds == null || hostIds.Contains(row.HostId.Value)))
+            .ToList();
+        var blocked = PrtgValueFetchScope.BackfillBlockedReason(settings.PrtgFetchStrategy, settings.PrtgSensorTypeWhitelist);
+        var sensors = blocked != null ? 0 : store.GetValueFetchTargets(settings.PrtgSensorTypeWhitelist,
+            okRows.Select(row => row.DeviceObjid).Distinct().ToList()).Count;
         var queries = (long)sensors * days;
         var concurrency = Math.Max(1, settings.PrtgFetchConcurrency);
 
         return ApiResponse<PrtgValuesEstimateDto>.Ok(new PrtgValuesEstimateDto
         {
+            Hosts = okRows.Select(row => row.HostId!.Value).Distinct().Count(),
             Sensors = sensors,
             Queries = queries,
-            Minutes = (int)Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60)
+            Minutes = (int)Math.Ceiling(queries * PrtgValueQuerySeconds / concurrency / 60),
+            Large = queries >= LargeBackfillQueryThreshold,
+            BlockedReason = blocked
         });
     }
 
@@ -790,9 +801,10 @@ public class SettingsController : ControllerBase
         var whitelist = _settings.Get().PrtgSensorTypeWhitelist;
         var coverage = store.GetWhitelistCoverage(whitelist, mapDate);
 
-        var mapOk = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Ok);
-        var mapConflict = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Conflict);
-        var mapUnmatched = hostMaps.Count(m => m.MapStatus == PrtgMapStatus.Unmatched);
+        // 主機口徑：與「未對應主機」清單、主機頁篩選同一份判定（PrtgHostCoverage）
+        var unmapped = _hosts == null ? Array.Empty<PrtgUnmappedHost>()
+            : PrtgHostCoverage.Unmapped(_hosts.GetAll(), hostMaps, store.GetIpExcludes().Select(e => e.Ip), new PrtgAddressResolver());
+        var nameMismatchHosts = PrtgHostCoverage.NameMismatchHostIds(hostMaps).Count;
 
         DateTime? snapshotLastAt = null;
         int snapshotSensors = 0;
@@ -816,16 +828,16 @@ public class SettingsController : ControllerBase
 
         return ApiResponse<PrtgMirrorStatusDto>.Ok(new PrtgMirrorStatusDto
         {
-            DeviceCount = summary.DeviceCount,
+            MappedHosts = PrtgHostCoverage.MappedHostIds(hostMaps).Count,
+            UnmappedHosts = unmapped.Count,
+            ConflictHosts = unmapped.Count(h => h.Reason == PrtgHostCoverage.ReasonConflict),
+            NameMismatchHosts = nameMismatchHosts,
             SensorCount = summary.SensorCount,
             LastDeviceSync = summary.LastDeviceSync,
             LastSensorSync = summary.LastSensorSync,
             LastValueAt = summary.LastValueAt,
             LastStateChangeAt = summary.LastStateChangeAt,
             MapDate = mapDate,
-            MapOk = mapOk,
-            MapConflict = mapConflict,
-            MapUnmatched = mapUnmatched,
             WhitelistSensorCount = coverage.WhitelistSensorCount,
             OnMappedDeviceCount = coverage.OnMappedDeviceCount,
             IpExcludeCount = store.GetIpExcludes().Count,
@@ -968,6 +980,95 @@ public class SettingsController : ControllerBase
         return ApiResponse<PrtgScopePurgePreviewDto>.Ok(dto);
     }
 
+    /// <summary>
+    /// 未對應到 PRTG 的清單主機（啟用、未合併、沒有 ok 對應），附原因；維護頁「未對應主機」清單用。
+    /// 只列主機清單內的主機（docs/PRTG-SPEC.md §1），判定與主機頁篩選同一份（<see cref="PrtgHostCoverage"/>）。
+    /// </summary>
+    [HttpGet("prtg-unmapped-hosts")]
+    public ApiResponse<PrtgUnmappedHostPageDto> GetPrtgUnmappedHosts([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        // 列出主機名與 IP：與人工對應、IP 排除清單同一道全站可見檢查，受限角色不得看到不可見主機
+        RequireFullPrtgTransferAccess();
+        var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
+        if (_backend == null || _hosts == null)
+            return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto { Page = normPage, PageSize = normPageSize });
+
+        var store = _backend.PrtgStore();
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip), new PrtgAddressResolver());
+        return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto
+        {
+            MapDate = mapDate,
+            Total = unmapped.Count,
+            Page = normPage,
+            PageSize = normPageSize,
+            Items = unmapped.Skip((normPage - 1) * normPageSize).Take(normPageSize)
+                .Select(h => new PrtgUnmappedHostDto { HostId = h.HostId, HostName = h.HostName, IpAddress = h.IpAddress, Reason = h.Reason })
+                .ToList()
+        });
+    }
+
+    /// <summary>
+    /// IP 已對上、但 PRTG 名稱與主機清單不同的主機（只提醒「主機名稱可能已變更」，不影響對應，docs/PRTG-SPEC.md §4）。
+    /// 一台主機可能有多台 device 都不一致，每台主機只列一次、帶第一筆提醒文字。
+    /// </summary>
+    [HttpGet("prtg-name-mismatch")]
+    public ApiResponse<List<PrtgNameMismatchDto>> GetPrtgNameMismatch()
+    {
+        // 列出主機名與 IP：與人工對應、IP 排除清單同一道全站可見檢查，受限角色不得看到不可見主機
+        RequireFullPrtgTransferAccess();
+        if (_backend == null) return ApiResponse<List<PrtgNameMismatchDto>>.Ok(new());
+        var hostById = (_hosts?.GetAll() ?? new List<WebHost>()).ToDictionary(h => h.HostId);
+        var items = _backend.PrtgStore().GetLatestHostMapWithDate(30).Rows
+            .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue &&
+                        (m.Note ?? "").StartsWith(PrtgHostMapper.NoteNameMismatchPrefix, StringComparison.Ordinal))
+            .GroupBy(m => m.HostId!.Value)
+            .Select(g => new PrtgNameMismatchDto
+            {
+                HostId = g.Key,
+                HostName = hostById.TryGetValue(g.Key, out var h) ? h.HostName : g.First().HostName ?? "",
+                IpAddress = hostById.TryGetValue(g.Key, out var h2) ? h2.IpAddress : null,
+                Note = g.OrderBy(m => m.DeviceObjid).First().Note ?? ""
+            })
+            .OrderBy(x => x.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return ApiResponse<List<PrtgNameMismatchDto>>.Ok(items);
+    }
+
+    /// <summary>人工指派用的裝置搜尋上限：一次回太多等於把全站裝置清單搬回畫面。</summary>
+    internal const int DeviceSearchLimit = 20;
+
+    /// <summary>
+    /// 人工指派時依名稱或 IP 搜尋 PRTG 裝置鏡像（至少 2 個字，最多 <see cref="DeviceSearchLimit"/> 筆）。
+    /// 這是「主機清單外的 device 可以出現在畫面」的例外之一：只在管理者主動輸入條件時回傳（docs/PRTG-SPEC.md §1）。
+    /// </summary>
+    [HttpGet("prtg-devices/search")]
+    public ApiResponse<PrtgDeviceSearchResultDto> SearchPrtgDevices([FromQuery] string? q)
+    {
+        RequireFullPrtgTransferAccess();
+        var needle = q?.Trim() ?? "";
+        if (needle.Length < 2)
+            throw DomainException.Validation("請輸入至少 2 個字（裝置名稱或 IP）。");
+        if (_backend == null)
+            return ApiResponse<PrtgDeviceSearchResultDto>.Ok(new PrtgDeviceSearchResultDto());
+
+        var matches = _backend.PrtgStore().GetAllDevices()
+            .Where(d => (d.Name ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+                        (d.Ip ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase))
+            // IP 完全相同的排最前：使用者照主機 IP 搜尋時，那一台一定看得到
+            .OrderBy(d => string.Equals(d.Ip?.Trim(), needle, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(DeviceSearchLimit + 1)
+            .ToList();
+        return ApiResponse<PrtgDeviceSearchResultDto>.Ok(new PrtgDeviceSearchResultDto
+        {
+            HasMore = matches.Count > DeviceSearchLimit,
+            Items = matches.Take(DeviceSearchLimit)
+                .Select(d => new PrtgDeviceSearchItemDto { Objid = d.Objid, Name = d.Name, GroupPath = d.GroupPath, Ip = d.Ip })
+                .ToList()
+        });
+    }
+
     /// <summary>PRTG 主機對應衝突清單分頁</summary>
     [HttpGet("prtg-host-map")]
     public ApiResponse<PrtgHostMapPageDto> GetPrtgHostMap(
@@ -975,11 +1076,11 @@ public class SettingsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
-        var isConflict = string.Equals(status, PrtgMapStatus.Conflict, StringComparison.OrdinalIgnoreCase);
-        var isUnmatched = string.Equals(status, PrtgMapStatus.Unmatched, StringComparison.OrdinalIgnoreCase);
-        if (!isConflict && !isUnmatched)
+        // 只列衝突：PRTG 端有、主機清單沒有的 device（unmatched）不呈現在畫面（docs/PRTG-SPEC.md §1）；
+        // 未對應的清單主機改由 prtg-unmapped-hosts 列出
+        if (!string.Equals(status, PrtgMapStatus.Conflict, StringComparison.OrdinalIgnoreCase))
         {
-            throw DomainException.Validation("status 僅支援 conflict 或 unmatched 查詢。");
+            throw DomainException.Validation("status 僅支援 conflict 查詢；未對應的主機請改用 prtg-unmapped-hosts。");
         }
 
         var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
@@ -996,7 +1097,7 @@ public class SettingsController : ControllerBase
         var store = _backend.PrtgStore();
         var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(30);
 
-        var targetStatus = isConflict ? PrtgMapStatus.Conflict : PrtgMapStatus.Unmatched;
+        var targetStatus = PrtgMapStatus.Conflict;
 
         // 依 DeviceObjid 排序後才分頁：GetLatestHostMapWithDate 的查詢沒有 ORDER BY，
         // 未排序就分頁時同一列可能在兩頁重複出現、也可能整列被跳過。
@@ -1048,23 +1149,11 @@ public class SettingsController : ControllerBase
             var isMultiDevice = sameDevices.Count > 1;
             string conflictKind;
             var note = row.Note ?? "";
-            if (note.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, StringComparison.Ordinal) ||
-                note.StartsWith(PrtgHostMapper.NoteHostnameSameHostPrefix, StringComparison.Ordinal))
-            {
-                conflictKind = "hostname-multi";
-            }
-            else if (note.StartsWith(PrtgHostMapper.NoteHostnameHostTakenPrefix, StringComparison.Ordinal))
-            {
-                conflictKind = "hostname-host-taken";
-            }
-            else if (isUnmatched)
-            {
-                conflictKind = "unmatched";
-            }
-            else
-            {
-                conflictKind = isMultiDevice ? "multi-device" : "multi-host";
-            }
+            // 衝突只剩兩種（docs/PRTG-SPEC.md §4）：名稱命中多台主機、一 IP 由多台主機共用。
+            // 同 IP 多 device 已改為全部對應到該 IP 的主機，不再是衝突。
+            conflictKind = note.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, StringComparison.Ordinal)
+                ? "hostname-multi"
+                : "multi-host";
 
             List<PrtgConflictDeviceDto> sameIpDevices;
             if (isMultiDevice)

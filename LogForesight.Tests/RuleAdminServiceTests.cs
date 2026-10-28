@@ -419,8 +419,15 @@ public class RuleAdminServiceTests
         using (var db = fx.NewContext())
             db.PrtgHostMaps.Where(m => m.MapDate < today.AddDays(-1).ToDateTime(TimeOnly.MinValue)).ExecuteDelete();
         request.ThroughDate = today.AddDays(-36);
-        var pastWithoutMapping = service.PreviewDiskTrend(request);
-        Assert.Equal(0, pastWithoutMapping.DateSensorAssessmentRowCount);
+        // 該日之前沒有對應時沿用之後最早一份（昨天那份，docs/PRTG-SPEC.md §4）
+        var pastBorrowingLater = service.PreviewDiskTrend(request);
+        Assert.Equal(1, pastBorrowingLater.DateSensorAssessmentRowCount);
+
+        // 完全沒有任何對應時才是 0
+        using (var db = fx.NewContext())
+            db.PrtgHostMaps.ExecuteDelete();
+        var withoutAnyMapping = service.PreviewDiskTrend(request);
+        Assert.Equal(0, withoutAnyMapping.DateSensorAssessmentRowCount);
 
         request.ThroughDate = today.AddDays(-1);
         request.FromDate = today.AddDays(-731);

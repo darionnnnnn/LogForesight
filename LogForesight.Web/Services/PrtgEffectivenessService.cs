@@ -32,10 +32,18 @@ public sealed class PrtgEffectivenessService
         var findingQuery = ctx.TopIssues.AsNoTracking()
             .Where(i => i.RecordDate >= start && i.RecordDate < endExclusive && i.LogName == PrtgFindingMapper.PrtgLogName);
         var findingCount = findingQuery.Count();
+        // 只算歸戶到主機清單內主機的 sensor（最新對應中 ok 的 device，docs/PRTG-SPEC.md §1）：
+        // 範圍外數值尚未清除前也還在表裡，不能算進「使用效果」
+        var latestMapDate = ctx.PrtgHostMaps.AsNoTracking().Max(m => (DateTime?)m.MapDate);
+        var okDevices = ctx.PrtgHostMaps.AsNoTracking()
+            .Where(m => m.MapDate == latestMapDate && m.MapStatus == PrtgMapStatus.Ok && m.HostId != null)
+            .Select(m => m.DeviceObjid);
+        var okSensors = ctx.PrtgSensors.AsNoTracking().Where(s => okDevices.Contains(s.DeviceObjid)).Select(s => s.Objid);
         var lowCoverageSampledHours = ctx.PrtgValues.AsNoTracking()
             .Count(v => v.PeriodStart >= start && v.PeriodStart < endExclusive
                 && v.Quality == PrtgDataQuality.Sampled
-                && v.Coverage < PrtgValueUsability.SampledMinCoverage);
+                && v.Coverage < PrtgValueUsability.SampledMinCoverage
+                && okSensors.Contains(v.SensorObjid));
         var recordIds = findingQuery.Select(i => i.RecordId).Distinct().OrderBy(id => id)
             .Take(MaxPayloadRecords + 1).ToArray();
 

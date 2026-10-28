@@ -381,6 +381,7 @@ public class RunMonitorService
             NetiqHostsSkipped = run.NetiqHostsSkipped,
             PrtgOutcome = run.PrtgOutcome,
             PrtgSensorsFetched = run.PrtgSensorsFetched,
+            PrtgStrategy = run.PrtgStrategy,
             PrtgSensorsFailed = run.PrtgSensorsFailed,
             PrtgTriggeredHosts = run.PrtgTriggeredHosts,
             PrtgDays = run.PrtgDays?.Select(d => new PrtgDayStatDto
@@ -452,6 +453,7 @@ public class RunMonitorService
                 NetiqHostsSkipped = run.NetiqHostsSkipped,
                 PrtgOutcome = run.PrtgOutcome,
                 PrtgSensorsFetched = run.PrtgSensorsFetched,
+                PrtgStrategy = run.PrtgStrategy,
                 PrtgSensorsFailed = run.PrtgSensorsFailed,
                 PrtgTriggeredHosts = run.PrtgTriggeredHosts
             })

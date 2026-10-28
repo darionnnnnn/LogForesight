@@ -7,6 +7,10 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 - **主檔以 NetIQ 為準**：主機身分只來自主機主檔（`lf_blobs` 的 `hosts`）。PRTG device 以 IP（退路為名稱，§4）對應過去；
   對不到就跳過，不猜測、不自動建立主機。
+- **畫面只呈現主機清單內的主機**：PRTG 相關畫面、執行紀錄與里程碑只談主機清單內的主機及其對應裝置（主機口徑：已對應／未對應主機、名稱不一致；
+  `PrtgHostCoverage` 是唯一判定），不列 PRTG 端有、主機清單沒有的 device，也不報 PRTG 全站裝置數。例外三處，頁面明示「含不在主機清單內的裝置」：
+  環境探測（全站診斷，§6）、資源守門預覽（PRTG／Sentinel 伺服器本身，§12）、人工指派時的裝置搜尋（管理者主動輸入條件，§4a）；
+  另外「監看範圍外資料」的涉及裝置名稱預設收合（確認清除前才看，§3c）。
 - **兩個來源各自取數、各自失敗隔離**。沒有「PRTG＋NetIQ」的合併規則平台；合成發生在主機日結論層：
   PRTG finding 進當日 `lf_top_issues`、單向上調日風險、以獨立區塊進 AI prompt（§9）。
 - **數值可信＝三條件**（§9b）：該日對應有效、該小時是可用列、單位可判。不再加其他閘門。
@@ -58,10 +62,10 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 **順序**：裝置結構同步 → 主機對應（§4）與取數範圍（§3c）→ 範圍內感測器結構與狀態變更同步 → 狀態規則評估（§9）→
 數值就緒度與數值規則（§9a、§9b）→ 跨日標註、抑制 → 發佈 finding 登錄簿並補追加已落地主機日 → 觸發式數值取數（§3a）。
 
-**排程補評估**：逐日統計（`PrtgDayStat.NeedsReevaluation`）記下「該日未完整評估並發佈，或結構同步失敗」；排程觸發且範圍為全部主機時，`PrtgReevaluationPlanner.Select` 從最近 7 天的執行紀錄挑出這些日子（同一日以最晚一趟為準；當機而沒留下逐日統計的排程執行，以其處理的資料日入選），與昨天聯集一起評估。手動立即執行不自動併入。已知限制：同一日之後若有「指定主機更新」的成功紀錄，會蓋過先前全範圍的失敗。
+**排程補評估**：逐日統計（`PrtgDayStat.NeedsReevaluation`）記下「該日未完整評估並發佈、結構同步失敗，結構（裝置／感測器鏡像）或狀態變更沒有取齊（`PrtgFetchResult.HistoryAffectingFailure`）」——單一裝置的感測器查詢失敗、分類填入、數值階段的失敗不影響已落地資料，不標重評；排程觸發且範圍為全部主機時，`PrtgReevaluationPlanner.Select` 從最近 7 天的執行紀錄挑出這些日子（同一日以最晚一趟為準；當機而沒留下逐日統計的排程執行，以其處理的資料日入選），與昨天聯集一起評估。手動立即執行不自動併入。已知限制：同一日之後若有「指定主機更新」的成功紀錄，會蓋過先前全範圍的失敗。
 
 **回望多日**（「立即執行」回望 N 天且範圍為全部主機；其餘只處理昨天）：結構同步與狀態變更只做一次；對應只重算最新一天，較舊日期沿用該日或之前最近一日
-（往回 31 天，`PrtgTriggeredValueFetcher.HostMapLookbackDays`）。規則評估兩段：先逐日評估並映射，再逐日跨日標註、抑制、發佈、補追加。
+（往回 31 天，`PrtgTriggeredValueFetcher.HostMapLookbackDays`；找不到時沿用之後最早一份，§4）。規則評估兩段：先逐日評估並映射，再逐日跨日標註、抑制、發佈、補追加。
 `silent` 與數值規則只評估最新一天。每日結果存 `BatchRun.PrtgDays`。
 
 **AI 完整性保證**：AI 判讀以 `SchedulerRunState.FindingsWaitCutoff` 擋住本趟 PRTG 處理範圍內的待補，`prtg-findings-ready` 後才放行；
@@ -76,7 +80,8 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 | 3. 狀態變更 | `content=messages&id=<裝置>&filter_drel=…`（範圍內逐台） | `AppendStateChanges`（一個區間一次取完、依日分桶、去重） |
 | 4. hourly 數值 | `historicdata.json?avg=3600` | `UpsertValues`；觸發式（§3a），只在激進策略執行（§3b） |
 
-各階段獨立 try/catch，任一失敗其餘照跑。共同規則：
+各階段獨立 try/catch，任一失敗其餘照跑；每個失敗都經 `PrtgFetchService` 內的 `Fail` 計數並留下原因（`PrtgFetchResult.StageFailures`），
+逐日說明與執行詳情的重要紀錄據此說出是哪個階段失敗。沒有規則、沒有任何對應的日子仍算評估完成，不會每晚被挑回重評。共同規則：
 - **分頁只有一份實作**（`PrtgTablePager`，`count` 5000、寫入批次 500）：空頁／未滿頁／本頁沒有新列任一成立即停（PRTG 在 `start` 超出範圍時夾到末頁）；
   頁數上限 `max(⌈treesize ÷ 頁大小⌉ + 2, 400)`，未收斂擲 `PrtgPagingNotConvergedException`。一律帶 `sortby=objid`。
 - **去重鍵是該 content 真正的唯一鍵**：預設 objid；messages 的 objid 是發出訊息的 sensor，列鍵為「objid＋時間」。
@@ -94,7 +99,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 激進策略下夜間只對觸發主機取數，三重過濾：
 1. 觸發主機＝當日 `risk_level` 高或中 ∪ PRTG 規則命中；
-2. 經 `lf_prtg_host_map` 反查 device（該日或之前最近一日、往回 31 天），**只取 `ok`**；
+2. 經 `lf_prtg_host_map` 反查 device（該日或之前最近一日、往回 31 天，找不到時沿用之後最早一份），**只取 `ok`**；
 3. device 上 type 命中 `PrtgSensorTypeWhitelist` 且未暫停的 sensor。
 
 `PrtgValueFetchScope` 改變第 1 步的候選主機（判定收斂在 `PrtgValueFetchScope.SelectHosts`，夜間與回填共用）：
@@ -133,7 +138,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 **範圍**＝`PrtgScopeDevices.Compute`（唯一出口）的聯集：
 1. 最近一次主機對應（回看 30 天）中 `ok` 的裝置；
-2. 與主機有關的 `conflict`：一 IP 多主機，或同 IP 多裝置而該 IP 屬於啟用中主機；
+2. 與主機有關的 `conflict`：一 IP 多主機；
 3. 人工對應表的全部裝置；
 4. 資源守門的裝置（§12）：Sentinel 與 PRTG 位址比對到的裝置、覆寫清單 sensor 所在裝置、corehealth sensor 所在裝置——不論守門是否啟用。
 
@@ -155,16 +160,28 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 | 情況 | 結果 |
 |---|---|
-| IP 命中恰好一台活躍主機 | `ok` |
-| IP 查無主機 | 走名稱退路（下節）；仍對不到為 `unmatched` |
-| 一個 IP 由多台主機共用 | `conflict`，對到 HostId 最小者，Note 列其他候選 |
-| 一個 IP 有多個 device | `conflict`，不填主機 |
+| IP 命中恰好一台活躍主機 | 該 IP 底下**所有** device 都 `ok` 對到這台主機（同一台伺服器在 PRTG 常有 Ping、WMI、SNMP 多個 device） |
+| IP 查無主機 | 逐台走名稱退路（下節）；仍對不到為 `unmatched` |
+| 一個 IP 由多台主機共用 | 該 IP 底下每台 device 都 `conflict`，對到 HostId 最小者，Note 列其他候選 |
 | device 沒有 IP | 走名稱退路；仍對不到不產生列，計入「略過（無 IP）」 |
 | device 有人工對應（§4a） | `ok`，Note 標人工指定 |
 | device 的 IP 在排除清單（§4b） | 不產生列，計入「略過（已排除）」；人工對應優先於排除 |
 | 同 IP 已有另一台 device 被人工指定 | 不產生列，計入「略過（同 IP 已有人工指定 device）」 |
 
-停用與已合併的主機不參與。**對應作業只讀主機主檔，絕不寫回。**
+停用與已合併的主機不參與。**對應作業只讀主機主檔，絕不寫回。** 同 IP 只想認其中一台 device 時，對它做人工對應，其餘自動略過。
+
+**名稱不一致提醒**：IP 對上的 device，若裝置名稱括號內或 host 欄的 DNS 名稱抽出的主機名沒有一個等於主檔短名，Note 記 `名稱不一致：…`（`PrtgHostMapper.NoteNameMismatchPrefix`），
+提醒主機名稱可能已變更，不影響對應。不帶括號的裝置名稱是 PRTG 端自取的顯示名，不拿來比對。
+
+**某日用哪一份對應**（`EfPrtgStore.FindLatestHostMapDate` 唯一出口）：該日或之前最近一份（往回 31 天）；找不到時沿用該日之後最早一份，
+執行輸出與逐日說明註明「沿用 YYYY-MM-DD 的主機對應」。正式環境 IP 很少異動；代價是 IP 曾改配給別台主機時，那段舊資料會掛到現在的主機上。
+
+**對應規則升級**（`PrtgHostMapper.RuleVersion`，blob `prtg_host_map_rule_version`）：版本不符時，站台開始服務後在背景以本機裝置鏡像＋主機主檔重算今天的對應
+（不連線 PRTG；重算要逐台解析 DNS 名稱，不放在啟動路徑），今天至少有一筆 `ok` 對應才刪除其他日期的舊對應並記下版本——
+刪除一次一個日期、Serializable 交易、範圍異動槽檢查、刪後遞增對應資料版本，與保留期清除同一套保護。
+鏡像沒有裝置、今天沒有任何主機對上、重算期間人工對應／IP 排除持續變動（範圍版本前後不一致，最多重算三次）或任何一步失敗時不刪、不記版本，下次啟動再試（`PrtgHostMapRefresher.TryApplyRuleUpgrade`）。
+`PrtgEnabled` 關閉時不執行，之後啟用要等下次啟動。升級刪除舊對應後，校準（§11）的「狀態變更涵蓋天數」要從升級日重新累積。
+校準（§11）刻意不沿用之後的對應：它以「那天已有對應」判斷 PRTG 資料當天確實在收。
 
 ### 位址怎麼比對
 
@@ -176,17 +193,16 @@ device 分組鍵用解析層結果。IP 排除清單的儲存鍵是純語法值�
 
 ### 名稱退路（hostname）
 
-IP 查無主機或 device 沒有 IP 時，以 `PrtgHostnameCandidates.Extract` 的候選名稱比對啟用中主機的名稱（`ShortName`，去網域、不分大小寫）：
+只用來補「IP 完全沒對到」的主機：IP 查無主機或 device 沒有 IP 時，以 `PrtgHostnameCandidates.Extract` 的候選名稱比對啟用中主機的名稱（`ShortName`，去網域、不分大小寫）：
 候選＝裝置名稱括號內字串（含「去掉開頭單一字母＋`-`」變體）＋ `host` 欄非 IP 的值。
 
 | 情況 | 結果 |
 |---|---|
-| 恰好一台主機、一台 device | `ok`，Note `hostname` |
+| 恰好一台主機（可多台 device 命中同一台） | 全部 `ok`，Note `hostname` |
 | 多台主機 | `conflict`，衝突清單標籤 `hostname-multi` |
-| 同一主機名有多台 device | `conflict`，Note「hostname 比對：同一主機名有 N 台 PRTG device」 |
-| 該主機已有 IP 或人工對應的裝置 | `conflict`，標籤 `hostname-host-taken` |
+| 命中的主機已有 IP 或人工對應的裝置 | 該 device 不屬於這台主機，落 `unmatched`（不列衝突） |
 
-比對是純字串，不做 DNS。執行摘要另列 `hostname=N`。
+比對是純字串，不做 DNS。執行摘要另列「名稱退路 N」。
 
 ### 什麼時候會重算
 
@@ -195,7 +211,10 @@ IP 查無主機或 device 沒有 IP 時，以 `PrtgHostnameCandidates.Extract` �
 
 ### 4a. 人工對應（`lf_prtg_manual_map`）
 
-管理者在維護頁的未對應／衝突清單把 device 指派給主機；長期有效、不按日，每日自動對應優先採用它。
+管理者從維護頁「未對應主機」清單選一台主機，依名稱或 IP 搜尋裝置鏡像（`GET prtg-devices/search`，至少 2 字、最多 20 筆、IP 完全相同排最前）後指派；
+衝突清單則在候選主機中挑一台。長期有效、不按日，每日自動對應優先採用它。
+「未對應主機」（`GET prtg-unmapped-hosts`）＝啟用、未合併、最新對應中沒有 `ok` 的清單主機，附原因：衝突（一 IP 多主機）→ 沒有 IP → IP 已排除 → PRTG 查無；
+與主機頁「PRTG 對應：未對應」篩選同一份判定。名稱不一致提醒另列（`GET prtg-name-mismatch`）。
 有人工對應的 device 跳出 IP 分組；指定的主機已停用或不存在時回到自動判定並警告；刪除即恢復自動判定。新增、刪除、批次對應都寫稽核並帶 `expectedScopeRevision`。
 
 ### 4b. IP 排除（`lf_prtg_ip_excludes`）
@@ -208,10 +227,13 @@ IP 查無主機或 device 沒有 IP 時，以 `PrtgHostnameCandidates.Extract` �
 
 手動離峰作業（PRTG 維護 → 歷史回填；排程作業頁看進度與停止），不掛排程，回填 `PrtgBackfillDays` 天（預設 30）的數值與狀態變更，不重跑結構同步。
 
-- **先預覽再確認**：預覽與正式 runner 共用逐日目標 resolver（觸發範圍、各日高／中風險、往回 31 天的有效對應、白名單），列逐日主機與 sensor 數、
+- **補哪些主機**（`PrtgValueFetchScope.BackfillScope`，預覽與 runner 共用；立即執行「一併補齊」的估算端點 `prtg-estimate` 只在保守策略呼叫，母體固定為最新對應的全部 `ok` 主機）：保守策略＝該日全部 `ok` 對應主機（「夜間數值取數對象」不適用）；
+  激進策略依該設定。保守策略且 sensor 白名單為空時明確拒絕（`BackfillBlockedReason`），不退回觸發主機。
+  立即執行確認框顯示「全部已對應主機 N 台、sensor M 顆、約 K 次查詢」，查詢次數達 2,000（暫定）時勾選預設不勾。
+- **先預覽再確認**：預覽與正式 runner 共用逐日目標 resolver（上述範圍、各日高／中風險、往回 31 天的有效對應、白名單），列逐日主機與 sensor 數、
   historicdata 次數與配額時間下界。預覽綁定設定、範圍、日期與目標 fingerprint，五分鐘有效；start 須帶當次 PreviewId 與 Confirmed，漂移即拒絕。
 - 狀態變更整趟只取一次（範圍在開始時以既有對應算一次），之後逐日做數值；單日失敗不中止。寫入有自然鍵去重，中斷後重跑不重複。
-- 回填不做主機對應；某日沒有對應取該回填日往回 31 天內最近一日，仍無則略過該日；全部略過時整趟為失敗。
+- 回填不做主機對應；某日的對應依 §4「某日用哪一份對應」取得（往回 31 天，找不到沿用之後最早一份），完全沒有任何對應才略過該日；全部略過時整趟為失敗。指定主機補值同一種取法。
 - 啟動閘門：未啟用、連線不齊、探測執行中、鏡像沒有感測器、取數執行中、同步執行中、近（回填天數＋31）天沒有任何主機對應。
 - 指定主機回填（維護頁「指定主機補值」）只補數值、不回填狀態、不補派歷史 finding。
 - 可停止（`POST prtg-backfill/cancel`，寫稽核）；結果寫「已停止：完成 X／N 天」。回填寫入 `ok` 列，覆蓋同一小時的 `sampled`。
@@ -239,7 +261,7 @@ IP 查無主機或 device 沒有 IP 時，以 `PrtgHostnameCandidates.Extract` �
 ## 6. 環境探測（probe）
 
 維護頁「環境探測」頁籤提供兩種共用狀態與停止鈕的探測，結果只存在記憶體，可複製或下載（輸出可能含主機名、IP，分享前遮蔽）。
-探測不檢查 `PrtgEnabled`。
+探測不檢查 `PrtgEnabled`。這是全站診斷：輸出包含不在主機清單內的裝置（§1 的例外之一，頁籤用途區明示）。
 
 **完整環境探測**（唯讀、背景執行，標頭含 InformationalVersion）：版本；device／sensor 總數；sensor type 分布與內建分類；群組樹；
 IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一行結論（`start` 與 `sortby`）；數值單位判定（四類內建對照各挑一顆）；
@@ -299,7 +321,7 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 
 | 頁面 | 內容 |
 |---|---|
-| PRTG 維護頁 `/admin/prtg`（Maintain） | 頁首「啟用準備」六項與全部確認後的「最近一次排程驗收」（§13）。頁籤：連線／擷取參數（啟用開關與取數範圍；**監看範圍（可選縮圈）**是參數表單之後的收合卡，預設收合、記住展開）／鏡像狀態（同步結構與對應、對應清單、範圍外資料）／環境探測（含就緒度卡、校準匯出 §11、資料搬運 §10）／歷史回填（全量含完成水位 §5、指定主機補值）／使用效果（末尾含**通知處理狀態**）。卡片細節見 docs/WEB-SPEC.md §9.9e |
+| PRTG 維護頁 `/admin/prtg`（Maintain） | 頁首「啟用準備」六項與全部確認後的「最近一次排程驗收」（§13）。頁籤：連線／擷取參數（啟用開關與取數範圍；**監看範圍（可選縮圈）**是參數表單之後的收合卡，預設收合、記住展開）／鏡像狀態（同步結構與對應、對應清單、範圍外資料）／環境探測（含就緒度卡、校準匯出 §11、資料搬運 §10）／歷史回填（全量含完成水位 §5、指定主機補值）／使用效果（末尾含**通知處理狀態**）。每個頁籤開頭有固定三列的用途區：這頁做什麼／什麼時候來／不會做什麼（環境探測註明含不在主機清單內的裝置）。卡片細節見 docs/WEB-SPEC.md §9.9e |
 | 設定頁「資源守門」頁籤 | 八個 `PrtgResourceGuard*` 欄位、「預覽／自動偵測並填入」、自動偵測日期註記（§12） |
 | 排程作業頁 | 模組狀態、同步／回填進度與停止鈕、每日擷取進度軌；沒有啟動鈕 |
 
@@ -318,7 +340,11 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 | `GET prtg-backfill/preview`、`POST prtg-backfill/start`、`POST prtg-backfill/cancel`、`GET prtg-backfill/status` | 歷史回填（§5） |
 | `POST prtg-structure-sync/start`、`POST prtg-structure-sync/cancel`、`GET prtg-structure-sync/status` | 同步結構與對應（§5a） |
 | `GET／PUT／DELETE prtg-manual-map`、`prtg-ip-excludes` | 人工對應（§4a）、IP 排除（§4b） |
-| `GET prtg-host-map?status=&page=&pageSize=` | 對應清單分頁；衝突列帶 `conflictKind`（`multi-device`／`multi-host`／`hostname-multi`／`hostname-host-taken`） |
+| `GET prtg-host-map?status=conflict&page=&pageSize=` | 衝突清單分頁（只接受 `conflict`）；衝突列帶 `conflictKind`（`multi-host`／`hostname-multi`） |
+| `GET prtg-unmapped-hosts?page=&pageSize=` | 未對應到 PRTG 的清單主機與原因（`no-ip`／`ip-excluded`／`conflict`／`not-in-prtg`，§4a）；全站可見者限定 |
+| `GET prtg-name-mismatch` | IP 已對上但 PRTG 名稱與主機清單不同的主機（§4）；全站可見者限定 |
+| `GET prtg-devices/search?q=` | 人工指派用的裝置搜尋（至少 2 字、最多 20 筆＋`hasMore`，§4a）；全站可見者限定 |
+| `GET prtg-estimate?days=&segment=` | 立即執行「一併補齊」的估算：`hosts`／`sensors`／`queries`／`minutes`／`large`／`blockedReason`（§5） |
 | `GET prtg-resource-guard/preview[?forceAuto=]` | 守門 sensor 與當下值；`source`＝`override`／`live`／`mirror-fallback`／`auto`；帶 `autoDetectedAt` |
 | `GET prtg-fetch-scope/estimate?scope=` | 取數範圍規模估算 |
 
@@ -443,7 +469,7 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 
 `PrtgValueAssessment` 是數值的唯一評估入口（每日管線、就緒度卡、規則啟用與試算、主機詳情共用）。只讀已落盤資料、每頁最多 100 顆。
 
-**數值可信＝三條件**：(1) 該日 sensor 所在裝置有 `ok` 或人工對應，且是評估日的同一台主機（過去日取該日或之前最近一日，往回 31 天）；
+**數值可信＝三條件**：(1) 該日 sensor 所在裝置有 `ok` 或人工對應，且是評估日的同一台主機（過去日依 §4「某日用哪一份對應」，含往後沿用）；
 (2) 該小時是可用列（§2）；(3) 單位可判。另加兩道合理性檢查：範圍外的小時不採用（值不合理）、近 7 個有效日每小時完全相同視為固定值。
 每日代表值＝當日可用小時的平均，可用小時不足 12（`MinDailyUsableHours`）的日不列入。
 
@@ -482,7 +508,7 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 - 匯出閘門：四項皆達「可用」才解鎖，否則勾「仍要匯出」覆寫；兩者都寫稽核。
 
 **使用效果**（維護頁頁籤，`PrtgEffectivenessService`）：期間內 PRTG finding 數、低涵蓋取樣小時、建立的案件與交辦、已回覆、已抑制、靜音 profile、
-PRTG 獨立主機日、佐證主機日，以及按規則代碼分列的「標記誤報／已處理」（分母是已標記的 PRTG 問題；全部為 0 時顯示「尚無標記」）。各指標分母不同，不是轉換漏斗。
+PRTG 獨立主機日、佐證主機日（低涵蓋取樣小時只算最新對應中 `ok` 裝置上的 sensor），以及按規則代碼分列的「標記誤報／已處理」（分母是已標記的 PRTG 問題；全部為 0 時顯示「尚無標記」）。各指標分母不同，不是轉換漏斗。
 
 ## 12. 資源守門
 
@@ -529,7 +555,7 @@ PRTG 獨立主機日、佐證主機日，以及按規則代碼分列的「標記
 | 步 | 做什麼 | 看哪裡 | 正常 | 不正常時 |
 |---|---|---|---|---|
 | 1 | 環境探測 → 完整環境探測 | 探測輸出 | 版本與 device／sensor 總數有值；9d-5 逐物件查詢驗證印「✓」；站台對照 [S1] 範圍台數合理、[S3] 守門目標找得到 | 「無法量測」或空白 HTML：先查 PRTG 位址與認證；[S1] 範圍外顆數過大：核對主機主檔 IP；9d-5 印「✗」：依 BACKLOG「取數範圍上線後待實機確認」第一條改 `StateChangeQueryObjects` 為逐感測器查詢 |
-| 2 | 鏡像狀態 → 同步結構與對應 | 對應摘要 | `ok` 台數接近預期、`unmatched` 與 `conflict` 可解釋；同步狀態來源「手動」且成功 | `ok=0`：主機主檔 IP 與 device 位址對不上（§4）；衝突：在衝突清單指派或排除 IP |
+| 2 | 鏡像狀態 → 同步結構與對應 | 統計卡與主機對應摘要 | 「已對應主機」接近預期、「未對應主機」清單每台的原因可解釋（沒有 IP／IP 已排除／衝突／PRTG 查無）；同步狀態來源「手動」且成功 | 已對應 0 台：主機主檔 IP 與 device 位址對不上（§4）；PRTG 查無：在該列「指派 PRTG 裝置」搜尋後指派；衝突：在衝突清單指派或排除 IP；名稱不一致：確認主機名稱是否改過 |
 | 3 | 排程作業 → 立即執行（回望 1 天） | 狀態卡 PRTG 軌、執行詳情 `[PRTG]` 行 | 三個同步階段有進度；「PRTG 規則評估完成」行存在並列出 finding 數與涉及主機數（站台正常時可為 0，不得缺行）；就緒度行有分組計數 | 「規則庫尚無啟用中的 PRTG 規則」：規則維護頁套用內建規則；「無主機對應可用」：回到第 2 步 |
 | 4 | 同一趟結束後看 AI 卡 | 排程作業 AI 分析卡 | 待補歸零、上次執行正常結束；提示列沒有「取數執行中，最近兩天的待補要等…」殘留 | 待補列寫「0 件（AI 服務未設定）」：設定 AI 服務；待補不減：看 AI 執行紀錄的失敗原因 |
 | 5 | 隔晚排程後 | 執行總表 PRTG 徽章、PRTG 卡「待補評估」 | 昨日徽章「成功」、待補評估為空 | 「部分失敗」／「失敗」：執行詳情找第一個 ✗；待補評估有日期：下一晚會自動補，連續出現就查該日原因 |

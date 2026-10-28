@@ -83,6 +83,8 @@ internal static class PrtgDailyPipeline
         try
         {
             var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
+            // 策略一讀到設定就定：連線建立前就失敗或取消的那趟，紀錄裡的策略才不會是預設的激進
+            conservativeStrategy = !PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy).NightlyExactValues;
             if (!systemSettings.PrtgEnabled ||
                 string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) ||
                 !PrtgClientFactory.HasUsableCredentials(systemSettings))
@@ -138,7 +140,6 @@ internal static class PrtgDailyPipeline
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
             var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";
-            conservativeStrategy = !strategyProfile.NightlyExactValues;
             prtgConsole.WriteLine($"PRTG 取數策略：{strategyLabel}（快照間隔 {strategyProfile.SnapshotIntervalMinutes} 分鐘）。");
 
             // 0. 手動 PRTG 作業佔用中就先等它（docs/PRTG-SPEC.md §5a）：同步成功結束時鏡像是最新的，
@@ -203,7 +204,7 @@ internal static class PrtgDailyPipeline
                         {
                             var hostMapper = new PrtgHostMapper(mirrorStore, hostStore, prtgConsole, resolver);
                             mapResult = hostMapper.MapForDate(newest);
-                            runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：ok={mapResult.Ok}, manual={mapResult.Manual}, conflict={mapResult.Conflict}, unmatched={mapResult.Unmatched}, skipped_no_ip={mapResult.SkippedNoIp}, skipped_excluded={mapResult.SkippedExcluded}, skipped_manual_sibling={mapResult.SkippedManualSibling}");
+                            runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：{mapResult.HostSummary}");
                         }
                         catch (OperationCanceledException)
                         {
@@ -227,12 +228,19 @@ internal static class PrtgDailyPipeline
                     progress: (stage, done, total) => progress?.Report(stage, done, total),
                     stateChangesFrom: oldest.AddDays(-1));
 
-                var summary = $"PRTG 每日擷取完成（{newest:yyyy-MM-dd}）：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
+                // 只報監看裝置（主機清單內的主機對應到的裝置與守門目標），不報 PRTG 全站裝置數（docs/PRTG-SPEC.md §1）
+                var scopeText = fetchResult.Scope is { } fetchScope ? $"監看裝置 {fetchScope.DeviceObjids.Count} 台、" : "";
+                var summary = $"PRTG 每日擷取完成（{newest:yyyy-MM-dd}）：{scopeText}感測器 {fetchResult.Sensors}、" +
                               $"狀態變更新增 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
                               (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : "");
 
                 prtgConsole.WriteLine(summary);
                 runRecorder.Milestone(summary);
+                // 失敗原因進「重要紀錄」：只計數的話執行詳情只看得到「部分失敗」，不知道是哪個階段
+                foreach (var failure in fetchResult.StageFailures)
+                {
+                    runRecorder.Milestone($"PRTG 擷取階段失敗：{(failure.Length > 300 ? failure[..299] + "…" : failure)}");
+                }
             }
             catch (OperationCanceledException)
             {
@@ -334,11 +342,23 @@ internal static class PrtgDailyPipeline
                 .ToList();
             var reportedDuplicateRuleWarnings = new HashSet<string>();
 
-            // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，不硬造（docs/PRTG-SPEC.md §5）。
-            // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。
-            List<PrtgHostMapRow> ResolveHostMapRows(DateTime d) => d == newest
-                ? prtgStore.GetHostMapForDate(newest)
-                : prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d).Rows;
+            // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，沒有時沿用之後最早的一份（docs/PRTG-SPEC.md §4）。
+            // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。回傳的日期晚於 d 即為沿用。
+            // 最新一天的對應這趟沒算出來（對應擲例外、沒有寫入）時退回前一份，與觸發式取數同一種取法——
+            // 不退回的話這天會被當成「沒有任何對應」評估完成，PRTG 腿記為成功卻沒有證據，也不再隔晚補評。
+            (DateTime? MapDate, List<PrtgHostMapRow> Rows) ResolveHostMapRows(DateTime d)
+            {
+                if (d == newest)
+                {
+                    var todayRows = prtgStore.GetHostMapForDate(newest);
+                    if (todayRows.Any(r => r.MapStatus == PrtgMapStatus.Ok)) return (newest, todayRows);
+                    // 最新日沒有任何 ok（這趟沒算出來、或主檔暫時讀不到而寫出一整天 unmatched）：以前一天為錨點找最近一份有列的對應；
+                    // 錨點用最新日自己會找回同一份 unmatched。主機真的被移除時由評估範圍濾掉，不會誤歸戶
+                    var prior = prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: newest.AddDays(-1));
+                    return prior.MapDate != null && prior.Rows.Any(r => r.MapStatus == PrtgMapStatus.Ok) ? prior : (newest, todayRows);
+                }
+                return prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d);
+            }
 
             // 包裝層：合成問題靜音項目（以紀錄日 day 判定，見下方逐主機標記）
             var allSuppressions = new MuteAwareSuppressionStore(
@@ -371,7 +391,13 @@ internal static class PrtgDailyPipeline
 
                 try
                 {
-                    var deviceToHost = DeviceToHost(ResolveHostMapRows(day), evaluationHostIds);
+                    var (mapDate, mapRows) = ResolveHostMapRows(day);
+                    var deviceToHost = DeviceToHost(mapRows, evaluationHostIds);
+                    if (mapDate is { } borrowed && borrowed.Date > day.Date && deviceToHost.Count > 0)
+                    {
+                        state.MapBorrowedFrom = borrowed.Date;
+                        prtgConsole.WriteLine($"{day:yyyy-MM-dd} 之前沒有主機對應，沿用 {borrowed:yyyy-MM-dd} 的對應");
+                    }
                     plan.DeviceToHost = deviceToHost;
                     state.MapAvailable = deviceToHost.Count > 0;
 
@@ -399,8 +425,8 @@ internal static class PrtgDailyPipeline
 
                     if (!state.MapAvailable)
                     {
-                        // 用今天的對應套到過去日會把裝置掛到錯的主機上，而且看起來與真的一樣（docs/PRTG-SPEC.md §5「回填不做主機對應」同一條線）。
-                        prtgConsole.WriteLine($"{day:yyyy-MM-dd} 無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶");
+                        // 往回與往後都沒有任何對應（從未完成過一次主機對應）
+                        prtgConsole.WriteLine($"{day:yyyy-MM-dd} 無主機對應可用（尚未完成任何一次主機對應），PRTG finding 未歸戶");
                         plan.DayEvaluated = true;
                         continue;
                     }
@@ -613,6 +639,9 @@ internal static class PrtgDailyPipeline
                     if (plan.FindingsByHost == null)
                     {
                         prtgFindings.Publish(day, new Dictionary<long, IReadOnlyList<LogIssueSignature>>(), new Dictionary<long, IReadOnlySet<string>>());
+                        // 第一段已完整評估、只是沒有可歸戶的 finding（沒有規則、沒有任何對應）：仍是評估完成。
+                        // 不標的話 NeedsReevaluation 恆為 true，排程每晚把這些日子挑回來重評、永遠收不掉。
+                        if (plan.DayEvaluated) prtgFindings.MarkEvaluated(day);
                         continue;
                     }
 
@@ -891,6 +920,7 @@ internal static class PrtgDailyPipeline
             if (dayStates.Count > 0)
             {
                 var stageFailed = fetchResult != null && fetchResult.Failures > 0;
+                var historyAffectingFailure = fetchResult?.HistoryAffectingFailure ?? false;
                 dayStats = days
                     .Where(dayStates.ContainsKey)
                     .Select(day =>
@@ -901,9 +931,15 @@ internal static class PrtgDailyPipeline
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
                         if (s.DiskAssessmentFailed && outcome == BatchRun.PrtgOutcomePartial)
                             note = "磁碟趨勢證據未完整；尚未完成風險判定。";
+                        if (stageFailed && note is null && outcome == BatchRun.PrtgOutcomePartial)
+                            note = StageFailureNote(fetchResult!.StageFailures);
+                        if (s.MapBorrowedFrom is { } borrowedFrom)
+                            note = (note is null ? "" : note + "；") + $"沿用 {borrowedFrom:yyyy-MM-dd} 的主機對應";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note,
-                            NeedsReevaluation: syncFailed || !prtgFindings.IsEvaluated(day));
+                            // 只有影響過去日資料的失敗才重評：結構（裝置／感測器鏡像）沒取齊、狀態變更沒取齊（下一趟成功即收斂）。
+                            // 單一裝置的感測器查詢固定失敗這類不影響已落地資料的失敗，重評治不好，標了只會讓「待補評估」永遠掛著
+                            NeedsReevaluation: syncFailed || historyAffectingFailure || !prtgFindings.IsEvaluated(day));
                     })
                     .ToList();
 
@@ -935,7 +971,8 @@ internal static class PrtgDailyPipeline
                     prtgOutcome,
                     Math.Max(0, totalTargetSensors - totalFailedSensors),
                     totalFailedSensors,
-                    totalTriggerHosts);
+                    totalTriggerHosts,
+                    prtgEnabled ? (conservativeStrategy ? PrtgFetchStrategy.Conservative : PrtgFetchStrategy.Aggressive) : null);
             }
 
             if (dayStats != null)
@@ -968,6 +1005,20 @@ internal static class PrtgDailyPipeline
         var eligible = readHosts().Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null)
             .Select(h => h.HostId).ToHashSet();
         return policyHostIds.Where(id => (requested is null || requested.Contains(id)) && eligible.Contains(id)).ToArray();
+    }
+
+    /// <summary>
+    /// 整趟共用階段（結構、狀態變更、清除、分類）失敗時的逐日說明：這些階段不分日，失敗會讓每一天都是部分失敗，
+    /// 說明要講出是哪個階段，使用者才知道該看哪裡（完整訊息在執行詳情的重要紀錄）。
+    /// </summary>
+    internal static string StageFailureNote(IReadOnlyList<string> stageFailures)
+    {
+        if (stageFailures.Count == 0) return "整趟擷取有階段失敗，詳見重要紀錄。";
+        var first = stageFailures[0].Replace("✗", "").Trim();
+        if (first.Length > 120) first = first[..119] + "…";
+        return stageFailures.Count == 1
+            ? $"整趟擷取階段失敗：{first}"
+            : $"整趟擷取 {stageFailures.Count} 個階段失敗，第一個：{first}";
     }
 
     /// <summary>規則庫沒有啟用中的 PRTG 規則時的逐日原因。</summary>
@@ -1075,6 +1126,8 @@ internal static class PrtgDailyPipeline
         public int Findings;
         public int AttributedHosts;
         public bool MapAvailable;
+        /// <summary>該日之前沒有對應、沿用之後那份時的對應日；逐日說明會註明。</summary>
+        public DateTime? MapBorrowedFrom;
         public bool DiskAssessmentFailed;
         /// <summary>規則命中的主機，觸發式取數會把它們併進候選（規則命中但風險未上調的主機也要取數）。</summary>
         public HashSet<long> TriggerHosts { get; } = new();
@@ -1117,6 +1170,9 @@ internal static class PrtgDailyPipeline
             MapSkippedNoIp = mapResult.SkippedNoIp,
             MapSkippedExcluded = mapResult.SkippedExcluded,
             MapSkippedManualSibling = mapResult.SkippedManualSibling,
+            MapMappedHosts = mapResult.MappedHosts,
+            MapUnmappedHosts = mapResult.UnmappedHosts,
+            MapNameMismatch = mapResult.NameMismatch,
             Source = PrtgStructureSyncStatus.SourceNightly
         };
     }

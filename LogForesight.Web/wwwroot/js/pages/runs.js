@@ -12,7 +12,7 @@ import {
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
-import { prtgModuleStateText } from '../core/prtg-scope-labels.js';
+import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 
 /* 色值於執行期讀 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
@@ -100,7 +100,7 @@ function formatNetiqBranch(analyzed, failed, skipped) {
     return text;
 }
 
-function renderPrtgCell(outcome, fetched, failed, triggeredHosts) {
+function renderPrtgCell(outcome, fetched, failed, triggeredHosts, strategy) {
     if (outcome == null) return document.createTextNode('—');
     const badge = renderPrtgBadge(outcome);
     if (!badge) return document.createTextNode('—');
@@ -108,6 +108,13 @@ function renderPrtgCell(outcome, fetched, failed, triggeredHosts) {
     const wrap = document.createElement('span');
     wrap.className = 'd-inline-flex align-items-center gap-1';
     wrap.appendChild(badge);
+    // 保守策略夜間不逐顆取數，sensor 數恆為 0——顯示「sensor 0」會被讀成「什麼都沒抓到」
+    if (strategy === 'conservative') {
+        const note = document.createElement('span');
+        note.textContent = '保守策略（數值由快照供應）';
+        wrap.appendChild(note);
+        return wrap;
+    }
     let text = `sensor ${fetched ?? 0}`;
     if ((failed ?? 0) > 0) {
         text += `／失敗 ${failed}`;
@@ -443,7 +450,7 @@ const RUN_LIST_COLUMNS = [
     {
         title: 'PRTG', className: 'text-end', sortKey: 'prtgOutcome',
         sortValue: r => r.prtgOutcome ?? '',
-        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts)
+        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts, r.prtgStrategy)
     },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
@@ -530,6 +537,9 @@ async function showDetail(runId, retryBody = null) {
         const prtgEl = document.createElement('div');
         prtgEl.className = 'mb-3';
         body.append(prtgTitle, prtgEl);
+        // 觸發主機／目標 sensor／失敗 sensor 只屬於激進策略的夜間逐顆取數；保守策略下顯示「—」並說明
+        const conservative = detail.prtgStrategy === 'conservative';
+        const triggerCount = value => (conservative ? '—' : formatNumber(value));
         renderTable(prtgEl, {
             columns: [
                 { title: '日期', render: d => String(d.date).slice(0, 10) },
@@ -537,13 +547,19 @@ async function showDetail(runId, retryBody = null) {
                 { title: 'finding', render: d => formatNumber(d.findings) },
                 { title: '歸戶主機', render: d => formatNumber(d.attributedHosts) },
                 { title: '對應', render: d => (d.mapAvailable ? '有' : '無') },
-                { title: '觸發主機', render: d => formatNumber(d.triggerHosts) },
-                { title: '目標 sensor', render: d => formatNumber(d.targetSensors) },
-                { title: '失敗 sensor', render: d => formatNumber(d.failedSensors) },
+                { title: '觸發主機', render: d => triggerCount(d.triggerHosts) },
+                { title: '目標 sensor', render: d => triggerCount(d.targetSensors) },
+                { title: '失敗 sensor', render: d => triggerCount(d.failedSensors) },
                 { title: '說明', render: d => d.note || '—' }
             ],
             rows: detail.prtgDays
         });
+        if (conservative) {
+            const hint = document.createElement('div');
+            hint.className = 'small text-muted mt-1';
+            hint.textContent = '保守策略：夜間不逐顆查詢數值（數值由快照供應），觸發主機、目標 sensor、失敗 sensor 不適用。';
+            prtgEl.appendChild(hint);
+        }
     }
 
     // 等級過濾（原本在 cshtml 的 log-level-filter，改建在 modal 內）
@@ -603,7 +619,7 @@ function renderStats(container, detail) {
         { label: '版本', value: detail.appVersion },
         { label: '本機', value: formatLocalBranch(detail.localDaysAnalyzed, detail.localDaysFailed) },
         { label: 'NetIQ', value: formatNetiqBranch(detail.netiqDaysAnalyzed, detail.netiqDaysFailed, detail.netiqHostsSkipped) },
-        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed, detail.prtgTriggeredHosts) }
+        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed, detail.prtgTriggeredHosts, detail.prtgStrategy) }
     ];
 
     for (const stat of stats) {
@@ -1499,9 +1515,7 @@ function renderPrtgSyncSummary(status) {
     }
 
     const sourceLabel = status.lastSource === 'nightly' ? '（夜間取數）' : '（手動）';
-    el.textContent =
-        `${formatDateTime(status.lastCompletedAt)}${sourceLabel}　對應 ${formatNumber((status.lastMapOk ?? 0) + (status.lastMapManual ?? 0))} 台`
-        + `（衝突 ${formatNumber(status.lastMapConflict ?? 0)}、查無主機 ${formatNumber(status.lastMapUnmatched ?? 0)}）`;
+    el.textContent = `${formatDateTime(status.lastCompletedAt)}${sourceLabel}　${prtgHostMapSummary(status)}`;
 }
 
 async function refreshPrtgSyncStatus() {
@@ -1942,7 +1956,7 @@ function confirmRunWithPrtgValues(days, segment) {
         label.className = 'form-check-label';
         label.htmlFor = input.id;
         const baseText = `一併補齊這 ${days} 天的 PRTG 逐小時數值`;
-        label.textContent = baseText;
+        label.textContent = `${baseText}（估算中…）`;
         check.append(input, label);
         body.append(message, check);
 
@@ -1967,16 +1981,33 @@ function confirmRunWithPrtgValues(days, segment) {
             bootstrap.Modal.getOrCreateInstance(modalEl).hide();
         });
         footer.appendChild(okButton);
+        // 估算回來前先停用「仍要開始」：查詢量大時勾選要改成預設不勾，太早按會用到預設的勾選
+        okButton.disabled = true;
 
         const params = new URLSearchParams({ days: String(days) });
         if (segment) params.set('segment', segment);
-        api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true })
+        api.get(`/api/admin/settings/prtg-estimate?${params}`, { silent: true, timeoutMs: 15000 })
             .then(estimate => {
+                okButton.disabled = false;
+                label.textContent = baseText;
                 if (!estimate || !Number.isFinite(estimate.queries)) return;
-                const minutesText = estimate.minutes > 0 ? `，約 ${formatNumber(estimate.minutes)} 分鐘` : '';
-                label.textContent = `${baseText}（約 ${formatNumber(estimate.queries)} 次查詢${minutesText}）`;
+                if (estimate.blockedReason || estimate.sensors === 0) {
+                    input.checked = false;
+                    input.disabled = true;
+                    label.textContent = estimate.blockedReason
+                        ? `${baseText}（無法補：${estimate.blockedReason}）`
+                        : `${baseText}（沒有可補的 sensor：尚無已對應主機或白名單 sensor）`;
+                    return;
+                }
+                // 保守策略補的是全部已對應主機；量大時預設不勾，讓使用者看過估算再主動勾
+                const minutesText = estimate.minutes > 0 ? `，至少約 ${formatNumber(estimate.minutes)} 分鐘` : '';
+                label.textContent = `${baseText}（全部已對應主機 ${formatNumber(estimate.hosts)} 台、`
+                    + `sensor ${formatNumber(estimate.sensors)} 顆、約 ${formatNumber(estimate.queries)} 次查詢${minutesText}）`;
+                if (estimate.large) input.checked = false;
             })
             .catch(() => {
+                okButton.disabled = false;
+                label.textContent = baseText;
                 // 取不到估算就不顯示數字，勾選照常可用
             });
     });

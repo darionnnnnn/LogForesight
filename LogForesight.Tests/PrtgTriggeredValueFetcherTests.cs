@@ -178,7 +178,7 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
 
     /// <summary>該日之後才有的對應不得往回套用到該日。</summary>
     [Fact]
-    public async Task RunAsync_只有該日之後的對應時不取數()
+    public async Task RunAsync_只有該日之後的對應時沿用之後的對應取數()
     {
         var day = new DateTime(2026, 8, 30);
         var store = CreateStore();
@@ -209,8 +209,9 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
             day, whitelist: null, concurrency: 1,
             analysisCompleted: () => true, ct: CancellationToken.None, pollSeconds: 1);
 
-        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("historicdata"));
-        Assert.Equal(0, result.TargetSensors);
+        // 該日之前沒有對應 → 沿用之後最早的一份（docs/PRTG-SPEC.md §4）
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("historicdata") && u.Contains("id=2001"));
+        Assert.Equal(1, result.TargetSensors);
     }
 
     [Fact]

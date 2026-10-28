@@ -170,6 +170,17 @@ public class PrtgDailyPipelineTests : IDisposable
     /// 「算不出東西」與「還沒算完」必須分得出來，否則 AI 會空等一整晚。
     /// </summary>
     [Fact]
+    public void 整趟階段失敗的逐日說明講出是哪個階段()
+    {
+        Assert.Equal("整趟擷取階段失敗：[階段 3/4] 狀態變更同步失敗：逾時",
+            PrtgDailyPipeline.StageFailureNote(new[] { "[階段 3/4] 狀態變更同步失敗：逾時" }));
+        Assert.StartsWith("整趟擷取 2 個階段失敗，第一個：[階段 2/4]",
+            PrtgDailyPipeline.StageFailureNote(new[] { "[階段 2/4] ✗ 3 台裝置的感測器取得失敗：1、2、3", "[階段 3/4] x" }));
+        Assert.Equal(120, PrtgDailyPipeline.StageFailureNote(new[] { new string('長', 300) }).Length - "整趟擷取階段失敗：".Length);
+        Assert.Contains("重要紀錄", PrtgDailyPipeline.StageFailureNote(Array.Empty<string>()));
+    }
+
+    [Fact]
     public async Task PRTG未啟用時仍宣告就緒並送出訊號()
     {
         // 預設設定即為 PrtgEnabled = false
@@ -912,7 +923,7 @@ public class PrtgDailyPipelineTests : IDisposable
     }
 
     [Fact]
-    public async Task 過去日查無對應表時安全跳過()
+    public async Task 過去日之前沒有對應時沿用之後的對應並註明()
     {
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {
@@ -952,14 +963,116 @@ public class PrtgDailyPipelineTests : IDisposable
             ctx, _backend, hostStore,
             new[] { day2, day1 }, Task.CompletedTask, hostIds: null, guard: null);
 
-        // prtgConsole 輸出包含「無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶」
-        Assert.Contains(console.Lines, l => l.Contains("無主機對應可用（鏡像晚於該日建立），PRTG finding 未歸戶"));
-
-        // day1 的 finding 不進行主機關聯（登錄簿為空清單）
-        Assert.Empty(registry.For(host.HostId, day1));
-
-        // 但不影響 day2 正常評估
+        // day1 之前沒有對應 → 沿用 day2 的對應（docs/PRTG-SPEC.md §4），輸出與逐日說明都註明
+        Assert.Contains(console.Lines, l => l.Contains($"沿用 {day2:yyyy-MM-dd} 的對應"));
+        Assert.NotEmpty(registry.For(host.HostId, day1));
         Assert.NotEmpty(registry.For(host.HostId, day2));
+
+        ctx.RunRecorder.Finish(1);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId)!;
+        var day1Stat = run.PrtgDays!.Single(s => s.Date.Date == day1.Date);
+        Assert.True(day1Stat.MapAvailable);
+        Assert.Contains($"沿用 {day2:yyyy-MM-dd} 的主機對應", day1Stat.Note);
+        Assert.DoesNotContain("沿用", run.PrtgDays!.Single(s => s.Date.Date == day2.Date).Note ?? "");
+    }
+
+    [Fact]
+    public async Task 同主機兩台裝置各一顆sensor同時Down_同主機日兩筆finding不合併()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TWO", Active = true, IpAddress = "192.168.7.7" });
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[]
+        {
+            new PrtgDeviceRow { Objid = 71, Name = "SRV-TWO ping", Ip = "192.168.7.7" },
+            new PrtgDeviceRow { Objid = 72, Name = "SRV-TWO wmi", Ip = "192.168.7.7" }
+        }, now);
+        prtgStore.UpsertSensors(new[]
+        {
+            new PrtgSensorRow { Objid = 7101, DeviceObjid = 71, Name = "Ping", SensorType = "Ping", Status = "Down" },
+            new PrtgSensorRow { Objid = 7201, DeviceObjid = 72, Name = "Disk", SensorType = "SNMP Disk Free", Status = "Down" }
+        }, now);
+        prtgStore.AppendStateChanges(new[]
+        {
+            new PrtgStateChangeRow { SensorObjid = 7101, ChangedAt = day.Date.AddHours(2), Status = "Down" },
+            new PrtgStateChangeRow { SensorObjid = 7201, ChangedAt = day.Date.AddHours(3), Status = "Down" }
+        });
+        MapDeviceToHost(day, 71, host);
+        MapDeviceToHost(day, 72, host);
+        SeedNetiqParent(host, day);
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        // 簽章帶 sensor objid：兩顆 sensor 各自一筆，不會互相覆蓋或合併
+        var findings = registry.For(host.HostId, day);
+        Assert.Contains(findings, f => f.EventKey.EndsWith(":7101", StringComparison.Ordinal));
+        Assert.Contains(findings, f => f.EventKey.EndsWith(":7201", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task 最新一天這趟沒算出對應時退回前一份_不當成沒有對應()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var newest = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-FALLBACK", Active = true, IpAddress = "192.168.8.8" });
+        var prtgStore = _backend.PrtgStore();
+        // 裝置鏡像是空的：這趟對應寫出空的一天；感測器與前天的對應還在
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 8101, DeviceObjid = 81, Name = "Ping", SensorType = "Ping", Status = "Down" } }, DateTime.Now);
+        prtgStore.AppendStateChanges(new[] { new PrtgStateChangeRow { SensorObjid = 8101, ChangedAt = newest.Date.AddHours(2), Status = "Down" } });
+        MapDeviceToHost(newest.AddDays(-1), 81, host);
+        SeedNetiqParent(host, newest);
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { newest }, Task.CompletedTask, hostIds: null, guard: null);
+
+        Assert.NotEmpty(registry.For(host.HostId, newest));
+    }
+
+    [Fact]
+    public async Task 最新一天的對應全是unmatched時退回前一份有ok的對應()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var newest = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        // 主機主檔暫時沒有 IP：管線以鏡像重算最新日的對應會寫出一整天 unmatched，不能把它當成「有對應」
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-UNMATCHED-TODAY", Active = true, IpAddress = null });
+        var prtgStore = _backend.PrtgStore();
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 91, Name = "dev-91", Ip = "192.168.9.9" } }, DateTime.Now);
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 9101, DeviceObjid = 91, Name = "Ping", SensorType = "Ping", Status = "Down" } }, DateTime.Now);
+        prtgStore.AppendStateChanges(new[] { new PrtgStateChangeRow { SensorObjid = 9101, ChangedAt = newest.Date.AddHours(2), Status = "Down" } });
+        MapDeviceToHost(newest.AddDays(-1), 91, host);
+        SeedNetiqParent(host, newest);
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { newest }, Task.CompletedTask, hostIds: null, guard: null);
+
+        Assert.NotEmpty(registry.For(host.HostId, newest));
+    }
+
+    [Fact]
+    public async Task 完全沒有主機對應的日子算評估完成_不再每晚重評()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var days = new[] { DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-2) };
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, new HostStore(_backend.Blob("hosts")), days, Task.CompletedTask, hostIds: null);
+
+        ctx.RunRecorder.Finish(1);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId)!;
+        Assert.All(days, d => Assert.True(registry.IsEvaluated(d)));
+        // 執行紀錄記下這趟的策略，畫面據此不顯示保守策略恆為 0 的 sensor 數
+        Assert.Equal(PrtgFetchStrategy.Conservative, run.PrtgStrategy);
+        // 假位址讓擷取失敗或部分失敗，這些日子照規則隔晚重評；「沒有對應」本身只會落成無產出，不再造成重評
+        Assert.All(run.PrtgDays!, stat => Assert.Equal(
+            stat.Outcome is BatchRun.PrtgOutcomeFailed or BatchRun.PrtgOutcomePartial, stat.NeedsReevaluation));
     }
 
     [Theory]

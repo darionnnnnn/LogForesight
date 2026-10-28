@@ -20,6 +20,55 @@ public sealed class PrtgAdminPageUiTests
     private static string Script() =>
         File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
 
+    [Theory]
+    [InlineData("connection")]
+    [InlineData("params")]
+    [InlineData("mirror")]
+    [InlineData("probe")]
+    [InlineData("selected-backfill")]
+    [InlineData("effectiveness")]
+    public void 每個頁籤開頭都有用途說明_做什麼什麼時候來不會做什麼(string panel)
+    {
+        var view = View();
+        var marker = $"<div data-panel=\"{panel}\"";
+        var start = view.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"找不到頁籤 {panel}");
+        // 用途區必須緊接在頁籤容器開頭（第一個子元素），不是藏在頁籤底部
+        var head = view.Substring(start, Math.Min(900, view.Length - start));
+        Assert.Contains("aria-label=\"這個頁籤的用途\"", head);
+        Assert.Contains("這頁做什麼", head);
+        Assert.Contains("什麼時候來", head);
+        Assert.Contains("不會做什麼", head);
+    }
+
+    [Fact]
+    public void 收合鈕都帶Bootstrap觸發屬性_否則按了展不開()
+    {
+        // bindRememberedCollapse 只負責初始狀態與記住，不綁 click；觸發靠 data-bs-toggle＋data-bs-target
+        var view = View();
+        foreach (var (button, target) in new[]
+                 {
+                     ("prtg-name-mismatch-toggle-btn", "#prtg-name-mismatch-collapse"),
+                     ("prtg-monitoring-toggle", "#prtg-monitoring-body")
+                 })
+        {
+            var start = view.IndexOf($"id=\"{button}\"", StringComparison.Ordinal);
+            Assert.True(start >= 0, button);
+            var tagStart = view.LastIndexOf('<', start);
+            var tag = view.Substring(tagStart, view.IndexOf('>', start) - tagStart);
+            Assert.Contains("data-bs-toggle=\"collapse\"", tag);
+            Assert.Contains($"data-bs-target=\"{target}\"", tag);
+        }
+    }
+
+    [Fact]
+    public void 環境探測與歷史回填的用途說明講清楚範圍()
+    {
+        var view = View();
+        Assert.Contains("結果包含不在主機清單內的裝置", view);
+        Assert.Contains("保守策略補全部已對應主機", view);
+    }
+
     /// <summary>從宣告處取出整個函式本體（大括號配對）。</summary>
     private static string FunctionBody(string source, string declaration)
     {
@@ -132,5 +181,27 @@ public sealed class PrtgAdminPageUiTests
         Assert.Contains("input.id = 'prtg-full-backfill-redo';", render);
         Assert.Contains("day.alreadyCompleted ? '已完成，略過' : '回填'", render);
         Assert.Contains("syncFullBackfillStart(preview);", render);
+    }
+
+    [Fact]
+    public void E3_鏡像狀態頁只呈現主機清單內的主機_檢視殼不含舊字樣()
+    {
+        var view = View();
+        foreach (var banned in new[] { "鏡像裝置數", "PRTG 獨有", "衝突（多筆）" })
+            Assert.DoesNotContain(banned, view);
+        Assert.Contains("已對應主機", view);
+        Assert.Contains("未對應主機", view);
+    }
+
+    [Fact]
+    public void E3_鏡像狀態腳本改走主機端端點_舊分支與欄位已移除_原因都有中文()
+    {
+        var js = Script();
+        foreach (var banned in new[] { "status=unmatched", "'multi-device'", "'hostname-host-taken'", "mapUnmatched", "mapConflict", "deviceCount" })
+            Assert.DoesNotContain(banned, js);
+        foreach (var required in new[] { "prtg-unmapped-hosts", "prtg-devices/search", "prtg-name-mismatch" })
+            Assert.Contains(required, js);
+        foreach (var (key, text) in new[] { ("no-ip", "主機沒有 IP"), ("ip-excluded", "IP 已排除"), ("conflict", "此 IP 由多台主機共用"), ("not-in-prtg", "PRTG 找不到此 IP") })
+            Assert.Matches(new Regex(@"'?" + Regex.Escape(key) + @"'?\s*:\s*'" + Regex.Escape(text) + "'"), js);
     }
 }
