@@ -170,6 +170,17 @@ public class PrtgDailyPipelineTests : IDisposable
     /// 「算不出東西」與「還沒算完」必須分得出來，否則 AI 會空等一整晚。
     /// </summary>
     [Fact]
+    public void 整趟階段失敗的逐日說明講出是哪個階段()
+    {
+        Assert.Equal("整趟擷取階段失敗：[階段 3/4] 狀態變更同步失敗：逾時",
+            PrtgDailyPipeline.StageFailureNote(new[] { "[階段 3/4] 狀態變更同步失敗：逾時" }));
+        Assert.StartsWith("整趟擷取 2 個階段失敗，第一個：[階段 2/4]",
+            PrtgDailyPipeline.StageFailureNote(new[] { "[階段 2/4] ✗ 3 台裝置的感測器取得失敗：1、2、3", "[階段 3/4] x" }));
+        Assert.Equal(120, PrtgDailyPipeline.StageFailureNote(new[] { new string('長', 300) }).Length - "整趟擷取階段失敗：".Length);
+        Assert.Contains("重要紀錄", PrtgDailyPipeline.StageFailureNote(Array.Empty<string>()));
+    }
+
+    [Fact]
     public async Task PRTG未啟用時仍宣告就緒並送出訊號()
     {
         // 預設設定即為 PrtgEnabled = false
@@ -979,6 +990,8 @@ public class PrtgDailyPipelineTests : IDisposable
         var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
             .GetRun(ctx.RunRecorder.RunId)!;
         Assert.All(days, d => Assert.True(registry.IsEvaluated(d)));
+        // 執行紀錄記下這趟的策略，畫面據此不顯示保守策略恆為 0 的 sensor 數
+        Assert.Equal(PrtgFetchStrategy.Conservative, run.PrtgStrategy);
         // 結構同步會失敗（假位址），失敗的日子照舊隔晚重評；這裡只驗「沒有對應」本身不再造成永久重評
         Assert.All(run.PrtgDays!, stat => Assert.Equal(stat.Outcome == BatchRun.PrtgOutcomeFailed, stat.NeedsReevaluation));
     }

@@ -91,6 +91,9 @@ public class BatchRun
     /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgSensorsFetched { get; set; }
 
+    /// <summary>這趟的取數策略（conservative | aggressive，null＝舊紀錄）；保守策略夜間不做觸發式取數，畫面不顯示 sensor 數</summary>
+    public string? PrtgStrategy { get; set; }
+
     /// <summary>PRTG 觸發式取數失敗感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgSensorsFailed { get; set; }
 

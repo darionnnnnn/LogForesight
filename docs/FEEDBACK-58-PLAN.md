@@ -310,4 +310,5 @@
 |---|---|---|---|---|
 | 開工基準 | 主代理 | 全量 6,487／10 略過 | — | — |
 | A | 主代理（幾行 CSS） | 完成 | 前端定向 230 條綠；突變（刪 background-color）守門紅 | 未在使用者 Chrome 重現，實測交使用者 |
+| C-2、C-3 | 主代理（同檔延續 B 的脈絡） | 完成 | 定向 485 條綠；突變（Fail 不記原因、一個 renderPrtgCell 呼叫點漏帶策略）皆紅 | ① 規劃寫「頁首徽章 title 顯示失敗訊息、不加欄位」，實作改為：原因逐條進重要紀錄（里程碑）＋逐日說明，比 title 更好找。② 保守策略的判斷需要知道「這趟用哪個策略」，`BatchRun` 是 JSON 存放，新增可為 null 的 `PrtgStrategy`（不是 schema 欄位），舊紀錄照舊顯示數字。③ 每日擷取摘要的「裝置 N」（全站數）在同一行，順手改成「監看裝置 N 台」（原屬 E）。 |
 | B（含 C-1） | 主代理（已持有脈絡，自己做比寫規格便宜） | 完成 | 定向 236 條＋重寫 60 條綠；突變三條（同 IP 多 device、往後沿用、C-1 MarkEvaluated）皆紅 | ① 名稱不一致提醒原寫「抽出候選即比對」，但 `Extract` 會把不帶括號的整個裝置名當候選，幾乎每台都誤報→改成只看括號內與 host 欄 DNS 名稱。② 指定主機補值（`PrtgBackfillRunner`、`PrtgBackfillService` 預覽）原本直接讀當日對應、不經唯一出口→改走 `GetLatestHostMapWithDate`，三條舊測試依新定案改寫。③ 升級重算改記 NLog（啟動時沒有稽核服務），不寫稽核。④ 主控台逐筆列出非 ok 裝置原屬 E，同檔先在 B 移除。⑤ 前端 `multi-device`／`hostname-host-taken` 分支留給 E 隨指派 modal 重寫一起刪（目前是死碼、不影響行為）。⑥ C-1（MarkEvaluated）與 B 同檔，一起提交。 |

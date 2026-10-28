@@ -100,7 +100,7 @@ function formatNetiqBranch(analyzed, failed, skipped) {
     return text;
 }
 
-function renderPrtgCell(outcome, fetched, failed, triggeredHosts) {
+function renderPrtgCell(outcome, fetched, failed, triggeredHosts, strategy) {
     if (outcome == null) return document.createTextNode('—');
     const badge = renderPrtgBadge(outcome);
     if (!badge) return document.createTextNode('—');
@@ -108,6 +108,13 @@ function renderPrtgCell(outcome, fetched, failed, triggeredHosts) {
     const wrap = document.createElement('span');
     wrap.className = 'd-inline-flex align-items-center gap-1';
     wrap.appendChild(badge);
+    // 保守策略夜間不逐顆取數，sensor 數恆為 0——顯示「sensor 0」會被讀成「什麼都沒抓到」
+    if (strategy === 'conservative') {
+        const note = document.createElement('span');
+        note.textContent = '保守策略（數值由快照供應）';
+        wrap.appendChild(note);
+        return wrap;
+    }
     let text = `sensor ${fetched ?? 0}`;
     if ((failed ?? 0) > 0) {
         text += `／失敗 ${failed}`;
@@ -443,7 +450,7 @@ const RUN_LIST_COLUMNS = [
     {
         title: 'PRTG', className: 'text-end', sortKey: 'prtgOutcome',
         sortValue: r => r.prtgOutcome ?? '',
-        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts)
+        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts, r.prtgStrategy)
     },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
@@ -530,6 +537,9 @@ async function showDetail(runId, retryBody = null) {
         const prtgEl = document.createElement('div');
         prtgEl.className = 'mb-3';
         body.append(prtgTitle, prtgEl);
+        // 觸發主機／目標 sensor／失敗 sensor 只屬於激進策略的夜間逐顆取數；保守策略下顯示「—」並說明
+        const conservative = detail.prtgStrategy === 'conservative';
+        const triggerCount = value => (conservative ? '—' : formatNumber(value));
         renderTable(prtgEl, {
             columns: [
                 { title: '日期', render: d => String(d.date).slice(0, 10) },
@@ -537,13 +547,19 @@ async function showDetail(runId, retryBody = null) {
                 { title: 'finding', render: d => formatNumber(d.findings) },
                 { title: '歸戶主機', render: d => formatNumber(d.attributedHosts) },
                 { title: '對應', render: d => (d.mapAvailable ? '有' : '無') },
-                { title: '觸發主機', render: d => formatNumber(d.triggerHosts) },
-                { title: '目標 sensor', render: d => formatNumber(d.targetSensors) },
-                { title: '失敗 sensor', render: d => formatNumber(d.failedSensors) },
+                { title: '觸發主機', render: d => triggerCount(d.triggerHosts) },
+                { title: '目標 sensor', render: d => triggerCount(d.targetSensors) },
+                { title: '失敗 sensor', render: d => triggerCount(d.failedSensors) },
                 { title: '說明', render: d => d.note || '—' }
             ],
             rows: detail.prtgDays
         });
+        if (conservative) {
+            const hint = document.createElement('div');
+            hint.className = 'small text-muted mt-1';
+            hint.textContent = '保守策略：夜間不逐顆查詢數值（數值由快照供應），觸發主機、目標 sensor、失敗 sensor 不適用。';
+            prtgEl.appendChild(hint);
+        }
     }
 
     // 等級過濾（原本在 cshtml 的 log-level-filter，改建在 modal 內）
@@ -603,7 +619,7 @@ function renderStats(container, detail) {
         { label: '版本', value: detail.appVersion },
         { label: '本機', value: formatLocalBranch(detail.localDaysAnalyzed, detail.localDaysFailed) },
         { label: 'NetIQ', value: formatNetiqBranch(detail.netiqDaysAnalyzed, detail.netiqDaysFailed, detail.netiqHostsSkipped) },
-        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed, detail.prtgTriggeredHosts) }
+        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed, detail.prtgTriggeredHosts, detail.prtgStrategy) }
     ];
 
     for (const stat of stats) {

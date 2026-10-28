@@ -227,12 +227,19 @@ internal static class PrtgDailyPipeline
                     progress: (stage, done, total) => progress?.Report(stage, done, total),
                     stateChangesFrom: oldest.AddDays(-1));
 
-                var summary = $"PRTG 每日擷取完成（{newest:yyyy-MM-dd}）：裝置 {fetchResult.Devices}、感測器 {fetchResult.Sensors}、" +
+                // 只報監看裝置（主機清單內的主機對應到的裝置與守門目標），不報 PRTG 全站裝置數（docs/PRTG-SPEC.md §1）
+                var scopeText = fetchResult.Scope is { } fetchScope ? $"監看裝置 {fetchScope.DeviceObjids.Count} 台、" : "";
+                var summary = $"PRTG 每日擷取完成（{newest:yyyy-MM-dd}）：{scopeText}感測器 {fetchResult.Sensors}、" +
                               $"狀態變更新增 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
                               (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : "");
 
                 prtgConsole.WriteLine(summary);
                 runRecorder.Milestone(summary);
+                // 失敗原因進「重要紀錄」：只計數的話執行詳情只看得到「部分失敗」，不知道是哪個階段
+                foreach (var failure in fetchResult.StageFailures)
+                {
+                    runRecorder.Milestone($"PRTG 擷取階段失敗：{failure}");
+                }
             }
             catch (OperationCanceledException)
             {
@@ -910,6 +917,8 @@ internal static class PrtgDailyPipeline
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
                         if (s.DiskAssessmentFailed && outcome == BatchRun.PrtgOutcomePartial)
                             note = "磁碟趨勢證據未完整；尚未完成風險判定。";
+                        if (stageFailed && note is null && outcome == BatchRun.PrtgOutcomePartial)
+                            note = StageFailureNote(fetchResult!.StageFailures);
                         if (s.MapBorrowedFrom is { } borrowedFrom)
                             note = (note is null ? "" : note + "；") + $"沿用 {borrowedFrom:yyyy-MM-dd} 的主機對應";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
@@ -946,7 +955,8 @@ internal static class PrtgDailyPipeline
                     prtgOutcome,
                     Math.Max(0, totalTargetSensors - totalFailedSensors),
                     totalFailedSensors,
-                    totalTriggerHosts);
+                    totalTriggerHosts,
+                    prtgEnabled ? (conservativeStrategy ? PrtgFetchStrategy.Conservative : PrtgFetchStrategy.Aggressive) : null);
             }
 
             if (dayStats != null)
@@ -979,6 +989,20 @@ internal static class PrtgDailyPipeline
         var eligible = readHosts().Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null)
             .Select(h => h.HostId).ToHashSet();
         return policyHostIds.Where(id => (requested is null || requested.Contains(id)) && eligible.Contains(id)).ToArray();
+    }
+
+    /// <summary>
+    /// 整趟共用階段（結構、狀態變更、清除、分類）失敗時的逐日說明：這些階段不分日，失敗會讓每一天都是部分失敗，
+    /// 說明要講出是哪個階段，使用者才知道該看哪裡（完整訊息在執行詳情的重要紀錄）。
+    /// </summary>
+    internal static string StageFailureNote(IReadOnlyList<string> stageFailures)
+    {
+        if (stageFailures.Count == 0) return "整趟擷取有階段失敗，詳見重要紀錄。";
+        var first = stageFailures[0].Replace("✗", "").Trim();
+        if (first.Length > 120) first = first[..119] + "…";
+        return stageFailures.Count == 1
+            ? $"整趟擷取階段失敗：{first}"
+            : $"整趟擷取 {stageFailures.Count} 個階段失敗，第一個：{first}";
     }
 
     /// <summary>規則庫沒有啟用中的 PRTG 規則時的逐日原因。</summary>

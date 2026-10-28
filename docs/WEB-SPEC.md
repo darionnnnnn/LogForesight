@@ -2683,7 +2683,10 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   （各為「分析 n（失敗 m）」與 PRTG 狀態徽章＋sensor 數＋觸發主機數），
   執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 四值：`disabled` 未啟用／`success`／
   `partial` 結構同步成功但有 sensor 失敗／`failed` 結構同步失敗；取消執行時為 null）。
-  「sensor N」是目標數扣掉失敗數，另附觸發主機數。資料來自 `BatchRun` 的分路結構化欄位；
+  「sensor N」是目標數扣掉失敗數，另附觸發主機數；**保守策略**（`BatchRun.PrtgStrategy`＝`conservative`）夜間不逐顆取數，改顯示「保守策略（數值由快照供應）」，
+  執行詳情「PRTG 逐日」表的觸發主機／目標 sensor／失敗 sensor 顯示「—」並在表下說明；舊紀錄（null）照舊顯示數字。
+  逐日「說明」欄：整趟共用階段失敗時寫出是哪個階段（`PrtgDailyPipeline.StageFailureNote`），完整訊息逐條進「重要紀錄」（「PRTG 擷取階段失敗：…」）；
+  沿用之後的主機對應時註明「沿用 YYYY-MM-DD 的主機對應」（docs/PRTG-SPEC.md §4）。資料來自 `BatchRun` 的分路結構化欄位；
   總表日期列的 PRTG 徽章依**資料日期**取：有逐日統計（`BatchRun.PrtgDays`）的執行取該日那一筆的結局（其餘逐日欄位尚無畫面消費，見 docs/BACKLOG.md）；舊紀錄取「開始日隔天」的那一趟（一趟取數處理的是前一天）；有逐日統計但不含該日的執行不套舊規則。
   **舊紀錄那些欄位為 null，畫面顯示「—」**，與「數字是 0」語意分開
   （0＝跑了但沒抓到，null＝這一路沒有產出）。總表主體仍是主機×日，

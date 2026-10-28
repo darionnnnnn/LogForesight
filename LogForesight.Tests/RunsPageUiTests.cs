@@ -85,6 +85,26 @@ public class RunsPageUiTests
     }
 
     [Fact]
+    public void 保守策略的執行不顯示sensor數_逐日觸發欄顯示破折號並說明()
+    {
+        var js = ReadRunsJs();
+        var cell = ExtractBlock(js, "function renderPrtgCell(");
+        var conservativeIdx = cell.IndexOf("strategy === 'conservative'", StringComparison.Ordinal);
+        var sensorIdx = cell.IndexOf("`sensor ${fetched ?? 0}`", StringComparison.Ordinal);
+        Assert.True(conservativeIdx >= 0 && conservativeIdx < sensorIdx, "保守策略必須在組 sensor 文字之前就返回");
+        Assert.Contains("保守策略（數值由快照供應）", cell);
+        // 兩個呼叫點都要帶策略，漏一個就有一邊照舊顯示「sensor 0」
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(js, @"renderPrtgCell\([^)]*prtgStrategy\)").Count);
+
+        var detail = ExtractBlock(js, "async function showDetail(");
+        Assert.Contains("const triggerCount = value => (conservative ? '—' : formatNumber(value));", detail);
+        Assert.Contains("render: d => triggerCount(d.triggerHosts)", detail);
+        Assert.Contains("render: d => triggerCount(d.targetSensors)", detail);
+        Assert.Contains("render: d => triggerCount(d.failedSensors)", detail);
+        Assert.Contains("觸發主機、目標 sensor、失敗 sensor 不適用", detail);
+    }
+
+    [Fact]
     public void AI待補為零時依執行狀態區分未結束與全部完成且今日執行有明確入口()
     {
         var js = ReadRunsJs();

@@ -515,6 +515,9 @@ public class PrtgFetchServiceTests : IDisposable
         Assert.Equal(0, result.Sensors);
         Assert.Equal(1, result.StateChanges);
         Assert.True(result.Failures > 0, "Sensors 階段失敗應記錄 Failures > 0");
+        // 原因與計數一一對應，畫面才說得出是哪個階段（docs/PRTG-SPEC.md §3）
+        Assert.Equal(result.Failures, result.StageFailures.Count);
+        Assert.Contains(result.StageFailures, f => f.StartsWith("[階段 2/4]"));
 
         using var ctx = _fx.NewContext();
         Assert.Equal(1, await ctx.PrtgDevices.CountAsync());

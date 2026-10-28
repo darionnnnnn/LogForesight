@@ -76,7 +76,8 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 | 3. 狀態變更 | `content=messages&id=<裝置>&filter_drel=…`（範圍內逐台） | `AppendStateChanges`（一個區間一次取完、依日分桶、去重） |
 | 4. hourly 數值 | `historicdata.json?avg=3600` | `UpsertValues`；觸發式（§3a），只在激進策略執行（§3b） |
 
-各階段獨立 try/catch，任一失敗其餘照跑。共同規則：
+各階段獨立 try/catch，任一失敗其餘照跑；每個失敗都經 `PrtgFetchService` 內的 `Fail` 計數並留下原因（`PrtgFetchResult.StageFailures`），
+逐日說明與執行詳情的重要紀錄據此說出是哪個階段失敗。沒有規則、沒有任何對應的日子仍算評估完成，不會每晚被挑回重評。共同規則：
 - **分頁只有一份實作**（`PrtgTablePager`，`count` 5000、寫入批次 500）：空頁／未滿頁／本頁沒有新列任一成立即停（PRTG 在 `start` 超出範圍時夾到末頁）；
   頁數上限 `max(⌈treesize ÷ 頁大小⌉ + 2, 400)`，未收斂擲 `PrtgPagingNotConvergedException`。一律帶 `sortby=objid`。
 - **去重鍵是該 content 真正的唯一鍵**：預設 objid；messages 的 objid 是發出訊息的 sensor，列鍵為「objid＋時間」。
