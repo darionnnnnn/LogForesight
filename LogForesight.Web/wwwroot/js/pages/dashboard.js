@@ -8,7 +8,7 @@
 
 import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, icon, kpiStrip, guardLoad } from '../core/ui.js';
 import { formatNumber, formatDateTime, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
@@ -210,38 +210,45 @@ function renderKpi(data, user, displaySettings, myBadge) {
 
     const cards = [
         {
+            group: 'risk',
             label: '高風險日',
             value: data.highRiskDays,
             variant: data.highRiskDays > 0 ? 'danger' : 'secondary',
             // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/archive/HISTORY.md #5）；
             // 顯示範圍另受「日風險等級顯示」設定影響（docs/archive/FEEDBACK-3-PLAN.md #8）
-            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
+            sub: '批次分析算定',
+            title: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
             url: recordsUrl({ riskLevels: '高', from: data.from, to: data.to })
         }
     ];
 
     if (visibleDayRisk.has('中')) {
         cards.push({
+            group: 'risk',
             label: '中風險日',
             value: data.mediumRiskDays,
             variant: data.mediumRiskDays > 0 ? 'warning' : 'secondary',
-            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
+            sub: '批次分析算定',
+            title: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
             url: recordsUrl({ riskLevels: '中', from: data.from, to: data.to })
         });
     }
 
     cards.push(
         {
+            group: 'risk',
             label: '監控主機數',
             value: data.totalHosts,
             variant: 'secondary',
             url: null
         },
         {
+            group: 'risk',
             label: '涵蓋率缺口天數',
             value: data.coverageGapDays,
             variant: data.coverageGapDays > 0 ? 'warning' : 'secondary',
-            hint: '資料不完整或 Security log 未讀取的日子',
+            sub: '資料不完整或未讀取',
+            title: '資料不完整或 Security log 未讀取的日子',
             url: null
         }
     );
@@ -250,17 +257,16 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 大數字改問題口徑（回饋十九輪批次D2，外部審查§一-2）：「未處理 1,340」（風險日數）
     // 在兩千台環境對使用者等於沒有資訊，改成「未處理問題 X 個」——有幾個不同的問題要處理，
     // 副標才是影響台數與風險日數（data.todo 的既有日數，退居輔助角色）
-    const todoExtra = document.createElement('div');
-    todoExtra.className = 'small text-muted';
-    todoExtra.textContent = `影響 ${formatNumber(data.issueTodo.affectedHostCount)} 台．未處理風險日 ${formatNumber(data.todo.openCount + data.todo.inProgressCount)}`;
+    const todoSub = `影響 ${formatNumber(data.issueTodo.affectedHostCount)} 台．未處理風險日 ${formatNumber(data.todo.openCount + data.todo.inProgressCount)}`;
     cards.push({
+        group: 'todo',
         label: data.issueTodo.overdueIssueCount > 0 ? `未處理問題（逾期 ${data.issueTodo.overdueIssueCount}）` : '未處理問題',
         value: data.issueTodo.openIssueCount,
         variant: data.issueTodo.overdueIssueCount > 0 ? 'danger' : (data.issueTodo.openIssueCount > 0 ? 'warning' : 'secondary'),
         // 三級全帶＝不按問題嚴重度篩：這張卡數的是「未處理問題」不分嚴重度，
         // 依問題視角的 chip 是嚴重度語意，只帶高中會把低嚴重度的未處理問題濾掉
         url: recordsUrl({ view: 'issue', statuses: 'open', riskLevels: '高,中,低', from: data.from, to: data.to }),
-        extra: todoExtra
+        sub: todoSub
     });
 
     // 我的交辦單：緊接在「未處理問題」之後——主管看完「有哪些事沒處理」，
@@ -268,6 +274,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 沒有 Handle 能力的角色動不了手，這張卡對他們只是噪音，不顯示。
     if (myBadge && hasCapability(user, 'Handle')) {
         cards.push({
+            group: 'todo',
             label: '我的交辦單',
             value: myBadge.activeWorkOrders ?? 0,
             // 0 張時仍顯示（處理人看到「0 張」是有意義的），只是不用強調色
@@ -286,6 +293,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
         const pd = data.pendingDispatch;
         const unassignable = pd.unassignableIssueCount ?? 0;
         cards.push({
+            group: 'todo',
             label: '待派工問題',
             value: pd.tooLarge ? '超過上限' : (pd.issueCount ?? 0),   // 字串值不可進 formatNumber（渲染處只格式化數值）
             variant: pd.tooLarge || (pd.issueCount ?? 0) > 0 ? 'warning' : 'secondary',
@@ -294,7 +302,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
                 : unassignable > 0
                     ? `其中 ${formatNumber(unassignable)} 個無法派出（無可接單人選）`
                     : '近 7 天沒人接的問題',
-            // statCard 內才套 appUrl（只加站台前綴、保留 hash）；work-orders 的頁籤列以 hash 選頁籤
+            // kpiStrip 內才套 appUrl（只加站台前綴、保留 hash）；work-orders 的頁籤列以 hash 選頁籤
             url: '/work-orders#gaps'
         });
     }
@@ -303,6 +311,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
     // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
     // 0 台時照常顯示，不換成空狀態插圖（KPI 卡列慣例）。
     cards.push({
+        group: 'todo',
         label: '未回報主機',
         value: data.silentHostsCount,
         variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
@@ -314,6 +323,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
 
     if (data.pendingPermissionChanges > 0 && hasCapability(user, 'ConfirmPermission')) {
         cards.push({
+            group: 'security',
             label: '權限異動待確認',
             value: data.pendingPermissionChanges,
             variant: 'warning',
@@ -323,6 +333,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
 
     if (data.recentLoginFailures !== null && data.recentLoginFailures !== undefined) {
         cards.push({
+            group: 'security',
             label: '24 小時登入失敗',
             value: data.recentLoginFailures,
             variant: data.recentLoginFailures > 0 ? 'warning' : 'secondary',
@@ -330,22 +341,25 @@ function renderKpi(data, user, displaySettings, myBadge) {
         });
     }
 
-    const container = document.getElementById('dashboard-kpi');
-    container.replaceChildren();
-
-    for (const card of cards) {
-        const col = document.createElement('div');
-        col.className = 'col-6 col-lg-3';
-        col.appendChild(statCard({
+    // 三組：風險概況／待處理／權限與安全。原本只放 tooltip 的 hint 改成可見副標（sub），完整文字留在 title
+    const groups = [
+        { key: 'risk', title: '風險概況' },
+        { key: 'todo', title: '待處理' },
+        { key: 'security', title: '權限與安全' }
+    ].map(g => ({
+        title: g.title,
+        cards: cards.filter(card => card.group === g.key).map(card => ({
             value: typeof card.value === 'string' ? card.value : formatNumber(card.value),
             label: card.label,
             variant: card.variant,
             url: card.url,
-            hint: card.hint,
-            extra: card.extra
-        }));
-        container.appendChild(col);
-    }
+            sub: card.sub ?? card.hint,
+            title: card.title ?? card.hint
+        }))
+    }));
+
+    const container = document.getElementById('dashboard-kpi');
+    container.replaceChildren(kpiStrip(groups));
 }
 
 function renderCategories(data) {

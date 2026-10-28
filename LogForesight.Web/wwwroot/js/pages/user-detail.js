@@ -10,7 +10,7 @@
 
 import { api, getCurrentUser } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderTable, renderLoading, statCard, guardLoad, renderPageHeader } from '../core/ui.js';
+import { renderTable, renderLoading, kpiStrip, guardLoad, renderPageHeader } from '../core/ui.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge } from '../core/format.js';
 
 const root = document.getElementById('user-detail');
@@ -148,19 +148,23 @@ function renderKpi(detail, workload) {
         }
     ];
 
-    for (const c of cards) {
-        const col = document.createElement('div');
-        col.className = 'col-6 col-lg-3';
-        // 檢視者沒有任何業務範圍時，「0」是規則的產物而不是事實——顯示「—」並說明
-        const noValue = c.viewerScoped && noScope;
-        col.appendChild(statCard({
-            value: noValue ? '—' : formatNumber(c.value),
-            label: c.label,
-            variant: noValue ? undefined : c.variant,
-            hint: noValue ? '您的帳號沒有業務資料範圍，無法計算' : c.hint
-        }));
-        container.appendChild(col);
-    }
+    const col = document.createElement('div');
+    col.className = 'col-12';
+    col.appendChild(kpiStrip([{
+        cards: cards.map(c => {
+            // 檢視者沒有任何業務範圍時，「0」是規則的產物而不是事實——顯示「—」並說明
+            const noValue = c.viewerScoped && noScope;
+            const note = noValue ? '您的帳號沒有業務資料範圍，無法計算' : c.hint;
+            return {
+                value: noValue ? '—' : formatNumber(c.value),
+                label: c.label,
+                variant: noValue ? undefined : c.variant,
+                sub: note,
+                title: note
+            };
+        })
+    }]));
+    container.appendChild(col);
 }
 
 function renderVisibleHosts(hosts) {

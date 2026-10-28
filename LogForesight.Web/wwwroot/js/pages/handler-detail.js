@@ -19,7 +19,7 @@ import {
     renderTable,
     renderEmpty,
     renderPagination,
-    statCard,
+    kpiStrip,
     guardLoad,
     renderPageHeader,
     loadPageSize,
@@ -219,12 +219,9 @@ function renderKpi(data) {
         { value: data.unrepliedWorkOrders, label: '未回覆單' }
     ];
 
-    for (const c of cards) {
-        const col = document.createElement('div');
-        col.className = 'col-6 col-lg-3';
-        col.appendChild(statCard({ value: formatNumber(c.value), label: c.label, variant: c.variant }));
-        kpiEl.appendChild(col);
-    }
+    kpiEl.appendChild(kpiStrip([{
+        cards: cards.map(c => ({ value: formatNumber(c.value), label: c.label, variant: c.variant }))
+    }]));
 }
 
 // ── 交辦單清單 ─────────────────────────────────────────────────────────────

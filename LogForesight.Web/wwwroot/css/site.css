@@ -1104,18 +1104,97 @@ a.lf-stat:hover .lf-card,
 }
 
 /*
-  KPI 卡跨行高度不一致修正：Bootstrap 的 row 是 flex + wrap，`h-100` 的
-  align-items:stretch 只在同一個換行的 flex line 內生效——換行後的下一行
-  各自為政，高度不會跟上一排看齊。兩組 KPI 卡各自的內容複雜度已知
-  （純數字／多一行前期比較），直接給一個涵蓋最壞情況的最小高度，
-  讓同一組卡片不論落在第幾排都是同一個高度。用 rem 而非 px，跟著字級偏好縮放。
+  KPI 卡列（core/ui.js kpiStrip，docs/DESIGN-SYSTEM.md §6b）：分組、等高、限寬。
+  - 組內 CSS grid：同一列的卡片天生等高（每張卡都有一行副標佔位，結構上就同高，不靠 min-height）。
+  - 卡寬 9rem～14rem：下限讓標籤不逐字換行，上限避免 2000px 寬螢幕上每張卡被拉成 400px 以上。
+  - ≥1200px 多組並排，各組以卡片數當 flex-grow 分寬；窄螢幕各組依序佔滿一列，375px 每列兩張。
+  - hover 只變陰影與邊框色，不位移（§4 動效）；轉場降級沿用全站 prefers-reduced-motion 規則。
 */
-#dashboard-kpi .lf-card {
-    min-height: 5.5rem;
+.lf-kpi-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-4) var(--lf-space-5);
+    min-width: 0;
 }
 
-#report-kpi .lf-card {
-    min-height: 7rem;
+.lf-kpi-group {
+    flex: 1 1 100%;
+    min-width: 0;
+}
+
+.lf-kpi-group--n1 { --lf-kpi-count: 1; }
+.lf-kpi-group--n2 { --lf-kpi-count: 2; }
+.lf-kpi-group--n3 { --lf-kpi-count: 3; }
+.lf-kpi-group--n4 { --lf-kpi-count: 4; }
+.lf-kpi-group--n5 { --lf-kpi-count: 5; }
+.lf-kpi-group--n6 { --lf-kpi-count: 6; }
+
+.lf-kpi-group__title {
+    margin: 0 0 var(--lf-space-2);
+    font-size: var(--lf-font-size-sm);
+    font-weight: 600;
+    color: var(--lf-text-muted);
+}
+
+.lf-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9rem, 14rem));
+    gap: var(--lf-space-3);
+}
+
+@media (max-width: 575.98px) {
+    /* 窄螢幕：兩欄均分，不留 14rem 上限造成的右側空白 */
+    .lf-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (min-width: 1200px) {
+    .lf-kpi-group {
+        /* 組寬下限＝卡數 × 9rem ＋ 間距；放不下就整組換列，不壓縮卡寬 */
+        flex: var(--lf-kpi-count, 1) 1 0;
+        min-width: calc(var(--lf-kpi-count, 1) * 9rem + (var(--lf-kpi-count, 1) - 1) * var(--lf-space-3));
+    }
+}
+
+.lf-kpi-card {
+    display: block;
+    min-width: 0;
+    padding: var(--lf-space-3);
+    background: var(--lf-card-bg);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    box-shadow: var(--lf-shadow-xs);
+    color: inherit;
+    text-decoration: none;
+    text-align: left;
+    transition: box-shadow var(--lf-transition), border-color var(--lf-transition);
+}
+
+a.lf-kpi-card--link:hover {
+    box-shadow: var(--lf-shadow-md);
+    border-color: var(--lf-primary-soft-border);
+    color: inherit;
+}
+
+a.lf-kpi-card--link:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+}
+
+/* 標籤可換行（「未處理問題（逾期 3）」截斷就看不到重點；同列卡片由 grid 拉成等高）；副標維持單行省略，完整文字在 title */
+.lf-kpi-card__sub {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* 副標列一定存在：沒有副標時是空佔位，仍保留一行高度（同列等高的結構前提） */
+.lf-kpi-card__sub {
+    min-height: 1.25em;
+    font-size: var(--lf-font-size-sm);
+    line-height: 1.25;
+    color: var(--lf-text-muted);
 }
 
 /* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁。
