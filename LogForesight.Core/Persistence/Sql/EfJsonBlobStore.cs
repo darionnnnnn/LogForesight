@@ -306,13 +306,18 @@ public sealed class EfJsonBlobStore
     // the outer loop owns the single five-attempt budget.
     private sealed class BlobWriterLockTimeoutException() : Exception("SQL blob writer application-lock timeout.");
 
-    private static bool IsTransient(Exception ex)
+    internal static bool IsTransient(Exception ex)
     {
         // SQLite busy / SqlServer deadlock 等暫時性衝突：訊息含 busy/locked/deadlock 即重試。
         // user-function：連線池關閉後（見 StorageBackend.DisableSqlitePoolingIfUnset）此錯誤的
         // 根因已除，這裡留作第二道保險（如使用者自行在 ConnectionString 開回 Pooling）。
+        if (ex is BlobWriterLockTimeoutException or DbUpdateConcurrencyException) return true;
+
         var msg = ex.Message.ToLowerInvariant();
-        return ex is BlobWriterLockTimeoutException or DbUpdateException || msg.Contains("busy") || msg.Contains("locked") ||
+        // 其餘 DbUpdateException（截斷／唯一鍵／FK）重試也不會好，只有訊息（含內層）屬暫時性才重試。
+        if (ex is DbUpdateException && ex.InnerException != null)
+            msg += " " + ex.InnerException.Message.ToLowerInvariant();
+        return msg.Contains("busy") || msg.Contains("locked") ||
                msg.Contains("deadlock") || msg.Contains("user-function");
     }
 }
