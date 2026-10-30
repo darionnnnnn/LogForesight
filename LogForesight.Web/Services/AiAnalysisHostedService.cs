@@ -613,7 +613,8 @@ public class AiAnalysisHostedService : BackgroundService
     {
         var aiService = _injectedAiService ?? ResolveAiService();
         var riskyEventStore = _storageBackend.RiskyEventStore();
-        var reportService = new RiskReportService(aiService, _storageBackend.ReportStore());
+        var reportService = new RiskReportService(aiService, _storageBackend.ReportStore(),
+            ruleProvider: () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_storageBackend.Blob("rules"))));
         // 包裝層包在外面（含 DI 注入的規則頁 store）：AI 補寫報告的已抑制段也要看得到靜音項目
         var suppressionStore = new MuteAwareSuppressionStore(
             _suppressionStore ?? new SuppressionStore(_storageBackend.Blob("suppressions")),

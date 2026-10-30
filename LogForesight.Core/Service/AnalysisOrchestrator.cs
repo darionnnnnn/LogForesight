@@ -422,7 +422,8 @@ public class AnalysisOrchestrator
                 var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
                 var historyService = backend.RecordStore(ownerHost);
 
-                var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
+                var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens,
+                    () => KnownIssueCatalog.ResolveRules(ruleStore));
                 var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
                     settings.Analysis.ServerDescription, reportService, currentHost, currentHostId,
                     hostGroupIds: currentHostGroupIds, logSource: AnalysisLogSource.Local);

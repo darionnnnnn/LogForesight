@@ -54,6 +54,7 @@
 | C4 | Sonnet | Linux【SSH 破解得手】失敗面改 `TryParseAuthFailure`（三類行、rhost 空不算解析失敗）；帳號與 IP 加時序（共用 `FilterByTiming`） | 主代理重跑 94 綠；突變解析回到只認 Failed password → 混合格式案紅；代理突變拿掉時序 → 時序案紅 | 無 |
 | C5 | Sonnet | `RiskLevels.Normalize` 只接受 ≤4 字且首字為等級；AI 格式異常降級路徑風險＝規則風險、不標 ai_raise | 主代理重跑 151 綠；突變長度門檻 → 2 紅；代理突變降級路徑 → 紅 | 舊 Theory 中「風險等級：高，理由…」「這次判定為低」改為未知（新契約）；`風險：高` 也判未知，屬規格意圖 |
 | C6 | Haiku | 慢速趨勢對疑似殘留憑證重試簽章進 suppressedAlerts 並加註；註記字串抽常數兩處共用 | 主代理重跑 136 綠；突變殘留判斷 → 紅 | 檔案被轉 LF，主代理轉回 CRLF |
+| C7 | Sonnet | 報告處置參考以簽章 RuleId 在注入規則清單反查（三個組裝點傳 `ResolveRules`）；重點問題排除已抑制；原始 log 配對改用 `GroupKeyFor` | 主代理重跑 188 綠；突變拿掉已抑制排除 → 紅；代理另突變 RuleId 反查（2 紅）與配對鍵（1 紅） | 只有已抑制簽章時重點問題為空（不再退回取前三），屬契約自然結果 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
