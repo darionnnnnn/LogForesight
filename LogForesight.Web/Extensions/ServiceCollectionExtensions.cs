@@ -339,7 +339,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IssueRankingBuilder>();
         // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
         // 快取必須是 Singleton 才跨得了請求（儀表板→報表切換時不必整套重算）
-        services.AddSingleton<IssueRankingCache>(_ => new IssueRankingCache());
+        services.AddSingleton<IssueRankingCache>(sp => new IssueRankingCache(sp.GetRequiredService<DataVersionStamp>()));
         // 全域資料版本戳與整包回應快取（回饋三十五輪批次F）：兩者都是 Singleton
         // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
         services.AddSingleton<DataVersionStamp>();
@@ -371,7 +371,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<OccurrenceStatusResolver>();
         services.AddScoped<IssueHandlingRollupQuery>();
         // 可行動快照的短 TTL 跨請求快取（回饋三十六輪批次B）：機制比照 IssueRankingCache
-        services.AddSingleton<ActionableSnapshotCache>(_ => new ActionableSnapshotCache());
+        services.AddSingleton<ActionableSnapshotCache>(sp => new ActionableSnapshotCache(sp.GetRequiredService<DataVersionStamp>()));
         services.AddScoped<IssueTodoQuery>();
         // 儀表板「待派工問題」卡取待派試跑用（§9.1）：委派指向 WorkOrderBoardService.GetGaps
         services.AddScoped<PendingDispatchGapsProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGaps);

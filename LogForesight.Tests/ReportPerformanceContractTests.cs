@@ -189,7 +189,7 @@ public class ReportPerformanceContractTests : IDisposable
     {
         var aggregates = new FakeIssueAggregateQuery();
         var now = new DateTime(2026, 8, 21, 10, 0, 0);
-        var builder = BuilderWith(aggregates, new IssueRankingCache(() => now));
+        var builder = BuilderWith(aggregates, new IssueRankingCache(new DataVersionStamp(), () => now));
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
 
@@ -208,7 +208,7 @@ public class ReportPerformanceContractTests : IDisposable
     {
         var aggregates = new FakeIssueAggregateQuery();
         var now = new DateTime(2026, 8, 21, 10, 0, 0);
-        var builder = BuilderWith(aggregates, new IssueRankingCache(() => now));
+        var builder = BuilderWith(aggregates, new IssueRankingCache(new DataVersionStamp(), () => now));
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
 
@@ -226,7 +226,7 @@ public class ReportPerformanceContractTests : IDisposable
     {
         var aggregates = new FakeIssueAggregateQuery();
         var clock = new DateTime(2026, 8, 21, 10, 0, 0);
-        var builder = BuilderWith(aggregates, new IssueRankingCache(() => clock));
+        var builder = BuilderWith(aggregates, new IssueRankingCache(new DataVersionStamp(), () => clock));
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
 
@@ -303,8 +303,8 @@ public class ReportPerformanceContractTests : IDisposable
     public void 排行快取_同鍵在TTL內回傳快取且回傳副本()
     {
         var now = new DateTime(2026, 8, 21, 10, 0, 0);
-        var cache = new IssueRankingCache(() => now);
-        var key = IssueRankingCache.KeyOf(new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), new long[] { 1, 2 }, 2, IssueExclusion.None.CacheToken);
+        var cache = new IssueRankingCache(new DataVersionStamp(), () => now);
+        var key = IssueRankingCache.KeyOf(0, new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), new long[] { 1, 2 }, 2, IssueExclusion.None.CacheToken);
 
         cache.Set(key, Ranking("disk"));
 
@@ -322,8 +322,8 @@ public class ReportPerformanceContractTests : IDisposable
     {
         var now = new DateTime(2026, 8, 21, 10, 0, 0);
         var clock = now;
-        var cache = new IssueRankingCache(() => clock);
-        var key = IssueRankingCache.KeyOf(new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), null, 5, IssueExclusion.None.CacheToken);
+        var cache = new IssueRankingCache(new DataVersionStamp(), () => clock);
+        var key = IssueRankingCache.KeyOf(0, new DateTime(2026, 8, 1), new DateTime(2026, 8, 20), null, 5, IssueExclusion.None.CacheToken);
 
         cache.Set(key, Ranking("disk"));
         clock = now.AddSeconds(IssueRankingCache.TtlSeconds - 1);
@@ -333,6 +333,34 @@ public class ReportPerformanceContractTests : IDisposable
         Assert.Null(cache.TryGet(key));
     }
 
+    [Fact]
+    public void 排行快取_版本推進後不命中_未推進則命中()
+    {
+        var stamp = new DataVersionStamp();
+        var cache = new IssueRankingCache(stamp, () => new DateTime(2026, 8, 21, 10, 0, 0));
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 20);
+        var calls = 0;
+        List<IssueRankingDto> GetOrAdd()
+        {
+            var key = IssueRankingCache.KeyOf(cache.Version, from, to, null, 5, IssueExclusion.None.CacheToken);
+            var hit = cache.TryGet(key);
+            if (hit != null) return hit;
+            calls++;
+            var v = Ranking("disk");
+            cache.Set(key, v);
+            return v;
+        }
+
+        GetOrAdd();
+        GetOrAdd();
+        Assert.Equal(1, calls);
+
+        stamp.Bump();
+        GetOrAdd();
+        Assert.Equal(2, calls);
+    }
+
     /// <summary>不同可見範圍是不同的鍵——授權範圍串味等於越權看到別人的資料。</summary>
     [Fact]
     public void 排行快取_可見範圍不同即不同鍵()
@@ -340,16 +368,16 @@ public class ReportPerformanceContractTests : IDisposable
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
 
-        var keyA = IssueRankingCache.KeyOf(from, to, new long[] { 1, 2 }, 2, IssueExclusion.None.CacheToken);
-        var keyB = IssueRankingCache.KeyOf(from, to, new long[] { 1 }, 2, IssueExclusion.None.CacheToken);
-        var keyUnlimited = IssueRankingCache.KeyOf(from, to, null, 2, IssueExclusion.None.CacheToken);
+        var keyA = IssueRankingCache.KeyOf(0, from, to, new long[] { 1, 2 }, 2, IssueExclusion.None.CacheToken);
+        var keyB = IssueRankingCache.KeyOf(0, from, to, new long[] { 1 }, 2, IssueExclusion.None.CacheToken);
+        var keyUnlimited = IssueRankingCache.KeyOf(0, from, to, null, 2, IssueExclusion.None.CacheToken);
 
         Assert.NotEqual(keyA, keyB);
         Assert.NotEqual(keyA, keyUnlimited);
         Assert.NotEqual(keyB, keyUnlimited);
 
         // 同一集合不同順序視為同一鍵
-        Assert.Equal(keyA, IssueRankingCache.KeyOf(from, to, new long[] { 2, 1 }, 2, IssueExclusion.None.CacheToken));
+        Assert.Equal(keyA, IssueRankingCache.KeyOf(0, from, to, new long[] { 2, 1 }, 2, IssueExclusion.None.CacheToken));
     }
 
     [Fact]
@@ -357,10 +385,10 @@ public class ReportPerformanceContractTests : IDisposable
     {
         var from = new DateTime(2026, 8, 1);
         var to = new DateTime(2026, 8, 20);
-        var baseKey = IssueRankingCache.KeyOf(from, to, null, 2, IssueExclusion.None.CacheToken);
+        var baseKey = IssueRankingCache.KeyOf(0, from, to, null, 2, IssueExclusion.None.CacheToken);
 
-        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from, to.AddDays(-1), null, 2, IssueExclusion.None.CacheToken));
-        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from.AddDays(-1), to, null, 2, IssueExclusion.None.CacheToken));
-        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(from, to, null, 3, IssueExclusion.None.CacheToken));
+        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(0, from, to.AddDays(-1), null, 2, IssueExclusion.None.CacheToken));
+        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(0, from.AddDays(-1), to, null, 2, IssueExclusion.None.CacheToken));
+        Assert.NotEqual(baseKey, IssueRankingCache.KeyOf(0, from, to, null, 3, IssueExclusion.None.CacheToken));
     }
 }

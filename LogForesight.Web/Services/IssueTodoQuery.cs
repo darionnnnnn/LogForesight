@@ -56,7 +56,7 @@ public class IssueTodoQuery
         // 啟動期版本戳推進打掉 SummaryCache 後會在幾秒內被整套重算——理由詳見 ActionableSnapshotCache
         var cacheKey = _cache == null
             ? null
-            : ActionableSnapshotCache.KeyOf(from, to, visibleHostIds, riskLevels,
+            : ActionableSnapshotCache.KeyOf(_cache.Version, from, to, visibleHostIds, riskLevels,
                 visibleSeverities?.Select(s => s.ToString()).ToList(), exclusion.CacheToken);
         if (cacheKey != null)
         {

@@ -37,6 +37,7 @@
 | A2 | Sonnet | display 改讀 `ISystemSettingsStore`；`help/ask` 掛 Maintain、`ask-available` 無權回 false | 主代理重跑 231 綠；突變 display 改回 `_settings.Get()` → 3 紅；代理已對 Maintain 判斷做突變 | 代理給兩個原無 BOM 的控制器加了 BOM（回報稱維持原樣）→ 主代理移除 |
 | A3 | Sonnet | `AccountNames.Canonical` 單一出口；LDAP、節流鍵、FindByAccount（先正規化後原字串）；登入欄位 256 上限 | 主代理重跑 116 綠；代理突變 FindByAccount 改回原字串 → 網域前綴案紅 | AuthController 節流接線無測試（控制器難組裝，規格允許），主代理讀 diff 確認四處皆改 |
 | A4 | Sonnet | `isSafeReturnUrl` 搬到 `core/safe-return-url.js`，含 tab／LF／CR 直接拒絕 | 主代理重跑 216 綠；突變拿掉控制字元判斷 → 3 紅（tab／LF／CR） | 無 |
+| A5 | Sonnet | `IssueRankingCache`／`ActionableSnapshotCache` 鍵加資料版本戳（呼叫端先取 `Version` 再查）；interpret 鍵加輸入雜湊 | 主代理重跑 210 綠；突變 Version 恆 0 → 版本推進案紅；代理另對 interpret 雜湊與另一快取做突變 | 白名單外必要改動 `IssueRankingBuilder`、`IssueTodoQuery`（KeyOf 呼叫端），合理 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

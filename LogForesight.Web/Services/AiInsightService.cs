@@ -169,7 +169,7 @@ public class AiInsightService
             sb.AppendLine("範例訊息：" + string.Join(" / ", issue.SampleMessages.Take(2)).Truncate(500));
         sb.AppendLine(PromptGuidelines.LanguageReminder);
 
-        var cacheKey = $"interpret|{hostName}|{date}|{issue.IssueKey}";
+        var cacheKey = $"interpret|{hostName}|{date}|{issue.IssueKey}|{WebAiService.HashInput(sb.ToString())}";
         const string system =
             "你是資深 Windows Server 維運分析師。針對以下單一事件，用兩句話回答：這件事要不要緊、以及該先做什麼。" +
             "只根據提供的資料，不要臆測。" + PromptGuidelines.Language +
