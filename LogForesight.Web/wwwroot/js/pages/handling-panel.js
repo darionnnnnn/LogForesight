@@ -251,7 +251,7 @@ function assignField(handling, users, hostId, date) {
             } else {
                 const preview = await api.post(`/api/records/${hostId}/${date}/handling/assign/preview`, { handlerId });
                 const name = select.selectedOptions[0]?.textContent ?? '新的處理人';
-                const lines = [`將為 ${preview.casesToCreate} 個問題建立案件並交辦給 ${name}。`];
+                const lines = [`將為 ${preview.casesToCreate} 個問題建立交辦給 ${name}。`];
                 if (preview.heldByOthers > 0) {
                     const holders = preview.heldByHandlerNames?.length ? `由 ${preview.heldByHandlerNames.join('、')} ` : '';
                     lines.push(`另有 ${preview.heldByOthers} 個問題已${holders}處理中，確認後會改派給 ${name}。`);
@@ -275,10 +275,10 @@ function assignField(handling, users, hostId, date) {
             // 建案提示（docs/archive/FEEDBACK-4-PLAN.md §2/Q1/Q2）：指派會對本日未結案問題建立案件並
             // 回溯歷史；讓使用者知道發生了什麼
             const parts = [updated.handlerName ? `已指派給 ${formatUserName(updated.handlerName, updated.handlerAccount)}` : '已取消指派'];
-            if (updated.casesCreated > 0) parts.push(`已為 ${updated.casesCreated} 個問題建立案件`);
+            if (updated.casesCreated > 0) parts.push(`已為 ${updated.casesCreated} 個問題建立交辦`);
             if (updated.casesReassigned > 0) parts.push(`改派 ${updated.casesReassigned} 個他人處理中的問題`);
             if (updated.casesSkippedHandlerNames?.length) {
-                parts.push(`${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的案件涵蓋，未變更`);
+                parts.push(`${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的交辦涵蓋，未變更`);
             }
             const noEmailNote = updated.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : '';
             toast(parts.join('；') + noEmailNote, 'success');
@@ -584,7 +584,7 @@ function handlingForm() {
                 const progress = result.totalIssues > 0 ? `（${result.closedIssues}/${result.totalIssues} 已結案）` : '';
                 // 案件同步提示（docs/archive/FEEDBACK-4-PLAN.md §2）：這批問題中有屬進行中案件的，
                 // 這次套用也會連動到案件涵蓋的其他日子
-                const caseNote = result.caseSyncedDayCount > 0 ? `；已同步案件涵蓋的 ${result.caseSyncedDayCount} 天` : '';
+                const caseNote = result.caseSyncedDayCount > 0 ? `；已同步交辦涵蓋的 ${result.caseSyncedDayCount} 天` : '';
                 toast(`已套用處理狀態；本日狀態：${result.dayStatusText}${progress}${caseNote}`, 'success');
                 // 把套用結果回報給頁面：已知雜訊等狀態的後續治本提議（建立抑制規則）由呼叫端接手
                 await state.onBatchSaved?.({ status: selectedStatus, issueKeys });

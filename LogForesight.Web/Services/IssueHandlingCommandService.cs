@@ -125,7 +125,7 @@ public class IssueHandlingCommandService
             summary: clearing
                 ? $"清除 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】的處理標記"
                 : $"將 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】標為「{HandlingTextHelpers.IssueStatusText(request.Status)}」" +
-                  (caseSync.Applied ? $"（已同步案件涵蓋的 {caseSync.SyncedDayCount} 天）" : ""),
+                  (caseSync.Applied ? $"（已同步交辦涵蓋的 {caseSync.SyncedDayCount} 天）" : ""),
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}/{request.IssueKey}",
             detail: new { request.IssueKey, request.Status, request.Note, request.DueDate });
@@ -205,7 +205,7 @@ public class IssueHandlingCommandService
             summary: clearing
                 ? $"批次清除 {host.HostName} {date:yyyy-MM-dd} 的 {appliedKeys.Count} 個問題的處理標記"
                 : $"批次將 {host.HostName} {date:yyyy-MM-dd} 的 {appliedKeys.Count} 個問題標為「{HandlingTextHelpers.IssueStatusText(request.Status)}」" +
-                  (totalSyncedDays > 0 ? $"（含案件同步共 {totalSyncedDays} 天）" : ""),
+                  (totalSyncedDays > 0 ? $"（含交辦同步共 {totalSyncedDays} 天）" : ""),
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
             detail: new { IssueKeys = appliedKeys, request.Status, request.Note, request.DueDate });
@@ -265,7 +265,7 @@ public class IssueHandlingCommandService
         var handler = _users.Get(handlerId);
         var name = handler == null ? "其他人" : _displayNameService.WithAccount(handler.DisplayName, handler.Account);
         throw DomainException.Validation(
-            $"此問題由 {name} 的案件處理中，無法直接變更狀態。如需接手，請由管理者改派處理人。");
+            $"此問題已在 {name} 的交辦單處理中，無法直接變更狀態。如需接手，請由管理者改派處理人。");
     }
 
     /// <summary>
@@ -567,7 +567,7 @@ public class IssueHandlingCommandService
 
             if (ownersByHost.TryGetValue(host.HostName, out var owner))
             {
-                row.SkipReason = $"已由 {ResolveDisplayName(owner.HandlerId!.Value)} 的案件處理中";
+                row.SkipReason = $"已在 {ResolveDisplayName(owner.HandlerId!.Value)} 的交辦單處理中";
                 plan.Add((host, new List<(DateTime, string, string)>(), row));
                 continue;
             }

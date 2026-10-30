@@ -199,8 +199,8 @@ public class DayHandlingCommandService
             // 事後查稽核的人必須看得出這一點
             summary: $"將 {host.HostName} {date:yyyy-MM-dd} 的處理人由「{beforeName}」改為「{afterName}」" +
                      $"（主機負責人不變：{OwnerNames(host)}）" +
-                     (casesCreated > 0 ? $"；建立 {casesCreated} 個問題案件並回溯關聯歷史" : "") +
-                     (reassignedCount > 0 ? $"；改派 {reassignedCount} 個他人進行中的問題案件" : "") +
+                     (casesCreated > 0 ? $"；建立 {casesCreated} 個問題交辦並回溯關聯歷史" : "") +
+                     (reassignedCount > 0 ? $"；改派 {reassignedCount} 個他人進行中的問題交辦" : "") +
                      (retractions.Count > 0 ? $"；收回 {retractions.Count} 張日層級交辦單（{retractions.Count(r => r.WholeOrderCancelled)} 張整張取消）" : ""),
             targetKind: "handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",

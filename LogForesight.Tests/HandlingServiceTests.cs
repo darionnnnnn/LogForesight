@@ -1838,7 +1838,7 @@ public class HandlingServiceTests : IDisposable
             }));
 
         Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
-        Assert.Contains("案件處理中", ex.Message);
+        Assert.Contains("交辦單處理中", ex.Message);
     }
 
     /// <summary>§8：自己的案件照常可以標記（限制的是「別人的」，不是「有案件的」）</summary>

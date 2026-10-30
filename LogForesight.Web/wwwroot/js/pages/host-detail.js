@@ -64,7 +64,7 @@ async function load() {
     renderCheckup(detail);
     if (detail.caseGrantOnly === true) {
         renderCaseGrantScopeNotice(document.getElementById('host-prtg'),
-            '案件授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。');
+            '交辦授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。');
     } else {
         loadPrtgMapping();
     }
@@ -150,7 +150,7 @@ function renderTimeline(detail) {
     const container = document.getElementById('host-timeline');
     if (detail.caseGrantOnly === true) {
         renderCaseGrantScopeNotice(container,
-            '案件授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。');
+            '交辦授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。');
         return;
     }
 
@@ -343,7 +343,7 @@ function renderIssues(detail) {
     currentDetail = detail;
     if (detail.caseGrantOnly === true) {
         renderCaseGrantScopeNotice(document.getElementById('host-issues'),
-            '案件授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。');
+            '交辦授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。');
         return;
     }
     const rows = sortRows(detail.topSignatures, ISSUE_COLUMNS, issuesSort);
@@ -459,9 +459,9 @@ function renderOccurrencePanel(container, data) {
             if (linkable) link.href = appUrl(`/handlers/${data.case.handlerId}`);
             link.textContent = data.case.handlerName;
             link.addEventListener('click', event => event.stopPropagation());
-            caseRow.append(`案件處理人：`, link, ` ｜ 狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`);
+            caseRow.append(`交辦處理人：`, link, ` ｜ 狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`);
         } else {
-            caseRow.textContent = `案件狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`;
+            caseRow.textContent = `交辦狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`;
         }
         container.appendChild(caseRow);
     }
@@ -496,7 +496,7 @@ function renderOccurrencePanel(container, data) {
                     if (occurrence.fromCase) {
                         const note = document.createElement('span');
                         note.className = 'text-muted small ms-1';
-                        note.textContent = '（案件同步）';
+                        note.textContent = '（交辦逐日同步）';
                         statusCell.appendChild(note);
                     }
                     return statusCell;

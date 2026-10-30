@@ -518,7 +518,7 @@ function issueHistoryBody(history) {
 
     if (history.cases.length > 0) {
         const heading = document.createElement('h6');
-        heading.textContent = '上次案件';
+        heading.textContent = '上次交辦';
         wrap.appendChild(heading);
         for (const c of history.cases) wrap.appendChild(issueHistoryCaseItem(c));
     }
@@ -583,7 +583,7 @@ function issueHistoryEntryItem(entry) {
 
     const date = document.createElement('span');
     date.className = 'small text-muted';
-    date.textContent = `${entry.date}　${formatUserName(entry.actorDisplayName, entry.actorAccount)}${entry.fromCase ? '（案件同步）' : ''}`;
+    date.textContent = `${entry.date}　${formatUserName(entry.actorDisplayName, entry.actorAccount)}${entry.fromCase ? '（交辦逐日同步）' : ''}`;
     head.appendChild(date);
 
     item.appendChild(head);
@@ -614,7 +614,7 @@ function selectCheckbox(issue, sectionIssues) {
         // tooltip 必須掛在**非 disabled** 的外層（體檢 M4）：瀏覽器不對 disabled 元素派送
         // 滑鼠事件，title 寫在 checkbox 上永遠不會出現——使用者看到的就是一個勾不動、
         // 也沒有解釋的 checkbox。文案本身沒問題，問題只在掛載點。
-        const reason = `此問題由 ${formatUserName(issue.caseHandlerName, issue.caseHandlerAccount)} 的案件處理中，如需接手請由管理者改派`;
+        const reason = `此問題已在 ${formatUserName(issue.caseHandlerName, issue.caseHandlerAccount)} 的交辦單處理中，如需接手請由管理者改派`;
         const lock = document.createElement('span');
         lock.className = 'lf-status-cell__checkbox lf-no-print';
         lock.title = reason;
@@ -879,7 +879,7 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
 
         // 案件同步提示（docs/archive/FEEDBACK-4-PLAN.md §2）：這個問題有進行中案件時，這次標記
         // 也會連動到案件涵蓋的其他日子，提示使用者「不是只改了眼前這一列」
-        const caseNote = result?.caseSyncedDayCount > 0 ? `（已同步案件涵蓋的 ${result.caseSyncedDayCount} 天）` : '';
+        const caseNote = result?.caseSyncedDayCount > 0 ? `（已同步交辦涵蓋的 ${result.caseSyncedDayCount} 天）` : '';
         toast((status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記') + caseNote, 'success');
     } catch {
         // 標記已成立，失敗的是 silent 的重新取回：api.js 沒出過訊息，這裡要自己講
@@ -1623,7 +1623,7 @@ function caseBadge(issue) {
         badge.addEventListener('click', event => event.stopPropagation());
     }
     badge.textContent = `${handlerText} ${statusText}`;
-    badge.title = `案件處理人：${handlerText}（自 ${issue.caseFirstLinkedDate} 起追蹤，跨日同步狀態）`;
+    badge.title = `交辦處理人：${handlerText}（自 ${issue.caseFirstLinkedDate} 起追蹤，跨日同步狀態）`;
     return badge;
 }
 

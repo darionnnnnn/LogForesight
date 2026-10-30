@@ -714,7 +714,7 @@ function caseDaySyncBar(activity) {
     bar.setAttribute('aria-live', 'polite');
 
     const text = document.createElement('span');
-    text.textContent = `案件逐日同步：待處理 ${formatNumber(pending)} 件，背景處理中，儀表板與報表數字稍後會更新。`;
+    text.textContent = `交辦逐日同步：待處理 ${formatNumber(pending)} 件，背景處理中，儀表板與報表數字稍後會更新。`;
     bar.appendChild(text);
     return bar;
 }
