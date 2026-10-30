@@ -19,7 +19,7 @@ internal static class LdapCredentialVerifier
             return CredentialCheckResult.Fail("密碼為空");
 
         // 去掉可能的網域前綴（DOMAIN\user）：LdapService 要的是 sAMAccountName
-        var samAccountName = account.Contains('\\') ? account[(account.IndexOf('\\') + 1)..] : account;
+        var samAccountName = AccountNames.Canonical(account);
 
         try
         {

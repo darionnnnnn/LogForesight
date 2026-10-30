@@ -146,6 +146,28 @@ public class IdentityServiceTests
     }
 
     [Fact]
+    public void Login_網域前綴帳號_以正規化帳號找到使用者()
+    {
+        _users.Upsert(new WebUser { Account = "bob" });
+
+        var outcome = Create(new FixedResultProvider { Result = new CredentialCheckResult(true) }).Login("CORP\\bob", "any");
+
+        Assert.True(outcome.Success);
+        Assert.Equal("bob", outcome.Identity!.Account);
+    }
+
+    [Fact]
+    public void Login_本地帳號含反斜線_相容查找仍可登入()
+    {
+        _users.Upsert(new WebUser { Account = "CORP\\legacy" });
+
+        var outcome = Create(new FixedResultProvider { Result = new CredentialCheckResult(true) }).Login("CORP\\legacy", "any");
+
+        Assert.True(outcome.Success);
+        Assert.Equal("CORP\\legacy", outcome.Identity!.Account);
+    }
+
+    [Fact]
     public void Login_停用帳號_被拒()
     {
         _users.Upsert(new WebUser { Account = "DOMAIN\\wang", Active = false });

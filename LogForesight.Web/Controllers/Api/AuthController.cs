@@ -74,10 +74,13 @@ public class AuthController : ControllerBase
             StringComparison.OrdinalIgnoreCase);
         var ip = isServerAdmin ? null : HttpContext.Connection.RemoteIpAddress;
 
-        if (_throttle.IsBlocked(account, ip, now, out var retryAfter))
+        // 節流鍵用正規化帳號：A\bob、B\bob、bob 視為同一帳號，不能靠網域前綴變體分散計數
+        var throttleKey = AccountNames.Canonical(account);
+
+        if (_throttle.IsBlocked(throttleKey, ip, now, out var retryAfter))
         {
             // 同一次暫停只在第一次被擋時寫稽核：暫停期間的連續嘗試不能再讓稽核表無上限成長
-            if (_throttle.MarkBlockAudited(account, ip, now))
+            if (_throttle.MarkBlockAudited(throttleKey, ip, now))
             {
                 _audit.RecordAuth(AuditActions.LoginThrottled, account.Trim(), null,
                     $"登入嘗試過多，暫停登入（來源 IP：{HttpContext.Connection.RemoteIpAddress?.ToString() ?? "未知"}）",
@@ -94,12 +97,12 @@ public class AuthController : ControllerBase
 
         if (!outcome.Success || outcome.Identity == null)
         {
-            _throttle.RecordFailure(account, ip, now);
+            _throttle.RecordFailure(throttleKey, ip, now);
             return Unauthorized(ApiResponse<CurrentUserDto>.Fail(
                 ApiErrorCodes.Forbidden, outcome.ErrorMessage ?? "登入失敗。"));
         }
 
-        _throttle.RecordSuccess(account);
+        _throttle.RecordSuccess(throttleKey);
 
         var token = _tokens.CreateToken(outcome.Identity);
         var expires = _tokens.ExpiresAt();

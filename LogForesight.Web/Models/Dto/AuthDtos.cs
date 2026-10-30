@@ -5,9 +5,11 @@ namespace LogForesight.Web.Models.Dto;
 public class LoginRequest
 {
     [Required(ErrorMessage = "請輸入帳號")]
+    [StringLength(256, ErrorMessage = "帳號過長")]
     public string Account { get; set; } = string.Empty;
 
     /// <summary>Stub 模式後端一律通過、不比對此欄位值（登入頁仍照常顯示密碼欄，只是設為選填）</summary>
+    [StringLength(256, ErrorMessage = "密碼過長")]
     public string? Password { get; set; }
 }
 

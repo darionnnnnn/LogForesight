@@ -35,6 +35,7 @@
 | （開輪） | 主代理 | 開 `feature/feedback-59`、PLAN 定案 | 批次 A 定向篩選前基準 601／0 | — |
 | A1 | Sonnet | `CurrentUserAuthorization.RequireViewAll/HasViewAll`；Settings／Effectiveness／Calibration 改用；9 個測試依賴方補使用者 | 主代理重跑 367 綠；突變 HasViewAll 恆真 → 主機對應、校準、效能端點受限案皆紅 | 代理宣稱新增 `Endpoint_無ViewAll回ForbidResult` 但檔內不存在（突變存活抓到）→ 主代理補 Theory 兩案；Edit 把該檔轉 LF → 轉回 CRLF。附帶消除 BACKLOG「主機表為空也 403」 |
 | A2 | Sonnet | display 改讀 `ISystemSettingsStore`；`help/ask` 掛 Maintain、`ask-available` 無權回 false | 主代理重跑 231 綠；突變 display 改回 `_settings.Get()` → 3 紅；代理已對 Maintain 判斷做突變 | 代理給兩個原無 BOM 的控制器加了 BOM（回報稱維持原樣）→ 主代理移除 |
+| A3 | Sonnet | `AccountNames.Canonical` 單一出口；LDAP、節流鍵、FindByAccount（先正規化後原字串）；登入欄位 256 上限 | 主代理重跑 116 綠；代理突變 FindByAccount 改回原字串 → 網域前綴案紅 | AuthController 節流接線無測試（控制器難組裝，規格允許），主代理讀 diff 確認四處皆改 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
