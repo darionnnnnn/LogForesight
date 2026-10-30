@@ -70,6 +70,7 @@
 | E2 | Haiku | 報表記憶體路徑的問題總數（本期與上期）排除靜音中的問題，與 scope=all 的 SQL 聚合同口徑 | 代理：改動前紅、突變紅；主代理重跑 183 綠 | 涵蓋缺口天數兩路徑定義相同（`HasCoverageGap`＝SQL 條件），差別只在顯示範圍篩選本身，不改 |
 | E3 | Sonnet | 刪 `BuildCase`／`ReassignCase`／`CreateOpenCase`／`CaseBuildResult`；測試前置改走 `WorkOrderCoordinator.Create`（`WorkOrderCaseSeeder`），需「無單案件」的案例改 `LegacyCaseSeeder` 直寫資料列；新增 `IssueCaseCreationGuardTests` | 代理：守門突變紅；主代理重跑 714 綠 4 略過（既有）、grep 三個方法 0 筆 | 「重現的問題」測試的前置改為舊案結案後才加 newDay（正式流程不強制寫入已結案觸發日），斷言未放寬；主代理補修 WorkOrderCoordinator 失效 cref、DayHandlingCommandService 註解、CLAUDE.md 紅線、WEB-SPEC 改派項；兩個新檔換行補成 CRLF |
 | E4 | Sonnet | `AttachNewDay` 存檔前重讀最新案件，只套 `LastLinkedDate`（只升不降）與 `PrtgEvidence`，已結案跳過；夜間寫成員鎖內重查主機進行中案件，已存在不建案、計 `open_case_exists` 並帶進摘要 | 代理：兩個突變各紅；主代理重跑 459 綠 4 略過（既有） | 改用 `GetOpenForHost`（夜間寫成員是單一主機）；主代理驗收抓到：略過後本趟新建的單會變零成員進行中空單 → `FlushRun` 以結案推導收掉並移出摘要，加端對端測試（拿掉即紅） |
+| E5a | Sonnet | `DispatchContext` 靜音判定委派 `IssueExclusion`（刪自建區間字典）；立即派工分組鍵加 Origin，建單來源與備註依決策（`NightlyNoteOf`） | 代理：先釘現行語意再改、兩個突變各紅；主代理重跑規格篩選 484 綠 | 白名單外：`NightlyNoteOf` 改 internal、派工器測試改用 `Exclusion`；立即派工的策略單備註由「系統依派工策略立即派工」改為與夜間相同 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

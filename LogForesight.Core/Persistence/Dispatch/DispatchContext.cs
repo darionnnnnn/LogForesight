@@ -71,16 +71,10 @@ public sealed class DispatchContext
     public object Gate { get; } = new();
 
     /// <summary>
-    /// 靜音區間，鍵同 <see cref="IssueProfile.KeyOf"/>：<see cref="Build"/> 由問題檔案填入每個問題的全部區間；
-    /// internal set 供測試手動塞區間。
+    /// 靜音判定的唯一來源（與讀取側、SQL 側共用同一條規則）：<see cref="Build"/> 以問題檔案與 now.Date 建立；
+    /// internal set 供測試換成指定區間。
     /// </summary>
-    public IReadOnlyDictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>> MuteIntervals { get; internal set; }
-        = new Dictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>>();
-
-    /// <summary>
-    /// 判定「目前靜音中」用的今天：<see cref="Build"/> 以 now.Date 設定；internal set 供測試覆寫。
-    /// </summary>
-    public DateTime MuteToday { get; internal set; } = DateTime.Today;
+    internal IssueExclusion Exclusion { get; set; } = IssueExclusion.None;
 
     /// <summary>本趟以 <see cref="RegisterOrder"/> 登記的單</summary>
     public IReadOnlyList<WorkOrder> RegisteredOrders => _registeredOrders;
@@ -93,15 +87,6 @@ public sealed class DispatchContext
         INoiseMarkStore noiseMarks, SystemSettings settings, DateTime now)
     {
         var allProfiles = issueOwners.GetAll();
-
-        // 靜音區間：不限有負責人的問題；同鍵（大小寫折疊後）的區間合併
-        var muteIntervals = allProfiles
-            .Where(p => p.Mutes.Count > 0)
-            .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<(DateTime From, DateTime To)>)g.SelectMany(p => p.Mutes)
-                    .Select(m => (m.From.Date, m.To.Date)).ToList());
 
         // 同鍵防禦性取第一筆（同 IssueProfile.IndexByKey 的既有慣例）
         var profiles = allProfiles
@@ -139,8 +124,8 @@ public sealed class DispatchContext
         return new DispatchContext(cases, orders, pool, profiles, activeOrders, loads, noiseByHost, continuityByHost,
             settings.ParseUnhandledSeverities(), settings.AutoDispatchEnabled, unavailable: false)
         {
-            MuteIntervals = muteIntervals,
-            MuteToday = now.Date
+            // 靜音區間：不限有負責人的問題；同鍵（大小寫折疊後）的區間合併
+            Exclusion = IssueExclusion.From(allProfiles, now.Date)
         };
     }
 
@@ -159,13 +144,11 @@ public sealed class DispatchContext
             new HashSet<IssueSeverity>(), autoDispatchEnabled: false, unavailable: true);
 
     /// <summary>
-    /// 問題目前靜音中（任一區間涵蓋 <see cref="MuteToday"/>），或紀錄日落在該問題任一靜音區間（皆含首尾）。
-    /// 與讀取側 IssueExclusion.IsMuted 同一條規則：今天剛設靜音時，夜間處理昨天的紀錄、
-    /// 或待派頁的立即派工，也不為正在靜音的問題建單。
+    /// 問題目前靜音中，或紀錄日落在該問題任一靜音區間（皆含首尾）；委派 <see cref="IssueExclusion.IsMuted"/>，
+    /// 今天剛設靜音時，夜間處理昨天的紀錄、或待派頁的立即派工，也不為正在靜音的問題建單。
     /// </summary>
     public bool IsMuted(string source, int eventId, DateTime recordDate) =>
-        MuteIntervals.TryGetValue(IssueProfile.KeyOf(source, eventId), out var intervals)
-        && intervals.Any(i => MuteInterval.Covers(i.From, i.To, recordDate) || MuteInterval.Covers(i.From, i.To, MuteToday));
+        Exclusion.IsMuted(source, eventId, recordDate);
 
     /// <summary>
     /// 「不再打擾」：該主機該鍵建立最晚的那件案件被以 wont_fix／false_positive／known_noise 結案

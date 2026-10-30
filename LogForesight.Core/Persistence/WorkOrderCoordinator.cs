@@ -657,7 +657,7 @@ public class WorkOrderCoordinator
         new() { ActorId = null, ActorAccount = AuditActions.SystemAccount, OccurredAt = occurredAt };
 
     /// <summary>夜間派工系統說明的唯一一份（建單備註、案件與逐日列備註共用）</summary>
-    private static string NightlyNoteOf(string step) => step switch
+    internal static string NightlyNoteOf(string step) => step switch
     {
         WorkOrderOrigins.OwnerRule => "系統依問題檔案自動派送",
         WorkOrderOrigins.AutoDispatch => "系統自動派工",

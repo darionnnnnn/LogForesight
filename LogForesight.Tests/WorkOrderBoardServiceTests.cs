@@ -651,6 +651,34 @@ public class WorkOrderBoardServiceTests : IDisposable
     }
 
     [Fact]
+    public void 立即派工_問題負責人規則決定的單_來源與備註保留負責人規則()
+    {
+        var host = AddHost("HOST-OWN");
+        var (h, _) = PoolSeeing(host);
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { h.UserId } });
+
+        var result = Service().RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.CreatedOrders);
+        var order = Assert.Single(_orderStore.All);
+        Assert.Equal(WorkOrderOrigins.OwnerRule, order.Origin);
+        Assert.Equal("系統依問題檔案自動派送", order.Note);
+    }
+
+    [Fact]
+    public void 立即派工_策略派工決定的單_來源與備註為自動派工()
+    {
+        PoolSeeing(AddHost("HOST-POL"));
+
+        var result = Service().RunAutoDispatch(null, null);
+
+        Assert.Equal(1, result.CreatedOrders);
+        var order = Assert.Single(_orderStore.All);
+        Assert.Equal(WorkOrderOrigins.AutoDispatch, order.Origin);
+        Assert.Equal("系統自動派工", order.Note);
+    }
+
+    [Fact]
     public void 立即派工_不改存檔設定_夜間開關維持關閉()
     {
         SeedMixed();

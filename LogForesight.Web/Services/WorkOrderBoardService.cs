@@ -35,7 +35,6 @@ public class WorkOrderBoardService
     private const int UnseenHostGroupLimit = 10;
     private const string DeletedName = "（已刪除）";
     private const string TargetKind = "work_order";
-    private const string AutoDispatchNote = "系統依派工策略立即派工";
 
     private readonly IWorkOrderStore _orders;
     private readonly IIssueCaseStore _cases;
@@ -243,6 +242,13 @@ public class WorkOrderBoardService
 
     // ── 立即派工 ────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// 決策的建單來源：⑤ 問題負責人規則與 ⑥ 自動派工各自保留；掛單決策（Origin 為空）以步驟為準，
+    /// 步驟是 ④ 續掛等其他值時沿用自動派工。
+    /// </summary>
+    private static string OriginOf(DispatchDecision d) =>
+        d.Origin ?? (d.Step == WorkOrderOrigins.OwnerRule ? WorkOrderOrigins.OwnerRule : WorkOrderOrigins.AutoDispatch);
+
     public AutoDispatchResultDto RunAutoDispatch(DateTime? from, DateTime? to)
     {
         var trial = RunTrial(from, to);
@@ -254,10 +260,12 @@ public class WorkOrderBoardService
         // 掛單與建單都依（處理人, 問題）分組；掛進他人範圍單的決策交給同處理人的建單自動併入其進行中單
         var groups = trial.Gaps
             .Where(g => g.Decision.Kind != DispatchDecisionKind.Skip)
-            .GroupBy(g => (HandlerId: g.Decision.HandlerId!.Value, SourceKey: WorkOrderIssueKey.SourceKeyOf(g.Issue.Source), g.Issue.EventId))
+            .GroupBy(g => (HandlerId: g.Decision.HandlerId!.Value, SourceKey: WorkOrderIssueKey.SourceKeyOf(g.Issue.Source), g.Issue.EventId,
+                Origin: OriginOf(g.Decision)))
             .OrderBy(g => g.Key.HandlerId)
             .ThenBy(g => g.Key.SourceKey, StringComparer.Ordinal)
             .ThenBy(g => g.Key.EventId)
+            .ThenBy(g => g.Key.Origin, StringComparer.Ordinal)
             .ToList();
 
         var created = 0;
@@ -287,12 +295,12 @@ public class WorkOrderBoardService
                 EventId = first.Issue.EventId,
                 IssueLabel = label,
                 HandlerId = group.Key.HandlerId,
-                Origin = WorkOrderOrigins.AutoDispatch,
+                Origin = group.Key.Origin,
                 ScopeKind = WorkOrderScopes.Hosts,
                 ScopeGroupIds = new List<long>(),
                 AutoAttach = false,
                 ReassignConflicts = false,
-                Note = AutoDispatchNote,
+                Note = WorkOrderCoordinator.NightlyNoteOf(group.Key.Origin),
                 Members = members,
                 Actor = actor
             });
