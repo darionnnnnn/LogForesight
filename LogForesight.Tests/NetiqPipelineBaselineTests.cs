@@ -469,6 +469,24 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.False(_hosts.Get(host.HostId)!.IsHighVolume, "查詢已不再截斷且遠低於上限，旗標應被清除");
     }
 
+    /// <summary>回報有資料卻取回 0 筆（結果頁讀不到）不是截斷：不二分、不設高流量旗標，該批記為失敗。</summary>
+    [Fact]
+    public async Task 回報有資料卻取回0筆_不二分不設高流量旗標_記為失敗()
+    {
+        var sentinel = AddSentinel();
+        var hosts = new[] { "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4" }
+            .Select((ip, i) => AddWindowsHost(sentinel, ip, $"HOST-{i}")).ToList();
+        _client.Responder = _ =>
+            new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 10, State = SentinelJobState.Completed, Unreadable = true };
+
+        var pipeline = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 1 });
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Single(_client.Requests); // 整批只查 1 次，不二分
+        Assert.Equal(4, result.HostsFailed);
+        Assert.All(hosts, h => Assert.False(_hosts.Get(h.HostId)!.IsHighVolume));
+    }
+
     // ── 回饋十三輪 D：單一 Sentinel 內部的 client pool 併發 ──────────────────────
     // 51 台主機才會跨過 IpBatchSize=50，真的切出兩個批次——這是唯一能逼出「同一天內
     // 多批次」路徑的方式，主機數不能再省。每一天的兩個查詢互相等候，確認實際重疊；

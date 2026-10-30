@@ -36,7 +36,9 @@ public sealed partial class SentinelClient
             var (events, retrieved) = await FetchAllPagesAsync(status, request, ct);
             return new SentinelSearchResult
             {
-                Events = events, Retrieved = retrieved, Found = status.Found, State = status.State
+                Events = events, Retrieved = retrieved, Found = status.Found, State = status.State,
+                Unreadable = status.Found > 0 && retrieved == 0
+                             && Math.Min(status.Found, request.MaxResults ?? _settings.MaxResultsPerJob) > 0
             };
         }
         finally

@@ -34,7 +34,7 @@ public sealed partial class SentinelClient
                 return r;
             }, ct);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or SentinelTransientException)
+        catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
             throw new SentinelClientException($"連線 Sentinel「{_server.Name}」認證失敗（重試已耗盡）：{ex.Message}", ex);
         }
@@ -104,7 +104,7 @@ public sealed partial class SentinelClient
                 return r;
             }, ct);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or SentinelTransientException)
+        catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
             throw new SentinelClientException($"連線 Sentinel「{_server.Name}」失敗（重試已耗盡）：{ex.Message}", ex);
         }

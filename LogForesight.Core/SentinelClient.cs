@@ -94,6 +94,11 @@ public sealed class SentinelSearchResult
     /// <summary>實際取回筆數少於 Found——受 max-results 上限或分頁提前中止影響，
     /// 呼叫端應比照 DataIncomplete 的基準排除邏輯處理（docs/archive/HISTORY.md）</summary>
     public bool Truncated => Retrieved < Found;
+
+    /// <summary>Sentinel 回報有資料（Found &gt; 0）卻一筆都沒取回、且並非 max-results 上限為 0——
+    /// 屬於結果頁讀不到／解析不出（avail 為 0、首頁為空、非陣列），不是真正的筆數截斷。
+    /// 呼叫端不得用二分重查或高流量旗標處理（重查只會得到同樣的空結果）。</summary>
+    public bool Unreadable { get; init; }
 }
 
 /// <summary>連線／查詢過程中的錯誤。訊息不含密碼，可直接顯示給操作者或寫入 log。</summary>

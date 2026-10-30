@@ -501,6 +501,20 @@ public class NetiqPipelineService
             throw;
         }
 
+        if (searchResult.Unreadable)
+        {
+            // Sentinel 回報有資料卻一筆都取不回（結果頁讀不到或解析不出）：這不是筆數截斷，
+            // 二分重查只會得到同樣的空結果（50 台批次會白查 99 次），也不能污染 IsHighVolume。
+            // 該批記為失敗，沿用批次查詢失敗的記法。
+            foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
+            NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "failed");
+            _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：Sentinel 回報 {searchResult.Found} 筆但取回 0 筆");
+            Log.Warn("[{Server}] {Date} Sentinel 回報 {Found} 筆但取回 0 筆，不視為截斷，該批記為失敗", sentinelName, date, searchResult.Found);
+            result.AddFailed(batch.Length);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
+            return;
+        }
+
         if (searchResult.Truncated)
         {
             // 截斷時二分重查（回饋十三輪 B2）：整批共用一個 job，原本無法判斷截斷影響哪幾台，
