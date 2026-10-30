@@ -371,16 +371,18 @@ public class PrtgStructureSyncService
     /// <summary>同步主體：跑完、落地結果並結束執行狀態。回傳（是否成功, 失敗原因）。</summary>
     private async Task<(bool Success, string? Error)> ExecuteAsync(SystemSettings s, PrtgClient client, CancellationTokenSource cts)
     {
-        using var operation = new PrtgOperationScope(s, _settings.Get, cts.Token,
-            new PrtgScopeRevisionReader(_backend, _hosts).Read, "結構同步",
-            requireEnabled: false, cancelOnEnabledChange: true);
-        client.OperationCheckpoint = operation.Checkpoint;
         var console = new PrtgStructureSyncConsole(_state);
         var prtgStore = _backend.PrtgStore();
         var success = false;
         string? failure = null;
+        PrtgOperationScope? operation = null;
         try
         {
+            // 建構移入 try：擲例外時 finally 仍會 EndRun，不會讓同步永遠停在執行中。
+            operation = new PrtgOperationScope(s, _settings.Get, cts.Token,
+                new PrtgScopeRevisionReader(_backend, _hosts).ReadStructural, "結構同步",
+                requireEnabled: false, cancelOnEnabledChange: true);
+            client.OperationCheckpoint = operation.Checkpoint;
             using (client)
             {
                 operation.Checkpoint();
@@ -403,7 +405,7 @@ public class PrtgStructureSyncService
         }
         catch (OperationCanceledException)
         {
-            var reason = operation.SettingsChanged ? "PRTG 設定已變更，同步停止；已完成資料保留" : "同步已被取消（站台關閉或手動中止）";
+            var reason = operation?.SettingsChanged == true ? "PRTG 設定已變更，同步停止；已完成資料保留" : "同步已被取消（站台關閉或手動中止）";
             console.WriteLine(reason);
             // 取消也要落地：不寫的話狀態卡會沿用上一筆「成功」的摘要，
             // 而執行輸出（行程內狀態）在站台重啟後一起消失，這趟被腰斬就沒有任何痕跡。
@@ -422,9 +424,25 @@ public class PrtgStructureSyncService
             console.WriteLine($"同步過程發生未預期錯誤：{ex.Message}");
             success = false;
             failure = ex.Message;
+            try
+            {
+                Persist(new PrtgStructureSyncStatus
+                {
+                    CompletedAt = DateTime.Now,
+                    Success = false,
+                    ErrorMessage = ex.Message,
+                    MapDate = DateTime.Today
+                });
+            }
+            catch (Exception persistEx)
+            {
+                console.WriteLine($"保存失敗狀態時發生錯誤：{persistEx.Message}");
+            }
         }
         finally
         {
+            if (operation == null) client.Dispose();
+            operation?.Dispose();
             // 先寫旗標再結束執行狀態：等待方看到 IsRunning 轉 false 的下一刻就會讀它，
             // 反過來寫會讓那一瞬間讀到上一趟的結果。
             _lastRunSucceeded = success;

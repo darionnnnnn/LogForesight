@@ -609,14 +609,16 @@ public class PrtgBackfillService : IPrtgBackfillTail
 
     private async Task ExecuteSelectedAsync(PreparedRun run, DateTime from, DateTime to, IReadOnlyCollection<long> hostIds)
     {
-        using var operation = new PrtgOperationScope(run.Settings, _settings.Get, run.Token,
-            new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "歷史補值");
-        run.Client.OperationCheckpoint = operation.Checkpoint;
         var success = false;
         var cancelled = false;
         var console = new PrtgBackfillConsole(_state);
+        PrtgOperationScope? operation = null;
         try
         {
+            // 建構移入 try：擲例外時 finally 仍會 FinishRun，不會讓回填永遠停在執行中。
+            operation = new PrtgOperationScope(run.Settings, _settings.Get, run.Token,
+                new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "歷史補值");
+            run.Client.OperationCheckpoint = operation.Checkpoint;
             using (run.Client)
             {
                 operation.Checkpoint();
@@ -631,7 +633,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                 operation.CompletedStage("指定主機補值已返回");
             }
         }
-        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        catch (OperationCanceledException) when (operation?.Token.IsCancellationRequested == true)
         {
             cancelled = true;
             success = false;
@@ -642,6 +644,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
         finally
         {
+            if (operation == null) run.Client.Dispose();
+            operation?.Dispose();
             _state.FinishRun(success, cancelled);
         }
     }
@@ -806,15 +810,18 @@ public class PrtgBackfillService : IPrtgBackfillTail
     private async Task<bool> ExecuteAsync(PreparedRun run, IRunConsole console, IReadOnlyCollection<long>? hostIds)
     {
         var s = run.Settings;
-        using var operation = new PrtgOperationScope(s, _settings.Get, run.Token,
-            new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "歷史補值");
-        var runToken = operation.Token;
-        run.Client.OperationCheckpoint = operation.Checkpoint;
         var prtgStore = _backend.PrtgStore();
         var success = false;
         var cancelled = false;
+        PrtgOperationScope? operation = null;
+        var runToken = run.Token;
         try
         {
+            // 建構移入 try：擲例外時 finally 仍會 FinishRun，不會讓回填永遠停在執行中。
+            operation = new PrtgOperationScope(s, _settings.Get, run.Token,
+                new PrtgScopeRevisionReader(_backend, _hosts).ReadRawSemantic, "歷史補值");
+            runToken = operation.Token;
+            run.Client.OperationCheckpoint = operation.Checkpoint;
             using (run.Client)
             {
                 operation.Checkpoint();
@@ -884,7 +891,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
         catch (OperationCanceledException) when (runToken.IsCancellationRequested)
         {
-            if (operation.SettingsChanged) console.WriteLine("PRTG 設定已變更，回填停止；已完成資料保留。");
+            if (operation?.SettingsChanged == true) console.WriteLine("PRTG 設定已變更，回填停止；已完成資料保留。");
             // 摘要已由 runner 印出（已停止：完成 x／N 天）
             cancelled = true;
             success = false;
@@ -896,6 +903,8 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
         finally
         {
+            if (operation == null) run.Client.Dispose();
+            operation?.Dispose();
             _state.FinishRun(success, cancelled);
         }
 

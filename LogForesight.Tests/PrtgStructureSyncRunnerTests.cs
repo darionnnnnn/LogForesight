@@ -238,4 +238,30 @@ public class PrtgStructureSyncRunnerTests : IDisposable
             Assert.Contains(console.Lines, l => l.Contains("[範圍] 監看裝置：1 台裝置"));
         }
     }
+
+    [Fact]
+    public async Task RunAsync_收斂但0台裝置_判定失敗並帶權限提示()
+    {
+        var store = CreateStore();
+        var console = new TestConsole();
+        var hostStore = new FakeHostStore();
+
+        var (client, _) = CreateClient(req =>
+            req.RequestUri!.ToString().Contains("content=devices")
+                ? Json("{\"treesize\":0,\"devices\":[]}")
+                : StructureResponder(req));
+        using (client)
+        {
+            var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+            var status = await PrtgStructureSyncRunner.RunAsync(
+                fetchService, store, hostStore, new PrtgAddressResolver(),
+                concurrency: 1, console, CancellationToken.None,
+                new PrtgMirrorGuardSource(store), new SystemSettings(), Array.Empty<Sentinel>(), today: new DateTime(2026, 9, 9));
+
+            Assert.False(status.Success);
+            Assert.Equal(0, status.Devices);
+            Assert.Equal("PRTG 回傳 0 台裝置，請檢查 PRTG 帳號權限與取數設定", status.ErrorMessage);
+        }
+    }
 }

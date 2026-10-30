@@ -122,6 +122,18 @@ public static class PrtgStructureSyncRunner
             return status;
         }
 
+        // 收斂但 0 台裝置且無階段失敗：多半是帳號權限或取數設定問題，不得當成成功（也不進清除流程）。
+        if (mapError is null && status.Devices == 0)
+        {
+            stopwatch.Stop();
+            status.Success = false;
+            status.ErrorMessage = "PRTG 回傳 0 台裝置，請檢查 PRTG 帳號權限與取數設定";
+            status.ElapsedSeconds = stopwatch.Elapsed.TotalSeconds;
+            status.CompletedAt = DateTime.Now;
+            console.WriteLine("✗ " + status.ErrorMessage);
+            return status;
+        }
+
         if (mapError is not null)
         {
             // 對應失敗不抹掉已完成的結構同步成果——鏡像已經更新了，那部分是有效的。
