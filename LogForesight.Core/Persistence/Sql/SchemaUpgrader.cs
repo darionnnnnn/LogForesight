@@ -358,6 +358,7 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_manual_map",
             "IX_lf_prtg_manual_map_host", "host_id");
         if (!isSqlite) FixSqlServerPrtgManualMapIdentityIfNeeded(ctx);
+        if (!isSqlite) ctx.Database.ExecuteSqlRaw(SqlServerWidenRiskyEventRuleIdDdl);
 
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_ip_excludes",
             isSqlite ? SqliteCreatePrtgIpExcludes : SqlServerCreatePrtgIpExcludes);
@@ -1212,7 +1213,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreateRiskyEventsTable = """
+    internal const string SqlServerCreateRiskyEventsTable = """
         CREATE TABLE lf_risky_events (
             id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_risky_events PRIMARY KEY,
             host_id bigint NOT NULL,
@@ -1224,7 +1225,7 @@ internal static class SchemaUpgrader
             entry_type int NOT NULL,
             event_time datetime2 NOT NULL,
             message nvarchar(max) NOT NULL,
-            rule_id nvarchar(64) NULL,
+            rule_id nvarchar(100) NULL,
             created_at datetime2 NOT NULL
         )
         """;
@@ -1672,6 +1673,19 @@ internal static class SchemaUpgrader
             IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
             THROW;
         END CATCH;
+        """;
+
+    /// <summary>
+    /// lf_risky_events.rule_id 放寬到規則 Id 上限（<see cref="LogForesight.Core.Analysis.RuleSchemaLimits.IdMaxLength"/> = 100）。
+    /// 每次升級都執行，但先以 INFORMATION_SCHEMA 判斷長度，不足才 ALTER；SQLite 無長度限制，不動作。
+    /// </summary>
+    internal const string SqlServerWidenRiskyEventRuleIdDdl = """
+        IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                   WHERE TABLE_NAME = 'lf_risky_events' AND COLUMN_NAME = 'rule_id'
+                     AND CHARACTER_MAXIMUM_LENGTH BETWEEN 1 AND 99)
+        BEGIN
+            ALTER TABLE lf_risky_events ALTER COLUMN rule_id nvarchar(100) NULL;
+        END
         """;
 
     private static void FixSqlServerPrtgManualMapIdentityIfNeeded(LfDbContext ctx)

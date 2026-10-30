@@ -445,7 +445,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.EventTime).HasColumnName("event_time");
             e.Property(x => x.Message).HasColumnName("message");
             e.Property(x => x.SourceEvidenceJson).HasColumnName("source_evidence_json");
-            e.Property(x => x.RuleId).HasColumnName("rule_id").HasMaxLength(64);
+            e.Property(x => x.RuleId).HasColumnName("rule_id").HasMaxLength(LogForesight.Core.Analysis.RuleSchemaLimits.IdMaxLength);
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
             e.HasIndex(x => new { x.HostId, x.Date, x.SourceKey, x.EventId })
