@@ -362,7 +362,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 大小寫不分（同 EfAnalysisRecordStore.ApplyPushableFilters 的 Source 篩選理由：
         // provider collation 不保證一致，兩邊都正規化才與比對邏輯逐位一致）
         var wanted = issues
-            .Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId))
+            .Select(i => (Source: WantedKey(i.Source, sourceKeyReady), i.EventId))
             .ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
@@ -403,7 +403,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var aliasIndex = AliasIndex();
         var sourceKeyReady = _sourceKeyReady();
 
-        var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var wanted = issues.Select(i => (SourceKey: WantedKey(i.Source, sourceKeyReady), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
@@ -451,7 +451,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
         var sourceKeyReady = _sourceKeyReady();
 
-        var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var wanted = issues.Select(i => (Source: WantedKey(i.Source, sourceKeyReady), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
@@ -525,7 +525,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var aliasIndex = AliasIndex();
         var sourceKeyReady = _sourceKeyReady();
 
-        var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var wanted = issues.Select(i => (Source: WantedKey(i.Source, sourceKeyReady), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
@@ -578,7 +578,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         _ = exclusion;
         if (issues.Count == 0) return new Dictionary<(string, int), DateTime>();
 
-        var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var wanted = issues.Select(i => (SourceKey: WorkOrderIssueKey.SourceKeyOf(i.Source), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
 
         using var ctx = _contextFactory();
@@ -1762,6 +1762,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     .Select(x => x.Category)
                     .ToList());
     }
+
+    /// <summary>wanted 集合的比對鍵：就緒時與存檔鍵同為「截 255 再大寫」，未就緒沿用 source_name 大寫。</summary>
+    private static string WantedKey(string source, bool sourceKeyReady) =>
+        sourceKeyReady ? WorkOrderIssueKey.SourceKeyOf(source) : source.ToUpperInvariant();
 
     private static string SourceKeyOf(string? sourceKey, string sourceName, bool sourceKeyReady) =>
         sourceKeyReady

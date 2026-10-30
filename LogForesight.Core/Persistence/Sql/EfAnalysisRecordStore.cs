@@ -267,7 +267,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var date = shaped.Date.Date;
         foreach (var (source, eventId) in shaped.TopIssues.Select(i => (i.Source, i.EventId)).Distinct())
         {
-            var sourceKey = source.ToUpperInvariant();
+            var sourceKey = WorkOrderIssueKey.SourceKeyOf(source);
             try
             {
                 using var ctx = _contextFactory();
@@ -285,7 +285,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     { SourceKey = sourceKey, EventId = eventId, SourceName = ColumnClamp.ClampFor<IssueFirstSeenRow>(source, nameof(IssueFirstSeenRow.SourceName))!, FirstSeen = date });
                 ctx.SaveChanges();
             }
-            catch (DbUpdateException ex)
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
             {
                 // 唯一鍵競態：另一台主機的平行寫入搶先建了這一列，補一次「較早才更新」即可，
                 // 不是需要中止分析的錯誤
@@ -306,6 +306,14 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             }
         }
     }
+
+    /// <summary>是否為唯一鍵衝突（SQLite 19／SQL Server 2601、2627）；其他錯誤不當競態吞掉。</summary>
+    internal static bool IsUniqueViolation(DbUpdateException ex) => ex.InnerException switch
+    {
+        Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 } => true,
+        Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 } => true,
+        _ => false
+    };
 
     public void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup)
     {
