@@ -178,6 +178,41 @@ public class PrtgScopeDevicesTests : IDisposable
     }
 
     [Fact]
+    public void Compute_人工對應的device不在裝置鏡像_不入範圍且計數與警告各一()
+    {
+        var (store, hostStore, settings, sentinels) = SeedComposition();
+        store.UpsertManualMap(new PrtgManualMapRow
+        {
+            DeviceObjid = 99,
+            HostId = 1,
+            Note = "已被 PRTG 刪除",
+            CreatedBy = "admin",
+            CreatedAt = DateTime.Now
+        });
+
+        var result = Compute(store, hostStore, settings, sentinels);
+
+        Assert.DoesNotContain(99L, result.DeviceObjids);
+        Assert.Contains(5L, result.DeviceObjids);
+        Assert.Equal(1, result.Manual);
+        Assert.Equal(1, result.ManualMissingInMirror);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("人工對應的裝置 #99 已不在 PRTG 鏡像，未納入取數範圍", warning);
+    }
+
+    [Fact]
+    public void Compute_人工對應的device在裝置鏡像_照舊入範圍且無警告()
+    {
+        var (store, hostStore, settings, sentinels) = SeedComposition();
+
+        var result = Compute(store, hostStore, settings, sentinels);
+
+        Assert.Contains(5L, result.DeviceObjids);
+        Assert.Equal(0, result.ManualMissingInMirror);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
     public void Compute_全空_回空集合且四個計數皆為零()
     {
         var store = CreateStore();

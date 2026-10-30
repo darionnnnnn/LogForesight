@@ -76,6 +76,7 @@
 | E7 | Sonnet | 日層級指派依序套用抑制、已知雜訊、不再打擾、靜音四道閘門，略過原因帶進預覽 DTO、寫入回應與處理面板文字 | 代理：後端兩條改動前紅、三個突變各紅；主代理重跑 881 綠 4 略過（既有） | 雜訊用 `INoiseMarkStore.Get`（同鍵比對）、不再打擾用 `DismissedKeys`（改 internal）、靜音用 `IIssueExclusionSource`；三個相依為選用參數 → 主代理補 `DayHandlingGateWiringTests` 以正式 DI 解析守住都有注入（突變紅） |
 | E8 | Sonnet | 說明書第 5 章改名「處理狀態與交辦單」、小節改「成員與跨日問題」、「案件授與」改「交辦授與」，引用章名同步；`.ai.md` 加「畫面上稱為交辦；舊稱案件」；manifest keywords 保留「案件」並加「交辦授與」「成員」 | 主代理重跑 `Help` 71 綠；使用者版 `.md` 的「案件」0 處 | 主代理修正一句不精確改寫：問題結案後再出現是「新的成員，掛進進行中的單或開新單」，不一定開新單；第 16 章補「目前沒有進行中的交辦」提示（對齊 E6 畫面） |
 | E12 | 主代理 | WEB-SPEC：§9.1 還原被拆開的項目符號、排序段改現況；用詞表補處理人側「交辦」與守門；日層級指派補四道閘門；待派移除 `disabled`、補試跑說明與立即派工來源；夜間掛接補 `related_warning_active`、`open_case_exists` 與空單收尾、摘要句；單一列判定改為記憶體一份；API 表補 due-date；§9.6 scope 作用範圍與問題總數排除靜音；資料存取表補郵件帳本與負責人原子更新。BACKLOG：IssueKey 條改現況、並行競態條改為殘留項 | (D) 逐句比對；無測試讀文件內容 | IssueCaseCoordinator 類別摘要已在 E3 完成 |
+| F1 | Sonnet | 人工對應裝置不在鏡像不入範圍（`ManualMissingInMirror`＋警告），維護頁標「PRTG 已無此裝置」；分頁器第一頁形狀不對或讀到筆數少於 treesize 擲未收斂例外（messages 只出聲） | 代理：6 條改動前紅、treesize 突變 3 紅；主代理重跑 271 綠 | 鏡像是全站全量同步，無雞生蛋；`PrtgFetchService` 既有 catch 已走「記失敗不清除」不需改；鏡像全空時人工對應暫不入範圍，下次同步成功即恢復 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

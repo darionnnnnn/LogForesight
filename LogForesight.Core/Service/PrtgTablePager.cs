@@ -1,4 +1,5 @@
 using System.Text.Json;
+using NLog;
 
 namespace LogForesight.Core.Service;
 
@@ -9,6 +10,15 @@ namespace LogForesight.Core.Service;
 /// </summary>
 internal sealed class PrtgPagingNotConvergedException : Exception
 {
+    public PrtgPagingNotConvergedException(string content, int pages, int readRows, int duplicateRows, string? message)
+        : base(message)
+    {
+        Content = content;
+        Pages = pages;
+        ReadRows = readRows;
+        DuplicateRows = duplicateRows;
+    }
+
     public PrtgPagingNotConvergedException(string content, int pages, int readRows, int duplicateRows)
         : base($"{content} 分頁未收斂：已翻 {pages} 頁、讀取 {readRows} 筆" +
                (duplicateRows > 0 ? $"（其中重複 {duplicateRows} 筆）" : "") + "仍未到結尾。" +
@@ -41,6 +51,8 @@ internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRo
 /// </summary>
 internal static class PrtgTablePager
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     internal const int DefaultPageSize = 5000;
     internal const int DefaultBatchSize = 500;
 
@@ -127,6 +139,11 @@ internal static class PrtgTablePager
                 !root.TryGetProperty(content, out var arrayProp) ||
                 arrayProp.ValueKind != JsonValueKind.Array)
             {
+                // 第一頁就不是預期形狀＝PRTG 回了錯誤物件／代理頁面，不是「沒有資料」；
+                // 靜默當成結尾會讓呼叫端把整個階段記成成功。後續頁形狀異常維持當作結尾。
+                if (pageIndex == 0)
+                    throw new PrtgPagingNotConvergedException(content, 0, 0, 0,
+                        $"{content} 第一頁回應不是預期的物件（缺少 {content} 陣列），無法判斷資料是否完整。");
                 break;
             }
 
@@ -226,6 +243,25 @@ internal static class PrtgTablePager
             totalMapped += buffer.Count;
             onBatch(buffer);
             buffer.Clear();
+        }
+
+        // treesize 比對：單發大查詢取不齊是靜默少一塊資料的典型來源（CLAUDE.md 紅線）。
+        // 已寫出的資料保留（冪等 upsert），但呼叫端必須把這階段記為失敗。
+        if (treeSize > 0 && readRows < treeSize && !stoppedEarly)
+        {
+            var shortMessage = $"{content} 只讀到 {readRows} 筆，少於 PRTG 回報的 treesize {treeSize} 筆";
+            if (string.Equals(content, "messages", StringComparison.Ordinal))
+            {
+                // messages 搭配 filter_drel 時 treesize 是否為過濾後筆數尚未證實，只出聲、不擲例外
+                var warn = $"  ⚠ {shortMessage}（treesize 在帶時間篩選時語意未證實，僅提醒）。";
+                console.WriteLine(warn);
+                Log.Warn("{Message}", warn);
+            }
+            else
+            {
+                throw new PrtgPagingNotConvergedException(content, pageIndex, readRows, duplicateRows,
+                    $"{shortMessage}，資料可能被截斷，沒讀到的不能當成已刪除。");
+            }
         }
 
         return new PrtgPagerResult(totalMapped, readRows, duplicateRows, pageIndex, stoppedEarly);

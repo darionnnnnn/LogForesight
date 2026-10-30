@@ -1298,7 +1298,8 @@ public class SettingsController : ControllerBase
                 Note = m.Note,
                 CreatedBy = m.CreatedBy,
                 CreatedAt = m.CreatedAt,
-                SameIpSkippedCount = skipped
+                SameIpSkippedCount = skipped,
+                MissingInMirror = !deviceByObjid.ContainsKey(m.DeviceObjid)
             };
         }).OrderBy(m => m.DeviceObjid).ToList();
 

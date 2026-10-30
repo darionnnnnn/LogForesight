@@ -194,6 +194,15 @@ public sealed class PrtgAdminPageUiTests
     }
 
     [Fact]
+    public void 人工對應列表_裝置已不在PRTG鏡像時顯示標示且以textContent呈現()
+    {
+        var js = Script();
+        Assert.Contains("PRTG 已無此裝置", js);
+        Assert.Contains("missingInMirror", js);
+        Assert.DoesNotContain("innerHTML = `", js.Substring(js.IndexOf("function renderManualMaps", StringComparison.Ordinal), 2500));
+    }
+
+    [Fact]
     public void E3_鏡像狀態腳本改走主機端端點_舊分支與欄位已移除_原因都有中文()
     {
         var js = Script();

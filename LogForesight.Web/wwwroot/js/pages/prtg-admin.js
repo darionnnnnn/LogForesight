@@ -1718,6 +1718,12 @@ function renderManualMaps(items) {
                         span.textContent = `（同 IP 另有 ${item.sameIpSkippedCount} 台 device 已略過）`;
                         note.appendChild(span);
                     }
+                    if (item.missingInMirror) {
+                        const gone = document.createElement('span');
+                        gone.className = 'badge text-bg-warning ms-1';
+                        gone.textContent = 'PRTG 已無此裝置';
+                        note.appendChild(gone);
+                    }
                     return note;
                 }
             },
