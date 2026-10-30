@@ -625,4 +625,23 @@ public class SentinelQueryBuilderTests
     {
         Assert.Equal(expected, SentinelQueryBuilder.ParseGranularity(input));
     }
+
+    [Fact]
+    public void BuildIpClause_只放行合法IPv4_壞值不進子句()
+    {
+        var clause = SentinelQueryBuilder.BuildIpClause(new[] { "10.0.0.1", "2001:db8::1", "10.1", "abc" });
+
+        Assert.Contains("10.0.0.1", clause);
+        Assert.DoesNotContain("2001", clause);
+        Assert.DoesNotContain("abc", clause);
+        Assert.DoesNotContain("repip:10.1)", clause);
+        Assert.DoesNotContain(" OR ", clause);   // 只剩一個合法位址
+    }
+
+    [Fact]
+    public void BuildIpClause_全部不合法_擲ArgumentException不建空子句()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            SentinelQueryBuilder.BuildIpClause(new[] { "2001:db8::1", "abc" }));
+    }
 }

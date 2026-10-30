@@ -289,6 +289,19 @@ public class NetiqPipelineService
         var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
         var linuxTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)).ToList();
 
+        // 作業系統標記不是 windows／linux 的目標沒有對應的查詢形狀，無法查詢：逐台出聲而不是靜默略過
+        // （TotalHosts 有算它們，不講就變成「清單上有、查詢裡沒有」）。這些主機沒有進任何計畫，
+        // 不進進度分母（HostDaysTotal 只累加計畫內的缺漏日），所以不影響進度到 100%；
+        // 也不計入「已完成跳過」——那個計數的語意是「已有分析紀錄」，混進去會讓使用者誤以為它們分析過了。
+        foreach (var t in targets.Where(t =>
+                     !string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase) &&
+                     !string.Equals(t.Os, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)))
+        {
+            _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
+            _console.WriteLine($"  ⚠ [{sentinel.Name}] 主機 {t.HostName} 的作業系統標記 {t.Os} 無法辨識，未查詢");
+            result.AddWarning($"主機 {t.HostName} 的作業系統標記 {t.Os} 無法辨識，未查詢");
+        }
+
         if (windowsTargets.Count > 0)
         {
             await RunServerOsGroupAsync(sentinel, windowsTargets, WebHost.OsWindows, trendWindowDays, result, suppressionSnapshot, ct);
@@ -305,6 +318,21 @@ public class NetiqPipelineService
         Sentinel sentinel, List<NetiqTarget> targets, string os, int trendWindowDays, NetiqPipelineResult result,
         List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
+        // 位址不是合法 IPv4 的主機不進查詢：壞值會被原樣插進 Lucene，讓同批其他主機一起被 Sentinel 拒絕。
+        // 在計畫階段就濾掉，所以它們不進進度分母（HostDaysTotal 只累加計畫內的缺漏日），進度仍能到 100%。
+        var unqueryable = targets.Where(t => !SentinelQueryBuilder.IsValidIpv4(t.IpAddress)).ToList();
+        foreach (var t in unqueryable)
+        {
+            _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
+            _console.WriteLine($"  ⚠ [{sentinel.Name}] 主機 {t.HostName} 的位址 {t.IpAddress} 不是 IPv4，未查詢");
+            result.AddWarning($"主機 {t.HostName} 的位址 {t.IpAddress} 不是 IPv4，未查詢");
+        }
+        if (unqueryable.Count > 0)
+        {
+            targets = targets.Except(unqueryable).ToList();
+            if (targets.Count == 0) return;
+        }
+
         var osLabel = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase) ? "Linux" : "Windows";
         _console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 {osLabel} 主機");
 

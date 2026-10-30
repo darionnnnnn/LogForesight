@@ -754,8 +754,9 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         return baseNote + "（兩個窗口內都完全沒有事件回報的主機，事件掃描原理上看不到。）";
     }
 
-    /// <summary>合法且去重的已登錄 IP；超過子句上限就整組放棄排除——
-    /// 退回一般掃描只是比較慢，送出超長 filter 則是整趟失敗。</summary>
+    /// <summary>合法且去重的已登錄 IP。不在全域總數上設上限：排除清單送出前已依段過濾
+    /// （單段 ≤254，且 <see cref="ScanState.SegmentExclusionOrNull"/> 有段內閘門），
+    /// 總數大（2000 台規模）時整組放棄只會讓重掃失去「已登錄主機不重掃」的效果。</summary>
     private static IReadOnlyList<string> NormalizeKnownIps(IReadOnlyCollection<string>? knownIps)
     {
         if (knownIps is null || knownIps.Count == 0) return Array.Empty<string>();
@@ -766,9 +767,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // 分段掃描後排除清單改依 /24 網段過濾（單段最多 254 台），此處 > ExclusionClauseLimit
-        // 的整組放棄分支實務上已幾乎不會觸發，保留作為全域輸入驗證的防禦性第二道閘門。
-        return normalized.Count > ExclusionClauseLimit ? Array.Empty<string>() : normalized;
+        return normalized;
     }
 
     /// <summary>單一分段掃描的產出（以分段索引固定收集，確保合併決定性）</summary>

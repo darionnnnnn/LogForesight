@@ -166,6 +166,14 @@ public class SentinelEventFetchService : ISentinelEventFetcher
     internal static LiveFetchQuery BuildQuery(string os, string ip, string source, int eventId)
     {
         var isLinux = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
+        // 位址不是 IPv4 時不組查詢（BuildIpClause 只放行 IPv4，全不合法會擲例外）；
+        // 與下方不安全 program 同一種處理：回 Filter 為空字串的「不查詢」結果，由呼叫端視為查不到。
+        if (!SentinelQueryBuilder.IsValidIpv4(ip))
+        {
+            Log.Debug("主機位址不是 IPv4，略過現場取數：{Ip}", ip);
+            return new LiveFetchQuery(string.Empty, Array.Empty<string>(),
+                isLinux ? SentinelFieldMap.LinuxProgram : SentinelFieldMap.Source);
+        }
         // Linux 的 program 來自事件內容（攻擊者可控），要放進未加引號的 Lucene 前綴查詢，
         // 只放行安全字元；不符則回 Filter 為空字串的「不查詢」結果，由呼叫端視為查不到。
         if (isLinux && !SafeProgramPattern.IsMatch(source ?? string.Empty))

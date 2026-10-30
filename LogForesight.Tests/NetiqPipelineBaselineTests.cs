@@ -708,6 +708,48 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
         Assert.Single(store.ReadRecent(DateTime.Today.AddDays(-1), 1));
     }
+
+    /// <summary>位址不是合法 IPv4 的主機不進查詢子句（否則同批主機會被 Sentinel 整批 400 拒絕），
+    /// 並逐台出聲；合法主機照常分析，失敗數不受影響。</summary>
+    [Fact]
+    public async Task 位址非IPv4的主機不進查詢且出現警告_其餘主機照常分析()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-OK");
+        AddWindowsHost(sentinel, "2001:db8::1", "HOST-V6");
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Contains("主機 HOST-V6 的位址 2001:db8::1 不是 IPv4，未查詢", result.Warnings);
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+        Assert.Equal(result.HostDaysTotal, result.HostDaysDone);   // 被濾掉的主機不進分母，進度能到 100%
+        var request = Assert.Single(_client.Requests);
+        Assert.Contains("10.0.0.1", request.Filter);
+        Assert.DoesNotContain("db8", request.Filter);
+    }
+
+    /// <summary>作業系統標記不是 windows／linux 的主機沒有對應查詢形狀：逐台警告、完全不查詢。</summary>
+    [Fact]
+    public async Task 作業系統標記無法辨識的主機出現警告且不查詢()
+    {
+        var sentinel = AddSentinel();
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "HOST-AIX", IpAddress = "10.0.0.7", Os = "aix",
+            SentinelId = sentinel.SentinelId, NetiqServer = sentinel.Name, Source = "netiq", Active = true
+        });
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Contains("主機 HOST-AIX 的作業系統標記 aix 無法辨識，未查詢", result.Warnings);
+        Assert.Empty(_client.Requests);
+        Assert.Equal(0, result.HostDaysAnalyzed);
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Equal(result.HostDaysTotal, result.HostDaysDone);
+    }
 }
 
 /// <summary>把輸出行存進呼叫端提供的清單，供測試檢查文字內容（如平行度、警告訊息）。</summary>
