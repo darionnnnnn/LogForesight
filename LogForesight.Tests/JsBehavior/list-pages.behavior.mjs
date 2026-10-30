@@ -125,6 +125,7 @@ function makeReports() {
         let currentData = null;
         let retentionDays = 90;
         let currentScope = 'all';
+        let requestedScope = null;
         let visibleDayRisk = null;
         const SCOPE_LABEL = {};
         const reportGuard = createSeqGuard();

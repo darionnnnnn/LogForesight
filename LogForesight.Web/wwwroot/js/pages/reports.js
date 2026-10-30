@@ -132,6 +132,8 @@ function renderChartPickerBody() {
 
 // 處理狀態顯示範圍（§5）：單選，存 URL（可分享）；不入 localStorage——報表以「全部」為誠實預設
 let currentScope = new URLSearchParams(location.search).get('handlingScope') || 'all';
+// 使用者點了 chip 但尚未載入成功的範圍：查詢先用它，成功後才成為 currentScope、chip 才亮起
+let requestedScope = null;
 
 /**
  * 區間檢查先做、再放骨架列（回饋第 45 輪 B7）：這頁的 summary 是全站最慢的查詢之一，
@@ -143,6 +145,10 @@ async function load() {
     const to = document.getElementById('report-to').value;
 
     if (from && to) {
+        if (from > to) {
+            toast('起日不可晚於迄日，請調整日期範圍', 'danger');
+            return;
+        }
         const fromDate = new Date(from);
         const toDate = new Date(to);
         const diffDays = Math.round((toDate - fromDate) / 86400000) + 1;
@@ -154,13 +160,15 @@ async function load() {
 
     const kpiContainer = document.getElementById('report-kpi');
     renderLoading(kpiContainer, 4);
-    await guardLoad(kpiContainer, loadReport);
+    // loadReport 成功渲染才回傳 true；失敗或被新查詢取代時 chip 不動，維持上一次成功的範圍
+    if (await guardLoad(kpiContainer, loadReport)) syncScopeChips();
 }
 
 const reportGuard = createSeqGuard();   // 連按查詢或切換範圍時，慢的舊回應不得蓋掉新結果
 
 /** 實際的取數與渲染；失敗與重試由 load() 的 guardLoad 負責 */
 async function loadReport() {
+    const scope = requestedScope ?? currentScope;
     const from = document.getElementById('report-from').value;
     const to = document.getElementById('report-to').value;
     const compare = document.getElementById('report-compare').value;
@@ -171,7 +179,7 @@ async function loadReport() {
     try {
         [data, displaySettings] = await Promise.all([
             // 報表允許 366 天區間、非「全部」範圍走記憶體推導，大站台會超過預設 60 秒
-            api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`, { timeoutMs: 180000 }),
+            api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${scope}&compare=${compare}`, { timeoutMs: 180000 }),
             getDisplaySettings()
         ]);
     } catch (err) {
@@ -184,7 +192,9 @@ async function loadReport() {
     currentData = data;
     retentionDays = data.retentionDays ?? retentionDays;
     updateYoyOptionLabel();
+    // 範圍只在載入成功後才生效，失敗時 chip 與 currentScope 都維持上一次成功的狀態
     currentScope = data.handlingScope || 'all';
+    requestedScope = null;
     visibleDayRisk = new Set(displaySettings?.visibleDayRiskLevels ?? ['高', '中', '低']);
 
     // 同步 URL（可複製分享）：scope=all 時不留參數，保持網址乾淨
@@ -199,6 +209,7 @@ async function loadReport() {
     // scope≠all 時「處理進度」小圖無資訊量（母體已抽掉已處理）——由 applyChartVisibility 統一隱藏
     renderKpi();
     renderVisibleCharts();
+    return true;
 }
 
 const SCOPE_LABEL = { unresolved: '未結案', open: '未處理', unassigned: '未指派' };
@@ -807,17 +818,17 @@ document.getElementById('btn-print-report').addEventListener('click', () => wind
 document.getElementById('report-scope-chips').addEventListener('click', event => {
     const btn = event.target.closest('button[data-scope]');
     if (!btn || btn.classList.contains('active')) return;
-    for (const other of document.querySelectorAll('#report-scope-chips button')) {
-        other.classList.toggle('active', other === btn);
-    }
-    currentScope = btn.dataset.scope;
+    requestedScope = btn.dataset.scope;
     load();
 });
 
-// 進頁時把 active chip 對齊 URL 帶入的 scope
-for (const btn of document.querySelectorAll('#report-scope-chips button')) {
-    btn.classList.toggle('active', btn.dataset.scope === currentScope);
+/** chip 的 active 一律對齊 currentScope（進頁與每次載入成功後呼叫） */
+function syncScopeChips() {
+    for (const btn of document.querySelectorAll('#report-scope-chips button')) {
+        btn.classList.toggle('active', btn.dataset.scope === currentScope);
+    }
 }
+syncScopeChips();
 
 let userSelectedCompare = false;
 

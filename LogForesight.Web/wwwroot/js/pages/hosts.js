@@ -253,15 +253,26 @@ function setupGroupChips() {
  * 目前的篩選條件（不含分頁）。清單查詢與「全選符合篩選」共用同一份組裝——
  * 兩邊各組一次的話，畫面說「符合 N 台」與實際全選到的可能是不同的一批（體檢 X3）。
  */
+function activeFilterEntries() {
+    const entries = [];
+    const keyword = searchInput.value.trim();
+    if (keyword) entries.push(['query', keyword]);
+    if (statusMode) entries.push(['status', statusMode]);
+    if (sentinelFilter.value) entries.push(['sentinel', sentinelFilter.value]);
+    if (groupFilter.size > 0) entries.push(['groupIds', [...groupFilter].join(',')]);
+    if (osFilter) entries.push(['os', osFilter]);
+    if (prtgMapFilter) entries.push(['prtgMap', prtgMapFilter]);
+    return entries;
+}
+
+/** 是否有任何篩選條件生效；與 currentFilterParams 共用同一份條件清單，新增篩選時兩處不會漏一邊 */
+function hasActiveFilter() {
+    return activeFilterEntries().length > 0;
+}
+
 function currentFilterParams() {
     const params = new URLSearchParams();
-    const keyword = searchInput.value.trim();
-    if (keyword) params.set('query', keyword);
-    if (statusMode) params.set('status', statusMode);
-    if (sentinelFilter.value) params.set('sentinel', sentinelFilter.value);
-    if (groupFilter.size > 0) params.set('groupIds', [...groupFilter].join(','));
-    if (osFilter) params.set('os', osFilter);
-    if (prtgMapFilter) params.set('prtgMap', prtgMapFilter);
+    for (const [key, value] of activeFilterEntries()) params.set(key, value);
     params.set('sort', sort.key);
     params.set('dir', sort.dir);
     return params;
@@ -334,7 +345,7 @@ async function selectAllMatching(button) {
 function render() {
     document.getElementById('host-count').textContent = `共 ${lastResult.total} 台`;
 
-    const hasFilter = !!(searchInput.value.trim() || statusMode || sentinelFilter.value || groupFilter.size > 0 || osFilter);
+    const hasFilter = hasActiveFilter();
 
     renderTable(listContainer, {
         columns: [

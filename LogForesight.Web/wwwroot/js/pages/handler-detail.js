@@ -29,7 +29,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
-import { statusBadgeMeta } from '../core/handling-statuses.js';
+import { statusBadgeMeta, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -51,9 +51,6 @@ const ADVANCED_OPEN_KEY = 'lf-handler-advanced-open';
 
 // 剛回覆而結案的列先淡化多久再重繪（讓人看得到「這張結案了」，不是突然消失）
 const DONE_ROW_DELAY_MS = 1200;
-
-// 處理人可排定的期限最遠天數（與後端 WorkOrderReplyService.MaxDueDateDays 相同）
-const MAX_DUE_DATE_DAYS = 90;
 
 // 來源名稱對照（同 work-orders.js）
 const ORIGIN_LABELS = {

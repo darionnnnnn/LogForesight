@@ -22,6 +22,12 @@ import { evaluateScheduledAcceptance } from '../core/prtg-acceptance.js';
 bindTabs(document.getElementById('prtg-tabs'), { hash: true });
 
 let scopeRevision = null;
+// 寫入前檢查取數範圍版本已載入；尚未載入就送出會讓後端以空版本比對，故在此擋下。
+function requireScopeRevision() {
+    if (scopeRevision !== null && scopeRevision !== undefined) return true;
+    toast('取數範圍尚未載入完成，請稍候再試', 'warning');
+    return false;
+}
 // 最近一次排程驗收的三個來源：undefined＝讀取中、null＝讀取失敗（見 core/prtg-acceptance.js）
 const setupState = {
     settings: null, settingsLoading: true, probe: null, sync: null, rules: null, schedule: null,
@@ -608,7 +614,7 @@ function bindFullBackfill() {
             fullBackfillPreview = null;
             result.replaceChildren(document.createTextNode('已啟動全量歷史回填。執行進度與停止控制位於 Runs 頁的 PRTG 狀態卡：'));
             const runsLink = document.createElement('a');
-            runsLink.href = result.dataset.runsUrl || '/runs';
+            runsLink.href = result.dataset.runsUrl;
             runsLink.textContent = '查看進度／停止作業';
             result.appendChild(runsLink);
             toast('已開始全量歷史回填。', 'success');
@@ -1506,6 +1512,7 @@ function mirrorAssignExcludeActions(item) {
         excludeBtn.title = '此 device 沒有 IP';
     } else {
         excludeBtn.addEventListener('click', async () => {
+            if (!requireScopeRevision()) return;
             const sameIpDeviceTotal = (item.sameIpDevices && item.sameIpDevices.length > 0) ? item.sameIpDevices.length : 1;
             const confirmed = await confirmAction({
                 message: `將排除 IP ${item.ip}：此 IP 底下的 ${sameIpDeviceTotal} 台 PRTG device 都不會再進行主機對應與取數。`
@@ -1677,6 +1684,7 @@ function renderIpExcludes(items) {
                     removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
                     removeBtn.textContent = '移除';
                     removeBtn.addEventListener('click', async () => {
+                        if (!requireScopeRevision()) return;
                         const confirmed = await confirmAction({
                             message: `確定要移除 IP ${item.ip} 的排除設定嗎？移除後此 IP 會恢復自動對應。`
                         });
@@ -1738,6 +1746,7 @@ function renderManualMaps(items) {
                     removeBtn.className = 'btn btn-sm btn-outline-danger py-0 text-nowrap';
                     removeBtn.textContent = '移除';
                     removeBtn.addEventListener('click', async () => {
+                        if (!requireScopeRevision()) return;
                         const confirmed = await confirmAction({
                             message: `確定要移除 PRTG device ${item.deviceObjid} 的人工主機對應嗎？移除後此 device 會回到自動 IP 對應判定。`
                         });
@@ -1945,6 +1954,7 @@ function bindHostAssignModal() {
             toast('請先搜尋並選擇一台 PRTG 裝置', 'warning');
             return;
         }
+        if (!requireScopeRevision()) return;
         const note = document.getElementById('prtg-host-assign-note').value.trim() || null;
         const restore = withBusy(submitBtn, '指派中');
         try {
@@ -1988,6 +1998,7 @@ function bindAssignForm() {
             targetHostId = Number(hostSelectVal);
         }
 
+        if (!requireScopeRevision()) return;
         const note = document.getElementById('prtg-assign-note').value.trim() || null;
 
         const restore = withBusy(submitBtn, '指派中');
@@ -2066,6 +2077,7 @@ function bindConflictBatchControls() {
                 toast('請選擇目標主機', 'warning');
                 return;
             }
+            if (!requireScopeRevision()) return;
             const targetHostId = Number(hostIdVal);
             const selectedHostText = hostSelect.options[hostSelect.selectedIndex]?.textContent || `主機 #${targetHostId}`;
 

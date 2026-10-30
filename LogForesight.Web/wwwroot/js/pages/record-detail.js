@@ -197,7 +197,7 @@ async function load() {
 
 /** 批次套用成功後：重載頁面，已知雜訊另接治本提議（建立抑制規則） */
 async function onBatchSaved(result) {
-    await load();
+    await guardLoad(document.getElementById('detail-issues'), load);
     if (result?.status === 'known_noise') await offerBatchSuppression(result.issueKeys);
 }
 
@@ -2311,13 +2311,14 @@ async function loadReports() {
     riskReportPendingNotice.textContent = currentDetail.hasReport
         ? '風險報告待補，背景自動重試；舊報告仍保留。'
         : '風險報告待補，背景自動重試；目前沒有已保存的報告。';
-    // 兩份報告各自可有可無，分開請求；任一份查無（已過保留期）不影響另一份
+    // 兩份報告各自可有可無，分開請求；任一份查無或失敗（已過保留期、暫時錯誤）都只讓該份顯示為空，
+    // 不得拖垮整個 load（否則 setupNextUnhandled 也不會跑）
     const [risk, checkup] = await Promise.all([
         currentDetail.hasReport
-            ? api.get(`/api/records/${hostId}/${date}/report`)
+            ? api.get(`/api/records/${hostId}/${date}/report`).catch(() => null)
             : Promise.resolve(null),
         currentDetail.weeklyCheckup?.hasReport
-            ? api.get(`/api/records/${hostId}/${date}/report?kind=weekly_checkup`)
+            ? api.get(`/api/records/${hostId}/${date}/report?kind=weekly_checkup`).catch(() => null)
             : Promise.resolve(null)
     ]);
 

@@ -175,7 +175,8 @@ function actionBadge(action) {
 applyButton.addEventListener('click', async () => {
     const confirmed = await confirmAction({
         title: `套用${KIND_NAMES[currentKind] ?? currentKind}匯入`,
-        message: `將新增 ${currentPlan.addCount} 筆、更新 ${currentPlan.updateCount} 筆資料。`,
+        message: `將新增 ${currentPlan.addCount} 筆、更新 ${currentPlan.updateCount} 筆資料。` +
+            (currentKind === 'Owners' ? '檔案中出現的主機，既有負責人會被整組取代。' : ''),
         confirmText: '套用',
         confirmVariant: 'primary'
     });

@@ -10,6 +10,9 @@ export const HANDLING_STATUSES = [
     { value: 'known_noise',    label: '已知雜訊',             shortLabel: '已知雜訊', variant: 'secondary', closed: true,  replyable: true,  noteRequired: false, noteLabel: '備註（選填，供日後回頭確認判斷依據）' }
 ];
 
+/** 處理人可排定的預計完成日／期限最遠天數；與後端 WorkOrderReplyService.MaxDueDateDays 相同，改一邊要改另一邊 */
+export const MAX_DUE_DATE_DAYS = 90;
+
 export function statusMeta(value) { return HANDLING_STATUSES.find(s => s.value === value) ?? null; }
 
 /** 依條件取出目錄的子集（各頁的「只列結案類」「只列可回覆的」等篩選一律走這裡，不再寫死值與名稱） */

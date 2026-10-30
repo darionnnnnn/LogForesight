@@ -11,8 +11,8 @@
 import { api, getCurrentUser } from '../core/api.js';
 import { toast, withBusy, showDetailModal, confirmAction, bindPastDateCheck } from '../core/ui.js';
 import { attachNoteEditor } from '../core/note-editor.js';
-import { statusMeta, statusesWhere } from '../core/handling-statuses.js';
-import { todayLocal } from '../core/format.js';
+import { statusMeta, statusesWhere, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
+import { todayLocal, toLocalDateString } from '../core/format.js';
 
 /**
  * 處理人可回覆的狀態：由 core/handling-statuses.js 的 replyable 衍生（不含「未處理」——
@@ -124,6 +124,10 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
     dueInput.id = 'wo-reply-due';
     dueInput.type = 'date';
     dueInput.min = todayLocal();   // 不可早於今天（本機日期；bindPastDateCheck 仍負責手打的情況）
+    const dueMaxDate = new Date();
+    dueMaxDate.setDate(dueMaxDate.getDate() + MAX_DUE_DATE_DAYS);
+    const dueMax = toLocalDateString(dueMaxDate);
+    dueInput.max = dueMax;   // 後端最多只收今天起 90 天內；手打超過的情況在送出前擋下
     dueInput.className = 'form-control form-control-sm mb-3';
     const dueError = document.createElement('div');
     dueError.className = 'invalid-feedback d-block';
@@ -179,6 +183,11 @@ export function openWorkOrderReplyModal({ title, targetText, draftKey, submit, o
             errors.push(noteInput);
         }
         if (!dueCheck.validate()) errors.push(dueInput);
+        else if (needsDue() && dueInput.value > dueMax) {
+            dueInput.classList.add('is-invalid');
+            dueError.textContent = `預計完成日最多只能設在 ${MAX_DUE_DATE_DAYS} 天內`;
+            errors.push(dueInput);
+        }
         if (statusSelect.value === 'observing' && !dueInput.value) {
             dueInput.classList.add('is-invalid');
             dueError.textContent = '標記為「觀察中」時請指定觀察至日期';

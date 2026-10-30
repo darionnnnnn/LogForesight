@@ -37,7 +37,8 @@ async function loadManual() {
     renderNav();
 
     const hashId = location.hash.replace(/^#/, '');
-    selectChapter(chapterById.has(hashId) ? hashId : chapters[0]?.id);
+    // 首次載入不捲動：頁面一開就跳到內文會讓人看不到頁首；只有換章（點擊、hashchange）才捲
+    selectChapter(chapterById.has(hashId) ? hashId : chapters[0]?.id, { scroll: false });
 
     loadAskAvailability();   // 獨立打，失敗不擋住章節內容（同 settings.js 的 backfill 狀態慣例）
 }
@@ -57,7 +58,7 @@ function renderNav() {
     }
 }
 
-function selectChapter(id) {
+function selectChapter(id, { scroll = true } = {}) {
     const chapter = chapterById.get(id);
     if (!chapter) return;
 
@@ -72,7 +73,7 @@ function selectChapter(id) {
     renderChapterContent(chapter);
     renderRelated(chapter);
 
-    document.getElementById('help-chapter-content').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (scroll) document.getElementById('help-chapter-content').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 /** 章名已在卡片標題（h2）顯示，內文開頭的「# 章名」再印一次只會讓層次變平，渲染前拿掉 */
