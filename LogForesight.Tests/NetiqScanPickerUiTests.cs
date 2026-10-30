@@ -85,4 +85,13 @@ public class NetiqScanPickerUiTests
         var callMatches = Regex.Matches(content, @"(?<!function\s)pickerHint\(");
         Assert.Equal(3, callMatches.Count);
     }
+
+    [Fact]
+    public void F5_精靈輪詢應累計連續失敗次數且文案不含案件()
+    {
+        var content = File.ReadAllText(GetWizardJsPath());
+        Assert.Contains("consecutiveFailures >= 3", content);
+        Assert.Contains("暫時無法取得掃描進度，請稍後重新開啟精靈", content);
+        Assert.DoesNotContain("案件", content);
+    }
 }

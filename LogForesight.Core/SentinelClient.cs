@@ -272,10 +272,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         {
             try
             {
-                using var req = new HttpRequestMessage(HttpMethod.Delete, $"{AuthTokensUrl}/{Uri.EscapeDataString(_token)}");
-                req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
-                    Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_server.Username}:{_server.Password}")));
-                using var resp = await SendHttpAsync(req, cleanupToken);
+                await DeleteTokenAsync(_token, cleanupToken);
             }
             catch (Exception ex)
             {

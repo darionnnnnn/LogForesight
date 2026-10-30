@@ -82,6 +82,7 @@
 | F3b | Sonnet | 範圍柵欄 `ReadCore` 加 `includeRules`：`Read()` 字串格式不變（golden 測試），`ReadStructural`／`ReadRawSemantic` 不含規則，結構同步改用 `ReadStructural`；結構同步 0 台判失敗並提示；一般例外也保存失敗狀態；結構同步、回填、探測的 `PrtgOperationScope` 移入 try | 代理：四個突變各紅；主代理重跑 476 綠 | 兩個柵欄字串只在操作期間於記憶體比對、未持久化，升級不受影響；建構擲例外無公開觸發方式，以結構保證與一般例外測試涵蓋；主代理還原一個被誤加的 BOM |
 | F4a | Haiku | NetIQ 新增主機對既有主機沿用未提供的 Sentinel／描述（同 BulkAddHosts 判定）；主機與 Sentinel 啟停改以既有物件複本更新 | 代理：兩條改動前紅、五個突變各紅；主代理重跑 362 綠 | 保留既有語意：停用保留孤兒標記、人工重新啟用才清除（加守門測試）；Sentinel 啟停原本已逐欄帶入，改複本後行為不變 |
 | F4b | Sonnet | `BuildIpClause` 只放行合法 IPv4（全不合法擲例外）；pipeline 對非 IPv4 位址與無法辨識的 Os 逐台警告、不查詢、標未完整；`NormalizeKnownIps` 移除總數上限、保留段內閘門 | 代理：新測試改動前紅、四個突變各紅；主代理重跑 384 綠 | 被濾掉的主機不進進度分母（不卡在 100% 前）；刻意不計入「已完成跳過」以免誤導；主代理補現場取數單台查詢位址非 IPv4 回空查詢而非擲例外（加 Theory，拿掉即紅）；`IsValidIpv4` 收緊為每段 1～3 位純數字 |
+| F5 | Sonnet | 掃描精靈輪詢：只有後端回「工作不存在或已逾期」（實為 400＋`validation_failed`，相容 404）才停並關精靈，其他錯誤連續 3 次才停並提示、成功歸零；重新認證前 best-effort 登出舊 token（5 秒、例外只記 Debug） | 代理：Sentinel 兩案與行為四案改動前紅、兩個突變各紅；主代理重跑 432 綠 | 連續失敗收尾保留 jobId，重開精靈走既有接續路徑；主代理把登出請求抽成 `DeleteTokenAsync`，結束登出與重新認證前登出共用 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

@@ -163,6 +163,72 @@ public class SentinelClientTests
         Assert.Equal(SentinelJobState.Completed, result.State);
     }
 
+    private static StubHandler ReauthStub(HttpStatusCode deleteStatus, List<string> log)
+    {
+        var handler = new StubHandler();
+        var authCalls = 0;
+        var jobCreateCalls = 0;
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+            {
+                authCalls++;
+                log.Add($"POST auth -> tok-{authCalls}");
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"Token\":\"tok-{authCalls}\"}}"));
+            }
+            if (req.Method == HttpMethod.Delete && url.StartsWith(AuthUrl() + "/"))
+            {
+                log.Add($"DELETE {url[(AuthUrl().Length + 1)..]}");
+                return Task.FromResult(new HttpResponseMessage(deleteStatus));
+            }
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl())
+            {
+                jobCreateCalls++;
+                if (jobCreateCalls == 1)
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                return Task.FromResult(JsonResponse(HttpStatusCode.Created, "{}", locationHeader: JobUrl("1")));
+            }
+            if (req.Method == HttpMethod.Get && url == JobUrl("1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    "{\"status\":2,\"found\":0,\"avail\":0,\"results\":null}"));
+            if (req.Method == HttpMethod.Delete)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+        return handler;
+    }
+
+    [Fact]
+    public async Task token過期重新認證前_先登出舊token再登入()
+    {
+        var log = new List<string>();
+        var handler = ReauthStub(HttpStatusCode.OK, log);
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var result = await client.SearchAsync(new SentinelSearchRequest("evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+
+        Assert.Equal(SentinelJobState.Completed, result.State);
+        Assert.Equal(1, log.Count(l => l == "DELETE tok-1"));
+        var deleteIdx = log.IndexOf("DELETE tok-1");
+        var secondLoginIdx = log.IndexOf("POST auth -> tok-2");
+        Assert.True(deleteIdx >= 0 && secondLoginIdx > deleteIdx, "必須先登出舊 token 再重新登入：" + string.Join(" | ", log));
+    }
+
+    [Fact]
+    public async Task 登出舊token回500_重新認證仍成功()
+    {
+        var log = new List<string>();
+        var handler = ReauthStub(HttpStatusCode.InternalServerError, log);
+
+        await using var client = new SentinelClient(Server(), Settings(retryCount: 0), handler);
+        var result = await client.SearchAsync(new SentinelSearchRequest("evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+
+        Assert.Equal(SentinelJobState.Completed, result.State);
+        Assert.Contains("DELETE tok-1", log);
+        Assert.Contains("POST auth -> tok-2", log);
+    }
+
     [Fact]
     public async Task 重新認證後仍被拒_擲例外不無限重試()
     {
