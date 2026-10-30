@@ -20,7 +20,7 @@ public sealed class PrtgTriggeredValueFetcher
     /// 過去日沿用既有主機對應時往回找的天數（與歷史回填的「近 31 天」同一個窗）。
     /// PRTG 路徑的規則歸戶與觸發式取數共用，兩者看到的主機對應必須一致。
     /// </summary>
-    public const int HostMapLookbackDays = 31;
+    public const int HostMapLookbackDays = PrtgHostMapLookup.LookbackDays;
 
     /// <summary>觸發式取數輪詢迴圈的總時長上限（自進入迴圈起算）；到上限仍會做收尾掃描</summary>
     private static readonly TimeSpan MaxPollDuration = TimeSpan.FromHours(8);

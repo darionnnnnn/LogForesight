@@ -2631,7 +2631,7 @@ public sealed class EfPrtgStore
             .ToList();
     }
 
-    /// <summary>單台／多台版共用：回看窗內最近一個有對應資料的日期，無資料或窗長不合法回 null。</summary>
+    /// <summary>單台／多台版共用：回看窗內最近一個有對應資料的日期，無資料或窗長不合法回 null。選法與 <see cref="PrtgHostMapLookup.Select"/> 相同（SQL 端表達），兩處須一起改。</summary>
     private static DateTime? FindLatestHostMapDate(LfDbContext ctx, int maxLookbackDays, DateTime? anchor)
     {
         if (maxLookbackDays <= 0)
