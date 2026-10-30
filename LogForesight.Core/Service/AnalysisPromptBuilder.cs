@@ -5,9 +5,8 @@ using LogForesight.Core.Models;
 namespace LogForesight.Core.Service;
 
 /// <summary>
-/// 每日分析主 prompt 的組裝，與前置掃描（Other 類尾巴超出呈現上限時，先分批請 AI 逐項篩選）。
-/// 從 <see cref="LogAnalysisService"/> 抽出——這兩件事都是「餵給 AI 看什麼」的關注點，與
-/// AnalyzeDayAsync 本體的聚合/規則判定/寫入歷史流程分開。
+/// 每日分析主 prompt 的組裝。從 <see cref="LogAnalysisService"/> 抽出——「餵給 AI 看什麼」的關注點，
+/// 與統計段的聚合、規則判定、寫入歷史流程分開。
 /// </summary>
 internal class AnalysisPromptBuilder
 {
@@ -53,16 +52,6 @@ internal class AnalysisPromptBuilder
     private readonly IAiService _aiService;
 
     public AnalysisPromptBuilder(IAiService aiService) => _aiService = aiService;
-
-    /// <summary>
-    /// 超出主 prompt 呈現上限的 Other 類項目（前置掃描的對象；與 BuildPrompt 的分界一致）。
-    /// 2026-07-20 AI 角色轉換後限縮：規則已命中的尾巴不再掃描——靜態知識庫已涵蓋處置建議，
-    /// 不需要 AI 逐項篩選；只有 Other 類（未命中規則）才是 AI 唯一還需要判讀新型態問題的地方
-    /// （見 docs/archive/HISTORY.md），與 RiskReportService 深析限縮到 Other 類的原則一致。
-    /// 抑制或靜音中的問題不進前置掃描（與 BuildPrompt 的 others 排除口徑一致）。
-    /// </summary>
-    public static List<LogIssueSignature> GetTailIssues(List<LogIssueSignature> issues) =>
-        issues.Where(i => i.KnownIssue == null && !i.Suppressed).Skip(MaxOthersInPrompt).ToList();
 
     public static string BuildPrompt(DateTime date, List<LogIssueSignature> issues,
         int errorCount, int warningCount, int auditCount, List<DailyAnalysisRecord> history,
@@ -170,8 +159,7 @@ internal class AnalysisPromptBuilder
             {
                 AppendIssue(sb, i, history.Count, flagged: true);
             }
-            // 規則命中的尾巴不再前置掃描（2026-07-20 限縮，見 GetTailIssues）——靜態知識庫已涵蓋
-            // 處置建議，這裡固定顯示折疊統計行，不像 Other 類尾巴有掃描結果可以彙報
+            // 規則命中的尾巴不逐項列出：靜態知識庫已涵蓋處置建議，這裡固定顯示折疊統計行
             if (flagged.Count > MaxFlaggedInPrompt)
             {
                 var folded = flagged.Skip(MaxFlaggedInPrompt).ToList();

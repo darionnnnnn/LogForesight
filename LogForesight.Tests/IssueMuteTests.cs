@@ -241,18 +241,6 @@ public sealed class IssueMuteTests : IDisposable
         Assert.DoesNotContain("MutedRuleAppZq", prompt);
     }
 
-    [Fact]
-    public void 前置掃描尾巴_不含被抑制的問題()
-    {
-        var issues = Enumerable.Range(0, 200).Select(i => Issue(source: $"App{i}")).ToList();
-        foreach (var i in issues.Take(150)) i.Suppressed = true;
-
-        var tail = AnalysisPromptBuilder.GetTailIssues(issues);
-
-        Assert.DoesNotContain(tail, i => i.Suppressed);
-        Assert.Equal(AnalysisPromptBuilder.GetTailIssues(issues.Where(i => !i.Suppressed).ToList()).Count, tail.Count);
-    }
-
     // ── 派工脈絡 ───────────────────────────────────────────────────────────
 
     [Fact]
