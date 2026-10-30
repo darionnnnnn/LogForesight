@@ -198,4 +198,19 @@ public class RiskyEventStoreContractTests : IDisposable
 
         Assert.Equal(0, store.Prune(retentionDays: 14));
     }
+
+    [Fact]
+    public void Prune超過單次上限分批清除_第一次清maxRows筆_第二次清餘下5筆()
+    {
+        var store = new EfRiskyEventStore(_fx.NewContext);
+        var old = DateTime.Today.AddDays(-20);
+        const int maxRows = 20;
+        var events = Enumerable.Range(0, maxRows + 5)
+            .Select(i => Event(1, old, "disk", 153, "old-" + i)).ToList();
+        store.ReplaceDay(1, old, events);
+
+        Assert.Equal(maxRows, store.Prune(14, maxRows, 7));
+        Assert.Equal(5, store.Prune(14, maxRows, 7));
+        Assert.Equal(0, store.Prune(14, maxRows, 7));
+    }
 }

@@ -548,13 +548,20 @@ public class PermissionChangeStore
     /// 依它清理會讓剛匯入的資料一寫入就消失。重跑不會刷新 created_at（去重鍵讓明細列不重寫，
     /// 彙總列走 UpsertByDedupeKey 只更新描述性欄位），所以舊資料不會因重跑而續命。
     /// </summary>
-    public int Prune(int retentionDays)
+    public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
+
+    /// <summary>可注入單次上限與批次大小的清除（測試用）；走 <see cref="BatchedPrune"/> 只撈主鍵分批刪除。</summary>
+    internal int Prune(int retentionDays, int maxRows, int batchSize)
     {
         var cutoff = DateTime.Today.AddDays(-retentionDays);
-        using var ctx = _contextFactory();
-        return ctx.PermissionChanges
-            .Where(r => r.CreatedAt < cutoff)
-            .ExecuteDelete();
+        return BatchedPrune.Run<long>(
+            _contextFactory,
+            (ctx, take) => ctx.PermissionChanges.Where(r => r.CreatedAt < cutoff).OrderBy(r => r.Id).Select(r => r.Id).Take(take).ToList(),
+            (ctx, keys) => ctx.PermissionChanges.Where(r => keys.Contains(r.Id)).ExecuteDelete(),
+            ctx => ctx.PermissionChanges.Count(r => r.CreatedAt < cutoff),
+            "權限異動",
+            maxRows,
+            batchSize);
     }
 
     private static PermissionChangeRecord ToModel(PermissionChangeRow row) => new()
