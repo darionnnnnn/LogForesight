@@ -129,8 +129,10 @@ public class AiAnalysisHostedService : BackgroundService
             try
             {
                 if (_runState.IsRunning) return;
+                // 取數剛寫入新資料：待補件數不能沿用取數前留下的 30 秒快取
+                _runState.InvalidatePendingAiCache();
                 // 前置條件與輪詢同一份判定（docs/WEB-SPEC.md §9.10「閒置原因」），只差不看窗口
-                var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), () => _recordQuery.CountPendingAi(),
+                var reason = BlockingIdleReason(DateTime.Now, _optionsStore.Get(), () => _runState.GetPendingAiCount(() => _recordQuery.CountPendingAi()),
                     out _, requireWindow: false);
                 _runState.SetIdleReason(reason);
                 if (reason != null) return;
@@ -161,7 +163,9 @@ public class AiAnalysisHostedService : BackgroundService
             return;
         }
 
-        var reason = BlockingIdleReason(DateTime.Now, options, () => _recordQuery.CountPendingAi(), out var inWindow);
+        // 跟隨取數期間資料持續落地，待補件數要實查；閒置的背景輪詢才沿用狀態 API 的 30 秒快取
+        if (_schedulerRunState.IsFollowingFetch(DateTime.Now)) _runState.InvalidatePendingAiCache();
+        var reason = BlockingIdleReason(DateTime.Now, options, () => _runState.GetPendingAiCount(() => _recordQuery.CountPendingAi()), out var inWindow);
         if (reason != null)
         {
             _runState.SetIdleReason(reason);
@@ -286,7 +290,8 @@ public class AiAnalysisHostedService : BackgroundService
                 }
 
                 recorder.DaysAnalyzed = counters.Done;
-                recorder.AiCalls = counters.Done;
+                // 實際呼叫過 AI 的筆數：成功且非 Skipped（Skipped 不呼叫 AI）加上失敗者
+                recorder.AiCalls = counters.Done - counters.Skipped + counters.Failed;
                 recorder.AiFailures = counters.Failed;
                 recorder.Stopped = stopped;
                 recorder.Finish(success ? 0 : 1);
@@ -384,6 +389,15 @@ public class AiAnalysisHostedService : BackgroundService
         // 同一批失敗者原樣重試。成功者寫回後已不是待補，從集合移除，查詢只需多取失敗者的列數。
         var attempted = new HashSet<(long HostId, string Host, DateTime Date)>();
 
+        // 一輪只解析一次 AI 服務與主機作業系統對照（閘道已負責節流）。
+        // 設定在輪中變更不即時生效，下一輪才採用；也不在每個分片、每批重讀主機表。
+        var aiService = _injectedAiService ?? ResolveAiService();
+        var hostOsMap = BuildHostOsMap();
+
+        // 待補總數：只在迴圈開頭實查一次，之後以「本批前總數 - 本批完成數」估算
+        // （CountPendingAi 在實機要 7～15 秒，不再每批查兩次）。
+        int? pendingEstimate = null;
+
         while (!ct.IsCancellationRequested)
         {
             var options = _optionsStore.Get();
@@ -409,7 +423,7 @@ public class AiAnalysisHostedService : BackgroundService
             // 每片的第一筆就是該主機在這批最先處理的那天
             var hostGroups = (oldestFirst ? groups.OrderBy(g => g[0].Date) : groups.OrderByDescending(g => g[0].Date)).ToList();
 
-            var pendingTotal = _recordQuery.CountPendingAi();
+            var pendingTotal = pendingEstimate ??= _recordQuery.CountPendingAi();
             _runState.ReportProgress(totalDone, totalDone + pendingTotal, $"AI 白話分析補寫中（併發 {concurrency}）");
 
             int batchSuccessCount = 0;
@@ -425,7 +439,7 @@ public class AiAnalysisHostedService : BackgroundService
                     var first = group.First();
                     var hostKey = new HostKey { HostId = first.HostId, HostName = first.Host };
                     var hostStore = _storageBackend.RecordStore(hostKey);
-                    var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore);
+                    var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore, aiService, hostOsMap);
 
                     // 片內序列：方向已在分片時決定（近日層新→舊、積壓層舊→新）
                     foreach (var record in group)
@@ -553,12 +567,23 @@ public class AiAnalysisHostedService : BackgroundService
             if (ct.IsCancellationRequested) break;
 
             // 失敗防線（與 attempted 集合互補）：本批全滅且總數未動時直接結束本輪，
-            // 不必等 attempted 把候選濾乾才停
-            var remainingPending = _recordQuery.CountPendingAi();
-            if (remainingPending == pendingTotal && batchSuccessCount == 0)
+            // 不必等 attempted 把候選濾乾才停。只有「本批全滅」才需要實查一次確認；
+            // 有成功者就用估算值（本批前總數 - 本批完成數）當下一批的進度基準。
+            if (batchSuccessCount == 0)
             {
-                Log.Warn("本批待補紀錄均未能成功完成 AI 分析，暫停本輪處理以防迴圈重試。");
-                break;
+                var remainingPending = _recordQuery.CountPendingAi();
+                if (remainingPending == pendingTotal)
+                {
+                    Log.Warn("本批待補紀錄均未能成功完成 AI 分析，暫停本輪處理以防迴圈重試。");
+                    break;
+                }
+                pendingEstimate = remainingPending;
+            }
+            else
+            {
+                // 估算歸零時下一批改實查，避免新進待補讓進度分母卡在 0
+                var estimate = pendingTotal - batchSuccessCount;
+                pendingEstimate = estimate > 0 ? estimate : null;
             }
         }
 
@@ -619,13 +644,21 @@ public class AiAnalysisHostedService : BackgroundService
         }
     }
 
-    private LogAnalysisService CreateAnalysisServiceForHost(HostKey hostKey, IAnalysisRecordStore hostStore)
+    /// <summary>一輪開始時建一次 HostId → 作業系統對照（C8b），分片不再各自重讀主機表</summary>
+    private Dictionary<long, string> BuildHostOsMap()
     {
-        var aiService = _injectedAiService ?? ResolveAiService();
+        var map = new Dictionary<long, string>();
+        foreach (var h in new HostStore(_storageBackend.Blob("hosts")).GetAll())
+            map[h.HostId] = h.Os;
+        return map;
+    }
+
+    private LogAnalysisService CreateAnalysisServiceForHost(HostKey hostKey, IAnalysisRecordStore hostStore,
+        IAiService aiService, IReadOnlyDictionary<long, string> hostOsMap)
+    {
         var riskyEventStore = _storageBackend.RiskyEventStore();
         // 主機作業系統：取不到時預設 Windows（與舊行為一致）
-        var hostOs = new HostStore(_storageBackend.Blob("hosts")).GetAll()
-            .FirstOrDefault(h => h.HostId == hostKey.HostId)?.Os ?? WebHost.OsWindows;
+        var hostOs = hostOsMap.TryGetValue(hostKey.HostId, out var os) && os != null ? os : WebHost.OsWindows;
         var reportService = new RiskReportService(aiService, _storageBackend.ReportStore(),
             ruleProvider: () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_storageBackend.Blob("rules"))),
             hostOs: hostOs);
@@ -647,11 +680,11 @@ public class AiAnalysisHostedService : BackgroundService
             hostOs: hostOs);
     }
 
-    private IAiService ResolveAiService()
+    internal virtual IAiService ResolveAiService()
     {
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
-        // 每個主機分片各自一個實例（各自的請求佇列），跨實例的併發上限與互動優先由全站閘道負責
+        // 每輪處理只解析一次，該輪所有分片共用；跨實例的併發上限與互動優先由全站閘道負責
         return new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
             gate: _aiGate);
     }
