@@ -80,6 +80,7 @@ public class ScheduleGuardStatusCodeTests : IDisposable
             new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
             backfiller,
             new StubWebAi(true),
+            NullAiRequestGate.Instance,
             new FakeSuppressionStore(),
             new FakeAiService());
     }

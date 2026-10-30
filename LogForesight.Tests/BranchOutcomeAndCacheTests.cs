@@ -436,7 +436,7 @@ public class BranchOutcomeAndCacheTests : IDisposable
             RetryDelaySeconds = 0,
             TimeoutSeconds = 5
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<SamplePayload>("測試 prompt");
 
@@ -471,7 +471,7 @@ public class BranchOutcomeAndCacheTests : IDisposable
             RetryDelaySeconds = 0,
             TimeoutSeconds = 5
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<SamplePayload>("長回應測試");
 
@@ -502,7 +502,7 @@ public class BranchOutcomeAndCacheTests : IDisposable
             RetryDelaySeconds = 0,
             TimeoutSeconds = 5
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<SamplePayload>("空回應測試");
 

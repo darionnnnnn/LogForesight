@@ -450,9 +450,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INetiqHostDayTimingCollector, NetiqHostDayTimingCollector>();
         services.AddSingleton<AnalysisOrchestrator>(sp => new AnalysisOrchestrator(
             sp.GetRequiredService<IDispatchCandidateSource>(),
+            sp.GetRequiredService<IAiRequestGate>(),
             () => { sp.GetRequiredService<PermissionVersionStamp>().Bump(); },
-            sp.GetRequiredService<INetiqHostDayTimingCollector>(),
-            sp.GetRequiredService<IAiRequestGate>()));
+            sp.GetRequiredService<INetiqHostDayTimingCollector>()));
         services.AddSingleton<NamedMutexGate>();
         services.AddSingleton<SchedulerRunState>();
         // 背景回填共用節流閘：同一時間最多一支背景回填，取數排程執行中時每 30 秒檢查一次再讓路
@@ -463,8 +463,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ISystemSettingsStore>(),
             sp.GetRequiredService<IWebAiService>(),
             sp.GetRequiredService<HostDayWorkflowService>(),
-            sp.GetRequiredService<BackgroundWorkGate>(),
-            aiGate: sp.GetRequiredService<IAiRequestGate>()));
+            sp.GetRequiredService<IAiRequestGate>(),
+            sp.GetRequiredService<BackgroundWorkGate>()));
         services.AddHostedService(sp => sp.GetRequiredService<HostDayWorkflowRecoveryHostedService>());
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
@@ -494,11 +494,11 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<BatchRunStore>(),
                 sp.GetRequiredService<DailyRecordBackfiller>(),
                 sp.GetRequiredService<IWebAiService>(),
+                sp.GetRequiredService<IAiRequestGate>(),
                 suppressionStore,
                 aiService: null,
                 lifetime: lifetime,
-                workflow: sp.GetRequiredService<HostDayWorkflowService>(),
-                aiGate: sp.GetRequiredService<IAiRequestGate>());
+                workflow: sp.GetRequiredService<HostDayWorkflowService>());
         });
         services.AddHostedService(sp => sp.GetRequiredService<AiAnalysisHostedService>());
 

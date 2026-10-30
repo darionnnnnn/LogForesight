@@ -35,7 +35,7 @@ public class AiAnalysisHostedService : BackgroundService
     private readonly IHostApplicationLifetime? _lifetime;
     private readonly HostDayWorkflowService? _workflow;
     private readonly IWebAiService _webAi;
-    private readonly IAiRequestGate? _aiGate;
+    private readonly IAiRequestGate _aiGate;
 
     public AiAnalysisHostedService(
         ScheduleOptionsStore optionsStore,
@@ -48,11 +48,11 @@ public class AiAnalysisHostedService : BackgroundService
         BatchRunStore batchRuns,
         DailyRecordBackfiller backfiller,
         IWebAiService webAi,
+        IAiRequestGate aiGate,
         ISuppressionStore? suppressionStore = null,
         IAiService? aiService = null,
         IHostApplicationLifetime? lifetime = null,
-        HostDayWorkflowService? workflow = null,
-        IAiRequestGate? aiGate = null)
+        HostDayWorkflowService? workflow = null)
     {
         _webAi = webAi;
         _optionsStore = optionsStore;
@@ -68,7 +68,7 @@ public class AiAnalysisHostedService : BackgroundService
         _injectedAiService = aiService;
         _lifetime = lifetime;
         _workflow = workflow;
-        _aiGate = aiGate;
+        _aiGate = aiGate ?? throw new ArgumentNullException(nameof(aiGate));
 
         // 站台關閉時對進行中的 AI 執行發出優雅停止
         _lifetime?.ApplicationStopping.Register(() => _runState.TryCancel());

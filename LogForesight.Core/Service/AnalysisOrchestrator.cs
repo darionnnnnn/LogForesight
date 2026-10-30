@@ -161,17 +161,17 @@ public class AnalysisOrchestrator
     private readonly IDispatchCandidateSource _candidateSource;
     private readonly Action? _permissionVersionBump;
     private readonly INetiqHostDayTimingCollector? _hostDayTiming;
-    private readonly IAiRequestGate? _aiGate;
+    private readonly IAiRequestGate _aiGate;
 
     /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
     /// <param name="aiGate">全站 AI 閘道；本趟的 AI 呼叫（週檢等）走背景車道</param>
-    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null,
-        INetiqHostDayTimingCollector? hostDayTiming = null, IAiRequestGate? aiGate = null)
+    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, IAiRequestGate aiGate,
+        Action? permissionVersionBump = null, INetiqHostDayTimingCollector? hostDayTiming = null)
     {
         _candidateSource = candidateSource;
         _permissionVersionBump = permissionVersionBump;
         _hostDayTiming = hostDayTiming;
-        _aiGate = aiGate;
+        _aiGate = aiGate ?? throw new ArgumentNullException(nameof(aiGate));
     }
 
     internal static long? TryBeginHostDayTiming(long runId, INetiqHostDayTimingCollector? collector)
@@ -312,8 +312,8 @@ public class AnalysisOrchestrator
             {
                 var eventLogService = new EventLogService();
                 IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
-                var aiService = new AIService(settings.Ai, dumper,
-                    new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)), gate: _aiGate);
+                var aiService = new AIService(settings.Ai, gate: _aiGate, dumper: dumper,
+                    usageMeter: new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
                 var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
 
                 // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯

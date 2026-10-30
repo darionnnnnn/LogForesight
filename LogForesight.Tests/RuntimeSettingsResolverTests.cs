@@ -27,7 +27,7 @@ public class RuntimeSettingsResolverTests
         Assert.Equal(3, settings.Ai.RetryCount);
         // DB 設定仍沿用管理介面的 1..10 範圍；壞值保留可建立 consumer 的預設值。
         // 建構本身不發出 HTTP 請求。
-        _ = new LogForesight.Core.Analysis.AIService(settings.Ai);
+        _ = new LogForesight.Core.Analysis.AIService(settings.Ai, LogForesight.Core.Analysis.NullAiRequestGate.Instance);
     }
 
     [Theory]
@@ -39,7 +39,7 @@ public class RuntimeSettingsResolverTests
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
         Assert.Equal(validCount, settings.Ai.RetryCount);
-        _ = new LogForesight.Core.Analysis.AIService(settings.Ai);
+        _ = new LogForesight.Core.Analysis.AIService(settings.Ai, LogForesight.Core.Analysis.NullAiRequestGate.Instance);
     }
 
     [Fact]

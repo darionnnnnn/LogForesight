@@ -24,22 +24,22 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     private readonly HostDayWorkflowService _workflow;
     private readonly BackgroundWorkGate? _gate;
     private readonly IAiService? _reportAiService;
-    private readonly IAiRequestGate? _aiGate;
+    private readonly IAiRequestGate _aiGate;
     private readonly RecoveryBudget _budget;
     private readonly NamedMutexGate _lease = new(LeaseName);
     private const int MaxPendingReportsPerPage = 4;
 
     public HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
-        ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow,
-        BackgroundWorkGate? gate = null, IAiService? reportAiService = null, IAiRequestGate? aiGate = null)
-        : this(records, backend, settings, ai, workflow, RecoveryBudget.Default, gate: gate,
-            reportAiService: reportAiService, aiGate: aiGate) { }
+        ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, IAiRequestGate aiGate,
+        BackgroundWorkGate? gate = null, IAiService? reportAiService = null)
+        : this(records, backend, settings, ai, workflow, RecoveryBudget.Default, aiGate, gate: gate,
+            reportAiService: reportAiService) { }
 
     internal HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
         ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, RecoveryBudget budget,
-        BackgroundWorkGate? gate = null, IAiService? reportAiService = null, IAiRequestGate? aiGate = null)
+        IAiRequestGate aiGate, BackgroundWorkGate? gate = null, IAiService? reportAiService = null)
     {
-        _aiGate = aiGate;
+        _aiGate = aiGate ?? throw new ArgumentNullException(nameof(aiGate));
         if (budget.PageSize is < 1 or > WorkflowRecoveryPage.MaximumRows || budget.HotPagesPerSlice < 0 ||
             budget.DeepPagesPerSlice < 0 || budget.OrphanPagesPerSlice < 0 || budget.HotTimeBudget < TimeSpan.Zero ||
             budget.TotalTimeBudget < TimeSpan.Zero)

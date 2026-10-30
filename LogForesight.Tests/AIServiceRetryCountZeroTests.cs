@@ -14,7 +14,7 @@ public sealed class AIServiceRetryCountZeroTests
         var handler = new ScriptedHandler((_, _) => Task.FromResult(SuccessResponse()));
 
         Assert.Throws<System.ComponentModel.DataAnnotations.ValidationException>(
-            () => new AIService(Settings(retryCount: -1), handler));
+            () => new AIService(Settings(retryCount: -1), handler, NullAiRequestGate.Instance));
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -22,7 +22,7 @@ public sealed class AIServiceRetryCountZeroTests
     public async Task RetryCountZero_AllowsSuccessfulChatThroughActualAiServiceConsumer()
     {
         var handler = new ScriptedHandler((_, _) => Task.FromResult(SuccessResponse()));
-        var service = new AIService(Settings(retryCount: 0), handler);
+        var service = new AIService(Settings(retryCount: 0), handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("status check");
 
@@ -36,7 +36,7 @@ public sealed class AIServiceRetryCountZeroTests
     {
         var handler = new ScriptedHandler((_, _) =>
             Task.FromException<HttpResponseMessage>(new HttpRequestException("owned transient failure")));
-        var service = new AIService(Settings(retryCount: 0), handler);
+        var service = new AIService(Settings(retryCount: 0), handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("status check");
 
@@ -51,7 +51,7 @@ public sealed class AIServiceRetryCountZeroTests
         var handler = new ScriptedHandler((attempt, _) => attempt == 1
             ? Task.FromException<HttpResponseMessage>(new HttpRequestException("owned transient failure"))
             : Task.FromResult(SuccessResponse()));
-        var service = new AIService(Settings(retryCount: 1), handler);
+        var service = new AIService(Settings(retryCount: 1), handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("status check");
 
@@ -70,7 +70,7 @@ public sealed class AIServiceRetryCountZeroTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return SuccessResponse();
         });
-        var service = new AIService(Settings(retryCount: 0), handler);
+        var service = new AIService(Settings(retryCount: 0), handler, NullAiRequestGate.Instance);
         using var cancellation = new CancellationTokenSource();
         var call = service.ChatAsync("status check", ct: cancellation.Token);
 

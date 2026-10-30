@@ -65,6 +65,7 @@
 | D5 | Sonnet | Sentinel 重試包裝不再把呼叫端取消包成「重試已耗盡」；結果加 `Unreadable`（回報有資料卻取回 0 筆），管線遇到時不二分、不設高流量、記失敗 | 代理：三個突變各紅；主代理重跑 236 綠 | 取消測試需 `RetryCount=0`（有 Polly 時取消本來就以 OCE 上傳）；白名單外補一行串流替身帶 `Unreadable`；NetiqDirectoryClient 經合併權杖自動對稱，不另改 |
 | D6 | Sonnet | `BatchRunStatus.Compute` 加 `heldByThisProcess`；兩個 RunState 提供 `HoldsRun`；執行監控與新鮮度傳入 | 代理：等價突變 2 紅；主代理重跑 234 綠 | AI 以 RunId 精確比對；取數的 BatchRun 在協調器內建立，改用「非 AI、未結束、開始不早於本趟」後備判定（單一閘門保證唯一）；精確登記需動協調器與進度介面，收益小不做 |
 | D9 | 主代理 | WEB-SPEC §9.10：節流段補「每輪共用一個 AIService」與 `AiProbeService` 探活例外、待補快取的實際用法、敘事行改現況、觸發來源補 `fetch-followup`、異常中斷補持有判定；程式註解：`BatchRun.Trigger` 補 `fetch-followup`，SchedulerRunState／SchedulerHostedService／AiAnalysisHostedService 的錯位與重複 summary 歸位 | 建置 0 錯誤；只動註解與文件，測試略過（過度） | 「未接閘道為 null」句留待 D7 改必填時一起改 |
+| D7 | Sonnet | 五個 AI 消費端的閘道參數改必填（null 擲例外）；`AiRequestGateTests` 刪寫死的 5、新增正式 DI 解析與非 nullable 反射守門；WEB-SPEC 節流段同步 | 代理：DI 改傳 Null、參數改回 nullable 兩個突變各紅；主代理重跑 148 綠、Core＋Web `IAiRequestGate? ` 0 筆 | 必填參數須排在選填前，建構式參數順序改變；WebAiService 新增 `_aiGate` 欄位供反射讀取 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

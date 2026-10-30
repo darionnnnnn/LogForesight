@@ -106,6 +106,7 @@ public class AiAnalysisSchedulerTests : IDisposable
             BatchRuns(),
             backfillCompleted ? CompletedBackfiller() : new DailyRecordBackfiller(_contextFactory),
             new FakeWebAiService(aiAvailable),
+            NullAiRequestGate.Instance,
             _suppressions,
             _ai,
             workflow: workflow);
@@ -694,7 +695,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         // 8c. 手動觸發不受窗口限制
         var manualRunState = new AiAnalysisRunState();
         var manualService = new AiAnalysisHostedService(
-            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), BatchRuns(), CompletedBackfiller(), new FakeWebAiService(true), _suppressions, _ai);
+            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), BatchRuns(), CompletedBackfiller(), new FakeWebAiService(true), NullAiRequestGate.Instance, _suppressions, _ai);
 
         manualRunState.TryBeginRun("manual:admin", 10, out _);
         await manualService.TickAsync();
@@ -1646,7 +1647,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         public ResolveCountingService(ScheduleOptionsStore o, SchedulerRunState sr, AiAnalysisRunState rs,
             IAnalysisRecordQuery q, StorageBackend b, ISystemSettingsStore ss, BatchRunStore runs,
             DailyRecordBackfiller bf, IWebAiService web, IAiService ai)
-            : base(o, sr, rs, q, b, ss, new DataVersionStamp(), runs, bf, web, aiService: null)
+            : base(o, sr, rs, q, b, ss, new DataVersionStamp(), runs, bf, web, NullAiRequestGate.Instance, aiService: null)
         {
             _ai = ai;
         }

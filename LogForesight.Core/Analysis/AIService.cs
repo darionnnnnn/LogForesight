@@ -79,18 +79,18 @@ public class AIService : IAiService
     private readonly IAiRequestGate _gate;
     private readonly AiLane _lane;
 
-    public AIService(AiSettings settings, IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null,
-        IAiRequestGate? gate = null, AiLane lane = AiLane.Background)
-        : this(settings, CreateDefaultHandler(), dumper, usageMeter, gate, lane)
+    public AIService(AiSettings settings, IAiRequestGate gate, IPromptDumper? dumper = null,
+        IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
+        : this(settings, CreateDefaultHandler(), gate, dumper, usageMeter, lane)
     {
     }
 
-    internal AIService(AiSettings settings, HttpMessageHandler handler, IPromptDumper? dumper = null,
-        IAiUsageMeter? usageMeter = null, IAiRequestGate? gate = null, AiLane lane = AiLane.Background)
+    internal AIService(AiSettings settings, HttpMessageHandler handler, IAiRequestGate gate,
+        IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
     {
         _dumper = dumper ?? new NullPromptDumper();
         _usageMeter = usageMeter;
-        _gate = gate ?? NullAiRequestGate.Instance;
+        _gate = gate ?? throw new ArgumentNullException(nameof(gate));
         _lane = lane;
         _httpClient = new HttpClient(handler)
         {

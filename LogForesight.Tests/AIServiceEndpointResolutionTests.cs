@@ -32,7 +32,7 @@ public sealed class AIServiceEndpointResolutionTests
             ApiKey = "controlled-bearer-secret",
             TimeoutSeconds = 5,
             RetryCount = 0
-        }, handler);
+        }, handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("endpoint integration probe");
 

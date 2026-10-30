@@ -19,7 +19,7 @@ public sealed class AIServiceChatJsonTransportTests
     {
         var handler = new ScriptedHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)));
-        var service = new AIService(Settings(jsonRetryCount: 2), handler);
+        var service = new AIService(Settings(jsonRetryCount: 2), handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<Probe>("status check");
 
@@ -32,7 +32,7 @@ public sealed class AIServiceChatJsonTransportTests
     {
         var handler = new ScriptedHandler((_, _) =>
             Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException())));
-        var service = new AIService(Settings(jsonRetryCount: 2), handler);
+        var service = new AIService(Settings(jsonRetryCount: 2), handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<Probe>("status check");
 
@@ -44,7 +44,7 @@ public sealed class AIServiceChatJsonTransportTests
     public async Task ChatJson_ResponseWithInvalidJson_StillRetriesJsonLayer()
     {
         var handler = new ScriptedHandler((_, _) => Task.FromResult(ContentResponse("這不是 JSON")));
-        var service = new AIService(Settings(jsonRetryCount: 2), handler);
+        var service = new AIService(Settings(jsonRetryCount: 2), handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<Probe>("status check");
 

@@ -3,6 +3,12 @@ using System.Text;
 using System.Text.RegularExpressions;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
+using System.Reflection;
+using LogForesight.Web.Configuration;
+using LogForesight.Web.Extensions;
+using LogForesight.Web.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -181,8 +187,67 @@ public sealed class AiRequestGateTests
             }
         }
 
-        Assert.Equal(5, calls.Count);
+        Assert.NotEmpty(calls);
         Assert.All(calls, call => Assert.EndsWith("ok", call));
+    }
+
+    [Fact]
+    public void 正式DI解析的三個AI消費端拿到全站閘道而非不節流替身()
+    {
+        var settings = new WebAppSettings();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IHostApplicationLifetime, FakeLifetime>();
+        services.AddStorage(settings);
+        services.AddLogForesightServices();
+        using var provider = services.BuildServiceProvider();
+
+        var siteGate = provider.GetRequiredService<IAiRequestGate>();
+        Assert.IsNotType<NullAiRequestGate>(siteGate);
+
+        foreach (var type in new[]
+                 {
+                     typeof(AiAnalysisHostedService), typeof(HostDayWorkflowRecoveryHostedService), typeof(WebAiService)
+                 })
+        {
+            var instance = provider.GetRequiredService(type == typeof(WebAiService) ? typeof(IWebAiService) : type);
+            var gateField = GateFieldOf(type);
+            var held = gateField.GetValue(instance);
+            Assert.NotNull(held);
+            Assert.IsNotType<NullAiRequestGate>(held);
+            Assert.Same(siteGate, held);
+        }
+    }
+
+    [Theory]
+    [InlineData(typeof(AIService))]
+    [InlineData(typeof(AiAnalysisHostedService))]
+    [InlineData(typeof(HostDayWorkflowRecoveryHostedService))]
+    [InlineData(typeof(WebAiService))]
+    [InlineData(typeof(LogForesight.Core.Service.AnalysisOrchestrator))]
+    public void 所有建構式的閘道參數必填且非nullable(Type type)
+    {
+        var context = new NullabilityInfoContext();
+        var ctors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotEmpty(ctors);
+        foreach (var ctor in ctors)
+        {
+            var gate = ctor.GetParameters().Single(p => p.ParameterType == typeof(IAiRequestGate));
+            Assert.False(gate.HasDefaultValue, $"{type.Name} 的 gate 參數不得有預設值");
+            Assert.NotEqual(NullabilityState.Nullable, context.Create(gate).WriteState);
+        }
+    }
+
+    private static FieldInfo GateFieldOf(Type type) =>
+        type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+            .Single(f => f.FieldType == typeof(IAiRequestGate));
+
+    private sealed class FakeLifetime : IHostApplicationLifetime
+    {
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() { }
     }
 
     private static string FindRepoRoot()

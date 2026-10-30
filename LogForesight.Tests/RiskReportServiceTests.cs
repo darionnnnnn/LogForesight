@@ -20,7 +20,7 @@ public class RiskReportServiceTests
     private static RiskReportService MakeService(FakeReportSink sink)
     {
         // 不會被呼叫到（測試情境全是規則命中的類別），BaseUrl 隨意即可
-        var aiService = new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 });
+        var aiService = new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance);
         return new RiskReportService(aiService, sink);
     }
 
@@ -232,7 +232,7 @@ public class RiskReportServiceTests
     {
         var rules = KnownIssueSeed.CreateRules();
         var service = new RiskReportService(
-            new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }),
+            new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance),
             new FakeReportSink(), ruleProvider: () => rules);
         var record = MakeRecord(MakeLinuxIssue("builtin-linux-ssh-bruteforce"));
 
@@ -253,7 +253,7 @@ public class RiskReportServiceTests
             PlainExplanation = "R59C7 自訂規則白話說明獨有字串", Impact = "影響", LikelyCauses = new[] { "原因" }, NextSteps = new[] { "步驟" }
         };
         var service = new RiskReportService(
-            new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }),
+            new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance),
             new FakeReportSink(), ruleProvider: () => new List<KnownIssueRule> { custom });
         var issue = MakeStorageIssue();
         issue.Source = "r59c7-source";

@@ -278,7 +278,7 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
         var worker = new HostDayWorkflowRecoveryHostedService(
             (IAnalysisRecordQuery)_backend.RecordStore(), _backend, RecoverySettings(), ai, workflow,
             new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 1, 0, 0,
-                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)), reportAiService: reportAi);
+                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)), NullAiRequestGate.Instance, reportAiService: reportAi);
 
         Assert.Equal(1, worker.RetryPendingReports([saved], CancellationToken.None));
 
@@ -305,7 +305,7 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
             new FakeAnalysisRecordQuery(), _backend, RecoverySettings(), webAi,
             new HostDayWorkflowService(new HostDayWorkflowStore(_backend)),
             new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 1, 0, 0,
-                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)), reportAiService: reportAi);
+                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)), NullAiRequestGate.Instance, reportAiService: reportAi);
         var pending = new DailyAnalysisRecord { RecordId = 1000, RiskReportPending = true, AiPending = true };
 
         Assert.Equal(0, worker.RetryPendingReports([pending], CancellationToken.None));
@@ -366,7 +366,7 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
             (IAnalysisRecordQuery)_backend.RecordStore(), _backend, RecoverySettings(),
             new RecoveryFakeAiService(), new HostDayWorkflowService(new HostDayWorkflowStore(_backend)),
             new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 1, 0, 0,
-                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)), reportAiService: new FakeAiService());
+                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)), NullAiRequestGate.Instance, reportAiService: new FakeAiService());
 
         var firstWorker = CreateWorker();
         Assert.Equal(0, firstWorker.RetryPendingReports(persisted, CancellationToken.None, passNumber: 0));
@@ -484,7 +484,7 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
     private HostDayWorkflowRecoveryHostedService CreateService(IAnalysisRecordQuery query,
         ISystemSettingsStore settings, HostDayWorkflowService workflow,
         HostDayWorkflowRecoveryHostedService.RecoveryBudget budget) =>
-        new(query, _backend, settings, new RecoveryFakeAiService(), workflow, budget);
+        new(query, _backend, settings, new RecoveryFakeAiService(), workflow, budget, NullAiRequestGate.Instance);
 
     public void Dispose()
     {

@@ -28,7 +28,7 @@ public class AIServiceCancellationTests
         {
             BaseUrl = "http://localhost:1", RetryCount = 5, RetryDelaySeconds = 10, TimeoutSeconds = 5
         };
-        var service = new AIService(settings);
+        var service = new AIService(settings, NullAiRequestGate.Instance);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -49,7 +49,7 @@ public class AIServiceCancellationTests
         {
             BaseUrl = "http://localhost:1", RetryCount = 1, RetryDelaySeconds = 10, TimeoutSeconds = 5, JsonRetryCount = 3
         };
-        var service = new AIService(settings);
+        var service = new AIService(settings, NullAiRequestGate.Instance);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -67,7 +67,7 @@ public class AIServiceCancellationTests
         {
             BaseUrl = "http://localhost:1", RetryCount = 1, RetryDelaySeconds = 1, TimeoutSeconds = 1
         };
-        var service = new AIService(settings);
+        var service = new AIService(settings, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("hi");
 

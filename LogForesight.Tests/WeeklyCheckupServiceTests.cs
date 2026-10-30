@@ -22,7 +22,7 @@ public class WeeklyCheckupServiceTests
         var aiService = new AIService(new AiSettings
         {
             BaseUrl = "http://localhost:1", RetryCount = 1, RetryDelaySeconds = 1, TimeoutSeconds = 1
-        });
+        }, NullAiRequestGate.Instance);
         return new WeeklyCheckupService(aiService, reader, sink);
     }
 

@@ -2719,7 +2719,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   上限＝`AiConcurrency`（每次取許可時重讀）；互動在途時背景最多讓 30 秒。閘道在各實例自己的佇列之後取、`finally` 歸還，取消穿透。
   AI 排程一輪開始時解析一次 AI 設定並建一個 `AIService`，該輪所有主機分片共用；輪中改設定下一輪才生效。
   例外：設定頁「測試連線」的 `AiProbeService` 以自己的 `HttpClient` 送一次 `max_tokens=1` 的請求，不經閘道（單次、使用者手動觸發）。
-  每個 `AIService` 建構都要帶 `gate:`（`AiRequestGateTests` 掃 Core／Web 的 `new AIService(`）；未接時為 null 閘道＝只剩逐實例序列。
+  閘道參數在 `AIService`、`AnalysisOrchestrator`、`AiAnalysisHostedService`、`HostDayWorkflowRecoveryHostedService`、`WebAiService` 皆為必填（傳 null 擲例外）；
+  `AiRequestGateTests` 以正式 DI 解析三個 AI 消費端、斷言拿到的是全站閘道，並以反射守住各建構式的閘道參數非 nullable、無預設值。
+  只有測試明確傳 `NullAiRequestGate.Instance` 取得不節流行為。
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
   `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：

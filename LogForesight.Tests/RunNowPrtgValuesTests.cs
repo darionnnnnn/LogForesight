@@ -123,7 +123,7 @@ public class RunNowPrtgValuesTests
                 Ai = new AiSettings { BaseUrl = "" },
                 Storage = new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "test.db")}" }
             };
-            var orchestrator = new AnalysisOrchestrator(new EmptyCandidateSource());
+            var orchestrator = new AnalysisOrchestrator(new EmptyCandidateSource(), NullAiRequestGate.Instance);
             return await orchestrator.RunAsync(
                 request, settings, dir, new RetentionOptions(), new LoggingConsole(log), CancellationToken.None,
                 new RecordingProgress(log), manualWorkGate: null, prtgBackfillTail: tail);
