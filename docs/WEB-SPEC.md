@@ -2616,7 +2616,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
     整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
 - **結果語意**：主程序與 AI 各自顯示「正常結束」或「已停止」；缺省／null 結果顯示「結果未知」。正常結束不表示 PRTG／AI 待補皆完成，需同時查看來源欄與待補數。AI 取消後拒絕 provider 晚到結果，保留完成紀錄及待補；目前版本的 Running workflow 在取消／例外時收尾，版本已更新者不覆寫。
-- **異常中斷（重啟時關閉）**：站台啟動時取得執行鎖後，把本行程啟動之前開始、仍未結束的執行（取數與 AI 皆是）補一列結束紀錄並標 `Interrupted`，狀態顯示「異常中斷」（與逾 6 小時未結束的「異常中斷」同一狀態），詳情多一則「站台重啟時發現此執行未正常結束」。拿不到執行鎖（另一個行程仍在跑）時整段略過。同一個排程窗口群組（`ScheduleCalculator.MostRecentWindowStart`）內第一筆中斷的排程執行不計入「已觸發」，因此窗口內或窗口結束 4 小時內會自動補跑一次；第二次中斷不再補，避免反覆崩潰時無限重跑。
+- **異常中斷（重啟時關閉）**：站台啟動時取得執行鎖後，把本行程啟動之前開始、仍未結束的執行（取數與 AI 皆是）補一列結束紀錄並標 `Interrupted`，狀態顯示「異常中斷」（與「本行程沒有持有、卻逾 6 小時未結束」的異常中斷同一狀態；本行程仍持有的執行不論跑多久都顯示執行中，`BatchRunStatus.Compute` 的 `heldByThisProcess`），詳情多一則「站台重啟時發現此執行未正常結束」。拿不到執行鎖（另一個行程仍在跑）時整段略過。同一個排程窗口群組（`ScheduleCalculator.MostRecentWindowStart`）內第一筆中斷的排程執行不計入「已觸發」，因此窗口內或窗口結束 4 小時內會自動補跑一次；第二次中斷不再補，避免反覆崩潰時無限重跑。
 - **PRTG 待補評估與上一趟**：閒置時 PRTG 卡多兩列（執行中不顯示）。「待補評估」列出排程下次會自動補評估的天數與最早日期，並指路「立即執行回望 N 天」可立即補；「上一趟」列出最近一趟取數第一個非成功日的結局與原因，原因為「規則庫沒有啟用中的 PRTG 規則」時附「前往規則維護」連結。資料來自 `GET status` 的 `prtgPendingDays`／`prtgLastIssue*`（`SchedulerHostedService.PrtgRunHealth`，一次讀最近 8 天執行紀錄）。
 - **PRTG 停用指引**：只向 Maintain 顯示維護入口，啟用方式是「擷取參數」勾選「啟用 PRTG 擷取」並儲存。保守策略的數值範圍選單不作啟用開關；停用時排程擷取／回填不跑，維護者仍可手動同步結構。
 - **三張卡各自承載什麼**：
@@ -2715,8 +2715,10 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   近日層被完整性閘門擋住時直接取積壓層；查詢以 `PendingAiQuery`（日期範圍＋方向）在 SQL 端排序，不放大批次。
   成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。完整性閘門（PRTG 證據指紋、事後追加 finding 重標待補、隔晚重判）見 docs/PRTG-SPEC.md §3。
 - **AI 呼叫節流**：全站單一 `IAiRequestGate`（Core `AiRequestGate`，DI 單例）——互動車道（`WebAiService` 的互動與對話兩個實例）
-  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每主機分片的實例、工作流恢復；取數路徑的深析關閉）
+  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每輪共用的一個實例、工作流恢復；取數路徑的深析關閉）
   上限＝`AiConcurrency`（每次取許可時重讀）；互動在途時背景最多讓 30 秒。閘道在各實例自己的佇列之後取、`finally` 歸還，取消穿透。
+  AI 排程一輪開始時解析一次 AI 設定並建一個 `AIService`，該輪所有主機分片共用；輪中改設定下一輪才生效。
+  例外：設定頁「測試連線」的 `AiProbeService` 以自己的 `HttpClient` 送一次 `max_tokens=1` 的請求，不經閘道（單次、使用者手動觸發）。
   每個 `AIService` 建構都要帶 `gate:`（`AiRequestGateTests` 掃 Core／Web 的 `new AIService(`）；未接時為 null 閘道＝只剩逐實例序列。
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
@@ -2730,12 +2732,13 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `no-pending` 不需要說明（待補為 0 本身就講完了）。
 - **待補件數快取 30 秒**：該查詢在實機要 7~15 秒，而狀態卡執行中每 3 秒輪詢一次
   ——不快取等於自己把資料庫打慢。AI 排程每輪收尾與整批重標時使快取失效。
+  AI 排程的閒置輪詢與狀態 API 共用這份快取；跟隨取數期間（取數執行中與結束後 10 分鐘）與取數的即時觸發先使快取失效再實查，
+  取數剛寫入的待補才不會被取數前留下的「0 件」擋住。處理迴圈只在每輪開頭實查一次，之後以「本批前總數－本批完成數」估算，
+  只有整批全部失敗時才實查確認是否結束本輪。
   **查詢刻意在鎖外執行**：那把鎖同時保護 AI 排程的開始與結束，
   在鎖內查會讓畫面輪詢卡住排程狀態機十幾秒。
-- **改名與權限放寬**：側欄由「執行監控」改名
-  「排程作業」；權限由單一 `DevMonitor` 放寬為 **DevMonitor 或 Maintain 任一**（OR 語意，
-  `PermissionAttribute` 擴為 `params Capability[]`）——修正 serverAdmin 有 Maintain 卻進不了
-  排程設定所在頁面的缺口。dev 進得來但只能看；排程設定／立即執行／停止等會動到系統的操作
+- **頁名與權限**：側欄名稱為「排程作業」；權限為 **DevMonitor 或 Maintain 任一**（OR 語意，
+  `PermissionAttribute` 接受 `params Capability[]`）——serverAdmin 只有 Maintain 也要能進排程設定所在頁面。dev 進得來但只能看；排程設定／立即執行／停止等會動到系統的操作
   僅 `Maintain`（前端以 `data-maintain-only` 整批隱藏，後端各 API 逐一標註）。
 - **排程設定卡**：頁頂新增——
   Enabled 開關（預設關，升級後零行為變化）、執行窗口清單編輯（最多 4 組 Start→End，支援
@@ -2785,8 +2788,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   晚到的舊值不得把進度往回拉）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
-- **開始時間／已耗時**：狀態 API 的 `startedAt` 欄位早就
-  存在，只是前端從未顯示——原本只看得到「執行中」，看不出何時開始、跑了多久。前端每秒
+- **開始時間／已耗時**：狀態卡依狀態 API 的 `startedAt` 顯示開始時間與已耗時。前端每秒
   本地計時，輪詢回來時用 `startedAt` 重設校正飄移（分頁背景、系統睡眠都可能讓
   `setInterval` 累積誤差）。
 - **執行進度條**：狀態卡在執行中顯示**三條**進度軌——
@@ -2820,38 +2822,36 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）：
   取數側由 `SchedulerRunState.LatestActivity()` 單點決定（netiq 主進度優先、本機次之、PRTG 最後）；
   `/api/run-activity` 在取數閒置時輪到 AI 排程（單位「件」）——優先序 取數 > AI。
-  **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 原本嚴格
-  「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
-  再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
+  **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 以 `Task.WhenAll` 並行本機與 NetIQ——2000 台規模下本機回補多天時，NetIQ 不必
+  空等本機，兩者寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
   `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。本機
   與 NetIQ 各自一條進度軌、互不覆蓋（結構見上方「三軌進度收成單一型別」；並行後兩路同時回報，
   共用一組欄位會出現「進度卡住不動」）；status API 各帶一組欄位，狀態卡畫出對應的進度條
   （只在有值時顯示，不像 NetIQ 主進度條「執行中就無條件顯示準備中」——`NetiqHosts` 範圍時
-  本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都改成
+  本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都是
   「有回報過才顯示」）。失敗語意維持嚴格：任一路未攔截的例外仍讓整趟判定失敗，`Task.WhenAll`
   保證回傳的 Task 要等兩個輸入 Task 都進入終態才完成，`runRecorder.Finish()`／`Dispose()`
   （單一匯合點呼叫，未加鎖）與 `IssueCaseCoordinator`（`RecordHandlingLog.LogId` 靠實例層級
   鎖擋撞號）因此不受影響——兩路共用同一個 `AnalysisRunContext` 執行個體是這裡安全的前提，
   不是巧合，未來異動不能讓任一路各自另建一份。連線池上限 `AnalysisMaxPoolSize` 再 +1，
   覆蓋本機迴圈現在會與 NetIQ 峰值並行度同時競爭連線的情境。
-  **NetIQ 完工訊號**：並行後 NetIQ 若比本機早跑完（主機少、本機在
-  回補多天缺漏），`ProgressPhase` 原本只在整趟執行的 `TryBeginRun`/`EndRun` 才會被清空，NetIQ
-  跑完後不會主動清掉自己的欄位——單一告示讀取端（`/api/run-activity`、健康診斷）的
-  `LatestActivity()` 因此會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
-  `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）改送一個特殊 phase
+  **NetIQ 完工訊號**：NetIQ 可能比本機早跑完（主機少、本機在
+  回補多天缺漏），而 `ProgressPhase` 只在整趟執行的 `TryBeginRun`/`EndRun` 清空——若 NetIQ
+  不主動清掉自己的欄位，單一告示讀取端（`/api/run-activity`、健康診斷）的
+  `LatestActivity()` 會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
+  `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）送一個特殊 phase
   （`RunPhases.NetiqDone`）通知 `SchedulerRunState` 清空
   netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
   NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
   一併消失，不是副作用。
   **Pipeline 警告上收**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
-  「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。
+  「…（完整清單見執行詳情）」，不必到單次執行詳情逐條翻找。
 - **三頁籤**：執行總表／
   異常彙總／執行紀錄，沿用設定頁既有的 `nav-tabs`＋`bindTabs` 模式；天數篩選與圖例移到頁籤列
   下方，三頁籤共用同一次 API 抓回的資料（`load()` 一次 `Promise.all` 三支端點），切頁籤只是
-  切換面板可見度，不重打 API。**實作踩坑**：頁籤 `<ul>` 一開始被包進日期篩選的 flex 容器裡，
-  `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，面板卻在容器外找不到——瀏覽器實測
-  抓到，改回頁籤與面板同一層手足元素（比照 `#settings-tabs` 的既有結構）才修正。
+  切換面板可見度，不重打 API。頁籤 `<ul>` 與面板必須是同一層手足元素（比照 `#settings-tabs`）：
+  `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，頁籤若被包進日期篩選的 flex 容器就找不到面板。
   - **執行總表**（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
     未執行計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面
     最下方的下鑽卡）。
@@ -2873,7 +2873,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     執行詳情 modal。
   - 單次執行詳情（改 `showDetailModal`，統計＋逐條 log，等級篩選、exception 展開）。
 - **本機主機的「已回補」狀態**（§3）：立即執行回補會把缺漏日的分析紀錄補到
-  被補的那些日期，但 `BatchRun` 只登記在觸發當天——被回補日期原本誤顯示「未執行」。
+  被補的那些日期，但 `BatchRun` 只登記在觸發當天——被回補日期若只看 `BatchRun` 會顯示「未執行」。
   `RunMonitorService` 對 local 主機在當日無 BatchRun 時 fallback 查「D-1 是否有分析紀錄」
   （與 NetIQ 同一套日期對應、同一次 `ListHostDates` 查詢），存在則標新狀態 `backfilled`
   （「已回補」淺綠）——刻意不冒充 success，「當天真的有跑」與「後來補的資料」要分得出來。
@@ -2889,20 +2889,20 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **「已停止」狀態**（§1.4.4）：手動停止或窗口 End 的優雅停止回填
   `BatchRun.Stopped`（JSON 缺欄容忍，零遷移）＋里程碑「執行已優雅停止…」——是獨立狀態、
   不是失敗也不卡執行中；不列入失敗主機清單，剩餘缺漏日由下次執行自動回補。
-- **觸發來源欄**：`BatchRun.Trigger`（`schedule`／`manual:{帳號}`／`console`；舊紀錄 null
+- **觸發來源欄**：`BatchRun.Trigger`（`schedule`／`fetch-followup`（AI 跟隨取數）／`manual:{帳號}`／`console`；舊紀錄 null
   與 console 統一顯示「工作排程器」——升級前唯一的觸發來源，語意等價）。
-- **矩陣為每日彙總**：舊版「主機×日期」色格矩陣在兩千台 × 90 天下會炸出
-  最多 18 萬格 DOM。改成每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
-  點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。原 `BuildCell` 狀態判定邏輯保留。
+- **矩陣為每日彙總**：「主機×日期」色格在兩千台 × 90 天下會有
+  最多 18 萬格 DOM，因此每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
+  點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。狀態判定在 `BuildCell`。
 - **NetIQ 主機的執行狀態以分析紀錄判定**：NetIQ 主機沒有個別的
   `lf_batch_runs` 紀錄（`NetiqPipelineService` 只以跑批次的那台機器名義登記彙總的一筆），
-  逐台比對 `BatchRun.HostName` 因此永遠比不到，恆顯示「未執行」。改為 `RunMonitorService`
-  依 `WebHost.Source` 分流：`local` 主機沿用原 `BuildCell` 邏輯；`netiq` 主機改查
+  逐台比對 `BatchRun.HostName` 永遠比不到。`RunMonitorService` 因此
+  依 `WebHost.Source` 分流：`local` 主機走 `BuildCell`；`netiq` 主機查
   `IAnalysisRecordQuery.ListHostDates`（只投影 HostId／RecordDate 的輕量查詢），
   監控日 D 對應「D-1 是否有分析紀錄」（管線在晚上跑、回補的是昨天的缺漏日）。
   只能判斷 success／none 兩態——分析失敗時管線刻意不寫入紀錄，與「沒跑」在資料面等價，
   是誠實的合併不是遺漏。已知取捨：主機首次回補多天歷史時，過去日期的列會回溯顯示成功。
-  單日明細（本地排序＋分頁）與異常彙總（本地排序）也改用 §8.6-2/7 的共用機制。
+  單日明細（本地排序＋分頁）與異常彙總（本地排序）使用 §8.6-2/7 的共用機制。
 - API：`GET api/runs/summary?days=&page=&pageSize=`（回應含 `items/totalDays/totalPages/page/
   pageSize/maxDays`；天數上限 `max(90, RunLogRetentionDays)`，`maxDays` 供前端「全部」鈕取值、
   不在前端寫死；分頁以最新一頁為第 1 頁、只計算當頁日期，errors/list 的天數上限同一套）、

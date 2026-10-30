@@ -366,15 +366,6 @@ public class SchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 觸發一次執行（排程輪詢與手動觸發 API 共用）。已有執行中時回 false（拒絕，不排隊）；
-    /// 跨行程 Mutex 逾時內拿不到（有 console 執行個體正在跑）也回 false。
-    ///
-    /// **只等到「確定開始」就返回**（最久 <see cref="MutexTimeout"/>）：分析本身在背景繼續，
-    /// 進度由 <see cref="SchedulerRunState"/> 供狀態 API 輪詢。不能等整趟跑完——手動觸發的
-    /// HTTP 請求會被掛住數小時，排程輪詢迴圈也會被卡死（窗口 End 的優雅停止就永遠輪不到）。
-    /// 背景工作只碰 Singleton 依賴（store／設定／run state），與 NetiqProbeService 同一套作法。
-    /// </summary>
-    /// <summary>
     /// 排程輪詢自己組的請求。**永遠不帶重新分析模式**（<see cref="RerunMode.None"/>）——
     /// 刪除既有分析結果重跑是破壞性動作，只在有人看著的手動觸發發生，不在無人看管的夜間排程。
     /// 抽成獨立函式是為了讓這條契約測得到。
@@ -403,6 +394,15 @@ public class SchedulerHostedService : BackgroundService
         PrtgBackfillDays = request.PrtgBackfillDays
     };
 
+    /// <summary>
+    /// 觸發一次執行（排程輪詢與手動觸發 API 共用）。已有執行中時回 false（拒絕，不排隊）；
+    /// 跨行程 Mutex 逾時內拿不到（有 console 執行個體正在跑）也回 false。
+    ///
+    /// **只等到「確定開始」就返回**（最久 <see cref="MutexTimeout"/>）：分析本身在背景繼續，
+    /// 進度由 <see cref="SchedulerRunState"/> 供狀態 API 輪詢。不能等整趟跑完——手動觸發的
+    /// HTTP 請求會被掛住數小時，排程輪詢迴圈也會被卡死（窗口 End 的優雅停止就永遠輪不到）。
+    /// 背景工作只碰 Singleton 依賴（store／設定／run state），與 NetiqProbeService 同一套作法。
+    /// </summary>
     public async Task<bool> TriggerRunAsync(RunRequest request)
     {
         // AI 診斷傾印一律以目前的排程設定為準（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.10）：

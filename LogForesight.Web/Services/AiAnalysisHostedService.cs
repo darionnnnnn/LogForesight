@@ -242,7 +242,7 @@ public class AiAnalysisHostedService : BackgroundService
 
         if (forceRerun)
         {
-            // gate 已在手上才重標；重標後的實際待補總數由處理迴圈每批的 CountPendingAi 更新進度
+            // gate 已在手上才重標；重標後的實際待補總數由處理迴圈開頭實查一次更新進度
             BatchResetAiPending();
         }
 
@@ -315,14 +315,6 @@ public class AiAnalysisHostedService : BackgroundService
         return await startSignal.Task;
     }
 
-    /// <summary>
-    /// AI 批次處理主迴圈：
-    /// 1. 完整性閘門篩選合格主機日
-    /// 2. 近日層新→舊、積壓層七日一塊、塊由新到舊、塊內同主機舊→新（<see cref="SelectNextBatch"/>）
-    /// 3. 不設回望天數上限，每批重新選（批次大小 50）
-    /// 4. 依 AiConcurrency 平行處理，同主機序列（按主機分片、片內序列、片間平行）
-    /// 5. 失敗維持 ai_pending = true，不中斷整批
-    /// </summary>
     /// <summary>處理迴圈的成果計數（執行紀錄用：完成件數／失敗件數）</summary>
     internal sealed class LoopCounters
     {
@@ -382,6 +374,14 @@ public class AiAnalysisHostedService : BackgroundService
         return new PendingBatch(block.Take(BatchSize).ToList(), OldestFirst: true);
     }
 
+    /// <summary>
+    /// AI 批次處理主迴圈：
+    /// 1. 完整性閘門篩選合格主機日
+    /// 2. 近日層新→舊、積壓層七日一塊、塊由新到舊、塊內同主機舊→新（<see cref="SelectNextBatch"/>）
+    /// 3. 不設回望天數上限，每批重新選（批次大小 50）
+    /// 4. 依 AiConcurrency 平行處理，同主機序列（按主機分片、片內序列、片間平行）
+    /// 5. 失敗維持 ai_pending = true，不中斷整批
+    /// </summary>
     internal async Task ExecuteProcessingLoopAsync(CancellationToken ct, LoopCounters counters)
     {
         int totalDone = 0;
@@ -620,11 +620,7 @@ public class AiAnalysisHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 強制重新分析：把全庫紀錄整批重標 ai_pending = true。
-    /// SQL 端整批 UPDATE，不逐筆讀寫、不重寫 ContentJson，不清空既有 AI 文字。
-    /// </summary>
-    /// <summary>
-    /// 強制重新分析的整批重標。判準與 SQL 端整批 UPDATE 的理由見
+    /// 強制重新分析：把全庫紀錄整批重標 ai_pending = true（不重寫 ContentJson、不清空既有 AI 文字）。判準與 SQL 端整批 UPDATE 的理由見
     /// <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/>——持久層的事交給持久層，
     /// 這裡不直接碰 DbContext（StorageBackend 是本專案唯一的持久層路由點）。
     /// </summary>

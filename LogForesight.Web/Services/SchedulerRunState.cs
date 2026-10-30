@@ -4,15 +4,7 @@ using NLog;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 排程執行的行程內狀態（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：單例，供
-/// <see cref="SchedulerHostedService"/> 與狀態／停止 API 共用同一份「現在是否在跑、誰觸發的、
-/// 最新進度」。<see cref="TryBeginRun"/> 內建原子檢查——這就是「行程內單一執行 gate」，
-/// 手動觸發撞上排程執行中時直接拒絕（回 false），不用另外設一把鎖。
-/// </summary>
-/// <summary>
-/// 上一次執行的結局（docs/archive/FEEDBACK-7-PLAN.md）：立即執行／排程觸發失敗時，原本只寫 NLog，
-/// 使用者在「已開始執行」的 toast 之後就再也看不到失敗訊息，只能翻 log 檔。狀態卡改顯示
-/// 這筆紀錄，讓失敗在畫面上「看得見」。
+/// 上一次執行的結局：狀態卡顯示這筆紀錄，立即執行／排程觸發的失敗在畫面上看得見，不必翻 log 檔。
 /// </summary>
 /// <param name="AnyRecordsWritten">
 /// 這次執行是否有任何主機日成功寫入分析結果（回饋十八輪批次B）：本機出問題會讓整趟
@@ -36,6 +28,12 @@ public sealed record RunOutcome(bool Success, string? Message, string Trigger, D
         result.LocalResults.Count > 0 || (result.NetiqResult?.HostDaysAnalyzed ?? 0) > 0;
 }
 
+/// <summary>
+/// 排程執行的行程內狀態（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：單例，供
+/// <see cref="SchedulerHostedService"/> 與狀態／停止 API 共用同一份「現在是否在跑、誰觸發的、
+/// 最新進度」。<see cref="TryBeginRun"/> 內建原子檢查——這就是「行程內單一執行 gate」，
+/// 手動觸發撞上排程執行中時直接拒絕（回 false），不用另外設一把鎖。
+/// </summary>
 public class SchedulerRunState
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
@@ -88,14 +86,10 @@ public class SchedulerRunState
         }
     }
 
-    /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：netiq；done/total 為主機日粒度。
-    /// ProgressTotal=0 代表尚未進到有量化進度的階段（清理／掃描中），狀態卡改顯示不定進度。
-    /// **回饋十七輪批次E 起這裡專屬 NetIQ**——本機的進度改回報到 <see cref="LocalProgressPhase"/>
-    /// （見其說明：本機與 NetIQ 改並行執行後，兩者不能再共用一組欄位）。</summary>
     /// <summary>
     /// 一條進度軌（phase／分子／分母／是否完工）。三軌互不覆蓋，各自持有自己最後一次回報的值。
-    /// 收成一個型別是為了**重設只寫一次**：原本 TryBeginRun 與 EndRun 各自逐欄重設 12 個欄位，
-    /// 兩份清單得手動保持同步，漏一個就是「上一趟的進度殘留在畫面上」。
+    /// 收成一個型別是為了**重設只寫一次**：TryBeginRun 與 EndRun 共用 <see cref="ResetTracks"/>，
+    /// 不必維護兩份逐欄重設清單（漏一個就是「上一趟的進度殘留在畫面上」）。
     /// </summary>
     private struct ProgressTrack
     {
@@ -125,6 +119,9 @@ public class SchedulerRunState
     private ProgressTrack _local;
     private ProgressTrack _prtg;
 
+    /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：專屬 NetIQ；done/total 為主機日粒度。
+    /// ProgressTotal=0 代表尚未進到有量化進度的階段（清理／掃描中），狀態卡顯示不定進度。
+    /// 本機進度在 <see cref="LocalProgressPhase"/>——本機與 NetIQ 並行執行，不共用欄位。</summary>
     public string? ProgressPhase => _netiq.Phase;
     public int ProgressDone => _netiq.Done;
     public int ProgressTotal => _netiq.Total;
@@ -309,16 +306,11 @@ public class SchedulerRunState
     }
 
     /// <summary>
-    /// 「單一告示」讀取端專用的進度快照（回饋十四輪 UI-6 體檢）：只有一行可顯示的讀取端
-    /// （一般使用者的執行中告示 <c>/api/run-activity</c>、健康診斷的 AnalysisPhase）要在
-    /// 主／子兩條軌之間挑一條——**子進度優先**，它代表較晚、較貼近「現在到底卡在哪」的階段
-    /// （搜尋主線常常已跑完，只剩 AI 佇列在背景消化）。選擇邏輯放在這裡單點化，
-    /// 不讓每個讀取端各自記得（主／子欄位拆開後，「漏改讀取端」這個坑已經踩過兩次）。
-    /// 能同時畫兩條進度條的讀取端（排程作業頁的狀態 API）直接讀兩組欄位，不走這裡。
-    /// </summary>
-    /// <summary>
-    /// 優先序：主進度（netiq） &gt; 本機 &gt; PRTG。原第一順位的子進度軌已隨 AI 拆離移除
-    /// （AI 補寫的告示由 RunActivityController 讀 AiAnalysisRunState 另行提供）。
+    /// 「單一告示」讀取端專用的進度快照：只有一行可顯示的讀取端
+    /// （一般使用者的執行中告示 <c>/api/run-activity</c>、健康診斷的 AnalysisPhase）要在多條軌之間挑一條，
+    /// 選擇邏輯放在這裡單點化，不讓每個讀取端各自記得。能同時畫多條進度條的讀取端
+    /// （排程作業頁的狀態 API）直接讀各組欄位，不走這裡。
+    /// 優先序：主進度（netiq） &gt; 本機 &gt; PRTG。AI 補寫的告示由 RunActivityController 讀 AiAnalysisRunState 另行提供。
     /// 本機排在 NetIQ 之後——Full 範圍下 NetIQ 通常是規模較大、較慢的一路，單一告示優先顯示它更有
     /// 代表性；LocalOnly 範圍或 NetIQ 尚未開始回報時，自然落回本機進度，不會顯示空白。
     /// PRTG 排最後：它是附屬流程，不該蓋掉主要分析的活動訊息。
@@ -335,9 +327,6 @@ public class SchedulerRunState
         }
     }
 
-    /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ／PRTG 三階段各自的
-    /// 進度，供狀態 API 畫進度條。phase=="local" 寫入本機專屬欄位；phase 以 "prtg-" 開頭寫入 PRTG 專屬欄位；
-    /// 其餘（netiq）寫入主進度欄位——三組欄位互不覆蓋。</summary>
     /// <summary>
     /// 當日 PRTG finding 剛到齊時觸發（每趟執行最多一次）。AI 分析服務據此立刻開跑，
     /// 不必等自己的輪詢週期。訂閱者的例外由發佈端吞掉——通知失敗不能反過來弄壞取數執行。
@@ -350,6 +339,9 @@ public class SchedulerRunState
     /// </summary>
     public event Action? RunEnded;
 
+    /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ／PRTG 三階段各自的
+    /// 進度，供狀態 API 畫進度條。phase=="local" 寫入本機專屬欄位；phase 以 "prtg-" 開頭寫入 PRTG 專屬欄位；
+    /// 其餘（netiq）寫入主進度欄位——三組欄位互不覆蓋。</summary>
     public void ReportProgress(string phase, int done, int total)
     {
         var becameReady = false;
