@@ -833,7 +833,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
   | 名詞 | 定義 |
   |---|---|
   | 交辦單 | 一個問題 × 一批主機 × 一位處理人；派工、通知、檢視、回覆的單位 |
-  | 成員 | 交辦單下的一個（主機, 問題）案件 |
+  | 成員 | 交辦單下的一個（主機, 問題）案件；處理人看到的畫面一律稱「交辦」（如「交辦處理人」「交辦狀態」「交辦逐日同步」），「案件」只留在管理者專屬頁（使用者詳情、PRTG 維護、排程作業、稽核）與進階說明，`HandlerFacingWordingUiTests` 掃前端字串守住 |
   | 進行中／已結案／上報中／暫停／未回覆 | 交辦單的推導狀態；暫停＝問題目前靜音中，未回覆＝處理人從未回覆 |
   | 範圍 | 建單時記錄的主機條件：全站／主機群組／指定主機 |
   | 續掛 | 進行中交辦單自動納入範圍內新出現的同問題主機 |
@@ -902,11 +902,6 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
 - 區塊：風險類型統計卡（8 類：主數字＝**問題類型數** `IssueTypeCount`——相異 (Source, EventId)、
   跨主機跨日皆去重；次行為涉及主機數、期間累計主機×日、嚴重度分解）、**重點問題 Top 5**、
-  **一個問題只歸一個類別**：同一個 (Source, EventId) 的 `lf_top_issues` 列可能帶不同 category
-  （規則調整過、或部分主機日未命中規則而落 `Other`）。`AggregateByCategory` 先以
-  `MIN(category)` 把每個問題收斂成單一類別再分卡——與依問題視角（`Aggregate` 的
-  `g.Min(x => x.Category)`）同一條規則，否則同一個問題會被兩張卡各算一次、點進去卻只出現在一張。
-
   高風險主機排行、待辦區（未處理/逾期/權限異動 pending 數；具 `Handle` 者在「未處理問題」之後多一張
   **我的交辦單**卡：進行中單數，副行台數、逾期台數與未回覆單數，連到自己的 §9.4a，資料同側欄徽章
   `GET api/handlers/me/badge`；具 `Assign` 者另有**待派工問題**卡：`DashboardDto.PendingDispatch`，
@@ -914,6 +909,10 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   超過試跑上限時顯示「超過上限」，副行為其中無法派出的問題數；點卡進待派頁籤 `/work-orders#gaps`；
   不具 `Assign` 者該欄為 null、不試跑。整包快取的鍵含 Assign 維度）、未回報主機、
   **依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
+- **一個問題只歸一個類別**：同一個 (Source, EventId) 的 `lf_top_issues` 列可能帶不同 category
+  （規則調整過、或部分主機日未命中規則而落 `Other`）。`AggregateByCategory` 先以
+  `MIN(category)` 把每個問題收斂成單一類別再分卡——與依問題視角（`Aggregate` 的
+  `g.Min(x => x.Category)`）同一條規則，否則同一個問題會被兩張卡各算一次、點進去卻只出現在一張。
 - **全部走 SQL 端聚合，不載入期間內的紀錄**；與報表共用同一組聚合與同一個排行排序，
   兩頁的主機排行、待辦四計數必然一致。三層可見範圍（可見主機／日風險等級顯示範圍／
   可見嚴重度）由呼叫端等價套用（`RecordRepository.ResolveDayRiskLevels`／`ParseVisibleSeverities`
@@ -927,10 +926,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   PRTG 問題在期間內每台主機的最近一次出現都落在 30 日誤報窗內時，列上顯示「已標誤報」徽章（`MarkedFalsePositive`，PRTG-SPEC §9 抑制）。
   **刻意不含處理狀態外的細節**：處理狀態摘要仍附在列上（未處理主機數），但逐問題的完整
   處理歷程要進依問題視角才看得到；這張卡回答的是「哪幾個問題現在最該優先看」。
-- **依「分數」而非數量或單純嚴重度排序**：
-  純數量排序在 2000 台以上必然失效——`DCOM 10016` 這種幾乎每台都有、每天都一樣的雜訊
-  恆在第 1（資訊量為零）。改依 `IssuePriorityScorer.Score` 算出的分數排序（同分時退回
-  嚴重度→主機數→總次數當次要鍵，排序穩定）：
+- **依「分數」而非數量或單純嚴重度排序**：依 `IssuePriorityScorer.Score` 算出的分數排序（同分時退回
+  嚴重度→主機數→總次數當次要鍵，排序穩定）。純數量排序在 2000 台以上會讓 `DCOM 10016` 這種幾乎每台都有、
+  每天都一樣的雜訊恆居第 1（資訊量為零）：
   ```
   score = 100 × severityW × hostRatioFactor × spreadW × noveltyW × openW × tierW
     severityW       高=1.0／中=0.6／低=0.3
@@ -1268,7 +1266,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      排程皆呼叫這一個類別，理由同 `DayHandlingDerivation`：語意分散就會漂移）：
 
      - **建案**（指派當下）：一律經交辦單協調器 `WorkOrderCoordinator`（§9.4b），沒有不屬於交辦單的
-       進行中案件。日層級指派（僅列入未處理計算等級、尚未結案、尚無進行中案件的問題才建案）時，
+       進行中案件。日層級指派（僅列入未處理計算等級、尚未結案、尚無進行中案件的問題才建案；
+       並與夜間派工相同，略過已抑制、已知雜訊、不再打擾、目前靜音中的問題，預覽與結果以 `skippedByReason`
+       說明略過幾個與原因）時，
        該處理人此問題已有進行中單就追加成員，否則建一張 `origin=day_assign`、範圍為指定主機的單，
        回應多帶 `workOrderId`；依問題視角的交辦見 §9.2。已有進行中案件的問題維持原案件與原處理人，不因改天
        再指派別人就被搶走，回傳結果提示「N 個問題已由 ○○○ 的案件涵蓋，未變更」。建案時回溯
@@ -1509,11 +1509,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **待派**：期間（預設昨天往前 7 天）內出現、卻沒有任何進行中案件的問題，以派工試跑決定——
   SQL 只取候選出現點（排除已有進行中案件），記憶體以與夜間相同的 `WorkOrderDispatcher.Decide`（含 ⓪ 靜音）
   套閘門、可見範圍與選人，依問題分組回：待派台數｜建議處理人｜無法派出（原因 `no_pool`／`no_visibility`
-  （列出無人看得到的主機群組）／`all_paused`／`disabled`）｜已排除（閘門計數）。抑制以「規則可能命中」
+  （列出無人看得到的主機群組）／`all_paused`）｜已排除（閘門計數）。試跑一律視為自動派工開啟、不模擬 ① 與 ③。抑制以「規則可能命中」
   逐主機判定（`KnownIssueCatalog.RuleMayHit`，可能多擋、不會少擋）。候選出現點超過 20000 筆回
   `tooLarge` 要求縮小期間（上限算尚未派出的出現點）。**畫面數字＝按「立即派工」會發生的事**：
-  「立即派工」（`Maintain`）走同一個試跑再落盤，以設定複本強制開啟自動派工、不改存檔設定；部分問題失敗時
-  逐組回報、稽核一定寫。
+  「立即派工」（`Maintain`）走同一個試跑再落盤，以設定複本強制開啟自動派工、不改存檔設定；建單依處理人、問題與
+  決策來源分組，來源（問題負責人規則／自動派工）與備註比照夜間派工；部分問題失敗時逐組回報、稽核一定寫。
 - **靜音中**（只有 `Maintain` 看得到；沒有該能力時頁籤與面板從 DOM 移除，`#muted` 不生效）：
   目前靜音中的問題，依到期日升冪——問題｜靜音至｜剩餘天數｜起始日｜原因｜設定者｜暫停中交辦單（前 20 個問題
   逐一查張數）｜「延長」「解除」。頁籤標題帶數字「靜音中（N）」。
@@ -1561,9 +1561,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ⑥ 自動派工（系統設定開啟時）：候選＝啟用∧未暫停接單∧派工池群組成員∧具 `Handle`∧看得到此主機；
 選人順序：本趟已為此問題選中且看得到此主機者 → 最近 30 天內此主機此問題最後一張 `resolved` 單的處理人
 （延續性偏好）→ 負載最輕（同分比單數、再比帳號）；無候選 → 計入待派。
+同一主機同一感測器已有進行中的 PRTG Warning 交辦時，同感測器的趨勢 finding 在通過 ⓪ 與閘門後改計
+`related_warning_active` 略過（同批的 Warning 先派），處理人手上那張 Warning 單已足以行動；
+寫成員時在鎖內重查該主機的進行中案件，決策之後才由 Web 路徑建出的（主機,問題）不再重複建案、計
+`open_case_exists` 略過，本趟新建卻因此沒有任何成員的單，收尾時以結案推導收掉、不列入摘要與通知。
 ④⑤⑥ 只寫當日一列、不回溯歷史。夜間建的單一律指定主機、不續掛（自動派工的處理人不一定看得到全部主機）；
 同問題新主機由「該人已有此問題進行中單 → 掛入」接上。夜間留痕寫交辦單事件（建單 `created`、趟末每張有新增的單一筆
-`appended`），執行紀錄一行摘要（`NightlyDispatch.DescribeSummary`：建單數、掛入台數、無候選人台數、靜音略過、閘門略過與四項明細）；自動派工開著但派工池沒有可接單的成員時，每趟另記一則警告。派工脈絡建立失敗時整趟
+`appended`），執行紀錄一行摘要（`NightlyDispatch.DescribeSummary`：建單數、掛入台數、無候選人台數、靜音略過、閘門略過與四項明細，
+另有途中結案、已有進行中案件、途中改派、同感測器 Warning 等略過時各帶一句）；自動派工開著但派工池沒有可接單的成員時，每趟另記一則警告。派工脈絡建立失敗時整趟
 略過派工並計為 `unavailable`，不讓分析失敗。
 
 **靜音**（問題負責與靜音 `IssueProfile.Mutes`，區間清單為唯一事實來源）：
@@ -1573,7 +1578,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   另需 `Assign`＋`Handle`，把該問題進行中的交辦單以「不處理」代為結案，能力不足整筆 403 零寫入。
   稽核 `issue_mute`／`issue_unmute`。
 - **單一列判定**：某一列（問題, 紀錄日）靜音＝問題目前靜音中，或紀錄日落在它任一區間。清單、卡片、排行、
-  待辦、逾期全用這一條；記憶體 `IssueExclusion.IsMuted` 與 SQL `IssueExclusionSql` 各一份，以同口徑測試守住。
+  待辦、逾期、派工全用這一條；記憶體只有 `IssueExclusion.IsMuted` 一份（派工脈絡 `DispatchContext.IsMuted` 委派它），
+  SQL 為 `IssueExclusionSql`，兩者以同口徑測試守住。
   效果：靜音中整個問題消失（含靜音前的日子）；到期後區間內的日子仍視同已有結論、區間前的未處理日子回到待辦；
   提前解除從解除當天起恢復。一天只剩靜音問題時日狀態推導為已處理（`DayStatusRule.Resolve`）。
 - `IIssueAggregateQuery` 每個方法第一個參數都是 `IssueExclusion`、**沒有預設值**（反射守門）：呼叫端必須明寫
@@ -1598,6 +1604,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | 端點 | 能力 | 說明 |
 |---|---|---|
 | `GET ?handlerId&groupId&source&eventId&status&handlerInactive&paused&resumedFromMute&unreadOnly&sort&page&pageSize` | `Assign`／`ViewAll` | 清單；`pageSize` ≤ 100 |
+| `PUT {id}/due-date { dueDate }` | `Handle`（處理人本人、單進行中） | 改期限；不可早於今天、不可晚於今天＋90 天（`WorkOrderReplyService.MaxDueDateDays`），null 清除；稽核 `work_order_due_date` |
 | `GET handler-groups` | `Assign`／`ViewAll` | 群組篩選選項（啟用中使用者群組） |
 | `GET unread-count` | `Assign`／`ViewAll` | 有未讀回覆的單數 `{ count }`（SQL COUNT，側欄徽章用） |
 | `GET {id}`／`{id}/members?status&page&pageSize`／`{id}/timeline` | 處理人本人／`Assign`／`ViewAll` | 詳情；成員每頁 ≤ 200 |
@@ -1793,8 +1800,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
 - **處理狀態顯示範圍（§5，與期間列同一行）**：一組**單選** chip——全部（預設）／未結案
   ／未處理／未指派（單選讓每個數字都有明確母體，取代語意重疊的多 checkbox）。
-  `HandlingHistoryQueryService.FilterByScope` **先過濾再聚合**：KPI、趨勢、類型分布、排行、
-  占比全部反映同一範圍；前期對比套同一 scope 才可比。狀態推導與 `GetTodo`／問題查詢清單同源
+  `HandlingHistoryQueryService.FilterByScope` **先過濾再聚合**：KPI、趨勢、主機排行、處理進度反映同一範圍；
+  風險類型分布與問題排行是獨立的 SQL 投影，不套 scope；前期對比套同一 scope 才可比。KPI 的問題總數在每個範圍
+  都排除靜音中的問題（與 scope=all 的 SQL 聚合同口徑）。狀態推導與 `GetTodo`／問題查詢清單同源
   （`DayHandlingDerivation`）；「未指派」＝日層級無處理人且無進行中案件涵蓋。scope≠all 時
   低風險日一律排除（不在待辦語意內）、「處理進度」小圖隱藏（母體已抽掉已處理，恆 0%/100%
   無資訊量）。scope 存 URL（可分享；all 不留參數）、不入 localStorage（誠實預設）；
@@ -2985,14 +2993,14 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `NetiqOptionsStore`（介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore` | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
 | `WorkOrderOutboxStore` | blob `work_order_outbox`（單一物件：交辦通知待寄項目，key 由種類、單號、收件人、入列時間 ticks 組成；入列時間為本地時間，上限 2 萬筆；寄送規則見 §9.4b「通知」） | Web＋批次（夜間派工入列） |
-| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）） | Web |
+| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）、先落庫再寄的即時通知意圖 `UrgentOutbox`、郵件貢獻帳本（已寄 `AcceptedMailContributionReceipts`、舊格式保留 `HeldLegacyMailContributionReceipts`，皆 180 天清理；寄送中預約 `MailContributionReservations`，`reserved` 逾 5 分鐘釋放、`attempted`／`unknown` 不自動釋放；三者合計上限 12,000 鍵，預約失敗時鍵已被佔用記 Info、滿載記 Warn）、交辦摘要各時刻最後寄出日 `WorkOrderDigestLastSentSlots`、資料過期警示旗標與日期） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；含 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬；交辦單成員） | Web＋批次 |
 | `IWorkOrderStore` | **表 `lf_work_orders`／`lf_work_order_events`**（交辦單與事件，§9.4b；清單、看板、處理人摘要皆單句 SQL 聚合） | Web＋批次 |
 | `IIssueAggregateQuery` | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
-| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題負責與靜音」頁維護） | Web |
+| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題負責與靜音」頁維護；負責人、結論、靜音各入口以 `Update` 在同一互斥區塊內只改自己的欄位，`Upsert` 只用於整列覆寫） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
