@@ -18,6 +18,7 @@ import { formatUserName, todayLocal } from './format.js';
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
 import { appUrl } from './paths.js';
+import { safeStorage } from './storage.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -232,13 +233,13 @@ export const DEFAULT_PAGE_SIZE = 20;
  * 内部統一加前綴避免與其他 localStorage 使用者衝突。
  */
 export function loadPageSize(key, fallback = DEFAULT_PAGE_SIZE) {
-    const raw = localStorage.getItem(`lf.pageSize.${key}`);
+    const raw = safeStorage.get(`lf.pageSize.${key}`);
     const n = raw ? Number(raw) : NaN;
     return PAGE_SIZE_OPTIONS.includes(n) ? n : fallback;
 }
 
 export function savePageSize(key, size) {
-    localStorage.setItem(`lf.pageSize.${key}`, String(size));
+    safeStorage.set(`lf.pageSize.${key}`, String(size));
 }
 
 /**
@@ -253,22 +254,15 @@ export function bindRememberedCollapse(collapseEl, toggleEl, key, { expandText =
         toggleEl.textContent = expanded ? collapseText : expandText;
         toggleEl.setAttribute('aria-expanded', String(expanded));
     };
-    let open = false;
-    try {
-        open = localStorage.getItem(storageKey) === 'open';
-    } catch {
-        // 讀不到就維持預設收合
-    }
+    // 讀不到（儲存區不可用）就維持預設收合
+    const open = safeStorage.get(storageKey) === 'open';
     // 直接帶 show 類別：載入時不播展開動畫，Bootstrap 依類別判斷目前狀態
     collapseEl.classList.toggle('show', open);
     sync(open);
     const remember = expanded => {
         sync(expanded);
-        try {
-            localStorage.setItem(storageKey, expanded ? 'open' : 'closed');
-        } catch {
-            // 記不住只影響下次預設，不影響本次操作
-        }
+        // 記不住只影響下次預設，不影響本次操作（safeStorage 失敗時靜默略過）
+        safeStorage.set(storageKey, expanded ? 'open' : 'closed');
     };
     collapseEl.addEventListener('shown.bs.collapse', () => remember(true));
     collapseEl.addEventListener('hidden.bs.collapse', () => remember(false));

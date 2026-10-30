@@ -339,7 +339,7 @@ form.addEventListener('submit', async event => {
 
         toast(editingUser ? '已更新使用者' : '已新增使用者', 'success');
         modal.hide();
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤訊息已由 api.js 以 toast 顯示
     } finally {
@@ -389,7 +389,7 @@ async function submitBatch(groupIds, active, saveButton) {
 
         toast(parts.join('、'), 'success');
         modal.hide();
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤訊息已由 api.js 以 toast 顯示
     } finally {

@@ -220,7 +220,7 @@ function bindAskForm() {
                 resultEl.appendChild(citeList);
             }
         } catch (error) {
-            toast(error?.message || '提問失敗，請稍後再試。', 'error');
+            toast(error?.message || '提問失敗，請稍後再試。', 'danger');
         } finally {
             restore();
         }

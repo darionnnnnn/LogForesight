@@ -22,6 +22,8 @@ import {
 } from '../core/format.js';
 import * as charts from '../core/charts.js';
 import { bindRangeChips, rangeFromDays } from '../core/date-range.js';
+import { createSeqGuard } from '../core/async-guards.js';
+import { safeStorage } from '../core/storage.js';
 
 let currentData = null;
 // 保留天數來自第一次 summary 回覆；在那之前不做自動切換（寫死一個猜測值反而會猜錯）
@@ -53,7 +55,7 @@ const CHART_REGISTRY = [
 /** 壞資料（手改過的 localStorage、舊格式）一律當作未設定，退回全開，不讓一筆壞值把整頁圖表藏光 */
 function loadVisibleCharts() {
     try {
-        const stored = JSON.parse(localStorage.getItem(VISIBLE_CHARTS_STORAGE_KEY));
+        const stored = JSON.parse(safeStorage.get(VISIBLE_CHARTS_STORAGE_KEY));
         if (Array.isArray(stored)) return new Set(stored);
     } catch { /* 忽略壞資料 */ }
     return new Set(CHART_REGISTRY.map(c => c.id));
@@ -62,7 +64,7 @@ function loadVisibleCharts() {
 let visibleCharts = loadVisibleCharts();
 
 function saveVisibleCharts() {
-    localStorage.setItem(VISIBLE_CHARTS_STORAGE_KEY, JSON.stringify([...visibleCharts]));
+    safeStorage.set(VISIBLE_CHARTS_STORAGE_KEY, JSON.stringify([...visibleCharts]));
 }
 
 /** scope≠all 時「處理進度」無資訊量（母體已抽掉已處理，恆 0%/100%）——不論自訂圖表是否勾選都隱藏 */
@@ -155,17 +157,30 @@ async function load() {
     await guardLoad(kpiContainer, loadReport);
 }
 
+const reportGuard = createSeqGuard();   // 連按查詢或切換範圍時，慢的舊回應不得蓋掉新結果
+
 /** 實際的取數與渲染；失敗與重試由 load() 的 guardLoad 負責 */
 async function loadReport() {
     const from = document.getElementById('report-from').value;
     const to = document.getElementById('report-to').value;
     const compare = document.getElementById('report-compare').value;
 
-    const [data, displaySettings] = await Promise.all([
-        // 報表允許 366 天區間、非「全部」範圍走記憶體推導，大站台會超過預設 60 秒
-        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`, { timeoutMs: 180000 }),
-        getDisplaySettings()
-    ]);
+    const seq = reportGuard.next();
+    let data;
+    let displaySettings;
+    try {
+        [data, displaySettings] = await Promise.all([
+            // 報表允許 366 天區間、非「全部」範圍走記憶體推導，大站台會超過預設 60 秒
+            api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`, { timeoutMs: 180000 }),
+            getDisplaySettings()
+        ]);
+    } catch (err) {
+        // 過期請求的失敗不處理：失敗態只該屬於最新一次查詢
+        if (!reportGuard.isCurrent(seq)) return;
+        throw err;
+    }
+    // 回應回來時已有更新的查詢就整份丟掉，不得寫入任何頁面狀態
+    if (!reportGuard.isCurrent(seq)) return;
     currentData = data;
     retentionDays = data.retentionDays ?? retentionDays;
     updateYoyOptionLabel();
@@ -431,7 +446,7 @@ function renderCategoryChart() {
  * 狀態存 localStorage，預設主機——既有畫面零變化，要看問題排行的人切一次就記住。
  */
 const RANK_MODE_KEY = 'lf.reports.rankMode';
-let rankMode = localStorage.getItem(RANK_MODE_KEY) === 'issue' ? 'issue' : 'host';
+let rankMode = safeStorage.get(RANK_MODE_KEY) === 'issue' ? 'issue' : 'host';
 
 function bindRankModeToggle() {
     const toggle = document.getElementById('rank-mode-toggle');
@@ -442,7 +457,7 @@ function bindRankModeToggle() {
         btn.addEventListener('click', () => {
             if (rankMode === btn.dataset.rankMode) return;
             rankMode = btn.dataset.rankMode;
-            localStorage.setItem(RANK_MODE_KEY, rankMode);
+            safeStorage.set(RANK_MODE_KEY, rankMode);
             for (const other of toggle.querySelectorAll('[data-rank-mode]')) {
                 other.classList.toggle('active', other.dataset.rankMode === rankMode);
             }

@@ -1057,7 +1057,7 @@ function bindBrandIcon() {
             setBrandIcon(String(reader.result));
             toast('已選擇圖示，按「儲存」後才會套用。', 'info');
         };
-        reader.onerror = () => toast('讀取圖片失敗，請換一張圖片再試。', 'error');
+        reader.onerror = () => toast('讀取圖片失敗，請換一張圖片再試。', 'danger');
         reader.readAsDataURL(file);
     });
 

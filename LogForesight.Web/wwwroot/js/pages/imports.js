@@ -189,7 +189,7 @@ applyButton.addEventListener('click', async () => {
 
         previewCard.classList.add('d-none');
         currentPlan = null;
-        await loadLogs();
+        await guardLoad(document.getElementById('import-logs'), loadLogs);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {

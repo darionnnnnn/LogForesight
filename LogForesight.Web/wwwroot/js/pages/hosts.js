@@ -12,6 +12,7 @@ import {
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 const listContainer = document.getElementById('host-list');
 const queueContainer = document.getElementById('netiq-queues');
@@ -173,7 +174,7 @@ function renderQueues() {
             statusMode = card.key;
             setupStatusChips();
             currentPage = 1;
-            search();
+            reload();
         });
 
         col.appendChild(button);
@@ -201,7 +202,7 @@ function setupStatusChips() {
         attr: 'status',
         activeValues: [statusMode],
         multi: false,
-        onToggle: value => { statusMode = value; currentPage = 1; search(); }
+        onToggle: value => { statusMode = value; currentPage = 1; reload(); }
     });
 }
 
@@ -215,7 +216,7 @@ function setupOsChips() {
         attr: 'os',
         activeValues: [osFilter],
         multi: false,
-        onToggle: value => { osFilter = value; currentPage = 1; search(); }
+        onToggle: value => { osFilter = value; currentPage = 1; reload(); }
     });
 }
 
@@ -230,7 +231,7 @@ function setupPrtgMapChips() {
         attr: 'prtg',
         activeValues: [prtgMapFilter],
         multi: false,
-        onToggle: value => { prtgMapFilter = value; currentPage = 1; search(); }
+        onToggle: value => { prtgMapFilter = value; currentPage = 1; reload(); }
     });
 }
 
@@ -243,7 +244,7 @@ function setupGroupChips() {
         onToggle: (value, active) => {
             if (active) groupFilter.add(value); else groupFilter.delete(value);
             currentPage = 1;
-            search();
+            reload();
         }
     });
 }
@@ -266,6 +267,8 @@ function currentFilterParams() {
     return params;
 }
 
+const searchGuard = createSeqGuard();
+
 /** 伺服器端分頁＋搜尋＋篩選（§5.4 D-4）：任何篩選條件改變都重新呼叫伺服器，不在瀏覽器內二次篩選 */
 async function search() {
     const params = currentFilterParams();
@@ -273,9 +276,25 @@ async function search() {
     params.set('pageSize', String(pageSize));
 
     renderLoading(listContainer, 5);
-    lastResult = await api.get(`/api/admin/hosts?${params.toString()}`);
+    const seq = searchGuard.next();
+    let result;
+    try {
+        result = await api.get(`/api/admin/hosts?${params.toString()}`);
+    } catch (err) {
+        // 過期請求的失敗不處理：使用者此刻在等的是新請求
+        if (!searchGuard.isCurrent(seq)) return;
+        throw err;
+    }
+    // 回應回來時已有更新的查詢（連打關鍵字、連點篩選）就整份丟掉，不得寫入頁面狀態
+    if (!searchGuard.isCurrent(seq)) return;
+    lastResult = result;
     currentPageHosts = lastResult.items;
     render();
+}
+
+/** 篩選、換頁、排序後的重載：失敗時換成可重試的失敗態，不留永遠轉圈的骨架 */
+function reload() {
+    return guardLoad(listContainer, search);
 }
 
 /**
@@ -336,7 +355,7 @@ function render() {
         onSort: (key, dir) => {
             sort = { key, dir };
             currentPage = 1;
-            search();
+            reload();
         },
         empty: !hasFilter && lastResult.total === 0
             ? { title: '尚無主機', hint: '批次分析執行時會自動登記本機；NetIQ 主機請用「新增主機」或「批次貼上」建立。' }
@@ -348,7 +367,7 @@ function render() {
         totalPages: Math.ceil(lastResult.total / lastResult.pageSize),
         onPage: page => {
             currentPage = page;
-            search();
+            reload();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         },
         pageSize,
@@ -356,7 +375,7 @@ function render() {
             pageSize = size;
             savePageSize('hosts', size);
             currentPage = 1;
-            search();
+            reload();
         }
     });
 
@@ -594,7 +613,7 @@ async function setActive(host, active) {
         const saved = await api.put(`/api/admin/hosts/${host.hostId}/active`, { active });
         toast(active ? '已啟用主機' : '已停用主機', 'success');
         if (saved?.remapWarning) toast(saved.remapWarning, 'warning');
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     }
@@ -613,7 +632,7 @@ async function unmerge(host) {
     try {
         await api.post(`/api/admin/hosts/${host.hostId}/unmerge`, {});
         toast('已解除合併', 'success');
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     }
@@ -683,7 +702,7 @@ form.addEventListener('submit', async event => {
         // 否則使用者看到 PRTG 區塊還是舊的，會以為存檔沒生效（docs/PRTG-SPEC.md §4）
         if (saved.remapWarning) toast(saved.remapWarning, 'warning');
         modal.hide();
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -713,7 +732,7 @@ bulkForm.addEventListener('submit', async event => {
 
         renderBulkResult(result);
         toast(`已新增 ${result.addedCount} 台、更新 ${result.updatedCount} 台`, 'success');
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -907,7 +926,7 @@ document.getElementById('batch-groups-form').addEventListener('submit', async ev
 
         selectedHosts.clear();
         batchGroupsModal.hide();
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -935,7 +954,7 @@ document.getElementById('batch-tier-form').addEventListener('submit', async even
 
         selectedHosts.clear();
         batchTierModal.hide();
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -994,9 +1013,9 @@ document.getElementById('btn-bulk-hosts').addEventListener('click', () => {
 // 停止輸入 300ms 後才查詢
 searchInput.addEventListener('input', () => {
     clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(() => { currentPage = 1; search(); }, 300);
+    searchDebounce = setTimeout(() => { currentPage = 1; reload(); }, 300);
 });
-sentinelFilter.addEventListener('change', () => { currentPage = 1; search(); });
+sentinelFilter.addEventListener('change', () => { currentPage = 1; reload(); });
 setupStatusChips();
 
 guardLoad(listContainer, load);

@@ -295,7 +295,7 @@ async function removeMute(rule) {
     try {
         await clearIssueMute(rule.sourceName, rule.eventId);
         toast('已解除靜音', 'success');
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     }
@@ -383,7 +383,7 @@ conclusionClearButton.addEventListener('click', async () => {
     try {
         await api.delete(`/api/admin/issue-owners/${encodeURIComponent(editingRule.sourceName)}/${editingRule.eventId}/conclusion`);
         toast('已解除機房結論', 'success');
-        await load();
+        await guardLoad(listContainer, load);
         modal.hide();
     } catch {
         // 錯誤已由 api.js 顯示
@@ -508,7 +508,7 @@ form.addEventListener('submit', async event => {
         }
         toast('已儲存問題設定', 'success');
         modal.hide();
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -530,7 +530,7 @@ async function removeRule(rule) {
     try {
         await api.delete(`/api/admin/issue-owners/${encodeURIComponent(rule.sourceName)}/${rule.eventId}`);
         toast('已刪除', 'success');
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     }

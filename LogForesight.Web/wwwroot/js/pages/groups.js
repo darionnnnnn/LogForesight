@@ -33,6 +33,14 @@ document.getElementById('group-tabs').addEventListener('click', event => {
 
 // ── 載入與渲染 ───────────────────────────────────────────────────────────────
 
+/** 群組頁 load 會重畫的容器；初次載入、儲存後與刪除後重載都經 guardLoad，失敗要有可重試的狀態 */
+function groupLoadContainers() {
+    return [
+        document.getElementById('user-group-list'),
+        document.getElementById('host-group-list')
+    ];
+}
+
 async function load() {
     renderLoading(document.getElementById('user-group-list'), 3);
     renderLoading(document.getElementById('host-group-list'), 3);
@@ -358,7 +366,7 @@ form.addEventListener('submit', async event => {
                             `群組「${saved.groupName}」已儲存，但設定可檢視的主機群組時發生錯誤，請至「授權矩陣」頁籤手動設定。`,
                             'warning', 8000);
                         modal.hide();
-                        await load();
+                        await guardLoad(groupLoadContainers(), load);
                         return;
                     }
                 }
@@ -369,7 +377,7 @@ form.addEventListener('submit', async event => {
 
         toast('已儲存群組', 'success');
         modal.hide();
-        await load();
+        await guardLoad(groupLoadContainers(), load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -396,7 +404,7 @@ async function onDelete(kind, group) {
             : `/api/admin/host-groups/${group.groupId}`;
         await api.delete(url);
         toast(`已刪除群組「${group.groupName}」`, 'success');
-        await load();
+        await guardLoad(groupLoadContainers(), load);
     } catch {
         // 錯誤已由 api.js 顯示（含「還有成員」這類業務錯誤）
     }
@@ -548,7 +556,7 @@ document.getElementById('current-members-remove').addEventListener('click', asyn
         await api.post(`/api/admin/host-groups/${membersState.groupId}/members/remove`, { hostIds });
         toast(`已移出 ${hostIds.length} 台主機`, 'success');
         await loadCurrentMembers(membersState.groupId);
-        await load();   // 群組清單的主機數要跟著更新
+        await guardLoad(groupLoadContainers(), load);   // 群組清單的主機數要跟著更新
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -676,7 +684,7 @@ document.getElementById('members-apply').addEventListener('click', async () => {
         await api.post(`/api/admin/host-groups/${membersState.groupId}/members`, { hostIds, removeFromOthers });
         toast(`已將 ${hostIds.length} 台主機加入群組`, 'success');
         membersModal.hide();
-        await load();
+        await guardLoad(groupLoadContainers(), load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -733,7 +741,4 @@ function activeBadge(active) {
     return span;
 }
 
-guardLoad([
-    document.getElementById('user-group-list'),
-    document.getElementById('host-group-list')
-], load);
+guardLoad(groupLoadContainers(), load);

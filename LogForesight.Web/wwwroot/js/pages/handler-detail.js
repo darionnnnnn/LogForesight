@@ -14,6 +14,7 @@
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
+import { safeStorage } from '../core/storage.js';
 import {
     renderLoading,
     renderTable,
@@ -1102,11 +1103,8 @@ document.getElementById('toggle-resolved-days').addEventListener('change', event
 });
 
 advancedEl.addEventListener('toggle', () => {
-    try {
-        localStorage.setItem(ADVANCED_OPEN_KEY, advancedEl.open ? '1' : '0');
-    } catch {
-        // 本機儲存區不可用（隱私模式等）：不記住展開狀態，不影響功能
-    }
+    // 本機儲存區不可用（隱私模式等）時 safeStorage 靜默略過：不記住展開狀態，不影響功能
+    safeStorage.set(ADVANCED_OPEN_KEY, advancedEl.open ? '1' : '0');
     if (!advancedEl.open || advancedLoaded) return;
     // 權限尚未確認（load 還在跑）就先記著，確認有權後由 load 補載入；無權者永遠不會呼叫 workload
     if (!advancedAllowed) {
@@ -1116,11 +1114,7 @@ advancedEl.addEventListener('toggle', () => {
     guardLoad([casesEl, daysEl], loadAdvanced);
 });
 
-try {
-    // 設定 open 會觸發 toggle 事件，由上面的監聽負責第一次載入
-    if (localStorage.getItem(ADVANCED_OPEN_KEY) === '1') advancedEl.open = true;
-} catch {
-    // 本機儲存區不可用：維持預設收合
-}
+// 設定 open 會觸發 toggle 事件，由上面的監聽負責第一次載入；讀不到（儲存區不可用）就維持預設收合
+if (safeStorage.get(ADVANCED_OPEN_KEY) === '1') advancedEl.open = true;
 
 guardLoad([kpiEl, ordersEl], load);
