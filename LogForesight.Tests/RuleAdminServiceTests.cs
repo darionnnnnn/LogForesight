@@ -970,6 +970,38 @@ public class RuleAdminServiceTests
     }
 
     [Fact]
+    public void 引用已移除關聯模式的抑制_清單可載入且標為已退役_可解除()
+    {
+        _suppressions.SaveAll(new List<RuleSuppression>
+        {
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Correlation, CorrelationPatternId = "prtg-storage-evidence-aligned",
+                RuleId = "prtg-storage-evidence-aligned", TargetLabel = "舊來源對齊", Scope = SuppressionScopes.Host,
+                Host = "SRV-01", Reason = "舊抑制", Platform = WebHost.OsWindows
+            },
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Correlation, CorrelationPatternId = CorrelationPatternIds.StorageChain,
+                RuleId = CorrelationPatternIds.StorageChain, TargetLabel = "儲存鏈", Scope = SuppressionScopes.Host,
+                Host = "SRV-01", Reason = "正常", Platform = WebHost.OsWindows
+            }
+        });
+        var service = Create();
+
+        var list = service.GetSuppressions();
+        Assert.Equal(2, list.Count);
+        Assert.True(list.Single(s => s.CorrelationPatternId == "prtg-storage-evidence-aligned").Retired);
+        Assert.False(list.Single(s => s.CorrelationPatternId == CorrelationPatternIds.StorageChain).Retired);
+
+        service.RemoveSuppression(SuppressionTargetTypes.Correlation, null, null, "prtg-storage-evidence-aligned", null,
+            SuppressionScopes.Host, "SRV-01", null);
+
+        var left = Assert.Single(service.GetSuppressions());
+        Assert.Equal(CorrelationPatternIds.StorageChain, left.CorrelationPatternId);
+    }
+
+    [Fact]
     public void 解除Volume目標抑制_成功()
     {
         var service = Create();

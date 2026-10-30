@@ -85,23 +85,6 @@ public static class PrtgFindingMapper
         var targetObjid = finding.SensorObjid ?? finding.DeviceObjid;
         var identityRuleCode = finding.RuleCode;
 
-        var observations = SourceEvidence.BoundObservations(finding.EvidenceWindows
-            .Where(window => window.StartUtc.Offset == TimeSpan.Zero && window.EndUtc.Offset == TimeSpan.Zero &&
-                window.EndUtc > window.StartUtc)
-            .Take(65).Select(window => new SourceEvidence
-            {
-                SourceKind = SourceEvidenceKind.Prtg,
-                ExactHostKey = verifiedHostId is > 0 ? $"host-id:{verifiedHostId}" : null,
-                // The native sensor's monitored volume/endpoint and addressable evidence reference
-                // have not been proved by objid, category, or our internal hash.
-                ResourceScope = SourceResourceScope.Unknown,
-                SourceReferenceQuality = SourceReferenceQuality.Unknown,
-                WindowStartUtc = window.StartUtc, WindowEndUtc = window.EndUtc,
-                WindowResolution = finding.EvidenceWindowResolution,
-                ProjectionFingerprint = SourceEvidence.Fingerprint(
-                    targetObjid.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    finding.RuleCode, window.StartUtc.ToString("O"), window.EndUtc.ToString("O"))
-            }), out var truncated);
         return new LogIssueSignature
         {
             LogName = PrtgLogName,
@@ -109,13 +92,6 @@ public static class PrtgFindingMapper
             EventId = 0,
             EntryType = EventLogEntryType.Warning,
             EventKey = $"prtg:{identityRuleCode}:{targetObjid}",
-            PrtgPresenceSourceAsOf = finding.PresenceSourceAsOf,
-            PrtgPresenceDeviceStatusAsOf = finding.PresenceDeviceStatusAsOf,
-            PrtgPresenceSourceAuthorityFingerprint = finding.PresenceSourceAuthorityFingerprint,
-            PrtgPresenceMappingFingerprint = finding.PresenceMappingFingerprint,
-            PrtgPresenceInventoryFingerprint = finding.PresenceInventoryFingerprint,
-            SourceObservations = observations,
-            SourceObservationsTruncated = truncated,
             Count = 1,
             FirstSeen = "00:00",
             LastSeen = "23:59",

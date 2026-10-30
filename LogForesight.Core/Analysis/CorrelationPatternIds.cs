@@ -40,13 +40,10 @@ public static class CorrelationPatternIds
     public const string LinuxSshBruteSuccess = "linux-ssh-brute-success";
     public const string LinuxSshBruteUncertain = "linux-ssh-brute-uncertain";
 
-    // ── PRTG 跨來源佐證（弱同日與精確來源對齊分開識別，見 PrtgCorroboration）──
+    // ── PRTG 跨來源佐證（見 PrtgCorroboration）──
     public const string PrtgStorageCorroborated = "prtg-storage-corroborated";
     public const string PrtgCapacityCorroborated = "prtg-capacity-corroborated";
     public const string PrtgOutageCorroborated = "prtg-outage-corroborated";
-    public const string PrtgStorageEvidenceAligned = "prtg-storage-evidence-aligned";
-    public const string PrtgCapacityEvidenceAligned = "prtg-capacity-evidence-aligned";
-    public const string PrtgOutageEvidenceAligned = "prtg-outage-evidence-aligned";
 
     public static readonly string[] All =
     {
@@ -55,8 +52,7 @@ public static class CorrelationPatternIds
         CrashServiceFail, CrashLoopResource, TimeSkewAuth, PasswordSpray,
         XdayIntrusion, XdayStorage, XdayAvOffMalware, XdayBruteRdp,
         LinuxSshBruteSuccess, LinuxSshBruteUncertain,
-        PrtgStorageCorroborated, PrtgCapacityCorroborated, PrtgOutageCorroborated,
-        PrtgStorageEvidenceAligned, PrtgCapacityEvidenceAligned, PrtgOutageEvidenceAligned
+        PrtgStorageCorroborated, PrtgCapacityCorroborated, PrtgOutageCorroborated
     };
 
     public static bool IsValid(string patternId) => All.Contains(patternId);

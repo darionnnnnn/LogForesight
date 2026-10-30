@@ -236,6 +236,9 @@ public class RuleSuppressionDto
     /// <summary>非 Rule 目標的人話標籤，畫面直接顯示；TargetType=Rule 時為 null（用 RuleId 查）</summary>
     public string? TargetLabel { get; set; }
 
+    /// <summary>TargetType=Correlation 且該關聯模式已不存在（已移除）時為 true；這筆抑制不再有作用，可刪除</summary>
+    public bool Retired { get; set; }
+
     /// <summary>Host（預設）｜Group｜Site（回饋十三輪 F，見 SuppressionScopes）</summary>
     public string Scope { get; set; } = "Host";
 

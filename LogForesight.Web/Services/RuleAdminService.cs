@@ -1220,6 +1220,8 @@ public class RuleAdminService
         CorrelationPatternId = suppression.CorrelationPatternId,
         VolumeKind = suppression.VolumeKind,
         TargetLabel = suppression.TargetLabel,
+        Retired = suppression.TargetType == SuppressionTargetTypes.Correlation &&
+            !CorrelationPatternIds.IsValid(suppression.CorrelationPatternId ?? string.Empty),
         Scope = suppression.Scope,
         Host = suppression.Host,
         HostGroupId = suppression.HostGroupId,
