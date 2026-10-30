@@ -217,7 +217,7 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 |---|---|---|---|
 | `Rule`（預設，舊資料反序列化到此值，零遷移） | `RuleId` | 命中規則的問題 | `LogIssueSignature.Suppressed`；`ComputeRuleBasedRisk` 排除該簽章的 `ElevatesDayRisk`／`Severity==High` 貢獻 |
 | `Signature` | `SignatureKey`（`IssueSignatureKey.For(LogIssueSignature)` 物件版，含 Linux 專用的第五段 `EventKey`） | 未命中規則的問題簽章（`RuleId==null`，即 Other 類別） | 同上 `Suppressed`／風險計算，補上 A1 指出的核心缺口——過去只有命中規則的簽章才有抑制掛載點 |
-| `Correlation` | `CorrelationPatternId`（`Analysis/CorrelationPatternIds.cs`，17 個 Windows＋2 個 Linux 模式） | 跨 log 關聯訊號（攻擊鏈／故障鏈組合） | 命中的模式整批移出 `correlations`，不參與 `ComputeRuleBasedRisk`、不進 prompt、不進告警清單——這是四型中**影響面最大**的一種（`correlations.Count>0` 本身即可判中風險，`ElevatesDayRisk` 的模式直接判高風險），建立時 UI 強制理由必填＋強警告 |
+| `Correlation` | `CorrelationPatternId`（`Analysis/CorrelationPatternIds.cs`，18 個 Windows、2 個 Linux、3 個 PRTG 跨來源模式，共 23 個；引用已移除模式的既有抑制列在規則頁標「已退役」，仍可刪除） | 跨 log 關聯訊號（攻擊鏈／故障鏈組合） | 命中的模式整批移出 `correlations`，不參與 `ComputeRuleBasedRisk`、不進 prompt、不進告警清單——這是四型中**影響面最大**的一種（`correlations.Count>0` 本身即可判中風險，`ElevatesDayRisk` 的模式直接判高風險），建立時 UI 強制理由必填＋強警告 |
 | `Volume` | `VolumeKind`（`error`／`audit`，見 `VolumeKinds`） | 整體錯誤量／安全稽核事件量突增的趨勢告警 | `TrendAnalyzer` 略過對應的總量突增判定，不產生趨勢告警、不參與風險計算 |
 
 **四型互相獨立、比對邏輯不重疊**：`SuppressionFilter.ToRuleIdSet`／`ToSignatureKeySet`／
@@ -287,7 +287,7 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 - **`Site`**：不限主機或群組，全站生效。
 
 **主機與到期比對**（`Analysis/SuppressionFilter.cs`，純函數）：`Host` 範圍不分大小寫比對
-`Environment.MachineName`；`Group` 範圍比對呼叫端注入的「該主機所屬群組 Id 集合」是否包含
+被分析主機的名稱（`ActiveForHost` 的 host 參數；只有週期體檢的本機路徑傳入 `Environment.MachineName`）；`Group` 範圍比對呼叫端注入的「該主機所屬群組 Id 集合」是否包含
 `HostGroupId`（`SuppressionFilter` 本身是純函數，不依賴群組 store，群組成員展開由呼叫端——
 `LogAnalysisService`／`NetiqPipelineService`／`AnalysisOrchestrator`／`WeeklyCheckupService`
 ——各自解析後傳入）；`Site` 範圍一律生效。`ExpiresAt` 已到期的項目不生效，但**不自動刪除**——

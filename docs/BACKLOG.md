@@ -241,11 +241,7 @@
 - **AI 設定頁的「測試連線」**：三種 provider 各自的連線驗證形狀不同（本機端點無金鑰、OpenAI 官方
   要金鑰、Azure 要 deployment），本輪只做儲存驗證（缺必填欄位即回驗證錯誤）。真的打一次
   chat/completions 回範例 JSON 才叫測試連線，留待需求明確時做。
-- **依問題視角的白話說明只對 Windows 規則有效**：`KnownIssueCatalog.FindRule` 是
-  Windows 專用（Linux 規則要靠 program＋訊息內容比對，見 `FindLinuxRule`），而問題清單這層
-  只有 (來源, EventId)，湊不出 Linux 規則的比對條件。Linux 問題因此不會顯示白話說明——
-  不是漏做，是這層資訊不足。要補得先決定「用 program 前綴粗略比對」是否可接受
-  （會有誤配風險，Linux 規則本來就靠訊息內容區分）。
+- **問題清單的白話說明對 Linux 以 program 前綴粗略比對**：`PlainExplanationFor` 對 Linux 簽章走 `FindLinuxRuleByProgram`（只有 program、沒有訊息內容），同一 program 有多條規則時可能配錯說明。風險報告已改以簽章的規則 Id 反查，不受影響。**觸發時機**：使用者回報 Linux 問題的白話說明與實際規則不符。
 - **`UpsertFirstSeen` 的 SQLite 日期字串比較**：條件式 UPDATE（`first_seen > {date}`）在
   SQLite 是字典序文字比較，同一天二次寫入時因小數位數格式差異會觸發一次無意義的 UPDATE 並讓
   儲存格式在兩種寫法間漂移（**首見日的值不會錯**，跨日比較方向正確；SqlServer 不受影響）。

@@ -109,7 +109,7 @@ public class AiSettings
     /// OpenAI 相容 API 的標準欄位，llama.cpp 也支援。
     /// 0.3 實測不足以壓下這個模型的退化傾向，調到 0.5 後從 log 觀察似乎依然明顯，
     /// 這裡先調到 0.8 作為下一步嘗試；若持續無效，可能代表這個 server/模型組合下
-    /// OpenAI 相容層的 frequency_penalty 沒有確實生效，改靠上面的 repeat_penalty
+    /// OpenAI 相容層的 frequency_penalty 沒有確實生效，改靠上面的 rep_pen
     /// 或請維護伺服器的人確認實際支援的取樣參數。
     /// </summary>
     public double? FrequencyPenalty { get; set; } = 0.8;

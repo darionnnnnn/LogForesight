@@ -491,7 +491,7 @@ public static class KnownIssueCatalog
     {
         foreach (var rule in Rules)
         {
-            if (rule.Platform != "linux")
+            if (rule.Platform != "linux" || !rule.Enabled)
             {
                 continue;
             }
