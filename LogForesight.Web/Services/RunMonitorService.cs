@@ -415,7 +415,7 @@ public class RunMonitorService
     private string TriggerText(string? trigger) => trigger switch
     {
         null or "" or "console" => "工作排程器",
-        "schedule" => "排程",
+        BatchRunTriggers.Schedule => "排程",
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
             $"手動（{_displayNameService.OfAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger

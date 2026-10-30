@@ -134,7 +134,7 @@ public class AiAnalysisHostedService : BackgroundService
                     out _, requireWindow: false);
                 _runState.SetIdleReason(reason);
                 if (reason != null) return;
-                await TriggerRunAsync(forceRerun: false, trigger: "fetch-followup");
+                await TriggerRunAsync(forceRerun: false, trigger: BatchRunTriggers.FetchFollowUp);
             }
             catch (Exception ex)
             {
@@ -152,7 +152,7 @@ public class AiAnalysisHostedService : BackgroundService
         {
             // 窗口 End 到點：對排程自動觸發的進行中執行發優雅停止（停在單筆邊界）。
             // 手動觸發不受窗口限制。
-            if (_runState.Trigger == "schedule" &&
+            if (_runState.Trigger == BatchRunTriggers.Schedule &&
                 !ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.AiWindows) &&
                 _runState.TryCancel())
             {
@@ -170,7 +170,7 @@ public class AiAnalysisHostedService : BackgroundService
 
         _runState.SetIdleReason(null);
 
-        await TriggerRunAsync(forceRerun: false, trigger: inWindow ? "schedule" : "fetch-followup", externalCt: stoppingToken);
+        await TriggerRunAsync(forceRerun: false, trigger: inWindow ? BatchRunTriggers.Schedule : BatchRunTriggers.FetchFollowUp, externalCt: stoppingToken);
     }
 
     /// <summary>
@@ -217,7 +217,7 @@ public class AiAnalysisHostedService : BackgroundService
     /// 觸發 AI 分析執行。支援手動觸發與自動輪詢觸發，可指定是否強制重新分析。
     /// 回傳 true 代表成功開始執行，false 代表目前已有其他執行進行中。
     /// </summary>
-    public async Task<bool> TriggerRunAsync(bool forceRerun = false, string trigger = "schedule", CancellationToken externalCt = default)
+    public async Task<bool> TriggerRunAsync(bool forceRerun = false, string trigger = BatchRunTriggers.Schedule, CancellationToken externalCt = default)
     {
         if (forceRerun && _runState.IsRunning)
         {

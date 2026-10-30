@@ -148,7 +148,7 @@ public class AiAnalysisRunState
         {
             IsRunning = false;
             CompletedAt = DateTime.Now;
-            LastOutcome = new RunOutcome(success, message, Trigger ?? "schedule", DateTime.Now);
+            LastOutcome = new RunOutcome(success, message, Trigger ?? LogForesight.Core.Persistence.BatchRunTriggers.Schedule, DateTime.Now);
             _cts?.Dispose();
             _cts = null;
             tcsToComplete = _runCompletionTcs;

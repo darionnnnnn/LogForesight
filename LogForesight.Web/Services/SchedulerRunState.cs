@@ -234,7 +234,7 @@ public class SchedulerRunState
             IsRunning = true;
             Trigger = trigger;
             StartedAt = DateTime.Now;
-            if (trigger == "schedule")
+            if (trigger == LogForesight.Core.Persistence.BatchRunTriggers.Schedule)
             {
                 RecordScheduleAttemptLocked(StartedAt.Value);
             }

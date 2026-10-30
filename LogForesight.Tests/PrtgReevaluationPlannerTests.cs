@@ -124,6 +124,20 @@ public class PrtgReevaluationPlannerTests
     }
 
     [Fact]
+    public void Select_AI排程的Interrupted_不當成排程日()
+    {
+        var today = new DateTime(2026, 10, 20);
+        var runs = new[]
+        {
+            CreateRun(today.AddDays(-2).AddHours(22), trigger: "schedule", jobType: BatchRun.JobTypeAi, interrupted: true, prtgDays: null)
+        };
+
+        var selected = PrtgReevaluationPlanner.Select(runs, today, 180);
+
+        Assert.DoesNotContain(today.AddDays(-3), selected);
+    }
+
+    [Fact]
     public void Select_手動觸發的Interrupted_不入選()
     {
         var today = new DateTime(2026, 10, 20);

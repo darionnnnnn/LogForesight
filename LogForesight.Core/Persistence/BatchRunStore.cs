@@ -4,6 +4,24 @@ using NLog;
 
 namespace LogForesight.Core.Persistence;
 
+/// <summary>BatchRun.Trigger 的固定值（手動觸發為 "manual:{帳號}"，不在此列）。</summary>
+public static class BatchRunTriggers
+{
+    /// <summary>排程自動觸發</summary>
+    public const string Schedule = "schedule";
+
+    /// <summary>取數完成後接續的 AI 分析（不算排程）</summary>
+    public const string FetchFollowUp = "fetch-followup";
+}
+
+/// <summary>BatchRun 的判定擴充：排程觸發判準的唯一出口。</summary>
+public static class BatchRunExtensions
+{
+    /// <summary>取數排程執行：Trigger == schedule 且非 AI 背景工作（AI 不算取數排程的新鮮度或觸發）。</summary>
+    public static bool IsScheduledFetch(this BatchRun run) =>
+        run.Trigger == BatchRunTriggers.Schedule && run.JobType != BatchRun.JobTypeAi;
+}
+
 /// <summary>
 /// 一次批次執行的紀錄（↔ lf_batch_runs）。
 ///

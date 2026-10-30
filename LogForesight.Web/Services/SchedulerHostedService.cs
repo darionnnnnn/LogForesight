@@ -168,7 +168,7 @@ public class SchedulerHostedService : BackgroundService
             // 窗口 End 到點（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：對「排程觸發」的進行中執行發
             // 優雅停止（停在主機日邊界）。手動觸發不受時間窗限制（§1.4.4），不在這裡停。
             // 刻意放在 Enabled 檢查之前——執行中途被關掉 Enabled，這次排程執行仍該按窗口停。
-            if (_runState.Trigger == "schedule" &&
+            if (_runState.Trigger == BatchRunTriggers.Schedule &&
                 !ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.Windows) &&
                 _runState.TryCancel())
             {
@@ -177,7 +177,7 @@ public class SchedulerHostedService : BackgroundService
             // 手動執行佔住 gate 時，這個窗口的自動觸發會靜默消失——手動觸發不受窗口 End 停止
             // （§1.4.4），一趟大回填可以吃掉整段窗口。畫面上看起來就是「排程沒跑，也沒說為什麼」。
             // 這裡把它說出來：狀態卡顯示、里程碑進那次手動執行的紀錄，每個窗口只記一次。
-            if (_runState.Trigger != null && !_runState.Trigger.StartsWith("schedule", StringComparison.Ordinal))
+            if (_runState.Trigger != null && _runState.Trigger != BatchRunTriggers.Schedule)
             {
                 NoteSkippedScheduleWindow(options);
             }
@@ -301,7 +301,7 @@ public class SchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的執行，
+    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == schedule 且 JobType != BatchRun.JobTypeAi 的執行（<see cref="BatchRunExtensions.IsScheduledFetch"/>），
     /// 交由 <see cref="ScheduleCalculator.EffectiveScheduleTriggerTimes"/> 計算有效觸發時間（中斷執行允許同窗口補跑一次），
     /// 並與記憶體中最近的排程觸發嘗試時間聯集。
     /// </summary>
@@ -315,7 +315,7 @@ public class SchedulerHostedService : BackgroundService
     public bool PrtgBackfillWaiting => _prtgManualWork.Running == PrtgManualWork.Backfill;
 
     /// <summary>排程執行的唯一判準：Trigger == "schedule" 且非 AI 背景工作（觸發判定、補跑說明、排程驗收共用）</summary>
-    internal static bool IsScheduledFetchRun(BatchRun run) => run.Trigger == "schedule" && run.JobType != BatchRun.JobTypeAi;
+    internal static bool IsScheduledFetchRun(BatchRun run) => run.IsScheduledFetch();
 
     internal static IEnumerable<(DateTime StartedAt, bool Interrupted)> ScheduledRunTimes(IEnumerable<BatchRun> runs) =>
         runs.Where(IsScheduledFetchRun).Select(r => (r.StartedAt, r.Interrupted));
@@ -349,7 +349,7 @@ public class SchedulerHostedService : BackgroundService
     /// 抽成獨立函式是為了讓這條契約測得到。
     /// </summary>
     internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null) =>
-        new() { Scope = RunScope.Full, Trigger = "schedule", CatchUpNote = catchUpNote };
+        new() { Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote };
 
     /// <summary>
     /// 把呼叫端的請求與目前排程設定合成實際執行用的請求（<see cref="TriggerRunAsync"/> 的純函式部分）。

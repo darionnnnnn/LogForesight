@@ -1325,7 +1325,7 @@ public class AnalysisOrchestrator
         bool prtgEnabled)
     {
         var baseDays = BuildPrtgDays(request, retention, today);
-        if (request.Trigger == "schedule" &&
+        if (request.Trigger == LogForesight.Core.Persistence.BatchRunTriggers.Schedule &&
             request.Scope == RunScope.Full &&
             prtgEnabled &&
             recentRuns != null)
