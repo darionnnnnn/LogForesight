@@ -46,6 +46,18 @@ public class FrontendMiscUiTests
     }
 
     [Fact]
+    public void 系統健康背景工作表接上郵件帳本提示且不含案件字樣()
+    {
+        var source = ReadPage("settings.js");
+        var render = FunctionBody(source, "function renderBackgroundJobs(");
+        Assert.Contains("mailLedgerNotice(detail.mailContributionLedger)", render);
+        Assert.Contains("item: '郵件貢獻帳本'", render);
+        var notice = FunctionBody(source, "function mailLedgerNotice(");
+        Assert.DoesNotContain("案件", notice);
+        Assert.DoesNotContain("innerHTML", notice);
+    }
+
+    [Fact]
     public void 頁面模組不得直接呼叫fetch或location_assign()
     {
         var pagesDir = Path.Combine(JsRoot(), "pages");
@@ -202,6 +214,9 @@ public class FrontendMiscBehaviorTests
     [InlineData("reports載入失敗時範圍chip與currentScope不變")]
     [InlineData("reports載入成功時才以回應範圍更新chip")]
     [InlineData("說明書首次載入不捲動而一般切章會捲動")]
+    [InlineData("郵件帳本提示_未達九成且無滿載紀錄時不顯示")]
+    [InlineData("郵件帳本提示_滿載時帶出數字時間與收件人")]
+    [InlineData("郵件帳本提示_達九成但無滿載紀錄時顯示接近上限")]
     public void 小項行為案例(string caseName)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

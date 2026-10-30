@@ -1964,6 +1964,35 @@ public class MailNotificationService
     // 帳本上限（郵件貢獻 key 總數）：建構式選用參數，預設 12,000，測試可注入小值。
     private readonly int _acceptedMailContributionLimit;
 
+    // 最近一次「真的滿載」的時間與略過的收件人：只存行程內，供健康頁細節顯示。
+    private readonly object _ledgerFullLock = new();
+    private DateTime? _ledgerLastFullAtUtc;
+    private string? _ledgerLastFullRecipient;
+
+    /// <summary>帳本目前佔用的鍵（已寄＋舊格式保留＋寄送中預約，去重）；滿載警告與健康細節共用這一份算法。</summary>
+    private HashSet<string> GetOccupiedMailContributionKeys()
+    {
+        var ledger = _state.Get();
+        return ledger.AcceptedMailContributionReceipts.Keys
+            .Concat(ledger.HeldLegacyMailContributionReceipts.Keys)
+            .Concat(ledger.MailContributionReservations.Keys)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>郵件貢獻帳本狀態（佔用數、上限、最近一次滿載），供 /api/health/detail 顯示。</summary>
+    public LogForesight.Web.Models.Dto.MailContributionLedgerDto GetContributionLedgerStatus()
+    {
+        var occupied = GetOccupiedMailContributionKeys().Count;
+        lock (_ledgerFullLock)
+            return new LogForesight.Web.Models.Dto.MailContributionLedgerDto
+            {
+                OccupiedKeys = occupied,
+                Limit = _acceptedMailContributionLimit,
+                LastFullAtUtc = _ledgerLastFullAtUtc,
+                LastFullRecipient = _ledgerLastFullRecipient
+            };
+    }
+
     internal sealed record RenderedMailContributions(
         IReadOnlyList<DailyAnalysisRecord> Records,
         IReadOnlyList<MailIssueRow>? Rows,
@@ -2032,14 +2061,17 @@ public class MailNotificationService
         {
             // 帳本滿載（或同 key 已在途）時整個收件人本輪不寄，不能寄出無法原子記帳的內容；
             // 留 WARN，否則該收件人會靜默停寄。
-            var ledger = _state.Get();
-            var occupiedKeys = ledger.AcceptedMailContributionReceipts.Keys
-                .Concat(ledger.HeldLegacyMailContributionReceipts.Keys)
-                .Concat(ledger.MailContributionReservations.Keys)
-                .ToHashSet(StringComparer.Ordinal);
+            var occupiedKeys = GetOccupiedMailContributionKeys();
             // 與 store 的拒絕順序一致：任一鍵已被佔用（已寄、保留或寄送中）是正常去重，其餘才是滿載
             if (!keys.Any(occupiedKeys.Contains))
+            {
+                lock (_ledgerFullLock)
+                {
+                    _ledgerLastFullAtUtc = DateTime.UtcNow;
+                    _ledgerLastFullRecipient = recipient;
+                }
                 Log.Warn("郵件貢獻帳本已滿（{Count}/{Limit}），收件人 {Email} 本輪略過", occupiedKeys.Count, _acceptedMailContributionLimit, recipient);
+            }
             else
                 Log.Info("收件人 {Email} 的郵件內容已在帳本或寄送中，本輪略過", recipient);
             return null;

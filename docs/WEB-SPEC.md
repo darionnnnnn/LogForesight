@@ -2404,6 +2404,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      熔斷（本輪 SMTP 整體異常、連續失敗 3 次即停止本輪剩餘寄送）跳過的
      收件人不計入這個跨輪計數——熔斷是「本輪沒嘗試」，不是這個收件人本身的問題。已暫停的
      收件人同時顯示在設定頁與 `/api/health/detail`（`SuspendedMailRecipients`）。
+     `/api/health/detail` 的 `MailContributionLedger` 帶出郵件貢獻帳本狀態：`OccupiedKeys`（已寄＋舊格式保留＋寄送中預約，去重）、`Limit`（12,000）、
+     `LastFullAtUtc`／`LastFullRecipient`（最近一次真的滿載略過的收件人，僅行程內記憶，重啟後清空）；
+     系統健康的背景工作表在佔用數達上限 90% 或有滿載紀錄時才多一列「郵件貢獻帳本」，否則不顯示。
      `/api/health/detail` 另有回饋二十輪 C 補上的首見日合併狀態：`IssueFirstSeenSeedState`
      （not_started／running／completed／skipped／failed）、`IssueFirstSeenSeedFailures`、
      `IssueFirstSeenSeedError`；連續失敗達 3 次即視為 degraded（見 DB-SPEC 首見日段）。

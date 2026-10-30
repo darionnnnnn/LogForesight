@@ -1843,6 +1843,107 @@ public class MailNotificationServiceTests : IDisposable
         }
     }
 
+    /// <summary>帳本狀態測試共用情境：一位收件人、一筆高風險記錄；limit 為 null 時用預設上限。</summary>
+    private (MailNotificationService Service, MailNotifyStateStore State) CreateLedgerScenario(
+        string recipient, int? limit, int prefill)
+    {
+        CreateViewAllAccount(recipient);
+        EnableMail(settings =>
+        {
+            settings.MailOnRunCompleted = false;
+            settings.MailUrgentEnabled = true;
+            settings.MailDailyEnabled = false;
+            settings.MailMinRiskLevel = RiskLevels.Medium;
+            settings.MailRecipients = [recipient];
+        });
+        var host = _hosts.Upsert(new WebHost { HostName = "ledger-status", Active = true, Source = "netiq" });
+        var issue = new LogIssueSignature
+        {
+            Source = "APP", EventId = 1, EventKey = "APP|1", LogName = "Application",
+            Severity = IssueSeverity.High, ElevatesDayRisk = true
+        };
+        var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High, issues: issue);
+        record.RecordId = 5302;
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+        _issueAggregates.AggregateOverride = (from, to) => from.Date <= Yesterday && to.Date >= Yesterday
+            ? [new IssueAggregate
+            {
+                Source = issue.Source, EventId = issue.EventId, Category = "Application",
+                MaxSeverityRank = (int)IssueSeverity.High, ElevatesDayRisk = true, HostCount = 1,
+                DayCount = 1, ActiveDays = 1, FirstSeen = Yesterday, LastSeen = Yesterday,
+                IssueKeys = [issue.EventKey]
+            }]
+            : [];
+        var root = Path.Combine(Path.GetTempPath(), "lf-mail-ledger-status-" + Guid.NewGuid().ToString("N"));
+        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, root);
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+        workflow.RestoreFromRecord(record, aiEnabled: false, prtgEnabled: false);
+        var digest = new MailIssueDigest(_issueAggregates,
+            new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore),
+            _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
+
+        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
+        if (prefill > 0)
+        {
+            var now = DateTime.UtcNow;
+            var keys = Enumerable.Range(1, prefill).Select(i => new string((char)('0' + i), 64)).ToArray();
+            var filled = state.TryReserveMailContributionKeys(keys, now, maximumKeys: prefill)!;
+            Assert.True(state.MarkMailContributionAttemptStarted(filled, now));
+            Assert.True(state.CompleteMailContributionReservation(filled, MailContributionReservationOutcome.Accepted, now));
+        }
+        var service = limit is { } l
+            ? new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
+                _records, _handlings, state, _freshness,
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
+                _issueOwners, _issueAggregates, issueDigest: digest, workflow: workflow, acceptedMailContributionLimit: l)
+            : new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
+                _records, _handlings, state, _freshness,
+                new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
+                _issueOwners, _issueAggregates, issueDigest: digest, workflow: workflow);
+        return (service, state);
+    }
+
+    [Fact]
+    public async Task 郵件貢獻帳本滿載_狀態回報佔用數上限與最近略過的收件人()
+    {
+        const string recipient = "ledger-status-full@test.local";
+        var (service, _) = CreateLedgerScenario(recipient, limit: 3, prefill: 3);
+
+        var before = service.GetContributionLedgerStatus();
+        Assert.Equal(3, before.OccupiedKeys);
+        Assert.Equal(3, before.Limit);
+        Assert.Null(before.LastFullAtUtc);
+        Assert.Null(before.LastFullRecipient);
+
+        var started = DateTime.UtcNow;
+        await service.NotifyAfterRunAsync();
+
+        Assert.Empty(_sender.Sent);
+        var status = service.GetContributionLedgerStatus();
+        Assert.Equal(3, status.OccupiedKeys);
+        Assert.Equal(3, status.Limit);
+        Assert.Equal(recipient, status.LastFullRecipient);
+        Assert.NotNull(status.LastFullAtUtc);
+        Assert.True(status.LastFullAtUtc >= started.AddSeconds(-1));
+    }
+
+    [Fact]
+    public async Task 郵件貢獻帳本未滿_正常寄送後不記為滿載()
+    {
+        const string recipient = "ledger-status-ok@test.local";
+        var (service, _) = CreateLedgerScenario(recipient, limit: null, prefill: 0);
+
+        await service.NotifyAfterRunAsync();
+
+        Assert.NotEmpty(_sender.Sent);
+        var status = service.GetContributionLedgerStatus();
+        Assert.True(status.OccupiedKeys > 0);
+        Assert.Equal(12000, status.Limit);
+        Assert.Null(status.LastFullAtUtc);
+        Assert.Null(status.LastFullRecipient);
+    }
+
     private static LogIssueSignature ActionablePrtg() => new()
     {
         LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,

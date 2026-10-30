@@ -116,6 +116,19 @@ public class HealthServiceTests : IDisposable
     }
 
     [Fact]
+    public void 健康詳情帶出郵件貢獻帳本狀態()
+    {
+        var dto = new HealthService(
+            _backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService(), NewFreshnessService()).GetDetail();
+
+        Assert.NotNull(dto.MailContributionLedger);
+        Assert.Equal(0, dto.MailContributionLedger.OccupiedKeys);
+        Assert.Equal(12000, dto.MailContributionLedger.Limit);
+        Assert.Null(dto.MailContributionLedger.LastFullAtUtc);
+        Assert.Null(dto.MailContributionLedger.LastFullRecipient);
+    }
+
+    [Fact]
     public void 健康詳情露出獨立風險事件來源鍵回填進度()
     {
         var backfiller = _backend.TopIssueBackfiller();

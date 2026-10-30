@@ -219,6 +219,27 @@ const cases = {
         inst.selectChapter('a');
         assert.equal(scrolls.n, 1, '點擊／hashchange 切章要捲到內文');
     },
+
+    // ---- settings：郵件貢獻帳本健康提示 ----
+    郵件帳本提示_未達九成且無滿載紀錄時不顯示() {
+        const inst = build('settings.js', ['function mailLedgerNotice('], '',
+            '{ mailLedgerNotice }', { formatNumber: (n) => String(n), formatDateTime: (v) => `T(${v})` });
+        assert.equal(inst.mailLedgerNotice({ occupiedKeys: 10799, limit: 12000, lastFullAtUtc: null, lastFullRecipient: null }), null);
+        assert.equal(inst.mailLedgerNotice(null), null);
+    },
+    郵件帳本提示_滿載時帶出數字時間與收件人() {
+        const inst = build('settings.js', ['function mailLedgerNotice('], '',
+            '{ mailLedgerNotice }', { formatNumber: (n) => String(n), formatDateTime: (v) => `T(${v})` });
+        const text = inst.mailLedgerNotice({ occupiedKeys: 12000, limit: 12000, lastFullAtUtc: '2026-10-30T01:02:03Z', lastFullRecipient: 'a@test.local' });
+        assert.equal(text, '郵件貢獻帳本已滿（12000／上限 12000）：最近一次於 T(2026-10-30T01:02:03Z) 略過收件人 a@test.local，該收件人本輪不寄');
+        assert(!text.includes('案件'));
+    },
+    郵件帳本提示_達九成但無滿載紀錄時顯示接近上限() {
+        const inst = build('settings.js', ['function mailLedgerNotice('], '',
+            '{ mailLedgerNotice }', { formatNumber: (n) => String(n), formatDateTime: (v) => `T(${v})` });
+        const text = inst.mailLedgerNotice({ occupiedKeys: 10800, limit: 12000, lastFullAtUtc: null, lastFullRecipient: null });
+        assert.match(text, /^郵件貢獻帳本接近上限（10800／上限 12000）/);
+    },
 };
 
 const name = process.argv[2];
