@@ -36,8 +36,11 @@ internal class AnalysisPromptBuilder
     internal const string DataBlockStart = "<<<事件資料開始>>>";
     internal const string DataBlockEnd = "<<<事件資料結束>>>";
 
-    public const string SystemPrompt =
-        "你是資深 Windows Server 維運與資安分析師，同時也是把技術判讀翻譯成白話的溝通者。" +
+    public static readonly string SystemPrompt = SystemPromptFor(null);
+
+    /// <summary>依主機作業系統（linux／其他）組主分析 system prompt；稱呼走 <see cref="PromptGuidelines.HostKindText"/>。</summary>
+    public static string SystemPromptFor(string? hostOs) =>
+        "你是資深 " + PromptGuidelines.HostKindText(hostOs) + " 維運與資安分析師，同時也是把技術判讀翻譯成白話的溝通者。" +
         "以下資料已由程式完成規則比對、趨勢分析與風險判定，你的工作分兩部分：" +
         "(1) 依專業判斷填寫 risk_level，但這只是輔助判斷、不會讓程式判定的風險等級降低；" +
         "(2) 把結論轉譯成不懂 Event Log 的管理者也能看懂的白話——不要引用 Event ID 或程式碼層級術語，" +
@@ -64,10 +67,10 @@ internal class AnalysisPromptBuilder
     public static string BuildPrompt(DateTime date, List<LogIssueSignature> issues,
         int errorCount, int warningCount, int auditCount, List<DailyAnalysisRecord> history,
         List<string> trendAlerts, List<CorrelationFinding> correlations,
-        bool dataIncomplete, List<string> uncoveredChecks, string serverDescription)
+        bool dataIncomplete, List<string> uncoveredChecks, string serverDescription, string? hostOs = null)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"以下是 Windows Server 在 {date:yyyy-MM-dd}（{WeekdayZh(date)}）的事件日誌摘要" +
+        sb.AppendLine($"以下是 {PromptGuidelines.HostKindText(hostOs)} 在 {date:yyyy-MM-dd}（{WeekdayZh(date)}）的事件日誌摘要" +
                       "（已聚合統計，且已由程式完成規則比對、趨勢分析與風險判定）。" +
                       "請依這些資料給出風險等級判斷，並把結論轉譯成白話讓不懂技術的人也能理解，" +
                       "特別注意硬體故障前兆與入侵跡象。");

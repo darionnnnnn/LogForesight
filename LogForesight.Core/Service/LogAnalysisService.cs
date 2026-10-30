@@ -32,6 +32,7 @@ public class LogAnalysisService
     private readonly string _host;
     private readonly long _hostId;
     private readonly AnalysisPromptBuilder _promptBuilder;
+    private readonly string _hostOs;
     private readonly IRiskyEventStore? _riskyEventStore;
     private readonly IReadOnlyCollection<long> _hostGroupIds;
     private readonly List<RuleSuppression>? _suppressionSnapshot;
@@ -68,8 +69,10 @@ public class LogAnalysisService
         string? host = null, long hostId = 0, IRiskyEventStore? riskyEventStore = null,
         IReadOnlyCollection<long>? hostGroupIds = null, List<RuleSuppression>? suppressionSnapshot = null,
         AnalysisLogSource logSource = AnalysisLogSource.Local,
-        Func<DateTime, EventLogScanResult>? localSecuritySupplementScanner = null)
+        Func<DateTime, EventLogScanResult>? localSecuritySupplementScanner = null,
+        string hostOs = WebHost.OsWindows)
     {
+        _hostOs = hostOs;
         _eventLogService = eventLogService;
         _aiService = aiService;
         _historyService = historyService;
@@ -658,11 +661,11 @@ public class LogAnalysisService
         string ruleRisk, CancellationToken ct)
     {
         var prompt = AnalysisPromptBuilder.BuildPrompt(date, issues, errorCount, warningCount, auditCount, history,
-            trendAlerts, correlations, dataIncomplete, uncoveredChecks, _serverDescription);
+            trendAlerts, correlations, dataIncomplete, uncoveredChecks, _serverDescription, _hostOs);
 
         // response_format=json_object 只保證「合法 JSON」，不保證是我們要的物件形狀
         // （模型可能回傳陣列、或欄位塞入異常冗長的重複文字）；驗證失敗會自動重新請求
-        var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, AnalysisPromptBuilder.SystemPrompt,
+        var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, AnalysisPromptBuilder.SystemPromptFor(_hostOs),
             validate: r => r.RiskLevel.Length > 0 && r.Headline.Length > 0 && r.Story.Length > 0
                            && r.Headline.Length <= MaxHeadlineChars && r.Story.Length <= MaxSummaryChars
                            && r.TrendStory.Length <= MaxSummaryChars && r.Action.Length <= MaxSummaryChars,

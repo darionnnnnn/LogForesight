@@ -653,7 +653,7 @@ public class NetiqPipelineService
             _eventLogService, _aiService, plan.Store, _suppressionStore,
             target.RoleDesc, _reportService, target.HostName, target.HostId,
             hostGroupIds: plan.GroupIds, suppressionSnapshot: suppressionSnapshot,
-            logSource: AnalysisLogSource.Netiq);
+            logSource: AnalysisLogSource.Netiq, hostOs: target.Os);
 
         // 記錄是否已成功寫入
         DailyAnalysisRecord? record = null;

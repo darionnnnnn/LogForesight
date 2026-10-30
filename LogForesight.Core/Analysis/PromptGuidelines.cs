@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
@@ -23,4 +25,12 @@ public static class PromptGuidelines
     /// </summary>
     public const string LanguageReminder =
         "（請全程以台灣繁體中文與台灣資訊業界慣用術語回答，不要使用簡體字或中國大陸用語。）";
+
+    /// <summary>
+    /// 主機種類的稱呼，給 prompt 句首（「以下是 X 在 … 的事件日誌摘要」）與系統提示角色用。
+    /// Linux 主機的資料是 syslog，叫成 Windows Server 會讓模型用錯平台脈絡解讀；
+    /// <paramref name="hostOs"/> 為 linux（不分大小寫）回「Linux 主機」，其餘（windows、null）維持「Windows Server」，與舊行為一致。
+    /// </summary>
+    public static string HostKindText(string? hostOs) =>
+        string.Equals(hostOs, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase) ? "Linux 主機" : "Windows Server";
 }

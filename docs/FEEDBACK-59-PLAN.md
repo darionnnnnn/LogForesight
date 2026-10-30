@@ -55,6 +55,8 @@
 | C5 | Sonnet | `RiskLevels.Normalize` 只接受 ≤4 字且首字為等級；AI 格式異常降級路徑風險＝規則風險、不標 ai_raise | 主代理重跑 151 綠；突變長度門檻 → 2 紅；代理突變降級路徑 → 紅 | 舊 Theory 中「風險等級：高，理由…」「這次判定為低」改為未知（新契約）；`風險：高` 也判未知，屬規格意圖 |
 | C6 | Haiku | 慢速趨勢對疑似殘留憑證重試簽章進 suppressedAlerts 並加註；註記字串抽常數兩處共用 | 主代理重跑 136 綠；突變殘留判斷 → 紅 | 檔案被轉 LF，主代理轉回 CRLF |
 | C7 | Sonnet | 報告處置參考以簽章 RuleId 在注入規則清單反查（三個組裝點傳 `ResolveRules`）；重點問題排除已抑制；原始 log 配對改用 `GroupKeyFor` | 主代理重跑 188 綠；突變拿掉已抑制排除 → 紅；代理另突變 RuleId 反查（2 紅）與配對鍵（1 紅） | 只有已抑制簽章時重點問題為空（不再退回取前三），屬契約自然結果 |
+| C8 | Haiku＋Sonnet | `PromptGuidelines.HostKindText`；主分析與深入分析 prompt 依主機作業系統（`LogAnalysisService`／`RiskReportService` 建構時帶入 hostOs；NetIQ、AI 排程、復原服務傳入；本機與週期體檢維持 Windows） | 主代理重跑 228 綠；突變深入分析 prompt 改傳 null → 紅；代理突變主分析 → 紅 | 第一段 Haiku 依停止條件停下（逐方法傳參超過 6 點）→ 主代理改「建構時帶入」設計再派 Sonnet。AI 排程每分片重讀主機表取 Os，併入 D4「同輪共用」 |
+| C9 | 主代理 | DETECTION／RULES／LINUX-RULES／BACKLOG 同步；FindLinuxRule 補 Enabled；兩處過時註解 | 規則相關 520 綠；逐句比對 | 無 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

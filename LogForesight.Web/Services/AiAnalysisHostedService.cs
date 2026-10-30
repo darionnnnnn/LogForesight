@@ -613,8 +613,12 @@ public class AiAnalysisHostedService : BackgroundService
     {
         var aiService = _injectedAiService ?? ResolveAiService();
         var riskyEventStore = _storageBackend.RiskyEventStore();
+        // 主機作業系統：取不到時預設 Windows（與舊行為一致）
+        var hostOs = new HostStore(_storageBackend.Blob("hosts")).GetAll()
+            .FirstOrDefault(h => h.HostId == hostKey.HostId)?.Os ?? WebHost.OsWindows;
         var reportService = new RiskReportService(aiService, _storageBackend.ReportStore(),
-            ruleProvider: () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_storageBackend.Blob("rules"))));
+            ruleProvider: () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_storageBackend.Blob("rules"))),
+            hostOs: hostOs);
         // 包裝層包在外面（含 DI 注入的規則頁 store）：AI 補寫報告的已抑制段也要看得到靜音項目
         var suppressionStore = new MuteAwareSuppressionStore(
             _suppressionStore ?? new SuppressionStore(_storageBackend.Blob("suppressions")),
@@ -629,7 +633,8 @@ public class AiAnalysisHostedService : BackgroundService
             reportService: reportService,
             host: hostKey.HostName,
             hostId: hostKey.HostId,
-            riskyEventStore: riskyEventStore);
+            riskyEventStore: riskyEventStore,
+            hostOs: hostOs);
     }
 
     private IAiService ResolveAiService()

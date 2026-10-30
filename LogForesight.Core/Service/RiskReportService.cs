@@ -32,13 +32,14 @@ public class RiskReportService
     /// </summary>
     private const int MaxDeepDivePromptChars = 16 * 1024;
 
-    private const string DeepDiveSystemPrompt =
-        "你是資深 Windows Server 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
+    private static string DeepDiveSystemPromptFor(string? hostOs) =>
+        "你是資深 " + PromptGuidelines.HostKindText(hostOs) + " 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
         "只根據提供的資料判斷，不要臆測資料中不存在的事件。" + PromptGuidelines.Language +
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
     private readonly IAiService _aiService;
+    private readonly string? _hostOs;
     private readonly int _deepDiveMaxTokens;
     private readonly Func<IReadOnlyList<KnownIssueRule>>? _ruleProvider;
 
@@ -46,8 +47,9 @@ public class RiskReportService
     /// RuleId 反查這份清單；靜態 <see cref="KnownIssueCatalog.Rules"/> 在 Web 重啟後、第一次取數 run 之前
     /// 只是內建種子，自訂規則與 Linux 規則會查不到。為 null 時退回靜態 FindRule 行為。</param>
     public RiskReportService(IAiService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192,
-        Func<IReadOnlyList<KnownIssueRule>>? ruleProvider = null)
+        Func<IReadOnlyList<KnownIssueRule>>? ruleProvider = null, string? hostOs = null)
     {
+        _hostOs = hostOs;
         _ruleProvider = ruleProvider;
         _aiService = aiService;
         // Kept in the constructor for existing composition roots; report persistence now belongs
@@ -269,7 +271,7 @@ public class RiskReportService
         }
         sb.Append(footer);
 
-        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt, maxTokens: _deepDiveMaxTokens,
+        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPromptFor(_hostOs), maxTokens: _deepDiveMaxTokens,
             label: $"deepdive-{record.Date:yyyyMMdd}-{category}", ct: ct);
         return new DeepDiveOutcome(result.Value, truncated, included, logLines.Count);
     }

@@ -323,9 +323,10 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                     _backend.RecordStore(new HostKey { HostId = record.HostId, HostName = record.Host }),
                     suppressionStore, reportService: new RiskReportService(aiService, reportStore,
                         appSettings.Ai.DeepDiveMaxTokens,
-                        () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_backend.Blob("rules")))),
+                        () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_backend.Blob("rules"))),
+                        hostOs: host?.Os ?? WebHost.OsWindows),
                     host: record.Host, hostId: record.HostId, riskyEventStore: _backend.RiskyEventStore(),
-                    hostGroupIds: host?.GroupIds);
+                    hostGroupIds: host?.GroupIds, hostOs: host?.Os ?? WebHost.OsWindows);
                 if (analysis.FinalizePendingRiskReportAsync(record, cancellationToken).GetAwaiter().GetResult())
                     completed++;
                 else
