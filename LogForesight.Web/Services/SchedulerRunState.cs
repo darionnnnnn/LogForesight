@@ -47,29 +47,17 @@ public class SchedulerRunState
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
 
-    /// <summary>執行中時為本趟 <see cref="BatchRun.RunId"/>；尚未登記或沒有執行時為 null。</summary>
-    public long? CurrentBatchRunId { get; private set; }
-
-    /// <summary>登記本趟執行的 RunId（recorder 建立後設定；EndRun 清除）。沒有執行中時忽略。</summary>
-    public void SetCurrentBatchRunId(long runId)
-    {
-        lock (_lock)
-        {
-            if (IsRunning && runId > 0) CurrentBatchRunId = runId;
-        }
-    }
-
     /// <summary>
     /// 這筆執行是否由本行程目前持有（單行程部署，見 BACKLOG 多實例遞延）。
-    /// 已知 RunId 時精確比對；RunId 尚未登記時，以「非 AI 且開始時間不早於本趟開始」判定
-    /// （單一執行 gate 保證同時只有一趟取數，舊的孤兒紀錄開始時間必然早於本趟）。
+    /// 取數的 BatchRun 由 AnalysisOrchestrator 建立，這裡沒有登記 RunId，一律以「非 AI、未結束、
+    /// 開始時間不早於本趟開始」判定：跨行程 Mutex 保證同時只有一趟取數，所以本趟開始後建立、
+    /// 未結束的非 AI 紀錄就是本趟；舊的孤兒紀錄開始時間必然早於本趟。
     /// </summary>
     public bool HoldsRun(BatchRun run)
     {
         lock (_lock)
         {
             if (!IsRunning || run.FinishedAt != null || run.JobType == BatchRun.JobTypeAi) return false;
-            if (CurrentBatchRunId is long id) return run.RunId == id;
             return StartedAt is DateTime s && run.StartedAt >= s.AddSeconds(-5);
         }
     }
@@ -447,7 +435,6 @@ public class SchedulerRunState
             IsRunning = false;
             Trigger = null;
             StartedAt = null;
-            CurrentBatchRunId = null;
             ResetTracks();
             PrtgFindingsReady = false;
             PrtgRangeStart = null;

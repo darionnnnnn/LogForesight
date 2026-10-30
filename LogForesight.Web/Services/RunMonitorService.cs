@@ -34,7 +34,7 @@ public class RunMonitorService
         HostDayWorkflowService? workflow = null, StorageBackend? backend = null,
         SchedulerRunState? schedulerState = null, AiAnalysisRunState? aiState = null)
     {
-        _isHeld = ScheduleFreshnessService.HeldProbe(schedulerState, aiState);
+        _isHeld = run => (schedulerState?.HoldsRun(run) ?? false) || (aiState?.HoldsRun(run) ?? false);
         _runs = runs;
         _hosts = hosts;
         _records = records;

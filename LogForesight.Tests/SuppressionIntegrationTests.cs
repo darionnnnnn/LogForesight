@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 抑制目標四型（回饋十五輪 A）跑過完整分析管線（<see cref="LogAnalysisService.AnalyzeDayAsync"/>）
+/// 抑制目標四型（回饋十五輪 A）跑過完整分析管線（<see cref="LogAnalysisService.AnalyzeDayStatisticalAsync"/>）
 /// 的端到端驗證——單元測試（SuppressionTests／TrendAnalyzerTests／CorrelationAnalyzerTests）已經
 /// 各自釘住純函數層的行為，這裡補的是「四型抑制真的能從設定一路生效到最終風險判定」這件事，
 /// 尤其是 A1 的核心情境：未命中規則（RuleId==null）的 Other 類簽章過去完全沒有抑制掛載點。

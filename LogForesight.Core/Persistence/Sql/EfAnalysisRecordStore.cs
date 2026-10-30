@@ -1708,12 +1708,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var sw = Stopwatch.StartNew();
         using var ctx = _contextFactory();
 
-        // 低風險且從未跑過 AI 的日子不標——那是「本來就不需要 AI」，標了會讓補跑把整庫
-        // 撿回來跑一遍。與統計段「低風險日不排 AI」的判準同源
-        // （AiPending = 非低風險）；低風險日補跑時 RetryAiAsync 也會直接跳過不呼叫 AI。
+        // 低風險日一律不標（不論是否已有 AI 白話）：低風險日不送 AI，與統計段「低風險日不排 AI」
+        // 的判準同源（AiPending = 非低風險）。已有 AI 白話的低風險列若被標回待補，補跑時
+        // RetryAiAsync 會回 Skipped，並以低風險通用字樣覆寫、清空深入分析——等於白白蓋掉既有內容。
         // detail_pruned 的列同樣不標：詳情已清、AI 輸入無法重建（同 WhereAiPending）。
         var affected = ctx.DailyRecords
-            .Where(r => (r.AiAnalyzed || r.RiskLevel != RiskLevels.Low) && !r.DetailPruned)
+            .Where(r => r.RiskLevel != RiskLevels.Low && !r.DetailPruned)
             .ExecuteUpdate(s => s.SetProperty(r => r.AiPending, true));
 
         Log.Info("[SQL] 強制重新分析：整批重標 ai_pending = true，共 {Count} 列、{Ms}ms",

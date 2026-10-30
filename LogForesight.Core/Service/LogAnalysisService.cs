@@ -536,8 +536,7 @@ public class LogAnalysisService
         var inputPrtgFingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(pendingRecord);
 
         // 低風險日（四層皆無訊號，且 AI 沒有把它拉高過）不呼叫 AI：沒有訊號就沒有故事可講，
-        // 2000 台規模下這是 AI 時間預算能否成立的關鍵。舊版統計段會把「未分類事件夠多」的低風險日
-        // 也標待補，補跑時卻沒有前置掃描可做——這裡一併清掉待補，不白花 AI 時間。
+        // 2000 台規模下這是 AI 時間預算能否成立的關鍵。舊資料中被標待補的低風險日，補跑到這裡也一併清掉待補。
         if (pendingRecord.RiskLevel == RiskLevels.Low && pendingRecord.RiskBasis != "ai_raise")
         {
             return new AiOutcome(LowRiskHeadline, LowRiskSummary, string.Empty, string.Empty,
@@ -674,7 +673,13 @@ public class LogAnalysisService
         if (result.Success)
         {
             // AI 判斷與程式判斷取較嚴重者：即使模型輕忽了，規則與趨勢比對的結論也會強制拉高風險等級
-            var riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.Value!.RiskLevel), ruleRisk);
+            var normalized = RiskLevels.Normalize(result.Value!.RiskLevel);
+            if (normalized == "未知")
+            {
+                // 不改判定（MoreSevere 仍以規則風險為準），但出一行聲：AI 給了無法歸一化的等級字串
+                Log.Warn("{Date:yyyy-MM-dd} AI 回覆的風險等級無法歸一化（原字串：{Raw}），風險維持規則層判定", date, result.Value.RiskLevel);
+            }
+            var riskLevel = RiskLevels.MoreSevere(normalized, ruleRisk);
             return (result.Value.Headline, result.Value.Story, result.Value.TrendStory, result.Value.Action,
                 riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
         }

@@ -153,7 +153,7 @@ public class AiController : ControllerBase
         var issue = detail.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(i.IssueKey, issueKey));
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
-        return ApiResponse<AiTextDto?>.Ok(await _ai.InterpretIssueAsync(issue, detail.HostName, detail.Date));
+        return ApiResponse<AiTextDto?>.Ok(await _ai.InterpretIssueAsync(issue, detail.HostName, detail.Date, _hosts.Get(hostId)?.Os));
     }
 
     /// <summary>

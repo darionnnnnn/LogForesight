@@ -541,18 +541,20 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
-    public void 執行紀錄_取數執行超過門檻但本行程持有_判執行中_結束後不再持有()
+    public void 執行紀錄_取數本趟開始後建立的未結束紀錄由本行程持有_結束後不再持有()
     {
-        var runId = StartOpenRun(null, "schedule", TimeSpan.FromHours(7));
+        // 走後備判定：取數沒有登記 RunId，本趟開始後建立的未結束非 AI 紀錄就是本趟
         var scheduler = new SchedulerRunState();
         Assert.True(scheduler.TryBeginRun("schedule", out _));
-        scheduler.SetCurrentBatchRunId(runId);
+        var runId = StartOpenRun(null, "schedule", TimeSpan.Zero);
+        var run = Assert.Single(Runs().GetRecentRuns(2, hostNames: null), r => r.RunId == runId);
 
+        Assert.True(scheduler.HoldsRun(run));
         var service = CreateWithStates(scheduler, null);
         Assert.Equal(BatchRunStatus.Running, Assert.Single(service.GetRunList(2), r => r.RunId == runId).Status);
 
         scheduler.EndRun();
-        Assert.Equal(BatchRunStatus.Stuck, Assert.Single(service.GetRunList(2), r => r.RunId == runId).Status);
+        Assert.False(scheduler.HoldsRun(run));
     }
 
     [Fact]

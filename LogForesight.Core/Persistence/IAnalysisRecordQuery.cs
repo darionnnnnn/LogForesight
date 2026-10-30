@@ -147,10 +147,10 @@ public interface IAnalysisRecordQuery
     /// 強制重新分析（批次D2）：把全庫「該有 AI」的紀錄整批重標為待補，回傳受影響筆數。
     /// 規則更新後要讓既有結論重跑一遍時使用。
     ///
-    /// 判準是 <c>ai_analyzed = true 或 風險等級 != 低</c>——與
+    /// 判準是 <c>風險等級 != 低</c>——與
     /// <see cref="LogForesight.Service.LogAnalysisService"/> 決定 AiPending 的判準同源：
-    /// 低風險日本來就不會呼叫 AI，把它們也標成待補會讓補跑把整庫都撿回來跑一遍。
-    /// 已跑過 AI 的紀錄無論結果是什麼風險等級都要重跑（AI 可能把風險往下調）。
+    /// 低風險日不送 AI，標成待補只會讓補跑回 Skipped 並以通用字樣覆寫既有的 AI 白話，
+    /// 所以已有 AI 白話的低風險列也不標、內容維持不變。
     ///
     /// SQL 端整批 UPDATE：**不逐筆讀寫、不重寫 content_json**（幾十萬列不可行）。
     /// 因此欄位與 ContentJson 內的同名值會短暫不一致——這是設計內行為，

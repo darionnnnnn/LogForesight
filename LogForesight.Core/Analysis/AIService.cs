@@ -186,7 +186,7 @@ public class AIService : IAiService
 
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>
     /// <param name="maxTokens">覆寫預設的 token 上限；null 則用設定檔的 Ai.MaxTokens。
-    /// 短小的終端 JSON（如每日總覽、前置掃描）該用較小的上限——模型一旦退化重複輸出，
+    /// 短小的終端 JSON（如每日總覽）該用較小的上限——模型一旦退化重複輸出，
     /// 上限越大只是讓失敗的嘗試跑越久才觸頂，不會讓成功率變高；篇幅本來就較長的深入分析
     /// 才需要調大</param>
     public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
@@ -386,7 +386,9 @@ public class AIService : IAiService
                 var transportError = response.Error == EmptyAiResponseException.DefaultMessage
                     ? $"{JsonContractError}：{FormatErrorResponseSnippet(rawContent)}"
                     : response.Error;
-                return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = transportError, Attempts = attempt };
+                // RawContent 刻意留空：前一次嘗試的不合格回覆不是這次的結果，帶著它會讓呼叫端走「原文保留」降級、
+                // 把傳輸失敗的主機日標成 AI 已完成而不再補跑；完全失敗才會維持待補
+                return new AiJsonResult<T> { Success = false, RawContent = string.Empty, Error = transportError, Attempts = attempt };
             }
             else
             {

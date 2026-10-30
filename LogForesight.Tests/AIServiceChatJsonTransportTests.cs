@@ -52,6 +52,27 @@ public sealed class AIServiceChatJsonTransportTests
         Assert.Equal(3, handler.RequestCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChatJson_InvalidJsonThenTransportFailure_RawContentIsEmpty(bool timeout)
+    {
+        // 第 1 次回不合格 JSON、第 2 次傳輸失敗：前一次的不合格回覆不能帶出去，
+        // 否則呼叫端會走「原文保留」降級並標成 AI 已完成
+        var handler = new ScriptedHandler((attempt, _) => attempt == 1
+            ? Task.FromResult(ContentResponse("這不是 JSON"))
+            : timeout
+                ? Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException()))
+                : Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)));
+        var service = new AIService(Settings(jsonRetryCount: 2), handler, NullAiRequestGate.Instance);
+
+        var result = await service.ChatJsonAsync<Probe>("status check");
+
+        Assert.False(result.Success);
+        Assert.Equal(2, handler.RequestCount);
+        Assert.Equal(string.Empty, result.RawContent);
+    }
+
     private static AiSettings Settings(int jsonRetryCount) => new()
     {
         BaseUrl = "http://localhost:1",

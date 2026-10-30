@@ -158,7 +158,8 @@ public class AiInsightService
 
     // ── W2 詳情頁快速判讀（主要服務未命中規則的「其他」類別）──────────────
 
-    public async Task<AiTextDto?> InterpretIssueAsync(IssueDto issue, string hostName, string date)
+    /// <param name="hostOs">該主機的作業系統（linux／windows）；null 或查不到時預設 Windows</param>
+    public async Task<AiTextDto?> InterpretIssueAsync(IssueDto issue, string hostName, string date, string? hostOs = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"主機 {hostName}，日期 {date}。");
@@ -169,9 +170,9 @@ public class AiInsightService
             sb.AppendLine("範例訊息：" + string.Join(" / ", issue.SampleMessages.Take(2)).Truncate(500));
         sb.AppendLine(PromptGuidelines.LanguageReminder);
 
-        var cacheKey = $"interpret|{hostName}|{date}|{issue.IssueKey}|{WebAiService.HashInput(sb.ToString())}";
-        const string system =
-            "你是資深 Windows Server 維運分析師。針對以下單一事件，用兩句話回答：這件事要不要緊、以及該先做什麼。" +
+        var cacheKey = $"interpret|{hostName}|{PromptGuidelines.HostKindText(hostOs)}|{date}|{issue.IssueKey}|{WebAiService.HashInput(sb.ToString())}";
+        var system =
+            $"你是資深 {PromptGuidelines.HostKindText(hostOs)} 維運分析師。針對以下單一事件，用兩句話回答：這件事要不要緊、以及該先做什麼。" +
             "只根據提供的資料，不要臆測。" + PromptGuidelines.Language +
             "只輸出 JSON：{\"text\":\"...\"}。第一個字元必須是 {。";
 

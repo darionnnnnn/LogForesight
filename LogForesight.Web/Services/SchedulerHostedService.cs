@@ -39,8 +39,6 @@ public class SchedulerHostedService : BackgroundService
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
     private readonly IHostApplicationLifetime _lifetime;
-    private Task? _lastMailTask;
-    private Task? _lastWorkOrderMailTask;
     private readonly Func<DateTime, CancellationToken, Task> _sendDailyWeeklyMail;
     private readonly Func<DateTime, CancellationToken, Task> _sendWorkOrderDigest;
 
@@ -144,49 +142,76 @@ public class SchedulerHostedService : BackgroundService
 
     internal async Task TickAsync(CancellationToken stoppingToken)
     {
-        // 先做窗口 End 的優雅停止與觸發判斷，再寄信：寄信各最長阻塞 5 分鐘，放在前面會讓窗口 End
-        // 的停止最晚延後 10 分鐘。判斷段有多個 return，所以寄信放在 finally，每條路徑都會執行。
+        // 先做窗口 End 的優雅停止與觸發判斷，再寄信：寄信不在輪詢路徑等待（只檢查上一次是否完成），
+        // 但仍排在判斷之後。判斷段有多個 return，所以寄信放在 finally，每條路徑都會執行。
         try
         {
             await EvaluateScheduleAsync();
         }
         finally
         {
-            await SendDigestsAsync(stoppingToken);
+            SendDigests(stoppingToken);
         }
     }
 
-    private async Task SendDigestsAsync(CancellationToken stoppingToken)
+    private void SendDigests(CancellationToken stoppingToken)
     {
         // 每日／每週定時彙總（回饋十五輪批次D）：獨立於排程分析窗口之外，即使排程本身未啟用
         // 也照常檢查——通知的時間軸是「使用者想幾點收到摘要」，不是「排程窗口設在幾點」。
-        // 內部自行 try/catch 到底且成功寄送與否都不影響下方的排程判斷，緊接著跑不需要額外保護。
-        // 上一次寄送尚未結束時跳過本次寄送且不等待；整段寄送設 5 分鐘上限，逾時不再等待直接繼續排程判斷。
-        if (_lastMailTask == null || _lastMailTask.IsCompleted)
+        // 輪詢路徑只做 IsCompleted 檢查、不 await：上一次寄送還沒結束就跳過本次，寄信卡住不會拖延下一輪判斷。
+        // 寄信 Task 的例外在 ObserveMailAsync 內觀察並記 Log；超過 5 分鐘未返回時，於下一輪檢查記一次警告。
+        PollMailSlot(_dailyWeeklyMail, _sendDailyWeeklyMail, "每日／每週彙總", stoppingToken);
+
+        // 交辦摘要（第 55 輪 C-1b）：寄出 outbox 內到期的交辦通知，節流與上限同上。
+        PollMailSlot(_workOrderMail, _sendWorkOrderDigest, "交辦摘要", stoppingToken);
+    }
+
+    /// <summary>單一寄信通道的狀態：上一次的 Task、開始時間、是否已記過逾時警告</summary>
+    private sealed class MailSlot
+    {
+        public Task? Task;
+        public DateTime StartedAt;
+        public bool TimeoutWarned;
+    }
+
+    private static readonly TimeSpan MailStuckWarnAfter = TimeSpan.FromMinutes(5);
+
+    private readonly MailSlot _dailyWeeklyMail = new();
+    private readonly MailSlot _workOrderMail = new();
+
+    private static void PollMailSlot(MailSlot slot, Func<DateTime, CancellationToken, Task> send, string name,
+        CancellationToken stoppingToken)
+    {
+        if (slot.Task != null && !slot.Task.IsCompleted)
         {
-            _lastMailTask = _sendDailyWeeklyMail(DateTime.Now, stoppingToken);
-            try
+            if (!slot.TimeoutWarned && DateTime.Now - slot.StartedAt > MailStuckWarnAfter)
             {
-                await _lastMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
+                slot.TimeoutWarned = true;
+                Log.Warn("{Name}寄送超過 5 分鐘未返回，輪詢不等待也不重複啟動", name);
             }
-            catch (TimeoutException)
-            {
-                Log.Warn("每日／每週彙總寄送超過 5 分鐘未返回，本次輪詢不再等待");
-            }
+            return;
         }
 
-        // 交辦摘要（第 55 輪 C-1b）：寄出 outbox 內到期的交辦通知，節流與上限同上；內部自行 try/catch 到底。
-        if (_lastWorkOrderMailTask == null || _lastWorkOrderMailTask.IsCompleted)
+        slot.StartedAt = DateTime.Now;
+        slot.TimeoutWarned = false;
+        slot.Task = ObserveMailAsync(send, name, stoppingToken);
+    }
+
+    /// <summary>啟動一次寄送並觀察結果：同步或非同步擲出的例外都記 Log，不會成為未觀察例外</summary>
+    private static async Task ObserveMailAsync(Func<DateTime, CancellationToken, Task> send, string name,
+        CancellationToken stoppingToken)
+    {
+        try
         {
-            _lastWorkOrderMailTask = _sendWorkOrderDigest(DateTime.Now, stoppingToken);
-            try
-            {
-                await _lastWorkOrderMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-            catch (TimeoutException)
-            {
-                Log.Warn("交辦摘要寄送超過 5 分鐘未返回，本次輪詢不再等待");
-            }
+            await send(DateTime.Now, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 站台停機：不是錯誤
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "{Name}寄送發生例外（不影響排程輪詢）", name);
         }
     }
 

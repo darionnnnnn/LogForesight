@@ -109,7 +109,7 @@ public class SystemSettings
     /// <summary>AI 回覆未通過 JSON 格式/內容檢查時的額外重問次數（不計入網路層重試）</summary>
     public int AiJsonRetryCount { get; set; } = 2;
 
-    /// <summary>一般呼叫（每日總覽、前置掃描）的 token 上限，0＝不設上限</summary>
+    /// <summary>一般呼叫（每日總覽等短回應）的 token 上限，0＝不設上限</summary>
     public int AiMaxTokens { get; set; } = 2048;
 
     /// <summary>深入分析呼叫的 token 上限（天生比終端摘要長，故與 <see cref="AiMaxTokens"/> 分開）</summary>

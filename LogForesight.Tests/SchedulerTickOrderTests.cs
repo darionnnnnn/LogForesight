@@ -17,6 +17,7 @@ namespace LogForesight.Tests;
 /// 第 59 輪 D3：排程輪詢先判斷窗口（優雅停止／觸發判斷）再寄信，寄信卡住不得拖延窗口 End 的停止；
 /// 停機取消不得記成 Error。
 /// </summary>
+[Collection("NLogGlobalConfig")]
 public class SchedulerTickOrderTests : IDisposable
 {
     private readonly string _dir;
@@ -77,18 +78,58 @@ public class SchedulerTickOrderTests : IDisposable
         Assert.True(runState.TryBeginRun(BatchRunTriggers.Schedule, out var runCts));
         using var tickCts = new CancellationTokenSource();
 
-        var tick = service.TickAsync(tickCts.Token);
-        var finished = await Task.WhenAny(tick, Task.Delay(TimeSpan.FromMilliseconds(500)));
+        // 寄信卡住也不在輪詢路徑等待：Tick 短時間內結束，且窗口停止已發出
+        await service.TickAsync(tickCts.Token).WaitAsync(TimeSpan.FromSeconds(2));
 
+        Assert.True(runCts.IsCancellationRequested, "窗口外的排程執行應已收到停止");
+    }
+
+    [Fact]
+    public async Task Tick_上一次寄信未完成時下一輪跳過不重複啟動()
+    {
+        var calls = 0;
+        var gate = new TaskCompletionSource();
+        var (service, _, _) = Create(false, WindowAwayFromNow(), (_, _) => { Interlocked.Increment(ref calls); return gate.Task; });
+
+        await service.TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        await service.TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, calls); // 卡住的那次還沒完成，第二輪不再啟動
+
+        gate.SetResult();
+        await Task.Delay(100); // 讓觀察用的包裝 Task 完成
+        await service.TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(2, calls); // 完成後下一輪才啟動新的一次
+    }
+
+    [Fact]
+    public async Task Tick_寄信Task例外被觀察且不影響輪詢()
+    {
+        var calls = 0;
+        var (service, _, _) = Create(false, WindowAwayFromNow(), (_, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromException(new InvalidOperationException("寄信炸了"));
+        });
+
+        var target = new MemoryTarget("lf-tick-order-warn-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}|${exception:format=Message}" };
+        var config = LogManager.Configuration ??= new LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Warn, NLog.LogLevel.Fatal, target, typeof(SchedulerHostedService).FullName);
+        LogManager.ReconfigExistingLoggers();
         try
         {
-            Assert.True(runCts.IsCancellationRequested, "窗口外的排程執行應在寄信之前就收到停止");
-            Assert.NotSame(tick, finished); // 寄信還卡著，Tick 尚未結束
+            await service.TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(100);
+            // 例外已被包裝 Task 吞下並記 Log：Tick 不擲出，下一輪照樣能再啟動
+            await service.TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(2, calls);
+            Assert.Contains(target.Logs, l => l.StartsWith("Warn|") && l.Contains("寄送發生例外") && l.Contains("寄信炸了"));
         }
         finally
         {
-            tickCts.Cancel();
-            try { await tick.WaitAsync(TimeSpan.FromSeconds(2)); } catch (OperationCanceledException) { }
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            LogManager.ReconfigExistingLoggers();
         }
     }
 
@@ -120,7 +161,7 @@ public class SchedulerTickOrderTests : IDisposable
             await Task.Delay(Timeout.Infinite, ct); // 寄信卡住，停機時以 OperationCanceledException 結束
         });
 
-        var target = new MemoryTarget("lf-tick-order-capture") { Layout = "${level}|${message}" };
+        var target = new MemoryTarget("lf-tick-order-capture-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
         var oldConfig = LogManager.Configuration;
         var config = oldConfig ?? new LoggingConfiguration();
         config.AddTarget(target);

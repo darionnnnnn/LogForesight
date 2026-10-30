@@ -12,6 +12,7 @@ internal sealed class FakeWebAi : IWebAiService
     public string? Response { get; set; }   // 要回的 JSON；null＝降級
     public int Calls { get; private set; }
     public string? LastUserPrompt { get; private set; }
+    public string? LastSystemPrompt { get; private set; }
 
     private static readonly JsonSerializerOptions Opts = new() { PropertyNameCaseInsensitive = true };
 
@@ -19,6 +20,7 @@ internal sealed class FakeWebAi : IWebAiService
     {
         Calls++;
         LastUserPrompt = userPrompt;
+        LastSystemPrompt = systemPrompt;
         return Task.FromResult(Response == null ? null : JsonSerializer.Deserialize<T>(Response, Opts));
     }
 

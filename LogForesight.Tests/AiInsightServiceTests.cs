@@ -237,6 +237,22 @@ public class AiInsightServiceTests
         public Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt) => Task.FromResult<string?>(null);
     }
 
+    [Theory]
+    [InlineData("linux", "Linux 主機", "Windows Server")]
+    [InlineData("windows", "Windows Server", "Linux 主機")]
+    [InlineData(null, "Windows Server", "Linux 主機")]
+    public async Task 單點判讀_system_prompt依主機作業系統稱呼(string? os, string expected, string notExpected)
+    {
+        var ai = new FakeWebAi { Response = "{\"text\":\"ok\"}" };
+        var svc = new AiInsightService(ai);
+        var issue = new IssueDto { Source = "disk", EventId = 7, LogName = "System", Severity = "Error", Count = 3 };
+
+        await svc.InterpretIssueAsync(issue, "SRV-A", "2026-07-27", os);
+
+        Assert.Contains($"資深 {expected} 維運分析師", ai.LastSystemPrompt);
+        Assert.DoesNotContain(notExpected, ai.LastSystemPrompt);
+    }
+
     [Fact]
     public async Task 單點判讀_輸入內容不同_快取鍵不同_相同才命中()
     {

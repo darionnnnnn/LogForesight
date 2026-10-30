@@ -393,7 +393,7 @@ public class AiAnalysisHostedService : BackgroundService
         // 一輪只解析一次 AI 服務與主機作業系統對照（閘道已負責節流）。
         // 設定在輪中變更不即時生效，下一輪才採用；也不在每個分片、每批重讀主機表。
         var aiService = _injectedAiService ?? ResolveAiService();
-        var hostOsMap = BuildHostOsMap();
+        var hostOsMap = new HostOsLookup(BuildHostOsMap);
 
         // 待補總數：只在迴圈開頭實查一次，之後以「本批前總數 - 本批完成數」估算
         // （CountPendingAi 在實機要 7～15 秒，不再每批查兩次）。
@@ -624,7 +624,7 @@ public class AiAnalysisHostedService : BackgroundService
     /// <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/>——持久層的事交給持久層，
     /// 這裡不直接碰 DbContext（StorageBackend 是本專案唯一的持久層路由點）。
     /// </summary>
-    public int BatchResetAiPending()
+    internal int BatchResetAiPending()
     {
         try
         {
@@ -641,7 +641,7 @@ public class AiAnalysisHostedService : BackgroundService
         }
     }
 
-    /// <summary>一輪開始時建一次 HostId → 作業系統對照（C8b），分片不再各自重讀主機表</summary>
+    /// <summary>一輪開始時建一次 HostId → 作業系統對照（C8b），分片不再各自重讀主機表；輪中新增的主機由 <see cref="HostOsLookup"/> 補讀</summary>
     private Dictionary<long, string> BuildHostOsMap()
     {
         var map = new Dictionary<long, string>();
@@ -651,11 +651,11 @@ public class AiAnalysisHostedService : BackgroundService
     }
 
     private LogAnalysisService CreateAnalysisServiceForHost(HostKey hostKey, IAnalysisRecordStore hostStore,
-        IAiService aiService, IReadOnlyDictionary<long, string> hostOsMap)
+        IAiService aiService, HostOsLookup hostOsMap)
     {
         var riskyEventStore = _storageBackend.RiskyEventStore();
-        // 主機作業系統：取不到時預設 Windows（與舊行為一致）
-        var hostOs = hostOsMap.TryGetValue(hostKey.HostId, out var os) && os != null ? os : WebHost.OsWindows;
+        // 主機作業系統：輪中新增的主機查不到時補讀一次主機表（每輪最多一次），仍查不到才預設 Windows
+        var hostOs = hostOsMap.Resolve(hostKey.HostId);
         var reportService = new RiskReportService(aiService, _storageBackend.ReportStore(),
             ruleProvider: () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_storageBackend.Blob("rules"))),
             hostOs: hostOs);
@@ -684,5 +684,37 @@ public class AiAnalysisHostedService : BackgroundService
         // 每輪處理只解析一次，該輪所有分片共用；跨實例的併發上限與互動優先由全站閘道負責
         return new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
             gate: _aiGate);
+    }
+}
+
+/// <summary>
+/// 一輪內的 HostId → 作業系統對照。開始時載入一次；輪中新增的主機查不到時補讀一次主機表
+/// （每輪最多補讀一次，避免每筆都重讀），仍查不到才預設 Windows。執行緒安全（分片可能並行）。
+/// </summary>
+internal sealed class HostOsLookup
+{
+    private readonly Func<Dictionary<long, string>> _load;
+    private readonly object _lock = new();
+    private Dictionary<long, string> _map;
+    private bool _reloaded;
+
+    public HostOsLookup(Func<Dictionary<long, string>> load)
+    {
+        _load = load;
+        _map = load();
+    }
+
+    public string Resolve(long hostId)
+    {
+        lock (_lock)
+        {
+            if (!_map.ContainsKey(hostId) && !_reloaded)
+            {
+                _reloaded = true;
+                try { _map = _load(); }
+                catch { /* 補讀失敗沿用舊對照，仍預設 Windows */ }
+            }
+            return _map.TryGetValue(hostId, out var os) && os != null ? os : WebHost.OsWindows;
+        }
     }
 }

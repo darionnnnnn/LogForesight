@@ -624,6 +624,33 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal("全新AI分析標題", r2Post.Headline);
     }
 
+    [Fact]
+    public void 強制重新分析_低風險且已有AI白話的列不被重標且內容不變_非低風險照標()
+    {
+        var store = _backend.RecordStore();
+        var lowDate = DateTime.Today.AddDays(-5);
+        var midDate = DateTime.Today.AddDays(-6);
+
+        var low = CreateRecord(1, "HOST-A", lowDate, pending: false, headline: "低風險的AI白話");
+        low.RiskLevel = "低";
+        low.AiAnalyzed = true;
+        low.Summary = "既有的 AI 摘要";
+        store.Append(low);
+        store.Append(CreateRecord(1, "HOST-A", midDate, pending: false, headline: "中風險標題"));
+
+        var affected = ((IAnalysisRecordQuery)store).MarkAllForAiRerun();
+
+        var key = new[] { new HostKey { HostId = 1, HostName = "HOST-A" } };
+        var lowAfter = store.GetOne(key, lowDate)!;
+        var midAfter = store.GetOne(key, midDate)!;
+        Assert.Equal(1, affected);
+        Assert.False(lowAfter.AiPending);
+        Assert.True(lowAfter.AiAnalyzed);
+        Assert.Equal("低風險的AI白話", lowAfter.Headline);
+        Assert.Equal("既有的 AI 摘要", lowAfter.Summary);
+        Assert.True(midAfter.AiPending);
+    }
+
     /// <summary>
     /// 只讓 <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/> 擲例外，其餘方法原樣轉交真實 store。
     /// 用 DispatchProxy 代替為整個介面手寫委派。
@@ -997,7 +1024,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var options = new ScheduleOptions
         {
-            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "00:00" } }
         };
 
         var (service, runState, _, _) = CreateTestHarness(options);
@@ -1008,9 +1035,10 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
     }
 
+    /// <summary>全天窗口：起訖相同在 IsWithinWindow 恆為窗口內（設定驗證不允許，僅測試直接寫入）。不用 00:00～23:59：23:59 到午夜執行會落在窗口外。</summary>
     private static ScheduleOptions AllDay() => new()
     {
-        AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+        AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "00:00" } }
     };
 
     /// <summary>
@@ -1111,7 +1139,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var options = new ScheduleOptions
         {
-            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "00:00" } }
         };
 
         var (service, runState, _, schedulerState) = CreateTestHarness(options);

@@ -210,10 +210,10 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
             .ToList();
     }
 
-    /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
+    /// <summary>強制重新分析：判準同正式實作——低風險日一律不標</summary>
     int IAnalysisRecordQuery.MarkAllForAiRerun()
     {
-        var targets = _records.Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low).ToList();
+        var targets = _records.Where(r => r.RiskLevel != RiskLevels.Low).ToList();
         foreach (var r in targets) r.AiPending = true;
         return targets.Count;
     }
