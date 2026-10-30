@@ -40,14 +40,8 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         if (parsed == null) return null;
 
         var (source, eventId) = parsed.Value;
-        return (Truncate(source, SourceMaxLength), SourceKeyOf(source), eventId);
+        return (ColumnClamp.Clamp(source, SourceMaxLength)!, SourceKeyOf(source), eventId);
     }
-
-    internal static string Truncate(string value, int maxLength) =>
-        value.Length <= maxLength ? value : value[..maxLength];
-
-    private static string? TruncateOrNull(string? value, int maxLength) =>
-        value == null ? null : Truncate(value, maxLength);
 
     public WorkOrder? Get(long workOrderId)
     {
@@ -158,11 +152,11 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
         var row = new WorkOrderEventRow
         {
             WorkOrderId = evt.WorkOrderId,
-            Action = Truncate(evt.Action, CodeMaxLength),
+            Action = ColumnClamp.Clamp(evt.Action, CodeMaxLength)!,
             ActorId = evt.ActorId,
-            ActorAccount = Truncate(evt.ActorAccount, AccountMaxLength),
+            ActorAccount = ColumnClamp.Clamp(evt.ActorAccount, AccountMaxLength)!,
             MemberDelta = evt.MemberDelta,
-            Note = TruncateOrNull(evt.Note, NoteMaxLength),
+            Note = ColumnClamp.Clamp(evt.Note, NoteMaxLength),
             CreatedAt = evt.CreatedAt
         };
 
@@ -500,26 +494,26 @@ public sealed class EfWorkOrderStore : IWorkOrderStore
 
     internal static void CopyToRow(WorkOrder order, WorkOrderRow row)
     {
-        row.SourceName = TruncateOrNull(order.SourceName, SourceMaxLength);
+        row.SourceName = ColumnClamp.Clamp(order.SourceName, SourceMaxLength);
         row.SourceKey = order.SourceName == null ? null : SourceKeyOf(order.SourceName);
         row.EventId = order.EventId;
-        row.IssueLabel = Truncate(order.IssueLabel, IssueLabelMaxLength);
+        row.IssueLabel = ColumnClamp.Clamp(order.IssueLabel, IssueLabelMaxLength)!;
         row.HandlerId = order.HandlerId;
         row.PreviousHandlerId = order.PreviousHandlerId;
-        row.Origin = Truncate(order.Origin, CodeMaxLength);
-        row.ScopeKind = Truncate(order.ScopeKind, CodeMaxLength);
+        row.Origin = ColumnClamp.Clamp(order.Origin, CodeMaxLength)!;
+        row.ScopeKind = ColumnClamp.Clamp(order.ScopeKind, CodeMaxLength)!;
         row.ScopeGroupIds = string.Join(",", order.ScopeGroupIds);
         row.AutoAttach = order.AutoAttach;
-        row.Note = TruncateOrNull(order.Note, NoteMaxLength);
+        row.Note = ColumnClamp.Clamp(order.Note, NoteMaxLength);
         row.DueDate = order.DueDate;
         row.CreatedById = order.CreatedById;
-        row.CreatedByAccount = Truncate(order.CreatedByAccount, AccountMaxLength);
+        row.CreatedByAccount = ColumnClamp.Clamp(order.CreatedByAccount, AccountMaxLength)!;
         row.CreatedAt = order.CreatedAt;
         row.LastAppendedAt = order.LastAppendedAt;
         row.LastReplyAt = order.LastReplyAt;
         row.AdminSeenAt = order.AdminSeenAt;
         row.ClosedAt = order.ClosedAt;
-        row.ClosedReason = TruncateOrNull(order.ClosedReason, CodeMaxLength);
+        row.ClosedReason = ColumnClamp.Clamp(order.ClosedReason, CodeMaxLength);
         row.UpdatedAt = order.UpdatedAt;
     }
 

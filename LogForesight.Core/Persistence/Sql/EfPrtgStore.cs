@@ -2755,8 +2755,8 @@ public sealed class EfPrtgStore
             if (existing != null)
             {
                 existing.HostId = row.HostId;
-                existing.CreatedBy = row.CreatedBy;
-                existing.Note = row.Note;
+                existing.CreatedBy = ColumnClamp.ClampFor<PrtgManualMapRow>(row.CreatedBy, nameof(PrtgManualMapRow.CreatedBy));
+                existing.Note = ColumnClamp.ClampFor<PrtgManualMapRow>(row.Note, nameof(PrtgManualMapRow.Note));
                 // CreatedAt 保持原值
             }
             else
@@ -2765,8 +2765,8 @@ public sealed class EfPrtgStore
                 {
                     DeviceObjid = row.DeviceObjid,
                     HostId = row.HostId,
-                    CreatedBy = row.CreatedBy,
-                    Note = row.Note,
+                    CreatedBy = ColumnClamp.ClampFor<PrtgManualMapRow>(row.CreatedBy, nameof(PrtgManualMapRow.CreatedBy)),
+                    Note = ColumnClamp.ClampFor<PrtgManualMapRow>(row.Note, nameof(PrtgManualMapRow.Note)),
                     CreatedAt = row.CreatedAt != default ? row.CreatedAt : DateTime.Now
                 };
                 ctx.PrtgManualMaps.Add(newRow);
@@ -2796,9 +2796,9 @@ public sealed class EfPrtgStore
         if (row == null) return;
         var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
         if (normIp == null) return;
-        normIp = Truncate(normIp, 64)!;
-        var note = Truncate(row.Note, 512);
-        var createdBy = Truncate(row.CreatedBy, 64);
+        normIp = ColumnClamp.Clamp(normIp, 64)!;
+        var note = ColumnClamp.Clamp(row.Note, 512);
+        var createdBy = ColumnClamp.Clamp(row.CreatedBy, 64);
 
         WriteScopeChange(ctx =>
         {
@@ -2836,9 +2836,6 @@ public sealed class EfPrtgStore
         return WriteScopeChange(ctx => ctx.PrtgIpExcludes
             .Where(e => e.Ip == trimmed || (normalized != null && e.Ip == normalized)).ExecuteDelete(), expectedRevision);
     }
-
-    private static string? Truncate(string? value, int maxLength) =>
-        value != null && value.Length > maxLength ? value[..maxLength] : value;
 
     /// <summary>
     /// 取得 PRTG 鏡像五表的概要統計（計數與最近時間點）。

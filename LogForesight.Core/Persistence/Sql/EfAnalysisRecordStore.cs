@@ -282,7 +282,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 }
 
                 ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
-                    { SourceKey = sourceKey, EventId = eventId, SourceName = source, FirstSeen = date });
+                    { SourceKey = sourceKey, EventId = eventId, SourceName = ColumnClamp.ClampFor<IssueFirstSeenRow>(source, nameof(IssueFirstSeenRow.SourceName))!, FirstSeen = date });
                 ctx.SaveChanges();
             }
             catch (DbUpdateException ex)
@@ -817,10 +817,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return new TopIssueRow
         {
             RecordId = recordId,
-            SourceName = issue.Source,
+            SourceName = ColumnClamp.ClampFor<TopIssueRow>(issue.Source, nameof(TopIssueRow.SourceName))!,
             SourceKey = WorkOrderIssueKey.SourceKeyOf(issue.Source),
             EventId = issue.EventId,
-            Category = issue.Category.ToString(),
+            Category = ColumnClamp.ClampFor<TopIssueRow>(issue.Category.ToString(), nameof(TopIssueRow.Category))!,
             SeverityRank = (int)issue.Severity,
             // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
             // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
@@ -829,10 +829,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             RecordDate = recordDate.Date,
             EventCount = issue.Count,
             ElevatesDayRisk = issue.ElevatesDayRisk,
-            LogName = issue.LogName,
+            LogName = ColumnClamp.ClampFor<TopIssueRow>(issue.LogName, nameof(TopIssueRow.LogName))!,
             EntryType = (int)issue.EntryType,
-            KnownIssue = issue.KnownIssue,
-            EventKey = issue.EventKey,
+            KnownIssue = ColumnClamp.ClampFor<TopIssueRow>(issue.KnownIssue, nameof(TopIssueRow.KnownIssue)),
+            EventKey = ColumnClamp.ClampFor<TopIssueRow>(issue.EventKey, nameof(TopIssueRow.EventKey))!,
             SourceObservationsJson = sourceObservationsJson,
             SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated
         };

@@ -44,15 +44,15 @@ public class EfRiskyEventStore : IRiskyEventStore
                 {
                     HostId = hostId,
                     Date = day,
-                    LogName = e.LogName,
-                    Source = e.Source,
+                    LogName = ColumnClamp.ClampFor<RiskyEventRow>(e.LogName, nameof(RiskyEventRow.LogName))!,
+                    Source = ColumnClamp.ClampFor<RiskyEventRow>(e.Source, nameof(RiskyEventRow.Source))!,
                     SourceKey = WorkOrderIssueKey.SourceKeyOf(e.Source),
                     EventId = e.EventId,
                     EntryType = e.EntryType,
                     EventTime = e.EventTime,
                     Message = e.Message,
                     SourceEvidenceJson = SourceEvidence.Serialize(e.SourceEvidence),
-                    RuleId = e.RuleId,
+                    RuleId = ColumnClamp.ClampFor<RiskyEventRow>(e.RuleId, nameof(RiskyEventRow.RuleId)),
                     CreatedAt = e.CreatedAt
                 });
             }

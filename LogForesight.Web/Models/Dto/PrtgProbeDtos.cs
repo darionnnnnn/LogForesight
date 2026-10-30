@@ -205,6 +205,7 @@ public class SetPrtgManualMapRequest
     public long? ExpectedScopeRevision { get; set; }
     public long DeviceObjid { get; set; }
     public long HostId { get; set; }
+    [StringLength(512, ErrorMessage = "指派說明不可超過 512 字")]
     public string? Note { get; set; }
 }
 
