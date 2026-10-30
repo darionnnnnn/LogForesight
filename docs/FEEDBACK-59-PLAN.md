@@ -91,7 +91,38 @@
 | G4b | Sonnet | PRTG 維護頁 `requireScopeRevision()` 守六個寫入點、移除 `/runs` fallback；詳情頁兩份報告各自容錯、批次儲存後重載經 guardLoad；主機頁 `activeFilterEntries()` 單一條件清單（含 prtgMap）；預計完成日上限常數 `MAX_DUE_DATE_DAYS`＝90 集中並與後端一致（另加手打超限擋下）；負責人匯入確認文字；說明書首次載入不捲動；報表起訖日檢查與範圍 chip 載入成功才更新 | 代理：十三個突變各紅（一個存活突變補強後轉紅）；主代理重跑 430 綠 | 報表維持無參數 `load()`（既有測試鎖定簽名），以 `requestedScope` 傳遞點選範圍 |
 | G12 | Sonnet | WEB-SPEC §8.1 core 模組總表（24 檔，含 async-guards、storage）、inline script 例外（LF_BASE／LF_LABELS／登入頁備援）、api 唯一出口含 download 與 saveBlobAsFile；§8.1a toast link 由呼叫端套前綴；§8.6-1 篩選記憶以網址為準；§8.6 序號守門與 pollWhile 唯一寫法與三條守門；§9.3／§9.4b／§9.6／§9.9c 與 PRTG 維護頁補批次 G 行為；BACKLOG 補 pollWhile 降頻與退避 | 代理逐項讀碼核對；主代理抽查模組數與注入點 | 篩選記憶依程式寫實際範圍（只有權限異動與儀表板天數記本機）；交辦 modal 無 90 天前端檢查，文件只寫有的兩處 |
 | 全量 | 主代理 | 第 59 輪全量測試：6,837 通過、2 失敗、10 略過。① `ChatJsonAsync` 空回覆被歸為傳輸失敗後錯誤訊息少了「（空回覆）」（D4b 回歸）→ 仍立即回傳、訊息沿用契約失敗組法；② `EfWebdataStoreTests` 以不帶內因的 DbUpdateException 測重試，B7 收窄後本就不該重試 → 改帶「database is locked」內因 | 修正後相關篩選 55 綠；整輪 6,839 通過／10 略過（失敗僅兩條、修正局部，不重跑全量） | 兩條都不在當時的定向篩選內：定向篩選要含被改函式的所有測試類 |
+| 核對補修 | 主代理＋Sonnet | 逐條核對 80 項：補 B-1 簽章入口截斷、刪 C-1 遺留 `GetTailIssues`、補 E-7 帳本健康細節（Sonnet）、補 E-8 裸轉型守門測試、README 升級注意事項四條、說明書低風險日不送 AI、DB-SPEC 已知限制 | 入口截斷相關 731 綠、綜合篩選 851 綠；入口截斷改動前紅、E-7 四突變紅、E-8 守門突變紅 | B-3 健康細節、B-6 主機排序大小寫經評估不做（理由見〈實作完成核對〉） |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
+
+## 實作完成核對（2026-10-30，主代理逐條對照程式碼）
+
+第 59 輪批次 A～G 共 80 條規劃項目逐條以程式碼、測試或文件證據核對。結論：全部已實作，其中下列 6 條核對時發現缺漏，已當場補齊；2 條子項經評估維持不做（理由見下表）。
+
+| 批次 | 項目 | 狀態 |
+|---|---|---|
+| A 授權與安全 | A-1～A-9 | ✅ 全部完成；A-4 的升級注意事項本次補進 README |
+| B 儲存層 | B-1～B-9 | ✅ 全部完成；B-1 的「簽章入口截斷」本次補齊；B-3、B-6 各一子項不做（見下） |
+| C 偵測邏輯 | C-1～C-10 | ✅ 全部完成；C-1 遺留的 `GetTailIssues` 與其測試本次刪除；C-1、C-5 的升級注意事項本次補進 README，低風險日不送 AI 補進說明書 |
+| D 排程與 AI | D-1～D-9 | ✅ 全部完成 |
+| E 交辦與派工 | E-1～E-12 | ✅ 全部完成；E-7 的健康細節、E-8 的裸轉型守門測試本次補齊 |
+| F PRTG 與 NetIQ | F-1～F-9 | ✅ 全部完成；F-7 的升級注意事項本次補進 README |
+| G 前端 | G-1～G-12 | ✅ 全部完成 |
+
+**本次補齊**：
+- **B-1**：`LogIssueSignature.Source`／`LogName` 在 setter 截到 255（與 `SourceKeyOf` 同常數），所有建構與反序列化路徑都經過，問題鍵與存檔讀回的鍵一致；`SignatureEntryClampTests` 改動前 3 紅、改動後綠；DB-SPEC 補已知限制。
+- **C-1**：前置掃描退場後 `AnalysisPromptBuilder.GetTailIssues` 只剩一條測試在用，連同測試刪除；類別摘要與註解改為現況。
+- **E-7**：`MailNotificationService.GetContributionLedgerStatus()`（佔用數、上限、最近滿載時間與收件人，與滿載警告共用同一份佔用算法），健康細節 `MailContributionLedger`，設定頁健康區塊在佔用 ≥ 九成或曾滿載時顯示提示；四個突變各紅。
+- **E-8**：新增 `SeverityCastGuardTests` 掃 Core／Web 不得以 `(IssueSeverity)…Rank` 裸轉型；加回一處裸轉型即紅。
+- **升級注意事項**：A-4（帳號網域前綴）、C-1（低風險日不送 AI）、C-5（Linux 時序可能讓重跑降級）、F-7（結構同步 0 台判失敗）四條寫進 README；這四條原列在本輪驗收欄、又被第 61 輪 L 草案重列，兩邊都沒做，以本輪為準（第 61 輪 L 不再重複）。
+
+**經評估不做的子項**：
+
+| 項目 | 子項 | 理由 |
+|---|---|---|
+| B-3 | 清除數寫入復原服務的健康細節 | 復原服務沒有任何健康細節出口（游標資料無讀取端），要顯示等於新增一個健康項目；清除數以 Info log 記錄 |
+| B-6 | 主機排序改不分大小寫 | 寫規格時刻意保留原排序以免改變使用者看到的順序；分頁大表的 ORDER BY 套 UPPER 會失去索引排序。唯一次要鍵 `RecordId` 已補，翻頁不重不漏 |
+
+**有理由的規格偏差（已記於執行紀錄）**：C-2 保留仍有 NetIQ／本機生產者的 `SourceObservations`；C-9 週期體檢只在 Windows 本機執行，維持「Windows Server」；E-3 守門白名單只放 `WorkOrderCoordinator.cs`（資料層沒有直接 `new IssueCase`）。
 
 ## 0. 總結
 
@@ -321,7 +352,7 @@
 
 | 批次 | 內容 |
 |---|---|
-| L 現況文件 | 59／60 未涵蓋的全面對齊：WEB-SPEC §1／§4.1／§5／§6／§7／§8／§9 各頁／§10（含 10.9→10.6）／§11／§12、敘事 69 處；DB-SPEC B-11 全部欄位級與索引、刪 EF migration／檔案輪替、升級器行為、A2a-20；PRTG-SPEC 其餘；DETECTION／RULES／LINUX／NETIQ／DESIGN-SYSTEM 敘事；README 機制章搬遷與沿革句與文件地圖；CLAUDE.md :42／:101、基線；BACKLOG 主題式分節、6 項過時、### 歸位、升級注意事項（A-4 帳號、C-5 Linux 重跑、C-1 低風險日、F-7 0 裝置）；程式註解失效引用 11＋7 處等 |
+| L 現況文件 | 59／60 未涵蓋的全面對齊：WEB-SPEC §1／§4.1／§5／§6／§7／§8／§9 各頁／§10（含 10.9→10.6）／§11／§12、敘事 69 處；DB-SPEC B-11 全部欄位級與索引、刪 EF migration／檔案輪替、升級器行為、A2a-20；PRTG-SPEC 其餘；DETECTION／RULES／LINUX／NETIQ／DESIGN-SYSTEM 敘事；README 機制章搬遷與沿革句與文件地圖；CLAUDE.md :42／:101、基線；BACKLOG 主題式分節、6 項過時、### 歸位、程式註解失效引用 11＋7 處等 |
 | M 守門測試 | 每個端點都有授權（反射＋白名單）；SQL Server DDL vs design-time model；DB-SPEC 對 `ctx.Model`；文件 §xref 存在性；PatternId 數量對文件與說明書；HelpWritingGuide 字詞與實作名詞；`.ai.md`／`.md` 標題同步；HelpNavigationConsistency 升級；NodeTheory 略過數；無斷言 22 條；CsrfHeaderMiddleware／ForwardedHeaders／MigrationGate handling 分支；mini-dom innerHTML setter；AuditActions 中文名與 `access_denied` 常數；BrandProvider；前端行為測試改用共用 node 執行器（非同步讀輸出＋逾時結束程序樹），取代既有 13 檔「先 `ReadToEnd` 再 `WaitForExit`」——實作壞掉時 node 不結束會讓測試卡死而非失敗（第 59 輪 G1、G4a 突變時實際發生） |
 
 ## 6. 環境整理（需你逐項同意）
