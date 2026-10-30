@@ -1969,6 +1969,12 @@ public class MailNotificationService
     private DateTime? _ledgerLastFullAtUtc;
     private string? _ledgerLastFullRecipient;
 
+    /// <summary>滿載警告節流：同一收件人在這段時間內只寫一次 Warn，其餘降為 Debug（健康細節照常更新）</summary>
+    private static readonly TimeSpan LedgerFullWarnInterval = TimeSpan.FromHours(1);
+
+    /// <summary>收件人（不分大小寫）→ 上次寫 Warn 的時間；只記被擋過的收件人，過期項目隨寫入時清掉，所以有界</summary>
+    private readonly Dictionary<string, DateTime> _ledgerFullWarnedAtUtc = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>帳本目前佔用的鍵（已寄＋舊格式保留＋寄送中預約，去重）；滿載警告與健康細節共用這一份算法。</summary>
     private HashSet<string> GetOccupiedMailContributionKeys()
     {
@@ -2065,12 +2071,24 @@ public class MailNotificationService
             // 與 store 的拒絕順序一致：任一鍵已被佔用（已寄、保留或寄送中）是正常去重，其餘才是滿載
             if (!keys.Any(occupiedKeys.Contains))
             {
+                bool warn;
                 lock (_ledgerFullLock)
                 {
-                    _ledgerLastFullAtUtc = DateTime.UtcNow;
+                    var nowUtc = DateTime.UtcNow;
+                    _ledgerLastFullAtUtc = nowUtc;
                     _ledgerLastFullRecipient = recipient;
+                    warn = !_ledgerFullWarnedAtUtc.TryGetValue(recipient, out var lastWarn) || nowUtc - lastWarn >= LedgerFullWarnInterval;
+                    if (warn)
+                    {
+                        foreach (var stale in _ledgerFullWarnedAtUtc.Where(p => nowUtc - p.Value >= LedgerFullWarnInterval).Select(p => p.Key).ToList())
+                            _ledgerFullWarnedAtUtc.Remove(stale);
+                        _ledgerFullWarnedAtUtc[recipient] = nowUtc;
+                    }
                 }
-                Log.Warn("郵件貢獻帳本已滿（{Count}/{Limit}），收件人 {Email} 本輪略過", occupiedKeys.Count, _acceptedMailContributionLimit, recipient);
+                if (warn)
+                    Log.Warn("郵件貢獻帳本已滿（{Count}/{Limit}），收件人 {Email} 本輪略過（同一收件人一小時內只警告一次）", occupiedKeys.Count, _acceptedMailContributionLimit, recipient);
+                else
+                    Log.Debug("郵件貢獻帳本仍滿（{Count}/{Limit}），收件人 {Email} 本輪略過", occupiedKeys.Count, _acceptedMailContributionLimit, recipient);
             }
             else
                 Log.Info("收件人 {Email} 的郵件內容已在帳本或寄送中，本輪略過", recipient);

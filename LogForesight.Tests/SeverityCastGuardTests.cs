@@ -11,7 +11,21 @@ namespace LogForesight.Tests;
 public class SeverityCastGuardTests
 {
     private static readonly Regex BareRankCast =
-        new(@"\(IssueSeverity\)\s*[A-Za-z_][A-Za-z_.]*(Rank|SeverityRank)\b", RegexOptions.Compiled);
+        new(@"\(IssueSeverity\)\s*\(?\s*[A-Za-z_.]*rank\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>唯一允許裸轉型的出口：LegacySeverityRank.ToSeverity 先 Normalize 再轉列舉</summary>
+    private static bool IsAllowedExit(string file, string line) =>
+        Path.GetFileName(file) == "KnownIssueCatalog.cs" && line.Contains("(IssueSeverity)Normalize(");
+
+    [Theory]
+    [InlineData("var s = (IssueSeverity)rank;", true)]
+    [InlineData("var s = (IssueSeverity)(x.SeverityRank);", true)]
+    [InlineData("var s = (IssueSeverity) row.MaxSeverityRank;", true)]
+    [InlineData("var s = (IssueSeverity)x.severityrank;", true)]
+    [InlineData("var s = (IssueSeverity)Normalize(rank);", false)]
+    [InlineData("var s = (IssueSeverity)level;", false)]
+    public void 正規式涵蓋各種寫法且不分大小寫(string line, bool expected) =>
+        Assert.Equal(expected, BareRankCast.IsMatch(line));
 
     private static string FindRepoRoot()
     {
@@ -34,7 +48,7 @@ public class SeverityCastGuardTests
 
         var hits = files
             .SelectMany(f => File.ReadLines(f).Select((line, i) => (f, line, i)))
-            .Where(x => BareRankCast.IsMatch(x.line))
+            .Where(x => BareRankCast.IsMatch(x.line) && !IsAllowedExit(x.f, x.line))
             .Select(x => $"{Path.GetRelativePath(root, x.f)}:{x.i + 1}: {x.line.Trim()}")
             .ToList();
 

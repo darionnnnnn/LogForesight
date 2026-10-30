@@ -1929,6 +1929,40 @@ public class MailNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task 郵件貢獻帳本滿載_同一收件人一小時內只寫一次警告_健康細節照常更新()
+    {
+        const string recipient = "ledger-warn-throttle@test.local";
+        var (service, _) = CreateLedgerScenario(recipient, limit: 3, prefill: 3);
+
+        var target = new NLog.Targets.MemoryTarget("ledger-throttle-capture-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        var rule = new NLog.Config.LoggingRule("*", NLog.LogLevel.Warn, target);
+        config.LoggingRules.Add(rule);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            await service.NotifyAfterRunAsync();
+            var firstFullAt = service.GetContributionLedgerStatus().LastFullAtUtc;
+            Assert.NotNull(firstFullAt);
+            await Task.Delay(20);
+            await service.NotifyAfterRunAsync();
+            await service.NotifyAfterRunAsync();
+
+            Assert.Empty(_sender.Sent);
+            Assert.Single(target.Logs, line => line.Contains("郵件貢獻帳本已滿") && line.Contains(recipient));
+            var status = service.GetContributionLedgerStatus();
+            Assert.Equal(recipient, status.LastFullRecipient);
+            Assert.True(status.LastFullAtUtc > firstFullAt, "略過警告被節流時，健康細節的最近滿載時間仍應更新");
+        }
+        finally
+        {
+            config.LoggingRules.Remove(rule);
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
+
+    [Fact]
     public async Task 郵件貢獻帳本未滿_正常寄送後不記為滿載()
     {
         const string recipient = "ledger-status-ok@test.local";

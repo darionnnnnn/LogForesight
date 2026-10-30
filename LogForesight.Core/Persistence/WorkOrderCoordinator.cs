@@ -17,15 +17,12 @@ namespace LogForesight.Core.Persistence;
 ///     推進回覆時間，不推導結案；成員因此全結案的單由 <see cref="SweepClosures"/>（背景掃描）補結案。
 ///   - 授權（回覆只准該單處理人本人）不在這裡，由 Web 層負責。
 /// </summary>
-/// <summary>夜間寫成員結果：每成員實際寫入的處理人（null＝未寫入）與「已有進行中案件而略過」的成員索引</summary>
-public sealed record NightlyWriteOutcome(IReadOnlyList<long?> Handlers, IReadOnlySet<int> ExistingOpenIndexes);
-
 public class WorkOrderCoordinator
 {
     /// <summary>取單成員的分頁大小（暫定）</summary>
     private const int MemberPageSize = 500;
 
-    private const string ReassignLogNote = "變更案件處理人";
+    private const string ReassignLogNote = "變更交辦處理人";
 
     /// <summary>夜間派工略過原因：交辦單在派工途中已結案（取消、代為結案、移入他單）</summary>
     public const string SkipOrderClosedMidrun = "order_closed_midrun";
@@ -545,15 +542,8 @@ public class WorkOrderCoordinator
     ///   - 單的處理人與成員記錄的不同（途中改派）→ 照寫入該單，但以單目前的處理人為準
     ///     （回傳新處理人，呼叫端計 <see cref="HandlerChangedMidrun"/>）。
     /// 回傳與 members 等長：每個成員實際寫入的處理人，null＝未寫入。
-    /// </summary>
-    public IReadOnlyList<long?> WriteNightlyMembers(
-        WebHost host, DateTime date,
-        IReadOnlyList<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)> members,
-        DateTime occurredAt) =>
-        WriteNightlyMembersDetailed(host, date, members, occurredAt).Handlers;
-
-    /// <summary>
-    /// 同 <see cref="WriteNightlyMembers"/>，另回報「（主機,問題）已有進行中案件而略過」的成員索引。
+    ///
+    /// 另回報「（主機,問題）已有進行中案件而略過」的成員索引。
     /// 鎖內建案前重查該主機的進行中案件，決策之後才被別人（Web 路徑）建出的案件不再重複插入。
     /// </summary>
     public NightlyWriteOutcome WriteNightlyMembersDetailed(
@@ -971,6 +961,21 @@ public class WorkOrderCoordinator
         lock (OrderMutationLock) return RecomputeClosureLocked(workOrderId, occurredAt);
     }
 
+    /// <summary>
+    /// 夜間派工收尾：本趟新建的單鎖內重查，仍沒有任何成員才以 <see cref="WorkOrderCloseReasons.EmptyDispatch"/> 結案
+    /// （不是併入或改派，不能記成 moved）。單不存在、已結案或已有成員回 false。
+    /// </summary>
+    public bool CloseEmptyDispatchOrder(long workOrderId, DateTime occurredAt)
+    {
+        lock (OrderMutationLock)
+        {
+            var order = _orders.Get(workOrderId);
+            if (order == null || order.ClosedAt != null) return false;
+            if (CountOf(workOrderId).Total != 0) return false;
+            return CloseBySystemLocked(workOrderId, WorkOrderCloseReasons.EmptyDispatch, occurredAt);
+        }
+    }
+
     private bool RecomputeClosureLocked(long workOrderId, DateTime occurredAt)
     {
         var order = _orders.Get(workOrderId);
@@ -982,6 +987,11 @@ public class WorkOrderCoordinator
         else if (counts.Active == 0) reason = WorkOrderCloseReasons.AllClosed;
         else return false;
 
+        return CloseBySystemLocked(workOrderId, reason, occurredAt);
+    }
+
+    private bool CloseBySystemLocked(long workOrderId, string reason, DateTime occurredAt)
+    {
         var saved = UpdateOrder(workOrderId, o =>
         {
             if (o.ClosedAt != null) return false;
@@ -1165,3 +1175,6 @@ public sealed record WorkOrderMemberPreview(int NewCases, int LinkedExisting, IR
 
 /// <summary><see cref="WorkOrderCoordinator.RetractDayAssignments"/> 對單張單的處理結果</summary>
 public sealed record DayOrderRetraction(long WorkOrderId, long HandlerId, bool WholeOrderCancelled, int CancelledCases);
+
+/// <summary>夜間寫成員結果：每成員實際寫入的處理人（null＝未寫入）與「已有進行中案件而略過」的成員索引</summary>
+public sealed record NightlyWriteOutcome(IReadOnlyList<long?> Handlers, IReadOnlySet<int> ExistingOpenIndexes);

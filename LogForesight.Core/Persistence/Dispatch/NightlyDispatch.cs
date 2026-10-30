@@ -263,11 +263,11 @@ public sealed class NightlyDispatch
                 _coordinator.RecordNightlyAppended(workOrderId, added, occurredAt);
 
             // 本趟新建、最後一個成員都沒寫入的單（成員全因「決策後已有進行中案件」略過）：交給結案推導
-            // 收掉（零成員→moved），不留零成員的進行中空單，也不列進摘要與通知。放在收尾而非當下，
+            // 收掉（以 empty_dispatch 結案），不留零成員的進行中空單，也不列進摘要與通知。放在收尾而非當下，
             // 同一趟後面的主機仍可能掛入這張單；推導只在單真的沒有任何案件時才結案。
             foreach (var emptyOrderId in _createdOrders.Where(id => !_addedByOrder.ContainsKey(id)).OrderBy(id => id).ToList())
             {
-                _coordinator.RecomputeClosure(emptyOrderId, occurredAt);
+                _coordinator.CloseEmptyDispatchOrder(emptyOrderId, occurredAt);
                 _createdOrders.Remove(emptyOrderId);
             }
 

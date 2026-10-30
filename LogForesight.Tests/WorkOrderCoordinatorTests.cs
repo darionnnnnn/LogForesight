@@ -222,7 +222,7 @@ public class WorkOrderCoordinatorTests
         var log = Assert.Single(w.HandlingLog.Logs);
         Assert.Equal(HandlingActions.CaseReassign, log.Action);
         Assert.Equal(D2, log.Date);
-        Assert.Equal("變更案件處理人", log.Note);
+        Assert.Equal("變更交辦處理人", log.Note);
 
         var old = w.Orders.Get(bobOrder)!;
         Assert.Equal(WorkOrderCloseReasons.Moved, old.ClosedReason);
@@ -670,6 +670,29 @@ public class WorkOrderCoordinatorTests
     {
         var (w, id, _) = ThreeHostOrder();
         Assert.Throws<ArgumentException>(() => w.Coordinator.Reply(id, null, "bogus", null, null, Actor()));
+    }
+
+    // ── CloseEmptyDispatchOrder ─────────────────────────────────────────────
+
+    [Fact]
+    public void CloseEmptyDispatchOrder_仍無成員以empty_dispatch結案_有成員或已結案不動()
+    {
+        var w = new World();
+        var empty = w.AddOrder(Alice);
+        var active = w.AddOrder(Carol);
+        w.AddCase("a", "H2", Carol, active);
+
+        Assert.True(w.Coordinator.CloseEmptyDispatchOrder(empty, T0));
+        Assert.False(w.Coordinator.CloseEmptyDispatchOrder(empty, T0.AddHours(1)));
+        Assert.False(w.Coordinator.CloseEmptyDispatchOrder(active, T0));
+
+        var closed = w.Orders.Get(empty)!;
+        Assert.Equal(WorkOrderCloseReasons.EmptyDispatch, closed.ClosedReason);
+        Assert.NotEqual(WorkOrderCloseReasons.Moved, closed.ClosedReason);
+        var evt = Assert.Single(w.Orders.ListEvents(empty));
+        Assert.Equal(WorkOrderEventActions.Closed, evt.Action);
+        Assert.Equal(WorkOrderCloseReasons.EmptyDispatch, evt.Note);
+        Assert.Null(w.Orders.Get(active)!.ClosedAt);
     }
 
     // ── RecomputeClosure／SweepClosures ─────────────────────────────────────

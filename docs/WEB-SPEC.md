@@ -1552,7 +1552,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 `WorkOrderCoordinator`；(b) 同一處理人同一問題同時最多一張進行中單（部分唯一索引），交辦給已有單的人＝
 追加成員、範圍取聯集（全站 ＞ 主機群組聯集 ＞ 指定主機）。
 
-**推導狀態**：進行中＝任一成員未結案；已結案＝成員全部結案（`ClosedReason`：`all_closed`／`moved`／
+**推導狀態**：進行中＝任一成員未結案；已結案＝成員全部結案（`ClosedReason`：`all_closed`／`moved`／`empty_dispatch`（夜間派工新建卻沒有成員）／
 `cancelled`／`admin_closed`）；上報中＝任一成員 `escalated`；暫停＝問題目前靜音中；未回覆＝`LastReplyAt`
 為空。沒有重開：案件結案後不會回到進行中，同問題再出現是新案件、新單。詳情頁逐筆標記讓全部成員結案時，
 結案由背景同步服務每輪掃描補上。

@@ -693,6 +693,7 @@ public class NightlyDispatchTests
         // 夜間為處理人 3 建的單沒有任何成員 → 已結案；仍在進行中的只有 Web 路徑那張
         var nightlyOrder = Assert.Single(_orders.All, o => o.HandlerId == 3);
         Assert.NotNull(nightlyOrder.ClosedAt);
+        Assert.Equal(WorkOrderCloseReasons.EmptyDispatch, nightlyOrder.ClosedReason);
         Assert.Single(_cases.GetOpenForHost("SRV-01"));
     }
 }
