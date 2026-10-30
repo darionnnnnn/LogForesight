@@ -322,6 +322,8 @@ public class AiAnalysisHostedService : BackgroundService
     {
         public int Done;
         public int Failed;
+        /// <summary>低風險不需 AI、已清除待補的件數（已含在 <see cref="Done"/> 內）</summary>
+        public int Skipped;
     }
 
     internal Task ExecuteProcessingLoopAsync(CancellationToken ct) => ExecuteProcessingLoopAsync(ct, new LoopCounters());
@@ -468,7 +470,7 @@ public class AiAnalysisHostedService : BackgroundService
                             token.ThrowIfCancellationRequested();
 
                             // AI 呼叫成功：寫回結果並清 ai_pending
-                            if (outcome.AiAnalyzed)
+                            if (outcome.AiAnalyzed || outcome.Skipped)
                             {
                                 if (_workflow != null && workflowVersion > 0)
                                 {
@@ -512,6 +514,7 @@ public class AiAnalysisHostedService : BackgroundService
                                 var doneNow = Interlocked.Increment(ref totalDone);
                                 Interlocked.Increment(ref counters.Done);
                                 Interlocked.Increment(ref batchSuccessCount);
+                                if (outcome.Skipped) Interlocked.Increment(ref counters.Skipped);
                                 // 用 Increment 的回傳值、且不碰分母：分片是並行的，
                                 // 「讀分母再寫回」會讓兩條分片的數字互相蓋（見 ReportProgressDone）
                                 _runState.ReportProgressDone(doneNow, $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 完成");
@@ -558,6 +561,9 @@ public class AiAnalysisHostedService : BackgroundService
                 break;
             }
         }
+
+        if (counters.Skipped > 0)
+            Log.Info("低風險 {Skipped} 筆不需 AI，已清除待補", counters.Skipped);
     }
 
     private void CompleteWorkflowAiAttempt(long hostId, DateTime date, long workflowVersion, string failure)

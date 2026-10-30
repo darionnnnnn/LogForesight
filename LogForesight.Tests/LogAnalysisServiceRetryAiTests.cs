@@ -46,6 +46,57 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
     };
 
     [Fact]
+    public async Task 低風險紀錄補跑時不呼叫AI_回傳Skipped且不標AI已分析()
+    {
+        var service = NewService(_riskyEvents);
+        var pending = PendingRecord(new List<LogIssueSignature>(), riskLevel: "低");
+        pending.RiskBasis = "無異常訊號";
+
+        var outcome = await service.RetryAiAsync(pending, historyDays: 14);
+
+        Assert.Equal(0, _ai.Calls);
+        Assert.True(outcome.Skipped);
+        Assert.False(outcome.AiAnalyzed);
+        Assert.Equal("今日狀況正常，無需處理", outcome.Headline);
+        Assert.Equal("今日無異常訊號，規則/趨勢/慢速趨勢/關聯四層檢查全數通過。", outcome.Summary);
+        Assert.Equal("低", outcome.RiskLevel);
+        Assert.Equal("無異常訊號", outcome.RiskBasis);
+        Assert.Null(outcome.ReportFile);
+        Assert.Null(outcome.ReportDraft);
+        Assert.Empty(outcome.DeepDives);
+    }
+
+    [Fact]
+    public async Task 低風險但判定依據為ai_raise時照常呼叫主分析()
+    {
+        _ai.NextContent = """{"risk_level":"低","headline":"補跑標題","story":"補跑摘要","trend_story":"","action":"a"}""";
+        var service = NewService(riskyEventStore: null);
+        var pending = PendingRecord(new List<LogIssueSignature>(), riskLevel: "低");
+        pending.RiskBasis = "ai_raise";
+
+        var outcome = await service.RetryAiAsync(pending, historyDays: 14);
+
+        Assert.True(_ai.Calls >= 1);
+        Assert.False(outcome.Skipped);
+        Assert.True(outcome.AiAnalyzed);
+        Assert.Equal("補跑標題", outcome.Headline);
+    }
+
+    [Fact]
+    public async Task 中風險紀錄補跑時照常呼叫AI()
+    {
+        _ai.NextContent = """{"risk_level":"中","headline":"補跑標題","story":"補跑摘要","trend_story":"","action":"a"}""";
+        var service = NewService(riskyEventStore: null);
+
+        var outcome = await service.RetryAiAsync(
+            PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
+
+        Assert.True(_ai.Calls >= 1);
+        Assert.False(outcome.Skipped);
+        Assert.True(outcome.AiAnalyzed);
+    }
+
+    [Fact]
     public async Task 風險事件暫存有資料時補上報告並申報原始log來源()
     {
         _riskyEvents.Rows = new List<RiskyEvent>

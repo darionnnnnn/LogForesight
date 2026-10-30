@@ -48,6 +48,7 @@
 | B6 | Sonnet＋主代理 | `StorageSettings.IsSqlite／IsSqlServer`；QueryPage SQL 分支末尾加 RecordId 次要鍵 | 主代理重跑 209 綠；突變 Storage 改回字面 → 3 紅；突變拿掉 date 降序次要鍵 → 主代理補的 `QueryPageOrderSqlTests` 紅 | 代理的翻頁測試在 SQLite 抓不到缺次要鍵（同分依 rowid 輸出）→ 主代理補 SQL 文字守門（攔截器檢查 ORDER BY 最後一鍵） |
 | B7 | Sonnet＋主代理 | 回填只對 extract_version<2 以 JSON 覆寫 AiPending／AiAnalyzed；BatchedPrune 零進展中止；IsTransient 只對暫時性錯誤重試 | 主代理逐一單獨突變三處 → 各 1 紅；定向 71 綠 | 代理三突變同時施加致測試卡死（無限迴圈）→ 主代理把 prune 測試改成超過 3 次呼叫即擲例外，突變變成乾淨紅燈 |
 | B8 | 主代理 | DB-SPEC（六個保留期、ColumnClamp 規則、workflow_ 清除、回填版本語意）；BACKLOG（刪「全新安裝 PRTG 維護頁 403」已由 A1 解決、改寫雙份索引項、新增升級期機制退場表） | 逐句比對；CRLF 保留 | `lf_risky_events` 欄位級定義缺漏屬 61-L（B-11） |
+| C1 | Sonnet | 統計段 `needsAi = useAi && !lowRisk`；`BuildStatisticalRecordAsync` 回 `(Record, NeedsAi)`；刪 AnalyzeDayAsync／CompleteAiAsync／ApplyOutcome／ScreenTailAsync／AiWorkItem 等；RetryAiAsync 低風險回 Skipped；排程以成功路徑寫回並計 Skipped | 主代理重跑 271 綠（0 警告）；突變拿掉 `|| outcome.Skipped` → 紅；代理另突變統計段與補跑判斷各紅 | 五個測試檔改寫最多約 30%；`BuildPrompt` 的 screening 參數一併移除；Skipped 沿用舊紀錄的掃描欄位值避免被覆寫清空 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

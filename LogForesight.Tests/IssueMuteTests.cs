@@ -233,7 +233,7 @@ public sealed class IssueMuteTests : IDisposable
         var prompt = AnalysisPromptBuilder.BuildPrompt(
             Today, new List<LogIssueSignature> { muted, mutedFlagged, visible }, errorCount: 3, warningCount: 0, auditCount: 0,
             history: new List<DailyAnalysisRecord>(), trendAlerts: new List<string>(),
-            correlations: new List<CorrelationFinding>(), screening: null,
+            correlations: new List<CorrelationFinding>(),
             dataIncomplete: false, uncoveredChecks: new List<string>(), serverDescription: "測試主機");
 
         Assert.Contains("VisibleAppZq", prompt);

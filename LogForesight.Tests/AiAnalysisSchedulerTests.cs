@@ -519,6 +519,66 @@ public class AiAnalysisSchedulerTests : IDisposable
     }
 
     [Fact]
+    public async Task 低風險待補不呼叫AI_直接清除待補且不計失敗也不觸發全滅防線()
+    {
+        var (service, _, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var date = DateTime.Today.AddDays(-3);
+        var low1 = CreateRecord(1, "HOST-LOW-1", date, pending: true);
+        low1.RiskLevel = "低";
+        var low2 = CreateRecord(2, "HOST-LOW-2", date, pending: true);
+        low2.RiskLevel = "低";
+        store.Append(low1);
+        store.Append(low2);
+        store.Append(CreateRecord(3, "HOST-MID", date, pending: true)); // 中風險，AI 替身成功
+
+        var counters = new AiAnalysisHostedService.LoopCounters();
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None, counters);
+
+        var r1 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-LOW-1" } }, date);
+        var r2 = store.GetOne(new[] { new HostKey { HostId = 2, HostName = "HOST-LOW-2" } }, date);
+        var r3 = store.GetOne(new[] { new HostKey { HostId = 3, HostName = "HOST-MID" } }, date);
+
+        // 三筆都不再待補；低風險兩筆沒有 AI 分析，中風險那筆有
+        Assert.False(r1!.AiPending);
+        Assert.False(r2!.AiPending);
+        Assert.False(r3!.AiPending);
+        Assert.False(r1.AiAnalyzed);
+        Assert.False(r2.AiAnalyzed);
+        Assert.True(r3.AiAnalyzed);
+        Assert.Equal("今日狀況正常，無需處理", r1.Headline);
+        Assert.Equal("低", r1.RiskLevel);
+        Assert.Equal(0, counters.Failed);
+        Assert.Equal(3, counters.Done);
+        Assert.Equal(2, counters.Skipped);
+        Assert.Equal(0, store.CountPendingAi());
+    }
+
+    [Fact]
+    public async Task 全部都是低風險待補時一批清空且不被全滅防線誤判()
+    {
+        var (service, _, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var date = DateTime.Today.AddDays(-3);
+        for (var i = 1; i <= 3; i++)
+        {
+            var r = CreateRecord(i, $"HOST-ALLLOW-{i}", date, pending: true);
+            r.RiskLevel = "低";
+            store.Append(r);
+        }
+
+        var counters = new AiAnalysisHostedService.LoopCounters();
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None, counters);
+
+        Assert.Equal(0, store.CountPendingAi());
+        Assert.Equal(0, _ai.Calls);
+        Assert.Equal(3, counters.Skipped);
+        Assert.Equal(0, counters.Failed);
+    }
+
+    [Fact]
     public async Task 情境7_強制重新分析_重標後全部重跑且舊AI文字保留顯示直到覆蓋()
     {
         var (service, _, _, _) = CreateTestHarness();

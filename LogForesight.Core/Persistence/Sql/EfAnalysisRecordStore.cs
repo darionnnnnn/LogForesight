@@ -1693,9 +1693,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         using var ctx = _contextFactory();
 
         // 低風險且從未跑過 AI 的日子不標——那是「本來就不需要 AI」，標了會讓補跑把整庫
-        // 撿回來跑一遍。與 LogAnalysisService.ApplyOutcome 的後置判準
-        // （AiPending = !AiAnalyzed && 非低風險）同源；「要不要呼叫 AI」的前置判準另含
-        // 低風險尾巴篩選，但那種日子跑過 AI 就 AiAnalyzed=true、已被本條涵蓋。
+        // 撿回來跑一遍。與統計段「低風險日不排 AI」的判準同源
+        // （AiPending = 非低風險）；低風險日補跑時 RetryAiAsync 也會直接跳過不呼叫 AI。
         // detail_pruned 的列同樣不標：詳情已清、AI 輸入無法重建（同 WhereAiPending）。
         var affected = ctx.DailyRecords
             .Where(r => (r.AiAnalyzed || r.RiskLevel != RiskLevels.Low) && !r.DetailPruned)

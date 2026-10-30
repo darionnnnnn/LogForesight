@@ -148,7 +148,8 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
             reportService: reportService, host: "test-host", hostId: 1);
 
         var events = MakeHighRiskDiskEvents(20);
-        var record = await service.AnalyzeDayAsync(yesterday, events, useAi: true);
+        // 統計段先寫入（不呼叫 AI），AI 由排程以 RetryAiAsync 補上
+        var record = await service.AnalyzeDayStatisticalAsync(yesterday, events, useAi: true);
 
         // 1. 斷言統計內容、規則命中與風險等級完全不受影響
         Assert.Equal("高", record.RiskLevel);
@@ -156,10 +157,17 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         Assert.Contains(record.TopIssues, i => i.RuleId == "builtin-storage-disk-io");
         Assert.Equal(20, record.ErrorCount);
 
-        // 2. 斷言 AI 狀態標記為待補
+        // 2. 斷言 AI 狀態標記為待補（統計段尚未呼叫 AI）
         Assert.False(record.AiAnalyzed);
         Assert.True(record.AiPending);
-        Assert.Contains("今日分析摘要暫缺", record.Headline);
+        Assert.Equal(0, ai.Calls);
+
+        // 2b. AI 服務斷線時補跑：失敗結果不是成功（排程維持待補），標題誠實註明 AI 待補
+        var failed = await service.RetryAiAsync(record, historyDays: 14);
+        Assert.False(failed.AiAnalyzed);
+        Assert.False(failed.Skipped);
+        Assert.Equal("高", failed.RiskLevel);
+        Assert.Contains("今日分析摘要暫缺", failed.Headline);
 
         // 3. 待補的辨識者是 AI 分析排程（QueryPendingAi），不是取數的 MissingDateFinder
         //    ——取數重抓待補會與 AI 排程打架（體檢輪語意變更）

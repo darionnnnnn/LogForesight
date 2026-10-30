@@ -997,13 +997,13 @@ public class AnalysisOrchestrator
                     var record = await analysisService.AnalyzeDayStatisticalAsync(date, logs, useAi: localUseAi, historyDays: TrendWindowDays,
                         dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                         replaceExisting: isRerun, deferNonAiReport: true);
-                    var hadAiWorkItem = record.AiPending;
+                    var hadAiPending = record.AiPending;
                     // PRTG finding 追加：**必須排在案件掛接與執行摘要之前**——案件掛接吃的是
                     // 記憶體裡的 record.TopIssues，摘要吃的是 record.RiskLevel，
                     // 晚一步併入的 finding 就進不了問題案件，上調後的風險也不會出現在摘要。
                     HostDayPostProcessor.AttachPrtgFindings(
                         prtgFindings, historyService, record, currentHostId, aiConfigured: localUseAi);
-                    if (!hadAiWorkItem)
+                    if (!hadAiPending)
                         await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, logs, ct);
                     try
                     {

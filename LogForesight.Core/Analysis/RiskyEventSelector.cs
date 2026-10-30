@@ -72,7 +72,7 @@ public static class RiskyEventSelector
     /// 分組與頭尾截斷邏輯（<see cref="SelectQualifyingEntries"/>），只是不轉成
     /// <see cref="RiskyEvent"/>——不需要落庫用的 RuleId／CreatedAt 這些欄位。
     ///
-    /// 供 <c>AiWorkItem.Logs</c> 入列前過濾使用（回饋十四輪 A2，呼叫端移進
+    /// 曾供 AI 工作項入列前過濾使用（回饋十四輪 A2，呼叫端移進
     /// <see cref="Service.LogAnalysisService.BuildStatisticalRecordAsync"/> 本身，型別內建構時
     /// 就窄化，不再由呼叫端事後補）：AI 深析報告最終只從這裡挑 20 筆
     /// （<see cref="Service.RiskReportService.MaxRawLogsPerReport"/>），沒有理由讓

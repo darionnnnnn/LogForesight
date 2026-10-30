@@ -5,11 +5,11 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// LogAnalysisService 拆分統計段/AI 段（docs/archive/FEEDBACK-12-PLAN.md §3.3）之後的回歸測試：
-/// AnalyzeDayAsync 的組合呼叫（統計段緊接著 AI 段）產出的最終紀錄與報告內容要與拆分前
-/// 完全一致。這裡專門釘住 <c>CompleteAiAsync</c> 內部組出的暫用 <see cref="DailyAnalysisRecord"/>
-/// 有沒有把 <see cref="RiskReportService.PrepareAsync"/> 會讀的欄位都填齊——實作過程中曾經
-/// 只填了 TopIssues/RiskLevel/AiAnalyzed 幾個欄位，報告會靜靜少一大塊內容（Headline／Summary／
-/// TrendAssessment／Action／UncoveredChecks／DataIncomplete），但不會有任何例外或建置警告。
+/// 統計段（<c>AnalyzeDayStatisticalAsync</c>）寫入後，AI 排程以 <c>RetryAiAsync</c> 補上並附掛，
+/// 最終紀錄與報告內容要完整。這裡專門釘住補跑組出的暫用 <see cref="DailyAnalysisRecord"/>
+/// 有沒有把 <see cref="RiskReportService.PrepareAsync"/> 會讀的欄位都填齊——少填欄位時
+/// 報告會靜靜少一大塊內容（Headline／Summary／TrendAssessment／Action／UncoveredChecks／
+/// DataIncomplete），但不會有任何例外或建置警告。
 /// </summary>
 [Collection("KnownIssueCatalogState")]
 public class LogAnalysisServiceSplitTests : IDisposable
@@ -32,6 +32,32 @@ public class LogAnalysisServiceSplitTests : IDisposable
             Message = $"磁碟發生 I/O 錯誤 #{i}"
         }).ToList();
 
+    /// <summary>風險事件暫存替身：把事件轉成補跑時重建報告佐證用的 <see cref="RiskyEvent"/></summary>
+    private static FakeRiskyEventStore RiskyStoreOf(long hostId, DateTime day, IEnumerable<EventLogEntryData> events) =>
+        new()
+        {
+            Rows = events.Select(e => new RiskyEvent
+            {
+                HostId = hostId, Date = day.Date, LogName = e.LogName, Source = e.Source, EventId = e.EventId,
+                EntryType = e.EntryType, EventTime = e.TimeGenerated, Message = e.Message,
+                RuleId = "builtin-storage-disk-io", CreatedAt = DateTime.Now
+            }).ToList()
+        };
+
+    /// <summary>統計段已寫入後，模擬 AI 排程：讀回紀錄 → RetryAiAsync → 帶版本指紋附掛，回傳補跑結果與讀回的最終紀錄</summary>
+    private static async Task<(AiOutcome Outcome, DailyAnalysisRecord Persisted)> RetryAndAttachAsync(
+        LogAnalysisService service, EfAnalysisRecordStore history, DateTime day)
+    {
+        var saved = Assert.Single(history.ReadRecent(day, 1));
+        Assert.True(saved.AiPending);
+        var outcome = await service.RetryAiAsync(saved, 14);
+        Assert.True(outcome.AiAnalyzed);
+        Assert.True(history.TryAttachAiResult(day, outcome, saved.RecordId,
+            HostDayWorkflowFingerprint.ForRecord(saved),
+            outcome.InputPrtgFingerprint ?? HostDayWorkflowFingerprint.PrtgInputFingerprint(saved)));
+        return (outcome, Assert.Single(history.ReadRecent(day, 1)));
+    }
+
     [Fact]
     public async Task 命中高風險規則時報告內容含AI產出的headline與summary()
     {
@@ -42,10 +68,16 @@ public class LogAnalysisServiceSplitTests : IDisposable
             NextContent = """{"risk_level":"高","headline":"磁碟即將故障","story":"偵測到大量磁碟I/O錯誤，硬碟可能即將故障。","trend_story":"","action":"今天就要處理"}"""
         };
         var reportService = new RiskReportService(ai, sink);
+        var day = DateTime.Today.AddDays(-1);
+        var events = MakeHighRiskDiskEvents();
         var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore(),
-            reportService: reportService, host: "SRV-NETIQ-07", hostId: 42);
+            reportService: reportService, host: "SRV-NETIQ-07", hostId: 42,
+            riskyEventStore: RiskyStoreOf(42, day, events));
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-1), MakeHighRiskDiskEvents(), useAi: true);
+        var stat = await service.AnalyzeDayStatisticalAsync(day, events, useAi: true);
+        Assert.True(stat.AiPending);
+        Assert.Equal(0, ai.Calls);
+        var (_, record) = await RetryAndAttachAsync(service, history, day);
 
         Assert.Equal(AnalysisLogSource.Local, record.LogSource);
         Assert.Equal(AnalysisLogSource.Local, Assert.Single(history.ReadRecent(record.Date, 1)).LogSource);
@@ -87,15 +119,17 @@ public class LogAnalysisServiceSplitTests : IDisposable
                 Scope = SuppressionScopes.Site, Reason = "測試：已知雜訊" }
         });
         var reportService = new RiskReportService(ai, sink);
+        var day = DateTime.Today.AddDays(-1);
+        var allEvents = MakeHighRiskDiskEvents().Append(suppressedEvent).ToList();
         var service = new LogAnalysisService(new EventLogService(), ai, history, suppressions,
-            reportService: reportService, host: "SRV-NETIQ-07", hostId: 42);
+            reportService: reportService, host: "SRV-NETIQ-07", hostId: 42,
+            riskyEventStore: RiskyStoreOf(42, day, allEvents));
         var channels = new ChannelAvailability { Read = new List<string> { "System" }, Denied = new List<string> { "Security" } };
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-1),
-            MakeHighRiskDiskEvents().Append(suppressedEvent).ToList(), useAi: true,
+        var record = await service.AnalyzeDayStatisticalAsync(day, allEvents, useAi: true,
             securityLogAvailable: false, channels: channels);
+        var (_, persisted) = await RetryAndAttachAsync(service, history, day);
 
-        var persisted = Assert.Single(history.ReadRecent(record.Date, 1));
         Assert.Equal("高", record.RiskLevel);
         Assert.Equal(record.RiskLevel, persisted.RiskLevel);
         Assert.Equal(channels.Read, persisted.ChannelsRead);
@@ -111,7 +145,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
 
     /// <summary>統計模式（useAi=false）路徑不受拆分影響：規則本身判定的高風險一樣要出報告，
     /// 只是報告內容不含 AI 產出（此路徑走 BuildStatisticalRecordAsync 的「不需要 AI」分支，
-    /// 不經過 CompleteAiAsync 的暫用記錄，是拆分後的另一條獨立路徑，需要各自驗證）。</summary>
+    /// 與 AI 補跑是兩條獨立路徑，需要各自驗證）。</summary>
     [Fact]
     public async Task 統計模式下高風險規則一樣輸出報告但不含AI內容()
     {
@@ -122,7 +156,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore(),
             reportService: reportService);
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-1), MakeHighRiskDiskEvents(), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-1), MakeHighRiskDiskEvents(), useAi: false);
 
         Assert.Equal("高", record.RiskLevel);
         Assert.False(record.AiAnalyzed);
@@ -143,9 +177,9 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore(),
             reportService: new RiskReportService(ai, sink), host: "SRV-NETIQ-07", hostId: 42);
         var day = DateTime.Today.AddDays(-1);
-        var (record, workItem) = await service.BuildStatisticalRecordAsync(
+        var (record, needsAi) = await service.BuildStatisticalRecordAsync(
             day, MakeHighRiskDiskEvents(), useAi: false, deferNonAiReport: true);
-        Assert.Null(workItem);
+        Assert.False(needsAi);
         Assert.Null(record.ReportFile);
         Assert.Null(sink.LastContent);
 
@@ -228,35 +262,56 @@ public class LogAnalysisServiceSplitTests : IDisposable
     }
 
     /// <summary>
-    /// 回饋十四輪 A2：AiWorkItem.Logs 的窄化移進 BuildStatisticalRecordAsync 本身——回傳的
-    /// workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果，不是原始 logs 全量。
-    /// 未命中規則、且首次執行（無歷史）故 Trend 恆 Unknown 的雜訊事件不該進到 workItem.Logs。
+    /// 統計段回傳的 NeedsAi 與紀錄的 AiPending 一致：高風險日 useAi 時需要 AI（排隊中暫代內容），
+    /// useAi=false 或低風險日都不需要。（原本的 Logs 窄化斷言隨 AI 工作項移除而刪除。）
     /// </summary>
     [Fact]
-    public async Task BuildStatisticalRecordAsync傳回的workItem其Logs已窄化不含未命中規則的雜訊事件()
+    public async Task BuildStatisticalRecordAsync高風險且useAi時NeedsAi為true且標待補()
     {
         var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
         var ai = new FakeAiService();
         var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore());
 
-        var diskEvents = MakeHighRiskDiskEvents(20); // 命中 builtin-storage-disk-io，應入選
-        var noiseEvents = Enumerable.Range(0, 30).Select(i => new EventLogEntryData
+        var (record, needsAi) = await service.BuildStatisticalRecordAsync(
+            DateTime.Today.AddDays(-1), MakeHighRiskDiskEvents(), useAi: true);
+        Assert.True(needsAi);
+        Assert.True(record.AiPending);
+        Assert.Equal("（統計已完成，AI 分析排隊中）", record.Headline);
+
+        var (offRecord, offNeedsAi) = await service.BuildStatisticalRecordAsync(
+            DateTime.Today.AddDays(-1), MakeHighRiskDiskEvents(), useAi: false);
+        Assert.False(offNeedsAi);
+        Assert.False(offRecord.AiPending);
+        Assert.Equal(0, ai.Calls);
+    }
+
+    /// <summary>低風險日（無規則命中）即使有 30 種未分類事件也不排 AI：直接定案「今日狀況正常」。
+    /// 舊判準（未分類事件種類 ≥ 20 仍標待補）在這裡會是 AiPending=true。</summary>
+    [Fact]
+    public async Task 低風險日即使有大量未分類事件也不標待補_直接定案正常()
+    {
+        var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
+        var ai = new FakeAiService();
+        var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore(),
+            host: "LOWRISK-HOST", hostId: 77);
+        var noise = Enumerable.Range(0, 30).Select(i => new EventLogEntryData
         {
-            TimeGenerated = DateTime.Today.AddMinutes(-i),
+            TimeGenerated = DateTime.Today.AddHours(-1),
             EntryType = EventLogEntryType.Information,
             LogName = "Application",
-            Source = "UnrelatedNoisyApp",
-            EventId = 5000,
+            Source = $"QuietZqApp{i}",
+            EventId = 7000 + i,
             Message = $"例行訊息 #{i}"
-        }).ToList(); // 未命中規則、首次執行歷史為空故 Trend=Unknown，不該入選
-        var logs = diskEvents.Concat(noiseEvents).ToList();
+        }).ToList();
 
-        var (_, workItem) = await service.BuildStatisticalRecordAsync(DateTime.Today.AddDays(-1), logs, useAi: true);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-1), noise, useAi: true);
 
-        Assert.NotNull(workItem);
-        Assert.Equal(diskEvents.Count, workItem!.Logs.Count);
-        Assert.All(workItem.Logs, e => Assert.Equal("disk", e.Source));
-        Assert.True(workItem.Logs.Count < logs.Count);
+        Assert.Equal("低", record.RiskLevel);
+        Assert.True(record.TopIssues.Count(i => i.KnownIssue == null) >= 20);
+        Assert.False(record.AiPending);
+        Assert.False(record.AiAnalyzed);
+        Assert.Equal("今日狀況正常，無需處理", record.Headline);
+        Assert.Equal(0, ai.Calls);
     }
 
     [Fact]
@@ -447,7 +502,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var sink = new FakeReportSink();
         var service = CreateMuteAwareService(MutedDisk(day, DateTime.Today.AddDays(2)), sink);
 
-        var record = await service.AnalyzeDayAsync(day, MakeHighRiskDiskEvents().Concat(MakeNtfsEvents()).ToList(), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(day, MakeHighRiskDiskEvents().Concat(MakeNtfsEvents()).ToList(), useAi: false);
 
         Assert.True(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
         Assert.False(record.TopIssues.Single(i => i.Source == "Ntfs").Suppressed);
@@ -465,7 +520,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var day = DateTime.Today.AddDays(-1);
         var service = CreateMuteAwareService(MutedDisk(day, day), new FakeReportSink());
 
-        var record = await service.AnalyzeDayAsync(day, MakeHighRiskDiskEvents(), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(day, MakeHighRiskDiskEvents(), useAi: false);
 
         Assert.True(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
         Assert.NotEqual("高", record.RiskLevel);
@@ -477,7 +532,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var day = DateTime.Today.AddDays(-1);
         var service = CreateMuteAwareService(MutedDisk(DateTime.Today, DateTime.Today.AddDays(3)), new FakeReportSink());
 
-        var record = await service.AnalyzeDayAsync(day, MakeHighRiskDiskEvents(), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(day, MakeHighRiskDiskEvents(), useAi: false);
 
         Assert.False(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
         Assert.Equal("高", record.RiskLevel);
@@ -489,7 +544,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
     {
         var service = CreateMuteAwareService(MutedDisk(DateTime.Today.AddDays(-1), DateTime.Today.AddDays(5)), new FakeReportSink());
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-2), MakeHighRiskDiskEvents(), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-2), MakeHighRiskDiskEvents(), useAi: false);
 
         Assert.False(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
     }
@@ -500,7 +555,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
     {
         var service = CreateMuteAwareService(MutedDisk(DateTime.Today.AddDays(-5), DateTime.Today.AddDays(-3)), new FakeReportSink());
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-4), MakeHighRiskDiskEvents(), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-4), MakeHighRiskDiskEvents(), useAi: false);
 
         Assert.True(record.TopIssues.Single(i => i.Source == "disk").Suppressed);
     }

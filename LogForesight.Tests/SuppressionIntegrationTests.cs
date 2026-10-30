@@ -51,11 +51,11 @@ public class SuppressionIntegrationTests : IDisposable
         // priorTotal=7、recentTotal=12+5=17，17>=10 且 17>=7*1.5=10.5，本該觸發慢速惡化
         for (int d = 13; d >= 7; d--)
         {
-            await service.AnalyzeDayAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(1, DateTime.Today.AddDays(-d)), useAi: false);
+            await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(1, DateTime.Today.AddDays(-d)), useAi: false);
         }
         for (int d = 6; d >= 1; d--)
         {
-            await service.AnalyzeDayAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(2, DateTime.Today.AddDays(-d)), useAi: false);
+            await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(2, DateTime.Today.AddDays(-d)), useAi: false);
         }
 
         suppressionStore.SaveAll(new List<RuleSuppression>
@@ -67,7 +67,7 @@ public class SuppressionIntegrationTests : IDisposable
             }
         });
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today, MakeUnknownEvents(5, DateTime.Today), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today, MakeUnknownEvents(5, DateTime.Today), useAi: false);
 
         var issue = Assert.Single(record.TopIssues);
         Assert.Null(issue.RuleId); // 確認真的是 Other 類、未命中規則——A1 指出的缺口情境
@@ -107,7 +107,7 @@ public class SuppressionIntegrationTests : IDisposable
 
         // 先跑一次拿到 bruteforce 簽章的完整（五段）issueKey——與前端 issue.issueKey 同一套算法
         var probeDate = DateTime.Today.AddDays(-1);
-        var probeRecord = await service.AnalyzeDayAsync(probeDate, MakeSshLogs(probeDate), useAi: false);
+        var probeRecord = await service.AnalyzeDayStatisticalAsync(probeDate, MakeSshLogs(probeDate), useAi: false);
         var bruteforceIssueKey = IssueSignatureKey.For(probeRecord.TopIssues.Single(i => i.EventKey == "builtin-linux-ssh-bruteforce"));
 
         suppressionStore.SaveAll(new List<RuleSuppression>
@@ -115,7 +115,7 @@ public class SuppressionIntegrationTests : IDisposable
             new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = bruteforceIssueKey, Scope = SuppressionScopes.Site, Reason = "測試：只抑制暴力破解" }
         });
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today, MakeSshLogs(DateTime.Today), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today, MakeSshLogs(DateTime.Today), useAi: false);
 
         var bruteforce = record.TopIssues.Single(i => i.EventKey == "builtin-linux-ssh-bruteforce");
         var accepted = record.TopIssues.Single(i => i.EventKey == "builtin-linux-ssh-accept");
@@ -133,14 +133,14 @@ public class SuppressionIntegrationTests : IDisposable
 
         for (int d = 13; d >= 7; d--)
         {
-            await service.AnalyzeDayAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(1, DateTime.Today.AddDays(-d)), useAi: false);
+            await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(1, DateTime.Today.AddDays(-d)), useAi: false);
         }
         for (int d = 6; d >= 1; d--)
         {
-            await service.AnalyzeDayAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(2, DateTime.Today.AddDays(-d)), useAi: false);
+            await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-d), MakeUnknownEvents(2, DateTime.Today.AddDays(-d)), useAi: false);
         }
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today, MakeUnknownEvents(5, DateTime.Today), useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today, MakeUnknownEvents(5, DateTime.Today), useAi: false);
 
         Assert.Contains(record.TrendAlerts, a => a.Contains("慢速惡化"));
         Assert.Equal("中", record.RiskLevel); // trendAlerts.Count>0 直接判中風險
@@ -159,7 +159,7 @@ public class SuppressionIntegrationTests : IDisposable
         // 5 天基準歷史（無事件，ErrorCount=0）：落入「多數日無錯誤」分支，今日達固定門檻（≥10）即觸發
         for (int d = 5; d >= 1; d--)
         {
-            await service.AnalyzeDayAsync(DateTime.Today.AddDays(-d), new List<EventLogEntryData>(), useAi: false);
+            await service.AnalyzeDayStatisticalAsync(DateTime.Today.AddDays(-d), new List<EventLogEntryData>(), useAi: false);
         }
 
         suppressionStore.SaveAll(new List<RuleSuppression>
@@ -177,7 +177,7 @@ public class SuppressionIntegrationTests : IDisposable
             Message = $"錯誤 #{i}"
         }).ToList();
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today, errorEvents, useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today, errorEvents, useAi: false);
 
         Assert.DoesNotContain(record.TrendAlerts, a => a.Contains("整體錯誤量突增"));
         Assert.Contains(record.SuppressedTrendAlerts, a => a.Contains("整體錯誤量突增"));
@@ -224,7 +224,7 @@ public class SuppressionIntegrationTests : IDisposable
             Message = "已建立使用者帳戶"
         });
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today, events, useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today, events, useAi: false);
 
         Assert.DoesNotContain(record.CorrelationAlerts, a => a.Contains("入侵鏈"));
         Assert.Contains(record.SuppressedCorrelationAlerts, a => a.Contains("入侵鏈"));
@@ -258,7 +258,7 @@ public class SuppressionIntegrationTests : IDisposable
             Message = "已建立使用者帳戶"
         });
 
-        var record = await service.AnalyzeDayAsync(DateTime.Today, events, useAi: false);
+        var record = await service.AnalyzeDayStatisticalAsync(DateTime.Today, events, useAi: false);
 
         Assert.Contains(record.CorrelationAlerts, a => a.Contains("入侵鏈"));
         Assert.Equal("高", record.RiskLevel);

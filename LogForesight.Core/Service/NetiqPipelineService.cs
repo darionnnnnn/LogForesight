@@ -666,8 +666,8 @@ public class NetiqPipelineService
             // （docs/BACKLOG.md 未決事項 #3，留待試點核對），v1 誠實的作法是不宣稱
             // 「已檢查且無異常」——channels=null 时 UncoveredChecks 不會列出這兩個頻道，
             // 這是已知的 v1 限制而非遺漏，待試點確認覆蓋現況後再決定要不要正式申報「不適用」。
-            AiWorkItem? workItem;
-            (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
+            bool needsAi;
+            (record, needsAi) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null, ct, hostOs: target.Os, deferNonAiReport: true);
 
@@ -712,7 +712,7 @@ public class NetiqPipelineService
             // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
             HostDayPostProcessor.AttachPrtgFindings(
                 _prtgFindings, plan.Store, record, target.HostId, aiConfigured: _useAi, logContext: logContext);
-            if (workItem == null)
+            if (!needsAi)
                 await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, events, ct);
 
             try
@@ -747,7 +747,7 @@ public class NetiqPipelineService
                 _hostTouches[target.HostId] = new HostTouch(displayName, DateTime.Now);
             }
 
-            if (workItem != null)
+            if (needsAi)
             {
                 _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 統計完成（待 AI 排程分析）");
             }
