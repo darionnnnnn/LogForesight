@@ -232,6 +232,19 @@ function assignField(handling, users, hostId, date) {
         assignBtn.classList.toggle('d-none', picked === currentId);
     });
 
+    // 派工閘門略過的問題（已抑制／已知雜訊／靜音中／不再打擾）：各原因有數量才列出；
+    // 預覽與寫入後的 toast 共用這一句，沒有略過則回傳 null
+    const SKIP_REASON_LABELS = [
+        ['suppressed', '已抑制'], ['noise', '已知雜訊'], ['muted', '靜音中'], ['dismissed', '不再打擾']
+    ];
+    function skippedNote(skippedByReason) {
+        const map = skippedByReason ?? {};
+        const total = SKIP_REASON_LABELS.reduce((sum, [key]) => sum + (map[key] ?? 0), 0);
+        if (total <= 0) return null;
+        const labels = SKIP_REASON_LABELS.filter(([key]) => (map[key] ?? 0) > 0).map(([, label]) => label);
+        return `${total} 個問題因${labels.join('／')}而略過；如需指派請先解除`;
+    }
+
     async function submitAssign(btn) {
         const handlerId = select.value ? Number(select.value) : null;
         const base = `/api/records/${hostId}/${date}/handling/assign`;
@@ -256,6 +269,8 @@ function assignField(handling, users, hostId, date) {
                     const holders = preview.heldByHandlerNames?.length ? `由 ${preview.heldByHandlerNames.join('、')} ` : '';
                     lines.push(`另有 ${preview.heldByOthers} 個問題已${holders}處理中，確認後會改派給 ${name}。`);
                 }
+                const previewSkipped = skippedNote(preview.skippedByReason);
+                if (previewSkipped) lines.push(previewSkipped);
                 if (preview.assigneeCannotSeeHost) lines.push('注意：對方看不到這台主機，只看得到被指派的問題。');
                 if (preview.assigneeCannotHandle) lines.push('注意：對方目前的角色沒有處理能力，無法回覆處理狀態。');
                 if (preview.handlerHasNoEmail) lines.push('注意：對方未設定 email，不會收到通知。');
@@ -280,6 +295,8 @@ function assignField(handling, users, hostId, date) {
             if (updated.casesSkippedHandlerNames?.length) {
                 parts.push(`${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的交辦涵蓋，未變更`);
             }
+            const doneSkipped = skippedNote(updated.skippedByReason);
+            if (doneSkipped) parts.push(doneSkipped);
             const noEmailNote = updated.handlerHasNoEmail ? '（處理人未設定 email，不會收到通知）' : '';
             toast(parts.join('；') + noEmailNote, 'success');
 

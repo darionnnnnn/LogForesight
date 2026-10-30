@@ -233,7 +233,7 @@ public sealed class DispatchContext
     }
 
     /// <summary>「不再打擾」判定規則的唯一一份：每個鍵取建立最晚的案件，以不處理類狀態結案者</summary>
-    private static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
+    internal static HashSet<string> DismissedKeys(IEnumerable<IssueCase> casesOfHost) =>
         casesOfHost
             .GroupBy(c => c.IssueKey, IssueSignatureKeyComparer.Instance)
             .Select(g => g.OrderByDescending(c => c.CreatedAt)

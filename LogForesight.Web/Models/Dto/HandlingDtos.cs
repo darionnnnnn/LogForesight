@@ -56,6 +56,9 @@ public class HandlingDto
     /// </summary>
     public List<string> CasesSkippedHandlerNames { get; set; } = new();
 
+    /// <summary>本次指派因派工閘門（已抑制／已知雜訊／不再打擾／靜音中）而未建交辦的問題數，依原因分列</summary>
+    public Dictionary<string, int> SkippedByReason { get; set; } = new();
+
     /// <summary>本次指派改派掉的他人案件數（docs/archive/FEEDBACK-10-PLAN.md §9，只有帶 reassign 才會 &gt; 0）</summary>
     public int CasesReassigned { get; set; }
 
@@ -123,6 +126,12 @@ public class HandlingAssignPreviewDto
 
     /// <summary>占用中的他人處理人名稱（顯示名稱(帳號)，去重）</summary>
     public List<string> HeldByHandlerNames { get; set; } = new();
+
+    /// <summary>
+    /// 因派工閘門而不建交辦的問題數，依原因分列：suppressed（已抑制）、noise（已知雜訊）、
+    /// dismissed（不再打擾）、muted（靜音中）。與夜間／立即派工共用同一組判定。
+    /// </summary>
+    public Dictionary<string, int> SkippedByReason { get; set; } = new();
 
     /// <summary>被指派者沒有 Handle 能力</summary>
     public bool AssigneeCannotHandle { get; set; }

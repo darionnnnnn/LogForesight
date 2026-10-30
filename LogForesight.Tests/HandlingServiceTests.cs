@@ -1245,6 +1245,67 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(preview.HeldByHandlerNames, actual.CasesSkippedHandlerNames);
     }
 
+    private HandlingServiceFacade CreateGated(IssueExclusion exclusion)
+    {
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle);
+        return new HandlingServiceFacade(
+            store: _handlings, issueStore: _issueHandlings, cases: _cases, caseCoordinator: _caseCoordinator,
+            noiseMarks: _noiseMarks, repository: _repository, hosts: _hosts, users: _users,
+            visibility: new AlwaysVisibleService(_hosts), currentUser: currentUser, audit: _audit,
+            settings: _settings, issueOwners: _issueOwners, exclusions: new FixedIssueExclusionSource(exclusion));
+    }
+
+    private static IssueExclusion MuteOf(string source, int eventId, DateTime from, DateTime to) =>
+        IssueExclusion.From(new[]
+        {
+            new IssueProfile { SourceName = source, EventId = eventId, Mutes = { new MuteInterval { From = from, To = to } } }
+        }, DateTime.Today);
+
+    /// <summary>日層級指派套用派工閘門：已抑制、靜音中的問題不建交辦，預覽講出原因，實際指派只建一件</summary>
+    [Fact]
+    public void 日層級指派_已抑制與靜音中的問題不建交辦_預覽與結果講出原因()
+    {
+        var day = Today.AddDays(-43);
+        var suppressed = Issue("disk", 153); suppressed.Suppressed = true;
+        var muted = Issue("net", 4201);
+        var normal = Issue("cpu", 77);
+        _repository.AddRecord(_host.HostName, day, suppressed, muted, normal);
+        var service = CreateGated(MuteOf("net", 4201, day.AddDays(-1), Today.AddDays(5)));
+
+        var preview = service.PreviewAssign(_host.HostId, day, _owner.UserId);
+
+        Assert.Equal(1, preview.CasesToCreate);
+        Assert.Equal(new Dictionary<string, int> { ["suppressed"] = 1, ["muted"] = 1 }, preview.SkippedByReason);
+
+        var actual = service.Assign(_host.HostId, day, _owner.UserId);
+        Assert.Equal(1, actual.CasesCreated);
+        Assert.Equal(preview.SkippedByReason, actual.SkippedByReason);
+    }
+
+    /// <summary>已知雜訊與不再打擾（最近一件以不處理類結案）同樣被略過並分別計數</summary>
+    [Fact]
+    public void 日層級指派_已知雜訊與不再打擾的問題不建交辦()
+    {
+        var day = Today.AddDays(-44);
+        var noise = Issue("disk", 153);
+        var dismissed = Issue("net", 4201);
+        var normal = Issue("cpu", 77);
+        _repository.AddRecord(_host.HostName, day, noise, dismissed, normal);
+        _noiseMarks.Save(new NoiseMark { HostName = _host.HostName, IssueKey = IssueSignatureKey.For(noise) });
+        _cases.Save(new IssueCase
+        {
+            CaseId = "C-DISMISSED", HostName = _host.HostName, IssueKey = IssueSignatureKey.For(dismissed),
+            Status = IssueHandlingStatuses.WontFix, ClosedAt = DateTime.Now, CreatedAt = DateTime.Now, UpdatedAt = DateTime.Now
+        });
+        var service = CreateGated(IssueExclusion.None);
+
+        var preview = service.PreviewAssign(_host.HostId, day, _owner.UserId);
+
+        Assert.Equal(1, preview.CasesToCreate);
+        Assert.Equal(new Dictionary<string, int> { ["noise"] = 1, ["dismissed"] = 1 }, preview.SkippedByReason);
+        Assert.Equal(1, service.Assign(_host.HostId, day, _owner.UserId).CasesCreated);
+    }
+
     [Fact]
     public void 預覽指派_停用帳號與不存在的處理人被拒()
     {

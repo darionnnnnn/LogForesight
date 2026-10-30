@@ -43,7 +43,8 @@ internal class HandlingServiceFacade
         IUserGroupStore? groups = null,
         IIssueOwnerStore? issueOwners = null,
         LogForesight.Web.Services.Mail.MailNotificationService? mail = null,
-        IIssueAggregateQuery? issueAggregates = null)
+        IIssueAggregateQuery? issueAggregates = null,
+        IIssueExclusionSource? exclusions = null)
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings, new FixedIssueExclusionSource(IssueExclusion.None));
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
@@ -57,7 +58,7 @@ internal class HandlingServiceFacade
             audit, currentUser, displayNames, workOrderStore, workOrders, TestPermissionStamps.Shared);
         _day = new DayHandlingCommandService(
             store, issueStore, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
-            displayNames, mail, issueOwners);
+            displayNames, mail, issueOwners, noiseMarks, cases, exclusions);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, workOrders, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
             issueOwnerAdmin, displayNames, mail);

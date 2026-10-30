@@ -67,4 +67,16 @@ public class HandlingStatusCatalogUiTests
         Assert.Contains("handling-statuses.js", File.ReadAllText(JsPath("pages", "issue-status-reply.js")));
         Assert.Contains("handling-statuses.js", File.ReadAllText(JsPath("pages", "handling-panel.js")));
     }
+
+    /// <summary>日層級指派：預覽與寫入結果要把派工閘門略過的原因講出來（讀 skippedByReason）</summary>
+    [Fact]
+    public void 處理面板指派預覽與結果講出略過原因()
+    {
+        var js = File.ReadAllText(JsPath("pages", "handling-panel.js"));
+
+        Assert.Contains("skippedByReason", js);
+        Assert.Contains("如需指派請先解除", js);
+        Assert.Contains("preview.skippedByReason", js);
+        Assert.Contains("updated.skippedByReason", js);
+    }
 }
