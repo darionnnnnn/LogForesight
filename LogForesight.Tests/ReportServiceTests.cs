@@ -144,6 +144,54 @@ public class ReportServiceTests : IDisposable
         Assert.Equal(1, unresolved.Kpi.HighRiskDays);   // 只剩未處理那台
     }
 
+    /// <summary>
+    /// 靜音問題不因顯示範圍而改變「問題總數」：scope=all 走 SQL 聚合（IssueExclusionSql），
+    /// scope=unresolved 走記憶體 BuildKpi，兩條路徑必須同口徑、都不含靜音中的問題。
+    /// </summary>
+    [Fact]
+    public void GetSummary_問題總數兩路徑都排除靜音問題()
+    {
+        var host = AddHost("HOST-MUTE");
+        var muted = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153, Severity = IssueSeverity.High, Count = 1,
+            EntryType = System.Diagnostics.EventLogEntryType.Error
+        };
+        var normal = new LogIssueSignature
+        {
+            LogName = "System", Source = "netlogon", EventId = 5719, Severity = IssueSeverity.High, Count = 1,
+            EntryType = System.Diagnostics.EventLogEntryType.Error
+        };
+        AddRecord(host, DateTime.Today, "高", muted, normal);
+
+        var exclusion = IssueExclusion.From(new[]
+        {
+            new IssueProfile
+            {
+                SourceName = "disk", EventId = 153,
+                Mutes = new List<MuteInterval> { new() { From = DateTime.Today.AddDays(-3), To = DateTime.Today.AddDays(3), Reason = "測試" } }
+            }
+        }, DateTime.Today);
+        var service = CreateServiceWithExclusion(exclusion);
+
+        var all = service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today, "all");
+        var unresolved = service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today, "unresolved");
+
+        Assert.Equal(1, all.Kpi.TotalIssues);
+        Assert.Equal(all.Kpi.TotalIssues, unresolved.Kpi.TotalIssues);
+    }
+
+    /// <summary>與建構子同一組相依，只把靜音排除條件換成指定的那一份（供需要靜音的測試使用）。</summary>
+    private ReportService CreateServiceWithExclusion(IssueExclusion exclusion)
+    {
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var issueRanking = new IssueRankingBuilder(aggregates, _hosts, new FixedIssueExclusionSource(exclusion));
+        return new ReportService(
+            _repository, _hosts, new AlwaysVisibleService(_hosts), _handling, issueRanking, _settingsStore, aggregates,
+            _severityVisibility, new SummaryCache(new DataVersionStamp()), new FixedIssueExclusionSource(exclusion),
+            new LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor());
+    }
+
     [Fact]
     public void GetSummary_顯示範圍unassigned_只留無處理人的風險日()
     {
