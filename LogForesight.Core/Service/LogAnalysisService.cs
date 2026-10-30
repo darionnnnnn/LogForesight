@@ -680,11 +680,12 @@ public class LogAnalysisService
         {
             // 網路正常但重試 JsonRetryCount 次後仍不合格：保留原文（截斷避免報告膨脹），不當機、不遺失資訊；
             // 仍算完成 AI 分析，只是白話翻譯品質降級
-            var riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.RawContent), ruleRisk);
+            // 原文是格式不合格的自由文字，不從中推風險（單字比對會把「其中」「中斷」誤判成等級）；風險維持規則層判定
+            var riskLevel = ruleRisk;
             Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", date, result.Attempts);
             return ("AI 回覆格式異常，以下為原始內容",
                 $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{TextTruncation.Truncate(result.RawContent, MaxSummaryChars)}",
-                string.Empty, string.Empty, riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
+                string.Empty, string.Empty, riskLevel, null, true);
         }
 
         // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。

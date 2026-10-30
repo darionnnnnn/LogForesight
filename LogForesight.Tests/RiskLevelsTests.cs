@@ -39,11 +39,22 @@ public class RiskLevelsTests
     }
 
     [Theory]
-    [InlineData("風險等級：高，理由是...", "高")]
+    [InlineData("高", "高")]
+    [InlineData(" 中 ", "中")]
+    [InlineData("低", "低")]
+    [InlineData("高風險", "高")]
+    [InlineData("中等", "中")]
+    [InlineData("低風險", "低")]
     [InlineData("中度風險", "中")]
-    [InlineData("這次判定為低", "低")]
+    [InlineData("其中有問題", "未知")]
+    [InlineData("高度懷疑但中斷", "未知")]
+    [InlineData("", "未知")]
+    [InlineData("   ", "未知")]
+    [InlineData(null, "未知")]
+    [InlineData("高風險，中等", "未知")]
+    [InlineData("風險：高", "未知")]
     [InlineData("這是一段完全解析失敗的原文", "未知")]
-    public void Normalize_從AI回傳文字擷取風險等級(string text, string expected)
+    public void Normalize_只接受短字串且首字為等級(string? text, string expected)
     {
         Assert.Equal(expected, RiskLevels.Normalize(text));
     }

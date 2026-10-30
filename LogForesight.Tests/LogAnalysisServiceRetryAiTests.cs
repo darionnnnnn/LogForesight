@@ -97,6 +97,35 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
     }
 
     [Fact]
+    public async Task AI回非JSON原文含高字時風險維持規則風險_不標ai_raise()
+    {
+        _ai.NextContent = "整體看來高度可疑，其中有中斷情形，但這不是 JSON";
+        var service = NewService(riskyEventStore: null);
+        var pending = PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中");
+        pending.RiskBasis = "規則命中";
+
+        var outcome = await service.RetryAiAsync(pending, historyDays: 14);
+
+        Assert.Equal("AI 回覆格式異常，以下為原始內容", outcome.Headline);
+        Assert.Equal("中", outcome.RiskLevel);
+        Assert.NotEqual("ai_raise", outcome.RiskBasis);
+    }
+
+    [Fact]
+    public async Task JSON的risk_level為高風險且規則風險低時拉高到高並標ai_raise()
+    {
+        _ai.NextContent = """{"risk_level":"高風險","headline":"h","story":"s","trend_story":"","action":"a"}""";
+        var service = NewService(riskyEventStore: null);
+        var pending = PendingRecord(new List<LogIssueSignature>(), riskLevel: "低");
+        pending.RiskBasis = "ai_raise";   // 低風險要呼叫主分析的唯一入口
+
+        var outcome = await service.RetryAiAsync(pending, historyDays: 14);
+
+        Assert.Equal("高", outcome.RiskLevel);
+        Assert.Equal("ai_raise", outcome.RiskBasis);
+    }
+
+    [Fact]
     public async Task 風險事件暫存有資料時補上報告並申報原始log來源()
     {
         _riskyEvents.Rows = new List<RiskyEvent>
