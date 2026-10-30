@@ -597,7 +597,7 @@ public class PrtgSnapshotHostedService : BackgroundService
     {
         var targets = ResolveTargets(settings, now);
         if (targets.Count == 0)
-            NoteSkip("snapshot-empty-scope-idle", "目前快照範圍為空（沒有已對應主機的白名單 sensor）；本輪未發出 PRTG 請求。", trackPause: false, targetCount: 0);
+            NoteSkip("snapshot-empty-scope-idle", "目前快照範圍為空（取數範圍為空：沒有已對應主機的白名單 sensor）；本輪未發出 PRTG 請求。", trackPause: false, targetCount: 0);
         lock (_pendingWrite)
         {
             if (_accumulator.EntryCount + _pendingRows + targets.Count > PrtgSnapshotJournal.MaxRows ||
@@ -619,7 +619,9 @@ public class PrtgSnapshotHostedService : BackgroundService
             WriteOutput(msg, LogLevel.Warn);
         }
 
-        RecordSuccess(settings, tally.Added, now);
+        // 範圍為空時沒有取樣可言：不算成功（不推進最近成功、不重設失敗、不寫新鮮度），
+        // 否則健康頁會顯示「快照正常」。診斷已在上面 NoteSkip 寫入「取數範圍為空」。
+        if (targets.Count > 0) RecordSuccess(settings, tally.Added, now);
 
         FlushAccumulator(now, all: false);
         return true;
@@ -638,7 +640,8 @@ public class PrtgSnapshotHostedService : BackgroundService
                 _sentinels.GetAll(), SilentConsole, _addressResolver).SensorObjids
             : Array.Empty<long>();
         var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get();
-        return PrtgSnapshotTargetResolver.SelectEffectiveTargets(_targetObjids ?? new HashSet<long>(), policy, guardSensors);
+        var targetObjids = _targetObjids;
+        return PrtgSnapshotTargetResolver.SelectEffectiveTargets(targetObjids ?? new HashSet<long>(), policy, guardSensors);
     }
 
     /// <summary>
@@ -796,8 +799,10 @@ public class PrtgSnapshotHostedService : BackgroundService
         double intervalSeconds = ParseIntervalSeconds(intervalStr, ref tally.UnparsedIntervals);
 
         double sampleValue;
-        if (_sensorTypes != null &&
-            _sensorTypes.TryGetValue(objid.Value, out var sensorType) &&
+        // RequestScopeRefresh 會在請求執行緒把 _sensorTypes 設 null；先取區域副本再判斷，避免判 null 與取值之間 NRE。
+        var sensorTypes = _sensorTypes;
+        if (sensorTypes != null &&
+            sensorTypes.TryGetValue(objid.Value, out var sensorType) &&
             PrtgVolumeSensorTypes.IsVolume(sensorType))
         {
             sampleValue = lastValueRaw.Value * 3600.0 / intervalSeconds;

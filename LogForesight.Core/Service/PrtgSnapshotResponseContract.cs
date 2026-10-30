@@ -15,7 +15,8 @@ public static class PrtgSnapshotResponseContract
 
     /// <summary>
     /// Validates a bounded snapshot response. Reasons are stable codes and contain no source values.
-    /// IDs must be one to one hundred distinct positive integers.
+    /// IDs must be one to one hundred distinct positive integers. A response containing any ID outside the request is rejected;
+    /// a non-empty proper subset of the request is accepted (sensors deleted in PRTG), an empty one is not.
     /// </summary>
     public static ValidationResult Validate(string json, IReadOnlyCollection<long> requestedSensorIds)
     {
@@ -50,7 +51,9 @@ public static class PrtgSnapshotResponseContract
                 var lastCheckValid = row.TryGetProperty("lastcheck", out var lastCheck) && HasScalarText(lastCheck);
                 if (!statusValid || !lastCheckValid) return new(false, false, "minimum-snapshot-fields-missing");
             }
-            if (!actual.SetEquals(expected)) return new(false, minimumFieldsObserved, "requested-sensor-set-mismatch");
+            // 請求外的 objid 已在上面拒收；走到這裡 actual 必為 expected 的子集。
+            // 真子集（PRTG 已刪掉其中幾顆）照收，缺的交給呼叫端的「缺 N 顆」警告；空回應仍視為不相容（無法與錯誤回應區分）。
+            if (actual.Count == 0) return new(false, minimumFieldsObserved, "requested-sensor-set-mismatch");
             return new(true, minimumFieldsObserved, "runtime-snapshot-contract-compatible");
         }
         catch (JsonException)

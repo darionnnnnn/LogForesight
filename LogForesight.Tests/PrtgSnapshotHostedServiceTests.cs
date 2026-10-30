@@ -2361,7 +2361,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 分批快照_目標0顆_不發請求且照記成功()
+    public async Task 分批快照_目標0顆_不發請求且不記成功_診斷含取數範圍為空()
     {
         _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse("{}"));
 
@@ -2369,9 +2369,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         Assert.True(_stubHandler.RequestedUrls.Count == 0, string.Join(" | ", _stubHandler.RequestedUrls));
-        Assert.NotNull(service.GetStatus().LastSuccessAt);
-        Assert.Equal(0, service.GetStatus().LastSensorCount);
+        // 範圍為空不是成功：不推進最近成功、不重設失敗、不寫新鮮度。
+        Assert.Null(service.GetStatus().LastSuccessAt);
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
         Assert.Contains("目前快照範圍為空", service.GetStatus().LastSkipReason);
+        var hours = new PrtgSnapshotDiagnosticsStore(_backend.Blob("prtg_snapshot_diagnostics_v1")).ReadHours();
+        Assert.Contains(hours, h => h.Reasons.Keys.Any(k => k.Contains("取數範圍為空")));
+        Assert.False(new PrtgFreshnessStore(_backend.Blob(PrtgFreshnessStore.BlobKey)).GetAll().ContainsKey(PrtgFreshnessStore.Snapshot));
     }
 
     [Fact]
@@ -2390,7 +2394,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         // 有效範圍為空時不快照、不查狀態變更；但已對應卻尚未鏡像 sensor 的裝置仍要補抓，
         // 否則新進範圍的裝置永遠沒有 sensor、範圍永遠是空的。
         Assert.All(_stubHandler.RequestedUrls, url => Assert.True(IsBackfillUrl(url) && url.Contains("id=20"), url));
-        Assert.NotNull(service.GetStatus().LastSuccessAt);
+        Assert.Null(service.GetStatus().LastSuccessAt);
         Assert.Equal(0, service.GetStatus().LastSensorCount);
         var pending = _backend.PrtgStore().ReadRecentStateChangeQueue()
             .OrderBy(item => item.DeviceObjid).ToArray();
@@ -2399,7 +2403,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task 分批快照_缺少要求sensor時拒絕整批且不寫部分資料()
+    public async Task 分批快照_缺少要求sensor時收下其餘並出缺顆警告()
     {
         SetupTargetSensors(ManyTargets(1001, 50));
         var omit = new HashSet<long> { 1010, 1020 };
@@ -2408,8 +2412,48 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var service = CreateService();
         await service.TickAsync();
 
+        // 回應是請求集合的真子集（PRTG 刪了幾顆 sensor）：其餘照收，缺的由「缺 N 顆」警告出聲。
+        Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
+        Assert.Equal(48, service.GetStatus().PendingSamples);
+        Assert.Contains(service.ExecutionOutputs, l => l.Contains("缺 2 顆"));
+    }
+
+    [Fact]
+    public async Task 分批快照_回應含請求外sensor時拒絕整批且不寫部分資料()
+    {
+        SetupTargetSensors(ManyTargets(1001, 50));
+        _stubHandler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            var ids = FilterObjids(url).Append(9999).ToList();
+            var rows = string.Join(",", ids.Select(id => $"{{\"objid\":{id},\"lastvalue_raw\":1,\"interval\":\"60 s\",\"status\":\"Up\",\"lastcheck\":\"now\"}}"));
+            return Task.FromResult(JsonResponse($"{{\"treesize\":{ids.Count},\"sensors\":[{rows}]}}"));
+        };
+
+        var service = CreateService();
+        await service.TickAsync();
+
         Assert.Equal(1, service.GetStatus().ConsecutiveFailures);
         Assert.Equal(0, service.GetStatus().PendingSamples);
+    }
+
+    [Fact]
+    public void 快照_讀取sensorTypes與targetObjids欄位處一律經區域副本()
+    {
+        // RequestScopeRefresh 在請求執行緒把兩個欄位設 null，輪詢執行緒的「判 null 再取值」之間會 NRE。
+        // 競態無法穩定重現，改守原始碼：解參考（.TryGetValue／.Count／.Contains 等）只准發生在區域副本上。
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var source = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Services", "PrtgSnapshotHostedService.cs"));
+        foreach (var field in new[] { "_sensorTypes", "_targetObjids" })
+        {
+            var unsafeDeref = System.Text.RegularExpressions.Regex.Matches(source,
+                field + @"(?!\s*(=|\?\.|\?\?))\s*\.(?!\s*$)");
+            Assert.True(unsafeDeref.Count == 0,
+                $"{field} 不得直接解參考（請先取區域副本）：{string.Join(" | ", unsafeDeref.Select(m => source.Substring(m.Index, Math.Min(40, source.Length - m.Index))))}");
+        }
+        Assert.DoesNotContain("_sensorTypes != null &&", source);
     }
 
     [Fact]

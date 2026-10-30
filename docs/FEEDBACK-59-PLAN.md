@@ -78,6 +78,7 @@
 | E12 | 主代理 | WEB-SPEC：§9.1 還原被拆開的項目符號、排序段改現況；用詞表補處理人側「交辦」與守門；日層級指派補四道閘門；待派移除 `disabled`、補試跑說明與立即派工來源；夜間掛接補 `related_warning_active`、`open_case_exists` 與空單收尾、摘要句；單一列判定改為記憶體一份；API 表補 due-date；§9.6 scope 作用範圍與問題總數排除靜音；資料存取表補郵件帳本與負責人原子更新。BACKLOG：IssueKey 條改現況、並行競態條改為殘留項 | (D) 逐句比對；無測試讀文件內容 | IssueCaseCoordinator 類別摘要已在 E3 完成 |
 | F1 | Sonnet | 人工對應裝置不在鏡像不入範圍（`ManualMissingInMirror`＋警告），維護頁標「PRTG 已無此裝置」；分頁器第一頁形狀不對或讀到筆數少於 treesize 擲未收斂例外（messages 只出聲） | 代理：6 條改動前紅、treesize 突變 3 紅；主代理重跑 271 綠 | 鏡像是全站全量同步，無雞生蛋；`PrtgFetchService` 既有 catch 已走「記失敗不清除」不需改；鏡像全空時人工對應暫不入範圍，下次同步成功即恢復 |
 | F2 | Sonnet | 新增 `PrtgHostMapLookup.Select`（回看窗內最晚，否則往後沿用到今天的最早一份）與共用 `LookbackDays`；數值評估改用它，就緒對應讀取窗上界延到今天 | 代理：舊判定與下界兩個突變各紅；主代理重跑 178 綠 | 回看窗由 32 天統一為 31 天（與 SQL `FindLatestHostMapDate` 同範圍）；SQL 端不便共用，兩處註解互引；讀取窗延長只有一個呼叫端且未來日期不會被選 |
+| F3a | Sonnet | 快照回應為請求集合的非空真子集時收下（缺顆警告可達），含請求外 objid 或空回應拒收；`_sensorTypes`／`_targetObjids` 讀取改區域副本並加原始碼守門；目標為空不記成功、略過原因帶「取數範圍為空」 | 代理：6 條改動前紅、三個突變各紅；主代理重跑 457 綠（含健康頁） | 4 條既有測試改為新語意；競態無法穩定重現改用原始碼守門；空範圍時健康頁顯示略過原因、快照新鮮度不假更新；代理殘留背景工作已由主代理停止 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
