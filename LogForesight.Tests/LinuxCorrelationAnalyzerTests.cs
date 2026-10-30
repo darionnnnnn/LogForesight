@@ -42,7 +42,7 @@ public class LinuxCorrelationAnalyzerTests
     {
         var logs = new List<EventLogEntryData>();
         logs.AddRange(MakeBruteforceEvents(10, "attacker1", "10.0.0.1"));
-        logs.AddRange(MakeAcceptEvents(1, "attacker1", "10.0.0.9")); // 帳號同、IP 不同也算重疊
+        logs.AddRange(MakeAcceptEvents(1, "attacker1", "10.0.0.9")); // 帳號同、IP 不同也算重疊（成功 02:00 晚於失敗 01:00）
 
         var findings = LinuxCorrelationAnalyzer.Detect(AggregateIssues(logs), logs);
 
@@ -147,6 +147,65 @@ public class LinuxCorrelationAnalyzerTests
 
         var finding = Assert.Single(findings);
         Assert.Contains("realuser", finding.Description);
+    }
+
+    private static EventLogEntryData At(string message, int hour, int minute = 0) =>
+        SshEvent(message, DateTime.Today.AddHours(hour).AddMinutes(minute));
+
+    [Fact]
+    public void 三類失敗行混合且無交集時不產生任何發現()
+    {
+        var logs = new List<EventLogEntryData>();
+        for (var i = 0; i < 4; i++) logs.Add(At($"Failed password for root from 10.0.0.1 port {i} ssh2", 1, i));
+        for (var i = 0; i < 3; i++) logs.Add(At($"Invalid user oracle from 10.0.0.2 port {i}", 1, 10 + i));
+        for (var i = 0; i < 2; i++) logs.Add(At("pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=10.0.0.3  user=admin", 1, 20 + i));
+        logs.Add(At("pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=  user=admin", 1, 30));
+        logs.AddRange(MakeAcceptEvents(1, "legit-user", "10.0.0.99"));
+
+        var findings = LinuxCorrelationAnalyzer.Detect(AggregateIssues(logs), logs);
+
+        Assert.Empty(findings);
+    }
+
+    [Fact]
+    public void 成功登入早於首次失敗時不成立_晚於時成立()
+    {
+        var early = new List<EventLogEntryData> { At("Accepted password for root from 192.168.1.1 port 22 ssh2", 9) };
+        early.AddRange(Enumerable.Range(0, 10).Select(i =>
+            At($"Failed password for root from 10.0.0.1 port {i} ssh2", 10, i)));
+        Assert.Empty(LinuxCorrelationAnalyzer.Detect(AggregateIssues(early), early));
+
+        var late = Enumerable.Range(0, 10).Select(i =>
+            At($"Failed password for root from 10.0.0.1 port {i} ssh2", 9, i)).ToList();
+        late.Add(At("Accepted password for root from 192.168.1.1 port 22 ssh2", 11));
+        var finding = Assert.Single(LinuxCorrelationAnalyzer.Detect(AggregateIssues(late), late));
+        Assert.Equal(IssueSeverity.High, finding.Severity);
+    }
+
+    [Fact]
+    public void 只有IP重疊時依時序決定是否成立()
+    {
+        var ok = Enumerable.Range(0, 10).Select(i =>
+            At($"Failed password for root from 10.0.0.5 port {i} ssh2", 9, i)).ToList();
+        ok.Add(At("Accepted password for admin from 10.0.0.5 port 22 ssh2", 11));
+        Assert.Single(LinuxCorrelationAnalyzer.Detect(AggregateIssues(ok), ok));
+
+        var bad = Enumerable.Range(0, 10).Select(i =>
+            At($"Failed password for root from 10.0.0.5 port {i} ssh2", 10, i)).ToList();
+        bad.Add(At("Accepted password for admin from 10.0.0.5 port 22 ssh2", 9));
+        Assert.Empty(LinuxCorrelationAnalyzer.Detect(AggregateIssues(bad), bad));
+    }
+
+    [Fact]
+    public void 三類都解析不出的失敗行加無交集成功登入仍產生不確定()
+    {
+        var logs = new List<EventLogEntryData>();
+        logs.AddRange(MakeBruteforceEvents(9, "attacker1", "10.0.0.1"));
+        logs.Add(SshEvent("Failed password for unparseable-format-line"));
+        logs.AddRange(MakeAcceptEvents(1, "legit-user", "10.0.0.99"));
+
+        var finding = Assert.Single(LinuxCorrelationAnalyzer.Detect(AggregateIssues(logs), logs));
+        Assert.Equal(CorrelationPatternIds.LinuxSshBruteUncertain, finding.PatternId);
     }
 
     [Fact]

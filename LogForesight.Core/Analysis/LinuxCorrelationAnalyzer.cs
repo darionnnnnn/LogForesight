@@ -47,15 +47,24 @@ internal static class LinuxCorrelationAnalyzer
         var bruteforceEvents = FilterByEventKey(logs, SshBruteforceRuleId);
         var acceptEvents = FilterByEventKey(logs, SshAcceptRuleId);
 
-        var (bruteforceMatches, bruteforceParseFailures) = ExtractMatches(bruteforceEvents, LinuxAuthParser.FailedPasswordRegex);
+        // 失敗面：三類失敗行（Failed password／Invalid user／pam authentication failure）統一走
+        // TryParseAuthFailure；pam 行 rhost 為空只是不貢獻 IP，不算解析失敗。
+        var (failUsers, failIps, bruteforceParseFailures) = ExtractFailures(bruteforceEvents);
         var (acceptMatches, acceptParseFailures) = ExtractMatches(acceptEvents, LinuxAuthParser.AcceptedRegex);
 
-        var bruteforceUsers = bruteforceMatches.Select(m => m.User).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var bruteforceIps = bruteforceMatches.Select(m => m.Ip).ToHashSet();
-        var overlapUsers = acceptMatches.Select(m => m.User).Where(u => bruteforceUsers.Contains(u))
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var overlapIps = acceptMatches.Select(m => m.Ip).Where(ip => bruteforceIps.Contains(ip))
-            .Distinct().ToList();
+        var successUsers = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        var successIps = new Dictionary<string, DateTime>();
+        foreach (var (user, ip, time) in acceptMatches)
+        {
+            Latest(successUsers, user, time);
+            Latest(successIps, ip, time);
+        }
+
+        // 交集後加時序：該帳號／IP 最晚成功時間須 >= 最早失敗時間（與 Windows 版共用 FilterByTiming）
+        var overlapUsers = LogAnalysisService.FilterByTiming(
+            successUsers.Keys.Where(failUsers.ContainsKey).ToList(), failUsers, successUsers);
+        var overlapIps = LogAnalysisService.FilterByTiming(
+            successIps.Keys.Where(failIps.ContainsKey).ToList(), failIps, successIps);
 
         if (overlapUsers.Count > 0 || overlapIps.Count > 0)
         {
@@ -94,10 +103,44 @@ internal static class LinuxCorrelationAnalyzer
     private static List<EventLogEntryData> FilterByEventKey(List<EventLogEntryData> logs, string eventKey) =>
         logs.Where(l => LogAggregator.GroupKeyFor(l).EventKey == eventKey).ToList();
 
-    private static (List<(string User, string Ip)> Matches, int ParseFailures) ExtractMatches(
+    private static void Earliest(Dictionary<string, DateTime> map, string key, DateTime time)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+        if (!map.TryGetValue(key, out var old) || time < old) map[key] = time;
+    }
+
+    private static void Latest(Dictionary<string, DateTime> map, string key, DateTime time)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+        if (!map.TryGetValue(key, out var old) || time > old) map[key] = time;
+    }
+
+    private static (Dictionary<string, DateTime> Users, Dictionary<string, DateTime> Ips, int ParseFailures) ExtractFailures(
+        List<EventLogEntryData> events)
+    {
+        var users = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        var ips = new Dictionary<string, DateTime>();
+        var failures = 0;
+        foreach (var evt in events)
+        {
+            if (LinuxAuthParser.TryParseAuthFailure(evt.Message, out var user, out var ip, out _))
+            {
+                Earliest(users, user, evt.TimeGenerated);
+                Earliest(ips, ip, evt.TimeGenerated);
+            }
+            else
+            {
+                failures++;
+            }
+        }
+
+        return (users, ips, failures);
+    }
+
+    private static (List<(string User, string Ip, DateTime Time)> Matches, int ParseFailures) ExtractMatches(
         List<EventLogEntryData> events, Regex pattern)
     {
-        var matches = new List<(string User, string Ip)>();
+        var matches = new List<(string User, string Ip, DateTime Time)>();
         var failures = 0;
 
         foreach (var evt in events)
@@ -105,7 +148,7 @@ internal static class LinuxCorrelationAnalyzer
             var match = pattern.Match(evt.Message);
             if (match.Success)
             {
-                matches.Add((match.Groups["user"].Value, match.Groups["ip"].Value));
+                matches.Add((match.Groups["user"].Value, match.Groups["ip"].Value, evt.TimeGenerated));
             }
             else
             {

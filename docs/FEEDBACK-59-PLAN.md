@@ -51,6 +51,7 @@
 | C1 | Sonnet | 統計段 `needsAi = useAi && !lowRisk`；`BuildStatisticalRecordAsync` 回 `(Record, NeedsAi)`；刪 AnalyzeDayAsync／CompleteAiAsync／ApplyOutcome／ScreenTailAsync／AiWorkItem 等；RetryAiAsync 低風險回 Skipped；排程以成功路徑寫回並計 Skipped | 主代理重跑 271 綠（0 警告）；突變拿掉 `|| outcome.Skipped` → 紅；代理另突變統計段與補跑判斷各紅 | 五個測試檔改寫最多約 30%；`BuildPrompt` 的 screening 參數一併移除；Skipped 沿用舊紀錄的掃描欄位值避免被覆寫清空 |
 | C2 | Sonnet | 移除三條 `prtg-*-evidence-aligned` 與 PrtgCorroboration 對齊半邊、PrtgFinding 無生產者屬性；抑制清單 DTO 加 `Retired`、規則頁「已退役」徽章 | 主代理重跑 301 綠、前端行為 63 綠；突變 Retired 判定 → 紅 | `SourceObservations` 仍有 NetIQ／本機生產者（LogAggregator.cs:213-226），保留；`PrtgPresence*` 五屬性已無生產者但可能存在歷史 JSON，保留。疑似新死碼（`CorrelationAnalyzer.StorageSignalCandidates`／`UnexpectedShutdownCandidates`、`SourceEvidenceRelation` 三成員）→ 60-H 盤點 |
 | C3 | Sonnet | 簽章加 `[JsonIgnore] BelowThreshold`（ApplyRule 設定）；關聯層 Find 跳過未達門檻（不跳過已抑制，守 RULES-SPEC 語意邊界）；【滅跡】錨點改 {1102,4719}、其他安全事件需 Severity>Low 且非 tamper／4907；時間偏移限 29/36/47/50 | 主代理重跑 464 綠；突變拿掉 Severity>Low → 1 紅；代理突變拿掉 BelowThreshold 跳過 → 2 紅 | PRTG 佐證走獨立 FindIn 不受影響；四檔被轉 LF，主代理轉回 CRLF。**PLAN 原寫「排除已抑制」違反語意邊界，規格已改** |
+| C4 | Sonnet | Linux【SSH 破解得手】失敗面改 `TryParseAuthFailure`（三類行、rhost 空不算解析失敗）；帳號與 IP 加時序（共用 `FilterByTiming`） | 主代理重跑 94 綠；突變解析回到只認 Failed password → 混合格式案紅；代理突變拿掉時序 → 時序案紅 | 無 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
