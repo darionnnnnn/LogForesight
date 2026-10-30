@@ -284,6 +284,10 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 **正式驗證（已定案：AD LDAP）**：`LdapAuthenticationProvider` 以使用者帳密向 AD bind 驗證；
 AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及可信來源 IP 節流，命中門檻時
 不再呼叫 AD，減少密碼噴灑觸發網域鎖定。救援帳號不受共用 IP 門檻連坐，仍受本身鎖定限制。
+帳號一律先經 `AccountNames.Canonical` 正規化（去前後空白、去掉 `DOMAIN\` 網域前綴）：LDAP bind、帳號節流鍵、
+使用者查找都用正規化帳號，`CORP\bob` 與 `bob` 是同一個人、同一個節流桶；查找時正規化帳號找不到才退回原字串
+（相容既有含 `\` 的本地帳號）。登入請求的帳號與密碼各上限 256 字。登入後導回的 `returnUrl` 只接受站內相對路徑，
+含 tab、換行字元或 `//`、`\`、`://` 一律拒絕（`core/safe-return-url.js`）。
 
 JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`pv`（簽發時的
 `PermissionVersionStamp`）、`jti`、`exp`。**能力進 token、主機授權範圍不進 token**——範圍每次請求由
@@ -349,6 +353,8 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 **同一個 `[Permission]` 內的多個能力是「任一」，兩個標註疊加是「都要」**——類別層與方法層
 不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
 表達「兩者兼具」（實務上即 admin）。
+
+**全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。
 
 **負責人隱含能力**：是任一**啟用中**主機的負責人時，
 `IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
@@ -1696,7 +1702,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   原始訊息（`raw_text`）入庫上限 8000 字，寫入每 500 筆一批——兩者都是量的上界，
   避免吵雜 DC 的單日數萬則把記憶體與資料庫體積推到沒有天花板。
 - **操作者／目標帳號的擷取規則**見 docs/DETECTION-SPEC.md「權限異動類別」段（偵測層的事實來源）。
-- API：
+- API（讀取端點同樣需要 `ConfirmPermission`；儀表板的待確認數走服務層計數，不經這些端點）：
   - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`
     → `PagedResult<PermissionChangeDto>`（`Total` 是套用篩選後的真實總筆數，畫面「共 N 筆」的來源）
   - `GET api/permission-changes/categories` → 類別 key 與中文標籤（篩選下拉的來源；
@@ -2459,8 +2465,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
   prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
   結構已為它預留素材。
-- API：`GET api/help/manual`（任何已登入者；回應依能力過濾章節）、`GET api/help/ask-available`、
-  `POST api/help/ask`（後兩者 `Maintain`）。
+- API：`GET api/help/manual`（任何已登入者；回應依能力過濾章節）、`GET api/help/ask-available`
+  （任何已登入者；沒有 `Maintain` 時回 `available=false`，前端因此不顯示問答卡）、`POST api/help/ask`（`Maintain`）。
 
 ### 9.9d `/setup` 首次啟動精靈（`Maintain`）
 
@@ -2568,7 +2574,8 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 
 這是 §9.9e 第四個頁籤裡的一張卡，不是獨立頁面——內容與 PRTG 高度相關，
 獨立一個選單項只會讓側欄變長。`/admin/calibration` 路由**保留為永久轉址**到
-`/admin/prtg#probe`，舊書籤與操作說明書的連結不致 404。API 與授權不變。
+`/admin/prtg#probe`，舊書籤與操作說明書的連結不致 404。API 需 `Maintain` 且持有 `ViewAll`（校準涵蓋全站資料，
+結論要可重現，不依檢視者的可見範圍變化）。
 
 本卡檢查門檻校準資料量，並匯出同一範圍的統計供分析；資料量判定與規則啟用條件（PRTG-SPEC §9a）分開，取得匯出檔不會啟用規則。**本卡沒有可儲存的設定欄位**；正式規則門檻走規則維護頁。摘要與完整匯出使用相同完整範圍，超出記憶體、輸出或一致性擷取限制時明示拒絕，不截斷資料後宣稱成功。
 

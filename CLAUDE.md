@@ -82,6 +82,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   AI 單獨在跑時那個動作是允許的）。
 - 不要新增鍵沒涵蓋授權維度的快取：跨請求快取的鍵必須含可見主機集合（或 userId）與資料版本戳，
   少一維就是把 A 看得到的東西端給 B；快取內容若與使用者無關（純鏡像結構）要在註解明講理由。
+  版本戳在背景寫入執行中不推進，所以有版本戳的快取仍要保留短 TTL 當上限（`IssueRankingCache`、`ActionableSnapshotCache` 即此形狀）。
 - 不要在 Core 複製可見範圍或處理能力規則：兩者依賴 Web 的 `RoleCapabilityMap`，派工候選人由 Web 的
   `IDispatchCandidateSource` 每趟算好快照交給 Core。複製一份就是兩套規則，改一邊另一邊靜默失準。
 - 不要建出不屬於交辦單的進行中案件：任何建案路徑（交辦、日層級指派、夜間派工）一律經 `WorkOrderCoordinator`。

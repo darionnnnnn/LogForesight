@@ -330,7 +330,7 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 
 ## 8. API 端點
 
-全部在 `/api/admin/settings` 之下，需 Maintain：
+全部在 `/api/admin/settings` 之下，需 Maintain；全站對應、IP 排除、回填、搬運另需持有 `ViewAll`（docs/WEB-SPEC.md §7.1）：
 
 | 端點 | 用途 |
 |---|---|
@@ -491,7 +491,7 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 
 ## 11. 校準數值匯出與使用效果
 
-`/admin/calibration`（頁面見 docs/WEB-SPEC.md §9.9f）回答四類資料量是否足夠並提供匯出；不是規則啟用閘門。
+`/admin/calibration`（頁面見 docs/WEB-SPEC.md §9.9f）回答四類資料量是否足夠並提供匯出；不是規則啟用閘門。狀態與匯出都需 `Maintain` 且持有 `ViewAll`（全站診斷，使用效果頁籤同）。
 門檻是程式常數（`CalibrationConstants`），刻意不開設定。
 
 | 項 | 單位 | 可用 | 充足 |

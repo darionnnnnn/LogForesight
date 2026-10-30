@@ -38,6 +38,8 @@
 | A3 | Sonnet | `AccountNames.Canonical` 單一出口；LDAP、節流鍵、FindByAccount（先正規化後原字串）；登入欄位 256 上限 | 主代理重跑 116 綠；代理突變 FindByAccount 改回原字串 → 網域前綴案紅 | AuthController 節流接線無測試（控制器難組裝，規格允許），主代理讀 diff 確認四處皆改 |
 | A4 | Sonnet | `isSafeReturnUrl` 搬到 `core/safe-return-url.js`，含 tab／LF／CR 直接拒絕 | 主代理重跑 216 綠；突變拿掉控制字元判斷 → 3 紅（tab／LF／CR） | 無 |
 | A5 | Sonnet | `IssueRankingCache`／`ActionableSnapshotCache` 鍵加資料版本戳（呼叫端先取 `Version` 再查）；interpret 鍵加輸入雜湊 | 主代理重跑 210 綠；突變 Version 恆 0 → 版本推進案紅；代理另對 interpret 雜湊與另一快取做突變 | 白名單外必要改動 `IssueRankingBuilder`、`IssueTodoQuery`（KeyOf 呼叫端），合理 |
+| A6 | Sonnet | Linux 現場取數 program 白名單（不符回空 Filter，呼叫端視為查不到）；權限異動四個 GET 加 ConfirmPermission | 主代理重跑 526 綠；突變拿掉白名單 → 4 紅；代理突變拿掉 ids 的 Permission → 反射守門紅 | 以空 Filter 表示不查詢而非 null（避免改既有測試型別），合理 |
+| A7 | 主代理 | WEB-SPEC §6.2／§7.1／§9.5／§9.9c／§9.9f、PRTG-SPEC §8／§11、CLAUDE.md 快取紅線 | 逐句比對；CRLF 保留 | heredoc 吞反斜線造成退格字元，已以位元組修正 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
