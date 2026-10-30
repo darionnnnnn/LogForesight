@@ -556,6 +556,7 @@ public static class KnownIssueCatalog
     {
         signature.Category = rule.Category;
         var thresholdMet = signature.Count >= rule.CountThreshold;
+        signature.BelowThreshold = !thresholdMet;
         signature.Severity = thresholdMet ? rule.Severity : Downgrade(rule.Severity);
         // 未達次數門檻時降級，旗標也跟著不算——舊制下「降到 High、沒到 Critical」本來就不會
         // 讓當天判定成高風險日，旗標要複製同一個行為（docs/archive/HISTORY.md #1）
@@ -569,6 +570,7 @@ public static class KnownIssueCatalog
         signature.Category = IssueCategory.Other;
         signature.Severity = IssueSeverity.Low;
         signature.ElevatesDayRisk = false;
+        signature.BelowThreshold = false;
     }
 
     private static IssueSeverity Downgrade(IssueSeverity s) =>

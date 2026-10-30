@@ -130,6 +130,10 @@ public class LogIssueSignature
     /// </summary>
     public bool ElevatesDayRisk { get; set; }
 
+    /// <summary>規則命中但次數未達門檻（僅記憶體，不持久化）；關聯層不採計此類簽章。</summary>
+    [JsonIgnore]
+    public bool BelowThreshold { get; set; }
+
     /// <summary>命中規則表時的已知問題說明，未命中為 null</summary>
     public string? KnownIssue { get; set; }
 
