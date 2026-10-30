@@ -301,7 +301,7 @@
 
 - **Sentinel 投影新增 `sip`／`shn`**（來源 IP／發起端機器名）：本輪只取已在投影內的 `sun`（操作者帳號）。這兩個欄位要改查詢語句並實機驗證，另案處理。
 - **使用者自訂異動類別**：類別是系統內建的固定六類（key 已是資料表欄位）。要開放自訂需引入規則引擎與「規則改動後歷史資料如何重分類」的策略，範圍不成比例。
-- **`EnsureCreated` 與 `SchemaUpgrader` 在全新安裝會建出兩份同欄位索引**：`AddIndexIfMissing` 依**索引名稱**判斷存在與否，而 EnsureCreated 建的是 EF 預設命名（`IX_lf_xxx_ChangeId`）、SchemaUpgrader 用的是自訂名稱（`IX_lf_xxx_change_id`），兩者不相等。這不是本輪造成的，`lf_issue_handling` 等表早已如此，影響是寫入吞吐與儲存空間、不影響正確性。要處理的話是全專案 schema 層級的一輪。
+- **既有 SQL Server 庫可能留有兩份同欄位索引**：全新安裝已不會重複（EF 具名索引與升級器同名，`DataConsistencyJ2Tests` 守門）。殘留只在舊命名建出的既有庫：`SchemaUpgrader.RemoveDuplicateIndexes` 對 SQLite 會移除，對 SQL Server 只警告不移除。影響是寫入吞吐與儲存空間、不影響正確性。**觸發時機**：正式機升級日誌出現重複索引警告時，以 DBA 手動移除。
 - **高風險（特權目標）判定的涵蓋範圍待議**：目前只標「成員新增到特權群組」。終檢建議一併涵蓋「成員移除」（把稽核人員移出 Domain Admins 是入侵後常見動作）與 ACL 授權對象（`權限新增（ACL 規則）` 的授權對象若是 Everyone／Domain Admins）。後者要改成比對 `Before`／`After` 的授權對象而非 `Target`（`Target` 是路徑，永遠不會命中群組關鍵字）。這是安全判定的範圍決策，需要與使用者確認後再改。
 - **權限異動的批次確認上限（500）是否放寬**：吵雜 DC 單日曾達 9 萬則，但例行同步成對合併落地後量預期大幅下降。先觀察合併後的實際待確認量，再決定要不要放寬上限或提供「符合篩選全部確認」。
 - **權限異動的查詢側效能在量增後未實測**：權限異動不設每主機日筆數上限，吵雜 DC 單日可達數萬則（實例 9.2 萬）。`/permission-changes` 的查詢與分頁在這個量級下是否仍可接受尚未實測；若實測出問題，處理方向是索引與查詢形狀，另案一輪。（寫入側的兩個無上界點已於回饋三十四輪處理：去重改逐主機日查資料庫、`raw_text` 截斷 8000 字、`AppendChanges` 每 500 筆分批。）
@@ -576,9 +576,18 @@
 - **明確不做（本輪定案）**：交辦單處理人變更歷史查詢、站內即時通知、負載加權與個人容量上限、後端 CSV 匯出端點、
   靜音的主機群組範圍（群組範圍用抑制）。
 
-## 全新安裝時 PRTG 維護頁的範圍區塊顯示「須由可見全部主機的管理者操作」
+## 升級期一次性機制與退場條件
 
-`SettingsController.RequireFullPrtgTransferAccess` 在主機主檔為空時一律 403（`hosts.Count == 0`），PRTG 維護頁的鏡像、人工對應、IP 排除區塊因此載不出來，並顯示「全站 PRTG 對應、排除及搬運須由可見全部主機的管理者操作」——對全新安裝的管理者是誤導（他其實看得到全部，只是還沒有主機）。正式站台有主機後不受影響。**觸發時機**：新站台導入流程被這段文字卡住或回報。修法：主機為空時允許讀取（範圍本來就是空的），或改文案為「尚未建立主機，PRTG 對應要先有主機」。
+這些機制只為「從舊版升級」存在，每次啟動都會檢查一次。全部站台都升級過、且正式機確認對應旗標已完成後才可移除。
+
+| 機制 | 判定完成的依據 | 退場條件 |
+|---|---|---|
+| `HandlingBlobMigrator`／`HandlingMigrationHostedService` | `HandlingMigrationState` 三份皆完成 | 所有站台升級後；移除時一併拿掉 `MigrationGateMiddleware` 的處理狀態分支 |
+| `PermissionChangeMigrator`／`PermissionChangeReparser`／`PermissionLegacySummaryCleanupState` | 各自狀態 blob 為完成 | 同上 |
+| `ReportFileMigrator`／`ReportFileMigrationHostedService` | 報告全文已存資料庫 | 正式機驗證報告機制後（另見本檔報告全文段） |
+| `TopIssueBackfiller`（來源鍵回填與首見日重整） | `source_key` 無 NULL 且重整旗標存在 | 所有站台回填完成後；就緒旗標目前為行程內狀態，重啟後重算 |
+| `WorkOrderBackfiller`／`DailyRecordBackfiller` | 回填版本達現行值 | 所有站台回填完成後 |
+| `SchemaUpgrader.RemoveRetiredPrtgBlobs`、SQL Server 人工對應自增欄位修正、`rule_id` 長度放寬 | 每次啟動皆冪等執行 | 所有站台升級到含該修正的版本後 |
 
 ## 背景服務與前景共用連線池
 
