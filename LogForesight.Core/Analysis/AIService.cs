@@ -382,7 +382,11 @@ public class AIService : IAiService
                 // 立即回傳失敗。JSON 重試只針對「有回應但內容不合格」（D4 契約 4）。
                 Log.Warn("ChatJsonAsync 傳輸層失敗（第 {Attempt}/{Total} 次），不進 JSON 重試：{Error}",
                     attempt, totalAttempts, response.Error);
-                return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = response.Error, Attempts = attempt };
+                // 空回覆屬內容層失敗、已由 Polly 層重試過：同樣不進 JSON 重試，但錯誤訊息沿用契約失敗的組法（附「（空回覆）」）
+                var transportError = response.Error == EmptyAiResponseException.DefaultMessage
+                    ? $"{JsonContractError}：{FormatErrorResponseSnippet(rawContent)}"
+                    : response.Error;
+                return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = transportError, Attempts = attempt };
             }
             else
             {

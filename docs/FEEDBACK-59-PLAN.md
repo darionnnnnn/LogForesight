@@ -1,6 +1,6 @@
 # 第 59 輪規劃：全專案體檢
 
-> 狀態：**定案**（2026-10-30 使用者確認），分支 `feature/feedback-59`；第 59 輪各批依序實作中（見〈作業總覽〉與〈執行紀錄〉）
+> 狀態：**第 59 輪（批次 A～G）實作完成、待換模型體檢**（2026-10-30），分支 `feature/feedback-59`；全量 **6,839 通過／10 略過**（含收尾修正兩條）；第 60、61 輪為草案，尚未開工（見〈作業總覽〉與〈執行紀錄〉）
 > 基準：dev@03dc3873（本機全量 **6,550 通過／10 略過**，32 分 27 秒；CLAUDE.md 寫 6,549，差 1 筆，收尾時對齊）
 > 來源：使用者要求以 subagent 對全專案程式碼與文件做五面向總體檢，規劃一至多輪優化
 > 體檢方式：11 個唯讀 subagent 分面向體檢（原始報告在 session scratchpad `findings-*.md`）→ 主代理親核高嚴重度 → 18 項待決逐項回到程式碼複核 → 三個視角審查員（使用者／管理者、程式與 SOLID、上帝視角跨批影響）對照程式碼挑缺漏 → 回寫本文。
@@ -90,6 +90,7 @@
 | G4a | Sonnet | 對話面板加世代計數器（換問題或清除後舊回覆與失敗皆丟棄）、pending 期間停用下拉與清除、finally 依是否已選問題決定輸入框；`api.download`（有界讀取、逾時、401 導登入、Content-Disposition 檔名）與 `saveBlobAsFile`，校準與 PRTG 維護兩處下載改用，失敗 toast 不整頁跳轉；新增 `FrontendMiscUiTests`（頁面不得直接 fetch／location.assign） | 代理：十個突變各紅（兩個存活突變補強後轉紅）；主代理重跑 402 綠 | 代理覆寫了主代理的 scratchpad 突變腳本（主代理改用新腳本）；既有 13 個行為測試檔「先 ReadToEnd 再 WaitForExit」在實作壞掉時會卡死，列入第 61 輪 M 改共用 node 執行器 |
 | G4b | Sonnet | PRTG 維護頁 `requireScopeRevision()` 守六個寫入點、移除 `/runs` fallback；詳情頁兩份報告各自容錯、批次儲存後重載經 guardLoad；主機頁 `activeFilterEntries()` 單一條件清單（含 prtgMap）；預計完成日上限常數 `MAX_DUE_DATE_DAYS`＝90 集中並與後端一致（另加手打超限擋下）；負責人匯入確認文字；說明書首次載入不捲動；報表起訖日檢查與範圍 chip 載入成功才更新 | 代理：十三個突變各紅（一個存活突變補強後轉紅）；主代理重跑 430 綠 | 報表維持無參數 `load()`（既有測試鎖定簽名），以 `requestedScope` 傳遞點選範圍 |
 | G12 | Sonnet | WEB-SPEC §8.1 core 模組總表（24 檔，含 async-guards、storage）、inline script 例外（LF_BASE／LF_LABELS／登入頁備援）、api 唯一出口含 download 與 saveBlobAsFile；§8.1a toast link 由呼叫端套前綴；§8.6-1 篩選記憶以網址為準；§8.6 序號守門與 pollWhile 唯一寫法與三條守門；§9.3／§9.4b／§9.6／§9.9c 與 PRTG 維護頁補批次 G 行為；BACKLOG 補 pollWhile 降頻與退避 | 代理逐項讀碼核對；主代理抽查模組數與注入點 | 篩選記憶依程式寫實際範圍（只有權限異動與儀表板天數記本機）；交辦 modal 無 90 天前端檢查，文件只寫有的兩處 |
+| 全量 | 主代理 | 第 59 輪全量測試：6,837 通過、2 失敗、10 略過。① `ChatJsonAsync` 空回覆被歸為傳輸失敗後錯誤訊息少了「（空回覆）」（D4b 回歸）→ 仍立即回傳、訊息沿用契約失敗組法；② `EfWebdataStoreTests` 以不帶內因的 DbUpdateException 測重試，B7 收窄後本就不該重試 → 改帶「database is locked」內因 | 修正後相關篩選 55 綠；整輪 6,839 通過／10 略過（失敗僅兩條、修正局部，不重跑全量） | 兩條都不在當時的定向篩選內：定向篩選要含被改函式的所有測試類 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
