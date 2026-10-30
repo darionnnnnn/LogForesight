@@ -39,6 +39,9 @@ public static class TrendAnalyzer
     /// <summary>今日次數達歷史基準的幾倍視為頻率上升</summary>
     private const double RisingFactor = 2.0;
 
+    /// <summary>疑似殘留憑證重試的告警文字註記；TrendAnalyzer 與 SlowTrendAnalyzer 共用，確保兩條路徑語意一致</summary>
+    internal const string ResidualCredentialNote = "（疑似殘留憑證重試，不列入風險判定）";
+
     /// <summary>
     /// Low 簽章（升級前）頻率上升的「爆量例外」倍率門檻（回饋十六輪批次B-1）：Rising 嚴重度
     /// 閘門（見下方 preEscalationSeverity 判斷）要求升級前 &gt;= Medium 才產生告警，未命中任何
@@ -244,7 +247,7 @@ public static class TrendAnalyzer
                         // 避免 trendAlerts.Count > 0 把當天拉成中風險，並於文字尾端加註說明。
                         if (sig.ResidualCredentialRetry)
                         {
-                            text += "（疑似殘留憑證重試，不列入風險判定）";
+                            text += ResidualCredentialNote;
                             suppressedAlerts.Add(text);
                         }
                         else if (sig.Suppressed)
