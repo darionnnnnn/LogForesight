@@ -343,7 +343,7 @@
 
 | 批次 | 內容 | 驗收要點 |
 |---|---|---|
-| H 刪死碼 | A2b-04 PrtgBackfillRunner 非觸發式分支；A2b-05 死包裝＋`GetStatus` 改 `Ok()`；A2b-06 PrtgDataTransfer Export／Import、`[NonAction]`；A2a-14 EfPrtgStore 舊 readiness 查詢群等 8 項；A2b-13；B-17；D1-10；C3-10；A3-16；A3-17；A2a-19 | 每項刪前 `grep -w` 正式碼＝0；測試同刪；全量綠 |
+| H 刪死碼 | 第 59 輪收尾體檢新增：`IIssueOwnerStore.Upsert`（正式碼已無呼叫端）、`SchedulerHostedService.IsScheduledFetchRun` 轉接、`PrtgScopeResult.Warnings`／`ManualMissingInMirror` 無消費端（接到範圍試算頁或刪除）、`NullAiRequestGate` 僅測試使用（註明或移到測試）；A2b-04 PrtgBackfillRunner 非觸發式分支；A2b-05 死包裝＋`GetStatus` 改 `Ok()`；A2b-06 PrtgDataTransfer Export／Import、`[NonAction]`；A2a-14 EfPrtgStore 舊 readiness 查詢群等 8 項；A2b-13；B-17；D1-10；C3-10；A3-16；A3-17；A2a-19 | 每項刪前 `grep -w` 正式碼＝0；測試同刪；全量綠 |
 | I 收斂重複 | C2-06 七支一次性 hosted service 共用骨架＋退場旗標；C3-17 `ResolveVisibility`；C1-16；C2-10 兩份 trigger switch 合一（含 fetch-followup）；A2a-12；A2a-13；A2a-21；D1-09／D2-16／18／19／20／21 前端上提；C1-25；C3-22 | 每組只剩一份（grep）；基底測試三路徑 |
 | J 拆分與分層 | C1-09 SettingsController 依路由前綴拆、可選相依必填；C1-08；C1-23；C1-14 RecordsController 查詢模型（先表驅動端對端測試）；D1-11；C1-10 稽核快照＋ExpectedRevision 必填 | 路由快照（method, route, permission）前後相同；表驅動測試先綠 |
 | K 效能與韌性 | C2-11／12／20；A2b-17；A2a-16／17；B-10；B-19；**B-07 TopIssueBackfill 啟動快判（逐閘門）**；C1-27 `[ReadOnlyPost]`＋安全標頭；C1-21 AI 每使用者節流＋C1-24 錯誤碼；C1-18；B-22；C1-13；E-7 帳本分帳與釋放策略 | 各快取失效測試；節流 429；錯誤碼守門 |

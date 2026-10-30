@@ -3207,7 +3207,7 @@ temp 檔＋`File.Replace` 手法。
   前端另擋下界（<1）；兩條路徑的天數在 `AnalysisOrchestrator` 內**再夾一次**（防設定被事後調小——
   `NetiqPipelineService.ResolveLookbackDays` 只夾 `MaxBackfillDaysLimit`，保留期上限由呼叫端負責）。
 - **逐日就地取代，不整批預刪**：原始事件不存 DB，整批預刪會把「舊結果尚在、新資料取不到」的日子
-  變成永久空洞。刪除**緊貼寫入之前**（本機在 `LogAnalysisService.AnalyzeDayAsync` 的 `replaceExisting`
+  變成永久空洞。刪除**緊貼寫入之前**（本機在 `LogAnalysisService.AnalyzeDayStatisticalAsync` 的 `replaceExisting`
   分支、NetIQ 在 `BuildStatisticalRecordAsync` 之後）——分析途中拋例外（AI 逾時、取消）時舊紀錄還在。
 - **什麼時候保留原結果不取代**：`HostDayPostProcessor.ShouldRetainExistingDay` 是兩條路徑共用的單一
   判準——來源零事件、該日取數不完整（來源已滾掉部分事件／查詢被截斷）、來源降級（本機頻道存取被拒）
