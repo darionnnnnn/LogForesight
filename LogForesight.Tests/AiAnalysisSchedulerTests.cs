@@ -76,7 +76,8 @@ public class AiAnalysisSchedulerTests : IDisposable
 
     private (AiAnalysisHostedService Service, AiAnalysisRunState RunState, ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState)
         CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true,
-            HostDayWorkflowService? workflow = null, bool backfillCompleted = true)
+            HostDayWorkflowService? workflow = null, bool backfillCompleted = true,
+            IAnalysisRecordQuery? recordQuery = null)
     {
         var optionsStore = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
         if (initialOptions != null)
@@ -92,7 +93,7 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         var schedulerState = new SchedulerRunState();
         var aiRunState = new AiAnalysisRunState();
-        var recordStore = _backend.RecordStore();
+        var recordStore = recordQuery ?? _backend.RecordStore();
 
         var service = new AiAnalysisHostedService(
             optionsStore,
@@ -620,6 +621,45 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.False(r2Post!.AiPending);
         Assert.Equal("全新AI分析標題", r1Post.Headline);
         Assert.Equal("全新AI分析標題", r2Post.Headline);
+    }
+
+    /// <summary>
+    /// 只讓 <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/> 擲例外，其餘方法原樣轉交真實 store。
+    /// 用 DispatchProxy 代替為整個介面手寫委派。
+    /// </summary>
+    public class FailingRerunRecordQuery : DispatchProxy
+    {
+        internal IAnalysisRecordQuery Target { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod!.Name == nameof(IAnalysisRecordQuery.MarkAllForAiRerun))
+                throw new InvalidOperationException("模擬整批重標的 DB 失敗");
+            try
+            {
+                return targetMethod.Invoke(Target, args);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                throw ex.InnerException;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task 強制重標擲例外_執行閘門釋放且可再次開始()
+    {
+        var failing = DispatchProxy.Create<IAnalysisRecordQuery, FailingRerunRecordQuery>();
+        ((FailingRerunRecordQuery)failing).Target = _backend.RecordStore();
+        var (service, runState, _, _) = CreateTestHarness(recordQuery: failing);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => service.TriggerRunAsync(forceRerun: true, trigger: "manual:test"));
+
+        // 閘門必須釋放：否則之後每次輪詢都回「已有其他執行」，直到站台重啟
+        Assert.False(runState.IsRunning);
+        Assert.True(runState.TryBeginRun("manual:test", 0, out var cts));
+        cts.Dispose();
+        runState.EndRun(true);
     }
 
     [Fact]

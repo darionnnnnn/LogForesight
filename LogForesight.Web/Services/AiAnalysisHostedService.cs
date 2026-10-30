@@ -604,9 +604,19 @@ public class AiAnalysisHostedService : BackgroundService
     /// </summary>
     public int BatchResetAiPending()
     {
-        var count = _recordQuery.MarkAllForAiRerun();
-        _runState.InvalidatePendingAiCache();
-        return count;
+        try
+        {
+            var count = _recordQuery.MarkAllForAiRerun();
+            _runState.InvalidatePendingAiCache();
+            return count;
+        }
+        catch (Exception ex)
+        {
+            // 這裡在 TriggerRunAsync 的 try/finally 之外，EndRun 不會被呼叫；
+            // 不在此釋放閘門會讓 IsRunning 永遠為 true，直到站台重啟。
+            _runState.EndRun(false, $"強制重新分析的整批重標失敗：{ex.Message}");
+            throw;
+        }
     }
 
     private LogAnalysisService CreateAnalysisServiceForHost(HostKey hostKey, IAnalysisRecordStore hostStore)
