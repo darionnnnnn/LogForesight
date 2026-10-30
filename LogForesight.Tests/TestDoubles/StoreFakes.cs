@@ -590,6 +590,19 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
         return existing;
     }
 
+    public IssueProfile Update(string source, int eventId, Action<IssueProfile> apply)
+    {
+        var row = _rules.FirstOrDefault(r => Matches(r, source, eventId));
+        if (row == null)
+        {
+            row = new IssueProfile { SourceName = source, EventId = eventId };
+            _rules.Add(row);
+        }
+        apply(row);
+        row.UpdatedAt = DateTime.Now;
+        return row;
+    }
+
     public void Delete(string source, int eventId) => _rules.RemoveAll(r => Matches(r, source, eventId));
 
     // 委派單一事實來源（終檢輪修正）：自寫一份就是 FakeHostStore/FakeUserStore 踩過的

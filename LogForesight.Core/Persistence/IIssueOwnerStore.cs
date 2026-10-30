@@ -12,6 +12,14 @@ public interface IIssueOwnerStore
     /// <summary>依 (Source, EventId) 自然鍵新增或更新。</summary>
     IssueProfile Upsert(IssueProfile rule);
 
+    /// <summary>
+    /// 原子更新：在同一個互斥區塊內找到既有列（找不到就建新列）、套用 <paramref name="apply"/>、
+    /// 設 UpdatedAt，並回傳寫入後的複本。呼叫端的 lambda 只改自己負責的欄位，其餘欄位維持
+    /// 區塊內讀到的最新值——兩位管理者同時操作同一問題時不會互相還原對方剛寫的欄位。
+    /// （<see cref="Upsert"/> 是整列覆寫，只留給匯入／全量覆寫情境。）
+    /// </summary>
+    IssueProfile Update(string source, int eventId, Action<IssueProfile> apply);
+
     void Delete(string source, int eventId);
 }
 
@@ -54,6 +62,24 @@ public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStor
             existing.AutoApply = rule.AutoApply;
             existing.Mutes = rule.Mutes;
             return existing;
+        });
+    }
+
+    public IssueProfile Update(string source, int eventId, Action<IssueProfile> apply)
+    {
+        ArgumentNullException.ThrowIfNull(apply);
+        return Mutate(items =>
+        {
+            var row = items.FirstOrDefault(r => Matches(r, source, eventId));
+            if (row == null)
+            {
+                row = new IssueProfile { SourceName = source, EventId = eventId };
+                items.Add(row);
+            }
+            apply(row);
+            row.UpdatedAt = DateTime.Now;
+            // Mutate 每次都從 blob 反序列化出全新物件，回傳的列不會與 store 內部共用參考
+            return row;
         });
     }
 
