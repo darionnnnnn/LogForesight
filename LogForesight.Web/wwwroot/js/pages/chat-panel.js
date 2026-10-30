@@ -17,6 +17,7 @@ let hostId = null;
 let date = null;
 let messages = [];   // { role: 'user'|'assistant', content }
 let currentIssueKey = '';
+let restoreSend = null;   // 進行中請求的送出鈕還原函式；重設對話時由 resetConversation 代為還原
 let generation = 0;    // 對話世代：每次 resetConversation 加一，送出時記下，回覆抵達若世代不同就丟棄
 let pending = false;   // 送出後、收到回覆前——顯示「思考中」泡泡
 
@@ -151,6 +152,12 @@ function scrollMessagesToBottom() {
 
 function resetConversation() {
     generation++;
+    // 進行中的舊請求不會再收尾（世代已變），送出鈕的「送出中」外觀由這裡還原，
+    // 之後才依「是否已選問題」決定可用與否
+    if (restoreSend) {
+        restoreSend();
+        restoreSend = null;
+    }
     messages = [];
     pending = false;
     renderMessages();
@@ -202,6 +209,7 @@ async function onSubmit(event) {
     input.value = '';
 
     const restore = withBusy(send, '送出中');
+    restoreSend = restore;
     input.disabled = true;
     try {
         const result = await api.post('/api/ai/chat', { hostId, date, issueKey: currentIssueKey, messages }, { silent: true });
@@ -218,19 +226,21 @@ async function onSubmit(event) {
         if (requestGeneration !== generation) return;
         messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
     } finally {
-        restore();
-        // 只在對話仍是自己發起的那一個時收尾；已被重設的對話，重設時就把畫面狀態處理好了
+        // 只在對話仍是自己發起的那一個時收尾；已被重設的對話，重設時就把畫面狀態處理好了——
+        // 此時新對話可能正在等待自己的回覆，舊請求不得把送出鈕或輸入框重新開啟
         if (requestGeneration === generation) {
+            restore();
+            restoreSend = null;
             pending = false;
             setConversationControlsDisabled(false);
             renderMessages();
             updateTurnCount();
+            // 輸入框是否可用取決於「是否已選問題」，不是無條件開啟
+            const hasIssue = !!currentIssueKey;
+            input.disabled = !hasIssue;
+            send.disabled = !hasIssue;
+            if (hasIssue) input.focus();
         }
-        // 輸入框是否可用取決於「是否已選問題」，不是無條件開啟
-        const hasIssue = !!currentIssueKey;
-        input.disabled = !hasIssue;
-        send.disabled = !hasIssue;
-        if (hasIssue && requestGeneration === generation) input.focus();
     }
 }
 

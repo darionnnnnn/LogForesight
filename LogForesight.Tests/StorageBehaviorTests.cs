@@ -25,6 +25,8 @@ public class StorageBehaviorTests
     [InlineData("getThrows")]
     [InlineData("setThrows")]
     [InlineData("roundTrip")]
+    [InlineData("sessionGetterThrows")]
+    [InlineData("sessionRoundTrip")]
     public void 安全儲存行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
@@ -55,9 +57,16 @@ public class StorageBehaviorTests
         }
 
         Assert.NotNull(process);
-        var stdout = process!.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        Assert.True(process.WaitForExit(60_000), $"node 執行逾時：{caseName}");
+        // 先非同步讀輸出、逾時就結束整個程序樹再判失敗；先 ReadToEnd 會在 node 不結束時無限卡住
+        var stdoutTask = process!.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(15_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* 已經結束就算了 */ }
+            Assert.Fail($"node 執行逾時：{caseName}");
+        }
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
 
         Assert.True(process.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);

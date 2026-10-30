@@ -141,29 +141,56 @@ let currentSummaryPage = 1;
 let currentErrors = [];
 let errorsSort = { key: 'count', dir: 'desc' };
 
+// load（整頁三塊）與 loadSummary（只換總表）共用同一個序號守門：任一方開始就讓更早的總表回應過期，
+// 慢的舊 loadSummary 不得覆寫剛換天數的總表。load 自己另有一個序號，連點天數時舊的整批回應整份丟掉。
+const summaryGuard = createSeqGuard();
+const loadGuard = createSeqGuard();
+
 async function load() {
+    const seq = loadGuard.next();
+    const summarySeq = summaryGuard.next();
     renderLoading(document.getElementById('run-summary'), 4);
     renderLoading(document.getElementById('run-errors'), 3);
     renderLoading(document.getElementById('run-list'), 4);
 
-    const [summaryPage, errors, runList] = await Promise.all([
-        api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`),
-        api.get(`/api/runs/errors?days=${currentDays}`),
-        api.get(`/api/runs/list?days=${currentDays}`)
-    ]);
+    let summaryPage, errors, runList;
+    try {
+        [summaryPage, errors, runList] = await Promise.all([
+            api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`),
+            api.get(`/api/runs/errors?days=${currentDays}`),
+            api.get(`/api/runs/list?days=${currentDays}`)
+        ]);
+    } catch (err) {
+        // 過期請求的失敗不處理：失敗態只該屬於最新一次載入（交給 guardLoad 呈現）
+        if (!loadGuard.isCurrent(seq)) return;
+        throw err;
+    }
+    if (!loadGuard.isCurrent(seq)) return;
 
     // 記住後端告知的最大天數供「全部」按鈕使用（不寫死）
     if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
 
     renderLegend();
-    renderSummary(summaryPage);
+    // 載入期間若使用者又換了總表頁（loadSummary 推進了序號），總表交給較新的那次，errors／list 照常渲染
+    if (summaryGuard.isCurrent(summarySeq)) renderSummary(summaryPage);
     renderErrors(errors);
     renderRunList(runList);
 }
 
-/** 只重新取執行總表（換頁時用，errors/list 不必重取） */
-const summaryGuard = createSeqGuard();
+function runLoadContainers() {
+    return [
+        document.getElementById('run-summary'),
+        document.getElementById('run-errors'),
+        document.getElementById('run-list')
+    ];
+}
 
+/** 重新載入整頁三塊；失敗走 guardLoad 的失敗態，不留未處理的 rejection */
+function reloadRuns() {
+    return guardLoad(runLoadContainers(), load);
+}
+
+/** 只重新取執行總表（換頁時用，errors/list 不必重取） */
 async function loadSummary() {
     const seq = summaryGuard.next();
     const summaryEl = document.getElementById('run-summary');
@@ -722,7 +749,7 @@ for (const button of document.querySelectorAll('[data-days]')) {
         for (const other of document.querySelectorAll('[data-days]')) {
             other.classList.toggle('active', other === button);
         }
-        load();
+        reloadRuns();
     });
 }
 
@@ -1193,7 +1220,7 @@ function applyScheduleStatus(status) {
     if (wasScheduleRunning && !status.isRunning) {
         toast('執行已結束，執行總表已刷新', 'info');
         currentSummaryPage = 1;   // 重設回最新頁，讓使用者一眼看到剛跑完的結果
-        load();
+        reloadRuns();
     }
     wasScheduleRunning = status.isRunning;
 }
@@ -1302,7 +1329,7 @@ function applyAiScheduleStatus(status) {
 
     if (wasAiScheduleRunning && !status.isRunning) {
         toast('AI 分析已結束', 'info');
-        load();
+        reloadRuns();
     }
     wasAiScheduleRunning = status.isRunning;
 }
@@ -2163,11 +2190,7 @@ bindPrtgBackfill();
 bindPrtgSync();
 refreshPrtgBackfillStatus();
 refreshPrtgSyncStatus();
-guardLoad([
-    document.getElementById('run-summary'),
-    document.getElementById('run-errors'),
-    document.getElementById('run-list')
-], load);
+reloadRuns();
 
 // PRTG 維護頁「最近一次排程驗收」的「檢視執行」（core/prtg-acceptance.js）：?run=<id> 直接開該趟執行詳情
 const linkedRunId = new URLSearchParams(location.search).get('run');

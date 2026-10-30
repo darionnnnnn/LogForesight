@@ -662,6 +662,8 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * sort（{key, dir}）算出下一個排序狀態（同欄切換 asc/desc，換欄回到 sortDefaultDir
  * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
+ * onRowToggle（選填）：每次展開／收合都呼叫 onRowToggle(row, expanded, cell)；onRowExpand 只在首次展開呼叫一次，
+ * 需要在收合或再展開時做事（例如清掉連動高亮）就用這個；首次展開時 onRowExpand 先於它執行，內容已填好。
  * truncate（選填，欄位選項）：該欄儲存格加 text-truncate 並以完整文字設 title，
  * 過長內容（主機名、問題標籤、sensor 名稱）以省略號收斂、不撐破列高；最大寬度由
  * site.css 的 `.lf-table-wrap td.text-truncate` 決定（不寫 inline）。
@@ -669,7 +671,7 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * footer（選填）：頁尾合計列，儲存格內容陣列（字串或 Node），數量對齊 columns。
  * 全站表格密度統一 table-sm（列高目標 36px），自建表格一律改走這裡或 buildKeyValueTable。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn, caption, footer }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, onRowToggle, sort, onSort, stickyLastColumn, caption, footer }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -796,6 +798,8 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
                     populated = true;
                     onRowExpand(row, cell);
                 }
+                // 每次展開／收合都通知（onRowExpand 只在首次展開呼叫一次，收合與再展開要靠這個）
+                if (onRowToggle) onRowToggle(row, !open, cell);
             });
         }
     }

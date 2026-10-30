@@ -53,25 +53,83 @@ public class FrontendGuardUiTests
         Assert.True(bad.Count == 0, "toast 型別不在 Bootstrap 色系內（會得到不存在的 text-bg-*）：" + Environment.NewLine + string.Join(Environment.NewLine, bad));
     }
 
+    private static IEnumerable<string> CoreAndPageFiles() =>
+        Directory.GetFiles(Path.Combine(JsRoot(), "core"), "*.js", SearchOption.AllDirectories)
+            .Concat(PageFiles())
+            .Where(f => !string.Equals(Path.GetFileName(f), "storage.js", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsCommentLine(string trimmed) =>
+        trimmed.StartsWith("//") || trimmed.StartsWith("*") || trimmed.StartsWith("/*");
+
+    /// <summary>
+    /// 全部 core 與 pages（core/storage.js 本身除外）的 localStorage／sessionStorage 直接呼叫，
+    /// 要嘛改用 safeStorage／safeSession，要嘛前幾行內就有 try——封鎖站台資料時直接呼叫會擲 SecurityError，
+    /// 模組載入階段執行的呼叫（例如 layout.js 的字級偏好）擲出去就是整個模組起不來。
+    /// 白名單只留真正有 try/catch 包住的呼叫；無法用行數判定的檔案不得整檔豁免。
+    /// </summary>
     [Fact]
-    public void LocalStorage直接呼叫只出現在白名單檔()
+    public void Storage直接呼叫必須改用安全包裝或包在try內()
     {
-        var allowed = new HashSet<string> { "permission-changes.js", "settings.js", "note-editor.js", "layout.js", "prtg-admin.js", "record-detail.js" };
         var bad = new List<string>();
-        foreach (var file in PageFiles().Append(Path.Combine(JsRoot(), "core", "ui.js")))
+        foreach (var file in CoreAndPageFiles())
         {
             var name = Path.GetFileName(file);
-            if (allowed.Contains(name)) continue;
             var lines = File.ReadAllLines(file);
             for (var i = 0; i < lines.Length; i++)
             {
                 var trimmed = lines[i].TrimStart();
-                if (trimmed.StartsWith("//") || trimmed.StartsWith("*") || trimmed.StartsWith("/*")) continue;
-                if (lines[i].Contains("localStorage.")) bad.Add($"{name}:{i + 1}: {trimmed}");
+                if (IsCommentLine(trimmed)) continue;
+                if (!Regex.IsMatch(lines[i], @"\b(localStorage|sessionStorage)\.")) continue;
+
+                var wrapped = false;
+                for (var k = Math.Max(0, i - 8); k <= i && !wrapped; k++)
+                {
+                    wrapped = Regex.IsMatch(lines[k], @"\btry\s*\{");
+                }
+
+                if (!wrapped) bad.Add($"{name}:{i + 1}: {trimmed}");
             }
         }
 
-        Assert.True(bad.Count == 0, "請改用 core/storage.js 的 safeStorage：" + Environment.NewLine + string.Join(Environment.NewLine, bad));
+        Assert.True(bad.Count == 0,
+            "請改用 core/storage.js 的 safeStorage／safeSession，或確實包在 try/catch 內：" + Environment.NewLine + string.Join(Environment.NewLine, bad));
+    }
+
+    [Fact]
+    public void 載入階段會執行的檔案不直接碰Storage()
+    {
+        // layout.js 的 initFontScale 在模組載入時就執行；report-view 的展開狀態在每次渲染報告時讀寫
+        foreach (var rel in new[] { Path.Combine("core", "layout.js"), Path.Combine("core", "report-view.js") })
+        {
+            var lines = File.ReadAllLines(Path.Combine(JsRoot(), rel));
+            var code = lines.Where(l => !IsCommentLine(l.TrimStart())).ToList();
+            Assert.DoesNotContain(code, l => l.Contains("localStorage."));
+            Assert.Contains(code, l => l.Contains("safeStorage."));
+        }
+    }
+
+    [Fact]
+    public void 主機詳情的問題明細展開走onRowExpand與onRowToggle且不再手掛click()
+    {
+        var js = ReadPage("host-detail.js");
+        Assert.Contains("onRowExpand: (s, cell)", js);
+        Assert.Contains("onRowToggle:", js);
+        Assert.DoesNotContain("rowDetail: s => occurrenceDetailPanel", js);
+        var panel = js[js.IndexOf("function occurrenceDetailPanel(", StringComparison.Ordinal)..];
+        panel = panel[..panel.IndexOf("function renderOccurrencePanel", StringComparison.Ordinal)];
+        Assert.DoesNotContain("setTimeout", panel);
+        Assert.DoesNotContain("addEventListener", panel);
+
+        var ui = File.ReadAllText(Path.Combine(JsRoot(), "core", "ui.js"));
+        Assert.Contains("onRowToggle(row, !open, cell)", ui);
+    }
+
+    [Fact]
+    public void 天數切換與自動刷新經reloadRuns且不裸呼叫load()
+    {
+        var js = ReadPage("runs.js");
+        Assert.Matches(@"function reloadRuns\(\)\s*\{\s*return guardLoad\(runLoadContainers\(\), load\);", js);
+        Assert.DoesNotMatch(@"(?m)^\s+load\(\);", js);
     }
 
     [Fact]

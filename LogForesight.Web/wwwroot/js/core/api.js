@@ -38,6 +38,10 @@ async function readJsonDownload(response, options) {
     const reject = (code, message) => new ApiError(code, message, response.status);
     if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get('Content-Type') || '') || !response.body) {
         response.body?.cancel().catch(() => {});
+        // 非 2xx 且不是 JSON（例如反向代理的 502 HTML）是一般伺服器錯誤，不是「登入狀態有問題」
+        if (!response.ok) {
+            throw reject('download_http_error', `伺服器暫時無法完成下載（HTTP ${response.status}），請稍後再試。`);
+        }
         throw reject('download_invalid_response', '伺服器未提供 JSON 證據檔，請確認登入狀態後重試。');
     }
     if (Number(response.headers.get('Content-Length')) > limit) {
@@ -216,8 +220,12 @@ async function request(method, url, body, options = {}) {
     return payload.data;
 }
 
+/** 物件網址保留時間：給瀏覽器足夠時間開始讀取下載內容 */
+const OBJECT_URL_REVOKE_DELAY_MS = 40_000;
+
 /**
- * 把 blob 以暫時 <a download> 觸發瀏覽器儲存，用完即 revoke 並移除元素。
+ * 把 blob 以暫時 <a download> 觸發瀏覽器儲存，移除元素後延遲才 revoke 物件網址
+ * （部分瀏覽器在 click() 同步回傳後才開始讀取，立刻 revoke 會讓下載失敗）。
  * 搭配 api.download 使用：錯誤已在取檔階段丟出，不會走到這裡把整頁換成錯誤內容。
  */
 export function saveBlobAsFile(blob, filename) {
@@ -230,7 +238,7 @@ export function saveBlobAsFile(blob, filename) {
         link.click();
     } finally {
         document.body.removeChild(link);
-        URL.revokeObjectURL(objectUrl);
+        setTimeout(() => URL.revokeObjectURL(objectUrl), OBJECT_URL_REVOKE_DELAY_MS);
     }
 }
 

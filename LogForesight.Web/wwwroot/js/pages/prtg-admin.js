@@ -5,6 +5,7 @@
 import { api, getCurrentUser, hasCapability, saveBlobAsFile } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { pollWhile } from '../core/async-guards.js';
+import { safeSession } from '../core/storage.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
@@ -2249,8 +2250,8 @@ function renderScopePurge(preview) {
     devicesEl.closest('details')?.classList.toggle('d-none', names.length === 0);
     btn.dataset.previewId = preview.previewId || '';
     btn.dataset.expiresAtUtc = preview.expiresAtUtc || '';
-    const pendingJob = scopePurgeStorageKey && sessionStorage.getItem(`${scopePurgeStorageKey}:job-id`);
-    const pendingPreview = scopePurgeStorageKey && sessionStorage.getItem(`${scopePurgeStorageKey}:preview-id`);
+    const pendingJob = scopePurgeStorageKey && safeSession.get(`${scopePurgeStorageKey}:job-id`);
+    const pendingPreview = scopePurgeStorageKey && safeSession.get(`${scopePurgeStorageKey}:preview-id`);
     btn.textContent = pendingJob || pendingPreview ? '檢查／繼續清除' : '確認清除';
     btn.disabled = pendingJob || pendingPreview ? false : (preview.values + preview.stateChanges === 0 || !btn.dataset.previewId);
 }
@@ -2271,8 +2272,8 @@ function bindScopePurge() {
         const jobStorageKey = `${scopePurgeStorageKey}:job-id`;
         const previewStorageKey = `${scopePurgeStorageKey}:preview-id`;
         const expiryStorageKey = `${scopePurgeStorageKey}:preview-expires`;
-        const savedJobId = sessionStorage.getItem(jobStorageKey);
-        const savedPreviewId = sessionStorage.getItem(previewStorageKey);
+        const savedJobId = safeSession.get(jobStorageKey);
+        const savedPreviewId = safeSession.get(previewStorageKey);
         const confirmed = await confirmAction({
             message: savedJobId || savedPreviewId
                 ? '要繼續這個已接受的範圍外清除作業嗎？只會處理原預覽時的資料集合。'
@@ -2292,23 +2293,23 @@ function bindScopePurge() {
             } else {
                 const previewId = savedPreviewId || btn.dataset.previewId;
                 const expiresAtUtc = savedPreviewId
-                    ? sessionStorage.getItem(expiryStorageKey)
+                    ? safeSession.get(expiryStorageKey)
                     : btn.dataset.expiresAtUtc;
                 // Once POST may have been attempted, the same preview ID is an idempotency key.
                 // Retry it even after local expiry so an accepted response lost in transit can be recovered.
                 if (!previewId || (!savedPreviewId && (!expiresAtUtc || Date.parse(expiresAtUtc) <= Date.now()))) {
-                    sessionStorage.removeItem(previewStorageKey);
-                    sessionStorage.removeItem(expiryStorageKey);
+                    safeSession.remove(previewStorageKey);
+                    safeSession.remove(expiryStorageKey);
                     throw new Error('預覽已逾期，請重新預覽後再確認。');
                 }
                 if (!savedPreviewId) {
-                    sessionStorage.setItem(previewStorageKey, previewId);
-                    sessionStorage.setItem(expiryStorageKey, expiresAtUtc);
+                    safeSession.set(previewStorageKey, previewId);
+                    safeSession.set(expiryStorageKey, expiresAtUtc);
                 }
                 job = await api.post('/api/admin/settings/prtg-scope-purge/confirm', { previewId });
-                sessionStorage.removeItem(previewStorageKey);
-                sessionStorage.removeItem(expiryStorageKey);
-                sessionStorage.setItem(jobStorageKey, job.jobId);
+                safeSession.remove(previewStorageKey);
+                safeSession.remove(expiryStorageKey);
+                safeSession.set(jobStorageKey, job.jobId);
             }
             while (job.status === 'accepted' || job.status === 'running') {
                 job = await api.post(`/api/admin/settings/prtg-scope-purge/jobs/${encodeURIComponent(job.jobId)}/resume`,
@@ -2319,11 +2320,11 @@ function bindScopePurge() {
                 }
             }
             if (job.status === 'complete') {
-                sessionStorage.removeItem(jobStorageKey);
+                safeSession.remove(jobStorageKey);
                 toast(`清除完成：本作業刪除數值 ${formatNumber(job.values)} 筆、狀態變更 ${formatNumber(job.stateChanges)} 筆`, 'success');
             } else if (job.status === 'stopped') {
-                sessionStorage.setItem(`${scopePurgeStorageKey}:stopped-job-id`, job.jobId);
-                sessionStorage.removeItem(jobStorageKey);
+                safeSession.set(`${scopePurgeStorageKey}:stopped-job-id`, job.jobId);
+                safeSession.remove(jobStorageKey);
                 toast(`清除已停止（${job.stopReason || '範圍已變更'}）；可重新預覽，前次部分進度仍保留。`, 'warning');
             } else {
                 toast(`清除已暫停（${job.stopReason || job.status}）；確認目前權限與範圍後，再明確選擇繼續。`, 'warning');
@@ -2332,8 +2333,8 @@ function bindScopePurge() {
             if (error?.name === 'ApiError' && ['validation_failed', 'conflict'].includes(error.code)) {
                 // These business responses mean the server rejected this operation. Auth/read
                 // failures and transport errors keep the durable preview key for safe recovery.
-                sessionStorage.removeItem(previewStorageKey);
-                sessionStorage.removeItem(expiryStorageKey);
+                safeSession.remove(previewStorageKey);
+                safeSession.remove(expiryStorageKey);
             } else if (error instanceof Error && error.name !== 'ApiError') {
                 toast(`範圍外清除未完成：${error.message}`, 'danger');
             }

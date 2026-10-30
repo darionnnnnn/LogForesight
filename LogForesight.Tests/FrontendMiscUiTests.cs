@@ -213,6 +213,18 @@ public class FrontendMiscBehaviorTests
     [InlineData("reports起日晚於迄日時擋下")]
     [InlineData("reports載入失敗時範圍chip與currentScope不變")]
     [InlineData("reports載入成功時才以回應範圍更新chip")]
+    [InlineData("reports起訖日顛倒時清掉待生效範圍")]
+    [InlineData("reports載入失敗後清掉待生效範圍")]
+    [InlineData("reports已亮起的chip可取消待生效範圍")]
+    [InlineData("reports已亮起的chip無待生效範圍時不重查")]
+    [InlineData("hostDetail收合後回應不呼叫highlightTimeline")]
+    [InlineData("hostDetail仍展開時照常高亮")]
+    [InlineData("hostDetail收合再展開沿用快取並高亮")]
+    [InlineData("runs天數連點舊回應晚到不蓋新結果")]
+    [InlineData("runs舊載入失敗不外擲")]
+    [InlineData("runs最新載入失敗要外擲")]
+    [InlineData("runs慢的舊loadSummary不覆寫新載入的總表")]
+    [InlineData("runs載入期間換總表頁時總表交給較新的請求")]
     [InlineData("說明書首次載入不捲動而一般切章會捲動")]
     [InlineData("郵件帳本提示_未達九成且無滿載紀錄時不顯示")]
     [InlineData("郵件帳本提示_滿載時帶出數字時間與收件人")]
@@ -279,6 +291,7 @@ public class ChatPanelGenerationBehaviorTests
     [InlineData("staleReplyDropped")]
     [InlineData("staleFailureDropped")]
     [InlineData("finallyKeepsInputDisabledWithoutIssue")]
+    [InlineData("舊請求收尾不得重新開啟新請求等待中的控制項")]
     public void 對話面板世代行為案例(string caseName)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

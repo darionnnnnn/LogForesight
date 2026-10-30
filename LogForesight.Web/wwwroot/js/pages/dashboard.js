@@ -35,13 +35,20 @@ async function load() {
     renderLoading(document.getElementById('dashboard-hosts'), 4);
     renderLoading(document.getElementById('dashboard-group-risk'), 3);
 
-    const [data, user, displaySettings, myBadge] = await Promise.all([
-        api.get(`/api/dashboard/summary?days=${currentDays}`),
-        getCurrentUser(),
-        getDisplaySettings(),
-        // 我的交辦單數字走既有聚合端點，不動儀表板後端 DTO；失敗就不顯示那張卡（靜默）
-        api.get('/api/handlers/me/badge', { silent: true }).catch(() => null)
-    ]);
+    let data, user, displaySettings, myBadge;
+    try {
+        [data, user, displaySettings, myBadge] = await Promise.all([
+            api.get(`/api/dashboard/summary?days=${currentDays}`),
+            getCurrentUser(),
+            getDisplaySettings(),
+            // 我的交辦單數字走既有聚合端點，不動儀表板後端 DTO；失敗就不顯示那張卡（靜默）
+            api.get('/api/handlers/me/badge', { silent: true }).catch(() => null)
+        ]);
+    } catch (err) {
+        // 過期請求的失敗不處理：失敗態只該屬於最新一次載入，否則會把新結果換成「載入失敗」
+        if (!loadGuard.isCurrent(seq)) return;
+        throw err;
+    }
 
     // 回應回來時已有更新的載入（又切了期間）就整份丟掉，不得寫入任何頁面狀態
     if (!loadGuard.isCurrent(seq)) return;

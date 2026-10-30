@@ -1,4 +1,4 @@
-﻿import { safeStorage } from '../../LogForesight.Web/wwwroot/js/core/storage.js';
+﻿import { safeStorage, safeSession } from '../../LogForesight.Web/wwwroot/js/core/storage.js';
 
 function throwingStore() {
     const fail = () => { throw new Error('SecurityError: 模擬隱私模式'); };
@@ -32,7 +32,42 @@ function expectEqual(actual, expected, label) {
     }
 }
 
+/** sessionStorage 版：被封鎖時連「取得」globalThis.sessionStorage 本身都會擲例外 */
+function withSession(store, body) {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+    Object.defineProperty(globalThis, 'sessionStorage', {
+        configurable: true,
+        get() {
+            if (store === 'blocked') throw new Error('SecurityError: 模擬封鎖站台資料');
+            return store;
+        },
+    });
+    try {
+        return body();
+    } finally {
+        if (original) Object.defineProperty(globalThis, 'sessionStorage', original);
+        else delete globalThis.sessionStorage;
+    }
+}
+
 const cases = {
+    sessionGetterThrows() {
+        withSession('blocked', () => {
+            expectEqual(safeSession.get('k'), null, '取得 sessionStorage 擲例外時讀取回 null');
+            safeSession.set('k', 'v');
+            safeSession.remove('k');
+        });
+    },
+
+    sessionRoundTrip() {
+        withSession(memoryStore(), () => {
+            safeSession.set('k', 'v1');
+            expectEqual(safeSession.get('k'), 'v1', '寫入後讀回');
+            safeSession.remove('k');
+            expectEqual(safeSession.get('k'), null, '移除後讀回');
+        });
+    },
+
     getThrows() {
         withStore(throwingStore(), () => {
             expectEqual(safeStorage.get('k'), null, '讀取擲例外時的回傳值');

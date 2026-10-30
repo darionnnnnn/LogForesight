@@ -35,6 +35,8 @@ public class ListPagesBehaviorTests
     [InlineData("reports舊回應晚到不寫入狀態")]
     [InlineData("reports舊請求失敗不外擲")]
     [InlineData("dashboard舊回應晚到不寫入狀態")]
+    [InlineData("dashboard舊請求失敗不外擲")]
+    [InlineData("dashboard最新請求失敗要外擲")]
     public void 清單頁查詢行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

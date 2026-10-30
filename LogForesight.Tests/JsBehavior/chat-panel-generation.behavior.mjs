@@ -155,6 +155,31 @@ const cases = {
         assert.equal(ctx.calls[1].body.messages.length, 1, '舊失敗訊息不得被推進新對話的歷史');
     },
 
+    async 舊請求收尾不得重新開啟新請求等待中的控制項() {
+        const ctx = setup();
+        await selectAndSend(ctx, 'A');
+        // 等待舊回覆期間換到問題 B（對話重設），並在 B 送出新請求、等待回覆
+        elements['chat-issue-select'].value = 'B';
+        await elements['chat-issue-select'].fire('change');
+        elements['chat-input'].value = '新問題';
+        elements['chat-form'].fire('submit');
+        await new Promise(r => setTimeout(r, 0));
+        assert.equal(ctx.calls.length, 2, '新對話應已送出自己的請求');
+        assert.equal(elements['chat-send'].disabled, true, '前提：新請求等待中送出鈕停用');
+        assert.equal(elements['chat-input'].disabled, true, '前提：新請求等待中輸入框停用');
+
+        ctx.calls[0].resolve({ text: '舊回覆' });
+        await new Promise(r => setTimeout(r, 0));
+        assert.equal(elements['chat-send'].disabled, true, '舊請求收尾不得重新開啟送出鈕');
+        assert.equal(elements['chat-input'].disabled, true, '舊請求收尾不得重新開啟輸入框');
+        assert.equal(elements['chat-issue-select'].disabled, true, '新請求等待中下拉仍須停用');
+
+        ctx.calls[1].resolve({ text: '新回覆' });
+        await new Promise(r => setTimeout(r, 0));
+        assert.equal(elements['chat-send'].disabled, false, '新請求自己收尾後送出鈕才恢復');
+        assert.equal(elements['chat-input'].disabled, false, '新請求自己收尾後輸入框才恢復');
+    },
+
     async finallyKeepsInputDisabledWithoutIssue() {
         const ctx = setup();
         await selectAndSend(ctx, 'A');

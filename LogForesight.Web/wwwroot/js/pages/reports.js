@@ -146,6 +146,7 @@ async function load() {
 
     if (from && to) {
         if (from > to) {
+            requestedScope = null;   // 沒發出查詢就不留下想切的範圍，否則之後按「查詢」會用沒亮起的範圍
             toast('起日不可晚於迄日，請調整日期範圍', 'danger');
             return;
         }
@@ -153,6 +154,7 @@ async function load() {
         const toDate = new Date(to);
         const diffDays = Math.round((toDate - fromDate) / 86400000) + 1;
         if (diffDays > 366) {
+            requestedScope = null;
             toast('查詢區間不可超過 366 天，請縮小範圍', 'danger');
             return;
         }
@@ -185,6 +187,7 @@ async function loadReport() {
     } catch (err) {
         // 過期請求的失敗不處理：失敗態只該屬於最新一次查詢
         if (!reportGuard.isCurrent(seq)) return;
+        requestedScope = null;   // 失敗時 chip 與資料都停在上次成功的範圍，不留下沒生效的選擇
         throw err;
     }
     // 回應回來時已有更新的查詢就整份丟掉，不得寫入任何頁面狀態
@@ -815,12 +818,21 @@ bindRangeChips({ onApply: ({ days }) => { setRange(days); load(); } });
 document.getElementById('btn-print-report').addEventListener('click', () => window.print());
 
 // 處理狀態顯示範圍（§5）：單選 chip，切換即重載（母體改變，全圖表跟著變）
-document.getElementById('report-scope-chips').addEventListener('click', event => {
+document.getElementById('report-scope-chips').addEventListener('click', onScopeChipClick);
+
+function onScopeChipClick(event) {
     const btn = event.target.closest('button[data-scope]');
-    if (!btn || btn.classList.contains('active')) return;
+    if (!btn) return;
+    if (btn.classList.contains('active')) {
+        // 已亮起的 chip 也是「取消」出口：有尚未生效的選擇就撤掉，改用目前範圍重查（舊的在途請求由序號守門丟棄）
+        if (requestedScope === null) return;
+        requestedScope = null;
+        load();
+        return;
+    }
     requestedScope = btn.dataset.scope;
     load();
-});
+}
 
 /** chip 的 active 一律對齊 currentScope（進頁與每次載入成功後呼叫） */
 function syncScopeChips() {

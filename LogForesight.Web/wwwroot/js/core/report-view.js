@@ -14,6 +14,7 @@
  */
 
 import { icon, toast, showDetailModal } from './ui.js';
+import { safeStorage } from './storage.js';
 
 /**
  * 副標：日期＋風險等級＋類別。這幾個欄位在全文的標頭裡也有，但那要展開才看得到；
@@ -155,7 +156,7 @@ export function reportCard({ storageKey, title } = {}) {
         body.classList.toggle('d-none', !nowOpen);
         caret.classList.toggle('lf-collapse-caret--open', nowOpen);
         header.setAttribute('aria-expanded', String(nowOpen));
-        if (storageKey) localStorage.setItem(storageKey, String(nowOpen));
+        if (storageKey) safeStorage.set(storageKey, String(nowOpen));
     }
 
     header.addEventListener('click', () => applyExpanded(body.classList.contains('d-none')));
@@ -184,7 +185,7 @@ export function reportCard({ storageKey, title } = {}) {
             body.replaceChildren(...[evidenceVersionNotice(report), pre(report)].filter(Boolean));
             section.classList.remove('d-none');
 
-            applyExpanded(storageKey ? localStorage.getItem(storageKey) === 'true' : false);
+            applyExpanded(storageKey ? safeStorage.get(storageKey) === 'true' : false);
         }
     };
 }

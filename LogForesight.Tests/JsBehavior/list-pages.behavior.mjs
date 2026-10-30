@@ -300,6 +300,27 @@ const cases = {
         await first;
         assert.equal(c.writes.length, afterNew, '舊回應不得寫入任何頁面狀態');
     },
+    async dashboard舊請求失敗不外擲() {
+        const c = makeDashboard();
+        const first = c.run();
+        await tick();
+        const second = c.run();
+        await tick();
+        c.api.pending[1].resolve({ from: 'a', to: 'b' });
+        await second;
+        const afterNew = c.writes.length;
+        assert(afterNew > 0, '最新回應應該渲染');
+        c.api.pending[0].reject(new Error('late boom'));
+        await first;   // 外擲會讓 guardLoad 把新結果換成「載入失敗」，本案例就會失敗
+        assert.equal(c.writes.length, afterNew, '舊請求失敗不得改動頁面');
+    },
+    async dashboard最新請求失敗要外擲() {
+        const c = makeDashboard();
+        const first = c.run();
+        await tick();
+        c.api.pending[0].reject(new Error('boom'));
+        await assert.rejects(first, /boom/);
+    },
 };
 
 const name = process.argv[2];
