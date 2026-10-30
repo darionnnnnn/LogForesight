@@ -294,7 +294,8 @@ public class ScheduleGuardStatusCodeTests : IDisposable
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
             prtgProbe: probe,
-            backend: _backend);
+            backend: _backend,
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
@@ -328,6 +329,10 @@ public class ScheduleGuardStatusCodeTests : IDisposable
             hosts, schedulerState, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
             new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState, hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
 
+        var effectiveVisibility = visibility ?? new FullPrtgVisibility(hosts);
+        // 「完整可見者」＝持有 ViewAll；由測試給的可見集合推得，保留部分可見與案件授權案例的角色。
+        var viewAll = hosts.GetAll().All(h => effectiveVisibility.GetVisibleHostIds().Contains(h.HostId)
+            && !effectiveVisibility.IsCaseGrantOnly(h.HostId));
         var controller = new SettingsController(
             new StubSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")),
@@ -335,7 +340,9 @@ public class ScheduleGuardStatusCodeTests : IDisposable
             prtgBackfill: backfill,
             backend: _backend,
             hosts: hosts,
-            visibility: visibility ?? new FullPrtgVisibility(hosts));
+            visibility: effectiveVisibility,
+            currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll)
+                : FakeCurrentUser.WithCapabilities(Capability.Maintain));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
@@ -451,7 +458,8 @@ public class ScheduleGuardStatusCodeTests : IDisposable
             _audit,
             backend: _backend,
             hosts: hosts,
-            visibility: new FullPrtgVisibility(hosts));
+            visibility: new FullPrtgVisibility(hosts),
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
 
         var ex = Assert.Throws<DomainException>(() => controller.StartPrtgBackfill());

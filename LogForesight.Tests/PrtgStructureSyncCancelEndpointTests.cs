@@ -56,7 +56,8 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
             prtgStructureSync: sync,
-            backend: _backend);
+            backend: _backend,
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
 
         var httpContext = new DefaultHttpContext
         {
@@ -135,7 +136,8 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
             prtgBackfill: backfill,
             backend: _backend,
             hosts: hosts,
-            visibility: new AllVisibleBackfillHosts(hosts));
+            visibility: new AllVisibleBackfillHosts(hosts),
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

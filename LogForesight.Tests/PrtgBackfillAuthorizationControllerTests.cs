@@ -293,6 +293,9 @@ public sealed class PrtgBackfillAuthorizationControllerTests : IDisposable
     private SettingsController CreateController(PrtgBackfillRunState runState, IVisibilityService visibility,
         Func<SystemSettings, PrtgClient>? clientFactory = null)
     {
+        // 「完整可見者」＝持有 ViewAll；這裡由測試給的可見集合推得，保留各案原本想表達的角色。
+        var viewAll = _hosts.GetAll().Count > 0 && _hosts.GetAll().All(h =>
+            visibility.GetVisibleHostIds().Contains(h.HostId) && !visibility.IsCaseGrantOnly(h.HostId));
         var scheduler = new SchedulerRunState();
         var structureState = new PrtgStructureSyncRunState();
         var structure = new PrtgStructureSyncService(_settings, _backend, structureState, scheduler,
@@ -303,7 +306,8 @@ public sealed class PrtgBackfillAuthorizationControllerTests : IDisposable
         var controller = new SettingsController(new FakeSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")), _audit, prtgBackfill: service,
             backend: _backend, hosts: _hosts, visibility: visibility,
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain));
+            currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll)
+                : FakeCurrentUser.WithCapabilities(Capability.Maintain));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("capability", nameof(Capability.Maintain))], "test"))

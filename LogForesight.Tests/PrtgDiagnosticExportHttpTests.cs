@@ -159,11 +159,13 @@ public sealed class PrtgDiagnosticExportHttpTests
             using (var denied = await client.GetAsync(ExportUrl()))
                 Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
 
+            // 受限角色＝有 Maintain 但沒有 ViewAll（全站管理端點只認 ViewAll）。
             fixture.User.SetCapabilities(Capability.Maintain);
             fixture.Visibility.SetVisibleHostIds([fixture.HostIds[0]]);
             using (var restricted = await client.GetAsync(ExportUrl()))
                 Assert.Equal(HttpStatusCode.Forbidden, restricted.StatusCode);
 
+            fixture.User.SetCapabilities(Capability.Maintain, Capability.ViewAll);
             fixture.Visibility.SetVisibleHostIds(fixture.HostIds);
             client.DefaultRequestHeaders.Add(CsrfHeaderMiddleware.HeaderName, CsrfHeaderMiddleware.HeaderValue);
             using var oldImport = new ByteArrayContent(Encoding.UTF8.GetBytes("{\"Devices\":[]}"));
@@ -408,7 +410,7 @@ public sealed class PrtgDiagnosticExportHttpTests
 
     private sealed class ExportUser : ICurrentUser
     {
-        private HashSet<Capability> _capabilities = [Capability.Maintain];
+        private HashSet<Capability> _capabilities = [Capability.Maintain, Capability.ViewAll];
         public bool IsAuthenticated => true;
         public long UserId => 73;
         public string Account => "export-http-maintainer";

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
@@ -187,6 +188,7 @@ public sealed class PrtgEffectivenessServiceTests
             using var provider = new ServiceCollection()
                 .AddSingleton(backend)
                 .AddSingleton<IIssueOwnerStore>(new FakeIssueOwnerStore())
+                .AddSingleton<ICurrentUser>(FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll))
                 .AddTransient<PrtgEffectivenessController>()
                 .BuildServiceProvider();
             var controller = provider.GetRequiredService<PrtgEffectivenessController>();
@@ -199,6 +201,34 @@ public sealed class PrtgEffectivenessServiceTests
         }
         finally
         {
+            if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Endpoint_無ViewAll回ForbidResult(bool serverAdmin)
+    {
+        var dataRoot = Path.Combine(Path.GetTempPath(), "lf-prtg-effectiveness-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataRoot);
+        try
+        {
+            var backend = new StorageBackend(new StorageSettings
+            {
+                Type = "Sqlite",
+                ConnectionString = $"Data Source={Path.Combine(dataRoot, "test.db") }"
+            }, dataRoot);
+            var user = serverAdmin ? FakeCurrentUser.ServerAdmin() : FakeCurrentUser.WithCapabilities(Capability.Maintain);
+            var controller = new PrtgEffectivenessController(backend, new FakeIssueOwnerStore(), user);
+
+            var result = controller.Get(new DateTime(2026, 9, 10), new DateTime(2026, 9, 10));
+
+            Assert.IsType<ForbidResult>(result.Result);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
         }
     }

@@ -30,15 +30,18 @@ public class CalibrationController : ControllerBase
         WriteIndented = false
     };
 
+    private const string ForbiddenMessage = "校準數值涵蓋全站資料，須由可檢視全部主機的管理者操作。";
     private readonly CalibrationService _calibrationService;
     private readonly IAuditService _audit;
     private readonly long _maximumExportBytes;
+    private readonly ICurrentUser _currentUser;
 
     public CalibrationController(CalibrationService calibrationService, IAuditService audit,
-        long maximumExportBytes = MaximumExportBytes)
+        ICurrentUser currentUser, long maximumExportBytes = MaximumExportBytes)
     {
         _calibrationService = calibrationService ?? throw new ArgumentNullException(nameof(calibrationService));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
+        _currentUser = currentUser ?? throw new ArgumentNullException(nameof(currentUser));
         if (maximumExportBytes is <= 0 or > MaximumExportBytes) throw new ArgumentOutOfRangeException(nameof(maximumExportBytes));
         _maximumExportBytes = maximumExportBytes;
     }
@@ -51,6 +54,8 @@ public class CalibrationController : ControllerBase
     [HttpGet("status")]
     public IActionResult GetStatus()
     {
+        if (!_currentUser.HasViewAll())
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse.Fail(ApiErrorCodes.Forbidden, ForbiddenMessage));
         if (!RequestAdmission.Wait(0))
             return CapacityResponse(StatusCodes.Status503ServiceUnavailable, "capture_busy", "另一個校準資料擷取或匯出正在執行，請稍後重試。");
         var admissionTransferred = false;
@@ -100,6 +105,8 @@ public class CalibrationController : ControllerBase
         [FromQuery(Name = "override")] bool isOverride = false,
         [FromQuery(Name = "detail")] string? detail = null)
     {
+        if (!_currentUser.HasViewAll())
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse.Fail(ApiErrorCodes.Forbidden, ForbiddenMessage));
         if (!RequestAdmission.Wait(0))
             return CapacityResponse(StatusCodes.Status503ServiceUnavailable, "capture_busy", "另一個校準資料擷取或匯出正在執行，請稍後重試。");
         BoundedMemoryStream? buffer = null;
