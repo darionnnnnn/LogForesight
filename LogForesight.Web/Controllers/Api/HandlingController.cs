@@ -164,6 +164,7 @@ public class PermissionChangesController : ControllerBase
     }
 
     [HttpGet]
+    [Permission(Capability.ConfirmPermission)]
     public ApiResponse<PagedResult<PermissionChangeDto>> Query(
         [FromQuery] string? q,
         [FromQuery] string? subnet,
@@ -199,6 +200,7 @@ public class PermissionChangesController : ControllerBase
     /// 某主機某日的權限異動報告全文（逐項「請確認」的完整敘事）。查無回 null，不是錯誤。
     /// </summary>
     [HttpGet("report")]
+    [Permission(Capability.ConfirmPermission)]
     public ApiResponse<ReportViewDto?> GetReport([FromQuery] string host, [FromQuery] string date)
     {
         if (string.IsNullOrWhiteSpace(host)) throw DomainException.Validation("請指定主機。");
@@ -211,6 +213,7 @@ public class PermissionChangesController : ControllerBase
     /// 沒有出現在當頁的類別就選不到，等於篩不到那一類。
     /// </summary>
     [HttpGet("categories")]
+    [Permission(Capability.ConfirmPermission)]
     public ApiResponse<List<PermissionCategoryOptionDto>> GetCategories() =>
         ApiResponse<List<PermissionCategoryOptionDto>>.Ok(
             PermissionCategory.GetAllLabels()
@@ -219,6 +222,7 @@ public class PermissionChangesController : ControllerBase
 
     /// <summary>「全選符合目前篩選的權限異動」ID 清單（僅限待確認項目）</summary>
     [HttpGet("ids")]
+    [Permission(Capability.ConfirmPermission)]
     public ApiResponse<PermissionChangeIdListDto> GetMatchingChangeIds(
         [FromQuery] string? q,
         [FromQuery] string? subnet,

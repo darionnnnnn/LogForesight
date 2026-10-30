@@ -104,4 +104,24 @@ public class SentinelEventFetchServiceTests : IDisposable
 
         Assert.Contains(SentinelFieldMap.LinuxProgram, query.ProjectionFields);
     }
+
+    [Theory]
+    [InlineData("sshd (x)")]
+    [InlineData("a OR b")]
+    [InlineData("x*")]
+    [InlineData("")]
+    public void BuildQuery_Linux不安全的program不產生查詢(string source)
+    {
+        var query = SentinelEventFetchService.BuildQuery(WebHost.OsLinux, "10.0.0.9", source, 0);
+
+        Assert.True(string.IsNullOrEmpty(query.Filter));
+    }
+
+    [Fact]
+    public void BuildQuery_Linux安全的program含連字號與點仍產生查詢()
+    {
+        var query = SentinelEventFetchService.BuildQuery(WebHost.OsLinux, "10.0.0.9", "systemd-logind.x_1", 0);
+
+        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:systemd-logind.x_1*", query.Filter);
+    }
 }
