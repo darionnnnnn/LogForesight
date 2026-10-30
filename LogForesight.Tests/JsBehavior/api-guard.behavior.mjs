@@ -160,6 +160,46 @@ const cases = {
         try { await query; } catch (error) { caught = error; }
         assert(caught?.name === 'AbortError' && canceled && dom.toasts.length === 0, '主動取消不應改成網路失敗或發錯誤 toast');
     },
+    async downloadOk() {
+        globalThis.fetch = async () => new Response('{"a":1}', { headers: {
+            'Content-Type': 'application/json',
+            'Content-Disposition': 'attachment; filename="calibration-20261030.json"; filename*=UTF-8\'\'calibration-20261030.json'
+        } });
+        const result = await api.download('/api/admin/calibration/export', { silent: true });
+        assert(result.blob instanceof Blob && await result.blob.text() === '{"a":1}', '須回傳完整 blob');
+        assert(result.filename === 'calibration-20261030.json', '檔名須取自 Content-Disposition');
+        globalThis.fetch = async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+        const noName = await api.download('/api/x', { silent: true });
+        assert(noName.filename === null, '沒有 Content-Disposition 時檔名為 null，由呼叫端給預設');
+    },
+    async downloadTimeout() {
+        const body = new ReadableStream({ cancel() {} });
+        globalThis.fetch = async () => new Response(body, { headers: { 'Content-Type': 'application/json' } });
+        let caught;
+        try { await api.download('/api/x', { timeoutMs: 20, silent: true }); } catch (error) { caught = error; }
+        assert(caught instanceof ApiError && caught.code === 'timeout', '本文停滯須有界逾時並丟 ApiError');
+        globalThis.fetch = hangingFetch({});
+        caught = null;
+        try { await api.download('/api/x', { timeoutMs: 20, silent: true }); } catch (error) { caught = error; }
+        assert(caught instanceof ApiError && caught.code === 'timeout', '標頭未回也須逾時');
+    },
+    async download401() {
+        globalThis.fetch = async () => new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } });
+        let caught;
+        try { await api.download('/api/x', { silent: true }); } catch (error) { caught = error; }
+        assert(caught?.code === 'auth_expired' && location.href.startsWith('/lf/login?returnUrl='), '401 須導向子站登入');
+    },
+    async downloadTooLarge() {
+        let canceled = false;
+        const body = new ReadableStream({
+            pull(controller) { controller.enqueue(new Uint8Array(4)); },
+            cancel() { canceled = true; }
+        }, { highWaterMark: 0 });
+        globalThis.fetch = async () => new Response(body, { headers: { 'Content-Type': 'application/json' } });
+        let caught;
+        try { await api.download('/api/x', { maxBytes: 5, silent: true }); } catch (error) { caught = error; }
+        assert(caught instanceof ApiError && caught.code === 'download_byte_cap' && canceled, '超限須拒絕並停止讀取');
+    },
     async 唯讀POST保留JSON與CSRF且逾時可辨識() {
         let captured;
         globalThis.fetch = (url, init) => {

@@ -2,7 +2,7 @@
  * PRTG 維護（「系統管理 > PRTG 維護」頁）：連線設定、擷取參數、鏡像狀態與環境探測。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, saveBlobAsFile } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { pollWhile } from '../core/async-guards.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
@@ -2676,7 +2676,7 @@ function bindPrtgDataTransfer() {
         finally { operationBusy = false; savePending(pending); }
     });
 
-    exportBtn?.addEventListener('click', () => {
+    exportBtn?.addEventListener('click', async () => {
         const from = document.getElementById('prtg-export-from')?.value?.trim();
         const to = document.getElementById('prtg-export-to')?.value?.trim();
 
@@ -2690,8 +2690,20 @@ function bindPrtgDataTransfer() {
             return;
         }
 
-        const url = appUrl(`/api/admin/settings/prtg-export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-        window.location.assign(url);
+        if (exportBtn.disabled) return;
+        const restore = withBusy(exportBtn, '匯出中…');
+        try {
+            const { blob, filename } = await api.download(
+                `/api/admin/settings/prtg-export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+                { timeoutMs: 300000, silent: true });
+            saveBlobAsFile(blob, filename || `prtg-export-${from}_${to}.json`);
+            toast('PRTG 資料已匯出。', 'success');
+        } catch (error) {
+            // 失敗留在目前頁面以 toast 顯示原因，不整頁跳轉
+            if (error?.name !== 'AbortError') toast(error?.message || '匯出失敗，請稍後再試。', 'danger');
+        } finally {
+            restore();
+        }
     });
 
     importBtn?.addEventListener('click', async () => {

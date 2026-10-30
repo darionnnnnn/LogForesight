@@ -56,6 +56,10 @@ public class ApiTimeoutBehaviorTests
     [InlineData("JSON下載登入逾期保留子站導頁")]
     [InlineData("JSON下載已知超限不等待取消確認")]
     [InlineData("JSON下載非JSON不等待取消確認")]
+    [InlineData("downloadOk")]
+    [InlineData("downloadTimeout")]
+    [InlineData("download401")]
+    [InlineData("downloadTooLarge")]
     public void 前端等待體驗的行為案例(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
