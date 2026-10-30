@@ -25,7 +25,7 @@
 |---|---|
 | 資料表 `lf_`、索引 `ix_lf_` 前綴，識別字使用小寫 snake_case | 避免與同庫其他系統混淆；EF 模型與升級器共用命名 |
 | 長文字與巢狀資料由應用層序列化，存入文字欄位 | 不讓查詢依賴單一資料庫的 JSON 函式 |
-| 欄位長度與可空性在 EF 模型及寫入前共同把關 | SQLite 對字串長度較寬鬆，SQL Server 會拒絕超長值。外部字串落地前一律經 `ColumnClamp`（上限讀 EF 模型的 `HasMaxLength`）截斷；鍵欄位（`source_key`、`issue_key` 等）不截斷——`source_key` 由 `SourceKeyOf` 先截 255 再轉大寫，`issue_key` 超過上限則不寫並警告 |
+| 欄位長度與可空性在 EF 模型及寫入前共同把關 | SQLite 對字串長度較寬鬆，SQL Server 會拒絕超長值。外部字串落地前一律經 `ColumnClamp`（上限讀 EF 模型的 `HasMaxLength`）截斷；鍵欄位（`source_key`、`issue_key` 等）不截斷——`source_key` 由 `SourceKeyOf` 先截 255 再轉大寫，`issue_key` 超過上限則不寫並警告。簽章的 `Source`／`LogName` 在入口（`LogIssueSignature` 的 setter，所有建構與反序列化路徑都經過）就截到 255，問題鍵與來源鍵都由截斷後的值衍生。已知限制：SQLite 不強制長度，舊版寫入的列可能存有超過 255 字的來源，讀回時會在記憶體截斷，與新寫入的鍵一致 |
 | 主鍵、分頁及日期查詢交給 EF Core；少數升級 DDL 分 provider 實作 | 兩個後端的 SQL 語法與索引管理不同 |
 | 寫入多表時明訂交易邊界；SQL Server 的顯式交易由執行策略包住 | 避免部分寫入及重試策略與自開交易衝突 |
 

@@ -18,8 +18,23 @@ public class LoginFailureDetail
 
 public class LogIssueSignature
 {
-    public string LogName { get; set; } = string.Empty;
-    public string Source { get; set; } = string.Empty;
+    private string _logName = string.Empty;
+    private string _source = string.Empty;
+
+    /// <summary>
+    /// 外部字串在入口截斷到欄位上限（<see cref="WorkOrderIssueKey.SourceMaxLength"/>＝255，與 source_name／log_name 欄位同長）：
+    /// 問題鍵、來源鍵都由截斷後的值衍生，記憶體中的鍵才會與存檔後讀回的鍵一致。所有建構路徑（彙整、PRTG 對應、
+    /// 讀回資料列、JSON 反序列化）都經過這個 setter。
+    /// </summary>
+    public string LogName { get => _logName; set => _logName = ClampEntry(value); }
+
+    /// <summary>事件來源；入口截斷規則同 <see cref="LogName"/>。</summary>
+    public string Source { get => _source; set => _source = ClampEntry(value); }
+
+    private static string ClampEntry(string? value) =>
+        value is null ? string.Empty
+            : value.Length <= WorkOrderIssueKey.SourceMaxLength ? value : value[..WorkOrderIssueKey.SourceMaxLength];
+
     public int EventId { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
