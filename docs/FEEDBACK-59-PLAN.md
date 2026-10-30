@@ -43,6 +43,7 @@
 | B1 | Sonnet | `ColumnClamp`（上限讀 LfDbContext Model）；top_issues／first_seen／risky_events／permission_changes／issue_cases／manual_map 寫入截斷；刪三份私有 Truncate | 主代理重跑 536 綠；突變拿掉 RuleId 截斷 → 1 紅 | `EfPrtgStore.Truncate` 原只被 IpExclude 用，UpsertManualMap 原本完全沒截斷，兩處都補；`Target`／`ProcessName` 無上限不截 |
 | B2 | Sonnet | 首見日與聚合查詢的來源鍵改走 `SourceKeyOf`（舊相容路徑保留）；首見日 catch 只吞唯一鍵；issue_key 超長拒寫並警告 | 主代理重跑 321 綠；突變首見日鍵改回全長 → 1 紅；代理另突變聚合鍵與 issue_key 守門 | SQLite 不強制長度，測試改斷言「存檔鍵＝SourceKeyOf 且 255 字」以確保改動前會紅；SqlException 無法建構只測 SQLite 19 |
 | B3 | Sonnet | `rule_id` 上限改引用 `RuleSchemaLimits.IdMaxLength`；SQL Server 建表 100、每次升級以 INFORMATION_SCHEMA 判斷長度不足才 ALTER | 主代理重跑 111 綠；突變 ALTER 改 SELECT → DDL 測試紅 | SQL Server 實機 ALTER 未連線驗證（專案限制）；呼叫點以讀碼確認（SchemaUpgrader.cs:361） |
+| B4 | Sonnet | 復原服務孤兒頁對保留期外 workflow blob 精確刪除（同租約、同邊界；不刪未來日、保留期內孤兒、cursor） | 主代理重跑 36 綠；突變邊界 `<` 改 `<=` → 邊界日案紅；代理突變停用刪除 → 2 紅 | 無 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

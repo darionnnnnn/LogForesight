@@ -4,6 +4,7 @@ using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using LogForesight.Web.Services;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -390,6 +391,59 @@ public sealed class HostDayWorkflowRecoveryHostedServiceTests : IDisposable
             Assert.False(record.RiskReportPending);
             Assert.NotNull(record.ReportFile);
         });
+    }
+
+    [Fact]
+    public async Task RunSlice_orphanPagePurgesOnlyWorkflowBlobsOlderThanRetention()
+    {
+        var today = new DateTime(2026, 10, 20);
+        var retentionFrom = today.AddDays(-1).AddDays(-10 + 1);
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
+        var store = new HostDayWorkflowStore(_backend);
+        var old = retentionFrom.AddDays(-1);
+        var edge = retentionFrom;
+        var future = today;
+        foreach (var d in new[] { old, edge, future }) store.Update(7, d, _ => { });
+        _backend.Blob(HostDayWorkflowStore.RecoveryCheckpointBlobKey).Mutate(_ => ("{}", true));
+
+        await RunOrphanSlice(workflow, today);
+
+        Assert.Null(store.Get(7, old));
+        Assert.NotNull(store.Get(7, edge));
+        Assert.NotNull(store.Get(7, future));
+        Assert.NotNull(_backend.Blob(HostDayWorkflowStore.RecoveryCheckpointBlobKey).Read());
+    }
+
+    [Fact]
+    public async Task RunSlice_orphanPagePurgeFailureDoesNotStopRemainingItems()
+    {
+        var today = new DateTime(2026, 10, 20);
+        var retentionFrom = today.AddDays(-1).AddDays(-10 + 1);
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(_backend));
+        var store = new HostDayWorkflowStore(_backend);
+        var bad = retentionFrom.AddDays(-2);
+        var good = retentionFrom.AddDays(-1);
+        store.Update(8, bad, _ => { });
+        store.Update(8, good, _ => { });
+        using (var ctx = _backend.CreateContext())
+        {
+            ctx.Database.ExecuteSqlRaw("CREATE TRIGGER lf_block_wf_delete BEFORE DELETE ON lf_blobs " +
+                $"WHEN OLD.blob_key = 'workflow_8_{bad:yyyyMMdd}' BEGIN SELECT RAISE(ABORT, 'blocked'); END;");
+        }
+
+        await RunOrphanSlice(workflow, today);
+
+        Assert.NotNull(store.Get(8, bad));
+        Assert.Null(store.Get(8, good));
+    }
+
+    private Task<HostDayWorkflowRecoveryHostedService.RecoverySliceResult> RunOrphanSlice(
+        HostDayWorkflowService workflow, DateTime today)
+    {
+        var budget = new HostDayWorkflowRecoveryHostedService.RecoveryBudget(10, 0, 0, 1,
+            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3));
+        return CreateService(new FakeAnalysisRecordQuery(), RecoverySettings(), workflow, budget)
+            .RunSliceAsync(CancellationToken.None, today);
     }
 
     private DailyAnalysisRecord AppendParent(long hostId, DateTime day, string host)

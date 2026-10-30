@@ -237,6 +237,8 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
 
             var inWindow = page.Items.Where(key => key.Date >= retentionFrom && key.Date <= retentionTo).ToArray();
             var existing = _records.ExistingHostDays(inWindow.Select(key => (key.HostId, key.Date)).ToArray());
+            var purged = 0;
+            var store = new HostDayWorkflowStore(_backend);
             foreach (var key in page.Items)
                 if (key.Date < retentionFrom || key.Date > retentionTo || !existing.Contains((key.HostId, key.Date.Date)))
                 {
@@ -244,7 +246,20 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                             retentionFrom, retentionTo))
                         Log.Info("Workflow orphan snapshot was stale; retained the current parent: hostId={HostId} date={Date:yyyy-MM-dd}",
                             key.HostId, key.Date);
+                    // 保留期外（不含未來日、不含保留期內的孤兒）的狀態 blob 在重置後一併刪除。
+                    if (key.Date < retentionFrom)
+                    {
+                        try
+                        {
+                            if (store.Delete(key.HostId, key.Date)) purged++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Warn(ex, "清除保留期外工作流狀態失敗：hostId={HostId} date={Date:yyyy-MM-dd}", key.HostId, key.Date);
+                        }
+                    }
                 }
+            if (purged > 0) Log.Info("清除保留期外工作流狀態 {Count} 筆", purged);
             cursor.AfterWorkflowKey = page.NextCursor;
             WriteCursor(cursor);
             outcome = new PageOutcome(true, true, false, page.RawCount, 0, 0);
