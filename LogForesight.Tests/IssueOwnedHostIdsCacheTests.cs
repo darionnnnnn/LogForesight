@@ -254,6 +254,35 @@ public class IssueOwnedHostIdsCacheTests
         Assert.Equal(new HashSet<long> { host.HostId }, second.ToHashSet());
     }
 
+    // ── 版本戳只前進：晚到的舊版本請求不得清掉較新的條目 ─────────────────────────
+
+    /// <summary>
+    /// 版本 2 的條目建立後，一個版本 1 的晚到請求不得清空快取；之後的版本 2 請求仍應命中。
+    /// DataVersionStamp 只會前進，這裡用反射把版本戳設回 1，只為重現「舊版本請求」。
+    /// </summary>
+    [Fact]
+    public void 較舊版本的晚到請求_不清空較新版本的條目()
+    {
+        var stamp = new DataVersionStamp();
+        var cache = new IssueOwnedHostIdsCache(stamp);
+        stamp.Bump();
+        stamp.Bump();
+        cache.GetOrAdd(7, 90, () => new HashSet<long> { 1 });   // 建立版本 2 條目
+
+        SetStampVersion(stamp, 1);
+        var late = cache.GetOrAdd(7, 90, () => new HashSet<long> { 99 });
+        Assert.Equal(new HashSet<long> { 99 }, late.ToHashSet());
+
+        SetStampVersion(stamp, 2);
+        var hit = cache.GetOrAdd(7, 90, () => throw new InvalidOperationException("版本 2 條目應命中，不得重算"));
+        Assert.Equal(new HashSet<long> { 1 }, hit.ToHashSet());
+    }
+
+    private static void SetStampVersion(DataVersionStamp stamp, long value) =>
+        typeof(DataVersionStamp)
+            .GetField("_version", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .SetValue(stamp, value);
+
     // ── TTL：逾時後重算（清理機制，不是新鮮度來源）─────────────────────────────
 
     [Fact]

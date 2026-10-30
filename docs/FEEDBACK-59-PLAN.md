@@ -61,6 +61,7 @@
 | D2 | Sonnet | `BatchRunTriggers` 常數＋`IsScheduledFetch()` 單一出口；PRTG 重評中斷判定排除 AI 排程；窗口略過判定改 `!=` | 代理：突變拿掉 AI 排除 5 紅；主代理重跑規格篩選 254 綠 | `StartsWith("schedule")` 全專案無其他前綴值，改 `!=` 等價 |
 | D3 | Sonnet | Tick 改為先判斷窗口與觸發、finally 再寄信；四個背景服務停機取消不記 Error；TriggerRunAsync 取消改記 Info | 代理：兩個突變（先寄信、拿掉取消 catch）各 1 紅；主代理重跑 304 綠 | 規格外同型處理：PRTG 啟動補抓與權限遷移 :46 的取消豁免；新增 `StartupDelay` 供測試縮短 |
 | D4a | Sonnet | 迴圈只在開頭實查待補、全滅才再查；`AiCalls = Done − Skipped + Failed`；一輪共用 `IAiService` 與 HostId→Os 對照 | 代理：三個突變各紅；主代理重跑 166 綠 | 主代理驗收抓到：輪詢改讀 30 秒快取後，取數期間的「0 筆」會擋住接續開跑 → 跟隨取數期間與接續觸發先使快取失效，加守門測試（拿掉修正即紅）；驗收 2 改 4 筆（3 筆時新舊公式同值） |
+| D4b | Haiku | `ChatJsonAsync` 傳輸層失敗立即回傳、不進 JSON 重試；`IssueOwnedHostIdsCache` 只在版本前進時清空 | 代理：改動前 3 紅、兩個突變各紅；主代理重跑 170 綠 | 空回應由 Polly 層重試，JSON 層不再加倍；舊版本晚到結果存在舊版本鍵下，不污染新版本 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

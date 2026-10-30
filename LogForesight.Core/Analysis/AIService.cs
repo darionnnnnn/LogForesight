@@ -378,7 +378,11 @@ public class AIService : IAiService
 
             if (!response.Success)
             {
-                lastError = response.Error;
+                // 傳輸層失敗（連線、HTTP 錯誤、逾時）：沒有回覆可供修正，重問只會把同一段等待再放大一次，
+                // 立即回傳失敗。JSON 重試只針對「有回應但內容不合格」（D4 契約 4）。
+                Log.Warn("ChatJsonAsync 傳輸層失敗（第 {Attempt}/{Total} 次），不進 JSON 重試：{Error}",
+                    attempt, totalAttempts, response.Error);
+                return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = response.Error, Attempts = attempt };
             }
             else
             {
