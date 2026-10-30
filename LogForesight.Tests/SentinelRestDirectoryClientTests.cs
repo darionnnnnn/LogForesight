@@ -1298,4 +1298,26 @@ public class SentinelRestDirectoryClientTests
             return resp;
         }
     }
+
+    /// <summary>
+    /// 結果頁讀不到（Found&gt;0、取回 0）時殘差輪立刻停：Truncated 對它也為 true，不處理會把同一個查詢
+    /// 重掃到輪數用盡、最後誤報「主機數超出單次掃描能力」（體檢輪）。
+    /// </summary>
+    [Fact]
+    public async Task 結果頁讀不到時殘差輪只掃一次並說明原因()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(1000),   // Found=1000 但零筆取回 → Unreadable
+            Empty());              // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Empty(result.Hosts);
+        // 只建兩個 job：殘差輪第 1 輪（讀不到就停）＋補充掃描；不處理會掃到輪數用盡
+        Assert.Equal(2, handler.Filters.Count);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("讀不到結果頁", warning);
+        Assert.DoesNotContain("主機數超出單次掃描能力", warning);
+    }
 }

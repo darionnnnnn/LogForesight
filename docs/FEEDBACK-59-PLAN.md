@@ -163,6 +163,29 @@
 
 **查證後不改**：A-5 returnUrl 擋 `://` 會誤殺 query 內含網址的站內路徑（安全面保守，沿用既有規則）；A-1 校準匯出改需 ViewAll 屬待決 5 已定案；NetIQ 單筆登錄重新啟用時清除孤兒標記與 SetActive 定案一致；有界探測的登出請求計入配額（重新認證極少發生）；`ReassignLogNote` 舊列維持原字樣（只影響新寫入）；`LegacyCaseSeeder` 只用於「無單舊資料防禦」測試、未掩蓋正式流程。
 
+## 體檢交接
+
+- 實作與〈實作完成核對〉〈收尾前體檢〉：Claude Opus 5.5（主代理）＋Sonnet 5.5 改檔代理；全量 6,901 通過／10 略過。
+- 換模型體檢與收尾：Claude Fable 5.1（2026-10-31）。四個唯讀 Sonnet 5.5 審查代理分區（排程／AI／儲存、交辦與處理人、前端、PRTG／NetIQ／授權），
+  每區附「先前已查過」清單、要求找沒查過的狀態組合；規劃比對（grep 類驗收逐條重跑、契約子句抽查）由主代理親做。
+
+## 體檢輪修正（Fable 5.1，2026-10-31）
+
+規劃比對：批次 A～G 的 (G) 類驗收全部重跑通過；C-2 保留 `SourceObservations`、C-9 週檢維持 Windows、E-3 守門白名單三項偏差皆已記於執行紀錄。
+審查代理共回報 13 條，主代理讀碼查證後修 6 條、記 BACKLOG 3 條、不改 4 條：
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| 1 | `AiAnalysisHostedService` D-4「一輪共用一個 AIService」 | `AIService` 內有逐實例請求佇列（非互動車道 `_requestQueue.WaitAsync`），整輪共用一個實例把所有主機分片的呼叫串成單線，設定頁 `AiConcurrency` 形同失效（本輪回歸） | 一輪只解析一次設定，改回傳工廠 `ResolveAiServiceFactory()`，每個分片各建一個實例（跨分片併發仍由全站閘道管） | `AiAnalysisSchedulerTests.同一輪兩個主機分片_設定只解析一次但每個分片各建一個AI服務`（ResolveCalls=1、FactoryCalls=2） |
+| 2 | `EfJsonBlobStore.IsTransient` B-8 | 收窄重試後，SQL Server 鎖等待逾時 1222／死結 1205 的訊息不含 busy／locked 字樣，不再重試 | 依 `SqlException.Number` 1205／1222 認定暫時性 | 無法以 SQLite 替身造 SqlException，讀碼確認；既有 `BlobStoreRoundTripTests` 綠 |
+| 3 | `work-order-detail.js` 時間軸 | 系統結案事件的註記就是原因代碼（`empty_dispatch`、`moved`…），`eventNoteText` 只翻「代碼：說明」，時間軸露出英文代碼 | 先查 `workOrderClosedReasonText`；說明書 05 章原因代碼補 `empty_dispatch` | `HandlingStatusCatalogUiTests.交辦單時間軸把系統結案原因代碼翻成中文` |
+| 4 | `host-detail.js` G-11 | (a) 回應未到前收合再展開會重打同一請求、重畫兩次；(b) 時間軸高亮只有一份：兩列都展開時先點那列晚到的回應蓋掉後點的列、收合別列清掉它的高亮、排序重建表格後面板 `expanded` 殘留 | 進行中請求沿用；高亮由「最後展開的面板」持有（`claimHighlight`／`releaseHighlight`）；`renderIssues` 重建時 `reset()` 所有展開面板並釋放高亮 | `misc-pages.behavior.mjs` 新增 `hostDetail回應未到前收合再展開不重打也不重畫`、`hostDetail先展開列晚到的回應不蓋掉最後展開的列`；既有三案改為共用頁面層狀態 |
+| 5 | `report-view.js`、`prtg-admin.js` 探測輸出下載 | 仍是 `click()` 後同步（或 1 秒後）`revokeObjectURL`，與修正四處理的是同一型 | 改走 `saveBlobAsFile`（延後 revoke） | `FrontendMiscUiTests` 既有 `saveBlobAsFile` 守門涵蓋 api.js；兩處以 grep 確認無 `revokeObjectURL` |
+| 6 | `NetiqDirectoryClient.RunResidualRoundsAsync` D-7 | `Unreadable`（Found>0 取回 0）時 `Truncated` 也為 true，殘差輪會把同一查詢重掃到輪數用盡並誤報「主機數超出單次掃描能力」 | `Unreadable` 先於 `Truncated` 判斷：記一條「讀不到結果頁」警告、`Complete:false` 結束 | `SentinelRestDirectoryClientTests.結果頁讀不到時殘差輪只掃一次並說明原因` |
+
+記入 BACKLOG：AI 傳輸失敗維持待補後 AI 停機時每個輪詢週期重試一批、無跨輪退避；日層級指派的靜音判定讀行程內 `IssueExclusionProvider` 快照，多行程部署下另一行程剛設的靜音要到版本戳推進才生效；快照契約對整批感測器皆已刪除的 `sensors: []` 仍判契約不符。
+查證後不改：帳本滿載原因由事後重讀區分、極端併發下只影響診斷文案（E-7 已定分帳策略不在本輪）；NetIQ 非 IPv4／未知作業系統主機逐台警告不彙總（警告就是修清單的依據，量＝需修的主機數）；`pollWhile` 無收斂上限與 401 每輪重設導頁（BACKLOG 既有條目、無實害）；`HandlerFacingWordingUiTests` 不掃 `.cshtml`／信件模板（目前無違規，掃描範圍擴充列第 61 輪 M）。
+
 ## 0. 總結
 
 | 面向 | 高 | 中 | 低 | 一句話 |

@@ -2531,12 +2531,7 @@ function bindPrtgProbe() {
     downloadButton?.addEventListener('click', () => {
         if (!outputEl.value || downloadButton.disabled) return;
         const blob = new Blob([outputEl.value + '\n'], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `prtg-probe-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-        anchor.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        saveBlobAsFile(blob, `prtg-probe-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`);
     });
 }
 

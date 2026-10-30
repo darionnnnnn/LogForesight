@@ -390,9 +390,11 @@ public class AiAnalysisHostedService : BackgroundService
         // 同一批失敗者原樣重試。成功者寫回後已不是待補，從集合移除，查詢只需多取失敗者的列數。
         var attempted = new HashSet<(long HostId, string Host, DateTime Date)>();
 
-        // 一輪只解析一次 AI 服務與主機作業系統對照（閘道已負責節流）。
+        // 一輪只解析一次 AI 設定與主機作業系統對照；AI 服務實例仍每個分片一個——
+        // AIService 內有逐實例的請求佇列，整輪共用一個實例會把所有分片的呼叫串成單線，
+        // 設定頁的 AiConcurrency 形同失效（跨分片的併發上限由全站閘道負責）。
         // 設定在輪中變更不即時生效，下一輪才採用；也不在每個分片、每批重讀主機表。
-        var aiService = _injectedAiService ?? ResolveAiService();
+        var aiServiceFactory = _injectedAiService is { } injected ? () => injected : ResolveAiServiceFactory();
         var hostOsMap = new HostOsLookup(BuildHostOsMap);
 
         // 待補總數：只在迴圈開頭實查一次，之後以「本批前總數 - 本批完成數」估算
@@ -440,7 +442,7 @@ public class AiAnalysisHostedService : BackgroundService
                     var first = group.First();
                     var hostKey = new HostKey { HostId = first.HostId, HostName = first.Host };
                     var hostStore = _storageBackend.RecordStore(hostKey);
-                    var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore, aiService, hostOsMap);
+                    var analysisService = CreateAnalysisServiceForHost(hostKey, hostStore, aiServiceFactory(), hostOsMap);
 
                     // 片內序列：方向已在分片時決定（近日層新→舊、積壓層舊→新）
                     foreach (var record in group)
@@ -677,12 +679,15 @@ public class AiAnalysisHostedService : BackgroundService
             hostOs: hostOs);
     }
 
-    internal virtual IAiService ResolveAiService()
+    /// <summary>
+    /// 每輪處理只解析一次 AI 設定，回傳的工廠供每個主機分片各建一個 <see cref="AIService"/>
+    /// （逐實例請求佇列不跨分片共用；跨實例的併發上限與互動優先由全站閘道負責）。
+    /// </summary>
+    internal virtual Func<IAiService> ResolveAiServiceFactory()
     {
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
-        // 每輪處理只解析一次，該輪所有分片共用；跨實例的併發上限與互動優先由全站閘道負責
-        return new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
+        return () => new AIService(settings.Ai, dumper: null, usageMeter: new AiUsageStore(_storageBackend.Blob(AiUsageStore.BlobKey)),
             gate: _aiGate);
     }
 }

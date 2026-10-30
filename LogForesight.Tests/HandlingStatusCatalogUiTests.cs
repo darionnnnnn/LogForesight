@@ -79,4 +79,17 @@ public class HandlingStatusCatalogUiTests
         Assert.Contains("preview.skippedByReason", js);
         Assert.Contains("updated.skippedByReason", js);
     }
+
+    [Fact]
+    public void 交辦單時間軸把系統結案原因代碼翻成中文()
+    {
+        // 系統結案事件的註記就是原因代碼本身（empty_dispatch 等），只翻「代碼：說明」會讓時間軸露出英文代碼（體檢輪）
+        var detail = File.ReadAllText(JsPath("pages", "work-order-detail.js"));
+        var fn = detail[detail.IndexOf("function eventNoteText(", StringComparison.Ordinal)..];
+        fn = fn[..fn.IndexOf("\nfunction ", 1, StringComparison.Ordinal)];
+        Assert.Contains("workOrderClosedReasonText(note)", fn);
+        var format = File.ReadAllText(JsPath("core", "format.js"));
+        foreach (var code in new[] { "all_closed", "moved", "cancelled", "admin_closed", "empty_dispatch" })
+            Assert.Contains(code + ":", format);
+    }
 }

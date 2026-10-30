@@ -710,6 +710,16 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
 
             newHosts += scan.Absorb(result.Events);
 
+            // 結果頁讀不到（Found>0 卻一筆都沒取回）：Truncated 也會是 true，但再掃一輪只會得到
+            // 同樣的空結果——不燒輪數、不說成「主機數超出單次掃描能力」
+            if (result.Unreadable)
+            {
+                warnings.Add(
+                    $"{stageName}：Sentinel 回報有 {result.Found} 筆資料卻讀不到結果頁（avail 為 0 或首頁為空），" +
+                    "本段清單可能不完整。請稍後重掃；持續發生請檢查 Sentinel 的結果頁服務。");
+                return new RoundsOutcome(newHosts, Complete: false);
+            }
+
             if (!result.Truncated)
             {
                 // 沒觸頂＝這一輪把殘差掃乾淨了，涵蓋保證成立

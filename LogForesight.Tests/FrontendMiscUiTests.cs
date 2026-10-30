@@ -220,6 +220,8 @@ public class FrontendMiscBehaviorTests
     [InlineData("hostDetail收合後回應不呼叫highlightTimeline")]
     [InlineData("hostDetail仍展開時照常高亮")]
     [InlineData("hostDetail收合再展開沿用快取並高亮")]
+    [InlineData("hostDetail回應未到前收合再展開不重打也不重畫")]
+    [InlineData("hostDetail先展開列晚到的回應不蓋掉最後展開的列")]
     [InlineData("runs天數連點舊回應晚到不蓋新結果")]
     [InlineData("runs舊載入失敗不外擲")]
     [InlineData("runs最新載入失敗要外擲")]

@@ -318,6 +318,9 @@ public sealed class EfJsonBlobStore
         // 判定與紀錄庫的首見日競態共用同一份（EfAnalysisRecordStore.IsUniqueViolation：SQLite 19／SQL Server 2601、2627）。
         if (ex is DbUpdateException due && EfAnalysisRecordStore.IsUniqueViolation(due)) return true;
 
+        // SQL Server 鎖等待逾時（1222）／死結（1205）：訊息不含 busy／locked 字樣，依錯誤碼認定
+        if (ex is DbUpdateException { InnerException: Microsoft.Data.SqlClient.SqlException { Number: 1205 or 1222 } }) return true;
+
         var msg = ex.Message.ToLowerInvariant();
         // 其餘 DbUpdateException（截斷／FK 等）重試也不會好，只有訊息（含內層）屬暫時性才重試。
         if (ex is DbUpdateException && ex.InnerException != null)

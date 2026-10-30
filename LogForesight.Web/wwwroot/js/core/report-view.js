@@ -14,6 +14,7 @@
  */
 
 import { icon, toast, showDetailModal } from './ui.js';
+import { saveBlobAsFile } from './api.js';
 import { safeStorage } from './storage.js';
 
 /**
@@ -39,14 +40,7 @@ function downloadReport(report) {
     // BOM：Windows 記事本／Excel 讀無 BOM 的 UTF-8 中文會是亂碼，而報告是拿去給人看、
     // 常被直接雙擊開啟的交付物
     const blob = new Blob(['﻿' + report.content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = report.fileName || 'report.txt';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    saveBlobAsFile(blob, report.fileName || 'report.txt');
 }
 
 async function copyReport(report) {

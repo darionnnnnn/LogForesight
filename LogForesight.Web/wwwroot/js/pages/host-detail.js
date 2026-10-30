@@ -341,6 +341,11 @@ let currentDetail = null;
  */
 function renderIssues(detail) {
     currentDetail = detail;
+    // 重建表格（首次載入、排序）時所有列都回到收合：面板的展開旗標與時間軸高亮一起歸零，
+    // 否則排序前展開那列晚到的回應仍會替已收合的列上色
+    for (const panel of openPanels) panel.reset();
+    openPanels.clear();
+    releaseHighlight(highlightOwner);
     if (detail.caseGrantOnly === true) {
         renderCaseGrantScopeNotice(document.getElementById('host-issues'),
             '交辦授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。');
@@ -369,6 +374,26 @@ function renderIssues(detail) {
 
 // 每個問題簽章一份面板狀態：排序重建表格時沿用，已取得的明細不必重打 API
 const occurrenceDetailPanels = new WeakMap();
+// 目前展開中的面板（重建表格時要一起收合）、時間軸高亮的持有者與最後展開的面板：
+// 高亮只有一份，由最後展開的列持有——兩列都展開時先點的那列晚到的回應不得蓋掉後點的列，
+// 收合別列也不得清掉它的高亮
+const openPanels = new Set();
+let highlightOwner = null;
+let lastOpenedPanel = null;
+
+function claimHighlight(panel, dates) {
+    if (lastOpenedPanel !== panel) return;
+    highlightOwner = panel;
+    highlightTimeline(dates);
+}
+
+function releaseHighlight(panel) {
+    if (!panel) return;
+    if (lastOpenedPanel === panel) lastOpenedPanel = null;
+    if (highlightOwner !== panel) return;
+    highlightOwner = null;
+    clearTimelineHighlight();
+}
 
 function lastSeenLink(signature) {
     const link = document.createElement('a');
@@ -397,13 +422,21 @@ function occurrenceDetailPanel(signature) {
 
     let cachedDates = null;
     let expanded = false;
+    let inFlight = null;
+    const panel = { element: container, setOpen, reset };
 
-    async function load() {
+    function load() {
         if (cachedDates) {
-            highlightTimeline(cachedDates);
-            return;
+            claimHighlight(panel, cachedDates);
+            return inFlight;
         }
+        // 回應未到前收合再展開：沿用進行中的請求，不重打也不重畫兩次
+        if (inFlight) return inFlight;
+        inFlight = fetchAndRender().finally(() => { inFlight = null; });
+        return inFlight;
+    }
 
+    async function fetchAndRender() {
         renderSpinner(container, '載入中…');
 
         try {
@@ -411,7 +444,7 @@ function occurrenceDetailPanel(signature) {
             const data = await api.get(`/api/host-detail/${hostId}/issues?${params.toString()}`, { silent: true });
             cachedDates = data.occurrences.map(o => o.date);
             renderOccurrencePanel(container, data);
-            if (expanded) highlightTimeline(cachedDates);
+            if (expanded) claimHighlight(panel, cachedDates);
         } catch {
             container.replaceChildren();
             const error = document.createElement('div');
@@ -424,11 +457,22 @@ function occurrenceDetailPanel(signature) {
 
     function setOpen(open) {
         expanded = open;
-        if (open) load();
-        else clearTimelineHighlight();
+        if (open) {
+            openPanels.add(panel);
+            lastOpenedPanel = panel;
+            load();
+        } else {
+            openPanels.delete(panel);
+            releaseHighlight(panel);
+        }
     }
 
-    return { element: container, setOpen };
+    /** 表格重建、列已收合但沒有經過 onRowToggle：只收旗標，高亮由呼叫端統一清 */
+    function reset() {
+        expanded = false;
+    }
+
+    return panel;
 }
 
 function renderOccurrencePanel(container, data) {

@@ -51,9 +51,13 @@ function makeHostPanel() {
     const api = makePendingApi();
     const state = { highlights: [], clears: 0, rendered: 0 };
     const node = () => ({ className: '', textContent: '', appendChild() {}, replaceChildren() {} });
-    const inst = build('host-detail.js', ['function occurrenceDetailPanel('], `
+    // 頁面層的高亮歸屬（openPanels／highlightOwner／lastOpenedPanel）一併帶入，兩個面板共用同一份
+    const inst = build('host-detail.js', ['function occurrenceDetailPanel(', 'function claimHighlight(', 'function releaseHighlight('], `
         const hostId = 1;
         const currentDays = 30;
+        const openPanels = new Set();
+        let highlightOwner = null;
+        let lastOpenedPanel = null;
     `, '{ occurrenceDetailPanel }', {
         api,
         document: { createElement: node },
@@ -63,7 +67,8 @@ function makeHostPanel() {
         clearTimelineHighlight: () => { state.clears++; }
     });
     const panel = inst.occurrenceDetailPanel({ source: 'System', eventId: 7 });
-    return { panel, pending: api.pending, state };
+    const second = inst.occurrenceDetailPanel({ source: 'System', eventId: 8 });
+    return { panel, second, pending: api.pending, state };
 }
 
 function makeRuns() {
@@ -325,7 +330,7 @@ const cases = {
         await tick();
         assert.equal(h.state.highlights.length, 0, '收合後抵達的回應不得替時間軸上色');
         assert.equal(h.state.rendered, 1, '內容仍要渲染（下次展開可直接用）');
-        assert(h.state.clears >= 1, '收合要清掉高亮');
+        assert.equal(h.state.clears, 0, '尚未高亮過就沒有東西要清（高亮由持有者釋放）');
     },
     async hostDetail仍展開時照常高亮() {
         const h = makeHostPanel();
@@ -333,6 +338,31 @@ const cases = {
         h.pending[0].resolve({ occurrences: [{ date: '2026-10-01' }, { date: '2026-10-02' }] });
         await tick();
         assert.deepEqual(h.state.highlights, [['2026-10-01', '2026-10-02']]);
+    },
+    async hostDetail回應未到前收合再展開不重打也不重畫() {
+        const h = makeHostPanel();
+        h.panel.setOpen(true);
+        h.panel.setOpen(false);
+        h.panel.setOpen(true);
+        assert.equal(h.pending.length, 1, '進行中的請求要沿用');
+        h.pending[0].resolve({ occurrences: [{ date: '2026-10-01' }] });
+        await tick();
+        assert.equal(h.state.rendered, 1, '只渲染一次');
+        assert.deepEqual(h.state.highlights, [['2026-10-01']], '仍展開所以要高亮一次');
+    },
+    async hostDetail先展開列晚到的回應不蓋掉最後展開的列() {
+        const h = makeHostPanel();
+        h.panel.setOpen(true);    // A
+        h.second.setOpen(true);   // B（最後展開）
+        h.pending[1].resolve({ occurrences: [{ date: '2026-10-02' }] });   // B 先回
+        await tick();
+        h.pending[0].resolve({ occurrences: [{ date: '2026-10-01' }] });   // A 後回
+        await tick();
+        assert.deepEqual(h.state.highlights, [['2026-10-02']], '時間軸停在最後展開的 B');
+        h.panel.setOpen(false);   // 收合 A 不得清掉 B 的高亮
+        assert.equal(h.state.clears, 0);
+        h.second.setOpen(false);
+        assert.equal(h.state.clears, 1);
     },
     async hostDetail收合再展開沿用快取並高亮() {
         const h = makeHostPanel();

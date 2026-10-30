@@ -1671,6 +1671,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         private readonly IAiService _ai;
         public int ResolveCalls;
+        public int FactoryCalls;
 
         public ResolveCountingService(ScheduleOptionsStore o, SchedulerRunState sr, AiAnalysisRunState rs,
             IAnalysisRecordQuery q, StorageBackend b, ISystemSettingsStore ss, BatchRunStore runs,
@@ -1680,15 +1681,15 @@ public class AiAnalysisSchedulerTests : IDisposable
             _ai = ai;
         }
 
-        internal override IAiService ResolveAiService()
+        internal override Func<IAiService> ResolveAiServiceFactory()
         {
             Interlocked.Increment(ref ResolveCalls);
-            return _ai;
+            return () => { Interlocked.Increment(ref FactoryCalls); return _ai; };
         }
     }
 
     [Fact]
-    public async Task 同一輪兩個主機分片_ResolveAiService只呼叫一次()
+    public async Task 同一輪兩個主機分片_設定只解析一次但每個分片各建一個AI服務()
     {
         var service = new ResolveCountingService(
             new ScheduleOptionsStore(_backend.Blob("schedule_options")), new SchedulerRunState(), new AiAnalysisRunState(),
@@ -1704,5 +1705,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(0, store.CountPendingAi());
         Assert.Equal(2, _ai.Calls);
         Assert.Equal(1, service.ResolveCalls);
+        // 分片各自一個實例：共用一個會讓 AIService 的逐實例佇列把全輪串成單線（體檢輪）
+        Assert.Equal(2, service.FactoryCalls);
     }
 }
