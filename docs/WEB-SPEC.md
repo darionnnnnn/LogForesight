@@ -1298,7 +1298,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      **他人處理中的問題不可勾選、不可改狀態**：checkbox `disabled`、全選跳過、狀態欄唯讀，
      後端 `IssueHandlingCommandService.RequireNotHandledByOthers` 是實際防線（**admin 也擋**——
      admin 的正確動作是改派，不是繞過協調機制直接寫）。要換人處理走第 17 項的改派。
-  17. **案件改派**：`IssueCaseCoordinator.ReassignCase`
+  17. **案件改派**：`WorkOrderCoordinator.Reassign`（批次改派共用 `ReassignCases`）
      轉移進行中案件的 `HandlerId`，**不結案重開**——案件是「這個問題這一輪處理」的連續紀錄，
      重開會把回溯關聯過的日子重算、也會讓「先前處理」誤以為這輪已結束；逐日 `IssueHandling`
      列完全不動（狀態沒變），只寫一列 `case_reassign` 歷程（記在案件最近掛接的那一天）＋稽核。

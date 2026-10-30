@@ -384,8 +384,7 @@ public class DayHandlingCommandService
         {
             var issue = candidate.Issue;
 
-            // 寫入走交辦單協調器（每個問題一張 day_assign 單；同處理人同問題已有進行中單時自動併入），
-            // 與既有 BuildCase／ReassignCase 語意一一對應：
+            // 寫入走交辦單協調器（每個問題一張 day_assign 單；同處理人同問題已有進行中單時自動併入）：
             //   - 無進行中案件→建案並回溯歷史（NewCases）
             //   - 處理人就是自己的進行中案件→不算略過，只改連本單（LinkedExisting）
             //   - 他人進行中案件→預設保留原處理人並回報（SkippedConflicts，不搶走）；

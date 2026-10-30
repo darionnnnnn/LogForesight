@@ -99,7 +99,8 @@ public sealed class SourceKeyComparerTests
         var firstKey = IssueSignatureKey.For(first);
         Assert.Equal("System|disk|153|1", firstKey);
 
-        coordinator.BuildCase(host, firstKey, "disk 153", DateTime.Today.AddDays(-1),
+        new WorkOrderCaseSeeder(cases, handlings, logs, hosts, coordinator, new FakeWorkOrderStore(cases))
+            .Assign(host, firstKey, "disk 153", DateTime.Today.AddDays(-1),
             handlerId: 7, note: null, dueDate: null, actorId: 7, actorAccount: "owner", occurredAt: DateTime.Now);
         var result = coordinator.AttachNewDay(host, DateTime.Today,
             new[] { first, first, second }, DateTime.Now);

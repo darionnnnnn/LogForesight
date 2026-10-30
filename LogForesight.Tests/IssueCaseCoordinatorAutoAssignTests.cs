@@ -108,8 +108,10 @@ public class IssueCaseCoordinatorAutoAssignTests
     {
         var yesterday = DateTime.Today.AddDays(-1);
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, yesterday, handlerId: 99, note: "既有案件處理中",
-            dueDate: null, actorId: 1, actorAccount: "admin", occurredAt: DateTime.Now);
+        // 本案例的本意是「整併前遺留、沒有交辦單的進行中案件」仍須能被掛接掛入且不為它建單，
+        // 所以直接寫入舊資料列模擬，不經建案入口（正式碼已無法再產生這種案件）
+        LegacyCaseSeeder.Seed(_cases, _issueHandlings, _handlingLog, Host, IssueKey, IssueLabel, yesterday,
+            handlerId: 99, note: "既有案件處理中", dueDate: null, actorId: 1, actorAccount: "admin", occurredAt: DateTime.Now);
         Users(101);
         Owners(101);
 

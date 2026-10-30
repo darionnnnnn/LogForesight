@@ -468,8 +468,8 @@ public class WorkOrderCoordinator
     }
 
     /// <summary>
-    /// 批次改派的唯一一份（改派、拆單、成員改派共用）：逐案語意等同 <see cref="IssueCaseCoordinator.ReassignCase"/>
-    /// ——只改處理人（與所屬單），逐日列不動，在 LastLinkedDate 那天記一筆 CaseReassign 歷程。
+    /// 批次改派的唯一一份（改派、拆單、成員改派共用）：
+    /// 只改處理人（與所屬單），逐日列不動，在 LastLinkedDate 那天記一筆 CaseReassign 歷程。
     /// 案件一次 SaveMany，不逐案讀取（逐案 GetOpen 會讓查詢次數隨案件數線性增長）。
     /// </summary>
     private void ReassignCases(IReadOnlyList<IssueCase> cases, long newHandlerId, long workOrderId, WorkOrderActor actor)

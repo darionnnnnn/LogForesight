@@ -68,6 +68,7 @@
 | D7 | Sonnet | 五個 AI 消費端的閘道參數改必填（null 擲例外）；`AiRequestGateTests` 刪寫死的 5、新增正式 DI 解析與非 nullable 反射守門；WEB-SPEC 節流段同步 | 代理：DI 改傳 Null、參數改回 nullable 兩個突變各紅；主代理重跑 148 綠、Core＋Web `IAiRequestGate? ` 0 筆 | 必填參數須排在選填前，建構式參數順序改變；WebAiService 新增 `_aiGate` 欄位供反射讀取 |
 | E1 | Sonnet | `IIssueOwnerStore.Update(source, eventId, apply)` 在互斥區塊內只改指定欄位；負責人、結論、靜音五個入口改用它 | 代理：三個突變各紅；主代理重跑 511 綠 4 略過（既有） | 驗證仍在 `Update` 之前以 `Get` 判斷，極端競態（毫秒級）下解除靜音可能靜默不動作、清除結論可能建空列，影響輕微接受 |
 | E2 | Haiku | 報表記憶體路徑的問題總數（本期與上期）排除靜音中的問題，與 scope=all 的 SQL 聚合同口徑 | 代理：改動前紅、突變紅；主代理重跑 183 綠 | 涵蓋缺口天數兩路徑定義相同（`HasCoverageGap`＝SQL 條件），差別只在顯示範圍篩選本身，不改 |
+| E3 | Sonnet | 刪 `BuildCase`／`ReassignCase`／`CreateOpenCase`／`CaseBuildResult`；測試前置改走 `WorkOrderCoordinator.Create`（`WorkOrderCaseSeeder`），需「無單案件」的案例改 `LegacyCaseSeeder` 直寫資料列；新增 `IssueCaseCreationGuardTests` | 代理：守門突變紅；主代理重跑 714 綠 4 略過（既有）、grep 三個方法 0 筆 | 「重現的問題」測試的前置改為舊案結案後才加 newDay（正式流程不強制寫入已結案觸發日），斷言未放寬；主代理補修 WorkOrderCoordinator 失效 cref、DayHandlingCommandService 註解、CLAUDE.md 紅線、WEB-SPEC 改派項；兩個新檔換行補成 CRLF |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

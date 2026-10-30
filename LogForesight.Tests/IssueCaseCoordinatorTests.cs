@@ -21,10 +21,15 @@ public class IssueCaseCoordinatorTests
     private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeHandlingStore _handlingLog = new();
     private readonly FakeIssueOwnerStore _issueProfiles = new();
+    private readonly FakeWorkOrderStore _orders;
+    private readonly WorkOrderCaseSeeder _seeder;
 
     public IssueCaseCoordinatorTests()
     {
         _hosts.Upsert(new WebHost { HostName = Host });
+        _orders = new FakeWorkOrderStore(_cases);
+        // 建案前置一律經 WorkOrderCoordinator（IssueCaseCoordinator 不再提供建案入口）
+        _seeder = new WorkOrderCaseSeeder(_cases, _issueHandlings, _handlingLog, _hosts, Create(), _orders);
     }
 
     private IssueCaseCoordinator Create() => new(_cases, _issueHandlings, _handlingLog, _records, _hosts, _issueProfiles);
@@ -44,7 +49,7 @@ public class IssueCaseCoordinatorTests
         });
     }
 
-    // ── 建案（BuildCase）─────────────────────────────────────────────────────
+    // ── 建案（經 WorkOrderCoordinator）─────────────────────────────────────────────────────
 
     [Fact]
     public void 建案_回溯關聯歷史全部含此問題的風險日()
@@ -56,16 +61,17 @@ public class IssueCaseCoordinatorTests
         AddRecord(d2);
         AddRecord(trigger);
 
-        var result = Create().BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1,
+        var result = _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1,
             note: "調查中", dueDate: null, actorId: 9, actorAccount: "acc", occurredAt: DateTime.Now);
 
-        Assert.True(result.Created);
-        Assert.Equal(3, result.LinkedDayCount);
+        Assert.Equal(1, result.NewCases);
+        Assert.Equal(3, result.DaySync.Rows);
+        var caseId = _cases.GetOpen(Host, IssueKey)!.CaseId;
         foreach (var date in new[] { d1, d2, trigger })
         {
             var row = _issueHandlings.GetForDay(Host, date).Single();
             Assert.Equal(IssueHandlingStatuses.InProgress, row.Status);
-            Assert.Equal(result.CaseId, row.CaseId);
+            Assert.Equal(caseId, row.CaseId);
         }
     }
 
@@ -74,16 +80,16 @@ public class IssueCaseCoordinatorTests
     {
         var trigger = DateTime.Today;
         AddRecord(trigger);
-        var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         // 另一次指派（例如改天再指派給別人）：不搶走，回報既有處理人
-        var second = coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 2, note: null, dueDate: null,
+        var second = _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 2, note: null, dueDate: null,
             actorId: 2, actorAccount: "b", occurredAt: DateTime.Now);
 
-        Assert.False(second.Created);
-        Assert.Equal(1, second.ExistingHandlerId);
+        Assert.Equal(0, second.NewCases);
+        Assert.False(second.CreatedOrder);
+        Assert.Equal(1, Assert.Single(second.SkippedConflicts).HandlerId);
         // 原案件的處理人沒被改掉
         Assert.Equal(1, _cases.GetOpen(Host, IssueKey)!.HandlerId);
     }
@@ -99,11 +105,11 @@ public class IssueCaseCoordinatorTests
         // 使用者在 closedDay 手動標成誤報（結案類），無案件
         _issueHandlings.Save(new IssueHandling { HostName = Host, Date = closedDay, IssueKey = IssueKey, Status = IssueHandlingStatuses.FalsePositive, UpdatedAt = DateTime.Now });
 
-        var result = Create().BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+        var result = _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         // 建案只涵蓋 trigger 這天，closedDay 維持使用者原本標的誤報，不被吃進案件
-        Assert.Equal(1, result.LinkedDayCount);
+        Assert.Equal(1, result.DaySync.Rows);
         var untouched = _issueHandlings.GetForDay(Host, closedDay).Single();
         Assert.Equal(IssueHandlingStatuses.FalsePositive, untouched.Status);
         Assert.Null(untouched.CaseId);
@@ -132,10 +138,10 @@ public class IssueCaseCoordinatorTests
         AddRecord(trigger);
 
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, d1, handlerId: 1, note: null, dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, d1, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
-        // 模擬批次在 d2 掛接後才出現（案件建立時 d2 已存在於 records，實務上會直接被 BuildCase 涵蓋，
+        // 模擬批次在 d2 掛接後才出現（案件建立時 d2 已存在於 records，實務上會直接被建單時的回溯涵蓋，
         // 這裡直接驗證 trigger 當天標結案時，d1/d2 全部同步）
         var sync = coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
             status: IssueHandlingStatuses.Resolved, note: "已換硬碟", dueDate: null, clearing: false,
@@ -158,7 +164,7 @@ public class IssueCaseCoordinatorTests
         var trigger = DateTime.Today;
         AddRecord(trigger);
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         var sync = coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
@@ -177,21 +183,21 @@ public class IssueCaseCoordinatorTests
         var oldDay = DateTime.Today.AddDays(-20);
         var newDay = DateTime.Today;
         AddRecord(oldDay);
-        AddRecord(newDay);
 
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, oldDay, handlerId: 1, note: null, dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, oldDay, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
         coordinator.SyncStatus(Host, IssueKey, IssueLabel, oldDay,
             status: IssueHandlingStatuses.Resolved, note: null, dueDate: null, clearing: false,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
-        // 舊案件已結案；同問題在 newDay 重新出現後開新案件，不該把 oldDay 的結案紀錄復活
-        var newCase = coordinator.BuildCase(Host, IssueKey, IssueLabel, newDay, handlerId: 2, note: null, dueDate: null,
+        // 舊案件已結案；同問題在 newDay 重新出現（此時才有 newDay 的紀錄）後開新案件，不該把 oldDay 的結案紀錄復活
+        AddRecord(newDay);
+        var newCase = _seeder.Assign(Host, IssueKey, IssueLabel, newDay, handlerId: 2, note: null, dueDate: null,
             actorId: 2, actorAccount: "b", occurredAt: DateTime.Now);
 
-        Assert.True(newCase.Created);
-        Assert.Equal(1, newCase.LinkedDayCount);   // 只涵蓋 newDay，不含已結案的 oldDay
+        Assert.Equal(1, newCase.NewCases);
+        Assert.Equal(1, newCase.DaySync.Rows);   // 只涵蓋 newDay，不含已結案的 oldDay
         var oldRow = _issueHandlings.GetForDay(Host, oldDay).Single();
         Assert.Equal(IssueHandlingStatuses.Resolved, oldRow.Status);   // 舊案件的結案結果原封不動
     }
@@ -205,7 +211,7 @@ public class IssueCaseCoordinatorTests
         var newDay = DateTime.Today;
         AddRecord(trigger);
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: "處理中", dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: "處理中", dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         var issues = new List<LogIssueSignature>
@@ -229,7 +235,7 @@ public class IssueCaseCoordinatorTests
         var newDay = DateTime.Today;
         AddRecord(trigger);
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         var issues = new List<LogIssueSignature>
@@ -308,7 +314,7 @@ public class IssueCaseCoordinatorTests
         var newDay = DateTime.Today;
         AddRecord(trigger);
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: "有人在處理", dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: "有人在處理", dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         // 同一個問題「機房」也有結論，但案件優先——案件代表「有人正在管」，不該被 fleet 結論蓋過去
@@ -397,7 +403,7 @@ public class IssueCaseCoordinatorTests
         var trigger = DateTime.Today;
         AddRecord(trigger);
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         var observeUntil = DateTime.Today.AddDays(7);
@@ -426,7 +432,7 @@ public class IssueCaseCoordinatorTests
         var newDay = DateTime.Today;
         AddRecord(trigger);
         var coordinator = Create();
-        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
             actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
 
         var observeUntil = DateTime.Today.AddDays(7);
