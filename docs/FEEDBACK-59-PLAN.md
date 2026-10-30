@@ -84,6 +84,7 @@
 | F4b | Sonnet | `BuildIpClause` 只放行合法 IPv4（全不合法擲例外）；pipeline 對非 IPv4 位址與無法辨識的 Os 逐台警告、不查詢、標未完整；`NormalizeKnownIps` 移除總數上限、保留段內閘門 | 代理：新測試改動前紅、四個突變各紅；主代理重跑 384 綠 | 被濾掉的主機不進進度分母（不卡在 100% 前）；刻意不計入「已完成跳過」以免誤導；主代理補現場取數單台查詢位址非 IPv4 回空查詢而非擲例外（加 Theory，拿掉即紅）；`IsValidIpv4` 收緊為每段 1～3 位純數字 |
 | F5 | Sonnet | 掃描精靈輪詢：只有後端回「工作不存在或已逾期」（實為 400＋`validation_failed`，相容 404）才停並關精靈，其他錯誤連續 3 次才停並提示、成功歸零；重新認證前 best-effort 登出舊 token（5 秒、例外只記 Debug） | 代理：Sentinel 兩案與行為四案改動前紅、兩個突變各紅；主代理重跑 432 綠 | 連續失敗收尾保留 jobId，重開精靈走既有接續路徑；主代理把登出請求抽成 `DeleteTokenAsync`，結束登出與重新認證前登出共用 |
 | F9 | Sonnet | PRTG-SPEC（down 語意、磁碟趨勢、§3 分頁器、§3b 真子集與空範圍與請求預算、§3c 人工對應缺鏡像、§4 名稱退路與往後沿用、§5a 結構同步 0 台、範圍柵欄、§6 資料流、§7 監看政策、§8 operations、§10 空陣列、§11 授權）；NETIQ 文件標頭、§2～§7 與新增 §8 SourceEvidence／欄位形狀探測；WEB-SPEC §9.9a；BACKLOG NetIQ #3／#4／#8／#9／:302；註解 A3-08／09／18、A2b-16、A2a-18 | 代理逐項讀碼核對、建置 0 錯誤、相關測試 860 綠；主代理抽查敘事字眼與請求預算數字 | A2b-02 經核對不成立（已有 ViewAll 檢查）；§3c 第 4 項依程式改寫；順手修 SentinelQueryBuilder 與三個測試檔頭的章節引用 |
+| G1 | Haiku | 新增 `core/async-guards.js`（`createSeqGuard`、`pollWhile`：fn 跑完才排下一輪、例外只警告一次續排、回 false 或 stop 即停）與 `core/storage.js`（`safeStorage` 全部 try/catch）；行為測試 7＋3 案 | 代理 M1～M3 紅；主代理補跑 M5～M8 各紅、還原後 10 綠 | 主代理抓到測試骨架先 `ReadToEnd` 再等待，輪詢停不下時 node 永不結束而卡死 → 改非同步讀輸出、15 秒逾時結束程序樹；代理兩支突變腳本併發改檔、中斷時檔案停在突變狀態，主代理以備份比對後還原 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
