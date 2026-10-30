@@ -599,6 +599,13 @@
 - `lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`
   程式已不讀寫，既有資料庫欄位保留（不寫 DROP COLUMN，避免 SQL Server 端的相依約束風險）。**觸發時機**：下次 schema 層級的一輪一併評估。
 
+## 前端輪詢：`pollWhile` 不做背景分頁降頻與失敗退避
+
+`core/async-guards.js` 的 `pollWhile` 以固定間隔輪詢（目前用於排程作業頁、PRTG 維護頁、NetIQ 維護頁，間隔 2～10 秒），
+不看 `document.hidden`、也不因連續失敗拉長間隔：背景分頁照常輪詢，站台卡住時每個間隔仍打一次（上一輪結束才排下一輪，不會疊加在途請求）。
+目前使用者少、輪詢頁都是維護頁，刻意未做。**觸發時機**：輪詢頁開給多人長時間掛著而站台負載可見上升，或新增面向一般使用者的輪詢頁時——
+在 `pollWhile` 一處加 `visibilitychange` 降頻與連續失敗退避（`core/badges.js` 已有「隱藏不打、回前景立即刷新」的做法可參照）。
+
 ## 深色模式（明確不做）
 
 DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案。**觸發時機**：使用者提出夜間值班需求。

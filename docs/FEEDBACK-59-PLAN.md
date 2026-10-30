@@ -89,6 +89,7 @@
 | G3 | Sonnet×2 | 權限異動、稽核、主機、儀表板、報表加序號守門；篩選、換頁、儲存後重載經 guardLoad（權限異動非網段錯誤外擲、不回填空清單；主機、使用者、群組、負責人、匯入儲存後重載失敗不再被吞）；儀表板 serverAdmin 隱藏與 guardLoad 容器補重點問題；兩處 toast `error`→`danger`；localStorage 改 `safeStorage`（已有 try/catch 者列白名單）；新增 `FrontendGuardUiTests`（toast 型別、localStorage 白名單）與 13 案清單頁行為測試 | 代理：十個突變各紅；主代理重跑 565 綠 | 兩段依檔案拆分、前半段單獨提交會帶全站守門紅燈，合併為一個提交；ui.js 收合記憶也改 safeStorage（守門要求，行為等價） |
 | G4a | Sonnet | 對話面板加世代計數器（換問題或清除後舊回覆與失敗皆丟棄）、pending 期間停用下拉與清除、finally 依是否已選問題決定輸入框；`api.download`（有界讀取、逾時、401 導登入、Content-Disposition 檔名）與 `saveBlobAsFile`，校準與 PRTG 維護兩處下載改用，失敗 toast 不整頁跳轉；新增 `FrontendMiscUiTests`（頁面不得直接 fetch／location.assign） | 代理：十個突變各紅（兩個存活突變補強後轉紅）；主代理重跑 402 綠 | 代理覆寫了主代理的 scratchpad 突變腳本（主代理改用新腳本）；既有 13 個行為測試檔「先 ReadToEnd 再 WaitForExit」在實作壞掉時會卡死，列入第 61 輪 M 改共用 node 執行器 |
 | G4b | Sonnet | PRTG 維護頁 `requireScopeRevision()` 守六個寫入點、移除 `/runs` fallback；詳情頁兩份報告各自容錯、批次儲存後重載經 guardLoad；主機頁 `activeFilterEntries()` 單一條件清單（含 prtgMap）；預計完成日上限常數 `MAX_DUE_DATE_DAYS`＝90 集中並與後端一致（另加手打超限擋下）；負責人匯入確認文字；說明書首次載入不捲動；報表起訖日檢查與範圍 chip 載入成功才更新 | 代理：十三個突變各紅（一個存活突變補強後轉紅）；主代理重跑 430 綠 | 報表維持無參數 `load()`（既有測試鎖定簽名），以 `requestedScope` 傳遞點選範圍 |
+| G12 | Sonnet | WEB-SPEC §8.1 core 模組總表（24 檔，含 async-guards、storage）、inline script 例外（LF_BASE／LF_LABELS／登入頁備援）、api 唯一出口含 download 與 saveBlobAsFile；§8.1a toast link 由呼叫端套前綴；§8.6-1 篩選記憶以網址為準；§8.6 序號守門與 pollWhile 唯一寫法與三條守門；§9.3／§9.4b／§9.6／§9.9c 與 PRTG 維護頁補批次 G 行為；BACKLOG 補 pollWhile 降頻與退避 | 代理逐項讀碼核對；主代理抽查模組數與注入點 | 篩選記憶依程式寫實際範圍（只有權限異動與儀表板天數記本機）；交辦 modal 無 90 天前端檢查，文件只寫有的兩處 |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結
@@ -320,7 +321,7 @@
 | 批次 | 內容 |
 |---|---|
 | L 現況文件 | 59／60 未涵蓋的全面對齊：WEB-SPEC §1／§4.1／§5／§6／§7／§8／§9 各頁／§10（含 10.9→10.6）／§11／§12、敘事 69 處；DB-SPEC B-11 全部欄位級與索引、刪 EF migration／檔案輪替、升級器行為、A2a-20；PRTG-SPEC 其餘；DETECTION／RULES／LINUX／NETIQ／DESIGN-SYSTEM 敘事；README 機制章搬遷與沿革句與文件地圖；CLAUDE.md :42／:101、基線；BACKLOG 主題式分節、6 項過時、### 歸位、升級注意事項（A-4 帳號、C-5 Linux 重跑、C-1 低風險日、F-7 0 裝置）；程式註解失效引用 11＋7 處等 |
-| M 守門測試 | 每個端點都有授權（反射＋白名單）；SQL Server DDL vs design-time model；DB-SPEC 對 `ctx.Model`；文件 §xref 存在性；PatternId 數量對文件與說明書；HelpWritingGuide 字詞與實作名詞；`.ai.md`／`.md` 標題同步；HelpNavigationConsistency 升級；NodeTheory 略過數；無斷言 22 條；CsrfHeaderMiddleware／ForwardedHeaders／MigrationGate handling 分支；mini-dom innerHTML setter；AuditActions 中文名與 `access_denied` 常數；BrandProvider |
+| M 守門測試 | 每個端點都有授權（反射＋白名單）；SQL Server DDL vs design-time model；DB-SPEC 對 `ctx.Model`；文件 §xref 存在性；PatternId 數量對文件與說明書；HelpWritingGuide 字詞與實作名詞；`.ai.md`／`.md` 標題同步；HelpNavigationConsistency 升級；NodeTheory 略過數；無斷言 22 條；CsrfHeaderMiddleware／ForwardedHeaders／MigrationGate handling 分支；mini-dom innerHTML setter；AuditActions 中文名與 `access_denied` 常數；BrandProvider；前端行為測試改用共用 node 執行器（非同步讀輸出＋逾時結束程序樹），取代既有 13 檔「先 `ReadToEnd` 再 `WaitForExit`」——實作壞掉時 node 不結束會讓測試卡死而非失敗（第 59 輪 G1、G4a 突變時實際發生） |
 
 ## 6. 環境整理（需你逐項同意）
 

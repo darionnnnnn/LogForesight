@@ -509,6 +509,11 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - `core/api.js`：fetch 包裝的**唯一出口**——組信封解析、錯誤 toast、401 導登入、
   非 GET 自動帶 `X-Requested-By`、掛載前綴（§8.1a）。頁面模組不得直接呼叫 `fetch`
   （含檔案上傳：傳 `FormData` 進來即可，它不會自己設 Content-Type，boundary 交給瀏覽器）。
+  下載檔案也走這個出口：`api.download(url)` 沿用有界讀取（預設上限 64 MiB）、GET 逾時與 401 導登入，
+  回傳 `{ blob, filename }`（`filename` 取自 Content-Disposition，沒有則為 `null`，由呼叫端給預設），
+  失敗一律丟 `ApiError`、不整頁跳轉；取得 blob 後以同檔匯出的 `saveBlobAsFile(blob, filename)` 觸發儲存
+  （暫時 `<a download>`，用完即 revoke 並移除）。頁面模組不得直接呼叫 `fetch(` 或 `location.assign(`
+  （`FrontendMiscUiTests` 掃全部 `pages/*.js` 守門）。
 - `core/paths.js`：站台掛載前綴的唯一出口（§8.1a）——`appUrl()` 補前綴、`appPath()` 去前綴。
   獨立成模組是因為 `ui.js` 也要用它，而 `api.js` 反過來用 `ui.js` 的 toast，放一起會成環。
 - `core/ui.js`：toast（Bootstrap Toast）、確認對話框（Bootstrap Modal 包裝，
@@ -519,9 +524,42 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題負責與靜音負責人與主機負責人兩處，
   其餘呼叫端不傳此選項、行為與過去完全相同。
 - `core/format.js`：日期、風險等級徽章、狀態徽章的統一格式化（風險/狀態的顯示規則只寫一次）。
+- **`core/` 模組總表**（`wwwroot/js/core/` 全部檔案；上列四個模組的細節不重複）：
+
+  | 模組 | 職責 |
+  |---|---|
+  | `alert-tools-table.js` | 告警工具決策表（靜音／抑制／統一標記／不再打擾），規則頁與設定頁共用（§9.7） |
+  | `api.js` | API 呼叫唯一出口，含 `api.download`、`saveBlobAsFile`、`getCurrentUser`、`hasCapability` |
+  | `async-guards.js` | `createSeqGuard`（查詢序號守門）、`pollWhile`（狀態輪詢），見 §8.6 |
+  | `badges.js` | 側欄徽章全站唯一計時器：每 60 秒刷新，分頁隱藏不打 API、回前景立即刷新（§9.4a） |
+  | `brand-align.js` | 品牌副標題字距對齊（§9.9b） |
+  | `charts.js` | Chart.js 包裝層（§8.3） |
+  | `date-range.js` | 期間快捷鈕的計算與綁定（§8.6-8） |
+  | `format.js` | 風險／狀態／日期等顯示格式化；類別與嚴重度名稱取自 `window.LF_LABELS` |
+  | `handling-statuses.js` | 處理狀態目錄（名稱、顏色、是否結案、說明欄規則）與預計完成日上限 `MAX_DUE_DATE_DAYS`（90） |
+  | `layout.js` | 側欄選單、目前使用者、登出、執行中告示、字級 |
+  | `markdown-lite.js` | AI 文字唯一渲染出口（安全子集，絕不 innerHTML） |
+  | `note-editor.js` | 說明輸入的字數計數與本機草稿（鍵 `lf-draft:{userId}:{draftKey}`，登出時清除） |
+  | `paths.js` | 站台掛載前綴：`appUrl()`／`appPath()`（§8.1a） |
+  | `prtg-acceptance.js` | PRTG 維護頁「最近一次排程驗收」三項判定（純函式） |
+  | `prtg-diagnostic-upload.js` | PRTG 診斷檔分片（4 MiB）上傳、續傳與雜湊 |
+  | `prtg-probe-types.js` | 從環境探測輸出擷取實際觀察到的 sensor 類型 |
+  | `prtg-scope-labels.js` | PRTG 啟用狀態與數值取數對象的顯示字串，維護頁與排程作業頁共用 |
+  | `report-view.js` | 報告全文共用呈現（風險／體檢／權限異動三種） |
+  | `run-phases.js` | 取數進度軌的 phase 文案與單位（§9.10） |
+  | `safe-return-url.js` | 登入後導回網址的站內相對路徑檢查（純函式） |
+  | `sha256-stream.js`、`sha256-worker.js` | 增量 SHA-256 與其 Web Worker（診斷檔雜湊，不把大檔留在頁面記憶體） |
+  | `storage.js` | `safeStorage`：localStorage 的安全包裝，見 §8.6 |
+  | `ui.js` | toast、確認對話框、表格、分頁、載入／空／失敗狀態等共用元件 |
+
 - `pages/*.js`：一頁一模組，`_Layout.cshtml` 以 `<script type="module">` 載入對應頁模組；
   頁面需要的初始參數（如 record id）用 `data-*` 屬性放在 View 的根元素上，JS 讀取——
   **cshtml 內不寫 inline script、不用 Razor 內插 JS 變數**。
+  例外只有下列 inline script，其餘一律不得新增：`_Layout.cshtml` 與 `Login.cshtml` 各一行
+  `window.LF_BASE = Request.PathBase`（§8.1a，必須早於任何 module）；`_Layout.cshtml` 的
+  `window.LF_LABELS`（問題類別名稱表 `categories` 與嚴重度中文名 `severities`，server-render 為單一顯示字典，
+  `format.js` 的 `CATEGORY_NAMES`／`SEVERITY_NAMES` 由它取值，登入頁不需要所以不帶）；`Login.cshtml`
+  尾端一段 `load` 事件備援（`login.js` 未載入成功、`LF_LOGIN_READY` 不為 `true` 時顯示資源載入失敗並停用送出）。
 - 禁止引入前端框架/打包工具（React/Vue/webpack…）——本專案的前端複雜度用「模組化原生 JS」
   就能維護，工具鏈越少、五年後越可能還編得起來（對應決策 #4 的防廢棄考量）。
   第三方 JS 套件僅限白名單：Bootstrap（範本內建）＋ Chart.js（§8.3）；新增套件需符合
@@ -559,6 +597,10 @@ IIS in-process 託管時 ASP.NET Core 會自動填 `Request.PathBase`；Kestrel 
 自己指派 `href` 時自己套；把值**交給** `core/ui.js`（sprite、整列可點、`rowHref`、kpiStrip）、
 `core/charts.js`（下鑽 `url`）、`core/layout.js`（選單表）這些 helper 時維持 app 相對，
 由 helper 在寫入的那一刻套，頁面端不得先套。
+
+`toast()` 的 `options.link`（`{ href, text }` 或其陣列）不屬於上述 helper：`ui.js` 只把 `href` 原樣指派給 `<a>`，
+**不套 `appUrl()`**，由呼叫端傳入前自己套一次（例：`records.js` 交辦建單成功的 toast 傳 `appUrl('/work-orders/' + id)`）。
+toast 的 message 若是 `Node`（例：自建的 `<a>`），連結同樣由組裝者自己套。
 
 ### 8.2 設計系統（Bootstrap 為基底、功能取向的自訂外觀）
 
@@ -715,7 +757,11 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 
 ### 8.6 使用者便利性規範（決策 #4 的具體化，逐條可驗收）
 
-1. 清單頁的篩選條件記憶於 `localStorage`，回到頁面自動還原（含儀表板時間窗）
+1. 清單頁的篩選條件**以網址查詢字串為準**，不一律記 `localStorage`：下鑽（§8.4）帶參數進頁是主流程，
+   `records`、`audit`、`hosts`、`reports`、`permission-changes` 進頁時讀網址參數還原條件；
+   `records`、`reports`、`permission-changes` 另把目前條件以 `history.replaceState` 寫回網址（可複製分享）。
+   記在本機的篩選類偏好只有兩項：權限異動檢核頁（網址沒帶任何篩選參數時還原上次條件，鍵 `lf.permissionChanges.filters`）
+   與儀表板時間窗天數（`lf.dashboard.days`）；報表的處理狀態範圍刻意不入 `localStorage`（§9.6）
 2. **所有清單支援表頭點擊排序**：`renderTable` 的欄位定義帶 `sortKey` 即可點擊，
    同欄再點切換 asc/desc、換欄回到該欄的 `sortDefaultDir`（未指定則 asc），切換邏輯集中在
    `core/ui.js`，呼叫端只需套用收到的 `{key, dir}`。伺服器端分頁頁（`records`／`hosts`／`audit`）
@@ -802,6 +848,21 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
   全部頁面的進入點皆已套用。實際踩到的案例：主機維護頁在**沒有任何 Sentinel 的全新環境**下，
   `fillSentinelOptions` 寫一個不存在節點的 textContent 而丟 TypeError，整頁清單就此卡住
   （根因是 `host-netiq-hint` 節點被漏在 view 之外，已補回並讓提示文字在有無 Sentinel 時都正確切換）。
+
+- **清單查詢與狀態輪詢的唯一寫法**（`core/async-guards.js`，無 DOM 相依）：
+  - 會被連按篩選、換頁、切換範圍打斷的查詢一律用 `createSeqGuard()`：發出前 `next()` 取序號，回應或失敗回來先 `isCurrent(seq)`，
+    不是最新一次就整份丟掉、不得寫入任何頁面狀態（失敗態只屬於最新一次查詢）。目前用於 `audit`、`dashboard`、`hosts`、
+    `permission-changes`、`records`、`reports`、`runs`（執行總表）。
+  - 狀態輪詢一律用 `pollWhile(fn, intervalMs)`：`fn` 跑完才排下一輪（在途請求不疊加）、首輪也等一個間隔、
+    例外只 `console.warn` 一次並照常續排、`fn` 回傳 `false` 或呼叫 `stop()` 即停。頁面不得 `setInterval(async …)`
+    或以 `setInterval` 驅動具名 async 函式（`PollingUiTests` 掃全部 `pages/*.js`）。依狀態切換間隔而以 `setTimeout`
+    自排程者（排程作業頁的排程狀態）必須把「排下一輪」放在 `finally`，否則一次例外就讓常駐輪詢靜默停掉。
+    `pollWhile` 不做背景分頁降頻與失敗退避（見 BACKLOG）。
+  - `core/storage.js` 的 `safeStorage`（`get`／`set`／`remove`，全部 try/catch；隱私模式或停用站台資料時 `get` 回 `null`、
+    寫入靜默略過）是讀寫 localStorage 的預設入口。`FrontendGuardUiTests.LocalStorage直接呼叫只出現在白名單檔` 掃
+    `pages/` 與 `core/ui.js`，直接呼叫 `localStorage.` 的檔案限白名單（`permission-changes`、`settings`、`note-editor`、
+    `layout`、`prtg-admin`、`record-detail`，自帶 try/catch）；同檔 `Toast第二參數只能是Bootstrap有的型別` 限 toast 型別為
+    `primary`／`secondary`／`success`／`danger`／`warning`／`info`（寫成 `error` 會得到不存在的 `text-bg-error`）。
 
 ### 8.6a 說明文字顯示原則與全站用詞規範
 
@@ -1363,7 +1424,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話；**下拉只列目前嚴重度篩選後
   仍可見的問題**，篩選切換即連動）、10 輪上限**伺服器端強制**、
   可清除重來、**不持久化**（對話史存前端記憶體，每輪 POST 完整 transcript；`docs/DB-SPEC.md` 的
-  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。context 由伺服器端依 issueKey 重組
+  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。**等待回覆期間**問題下拉與清除鈕停用；換問題或清除各使對話世代加一，
+  送出時記下世代，回覆（含失敗）抵達時世代已不同就整份丟棄、不寫進新對話；收尾時輸入框與送出鈕依「是否已選問題」
+  決定可否使用，而非無條件開啟。context 由伺服器端依 issueKey 重組
   （授權繼承 `GetDetail`，同 interpret-issue 版型），SampleMessages **與當日報告全文**（#11，
   `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、超出從尾端截斷並在
   圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）。
@@ -1532,6 +1595,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 回覆鈕依詳情 DTO 的 `ViewerCanReply`（本人、具 `Handle`、單未結案，後端單點決定）。
 處理人回覆不能選「未處理」（`IssueStatusValidation.ValidateReply` 擋下，要退回由管理者處理；詳情頁逐筆標記的「調回未處理」不受影響）。
 回覆與交辦 modal 的預計完成日在 `change`／`blur` 即時檢查「不可早於今天」，送出前有錯誤則 focus 到第一個錯誤欄位。
+預計完成日上限為今天起 90 天（`core/handling-statuses.js` 的 `MAX_DUE_DATE_DAYS`，與後端 `WorkOrderReplyService.MaxDueDateDays` 同值）：
+回覆 modal 與處理人工作頁（§9.4a）的期限編輯器都以它設 date input 的 `max`，回覆 modal 手打超過時送出前擋下並提示「預計完成日最多只能設在 90 天內」。
 交辦建單成功的 toast 帶單號連結（1 張「查看單號 #N」；多張列前 3 張，其餘寫「等 N 張」連到第一張）。
 上報信（無法處理）在單一交辦單轉入 `escalated` 時多一行「交辦單：單號 N」。
 取消交辦的確認文字依 `GET api/settings/display` 的 `mailWorkOrdersEnabled`（`MailEnabled` 且 `MailNotifyWorkOrders`）切換：
@@ -1604,7 +1669,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | 端點 | 能力 | 說明 |
 |---|---|---|
 | `GET ?handlerId&groupId&source&eventId&status&handlerInactive&paused&resumedFromMute&unreadOnly&sort&page&pageSize` | `Assign`／`ViewAll` | 清單；`pageSize` ≤ 100 |
-| `PUT {id}/due-date { dueDate }` | `Handle`（處理人本人、單進行中） | 改期限；不可早於今天、不可晚於今天＋90 天（`WorkOrderReplyService.MaxDueDateDays`），null 清除；稽核 `work_order_due_date` |
+| `PUT {id}/due-date { dueDate }` | `Handle`（處理人本人、單進行中） | 改期限；不可早於今天、不可晚於今天＋90 天（`WorkOrderReplyService.MaxDueDateDays`，前端 `MAX_DUE_DATE_DAYS` 同值），null 清除；稽核 `work_order_due_date` |
 | `GET handler-groups` | `Assign`／`ViewAll` | 群組篩選選項（啟用中使用者群組） |
 | `GET unread-count` | `Assign`／`ViewAll` | 有未讀回覆的單數 `{ count }`（SQL COUNT，側欄徽章用） |
 | `GET {id}`／`{id}/members?status&page&pageSize`／`{id}/timeline` | 處理人本人／`Assign`／`ViewAll` | 詳情；成員每頁 ≤ 200 |
@@ -1807,6 +1872,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   低風險日一律排除（不在待辦語意內）、「處理進度」小圖隱藏（母體已抽掉已處理，恆 0%/100%
   無資訊量）。scope 存 URL（可分享；all 不留參數）、不入 localStorage（誠實預設）；
   KPI 下鑽 URL 附帶對應 `statuses=`／`unassigned=true`，點進去的筆數與卡片數字對得上。
+  點範圍 chip 後查詢先用該範圍，**載入成功才**成為目前範圍、chip 才亮起並寫回網址；失敗或已有更新的查詢時
+  chip 與網址維持上一次成功的範圍。查詢前先檢查區間：起日晚於迄日（或含首尾超過 366 天）直接 toast 擋下，
+  不送出請求也不換成骨架列，與後端 `from > to` 回 400 同口徑。
 - **列印/匯出**：`@media print` 樣式（隱藏側欄與工具鈕、卡片不裁切）——主管列印或另存 PDF
   給上級是真實使用情境，排版好看必須含列印版面。
 - API：`GET api/reports/summary?from=&to=&handlingScope=all|unresolved|open|unassigned`
@@ -2397,6 +2465,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **選單位置**：側欄「系統」分組最下方。操作說明書本身對所有已登入者顯示；章節依
   manifest 的 `requires` 過濾，維護章節與首次啟動精靈連結需 `Maintain`。AI 提問端點另需
   `Maintain`，不因說明書放寬而開放。
+- **首次載入不捲動**：進頁（含帶 `#章節` hash）只選章不捲動，免得頁首被跳過；只有換章（點選、`hashchange`）才平滑捲到內文。
 - **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`icon`／
   `keywords[]`／`related[]`／`type`／`href`；`icon` 對應 `icons.svg` 的 symbol id，各章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇；
   `type`／`href` 欄位：`type` 省略時預設 `"markdown"`（既有章節零改動），
@@ -3219,6 +3288,9 @@ target 名稱也帶 runId 以免互相移除。
 
 一般設定與 PRTG 專屬 PUT 要求 `expectedRevision`（來自 GET 的 `revision`）；缺值回驗證錯誤、舊值回 409。PRTG 頁衝突對話框提供「保留目前輸入」及「重新載入」。
 人工對應／排除另帶 `expectedScopeRevision`，過期回衝突；批次遇競爭停止後續並列明已成功項目。全站對應／排除須全站主機維護範圍，案件授與不成立。
+PRTG 維護頁在取數範圍版本（`scopeRevision`）載入完成前，排除 IP、移除排除、移除人工對應、單台指派、衝突指派、批次指派
+六個寫入點一律先經 `requireScopeRevision()`：未載入就 toast「取數範圍尚未載入完成，請稍候再試」並中止，
+不送出帶空版本的請求（`FrontendMiscUiTests` 逐一守門）。
 
 ### PRTG 快照待寫狀態
 
