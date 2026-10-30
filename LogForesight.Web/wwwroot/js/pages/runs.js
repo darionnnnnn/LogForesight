@@ -14,6 +14,7 @@ import {
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
+import { createSeqGuard, pollWhile } from '../core/async-guards.js';
 
 /* 色值於執行期讀 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
@@ -161,9 +162,21 @@ async function load() {
 }
 
 /** 只重新取執行總表（換頁時用，errors/list 不必重取） */
+const summaryGuard = createSeqGuard();
+
 async function loadSummary() {
-    renderLoading(document.getElementById('run-summary'), 4);
-    const summaryPage = await api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`);
+    const seq = summaryGuard.next();
+    const summaryEl = document.getElementById('run-summary');
+    renderLoading(summaryEl, 4);
+    let summaryPage;
+    try {
+        summaryPage = await api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`);
+    } catch {
+        if (summaryGuard.isCurrent(seq)) renderError(summaryEl, { onRetry: loadSummary });
+        return;
+    }
+    // 連續換頁時舊回應晚到不得蓋掉新頁
+    if (!summaryGuard.isCurrent(seq)) return;
     if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
     renderSummary(summaryPage);
 }
@@ -988,24 +1001,29 @@ let wasAiScheduleRunning = false;
 let scheduleStatusTimer = null;
 
 async function refreshScheduleStatus() {
-    const [status, aiStatus] = await Promise.all([
-        api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
-        api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
-        // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
-        // 兩者自帶錯誤吞掉，且快速計時器「執行中才開、已存在就不重建」，重複呼叫不會疊計時器
-        refreshPrtgSyncStatus(),
-        refreshPrtgBackfillStatus()
-    ]);
-    if (status) {
-        applyScheduleStatus(status);
-        applyPrtgOperationalStatus(status);
+    let status = null;
+    let aiStatus = null;
+    try {
+        [status, aiStatus] = await Promise.all([
+            api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
+            api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
+            // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
+            // 兩者自帶錯誤吞掉，且快速輪詢「執行中才開、已存在就不重建」，重複呼叫不會疊輪詢
+            refreshPrtgSyncStatus(),
+            refreshPrtgBackfillStatus()
+        ]);
+        if (status) {
+            applyScheduleStatus(status);
+            applyPrtgOperationalStatus(status);
+        }
+        if (aiStatus) applyAiScheduleStatus(aiStatus);
+    } finally {
+        // 任一 apply 擲例外也要排下一輪，否則常駐輪詢整條靜默死亡
+        clearTimeout(scheduleStatusTimer);
+        const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
+        const interval = isAnyRunning ? 3000 : 10000;
+        scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
     }
-    if (aiStatus) applyAiScheduleStatus(aiStatus);
-
-    clearTimeout(scheduleStatusTimer);
-    const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
-    const interval = isAnyRunning ? 3000 : 10000;
-    scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
     return status;
 }
 
@@ -1533,9 +1551,9 @@ async function refreshPrtgSyncStatus() {
         }
 
         if (status.isRunning) {
-            if (!prtgSyncTimer) prtgSyncTimer = setInterval(refreshPrtgSyncStatus, 3000);
+            if (!prtgSyncTimer) prtgSyncTimer = pollWhile(refreshPrtgSyncStatus, 3000);
         } else if (prtgSyncTimer) {
-            clearInterval(prtgSyncTimer);
+            prtgSyncTimer.stop();
             prtgSyncTimer = null;
         }
     } catch {
@@ -2096,13 +2114,14 @@ async function refreshPrtgBackfillStatus() {
     renderPrtgBackfillStatus(status);
 
     if (status.isRunning && !prtgBackfillPollTimer) {
-        prtgBackfillPollTimer = setInterval(async () => {
+        prtgBackfillPollTimer = pollWhile(async () => {
             const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true }).catch(() => null);
             if (!latest) return;
             renderPrtgBackfillStatus(latest);
             if (!latest.isRunning) {
-                clearInterval(prtgBackfillPollTimer);
+                prtgBackfillPollTimer.stop();
                 prtgBackfillPollTimer = null;
+                return false;
             }
         }, 2000);
     }

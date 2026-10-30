@@ -27,6 +27,7 @@ import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
 import { bindRangeChips } from '../core/date-range.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -407,7 +408,12 @@ const ENDPOINT = {
     issue: '/api/records/by-issue'
 };
 
+// 查詢序號守門：視角切換、連續篩選都會重發查詢，舊回應晚到不得蓋掉新結果
+const searchGuard = createSeqGuard();
+
 async function search() {
+    const seq = searchGuard.next();
+    const view = currentView;
     const filters = collectFilters();
     const query = buildQueryString(filters, currentPage);
 
@@ -418,7 +424,19 @@ async function search() {
     document.getElementById('ai-summary').replaceChildren();   // 篩選變了，舊的 AI 歸納作廢
     renderLoading(listContainer, 6);
     // 帶處理狀態篩選時是整個保留期的記憶體推導，大站台會超過預設 60 秒
-    lastResult = await api.get(`${ENDPOINT[currentView]}?${query}`, { timeoutMs: 120000 });
+    let result;
+    try {
+        result = await api.get(`${ENDPOINT[view]}?${query}`, { timeoutMs: 120000 });
+    } catch {
+        // 過期請求的失敗不用理；目前這一次失敗才顯示失敗態（骨架列不可永留）
+        if (searchGuard.isCurrent(seq) && view === currentView) {
+            renderError(listContainer, { onRetry: search });
+        }
+        return;
+    }
+    // 視角已切換或已有更新的查詢：舊回應的資料形狀可能與目前視角不符，直接丟棄
+    if (!searchGuard.isCurrent(seq) || view !== currentView) return;
+    lastResult = result;
     render();
 }
 

@@ -4,6 +4,7 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
+import { pollWhile } from '../core/async-guards.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
@@ -387,10 +388,10 @@ function renderSelectedBackfillStatus(status) {
             ? `讀取狀態變更 ${status.stateChangesRead} / ${status.stateChangesTotal}`
             : `日期 ${status.daysDone} / ${status.daysTotal}${status.currentDate ? `；目前 ${String(status.currentDate).slice(0, 10)}` : ''}；感測器 ${status.sensorsDone} / ${status.sensorsTotal}`;
         cancel.classList.toggle('d-none', status.runKind !== 'selected' || !status.runId);
-        if (!selectedBackfillTimer) selectedBackfillTimer = setInterval(refreshSelectedBackfillStatus, 2000);
+        if (!selectedBackfillTimer) selectedBackfillTimer = pollWhile(refreshSelectedBackfillStatus, 2000);
         return;
     }
-    if (selectedBackfillTimer) { clearInterval(selectedBackfillTimer); selectedBackfillTimer = null; }
+    if (selectedBackfillTimer) { selectedBackfillTimer.stop(); selectedBackfillTimer = null; }
     cancel.classList.add('d-none');
     text.textContent = status.completedAt
         ? `${status.cancelled ? '已停止' : status.success ? '回填完成' : '回填未完整成功'}：${status.latestMessage || ''}`
@@ -2446,13 +2447,14 @@ async function refreshPrtgProbeStatus() {
     renderPrtgProbeStatus(status);
 
     if (status.isRunning && !prtgProbePollTimer) {
-        prtgProbePollTimer = setInterval(async () => {
+        prtgProbePollTimer = pollWhile(async () => {
             const latest = await api.get('/api/admin/settings/prtg-probe/status', { silent: true }).catch(() => null);
             if (!latest) return;
             renderPrtgProbeStatus(latest);
             if (!latest.isRunning) {
-                clearInterval(prtgProbePollTimer);
+                prtgProbePollTimer.stop();
                 prtgProbePollTimer = null;
+                return false;
             }
         }, 2000);
     }
@@ -2802,10 +2804,10 @@ async function refreshStructureSyncStatus() {
 
         if (status.isRunning) {
             if (!structureSyncTimer) {
-                structureSyncTimer = setInterval(refreshStructureSyncStatus, 3000);
+                structureSyncTimer = pollWhile(refreshStructureSyncStatus, 3000);
             }
         } else if (structureSyncTimer) {
-            clearInterval(structureSyncTimer);
+            structureSyncTimer.stop();
             structureSyncTimer = null;
             await refreshPrtgMirror();
         }

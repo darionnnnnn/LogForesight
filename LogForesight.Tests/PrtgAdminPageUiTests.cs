@@ -213,4 +213,13 @@ public sealed class PrtgAdminPageUiTests
         foreach (var (key, text) in new[] { ("no-ip", "主機沒有 IP"), ("ip-excluded", "IP 已排除"), ("conflict", "此 IP 由多台主機共用"), ("not-in-prtg", "PRTG 找不到此 IP") })
             Assert.Matches(new Regex(@"'?" + Regex.Escape(key) + @"'?\s*:\s*'" + Regex.Escape(text) + "'"), js);
     }
+
+    [Fact]
+    public void G2_輪詢走pollWhile_停止路徑不留clearInterval()
+    {
+        var js = Script();
+        Assert.Contains("pollWhile(", js);
+        Assert.DoesNotContain("setInterval(", js);
+        Assert.DoesNotContain("clearInterval(", js);
+    }
 }
