@@ -1,7 +1,7 @@
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §4「watchlist→Lucene 產生器」）。
+/// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §5 查詢 payload）。
 /// Windows／Linux 各自的 <c>Build{Os}Filter</c> 分支，皆依真實 probe 樣本定案
 /// （docs/archive/FEEDBACK-12-PLAN.md §4.0，四輪 probe，Sentinel「118_linux」）。
 /// </summary>

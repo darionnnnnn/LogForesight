@@ -20,7 +20,7 @@
   依 `Os` 分流查詢與映射，見 docs/archive/FEEDBACK-12-PLAN.md §4B）皆已實作完成，
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
-  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。
+  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠缺漏日判定（`MissingDateFinder`：已有分析紀錄的主機日不重查）。
   探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
   （權限被拒）與全站 24h distinct（不可行）。**涵蓋保證改版**：移除自適應時間窗
   （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），改為窄化 filter
@@ -30,12 +30,11 @@
   2~3 晚，核對下列尚未實證的細節：
   1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
   2. Defender/RDP Operational 頻道有無進 Sentinel（沒有則該偵測面誠實申報不適用）。
-  3. ~~Linux 主機的欄位形狀／`sev` 對應門檻~~ **多輪 probe（Sentinel「118_linux」）
-     全數定案並實作完成**（`Program=sp`、主機歸屬鍵沿用 `repip`、`sev` 不可靠承載 syslog
-     priority 語意改採計數用途的務實映射，見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)
-     §4a、[docs/LINUX-RULES.md](LINUX-RULES.md)）。
+  3. （已完成，編號保留）Linux 主機的欄位形狀與 `sev` 對應已由多輪 probe 定案並實作，見
+     [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §4a、[docs/LINUX-RULES.md](LINUX-RULES.md)。
   4. 真實 watchlist 形狀查詢（事件 ID 集合＋50 台 IP 批次）的耗時與命中量，決定夜間窗時程與
-     批次大小。
+     批次大小。現有的主機日計時收集器（`NetiqHostDayTimingCollector`）只量統計分析＋落地段，不含 Sentinel 查詢耗時，
+     所以它回答不了這一項——查詢耗時與命中量目前沒有現成的量測，試點時要另行量測或補收集。
   5. `dt` 時間邊界的人工核對（絕對時間區間需在 Sentinel Web UI 重現比對）。
   6. 8.5 apidoc 是否有伺服器端聚合端點（有的話 Q1 查詢可以改走聚合，目前是本地聚合的退路）。
   6b. **`NOT` 子句（`AND NOT (repip:a OR repip:b …)`）是否被此環境的 Lucene 接受**——
@@ -44,11 +43,12 @@
       （取回事件含已排除的 repip 即判定未生效、停止輪掃並顯性警告），
       試點時核對是否曾出現該警告。
   7. 多網卡主機以哪個 IP 回報（有「查無資料」假象的風險）。
-  8. token 有效期長短（決定長輪收集中是否需要主動換發）。
-  9. 2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化（目前是 O(主機數×天數) 個別查詢）。
-      同構的 `HostStore.Get`／`ISuppressionStore.LoadAll` 每主機日呼叫已收斂
-      （改為計畫階段解析一次＋run 級快照，見 `NetiqPipelineService.HostPlan`）——`HasRecord`
-      走的是 SQL 而非整份 blob 反序列化，性質不同，仍待放量前實測決定要不要批次化。
+  8. token 有效期長短（決定長輪收集中是否需要主動換發）。被動處理已實作：401／403 時先登出舊 token，再重新認證並重放請求，
+     仍被拒才報錯（`SentinelClientTests` 有對應測試）；剩下的未知是實際壽命，以及主動換發值不值得做。
+  9. 2000 台規模放量前需實測缺漏日判定的總耗時：現行是每台主機一次 `ReadRecent`（`MissingDateFinder.FindWithExistingDates`，
+      取回望窗內的紀錄再算缺漏日與失敗重試），共 O(主機數) 次 SQL 查詢，不是主機數×天數。
+      同構的 `HostStore.Get`／`ISuppressionStore.LoadAll` 已在計畫階段解析一次並共用 run 級快照（`NetiqPipelineService.HostPlan`）；
+      `ReadRecent` 走 SQL 而非整份 blob 反序列化，性質不同，放量前實測決定要不要改成跨主機批次查詢。
   10. Security 頻道規則未涵蓋的「未知失敗 ID」目前不會被撈入 Sentinel 路徑（相對本機模式的
       已知涵蓋縮小）；是否值得靠 `xdasoutcome` 補一條 `NOT xdasoutcome:0` 分支待評估。
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
@@ -295,7 +295,8 @@
 
 ## 權限異動檢核（PERMISSION-CHANGES 輪次遞延）
 
-- **Sentinel 投影新增 `sip`／`shn`**（來源 IP／發起端機器名）：本輪只取已在投影內的 `sun`（操作者帳號）。這兩個欄位要改查詢語句並實機驗證，另案處理。
+- **權限異動紀錄未存來源 IP／發起端機器名**：Sentinel 投影已含 `sip`／`shn`（`SentinelFieldMap.Q1ProjectionFields`），但目前只併進登入失敗（4625／4771）事件的訊息文字；
+  `PermissionChangeRecord` 只取操作者帳號（`sun`），沒有這兩個欄位。要存需新增欄位與 DDL 並實機驗證，另案處理。
 - **使用者自訂異動類別**：類別是系統內建的固定六類（key 已是資料表欄位）。要開放自訂需引入規則引擎與「規則改動後歷史資料如何重分類」的策略，範圍不成比例。
 - **既有 SQL Server 庫可能留有兩份同欄位索引**：全新安裝已不會重複（EF 具名索引與升級器同名，`DataConsistencyJ2Tests` 守門）。殘留只在舊命名建出的既有庫：`SchemaUpgrader.RemoveDuplicateIndexes` 對 SQLite 會移除，對 SQL Server 只警告不移除。影響是寫入吞吐與儲存空間、不影響正確性。**觸發時機**：正式機升級日誌出現重複索引警告時，以 DBA 手動移除。
 - **高風險（特權目標）判定的涵蓋範圍待議**：目前只標「成員新增到特權群組」。終檢建議一併涵蓋「成員移除」（把稽核人員移出 Domain Admins 是入侵後常見動作）與 ACL 授權對象（`權限新增（ACL 規則）` 的授權對象若是 Everyone／Domain Admins）。後者要改成比對 `Before`／`After` 的授權對象而非 `Target`（`Target` 是路徑，永遠不會命中群組關鍵字）。這是安全判定的範圍決策，需要與使用者確認後再改。

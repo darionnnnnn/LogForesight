@@ -295,7 +295,7 @@ public static class PrtgBackfillRunner
                         if (targetPlan.MappedHosts == 0)
                         {
                             // 沒有對應就沒有目標 sensor：不是成功（一筆都沒取）也不是失敗（沒有東西壞）。
-                            // 這天沒有東西要補，照樣記完成水位（體檢輪）：不記的話「全部完成」永遠湊不齊，
+                            // 這天沒有東西要補，照樣記完成水位：不記的話「全部完成」永遠湊不齊，
                             // 續跑只剩這種日子時會整趟回失敗還重翻狀態變更區間；指紋含對應，之後有對應就不算完成。
                             skippedDays++;
                             console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）略過：該日之前沒有主機對應");

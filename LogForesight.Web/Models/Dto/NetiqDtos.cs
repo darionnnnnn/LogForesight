@@ -3,11 +3,6 @@ using System.ComponentModel.DataAnnotations;
 namespace LogForesight.Web.Models.Dto;
 
 /// <summary>
-/// 主機頁的 NetIQ 清單概況：可選的 Sentinel 名單，以及需要人處理的佇列數。
-/// 佇列數不是統計儀表，是**待辦**——每一項都代表某些主機今晚不會被檢查、
-/// 或檢查了卻沒有人看得到。
-/// </summary>
-/// <summary>
 /// NetIQ 連線與節流參數的顯示 DTO（§9）：對應 <see cref="LogForesight.Core.Models.NetiqOptions"/>
 /// 的可調欄位，另補上更新者顯示名稱（即時解析，前端以 formatUserName 組「顯示名稱(帳號)」）。
 /// 寫入走 <see cref="UpdateNetiqOptionsRequest"/>，與此 DTO 分開。
@@ -39,6 +34,11 @@ public class NetiqOptionsDto
     public int MaxBackfillDays { get; set; }
 }
 
+/// <summary>
+/// 主機頁的 NetIQ 清單概況：可選的 Sentinel 名單，以及需要人處理的佇列數。
+/// 佇列數不是統計儀表，是**待辦**——每一項都代表某些主機今晚不會被檢查、
+/// 或檢查了卻沒有人看得到。
+/// </summary>
 public class NetiqOverviewDto
 {
     public List<string> SentinelNames { get; set; } = new();
@@ -283,8 +283,8 @@ public class NetiqImportResultDto
 }
 
 // ── 連線與節流參數（「系統管理 > NetIQ 維護」頁）───────────────────────────
-// 讀取直接回傳 Core 的 NetiqOptions（欄位與原本的 NetiqOptionsDto 逐一相同、
-// 無需遮蔽敏感欄位，這層 DTO 只是零加值的複本，已移除）。
+// 讀取回傳上方的 NetiqOptionsDto（NetiqOptions 的可調欄位，另補更新者顯示名稱、
+// CanUseOfflineDemo 與回望天數有效上限）；寫入走下面的 UpdateNetiqOptionsRequest。
 
 public class UpdateNetiqOptionsRequest
 {

@@ -341,7 +341,8 @@ public static class PrtgScopePurge
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 
-    /// <summary>成功清除後更新基準並清掉擋下提示（自動與人工確認共用）</summary>
+    /// <summary>更新範圍基準並清掉擋下提示。目前沒有呼叫端——正式清除路徑在
+    /// <c>PrtgScopePurgeStore</c> 的清除交易內更新基準（<c>RecordBaselineInTransaction</c>）。</summary>
     public static void RecordBaseline(EfPrtgStore store, int deviceCount) =>
         store.ScopeBaseline().Update(b =>
         {

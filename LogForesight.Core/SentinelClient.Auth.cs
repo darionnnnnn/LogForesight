@@ -63,7 +63,7 @@ public sealed partial class SentinelClient
         }
     }
 
-    /// <summary>原廠文件範例回應為 <c>{"Token":"…"}</c>（見 docs/NETIQ-API-REFERENCE.md §1.1），
+    /// <summary>原廠文件範例回應為 <c>{"Token":"…"}</c>（見 docs/NETIQ-API-REFERENCE.md §2），
     /// 大小寫容忍以防實際環境版本差異</summary>
     private static string? TryExtractToken(string json)
     {

@@ -6,7 +6,7 @@ using NLog;
 namespace LogForesight.Core.Service;
 
 /// <summary>
-/// PRTG 資源守門閘門服務（批次F 階段3）。
+/// PRTG 資源守門閘門服務（docs/PRTG-SPEC.md §12）。
 /// 在 NetIQ 與 PRTG 取數路徑前檢查監看目標主機之資源狀況（CPU／可用記憶體）；
 /// 連續超標達門檻時進入暫停，資源回落後自動恢復，單趟達累計暫停上限時放行不再暫停。
 /// </summary>

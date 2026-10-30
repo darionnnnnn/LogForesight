@@ -11,12 +11,12 @@ namespace LogForesight.Core.Service;
 ///
 /// 這是欄位對應／IP 篩選批次大小／時區等未決事項（docs/BACKLOG.md）唯一的定案依據——
 /// 公開文件沒有提供 event-search 結果頁的確切 JSON 結構範例，<see cref="SentinelClient"/> 的
-/// <c>ParseEventsPage</c> 目前只能 best-effort 通用解析（docs/NETIQ-API-REFERENCE.md §3.3、§4 未決欄位），
+/// <c>ParseEventsPage</c> 目前只能 best-effort 通用解析（docs/NETIQ-API-REFERENCE.md §3、§4），
 /// 必須用真實環境的原始輸出核對後才能繼續實作 SentinelFieldMap／SentinelStatsSource
 /// （docs/archive/HISTORY.md 步驟 3 起）。
 ///
 /// 全程透過 <see cref="SentinelClient"/> 既有的單一佇列＋節流執行，對 server 負擔可忽略
-/// （docs/NETIQ-API-REFERENCE.md §5）。
+/// （docs/NETIQ-API-REFERENCE.md §6）。
 ///
 /// **第二輪（2026-07-29）**：第一輪真實輸出（Sentinel「162」）量級遠超原估計
 /// （近 24h found≈2470 萬筆），推翻了「探索走近 24h 全事件投影＋本地 distinct」的原設計，
@@ -46,7 +46,7 @@ public static class NetiqProbeRunner
     {
         if (sentinels.Count == 0)
         {
-            console.WriteLine("目前沒有已設定且啟用的 Sentinel（請先在 Web「資料匯入」頁新增），無法執行 probe。");
+            console.WriteLine("目前沒有已設定且啟用的 Sentinel（請先在 Web「NetIQ 維護」頁新增），無法執行 probe。");
             return false;
         }
 
@@ -92,7 +92,7 @@ public static class NetiqProbeRunner
         IRunConsole console, CancellationToken ct)
     {
         console.WriteLine($"── Sentinel「{server.Name}」（{server.BaseUrl}） ──");
-        console.WriteLine($"   [人工核對] apidoc（有無聚合端點可取代 §1.3 的本地聚合退回方案）：" +
+        console.WriteLine($"   [人工核對] apidoc（有無聚合端點可取代 NETIQ-API-REFERENCE §3「沒有 GROUP BY」的本地聚合退回方案）：" +
                           $"{server.BaseUrl.TrimEnd('/')}/SentinelRESTServices/apidoc/en/index.html");
 
         var ok = true;

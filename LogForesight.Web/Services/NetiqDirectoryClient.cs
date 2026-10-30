@@ -233,13 +233,14 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     internal const int BackgroundTotalBudgetSeconds = 900;
 
     /// <summary>
-    /// **整趟掃描**的總預算秒數。<see cref="InteractiveTimeoutSeconds"/> 只約束單次 REST 呼叫與
+    /// **整趟掃描**的預設總預算秒數（呼叫端沒有指定時使用；背景掃描一律傳 <see cref="BackgroundTotalBudgetSeconds"/>）。
+    /// <see cref="InteractiveTimeoutSeconds"/> 只約束單次 REST 呼叫與
     /// job 輪詢階段（<c>SentinelClient.PollUntilTerminalAsync</c>），**分頁迴圈不受它約束**：
     /// <see cref="CoverageTargetResults"/>÷1000 筆/頁＝最多 50 次連續翻頁請求，實測 Sentinel
-    /// 單次查詢往返約 1.7 秒（第一輪 probe），最壞情況可以讓管理員在精靈畫面前乾等一分半以上，
-    /// 沒有任何上限——「逾時要短」的承諾等於沒有兌現。這裡用一個涵蓋整個 <see cref="ListHostsAsync"/>
-    /// 的 deadline 補上，逾時就明確報錯並建議縮小網段，**不回傳半套結果**（半套清單會讓人以為
-    /// 那就是該網段的全部主機，違反本專案「沒查 ≠ 沒事」的誠實申報原則）。
+    /// 單次查詢往返約 1.7 秒（第一輪 probe），最壞情況翻頁時間沒有任何上限。
+    /// 這裡用一個涵蓋整個 <see cref="ListHostsAsync"/> 的 deadline 補上：單一分段逾時就明確報錯並建議縮小網段，
+    /// **不回傳半套結果**（半套清單會讓人以為那就是該網段的全部主機，違反本專案「沒查 ≠ 沒事」的誠實申報原則）；
+    /// 多分段時回傳已完成分段的結果，並在警告列出未掃描的網段（分段的部分結果有明確邊界）。
     /// </summary>
     internal const int InteractiveTotalBudgetSeconds = 90;
 
@@ -324,7 +325,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             : _totalBudgetSeconds;
 
         // 整趟掃描的總預算（見 InteractiveTotalBudgetSeconds）——分頁迴圈本身不受單次逾時約束，
-        // 沒有這道 deadline 就沒有任何東西能保證互動操作會在可接受的時間內結束
+        // 沒有這道 deadline 就沒有任何東西能保證掃描會在可接受的時間內結束
         using var budgetTimer = new CancellationTokenSource(TimeSpan.FromSeconds(budgetSeconds), _timeProvider);
         using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct, budgetTimer.Token);
         var scanCt = budgetCts.Token;

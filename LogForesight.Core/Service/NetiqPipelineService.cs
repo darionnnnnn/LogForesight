@@ -17,7 +17,8 @@ namespace LogForesight.Core.Service;
 /// （<see cref="SentinelQueryBuilder"/>／<see cref="SentinelFieldMap"/>／
 /// <see cref="SentinelEventMapper"/>），統計/趨勢/AI/報告仍是同一條零改動重用的下游。
 ///
-/// **當日續跑免費取得**：完成標記＝該主機當日已有分析紀錄（<see cref="IAnalysisRecordReader.HasRecord"/>，
+/// **當日續跑免費取得**：完成標記＝該主機當日已有分析紀錄（<c>MissingDateFinder.FindWithExistingDates</c>，每台主機一次
+/// <c>ReadRecent</c> 取回望窗內的紀錄再算缺漏日，
 /// 各主機的 record store 已按 owner host 隔離）。凌晨排程跑到一半掛掉，白天重跑只會補上
 /// 還沒完成的主機/日期，不會重複分析——與本機模式的缺漏日回補同一機制，不是另外設計的功能。
 /// </summary>
@@ -779,8 +780,8 @@ public class NetiqPipelineService
             HostDayPostProcessor.RecordPermissionChanges(
                 _permissionChangeStore, _permissionHostDayClaims, target.HostName, target.Os, events, date, logContext, _permissionMappings);
 
-            // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（docs/NETIQ-API-REFERENCE.md §4.4：
-            // 「整台主機近 24h 零事件＝無資料來源告警，沿用既有無回報機制」）——零事件也 Touch 的話，
+            // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（零事件不更新，沿用既有「未回報」機制，
+            // 判定見 HostAdminService.IsSilent）——零事件也 Touch 的話，
             // 轉送已掛掉的主機會永遠顯示為正常回報，正是「沒查 ≠ 沒事」要防的靜默盲區。
             // 代價是「當日剛好沒有任何 watchlist/錯誤事件」的安靜主機兩天後會被標無回報——
             // 這個訊號值得人工看一眼（確認是真安靜還是轉送掛了），試點階段再依誤報率校準。
@@ -814,7 +815,7 @@ public class NetiqPipelineService
             _console.WriteLine($"  ✗ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +
                               "（未寫入紀錄，下次執行自動重試）");
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
-            // 刻意不寫入歷史：下次執行的缺漏日判定（HasRecord）會自動把這天當缺漏重新處理，
+            // 刻意不寫入歷史：下次執行的缺漏日判定（MissingDateFinder）會自動把這天當缺漏重新處理，
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
             return "failed";
         }

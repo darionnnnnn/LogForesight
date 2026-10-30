@@ -3,7 +3,7 @@ using LogForesight.Core.Models;
 namespace LogForesight.Core.Service;
 
 /// <summary>
-/// PRTG 用戶端工廠（PRTG 第 2 輪批次A）。
+/// PRTG 用戶端工廠。
 /// 全專案唯一的 PRTG 憑證解密與憑證完整性檢查收斂點。
 /// </summary>
 public static class PrtgClientFactory

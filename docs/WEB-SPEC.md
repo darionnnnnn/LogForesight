@@ -1936,6 +1936,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **NetIQ 匯入即時落盤**：主機頁曾經的「排入匯入佇列」機制已整組移除，掃描/勾選精靈送出後
   即時落盤（不再等批次執行套用），精靈已搬離主機頁（現在在 §9.9a「匯入」分頁）。落盤邏輯為
   Core 純函數 `NetiqImportApplier`（新增/更新/孤兒復活三態），供 Web 與批次共用同一份規則。
+- **NetIQ 單筆登錄與啟停**：單筆登錄（`NetiqHostService.AddHost`）對**既有主機**，Sentinel 與角色描述省略（未選／空白）時沿用既有值，明確提供才覆寫
+  （與批次登錄 `BulkAddHosts` 同一判定）；群組與負責人不動。主機啟停（`SetActive`）以既有主機的複本只改 `Active`：**停用時保留孤兒標記**
+  （仍是原屬某台已移除 Sentinel 的孤兒，掃描精靈據此認出），**人工重新啟用才清除**孤兒標記。
 - 群組：三頁籤——使用者群組（builtin admin/manager 鎖刪除與 role；**派工池**欄為切換開關、切換即存，
   內建群組 disabled，`PUT api/admin/groups/{id}/dispatch-pool`）、主機群組、
   **授權矩陣**（列=user 角色群組、欄=主機群組、勾選=授權）。
@@ -2019,7 +2022,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   設計與退路詳見 docs/NETIQ-API-REFERENCE.md §3.5。
 - **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
-  另有「同時處理幾台 Sentinel」（`MaxParallelServers`，1＝完全依序處理）——
+  另有「每台主機每次執行最多回補幾天」（`BackfillDays`，預設 1＝只查前一天，範圍 1–365，實際上限夾在歷史資料保留天數；首次與非首次一律套用同一值，缺漏日不自動自癒）、
+  「單台 Sentinel 內同時開幾條批次查詢」（`MaxParallelQueriesPerServer`，預設 1＝完全依序，後端 `[Range(1, NetiqOptions.MaxParallelQueriesPerServerLimit)]` 上限 4，
+  與 `MaxParallelServers` 的乘積決定夜間分析的 DB 連線池上限，細節見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §6、§7）與
+  「同時處理幾台 Sentinel」（`MaxParallelServers`，1＝完全依序處理）——
   **上限收斂為 3**：表單 `max="3"`＋後端
   `[Range(1, NetiqOptions.MaxParallelServersLimit)]` 雙重把關，避免無上限地並行對多台
   Sentinel 開查詢造成 server 端負擔失控；既有存值超過上限時讀取自動夾住（不擋存檔，
@@ -2033,6 +2039,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   首輪會對 Sentinel 發即時查詢，請評估白天查詢負載（行為詳見 §9.3 詢問 AI 對話區塊一節）。
   此即時查詢為 **fallback**：對話先查風險 log 暫存（不受本開關影響），
   查無才用到本開關控制的即時查詢。
+- **NetIQ 取數的查詢對象限制**：只有位址是合法 IPv4、且 `Os` 標記為 `windows`／`linux` 的主機會被查詢；位址不是 IPv4 或作業系統標記無法辨識的主機，
+  逐台印警告（執行詳情與本趟警告）、標記該趟未完整、不查詢，也不進進度分母（機制見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §5）。
 - **離線示範資料開關**（`UseOfflineDemoData`，§13，**預設關閉＝真實連線**）：
   取代原 appsettings 的 `Netiq:DiscoveryClient`（Auto 讓 Development 預設假資料、方向顛倒）。
   開關**僅非 Production 顯示**（DTO 的 `CanUseOfflineDemo`）；三道保險擋正式環境——前端不顯示、
@@ -2059,7 +2067,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
   掃描機制採**涵蓋保證**設計（完整說明見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §3.4）：
   結果只有「完整／顯性警告不完整／顯性失敗」三種，不會靜默漏掉安靜主機。重掃時該
-  Sentinel×網段的已登錄主機在 server 端直接排除（無新機的重掃趨近免費），由 Service 合成回清單
+  Sentinel×網段的已登錄主機在 server 端直接排除（無新機的重掃趨近免費；已登錄清單不設全域總數上限，只依分段過濾），由 Service 合成回清單
   （`Exists=true`、名稱取 `DisplayName`），精靈畫面分組不變。精靈的網段勾選面板上方顯示
   `CoverageNote`（涵蓋語意說明）與 `Warnings`（超出掃描能力／排除語法未生效／頻道覆蓋疑慮等，
   每則都說得出下一步動作）。
@@ -2079,6 +2087,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
     則續看（不同台顯示提示、不接手——舊結果配上新選 Sentinel 的 OS 預設值匯入會錯配），
     已結束的舊工作則放掉識別、照常啟動新掃描。不保留識別的話，背景工作還在跑而重開精靈
     會啟動新掃描並吃到「已有掃描進行中」，使用者被鎖到工作自然結束為止。
+  - **輪詢的停止規則**：只有後端明確回「掃描工作不存在或已逾期」（實為 HTTP 400＋`validation_failed`，相容 404／`not_found`）才放棄工作並關閉精靈；
+    其他錯誤（網路、5xx、逾時）不放棄工作，連續失敗 3 次才停止輪詢、關閉精靈並提示「暫時無法取得掃描進度，請稍後重新開啟精靈」，成功一次即歸零。
+    連續失敗收尾時保留工作識別，重開精靈走上述接續路徑。
 - **掃描粒度下拉**（`scan-granularity-select`，請求欄位 `granularity`）：
   `24`＝每段 254 台（預設）／`26`＝每段 62 台（最細）。網段事件量大時選較細的粒度
   可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。無法解析或缺席一律當 `/24`。
@@ -2116,7 +2127,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   不稀釋純 Windows 環境的既有 13 步輸出（逐字不變，契約不破）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
   （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
-  （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁）
+  （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁）、
+  `POST api/admin/netiq/probe/metadata/start`（診斷分頁的「欄位形狀探測」，`Maintain`、寫稽核 `netiq_probe_run`；與一般診斷共用探測執行閘門，
+  只送一個近 1 小時、最多 3 筆事件的查詢，報告只列欄位名稱與形狀、不含任何值，30 秒期限；細節見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §8）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化**：設定項目多且長，
