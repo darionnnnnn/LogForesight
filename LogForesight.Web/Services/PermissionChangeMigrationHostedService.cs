@@ -43,6 +43,10 @@ public class PermissionChangeMigrationHostedService : BackgroundService
             {
                 _backend.PermissionChangeMigrator.Run(stoppingToken);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;   // 站台停機：不是錯誤
+            }
             catch (Exception ex)
             {
                 Log.Error(ex, "[SQL] 權限異動遷移失敗，權限異動維持唯讀：{Msg}", ex.Message);
@@ -56,6 +60,10 @@ public class PermissionChangeMigrationHostedService : BackgroundService
                 // 帶上欄位對應：訊息用非標準欄位名的站台，沒帶就等於白跑（重剖是一次性的）
                 _backend.PermissionChangeReparser.Run(
                     stoppingToken, PermissionFieldMappings.FromSystemSettings(_systemSettings.Get()));
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;   // 站台停機：不是錯誤，也不要接著做清理
             }
             catch (Exception ex)
             {

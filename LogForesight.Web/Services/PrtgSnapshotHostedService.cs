@@ -266,6 +266,10 @@ public class PrtgSnapshotHostedService : BackgroundService
                 _scopeRefreshRequested = false;
                 await ScopeRefreshTickAsync(stoppingToken, prepareBeforeFirstSample: true);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // 站台停機：不是錯誤，後面的迴圈會直接結束
+            }
             catch (Exception ex)
             {
                 Log.Error(ex, "PRTG 啟動時範圍補抓發生未預期錯誤；不影響後續快照輪詢");
@@ -283,6 +287,10 @@ public class PrtgSnapshotHostedService : BackgroundService
                     _scopeRefreshRequested = false;
                     await ScopeRefreshTickAsync(stoppingToken);
                 }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break; // 站台停機：不是錯誤
             }
             catch (Exception ex)
             {
