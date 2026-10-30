@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using NLog;
 
 namespace LogForesight.Web.Services;
@@ -47,6 +48,33 @@ public class SchedulerRunState
     public string? Trigger { get; private set; }
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
+
+    /// <summary>執行中時為本趟 <see cref="BatchRun.RunId"/>；尚未登記或沒有執行時為 null。</summary>
+    public long? CurrentBatchRunId { get; private set; }
+
+    /// <summary>登記本趟執行的 RunId（recorder 建立後設定；EndRun 清除）。沒有執行中時忽略。</summary>
+    public void SetCurrentBatchRunId(long runId)
+    {
+        lock (_lock)
+        {
+            if (IsRunning && runId > 0) CurrentBatchRunId = runId;
+        }
+    }
+
+    /// <summary>
+    /// 這筆執行是否由本行程目前持有（單行程部署，見 BACKLOG 多實例遞延）。
+    /// 已知 RunId 時精確比對；RunId 尚未登記時，以「非 AI 且開始時間不早於本趟開始」判定
+    /// （單一執行 gate 保證同時只有一趟取數，舊的孤兒紀錄開始時間必然早於本趟）。
+    /// </summary>
+    public bool HoldsRun(BatchRun run)
+    {
+        lock (_lock)
+        {
+            if (!IsRunning || run.FinishedAt != null || run.JobType == BatchRun.JobTypeAi) return false;
+            if (CurrentBatchRunId is long id) return run.RunId == id;
+            return StartedAt is DateTime s && run.StartedAt >= s.AddSeconds(-5);
+        }
+    }
 
     /// <summary>最近幾次排程觸發嘗試的時間（保留最近 10 筆，行程內狀態）</summary>
     public IReadOnlyList<DateTime> RecentScheduleAttempts
@@ -427,6 +455,7 @@ public class SchedulerRunState
             IsRunning = false;
             Trigger = null;
             StartedAt = null;
+            CurrentBatchRunId = null;
             ResetTracks();
             PrtgFindingsReady = false;
             PrtgRangeStart = null;

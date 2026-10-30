@@ -437,10 +437,12 @@ public static class BatchRunStatus
     /// Stopped 優先於 exit code／錯誤計數判定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：
     /// 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來。
     /// </summary>
-    public static string Compute(BatchRun run, DateTime now, TimeSpan stuckThreshold)
+    /// <param name="heldByThisProcess">本行程仍持有這筆執行（RunState 的目前執行）：未結束時一律視為執行中、不看逾時門檻——
+    /// AI 積壓消化與大規模取數可以合理地跑超過門檻；門檻只用來判定「沒人持有卻沒結束」的孤兒紀錄。</param>
+    public static string Compute(BatchRun run, DateTime now, TimeSpan stuckThreshold, bool heldByThisProcess = false)
     {
         if (run.FinishedAt == null)
-            return now - run.StartedAt > stuckThreshold ? Stuck : Running;
+            return heldByThisProcess ? Running : now - run.StartedAt > stuckThreshold ? Stuck : Running;
         if (run.Interrupted) return Stuck;
         if (run.Stopped) return Stopped;
         if (run.ExitCode != 0) return Failed;

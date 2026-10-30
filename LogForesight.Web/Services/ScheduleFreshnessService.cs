@@ -12,9 +12,16 @@ public class ScheduleFreshnessService
 {
     private readonly BatchRunStore _runs;
     private readonly ScheduleOptionsStore _scheduleOptions;
+    private readonly Func<BatchRun, bool> _isHeld;
 
-    public ScheduleFreshnessService(BatchRunStore runs, ScheduleOptionsStore scheduleOptions)
+    /// <summary>組出「這筆執行是否由本行程持有」判定；兩個 RunState 皆可省略（視為不持有）。</summary>
+    internal static Func<BatchRun, bool> HeldProbe(SchedulerRunState? scheduler, AiAnalysisRunState? ai) =>
+        run => (scheduler?.HoldsRun(run) ?? false) || (ai?.HoldsRun(run) ?? false);
+
+    public ScheduleFreshnessService(BatchRunStore runs, ScheduleOptionsStore scheduleOptions,
+        SchedulerRunState? schedulerState = null, AiAnalysisRunState? aiState = null)
     {
+        _isHeld = HeldProbe(schedulerState, aiState);
         _runs = runs;
         _scheduleOptions = scheduleOptions;
     }
@@ -32,7 +39,7 @@ public class ScheduleFreshnessService
         var latestSuccess = runs
             .Where(r => r.IsScheduledFetch() &&
                         r.FinishedAt != null &&
-                        BatchRunStatus.UpdatedData(BatchRunStatus.Compute(r, now, RunMonitorService.StuckThreshold)))
+                        BatchRunStatus.UpdatedData(BatchRunStatus.Compute(r, now, RunMonitorService.StuckThreshold, _isHeld(r))))
             .OrderByDescending(r => r.FinishedAt)
             .FirstOrDefault();
 

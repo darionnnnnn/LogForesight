@@ -505,6 +505,69 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal("success", row.Status);
     }
 
+    // ── 本行程持有中的執行不判異常中斷 ────────────────────────────────
+
+    private long StartOpenRun(string? jobType, string trigger, TimeSpan age)
+    {
+        var started = DateTime.Now - age;
+        return Runs().StartRun(new BatchRun { HostName = "SRV-HELD", StartedAt = started, JobType = jobType, Trigger = trigger });
+    }
+
+    private RunMonitorService CreateWithStates(SchedulerRunState? scheduler, AiAnalysisRunState? ai) =>
+        new(Runs(), _hosts, Records(), new FakeUserStore(), Options(), _displayNames, schedulerState: scheduler, aiState: ai);
+
+    [Fact]
+    public void 執行紀錄_AI執行超過門檻但本行程持有_判執行中()
+    {
+        var runId = StartOpenRun(BatchRun.JobTypeAi, "schedule", TimeSpan.FromHours(7));
+        var ai = new AiAnalysisRunState();
+        Assert.True(ai.TryBeginRun("schedule", 1, out _));
+        ai.SetCurrentBatchRunId(runId);
+
+        var item = Assert.Single(CreateWithStates(null, ai).GetRunList(2), r => r.RunId == runId);
+        Assert.Equal(BatchRunStatus.Running, item.Status);
+    }
+
+    [Fact]
+    public void 執行紀錄_AI執行超過門檻且本行程不持有_判異常中斷()
+    {
+        var runId = StartOpenRun(BatchRun.JobTypeAi, "schedule", TimeSpan.FromHours(7));
+        var ai = new AiAnalysisRunState();
+        Assert.True(ai.TryBeginRun("schedule", 1, out _));
+        ai.SetCurrentBatchRunId(runId + 99);
+
+        Assert.Equal(BatchRunStatus.Stuck, Assert.Single(CreateWithStates(null, ai).GetRunList(2), r => r.RunId == runId).Status);
+        Assert.Equal(BatchRunStatus.Stuck, Assert.Single(Create().GetRunList(2), r => r.RunId == runId).Status);
+    }
+
+    [Fact]
+    public void 執行紀錄_取數執行超過門檻但本行程持有_判執行中_結束後不再持有()
+    {
+        var runId = StartOpenRun(null, "schedule", TimeSpan.FromHours(7));
+        var scheduler = new SchedulerRunState();
+        Assert.True(scheduler.TryBeginRun("schedule", out _));
+        scheduler.SetCurrentBatchRunId(runId);
+
+        var service = CreateWithStates(scheduler, null);
+        Assert.Equal(BatchRunStatus.Running, Assert.Single(service.GetRunList(2), r => r.RunId == runId).Status);
+
+        scheduler.EndRun();
+        Assert.Equal(BatchRunStatus.Stuck, Assert.Single(service.GetRunList(2), r => r.RunId == runId).Status);
+    }
+
+    [Fact]
+    public void 執行紀錄_取數尚未登記RunId_舊的孤兒紀錄不會被當成持有中()
+    {
+        var orphanId = StartOpenRun(null, "schedule", TimeSpan.FromHours(7));
+        var scheduler = new SchedulerRunState();
+        Assert.True(scheduler.TryBeginRun("schedule", out _));
+        var currentId = StartOpenRun(null, "schedule", TimeSpan.Zero);
+
+        var list = CreateWithStates(scheduler, null).GetRunList(2);
+        Assert.Equal(BatchRunStatus.Stuck, Assert.Single(list, r => r.RunId == orphanId).Status);
+        Assert.Equal(BatchRunStatus.Running, Assert.Single(list, r => r.RunId == currentId).Status);
+    }
+
     // ── 批次G：執行總表分頁（GetDaySummaries(days, page, pageSize)）────────────────────
 
     /// <summary>

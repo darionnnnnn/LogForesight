@@ -260,6 +260,7 @@ public class AiAnalysisHostedService : BackgroundService
             // 主機×日總表以 JobType 排除它（RunMonitorService）。
             var args = new[] { forceRerun ? "ai --force-rerun" : "ai" };
             using BatchRunRecorder recorder = new(_batchRuns, Environment.MachineName, args, trigger, runCts.Token, jobType: BatchRun.JobTypeAi);
+            _runState.SetCurrentBatchRunId(recorder.RunId);
 
             try
             {
