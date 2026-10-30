@@ -108,14 +108,17 @@ public class NetiqHostService : INetiqHostService
         var existing = _hosts.FindByName(ip);
         var permissionChanged = existing != null && !existing.Active && existing.OwnerUserIds.Count > 0;
 
+        // 省略（null 或空白）＝沿用既有值，與 BulkAddHosts 同一判定（F4 契約 1）；明確提供才覆寫
+        var roleDesc = request.RoleDesc?.Trim() ?? "";
+
         var saved = _hosts.Upsert(new WebHost
         {
             HostName = ip,
             IpAddress = ip,
             IpUpdatedAt = existing?.IpAddress == ip ? existing.IpUpdatedAt : DateTime.Now,
-            SentinelId = sentinelId,
-            NetiqServer = sentinel,
-            RoleDesc = request.RoleDesc?.Trim() ?? "",
+            SentinelId = sentinelId ?? existing?.SentinelId,
+            NetiqServer = sentinel ?? existing?.NetiqServer,
+            RoleDesc = string.IsNullOrWhiteSpace(roleDesc) ? existing?.RoleDesc ?? "" : roleDesc,
             Source = NetiqHostList.NetiqSource,
             Os = os,
             Tier = tier ?? existing?.Tier ?? WebHost.TierStandard,
@@ -130,8 +133,8 @@ public class NetiqHostService : INetiqHostService
         _audit.Record(
             action: AuditActions.HostUpdate,
             summary: existing == null
-                ? $"新增 NetIQ 主機 {ip}（Sentinel：{sentinel ?? "待歸屬"}、OS：{os}）"
-                : $"更新 NetIQ 主機 {ip}（Sentinel：{sentinel ?? "待歸屬"}、OS：{os}）",
+                ? $"新增 NetIQ 主機 {ip}（Sentinel：{saved.NetiqServer ?? "待歸屬"}、OS：{os}）"
+                : $"更新 NetIQ 主機 {ip}（Sentinel：{saved.NetiqServer ?? "待歸屬"}、OS：{os}）",
             targetKind: "host",
             targetId: saved.HostId.ToString(),
             detail: new { saved.HostName, saved.NetiqServer, saved.RoleDesc });
@@ -219,38 +222,23 @@ public class NetiqHostService : INetiqHostService
     }
 
     /// <summary>
-    /// 人工啟用／停用主機。
+    /// 人工啟用／停用主機。以既有主機的複本改 <c>Active</c> 後 Upsert，其餘欄位（含
+    /// <c>OrphanedFromSentinel</c>）原樣保留（F4 契約 2）。
     ///
-    /// **刻意不傳 <c>OrphanedFromSentinel</c>（不是漏抄）**：`Upsert` 的既存分支會用傳入物件
-    /// 覆寫該欄位，因此這裡不填＝標記被清除，而這正是要的行為——設計明訂「手動重新啟用一台
-    /// 孤兒主機時一併清除 OrphanedFromSentinel（人已表態，標記使命結束）」，見 docs/archive/HISTORY.md
-    /// 「2026-07-23」段 §1.7。孤兒標記的用途只是讓汰換 Sentinel 時能在掃描精靈裡認出「這台
-    /// 原屬某台已移除的 Sentinel」，人一旦自己動手處置過，這個標記就沒有意義了。
-    ///
-    /// 對照 <c>OwnerCsvImporter</c>：那裡曾因手刻 WebHost 漏抄欄位而靜默清掉 SentinelId／Os，
-    /// 已改走 <see cref="IHostStore.SetOwners"/>。兩者看起來像同一種寫法，但語意相反——
-    /// 這裡是「要覆寫」，那裡是「不該覆寫」，做逐欄比對的體檢時別把這裡一併「修」掉。
+    /// **孤兒標記只在人工重新啟用時清除**：停用時保留（仍是原屬某台已移除 Sentinel 的孤兒），
+    /// 重新啟用代表人已表態、標記使命結束（設計定案，見 docs/archive/HISTORY.md「2026-07-23」段 §1.7）。
+    /// 孤兒標記的用途只是讓汰換 Sentinel 時能在掃描精靈裡認出「這台原屬某台已移除的 Sentinel」。
     /// </summary>
     public HostDto SetActive(long hostId, bool active)
     {
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
         var permissionChanged = host.Active != active && host.OwnerUserIds.Count > 0;
 
-        _hosts.Upsert(new WebHost
-        {
-            HostName = host.HostName,
-            IpAddress = host.IpAddress,
-            IpUpdatedAt = host.IpUpdatedAt,
-            SentinelId = host.SentinelId,
-            NetiqServer = host.NetiqServer,
-            RoleDesc = host.RoleDesc,
-            Source = host.Source,
-            Os = host.Os,
-            Tier = host.Tier,
-            Active = active,
-            GroupIds = host.GroupIds,
-            OwnerUserIds = host.OwnerUserIds
-        });
+        var copy = CopyHost(host);
+        copy.Active = active;
+        // 停用保留孤兒標記；人工重新啟用才清除（見上方 XML 註解）
+        if (active) copy.OrphanedFromSentinel = null;
+        _hosts.Upsert(copy);
 
         if (permissionChanged)
             _permissionVersion.Bump();
@@ -296,6 +284,34 @@ public class NetiqHostService : INetiqHostService
 
         return (server.Id, server.Name);
     }
+
+    /// <summary>
+    /// 主機複本：<c>IHostStore.Get</c> 回傳的是共用快照，不可原地修改，且 <c>Upsert</c> 逐欄覆寫，
+    /// 所以寫回前一律先複製。欄位在這裡列全，避免像手刻 <c>WebHost</c> 那樣漏抄
+    /// （<c>OrphanedFromSentinel</c> 即曾因此被靜默清掉）；新增模型欄位時記得同步加一行。
+    /// </summary>
+    private static WebHost CopyHost(WebHost h) => new()
+    {
+        HostId = h.HostId,
+        HostName = h.HostName,
+        DisplayName = h.DisplayName,
+        IpAddress = h.IpAddress,
+        IpUpdatedAt = h.IpUpdatedAt,
+        SentinelId = h.SentinelId,
+        NetiqServer = h.NetiqServer,
+        RoleDesc = h.RoleDesc,
+        Source = h.Source,
+        Os = h.Os,
+        Active = h.Active,
+        MergedInto = h.MergedInto,
+        LastReportAt = h.LastReportAt,
+        CreatedAt = h.CreatedAt,
+        GroupIds = new List<long>(h.GroupIds),
+        OwnerUserIds = new List<long>(h.OwnerUserIds),
+        OrphanedFromSentinel = h.OrphanedFromSentinel,
+        IsHighVolume = h.IsHighVolume,
+        Tier = h.Tier
+    };
 
     private static BulkAddLineDto Skip(NetiqHostLine line, string reason) => new()
     {

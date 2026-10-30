@@ -238,4 +238,81 @@ public class NetiqHostServiceTests
 
         Assert.Equal(before + 1, _mapRefresher.Calls);
     }
+
+    // ── 既有主機重登與停用：未提供欄位沿用既有值（F4 契約 1、2） ─────────────
+
+    /// <summary>單筆登錄省略 Sentinel 與角色描述＝沿用既有值（比照批次登錄的 ?? existing 寫法）。</summary>
+    [Fact]
+    public void AddHost_既有主機未帶Sentinel與描述_沿用既有值()
+    {
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.12", IpAddress = "10.1.2.12", Source = "netiq",
+            SentinelId = 5, NetiqServer = "SENTINEL-A", RoleDesc = "DB"
+        });
+
+        Create().AddHost(new AddNetiqHostRequest { IpAddress = "10.1.2.12" });
+
+        var host = _hosts.FindByName("10.1.2.12")!;
+        Assert.Equal(5, host.SentinelId);
+        Assert.Equal("SENTINEL-A", host.NetiqServer);
+        Assert.Equal("DB", host.RoleDesc);
+    }
+
+    /// <summary>明確提供的新值照樣覆寫，沿用只發生在省略時。</summary>
+    [Fact]
+    public void AddHost_既有主機明確提供新值_覆寫既有值()
+    {
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.12", IpAddress = "10.1.2.12", Source = "netiq",
+            SentinelId = 5, NetiqServer = "SENTINEL-A", RoleDesc = "DB"
+        });
+
+        Create().AddHost(new AddNetiqHostRequest
+        {
+            IpAddress = "10.1.2.12", NetiqServer = "SENTINEL-B", RoleDesc = "FS"
+        });
+
+        var host = _hosts.FindByName("10.1.2.12")!;
+        Assert.Equal(_servers.GetServer("SENTINEL-B")!.Id, host.SentinelId);
+        Assert.Equal("SENTINEL-B", host.NetiqServer);
+        Assert.Equal("FS", host.RoleDesc);
+    }
+
+    /// <summary>停用不得清掉孤兒標記（SetActive 只複製既有物件、不重建）。</summary>
+    [Fact]
+    public void SetActive_停用孤兒主機_保留OrphanedFromSentinel()
+    {
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.12", IpAddress = "10.1.2.12", Source = "netiq",
+            Active = true, OrphanedFromSentinel = "SENTINEL-OLD"
+        });
+        var hostId = _hosts.FindByName("10.1.2.12")!.HostId;
+
+        Create().SetActive(hostId, active: false);
+
+        var host = _hosts.FindByName("10.1.2.12")!;
+        Assert.False(host.Active);
+        Assert.Equal("SENTINEL-OLD", host.OrphanedFromSentinel);
+    }
+
+    /// <summary>人工重新啟用孤兒主機時清除標記（既定設計，見 SetActive 的 XML 註解）。</summary>
+    [Fact]
+    public void SetActive_重新啟用孤兒主機_清除OrphanedFromSentinel()
+    {
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.12", IpAddress = "10.1.2.12", Source = "netiq",
+            Active = false, OrphanedFromSentinel = "SENTINEL-OLD"
+        });
+        var hostId = _hosts.FindByName("10.1.2.12")!.HostId;
+
+        Create().SetActive(hostId, active: true);
+
+        var host = _hosts.FindByName("10.1.2.12")!;
+        Assert.True(host.Active);
+        Assert.Null(host.OrphanedFromSentinel);
+    }
 }

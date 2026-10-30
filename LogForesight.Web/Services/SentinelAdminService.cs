@@ -138,24 +138,31 @@ public class SentinelAdminService
             detail: new { sentinel.Name, AffectedHostCount = affected });
     }
 
+    /// <summary>Sentinel 複本（F4 契約 2）：<c>ISentinelStore.Get</c> 回傳的是共用快照，寫回前先複製。</summary>
+    private static Sentinel CopySentinel(Sentinel s) => new()
+    {
+        SentinelId = s.SentinelId,
+        Name = s.Name,
+        BaseUrl = s.BaseUrl,
+        Username = s.Username,
+        PasswordEnc = s.PasswordEnc,
+        Active = s.Active,
+        CreatedAt = s.CreatedAt,
+        UpdatedAt = s.UpdatedAt,
+        Os = s.Os,
+        UseEsmDirectory = s.UseEsmDirectory
+    };
+
     public SentinelDto SetActive(long sentinelId, bool active)
     {
         var sentinel = _sentinels.Get(sentinelId) ?? throw DomainException.NotFound("找不到這台 Sentinel。");
 
-        // 逐欄重建（只有 Active 是要改的）：**新增模型欄位時這裡必須跟著加**，
-        // 漏抄的症狀是「停用再啟用，該欄位被靜默重置」——UseEsmDirectory 曾在這裡漏過，
-        // SentinelAdminServiceTests 的 SetActive 保留欄位測試守住這件事
-        var saved = _sentinels.Upsert(new Sentinel
-        {
-            SentinelId = sentinel.SentinelId,
-            Name = sentinel.Name,
-            BaseUrl = sentinel.BaseUrl,
-            Username = sentinel.Username,
-            PasswordEnc = sentinel.PasswordEnc,
-            Active = active,
-            Os = sentinel.Os,
-            UseEsmDirectory = sentinel.UseEsmDirectory
-        });
+        // 以既有 Sentinel 的複本改 Active 後 Upsert（只有 Active 是要改的）。
+        // 欄位清單在 CopySentinel 列全：新增模型欄位時要同步加一行，否則「停用再啟用」會靜默重置它
+        // ——UseEsmDirectory 曾在這裡漏過，SentinelAdminServiceTests 的 SetActive 保留欄位測試守住這件事
+        var copy = CopySentinel(sentinel);
+        copy.Active = active;
+        var saved = _sentinels.Upsert(copy);
 
         _audit.Record(
             action: AuditActions.SentinelSetActive,
