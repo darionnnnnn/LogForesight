@@ -45,6 +45,7 @@
 | B3 | Sonnet | `rule_id` 上限改引用 `RuleSchemaLimits.IdMaxLength`；SQL Server 建表 100、每次升級以 INFORMATION_SCHEMA 判斷長度不足才 ALTER | 主代理重跑 111 綠；突變 ALTER 改 SELECT → DDL 測試紅 | SQL Server 實機 ALTER 未連線驗證（專案限制）；呼叫點以讀碼確認（SchemaUpgrader.cs:361） |
 | B4 | Sonnet | 復原服務孤兒頁對保留期外 workflow blob 精確刪除（同租約、同邊界；不刪未來日、保留期內孤兒、cursor） | 主代理重跑 36 綠；突變邊界 `<` 改 `<=` → 邊界日案紅；代理突變停用刪除 → 2 紅 | 無 |
 | B5 | Sonnet | 風險事件與權限異動 Prune 改 `BatchedPrune`（只撈主鍵、單次上限）；`RetentionPruner` 任一步失敗不寫 LastRunDate | 主代理重跑 243 綠；突變拿掉 Take → 分批測試紅；代理突變 `if (!anyFailed)` → 失敗不記日期案紅 | 無 |
+| B6 | Sonnet＋主代理 | `StorageSettings.IsSqlite／IsSqlServer`；QueryPage SQL 分支末尾加 RecordId 次要鍵 | 主代理重跑 209 綠；突變 Storage 改回字面 → 3 紅；突變拿掉 date 降序次要鍵 → 主代理補的 `QueryPageOrderSqlTests` 紅 | 代理的翻頁測試在 SQLite 抓不到缺次要鍵（同分依 rowid 輸出）→ 主代理補 SQL 文字守門（攔截器檢查 ORDER BY 最後一鍵） |
 | A 規格 | 主代理 | `.gemini-tasks/r59/_common.md`＋A1～A7 | PLAN A-1～A-9 逐條對照規格與驗收皆有對應 | 寫規格時核對推翻兩處：A-1 不動 CaptureBinding／PrtgMonitoringController；A-6 儀表板快取鍵項撤銷（死條件非缺口）。A-5 改為含控制字元直接拒絕 |
 
 ## 0. 總結

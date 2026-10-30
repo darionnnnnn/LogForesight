@@ -1543,14 +1543,15 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             // RiskRankConsistencyTests 斷言這裡的權重與 RiskLevels.Rank 一致
             IOrderedQueryable<DailyRecordRow> ordered = sortKey switch
             {
-                "date" => ascending ? q.OrderBy(r => r.RecordDate) : q.OrderByDescending(r => r.RecordDate),
-                "host" => ascending ? q.OrderBy(r => r.HostName) : q.OrderByDescending(r => r.HostName),
+                "date" => ascending ? q.OrderBy(r => r.RecordDate).ThenBy(r => r.RecordId) : q.OrderByDescending(r => r.RecordDate).ThenByDescending(r => r.RecordId),
+                "host" => ascending ? q.OrderBy(r => r.HostName).ThenBy(r => r.RecordId) : q.OrderByDescending(r => r.HostName).ThenByDescending(r => r.RecordId),
                 "risk" => ascending
-                    ? q.OrderBy(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
-                    : q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0),
+                    ? q.OrderBy(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0).ThenBy(r => r.RecordId)
+                    : q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0).ThenByDescending(r => r.RecordId),
                 _ => q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
                     .ThenByDescending(r => r.HasCorrelation)
                     .ThenByDescending(r => r.RecordDate)
+                    .ThenByDescending(r => r.RecordId)
             };
 
             var items = ordered

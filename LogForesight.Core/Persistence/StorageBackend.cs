@@ -72,7 +72,7 @@ public class StorageBackend
         DbCommandInterceptor? commandInterceptor)
     {
         DbContextOptions<LfDbContext> options;
-        if (settings.Type == "Sqlite")
+        if (settings.IsSqlite)
         {
             string cs;
             if (string.IsNullOrWhiteSpace(settings.ConnectionString))
