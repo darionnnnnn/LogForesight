@@ -177,6 +177,36 @@ public class EfRecordQueryTests : IDisposable
         Assert.Equal(new[] { "B", "A" }, page.Items.Select(r => r.Host));
     }
 
+    /// <summary>退回路徑（含 HostId=0 舊列）與 SQL 全下推路徑一樣必須有穩定的 RecordId 次要鍵：
+    /// 同日同風險多筆時，翻頁聯集要不重不漏，且順序與 SQL 路徑一致（升冪 RecordId 升、降冪 RecordId 降）。</summary>
+    [Theory]
+    [InlineData("date", false)]
+    [InlineData("date", true)]
+    [InlineData("risk", false)]
+    [InlineData("risk", true)]
+    [InlineData(null, false)]
+    public void QueryPage_退回路徑_同日同風險多筆_翻頁聯集不重不漏且次序依RecordId(string? sortKey, bool ascending)
+    {
+        var store = Store();
+        var day = new DateTime(2026, 7, 15);
+        store.Append(Rec(0, "舊列", day, "高"));      // 觸發退回路徑
+        for (var i = 1; i <= 5; i++) store.Append(Rec(i, "H" + i, day, "高"));
+
+        var filter = new RecordQueryFilter { Hosts = Enumerable.Range(1, 5).Select(i => new HostKey { HostId = i, HostName = "H" + i })
+            .Append(new HostKey { HostId = 0, HostName = "舊列" }).ToArray() };
+
+        var all = new List<DailyAnalysisRecord>();
+        for (var p = 1; p <= 3; p++)
+            all.AddRange(store.QueryPage(filter, page: p, pageSize: 2, sortKey: sortKey, ascending: ascending).Items);
+
+        Assert.Equal(6, all.Count);
+        Assert.Equal(6, all.Select(r => r.RecordId).Distinct().Count());
+        var ids = all.Select(r => r.RecordId).ToList();
+        // 全部同日同風險：次序完全由 RecordId 決定（升冪＝小到大；降冪與預設＝大到小）
+        var expected = (sortKey != null && ascending) ? ids.OrderBy(x => x).ToList() : ids.OrderByDescending(x => x).ToList();
+        Assert.Equal(expected, ids);
+    }
+
     // ── 批次C：全域待補查詢與計數 ─────────────────────────────────────────────
 
     [Fact]
@@ -426,5 +456,24 @@ public class EfRecordQueryTests : IDisposable
         Assert.Single(q2.QueryPendingAi(1));
         Assert.Empty(q1.QueryPendingAi(0));
         Assert.Empty(q2.QueryPendingAi(0));
+    }
+
+    /// <summary>首見日是輔助資料：主交易已提交後，非唯一鍵的 DbUpdateException（這裡用 trigger 呼叫不存在的函式，
+    /// 讓 INSERT 擲 SQLite 錯誤碼 1，被包成 DbUpdateException）只能記警告，不得從 Append 擲出，
+    /// 否則呼叫端會把已寫入的主機日判為失敗。</summary>
+    [Fact]
+    public void Append_首見日寫入遇非唯一鍵DbUpdateException_不拋且主機日已寫入()
+    {
+        using (var ctx = _fx.NewContext())
+            Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw(ctx.Database,
+                "CREATE TRIGGER trg_first_seen_ignore BEFORE INSERT ON lf_issue_first_seen BEGIN SELECT lf_no_such_function(); END;");
+        var store = Store();
+
+        var ex = Record.Exception(() => store.Append(Rec(1, "H1", new DateTime(2026, 7, 15), "高", Issue("Disk", 7))));
+
+        Assert.Null(ex);
+        using var verify = _fx.NewContext();
+        Assert.Equal(1, verify.DailyRecords.Count());
+        Assert.Equal(0, verify.IssueFirstSeen.Count());
     }
 }

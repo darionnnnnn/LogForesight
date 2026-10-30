@@ -234,9 +234,6 @@ public class StorageSettings
     /// <summary>是否為 Sqlite 後端（不分大小寫、容忍前後空白）</summary>
     public bool IsSqlite => string.Equals(Type?.Trim(), "Sqlite", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>是否為 SqlServer 後端（不分大小寫、容忍前後空白）</summary>
-    public bool IsSqlServer => string.Equals(Type?.Trim(), "SqlServer", StringComparison.OrdinalIgnoreCase);
-
     /// <summary>實際生效的資料根目錄：未設定時回退到執行檔目錄</summary>
     public string ResolveDataRoot() =>
         string.IsNullOrWhiteSpace(DataRoot) ? AppContext.BaseDirectory : DataRoot;

@@ -313,8 +313,13 @@ public sealed class EfJsonBlobStore
         // 根因已除，這裡留作第二道保險（如使用者自行在 ConnectionString 開回 Pooling）。
         if (ex is BlobWriterLockTimeoutException or DbUpdateConcurrencyException) return true;
 
+        // 唯一鍵違規：lf_blobs 以 blob_key 為主鍵，唯一鍵衝突只可能來自「讀到 null 後、自己 Add 前，
+        // 別的實例／連線先建了同 key」的首次寫入競態；重試時會讀到那一列、改走更新而成功。
+        // 判定與紀錄庫的首見日競態共用同一份（EfAnalysisRecordStore.IsUniqueViolation：SQLite 19／SQL Server 2601、2627）。
+        if (ex is DbUpdateException due && EfAnalysisRecordStore.IsUniqueViolation(due)) return true;
+
         var msg = ex.Message.ToLowerInvariant();
-        // 其餘 DbUpdateException（截斷／唯一鍵／FK）重試也不會好，只有訊息（含內層）屬暫時性才重試。
+        // 其餘 DbUpdateException（截斷／FK 等）重試也不會好，只有訊息（含內層）屬暫時性才重試。
         if (ex is DbUpdateException && ex.InnerException != null)
             msg += " " + ex.InnerException.Message.ToLowerInvariant();
         return msg.Contains("busy") || msg.Contains("locked") ||

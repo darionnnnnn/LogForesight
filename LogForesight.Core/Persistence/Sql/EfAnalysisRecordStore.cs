@@ -305,13 +305,24 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     Log.Warn(retryEx, "[SQL] IssueFirstSeen 補更新仍失敗，這個問題的首見日這次先不更新：{Msg}", retryEx.Message);
                 }
             }
+            catch (DbUpdateException ex)
+            {
+                // 非唯一鍵的寫入錯誤：此時主交易已提交，首見日只是輔助的呈現資料——
+                // 擲出去會讓呼叫端把已寫入的主機日判為失敗，所以只記警告、繼續處理下一個問題
+                Log.Warn(ex, "[SQL] IssueFirstSeen 寫入失敗（主機 {Host}、日期 {Date:yyyy-MM-dd}、{Source}/{EventId}），這個問題的首見日這次先不更新：{Msg}",
+                    shaped.Host, date, source, eventId, ex.Message);
+            }
         }
     }
 
-    /// <summary>是否為唯一鍵衝突（SQLite 19／SQL Server 2601、2627）；其他錯誤不當競態吞掉。</summary>
+    /// <summary>
+    /// 是否為唯一鍵衝突（SQLite 主碼 19 且延伸碼為 UNIQUE 2067／PRIMARYKEY 1555；SQL Server 2601、2627）；
+    /// 其他錯誤不當競態吞掉。SQLite 的主碼 19 涵蓋所有約束（外鍵 787、NOT NULL 1299、CHECK 275），只看主碼會誤判。
+    /// 延伸碼等於 19 是沒有延伸資訊的情況（例如只帶主碼建構的例外），視同唯一鍵以維持相容。
+    /// </summary>
     internal static bool IsUniqueViolation(DbUpdateException ex) => ex.InnerException switch
     {
-        Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 } => true,
+        Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19, SqliteExtendedErrorCode: 2067 or 1555 or 19 } => true,
         Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 } => true,
         _ => false
     };
@@ -1583,16 +1594,20 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var matched = records.Where(r => RecordFilterMatcher.Matches(r, filter));
         var ordered2 = sortKey switch
         {
-            "date" => ascending ? matched.OrderBy(r => r.Date) : matched.OrderByDescending(r => r.Date),
+            // 每個分支末尾補 RecordId 次要鍵，與 SQL 全下推路徑一致：同鍵多筆時次序穩定，翻頁聯集不重不漏
+            "date" => ascending
+                ? matched.OrderBy(r => r.Date).ThenBy(r => r.RecordId)
+                : matched.OrderByDescending(r => r.Date).ThenByDescending(r => r.RecordId),
             "host" => ascending
-                ? matched.OrderBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
-                : matched.OrderByDescending(r => r.Host, StringComparer.OrdinalIgnoreCase),
+                ? matched.OrderBy(r => r.Host, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.RecordId)
+                : matched.OrderByDescending(r => r.Host, StringComparer.OrdinalIgnoreCase).ThenByDescending(r => r.RecordId),
             "risk" => ascending
-                ? matched.OrderBy(r => RiskLevels.Rank(r.RiskLevel))
-                : matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)),
+                ? matched.OrderBy(r => RiskLevels.Rank(r.RiskLevel)).ThenBy(r => r.RecordId)
+                : matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)).ThenByDescending(r => r.RecordId),
             _ => matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
                 .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
                 .ThenByDescending(r => r.Date)
+                .ThenByDescending(r => r.RecordId)
         };
         var finalOrdered = ordered2.ToList();
 

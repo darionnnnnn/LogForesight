@@ -4,10 +4,11 @@ namespace LogForesight.Web.Services;
 /// <see cref="IssueTodoQuery.ResolveActionable"/> 結果的跨請求快取（回饋三十六輪批次B）。
 ///
 /// 為什麼需要它：可行動快照是儀表板成本最高的查詢之一（lf_top_issues join lf_daily_records
-/// 後五欄 GROUP BY），卻是問題彙總家族裡唯一沒有查詢層快取的——`IssueRankingCache` 只包
-/// 排行投影，最外層 `SummaryCache` 又會被啟動期背景服務的版本戳推進打掉，於是同一份快照
-/// 在幾秒內被完整重算。機制與取捨完全比照 <see cref="IssueRankingCache"/>：
-/// 鍵含資料版本戳；背景寫入執行中版本不推進，故保留 TTL 作為上限。鍵含可見主機集合不得串味。
+/// 後五欄 GROUP BY）。`IssueRankingCache` 只包排行投影、最外層 `SummaryCache` 的鍵各不相同，
+/// 所以同一份資料版本下，不同外層鍵的請求仍會各自重算一次快照；本快取的價值就在這裡——
+/// 鍵含資料版本戳，同版本時不同外層鍵共用同一份快照，版本推進時鍵自然換新。
+/// 機制與取捨完全比照 <see cref="IssueRankingCache"/>：背景寫入執行中版本不推進，
+/// 故保留 TTL 作為上限。鍵含可見主機集合不得串味。
 /// </summary>
 public class ActionableSnapshotCache
 {

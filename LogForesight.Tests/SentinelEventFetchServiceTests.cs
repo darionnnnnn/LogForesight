@@ -122,6 +122,8 @@ public class SentinelEventFetchServiceTests : IDisposable
     [InlineData("a OR b")]
     [InlineData("x*")]
     [InlineData("")]
+    [InlineData("sshd\n")]
+    [InlineData("sshd\r\n")]
     public void BuildQuery_Linux不安全的program不產生查詢(string source)
     {
         var query = SentinelEventFetchService.BuildQuery(WebHost.OsLinux, "10.0.0.9", source, 0);

@@ -18,7 +18,6 @@ public class StorageTypeCaseAndPagingTests
         {
             var settings = new StorageSettings { Type = type, ConnectionString = $"Data Source={Path.Combine(dir, "t.db")}" };
             Assert.True(settings.IsSqlite);
-            Assert.False(settings.IsSqlServer);
             var backend = new StorageBackend(settings, dir);
             var blob = backend.Blob("b6_blob");
             blob.Mutate<int>(_ => ("hello", 0));
@@ -37,8 +36,8 @@ public class StorageTypeCaseAndPagingTests
     public void SqlServer判定不分大小寫(string type)
     {
         var s = new StorageSettings { Type = type };
-        Assert.True(s.IsSqlServer);
         Assert.False(s.IsSqlite);
+        Assert.True(s.IsValidType);
     }
 
     [Theory]

@@ -145,7 +145,7 @@ public class SentinelEventFetchService : ISentinelEventFetcher
     }
 
     private static readonly System.Text.RegularExpressions.Regex SafeProgramPattern =
-        new(@"^[A-Za-z0-9_.\-]+$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        new(@"^[A-Za-z0-9_.\-]+\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     internal readonly record struct LiveFetchQuery(string Filter, string[] ProjectionFields, string SourceField);
 

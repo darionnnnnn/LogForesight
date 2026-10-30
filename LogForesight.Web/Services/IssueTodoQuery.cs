@@ -52,8 +52,8 @@ public class IssueTodoQuery
         IReadOnlySet<string>? riskLevels,
         IReadOnlySet<IssueSeverity>? visibleSeverities)
     {
-        // 跨請求快取（回饋三十六輪批次B）：這支是問題彙總家族唯一沒有查詢層快取的，
-        // 啟動期版本戳推進打掉 SummaryCache 後會在幾秒內被整套重算——理由詳見 ActionableSnapshotCache
+        // 跨請求快取：鍵含資料版本戳，同版本下不同外層鍵的請求共用同一份快照，
+        // TTL 是背景寫入期間（版本戳不推進）的上限——理由詳見 ActionableSnapshotCache
         var cacheKey = _cache == null
             ? null
             : ActionableSnapshotCache.KeyOf(_cache.Version, from, to, visibleHostIds, riskLevels,
