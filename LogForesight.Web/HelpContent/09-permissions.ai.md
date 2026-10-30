@@ -32,4 +32,4 @@ LogForesight 將授權嚴格拆分為兩個正交維度：
 1. **群組授權矩陣（Group Authorization Matrix）**：依「群組與授權」頁之授權矩陣勾選決定。
 2. **主機負責人（Host Owner）**：是任一啟用中主機的負責人時，自動獲得該主機的檢視權，並自動隱含獲得 `Handle` + `ConfirmPermission` 能力。
 3. **問題負責人（Issue Owner）**：在「問題負責與靜音」設定為某問題之負責人時，自動獲得資料保留期內出現該問題之主機的檢視權，同樣自動隱含獲得 `Handle` + `ConfirmPermission` 能力。
-4. **案件授與（Case Assignment Grant）**：被指派為特定問題案件處理人時，獲得對該單一問題的窄檢視權（看不到同日其他問題與 AI 總覽）。
+4. **交辦授與（Case Assignment Grant）**：被指派為特定問題案件處理人時，獲得對該單一問題的窄檢視權（看不到同日其他問題與 AI 總覽）。
