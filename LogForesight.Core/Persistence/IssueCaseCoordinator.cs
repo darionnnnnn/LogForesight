@@ -262,7 +262,7 @@ public class IssueCaseCoordinator
         }
 
         _issueHandlings.SaveMany(toSave);
-        _cases.SaveMany(casesToSave);
+        _cases.SaveMany(ReloadCasesForAttach(casesToSave, occurredAt));
 
         // 仍沒有當日列、也沒有進行中案件的問題交給派工（依問題鍵去重、保持輸入順序）
         var unassigned = new List<LogIssueSignature>();
@@ -275,6 +275,39 @@ public class IssueCaseCoordinator
         }
 
         return new CaseAttachResult(toSave.Count, unassigned);
+    }
+
+    /// <summary>
+    /// 夜間掛接存檔前的重讀（同 <see cref="ApplyPendingCaseDays"/> 的手法）：開頭讀到的案件快照可能已過時
+    /// （處理人在窗口內結案或回覆），整列覆寫會把 ClosedAt 寫回 null。這裡對每個案件重讀最新物件，
+    /// 只把 LastLinkedDate 與 PrtgEvidence 套上去；重讀時已結案（或已不存在）的案件跳過、不再掛新日。
+    /// </summary>
+    private List<IssueCase> ReloadCasesForAttach(List<IssueCase> snapshots, DateTime occurredAt)
+    {
+        var result = new List<IssueCase>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var snapshot in snapshots)
+        {
+            if (!seen.Add(snapshot.CaseId)) continue;
+            var fresh = _cases.Get(snapshot.CaseId);
+            if (fresh == null || fresh.ClosedAt != null || IssueHandlingStatuses.IsClosed(fresh.Status)) continue;
+
+            var changed = false;
+            if (snapshot.LastLinkedDate.Date > fresh.LastLinkedDate.Date)
+            {
+                fresh.LastLinkedDate = snapshot.LastLinkedDate.Date;
+                changed = true;
+            }
+            if (fresh.PrtgEvidence == null && snapshot.PrtgEvidence != null)
+            {
+                fresh.PrtgEvidence = snapshot.PrtgEvidence;
+                changed = true;
+            }
+            if (!changed) continue;
+            fresh.UpdatedAt = occurredAt;
+            result.Add(fresh);
+        }
+        return result;
     }
 
     /// <summary>

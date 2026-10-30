@@ -155,13 +155,20 @@ public sealed class NightlyDispatch
         }
 
         // 途中已結案的單不寫入、途中改派的依新處理人寫入（判斷在 coordinator 鎖內，見 WriteNightlyMembers）
-        var writtenHandlers = _coordinator.WriteNightlyMembers(host, date, members, occurredAt);
+        var writeOutcome = _coordinator.WriteNightlyMembersDetailed(host, date, members, occurredAt);
+        var writtenHandlers = writeOutcome.Handlers;
 
             for (var i = 0; i < members.Count; i++)
             {
                 var (issue, workOrderId, plannedHandlerId, _) = members[i];
                 if (writtenHandlers[i] is not long handlerId)
                 {
+                    if (writeOutcome.ExistingOpenIndexes.Contains(i))
+                    {
+                        Report(onResult, issue, "skipped", WorkOrderCoordinator.SkipOpenCaseExists);
+                        _midrunCounts[WorkOrderCoordinator.SkipOpenCaseExists] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.SkipOpenCaseExists) + 1;
+                        continue;
+                    }
                     Report(onResult, issue, "failed", WorkOrderCoordinator.SkipOrderClosedMidrun);
                     _midrunCounts[WorkOrderCoordinator.SkipOrderClosedMidrun] = _midrunCounts.GetValueOrDefault(WorkOrderCoordinator.SkipOrderClosedMidrun) + 1;
                     continue;
@@ -239,6 +246,8 @@ public sealed class NightlyDispatch
                    $"嚴重度 {Count(WorkOrderDispatcher.SkipSeverity)}、不再打擾 {Count(WorkOrderDispatcher.SkipDismissed)}）";
         if (Count(WorkOrderCoordinator.SkipOrderClosedMidrun) > 0)
             text += $"；交辦單在派工途中已結案 {Count(WorkOrderCoordinator.SkipOrderClosedMidrun)} 台";
+        if (Count(WorkOrderCoordinator.SkipOpenCaseExists) > 0)
+            text += $"；已有進行中案件略過 {Count(WorkOrderCoordinator.SkipOpenCaseExists)} 台";
         if (Count(WorkOrderCoordinator.HandlerChangedMidrun) > 0)
             text += $"；交辦單在派工途中已改派，已依新處理人掛入 {Count(WorkOrderCoordinator.HandlerChangedMidrun)} 台";
         if (Count(WorkOrderDispatcher.SkipUnavailable) > 0) text += "；派工資料讀取失敗，本趟未派工";
@@ -252,6 +261,15 @@ public sealed class NightlyDispatch
         {
             foreach (var (workOrderId, added) in _addedByOrder.OrderBy(p => p.Key))
                 _coordinator.RecordNightlyAppended(workOrderId, added, occurredAt);
+
+            // 本趟新建、最後一個成員都沒寫入的單（成員全因「決策後已有進行中案件」略過）：交給結案推導
+            // 收掉（零成員→moved），不留零成員的進行中空單，也不列進摘要與通知。放在收尾而非當下，
+            // 同一趟後面的主機仍可能掛入這張單；推導只在單真的沒有任何案件時才結案。
+            foreach (var emptyOrderId in _createdOrders.Where(id => !_addedByOrder.ContainsKey(id)).OrderBy(id => id).ToList())
+            {
+                _coordinator.RecomputeClosure(emptyOrderId, occurredAt);
+                _createdOrders.Remove(emptyOrderId);
+            }
 
             var perHandler = _handlerByOrder
                 .Where(p => _createdOrders.Contains(p.Key) || _addedByOrder.ContainsKey(p.Key))

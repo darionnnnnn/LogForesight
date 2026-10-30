@@ -451,4 +451,62 @@ public class IssueCaseCoordinatorTests
         Assert.Equal(IssueHandlingStatuses.Observing, row.Status);
         Assert.Equal(observeUntil, row.DueDate);
     }
+
+    /// <summary>
+    /// 決定性交錯用替身：GetOpenForHost 回傳「快照複本」（模擬 EF 每次載入新物件），並在回傳後觸發 callback，
+    /// 讓測試在 AttachNewDay 讀取之後、存檔之前改動 store（等同處理人在窗口內結案）。
+    /// </summary>
+    private class InterleavingCaseStore : System.Reflection.DispatchProxy
+    {
+        public IIssueCaseStore Inner = null!;
+        public Action? AfterOpenForHost;
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            var result = targetMethod!.Invoke(Inner, args);
+            if (targetMethod.Name == nameof(IIssueCaseStore.GetOpenForHost))
+            {
+                var copies = ((List<IssueCase>)result!)
+                    .Select(c => System.Text.Json.JsonSerializer.Deserialize<IssueCase>(System.Text.Json.JsonSerializer.Serialize(c))!)
+                    .ToList();
+                var callback = AfterOpenForHost;
+                AfterOpenForHost = null;
+                callback?.Invoke();
+                return copies;
+            }
+            return result;
+        }
+    }
+
+    [Fact]
+    public void 掛接_讀取後存檔前案件被結案_存檔不把結案蓋回進行中()
+    {
+        var trigger = DateTime.Today.AddDays(-1);
+        var newDay = DateTime.Today;
+        AddRecord(trigger);
+        _seeder.Assign(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: "處理中", dueDate: null,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        var caseId = _cases.GetOpen(Host, IssueKey)!.CaseId;
+
+        var proxy = System.Reflection.DispatchProxy.Create<IIssueCaseStore, InterleavingCaseStore>();
+        var interleaving = (InterleavingCaseStore)(object)proxy;
+        interleaving.Inner = _cases;
+        interleaving.AfterOpenForHost = () =>
+        {
+            var live = _cases.Get(caseId)!;
+            live.Status = IssueHandlingStatuses.Resolved;
+            live.ClosedAt = DateTime.Now;
+            _cases.Save(live);
+        };
+        var coordinator = new IssueCaseCoordinator(proxy, _issueHandlings, _handlingLog, _records, _hosts, _issueProfiles);
+
+        coordinator.AttachNewDay(Host, newDay, new List<LogIssueSignature>
+        {
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+        }, DateTime.Now);
+
+        var after = _cases.Get(caseId)!;
+        Assert.NotNull(after.ClosedAt);
+        Assert.Equal(IssueHandlingStatuses.Resolved, after.Status);
+    }
 }

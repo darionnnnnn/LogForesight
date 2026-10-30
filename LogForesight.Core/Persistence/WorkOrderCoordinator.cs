@@ -17,6 +17,9 @@ namespace LogForesight.Core.Persistence;
 ///     推進回覆時間，不推導結案；成員因此全結案的單由 <see cref="SweepClosures"/>（背景掃描）補結案。
 ///   - 授權（回覆只准該單處理人本人）不在這裡，由 Web 層負責。
 /// </summary>
+/// <summary>夜間寫成員結果：每成員實際寫入的處理人（null＝未寫入）與「已有進行中案件而略過」的成員索引</summary>
+public sealed record NightlyWriteOutcome(IReadOnlyList<long?> Handlers, IReadOnlySet<int> ExistingOpenIndexes);
+
 public class WorkOrderCoordinator
 {
     /// <summary>取單成員的分頁大小（暫定）</summary>
@@ -26,6 +29,9 @@ public class WorkOrderCoordinator
 
     /// <summary>夜間派工略過原因：交辦單在派工途中已結案（取消、代為結案、移入他單）</summary>
     public const string SkipOrderClosedMidrun = "order_closed_midrun";
+
+    /// <summary>夜間派工略過原因：（主機,問題）在決策後已被別人建了進行中案件，不重複建案</summary>
+    public const string SkipOpenCaseExists = "open_case_exists";
 
     /// <summary>夜間派工計數：交辦單在派工途中已改派，成員依單目前的處理人掛入</summary>
     public const string HandlerChangedMidrun = "handler_changed_midrun";
@@ -543,18 +549,32 @@ public class WorkOrderCoordinator
     public IReadOnlyList<long?> WriteNightlyMembers(
         WebHost host, DateTime date,
         IReadOnlyList<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)> members,
+        DateTime occurredAt) =>
+        WriteNightlyMembersDetailed(host, date, members, occurredAt).Handlers;
+
+    /// <summary>
+    /// 同 <see cref="WriteNightlyMembers"/>，另回報「（主機,問題）已有進行中案件而略過」的成員索引。
+    /// 鎖內建案前重查該主機的進行中案件，決策之後才被別人（Web 路徑）建出的案件不再重複插入。
+    /// </summary>
+    public NightlyWriteOutcome WriteNightlyMembersDetailed(
+        WebHost host, DateTime date,
+        IReadOnlyList<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)> members,
         DateTime occurredAt)
     {
         lock (OrderMutationLock) return WriteNightlyMembersLocked(host, date, members, occurredAt);
     }
 
-    private IReadOnlyList<long?> WriteNightlyMembersLocked(
+    private NightlyWriteOutcome WriteNightlyMembersLocked(
         WebHost host, DateTime date,
         IReadOnlyList<(LogIssueSignature Issue, long WorkOrderId, long HandlerId, string Step)> members,
         DateTime occurredAt)
     {
         var written = new List<long?>(members.Count);
-        if (members.Count == 0) return written;
+        var existingOpen = new HashSet<int>();
+        if (members.Count == 0) return new NightlyWriteOutcome(written, existingOpen);
+
+        var openKeys = new HashSet<string>(
+            _cases.GetOpenForHost(host.HostName).Select(c => c.IssueKey), IssueSignatureKeyComparer.Instance);
 
         // 只重讀本批成員涉及的單（一個主機日通常只有個位數張）：每個主機日都讀全部進行中的單，
         // 在數千台×數百張進行中單的站台上是整晚重複的全表讀
@@ -567,16 +587,25 @@ public class WorkOrderCoordinator
         var cases = new List<IssueCase>(members.Count);
         var rows = new List<IssueHandling>(members.Count);
         var logs = new List<RecordHandlingLog>(members.Count);
+        var index = -1;
         foreach (var (issue, workOrderId, _, step) in members)
         {
+            index++;
             if (!activeHandlers.TryGetValue(workOrderId, out var handlerId))
             {
                 written.Add(null);
                 continue;
             }
-            written.Add(handlerId);
 
             var key = IssueSignatureKey.For(issue);
+            // 同批重複的鍵也算：第一件建出後第二件不可再插第二件進行中案件
+            if (!openKeys.Add(key))
+            {
+                written.Add(null);
+                existingOpen.Add(index);
+                continue;
+            }
+            written.Add(handlerId);
             var note = NightlyNoteOf(step);
             var caseId = Guid.NewGuid().ToString("n");
 
@@ -610,7 +639,7 @@ public class WorkOrderCoordinator
             _issueHandlings.SaveMany(rows);
             _handlingLog.AppendLogs(logs);
         }
-        return written;
+        return new NightlyWriteOutcome(written, existingOpen);
     }
 
     /// <summary>夜間派工一趟結束：對本趟有新增成員的單記一筆 appended 並推進 LastAppendedAt</summary>
