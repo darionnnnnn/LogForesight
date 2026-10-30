@@ -371,6 +371,33 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Equal("未過期", record.Headline);
     }
 
+    /// <summary>
+    /// 輕量查詢在 store 端就把舊資料 Critical 正規化為 High；讀取端的正規化因此看不到 Critical，
+    /// 「重大」標記（ElevatesDayRisk）必須在同一處補上，否則舊資料的重大日會漏標。
+    /// </summary>
+    [Fact]
+    public void QueryLightweight_舊資料Critical正規化為High且補上重大標記()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = DateTime.Today, HostId = 99, Host = "test-host", RiskLevel = "高",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "System", Source = "disk", EventId = 153, Count = 7,
+                    Severity = IssueSeverity.Critical, Category = IssueCategory.Storage, ElevatesDayRisk = false
+                }
+            }
+        });
+
+        var issue = Assert.Single(Assert.Single(store.QueryLightweight(new RecordQueryFilter())).TopIssues);
+
+        Assert.Equal(IssueSeverity.High, issue.Severity);
+        Assert.True(issue.ElevatesDayRisk);
+    }
+
     [Fact]
     public void PruneDetails_QueryLightweight回傳的DetailPruned正確()
     {

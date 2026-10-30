@@ -119,8 +119,10 @@ public class MailNotificationService
         IIssueOwnerStore? issueOwners = null,
         IIssueAggregateQuery? issueAggregates = null,
         MailIssueDigest? issueDigest = null, PrtgMonitoringPolicyStore? prtgMonitoring = null, StorageBackend? prtgBackend = null,
-        HostDayWorkflowService? workflow = null)
+        HostDayWorkflowService? workflow = null, int acceptedMailContributionLimit = 12_000)
     {
+        if (acceptedMailContributionLimit < 1) throw new ArgumentOutOfRangeException(nameof(acceptedMailContributionLimit));
+        _acceptedMailContributionLimit = acceptedMailContributionLimit;
         _settingsStore = settingsStore;
         _sender = sender;
         _hosts = hosts;
@@ -1959,7 +1961,8 @@ public class MailNotificationService
         return FilterAcceptedMailContributions(kind, recipient, unresolved, versions);
     }
 
-    private const int AcceptedMailContributionLimit = 12_000;
+    // 帳本上限（郵件貢獻 key 總數）：建構式選用參數，預設 12,000，測試可注入小值。
+    private readonly int _acceptedMailContributionLimit;
 
     internal sealed record RenderedMailContributions(
         IReadOnlyList<DailyAnalysisRecord> Records,
@@ -2024,8 +2027,24 @@ public class MailNotificationService
                     item.ParentAndDecision, item.IssueEvidenceJson));
         }
         var reservationId = _state.TryReserveMailContributionKeys(keys.ToArray(), DateTime.UtcNow,
-            AcceptedMailContributionLimit);
-        return reservationId is null ? null : new MailContributionReservationAttempt(reservationId);
+            _acceptedMailContributionLimit);
+        if (reservationId is null)
+        {
+            // 帳本滿載（或同 key 已在途）時整個收件人本輪不寄，不能寄出無法原子記帳的內容；
+            // 留 WARN，否則該收件人會靜默停寄。
+            var ledger = _state.Get();
+            var occupiedKeys = ledger.AcceptedMailContributionReceipts.Keys
+                .Concat(ledger.HeldLegacyMailContributionReceipts.Keys)
+                .Concat(ledger.MailContributionReservations.Keys)
+                .ToHashSet(StringComparer.Ordinal);
+            // 與 store 的拒絕順序一致：任一鍵已被佔用（已寄、保留或寄送中）是正常去重，其餘才是滿載
+            if (!keys.Any(occupiedKeys.Contains))
+                Log.Warn("郵件貢獻帳本已滿（{Count}/{Limit}），收件人 {Email} 本輪略過", occupiedKeys.Count, _acceptedMailContributionLimit, recipient);
+            else
+                Log.Info("收件人 {Email} 的郵件內容已在帳本或寄送中，本輪略過", recipient);
+            return null;
+        }
+        return new MailContributionReservationAttempt(reservationId);
     }
 
     private static string AcceptedMailContributionKey(string kind, string recipient, DailyAnalysisRecord record,
@@ -2256,7 +2275,7 @@ public class MailNotificationService
                 .Count(key => !current.AcceptedMailContributionReceipts.ContainsKey(key) &&
                     !current.HeldLegacyMailContributionReceipts.ContainsKey(key));
             if (current.AcceptedMailContributionReceipts.Count + current.HeldLegacyMailContributionReceipts.Count +
-                current.MailContributionReservations.Count + additions > AcceptedMailContributionLimit) return;
+                current.MailContributionReservations.Count + additions > _acceptedMailContributionLimit) return;
             foreach (var pair in migrated) current.AcceptedMailContributionReceipts.TryAdd(pair.Key, pair.Value);
             foreach (var pair in heldLegacy) current.HeldLegacyMailContributionReceipts.TryAdd(pair.Key, pair.Value);
         });

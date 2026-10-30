@@ -3,6 +3,7 @@ using System.Data;
 using System.Linq.Expressions;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -1822,12 +1823,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 SourceObservations = SourceEvidence.DeserializeObservations(t.SourceObservationsJson),
                 SourceObservationsTruncated = t.SourceObservationsTruncated,
                 Count = t.EventCount,
-                // 嚴重度刻意不在這裡正規化（Critical=3 原樣帶出）——與 Deserialize() 回傳的
-                // 完整紀錄行為一致，正規化是 RecordRepository.ApplySeverityVisibility 讀取時
-                // 的職責（單一咽喉），這裡另外做一次會漏掉 SiteHidden 那半套規則
-                Severity = (IssueSeverity)t.SeverityRank,
+                // 舊資料嚴重度（三級化前寫入的 Critical=3）在這裡就正規化為 High，下游的
+                // RecordRepository.NormalizeLegacySeverity 因此看不到 Critical——「重大」標記必須同時補上
+                // （與 EfIssueAggregateQuery 的 ForcesElevate 同一條規則），否則舊資料的重大日會漏標
+                Severity = LegacySeverityRank.ToSeverity(t.SeverityRank),
                 Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
-                ElevatesDayRisk = t.ElevatesDayRisk,
+                ElevatesDayRisk = t.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(t.SeverityRank),
                 KnownIssue = t.KnownIssue
             }).ToList());
     }

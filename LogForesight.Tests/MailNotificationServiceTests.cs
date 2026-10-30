@@ -1769,6 +1769,80 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Contains("超過 48 小時沒有成功更新", sent7.Message.Body);
     }
 
+    [Fact]
+    public async Task 郵件貢獻帳本滿載_收件人本輪略過並記WARN()
+    {
+        const string recipient = "ledger-full@test.local";
+        CreateViewAllAccount(recipient);
+        EnableMail(settings =>
+        {
+            settings.MailOnRunCompleted = false;
+            settings.MailUrgentEnabled = true;
+            settings.MailDailyEnabled = false;
+            settings.MailMinRiskLevel = RiskLevels.Medium;
+            settings.MailRecipients = [recipient];
+        });
+        var host = _hosts.Upsert(new WebHost { HostName = "ledger-full", Active = true, Source = "netiq" });
+        var issue = new LogIssueSignature
+        {
+            Source = "APP", EventId = 1, EventKey = "APP|1", LogName = "Application",
+            Severity = IssueSeverity.High, ElevatesDayRisk = true
+        };
+        var record = Record(host.HostId, host.HostName, Yesterday, RiskLevels.High, issues: issue);
+        record.RecordId = 5301;
+        record.LogSource = AnalysisLogSource.Netiq;
+        _records.Add(record);
+        _issueAggregates.AggregateOverride = (from, to) => from.Date <= Yesterday && to.Date >= Yesterday
+            ? [new IssueAggregate
+            {
+                Source = issue.Source, EventId = issue.EventId, Category = "Application",
+                MaxSeverityRank = (int)IssueSeverity.High, ElevatesDayRisk = true, HostCount = 1,
+                DayCount = 1, ActiveDays = 1, FirstSeen = Yesterday, LastSeen = Yesterday,
+                IssueKeys = [issue.EventKey]
+            }]
+            : [];
+        var root = Path.Combine(Path.GetTempPath(), "lf-mail-ledger-full-" + Guid.NewGuid().ToString("N"));
+        var backend = new StorageBackend(new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite" }, root);
+        var workflow = new HostDayWorkflowService(new HostDayWorkflowStore(backend));
+        workflow.RestoreFromRecord(record, aiEnabled: false, prtgEnabled: false);
+        var digest = new MailIssueDigest(_issueAggregates,
+            new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore),
+            _settingsStore, new FixedIssueExclusionSource(IssueExclusion.None));
+
+        // 先把帳本佔滿（上限注入 3）：三把已接受的 key，新收件人的內容放不進去。
+        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
+        var now = DateTime.UtcNow;
+        var filled = state.TryReserveMailContributionKeys([new string('1', 64), new string('2', 64), new string('3', 64)], now, maximumKeys: 3)!;
+        Assert.True(state.MarkMailContributionAttemptStarted(filled, now));
+        Assert.True(state.CompleteMailContributionReservation(filled, MailContributionReservationOutcome.Accepted, now));
+        Assert.Equal(3, state.Get().AcceptedMailContributionReceipts.Count);
+
+        var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess,
+            _records, _handlings, state, _freshness,
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(),
+            _issueOwners, _issueAggregates, issueDigest: digest, workflow: workflow, acceptedMailContributionLimit: 3);
+
+        var target = new NLog.Targets.MemoryTarget("ledger-full-capture-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        var rule = new NLog.Config.LoggingRule("*", NLog.LogLevel.Warn, target);
+        config.LoggingRules.Add(rule);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            await service.NotifyAfterRunAsync();
+
+            Assert.Empty(_sender.Sent);
+            Assert.Equal(3, state.Get().AcceptedMailContributionReceipts.Count);
+            Assert.Contains(target.Logs, line => line.Contains("郵件貢獻帳本已滿（3/3）") && line.Contains(recipient));
+        }
+        finally
+        {
+            config.LoggingRules.Remove(rule);
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
+
     private static LogIssueSignature ActionablePrtg() => new()
     {
         LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,

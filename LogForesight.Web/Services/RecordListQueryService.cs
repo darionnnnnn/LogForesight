@@ -614,7 +614,7 @@ public class RecordListQueryService
             Source = aggregate.Source,
             EventId = aggregate.EventId,
             Category = aggregate.Category,
-            MaxSeverity = ((IssueSeverity)aggregate.MaxSeverityRank).ToString(),
+            MaxSeverity = LegacySeverityRank.ToSeverity(aggregate.MaxSeverityRank).ToString(),
             HostCount = aggregate.HostCount,
             DayCount = aggregate.DayCount,
             // 溢位保護與排行卡（IssueRankingBuilder）同一寫法：全歷史區間的 SUM(event_count)
@@ -765,7 +765,7 @@ public class RecordListQueryService
             (!eventId.HasValue || a.EventId == eventId.Value) &&
             (source == null || SourceKeyComparer.Instance.Equals(a.Source, source)) &&
             (allowedCategories == null || allowedCategories.Contains(a.Category)) &&
-            (allowedSeverities == null || allowedSeverities.Contains((IssueSeverity)a.MaxSeverityRank)) &&
+            (allowedSeverities == null || allowedSeverities.Contains(LegacySeverityRank.ToSeverity(a.MaxSeverityRank))) &&
             (!minSeverityRank.HasValue || a.MaxSeverityRank >= minSeverityRank.Value);
     }
 
@@ -950,7 +950,7 @@ public class RecordListQueryService
         if (request.RiskLevels is { Count: > 0 } riskLevels)
         {
             var allowedSeverities = riskLevels.SelectMany(MapRiskLevelToSeverities).ToHashSet();
-            aggregates = aggregates.Where(a => allowedSeverities.Contains((IssueSeverity)a.MaxSeverityRank)).ToList();
+            aggregates = aggregates.Where(a => allowedSeverities.Contains(LegacySeverityRank.ToSeverity(a.MaxSeverityRank))).ToList();
         }
 
         if (!string.IsNullOrWhiteSpace(request.Severity) &&
