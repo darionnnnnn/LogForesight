@@ -608,7 +608,7 @@ public class SystemSettingsServiceTests : IDisposable
         // 1. DefaultHidden 模式（未限制）：回傳完整清單 ["High", "Medium", "Low"]
         _store.Update(s => s.SeverityDisplayMode = "DefaultHidden");
         var service = Create();
-        var controller = new DisplaySettingsController(service);
+        var controller = new DisplaySettingsController(service, _store);
 
         var unrestricted = controller.Get();
         Assert.True(unrestricted.Success);

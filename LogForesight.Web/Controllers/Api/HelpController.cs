@@ -36,13 +36,16 @@ public class HelpController : ControllerBase
 
     /// <summary>AI 是否可用——手冊頁在渲染問答框前先問一次，未設定時整區換成說明文案</summary>
     [HttpGet("ask-available")]
-    public ApiResponse<AiStatusDto> AskAvailable() => ApiResponse<AiStatusDto>.Ok(new AiStatusDto { Available = _qa.Available });
+    public ApiResponse<AiStatusDto> AskAvailable() =>
+        // 問答需 Maintain（WEB-SPEC §9.9c）；沒有權限回 200＋不可用，讓前端靜默隱藏問答卡而非 403
+        ApiResponse<AiStatusDto>.Ok(new AiStatusDto { Available = _currentUser.Has(Capability.Maintain) && _qa.Available });
 
     /// <summary>
     /// 單輪問答，不保留對話歷史（實驗性功能）。AI 未設定或呼叫失敗一律回 data:null，
     /// 前端顯示「AI 服務暫時無法回應，可先查閱下方章節」。
     /// </summary>
     [HttpPost("ask")]
+    [Permission(Capability.Maintain)]
     public async Task<ApiResponse<AskHelpResponseDto?>> Ask([FromBody] AskHelpRequest request) =>
         ApiResponse<AskHelpResponseDto?>.Ok(await _qa.AskAsync(request.Question));
 }
