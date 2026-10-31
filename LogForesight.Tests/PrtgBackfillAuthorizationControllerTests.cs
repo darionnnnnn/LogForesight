@@ -290,7 +290,7 @@ public sealed class PrtgBackfillAuthorizationControllerTests : IDisposable
         }
     }
 
-    private SettingsController CreateController(PrtgBackfillRunState runState, IVisibilityService visibility,
+    private PrtgBackfillAdminController CreateController(PrtgBackfillRunState runState, IVisibilityService visibility,
         Func<SystemSettings, PrtgClient>? clientFactory = null)
     {
         // 「完整可見者」＝持有 ViewAll；這裡由測試給的可見集合推得，保留各案原本想表達的角色。
@@ -303,9 +303,8 @@ public sealed class PrtgBackfillAuthorizationControllerTests : IDisposable
             runState, new FakeSentinelStore(), new DataVersionStamp());
         var service = new PrtgBackfillService(_settings, _backend, runState, new PrtgProbeRunState(),
             _hosts, scheduler, structureState, new FakeSentinelStore(), structure, clientFactory: clientFactory);
-        var controller = new SettingsController(new FakeSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")), _audit, prtgBackfill: service,
-            backend: _backend, hosts: _hosts, visibility: visibility,
+        var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, backfill: service,
+            structureSync: structure, hosts: _hosts, visibility: visibility,
             currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll)
                 : FakeCurrentUser.WithCapabilities(Capability.Maintain));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext

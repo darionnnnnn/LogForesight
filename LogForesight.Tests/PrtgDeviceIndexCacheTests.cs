@@ -115,7 +115,7 @@ public class PrtgHostMapCachedPagingTests : IDisposable
 {
     private readonly string _dir;
     private readonly StorageBackend _backend;
-    private readonly SettingsController _controller;
+    private readonly PrtgHostMappingAdminController _controller;
     private DateTime _now = new(2026, 9, 16, 9, 0, 0);
 
     public PrtgHostMapCachedPagingTests()
@@ -126,13 +126,8 @@ public class PrtgHostMapCachedPagingTests : IDisposable
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "test.db")}" },
             _dir);
 
-        _controller = new SettingsController(
-            new StubSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            new RecordingAuditService(),
-            backend: _backend,
-            deviceIndexCache: new PrtgDeviceIndexCache(() => _now),
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        _controller = PrtgControllerFactory.HostMapping(_backend, new RecordingAuditService(),
+            conflictQuery: PrtgControllerFactory.Conflict(_backend, cache: new PrtgDeviceIndexCache(() => _now)));
 
         var httpContext = new DefaultHttpContext
         {

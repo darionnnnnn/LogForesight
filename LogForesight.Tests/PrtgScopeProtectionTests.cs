@@ -454,7 +454,7 @@ public class PrtgScopeProtectionTests : IDisposable
 
     // ── 預覽與確認 ──
 
-    private (SettingsController Controller, PrtgScopePurgeJobsController JobsController,
+    private (PrtgScopeEstimateController Controller, PrtgScopePurgeJobsController JobsController,
         RecordingAuditService Audit, SchedulerRunState Scheduler) NewController()
     {
         var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
@@ -476,9 +476,7 @@ public class PrtgScopeProtectionTests : IDisposable
         var currentUser = FakeCurrentUser.ForUser(user.UserId);
         var purgeAuthorization = new PrtgScopePurgeAuthorizationService(users,
             new UserCapabilityResolver(groups, _hosts), currentUser, new WebAppSettings(), _backend);
-        var controller = new SettingsController(
-            new StubSettingsService(), new AiUsageStore(_backend.Blob("ai_usage")), audit,
-            prtgBackfill: backfill, backend: _backend, hosts: _hosts,
+        var controller = PrtgControllerFactory.ScopeEstimate(new StubSettingsService(), _backend, _hosts,
             currentUser: currentUser, scopePurgeAuthorization: purgeAuthorization);
         var jobsController = new PrtgScopePurgeJobsController(_backend, currentUser, purgeAuthorization, audit, backfill);
         controller.ControllerContext = new ControllerContext

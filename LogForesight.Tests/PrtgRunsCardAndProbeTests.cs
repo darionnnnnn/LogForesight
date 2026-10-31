@@ -283,14 +283,9 @@ public class PrtgRunsCardAndProbeTests : IDisposable
 
     // ── 驗收點 6：探測取消端點與狀態 ────────────────────────────────────
 
-    private SettingsController CreateSettingsController(PrtgProbeService probeService)
+    private PrtgBackfillAdminController CreateSettingsController(PrtgProbeService probeService)
     {
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            prtgProbe: probeService,
-            backend: _backend);
+        var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, probe: probeService);
 
         var httpContext = new DefaultHttpContext
         {

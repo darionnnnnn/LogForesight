@@ -29,33 +29,33 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
     }
 
     [Fact]
-    public void LegacyPrtgImport_完整可見者回410_受限案件及空可見仍拒絕()
+    public void LegacyPrtgImport_回410且不寫診斷暫存_診斷匯出入口皆要求ViewAll()
     {
-        var full = Controller(new TestVisibility([1, 2]));
-        var retired = Assert.IsType<ObjectResult>(full.LegacyPrtgImport());
+        var controller = Controller();
+        var retired = Assert.IsType<ObjectResult>(controller.LegacyPrtgImport());
         Assert.Equal(StatusCodes.Status410Gone, retired.StatusCode);
         Assert.Equal("legacy_import_retired", Assert.IsType<ApiResponse<object>>(retired.Value).Error?.Code);
         using (var db = _backend.CreateContext())
             Assert.Empty(db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_import_diagnostic_")));
 
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1])).LegacyPrtgImport());
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2], caseOnly: true)).LegacyPrtgImport());
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([])).LegacyPrtgImport());
-        Assert.Throws<DomainException>(() => Controller(null, hosts: _hosts).LegacyPrtgImport());
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2]), omitHosts: true).LegacyPrtgImport());
-        var noHosts = new HostStore(_backend.Blob("empty-hosts"));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([]), hosts: noHosts).LegacyPrtgImport());
-        Assert.Throws<DomainException>(() => Controller(null, hosts: _hosts).ExportPrtgData(DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Today.ToString("yyyy-MM-dd")));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2]), omitHosts: true).ExportPrtgData(DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Today.ToString("yyyy-MM-dd")));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([]), hosts: noHosts).ExportPrtgData(DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Today.ToString("yyyy-MM-dd")));
-        Assert.Throws<DomainException>(() => Controller(null, hosts: _hosts).GetPrtgManualMaps());
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2]), omitHosts: true).GetPrtgManualMaps());
+        // 受限者（只有 Maintain、沒有 ViewAll）一律擋下；完整可見者放行
+        var limited = FakeCurrentUser.WithCapabilities(Capability.Maintain);
+        var full = FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll);
+        foreach (var action in new[] { nameof(controller.LegacyPrtgImport), nameof(controller.ExportPrtgData) })
+        {
+            ViewAllGuard.AssertForbidden(controller, action, limited);
+            ViewAllGuard.AssertAllowed(controller, action, full);
+        }
+
+        var mapping = PrtgControllerFactory.HostMapping(_backend, new RecordingAuditService(), _hosts);
+        ViewAllGuard.AssertForbidden(mapping, nameof(mapping.GetPrtgManualMaps), limited);
+        ViewAllGuard.AssertAllowed(mapping, nameof(mapping.GetPrtgManualMaps), full);
     }
 
     [Fact]
-    public void SettingsControllerPermissionFilter_只允許Maintain能力()
+    public void PrtgTransferControllerPermissionFilter_只允許Maintain能力()
     {
-        var required = typeof(SettingsController).GetCustomAttributes(typeof(PermissionAttribute), inherit: true)
+        var required = typeof(PrtgTransferController).GetCustomAttributes(typeof(PermissionAttribute), inherit: true)
             .Cast<PermissionAttribute>().Single().Arguments!.Cast<Capability[]>().Single();
         var audit = new RecordingAuditService();
         AuthorizationFilterContext Context() => new(new ActionContext(new DefaultHttpContext
@@ -64,7 +64,7 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         var maintainerContext = Context();
         new PermissionFilter(required, FakeCurrentUser.WithCapabilities(Capability.Maintain), audit).OnAuthorization(maintainerContext);
         Assert.Null(maintainerContext.Result);
-        var maintainedAction = Assert.IsType<ObjectResult>(Controller(new TestVisibility([1, 2]), audit).LegacyPrtgImport());
+        var maintainedAction = Assert.IsType<ObjectResult>(Controller(audit).LegacyPrtgImport());
         Assert.Equal(StatusCodes.Status410Gone, maintainedAction.StatusCode);
 
         var restrictedContext = Context();
@@ -74,23 +74,23 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         if (restrictedContext.Result is null)
         {
             restrictedActionCalls++;
-            Controller(new TestVisibility([1, 2]), audit).LegacyPrtgImport();
+            Controller(audit).LegacyPrtgImport();
         }
         Assert.Equal(0, restrictedActionCalls);
         Assert.Contains(audit.Entries, entry => entry.Result == LogForesight.Core.Models.AuditResult.Denied);
     }
 
-    // 「完整可見者」＝持有 ViewAll；由各案給的可見集合與主機表推得，保留各案原本想表達的角色。
-    private SettingsController Controller(TestVisibility? visibility, RecordingAuditService? audit = null, HostStore? hosts = null, bool omitHosts = false)
+    private PrtgTransferController Controller(RecordingAuditService? audit = null) =>
+        new(_backend, new FixedCapacity(), _hosts, new TestVisibility([1, 2]),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll),
+            new SystemSettingsStore(_backend.Blob("system_settings")), audit ?? new RecordingAuditService(),
+            new PrtgLegacyJsonTransferValidator());
+
+    private sealed class FixedCapacity : IPrtgTransferCapacityProvider
     {
-        var effectiveHosts = omitHosts ? null : hosts ?? _hosts;
-        var all = effectiveHosts?.GetAll();
-        var viewAll = visibility != null && all is { Count: > 0 } && all.All(h =>
-            visibility.GetVisibleHostIds().Contains(h.HostId) && !visibility.IsCaseGrantOnly(h.HostId));
-        return new(new FakeSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")), audit ?? new RecordingAuditService(), backend: _backend, hosts: effectiveHosts, visibility: visibility,
-            currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll) : FakeCurrentUser.WithCapabilities(Capability.Maintain));
+        public PrtgTransferCapacitySnapshot Capture() => new(true, 512L * 1024 * 1024, "test-fixed-capacity", null);
     }
+
     private sealed class TestVisibility(long[] ids, bool caseOnly = false) : IVisibilityService
     {
         public IReadOnlySet<long> GetVisibleHostIds() => ids.ToHashSet();

@@ -48,9 +48,9 @@ public class ControllerRouteSnapshotTests
         ["WorkOrderViewController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
     };
 
-    private sealed record Row(string Method, string Route, string Caps, bool Anonymous, string Controller)
+    private sealed record Row(string Method, string Route, string Caps, bool Anonymous, bool ViewAll, string Controller)
     {
-        public string Comparable => $"{Method}\t{Route}\t{Caps}\t{(Anonymous ? "anonymous" : "-")}";
+        public string Comparable => $"{Method}\t{Route}\t{Caps}\t{(Anonymous ? "anonymous" : "-")}\t{(ViewAll ? "viewall" : "-")}";
         public string Line => $"{Comparable}\t{Controller}";
     }
 
@@ -108,9 +108,11 @@ public class ControllerRouteSnapshotTests
                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.Ordinal).ToList();
             if (methods.Count == 0) methods.Add("ANY");
             var anon = d.EndpointMetadata.OfType<IAllowAnonymous>().Any();
+            var viewAll = d.ControllerTypeInfo.GetCustomAttributes<RequireViewAllAttribute>(inherit: true).Any()
+                          || d.MethodInfo.GetCustomAttributes<RequireViewAllAttribute>(inherit: true).Any();
             foreach (var m in methods)
             {
-                rows.Add(new Row(m.ToUpperInvariant(), route, CapsOf(d), anon, d.ControllerTypeInfo.Name));
+                rows.Add(new Row(m.ToUpperInvariant(), route, CapsOf(d), anon, viewAll, d.ControllerTypeInfo.Name));
             }
         }
 
@@ -132,10 +134,10 @@ public class ControllerRouteSnapshotTests
         }
 
         Assert.True(File.Exists(path), $"找不到基準檔 {path}；設定 {UpdateEnvVar}=1 重新產生");
-        // 控制器名（第 5 欄）只供資訊，不比對
+        // 控制器名（第 6 欄）只供資訊，不比對
         var baseline = File.ReadAllText(path).Replace("\r\n", "\n")
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(l => string.Join("\t", l.Split('\t').Take(4)))
+            .Select(l => string.Join("\t", l.Split('\t').Take(5)))
             .OrderBy(s => s, StringComparer.Ordinal).ToList();
         var current = rows.Select(r => r.Comparable).OrderBy(s => s, StringComparer.Ordinal).ToList();
 
@@ -143,7 +145,7 @@ public class ControllerRouteSnapshotTests
         var removed = Subtract(baseline, current);
         var added = Subtract(current, baseline);
         var diff = new StringBuilder();
-        diff.AppendLine("路由／授權快照與基準檔不一致（格式：METHOD、路由、能力集合 C=class層;A=action層、匿名）。");
+        diff.AppendLine("路由／授權快照與基準檔不一致（格式：METHOD、路由、能力集合 C=class層;A=action層、匿名、RequireViewAll）。");
         diff.AppendLine("基準檔有、現況沒有：");
         foreach (var s in removed) diff.AppendLine("  - " + s);
         diff.AppendLine("現況有、基準檔沒有：");

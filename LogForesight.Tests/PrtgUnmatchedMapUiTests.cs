@@ -21,7 +21,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
     private readonly StorageBackend _backend;
     private readonly HostStore _hosts;
     private readonly RecordingAuditService _audit = new();
-    private readonly SettingsController _controller;
+    private readonly PrtgHostMappingAdminController _controller;
 
     public PrtgUnmatchedMapUiTests()
     {
@@ -35,15 +35,8 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
         settingsStore.Update(x => x.PrtgEnabled = true);
 
-        _controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend,
-            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend),
-            hosts: _hosts,
-            visibility: new FullVisibility(_hosts),
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        _controller = PrtgControllerFactory.HostMapping(_backend, _audit, _hosts,
+            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -59,32 +52,6 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
         GC.SuppressFinalize(this);
-    }
-
-    private sealed class StubSystemSettingsService : ISystemSettingsService
-    {
-        public SystemSettingsDto Settings { get; set; } = new();
-        public SystemSettingsDto Get() => Settings;
-        public SystemSettingsDto Update(UpdateSystemSettingsRequest request) => throw new NotSupportedException();
-        public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request) => throw new NotSupportedException();
-        public HashSet<string>? GetVisibleSeverities() => null;
-        public IReadOnlySet<string>? GetVisibleDayRiskLevels() => null;
-        public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request) => throw new NotSupportedException();
-        public Task<TestMailResultDto> TestMail(TestMailRequest request) => throw new NotSupportedException();
-        public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) => throw new NotSupportedException();
-    }
-
-    private sealed class FullVisibility(IHostStore hosts) : IVisibilityService
-    {
-        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Select(h => h.HostId).ToHashSet();
-        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlyList<string> GetCaseGrantHostNames() => [];
-        public bool IsCaseGrantOnly(long id) => false;
-        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => null;
-        public List<WebHost> GetVisibleHosts() => hosts.GetAll();
-        public void EnsureVisible(long id) { }
     }
 
     private (long HostId, long[] DeviceIds) SeedBatchTargets()
@@ -207,22 +174,4 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         var ex4 = Assert.Throws<DomainException>(() => _controller.GetPrtgHostMap("unknown"));
         Assert.Equal(ApiErrorCodes.ValidationFailed, ex4.Code);
     }
-
-    [Fact]
-    public void GetPrtgHostMap_後端為null時維持空頁()
-    {
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: null,
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
-
-        var res = controller.GetPrtgHostMap("conflict", page: 1, pageSize: 20);
-        Assert.True(res.Success);
-        Assert.NotNull(res.Data);
-        Assert.Equal(0, res.Data.Total);
-        Assert.Empty(res.Data.Items);
-    }
-
 }

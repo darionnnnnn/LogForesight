@@ -265,8 +265,9 @@ public sealed class PrtgDiagnosticExportHttpTests
             builder.Services.AddSingleton<ICurrentUser>(User);
             builder.Services.AddSingleton<IPrtgTransferCapacityProvider>(Capacity);
             builder.Services.AddSingleton<ISystemSettingsStore>(Settings);
+            builder.Services.AddSingleton<PrtgLegacyJsonTransferValidator>();
             builder.Services.AddControllers(options => options.Filters.Add<ApiExceptionFilter>())
-                .AddApplicationPart(typeof(SettingsController).Assembly);
+                .AddApplicationPart(typeof(PrtgTransferController).Assembly);
 
             var app = builder.Build();
             app.UsePathBase(PathBase);

@@ -21,7 +21,7 @@ public class PrtgResourceGuardPreviewEndpointTests : IDisposable
     private readonly string _dir;
     private readonly StorageBackend _backend;
     private readonly RecordingAuditService _audit = new();
-    private readonly SettingsController _controller;
+    private readonly PrtgScopeEstimateController _controller;
 
     public PrtgResourceGuardPreviewEndpointTests()
     {
@@ -31,11 +31,7 @@ public class PrtgResourceGuardPreviewEndpointTests : IDisposable
             new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(_dir, "test.db")}" },
             _dir);
 
-        _controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend);
+        _controller = PrtgControllerFactory.ScopeEstimate(new StubSystemSettingsService(), _backend);
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]

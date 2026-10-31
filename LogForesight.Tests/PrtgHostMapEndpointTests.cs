@@ -20,7 +20,8 @@ public class PrtgHostMapEndpointTests : IDisposable
     private readonly StorageBackend _backend;
     private readonly HostStore _hosts;
     private readonly RecordingAuditService _audit = new();
-    private readonly SettingsController _controller;
+    private readonly PrtgHostMappingAdminController _controller;
+    private readonly PrtgScopeEstimateController _scope;
 
     public PrtgHostMapEndpointTests()
     {
@@ -36,15 +37,10 @@ public class PrtgHostMapEndpointTests : IDisposable
         var settingsStore = new SystemSettingsStore(_backend.Blob("system_settings"));
         settingsStore.Update(x => x.PrtgEnabled = true);
 
-        _controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend,
-            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend),
-            hosts: _hosts,
-            visibility: new FullVisibility(_hosts),
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        _controller = PrtgControllerFactory.HostMapping(_backend, _audit, _hosts,
+            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend));
+        _scope = PrtgControllerFactory.ScopeEstimate(new StubSystemSettingsService(), _backend, _hosts,
+            visibility: new FullVisibility(_hosts));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -373,7 +369,7 @@ public class PrtgHostMapEndpointTests : IDisposable
             s.PrtgSensorTypeWhitelist = new List<string> { "Ping" };
         });
 
-        var estimate = _controller.EstimatePrtgValues(days: 3).Data!;
+        var estimate = _scope.EstimatePrtgValues(days: 3).Data!;
 
         // 主機清單外的 device 8002 不算；1 台主機 × 1 顆 × 3 天
         Assert.Equal(1, estimate.Hosts);
@@ -383,7 +379,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Null(estimate.BlockedReason);
 
         settings.Update(s => s.PrtgSensorTypeWhitelist = new List<string>());
-        var blocked = _controller.EstimatePrtgValues(days: 3).Data!;
+        var blocked = _scope.EstimatePrtgValues(days: 3).Data!;
         Assert.Equal(0, blocked.Sensors);
         Assert.Contains("白名單", blocked.BlockedReason);
     }
@@ -428,14 +424,14 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Equal("srv-new", item.HostName);
         Assert.Contains("srv-old", item.Note);
         // 與鏡像狀態的計數同一口徑
-        Assert.Equal(1, _controller.GetPrtgMirrorStatus().Data!.NameMismatchHosts);
+        Assert.Equal(1, _scope.GetPrtgMirrorStatus().Data!.NameMismatchHosts);
     }
 
     [Fact]
     public void 裝置搜尋_至少兩字_IP完全相同排最前_超過上限回hasMore()
     {
         var store = _backend.PrtgStore();
-        var devices = Enumerable.Range(1, SettingsController.DeviceSearchLimit + 5)
+        var devices = Enumerable.Range(1, PrtgHostMappingAdminController.DeviceSearchLimit + 5)
             .Select(i => new PrtgDeviceRow { Objid = 9100 + i, Name = $"web-{i:D2}", Ip = $"10.91.0.{i}" })
             .Append(new PrtgDeviceRow { Objid = 9200, Name = "zz-exact", Ip = "10.91.0.1" })
             .ToArray();
@@ -446,7 +442,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         Assert.Contains("至少 2 個字", tooShort.Message);
 
         var byName = _controller.SearchPrtgDevices("web").Data!;
-        Assert.Equal(SettingsController.DeviceSearchLimit, byName.Items.Count);
+        Assert.Equal(PrtgHostMappingAdminController.DeviceSearchLimit, byName.Items.Count);
         Assert.True(byName.HasMore);
 
         var byIp = _controller.SearchPrtgDevices("10.91.0.1").Data!;
@@ -458,17 +454,8 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void 衝突清單端點_受限Maintain擲403_ViewAll正常回傳()
     {
-        var restricted = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend,
-            hosts: _hosts,
-            visibility: new FullVisibility(_hosts),
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain));
-
-        var ex = Assert.Throws<DomainException>(() => restricted.GetPrtgHostMap("conflict"));
-        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+        var restrictedUser = FakeCurrentUser.WithCapabilities(Capability.Maintain);
+        ViewAllGuard.AssertForbidden(_controller, nameof(_controller.GetPrtgHostMap), restrictedUser);
 
         var ok = _controller.GetPrtgHostMap("conflict");
         Assert.True(ok.Success);
@@ -620,7 +607,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         store.UpsertIpExclude(new PrtgIpExcludeRow { Ip = "10.0.0.1", CreatedAt = DateTime.Now });
         store.UpsertIpExclude(new PrtgIpExcludeRow { Ip = "10.0.0.2", CreatedAt = DateTime.Now });
 
-        var res = _controller.GetPrtgMirrorStatus();
+        var res = _scope.GetPrtgMirrorStatus();
 
         Assert.True(res.Success);
         Assert.NotNull(res.Data);
@@ -781,51 +768,25 @@ public class PrtgHostMapEndpointTests : IDisposable
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
             new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp());
 
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend,
-            prtgStructureSync: syncService);
+        var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, structureSync: syncService);
 
         var ex = Assert.Throws<DomainException>(() => controller.StartPrtgStructureSync());
         Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
         Assert.Contains("取數執行進行中", ex.Message);
     }
 
-    private sealed class ActiveOnlyVisibility(IHostStore hosts) : IVisibilityService
-    {
-        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Where(h => h.Active).Select(h => h.HostId).ToHashSet();
-        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlyList<string> GetCaseGrantHostNames() => [];
-        public bool IsCaseGrantOnly(long id) => false;
-        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => null;
-        public List<WebHost> GetVisibleHosts() => hosts.GetAll().Where(h => h.Active).ToList();
-        public void EnsureVisible(long id) { }
-    }
-
-    private SettingsController BuildControllerWithInactiveAndMergedHosts(ICurrentUser user)
+    private PrtgHostMappingAdminController BuildControllerWithInactiveAndMergedHosts()
     {
         var alive = _hosts.Upsert(new WebHost { HostName = "alive", Active = true });
         _hosts.Upsert(new WebHost { HostName = "disabled", Active = false });
         _hosts.Upsert(new WebHost { HostName = "merged", Active = false, MergedInto = alive.HostId });
-        return new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend,
-            hosts: _hosts,
-            visibility: new ActiveOnlyVisibility(_hosts),
-            currentUser: user);
+        return PrtgControllerFactory.HostMapping(_backend, _audit, _hosts);
     }
 
     [Fact]
     public void 全站PRTG管理端點_持有ViewAll即使有停用與合併主機仍可操作()
     {
-        var controller = BuildControllerWithInactiveAndMergedHosts(
-            FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        var controller = BuildControllerWithInactiveAndMergedHosts();
         var res = controller.GetPrtgManualMaps();
         Assert.True(res.Success);
     }
@@ -833,17 +794,16 @@ public class PrtgHostMapEndpointTests : IDisposable
     [Fact]
     public void 全站PRTG管理端點_無ViewAll回Forbidden()
     {
-        var controller = BuildControllerWithInactiveAndMergedHosts(
-            FakeCurrentUser.WithCapabilities(Capability.Maintain));
-        var ex = Assert.Throws<DomainException>(() => controller.GetPrtgManualMaps());
-        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+        var user = FakeCurrentUser.WithCapabilities(Capability.Maintain);
+        var controller = BuildControllerWithInactiveAndMergedHosts();
+        ViewAllGuard.AssertForbidden(controller, nameof(controller.GetPrtgManualMaps), user);
     }
 
     [Fact]
     public void 全站PRTG管理端點_serverAdmin無ViewAll回Forbidden()
     {
-        var controller = BuildControllerWithInactiveAndMergedHosts(FakeCurrentUser.ServerAdmin());
-        var ex = Assert.Throws<DomainException>(() => controller.GetPrtgManualMaps());
-        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+        var user = FakeCurrentUser.ServerAdmin();
+        var controller = BuildControllerWithInactiveAndMergedHosts();
+        ViewAllGuard.AssertForbidden(controller, nameof(controller.GetPrtgManualMaps), user);
     }
 }

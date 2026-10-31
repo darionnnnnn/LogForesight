@@ -109,19 +109,13 @@ public class PrtgSnapshotObservabilityTests : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
         }
     }
-    private SettingsController CreateController(
+    private PrtgScopeEstimateController CreateController(
         PrtgSnapshotHostedService? snapshot = null,
         StubSystemSettingsService? settingsService = null,
         IHostStore? hosts = null)
     {
         var stubSettings = settingsService ?? new StubSystemSettingsService();
-        var controller = new SettingsController(
-            stubSettings,
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend,
-            hosts: hosts,
-            snapshot: snapshot);
+        var controller = PrtgControllerFactory.ScopeEstimate(stubSettings, _backend, hosts, snapshot);
 
         var httpContext = new DefaultHttpContext
         {
@@ -235,21 +229,6 @@ public class PrtgSnapshotObservabilityTests : IDisposable
         }
 
         store.UpsertSensors(sensors, DateTime.Now);
-    }
-
-    [Fact]
-    public void 鏡像狀態_快照服務未接上時欄位為預設且不擲例外()
-    {
-        var controller = CreateController(snapshot: null);
-        var res = controller.GetPrtgMirrorStatus();
-
-        Assert.NotNull(res.Data);
-        Assert.Null(res.Data.SnapshotLastAt);
-        Assert.Equal(0, res.Data.SnapshotSensors);
-        Assert.Equal(0, res.Data.SnapshotIntervalMinutes);
-        Assert.Equal(0, res.Data.SnapshotConsecutiveFailures);
-        Assert.False(res.Data.SnapshotBackingOff);
-        Assert.Null(res.Data.SnapshotSkipReason);
     }
 
     [Fact]

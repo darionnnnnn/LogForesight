@@ -193,7 +193,7 @@ public class HostPrtgDetailServiceTests : IDisposable
 }
 
 /// <summary>
-/// PRTG 衝突清單分頁（SettingsController.GetPrtgHostMap → PrtgConflictQueryService）的黃金值：
+/// PRTG 衝突清單分頁（PrtgHostMappingAdminController.GetPrtgHostMap → PrtgConflictQueryService）的黃金值：
 /// 期望字串在邏輯還在控制器時取得，抽進 Service 後逐字相同。
 /// </summary>
 public class PrtgHostMapGoldenTests : IDisposable
@@ -220,39 +220,8 @@ public class PrtgHostMapGoldenTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private sealed class FullVisibility(IHostStore hosts) : IVisibilityService
-    {
-        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Select(h => h.HostId).ToHashSet();
-        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
-        public IReadOnlyList<string> GetCaseGrantHostNames() => [];
-        public bool IsCaseGrantOnly(long id) => false;
-        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => null;
-        public List<WebHost> GetVisibleHosts() => hosts.GetAll();
-        public void EnsureVisible(long id) { }
-    }
-
-    private sealed class StubSettings : ISystemSettingsService
-    {
-        public SystemSettingsDto Get() => new();
-        public SystemSettingsDto Update(UpdateSystemSettingsRequest request) => throw new NotSupportedException();
-        public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request) => throw new NotSupportedException();
-        public HashSet<string>? GetVisibleSeverities() => null;
-        public IReadOnlySet<string>? GetVisibleDayRiskLevels() => null;
-        public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request) => throw new NotSupportedException();
-        public Task<TestMailResultDto> TestMail(TestMailRequest request) => throw new NotSupportedException();
-        public Task<TestPrtgConnectionResultDto> TestPrtgAsync(TestPrtgConnectionRequest request, CancellationToken ct) => throw new NotSupportedException();
-    }
-
-    private SettingsController CreateController() => new(
-        new StubSettings(),
-        new AiUsageStore(_backend.Blob("ai_usage")),
-        new RecordingAuditService(),
-        backend: _backend,
-        hosts: _hosts,
-        visibility: new FullVisibility(_hosts),
-        currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+    private PrtgHostMappingAdminController CreateController() =>
+        PrtgControllerFactory.HostMapping(_backend, new RecordingAuditService(), _hosts);
 
     private DateTime Seed()
     {
@@ -309,7 +278,7 @@ public class PrtgHostMapGoldenTests : IDisposable
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
         Assert.NotNull(dir);
-        var src = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Controllers", "Api", "SettingsController.cs")).Replace("\r\n", "\n");
+        var src = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Controllers", "Api", "PrtgHostMappingAdminController.cs")).Replace("\r\n", "\n");
         var start = src.IndexOf("public ApiResponse<PrtgHostMapPageDto> GetPrtgHostMap(", StringComparison.Ordinal);
         Assert.True(start > 0);
         var end = src.IndexOf("\n    }\n", start, StringComparison.Ordinal);

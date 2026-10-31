@@ -285,18 +285,12 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         Assert.Contains("連線位址", ex.Message);
     }
 
-    private SettingsController CreateProbeController(PrtgBackfillRunState backfillState)
+    private PrtgBackfillAdminController CreateProbeController(PrtgBackfillRunState backfillState)
     {
         var probe = new PrtgProbeService(_settingsStore, new PrtgProbeRunState(), backfillState,
             _backend, new FakeHostStore(), new FakeSentinelStore(),
             new SchedulerRunState(), new PrtgStructureSyncRunState());
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            prtgProbe: probe,
-            backend: _backend,
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, probe: probe);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
@@ -321,7 +315,7 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         });
     }
 
-    private SettingsController CreateBackfillController(SchedulerRunState schedulerState, IVisibilityService? visibility = null)
+    private PrtgBackfillAdminController CreateBackfillController(SchedulerRunState schedulerState, IVisibilityService? visibility = null)
     {
         var hosts = new HostStore(_backend.Blob("hosts"));
         if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "full-backfill-host", Active = true });
@@ -334,14 +328,8 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         // 「完整可見者」＝持有 ViewAll；由測試給的可見集合推得，保留部分可見與案件授權案例的角色。
         var viewAll = hosts.GetAll().All(h => effectiveVisibility.GetVisibleHostIds().Contains(h.HostId)
             && !effectiveVisibility.IsCaseGrantOnly(h.HostId));
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            prtgBackfill: backfill,
-            backend: _backend,
-            hosts: hosts,
-            visibility: effectiveVisibility,
+        var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, backfill: backfill,
+            hosts: hosts, visibility: effectiveVisibility,
             currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll)
                 : FakeCurrentUser.WithCapabilities(Capability.Maintain));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
@@ -428,16 +416,14 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "full-backfill-host", Active = true });
         hosts.Upsert(new WebHost { HostName = "second-backfill-host", Active = true });
         var partial = CreateBackfillController(new SchedulerRunState(), new PartialPrtgVisibility(hosts, caseOnly: false));
-        var previewDenied = Assert.Throws<DomainException>(() => partial.PreviewPrtgBackfill());
-        var startDenied = Assert.Throws<DomainException>(() => partial.StartPrtgBackfill(new PrtgFullBackfillStartRequest
-        { PreviewId = "not-issued", Confirmed = true }));
-        Assert.Equal(ApiErrorCodes.Forbidden, previewDenied.Code);
-        Assert.Equal(ApiErrorCodes.Forbidden, startDenied.Code);
+        // 全站回填端點的 ViewAll 檢查掛在 action 屬性上（CreateBackfillController 對部分可見者給不含 ViewAll 的使用者）
+        var limitedUser = FakeCurrentUser.WithCapabilities(Capability.Maintain);
+        ViewAllGuard.AssertForbidden(partial, nameof(partial.PreviewPrtgBackfill), limitedUser);
+        ViewAllGuard.AssertForbidden(partial, nameof(partial.StartPrtgBackfill), limitedUser);
 
         var caseOnly = CreateBackfillController(new SchedulerRunState(), new PartialPrtgVisibility(hosts, caseOnly: true));
-        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => caseOnly.PreviewPrtgBackfill()).Code);
-        Assert.Equal(ApiErrorCodes.Forbidden, Assert.Throws<DomainException>(() => caseOnly.StartPrtgBackfill(new PrtgFullBackfillStartRequest
-        { PreviewId = "not-issued", Confirmed = true })).Code);
+        ViewAllGuard.AssertForbidden(caseOnly, nameof(caseOnly.PreviewPrtgBackfill), limitedUser);
+        ViewAllGuard.AssertForbidden(caseOnly, nameof(caseOnly.StartPrtgBackfill), limitedUser);
 
         var scheduler = new SchedulerRunState();
         Assert.True(scheduler.TryBeginRun("manual", out _));
@@ -446,25 +432,5 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         var conflict = Assert.Throws<DomainException>(() => full.StartPrtgBackfill(new PrtgFullBackfillStartRequest
         { PreviewId = preview.PreviewId, Confirmed = true }));
         Assert.Equal(ApiErrorCodes.Conflict, conflict.Code);
-    }
-
-    [Fact]
-    public void C4_回填服務未啟用維持400()
-    {
-        var hosts = new HostStore(_backend.Blob("hosts"));
-        if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "service-unavailable-host", Active = true });
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            backend: _backend,
-            hosts: hosts,
-            visibility: new FullPrtgVisibility(hosts),
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
-        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
-
-        var ex = Assert.Throws<DomainException>(() => controller.StartPrtgBackfill());
-
-        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
     }
 }

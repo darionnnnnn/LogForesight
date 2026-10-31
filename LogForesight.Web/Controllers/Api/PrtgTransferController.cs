@@ -21,24 +21,54 @@ public sealed class PrtgTransferController : ControllerBase
     private static readonly TimeSpan ValidationLeaseDuration = TimeSpan.FromHours(1);
     private readonly StorageBackend _backend;
     private readonly IPrtgTransferCapacityProvider _capacity;
-    private readonly IHostStore? _hosts;
-    private readonly IVisibilityService? _visibility;
-    private readonly ICurrentUser? _currentUser;
-    private readonly ISystemSettingsStore? _settings;
+    private readonly IHostStore _hosts;
+    private readonly IVisibilityService _visibility;
+    private readonly ICurrentUser _currentUser;
+    private readonly ISystemSettingsStore _settings;
+    private readonly IAuditService _audit;
     private readonly PrtgLegacyJsonTransferValidator _validator;
 
-    public PrtgTransferController(StorageBackend? backend, IPrtgTransferCapacityProvider? capacity,
-        IHostStore? hosts, IVisibilityService? visibility, ICurrentUser? currentUser,
-        ISystemSettingsStore? settings, PrtgLegacyJsonTransferValidator? validator = null)
+    public PrtgTransferController(StorageBackend backend, IPrtgTransferCapacityProvider capacity,
+        IHostStore hosts, IVisibilityService visibility, ICurrentUser currentUser,
+        ISystemSettingsStore settings, IAuditService audit, PrtgLegacyJsonTransferValidator validator)
     {
-        _backend = backend ?? throw new InvalidOperationException("PRTG 診斷傳輸儲存後端未設定。");
-        _capacity = capacity ?? throw new InvalidOperationException("PRTG 診斷傳輸容量探測器未設定。");
+        _backend = backend;
+        _capacity = capacity;
         _hosts = hosts;
         _visibility = visibility;
         _currentUser = currentUser;
         _settings = settings;
-        _validator = validator ?? new PrtgLegacyJsonTransferValidator();
+        _audit = audit;
+        _validator = validator;
     }
+
+    /// <summary>匯出指定期間的 PRTG 鏡像資料為 JSON 檔案（路由沿用全站設定前綴，不隨本控制器的傳輸前綴）</summary>
+    [RequireViewAll]
+    [HttpGet("/api/admin/settings/prtg-export")]
+    public IActionResult ExportPrtgData([FromQuery] string? from, [FromQuery] string? to)
+    {
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
+            throw DomainException.Validation("請指定起始與結束日期。");
+
+        var fromDate = QueryStringParsing.ParseRequiredDate(from);
+        var toDate = QueryStringParsing.ParseRequiredDate(to);
+
+        if (fromDate > toDate)
+            throw DomainException.Validation("起始日期不得大於結束日期。");
+
+        var days = (toDate.Date - fromDate.Date).Days + 1;
+        if (days > 366)
+            throw DomainException.Validation($"匯出期間不可超過 366 天（目前 {days} 天）。");
+
+        return new PrtgDiagnosticExportActionResult(_backend, _capacity, CaptureBinding, fromDate, toDate, _audit);
+    }
+
+    /// <summary>舊單次匯入入口：已停止接收檔案，一律回 410</summary>
+    [RequireViewAll]
+    [HttpPost("/api/admin/settings/prtg-import")]
+    public IActionResult LegacyPrtgImport() =>
+        StatusCode(410, ApiResponse.Fail("legacy_import_retired",
+            "請使用管理介面的可續傳診斷匯入；V1/V2 JSON 舊檔仍可使用。舊單次入口已停止接收檔案。"));
 
     [HttpPost]
     [RequestSizeLimit(16 * 1024)]
@@ -195,8 +225,7 @@ public sealed class PrtgTransferController : ControllerBase
 
     internal PrtgTransferBinding CaptureBinding()
     {
-        if (_hosts == null || _visibility == null || _currentUser == null || _settings == null ||
-            !_currentUser.IsAuthenticated || !_currentUser.Has(Capability.Maintain) ||
+        if (!_currentUser.IsAuthenticated || !_currentUser.Has(Capability.Maintain) ||
             string.IsNullOrWhiteSpace(_currentUser.Account) || (_currentUser.UserId <= 0 && !_currentUser.IsServerAdmin))
             throw new PrtgTransferStoreException("transfer_access_unverified", "無法確認登入者、主機可見範圍或 PRTG 來源，拒絕診斷傳輸。", 403);
 

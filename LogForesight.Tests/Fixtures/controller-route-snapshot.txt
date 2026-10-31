@@ -1,269 +1,269 @@
-GET	/	C=-;A=-	-	PagesController
-GET	/access-denied	C=-;A=-	-	PagesController
-GET	/admin/calibration	C=-;A=Maintain	-	PagesController
-GET	/admin/groups	C=-;A=Maintain	-	PagesController
-GET	/admin/hosts	C=-;A=Maintain	-	PagesController
-GET	/admin/imports	C=-;A=Maintain	-	PagesController
-GET	/admin/issue-owners	C=-;A=Maintain	-	PagesController
-GET	/admin/netiq	C=-;A=Maintain	-	PagesController
-GET	/admin/prtg	C=-;A=Maintain	-	PagesController
-GET	/admin/rules	C=-;A=Maintain	-	PagesController
-GET	/admin/settings	C=-;A=Maintain	-	PagesController
-GET	/admin/users	C=-;A=Maintain	-	PagesController
-GET	/admin/users/{userId:long}	C=-;A=Maintain	-	PagesController
-GET	/api/admin/access	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/access/{userGroupId:long}	C=Maintain;A=-	-	AdminController
-GET	/api/admin/calibration/export	C=Maintain;A=-	-	CalibrationController
-GET	/api/admin/calibration/status	C=Maintain;A=-	-	CalibrationController
-GET	/api/admin/groups	C=Maintain;A=-	-	AdminController
-POST	/api/admin/groups	C=Maintain;A=-	-	AdminController
-DELETE	/api/admin/groups/{groupId:long}	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/groups/{groupId:long}/dispatch-pool	C=Maintain;A=-	-	AdminController
-GET	/api/admin/host-groups	C=Maintain;A=-	-	AdminController
-POST	/api/admin/host-groups	C=Maintain;A=-	-	AdminController
-DELETE	/api/admin/host-groups/{groupId:long}	C=Maintain;A=-	-	AdminController
-GET	/api/admin/host-groups/{groupId:long}/members	C=Maintain;A=-	-	AdminController
-POST	/api/admin/host-groups/{groupId:long}/members	C=Maintain;A=-	-	AdminController
-POST	/api/admin/host-groups/{groupId:long}/members/preview	C=Maintain;A=-	-	AdminController
-POST	/api/admin/host-groups/{groupId:long}/members/remove	C=Maintain;A=-	-	AdminController
-GET	/api/admin/hosts	C=Maintain;A=-	-	AdminController
-POST	/api/admin/hosts	C=Maintain;A=-	-	AdminController
-GET	/api/admin/hosts/all	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/hosts/groups/batch	C=Maintain;A=-	-	AdminController
-GET	/api/admin/hosts/ids	C=Maintain;A=-	-	AdminController
-POST	/api/admin/hosts/merge	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/hosts/owners/batch	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/hosts/tier/batch	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/hosts/{hostId:long}/active	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/hosts/{hostId:long}/groups	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/hosts/{hostId:long}/owners	C=Maintain;A=-	-	AdminController
-POST	/api/admin/hosts/{hostId:long}/unmerge	C=Maintain;A=-	-	AdminController
-GET	/api/admin/issue-owners	C=Maintain;A=-	-	IssueOwnersController
-PUT	/api/admin/issue-owners	C=Maintain;A=-	-	IssueOwnersController
-GET	/api/admin/issue-owners/recent-issues	C=Maintain;A=-	-	IssueOwnersController
-DELETE	/api/admin/issue-owners/{source}/{eventId:int}	C=Maintain;A=-	-	IssueOwnersController
-DELETE	/api/admin/issue-owners/{source}/{eventId:int}/conclusion	C=Maintain;A=-	-	IssueOwnersController
-PUT	/api/admin/issue-owners/{source}/{eventId:int}/conclusion	C=Maintain;A=-	-	IssueOwnersController
-DELETE	/api/admin/issue-owners/{source}/{eventId:int}/mute	C=Maintain;A=-	-	IssueOwnersController
-PUT	/api/admin/issue-owners/{source}/{eventId:int}/mute	C=Maintain;A=-	-	IssueOwnersController
-GET	/api/admin/issue-owners/{source}/{eventId:int}/mute-history	C=Maintain;A=-	-	IssueOwnersController
-POST	/api/admin/netiq/hosts	C=Maintain;A=-	-	AdminController
-POST	/api/admin/netiq/hosts/bulk	C=Maintain;A=-	-	AdminController
-POST	/api/admin/netiq/import	C=Maintain;A=-	-	AdminController
-GET	/api/admin/netiq/options	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/netiq/options	C=Maintain;A=-	-	AdminController
-GET	/api/admin/netiq/overview	C=Maintain;A=-	-	AdminController
-POST	/api/admin/netiq/probe/metadata/start	C=Maintain;A=-	-	AdminController
-POST	/api/admin/netiq/probe/start	C=Maintain;A=-	-	AdminController
-GET	/api/admin/netiq/probe/status	C=Maintain;A=-	-	AdminController
-POST	/api/admin/netiq/scan	C=Maintain;A=-	-	AdminController
-GET	/api/admin/netiq/scan/{jobId}	C=Maintain;A=-	-	AdminController
-POST	/api/admin/netiq/scan/{jobId}/cancel	C=Maintain;A=-	-	AdminController
-POST	/api/admin/schedule/ai-cancel	C=-;A=Maintain	-	ScheduleController
-POST	/api/admin/schedule/ai-run	C=-;A=Maintain	-	ScheduleController
-GET	/api/admin/schedule/ai-status	C=-;A=DevMonitor|Maintain	-	ScheduleController
-POST	/api/admin/schedule/cancel	C=-;A=Maintain	-	ScheduleController
-GET	/api/admin/schedule/options	C=-;A=DevMonitor|Maintain	-	ScheduleController
-PUT	/api/admin/schedule/options	C=-;A=Maintain	-	ScheduleController
-POST	/api/admin/schedule/run	C=-;A=Maintain	-	ScheduleController
-GET	/api/admin/schedule/run-preview	C=-;A=Maintain	-	ScheduleController
-GET	/api/admin/schedule/status	C=-;A=DevMonitor|Maintain	-	ScheduleController
-GET	/api/admin/sentinels	C=Maintain;A=-	-	AdminController
-POST	/api/admin/sentinels	C=Maintain;A=-	-	AdminController
-POST	/api/admin/sentinels/test-connection	C=Maintain;A=-	-	AdminController
-DELETE	/api/admin/sentinels/{sentinelId:long}	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/sentinels/{sentinelId:long}/active	C=Maintain;A=-	-	AdminController
-GET	/api/admin/settings	C=Maintain;A=-	-	SettingsController
-PUT	/api/admin/settings	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/ad-test	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/ai-usage	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/ai-usage/reset	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/mail-test	C=Maintain;A=-	-	SettingsController
-PUT	/api/admin/settings/prtg	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-backfill/cancel	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-backfill/preview	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-backfill/selected/preview	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-backfill/selected/start	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-backfill/start	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-backfill/status	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-devices/search	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-estimate	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-export	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-fetch-scope/estimate	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-host-map	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-import	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-import-transfers	C=Maintain;A=-	-	PrtgTransferController
-GET	/api/admin/settings/prtg-import-transfers/{transferId:guid}	C=Maintain;A=-	-	PrtgTransferController
-POST	/api/admin/settings/prtg-import-transfers/{transferId:guid}/abandon	C=Maintain;A=-	-	PrtgTransferController
-PUT	/api/admin/settings/prtg-import-transfers/{transferId:guid}/chunks/{ordinal:int}	C=Maintain;A=-	-	PrtgTransferController
-POST	/api/admin/settings/prtg-import-transfers/{transferId:guid}/complete	C=Maintain;A=-	-	PrtgTransferController
-GET	/api/admin/settings/prtg-ip-excludes	C=Maintain;A=-	-	SettingsController
-PUT	/api/admin/settings/prtg-ip-excludes	C=Maintain;A=-	-	SettingsController
-DELETE	/api/admin/settings/prtg-ip-excludes/{ip}	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-manual-map	C=Maintain;A=-	-	SettingsController
-PUT	/api/admin/settings/prtg-manual-map	C=Maintain;A=-	-	SettingsController
-PUT	/api/admin/settings/prtg-manual-map/batch	C=Maintain;A=-	-	SettingsController
-DELETE	/api/admin/settings/prtg-manual-map/{deviceObjid:long}	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-mirror	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-name-mismatch	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-probe/cancel	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-probe/data-flow/start	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-probe/start	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-probe/status	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-resource-guard/preview	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-scope-purge/confirm	C=-;A=-	-	PrtgScopePurgeJobsController
-GET	/api/admin/settings/prtg-scope-purge/jobs/{jobId}	C=-;A=-	-	PrtgScopePurgeJobsController
-POST	/api/admin/settings/prtg-scope-purge/jobs/{jobId}/resume	C=-;A=-	-	PrtgScopePurgeJobsController
-GET	/api/admin/settings/prtg-scope-purge/preview	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-scope-revision	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-structure-sync/cancel	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-structure-sync/start	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-structure-sync/status	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/settings/prtg-test	C=Maintain;A=-	-	SettingsController
-GET	/api/admin/settings/prtg-unmapped-hosts	C=Maintain;A=-	-	SettingsController
-POST	/api/admin/setup/hidden	C=Maintain;A=-	-	SetupController
-POST	/api/admin/setup/skip/{stepId}	C=Maintain;A=-	-	SetupController
-GET	/api/admin/setup/status	C=Maintain;A=-	-	SetupController
-GET	/api/admin/users	C=Maintain;A=-	-	AdminController
-POST	/api/admin/users	C=Maintain;A=-	-	AdminController
-POST	/api/admin/users/batch	C=Maintain;A=-	-	AdminController
-GET	/api/admin/users/{userId:long}/detail	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/users/{userId:long}/dispatch-paused	C=Maintain;A=-	-	AdminController
-PUT	/api/admin/users/{userId:long}/groups	C=Maintain;A=-	-	AdminController
-POST	/api/ai/chat	C=-;A=-	-	AiController
-GET	/api/ai/interpret-issue	C=-;A=-	-	AiController
-GET	/api/ai/query-summary	C=-;A=-	-	AiController
-GET	/api/ai/status	C=-;A=-	-	AiController
-POST	/api/ai/tidy-note	C=-;A=Handle	-	AiController
-GET	/api/ai/today-focus	C=-;A=-	-	AiController
-GET	/api/audit	C=ViewAudit;A=-	-	AuditController
-GET	/api/audit/actions	C=ViewAudit;A=-	-	AuditController
-POST	/api/auth/login	C=-;A=-	anonymous	AuthController
-POST	/api/auth/logout	C=-;A=-	-	AuthController
-GET	/api/auth/me	C=-;A=-	-	AuthController
-GET	/api/auth/options	C=-;A=-	anonymous	AuthController
-GET	/api/dashboard/summary	C=-;A=-	-	DashboardController
-GET	/api/handlers/me/badge	C=-;A=-	-	HandlersController
-GET	/api/handlers/{userId:long}/work-orders	C=-;A=-	-	HandlersController
-GET	/api/handlers/{userId:long}/work-orders/summary	C=-;A=-	-	HandlersController
-GET	/api/handlers/{userId:long}/workload	C=-;A=-	-	HandlersController
-POST	/api/handling/issue-cases/bulk-close	C=Assign&Handle;A=-	-	IssueBulkCloseController
-GET	/api/handling/issue-cases/close-preview	C=Assign&Handle;A=-	-	IssueBulkCloseController
-GET	/api/handling/last-note	C=-;A=Handle	-	IssueNoteController
-GET	/api/health	C=-;A=-	anonymous	HealthController
-GET	/api/health/detail	C=-;A=Maintain	-	HealthController
-GET	/api/health/freshness	C=-;A=-	-	HealthController
-POST	/api/health/freshness-ack	C=-;A=Maintain	-	HealthController
-GET	/api/health/login-throttle	C=-;A=Maintain	-	HealthController
-DELETE	/api/health/login-throttle/{key}	C=-;A=Maintain	-	HealthController
-POST	/api/help/ask	C=-;A=Maintain	-	HelpController
-GET	/api/help/ask-available	C=-;A=-	-	HelpController
-GET	/api/help/manual	C=-;A=-	-	HelpController
-GET	/api/host-detail/{hostId:long}	C=-;A=-	-	HostDetailController
-GET	/api/host-detail/{hostId:long}/issues	C=-;A=-	-	HostDetailController
-GET	/api/host-detail/{hostId:long}/prtg	C=-;A=-	-	HostDetailController
-GET	/api/hosts	C=-;A=-	-	HostsController
-GET	/api/hosts/groups	C=-;A=-	-	HostsController
-GET	/api/imports/logs	C=Maintain;A=-	-	ImportsController
-POST	/api/imports/{kind}/apply	C=Maintain;A=-	-	ImportsController
-POST	/api/imports/{kind}/preview	C=Maintain;A=-	-	ImportsController
-GET	/api/imports/{kind}/template	C=Maintain;A=-	-	ImportsController
-GET	/api/me/note-phrases	C=-;A=-	-	MeController
-PUT	/api/me/note-phrases	C=-;A=-	-	MeController
-GET	/api/me/setup-guide	C=-;A=-	-	MeController
-PUT	/api/me/setup-guide	C=-;A=-	-	MeController
-GET	/api/permission-changes	C=-;A=ConfirmPermission	-	PermissionChangesController
-GET	/api/permission-changes/categories	C=-;A=ConfirmPermission	-	PermissionChangesController
-POST	/api/permission-changes/confirm/batch	C=-;A=ConfirmPermission	-	PermissionChangesController
-GET	/api/permission-changes/ids	C=-;A=ConfirmPermission	-	PermissionChangesController
-GET	/api/permission-changes/report	C=-;A=ConfirmPermission	-	PermissionChangesController
-PUT	/api/permission-changes/{changeId}/confirm	C=-;A=ConfirmPermission	-	PermissionChangesController
-GET	/api/prtg-snapshot-diagnostics	C=Maintain;A=-	-	PrtgSnapshotDiagnosticsController
-GET	/api/prtg/effectiveness	C=Maintain;A=-	-	PrtgEffectivenessController
-GET	/api/prtg/monitoring	C=Maintain;A=-	-	PrtgMonitoringController
-PUT	/api/prtg/monitoring	C=Maintain;A=-	-	PrtgMonitoringController
-POST	/api/prtg/monitoring/estimate	C=Maintain;A=-	-	PrtgMonitoringController
-GET	/api/prtg/monitoring/hosts	C=Maintain;A=-	-	PrtgMonitoringController
-GET	/api/prtg/monitoring/preview	C=Maintain;A=-	-	PrtgMonitoringController
-POST	/api/prtg/monitoring/sensors	C=Maintain;A=-	-	PrtgMonitoringController
-GET	/api/prtg/operations	C=Maintain;A=-	-	PrtgOperationsController
-GET	/api/prtg/risk-review	C=Maintain;A=-	-	PrtgRiskReviewController
-GET	/api/prtg/risk-review/pending	C=Maintain;A=-	-	PrtgRiskReviewController
-POST	/api/prtg/risk-review/retry	C=Maintain;A=-	-	PrtgRiskReviewController
-GET	/api/prtg/value-readiness	C=Maintain;A=-	-	PrtgValueReadinessController
-GET	/api/records	C=-;A=-	-	RecordsController
-GET	/api/records/by-date	C=-;A=-	-	RecordsController
-GET	/api/records/by-host	C=-;A=-	-	RecordsController
-GET	/api/records/by-issue	C=-;A=-	-	RecordsController
-GET	/api/records/next-unhandled	C=-;A=-	-	RecordsController
-GET	/api/records/{hostId:long}/{date}	C=-;A=-	-	RecordsController
-GET	/api/records/{hostId:long}/{date}/handling	C=-;A=-	-	HandlingController
-PUT	/api/records/{hostId:long}/{date}/handling	C=-;A=Handle	-	HandlingController
-PUT	/api/records/{hostId:long}/{date}/handling/assign	C=-;A=Assign	-	HandlingController
-POST	/api/records/{hostId:long}/{date}/handling/assign/preview	C=-;A=Assign	-	HandlingController
-GET	/api/records/{hostId:long}/{date}/handling/issue-history	C=-;A=-	-	RecordsController
-PUT	/api/records/{hostId:long}/{date}/handling/issues	C=-;A=Handle	-	HandlingController
-PUT	/api/records/{hostId:long}/{date}/handling/issues/batch	C=-;A=Handle	-	HandlingController
-GET	/api/records/{hostId:long}/{date}/handling/logs	C=-;A=-	-	HandlingController
-GET	/api/records/{hostId:long}/{date}/report	C=-;A=-	-	RecordsController
-GET	/api/reports/summary	C=-;A=-	-	ReportsController
-GET	/api/rules	C=Maintain;A=-	-	RulesController
-POST	/api/rules	C=Maintain;A=-	-	RulesController
-POST	/api/rules/disk-trend-preview	C=Maintain;A=-	-	RulesController
-POST	/api/rules/import-apply	C=Maintain;A=-	-	RulesController
-GET	/api/rules/import-preview	C=Maintain;A=-	-	RulesController
-GET	/api/rules/import-status	C=Maintain;A=-	-	RulesController
-GET	/api/rules/suppressions	C=Maintain;A=-	-	RulesController
-POST	/api/rules/validate	C=Maintain;A=-	-	RulesController
-DELETE	/api/rules/{ruleId}	C=Maintain;A=-	-	RulesController
-PUT	/api/rules/{ruleId}/enabled	C=Maintain;A=-	-	RulesController
-POST	/api/rules/{ruleId}/restore	C=Maintain;A=-	-	RulesController
-GET	/api/rules/{ruleId}/restore-preview	C=Maintain;A=-	-	RulesController
-GET	/api/rules/{ruleId}/suppression-preview	C=Maintain;A=-	-	RulesController
-DELETE	/api/rules/{ruleId}/suppressions	C=Maintain;A=-	-	RulesController
-POST	/api/rules/{ruleId}/suppressions	C=Maintain;A=-	-	RulesController
-GET	/api/run-activity	C=-;A=-	-	RunActivityController
-GET	/api/runs/day/{date}	C=DevMonitor|Maintain;A=-	-	RunsController
-GET	/api/runs/errors	C=DevMonitor|Maintain;A=-	-	RunsController
-GET	/api/runs/list	C=DevMonitor|Maintain;A=-	-	RunsController
-GET	/api/runs/summary	C=DevMonitor|Maintain;A=-	-	RunsController
-GET	/api/runs/{runId:long}	C=DevMonitor|Maintain;A=-	-	RunsController
-GET	/api/settings/display	C=-;A=-	-	DisplaySettingsController
-DELETE	/api/suppressions	C=Maintain;A=-	-	RulesController
-POST	/api/suppressions	C=Maintain;A=-	-	RulesController
-GET	/api/work-orders	C=Assign|ViewAll;A=-	-	WorkOrderListController
-POST	/api/work-orders	C=Assign;A=-	-	WorkOrdersController
-POST	/api/work-orders/auto-dispatch	C=Maintain;A=-	-	WorkOrderAutoDispatchController
-POST	/api/work-orders/candidates	C=Assign;A=Assign	-	WorkOrdersController
-GET	/api/work-orders/gaps	C=Assign|ViewAll;A=-	-	WorkOrderBoardController
-GET	/api/work-orders/handler-groups	C=Assign|ViewAll;A=-	-	WorkOrderListController
-GET	/api/work-orders/load-board	C=Assign|ViewAll;A=-	-	WorkOrderBoardController
-POST	/api/work-orders/preview	C=Assign;A=-	-	WorkOrdersController
-POST	/api/work-orders/reply-many	C=Handle;A=-	-	WorkOrderReplyController
-GET	/api/work-orders/unread-count	C=Assign|ViewAll;A=-	-	WorkOrderListController
-GET	/api/work-orders/{id:long}	C=-;A=-	-	WorkOrderViewController
-POST	/api/work-orders/{id:long}/admin-close	C=Assign&Handle;A=-	-	WorkOrderAdminCloseController
-POST	/api/work-orders/{id:long}/append	C=Assign;A=-	-	WorkOrdersController
-POST	/api/work-orders/{id:long}/cancel	C=Assign;A=-	-	WorkOrdersController
-PUT	/api/work-orders/{id:long}/due-date	C=Handle;A=-	-	WorkOrderReplyController
-GET	/api/work-orders/{id:long}/members	C=-;A=-	-	WorkOrderViewController
-POST	/api/work-orders/{id:long}/reassign	C=Assign;A=-	-	WorkOrdersController
-POST	/api/work-orders/{id:long}/reply	C=Handle;A=-	-	WorkOrderReplyController
-POST	/api/work-orders/{id:long}/return	C=Assign;A=-	-	WorkOrdersController
-POST	/api/work-orders/{id:long}/seen	C=-;A=-	-	WorkOrderViewController
-POST	/api/work-orders/{id:long}/split	C=Assign;A=-	-	WorkOrdersController
-GET	/api/work-orders/{id:long}/timeline	C=-;A=-	-	WorkOrderViewController
-GET	/audit	C=-;A=ViewAudit	-	PagesController
-GET	/error	C=-;A=-	anonymous	PagesController
-GET	/handlers/{userId:long}	C=-;A=-	-	PagesController
-GET	/help/manual	C=-;A=-	-	PagesController
-GET	/hosts/{hostId:long}	C=-;A=-	-	PagesController
-GET	/login	C=-;A=-	anonymous	PagesController
-GET	/permission-changes	C=-;A=ConfirmPermission	-	PagesController
-GET	/records	C=-;A=-	-	PagesController
-GET	/records/{hostId:long}/{date}	C=-;A=-	-	PagesController
-GET	/reports	C=-;A=-	-	PagesController
-GET	/runs	C=-;A=DevMonitor|Maintain	-	PagesController
-GET	/setup	C=-;A=Maintain	-	PagesController
-GET	/work-orders	C=-;A=Assign|ViewAll	-	PagesController
-GET	/work-orders/{id:long}	C=-;A=-	-	PagesController
+GET	/	C=-;A=-	-	-	PagesController
+GET	/access-denied	C=-;A=-	-	-	PagesController
+GET	/admin/calibration	C=-;A=Maintain	-	-	PagesController
+GET	/admin/groups	C=-;A=Maintain	-	-	PagesController
+GET	/admin/hosts	C=-;A=Maintain	-	-	PagesController
+GET	/admin/imports	C=-;A=Maintain	-	-	PagesController
+GET	/admin/issue-owners	C=-;A=Maintain	-	-	PagesController
+GET	/admin/netiq	C=-;A=Maintain	-	-	PagesController
+GET	/admin/prtg	C=-;A=Maintain	-	-	PagesController
+GET	/admin/rules	C=-;A=Maintain	-	-	PagesController
+GET	/admin/settings	C=-;A=Maintain	-	-	PagesController
+GET	/admin/users	C=-;A=Maintain	-	-	PagesController
+GET	/admin/users/{userId:long}	C=-;A=Maintain	-	-	PagesController
+GET	/api/admin/access	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/access/{userGroupId:long}	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/calibration/export	C=Maintain;A=-	-	-	CalibrationController
+GET	/api/admin/calibration/status	C=Maintain;A=-	-	-	CalibrationController
+GET	/api/admin/groups	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/groups	C=Maintain;A=-	-	-	AdminController
+DELETE	/api/admin/groups/{groupId:long}	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/groups/{groupId:long}/dispatch-pool	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/host-groups	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/host-groups	C=Maintain;A=-	-	-	AdminController
+DELETE	/api/admin/host-groups/{groupId:long}	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/host-groups/{groupId:long}/members	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/host-groups/{groupId:long}/members	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/host-groups/{groupId:long}/members/preview	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/host-groups/{groupId:long}/members/remove	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/hosts	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/hosts	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/hosts/all	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/hosts/groups/batch	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/hosts/ids	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/hosts/merge	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/hosts/owners/batch	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/hosts/tier/batch	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/hosts/{hostId:long}/active	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/hosts/{hostId:long}/groups	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/hosts/{hostId:long}/owners	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/hosts/{hostId:long}/unmerge	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/issue-owners	C=Maintain;A=-	-	-	IssueOwnersController
+PUT	/api/admin/issue-owners	C=Maintain;A=-	-	-	IssueOwnersController
+GET	/api/admin/issue-owners/recent-issues	C=Maintain;A=-	-	-	IssueOwnersController
+DELETE	/api/admin/issue-owners/{source}/{eventId:int}	C=Maintain;A=-	-	-	IssueOwnersController
+DELETE	/api/admin/issue-owners/{source}/{eventId:int}/conclusion	C=Maintain;A=-	-	-	IssueOwnersController
+PUT	/api/admin/issue-owners/{source}/{eventId:int}/conclusion	C=Maintain;A=-	-	-	IssueOwnersController
+DELETE	/api/admin/issue-owners/{source}/{eventId:int}/mute	C=Maintain;A=-	-	-	IssueOwnersController
+PUT	/api/admin/issue-owners/{source}/{eventId:int}/mute	C=Maintain;A=-	-	-	IssueOwnersController
+GET	/api/admin/issue-owners/{source}/{eventId:int}/mute-history	C=Maintain;A=-	-	-	IssueOwnersController
+POST	/api/admin/netiq/hosts	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/netiq/hosts/bulk	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/netiq/import	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/netiq/options	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/netiq/options	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/netiq/overview	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/netiq/probe/metadata/start	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/netiq/probe/start	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/netiq/probe/status	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/netiq/scan	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/netiq/scan/{jobId}	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/netiq/scan/{jobId}/cancel	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/schedule/ai-cancel	C=-;A=Maintain	-	-	ScheduleController
+POST	/api/admin/schedule/ai-run	C=-;A=Maintain	-	-	ScheduleController
+GET	/api/admin/schedule/ai-status	C=-;A=DevMonitor|Maintain	-	-	ScheduleController
+POST	/api/admin/schedule/cancel	C=-;A=Maintain	-	-	ScheduleController
+GET	/api/admin/schedule/options	C=-;A=DevMonitor|Maintain	-	-	ScheduleController
+PUT	/api/admin/schedule/options	C=-;A=Maintain	-	-	ScheduleController
+POST	/api/admin/schedule/run	C=-;A=Maintain	-	-	ScheduleController
+GET	/api/admin/schedule/run-preview	C=-;A=Maintain	-	-	ScheduleController
+GET	/api/admin/schedule/status	C=-;A=DevMonitor|Maintain	-	-	ScheduleController
+GET	/api/admin/sentinels	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/sentinels	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/sentinels/test-connection	C=Maintain;A=-	-	-	AdminController
+DELETE	/api/admin/sentinels/{sentinelId:long}	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/sentinels/{sentinelId:long}/active	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/settings	C=Maintain;A=-	-	-	SettingsController
+PUT	/api/admin/settings	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/ad-test	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/ai-usage	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/ai-usage/reset	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/mail-test	C=Maintain;A=-	-	-	SettingsController
+PUT	/api/admin/settings/prtg	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-backfill/cancel	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-backfill/preview	C=Maintain;A=-	-	viewall	SettingsController
+POST	/api/admin/settings/prtg-backfill/selected/preview	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-backfill/selected/start	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-backfill/start	C=Maintain;A=-	-	viewall	SettingsController
+GET	/api/admin/settings/prtg-backfill/status	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-devices/search	C=Maintain;A=-	-	viewall	SettingsController
+GET	/api/admin/settings/prtg-estimate	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-export	C=Maintain;A=-	-	viewall	SettingsController
+GET	/api/admin/settings/prtg-fetch-scope/estimate	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-host-map	C=Maintain;A=-	-	viewall	SettingsController
+POST	/api/admin/settings/prtg-import	C=Maintain;A=-	-	viewall	SettingsController
+POST	/api/admin/settings/prtg-import-transfers	C=Maintain;A=-	-	-	PrtgTransferController
+GET	/api/admin/settings/prtg-import-transfers/{transferId:guid}	C=Maintain;A=-	-	-	PrtgTransferController
+POST	/api/admin/settings/prtg-import-transfers/{transferId:guid}/abandon	C=Maintain;A=-	-	-	PrtgTransferController
+PUT	/api/admin/settings/prtg-import-transfers/{transferId:guid}/chunks/{ordinal:int}	C=Maintain;A=-	-	-	PrtgTransferController
+POST	/api/admin/settings/prtg-import-transfers/{transferId:guid}/complete	C=Maintain;A=-	-	-	PrtgTransferController
+GET	/api/admin/settings/prtg-ip-excludes	C=Maintain;A=-	-	viewall	SettingsController
+PUT	/api/admin/settings/prtg-ip-excludes	C=Maintain;A=-	-	viewall	SettingsController
+DELETE	/api/admin/settings/prtg-ip-excludes/{ip}	C=Maintain;A=-	-	viewall	SettingsController
+GET	/api/admin/settings/prtg-manual-map	C=Maintain;A=-	-	viewall	SettingsController
+PUT	/api/admin/settings/prtg-manual-map	C=Maintain;A=-	-	viewall	SettingsController
+PUT	/api/admin/settings/prtg-manual-map/batch	C=Maintain;A=-	-	viewall	SettingsController
+DELETE	/api/admin/settings/prtg-manual-map/{deviceObjid:long}	C=Maintain;A=-	-	viewall	SettingsController
+GET	/api/admin/settings/prtg-mirror	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-name-mismatch	C=Maintain;A=-	-	viewall	SettingsController
+POST	/api/admin/settings/prtg-probe/cancel	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-probe/data-flow/start	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-probe/start	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-probe/status	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-resource-guard/preview	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-scope-purge/confirm	C=-;A=-	-	-	PrtgScopePurgeJobsController
+GET	/api/admin/settings/prtg-scope-purge/jobs/{jobId}	C=-;A=-	-	-	PrtgScopePurgeJobsController
+POST	/api/admin/settings/prtg-scope-purge/jobs/{jobId}/resume	C=-;A=-	-	-	PrtgScopePurgeJobsController
+GET	/api/admin/settings/prtg-scope-purge/preview	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-scope-revision	C=Maintain;A=-	-	viewall	SettingsController
+POST	/api/admin/settings/prtg-structure-sync/cancel	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-structure-sync/start	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-structure-sync/status	C=Maintain;A=-	-	-	SettingsController
+POST	/api/admin/settings/prtg-test	C=Maintain;A=-	-	-	SettingsController
+GET	/api/admin/settings/prtg-unmapped-hosts	C=Maintain;A=-	-	viewall	SettingsController
+POST	/api/admin/setup/hidden	C=Maintain;A=-	-	-	SetupController
+POST	/api/admin/setup/skip/{stepId}	C=Maintain;A=-	-	-	SetupController
+GET	/api/admin/setup/status	C=Maintain;A=-	-	-	SetupController
+GET	/api/admin/users	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/users	C=Maintain;A=-	-	-	AdminController
+POST	/api/admin/users/batch	C=Maintain;A=-	-	-	AdminController
+GET	/api/admin/users/{userId:long}/detail	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/users/{userId:long}/dispatch-paused	C=Maintain;A=-	-	-	AdminController
+PUT	/api/admin/users/{userId:long}/groups	C=Maintain;A=-	-	-	AdminController
+POST	/api/ai/chat	C=-;A=-	-	-	AiController
+GET	/api/ai/interpret-issue	C=-;A=-	-	-	AiController
+GET	/api/ai/query-summary	C=-;A=-	-	-	AiController
+GET	/api/ai/status	C=-;A=-	-	-	AiController
+POST	/api/ai/tidy-note	C=-;A=Handle	-	-	AiController
+GET	/api/ai/today-focus	C=-;A=-	-	-	AiController
+GET	/api/audit	C=ViewAudit;A=-	-	-	AuditController
+GET	/api/audit/actions	C=ViewAudit;A=-	-	-	AuditController
+POST	/api/auth/login	C=-;A=-	anonymous	-	AuthController
+POST	/api/auth/logout	C=-;A=-	-	-	AuthController
+GET	/api/auth/me	C=-;A=-	-	-	AuthController
+GET	/api/auth/options	C=-;A=-	anonymous	-	AuthController
+GET	/api/dashboard/summary	C=-;A=-	-	-	DashboardController
+GET	/api/handlers/me/badge	C=-;A=-	-	-	HandlersController
+GET	/api/handlers/{userId:long}/work-orders	C=-;A=-	-	-	HandlersController
+GET	/api/handlers/{userId:long}/work-orders/summary	C=-;A=-	-	-	HandlersController
+GET	/api/handlers/{userId:long}/workload	C=-;A=-	-	-	HandlersController
+POST	/api/handling/issue-cases/bulk-close	C=Assign&Handle;A=-	-	-	IssueBulkCloseController
+GET	/api/handling/issue-cases/close-preview	C=Assign&Handle;A=-	-	-	IssueBulkCloseController
+GET	/api/handling/last-note	C=-;A=Handle	-	-	IssueNoteController
+GET	/api/health	C=-;A=-	anonymous	-	HealthController
+GET	/api/health/detail	C=-;A=Maintain	-	-	HealthController
+GET	/api/health/freshness	C=-;A=-	-	-	HealthController
+POST	/api/health/freshness-ack	C=-;A=Maintain	-	-	HealthController
+GET	/api/health/login-throttle	C=-;A=Maintain	-	-	HealthController
+DELETE	/api/health/login-throttle/{key}	C=-;A=Maintain	-	-	HealthController
+POST	/api/help/ask	C=-;A=Maintain	-	-	HelpController
+GET	/api/help/ask-available	C=-;A=-	-	-	HelpController
+GET	/api/help/manual	C=-;A=-	-	-	HelpController
+GET	/api/host-detail/{hostId:long}	C=-;A=-	-	-	HostDetailController
+GET	/api/host-detail/{hostId:long}/issues	C=-;A=-	-	-	HostDetailController
+GET	/api/host-detail/{hostId:long}/prtg	C=-;A=-	-	-	HostDetailController
+GET	/api/hosts	C=-;A=-	-	-	HostsController
+GET	/api/hosts/groups	C=-;A=-	-	-	HostsController
+GET	/api/imports/logs	C=Maintain;A=-	-	-	ImportsController
+POST	/api/imports/{kind}/apply	C=Maintain;A=-	-	-	ImportsController
+POST	/api/imports/{kind}/preview	C=Maintain;A=-	-	-	ImportsController
+GET	/api/imports/{kind}/template	C=Maintain;A=-	-	-	ImportsController
+GET	/api/me/note-phrases	C=-;A=-	-	-	MeController
+PUT	/api/me/note-phrases	C=-;A=-	-	-	MeController
+GET	/api/me/setup-guide	C=-;A=-	-	-	MeController
+PUT	/api/me/setup-guide	C=-;A=-	-	-	MeController
+GET	/api/permission-changes	C=-;A=ConfirmPermission	-	-	PermissionChangesController
+GET	/api/permission-changes/categories	C=-;A=ConfirmPermission	-	-	PermissionChangesController
+POST	/api/permission-changes/confirm/batch	C=-;A=ConfirmPermission	-	-	PermissionChangesController
+GET	/api/permission-changes/ids	C=-;A=ConfirmPermission	-	-	PermissionChangesController
+GET	/api/permission-changes/report	C=-;A=ConfirmPermission	-	-	PermissionChangesController
+PUT	/api/permission-changes/{changeId}/confirm	C=-;A=ConfirmPermission	-	-	PermissionChangesController
+GET	/api/prtg-snapshot-diagnostics	C=Maintain;A=-	-	-	PrtgSnapshotDiagnosticsController
+GET	/api/prtg/effectiveness	C=Maintain;A=-	-	-	PrtgEffectivenessController
+GET	/api/prtg/monitoring	C=Maintain;A=-	-	-	PrtgMonitoringController
+PUT	/api/prtg/monitoring	C=Maintain;A=-	-	-	PrtgMonitoringController
+POST	/api/prtg/monitoring/estimate	C=Maintain;A=-	-	-	PrtgMonitoringController
+GET	/api/prtg/monitoring/hosts	C=Maintain;A=-	-	-	PrtgMonitoringController
+GET	/api/prtg/monitoring/preview	C=Maintain;A=-	-	-	PrtgMonitoringController
+POST	/api/prtg/monitoring/sensors	C=Maintain;A=-	-	-	PrtgMonitoringController
+GET	/api/prtg/operations	C=Maintain;A=-	-	-	PrtgOperationsController
+GET	/api/prtg/risk-review	C=Maintain;A=-	-	-	PrtgRiskReviewController
+GET	/api/prtg/risk-review/pending	C=Maintain;A=-	-	-	PrtgRiskReviewController
+POST	/api/prtg/risk-review/retry	C=Maintain;A=-	-	-	PrtgRiskReviewController
+GET	/api/prtg/value-readiness	C=Maintain;A=-	-	-	PrtgValueReadinessController
+GET	/api/records	C=-;A=-	-	-	RecordsController
+GET	/api/records/by-date	C=-;A=-	-	-	RecordsController
+GET	/api/records/by-host	C=-;A=-	-	-	RecordsController
+GET	/api/records/by-issue	C=-;A=-	-	-	RecordsController
+GET	/api/records/next-unhandled	C=-;A=-	-	-	RecordsController
+GET	/api/records/{hostId:long}/{date}	C=-;A=-	-	-	RecordsController
+GET	/api/records/{hostId:long}/{date}/handling	C=-;A=-	-	-	HandlingController
+PUT	/api/records/{hostId:long}/{date}/handling	C=-;A=Handle	-	-	HandlingController
+PUT	/api/records/{hostId:long}/{date}/handling/assign	C=-;A=Assign	-	-	HandlingController
+POST	/api/records/{hostId:long}/{date}/handling/assign/preview	C=-;A=Assign	-	-	HandlingController
+GET	/api/records/{hostId:long}/{date}/handling/issue-history	C=-;A=-	-	-	RecordsController
+PUT	/api/records/{hostId:long}/{date}/handling/issues	C=-;A=Handle	-	-	HandlingController
+PUT	/api/records/{hostId:long}/{date}/handling/issues/batch	C=-;A=Handle	-	-	HandlingController
+GET	/api/records/{hostId:long}/{date}/handling/logs	C=-;A=-	-	-	HandlingController
+GET	/api/records/{hostId:long}/{date}/report	C=-;A=-	-	-	RecordsController
+GET	/api/reports/summary	C=-;A=-	-	-	ReportsController
+GET	/api/rules	C=Maintain;A=-	-	-	RulesController
+POST	/api/rules	C=Maintain;A=-	-	-	RulesController
+POST	/api/rules/disk-trend-preview	C=Maintain;A=-	-	-	RulesController
+POST	/api/rules/import-apply	C=Maintain;A=-	-	-	RulesController
+GET	/api/rules/import-preview	C=Maintain;A=-	-	-	RulesController
+GET	/api/rules/import-status	C=Maintain;A=-	-	-	RulesController
+GET	/api/rules/suppressions	C=Maintain;A=-	-	-	RulesController
+POST	/api/rules/validate	C=Maintain;A=-	-	-	RulesController
+DELETE	/api/rules/{ruleId}	C=Maintain;A=-	-	-	RulesController
+PUT	/api/rules/{ruleId}/enabled	C=Maintain;A=-	-	-	RulesController
+POST	/api/rules/{ruleId}/restore	C=Maintain;A=-	-	-	RulesController
+GET	/api/rules/{ruleId}/restore-preview	C=Maintain;A=-	-	-	RulesController
+GET	/api/rules/{ruleId}/suppression-preview	C=Maintain;A=-	-	-	RulesController
+DELETE	/api/rules/{ruleId}/suppressions	C=Maintain;A=-	-	-	RulesController
+POST	/api/rules/{ruleId}/suppressions	C=Maintain;A=-	-	-	RulesController
+GET	/api/run-activity	C=-;A=-	-	-	RunActivityController
+GET	/api/runs/day/{date}	C=DevMonitor|Maintain;A=-	-	-	RunsController
+GET	/api/runs/errors	C=DevMonitor|Maintain;A=-	-	-	RunsController
+GET	/api/runs/list	C=DevMonitor|Maintain;A=-	-	-	RunsController
+GET	/api/runs/summary	C=DevMonitor|Maintain;A=-	-	-	RunsController
+GET	/api/runs/{runId:long}	C=DevMonitor|Maintain;A=-	-	-	RunsController
+GET	/api/settings/display	C=-;A=-	-	-	DisplaySettingsController
+DELETE	/api/suppressions	C=Maintain;A=-	-	-	RulesController
+POST	/api/suppressions	C=Maintain;A=-	-	-	RulesController
+GET	/api/work-orders	C=Assign|ViewAll;A=-	-	-	WorkOrderListController
+POST	/api/work-orders	C=Assign;A=-	-	-	WorkOrdersController
+POST	/api/work-orders/auto-dispatch	C=Maintain;A=-	-	-	WorkOrderAutoDispatchController
+POST	/api/work-orders/candidates	C=Assign;A=Assign	-	-	WorkOrdersController
+GET	/api/work-orders/gaps	C=Assign|ViewAll;A=-	-	-	WorkOrderBoardController
+GET	/api/work-orders/handler-groups	C=Assign|ViewAll;A=-	-	-	WorkOrderListController
+GET	/api/work-orders/load-board	C=Assign|ViewAll;A=-	-	-	WorkOrderBoardController
+POST	/api/work-orders/preview	C=Assign;A=-	-	-	WorkOrdersController
+POST	/api/work-orders/reply-many	C=Handle;A=-	-	-	WorkOrderReplyController
+GET	/api/work-orders/unread-count	C=Assign|ViewAll;A=-	-	-	WorkOrderListController
+GET	/api/work-orders/{id:long}	C=-;A=-	-	-	WorkOrderViewController
+POST	/api/work-orders/{id:long}/admin-close	C=Assign&Handle;A=-	-	-	WorkOrderAdminCloseController
+POST	/api/work-orders/{id:long}/append	C=Assign;A=-	-	-	WorkOrdersController
+POST	/api/work-orders/{id:long}/cancel	C=Assign;A=-	-	-	WorkOrdersController
+PUT	/api/work-orders/{id:long}/due-date	C=Handle;A=-	-	-	WorkOrderReplyController
+GET	/api/work-orders/{id:long}/members	C=-;A=-	-	-	WorkOrderViewController
+POST	/api/work-orders/{id:long}/reassign	C=Assign;A=-	-	-	WorkOrdersController
+POST	/api/work-orders/{id:long}/reply	C=Handle;A=-	-	-	WorkOrderReplyController
+POST	/api/work-orders/{id:long}/return	C=Assign;A=-	-	-	WorkOrdersController
+POST	/api/work-orders/{id:long}/seen	C=-;A=-	-	-	WorkOrderViewController
+POST	/api/work-orders/{id:long}/split	C=Assign;A=-	-	-	WorkOrdersController
+GET	/api/work-orders/{id:long}/timeline	C=-;A=-	-	-	WorkOrderViewController
+GET	/audit	C=-;A=ViewAudit	-	-	PagesController
+GET	/error	C=-;A=-	anonymous	-	PagesController
+GET	/handlers/{userId:long}	C=-;A=-	-	-	PagesController
+GET	/help/manual	C=-;A=-	-	-	PagesController
+GET	/hosts/{hostId:long}	C=-;A=-	-	-	PagesController
+GET	/login	C=-;A=-	anonymous	-	PagesController
+GET	/permission-changes	C=-;A=ConfirmPermission	-	-	PagesController
+GET	/records	C=-;A=-	-	-	PagesController
+GET	/records/{hostId:long}/{date}	C=-;A=-	-	-	PagesController
+GET	/reports	C=-;A=-	-	-	PagesController
+GET	/runs	C=-;A=DevMonitor|Maintain	-	-	PagesController
+GET	/setup	C=-;A=Maintain	-	-	PagesController
+GET	/work-orders	C=-;A=Assign|ViewAll	-	-	PagesController
+GET	/work-orders/{id:long}	C=-;A=-	-	-	PagesController

@@ -492,6 +492,7 @@ public sealed class PrtgTransferControllerTests
         builder.Services.AddSingleton<ICurrentUser>(fixture.User);
         builder.Services.AddSingleton<ISystemSettingsStore>(fixture.Settings);
         builder.Services.AddSingleton<IAuditService, NoopAudit>();
+        builder.Services.AddSingleton<PrtgLegacyJsonTransferValidator>();
         builder.Services.AddControllers(options => options.Filters.Add<ApiExceptionFilter>())
             .AddApplicationPart(typeof(PrtgTransferController).Assembly);
         await using var app = builder.Build();
@@ -605,7 +606,8 @@ public sealed class PrtgTransferControllerTests
                 value.HostIds = [1, 2];
                 value.SensorIds = [11];
             });
-            Controller = new PrtgTransferController(Backend, Capacity, Hosts, new FixtureVisibility(Hosts), User, Settings);
+            Controller = new PrtgTransferController(Backend, Capacity, Hosts, new FixtureVisibility(Hosts), User, Settings,
+                new NoopAudit(), new PrtgLegacyJsonTransferValidator());
         }
 
         public Guid CreateTransfer(byte[]? payload = null)

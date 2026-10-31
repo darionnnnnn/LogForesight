@@ -15,12 +15,19 @@ namespace LogForesight.Tests;
 public class ReportPerformanceContractTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
+    private readonly string _backendDir = Path.Combine(Path.GetTempPath(), "lf-test-report-perf-" + Guid.NewGuid().ToString("N"));
     private readonly EfAnalysisRecordStore _records;
     private readonly FakeHostStore _hosts = new();
 
     public ReportPerformanceContractTests() => _records = new EfAnalysisRecordStore(_fx.NewContext, "test");
 
-    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
+    public void Dispose()
+    {
+        _fx.Dispose();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        try { if (Directory.Exists(_backendDir)) Directory.Delete(_backendDir, recursive: true); } catch (IOException) { }
+        GC.SuppressFinalize(this);
+    }
 
     private EfIssueAggregateQuery Query() => new(_fx.NewContext, _hosts);
 
@@ -258,7 +265,7 @@ public class ReportPerformanceContractTests : IDisposable
     // ── B2：AI 用量 API（終檢指出規劃驗收要求的 API 測試原本沒做）────────────
 
     private SettingsController AiUsageController(AiUsageStore store, RecordingAuditService audit) =>
-        new(new FakeSystemSettingsService(), store, audit);
+        new(new FakeSystemSettingsService(), store, audit, new StorageBackend(new StorageSettings { Type = "Sqlite" }, _backendDir));
 
     [Fact]
     public void AiUsageApi_讀取回傳今日與累計()
