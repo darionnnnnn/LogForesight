@@ -37,6 +37,8 @@ public class ListPagesBehaviorTests
     [InlineData("dashboard舊回應晚到不寫入狀態")]
     [InlineData("dashboard舊請求失敗不外擲")]
     [InlineData("dashboard最新請求失敗要外擲")]
+    [InlineData("dashboard自動AI卡遇429顯示暫時休息且不隱藏")]
+    [InlineData("dashboard自動AI卡一般失敗維持隱藏")]
     public void 清單頁查詢行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

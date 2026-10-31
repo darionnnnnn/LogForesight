@@ -199,6 +199,14 @@ public class FrontendMiscUiTests
         Assert.DoesNotContain("currentScope =", chipHandler);
         Assert.Contains("requestedScope = btn.dataset.scope", chipHandler);
     }
+
+    [Fact]
+    public void 衝突清單載入遇403顯示權限說明而非載入失敗()
+    {
+        var body = FunctionBody(ReadPage("prtg-admin.js"), "async function refreshConflicts(");
+        Assert.Contains("status === 403", body);
+        Assert.Contains("需要可檢視全部主機的權限才能查看衝突清單", body);
+    }
 }
 
 /// <summary>G4 小項行為：載入 production 頁面模組的目標函式，以替身驅動。</summary>

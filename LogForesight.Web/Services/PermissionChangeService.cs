@@ -684,7 +684,7 @@ public class PermissionChangeService
         if (!string.IsNullOrWhiteSpace(host?.IpAddress))
             return host.IpAddress;
 
-        if (!string.IsNullOrWhiteSpace(hostName) && System.Net.IPAddress.TryParse(hostName.Trim(), out _))
+        if (!string.IsNullOrWhiteSpace(hostName) && IpSyntax.TryParse(hostName, out _))
             return hostName.Trim();
 
         return null;

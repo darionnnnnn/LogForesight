@@ -78,10 +78,8 @@ public class ReportService
         List<DashboardHostDto> ranked;
         HandlingTodoDto? handlingDto = null;
 
-        var visibleDayRiskLevels = _systemSettings.GetVisibleDayRiskLevels();
-        var riskLevels = RecordRepository.ResolveDayRiskLevels(visibleDayRiskLevels, null);
-        var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
-        var nothingVisible = riskLevels != null && riskLevels.Count == 0;
+        var (riskLevels, visibleSeverities, nothingVisible) = RecordRepository.ResolveVisibility(
+            _systemSettings.GetVisibleDayRiskLevels(), _systemSettings.GetVisibleSeverities());
 
         if (scope == HandlingHistoryQueryService.HandlingScopes.All)
         {

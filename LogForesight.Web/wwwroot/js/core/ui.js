@@ -13,7 +13,7 @@
 // formatUserName 是使用者顯示的單一格式出口（§9）。format.js 也 import 本檔的 icon()，
 // 形成循環——但雙方都只在「函式體內」使用彼此、非模組初始化期求值，ESM 的 live binding
 // 在此安全（searchableUserSelect 於執行期才呼叫 formatUserName）。
-import { formatUserName, todayLocal } from './format.js';
+import { formatUserName, formatDateTime, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
@@ -295,6 +295,28 @@ export function renderPagination(container, { page, totalPages, onPage, pageSize
     }
 
     container.replaceChildren(bar);
+}
+
+/**
+ * 列表頁分頁列的標準接法：result 為 { page, total, pageSize }。換頁與改每頁筆數都呼叫
+ * onPage(page, pageSize)——頁面狀態（currentPage、pageSize）仍由頁面持有，在 onPage 內更新並重載。
+ * 換頁後捲回頁首；改每頁筆數會存回 pageSizeKey 並回到第 1 頁。
+ */
+export function renderPager(containerId, result, { pageSizeKey, onPage }) {
+    const totalPages = Math.ceil(result.total / result.pageSize);
+    renderPagination(document.getElementById(containerId), {
+        page: result.page,
+        totalPages,
+        onPage: page => {
+            onPage(page, result.pageSize);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+        pageSize: result.pageSize,
+        onPageSize: size => {
+            savePageSize(pageSizeKey, size);
+            onPage(1, size);
+        }
+    });
 }
 
 function pageSizeSelect(current, options, onChange) {
@@ -1693,4 +1715,134 @@ export function numberOr(id, fallback) {
     if (raw.trim() === '') return fallback;
     const n = Number(raw);
     return Number.isFinite(n) ? n : fallback;
+}
+
+/** 設定類頁面的「最後更新」提示列（誰在何時改過）；el 不存在時略過 */
+export function renderUpdatedAt(el, settings) {
+    if (!el) return;
+    if (!settings.updatedAt) {
+        el.textContent = '尚未有人更新過（目前為系統預設值）。';
+        return;
+    }
+    el.textContent = `最後更新：${formatDateTime(settings.updatedAt)}` +
+        (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
+}
+
+/**
+ * 分析執行中提示：AI 對話／問答與批次分析共用同一個模型的序列請求佇列，執行中時回應會明顯變慢。
+ * 面板顯示當下查一次，不輪詢；查詢失敗就隱藏提示。hintEl 不存在時略過。
+ */
+export async function loadRunHint(hintEl) {
+    if (!hintEl) return;
+    try {
+        const activity = await api.get('/api/run-activity', { silent: true });
+        hintEl.classList.toggle('d-none', !activity?.isRunning);
+    } catch {
+        hintEl.classList.add('d-none');
+    }
+}
+
+/**
+ * 確認後解除一條問題靜音（DELETE 同一個端點），回傳是否已解除。
+ * 取消或失敗回 false（錯誤已由 api.js 顯示）；成功後的重整動作由呼叫的頁面自己接手。
+ */
+export async function confirmAndClearMute(rule) {
+    const confirmed = await confirmAction({
+        title: '解除靜音',
+        message: '解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。',
+        confirmText: '解除',
+        confirmVariant: 'danger'
+    });
+    if (!confirmed) return false;
+
+    try {
+        await api.delete(`/api/admin/issue-owners/${encodeURIComponent(rule.sourceName)}/${rule.eventId}/mute`);
+        toast('已解除靜音', 'success');
+        return true;
+    } catch {
+        // 錯誤已由 api.js 顯示
+        return false;
+    }
+}
+
+/**
+ * 清單頁「勾選列＋表頭全選＋選取列」的共用實作（伺服器端分頁、勾選跨頁保留）。
+ *
+ * - keyOf(item)：選取鍵；isSelectable(item)：該列能不能勾；getPageItems()：目前這一頁的列
+ *   （全選與表頭三態只看本頁可勾選的列）。
+ * - labels：{ row, all } 為列／表頭勾選框的 title；bar：{ barId, countId, unit } 為選取列與計數文字（「已選 N {unit}」）。
+ * - onSelectAll()：全選／取消全選後的重繪（頁面通常傳自己的 render）。
+ * 回傳的 selected 是 key → 列物件的 Map，由頁面持有並直接讀取（批次動作取 keys()／values()）；
+ * 批次動作成功或篩選改變時用 clear() 清空（同步選取列與表頭狀態）。
+ */
+export function createPageSelection({ keyOf, isSelectable, getPageItems, labels, bar, onSelectAll }) {
+    const selected = new Map();
+    let headerCheckboxEl = null;
+
+    function renderBar() {
+        const barEl = document.getElementById(bar.barId);
+        if (!barEl) return;
+        barEl.classList.toggle('d-none', selected.size === 0);
+        const countEl = document.getElementById(bar.countId);
+        if (countEl) countEl.textContent = `已選 ${selected.size} ${bar.unit}`;
+    }
+
+    /** 本頁可勾選列是否已全部勾選（checked）、部分勾選（indeterminate）——翻頁、篩選、逐列勾選後都要重新同步 */
+    function sync() {
+        if (!headerCheckboxEl) return;
+        const selectable = getPageItems().filter(isSelectable);
+        headerCheckboxEl.checked = selectable.length > 0 && selectable.every(item => selected.has(keyOf(item)));
+        headerCheckboxEl.indeterminate = !headerCheckboxEl.checked && selectable.some(item => selected.has(keyOf(item)));
+    }
+
+    function rowCheckboxCell(item) {
+        if (!isSelectable(item)) return document.createTextNode('');
+
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.className = 'form-check-input';
+        check.checked = selected.has(keyOf(item));
+        check.title = labels.row;
+
+        check.addEventListener('click', event => event.stopPropagation());
+        check.addEventListener('change', () => {
+            if (check.checked) selected.set(keyOf(item), item);
+            else selected.delete(keyOf(item));
+            renderBar();
+            sync();
+        });
+
+        return check;
+    }
+
+    /** 表頭全選：只作用在目前這一頁可勾選的列（伺服器端分頁下沒有「全部」的概念） */
+    function selectAllHeaderCheckbox() {
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.className = 'form-check-input';
+        check.title = labels.all;
+
+        check.addEventListener('click', event => event.stopPropagation());
+        check.addEventListener('change', () => {
+            const selectable = getPageItems().filter(isSelectable);
+            if (check.checked) {
+                for (const item of selectable) selected.set(keyOf(item), item);
+            } else {
+                for (const item of selectable) selected.delete(keyOf(item));
+            }
+            if (onSelectAll) onSelectAll();
+        });
+
+        headerCheckboxEl = check;
+        sync();
+        return check;
+    }
+
+    function clear() {
+        selected.clear();
+        renderBar();
+        sync();
+    }
+
+    return { selected, rowCheckboxCell, selectAllHeaderCheckbox, sync, renderBar, clear };
 }

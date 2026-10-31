@@ -246,6 +246,7 @@ public class NoteReuseAndPhrasesTests : IDisposable
 
     private static UpdateSystemSettingsRequest SettingsRequest() => new()
     {
+        ExpectedRevision = "legacy",
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
         VisibleDayRiskLevels = new List<string> { "高", "中" },

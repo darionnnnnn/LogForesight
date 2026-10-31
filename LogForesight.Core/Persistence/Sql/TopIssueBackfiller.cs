@@ -52,12 +52,33 @@ public sealed class TopIssueBackfiller
     }
 
     /// <summary>
+    /// 啟動快判（純讀）：沒有 NULL 來源鍵、舊首見日重鍵標記已成立、沒有未回填聚合欄時，
+    /// 直接發布閘門 A，讓使用者不必等排隊中的完整回填。任一條件不成立則什麼都不改。
+    /// 只管閘門 A；風險事件的閘門 B 只看自己的完成標記。
+    /// </summary>
+    public bool TryFastReady()
+    {
+        using (var ctx = _contextFactory())
+        {
+            if (ctx.TopIssues.Any(x => x.SourceKey == null)) return false;
+            if (ctx.TopIssues.Any(x => x.RecordDate == DateTime.MinValue)) return false;
+        }
+        if (!SchemaUpgrader.HasBlobVersion(_contextFactory,
+                SchemaUpgrader.IssueFirstSeenSourceKeyRekeyDoneBlobKey,
+                SchemaUpgrader.IssueFirstSeenSourceKeyRekeyVersion)) return false;
+
+        Progress = new TopIssueBackfillProgress { Completed = true };
+        SourceKeyProgress = new TopIssueBackfillProgress { Completed = true };
+        Volatile.Write(ref _issueSourceKeyReady, 1);
+        return true;
+    }
+
+    /// <summary>
     /// 執行回填直到完成或被取消。**每批一個交易**——中途取消（站台關閉）時已完成的批次
     /// 不會回滾，下次啟動接著跑。
     /// </summary>
     public void Run(CancellationToken cancellationToken)
     {
-        Volatile.Write(ref _issueSourceKeyReady, 0);
         var pending = CountPending();
         if (pending == 0)
         {
@@ -100,20 +121,20 @@ public sealed class TopIssueBackfiller
     {
         ArgumentNullException.ThrowIfNull(riskyEvents);
 
-        using (var ctx = _contextFactory())
+        // 完成標記存在就不碰 lf_risky_events（source_key 不是該表索引前導欄，查詢等於全表掃描）
+        if (SchemaUpgrader.HasBlobVersion(_contextFactory,
+                SchemaUpgrader.RiskySourceKeyDoneBlobKey, SchemaUpgrader.RiskySourceKeyDoneVersion))
         {
-            var total = ctx.RiskyEvents.Count();
-            var pending = ctx.RiskyEvents.Count(x => x.SourceKey == null);
-            RiskySourceKeyProgress = new TopIssueBackfillProgress
-            {
-                Total = total,
-                Done = total - pending,
-                Completed = pending == 0
-            };
-            if (pending == 0 || cancellationToken.IsCancellationRequested) return;
+            RiskySourceKeyProgress = new TopIssueBackfillProgress { Completed = true };
+            return;
         }
 
-        while (!cancellationToken.IsCancellationRequested)
+        bool needsBackfill;
+        using (var ctx = _contextFactory())
+            needsBackfill = ctx.RiskyEvents.Any(x => x.SourceKey == null);
+        if (cancellationToken.IsCancellationRequested) needsBackfill = false;
+
+        while (needsBackfill && !cancellationToken.IsCancellationRequested)
         {
             int processed;
             try
@@ -137,6 +158,9 @@ public sealed class TopIssueBackfiller
             Done = totalRows - remaining,
             Completed = remaining == 0
         };
+        if (remaining == 0)
+            SchemaUpgrader.WriteBlobVersion(_contextFactory,
+                SchemaUpgrader.RiskySourceKeyDoneBlobKey, SchemaUpgrader.RiskySourceKeyDoneVersion);
     }
 
     private void RunSourceKeys(CancellationToken cancellationToken)

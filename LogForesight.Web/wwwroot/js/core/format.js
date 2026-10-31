@@ -75,8 +75,49 @@ export const SEVERITY_ORDER = Object.keys(SEVERITY_NAMES);
  */
 export function elevatesBadge() {
     return statusBadge('重大', 'danger', {
-        title: '命中重大規則——此類問題出現當日即列為高風險日'
+        title: '命中即列為高風險日（重大）'
     });
+}
+
+/**
+ * 嚴重度欄：嚴重度徽章＋「重大」旗標（elevatesDayRisk 為真時）。問題排行、風險日詳情、
+ * 規則維護頁共用同一個儲存格，「重大」徽章與 tooltip 只有 elevatesBadge() 一個出口。
+ */
+export function severityCell(severity, elevatesDayRisk) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(severity));
+    if (elevatesDayRisk) wrap.appendChild(elevatesBadge());
+    return wrap;
+}
+
+/**
+ * 出現密度：出現天數 ÷ 期間天數（數字＋密度條）。layout 'row' 為橫排（儀表板、靠右），
+ * 'column' 為數字在上、密度條換行在下（問題排行表，欄寬不變）。
+ */
+export function issueDensityCell(row, { layout = 'row' } = {}) {
+    const column = layout === 'column';
+    const wrap = document.createElement(column ? 'div' : 'span');
+    wrap.className = column
+        ? 'd-inline-flex flex-column align-items-center'
+        : 'd-inline-flex align-items-center gap-1 justify-content-end';
+
+    const text = document.createElement('span');
+    text.className = 'lf-mono small';
+    text.textContent = `${row.activeDays}/${row.periodDays}`;
+    wrap.appendChild(text);
+
+    const ratio = row.periodDays > 0 ? row.activeDays / row.periodDays : 0;
+    const bar = document.createElement('span');
+    bar.className = column ? 'lf-density mt-1' : 'lf-density';
+    bar.title = `期間 ${row.periodDays} 天內出現 ${row.activeDays} 天（${Math.round(ratio * 100)}%）`;
+    const fill = document.createElement('span');
+    fill.className = 'lf-density__fill lf-progress-fill';
+    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+
+    return wrap;
 }
 
 /**
@@ -338,4 +379,52 @@ export function issueBaselineText(issue) {
     }
 
     return `基準 ${median} 台/日 → ${issue.baselineLatestHostCount} 台` + multiplierText;
+}
+
+/** 問題欄：粗體問題標籤＋灰字白話說明（處理人頁與交辦單頁的表格共用） */
+export function renderIssueCell(issueLabelText, plainExplanationText) {
+    const wrap = document.createElement('div');
+    const main = document.createElement('div');
+    main.className = 'fw-bold';
+    main.textContent = issueLabelText || '';
+    wrap.appendChild(main);
+
+    if (plainExplanationText) {
+        const sub = document.createElement('div');
+        sub.className = 'text-muted small';
+        sub.textContent = plainExplanationText;
+        wrap.appendChild(sub);
+    }
+    return wrap;
+}
+
+/** 日層級／案件項目的狀態文字：逾期時紅字（優先用推導後的狀態文字） */
+export function statusText(item) {
+    const span = document.createElement('span');
+    span.textContent = item.derivedStatusText ?? item.statusText;
+    if (item.isOverdue) span.className = 'text-danger fw-semibold';
+    return span;
+}
+
+/** 預計完成日欄：逾期時紅字並加「逾期」前綴；沒有日期回空字串 */
+export function dueCell(item) {
+    if (!item.dueDate) return '';
+    const span = document.createElement('span');
+    span.className = item.isOverdue ? 'text-danger fw-semibold' : '';
+    span.textContent = item.isOverdue ? `逾期 ${item.dueDate}` : item.dueDate;
+    return span;
+}
+
+/** 交辦單來源代碼 → 中文 */
+export const ORIGIN_LABELS = {
+    manual: '人工交辦',
+    owner_rule: '負責人規則',
+    auto_dispatch: '自動派工',
+    backfill: '系統整併',
+    day_assign: '詳情頁指派'
+};
+
+/** 交辦單來源徽章；不認得的代碼原樣顯示，空值顯示「未知」 */
+export function originBadge(origin) {
+    return statusBadge(ORIGIN_LABELS[origin] || origin || '未知', 'neutral');
 }

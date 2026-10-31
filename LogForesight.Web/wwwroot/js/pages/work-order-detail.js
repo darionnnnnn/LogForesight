@@ -22,7 +22,7 @@ import {
     icon,
     candidatesToUserOptions
 } from '../core/ui.js';
-import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText } from '../core/format.js';
+import { formatDate, formatDateTime, statusBadge, workOrderClosedReasonText, originBadge } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult } from './issue-status-reply.js';
 
 // DOM 元素
@@ -43,15 +43,6 @@ const timelineContainer = document.getElementById('wo-timeline');
 
 const workOrderId = Number(rootEl?.dataset.workOrderId);
 const PAGE_SIZE = 50;
-
-// 同 work-orders.js
-const ORIGIN_LABELS = {
-    manual: '人工交辦',
-    owner_rule: '負責人規則',
-    auto_dispatch: '自動派工',
-    backfill: '系統整併',
-    day_assign: '詳情頁指派'
-};
 
 let currentUser = null;
 let currentDetail = null;
@@ -177,7 +168,7 @@ function renderHeader(detail) {
     // 來源
     const originWrap = document.createElement('div');
     originWrap.className = 'd-flex align-items-center gap-1 flex-wrap';
-    originWrap.appendChild(statusBadge(ORIGIN_LABELS[detail.origin] || detail.origin || '未知', 'neutral'));
+    originWrap.appendChild(originBadge(detail.origin));
     if (detail.autoAttach) {
         originWrap.appendChild(statusBadge('自動續掛', 'info'));
     }

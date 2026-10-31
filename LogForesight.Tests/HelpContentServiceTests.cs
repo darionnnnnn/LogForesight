@@ -166,4 +166,22 @@ public class HelpContentServiceTests
         Assert.Contains("交辦授與不會附帶主機級", handling);
         Assert.Contains("不含主機整體的 PRTG 資訊", myWork);
     }
+
+    /// <summary>
+    /// 篩選矩陣、PRTG 部分完成與 AI 跟隨取數是說明書必須交代的行為：
+    /// 程式改了（WEB-SPEC §10、PRTG-SPEC §9b、排程觸發文字）說明書沒跟上，使用者會照舊說明操作而找不到對應畫面。
+    /// </summary>
+    [Fact]
+    public void 說明書交代篩選矩陣_PRTG部分完成與AI跟隨取數()
+    {
+        var issues = _service.Chapters.Single(c => c.Id == "issues");
+        var prtg = _service.Chapters.Single(c => c.Id == "prtg");
+        var scheduler = _service.Chapters.Single(c => c.Id == "scheduler");
+
+        Assert.Contains("不支援", issues.Content);
+        Assert.Contains("不支援的角度", issues.ContentForAi);
+        Assert.Contains("部分完成", prtg.Content);
+        Assert.Contains("部分完成", prtg.ContentForAi);
+        Assert.Contains("AI 跟隨取數", scheduler.Content);
+    }
 }

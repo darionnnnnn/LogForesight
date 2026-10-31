@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit, renderPageHeader } from '../core/ui.js';
-import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
+import { categoryName, formatDateTime, formatNumber, severityBadge, riskBadge, SEVERITY_ORDER } from '../core/format.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
 const root = document.getElementById('host-detail');
@@ -287,8 +287,8 @@ const ISSUE_COLUMNS = [
     {
         title: '分類',
         sortKey: 'category',
-        sortValue: s => CATEGORY_NAMES[s.category] ?? s.category,
-        render: s => CATEGORY_NAMES[s.category] ?? s.category
+        sortValue: s => categoryName(s.category),
+        render: s => categoryName(s.category)
     },
     {
         title: '嚴重度',

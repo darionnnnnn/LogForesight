@@ -174,7 +174,7 @@ public class BulkScaleGateTests : IDisposable
     /// 而且錯誤訊息要說得出「怎麼縮小範圍」。
     /// </summary>
     [Fact]
-    public void 統一標記_超過單次寫入上限時擋下並說明怎麼分批()
+    public void 統一標記_符合條件的項目超過上限時在讀取階段擋下_不截斷()
     {
         // 每台 1 天，台數超過上限即可觸發（不必真的造五千筆多天資料）
         SeedHosts(IssueHandlingCommandService.MaxBulkCloseDayWrites + 1, days: 1);
@@ -187,11 +187,25 @@ public class BulkScaleGateTests : IDisposable
             Note = "壓測"
         }));
 
-        Assert.Contains("超過單次上限", ex.Message);
-        Assert.Contains("分次執行", ex.Message);
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("符合條件的項目超過 5,000 筆", ex.Message);
+        Assert.Contains("請縮小篩選範圍後再批次結案", ex.Message);
+        // 預覽走同一份規劃，同樣擋下，不回傳被截斷的半套結果
+        var preview = Assert.Throws<DomainException>(() => _service.PreviewBulkClose("DistributedCOM", 10016, null, null));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, preview.Code);
         // 擋下就是完全沒寫——半套結果比擋下來難收拾得多
         Assert.Empty(_issueHandlingStore.GetMany(
             new[] { "SRV-0000", "SRV-0001" }, DateTime.Today.AddDays(-1), DateTime.Today));
+    }
+
+    [Fact]
+    public void 統一標記_剛好等於上限時照常規劃()
+    {
+        SeedHosts(IssueHandlingCommandService.MaxBulkCloseDayWrites, days: 1);
+
+        var preview = _service.PreviewBulkClose("DistributedCOM", 10016, null, null);
+
+        Assert.Equal(IssueHandlingCommandService.MaxBulkCloseDayWrites, preview.TotalHostCount);
     }
 
     [Fact]

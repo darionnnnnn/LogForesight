@@ -29,157 +29,33 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
     }
 
     [Fact]
-    public void Import_只隔離診斷包且重複內容同一識別()
+    public void LegacyPrtgImport_回410且不寫診斷暫存_診斷匯出入口皆要求ViewAll()
     {
-        var store = _backend.PrtgStore();
-        store.UpsertDevices([new() { Objid = 10, Name = "formal" }], DateTime.Today);
-        store.UpsertSensors([new() { Objid = 100, DeviceObjid = 10, Name = "formal sensor" }], DateTime.Today);
-        store.AppendStateChanges([new() { SensorObjid = 100, ChangedAt = DateTime.Today.AddHours(1), Status = "Up", Quality = PrtgDataQuality.Ok }]);
-        store.UpsertValues([new() { SensorObjid = 100, PeriodStart = DateTime.Today, AvgValue = 41, Quality = PrtgDataQuality.Ok }]);
-        store.ReplaceHostMapForDate(DateTime.Today, [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 77, HostName = "formal", MapStatus = PrtgMapStatus.Ok }]);
-        store.UpsertManualMap(new() { DeviceObjid = 10, HostId = 77 });
-        var policyStore = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policyStore.Update(p => { p.Revision = "revision"; p.HostIds = [77]; p.SensorIds = [100]; });
-        var policyBefore = System.Text.Json.JsonSerializer.Serialize(policyStore.Get());
-        var devicesBefore = System.Text.Json.JsonSerializer.Serialize(store.GetAllDevices());
-        var sensorsBefore = System.Text.Json.JsonSerializer.Serialize(store.GetAllSensors());
-        var changesBefore = System.Text.Json.JsonSerializer.Serialize(store.GetStateChanges(DateTime.Today, DateTime.Today.AddDays(1)));
-        var valueBefore = System.Text.Json.JsonSerializer.Serialize(store.GetValues(DateTime.Today, DateTime.Today.AddDays(1)));
-        var mapsBefore = System.Text.Json.JsonSerializer.Serialize(store.GetHostMapForDate(DateTime.Today));
-        var manualBefore = System.Text.Json.JsonSerializer.Serialize(store.GetManualMaps());
-        string ExistingBlobSnapshot()
+        var controller = Controller();
+        var retired = Assert.IsType<ObjectResult>(controller.LegacyPrtgImport());
+        Assert.Equal(StatusCodes.Status410Gone, retired.StatusCode);
+        Assert.Equal("legacy_import_retired", Assert.IsType<ApiResponse<object>>(retired.Value).Error?.Code);
+        using (var db = _backend.CreateContext())
+            Assert.Empty(db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_import_diagnostic_")));
+
+        // 受限者（只有 Maintain、沒有 ViewAll）一律擋下；完整可見者放行
+        var limited = FakeCurrentUser.WithCapabilities(Capability.Maintain);
+        var full = FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll);
+        foreach (var action in new[] { nameof(controller.LegacyPrtgImport), nameof(controller.ExportPrtgData) })
         {
-            using var context = _backend.CreateContext();
-            return System.Text.Json.JsonSerializer.Serialize(context.Blobs.Where(b => !b.BlobKey.StartsWith("prtg_import_diagnostic_")).OrderBy(b => b.BlobKey).ToList());
+            ViewAllGuard.AssertForbidden(controller, action, limited);
+            ViewAllGuard.AssertAllowed(controller, action, full);
         }
-        string EvidenceSnapshot()
-        {
-            using var context = _backend.CreateContext();
-            return System.Text.Json.JsonSerializer.Serialize(new
-            {
-                Cases = context.IssueCases.ToList(),
-                Orders = context.WorkOrders.ToList()
-            });
-        }
-        var blobsBefore = ExistingBlobSnapshot();
-        var evidenceBefore = EvidenceSnapshot();
-        var pkg = new PrtgDataPackage { FormatVersion = 2, Devices = [new() { Objid = 10, Name = "foreign" }], Sensors = [new() { Objid = 100, DeviceObjid = 10, Name = "foreign" }], StateChanges = [new() { SensorObjid = 100, ChangedAt = DateTime.Today.AddHours(2), Status = "Down", Quality = PrtgDataQuality.Ok }], Values = [new() { SensorObjid = 100, PeriodStart = DateTime.Today, AvgValue = 99, Quality = PrtgDataQuality.Sampled }], HostMaps = [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 999, HostName = "foreign", MapStatus = PrtgMapStatus.Ok }], ManualMaps = [new() { DeviceObjid = 10, HostId = 999 }] };
-        var rawJson = System.Text.Json.JsonSerializer.Serialize(pkg);
-        var first = PrtgDataTransfer.Import(_backend, pkg);
-        var second = PrtgDataTransfer.Import(_backend, pkg);
-        Assert.True(first.DiagnosticOnly);
-        Assert.Equal((1, 1, 1, 1, 1, 1), (first.Devices, first.Sensors, first.StateChanges, first.Values, first.HostMaps, first.ManualMaps));
-        Assert.Equal(first.DiagnosticId, second.DiagnosticId);
-        Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawJson))), first.DiagnosticId);
-        Assert.Equal(rawJson, _backend.Blob("prtg_import_diagnostic_" + first.DiagnosticId).Read());
-        Assert.Equal(valueBefore, System.Text.Json.JsonSerializer.Serialize(store.GetValues(DateTime.Today, DateTime.Today.AddDays(1))));
-        Assert.Equal(devicesBefore, System.Text.Json.JsonSerializer.Serialize(store.GetAllDevices()));
-        Assert.Equal(sensorsBefore, System.Text.Json.JsonSerializer.Serialize(store.GetAllSensors()));
-        Assert.Equal(changesBefore, System.Text.Json.JsonSerializer.Serialize(store.GetStateChanges(DateTime.Today, DateTime.Today.AddDays(1))));
-        Assert.Equal(mapsBefore, System.Text.Json.JsonSerializer.Serialize(store.GetHostMapForDate(DateTime.Today)));
-        Assert.Equal(manualBefore, System.Text.Json.JsonSerializer.Serialize(store.GetManualMaps()));
-        Assert.Equal(policyBefore, System.Text.Json.JsonSerializer.Serialize(policyStore.Get()));
-        Assert.Equal(blobsBefore, ExistingBlobSnapshot());
-        Assert.Equal(evidenceBefore, EvidenceSnapshot());
-        using var db = _backend.CreateContext();
-        Assert.Single(db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_import_diagnostic_")));
+
+        var mapping = PrtgControllerFactory.HostMapping(_backend, new RecordingAuditService(), _hosts);
+        ViewAllGuard.AssertForbidden(mapping, nameof(mapping.GetPrtgManualMaps), limited);
+        ViewAllGuard.AssertAllowed(mapping, nameof(mapping.GetPrtgManualMaps), full);
     }
 
     [Fact]
-    public void InvalidPackage_不得留下隔離Blob()
+    public void PrtgTransferControllerPermissionFilter_只允許Maintain能力()
     {
-        SeedFormalSnapshot();
-        var before = FormalSnapshot();
-        foreach (var pkg in new[] { new PrtgDataPackage { FormatVersion = 8 }, new PrtgDataPackage { Purpose = "formal" } })
-        {
-            Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(_backend, pkg));
-            Assert.Equal(before, FormalSnapshot());
-        }
-        using var db = _backend.CreateContext();
-        Assert.Empty(db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_import_diagnostic_")));
-    }
-
-    [Fact]
-    public void LegacyEfImport_拒絕且正式資料不變()
-    {
-        SeedFormalSnapshot();
-        var store = _backend.PrtgStore();
-        store.UpsertSensors([new() { Objid = 6, DeviceObjid = 5, Name = "existing sensor" }], DateTime.Today);
-        store.AppendStateChanges([new() { SensorObjid = 6, ChangedAt = DateTime.Today, Status = "Up", Quality = PrtgDataQuality.Ok }]);
-        store.ReplaceHostMapForDate(DateTime.Today, [new() { MapDate = DateTime.Today, DeviceObjid = 5, HostId = 1, HostName = "existing", MapStatus = PrtgMapStatus.Ok }]);
-        store.UpsertManualMap(new() { DeviceObjid = 5, HostId = 1 });
-        var policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
-        policy.Update(p => { p.HostIds = [1]; p.SensorIds = [6]; });
-        var before = FormalSnapshot();
-
-        var ex = Assert.Throws<InvalidOperationException>(() => PrtgDataTransfer.Import(store,
-            new PrtgDataPackage { Devices = [new() { Objid = 5, Name = "overwrite" }], Values = [new() { SensorObjid = 6, PeriodStart = DateTime.Today, AvgValue = 999, Quality = PrtgDataQuality.Sampled }] }));
-
-        Assert.Contains("正式 PRTG 鏡像匯入已停用", ex.Message);
-        Assert.Equal(before, FormalSnapshot());
-    }
-
-    [Fact]
-    public void Format1診斷包仍可讀取且不修改正式資料()
-    {
-        SeedFormalSnapshot();
-        var before = FormalSnapshot();
-        var package = new PrtgDataPackage { FormatVersion = 1, Devices = [new() { Objid = 55, Name = "legacy diagnostic" }] };
-        var result = PrtgDataTransfer.Import(_backend, package);
-
-        Assert.True(result.DiagnosticOnly);
-        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(package), _backend.Blob("prtg_import_diagnostic_" + result.DiagnosticId).Read());
-        Assert.Equal(before, FormalSnapshot());
-    }
-
-    private void SeedFormalSnapshot()
-    {
-        _backend.PrtgStore().UpsertDevices([new() { Objid = 5, Name = "existing" }], DateTime.Today);
-        _backend.PrtgStore().UpsertValues([new() { SensorObjid = 6, PeriodStart = DateTime.Today, AvgValue = 8, Quality = PrtgDataQuality.Ok }]);
-        new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Update(p => { p.Revision = "valid-revision"; p.HostIds = [1]; p.SensorIds = [6]; });
-    }
-
-    private string FormalSnapshot()
-    {
-        using var db = _backend.CreateContext();
-        return System.Text.Json.JsonSerializer.Serialize(new
-        {
-            Devices = _backend.PrtgStore().GetAllDevices(), Sensors = _backend.PrtgStore().GetAllSensors(),
-            StateChanges = _backend.PrtgStore().GetStateChanges(DateTime.Today, DateTime.Today.AddDays(1)),
-            Values = _backend.PrtgStore().GetValues(DateTime.Today, DateTime.Today.AddDays(1)),
-            HostMaps = _backend.PrtgStore().GetHostMapForDate(DateTime.Today), ManualMaps = _backend.PrtgStore().GetManualMaps(),
-            Policy = new PrtgMonitoringPolicyStore(_backend.Blob(PrtgMonitoringPolicyStore.BlobKey)).Get(),
-            Blobs = db.Blobs.Where(b => !b.BlobKey.StartsWith("prtg_import_diagnostic_")).OrderBy(b => b.BlobKey).ToList()
-        });
-    }
-
-    [Fact]
-    public void SettingsControllerImport_完整可見者隔離保存_受限案件及空可見仍拒絕()
-    {
-        var audit = new RecordingAuditService();
-        var full = Controller(new TestVisibility([1, 2]), audit);
-        var ok = full.ImportPrtgData(FileFor(new PrtgDataPackage()));
-        Assert.True(ok.Data!.DiagnosticOnly);
-        Assert.Contains(audit.Entries, e => e.Summary.Contains("診斷包已隔離保存，正式監控資料與判定未變更"));
-        Assert.Throws<DomainException>(() => full.ImportPrtgData(FileFor(new PrtgDataPackage { Purpose = "formal" })));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1])).ImportPrtgData(FileFor(new())));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2], caseOnly: true)).ImportPrtgData(FileFor(new())));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([])).ImportPrtgData(FileFor(new())));
-        Assert.Throws<DomainException>(() => Controller(null, hosts: _hosts).ImportPrtgData(FileFor(new())));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2]), omitHosts: true).ImportPrtgData(FileFor(new())));
-        var noHosts = new HostStore(_backend.Blob("empty-hosts"));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([]), hosts: noHosts).ImportPrtgData(FileFor(new())));
-        Assert.Throws<DomainException>(() => Controller(null, hosts: _hosts).ExportPrtgData(DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Today.ToString("yyyy-MM-dd")));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2]), omitHosts: true).ExportPrtgData(DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Today.ToString("yyyy-MM-dd")));
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([]), hosts: noHosts).ExportPrtgData(DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Today.ToString("yyyy-MM-dd")));
-        Assert.Throws<DomainException>(() => Controller(null, hosts: _hosts).GetPrtgManualMaps());
-        Assert.Throws<DomainException>(() => Controller(new TestVisibility([1, 2]), omitHosts: true).GetPrtgManualMaps());
-    }
-
-    [Fact]
-    public void SettingsControllerPermissionFilter_只允許Maintain能力()
-    {
-        var required = typeof(SettingsController).GetCustomAttributes(typeof(PermissionAttribute), inherit: true)
+        var required = typeof(PrtgTransferController).GetCustomAttributes(typeof(PermissionAttribute), inherit: true)
             .Cast<PermissionAttribute>().Single().Arguments!.Cast<Capability[]>().Single();
         var audit = new RecordingAuditService();
         AuthorizationFilterContext Context() => new(new ActionContext(new DefaultHttpContext
@@ -188,11 +64,8 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         var maintainerContext = Context();
         new PermissionFilter(required, FakeCurrentUser.WithCapabilities(Capability.Maintain), audit).OnAuthorization(maintainerContext);
         Assert.Null(maintainerContext.Result);
-        var maintainedAction = Controller(new TestVisibility([1, 2]), audit)
-            .ImportPrtgData(FileFor(new PrtgDataPackage { Devices = [new() { Objid = 77, Name = "maintainer diagnostic" }] }));
-        Assert.True(maintainedAction.Data!.DiagnosticOnly);
-        Assert.Equal("maintainer diagnostic", System.Text.Json.JsonSerializer.Deserialize<PrtgDataPackage>(
-            _backend.Blob("prtg_import_diagnostic_" + maintainedAction.Data.DiagnosticId).Read()!)!.Devices.Single().Name);
+        var maintainedAction = Assert.IsType<ObjectResult>(Controller(audit).LegacyPrtgImport());
+        Assert.Equal(StatusCodes.Status410Gone, maintainedAction.StatusCode);
 
         var restrictedContext = Context();
         new PermissionFilter(required, FakeCurrentUser.WithCapabilities(Capability.Handle), audit).OnAuthorization(restrictedContext);
@@ -201,30 +74,23 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         if (restrictedContext.Result is null)
         {
             restrictedActionCalls++;
-            Controller(new TestVisibility([1, 2]), audit).ImportPrtgData(FileFor(new PrtgDataPackage()));
+            Controller(audit).LegacyPrtgImport();
         }
         Assert.Equal(0, restrictedActionCalls);
-        using (var db = _backend.CreateContext())
-            Assert.Single(db.Blobs.Where(b => b.BlobKey.StartsWith("prtg_import_diagnostic_")));
         Assert.Contains(audit.Entries, entry => entry.Result == LogForesight.Core.Models.AuditResult.Denied);
     }
 
-    // 「完整可見者」＝持有 ViewAll；由各案給的可見集合與主機表推得，保留各案原本想表達的角色。
-    private SettingsController Controller(TestVisibility? visibility, RecordingAuditService? audit = null, HostStore? hosts = null, bool omitHosts = false)
+    private PrtgTransferController Controller(RecordingAuditService? audit = null) =>
+        new(_backend, new FixedCapacity(), _hosts, new TestVisibility([1, 2]),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll),
+            new SystemSettingsStore(_backend.Blob("system_settings")), audit ?? new RecordingAuditService(),
+            new PrtgLegacyJsonTransferValidator());
+
+    private sealed class FixedCapacity : IPrtgTransferCapacityProvider
     {
-        var effectiveHosts = omitHosts ? null : hosts ?? _hosts;
-        var all = effectiveHosts?.GetAll();
-        var viewAll = visibility != null && all is { Count: > 0 } && all.All(h =>
-            visibility.GetVisibleHostIds().Contains(h.HostId) && !visibility.IsCaseGrantOnly(h.HostId));
-        return new(new FakeSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")), audit ?? new RecordingAuditService(), backend: _backend, hosts: effectiveHosts, visibility: visibility,
-            currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll) : FakeCurrentUser.WithCapabilities(Capability.Maintain));
+        public PrtgTransferCapacitySnapshot Capture() => new(true, 512L * 1024 * 1024, "test-fixed-capacity", null);
     }
-    private static IFormFile FileFor(PrtgDataPackage package)
-    {
-        var stream = new MemoryStream(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(package));
-        return new FormFile(stream, 0, stream.Length, "file", "package.json");
-    }
+
     private sealed class TestVisibility(long[] ids, bool caseOnly = false) : IVisibilityService
     {
         public IReadOnlySet<long> GetVisibleHostIds() => ids.ToHashSet();

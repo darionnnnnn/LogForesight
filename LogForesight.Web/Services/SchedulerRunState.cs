@@ -29,6 +29,36 @@ public sealed record RunOutcome(bool Success, string? Message, string Trigger, D
 }
 
 /// <summary>
+/// 取數執行狀態的一致性快照：<see cref="SchedulerRunState.Snapshot"/> 在同一把鎖內一次複製，
+/// 狀態 API 與全站告示據此組 DTO，不會在 EndRun 的空隙讀到「執行中但沒有觸發者」之類的混合狀態。
+/// </summary>
+public sealed record SchedulerRunSnapshot(
+    bool IsRunning,
+    string? Trigger,
+    DateTime? StartedAt,
+    string? LatestMessage,
+    string? ProgressPhase,
+    int ProgressDone,
+    int ProgressTotal,
+    string? LocalProgressPhase,
+    int LocalProgressDone,
+    int LocalProgressTotal,
+    string? PrtgProgressPhase,
+    int PrtgProgressDone,
+    int PrtgProgressTotal,
+    int PrtgDayCount,
+    int PrtgDayIndex,
+    DateTime? SkippedScheduleAt,
+    bool LocalCompleted,
+    bool NetiqCompleted,
+    bool PrtgCompleted,
+    string? PausedReason,
+    RunOutcome? LastOutcome,
+    string? ActivityPhase,
+    int ActivityDone,
+    int ActivityTotal);
+
+/// <summary>
 /// 排程執行的行程內狀態（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：單例，供
 /// <see cref="SchedulerHostedService"/> 與狀態／停止 API 共用同一份「現在是否在跑、誰觸發的、
 /// 最新進度」。<see cref="TryBeginRun"/> 內建原子檢查——這就是「行程內單一執行 gate」，
@@ -307,11 +337,39 @@ public class SchedulerRunState
     {
         lock (_lock)
         {
-            if (ProgressPhase != null && !NetiqCompleted) return (ProgressPhase, ProgressDone, ProgressTotal);
-            if (LocalProgressPhase != null && !LocalCompleted) return (LocalProgressPhase, LocalProgressDone, LocalProgressTotal);
-            return PrtgProgressPhase != null && !PrtgCompleted
-                ? (PrtgProgressPhase, PrtgProgressDone, PrtgProgressTotal)
-                : (null, 0, 0);
+            return LatestActivityLocked();
+        }
+    }
+
+    /// <summary>LatestActivity 的選擇邏輯本體；呼叫端須已持有 <c>_lock</c>。</summary>
+    private (string? Phase, int Done, int Total) LatestActivityLocked()
+    {
+        if (_netiq.Phase != null && !_netiq.Completed) return (_netiq.Phase, _netiq.Done, _netiq.Total);
+        if (_local.Phase != null && !_local.Completed) return (_local.Phase, _local.Done, _local.Total);
+        return _prtg.Phase != null && !_prtg.Completed
+            ? (_prtg.Phase, _prtg.Done, _prtg.Total)
+            : (null, 0, 0);
+    }
+
+    /// <summary>
+    /// 在同一把鎖內一次複製狀態 API 與全站告示需要的全部欄位。讀端逐屬性讀取會與
+    /// <see cref="EndRun"/> 的整批清空交錯，得到「IsRunning=true 但 Trigger=null」之類的混合狀態；
+    /// 一律改讀這份快照。
+    /// </summary>
+    public SchedulerRunSnapshot Snapshot()
+    {
+        lock (_lock)
+        {
+            var (aPhase, aDone, aTotal) = LatestActivityLocked();
+            return new SchedulerRunSnapshot(
+                IsRunning, Trigger, StartedAt, LatestMessage,
+                _netiq.Phase, _netiq.Done, _netiq.Total,
+                _local.Phase, _local.Done, _local.Total,
+                _prtg.Phase, _prtg.Done, _prtg.Total,
+                PrtgDayCount, PrtgDayIndex, SkippedScheduleAt,
+                _local.Completed, _netiq.Completed, _prtg.Completed,
+                PausedReason, LastOutcome,
+                aPhase, aDone, aTotal);
         }
     }
 

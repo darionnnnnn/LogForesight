@@ -589,7 +589,7 @@ function renderAiInlineForm(step) {
     baseUrlInput.value = settingsSnapshot?.aiBaseUrl ?? '';
     modelInput.value = settingsSnapshot?.aiModel ?? '';
     azureDepInput.value = settingsSnapshot?.aiAzureDeployment ?? '';
-    azureVerInput.value = settingsSnapshot?.aiAzureApiVersion || '2024-10-21';
+    azureVerInput.value = settingsSnapshot?.aiAzureApiVersion || azureVerInput.dataset.default || '';
     apiKeyInput.value = '';
     apiKeyInput.setAttribute('autocomplete', 'off');
     saveTestBtn.type = 'button';

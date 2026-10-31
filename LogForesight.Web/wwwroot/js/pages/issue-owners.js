@@ -11,9 +11,9 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad, renderPageHeader } from '../core/ui.js';
+import { renderTable, renderEmpty, renderLoading, toast, withBusy, confirmAction, checkboxList, button, guardLoad, renderPageHeader, confirmAndClearMute } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
-import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
+import { openIssueMuteModal } from './issue-mute-modal.js';
 
 const listContainer = document.getElementById('issue-owner-list');
 const form = document.getElementById('issue-owner-form');
@@ -284,21 +284,8 @@ function openMute(rule) {
 }
 
 async function removeMute(rule) {
-    const confirmed = await confirmAction({
-        title: '解除靜音',
-        message: '解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。',
-        confirmText: '解除',
-        confirmVariant: 'danger'
-    });
-    if (!confirmed) return;
-
-    try {
-        await clearIssueMute(rule.sourceName, rule.eventId);
-        toast('已解除靜音', 'success');
-        await guardLoad(listContainer, load);
-    } catch {
-        // 錯誤已由 api.js 顯示
-    }
+    if (!await confirmAndClearMute(rule)) return;
+    await guardLoad(listContainer, load);
 }
 
 // ── 新增／編輯 modal ─────────────────────────────────────────────────────

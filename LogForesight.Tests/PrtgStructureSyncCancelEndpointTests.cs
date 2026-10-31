@@ -49,15 +49,9 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
             new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp());
 
-    private SettingsController CreateController(PrtgStructureSyncService? sync)
+    private PrtgBackfillAdminController CreateController(PrtgStructureSyncService sync)
     {
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            prtgStructureSync: sync,
-            backend: _backend,
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, structureSync: sync);
 
         var httpContext = new DefaultHttpContext
         {
@@ -125,19 +119,12 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
             new HostStore(_backend.Blob("hosts")), new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(),
             new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), new HostStore(_backend.Blob("hosts")), new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), state, new FakeSentinelStore(), new DataVersionStamp()));
 
-    private SettingsController CreateBackfillController(PrtgBackfillService backfill)
+    private PrtgBackfillAdminController CreateBackfillController(PrtgBackfillService backfill)
     {
         var hosts = new HostStore(_backend.Blob("hosts"));
         if (hosts.GetAll().Count == 0) hosts.Upsert(new WebHost { HostName = "backfill-auth-host", Active = true });
-        var controller = new SettingsController(
-            new StubSystemSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            _audit,
-            prtgBackfill: backfill,
-            backend: _backend,
-            hosts: hosts,
-            visibility: new AllVisibleBackfillHosts(hosts),
-            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, backfill: backfill,
+            hosts: hosts, visibility: new AllVisibleBackfillHosts(hosts));
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
@@ -192,14 +179,5 @@ public class PrtgStructureSyncCancelEndpointTests : IDisposable
         public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
         public List<WebHost> GetVisibleHosts() => hosts.GetAll();
         public void EnsureVisible(long hostId) { }
-    }
-
-    [Fact]
-    public void 同步服務未接上時回輸入錯誤而非500()
-    {
-        var controller = CreateController(null);
-
-        var ex = Assert.Throws<DomainException>(() => controller.CancelPrtgStructureSync());
-        Assert.NotEqual(ApiErrorCodes.Conflict, ex.Code);
     }
 }

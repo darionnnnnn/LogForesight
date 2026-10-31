@@ -4,13 +4,13 @@
 
 import { api, getCurrentUser, hasCapability, saveBlobAsFile } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { pollWhile } from '../core/async-guards.js';
+import { createSeqGuard, pollWhile } from '../core/async-guards.js';
 import { safeSession } from '../core/storage.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, bindRememberedCollapse,
-    collectLines, renderTable, renderError
+    collectLines, renderTable, renderError, renderUpdatedAt
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
@@ -134,14 +134,6 @@ function renderSetupSummary() {
     summary.textContent = pending ? `尚有 ${pending} 項需確認；下列步驟依已儲存設定與最近一次狀態顯示。`
         : '設定與最近一次檢查均已確認；下方以最近一趟排程的實際結果驗收，資料涵蓋另見數值資料就緒度與使用效果。';
     renderAcceptance(pending === 0);
-}
-
-function missingHourDate(windowStart, dayIndex, hour) {
-    const [year, month, day] = String(windowStart).slice(0, 10).split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    date.setDate(date.getDate() + dayIndex);
-    date.setHours(hour, 0, 0, 0);
-    return date;
 }
 
 function effectivenessRangeError(from, through) {
@@ -760,18 +752,7 @@ function renderPrtgFields(settings) {
     document.getElementById('prtg-snapshot-estimate-result')?.replaceChildren();
 
     document.getElementById('prtg-test-result').replaceChildren();
-    renderUpdatedAt(settings);
-}
-
-function renderUpdatedAt(settings) {
-    const el = document.getElementById('prtg-config-updated');
-    if (!el) return;
-    if (!settings.updatedAt) {
-        el.textContent = '尚未有人更新過（目前為系統預設值）。';
-        return;
-    }
-    el.textContent = `最後更新：${formatDateTime(settings.updatedAt)}` +
-        (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
+    renderUpdatedAt(document.getElementById('prtg-config-updated'), settings);
 }
 
 /**
@@ -1338,10 +1319,6 @@ function renderUnmappedHostsError(errorMessage) {
     renderListError('prtg-unmatched-table', '未對應主機清單', errorMessage, () => refreshUnmappedHosts(unmappedPage), 'prtg-unmatched-pagination');
 }
 
-function renderIpExcludesError(errorMessage) {
-    renderListError('prtg-ip-excludes-table', ' IP 排除清單', errorMessage, () => refreshIpExcludes());
-}
-
 async function refreshConflicts(page = conflictPage, options = {}) {
     const pageChanged = (page !== conflictPage);
     conflictPage = page;
@@ -1371,7 +1348,13 @@ async function refreshConflicts(page = conflictPage, options = {}) {
         renderConflictPagination(totalPages);
         updateConflictBatchBar();
     } catch (error) {
-        renderConflictsError(error && error.message ? error.message : '載入衝突清單失敗');
+        // 全站對應清單只開放可檢視全部主機的角色；受限角色看到的是權限說明，不是「載入失敗」——不走 renderListError 的失敗前綴
+        if (error && error.status === 403) {
+            renderError(document.getElementById('prtg-mirror-conflicts-table'), { message: '需要可檢視全部主機的權限才能查看衝突清單' });
+            document.getElementById('prtg-conflicts-pagination')?.replaceChildren();
+        } else {
+            renderConflictsError(error && error.message ? error.message : '載入衝突清單失敗');
+        }
     }
 }
 
@@ -1653,17 +1636,6 @@ async function refreshNameMismatch() {
         // 只是提醒資訊：失敗時隱藏整區，不干擾主流程
         section.classList.add('d-none');
     }
-}
-
-function renderIpExcludesLoading() {
-    const container = document.getElementById('prtg-ip-excludes-table');
-    if (!container) return;
-    renderMirrorTableLoading(container);
-}
-
-
-async function refreshIpExcludes() {
-    await refreshPrtgMirror();
 }
 
 function renderIpExcludes(items) {
@@ -2140,60 +2112,106 @@ function refreshPrtgMirror() {
     scopeRefresh = refreshPrtgMirrorCore().finally(() => { scopeRefresh = null; });
     return scopeRefresh;
 }
-async function refreshPrtgMirrorCore() {
+// 範圍快照：revision 前後各讀一次，中間三個請求各自成敗互不影響（allSettled）。
+// 回傳 { mirror, manualMaps, ipExcludes } 各為 { ok: true, value } 或 { ok: false, error }；
+// revision 前後一致時另帶 revision（不論各區成敗）。
+async function loadScopeSnapshot() {
+    const failAll = error => ({
+        mirror: { ok: false, error }, manualMaps: { ok: false, error }, ipExcludes: { ok: false, error }
+    });
+    let before;
     try {
-        const before = await api.get('/api/admin/settings/prtg-scope-revision', { silent: true });
-        const [mirrorData, manualMaps, excludes] = await Promise.all([
-            api.get('/api/admin/settings/prtg-mirror', { silent: true }),
-            api.get('/api/admin/settings/prtg-manual-map', { silent: true }),
-            api.get('/api/admin/settings/prtg-ip-excludes', { silent: true })
-        ]);
-        const after = await api.get('/api/admin/settings/prtg-scope-revision', { silent: true });
-        if (before !== after) throw new Error('載入期間 PRTG 範圍已被修改，請重新整理並核對；目前表單輸入保留。');
-        scopeRevision = before;
-        renderPrtgMirror(mirrorData);
-        renderManualMaps(manualMaps);
-        renderIpExcludes(excludes || []);
+        before = await api.get('/api/admin/settings/prtg-scope-revision', { silent: true });
     } catch (error) {
-        renderIpExcludesError(error?.message || '載入 PRTG 範圍失敗，請重新整理；目前表單輸入保留。');
+        return failAll(error);
     }
+    const settled = await Promise.allSettled([
+        api.get('/api/admin/settings/prtg-mirror', { silent: true }),
+        api.get('/api/admin/settings/prtg-manual-map', { silent: true }),
+        api.get('/api/admin/settings/prtg-ip-excludes', { silent: true })
+    ]);
+    let after;
+    try {
+        after = await api.get('/api/admin/settings/prtg-scope-revision', { silent: true });
+    } catch (error) {
+        return failAll(error);
+    }
+    if (before !== after) return failAll(new Error('載入期間 PRTG 範圍已被修改，請重新整理'));
+    const pick = item => (item.status === 'fulfilled' ? { ok: true, value: item.value } : { ok: false, error: item.reason });
+    const result = { mirror: pick(settled[0]), manualMaps: pick(settled[1]), ipExcludes: pick(settled[2]) };
+    // 前後 revision 一致即代表成功的各區都對應這個版本；某區失敗時該區沒有可操作的列，其餘區仍要能帶正確版本送出
+    return { ...result, revision: before };
+}
+
+// 三區各自渲染：成功就畫、失敗就只在該區顯示對應名稱的錯誤
+function renderScopeSnapshot(result) {
+    const retry = () => refreshPrtgMirror();
+    const errorText = part => part.error?.message || '網路或伺服器錯誤';
+    // 鏡像錯誤放在統計卡外的兄弟節點：統計卡內是 renderPrtgMirror 以 id 填值的節點，被錯誤蓋掉後重試成功也填不回來
+    if (result.mirror.ok) {
+        document.getElementById('prtg-mirror-stats-error')?.replaceChildren();
+        renderPrtgMirror(result.mirror.value);
+    } else renderListError('prtg-mirror-stats-error', ' PRTG 鏡像', errorText(result.mirror), retry);
+    if (result.manualMaps.ok) renderManualMaps(result.manualMaps.value);
+    else renderListError('prtg-mirror-manual-maps-table', '人工對應', errorText(result.manualMaps), retry);
+    if (result.ipExcludes.ok) renderIpExcludes(result.ipExcludes.value || []);
+    else renderListError('prtg-ip-excludes-table', ' IP 排除清單', errorText(result.ipExcludes), retry);
+}
+
+let riskReviewPage = 1;
+// 翻頁、重評後重讀與鏡像整頁重讀會重疊呼叫：函式開頭先清空再 append，沒有序號守門時兩趟都會把清單接上去（清單與分頁列各出現兩份）
+const riskReviewGuard = createSeqGuard();
+async function refreshRiskReviewPanel(page = riskReviewPage) {
     const riskReviewEl = document.getElementById('prtg-risk-review');
-    if (riskReviewEl) {
-        const refreshRiskReview = async (page = 1) => {
-            try {
-                const result = await api.get('/api/prtg/risk-review', { silent: true });
-                riskReviewEl.textContent = `歷史風險重評：尚未檢查 ${formatNumber(result.uncheckedRecords)} 筆、證據不足待重評 ${formatNumber(result.pendingReviewRecords)} 筆、已修訂 ${formatNumber(result.revisedRecords)} 筆。證據不足不會自動降風險；請從主機日詳情核對並明確重跑 NetIQ。`;
-                if (result.pendingReviewRecords > 0) {
-                    const pending = await api.get(`/api/prtg/risk-review/pending?page=${page}`);
-                    const list = document.createElement('ul');
-                    for (const record of pending.items) {
-                        const row = document.createElement('li');
-                        const link = document.createElement('a');
-                        link.href = appUrl(`/records/${record.hostId}/${record.recordDate.slice(0, 10)}`);
-                        link.textContent = `${record.hostName}｜${record.recordDate.slice(0, 10)}｜原等級 ${record.riskLevel}｜${record.detailPruned ? '詳情已精簡' : '待重評'}`;
-                        row.append(link); list.append(row);
-                    }
-                    riskReviewEl.append(list);
-                    const navigation = document.createElement('div');
-                    navigation.append(document.createTextNode(`第 ${page} 頁，共 ${pending.total} 筆。`));
-                    for (const [label, target, disabled] of [['上一頁', page - 1, page <= 1], ['下一頁', page + 1, page * 50 >= pending.total]]) {
-                        const button = document.createElement('button'); button.type = 'button';
-                        button.className = 'btn btn-sm btn-outline-secondary ms-2'; button.textContent = label; button.disabled = disabled;
-                        button.addEventListener('click', () => refreshRiskReview(target)); navigation.append(button);
-                    }
-                    riskReviewEl.append(navigation);
-                }
-            } catch { riskReviewEl.textContent = '歷史風險重評狀態無法讀取，請重試。'; }
-        };
-        await refreshRiskReview();
-        const retry = document.getElementById('prtg-risk-review-retry');
-        if (retry) retry.onclick = async () => {
-            const restore = withBusy(retry, '重評中');
-            try { await api.post('/api/prtg/risk-review/retry', {}); await refreshRiskReview(); }
-            catch (error) { toast(`重評失敗：${error.message}`, 'danger'); }
-            finally { restore(); }
-        };
-    }
+    if (!riskReviewEl) return;
+    riskReviewPage = page;
+    const seq = riskReviewGuard.next();
+    try {
+        const result = await api.get('/api/prtg/risk-review', { silent: true });
+        if (!riskReviewGuard.isCurrent(seq)) return;
+        riskReviewEl.textContent = `歷史風險重評：尚未檢查 ${formatNumber(result.uncheckedRecords)} 筆、證據不足待重評 ${formatNumber(result.pendingReviewRecords)} 筆、已修訂 ${formatNumber(result.revisedRecords)} 筆。證據不足不會自動降風險；請從主機日詳情核對並明確重跑 NetIQ。`;
+        if (result.pendingReviewRecords > 0) {
+            const pending = await api.get(`/api/prtg/risk-review/pending?page=${page}`, { silent: true });
+            if (!riskReviewGuard.isCurrent(seq)) return;
+            const list = document.createElement('ul');
+            for (const record of pending.items) {
+                const row = document.createElement('li');
+                const link = document.createElement('a');
+                link.href = appUrl(`/records/${record.hostId}/${record.recordDate.slice(0, 10)}`);
+                link.textContent = `${record.hostName}｜${record.recordDate.slice(0, 10)}｜原等級 ${record.riskLevel}｜${record.detailPruned ? '詳情已精簡' : '待重評'}`;
+                row.append(link); list.append(row);
+            }
+            riskReviewEl.append(list);
+            const navigation = document.createElement('div');
+            navigation.append(document.createTextNode(`第 ${page} 頁，共 ${pending.total} 筆。`));
+            for (const [label, target, disabled] of [['上一頁', page - 1, page <= 1], ['下一頁', page + 1, page * 50 >= pending.total]]) {
+                const button = document.createElement('button'); button.type = 'button';
+                button.className = 'btn btn-sm btn-outline-secondary ms-2'; button.textContent = label; button.disabled = disabled;
+                button.addEventListener('click', () => refreshRiskReviewPanel(target)); navigation.append(button);
+            }
+            riskReviewEl.append(navigation);
+        }
+    } catch { if (riskReviewGuard.isCurrent(seq)) riskReviewEl.textContent = '歷史風險重評狀態無法讀取，請重試。'; }
+}
+
+function bindRiskReviewRetry() {
+    const retry = document.getElementById('prtg-risk-review-retry');
+    if (!retry || retry.dataset.bound === '1') return;
+    retry.dataset.bound = '1';
+    retry.addEventListener('click', async () => {
+        const restore = withBusy(retry, '重評中');
+        try { await api.post('/api/prtg/risk-review/retry', {}); await refreshRiskReviewPanel(1); }
+        catch (error) { toast(`重評失敗：${error.message}`, 'danger'); }
+        finally { restore(); }
+    });
+}
+
+async function refreshPrtgMirrorCore() {
+    const snapshot = await loadScopeSnapshot();
+    if (snapshot.revision !== undefined) scopeRevision = snapshot.revision;
+    renderScopeSnapshot(snapshot);
+    bindRiskReviewRetry();
+    await refreshRiskReviewPanel(1);
     await refreshScopePurge();
 }
 
@@ -3008,7 +3026,6 @@ function init() {
     refreshConflicts(1);
     refreshUnmappedHosts(1);
     refreshNameMismatch();
-    refreshIpExcludes();
     refreshPrtgProbeStatus();
     refreshStructureSyncStatus();
     refreshPrtgRuleBanner();

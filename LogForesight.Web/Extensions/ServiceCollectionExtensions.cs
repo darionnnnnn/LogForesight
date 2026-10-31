@@ -322,7 +322,8 @@ public static class ServiceCollectionExtensions
 
         // 處理說明 AI 整理（回饋第 50 輪批次C-3）：節流窗口要全站共用，Singleton
         services.AddScoped<HandlingNoteAiService>();
-        services.AddSingleton<HandlingNoteTidyThrottle>();
+        services.AddSingleton<ManualAiThrottle>();
+        services.AddSingleton<AutoAiThrottle>();
 
         // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
@@ -335,6 +336,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRecordRepository, RecordRepository>();
         services.AddScoped<RecordListQueryService>();
         services.AddScoped<RecordDetailQueryService>();
+        services.AddScoped<HostPrtgDetailService>();
+        services.AddScoped<PrtgConflictQueryService>();
         // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
         services.AddScoped<IssueRankingBuilder>();
         // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
@@ -428,9 +431,7 @@ public static class ServiceCollectionExtensions
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。
         services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
         services.AddSingleton<MailIssueDigest>(sp => new MailIssueDigest(
-            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(
-                sp.GetRequiredService<IHostStore>(),
-                () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady),
+            sp.GetRequiredService<IIssueAggregateQuery>(),
             sp.GetRequiredService<OccurrenceStatusResolver>(),
             sp.GetRequiredService<ISystemSettingsStore>(),
             sp.GetRequiredService<IIssueExclusionSource>()));

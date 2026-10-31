@@ -16,12 +16,19 @@ public class ReportFileMigrationHostedService : BackgroundService
 
     private readonly BackgroundWorkGate _gate;
 
-    private readonly StorageBackend _backend;
+    private readonly Action<CancellationToken> _run;
+
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     public ReportFileMigrationHostedService(StorageBackend backend, BackgroundWorkGate gate)
+        : this(ct => backend.ReportFileMigrator.Run(ct), gate)
+    {
+    }
+
+    internal ReportFileMigrationHostedService(Action<CancellationToken> run, BackgroundWorkGate gate)
     {
         _gate = gate;
-        _backend = backend;
+        _run = run;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,7 +36,7 @@ public class ReportFileMigrationHostedService : BackgroundService
         // 讓站台其餘啟動流程先完成（同其他遷移背景服務的作法）
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -45,9 +52,10 @@ public class ReportFileMigrationHostedService : BackgroundService
                 {
                     try
                     {
-                        _backend.ReportFileMigrator.Run(stoppingToken);
+                        _run(stoppingToken);
                     }
-                    catch (Exception ex)
+                    // 關站取消交給外層 when 篩選，不記成失敗
+                    catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                     {
                         // 舊報告搬不進來不影響站台任何其他功能，也不影響今晚新產生的報告
                         Log.Error(ex, "[SQL] 既有報告檔遷移失敗（不影響新報告）：{Msg}", ex.Message);

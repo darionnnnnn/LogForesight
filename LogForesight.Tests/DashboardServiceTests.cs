@@ -628,7 +628,7 @@ public class DashboardServiceTests : IDisposable
             {
                 var row = new GapRowDto { Source = "s", EventId = (page - 1) * 50 + i };
                 if (page == 2 && i < 3) row.Unassignable.Add(new GapUnassignableDto { Reason = "no_pool", Hosts = 1 });
-                if (page == 3 && i == 0) row.Unassignable.Add(new GapUnassignableDto { Reason = "disabled", Hosts = 2 });
+                if (page == 3 && i == 0) row.Unassignable.Add(new GapUnassignableDto { Reason = "all_paused", Hosts = 2 });
                 dto.Rows.Add(row);
             }
             return dto;

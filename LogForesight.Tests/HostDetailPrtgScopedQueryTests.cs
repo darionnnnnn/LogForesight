@@ -70,7 +70,7 @@ public class HostDetailPrtgScopedQueryTests : IDisposable
     {
         var store = new EfPrtgStore(NewContext);
         var assessment = new PrtgValueAssessment(store, new Dictionary<string, PrtgValueSemantic>());
-        return new(null!, store, new OnlyVisible(visibleHostId), assessment, new FakeRuleStore());
+        return new(null!, new HostPrtgDetailService(store, new OnlyVisible(visibleHostId), assessment, new FakeRuleStore()));
     }
 
     /// <summary>今天的對應：hostId 10 有兩台 device、hostId 11 有一台、另外 50 台是別人的</summary>

@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { toast, withBusy, icon, guardLoad, renderLoading } from '../core/ui.js';
+import { toast, withBusy, icon, guardLoad, renderLoading, loadRunHint } from '../core/ui.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
 /** 沒有指定圖示的章節（理論上不會發生，manifest 十四章都已配置）退回這個通用圖示 */
@@ -149,23 +149,9 @@ async function loadAskAvailability() {
     try {
         const status = await api.get('/api/help/ask-available', { silent: true });
         document.getElementById('help-ask-card').classList.toggle('d-none', !status.available);
-        if (status.available) loadRunHint();
+        if (status.available) loadRunHint(document.getElementById('help-ask-run-hint'));
     } catch {
         // 靜默：問答框本來就是加值功能，查詢失敗維持預設隱藏狀態即可，不擋住手冊內容
-    }
-}
-
-/**
- * 分析執行中提示（回饋十六輪批次D-1）：AI 問答與批次分析共用同一個地端模型的序列請求佇列，
- * 執行中時回應會明顯變慢——卡片顯示當下查一次，不輪詢。
- */
-async function loadRunHint() {
-    const hint = document.getElementById('help-ask-run-hint');
-    try {
-        const activity = await api.get('/api/run-activity', { silent: true });
-        hint.classList.toggle('d-none', !activity?.isRunning);
-    } catch {
-        hint.classList.add('d-none');
     }
 }
 

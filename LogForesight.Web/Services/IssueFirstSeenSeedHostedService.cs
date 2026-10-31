@@ -68,8 +68,6 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
                         try
                         {
                             outcome = _backend.MergeIssueFirstSeenSeed();
-                            // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                            _dataVersion.Bump();
                         }
                         catch (Exception ex)
                         {
@@ -78,6 +76,11 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
                             Progress.State = IssueFirstSeenSeedStates.Failed;
                             Log.Error(ex, "[SQL] lf_issue_first_seen 冪等合併失敗（第 {Failures}/{Max} 次）：{Msg}",
                                 Progress.Failures, MaxRetries, ex.Message);
+                        }
+                        finally
+                        {
+                            // 合併是分段 SQL，成功或失敗都可能已改寫部分列，快取要失效；背景服務不走 HTTP 管線
+                            _dataVersion.Bump();
                         }
                     }),
                     stoppingToken);

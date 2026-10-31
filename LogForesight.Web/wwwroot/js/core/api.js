@@ -21,12 +21,20 @@ const GET_TIMEOUT_MS = 60000;
 
 /** API 回傳的業務錯誤。message 是後端組好的中文，可直接顯示 */
 export class ApiError extends Error {
-    constructor(code, message, status) {
+    constructor(code, message, status, retryAfterSeconds = null) {
         super(message);
         this.name = 'ApiError';
         this.code = code;
         this.status = status;
+        /** 429 時伺服器的 Retry-After（秒）；沒有或不是正整數為 null */
+        this.retryAfterSeconds = retryAfterSeconds;
     }
+}
+
+/** 讀 Retry-After 標頭（秒）；缺少或不是正整數回 null */
+function readRetryAfter(response) {
+    const value = Number.parseInt(response.headers?.get?.('Retry-After') ?? '', 10);
+    return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 // 證據檔保留原始 JSON；讀取有界且完成後才交付 Blob，避免錯誤／部分內容被當成檔案。
@@ -214,7 +222,7 @@ async function request(method, url, body, options = {}) {
             ? '目前沒有權限操作此範圍，請核對所選項目及可見權限。'
             : '系統發生未預期的錯誤，請稍後再試。');
         if (options.silent !== true) toast(message, 'danger');
-        throw new ApiError(code, message, response.status);
+        throw new ApiError(code, message, response.status, readRetryAfter(response));
     }
 
     return payload.data;

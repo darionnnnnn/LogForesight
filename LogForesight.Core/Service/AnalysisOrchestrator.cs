@@ -46,7 +46,7 @@ public class RunRequest
     public RerunMode RerunMode { get; init; } = RerunMode.None;
 
     /// <summary>
-    /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
+    /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>｜<c>"fetch-followup"</c>（取數完成後接續的 AI 分析，不算排程）
     /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
     /// </summary>
     public string? Trigger { get; init; }

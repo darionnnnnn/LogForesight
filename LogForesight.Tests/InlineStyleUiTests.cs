@@ -48,12 +48,12 @@ public class InlineStyleUiTests
         ["core/charts.js"] = new[] { "--lf-swatch", "--lf-center-font-size" },
         // 載入骨架列的隨機寬度
         ["core/ui.js"] = new[] { "--lf-skeleton-width" },
-        // 類別卡色點、問題密度條寬度
-        ["pages/dashboard.js"] = new[] { "--lf-swatch", "--lf-progress" },
+        // 問題密度條寬度（issueDensityCell）
+        ["core/format.js"] = new[] { "--lf-progress" },
+        // 類別卡色點
+        ["pages/dashboard.js"] = new[] { "--lf-swatch" },
         // 時間軸格子的風險色、圖例色塊
         ["pages/host-detail.js"] = new[] { "--lf-swatch" },
-        // 問題密度條寬度
-        ["pages/records.js"] = new[] { "--lf-progress" },
         // 狀態圖例色塊、批次進度條寬度、狀態計數文字色
         ["pages/runs.js"] = new[] { "--lf-swatch", "--lf-progress", "--lf-status-color" },
         // 設定精靈進度條寬度、步驟狀態色點

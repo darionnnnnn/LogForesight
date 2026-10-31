@@ -27,7 +27,7 @@ import {
     savePageSize,
     toast
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString } from '../core/format.js';
+import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString, renderIssueCell, statusText, dueCell, originBadge } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
 import { statusBadgeMeta, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 
@@ -51,15 +51,6 @@ const ADVANCED_OPEN_KEY = 'lf-handler-advanced-open';
 
 // 剛回覆而結案的列先淡化多久再重繪（讓人看得到「這張結案了」，不是突然消失）
 const DONE_ROW_DELAY_MS = 1200;
-
-// 來源名稱對照（同 work-orders.js）
-const ORIGIN_LABELS = {
-    manual: '人工交辦',
-    owner_rule: '負責人規則',
-    auto_dispatch: '自動派工',
-    backfill: '系統整併',
-    day_assign: '詳情頁指派'
-};
 
 const MEMBER_STATUS_OPTIONS = [
     { value: 'active', label: '進行中' },
@@ -346,23 +337,6 @@ function selectedInfo(id) {
     return row ? { active: row.counts.active, issueLabel: row.issueLabel } : selectedOrderMeta.get(id);
 }
 
-/** 問題欄（同 work-orders.js） */
-function renderIssueCell(issueLabelText, plainExplanationText) {
-    const wrap = document.createElement('div');
-    const main = document.createElement('div');
-    main.className = 'fw-bold';
-    main.textContent = issueLabelText || '';
-    wrap.appendChild(main);
-
-    if (plainExplanationText) {
-        const sub = document.createElement('div');
-        sub.className = 'text-muted small';
-        sub.textContent = plainExplanationText;
-        wrap.appendChild(sub);
-    }
-    return wrap;
-}
-
 function renderOrders(data) {
     const rows = data.items || [];
     currentRows = rows;
@@ -490,7 +464,7 @@ function renderOrders(data) {
         },
         {
             title: '來源',
-            render: row => statusBadge(ORIGIN_LABELS[row.origin] || row.origin || '未知', 'neutral')
+            render: row => originBadge(row.origin)
         },
         {
             title: '最近新增',
@@ -1054,21 +1028,6 @@ function renderDays(days) {
             hint: includeResolvedDays ? '目前無任何指派至此處理人的風險日紀錄。' : '勾選上方「顯示近 30 天已結案」檢視回顧紀錄。'
         }
     });
-}
-
-function statusText(item) {
-    const span = document.createElement('span');
-    span.textContent = item.derivedStatusText ?? item.statusText;
-    if (item.isOverdue) span.className = 'text-danger fw-semibold';
-    return span;
-}
-
-function dueCell(item) {
-    if (!item.dueDate) return '';
-    const span = document.createElement('span');
-    span.className = item.isOverdue ? 'text-danger fw-semibold' : '';
-    span.textContent = item.isOverdue ? `逾期 ${item.dueDate}` : item.dueDate;
-    return span;
 }
 
 function hostLink(item) {

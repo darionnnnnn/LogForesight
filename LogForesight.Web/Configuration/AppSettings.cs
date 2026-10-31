@@ -102,6 +102,16 @@ public class WebAppSettings
                 errors.Add($"Server:TrustedProxies 含有不是 IP 位址的值「{proxy}」（只能填反向代理的 IP，例如 10.0.0.5）。");
         }
 
+        try { Server.ResolvePathBase(); }
+        catch (InvalidOperationException ex) { errors.Add(ex.Message); }
+
+        // 瀏覽器會忽略不認得的 X-Frame-Options（等於沒防嵌入），含換行的值則讓每個回應寫標頭時擲例外——拒絕而非悄悄失效
+        var frameOptions = (Server.FrameOptions ?? "").Trim();
+        if (frameOptions.Length > 0 &&
+            !frameOptions.Equals("DENY", StringComparison.OrdinalIgnoreCase) &&
+            !frameOptions.Equals("SAMEORIGIN", StringComparison.OrdinalIgnoreCase))
+            errors.Add($"Server:FrameOptions 只能是 DENY、SAMEORIGIN 或空字串（不送此標頭），目前值：「{Server.FrameOptions}」。");
+
         if (errors.Count > 0)
             throw new InvalidOperationException("appsettings.json 設定不合格：" + Environment.NewLine + string.Join(Environment.NewLine, errors.Select(e => "  - " + e)));
     }
@@ -114,6 +124,50 @@ public class ServerSettings
     /// （登入節流的 IP 維度靠它）。空＝不處理轉送標頭。
     /// </summary>
     public List<string> TrustedProxies { get; set; } = new();
+
+    /// <summary>
+    /// 回應標頭 <c>X-Frame-Options</c> 的值（防止站台被嵌進別人的頁面）。預設 <c>DENY</c>；
+    /// 需要被同網域頁面嵌入時改 <c>SAMEORIGIN</c>；空字串＝不送此標頭。
+    /// </summary>
+    public string FrameOptions { get; set; } = "DENY";
+
+    /// <summary>
+    /// 站台掛載前綴（例：<c>/LogForesight</c>）。空白＝掛在網站根目錄。必須以 <c>/</c> 開頭，
+    /// 尾端的 <c>/</c> 會被去掉；缺開頭 <c>/</c> 時啟動失敗，不自動補。
+    /// **IIS 以子 Application 掛載時不要設定**——ASP.NET Core 會自動填前綴，再設會雙重前綴。
+    /// 只給「Kestrel 直曝、前面的反向代理加了路徑前綴」與本機驗證前綴行為用。
+    /// </summary>
+    public string PathBase { get; set; } = "";
+
+    /// <summary>
+    /// 解析 <see cref="PathBase"/> 成可交給 <c>UsePathBase</c> 的值：空白（含只有 <c>/</c>）回 null＝不套用；
+    /// 其餘必須以 <c>/</c> 開頭，回傳去掉尾端 <c>/</c> 的結果；不合格擲例外並點名設定鍵與目前值。
+    /// </summary>
+    public string? ResolvePathBase()
+    {
+        var value = (PathBase ?? "").Trim();
+        if (value.Length == 0) return null;
+        // 「//app」會被瀏覽器當成 protocol-relative 連結、空白／?／# 會讓前綴帶進查詢字串——都不是合法的掛載路徑
+        if (value[0] != '/' || value.StartsWith("//", StringComparison.Ordinal) || value.Any(c => char.IsWhiteSpace(c) || c is '?' or '#'))
+            throw new InvalidOperationException(
+                $"Server:PathBase 必須以 / 開頭（單一斜線，不含空白、?、#；目前值：「{PathBase}」，例如 /LogForesight）。" +
+                "IIS 以子 Application 掛載時不需要設定這個值。");
+        var trimmed = value.TrimEnd('/');
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    /// <summary>
+    /// IIS 子 Application 已由整合層自動套用前綴（<c>ASPNETCORE_APPL_PATH</c> 非空且不是根 <c>/</c>），
+    /// 此時若又設了 <see cref="PathBase"/> 會造成雙重前綴；回傳要寫進日誌的警告文字，否則 null。
+    /// </summary>
+    public string? DoublePrefixWarning(string? iisApplPath)
+    {
+        var appl = (iisApplPath ?? "").Trim();
+        if (appl.Length == 0 || appl.TrimEnd('/').Length == 0) return null;
+        if (ResolvePathBase() == null) return null;   // 「/」與空白同義＝不套用，不是雙重前綴
+        return $"偵測到站台掛在 IIS 子 Application（{appl}）下，ASP.NET Core 已自動套用前綴；" +
+               $"Server:PathBase（{PathBase}）也有值，會造成雙重前綴。請清空 Server:PathBase。";
+    }
 }
 
 public class JwtSettings

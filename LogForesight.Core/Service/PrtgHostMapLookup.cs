@@ -12,6 +12,12 @@ public static class PrtgHostMapLookup
     /// <summary>過去日沿用既有主機對應時往回找的天數（與歷史回填的「近 31 天」同一個窗）；觸發式取數與數值評估共用。</summary>
     public const int LookbackDays = 31;
 
+    /// <summary>
+    /// 「最近一次對應」的回看天數：以今天（或指定錨點）為錨、往回找這麼多天內最近一份對應，不往後沿用（取數範圍試算、校準、維護頁讀取用）。
+    /// 與逐日沿用的 <see cref="LookbackDays"/> 是兩條不同的讀取，語意不同，不可合併成同一個數字。
+    /// </summary>
+    public const int LatestLookbackDays = 30;
+
     /// <param name="rows">同一個 device 的對應列（順序不限）。</param>
     /// <param name="day">目標日（只看日期部分）。</param>
     /// <param name="lookbackDays">回看窗長（含 day 當日共 N 天）。</param>

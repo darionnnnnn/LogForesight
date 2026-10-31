@@ -399,8 +399,9 @@ public sealed class CalibrationService
     /// <summary>
     /// 評估四項校準指標的累積量、狀態與補充說明。
     /// 結果在行程內快取 <see cref="CacheTtl"/>；`forceRefresh` 為 true 時略過快取重算。
+    /// 僅供測試以固定 anchor 驗證；正式入口為 <see cref="WithAssessment{TResult}"/>。
     /// </summary>
-    public CalibrationAssessmentSummary AssessStatus(DateTime? anchor = null, bool forceRefresh = false,
+    internal CalibrationAssessmentSummary AssessStatus(DateTime? anchor = null, bool forceRefresh = false,
         CancellationToken cancellationToken = default)
     {
         if (!CalibrationCaptureAdmission.Wait(0))
@@ -526,8 +527,9 @@ public sealed class CalibrationService
 
     /// <summary>
     /// 組裝校準數值匯出物件（包含檔案摘要與四大資料集）。
+    /// 僅供測試以固定 anchor 驗證；正式入口為 <see cref="WithExportPackage{TResult}"/>。
     /// </summary>
-    public CalibrationExportPackage BuildExportPackage(DateTime? anchor = null, bool summaryOnly = false)
+    internal CalibrationExportPackage BuildExportPackage(DateTime? anchor = null, bool summaryOnly = false)
     {
         if (!CalibrationCaptureAdmission.Wait(0))
             throw new CalibrationCapacityException("另一個校準資料擷取正在執行，請稍後重試。", retryable: true);

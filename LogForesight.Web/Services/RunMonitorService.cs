@@ -377,7 +377,7 @@ public class RunMonitorService
             DurationSeconds = run.FinishedAt.HasValue
                 ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
                 : null,
-            TriggerText = TriggerText(run.Trigger),
+            TriggerText = RunTriggerText.Of(run.Trigger ?? "console", _displayNameService, _users),
             LocalDaysAnalyzed = run.LocalDaysAnalyzed,
             LocalDaysFailed = run.LocalDaysFailed,
             NetiqDaysAnalyzed = run.NetiqDaysAnalyzed,
@@ -412,20 +412,6 @@ public class RunMonitorService
     }
 
     /// <summary>
-    /// 「誰跑的」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：null／"console" 是舊紀錄或批次 exe
-    /// 直接執行（升級前唯一的觸發來源，統一顯示「工作排程器」，語意等價且不驚動既有部署）；
-    /// "schedule" 是 Web 排程觸發；"manual:{帳號}" 是 Web 手動觸發。
-    /// </summary>
-    private string TriggerText(string? trigger) => trigger switch
-    {
-        null or "" or "console" => "工作排程器",
-        BatchRunTriggers.Schedule => "排程",
-        _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
-            $"手動（{_displayNameService.OfAccount(_users, trigger["manual:".Length..])}）",
-        _ => trigger
-    };
-
-    /// <summary>
     /// 執行紀錄（回饋十七輪批次F-3）：每一筆 BatchRun 原始資料的扁平清單，依開始時間新到舊。
     /// 與「執行總表」（按日期彙總每台主機的最新一筆）不同——這裡逐筆列出，含同一天內的多次
     /// 手動重跑，回答的是「每一次執行本身的細節」而非「這一天整體狀況」。
@@ -443,7 +429,7 @@ public class RunMonitorService
                     : null,
                 Status = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold, _isHeld(run)),
                 JobTypeText = run.JobType == BatchRun.JobTypeAi ? "AI 分析" : "取數分析",
-                TriggerText = TriggerText(run.Trigger),
+                TriggerText = RunTriggerText.Of(run.Trigger ?? "console", _displayNameService, _users),
                 Args = run.Args,
                 DaysAnalyzed = run.DaysAnalyzed,
                 AiCalls = run.AiCalls,

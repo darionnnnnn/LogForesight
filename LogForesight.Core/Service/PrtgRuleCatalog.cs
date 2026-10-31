@@ -106,10 +106,6 @@ public static class PrtgRuleCatalog
 
     public static bool IsRetired(string? ruleCode) => ruleCode is not null && RetiredRuleCodes.Contains(ruleCode);
 
-    /// <summary>依規則代碼查詢規則資訊</summary>
-    public static bool TryGetRule(string ruleCode, out PrtgRuleInfo rule) =>
-        Rules.TryGetValue(ruleCode, out rule!);
-
     /// <summary>取得指定規則資訊（僅供已知規則代碼常數呼叫；未知代碼擲例外，代表程式錯誤）</summary>
     public static PrtgRuleInfo GetRule(string ruleCode) =>
         Rules[ruleCode];

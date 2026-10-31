@@ -258,6 +258,26 @@ public class PrtgHostMapperTests : IDisposable
     }
 
     [Fact]
+    public void MapForDate_device位址是簡寫_不得被當成IP對上主機()
+    {
+        // 10.1 若被 IPAddress.TryParse 當成 10.0.0.1，會錯對應到這台主機
+        var hostStore = new FakeHostStore();
+        hostStore.Upsert(new WebHost { HostId = 1, HostName = "srv-a", IpAddress = "10.0.0.1", Active = true });
+
+        SeedDevices(new PrtgDeviceRow { Objid = 4101, Name = "short", Ip = "10.1" });
+
+        var store = CreateStore();
+        var mapper = CreateMapper(store, hostStore, new TestConsole());
+        var mapDate = new DateTime(2026, 8, 30);
+
+        var result = mapper.MapForDate(mapDate);
+
+        Assert.Equal(0, result.Ok);
+        Assert.Equal(0, result.Conflict);
+        Assert.DoesNotContain(store.GetHostMapForDate(mapDate), r => r.HostId == 1);
+    }
+
+    [Fact]
     public void MapForDate_device沒有IP時不產生對應列()
     {
         // Arrange

@@ -27,6 +27,10 @@ public class RecordsSearchBehaviorTests
     [InlineData("同序號但視角已變也丟棄")]
     [InlineData("api擲錯呼叫renderError")]
     [InlineData("舊請求失敗不蓋掉新結果")]
+    [InlineData("依主機視角不送逾期不顯示標籤且提示被略過")]
+    [InlineData("切回明細恢復逾期與標籤且提示消失")]
+    [InlineData("依問題視角只略過逾期")]
+    [InlineData("支援矩陣與後端一致")]
     public void 查詢頁search行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

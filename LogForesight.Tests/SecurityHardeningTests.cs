@@ -162,6 +162,7 @@ public class SecurityHardeningTests
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
         {
+            ExpectedRevision = store.Get().Revision,
             PrtgUrl = "https://prtg.corp.local/api/table.json?username=a&PassHash=123456"
         }));
 

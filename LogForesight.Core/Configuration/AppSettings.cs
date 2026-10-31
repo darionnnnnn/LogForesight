@@ -28,8 +28,8 @@ public class AiSettings
     /// <summary>Azure OpenAI 部署名稱（deployment）</summary>
     public string AzureDeployment { get; set; } = "";
 
-    /// <summary>Azure OpenAI API 版本，預設 2024-10-21</summary>
-    public string AzureApiVersion { get; set; } = "2024-10-21";
+    /// <summary>Azure OpenAI API 版本，預設值見 <see cref="AiProviders.DefaultAzureApiVersion"/></summary>
+    public string AzureApiVersion { get; set; } = AiProviders.DefaultAzureApiVersion;
 
     /// <summary>
     /// AI 是否已設定——批次／排程執行以此判斷要不要呼叫 AI，未設定時

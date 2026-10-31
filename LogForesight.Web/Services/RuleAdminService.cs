@@ -401,12 +401,13 @@ public class RuleAdminService
             .Select(h => h.HostId).ToHashSet();
         var mirror = _valueAssessment.SensorMirror();
         var noPolicy = new HashSet<long>();
+        var latestCompletedDay = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
         var page = new List<(DateOnly Day, PrtgValueSensor Sensor)>();
         var total = 0;
         for (var day = from; day <= through; day = day.AddDays(1))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var candidates = PrtgValueAssessment.Candidates(mirror, _valueAssessment.DeviceToHostOn(day, evaluationHostIds),
+            var candidates = PrtgValueAssessment.Candidates(mirror, _valueAssessment.DeviceToHostOn(day, latestCompletedDay, evaluationHostIds),
                 evaluationHostIds, noPolicy, category);
             foreach (var sensor in candidates)
             {
@@ -426,7 +427,7 @@ public class RuleAdminService
             var groupSensors = group.Select(item => item.Sensor).ToList();
             var deviceNames = _valueAssessment!.GetDeviceNamesByObjids(groupSensors.Select(s => s.DeviceObjid).Distinct().ToList());
             foreach (var row in _valueAssessment.AssessPage(groupSensors, day,
-                         windowDays, minValidDays))
+                         windowDays, minValidDays, latestCompletedDay))
             {
                 var deviceName = PrtgValueAssessment.DeviceDisplayName(deviceNames, row.Sensor.DeviceObjid);
                 var previewRow = evaluateRow(row, day, deviceName);
@@ -523,7 +524,7 @@ public class RuleAdminService
         var day = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
         var evaluationHostIds = _hosts.CapturePrtgSnapshot().Hosts.Where(h => h.Active && h.MergedInto == null)
             .Select(h => h.HostId).ToHashSet();
-        var candidates = _valueAssessment.Candidates(_valueAssessment.DeviceToHostOn(day, evaluationHostIds),
+        var candidates = _valueAssessment.Candidates(_valueAssessment.DeviceToHostOn(day, day, evaluationHostIds),
             evaluationHostIds, new HashSet<long>(), PrtgSensorCategories.Disk);
         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
         {
@@ -568,7 +569,7 @@ public class RuleAdminService
         var day = DateOnly.FromDateTime(DateTime.Today.AddDays(-1));
         var evaluationHostIds = _hosts.CapturePrtgSnapshot().Hosts.Where(h => h.Active && h.MergedInto == null)
             .Select(h => h.HostId).ToHashSet();
-        var candidates = _valueAssessment.Candidates(_valueAssessment.DeviceToHostOn(day, evaluationHostIds),
+        var candidates = _valueAssessment.Candidates(_valueAssessment.DeviceToHostOn(day, day, evaluationHostIds),
             evaluationHostIds, new HashSet<long>(), category);
         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
         {

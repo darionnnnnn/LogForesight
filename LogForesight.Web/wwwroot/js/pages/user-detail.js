@@ -11,7 +11,7 @@
 import { api, getCurrentUser } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, kpiStrip, guardLoad, renderPageHeader } from '../core/ui.js';
-import { formatNumber, formatUserName, formatDateTime, riskBadge } from '../core/format.js';
+import { formatNumber, formatUserName, formatDateTime, riskBadge, statusText, dueCell } from '../core/format.js';
 
 const root = document.getElementById('user-detail');
 const userId = Number(root.dataset.userId);
@@ -235,12 +235,10 @@ function renderOpenWork(workload) {
         empty: { title: '目前沒有進行中案件', hint: '被指派問題並建立案件後，會顯示在這裡。' }
     });
 
-    // 未結案風險日：workload 帶回近 30 天已結案的日子，這裡只留推導後未結案的。
-    // 判定沿用後端 HandlingStatuses.Unresolved 的定義（open／in_progress／escalated，觀察中在
-    // 日層級推導時已映成 in_progress），不自己另立一套「不是 resolved 就算未結案」的規則——
-    // 結案有四種狀態，那樣寫會把「不處理／誤報／已知雜訊」全部誤列成未結案。
-    const UNRESOLVED = new Set(['open', 'in_progress', 'escalated']);
-    const openDays = workload.days.filter(d => UNRESOLVED.has(d.derivedStatus));
+    // 未結案風險日：workload 帶回近 30 天已結案的日子，這裡只留後端標為未結案的。
+    // 判定由後端 HandlingStatuses.Unresolved 算好放在 isUnresolved，前端不自己維護狀態集合；
+    // 欄位缺失（舊快取或漏填）時視為未結案，寧可多列也不要把待處理的日子藏起來。
+    const openDays = workload.days.filter(d => d.isUnresolved !== false);
     container.appendChild(sectionLabel(`未結案風險日（${openDays.length}）`));
 
     const daysBox = document.createElement('div');
@@ -332,21 +330,6 @@ function sectionLabel(text) {
     div.className = 'px-3 pt-3 pb-1 small fw-semibold text-muted';
     div.textContent = text;
     return div;
-}
-
-function statusText(item) {
-    const span = document.createElement('span');
-    span.textContent = item.derivedStatusText ?? item.statusText;
-    if (item.isOverdue) span.className = 'text-danger fw-semibold';
-    return span;
-}
-
-function dueCell(item) {
-    if (!item.dueDate) return '';
-    const span = document.createElement('span');
-    span.className = item.isOverdue ? 'text-danger fw-semibold' : '';
-    span.textContent = item.isOverdue ? `逾期 ${item.dueDate}` : item.dueDate;
-    return span;
 }
 
 // backLink 只在 404 時出現（體檢 M1）：使用者打錯 id 或該帳號已被刪除時，

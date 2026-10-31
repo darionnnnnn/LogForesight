@@ -46,7 +46,6 @@ public class RunActivityBannerTests : IDisposable
     [Theory]
     [InlineData("manual:alice")]
     [InlineData("schedule")]
-    [InlineData("fetch-followup")]
     public void 取數執行中時TriggerText與排程頁狀態算出的文字相同(string trigger)
     {
         var runState = new SchedulerRunState();
@@ -60,6 +59,20 @@ public class RunActivityBannerTests : IDisposable
         Assert.NotNull(activity.TriggerText);
         // 同一個 helper 的兩個呼叫端：文字一字不差，使用者在兩個畫面看到的是同一件事
         Assert.Equal(status.TriggerText, activity.TriggerText);
+    }
+
+    [Fact]
+    public void 取數跟隨AI執行中時TriggerText顯示AI跟隨取數()
+    {
+        var runState = new SchedulerRunState();
+        var aiRunState = new AiAnalysisRunState();
+        Assert.True(runState.TryBeginRun(BatchRunTriggers.FetchFollowUp, out _));
+
+        var activity = CreateRunActivityController(runState, aiRunState).Get().Data!;
+        var status = CreateScheduleController(runState, aiRunState).GetStatus().Data!;
+
+        Assert.Equal("AI 跟隨取數", activity.TriggerText);
+        Assert.Equal("AI 跟隨取數", status.TriggerText);
     }
 
     [Fact]

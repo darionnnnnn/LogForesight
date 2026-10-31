@@ -90,8 +90,8 @@ public class SystemSettings
     /// <summary>Azure OpenAI 部署名稱（deployment）</summary>
     public string AiAzureDeployment { get; set; } = "";
 
-    /// <summary>Azure OpenAI API 版本，預設 2024-10-21</summary>
-    public string AiAzureApiVersion { get; set; } = "2024-10-21";
+    /// <summary>Azure OpenAI API 版本，預設值見 <see cref="Configuration.AiProviders.DefaultAzureApiVersion"/></summary>
+    public string AiAzureApiVersion { get; set; } = Configuration.AiProviders.DefaultAzureApiVersion;
 
     // ── AI 進階參數（§12，回饋第九輪：自 appsettings 的 Ai 區段遷入）──────────────────
     // 各欄位預設值＝原 appsettings.json 的出廠值，舊部署升級後行為不變（零遷移）。

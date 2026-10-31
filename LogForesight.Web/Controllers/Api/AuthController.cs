@@ -1,5 +1,6 @@
 ﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
+using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -60,6 +61,7 @@ public class AuthController : ControllerBase
             RequiresPassword = _provider.RequiresPassword
         });
 
+    [SkipDataVersionBump]
     [HttpPost("login")]
     [AllowAnonymous]
     public ActionResult<ApiResponse<CurrentUserDto>> Login([FromBody] LoginRequest request)
@@ -90,7 +92,7 @@ public class AuthController : ControllerBase
             // 不透露是帳號還是 IP 被擋，也不透露帳號是否存在
             var minutes = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalMinutes));
             return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse<CurrentUserDto>.Fail(
-                ApiErrorCodes.Forbidden, $"登入嘗試次數過多，請於 {minutes} 分鐘後再試。"));
+                ApiErrorCodes.RateLimited, $"登入嘗試次數過多，請於 {minutes} 分鐘後再試。"));
         }
 
         var outcome = _identity.Login(account, request.Password);
@@ -99,7 +101,7 @@ public class AuthController : ControllerBase
         {
             _throttle.RecordFailure(throttleKey, ip, now);
             return Unauthorized(ApiResponse<CurrentUserDto>.Fail(
-                ApiErrorCodes.Forbidden, outcome.ErrorMessage ?? "登入失敗。"));
+                ApiErrorCodes.AuthFailed, outcome.ErrorMessage ?? "登入失敗。"));
         }
 
         _throttle.RecordSuccess(throttleKey);
@@ -115,6 +117,7 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<CurrentUserDto>.Ok(ToDto(outcome.Identity)));
     }
 
+    [SkipDataVersionBump]
     [HttpPost("logout")]
     public ApiResponse Logout()
     {

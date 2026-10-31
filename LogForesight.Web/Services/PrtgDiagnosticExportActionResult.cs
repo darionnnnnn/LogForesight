@@ -44,7 +44,7 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
                 await using var command = db.Database.GetDbConnection().CreateCommand();
                 command.CommandText = "SELECT snapshot_isolation_state FROM sys.databases WHERE database_id = DB_ID()";
                 var state = Convert.ToInt32(await command.ExecuteScalarAsync(token));
-                if (state != 1) throw new PrtgTransferStoreException("export_snapshot_unavailable",
+                if (state != 1) throw new PrtgTransferStoreException(ApiErrorCodes.ExportSnapshotUnavailable,
                     "SQL Server 尚未啟用 ALLOW_SNAPSHOT_ISOLATION；請依維運文件設定後重試診斷匯出。", 409);
             }
             else if (db.Database.IsSqlite())
@@ -52,10 +52,10 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
                 await using var command = db.Database.GetDbConnection().CreateCommand();
                 command.CommandText = "PRAGMA journal_mode";
                 if (!string.Equals(Convert.ToString(await command.ExecuteScalarAsync(token)), "wal", StringComparison.OrdinalIgnoreCase))
-                    throw new PrtgTransferStoreException("export_snapshot_unavailable",
+                    throw new PrtgTransferStoreException(ApiErrorCodes.ExportSnapshotUnavailable,
                         "SQLite 診斷匯出需要 WAL，以避免長時間讀取阻塞正式寫入；請依維運文件設定後重試。", 409);
             }
-            else throw new PrtgTransferStoreException("export_provider_unsupported", "此資料庫不支援一致串流匯出。", 409);
+            else throw new PrtgTransferStoreException(ApiErrorCodes.ExportProviderUnsupported, "此資料庫不支援一致串流匯出。", 409);
 
             await using var transaction = await db.Database.BeginTransactionAsync(
                 db.Database.IsSqlServer() ? IsolationLevel.Snapshot : IsolationLevel.Serializable, token);
@@ -68,7 +68,7 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
                 JsonSerializer.Deserialize<PrtgMonitoringPolicy>(policyRow.Prefix!, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                     ?? throw new InvalidDataException("來源政策格式無效。");
             if (captureBinding() != binding)
-                throw new PrtgTransferStoreException("transfer_context_changed", "匯出來源或授權已變更，請重新開始下載。", 409);
+                throw new PrtgTransferStoreException(ApiErrorCodes.TransferContextChanged, "匯出來源或授權已變更，請重新開始下載。", 409);
 
             response.ContentType = "application/json; charset=utf-8";
             response.Headers.ContentDisposition = $"attachment; filename=prtg-export-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.json";
@@ -97,7 +97,7 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
             if (response.HasStarted) { context.HttpContext.Abort(); return; }
             response.StatusCode = error is PrtgTransferStoreException transfer ? transfer.HttpStatusCode : 422;
             await response.WriteAsJsonAsync(ApiResponse.Fail(
-                error is PrtgTransferStoreException failure ? failure.Code : "export_failed",
+                error is PrtgTransferStoreException failure ? failure.Code : ApiErrorCodes.ExportFailed,
                 error is PrtgTransferStoreException ? error.Message : "診斷匯出未完成；來源資料超限或快照失效。"),
                 context.HttpContext.RequestAborted);
         }
@@ -122,7 +122,7 @@ public sealed class PrtgDiagnosticExportActionResult(StorageBackend backend,
             if (property != row.PropertyName) { property = row.PropertyName; sinceFence = 0; }
             var pageSize = row.PropertyName == "Values" ? PrtgDiagnosticExportSource.ValuePageSize : PrtgDiagnosticExportSource.PageSize;
             if (sinceFence++ % pageSize == 0 && captureBinding() != initial)
-                throw new PrtgTransferStoreException("transfer_context_changed", "匯出期間權限或來源已變更。", 409);
+                throw new PrtgTransferStoreException(ApiErrorCodes.TransferContextChanged, "匯出期間權限或來源已變更。", 409);
             yield return row;
         }
         if (captureBinding() != initial) throw new InvalidDataException("匯出期間權限或來源已變更。");

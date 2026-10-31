@@ -29,7 +29,7 @@ public interface IAiRequestGate
     TimeSpan InteractiveMaxWait { get; }
 }
 
-/// <summary>不節流（測試與未接 DI 的呼叫端）：行為等同只有各實例自己的序列化。</summary>
+/// <summary>不節流（僅供測試；正式碼的閘道參數一律必填）：行為等同只有各實例自己的序列化。</summary>
 public sealed class NullAiRequestGate : IAiRequestGate
 {
     public static readonly NullAiRequestGate Instance = new();

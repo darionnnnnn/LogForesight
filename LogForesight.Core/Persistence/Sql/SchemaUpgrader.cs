@@ -744,7 +744,34 @@ internal static class SchemaUpgrader
     internal const string IssueFirstSeenWatermarkBlobKey = "issue_first_seen_watermark";
     internal const string IssueFirstSeenFullDoneBlobKey = "issue_first_seen_full_done";
     internal const string IssueFirstSeenSourceKeyRekeyDoneBlobKey = "issue_first_seen_source_key_rekey_done";
-    private const string IssueFirstSeenSourceKeyRekeyVersion = "1";
+    internal const string IssueFirstSeenSourceKeyRekeyVersion = "1";
+    internal const string RiskySourceKeyDoneBlobKey = "risky_events_source_key_done";
+    internal const string RiskySourceKeyDoneVersion = "1";
+
+    /// <summary>該 blob 是否存在且內容等於指定版本（單列主鍵查詢，純讀）。</summary>
+    internal static bool HasBlobVersion(Func<LfDbContext> contextFactory, string blobKey, string version)
+    {
+        using var ctx = contextFactory();
+        return ctx.Blobs.AsNoTracking().Any(x => x.BlobKey == blobKey && x.Content == version);
+    }
+
+    /// <summary>寫入（或更新）完成標記 blob。</summary>
+    internal static void WriteBlobVersion(Func<LfDbContext> contextFactory, string blobKey, string version)
+    {
+        using var ctx = contextFactory();
+        var row = ctx.Blobs.FirstOrDefault(x => x.BlobKey == blobKey);
+        if (row == null)
+        {
+            ctx.Blobs.Add(new BlobRow { BlobKey = blobKey, Content = version, UpdatedAt = DateTime.Now, Version = 1 });
+        }
+        else
+        {
+            row.Content = version;
+            row.UpdatedAt = DateTime.Now;
+            row.Version++;
+        }
+        ctx.SaveChanges();
+    }
 
     /// <summary>
     /// 將來源鍵回填前以 SQL <c>UPPER(source_name)</c> 寫入的首見日列，安全地

@@ -22,7 +22,7 @@ public class PrtgFetchScopeEstimateEndpointTests : IDisposable
 {
     private readonly string _dir;
     private readonly StorageBackend _backend;
-    private readonly SettingsController _controller;
+    private readonly PrtgScopeEstimateController _controller;
     private readonly IHostStore _hosts;
 
     public PrtgFetchScopeEstimateEndpointTests()
@@ -35,12 +35,7 @@ public class PrtgFetchScopeEstimateEndpointTests : IDisposable
 
         _hosts = new HostStore(_backend.Blob("hosts"));
 
-        _controller = new SettingsController(
-            new StubSettingsService(),
-            new AiUsageStore(_backend.Blob("ai_usage")),
-            new RecordingAuditService(),
-            backend: _backend,
-            hosts: _hosts);
+        _controller = PrtgControllerFactory.ScopeEstimate(new StubSettingsService(), _backend, _hosts);
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]

@@ -198,7 +198,7 @@ internal static class SentinelEventMapper
         SourceEvidenceKind sourceKind, DateTimeOffset eventTimeUtc)
     {
         var rawHostIp = fields.GetValueOrDefault(SentinelFieldMap.HostIp)?.Trim();
-        var hostKey = !string.IsNullOrEmpty(rawHostIp) && IPAddress.TryParse(rawHostIp, out var address)
+        var hostKey = !string.IsNullOrEmpty(rawHostIp) && IpSyntax.TryParse(rawHostIp, out var address)
             ? $"host-ip:{address}"
             : null;
         var fingerprintParts = fields.OrderBy(pair => pair.Key, StringComparer.Ordinal)

@@ -19,12 +19,19 @@ public class HandlingMigrationHostedService : BackgroundService
     private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly StorageBackend _backend;
+    private readonly Action<CancellationToken> _run;
+
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(3);
 
     public HandlingMigrationHostedService(StorageBackend backend, DataVersionStamp dataVersion)
+        : this(ct => backend.HandlingMigrator.Run(ct), dataVersion)
+    {
+    }
+
+    internal HandlingMigrationHostedService(Action<CancellationToken> run, DataVersionStamp dataVersion)
     {
         _dataVersion = dataVersion;
-        _backend = backend;
+        _run = run;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,7 +40,7 @@ public class HandlingMigrationHostedService : BackgroundService
         // 這裡刻意比回填的 15 秒短——遷移未完成時處理狀態是唯讀的，要盡快解除
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -46,15 +53,18 @@ public class HandlingMigrationHostedService : BackgroundService
         {
             try
             {
-                _backend.HandlingMigrator.Run(stoppingToken);
-                // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                _dataVersion.Bump();
+                _run(stoppingToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
             {
-                // 失敗不讓背景例外把行程帶走。狀態已由 Migrator 記成 pending＋LastError，
+                // 失敗不讓背景例外把行程帶走（關站取消不是失敗，與其餘回填外殼同形）。狀態已由 Migrator 記成 pending＋LastError，
                 // 因此寫入**仍然被擋著**（不會落進半搬完的表），而畫面看得到原因
                 Log.Error(ex, "[SQL] 處理狀態遷移失敗，處理狀態維持唯讀：{Msg}", ex.Message);
+            }
+            finally
+            {
+                // 遷移分批落地，失敗前已搬的批次同樣改寫了資料，儀表板／報表快取要失效；背景服務不走 HTTP 管線
+                _dataVersion.Bump();
             }
         }, stoppingToken);
     }

@@ -33,12 +33,10 @@ public sealed class PrtgStoreManagementConsumerTests : IDisposable
 
         var page = store.GetMonitoringSensorPage(_mapDate, [7], null, 0, 100);
         var validCount = store.CountValidMonitoringSensors(_mapDate, hosts, sensors);
-        var inventory = store.GetReadinessInventoryCounts(hosts, ["disk"], _mapDate, _mapDate.AddDays(-30));
 
         Assert.Equal(1, page.Total);
         Assert.Equal(201, Assert.Single(page.Rows).SensorId);
         Assert.Equal(1, validCount);
-        Assert.Equal(new EfPrtgStore.PrtgReadinessInventoryCounts(3, 3, 3, 2, 0, 0, 0), inventory);
     }
 
     [Fact]

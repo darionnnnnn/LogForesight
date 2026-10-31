@@ -516,8 +516,13 @@ public class IssueHandlingCommandService
     private List<(WebHost Host, List<(DateTime Date, string IssueKey, string IssueLabel)> Days, IssueBulkCloseHostDto Row)>
         PlanBulkClose(string source, int eventId, DateTime? from, DateTime? to)
     {
-        var filter = new RecordQueryFilter { Source = source, EventId = eventId, From = from, To = to };
-        var records = _repository.Query(filter);
+        RecordQueryFilter Filter() => new() { Source = source, EventId = eventId, From = from, To = to };
+        // 讀取階段上限：先以 SQL 計數（來源與事件 ID 皆已下推），超過就整批擋下請使用者縮小，
+        // 不載入、不截斷（截斷會讓「到底影響了哪些」不可知）
+        if (_repository.QueryPage(Filter(), 1, 1).Total > MaxBulkCloseDayWrites)
+            throw new DomainException(ApiErrorCodes.ValidationFailed,
+                $"符合條件的項目超過 {MaxBulkCloseDayWrites.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} 筆，請縮小篩選範圍後再批次結案");
+        var records = _repository.Query(Filter());
         var lookup = new HostLookup(_hosts.GetAll());
 
         var byHost = new Dictionary<string, (WebHost Host, List<(DateTime, LogIssueSignature)> Occurrences)>(StringComparer.OrdinalIgnoreCase);

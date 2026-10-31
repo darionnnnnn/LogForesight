@@ -1768,6 +1768,46 @@ public class HandlingServiceTests : IDisposable
         Assert.Equal(HandlingStatuses.InProgress, dayItem.DerivedStatus);
     }
 
+    [Fact]
+    public void 工作頁_日項目帶IsUnresolved_與UnresolvedDayCount同一出處()
+    {
+        var openDay = Today.AddDays(-50);
+        var doneDay = Today.AddDays(-5);
+        var a = Issue("disk", 153);
+        var b = Issue("disk", 154);
+        _repository.AddRecord(_host.HostName, openDay, a);
+        _repository.AddRecord(_host.HostName, doneDay, b);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, openDay, _other.UserId);
+        service.Assign(_host.HostId, doneDay, _other.UserId);
+        service.SetIssueStatus(_host.HostId, doneDay, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(b),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        var workload = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: true);
+
+        var open = Assert.Single(workload.Days, d => d.Date == openDay.ToString("yyyy-MM-dd"));
+        Assert.Equal(HandlingStatuses.InProgress, open.DerivedStatus);
+        Assert.True(open.IsUnresolved);
+        var done = Assert.Single(workload.Days, d => d.Date == doneDay.ToString("yyyy-MM-dd"));
+        Assert.False(done.IsUnresolved);
+        // 逐項與 HandlingStatuses.Unresolved 一致（open／in_progress／escalated 為 true，結案態為 false）
+        foreach (var d in workload.Days)
+            Assert.Equal(HandlingStatuses.Unresolved.Contains(d.DerivedStatus), d.IsUnresolved);
+        Assert.Equal(workload.Days.Count(d => d.IsUnresolved), workload.UnresolvedDayCount);
+    }
+
+    [Fact]
+    public void 工作頁_日項目序列化含isUnresolved欄位()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new HandlerDayItemDto { DerivedStatus = HandlingStatuses.Escalated, IsUnresolved = true },
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Contains("\"isUnresolved\":true", json);
+    }
+
     /// <summary>
     /// 問題簽章鍵的反解（§7）。與 <c>For</c> 對稱，格式壞掉時回 null 而不是拋例外——
     /// 舊資料或人為改壞的 blob 不該讓整個工作頁 500。

@@ -34,7 +34,7 @@ public sealed class PrtgValueReadinessController : ControllerBase
         {
             if (!Enum.TryParse<PrtgValueReason>(reason.Trim(), ignoreCase: true, out var parsed))
             {
-                return BadRequest(ApiResponse.Fail("invalid_reason", $"無效的就緒原因：{reason}。"));
+                return BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidReason, $"無效的就緒原因：{reason}。"));
             }
             filterReason = parsed;
         }
@@ -59,7 +59,7 @@ public sealed class PrtgValueReadinessController : ControllerBase
         var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
         var semanticOverrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(settings.PrtgSensorTypeCategoryOverrides);
         var assessment = new PrtgValueAssessment(_backend.PrtgStore(), semanticOverrides);
-        var deviceToHost = assessment.DeviceToHostOn(completedDay, evaluationHostIds);
+        var deviceToHost = assessment.DeviceToHostOn(completedDay, completedDay, evaluationHostIds);
         var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
 
         var summary = PrtgValueReadiness.Compute(assessment, deviceToHost, evaluationHostIds, policySensorIds, completedDay, ct);

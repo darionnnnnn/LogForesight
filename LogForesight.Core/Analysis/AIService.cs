@@ -516,7 +516,7 @@ public class AIService : IAiService
         {
             var baseUrl = (settings.BaseUrl ?? "").TrimEnd('/');
             var deployment = settings.AzureDeployment?.Trim() ?? "";
-            var apiVersion = string.IsNullOrWhiteSpace(settings.AzureApiVersion) ? "2024-10-21" : settings.AzureApiVersion.Trim();
+            var apiVersion = string.IsNullOrWhiteSpace(settings.AzureApiVersion) ? AiProviders.DefaultAzureApiVersion : settings.AzureApiVersion.Trim();
             var url = $"{baseUrl}/openai/deployments/{deployment}/chat/completions?api-version={apiVersion}";
             Action<HttpRequestHeaders> applyAuth = headers =>
             {
@@ -587,7 +587,7 @@ public class AIService : IAiService
         var provider = AiProviders.Normalize(db.AiProvider);
         var model = string.IsNullOrWhiteSpace(db.AiModel) ? AiProviders.DefaultModel(provider) : db.AiModel.Trim();
         var azureDeployment = db.AiAzureDeployment?.Trim() ?? "";
-        var azureApiVersion = string.IsNullOrWhiteSpace(db.AiAzureApiVersion) ? "2024-10-21" : db.AiAzureApiVersion.Trim();
+        var azureApiVersion = string.IsNullOrWhiteSpace(db.AiAzureApiVersion) ? AiProviders.DefaultAzureApiVersion : db.AiAzureApiVersion.Trim();
         var apiKey = CryptoHelper.IsEncrypted(db.AiApiKeyEnc) && CryptoHelper.TryDecrypt(db.AiApiKeyEnc, out var key) ? key : "";
 
         return new AiSettings

@@ -18,6 +18,8 @@ public class WorkOrderBackfillHostedService : BackgroundService
     private readonly WorkOrderBackfiller _backfiller;
     private readonly DataVersionStamp _dataVersion;
 
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(15);
+
     public WorkOrderBackfillHostedService(WorkOrderBackfiller backfiller, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
         _gate = gate;
@@ -30,7 +32,7 @@ public class WorkOrderBackfillHostedService : BackgroundService
         // 讓站台其餘啟動流程先完成，不與第一批使用者請求搶資料庫
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -47,13 +49,17 @@ public class WorkOrderBackfillHostedService : BackgroundService
                     try
                     {
                         _backfiller.Run(stoppingToken);
-                        // 案件的交辦單連結已被背景改寫，快取要失效
-                        _dataVersion.Bump();
                     }
-                    catch (Exception ex)
+                    // 關站取消交給外層 when 篩選，不記成失敗
+                    catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                     {
                         // 整併失敗不影響站台運作：記 log，不讓背景例外把行程帶走
                         Log.Error(ex, "[SQL] 交辦單整併失敗：{Msg}", ex.Message);
+                    }
+                    finally
+                    {
+                        // 整併是分批交易，中途失敗前面的批次已落地，成功或失敗都要推進版本（案件的交辦單連結已改寫）
+                        _dataVersion.Bump();
                     }
                 }, stoppingToken),
                 stoppingToken);

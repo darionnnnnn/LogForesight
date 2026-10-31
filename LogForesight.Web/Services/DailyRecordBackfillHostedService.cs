@@ -16,6 +16,8 @@ public class DailyRecordBackfillHostedService : BackgroundService
 
     private readonly DailyRecordBackfiller _backfiller;
 
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(20);
+
     public DailyRecordBackfillHostedService(DailyRecordBackfiller backfiller, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
         _gate = gate;
@@ -28,7 +30,7 @@ public class DailyRecordBackfillHostedService : BackgroundService
         try
         {
             // 錯開 TopIssueBackfillHostedService 的 15 秒，避免兩個回填同時搶站台剛啟動時的連線
-            await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -44,12 +46,16 @@ public class DailyRecordBackfillHostedService : BackgroundService
                     try
                     {
                         _backfiller.Run(stoppingToken);
-                        // 回填改寫了儀表板聚合的抽出欄，快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                        _dataVersion.Bump();
                     }
-                    catch (Exception ex)
+                    // 關站取消交給外層 when 篩選，不記成失敗
+                    catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                     {
                         Log.Error(ex, "[SQL] lf_daily_records 抽出欄回填失敗：{Msg}", ex.Message);
+                    }
+                    finally
+                    {
+                        // 回填改寫了儀表板聚合的抽出欄，失敗前已落地的批次同樣要讓快取失效；背景服務不走 HTTP 管線
+                        _dataVersion.Bump();
                     }
                 }, stoppingToken),
                 stoppingToken);

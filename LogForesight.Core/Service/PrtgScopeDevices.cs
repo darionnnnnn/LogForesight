@@ -26,14 +26,6 @@ public sealed record PrtgScopeResult(IReadOnlySet<long> DeviceObjids, int Mapped
     /// <summary>本次只涵蓋部分主機（指定主機更新）。為 true 時任何「沒刷新到就清」的動作都不得執行。</summary>
     public bool IsPartial { get; init; }
 
-    /// <summary>指向已停用、已合併或不存在主機而未納入的人工對應筆數</summary>
-    public int ManualExcluded { get; init; }
-
-    /// <summary>人工對應指向的 device 已不在裝置鏡像（PRTG 端已刪除）而未納入的筆數</summary>
-    public int ManualMissingInMirror { get; init; }
-
-    /// <summary>計算過程要讓使用者看見的警告（與寫進執行輸出的文字相同）</summary>
-    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
@@ -42,7 +34,7 @@ public sealed record PrtgScopeResult(IReadOnlySet<long> DeviceObjids, int Mapped
 /// <item>conflict 只收「mapper 已指到主機」（一 IP 多主機）或「IP 屬於某台啟用中主機」的列——名稱命中多台主機（hostname-multi）
 /// 沒有 IP 可判斷時不收，等人工指派後才進範圍（docs/PRTG-SPEC.md §4）。</item>
 /// <item>人工對應只收目標主機存在、啟用中且未被合併、且 device 仍在裝置鏡像的列；
-/// 其餘分別計入 <see cref="PrtgScopeResult.ManualExcluded"/>、<see cref="PrtgScopeResult.ManualMissingInMirror"/>。</item>
+/// 其餘不入範圍並寫進執行輸出。</item>
 /// <item>守門裝置與 corehealth 所在裝置只在資源守門啟用時入範圍；未啟用（或只算部分主機）時改放進
 /// <see cref="PrtgScopeResult.PreserveDeviceObjids"/>：不取數，但清除時保留它們的感測器鏡像，守門自動偵測才找得到。</item>
 /// <item><c>hostIds</c> 非 null（指定主機更新）時三類對應只收屬於這些主機的列、守門不入範圍，結果標為 partial。</item>
@@ -91,8 +83,6 @@ public static class PrtgScopeDevices
             .ToHashSet();
         var manual = new HashSet<long>();
         var manualExcluded = 0;
-        var manualMissingInMirror = 0;
-        var warnings = new List<string>();
         var manualRows = store.GetManualMaps();
         // 人工對應指向的 device 若已從 PRTG 刪除，objid 留在範圍內會讓每晚查詢失敗、範圍外清除永不執行
         var mirrorObjids = store.GetDeviceNamesByObjids(manualRows.Select(m => m.DeviceObjid).Distinct().ToList()).Keys.ToHashSet();
@@ -105,10 +95,7 @@ public static class PrtgScopeDevices
             }
             if (!mirrorObjids.Contains(m.DeviceObjid))
             {
-                manualMissingInMirror++;
-                var warning = $"人工對應的裝置 #{m.DeviceObjid} 已不在 PRTG 鏡像，未納入取數範圍";
-                warnings.Add(warning);
-                console.WriteLine(warning);
+                console.WriteLine($"人工對應的裝置 #{m.DeviceObjid} 已不在 PRTG 鏡像，未納入取數範圍");
                 continue;
             }
             if (HostWanted(m.HostId))
@@ -144,9 +131,6 @@ public static class PrtgScopeDevices
         {
             PreserveDeviceObjids = preserve,
             IsPartial = wanted != null,
-            ManualExcluded = manualExcluded,
-            ManualMissingInMirror = manualMissingInMirror,
-            Warnings = warnings,
             ScopeFenceJson = scopeFenceAfter,
             SourceGeneration = SourceGenerationFingerprint(mapRows, manualRows, hostRows, guard,
                 settings.PrtgResourceGuardEnabled, wanted)
@@ -340,15 +324,4 @@ public static class PrtgScopePurge
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
-
-    /// <summary>更新範圍基準並清掉擋下提示。目前沒有呼叫端——正式清除路徑在
-    /// <c>PrtgScopePurgeStore</c> 的清除交易內更新基準（<c>RecordBaselineInTransaction</c>）。</summary>
-    public static void RecordBaseline(EfPrtgStore store, int deviceCount) =>
-        store.ScopeBaseline().Update(b =>
-        {
-            b.DeviceCount = deviceCount;
-            b.At = DateTime.Now;
-            b.BlockedReason = null;
-            b.BlockedAt = null;
-        });
 }

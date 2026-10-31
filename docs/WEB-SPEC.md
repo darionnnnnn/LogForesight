@@ -116,10 +116,12 @@ LogForesight.Web/
 
 | 層 | 做 | 不做 |
 |---|---|---|
-| API Controller | 綁定/驗證 DTO、呼叫單一 Service 方法、回傳信封 | 業務判斷、直接用 Repository、組 SQL/LINQ、try-catch（交給 ExceptionFilter） |
+| API Controller | 綁定/驗證 DTO、呼叫單一 Service 方法、回傳信封 | 業務判斷、直接用 Repository、組 SQL/LINQ、純轉譯的 try-catch（交給 ExceptionFilter） |
 | Service | 業務規則、授權範圍過濾（呼叫 `IVisibilityService`）、稽核寫入、跨 Repository 組合 | 讀 HttpContext（需要目前使用者時注入 `ICurrentUser`）、格式化顯示文字 |
 | Repository | 查詢組合、分頁、對 Core 介面的轉接 | 授權判斷、業務規則 |
 | View + JS | 呈現、互動、呼叫 API | 權限判斷邏輯（選單顯示依 `/api/auth/me` 回傳的能力，但**真正的防線在後端**） |
+
+控制器一檔一個、檔名＝類別名；全部 action 的（HTTP 方法、路由、`[Permission]` 能力、匿名、`[RequireViewAll]`、`[SkipDataVersionBump]`）由 `ControllerRouteSnapshotTests` 對基準檔守門，沒有 `[Permission]` 的控制器必須列在該測試的白名單並附理由。全站 PRTG 對應類端點以 `[RequireViewAll]` 宣告，不在 action 內手寫檢查。
 
 ### 4.3 DI 註冊表
 
@@ -142,7 +144,9 @@ LogForesight.Web/
 
 ```json
 {
-  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "", "SqliteWal": true },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）
+  // PathBase 必須以單一 / 開頭且不含空白、?、#，或留空（IIS 子 Application 不要設）；TrustedProxies 填反向代理 IP；FrameOptions 空字串＝不送 X-Frame-Options
+  "Server": { "PathBase": "", "TrustedProxies": [], "FrameOptions": "DENY" },
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
@@ -354,7 +358,7 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
 表達「兩者兼具」（實務上即 admin）。
 
-**全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。
+**全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。只回全站計數、不含主機身分的維護端點（`prtg-mirror`、`prtg-estimate`、`prtg-fetch-scope/estimate`）與主機管理（`api/admin/hosts*`）屬 `Maintain` 職責，不在此列；衝突清單 `prtg-host-map` 回傳候選主機身分，屬此列，受限角色在維護頁看到權限說明。
 
 **負責人隱含能力**：是任一**啟用中**主機的負責人時，
 `IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
@@ -484,12 +488,26 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 { "success": false, "data": null, "error": { "code": "validation_failed", "message": "預計完成日不可早於今天" } }
 ```
 
-- 錯誤碼固定小寫 snake_case：`auth_expired`、`forbidden`、`not_found`、`validation_failed`、
-  `conflict`、`server_error`。`message` 一律是**可直接顯示給使用者的繁體中文**——
+- 錯誤碼固定小寫 snake_case，**唯一登錄處是 `ApiErrorCodes`**（常數＋`Table` 狀態碼對照，表外一律 400）；`Fail(`／`DomainException(` 不得傳字面字串（`ApiErrorCodeGuardTests` 守門）。通用碼：
+
+  | 碼 | HTTP | 用途 |
+  |---|---|---|
+  | `validation_failed` | 400 | 輸入不合法（表外預設） |
+  | `auth_failed` | 401 | 登入帳密錯誤 |
+  | `auth_expired` | 401 | 登入逾期 |
+  | `forbidden` | 403 | 沒有權限 |
+  | `not_found` | 404 | 資源不存在 |
+  | `conflict` | 409 | 樂觀鎖衝突、執行互斥 |
+  | `rate_limited` | 429 | 登入嘗試或 AI 使用太頻繁，回應帶 `Retry-After` |
+  | `server_error` | 500 | 未預期例外 |
+  | `service_unavailable` | 503 | 升級遷移進行中，寫入暫停 |
+  | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
+
+  PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
-  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板。
+  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯。
   **樂觀鎖衝突另有一支**：處理狀態三表以
   `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
   `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
@@ -740,7 +758,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 |---|---|
 | 類型分布圖的某一段（如「儲存裝置×高」） | `/records?categories=Storage&severity=High&from=...&to=...` |
 | 趨勢折線的某一個資料點（某日高風險數） | `/records?riskLevels=高&from=該日&to=該日` |
-| 儀表板統計卡（逾期未處理 N 件） | `/records?statuses=open,in_progress&overdue=1` |
+| 儀表板統計卡（未處理問題，逾期數在標題） | `/records?view=issue&statuses=open&riskLevels=高,中,低&from=...&to=...`（`overdue=true` 只在明細視角生效，見記錄查詢的篩選支援矩陣） |
 | 高風險主機排行的一列 | `/hosts/{id}`（時間軸） |
 | 執行監控異常彙總的一列 | 該錯誤的執行詳情清單 |
 
@@ -1082,6 +1100,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **預設視角**：URL 完全沒有查詢參數（從側欄直接進頁）→ **依問題**
   （主機量大後「有哪些問題、誰在處理」才是主要動線）；帶任何查詢參數（下鑽連結帶
   `statuses`/`severity` 等明細專屬條件）→ 維持**明細**，全站下鑽連結零改動、數字對得上。
+- **篩選支援矩陣**（`RecordQuerySupport` 單一出處，前端 `viewSupports` 對應）：明細支援處理狀態、逾期、未指派；依問題支援處理狀態與未指派；依主機、依日期三者皆不支援（彙總視角套用處理篩選需全撈處理資料）。目前視角不支援的條件**不送出、不顯示標籤**，條件列改顯示「目前的檢視不支援：…（切回明細可套用）」；值保留在網址，切回支援的視角自動恢復。`hostIds`／`groupIds` 給了卻沒有任何合法數字回 400，不當成未指定。
 - **依問題視角的處理**：狀態 chip 篩「處理概況」三態（`by-issue` 的 `statuses`，
   群組層級 `GroupStatus`）、「未指派」chip 篩 `Handlers` 為空的問題；點列**就地展開**該問題
   受影響主機×日期（重用 `GET api/records` 明細端點、可見範圍已過濾），每列「去處理」直連風險日詳情。
@@ -2030,8 +2049,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **可見主機**：`GetGroupVisibleHostIdsFor` ∪ `GetOwnedHostIdsFor`，每列標「可見來源」——
   **群組授權**與**負責人**兩顆獨立徽章（可同時成立，§7.1）。列點擊到主機詳情。
 - **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true`，
-  **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress` 判定（同後端
-  `HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態）。
+  **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress`／`escalated` 判定，由後端在每個日項目回 `isUnresolved`
+  （`HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態），前端不另維護一份集合。
 - **被指派歷程**：以 `IssueCase` 為事實來源（建案時間／交辦者／主機／問題／目前狀態／涵蓋區間），
   新到舊。**刻意不用稽核表反查**：稽核有保留天數且要比對 detail JSON，案件本身就是指派的第一手紀錄。
   誠實邊界：案件只保存**目前**處理人，被改派走的案件不再出現於此（那次改派記在該主機的

@@ -20,12 +20,9 @@ public sealed class LegacyObservationsRemovalTests : IDisposable
     private const string ObservationRowJson =
         """{"SnapshotId":"snapshot","DecisionKey":"decision","HostId":23,"RecordDate":"2026-10-02T00:00:00","DeviceObjid":17,"RuleCode":"rule","EventKey":"event","SourceName":"source","Category":"category","SeverityRank":1,"ElevatesDayRisk":false,"Suppressed":false,"SourceHint":"hint","QualityReason":"quality","FormatVersion":1,"ContentJson":"{}","RecordedAtUtc":"2026-10-02T00:00:00Z"}""";
 
-    private readonly string _directory = Path.Combine(Path.GetTempPath(), "lf-obs-removal-" + Guid.NewGuid().ToString("N"));
-
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
-        try { if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true); } catch (IOException) { }
         GC.SuppressFinalize(this);
     }
 
@@ -67,17 +64,6 @@ public sealed class LegacyObservationsRemovalTests : IDisposable
     }
 
     [Fact]
-    public void 新匯出的資料包不含Observations區段()
-    {
-        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, _directory);
-        var from = new DateTime(2026, 10, 1);
-        var package = PrtgDataTransfer.Export(backend, from, from.AddDays(1));
-
-        using var document = JsonDocument.Parse(JsonSerializer.Serialize(package));
-        Assert.False(document.RootElement.TryGetProperty("Observations", out _));
-    }
-
-    [Fact]
     public async Task 串流匯出器的輸出與manifest都不含Observations_且拒收來源硬塞的該區段()
     {
         var from = new DateTime(2026, 10, 1);
@@ -99,31 +85,6 @@ public sealed class LegacyObservationsRemovalTests : IDisposable
         using var rejected = new MemoryStream();
         await Assert.ThrowsAnyAsync<Exception>(() => new PrtgDiagnosticExportWriter().WriteAsync(WithObservation(), rejected,
             new PrtgDiagnosticExportHeader(from, from, from)));
-    }
-
-    [Fact]
-    public void 舊版資料包含Observations_匯入照常成功且該區段被忽略()
-    {
-        var backend = new StorageBackend(new StorageSettings { Type = "Sqlite" }, _directory);
-        var legacyJson = """
-            {"FormatVersion":2,"Purpose":"diagnostic-only","Devices":[{"Objid":17,"Name":"device"}],"Sensors":[],"StateChanges":[],
-             "Values":[],"HostMaps":[],"ManualMaps":[],"SourcePolicy":null,"Observations":[
-            """ + ObservationRowJson + """
-            ],"Timelines":[],"SemanticEvidence":[],"SemanticResults":[]}
-            """;
-        var package = JsonSerializer.Deserialize<PrtgDataPackage>(legacyJson)!;
-
-        var result = PrtgDataTransfer.Import(backend, package);
-
-        Assert.True(result.DiagnosticOnly);
-        Assert.Equal(1, result.Devices);
-        using var db = backend.CreateContext();
-        // 模型已無觀察表，匯入也不會憑空建立它。
-        Assert.Equal(0, db.Database.SqlQueryRaw<int>(
-            "SELECT COUNT(*) AS Value FROM sqlite_master WHERE name = 'lf_prtg_observations'").Single());
-        // 診斷隔離 blob 內不保留被忽略的 Observations 區段。
-        var stored = backend.Blob("prtg_import_diagnostic_" + result.DiagnosticId).Read();
-        Assert.DoesNotContain("Observations", stored, StringComparison.Ordinal);
     }
 
     [Fact]

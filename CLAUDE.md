@@ -111,7 +111,10 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   建構點都要帶 `gate:`（`AiRequestGateTests` 掃 `new AIService(`）。也不要讓背景排程整輪只建一個實例給所有主機分片共用：
   `AIService` 內有逐實例的請求佇列，共用一個等於把全輪串成單線、`AiConcurrency` 形同失效（設定一輪只解析一次即可，實例每分片一個）。
   AI 待補順序與閒置原因各只有一份判定（`SelectNextBatch`、`BlockingIdleReason`），不要在控制器或畫面再算一次。
+- 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
+- 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。
+- 不要在 `Fail(`／`DomainException(` 傳錯誤碼字面：新碼先登錄到 `ApiErrorCodes`（常數＋狀態碼表），WEB-SPEC §7.2 同步。
 - K 的來源鍵就緒閘門必須分開：`IIssueAggregateQuery` 等 `lf_top_issues.source_key` 回填與
   `lf_issue_first_seen` 舊鍵重整完成；`IRiskyEventStore` 只等 `lf_risky_events.source_key`
-  回填完成。後者在前者回填後開始，但不是聯合讀取閘門；每批 500 列。索引完整鍵序列是
+  回填完成。後者在前者回填後開始，但不是聯合讀取閘門；每批 500 列。啟動快判（`TopIssueBackfiller.TryFastReady`）只針對前者、在進背景閘門前以索引可 seek 的 EXISTS 判定；後者以版本化 blob `risky_events_source_key_done` 短路，不得改回每次啟動 `Count()` 全表。就緒旗標只升不降。索引完整鍵序列是
   top `(source_key, event_id, record_date)`、risky `(host_id, date, source_key, event_id)`。

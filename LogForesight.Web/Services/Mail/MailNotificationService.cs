@@ -3,6 +3,8 @@ using System.Text;
 using System.Security.Cryptography;
 using System.Data;
 using System.Net.Mail;
+using System.Net.Sockets;
+using System.Security.Authentication;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -720,12 +722,10 @@ public class MailNotificationService
             _state.Update(s =>
             {
                 if (summary) foreach (var key in keys) s.SummarySentKeys.Add(key);
+                // 即時信的 key 在沒有工作流版本時就是 RecordKey（host|date），與上面的 keys 逐字相同，
+                // 不需要為了算它而把窗口內整批紀錄（含 ContentJson）讀回來反序列化
                 if (urgent)
-                {
                     foreach (var key in keys) s.UrgentSentKeys.Add(key);
-                    foreach (var record in _records.Query(new RecordQueryFilter { From = from, To = to }))
-                        s.UrgentSentKeys.Add(UrgentRecordKey(record));
-                }
             });
         }
         catch (Exception ex)
@@ -779,10 +779,9 @@ public class MailNotificationService
         return matches.FirstOrDefault();
     }
 
-    /// <summary>指定使用者可見的主機 ID（回饋十七輪批次B-4）：與
-    /// LogForesight.Web.Services.VisibilityService.GetVisibleHostIdsFor 邏輯對稱但獨立實作——
-    /// MailNotificationService 是 Singleton，VisibilityService 依賴 Scoped 的 ICurrentUser
-    /// 無法被 Singleton 直接消費，見 <see cref="HostVisibilityResolver"/>。</summary>
+    /// <summary>指定使用者可見的主機 ID：與 VisibilityService.GetVisibleHostIdsFor 共用
+    /// <see cref="HostVisibilityResolver"/> 同一份規則——MailNotificationService 是 Singleton，
+    /// VisibilityService 依賴 Scoped 的 ICurrentUser 無法被直接消費，所以規則放在 Resolver。</summary>
     private IReadOnlySet<long> GetVisibleHostIds(long userId, int retentionDays) =>
         HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _groupAccess, userId,
             _issueOwners, _issueAggregates, retentionDays);
@@ -1664,8 +1663,8 @@ public class MailNotificationService
         SystemSettings mailSettings, bool withoutPrtg,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions = null)
     {
-        var visibleRiskLevels = RecordRepository.ResolveDayRiskLevels(
-            SystemSettingsService.ResolveVisibleDayRiskLevels(mailSettings), null);
+        var visibleRiskLevels = RecordRepository.ResolveVisibility(
+            SystemSettingsService.ResolveVisibleDayRiskLevels(mailSettings), null).RiskLevels;
         List<DailyAnalysisRecord> ReadWindow(DateTime windowFrom, DateTime windowTo)
         {
             if (visibleRiskLevels is { Count: 0 }) return [];
@@ -1988,11 +1987,18 @@ public class MailNotificationService
     /// <summary>郵件貢獻帳本狀態（佔用數、上限、最近一次滿載），供 /api/health/detail 顯示。</summary>
     public LogForesight.Web.Models.Dto.MailContributionLedgerDto GetContributionLedgerStatus()
     {
+        var ledger = _state.Get();
         var occupied = GetOccupiedMailContributionKeys().Count;
+        var reservations = ledger.MailContributionReservations.Values;
         lock (_ledgerFullLock)
             return new LogForesight.Web.Models.Dto.MailContributionLedgerDto
             {
                 OccupiedKeys = occupied,
+                AcceptedKeys = ledger.AcceptedMailContributionReceipts.Count,
+                HeldKeys = ledger.HeldLegacyMailContributionReceipts.Count,
+                ReservedKeys = reservations.Count(r => r.Status == "reserved"),
+                AttemptedKeys = reservations.Count(r => r.Status == "attempted"),
+                UnknownKeys = reservations.Count(r => r.Status == "unknown"),
                 Limit = _acceptedMailContributionLimit,
                 LastFullAtUtc = _ledgerLastFullAtUtc,
                 LastFullRecipient = _ledgerLastFullRecipient
@@ -2316,7 +2322,7 @@ public class MailNotificationService
         if (migrated.Count == 0 && heldLegacy.Count == 0) return;
         _state.Update(current =>
         {
-            var cutoff = now.AddDays(-180);
+            var cutoff = now.AddDays(-MailNotifyStateStore.ContributionReceiptRetentionDays);
             foreach (var key in current.AcceptedMailContributionReceipts.Where(pair => pair.Value < cutoff).Select(pair => pair.Key).ToArray())
                 current.AcceptedMailContributionReceipts.Remove(key);
             foreach (var key in current.HeldLegacyMailContributionReceipts.Where(pair => pair.Value < cutoff).Select(pair => pair.Key).ToArray())
@@ -2429,9 +2435,46 @@ public class MailNotificationService
         catch (Exception ex)
         {
             Log.Warn(ex, "[Mail] 寄送失敗：{Subject}（收件人 {Count} 位）", subject, recipients.Count);
-            return IsExactSingleRecipientRejection(ex, recipients)
+            return IsExactSingleRecipientRejection(ex, recipients) || IsConnectionEstablishmentFailure(ex)
                 ? MailSendOutcome.DefinitelyRejected : MailSendOutcome.Unknown;
         }
+    }
+
+    /// <summary>
+    /// 例外鏈（含 InnerException、AggregateException）中出現「連線建立前」就失敗的證據：
+    /// <see cref="SocketException"/> 的 ConnectionRefused／HostNotFound／NetworkUnreachable／HostUnreachable，
+    /// 或 TLS 交握的 <see cref="AuthenticationException"/>。這些情況連 MAIL FROM 都還沒送出，肯定沒寄出，
+    /// 可安全釋放預約重寄。實測 System.Net.Mail 對本機未開的 port 拋出 SmtpException → SocketException。
+    /// 刻意不含 SocketError.TimedOut：SocketException 看不出逾時發生在連線還是 DATA 之後，維持不確定。
+    /// 鏈上若有伺服器已回覆明確狀態碼的 SmtpException（StatusCode 非 GeneralFailure），代表已進入對話，不判定。
+    /// </summary>
+    internal static bool IsConnectionEstablishmentFailure(Exception exception)
+    {
+        var pending = new Stack<Exception>();
+        pending.Push(exception);
+        var seen = new HashSet<Exception>(ReferenceEqualityComparer.Instance);
+        var evidence = false;
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (!seen.Add(current)) continue;
+            switch (current)
+            {
+                case SmtpException { StatusCode: not SmtpStatusCode.GeneralFailure }:
+                    return false;
+                case SocketException socket when socket.SocketErrorCode is SocketError.ConnectionRefused
+                    or SocketError.HostNotFound or SocketError.NetworkUnreachable or SocketError.HostUnreachable:
+                    evidence = true;
+                    break;
+                case AuthenticationException:
+                    evidence = true;
+                    break;
+            }
+            if (current is AggregateException aggregate)
+                foreach (var inner in aggregate.InnerExceptions) pending.Push(inner);
+            if (current.InnerException != null) pending.Push(current.InnerException);
+        }
+        return evidence;
     }
 
     internal static bool IsExactSingleRecipientRejection(Exception exception, IReadOnlyCollection<string> recipients)

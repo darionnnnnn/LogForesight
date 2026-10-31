@@ -133,6 +133,22 @@ public class RecordRepository : IRecordRepository
     }
 
     /// <summary>
+    /// 繞過 <see cref="IRecordRepository"/> 的呼叫端一次取得兩份可見範圍：日風險等級（母體）與可見嚴重度。
+    /// 輸入是設定層的字串集合（null＝不限制）；純函式，不讀設定。
+    /// <c>NothingVisible</c>＝日風險等級顯示範圍為空集合，**不走 aggregate 介面的路徑
+    /// （<c>db.DailyRecords</c> 直查、<c>IRecordRepository.Query</c>）必須短路**，
+    /// 不可把空集合下推（底層 RiskLevels 的空集合語意是「不限制」）；aggregate 介面對空集合
+    /// 的語意是「零結果」，可不短路。
+    /// </summary>
+    public static (IReadOnlySet<string>? RiskLevels, IReadOnlySet<IssueSeverity>? Severities, bool NothingVisible)
+        ResolveVisibility(IReadOnlySet<string>? visibleDayRiskLevels, IReadOnlySet<string>? visibleSeverities)
+    {
+        var riskLevels = ResolveDayRiskLevels(visibleDayRiskLevels, null);
+        var severities = ParseVisibleSeverities(visibleSeverities);
+        return (riskLevels, severities, riskLevels is { Count: 0 });
+    }
+
+    /// <summary>
     /// 日風險等級顯示過濾（docs/archive/FEEDBACK-3-PLAN.md #8）：與可見範圍同樣的「只能縮小不能放大」
     /// 語意——filter.RiskLevels 若已被呼叫端（或使用者篩選）設限，取交集；未設限則直接套用
     /// 顯示範圍。回傳 false 時代表交集為空，呼叫端應直接回傳空結果。

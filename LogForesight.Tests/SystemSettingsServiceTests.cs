@@ -61,6 +61,17 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Contains(errors, e => e.MemberNames.Contains(nameof(request.ExpectedRevision)));
     }
 
+    [Fact]
+    public void 服務層缺ExpectedRevision_一律擲驗證錯誤而非沿用現行版本()
+    {
+        var service = Create();
+        var update = ValidRequest();
+        update.ExpectedRevision = null;
+        Assert.Equal(ApiErrorCodes.ValidationFailed, Assert.Throws<DomainException>(() => service.Update(update)).Code);
+        var prtg = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = false }));
+        Assert.Equal(ApiErrorCodes.ValidationFailed, prtg.Code);
+    }
+
     private void EnableAggressivePrtg()
     {
         _store.Update(s =>
@@ -1953,7 +1964,7 @@ public class SystemSettingsServiceTests : IDisposable
     {
         var service = Create();
         var ex = Assert.Throws<DomainException>(() =>
-            service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = true }));
+            service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgEnabled = true }));
         Assert.Contains("「連線」頁籤", ex.Message);
     }
 
@@ -1969,7 +1980,7 @@ public class SystemSettingsServiceTests : IDisposable
         });
 
         var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgEnabled = true,
             PrtgValueFetchScope = LogForesight.Core.Service.PrtgValueFetchScope.Triggered
         });
@@ -1990,7 +2001,7 @@ public class SystemSettingsServiceTests : IDisposable
             s.PrtgEnabled = true;
         });
 
-        var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = false });
+        var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgEnabled = false });
         Assert.False(saved.PrtgEnabled);
 
         var dto = service.Get();
@@ -2013,7 +2024,7 @@ public class SystemSettingsServiceTests : IDisposable
             s.PrtgValueFetchScope = LogForesight.Core.Service.PrtgValueFetchScope.TriggeredPlusList;
         });
 
-        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = false });
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgEnabled = false });
 
         var dto = service.Get();
         Assert.False(dto.PrtgEnabled);
@@ -2033,7 +2044,7 @@ public class SystemSettingsServiceTests : IDisposable
             s.PrtgEnabled = true;
         });
 
-        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgTimeoutSeconds = 90 });
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgTimeoutSeconds = 90 });
 
         var dto = service.Get();
         Assert.True(dto.PrtgEnabled);
@@ -2218,7 +2229,7 @@ public class SystemSettingsServiceTests : IDisposable
 
         // 2. 呼叫 UpdatePrtg 專屬更新端點
         var prtgReq = new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgUrl = "https://new-prtg.example.com",
             PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Token,
             PrtgApiToken = "new-token-123",
@@ -2277,7 +2288,7 @@ public class SystemSettingsServiceTests : IDisposable
 
         // 1. 非法認證方式被拒
         var invalidAuthReq = new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgUrl = "https://prtg.example.com",
             PrtgAuthMode = "InvalidMode"
         };
@@ -2286,7 +2297,7 @@ public class SystemSettingsServiceTests : IDisposable
 
         // 2. Password 模式缺帳號被拒
         var noUsernameReq = new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgUrl = "https://prtg.example.com",
             PrtgAuthMode = LogForesight.Core.Models.PrtgAuthModes.Password,
             PrtgUsername = "",
@@ -2308,7 +2319,7 @@ public class SystemSettingsServiceTests : IDisposable
         });
 
         var req = new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgRetentionDays = 200 // > 180
         };
 
@@ -2396,39 +2407,39 @@ public class SystemSettingsServiceTests : IDisposable
         var service = Create();
 
         // 1. CpuPercent < 1 或 > 100
-        var exCpuLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCpuPercent = 0 }));
+        var exCpuLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardCpuPercent = 0 }));
         Assert.Contains("CPU", exCpuLow.Message);
-        var exCpuHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCpuPercent = 101 }));
+        var exCpuHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardCpuPercent = 101 }));
         Assert.Contains("CPU", exCpuHigh.Message);
 
         // 2. MemoryFreePercent < 0 或 > 99
-        var exMemLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMemoryFreePercent = -1 }));
+        var exMemLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardMemoryFreePercent = -1 }));
         Assert.Contains("記憶體", exMemLow.Message);
-        var exMemHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMemoryFreePercent = 100 }));
+        var exMemHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardMemoryFreePercent = 100 }));
         Assert.Contains("記憶體", exMemHigh.Message);
 
         // 3. CheckSeconds < 15 或 > 600
-        var exSecLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCheckSeconds = 14 }));
+        var exSecLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardCheckSeconds = 14 }));
         Assert.Contains("檢查間隔", exSecLow.Message);
-        var exSecHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardCheckSeconds = 601 }));
+        var exSecHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardCheckSeconds = 601 }));
         Assert.Contains("檢查間隔", exSecHigh.Message);
 
         // 4. PauseMinutes < 1 或 > 60
-        var exPauseLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardPauseMinutes = 0 }));
+        var exPauseLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardPauseMinutes = 0 }));
         Assert.Contains("暫停", exPauseLow.Message);
-        var exPauseHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardPauseMinutes = 61 }));
+        var exPauseHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardPauseMinutes = 61 }));
         Assert.Contains("暫停", exPauseHigh.Message);
 
         // 5. Strikes < 1 或 > 10
-        var exStrikesLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardStrikes = 0 }));
+        var exStrikesLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardStrikes = 0 }));
         Assert.Contains("連續超標", exStrikesLow.Message);
-        var exStrikesHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardStrikes = 11 }));
+        var exStrikesHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardStrikes = 11 }));
         Assert.Contains("連續超標", exStrikesHigh.Message);
 
         // 6. MaxPauseMinutes < 10 或 > 600
-        var exMaxPauseLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMaxPauseMinutes = 9 }));
+        var exMaxPauseLow = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardMaxPauseMinutes = 9 }));
         Assert.Contains("暫停上限", exMaxPauseLow.Message);
-        var exMaxPauseHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardMaxPauseMinutes = 601 }));
+        var exMaxPauseHigh = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardMaxPauseMinutes = 601 }));
         Assert.Contains("暫停上限", exMaxPauseHigh.Message);
     }
 
@@ -2439,7 +2450,7 @@ public class SystemSettingsServiceTests : IDisposable
 
         // 1. 寫入八個資源守門設定
         var req = new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgResourceGuardEnabled = true,
             PrtgResourceGuardSensorObjids = new List<string> { "1234", "5678" },
             PrtgResourceGuardCpuPercent = 90,
@@ -2462,7 +2473,7 @@ public class SystemSettingsServiceTests : IDisposable
 
         // 2. 呼叫 UpdatePrtg 且八個參數皆為 null（不送），應維持原樣
         var noSendReq = new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgTimeoutSeconds = 80
         };
         var kept = service.UpdatePrtg(noSendReq);
@@ -2484,13 +2495,13 @@ public class SystemSettingsServiceTests : IDisposable
         var service = Create();
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgResourceGuardSensorObjids = new List<string> { "1001", "abc" }
         }));
         Assert.Contains("abc", ex.Message);
 
         // 合法清單照常存入，且逐行去空白
-        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgResourceGuardSensorObjids = new List<string> { " 1001 ", "1002" } });
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgResourceGuardSensorObjids = new List<string> { " 1001 ", "1002" } });
         Assert.Equal(new[] { "1001", "1002" }, service.Get().PrtgResourceGuardSensorObjids);
     }
     // ── 批次D：PRTG 取數範圍設定 ──────────────────────────────────────
@@ -2509,7 +2520,7 @@ public class SystemSettingsServiceTests : IDisposable
     {
         var service = Create();
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgValueFetchScope = PrtgValueFetchScope.TriggeredPlusList,
             PrtgValueFetchExtraHosts = new List<string> { " SRV-DB01 ", "SRV-APP02" }
         });
@@ -2524,8 +2535,8 @@ public class SystemSettingsServiceTests : IDisposable
     {
         // 只想改逾時的呼叫端不該把取數範圍重設回預設——「有送才更新」的既有規則。
         var service = Create();
-        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgValueFetchScope = PrtgValueFetchScope.TriggeredPlusList });
-        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgTimeoutSeconds = 90 });
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgValueFetchScope = PrtgValueFetchScope.TriggeredPlusList });
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgTimeoutSeconds = 90 });
 
         Assert.Equal(PrtgValueFetchScope.TriggeredPlusList, service.Get().PrtgValueFetchScope);
     }
@@ -2541,7 +2552,7 @@ public class SystemSettingsServiceTests : IDisposable
         EnableAggressivePrtg();
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
             PrtgSensorTypeWhitelist = new List<string>()
         }));
@@ -2549,7 +2560,7 @@ public class SystemSettingsServiceTests : IDisposable
 
         // 白名單非空時同一個模式可以存
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
             PrtgSensorTypeWhitelist = new List<string> { "SNMP Disk Free" }
         });
@@ -2566,13 +2577,13 @@ public class SystemSettingsServiceTests : IDisposable
         var service = Create();
         EnableAggressivePrtg();
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
             PrtgSensorTypeWhitelist = new List<string> { "SNMP Disk Free" }
         });
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgSensorTypeWhitelist = new List<string>()
         }));
         Assert.Contains("白名單", ex.Message);
@@ -2590,7 +2601,7 @@ public class SystemSettingsServiceTests : IDisposable
         });
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgEnabled = true,
             PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Conservative,
             PrtgValueFetchScope = PrtgValueFetchScope.AllMapped,
@@ -2600,7 +2611,7 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(PrtgValueFetchScope.AllMapped, service.Get().PrtgValueFetchScope);
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
         }));
         Assert.Contains("白名單", ex.Message);
@@ -2611,7 +2622,7 @@ public class SystemSettingsServiceTests : IDisposable
     {
         var service = Create();
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgValueFetchScope = "everything"
         }));
         Assert.Contains("取數範圍", ex.Message);
@@ -2630,7 +2641,7 @@ public class SystemSettingsServiceTests : IDisposable
     {
         var service = Create();
         var updated = service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
         });
         Assert.Equal(LogForesight.Core.Service.PrtgFetchStrategy.Aggressive, updated.PrtgFetchStrategy);
@@ -2642,12 +2653,12 @@ public class SystemSettingsServiceTests : IDisposable
     {
         var service = Create();
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
         });
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgTimeoutSeconds = 90
         });
 
@@ -2670,7 +2681,7 @@ public class SystemSettingsServiceTests : IDisposable
     {
         var service = Create();
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgFetchStrategy = "turbo"
         }));
         Assert.Contains("conservative", ex.Message);
@@ -2709,7 +2720,7 @@ public class SystemSettingsServiceTests : IDisposable
                 MailState, Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgFetchStrategy = LogForesight.Core.Service.PrtgFetchStrategy.Aggressive
         });
 
@@ -2733,7 +2744,7 @@ public class SystemSettingsServiceTests : IDisposable
 
         // 先用專屬端點設好 PRTG 連線與擷取參數
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgUrl = "https://prtg.example",
             PrtgTimeoutSeconds = 45,
             PrtgFetchConcurrency = 3,
@@ -2799,7 +2810,7 @@ public class SystemSettingsServiceTests : IDisposable
     public void UpdatePrtgSettingsRequest_PrtgFetchConcurrency_8接受_9拒絕(int concurrency, bool expectedValid)
     {
         var request = new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgFetchConcurrency = concurrency
         };
 
@@ -2838,7 +2849,7 @@ public class SystemSettingsServiceTests : IDisposable
         var service = Create();
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgSensorTypeCategoryOverrides = new List<string> { "foo=bogus" }
         }));
         Assert.Contains("foo=bogus", ex.Message);
@@ -2852,7 +2863,7 @@ public class SystemSettingsServiceTests : IDisposable
         var lines = Enumerable.Range(1, 7).Select(i => $"t{i}=bad{i}").ToList();
 
         var ex = Assert.Throws<DomainException>(() => service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgSensorTypeCategoryOverrides = lines
         }));
         Assert.Contains("t5=bad5", ex.Message);
@@ -2880,7 +2891,7 @@ public class SystemSettingsServiceTests : IDisposable
         var service = Create();
 
         var saved = service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgSensorTypeCategoryOverrides = new List<string> { "SNMP CPU Load=hardware" }
         });
 
@@ -2899,7 +2910,7 @@ public class SystemSettingsServiceTests : IDisposable
         service.Update(request);
         Assert.Equal(new[] { "Custom=disk" }, _store.Get().PrtgSensorTypeCategoryOverrides);
 
-        service.UpdatePrtg(new UpdatePrtgSettingsRequest { PrtgEnabled = false });
+        service.UpdatePrtg(new UpdatePrtgSettingsRequest { ExpectedRevision = _store.Get().Revision, PrtgEnabled = false });
         Assert.Equal(new[] { "Custom=disk" }, _store.Get().PrtgSensorTypeCategoryOverrides);
     }
 
@@ -2914,7 +2925,7 @@ public class SystemSettingsServiceTests : IDisposable
                 new MailNotifyStateStore(_fx.Blob("mail_state_cat_overrides")), Freshness, Outbox, new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()), new FakeReportUsageQuery());
 
         service.UpdatePrtg(new UpdatePrtgSettingsRequest
-        {
+        { ExpectedRevision = _store.Get().Revision,
             PrtgSensorTypeCategoryOverrides = new List<string> { "Custom=disk" }
         });
 

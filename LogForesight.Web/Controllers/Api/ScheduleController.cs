@@ -124,10 +124,11 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.DevMonitor, Capability.Maintain)]
     public ApiResponse<ScheduleStatusDto> GetStatus()
     {
+        var s = _runState.Snapshot();
         var options = _optionsStore.Get();
         var systemSettings = _settingsStore.Get();
 
-        var lastOutcome = _runState.LastOutcome;
+        var lastOutcome = s.LastOutcome;
         var prtgPendingDays = new List<string>();
         string? prtgLastIssueDate = null;
         string? prtgLastIssueOutcome = null;
@@ -135,7 +136,7 @@ public class ScheduleController : ControllerBase
         PrtgLastScheduledDayDto? prtgLastScheduledDay = null;
 
         // 單元測試以 scheduler: null! 建控制器（只測狀態欄位），與本控制器其他可省略相依同一慣例；正式 DI 一定有值
-        if (!_runState.IsRunning && _scheduler is not null)
+        if (!s.IsRunning && _scheduler is not null)
         {
             var (healthPending, healthLastIssue, healthLastScheduled) = _scheduler.PrtgRunHealth();
             if (healthLastScheduled is { } scheduled)
@@ -160,27 +161,27 @@ public class ScheduleController : ControllerBase
 
         return ApiResponse<ScheduleStatusDto>.Ok(new ScheduleStatusDto
         {
-            IsRunning = _runState.IsRunning,
-            TriggerText = TriggerText(_runState.Trigger),
-            StartedAt = _runState.StartedAt,
-            LatestMessage = _runState.LatestMessage,
-            ProgressPhase = _runState.ProgressPhase,
-            ProgressDone = _runState.ProgressDone,
-            ProgressTotal = _runState.ProgressTotal,
-            LocalProgressPhase = _runState.LocalProgressPhase,
-            LocalProgressDone = _runState.LocalProgressDone,
-            LocalProgressTotal = _runState.LocalProgressTotal,
-            PrtgProgressPhase = _runState.PrtgProgressPhase,
-            PrtgProgressDone = _runState.PrtgProgressDone,
-            PrtgProgressTotal = _runState.PrtgProgressTotal,
-            PrtgDayCount = _runState.PrtgDayCount,
-            PrtgDayIndex = _runState.PrtgDayIndex,
-            SkippedScheduleAt = _runState.SkippedScheduleAt,
-            LocalCompleted = _runState.LocalCompleted,
-            NetiqCompleted = _runState.NetiqCompleted,
-            PrtgCompleted = _runState.PrtgCompleted,
-            PausedReason = _runState.PausedReason,
-            CanStop = _runState.IsRunning,
+            IsRunning = s.IsRunning,
+            TriggerText = TriggerText(s.Trigger),
+            StartedAt = s.StartedAt,
+            LatestMessage = s.LatestMessage,
+            ProgressPhase = s.ProgressPhase,
+            ProgressDone = s.ProgressDone,
+            ProgressTotal = s.ProgressTotal,
+            LocalProgressPhase = s.LocalProgressPhase,
+            LocalProgressDone = s.LocalProgressDone,
+            LocalProgressTotal = s.LocalProgressTotal,
+            PrtgProgressPhase = s.PrtgProgressPhase,
+            PrtgProgressDone = s.PrtgProgressDone,
+            PrtgProgressTotal = s.PrtgProgressTotal,
+            PrtgDayCount = s.PrtgDayCount,
+            PrtgDayIndex = s.PrtgDayIndex,
+            SkippedScheduleAt = s.SkippedScheduleAt,
+            LocalCompleted = s.LocalCompleted,
+            NetiqCompleted = s.NetiqCompleted,
+            PrtgCompleted = s.PrtgCompleted,
+            PausedReason = s.PausedReason,
+            CanStop = s.IsRunning,
             ScheduleEnabled = options.Enabled,
             NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
             PrtgEnabled = systemSettings.PrtgEnabled,
@@ -240,7 +241,7 @@ public class ScheduleController : ControllerBase
             {
                 var latestAttempts = NetiqSourceAttempt.ReadLatest(_storageBackend, from, to);
                 if (latestAttempts.Values.Any(attempt => attempt.Status == "unknown"))
-                    return ApiResponse<RunPreviewDto>.Fail("netiq_attempt_ledger_invalid",
+                    return ApiResponse<RunPreviewDto>.Fail(ApiErrorCodes.NetiqAttemptLedgerInvalid,
                         "NetIQ 最近執行狀態資料不完整，無法準確預覽補跑範圍；請先檢查執行狀態或聯絡管理員。");
 
                 retryAttemptHostIds = latestAttempts.Values
@@ -250,7 +251,7 @@ public class ScheduleController : ControllerBase
             }
             catch (InvalidDataException)
             {
-                return ApiResponse<RunPreviewDto>.Fail("netiq_attempt_ledger_invalid",
+                return ApiResponse<RunPreviewDto>.Fail(ApiErrorCodes.NetiqAttemptLedgerInvalid,
                     "NetIQ 最近執行狀態資料損毀或超出可檢查範圍，無法準確預覽補跑範圍；請檢查執行狀態或聯絡管理員。");
             }
         }
@@ -480,7 +481,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>觸發者文字：與 /api/run-activity 共用同一份判定（回饋四十五輪批次A3）</summary>
     private string TriggerText(string? trigger) =>
-        RunTriggerText.Of(trigger, _userDisplayNames, _users);
+        trigger is null ? "閒置" : RunTriggerText.Of(trigger, _userDisplayNames, _users);
 
     private static string RerunModeText(RerunMode mode) => mode switch
     {
@@ -503,7 +504,7 @@ public class ScheduleController : ControllerBase
         return ApiResponse<AiScheduleStatusDto>.Ok(new AiScheduleStatusDto
         {
             IsRunning = snapshot.IsRunning,
-            TriggerText = snapshot.Trigger != null ? TriggerText(snapshot.Trigger) : "閒置",
+            TriggerText = TriggerText(snapshot.Trigger),
             StartedAt = snapshot.StartedAt,
             CompletedAt = snapshot.CompletedAt,
             LatestMessage = snapshot.LatestMessage,

@@ -350,7 +350,6 @@ public sealed class IssueMuteTests : IDisposable
 
         public List<IssueProfile> GetAll() => _inner.GetAll();
         public IssueProfile? Get(string source, int eventId) => _frozen;
-        public IssueProfile Upsert(IssueProfile rule) => _inner.Upsert(rule);
         public IssueProfile Update(string source, int eventId, Action<IssueProfile> apply) => _inner.Update(source, eventId, apply);
         public void Delete(string source, int eventId) => _inner.Delete(source, eventId);
     }

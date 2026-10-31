@@ -48,7 +48,7 @@ public class MigrationGateMiddleware
                 {
                     context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
                     await context.Response.WriteAsJsonAsync(
-                        ApiResponse<object>.Fail(ApiErrorCodes.Conflict, DescribePermissionChangeState(permState)));
+                        ApiResponse<object>.Fail(ApiErrorCodes.ServiceUnavailable, DescribePermissionChangeState(permState)));
                     return;
                 }
             }
@@ -59,7 +59,7 @@ public class MigrationGateMiddleware
                 {
                     context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
                     await context.Response.WriteAsJsonAsync(
-                        ApiResponse<object>.Fail(ApiErrorCodes.Conflict, DescribeState(state)));
+                        ApiResponse<object>.Fail(ApiErrorCodes.ServiceUnavailable, DescribeState(state)));
                     return;
                 }
             }

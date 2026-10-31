@@ -360,7 +360,7 @@ public class PermissionChangeMigrationTests : IDisposable
         contextPost.Response.Body.Position = 0;
         using var docPost = JsonDocument.Parse(contextPost.Response.Body);
         Assert.False(docPost.RootElement.GetProperty("success").GetBoolean());
-        Assert.Equal(ApiErrorCodes.Conflict, docPost.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(ApiErrorCodes.ServiceUnavailable, docPost.RootElement.GetProperty("error").GetProperty("code").GetString());
         Assert.Contains("權限異動", docPost.RootElement.GetProperty("error").GetProperty("message").GetString());
 
         // 2. GET /api/permission-changes 應放行

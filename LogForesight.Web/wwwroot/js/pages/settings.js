@@ -7,7 +7,7 @@ import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
-    guardLoad, renderSpinner, renderEmpty, renderError
+    guardLoad, renderSpinner, renderEmpty, renderError, renderUpdatedAt
 } from '../core/ui.js';
 import {
     formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
@@ -92,7 +92,7 @@ function applySettings(settings) {
     renderMailFields(settings);
     renderBrandFields(settings);
     loadGuardFields(settings);
-    renderUpdatedAt(settings);
+    renderUpdatedAt(document.getElementById('settings-updated'), settings);
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -404,7 +404,7 @@ function renderAiFields(settings) {
     document.getElementById('ai-base-url').value = settings.aiBaseUrl ?? '';
     document.getElementById('ai-model').value = settings.aiModel ?? '';
     document.getElementById('ai-azure-deployment').value = settings.aiAzureDeployment ?? '';
-    document.getElementById('ai-azure-api-version').value = settings.aiAzureApiVersion || '2024-10-21';
+    document.getElementById('ai-azure-api-version').value = settings.aiAzureApiVersion || document.getElementById('ai-azure-api-version').dataset.default || '';
     updateAiProviderFields(provider);
 
     const apiKeyInput = document.getElementById('ai-api-key');
@@ -819,7 +819,17 @@ function renderFreshness(freshness) {
     }
 }
 
-/** 郵件貢獻帳本提示：佔用達上限 90% 或有最近一次滿載紀錄才回字串，否則回 null（不顯示） */
+/** 郵件貢獻帳本佔用分項：五項各附一句白話說明，缺欄位（舊版回應）以 0 計 */
+function mailLedgerBreakdown(ledger) {
+    const n = (v) => formatNumber(v ?? 0);
+    return `佔用分項：已寄收據 ${n(ledger.acceptedKeys)}（已被郵件伺服器接受、用來避免重複寄送）`
+        + `；舊格式保留 ${n(ledger.heldKeys)}（舊版寄送紀錄換算而來的保留項目）`
+        + `；已預約 ${n(ledger.reservedKeys)}（準備寄送、尚未開始）`
+        + `；寄送中 ${n(ledger.attemptedKeys)}（已開始寄送、等待結果）`
+        + `；結果不確定 ${n(ledger.unknownKeys)}（寄送結果不確定、為避免重複寄送而保留的項目）`;
+}
+
+/** 郵件貢獻帳本提示：佔用達上限 90% 或有最近一次滿載紀錄才回字串（附五項佔用分項），否則回 null（不顯示） */
 function mailLedgerNotice(ledger) {
     if (!ledger) return null;
     const occupied = ledger.occupiedKeys ?? 0;
@@ -829,9 +839,9 @@ function mailLedgerNotice(ledger) {
     const count = `${formatNumber(occupied)}／上限 ${formatNumber(limit)}`;
     if (ledger.lastFullAtUtc) {
         const head = occupied >= limit ? '郵件貢獻帳本已滿' : '郵件貢獻帳本曾滿載';
-        return `${head}（${count}）：最近一次於 ${formatDateTime(ledger.lastFullAtUtc)} 略過收件人 ${ledger.lastFullRecipient ?? '（未知）'}，該收件人本輪不寄`;
+        return `${head}（${count}）：最近一次於 ${formatDateTime(ledger.lastFullAtUtc)} 略過收件人 ${ledger.lastFullRecipient ?? '（未知）'}，該收件人本輪不寄。${mailLedgerBreakdown(ledger)}`;
     }
-    return `郵件貢獻帳本接近上限（${count}）：滿載後新內容無法記帳，該收件人本輪不寄`;
+    return `郵件貢獻帳本接近上限（${count}）：滿載後新內容無法記帳，該收件人本輪不寄。${mailLedgerBreakdown(ledger)}`;
 }
 
 /** 背景工作：分析、回填、兩項遷移、首見日合併、暫停的郵件收件人（兩欄表） */
@@ -1092,16 +1102,6 @@ function bindBrandIcon() {
         fileInput.value = '';
         toast('已還原預設外觀，按「儲存」後才會生效。', 'info');
     });
-}
-
-function renderUpdatedAt(settings) {
-    const el = document.getElementById('settings-updated');
-    if (!settings.updatedAt) {
-        el.textContent = '尚未有人更新過（目前為系統預設值）。';
-        return;
-    }
-    el.textContent = `最後更新：${formatDateTime(settings.updatedAt)}` +
-        (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
 }
 
 function collectSeverities() {

@@ -601,7 +601,6 @@ public class PrtgFindingsRegistryTests : IDisposable
         // 模擬補追加路徑先走（同 PrtgDailyPipeline 的呼叫形狀）
         Assert.True(registry.AttachExclusive(101, DateTime.Today,
             () => store.AttachPrtgFindings(101, DateTime.Today, findings[101], NoPatternIds, out _, aiConfigured: true)));
-        Assert.True(registry.WasAttached(101, DateTime.Today));
 
         // 寫入路徑隨後對「未含 finding 的記憶體紀錄」呼叫
         var added = HostDayPostProcessor.AttachPrtgFindings(registry, store, record, 101, aiConfigured: true);
@@ -613,16 +612,11 @@ public class PrtgFindingsRegistryTests : IDisposable
     }
 
     [Fact]
-    public void AttachExclusive_只在真的寫入時標記已追加()
+    public void AttachExclusive_原樣回傳追加動作的結果()
     {
         var registry = new PrtgFindingsRegistry();
         Assert.False(registry.AttachExclusive(101, DateTime.Today, () => false));
-        Assert.False(registry.WasAttached(101, DateTime.Today));
-
         Assert.True(registry.AttachExclusive(101, DateTime.Today, () => true));
-        Assert.True(registry.WasAttached(101, DateTime.Today));
-        Assert.False(registry.WasAttached(101, DateTime.Today.AddDays(-1)));
-        Assert.False(registry.WasAttached(102, DateTime.Today));
     }
 
     // ── 跨來源佐證（PrtgCorroboration）──────────────────────────────────────

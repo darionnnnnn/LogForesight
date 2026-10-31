@@ -17,7 +17,7 @@ import { api, getDisplaySettings } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { kpiStrip, toast, guardLoad, renderLoading } from '../core/ui.js';
 import {
-    formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER,
+    formatNumber, categoryName, severityName, SEVERITY_ORDER,
     issueBaselineText, toLocalDateString
 } from '../core/format.js';
 import * as charts from '../core/charts.js';
@@ -419,7 +419,7 @@ function renderCategoryChart() {
     chartInstances.category?.destroy();
     chartInstances.category = charts.bar(document.getElementById('category-chart'), {
         data: {
-            labels: categories.map(c => CATEGORY_NAMES[c.category] ?? c.category),
+            labels: categories.map(c => categoryName(c.category)),
             datasets: severityKeys.map(s => ({
                 label: severityName(s.severity),
                 data: categories.map(c => c[s.key]),
@@ -449,7 +449,7 @@ function renderCategoryChart() {
         // 問題數＝去重風險資訊筆數（回饋十九輪批次D），高/中/低三欄依此口徑分桶、三者之和＝問題數
         tableColumns: ['類型', '高', '中', '低', '問題數', '期間累計', '主機數'],
         tableRows: categories.map(c => [
-            CATEGORY_NAMES[c.category] ?? c.category,
+            categoryName(c.category),
             c.highCount, c.mediumCount, c.lowCount, c.riskItemCount, c.cumulativeCount, c.affectedHosts
         ])
     });
@@ -600,7 +600,7 @@ function renderIssueRankChart() {
     });
 
     const tableRows = issues.map(i => [
-        `${i.source} (${i.eventId})`, i.priorityScore.toFixed(0), CATEGORY_NAMES[i.category] ?? i.category,
+        `${i.source} (${i.eventId})`, i.priorityScore.toFixed(0), categoryName(i.category),
         severityName(i.maxSeverity), i.hostCount, i.dayCount, i.totalCount,
         issueBaselineText(i), i.fleetFirstSeen || i.firstSeen
     ]);

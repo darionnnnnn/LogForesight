@@ -90,10 +90,10 @@ public static class NetiqHostList
     public static bool IsValidIp(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return false;
-        if (!IPAddress.TryParse(value.Trim(), out var parsed)) return false;
+        var trimmed = value.Trim();
+        if (!trimmed.Contains(':')) return IpSyntax.IsStrictIpv4(trimmed);
 
-        return parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork ||
-               value.Trim().Count(c => c == '.') == 3;
+        return IPAddress.TryParse(trimmed, out _);
     }
 
     /// <summary>

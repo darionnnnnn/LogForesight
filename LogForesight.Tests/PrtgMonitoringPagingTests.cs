@@ -130,7 +130,7 @@ public sealed class PrtgMonitoringPagingTests : IDisposable
 
     private PrtgMonitoringController Controller() => new(_backend, _hosts,
         new Visible(Enumerable.Range(1, HostCount).Select(id => (long)id).ToArray()),
-        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, new DataVersionStamp(), _protection);
+        FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _protection);
 
     private static JsonElement Data(IActionResult result)
     {

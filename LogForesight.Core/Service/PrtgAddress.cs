@@ -1,4 +1,4 @@
-using System.Net;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -9,8 +9,9 @@ public static class PrtgAddress
 {
     /// <summary>
     /// 將位址字串正規化為純 IP 表示。去除 scheme、路徑、port，
-    /// 再透過 <see cref="IPAddress.TryParse"/> 消除前導零與大小寫差異。
-    /// 若輸入不是合法 IP 則回傳 null。
+    /// 再透過 <see cref="IpSyntax.TryParse"/> 消除前導零與大小寫差異。
+    /// 若輸入不是合法 IP 則回傳 null。刻意拒絕簡寫（"10.1"、"12345"、"0x7f.1"）：
+    /// 這些是 PRTG device 的短名稱，被當成 IP 會錯對應到別台主機，應交給名稱退路處理。
     /// </summary>
     public static string? Normalize(string? value)
     {
@@ -26,9 +27,9 @@ public static class PrtgAddress
             s = string.Join('.', parts);
         }
 
-        // 透過 IPAddress.TryParse 正規化
-        if (IPAddress.TryParse(s, out var parsed))
-            return parsed.ToString();
+        // 透過 IpSyntax.TryParse 正規化（只收完整四段 IPv4 與 IPv6）
+        if (IpSyntax.TryParse(s, out var parsed))
+            return parsed!.ToString();
 
         return null;
     }

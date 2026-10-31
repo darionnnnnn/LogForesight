@@ -9,8 +9,8 @@
 
 import { api } from '../core/api.js';
 import {
-    renderTable, buildKeyValueTable, renderLoading, renderPagination, loadPageSize, savePageSize,
-    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader
+    renderTable, buildKeyValueTable, renderLoading, renderPager, loadPageSize,
+    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader, createPageSelection
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openReportModal } from '../core/report-view.js';
@@ -55,8 +55,16 @@ let searchDebounce = null;
 const selectedCategories = new Set();
 const knownCategories = new Map(); // categoryKey -> categoryLabel
 
-const selectedChanges = new Map(); // changeId -> change object
-let headerCheckboxEl = null;
+const selection = createPageSelection({
+    keyOf: change => change.changeId,
+    // 勾選框只出現在 status 為 pending 的列（已確認的不能改回）
+    isSelectable: change => change.status === 'pending',
+    getPageItems: () => lastResult?.items || [],
+    labels: { row: '選取此項目', all: '全選本頁待確認項目' },
+    bar: { barId: 'perm-selection-bar', countId: 'perm-selection-count', unit: '筆' },
+    onSelectAll: () => render()
+});
+const selectedChanges = selection.selected; // changeId -> change object
 let batchTargetStatus = 'authorized';
 
 /**
@@ -87,7 +95,7 @@ document.getElementById('perm-tabs').addEventListener('click', event => {
     // 切換頁籤要清空選取：勾選框只在「待確認」的列出現，切走之後那些選取項目
     // 使用者已經看不見，送出時後端會以「已被其他使用者處理過」回絕，
     // 那個理由與實情不符，會把排查帶往錯誤方向。
-    selectedChanges.clear();
+    selection.clear();
     currentPage = 1;
     reload();
 });
@@ -365,8 +373,8 @@ function render() {
             {
                 title: '',
                 className: 'lf-checkbox-cell',
-                renderHeader: selectAllHeaderCheckbox,
-                render: rowCheckboxCell
+                renderHeader: selection.selectAllHeaderCheckbox,
+                render: selection.rowCheckboxCell
             },
             {
                 key: 'hostName',
@@ -396,7 +404,7 @@ function render() {
                 title: '狀態',
                 sortKey: 'status',
                 sortDefaultDir: 'asc',
-                render: row => statusBadge(row.status)
+                render: row => permStatusBadge(row.status)
             }
         ],
         rows: lastResult.items,
@@ -415,74 +423,11 @@ function render() {
         }
     });
 
-    renderPager();
-    renderSelectionBar();
-}
-
-/** 勾選框只出現在 status 為 pending 的列（已確認的不能改回） */
-function isSelectable(change) {
-    return change.status === 'pending';
-}
-
-function rowCheckboxCell(change) {
-    if (!isSelectable(change)) return document.createTextNode('');
-
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'form-check-input';
-    check.checked = selectedChanges.has(change.changeId);
-    check.title = '選取此項目';
-
-    check.addEventListener('click', event => event.stopPropagation());
-    check.addEventListener('change', () => {
-        if (check.checked) selectedChanges.set(change.changeId, change);
-        else selectedChanges.delete(change.changeId);
-        renderSelectionBar();
-        syncSelectAllHeaderCheckbox();
+    renderPager('perm-pager', lastResult, {
+        pageSizeKey: 'permissionChanges',
+        onPage: (page, size) => { currentPage = page; pageSize = size; reload(); }
     });
-
-    return check;
-}
-
-/** 表頭全選：只作用在目前這一頁可勾選的列 */
-function selectAllHeaderCheckbox() {
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'form-check-input';
-    check.title = '全選本頁待確認項目';
-
-    check.addEventListener('click', event => event.stopPropagation());
-    check.addEventListener('change', () => {
-        const selectable = (lastResult?.items || []).filter(isSelectable);
-        if (check.checked) {
-            for (const change of selectable) selectedChanges.set(change.changeId, change);
-        } else {
-            for (const change of selectable) selectedChanges.delete(change.changeId);
-        }
-        render();
-    });
-
-    headerCheckboxEl = check;
-    syncSelectAllHeaderCheckbox();
-    return check;
-}
-
-/** 本頁可勾選列是否已全部勾選，維持三態同步 */
-function syncSelectAllHeaderCheckbox() {
-    if (!headerCheckboxEl) return;
-    const selectable = (lastResult?.items || []).filter(isSelectable);
-    headerCheckboxEl.checked = selectable.length > 0 && selectable.every(c => selectedChanges.has(c.changeId));
-    headerCheckboxEl.indeterminate = !headerCheckboxEl.checked && selectable.some(c => selectedChanges.has(c.changeId));
-}
-
-function renderSelectionBar() {
-    const bar = document.getElementById('perm-selection-bar');
-    if (!bar) return;
-    bar.classList.toggle('d-none', selectedChanges.size === 0);
-    const countEl = document.getElementById('perm-selection-count');
-    if (countEl) {
-        countEl.textContent = `已選 ${selectedChanges.size} 筆`;
-    }
+    selection.renderBar();
 }
 
 function hostCell(row) {
@@ -559,7 +504,7 @@ function summaryCell(row) {
     return div;
 }
 
-function statusBadge(status) {
+function permStatusBadge(status) {
     const meta = {
         pending: { text: '待確認', variant: 'warning' },
         authorized: { text: '已確認授權', variant: 'success' },
@@ -997,26 +942,6 @@ function dayReportLink(change) {
     return area;
 }
 
-function renderPager() {
-    const totalPages = Math.ceil(lastResult.total / lastResult.pageSize);
-    renderPagination(document.getElementById('perm-pager'), {
-        page: lastResult.page,
-        totalPages,
-        onPage: page => {
-            currentPage = page;
-            reload();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        },
-        pageSize,
-        onPageSize: size => {
-            pageSize = size;
-            savePageSize('permissionChanges', size);
-            currentPage = 1;
-            reload();
-        }
-    });
-}
-
 function updateExpandButtonState() {
     const btn = document.getElementById('btn-toggle-expand');
     if (!btn) return;
@@ -1245,7 +1170,7 @@ if (batchConfirmForm) {
                 toast(`已處理 ${result.updatedCount} 筆`, 'success');
             }
 
-            selectedChanges.clear();
+            selection.clear();
             batchConfirmModal.hide();
             await reload();
         } catch {
@@ -1263,7 +1188,7 @@ function resetFilters() {
     if (fromInput) fromInput.value = '';
     if (toInput) toInput.value = '';
     selectedCategories.clear();
-    selectedChanges.clear();   // 篩選換了，先前選取的項目多半已不在結果內
+    selection.clear();   // 篩選換了，先前選取的項目多半已不在結果內
     clearSubnetError();
     renderCategoryChips();
     try {
@@ -1341,7 +1266,7 @@ document.getElementById('btn-batch-suspicious')
     ?.addEventListener('click', () => openBatchConfirmModal('suspicious'));
 document.getElementById('btn-clear-selection')
     ?.addEventListener('click', () => {
-        selectedChanges.clear();
+        selection.clear();
         render();
     });
 

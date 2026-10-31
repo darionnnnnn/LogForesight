@@ -7,7 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, showDetailModal } from '../core/ui.js';
+import { toast, withBusy, showDetailModal, loadRunHint } from '../core/ui.js';
 import { severityName } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
@@ -38,22 +38,7 @@ export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
     renderIssueOptions(topIssues);
     resetConversation();
     bindEvents();
-    loadRunHint();
-}
-
-/**
- * 分析執行中提示（回饋十六輪批次D-1）：AI 對話與批次分析共用同一個地端模型的序列請求佇列
- * （見 README 的「本機推論同時處理多個請求會互搶 GPU 資源」），執行中時回應會明顯變慢——
- * 面板顯示當下查一次，不輪詢（分析動輒數小時，多輪詢不會讓提示更準確，只是白發請求）。
- */
-async function loadRunHint() {
-    const hint = document.getElementById('chat-run-hint');
-    try {
-        const activity = await api.get('/api/run-activity', { silent: true });
-        hint.classList.toggle('d-none', !activity?.isRunning);
-    } catch {
-        hint.classList.add('d-none');
-    }
+    loadRunHint(document.getElementById('chat-run-hint'));
 }
 
 /**
@@ -222,9 +207,10 @@ async function onSubmit(event) {
         } else {
             messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
         }
-    } catch {
+    } catch (err) {
         if (requestGeneration !== generation) return;
-        messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
+        const content = err?.status === 429 ? err.message : 'AI 目前忙碌或無法回應，稍後再試。';
+        messages.push({ role: 'assistant', content, failed: true });
     } finally {
         // 只在對話仍是自己發起的那一個時收尾；已被重設的對話，重設時就把畫面狀態處理好了——
         // 此時新對話可能正在等待自己的回覆，舊請求不得把送出鈕或輸入框重新開啟

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Configuration;
 using LogForesight.Core.Models;
 
 namespace LogForesight.Web.Models.Dto;
@@ -29,7 +30,7 @@ public class SystemSettingsDto
     public string AiBaseUrl { get; set; } = "";
     public string AiModel { get; set; } = "local-model";
     public string AiAzureDeployment { get; set; } = "";
-    public string AiAzureApiVersion { get; set; } = "2024-10-21";
+    public string AiAzureApiVersion { get; set; } = AiProviders.DefaultAzureApiVersion;
 
     /// <summary>API 金鑰是否已設定；金鑰本身 write-only，絕不回傳明碼或密文</summary>
     public bool AiHasApiKey { get; set; }

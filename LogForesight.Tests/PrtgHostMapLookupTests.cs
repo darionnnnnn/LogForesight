@@ -61,6 +61,13 @@ public sealed class PrtgHostMapLookupTests
     }
 
     [Fact]
+    public void 最近一次對應的回看天數是30_與逐日沿用的31分開()
+    {
+        Assert.Equal(30, PrtgHostMapLookup.LatestLookbackDays);
+        Assert.NotEqual(PrtgHostMapLookup.LookbackDays, PrtgHostMapLookup.LatestLookbackDays);
+    }
+
+    [Fact]
     public void 兩個回看天數常數引用同一個值()
     {
         Assert.Equal(PrtgHostMapLookup.LookbackDays, PrtgValueAssessment.MapLookbackDays);

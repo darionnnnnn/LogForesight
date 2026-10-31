@@ -725,12 +725,12 @@ public class RecordListQueryService
     /// 依問題／依主機／依日期視角重新冒出來。null＝DefaultHidden 模式，不限制。
     /// </summary>
     private IReadOnlySet<IssueSeverity>? ResolveVisibleSeverities() =>
-        RecordRepository.ParseVisibleSeverities(_settingsService.GetVisibleSeverities());
+        RecordRepository.ResolveVisibility(null, _settingsService.GetVisibleSeverities()).Severities;
 
     /// <summary>全站「日風險等級顯示」設定允許的等級（母體限制，與畫面 chip 無關）。
     /// 依問題視角用它當 universe，才會與儀表板風險類型卡是同一批主機日。</summary>
     private IReadOnlySet<string>? ResolveVisibleDayRiskLevels() =>
-        RecordRepository.ResolveDayRiskLevels(_settingsService.GetVisibleDayRiskLevels(), null);
+        RecordRepository.ResolveVisibility(_settingsService.GetVisibleDayRiskLevels(), null).RiskLevels;
 
     /// <summary>
     /// 依問題視角的後段篩選述詞（主清單與靜音清單共用，回饋第 47 輪 G-2a）。

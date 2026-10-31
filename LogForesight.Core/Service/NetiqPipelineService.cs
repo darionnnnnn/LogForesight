@@ -321,7 +321,7 @@ public class NetiqPipelineService
     {
         // 位址不是合法 IPv4 的主機不進查詢：壞值會被原樣插進 Lucene，讓同批其他主機一起被 Sentinel 拒絕。
         // 在計畫階段就濾掉，所以它們不進進度分母（HostDaysTotal 只累加計畫內的缺漏日），進度仍能到 100%。
-        var unqueryable = targets.Where(t => !SentinelQueryBuilder.IsValidIpv4(t.IpAddress)).ToList();
+        var unqueryable = targets.Where(t => !IpSyntax.IsStrictIpv4(t.IpAddress)).ToList();
         foreach (var t in unqueryable)
         {
             _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
@@ -584,9 +584,9 @@ public class NetiqPipelineService
         }
 
         var totalSkipped = 0;
-        // 同一批裡可能有兩台主機登錄同一個 IP（NetIQ 主機以 IP 登錄，重複登錄並非不可能）。
-        // 用剩餘台數決定何時可以把桶子丟掉——只剩最後一台在用時才移除，
-        // 否則第二台會拿到空事件、整天被當成「來源未回報」（終檢抓到）。
+        // 防禦性：目標清單來自 NetiqHostList.Pollable，已依 IP 去重，正式路徑不會有同 IP 兩台；
+        // 若日後有繞過 Pollable 的目標來源，這道閘門避免第二台拿到空事件被誤判未回報。
+        // 用剩餘台數決定何時可以把桶子丟掉——只剩最後一台在用時才移除。
         var plansPerIp = batch
             .GroupBy(p => p.Target.IpAddress, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);

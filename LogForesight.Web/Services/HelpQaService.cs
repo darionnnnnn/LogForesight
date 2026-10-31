@@ -46,7 +46,7 @@ public class HelpQaService
     /// 任何失敗（未設定、選不到節仍呼叫失敗、AI 逾時）一律回 null，比照 AiController 既有慣例，
     /// 呼叫端顯示「AI 服務暫時無法回應，可先查閱下方章節」。
     /// </summary>
-    public async Task<AskHelpResponseDto?> AskAsync(string question)
+    public async Task<AskHelpResponseDto?> AskAsync(string question, Func<bool>? beforeCall = null)
     {
         var trimmed = (question ?? "").Trim();
         if (trimmed.Length == 0) throw DomainException.Validation("請輸入問題。");
@@ -57,6 +57,8 @@ public class HelpQaService
         var visibleChapters = _content.GetVisibleChapters(_currentUser.Capabilities);
         var selected = HelpChapterScorer.SelectChapters(trimmed, visibleChapters, ContentTokenBudget);
         var userPrompt = BuildUserPrompt(trimmed, selected);
+
+        if (beforeCall != null && !beforeCall()) return null;
 
         var answer = await _ai.ChatOnceAsync(SystemPrompt, userPrompt);
         if (string.IsNullOrWhiteSpace(answer)) return null;

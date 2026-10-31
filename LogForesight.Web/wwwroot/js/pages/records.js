@@ -14,14 +14,14 @@
 import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
-    renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
+    renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, renderPager, withBusy, renderChips,
+    loadPageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
     headerWithHelp, icon, bindPastDateCheck
 } from '../core/ui.js';
 import { statusesWhere } from '../core/handling-statuses.js';
 import {
-    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, CATEGORY_ORDER, severityName, formatNumber,
-    formatUserName, toLocalDateString, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
+    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
+    formatUserName, toLocalDateString, analysisAnchorLocal, isAiRetryPending, issueBaselineCell, severityCell, issueDensityCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -126,8 +126,17 @@ async function initAiSummary() {
             // AI 產出走 markdown-lite 唯一渲染出口（S7）：DOM 組裝、不解析 HTML
             renderAiText(box, result.text, { badge: 'AI 歸納', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
             area.appendChild(box);
-        } catch {
-            // 靜默
+        } catch (err) {
+            // 一般失敗靜默；被每人節流擋下時說明稍後再試
+            if (err?.status === 429) {
+                area.replaceChildren();
+                const note = document.createElement('div');
+                note.className = 'text-muted small';
+                note.textContent = err.retryAfterSeconds
+                    ? `AI 暫時休息，約 ${err.retryAfterSeconds} 秒後再試。`
+                    : 'AI 暫時休息，請稍後再試。';
+                area.appendChild(note);
+            }
         } finally {
             restore();
         }
@@ -329,13 +338,28 @@ function activeChips(containerId, attr) {
         .map(btn => btn.dataset[attr]);
 }
 
+/**
+ * 各視角支援哪些處理狀態類篩選條件。對應後端 `RecordQuerySupport`（Models/Dto/RecordQuery.cs）的支援矩陣，
+ * 兩邊一起改：不支援的條件後端會直接忽略，前端不送也不顯示標籤，免得畫面宣稱篩選生效卻沒作用。
+ */
+const VIEW_FILTER_SUPPORT = {
+    detail: ['statuses', 'overdue', 'unassigned'],
+    issue: ['statuses', 'unassigned'],
+    host: [],
+    date: []
+};
+
+function viewSupports(view, filterKey) {
+    return (VIEW_FILTER_SUPPORT[view] ?? []).includes(filterKey);
+}
+
 function setActiveView(view) {
     for (const btn of document.querySelectorAll('#view-toggle [data-view]')) {
         btn.classList.toggle('active', btn.dataset.view === view);
     }
 
     // 明細與依問題視角支援處理狀態篩選（§10：依問題篩的是「處理概況」三態）；依主機／依日期不支援
-    const supportsStatus = view === 'detail' || view === 'issue';
+    const supportsStatus = viewSupports(view, 'statuses');
     for (const btn of document.querySelectorAll('#filter-status-chips button')) {
         btn.disabled = !supportsStatus;
         btn.title = supportsStatus
@@ -347,7 +371,10 @@ function setActiveView(view) {
 
     // 未指派 chip 僅「依問題」視角顯示（§10）：問題角度的分派入口
     document.getElementById('filter-unassigned-group').classList.toggle('d-none', view !== 'issue');
-    if (view !== 'issue') document.getElementById('filter-unassigned-chip').classList.remove('active');
+    const unassignedChip = document.getElementById('filter-unassigned-chip');
+    if (view !== 'issue') unassignedChip.classList.remove('active');
+    // 切回支援的視角時依 URL 恢復（篩選值保留在 URL，不因經過不支援的視角而清掉）
+    else if (new URLSearchParams(location.search).get('unassigned') === 'true') unassignedChip.classList.add('active');
 }
 
 function collectFilters() {
@@ -375,7 +402,12 @@ function collectFilters() {
     };
 }
 
-function buildQueryString(filters, page) {
+/**
+ * @param keepUnsupported true＝連目前視角不支援的條件也寫入（同步網址用，讓切回支援的視角時能恢復）；
+ *   預設 false＝只含 API 會處理的條件（送出查詢用）
+ */
+function buildQueryString(filters, page, { keepUnsupported = false } = {}) {
+    const sends = key => keepUnsupported || viewSupports(currentView, key);
     const params = new URLSearchParams();
     if (filters.hostIds.length) params.set('hostIds', filters.hostIds.join(','));
     if (filters.groupIds.length) params.set('groupIds', filters.groupIds.join(','));
@@ -386,9 +418,9 @@ function buildQueryString(filters, page) {
     if (filters.to) params.set('to', filters.to);
     if (filters.eventId) params.set('eventId', filters.eventId);
     if (filters.severity) params.set('severity', filters.severity);
-    if (filters.statuses) params.set('statuses', filters.statuses);
-    if (filters.overdue) params.set('overdue', filters.overdue);
-    if (filters.unassigned) params.set('unassigned', 'true');
+    if (filters.statuses && sends('statuses')) params.set('statuses', filters.statuses);
+    if (filters.overdue && sends('overdue')) params.set('overdue', filters.overdue);
+    if (filters.unassigned && sends('unassigned')) params.set('unassigned', 'true');
     if (filters.source) params.set('source', filters.source);
     if (currentView !== 'detail') params.set('view', currentView);
     if (sort.key) {
@@ -402,7 +434,6 @@ function buildQueryString(filters, page) {
     return params.toString();
 }
 
-/** 明細視角才支援處理狀態／逾期篩選；彙總視角不帶這兩個參數 */
 const ENDPOINT = {
     detail: '/api/records', host: '/api/records/by-host', date: '/api/records/by-date',
     issue: '/api/records/by-issue'
@@ -417,8 +448,10 @@ async function search() {
     const filters = collectFilters();
     const query = buildQueryString(filters, currentPage);
 
-    // 同步網址：可直接複製分享，重新整理回到同一個結果與同一個視角
-    history.replaceState(null, '', query ? `?${query}` : location.pathname);
+    // 同步網址：可直接複製分享，重新整理回到同一個結果與同一個視角；
+    // 目前視角不支援的條件仍保留在網址（只是不送給 API），切回支援的視角時自動恢復
+    const urlQuery = buildQueryString(filters, currentPage, { keepUnsupported: true });
+    history.replaceState(null, '', urlQuery ? `?${urlQuery}` : location.pathname);
 
     renderActiveConditions(filters);
     document.getElementById('ai-summary').replaceChildren();   // 篩選變了，舊的 AI 歸納作廢
@@ -451,13 +484,22 @@ function renderActiveConditions(filters) {
 
     const tags = [];
     if (filters.severity) tags.push({ label: `嚴重度：${severityName(filters.severity)}`, param: 'severity' });
-    if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
-    // 未指派在非 issue 視角沒有 chip 可解除（§5 報表下鑽帶入）——顯性化成可移除標籤
-    if (filters.unassigned && currentView !== 'issue') tags.push({ label: '僅未指派', param: 'unassigned' });
+    // 目前視角不支援的條件不顯示標籤（後端會忽略），改在列尾一句話說明被略過了什麼
+    const skipped = [];
+    if (filters.overdue === 'true') {
+        if (viewSupports(currentView, 'overdue')) tags.push({ label: '只看逾期', param: 'overdue' });
+        else skipped.push('只看逾期');
+    }
+    if (filters.unassigned) {
+        // 未指派在非 issue 視角沒有 chip 可解除（§5 報表下鑽帶入）——顯性化成可移除標籤
+        if (!viewSupports(currentView, 'unassigned')) skipped.push('僅未指派');
+        else if (currentView !== 'issue') tags.push({ label: '僅未指派', param: 'unassigned' });
+    }
+    if (filters.statuses && !viewSupports(currentView, 'statuses')) skipped.push('處理狀態');
     // 來源（§4 起）已是可見表單欄位，不再作為可移除條件標籤——清空欄位即可
 
     // 空白時整列連同上邊界一起隱藏，不留一條沒東西的空行
-    container.classList.toggle('d-none', tags.length === 0);
+    container.classList.toggle('d-none', tags.length === 0 && skipped.length === 0);
 
     for (const tag of tags) {
         const chip = document.createElement('span');
@@ -481,6 +523,14 @@ function renderActiveConditions(filters) {
         });
         chip.appendChild(remove);
         container.appendChild(chip);
+    }
+
+    if (skipped.length) {
+        const hint = document.createElement('span');
+        hint.className = 'small text-muted';
+        hint.setAttribute('data-role', 'unsupported-filters-hint');
+        hint.textContent = `目前的檢視不支援：${skipped.join('、')}（切回明細可套用）`;
+        container.appendChild(hint);
     }
 }
 
@@ -515,7 +565,10 @@ function render() {
     else if (currentView === 'issue') renderIssueView();
     else renderDetailView();
 
-    renderPager();
+    renderPager('pager', lastResult, {
+        pageSizeKey: 'records',
+        onPage: (page, size) => { currentPage = page; pageSize = size; search(); }
+    });
 }
 
 // ── 明細視角 ─────────────────────────────────────────────────────────────────
@@ -718,8 +771,8 @@ function renderIssueView() {
     // 這是天天都有的背景值、還是近三天才冒出來的新問題。
     const columns = [
         { title: '問題', className: 'lf-issue-col', render: i => issueGroupCell(i) },
-        { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
-        { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
+        { title: '分類', render: i => categoryName(i.category) },
+        { title: '嚴重度', sortKey: 'severity', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
         {
             title: '主機數 / 主機日',
             // 兩個數字上下兩行（回饋二十六輪 E1）：單行 nowrap 時這一欄要 12 個字寬，
@@ -757,7 +810,7 @@ function renderIssueView() {
             title: '出現密度',
             className: 'text-center text-nowrap',
             renderHeader: () => headerWithHelp('出現密度', '查詢期間內有發生此問題的天數比例（出現天數 / 查詢天數）。比例高（如 30/30）代表天天發生的背景雜訊；比例低（如 2/30）代表近期或零星爆發的突發狀況。', '出現密度'),
-            render: i => issueDensityCell(i)
+            render: i => issueDensityCell(i, { layout: 'column' })
         },
         {
             title: '總次數',
@@ -945,25 +998,6 @@ function issueAssignedCell(group) {
 }
 
 /**
- * 嚴重度欄：徽章＋「重大」旗標（規劃 §10.2 維度 1 的既有缺口——這個旗標過去只在
- * 風險日詳情看得到，而它正是「disk 153 該排第一」的理由之一）。
- */
-function issueSeverityCell(group) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1';
-    wrap.appendChild(severityBadge(group.maxSeverity));
-
-    if (group.elevatesDayRisk) {
-        const flag = document.createElement('span');
-        flag.className = 'lf-badge lf-badge--danger';
-        flag.textContent = '重大';
-        flag.title = '此問題曾命中「命中即列為高風險日」的規則旗標';
-        wrap.appendChild(flag);
-    }
-    return wrap;
-}
-
-/**
  * 處理概況：三種狀態各一行（未處理／處理中／已處理），數量為 0 時淡色呈現
  */
 function issueHandlingSummaryCell(group) {
@@ -1023,32 +1057,6 @@ function issueFirstSeenCell(group) {
     return wrap;
 }
 
-
-/**
- * 出現密度：出現天數 ÷ 期間天數（§10.3）。
- * 數字在上、進度條換行在下，欄寬不變。既有的數字文字與 tooltip 內容保留。
- */
-function issueDensityCell(group) {
-    const wrap = document.createElement('div');
-    wrap.className = 'd-inline-flex flex-column align-items-center';
-
-    const text = document.createElement('span');
-    text.className = 'lf-mono small';
-    text.textContent = `${group.activeDays}/${group.periodDays}`;
-    wrap.appendChild(text);
-
-    const ratio = group.periodDays > 0 ? group.activeDays / group.periodDays : 0;
-    const bar = document.createElement('span');
-    bar.className = 'lf-density mt-1';
-    bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
-    const fill = document.createElement('span');
-    fill.className = 'lf-density__fill lf-progress-fill';
-    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
-    bar.appendChild(fill);
-    wrap.appendChild(bar);
-
-    return wrap;
-}
 
 /**
  * 最近出現：日期＋「還在不在發生」（§10.3）。
@@ -2039,30 +2047,10 @@ function categoryBadges(categories) {
         badge.className = active.has(category)
             ? 'lf-badge lf-badge--primary me-1'
             : 'lf-badge lf-badge--light border me-1';
-        badge.textContent = CATEGORY_NAMES[category] ?? category;
+        badge.textContent = categoryName(category);
         wrap.appendChild(badge);
     }
     return wrap;
-}
-
-function renderPager() {
-    const totalPages = Math.ceil(lastResult.total / lastResult.pageSize);
-    renderPagination(document.getElementById('pager'), {
-        page: lastResult.page,
-        totalPages,
-        onPage: page => {
-            currentPage = page;
-            search();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        },
-        pageSize,
-        onPageSize: size => {
-            pageSize = size;
-            savePageSize('records', size);
-            currentPage = 1;
-            search();
-        }
-    });
 }
 
 // ── 事件 ─────────────────────────────────────────────────────────────────────
@@ -2149,7 +2137,7 @@ function csvHeader() {
 }
 
 function csvRow(item) {
-    const cats = c => quote((c ?? []).map(x => CATEGORY_NAMES[x] ?? x).join(';'));
+    const cats = c => quote((c ?? []).map(x => categoryName(x)).join(';'));
     if (currentView === 'host') {
         return [quote(item.hostName), item.highRiskDays, item.mediumRiskDays, item.lowRiskDays,
             item.correlationDays, cats(item.categories), item.latestDate, quote(item.latestHeadline)];
@@ -2159,7 +2147,7 @@ function csvRow(item) {
             item.correlationHosts, cats(item.categories)];
     }
     if (currentView === 'issue') {
-        return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category,
+        return [quote(item.source), item.eventId, categoryName(item.category),
             severityName(item.maxSeverity), item.elevatesDayRisk ? '是' : '',
             item.hostCount,
             item.firstSeen, item.lastSeen, item.daysSinceLastSeen,

@@ -66,13 +66,9 @@
   與「餵 context 給內建小模型」無關。觀察需求出現、有明確使用情境（例如分析師想在自己的 AI 工具
   裡直接問「這台主機最近有哪些未結案問題」）時再另案規劃。
 
-## 本次簡化重構（refactor/simplify-2026-07）遞延項
+## 查詢參數收斂（未排期）
 
-- **`RecordsController` 的查詢參數尚未收斂為查詢模型類別**：`RecordsController.cs` 目前仍有
-  41 個 `[FromQuery]` 參數（3 個端點各約 13～15 個；表頭排序功能又加了 `sort`/`dir`
-  各三份，收斂的價值更高了），Phase 6f 體檢時判斷「model binding 語意屬
-  行為相鄰、無把關測試」而暫緩合併成單一查詢模型類別，改記入本清單。需要先补一輪端到端測試
-  釘住目前的 model binding 行為（空值/預設值/大小寫等），才能安全地做這個重構。
+- **其他控制器的 `[FromQuery]` 尚未收斂為查詢模型**：記錄查詢已改 `RecordQuery`（含表驅動綁定測試）；`HandlingController`（24 個）、`AdminController`（18 個）、`RulesController`（10 個）、`AuditController`（9 個）仍逐參數宣告。`QueryStringParsing.ParseLongs` 對「給了卻沒有合法數字」回空集合，這些呼叫端各自決定空集合的意義，記錄查詢已改為回 400。**觸發時機**：再替其中任一端點加參數時，先比照 `RecordsControllerBindingTests` 補綁定測試再收斂。
 
 ## 架構重構（feature/arch-refactor）遞延項
 
@@ -343,7 +339,7 @@
 
 ## 回饋三十四輪遞延
 
-- **報告檔遷移器（`ReportFileMigrator` / `ReportFileMigrationHostedService`）尚未退場**：報告已全數存在資料庫，遷移器只在升級時讀舊 `export\` 檔。第三十三輪的報告機制尚未在正式機實測，升級路徑還需要它——待正式機驗證後的輪次再移除（連同 `export` 這個已死的目錄概念）。
+- **報告檔遷移器尚未退場**：退場條件見本檔〈升級期一次性機制與退場條件〉；移除時連同 `export` 這個已死的目錄概念一起拿掉。
 
 - **NetIQ 取數仍以「整個 job 的事件桶」為單位**（回饋三十五輪批次E1 遞延）：`NetiqPipelineService`
   的 `eventsByIp` 持有該 job 全部事件（單 job 上限 10 萬筆），映射完才逐 IP 移除。本輪已在解析端
@@ -409,8 +405,6 @@
 - **伺服器硬體健康 sensor**（觸發條件：PRTG 端為伺服器加裝硬體健康類 sensor，如 Dell iDRAC、HPE iLO、IPMI）：
   實機 type 清單裡唯一的硬體健康 type 是 `SNMP Cisco System Health`，多掛在網路設備上；只對應伺服器的站台，
   hardware 規則與儲存故障佐證仍不會命中。加裝後把新 type 補進 `PrtgSensorTypeCategoryMap`（或先用補充對照）。
-- **非觸發式回填逐日重查狀態變更**（觸發條件：有人以不注入 store／records 的方式呼叫 `PrtgBackfillRunner`——正式路徑一律走觸發式、整趟只查一次）：
-  `FetchDayAsync(syncStructure:false)` 每一天都會跑狀態變更階段，逐裝置查詢後請求數是「天數 × 範圍台數」。要修就讓該分支比照觸發式在迴圈前取一次。
 - **範圍補抓每輪讀整份感測器鏡像**（觸發條件：取數範圍成長到數千台、快照執行輸出的間隔明顯拉長）：`BackfillScopeSensorsAsync` 每輪 `GetAllSensors()`
   只為了取裝置與 objid 兩個集合，可改成投影查詢。
 - **範圍補抓失敗的裝置沒有節流**（觸發條件：快照執行輸出反覆出現「N 台新進取數範圍的裝置感測器補抓失敗，下次再試」）：快照服務的範圍補抓對「查詢失敗」的裝置每輪重試（最多 50 台一輪），
@@ -467,7 +461,6 @@
 - **`PrtgFinding.Magnitude` 刻意不落 `Count`**（已定位，非缺陷）：整日 Down 會是 1440，
   用它填 `Count` 會讓 PRTG finding 在問題排行的「次數」維度壓過所有真實事件計數。
   它的用途是規則測試、`Detail` 文案與校準數值匯出的門檻分佈統計（PRTG-SPEC §11）。
-- **`PrtgDataPackage.FromDate`／`ToDate` 只寫不讀**：匯入端不校驗區間，屬輕度冗餘。
 - **匯出不能選資料類別**：規劃原本允許只匯出某幾張表，實作是固定全類別。
   實際檔案過大時再加。
 - **觸發式取數的收尾掃描會多跑一次**：輪詢迴圈是「先掃描、再判斷分析是否完成」，
@@ -582,9 +575,12 @@
 | `HandlingBlobMigrator`／`HandlingMigrationHostedService` | `HandlingMigrationState` 三份皆完成 | 所有站台升級後；移除時一併拿掉 `MigrationGateMiddleware` 的處理狀態分支 |
 | `PermissionChangeMigrator`／`PermissionChangeReparser`／`PermissionLegacySummaryCleanupState` | 各自狀態 blob 為完成 | 同上 |
 | `ReportFileMigrator`／`ReportFileMigrationHostedService` | 報告全文已存資料庫 | 正式機驗證報告機制後（另見本檔報告全文段） |
-| `TopIssueBackfiller`（來源鍵回填與首見日重整） | `source_key` 無 NULL 且重整旗標存在 | 所有站台回填完成後；就緒旗標目前為行程內狀態，重啟後重算 |
+| `TopIssueBackfiller`（來源鍵回填與首見日重整） | 問題聚合：`source_key` 無 NULL、首見日重整旗標存在、無未回填聚合欄（啟動快判，進背景閘門前即就緒）；風險事件：`risky_events_source_key_done` 旗標 | 所有站台回填完成後 |
+| `IssueFirstSeenSeedHostedService`（首見日種子合併） | 合併回報 Skipped／Completed；進度為行程內狀態，失敗重試 3 次 | 所有站台升級後 |
 | `WorkOrderBackfiller`／`DailyRecordBackfiller` | 回填版本達現行值 | 所有站台回填完成後 |
 | `SchemaUpgrader.RemoveRetiredPrtgBlobs`、SQL Server 人工對應自增欄位修正、`rule_id` 長度放寬 | 每次啟動皆冪等執行 | 所有站台升級到含該修正的版本後 |
+
+`CaseDaySyncHostedService` 是常駐的逐日同步迴圈，不是升級期機制，不列入本表。
 
 ## 背景服務與前景共用連線池
 
@@ -664,3 +660,27 @@ DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案�
 `PrtgSnapshotResponseContract` 收真子集並計缺顆，但回應為空集合仍視為契約不符（整批失敗、每輪輪詢記一次「批查詢失敗」）。
 批次是目標清單的連續切片，一整台裝置被刪就可能填滿一批；鏡像要到夜間結構同步才會移除這些感測器。
 **觸發時機**：白天刪裝置後快照執行紀錄持續出現批查詢失敗時，把「形狀正確的空陣列」改為全部計缺顆而非失敗。
+
+## 第 60 輪體檢遞延（純效能與需實機確認，未排期）
+
+下列項目已核對屬實，因需量測、schema 變更或部署端確認而未在第 60 輪處理；細節與核對證據見 `docs/archive/FEEDBACK-60-PLAN.md` §1 K 表與 §6。
+
+- **內容安全政策（CSP）**：四段 inline script（`_Layout.cshtml` 兩段、`Login.cshtml` 兩段）改 nonce，加回報端點寫入 NLog，先 report-only 收集再強制；`frame-ancestors` 需先確認部署端有無嵌入。
+- **排程新鮮度告示每次換頁重算**（`/api/health/freshness`）：30～60 秒短快取；內容與使用者無關。
+- **CaseDaySync 閒置固定 5 秒輪詢**：訊號喚醒＋退避到 60 秒，保留保底輪詢。
+- **完整回填一次啟動把計畫算 5 次**：同一請求內重用、對應表依日期 memo；runner 逐日預檢保留為圍籬，指紋組成不可改。
+- **PRTG 未對應主機清單在請求執行緒做真 DNS**：單例快取 resolver（TTL、負快取、預算）。
+- **沿用上次說明（`GetLatestNote`）整表撈回**：投影不含說明全文、串流到第一筆相符即停。
+- **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：先查資料有無「id 不同但同名」的列再決定加 `host_name_key` 欄位或只對 `host_id=0` 舊列做名稱備援；`LastWeeklyCheckupDate` 改下推 MAX。
+- **郵件貢獻帳本的管理出口與結構**：不確定預約的釋放端點與健康頁指引、逾時自動釋放的政策、依收件人分配額、搬出 blob 改真表。
+- **`ReportFileMigrator` 一次撈全部非低風險列**、**寄前重核逐收件人重查整個窗口**、**AI 快取整份 blob 讀寫無上限**、**`netiq_attempt_ledger_invalid` 以 HTTP 200 回失敗**。
+- **Core 取數路徑的 `catch (Exception ex) when (ex is not OperationCanceledException)` 把 HttpClient 逾時當成使用者取消**（`NetiqPipelineService` 逐 Sentinel 隔離、`LogAnalysisService` 三處、`AnalysisOrchestrator` 外殼）：`HttpClient` 逾時擲的是 `TaskCanceledException`（屬 OCE）而 ct 未取消，會穿過失敗隔離、整趟當成「使用者停止」結束。第 60 輪 Z-2 只普查 PRTG 與設定控制器站點；改法同 Z-2（`when (ex is not OperationCanceledException || !ct.IsCancellationRequested)`），但三處各有外層 OCE 分支要一起改語意並補「逾時≠取消」的測試，先量測逾時實際發生頻率再排。
+- **PRTG 維護頁 `refreshPrtgMirror` 的去重會把寫入後的重讀併進寫入前已在飛的那趟**：同步結束輪詢觸發的重讀未完成時新增／刪除 IP 排除或人工對應，畫面顯示寫入前清單、`scopeRevision` 停在舊值，下一次寫入被 409 擋下（使用者再按一次重新整理即恢復）。改法：in-flight 結束後自動再跑一次。觸發時機：實測回報「剛加的排除沒出現」。
+- **記錄查詢「AI 歸納」在途時改篩選或切視角，舊查詢的結果仍寫回摘要區**：點擊時記下 `search` 世代、回應回來比對再寫；非 429 的靜默失敗也不清前一次的休息提示。觸發時機：有人回報摘要與清單不符。
+- **`PrtgValueAssessment.AssessPage` 每頁重讀最新日主機對應**（四類各自分頁，每頁一次 `GetHostMapForDate`＋必要時 `GetLatestHostMapWithDate`）：把「最新日是否借前一份」在 `PrtgDailyPipeline` 外層算一次傳入。純效能，歸第 61 輪量測後排。
+- **`HealthService` 仍逐屬性讀 `SchedulerRunState`**（`IsRunning`／`Trigger`／`StartedAt`／`LatestActivity()`），`EndRun` 交錯時可能讀到混合狀態；`AiAnalysisHostedService`、`PrtgBackfillService` 同形。改讀一次 `Snapshot()`（第 60 輪 Z-6 只收斂 `GetStatus` 與 `RunActivity`）。皆 null 安全，只影響顯示一致性。
+- **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
+- **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
+- **NetIQ 結果頁外層鍵的猜測式解析**（`SentinelClient.CandidateArrayKeys`）：待用診斷頁確認實機外層鍵後寫進 NETIQ-API-REFERENCE 再收窄。
+- **`PrtgScopePurgeJobsController` 以 `InvalidOperationException` 訊息分流狀態碼**：需在 Core 新增專屬例外型別才能交給 filter。
+

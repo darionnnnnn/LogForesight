@@ -205,6 +205,21 @@ public sealed class MailContributionLedgerDto
     /// <summary>目前佔用的鍵數（已寄＋舊格式保留＋寄送中預約，去重）</summary>
     public int OccupiedKeys { get; set; }
 
+    /// <summary>已被 SMTP 接受的收據數（佔用數分項之一）</summary>
+    public int AcceptedKeys { get; set; }
+
+    /// <summary>舊格式保留的收據數</summary>
+    public int HeldKeys { get; set; }
+
+    /// <summary>已預約、尚未開始寄送的項目數</summary>
+    public int ReservedKeys { get; set; }
+
+    /// <summary>已開始寄送、結果尚未回報的項目數</summary>
+    public int AttemptedKeys { get; set; }
+
+    /// <summary>寄送結果不確定、為避免重複寄送而保留的項目數</summary>
+    public int UnknownKeys { get; set; }
+
     /// <summary>帳本鍵數上限</summary>
     public int Limit { get; set; }
 

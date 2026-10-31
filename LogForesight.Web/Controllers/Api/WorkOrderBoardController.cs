@@ -33,21 +33,3 @@ public class WorkOrderBoardController : ControllerBase
     public ApiResponse<GapsDto> Gaps([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int page = 1) =>
         ApiResponse<GapsDto>.Ok(_service.GetGaps(from, to, page));
 }
-
-/// <summary>立即派工：真的建單，能力＝<c>Maintain</c></summary>
-[ApiController]
-[Route("api/work-orders")]
-[Permission(Capability.Maintain)]
-public class WorkOrderAutoDispatchController : ControllerBase
-{
-    private readonly WorkOrderBoardService _service;
-
-    public WorkOrderAutoDispatchController(WorkOrderBoardService service)
-    {
-        _service = service;
-    }
-
-    [HttpPost("auto-dispatch")]
-    public ApiResponse<AutoDispatchResultDto> AutoDispatch([FromBody] AutoDispatchRequest request) =>
-        ApiResponse<AutoDispatchResultDto>.Ok(_service.RunAutoDispatch(request.From, request.To));
-}

@@ -9,7 +9,7 @@
 import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, kpiStrip, guardLoad } from '../core/ui.js';
-import { formatNumber, formatDateTime, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
+import { categoryName, formatNumber, formatDateTime, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell, severityCell, issueDensityCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 import { bindRangeChips, setActiveChip } from '../core/date-range.js';
@@ -69,6 +69,19 @@ async function load() {
  * AI 今日焦點（docs/archive/HISTORY.md §6 W1-1）：純加值。
  * AI 不可用或回空時整卡不顯示——不留「載入失敗」的殘影。
  */
+function renderAiFocusResting(container, err) {
+    const seconds = err.retryAfterSeconds;
+    const card = document.createElement('div');
+    card.className = 'lf-card mb-3';
+    const body = document.createElement('div');
+    body.className = 'lf-card__body text-muted small';
+    body.textContent = seconds
+        ? `AI 暫時休息，約 ${seconds} 秒後再試。`
+        : 'AI 暫時休息，請稍後再試。';
+    card.appendChild(body);
+    container.replaceChildren(card);
+}
+
 async function loadAiFocus() {
     const container = document.getElementById('dashboard-ai-focus');
     container.replaceChildren();
@@ -81,7 +94,9 @@ async function loadAiFocus() {
     let focus;
     try {
         focus = await api.get(`/api/ai/today-focus?days=${currentDays}`, { silent: true });
-    } catch {
+    } catch (err) {
+        // 被每人節流擋下不是「AI 不可用」：卡片留著並說明稍後會好，不要讓它無聲消失
+        if (aiFocusGuard.isCurrent(seq) && err?.status === 429) renderAiFocusResting(container, err);
         return;
     }
     if (!aiFocusGuard.isCurrent(seq)) return;
@@ -429,7 +444,7 @@ function renderCategories(data) {
             </div>`;
 
         card.querySelector('span.rounded-circle').style.setProperty('--lf-swatch', colors[category.category] ?? 'var(--lf-cat-other)');
-        card.querySelector('span.fw-semibold').textContent = CATEGORY_NAMES[category.category] ?? category.category;
+        card.querySelector('span.fw-semibold').textContent = categoryName(category.category);
         // 大數字＝去重問題類型數（同一個問題不論出現在幾台主機、幾天，都只算一項）；
         // 第二行＝相異存活主機數；
         // 第三行＝期間累計出現次數（主機×日）
@@ -490,14 +505,14 @@ function renderTopIssues(data) {
         columns: [
             { title: '問題', render: i => issueNameCell(i) },
             { title: '分數', className: 'text-end', render: i => issuePriorityScoreCell(i) },
-            { title: '嚴重度', render: i => issueSeverityCell(i) },
+            { title: '嚴重度', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
             { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
             { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
             // 機房級基準線（回饋十九輪批次G1）：與問題查詢「依問題」共用 format.js 的同一個 cell
             { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
             { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
             { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
-            { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
+            { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i, { layout: 'row' }) },
             { title: '變化', className: 'text-end text-nowrap', render: i => issueChangeCell(i) },
             { title: '總次數', className: 'text-end', render: i => formatNumber(i.totalCount) }
         ],
@@ -585,25 +600,9 @@ function issueNameCell(issue) {
 
     const category = document.createElement('div');
     category.className = 'small text-muted';
-    category.textContent = CATEGORY_NAMES[issue.category] ?? issue.category;
+    category.textContent = categoryName(issue.category);
     wrap.appendChild(category);
 
-    return wrap;
-}
-
-/** 嚴重度＋「重大」旗標（§10.2 維度 1：這個旗標過去只在詳情頁看得到） */
-function issueSeverityCell(issue) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1';
-    wrap.appendChild(severityBadge(issue.maxSeverity));
-
-    if (issue.elevatesDayRisk) {
-        const flag = document.createElement('span');
-        flag.className = 'lf-badge lf-badge--danger';
-        flag.textContent = '重大';
-        flag.title = '此問題曾命中「命中即列為高風險日」的規則旗標';
-        wrap.appendChild(flag);
-    }
     return wrap;
 }
 
@@ -695,29 +694,6 @@ function issueFleetFirstSeenCell(issue) {
     span.className = 'lf-mono small';
     span.textContent = issue.fleetFirstSeen || issue.firstSeen;
     return span;
-}
-
-/** 出現密度：天天都有（背景值）還是零星爆發（§10.3）。文字為主、密度條為輔 */
-function issueDensityCell(issue) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1 justify-content-end';
-
-    const text = document.createElement('span');
-    text.className = 'lf-mono small';
-    text.textContent = `${issue.activeDays}/${issue.periodDays}`;
-    wrap.appendChild(text);
-
-    const ratio = issue.periodDays > 0 ? issue.activeDays / issue.periodDays : 0;
-    const bar = document.createElement('span');
-    bar.className = 'lf-density';
-    bar.title = `期間 ${issue.periodDays} 天內出現 ${issue.activeDays} 天（${Math.round(ratio * 100)}%）`;
-    const fill = document.createElement('span');
-    fill.className = 'lf-density__fill lf-progress-fill';
-    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
-    bar.appendChild(fill);
-    wrap.appendChild(bar);
-
-    return wrap;
 }
 
 /**

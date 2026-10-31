@@ -103,13 +103,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
             _lifetime, pollInterval ?? TimeSpan.FromSeconds(60));
 
         service.ClientFactory = () => new PrtgClient("https://prtg.example.com", "token123", 30, true, _stubHandler, PrtgAuthModes.Token, "", "", "", CreateFixtureBudget());
-        if (console != null)
-        {
-            service.Console = console;
-        }
+        service.Console = console ?? new TestConsole();
         _services.Add(service);
         return service;
     }
+
+    /// <summary>服務寫進執行輸出的文字（測試掛上的 console 收集）。</summary>
+    private static List<string> Outputs(PrtgSnapshotHostedService service) => ((TestConsole)service.Console!).Lines;
 
     private PrtgRequestBudget CreateFixtureBudget()
     {
@@ -557,41 +557,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Null(row.CompletedAtUtc);
         Assert.Null(row.LeaseOwner);
         Assert.True(row.Attempts > 0);
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task 實際Tick僅在有效採樣區段中止背景歷史且結束後釋放優先權(bool enabled)
-    {
-        SeedManualBusinessDevice(720);
-        SetupOkDevices(new long[] { 10 });
-        _settingsStore.Update(s => s.PrtgEnabled = enabled);
-        SeedCurrentMappedSensors();
-        var activity = new PrtgSamplingActivity();
-        Assert.True(activity.TryBeginBackground(out var background));
-        using (background)
-        {
-            var observedRequests = 0;
-            _stubHandler.OnSend = (request, cancellationToken) =>
-            {
-                observedRequests++;
-                Assert.True(background.WasPreempted);
-                Assert.False(activity.TryBeginBackground(out _));
-                return Task.FromResult(JsonResponse(
-                    request.RequestUri!.Query.Contains("content=messages", StringComparison.Ordinal)
-                        ? "{\"treesize\":0,\"messages\":[]}"
-                        : "{\"treesize\":1,\"sensors\":[{\"objid\":721,\"parentid\":720,\"sensor\":\"Ping\",\"type\":\"ping\",\"status\":\"Up\",\"paused\":false,\"lastvalue_raw\":1,\"interval\":\"60 s\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}"));
-            };
-            var service = CreateService();
-            service.SamplingActivity = activity;
-            service.Now = () => DateTime.Today.AddHours(12);
-            await service.TickAsync();
-            Assert.Equal(enabled, background.WasPreempted);
-            Assert.Equal(enabled, observedRequests > 0);
-            Assert.True(activity.TryBeginBackground(out var next));
-            next.Dispose();
-        }
     }
 
     [Fact]
@@ -1204,13 +1169,13 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _syncState.EndRun(true);
         await service.TickAsync();
 
-        Assert.Contains(service.ExecutionOutputs, l =>
+        Assert.Contains(Outputs(service), l =>
             l == "快照已恢復：因「結構同步執行中，暫停快照」暫停 40 分鐘（10:00～10:40），這段期間的取樣列 coverage 會偏低");
 
         // 已清掉暫停開始時間：之後正常 tick 不再重複寫
         clock = clock.AddMinutes(20);
         await service.TickAsync();
-        Assert.Single(service.ExecutionOutputs, l => l.StartsWith("快照已恢復"));
+        Assert.Single(Outputs(service), l => l.StartsWith("快照已恢復"));
     }
 
     [Fact]
@@ -1231,7 +1196,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _syncState.EndRun(true);
         await service.TickAsync();
 
-        Assert.DoesNotContain(service.ExecutionOutputs, l => l.StartsWith("快照已恢復"));
+        Assert.DoesNotContain(Outputs(service), l => l.StartsWith("快照已恢復"));
         Assert.Single(_stubHandler.RequestedUrls); // 恢復後照常快照，不是整條沒走到
     }
 
@@ -1259,7 +1224,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         _backfillState.FinishRun(true, cancelled: false);
         await service.TickAsync();
 
-        Assert.Contains(service.ExecutionOutputs, l =>
+        Assert.Contains(Outputs(service), l =>
             l.Contains("因「歷史回填執行中，暫停快照」暫停 30 分鐘（10:00～10:30）"));
     }
 
@@ -1323,7 +1288,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(6000.0, row301.AvgValue);
 
         Assert.Contains(console.Lines, l => l.Contains("無法解析") && l.Contains("以 60 秒計"));
-        Assert.Contains(service.ExecutionOutputs, l => l.Contains("無法解析") && l.Contains("以 60 秒計"));
+        Assert.Contains(Outputs(service), l => l.Contains("無法解析") && l.Contains("以 60 秒計"));
     }
 
     /// <summary>
@@ -1422,39 +1387,6 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         // 1 個樣本 ÷ 期望 4 個 ＝ 25，coverage 不足 75 → 不算可用列
         Assert.Equal(0, agg.UsableCount);
         Assert.Equal(1, agg.OtherCount);
-    }
-
-    /// <summary>
-    /// 執行輸出只留最近的紀錄：站台長時間運行，每次截斷或間隔解析失敗都會寫一行，
-    /// 沒有上限就是記憶體洩漏。
-    /// </summary>
-    [Fact]
-    public async Task TickAsync_執行輸出有上限_長時間運行不無限增長()
-    {
-        SetupTargetSensors(new[] { (601L, "SNMP Traffic 64bit") });
-        var service = CreateService();
-        var clock = DateTime.Today.AddHours(1);
-        service.Now = () => clock;
-
-        // 先由真實 Tick 證明警告進入同一輸出管線；裁切測試不重跑 130 輪 DB／取數工作。
-        var invalidIntervalJson = "{\"treesize\":1,\"sensors\":[{\"objid\":601,\"lastvalue_raw\":100,\"interval\":\"abc\",\"status\":\"Up\",\"lastcheck\":\"__FIXTURE_NOW__\"}]}";
-        _stubHandler.OnSend = (_, _) => Task.FromResult(JsonResponse(invalidIntervalJson));
-
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await service.TickAsync(deadline.Token).WaitAsync(TimeSpan.FromSeconds(20));
-        Assert.Single(SnapshotUrls());
-        Assert.Contains(service.ExecutionOutputs, line => line.Contains("間隔") && line.Contains("60"));
-        var writeOutput = typeof(PrtgSnapshotHostedService).GetMethod("WriteOutput",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        for (var i = 0; i < 130; i++)
-            writeOutput.Invoke(service, [$"bounded-output-{i}", NLog.LogLevel.Warn]);
-
-        Assert.True(service.ExecutionOutputs.Count <= 100,
-            $"執行輸出應有上限，實際 {service.ExecutionOutputs.Count} 筆");
-        // 確認真的每輪都有寫（上限有被撞到），不是因為沒輸出才恆成立
-        Assert.Equal(100, service.ExecutionOutputs.Count);
-        Assert.Contains(service.ExecutionOutputs, line => line.Contains("bounded-output-129"));
-        Assert.DoesNotContain(service.ExecutionOutputs, line => line.Contains("bounded-output-0"));
     }
 
     /// <summary>
@@ -1818,7 +1750,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Equal(clock, service.GetStatus().LastSuccessAt);
         Assert.Single(SnapshotUrls());
         Assert.Single(BackfillUrls());
-        Assert.Contains(service.ExecutionOutputs, line => line.Contains("補抓已達期限"));
+        Assert.Contains(Outputs(service), line => line.Contains("補抓已達期限"));
         clock = clock.AddMinutes(15);
         await service.TickAsync().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, SnapshotUrls().Count);
@@ -1978,7 +1910,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         service.Now = () => clock;
         await service.TickAsync();
         Assert.DoesNotContain(_backend.PrtgStore().GetAllSensors(), row => row.DeviceObjid != 10);
-        Assert.Contains(service.ExecutionOutputs, line => line.Contains("感測器補抓失敗"));
+        Assert.Contains(Outputs(service), line => line.Contains("感測器補抓失敗"));
         first = false;
         clock = clock.AddMinutes(15);
         await service.TickAsync();
@@ -2082,7 +2014,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Empty(BackfillUrls());
         Assert.Single(_stubHandler.RequestedUrls);
         Assert.Null(service.GetStatus().LastSuccessAt);
-        Assert.DoesNotContain(service.ExecutionOutputs, line => line.Contains("補抓已達期限"));
+        Assert.DoesNotContain(Outputs(service), line => line.Contains("補抓已達期限"));
     }
 
     private static async Task WaitUntilAsync(Func<bool> ready, TimeSpan? timeout = null)
@@ -2415,7 +2347,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         // 回應是請求集合的真子集（PRTG 刪了幾顆 sensor）：其餘照收，缺的由「缺 N 顆」警告出聲。
         Assert.Equal(0, service.GetStatus().ConsecutiveFailures);
         Assert.Equal(48, service.GetStatus().PendingSamples);
-        Assert.Contains(service.ExecutionOutputs, l => l.Contains("缺 2 顆"));
+        Assert.Contains(Outputs(service), l => l.Contains("缺 2 顆"));
     }
 
     [Fact]
@@ -2465,7 +2397,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var service = CreateService();
         await service.TickAsync();
 
-        Assert.DoesNotContain(service.ExecutionOutputs, l => l.Contains("缺"));
+        Assert.DoesNotContain(Outputs(service), l => l.Contains("缺"));
     }
 
     [Fact]
@@ -2484,9 +2416,9 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         await service.TickAsync();
 
         Assert.Equal(2, SnapshotUrls().Count);
-        Assert.Contains(service.ExecutionOutputs, l => l.Contains("1 批查詢失敗"));
+        Assert.Contains(Outputs(service), l => l.Contains("1 批查詢失敗"));
         // 失敗批次不重複算成「缺」
-        Assert.DoesNotContain(service.ExecutionOutputs, l => l.Contains("缺"));
+        Assert.DoesNotContain(Outputs(service), l => l.Contains("缺"));
         var status = service.GetStatus();
         Assert.Equal(50, status.PendingSamples);
         Assert.Equal(0, status.ConsecutiveFailures);
@@ -2523,7 +2455,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         Assert.Matches(@"[?&]id=20(&|$)", backfill);
         var sensor = Assert.Single(_backend.PrtgStore().GetAllSensors(), s => s.Objid == 201);
         Assert.Equal(20, sensor.DeviceObjid);
-        Assert.Contains(service.ExecutionOutputs, l => l.Contains("已為 1 台新進取數範圍的裝置補上 1 個感測器"));
+        Assert.Contains(Outputs(service), l => l.Contains("已為 1 台新進取數範圍的裝置補上 1 個感測器"));
         // 補抓不影響快照本身
         Assert.NotNull(service.GetStatus().LastSuccessAt);
     }
@@ -2553,7 +2485,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
         var first = BackfillUrls().Count;
         Assert.True(first >= 1);
         Assert.All(BackfillUrls(), u => Assert.Matches(@"[?&]id=20(&|$)", u));
-        Assert.DoesNotContain(service.ExecutionOutputs, l => l.Contains("補上"));
+        Assert.DoesNotContain(Outputs(service), l => l.Contains("補上"));
 
         clock = clock.AddMinutes(15);
         await service.TickAsync();
@@ -2907,7 +2839,7 @@ public class PrtgSnapshotHostedServiceTests : IDisposable
 
         Assert.Equal(1, calls);
         Assert.Single(DeviceBackfillUrls());
-        Assert.Contains(service.ExecutionOutputs, l => l.Contains("感測器補抓失敗"));
+        Assert.Contains(Outputs(service), l => l.Contains("感測器補抓失敗"));
         var status = service.GetStatus();
         Assert.NotNull(status.LastSuccessAt);
         Assert.Equal(0, status.ConsecutiveFailures);

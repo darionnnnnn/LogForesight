@@ -103,6 +103,23 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 
 **升級到本版之前，先到「系統管理 > 設定」確認各項資料保留天數。**
 
+**IP 位址只認完整四段寫法**：`10.1`、`12345`、`0x7f.1` 這類簡寫不再被當成 IP（以前會被解成別台主機的位址）。影響三處：
+(1) PRTG 裝置位址欄是簡寫的，改走主機名稱比對——升級後跑一次「同步結構與對應」，看衝突清單是否有變化；
+(2) NetIQ 主機清單裡的十六進位寫法（例如 `0x7f.0.0.1`）會被判為格式錯誤，請改成一般四段寫法；
+(3) 權限異動以主機名稱判斷 IP 時，純數字名稱不再被當成 IP。
+
+**所有回應多了三個安全標頭**（`X-Content-Type-Options`、`Referrer-Policy`、`X-Frame-Options: DENY`），升級後立即生效。
+若有其他入口網站以 iframe 嵌入本站，把 `appsettings.json` 的 `Server:FrameOptions` 改為 `SAMEORIGIN` 或空字串（不送此標頭）。
+
+**`Server:PathBase` 格式錯誤時啟動訊息會點名設定鍵**：值必須以 `/` 開頭（例如 `/LogForesight`），以前缺斜線同樣無法啟動，只是訊息看不出原因。
+掛在 IIS 子 Application 底下時不要再設 `Server:PathBase`（IIS 會自動加前綴，重複設定會變成雙重前綴，啟動時會記警告）。
+
+**郵件通知首輪可能補寄**：「已寄出」收據的保留期由 180 天縮短為實際回看所需的天數，SMTP 連線被拒、DNS 或 TLS 失敗這類確定沒寄出的情況也改為可重寄。升級後第一輪寄送時，先前因此卡住的內容可能補寄一次。
+
+**API 錯誤碼調整**：登入帳密錯誤回 `auth_failed`、太頻繁回 `rate_limited`（429，帶 `Retry-After`）、升級遷移中回 `service_unavailable`（503）、外部服務逾時回 `upstream_timeout`（503）、用戶端中斷回 499。HTTP 狀態碼除後兩者外不變；外部監控若依錯誤碼字串告警請一併調整。AI 功能另有每人每分鐘上限。
+
+**日誌 logger 名稱變更**：原本的 `SettingsController` 拆成五個控制器（`SettingsController`、`PrtgBackfillAdminController`、`PrtgScopeEstimateController`、`PrtgHostMappingAdminController`、`PrtgTransferController`）。內建 `nlog.config` 沒有依賴這些名稱；若部署端自訂了依 logger 名稱過濾的規則，請一併更新。URL 不變。
+
 **AI 分析改為自動啟用**：原本 AI 分析排程有自己的開關且預設關閉，本版起 AI 服務只要
 設定好就一律啟用——取數執行產出結果後 AI 立刻跟上，其餘時間在「背景補跑窗口」內消化積壓。
 排程作業頁的「啟用 AI 分析排程」勾選已移除。原本刻意把它關著的站台升級後 AI 會開始運作，

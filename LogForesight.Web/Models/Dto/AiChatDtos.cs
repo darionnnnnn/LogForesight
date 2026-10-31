@@ -42,3 +42,14 @@ public class TidyNoteResponseDto
     public bool Unavailable { get; set; }
     public bool Failed { get; set; }
 }
+
+public class AiStatusDto
+{
+    public bool Available { get; set; }
+
+    /// <summary>目前設定的提供者不是本機端點——內容會送到外部 AI 服務</summary>
+    public bool External { get; set; }
+
+    /// <summary>AI 分析排程正在執行（互動請求可能較慢）</summary>
+    public bool BatchBusy { get; set; }
+}
