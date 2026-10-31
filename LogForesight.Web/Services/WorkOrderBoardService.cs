@@ -540,11 +540,10 @@ public class WorkOrderBoardService
             })
             .ToList();
 
-    /// <summary>派不出去的原因（無候選的細分或自動派工關閉）；其餘略過屬閘門排除，回 null</summary>
+    /// <summary>派不出去的原因（無候選的細分）；其餘略過屬閘門排除，回 null</summary>
     private static string? UnassignableReasonOf(DispatchDecision decision) => decision.SkipReason switch
     {
         WorkOrderDispatcher.SkipNoCandidate => decision.NoCandidateDetail,
-        WorkOrderDispatcher.SkipDisabled => WorkOrderDispatcher.SkipDisabled,
         _ => null
     };
 

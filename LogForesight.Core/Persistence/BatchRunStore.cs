@@ -17,7 +17,7 @@ public static class BatchRunTriggers
 /// <summary>BatchRun 的判定擴充：排程觸發判準的唯一出口。</summary>
 public static class BatchRunExtensions
 {
-    /// <summary>取數排程執行：Trigger == schedule 且非 AI 背景工作（AI 不算取數排程的新鮮度或觸發）。</summary>
+    /// <summary>取數排程執行的唯一判準：Trigger == schedule 且非 AI 背景工作（AI 不算取數排程的新鮮度或觸發；觸發判定、補跑說明、排程驗收共用）。</summary>
     public static bool IsScheduledFetch(this BatchRun run) =>
         run.Trigger == BatchRunTriggers.Schedule && run.JobType != BatchRun.JobTypeAi;
 }
@@ -412,8 +412,6 @@ public class BatchRunStore
     /// <summary>附加時間不早於 from 的執行紀錄行（SQL 端窄化，不保證精確）</summary>
     private List<BatchRun> ReadRunLinesFrom(DateTime from) =>
         JsonLogParser.Parse<BatchRun>(_runs.ReadLines(from, null), LfJsonOptions.Compact);
-
-    private List<BatchRunLog> ReadAllLogs() => JsonLogParser.Parse<BatchRunLog>(_logs.ReadLines(), LfJsonOptions.Compact);
 
     /// <summary>附加時間落在範圍內的診斷紀錄行（SQL 端窄化，不保證精確）</summary>
     private List<BatchRunLog> ReadLogs(DateTime? from, DateTime? to) =>

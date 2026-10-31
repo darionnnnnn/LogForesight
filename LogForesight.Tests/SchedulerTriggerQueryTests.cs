@@ -191,6 +191,5 @@ public class SchedulerTriggerQueryTests
         var run = new BatchRun { Trigger = trigger, JobType = jobType };
 
         Assert.Equal(expected, run.IsScheduledFetch());
-        Assert.Equal(expected, SchedulerHostedService.IsScheduledFetchRun(run));
     }
 }

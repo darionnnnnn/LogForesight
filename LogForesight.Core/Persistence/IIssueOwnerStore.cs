@@ -9,14 +9,10 @@ public interface IIssueOwnerStore
     /// <summary>(Source, EventId) 不分大小寫比對；找不到回 null。</summary>
     IssueProfile? Get(string source, int eventId);
 
-    /// <summary>依 (Source, EventId) 自然鍵新增或更新。</summary>
-    IssueProfile Upsert(IssueProfile rule);
-
     /// <summary>
     /// 原子更新：在同一個互斥區塊內找到既有列（找不到就建新列）、套用 <paramref name="apply"/>、
     /// 設 UpdatedAt，並回傳寫入後的複本。呼叫端的 lambda 只改自己負責的欄位，其餘欄位維持
     /// 區塊內讀到的最新值——兩位管理者同時操作同一問題時不會互相還原對方剛寫的欄位。
-    /// （<see cref="Upsert"/> 是整列覆寫，只留給匯入／全量覆寫情境。）
     /// </summary>
     IssueProfile Update(string source, int eventId, Action<IssueProfile> apply);
 
@@ -34,6 +30,7 @@ public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStor
     public IssueProfile? Get(string source, int eventId) =>
         Read().FirstOrDefault(r => Matches(r, source, eventId));
 
+    /// <summary>依 (Source, EventId) 自然鍵新增或更新（整列覆寫）。僅供測試植入資料；正式路徑一律用 Update(apply) 原子更新。</summary>
     public IssueProfile Upsert(IssueProfile rule)
     {
         return Mutate(items =>

@@ -527,7 +527,7 @@ public class GapSuggestionDto
 
 public class GapUnassignableDto
 {
-    /// <summary>no_pool／all_paused／no_visibility／disabled</summary>
+    /// <summary>no_pool／all_paused／no_visibility</summary>
     public string Reason { get; set; } = string.Empty;
 
     public int Hosts { get; set; }

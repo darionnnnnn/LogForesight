@@ -136,14 +136,6 @@ function renderSetupSummary() {
     renderAcceptance(pending === 0);
 }
 
-function missingHourDate(windowStart, dayIndex, hour) {
-    const [year, month, day] = String(windowStart).slice(0, 10).split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    date.setDate(date.getDate() + dayIndex);
-    date.setHours(hour, 0, 0, 0);
-    return date;
-}
-
 function effectivenessRangeError(from, through) {
     if (!from || !through) return '請選擇起始與結束日期。';
     const days = Math.round((Date.parse(`${through}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
@@ -1339,7 +1331,7 @@ function renderUnmappedHostsError(errorMessage) {
 }
 
 function renderIpExcludesError(errorMessage) {
-    renderListError('prtg-ip-excludes-table', ' IP 排除清單', errorMessage, () => refreshIpExcludes());
+    renderListError('prtg-ip-excludes-table', ' IP 排除清單', errorMessage, () => refreshPrtgMirror());
 }
 
 async function refreshConflicts(page = conflictPage, options = {}) {
@@ -1656,17 +1648,6 @@ async function refreshNameMismatch() {
         // 只是提醒資訊：失敗時隱藏整區，不干擾主流程
         section.classList.add('d-none');
     }
-}
-
-function renderIpExcludesLoading() {
-    const container = document.getElementById('prtg-ip-excludes-table');
-    if (!container) return;
-    renderMirrorTableLoading(container);
-}
-
-
-async function refreshIpExcludes() {
-    await refreshPrtgMirror();
 }
 
 function renderIpExcludes(items) {
@@ -3011,7 +2992,6 @@ function init() {
     refreshConflicts(1);
     refreshUnmappedHosts(1);
     refreshNameMismatch();
-    refreshIpExcludes();
     refreshPrtgProbeStatus();
     refreshStructureSyncStatus();
     refreshPrtgRuleBanner();

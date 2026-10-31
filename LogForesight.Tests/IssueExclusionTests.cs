@@ -180,7 +180,6 @@ public class IssueExclusionTests : IDisposable
         public int GetAllCount { get; private set; }
         public List<IssueProfile> GetAll() { GetAllCount++; return Inner.GetAll(); }
         public IssueProfile? Get(string source, int eventId) => Inner.Get(source, eventId);
-        public IssueProfile Upsert(IssueProfile rule) => Inner.Upsert(rule);
         public IssueProfile Update(string source, int eventId, Action<IssueProfile> apply) => Inner.Update(source, eventId, apply);
         public void Delete(string source, int eventId) => Inner.Delete(source, eventId);
     }

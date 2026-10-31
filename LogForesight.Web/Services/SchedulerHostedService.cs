@@ -370,11 +370,8 @@ public class SchedulerHostedService : BackgroundService
     /// <summary>手動回填執行中（接續回填不算）：立即執行的 PRTG 日路徑會先等它，狀態 API 據此顯示提示。</summary>
     public bool PrtgBackfillWaiting => _prtgManualWork.Running == PrtgManualWork.Backfill;
 
-    /// <summary>排程執行的唯一判準：Trigger == "schedule" 且非 AI 背景工作（觸發判定、補跑說明、排程驗收共用）</summary>
-    internal static bool IsScheduledFetchRun(BatchRun run) => run.IsScheduledFetch();
-
     internal static IEnumerable<(DateTime StartedAt, bool Interrupted)> ScheduledRunTimes(IEnumerable<BatchRun> runs) =>
-        runs.Where(IsScheduledFetchRun).Select(r => (r.StartedAt, r.Interrupted));
+        runs.Where(r => r.IsScheduledFetch()).Select(r => (r.StartedAt, r.Interrupted));
 
     /// <summary>
     /// 最近一趟已結束、有逐日 PRTG 統計的排程取數，取它處理的最新資料日（PRTG 維護頁「最近一次排程驗收」）。
@@ -383,7 +380,7 @@ public class SchedulerHostedService : BackgroundService
     internal static (long RunId, PrtgDayStat Day)? LastScheduledPrtgDay(IEnumerable<BatchRun> runs)
     {
         var run = runs
-            .Where(r => IsScheduledFetchRun(r) && r.FinishedAt.HasValue && r.PrtgDays is { Count: > 0 })
+            .Where(r => r.IsScheduledFetch() && r.FinishedAt.HasValue && r.PrtgDays is { Count: > 0 })
             .OrderByDescending(r => r.StartedAt)
             .ThenByDescending(r => r.RunId)
             .FirstOrDefault();

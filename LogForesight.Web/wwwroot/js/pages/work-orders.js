@@ -70,12 +70,8 @@ const ORIGIN_LABELS = {
 // 無法指派原因對照
 const UNASSIGNABLE_LABELS = {
     no_pool: '沒有派工池成員',
-    noPool: '沒有派工池成員',
     no_visibility: '派工池成員都看不到這些主機',
-    noVisibility: '派工池成員都看不到這些主機',
-    all_paused: '候選人全部暫停接單',
-    allPaused: '候選人全部暫停接單',
-    disabled: '自動派工未開啟'
+    all_paused: '候選人全部暫停接單'
 };
 
 // 已排除原因對照
