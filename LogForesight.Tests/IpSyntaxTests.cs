@@ -19,7 +19,8 @@ public class IpSyntaxTests
     [InlineData(null, false)]
     [InlineData("1.2.3.4", true)]
     [InlineData("010.001.002.003", true)]
-    [InlineData(" 1.2.3.4 ", true)]
+    [InlineData(" 1.2.3.4 ", false)]
+    [InlineData("1.2.3.4\t", false)]
     public void IsStrictIpv4(string? value, bool expected)
     {
         Assert.Equal(expected, IpSyntax.IsStrictIpv4(value));
@@ -29,6 +30,7 @@ public class IpSyntaxTests
     [InlineData("::1")]
     [InlineData("fe80::1")]
     [InlineData("1.2.3.4")]
+    [InlineData(" 1.2.3.4 ")]
     public void TryParse_合法位址_成功(string value)
     {
         Assert.True(IpSyntax.TryParse(value, out var address));
@@ -52,7 +54,7 @@ public class IpSyntaxTests
     {
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "IpSyntax.cs", "NetiqHostList.cs", "LoginThrottle.cs", "AppSettings.cs", "Program.cs", "PrtgProbeRunner.cs"
+            "IpSyntax.cs", "NetiqHostList.cs", "LoginThrottle.cs", "AppSettings.cs", "PrtgProbeRunner.cs"
         };
         var root = FindRepoRoot();
         var offenders = new List<string>();

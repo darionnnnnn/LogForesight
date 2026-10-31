@@ -45,7 +45,7 @@ public class ApiExceptionFilter : IExceptionFilter
             // 用戶端已斷線（關分頁／取消請求）：沒人收回應，不是故障
             OperationCanceledException when context.HttpContext.RequestAborted.IsCancellationRequested => (
                 499,
-                ApiErrorCodes.ServerError,
+                ApiErrorCodes.RequestCancelled,
                 "請求已取消。"),
 
             // 請求沒被取消卻拋 OCE：多半是 HttpClient 逾時（外部服務太慢），不是本站程式錯誤

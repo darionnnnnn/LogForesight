@@ -60,6 +60,7 @@ public class ApiExceptionFilterTests
 
         var result = Assert.IsType<ObjectResult>(ctx.Result);
         Assert.Equal(499, result.StatusCode);
+        Assert.Equal(ApiErrorCodes.RequestCancelled, Assert.IsType<ApiResponse<object>>(result.Value).Error!.Code);
         Assert.True(ctx.ExceptionHandled);
         Assert.DoesNotContain(logs, IsWarnOrAbove);
     }

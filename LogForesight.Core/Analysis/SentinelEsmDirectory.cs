@@ -74,7 +74,7 @@ public static class SentinelEsmDirectory
         {
             if (entry.ValueKind != JsonValueKind.Object) continue;
 
-            var ip = FirstMatching(entry, IpFieldCandidates, IpSyntax.IsStrictIpv4);
+            var ip = FirstMatching(entry, IpFieldCandidates, v => IpSyntax.IsStrictIpv4(v.Trim()));
             if (ip == null) continue;   // 沒有可辨識的 IP 就不是我們認得的主機條目
 
             // 名稱可缺（退回 IP）——名稱只是顯示用，IP 才是身分

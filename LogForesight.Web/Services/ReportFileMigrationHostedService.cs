@@ -54,7 +54,8 @@ public class ReportFileMigrationHostedService : BackgroundService
                     {
                         _run(stoppingToken);
                     }
-                    catch (Exception ex)
+                    // 關站取消交給外層 when 篩選，不記成失敗
+                    catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                     {
                         // 舊報告搬不進來不影響站台任何其他功能，也不影響今晚新產生的報告
                         Log.Error(ex, "[SQL] 既有報告檔遷移失敗（不影響新報告）：{Msg}", ex.Message);

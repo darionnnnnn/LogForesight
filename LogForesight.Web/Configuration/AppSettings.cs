@@ -105,6 +105,13 @@ public class WebAppSettings
         try { Server.ResolvePathBase(); }
         catch (InvalidOperationException ex) { errors.Add(ex.Message); }
 
+        // 瀏覽器會忽略不認得的 X-Frame-Options（等於沒防嵌入），含換行的值則讓每個回應寫標頭時擲例外——拒絕而非悄悄失效
+        var frameOptions = (Server.FrameOptions ?? "").Trim();
+        if (frameOptions.Length > 0 &&
+            !frameOptions.Equals("DENY", StringComparison.OrdinalIgnoreCase) &&
+            !frameOptions.Equals("SAMEORIGIN", StringComparison.OrdinalIgnoreCase))
+            errors.Add($"Server:FrameOptions 只能是 DENY、SAMEORIGIN 或空字串（不送此標頭），目前值：「{Server.FrameOptions}」。");
+
         if (errors.Count > 0)
             throw new InvalidOperationException("appsettings.json 設定不合格：" + Environment.NewLine + string.Join(Environment.NewLine, errors.Select(e => "  - " + e)));
     }

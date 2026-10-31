@@ -71,7 +71,7 @@ function makeHarness({ failures = {}, revisions = ['r1', 'r1'], riskReview, risk
     const factory = new Function(...Object.keys(deps),
         `let riskReviewPage = 1;\n${bodies}\nreturn { loadScopeSnapshot, renderScopeSnapshot, refreshRiskReviewPanel };`);
     const fns = factory(...Object.values(deps));
-    return { fns, log, riskEl };
+    return { fns, log, riskEl, dom };
 }
 
 async function manualMapRejectOnlyManualMapAreaShowsError() {
@@ -90,10 +90,29 @@ async function mirrorRejectOnlyMirrorAreaShowsError() {
     const h = makeHarness({ failures: { '/prtg-mirror': '鏡像壞了' } });
     h.fns.renderScopeSnapshot(await h.fns.loadScopeSnapshot());
     assert.equal(h.log.errors.length, 1, JSON.stringify(h.log.errors));
-    assert.equal(h.log.errors[0].containerId, 'prtg-mirror-stats');
+    assert.equal(h.log.errors[0].containerId, 'prtg-mirror-stats-error');
     assert.equal(h.log.errors[0].label, ' PRTG 鏡像');
     assert.match(h.log.errors[0].message, /鏡像壞了/);
     assert.deepEqual(h.log.rendered.map(r => r[0]).sort(), ['excludes', 'manual']);
+}
+
+// 部分失敗仍帶 revision：成功的人工對應／IP 排除區要能以正確版本送出異動
+async function partialFailureStillStoresRevision() {
+    const h = makeHarness({ failures: { '/prtg-mirror': '鏡像壞了' } });
+    const snapshot = await h.fns.loadScopeSnapshot();
+    assert.equal(snapshot.revision, 'r1');
+}
+
+// 鏡像重試成功時清掉錯誤：錯誤不得寫進統計卡本身（卡內節點被蓋掉就填不回數字）
+async function mirrorSuccessClearsErrorSlotAndKeepsStatsNodes() {
+    const h = makeHarness();
+    const errorSlot = document.createElement('div');
+    errorSlot.id = 'prtg-mirror-stats-error';
+    errorSlot.append(document.createElement('span'));
+    h.dom.byId.set(errorSlot.id, errorSlot);
+    h.fns.renderScopeSnapshot(await h.fns.loadScopeSnapshot());
+    assert.equal(errorSlot.children.length, 0, '成功後應清掉鏡像錯誤');
+    assert(!source.includes("renderListError('prtg-mirror-stats',"), '錯誤不得寫進統計卡容器');
 }
 
 async function ipExcludesRejectOnlyExcludesAreaShowsError() {
@@ -110,7 +129,7 @@ async function revisionMismatchShowsSameMessageInAllThreeAreas() {
     h.fns.renderScopeSnapshot(snapshot);
     assert.equal(h.log.rendered.length, 0);
     assert.deepEqual(h.log.errors.map(e => e.containerId).sort(),
-        ['prtg-ip-excludes-table', 'prtg-mirror-manual-maps-table', 'prtg-mirror-stats']);
+        ['prtg-ip-excludes-table', 'prtg-mirror-manual-maps-table', 'prtg-mirror-stats-error']);
     for (const e of h.log.errors) assert.equal(e.message, '載入期間 PRTG 範圍已被修改，請重新整理');
     assert.equal(snapshot.revision, undefined, '不一致時不得回傳 revision');
 }
@@ -137,6 +156,8 @@ const cases = {
     mirrorRejectOnlyMirrorAreaShowsError,
     ipExcludesRejectOnlyExcludesAreaShowsError,
     revisionMismatchShowsSameMessageInAllThreeAreas,
+    partialFailureStillStoresRevision,
+    mirrorSuccessClearsErrorSlotAndKeepsStatsNodes,
     allSucceedRendersThreeAreasAndStoresRevision,
     riskReviewPendingRequestIsSilent
 };

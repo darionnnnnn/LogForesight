@@ -2111,7 +2111,7 @@ function refreshPrtgMirror() {
 }
 // 範圍快照：revision 前後各讀一次，中間三個請求各自成敗互不影響（allSettled）。
 // 回傳 { mirror, manualMaps, ipExcludes } 各為 { ok: true, value } 或 { ok: false, error }；
-// 三者全部成功且 revision 一致時另帶 revision。
+// revision 前後一致時另帶 revision（不論各區成敗）。
 async function loadScopeSnapshot() {
     const failAll = error => ({
         mirror: { ok: false, error }, manualMaps: { ok: false, error }, ipExcludes: { ok: false, error }
@@ -2136,16 +2136,19 @@ async function loadScopeSnapshot() {
     if (before !== after) return failAll(new Error('載入期間 PRTG 範圍已被修改，請重新整理'));
     const pick = item => (item.status === 'fulfilled' ? { ok: true, value: item.value } : { ok: false, error: item.reason });
     const result = { mirror: pick(settled[0]), manualMaps: pick(settled[1]), ipExcludes: pick(settled[2]) };
-    if (result.mirror.ok && result.manualMaps.ok && result.ipExcludes.ok) result.revision = before;
-    return result;
+    // 前後 revision 一致即代表成功的各區都對應這個版本；某區失敗時該區沒有可操作的列，其餘區仍要能帶正確版本送出
+    return { ...result, revision: before };
 }
 
 // 三區各自渲染：成功就畫、失敗就只在該區顯示對應名稱的錯誤
 function renderScopeSnapshot(result) {
     const retry = () => refreshPrtgMirror();
     const errorText = part => part.error?.message || '網路或伺服器錯誤';
-    if (result.mirror.ok) renderPrtgMirror(result.mirror.value);
-    else renderListError('prtg-mirror-stats', ' PRTG 鏡像', errorText(result.mirror), retry);
+    // 鏡像錯誤放在統計卡外的兄弟節點：統計卡內是 renderPrtgMirror 以 id 填值的節點，被錯誤蓋掉後重試成功也填不回來
+    if (result.mirror.ok) {
+        document.getElementById('prtg-mirror-stats-error')?.replaceChildren();
+        renderPrtgMirror(result.mirror.value);
+    } else renderListError('prtg-mirror-stats-error', ' PRTG 鏡像', errorText(result.mirror), retry);
     if (result.manualMaps.ok) renderManualMaps(result.manualMaps.value);
     else renderListError('prtg-mirror-manual-maps-table', '人工對應', errorText(result.manualMaps), retry);
     if (result.ipExcludes.ok) renderIpExcludes(result.ipExcludes.value || []);

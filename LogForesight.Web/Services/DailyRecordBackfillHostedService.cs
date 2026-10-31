@@ -47,7 +47,8 @@ public class DailyRecordBackfillHostedService : BackgroundService
                     {
                         _backfiller.Run(stoppingToken);
                     }
-                    catch (Exception ex)
+                    // 關站取消交給外層 when 篩選，不記成失敗
+                    catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                     {
                         Log.Error(ex, "[SQL] lf_daily_records 抽出欄回填失敗：{Msg}", ex.Message);
                     }

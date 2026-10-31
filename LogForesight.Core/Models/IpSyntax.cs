@@ -9,14 +9,15 @@ namespace LogForesight.Core.Models;
 /// </summary>
 public static class IpSyntax
 {
-    /// <summary>完整四段十進位 IPv4 且每段 0~255（前後空白先 Trim）。刻意不接受簡寫、十六進位或前綴——
+    /// <summary>完整四段十進位 IPv4 且每段 0~255，不容許前後空白（呼叫端會把原字串插進 Lucene 子句，放行帶空白的值就會送出壞查詢；
+    /// 要容忍空白的呼叫端自行先 Trim）。刻意不接受簡寫、十六進位或前綴——
     /// 呼叫端用它判斷「這條目是不是一台明確的主機」，也用它濾掉進不了 Lucene 子句的位址，寬鬆一點就會
     /// 把版本號、序號之類的字串當成 IP 收進來。</summary>
     public static bool IsStrictIpv4(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return false;
 
-        var octets = value.Trim().Split('.');
+        var octets = value.Split('.');
         return octets.Length == 4 &&
                octets.All(o => o.Length is >= 1 and <= 3 && o.All(char.IsAsciiDigit) && int.TryParse(o, out var v) && v is >= 0 and <= 255);
     }

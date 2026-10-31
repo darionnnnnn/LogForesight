@@ -54,14 +54,17 @@ public class HandlingMigrationHostedService : BackgroundService
             try
             {
                 _run(stoppingToken);
-                // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                _dataVersion.Bump();
             }
             catch (Exception ex)
             {
                 // 失敗不讓背景例外把行程帶走。狀態已由 Migrator 記成 pending＋LastError，
                 // 因此寫入**仍然被擋著**（不會落進半搬完的表），而畫面看得到原因
                 Log.Error(ex, "[SQL] 處理狀態遷移失敗，處理狀態維持唯讀：{Msg}", ex.Message);
+            }
+            finally
+            {
+                // 遷移分批落地，失敗前已搬的批次同樣改寫了資料，儀表板／報表快取要失效；背景服務不走 HTTP 管線
+                _dataVersion.Bump();
             }
         }, stoppingToken);
     }

@@ -638,6 +638,17 @@ public class SentinelQueryBuilderTests
         Assert.DoesNotContain(" OR ", clause);   // 只剩一個合法位址
     }
 
+    /// <summary>IP 原樣插進 Lucene：帶空白的值不得放行，否則子句變成 <c>host: 10.0.0.2</c> 讓同批主機一起被拒</summary>
+    [Fact]
+    public void BuildIpClause_帶空白的IP不進子句()
+    {
+        var clause = SentinelQueryBuilder.BuildIpClause(new[] { "10.0.0.1", " 10.0.0.2", "10.0.0.3\t" });
+
+        Assert.DoesNotContain("10.0.0.2", clause);
+        Assert.DoesNotContain("10.0.0.3", clause);
+        Assert.DoesNotContain(" OR ", clause);
+    }
+
     [Fact]
     public void BuildIpClause_全部不合法_擲ArgumentException不建空子句()
     {

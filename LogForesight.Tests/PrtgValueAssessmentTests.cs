@@ -213,6 +213,23 @@ public sealed class PrtgValueAssessmentTests : IDisposable
         Assert.Equal(PrtgValueReason.Ready, row.Reason);
     }
 
+    /// <summary>最新日有其他 device 的 ok 對應、但當天少了這台 device 的列：仍逐 device 沿用它較早的對應，不判對應無效</summary>
+    [Fact]
+    public void 最新日有ok但缺這台device_沿用該device較早的對應()
+    {
+        SeedSensors((101, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu));
+        for (var d = 1; d < 3; d++)
+            _store.ReplaceHostMapForDate(Completed.AddDays(-d).ToDateTime(TimeOnly.MinValue), [new PrtgHostMapRow
+                { DeviceObjid = 1, HostId = 11, HostName = "h11", MapStatus = PrtgMapStatus.Ok }]);
+        _store.ReplaceHostMapForDate(Completed.ToDateTime(TimeOnly.MinValue), [new PrtgHostMapRow
+            { DeviceObjid = 2, HostId = 12, HostName = "h12", MapStatus = PrtgMapStatus.Ok }]);
+        SeedHours(101, 3, (d, h) => 20 + h);
+
+        var row = Assert.Single(Assess());
+
+        Assert.Equal(PrtgValueReason.Ready, row.Reason);
+    }
+
     [Fact]
     public void 有效日差一天_計有效日不足並帶實際天數()
     {

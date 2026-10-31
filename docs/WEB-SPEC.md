@@ -503,7 +503,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `service_unavailable` | 503 | 升級遷移進行中，寫入暫停 |
   | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
 
-  PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
+  PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，

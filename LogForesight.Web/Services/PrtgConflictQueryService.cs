@@ -12,13 +12,13 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class PrtgConflictQueryService
 {
-    private readonly StorageBackend? _backend;
-    private readonly IHostStore? _hosts;
+    private readonly StorageBackend _backend;
+    private readonly IHostStore _hosts;
     private readonly PrtgDeviceIndexCache? _deviceIndexCache;
 
     public PrtgConflictQueryService(
-        StorageBackend? backend,
-        IHostStore? hosts = null,
+        StorageBackend backend,
+        IHostStore hosts,
         PrtgDeviceIndexCache? deviceIndexCache = null)
     {
         _backend = backend;
@@ -29,17 +29,7 @@ public class PrtgConflictQueryService
     /// <summary>第 <paramref name="page"/> 頁的衝突清單；page／pageSize 須為已正規化的值</summary>
     public PrtgHostMapPageDto GetConflictPage(int page, int pageSize)
     {
-        if (_backend == null)
-        {
-            return new PrtgHostMapPageDto
-            {
-                Page = page,
-                PageSize = pageSize
-            };
-        }
-
-        var backend = _backend;
-        var store = backend.PrtgStore();
+        var store = _backend.PrtgStore();
         var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays);
 
         var targetStatus = PrtgMapStatus.Conflict;
@@ -65,8 +55,7 @@ public class PrtgConflictQueryService
             ? _deviceIndexCache.GetOrAdd(PrtgDeviceIndexCache.GlobalKey, () => store.GetAllDevices())
             : new PrtgDeviceIndex(store.GetAllDevices());
 
-        var hostStore = _hosts ?? new HostStore(backend.Blob("hosts"));
-        var activeHosts = hostStore.GetAll()
+        var activeHosts = _hosts.GetAll()
             .Where(h => h.Active && h.MergedInto == null)
             .ToList();
 

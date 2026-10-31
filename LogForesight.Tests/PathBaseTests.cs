@@ -227,6 +227,38 @@ public class PathBaseTests
         Assert.Contains("必須以 / 開頭", ex.Message);
     }
 
+    /// <summary>X-Frame-Options 只接受瀏覽器認得的值：打錯字等於沒防嵌入，含換行會讓每個回應擲例外</summary>
+    [Theory]
+    [InlineData("DENNY", false)]
+    [InlineData("ALLOW-FROM https://x", false)]
+    [InlineData("DENY\r\nX: y", false)]
+    [InlineData("DENY", true)]
+    [InlineData("sameorigin", true)]
+    [InlineData("", true)]
+    public void 啟動驗證_FrameOptions只接受DENY_SAMEORIGIN或空字串(string value, bool valid)
+    {
+        var settings = new WebAppSettings
+        {
+            Jwt = new JwtSettings { SecretKey = new string('k', 40), ExpireHours = 8 },
+            Auth = new AuthSettings
+            {
+                Provider = "Ldap",
+                ServerAdmin = new ServerAdminSettings
+                {
+                    Account = "svc-lfadmin",
+                    PasswordHash = "PBKDF2$210000$s79Mzbz0FKaArA2SsMlCuQ==$2JKMIZGXFQbelisLIZZo+WAMCPJ0Ao3XPm5jg8TFy9M="
+                }
+            },
+            Storage = new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite", DataRoot = AppContext.BaseDirectory },
+            Server = new ServerSettings { FrameOptions = value }
+        };
+
+        var ex = Record.Exception(() => settings.Validate(strict: false, "Development"));
+
+        if (valid) Assert.Null(ex);
+        else Assert.Contains("Server:FrameOptions", Assert.IsType<InvalidOperationException>(ex).Message);
+    }
+
     /// <summary>IIS 子 Application 會自動填前綴，Server:PathBase 又有值就會雙重前綴——要在啟動時警告</summary>
     [Theory]
     [InlineData("/LogForesight", "/app", true)]

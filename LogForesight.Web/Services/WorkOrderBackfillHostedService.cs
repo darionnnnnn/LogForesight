@@ -50,7 +50,8 @@ public class WorkOrderBackfillHostedService : BackgroundService
                     {
                         _backfiller.Run(stoppingToken);
                     }
-                    catch (Exception ex)
+                    // 關站取消交給外層 when 篩選，不記成失敗
+                    catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                     {
                         // 整併失敗不影響站台運作：記 log，不讓背景例外把行程帶走
                         Log.Error(ex, "[SQL] 交辦單整併失敗：{Msg}", ex.Message);
