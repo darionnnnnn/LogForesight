@@ -19,6 +19,9 @@ public static class AiProviders
 
     public static readonly IReadOnlyList<string> All = new[] { Local, OpenAi, AzureOpenAi };
 
+    /// <summary>Azure OpenAI API 版本的預設值；設定模型、DTO、服務與畫面預設一律引用這裡。</summary>
+    public const string DefaultAzureApiVersion = "2024-10-21";
+
     /// <summary>把任意來源（DB／appsettings／表單）的值正規化成上面三個標準寫法之一；
     /// 空白或無法辨識一律視為 <see cref="Local"/>。</summary>
     public static string Normalize(string? value)

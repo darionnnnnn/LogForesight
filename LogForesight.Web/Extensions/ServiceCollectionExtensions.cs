@@ -428,9 +428,7 @@ public static class ServiceCollectionExtensions
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。
         services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
         services.AddSingleton<MailIssueDigest>(sp => new MailIssueDigest(
-            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(
-                sp.GetRequiredService<IHostStore>(),
-                () => sp.GetRequiredService<TopIssueBackfiller>().IssueSourceKeyReady),
+            sp.GetRequiredService<IIssueAggregateQuery>(),
             sp.GetRequiredService<OccurrenceStatusResolver>(),
             sp.GetRequiredService<ISystemSettingsStore>(),
             sp.GetRequiredService<IIssueExclusionSource>()));

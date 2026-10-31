@@ -16,6 +16,8 @@ public class DailyRecordBackfillHostedService : BackgroundService
 
     private readonly DailyRecordBackfiller _backfiller;
 
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(20);
+
     public DailyRecordBackfillHostedService(DailyRecordBackfiller backfiller, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
         _gate = gate;
@@ -28,7 +30,7 @@ public class DailyRecordBackfillHostedService : BackgroundService
         try
         {
             // 錯開 TopIssueBackfillHostedService 的 15 秒，避免兩個回填同時搶站台剛啟動時的連線
-            await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {

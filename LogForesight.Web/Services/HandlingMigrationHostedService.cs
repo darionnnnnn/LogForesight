@@ -19,12 +19,19 @@ public class HandlingMigrationHostedService : BackgroundService
     private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly StorageBackend _backend;
+    private readonly Action<CancellationToken> _run;
+
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(3);
 
     public HandlingMigrationHostedService(StorageBackend backend, DataVersionStamp dataVersion)
+        : this(ct => backend.HandlingMigrator.Run(ct), dataVersion)
+    {
+    }
+
+    internal HandlingMigrationHostedService(Action<CancellationToken> run, DataVersionStamp dataVersion)
     {
         _dataVersion = dataVersion;
-        _backend = backend;
+        _run = run;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,7 +40,7 @@ public class HandlingMigrationHostedService : BackgroundService
         // 這裡刻意比回填的 15 秒短——遷移未完成時處理狀態是唯讀的，要盡快解除
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -46,7 +53,7 @@ public class HandlingMigrationHostedService : BackgroundService
         {
             try
             {
-                _backend.HandlingMigrator.Run(stoppingToken);
+                _run(stoppingToken);
                 // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
                 _dataVersion.Bump();
             }

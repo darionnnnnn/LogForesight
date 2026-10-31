@@ -182,8 +182,8 @@
             </div>
             <div class="mb-3 d-none" id="setup-ai-azure-api-version-wrap">
                 <label for="setup-ai-azure-api-version" class="form-label small fw-semibold">API 版本</label>
-                <input type="text" class="form-control form-control-sm" id="setup-ai-azure-api-version" placeholder="2024-10-21" value="2024-10-21" />
-                <div class="form-text small text-muted">Azure OpenAI API 版本，預設 2024-10-21。</div>
+                <input type="text" class="form-control form-control-sm" id="setup-ai-azure-api-version" placeholder="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" value="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" data-default="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" />
+                <div class="form-text small text-muted">Azure OpenAI API 版本，預設 @LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion。</div>
             </div>
             <div class="mb-3" id="setup-ai-api-key-wrap">
                 <label for="setup-ai-api-key" class="form-label small fw-semibold" id="setup-ai-api-key-label">API 金鑰</label>

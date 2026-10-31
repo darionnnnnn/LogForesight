@@ -404,7 +404,7 @@ function renderAiFields(settings) {
     document.getElementById('ai-base-url').value = settings.aiBaseUrl ?? '';
     document.getElementById('ai-model').value = settings.aiModel ?? '';
     document.getElementById('ai-azure-deployment').value = settings.aiAzureDeployment ?? '';
-    document.getElementById('ai-azure-api-version').value = settings.aiAzureApiVersion || '2024-10-21';
+    document.getElementById('ai-azure-api-version').value = settings.aiAzureApiVersion || document.getElementById('ai-azure-api-version').dataset.default || '';
     updateAiProviderFields(provider);
 
     const apiKeyInput = document.getElementById('ai-api-key');

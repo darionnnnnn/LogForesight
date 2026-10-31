@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Core.Configuration;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -45,7 +46,7 @@ public static class RuntimeSettingsResolver
                 : systemSettings.AiModel.Trim();
             settings.Ai.AzureDeployment = systemSettings.AiAzureDeployment?.Trim() ?? "";
             settings.Ai.AzureApiVersion = string.IsNullOrWhiteSpace(systemSettings.AiAzureApiVersion)
-                ? "2024-10-21"
+                ? AiProviders.DefaultAzureApiVersion
                 : systemSettings.AiAzureApiVersion.Trim();
 
             ApplyAiAdvanced(settings.Ai, systemSettings);

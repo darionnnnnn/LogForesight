@@ -18,6 +18,8 @@ public class WorkOrderBackfillHostedService : BackgroundService
     private readonly WorkOrderBackfiller _backfiller;
     private readonly DataVersionStamp _dataVersion;
 
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(15);
+
     public WorkOrderBackfillHostedService(WorkOrderBackfiller backfiller, DataVersionStamp dataVersion, BackgroundWorkGate gate)
     {
         _gate = gate;
@@ -30,7 +32,7 @@ public class WorkOrderBackfillHostedService : BackgroundService
         // 讓站台其餘啟動流程先完成，不與第一批使用者請求搶資料庫
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {

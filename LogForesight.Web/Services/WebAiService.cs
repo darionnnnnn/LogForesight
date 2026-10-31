@@ -75,7 +75,7 @@ public class WebAiService : IWebAiService
     {
         var provider = AiProviders.Normalize(db.AiProvider);
         var model = string.IsNullOrWhiteSpace(db.AiModel) ? AiProviders.DefaultModel(provider) : db.AiModel.Trim();
-        var apiVersion = string.IsNullOrWhiteSpace(db.AiAzureApiVersion) ? "2024-10-21" : db.AiAzureApiVersion.Trim();
+        var apiVersion = string.IsNullOrWhiteSpace(db.AiAzureApiVersion) ? AiProviders.DefaultAzureApiVersion : db.AiAzureApiVersion.Trim();
         return (provider, EffectiveBaseUrl(db), db.AiApiKeyEnc ?? "", model, db.AiAzureDeployment?.Trim() ?? "", apiVersion, AdvancedFingerprint(db));
     }
 

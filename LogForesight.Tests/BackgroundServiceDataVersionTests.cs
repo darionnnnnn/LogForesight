@@ -48,14 +48,14 @@ public class BackgroundServiceDataVersionTests
         var backfiller = new WorkOrderBackfiller(store);
         var dataVersion = new DataVersionStamp();
         var gate = new BackgroundWorkGate(new SchedulerRunState(), Poll);
-        var service = new WorkOrderBackfillHostedService(backfiller, dataVersion, gate);
+        var service = new WorkOrderBackfillHostedService(backfiller, dataVersion, gate) { InitialDelay = TimeSpan.Zero };
 
         using var cts = new CancellationTokenSource();
         await service.StartAsync(cts.Token);
         try
         {
-            // 服務內建 15 秒啟動延遲，等待時間取寬鬆值
-            var bumped = await WaitUntilAsync(() => dataVersion.Current >= 1, TimeSpan.FromSeconds(40));
+            // 啟動延遲已注入為 0，等待時間取寬鬆值
+            var bumped = await WaitUntilAsync(() => dataVersion.Current >= 1, TimeSpan.FromSeconds(10));
             Assert.True(bumped, "回填擲例外後資料版本未推進（快取不會失效）");
             Assert.Equal(1, dataVersion.Current);
         }
@@ -73,14 +73,14 @@ public class BackgroundServiceDataVersionTests
         var backfiller = new DailyRecordBackfiller(() => throw new InvalidOperationException("測試用：每日紀錄回填擲例外"));
         var dataVersion = new DataVersionStamp();
         var gate = new BackgroundWorkGate(new SchedulerRunState(), Poll);
-        var service = new DailyRecordBackfillHostedService(backfiller, dataVersion, gate);
+        var service = new DailyRecordBackfillHostedService(backfiller, dataVersion, gate) { InitialDelay = TimeSpan.Zero };
 
         using var cts = new CancellationTokenSource();
         await service.StartAsync(cts.Token);
         try
         {
-            // 服務內建 20 秒啟動延遲，等待時間取寬鬆值
-            var bumped = await WaitUntilAsync(() => dataVersion.Current >= 1, TimeSpan.FromSeconds(45));
+            // 啟動延遲已注入為 0，等待時間取寬鬆值
+            var bumped = await WaitUntilAsync(() => dataVersion.Current >= 1, TimeSpan.FromSeconds(10));
             Assert.True(bumped, "回填擲例外後資料版本未推進（快取不會失效）");
             Assert.Equal(1, dataVersion.Current);
         }

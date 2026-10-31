@@ -16,12 +16,25 @@ public class PermissionChangeMigrationHostedService : BackgroundService
 
     private readonly StorageBackend _backend;
     private readonly ISystemSettingsStore _systemSettings;
+    private readonly Action<CancellationToken> _migrate;
+
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(3);
 
     public PermissionChangeMigrationHostedService(StorageBackend backend, ISystemSettingsStore systemSettings, DataVersionStamp dataVersion)
     {
         _dataVersion = dataVersion;
         _backend = backend;
         _systemSettings = systemSettings;
+        _migrate = ct => _backend.PermissionChangeMigrator.Run(ct);
+    }
+
+    /// <summary>測試用：只替換第一步遷移；遷移失敗或取消時後續步驟不會執行，因此不需要 backend。</summary>
+    internal PermissionChangeMigrationHostedService(Action<CancellationToken> migrate, DataVersionStamp dataVersion)
+    {
+        _dataVersion = dataVersion;
+        _backend = null!;
+        _systemSettings = null!;
+        _migrate = migrate;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,7 +42,7 @@ public class PermissionChangeMigrationHostedService : BackgroundService
         // 讓站台其餘啟動流程先完成（同 HandlingMigrationHostedService 的作法）。
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -41,7 +54,7 @@ public class PermissionChangeMigrationHostedService : BackgroundService
         {
             try
             {
-                _backend.PermissionChangeMigrator.Run(stoppingToken);
+                _migrate(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

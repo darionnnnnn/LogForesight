@@ -377,7 +377,7 @@ public class SystemSettingsService : ISystemSettingsService
                 : request.AiModel.Trim();
             s.AiAzureDeployment = request.AiAzureDeployment?.Trim() ?? "";
             s.AiAzureApiVersion = string.IsNullOrWhiteSpace(request.AiAzureApiVersion)
-                ? "2024-10-21"
+                ? AiProviders.DefaultAzureApiVersion
                 : request.AiAzureApiVersion.Trim();
             s.InitialHistoryDays = request.InitialHistoryDays;
             s.RetentionDays = request.RetentionDays;
@@ -1339,7 +1339,7 @@ public class SystemSettingsService : ISystemSettingsService
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
         AiModel = string.IsNullOrWhiteSpace(s.AiModel) ? AiProviders.DefaultModel(s.AiProvider) : s.AiModel,
         AiAzureDeployment = s.AiAzureDeployment,
-        AiAzureApiVersion = string.IsNullOrWhiteSpace(s.AiAzureApiVersion) ? "2024-10-21" : s.AiAzureApiVersion,
+        AiAzureApiVersion = string.IsNullOrWhiteSpace(s.AiAzureApiVersion) ? AiProviders.DefaultAzureApiVersion : s.AiAzureApiVersion,
         InitialHistoryDays = s.InitialHistoryDays,
         RetentionDays = s.RetentionDays,
         RunLogRetentionDays = s.RunLogRetentionDays,

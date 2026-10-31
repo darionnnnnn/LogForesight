@@ -16,12 +16,19 @@ public class ReportFileMigrationHostedService : BackgroundService
 
     private readonly BackgroundWorkGate _gate;
 
-    private readonly StorageBackend _backend;
+    private readonly Action<CancellationToken> _run;
+
+    internal TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     public ReportFileMigrationHostedService(StorageBackend backend, BackgroundWorkGate gate)
+        : this(ct => backend.ReportFileMigrator.Run(ct), gate)
+    {
+    }
+
+    internal ReportFileMigrationHostedService(Action<CancellationToken> run, BackgroundWorkGate gate)
     {
         _gate = gate;
-        _backend = backend;
+        _run = run;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,7 +36,7 @@ public class ReportFileMigrationHostedService : BackgroundService
         // 讓站台其餘啟動流程先完成（同其他遷移背景服務的作法）
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            if (InitialDelay > TimeSpan.Zero) await Task.Delay(InitialDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -45,7 +52,7 @@ public class ReportFileMigrationHostedService : BackgroundService
                 {
                     try
                     {
-                        _backend.ReportFileMigrator.Run(stoppingToken);
+                        _run(stoppingToken);
                     }
                     catch (Exception ex)
                     {
