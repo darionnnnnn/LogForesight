@@ -321,7 +321,7 @@ public class NetiqPipelineService
     {
         // 位址不是合法 IPv4 的主機不進查詢：壞值會被原樣插進 Lucene，讓同批其他主機一起被 Sentinel 拒絕。
         // 在計畫階段就濾掉，所以它們不進進度分母（HostDaysTotal 只累加計畫內的缺漏日），進度仍能到 100%。
-        var unqueryable = targets.Where(t => !SentinelQueryBuilder.IsValidIpv4(t.IpAddress)).ToList();
+        var unqueryable = targets.Where(t => !IpSyntax.IsStrictIpv4(t.IpAddress)).ToList();
         foreach (var t in unqueryable)
         {
             _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);

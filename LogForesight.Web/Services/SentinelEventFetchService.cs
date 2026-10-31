@@ -168,7 +168,7 @@ public class SentinelEventFetchService : ISentinelEventFetcher
         var isLinux = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
         // 位址不是 IPv4 時不組查詢（BuildIpClause 只放行 IPv4，全不合法會擲例外）；
         // 與下方不安全 program 同一種處理：回 Filter 為空字串的「不查詢」結果，由呼叫端視為查不到。
-        if (!SentinelQueryBuilder.IsValidIpv4(ip))
+        if (!IpSyntax.IsStrictIpv4(ip))
         {
             Log.Debug("主機位址不是 IPv4，略過現場取數：{Ip}", ip);
             return new LiveFetchQuery(string.Empty, Array.Empty<string>(),

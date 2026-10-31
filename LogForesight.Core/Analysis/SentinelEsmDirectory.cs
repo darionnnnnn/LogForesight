@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Analysis;
 
@@ -73,7 +74,7 @@ public static class SentinelEsmDirectory
         {
             if (entry.ValueKind != JsonValueKind.Object) continue;
 
-            var ip = FirstMatching(entry, IpFieldCandidates, IsValidIpv4);
+            var ip = FirstMatching(entry, IpFieldCandidates, IpSyntax.IsStrictIpv4);
             if (ip == null) continue;   // 沒有可辨識的 IP 就不是我們認得的主機條目
 
             // 名稱可缺（退回 IP）——名稱只是顯示用，IP 才是身分
@@ -129,15 +130,6 @@ public static class SentinelEsmDirectory
             }
         }
         return null;
-    }
-
-    /// <summary>完整四段 IPv4。嚴格驗證是刻意的——這是「這條目是不是一台主機」的唯一判準，
-    /// 寬鬆一點就會把版本號、序號之類的字串當成 IP 收進來。</summary>
-    private static bool IsValidIpv4(string value)
-    {
-        var octets = value.Trim().Split('.');
-        return octets.Length == 4 &&
-               octets.All(o => o.Length > 0 && int.TryParse(o, out var v) && v is >= 0 and <= 255);
     }
 }
 

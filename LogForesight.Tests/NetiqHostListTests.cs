@@ -126,6 +126,7 @@ public class NetiqHostListTests
     // Sentinel 篩選的條件，收下的後果是「這台主機永遠查無資料」
     [InlineData("10.1", false)]
     [InlineData("10.1.2", false)]
+    [InlineData("0x7f.0.0.1", false)]
     public void IsValidIp(string value, bool expected)
     {
         Assert.Equal(expected, NetiqHostList.IsValidIp(value));

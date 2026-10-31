@@ -1,3 +1,5 @@
+using LogForesight.Core.Models;
+
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
@@ -39,13 +41,13 @@ public static class SentinelQueryBuilder
 
     /// <summary>
     /// 單獨曝露 IP 批次子句，供 Q3（風險主機原始 log，單台小查詢）等其他查詢重用同一組寫法。
-    /// 只放行合法 IPv4（見 <see cref="IsValidIpv4"/>）：IP 會原樣插進 Lucene，一個壞值
+    /// 只放行合法 IPv4（見 <see cref="IpSyntax.IsStrictIpv4"/>）：IP 會原樣插進 Lucene，一個壞值
     /// （IPv6、短格式、亂字串）會讓同批所有主機被 Sentinel 以 400 整批拒絕。
     /// </summary>
     /// <exception cref="ArgumentException">沒有任何合法 IPv4——不建只剩空括號的子句。</exception>
     public static string BuildIpClause(IReadOnlyList<string> hostIps)
     {
-        var valid = hostIps.Where(IsValidIpv4).ToList();
+        var valid = hostIps.Where(IpSyntax.IsStrictIpv4).ToList();
         if (valid.Count == 0)
         {
             throw new ArgumentException("沒有任何合法的 IPv4 位址可建立查詢子句。", nameof(hostIps));
@@ -328,23 +330,12 @@ public static class SentinelQueryBuilder
         if (excludeIps is null || excludeIps.Count == 0) return string.Empty;
 
         var valid = excludeIps
-            .Where(IsValidIpv4)
+            .Where(IpSyntax.IsStrictIpv4)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (valid.Count == 0) return string.Empty;
 
         return $" AND NOT ({string.Join(" OR ", valid.Select(ip => $"{SentinelFieldMap.HostIp}:{ip}"))})";
-    }
-
-    /// <summary>完整四段十進位 IPv4 且每段 0~255（呼叫端亦用它濾掉進不了 Lucene 子句的主機位址）。刻意不接受簡寫或前綴——排除清單的每一筆
-    /// 都該是一台明確的主機，模糊的排除會讓涵蓋保證失去意義。</summary>
-    public static bool IsValidIpv4(string? ip)
-    {
-        if (string.IsNullOrWhiteSpace(ip)) return false;
-
-        var octets = ip.Split('.');
-        return octets.Length == 4 &&
-               octets.All(o => o.Length is >= 1 and <= 3 && o.All(char.IsAsciiDigit) && int.TryParse(o, out var v) && v is >= 0 and <= 255);
     }
 
     /// <summary>

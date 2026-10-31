@@ -145,4 +145,24 @@ public class PrtgAddressTests
     {
         Assert.False(PrtgAddress.IsDnsCandidate(token));
     }
+
+    [Theory]
+    [InlineData("10.1")]
+    [InlineData("1.2.3")]
+    [InlineData("12345")]
+    [InlineData("0")]
+    [InlineData("0x7f.1")]
+    [InlineData("0x7f.0.0.1")]
+    [InlineData("1.2.3.4.5")]
+    [InlineData("256.1.1.1")]
+    public void Normalize_簡寫或不合法的IPv4_回null(string value)
+    {
+        Assert.Null(PrtgAddress.Normalize(value));
+    }
+
+    [Fact]
+    public void Normalize_末段前導零_去除後回傳()
+    {
+        Assert.Equal("1.2.3.4", PrtgAddress.Normalize("1.2.3.04"));
+    }
 }
