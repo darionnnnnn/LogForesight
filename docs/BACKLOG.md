@@ -66,13 +66,9 @@
   與「餵 context 給內建小模型」無關。觀察需求出現、有明確使用情境（例如分析師想在自己的 AI 工具
   裡直接問「這台主機最近有哪些未結案問題」）時再另案規劃。
 
-## 本次簡化重構（refactor/simplify-2026-07）遞延項
+## 查詢參數收斂（未排期）
 
-- **`RecordsController` 的查詢參數尚未收斂為查詢模型類別**：`RecordsController.cs` 目前仍有
-  41 個 `[FromQuery]` 參數（3 個端點各約 13～15 個；表頭排序功能又加了 `sort`/`dir`
-  各三份，收斂的價值更高了），Phase 6f 體檢時判斷「model binding 語意屬
-  行為相鄰、無把關測試」而暫緩合併成單一查詢模型類別，改記入本清單。需要先补一輪端到端測試
-  釘住目前的 model binding 行為（空值/預設值/大小寫等），才能安全地做這個重構。
+- **其他控制器的 `[FromQuery]` 尚未收斂為查詢模型**：記錄查詢已改 `RecordQuery`（含表驅動綁定測試）；`HandlingController`（24 個）、`AdminController`（18 個）、`RulesController`（10 個）、`AuditController`（9 個）仍逐參數宣告。`QueryStringParsing.ParseLongs` 對「給了卻沒有合法數字」回空集合，這些呼叫端各自決定空集合的意義，記錄查詢已改為回 400。**觸發時機**：再替其中任一端點加參數時，先比照 `RecordsControllerBindingTests` 補綁定測試再收斂。
 
 ## 架構重構（feature/arch-refactor）遞延項
 
@@ -664,3 +660,22 @@ DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案�
 `PrtgSnapshotResponseContract` 收真子集並計缺顆，但回應為空集合仍視為契約不符（整批失敗、每輪輪詢記一次「批查詢失敗」）。
 批次是目標清單的連續切片，一整台裝置被刪就可能填滿一批；鏡像要到夜間結構同步才會移除這些感測器。
 **觸發時機**：白天刪裝置後快照執行紀錄持續出現批查詢失敗時，把「形狀正確的空陣列」改為全部計缺顆而非失敗。
+
+## 第 60 輪體檢遞延（純效能與需實機確認，未排期）
+
+下列項目已核對屬實，因需量測、schema 變更或部署端確認而未在第 60 輪處理；細節與核對證據見 `docs/archive/FEEDBACK-60-PLAN.md` §1 K 表與 §6。
+
+- **內容安全政策（CSP）**：四段 inline script（`_Layout.cshtml` 兩段、`Login.cshtml` 兩段）改 nonce，加回報端點寫入 NLog，先 report-only 收集再強制；`frame-ancestors` 需先確認部署端有無嵌入。
+- **排程新鮮度告示每次換頁重算**（`/api/health/freshness`）：30～60 秒短快取；內容與使用者無關。
+- **CaseDaySync 閒置固定 5 秒輪詢**：訊號喚醒＋退避到 60 秒，保留保底輪詢。
+- **完整回填一次啟動把計畫算 5 次**：同一請求內重用、對應表依日期 memo；runner 逐日預檢保留為圍籬，指紋組成不可改。
+- **PRTG 未對應主機清單在請求執行緒做真 DNS**：單例快取 resolver（TTL、負快取、預算）。
+- **沿用上次說明（`GetLatestNote`）整表撈回**：投影不含說明全文、串流到第一筆相符即停。
+- **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：先查資料有無「id 不同但同名」的列再決定加 `host_name_key` 欄位或只對 `host_id=0` 舊列做名稱備援；`LastWeeklyCheckupDate` 改下推 MAX。
+- **郵件貢獻帳本的管理出口與結構**：不確定預約的釋放端點與健康頁指引、逾時自動釋放的政策、依收件人分配額、搬出 blob 改真表。
+- **`ReportFileMigrator` 一次撈全部非低風險列**、**寄前重核逐收件人重查整個窗口**、**AI 快取整份 blob 讀寫無上限**、**`netiq_attempt_ledger_invalid` 以 HTTP 200 回失敗**。
+- **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
+- **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
+- **NetIQ 結果頁外層鍵的猜測式解析**（`SentinelClient.CandidateArrayKeys`）：待用診斷頁確認實機外層鍵後寫進 NETIQ-API-REFERENCE 再收窄。
+- **`PrtgScopePurgeJobsController` 以 `InvalidOperationException` 訊息分流狀態碼**：需在 Core 新增專屬例外型別才能交給 filter。
+
