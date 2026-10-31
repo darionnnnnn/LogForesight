@@ -501,6 +501,106 @@ public class MailNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void 收據保留期_超過常數天數清除_未超過保留()
+    {
+        var store = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
+        var now = DateTime.UtcNow;
+        var oldKey = new string('E', 64);
+        var freshKey = new string('F', 64);
+        var heldOld = new string('9', 64);
+        var heldFresh = new string('8', 64);
+        var days = MailNotifyStateStore.ContributionReceiptRetentionDays;
+        store.Update(state =>
+        {
+            state.AcceptedMailContributionReceipts[oldKey] = now.AddDays(-(days + 1));
+            state.AcceptedMailContributionReceipts[freshKey] = now.AddDays(-(days - 1));
+            state.HeldLegacyMailContributionReceipts[heldOld] = now.AddDays(-(days + 1));
+            state.HeldLegacyMailContributionReceipts[heldFresh] = now.AddDays(-(days - 1));
+        });
+
+        Assert.NotNull(store.TryReserveMailContributionKeys([new string('7', 64)], now, maximumKeys: 100));
+
+        var after = store.Get();
+        Assert.DoesNotContain(oldKey, after.AcceptedMailContributionReceipts.Keys);
+        Assert.Contains(freshKey, after.AcceptedMailContributionReceipts.Keys);
+        Assert.DoesNotContain(heldOld, after.HeldLegacyMailContributionReceipts.Keys);
+        Assert.Contains(heldFresh, after.HeldLegacyMailContributionReceipts.Keys);
+    }
+
+    [Fact]
+    public void 收據保留期_必須涵蓋最長回看窗口且遠小於舊值()
+    {
+        // 14 天補寄窗 + 週報前期 14 天 = 28 天；保留期至少要蓋住，且不再是 180 天。
+        Assert.True(MailNotifyStateStore.ContributionReceiptRetentionDays >= 28);
+        Assert.True(MailNotifyStateStore.ContributionReceiptRetentionDays < 90);
+    }
+
+    [Fact]
+    public async Task 連線被拒_真實sender對本機未開port_判為連線前失敗並釋放預約()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+
+        var sender = new SystemNetSmtpMailSender();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var error = await Xunit.Record.ExceptionAsync(() => sender.SendAsync(
+            new SmtpConnectionSpec("127.0.0.1", port, false, "", null),
+            new MailMessageSpec("from@test.local", ["to@test.local"], "s", "b"), cts.Token));
+
+        Assert.NotNull(error);
+        var chain = new List<string>();
+        for (var e = error; e != null; e = e.InnerException) chain.Add(e.GetType().Name);
+        Assert.True(MailNotificationService.IsConnectionEstablishmentFailure(error!),
+            "實際例外鏈：" + string.Join(" -> ", chain));
+
+        var store = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
+        var key = new string('A', 64);
+        var now = DateTime.UtcNow;
+        var id = store.TryReserveMailContributionKeys([key], now, maximumKeys: 10)!;
+        Assert.True(store.MarkMailContributionAttemptStarted(id, now));
+        var outcome = MailNotificationService.IsConnectionEstablishmentFailure(error!)
+            ? MailContributionReservationOutcome.DefinitelyRejected : MailContributionReservationOutcome.Unknown;
+        Assert.True(store.CompleteMailContributionReservation(id, outcome, now));
+        Assert.NotNull(store.TryReserveMailContributionKeys([key], now, maximumKeys: 10));
+    }
+
+    [Fact]
+    public void 連線層判定_DATA後逾時或一般SmtpException仍為不確定()
+    {
+        var generalSmtp = new System.Net.Mail.SmtpException(System.Net.Mail.SmtpStatusCode.GeneralFailure, "timeout after DATA");
+        Assert.False(MailNotificationService.IsConnectionEstablishmentFailure(generalSmtp));
+        var ioTimeout = new System.Net.Mail.SmtpException("failure",
+            new IOException("read", new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.TimedOut)));
+        Assert.False(MailNotificationService.IsConnectionEstablishmentFailure(ioTimeout));
+        Assert.False(MailNotificationService.IsConnectionEstablishmentFailure(new TimeoutException()));
+        // 伺服器已回覆（有明確狀態碼）的例外，即使內含 SocketException 也不算連線前失敗
+        var replied = new System.Net.Mail.SmtpException(System.Net.Mail.SmtpStatusCode.MailboxBusy, "busy");
+        Assert.False(MailNotificationService.IsConnectionEstablishmentFailure(replied));
+    }
+
+    [Theory]
+    [InlineData(System.Net.Sockets.SocketError.ConnectionRefused)]
+    [InlineData(System.Net.Sockets.SocketError.HostNotFound)]
+    [InlineData(System.Net.Sockets.SocketError.NetworkUnreachable)]
+    [InlineData(System.Net.Sockets.SocketError.HostUnreachable)]
+    public void 連線層判定_連線建立前的SocketError皆為確定未送出(System.Net.Sockets.SocketError code)
+    {
+        var inner = new System.Net.Sockets.SocketException((int)code);
+        Assert.True(MailNotificationService.IsConnectionEstablishmentFailure(
+            new System.Net.Mail.SmtpException("Failure sending mail.", new IOException("x", inner))));
+    }
+
+    [Fact]
+    public void 連線層判定_TLS交握失敗為確定未送出()
+    {
+        var tls = new System.Security.Authentication.AuthenticationException("handshake");
+        Assert.True(MailNotificationService.IsConnectionEstablishmentFailure(
+            new System.Net.Mail.SmtpException("Failure sending mail.", tls)));
+    }
+
+    [Fact]
     public void AcceptedReservationCommitsItsReservedReceiptAndKnownSingleRecipientRejectionReleasesIt()
     {
         var store = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
@@ -1989,6 +2089,32 @@ public class MailNotificationServiceTests : IDisposable
             config.LoggingRules.Remove(rule);
             NLog.LogManager.ReconfigExistingLoggers();
         }
+    }
+
+    [Fact]
+    public void 郵件貢獻帳本狀態_佔用數拆成五個分項且加總等於佔用數()
+    {
+        var (service, state) = CreateLedgerScenario("ledger-breakdown@test.local", limit: null, prefill: 3);
+        var now = DateTime.UtcNow;
+        state.Update(s =>
+        {
+            s.HeldLegacyMailContributionReceipts[new string('a', 64)] = now;
+            s.HeldLegacyMailContributionReceipts[new string('b', 64)] = now;
+            s.MailContributionReservations[new string('c', 64)] = new MailContributionReservation { ReservationId = "r", Status = "reserved", CreatedAtUtc = now };
+            s.MailContributionReservations[new string('d', 64)] = new MailContributionReservation { ReservationId = "a", Status = "attempted", CreatedAtUtc = now };
+            s.MailContributionReservations[new string('e', 64)] = new MailContributionReservation { ReservationId = "a", Status = "attempted", CreatedAtUtc = now };
+            s.MailContributionReservations[new string('f', 64)] = new MailContributionReservation { ReservationId = "u", Status = "unknown", CreatedAtUtc = now };
+        });
+
+        var status = service.GetContributionLedgerStatus();
+
+        Assert.Equal(3, status.AcceptedKeys);
+        Assert.Equal(2, status.HeldKeys);
+        Assert.Equal(1, status.ReservedKeys);
+        Assert.Equal(2, status.AttemptedKeys);
+        Assert.Equal(1, status.UnknownKeys);
+        Assert.Equal(status.OccupiedKeys,
+            status.AcceptedKeys + status.HeldKeys + status.ReservedKeys + status.AttemptedKeys + status.UnknownKeys);
     }
 
     [Fact]

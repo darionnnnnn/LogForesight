@@ -11,6 +11,18 @@ public class MailNotifyStateStore : JsonBlobSingleton<MailNotifyState>
     internal const string BlobKey = "mail_notify_state";
     internal const int MaxMutationCharacters = 4 * 1024 * 1024;
     private readonly EfJsonBlobStore _blob;
+    /// <summary>
+    /// 已被 SMTP 接受（或舊格式保留）的貢獻收據保留天數；Prune 與遷移函式共用這一個值。
+    /// 收據的用途是防止「同一主機日、同一證據」被重新渲染後重寄，因此只需活得比「主機日可能被重新帶回
+    /// 渲染」的最長窗口久。稽核所有會把舊主機日帶回渲染的路徑：
+    /// 執行後通知與補寄用 NotifyLookbackDays＝14 天（from＝昨天往回 13 天），其貢獻範圍的 Previous 窗口
+    /// 再往前等長 14 天，合計最遠約 28 天；每日摘要 1 天（含 Previous 共 2 天）；週報 7 天（含 Previous 共
+    /// 14 天）。緊急通知補送只重跑同一個 14 天窗口。另兩處用 RetentionDays 的清理（緊急 outbox 終態項目、
+    /// 已通知集合）只刪自己的狀態，不會把舊主機日重新帶回渲染；手動重新分析會換 parent 版本，產生新鍵。
+    /// 所以最長回看窗口為 28 天，加約 17 天邊際取 45 天。舊值 180 天遠超所需，在大型部署會讓帳本
+    /// （總上限 12,000，由單一 blob 4 MiB 推導）穩態滿載。
+    /// </summary>
+    public const int ContributionReceiptRetentionDays = 45;
     private static readonly TimeSpan PreparedMailReservationLifetime = TimeSpan.FromMinutes(5);
 
     public MailNotifyStateStore(EfJsonBlobStore blob) : base(blob) => _blob = blob;
@@ -154,7 +166,7 @@ public class MailNotifyStateStore : JsonBlobSingleton<MailNotifyState>
 
     private static void PruneMailContributionReceipts(MailNotifyState state, DateTime nowUtc)
     {
-        var cutoff = nowUtc.AddDays(-180);
+        var cutoff = nowUtc.AddDays(-ContributionReceiptRetentionDays);
         foreach (var key in state.AcceptedMailContributionReceipts.Where(pair => pair.Value < cutoff)
                      .Select(pair => pair.Key).ToArray()) state.AcceptedMailContributionReceipts.Remove(key);
         foreach (var key in state.HeldLegacyMailContributionReceipts.Where(pair => pair.Value < cutoff)

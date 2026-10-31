@@ -453,14 +453,30 @@ const cases = {
         assert.equal(inst.mailLedgerNotice(null), null);
     },
     郵件帳本提示_滿載時帶出數字時間與收件人() {
-        const inst = build('settings.js', ['function mailLedgerNotice('], '',
+        const inst = build('settings.js', ['function mailLedgerBreakdown(', 'function mailLedgerNotice('], '',
             '{ mailLedgerNotice }', { formatNumber: (n) => String(n), formatDateTime: (v) => `T(${v})` });
         const text = inst.mailLedgerNotice({ occupiedKeys: 12000, limit: 12000, lastFullAtUtc: '2026-10-30T01:02:03Z', lastFullRecipient: 'a@test.local' });
-        assert.equal(text, '郵件貢獻帳本已滿（12000／上限 12000）：最近一次於 T(2026-10-30T01:02:03Z) 略過收件人 a@test.local，該收件人本輪不寄');
+        assert(text.startsWith('郵件貢獻帳本已滿（12000／上限 12000）：最近一次於 T(2026-10-30T01:02:03Z) 略過收件人 a@test.local，該收件人本輪不寄。'));
         assert(!text.includes('案件'));
     },
+    郵件帳本提示_顯示五個佔用分項且各有白話說明() {
+        const inst = build('settings.js', ['function mailLedgerBreakdown(', 'function mailLedgerNotice('], '',
+            '{ mailLedgerNotice }', { formatNumber: (n) => String(n), formatDateTime: (v) => `T(${v})` });
+        const text = inst.mailLedgerNotice({
+            occupiedKeys: 12000, limit: 12000, lastFullAtUtc: '2026-10-30T01:02:03Z', lastFullRecipient: 'a@test.local',
+            acceptedKeys: 11000, heldKeys: 400, reservedKeys: 100, attemptedKeys: 200, unknownKeys: 300
+        });
+        assert(text.includes('已寄收據 11000（'), text);
+        assert(text.includes('舊格式保留 400（'), text);
+        assert(text.includes('已預約 100（'), text);
+        assert(text.includes('寄送中 200（'), text);
+        assert(text.includes('結果不確定 300（寄送結果不確定、為避免重複寄送而保留的項目）'), text);
+        // 接近上限（未滿載紀錄）也要帶分項；舊版回應缺欄位時以 0 計
+        const near = inst.mailLedgerNotice({ occupiedKeys: 10800, limit: 12000, lastFullAtUtc: null, lastFullRecipient: null });
+        assert(near.includes('結果不確定 0（'), near);
+    },
     郵件帳本提示_達九成但無滿載紀錄時顯示接近上限() {
-        const inst = build('settings.js', ['function mailLedgerNotice('], '',
+        const inst = build('settings.js', ['function mailLedgerBreakdown(', 'function mailLedgerNotice('], '',
             '{ mailLedgerNotice }', { formatNumber: (n) => String(n), formatDateTime: (v) => `T(${v})` });
         const text = inst.mailLedgerNotice({ occupiedKeys: 10800, limit: 12000, lastFullAtUtc: null, lastFullRecipient: null });
         assert.match(text, /^郵件貢獻帳本接近上限（10800／上限 12000）/);
