@@ -354,7 +354,7 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
 表達「兩者兼具」（實務上即 admin）。
 
-**全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。
+**全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。只回全站計數、不含主機身分的維護端點（`prtg-mirror`、`prtg-estimate`、`prtg-fetch-scope/estimate`）與主機管理（`api/admin/hosts*`）屬 `Maintain` 職責，不在此列；衝突清單 `prtg-host-map` 回傳候選主機身分，屬此列，受限角色在維護頁看到權限說明。
 
 **負責人隱含能力**：是任一**啟用中**主機的負責人時，
 `IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
@@ -2030,8 +2030,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **可見主機**：`GetGroupVisibleHostIdsFor` ∪ `GetOwnedHostIdsFor`，每列標「可見來源」——
   **群組授權**與**負責人**兩顆獨立徽章（可同時成立，§7.1）。列點擊到主機詳情。
 - **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true`，
-  **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress` 判定（同後端
-  `HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態）。
+  **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress`／`escalated` 判定，由後端在每個日項目回 `isUnresolved`
+  （`HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態），前端不另維護一份集合。
 - **被指派歷程**：以 `IssueCase` 為事實來源（建案時間／交辦者／主機／問題／目前狀態／涵蓋區間），
   新到舊。**刻意不用稽核表反查**：稽核有保留天數且要比對 detail JSON，案件本身就是指派的第一手紀錄。
   誠實邊界：案件只保存**目前**處理人，被改派走的案件不再出現於此（那次改派記在該主機的

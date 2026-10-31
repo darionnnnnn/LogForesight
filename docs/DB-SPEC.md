@@ -827,7 +827,8 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 | `prtg_snapshot_diagnostics_v1` | `PrtgSnapshotDiagnosticsStore`（快照服務寫；診斷 API 讀） | 快照嘗試／成功／略過的耐久診斷 |
 | `prtg_resource_guard_autodetect` | `PrtgResourceGuardAutoDetect`（夜間自動偵測寫；設定頁預覽讀） | `DetectedAt`、`Objids`；清單等於它才算自動偵測結果 |
 | `prtg_recent_stateq_*` | `EfPrtgStore.RecentStateChangeQueuePrefix`（快照服務） | 近期狀態變更待辦 |
-| `prtg_import_diagnostic_*` | `PrtgDataTransfer`（舊匯入寫；`RetentionPruner` 每輪最多清 100 份） | 舊版隔離診斷匯入 |
+| `prtg_import_diagnostic_*` | 舊版遺留，已無寫入端；`RetentionPruner` 每輪最多清 100 份 | 舊版隔離診斷匯入 |
+| `risky_events_source_key_done` | `TopIssueBackfiller.RunRiskySourceKeys`（回填完成且無 NULL 時寫；啟動時讀） | 風險事件來源鍵回填完成標記（版本字串）；存在即不再掃 `lf_risky_events`。只會因「部分還原資料庫」而與實際資料不符，此時刪除該列即可重跑 |
 
 - `lf_blobs.version` 同時作快取版本與 EF 併發權杖；`system_settings` JSON 的 `revision` 每次成功更新換 GUID（舊資料為 `legacy`），API 的預期版本在 `Mutate` 內比對。
 - **升級時不可逆刪除的退役 key**（`SchemaUpgrader`，冪等）：完全相符 `prtg_capacity_admission_plan_v1`、`prtg_capacity_reservation_v1`、`prtg_profile_transport_capacity_v1`、

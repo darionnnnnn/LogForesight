@@ -343,7 +343,7 @@
 
 ## 回饋三十四輪遞延
 
-- **報告檔遷移器（`ReportFileMigrator` / `ReportFileMigrationHostedService`）尚未退場**：報告已全數存在資料庫，遷移器只在升級時讀舊 `export\` 檔。第三十三輪的報告機制尚未在正式機實測，升級路徑還需要它——待正式機驗證後的輪次再移除（連同 `export` 這個已死的目錄概念）。
+- **報告檔遷移器尚未退場**：退場條件見本檔〈升級期一次性機制與退場條件〉；移除時連同 `export` 這個已死的目錄概念一起拿掉。
 
 - **NetIQ 取數仍以「整個 job 的事件桶」為單位**（回饋三十五輪批次E1 遞延）：`NetiqPipelineService`
   的 `eventsByIp` 持有該 job 全部事件（單 job 上限 10 萬筆），映射完才逐 IP 移除。本輪已在解析端
@@ -409,8 +409,6 @@
 - **伺服器硬體健康 sensor**（觸發條件：PRTG 端為伺服器加裝硬體健康類 sensor，如 Dell iDRAC、HPE iLO、IPMI）：
   實機 type 清單裡唯一的硬體健康 type 是 `SNMP Cisco System Health`，多掛在網路設備上；只對應伺服器的站台，
   hardware 規則與儲存故障佐證仍不會命中。加裝後把新 type 補進 `PrtgSensorTypeCategoryMap`（或先用補充對照）。
-- **非觸發式回填逐日重查狀態變更**（觸發條件：有人以不注入 store／records 的方式呼叫 `PrtgBackfillRunner`——正式路徑一律走觸發式、整趟只查一次）：
-  `FetchDayAsync(syncStructure:false)` 每一天都會跑狀態變更階段，逐裝置查詢後請求數是「天數 × 範圍台數」。要修就讓該分支比照觸發式在迴圈前取一次。
 - **範圍補抓每輪讀整份感測器鏡像**（觸發條件：取數範圍成長到數千台、快照執行輸出的間隔明顯拉長）：`BackfillScopeSensorsAsync` 每輪 `GetAllSensors()`
   只為了取裝置與 objid 兩個集合，可改成投影查詢。
 - **範圍補抓失敗的裝置沒有節流**（觸發條件：快照執行輸出反覆出現「N 台新進取數範圍的裝置感測器補抓失敗，下次再試」）：快照服務的範圍補抓對「查詢失敗」的裝置每輪重試（最多 50 台一輪），
@@ -467,7 +465,6 @@
 - **`PrtgFinding.Magnitude` 刻意不落 `Count`**（已定位，非缺陷）：整日 Down 會是 1440，
   用它填 `Count` 會讓 PRTG finding 在問題排行的「次數」維度壓過所有真實事件計數。
   它的用途是規則測試、`Detail` 文案與校準數值匯出的門檻分佈統計（PRTG-SPEC §11）。
-- **`PrtgDataPackage.FromDate`／`ToDate` 只寫不讀**：匯入端不校驗區間，屬輕度冗餘。
 - **匯出不能選資料類別**：規劃原本允許只匯出某幾張表，實作是固定全類別。
   實際檔案過大時再加。
 - **觸發式取數的收尾掃描會多跑一次**：輪詢迴圈是「先掃描、再判斷分析是否完成」，
@@ -582,9 +579,12 @@
 | `HandlingBlobMigrator`／`HandlingMigrationHostedService` | `HandlingMigrationState` 三份皆完成 | 所有站台升級後；移除時一併拿掉 `MigrationGateMiddleware` 的處理狀態分支 |
 | `PermissionChangeMigrator`／`PermissionChangeReparser`／`PermissionLegacySummaryCleanupState` | 各自狀態 blob 為完成 | 同上 |
 | `ReportFileMigrator`／`ReportFileMigrationHostedService` | 報告全文已存資料庫 | 正式機驗證報告機制後（另見本檔報告全文段） |
-| `TopIssueBackfiller`（來源鍵回填與首見日重整） | `source_key` 無 NULL 且重整旗標存在 | 所有站台回填完成後；就緒旗標目前為行程內狀態，重啟後重算 |
+| `TopIssueBackfiller`（來源鍵回填與首見日重整） | 問題聚合：`source_key` 無 NULL、首見日重整旗標存在、無未回填聚合欄（啟動快判，進背景閘門前即就緒）；風險事件：`risky_events_source_key_done` 旗標 | 所有站台回填完成後 |
+| `IssueFirstSeenSeedHostedService`（首見日種子合併） | 合併回報 Skipped／Completed；進度為行程內狀態，失敗重試 3 次 | 所有站台升級後 |
 | `WorkOrderBackfiller`／`DailyRecordBackfiller` | 回填版本達現行值 | 所有站台回填完成後 |
 | `SchemaUpgrader.RemoveRetiredPrtgBlobs`、SQL Server 人工對應自增欄位修正、`rule_id` 長度放寬 | 每次啟動皆冪等執行 | 所有站台升級到含該修正的版本後 |
+
+`CaseDaySyncHostedService` 是常駐的逐日同步迴圈，不是升級期機制，不列入本表。
 
 ## 背景服務與前景共用連線池
 
