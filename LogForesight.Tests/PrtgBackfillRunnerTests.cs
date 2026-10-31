@@ -128,44 +128,27 @@ public class PrtgBackfillRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_逐日推進回填過去多天數據且成功回傳true()
     {
-        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
-        var msgJson = "{\"treesize\":0,\"messages\":[]}";
-        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
-
+        var (store, records) = SetupTriggered(3, DateTime.Today.AddDays(-3));
+        var console = new TestConsole();
         var (client, handler) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
-            if (url.Contains("content=devices"))
-                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
-            if (url.Contains("content=sensors"))
-                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
             if (url.Contains("content=messages"))
-                return JsonResponse(msgJson);
+                return JsonResponse(EmptyMessagesJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(HistoricForRequest(url, histJson));
+                return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-
-        var store = CreateStore();
-        var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        // 回填不跑結構同步、sensor 清單來自鏡像——沒預置的話整趟是「0 個 sensor 的空跑」，
-        // 這個測試就變成在替「空跑報成功」背書（換模型體檢抓到的假通過形狀）
-        store.UpsertSensors(new List<PrtgSensorRow>
-        {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
-
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>());
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, new long[] { 1001 }, store, records);
 
         Assert.True(ok);
         Assert.Contains(console.Lines, l => l.Contains("開始執行 PRTG 歷史回填（共 3 天"));
         Assert.Contains(console.Lines, l => l.Contains("第 1/3 天"));
         Assert.Contains(console.Lines, l => l.Contains("第 2/3 天"));
         Assert.Contains(console.Lines, l => l.Contains("第 3/3 天"));
-        Assert.Contains(console.Lines, l => l.Contains("共成功 3 天，失敗 0 天"));
+        Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 3 天、失敗 0 天"));
 
         // 「逐日推進」要驗實際請求，不能只驗 console 文字：三天的 historicdata 必須帶三個相異的 sdate，
         // 且正是昨天、前天、大前天（若日期計算寫死成固定一天，console 照樣印三行，只有這裡抓得到）
@@ -181,79 +164,52 @@ public class PrtgBackfillRunnerTests : IDisposable
             .ToList();
         Assert.Equal(expected, sdates);
 
-        // 回填不得寫入主機對應（歷史對應無法重建）；有真的抓到數值才證明這不是空跑
+        // 有真的抓到數值才證明這不是空跑
         using var ctx = _fx.NewContext();
         Assert.True(ctx.PrtgValues.Any(), "回填應寫入數值——零筆代表整趟是空跑，測試前提失效");
-        Assert.False(ctx.PrtgHostMaps.Any(), "回填不得寫入主機對應");
     }
 
     [Fact]
     public async Task RunAsync_單日擷取失敗時繼續推進其餘天數()
     {
-        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
-        var msgJson = "{\"treesize\":0,\"messages\":[]}";
-        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
-
+        var (store, records) = SetupTriggered(3, DateTime.Today.AddDays(-3));
+        var console = new TestConsole();
         // 第 2 天（AddDays(-2)）模擬 PRTG 異常失敗
         var day2 = DateTime.Today.AddDays(-2);
         var day2Str = day2.ToString("yyyy-MM-dd");
-
-        var (client, handler) = CreateClient(req =>
+        var (client, _) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
             if (url.Contains($"sdate={day2Str}"))
-            {
                 return JsonResponse("Internal Server Error", HttpStatusCode.InternalServerError);
-            }
-            if (url.Contains("content=devices"))
-                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
-            if (url.Contains("content=sensors"))
-                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
             if (url.Contains("content=messages"))
-                return JsonResponse(msgJson);
+                return JsonResponse(EmptyMessagesJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(HistoricForRequest(url, histJson));
+                return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-
-        var store = CreateStore();
-        var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        // 回填不跑結構同步，sensor 清單改從鏡像讀——先把結構準備好，才是真實的回填前提
-        store.UpsertSensors(new List<PrtgSensorRow>
-        {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, new long[] { 1001 }, store, records);
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>());
-
-        Assert.True(ok); // 有成功的天數即回傳 true
+        Assert.False(ok); // 有失敗日即回傳 false，但其餘天數照常推進
         Assert.Contains(console.Lines, l => l.Contains($"回填 {day2Str}（第 2/3 天）失敗"));
         Assert.Contains(console.Lines, l => l.Contains("第 3/3 天"));
-        Assert.Contains(console.Lines, l => l.Contains("共成功 2 天，失敗 1 天"));
+        Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 2 天、失敗 1 天"));
     }
 
     [Fact]
     public async Task RunAsync_全部天數皆失敗時回傳false()
     {
+        var (store, records) = SetupTriggered(2, DateTime.Today.AddDays(-2));
         var (client, _) = CreateClient(_ => JsonResponse("Service Unavailable", HttpStatusCode.ServiceUnavailable));
-
-        var store = CreateStore();
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        // 預置鏡像，讓失敗真的來自 PRTG 回 503，而不是「鏡像為空」的入口防線
-        store.UpsertSensors(new List<PrtgSensorRow>
-        {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
-
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>());
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 2, 2, console, CancellationToken.None, new long[] { 1001 }, store, records);
 
         Assert.False(ok);
-        Assert.Contains(console.Lines, l => l.Contains("共成功 0 天，失敗 2 天"));
+        Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 0 天、失敗 2 天"));
     }
 
     [Fact]
@@ -261,11 +217,12 @@ public class PrtgBackfillRunnerTests : IDisposable
     {
         var (client, _) = CreateClient(_ => JsonResponse("{}"));
         var store = CreateStore();
+        var records = CreateRecordStore();
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        var okZero = await PrtgBackfillRunner.RunAsync(fetchService, 0, 2, console, CancellationToken.None, Array.Empty<long>());
-        var okNegative = await PrtgBackfillRunner.RunAsync(fetchService, -5, 2, console, CancellationToken.None, Array.Empty<long>());
+        var okZero = await PrtgBackfillRunner.RunAsync(fetchService, 0, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
+        var okNegative = await PrtgBackfillRunner.RunAsync(fetchService, -5, 2, console, CancellationToken.None, Array.Empty<long>(), store, records);
 
         Assert.False(okZero);
         Assert.False(okNegative);
@@ -275,45 +232,25 @@ public class PrtgBackfillRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_收到取消語彙基元時中斷並拋出例外()
     {
-        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
-        var msgJson = "{\"treesize\":0,\"messages\":[]}";
-        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
-
+        var (store, records) = SetupTriggered(5, DateTime.Today.AddDays(-5));
         using var cts = new CancellationTokenSource();
-
-        var (client, handler) = CreateClient(req =>
+        var (client, _) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
-            // 第一天執行完後觸發取消
-            if (url.Contains("content=devices"))
-            {
-                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
-            }
-            if (url.Contains("content=sensors"))
-                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
             if (url.Contains("content=messages"))
-                return JsonResponse(msgJson);
+                return JsonResponse(EmptyMessagesJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(HistoricForRequest(url, histJson));
+                return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-
-        var store = CreateStore();
         var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
-
-        // 預置鏡像：鏡像為空時 FetchDayAsync 在入口就短路，走不到會回報 sensor 進度的數值階段
-        store.UpsertSensors(new List<PrtgSensorRow>
-        {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
             // 第一天唯一一顆 sensor 的數值寫完（進度回報 1/1）當下按停止：
             // 這一天已沒有任何取消檢查點、照常做完，第二天入口才中斷
-            await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token, Array.Empty<long>(),
+            await PrtgBackfillRunner.RunAsync(fetchService, 5, 2, console, cts.Token, new long[] { 1001 }, store, records,
                 sensorProgress: (done, total) => { if (total > 0 && done == total) cts.Cancel(); });
         });
 
@@ -324,80 +261,31 @@ public class PrtgBackfillRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_回填過程中完全不寫入主機對應表()
     {
-        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
-        var msgJson = "{\"treesize\":0,\"messages\":[]}";
-        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
-
-        var (client, handler) = CreateClient(req =>
+        var (store, records) = SetupTriggered(1, DateTime.Today.AddDays(-1));
+        var console = new TestConsole();
+        var (client, _) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
-            if (url.Contains("content=devices"))
-                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
-            if (url.Contains("content=sensors"))
-                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
             if (url.Contains("content=messages"))
-                return JsonResponse(msgJson);
+                return JsonResponse(EmptyMessagesJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(HistoricForRequest(url, histJson));
+                return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-
-        var store = CreateStore();
-        var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        // 預置鏡像 sensor（回填不跑結構同步）；沒預置的話整趟空跑，「不寫對應」會變成恆真斷言
-        store.UpsertSensors(new List<PrtgSensorRow>
-        {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
+        int mapCountBefore;
+        using (var before = _fx.NewContext())
+            mapCountBefore = before.PrtgHostMaps.Count();
+        Assert.True(mapCountBefore > 0, "前提：回填前已有預置的主機對應，才能證明回填沒有改動它");
 
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>());
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None, new long[] { 1001 }, store, records);
         Assert.True(ok);
 
+        // 回填只抓 values／state changes，完全不寫入 lf_prtg_host_map
         using var ctx = _fx.NewContext();
-        // 斷言回填只抓 values/messages/devices/sensors，完全不寫入 lf_prtg_host_map
-        var mapCount = ctx.PrtgHostMaps.Count();
-        Assert.Equal(0, mapCount);
-    }
-
-    [Fact]
-    public async Task RunAsync_未傳入store與records時維持全量回填()
-    {
-        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
-        var msgJson = "{\"treesize\":0,\"messages\":[]}";
-        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
-
-        var (client, handler) = CreateClient(req =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (url.Contains("content=devices"))
-                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
-            if (url.Contains("content=sensors"))
-                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
-            if (url.Contains("content=messages"))
-                return JsonResponse(msgJson);
-            if (url.Contains("historicdata.json"))
-                return JsonResponse(HistoricForRequest(url, histJson));
-            return JsonResponse("{}", HttpStatusCode.NotFound);
-        });
-
-        var store = CreateStore();
-        var console = new TestConsole();
-        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
-
-        store.UpsertSensors(new List<PrtgSensorRow>
-        {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
-
-        // 不傳 store、records、whitelist（預設 null），應走全量回填路徑
-        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 2, console, CancellationToken.None, Array.Empty<long>());
-
-        Assert.True(ok);
-        Assert.Contains(handler.RequestedUrls, u => u.Contains("historicdata.json") && u.Contains("id=201"));
+        Assert.True(ctx.PrtgValues.Any(), "回填應寫入數值——零筆代表整趟是空跑，測試前提失效");
+        Assert.Equal(mapCountBefore, ctx.PrtgHostMaps.Count());
     }
 
     [Fact]
@@ -566,37 +454,23 @@ public class PrtgBackfillRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_回報天數進度_依序涵蓋第1至N天且最後為總天數()
     {
-        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var senJson = "{\"treesize\":1,\"sensors\":[{\"objid\":201,\"parentid\":101,\"sensor\":\"CPU\",\"type\":\"wmicpu\",\"status\":\"Up\",\"paused\":false}]}";
-        var msgJson = "{\"treesize\":0,\"messages\":[]}";
-        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
-
+        var (store, records) = SetupTriggered(3, DateTime.Today.AddDays(-3));
+        var console = new TestConsole();
         var (client, _) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
-            if (url.Contains("content=devices"))
-                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
-            if (url.Contains("content=sensors"))
-                return url.Contains("start=0") ? JsonResponse(senJson) : JsonResponse("{\"treesize\":1,\"sensors\":[]}");
             if (url.Contains("content=messages"))
-                return JsonResponse(msgJson);
+                return JsonResponse(EmptyMessagesJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(HistoricForRequest(url, histJson));
+                return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-
-        var store = CreateStore();
-        var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
-
-        store.UpsertSensors(new List<PrtgSensorRow>
-        {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
 
         var dayProgressList = new List<(int Done, int Total, DateTime? Date)>();
         var ok = await PrtgBackfillRunner.RunAsync(
-            fetchService, 3, 2, console, CancellationToken.None, Array.Empty<long>(),
+            fetchService, 3, 2, console, CancellationToken.None, new long[] { 1001 },
+            store, records,
             dayProgress: (done, total, date) => dayProgressList.Add((done, total, date)));
 
         Assert.True(ok);
@@ -623,41 +497,35 @@ public class PrtgBackfillRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_跨日回填時sensor進度換日重設不累加()
     {
-        var devJson = "{\"treesize\":1,\"devices\":[{\"objid\":101,\"device\":\"Server-01\",\"host\":\"192.168.1.10\",\"group\":\"Prod\",\"status\":\"Up\",\"paused\":false}]}";
-        var msgJson = "{\"treesize\":0,\"messages\":[]}";
-        var histJson = "{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}";
-
+        var (store, records) = SetupTriggered(2, DateTime.Today.AddDays(-2));
+        var console = new TestConsole();
         var (client, _) = CreateClient(req =>
         {
             var url = req.RequestUri!.ToString();
-            if (url.Contains("content=devices"))
-                return url.Contains("start=0") ? JsonResponse(devJson) : JsonResponse("{\"treesize\":1,\"devices\":[]}");
             if (url.Contains("content=messages"))
-                return JsonResponse(msgJson);
+                return JsonResponse(EmptyMessagesJson);
             if (url.Contains("historicdata.json"))
-                return JsonResponse(HistoricForRequest(url, histJson));
+                return JsonResponse(HistoricForRequest(url, OneHourHistJson));
             return JsonResponse("{}", HttpStatusCode.NotFound);
         });
-
-        var store = CreateStore();
-        var console = new TestConsole();
         var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
 
-        // 預置 4 個 sensor
+        // 同一台裝置再補 3 個 sensor，合計 4 個
         store.UpsertSensors(new List<PrtgSensorRow>
         {
-            new() { Objid = 201, DeviceObjid = 101, Name = "CPU-1", SensorType = "wmicpu", Paused = false },
-            new() { Objid = 202, DeviceObjid = 101, Name = "CPU-2", SensorType = "wmicpu", Paused = false },
-            new() { Objid = 203, DeviceObjid = 101, Name = "CPU-3", SensorType = "wmicpu", Paused = false },
-            new() { Objid = 204, DeviceObjid = 101, Name = "CPU-4", SensorType = "wmicpu", Paused = false }
-        }, DateTime.Now);
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "Sensor-A", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1001, Name = "CPU-2", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 2003, DeviceObjid = 1001, Name = "CPU-3", SensorType = "wmicpu", Paused = false },
+            new() { Objid = 2004, DeviceObjid = 1001, Name = "CPU-4", SensorType = "wmicpu", Paused = false }
+        }, DateTime.Today);
 
         // 以「正在處理的日期」分桶，不依賴已完成天數的計法
         var events = new List<(DateTime? Day, int SensorDone, int SensorTotal)>();
         DateTime? currentDay = null;
 
         var ok = await PrtgBackfillRunner.RunAsync(
-            fetchService, 2, 2, console, CancellationToken.None, Array.Empty<long>(),
+            fetchService, 2, 2, console, CancellationToken.None, new long[] { 1001 },
+            store, records,
             dayProgress: (done, total, date) =>
             {
                 if (date.HasValue)

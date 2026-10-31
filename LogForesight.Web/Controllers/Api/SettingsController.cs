@@ -1689,13 +1689,6 @@ public class SettingsController : ControllerBase
         ((left.SelectedHostIds == null && right.SelectedHostIds == null) ||
          (left.SelectedHostIds != null && right.SelectedHostIds != null && left.SelectedHostIds.SetEquals(right.SelectedHostIds)));
 
-    private static readonly JsonSerializerOptions PrtgDataJsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        WriteIndented = false
-    };
-
     /// <summary>匯出指定期間的 PRTG 鏡像資料為 JSON 檔案</summary>
     [HttpGet("prtg-export")]
     public IActionResult ExportPrtgData([FromQuery] string? from, [FromQuery] string? to)
@@ -1731,65 +1724,6 @@ public class SettingsController : ControllerBase
         RequireFullPrtgTransferAccess();
         return StatusCode(410, ApiResponse.Fail("legacy_import_retired",
             "請使用管理介面的可續傳診斷匯入；V1/V2 JSON 舊檔仍可使用。舊單次入口已停止接收檔案。"));
-    }
-
-    // Kept for trusted in-process callers; HTTP never binds an IFormFile here.
-    [NonAction]
-    [RequestSizeLimit(4 * 1024 * 1024 + 64 * 1024)]
-    [RequestFormLimits(MultipartBodyLengthLimit = 4 * 1024 * 1024)]
-    public ApiResponse<PrtgImportResult> ImportPrtgData([FromForm] IFormFile? file)
-    {
-        RequireFullPrtgTransferAccess();
-        if (_backend == null)
-            throw DomainException.Validation("PRTG 鏡像服務未啟用。");
-
-        if (file == null || file.Length == 0)
-            throw DomainException.Validation("請選擇要匯入的 JSON 檔案。");
-        if (file.Length > 4 * 1024 * 1024)
-            throw DomainException.Validation("舊版單次匯入上限為 4 MiB；請使用管理介面的可續傳診斷匯入。");
-
-        PrtgDataPackage? package;
-        try
-        {
-            using var stream = file.OpenReadStream();
-            package = JsonSerializer.Deserialize<PrtgDataPackage>(stream, PrtgDataJsonOptions);
-        }
-        catch (Exception ex)
-        {
-            throw DomainException.Validation($"檔案解析失敗：{ex.Message}");
-        }
-
-        if (package == null)
-            throw DomainException.Validation("匯入檔案內容為空或格式不符。");
-
-        if (package.FormatVersion is not (1 or PrtgDataTransfer.CurrentFormatVersion))
-            throw DomainException.Validation($"不支援的格式版本 {package.FormatVersion}（目前支援版本為 {PrtgDataTransfer.CurrentFormatVersion}）。");
-
-        if (package.Purpose != "diagnostic-only")
-            throw DomainException.Validation("匯入僅接受 diagnostic-only 診斷包。");
-
-        var result = PrtgDataTransfer.Import(_backend, package);
-
-        _audit.Record(
-            action: AuditActions.PrtgDataImport,
-            summary: $"診斷包已隔離保存，正式監控資料與判定未變更（{result.DiagnosticId}；裝置 {result.Devices} 筆、感測器 {result.Sensors} 筆、狀態變更 {result.StateChanges} 筆、數值 {result.Values} 筆、主機對應 {result.HostMaps} 筆、人工對應 {result.ManualMaps} 筆）",
-            targetKind: "prtg_data",
-            targetId: $"{package.FromDate:yyyyMMdd}-{package.ToDate:yyyyMMdd}",
-            detail: new
-            {
-                From = package.FromDate.ToString("yyyy-MM-dd"),
-                To = package.ToDate.ToString("yyyy-MM-dd"),
-                result.Devices,
-                result.Sensors,
-                result.StateChanges,
-                result.Values,
-                result.HostMaps,
-                result.ManualMaps,
-                result.DiagnosticOnly,
-                result.DiagnosticId
-            });
-
-        return ApiResponse<PrtgImportResult>.Ok(result);
     }
 }
 

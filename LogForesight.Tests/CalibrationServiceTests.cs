@@ -2804,7 +2804,6 @@ public class CalibrationControllerTests : IDisposable
         Assert.NotNull(data.TriggeredFetchMagnitude);
         Assert.NotNull(data.ResidualCredentialThresholds);
         Assert.False(data.CanExport);
-        Assert.IsAssignableFrom<IDisposable>(response).Dispose();
     }
 
     [Fact]
@@ -2874,25 +2873,28 @@ public class CalibrationControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetStatus_MVC傳送期間保留Admission並阻擋匯出()
+    public void GetStatus_與匯出同時進行時由服務層互斥回503_capture_busy()
     {
         var controller = CreateController();
-        await using var body = new BlockingResponseStream();
-        var mvc = CreateMvcActionContext(body);
-        using var services = mvc.Services;
-        controller.ControllerContext = new ControllerContext(mvc.Context);
-        var status = Assert.IsAssignableFrom<OkObjectResult>(controller.GetStatus());
+        var prtgStore = new EfPrtgStore(_fx.NewContext);
+        var issueQuery = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
+        var exportingService = new CalibrationService(_fx.NewContext, prtgStore, issueQuery,
+            _settingsStore, _ruleStore, null);
 
-        var execution = status.ExecuteResultAsync(mvc.Context);
-        await body.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var blocked = Assert.IsType<ObjectResult>(controller.Export(isOverride: true));
-        Assert.Equal(StatusCodes.Status503ServiceUnavailable, blocked.StatusCode);
+        // 匯出的組包階段持有服務層 admission；此時另一個狀態請求必須被擋成 503 capture_busy
+        ObjectResult? blocked = null;
+        exportingService.WithExportPackage(summaryOnly: true, (_, _) =>
+        {
+            blocked = Assert.IsType<ObjectResult>(controller.GetStatus());
+            return 0;
+        });
+
+        Assert.NotNull(blocked);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, blocked!.StatusCode);
         Assert.Equal("capture_busy", Assert.IsType<ApiResponse<object>>(blocked.Value).Error?.Code);
 
-        body.AllowWrite.TrySetResult(true);
-        await execution;
-        var next = Assert.IsAssignableFrom<IDisposable>(controller.Export(isOverride: true));
-        next.Dispose();
+        // 匯出結束後 admission 已釋放，狀態請求恢復正常
+        Assert.IsAssignableFrom<OkObjectResult>(controller.GetStatus());
     }
 
     [Fact]

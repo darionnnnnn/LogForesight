@@ -56,44 +56,18 @@ public class CalibrationController : ControllerBase
     {
         if (!_currentUser.HasViewAll())
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse.Fail(ApiErrorCodes.Forbidden, ForbiddenMessage));
-        if (!RequestAdmission.Wait(0))
-            return CapacityResponse(StatusCodes.Status503ServiceUnavailable, "capture_busy", "另一個校準資料擷取或匯出正在執行，請稍後重試。");
-        var admissionTransferred = false;
         try
         {
-            var result = _calibrationService.WithAssessment(forceRefresh: true, (summary, budget) =>
-            {
-                var budgetLifetime = budget.Retain();
-                IDisposable? outputReservation = null;
-                try
-                {
-                    outputReservation = budget.ReserveTransient(128L * 1024 * 1024, "bounded status JSON response buffer");
-                    var response = new CalibrationBudgetedOkResult(ApiResponse<CalibrationStatusDto>.Ok(
-                        CalibrationStatusDto.From(summary)), () => RequestAdmission.Release(), budgetLifetime, outputReservation);
-                    var httpContext = ControllerContext?.HttpContext;
-                    if (httpContext != null)
-                        httpContext.Response.OnCompleted(() => { response.Dispose(); return Task.CompletedTask; });
-                    outputReservation = null;
-                    budgetLifetime = null!;
-                    admissionTransferred = true;
-                    return response;
-                }
-                finally
-                {
-                    outputReservation?.Dispose();
-                    budgetLifetime?.Dispose();
-                }
-            }, ControllerContext?.HttpContext?.RequestAborted ?? CancellationToken.None);
-            return result;
+            // 狀態是小 DTO，直接回 Ok；與匯出的互斥由服務層 CalibrationCaptureAdmission 負責，
+            // 兩者同時進行時服務層擲 CalibrationCapacityException，下方轉成 503 capture_busy。
+            return _calibrationService.WithAssessment<IActionResult>(forceRefresh: true,
+                (summary, _) => Ok(ApiResponse<CalibrationStatusDto>.Ok(CalibrationStatusDto.From(summary))),
+                ControllerContext?.HttpContext?.RequestAborted ?? CancellationToken.None);
         }
         catch (CalibrationCapacityException exception)
         {
             return CapacityResponse(exception.Retryable ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status413PayloadTooLarge,
                 exception.Retryable ? "capture_busy" : "capacity_exceeded", exception.Message);
-        }
-        finally
-        {
-            if (!admissionTransferred) RequestAdmission.Release();
         }
     }
 
@@ -198,48 +172,6 @@ public class CalibrationController : ControllerBase
 
     private ObjectResult CapacityResponse(int statusCode, string code, string message) =>
         StatusCode(statusCode, ApiResponse.Fail(code, message));
-
-    private sealed class CalibrationBudgetedOkResult(object value, Action releaseAdmission,
-        IDisposable budgetLifetime, IDisposable outputReservation) : OkObjectResult(value), IDisposable
-    {
-        private Action? _releaseAdmission = releaseAdmission;
-        private IDisposable? _budgetLifetime = budgetLifetime;
-        private IDisposable? _outputReservation = outputReservation;
-
-        public override async Task ExecuteResultAsync(ActionContext context)
-        {
-            try
-            {
-                var httpContext = context.HttpContext;
-                var cancellationToken = httpContext.RequestAborted;
-                using var buffer = new BoundedMemoryStream(MaximumExportBytes);
-                var options = httpContext.RequestServices.GetRequiredService<IOptions<JsonOptions>>().Value.JsonSerializerOptions;
-                try
-                {
-                    JsonSerializer.Serialize(buffer, Value, Value?.GetType() ?? typeof(object), options);
-                }
-                catch (CalibrationCapacityException exception)
-                {
-                    buffer.ResetBuffer();
-                    httpContext.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
-                    JsonSerializer.Serialize(buffer, ApiResponse.Fail("capacity_exceeded", exception.Message), options);
-                }
-                cancellationToken.ThrowIfCancellationRequested();
-                buffer.Position = 0;
-                httpContext.Response.ContentType = "application/json; charset=utf-8";
-                httpContext.Response.ContentLength = buffer.Length;
-                await buffer.CopyToAsync(httpContext.Response.Body, 64 * 1024, cancellationToken).ConfigureAwait(false);
-            }
-            finally { Dispose(); }
-        }
-
-        public void Dispose()
-        {
-            Interlocked.Exchange(ref _outputReservation, null)?.Dispose();
-            Interlocked.Exchange(ref _budgetLifetime, null)?.Dispose();
-            Interlocked.Exchange(ref _releaseAdmission, null)?.Invoke();
-        }
-    }
 
     private sealed class CalibrationFileStreamResult : FileStreamResult, IDisposable
     {

@@ -10,9 +10,8 @@ namespace LogForesight.Core.Service;
 public static class PrtgBackfillRunner
 {
     // 斷點續傳靠冪等：
-    // FetchDayAsync 的寫入全部冪等（數值有自然鍵 (sensor_objid, period_start) 覆蓋更新、
-    // 狀態變更以 (sensor_objid, changed_at) 去重），因此中斷後重跑同一區間不會產生重複資料，
-    // 不需要額外的水位紀錄。
+    // 數值寫入有自然鍵 (sensor_objid, period_start) 覆蓋更新、狀態變更以 (sensor_objid, changed_at) 去重，
+    // 因此中斷後重跑同一區間不會產生重複資料；已完整回填的日子另由完成水位（skipDays）略過。
     //
     // 回填不做主機對應：
     // 主機對應為每日作業，歷史對應無法事後重建（歷史 IP 變動、主機異動無法考證），硬造反而是假資料。
@@ -122,8 +121,8 @@ public static class PrtgBackfillRunner
     /// <param name="console">執行歷程輸出</param>
     /// <param name="ct">取消語彙基元</param>
     /// <param name="scopeDeviceObjids">取數範圍裝置集合（呼叫端以 PrtgScopeDevices.Compute 算好；本方法只轉交給擷取服務、不自行過濾）</param>
-    /// <param name="store">PRTG 鏡像 store（傳入時啟用觸發式過濾）</param>
-    /// <param name="records">分析紀錄查詢介面（傳入時啟用觸發式過濾）</param>
+    /// <param name="store">PRTG 鏡像 store（觸發式過濾必填）</param>
+    /// <param name="records">分析紀錄查詢介面（觸發式過濾必填）</param>
     /// <param name="whitelist">sensor type 白名單（null 或空表示不限制）</param>
     /// <param name="dayProgress">天數層進度回呼（已完成天數, 總天數, 當前日期），null＝不回報</param>
     /// <param name="sensorProgress">當日 sensor 進度回呼（已完成數, 總數），null＝不回報</param>
@@ -131,13 +130,12 @@ public static class PrtgBackfillRunner
     /// <param name="skipDays">先前已完整回填、本趟略過的資料日（完成水位，docs/PRTG-SPEC.md §5）；null＝全跑</param>
     /// <param name="dayCompleted">某日每個目標 sensor 都取到時回呼（資料日, 該日目標指紋），供呼叫端記錄完成水位</param>
     /// <returns>
-    /// 全量分支：有任何一天成功回傳 true。
-    /// 觸發式分支：沒有失敗日、狀態變更完整取得、且至少一天成功才回傳 true。
+    /// 沒有失敗日、狀態變更完整取得、且至少一天成功才回傳 true。
     /// </returns>
     public static async Task<bool> RunAsync(
         PrtgFetchService fetchService, int days, int concurrency, IRunConsole console, CancellationToken ct,
         IReadOnlyCollection<long> scopeDeviceObjids,
-        EfPrtgStore? store = null, IAnalysisRecordQuery? records = null, IReadOnlyCollection<string>? whitelist = null,
+        EfPrtgStore store, IAnalysisRecordQuery records, IReadOnlyCollection<string>? whitelist = null,
         Action<int, int, DateTime?>? dayProgress = null,
         Action<int, int>? sensorProgress = null,
         string? scope = null,
@@ -167,7 +165,8 @@ public static class PrtgBackfillRunner
         // Preview admission itself rejects a preview whose anchor is no longer today's date.
         var anchorDate = expectedPlanAnchorDate?.Date ?? DateTime.Today;
 
-        var triggered = store != null && records != null;
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(records);
         var successDays = 0;
         var failedDays = 0;
         var skippedDays = 0;
@@ -181,7 +180,7 @@ public static class PrtgBackfillRunner
 
         if (expectedDayFingerprints != null)
         {
-            if (!triggered || expectedDayFingerprints.Count != days)
+            if (expectedDayFingerprints.Count != days)
             {
                 console.WriteLine("全量回填計畫不完整或執行範圍不相符，停止且不發出 PRTG 請求。");
                 return false;
@@ -189,7 +188,7 @@ public static class PrtgBackfillRunner
             for (var i = 1; i <= days; i++)
             {
                 var day = anchorDate.AddDays(-i);
-                var current = PrtgFullBackfillPlanBuilder.ResolveDay(store!, records!, day,
+                var current = PrtgFullBackfillPlanBuilder.ResolveDay(store, records, day,
                     scopeDeviceObjids, whitelist, scope, extraScopeHosts);
                 if (!expectedDayFingerprints.TryGetValue(day, out var expected) || expected != current.Fingerprint)
                 {
@@ -201,35 +200,32 @@ public static class PrtgBackfillRunner
 
         try
         {
-            if (triggered)
+            // 狀態變更整趟只翻一次：逐日各翻一次相對窗，實機一窗約 100 萬筆、N 天就翻 N 次。
+            // 區間兩端各放寬一天（最舊回填日的前一天到今天）：規則評估會看前後一天的變更，
+            // 只取回填日本身會讓邊界日的評估缺資料。
+            try
             {
-                // 狀態變更整趟只翻一次：逐日各翻一次相對窗，實機一窗約 100 萬筆、N 天就翻 N 次。
-                // 區間兩端各放寬一天（最舊回填日的前一天到今天）：規則評估會看前後一天的變更，
-                // 只取回填日本身會讓邊界日的評估缺資料。
-                try
+                var range = await fetchService.FetchStateChangesRangeAsync(
+                    anchorDate.AddDays(-days - 1), anchorDate, scopeDeviceObjids, concurrency, ct,
+                    (stage, done, total) => stateChangeProgress?.Invoke(done, total));
+                console.WriteLine($"狀態變更：查詢 {range.QueriedObjects} 台、讀取 {range.ReadRows} 筆、新增 {range.TotalWritten} 筆（其餘已存在）");
+                if (!range.Converged)
                 {
-                    var range = await fetchService.FetchStateChangesRangeAsync(
-                        anchorDate.AddDays(-days - 1), anchorDate, scopeDeviceObjids, concurrency, ct,
-                        (stage, done, total) => stateChangeProgress?.Invoke(done, total));
-                    console.WriteLine($"狀態變更：查詢 {range.QueriedObjects} 台、讀取 {range.ReadRows} 筆、新增 {range.TotalWritten} 筆（其餘已存在）");
-                    if (!range.Converged)
-                    {
-                        stateChangesFailed = true;
-                        stateChangesError = string.IsNullOrWhiteSpace(range.Error) ? "分頁未收斂" : range.Error;
-                        console.WriteLine($"⚠ 狀態變更未收斂：{stateChangesError}（逐日數值照常回填）");
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    // 數值與狀態變更互相獨立，前者不因後者失敗而放棄
                     stateChangesFailed = true;
-                    stateChangesError = ex.Message;
-                    console.WriteLine($"⚠ 狀態變更取得失敗：{ex.Message}（逐日數值照常回填）");
+                    stateChangesError = string.IsNullOrWhiteSpace(range.Error) ? "分頁未收斂" : range.Error;
+                    console.WriteLine($"⚠ 狀態變更未收斂：{stateChangesError}（逐日數值照常回填）");
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // 數值與狀態變更互相獨立，前者不因後者失敗而放棄
+                stateChangesFailed = true;
+                stateChangesError = ex.Message;
+                console.WriteLine($"⚠ 狀態變更取得失敗：{ex.Message}（逐日數值照常回填）");
             }
 
             for (var i = 1; i <= days; i++)
@@ -245,91 +241,66 @@ public static class PrtgBackfillRunner
                 var dayInterrupted = false;
                 try
                 {
-                    if (!triggered)
+                    // 觸發式回填：只回填問題主機命中白名單的 sensor（狀態變更已在迴圈前一次取完）
+
+                    // 完成水位：先前已完整回填且目標沒變的日子不再發請求
+                    if (skipDays?.Contains(day) == true)
                     {
-                        // syncStructure: false —— 結構鏡像永遠是現況，逐日回填不必也不該重跑它
-                        // （會對 PRTG 做 N 次全量查詢，並把「最後結構同步時間」改寫成回填當下）
-                        // 範圍由呼叫端在回填開始前算好（回填不做主機對應）
-                        var result = await fetchService.FetchDayAsync(
-                            day, concurrency, ct,
-                            _ => new PrtgScopeResult(scopeDeviceObjids.ToHashSet(), 0, 0, 0, 0),
-                            syncStructure: false,
+                        completedEarlierDays++;
+                        console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）略過：先前已完整回填");
+                        continue;
+                    }
+
+                    // 該日無對應時退回最近一日的對應：以回填當日為基準往回查，
+                    // 單一聚合查詢取代逐日往回的多次獨立查詢（回填 N 天會放大 N 倍）
+                    var targetPlan = PrtgFullBackfillPlanBuilder.ResolveDay(
+                        store, records, day, scopeDeviceObjids, whitelist, scope, extraScopeHosts);
+
+                    if (expectedDayFingerprints != null &&
+                        (!expectedDayFingerprints.TryGetValue(day, out var expectedFingerprint) ||
+                         expectedFingerprint != targetPlan.Fingerprint))
+                    {
+                        console.WriteLine($"全量回填 {day:yyyy-MM-dd} 的記錄、對應或目標在執行中變更，停止且不發出該日 historicdata 請求。");
+                        return false;
+                    }
+
+                    if (targetPlan.MappedHosts == 0)
+                    {
+                        // 沒有對應就沒有目標 sensor：不是成功（一筆都沒取）也不是失敗（沒有東西壞）。
+                        // 這天沒有東西要補，照樣記完成水位：不記的話「全部完成」永遠湊不齊，
+                        // 續跑只剩這種日子時會整趟回失敗還重翻狀態變更區間；指紋含對應，之後有對應就不算完成。
+                        skippedDays++;
+                        console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）略過：該日之前沒有主機對應");
+                        dayCompleted?.Invoke(day, targetPlan.Fingerprint);
+                        continue;
+                    }
+
+                    var problemHostsCount = targetPlan.SelectedHosts;
+                    var valuesWritten = 0;
+                    var failedSensors = 0;
+                    var targetSensorsCount = targetPlan.SensorObjids.Count;
+                    if (targetSensorsCount > 0)
+                    {
+                        var (written, failed) = await fetchService.FetchValuesForSensorsAsync(
+                            day, targetPlan.SensorObjids, concurrency, ct,
                             progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
-                        if (result.Failures > 0 && result.Values == 0 && result.StateChanges == 0)
-                        {
-                            failedDays++;
-                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：所有擷取階段皆未成功。");
-                        }
-                        else
-                        {
-                            successDays++;
-                            totalValuesWritten += result.Values;
-                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：數值 {result.Values} 筆、狀態變更 {result.StateChanges} 筆");
-                        }
+                        valuesWritten = written;
+                        failedSensors = failed;
+                    }
+
+                    // 失敗＝有目標 sensor 且全部失敗；狀態變更不再逐日取，不參與判定
+                    if (failedSensors > 0 && valuesWritten == 0)
+                    {
+                        failedDays++;
+                        console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：{failedSensors} 個 sensor 的數值皆未取得。");
                     }
                     else
                     {
-                        // 觸發式回填：只回填問題主機命中白名單的 sensor（狀態變更已在迴圈前一次取完）
-
-                        // 完成水位：先前已完整回填且目標沒變的日子不再發請求
-                        if (skipDays?.Contains(day) == true)
-                        {
-                            completedEarlierDays++;
-                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）略過：先前已完整回填");
-                            continue;
-                        }
-
-                        // 該日無對應時退回最近一日的對應：以回填當日為基準往回查，
-                        // 單一聚合查詢取代逐日往回的多次獨立查詢（回填 N 天會放大 N 倍）
-                        var targetPlan = PrtgFullBackfillPlanBuilder.ResolveDay(
-                            store!, records!, day, scopeDeviceObjids, whitelist, scope, extraScopeHosts);
-
-                        if (expectedDayFingerprints != null &&
-                            (!expectedDayFingerprints.TryGetValue(day, out var expectedFingerprint) ||
-                             expectedFingerprint != targetPlan.Fingerprint))
-                        {
-                            console.WriteLine($"全量回填 {day:yyyy-MM-dd} 的記錄、對應或目標在執行中變更，停止且不發出該日 historicdata 請求。");
-                            return false;
-                        }
-
-                        if (targetPlan.MappedHosts == 0)
-                        {
-                            // 沒有對應就沒有目標 sensor：不是成功（一筆都沒取）也不是失敗（沒有東西壞）。
-                            // 這天沒有東西要補，照樣記完成水位：不記的話「全部完成」永遠湊不齊，
-                            // 續跑只剩這種日子時會整趟回失敗還重翻狀態變更區間；指紋含對應，之後有對應就不算完成。
-                            skippedDays++;
-                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）略過：該日之前沒有主機對應");
-                            dayCompleted?.Invoke(day, targetPlan.Fingerprint);
-                            continue;
-                        }
-
-                        var problemHostsCount = targetPlan.SelectedHosts;
-                        var valuesWritten = 0;
-                        var failedSensors = 0;
-                        var targetSensorsCount = targetPlan.SensorObjids.Count;
-                        if (targetSensorsCount > 0)
-                        {
-                            var (written, failed) = await fetchService.FetchValuesForSensorsAsync(
-                                day, targetPlan.SensorObjids, concurrency, ct,
-                                progress: (stage, done, total) => sensorProgress?.Invoke(done, total));
-                            valuesWritten = written;
-                            failedSensors = failed;
-                        }
-
-                        // 失敗＝有目標 sensor 且全部失敗；狀態變更不再逐日取，不參與判定
-                        if (failedSensors > 0 && valuesWritten == 0)
-                        {
-                            failedDays++;
-                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）失敗：{failedSensors} 個 sensor 的數值皆未取得。");
-                        }
-                        else
-                        {
-                            successDays++;
-                            totalValuesWritten += valuesWritten;
-                            console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：問題主機 {problemHostsCount} 台、sensor {targetSensorsCount} 個、數值 {valuesWritten} 筆");
-                            // 部分 sensor 失敗的日子不記完成：下次續跑要再補
-                            if (failedSensors == 0) dayCompleted?.Invoke(day, targetPlan.Fingerprint);
-                        }
+                        successDays++;
+                        totalValuesWritten += valuesWritten;
+                        console.WriteLine($"回填 {day:yyyy-MM-dd}（第 {i}/{days} 天）：問題主機 {problemHostsCount} 台、sensor {targetSensorsCount} 個、數值 {valuesWritten} 筆");
+                        // 部分 sensor 失敗的日子不記完成：下次續跑要再補
+                        if (failedSensors == 0) dayCompleted?.Invoke(day, targetPlan.Fingerprint);
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -364,12 +335,6 @@ public static class PrtgBackfillRunner
         if (successDays > 0)
         {
             fetchService.RecordFreshness(PrtgFreshnessStore.Values, totalValuesWritten);
-        }
-
-        if (!triggered)
-        {
-            console.WriteLine($"回填作業完成。共成功 {successDays} 天，失敗 {failedDays} 天。");
-            return successDays > 0;
         }
 
         console.WriteLine($"回填完成：成功 {successDays} 天、失敗 {failedDays} 天、略過 {skippedDays} 天（無主機對應）" +
