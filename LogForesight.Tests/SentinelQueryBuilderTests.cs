@@ -649,6 +649,19 @@ public class SentinelQueryBuilderTests
         Assert.DoesNotContain(" OR ", clause);
     }
 
+    /// <summary>帶前導零的清單值合法但 Sentinel 存的是標準寫法：子句與排除子句都要用標準寫法，字面比對才對得到。</summary>
+    [Fact]
+    public void BuildIpClause_前導零以標準寫法進子句()
+    {
+        var clause = SentinelQueryBuilder.BuildIpClause(new[] { "010.001.002.003" });
+        var suffix = SentinelQueryBuilder.BuildExclusionSuffix(new[] { "010.001.002.003", "10.1.2.3" });
+
+        Assert.Contains(":10.1.2.3", clause);
+        Assert.DoesNotContain("010.001", clause);
+        Assert.DoesNotContain("010.001", suffix);
+        Assert.DoesNotContain(" OR ", suffix);   // 兩個寫法同一台，標準化後去重只剩一個
+    }
+
     [Fact]
     public void BuildIpClause_全部不合法_擲ArgumentException不建空子句()
     {

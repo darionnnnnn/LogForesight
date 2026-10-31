@@ -674,6 +674,11 @@ DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案�
 - **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：先查資料有無「id 不同但同名」的列再決定加 `host_name_key` 欄位或只對 `host_id=0` 舊列做名稱備援；`LastWeeklyCheckupDate` 改下推 MAX。
 - **郵件貢獻帳本的管理出口與結構**：不確定預約的釋放端點與健康頁指引、逾時自動釋放的政策、依收件人分配額、搬出 blob 改真表。
 - **`ReportFileMigrator` 一次撈全部非低風險列**、**寄前重核逐收件人重查整個窗口**、**AI 快取整份 blob 讀寫無上限**、**`netiq_attempt_ledger_invalid` 以 HTTP 200 回失敗**。
+- **Core 取數路徑的 `catch (Exception ex) when (ex is not OperationCanceledException)` 把 HttpClient 逾時當成使用者取消**（`NetiqPipelineService` 逐 Sentinel 隔離、`LogAnalysisService` 三處、`AnalysisOrchestrator` 外殼）：`HttpClient` 逾時擲的是 `TaskCanceledException`（屬 OCE）而 ct 未取消，會穿過失敗隔離、整趟當成「使用者停止」結束。第 60 輪 Z-2 只普查 PRTG 與設定控制器站點；改法同 Z-2（`when (ex is not OperationCanceledException || !ct.IsCancellationRequested)`），但三處各有外層 OCE 分支要一起改語意並補「逾時≠取消」的測試，先量測逾時實際發生頻率再排。
+- **PRTG 維護頁 `refreshPrtgMirror` 的去重會把寫入後的重讀併進寫入前已在飛的那趟**：同步結束輪詢觸發的重讀未完成時新增／刪除 IP 排除或人工對應，畫面顯示寫入前清單、`scopeRevision` 停在舊值，下一次寫入被 409 擋下（使用者再按一次重新整理即恢復）。改法：in-flight 結束後自動再跑一次。觸發時機：實測回報「剛加的排除沒出現」。
+- **記錄查詢「AI 歸納」在途時改篩選或切視角，舊查詢的結果仍寫回摘要區**：點擊時記下 `search` 世代、回應回來比對再寫；非 429 的靜默失敗也不清前一次的休息提示。觸發時機：有人回報摘要與清單不符。
+- **`PrtgValueAssessment.AssessPage` 每頁重讀最新日主機對應**（四類各自分頁，每頁一次 `GetHostMapForDate`＋必要時 `GetLatestHostMapWithDate`）：把「最新日是否借前一份」在 `PrtgDailyPipeline` 外層算一次傳入。純效能，歸第 61 輪量測後排。
+- **`HealthService` 仍逐屬性讀 `SchedulerRunState`**（`IsRunning`／`Trigger`／`StartedAt`／`LatestActivity()`），`EndRun` 交錯時可能讀到混合狀態；`AiAnalysisHostedService`、`PrtgBackfillService` 同形。改讀一次 `Snapshot()`（第 60 輪 Z-6 只收斂 `GetStatus` 與 `RunActivity`）。皆 null 安全，只影響顯示一致性。
 - **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
 - **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
 - **NetIQ 結果頁外層鍵的猜測式解析**（`SentinelClient.CandidateArrayKeys`）：待用診斷頁確認實機外層鍵後寫進 NETIQ-API-REFERENCE 再收窄。

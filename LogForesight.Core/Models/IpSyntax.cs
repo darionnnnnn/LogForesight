@@ -23,6 +23,17 @@ public static class IpSyntax
     }
 
     /// <summary>
+    /// 通過 <see cref="IsStrictIpv4"/> 的值去掉每段前導零後的標準寫法（<c>010.001.002.003</c>→<c>10.1.2.3</c>）；
+    /// 不合格回 null。要拿 IP 去比對外部系統回傳值或插進查詢子句時用這個——Sentinel 存的是標準寫法，
+    /// 原樣插入帶前導零的字串會「永遠查無資料」。
+    /// </summary>
+    public static string? CanonicalIpv4(string? value)
+    {
+        if (!IsStrictIpv4(value)) return null;
+        return string.Join('.', value!.Split('.').Select(o => int.Parse(o).ToString()));
+    }
+
+    /// <summary>
     /// 嚴格版的 <c>IPAddress.TryParse</c>：含 ':' 視為 IPv6 交給框架判定；否則必須先通過
     /// <see cref="IsStrictIpv4"/> 才解析，簡寫與十六進位寫法一律回 false。
     /// </summary>

@@ -192,6 +192,10 @@ public class PathBaseTests
     [InlineData("app")]
     [InlineData("LogForesight/")]
     [InlineData("\\app")]
+    [InlineData("//app")]
+    [InlineData("/my app")]
+    [InlineData("/app?x=1")]
+    [InlineData("/app#top")]
     public void 掛載前綴設定_缺開頭斜線時擲例外並點名設定鍵與目前值(string value)
     {
         var ex = Assert.Throws<InvalidOperationException>(() => new ServerSettings { PathBase = value }.ResolvePathBase());
@@ -264,6 +268,7 @@ public class PathBaseTests
     [InlineData("/LogForesight", "/app", true)]
     [InlineData("/LogForesight", "", false)]
     [InlineData("/LogForesight", null, false)]
+    [InlineData("/LogForesight", "/", false)]
     [InlineData("/", "/app", false)]
     [InlineData("", "/app", false)]
     [InlineData(null, "/app", false)]

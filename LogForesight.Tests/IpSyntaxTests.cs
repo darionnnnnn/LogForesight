@@ -26,6 +26,19 @@ public class IpSyntaxTests
         Assert.Equal(expected, IpSyntax.IsStrictIpv4(value));
     }
 
+    /// <summary>Sentinel 存的是標準寫法：前導零的清單值要先標準化再進子句與事件歸戶，否則永遠查無資料。</summary>
+    [Theory]
+    [InlineData("010.001.002.003", "10.1.2.3")]
+    [InlineData("1.2.3.04", "1.2.3.4")]
+    [InlineData("1.2.3.4", "1.2.3.4")]
+    [InlineData("10.1", null)]
+    [InlineData(" 1.2.3.4", null)]
+    [InlineData(null, null)]
+    public void CanonicalIpv4(string? value, string? expected)
+    {
+        Assert.Equal(expected, IpSyntax.CanonicalIpv4(value));
+    }
+
     [Theory]
     [InlineData("::1")]
     [InlineData("fe80::1")]

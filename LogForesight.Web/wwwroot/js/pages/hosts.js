@@ -845,7 +845,7 @@ document.getElementById('link-owner-csv').href = appUrl('/admin/imports');
 document.getElementById('btn-select-all-matching')
     .addEventListener('click', event => selectAllMatching(event.currentTarget));
 document.getElementById('btn-clear-selection').addEventListener('click', () => {
-    selectedHosts.clear();
+    selection.clear();
     render();
 });
 
@@ -869,7 +869,7 @@ document.getElementById('batch-groups-form').addEventListener('submit', async ev
             ? `已更新 ${result.updatedCount} 台，略過 ${result.skipped.length} 台（已併入其他主機）`
             : `已更新 ${result.updatedCount} 台`, 'success');
 
-        selectedHosts.clear();
+        selection.clear();
         batchGroupsModal.hide();
         await guardLoad(listContainer, load);
     } catch {
@@ -897,7 +897,7 @@ document.getElementById('batch-tier-form').addEventListener('submit', async even
             ? `已更新 ${result.updatedCount} 台，略過 ${result.skipped.length} 台（已併入其他主機）`
             : `已更新 ${result.updatedCount} 台`, 'success');
 
-        selectedHosts.clear();
+        selection.clear();
         batchTierModal.hide();
         await guardLoad(listContainer, load);
     } catch {

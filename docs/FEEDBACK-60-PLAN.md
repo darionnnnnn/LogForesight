@@ -1,6 +1,6 @@
 # LogForesight 第 60 輪規劃：冗餘、死碼、結構、韌性（＋核對抓到的 bug）
 
-> 狀態：**實作完成，待換模型體檢**（分支 feature/feedback-60；定案版 v3）
+> 狀態：**全案完成**（Opus 5.5 實作＋自查、Fable 5.1 體檢與終檢；已併 dev）
 > 基準：dev@da1efddc（6,905 通過／10 略過，Windows）
 > 來源：第 59 輪全專案體檢的草案 §4（H／I／J／K 四批），加上本輪核對時抓到的 bug 與設計問題
 > 實作方式：Opus 5.5 主代理寫規格與驗收；改檔代理依複雜度用 Sonnet 5.5／Haiku 5.5（同第 59 輪），一個 checkout 一次只派一個改檔代理
@@ -325,3 +325,25 @@ C2-12；C2-20；A2b-17；A2a-16；B-10；B-19；CSP（nonce 四段 inline script
 | — | 前端 | 「AI 暫時休息」文案在儀表板與記錄查詢各一份 | 接受 | 兩處各三行，抽共用不划算 |
 
 定向驗證：修正相關 1,194＋193 個測試全綠；突變 6 處皆轉紅後還原。全量留給換模型體檢。
+
+## 體檢輪修正（Fable 5.1；實作與自我體檢皆為 Opus 5.5）
+
+掃描方式：四個 Sonnet 唯讀代理依視角分區（A 受限角色與授權邊界、B 管理者瀏覽器動線、C 後端對抗與程式碼稽核、D 最後三個 commit 專掃），共同規則檔列明「先前已查過不重查」清單；規劃比對（§3／§4／§9 逐項 grep）由主代理親做。代理回報 29 條（全部標「推論未驗證」），主代理逐條讀碼或探針重驗，成立 9 條、修正如下；其餘記 BACKLOG 或判定不成立。
+
+| # | 區 | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|---|
+| 1 | 主 | `HelpContentServiceTests` | §9「說明書」列的三個關鍵字守門沒補（雜項交付漏） | 新增一案，鎖 issues／prtg／scheduler 三章使用者版與 AI 版關鍵字 | `說明書交代篩選矩陣_PRTG部分完成與AI跟隨取數` |
+| 2 | D | `HandlingMigrationHostedService` | 自查第 8 條只改了三支回填，這支的 catch 仍把關站取消記成 Error | 補同形 `when` 篩選 | 外殼測試既有 |
+| 3 | C | `IpSyntax`／`SentinelQueryBuilder`／`HostListProviders` | `IsStrictIpv4` 依定案接受前導零，但 `010.001.002.003` 原樣進 Lucene、事件又以 Sentinel 的標準寫法歸戶——這台主機永遠查無資料（定案 7 寫的 `TryParseIpv4Strict` 正規化沒有落地） | 新增 `IpSyntax.CanonicalIpv4`；子句、排除子句與 NetIQ 目標位址一律用標準寫法 | `IpSyntaxTests.CanonicalIpv4` 六案、`BuildIpClause_前導零以標準寫法進子句` |
+| 4 | C | `AppSettings.ResolvePathBase`／`DoublePrefixWarning` | `//app`、含空白／?／# 的值通過驗證（protocol-relative 連結、前綴帶進查詢字串）；`PathBase="/"` 在 IIS 子 App 下誤報雙重前綴 | 驗證拒絕這些形狀；警告改以 `ResolvePathBase()==null` 判定 | `PathBaseTests` 缺斜線 Theory 加四案、雙重前綴 Theory 加 `"/"` 案 |
+| 5 | B | `prtg-admin.js` `refreshRiskReviewPanel`（本輪新增） | 翻頁與鏡像整頁重讀重疊時先清空再 append，清單與分頁列各出現兩份 | `createSeqGuard` 序號守門，三處寫入前比對 | behavior `overlappingRiskReviewCallsRenderPendingListOnce`；突變（拿掉守門）轉紅 |
+| 6 | B | `mini-dom.mjs` | 替身沒有 `createTextNode`，待重評面板的切函式一進分頁列就進 catch——既有案 `riskReviewPendingRequestIsSilent` 從未真正渲染過 | 替身補 `createTextNode` | 同上兩案現在走完整渲染 |
+| 7 | B | `prtg-admin.js` 衝突卡 403 | 定案 8 要求顯示權限提示而非「載入失敗」，實作仍經 `renderListError` 加上「載入衝突清單失敗：」前綴 | 403 直接 `renderError`，不加前綴 | `FrontendMiscUiTests` 既有字串斷言 |
+| 8 | B | `permission-changes.js`／`hosts.js` | D2-18 上提後頁面仍呼叫原生 `Map.clear()`，選取列「已選 N 筆」與表頭勾選在下一次 render 前不同步、載入失敗時殘留 | 一律走 `selection.clear()` | 前端 `UiTests|JsModuleImport|BehaviorTests` 全綠 |
+| 9 | 主 | `docs/BACKLOG.md` | Core 取數路徑的 `when (ex is not OCE)` 會把 HttpClient 逾時當成使用者取消（Z-2 普查只涵蓋 PRTG 與設定控制器） | 既有行為、超出體檢修正範圍，記 BACKLOG 附改法 | — |
+
+接受不修（已記 BACKLOG 或 PLAN）：`refreshPrtgMirror` in-flight 去重吞掉寫入後重讀（既有）、AI 歸納在途改篩選寫回舊結果（既有）、`AssessPage` 每頁重讀對應（效能）、`HealthService` 逐屬性讀排程狀態、`PrtgTransferController` 整個 class 貼 `[SkipDataVersionBump]`（與舊版前綴豁免等價；日後加寫入端點時要改貼 action）、閘門 B blob 在部分還原 DB 後失準（定案 11 已接受）、`PermissionChangeMigration` 失敗不 Bump（§3 小修定案）、`PlanBulkClose` 預先計數以主機日為分母（K-6 定案不截斷）。判定不成立：`AssessPage` 與管線退路口徑（SPEC 已寫明）、匿名請求在 `[RequireViewAll]` 回 403（管線先回 401，與舊版相同）、`records.js` 未知 `view` 退回明細。
+
+規劃比對：§3 五批、§4 文件清單、§9 驗收表逐項 grep 皆有對應；唯一缺漏為第 1 列。終檢後手改（7bc7187a／a3b91c5f／d9e143e1）逐檔重看，九條修法同型站點只漏第 2 列。瀏覽器實際操作未做（鏡像重試、待重評面板以 behavior 測試覆蓋）。
+
+定向：修正相關 C# 652 綠；全部 `*.behavior.mjs` 逐案綠。全量見終檢節。

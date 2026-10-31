@@ -4,7 +4,7 @@
 
 import { api, getCurrentUser, hasCapability, saveBlobAsFile } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { pollWhile } from '../core/async-guards.js';
+import { createSeqGuard, pollWhile } from '../core/async-guards.js';
 import { safeSession } from '../core/storage.js';
 import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
@@ -1348,10 +1348,13 @@ async function refreshConflicts(page = conflictPage, options = {}) {
         renderConflictPagination(totalPages);
         updateConflictBatchBar();
     } catch (error) {
-        // 全站對應清單只開放可檢視全部主機的角色；受限角色看到的是權限說明，不是「載入失敗」
-        renderConflictsError(error && error.status === 403
-            ? '需要可檢視全部主機的權限才能查看衝突清單'
-            : (error && error.message ? error.message : '載入衝突清單失敗'));
+        // 全站對應清單只開放可檢視全部主機的角色；受限角色看到的是權限說明，不是「載入失敗」——不走 renderListError 的失敗前綴
+        if (error && error.status === 403) {
+            renderError(document.getElementById('prtg-mirror-conflicts-table'), { message: '需要可檢視全部主機的權限才能查看衝突清單' });
+            document.getElementById('prtg-conflicts-pagination')?.replaceChildren();
+        } else {
+            renderConflictsError(error && error.message ? error.message : '載入衝突清單失敗');
+        }
     }
 }
 
@@ -2156,15 +2159,20 @@ function renderScopeSnapshot(result) {
 }
 
 let riskReviewPage = 1;
+// 翻頁、重評後重讀與鏡像整頁重讀會重疊呼叫：函式開頭先清空再 append，沒有序號守門時兩趟都會把清單接上去（清單與分頁列各出現兩份）
+const riskReviewGuard = createSeqGuard();
 async function refreshRiskReviewPanel(page = riskReviewPage) {
     const riskReviewEl = document.getElementById('prtg-risk-review');
     if (!riskReviewEl) return;
     riskReviewPage = page;
+    const seq = riskReviewGuard.next();
     try {
         const result = await api.get('/api/prtg/risk-review', { silent: true });
+        if (!riskReviewGuard.isCurrent(seq)) return;
         riskReviewEl.textContent = `歷史風險重評：尚未檢查 ${formatNumber(result.uncheckedRecords)} 筆、證據不足待重評 ${formatNumber(result.pendingReviewRecords)} 筆、已修訂 ${formatNumber(result.revisedRecords)} 筆。證據不足不會自動降風險；請從主機日詳情核對並明確重跑 NetIQ。`;
         if (result.pendingReviewRecords > 0) {
             const pending = await api.get(`/api/prtg/risk-review/pending?page=${page}`, { silent: true });
+            if (!riskReviewGuard.isCurrent(seq)) return;
             const list = document.createElement('ul');
             for (const record of pending.items) {
                 const row = document.createElement('li');
@@ -2183,7 +2191,7 @@ async function refreshRiskReviewPanel(page = riskReviewPage) {
             }
             riskReviewEl.append(navigation);
         }
-    } catch { riskReviewEl.textContent = '歷史風險重評狀態無法讀取，請重試。'; }
+    } catch { if (riskReviewGuard.isCurrent(seq)) riskReviewEl.textContent = '歷史風險重評狀態無法讀取，請重試。'; }
 }
 
 function bindRiskReviewRetry() {

@@ -61,7 +61,9 @@ function makeHarness({ failures = {}, revisions = ['r1', 'r1'], riskReview, risk
         renderManualMaps: data => log.rendered.push(['manual', data]),
         renderIpExcludes: data => log.rendered.push(['excludes', data]),
         renderListError: (containerId, label, message) => log.errors.push({ containerId, label, message }),
-        refreshPrtgMirror: () => { }
+        refreshPrtgMirror: () => { },
+        // 與 core/async-guards.js 的 createSeqGuard 同形：頁面模組層以它守住重疊的待重評面板重讀
+        createSeqGuard: () => { let current = 0; return { next: () => ++current, isCurrent: seq => seq === current }; }
     };
     const names = ['loadScopeSnapshot', 'renderScopeSnapshot', 'refreshRiskReviewPanel'];
     const bodies = names.map(n => {
@@ -69,7 +71,7 @@ function makeHarness({ failures = {}, revisions = ['r1', 'r1'], riskReview, risk
         return source.includes(`async function ${n}(`) ? `async ${text}` : text;
     }).join('\n');
     const factory = new Function(...Object.keys(deps),
-        `let riskReviewPage = 1;\n${bodies}\nreturn { loadScopeSnapshot, renderScopeSnapshot, refreshRiskReviewPanel };`);
+        `let riskReviewPage = 1;\nconst riskReviewGuard = createSeqGuard();\n${bodies}\nreturn { loadScopeSnapshot, renderScopeSnapshot, refreshRiskReviewPanel };`);
     const fns = factory(...Object.values(deps));
     return { fns, log, riskEl, dom };
 }
@@ -151,7 +153,29 @@ async function riskReviewPendingRequestIsSilent() {
     assert.equal(pending.options?.silent, true);
 }
 
+async function overlappingRiskReviewCallsRenderPendingListOnce() {
+    // 第一趟的 pending 請求被卡住，第二趟（翻頁）先回來；第一趟回來後不得再把清單接到第二趟的結果後面
+    let releaseFirst;
+    let pendingCalls = 0;
+    const h = makeHarness({
+        riskPending: (url) => {
+            pendingCalls += 1;
+            if (pendingCalls === 1) return new Promise(resolve => { releaseFirst = () => resolve({ items: [{ hostId: 1, hostName: 'A', recordDate: '2026-01-01', riskLevel: 'high', detailPruned: false }], total: 60 }); });
+            return { items: [{ hostId: 2, hostName: 'B', recordDate: '2026-01-02', riskLevel: 'high', detailPruned: false }], total: 60 };
+        }
+    });
+    const first = h.fns.refreshRiskReviewPanel(1);
+    await new Promise(r => setTimeout(r, 0));
+    await h.fns.refreshRiskReviewPanel(2);
+    releaseFirst();
+    await first;
+    const lists = h.riskEl.children.filter(c => c.tagName === 'UL');
+    assert.equal(lists.length, 1, `清單應只有一份，實際 ${lists.length}`);
+    assert.equal(lists[0].children[0].children[0].textContent.startsWith('B'), true, '留下的應是最後一趟（第 2 頁）的結果');
+}
+
 const cases = {
+    overlappingRiskReviewCallsRenderPendingListOnce,
     manualMapRejectOnlyManualMapAreaShowsError,
     mirrorRejectOnlyMirrorAreaShowsError,
     ipExcludesRejectOnlyExcludesAreaShowsError,

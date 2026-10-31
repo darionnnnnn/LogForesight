@@ -48,7 +48,8 @@ public static class HostListSelection
                 result.ByServer[name] = list;
             }
 
-            list.Add(new NetiqTarget(host.HostId, host.HostName, host.IpAddress!, host.RoleDesc, host.Os));
+            // 目標位址用標準寫法：事件回來依 Sentinel 回傳的 IP 字串歸戶，主機表若存了前導零（010.001.002.003）會對不回來
+            list.Add(new NetiqTarget(host.HostId, host.HostName, IpSyntax.CanonicalIpv4(host.IpAddress) ?? host.IpAddress!, host.RoleDesc, host.Os));
         }
 
         AddExclusionWarnings(allHosts, allSentinels, result);

@@ -47,7 +47,7 @@ public static class SentinelQueryBuilder
     /// <exception cref="ArgumentException">沒有任何合法 IPv4——不建只剩空括號的子句。</exception>
     public static string BuildIpClause(IReadOnlyList<string> hostIps)
     {
-        var valid = hostIps.Where(IpSyntax.IsStrictIpv4).ToList();
+        var valid = hostIps.Select(IpSyntax.CanonicalIpv4).Where(ip => ip != null).ToList();
         if (valid.Count == 0)
         {
             throw new ArgumentException("沒有任何合法的 IPv4 位址可建立查詢子句。", nameof(hostIps));
@@ -330,7 +330,8 @@ public static class SentinelQueryBuilder
         if (excludeIps is null || excludeIps.Count == 0) return string.Empty;
 
         var valid = excludeIps
-            .Where(IpSyntax.IsStrictIpv4)
+            .Select(IpSyntax.CanonicalIpv4)
+            .Where(ip => ip != null)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (valid.Count == 0) return string.Empty;

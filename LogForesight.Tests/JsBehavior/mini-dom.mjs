@@ -87,6 +87,8 @@ export function installDom() {
         body,
         createElement: tag => new FakeNode(tag),
         createElementNS: (_ns, tag) => new FakeNode(tag),
+        // 頁面以 createTextNode 接純文字（PRTG 待重評面板的分頁列）；缺這個方法時被切出的函式會在 catch 裡靜默失敗
+        createTextNode: text => { const node = new FakeNode('#text'); node.textContent = String(text); return node; },
         getElementById: id => byId.get(id) ?? null,
         querySelectorAll: () => []
     };

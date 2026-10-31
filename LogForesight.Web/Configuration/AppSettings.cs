@@ -147,9 +147,10 @@ public class ServerSettings
     {
         var value = (PathBase ?? "").Trim();
         if (value.Length == 0) return null;
-        if (value[0] != '/')
+        // 「//app」會被瀏覽器當成 protocol-relative 連結、空白／?／# 會讓前綴帶進查詢字串——都不是合法的掛載路徑
+        if (value[0] != '/' || value.StartsWith("//", StringComparison.Ordinal) || value.Any(c => char.IsWhiteSpace(c) || c is '?' or '#'))
             throw new InvalidOperationException(
-                $"Server:PathBase 必須以 / 開頭（目前值：「{PathBase}」，例如 /LogForesight）。" +
+                $"Server:PathBase 必須以 / 開頭（單一斜線，不含空白、?、#；目前值：「{PathBase}」，例如 /LogForesight）。" +
                 "IIS 以子 Application 掛載時不需要設定這個值。");
         var trimmed = value.TrimEnd('/');
         return trimmed.Length == 0 ? null : trimmed;
@@ -163,7 +164,7 @@ public class ServerSettings
     {
         var appl = (iisApplPath ?? "").Trim();
         if (appl.Length == 0 || appl.TrimEnd('/').Length == 0) return null;
-        if (string.IsNullOrWhiteSpace(PathBase)) return null;
+        if (ResolvePathBase() == null) return null;   // 「/」與空白同義＝不套用，不是雙重前綴
         return $"偵測到站台掛在 IIS 子 Application（{appl}）下，ASP.NET Core 已自動套用前綴；" +
                $"Server:PathBase（{PathBase}）也有值，會造成雙重前綴。請清空 Server:PathBase。";
     }
