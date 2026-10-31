@@ -59,10 +59,10 @@ public class MailIssueDigest
             return new MailIssueDigestProjection([], []);
 
         var settings = _settingsStore.Get();
-        var visibleSeverities = RecordRepository.ParseVisibleSeverities(
+        // 不短路：aggregate 介面對空集合的語意是「零結果」，空的 riskLevels 原樣傳入
+        var (riskLevels, visibleSeverities, _) = RecordRepository.ResolveVisibility(
+            SystemSettingsService.ResolveVisibleDayRiskLevels(settings),
             SystemSettingsService.ResolveVisibleSeverities(settings));
-        var riskLevels = RecordRepository.ResolveDayRiskLevels(
-            SystemSettingsService.ResolveVisibleDayRiskLevels(settings), null);
 
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
 

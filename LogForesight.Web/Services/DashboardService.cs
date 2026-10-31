@@ -135,12 +135,11 @@ public class DashboardService
 
         // 全部走 SQL 端聚合（SCALE-3000 S4），不再把整段期間的紀錄載入記憶體。
         // 繞過 RecordRepository 之後，它套的三層可見範圍要在這裡自己等價重現：
-        // 可見主機以 hostIds 傳入；日風險等級顯示範圍由 ResolveDayRiskLevels 算出，
+        // 可見主機以 hostIds 傳入；日風險等級顯示範圍由 ResolveVisibility 算出，
         // **空交集必須在這裡短路、不可下推**（底層對空集合的語意是「不限制」，會從零筆變全部）；
         // 可見嚴重度傳給有問題子列參與的聚合。
-        var riskLevels = RecordRepository.ResolveDayRiskLevels(_systemSettings.GetVisibleDayRiskLevels(), null);
-        var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
-        var nothingVisible = riskLevels != null && riskLevels.Count == 0;
+        var (riskLevels, visibleSeverities, nothingVisible) = RecordRepository.ResolveVisibility(
+            _systemSettings.GetVisibleDayRiskLevels(), _systemSettings.GetVisibleSeverities());
 
         var hostRiskAgg = nothingVisible
             ? new List<HostRiskAggregate>()

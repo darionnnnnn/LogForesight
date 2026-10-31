@@ -217,36 +217,20 @@ public class VisibilityService : IVisibilityService
             return _cached;
         }
 
-        // 停用的使用者群組不帶來授權（與能力解析的規則一致）
-        var activeUserGroupIds = _userGroups.GetAll()
-            .Where(g => g.Active && user.GroupIds.Contains(g.GroupId))
-            .Select(g => g.GroupId)
-            .ToHashSet();
-
-        var hostGroupIds = _access.GetAll()
-            .Where(a => activeUserGroupIds.Contains(a.UserGroupId))
-            .Select(a => a.HostGroupId)
-            .ToHashSet();
-
-        // 群組授權 ∪ 主機負責人（§2b）：負責人是主機歸屬的第一手資料，不該還要另外去授權矩陣補一刀
-        var visible = allHosts
-            .Where(h => h.GroupIds.Any(hostGroupIds.Contains) || h.OwnerUserIds.Contains(user.UserId))
-            .Select(h => h.HostId)
-            .ToHashSet();
-
-        // ∪ 問題負責人（回饋十八輪批次F，第四條授權路徑）：與主機負責人同級的整台可見，
-        // 理由同上——問題歸屬也是第一手資料。兩個可選依賴同時可用才查（其一為 null 代表測試組裝
-        // 沒注入，靜默跳過這條路徑，同本類別既有的 Singleton 依賴慣例）。
-        // 保留天數改由必填的 _settings 提供：它決定問題負責人可見的回溯範圍，
-        // 之前是可選依賴、缺席時退回出廠預設，等於測試與正式環境算出不同的可見範圍。
+        // 群組授權 ∪ 主機負責人 ∪ 問題負責人的規則只在 HostVisibilityResolver 有一份。
+        // ViewAll 已在上方依 claim 處理（這裡一律 false，不讓角色重算蓋過 claim）；問題負責人集合
+        // 由本類別提供以沿用跨請求快取——兩個可選依賴同時可用才查（其一為 null 代表測試組裝
+        // 沒注入，靜默跳過這條路徑）。保留天數由必填的 _settings 提供，缺席時不退回出廠預設。
+        Func<IReadOnlySet<long>>? issueOwnedHostIds = null;
         if (_issueOwners != null && _issueAggregates != null)
         {
             var retentionDays = _settings.Get().RetentionDays;
-            visible.UnionWith(ResolveIssueOwnedHostIds(user.UserId, retentionDays, allowCrossRequestCache));
+            issueOwnedHostIds = () => ResolveIssueOwnedHostIds(user.UserId, retentionDays, allowCrossRequestCache);
         }
 
-        // Keep even a cross-request issue-owner cache hit inside this capture's active inventory.
-        visible.IntersectWith(allHosts.Select(host => host.HostId));
+        // 收尾交集由 Resolver 內完成（即使跨請求快取命中也限制在這份快照的存活主機內）
+        var visible = HostVisibilityResolver.GetVisibleHostIds(
+            snapshot, _users, _userGroups, _access, user.UserId, viewAll: false, issueOwnedHostIds);
         _cached = visible;
         return _cached;
     }

@@ -779,10 +779,9 @@ public class MailNotificationService
         return matches.FirstOrDefault();
     }
 
-    /// <summary>指定使用者可見的主機 ID（回饋十七輪批次B-4）：與
-    /// LogForesight.Web.Services.VisibilityService.GetVisibleHostIdsFor 邏輯對稱但獨立實作——
-    /// MailNotificationService 是 Singleton，VisibilityService 依賴 Scoped 的 ICurrentUser
-    /// 無法被 Singleton 直接消費，見 <see cref="HostVisibilityResolver"/>。</summary>
+    /// <summary>指定使用者可見的主機 ID：與 VisibilityService.GetVisibleHostIdsFor 共用
+    /// <see cref="HostVisibilityResolver"/> 同一份規則——MailNotificationService 是 Singleton，
+    /// VisibilityService 依賴 Scoped 的 ICurrentUser 無法被直接消費，所以規則放在 Resolver。</summary>
     private IReadOnlySet<long> GetVisibleHostIds(long userId, int retentionDays) =>
         HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _groupAccess, userId,
             _issueOwners, _issueAggregates, retentionDays);
@@ -1664,8 +1663,8 @@ public class MailNotificationService
         SystemSettings mailSettings, bool withoutPrtg,
         IReadOnlyDictionary<string, HostDayWorkflowVersion>? versions = null)
     {
-        var visibleRiskLevels = RecordRepository.ResolveDayRiskLevels(
-            SystemSettingsService.ResolveVisibleDayRiskLevels(mailSettings), null);
+        var visibleRiskLevels = RecordRepository.ResolveVisibility(
+            SystemSettingsService.ResolveVisibleDayRiskLevels(mailSettings), null).RiskLevels;
         List<DailyAnalysisRecord> ReadWindow(DateTime windowFrom, DateTime windowTo)
         {
             if (visibleRiskLevels is { Count: 0 }) return [];

@@ -5,12 +5,13 @@ namespace LogForesight.Web.Services;
 
 /// <summary>
 /// 「指定使用者看得到哪些主機」的純函式核心（回饋十七輪批次B-4 自 <see cref="VisibilityService"/>
-/// 抽出）。<see cref="VisibilityService"/> 的 <c>GetGroupVisibleHostIdsFor</c>／
-/// <c>GetOwnedHostIdsFor</c>／<c>GetVisibleHostIdsFor</c> 三個方法與
-/// <see cref="Mail.MailNotificationService"/> 的收件人可見範圍過濾共用同一份邏輯——
-/// 後者是 Singleton，<see cref="VisibilityService"/> 依賴 Scoped 的 <c>ICurrentUser</c>
-/// 無法直接被 Singleton 消費，且這條邏輯本來就不需要「目前登入者」（引數是任意 userId），
-/// 單點化能避免兩邊各自維護一份而漂移（本專案已踩過多次「欄位漂移」的失敗模式）。
+/// 抽出）。群組授權 ∪ 主機負責人 ∪ 問題負責人的規則只在這裡有一份：
+/// <see cref="VisibilityService"/> 的「目前登入者」與 <c>*For</c> 三個方法、
+/// <see cref="Mail.MailNotificationService"/> 的收件人過濾、派工候選都委派到此。
+/// 「目前登入者」入口另帶 ViewAll（由呼叫端依 claim 提供）與問題負責人集合提供者（讓
+/// <see cref="VisibilityService"/> 繼續用跨請求快取）兩個參數；<see cref="VisibilityService"/>
+/// 依賴 Scoped 的 <c>ICurrentUser</c> 無法被 Singleton 消費，所以規則放在這個純函式類別。
+/// 兩條入口的等價性由 VisibilityPathEquivalenceTests 守門（唯一刻意差異：已停用使用者帶 ViewAll claim）。
 /// 全部方法只依賴 Singleton 的 Store，沒有 captive dependency 疑慮。
 /// </summary>
 internal static class HostVisibilityResolver
@@ -35,6 +36,12 @@ internal static class HostVisibilityResolver
 
     public static IReadOnlySet<long> GetGroupVisibleHostIds(
         PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId)
+        => GetGroupVisibleHostIds(hosts, users, userGroups, access, userId, viewAll: null);
+
+    /// <param name="viewAll">null＝由所屬啟用群組的角色即時算；非 null＝由呼叫端提供（目前登入者以 JWT claim 為準）</param>
+    private static IReadOnlySet<long> GetGroupVisibleHostIds(
+        PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
+        bool? viewAll)
     {
         var user = users.Get(userId);
         if (user == null || !user.Active) return new HashSet<long>();
@@ -47,7 +54,7 @@ internal static class HostVisibilityResolver
 
         var allHosts = hosts.Hosts.Where(h => h.Active).ToList();
 
-        if (RoleCapabilityMap.For(activeGroups.Select(g => g.Role)).Contains(Capability.ViewAll))
+        if (viewAll ?? RoleCapabilityMap.For(activeGroups.Select(g => g.Role)).Contains(Capability.ViewAll))
             return allHosts.Select(h => h.HostId).ToHashSet();
 
         var hostGroupIds = access.GetAll()
@@ -103,15 +110,13 @@ internal static class HostVisibilityResolver
     /// 回饋十八輪批次F 新增第三條聯集）。</summary>
     public static IReadOnlySet<long> GetVisibleHostIds(
         IHostStore hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
-        IIssueOwnerStore? issueOwners = null, IIssueAggregateQuery? issueAggregates = null,
-        int retentionDays = SystemSettings.DefaultRetentionDays)
+        IIssueOwnerStore? issueOwners, IIssueAggregateQuery? issueAggregates, int retentionDays)
         => GetVisibleHostIds(hosts.CapturePrtgSnapshot(), users, userGroups, access, userId,
             issueOwners, issueAggregates, retentionDays);
 
     public static IReadOnlySet<long> GetVisibleHostIds(
         PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
-        IIssueOwnerStore? issueOwners = null, IIssueAggregateQuery? issueAggregates = null,
-        int retentionDays = SystemSettings.DefaultRetentionDays)
+        IIssueOwnerStore? issueOwners, IIssueAggregateQuery? issueAggregates, int retentionDays)
     {
         var visible = GetGroupVisibleHostIds(hosts, users, userGroups, access, userId).ToHashSet();
         visible.UnionWith(GetOwnedHostIds(hosts, users, userId));
@@ -119,6 +124,24 @@ internal static class HostVisibilityResolver
         {
             visible.UnionWith(GetIssueOwnedHostIds(hosts, issueOwners, users, issueAggregates, userId, retentionDays));
         }
+        return visible;
+    }
+
+    /// <summary>
+    /// 「目前登入者」入口：規則同上，差別在 ViewAll 與問題負責人集合由呼叫端提供。
+    /// <paramref name="viewAll"/> 以呼叫端的 claim 為準（不依角色重算）；<paramref name="issueOwnedHostIds"/>
+    /// 為 null 代表這條路徑未啟用（測試組裝沒注入問題負責人依賴）。回傳已收斂在存活主機內。
+    /// </summary>
+    public static IReadOnlySet<long> GetVisibleHostIds(
+        PrtgHostSnapshot hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
+        bool viewAll, Func<IReadOnlySet<long>>? issueOwnedHostIds)
+    {
+        var visible = GetGroupVisibleHostIds(hosts, users, userGroups, access, userId, viewAll).ToHashSet();
+        visible.UnionWith(GetOwnedHostIds(hosts, users, userId));
+        if (issueOwnedHostIds != null) visible.UnionWith(issueOwnedHostIds());
+
+        // 問題負責人集合可能來自跨請求快取：收斂在這份快照的存活主機內
+        visible.IntersectWith(hosts.Hosts.Where(h => h.Active).Select(h => h.HostId));
         return visible;
     }
 }
