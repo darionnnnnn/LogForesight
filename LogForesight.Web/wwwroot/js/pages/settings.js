@@ -7,7 +7,7 @@ import { api } from '../core/api.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable, collectLines,
-    guardLoad, renderSpinner, renderEmpty, renderError
+    guardLoad, renderSpinner, renderEmpty, renderError, renderUpdatedAt
 } from '../core/ui.js';
 import {
     formatDate, formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER,
@@ -92,7 +92,7 @@ function applySettings(settings) {
     renderMailFields(settings);
     renderBrandFields(settings);
     loadGuardFields(settings);
-    renderUpdatedAt(settings);
+    renderUpdatedAt(document.getElementById('settings-updated'), settings);
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -1092,16 +1092,6 @@ function bindBrandIcon() {
         fileInput.value = '';
         toast('已還原預設外觀，按「儲存」後才會生效。', 'info');
     });
-}
-
-function renderUpdatedAt(settings) {
-    const el = document.getElementById('settings-updated');
-    if (!settings.updatedAt) {
-        el.textContent = '尚未有人更新過（目前為系統預設值）。';
-        return;
-    }
-    el.textContent = `最後更新：${formatDateTime(settings.updatedAt)}` +
-        (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
 }
 
 function collectSeverities() {

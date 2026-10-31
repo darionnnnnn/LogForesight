@@ -9,7 +9,7 @@
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader } from '../core/ui.js';
-import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
+import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending, severityCell } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
@@ -693,18 +693,6 @@ function severityNeutralBadge(text) {
 }
 
 /**
- * 嚴重度徽章＋「重大」旗標（docs/archive/HISTORY.md #1，B1 三級化）：命中帶
- * ElevatesDayRisk 旗標規則的問題，一眼看得出「這條問題特別嚴重、是它讓今天變高風險日」。
- */
-function severityCell(issue) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1';
-    wrap.appendChild(severityBadge(issue.severity));
-    if (issue.elevatesDayRisk) wrap.appendChild(elevatesBadge());
-    return wrap;
-}
-
-/**
  * 問題層級處理狀態顯示（方案 B，§5.1 D-1 #2/#3；#7 拆欄後這裡只管「處理狀態」欄，
  * 勾選移到獨立的「選取」欄，見 selectCheckbox）。四條路徑：
  *   1. 無 Handle 能力 → 唯讀徽章
@@ -1251,7 +1239,7 @@ function renderIssues(detail) {
 
         const title = document.createElement('span');
         title.className = 'fw-semibold';
-        title.textContent = `【${CATEGORY_NAMES[category.category] ?? category.category}】重點問題 ${issues.length} 項`;
+        title.textContent = `【${categoryName(category.category)}】重點問題 ${issues.length} 項`;
         header.append(title, severityBadge(category.maxSeverity));
         section.appendChild(header);
 
@@ -1417,7 +1405,7 @@ function issueCell(issue) {
 
     const meta = document.createElement('div');
     meta.className = 'lf-issue-cell__meta d-flex flex-wrap align-items-center gap-2 small text-muted mt-1';
-    meta.appendChild(severityCell(issue));
+    meta.appendChild(severityCell(issue.severity, issue.elevatesDayRisk));
     const count = document.createElement('span');
     count.textContent = `次數 ${formatNumber(issue.count)}`;
     meta.appendChild(count);
@@ -2051,7 +2039,7 @@ function renderCategories(detail) {
         nav.addEventListener('click', () => scrollToCategory(category.category));
 
         const name = document.createElement('span');
-        name.textContent = CATEGORY_NAMES[category.category] ?? category.category;
+        name.textContent = categoryName(category.category);
 
         const right = document.createElement('span');
         right.className = 'd-flex align-items-center gap-2';

@@ -75,8 +75,49 @@ export const SEVERITY_ORDER = Object.keys(SEVERITY_NAMES);
  */
 export function elevatesBadge() {
     return statusBadge('重大', 'danger', {
-        title: '命中重大規則——此類問題出現當日即列為高風險日'
+        title: '命中即列為高風險日（重大）'
     });
+}
+
+/**
+ * 嚴重度欄：嚴重度徽章＋「重大」旗標（elevatesDayRisk 為真時）。問題排行、風險日詳情、
+ * 規則維護頁共用同一個儲存格，「重大」徽章與 tooltip 只有 elevatesBadge() 一個出口。
+ */
+export function severityCell(severity, elevatesDayRisk) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(severity));
+    if (elevatesDayRisk) wrap.appendChild(elevatesBadge());
+    return wrap;
+}
+
+/**
+ * 出現密度：出現天數 ÷ 期間天數（數字＋密度條）。layout 'row' 為橫排（儀表板、靠右），
+ * 'column' 為數字在上、密度條換行在下（問題排行表，欄寬不變）。
+ */
+export function issueDensityCell(row, { layout = 'row' } = {}) {
+    const column = layout === 'column';
+    const wrap = document.createElement(column ? 'div' : 'span');
+    wrap.className = column
+        ? 'd-inline-flex flex-column align-items-center'
+        : 'd-inline-flex align-items-center gap-1 justify-content-end';
+
+    const text = document.createElement('span');
+    text.className = 'lf-mono small';
+    text.textContent = `${row.activeDays}/${row.periodDays}`;
+    wrap.appendChild(text);
+
+    const ratio = row.periodDays > 0 ? row.activeDays / row.periodDays : 0;
+    const bar = document.createElement('span');
+    bar.className = column ? 'lf-density mt-1' : 'lf-density';
+    bar.title = `期間 ${row.periodDays} 天內出現 ${row.activeDays} 天（${Math.round(ratio * 100)}%）`;
+    const fill = document.createElement('span');
+    fill.className = 'lf-density__fill lf-progress-fill';
+    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+
+    return wrap;
 }
 
 /**

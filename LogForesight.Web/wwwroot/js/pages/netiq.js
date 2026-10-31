@@ -7,7 +7,7 @@
  */
 
 import { api, getAiAvailable } from '../core/api.js';
-import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad, applyBackfillDaysLimit } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad, applyBackfillDaysLimit, renderUpdatedAt } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
 import { pollWhile } from '../core/async-guards.js';
@@ -251,17 +251,7 @@ async function loadOptions() {
         `每台主機每次執行往回檢查幾天內有沒有缺漏或需要補跑的日子（上限 ${options.maxBackfillDays} 天），已完成的日子不會重跑。正式環境建議 1（只查前一天）——2000 台規模下對 Sentinel 做大量歷史日查詢會拖垮執行時間。需要補較久以前的歷史時可暫時調大此值、跑一次、再調回來。`
     );
 
-    renderOptionsUpdated(options);
-}
-
-function renderOptionsUpdated(options) {
-    const el = document.getElementById('netiq-options-updated');
-    if (!options.updatedAt) {
-        el.textContent = '尚未有人更新過（目前為系統預設值）。';
-        return;
-    }
-    el.textContent = `最後更新：${formatDateTime(options.updatedAt)}` +
-        (options.updatedByAccount ? `　更新者：${formatUserName(options.updatedByDisplayName, options.updatedByAccount)}` : '');
+    renderUpdatedAt(document.getElementById('netiq-options-updated'), options);
 }
 
 document.getElementById('netiq-options-form').addEventListener('submit', async event => {
@@ -287,7 +277,7 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
         // 重新套用（含離線示範徽章）——儲存後徽章要即時反映
         document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
         document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
-        renderOptionsUpdated(options);
+        renderUpdatedAt(document.getElementById('netiq-options-updated'), options);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {

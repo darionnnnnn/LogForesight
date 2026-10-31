@@ -10,7 +10,7 @@ import { PROGRESS_PHASE_LABEL } from '../core/run-phases.js';
 import {
     bindTabs, toast, withBusy, setSpinnerText, confirmAction, guardLoad, renderSpinner,
     renderPagination, loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, bindRememberedCollapse,
-    collectLines, renderTable, renderError
+    collectLines, renderTable, renderError, renderUpdatedAt
 } from '../core/ui.js';
 import { formatDate, elapsedSinceText, formatDateTime, formatNumber, formatUserName, prtgFreshnessLabel, toLocalDateString } from '../core/format.js';
 import { initCalibration } from './prtg-calibration.js';
@@ -752,18 +752,7 @@ function renderPrtgFields(settings) {
     document.getElementById('prtg-snapshot-estimate-result')?.replaceChildren();
 
     document.getElementById('prtg-test-result').replaceChildren();
-    renderUpdatedAt(settings);
-}
-
-function renderUpdatedAt(settings) {
-    const el = document.getElementById('prtg-config-updated');
-    if (!el) return;
-    if (!settings.updatedAt) {
-        el.textContent = '尚未有人更新過（目前為系統預設值）。';
-        return;
-    }
-    el.textContent = `最後更新：${formatDateTime(settings.updatedAt)}` +
-        (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
+    renderUpdatedAt(document.getElementById('prtg-config-updated'), settings);
 }
 
 /**

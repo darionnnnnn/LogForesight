@@ -639,6 +639,37 @@ public class FrontendConsistencyUiTests
     }
 
     [Fact]
+    public void 頁面不得再宣告已上提到core的共用儲存格與類別查表()
+    {
+        // 這些共用函式／常數只在 core/format.js、core/ui.js 定義一次；頁面本地同名宣告會蓋過 import，
+        // 內嵌 CATEGORY_NAMES[x] 查表則繞過 categoryName() 單一出口。
+        var banned = new[]
+        {
+            new Regex(@"function\s+severityCell\s*\("),
+            new Regex(@"function\s+issueSeverityCell\s*\("),
+            new Regex(@"function\s+renderUpdatedAt\s*\("),
+            new Regex(@"function\s+issueDensityCell\s*\("),
+            new Regex(@"function\s+renderPager\s*\("),
+            new Regex(@"const\s+CATEGORY_NAMES\b"),
+            new Regex(@"const\s+SEVERITY_ORDER\b"),
+            new Regex(@"CATEGORY_NAMES\s*\["),
+        };
+        var files = Directory.GetFiles(JsDir("pages"), "*.js", SearchOption.AllDirectories);
+        Assert.NotEmpty(files);
+        var offenders = new List<string>();
+        foreach (var path in files)
+        {
+            var text = File.ReadAllText(path);
+            foreach (var rx in banned)
+            {
+                if (rx.IsMatch(text)) offenders.Add($"{Path.GetFileName(path)}：{rx}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0, "頁面仍有已上提的本地宣告或內嵌查表: " + string.Join("; ", offenders));
+    }
+
+    [Fact]
     public void KPI卡_hover規則只變陰影與邊框_不得位移()
     {
         var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));

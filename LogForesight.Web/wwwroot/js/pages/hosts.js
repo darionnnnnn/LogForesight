@@ -7,8 +7,8 @@
 
 import { api } from '../core/api.js';
 import {
-    renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPagination,
-    checkboxList, button, loadPageSize, savePageSize, guardLoad
+    renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPager,
+    checkboxList, button, loadPageSize, guardLoad
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
@@ -373,21 +373,9 @@ function render() {
             : { title: '沒有符合條件的主機', hint: '請調整搜尋或篩選條件後再試。' }
     });
 
-    renderPagination(document.getElementById('host-pager'), {
-        page: lastResult.page,
-        totalPages: Math.ceil(lastResult.total / lastResult.pageSize),
-        onPage: page => {
-            currentPage = page;
-            reload();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        },
-        pageSize,
-        onPageSize: size => {
-            pageSize = size;
-            savePageSize('hosts', size);
-            currentPage = 1;
-            reload();
-        }
+    renderPager('host-pager', lastResult, {
+        pageSizeKey: 'hosts',
+        onPage: (page, size) => { currentPage = page; pageSize = size; reload(); }
     });
 
     renderSelectionBar();

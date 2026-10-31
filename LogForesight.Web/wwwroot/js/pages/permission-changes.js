@@ -9,7 +9,7 @@
 
 import { api } from '../core/api.js';
 import {
-    renderTable, buildKeyValueTable, renderLoading, renderPagination, loadPageSize, savePageSize,
+    renderTable, buildKeyValueTable, renderLoading, renderPager, loadPageSize,
     guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
@@ -415,7 +415,10 @@ function render() {
         }
     });
 
-    renderPager();
+    renderPager('perm-pager', lastResult, {
+        pageSizeKey: 'permissionChanges',
+        onPage: (page, size) => { currentPage = page; pageSize = size; reload(); }
+    });
     renderSelectionBar();
 }
 
@@ -995,26 +998,6 @@ function dayReportLink(change) {
 
     area.appendChild(btn);
     return area;
-}
-
-function renderPager() {
-    const totalPages = Math.ceil(lastResult.total / lastResult.pageSize);
-    renderPagination(document.getElementById('perm-pager'), {
-        page: lastResult.page,
-        totalPages,
-        onPage: page => {
-            currentPage = page;
-            reload();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        },
-        pageSize,
-        onPageSize: size => {
-            pageSize = size;
-            savePageSize('permissionChanges', size);
-            currentPage = 1;
-            reload();
-        }
-    });
 }
 
 function updateExpandButtonState() {

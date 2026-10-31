@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderPagination, loadPageSize, savePageSize, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, renderPager, loadPageSize, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 import { createSeqGuard } from '../core/async-guards.js';
 
@@ -124,7 +124,10 @@ function render() {
         empty: { title: '沒有符合條件的稽核紀錄', hint: '請調整日期區間或動作條件。' }
     });
 
-    renderPager();
+    renderPager('audit-pager', lastResult, {
+        pageSizeKey: 'audit',
+        onPage: (page, size) => { currentPage = page; pageSize = size; reload(); }
+    });
 }
 
 function resultBadge(result) {
@@ -179,26 +182,6 @@ function renderDefaultRangeNotice(applied) {
         list.parentNode.insertBefore(notice, list);
     }
     notice.hidden = !applied;
-}
-
-function renderPager() {
-    const totalPages = Math.ceil(lastResult.total / lastResult.pageSize);
-    renderPagination(document.getElementById('audit-pager'), {
-        page: lastResult.page,
-        totalPages,
-        onPage: page => {
-            currentPage = page;
-            reload();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        },
-        pageSize,
-        onPageSize: size => {
-            pageSize = size;
-            savePageSize('audit', size);
-            currentPage = 1;
-            reload();
-        }
-    });
 }
 
 document.getElementById('audit-filter').addEventListener('submit', event => {

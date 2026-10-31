@@ -13,7 +13,7 @@
 // formatUserName 是使用者顯示的單一格式出口（§9）。format.js 也 import 本檔的 icon()，
 // 形成循環——但雙方都只在「函式體內」使用彼此、非模組初始化期求值，ESM 的 live binding
 // 在此安全（searchableUserSelect 於執行期才呼叫 formatUserName）。
-import { formatUserName, todayLocal } from './format.js';
+import { formatUserName, formatDateTime, todayLocal } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
@@ -295,6 +295,28 @@ export function renderPagination(container, { page, totalPages, onPage, pageSize
     }
 
     container.replaceChildren(bar);
+}
+
+/**
+ * 列表頁分頁列的標準接法：result 為 { page, total, pageSize }。換頁與改每頁筆數都呼叫
+ * onPage(page, pageSize)——頁面狀態（currentPage、pageSize）仍由頁面持有，在 onPage 內更新並重載。
+ * 換頁後捲回頁首；改每頁筆數會存回 pageSizeKey 並回到第 1 頁。
+ */
+export function renderPager(containerId, result, { pageSizeKey, onPage }) {
+    const totalPages = Math.ceil(result.total / result.pageSize);
+    renderPagination(document.getElementById(containerId), {
+        page: result.page,
+        totalPages,
+        onPage: page => {
+            onPage(page, result.pageSize);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+        pageSize: result.pageSize,
+        onPageSize: size => {
+            savePageSize(pageSizeKey, size);
+            onPage(1, size);
+        }
+    });
 }
 
 function pageSizeSelect(current, options, onChange) {
@@ -1693,4 +1715,15 @@ export function numberOr(id, fallback) {
     if (raw.trim() === '') return fallback;
     const n = Number(raw);
     return Number.isFinite(n) ? n : fallback;
+}
+
+/** 設定類頁面的「最後更新」提示列（誰在何時改過）；el 不存在時略過 */
+export function renderUpdatedAt(el, settings) {
+    if (!el) return;
+    if (!settings.updatedAt) {
+        el.textContent = '尚未有人更新過（目前為系統預設值）。';
+        return;
+    }
+    el.textContent = `最後更新：${formatDateTime(settings.updatedAt)}` +
+        (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
 }

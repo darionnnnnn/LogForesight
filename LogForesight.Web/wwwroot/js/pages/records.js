@@ -14,14 +14,14 @@
 import { api, getAiAvailable, getDisplaySettings, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import {
-    renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
+    renderTable, renderLoading, renderSpinner, renderEmpty, renderError, toast, renderPagination, renderPager, withBusy, renderChips,
+    loadPageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, candidatesToUserOptions, guardLoad,
     headerWithHelp, icon, bindPastDateCheck
 } from '../core/ui.js';
 import { statusesWhere } from '../core/handling-statuses.js';
 import {
-    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, CATEGORY_ORDER, severityName, formatNumber,
-    formatUserName, toLocalDateString, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
+    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
+    formatUserName, toLocalDateString, analysisAnchorLocal, isAiRetryPending, issueBaselineCell, severityCell, issueDensityCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -515,7 +515,10 @@ function render() {
     else if (currentView === 'issue') renderIssueView();
     else renderDetailView();
 
-    renderPager();
+    renderPager('pager', lastResult, {
+        pageSizeKey: 'records',
+        onPage: (page, size) => { currentPage = page; pageSize = size; search(); }
+    });
 }
 
 // ── 明細視角 ─────────────────────────────────────────────────────────────────
@@ -718,8 +721,8 @@ function renderIssueView() {
     // 這是天天都有的背景值、還是近三天才冒出來的新問題。
     const columns = [
         { title: '問題', className: 'lf-issue-col', render: i => issueGroupCell(i) },
-        { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
-        { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
+        { title: '分類', render: i => categoryName(i.category) },
+        { title: '嚴重度', sortKey: 'severity', render: i => severityCell(i.maxSeverity, i.elevatesDayRisk) },
         {
             title: '主機數 / 主機日',
             // 兩個數字上下兩行（回饋二十六輪 E1）：單行 nowrap 時這一欄要 12 個字寬，
@@ -757,7 +760,7 @@ function renderIssueView() {
             title: '出現密度',
             className: 'text-center text-nowrap',
             renderHeader: () => headerWithHelp('出現密度', '查詢期間內有發生此問題的天數比例（出現天數 / 查詢天數）。比例高（如 30/30）代表天天發生的背景雜訊；比例低（如 2/30）代表近期或零星爆發的突發狀況。', '出現密度'),
-            render: i => issueDensityCell(i)
+            render: i => issueDensityCell(i, { layout: 'column' })
         },
         {
             title: '總次數',
@@ -945,25 +948,6 @@ function issueAssignedCell(group) {
 }
 
 /**
- * 嚴重度欄：徽章＋「重大」旗標（規劃 §10.2 維度 1 的既有缺口——這個旗標過去只在
- * 風險日詳情看得到，而它正是「disk 153 該排第一」的理由之一）。
- */
-function issueSeverityCell(group) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1';
-    wrap.appendChild(severityBadge(group.maxSeverity));
-
-    if (group.elevatesDayRisk) {
-        const flag = document.createElement('span');
-        flag.className = 'lf-badge lf-badge--danger';
-        flag.textContent = '重大';
-        flag.title = '此問題曾命中「命中即列為高風險日」的規則旗標';
-        wrap.appendChild(flag);
-    }
-    return wrap;
-}
-
-/**
  * 處理概況：三種狀態各一行（未處理／處理中／已處理），數量為 0 時淡色呈現
  */
 function issueHandlingSummaryCell(group) {
@@ -1023,32 +1007,6 @@ function issueFirstSeenCell(group) {
     return wrap;
 }
 
-
-/**
- * 出現密度：出現天數 ÷ 期間天數（§10.3）。
- * 數字在上、進度條換行在下，欄寬不變。既有的數字文字與 tooltip 內容保留。
- */
-function issueDensityCell(group) {
-    const wrap = document.createElement('div');
-    wrap.className = 'd-inline-flex flex-column align-items-center';
-
-    const text = document.createElement('span');
-    text.className = 'lf-mono small';
-    text.textContent = `${group.activeDays}/${group.periodDays}`;
-    wrap.appendChild(text);
-
-    const ratio = group.periodDays > 0 ? group.activeDays / group.periodDays : 0;
-    const bar = document.createElement('span');
-    bar.className = 'lf-density mt-1';
-    bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
-    const fill = document.createElement('span');
-    fill.className = 'lf-density__fill lf-progress-fill';
-    fill.style.setProperty('--lf-progress', `${Math.max(4, Math.round(ratio * 100))}%`);
-    bar.appendChild(fill);
-    wrap.appendChild(bar);
-
-    return wrap;
-}
 
 /**
  * 最近出現：日期＋「還在不在發生」（§10.3）。
@@ -2039,30 +1997,10 @@ function categoryBadges(categories) {
         badge.className = active.has(category)
             ? 'lf-badge lf-badge--primary me-1'
             : 'lf-badge lf-badge--light border me-1';
-        badge.textContent = CATEGORY_NAMES[category] ?? category;
+        badge.textContent = categoryName(category);
         wrap.appendChild(badge);
     }
     return wrap;
-}
-
-function renderPager() {
-    const totalPages = Math.ceil(lastResult.total / lastResult.pageSize);
-    renderPagination(document.getElementById('pager'), {
-        page: lastResult.page,
-        totalPages,
-        onPage: page => {
-            currentPage = page;
-            search();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        },
-        pageSize,
-        onPageSize: size => {
-            pageSize = size;
-            savePageSize('records', size);
-            currentPage = 1;
-            search();
-        }
-    });
 }
 
 // ── 事件 ─────────────────────────────────────────────────────────────────────
@@ -2149,7 +2087,7 @@ function csvHeader() {
 }
 
 function csvRow(item) {
-    const cats = c => quote((c ?? []).map(x => CATEGORY_NAMES[x] ?? x).join(';'));
+    const cats = c => quote((c ?? []).map(x => categoryName(x)).join(';'));
     if (currentView === 'host') {
         return [quote(item.hostName), item.highRiskDays, item.mediumRiskDays, item.lowRiskDays,
             item.correlationDays, cats(item.categories), item.latestDate, quote(item.latestHeadline)];
@@ -2159,7 +2097,7 @@ function csvRow(item) {
             item.correlationHosts, cats(item.categories)];
     }
     if (currentView === 'issue') {
-        return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category,
+        return [quote(item.source), item.eventId, categoryName(item.category),
             severityName(item.maxSeverity), item.elevatesDayRisk ? '是' : '',
             item.hostCount,
             item.firstSeen, item.lastSeen, item.daysSinceLastSeen,

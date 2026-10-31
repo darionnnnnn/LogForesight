@@ -13,15 +13,7 @@ import {
     renderTable, renderLoading, renderSpinner, guardLoad, toast, confirmAction, withBusy, button, bindTabs, renderChips, renderPageHeader,
     renderPagination, sortRows, loadPageSize, savePageSize, searchableHostSelect
 } from '../core/ui.js';
-import { severityBadge, elevatesBadge, statusBadge, formatDate, formatDateTime, severityName, toLocalDateString as dateText } from '../core/format.js';
-
-const CATEGORY_NAMES = {
-    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
-    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
-};
-
-// docs/archive/HISTORY.md #1（B1 三級化）：Critical 收斂進 High
-const SEVERITY_ORDER = ['High', 'Medium', 'Low'];
+import { categoryName, severityBadge, elevatesBadge, statusBadge, formatDate, formatDateTime, severityName, toLocalDateString as dateText, CATEGORY_NAMES, SEVERITY_ORDER, severityCell } from '../core/format.js';
 
 // chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制/重大為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
 const chipFilters = {
@@ -226,12 +218,12 @@ const RULE_COLUMNS = [
     { title: '規則', sortKey: 'id', sortValue: r => r.id, render: r => ruleCell(r) },
     { title: '比對', render: r => matchCell(r) },
     {
-        title: '類別', sortKey: 'category', sortValue: r => CATEGORY_NAMES[r.category] ?? r.category,
-        render: r => CATEGORY_NAMES[r.category] ?? r.category
+        title: '類別', sortKey: 'category', sortValue: r => categoryName(r.category),
+        render: r => categoryName(r.category)
     },
     {
         title: '嚴重度', sortKey: 'severity', sortDefaultDir: 'asc',
-        sortValue: r => SEVERITY_ORDER.indexOf(r.severity), render: r => severityCell(r)
+        sortValue: r => SEVERITY_ORDER.indexOf(r.severity), render: r => severityCell(r.severity, r.elevatesDayRisk)
     },
     {
         title: '門檻', className: 'text-end', sortKey: 'threshold', sortDefaultDir: 'desc',
@@ -323,15 +315,6 @@ function renderRules() {
             renderRules();
         }
     });
-}
-
-/** 嚴重度徽章＋「重大」旗標（docs/archive/HISTORY.md #1） */
-function severityCell(rule) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1';
-    wrap.appendChild(severityBadge(rule.severity));
-    if (rule.elevatesDayRisk) wrap.appendChild(elevatesBadge());
-    return wrap;
 }
 
 function ruleCell(rule) {
