@@ -1,6 +1,6 @@
 # LogForesight 第 60 輪規劃：冗餘、死碼、結構、韌性（＋核對抓到的 bug）
 
-> 狀態：**規劃中（定案版 v3：經使用者／管理者／程式面三視角審查與上帝視角複檢後修訂；等使用者確認後拆段寫規格；未開分支、未動程式）**
+> 狀態：**實作完成，待換模型體檢**（分支 feature/feedback-60；定案版 v3）
 > 基準：dev@da1efddc（6,905 通過／10 略過，Windows）
 > 來源：第 59 輪全專案體檢的草案 §4（H／I／J／K 四批），加上本輪核對時抓到的 bug 與設計問題
 > 實作方式：Opus 5.5 主代理寫規格與驗收；改檔代理依複雜度用 Sonnet 5.5／Haiku 5.5（同第 59 輪），一個 checkout 一次只派一個改檔代理
@@ -266,3 +266,41 @@ C2-12；C2-20；A2b-17；A2a-16；B-10；B-19；CSP（nonce 四段 inline script
 | K-5 | 掃描：`AddDays(-180)` 在 Core／Web＝0、常數只一處；Fact：46 天前收據清除、44 天前保留、44 天前且仍在回看窗口的問題不重寄；連線被拒替身→預約釋放可重寄；DATA 後逾時→仍 Unknown；健康 DTO 含五分項 | 是 |
 | K-6 | 掃描：`MarkExistingRecordsAsNotified` 只一次 `Query(`；Fact：`PlanBulkClose` 5,001 筆→`validation` | 是 |
 | 說明書 | `HelpContentServiceTests` 既有結構校驗全綠；新增關鍵字守門：`03-issues.ai.md` 含「支援視角」、`20-prtg.md` 含「部分成功」、`10-scheduler.md` 含「AI 跟隨取數」 | 是 |
+
+## 10. 執行紀錄
+
+| 段 | 執行者 | 結果 | 驗收 | 落差與處置 |
+|---|---|---|---|---|
+| Z-a（Z-1／Z-2） | Sonnet | 69270d38 | 定向 520 綠；授權與取消突變轉紅 | 兩個舊測試建構缺 ViewAll 使用者，主代理補 |
+| Z-b（Z-4） | Sonnet | 242b6387 | 定向 597 綠；守門突變轉紅 | 白名單外 SentinelEventFetchService 一行連動 |
+| Z-c（Z-5／Z-10） | Sonnet | 7abe8d95 | 定向 87 綠 | 主代理確認 server_error 改 500 不影響既有 DomainException |
+| Z-d（Z-6） | Sonnet | 0980af60 | 定向 248 綠 | 代理未做改前紅，主代理以突變補證 |
+| Z-e（Z-12） | Sonnet | a81bc8ad | 定向 105 綠；改前紅為編譯失敗 | 主代理確認唯一寫入點一律帶 SourceKey，旗標單調安全 |
+| Z-f（小修） | Haiku | 0836a9a5 | 定向 48 綠；五案改前紅 | 兩個行為測試實際等 15～20 秒，I-4 改可注入延遲後降為 0 |
+| H-1 | Sonnet | dd3d2ff1 | 定向 470 綠；警告數不變 | IN 上限守門改指向 BuildValidMonitoringSensorsQuery |
+| H-2 | Sonnet | 21cec017 | 定向 167 綠 | 一次 Kestrel 偶發失敗重跑綠（BACKLOG 既有的負載偶發） |
+| H-3 | Sonnet | 4546d4e6 | 定向 747 綠 | 主代理改一處提到已刪方法的歷史註解 |
+| I-1 | Sonnet | 04746b61 | 等價 194 例改前即綠；突變 24 例轉紅 | — |
+| I-2（Z-7） | Haiku | ea4fe5fd | 定向 294 綠；改前紅 4 案 | — |
+| I-3（Z-8／Z-9） | Sonnet | 69e76462 | 定向 853 綠；改前紅 5 案 | 主代理確認 AssessPage 預設 newest 的呼叫端皆傳昨天 |
+| I-4 | Sonnet | 58f16dcd | 定向 759 綠 | 三支服務多加可注入建構式才能替身 |
+| I-5 | Sonnet | 0e0b77af | 前端 401 綠；守門突變轉紅 | InlineStyle 允許清單隨 setProperty 搬家 |
+| I-6 | Sonnet | 1a0a7fd0 | 定向 1140 綠 | 主代理刪除因此無人使用的 clearIssueMute |
+| J-0／J-1 | Sonnet | 612e340e | 定向 2311 綠；快照突變轉紅 | 白名單實為 17 個控制器（PrtgMonitoring／PrtgOperations 其實有 Permission）；搬檔後一個結構測試路徑由主代理修 |
+| J-3 | Sonnet | 8f6a14ea | 定向 579 綠；兩份黃金值逐字相同 | 只搬 PrtgTransferStoreException 一種；其餘 catch 有降級或專屬碼，保留 |
+| J-2 | Sonnet×2 | 6f6bc242 | 主代理重跑 1171 綠；兩項突變轉紅 | 使用者暫停一次，第二個代理接手半成品；主代理逐欄比對快照只多 RequireViewAll |
+| J-4（Z-3） | Sonnet | 0ec6ab26 | 定向 1147 綠；hostIds=abc 改前紅 | 代理改了 ParseLongs 共用語意讓 HostsController ids=abc 變全部；主代理還原共用函式、改為只在 RecordsController 擋 |
+| J-5／J-6（Z-11） | Sonnet | 204fe075 | 定向 625 綠；behavior 與反射守門改前紅 | 其餘 4 個稽核站點非同型，保留 |
+| K-a（K-1） | Sonnet | c5c24f0e | 定向 111 綠；改前紅 28 案 | 主代理移除因此未使用的 DataVersionStamp 相依 |
+| K-b（K-2／K-3） | Sonnet | 0360897d | 定向 618 綠 | today-focus 等三端點控制器接線無端到端測試，以服務層與 HelpController 驗證 |
+| K-c（K-4／K-6） | Sonnet | 9b6d6b4d | 定向 428 綠 | 批次結案上限原為載入後才檢查，主代理改為先以 SQL 計數並以突變確認 |
+| K-d（K-5） | Sonnet | a055f9fc | 郵件 103 綠；改前紅 7 案 | SocketError.TimedOut 刻意維持不確定（看不出逾時在連線前或後） |
+| 文件 | 主代理 | fc3844da、cd0e1507、5b3c1eb1、c0ab7ee8 | Help／Wording 守門 83 綠 | 三句超過 45 字由主代理縮短 |
+| 比對補漏 | 主代理 | 本次提交 | PrtgScope 61 綠 | 範圍外清除預覽仍自建 HostStore，改用注入的 _hosts |
+
+## 體檢交接
+
+- 全量（主代理，Windows，補漏前）：**7,334 通過／0 失敗／10 略過**，較基線 6,905／10 增加 429 個測試；補漏後受影響的 PrtgScope 與路由快照定向 61 綠。
+- 規劃逐項比對：以靜態檢查腳本對 §9 各項逐一核對程式碼（75 項），唯一真缺漏已補（上表最後一列）；其餘旗標經查為子字串誤判或屬 §5 明確不做的慣用法。
+- 尚未做：瀏覽器實際操作檢查（記錄查詢不支援提示、PRTG 維護頁錯誤分區、AI 暫時休息卡、規則頁類別名稱）；換模型體檢；CLAUDE.md 基線數字（收尾時更新）。
+- 已知限制：SQL Server 只驗 EF 翻譯形狀；CSP、純效能七項與郵件帳本管理出口在 BACKLOG「第 60 輪體檢遞延」。

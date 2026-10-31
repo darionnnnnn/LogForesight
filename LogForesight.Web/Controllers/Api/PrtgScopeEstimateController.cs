@@ -441,7 +441,7 @@ public class PrtgScopeEstimateController : ControllerBase
         {
             var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
             scope = PrtgScopeDevices.Compute(
-                store, new HostStore(backend.Blob("hosts")), new PrtgMirrorGuardSource(store), settings,
+                store, _hosts, new PrtgMirrorGuardSource(store), settings,
                 new SentinelStore(backend.Blob("sentinels")).GetAll(), new ResourceGuardWarningConsole(), new PrtgAddressResolver(),
                 hostIds: null);
         }
