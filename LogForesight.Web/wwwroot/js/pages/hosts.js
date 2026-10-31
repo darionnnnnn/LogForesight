@@ -8,7 +8,7 @@
 import { api } from '../core/api.js';
 import {
     renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPager,
-    checkboxList, button, loadPageSize, guardLoad
+    checkboxList, button, loadPageSize, guardLoad, createPageSelection
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { appUrl } from '../core/paths.js';
@@ -60,11 +60,19 @@ let unpolledIds = new Set();   // 其中今晚不會被輪巡的那些
  * 主機名＋現有群組徽章，而那些主機未必在目前這一頁，只能靠勾選當下存下來的物件。
  * 只在「清除選取」與套用成功後清空，翻頁／篩選不清空。
  */
-const selectedHosts = new Map();
+const selection = createPageSelection({
+    keyOf: host => host.hostId,
+    // 已併入其他主機的列不給勾選——群組對墓碑紀錄無意義；停用主機可勾（改群組合理）
+    isSelectable: host => !host.mergedInto,
+    getPageItems: () => currentPageHosts,
+    labels: { row: '批次改群組', all: '全選本頁' },
+    bar: { barId: 'host-selection-bar', countId: 'host-selection-count', unit: '台' },
+    onSelectAll: () => render()
+});
+const selectedHosts = selection.selected;
 const batchGroupsModal = new bootstrap.Modal(document.getElementById('batch-groups-modal'));
 const batchTierModal = new bootstrap.Modal(document.getElementById('batch-tier-modal'));
 const batchOwnersModal = new bootstrap.Modal(document.getElementById('batch-owners-modal'));
-let headerCheckboxEl = null;   // 表頭全選 checkbox 的 DOM 參照，供逐列勾選後同步狀態
 
 async function load() {
     renderLoading(listContainer, 5);
@@ -349,7 +357,7 @@ function render() {
 
     renderTable(listContainer, {
         columns: [
-            { title: '', className: 'lf-checkbox-cell', renderHeader: selectAllHeaderCheckbox, render: rowCheckboxCell },
+            { title: '', className: 'lf-checkbox-cell', renderHeader: selection.selectAllHeaderCheckbox, render: selection.rowCheckboxCell },
             { title: '主機', sortKey: 'name', render: hostNameCell },
             { title: '來源', sortKey: 'source', render: sourceCell },
             { title: 'IP', sortKey: 'ip', render: h => h.ipAddress ?? '' },
@@ -378,69 +386,7 @@ function render() {
         onPage: (page, size) => { currentPage = page; pageSize = size; reload(); }
     });
 
-    renderSelectionBar();
-}
-
-/** 已併入其他主機的列不給勾選——群組對墓碑紀錄無意義；停用主機可勾（改群組合理） */
-function isSelectable(host) {
-    return !host.mergedInto;
-}
-
-function rowCheckboxCell(host) {
-    if (!isSelectable(host)) return document.createTextNode('');
-
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'form-check-input';
-    check.checked = selectedHosts.has(host.hostId);
-    check.title = '批次改群組';
-
-    check.addEventListener('click', event => event.stopPropagation());
-    check.addEventListener('change', () => {
-        if (check.checked) selectedHosts.set(host.hostId, host);
-        else selectedHosts.delete(host.hostId);
-        renderSelectionBar();
-        syncSelectAllHeaderCheckbox();
-    });
-
-    return check;
-}
-
-/** 表頭全選：只作用在目前這一頁可勾選的列（伺服器端分頁下沒有「全部主機」的概念） */
-function selectAllHeaderCheckbox() {
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'form-check-input';
-    check.title = '全選本頁';
-
-    check.addEventListener('click', event => event.stopPropagation());
-    check.addEventListener('change', () => {
-        const selectable = currentPageHosts.filter(isSelectable);
-        if (check.checked) {
-            for (const host of selectable) selectedHosts.set(host.hostId, host);
-        } else {
-            for (const host of selectable) selectedHosts.delete(host.hostId);
-        }
-        render();
-    });
-
-    headerCheckboxEl = check;
-    syncSelectAllHeaderCheckbox();
-    return check;
-}
-
-/** 本頁可勾選列是否已全部勾選——翻頁、篩選、逐列勾選後都要重新同步表頭狀態 */
-function syncSelectAllHeaderCheckbox() {
-    if (!headerCheckboxEl) return;
-    const selectable = currentPageHosts.filter(isSelectable);
-    headerCheckboxEl.checked = selectable.length > 0 && selectable.every(h => selectedHosts.has(h.hostId));
-    headerCheckboxEl.indeterminate = !headerCheckboxEl.checked && selectable.some(h => selectedHosts.has(h.hostId));
-}
-
-function renderSelectionBar() {
-    const bar = document.getElementById('host-selection-bar');
-    bar.classList.toggle('d-none', selectedHosts.size === 0);
-    document.getElementById('host-selection-count').textContent = `已選 ${selectedHosts.size} 台`;
+    selection.renderBar();
 }
 
 function hostNameCell(host) {

@@ -279,10 +279,3 @@ export async function openIssueMuteModal({ source, eventId, issueLabel, currentM
     body.appendChild(form);
     showDetailModal({ title: `${actionText}：${issueLabel}`, body });
 }
-
-/**
- * 提前解除靜音（DELETE 同一個端點）。成功訊息與重新載入由呼叫端的 onApplied 接手。
- */
-export async function clearIssueMute(source, eventId) {
-    await api.delete(`/api/admin/issue-owners/${encodeURIComponent(source)}/${eventId}/mute`);
-}

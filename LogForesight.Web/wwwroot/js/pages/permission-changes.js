@@ -10,7 +10,7 @@
 import { api } from '../core/api.js';
 import {
     renderTable, buildKeyValueTable, renderLoading, renderPager, loadPageSize,
-    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader
+    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips, renderPageHeader, createPageSelection
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openReportModal } from '../core/report-view.js';
@@ -55,8 +55,16 @@ let searchDebounce = null;
 const selectedCategories = new Set();
 const knownCategories = new Map(); // categoryKey -> categoryLabel
 
-const selectedChanges = new Map(); // changeId -> change object
-let headerCheckboxEl = null;
+const selection = createPageSelection({
+    keyOf: change => change.changeId,
+    // 勾選框只出現在 status 為 pending 的列（已確認的不能改回）
+    isSelectable: change => change.status === 'pending',
+    getPageItems: () => lastResult?.items || [],
+    labels: { row: '選取此項目', all: '全選本頁待確認項目' },
+    bar: { barId: 'perm-selection-bar', countId: 'perm-selection-count', unit: '筆' },
+    onSelectAll: () => render()
+});
+const selectedChanges = selection.selected; // changeId -> change object
 let batchTargetStatus = 'authorized';
 
 /**
@@ -365,8 +373,8 @@ function render() {
             {
                 title: '',
                 className: 'lf-checkbox-cell',
-                renderHeader: selectAllHeaderCheckbox,
-                render: rowCheckboxCell
+                renderHeader: selection.selectAllHeaderCheckbox,
+                render: selection.rowCheckboxCell
             },
             {
                 key: 'hostName',
@@ -396,7 +404,7 @@ function render() {
                 title: '狀態',
                 sortKey: 'status',
                 sortDefaultDir: 'asc',
-                render: row => statusBadge(row.status)
+                render: row => permStatusBadge(row.status)
             }
         ],
         rows: lastResult.items,
@@ -419,73 +427,7 @@ function render() {
         pageSizeKey: 'permissionChanges',
         onPage: (page, size) => { currentPage = page; pageSize = size; reload(); }
     });
-    renderSelectionBar();
-}
-
-/** 勾選框只出現在 status 為 pending 的列（已確認的不能改回） */
-function isSelectable(change) {
-    return change.status === 'pending';
-}
-
-function rowCheckboxCell(change) {
-    if (!isSelectable(change)) return document.createTextNode('');
-
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'form-check-input';
-    check.checked = selectedChanges.has(change.changeId);
-    check.title = '選取此項目';
-
-    check.addEventListener('click', event => event.stopPropagation());
-    check.addEventListener('change', () => {
-        if (check.checked) selectedChanges.set(change.changeId, change);
-        else selectedChanges.delete(change.changeId);
-        renderSelectionBar();
-        syncSelectAllHeaderCheckbox();
-    });
-
-    return check;
-}
-
-/** 表頭全選：只作用在目前這一頁可勾選的列 */
-function selectAllHeaderCheckbox() {
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'form-check-input';
-    check.title = '全選本頁待確認項目';
-
-    check.addEventListener('click', event => event.stopPropagation());
-    check.addEventListener('change', () => {
-        const selectable = (lastResult?.items || []).filter(isSelectable);
-        if (check.checked) {
-            for (const change of selectable) selectedChanges.set(change.changeId, change);
-        } else {
-            for (const change of selectable) selectedChanges.delete(change.changeId);
-        }
-        render();
-    });
-
-    headerCheckboxEl = check;
-    syncSelectAllHeaderCheckbox();
-    return check;
-}
-
-/** 本頁可勾選列是否已全部勾選，維持三態同步 */
-function syncSelectAllHeaderCheckbox() {
-    if (!headerCheckboxEl) return;
-    const selectable = (lastResult?.items || []).filter(isSelectable);
-    headerCheckboxEl.checked = selectable.length > 0 && selectable.every(c => selectedChanges.has(c.changeId));
-    headerCheckboxEl.indeterminate = !headerCheckboxEl.checked && selectable.some(c => selectedChanges.has(c.changeId));
-}
-
-function renderSelectionBar() {
-    const bar = document.getElementById('perm-selection-bar');
-    if (!bar) return;
-    bar.classList.toggle('d-none', selectedChanges.size === 0);
-    const countEl = document.getElementById('perm-selection-count');
-    if (countEl) {
-        countEl.textContent = `已選 ${selectedChanges.size} 筆`;
-    }
+    selection.renderBar();
 }
 
 function hostCell(row) {
@@ -562,7 +504,7 @@ function summaryCell(row) {
     return div;
 }
 
-function statusBadge(status) {
+function permStatusBadge(status) {
     const meta = {
         pending: { text: '待確認', variant: 'warning' },
         authorized: { text: '已確認授權', variant: 'success' },

@@ -8,6 +8,7 @@
  */
 
 import { api } from '../core/api.js';
+import { prtgCategoryLabel } from '../core/prtg-sensor-categories.js';
 import { renderAlertToolsTable } from '../core/alert-tools-table.js';
 import {
     renderTable, renderLoading, renderSpinner, guardLoad, toast, confirmAction, withBusy, button, bindTabs, renderChips, renderPageHeader,
@@ -332,20 +333,10 @@ function ruleCell(rule) {
     return wrap;
 }
 
-// PRTG sensor 分類的顯示文字（與 Rules.cshtml 的 rule-prtg-sensor-category 選項一致）。
-const PRTG_SENSOR_CATEGORY_LABELS = {
-    traffic: '流量',
-    disk: '磁碟空間',
-    cpu: 'CPU',
-    memory: '記憶體',
-    availability: '連通性',
-    hardware: '硬體健康'
-};
-
 function prtgSensorCategorySuffix(rule) {
     const category = rule.prtgSensorCategory;
     if (!category) return '';
-    return `（${PRTG_SENSOR_CATEGORY_LABELS[category] ?? category}）`;
+    return `（${prtgCategoryLabel(category)}）`;
 }
 
 // 三條趨勢規則新建時的暫定門檻（與 Core PrtgTrendThresholds.*Provisional 相同）

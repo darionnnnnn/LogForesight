@@ -69,12 +69,13 @@ function setup() {
         .replace(/^import[\s\S]*?;\n/gm, '')
         .replace(/^export function/gm, 'function')
         + '\nreturn { initChatPanel, updateIssueOptions };';
-    const factory = new Function('document', 'api', 'toast', 'withBusy', 'showDetailModal', 'severityName', 'renderAiText', body);
+    const factory = new Function('document', 'api', 'toast', 'withBusy', 'showDetailModal', 'severityName', 'renderAiText', 'loadRunHint', body);
     const panel = factory(
         document, api, () => {},
         button => { button.disabled = true; return () => { button.disabled = false; }; },
         () => {}, value => String(value),
-        (container, text) => { container.appendChild({ aiText: text }); });
+        (container, text) => { container.appendChild({ aiText: text }); },
+        () => {});
     const issues = [
         { issueKey: 'A', sourceEventLabel: '問題甲', severity: 3 },
         { issueKey: 'B', sourceEventLabel: '問題乙', severity: 2 }

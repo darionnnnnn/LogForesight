@@ -653,20 +653,66 @@ public class FrontendConsistencyUiTests
             new Regex(@"const\s+CATEGORY_NAMES\b"),
             new Regex(@"const\s+SEVERITY_ORDER\b"),
             new Regex(@"CATEGORY_NAMES\s*\["),
+            new Regex(@"function\s+renderIssueCell\s*\("),
+            new Regex(@"function\s+dueCell\s*\("),
+            new Regex(@"const\s+ORIGIN_LABELS\b"),
+            new Regex(@"function\s+loadRunHint\s*\("),
+            new Regex(@"const\s+PRTG_SENSOR_CATEGORY_LABELS\b"),
         };
+        // runs.js 的 statusText(detail) 是批次執行狀態文字，與處理狀態儲存格同名不同語意，不在此列
+        var statusTextRx = new Regex(@"function\s+statusText\s*\(");
+        // 數值就緒度頁的類別顯示一律走 core/prtg-sensor-categories.js，不得再內嵌 switch 對照
+        var categorySwitchRx = new Regex(@"case\s+'(cpu|memory|disk|availability|traffic|hardware)'");
         var files = Directory.GetFiles(JsDir("pages"), "*.js", SearchOption.AllDirectories);
         Assert.NotEmpty(files);
         var offenders = new List<string>();
         foreach (var path in files)
         {
             var text = File.ReadAllText(path);
+            var name = Path.GetFileName(path);
             foreach (var rx in banned)
             {
-                if (rx.IsMatch(text)) offenders.Add($"{Path.GetFileName(path)}：{rx}");
+                if (rx.IsMatch(text)) offenders.Add($"{name}：{rx}");
             }
+            if (name != "runs.js" && statusTextRx.IsMatch(text)) offenders.Add($"{name}：{statusTextRx}");
+            if (name == "prtg-value-readiness.js" && categorySwitchRx.IsMatch(text)) offenders.Add($"{name}：{categorySwitchRx}");
         }
 
         Assert.True(offenders.Count == 0, "頁面仍有已上提的本地宣告或內嵌查表: " + string.Join("; ", offenders));
+    }
+
+    [Fact]
+    public void 規則頁sensor分類選項文字等於core字典label()
+    {
+        var cshtml = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "Views", "Pages", "Rules.cshtml"));
+        var select = Regex.Match(cshtml, @"<select[^>]*id=""rule-prtg-sensor-category""[^>]*>(?<body>.*?)</select>", RegexOptions.Singleline);
+        Assert.True(select.Success, "找不到 rule-prtg-sensor-category 下拉");
+        var options = Regex.Matches(select.Groups["body"].Value, @"<option value=""(?<v>[^""]*)"">(?<t>[^<]*)</option>")
+            .Select(m => (value: m.Groups["v"].Value, text: m.Groups["t"].Value.Trim()))
+            .Where(o => o.value != "")
+            .ToList();
+        Assert.Equal(6, options.Count);
+
+        // 字典：core/prtg-sensor-categories.js 內 key: { label: '…' } 的 label
+        var dict = File.ReadAllText(JsDir("core", "prtg-sensor-categories.js"));
+        foreach (var (value, text) in options)
+        {
+            var m = Regex.Match(dict, @"\b" + value + @"\s*:\s*\{\s*label:\s*'(?<l>[^']*)'");
+            Assert.True(m.Success, $"字典缺少類別 {value}");
+            Assert.Equal(m.Groups["l"].Value, text);
+        }
+    }
+
+    [Fact]
+    public void 數值就緒度頁類別顯示走core字典_availability顯示Ping_traffic顯示流量()
+    {
+        var page = ReadJs("pages", "prtg-value-readiness.js");
+        Assert.Contains("prtgCategoryShort(", page);
+        var dict = ReadJs("core", "prtg-sensor-categories.js");
+        Assert.Matches(@"availability\s*:\s*\{\s*label:\s*'連通性',\s*short:\s*'Ping'", dict);
+        Assert.Matches(@"traffic\s*:\s*\{\s*label:\s*'流量'", dict);
+        var rules = ReadJs("pages", "rules.js");
+        Assert.Contains("prtgCategoryLabel(", rules);
     }
 
     [Fact]

@@ -617,6 +617,10 @@ public class HandlerDayItemDto
     /// in_progress，必須看推導值才知道「現在真正的狀態」</summary>
     public string DerivedStatus { get; set; } = string.Empty;
     public string DerivedStatusText { get; set; } = string.Empty;
+
+    /// <summary>推導後是否仍未結案——由 <c>HandlingStatuses.Unresolved</c> 判定（與
+    /// <c>UnresolvedDayCount</c> 同一出處），前端不必自己維護一份狀態集合</summary>
+    public bool IsUnresolved { get; set; }
     public string? DueDate { get; set; }
     public bool IsOverdue { get; set; }
 }

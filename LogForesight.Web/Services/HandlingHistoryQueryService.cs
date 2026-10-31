@@ -420,7 +420,7 @@ public class HandlingHistoryQueryService
             Account = user.Account,
             Active = user.Active,
             OpenCaseCount = caseItems.Count,
-            UnresolvedDayCount = dayItems.Count(d => HandlingStatuses.Unresolved.Contains(d.DerivedStatus)),
+            UnresolvedDayCount = dayItems.Count(d => d.IsUnresolved),
             OverdueCount = caseItems.Count(c => c.IsOverdue) + dayItems.Count(d => d.IsOverdue),
             Cases = caseItems,
             Days = dayItems
@@ -500,6 +500,7 @@ public class HandlingHistoryQueryService
                 RiskLevel = record.RiskLevel,
                 DerivedStatus = progress.DayStatus,
                 DerivedStatusText = HandlingTextHelpers.StatusText(progress.DayStatus),
+                IsUnresolved = HandlingStatuses.Unresolved.Contains(progress.DayStatus),
                 DueDate = handling.DueDate?.ToString("yyyy-MM-dd"),
                 IsOverdue = isOverdue
             });

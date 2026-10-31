@@ -380,3 +380,51 @@ export function issueBaselineText(issue) {
 
     return `基準 ${median} 台/日 → ${issue.baselineLatestHostCount} 台` + multiplierText;
 }
+
+/** 問題欄：粗體問題標籤＋灰字白話說明（處理人頁與交辦單頁的表格共用） */
+export function renderIssueCell(issueLabelText, plainExplanationText) {
+    const wrap = document.createElement('div');
+    const main = document.createElement('div');
+    main.className = 'fw-bold';
+    main.textContent = issueLabelText || '';
+    wrap.appendChild(main);
+
+    if (plainExplanationText) {
+        const sub = document.createElement('div');
+        sub.className = 'text-muted small';
+        sub.textContent = plainExplanationText;
+        wrap.appendChild(sub);
+    }
+    return wrap;
+}
+
+/** 日層級／案件項目的狀態文字：逾期時紅字（優先用推導後的狀態文字） */
+export function statusText(item) {
+    const span = document.createElement('span');
+    span.textContent = item.derivedStatusText ?? item.statusText;
+    if (item.isOverdue) span.className = 'text-danger fw-semibold';
+    return span;
+}
+
+/** 預計完成日欄：逾期時紅字並加「逾期」前綴；沒有日期回空字串 */
+export function dueCell(item) {
+    if (!item.dueDate) return '';
+    const span = document.createElement('span');
+    span.className = item.isOverdue ? 'text-danger fw-semibold' : '';
+    span.textContent = item.isOverdue ? `逾期 ${item.dueDate}` : item.dueDate;
+    return span;
+}
+
+/** 交辦單來源代碼 → 中文 */
+export const ORIGIN_LABELS = {
+    manual: '人工交辦',
+    owner_rule: '負責人規則',
+    auto_dispatch: '自動派工',
+    backfill: '系統整併',
+    day_assign: '詳情頁指派'
+};
+
+/** 交辦單來源徽章；不認得的代碼原樣顯示，空值顯示「未知」 */
+export function originBadge(origin) {
+    return statusBadge(ORIGIN_LABELS[origin] || origin || '未知', 'neutral');
+}

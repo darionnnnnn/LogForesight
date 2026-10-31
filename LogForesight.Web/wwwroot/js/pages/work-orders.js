@@ -19,13 +19,14 @@ import {
     button,
     toast,
     confirmAction,
+    confirmAndClearMute,
     withBusy,
     guardLoad,
     loadPageSize,
     savePageSize
 } from '../core/ui.js';
-import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText } from '../core/format.js';
-import { openIssueMuteModal, clearIssueMute } from './issue-mute-modal.js';
+import { formatDate, formatDateTime, formatNumber, statusBadge, todayLocal, workOrderClosedReasonText, renderIssueCell, originBadge } from '../core/format.js';
+import { openIssueMuteModal } from './issue-mute-modal.js';
 
 // DOM 元素
 const tabsEl = document.getElementById('wo-tabs');
@@ -57,15 +58,6 @@ const gapsPagerContainer = document.getElementById('wo-gaps-pager');
 // 靜音中頁籤
 const mutedTabItem = document.getElementById('wo-muted-tab-item');
 const mutedContainer = document.getElementById('wo-muted-list');
-
-// 來源名稱對照
-const ORIGIN_LABELS = {
-    manual: '人工交辦',
-    owner_rule: '負責人規則',
-    auto_dispatch: '自動派工',
-    backfill: '系統整併',
-    day_assign: '詳情頁指派'
-};
 
 // 無法指派原因對照
 const UNASSIGNABLE_LABELS = {
@@ -173,25 +165,6 @@ let currentUser = null;
 const loadedTabs = new Set();
 let activePage = 1;
 let gapsPage = 1;
-
-/**
- * 兩個頁籤共用的「問題欄」渲染函式
- */
-function renderIssueCell(issueLabelText, plainExplanationText) {
-    const wrap = document.createElement('div');
-    const main = document.createElement('div');
-    main.className = 'fw-bold';
-    main.textContent = issueLabelText || '';
-    wrap.appendChild(main);
-
-    if (plainExplanationText) {
-        const sub = document.createElement('div');
-        sub.className = 'text-muted small';
-        sub.textContent = plainExplanationText;
-        wrap.appendChild(sub);
-    }
-    return wrap;
-}
 
 // ── 進行中頁籤 ─────────────────────────────────────────────────────────────
 
@@ -324,7 +297,7 @@ function renderActiveTable(data) {
         },
         {
             title: '來源',
-            render: r => statusBadge(ORIGIN_LABELS[r.origin] || r.origin || '未知', 'neutral')
+            render: r => originBadge(r.origin)
         },
         {
             title: '建立',
@@ -738,25 +711,11 @@ function extendMute(r) {
     });
 }
 
-/** 確認文字與 issue-owners.js 的「解除」同一份說法 */
 async function removeMute(r) {
-    const confirmed = await confirmAction({
-        title: '解除靜音',
-        message: '解除後這個問題會立刻恢復告警與待辦；解除前的日子仍維持已有結論。',
-        confirmText: '解除',
-        confirmVariant: 'danger'
-    });
-    if (!confirmed) return;
-
-    try {
-        await clearIssueMute(r.sourceName, r.eventId);
-        toast('已解除靜音', 'success');
-        // 解除後暫停中的交辦單恢復，進行中頁籤下次切過去要重查
-        loadedTabs.delete('active');
-        reloadMuted();
-    } catch {
-        // 錯誤已由 api.js 顯示
-    }
+    if (!await confirmAndClearMute(r)) return;
+    // 解除後暫停中的交辦單恢復，進行中頁籤下次切過去要重查
+    loadedTabs.delete('active');
+    reloadMuted();
 }
 
 // ── 頁籤切換與事件綁定 ─────────────────────────────────────────────────────

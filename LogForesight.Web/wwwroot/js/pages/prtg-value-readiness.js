@@ -1,4 +1,5 @@
 import { api } from '../core/api.js';
+import { prtgCategoryShort } from '../core/prtg-sensor-categories.js';
 import { formatDate, formatNumber } from '../core/format.js';
 import { guardLoad, renderSpinner, renderTable } from '../core/ui.js';
 
@@ -24,18 +25,6 @@ export function initValueReadiness() {
     let loaded = false;
     let inFlight = null;
     let totalPages = 1;
-
-    function formatCategory(category) {
-        if (!category) return '';
-        const lower = String(category).toLowerCase();
-        switch (lower) {
-            case 'cpu': return 'CPU';
-            case 'memory': return '記憶體';
-            case 'disk': return '磁碟';
-            case 'availability': return 'Ping';
-            default: return String(category);
-        }
-    }
 
     function renderSuccess(data) {
         const population = data.population || 0;
@@ -108,7 +97,7 @@ export function initValueReadiness() {
                 columns: [
                     { title: '主機', truncate: true, render: row => row.hostName ?? '' },
                     { title: 'Sensor', truncate: true, render: row => row.sensorName ?? '' },
-                    { title: '類別', render: row => formatCategory(row.category) },
+                    { title: '類別', render: row => prtgCategoryShort(row.category) },
                     { title: '有效日', render: row => `${row.validDays}／${row.requiredDays}` },
                     { title: '最新有效日', render: row => (row.latestValidDay ? formatDate(row.latestValidDay) : '—') },
                     { title: '原因', render: row => row.reasonLabel ?? '' }
