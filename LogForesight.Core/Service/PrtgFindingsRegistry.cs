@@ -128,17 +128,11 @@ public sealed class PrtgFindingsRegistry
         var gate = _attachGates.GetOrAdd((hostId, date.Date), _ => new object());
         lock (gate)
         {
-            var attached = attach();
-            if (attached) _attached.TryAdd((hostId, date.Date), true);
-            return attached;
+            return attach();
         }
     }
 
-    /// <summary>這個主機日是否已由任一條路徑追加成功（供另一條路徑判斷「資料庫已有，是我之前來過」）。</summary>
-    public bool WasAttached(long hostId, DateTime date) => _attached.ContainsKey((hostId, date.Date));
-
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(long, DateTime), object> _attachGates = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long, DateTime), bool> _attached = new();
 
     private static PrtgFindingsRegistry CreateReady()
     {

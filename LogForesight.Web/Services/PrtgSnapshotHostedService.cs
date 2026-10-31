@@ -91,8 +91,6 @@ public class PrtgSnapshotHostedService : BackgroundService
     /// <summary>鏡像補抓與近期狀態查詢每輪必須讓出採樣；測試可縮短期限。</summary>
     internal TimeSpan ScopeWorkBudget { get; set; } = TimeSpan.FromSeconds(30);
 
-    internal PrtgSamplingActivity SamplingActivity { get; set; } = PrtgSamplingActivity.Shared;
-
     private DateTime? _targetRefreshHour;
     private string? _targetWhitelistFingerprint;
     private HashSet<long>? _targetObjids;
@@ -138,10 +136,6 @@ public class PrtgSnapshotHostedService : BackgroundService
     internal IRunConsole? Console { get; set; }
     internal Func<DateTime> Now { get; set; } = () => DateTime.Now;
     internal PrtgSnapshotAccumulator Accumulator => _accumulator;
-    /// <summary>執行輸出只留最近這麼多筆：站台長時間運行，無上限會一直長成記憶體洩漏。</summary>
-    private const int MaxExecutionOutputs = 100;
-
-    internal List<string> ExecutionOutputs { get; } = new();
 
     public PrtgSnapshotHostedService(
         ISystemSettingsStore systemSettingsStore,
@@ -497,9 +491,6 @@ public class PrtgSnapshotHostedService : BackgroundService
         }
 
         _lastAttemptAt = now;
-
-        // 採樣取得優先權時中止背景歷史頁；整個區段結束後才准入下一頁。
-        using var samplingPriority = SamplingActivity.BeginSampling();
 
         // 7. 快照之前先補抓新進取數範圍、鏡像還沒有感測器的裝置（自帶 try/catch，不進退避）。
         //    跟著快照間隔走、不每分鐘跑：取數範圍計算要讀整份對應與鏡像，沒必要比快照更頻繁。
@@ -1506,8 +1497,6 @@ public class PrtgSnapshotHostedService : BackgroundService
 
     private void WriteOutput(string message, NLog.LogLevel? logLevel = null)
     {
-        ExecutionOutputs.Add(message);
-        if (ExecutionOutputs.Count > MaxExecutionOutputs) ExecutionOutputs.RemoveAt(0);
         Console?.WriteLine(message);
         if (logLevel == NLog.LogLevel.Warn)
             Log.Warn(message);

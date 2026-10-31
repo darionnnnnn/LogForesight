@@ -27,9 +27,10 @@ public class PrtgScopeDevicesTests : IDisposable
     /// <summary>
     /// 位址解析器用正式實作：測試位址都是合法 IP，第一層純語法正規化就會命中，不會真的去查 DNS。
     /// </summary>
-    private static PrtgScopeResult Compute(EfPrtgStore store, IHostStore hostStore, SystemSettings settings, IReadOnlyList<Sentinel> sentinels)
+    private static PrtgScopeResult Compute(EfPrtgStore store, IHostStore hostStore, SystemSettings settings, IReadOnlyList<Sentinel> sentinels,
+        TestConsole? console = null)
         => PrtgScopeDevices.Compute(store, hostStore, new PrtgMirrorGuardSource(store), settings, sentinels,
-            new TestConsole(), new PrtgAddressResolver(), hostIds: null);
+            console ?? new TestConsole(), new PrtgAddressResolver(), hostIds: null);
 
     private static PrtgHostMapRow MapRow(long deviceObjid, string ip, int? hostId, string status) => new()
     {
@@ -178,7 +179,7 @@ public class PrtgScopeDevicesTests : IDisposable
     }
 
     [Fact]
-    public void Compute_人工對應的device不在裝置鏡像_不入範圍且計數與警告各一()
+    public void Compute_人工對應的device不在裝置鏡像_不入範圍且輸出一則警告()
     {
         var (store, hostStore, settings, sentinels) = SeedComposition();
         store.UpsertManualMap(new PrtgManualMapRow
@@ -190,13 +191,13 @@ public class PrtgScopeDevicesTests : IDisposable
             CreatedAt = DateTime.Now
         });
 
-        var result = Compute(store, hostStore, settings, sentinels);
+        var console = new TestConsole();
+        var result = Compute(store, hostStore, settings, sentinels, console);
 
         Assert.DoesNotContain(99L, result.DeviceObjids);
         Assert.Contains(5L, result.DeviceObjids);
         Assert.Equal(1, result.Manual);
-        Assert.Equal(1, result.ManualMissingInMirror);
-        var warning = Assert.Single(result.Warnings);
+        var warning = Assert.Single(console.Lines, l => l.Contains("已不在 PRTG 鏡像"));
         Assert.Equal("人工對應的裝置 #99 已不在 PRTG 鏡像，未納入取數範圍", warning);
     }
 
@@ -205,11 +206,11 @@ public class PrtgScopeDevicesTests : IDisposable
     {
         var (store, hostStore, settings, sentinels) = SeedComposition();
 
-        var result = Compute(store, hostStore, settings, sentinels);
+        var console = new TestConsole();
+        var result = Compute(store, hostStore, settings, sentinels, console);
 
         Assert.Contains(5L, result.DeviceObjids);
-        Assert.Equal(0, result.ManualMissingInMirror);
-        Assert.Empty(result.Warnings);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("已不在 PRTG 鏡像"));
     }
 
     [Fact]

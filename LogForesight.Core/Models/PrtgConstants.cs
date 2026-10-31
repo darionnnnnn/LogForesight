@@ -1,4 +1,3 @@
-using System.Globalization;
 using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Models;
@@ -14,49 +13,6 @@ public static class PrtgSensorStatuses
     public const string Warning = "Warning";
     public const string Unknown = "Unknown";
     public const string Paused = "Paused";
-
-    /// <summary>Maps PRTG's documented sensor status code; display text cannot override an invalid raw code.</summary>
-    public static bool TryParseSourceStatus(string? raw, string? display, out string status)
-    {
-        status = string.Empty;
-        if (!string.IsNullOrWhiteSpace(raw))
-        {
-            if (!int.TryParse(raw.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var code)) return false;
-            status = code switch
-            {
-                0 => "None",
-                1 => Unknown,
-                2 => "Scanning",
-                3 => Up,
-                4 => Warning,
-                5 => Down,
-                6 => "No Probe",
-                7 or 8 or 9 or 12 => Paused,
-                10 => "Unusual",
-                11 => "Not Licensed",
-                13 => "Down (Acknowledged)",
-                14 => "Down (Partial)",
-                _ => string.Empty
-            };
-            return status.Length > 0;
-        }
-
-        // When raw is absent, allow a canonical PRTG display value as a compatibility path.
-        var text = display?.Trim();
-        if (string.IsNullOrWhiteSpace(text)) return false;
-        if (string.Equals(text, Unknown, StringComparison.OrdinalIgnoreCase)) status = Unknown;
-        else if (string.Equals(text, Up, StringComparison.OrdinalIgnoreCase)) status = Up;
-        else if (string.Equals(text, Warning, StringComparison.OrdinalIgnoreCase)) status = Warning;
-        else if (string.Equals(text, Down, StringComparison.OrdinalIgnoreCase) ||
-                 text.StartsWith(Down + " (", StringComparison.OrdinalIgnoreCase)) status = text;
-        else if (string.Equals(text, "None", StringComparison.OrdinalIgnoreCase)) status = "None";
-        else if (string.Equals(text, "Scanning", StringComparison.OrdinalIgnoreCase)) status = "Scanning";
-        else if (string.Equals(text, "No Probe", StringComparison.OrdinalIgnoreCase)) status = "No Probe";
-        else if (text.StartsWith(Paused, StringComparison.OrdinalIgnoreCase)) status = Paused;
-        else if (string.Equals(text, "Unusual", StringComparison.OrdinalIgnoreCase)) status = "Unusual";
-        else if (string.Equals(text, "Not Licensed", StringComparison.OrdinalIgnoreCase)) status = "Not Licensed";
-        return status.Length > 0;
-    }
 
     /// <summary>是否為 Down 系列狀態（含 "Down (Acknowledged)" 等變體）</summary>
     public static bool IsDown(string? status) =>

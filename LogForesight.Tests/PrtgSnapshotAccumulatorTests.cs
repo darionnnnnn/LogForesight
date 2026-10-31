@@ -196,3 +196,23 @@ public class PrtgSnapshotAccumulatorTests
         Assert.Equal(0, acc.SampleCount);
     }
 }
+
+/// <summary>測試用：以正式路徑的「預覽＋擷取差異＋提交」組出取走並清除的語意。</summary>
+internal static class PrtgSnapshotAccumulatorDrainExtensions
+{
+    public static IReadOnlyList<PrtgValueRow> DrainBefore(this PrtgSnapshotAccumulator acc,
+        DateTime hourExclusive, int expectedSamplesPerHour, DateTime now)
+    {
+        var rows = acc.PreviewDrainBefore(hourExclusive, expectedSamplesPerHour, now);
+        acc.CommitDelta(acc.CaptureDelta(acc.KeysForDrainBefore(hourExclusive)));
+        return rows;
+    }
+
+    public static IReadOnlyList<PrtgValueRow> DrainAll(this PrtgSnapshotAccumulator acc,
+        int expectedSamplesPerHour, DateTime now)
+    {
+        var rows = acc.PreviewDrainAll(expectedSamplesPerHour, now);
+        acc.CommitDelta(acc.CaptureDelta(acc.KeysForDrainAll()));
+        return rows;
+    }
+}

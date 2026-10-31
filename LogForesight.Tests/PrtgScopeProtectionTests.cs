@@ -157,7 +157,6 @@ public class PrtgScopeProtectionTests : IDisposable
         Assert.Equal(expectedScope, result.DeviceObjids.ToHashSet());
         Assert.Equal(guardEnabled ? new HashSet<long>() : guardDevices, result.PreserveDeviceObjids.ToHashSet());
         Assert.False(result.IsPartial);
-        Assert.Equal(manualKind == "active" ? 0 : 1, result.ManualExcluded);
         if (manualKind == "active")
             Assert.DoesNotContain(console.Lines, l => l.Contains("未納入監看"));
         else

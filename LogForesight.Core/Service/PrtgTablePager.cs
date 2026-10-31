@@ -36,12 +36,6 @@ internal sealed class PrtgPagingNotConvergedException : Exception
     public int DuplicateRows { get; }
 }
 
-internal sealed class PrtgPageFenceRejectedException : Exception
-{
-    public PrtgPageFenceRejectedException(string content, int pageIndex)
-        : base($"{content} 第 {pageIndex + 1} 頁送出前的來源授權已變更；停止分頁。") { }
-}
-
 /// <summary>分頁結果統計。ReadRows 含重複列，Mapped 是實際交給 onBatch 的筆數。</summary>
 internal sealed record PrtgPagerResult(int Mapped, int ReadRows, int DuplicateRows, int Pages, bool StoppedEarly = false);
 
@@ -103,8 +97,7 @@ internal static class PrtgTablePager
         int maxPagesWhenTreeSizeUnknown = DefaultMaxPages,
         Func<JsonElement, string?>? rowKey = null,
         int batchSize = DefaultBatchSize,
-        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null,
-        Func<int, bool>? beforePageRequest = null)
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
     {
         rowKey ??= DefaultRowKey;
 
@@ -125,8 +118,6 @@ internal static class PrtgTablePager
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            if (beforePageRequest is not null && !beforePageRequest(pageIndex))
-                throw new PrtgPageFenceRejectedException(content, pageIndex);
 
             var query = $"api/table.json?content={content}&columns={columns}&start={offset}&count={pageSize}&sortby=objid";
             if (!string.IsNullOrEmpty(extraQuery)) query += $"&{extraQuery}";

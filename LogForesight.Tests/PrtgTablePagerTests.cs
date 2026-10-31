@@ -402,30 +402,6 @@ public class PrtgTablePagerTests
     }
 
     [Fact]
-    public async Task 每頁送出前authorityFence拒絕時不發下一頁()
-    {
-        var handler = new StubHandler { Responder = _ => Page("messages", new long[] { 1, 2 }, treesize: 4) };
-        using var client = new PrtgClient("https://prtg.example.com", "token123", 30, true, handler, PrtgAuthModes.Token, "", "", "");
-        var fencePages = new List<int>();
-        var written = new List<long>();
-
-        await Assert.ThrowsAsync<PrtgPageFenceRejectedException>(() => PrtgTablePager.FetchAsync<long>(
-            client, new TestConsole(), "messages", "objid", null,
-            mapper: el => el.GetProperty("objid").GetInt64(),
-            onBatch: batch => written.AddRange(batch),
-            ct: CancellationToken.None,
-            pageSize: 2,
-            maxPagesWhenTreeSizeUnknown: 4,
-            rowKey: el => el.GetProperty("objid").GetRawText(),
-            batchSize: 2,
-            beforePageRequest: page => { fencePages.Add(page); return page == 0; }));
-
-        Assert.Equal(new[] { 0, 1 }, fencePages);
-        Assert.Single(handler.RequestedUrls);
-        Assert.Equal(new long[] { 1, 2 }, written); // Partial diagnostic mirror is not a completed formal range.
-    }
-
-    [Fact]
     public async Task 掛鉤在第1頁回true_只發1次請求且StoppedEarly為true且緩衝列有交給onBatch()
     {
         var (result, written, handler, _) = await RunAsync(

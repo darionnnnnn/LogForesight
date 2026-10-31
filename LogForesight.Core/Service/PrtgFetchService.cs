@@ -1448,11 +1448,10 @@ public sealed class PrtgFetchService
         Action<string, int, int>? progress = null,
         string? stageLabel = null,
         Func<JsonElement, string?>? rowKey = null,
-        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null,
-        Func<int, bool>? beforePageRequest = null)
+        Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
         => PrtgTablePager.FetchAsync(
             _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel,
-            rowKey: rowKey, stopAfterPage: stopAfterPage, beforePageRequest: beforePageRequest);
+            rowKey: rowKey, stopAfterPage: stopAfterPage);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。
