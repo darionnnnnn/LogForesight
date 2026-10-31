@@ -347,3 +347,10 @@ C2-12；C2-20；A2b-17；A2a-16；B-10；B-19；CSP（nonce 四段 inline script
 規劃比對：§3 五批、§4 文件清單、§9 驗收表逐項 grep 皆有對應；唯一缺漏為第 1 列。終檢後手改（7bc7187a／a3b91c5f／d9e143e1）逐檔重看，九條修法同型站點只漏第 2 列。瀏覽器實際操作未做（鏡像重試、待重評面板以 behavior 測試覆蓋）。
 
 定向：修正相關 C# 652 綠；全部 `*.behavior.mjs` 逐案綠。全量見終檢節。
+
+## 終檢輪（Fable 5.1，併 dev 後）
+
+- 併入：`dev` 自分支起點 da1efddc 未移動，`git merge --no-ff` 後 `git diff --quiet feature/feedback-60 dev` 成立；因體檢輪改了程式碼，全量照跑：**7,357 通過／0 失敗／10 略過**（基線 6,905／10，＋452）。
+- 體檢修正 commit（436e0300）重看：`CanonicalIpv4` 的呼叫端只放在子句與 NetIQ 目標位址，主機表存值不改（PRTG 對應走 `PrtgAddress.Normalize` 本來就標準化）；`ResolvePathBase` 收緊後 `appsettings.json` 範例值與 README 說明仍相容；`selection.clear()` 兩頁各四處皆在 `selection` 宣告之後；behavior 替身補 `createTextNode` 後其餘切函式案無行為變化。
+- 文件稽核：WEB-SPEC §5 註解同步 PathBase 格式；BACKLOG 新增五條；現行文件新增行無輪次敘事（README 升級注意段落本來就以「升級後」口吻陳述）；衝突標記 grep 為 0。
+- 終檢無新發現。
