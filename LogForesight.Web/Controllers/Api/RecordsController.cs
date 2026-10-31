@@ -30,137 +30,72 @@ public class RecordsController : ControllerBase
     }
 
     [HttpGet]
-    public ApiResponse<PagedResult<RecordListItemDto>> Search(
-        [FromQuery] string? hostIds,
-        [FromQuery] string? groupIds,
-        [FromQuery] string? from,
-        [FromQuery] string? to,
-        [FromQuery] string? riskLevels,
-        [FromQuery] string? categories,
-        [FromQuery] string? severity,
-        [FromQuery] int? eventId,
-        [FromQuery] string? source,
-        [FromQuery] string? statuses,
-        [FromQuery] bool? overdue,
-        [FromQuery] bool? unassigned,
-        [FromQuery] string? sort,
-        [FromQuery] string dir = "desc",
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50)
-    {
-        var (parsedFrom, parsedTo) = ParseDateRange(from, to);
-        var request = new RecordSearchRequest
-        {
-            HostIds = ParseLongs(hostIds),
-            GroupIds = ParseLongs(groupIds),
-            From = parsedFrom,
-            To = parsedTo,
-            RiskLevels = ParseStrings(riskLevels),
-            Categories = ParseStrings(categories),
-            Severity = severity,
-            EventId = eventId,
-            Source = source,
-            Statuses = ParseStrings(statuses),
-            Overdue = overdue,
-            Unassigned = unassigned == true,
-            SortKey = sort,
-            Ascending = dir == "asc",
-            Page = page,
-            PageSize = pageSize
-        };
+    public ApiResponse<PagedResult<RecordListItemDto>> Search([FromQuery] RecordQuery query) =>
+        ApiResponse<PagedResult<RecordListItemDto>>.Ok(_list.Search(BuildRequest(query, RecordView.Detail)));
 
-        return ApiResponse<PagedResult<RecordListItemDto>>.Ok(_list.Search(request));
-    }
-
-    /// <summary>依主機彙總（日期合併）。篩選參數與 <see cref="Search"/> 同義，只是換視角</summary>
+    /// <summary>依主機彙總（日期合併）。不支援處理狀態類篩選（<see cref="RecordQuerySupport"/>）</summary>
     [HttpGet("by-host")]
-    public ApiResponse<PagedResult<RecordHostGroupDto>> ByHost(
-        [FromQuery] string? hostIds,
-        [FromQuery] string? groupIds,
-        [FromQuery] string? from,
-        [FromQuery] string? to,
-        [FromQuery] string? riskLevels,
-        [FromQuery] string? categories,
-        [FromQuery] string? severity,
-        [FromQuery] int? eventId,
-        [FromQuery] string? source,
-        [FromQuery] string? sort,
-        [FromQuery] string dir = "desc",
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50) =>
-        ApiResponse<PagedResult<RecordHostGroupDto>>.Ok(
-            _list.SearchByHost(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
+    public ApiResponse<PagedResult<RecordHostGroupDto>> ByHost([FromQuery] RecordQuery query) =>
+        ApiResponse<PagedResult<RecordHostGroupDto>>.Ok(_list.SearchByHost(BuildRequest(query, RecordView.ByHost)));
 
-    /// <summary>依日期彙總（主機合併）</summary>
+    /// <summary>依日期彙總（主機合併）。不支援處理狀態類篩選（<see cref="RecordQuerySupport"/>）</summary>
     [HttpGet("by-date")]
-    public ApiResponse<PagedResult<RecordDateGroupDto>> ByDate(
-        [FromQuery] string? hostIds,
-        [FromQuery] string? groupIds,
-        [FromQuery] string? from,
-        [FromQuery] string? to,
-        [FromQuery] string? riskLevels,
-        [FromQuery] string? categories,
-        [FromQuery] string? severity,
-        [FromQuery] int? eventId,
-        [FromQuery] string? source,
-        [FromQuery] string? sort,
-        [FromQuery] string dir = "desc",
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50) =>
-        ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
-            _list.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
+    public ApiResponse<PagedResult<RecordDateGroupDto>> ByDate([FromQuery] RecordQuery query) =>
+        ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(_list.SearchByDate(BuildRequest(query, RecordView.ByDate)));
 
     /// <summary>依問題彙總（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）。
-    /// §10：支援處理狀態（處理概況三態）與未指派過濾。
+    /// §10：支援處理狀態（處理概況三態）與未指派過濾，不支援逾期（<see cref="RecordQuerySupport"/>）。
     ///
     /// 回傳型別必須寫 <see cref="IssueSearchResultDto"/> 而不是父型別 <c>PagedResult</c>：
     /// JSON 依**宣告型別**序列化，寫父型別會把子型別獨有的欄位（去重主機數、靜音未列出數）
     /// 靜默吊掉——服務層回傳值正確、單元測試也綠，只有實際打 API 才看得出來。</summary>
     [HttpGet("by-issue")]
-    public ApiResponse<IssueSearchResultDto> ByIssue(
-        [FromQuery] string? hostIds,
-        [FromQuery] string? groupIds,
-        [FromQuery] string? from,
-        [FromQuery] string? to,
-        [FromQuery] string? riskLevels,
-        [FromQuery] string? categories,
-        [FromQuery] string? severity,
-        [FromQuery] int? eventId,
-        [FromQuery] string? source,
-        [FromQuery] string? statuses,
-        [FromQuery] bool? unassigned,
-        [FromQuery] string? sort,
-        [FromQuery] string dir = "desc",
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50)
-    {
-        var request = BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize);
-        request.Statuses = ParseStrings(statuses);
-        request.Unassigned = unassigned == true;
-        return ApiResponse<IssueSearchResultDto>.Ok(_list.SearchByIssue(request));
-    }
+    public ApiResponse<IssueSearchResultDto> ByIssue([FromQuery] RecordQuery query) =>
+        ApiResponse<IssueSearchResultDto>.Ok(_list.SearchByIssue(BuildRequest(query, RecordView.ByIssue)));
 
-    private static RecordSearchRequest BuildRequest(
-        string? hostIds, string? groupIds, string? from, string? to, string? riskLevels, string? categories,
-        string? severity, int? eventId, string? source, string? sort, string dir, int page, int pageSize)
+    /// <summary>
+    /// 依視角的支援矩陣把查詢參數組成請求：不支援的處理狀態類條件即使 URL 帶了也不傳給服務
+    /// （前端同樣不送、不顯示該條件，見 records.js 的 viewSupports）。
+    /// </summary>
+    internal static RecordSearchRequest BuildRequest(RecordQuery query, RecordView view)
     {
-        var (parsedFrom, parsedTo) = ParseDateRange(from, to);
-        return new()
+        var (parsedFrom, parsedTo) = ParseDateRange(query.From, query.To);
+        var request = new RecordSearchRequest
         {
-            HostIds = ParseLongs(hostIds),
-            GroupIds = ParseLongs(groupIds),
+            HostIds = ParseIds(query.HostIds),
+            GroupIds = ParseIds(query.GroupIds),
             From = parsedFrom,
             To = parsedTo,
-            RiskLevels = ParseStrings(riskLevels),
-            Categories = ParseStrings(categories),
-            Severity = severity,
-            EventId = eventId,
-            Source = source,
-            SortKey = sort,
-            Ascending = dir == "asc",
-            Page = page,
-            PageSize = pageSize
+            RiskLevels = ParseStrings(query.RiskLevels),
+            Categories = ParseStrings(query.Categories),
+            Severity = query.Severity,
+            EventId = query.EventId,
+            Source = query.Source,
+            SortKey = query.Sort,
+            Ascending = query.Dir == "asc",
+            Page = query.Page ?? 1,
+            PageSize = query.PageSize ?? 50
         };
+
+        if (RecordQuerySupport.Supports(view, RecordQuerySupport.Statuses))
+            request.Statuses = ParseStrings(query.Statuses);
+        if (RecordQuerySupport.Supports(view, RecordQuerySupport.Overdue))
+            request.Overdue = query.Overdue;
+        if (RecordQuerySupport.Supports(view, RecordQuerySupport.Unassigned))
+            request.Unassigned = query.Unassigned == true;
+        return request;
+    }
+
+    /// <summary>
+    /// 主機／群組 id 清單：沒給（空白）回 null＝不限；給了卻一個合法數字都沒有就擋下，
+    /// 否則「篩選失效、悄悄變成全部可見主機」使用者完全看不出來。
+    /// </summary>
+    private static List<long>? ParseIds(string? raw)
+    {
+        var ids = ParseLongs(raw);
+        if (ids is { Count: 0 })
+            throw DomainException.Validation("主機／群組參數格式不正確。");
+        return ids;
     }
 
     /// <summary>
