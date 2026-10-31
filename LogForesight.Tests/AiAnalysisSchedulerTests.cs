@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Reflection;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
@@ -76,7 +76,8 @@ public class AiAnalysisSchedulerTests : IDisposable
 
     private (AiAnalysisHostedService Service, AiAnalysisRunState RunState, ScheduleOptionsStore OptionsStore, SchedulerRunState SchedulerState)
         CreateTestHarness(ScheduleOptions? initialOptions = null, bool aiAvailable = true,
-            HostDayWorkflowService? workflow = null, bool backfillCompleted = true)
+            HostDayWorkflowService? workflow = null, bool backfillCompleted = true,
+            IAnalysisRecordQuery? recordQuery = null)
     {
         var optionsStore = new ScheduleOptionsStore(_backend.Blob("schedule_options"));
         if (initialOptions != null)
@@ -92,7 +93,7 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         var schedulerState = new SchedulerRunState();
         var aiRunState = new AiAnalysisRunState();
-        var recordStore = _backend.RecordStore();
+        var recordStore = recordQuery ?? _backend.RecordStore();
 
         var service = new AiAnalysisHostedService(
             optionsStore,
@@ -105,6 +106,7 @@ public class AiAnalysisSchedulerTests : IDisposable
             BatchRuns(),
             backfillCompleted ? CompletedBackfiller() : new DailyRecordBackfiller(_contextFactory),
             new FakeWebAiService(aiAvailable),
+            NullAiRequestGate.Instance,
             _suppressions,
             _ai,
             workflow: workflow);
@@ -519,6 +521,66 @@ public class AiAnalysisSchedulerTests : IDisposable
     }
 
     [Fact]
+    public async Task 低風險待補不呼叫AI_直接清除待補且不計失敗也不觸發全滅防線()
+    {
+        var (service, _, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var date = DateTime.Today.AddDays(-3);
+        var low1 = CreateRecord(1, "HOST-LOW-1", date, pending: true);
+        low1.RiskLevel = "低";
+        var low2 = CreateRecord(2, "HOST-LOW-2", date, pending: true);
+        low2.RiskLevel = "低";
+        store.Append(low1);
+        store.Append(low2);
+        store.Append(CreateRecord(3, "HOST-MID", date, pending: true)); // 中風險，AI 替身成功
+
+        var counters = new AiAnalysisHostedService.LoopCounters();
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None, counters);
+
+        var r1 = store.GetOne(new[] { new HostKey { HostId = 1, HostName = "HOST-LOW-1" } }, date);
+        var r2 = store.GetOne(new[] { new HostKey { HostId = 2, HostName = "HOST-LOW-2" } }, date);
+        var r3 = store.GetOne(new[] { new HostKey { HostId = 3, HostName = "HOST-MID" } }, date);
+
+        // 三筆都不再待補；低風險兩筆沒有 AI 分析，中風險那筆有
+        Assert.False(r1!.AiPending);
+        Assert.False(r2!.AiPending);
+        Assert.False(r3!.AiPending);
+        Assert.False(r1.AiAnalyzed);
+        Assert.False(r2.AiAnalyzed);
+        Assert.True(r3.AiAnalyzed);
+        Assert.Equal("今日狀況正常，無需處理", r1.Headline);
+        Assert.Equal("低", r1.RiskLevel);
+        Assert.Equal(0, counters.Failed);
+        Assert.Equal(3, counters.Done);
+        Assert.Equal(2, counters.Skipped);
+        Assert.Equal(0, store.CountPendingAi());
+    }
+
+    [Fact]
+    public async Task 全部都是低風險待補時一批清空且不被全滅防線誤判()
+    {
+        var (service, _, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+
+        var date = DateTime.Today.AddDays(-3);
+        for (var i = 1; i <= 3; i++)
+        {
+            var r = CreateRecord(i, $"HOST-ALLLOW-{i}", date, pending: true);
+            r.RiskLevel = "低";
+            store.Append(r);
+        }
+
+        var counters = new AiAnalysisHostedService.LoopCounters();
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None, counters);
+
+        Assert.Equal(0, store.CountPendingAi());
+        Assert.Equal(0, _ai.Calls);
+        Assert.Equal(3, counters.Skipped);
+        Assert.Equal(0, counters.Failed);
+    }
+
+    [Fact]
     public async Task 情境7_強制重新分析_重標後全部重跑且舊AI文字保留顯示直到覆蓋()
     {
         var (service, _, _, _) = CreateTestHarness();
@@ -563,6 +625,72 @@ public class AiAnalysisSchedulerTests : IDisposable
     }
 
     [Fact]
+    public void 強制重新分析_低風險且已有AI白話的列不被重標且內容不變_非低風險照標()
+    {
+        var store = _backend.RecordStore();
+        var lowDate = DateTime.Today.AddDays(-5);
+        var midDate = DateTime.Today.AddDays(-6);
+
+        var low = CreateRecord(1, "HOST-A", lowDate, pending: false, headline: "低風險的AI白話");
+        low.RiskLevel = "低";
+        low.AiAnalyzed = true;
+        low.Summary = "既有的 AI 摘要";
+        store.Append(low);
+        store.Append(CreateRecord(1, "HOST-A", midDate, pending: false, headline: "中風險標題"));
+
+        var affected = ((IAnalysisRecordQuery)store).MarkAllForAiRerun();
+
+        var key = new[] { new HostKey { HostId = 1, HostName = "HOST-A" } };
+        var lowAfter = store.GetOne(key, lowDate)!;
+        var midAfter = store.GetOne(key, midDate)!;
+        Assert.Equal(1, affected);
+        Assert.False(lowAfter.AiPending);
+        Assert.True(lowAfter.AiAnalyzed);
+        Assert.Equal("低風險的AI白話", lowAfter.Headline);
+        Assert.Equal("既有的 AI 摘要", lowAfter.Summary);
+        Assert.True(midAfter.AiPending);
+    }
+
+    /// <summary>
+    /// 只讓 <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/> 擲例外，其餘方法原樣轉交真實 store。
+    /// 用 DispatchProxy 代替為整個介面手寫委派。
+    /// </summary>
+    public class FailingRerunRecordQuery : DispatchProxy
+    {
+        internal IAnalysisRecordQuery Target { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod!.Name == nameof(IAnalysisRecordQuery.MarkAllForAiRerun))
+                throw new InvalidOperationException("模擬整批重標的 DB 失敗");
+            try
+            {
+                return targetMethod.Invoke(Target, args);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                throw ex.InnerException;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task 強制重標擲例外_執行閘門釋放且可再次開始()
+    {
+        var failing = DispatchProxy.Create<IAnalysisRecordQuery, FailingRerunRecordQuery>();
+        ((FailingRerunRecordQuery)failing).Target = _backend.RecordStore();
+        var (service, runState, _, _) = CreateTestHarness(recordQuery: failing);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => service.TriggerRunAsync(forceRerun: true, trigger: "manual:test"));
+
+        // 閘門必須釋放：否則之後每次輪詢都回「已有其他執行」，直到站台重啟
+        Assert.False(runState.IsRunning);
+        Assert.True(runState.TryBeginRun("manual:test", 0, out var cts));
+        cts.Dispose();
+        runState.EndRun(true);
+    }
+
+    [Fact]
     public async Task 情境8_窗口_窗口外不自動觸發且窗口結束時自動觸發收到停止未完成維持待補()
     {
         var now = DateTime.Now;
@@ -594,7 +722,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         // 8c. 手動觸發不受窗口限制
         var manualRunState = new AiAnalysisRunState();
         var manualService = new AiAnalysisHostedService(
-            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), BatchRuns(), CompletedBackfiller(), new FakeWebAiService(true), _suppressions, _ai);
+            optionsStore, new SchedulerRunState(), manualRunState, store, _backend, _settingsStore, new DataVersionStamp(), BatchRuns(), CompletedBackfiller(), new FakeWebAiService(true), NullAiRequestGate.Instance, _suppressions, _ai);
 
         manualRunState.TryBeginRun("manual:admin", 10, out _);
         await manualService.TickAsync();
@@ -896,7 +1024,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var options = new ScheduleOptions
         {
-            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "00:00" } }
         };
 
         var (service, runState, _, _) = CreateTestHarness(options);
@@ -907,9 +1035,10 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(AiIdleReasons.NoPending, runState.Snapshot().IdleReason);
     }
 
+    /// <summary>全天窗口：起訖相同在 IsWithinWindow 恆為窗口內（設定驗證不允許，僅測試直接寫入）。不用 00:00～23:59：23:59 到午夜執行會落在窗口外。</summary>
     private static ScheduleOptions AllDay() => new()
     {
-        AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+        AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "00:00" } }
     };
 
     /// <summary>
@@ -1010,7 +1139,7 @@ public class AiAnalysisSchedulerTests : IDisposable
     {
         var options = new ScheduleOptions
         {
-            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "23:59" } }
+            AiWindows = new List<ScheduleWindow> { new ScheduleWindow { Start = "00:00", End = "00:00" } }
         };
 
         var (service, runState, _, schedulerState) = CreateTestHarness(options);
@@ -1362,6 +1491,51 @@ public class AiAnalysisSchedulerTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// D4 體檢：輪詢改讀狀態 API 的 30 秒待補快取後，取數期間留下的「0 筆」不得擋住取數後的接續開跑。
+    /// </summary>
+    [Fact]
+    public async Task 跟隨取數_待補快取停在取數前的0筆_取數結束後輪詢仍實查並開跑()
+    {
+        var now = DateTime.Now;
+        var options = new ScheduleOptions
+        {
+            AiWindows = new List<ScheduleWindow>
+            {
+                new ScheduleWindow { Start = now.AddHours(2).ToString("HH:mm"), End = now.AddHours(3).ToString("HH:mm") }
+            }
+        };
+
+        var (service, runState, _, schedulerState) = CreateTestHarness(options);
+
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ai.Behavior = async (_, _) =>
+        {
+            await gate.Task;
+            return new AiResponse { Success = true, Content = _ai.NextContent };
+        };
+
+        // 取數期間狀態頁輪詢把待補件數快取成 0
+        Assert.Equal(0, runState.GetPendingAiCount(() => 0));
+
+        schedulerState.TryBeginRun("schedule", out _);
+        _backend.RecordStore().Append(CreateRecord(1, "HOST-A", DateTime.Today.AddDays(-3), pending: true));
+        schedulerState.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
+
+        await service.TickAsync();
+
+        try
+        {
+            await WaitUntilAsync(() => runState.IsRunning, TimeSpan.FromSeconds(5));
+            Assert.True(runState.IsRunning);
+        }
+        finally
+        {
+            gate.TrySetResult(true);
+            await WaitUntilAsync(() => !runState.IsRunning, TimeSpan.FromSeconds(10));
+        }
+    }
+
     [Fact]
     public void 跟隨取數_超過寬限期IsNotFollowingFetch為False()
     {
@@ -1420,5 +1594,118 @@ public class AiAnalysisSchedulerTests : IDisposable
         state.EndRun(new RunOutcome(true, null, "schedule", DateTime.Now));
         Assert.Equal(1, count);
         Assert.NotNull(state.LastRunEndedAt);
+    }
+
+    /// <summary>只計 <see cref="IAnalysisRecordQuery.CountPendingAi"/> 呼叫次數，其餘原樣轉交真實 store</summary>
+    public class CountingPendingRecordQuery : DispatchProxy
+    {
+        internal IAnalysisRecordQuery Target { get; set; } = null!;
+        internal int CountPendingCalls;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod!.Name == nameof(IAnalysisRecordQuery.CountPendingAi))
+                Interlocked.Increment(ref CountPendingCalls);
+            try
+            {
+                return targetMethod.Invoke(Target, args);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                throw ex.InnerException;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task 處理兩批全成功_CountPendingAi呼叫次數不超過改動前的一半()
+    {
+        var counting = DispatchProxy.Create<IAnalysisRecordQuery, CountingPendingRecordQuery>();
+        var proxy = (CountingPendingRecordQuery)counting;
+        proxy.Target = _backend.RecordStore();
+        var (service, _, _, _) = CreateTestHarness(recordQuery: counting);
+        var store = _backend.RecordStore();
+
+        // 批次大小 50：60 台主機同一天 → 第一批 50 筆、第二批 10 筆
+        var date = DateTime.Today.AddDays(-3);
+        for (var i = 1; i <= 60; i++)
+            store.Append(CreateRecord(i, $"HOST-B{i:D2}", date, pending: true));
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        Assert.Equal(0, store.CountPendingAi());
+        // 改動前：每批 2 次（批前進度＋批後全滅防線）×2 批＋結尾 1 次＝5 次；改動後上限為一半（2 次：開頭實查＋結尾確認）
+        Assert.True(proxy.CountPendingCalls <= 2, $"CountPendingAi 呼叫 {proxy.CountPendingCalls} 次，應 ≤ 2（改動前為 5）");
+    }
+
+    [Fact]
+    public async Task AiCalls只計實際呼叫過AI的筆數_成功加失敗_Skipped不計()
+    {
+        var (service, runState, _, _) = CreateTestHarness();
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        store.Append(CreateRecord(1, "HOST-OK", date, pending: true));
+        store.Append(CreateRecord(2, "HOST-FAILX", date, pending: true));
+        var low = CreateRecord(3, "HOST-LOWX", date, pending: true);
+        low.RiskLevel = "低";
+        store.Append(low);
+        // 兩筆低風險 Skipped（多於失敗數，才分得出「Done」與「Done - Skipped + Failed」）
+        var low2 = CreateRecord(4, "HOST-LOWY", date, pending: true);
+        low2.RiskLevel = "低";
+        store.Append(low2);
+
+        var okContent = _ai.NextContent;
+        _ai.Behavior = (prompt, ct) => Task.FromResult(prompt.Contains("HOST-FAILX")
+            ? new AiResponse { Success = false, Error = "模擬失敗" }
+            : new AiResponse { Success = true, Content = okContent });
+
+        Assert.True(await service.TriggerRunAsync(forceRerun: false, trigger: "schedule"));
+        await runState.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
+
+        var aiRun = BatchRuns().GetRecentRuns(7, null).First(r => r.JobType == BatchRun.JobTypeAi);
+        Assert.Equal(2, aiRun.AiCalls);
+        Assert.Equal(1, aiRun.AiFailures);
+    }
+
+    private sealed class ResolveCountingService : AiAnalysisHostedService
+    {
+        private readonly IAiService _ai;
+        public int ResolveCalls;
+        public int FactoryCalls;
+
+        public ResolveCountingService(ScheduleOptionsStore o, SchedulerRunState sr, AiAnalysisRunState rs,
+            IAnalysisRecordQuery q, StorageBackend b, ISystemSettingsStore ss, BatchRunStore runs,
+            DailyRecordBackfiller bf, IWebAiService web, IAiService ai)
+            : base(o, sr, rs, q, b, ss, new DataVersionStamp(), runs, bf, web, NullAiRequestGate.Instance, aiService: null)
+        {
+            _ai = ai;
+        }
+
+        internal override Func<IAiService> ResolveAiServiceFactory()
+        {
+            Interlocked.Increment(ref ResolveCalls);
+            return () => { Interlocked.Increment(ref FactoryCalls); return _ai; };
+        }
+    }
+
+    [Fact]
+    public async Task 同一輪兩個主機分片_設定只解析一次但每個分片各建一個AI服務()
+    {
+        var service = new ResolveCountingService(
+            new ScheduleOptionsStore(_backend.Blob("schedule_options")), new SchedulerRunState(), new AiAnalysisRunState(),
+            _backend.RecordStore(), _backend, _settingsStore, BatchRuns(), CompletedBackfiller(),
+            new FakeWebAiService(true), _ai);
+        var store = _backend.RecordStore();
+        var date = DateTime.Today.AddDays(-3);
+        store.Append(CreateRecord(1, "HOST-S1", date, pending: true));
+        store.Append(CreateRecord(2, "HOST-S2", date, pending: true));
+
+        await service.ExecuteProcessingLoopAsync(CancellationToken.None);
+
+        Assert.Equal(0, store.CountPendingAi());
+        Assert.Equal(2, _ai.Calls);
+        Assert.Equal(1, service.ResolveCalls);
+        // 分片各自一個實例：共用一個會讓 AIService 的逐實例佇列把全輪串成單線（體檢輪）
+        Assert.Equal(2, service.FactoryCalls);
     }
 }

@@ -202,7 +202,7 @@ public static class RuleValidator
         // LinuxRuleProgramClauses 的 `sp:{pattern}*`，不像 MessagePatterns 有引號＋跳脫保護）——
         // 空白或 Lucene 特殊字元（(、:、* 等）會讓整份 Q1 filter 語法壞掉，夜間取數整批查詢
         // 失敗。字元集對齊 SentinelEventMapper.LinuxMessagePrefixRegex 的 program 字元類別
-        // （syslog identifier 的實務形狀），17 條種子全數天然合格。
+        // （syslog identifier 的實務形狀），28 條種子全數天然合格。
         if (rule.ProgramPattern.Length > 0 && !rule.ProgramPattern.All(IsLuceneSafeTermChar))
         {
             return "ProgramPattern 僅接受英數字與 _ . -（會直接進 Sentinel 查詢子句，" +

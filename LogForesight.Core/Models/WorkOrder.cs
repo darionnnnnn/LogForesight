@@ -119,6 +119,9 @@ public static class WorkOrderCloseReasons
     public const string Moved = "moved";
     public const string Cancelled = "cancelled";
     public const string AdminClosed = "admin_closed";
+
+    /// <summary>夜間派工收尾：本趟新建的單最後沒有任何成員（成員全因決策後已有進行中案件而略過）</summary>
+    public const string EmptyDispatch = "empty_dispatch";
 }
 
 /// <summary>交辦單事件動作</summary>

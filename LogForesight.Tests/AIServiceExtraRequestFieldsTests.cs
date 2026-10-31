@@ -77,7 +77,7 @@ public class AIServiceExtraRequestFieldsTests
             }
         };
 
-        var ex = Record.Exception(() => new AIService(settings));
+        var ex = Record.Exception(() => new AIService(settings, NullAiRequestGate.Instance));
 
         Assert.Null(ex);
     }
@@ -97,7 +97,7 @@ public class AIServiceExtraRequestFieldsTests
             }
         };
 
-        var ex = Record.Exception(() => new AIService(settings));
+        var ex = Record.Exception(() => new AIService(settings, NullAiRequestGate.Instance));
 
         Assert.Null(ex);
     }
@@ -177,7 +177,7 @@ public class AIServiceProviderAndRetryTests
             TimeoutSeconds = 5,
             RetryCount = 1
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("測試 Azure prompt");
 
@@ -212,7 +212,7 @@ public class AIServiceProviderAndRetryTests
             TimeoutSeconds = 5,
             RetryCount = 1
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("測試 OpenAI prompt");
 
@@ -249,7 +249,7 @@ public class AIServiceProviderAndRetryTests
             TimeoutSeconds = 5,
             RetryCount = 1
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("測試 OpenAI proxy prompt");
 
@@ -273,7 +273,7 @@ public class AIServiceProviderAndRetryTests
             TimeoutSeconds = 5,
             RetryCount = 1
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("測試 Local prompt");
 
@@ -350,7 +350,7 @@ public class AIServiceProviderAndRetryTests
             RetryCount = 1,
             TimeoutSeconds = 5
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<TestResult>("請以 JSON 輸出系統摘要");
 
@@ -432,7 +432,7 @@ public class AIServiceProviderAndRetryTests
             RetryCount = 1,
             TimeoutSeconds = 5
         };
-        var service = new AIService(settings, handler);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance);
 
         var result = await service.ChatJsonAsync<TestResult>(
             "分析日誌狀態",

@@ -5,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// SentinelClient 的 REST 協定層測試（docs/NETIQ-API-REFERENCE.md §3.1、§7）：認證生命週期、
+/// SentinelClient 的 REST 協定層測試（docs/NETIQ-API-REFERENCE.md §2、§3、§7）：認證生命週期、
 /// event-search job 生命週期、清理保證、重試/不重試邊界。用 <see cref="StubHandler"/> 取代真實
 /// HTTP 連線，不需要真 Sentinel 環境。
 /// </summary>
@@ -161,6 +161,72 @@ public class SentinelClientTests
         Assert.Equal(2, authCalls);
         Assert.Equal(2, jobCreateCalls);
         Assert.Equal(SentinelJobState.Completed, result.State);
+    }
+
+    private static StubHandler ReauthStub(HttpStatusCode deleteStatus, List<string> log)
+    {
+        var handler = new StubHandler();
+        var authCalls = 0;
+        var jobCreateCalls = 0;
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+            {
+                authCalls++;
+                log.Add($"POST auth -> tok-{authCalls}");
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"Token\":\"tok-{authCalls}\"}}"));
+            }
+            if (req.Method == HttpMethod.Delete && url.StartsWith(AuthUrl() + "/"))
+            {
+                log.Add($"DELETE {url[(AuthUrl().Length + 1)..]}");
+                return Task.FromResult(new HttpResponseMessage(deleteStatus));
+            }
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl())
+            {
+                jobCreateCalls++;
+                if (jobCreateCalls == 1)
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                return Task.FromResult(JsonResponse(HttpStatusCode.Created, "{}", locationHeader: JobUrl("1")));
+            }
+            if (req.Method == HttpMethod.Get && url == JobUrl("1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    "{\"status\":2,\"found\":0,\"avail\":0,\"results\":null}"));
+            if (req.Method == HttpMethod.Delete)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+        return handler;
+    }
+
+    [Fact]
+    public async Task token過期重新認證前_先登出舊token再登入()
+    {
+        var log = new List<string>();
+        var handler = ReauthStub(HttpStatusCode.OK, log);
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var result = await client.SearchAsync(new SentinelSearchRequest("evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+
+        Assert.Equal(SentinelJobState.Completed, result.State);
+        Assert.Equal(1, log.Count(l => l == "DELETE tok-1"));
+        var deleteIdx = log.IndexOf("DELETE tok-1");
+        var secondLoginIdx = log.IndexOf("POST auth -> tok-2");
+        Assert.True(deleteIdx >= 0 && secondLoginIdx > deleteIdx, "必須先登出舊 token 再重新登入：" + string.Join(" | ", log));
+    }
+
+    [Fact]
+    public async Task 登出舊token回500_重新認證仍成功()
+    {
+        var log = new List<string>();
+        var handler = ReauthStub(HttpStatusCode.InternalServerError, log);
+
+        await using var client = new SentinelClient(Server(), Settings(retryCount: 0), handler);
+        var result = await client.SearchAsync(new SentinelSearchRequest("evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+
+        Assert.Equal(SentinelJobState.Completed, result.State);
+        Assert.Contains("DELETE tok-1", log);
+        Assert.Contains("POST auth -> tok-2", log);
     }
 
     [Fact]
@@ -338,6 +404,88 @@ public class SentinelClientTests
             client.SearchAsync(new SentinelSearchRequest("evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow), cts.Token));
 
         Assert.Contains(handler.Requests, r => r.Method == HttpMethod.Delete && r.Url == JobUrl("1"));
+    }
+
+    [Fact]
+    public async Task 呼叫端取消時HttpClient擲取消_不包成SentinelClientException()
+    {
+        // retryCount: 0 不掛 Polly 策略，HttpClient 的取消例外直達 catch 篩選（有重試策略時 Polly 自己會改擲 OCE）
+        var handler = new StubHandler();
+        using var cts = new CancellationTokenSource();
+        handler.OnSend = async (req, ct) =>
+        {
+            if (req.RequestUri!.ToString() == AuthUrl())
+            {
+                cts.Cancel();
+                await Task.Yield();
+                throw new TaskCanceledException("模擬 HttpClient 在 ct 取消時的行為", null, ct);
+            }
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {req.RequestUri}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(retryCount: 0), handler);
+        var ex = await Record.ExceptionAsync(() => client.SearchAsync(
+            new SentinelSearchRequest("evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow), cts.Token));
+
+        Assert.IsAssignableFrom<OperationCanceledException>(ex);
+        Assert.IsNotType<SentinelClientException>(ex);
+    }
+
+    [Fact]
+    public async Task 回報有資料但結果頁為空_標記為無法讀取而非截斷依據()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.Created, "{}", locationHeader: JobUrl("1")));
+            if (req.Method == HttpMethod.Get && url == JobUrl("1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    "{\"status\":2,\"found\":10,\"avail\":0,\"results\":{\"@href\":\"https://sentinel.local:8443/SentinelRESTServices/objects/event?page=1\"}}"));
+            if (req.Method == HttpMethod.Delete)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var result = await client.SearchAsync(new SentinelSearchRequest(
+            "evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+
+        Assert.Equal(10, result.Found);
+        Assert.Equal(0, result.Retrieved);
+        Assert.True(result.Unreadable);
+    }
+
+    [Fact]
+    public async Task 取回部分筆數的截斷_不算無法讀取()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.Created, "{}", locationHeader: JobUrl("1")));
+            if (req.Method == HttpMethod.Get && url == JobUrl("1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK,
+                    "{\"status\":2,\"found\":100,\"avail\":2,\"results\":{\"@href\":\"https://sentinel.local:8443/SentinelRESTServices/objects/event?page=1\"}}"));
+            if (req.Method == HttpMethod.Get && url.Contains("/objects/event?"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "[{\"evt\":\"A\"},{\"evt\":\"B\"}]"));
+            if (req.Method == HttpMethod.Delete)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var result = await client.SearchAsync(new SentinelSearchRequest(
+            "evt:test", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow, MaxResults: 2));
+
+        Assert.True(result.Truncated);
+        Assert.False(result.Unreadable);
     }
 
     [Fact]

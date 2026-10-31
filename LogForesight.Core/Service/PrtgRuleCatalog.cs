@@ -42,7 +42,8 @@ public static class PrtgRuleCatalog
     public const int EscalateConsecutiveDays = 3;
     /// <summary>窗口內命中次數（含當日）達此數即升一級嚴重度</summary>
     public const int EscalateHitsInWindow = 3;
-    /// <summary>down 連續達此日數視為長期 Down（沒人移除的死 sensor），不再拉高日風險</summary>
+    /// <summary>down 連續達此日數視為長期 Down（沒人移除的死 sensor）：Detail 加註「已連續 M 日，故障尚未恢復」；
+    /// 故障風險照舊保留，重複提醒交給通知層（見 <see cref="PrtgCrossDay"/>）</summary>
     public const int ChronicDownDays = 14;
 
     private static readonly Dictionary<string, PrtgRuleInfo> Rules = new(StringComparer.Ordinal)

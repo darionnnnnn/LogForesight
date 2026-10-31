@@ -48,6 +48,8 @@ public class ApiTimeoutBehaviorTests
     [InlineData("JSON下載413保留明確原因且不提供檔案")]
     [InlineData("JSON下載超限取消串流且不提供部分檔案")]
     [InlineData("JSON下載拒絕登入HTML")]
+    [InlineData("JSON下載502HTML顯示一般錯誤並帶狀態")]
+    [InlineData("saveBlobAsFile延後revoke物件網址")]
     [InlineData("JSON下載本文逾時會取消串流")]
     [InlineData("JSON下載本文主動取消保持AbortError")]
     [InlineData("JSON下載ContentLength超限不讀取本文")]
@@ -56,6 +58,10 @@ public class ApiTimeoutBehaviorTests
     [InlineData("JSON下載登入逾期保留子站導頁")]
     [InlineData("JSON下載已知超限不等待取消確認")]
     [InlineData("JSON下載非JSON不等待取消確認")]
+    [InlineData("downloadOk")]
+    [InlineData("downloadTimeout")]
+    [InlineData("download401")]
+    [InlineData("downloadTooLarge")]
     public void 前端等待體驗的行為案例(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
@@ -89,9 +95,16 @@ public class ApiTimeoutBehaviorTests
         }
 
         Assert.NotNull(process);
-        var stdout = process!.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        Assert.True(process.WaitForExit(60_000), $"node 執行逾時：{caseName}");
+        // 先非同步讀輸出、逾時就結束整個程序樹再判失敗；先 ReadToEnd 會在 node 不結束時無限卡住
+        var stdoutTask = process!.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(15_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* 已經結束就算了 */ }
+            Assert.Fail($"node 執行逾時：{caseName}");
+        }
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
 
         Assert.True(process.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);

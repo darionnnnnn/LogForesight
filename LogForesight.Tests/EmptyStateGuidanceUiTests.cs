@@ -113,7 +113,7 @@ public class EmptyStateGuidanceUiTests
         Assert.Contains("請調整狀態、群組或勾選條件，或至「待派」頁籤查看可建立交辦的問題", workOrdersJs);
         Assert.Contains("目前區間內所有問題皆已指派交辦，或請調整上方的起訖日期", workOrdersJs);
         Assert.Contains("目前沒有啟用中的靜音規則；需要暫停特定問題通知時，可在問題詳情中設定靜音", workOrdersJs);
-        Assert.Contains("目前系統中沒有設定任何可指派的處理人或尚無案件負載資料", workOrdersJs);
+        Assert.Contains("目前系統中沒有設定任何可指派的處理人或尚無交辦負載資料", workOrdersJs);
 
         // 3. runs.js
         var runsJs = ReadPage("runs.js");

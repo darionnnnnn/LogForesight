@@ -20,7 +20,7 @@
   依 `Os` 分流查詢與映射，見 docs/archive/FEEDBACK-12-PLAN.md §4B）皆已實作完成，
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
-  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。
+  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠缺漏日判定（`MissingDateFinder`：已有分析紀錄的主機日不重查）。
   探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
   （權限被拒）與全站 24h distinct（不可行）。**涵蓋保證改版**：移除自適應時間窗
   （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），改為窄化 filter
@@ -30,12 +30,11 @@
   2~3 晚，核對下列尚未實證的細節：
   1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
   2. Defender/RDP Operational 頻道有無進 Sentinel（沒有則該偵測面誠實申報不適用）。
-  3. ~~Linux 主機的欄位形狀／`sev` 對應門檻~~ **多輪 probe（Sentinel「118_linux」）
-     全數定案並實作完成**（`Program=sp`、主機歸屬鍵沿用 `repip`、`sev` 不可靠承載 syslog
-     priority 語意改採計數用途的務實映射，見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)
-     §4a、[docs/LINUX-RULES.md](LINUX-RULES.md)）。
+  3. （已完成，編號保留）Linux 主機的欄位形狀與 `sev` 對應已由多輪 probe 定案並實作，見
+     [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §4a、[docs/LINUX-RULES.md](LINUX-RULES.md)。
   4. 真實 watchlist 形狀查詢（事件 ID 集合＋50 台 IP 批次）的耗時與命中量，決定夜間窗時程與
-     批次大小。
+     批次大小。現有的主機日計時收集器（`NetiqHostDayTimingCollector`）只量統計分析＋落地段，不含 Sentinel 查詢耗時，
+     所以它回答不了這一項——查詢耗時與命中量目前沒有現成的量測，試點時要另行量測或補收集。
   5. `dt` 時間邊界的人工核對（絕對時間區間需在 Sentinel Web UI 重現比對）。
   6. 8.5 apidoc 是否有伺服器端聚合端點（有的話 Q1 查詢可以改走聚合，目前是本地聚合的退路）。
   6b. **`NOT` 子句（`AND NOT (repip:a OR repip:b …)`）是否被此環境的 Lucene 接受**——
@@ -44,11 +43,12 @@
       （取回事件含已排除的 repip 即判定未生效、停止輪掃並顯性警告），
       試點時核對是否曾出現該警告。
   7. 多網卡主機以哪個 IP 回報（有「查無資料」假象的風險）。
-  8. token 有效期長短（決定長輪收集中是否需要主動換發）。
-  9. 2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化（目前是 O(主機數×天數) 個別查詢）。
-      同構的 `HostStore.Get`／`ISuppressionStore.LoadAll` 每主機日呼叫已收斂
-      （改為計畫階段解析一次＋run 級快照，見 `NetiqPipelineService.HostPlan`）——`HasRecord`
-      走的是 SQL 而非整份 blob 反序列化，性質不同，仍待放量前實測決定要不要批次化。
+  8. token 有效期長短（決定長輪收集中是否需要主動換發）。被動處理已實作：401／403 時先登出舊 token，再重新認證並重放請求，
+     仍被拒才報錯（`SentinelClientTests` 有對應測試）；剩下的未知是實際壽命，以及主動換發值不值得做。
+  9. 2000 台規模放量前需實測缺漏日判定的總耗時：現行是每台主機一次 `ReadRecent`（`MissingDateFinder.FindWithExistingDates`，
+      取回望窗內的紀錄再算缺漏日與失敗重試），共 O(主機數) 次 SQL 查詢，不是主機數×天數。
+      同構的 `HostStore.Get`／`ISuppressionStore.LoadAll` 已在計畫階段解析一次並共用 run 級快照（`NetiqPipelineService.HostPlan`）；
+      `ReadRecent` 走 SQL 而非整份 blob 反序列化，性質不同，放量前實測決定要不要改成跨主機批次查詢。
   10. Security 頻道規則未涵蓋的「未知失敗 ID」目前不會被撈入 Sentinel 路徑（相對本機模式的
       已知涵蓋縮小）；是否值得靠 `xdasoutcome` 補一條 `NOT xdasoutcome:0` 分支待評估。
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
@@ -241,11 +241,7 @@
 - **AI 設定頁的「測試連線」**：三種 provider 各自的連線驗證形狀不同（本機端點無金鑰、OpenAI 官方
   要金鑰、Azure 要 deployment），本輪只做儲存驗證（缺必填欄位即回驗證錯誤）。真的打一次
   chat/completions 回範例 JSON 才叫測試連線，留待需求明確時做。
-- **依問題視角的白話說明只對 Windows 規則有效**：`KnownIssueCatalog.FindRule` 是
-  Windows 專用（Linux 規則要靠 program＋訊息內容比對，見 `FindLinuxRule`），而問題清單這層
-  只有 (來源, EventId)，湊不出 Linux 規則的比對條件。Linux 問題因此不會顯示白話說明——
-  不是漏做，是這層資訊不足。要補得先決定「用 program 前綴粗略比對」是否可接受
-  （會有誤配風險，Linux 規則本來就靠訊息內容區分）。
+- **問題清單的白話說明對 Linux 以 program 前綴粗略比對**：`PlainExplanationFor` 對 Linux 簽章走 `FindLinuxRuleByProgram`（只有 program、沒有訊息內容），同一 program 有多條規則時可能配錯說明。風險報告已改以簽章的規則 Id 反查，不受影響。**觸發時機**：使用者回報 Linux 問題的白話說明與實際規則不符。
 - **`UpsertFirstSeen` 的 SQLite 日期字串比較**：條件式 UPDATE（`first_seen > {date}`）在
   SQLite 是字典序文字比較，同一天二次寫入時因小數位數格式差異會觸發一次無意義的 UPDATE 並讓
   儲存格式在兩種寫法間漂移（**首見日的值不會錯**，跨日比較方向正確；SqlServer 不受影響）。
@@ -299,9 +295,10 @@
 
 ## 權限異動檢核（PERMISSION-CHANGES 輪次遞延）
 
-- **Sentinel 投影新增 `sip`／`shn`**（來源 IP／發起端機器名）：本輪只取已在投影內的 `sun`（操作者帳號）。這兩個欄位要改查詢語句並實機驗證，另案處理。
+- **權限異動紀錄未存來源 IP／發起端機器名**：Sentinel 投影已含 `sip`／`shn`（`SentinelFieldMap.Q1ProjectionFields`），但目前只併進登入失敗（4625／4771）事件的訊息文字；
+  `PermissionChangeRecord` 只取操作者帳號（`sun`），沒有這兩個欄位。要存需新增欄位與 DDL 並實機驗證，另案處理。
 - **使用者自訂異動類別**：類別是系統內建的固定六類（key 已是資料表欄位）。要開放自訂需引入規則引擎與「規則改動後歷史資料如何重分類」的策略，範圍不成比例。
-- **`EnsureCreated` 與 `SchemaUpgrader` 在全新安裝會建出兩份同欄位索引**：`AddIndexIfMissing` 依**索引名稱**判斷存在與否，而 EnsureCreated 建的是 EF 預設命名（`IX_lf_xxx_ChangeId`）、SchemaUpgrader 用的是自訂名稱（`IX_lf_xxx_change_id`），兩者不相等。這不是本輪造成的，`lf_issue_handling` 等表早已如此，影響是寫入吞吐與儲存空間、不影響正確性。要處理的話是全專案 schema 層級的一輪。
+- **既有 SQL Server 庫可能留有兩份同欄位索引**：全新安裝已不會重複（EF 具名索引與升級器同名，`DataConsistencyJ2Tests` 守門）。殘留只在舊命名建出的既有庫：`SchemaUpgrader.RemoveDuplicateIndexes` 對 SQLite 會移除，對 SQL Server 只警告不移除。影響是寫入吞吐與儲存空間、不影響正確性。**觸發時機**：正式機升級日誌出現重複索引警告時，以 DBA 手動移除。
 - **高風險（特權目標）判定的涵蓋範圍待議**：目前只標「成員新增到特權群組」。終檢建議一併涵蓋「成員移除」（把稽核人員移出 Domain Admins 是入侵後常見動作）與 ACL 授權對象（`權限新增（ACL 規則）` 的授權對象若是 Everyone／Domain Admins）。後者要改成比對 `Before`／`After` 的授權對象而非 `Target`（`Target` 是路徑，永遠不會命中群組關鍵字）。這是安全判定的範圍決策，需要與使用者確認後再改。
 - **權限異動的批次確認上限（500）是否放寬**：吵雜 DC 單日曾達 9 萬則，但例行同步成對合併落地後量預期大幅下降。先觀察合併後的實際待確認量，再決定要不要放寬上限或提供「符合篩選全部確認」。
 - **權限異動的查詢側效能在量增後未實測**：權限異動不設每主機日筆數上限，吵雜 DC 單日可達數萬則（實例 9.2 萬）。`/permission-changes` 的查詢與分頁在這個量級下是否仍可接受尚未實測；若實測出問題，處理方向是索引與查詢形狀，另案一輪。（寫入側的兩個無上界點已於回饋三十四輪處理：去重改逐主機日查資料庫、`raw_text` 截斷 8000 字、`AppendChanges` 每 500 筆分批。）
@@ -338,11 +335,11 @@
   （與 KPI 卡同定義），但點列導向的是 `/records?groupIds={id}&riskLevels=高,中`——
   日紀錄視角、不帶 `statuses=open`，看到的不是那個數字所數的東西。整列共用一個連結，
   要收斂得先決定「點群組列要看什麼」（依問題視角還是日紀錄視角），屬版面動線決策。
-- **`IssueKey` 的比對全專案是 `StringComparison.Ordinal`，SQL 端卻用 `UPPER(source)`**：
-  記憶體端的問題計數已改為大小寫不敏感（KPI 與下鑽同口徑的前提），但處理狀態解析
-  （`OccurrenceStatusResolver`）與其他十餘處 `IssueKey` 比對仍是 Ordinal。
-  後果是來源名稱大小寫不同的同一問題，處理標記不會互通。要統一得一次改掉全部比對點
-  並確認既有 `lf_issue_handling`／`lf_issue_cases` 資料的鍵寫法，範圍大於單輪回饋。
+- **來源鍵的長來源截斷尚未全面一致**：記憶體端 `IssueKey` 比對已統一用 `IssueSignatureKeyComparer`
+  （來源大小寫不敏感；派工脈絡、雜訊記憶、可見範圍、處理狀態解析、兩個協調器等），剩下的 Ordinal 多為排序次要鍵。
+  殘留差異：`LatestOccurrences` 等處以 `ToUpperInvariant()` 組來源鍵，沒有 `WorkOrderIssueKey.SourceKeyOf` 的 255 字元截斷，
+  只有來源超過 255 字元時才與 SQL 口徑不同；SQL legacy `.ToUpper()` 路徑見下方 SQLite `upper()` 條。
+  **觸發時機**：出現來源名稱超過 255 字元的問題。
 
 ## 回饋三十四輪遞延
 
@@ -557,11 +554,11 @@
 - **統一標記逐筆多查一次進行中案件**：為判斷是否為處理人本人的回覆，每筆寫入多查一次，上限 5000 主機日時查詢量翻倍。
   **觸發時機**：統一標記變慢；改由同步結果帶回處理人與單號。
 - **建單改背景作業**：4000 台 × 10 天建單同步段約 2.2 秒、預覽約 0.8 秒，目前同步完成。**觸發時機**：建單同步段超過 30 秒。
-- **夜間派工與 Web 單操作的並行競態**（收尾體檢，機率低、未重現）：夜間派工用開跑時的交辦單快照，執行途中管理者
-  取消、代為結案或改派併入某張單，夜間仍可能把新成員掛進那張已結案的單（案件進行中、單已結案，結案掃描不會自癒），
-  或在改派後以舊處理人寫入。同型：改派不併入分支撞部分唯一索引時留下「案件已換人、單未換人」；取消與背景逐日同步
-  交錯時，背景已算好的逐日寫入可能在取消後落盤。**觸發時機**：出現「案件進行中但所屬單已結案」的資料；
-  修法方向是夜間寫成員前重讀單的狀態、改派與取消取同一把鎖或以版本戳重試。
+- **交辦單操作的殘餘並行競態**（收尾體檢，機率低、未重現）：夜間寫成員已在鎖內重讀單的狀態（途中結案不寫入、
+  途中改派依新處理人寫入）並重查主機進行中案件（決策後才被 Web 建出的不重複建案）；問題負責人、結論、靜音的
+  並行寫入已改為原子局部更新。仍殘留：改派不併入分支撞部分唯一索引時留下「案件已換人、單未換人」；
+  取消與背景逐日同步交錯時，背景已算好的逐日寫入可能在取消後落盤。**觸發時機**：出現「案件已換人但單的處理人未換」
+  或「單已取消但仍有新逐日列」的資料；修法方向是改派與取消取同一把鎖或以版本戳重試。
 - **多單寫入沒有整體交易**：多單回覆在前置授權檢查通過後逐張寫入，中途某張擲例外時前面幾張已寫；靜音選「代為結案」時
   先存靜音、再逐張結案。兩者都不是授權問題，是一致性問題。**觸發時機**：回覆或靜音出現部分成功的回報。
 - **SQLite 的 `upper()` 只轉 ASCII（僅剩 legacy fallback）**：來源鍵 readiness 完成後，問題聚合與風險事件查詢都走已回填的
@@ -576,9 +573,18 @@
 - **明確不做（本輪定案）**：交辦單處理人變更歷史查詢、站內即時通知、負載加權與個人容量上限、後端 CSV 匯出端點、
   靜音的主機群組範圍（群組範圍用抑制）。
 
-## 全新安裝時 PRTG 維護頁的範圍區塊顯示「須由可見全部主機的管理者操作」
+## 升級期一次性機制與退場條件
 
-`SettingsController.RequireFullPrtgTransferAccess` 在主機主檔為空時一律 403（`hosts.Count == 0`），PRTG 維護頁的鏡像、人工對應、IP 排除區塊因此載不出來，並顯示「全站 PRTG 對應、排除及搬運須由可見全部主機的管理者操作」——對全新安裝的管理者是誤導（他其實看得到全部，只是還沒有主機）。正式站台有主機後不受影響。**觸發時機**：新站台導入流程被這段文字卡住或回報。修法：主機為空時允許讀取（範圍本來就是空的），或改文案為「尚未建立主機，PRTG 對應要先有主機」。
+這些機制只為「從舊版升級」存在，每次啟動都會檢查一次。全部站台都升級過、且正式機確認對應旗標已完成後才可移除。
+
+| 機制 | 判定完成的依據 | 退場條件 |
+|---|---|---|
+| `HandlingBlobMigrator`／`HandlingMigrationHostedService` | `HandlingMigrationState` 三份皆完成 | 所有站台升級後；移除時一併拿掉 `MigrationGateMiddleware` 的處理狀態分支 |
+| `PermissionChangeMigrator`／`PermissionChangeReparser`／`PermissionLegacySummaryCleanupState` | 各自狀態 blob 為完成 | 同上 |
+| `ReportFileMigrator`／`ReportFileMigrationHostedService` | 報告全文已存資料庫 | 正式機驗證報告機制後（另見本檔報告全文段） |
+| `TopIssueBackfiller`（來源鍵回填與首見日重整） | `source_key` 無 NULL 且重整旗標存在 | 所有站台回填完成後；就緒旗標目前為行程內狀態，重啟後重算 |
+| `WorkOrderBackfiller`／`DailyRecordBackfiller` | 回填版本達現行值 | 所有站台回填完成後 |
+| `SchemaUpgrader.RemoveRetiredPrtgBlobs`、SQL Server 人工對應自增欄位修正、`rule_id` 長度放寬 | 每次啟動皆冪等執行 | 所有站台升級到含該修正的版本後 |
 
 ## 背景服務與前景共用連線池
 
@@ -593,11 +599,68 @@
 - `lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`
   程式已不讀寫，既有資料庫欄位保留（不寫 DROP COLUMN，避免 SQL Server 端的相依約束風險）。**觸發時機**：下次 schema 層級的一輪一併評估。
 
+## 前端輪詢：`pollWhile` 不做背景分頁降頻與失敗退避
+
+`core/async-guards.js` 的 `pollWhile` 以固定間隔輪詢（目前用於排程作業頁、PRTG 維護頁、NetIQ 維護頁，間隔 2～10 秒），
+不看 `document.hidden`、也不因連續失敗拉長間隔：背景分頁照常輪詢，站台卡住時每個間隔仍打一次（上一輪結束才排下一輪，不會疊加在途請求）。
+目前使用者少、輪詢頁都是維護頁，刻意未做。**觸發時機**：輪詢頁開給多人長時間掛著而站台負載可見上升，或新增面向一般使用者的輪詢頁時——
+在 `pollWhile` 一處加 `visibilitychange` 降頻與連續失敗退避（`core/badges.js` 已有「隱藏不打、回前景立即刷新」的做法可參照）。
+
 ## 深色模式（明確不做）
 
 DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案。**觸發時機**：使用者提出夜間值班需求。
 
-## 測試：`AiAnalysisSchedulerTests.CurrentIdleReason_依序判定且執行中為null` 全量負載下偶發
+## PRTG：完整回填預覽與快照狀態補抓佇列仍受規則版本影響
 
-單跑 2 秒綠（連續三次），只在全量（20 分鐘、多測試並行）時以 10 秒紅過一次；第 58 輪未動該檔與 `AiAnalysisScheduler`。
-**觸發時機**：再次在全量紅時——把判定用的時鐘改替身、或等待上限加寬；不要用重跑掩蓋。
+結構同步、回填與快照的作業期間已改用不含規則的範圍柵欄，存規則不會中止進行中的作業；但完整回填的
+預覽確認與續跑水位、快照的狀態補抓佇列雜湊仍用含規則的 `PrtgScopeRevisionReader.Read()`——存規則後預覽要重做、
+佇列會整理重排。佇列雜湊與水位會持久化，改用不含規則的版本需要一次升級遷移。
+**觸發時機**：使用者反映「存規則後回填要重新預覽」或快照補抓頻繁重排。
+
+## PRTG 分頁：翻頁期間 PRTG 端刪除資料會被判為未收斂
+
+`PrtgTablePager` 只在第一頁記錄 `treesize`，翻頁期間 PRTG 端刪了裝置或感測器時讀到筆數少於它，裝置／感測器階段記為失敗、
+本趟不清除過期資料（偏保守，下次同步自癒）。`sortby`、`id=` 下 `treesize` 是否為子樹筆數尚無實機證據。
+**觸發時機**：大站夜間同步偶發「未收斂」且隔天自癒時，改為允許小幅短讀或最後一頁再取一次 `treesize`。
+
+## 交辦：新日掛接在案件被結案後仍可能先寫入逐日列
+
+`IssueCaseCoordinator.AttachNewDay` 存檔前重讀案件、已結案就不再蓋回進行中；但同一趟迴圈內逐日列與 `CaseAttach` 歷程
+在重讀之前已寫入，案件於讀取後、存檔前被結案時，那一天會留下指向已結案案件的進行中逐日列。
+**觸發時機**：出現「案件已結案但最後一天仍為進行中」的逐日列；修法是寫列前重讀，或存檔後回頭校正。
+
+## 保留期清除失敗後當天不重試
+
+`RetentionPruner` 任一步驟失敗不寫 `LastRunDate`，但排程的 `RunRetentionIfDueAsync` 仍把當天標為已確認，
+所以只有行程重啟後同日才會再跑，否則等隔天。
+**觸發時機**：清除步驟常態失敗、需要當天自動補跑時，加上失敗後的有限次重試或退避。
+
+## 前端：PRTG 診斷匯出改為瀏覽器端載入後儲存，上限 64 MiB
+
+匯出下載改走 `api.download`（有界讀取、逾時、401 導登入、失敗留在原頁），整份內容先載入記憶體再存檔，
+超過 64 MiB 會提示縮小日期範圍；原本以整頁跳轉下載沒有這個上限。
+**觸發時機**：大站長日期範圍匯出碰到上限時，改為串流寫檔或對該端點傳較大的 `maxBytes`。
+
+## 交辦：日層級指派與夜間派工的略過原因順序不同
+
+日層級指派依「已抑制→已知雜訊→不再打擾→靜音中」判定，夜間派工靜音優先；同一問題同時靜音又抑制時，
+兩處回報的略過原因不同（哪些問題被擋相同）。立即派工的單備註與夜間相同，事後只能從時間軸的操作者區分來源。
+**觸發時機**：使用者需要對照兩處的略過統計，或需要從單上區分立即派工與夜間派工。
+
+## AI 待補：AI 服務停機時無跨輪退避
+
+傳輸失敗的日子維持待補（不再誤判為已完成），本輪全滅時結束本輪；但下一個輪詢週期（60 秒）在窗口內或跟隨取數時會再選一批重試，
+沒有跨輪的失敗計數或退避。AI 服務停機整晚時每分鐘最多打一批（每筆受逾時與閘道限制）。
+**觸發時機**：AI 停機期間的 log 或 AI 服務端負載成為困擾時，於 `AiAnalysisRunState` 記本輪全滅時間、下一輪退避數分鐘（常數即可，不新增設定）。
+
+## 交辦：日層級指派的靜音判定在多行程部署下可能過時
+
+日層級指派（預覽與寫入）的靜音閘門讀 `IssueExclusionProvider` 的行程內快照，快照以本行程的 `DataVersionStamp` 與日期為鍵；
+另一個 Web 行程剛設的靜音要到本行程收到非 GET 請求推進版本戳才會重建。夜間派工每趟重讀，不受影響。單行程部署不成立。
+**觸發時機**：多行程部署且出現「剛靜音的問題仍被日層級指派建單」時，改為即時 `IssueExclusion.From(_issueOwners.GetAll(), today)` 或加短 TTL。
+
+## PRTG 快照：整批感測器皆已自 PRTG 刪除時判為契約不符
+
+`PrtgSnapshotResponseContract` 收真子集並計缺顆，但回應為空集合仍視為契約不符（整批失敗、每輪輪詢記一次「批查詢失敗」）。
+批次是目標清單的連續切片，一整台裝置被刪就可能填滿一批；鏡像要到夜間結構同步才會移除這些感測器。
+**觸發時機**：白天刪裝置後快照執行紀錄持續出現批查詢失敗時，把「形狀正確的空陣列」改為全部計缺顆而非失敗。

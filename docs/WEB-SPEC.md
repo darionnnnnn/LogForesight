@@ -284,6 +284,10 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 **正式驗證（已定案：AD LDAP）**：`LdapAuthenticationProvider` 以使用者帳密向 AD bind 驗證；
 AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及可信來源 IP 節流，命中門檻時
 不再呼叫 AD，減少密碼噴灑觸發網域鎖定。救援帳號不受共用 IP 門檻連坐，仍受本身鎖定限制。
+帳號一律先經 `AccountNames.Canonical` 正規化（去前後空白、去掉 `DOMAIN\` 網域前綴）：LDAP bind、帳號節流鍵、
+使用者查找都用正規化帳號，`CORP\bob` 與 `bob` 是同一個人、同一個節流桶；查找時正規化帳號找不到才退回原字串
+（相容既有含 `\` 的本地帳號）。登入請求的帳號與密碼各上限 256 字。登入後導回的 `returnUrl` 只接受站內相對路徑，
+含 tab、換行字元或 `//`、`\`、`://` 一律拒絕（`core/safe-return-url.js`）。
 
 JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`pv`（簽發時的
 `PermissionVersionStamp`）、`jti`、`exp`。**能力進 token、主機授權範圍不進 token**——範圍每次請求由
@@ -349,6 +353,8 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 **同一個 `[Permission]` 內的多個能力是「任一」，兩個標註疊加是「都要」**——類別層與方法層
 不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
 表達「兩者兼具」（實務上即 admin）。
+
+**全站管理端點的授權單一出口**：全站 PRTG 對應、IP 排除、回填、搬運、使用效果與校準匯出只問「是否持有 `ViewAll`」（`CurrentUserAuthorization.RequireViewAll`／`HasViewAll`），不比對可見主機集合，停用或合併的主機不影響判定。serverAdmin 沒有 `ViewAll`（只有 `Maintain`、`ViewAudit`），這些端點對它回 403。
 
 **負責人隱含能力**：是任一**啟用中**主機的負責人時，
 `IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
@@ -503,6 +509,11 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - `core/api.js`：fetch 包裝的**唯一出口**——組信封解析、錯誤 toast、401 導登入、
   非 GET 自動帶 `X-Requested-By`、掛載前綴（§8.1a）。頁面模組不得直接呼叫 `fetch`
   （含檔案上傳：傳 `FormData` 進來即可，它不會自己設 Content-Type，boundary 交給瀏覽器）。
+  下載檔案也走這個出口：`api.download(url)` 沿用有界讀取（預設上限 64 MiB）、GET 逾時與 401 導登入，
+  回傳 `{ blob, filename }`（`filename` 取自 Content-Disposition，沒有則為 `null`，由呼叫端給預設），
+  失敗一律丟 `ApiError`、不整頁跳轉；取得 blob 後以同檔匯出的 `saveBlobAsFile(blob, filename)` 觸發儲存
+  （暫時 `<a download>`，用完即 revoke 並移除）。頁面模組不得直接呼叫 `fetch(` 或 `location.assign(`
+  （`FrontendMiscUiTests` 掃全部 `pages/*.js` 守門）。
 - `core/paths.js`：站台掛載前綴的唯一出口（§8.1a）——`appUrl()` 補前綴、`appPath()` 去前綴。
   獨立成模組是因為 `ui.js` 也要用它，而 `api.js` 反過來用 `ui.js` 的 toast，放一起會成環。
 - `core/ui.js`：toast（Bootstrap Toast）、確認對話框（Bootstrap Modal 包裝，
@@ -513,9 +524,42 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題負責與靜音負責人與主機負責人兩處，
   其餘呼叫端不傳此選項、行為與過去完全相同。
 - `core/format.js`：日期、風險等級徽章、狀態徽章的統一格式化（風險/狀態的顯示規則只寫一次）。
+- **`core/` 模組總表**（`wwwroot/js/core/` 全部檔案；上列四個模組的細節不重複）：
+
+  | 模組 | 職責 |
+  |---|---|
+  | `alert-tools-table.js` | 告警工具決策表（靜音／抑制／統一標記／不再打擾），規則頁與設定頁共用（§9.7） |
+  | `api.js` | API 呼叫唯一出口，含 `api.download`、`saveBlobAsFile`、`getCurrentUser`、`hasCapability` |
+  | `async-guards.js` | `createSeqGuard`（查詢序號守門）、`pollWhile`（狀態輪詢），見 §8.6 |
+  | `badges.js` | 側欄徽章全站唯一計時器：每 60 秒刷新，分頁隱藏不打 API、回前景立即刷新（§9.4a） |
+  | `brand-align.js` | 品牌副標題字距對齊（§9.9b） |
+  | `charts.js` | Chart.js 包裝層（§8.3） |
+  | `date-range.js` | 期間快捷鈕的計算與綁定（§8.6-8） |
+  | `format.js` | 風險／狀態／日期等顯示格式化；類別與嚴重度名稱取自 `window.LF_LABELS` |
+  | `handling-statuses.js` | 處理狀態目錄（名稱、顏色、是否結案、說明欄規則）與預計完成日上限 `MAX_DUE_DATE_DAYS`（90） |
+  | `layout.js` | 側欄選單、目前使用者、登出、執行中告示、字級 |
+  | `markdown-lite.js` | AI 文字唯一渲染出口（安全子集，絕不 innerHTML） |
+  | `note-editor.js` | 說明輸入的字數計數與本機草稿（鍵 `lf-draft:{userId}:{draftKey}`，登出時清除） |
+  | `paths.js` | 站台掛載前綴：`appUrl()`／`appPath()`（§8.1a） |
+  | `prtg-acceptance.js` | PRTG 維護頁「最近一次排程驗收」三項判定（純函式） |
+  | `prtg-diagnostic-upload.js` | PRTG 診斷檔分片（4 MiB）上傳、續傳與雜湊 |
+  | `prtg-probe-types.js` | 從環境探測輸出擷取實際觀察到的 sensor 類型 |
+  | `prtg-scope-labels.js` | PRTG 啟用狀態與數值取數對象的顯示字串，維護頁與排程作業頁共用 |
+  | `report-view.js` | 報告全文共用呈現（風險／體檢／權限異動三種） |
+  | `run-phases.js` | 取數進度軌的 phase 文案與單位（§9.10） |
+  | `safe-return-url.js` | 登入後導回網址的站內相對路徑檢查（純函式） |
+  | `sha256-stream.js`、`sha256-worker.js` | 增量 SHA-256 與其 Web Worker（診斷檔雜湊，不把大檔留在頁面記憶體） |
+  | `storage.js` | `safeStorage`：localStorage 的安全包裝，見 §8.6 |
+  | `ui.js` | toast、確認對話框、表格、分頁、載入／空／失敗狀態等共用元件 |
+
 - `pages/*.js`：一頁一模組，`_Layout.cshtml` 以 `<script type="module">` 載入對應頁模組；
   頁面需要的初始參數（如 record id）用 `data-*` 屬性放在 View 的根元素上，JS 讀取——
   **cshtml 內不寫 inline script、不用 Razor 內插 JS 變數**。
+  例外只有下列 inline script，其餘一律不得新增：`_Layout.cshtml` 與 `Login.cshtml` 各一行
+  `window.LF_BASE = Request.PathBase`（§8.1a，必須早於任何 module）；`_Layout.cshtml` 的
+  `window.LF_LABELS`（問題類別名稱表 `categories` 與嚴重度中文名 `severities`，server-render 為單一顯示字典，
+  `format.js` 的 `CATEGORY_NAMES`／`SEVERITY_NAMES` 由它取值，登入頁不需要所以不帶）；`Login.cshtml`
+  尾端一段 `load` 事件備援（`login.js` 未載入成功、`LF_LOGIN_READY` 不為 `true` 時顯示資源載入失敗並停用送出）。
 - 禁止引入前端框架/打包工具（React/Vue/webpack…）——本專案的前端複雜度用「模組化原生 JS」
   就能維護，工具鏈越少、五年後越可能還編得起來（對應決策 #4 的防廢棄考量）。
   第三方 JS 套件僅限白名單：Bootstrap（範本內建）＋ Chart.js（§8.3）；新增套件需符合
@@ -553,6 +597,10 @@ IIS in-process 託管時 ASP.NET Core 會自動填 `Request.PathBase`；Kestrel 
 自己指派 `href` 時自己套；把值**交給** `core/ui.js`（sprite、整列可點、`rowHref`、kpiStrip）、
 `core/charts.js`（下鑽 `url`）、`core/layout.js`（選單表）這些 helper 時維持 app 相對，
 由 helper 在寫入的那一刻套，頁面端不得先套。
+
+`toast()` 的 `options.link`（`{ href, text }` 或其陣列）不屬於上述 helper：`ui.js` 只把 `href` 原樣指派給 `<a>`，
+**不套 `appUrl()`**，由呼叫端傳入前自己套一次（例：`records.js` 交辦建單成功的 toast 傳 `appUrl('/work-orders/' + id)`）。
+toast 的 message 若是 `Node`（例：自建的 `<a>`），連結同樣由組裝者自己套。
 
 ### 8.2 設計系統（Bootstrap 為基底、功能取向的自訂外觀）
 
@@ -709,7 +757,11 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 
 ### 8.6 使用者便利性規範（決策 #4 的具體化，逐條可驗收）
 
-1. 清單頁的篩選條件記憶於 `localStorage`，回到頁面自動還原（含儀表板時間窗）
+1. 清單頁的篩選條件**以網址查詢字串為準**，不一律記 `localStorage`：下鑽（§8.4）帶參數進頁是主流程，
+   `records`、`audit`、`hosts`、`reports`、`permission-changes` 進頁時讀網址參數還原條件；
+   `records`、`reports`、`permission-changes` 另把目前條件以 `history.replaceState` 寫回網址（可複製分享）。
+   記在本機的篩選類偏好只有兩項：權限異動檢核頁（網址沒帶任何篩選參數時還原上次條件，鍵 `lf.permissionChanges.filters`）
+   與儀表板時間窗天數（`lf.dashboard.days`）；報表的處理狀態範圍刻意不入 `localStorage`（§9.6）
 2. **所有清單支援表頭點擊排序**：`renderTable` 的欄位定義帶 `sortKey` 即可點擊，
    同欄再點切換 asc/desc、換欄回到該欄的 `sortDefaultDir`（未指定則 asc），切換邏輯集中在
    `core/ui.js`，呼叫端只需套用收到的 `{key, dir}`。伺服器端分頁頁（`records`／`hosts`／`audit`）
@@ -797,6 +849,21 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
   `fillSentinelOptions` 寫一個不存在節點的 textContent 而丟 TypeError，整頁清單就此卡住
   （根因是 `host-netiq-hint` 節點被漏在 view 之外，已補回並讓提示文字在有無 Sentinel 時都正確切換）。
 
+- **清單查詢與狀態輪詢的唯一寫法**（`core/async-guards.js`，無 DOM 相依）：
+  - 會被連按篩選、換頁、切換範圍打斷的查詢一律用 `createSeqGuard()`：發出前 `next()` 取序號，回應或失敗回來先 `isCurrent(seq)`，
+    不是最新一次就整份丟掉、不得寫入任何頁面狀態（失敗態只屬於最新一次查詢）。目前用於 `audit`、`dashboard`、`hosts`、
+    `permission-changes`、`records`、`reports`、`runs`（執行總表）。
+  - 狀態輪詢一律用 `pollWhile(fn, intervalMs)`：`fn` 跑完才排下一輪（在途請求不疊加）、首輪也等一個間隔、
+    例外只 `console.warn` 一次並照常續排、`fn` 回傳 `false` 或呼叫 `stop()` 即停。頁面不得 `setInterval(async …)`
+    或以 `setInterval` 驅動具名 async 函式（`PollingUiTests` 掃全部 `pages/*.js`）。依狀態切換間隔而以 `setTimeout`
+    自排程者（排程作業頁的排程狀態）必須把「排下一輪」放在 `finally`，否則一次例外就讓常駐輪詢靜默停掉。
+    `pollWhile` 不做背景分頁降頻與失敗退避（見 BACKLOG）。
+  - `core/storage.js` 的 `safeStorage`（`get`／`set`／`remove`，全部 try/catch；隱私模式或停用站台資料時 `get` 回 `null`、
+    寫入靜默略過）是讀寫 localStorage 的預設入口。`FrontendGuardUiTests.LocalStorage直接呼叫只出現在白名單檔` 掃
+    `pages/` 與 `core/ui.js`，直接呼叫 `localStorage.` 的檔案限白名單（`permission-changes`、`settings`、`note-editor`、
+    `layout`、`prtg-admin`、`record-detail`，自帶 try/catch）；同檔 `Toast第二參數只能是Bootstrap有的型別` 限 toast 型別為
+    `primary`／`secondary`／`success`／`danger`／`warning`／`info`（寫成 `error` 會得到不存在的 `text-bg-error`）。
+
 ### 8.6a 說明文字顯示原則與全站用詞規範
 
 **常駐顯示 vs 收進 icon 的分類基準**：頁面上的欄位說明文字分兩類——
@@ -827,7 +894,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
   | 名詞 | 定義 |
   |---|---|
   | 交辦單 | 一個問題 × 一批主機 × 一位處理人；派工、通知、檢視、回覆的單位 |
-  | 成員 | 交辦單下的一個（主機, 問題）案件 |
+  | 成員 | 交辦單下的一個（主機, 問題）案件；處理人看到的畫面一律稱「交辦」（如「交辦處理人」「交辦狀態」「交辦逐日同步」），「案件」只留在管理者專屬頁（使用者詳情、PRTG 維護、排程作業、稽核）與進階說明，`HandlerFacingWordingUiTests` 掃前端字串守住 |
   | 進行中／已結案／上報中／暫停／未回覆 | 交辦單的推導狀態；暫停＝問題目前靜音中，未回覆＝處理人從未回覆 |
   | 範圍 | 建單時記錄的主機條件：全站／主機群組／指定主機 |
   | 續掛 | 進行中交辦單自動納入範圍內新出現的同問題主機 |
@@ -896,11 +963,6 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
 - 區塊：風險類型統計卡（8 類：主數字＝**問題類型數** `IssueTypeCount`——相異 (Source, EventId)、
   跨主機跨日皆去重；次行為涉及主機數、期間累計主機×日、嚴重度分解）、**重點問題 Top 5**、
-  **一個問題只歸一個類別**：同一個 (Source, EventId) 的 `lf_top_issues` 列可能帶不同 category
-  （規則調整過、或部分主機日未命中規則而落 `Other`）。`AggregateByCategory` 先以
-  `MIN(category)` 把每個問題收斂成單一類別再分卡——與依問題視角（`Aggregate` 的
-  `g.Min(x => x.Category)`）同一條規則，否則同一個問題會被兩張卡各算一次、點進去卻只出現在一張。
-
   高風險主機排行、待辦區（未處理/逾期/權限異動 pending 數；具 `Handle` 者在「未處理問題」之後多一張
   **我的交辦單**卡：進行中單數，副行台數、逾期台數與未回覆單數，連到自己的 §9.4a，資料同側欄徽章
   `GET api/handlers/me/badge`；具 `Assign` 者另有**待派工問題**卡：`DashboardDto.PendingDispatch`，
@@ -908,6 +970,10 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   超過試跑上限時顯示「超過上限」，副行為其中無法派出的問題數；點卡進待派頁籤 `/work-orders#gaps`；
   不具 `Assign` 者該欄為 null、不試跑。整包快取的鍵含 Assign 維度）、未回報主機、
   **依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
+- **一個問題只歸一個類別**：同一個 (Source, EventId) 的 `lf_top_issues` 列可能帶不同 category
+  （規則調整過、或部分主機日未命中規則而落 `Other`）。`AggregateByCategory` 先以
+  `MIN(category)` 把每個問題收斂成單一類別再分卡——與依問題視角（`Aggregate` 的
+  `g.Min(x => x.Category)`）同一條規則，否則同一個問題會被兩張卡各算一次、點進去卻只出現在一張。
 - **全部走 SQL 端聚合，不載入期間內的紀錄**；與報表共用同一組聚合與同一個排行排序，
   兩頁的主機排行、待辦四計數必然一致。三層可見範圍（可見主機／日風險等級顯示範圍／
   可見嚴重度）由呼叫端等價套用（`RecordRepository.ResolveDayRiskLevels`／`ParseVisibleSeverities`
@@ -921,10 +987,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   PRTG 問題在期間內每台主機的最近一次出現都落在 30 日誤報窗內時，列上顯示「已標誤報」徽章（`MarkedFalsePositive`，PRTG-SPEC §9 抑制）。
   **刻意不含處理狀態外的細節**：處理狀態摘要仍附在列上（未處理主機數），但逐問題的完整
   處理歷程要進依問題視角才看得到；這張卡回答的是「哪幾個問題現在最該優先看」。
-- **依「分數」而非數量或單純嚴重度排序**：
-  純數量排序在 2000 台以上必然失效——`DCOM 10016` 這種幾乎每台都有、每天都一樣的雜訊
-  恆在第 1（資訊量為零）。改依 `IssuePriorityScorer.Score` 算出的分數排序（同分時退回
-  嚴重度→主機數→總次數當次要鍵，排序穩定）：
+- **依「分數」而非數量或單純嚴重度排序**：依 `IssuePriorityScorer.Score` 算出的分數排序（同分時退回
+  嚴重度→主機數→總次數當次要鍵，排序穩定）。純數量排序在 2000 台以上會讓 `DCOM 10016` 這種幾乎每台都有、
+  每天都一樣的雜訊恆居第 1（資訊量為零）：
   ```
   score = 100 × severityW × hostRatioFactor × spreadW × noveltyW × openW × tierW
     severityW       高=1.0／中=0.6／低=0.3
@@ -1262,7 +1327,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      排程皆呼叫這一個類別，理由同 `DayHandlingDerivation`：語意分散就會漂移）：
 
      - **建案**（指派當下）：一律經交辦單協調器 `WorkOrderCoordinator`（§9.4b），沒有不屬於交辦單的
-       進行中案件。日層級指派（僅列入未處理計算等級、尚未結案、尚無進行中案件的問題才建案）時，
+       進行中案件。日層級指派（僅列入未處理計算等級、尚未結案、尚無進行中案件的問題才建案；
+       並與夜間派工相同，略過已抑制、已知雜訊、不再打擾、目前靜音中的問題，預覽與結果以 `skippedByReason`
+       說明略過幾個與原因）時，
        該處理人此問題已有進行中單就追加成員，否則建一張 `origin=day_assign`、範圍為指定主機的單，
        回應多帶 `workOrderId`；依問題視角的交辦見 §9.2。已有進行中案件的問題維持原案件與原處理人，不因改天
        再指派別人就被搶走，回傳結果提示「N 個問題已由 ○○○ 的案件涵蓋，未變更」。建案時回溯
@@ -1292,7 +1359,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      **他人處理中的問題不可勾選、不可改狀態**：checkbox `disabled`、全選跳過、狀態欄唯讀，
      後端 `IssueHandlingCommandService.RequireNotHandledByOthers` 是實際防線（**admin 也擋**——
      admin 的正確動作是改派，不是繞過協調機制直接寫）。要換人處理走第 17 項的改派。
-  17. **案件改派**：`IssueCaseCoordinator.ReassignCase`
+  17. **案件改派**：`WorkOrderCoordinator.Reassign`（批次改派共用 `ReassignCases`）
      轉移進行中案件的 `HandlerId`，**不結案重開**——案件是「這個問題這一輪處理」的連續紀錄，
      重開會把回溯關聯過的日子重算、也會讓「先前處理」誤以為這輪已結束；逐日 `IssueHandling`
      列完全不動（狀態沒變），只寫一列 `case_reassign` 歷程（記在案件最近掛接的那一天）＋稽核。
@@ -1357,7 +1424,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話；**下拉只列目前嚴重度篩選後
   仍可見的問題**，篩選切換即連動）、10 輪上限**伺服器端強制**、
   可清除重來、**不持久化**（對話史存前端記憶體，每輪 POST 完整 transcript；`docs/DB-SPEC.md` 的
-  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。context 由伺服器端依 issueKey 重組
+  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。**等待回覆期間**問題下拉與清除鈕停用；換問題或清除各使對話世代加一，
+  送出時記下世代，回覆（含失敗）抵達時世代已不同就整份丟棄、不寫進新對話；收尾時輸入框與送出鈕依「是否已選問題」
+  決定可否使用，而非無條件開啟。context 由伺服器端依 issueKey 重組
   （授權繼承 `GetDetail`，同 interpret-issue 版型），SampleMessages **與當日報告全文**（#11，
   `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、超出從尾端截斷並在
   圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-SPEC 的 prompt injection 預警）。
@@ -1483,7 +1552,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 `WorkOrderCoordinator`；(b) 同一處理人同一問題同時最多一張進行中單（部分唯一索引），交辦給已有單的人＝
 追加成員、範圍取聯集（全站 ＞ 主機群組聯集 ＞ 指定主機）。
 
-**推導狀態**：進行中＝任一成員未結案；已結案＝成員全部結案（`ClosedReason`：`all_closed`／`moved`／
+**推導狀態**：進行中＝任一成員未結案；已結案＝成員全部結案（`ClosedReason`：`all_closed`／`moved`／`empty_dispatch`（夜間派工新建卻沒有成員）／
 `cancelled`／`admin_closed`）；上報中＝任一成員 `escalated`；暫停＝問題目前靜音中；未回覆＝`LastReplyAt`
 為空。沒有重開：案件結案後不會回到進行中，同問題再出現是新案件、新單。詳情頁逐筆標記讓全部成員結案時，
 結案由背景同步服務每輪掃描補上。
@@ -1503,11 +1572,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **待派**：期間（預設昨天往前 7 天）內出現、卻沒有任何進行中案件的問題，以派工試跑決定——
   SQL 只取候選出現點（排除已有進行中案件），記憶體以與夜間相同的 `WorkOrderDispatcher.Decide`（含 ⓪ 靜音）
   套閘門、可見範圍與選人，依問題分組回：待派台數｜建議處理人｜無法派出（原因 `no_pool`／`no_visibility`
-  （列出無人看得到的主機群組）／`all_paused`／`disabled`）｜已排除（閘門計數）。抑制以「規則可能命中」
+  （列出無人看得到的主機群組）／`all_paused`）｜已排除（閘門計數）。試跑一律視為自動派工開啟、不模擬 ① 與 ③。抑制以「規則可能命中」
   逐主機判定（`KnownIssueCatalog.RuleMayHit`，可能多擋、不會少擋）。候選出現點超過 20000 筆回
   `tooLarge` 要求縮小期間（上限算尚未派出的出現點）。**畫面數字＝按「立即派工」會發生的事**：
-  「立即派工」（`Maintain`）走同一個試跑再落盤，以設定複本強制開啟自動派工、不改存檔設定；部分問題失敗時
-  逐組回報、稽核一定寫。
+  「立即派工」（`Maintain`）走同一個試跑再落盤，以設定複本強制開啟自動派工、不改存檔設定；建單依處理人、問題與
+  決策來源分組，來源（問題負責人規則／自動派工）與備註比照夜間派工；部分問題失敗時逐組回報、稽核一定寫。
 - **靜音中**（只有 `Maintain` 看得到；沒有該能力時頁籤與面板從 DOM 移除，`#muted` 不生效）：
   目前靜音中的問題，依到期日升冪——問題｜靜音至｜剩餘天數｜起始日｜原因｜設定者｜暫停中交辦單（前 20 個問題
   逐一查張數）｜「延長」「解除」。頁籤標題帶數字「靜音中（N）」。
@@ -1526,6 +1595,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 回覆鈕依詳情 DTO 的 `ViewerCanReply`（本人、具 `Handle`、單未結案，後端單點決定）。
 處理人回覆不能選「未處理」（`IssueStatusValidation.ValidateReply` 擋下，要退回由管理者處理；詳情頁逐筆標記的「調回未處理」不受影響）。
 回覆與交辦 modal 的預計完成日在 `change`／`blur` 即時檢查「不可早於今天」，送出前有錯誤則 focus 到第一個錯誤欄位。
+預計完成日上限為今天起 90 天（`core/handling-statuses.js` 的 `MAX_DUE_DATE_DAYS`，與後端 `WorkOrderReplyService.MaxDueDateDays` 同值）：
+回覆 modal 與處理人工作頁（§9.4a）的期限編輯器都以它設 date input 的 `max`，回覆 modal 手打超過時送出前擋下並提示「預計完成日最多只能設在 90 天內」。
 交辦建單成功的 toast 帶單號連結（1 張「查看單號 #N」；多張列前 3 張，其餘寫「等 N 張」連到第一張）。
 上報信（無法處理）在單一交辦單轉入 `escalated` 時多一行「交辦單：單號 N」。
 取消交辦的確認文字依 `GET api/settings/display` 的 `mailWorkOrdersEnabled`（`MailEnabled` 且 `MailNotifyWorkOrders`）切換：
@@ -1555,9 +1626,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ⑥ 自動派工（系統設定開啟時）：候選＝啟用∧未暫停接單∧派工池群組成員∧具 `Handle`∧看得到此主機；
 選人順序：本趟已為此問題選中且看得到此主機者 → 最近 30 天內此主機此問題最後一張 `resolved` 單的處理人
 （延續性偏好）→ 負載最輕（同分比單數、再比帳號）；無候選 → 計入待派。
+同一主機同一感測器已有進行中的 PRTG Warning 交辦時，同感測器的趨勢 finding 在通過 ⓪ 與閘門後改計
+`related_warning_active` 略過（同批的 Warning 先派），處理人手上那張 Warning 單已足以行動；
+寫成員時在鎖內重查該主機的進行中案件，決策之後才由 Web 路徑建出的（主機,問題）不再重複建案、計
+`open_case_exists` 略過，本趟新建卻因此沒有任何成員的單，收尾時以結案推導收掉、不列入摘要與通知。
 ④⑤⑥ 只寫當日一列、不回溯歷史。夜間建的單一律指定主機、不續掛（自動派工的處理人不一定看得到全部主機）；
 同問題新主機由「該人已有此問題進行中單 → 掛入」接上。夜間留痕寫交辦單事件（建單 `created`、趟末每張有新增的單一筆
-`appended`），執行紀錄一行摘要（`NightlyDispatch.DescribeSummary`：建單數、掛入台數、無候選人台數、靜音略過、閘門略過與四項明細）；自動派工開著但派工池沒有可接單的成員時，每趟另記一則警告。派工脈絡建立失敗時整趟
+`appended`），執行紀錄一行摘要（`NightlyDispatch.DescribeSummary`：建單數、掛入台數、無候選人台數、靜音略過、閘門略過與四項明細，
+另有途中結案、已有進行中案件、途中改派、同感測器 Warning 等略過時各帶一句）；自動派工開著但派工池沒有可接單的成員時，每趟另記一則警告。派工脈絡建立失敗時整趟
 略過派工並計為 `unavailable`，不讓分析失敗。
 
 **靜音**（問題負責與靜音 `IssueProfile.Mutes`，區間清單為唯一事實來源）：
@@ -1567,7 +1643,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   另需 `Assign`＋`Handle`，把該問題進行中的交辦單以「不處理」代為結案，能力不足整筆 403 零寫入。
   稽核 `issue_mute`／`issue_unmute`。
 - **單一列判定**：某一列（問題, 紀錄日）靜音＝問題目前靜音中，或紀錄日落在它任一區間。清單、卡片、排行、
-  待辦、逾期全用這一條；記憶體 `IssueExclusion.IsMuted` 與 SQL `IssueExclusionSql` 各一份，以同口徑測試守住。
+  待辦、逾期、派工全用這一條；記憶體只有 `IssueExclusion.IsMuted` 一份（派工脈絡 `DispatchContext.IsMuted` 委派它），
+  SQL 為 `IssueExclusionSql`，兩者以同口徑測試守住。
   效果：靜音中整個問題消失（含靜音前的日子）；到期後區間內的日子仍視同已有結論、區間前的未處理日子回到待辦；
   提前解除從解除當天起恢復。一天只剩靜音問題時日狀態推導為已處理（`DayStatusRule.Resolve`）。
 - `IIssueAggregateQuery` 每個方法第一個參數都是 `IssueExclusion`、**沒有預設值**（反射守門）：呼叫端必須明寫
@@ -1592,6 +1669,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | 端點 | 能力 | 說明 |
 |---|---|---|
 | `GET ?handlerId&groupId&source&eventId&status&handlerInactive&paused&resumedFromMute&unreadOnly&sort&page&pageSize` | `Assign`／`ViewAll` | 清單；`pageSize` ≤ 100 |
+| `PUT {id}/due-date { dueDate }` | `Handle`（處理人本人、單進行中） | 改期限；不可早於今天、不可晚於今天＋90 天（`WorkOrderReplyService.MaxDueDateDays`，前端 `MAX_DUE_DATE_DAYS` 同值），null 清除；稽核 `work_order_due_date` |
 | `GET handler-groups` | `Assign`／`ViewAll` | 群組篩選選項（啟用中使用者群組） |
 | `GET unread-count` | `Assign`／`ViewAll` | 有未讀回覆的單數 `{ count }`（SQL COUNT，側欄徽章用） |
 | `GET {id}`／`{id}/members?status&page&pageSize`／`{id}/timeline` | 處理人本人／`Assign`／`ViewAll` | 詳情；成員每頁 ≤ 200 |
@@ -1696,7 +1774,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   原始訊息（`raw_text`）入庫上限 8000 字，寫入每 500 筆一批——兩者都是量的上界，
   避免吵雜 DC 的單日數萬則把記憶體與資料庫體積推到沒有天花板。
 - **操作者／目標帳號的擷取規則**見 docs/DETECTION-SPEC.md「權限異動類別」段（偵測層的事實來源）。
-- API：
+- API（讀取端點同樣需要 `ConfirmPermission`；儀表板的待確認數走服務層計數，不經這些端點）：
   - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`
     → `PagedResult<PermissionChangeDto>`（`Total` 是套用篩選後的真實總筆數，畫面「共 N 筆」的來源）
   - `GET api/permission-changes/categories` → 類別 key 與中文標籤（篩選下拉的來源；
@@ -1787,12 +1865,16 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
 - **處理狀態顯示範圍（§5，與期間列同一行）**：一組**單選** chip——全部（預設）／未結案
   ／未處理／未指派（單選讓每個數字都有明確母體，取代語意重疊的多 checkbox）。
-  `HandlingHistoryQueryService.FilterByScope` **先過濾再聚合**：KPI、趨勢、類型分布、排行、
-  占比全部反映同一範圍；前期對比套同一 scope 才可比。狀態推導與 `GetTodo`／問題查詢清單同源
+  `HandlingHistoryQueryService.FilterByScope` **先過濾再聚合**：KPI、趨勢、主機排行、處理進度反映同一範圍；
+  風險類型分布與問題排行是獨立的 SQL 投影，不套 scope；前期對比套同一 scope 才可比。KPI 的問題總數在每個範圍
+  都排除靜音中的問題（與 scope=all 的 SQL 聚合同口徑）。狀態推導與 `GetTodo`／問題查詢清單同源
   （`DayHandlingDerivation`）；「未指派」＝日層級無處理人且無進行中案件涵蓋。scope≠all 時
   低風險日一律排除（不在待辦語意內）、「處理進度」小圖隱藏（母體已抽掉已處理，恆 0%/100%
   無資訊量）。scope 存 URL（可分享；all 不留參數）、不入 localStorage（誠實預設）；
   KPI 下鑽 URL 附帶對應 `statuses=`／`unassigned=true`，點進去的筆數與卡片數字對得上。
+  點範圍 chip 後查詢先用該範圍，**載入成功才**成為目前範圍、chip 才亮起並寫回網址；失敗或已有更新的查詢時
+  chip 與網址維持上一次成功的範圍。查詢前先檢查區間：起日晚於迄日（或含首尾超過 366 天）直接 toast 擋下，
+  不送出請求也不換成骨架列，與後端 `from > to` 回 400 同口徑。
 - **列印/匯出**：`@media print` 樣式（隱藏側欄與工具鈕、卡片不裁切）——主管列印或另存 PDF
   給上級是真實使用情境，排版好看必須含列印版面。
 - API：`GET api/reports/summary?from=&to=&handlingScope=all|unresolved|open|unassigned`
@@ -1922,6 +2004,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **NetIQ 匯入即時落盤**：主機頁曾經的「排入匯入佇列」機制已整組移除，掃描/勾選精靈送出後
   即時落盤（不再等批次執行套用），精靈已搬離主機頁（現在在 §9.9a「匯入」分頁）。落盤邏輯為
   Core 純函數 `NetiqImportApplier`（新增/更新/孤兒復活三態），供 Web 與批次共用同一份規則。
+- **NetIQ 單筆登錄與啟停**：單筆登錄（`NetiqHostService.AddHost`）對**既有主機**，Sentinel 與角色描述省略（未選／空白）時沿用既有值，明確提供才覆寫
+  （與批次登錄 `BulkAddHosts` 同一判定）；群組與負責人不動。主機啟停（`SetActive`）以既有主機的複本只改 `Active`：**停用時保留孤兒標記**
+  （仍是原屬某台已移除 Sentinel 的孤兒，掃描精靈據此認出），**人工重新啟用才清除**孤兒標記。
 - 群組：三頁籤——使用者群組（builtin admin/manager 鎖刪除與 role；**派工池**欄為切換開關、切換即存，
   內建群組 disabled，`PUT api/admin/groups/{id}/dispatch-pool`）、主機群組、
   **授權矩陣**（列=user 角色群組、欄=主機群組、勾選=授權）。
@@ -2005,7 +2090,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   設計與退路詳見 docs/NETIQ-API-REFERENCE.md §3.5。
 - **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
-  另有「同時處理幾台 Sentinel」（`MaxParallelServers`，1＝完全依序處理）——
+  另有「每台主機每次執行最多回補幾天」（`BackfillDays`，預設 1＝只查前一天，範圍 1–365，實際上限夾在歷史資料保留天數；首次與非首次一律套用同一值，缺漏日不自動自癒）、
+  「單台 Sentinel 內同時開幾條批次查詢」（`MaxParallelQueriesPerServer`，預設 1＝完全依序，後端 `[Range(1, NetiqOptions.MaxParallelQueriesPerServerLimit)]` 上限 4，
+  與 `MaxParallelServers` 的乘積決定夜間分析的 DB 連線池上限，細節見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §6、§7）與
+  「同時處理幾台 Sentinel」（`MaxParallelServers`，1＝完全依序處理）——
   **上限收斂為 3**：表單 `max="3"`＋後端
   `[Range(1, NetiqOptions.MaxParallelServersLimit)]` 雙重把關，避免無上限地並行對多台
   Sentinel 開查詢造成 server 端負擔失控；既有存值超過上限時讀取自動夾住（不擋存檔，
@@ -2019,6 +2107,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   首輪會對 Sentinel 發即時查詢，請評估白天查詢負載（行為詳見 §9.3 詢問 AI 對話區塊一節）。
   此即時查詢為 **fallback**：對話先查風險 log 暫存（不受本開關影響），
   查無才用到本開關控制的即時查詢。
+- **NetIQ 取數的查詢對象限制**：只有位址是合法 IPv4、且 `Os` 標記為 `windows`／`linux` 的主機會被查詢；位址不是 IPv4 或作業系統標記無法辨識的主機，
+  逐台印警告（執行詳情與本趟警告）、標記該趟未完整、不查詢，也不進進度分母（機制見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §5）。
 - **離線示範資料開關**（`UseOfflineDemoData`，§13，**預設關閉＝真實連線**）：
   取代原 appsettings 的 `Netiq:DiscoveryClient`（Auto 讓 Development 預設假資料、方向顛倒）。
   開關**僅非 Production 顯示**（DTO 的 `CanUseOfflineDemo`）；三道保險擋正式環境——前端不顯示、
@@ -2045,7 +2135,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
   掃描機制採**涵蓋保證**設計（完整說明見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §3.4）：
   結果只有「完整／顯性警告不完整／顯性失敗」三種，不會靜默漏掉安靜主機。重掃時該
-  Sentinel×網段的已登錄主機在 server 端直接排除（無新機的重掃趨近免費），由 Service 合成回清單
+  Sentinel×網段的已登錄主機在 server 端直接排除（無新機的重掃趨近免費；已登錄清單不設全域總數上限，只依分段過濾），由 Service 合成回清單
   （`Exists=true`、名稱取 `DisplayName`），精靈畫面分組不變。精靈的網段勾選面板上方顯示
   `CoverageNote`（涵蓋語意說明）與 `Warnings`（超出掃描能力／排除語法未生效／頻道覆蓋疑慮等，
   每則都說得出下一步動作）。
@@ -2065,6 +2155,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
     則續看（不同台顯示提示、不接手——舊結果配上新選 Sentinel 的 OS 預設值匯入會錯配），
     已結束的舊工作則放掉識別、照常啟動新掃描。不保留識別的話，背景工作還在跑而重開精靈
     會啟動新掃描並吃到「已有掃描進行中」，使用者被鎖到工作自然結束為止。
+  - **輪詢的停止規則**：只有後端明確回「掃描工作不存在或已逾期」（實為 HTTP 400＋`validation_failed`，相容 404／`not_found`）才放棄工作並關閉精靈；
+    其他錯誤（網路、5xx、逾時）不放棄工作，連續失敗 3 次才停止輪詢、關閉精靈並提示「暫時無法取得掃描進度，請稍後重新開啟精靈」，成功一次即歸零。
+    連續失敗收尾時保留工作識別，重開精靈走上述接續路徑。
 - **掃描粒度下拉**（`scan-granularity-select`，請求欄位 `granularity`）：
   `24`＝每段 254 台（預設）／`26`＝每段 62 台（最細）。網段事件量大時選較細的粒度
   可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。無法解析或缺席一律當 `/24`。
@@ -2102,7 +2195,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   不稀釋純 Windows 環境的既有 13 步輸出（逐字不變，契約不破）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
   （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
-  （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁）
+  （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁）、
+  `POST api/admin/netiq/probe/metadata/start`（診斷分頁的「欄位形狀探測」，`Maintain`、寫稽核 `netiq_probe_run`；與一般診斷共用探測執行閘門，
+  只送一個近 1 小時、最多 3 筆事件的查詢，報告只列欄位名稱與形狀、不含任何值，30 秒期限；細節見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §8）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化**：設定項目多且長，
@@ -2309,6 +2404,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      熔斷（本輪 SMTP 整體異常、連續失敗 3 次即停止本輪剩餘寄送）跳過的
      收件人不計入這個跨輪計數——熔斷是「本輪沒嘗試」，不是這個收件人本身的問題。已暫停的
      收件人同時顯示在設定頁與 `/api/health/detail`（`SuspendedMailRecipients`）。
+     `/api/health/detail` 的 `MailContributionLedger` 帶出郵件貢獻帳本狀態：`OccupiedKeys`（已寄＋舊格式保留＋寄送中預約，去重）、`Limit`（12,000）、
+     `LastFullAtUtc`／`LastFullRecipient`（最近一次真的滿載略過的收件人，僅行程內記憶，重啟後清空）；
+     系統健康的背景工作表在佔用數達上限 90% 或有滿載紀錄時才多一列「郵件貢獻帳本」，否則不顯示。
      `/api/health/detail` 另有回饋二十輪 C 補上的首見日合併狀態：`IssueFirstSeenSeedState`
      （not_started／running／completed／skipped／failed）、`IssueFirstSeenSeedFailures`、
      `IssueFirstSeenSeedError`；連續失敗達 3 次即視為 degraded（見 DB-SPEC 首見日段）。
@@ -2370,6 +2468,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **選單位置**：側欄「系統」分組最下方。操作說明書本身對所有已登入者顯示；章節依
   manifest 的 `requires` 過濾，維護章節與首次啟動精靈連結需 `Maintain`。AI 提問端點另需
   `Maintain`，不因說明書放寬而開放。
+- **首次載入不捲動**：進頁（含帶 `#章節` hash）只選章不捲動，免得頁首被跳過；只有換章（點選、`hashchange`）才平滑捲到內文。
 - **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`icon`／
   `keywords[]`／`related[]`／`type`／`href`；`icon` 對應 `icons.svg` 的 symbol id，各章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇；
   `type`／`href` 欄位：`type` 省略時預設 `"markdown"`（既有章節零改動），
@@ -2459,8 +2558,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
   prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
   結構已為它預留素材。
-- API：`GET api/help/manual`（任何已登入者；回應依能力過濾章節）、`GET api/help/ask-available`、
-  `POST api/help/ask`（後兩者 `Maintain`）。
+- API：`GET api/help/manual`（任何已登入者；回應依能力過濾章節）、`GET api/help/ask-available`
+  （任何已登入者；沒有 `Maintain` 時回 `available=false`，前端因此不顯示問答卡）、`POST api/help/ask`（`Maintain`）。
 
 ### 9.9d `/setup` 首次啟動精靈（`Maintain`）
 
@@ -2568,7 +2667,8 @@ API：`PUT api/admin/settings/prtg`（PRTG 專屬更新）、
 
 這是 §9.9e 第四個頁籤裡的一張卡，不是獨立頁面——內容與 PRTG 高度相關，
 獨立一個選單項只會讓側欄變長。`/admin/calibration` 路由**保留為永久轉址**到
-`/admin/prtg#probe`，舊書籤與操作說明書的連結不致 404。API 與授權不變。
+`/admin/prtg#probe`，舊書籤與操作說明書的連結不致 404。API 需 `Maintain` 且持有 `ViewAll`（校準涵蓋全站資料，
+結論要可重現，不依檢視者的可見範圍變化）。
 
 本卡檢查門檻校準資料量，並匯出同一範圍的統計供分析；資料量判定與規則啟用條件（PRTG-SPEC §9a）分開，取得匯出檔不會啟用規則。**本卡沒有可儲存的設定欄位**；正式規則門檻走規則維護頁。摘要與完整匯出使用相同完整範圍，超出記憶體、輸出或一致性擷取限制時明示拒絕，不截斷資料後宣稱成功。
 
@@ -2609,7 +2709,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
     整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
 - **結果語意**：主程序與 AI 各自顯示「正常結束」或「已停止」；缺省／null 結果顯示「結果未知」。正常結束不表示 PRTG／AI 待補皆完成，需同時查看來源欄與待補數。AI 取消後拒絕 provider 晚到結果，保留完成紀錄及待補；目前版本的 Running workflow 在取消／例外時收尾，版本已更新者不覆寫。
-- **異常中斷（重啟時關閉）**：站台啟動時取得執行鎖後，把本行程啟動之前開始、仍未結束的執行（取數與 AI 皆是）補一列結束紀錄並標 `Interrupted`，狀態顯示「異常中斷」（與逾 6 小時未結束的「異常中斷」同一狀態），詳情多一則「站台重啟時發現此執行未正常結束」。拿不到執行鎖（另一個行程仍在跑）時整段略過。同一個排程窗口群組（`ScheduleCalculator.MostRecentWindowStart`）內第一筆中斷的排程執行不計入「已觸發」，因此窗口內或窗口結束 4 小時內會自動補跑一次；第二次中斷不再補，避免反覆崩潰時無限重跑。
+- **異常中斷（重啟時關閉）**：站台啟動時取得執行鎖後，把本行程啟動之前開始、仍未結束的執行（取數與 AI 皆是）補一列結束紀錄並標 `Interrupted`，狀態顯示「異常中斷」（與「本行程沒有持有、卻逾 6 小時未結束」的異常中斷同一狀態；本行程仍持有的執行不論跑多久都顯示執行中，`BatchRunStatus.Compute` 的 `heldByThisProcess`），詳情多一則「站台重啟時發現此執行未正常結束」。拿不到執行鎖（另一個行程仍在跑）時整段略過。同一個排程窗口群組（`ScheduleCalculator.MostRecentWindowStart`）內第一筆中斷的排程執行不計入「已觸發」，因此窗口內或窗口結束 4 小時內會自動補跑一次；第二次中斷不再補，避免反覆崩潰時無限重跑。
 - **PRTG 待補評估與上一趟**：閒置時 PRTG 卡多兩列（執行中不顯示）。「待補評估」列出排程下次會自動補評估的天數與最早日期，並指路「立即執行回望 N 天」可立即補；「上一趟」列出最近一趟取數第一個非成功日的結局與原因，原因為「規則庫沒有啟用中的 PRTG 規則」時附「前往規則維護」連結。資料來自 `GET status` 的 `prtgPendingDays`／`prtgLastIssue*`（`SchedulerHostedService.PrtgRunHealth`，一次讀最近 8 天執行紀錄）。
 - **PRTG 停用指引**：只向 Maintain 顯示維護入口，啟用方式是「擷取參數」勾選「啟用 PRTG 擷取」並儲存。保守策略的數值範圍選單不作啟用開關；停用時排程擷取／回填不跑，維護者仍可手動同步結構。
 - **三張卡各自承載什麼**：
@@ -2708,9 +2808,13 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   近日層被完整性閘門擋住時直接取積壓層；查詢以 `PendingAiQuery`（日期範圍＋方向）在 SQL 端排序，不放大批次。
   成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。完整性閘門（PRTG 證據指紋、事後追加 finding 重標待補、隔晚重判）見 docs/PRTG-SPEC.md §3。
 - **AI 呼叫節流**：全站單一 `IAiRequestGate`（Core `AiRequestGate`，DI 單例）——互動車道（`WebAiService` 的互動與對話兩個實例）
-  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每主機分片的實例、工作流恢復；取數路徑的深析關閉）
+  同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每輪共用的一個實例、工作流恢復；取數路徑的深析關閉）
   上限＝`AiConcurrency`（每次取許可時重讀）；互動在途時背景最多讓 30 秒。閘道在各實例自己的佇列之後取、`finally` 歸還，取消穿透。
-  每個 `AIService` 建構都要帶 `gate:`（`AiRequestGateTests` 掃 Core／Web 的 `new AIService(`）；未接時為 null 閘道＝只剩逐實例序列。
+  AI 排程一輪開始時解析一次 AI 設定並建一個 `AIService`，該輪所有主機分片共用；輪中改設定下一輪才生效。
+  例外：設定頁「測試連線」的 `AiProbeService` 以自己的 `HttpClient` 送一次 `max_tokens=1` 的請求，不經閘道（單次、使用者手動觸發）。
+  閘道參數在 `AIService`、`AnalysisOrchestrator`、`AiAnalysisHostedService`、`HostDayWorkflowRecoveryHostedService`、`WebAiService` 皆為必填（傳 null 擲例外）；
+  `AiRequestGateTests` 以正式 DI 解析三個 AI 消費端、斷言拿到的是全站閘道，並以反射守住各建構式的閘道參數非 nullable、無預設值。
+  只有測試明確傳 `NullAiRequestGate.Instance` 取得不節流行為。
 - **閒置原因**：AI 排程每輪輪詢有多個前置條件，任一不成立就整輪不跑，而狀態卡只顯示
   「閒置＋N 件待補」，使用者無從分辨是設定沒開、不在窗口、還是真的沒事做。
   `GET ai-status` 因此帶 `idleReason`（執行中為 null；字面值見 `AiIdleReasons`：
@@ -2723,12 +2827,13 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   `no-pending` 不需要說明（待補為 0 本身就講完了）。
 - **待補件數快取 30 秒**：該查詢在實機要 7~15 秒，而狀態卡執行中每 3 秒輪詢一次
   ——不快取等於自己把資料庫打慢。AI 排程每輪收尾與整批重標時使快取失效。
+  AI 排程的閒置輪詢與狀態 API 共用這份快取；跟隨取數期間（取數執行中與結束後 10 分鐘）與取數的即時觸發先使快取失效再實查，
+  取數剛寫入的待補才不會被取數前留下的「0 件」擋住。處理迴圈只在每輪開頭實查一次，之後以「本批前總數－本批完成數」估算，
+  只有整批全部失敗時才實查確認是否結束本輪。
   **查詢刻意在鎖外執行**：那把鎖同時保護 AI 排程的開始與結束，
   在鎖內查會讓畫面輪詢卡住排程狀態機十幾秒。
-- **改名與權限放寬**：側欄由「執行監控」改名
-  「排程作業」；權限由單一 `DevMonitor` 放寬為 **DevMonitor 或 Maintain 任一**（OR 語意，
-  `PermissionAttribute` 擴為 `params Capability[]`）——修正 serverAdmin 有 Maintain 卻進不了
-  排程設定所在頁面的缺口。dev 進得來但只能看；排程設定／立即執行／停止等會動到系統的操作
+- **頁名與權限**：側欄名稱為「排程作業」；權限為 **DevMonitor 或 Maintain 任一**（OR 語意，
+  `PermissionAttribute` 接受 `params Capability[]`）——serverAdmin 只有 Maintain 也要能進排程設定所在頁面。dev 進得來但只能看；排程設定／立即執行／停止等會動到系統的操作
   僅 `Maintain`（前端以 `data-maintain-only` 整批隱藏，後端各 API 逐一標註）。
 - **排程設定卡**：頁頂新增——
   Enabled 開關（預設關，升級後零行為變化）、執行窗口清單編輯（最多 4 組 Start→End，支援
@@ -2778,8 +2883,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   晚到的舊值不得把進度往回拉）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
-- **開始時間／已耗時**：狀態 API 的 `startedAt` 欄位早就
-  存在，只是前端從未顯示——原本只看得到「執行中」，看不出何時開始、跑了多久。前端每秒
+- **開始時間／已耗時**：狀態卡依狀態 API 的 `startedAt` 顯示開始時間與已耗時。前端每秒
   本地計時，輪詢回來時用 `startedAt` 重設校正飄移（分頁背景、系統睡眠都可能讓
   `setInterval` 累積誤差）。
 - **執行進度條**：狀態卡在執行中顯示**三條**進度軌——
@@ -2813,38 +2917,36 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）：
   取數側由 `SchedulerRunState.LatestActivity()` 單點決定（netiq 主進度優先、本機次之、PRTG 最後）；
   `/api/run-activity` 在取數閒置時輪到 AI 排程（單位「件」）——優先序 取數 > AI。
-  **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 原本嚴格
-  「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
-  再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
+  **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 以 `Task.WhenAll` 並行本機與 NetIQ——2000 台規模下本機回補多天時，NetIQ 不必
+  空等本機，兩者寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
   `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。本機
   與 NetIQ 各自一條進度軌、互不覆蓋（結構見上方「三軌進度收成單一型別」；並行後兩路同時回報，
   共用一組欄位會出現「進度卡住不動」）；status API 各帶一組欄位，狀態卡畫出對應的進度條
   （只在有值時顯示，不像 NetIQ 主進度條「執行中就無條件顯示準備中」——`NetiqHosts` 範圍時
-  本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都改成
+  本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都是
   「有回報過才顯示」）。失敗語意維持嚴格：任一路未攔截的例外仍讓整趟判定失敗，`Task.WhenAll`
   保證回傳的 Task 要等兩個輸入 Task 都進入終態才完成，`runRecorder.Finish()`／`Dispose()`
   （單一匯合點呼叫，未加鎖）與 `IssueCaseCoordinator`（`RecordHandlingLog.LogId` 靠實例層級
   鎖擋撞號）因此不受影響——兩路共用同一個 `AnalysisRunContext` 執行個體是這裡安全的前提，
   不是巧合，未來異動不能讓任一路各自另建一份。連線池上限 `AnalysisMaxPoolSize` 再 +1，
   覆蓋本機迴圈現在會與 NetIQ 峰值並行度同時競爭連線的情境。
-  **NetIQ 完工訊號**：並行後 NetIQ 若比本機早跑完（主機少、本機在
-  回補多天缺漏），`ProgressPhase` 原本只在整趟執行的 `TryBeginRun`/`EndRun` 才會被清空，NetIQ
-  跑完後不會主動清掉自己的欄位——單一告示讀取端（`/api/run-activity`、健康診斷）的
-  `LatestActivity()` 因此會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
-  `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）改送一個特殊 phase
+  **NetIQ 完工訊號**：NetIQ 可能比本機早跑完（主機少、本機在
+  回補多天缺漏），而 `ProgressPhase` 只在整趟執行的 `TryBeginRun`/`EndRun` 清空——若 NetIQ
+  不主動清掉自己的欄位，單一告示讀取端（`/api/run-activity`、健康診斷）的
+  `LatestActivity()` 會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
+  `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）送一個特殊 phase
   （`RunPhases.NetiqDone`）通知 `SchedulerRunState` 清空
   netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
   NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
   一併消失，不是副作用。
   **Pipeline 警告上收**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
-  「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。
+  「…（完整清單見執行詳情）」，不必到單次執行詳情逐條翻找。
 - **三頁籤**：執行總表／
   異常彙總／執行紀錄，沿用設定頁既有的 `nav-tabs`＋`bindTabs` 模式；天數篩選與圖例移到頁籤列
   下方，三頁籤共用同一次 API 抓回的資料（`load()` 一次 `Promise.all` 三支端點），切頁籤只是
-  切換面板可見度，不重打 API。**實作踩坑**：頁籤 `<ul>` 一開始被包進日期篩選的 flex 容器裡，
-  `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，面板卻在容器外找不到——瀏覽器實測
-  抓到，改回頁籤與面板同一層手足元素（比照 `#settings-tabs` 的既有結構）才修正。
+  切換面板可見度，不重打 API。頁籤 `<ul>` 與面板必須是同一層手足元素（比照 `#settings-tabs`）：
+  `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，頁籤若被包進日期篩選的 flex 容器就找不到面板。
   - **執行總表**（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
     未執行計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面
     最下方的下鑽卡）。
@@ -2866,7 +2968,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     執行詳情 modal。
   - 單次執行詳情（改 `showDetailModal`，統計＋逐條 log，等級篩選、exception 展開）。
 - **本機主機的「已回補」狀態**（§3）：立即執行回補會把缺漏日的分析紀錄補到
-  被補的那些日期，但 `BatchRun` 只登記在觸發當天——被回補日期原本誤顯示「未執行」。
+  被補的那些日期，但 `BatchRun` 只登記在觸發當天——被回補日期若只看 `BatchRun` 會顯示「未執行」。
   `RunMonitorService` 對 local 主機在當日無 BatchRun 時 fallback 查「D-1 是否有分析紀錄」
   （與 NetIQ 同一套日期對應、同一次 `ListHostDates` 查詢），存在則標新狀態 `backfilled`
   （「已回補」淺綠）——刻意不冒充 success，「當天真的有跑」與「後來補的資料」要分得出來。
@@ -2882,20 +2984,20 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **「已停止」狀態**（§1.4.4）：手動停止或窗口 End 的優雅停止回填
   `BatchRun.Stopped`（JSON 缺欄容忍，零遷移）＋里程碑「執行已優雅停止…」——是獨立狀態、
   不是失敗也不卡執行中；不列入失敗主機清單，剩餘缺漏日由下次執行自動回補。
-- **觸發來源欄**：`BatchRun.Trigger`（`schedule`／`manual:{帳號}`／`console`；舊紀錄 null
+- **觸發來源欄**：`BatchRun.Trigger`（`schedule`／`fetch-followup`（AI 跟隨取數）／`manual:{帳號}`／`console`；舊紀錄 null
   與 console 統一顯示「工作排程器」——升級前唯一的觸發來源，語意等價）。
-- **矩陣為每日彙總**：舊版「主機×日期」色格矩陣在兩千台 × 90 天下會炸出
-  最多 18 萬格 DOM。改成每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
-  點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。原 `BuildCell` 狀態判定邏輯保留。
+- **矩陣為每日彙總**：「主機×日期」色格在兩千台 × 90 天下會有
+  最多 18 萬格 DOM，因此每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
+  點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。狀態判定在 `BuildCell`。
 - **NetIQ 主機的執行狀態以分析紀錄判定**：NetIQ 主機沒有個別的
   `lf_batch_runs` 紀錄（`NetiqPipelineService` 只以跑批次的那台機器名義登記彙總的一筆），
-  逐台比對 `BatchRun.HostName` 因此永遠比不到，恆顯示「未執行」。改為 `RunMonitorService`
-  依 `WebHost.Source` 分流：`local` 主機沿用原 `BuildCell` 邏輯；`netiq` 主機改查
+  逐台比對 `BatchRun.HostName` 永遠比不到。`RunMonitorService` 因此
+  依 `WebHost.Source` 分流：`local` 主機走 `BuildCell`；`netiq` 主機查
   `IAnalysisRecordQuery.ListHostDates`（只投影 HostId／RecordDate 的輕量查詢），
   監控日 D 對應「D-1 是否有分析紀錄」（管線在晚上跑、回補的是昨天的缺漏日）。
   只能判斷 success／none 兩態——分析失敗時管線刻意不寫入紀錄，與「沒跑」在資料面等價，
   是誠實的合併不是遺漏。已知取捨：主機首次回補多天歷史時，過去日期的列會回溯顯示成功。
-  單日明細（本地排序＋分頁）與異常彙總（本地排序）也改用 §8.6-2/7 的共用機制。
+  單日明細（本地排序＋分頁）與異常彙總（本地排序）使用 §8.6-2/7 的共用機制。
 - API：`GET api/runs/summary?days=&page=&pageSize=`（回應含 `items/totalDays/totalPages/page/
   pageSize/maxDays`；天數上限 `max(90, RunLogRetentionDays)`，`maxDays` 供前端「全部」鈕取值、
   不在前端寫死；分頁以最新一頁為第 1 頁、只計算當頁日期，errors/list 的天數上限同一套）、
@@ -2976,14 +3078,14 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `NetiqOptionsStore`（介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore` | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
 | `WorkOrderOutboxStore` | blob `work_order_outbox`（單一物件：交辦通知待寄項目，key 由種類、單號、收件人、入列時間 ticks 組成；入列時間為本地時間，上限 2 萬筆；寄送規則見 §9.4b「通知」） | Web＋批次（夜間派工入列） |
-| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）） | Web |
+| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）、先落庫再寄的即時通知意圖 `UrgentOutbox`、郵件貢獻帳本（已寄 `AcceptedMailContributionReceipts`、舊格式保留 `HeldLegacyMailContributionReceipts`，皆 180 天清理；寄送中預約 `MailContributionReservations`，`reserved` 逾 5 分鐘釋放、`attempted`／`unknown` 不自動釋放；三者合計上限 12,000 鍵，預約失敗時鍵已被佔用記 Info、滿載記 Warn）、交辦摘要各時刻最後寄出日 `WorkOrderDigestLastSentSlots`、資料過期警示旗標與日期） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；含 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬；交辦單成員） | Web＋批次 |
 | `IWorkOrderStore` | **表 `lf_work_orders`／`lf_work_order_events`**（交辦單與事件，§9.4b；清單、看板、處理人摘要皆單句 SQL 聚合） | Web＋批次 |
 | `IIssueAggregateQuery` | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
-| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題負責與靜音」頁維護） | Web |
+| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論＋靜音區間 `Mutes`，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題負責與靜音」頁維護；負責人、結論、靜音各入口以 `Update` 在同一互斥區塊內只改自己的欄位，`Upsert` 只用於整列覆寫） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
@@ -3105,7 +3207,7 @@ temp 檔＋`File.Replace` 手法。
   前端另擋下界（<1）；兩條路徑的天數在 `AnalysisOrchestrator` 內**再夾一次**（防設定被事後調小——
   `NetiqPipelineService.ResolveLookbackDays` 只夾 `MaxBackfillDaysLimit`，保留期上限由呼叫端負責）。
 - **逐日就地取代，不整批預刪**：原始事件不存 DB，整批預刪會把「舊結果尚在、新資料取不到」的日子
-  變成永久空洞。刪除**緊貼寫入之前**（本機在 `LogAnalysisService.AnalyzeDayAsync` 的 `replaceExisting`
+  變成永久空洞。刪除**緊貼寫入之前**（本機在 `LogAnalysisService.AnalyzeDayStatisticalAsync` 的 `replaceExisting`
   分支、NetIQ 在 `BuildStatisticalRecordAsync` 之後）——分析途中拋例外（AI 逾時、取消）時舊紀錄還在。
 - **什麼時候保留原結果不取代**：`HostDayPostProcessor.ShouldRetainExistingDay` 是兩條路徑共用的單一
   判準——來源零事件、該日取數不完整（來源已滾掉部分事件／查詢被截斷）、來源降級（本機頻道存取被拒）
@@ -3189,6 +3291,9 @@ target 名稱也帶 runId 以免互相移除。
 
 一般設定與 PRTG 專屬 PUT 要求 `expectedRevision`（來自 GET 的 `revision`）；缺值回驗證錯誤、舊值回 409。PRTG 頁衝突對話框提供「保留目前輸入」及「重新載入」。
 人工對應／排除另帶 `expectedScopeRevision`，過期回衝突；批次遇競爭停止後續並列明已成功項目。全站對應／排除須全站主機維護範圍，案件授與不成立。
+PRTG 維護頁在取數範圍版本（`scopeRevision`）載入完成前，排除 IP、移除排除、移除人工對應、單台指派、衝突指派、批次指派
+六個寫入點一律先經 `requireScopeRevision()`：未載入就 toast「取數範圍尚未載入完成，請稍候再試」並中止，
+不送出帶空版本的請求（`FrontendMiscUiTests` 逐一守門）。
 
 ### PRTG 快照待寫狀態
 

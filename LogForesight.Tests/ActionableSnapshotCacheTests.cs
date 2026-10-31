@@ -15,8 +15,8 @@ public class ActionableSnapshotCacheTests
     public void TTL內命中_逾期後失效()
     {
         var now = new DateTime(2026, 9, 1, 10, 0, 0);
-        var cache = new ActionableSnapshotCache(() => now);
-        var key = ActionableSnapshotCache.KeyOf(
+        var cache = new ActionableSnapshotCache(new DataVersionStamp(), () => now);
+        var key = ActionableSnapshotCache.KeyOf(0, 
             new DateTime(2026, 8, 25), new DateTime(2026, 8, 31), new long[] { 1, 2 }, null, null, IssueExclusion.None.CacheToken);
 
         cache.Set(key, EmptySnapshot());
@@ -37,23 +37,23 @@ public class ActionableSnapshotCacheTests
 
         // 同一集合不同順序 → 同一鍵
         Assert.Equal(
-            ActionableSnapshotCache.KeyOf(from, to, new long[] { 2, 1 }, new[] { "高", "中" }, null, IssueExclusion.None.CacheToken),
-            ActionableSnapshotCache.KeyOf(from, to, new long[] { 1, 2 }, new[] { "中", "高" }, null, IssueExclusion.None.CacheToken));
+            ActionableSnapshotCache.KeyOf(0, from, to, new long[] { 2, 1 }, new[] { "高", "中" }, null, IssueExclusion.None.CacheToken),
+            ActionableSnapshotCache.KeyOf(0, from, to, new long[] { 1, 2 }, new[] { "中", "高" }, null, IssueExclusion.None.CacheToken));
 
         // 不同主機集合／不同風險等級 → 不同鍵（不得串味）
         Assert.NotEqual(
-            ActionableSnapshotCache.KeyOf(from, to, new long[] { 1 }, null, null, IssueExclusion.None.CacheToken),
-            ActionableSnapshotCache.KeyOf(from, to, new long[] { 1, 2 }, null, null, IssueExclusion.None.CacheToken));
+            ActionableSnapshotCache.KeyOf(0, from, to, new long[] { 1 }, null, null, IssueExclusion.None.CacheToken),
+            ActionableSnapshotCache.KeyOf(0, from, to, new long[] { 1, 2 }, null, null, IssueExclusion.None.CacheToken));
         Assert.NotEqual(
-            ActionableSnapshotCache.KeyOf(from, to, new long[] { 1 }, new[] { "高" }, null, IssueExclusion.None.CacheToken),
-            ActionableSnapshotCache.KeyOf(from, to, new long[] { 1 }, new[] { "高", "中" }, null, IssueExclusion.None.CacheToken));
+            ActionableSnapshotCache.KeyOf(0, from, to, new long[] { 1 }, new[] { "高" }, null, IssueExclusion.None.CacheToken),
+            ActionableSnapshotCache.KeyOf(0, from, to, new long[] { 1 }, new[] { "高", "中" }, null, IssueExclusion.None.CacheToken));
     }
 
     [Fact]
     public void 命中回傳副本_呼叫端修改不影響快取()
     {
-        var cache = new ActionableSnapshotCache(() => new DateTime(2026, 9, 1));
-        var key = ActionableSnapshotCache.KeyOf(new DateTime(2026, 8, 25), new DateTime(2026, 8, 31), null, null, null, IssueExclusion.None.CacheToken);
+        var cache = new ActionableSnapshotCache(new DataVersionStamp(), () => new DateTime(2026, 9, 1));
+        var key = ActionableSnapshotCache.KeyOf(0, new DateTime(2026, 8, 25), new DateTime(2026, 8, 31), null, null, null, IssueExclusion.None.CacheToken);
 
         cache.Set(key, EmptySnapshot());
         var first = cache.TryGet(key)!;
@@ -61,5 +61,31 @@ public class ActionableSnapshotCacheTests
 
         var second = cache.TryGet(key)!;
         Assert.Empty(second);
+    }
+
+    [Fact]
+    public void 可行動快照快取_版本推進後不命中_未推進則命中()
+    {
+        var stamp = new DataVersionStamp();
+        var cache = new ActionableSnapshotCache(stamp, () => new DateTime(2026, 9, 1));
+        var calls = 0;
+        List<ResolvedOccurrence> GetOrAdd()
+        {
+            var key = ActionableSnapshotCache.KeyOf(cache.Version, new DateTime(2026, 8, 25), new DateTime(2026, 8, 31), null, null, null, IssueExclusion.None.CacheToken);
+            var hit = cache.TryGet(key);
+            if (hit != null) return hit;
+            calls++;
+            var v = EmptySnapshot();
+            cache.Set(key, v);
+            return v;
+        }
+
+        GetOrAdd();
+        GetOrAdd();
+        Assert.Equal(1, calls);
+
+        stamp.Bump();
+        GetOrAdd();
+        Assert.Equal(2, calls);
     }
 }

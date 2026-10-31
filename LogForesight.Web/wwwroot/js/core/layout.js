@@ -8,6 +8,7 @@
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
+import { safeStorage } from './storage.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
 import { startBadgePolling } from './badges.js';
@@ -254,7 +255,7 @@ function bindSectionToggle(toggle, itemsWrap, label) {
     toggle.setAttribute('aria-controls', itemsWrap.id);
     toggle.setAttribute('aria-expanded', 'true');
 
-    const manual = localStorage.getItem(sectionStorageKey(label));
+    const manual = safeStorage.get(sectionStorageKey(label));
     if (manual === 'true') setSectionCollapsed(toggle, itemsWrap, true);
 
     toggle.addEventListener('click', () => {
@@ -262,7 +263,7 @@ function bindSectionToggle(toggle, itemsWrap, label) {
         // 用屬性的有無反推狀態容易搞反第一次點擊的方向
         const collapsed = itemsWrap.classList.contains('is-collapsed');
         setSectionCollapsed(toggle, itemsWrap, !collapsed);
-        localStorage.setItem(sectionStorageKey(label), String(!collapsed));
+        safeStorage.set(sectionStorageKey(label), String(!collapsed));
     });
 }
 
@@ -283,7 +284,7 @@ function autoCollapseIfNeeded() {
     if (!nav || !toggle) return;
 
     const label = toggle.dataset.section;
-    if (localStorage.getItem(sectionStorageKey(label)) !== null) return;   // 使用者已手動設定過，不介入
+    if (safeStorage.get(sectionStorageKey(label)) !== null) return;   // 使用者已手動設定過，不介入
 
     const itemsWrap = toggle.nextElementSibling;
     const overflowing = nav.scrollHeight > nav.clientHeight;
@@ -349,7 +350,7 @@ function bindLogout(user) {
  * 回來才縮放造成閃動。中＝預設，不覆寫倍率。
  */
 function initFontScale() {
-    applyFontScale(localStorage.getItem('lf.fontScale') || 'medium');
+    applyFontScale(safeStorage.get('lf.fontScale') || 'medium');
 
     const group = document.getElementById('lf-font-scale');
     if (!group) return;
@@ -358,7 +359,7 @@ function initFontScale() {
         const button = event.target.closest('[data-scale]');
         if (!button) return;
         applyFontScale(button.dataset.scale);
-        localStorage.setItem('lf.fontScale', button.dataset.scale);
+        safeStorage.set('lf.fontScale', button.dataset.scale);
     });
 }
 
@@ -714,7 +715,7 @@ function caseDaySyncBar(activity) {
     bar.setAttribute('aria-live', 'polite');
 
     const text = document.createElement('span');
-    text.textContent = `案件逐日同步：待處理 ${formatNumber(pending)} 件，背景處理中，儀表板與報表數字稍後會更新。`;
+    text.textContent = `交辦逐日同步：待處理 ${formatNumber(pending)} 件，背景處理中，儀表板與報表數字稍後會更新。`;
     bar.appendChild(text);
     return bar;
 }

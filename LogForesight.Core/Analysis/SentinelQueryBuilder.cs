@@ -1,7 +1,7 @@
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §4「watchlist→Lucene 產生器」）。
+/// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §5 查詢 payload）。
 /// Windows／Linux 各自的 <c>Build{Os}Filter</c> 分支，皆依真實 probe 樣本定案
 /// （docs/archive/FEEDBACK-12-PLAN.md §4.0，四輪 probe，Sentinel「118_linux」）。
 /// </summary>
@@ -37,9 +37,22 @@ public static class SentinelQueryBuilder
         return $"{ipClause} AND {contentClause}";
     }
 
-    /// <summary>單獨曝露 IP 批次子句，供 Q3（風險主機原始 log，單台小查詢）等其他查詢重用同一組寫法。</summary>
-    public static string BuildIpClause(IReadOnlyList<string> hostIps) =>
-        $"({string.Join(" OR ", hostIps.Select(ip => $"{SentinelFieldMap.HostIp}:{ip}"))})";
+    /// <summary>
+    /// 單獨曝露 IP 批次子句，供 Q3（風險主機原始 log，單台小查詢）等其他查詢重用同一組寫法。
+    /// 只放行合法 IPv4（見 <see cref="IsValidIpv4"/>）：IP 會原樣插進 Lucene，一個壞值
+    /// （IPv6、短格式、亂字串）會讓同批所有主機被 Sentinel 以 400 整批拒絕。
+    /// </summary>
+    /// <exception cref="ArgumentException">沒有任何合法 IPv4——不建只剩空括號的子句。</exception>
+    public static string BuildIpClause(IReadOnlyList<string> hostIps)
+    {
+        var valid = hostIps.Where(IsValidIpv4).ToList();
+        if (valid.Count == 0)
+        {
+            throw new ArgumentException("沒有任何合法的 IPv4 位址可建立查詢子句。", nameof(hostIps));
+        }
+
+        return $"({string.Join(" OR ", valid.Select(ip => $"{SentinelFieldMap.HostIp}:{ip}"))})";
+    }
 
     /// <summary>
     /// 事件內容子句：規則事件 ID 聯集 OR generic 錯誤收集。兩者是 OR，任一命中即收——
@@ -323,15 +336,15 @@ public static class SentinelQueryBuilder
         return $" AND NOT ({string.Join(" OR ", valid.Select(ip => $"{SentinelFieldMap.HostIp}:{ip}"))})";
     }
 
-    /// <summary>完整四段 IPv4 且每段 0~255。刻意不接受簡寫或前綴——排除清單的每一筆
+    /// <summary>完整四段十進位 IPv4 且每段 0~255（呼叫端亦用它濾掉進不了 Lucene 子句的主機位址）。刻意不接受簡寫或前綴——排除清單的每一筆
     /// 都該是一台明確的主機，模糊的排除會讓涵蓋保證失去意義。</summary>
-    private static bool IsValidIpv4(string? ip)
+    public static bool IsValidIpv4(string? ip)
     {
         if (string.IsNullOrWhiteSpace(ip)) return false;
 
         var octets = ip.Split('.');
         return octets.Length == 4 &&
-               octets.All(o => o.Length > 0 && int.TryParse(o, out var v) && v is >= 0 and <= 255);
+               octets.All(o => o.Length is >= 1 and <= 3 && o.All(char.IsAsciiDigit) && int.TryParse(o, out var v) && v is >= 0 and <= 255);
     }
 
     /// <summary>

@@ -50,17 +50,25 @@ public static class RiskLevels
         _ => All
     };
 
-    /// <summary>從 AI 回傳的風險等級文字（或 JSON 解析失敗時的原文）歸一化為 高/中/低/未知</summary>
-    public static string Normalize(string text)
+    /// <summary>
+    /// 從 AI 回傳的 <c>risk_level</c> 欄位文字歸一化為 高/中/低/未知。
+    /// 只接受「去前後空白後長度 ≤ 4、且第一個字是 高／中／低」的短字串（如「高」「高風險」「中等」）；
+    /// 其餘一律「未知」，避免「其中」「中斷」「高度」這類自由文字中的單字被誤判成等級。
+    /// </summary>
+    public static string Normalize(string? text)
     {
-        foreach (var level in All)
+        if (string.IsNullOrWhiteSpace(text))
         {
-            if (text.Contains(level))
-            {
-                return level;
-            }
+            return "未知";
         }
 
-        return "未知";
+        var trimmed = text.Trim();
+        if (trimmed.Length > 4)
+        {
+            return "未知";
+        }
+
+        var first = trimmed[0].ToString();
+        return All.Contains(first) ? first : "未知";
     }
 }

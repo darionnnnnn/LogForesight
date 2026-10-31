@@ -27,6 +27,7 @@ import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
 import { openIssueMuteModal } from './issue-mute-modal.js';
 import { bindRangeChips } from '../core/date-range.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -407,7 +408,12 @@ const ENDPOINT = {
     issue: '/api/records/by-issue'
 };
 
+// 查詢序號守門：視角切換、連續篩選都會重發查詢，舊回應晚到不得蓋掉新結果
+const searchGuard = createSeqGuard();
+
 async function search() {
+    const seq = searchGuard.next();
+    const view = currentView;
     const filters = collectFilters();
     const query = buildQueryString(filters, currentPage);
 
@@ -418,7 +424,19 @@ async function search() {
     document.getElementById('ai-summary').replaceChildren();   // 篩選變了，舊的 AI 歸納作廢
     renderLoading(listContainer, 6);
     // 帶處理狀態篩選時是整個保留期的記憶體推導，大站台會超過預設 60 秒
-    lastResult = await api.get(`${ENDPOINT[currentView]}?${query}`, { timeoutMs: 120000 });
+    let result;
+    try {
+        result = await api.get(`${ENDPOINT[view]}?${query}`, { timeoutMs: 120000 });
+    } catch {
+        // 過期請求的失敗不用理；目前這一次失敗才顯示失敗態（骨架列不可永留）
+        if (searchGuard.isCurrent(seq) && view === currentView) {
+            renderError(listContainer, { onRetry: search });
+        }
+        return;
+    }
+    // 視角已切換或已有更新的查詢：舊回應的資料形狀可能與目前視角不符，直接丟棄
+    if (!searchGuard.isCurrent(seq) || view !== currentView) return;
+    lastResult = result;
     render();
 }
 
@@ -626,7 +644,7 @@ function handlingCell(record) {
 function handlerCell(record) {
     if (!record.handlerId || !record.handlerName) return record.handlerName ?? '';
 
-    const suffix = record.handlerFromCase ? '（案件）' : '';
+    const suffix = record.handlerFromCase ? '（交辦）' : '';
     // 只有本人或具 Assign／ViewAll 才開得了處理人頁，其餘只輸出姓名文字
     const linkable = canViewHandlerPage(currentUser, record.handlerId);
     const link = document.createElement(linkable ? 'a' : 'span');
@@ -752,7 +770,7 @@ function renderIssueView() {
         {
             title: '處理概況',
             className: 'text-nowrap',
-            renderHeader: () => headerWithHelp('處理概況', '受此問題影響的主機目前處理狀態分佈。分為未指派或待確認的「未處理」、已有案件或跟進中的「處理中」，以及已結案或確認為雜訊/誤報的「已處理」台數。', '處理概況'),
+            renderHeader: () => headerWithHelp('處理概況', '受此問題影響的主機目前處理狀態分佈。分為未指派或待確認的「未處理」、已有交辦或跟進中的「處理中」，以及已結案或確認為雜訊/誤報的「已處理」台數。', '處理概況'),
             render: i => issueHandlingSummaryCell(i)
         },
         { title: '處理人', render: i => issueHandlersCell(i) },
@@ -1273,7 +1291,7 @@ function renderBulkCloseForm(body, group, preview) {
 
     const scopeNote = document.createElement('div');
     scopeNote.className = 'lf-hint mb-3';
-    scopeNote.textContent = '只套用到「尚未有人接手」的主機——已建立案件的主機一律略過（要換結論請由處理人回覆或先改派）。' +
+    scopeNote.textContent = '只套用到「尚未有人接手」的主機——已建立交辦的主機一律略過（要換結論請由處理人回覆或先改派）。' +
         '本操作只對上列期間內的既有紀錄下結論；規則未調整前，之後的新日子仍會產生同類問題' +
         '（標「已知雜訊」除外——會為這些主機寫入雜訊記憶，之後同問題自動標示）。';
     form.appendChild(scopeNote);
@@ -1521,7 +1539,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     // 1. 常駐說明（lf-hint）
     const hint = document.createElement('div');
     hint.className = 'lf-hint mb-3';
-    hint.textContent = '交辦會建立交辦單：這個問題在選取主機上的案件都掛在同一張單，處理人回覆一次就套用到整張單。之後同一問題的新風險日會自動掛進單裡，直到結案。';
+    hint.textContent = '交辦會建立交辦單：這個問題在選取主機上的交辦都掛在同一張單，處理人回覆一次就套用到整張單。之後同一問題的新風險日會自動掛進單裡，直到結案。';
     form.appendChild(hint);
 
     // 2. 交辦給：單一使用者／使用者群組（平均分攤）
@@ -1577,7 +1595,7 @@ function renderWorkOrderForm(body, group, users, groups) {
     const splitSelect = document.createElement('select');
     splitSelect.className = 'form-select form-select-sm w-auto';
     for (const option of [
-        { value: 'byLoad', label: '依現有負載（手上案件少的人多分）' },
+        { value: 'byLoad', label: '依現有負載（手上交辦少的人多分）' },
         { value: 'roundRobin', label: '平均輪流（每人台數盡量相同）' }
     ]) {
         const el = document.createElement('option');
@@ -1975,7 +1993,7 @@ function renderWorkOrderForm(body, group, users, groups) {
             }
 
             if (result.assigneeNoAccessTotal > 0) {
-                toast(`${result.assigneeNoAccessTotal} 台不在對方的檢視範圍（對方仍可經由案件看到被交辦的問題）`, 'warning');
+                toast(`${result.assigneeNoAccessTotal} 台不在對方的檢視範圍（對方仍可經由交辦看到被交辦的問題）`, 'warning');
             }
 
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
@@ -2152,7 +2170,7 @@ function csvRow(item) {
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
     const handler = item.handlerName
-        ? formatUserName(item.handlerName, item.handlerAccount) + (item.handlerFromCase ? '（案件）' : '')
+        ? formatUserName(item.handlerName, item.handlerAccount) + (item.handlerFromCase ? '（交辦）' : '')
         : '';
     return [item.date, quote(item.hostName), item.riskLevel, quote(item.headline),
         cats(item.categories), quote(item.handlingStatusText), quote(handler)];

@@ -88,4 +88,28 @@ public class OccurrenceStatusResolverTests
         Assert.Equal(HostIssueStatus.Open, item.Status);
         Assert.False(item.InheritedFalsePositive);
     }
+
+    [Fact]
+    public void 舊資料SeverityRank3_CriticalRow_在未處理為High時計入未處理()
+    {
+        // 三級化前寫入的 Critical（rank 3）正規化為 High；未處理等級只含 High 時必須算作 Open。
+        _settings.Update(s => s.UnhandledSeverities = ["High"]);
+        var host = _hosts.Upsert(new WebHost { HostName = "host-legacy" });
+        var issueKey = IssueSignatureKey.For("System", "Legacy", 1, EventLogEntryType.Error, "");
+        var day = new DateTime(2026, 9, 10);
+        var occurrences = new[]
+        {
+            new HostIssueOccurrence
+            {
+                HostId = host.HostId,
+                IssueKey = issueKey,
+                LastSeen = day,
+                SeverityRank = 3
+            }
+        };
+
+        var item = Assert.Single(Resolver().Resolve(occurrences, day, day));
+
+        Assert.Equal(HostIssueStatus.Open, item.Status);
+    }
 }

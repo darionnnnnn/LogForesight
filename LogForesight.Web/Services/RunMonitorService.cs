@@ -21,6 +21,7 @@ public class RunMonitorService
     private readonly IUserDisplayNameService _displayNameService;
     private readonly HostDayWorkflowService? _workflow;
     private readonly StorageBackend? _backend;
+    private readonly Func<BatchRun, bool> _isHeld;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     internal static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -30,8 +31,10 @@ public class RunMonitorService
 
     public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users,
         ScheduleOptionsStore scheduleOptions, IUserDisplayNameService displayNameService,
-        HostDayWorkflowService? workflow = null, StorageBackend? backend = null)
+        HostDayWorkflowService? workflow = null, StorageBackend? backend = null,
+        SchedulerRunState? schedulerState = null, AiAnalysisRunState? aiState = null)
     {
+        _isHeld = run => (schedulerState?.HoldsRun(run) ?? false) || (aiState?.HoldsRun(run) ?? false);
         _runs = runs;
         _hosts = hosts;
         _records = records;
@@ -243,13 +246,13 @@ public class RunMonitorService
         catch (InvalidDataException) { available = false; return new Dictionary<(long, DateTime), NetiqSourceAttempt.Receipt>(); }
     }
 
-    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,
+    private string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date,
         HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled,
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
         IReadOnlyDictionary<long, BatchRun> runsById) =>
         host.Source == "netiq" ? NetiqStatus(host, date, recordDates, attempts, attemptsAvailable, runsById) : LocalStatus(host, dayRuns, date, recordDates, localEnabled);
 
-    private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates,
+    private string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates,
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
         IReadOnlyDictionary<long, BatchRun> runsById)
     {
@@ -263,6 +266,7 @@ public class RunMonitorService
                 "stopped" => BatchRunStatus.Stopped,
                 "running" when runsById.TryGetValue(latest.RunId, out var run) && run.FinishedAt.HasValue =>
                     run.Stopped ? BatchRunStatus.Stopped : run.ExitCode != 0 || run.ErrorCount > 0 ? BatchRunStatus.Failed : BatchRunStatus.Warning,
+                "running" when runsById.TryGetValue(latest.RunId, out var heldRun) && _isHeld(heldRun) => BatchRunStatus.Running,
                 "running" when DateTime.UtcNow - latest.AttemptAtUtc > StuckThreshold => BatchRunStatus.Stuck,
                 "running" => BatchRunStatus.Running,
                 "partial" or "retained-incomplete" => BatchRunStatus.Warning,
@@ -274,7 +278,7 @@ public class RunMonitorService
         return recordDates.Contains(key) ? BatchRunStatus.Success : "none";
     }
 
-    private static RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates,
+    private RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates,
         IReadOnlyDictionary<(long HostId, DateTime Date), NetiqSourceAttempt.Receipt> attempts, bool attemptsAvailable,
         IReadOnlyDictionary<long, BatchRun> runsById) =>
         new() { Status = NetiqStatus(host, date, recordDates, attempts, attemptsAvailable, runsById) };
@@ -286,7 +290,7 @@ public class RunMonitorService
     /// 於是被回補的其他日期原本會誤顯示「未執行」。存在則標「backfilled」（已回補），不冒充
     /// success——「當天真的有跑」與「後來補的資料」要分得出來，符合本頁誠實原則。
     /// </summary>
-    private static string LocalStatus(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled)
+    private string LocalStatus(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled)
     {
         if (dayRuns.Count > 0) return StatusOf(dayRuns);
         if (HasBackfilledRecord(host, date, recordDates)) return "backfilled";
@@ -297,7 +301,7 @@ public class RunMonitorService
         return localEnabled ? "none" : "local_disabled";
     }
 
-    private static RunDayHostStatusDto LocalCell(
+    private RunDayHostStatusDto LocalCell(
         HostRef host, string dateStr, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled)
     {
         // 有 BatchRun：完整 cell（含 runId／計數，供「檢視執行」）。沒有：回補 fallback 只有狀態，
@@ -323,9 +327,9 @@ public class RunMonitorService
             .OrderByDescending(r => r.StartedAt)
             .ToList();
 
-    private static string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
+    private string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
 
-    private static RunDayHostStatusDto BuildCell(string date, List<BatchRun> dayRuns)
+    private RunDayHostStatusDto BuildCell(string date, List<BatchRun> dayRuns)
     {
         if (dayRuns.Count == 0)
         {
@@ -338,7 +342,7 @@ public class RunMonitorService
 
         return new RunDayHostStatusDto
         {
-            Status = BatchRunStatus.Compute(latest, DateTime.Now, StuckThreshold),
+            Status = BatchRunStatus.Compute(latest, DateTime.Now, StuckThreshold, _isHeld(latest)),
             RunId = latest.RunId,
             StartedAt = latest.StartedAt,
             FinishedAt = latest.FinishedAt,
@@ -415,7 +419,7 @@ public class RunMonitorService
     private string TriggerText(string? trigger) => trigger switch
     {
         null or "" or "console" => "工作排程器",
-        "schedule" => "排程",
+        BatchRunTriggers.Schedule => "排程",
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
             $"手動（{_displayNameService.OfAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
@@ -437,7 +441,7 @@ public class RunMonitorService
                 DurationSeconds = run.FinishedAt.HasValue
                     ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
                     : null,
-                Status = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold),
+                Status = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold, _isHeld(run)),
                 JobTypeText = run.JobType == BatchRun.JobTypeAi ? "AI 分析" : "取數分析",
                 TriggerText = TriggerText(run.Trigger),
                 Args = run.Args,

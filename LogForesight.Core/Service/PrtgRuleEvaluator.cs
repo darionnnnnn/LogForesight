@@ -10,8 +10,6 @@ namespace LogForesight.Core.Service;
 /// 問題簽章的 <c>Count</c>：整日 Down 會是 1440，會讓 PRTG finding 在問題排行的「次數」
 /// 維度壓過所有真實事件計數。它的用途是規則測試、Detail 文案，以及校準數值匯出時的門檻分佈統計。
 /// </remarks>
-public sealed record PrtgEvidenceWindow(DateTimeOffset StartUtc, DateTimeOffset EndUtc);
-
 public sealed record PrtgFinding(
     long DeviceObjid,
     long? SensorObjid,
@@ -25,22 +23,10 @@ public sealed record PrtgFinding(
     /// 觸發這筆 finding 的 sensor 語意分類（評估時已知，見 <see cref="PrtgSensorCategories"/>）。
     /// device 層（silent）與分類未知的 sensor 為 null。映射成簽章時寫進 <c>LogIssueSignature.PrtgSensorCategory</c>。
     /// </summary>
-    public IReadOnlyList<PrtgEvidenceWindow> EvidenceWindows { get; init; } = Array.Empty<PrtgEvidenceWindow>();
-    public string EvidenceWindowResolution { get; init; } = "來源覆蓋狀態區間";
     public string? SensorCategory { get; init; }
-    /// <summary>產生狀態風險時的訊息解析版本；舊資料與非狀態規則不補猜。</summary>
-    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    public int? MessageStatusSemanticVersion { get; init; }
     /// <summary>數值趨勢 finding 的結構化證據；非數值趨勢規則為 null。</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public PrtgTrendEvidence? TrendEvidence { get; init; }
-    public DateTimeOffset? PresenceSourceAsOf { get; init; }
-    public DateTimeOffset? PresenceDeviceStatusAsOf { get; init; }
-    public string? PresenceSourceAuthorityFingerprint { get; init; }
-    public string? PresenceMappingFingerprint { get; init; }
-    public string? PresenceInventoryFingerprint { get; init; }
-    /// <summary>規則門檻實際使用的量值；跨日 Down 為完整可信 episode，Magnitude 仍保留當日重疊分鐘。</summary>
-    public int? ThresholdMagnitude { get; init; }
 }
 
 /// <summary>規則評估用的 sensor 現況（未暫停 sensor）：objid、所屬 device、狀態、type、語意分類。</summary>

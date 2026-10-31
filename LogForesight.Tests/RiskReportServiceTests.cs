@@ -20,7 +20,7 @@ public class RiskReportServiceTests
     private static RiskReportService MakeService(FakeReportSink sink)
     {
         // 不會被呼叫到（測試情境全是規則命中的類別），BaseUrl 隨意即可
-        var aiService = new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 });
+        var aiService = new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance);
         return new RiskReportService(aiService, sink);
     }
 
@@ -200,5 +200,107 @@ public class RiskReportServiceTests
 
         Assert.Single(record.DeepDives);
         Assert.Contains("處置參考（知識庫）", draft.Content);
+    }
+
+    private static LogIssueSignature MakeLinuxIssue(string ruleId, int count = 12) => new()
+    {
+        LogName = "Linux",
+        Source = "sshd",
+        EventId = 0,
+        EntryType = EventLogEntryType.Warning,
+        EventKey = ruleId,
+        RuleId = ruleId,
+        Count = count,
+        FirstSeen = "01:00",
+        LastSeen = "02:00",
+        Category = IssueCategory.Security,
+        Severity = IssueSeverity.High
+    };
+
+    private static EventLogEntryData MakeLinuxLog(string message, int minute) => new()
+    {
+        LogName = "Linux",
+        Source = "sshd",
+        EventId = 0,
+        EntryType = EventLogEntryType.Warning,
+        Message = message,
+        TimeGenerated = DateTime.Today.AddMinutes(minute)
+    };
+
+    [Fact]
+    public async Task Linux規則命中簽章以RuleId反查處置參考()
+    {
+        var rules = KnownIssueSeed.CreateRules();
+        var service = new RiskReportService(
+            new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance),
+            new FakeReportSink(), ruleProvider: () => rules);
+        var record = MakeRecord(MakeLinuxIssue("builtin-linux-ssh-bruteforce"));
+
+        var draft = await service.PrepareAsync(record, new List<EventLogEntryData>());
+
+        var rule = rules.First(r => r.Id == "builtin-linux-ssh-bruteforce");
+        Assert.Contains(rule.PlainExplanation, draft.Content);
+        Assert.Single(record.DeepDives);
+    }
+
+    [Fact]
+    public async Task 自訂規則只在注入清單中仍有處置參考()
+    {
+        var custom = new KnownIssueRule
+        {
+            Id = "custom-r59-c7-only", Origin = "custom", Enabled = true, Platform = "windows",
+            SourcePattern = "r59c7-nowhere", Category = IssueCategory.Storage, Severity = IssueSeverity.High,
+            PlainExplanation = "R59C7 自訂規則白話說明獨有字串", Impact = "影響", LikelyCauses = new[] { "原因" }, NextSteps = new[] { "步驟" }
+        };
+        var service = new RiskReportService(
+            new AIService(new AiSettings { BaseUrl = "http://localhost:1", RetryCount = 1, TimeoutSeconds = 1 }, NullAiRequestGate.Instance),
+            new FakeReportSink(), ruleProvider: () => new List<KnownIssueRule> { custom });
+        var issue = MakeStorageIssue();
+        issue.Source = "r59c7-source";
+        issue.EventId = 9;
+        issue.RuleId = custom.Id;
+
+        var draft = await service.PrepareAsync(MakeRecord(issue), new List<EventLogEntryData>());
+
+        Assert.Contains("R59C7 自訂規則白話說明獨有字串", draft.Content);
+    }
+
+    [Fact]
+    public async Task 已抑制的High簽章不進重點問題()
+    {
+        var service = MakeService(new FakeReportSink());
+        var suppressed = MakeStorageIssue();
+        suppressed.Suppressed = true;
+
+        var onlySuppressed = await service.PrepareAsync(MakeRecord(suppressed), new List<EventLogEntryData>());
+        Assert.Contains("（無重點類別）", onlySuppressed.Content);
+        Assert.DoesNotContain("重點問題", onlySuppressed.Content);
+
+        var other = MakeStorageIssue();
+        other.Source = "Ntfs";
+        other.EventId = 55;
+        var record = MakeRecord(suppressed);
+        record.TopIssues.Add(other);
+        var mixed = await service.PrepareAsync(record, new List<EventLogEntryData>());
+        Assert.Contains("重點問題 1 項", mixed.Content);
+    }
+
+    [Fact]
+    public async Task 同program不同規則的原始log不互相撈取()
+    {
+        var service = MakeService(new FakeReportSink());
+        var record = MakeRecord(MakeLinuxIssue("builtin-linux-ssh-bruteforce"));
+        record.TopIssues.Add(MakeLinuxIssue("builtin-linux-ssh-accept", 5));
+        var logs = new List<EventLogEntryData>
+        {
+            MakeLinuxLog("Failed password for root from 1.2.3.4 port 1 ssh2", 1),
+            MakeLinuxLog("Accepted publickey for admin from 5.6.7.8 port 2 ssh2", 2)
+        };
+
+        var draft = await service.PrepareAsync(record, logs);
+
+        Assert.Contains("相關原始 Log（2 筆", draft.Content);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(draft.Content, "Failed password for root"));
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(draft.Content, "Accepted publickey for admin"));
     }
 }

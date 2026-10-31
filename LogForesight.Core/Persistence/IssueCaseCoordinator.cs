@@ -2,9 +2,6 @@
 
 namespace LogForesight.Core.Persistence;
 
-/// <summary>建案結果：Created=false 時代表該問題已有他人的進行中案件，未變更（2.1「只由一個人處理」）</summary>
-public readonly record struct CaseBuildResult(bool Created, string? CaseId, long? ExistingHandlerId, int LinkedDayCount);
-
 /// <summary>狀態同步結果：Applied=false 代表該問題目前沒有進行中案件，呼叫端應走既有的單日寫入</summary>
 public readonly record struct CaseSyncResult(bool Applied, int SyncedDayCount, bool CaseClosed);
 
@@ -24,13 +21,13 @@ public readonly record struct CaseDaySubmitResult(bool Inline, int Rows, int Pen
 /// （HandlingService）都要呼叫同一套規則——理由同 <c>DayHandlingDerivation</c>，
 /// 語意分散在兩處遲早漂移。
 ///
-/// 三個入口對應三個觸發點：
-///   - <see cref="BuildCase"/>：指派處理人當下（2.1），建案並回溯關聯歷史風險日
+/// 建案入口不在這個類別：任何建案路徑（交辦、日層級指派、夜間派工）一律經 <see cref="WorkOrderCoordinator"/>，
+/// 才不會產生沒有交辦單的散案（<c>IssueCaseCreationGuardTests</c> 守門）。這裡只負責既有案件的兩個觸發點：
 ///   - <see cref="SyncStatus"/>：標記問題狀態當下（2.2/2.3），若該問題已有進行中案件，
 ///     **整個狀態寫入（含觸發日）改由這裡統一處理**，呼叫端不再自己寫 IssueHandling
 ///   - <see cref="AttachNewDay"/>：批次排程每天寫入新紀錄後（2.4），把新的一天掛進進行中案件
 ///
-/// 三者共用同一條「合格日」規則（<see cref="ResolveEligibleDays"/>）：**只排除已被使用者
+/// 兩者與 <see cref="SubmitCaseDays"/> 共用同一條「合格日」規則（<see cref="ResolveEligibleDays"/>）：**只排除已被使用者
 /// 明確標成結案類的日子**（不論該列 CaseId 是否屬於較早、已結案的舊案件——結案就是結案，
 /// 不因為案件重開而復活）。未標記、標記但未結案（含孤兒的舊案件殘留列）一律視為合格、
 /// 可被目前的案件狀態覆蓋。
@@ -79,63 +76,6 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
-    /// 建案（§0.4-A）：該（主機, 問題簽章）已有進行中案件時**保留原處理人、不搶走**（Q2），
-    /// 回傳 Created=false＋原處理人 Id 供呼叫端提示「已由 ○○○ 的案件涵蓋」。
-    /// 否則建立新案件，狀態固定為 in_progress（指派給人卻還是未處理語意矛盾，同日層級 Assign
-    /// 的既有規則），並回溯關聯該主機全部留存歷史中含此問題的風險日（Q3：全部留存歷史，
-    /// RetentionDays 天然設限）。
-    /// </summary>
-    public CaseBuildResult BuildCase(
-        string hostName, string issueKey, string issueLabel, DateTime triggerDate,
-        long handlerId, string? note, DateTime? dueDate,
-        long? actorId, string actorAccount, DateTime occurredAt)
-    {
-        var existing = _cases.GetOpen(hostName, issueKey);
-        if (existing != null)
-            return new CaseBuildResult(Created: false, CaseId: null, ExistingHandlerId: existing.HandlerId, LinkedDayCount: 0);
-
-        var host = _hosts.FindByName(hostName)
-                   ?? throw new InvalidOperationException($"IssueCaseCoordinator：找不到主機「{hostName}」。");
-
-        var caseId = Guid.NewGuid().ToString("n");
-        const string status = IssueHandlingStatuses.InProgress;
-
-        var eligibleDays = ResolveEligibleDays(host, hostName, issueKey);
-        if (!eligibleDays.Contains(triggerDate.Date)) eligibleDays.Add(triggerDate.Date);
-        eligibleDays.Sort();
-
-        var toSave = new List<IssueHandling>(eligibleDays.Count);
-        foreach (var date in eligibleDays)
-        {
-            toSave.Add(new IssueHandling
-            {
-                HostName = hostName, Date = date, IssueKey = issueKey, Status = status,
-                Note = note, DueDate = dueDate, CaseId = caseId,
-                ActorId = actorId, ActorAccount = actorAccount, UpdatedAt = occurredAt
-            });
-
-            _handlingLog.AppendLog(new RecordHandlingLog
-            {
-                HostName = hostName, Date = date, Status = status, IssueKey = issueKey, IssueLabel = issueLabel,
-                Note = note, ActorId = actorId, ActorAccount = actorAccount,
-                Action = date.Date == triggerDate.Date ? HandlingActions.CaseAssign : HandlingActions.CaseSync,
-                CreatedAt = occurredAt
-            });
-        }
-        _issueHandlings.SaveMany(toSave);
-
-        var newCase = CreateOpenCase(
-            caseId, hostName, issueKey, issueLabel,
-            handlerId, note, dueDate,
-            eligibleDays[0], eligibleDays[^1],
-            occurredAt, actorAccount);
-        newCase.PrtgEvidence = CapturePrtgEvidence(hostName, triggerDate, issueKey);
-        _cases.Save(newCase);
-
-        return new CaseBuildResult(Created: true, CaseId: caseId, ExistingHandlerId: null, LinkedDayCount: toSave.Count);
-    }
-
-    /// <summary>
     /// 狀態同步（§0.4-B）：Applied=false 代表該問題目前沒有進行中案件，呼叫端（IssueHandlingCommandService.
     /// ApplyIssueStatus）應維持既有的「只寫觸發日」行為不變。Applied=true 時**這裡取得觸發日
     /// 寫入的完整主導權**——呼叫端不應該再自己寫 IssueHandling／歷程，包含觸發日本身：
@@ -147,7 +87,7 @@ public class IssueCaseCoordinator
     /// 的設計理由同構：缺列語意會讓下一次批次掛接把它自動蓋回 in_progress，操作等於沒發生）。
     ///
     /// 標成結案類時案件本身同步結案（ClosedAt=occurredAt）——之後同問題再出現即為全新的
-    /// 未處理問題，不會被這個已結案的案件靜默吃掉（下次指派會走 BuildCase 開一個新案件）。
+    /// 未處理問題，不會被這個已結案的案件靜默吃掉（下次經 WorkOrderCoordinator 指派會開一個新案件）。
     /// </summary>
     public CaseSyncResult SyncStatus(
         string hostName, string issueKey, string issueLabel, DateTime triggerDate,
@@ -322,7 +262,7 @@ public class IssueCaseCoordinator
         }
 
         _issueHandlings.SaveMany(toSave);
-        _cases.SaveMany(casesToSave);
+        _cases.SaveMany(ReloadCasesForAttach(casesToSave, occurredAt));
 
         // 仍沒有當日列、也沒有進行中案件的問題交給派工（依問題鍵去重、保持輸入順序）
         var unassigned = new List<LogIssueSignature>();
@@ -338,46 +278,36 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
-    /// 改派進行中案件的處理人（docs/archive/FEEDBACK-10-PLAN.md §9）。
-    ///
-    /// **不結案重開**：案件是「這個問題這一輪處理」的連續紀錄，換人只是換掛名的人。
-    /// 結案再開會把回溯關聯過的日子重算一遍，也會讓「上次怎麼解的」（§9.3 第 15 項的
-    /// 先前處理）誤以為這一輪已經結束過。逐日的 <c>IssueHandling</c> 列因此完全不動——
-    /// 狀態沒變，變的只有案件層的 <c>HandlerId</c>。
-    ///
-    /// 回傳原處理人 Id 供呼叫端寫稽核與提示；沒有進行中案件時回 null（呼叫端應改走
-    /// <see cref="BuildCase"/>——那是「開始有人處理」，與換人是不同的動作）。
+    /// 夜間掛接存檔前的重讀（同 <see cref="ApplyPendingCaseDays"/> 的手法）：開頭讀到的案件快照可能已過時
+    /// （處理人在窗口內結案或回覆），整列覆寫會把 ClosedAt 寫回 null。這裡對每個案件重讀最新物件，
+    /// 只把 LastLinkedDate 與 PrtgEvidence 套上去；重讀時已結案（或已不存在）的案件跳過、不再掛新日。
     /// </summary>
-    public long? ReassignCase(
-        string hostName, string issueKey, long newHandlerId,
-        long? actorId, string actorAccount, DateTime occurredAt)
+    private List<IssueCase> ReloadCasesForAttach(List<IssueCase> snapshots, DateTime occurredAt)
     {
-        var openCase = _cases.GetOpen(hostName, issueKey);
-        if (openCase == null) return null;
-
-        var previousHandlerId = openCase.HandlerId;
-        openCase.HandlerId = newHandlerId;
-        openCase.UpdatedAt = occurredAt;
-        _cases.Save(openCase);
-
-        // 歷程記在案件最近掛接的那一天：改派不是針對某一天的動作，沒有天然的「觸發日」，
-        // 記在最新的一天最容易被看到——處理人打開的通常就是最近那筆風險日
-        _handlingLog.AppendLog(new RecordHandlingLog
+        var result = new List<IssueCase>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var snapshot in snapshots)
         {
-            HostName = hostName,
-            Date = openCase.LastLinkedDate,
-            Status = openCase.Status,
-            IssueKey = issueKey,
-            IssueLabel = openCase.IssueLabel,
-            Note = "變更案件處理人",
-            CaseId = openCase.CaseId, PreviousHandlerId = previousHandlerId, HandlerId = newHandlerId,
-            ActorId = actorId,
-            ActorAccount = actorAccount,
-            Action = HandlingActions.CaseReassign,
-            CreatedAt = occurredAt
-        });
+            if (!seen.Add(snapshot.CaseId)) continue;
+            var fresh = _cases.Get(snapshot.CaseId);
+            if (fresh == null || fresh.ClosedAt != null || IssueHandlingStatuses.IsClosed(fresh.Status)) continue;
 
-        return previousHandlerId;
+            var changed = false;
+            if (snapshot.LastLinkedDate.Date > fresh.LastLinkedDate.Date)
+            {
+                fresh.LastLinkedDate = snapshot.LastLinkedDate.Date;
+                changed = true;
+            }
+            if (fresh.PrtgEvidence == null && snapshot.PrtgEvidence != null)
+            {
+                fresh.PrtgEvidence = snapshot.PrtgEvidence;
+                changed = true;
+            }
+            if (!changed) continue;
+            fresh.UpdatedAt = occurredAt;
+            result.Add(fresh);
+        }
+        return result;
     }
 
     /// <summary>
@@ -814,29 +744,5 @@ public class IssueCaseCoordinator
 
         public int GetHashCode((long HostId, string IssueKey) key) =>
             HashCode.Combine(key.HostId, IssueSignatureKeyComparer.Instance.GetHashCode(key.IssueKey));
-    }
-
-    private static IssueCase CreateOpenCase(
-        string caseId, string hostName, string issueKey, string issueLabel,
-        long? handlerId, string? note, DateTime? dueDate,
-        DateTime firstLinkedDate, DateTime lastLinkedDate,
-        DateTime occurredAt, string createdByAccount)
-    {
-        return new IssueCase
-        {
-            CaseId = caseId,
-            HostName = hostName,
-            IssueKey = issueKey,
-            IssueLabel = issueLabel,
-            Status = IssueHandlingStatuses.InProgress,
-            HandlerId = handlerId,
-            Note = note,
-            DueDate = dueDate,
-            FirstLinkedDate = firstLinkedDate,
-            LastLinkedDate = lastLinkedDate,
-            CreatedAt = occurredAt,
-            CreatedByAccount = createdByAccount,
-            UpdatedAt = occurredAt
-        };
     }
 }

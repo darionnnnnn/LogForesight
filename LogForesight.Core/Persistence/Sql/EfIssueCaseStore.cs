@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using NLog;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -19,6 +20,7 @@ namespace LogForesight.Core.Persistence.Sql;
 /// </summary>
 public sealed class EfIssueCaseStore : IIssueCaseStore
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private readonly Func<LfDbContext> _contextFactory;
 
     public EfIssueCaseStore(Func<LfDbContext> contextFactory)
@@ -136,6 +138,16 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         return row == null ? null : ToModel(row);
     }
 
+    /// <summary>issue_key 超長不寫（截斷會讓鍵對不上或撞鍵）；回傳 true 表示已警告、呼叫端應略過該列。</summary>
+    private static bool IssueKeyTooLong(IssueCase issueCase)
+    {
+        var max = ColumnClamp.For<IssueCaseRow>(nameof(IssueCaseRow.IssueKey));
+        if (max is not { } m || issueCase.IssueKey.Length <= m) return false;
+        Log.Warn("[SQL] IssueCase 的 issue_key 超過 {Max} 字（{Len}），略過不寫：{Host} {Date:yyyy-MM-dd} {Key}",
+            m, issueCase.IssueKey.Length, issueCase.HostName, issueCase.CreatedAt, issueCase.IssueKey[..80]);
+        return true;
+    }
+
     public void Save(IssueCase issueCase)
     {
         using var ctx = _contextFactory();
@@ -143,13 +155,14 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
 
         if (row == null)
         {
+            if (IssueKeyTooLong(issueCase)) return;
             row = new IssueCaseRow
             {
                 CaseId = issueCase.CaseId,
                 HostName = issueCase.HostName,
                 HostNameKey = HostNameKey.Of(issueCase.HostName),
                 IssueKey = issueCase.IssueKey,
-                IssueLabel = issueCase.IssueLabel,
+                IssueLabel = ColumnClamp.ClampFor<IssueCaseRow>(issueCase.IssueLabel, nameof(IssueCaseRow.IssueLabel))!,
                 CreatedAt = issueCase.CreatedAt,
                 CreatedByAccount = issueCase.CreatedByAccount
             };
@@ -190,13 +203,14 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         {
             if (!existing.TryGetValue(issueCase.CaseId, out var row))
             {
+                if (IssueKeyTooLong(issueCase)) continue;
                 row = new IssueCaseRow
                 {
                     CaseId = issueCase.CaseId,
                     HostName = issueCase.HostName,
                     HostNameKey = HostNameKey.Of(issueCase.HostName),
                     IssueKey = issueCase.IssueKey,
-                    IssueLabel = issueCase.IssueLabel,
+                    IssueLabel = ColumnClamp.ClampFor<IssueCaseRow>(issueCase.IssueLabel, nameof(IssueCaseRow.IssueLabel))!,
                     CreatedAt = issueCase.CreatedAt,
                     CreatedByAccount = issueCase.CreatedByAccount
                 };

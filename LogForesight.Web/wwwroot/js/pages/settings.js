@@ -819,6 +819,21 @@ function renderFreshness(freshness) {
     }
 }
 
+/** 郵件貢獻帳本提示：佔用達上限 90% 或有最近一次滿載紀錄才回字串，否則回 null（不顯示） */
+function mailLedgerNotice(ledger) {
+    if (!ledger) return null;
+    const occupied = ledger.occupiedKeys ?? 0;
+    const limit = ledger.limit ?? 0;
+    const nearFull = limit > 0 && occupied * 10 >= limit * 9;
+    if (!nearFull && !ledger.lastFullAtUtc) return null;
+    const count = `${formatNumber(occupied)}／上限 ${formatNumber(limit)}`;
+    if (ledger.lastFullAtUtc) {
+        const head = occupied >= limit ? '郵件貢獻帳本已滿' : '郵件貢獻帳本曾滿載';
+        return `${head}（${count}）：最近一次於 ${formatDateTime(ledger.lastFullAtUtc)} 略過收件人 ${ledger.lastFullRecipient ?? '（未知）'}，該收件人本輪不寄`;
+    }
+    return `郵件貢獻帳本接近上限（${count}）：滿載後新內容無法記帳，該收件人本輪不寄`;
+}
+
 /** 背景工作：分析、回填、兩項遷移、首見日合併、暫停的郵件收件人（兩欄表） */
 function renderBackgroundJobs(detail) {
     const withError = (state, error) => (error ? `${state || '未知'}（錯誤：${error}）` : (state || '未知'));
@@ -850,6 +865,8 @@ function renderBackgroundJobs(detail) {
         { item: '被暫停的郵件收件人', status: suspended.length > 0 ? suspended.join('、') : '無' },
         { item: '密碼欄位加密', status: cryptoStatus(detail) }
     ];
+    const ledgerNotice = mailLedgerNotice(detail.mailContributionLedger);
+    if (ledgerNotice) rows.push({ item: '郵件貢獻帳本', status: ledgerNotice });
     // PRTG 擷取：未啟用時後端回 null、不加這列；曾有資料卻連續多次取得 0 筆的類別列出來
     if (Array.isArray(detail.prtgFreshness)) {
         const suspicious = detail.prtgFreshness.filter(f => f.suspicious);
@@ -1057,7 +1074,7 @@ function bindBrandIcon() {
             setBrandIcon(String(reader.result));
             toast('已選擇圖示，按「儲存」後才會套用。', 'info');
         };
-        reader.onerror = () => toast('讀取圖片失敗，請換一張圖片再試。', 'error');
+        reader.onerror = () => toast('讀取圖片失敗，請換一張圖片再試。', 'danger');
         reader.readAsDataURL(file);
     });
 

@@ -25,6 +25,9 @@ public static class RetentionPruner
         // 風險 log 暫存（清除用；分析路徑另有自己的實例，兩者都是無狀態的真表 store）
         var riskyEventStore = backend.RiskyEventStore();
 
+        // 任一清除步驟失敗就不記「今天已執行」，讓排程隔天（或下次輪詢）重試
+        var anyFailed = false;
+
         // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長。
         //
         // **一律用未限縮的 RecordStore()，不要用上面的 historyService**（SCALE-3000 S2-3b）：
@@ -71,6 +74,7 @@ public static class RetentionPruner
         }
         catch (Exception ex)
         {
+            anyFailed = true;
             Log.Warn(ex, "詳情清除或積壓申報失敗（不影響本次分析）：{0}", ex.Message);
         }
 
@@ -104,6 +108,7 @@ public static class RetentionPruner
         }
         catch (Exception ex)
         {
+            anyFailed = true;
             Log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
         }
 
@@ -139,6 +144,7 @@ public static class RetentionPruner
         }
         catch (Exception ex)
         {
+            anyFailed = true;
             Log.Warn(ex, "處理狀態／處理歷程清理失敗（不影響本次分析）：{0}", ex.Message);
         }
 
@@ -152,6 +158,7 @@ public static class RetentionPruner
         }
         catch (Exception ex)
         {
+            anyFailed = true;
             Log.Warn(ex, "報告全文清理失敗（不影響本次分析）：{0}", ex.Message);
         }
 
@@ -171,6 +178,7 @@ public static class RetentionPruner
         }
         catch (Exception ex)
         {
+            anyFailed = true;
             Log.Warn(ex, "PRTG 鏡像資料清理失敗（不影響本次分析）：{0}", ex.Message);
         }
 
@@ -182,6 +190,7 @@ public static class RetentionPruner
         }
         catch (Exception ex)
         {
+            anyFailed = true;
             Log.Warn(ex, "AI 診斷傾印檔清理失敗（不影響本次分析）：{0}", ex.Message);
         }
 
@@ -192,7 +201,10 @@ public static class RetentionPruner
             // 只封存結果明確的郵件意圖；結果不明或混合的保留，避免重寄或漏寄。
             var retiredIntents = new MailNotifyStateStore(backend.Blob(MailNotifyStateStore.BlobKey))
                 .PruneTerminalUrgentIntents(retention.RetentionDays, DateTime.UtcNow);
-            stateStore.Update(s => s.LastRunDate = DateTime.Today.ToString("yyyy-MM-dd"));
+            if (!anyFailed)
+                stateStore.Update(s => s.LastRunDate = DateTime.Today.ToString("yyyy-MM-dd"));
+            else
+                Log.Warn("保留清除有步驟失敗，不記錄今日已執行，留待下次重試");
             if (retiredIntents > 0)
                 console.WriteLine($"已封存 {retiredIntents} 筆超過 {Math.Max(90, retention.RetentionDays)} 天且結果明確的郵件意圖。");
         }

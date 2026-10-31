@@ -483,6 +483,144 @@ public class CorrelationAnalyzerTests
         Assert.False(CorrelationAnalyzer.IsBruteForceAnchor(wrongLogName));
     }
 
+    // ── C3：只認達門檻簽章／滅跡收窄／時間偏移限事件 Id ───────────────────
+
+    private static LogIssueSignature Classified(string log, string source, int id, int count)
+    {
+        var sig = Sig(log, source, id, count, IssueSeverity.Low, IssueCategory.Other);
+        KnownIssueCatalog.Classify(sig);
+        return sig;
+    }
+
+    private static int ThresholdOf(string source, int id) =>
+        KnownIssueCatalog.Rules.First(r => r.Enabled && r.Platform != "linux" &&
+            r.SourcePattern.Contains(source, StringComparison.OrdinalIgnoreCase) && r.EventIds.Contains(id)).CountThreshold;
+
+    private static List<CorrelationFinding> DetectOnly(List<LogIssueSignature> issues) =>
+        CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today);
+
+    [Fact]
+    public void 提權植入_4703未達門檻不成立_達門檻成立()
+    {
+        int th = ThresholdOf("Security-Auditing", 4703);
+        Assert.True(th > 1);
+        var below = DetectOnly(new()
+        {
+            Classified("Security", "Security-Auditing", 4703, 1),
+            Sig("System", "Service Control Manager", 7045, 1, IssueSeverity.High, IssueCategory.Security)
+        });
+        Assert.DoesNotContain(below, f => f.PatternId == CorrelationPatternIds.PrivImplant);
+
+        var met = DetectOnly(new()
+        {
+            Classified("Security", "Security-Auditing", 4703, th),
+            Sig("System", "Service Control Manager", 7045, 1, IssueSeverity.High, IssueCategory.Security)
+        });
+        Assert.Contains(met, f => f.PatternId == CorrelationPatternIds.PrivImplant);
+    }
+
+    [Fact]
+    public void 提權植入_被抑制但達門檻仍成立()
+    {
+        var priv = Classified("Security", "Security-Auditing", 4703, ThresholdOf("Security-Auditing", 4703));
+        priv.Suppressed = true;
+        var findings = DetectOnly(new()
+        {
+            priv,
+            Sig("System", "Service Control Manager", 7045, 1, IssueSeverity.High, IssueCategory.Security)
+        });
+        Assert.Contains(findings, f => f.PatternId == CorrelationPatternIds.PrivImplant);
+    }
+
+    [Fact]
+    public void 崩潰服務失敗_單筆未達門檻不成立_達門檻成立()
+    {
+        int thCrash = ThresholdOf(".NET Runtime", 1026);
+        int thSvc = ThresholdOf("Service Control Manager", 7034);
+        Assert.True(thCrash > 1 || thSvc > 1);
+        var below = DetectOnly(new()
+        {
+            Classified("Application", ".NET Runtime", 1026, 1),
+            Classified("System", "Service Control Manager", 7034, 1)
+        });
+        Assert.DoesNotContain(below, f => f.PatternId == CorrelationPatternIds.CrashServiceFail);
+
+        var met = DetectOnly(new()
+        {
+            Classified("Application", ".NET Runtime", 1026, thCrash),
+            Classified("System", "Service Control Manager", 7034, thSvc)
+        });
+        Assert.Contains(met, f => f.PatternId == CorrelationPatternIds.CrashServiceFail);
+    }
+
+    [Fact]
+    public void 滅跡_4907加只有低嚴重度簽章不成立()
+    {
+        var rdp = Sig("Security", "Security-Auditing", 4624, 3, IssueSeverity.Low, IssueCategory.Security);
+        var findings = DetectOnly(new()
+        {
+            Sig("Security", "Security-Auditing", 4907, 1, IssueSeverity.Medium, IssueCategory.Security),
+            rdp
+        });
+        Assert.DoesNotContain(findings, f => f.PatternId == CorrelationPatternIds.AuditTamper);
+    }
+
+    [Fact]
+    public void 滅跡_4719加低嚴重度或4907不成立()
+    {
+        var low = DetectOnly(new()
+        {
+            Sig("Security", "Security-Auditing", 4719, 1, IssueSeverity.High, IssueCategory.Security),
+            Sig("Security", "Security-Auditing", 4624, 3, IssueSeverity.Low, IssueCategory.Security)
+        });
+        Assert.DoesNotContain(low, f => f.PatternId == CorrelationPatternIds.AuditTamper);
+
+        var with4907 = DetectOnly(new()
+        {
+            Sig("Security", "Security-Auditing", 4719, 1, IssueSeverity.High, IssueCategory.Security),
+            Sig("Security", "Security-Auditing", 4907, 1, IssueSeverity.Medium, IssueCategory.Security)
+        });
+        Assert.DoesNotContain(with4907, f => f.PatternId == CorrelationPatternIds.AuditTamper);
+    }
+
+    [Fact]
+    public void 滅跡_1102加Medium以上非tamper安全簽章成立_未達門檻不算()
+    {
+        var ok = DetectOnly(new()
+        {
+            Sig("Security", "Security-Auditing", 1102, 1, IssueSeverity.Critical, IssueCategory.Security),
+            Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.Medium, IssueCategory.Security)
+        });
+        Assert.Contains(ok, f => f.PatternId == CorrelationPatternIds.AuditTamper);
+
+        var belowOther = Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.Medium, IssueCategory.Security);
+        belowOther.BelowThreshold = true;
+        var no = DetectOnly(new()
+        {
+            Sig("Security", "Security-Auditing", 1102, 1, IssueSeverity.Critical, IssueCategory.Security),
+            belowOther
+        });
+        Assert.DoesNotContain(no, f => f.PatternId == CorrelationPatternIds.AuditTamper);
+    }
+
+    [Fact]
+    public void 時間偏移驗證失敗_限定事件Id()
+    {
+        var bad = DetectOnly(new()
+        {
+            Sig("System", "Time-Service", 1, 3, IssueSeverity.Medium, IssueCategory.Config),
+            Sig("Security", "Security-Auditing", 4625, 15, IssueSeverity.High, IssueCategory.Security)
+        });
+        Assert.DoesNotContain(bad, f => f.PatternId == CorrelationPatternIds.TimeSkewAuth);
+
+        var good = DetectOnly(new()
+        {
+            Sig("System", "Time-Service", 36, 3, IssueSeverity.Medium, IssueCategory.Config),
+            Sig("Security", "Security-Auditing", 4625, 15, IssueSeverity.High, IssueCategory.Security)
+        });
+        Assert.Contains(good, f => f.PatternId == CorrelationPatternIds.TimeSkewAuth);
+    }
+
     private static void AssertPattern(string pattern, string expectedPatternId, List<LogIssueSignature> issues)
     {
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today);

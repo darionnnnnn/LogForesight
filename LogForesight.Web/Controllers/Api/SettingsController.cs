@@ -1298,7 +1298,8 @@ public class SettingsController : ControllerBase
                 Note = m.Note,
                 CreatedBy = m.CreatedBy,
                 CreatedAt = m.CreatedAt,
-                SameIpSkippedCount = skipped
+                SameIpSkippedCount = skipped,
+                MissingInMirror = !deviceByObjid.ContainsKey(m.DeviceObjid)
             };
         }).OrderBy(m => m.DeviceObjid).ToList();
 
@@ -1638,28 +1639,10 @@ public class SettingsController : ControllerBase
 
 
     // ── PRTG 鏡像資料匯出／匯入（PRTG 任務G）──────────────────────────────────────
-    private void RequireFullPrtgTransferAccess()
-    {
-        if (_visibility == null || _hosts == null)
-            throw DomainException.Forbidden("無法確認全站 PRTG 主機可見範圍，拒絕執行搬運與維護操作。");
-        var visible = _visibility.GetVisibleHostIds();
-        var hosts = _hosts.GetAll();
-        if (visible.Count == 0 || hosts.Count == 0 || hosts.Any(h => !visible.Contains(h.HostId) || _visibility.IsCaseGrantOnly(h.HostId)))
-            throw DomainException.Forbidden("全站 PRTG 對應、排除及搬運須由可見全部主機的管理者操作；受限角色請使用試點與驗收證據入口。");
-    }
+    private void RequireFullPrtgTransferAccess() =>
+        _currentUser.RequireViewAll("全站 PRTG 對應、排除及搬運須由可檢視全部主機的管理者操作；受限角色請使用試點與驗收證據入口。");
 
-    private bool HasFullPrtgTransferAccess()
-    {
-        try
-        {
-            RequireFullPrtgTransferAccess();
-            return true;
-        }
-        catch (DomainException ex) when (ex.Code == ApiErrorCodes.Forbidden)
-        {
-            return false;
-        }
-    }
+    private bool HasFullPrtgTransferAccess() => _currentUser.HasViewAll();
 
     private void RequireSelectedPrtgBackfillAccess(IEnumerable<long>? requestedHostIds)
     {

@@ -44,10 +44,10 @@ internal static class HandlingTextHelpers
         HandlingActions.NoteUpdate => "更新說明",
         HandlingActions.IssueStatus => "標記問題",
         HandlingActions.IssueStatusCleared => "清除問題標記",
-        HandlingActions.CaseAssign => "建立案件",
-        HandlingActions.CaseSync => "案件同步",
-        HandlingActions.CaseAttach => "排程掛接案件",
-        HandlingActions.CaseReassign => "改派案件處理人",
+        HandlingActions.CaseAssign => "建立交辦",
+        HandlingActions.CaseSync => "交辦逐日同步",
+        HandlingActions.CaseAttach => "排程掛接交辦",
+        HandlingActions.CaseReassign => "改派交辦處理人",
         _ => action
     };
 

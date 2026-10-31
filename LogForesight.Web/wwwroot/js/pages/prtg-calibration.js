@@ -2,8 +2,7 @@
  * 校準數值匯出頁面模組（docs/archive/FEEDBACK-37-PLAN.md 批次A4）
  */
 
-import { api } from '../core/api.js';
-import { appUrl } from '../core/paths.js';
+import { api, saveBlobAsFile } from '../core/api.js';
 import { toast, withBusy, guardLoad, renderLoading, renderSpinner } from '../core/ui.js';
 import { formatNumber, formatTime } from '../core/format.js';
 
@@ -282,48 +281,11 @@ async function downloadPackage() {
 
     try {
         const detailParam = isSummary ? '&detail=summary' : '';
-        const downloadUrl = appUrl(`/api/admin/calibration/export?override=${isOverride ? 'true' : 'false'}${detailParam}`);
-        const response = await fetch(downloadUrl, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json'
-            },
-            credentials: 'same-origin'
-        });
-
-        if (!response.ok) {
-            let errorMsg = '匯出失敗，請稍後再試。';
-            try {
-                const payload = await response.json();
-                if (payload?.error?.message) {
-                    errorMsg = payload.error.message;
-                }
-            } catch {
-                // 忽略非 JSON 錯誤回應
-            }
-            toast(errorMsg, 'danger');
-            return;
-        }
-
-        const blob = await response.blob();
-        const disposition = response.headers.get('Content-Disposition');
-        let filename = `calibration-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.json`;
-
-        if (disposition && disposition.includes('filename=')) {
-            const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-            if (match && match[1]) {
-                filename = match[1].replace(/['"]/g, '');
-            }
-        }
-
-        const objectUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(objectUrl);
+        const { blob, filename } = await api.download(
+            `/api/admin/calibration/export?override=${isOverride ? 'true' : 'false'}${detailParam}`,
+            { timeoutMs: 300000, silent: true });
+        saveBlobAsFile(blob, filename
+            || `calibration-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.json`);
 
         toast('校準數值封裝檔已成功匯出', 'success');
     } catch (error) {

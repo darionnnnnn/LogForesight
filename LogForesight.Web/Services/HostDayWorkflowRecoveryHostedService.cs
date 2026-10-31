@@ -24,22 +24,22 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
     private readonly HostDayWorkflowService _workflow;
     private readonly BackgroundWorkGate? _gate;
     private readonly IAiService? _reportAiService;
-    private readonly IAiRequestGate? _aiGate;
+    private readonly IAiRequestGate _aiGate;
     private readonly RecoveryBudget _budget;
     private readonly NamedMutexGate _lease = new(LeaseName);
     private const int MaxPendingReportsPerPage = 4;
 
     public HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
-        ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow,
-        BackgroundWorkGate? gate = null, IAiService? reportAiService = null, IAiRequestGate? aiGate = null)
-        : this(records, backend, settings, ai, workflow, RecoveryBudget.Default, gate: gate,
-            reportAiService: reportAiService, aiGate: aiGate) { }
+        ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, IAiRequestGate aiGate,
+        BackgroundWorkGate? gate = null, IAiService? reportAiService = null)
+        : this(records, backend, settings, ai, workflow, RecoveryBudget.Default, aiGate, gate: gate,
+            reportAiService: reportAiService) { }
 
     internal HostDayWorkflowRecoveryHostedService(IAnalysisRecordQuery records, StorageBackend backend,
         ISystemSettingsStore settings, IWebAiService ai, HostDayWorkflowService workflow, RecoveryBudget budget,
-        BackgroundWorkGate? gate = null, IAiService? reportAiService = null, IAiRequestGate? aiGate = null)
+        IAiRequestGate aiGate, BackgroundWorkGate? gate = null, IAiService? reportAiService = null)
     {
-        _aiGate = aiGate;
+        _aiGate = aiGate ?? throw new ArgumentNullException(nameof(aiGate));
         if (budget.PageSize is < 1 or > WorkflowRecoveryPage.MaximumRows || budget.HotPagesPerSlice < 0 ||
             budget.DeepPagesPerSlice < 0 || budget.OrphanPagesPerSlice < 0 || budget.HotTimeBudget < TimeSpan.Zero ||
             budget.TotalTimeBudget < TimeSpan.Zero)
@@ -237,6 +237,8 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
 
             var inWindow = page.Items.Where(key => key.Date >= retentionFrom && key.Date <= retentionTo).ToArray();
             var existing = _records.ExistingHostDays(inWindow.Select(key => (key.HostId, key.Date)).ToArray());
+            var purged = 0;
+            var store = new HostDayWorkflowStore(_backend);
             foreach (var key in page.Items)
                 if (key.Date < retentionFrom || key.Date > retentionTo || !existing.Contains((key.HostId, key.Date.Date)))
                 {
@@ -244,7 +246,20 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                             retentionFrom, retentionTo))
                         Log.Info("Workflow orphan snapshot was stale; retained the current parent: hostId={HostId} date={Date:yyyy-MM-dd}",
                             key.HostId, key.Date);
+                    // 保留期外（不含未來日、不含保留期內的孤兒）的狀態 blob 在重置後一併刪除。
+                    if (key.Date < retentionFrom)
+                    {
+                        try
+                        {
+                            if (store.Delete(key.HostId, key.Date)) purged++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Warn(ex, "清除保留期外工作流狀態失敗：hostId={HostId} date={Date:yyyy-MM-dd}", key.HostId, key.Date);
+                        }
+                    }
                 }
+            if (purged > 0) Log.Info("清除保留期外工作流狀態 {Count} 筆", purged);
             cursor.AfterWorkflowKey = page.NextCursor;
             WriteCursor(cursor);
             outcome = new PageOutcome(true, true, false, page.RawCount, 0, 0);
@@ -307,9 +322,11 @@ public sealed class HostDayWorkflowRecoveryHostedService : BackgroundService
                 var analysis = new LogAnalysisService(new EventLogService(), aiService,
                     _backend.RecordStore(new HostKey { HostId = record.HostId, HostName = record.Host }),
                     suppressionStore, reportService: new RiskReportService(aiService, reportStore,
-                        appSettings.Ai.DeepDiveMaxTokens),
+                        appSettings.Ai.DeepDiveMaxTokens,
+                        () => KnownIssueCatalog.ResolveRules(new KnownIssueRuleStore(_backend.Blob("rules"))),
+                        hostOs: host?.Os ?? WebHost.OsWindows),
                     host: record.Host, hostId: record.HostId, riskyEventStore: _backend.RiskyEventStore(),
-                    hostGroupIds: host?.GroupIds);
+                    hostGroupIds: host?.GroupIds, hostOs: host?.Os ?? WebHost.OsWindows);
                 if (analysis.FinalizePendingRiskReportAsync(record, cancellationToken).GetAwaiter().GetResult())
                     completed++;
                 else

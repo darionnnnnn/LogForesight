@@ -5,8 +5,8 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// Sentinel 連線設定維護（docs/archive/HISTORY.md 定案 1）。
-/// 「新增即掃描」精靈與資料匯入頁整併留待 Phase 4；這裡先把 CRUD 本身建好。
+/// Sentinel 連線設定維護：清單、新增／編輯、啟停、刪除與測試連線。
+/// 掃描匯入精靈在「NetIQ 維護」頁的「匯入」分頁（<see cref="NetiqDiscoveryService"/>），不在這個服務。
 /// </summary>
 public class SentinelAdminService
 {
@@ -138,24 +138,31 @@ public class SentinelAdminService
             detail: new { sentinel.Name, AffectedHostCount = affected });
     }
 
+    /// <summary>Sentinel 複本（F4 契約 2）：<c>ISentinelStore.Get</c> 回傳的是共用快照，寫回前先複製。</summary>
+    private static Sentinel CopySentinel(Sentinel s) => new()
+    {
+        SentinelId = s.SentinelId,
+        Name = s.Name,
+        BaseUrl = s.BaseUrl,
+        Username = s.Username,
+        PasswordEnc = s.PasswordEnc,
+        Active = s.Active,
+        CreatedAt = s.CreatedAt,
+        UpdatedAt = s.UpdatedAt,
+        Os = s.Os,
+        UseEsmDirectory = s.UseEsmDirectory
+    };
+
     public SentinelDto SetActive(long sentinelId, bool active)
     {
         var sentinel = _sentinels.Get(sentinelId) ?? throw DomainException.NotFound("找不到這台 Sentinel。");
 
-        // 逐欄重建（只有 Active 是要改的）：**新增模型欄位時這裡必須跟著加**，
-        // 漏抄的症狀是「停用再啟用，該欄位被靜默重置」——UseEsmDirectory 曾在這裡漏過，
-        // SentinelAdminServiceTests 的 SetActive 保留欄位測試守住這件事
-        var saved = _sentinels.Upsert(new Sentinel
-        {
-            SentinelId = sentinel.SentinelId,
-            Name = sentinel.Name,
-            BaseUrl = sentinel.BaseUrl,
-            Username = sentinel.Username,
-            PasswordEnc = sentinel.PasswordEnc,
-            Active = active,
-            Os = sentinel.Os,
-            UseEsmDirectory = sentinel.UseEsmDirectory
-        });
+        // 以既有 Sentinel 的複本改 Active 後 Upsert（只有 Active 是要改的）。
+        // 欄位清單在 CopySentinel 列全：新增模型欄位時要同步加一行，否則「停用再啟用」會靜默重置它
+        // ——UseEsmDirectory 曾在這裡漏過，SentinelAdminServiceTests 的 SetActive 保留欄位測試守住這件事
+        var copy = CopySentinel(sentinel);
+        copy.Active = active;
+        var saved = _sentinels.Upsert(copy);
 
         _audit.Record(
             action: AuditActions.SentinelSetActive,
@@ -171,7 +178,7 @@ public class SentinelAdminService
 
     /// <summary>
     /// 測試連線（項目 6）：只驗證認證能否成功，不建立查詢工作、不寫入任何東西。
-    /// 帳密僅過境不落地，與 <see cref="LogForesight.Web.Services.NetiqDiscoveryService.CreateAndScanAsync"/>
+    /// 帳密僅過境不落地，與 <see cref="LogForesight.Web.Services.NetiqDiscoveryService"/> 的掃描
     /// 同一先例——連線失敗（含 401 帳密錯誤／逾時／憑證問題）**不是**例外，是這個功能本來就該回報的結果，
     /// 回傳 <see cref="TestSentinelConnectionResultDto.Success"/>=false 讓畫面就地顯示，不當成系統錯誤 toast；
     /// 只有輸入本身不合法（漏填欄位、既有 Sentinel 找不到、既有 Sentinel 尚無密碼可測）才擲例外。

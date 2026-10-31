@@ -416,12 +416,12 @@ public class FrontendConsistencyUiTests
         Assert.Contains("notice.textContent = message", hostJs);
         Assert.DoesNotContain("notice.innerHTML", hostJs);
         Assert.Contains("if (detail.caseGrantOnly === true)", ExtractBody(hostJs, @"function renderTimeline\(detail\)"));
-        Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。", hostJs);
-        Assert.Contains("案件授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。", hostJs);
+        Assert.Contains("交辦授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。", hostJs);
+        Assert.Contains("交辦授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。", hostJs);
         var load = ExtractBody(hostJs, @"async function load\(\)");
         Assert.Contains("if (detail.caseGrantOnly === true)", load);
         Assert.Contains("loadPrtgMapping();", load);
-        Assert.Contains("案件授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。", hostJs);
+        Assert.Contains("交辦授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。", hostJs);
     }
 
     [Fact]

@@ -180,4 +180,17 @@ public class SchedulerTriggerQueryTests
             return Task.CompletedTask;
         }
     }
+
+    [Theory]
+    [InlineData(BatchRunTriggers.Schedule, null, true)]
+    [InlineData(BatchRunTriggers.Schedule, BatchRun.JobTypeAi, false)]
+    [InlineData("manual:x", null, false)]
+    [InlineData(BatchRunTriggers.FetchFollowUp, null, false)]
+    public void IsScheduledFetch_只認排程取數_AI排程不算(string trigger, string? jobType, bool expected)
+    {
+        var run = new BatchRun { Trigger = trigger, JobType = jobType };
+
+        Assert.Equal(expected, run.IsScheduledFetch());
+        Assert.Equal(expected, SchedulerHostedService.IsScheduledFetchRun(run));
+    }
 }

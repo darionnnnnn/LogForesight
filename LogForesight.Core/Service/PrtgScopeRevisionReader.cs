@@ -20,10 +20,13 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
     private const string SentinelsBlobKey = "sentinels";
     private const string RulesBlobKey = "rules";
 
-    public string Read() => ReadCore(includePolicyRevision: true);
+    /// <summary>
+    /// 完整柵欄（含政策與規則版本）。輸出字串格式是郵件冪等鍵與快照佇列雜湊的持久鍵，不得更動。
+    /// </summary>
+    public string Read() => ReadCore(includePolicyRevision: true, includeRules: true);
 
     /// <summary>Structural fence for consumers that independently revalidate each policy-dependent issue.</summary>
-    public string ReadStructural() => ReadCore(includePolicyRevision: false);
+    public string ReadStructural() => ReadCore(includePolicyRevision: false, includeRules: false);
 
     /// <summary>
     /// 長時間取值工作（快照、範圍補抓）的範圍柵欄：結構範圍＋監看政策的主機／sensor 縮圈。
@@ -41,7 +44,8 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
         return $"{ReadStructural()}:{rawFingerprint}";
     }
 
-    private string ReadCore(bool includePolicyRevision)
+    // includeRules=false 時規則版本欄位固定填 0：範圍計算與回填都不讀規則，存規則不應中止進行中的工作。
+    private string ReadCore(bool includePolicyRevision, bool includeRules)
     {
         lock (_gate)
         {
@@ -90,7 +94,8 @@ public sealed class PrtgScopeRevisionReader(StorageBackend backend, IHostStore h
                 _sentinelVersion = sentinelVersion;
             }
             var policyVersion = includePolicyRevision ? versions.GetValueOrDefault(PrtgMonitoringPolicyStore.BlobKey) : 0;
-            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{policyVersion}:{versions.GetValueOrDefault(RulesBlobKey)}:{_sentinelFingerprint}:{_hostFingerprint}";
+            var rulesVersion = includeRules ? versions.GetValueOrDefault(RulesBlobKey) : 0;
+            return $"{versions.GetValueOrDefault(EfPrtgStore.ScopeRevisionBlobKey)}:{policyVersion}:{rulesVersion}:{_sentinelFingerprint}:{_hostFingerprint}";
         }
     }
 }

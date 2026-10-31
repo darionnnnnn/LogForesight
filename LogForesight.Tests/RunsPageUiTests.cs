@@ -604,6 +604,42 @@ public class RunsPageUiTests
         return string.Empty;
     }
 
+    /// <summary>常駐輪詢：任一 apply 擲例外，下一輪也必須照排，否則整條輪詢靜默死亡。</summary>
+    [Fact]
+    public void 排程狀態輪詢的排下一輪放在finally內()
+    {
+        var refresh = ExtractBlock(ReadRunsJs(), "async function refreshScheduleStatus(");
+        Assert.False(string.IsNullOrWhiteSpace(refresh), "擷取不到 refreshScheduleStatus 主體");
+        var finallyIndex = refresh.IndexOf("finally", StringComparison.Ordinal);
+        Assert.True(finallyIndex >= 0, "refreshScheduleStatus 必須用 try/finally 確保排下一輪");
+        var scheduleIndex = refresh.IndexOf("setTimeout(refreshScheduleStatus", StringComparison.Ordinal);
+        Assert.True(scheduleIndex > finallyIndex, "排下一輪的 setTimeout 必須在 finally 區塊內");
+    }
+
+    /// <summary>執行總表換頁：序號守門避免舊回應蓋掉新頁，失敗要有失敗態而不是骨架列永留。</summary>
+    [Fact]
+    public void 執行總表換頁載入有序號守門與失敗態()
+    {
+        var js = ReadRunsJs();
+        var load = ExtractBlock(js, "async function loadSummary(");
+        Assert.False(string.IsNullOrWhiteSpace(load), "擷取不到 loadSummary 主體");
+        Assert.Contains("createSeqGuard()", js);
+        Assert.Contains("isCurrent(", load);
+        Assert.Contains("renderError(", load);
+    }
+
+    /// <summary>三處 PRTG 輪詢改走 pollWhile：停止路徑一律呼叫 stop()，不再留 clearInterval。</summary>
+    [Fact]
+    public void PRTG狀態輪詢走pollWhile且不留clearInterval()
+    {
+        var js = ReadRunsJs();
+        Assert.Contains("pollWhile(", js);
+        Assert.DoesNotContain("setInterval(async", js);
+        Assert.DoesNotContain("setInterval(refreshPrtg", js);
+        Assert.DoesNotContain("clearInterval(prtgSyncTimer", js);
+        Assert.DoesNotContain("clearInterval(prtgBackfillPollTimer", js);
+    }
+
     private static string ReadRunsJs() =>
         File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
 

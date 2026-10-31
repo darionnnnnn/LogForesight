@@ -135,6 +135,31 @@ public class RetentionPrunerTests : IDisposable
         Assert.True(result.Blobs.Any(b => b.BlobKey == "prtg_monitoring_policy"));
     }
 
+    [Fact]
+    public void 任一清除步驟擲例外_不記錄今日已執行()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lf-retention-fail-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var backend = new StorageBackend(
+                new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "retention.db")}" }, dir);
+            // 先讓 schema 建立，再把權限異動表拿掉，使該清除步驟擲例外
+            backend.PermissionChanges().Prune(30);
+            using (var ctx = backend.CreateContext())
+                ctx.Database.ExecuteSqlRaw("DROP TABLE lf_permission_changes");
+
+            RetentionPruner.Run(backend, new RetentionOptions(), new NullConsole(), batchRunStore: null);
+
+            Assert.Null(RetentionPruner.LastRunDate(backend));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
     private sealed class NullConsole : IRunConsole
     {
         public void WriteLine(string message = "") { }

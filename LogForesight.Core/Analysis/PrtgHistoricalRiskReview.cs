@@ -10,13 +10,9 @@ public static class PrtgHistoricalRiskReview
     public static readonly string[] WeakPatterns =
     [CorrelationPatternIds.PrtgStorageCorroborated, CorrelationPatternIds.PrtgCapacityCorroborated,
         CorrelationPatternIds.PrtgOutageCorroborated];
-    private static readonly string[] EvidenceAlignmentPatterns =
-    [CorrelationPatternIds.PrtgStorageEvidenceAligned, CorrelationPatternIds.PrtgCapacityEvidenceAligned,
-        CorrelationPatternIds.PrtgOutageEvidenceAligned];
 
     public static bool IsWeakPattern(string? id) => id != null && WeakPatterns.Contains(id);
-    private static bool IsNonRiskPrtgPattern(string? id) => IsWeakPattern(id) ||
-        id != null && EvidenceAlignmentPatterns.Contains(id);
+    private static bool IsNonRiskPrtgPattern(string? id) => IsWeakPattern(id);
     private static readonly (string Old, string Current)[] Prefixes =
     [("【儲存故障雙重確認】", "【儲存異常同日訊號】"),
         ("【磁碟容量雙重確認】", "【容量異常同日訊號】"),

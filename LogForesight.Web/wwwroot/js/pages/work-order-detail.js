@@ -743,6 +743,9 @@ function renderMembers(data) {
  * 改派註記後端已直接給處理人姓名（「王小明(wang) → 李四(lee)」），原樣顯示。
  */
 function eventNoteText(note) {
+    // 系統結案事件的註記就是結案原因代碼本身（all_closed／moved／empty_dispatch…）
+    const reason = workOrderClosedReasonText(note);
+    if (reason !== note) return reason;
     // 「狀態碼：說明（N 台）」與不填說明的「狀態碼（N 台）」：開頭的狀態碼緊接全形冒號或左括號
     const code = note.match(/^([a-z_]+)(?=[：（])/);
     const meta = code ? statusBadgeMeta(code[1]) : null;

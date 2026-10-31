@@ -42,7 +42,7 @@ newRuleButton.id = 'issue-owner-new';
 renderPageHeader(document.getElementById('page-header'), {
     subtitle: '以問題為單位記錄負責人與機房結論，跨主機生效。',
     help: {
-        content: '以「問題（來源＋Event ID）」為單位記錄負責人與機房結論，跨主機生效。負責人是長期負責人：該問題之後每天出現時會自動建立案件並指派給第一位負責人（進「我的交辦」）；郵件通知路由也優先問題負責人，並自動取得曾出現其負責問題之主機的檢視權。機房結論勾選「自動套用」後，之後新出現的主機日會沿用同一個結論，不必每次重新標記。'
+        content: '以「問題（來源＋Event ID）」為單位記錄負責人與機房結論，跨主機生效。負責人是長期負責人：該問題之後每天出現時會自動建立交辦並指派給第一位負責人（進「我的交辦」）；郵件通知路由也優先問題負責人，並自動取得曾出現其負責問題之主機的檢視權。機房結論勾選「自動套用」後，之後新出現的主機日會沿用同一個結論，不必每次重新標記。'
     },
     actions: [newRuleButton]
 });
@@ -295,7 +295,7 @@ async function removeMute(rule) {
     try {
         await clearIssueMute(rule.sourceName, rule.eventId);
         toast('已解除靜音', 'success');
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     }
@@ -383,7 +383,7 @@ conclusionClearButton.addEventListener('click', async () => {
     try {
         await api.delete(`/api/admin/issue-owners/${encodeURIComponent(editingRule.sourceName)}/${editingRule.eventId}/conclusion`);
         toast('已解除機房結論', 'success');
-        await load();
+        await guardLoad(listContainer, load);
         modal.hide();
     } catch {
         // 錯誤已由 api.js 顯示
@@ -508,7 +508,7 @@ form.addEventListener('submit', async event => {
         }
         toast('已儲存問題設定', 'success');
         modal.hide();
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -530,7 +530,7 @@ async function removeRule(rule) {
     try {
         await api.delete(`/api/admin/issue-owners/${encodeURIComponent(rule.sourceName)}/${rule.eventId}`);
         toast('已刪除', 'success');
-        await load();
+        await guardLoad(listContainer, load);
     } catch {
         // 錯誤已由 api.js 顯示
     }

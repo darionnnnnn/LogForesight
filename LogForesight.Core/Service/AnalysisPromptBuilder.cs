@@ -5,9 +5,8 @@ using LogForesight.Core.Models;
 namespace LogForesight.Core.Service;
 
 /// <summary>
-/// 每日分析主 prompt 的組裝，與前置掃描（Other 類尾巴超出呈現上限時，先分批請 AI 逐項篩選）。
-/// 從 <see cref="LogAnalysisService"/> 抽出——這兩件事都是「餵給 AI 看什麼」的關注點，與
-/// AnalyzeDayAsync 本體的聚合/規則判定/寫入歷史流程分開。
+/// 每日分析主 prompt 的組裝。從 <see cref="LogAnalysisService"/> 抽出——「餵給 AI 看什麼」的關注點，
+/// 與統計段的聚合、規則判定、寫入歷史流程分開。
 /// </summary>
 internal class AnalysisPromptBuilder
 {
@@ -18,9 +17,6 @@ internal class AnalysisPromptBuilder
     internal const int MaxFlaggedInPrompt = 12;  // 規則命中問題最多逐項列 12 個
     internal const int MaxOthersInPrompt = 10;   // 未命中規則事件最多逐項列 10 個
     private const int MaxTrendAlertsInPrompt = 15;
-
-    /// <summary>前置掃描每批的項目數（每批一次獨立 AI 呼叫，prompt 約 5KB）</summary>
-    private const int ScreeningChunkSize = 20;
 
     private const int FlaggedSampleCount = 2;    // 重點問題每項附 2 則範例訊息
     private const int OtherSampleCount = 1;      // 其他事件每項附 1 則
@@ -39,8 +35,11 @@ internal class AnalysisPromptBuilder
     internal const string DataBlockStart = "<<<事件資料開始>>>";
     internal const string DataBlockEnd = "<<<事件資料結束>>>";
 
-    public const string SystemPrompt =
-        "你是資深 Windows Server 維運與資安分析師，同時也是把技術判讀翻譯成白話的溝通者。" +
+    public static readonly string SystemPrompt = SystemPromptFor(null);
+
+    /// <summary>依主機作業系統（linux／其他）組主分析 system prompt；稱呼走 <see cref="PromptGuidelines.HostKindText"/>。</summary>
+    public static string SystemPromptFor(string? hostOs) =>
+        "你是資深 " + PromptGuidelines.HostKindText(hostOs) + " 維運與資安分析師，同時也是把技術判讀翻譯成白話的溝通者。" +
         "以下資料已由程式完成規則比對、趨勢分析與風險判定，你的工作分兩部分：" +
         "(1) 依專業判斷填寫 risk_level，但這只是輔助判斷、不會讓程式判定的風險等級降低；" +
         "(2) 把結論轉譯成不懂 Event Log 的管理者也能看懂的白話——不要引用 Event ID 或程式碼層級術語，" +
@@ -54,85 +53,13 @@ internal class AnalysisPromptBuilder
 
     public AnalysisPromptBuilder(IAiService aiService) => _aiService = aiService;
 
-    /// <summary>
-    /// 超出主 prompt 呈現上限的 Other 類項目（前置掃描的對象；與 BuildPrompt 的分界一致）。
-    /// 2026-07-20 AI 角色轉換後限縮：規則已命中的尾巴不再掃描——靜態知識庫已涵蓋處置建議，
-    /// 不需要 AI 逐項篩選；只有 Other 類（未命中規則）才是 AI 唯一還需要判讀新型態問題的地方
-    /// （見 docs/archive/HISTORY.md），與 RiskReportService 深析限縮到 Other 類的原則一致。
-    /// 抑制或靜音中的問題不進前置掃描（與 BuildPrompt 的 others 排除口徑一致）。
-    /// </summary>
-    public static List<LogIssueSignature> GetTailIssues(List<LogIssueSignature> issues) =>
-        issues.Where(i => i.KnownIssue == null && !i.Suppressed).Skip(MaxOthersInPrompt).ToList();
-
-    /// <summary>
-    /// 前置掃描：分批請 AI 逐項篩選尾巴項目，只回報值得注意者。
-    /// 批次之間彼此獨立（逐項判斷是否為雜訊不需要全局脈絡），所以可以安全拆分呼叫。
-    /// </summary>
-    public async Task<ScreeningOutcome> ScreenTailAsync(DateTime date, List<LogIssueSignature> tailIssues, CancellationToken ct = default)
-    {
-        var outcome = new ScreeningOutcome();
-
-        foreach (var chunk in tailIssues.Chunk(ScreeningChunkSize))
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"{date:yyyy-MM-dd} 的 Windows Server 事件種類較多，主分析前請先篩選以下較低嚴重度的事件。" +
-                          "逐項判斷是否值得納入主分析（入侵跡象、故障前兆、不尋常的模式）；一般性雜訊不要列出。");
-            sb.AppendLine();
-            sb.AppendLine(DataBlockStart);
-            for (int i = 0; i < chunk.Length; i++)
-            {
-                var item = chunk[i];
-                sb.AppendLine($"{i + 1}. [{item.Severity}] {item.LogName}/{item.SourceEventLabel} x{item.Count}" +
-                              $"（{item.FirstSeen}~{item.LastSeen}）：" +
-                              (item.KnownIssue != null ? $"{item.KnownIssue}；" : "") +
-                              (item.SampleMessages.FirstOrDefault() ?? ""));
-                if (item.KeyDetails != null)
-                {
-                    sb.AppendLine($"   {item.KeyDetails}");
-                }
-                // 殘留憑證判定（FEEDBACK-30 A3）必須進 prompt：不給的話 AI 看到大量登入失敗
-                // 會自行敘述成暴力破解，與系統自己的判定互相矛盾。
-                if (item.ResidualCredentialBasis != null)
-                {
-                    sb.AppendLine($"   {item.ResidualCredentialBasis}");
-                }
-            }
-            sb.AppendLine(DataBlockEnd);
-            sb.AppendLine();
-            sb.AppendLine("請只回傳一個 JSON 物件（不要任何其他文字），no 為上列項目編號；全部屬一般雜訊時 notable 給空陣列：");
-            sb.AppendLine("""{"notable": [{"no": 1, "reason": "為何值得注意"}]}""");
-
-            var result = await _aiService.ChatJsonAsync<ScreeningResult>(sb.ToString(), SystemPrompt, label: $"screening-{date:yyyyMMdd}", ct: ct);
-            var parsed = result.Value;
-
-            if (parsed == null)
-            {
-                outcome.FailedCount += chunk.Length;
-                continue;
-            }
-
-            int valid = 0;
-            foreach (var n in parsed.Notable)
-            {
-                if (n.No >= 1 && n.No <= chunk.Length)
-                {
-                    outcome.Notable.Add((chunk[n.No - 1], n.Reason));
-                    valid++;
-                }
-            }
-            outcome.CleanCount += chunk.Length - valid;
-        }
-
-        return outcome;
-    }
-
     public static string BuildPrompt(DateTime date, List<LogIssueSignature> issues,
         int errorCount, int warningCount, int auditCount, List<DailyAnalysisRecord> history,
-        List<string> trendAlerts, List<CorrelationFinding> correlations, ScreeningOutcome? screening,
-        bool dataIncomplete, List<string> uncoveredChecks, string serverDescription)
+        List<string> trendAlerts, List<CorrelationFinding> correlations,
+        bool dataIncomplete, List<string> uncoveredChecks, string serverDescription, string? hostOs = null)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"以下是 Windows Server 在 {date:yyyy-MM-dd}（{WeekdayZh(date)}）的事件日誌摘要" +
+        sb.AppendLine($"以下是 {PromptGuidelines.HostKindText(hostOs)} 在 {date:yyyy-MM-dd}（{WeekdayZh(date)}）的事件日誌摘要" +
                       "（已聚合統計，且已由程式完成規則比對、趨勢分析與風險判定）。" +
                       "請依這些資料給出風險等級判斷，並把結論轉譯成白話讓不懂技術的人也能理解，" +
                       "特別注意硬體故障前兆與入侵跡象。");
@@ -232,8 +159,7 @@ internal class AnalysisPromptBuilder
             {
                 AppendIssue(sb, i, history.Count, flagged: true);
             }
-            // 規則命中的尾巴不再前置掃描（2026-07-20 限縮，見 GetTailIssues）——靜態知識庫已涵蓋
-            // 處置建議，這裡固定顯示折疊統計行，不像 Other 類尾巴有掃描結果可以彙報
+            // 規則命中的尾巴不逐項列出：靜態知識庫已涵蓋處置建議，這裡固定顯示折疊統計行
             if (flagged.Count > MaxFlaggedInPrompt)
             {
                 var folded = flagged.Skip(MaxFlaggedInPrompt).ToList();
@@ -249,33 +175,10 @@ internal class AnalysisPromptBuilder
             {
                 AppendIssue(sb, i, history.Count, flagged: false);
             }
-            if (others.Count > MaxOthersInPrompt && screening == null)
+            if (others.Count > MaxOthersInPrompt)
             {
                 var folded = others.Skip(MaxOthersInPrompt).ToList();
                 sb.AppendLine($"（另有 {folded.Count} 種其他事件共 {folded.Sum(i => i.Count)} 筆，未逐項列出）");
-            }
-        }
-
-        if (screening != null)
-        {
-            sb.AppendLine();
-            sb.AppendLine("【前置掃描結果】（超出上方篇幅的較低嚴重度項目，已先由獨立 AI 呼叫逐項檢視）");
-            foreach (var (issue, reason) in screening.Notable)
-            {
-                AppendIssue(sb, issue, history.Count, flagged: issue.KnownIssue != null);
-                sb.AppendLine($"  掃描意見：{reason}");
-            }
-            if (screening.Notable.Count == 0 && screening.CleanCount > 0)
-            {
-                sb.AppendLine($"- 已檢視 {screening.CleanCount} 項，皆判定為一般雜訊。");
-            }
-            else if (screening.CleanCount > 0)
-            {
-                sb.AppendLine($"（另 {screening.CleanCount} 項經檢視判定為一般雜訊）");
-            }
-            if (screening.FailedCount > 0)
-            {
-                sb.AppendLine($"（{screening.FailedCount} 項掃描失敗未經檢視，僅計入當日統計）");
             }
         }
 
@@ -384,29 +287,5 @@ internal class AnalysisPromptBuilder
             IssueTrend.Declining => $"（頻率下降：近{historyDays}日基準 x{i.HistoryDailyAverage}）",
             _ => ""
         };
-    }
-
-    /// <summary>前置掃描的彙總結果</summary>
-    public class ScreeningOutcome
-    {
-        public List<(LogIssueSignature Issue, string Reason)> Notable { get; } = new();
-        public int CleanCount { get; set; }
-        public int FailedCount { get; set; }
-    }
-
-    /// <summary>前置掃描呼叫的 JSON 契約</summary>
-    private class ScreeningResult
-    {
-        [JsonPropertyName("notable")]
-        public List<ScreeningItem> Notable { get; set; } = new();
-    }
-
-    private class ScreeningItem
-    {
-        [JsonPropertyName("no")]
-        public int No { get; set; }
-
-        [JsonPropertyName("reason")]
-        public string Reason { get; set; } = string.Empty;
     }
 }

@@ -232,7 +232,8 @@ public sealed record AiOutcome(
     List<string>? UncoveredChecksAddendum = null,
     string? InputPrtgFingerprint = null,
     string? ReportPrtgEvidenceFingerprint = null,
-    LogForesight.Core.Persistence.PreparedRiskReport? ReportDraft = null);
+    LogForesight.Core.Persistence.PreparedRiskReport? ReportDraft = null,
+    bool Skipped = false);
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive

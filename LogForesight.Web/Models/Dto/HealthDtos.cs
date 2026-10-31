@@ -130,6 +130,9 @@ public class HealthDetailDto : HealthDto
     /// 通常代表地址打錯，維運人員不用翻 log 就看得到。</summary>
     public List<string> SuspendedMailRecipients { get; set; } = new();
 
+    /// <summary>郵件貢獻帳本狀態：佔用鍵數、上限與最近一次滿載（行程內記憶）。</summary>
+    public MailContributionLedgerDto MailContributionLedger { get; set; } = new();
+
     // ── 密碼欄位加密 ─────────────────────────────────────────────────────
 
     /// <summary>密文金鑰來源：env｜file｜embedded（見 CryptoHelper.KeySource）</summary>
@@ -194,4 +197,20 @@ public class ScheduleFreshnessDto
 public class FreshnessAckRequest
 {
     public DateTime Until { get; set; }
+}
+
+/// <summary>郵件貢獻帳本的健康細節。</summary>
+public sealed class MailContributionLedgerDto
+{
+    /// <summary>目前佔用的鍵數（已寄＋舊格式保留＋寄送中預約，去重）</summary>
+    public int OccupiedKeys { get; set; }
+
+    /// <summary>帳本鍵數上限</summary>
+    public int Limit { get; set; }
+
+    /// <summary>最近一次因滿載而略過收件人的時間（UTC）；本行程未發生過為 null</summary>
+    public DateTime? LastFullAtUtc { get; set; }
+
+    /// <summary>最近一次因滿載而略過的收件人；未發生過為 null</summary>
+    public string? LastFullRecipient { get; set; }
 }

@@ -14,7 +14,7 @@ public static class RunTriggerText
     public static string Of(string? trigger, IUserDisplayNameService displayNames, IUserStore users) => trigger switch
     {
         null => "閒置",
-        "schedule" => "排程",
+        BatchRunTriggers.Schedule => "排程",
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
             $"手動（{displayNames.OfAccount(users, trigger["manual:".Length..])}）",
         _ => trigger

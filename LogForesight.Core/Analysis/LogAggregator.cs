@@ -18,8 +18,23 @@ public class LoginFailureDetail
 
 public class LogIssueSignature
 {
-    public string LogName { get; set; } = string.Empty;
-    public string Source { get; set; } = string.Empty;
+    private string _logName = string.Empty;
+    private string _source = string.Empty;
+
+    /// <summary>
+    /// 外部字串在入口截斷到欄位上限（<see cref="WorkOrderIssueKey.SourceMaxLength"/>＝255，與 source_name／log_name 欄位同長）：
+    /// 問題鍵、來源鍵都由截斷後的值衍生，記憶體中的鍵才會與存檔後讀回的鍵一致。所有建構路徑（彙整、PRTG 對應、
+    /// 讀回資料列、JSON 反序列化）都經過這個 setter。
+    /// </summary>
+    public string LogName { get => _logName; set => _logName = ClampEntry(value); }
+
+    /// <summary>事件來源；入口截斷規則同 <see cref="LogName"/>。</summary>
+    public string Source { get => _source; set => _source = ClampEntry(value); }
+
+    private static string ClampEntry(string? value) =>
+        value is null ? string.Empty
+            : value.Length <= WorkOrderIssueKey.SourceMaxLength ? value : value[..WorkOrderIssueKey.SourceMaxLength];
+
     public int EventId { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -130,6 +145,10 @@ public class LogIssueSignature
     /// </summary>
     public bool ElevatesDayRisk { get; set; }
 
+    /// <summary>規則命中但次數未達門檻（僅記憶體，不持久化）；關聯層不採計此類簽章。</summary>
+    [JsonIgnore]
+    public bool BelowThreshold { get; set; }
+
     /// <summary>命中規則表時的已知問題說明，未命中為 null</summary>
     public string? KnownIssue { get; set; }
 
@@ -186,8 +205,8 @@ internal static class LogAggregator
     /// <summary>
     /// 依 (LogName, Source, EventId, EntryType, EventKey) 五元組分組統計並用規則表分類。
     /// 聚合是小模型策略的核心：把上千筆原始 log 壓成數十行統計，AI 只看摘要不看原文。
-    /// 上限 50：超出主 prompt 呈現上限的部分會走前置掃描（分批給 AI 篩選），
-    /// 不會直接消失，所以這裡不需要砍太兇；50 之後的極端尾巴才截斷。
+    /// 上限 50：偵測、規則與處置建議都吃這份完整聚合結果，主 prompt 只呈現其中較重要的前幾項
+    /// （AI 只負責白話翻譯，不是偵測的必要環節），所以這裡不需要砍太兇；50 之後的極端尾巴才截斷。
     ///
     /// EventKey（第五段，docs/archive/FEEDBACK-12-PLAN.md §4.2）：Windows 事件恆空字串，
     /// 既有四元組鍵字串完全不變。Linux 事件在分組**之前**逐事件呼叫

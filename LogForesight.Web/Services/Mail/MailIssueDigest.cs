@@ -152,7 +152,7 @@ public class MailIssueDigest
             if (overdueKeys.Contains(key)) bucket = MailIssueBucket.Overdue;
             else if (previousHostCount == 0) bucket = MailIssueBucket.New;
             else if (hostCount > previousHostCount) bucket = MailIssueBucket.Spreading;
-            else if ((IssueSeverity)severityRank >= IssueSeverity.High) bucket = MailIssueBucket.OtherHighRisk;
+            else if (LegacySeverityRank.ToSeverity(severityRank) >= IssueSeverity.High) bucket = MailIssueBucket.OtherHighRisk;
             else continue;   // 不屬於任何一區的問題不進郵件——這是「優先」摘要，不是全量清單
 
             rows.Add(new MailIssueRow(a.Source, a.EventId, a.Category, hostCount, previousHostCount, bucket, severityRank));
@@ -176,7 +176,7 @@ public class MailIssueDigest
         var visibleHosts = visibleHostIds?.ToHashSet();
         return contributions.Where(item => item.HostId > 0 &&
             (visibleHosts == null || visibleHosts.Contains(item.HostId)) &&
-            (visibleSeverities == null || visibleSeverities.Contains((IssueSeverity)item.SeverityRank)) &&
+            (visibleSeverities == null || visibleSeverities.Contains(LegacySeverityRank.ToSeverity(item.SeverityRank))) &&
             !exclusion.IsMuted(item.Source, item.EventId, item.Date));
     }
 

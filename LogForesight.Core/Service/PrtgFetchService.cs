@@ -547,11 +547,11 @@ public sealed class PrtgFetchService
                     // 有長度上限的字串欄一律先截斷（上限與 LfDbContext 的 HasMaxLength 對齊）：
                     // PRTG 沒有長度保證，SQL Server 端超長會讓整批 500 筆一起寫入失敗、SQLite 靜默通過。
                     // Ip 截掉的一定不是 IPv4（最長 15 字元），對主機對應沒有影響。
-                    Name = Truncate(GetStringProperty(el, "device"), 255) ?? string.Empty,
-                    GroupPath = Truncate(GetStringProperty(el, "group"), 512) ?? string.Empty,
-                    Ip = Truncate(GetStringProperty(el, "host"), 64),
+                    Name = ColumnClamp.Clamp(GetStringProperty(el, "device"), 255) ?? string.Empty,
+                    GroupPath = ColumnClamp.Clamp(GetStringProperty(el, "group"), 512) ?? string.Empty,
+                    Ip = ColumnClamp.Clamp(GetStringProperty(el, "host"), 64),
                     Tags = GetStringProperty(el, "tags"),
-                    Status = Truncate(GetStringProperty(el, "status"), 64),
+                    Status = ColumnClamp.Clamp(GetStringProperty(el, "status"), 64),
                     DependencyObjid = ParseDependency(el),
                     Paused = ParsePaused(el),
                     SyncedAt = syncedAt,
@@ -732,11 +732,11 @@ public sealed class PrtgFetchService
             Objid = objid.Value,
             DeviceObjid = parentid,
             // 截斷理由同 device mapper（上限對齊 LfDbContext）
-            Name = Truncate(GetStringProperty(el, "sensor"), 255) ?? string.Empty,
-            SensorType = Truncate(GetStringProperty(el, "type"), 128) ?? string.Empty,
+            Name = ColumnClamp.Clamp(GetStringProperty(el, "sensor"), 255) ?? string.Empty,
+            SensorType = ColumnClamp.Clamp(GetStringProperty(el, "type"), 128) ?? string.Empty,
             Tags = GetStringProperty(el, "tags"),
-            Unit = Truncate(GetStringProperty(el, "unit"), 64),
-            Status = Truncate(GetStringProperty(el, "status"), 64),
+            Unit = ColumnClamp.Clamp(GetStringProperty(el, "unit"), 64),
+            Status = ColumnClamp.Clamp(GetStringProperty(el, "status"), 64),
             ThresholdsJson = null,
             DependencyObjid = ParseDependency(el),
             Paused = ParsePaused(el),
@@ -833,7 +833,7 @@ public sealed class PrtgFetchService
                         {
                             SensorObjid = sensorObjid.Value,
                             ChangedAt = changedAt,
-                            Status = Truncate(GetStringProperty(el, "status"), 64) ?? string.Empty,
+                            Status = ColumnClamp.Clamp(GetStringProperty(el, "status"), 64) ?? string.Empty,
                             PrevStatus = null,
                             Message = GetStringProperty(el, "message"),
                             Quality = PrtgDataQuality.Ok,
@@ -1527,12 +1527,6 @@ public sealed class PrtgFetchService
         return null;
     }
 
-    /// <summary>
-    /// 依欄位長度上限截斷。PRTG 的字串欄位沒有長度保證，SQL Server 端超長會擲截斷例外，
-    /// 讓整批（一次 500 筆）寫入一起失敗；SQLite 端不報錯，兩個後端行為還會分岔。
-    /// </summary>
-    private static string? Truncate(string? value, int maxLength) =>
-        value != null && value.Length > maxLength ? value[..maxLength] : value;
 
     /// <summary>
     /// messages 端點對單一物件（<c>id={objid}</c>）的查詢字串。PRTG 的 messages 沒有「只取某一天」的參數，只有相對區間

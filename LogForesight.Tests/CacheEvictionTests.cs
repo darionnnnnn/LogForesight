@@ -55,7 +55,7 @@ public class CacheEvictionTests
     {
         RunScenario(clock =>
         {
-            var cache = new IssueRankingCache(clock);
+            var cache = new IssueRankingCache(new DataVersionStamp(), clock);
             return new CacheHarness(
                 i => cache.Set($"k{i}", new List<IssueRankingDto>()),
                 i => cache.TryGet($"k{i}") != null);
@@ -67,7 +67,7 @@ public class CacheEvictionTests
     {
         RunScenario(clock =>
         {
-            var cache = new ActionableSnapshotCache(clock);
+            var cache = new ActionableSnapshotCache(new DataVersionStamp(), clock);
             return new CacheHarness(
                 i => cache.Set($"k{i}", new List<ResolvedOccurrence>()),
                 i => cache.TryGet($"k{i}") != null);

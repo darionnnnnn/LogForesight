@@ -52,7 +52,7 @@ public class CalibrationServiceTests : IDisposable
     }
 
     private CalibrationService CreateService(IKnownIssueRuleStore? ruleStore = null,
-        IIssueAggregateQuery? issueQueryOverride = null, PrtgCalibrationCaptureLimits? captureLimits = null)
+        IIssueAggregateQuery? issueQueryOverride = null, PrtgCalibrationCaptureLimits? captureLimits = null, ICurrentUser? currentUser = null)
     {
         // 判定快取是靜態的，測試之間必須清乾淨（否則前一個測試的結論會漏到下一個）
         CalibrationService.ClearAssessmentCache();
@@ -1778,7 +1778,8 @@ public class CalibrationServiceTests : IDisposable
             Assert.Contains("Rules", exception.Message, StringComparison.OrdinalIgnoreCase);
         }
 
-        var controller = new CalibrationController(service, new RecordingAuditService());
+        var controller = new CalibrationController(service, new RecordingAuditService(),
+            FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
         var statusResult = Assert.IsType<ObjectResult>(controller.GetStatus());
         Assert.Equal(StatusCodes.Status413PayloadTooLarge, statusResult.StatusCode);
         var envelope = Assert.IsAssignableFrom<ApiResponse<object>>(statusResult.Value);
@@ -2586,13 +2587,35 @@ public class CalibrationControllerTests : IDisposable
     }
 
     private CalibrationController CreateController(ISystemSettingsStore? settingsStore = null,
-        long maximumExportBytes = 64L * 1024 * 1024, PrtgCalibrationCaptureLimits? captureLimits = null)
+        long maximumExportBytes = 64L * 1024 * 1024, PrtgCalibrationCaptureLimits? captureLimits = null, ICurrentUser? currentUser = null)
     {
         var prtgStore = new EfPrtgStore(_fx.NewContext);
         var issueQuery = new EfIssueAggregateQuery(_fx.NewContext, _hostStore);
         var service = new CalibrationService(_fx.NewContext, prtgStore, issueQuery,
             settingsStore ?? _settingsStore, _ruleStore, captureLimits);
-        return new CalibrationController(service, _audit, maximumExportBytes);
+        return new CalibrationController(service, _audit,
+            currentUser ?? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll), maximumExportBytes);
+    }
+
+    [Fact]
+    public void 校準端點_無ViewAll狀態與匯出皆回403()
+    {
+        var controller = CreateController(currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain));
+        var status = Assert.IsType<ObjectResult>(controller.GetStatus());
+        Assert.Equal(StatusCodes.Status403Forbidden, status.StatusCode);
+        var export = Assert.IsType<ObjectResult>(controller.Export(isOverride: true));
+        Assert.Equal(StatusCodes.Status403Forbidden, export.StatusCode);
+        var serverAdmin = CreateController(currentUser: FakeCurrentUser.ServerAdmin());
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(serverAdmin.GetStatus()).StatusCode);
+    }
+
+    [Fact]
+    public void 校準端點_持有ViewAll狀態正常()
+    {
+        var controller = CreateController();
+        var status = controller.GetStatus();
+        try { Assert.IsAssignableFrom<OkObjectResult>(status); }
+        finally { (status as IDisposable)?.Dispose(); } // 釋放靜態的請求占用，避免影響其他測試
     }
 
     private sealed class DisablePrtgOnSecondReadStore(FakeSystemSettingsStore inner) : ISystemSettingsStore

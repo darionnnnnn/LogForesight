@@ -150,6 +150,42 @@ public class SlowTrendAnalyzerTests
         Assert.Empty(suppressed);
     }
 
+    [Fact]
+    public void 疑似殘留憑證重試的簽章慢速惡化時不進alerts改進suppressedAlerts並加註()
+    {
+        // 與 TrendAnalyzer 的殘留憑證降噪同一套語意（A4c）：不得讓慢速惡化路徑繞過降噪而拉高當日風險
+        var prior = Enumerable.Range(7, 7).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 1));
+        var recent = Enumerable.Range(1, 6).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 2));
+        var history = prior.Concat(recent).ToList();
+        var sig = Sig(5);
+        sig.ResidualCredentialRetry = true;
+
+        var alerts = SlowTrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today,
+            out bool evaluated, out var suppressed);
+
+        Assert.True(evaluated);
+        Assert.Empty(alerts);
+        Assert.Single(suppressed);
+        Assert.Contains(suppressed, a => a.Contains("慢速惡化") && a.EndsWith("（疑似殘留憑證重試，不列入風險判定）"));
+    }
+
+    [Fact]
+    public void 一般簽章同條件慢速惡化仍進alerts且不加殘留註記()
+    {
+        var prior = Enumerable.Range(7, 7).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 1));
+        var recent = Enumerable.Range(1, 6).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 2));
+        var history = prior.Concat(recent).ToList();
+        var sig = Sig(5);
+        sig.ResidualCredentialRetry = false;
+
+        var alerts = SlowTrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today,
+            out _, out var suppressed);
+
+        Assert.Single(alerts);
+        Assert.DoesNotContain("疑似殘留憑證重試", alerts[0]);
+        Assert.Empty(suppressed);
+    }
+
     private static LogIssueSignature Sig(int count) => new()
     {
         LogName = "System",

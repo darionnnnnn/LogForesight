@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NLog;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -21,6 +22,7 @@ namespace LogForesight.Core.Persistence.Sql;
 /// </summary>
 public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private readonly Func<LfDbContext> _contextFactory;
     private readonly SqlPerformanceMonitor? _performance;
 
@@ -147,8 +149,16 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
             .GroupBy(h => (h.HostNameKey, h.RecordDate))
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        var issueKeyMax = ColumnClamp.For<IssueHandlingRow>(nameof(IssueHandlingRow.IssueKey));
         foreach (var handling in list)
         {
+            // issue_key 是比對鍵，截斷到中間會與其他問題撞鍵或永遠對不上；超長就整列不寫
+            if (issueKeyMax is { } max && handling.IssueKey.Length > max)
+            {
+                Log.Warn("[SQL] IssueHandling 的 issue_key 超過 {Max} 字（{Len}），略過不寫：{Host} {Date:yyyy-MM-dd} {Key}",
+                    max, handling.IssueKey.Length, handling.HostName, handling.Date, handling.IssueKey[..80]);
+                continue;
+            }
             var rowKey = (HostNameKey.Of(handling.HostName), handling.Date.Date, handling.IssueKey);
             var hostDayKey = (rowKey.Item1, rowKey.Item2);
             if (!existingByHostDay.TryGetValue(hostDayKey, out var candidates))

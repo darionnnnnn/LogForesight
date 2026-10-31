@@ -157,7 +157,7 @@ public class ReportService
             // 撈回來的紀錄其主機必然在 visibleHosts 裡，不必再載一次整份主機表
             var hostsByName = visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
             ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
-            kpi = BuildKpi(records, previousRecords);
+            kpi = BuildKpi(exclusion, records, previousRecords);
             trend = BuildTrend(records, from, to);
         }
 
@@ -273,13 +273,20 @@ public class ReportService
         };
     }
 
+    private static int CountUnmutedIssues(IssueExclusion exclusion, List<DailyAnalysisRecord> records) =>
+        records.Sum(r => r.TopIssues.Count(i => !exclusion.IsMuted(i.Source, i.EventId, r.Date)));
+
+    /// <summary>
+    /// 問題總數與 scope=all 的 SQL 聚合（<c>IssueExclusionSql</c>）同口徑：靜音中的問題不計入，
+    /// 讓同一份資料切換顯示範圍時「問題總數」不變。日數與主機數不受靜音影響，維持原本計算。
+    /// </summary>
     private static ReportKpiDto BuildKpi(
-        List<DailyAnalysisRecord> records, List<DailyAnalysisRecord> previous)
+        IssueExclusion exclusion, List<DailyAnalysisRecord> records, List<DailyAnalysisRecord> previous)
     {
         return new ReportKpiDto
         {
-            TotalIssues = records.Sum(r => r.TopIssues.Count),
-            TotalIssuesPrevious = previous.Sum(r => r.TopIssues.Count),
+            TotalIssues = CountUnmutedIssues(exclusion, records),
+            TotalIssuesPrevious = CountUnmutedIssues(exclusion, previous),
             HighRiskDays = records.Count(r => r.RiskLevel == RiskLevels.High),
             HighRiskDaysPrevious = previous.Count(r => r.RiskLevel == RiskLevels.High),
             AffectedHosts = records

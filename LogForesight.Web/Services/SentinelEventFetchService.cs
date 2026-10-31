@@ -114,6 +114,8 @@ public class SentinelEventFetchService : ISentinelEventFetcher
         await using var client = new SentinelClient(server, netiqOptions);
 
         var query = BuildQuery(host.Os, host.IpAddress!, source, eventId);
+        // program 字串不合法（可能含 Lucene 運算子）→ 不查詢，走既有「查不到」路徑
+        if (string.IsNullOrEmpty(query.Filter)) return null;
 
         // 當地日 00:00 → 翌日 00:00，轉 UTC 交給 SentinelClient——與 NetiqPipelineService 的
         // 日窗口同一套換算（TimeSpan.Zero 會把當地午夜當成 UTC 午夜，台灣環境整個窗口偏移 8 小時）
@@ -142,6 +144,9 @@ public class SentinelEventFetchService : ISentinelEventFetcher
         return messages.Count > 0 ? new LiveEventFetchResult(messages) : null;
     }
 
+    private static readonly System.Text.RegularExpressions.Regex SafeProgramPattern =
+        new(@"^[A-Za-z0-9_.\-]+\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     internal readonly record struct LiveFetchQuery(string Filter, string[] ProjectionFields, string SourceField);
 
     /// <summary>
@@ -161,6 +166,21 @@ public class SentinelEventFetchService : ISentinelEventFetcher
     internal static LiveFetchQuery BuildQuery(string os, string ip, string source, int eventId)
     {
         var isLinux = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
+        // 位址不是 IPv4 時不組查詢（BuildIpClause 只放行 IPv4，全不合法會擲例外）；
+        // 與下方不安全 program 同一種處理：回 Filter 為空字串的「不查詢」結果，由呼叫端視為查不到。
+        if (!SentinelQueryBuilder.IsValidIpv4(ip))
+        {
+            Log.Debug("主機位址不是 IPv4，略過現場取數：{Ip}", ip);
+            return new LiveFetchQuery(string.Empty, Array.Empty<string>(),
+                isLinux ? SentinelFieldMap.LinuxProgram : SentinelFieldMap.Source);
+        }
+        // Linux 的 program 來自事件內容（攻擊者可控），要放進未加引號的 Lucene 前綴查詢，
+        // 只放行安全字元；不符則回 Filter 為空字串的「不查詢」結果，由呼叫端視為查不到。
+        if (isLinux && !SafeProgramPattern.IsMatch(source ?? string.Empty))
+        {
+            Log.Debug("Linux program 含不安全字元，略過現場取數：{Source}", source);
+            return new LiveFetchQuery(string.Empty, Array.Empty<string>(), SentinelFieldMap.LinuxProgram);
+        }
         var contentClause = isLinux
             ? $"{SentinelFieldMap.LinuxProgram}:{source}*"
             : $"{SentinelFieldMap.EventId}:\"{eventId}\"";

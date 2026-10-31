@@ -1350,6 +1350,10 @@ function targetCell(s) {
     badge.textContent = TARGET_TYPE_NAMES[s.targetType] ?? '規則';
     wrap.appendChild(badge);
     wrap.appendChild(document.createTextNode(suppressionTargetLabel(s)));
+    if (s.retired) {
+        wrap.appendChild(document.createTextNode(' '));
+        wrap.appendChild(statusBadge('已退役', 'secondary', { title: '此關聯模式已移除，這筆抑制不再有作用，可刪除' }));
+    }
     return wrap;
 }
 

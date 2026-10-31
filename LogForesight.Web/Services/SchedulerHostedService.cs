@@ -39,8 +39,11 @@ public class SchedulerHostedService : BackgroundService
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
     private readonly IHostApplicationLifetime _lifetime;
-    private Task? _lastMailTask;
-    private Task? _lastWorkOrderMailTask;
+    private readonly Func<DateTime, CancellationToken, Task> _sendDailyWeeklyMail;
+    private readonly Func<DateTime, CancellationToken, Task> _sendWorkOrderDigest;
+
+    /// <summary>站台啟動後讓其餘啟動流程先完成的等待時間（測試可縮短）</summary>
+    internal TimeSpan StartupDelay { get; init; } = TimeSpan.FromSeconds(10);
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -54,8 +57,13 @@ public class SchedulerHostedService : BackgroundService
         NamedMutexGate mutexGate,
         MailNotificationService mail,
         IHostApplicationLifetime lifetime,
-        DataVersionStamp dataVersion)
+        DataVersionStamp dataVersion,
+        Func<DateTime, CancellationToken, Task>? sendDailyWeeklyMail = null,
+        Func<DateTime, CancellationToken, Task>? sendWorkOrderDigest = null)
     {
+        // 寄信入口可注入，測試才能驗證「先判斷窗口、後寄信」的順序；預設包 _mail 的兩個方法
+        _sendDailyWeeklyMail = sendDailyWeeklyMail ?? ((t, ct) => mail.CheckAndSendDailyWeeklyAsync(t, ct));
+        _sendWorkOrderDigest = sendWorkOrderDigest ?? ((t, ct) => mail.CheckAndSendWorkOrderDigestAsync(t, ct));
         _webSettings = webSettings;
         _scheduleOptionsStore = scheduleOptionsStore;
         _systemSettingsStore = systemSettingsStore;
@@ -78,7 +86,7 @@ public class SchedulerHostedService : BackgroundService
         // 讓站台其餘啟動流程（規則庫初始化等，見 Program.cs「啟動時的資料準備」）先完成，避免搶跑
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+            await Task.Delay(StartupDelay, stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -109,6 +117,10 @@ public class SchedulerHostedService : BackgroundService
             {
                 await TickAsync(stoppingToken);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break; // 站台停機：不是錯誤
+            }
             catch (Exception ex)
             {
                 Log.Error(ex, "排程輪詢發生未預期錯誤（不影響下次輪詢）");
@@ -128,39 +140,83 @@ public class SchedulerHostedService : BackgroundService
         }
     }
 
-    private async Task TickAsync(CancellationToken stoppingToken)
+    internal async Task TickAsync(CancellationToken stoppingToken)
+    {
+        // 先做窗口 End 的優雅停止與觸發判斷，再寄信：寄信不在輪詢路徑等待（只檢查上一次是否完成），
+        // 但仍排在判斷之後。判斷段有多個 return，所以寄信放在 finally，每條路徑都會執行。
+        try
+        {
+            await EvaluateScheduleAsync();
+        }
+        finally
+        {
+            SendDigests(stoppingToken);
+        }
+    }
+
+    private void SendDigests(CancellationToken stoppingToken)
     {
         // 每日／每週定時彙總（回饋十五輪批次D）：獨立於排程分析窗口之外，即使排程本身未啟用
         // 也照常檢查——通知的時間軸是「使用者想幾點收到摘要」，不是「排程窗口設在幾點」。
-        // 內部自行 try/catch 到底且成功寄送與否都不影響下方的排程判斷，緊接著跑不需要額外保護。
-        // 上一次寄送尚未結束時跳過本次寄送且不等待；整段寄送設 5 分鐘上限，逾時不再等待直接繼續排程判斷。
-        if (_lastMailTask == null || _lastMailTask.IsCompleted)
+        // 輪詢路徑只做 IsCompleted 檢查、不 await：上一次寄送還沒結束就跳過本次，寄信卡住不會拖延下一輪判斷。
+        // 寄信 Task 的例外在 ObserveMailAsync 內觀察並記 Log；超過 5 分鐘未返回時，於下一輪檢查記一次警告。
+        PollMailSlot(_dailyWeeklyMail, _sendDailyWeeklyMail, "每日／每週彙總", stoppingToken);
+
+        // 交辦摘要（第 55 輪 C-1b）：寄出 outbox 內到期的交辦通知，節流與上限同上。
+        PollMailSlot(_workOrderMail, _sendWorkOrderDigest, "交辦摘要", stoppingToken);
+    }
+
+    /// <summary>單一寄信通道的狀態：上一次的 Task、開始時間、是否已記過逾時警告</summary>
+    private sealed class MailSlot
+    {
+        public Task? Task;
+        public DateTime StartedAt;
+        public bool TimeoutWarned;
+    }
+
+    private static readonly TimeSpan MailStuckWarnAfter = TimeSpan.FromMinutes(5);
+
+    private readonly MailSlot _dailyWeeklyMail = new();
+    private readonly MailSlot _workOrderMail = new();
+
+    private static void PollMailSlot(MailSlot slot, Func<DateTime, CancellationToken, Task> send, string name,
+        CancellationToken stoppingToken)
+    {
+        if (slot.Task != null && !slot.Task.IsCompleted)
         {
-            _lastMailTask = _mail.CheckAndSendDailyWeeklyAsync(DateTime.Now, stoppingToken);
-            try
+            if (!slot.TimeoutWarned && DateTime.Now - slot.StartedAt > MailStuckWarnAfter)
             {
-                await _lastMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
+                slot.TimeoutWarned = true;
+                Log.Warn("{Name}寄送超過 5 分鐘未返回，輪詢不等待也不重複啟動", name);
             }
-            catch (TimeoutException)
-            {
-                Log.Warn("每日／每週彙總寄送超過 5 分鐘未返回，本次輪詢不再等待");
-            }
+            return;
         }
 
-        // 交辦摘要（第 55 輪 C-1b）：寄出 outbox 內到期的交辦通知，節流與上限同上；內部自行 try/catch 到底。
-        if (_lastWorkOrderMailTask == null || _lastWorkOrderMailTask.IsCompleted)
-        {
-            _lastWorkOrderMailTask = _mail.CheckAndSendWorkOrderDigestAsync(DateTime.Now, stoppingToken);
-            try
-            {
-                await _lastWorkOrderMailTask.WaitAsync(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-            catch (TimeoutException)
-            {
-                Log.Warn("交辦摘要寄送超過 5 分鐘未返回，本次輪詢不再等待");
-            }
-        }
+        slot.StartedAt = DateTime.Now;
+        slot.TimeoutWarned = false;
+        slot.Task = ObserveMailAsync(send, name, stoppingToken);
+    }
 
+    /// <summary>啟動一次寄送並觀察結果：同步或非同步擲出的例外都記 Log，不會成為未觀察例外</summary>
+    private static async Task ObserveMailAsync(Func<DateTime, CancellationToken, Task> send, string name,
+        CancellationToken stoppingToken)
+    {
+        try
+        {
+            await send(DateTime.Now, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // 站台停機：不是錯誤
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "{Name}寄送發生例外（不影響排程輪詢）", name);
+        }
+    }
+
+    private async Task EvaluateScheduleAsync()
+    {
         var options = _scheduleOptionsStore.Get();
 
         if (_runState.IsRunning)
@@ -168,7 +224,7 @@ public class SchedulerHostedService : BackgroundService
             // 窗口 End 到點（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：對「排程觸發」的進行中執行發
             // 優雅停止（停在主機日邊界）。手動觸發不受時間窗限制（§1.4.4），不在這裡停。
             // 刻意放在 Enabled 檢查之前——執行中途被關掉 Enabled，這次排程執行仍該按窗口停。
-            if (_runState.Trigger == "schedule" &&
+            if (_runState.Trigger == BatchRunTriggers.Schedule &&
                 !ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.Windows) &&
                 _runState.TryCancel())
             {
@@ -177,7 +233,7 @@ public class SchedulerHostedService : BackgroundService
             // 手動執行佔住 gate 時，這個窗口的自動觸發會靜默消失——手動觸發不受窗口 End 停止
             // （§1.4.4），一趟大回填可以吃掉整段窗口。畫面上看起來就是「排程沒跑，也沒說為什麼」。
             // 這裡把它說出來：狀態卡顯示、里程碑進那次手動執行的紀錄，每個窗口只記一次。
-            if (_runState.Trigger != null && !_runState.Trigger.StartsWith("schedule", StringComparison.Ordinal))
+            if (_runState.Trigger != null && _runState.Trigger != BatchRunTriggers.Schedule)
             {
                 NoteSkippedScheduleWindow(options);
             }
@@ -301,7 +357,7 @@ public class SchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == "schedule" 且 JobType != BatchRun.JobTypeAi 的執行，
+    /// 取數排程的觸發時間查詢（單一查詢點）：篩選持久紀錄中 Trigger == schedule 且 JobType != BatchRun.JobTypeAi 的執行（<see cref="BatchRunExtensions.IsScheduledFetch"/>），
     /// 交由 <see cref="ScheduleCalculator.EffectiveScheduleTriggerTimes"/> 計算有效觸發時間（中斷執行允許同窗口補跑一次），
     /// 並與記憶體中最近的排程觸發嘗試時間聯集。
     /// </summary>
@@ -315,7 +371,7 @@ public class SchedulerHostedService : BackgroundService
     public bool PrtgBackfillWaiting => _prtgManualWork.Running == PrtgManualWork.Backfill;
 
     /// <summary>排程執行的唯一判準：Trigger == "schedule" 且非 AI 背景工作（觸發判定、補跑說明、排程驗收共用）</summary>
-    internal static bool IsScheduledFetchRun(BatchRun run) => run.Trigger == "schedule" && run.JobType != BatchRun.JobTypeAi;
+    internal static bool IsScheduledFetchRun(BatchRun run) => run.IsScheduledFetch();
 
     internal static IEnumerable<(DateTime StartedAt, bool Interrupted)> ScheduledRunTimes(IEnumerable<BatchRun> runs) =>
         runs.Where(IsScheduledFetchRun).Select(r => (r.StartedAt, r.Interrupted));
@@ -335,21 +391,12 @@ public class SchedulerHostedService : BackgroundService
     }
 
     /// <summary>
-    /// 觸發一次執行（排程輪詢與手動觸發 API 共用）。已有執行中時回 false（拒絕，不排隊）；
-    /// 跨行程 Mutex 逾時內拿不到（有 console 執行個體正在跑）也回 false。
-    ///
-    /// **只等到「確定開始」就返回**（最久 <see cref="MutexTimeout"/>）：分析本身在背景繼續，
-    /// 進度由 <see cref="SchedulerRunState"/> 供狀態 API 輪詢。不能等整趟跑完——手動觸發的
-    /// HTTP 請求會被掛住數小時，排程輪詢迴圈也會被卡死（窗口 End 的優雅停止就永遠輪不到）。
-    /// 背景工作只碰 Singleton 依賴（store／設定／run state），與 NetiqProbeService 同一套作法。
-    /// </summary>
-    /// <summary>
     /// 排程輪詢自己組的請求。**永遠不帶重新分析模式**（<see cref="RerunMode.None"/>）——
     /// 刪除既有分析結果重跑是破壞性動作，只在有人看著的手動觸發發生，不在無人看管的夜間排程。
     /// 抽成獨立函式是為了讓這條契約測得到。
     /// </summary>
     internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null) =>
-        new() { Scope = RunScope.Full, Trigger = "schedule", CatchUpNote = catchUpNote };
+        new() { Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote };
 
     /// <summary>
     /// 把呼叫端的請求與目前排程設定合成實際執行用的請求（<see cref="TriggerRunAsync"/> 的純函式部分）。
@@ -372,6 +419,15 @@ public class SchedulerHostedService : BackgroundService
         PrtgBackfillDays = request.PrtgBackfillDays
     };
 
+    /// <summary>
+    /// 觸發一次執行（排程輪詢與手動觸發 API 共用）。已有執行中時回 false（拒絕，不排隊）；
+    /// 跨行程 Mutex 逾時內拿不到（有 console 執行個體正在跑）也回 false。
+    ///
+    /// **只等到「確定開始」就返回**（最久 <see cref="MutexTimeout"/>）：分析本身在背景繼續，
+    /// 進度由 <see cref="SchedulerRunState"/> 供狀態 API 輪詢。不能等整趟跑完——手動觸發的
+    /// HTTP 請求會被掛住數小時，排程輪詢迴圈也會被卡死（窗口 End 的優雅停止就永遠輪不到）。
+    /// 背景工作只碰 Singleton 依賴（store／設定／run state），與 NetiqProbeService 同一套作法。
+    /// </summary>
     public async Task<bool> TriggerRunAsync(RunRequest request)
     {
         // AI 診斷傾印一律以目前的排程設定為準（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.10）：
@@ -430,6 +486,13 @@ public class SchedulerHostedService : BackgroundService
                     Log.Warn("取得執行鎖逾時（可能有 console 執行個體正在跑），本次觸發（{Trigger}）略過。", effectiveRequest.Trigger);
                     startSignal.TrySetResult(false);
                 }
+            }
+            catch (OperationCanceledException ex) when (runCts.IsCancellationRequested)
+            {
+                // 站台停機或使用者停止造成的取消，不是未預期錯誤
+                Log.Info("觸發來源 {Trigger} 的執行已被取消", effectiveRequest.Trigger);
+                startSignal.TrySetResult(false);
+                outcome = new RunOutcome(false, ex.Message, effectiveRequest.Trigger ?? "manual", DateTime.Now);
             }
             catch (Exception ex)
             {

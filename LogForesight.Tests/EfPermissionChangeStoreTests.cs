@@ -428,4 +428,25 @@ public sealed class EfPermissionChangeStoreTests : IDisposable
         Assert.NotNull(fetched);
         Assert.Null(fetched!.RawText);
     }
+
+    [Fact]
+    public void Prune超過單次上限分批清除_第一次清maxRows筆_第二次清餘下5筆()
+    {
+        const int maxRows = 20;
+        _store.AppendChanges(Enumerable.Range(0, maxRows + 5).Select(i => new PermissionChangeRecord
+        {
+            ChangeId = "batch-" + i,
+            HostName = "SRV-DC01",
+            DetectedAt = DateTime.Now,
+            Target = "T" + i
+        }).ToList());
+        using (var ctx = _fixture.NewContext())
+        {
+            ctx.PermissionChanges.ExecuteUpdate(u => u.SetProperty(r => r.CreatedAt, DateTime.Today.AddDays(-60)));
+        }
+
+        Assert.Equal(maxRows, _store.Prune(30, maxRows, 7));
+        Assert.Equal(5, _store.Prune(30, maxRows, 7));
+        Assert.Equal(0, _store.Prune(30, maxRows, 7));
+    }
 }

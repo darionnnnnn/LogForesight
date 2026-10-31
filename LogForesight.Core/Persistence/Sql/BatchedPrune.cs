@@ -49,7 +49,15 @@ internal static class BatchedPrune
             var keys = takeKeys(ctx, Math.Min(batchSize, maxRows - total));
             if (keys.Count == 0) break;
 
-            total += deleteByKeys(ctx, keys);
+            var deleted = deleteByKeys(ctx, keys);
+            if (deleted == 0)
+            {
+                // 取到鍵卻刪不掉任何列：再取只會拿到同一批，空轉到上限沒有意義，中止留待下次。
+                Log.Warn("[SQL] 清理{What}：取得 {Count} 個鍵但刪除 0 筆，零進展中止", what, keys.Count);
+                break;
+            }
+
+            total += deleted;
         }
 
         if (total == 0) return 0;

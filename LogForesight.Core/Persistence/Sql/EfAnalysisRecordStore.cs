@@ -3,6 +3,7 @@ using System.Data;
 using System.Linq.Expressions;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Analysis;
 using LogForesight.Core.Configuration;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
@@ -267,7 +268,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var date = shaped.Date.Date;
         foreach (var (source, eventId) in shaped.TopIssues.Select(i => (i.Source, i.EventId)).Distinct())
         {
-            var sourceKey = source.ToUpperInvariant();
+            var sourceKey = WorkOrderIssueKey.SourceKeyOf(source);
             try
             {
                 using var ctx = _contextFactory();
@@ -282,10 +283,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 }
 
                 ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
-                    { SourceKey = sourceKey, EventId = eventId, SourceName = source, FirstSeen = date });
+                    { SourceKey = sourceKey, EventId = eventId, SourceName = ColumnClamp.ClampFor<IssueFirstSeenRow>(source, nameof(IssueFirstSeenRow.SourceName))!, FirstSeen = date });
                 ctx.SaveChanges();
             }
-            catch (DbUpdateException ex)
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
             {
                 // 唯一鍵競態：另一台主機的平行寫入搶先建了這一列，補一次「較早才更新」即可，
                 // 不是需要中止分析的錯誤
@@ -304,8 +305,27 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     Log.Warn(retryEx, "[SQL] IssueFirstSeen 補更新仍失敗，這個問題的首見日這次先不更新：{Msg}", retryEx.Message);
                 }
             }
+            catch (DbUpdateException ex)
+            {
+                // 非唯一鍵的寫入錯誤：此時主交易已提交，首見日只是輔助的呈現資料——
+                // 擲出去會讓呼叫端把已寫入的主機日判為失敗，所以只記警告、繼續處理下一個問題
+                Log.Warn(ex, "[SQL] IssueFirstSeen 寫入失敗（主機 {Host}、日期 {Date:yyyy-MM-dd}、{Source}/{EventId}），這個問題的首見日這次先不更新：{Msg}",
+                    shaped.Host, date, source, eventId, ex.Message);
+            }
         }
     }
+
+    /// <summary>
+    /// 是否為唯一鍵衝突（SQLite 主碼 19 且延伸碼為 UNIQUE 2067／PRIMARYKEY 1555；SQL Server 2601、2627）；
+    /// 其他錯誤不當競態吞掉。SQLite 的主碼 19 涵蓋所有約束（外鍵 787、NOT NULL 1299、CHECK 275），只看主碼會誤判。
+    /// 延伸碼等於 19 是沒有延伸資訊的情況（例如只帶主碼建構的例外），視同唯一鍵以維持相容。
+    /// </summary>
+    internal static bool IsUniqueViolation(DbUpdateException ex) => ex.InnerException switch
+    {
+        Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19, SqliteExtendedErrorCode: 2067 or 1555 or 19 } => true,
+        Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 } => true,
+        _ => false
+    };
 
     public void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup)
     {
@@ -817,10 +837,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return new TopIssueRow
         {
             RecordId = recordId,
-            SourceName = issue.Source,
+            SourceName = ColumnClamp.ClampFor<TopIssueRow>(issue.Source, nameof(TopIssueRow.SourceName))!,
             SourceKey = WorkOrderIssueKey.SourceKeyOf(issue.Source),
             EventId = issue.EventId,
-            Category = issue.Category.ToString(),
+            Category = ColumnClamp.ClampFor<TopIssueRow>(issue.Category.ToString(), nameof(TopIssueRow.Category))!,
             SeverityRank = (int)issue.Severity,
             // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
             // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
@@ -829,10 +849,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             RecordDate = recordDate.Date,
             EventCount = issue.Count,
             ElevatesDayRisk = issue.ElevatesDayRisk,
-            LogName = issue.LogName,
+            LogName = ColumnClamp.ClampFor<TopIssueRow>(issue.LogName, nameof(TopIssueRow.LogName))!,
             EntryType = (int)issue.EntryType,
-            KnownIssue = issue.KnownIssue,
-            EventKey = issue.EventKey,
+            KnownIssue = ColumnClamp.ClampFor<TopIssueRow>(issue.KnownIssue, nameof(TopIssueRow.KnownIssue)),
+            EventKey = ColumnClamp.ClampFor<TopIssueRow>(issue.EventKey, nameof(TopIssueRow.EventKey))!,
             SourceObservationsJson = sourceObservationsJson,
             SourceObservationsTruncated = issue.SourceObservationsTruncated || serializationTruncated
         };
@@ -1535,14 +1555,15 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             // RiskRankConsistencyTests 斷言這裡的權重與 RiskLevels.Rank 一致
             IOrderedQueryable<DailyRecordRow> ordered = sortKey switch
             {
-                "date" => ascending ? q.OrderBy(r => r.RecordDate) : q.OrderByDescending(r => r.RecordDate),
-                "host" => ascending ? q.OrderBy(r => r.HostName) : q.OrderByDescending(r => r.HostName),
+                "date" => ascending ? q.OrderBy(r => r.RecordDate).ThenBy(r => r.RecordId) : q.OrderByDescending(r => r.RecordDate).ThenByDescending(r => r.RecordId),
+                "host" => ascending ? q.OrderBy(r => r.HostName).ThenBy(r => r.RecordId) : q.OrderByDescending(r => r.HostName).ThenByDescending(r => r.RecordId),
                 "risk" => ascending
-                    ? q.OrderBy(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
-                    : q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0),
+                    ? q.OrderBy(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0).ThenBy(r => r.RecordId)
+                    : q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0).ThenByDescending(r => r.RecordId),
                 _ => q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
                     .ThenByDescending(r => r.HasCorrelation)
                     .ThenByDescending(r => r.RecordDate)
+                    .ThenByDescending(r => r.RecordId)
             };
 
             var items = ordered
@@ -1573,16 +1594,20 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var matched = records.Where(r => RecordFilterMatcher.Matches(r, filter));
         var ordered2 = sortKey switch
         {
-            "date" => ascending ? matched.OrderBy(r => r.Date) : matched.OrderByDescending(r => r.Date),
+            // 每個分支末尾補 RecordId 次要鍵，與 SQL 全下推路徑一致：同鍵多筆時次序穩定，翻頁聯集不重不漏
+            "date" => ascending
+                ? matched.OrderBy(r => r.Date).ThenBy(r => r.RecordId)
+                : matched.OrderByDescending(r => r.Date).ThenByDescending(r => r.RecordId),
             "host" => ascending
-                ? matched.OrderBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
-                : matched.OrderByDescending(r => r.Host, StringComparer.OrdinalIgnoreCase),
+                ? matched.OrderBy(r => r.Host, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.RecordId)
+                : matched.OrderByDescending(r => r.Host, StringComparer.OrdinalIgnoreCase).ThenByDescending(r => r.RecordId),
             "risk" => ascending
-                ? matched.OrderBy(r => RiskLevels.Rank(r.RiskLevel))
-                : matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)),
+                ? matched.OrderBy(r => RiskLevels.Rank(r.RiskLevel)).ThenBy(r => r.RecordId)
+                : matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)).ThenByDescending(r => r.RecordId),
             _ => matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
                 .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
                 .ThenByDescending(r => r.Date)
+                .ThenByDescending(r => r.RecordId)
         };
         var finalOrdered = ordered2.ToList();
 
@@ -1683,13 +1708,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var sw = Stopwatch.StartNew();
         using var ctx = _contextFactory();
 
-        // 低風險且從未跑過 AI 的日子不標——那是「本來就不需要 AI」，標了會讓補跑把整庫
-        // 撿回來跑一遍。與 LogAnalysisService.ApplyOutcome 的後置判準
-        // （AiPending = !AiAnalyzed && 非低風險）同源；「要不要呼叫 AI」的前置判準另含
-        // 低風險尾巴篩選，但那種日子跑過 AI 就 AiAnalyzed=true、已被本條涵蓋。
+        // 低風險日一律不標（不論是否已有 AI 白話）：低風險日不送 AI，與統計段「低風險日不排 AI」
+        // 的判準同源（AiPending = 非低風險）。已有 AI 白話的低風險列若被標回待補，補跑時
+        // RetryAiAsync 會回 Skipped，並以低風險通用字樣覆寫、清空深入分析——等於白白蓋掉既有內容。
         // detail_pruned 的列同樣不標：詳情已清、AI 輸入無法重建（同 WhereAiPending）。
         var affected = ctx.DailyRecords
-            .Where(r => (r.AiAnalyzed || r.RiskLevel != RiskLevels.Low) && !r.DetailPruned)
+            .Where(r => r.RiskLevel != RiskLevels.Low && !r.DetailPruned)
             .ExecuteUpdate(s => s.SetProperty(r => r.AiPending, true));
 
         Log.Info("[SQL] 強制重新分析：整批重標 ai_pending = true，共 {Count} 列、{Ms}ms",
@@ -1814,12 +1838,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 SourceObservations = SourceEvidence.DeserializeObservations(t.SourceObservationsJson),
                 SourceObservationsTruncated = t.SourceObservationsTruncated,
                 Count = t.EventCount,
-                // 嚴重度刻意不在這裡正規化（Critical=3 原樣帶出）——與 Deserialize() 回傳的
-                // 完整紀錄行為一致，正規化是 RecordRepository.ApplySeverityVisibility 讀取時
-                // 的職責（單一咽喉），這裡另外做一次會漏掉 SiteHidden 那半套規則
-                Severity = (IssueSeverity)t.SeverityRank,
+                // 舊資料嚴重度（三級化前寫入的 Critical=3）在這裡就正規化為 High，下游的
+                // RecordRepository.NormalizeLegacySeverity 因此看不到 Critical——「重大」標記必須同時補上
+                // （與 EfIssueAggregateQuery 的 ForcesElevate 同一條規則），否則舊資料的重大日會漏標
+                Severity = LegacySeverityRank.ToSeverity(t.SeverityRank),
                 Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
-                ElevatesDayRisk = t.ElevatesDayRisk,
+                ElevatesDayRisk = t.ElevatesDayRisk || LegacySeverityRank.ForcesElevate(t.SeverityRank),
                 KnownIssue = t.KnownIssue
             }).ToList());
     }

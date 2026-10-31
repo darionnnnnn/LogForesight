@@ -15,6 +15,7 @@ import {
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { openReportModal } from '../core/report-view.js';
 import { bindRangeChips } from '../core/date-range.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 const STORAGE_KEY = 'lf.permissionChanges.filters';
 
@@ -88,7 +89,7 @@ document.getElementById('perm-tabs').addEventListener('click', event => {
     // 那個理由與實情不符，會把排查帶往錯誤方向。
     selectedChanges.clear();
     currentPage = 1;
-    load();
+    reload();
 });
 
 /** 讀取 localStorage 篩選偏好 */
@@ -200,7 +201,7 @@ function renderCategoryChips() {
             if (active) selectedCategories.add(value);
             else selectedCategories.delete(value);
             currentPage = 1;
-            load();
+            reload();
         }
     });
 }
@@ -254,6 +255,8 @@ function buildQueryParams(includePaging = true) {
     return params;
 }
 
+const loadGuard = createSeqGuard();
+
 async function load() {
     clearSubnetError();
     saveStoredFilters();
@@ -264,29 +267,43 @@ async function load() {
     const params = buildQueryParams(true);
     history.replaceState(null, '', `?${params.toString()}`);
 
+    const seq = loadGuard.next();
+    let result;
     try {
-        lastResult = await api.get(`/api/permission-changes?${params.toString()}`, { silent: true });
-
-        if (lastResult && Array.isArray(lastResult.items)) {
-            for (const item of lastResult.items) {
-                if (selectedChanges.has(item.changeId)) {
-                    selectedChanges.set(item.changeId, item);
-                }
-            }
-        }
-
-        renderCategoryChips();
-        render();
+        result = await api.get(`/api/permission-changes?${params.toString()}`, { silent: true });
     } catch (err) {
+        // 過期請求的失敗不處理：使用者此刻在等的是新請求
+        if (!loadGuard.isCurrent(seq)) return;
         const isSubnetErr = subnetInput?.value.trim() && (err.code === 'validation_failed' || (err.message && err.message.includes('網段')));
         if (isSubnetErr) {
             showSubnetError(err.message);
-        } else {
-            toast(err.message || '查詢失敗', 'danger');
+            lastResult = { items: [], total: 0, page: currentPage, pageSize };
+            render();
+            return;
         }
-        lastResult = { items: [], total: 0, page: currentPage, pageSize };
-        render();
+        // 一般失敗不可回填空清單：安全檢核頁把「查詢失敗」畫成「沒有待確認的權限異動」會靜默吞資料。
+        // 交給外層 guardLoad 顯示可重試的失敗態。
+        throw err;
     }
+    // 回應回來時已有更新的查詢就整份丟掉，不得寫入頁面狀態
+    if (!loadGuard.isCurrent(seq)) return;
+    lastResult = result;
+
+    if (lastResult && Array.isArray(lastResult.items)) {
+        for (const item of lastResult.items) {
+            if (selectedChanges.has(item.changeId)) {
+                selectedChanges.set(item.changeId, item);
+            }
+        }
+    }
+
+    renderCategoryChips();
+    render();
+}
+
+/** 篩選、換頁、排序、儲存後的重載：失敗時換成可重試的失敗態，不留永遠轉圈的骨架 */
+function reload() {
+    return guardLoad(document.getElementById('perm-list'), load);
 }
 
 /**
@@ -388,7 +405,7 @@ function render() {
         onSort: (key, dir) => {
             sort = { key, dir };
             currentPage = 1;
-            load();
+            reload();
         },
         empty: {
             title: currentStatus === 'pending' ? '沒有待確認的權限異動' : '沒有符合條件的紀錄',
@@ -987,7 +1004,7 @@ function renderPager() {
         totalPages,
         onPage: page => {
             currentPage = page;
-            load();
+            reload();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         },
         pageSize,
@@ -995,7 +1012,7 @@ function renderPager() {
             pageSize = size;
             savePageSize('permissionChanges', size);
             currentPage = 1;
-            load();
+            reload();
         }
     });
 }
@@ -1082,7 +1099,7 @@ confirmForm.addEventListener('submit', async event => {
 
         toast(pendingConfirm.targetStatus === 'authorized' ? '已確認為授權操作' : '已標記為可疑', 'success');
         modal.hide();
-        await load();
+        await reload();
     } catch {
         restore();
     }
@@ -1230,7 +1247,7 @@ if (batchConfirmForm) {
 
             selectedChanges.clear();
             batchConfirmModal.hide();
-            await load();
+            await reload();
         } catch {
             // 錯誤已由 api.js 顯示
         } finally {
@@ -1253,7 +1270,7 @@ function resetFilters() {
         localStorage.removeItem(STORAGE_KEY);
     } catch {}
     currentPage = 1;
-    load();
+    reload();
 }
 
 function onSearchInput() {
@@ -1261,7 +1278,7 @@ function onSearchInput() {
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => {
         currentPage = 1;
-        load();
+        reload();
     }, 300);
 }
 
@@ -1270,7 +1287,7 @@ if (filterForm) {
         event.preventDefault();
         clearTimeout(searchDebounce);
         currentPage = 1;
-        load();
+        reload();
     });
 }
 
@@ -1285,21 +1302,21 @@ if (subnetInput) {
 if (sourceSelect) {
     sourceSelect.addEventListener('change', () => {
         currentPage = 1;
-        load();
+        reload();
     });
 }
 
 if (fromInput) {
     fromInput.addEventListener('change', () => {
         currentPage = 1;
-        load();
+        reload();
     });
 }
 
 if (toInput) {
     toInput.addEventListener('change', () => {
         currentPage = 1;
-        load();
+        reload();
     });
 }
 
@@ -1308,7 +1325,7 @@ bindRangeChips({
     toInput,
     onApply: () => {
         currentPage = 1;
-        load();
+        reload();
     }
 });
 

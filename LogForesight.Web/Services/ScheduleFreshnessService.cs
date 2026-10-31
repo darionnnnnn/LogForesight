@@ -27,11 +27,10 @@ public class ScheduleFreshnessService
         var options = _scheduleOptions.Get();
         var scheduleEnabled = options.Enabled;
 
-        // 近 14 天的執行紀錄中，JobType != BatchRun.JobTypeAi、Trigger == "schedule"、FinishedAt != null、BatchRunStatus.UpdatedData(...) 為 true 的最新一筆之 FinishedAt。
+        // 近 14 天的執行紀錄中，JobType != BatchRun.JobTypeAi、Trigger == schedule（IsScheduledFetch）、FinishedAt != null、BatchRunStatus.UpdatedData(...) 為 true 的最新一筆之 FinishedAt。
         var runs = _runs.GetRecentRuns(14, hostNames: null);
         var latestSuccess = runs
-            .Where(r => r.JobType != BatchRun.JobTypeAi &&
-                        r.Trigger == "schedule" &&
+            .Where(r => r.IsScheduledFetch() &&
                         r.FinishedAt != null &&
                         BatchRunStatus.UpdatedData(BatchRunStatus.Compute(r, now, RunMonitorService.StuckThreshold)))
             .OrderByDescending(r => r.FinishedAt)

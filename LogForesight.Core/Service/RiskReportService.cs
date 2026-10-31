@@ -32,17 +32,25 @@ public class RiskReportService
     /// </summary>
     private const int MaxDeepDivePromptChars = 16 * 1024;
 
-    private const string DeepDiveSystemPrompt =
-        "你是資深 Windows Server 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
+    private static string DeepDiveSystemPromptFor(string? hostOs) =>
+        "你是資深 " + PromptGuidelines.HostKindText(hostOs) + " 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
         "只根據提供的資料判斷，不要臆測資料中不存在的事件。" + PromptGuidelines.Language +
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
     private readonly IAiService _aiService;
+    private readonly string? _hostOs;
     private readonly int _deepDiveMaxTokens;
+    private readonly Func<IReadOnlyList<KnownIssueRule>>? _ruleProvider;
 
-    public RiskReportService(IAiService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192)
+    /// <param name="ruleProvider">由組裝端注入「目前生效規則清單」（從規則儲存讀取）。處置參考以簽章的
+    /// RuleId 反查這份清單；靜態 <see cref="KnownIssueCatalog.Rules"/> 在 Web 重啟後、第一次取數 run 之前
+    /// 只是內建種子，自訂規則與 Linux 規則會查不到。為 null 時退回靜態 FindRule 行為。</param>
+    public RiskReportService(IAiService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192,
+        Func<IReadOnlyList<KnownIssueRule>>? ruleProvider = null, string? hostOs = null)
     {
+        _hostOs = hostOs;
+        _ruleProvider = ruleProvider;
         _aiService = aiService;
         // Kept in the constructor for existing composition roots; report persistence now belongs
         // to the guarded parent writer, never to this renderer.
@@ -92,7 +100,7 @@ public class RiskReportService
                 ? (record.AiAnalyzed && allowAiDeepDive
                     ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription, ct)
                     : new DeepDiveOutcome(null, false, 0, categoryLogs.Count))
-                : BuildStaticOutcome(issues, categoryLogs.Count);
+                : BuildStaticOutcome(issues, categoryLogs.Count, _ruleProvider);
 
             if (group.Key == IssueCategory.Other && record.AiAnalyzed && allowAiDeepDive && outcome.Result == null)
             {
@@ -149,6 +157,8 @@ public class RiskReportService
     /// <summary>挑出值得深入分析的重點問題：High 以上、頻率上升、或首次出現的 Medium 以上</summary>
     private static List<LogIssueSignature> SelectFocusIssues(List<LogIssueSignature> issues)
     {
+        // 已被抑制的簽章不佔類別名額、也不觸發 Other 類深入分析（與主 prompt 排除被抑制問題的口徑一致）
+        issues = issues.Where(i => !i.Suppressed).ToList();
         var focus = issues
             .Where(i => i.Severity >= IssueSeverity.High
                         || i.Trend == IssueTrend.Rising
@@ -172,9 +182,9 @@ public class RiskReportService
 
         foreach (var issue in issues)
         {
+            // 與 RiskyEventSelector 相同的分組鍵（含 Linux 規則 Id），同 program 不同規則的 log 不互撈
             selected.AddRange(logs.Where(l =>
-                    l.LogName == issue.LogName && l.Source == issue.Source &&
-                    l.EventId == issue.EventId && l.EntryType == issue.EntryType)
+                    LogAggregator.GroupKeyFor(l) == (issue.LogName, issue.Source, issue.EventId, issue.EntryType, issue.EventKey))
                 .Take(quota));
         }
 
@@ -261,7 +271,7 @@ public class RiskReportService
         }
         sb.Append(footer);
 
-        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt, maxTokens: _deepDiveMaxTokens,
+        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPromptFor(_hostOs), maxTokens: _deepDiveMaxTokens,
             label: $"deepdive-{record.Date:yyyyMMdd}-{category}", ct: ct);
         return new DeepDiveOutcome(result.Value, truncated, included, logLines.Count);
     }
@@ -272,12 +282,20 @@ public class RiskReportService
     /// 理論上該類別的每個問題都命中過規則（Category 正是規則分類來的），查不到規則屬防禦性情況，
     /// 略過該問題而非產生空白區塊。
     /// </summary>
-    private static DeepDiveOutcome BuildStaticOutcome(List<LogIssueSignature> issues, int totalLogs)
+    private static DeepDiveOutcome BuildStaticOutcome(List<LogIssueSignature> issues, int totalLogs,
+        Func<IReadOnlyList<KnownIssueRule>>? ruleProvider)
     {
         var analyses = new List<DeepDiveItem>();
+        IReadOnlyList<KnownIssueRule>? rules = null;
         foreach (var issue in issues)
         {
-            var rule = KnownIssueCatalog.FindRule(issue.Source, issue.EventId);
+            KnownIssueRule? rule = null;
+            if (!string.IsNullOrEmpty(issue.RuleId) && ruleProvider != null)
+            {
+                rules ??= ruleProvider();
+                rule = rules.FirstOrDefault(r => r.Id == issue.RuleId);
+            }
+            rule ??= KnownIssueCatalog.FindRule(issue.Source, issue.EventId);
             if (rule == null || rule.PlainExplanation.Length == 0)
             {
                 continue;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..', '..');
@@ -35,9 +35,14 @@ function element() {
     };
 }
 
+// production 已改走 core/storage.js 的 safeStorage：這裡載入真正的 safeStorage，
+// 並把測試替身掛到 globalThis.localStorage，讓「儲存區擲例外」的情境走真實的 try/catch 包裝
+const { safeStorage } = await import(pathToFileURL(path.join(repoRoot, 'LogForesight.Web', 'wwwroot', 'js', 'core', 'storage.js')).href);
+
 function load(localStorage) {
+    globalThis.localStorage = localStorage;
     const body = extractFunction('export function bindRememberedCollapse').replace(/^export /, '');
-    return new Function('localStorage', `${body}\nreturn bindRememberedCollapse;`)(localStorage);
+    return new Function('safeStorage', `${body}\nreturn bindRememberedCollapse;`)(safeStorage);
 }
 
 function memoryStorage(initial = {}) {

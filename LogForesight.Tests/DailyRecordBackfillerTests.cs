@@ -130,4 +130,42 @@ public class DailyRecordBackfillerTests : IDisposable
         using var check = _fx.NewContext();
         Assert.False(check.DailyRecords.Single().AiPending);
     }
+
+    /// <summary>
+    /// 版本 >= 2 的列以欄位為事實來源（DB-SPEC）：即使落進回填候選（&lt; CurrentVersion），
+    /// 欄位 AiPending=1、JSON=false 也不得被 JSON 覆寫。版本 1 的舊列則照舊以 JSON 校正。
+    /// </summary>
+    [Fact]
+    public void 回填_版本2的列_保留欄位AiPending_版本1的列仍由JSON校正()
+    {
+        var date = new DateTime(2026, 8, 3);
+        using (var ctx = _fx.NewContext())
+        {
+            foreach (var (hostId, version) in new[] { (11, 1), (12, 2) })
+            {
+                ctx.DailyRecords.Add(new DailyRecordRow
+                {
+                    HostId = hostId, HostName = "H" + hostId, RecordDate = date, RiskLevel = "高",
+                    ContentJson = System.Text.Json.JsonSerializer.Serialize(new DailyAnalysisRecord
+                    {
+                        HostId = hostId, Host = "H" + hostId, Date = date, RiskLevel = "高",
+                        AiAnalyzed = true, AiPending = false
+                    }),
+                    AiPending = true, AiAnalyzed = false, ExtractVersion = version, CreatedAt = DateTime.Now
+                });
+            }
+            ctx.SaveChanges();
+        }
+
+        new DailyRecordBackfiller(_fx.NewContext).Run(CancellationToken.None);
+
+        using var check = _fx.NewContext();
+        var v1 = check.DailyRecords.Single(r => r.HostId == 11);
+        var v2 = check.DailyRecords.Single(r => r.HostId == 12);
+        Assert.False(v1.AiPending);
+        Assert.True(v1.AiAnalyzed);
+        Assert.True(v2.AiPending);
+        Assert.False(v2.AiAnalyzed);
+        Assert.Equal(DailyRecordBackfiller.CurrentVersion, v2.ExtractVersion);
+    }
 }

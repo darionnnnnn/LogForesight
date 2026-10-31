@@ -533,10 +533,10 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 
     public int CountPendingAi() => _records.Count(r => r.AiPending);
 
-    /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
+    /// <summary>強制重新分析：判準同正式實作——低風險日一律不標</summary>
     public int MarkAllForAiRerun()
     {
-        var targets = _records.Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low).ToList();
+        var targets = _records.Where(r => r.RiskLevel != RiskLevels.Low).ToList();
         foreach (var r in targets) r.AiPending = true;
         return targets.Count;
     }
@@ -588,6 +588,19 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
         // 與正式 IssueOwnerStore.Upsert 逐欄複製保持一致（替身 Get 回傳同一個參考，漏欄缺陷要靠真實 store 的測試抓）
         existing.Mutes = rule.Mutes;
         return existing;
+    }
+
+    public IssueProfile Update(string source, int eventId, Action<IssueProfile> apply)
+    {
+        var row = _rules.FirstOrDefault(r => Matches(r, source, eventId));
+        if (row == null)
+        {
+            row = new IssueProfile { SourceName = source, EventId = eventId };
+            _rules.Add(row);
+        }
+        apply(row);
+        row.UpdatedAt = DateTime.Now;
+        return row;
     }
 
     public void Delete(string source, int eventId) => _rules.RemoveAll(r => Matches(r, source, eventId));

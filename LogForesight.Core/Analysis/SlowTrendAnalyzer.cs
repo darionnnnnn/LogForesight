@@ -92,7 +92,13 @@ internal static class SlowTrendAnalyzer
             {
                 var text = $"慢速惡化：{sig.SourceEventLabel} 近 {WindowDays} 天累計 x{recentTotal}" +
                            $"（含今日），前 {WindowDays} 天累計 x{priorTotal}";
-                if (sig.Suppressed)
+                // 疑似殘留憑證重試（與 TrendAnalyzer 同一降噪語意）：不進 alerts，避免 trendAlerts.Count > 0 拉高當日風險
+                if (sig.ResidualCredentialRetry)
+                {
+                    text += TrendAnalyzer.ResidualCredentialNote;
+                    suppressedAlerts.Add(text);
+                }
+                else if (sig.Suppressed)
                 {
                     suppressedAlerts.Add(text);
                 }

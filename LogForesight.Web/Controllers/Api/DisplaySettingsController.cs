@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -18,16 +19,19 @@ namespace LogForesight.Web.Controllers.Api;
 public class DisplaySettingsController : ControllerBase
 {
     private readonly ISystemSettingsService _settings;
+    private readonly ISystemSettingsStore _store;
 
-    public DisplaySettingsController(ISystemSettingsService settings)
+    public DisplaySettingsController(ISystemSettingsService settings, ISystemSettingsStore store)
     {
         _settings = settings;
+        _store = store;
     }
 
     [HttpGet]
     public ApiResponse<DisplaySettingsDto> Get()
     {
-        var all = _settings.Get();
+        // 每次頁面載入都會呼叫；完整 Get() 會統計報告用量（lf_reports 全表），這裡只需兩個郵件布林，改讀輕量設定庫
+        var all = _store.Get();
         return ApiResponse<DisplaySettingsDto>.Ok(new DisplaySettingsDto
         {
             // null（全顯示）轉為完整清單——前端要的是明確的顯示範圍，不是「不過濾」的內部語意

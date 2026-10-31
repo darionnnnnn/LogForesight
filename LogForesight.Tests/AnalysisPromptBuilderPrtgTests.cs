@@ -42,7 +42,7 @@ public class AnalysisPromptBuilderPrtgTests
         AnalysisPromptBuilder.BuildPrompt(
             DateTime.Today, issues.ToList(), errorCount: 1, warningCount: 0, auditCount: 0,
             history: new List<DailyAnalysisRecord>(), trendAlerts: new List<string>(),
-            correlations: new List<CorrelationFinding>(), screening: null,
+            correlations: new List<CorrelationFinding>(),
             dataIncomplete: false, uncoveredChecks: new List<string>(), serverDescription: "測試主機");
 
     [Fact]

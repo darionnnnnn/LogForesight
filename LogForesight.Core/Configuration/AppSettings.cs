@@ -61,7 +61,7 @@ public class AiSettings
     public int JsonRetryCount { get; set; } = 2;
 
     /// <summary>
-    /// 一般（終端 JSON 較短）呼叫的 token 上限，用於每日總覽分析與前置掃描。0 = 不設上限。
+    /// 一般（終端 JSON 較短）呼叫的 token 上限，用於每日總覽分析等短回應呼叫。0 = 不設上限。
     /// 這類回應正常應該只有幾百字元；上限故意抓緊，是因為觀察到模型退化重複輸出時會一路
     /// 生成到頂到上限才停——上限越大不會讓成功率變高，只會讓失敗的嘗試多跑幾十秒才觸頂、
     /// 白白浪費時間。如果模型的「思考/推理」長度本身沒有上限，一直調高這個值也只是把
@@ -109,7 +109,7 @@ public class AiSettings
     /// OpenAI 相容 API 的標準欄位，llama.cpp 也支援。
     /// 0.3 實測不足以壓下這個模型的退化傾向，調到 0.5 後從 log 觀察似乎依然明顯，
     /// 這裡先調到 0.8 作為下一步嘗試；若持續無效，可能代表這個 server/模型組合下
-    /// OpenAI 相容層的 frequency_penalty 沒有確實生效，改靠上面的 repeat_penalty
+    /// OpenAI 相容層的 frequency_penalty 沒有確實生效，改靠上面的 rep_pen
     /// 或請維護伺服器的人確認實際支援的取樣參數。
     /// </summary>
     public double? FrequencyPenalty { get; set; } = 0.8;
@@ -230,6 +230,9 @@ public class StorageSettings
 
     /// <summary>Type 是否為受支援的後端（不分大小寫）</summary>
     public bool IsValidType => ValidTypes.Contains(Type, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>是否為 Sqlite 後端（不分大小寫、容忍前後空白）</summary>
+    public bool IsSqlite => string.Equals(Type?.Trim(), "Sqlite", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>實際生效的資料根目錄：未設定時回退到執行檔目錄</summary>
     public string ResolveDataRoot() =>

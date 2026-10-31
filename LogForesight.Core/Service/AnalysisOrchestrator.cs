@@ -161,17 +161,17 @@ public class AnalysisOrchestrator
     private readonly IDispatchCandidateSource _candidateSource;
     private readonly Action? _permissionVersionBump;
     private readonly INetiqHostDayTimingCollector? _hostDayTiming;
-    private readonly IAiRequestGate? _aiGate;
+    private readonly IAiRequestGate _aiGate;
 
     /// <param name="candidateSource">派工候選人快照來源（Web 實作），每趟執行開始時取一次</param>
     /// <param name="aiGate">全站 AI 閘道；本趟的 AI 呼叫（週檢等）走背景車道</param>
-    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, Action? permissionVersionBump = null,
-        INetiqHostDayTimingCollector? hostDayTiming = null, IAiRequestGate? aiGate = null)
+    public AnalysisOrchestrator(IDispatchCandidateSource candidateSource, IAiRequestGate aiGate,
+        Action? permissionVersionBump = null, INetiqHostDayTimingCollector? hostDayTiming = null)
     {
         _candidateSource = candidateSource;
         _permissionVersionBump = permissionVersionBump;
         _hostDayTiming = hostDayTiming;
-        _aiGate = aiGate;
+        _aiGate = aiGate ?? throw new ArgumentNullException(nameof(aiGate));
     }
 
     internal static long? TryBeginHostDayTiming(long runId, INetiqHostDayTimingCollector? collector)
@@ -312,8 +312,8 @@ public class AnalysisOrchestrator
             {
                 var eventLogService = new EventLogService();
                 IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
-                var aiService = new AIService(settings.Ai, dumper,
-                    new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)), gate: _aiGate);
+                var aiService = new AIService(settings.Ai, gate: _aiGate, dumper: dumper,
+                    usageMeter: new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
                 var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
 
                 // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
@@ -422,7 +422,8 @@ public class AnalysisOrchestrator
                 var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
                 var historyService = backend.RecordStore(ownerHost);
 
-                var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
+                var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens,
+                    () => KnownIssueCatalog.ResolveRules(ruleStore));
                 var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
                     settings.Analysis.ServerDescription, reportService, currentHost, currentHostId,
                     hostGroupIds: currentHostGroupIds, logSource: AnalysisLogSource.Local);
@@ -997,13 +998,13 @@ public class AnalysisOrchestrator
                     var record = await analysisService.AnalyzeDayStatisticalAsync(date, logs, useAi: localUseAi, historyDays: TrendWindowDays,
                         dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                         replaceExisting: isRerun, deferNonAiReport: true);
-                    var hadAiWorkItem = record.AiPending;
+                    var hadAiPending = record.AiPending;
                     // PRTG finding 追加：**必須排在案件掛接與執行摘要之前**——案件掛接吃的是
                     // 記憶體裡的 record.TopIssues，摘要吃的是 record.RiskLevel，
                     // 晚一步併入的 finding 就進不了問題案件，上調後的風險也不會出現在摘要。
                     HostDayPostProcessor.AttachPrtgFindings(
                         prtgFindings, historyService, record, currentHostId, aiConfigured: localUseAi);
-                    if (!hadAiWorkItem)
+                    if (!hadAiPending)
                         await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, logs, ct);
                     try
                     {
@@ -1324,7 +1325,7 @@ public class AnalysisOrchestrator
         bool prtgEnabled)
     {
         var baseDays = BuildPrtgDays(request, retention, today);
-        if (request.Trigger == "schedule" &&
+        if (request.Trigger == LogForesight.Core.Persistence.BatchRunTriggers.Schedule &&
             request.Scope == RunScope.Full &&
             prtgEnabled &&
             recentRuns != null)

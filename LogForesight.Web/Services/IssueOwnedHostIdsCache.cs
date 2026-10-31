@@ -58,7 +58,8 @@ public class IssueOwnedHostIdsCache
 
         lock (_lock)
         {
-            if (version != _seenVersion)
+            // 版本戳只前進：較舊版本的晚到請求不得清掉較新版本的條目（D4 契約 5）
+            if (version > _seenVersion)
             {
                 _entries.Clear();
                 _seenVersion = version;

@@ -15,7 +15,7 @@
    查找自己主機的問題；**風險報告直接在畫面顯示**（現有 txt 全文照出）
 2. **主管**：一眼看出目前有哪些風險類型、數量、緊急程度
 3. **AI 問答為未來選項**：視屆時資源決定是否做；schema 保留設計但不圍繞它做任何取捨
-4. 保留策略見下方「保留策略」一節（現況已分四種期間，非單一統一年限）
+4. 保留策略見下方「保留策略」一節（現況分六個保留期，非單一統一年限）
 5. 現行雙後端為 SQLite 與 SQL Server
 6. Web 是獨立的查詢應用，讀同一個 DB
 
@@ -25,7 +25,7 @@
 |---|---|
 | 資料表 `lf_`、索引 `ix_lf_` 前綴，識別字使用小寫 snake_case | 避免與同庫其他系統混淆；EF 模型與升級器共用命名 |
 | 長文字與巢狀資料由應用層序列化，存入文字欄位 | 不讓查詢依賴單一資料庫的 JSON 函式 |
-| 欄位長度與可空性在 EF 模型及寫入前共同把關 | SQLite 對字串長度較寬鬆，SQL Server 會拒絕超長值 |
+| 欄位長度與可空性在 EF 模型及寫入前共同把關 | SQLite 對字串長度較寬鬆，SQL Server 會拒絕超長值。外部字串落地前一律經 `ColumnClamp`（上限讀 EF 模型的 `HasMaxLength`）截斷；鍵欄位（`source_key`、`issue_key` 等）不截斷——`source_key` 由 `SourceKeyOf` 先截 255 再轉大寫，`issue_key` 超過上限則不寫並警告。簽章的 `Source`／`LogName` 在入口（`LogIssueSignature` 的 setter，所有建構與反序列化路徑都經過）就截到 255，問題鍵與來源鍵都由截斷後的值衍生。已知限制：SQLite 不強制長度，舊版寫入的列可能存有超過 255 字的來源，讀回時會在記憶體截斷，與新寫入的鍵一致 |
 | 主鍵、分頁及日期查詢交給 EF Core；少數升級 DDL 分 provider 實作 | 兩個後端的 SQL 語法與索引管理不同 |
 | 寫入多表時明訂交易邊界；SQL Server 的顯式交易由執行策略包住 | 避免部分寫入及重試策略與自開交易衝突 |
 
@@ -93,7 +93,8 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
                                                      -- error_count/warning_count/ai_analyzed/
                                                      -- ai_pending/log_source）的回填版本號（目前 3），0=舊列尚未回填、
                                                      -- 由 DailyRecordBackfiller 背景補齊（同
-                                                     -- lf_top_issues 既有的回填機制）
+                                                     -- lf_top_issues 既有的回填機制）；ai_pending／ai_analyzed
+                                                     -- 只在原版本 < 2 時以 JSON 校正，>= 2 以欄位為準
   -- 主鍵與查詢索引由現行 EF schema 建立；不宣稱 host_id＋日期是唯一鍵
 ```
 
@@ -460,6 +461,11 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 （實測：500 台 × 200 天的資料集，限縮可清 0 筆、未限縮 39,500 筆）。
 `RecordStore(ownerHost)` 的限縮語意本身是對的（缺日判定與趨勢基準只該看本機），
 錯的是拿它來清理——回歸防線見 `LogForesight.Tests/Scale/RetentionScopeBenchmarks.cs`。
+
+**主機日工作流狀態**（`lf_blobs` 的 `workflow_{hostId}_{yyyyMMdd}`，每個成功分析的主機日一列）跟 `RetentionDays`：
+由 `HostDayWorkflowRecoveryHostedService` 每日的孤兒掃描在同一個全域租約、同一個保留邊界內，
+對保留期外的 key 先重置狀態再以完整 key 刪除 blob；未來日、保留期內的孤兒與 `workflow_recovery_cursor` 不刪。
+每頁筆數即單次上限，升級後的存量分多日清完。
 
 **升級告知**：修好之後的第一個副作用是「這些設定值第一次真正生效」——既有部署升級後第一晚
 就會開始真的刪 NetIQ 主機的過期資料。若當初因為「反正沒作用」把天數設得很短，那是一次

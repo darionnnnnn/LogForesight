@@ -45,6 +45,12 @@ public class DayHandlingCommandService
     /// 可為 null——測試組裝不注入時，這條優先序靜默跳過、落回既有主機負責人規則。</summary>
     private readonly IIssueOwnerStore? _issueOwners;
 
+    /// <summary>派工閘門的判定來源（日層級指派與夜間／立即派工共用同一組判定）：已知雜訊記憶、案件（不再打擾）、
+    /// 靜音排除。**可為 null**：測試組裝不注入時，對應閘門靜默跳過。</summary>
+    private readonly INoiseMarkStore? _noiseMarks;
+    private readonly IIssueCaseStore? _cases;
+    private readonly IIssueExclusionSource? _exclusions;
+
     public DayHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -60,8 +66,14 @@ public class DayHandlingCommandService
         UserCapabilityResolver capabilities,
         IUserDisplayNameService displayNameService,
         MailNotificationService? mail = null,
-        IIssueOwnerStore? issueOwners = null)
+        IIssueOwnerStore? issueOwners = null,
+        INoiseMarkStore? noiseMarks = null,
+        IIssueCaseStore? cases = null,
+        IIssueExclusionSource? exclusions = null)
     {
+        _noiseMarks = noiseMarks;
+        _cases = cases;
+        _exclusions = exclusions;
         _mail = mail;
         _issueOwners = issueOwners;
         _store = store;
@@ -189,9 +201,9 @@ public class DayHandlingCommandService
         // 建案（docs/archive/FEEDBACK-4-PLAN.md §2/Q1）：指派給人時，對當日「未處理計算」等級內、
         // 未結案、無進行中案件的每個問題建案並回溯關聯歷史——落實 2.1「同主機同問題只由
         // 一個人處理」。取消指派（handlerId=null）不建案，那不是「開始有人處理」的動作。
-        var (casesCreated, skippedHandlerNames, reassignedCount, createdOrders) = handlerId.HasValue
+        var (casesCreated, skippedHandlerNames, reassignedCount, createdOrders, skippedByReason) = handlerId.HasValue
             ? BuildCasesForDay(host, date, record, handlerId.Value, reassign)
-            : (0, new List<string>(), 0, new List<(long WorkOrderId, string IssueLabel)>());
+            : (0, new List<string>(), 0, new List<(long WorkOrderId, string IssueLabel)>(), new Dictionary<string, int>());
 
         _audit.Record(
             action: AuditActions.HandlingAssign,
@@ -199,8 +211,8 @@ public class DayHandlingCommandService
             // 事後查稽核的人必須看得出這一點
             summary: $"將 {host.HostName} {date:yyyy-MM-dd} 的處理人由「{beforeName}」改為「{afterName}」" +
                      $"（主機負責人不變：{OwnerNames(host)}）" +
-                     (casesCreated > 0 ? $"；建立 {casesCreated} 個問題案件並回溯關聯歷史" : "") +
-                     (reassignedCount > 0 ? $"；改派 {reassignedCount} 個他人進行中的問題案件" : "") +
+                     (casesCreated > 0 ? $"；建立 {casesCreated} 個問題交辦並回溯關聯歷史" : "") +
+                     (reassignedCount > 0 ? $"；改派 {reassignedCount} 個他人進行中的問題交辦" : "") +
                      (retractions.Count > 0 ? $"；收回 {retractions.Count} 張日層級交辦單（{retractions.Count(r => r.WholeOrderCancelled)} 張整張取消）" : ""),
             targetKind: "handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
@@ -215,6 +227,7 @@ public class DayHandlingCommandService
         dto.CasesCreated = casesCreated;
         dto.CasesSkippedHandlerNames = skippedHandlerNames;
         dto.CasesReassigned = reassignedCount;
+        dto.SkippedByReason = skippedByReason;
         dto.OpenCaseCount = _progress.OpenCaseCount(host, record);
 
         // 被指派者看不到這台主機時告知執行指派的人（docs/archive/FEEDBACK-10-PLAN.md §7）：
@@ -290,6 +303,7 @@ public class DayHandlingCommandService
             CasesToCreate = plan.CasesToCreate,
             HeldByOthers = plan.HeldByOthers,
             HeldByHandlerNames = HandlerNames(plan.HeldHandlerIds),
+            SkippedByReason = plan.SkippedByReason,
             AssigneeCannotHandle = warnings.CannotHandle,
             AssigneeCannotSeeHost = warnings.CannotSeeHost,
             HandlerHasNoEmail = warnings.NoEmail
@@ -300,7 +314,8 @@ public class DayHandlingCommandService
     private sealed record DayCaseCandidate(LogIssueSignature Issue, string Key);
 
     private sealed record DayCasePlan(
-        List<DayCaseCandidate> Candidates, int CasesToCreate, int HeldByOthers, HashSet<long> HeldHandlerIds);
+        List<DayCaseCandidate> Candidates, int CasesToCreate, int HeldByOthers, HashSet<long> HeldHandlerIds,
+        Dictionary<string, int> SkippedByReason);
 
     /// <summary>成員身分：同一份組法供預覽與寫入共用</summary>
     private static WorkOrderMember MemberOf(WebHost host, DateTime date, DayCaseCandidate c) => new()
@@ -312,6 +327,10 @@ public class DayHandlingCommandService
     /// 建案判定（只讀，唯一一份）：只對「未處理計算」等級內、未結案的問題建案——低風險預設不處理的問題
     /// 不該自動變成有人要處理的案件，已結案的問題也不建案。其餘由協調器的成員分類（ClassifyMembers）
     /// 判定：無進行中案件＝將建案；他人進行中案件＝被占用（不要求改派時保留原處理人）。
+    /// 再套用與夜間／立即派工相同的閘門（已抑制→已知雜訊→不再打擾→靜音中）：被擋的問題不建交辦，
+    /// 依原因計入 <c>SkippedByReason</c>，讓預覽與結果講得出「為什麼沒建」。判定不在此重寫：
+    /// 抑制讀簽章旗標、雜訊走 <see cref="INoiseMarkStore"/> 的查找、不再打擾走 DispatchContext.DismissedKeys、
+    /// 靜音走 <see cref="IssueExclusion.IsMuted"/>（皆為派工閘門使用的同一支）。
     /// </summary>
     private DayCasePlan PlanCasesForDay(WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId)
     {
@@ -329,6 +348,13 @@ public class DayHandlingCommandService
         var toCreate = 0;
         var held = 0;
         var heldHandlerIds = new HashSet<long>();
+        var skippedByReason = new Dictionary<string, int>(StringComparer.Ordinal);
+        var dismissedKeys = _cases != null
+            ? DispatchContext.DismissedKeys(_cases.GetMany(new[] { host.HostName }))
+            : null;
+        var exclusion = _exclusions?.Current();
+
+        void Skip(string reason) => skippedByReason[reason] = skippedByReason.GetValueOrDefault(reason) + 1;
 
         foreach (var issue in record.TopIssues)
         {
@@ -338,6 +364,11 @@ public class DayHandlingCommandService
             if (dayIssueHandlings.TryGetValue(key, out var existingHandling) &&
                 IssueHandlingStatuses.IsClosed(existingHandling.Status))
                 continue;
+
+            if (issue.Suppressed) { Skip("suppressed"); continue; }
+            if (_noiseMarks?.Get(host.HostName, key) != null) { Skip("noise"); continue; }
+            if (dismissedKeys != null && dismissedKeys.Contains(key)) { Skip("dismissed"); continue; }
+            if (exclusion != null && exclusion.IsMuted(issue.Source, issue.EventId, date)) { Skip("muted"); continue; }
 
             var candidate = new DayCaseCandidate(issue, key);
             candidates.Add(candidate);
@@ -353,7 +384,7 @@ public class DayHandlingCommandService
             }
         }
 
-        return new DayCasePlan(candidates, toCreate, held, heldHandlerIds);
+        return new DayCasePlan(candidates, toCreate, held, heldHandlerIds, skippedByReason);
     }
 
     private List<string> HandlerNames(IEnumerable<long> userIds) =>
@@ -371,7 +402,7 @@ public class DayHandlingCommandService
     /// 已有進行中案件的問題保留原處理人（Q2），回傳略過清單（去重的處理人姓名）供呼叫端提示
     /// 「已由 ○○○ 的案件涵蓋」。
     /// </summary>
-    private (int Created, List<string> SkippedHandlerNames, int Reassigned, List<(long WorkOrderId, string IssueLabel)> CreatedOrders) BuildCasesForDay(
+    private (int Created, List<string> SkippedHandlerNames, int Reassigned, List<(long WorkOrderId, string IssueLabel)> CreatedOrders, Dictionary<string, int> SkippedByReason) BuildCasesForDay(
         WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId, bool reassign)
     {
         var actor = _currentUser.ToWorkOrderActor();
@@ -380,12 +411,12 @@ public class DayHandlingCommandService
         var skippedHandlerIds = new HashSet<long>();
         var createdOrders = new List<(long WorkOrderId, string IssueLabel)>();
 
-        foreach (var candidate in PlanCasesForDay(host, date, record, handlerId).Candidates)
+        var plan = PlanCasesForDay(host, date, record, handlerId);
+        foreach (var candidate in plan.Candidates)
         {
             var issue = candidate.Issue;
 
-            // 寫入走交辦單協調器（每個問題一張 day_assign 單；同處理人同問題已有進行中單時自動併入），
-            // 與既有 BuildCase／ReassignCase 語意一一對應：
+            // 寫入走交辦單協調器（每個問題一張 day_assign 單；同處理人同問題已有進行中單時自動併入）：
             //   - 無進行中案件→建案並回溯歷史（NewCases）
             //   - 處理人就是自己的進行中案件→不算略過，只改連本單（LinkedExisting）
             //   - 他人進行中案件→預設保留原處理人並回報（SkippedConflicts，不搶走）；
@@ -415,7 +446,7 @@ public class DayHandlingCommandService
             }
         }
 
-        return (created, HandlerNames(skippedHandlerIds), reassigned, createdOrders);
+        return (created, HandlerNames(skippedHandlerIds), reassigned, createdOrders, plan.SkippedByReason);
     }
 
     /// <summary>

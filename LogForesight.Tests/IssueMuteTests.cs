@@ -233,24 +233,12 @@ public sealed class IssueMuteTests : IDisposable
         var prompt = AnalysisPromptBuilder.BuildPrompt(
             Today, new List<LogIssueSignature> { muted, mutedFlagged, visible }, errorCount: 3, warningCount: 0, auditCount: 0,
             history: new List<DailyAnalysisRecord>(), trendAlerts: new List<string>(),
-            correlations: new List<CorrelationFinding>(), screening: null,
+            correlations: new List<CorrelationFinding>(),
             dataIncomplete: false, uncoveredChecks: new List<string>(), serverDescription: "測試主機");
 
         Assert.Contains("VisibleAppZq", prompt);
         Assert.DoesNotContain("MutedAppZq", prompt);
         Assert.DoesNotContain("MutedRuleAppZq", prompt);
-    }
-
-    [Fact]
-    public void 前置掃描尾巴_不含被抑制的問題()
-    {
-        var issues = Enumerable.Range(0, 200).Select(i => Issue(source: $"App{i}")).ToList();
-        foreach (var i in issues.Take(150)) i.Suppressed = true;
-
-        var tail = AnalysisPromptBuilder.GetTailIssues(issues);
-
-        Assert.DoesNotContain(tail, i => i.Suppressed);
-        Assert.Equal(AnalysisPromptBuilder.GetTailIssues(issues.Where(i => !i.Suppressed).ToList()).Count, tail.Count);
     }
 
     // ── 派工脈絡 ───────────────────────────────────────────────────────────
@@ -340,6 +328,76 @@ public sealed class IssueMuteTests : IDisposable
         Assert.Throws<DomainException>(() => Admin(Maintainer()).SetMute(Source, EventId,
             new SetIssueMuteRequest { Days = 1, Reason = "r", ExistingOrders = mode }));
         Assert.Null(_owners.Get(Source, EventId));
+    }
+
+    /// <summary>Get 一律回傳凍結的舊快照（模擬另一位管理者在本次讀取之後才寫入）；Update 轉給內層。</summary>
+    private sealed class StaleGetStore : IIssueOwnerStore
+    {
+        private readonly FakeIssueOwnerStore _inner;
+        private readonly IssueProfile? _frozen;
+
+        public StaleGetStore(FakeIssueOwnerStore inner)
+        {
+            _inner = inner;
+            var p = inner.Get(Source, EventId);
+            _frozen = p == null ? null : new IssueProfile
+            {
+                SourceName = p.SourceName, EventId = p.EventId, OwnerUserIds = p.OwnerUserIds.ToList(),
+                Note = p.Note, ConclusionStatus = p.ConclusionStatus, ConclusionNote = p.ConclusionNote,
+                AutoApply = p.AutoApply, Mutes = p.Mutes.ToList()
+            };
+        }
+
+        public List<IssueProfile> GetAll() => _inner.GetAll();
+        public IssueProfile? Get(string source, int eventId) => _frozen;
+        public IssueProfile Upsert(IssueProfile rule) => _inner.Upsert(rule);
+        public IssueProfile Update(string source, int eventId, Action<IssueProfile> apply) => _inner.Update(source, eventId, apply);
+        public void Delete(string source, int eventId) => _inner.Delete(source, eventId);
+    }
+
+    [Fact]
+    public void SetMute後SetConclusion_中間不重讀_兩者並存()
+    {
+        var admin = Admin(Maintainer());
+        admin.SetMute(Source, EventId, new SetIssueMuteRequest { Days = 2, Reason = "搬機房", ExistingOrders = "pause" });
+        admin.SetConclusion(Source, EventId, new SetIssueConclusionRequest { Status = "wont_fix", Note = "已知雜訊", AutoApply = true });
+
+        var p = _owners.Get(Source, EventId)!;
+        Assert.Equal("wont_fix", p.ConclusionStatus);
+        Assert.True(p.AutoApply);
+        Assert.Equal("搬機房", Assert.Single(p.Mutes).Reason);
+    }
+
+    [Fact]
+    public void SetConclusion_讀到舊快照時_不洗掉別人剛寫的靜音()
+    {
+        _owners.Upsert(new IssueProfile { SourceName = Source, EventId = EventId });
+        var stale = new StaleGetStore(_owners);                        // 管理者 B 的讀在此凍結
+        _owners.Update(Source, EventId, p => p.Mutes = new List<MuteInterval>
+            { new() { From = Today, To = Today.AddDays(1), Reason = "A先靜音", ByAccount = "a" } });
+
+        Admin(Maintainer(), stale).SetConclusion(Source, EventId,
+            new SetIssueConclusionRequest { Status = "wont_fix", Note = "B後結論", AutoApply = false });
+
+        var p = _owners.Get(Source, EventId)!;
+        Assert.Equal("wont_fix", p.ConclusionStatus);
+        Assert.Equal("A先靜音", Assert.Single(p.Mutes).Reason);
+    }
+
+    [Fact]
+    public void SetMute_讀到舊快照時_不洗掉別人剛寫的結論()
+    {
+        _owners.Upsert(new IssueProfile { SourceName = Source, EventId = EventId });
+        var stale = new StaleGetStore(_owners);
+        _owners.Update(Source, EventId, p => { p.ConclusionStatus = "wont_fix"; p.ConclusionNote = "A先結論"; });
+
+        Admin(Maintainer(), stale).SetMute(Source, EventId,
+            new SetIssueMuteRequest { Days = 2, Reason = "B後靜音", ExistingOrders = "pause" });
+
+        var p = _owners.Get(Source, EventId)!;
+        Assert.Equal("wont_fix", p.ConclusionStatus);
+        Assert.Equal("A先結論", p.ConclusionNote);
+        Assert.Equal("B後靜音", Assert.Single(p.Mutes).Reason);
     }
 
     [Fact]

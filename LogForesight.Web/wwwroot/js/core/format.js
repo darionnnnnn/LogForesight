@@ -120,7 +120,8 @@ const WORK_ORDER_CLOSED_REASON_TEXT = {
     all_closed: '成員全部結案',
     moved: '已併入或改派到另一張單',
     cancelled: '已取消交辦',
-    admin_closed: '管理者代為結案'
+    admin_closed: '管理者代為結案',
+    empty_dispatch: '派工時該問題已由其他交辦處理，未納入成員'
 };
 
 /** 交辦單結案原因代碼 → 中文（總覽與詳情頁的「已結案」徽章提示共用）；不認得的代碼原樣顯示 */

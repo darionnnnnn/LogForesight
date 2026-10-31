@@ -199,6 +199,21 @@ public sealed class PrtgValueAssessmentTests : IDisposable
     }
 
     [Fact]
+    public void 只有今天一份ok對應_回填的過去日往後沿用_就緒()
+    {
+        SeedSensors((101, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu));
+        _store.ReplaceHostMapForDate(DateTime.Today, [new PrtgHostMapRow
+            { DeviceObjid = 1, HostId = 11, HostName = "h11", MapStatus = PrtgMapStatus.Ok }]);
+        SeedHours(101, 30, (d, h) => 20 + h);
+
+        var row = Assert.Single(Assess(window: 30, required: 28));
+
+        Assert.NotEqual(PrtgValueReason.MappingInvalid, row.Reason);
+        Assert.True(row.ValidDays >= 28, $"有效日數 {row.ValidDays}");
+        Assert.Equal(PrtgValueReason.Ready, row.Reason);
+    }
+
+    [Fact]
     public void 有效日差一天_計有效日不足並帶實際天數()
     {
         SeedSensors((101, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu));

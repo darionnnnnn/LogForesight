@@ -8,7 +8,7 @@ using Polly.Retry;
 namespace LogForesight.Core;
 
 /// <summary>
-/// event-search job 的狀態（Sentinel REST API 文件定義，見 docs/NETIQ-API-REFERENCE.md §1.2）。
+/// event-search job 的狀態（Sentinel REST API 文件定義，見 docs/NETIQ-API-REFERENCE.md §3）。
 /// 數值與原廠文件的 <c>status</c> 欄位一一對應。
 /// </summary>
 public enum SentinelJobState
@@ -23,7 +23,7 @@ public enum SentinelJobState
 }
 
 /// <summary>單筆事件的投影結果：欄位名（Sentinel schema 短名）→ 值。欄位對應交由呼叫端解讀
-/// （docs/NETIQ-API-REFERENCE.md §3.3，已由三輪 probe 實測定案，見 <see cref="SentinelFieldMap"/>）</summary>
+/// （docs/NETIQ-API-REFERENCE.md §4，已由三輪 probe 實測定案，見 <see cref="SentinelFieldMap"/>）</summary>
 public sealed record SentinelEvent(IReadOnlyDictionary<string, string> Fields)
 {
     private static readonly IReadOnlyDictionary<string, SentinelFieldShape> EmptyShapes =
@@ -94,6 +94,11 @@ public sealed class SentinelSearchResult
     /// <summary>實際取回筆數少於 Found——受 max-results 上限或分頁提前中止影響，
     /// 呼叫端應比照 DataIncomplete 的基準排除邏輯處理（docs/archive/HISTORY.md）</summary>
     public bool Truncated => Retrieved < Found;
+
+    /// <summary>Sentinel 回報有資料（Found &gt; 0）卻一筆都沒取回、且並非 max-results 上限為 0——
+    /// 屬於結果頁讀不到／解析不出（avail 為 0、首頁為空、非陣列），不是真正的筆數截斷。
+    /// 呼叫端不得用二分重查或高流量旗標處理（重查只會得到同樣的空結果）。</summary>
+    public bool Unreadable { get; init; }
 }
 
 /// <summary>連線／查詢過程中的錯誤。訊息不含密碼，可直接顯示給操作者或寫入 log。</summary>
@@ -115,16 +120,16 @@ public interface ISentinelSearchClient : IAsyncDisposable
 
 /// <summary>
 /// Sentinel REST API 封裝：SAML token 認證生命週期＋event-search job 生命週期
-/// （docs/NETIQ-API-REFERENCE.md §1、§3.1）。單一職責——只懂 REST 協定，不懂 watchlist／欄位對應等業務語意。
+/// （docs/NETIQ-API-REFERENCE.md §2、§3）。單一職責——只懂 REST 協定，不懂 watchlist／欄位對應等業務語意。
 ///
 /// 單一 instance＝單一併發佇列（同 <see cref="AIService"/> 慣例）：同一時間只有一個 job 在跑，
 /// 跨 Sentinel 平行由呼叫端各自建立一個 client 實例達成。token 整個 instance 生命週期內重用，
 /// <see cref="DisposeAsync"/> 時登出。
 ///
 /// 建立 job → 輪詢至終態 → 逐頁取回結果 → 刪除 job 的完整生命週期（<see cref="SearchAsync"/>）。
-/// 任何中途失敗（含呼叫端取消）都保證嘗試刪除已建立的 job（docs/NETIQ-API-REFERENCE.md §5「job 用完即刪」）。
+/// 任何中途失敗（含呼叫端取消）都保證嘗試刪除已建立的 job（docs/NETIQ-API-REFERENCE.md §6 #7「job 用完即刪」）。
 ///
-/// 依關注點分 3 個 partial 檔：本檔（共用狀態／建構／連線資源）、
+/// 依關注點分 4 個 partial 檔：本檔（共用狀態／建構／連線資源）、
 /// <c>SentinelClient.Auth.cs</c>（token 認證與已認證請求）、
 /// <c>SentinelClient.Search.cs</c>（event-search job 生命週期）、
 /// <c>SentinelClient.Paging.cs</c>（查詢結果分頁與解析）。方法共享同一組 HTTP／session 狀態，
@@ -267,10 +272,7 @@ public sealed partial class SentinelClient : ISentinelSearchClient
         {
             try
             {
-                using var req = new HttpRequestMessage(HttpMethod.Delete, $"{AuthTokensUrl}/{Uri.EscapeDataString(_token)}");
-                req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
-                    Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_server.Username}:{_server.Password}")));
-                using var resp = await SendHttpAsync(req, cleanupToken);
+                await DeleteTokenAsync(_token, cleanupToken);
             }
             catch (Exception ex)
             {

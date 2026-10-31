@@ -119,8 +119,10 @@ public class MailNotificationService
         IIssueOwnerStore? issueOwners = null,
         IIssueAggregateQuery? issueAggregates = null,
         MailIssueDigest? issueDigest = null, PrtgMonitoringPolicyStore? prtgMonitoring = null, StorageBackend? prtgBackend = null,
-        HostDayWorkflowService? workflow = null)
+        HostDayWorkflowService? workflow = null, int acceptedMailContributionLimit = 12_000)
     {
+        if (acceptedMailContributionLimit < 1) throw new ArgumentOutOfRangeException(nameof(acceptedMailContributionLimit));
+        _acceptedMailContributionLimit = acceptedMailContributionLimit;
         _settingsStore = settingsStore;
         _sender = sender;
         _hosts = hosts;
@@ -1959,7 +1961,43 @@ public class MailNotificationService
         return FilterAcceptedMailContributions(kind, recipient, unresolved, versions);
     }
 
-    private const int AcceptedMailContributionLimit = 12_000;
+    // 帳本上限（郵件貢獻 key 總數）：建構式選用參數，預設 12,000，測試可注入小值。
+    private readonly int _acceptedMailContributionLimit;
+
+    // 最近一次「真的滿載」的時間與略過的收件人：只存行程內，供健康頁細節顯示。
+    private readonly object _ledgerFullLock = new();
+    private DateTime? _ledgerLastFullAtUtc;
+    private string? _ledgerLastFullRecipient;
+
+    /// <summary>滿載警告節流：同一收件人在這段時間內只寫一次 Warn，其餘降為 Debug（健康細節照常更新）</summary>
+    private static readonly TimeSpan LedgerFullWarnInterval = TimeSpan.FromHours(1);
+
+    /// <summary>收件人（不分大小寫）→ 上次寫 Warn 的時間；只記被擋過的收件人，過期項目隨寫入時清掉，所以有界</summary>
+    private readonly Dictionary<string, DateTime> _ledgerFullWarnedAtUtc = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>帳本目前佔用的鍵（已寄＋舊格式保留＋寄送中預約，去重）；滿載警告與健康細節共用這一份算法。</summary>
+    private HashSet<string> GetOccupiedMailContributionKeys()
+    {
+        var ledger = _state.Get();
+        return ledger.AcceptedMailContributionReceipts.Keys
+            .Concat(ledger.HeldLegacyMailContributionReceipts.Keys)
+            .Concat(ledger.MailContributionReservations.Keys)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>郵件貢獻帳本狀態（佔用數、上限、最近一次滿載），供 /api/health/detail 顯示。</summary>
+    public LogForesight.Web.Models.Dto.MailContributionLedgerDto GetContributionLedgerStatus()
+    {
+        var occupied = GetOccupiedMailContributionKeys().Count;
+        lock (_ledgerFullLock)
+            return new LogForesight.Web.Models.Dto.MailContributionLedgerDto
+            {
+                OccupiedKeys = occupied,
+                Limit = _acceptedMailContributionLimit,
+                LastFullAtUtc = _ledgerLastFullAtUtc,
+                LastFullRecipient = _ledgerLastFullRecipient
+            };
+    }
 
     internal sealed record RenderedMailContributions(
         IReadOnlyList<DailyAnalysisRecord> Records,
@@ -2024,8 +2062,39 @@ public class MailNotificationService
                     item.ParentAndDecision, item.IssueEvidenceJson));
         }
         var reservationId = _state.TryReserveMailContributionKeys(keys.ToArray(), DateTime.UtcNow,
-            AcceptedMailContributionLimit);
-        return reservationId is null ? null : new MailContributionReservationAttempt(reservationId);
+            _acceptedMailContributionLimit);
+        if (reservationId is null)
+        {
+            // 帳本滿載（或同 key 已在途）時整個收件人本輪不寄，不能寄出無法原子記帳的內容；
+            // 留 WARN，否則該收件人會靜默停寄。
+            var occupiedKeys = GetOccupiedMailContributionKeys();
+            // 與 store 的拒絕順序一致：任一鍵已被佔用（已寄、保留或寄送中）是正常去重，其餘才是滿載
+            if (!keys.Any(occupiedKeys.Contains))
+            {
+                bool warn;
+                lock (_ledgerFullLock)
+                {
+                    var nowUtc = DateTime.UtcNow;
+                    _ledgerLastFullAtUtc = nowUtc;
+                    _ledgerLastFullRecipient = recipient;
+                    warn = !_ledgerFullWarnedAtUtc.TryGetValue(recipient, out var lastWarn) || nowUtc - lastWarn >= LedgerFullWarnInterval;
+                    if (warn)
+                    {
+                        foreach (var stale in _ledgerFullWarnedAtUtc.Where(p => nowUtc - p.Value >= LedgerFullWarnInterval).Select(p => p.Key).ToList())
+                            _ledgerFullWarnedAtUtc.Remove(stale);
+                        _ledgerFullWarnedAtUtc[recipient] = nowUtc;
+                    }
+                }
+                if (warn)
+                    Log.Warn("郵件貢獻帳本已滿（{Count}/{Limit}），收件人 {Email} 本輪略過（同一收件人一小時內只警告一次）", occupiedKeys.Count, _acceptedMailContributionLimit, recipient);
+                else
+                    Log.Debug("郵件貢獻帳本仍滿（{Count}/{Limit}），收件人 {Email} 本輪略過", occupiedKeys.Count, _acceptedMailContributionLimit, recipient);
+            }
+            else
+                Log.Info("收件人 {Email} 的郵件內容已在帳本或寄送中，本輪略過", recipient);
+            return null;
+        }
+        return new MailContributionReservationAttempt(reservationId);
     }
 
     private static string AcceptedMailContributionKey(string kind, string recipient, DailyAnalysisRecord record,
@@ -2256,7 +2325,7 @@ public class MailNotificationService
                 .Count(key => !current.AcceptedMailContributionReceipts.ContainsKey(key) &&
                     !current.HeldLegacyMailContributionReceipts.ContainsKey(key));
             if (current.AcceptedMailContributionReceipts.Count + current.HeldLegacyMailContributionReceipts.Count +
-                current.MailContributionReservations.Count + additions > AcceptedMailContributionLimit) return;
+                current.MailContributionReservations.Count + additions > _acceptedMailContributionLimit) return;
             foreach (var pair in migrated) current.AcceptedMailContributionReceipts.TryAdd(pair.Key, pair.Value);
             foreach (var pair in heldLegacy) current.HeldLegacyMailContributionReceipts.TryAdd(pair.Key, pair.Value);
         });

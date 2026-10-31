@@ -144,6 +144,24 @@ public sealed class HostDayWorkflowStore(StorageBackend backend)
         return new HostDayWorkflowKeyPage(result, keys.LastOrDefault(), keys.Count);
     }
 
+    /// <summary>以 (hostId, date) 組出的精確 blob key 刪除該主機日的工作流狀態；不做前綴刪除，因此不會碰到復原游標。</summary>
+    public bool Delete(long hostId, DateTime date)
+    {
+        var key = "workflow_" + Key(hostId, date);
+        var deleted = false;
+        var acquired = WorkflowMutex(hostId, date).RunExclusive(() =>
+        {
+            using var ctx = backend.CreateContext();
+            var row = ctx.Blobs.SingleOrDefault(value => value.BlobKey == key);
+            if (row == null) return;
+            ctx.Blobs.Remove(row);
+            ctx.SaveChanges();
+            deleted = true;
+        }, TimeSpan.FromSeconds(30), runActionWhenNotAcquired: false);
+        if (!acquired) throw new TimeoutException("Could not acquire the host-day workflow write lock.");
+        return deleted;
+    }
+
     public HostDayWorkflowState Update(long hostId, DateTime date, Action<HostDayWorkflowState> change)
     {
         var blob = Blob(hostId, date);

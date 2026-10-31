@@ -444,6 +444,48 @@ public class PrtgTablePagerTests
     }
 
     [Fact]
+    public async Task 第一頁回應不是預期物件_擲未收斂例外且訊息含content名稱()
+    {
+        var ex = await Assert.ThrowsAsync<PrtgPagingNotConvergedException>(
+            () => RunAsync(_ => "{}", pageSize: 5));
+
+        Assert.Equal("devices", ex.Content);
+        Assert.Contains("devices", ex.Message);
+    }
+
+    [Fact]
+    public async Task devices讀到筆數少於treesize_擲未收斂例外()
+    {
+        // 第一頁只回 3 筆（少於頁大小 5，舊邏輯當作最後一頁）但 treesize 是 10＝被截斷
+        var ex = await Assert.ThrowsAsync<PrtgPagingNotConvergedException>(
+            () => RunAsync(_ => Page("devices", new long[] { 1, 2, 3 }, treesize: 10), pageSize: 5));
+
+        Assert.Equal("devices", ex.Content);
+        Assert.Equal(3, ex.ReadRows);
+    }
+
+    [Fact]
+    public async Task messages讀到筆數少於treesize_不擲但寫警告()
+    {
+        var (result, written, _, console) = await RunAsync(
+            _ => Page("messages", new long[] { 1, 2, 3 }, treesize: 10), pageSize: 5, content: "messages");
+
+        Assert.Equal(3, result.Mapped);
+        Assert.Equal(new long[] { 1, 2, 3 }, written);
+        Assert.Contains(console.Lines, l => l.Contains("messages") && l.Contains("treesize"));
+    }
+
+    [Fact]
+    public async Task 讀到筆數等於treesize_正常結束且無警告()
+    {
+        var (result, _, _, console) = await RunAsync(
+            _ => Page("devices", new long[] { 1, 2, 3 }, treesize: 3), pageSize: 5);
+
+        Assert.Equal(3, result.Mapped);
+        Assert.DoesNotContain(console.Lines, l => l.Contains("treesize"));
+    }
+
+    [Fact]
     public async Task 掛鉤恆回false_行為與不傳掛鉤相同且StoppedEarly為false()
     {
         Func<string, string> responder = url => StartOf(url) == 0

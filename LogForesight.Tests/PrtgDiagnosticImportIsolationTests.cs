@@ -209,8 +209,17 @@ public sealed class PrtgDiagnosticImportIsolationTests : IDisposable
         Assert.Contains(audit.Entries, entry => entry.Result == LogForesight.Core.Models.AuditResult.Denied);
     }
 
-    private SettingsController Controller(TestVisibility? visibility, RecordingAuditService? audit = null, HostStore? hosts = null, bool omitHosts = false) => new(new FakeSystemSettingsService(),
-        new AiUsageStore(_backend.Blob("ai_usage")), audit ?? new RecordingAuditService(), backend: _backend, hosts: omitHosts ? null : hosts ?? _hosts, visibility: visibility);
+    // 「完整可見者」＝持有 ViewAll；由各案給的可見集合與主機表推得，保留各案原本想表達的角色。
+    private SettingsController Controller(TestVisibility? visibility, RecordingAuditService? audit = null, HostStore? hosts = null, bool omitHosts = false)
+    {
+        var effectiveHosts = omitHosts ? null : hosts ?? _hosts;
+        var all = effectiveHosts?.GetAll();
+        var viewAll = visibility != null && all is { Count: > 0 } && all.All(h =>
+            visibility.GetVisibleHostIds().Contains(h.HostId) && !visibility.IsCaseGrantOnly(h.HostId));
+        return new(new FakeSystemSettingsService(),
+            new AiUsageStore(_backend.Blob("ai_usage")), audit ?? new RecordingAuditService(), backend: _backend, hosts: effectiveHosts, visibility: visibility,
+            currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll) : FakeCurrentUser.WithCapabilities(Capability.Maintain));
+    }
     private static IFormFile FileFor(PrtgDataPackage package)
     {
         var stream = new MemoryStream(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(package));

@@ -73,7 +73,7 @@ try
     // Sqlite 自訂 ConnectionString 與 SqlServer 的可用性由 StorageBackend 建構時連線 fail-fast 把關，這裡不重複檢查。
     // 刻意不 fail-fast：排程還沒首次執行過是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
     var dataRoot = settings.Storage.ResolveDataRoot();
-    var expectedDataFiles = settings.Storage.Type == "Sqlite" && string.IsNullOrWhiteSpace(settings.Storage.ConnectionString)
+    var expectedDataFiles = settings.Storage.IsSqlite && string.IsNullOrWhiteSpace(settings.Storage.ConnectionString)
         ? new[] { StorageBackend.DefaultSqlitePath(dataRoot) }
         : Array.Empty<string>();   // SqlServer／自訂連線的 Sqlite：足跡不在 DataRoot，交給 DB 連線把關
     if (expectedDataFiles.Length > 0 &&

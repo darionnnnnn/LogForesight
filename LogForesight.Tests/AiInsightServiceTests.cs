@@ -217,4 +217,55 @@ public class AiInsightServiceTests
         Assert.Contains("LIVE-HEAD-MARKER", ai.LastUserPrompt);
         Assert.DoesNotContain("LIVE-TAIL-MARKER", ai.LastUserPrompt);
     }
+
+    /// <summary>依 cacheKey 快取的替身：鍵相同才不重呼叫，用來驗證快取鍵是否含輸入內容。</summary>
+    private sealed class KeyCachingAi : IWebAiService
+    {
+        private readonly Dictionary<string, object?> _cache = new();
+        public bool Available => true;
+        public int Calls { get; private set; }
+
+        public Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class
+        {
+            if (_cache.TryGetValue(cacheKey, out var hit)) return Task.FromResult((T?)hit);
+            Calls++;
+            var r = System.Text.Json.JsonSerializer.Deserialize<T>("{\"text\":\"判讀\"}", new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+            _cache[cacheKey] = r;
+            return Task.FromResult<T?>(r);
+        }
+
+        public Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt) => Task.FromResult<string?>(null);
+    }
+
+    [Theory]
+    [InlineData("linux", "Linux 主機", "Windows Server")]
+    [InlineData("windows", "Windows Server", "Linux 主機")]
+    [InlineData(null, "Windows Server", "Linux 主機")]
+    public async Task 單點判讀_system_prompt依主機作業系統稱呼(string? os, string expected, string notExpected)
+    {
+        var ai = new FakeWebAi { Response = "{\"text\":\"ok\"}" };
+        var svc = new AiInsightService(ai);
+        var issue = new IssueDto { Source = "disk", EventId = 7, LogName = "System", Severity = "Error", Count = 3 };
+
+        await svc.InterpretIssueAsync(issue, "SRV-A", "2026-07-27", os);
+
+        Assert.Contains($"資深 {expected} 維運分析師", ai.LastSystemPrompt);
+        Assert.DoesNotContain(notExpected, ai.LastSystemPrompt);
+    }
+
+    [Fact]
+    public async Task 單點判讀_輸入內容不同_快取鍵不同_相同才命中()
+    {
+        var ai = new KeyCachingAi();
+        var svc = new AiInsightService(ai);
+        var a = new IssueDto { Source = "disk", EventId = 7, LogName = "System", Severity = "Error", Count = 3 };
+        var b = new IssueDto { Source = "disk", EventId = 7, LogName = "System", Severity = "Error", Count = 99 };
+
+        await svc.InterpretIssueAsync(a, "SRV-A", "2026-07-27");
+        await svc.InterpretIssueAsync(b, "SRV-A", "2026-07-27");
+        Assert.Equal(2, ai.Calls);
+
+        await svc.InterpretIssueAsync(a, "SRV-A", "2026-07-27");
+        Assert.Equal(2, ai.Calls);
+    }
 }

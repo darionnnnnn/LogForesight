@@ -207,8 +207,7 @@ public class RiskyEventSelectorTests
 
     /// <summary>
     /// 回饋十四輪 A2：入列前訊息截斷對齊 <see cref="RiskyEventSelector.Select"/> 落庫版的
-    /// <see cref="RiskyEventSelector.MaxMessageChars"/>（2000 字）——AiWorkItem.Logs 窄化移進
-    /// BuildStatisticalRecordAsync 後，這裡是唯一還會帶著原始 Windows 事件訊息在記憶體排隊的地方，
+    /// <see cref="RiskyEventSelector.MaxMessageChars"/>（2000 字）——這裡是唯一還會帶著原始 Windows 事件訊息在記憶體排隊的地方，
     /// 單筆訊息沒有上限的話，佇列容量 200 件仍可能因超長訊息吃到 GB 級記憶體。
     /// 同時鎖住「不修改傳入的 logs」這個不變量：截斷回傳新物件，原始清單裡的物件應維持原長度，
     /// 避免污染呼叫端後續還要用完整訊息的用途（如寫入風險 log 暫存）。

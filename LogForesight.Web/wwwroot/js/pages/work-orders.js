@@ -454,7 +454,7 @@ function renderLoadBoardTable(data) {
     renderTable(loadContainer, {
         columns,
         rows,
-        empty: { title: '尚無資料', hint: '目前系統中沒有設定任何可指派的處理人或尚無案件負載資料。' }
+        empty: { title: '尚無資料', hint: '目前系統中沒有設定任何可指派的處理人或尚無交辦負載資料。' }
     });
 }
 

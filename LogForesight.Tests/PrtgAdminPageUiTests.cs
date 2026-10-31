@@ -194,6 +194,15 @@ public sealed class PrtgAdminPageUiTests
     }
 
     [Fact]
+    public void 人工對應列表_裝置已不在PRTG鏡像時顯示標示且以textContent呈現()
+    {
+        var js = Script();
+        Assert.Contains("PRTG 已無此裝置", js);
+        Assert.Contains("missingInMirror", js);
+        Assert.DoesNotContain("innerHTML = `", js.Substring(js.IndexOf("function renderManualMaps", StringComparison.Ordinal), 2500));
+    }
+
+    [Fact]
     public void E3_鏡像狀態腳本改走主機端端點_舊分支與欄位已移除_原因都有中文()
     {
         var js = Script();
@@ -203,5 +212,14 @@ public sealed class PrtgAdminPageUiTests
             Assert.Contains(required, js);
         foreach (var (key, text) in new[] { ("no-ip", "主機沒有 IP"), ("ip-excluded", "IP 已排除"), ("conflict", "此 IP 由多台主機共用"), ("not-in-prtg", "PRTG 找不到此 IP") })
             Assert.Matches(new Regex(@"'?" + Regex.Escape(key) + @"'?\s*:\s*'" + Regex.Escape(text) + "'"), js);
+    }
+
+    [Fact]
+    public void G2_輪詢走pollWhile_停止路徑不留clearInterval()
+    {
+        var js = Script();
+        Assert.Contains("pollWhile(", js);
+        Assert.DoesNotContain("setInterval(", js);
+        Assert.DoesNotContain("clearInterval(", js);
     }
 }

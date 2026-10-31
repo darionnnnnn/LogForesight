@@ -14,6 +14,7 @@
 
 import { api, getCurrentUser, hasCapability, canViewHandlerPage } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
+import { safeStorage } from '../core/storage.js';
 import {
     renderLoading,
     renderTable,
@@ -28,7 +29,7 @@ import {
 } from '../core/ui.js';
 import { formatDate, formatDateTime, formatNumber, formatUserName, riskBadge, statusBadge, toLocalDateString } from '../core/format.js';
 import { openWorkOrderReplyModal, toastReplyResult, toastReplyManyResult, workOrdersDraftKey } from './issue-status-reply.js';
-import { statusBadgeMeta } from '../core/handling-statuses.js';
+import { statusBadgeMeta, MAX_DUE_DATE_DAYS } from '../core/handling-statuses.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -50,9 +51,6 @@ const ADVANCED_OPEN_KEY = 'lf-handler-advanced-open';
 
 // 剛回覆而結案的列先淡化多久再重繪（讓人看得到「這張結案了」，不是突然消失）
 const DONE_ROW_DELAY_MS = 1200;
-
-// 處理人可排定的期限最遠天數（與後端 WorkOrderReplyService.MaxDueDateDays 相同）
-const MAX_DUE_DATE_DAYS = 90;
 
 // 來源名稱對照（同 work-orders.js）
 const ORIGIN_LABELS = {
@@ -1036,7 +1034,7 @@ function renderCases(cases) {
         rows: cases,
         // 點列 → 最近掛接日的風險日詳情（該頁有完整處理動線）；主機名稱另有連結可到主機頁
         rowHref: c => `/records/${c.hostId}/${c.lastLinkedDate}`,
-        empty: { title: '目前沒有進行中案件', hint: '被指派問題並建立案件後，會顯示在這裡。' }
+        empty: { title: '目前沒有進行中的交辦', hint: '被指派問題並建立交辦後，會顯示在這裡。' }
     });
 }
 
@@ -1102,11 +1100,8 @@ document.getElementById('toggle-resolved-days').addEventListener('change', event
 });
 
 advancedEl.addEventListener('toggle', () => {
-    try {
-        localStorage.setItem(ADVANCED_OPEN_KEY, advancedEl.open ? '1' : '0');
-    } catch {
-        // 本機儲存區不可用（隱私模式等）：不記住展開狀態，不影響功能
-    }
+    // 本機儲存區不可用（隱私模式等）時 safeStorage 靜默略過：不記住展開狀態，不影響功能
+    safeStorage.set(ADVANCED_OPEN_KEY, advancedEl.open ? '1' : '0');
     if (!advancedEl.open || advancedLoaded) return;
     // 權限尚未確認（load 還在跑）就先記著，確認有權後由 load 補載入；無權者永遠不會呼叫 workload
     if (!advancedAllowed) {
@@ -1116,11 +1111,7 @@ advancedEl.addEventListener('toggle', () => {
     guardLoad([casesEl, daysEl], loadAdvanced);
 });
 
-try {
-    // 設定 open 會觸發 toggle 事件，由上面的監聽負責第一次載入
-    if (localStorage.getItem(ADVANCED_OPEN_KEY) === '1') advancedEl.open = true;
-} catch {
-    // 本機儲存區不可用：維持預設收合
-}
+// 設定 open 會觸發 toggle 事件，由上面的監聽負責第一次載入；讀不到（儲存區不可用）就維持預設收合
+if (safeStorage.get(ADVANCED_OPEN_KEY) === '1') advancedEl.open = true;
 
 guardLoad([kpiEl, ordersEl], load);

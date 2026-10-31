@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Service;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -19,8 +20,21 @@ public sealed class PrtgSnapshotCapacityResponseValidatorTests
         PrtgSnapshotCapacityResponseValidator.Validate(rows, ids);
         Assert.Throws<InvalidDataException>(() => PrtgSnapshotCapacityResponseValidator.Validate(
             Rows(ids.Append(2001)), ids));
-        Assert.Throws<InvalidDataException>(() => PrtgSnapshotCapacityResponseValidator.Validate(
-            Rows(ids.Take(99)), ids));
+        // 真子集（PRTG 刪了一顆）收下；缺的由呼叫端警告。
+        PrtgSnapshotCapacityResponseValidator.Validate(Rows(ids.Take(99)), ids);
+    }
+
+    [Fact]
+    public void Snapshot_contract_accepts_proper_subset_rejects_outside_and_empty()
+    {
+        long[] requested = [1, 2, 3];
+        var subset = PrtgSnapshotResponseContract.Validate(Rows(new long[] { 1, 2 }), requested);
+        Assert.True(subset.Compatible);
+        Assert.True(subset.MinimumFieldsObserved);
+        Assert.True(PrtgSnapshotResponseContract.Validate(Rows(requested), requested).Compatible);
+        Assert.Equal("sensor-outside-requested-scope",
+            PrtgSnapshotResponseContract.Validate(Rows(new long[] { 1, 2, 4 }), requested).Reason);
+        Assert.False(PrtgSnapshotResponseContract.Validate(Rows(Array.Empty<long>()), requested).Compatible);
     }
 
     [Fact]

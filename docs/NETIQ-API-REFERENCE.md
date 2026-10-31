@@ -7,10 +7,10 @@
 > 下列欄位對應是本環境（8.5）以 NetIQ 維護頁「診斷」分頁的驗證查詢核對後的定案結果。
 > 換一套 Sentinel 環境時，仍應以現場 `apidoc`（`https://<sentinel>:8443/SentinelRESTServices/apidoc/`）
 > 與 Web UI「Tips」頁為準，本文件的欄位對應是本環境的實測結果，不是原廠保證的通用契約。
-> 實作見 `LogForesight.Core/Analysis/SentinelClient.cs`、`SentinelFieldMap.cs`、
-> `SentinelEventMapper.cs`、`SentinelQueryBuilder.cs`。取數管線的整體設計（機房 pipeline、
-> 網段掃描探索、節流參數）見 docs/WEB-SPEC.md §9.9a／§10.2；欄位對應的實測過程與尚未核對的
-> 開放項見 docs/BACKLOG.md。
+> 實作見 `LogForesight.Core/SentinelClient*.cs`（四個 partial：本體、`.Auth`、`.Search`、`.Paging`）與
+> `LogForesight.Core/Analysis/` 的 `SentinelFieldMap.cs`、`SentinelEventMapper.cs`、`SentinelQueryBuilder.cs`。
+> 取數管線的整體設計（機房 pipeline、網段掃描探索、節流參數）見 docs/WEB-SPEC.md §9.9a；
+> 欄位對應的實測過程與尚未核對的開放項見 docs/BACKLOG.md。
 
 ## 1. 原廠文件依據
 
@@ -32,7 +32,8 @@
 
 token 是 server 端 session 資源。**整輪收集共用一個 token、結束時 DELETE 登出**，不每個查詢
 重新認證（認證是相對昂貴的操作，2000 台量級下每查詢一次認證即自我 DoS）。token 過期
-（401/403）由 `SentinelClient` 統一攔截：重新認證一次後重放原請求，仍失敗才報錯。
+（401/403）由 `SentinelClient` 統一攔截：先 best-effort 登出舊 token（5 秒逾時，失敗只記 Debug、不影響重新認證，避免殘留 session），
+再重新認證一次並重放原請求，仍失敗才報錯。
 
 ## 3. 事件查詢：event-search job 生命週期
 
@@ -41,8 +42,8 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 | 步驟 | 呼叫 | 說明 |
 |---|---|---|
 | 建立 | `POST /SentinelRESTServices/objects/event-search`（201 Created，回 `@href`） | body 見下 |
-| 查狀態 | `GET /SentinelRESTServices/objects/event-search/{id}`（或 event-search-status） | `status`：0 Pending / 1 Running / 2 Completed / 3 CompletedWithErrors / 4 Unavailable / 5 Canceled / 6 AccessDenied；`found`＝符合總數、`avail`＝目前可取數、`results`＝**第一頁結果的 URL** |
-| 取結果 | `GET <results URL>` 逐頁 | 每頁 `pgsize` 筆，跟隨回應中的下一頁連結 |
+| 查狀態 | `GET /SentinelRESTServices/objects/event-search/{id}`（或 event-search-status） | `status`：0 Pending / 1 Running / 2 Completed / 3 CompletedWithErrors / 4 Unavailable / 5 Canceled / 6 AccessDenied；`found`＝符合總數、`avail`＝目前可取數、`results`＝**第一頁結果的 URL**。Completed 與 CompletedWithErrors 都視為終態並照常取結果（`State` 帶在結果上，目前沒有消費端、不改變成功判定）；Unavailable／Canceled／AccessDenied 擲 `SentinelClientException`；未知或缺席的狀態當作仍在跑 |
+| 取結果 | `GET <results URL>` 逐頁 | 每頁 `pgsize` 筆；頁碼由本程式自算——把 results URL 的 `page=` 參數依序改為 1、2、3…（`SetPageQueryParam`），不依賴未文件化的下一頁連結；空頁、不足一頁或已取回 `min(found, max-results)` 筆即停 |
 | 清理 | `DELETE /SentinelRESTServices/objects/event-search/{id}` | **用完即刪**，不留 job 佔用 server 資源 |
 
 建立 job 的 body 欄位（原廠文件欄位名）：
@@ -61,8 +62,11 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 
 - `start` 含、`end` 不含——日切界用「當地日 00:00 轉 UTC」到「翌日 00:00 轉 UTC」，不會重複
   也不會漏。
-- `type` 用 `USER`；並填 `init-user`/`ip`/`InitiatingHostName` 表明身分——Sentinel 管理端的
+- `type` 用 `USER`；並填 `init-user`（探索帳號）與 `InitiatingHostName`（查詢端主機名）表明身分——Sentinel 管理端的
   「Active Searches」畫面看得到是誰在查，SIEM 管理者可辨識、可管理。
+- **逾時有兩層**：`TimeoutSeconds` 同時是單次 HTTP 呼叫的逾時，也是 job 建立後輪詢至終態的完成期限（超過擲「查詢逾時」）；翻頁迴圈不受它約束。
+- **取不回的結果**：`found` > 0 但結果頁一筆都取不回（讀不到或解析不出）時 `SentinelSearchResult.Unreadable` 為 true，pipeline 將該批記為失敗，
+  不當成截斷、不二分重查；取回數 < `found` 才是 `Truncated`，pipeline 才二分重查並在收斂到單台後誠實標記資料不完整。
 
 **沒有 GROUP BY**：公開 REST API 只有 search job，沒有伺服器端聚合（GROUP BY／facet 不在
 公開端點中）。本專案的取數策略是 **watchlist Lucene 篩選（server 端先過濾掉多數事件）＋
@@ -165,7 +169,8 @@ Lucene 預設上限 1024，結構上安全，但**本環境只實證過 50~100 �
 
 **重掃增量**：精靈重掃已有登錄主機的網段時，把該 Sentinel 轄下、IP 落在此網段、
 且乾淨登錄（非孤兒、非合併）的主機當 `knownIps` 一併排除——沒有新主機時 `found=0`，
-一次查詢就結束。孤兒主機**刻意不排除**：它出現在掃描結果裡是「又活過來了」的訊號。
+一次查詢就結束。已登錄主機清單**不設全域總數上限**（2000 台規模仍排除），只在送出前依當前分段過濾；
+單段內排除超過 `ExclusionClauseLimit` 時，第一輪退回不排除照掃、後續輪次停止並警告。孤兒主機**刻意不排除**：它出現在掃描結果裡是「又活過來了」的訊號。
 
 **⚠ `NOT` 子句尚未在本環境實測**（probe 驗過 OR 50~100 子句、片語、前綴萬用字元，
 沒驗過 NOT）。實作加了偵測：任一輪取回的事件若含已排除的 `repip`，即判定排除未生效，
@@ -265,7 +270,7 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 {
   "filter": "(repip:10.1.2.11 OR repip:10.1.2.12 OR …) AND ((rv40:(4625 OR 4720 OR …)) OR ((rv150:System OR rv150:Application) AND sev:[2 TO 5]))",
   "start": "<當地日00:00→UTC>", "end": "<翌日00:00→UTC>",
-  "fields": "repip,sn,rv40,obssvcname,rv150,dt,sev,msg,evt,sun,xdasoutcome",
+  "fields": "repip,sn,rv40,obssvcname,rv150,dt,sev,msg,evt,sun,xdasoutcome,shn,sip",   // 13 欄＝SentinelFieldMap.Q1ProjectionFields
   "pgsize": 500, "max-results": 100000, "type": "USER",
   "init-user": "svc-lfquery", "InitiatingHostName": "<查詢端主機名>"
 }
@@ -282,7 +287,11 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
   規則已外部化，watchlist 推導與規則庫同步；規則表改了，產生的子句自動跟著對（見
   `RunSentinelQueryChecks` 測試）。
 - IP 篩選以批次子句組成（`repip:ip1 OR repip:ip2 OR …`）；10/50/100 個 IP 子句皆可正常查詢
-  （耗時與子句數無明顯相關），批次大小由 `NetiqOptions` 節流參數控制。
+  （耗時與子句數無明顯相關），批次大小為 `IpBatchSize`（50，Windows／Linux 共用）。
+- **只放行合法 IPv4**（`SentinelQueryBuilder.IsValidIpv4`：四段、每段 1–3 位數字且 0–255）：位址會原樣插進 Lucene，一個壞值（IPv6、簡寫、亂字串）會讓同批所有主機被 Sentinel 以 400 整批拒絕。
+  `BuildIpClause` 濾掉不合法者、全部不合法時擲 `ArgumentException`；pipeline 在計畫階段就把位址不是 IPv4 的主機排除，逐台警告「位址 X 不是 IPv4，未查詢」並標記未完整；
+  作業系統標記不是 `windows`／`linux` 的主機同樣逐台警告、不查詢。這些主機不進進度分母，也不計入「已完成跳過」（那個計數的語意是已有分析紀錄）。
+  Web 現場取數（詢問 AI）對單台查詢位址不是 IPv4 時回空查詢（視為查不到），不擲例外。
 - 片語查詢（`obssvcname:"…"`）需注意 JSON 轉義：`System.Text.Json` 預設編碼器會把非 ASCII
   字元寫成 `\uXXXX`，但 Sentinel 的 JSON 解析器不接受這種轉義序列，會導致片語查詢整個被
   400 拒絕。`SentinelClient` 已改用 `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`
@@ -294,10 +303,10 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 |---|---|---|
 | 1 | **watchlist 先在 server 端過濾**（Lucene filter） | 只索引查詢命中事件，不全量拉回 |
 | 2 | **欄位投影**（fields） | 每筆只回必要欄位，序列化與傳輸成本降一個數量級 |
-| 3 | **單一併發 per Sentinel** | 任一時刻每台最多 1 個查詢在跑；不與現場操作人員搶資源 |
-| 4 | **跨 Sentinel 平行** | 不同 Sentinel 是獨立系統，平行不增加單台負擔 |
+| 3 | **每個 client 單一併發；單台 Sentinel 內的平行度有上限** | 一個 `SentinelClient` 實例同一時間只有 1 個 job；`MaxParallelQueriesPerServer`（預設 1＝完全依序，上限 4）才會替同一台 Sentinel 建 client pool、讓同一天的主機批次同時開多條查詢；不與現場操作人員搶資源 |
+| 4 | **跨 Sentinel 平行** | 不同 Sentinel 是獨立系統，平行不增加單台負擔；`MaxParallelServers` 預設 2、上限 3 |
 | 5 | **夜間窗執行** | 避開日間互動查詢尖峰 |
-| 6 | **token 重用＋登出** | 整輪一次認證；不製造認證風暴、不留殭屍 session |
+| 6 | **token 重用＋登出** | 整輪一次認證；token 過期重新認證前先登出舊 token；不製造認證風暴、不留殭屍 session |
 | 7 | **job 用完即 DELETE** | 不佔用 server 的 search job 資源與快取 |
 | 8 | **`QueryDelayMs` 節流** | 呼叫間隔可調；哪台 Sentinel 反映負載即可單獨放慢 |
 | 9 | **`max-results` 安全閥** | 異常爆量日不無限制拉取；截斷誠實標 `DataIncomplete` |
@@ -307,7 +316,37 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 
 ## 7. 設定（`NetiqOptions`，Web「NetIQ 維護」頁維護）
 
-節流／行為參數（各處皆經 `NetiqOptionsStore`——DB blob `netiq_options`——讀同一份）：
-`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／`RetryCount`／
-`AllowInvalidCertificates`（自簽憑證環境的顯式逃生門，啟用即 WARN）。連線帳密另存
-`ISentinelStore`（每台 Sentinel 各自一組，密碼以 `CryptoHelper` AES-256 加密）。
+節流／行為參數（各處皆經 `NetiqOptionsStore`——DB blob `netiq_options`——讀同一份；儲存時的範圍由 `UpdateNetiqOptionsRequest` 驗證）：
+
+| 設定 | 預設 | 範圍 | 說明 |
+|---|---|---|---|
+| `QueryDelayMs` | 0 | 0–60,000 | 每次 REST 呼叫（建立／輪詢／翻頁）之間的節流間隔 |
+| `PageSize` | 500 | 1–5,000 | event-search job 的單頁筆數（`pgsize`） |
+| `MaxResultsPerJob` | 100,000 | 1–10,000,000 | 單一 job 最多回傳筆數（`max-results`），超過標記截斷 |
+| `TimeoutSeconds` | 120 | 1–3,600 | 單次 HTTP 逾時，同時是 job 輪詢至終態的完成期限（§3） |
+| `RetryCount` | 3 | 0–20 | Polly 重試：503／逾時／網路錯誤重試，4xx 不重試 |
+| `AllowInvalidCertificates` | false | — | 自簽憑證環境的顯式逃生門，啟用即 WARN |
+| `BackfillDays` | 1 | 1–365 | 每台主機每次執行最多回補幾天；實際上限＝歷史資料保留天數（不超過 365）；首次與非首次一律套用同一值，缺漏日不自動自癒 |
+| `MaxParallelServers` | 2 | 1–3 | 同時處理幾台 Sentinel；1＝完全依序；上限是行程架構常數，既有存值超過時讀取夾住 |
+| `MaxParallelQueriesPerServer` | 1 | 1–4 | 單台 Sentinel 內同時開幾條批次查詢（client pool 大小）；與 `MaxParallelServers` 的乘積決定夜間分析的 DB 連線池上限 |
+| `ChatLiveFetchEnabled` | false | — | 詢問 AI 是否向 Sentinel 即時查詢現場事件（只對 NetIQ 主機；白天查詢負載須管理者顯式開啟） |
+| `UseOfflineDemoData` | false | — | 掃描匯入使用離線示範資料；僅非 Production 可開 |
+
+連線帳密另存 `ISentinelStore`（每台 Sentinel 各自一組，密碼以 `CryptoHelper` AES-256 加密）。
+
+## 8. 來源佐證（SourceEvidence）與欄位形狀探測
+
+**來源佐證**：`SentinelEventMapper` 為每筆映射後的事件附一份 `SourceEvidence`（`LogForesight.Core/Models/SourceEvidence.cs`），供跨來源（Sentinel 事件 × PRTG）弱佐證判定用：
+- `SourceKind`＝`SentinelWindows`／`SentinelLinux`；`EventTimeUtc`＝`dt`；`ResourceScope`＝`repip` 能解析成 IP 時為 `Host`，否則 `Unknown`。
+- `ExactHostKey`／`ExactResourceKey`＝`host-ip:<repip>`；NetIQ pipeline 在**該 IP 對到唯一一台已登錄目標**時，改成正規主機鍵 `host-id:<HostId>`
+  （`SourceEvidence.WithCanonicalHost`）；IP 重複的目標維持 `host-ip:` 的弱鍵。
+- `SourceReference` 一律空、`SourceReferenceQuality`＝`Unknown`：Sentinel 投影沒有逐筆事件的原生參照，所以 Sentinel 端證據永遠不滿足「精確參照」；
+  `ProjectionFingerprint`＝投影欄位（依鍵排序）的 SHA-256，只用來辨識內容，不是可定址的來源參照。
+- 同一主機日的觀測清單有界：最多 64 筆、序列化 ≤ 8 KiB，超過標記截斷（`SourceEvidence.BoundObservations`）。
+
+**欄位形狀探測**（NetIQ 維護頁「診斷」分頁的第二個鈕，`POST api/admin/netiq/probe/metadata/start`，需 `Maintain`，寫稽核 `netiq_probe_run`，`Mode=metadata-shape`；帳密未設定的 Sentinel 拒絕啟動）：
+- 與一般診斷共用同一個探測執行閘門（已有診斷執行中時拒絕）；由 `NetiqEvidenceMetadataProbeRunner` 執行，有界且不輸出任何值。
+- 只送一個查詢：`sev:[0 TO 5]`、近 1 小時、最多 3 筆事件、1 頁、保留全部原始欄位；整體期限 30 秒，HTTP 請求 ≤ 12 次，單一回應 ≤ 512 KiB，欄位鍵 ≤ 128 個，報告 ≤ 32 KiB。
+- 報告只列欄位形狀：欄位名稱（僅限安全字元，其餘只計數）、JSON 型別、值長度、是否可解析為時間、是否帶明確時區位移；不含任何欄位值與例外細節，失敗只回固定的原因代碼。
+- 用途是核對候選欄位形狀（例如 `dt` 的時區位移）；報告明寫「欄位形狀不等於語意證明，不授權強制比對」。
+

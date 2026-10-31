@@ -78,7 +78,7 @@ public class OccurrenceStatusResolver
             }
 
             var status = IssueGroupStatusResolver.Resolve(
-                openCase, handling, (IssueSeverity)occurrence.SeverityRank, unhandledSeverities, today);
+                openCase, handling, LegacySeverityRank.ToSeverity(occurrence.SeverityRank), unhandledSeverities, today);
 
             result.Add(new ResolvedOccurrence(occurrence, host, status, openCase, handling, inheritedFalsePositive));
         }

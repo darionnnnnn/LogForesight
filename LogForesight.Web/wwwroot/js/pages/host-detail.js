@@ -64,7 +64,7 @@ async function load() {
     renderCheckup(detail);
     if (detail.caseGrantOnly === true) {
         renderCaseGrantScopeNotice(document.getElementById('host-prtg'),
-            '案件授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。');
+            '交辦授與只包含被交辦的問題；不顯示主機整體的 PRTG 對應資訊。');
     } else {
         loadPrtgMapping();
     }
@@ -150,7 +150,7 @@ function renderTimeline(detail) {
     const container = document.getElementById('host-timeline');
     if (detail.caseGrantOnly === true) {
         renderCaseGrantScopeNotice(container,
-            '案件授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。');
+            '交辦授與只包含被交辦的問題；此頁不顯示整台主機的時間軸。');
         return;
     }
 
@@ -341,9 +341,14 @@ let currentDetail = null;
  */
 function renderIssues(detail) {
     currentDetail = detail;
+    // 重建表格（首次載入、排序）時所有列都回到收合：面板的展開旗標與時間軸高亮一起歸零，
+    // 否則排序前展開那列晚到的回應仍會替已收合的列上色
+    for (const panel of openPanels) panel.reset();
+    openPanels.clear();
+    releaseHighlight(highlightOwner);
     if (detail.caseGrantOnly === true) {
         renderCaseGrantScopeNotice(document.getElementById('host-issues'),
-            '案件授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。');
+            '交辦授與只包含被交辦的問題；此頁不顯示整台主機的問題摘要。');
         return;
     }
     const rows = sortRows(detail.topSignatures, ISSUE_COLUMNS, issuesSort);
@@ -355,11 +360,39 @@ function renderIssues(detail) {
             issuesSort = { key, dir };
             renderIssues(currentDetail);
         },
-        rowDetail: s => occurrenceDetailPanel(s),
+        onRowExpand: (s, cell) => {
+            const panel = occurrenceDetailPanels.get(s) || occurrenceDetailPanel(s);
+            occurrenceDetailPanels.set(s, panel);
+            cell.appendChild(panel.element);
+        },
+        onRowToggle: (s, expanded) => occurrenceDetailPanels.get(s)?.setOpen(expanded),
         // 時間軸的灰格＝「這天沒分析」，不是「沒問題」；空狀態的 hint 呼應同一個原則，
         // 避免使用者把「期間內沒有重點問題」誤讀成「這台主機根本沒被監控」
         empty: { title: '期間內未偵測到問題', hint: '時間軸灰格代表該日無分析紀錄，與「這天沒風險」是不同的意思。' }
     });
+}
+
+// 每個問題簽章一份面板狀態：排序重建表格時沿用，已取得的明細不必重打 API
+const occurrenceDetailPanels = new WeakMap();
+// 目前展開中的面板（重建表格時要一起收合）、時間軸高亮的持有者與最後展開的面板：
+// 高亮只有一份，由最後展開的列持有——兩列都展開時先點的那列晚到的回應不得蓋掉後點的列，
+// 收合別列也不得清掉它的高亮
+const openPanels = new Set();
+let highlightOwner = null;
+let lastOpenedPanel = null;
+
+function claimHighlight(panel, dates) {
+    if (lastOpenedPanel !== panel) return;
+    highlightOwner = panel;
+    highlightTimeline(dates);
+}
+
+function releaseHighlight(panel) {
+    if (!panel) return;
+    if (lastOpenedPanel === panel) lastOpenedPanel = null;
+    if (highlightOwner !== panel) return;
+    highlightOwner = null;
+    clearTimelineHighlight();
 }
 
 function lastSeenLink(signature) {
@@ -372,12 +405,11 @@ function lastSeenLink(signature) {
 }
 
 /**
- * 問題發生明細展開列（docs/archive/FEEDBACK-4-PLAN.md §3）：lazy fetch——renderTable 的展開/收合
- * 由外層 <tr> 的 click 監聽器控制（見 ui.js renderTable），這個節點本身沒有「被展開」的
- * 事件可掛，改用 setTimeout(0) 延到節點插入 DOM 後才找得到外層 <tr>，掛一個額外的 click
- * 監聽器判斷當下是展開還是收合（同一輪 click 兩個監聽器都會跑，順序即註冊順序，
- * renderTable 的 toggle 先發生，這裡讀到的 class 已經是切換後的狀態）。
- * cachedOccurrences 只抓一次，收合再展開不重打 API、也不必重新渲染內容。
+ * 問題發生明細展開列（docs/archive/FEEDBACK-4-PLAN.md §3）：lazy fetch——renderTable 以 onRowExpand
+ * 在首次展開才建面板、onRowToggle 通知之後每次展開／收合，不必再等節點插入 DOM 後手掛 click 監聽。
+ * 回傳 { element, setOpen }：setOpen(true) 展開並（必要時）取資料後高亮時間軸；setOpen(false)
+ * 收合並清掉高亮。回應抵達時若該列已收合就只渲染內容、不高亮（否則收合列會替時間軸上色）。
+ * cachedDates 只抓一次，收合再展開不重打 API、也不必重新渲染內容。
  */
 function occurrenceDetailPanel(signature) {
     const container = document.createElement('div');
@@ -389,13 +421,22 @@ function occurrenceDetailPanel(signature) {
     container.appendChild(placeholder);
 
     let cachedDates = null;
+    let expanded = false;
+    let inFlight = null;
+    const panel = { element: container, setOpen, reset };
 
-    async function load() {
+    function load() {
         if (cachedDates) {
-            highlightTimeline(cachedDates);
-            return;
+            claimHighlight(panel, cachedDates);
+            return inFlight;
         }
+        // 回應未到前收合再展開：沿用進行中的請求，不重打也不重畫兩次
+        if (inFlight) return inFlight;
+        inFlight = fetchAndRender().finally(() => { inFlight = null; });
+        return inFlight;
+    }
 
+    async function fetchAndRender() {
         renderSpinner(container, '載入中…');
 
         try {
@@ -403,7 +444,7 @@ function occurrenceDetailPanel(signature) {
             const data = await api.get(`/api/host-detail/${hostId}/issues?${params.toString()}`, { silent: true });
             cachedDates = data.occurrences.map(o => o.date);
             renderOccurrencePanel(container, data);
-            highlightTimeline(cachedDates);
+            if (expanded) claimHighlight(panel, cachedDates);
         } catch {
             container.replaceChildren();
             const error = document.createElement('div');
@@ -414,19 +455,24 @@ function occurrenceDetailPanel(signature) {
         }
     }
 
-    setTimeout(() => {
-        // container 位在收合列（lf-row-detail）裡，真正掛 click 監聽器（renderTable 的
-        // 展開/收合 toggle）的是它的上一個手足節點——那才是使用者實際點的內容列
-        const detailRow = container.closest('tr');
-        const tr = detailRow?.previousElementSibling;
-        if (!tr) return;
-        tr.addEventListener('click', () => {
-            if (tr.classList.contains('lf-row-open')) load();
-            else clearTimelineHighlight();
-        });
-    }, 0);
+    function setOpen(open) {
+        expanded = open;
+        if (open) {
+            openPanels.add(panel);
+            lastOpenedPanel = panel;
+            load();
+        } else {
+            openPanels.delete(panel);
+            releaseHighlight(panel);
+        }
+    }
 
-    return container;
+    /** 表格重建、列已收合但沒有經過 onRowToggle：只收旗標，高亮由呼叫端統一清 */
+    function reset() {
+        expanded = false;
+    }
+
+    return panel;
 }
 
 function renderOccurrencePanel(container, data) {
@@ -459,9 +505,9 @@ function renderOccurrencePanel(container, data) {
             if (linkable) link.href = appUrl(`/handlers/${data.case.handlerId}`);
             link.textContent = data.case.handlerName;
             link.addEventListener('click', event => event.stopPropagation());
-            caseRow.append(`案件處理人：`, link, ` ｜ 狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`);
+            caseRow.append(`交辦處理人：`, link, ` ｜ 狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`);
         } else {
-            caseRow.textContent = `案件狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`;
+            caseRow.textContent = `交辦狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`;
         }
         container.appendChild(caseRow);
     }
@@ -496,7 +542,7 @@ function renderOccurrencePanel(container, data) {
                     if (occurrence.fromCase) {
                         const note = document.createElement('span');
                         note.className = 'text-muted small ms-1';
-                        note.textContent = '（案件同步）';
+                        note.textContent = '（交辦逐日同步）';
                         statusCell.appendChild(note);
                     }
                     return statusCell;

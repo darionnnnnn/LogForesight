@@ -112,7 +112,7 @@ public class ExternalCallLimitTests : IDisposable
             await Task.Delay(TimeSpan.FromSeconds(30), ct);
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
-        var service = new AIService(AiSettingsForRetry(), handler);
+        var service = new AIService(AiSettingsForRetry(), handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("hi");
 
@@ -124,7 +124,7 @@ public class ExternalCallLimitTests : IDisposable
     public async Task AI_連線失敗仍依重試次數重試()
     {
         var handler = new CountingHandler(_ => throw new HttpRequestException("連不上"));
-        var service = new AIService(AiSettingsForRetry(), handler);
+        var service = new AIService(AiSettingsForRetry(), handler, NullAiRequestGate.Instance);
 
         var response = await service.ChatAsync("hi");
 

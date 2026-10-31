@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Services;
 
 namespace LogForesight.Web.Services;
@@ -57,6 +58,28 @@ public class AiAnalysisRunState
     public int ProgressDone { get; private set; }
     public int ProgressTotal { get; private set; }
     public string? LatestMessage { get; private set; }
+
+    /// <summary>執行中時為本趟 AI 執行的 <see cref="BatchRun.RunId"/>；沒有執行時為 null。</summary>
+    public long? CurrentBatchRunId { get; private set; }
+
+    /// <summary>登記本趟 AI 執行的 RunId（recorder 建立後設定；EndRun 清除）。</summary>
+    public void SetCurrentBatchRunId(long runId)
+    {
+        lock (_lock)
+        {
+            if (IsRunning && runId > 0) CurrentBatchRunId = runId;
+        }
+    }
+
+    /// <summary>這筆未結束的 AI 執行是否由本行程目前持有。</summary>
+    public bool HoldsRun(BatchRun run)
+    {
+        lock (_lock)
+        {
+            return IsRunning && run.FinishedAt == null && run.JobType == BatchRun.JobTypeAi
+                && CurrentBatchRunId is long id && run.RunId == id;
+        }
+    }
     public RunOutcome? LastOutcome { get; private set; }
 
     /// <summary>
@@ -147,8 +170,9 @@ public class AiAnalysisRunState
         lock (_lock)
         {
             IsRunning = false;
+            CurrentBatchRunId = null;
             CompletedAt = DateTime.Now;
-            LastOutcome = new RunOutcome(success, message, Trigger ?? "schedule", DateTime.Now);
+            LastOutcome = new RunOutcome(success, message, Trigger ?? LogForesight.Core.Persistence.BatchRunTriggers.Schedule, DateTime.Now);
             _cts?.Dispose();
             _cts = null;
             tcsToComplete = _runCompletionTcs;

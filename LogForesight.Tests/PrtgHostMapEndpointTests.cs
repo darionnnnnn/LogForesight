@@ -43,7 +43,8 @@ public class PrtgHostMapEndpointTests : IDisposable
             backend: _backend,
             mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend),
             hosts: _hosts,
-            visibility: new FullVisibility(_hosts));
+            visibility: new FullVisibility(_hosts),
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -770,5 +771,59 @@ public class PrtgHostMapEndpointTests : IDisposable
         var ex = Assert.Throws<DomainException>(() => controller.StartPrtgStructureSync());
         Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
         Assert.Contains("取數執行進行中", ex.Message);
+    }
+
+    private sealed class ActiveOnlyVisibility(IHostStore hosts) : IVisibilityService
+    {
+        public IReadOnlySet<long> GetVisibleHostIds() => hosts.GetAll().Where(h => h.Active).Select(h => h.HostId).ToHashSet();
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetOwnedHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long id) => GetVisibleHostIds();
+        public IReadOnlyList<string> GetCaseGrantHostNames() => [];
+        public bool IsCaseGrantOnly(long id) => false;
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long id) => null;
+        public List<WebHost> GetVisibleHosts() => hosts.GetAll().Where(h => h.Active).ToList();
+        public void EnsureVisible(long id) { }
+    }
+
+    private SettingsController BuildControllerWithInactiveAndMergedHosts(ICurrentUser user)
+    {
+        var alive = _hosts.Upsert(new WebHost { HostName = "alive", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "disabled", Active = false });
+        _hosts.Upsert(new WebHost { HostName = "merged", Active = false, MergedInto = alive.HostId });
+        return new SettingsController(
+            new StubSystemSettingsService(),
+            new AiUsageStore(_backend.Blob("ai_usage")),
+            _audit,
+            backend: _backend,
+            hosts: _hosts,
+            visibility: new ActiveOnlyVisibility(_hosts),
+            currentUser: user);
+    }
+
+    [Fact]
+    public void 全站PRTG管理端點_持有ViewAll即使有停用與合併主機仍可操作()
+    {
+        var controller = BuildControllerWithInactiveAndMergedHosts(
+            FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
+        var res = controller.GetPrtgManualMaps();
+        Assert.True(res.Success);
+    }
+
+    [Fact]
+    public void 全站PRTG管理端點_無ViewAll回Forbidden()
+    {
+        var controller = BuildControllerWithInactiveAndMergedHosts(
+            FakeCurrentUser.WithCapabilities(Capability.Maintain));
+        var ex = Assert.Throws<DomainException>(() => controller.GetPrtgManualMaps());
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+    }
+
+    [Fact]
+    public void 全站PRTG管理端點_serverAdmin無ViewAll回Forbidden()
+    {
+        var controller = BuildControllerWithInactiveAndMergedHosts(FakeCurrentUser.ServerAdmin());
+        var ex = Assert.Throws<DomainException>(() => controller.GetPrtgManualMaps());
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
     }
 }

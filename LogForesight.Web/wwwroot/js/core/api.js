@@ -38,6 +38,10 @@ async function readJsonDownload(response, options) {
     const reject = (code, message) => new ApiError(code, message, response.status);
     if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get('Content-Type') || '') || !response.body) {
         response.body?.cancel().catch(() => {});
+        // 非 2xx 且不是 JSON（例如反向代理的 502 HTML）是一般伺服器錯誤，不是「登入狀態有問題」
+        if (!response.ok) {
+            throw reject('download_http_error', `伺服器暫時無法完成下載（HTTP ${response.status}），請稍後再試。`);
+        }
         throw reject('download_invalid_response', '伺服器未提供 JSON 證據檔，請確認登入狀態後重試。');
     }
     if (Number(response.headers.get('Content-Length')) > limit) {
@@ -84,6 +88,18 @@ async function readJsonDownload(response, options) {
         options.signal?.removeEventListener('abort', abort);
         reader.releaseLock();
     }
+}
+
+/** 從 Content-Disposition 取檔名（支援 filename*=UTF-8'' 與一般 filename=）；取不到回傳 null，由呼叫端給預設 */
+function filenameFromDisposition(response) {
+    const disposition = response.headers?.get?.('Content-Disposition') || '';
+    const star = disposition.match(/filename\*\s*=\s*(?:UTF-8|utf-8)''([^;\n]+)/);
+    if (star) {
+        try { return decodeURIComponent(star[1].trim().replace(/^"|"$/g, '')); } catch { /* 退回一般 filename */ }
+    }
+    const plain = disposition.match(/filename\s*=\s*("([^"]*)"|[^;\n]*)/);
+    const name = plain ? (plain[2] ?? plain[1]).trim().replace(/^"|"$/g, '') : '';
+    return name || null;
 }
 
 async function request(method, url, body, options = {}) {
@@ -177,7 +193,11 @@ async function request(method, url, body, options = {}) {
     if (options.downloadJson === true) {
         try {
             const blob = await readJsonDownload(response, options);
-            if (response.ok) return blob;
+            if (response.ok) {
+                return options.downloadMeta === true
+                    ? { blob, filename: filenameFromDisposition(response) }
+                    : blob;
+            }
             try { payload = JSON.parse(await blob.text()); } catch { payload = null; }
         }
         catch (error) {
@@ -200,9 +220,36 @@ async function request(method, url, body, options = {}) {
     return payload.data;
 }
 
+/** 物件網址保留時間：給瀏覽器足夠時間開始讀取下載內容 */
+const OBJECT_URL_REVOKE_DELAY_MS = 40_000;
+
+/**
+ * 把 blob 以暫時 <a download> 觸發瀏覽器儲存，移除元素後延遲才 revoke 物件網址
+ * （部分瀏覽器在 click() 同步回傳後才開始讀取，立刻 revoke 會讓下載失敗）。
+ * 搭配 api.download 使用：錯誤已在取檔階段丟出，不會走到這裡把整頁換成錯誤內容。
+ */
+export function saveBlobAsFile(blob, filename) {
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    try {
+        link.click();
+    } finally {
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(objectUrl), OBJECT_URL_REVOKE_DELAY_MS);
+    }
+}
+
 export const api = {
     get: (url, options) => request('GET', url, null, options),
     downloadJson: (url, options) => request('GET', url, null, { ...options, downloadJson: true }),
+    /**
+     * 下載 JSON 檔：沿用有界讀取、逾時與 401 導登入，回傳 { blob, filename }（filename 取自
+     * Content-Disposition，沒有則為 null，由呼叫端給預設）。失敗一律丟 ApiError，不整頁跳轉。
+     */
+    download: (url, options) => request('GET', url, null, { ...options, downloadJson: true, downloadMeta: true }),
     post: (url, body, options) => request('POST', url, body, options),
     // 大範圍查詢使用 POST body，仍經相同 CSRF／登入／信封與取消處理。
     readOnlyPost: (url, body, options) => request('POST', url, body, { ...options, readOnly: true }),

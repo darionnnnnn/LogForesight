@@ -102,7 +102,7 @@ public class IdentityService
             return LoginOutcome.Fail("帳號或密碼錯誤。");
         }
 
-        var user = _users.FindByAccount(account);
+        var user = _users.FindByAccount(AccountNames.Canonical(account)) ?? _users.FindByAccount(account);
         if (user == null)
         {
             // 憑證正確但系統裡沒有這個人：AD 驗證成功卻未被匯入的情況。

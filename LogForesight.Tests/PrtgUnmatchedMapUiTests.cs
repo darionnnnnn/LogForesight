@@ -42,7 +42,8 @@ public class PrtgUnmatchedMapUiTests : IDisposable
             backend: _backend,
             mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend),
             hosts: _hosts,
-            visibility: new FullVisibility(_hosts));
+            visibility: new FullVisibility(_hosts),
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]

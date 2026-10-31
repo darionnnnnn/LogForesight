@@ -199,6 +199,7 @@ public class HealthService
             IssueFirstSeenSeedError = firstSeenProgress?.LastError,
 
             SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
+            MailContributionLedger = _mail.GetContributionLedgerStatus(),
 
             CryptoKeySource = CryptoHelper.KeySource,
             CryptoKeyMismatch = cryptoKeyMismatch,

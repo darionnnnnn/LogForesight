@@ -46,7 +46,7 @@ public interface IPrtgManualWorkGate
     /// 等 <paramref name="observed"/>（呼叫端剛從 <see cref="Running"/> 看到的作業）結束（各自有等待上限，逾時不擲例外）。
     /// 取消訊號穿透。只有等到的是**成功的同步**才回 <see cref="PrtgManualWaitOutcome.MirrorFresh"/>——
     /// 半套的鏡像看起來與完整的一模一樣，分不出來就會整晚用錯資料。
-    /// 以呼叫端看到的種類為準而不在這裡重讀（體檢輪）：同步在兩次讀取之間剛結束時，重讀會掉進回填分支，
+    /// 以呼叫端看到的種類為準而不在這裡重讀：同步在兩次讀取之間剛結束時，重讀會掉進回填分支，
     /// 回「回填已結束」且把剛成功的同步再做一次。
     /// </summary>
     Task<PrtgManualWaitOutcome> WaitUntilIdleAsync(PrtgManualWork observed, CancellationToken ct);

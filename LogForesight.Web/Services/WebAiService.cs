@@ -96,13 +96,17 @@ public class WebAiService : IWebAiService
     /// 每次 AI 歸納、每輪問答都真的打了模型，只算批次會讓統計與帳單對不起來。</summary>
     private readonly AiUsageStore _usageMeter;
 
+    /// <summary>全站 AI 閘道；互動與對話兩個 AIService 實例共用（必填，不得退回不節流）。</summary>
+    private readonly IAiRequestGate _aiGate;
+
     private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _interactiveClient;
     private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _chatClient;
 
     /// <param name="aiGate">全站 AI 閘道；互動與對話兩個實例都走互動車道（優先於背景判讀）</param>
     public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings, AiUsageStore usageMeter,
-        IAiRequestGate? aiGate = null)
+        IAiRequestGate aiGate)
     {
+        _aiGate = aiGate ?? throw new ArgumentNullException(nameof(aiGate));
         _cache = cache;
         _systemSettings = systemSettings;
         _usageMeter = usageMeter;
@@ -134,7 +138,7 @@ public class WebAiService : IWebAiService
                 FrequencyPenalty = advanced.FrequencyPenalty,
                 PresencePenalty = advanced.PresencePenalty,
                 ExtraRequestFields = advanced.ExtraRequestFields
-            }, usageMeter: _usageMeter, gate: aiGate, lane: AiLane.Interactive);
+            }, usageMeter: _usageMeter, gate: _aiGate, lane: AiLane.Interactive);
         });
 
         _chatClient = new SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService>(snapshot =>
@@ -164,7 +168,7 @@ public class WebAiService : IWebAiService
                 FrequencyPenalty = advanced.FrequencyPenalty,
                 PresencePenalty = advanced.PresencePenalty,
                 ExtraRequestFields = advanced.ExtraRequestFields
-            }, usageMeter: _usageMeter, gate: aiGate, lane: AiLane.Interactive);
+            }, usageMeter: _usageMeter, gate: _aiGate, lane: AiLane.Interactive);
         });
     }
 

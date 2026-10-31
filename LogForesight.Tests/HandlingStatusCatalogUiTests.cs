@@ -67,4 +67,29 @@ public class HandlingStatusCatalogUiTests
         Assert.Contains("handling-statuses.js", File.ReadAllText(JsPath("pages", "issue-status-reply.js")));
         Assert.Contains("handling-statuses.js", File.ReadAllText(JsPath("pages", "handling-panel.js")));
     }
+
+    /// <summary>日層級指派：預覽與寫入結果要把派工閘門略過的原因講出來（讀 skippedByReason）</summary>
+    [Fact]
+    public void 處理面板指派預覽與結果講出略過原因()
+    {
+        var js = File.ReadAllText(JsPath("pages", "handling-panel.js"));
+
+        Assert.Contains("skippedByReason", js);
+        Assert.Contains("如需指派請先解除", js);
+        Assert.Contains("preview.skippedByReason", js);
+        Assert.Contains("updated.skippedByReason", js);
+    }
+
+    [Fact]
+    public void 交辦單時間軸把系統結案原因代碼翻成中文()
+    {
+        // 系統結案事件的註記就是原因代碼本身（empty_dispatch 等），只翻「代碼：說明」會讓時間軸露出英文代碼（體檢輪）
+        var detail = File.ReadAllText(JsPath("pages", "work-order-detail.js"));
+        var fn = detail[detail.IndexOf("function eventNoteText(", StringComparison.Ordinal)..];
+        fn = fn[..fn.IndexOf("\nfunction ", 1, StringComparison.Ordinal)];
+        Assert.Contains("workOrderClosedReasonText(note)", fn);
+        var format = File.ReadAllText(JsPath("core", "format.js"));
+        foreach (var code in new[] { "all_closed", "moved", "cancelled", "admin_closed", "empty_dispatch" })
+            Assert.Contains(code + ":", format);
+    }
 }

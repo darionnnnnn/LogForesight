@@ -236,20 +236,27 @@ public class SentinelRestDirectoryClientTests
         Assert.Contains("已登錄 2 台未重查", result.CoverageNote);
     }
 
-    /// <summary>已登錄數超過子句上限就整組放棄排除：退回一般掃描只是慢，
-    /// 送出超長 filter 會被 Sentinel 整個拒絕——寧可慢也不要整趟失敗</summary>
+    /// <summary>已登錄總數超過子句上限（600 台、分佈在多個 /24）時仍依段排除：排除清單已依段過濾
+    /// （單段 ≤254），不該因全域總數大就整組放棄而讓重掃失去「已登錄主機不重掃」效果</summary>
     [Fact]
-    public async Task 已登錄主機數超過子句上限_退回不排除的一般掃描()
+    public async Task 已登錄主機數超過子句上限_仍依段排除()
     {
-        var tooMany = Enumerable.Range(1, SentinelRestDirectoryClient.ExclusionClauseLimit + 1)
-            .Select(i => $"10.1.{i / 250}.{i % 250}")
+        var many = Enumerable.Range(0, 3)
+            .SelectMany(seg => Enumerable.Range(1, 200).Select(h => $"10.1.{seg}.{h}"))
             .ToList();
-        var handler = new ScriptedHandler(Empty(), Empty());
+        Assert.True(many.Count > SentinelRestDirectoryClient.ExclusionClauseLimit);
+        var handler = new ScriptedHandler { DefaultScript = Empty() };
 
         await new SentinelRestDirectoryClient(Options(), handler)
-            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None, knownIps: tooMany);
+            .ListHostsAsync(Server(), "10.1", CancellationToken.None, knownIps: many);
 
-        Assert.DoesNotContain("NOT", handler.Filters[0]);
+        foreach (var seg in new[] { 0, 1, 2 })
+        {
+            var f = handler.Filters.First(x => x.Contains($"repip:10.1.{seg}.*"));
+            Assert.Contains($"NOT (repip:10.1.{seg}.1 OR", f);
+            Assert.Contains($"repip:10.1.{seg}.200)", f);
+            Assert.DoesNotContain($"10.1.{(seg + 1) % 3}.1 ", f);
+        }
     }
 
     // ── 誠實申報 ────────────────────────────────────────────────────────────
@@ -1290,5 +1297,27 @@ public class SentinelRestDirectoryClientTests
             if (location != null) resp.Headers.Location = new Uri(location);
             return resp;
         }
+    }
+
+    /// <summary>
+    /// 結果頁讀不到（Found&gt;0、取回 0）時殘差輪立刻停：Truncated 對它也為 true，不處理會把同一個查詢
+    /// 重掃到輪數用盡、最後誤報「主機數超出單次掃描能力」（體檢輪）。
+    /// </summary>
+    [Fact]
+    public async Task 結果頁讀不到時殘差輪只掃一次並說明原因()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(1000),   // Found=1000 但零筆取回 → Unreadable
+            Empty());              // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Empty(result.Hosts);
+        // 只建兩個 job：殘差輪第 1 輪（讀不到就停）＋補充掃描；不處理會掃到輪數用盡
+        Assert.Equal(2, handler.Filters.Count);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("讀不到結果頁", warning);
+        Assert.DoesNotContain("主機數超出單次掃描能力", warning);
     }
 }

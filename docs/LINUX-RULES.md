@@ -102,7 +102,7 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
   與 IP——NetIQ 主機以 IP 登錄，只有一串 IP 認不出是哪台機器；OS 決定套用哪個平台的規則面，
   判讀問題時需要知道。
 
-## 現行 Linux 種子規則（28 條，seed v5）
+## 現行 Linux 種子規則（28 條）
 
 「嚴重度」欄的「高（重大）」＝ High 且帶 `ElevatesDayRisk` 旗標（命中即列為當日高風險）。
 
@@ -198,8 +198,10 @@ Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一�
 
 比對邏輯【SSH 破解得手】：同日 `builtin-linux-ssh-bruteforce` 簽章達門檻（≥10，
 `HeavyBruteforceThreshold`，與規則本身的 `CountThreshold` 各自獨立設定，比照 Windows
-關聯層慣例）＋`builtin-linux-ssh-accept` 簽章存在時，從兩組事件各自 regex 抽取
-(user, ip)，找交集：
+關聯層慣例）＋`builtin-linux-ssh-accept` 簽章存在時，從兩組事件各自抽取 (user, ip)——失敗面以
+`LinuxAuthParser.TryParseAuthFailure` 解析 Failed password／Invalid user／pam authentication failure 三類行
+（pam 行沒有 rhost 只是不貢獻 IP，不算解析失敗），成功面以 Accepted 行——再找交集，並套用與 Windows 版相同的
+時序條件（該帳號／IP 當日最晚成功時間 ≥ 最早失敗時間；成功早於失敗的不算得手）：
 
 - **交集有命中** → 精確比對成功，High／`ElevatesDayRisk=true` 告警
 - **無交集，且全部事件都解析成功** → 誠實不告警（不是漏做——真的沒有精確重疊）

@@ -2482,6 +2482,32 @@ public class PrtgFetchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchDayAsync_devices被截斷少於treesize時不清除過期裝置且計失敗()
+    {
+        // 只回 2 台、未滿頁（舊邏輯視為正常結尾），但 treesize 宣告 10 台＝被截斷；沒讀到的不能當成已刪除
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=devices"))
+                return JsonResponse("{\"treesize\":10,\"devices\":[{\"objid\":101,\"device\":\"Dev-101\"},{\"objid\":102,\"device\":\"Dev-102\"}]}");
+            if (url.Contains("content=sensors")) return JsonResponse("{\"treesize\":0,\"sensors\":[]}");
+            if (url.Contains("content=messages")) return JsonResponse("{\"treesize\":0,\"messages\":[]}");
+            return JsonResponse("{}", HttpStatusCode.NotFound);
+        });
+        var store = CreateStore();
+        SeedOldDevices(store, new long[] { 99 });
+        var console = new TestConsole();
+        var service = NewFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        var result = await service.FetchDayAsync(new DateTime(2026, 9, 17), 1, CancellationToken.None, NoScope,
+            fetchValues: false);
+
+        Assert.True(result.Failures > 0);
+        Assert.Contains(console.Lines, l => l.Contains("鏡像不完整"));
+        Assert.Contains(store.GetAllDevices(), d => d.Objid == 99);
+    }
+
+    [Fact]
     public async Task FetchDayAsync_本趟未出現的裝置過半時不清除且不計失敗()
     {
         var store = CreateStore();

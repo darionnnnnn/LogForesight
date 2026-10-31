@@ -55,7 +55,7 @@ public static class PrtgReevaluationPlanner
             else
             {
                 var hasInterruptedSchedule = nonAiRuns.Any(r =>
-                    r.Trigger == "schedule" &&
+                    r.IsScheduledFetch() &&
                     r.Interrupted &&
                     r.StartedAt.Date.AddDays(-1) == date);
 

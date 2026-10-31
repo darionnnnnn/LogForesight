@@ -59,7 +59,7 @@ public class AiUsageMeterTests : IDisposable
     public async Task 呼叫成功時記錄token用量並累加()
     {
         var store = NewStore();
-        var service = new AIService(Settings(), new StubHandler(_ => ReplyWithUsage("好", 120, 30)), null, store);
+        var service = new AIService(Settings(), new StubHandler(_ => ReplyWithUsage("好", 120, 30)), NullAiRequestGate.Instance, null, store);
 
         await service.ChatAsync("第一次");
         await service.ChatAsync("第二次");
@@ -81,7 +81,7 @@ public class AiUsageMeterTests : IDisposable
     public async Task 回應未帶usage時次數照計token記零()
     {
         var store = NewStore();
-        var service = new AIService(Settings(), new StubHandler(_ => ReplyWithoutUsage("好")), null, store);
+        var service = new AIService(Settings(), new StubHandler(_ => ReplyWithoutUsage("好")), NullAiRequestGate.Instance, null, store);
 
         await service.ChatAsync("問題");
 
@@ -101,7 +101,7 @@ public class AiUsageMeterTests : IDisposable
         var handler = new StubHandler(n => n == 1
             ? ReplyWithUsage("", 100, 0)          // 空回應 → 觸發重試
             : ReplyWithUsage("好", 100, 20));
-        var service = new AIService(settings, handler, null, store);
+        var service = new AIService(settings, handler, NullAiRequestGate.Instance, null, store);
 
         var response = await service.ChatAsync("問題");
 
@@ -188,7 +188,7 @@ public class AiUsageMeterTests : IDisposable
     [Fact]
     public async Task 計量失敗不影響AI呼叫()
     {
-        var service = new AIService(Settings(), new StubHandler(_ => ReplyWithUsage("好", 10, 5)),
+        var service = new AIService(Settings(), new StubHandler(_ => ReplyWithUsage("好", 10, 5)), NullAiRequestGate.Instance,
             null, new ThrowingMeter());
 
         var response = await service.ChatAsync("問題");

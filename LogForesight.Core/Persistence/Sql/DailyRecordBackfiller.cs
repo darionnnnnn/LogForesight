@@ -92,6 +92,7 @@ public sealed class DailyRecordBackfiller
 
         foreach (var row in rows)
         {
+            var originalVersion = row.ExtractVersion;
             var record = Parse(row.ContentJson);
             if (record == null)
             {
@@ -110,8 +111,14 @@ public sealed class DailyRecordBackfiller
             row.SecurityLogAvailable = record.SecurityLogAvailable;
             row.ErrorCount = record.ErrorCount;
             row.WarningCount = record.WarningCount;
-            row.AiAnalyzed = record.AiAnalyzed;
-            row.AiPending = record.AiPending;
+            // 版本 2 起 ai_pending／ai_analyzed 以欄位為事實來源（DB-SPEC）：
+            // 只有版本 < 2 的舊列才由 ContentJson 校正，>= 2 的列保留欄位，避免之後推進
+            // CurrentVersion 時把「欄位 1、JSON 0」的合法狀態誤清。
+            if (originalVersion < 2)
+            {
+                row.AiAnalyzed = record.AiAnalyzed;
+                row.AiPending = record.AiPending;
+            }
             row.LogSource = (short)record.LogSource;
             row.HasCorrelation = record.CorrelationAlerts.Count > 0;
             row.ExtractVersion = CurrentVersion;

@@ -469,6 +469,24 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.False(_hosts.Get(host.HostId)!.IsHighVolume, "查詢已不再截斷且遠低於上限，旗標應被清除");
     }
 
+    /// <summary>回報有資料卻取回 0 筆（結果頁讀不到）不是截斷：不二分、不設高流量旗標，該批記為失敗。</summary>
+    [Fact]
+    public async Task 回報有資料卻取回0筆_不二分不設高流量旗標_記為失敗()
+    {
+        var sentinel = AddSentinel();
+        var hosts = new[] { "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4" }
+            .Select((ip, i) => AddWindowsHost(sentinel, ip, $"HOST-{i}")).ToList();
+        _client.Responder = _ =>
+            new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 10, State = SentinelJobState.Completed, Unreadable = true };
+
+        var pipeline = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 1 });
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Single(_client.Requests); // 整批只查 1 次，不二分
+        Assert.Equal(4, result.HostsFailed);
+        Assert.All(hosts, h => Assert.False(_hosts.Get(h.HostId)!.IsHighVolume));
+    }
+
     // ── 回饋十三輪 D：單一 Sentinel 內部的 client pool 併發 ──────────────────────
     // 51 台主機才會跨過 IpBatchSize=50，真的切出兩個批次——這是唯一能逼出「同一天內
     // 多批次」路徑的方式，主機數不能再省。每一天的兩個查詢互相等候，確認實際重疊；
@@ -689,6 +707,48 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         // 分析結果本身照樣落地
         var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
         Assert.Single(store.ReadRecent(DateTime.Today.AddDays(-1), 1));
+    }
+
+    /// <summary>位址不是合法 IPv4 的主機不進查詢子句（否則同批主機會被 Sentinel 整批 400 拒絕），
+    /// 並逐台出聲；合法主機照常分析，失敗數不受影響。</summary>
+    [Fact]
+    public async Task 位址非IPv4的主機不進查詢且出現警告_其餘主機照常分析()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-OK");
+        AddWindowsHost(sentinel, "2001:db8::1", "HOST-V6");
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Contains("主機 HOST-V6 的位址 2001:db8::1 不是 IPv4，未查詢", result.Warnings);
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+        Assert.Equal(result.HostDaysTotal, result.HostDaysDone);   // 被濾掉的主機不進分母，進度能到 100%
+        var request = Assert.Single(_client.Requests);
+        Assert.Contains("10.0.0.1", request.Filter);
+        Assert.DoesNotContain("db8", request.Filter);
+    }
+
+    /// <summary>作業系統標記不是 windows／linux 的主機沒有對應查詢形狀：逐台警告、完全不查詢。</summary>
+    [Fact]
+    public async Task 作業系統標記無法辨識的主機出現警告且不查詢()
+    {
+        var sentinel = AddSentinel();
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "HOST-AIX", IpAddress = "10.0.0.7", Os = "aix",
+            SentinelId = sentinel.SentinelId, NetiqServer = sentinel.Name, Source = "netiq", Active = true
+        });
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Contains("主機 HOST-AIX 的作業系統標記 aix 無法辨識，未查詢", result.Warnings);
+        Assert.Empty(_client.Requests);
+        Assert.Equal(0, result.HostDaysAnalyzed);
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Equal(result.HostDaysTotal, result.HostDaysDone);
     }
 }
 

@@ -339,7 +339,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IssueRankingBuilder>();
         // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
         // 快取必須是 Singleton 才跨得了請求（儀表板→報表切換時不必整套重算）
-        services.AddSingleton<IssueRankingCache>(_ => new IssueRankingCache());
+        services.AddSingleton<IssueRankingCache>(sp => new IssueRankingCache(sp.GetRequiredService<DataVersionStamp>()));
         // 全域資料版本戳與整包回應快取（回饋三十五輪批次F）：兩者都是 Singleton
         // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
         services.AddSingleton<DataVersionStamp>();
@@ -371,7 +371,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<OccurrenceStatusResolver>();
         services.AddScoped<IssueHandlingRollupQuery>();
         // 可行動快照的短 TTL 跨請求快取（回饋三十六輪批次B）：機制比照 IssueRankingCache
-        services.AddSingleton<ActionableSnapshotCache>(_ => new ActionableSnapshotCache());
+        services.AddSingleton<ActionableSnapshotCache>(sp => new ActionableSnapshotCache(sp.GetRequiredService<DataVersionStamp>()));
         services.AddScoped<IssueTodoQuery>();
         // 儀表板「待派工問題」卡取待派試跑用（§9.1）：委派指向 WorkOrderBoardService.GetGaps
         services.AddScoped<PendingDispatchGapsProvider>(sp => sp.GetRequiredService<WorkOrderBoardService>().GetGaps);
@@ -450,9 +450,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INetiqHostDayTimingCollector, NetiqHostDayTimingCollector>();
         services.AddSingleton<AnalysisOrchestrator>(sp => new AnalysisOrchestrator(
             sp.GetRequiredService<IDispatchCandidateSource>(),
+            sp.GetRequiredService<IAiRequestGate>(),
             () => { sp.GetRequiredService<PermissionVersionStamp>().Bump(); },
-            sp.GetRequiredService<INetiqHostDayTimingCollector>(),
-            sp.GetRequiredService<IAiRequestGate>()));
+            sp.GetRequiredService<INetiqHostDayTimingCollector>()));
         services.AddSingleton<NamedMutexGate>();
         services.AddSingleton<SchedulerRunState>();
         // 背景回填共用節流閘：同一時間最多一支背景回填，取數排程執行中時每 30 秒檢查一次再讓路
@@ -463,8 +463,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ISystemSettingsStore>(),
             sp.GetRequiredService<IWebAiService>(),
             sp.GetRequiredService<HostDayWorkflowService>(),
-            sp.GetRequiredService<BackgroundWorkGate>(),
-            aiGate: sp.GetRequiredService<IAiRequestGate>()));
+            sp.GetRequiredService<IAiRequestGate>(),
+            sp.GetRequiredService<BackgroundWorkGate>()));
         services.AddHostedService(sp => sp.GetRequiredService<HostDayWorkflowRecoveryHostedService>());
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
@@ -494,11 +494,11 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<BatchRunStore>(),
                 sp.GetRequiredService<DailyRecordBackfiller>(),
                 sp.GetRequiredService<IWebAiService>(),
+                sp.GetRequiredService<IAiRequestGate>(),
                 suppressionStore,
                 aiService: null,
                 lifetime: lifetime,
-                workflow: sp.GetRequiredService<HostDayWorkflowService>(),
-                aiGate: sp.GetRequiredService<IAiRequestGate>());
+                workflow: sp.GetRequiredService<HostDayWorkflowService>());
         });
         services.AddHostedService(sp => sp.GetRequiredService<AiAnalysisHostedService>());
 

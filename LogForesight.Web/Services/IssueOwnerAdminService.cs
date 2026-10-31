@@ -122,24 +122,14 @@ public class IssueOwnerAdminService
                             ?? new List<string>();
         var afterOwners = requestedOwners.Select(id => usersById[id].Account).ToList();
 
-        var saved = _issueOwners.Upsert(new IssueProfile
+        // 原子更新：只改負責人入口自己的欄位（OwnerUserIds／Note／UpdatedByAccount），
+        // 結論與靜音維持區塊內讀到的最新值，不會被這支方法的舊快照還原
+        var note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+        var saved = _issueOwners.Update(sourceName, request.EventId, p =>
         {
-            SourceName = sourceName,
-            EventId = request.EventId,
-            OwnerUserIds = requestedOwners,
-            Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(),
-            UpdatedByAccount = _currentUser.Account,
-            // 這支方法只管負責人（表單看不到機房結論欄位）——保留既有結論原封不動，
-            // 否則「編輯負責人」會把「設定機房結論」的結果悄悄清空（同 IssueOwnerStore.Upsert
-            // 逐欄複製守則的反向情境：呼叫端沒帶到的欄位不該被覆寫成預設值）
-            ConclusionStatus = before?.ConclusionStatus,
-            ConclusionNote = before?.ConclusionNote ?? string.Empty,
-            ConcludedById = before?.ConcludedById,
-            ConcludedByAccount = before?.ConcludedByAccount,
-            ConcludedAt = before?.ConcludedAt,
-            AutoApply = before?.AutoApply ?? false,
-            // 靜音區間同理：編輯負責人不可洗掉既有靜音
-            Mutes = before?.Mutes ?? new List<MuteInterval>()
+            p.OwnerUserIds = requestedOwners;
+            p.Note = note;
+            p.UpdatedByAccount = _currentUser.Account;
         });
         // 問題負責人隱含 User 角色能力：負責人清單一變就推進權限版本
         _permissionVersion.Bump();
@@ -173,18 +163,19 @@ public class IssueOwnerAdminService
         if (string.IsNullOrEmpty(note))
             throw DomainException.Validation("請填寫機房結論的原因——這是代全體下結論的操作，理由要留在紀錄裡。");
 
-        var existing = _issueOwners.Get(sourceName, eventId) ?? new IssueProfile { SourceName = sourceName, EventId = eventId };
-        var beforeStatus = existing.ConclusionStatus;
+        var beforeStatus = _issueOwners.Get(sourceName, eventId)?.ConclusionStatus;
+        var concludedAt = DateTime.Now;
 
-        existing.ConclusionStatus = request.Status;
-        existing.ConclusionNote = note;
-        existing.ConcludedById = _currentUser.UserId;
-        existing.ConcludedByAccount = _currentUser.Account;
-        existing.ConcludedAt = DateTime.Now;
-        existing.AutoApply = request.AutoApply;
-        existing.UpdatedByAccount = _currentUser.Account;
-
-        var saved = _issueOwners.Upsert(existing);
+        var saved = _issueOwners.Update(sourceName, eventId, p =>
+        {
+            p.ConclusionStatus = request.Status;
+            p.ConclusionNote = note;
+            p.ConcludedById = _currentUser.UserId;
+            p.ConcludedByAccount = _currentUser.Account;
+            p.ConcludedAt = concludedAt;
+            p.AutoApply = request.AutoApply;
+            p.UpdatedByAccount = _currentUser.Account;
+        });
 
         _audit.Record(
             action: AuditActions.IssueOwnerUpdate,
@@ -206,18 +197,19 @@ public class IssueOwnerAdminService
     public IssueOwnerDto ClearConclusion(string source, int eventId)
     {
         EnsureMaintain();
-        var existing = _issueOwners.Get(source, eventId)
+        _ = _issueOwners.Get(source, eventId)
                         ?? throw DomainException.NotFound("找不到這筆問題設定。");
 
-        existing.ConclusionStatus = null;
-        existing.ConclusionNote = string.Empty;
-        existing.ConcludedById = null;
-        existing.ConcludedByAccount = null;
-        existing.ConcludedAt = null;
-        existing.AutoApply = false;
-        existing.UpdatedByAccount = _currentUser.Account;
-
-        var saved = _issueOwners.Upsert(existing);
+        var saved = _issueOwners.Update(source, eventId, p =>
+        {
+            p.ConclusionStatus = null;
+            p.ConclusionNote = string.Empty;
+            p.ConcludedById = null;
+            p.ConcludedByAccount = null;
+            p.ConcludedAt = null;
+            p.AutoApply = false;
+            p.UpdatedByAccount = _currentUser.Account;
+        });
 
         _audit.Record(
             action: AuditActions.IssueOwnerUpdate,
@@ -280,24 +272,27 @@ public class IssueOwnerAdminService
 
         var now = DateTime.Now;
         var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
-        var existing = _issueOwners.Get(sourceName, eventId) ?? new IssueProfile { SourceName = sourceName, EventId = eventId };
-
-        var current = IssueProfile.CurrentMute(existing, today);
-        var extended = current != null;
-        var interval = new MuteInterval
-        {
-            From = current?.From.Date ?? today, To = to, Reason = reason,
-            ById = actorId, ByAccount = _currentUser.Account, At = now
-        };
-        // 重建清單再存回（不就地改讀出的物件清單，store 的快照不可修改）
-        var mutes = existing.Mutes.Where(m => !ReferenceEquals(m, current)).ToList();
-        mutes.Add(interval);
-        existing.Mutes = mutes;
-        existing.UpdatedByAccount = _currentUser.Account;
+        var extended = false;
+        MuteInterval interval = null!;
 
         // 在靜音寫入前固定本次對象；權限與請求驗證失敗時仍維持零寫入。
         var ordersToClose = closeOrders ? _workOrders.GetActiveByIssue(sourceName, eventId).ToList() : new List<WorkOrder>();
-        var saved = _issueOwners.Upsert(existing);
+        // 原子更新：在 store 的互斥區塊內讀「當下」的靜音清單再改，只動 Mutes 與 UpdatedByAccount，
+        // 結論與負責人不會被先寫的另一位管理者的欄位還原
+        var saved = _issueOwners.Update(sourceName, eventId, p =>
+        {
+            var current = IssueProfile.CurrentMute(p, today);
+            extended = current != null;
+            interval = new MuteInterval
+            {
+                From = current?.From.Date ?? today, To = to, Reason = reason,
+                ById = actorId, ByAccount = _currentUser.Account, At = now
+            };
+            var mutes = p.Mutes.Where(m => !ReferenceEquals(m, current)).ToList();
+            mutes.Add(interval);
+            p.Mutes = mutes;
+            p.UpdatedByAccount = _currentUser.Account;
+        });
 
         IssueMuteCloseOutcomeDto? closeOutcome = null;
         if (closeOrders)
@@ -367,19 +362,23 @@ public class IssueOwnerAdminService
             throw DomainException.Validation("這個問題目前沒有進行中的靜音。");
 
         var removed = current.From.Date == today;
-        var mutes = existing.Mutes.Where(m => !ReferenceEquals(m, current)).ToList();
-        if (!removed)
+        // 原子更新：區塊內以「當下」的靜音區間重算；若已被另一位管理者先解除則不再動作
+        var saved = _issueOwners.Update(source, eventId, p =>
         {
-            mutes.Add(new MuteInterval
+            var cur = IssueProfile.CurrentMute(p, today);
+            if (cur == null) return;
+            var mutes = p.Mutes.Where(m => !ReferenceEquals(m, cur)).ToList();
+            if (cur.From.Date != today)
             {
-                From = current.From, To = today.AddDays(-1), Reason = current.Reason,
-                ById = current.ById, ByAccount = current.ByAccount, At = current.At
-            });
-        }
-        existing.Mutes = mutes;
-        existing.UpdatedByAccount = _currentUser.Account;
-
-        var saved = _issueOwners.Upsert(existing);
+                mutes.Add(new MuteInterval
+                {
+                    From = cur.From, To = today.AddDays(-1), Reason = cur.Reason,
+                    ById = cur.ById, ByAccount = cur.ByAccount, At = cur.At
+                });
+            }
+            p.Mutes = mutes;
+            p.UpdatedByAccount = _currentUser.Account;
+        });
 
         _audit.Record(
             action: AuditActions.IssueUnmute,

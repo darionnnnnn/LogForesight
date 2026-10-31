@@ -126,10 +126,7 @@ public class WorkOrderDispatcherTests
         var ctx = Build();
         var from = new DateTime(2026, 9, 1);
         var to = new DateTime(2026, 9, 3);
-        ctx.MuteIntervals = new Dictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>>
-        {
-            [IssueProfile.KeyOf("disk", EventId)] = new List<(DateTime, DateTime)> { (from, to) }
-        };
+        ctx.Exclusion = MuteOf(from, to, DateTime.Today);
 
         AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), from), WorkOrderDispatcher.SkipMuted);
         AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), to), WorkOrderDispatcher.SkipMuted);
@@ -142,11 +139,7 @@ public class WorkOrderDispatcherTests
         Candidate(1, "a", visibleHostIds: 1);
         var ctx = Build();
         var today = new DateTime(2026, 9, 18);
-        ctx.MuteToday = today;
-        ctx.MuteIntervals = new Dictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>>
-        {
-            [IssueProfile.KeyOf("disk", EventId)] = new List<(DateTime, DateTime)> { (today, today.AddDays(6)) }
-        };
+        ctx.Exclusion = MuteOf(today, today.AddDays(6), today);
 
         AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), today.AddDays(-1)), WorkOrderDispatcher.SkipMuted);
     }
@@ -157,25 +150,60 @@ public class WorkOrderDispatcherTests
         Candidate(1, "a", visibleHostIds: 1);
         var ctx = Build();
         var today = new DateTime(2026, 9, 18);
-        ctx.MuteToday = today;
-        ctx.MuteIntervals = new Dictionary<(string SourceUpper, int EventId), IReadOnlyList<(DateTime From, DateTime To)>>
-        {
-            [IssueProfile.KeyOf("disk", EventId)] = new List<(DateTime, DateTime)> { (today.AddDays(-10), today.AddDays(-5)) }
-        };
+        ctx.Exclusion = MuteOf(today.AddDays(-10), today.AddDays(-5), today);
 
         AssertCreate(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), today.AddDays(-1)), 1, WorkOrderOrigins.AutoDispatch);
     }
 
+    private static IssueExclusion MuteOf(DateTime from, DateTime to, DateTime today) =>
+        IssueExclusion.From(
+            new[] { new IssueProfile { SourceName = "disk", EventId = EventId, Mutes = { new MuteInterval { From = from, To = to } } } },
+            today);
+
+    // 釘住現行語意（改為委派 IssueExclusion 前後都必須綠）：以真實 Build 走問題檔案，來源大小寫折疊
+
+    private void MuteProfile(DateTime from, DateTime to) =>
+        _owners.Upsert(new IssueProfile
+        {
+            SourceName = "DISK", EventId = EventId, Mutes = { new MuteInterval { From = from, To = to } }
+        });
+
     [Fact]
-    public void Build以now的日期設定MuteToday()
+    public void 靜音_Build後紀錄日落在區間含首尾且來源大小寫折疊()
     {
-        Assert.Equal(new DateTime(2026, 9, 18), Build(new DateTime(2026, 9, 18, 23, 30, 0)).MuteToday);
+        Candidate(1, "a", visibleHostIds: 1);
+        var from = new DateTime(2026, 9, 1);
+        var to = new DateTime(2026, 9, 3);
+        MuteProfile(from, to);
+        var ctx = Build(new DateTime(2026, 9, 20));
+
+        AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), from), WorkOrderDispatcher.SkipMuted);
+        AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), to), WorkOrderDispatcher.SkipMuted);
+        AssertCreate(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), to.AddDays(1)), 1, WorkOrderOrigins.AutoDispatch);
+        AssertCreate(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), from.AddDays(-1)), 1, WorkOrderOrigins.AutoDispatch);
+    }
+
+    [Fact]
+    public void 靜音_Build後目前靜音中但紀錄日在區間外_不派工()
+    {
+        Candidate(1, "a", visibleHostIds: 1);
+        var today = new DateTime(2026, 9, 18);
+        MuteProfile(today, today.AddDays(6));
+        var ctx = Build(today.AddHours(23));
+
+        AssertSkip(WorkOrderDispatcher.Decide(ctx, Host(), Issue(), today.AddDays(-1)), WorkOrderDispatcher.SkipMuted);
+    }
+
+    [Fact]
+    public void Build以now的日期設定靜音判定的今天()
+    {
+        Assert.Equal(new DateTime(2026, 9, 18), Build(new DateTime(2026, 9, 18, 23, 30, 0)).Exclusion.Today);
     }
 
     [Fact]
     public void 本段靜音區間恆為空()
     {
-        Assert.Empty(Build().MuteIntervals);
+        Assert.True(Build().Exclusion.IsEmpty);
     }
 
     [Fact]

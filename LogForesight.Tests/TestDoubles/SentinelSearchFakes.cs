@@ -96,7 +96,8 @@ internal sealed class FakeSentinelSearchClient : ISentinelSearchClient
             Events = Array.Empty<SentinelEvent>(),
             Retrieved = delivered,
             Found = result.Found,
-            State = result.State
+            State = result.State,
+            Unreadable = result.Unreadable
         };
     }
 }

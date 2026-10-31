@@ -43,7 +43,8 @@ internal class HandlingServiceFacade
         IUserGroupStore? groups = null,
         IIssueOwnerStore? issueOwners = null,
         LogForesight.Web.Services.Mail.MailNotificationService? mail = null,
-        IIssueAggregateQuery? issueAggregates = null)
+        IIssueAggregateQuery? issueAggregates = null,
+        IIssueExclusionSource? exclusions = null)
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings, new FixedIssueExclusionSource(IssueExclusion.None));
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
@@ -57,7 +58,7 @@ internal class HandlingServiceFacade
             audit, currentUser, displayNames, workOrderStore, workOrders, TestPermissionStamps.Shared);
         _day = new DayHandlingCommandService(
             store, issueStore, workOrders, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
-            displayNames, mail, issueOwners);
+            displayNames, mail, issueOwners, noiseMarks, cases, exclusions);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, workOrders, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
             issueOwnerAdmin, displayNames, mail);
@@ -209,10 +210,10 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
             .ToList();
     }
 
-    /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
+    /// <summary>強制重新分析：判準同正式實作——低風險日一律不標</summary>
     int IAnalysisRecordQuery.MarkAllForAiRerun()
     {
-        var targets = _records.Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low).ToList();
+        var targets = _records.Where(r => r.RiskLevel != RiskLevels.Low).ToList();
         foreach (var r in targets) r.AiPending = true;
         return targets.Count;
     }

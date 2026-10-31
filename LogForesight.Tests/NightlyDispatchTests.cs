@@ -76,6 +76,10 @@ public class NightlyDispatchTests
         return (new NightlyDispatch(coordinator, ctx, _hosts), ctx);
     }
 
+    /// <summary>建案前置：一律經 WorkOrderCoordinator（_orders 可能在案例中被替換，所以每次現組）</summary>
+    private WorkOrderCaseSeeder Seeder() =>
+        new(_cases, _issueHandlings, _handlingLog, _hosts, _caseCoordinator, _orders);
+
     private void Owner(long userId)
     {
         _candidates.Add(new DispatchCandidate { UserId = userId, Account = "owner" + userId, InPool = false });
@@ -139,7 +143,9 @@ public class NightlyDispatchTests
         var warning = PrtgFinding("warning", sensorId);
         var trend = PrtgFinding("disk_free_trend", sensorId);
         var trendKey = IssueSignatureKey.For(trend);
-        _caseCoordinator.BuildCase("SRV-01", trendKey, trend.Source, DateTime.Today,
+        // 本意是「已有進行中的趨勢案件（無單）不擋 Warning 派工且案件不被動到」，只該有 Warning 一張單，
+        // 所以以舊資料列模擬無單案件，不經建案入口
+        LegacyCaseSeeder.Seed(_cases, _issueHandlings, _handlingLog, "SRV-01", trendKey, trend.Source, DateTime.Today,
             handlerId: 7, note: "既有趨勢案件", dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
         var trendCaseId = _cases.GetOpen("SRV-01", trendKey)!.CaseId;
         var (dispatch, _) = Create();
@@ -248,16 +254,10 @@ public class NightlyDispatchTests
 
         const string sensorId = "2001";
         var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
-        var orderId = _orders.Insert(new WorkOrder
-        {
-            SourceName = "PRTG:warning", EventId = 0, IssueLabel = "PRTG:warning", HandlerId = 7,
-            Origin = WorkOrderOrigins.AutoDispatch, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
-        });
-        _caseCoordinator.BuildCase("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
-            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
-        var warningCase = _cases.GetOpen("SRV-01", warningKey)!;
-        warningCase.WorkOrderId = orderId;
-        _cases.Save(warningCase);
+        // 前置經 WorkOrderCoordinator 建出「自動派工單＋其進行中案件」
+        var orderId = Seeder().Assign("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
+            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now,
+            origin: WorkOrderOrigins.AutoDispatch).WorkOrderId;
 
         var trend = new LogIssueSignature
         {
@@ -266,7 +266,9 @@ public class NightlyDispatchTests
             Severity = IssueSeverity.High
         };
         var trendKey = IssueSignatureKey.For(trend);
-        _caseCoordinator.BuildCase("SRV-01", trendKey, trend.Source, DateTime.Today,
+        // 本意是「已有進行中的趨勢案件（無單）不擋 Warning 派工且案件不被動到」，只該有 Warning 一張單，
+        // 所以以舊資料列模擬無單案件，不經建案入口
+        LegacyCaseSeeder.Seed(_cases, _issueHandlings, _handlingLog, "SRV-01", trendKey, trend.Source, DateTime.Today,
             handlerId: 7, note: "既有趨勢案件", dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
         var trendCase = _cases.GetOpen("SRV-01", trendKey)!;
         var (dispatch, _) = Create();
@@ -290,16 +292,10 @@ public class NightlyDispatchTests
         _settings.AutoDispatchEnabled = true;
         const string sensorId = "2001";
         var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
-        var orderId = _orders.Insert(new WorkOrder
-        {
-            SourceName = "PRTG:warning", EventId = 0, IssueLabel = "PRTG:warning", HandlerId = 7,
-            Origin = WorkOrderOrigins.AutoDispatch, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
-        });
-        _caseCoordinator.BuildCase("SRV-02", warningKey, "PRTG:warning", DateTime.Today,
-            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
-        var warningCase = _cases.GetOpen("SRV-02", warningKey)!;
-        warningCase.WorkOrderId = orderId;
-        _cases.Save(warningCase);
+        // 前置經 WorkOrderCoordinator 建出「自動派工單＋其進行中案件」
+        var orderId = Seeder().Assign("SRV-02", warningKey, "PRTG:warning", DateTime.Today,
+            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now,
+            origin: WorkOrderOrigins.AutoDispatch).WorkOrderId;
         var trend = new LogIssueSignature
         {
             LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
@@ -323,15 +319,11 @@ public class NightlyDispatchTests
         _settings.AutoDispatchEnabled = true;
         const string sensorId = "2001";
         var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
-        var orderId = _orders.Insert(new WorkOrder
-        {
-            SourceName = "PRTG:warning", EventId = 0, IssueLabel = "PRTG:warning", HandlerId = 7,
-            Origin = WorkOrderOrigins.AutoDispatch, ScopeKind = WorkOrderScopes.Hosts, CreatedAt = DateTime.Now
-        });
-        _caseCoordinator.BuildCase("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
-            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now);
+        // 前置經 WorkOrderCoordinator 建出「自動派工單＋其進行中案件」
+        var orderId = Seeder().Assign("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
+            handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now,
+            origin: WorkOrderOrigins.AutoDispatch).WorkOrderId;
         var warningCase = _cases.GetOpen("SRV-01", warningKey)!;
-        warningCase.WorkOrderId = orderId;
         warningCase.ClosedAt = DateTime.Now;
         warningCase.Status = IssueHandlingStatuses.Resolved;
         _cases.Save(warningCase);
@@ -419,8 +411,10 @@ public class NightlyDispatchTests
         AddHost("SRV-01");
         AddHost("SRV-02");
         Owner(7);
-        _caseCoordinator.BuildCase("SRV-02", IssueKey, "Disk 153", DateTime.Today.AddDays(-1), handlerId: 99,
-            note: null, dueDate: null, actorId: 1, actorAccount: "admin", occurredAt: DateTime.Now);
+        // 本意是「整併前遺留、沒有交辦單的進行中案件」在問題被抑制時仍由掛接掛入，所以以舊資料列模擬，
+        // 不經建案入口（Assert.Empty(_orders.All) 也要求前置不產生交辦單）
+        LegacyCaseSeeder.Seed(_cases, _issueHandlings, _handlingLog, "SRV-02", IssueKey, "Disk 153", DateTime.Today.AddDays(-1),
+            handlerId: 99, note: null, dueDate: null, actorId: 1, actorAccount: "admin", occurredAt: DateTime.Now);
         var (dispatch, _) = Create();
         var today = DateTime.Today;
 
@@ -626,5 +620,80 @@ public class NightlyDispatchTests
             Events++;
             base.AppendEvent(evt);
         }
+    }
+
+    [Fact]
+    public void 夜間寫成員_決策後已有進行中案件_不重複建案並計入略過()
+    {
+        var host = AddHost("SRV-01");
+        var today = DateTime.Today;
+        // Web 路徑先為（主機,問題）建好進行中案件與單
+        Seeder().Assign("SRV-01", IssueKey, "disk 153", today, handlerId: 3, note: null, dueDate: null,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        var existing = _cases.GetOpen("SRV-01", IssueKey)!;
+        var coordinator = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, _caseCoordinator, _handlingLog, _hosts);
+
+        var outcome = coordinator.WriteNightlyMembersDetailed(host, today,
+            new[] { (Issue(), existing.WorkOrderId!.Value, 3L, WorkOrderOrigins.AutoDispatch) }, DateTime.Now);
+
+        Assert.Single(outcome.Handlers);
+        Assert.Null(outcome.Handlers[0]);
+        Assert.Contains(0, outcome.ExistingOpenIndexes);
+        Assert.Single(_cases.GetOpenForHost("SRV-01"));
+        Assert.Equal(existing.CaseId, _cases.GetOpen("SRV-01", IssueKey)!.CaseId);
+    }
+
+    /// <summary>派工脈絡讀完主機案件之後才觸發回呼：模擬「決策之後、寫入之前」Web 路徑建出進行中案件</summary>
+    private class SeedAfterContextReadStore : System.Reflection.DispatchProxy
+    {
+        public IIssueCaseStore Inner = null!;
+        public Action? AfterGetMany;
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            var result = targetMethod!.Invoke(Inner, args);
+            if (targetMethod.Name == nameof(IIssueCaseStore.GetMany))
+            {
+                var callback = AfterGetMany;
+                AfterGetMany = null;
+                callback?.Invoke();
+            }
+            return result;
+        }
+    }
+
+    [Fact]
+    public void 夜間派工_決策後別人已建進行中案件_新建的單沒有成員時收尾結掉且不進摘要()
+    {
+        var host = AddHost("SRV-01");
+        _settings.AutoDispatchEnabled = true;
+        _candidates.Add(new DispatchCandidate { UserId = 3, Account = "c", InPool = true,
+            VisibleHostIds = new HashSet<long> { host.HostId } });
+        var proxy = System.Reflection.DispatchProxy.Create<IIssueCaseStore, SeedAfterContextReadStore>();
+        var seeding = (SeedAfterContextReadStore)(object)proxy;
+        seeding.Inner = _cases;
+        seeding.AfterGetMany = () => Seeder().Assign("SRV-01", IssueKey, "disk 153", DateTime.Today, handlerId: 5, note: null,
+            dueDate: null, actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+        var pool = new DispatchCandidatePool
+        {
+            ByUserId = _candidates.ToDictionary(c => c.UserId),
+            PoolMemberCount = _candidates.Count(c => c.InPool),
+            ActivePoolMemberCount = _candidates.Count(c => c.InPool && !c.Paused)
+        };
+        var ctx = DispatchContext.Build(pool, _owners, _orders, proxy, new FakeNoiseMarkStore(), _settings, DateTime.Now);
+        var coordinator = new WorkOrderCoordinator(_orders, _cases, _issueHandlings, _caseCoordinator, _handlingLog, _hosts);
+        var dispatch = new NightlyDispatch(coordinator, ctx, _hosts);
+
+        dispatch.DispatchDay("SRV-01", DateTime.Today, [Issue()], DateTime.Now);
+        var summary = dispatch.FlushRun(DateTime.Now);
+
+        Assert.Equal(1, summary.SkipCounts[WorkOrderCoordinator.SkipOpenCaseExists]);
+        Assert.Equal(0, summary.CreatedOrders);
+        Assert.Empty(summary.PerHandler);
+        // 夜間為處理人 3 建的單沒有任何成員 → 已結案；仍在進行中的只有 Web 路徑那張
+        var nightlyOrder = Assert.Single(_orders.All, o => o.HandlerId == 3);
+        Assert.NotNull(nightlyOrder.ClosedAt);
+        Assert.Equal(WorkOrderCloseReasons.EmptyDispatch, nightlyOrder.ClosedReason);
+        Assert.Single(_cases.GetOpenForHost("SRV-01"));
     }
 }

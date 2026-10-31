@@ -120,7 +120,7 @@ public class IssueRankingBuilder
     {
         // 跨請求快取（回饋二十七輪作業 F4）：儀表板與報表共用這份投影，
         // 使用者在兩頁間切換時同一組聚合幾秒內會被整套重算——短 TTL 內直接沿用
-        var cacheKey = _cache == null ? null : IssueRankingCache.KeyOf(from, to, visibleHostIds, totalHosts, exclusion.CacheToken);
+        var cacheKey = _cache == null ? null : IssueRankingCache.KeyOf(_cache.Version, from, to, visibleHostIds, totalHosts, exclusion.CacheToken);
         if (cacheKey != null)
         {
             var cached = _cache!.TryGet(cacheKey);
@@ -240,7 +240,7 @@ public class IssueRankingBuilder
                     : WebHost.TierStandard;
 
                 var score = IssuePriorityScorer.Score(new IssuePriorityScorer.ScoreInput(
-                    MaxSeverity: (IssueSeverity)a.MaxSeverityRank,
+                    MaxSeverity: LegacySeverityRank.ToSeverity(a.MaxSeverityRank),
                     HostRatio: totalHosts > 0 ? (double)a.HostCount / totalHosts : 0,
                     BaselineDeviationMultiplier: baseline.DeviationMultiplier,
                     FleetFirstSeenDaysAgo: Math.Max(0, (today - resolvedFleetFirstSeen.Date).Days),
@@ -256,7 +256,7 @@ public class IssueRankingBuilder
                     Source = a.Source,
                     EventId = a.EventId,
                     Category = a.Category,
-                    MaxSeverity = ((IssueSeverity)a.MaxSeverityRank).ToString(),
+                    MaxSeverity = LegacySeverityRank.ToSeverity(a.MaxSeverityRank).ToString(),
                     HostCount = a.HostCount,
                     DayCount = a.DayCount,
                     TotalCount = (int)Math.Min(a.TotalCount, int.MaxValue),

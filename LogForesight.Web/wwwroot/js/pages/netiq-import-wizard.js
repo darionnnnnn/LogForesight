@@ -269,11 +269,14 @@ function startPolling(jobId, { resume = false } = {}) {
     currentJobId = jobId;
     renderScanProgress(jobId, resume ? '接續先前的掃描…' : '主掃描中', 0);
 
+    // 連續失敗計數：單次暫時性錯誤（網路、5xx、逾時）不放棄，後端掃描仍在跑，丟掉 jobId 會讓使用者被鎖到工作結束
+    let consecutiveFailures = 0;
     const poll = async () => {
         if (currentJobId !== jobId) return;
         try {
-            const job = await api.get(`/api/admin/netiq/scan/${jobId}`);
+            const job = await api.get(`/api/admin/netiq/scan/${jobId}`, { silent: true });
             if (currentJobId !== jobId) return;
+            consecutiveFailures = 0;
 
             if (job.status === 'running') {
                 renderScanProgress(jobId, job.stage, job.hostsFound);
@@ -296,10 +299,26 @@ function startPolling(jobId, { resume = false } = {}) {
                 stopPolling();
                 wizardModal.hide();
             }
-        } catch {
-            // 輪詢遇到「工作不存在或已逾期」的錯誤（例如站台重啟）由 api.js 顯示訊息，停止輪詢
-            stopPolling();
-            wizardModal.hide();
+        } catch (error) {
+            if (currentJobId !== jobId) return;
+            // 後端對「掃描工作不存在或已逾期」回 HTTP 400＋validation_failed（亦相容 404／not_found）；
+            // 只有這種明確回應才放棄工作，其餘錯誤累計連續失敗次數
+            const jobGone = (error?.status === 400 && error?.code === 'validation_failed')
+                || error?.status === 404 || error?.code === 'not_found';
+            if (jobGone) {
+                if (error.message) toast(error.message, 'danger');
+                stopPolling();
+                wizardModal.hide();
+                return;
+            }
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= 3) {
+                toast('暫時無法取得掃描進度，請稍後重新開啟精靈', 'danger');
+                stopPolling(false);
+                wizardModal.hide();
+                return;
+            }
+            pollTimer = setTimeout(poll, 2000);
         }
     };
 

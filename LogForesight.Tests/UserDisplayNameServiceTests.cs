@@ -339,7 +339,7 @@ public class UserDisplayNameServiceTests
             }));
 
         // 驗證他人案件衝突提示套用了規則（鄭孟瑋(181035) 而非 原始未清洗字串）
-        Assert.Contains("此問題由 鄭孟瑋(181035) 的案件處理中", ex.Message);
+        Assert.Contains("此問題已在 鄭孟瑋(181035) 的交辦單處理中", ex.Message);
         Assert.DoesNotContain("Wayne2021", ex.Message);
     }
 

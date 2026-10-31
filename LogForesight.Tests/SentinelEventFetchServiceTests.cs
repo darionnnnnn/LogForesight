@@ -71,6 +71,18 @@ public class SentinelEventFetchServiceTests : IDisposable
     // ── BuildQuery：現場取數的 filter／投影欄位（docs/archive/FEEDBACK-12-PLAN.md §4.6 體檢揪出）──
     // 純函數，不需要架假 Sentinel 伺服器——這裡驗證的正是「查詢本身怎麼組」，之前完全沒被測過。
 
+    [Theory]
+    [InlineData("2001:db8::1")]
+    [InlineData("10.1")]
+    [InlineData("")]
+    public void BuildQuery_位址不是IPv4_回不查詢的空Filter而非擲例外(string ip)
+    {
+        var query = SentinelEventFetchService.BuildQuery(WebHost.OsWindows, ip, "disk", 153);
+
+        Assert.Equal(string.Empty, query.Filter);
+        Assert.Empty(query.ProjectionFields);
+    }
+
     [Fact]
     public void BuildQuery_Windows主機用EventId子句()
     {
@@ -103,5 +115,27 @@ public class SentinelEventFetchServiceTests : IDisposable
         var query = SentinelEventFetchService.BuildQuery("LINUX", "10.0.0.9", "sshd", 0);
 
         Assert.Contains(SentinelFieldMap.LinuxProgram, query.ProjectionFields);
+    }
+
+    [Theory]
+    [InlineData("sshd (x)")]
+    [InlineData("a OR b")]
+    [InlineData("x*")]
+    [InlineData("")]
+    [InlineData("sshd\n")]
+    [InlineData("sshd\r\n")]
+    public void BuildQuery_Linux不安全的program不產生查詢(string source)
+    {
+        var query = SentinelEventFetchService.BuildQuery(WebHost.OsLinux, "10.0.0.9", source, 0);
+
+        Assert.True(string.IsNullOrEmpty(query.Filter));
+    }
+
+    [Fact]
+    public void BuildQuery_Linux安全的program含連字號與點仍產生查詢()
+    {
+        var query = SentinelEventFetchService.BuildQuery(WebHost.OsLinux, "10.0.0.9", "systemd-logind.x_1", 0);
+
+        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:systemd-logind.x_1*", query.Filter);
     }
 }

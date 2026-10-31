@@ -14,6 +14,8 @@
  */
 
 import { icon, toast, showDetailModal } from './ui.js';
+import { saveBlobAsFile } from './api.js';
+import { safeStorage } from './storage.js';
 
 /**
  * 副標：日期＋風險等級＋類別。這幾個欄位在全文的標頭裡也有，但那要展開才看得到；
@@ -38,14 +40,7 @@ function downloadReport(report) {
     // BOM：Windows 記事本／Excel 讀無 BOM 的 UTF-8 中文會是亂碼，而報告是拿去給人看、
     // 常被直接雙擊開啟的交付物
     const blob = new Blob(['﻿' + report.content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = report.fileName || 'report.txt';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    saveBlobAsFile(blob, report.fileName || 'report.txt');
 }
 
 async function copyReport(report) {
@@ -155,7 +150,7 @@ export function reportCard({ storageKey, title } = {}) {
         body.classList.toggle('d-none', !nowOpen);
         caret.classList.toggle('lf-collapse-caret--open', nowOpen);
         header.setAttribute('aria-expanded', String(nowOpen));
-        if (storageKey) localStorage.setItem(storageKey, String(nowOpen));
+        if (storageKey) safeStorage.set(storageKey, String(nowOpen));
     }
 
     header.addEventListener('click', () => applyExpanded(body.classList.contains('d-none')));
@@ -184,7 +179,7 @@ export function reportCard({ storageKey, title } = {}) {
             body.replaceChildren(...[evidenceVersionNotice(report), pre(report)].filter(Boolean));
             section.classList.remove('d-none');
 
-            applyExpanded(storageKey ? localStorage.getItem(storageKey) === 'true' : false);
+            applyExpanded(storageKey ? safeStorage.get(storageKey) === 'true' : false);
         }
     };
 }

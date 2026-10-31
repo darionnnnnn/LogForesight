@@ -8,6 +8,7 @@
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderPagination, loadPageSize, savePageSize, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
+import { createSeqGuard } from '../core/async-guards.js';
 
 const RESULT_META = {
     ok: { text: '成功', variant: 'light' },
@@ -19,6 +20,7 @@ let currentPage = 1;
 let pageSize = loadPageSize('audit');
 let sort = { key: 'occurredAt', dir: 'desc' };   // 稽核頁原本恆為新到舊，維持同一預設
 let lastResult = null;
+const searchGuard = createSeqGuard();   // 連點篩選／換頁時，慢的舊回應不得蓋掉新結果
 
 async function init() {
     await loadActionOptions();
@@ -71,15 +73,30 @@ async function search() {
     const actions = Array.from(document.getElementById('audit-actions').selectedOptions).map(o => o.value);
     if (actions.length) params.set('actions', actions.join(','));
 
-    const result = document.getElementById('audit-result').value;
-    if (result) params.set('result', result);
+    const resultFilter = document.getElementById('audit-result').value;
+    if (resultFilter) params.set('result', resultFilter);
 
     params.set('dir', sort.dir);
     params.set('page', String(currentPage));
     params.set('pageSize', String(pageSize));
 
-    lastResult = await api.get(`/api/audit?${params}`);
+    const seq = searchGuard.next();
+    let result;
+    try {
+        result = await api.get(`/api/audit?${params}`);
+    } catch (err) {
+        // 過期請求的失敗不處理：使用者此刻在等的是新請求
+        if (!searchGuard.isCurrent(seq)) return;
+        throw err;
+    }
+    if (!searchGuard.isCurrent(seq)) return;
+    lastResult = result;
     render();
+}
+
+/** 篩選、換頁、排序後的重載：失敗時換成可重試的失敗態，不留永遠轉圈的骨架 */
+function reload() {
+    return guardLoad(document.getElementById('audit-list'), search);
 }
 
 function render() {
@@ -102,7 +119,7 @@ function render() {
         onSort: (key, dir) => {
             sort = { key, dir };
             currentPage = 1;
-            search();
+            reload();
         },
         empty: { title: '沒有符合條件的稽核紀錄', hint: '請調整日期區間或動作條件。' }
     });
@@ -171,7 +188,7 @@ function renderPager() {
         totalPages,
         onPage: page => {
             currentPage = page;
-            search();
+            reload();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         },
         pageSize,
@@ -179,7 +196,7 @@ function renderPager() {
             pageSize = size;
             savePageSize('audit', size);
             currentPage = 1;
-            search();
+            reload();
         }
     });
 }
@@ -188,7 +205,7 @@ document.getElementById('audit-filter').addEventListener('submit', event => {
     event.preventDefault();
     currentPage = 1;
     updateDeniedButtonState();
-    search();
+    reload();
 });
 
 /** 被拒的存取是稽核上最有價值的一類——給它一個一鍵入口。再按一次可以取消篩選
@@ -198,7 +215,7 @@ document.getElementById('btn-denied').addEventListener('click', () => {
     select.value = select.value === 'Denied' ? '' : 'Denied';
     updateDeniedButtonState();
     currentPage = 1;
-    search();
+    reload();
 });
 
 /** 手動改下拉選單、URL 下鑽（result=Denied）與按鈕點擊三個途徑最終都收斂到同一個

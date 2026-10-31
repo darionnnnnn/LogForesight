@@ -12,11 +12,9 @@ public class LogAnalysisService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    /// <summary>
-    /// 低風險日仍執行前置掃描的未分類事件種類門檻。低於此值的低風險日維持零 AI 呼叫；
-    /// 達到此值代表當日有異常大量的未分類事件，規則層依定義沒看過它們，值得付出一次掃描成本。
-    /// </summary>
-    private const int MinTailForLowRiskScreening = 20;
+    /// <summary>低風險日定案文字（統計段與 <see cref="RetryAiAsync"/> 的低風險跳過共用）</summary>
+    private const string LowRiskHeadline = "今日狀況正常，無需處理";
+    private const string LowRiskSummary = "今日無異常訊號，規則/趨勢/慢速趨勢/關聯四層檢查全數通過。";
 
     /// <summary>敘事欄位（story/trend_story/action）的合理長度上限。這些是一到兩句話的白話敘述，
     /// 不該超過這個長度，超過視為模型異常重複輸出（JSON 語法可能仍合法，但內容不合理），觸發 JSON 重試</summary>
@@ -34,6 +32,7 @@ public class LogAnalysisService
     private readonly string _host;
     private readonly long _hostId;
     private readonly AnalysisPromptBuilder _promptBuilder;
+    private readonly string _hostOs;
     private readonly IRiskyEventStore? _riskyEventStore;
     private readonly IReadOnlyCollection<long> _hostGroupIds;
     private readonly List<RuleSuppression>? _suppressionSnapshot;
@@ -70,8 +69,10 @@ public class LogAnalysisService
         string? host = null, long hostId = 0, IRiskyEventStore? riskyEventStore = null,
         IReadOnlyCollection<long>? hostGroupIds = null, List<RuleSuppression>? suppressionSnapshot = null,
         AnalysisLogSource logSource = AnalysisLogSource.Local,
-        Func<DateTime, EventLogScanResult>? localSecuritySupplementScanner = null)
+        Func<DateTime, EventLogScanResult>? localSecuritySupplementScanner = null,
+        string hostOs = WebHost.OsWindows)
     {
+        _hostOs = hostOs;
         _eventLogService = eventLogService;
         _aiService = aiService;
         _historyService = historyService;
@@ -92,54 +93,16 @@ public class LogAnalysisService
     private List<RuleSuppression> LoadSuppressions() => _suppressionSnapshot ?? _suppressionStore.LoadAll();
 
     /// <summary>
-    /// 分析已抓取好的當日 log（回補多天時用：log 由呼叫端一次掃描、預先分桶，
-    /// 分析迴圈不需等待任何 Event Log I/O，只等 AI 推論）。
-    ///
-    /// 組合呼叫：<see cref="BuildStatisticalRecordAsync"/> 算統計段，需要 AI 時立刻接著跑
-    /// <see cref="CompleteAiAsync"/>，行為與拆分前完全相同——本機分析路徑目前仍走這個組合呼叫，
-    /// 兩階段真正脫鉤（統計先寫入、AI 由背景消費者延後補上）只在 NetIQ pipeline 生效
-    /// （docs/archive/FEEDBACK-12-PLAN.md §3.3/§3.4）。
-    /// </summary>
-    /// <param name="useAi">false = 統計模式：聚合、規則分類、趨勢比對照常執行，但不呼叫 AI</param>
-    /// <param name="dataIncomplete">true = 本日事件來源不完整（如 Event Log 回補時已被覆蓋），寫入紀錄供趨勢基準排除</param>
-    /// <param name="securityLogAvailable">本次執行 Security log 是否成功讀取；false 時停用相關規則層偵測、
-    /// 相關關聯模式改標記「未檢查」，並在趨勢基準計算時排除本日的 Security 簽章</param>
-    /// <param name="channels">本次各頻道的讀取三態（成功/被拒/不存在）；null = 舊呼叫端（單日情境），
-    /// 退回三頻道假設。寫入 <see cref="DailyAnalysisRecord.ChannelsRead"/> 供暖身/趨勢基準判斷，
-    /// 並讓 UncoveredChecks 申報被拒的 Defender/RDP 頻道</param>
-    /// <param name="replaceExisting">重新分析既有日（第三十一輪）：true 時在寫入前刪掉這一天的舊紀錄。
-    /// **刪除刻意緊貼 <see cref="IAnalysisRecordStore.Append"/> 之前**——分析途中拋例外（AI 逾時、
-    /// 取消）時舊紀錄還在，不會留下「舊的已刪、新的沒寫」的永久空白日。NetIQ 路徑是同一個順序。</param>
-    public async Task<DailyAnalysisRecord> AnalyzeDayAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
-        int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
-        CancellationToken ct = default, bool replaceExisting = false)
-    {
-        var sw = Stopwatch.StartNew();
-
-        var (record, workItem) = await BuildStatisticalRecordAsync(
-            targetDate, logs, useAi, historyDays, dataIncomplete, securityLogAvailable, channels, ct);
-
-        if (workItem != null)
-        {
-            var outcome = await CompleteAiAsync(workItem, ct);
-            ApplyOutcome(record, outcome);
-            // Render only after the AI fields have been overlaid on the complete statistical
-            // record. The prepared draft fingerprints report inputs that AiWorkItem does not carry.
-            record.PendingRiskReportDraft = await GenerateReportIfActionableAsync(
-                record, workItem.Logs, workItem.ActiveSuppressions, ct);
-        }
-
-        record.RiskReportPending = RiskLevels.IsActionable(record.RiskLevel);
-        CommitRecord(record, targetDate, replaceExisting, sw.ElapsedMilliseconds);
-        PersistPendingRiskReport(record);
-
-        return record;
-    }
-
-    /// <summary>
     /// 本機分析統計段並寫入（docs/archive/FEEDBACK-12-PLAN.md §3.3、批次 E）：
     /// 只做統計段並寫入資料庫（不在此同步呼叫 AI，AI 留給 AI 排程處理）。
-    /// 與 <see cref="AnalyzeDayAsync"/> 共用「刪除舊紀錄＋寫入＋Log.Info」三件事的實作。
+    /// 兩階段脫鉤：統計先寫入，AI 由背景消費者（AI 排程）延後以 <see cref="RetryAiAsync"/> 補上。
+    ///
+    /// 參數：<c>useAi</c> false＝統計模式（聚合、規則分類、趨勢比對照常，但不排 AI）；
+    /// <c>dataIncomplete</c> true＝本日事件來源不完整，寫入紀錄供趨勢基準排除；
+    /// <c>securityLogAvailable</c> false 時停用相關規則層偵測並在趨勢基準排除本日 Security 簽章；
+    /// <c>channels</c> 為各頻道讀取三態（null＝舊呼叫端，退回三頻道假設）；
+    /// <c>replaceExisting</c> true 時刪除緊貼 <see cref="IAnalysisRecordStore.Append"/> 之前，
+    /// 分析途中拋例外時舊紀錄仍在。
     /// </summary>
     public async Task<DailyAnalysisRecord> AnalyzeDayStatisticalAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
         int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
@@ -222,21 +185,17 @@ public class LogAnalysisService
     /// 統計段（docs/archive/FEEDBACK-12-PLAN.md §3.3）：聚合、規則分類、趨勢／慢速趨勢／關聯比對——
     /// 全部確定性計算，不呼叫 AI。回傳的 <see cref="DailyAnalysisRecord"/> 在「不需要 AI」時
     /// 已經是定案內容（含報告檔，若風險可行動）；「需要 AI」時則是暫代內容（Headline/Summary
-    /// 顯示排隊中字樣），同時回傳非 null 的 <see cref="AiWorkItem"/> 供 <see cref="CompleteAiAsync"/>
-    /// 之後補完——呼叫端（NetIQ pipeline 的兩階段消費者）據此決定要不要先把這筆統計結果寫入，
-    /// 讓搜尋主線不被 AI 拖住。
+    /// 顯示排隊中字樣、<c>AiPending=true</c>），<c>NeedsAi</c> 為 true，由 AI 排程之後以
+    /// <see cref="RetryAiAsync"/> 補完。
     ///
-    /// 「需要 AI」的判準：<c>useAi &amp;&amp; (!lowRisk || tailIssues.Count >= MinTailForLowRiskScreening)</c>——
-    /// 與拆分前的 <c>shouldScreen</c>／<c>skipAiForLowRisk</c> 語意等價，只是決策時間點提前到
-    /// AI 呼叫本身發生之前：lowRisk 且尾巴事件夠多的日子，統計段還答不出「篩選後到底要不要用 AI
-    /// 內容」，這個問題留給 AI 段自己跑完前置掃描後決定（見 <see cref="CompleteAiAsync"/> 內的
-    /// <c>skipForLowRisk</c>）。
+    /// 「需要 AI」的判準：<c>useAi &amp;&amp; !lowRisk</c>——低風險日（規則／趨勢／慢速趨勢／關聯四層皆無訊號）
+    /// 一律直接定案為「今日狀況正常，無需處理」，不排 AI。
     /// </summary>
     /// <param name="hostOs">'windows'（預設）｜'linux'（docs/archive/FEEDBACK-12-PLAN.md §4.3）：Linux 主機
     /// 跳過跨 log 關聯比對（<see cref="CorrelationAnalyzer"/> 目前無 Platform 概念，Linux 事件
     /// 餵進去會被 Windows 事件 ID 群組靜默誤讀）並在 UncoveredChecks 誠實申報「不適用」，
     /// 不是還沒做完；本機路徑固定 Windows，不傳這個參數。</param>
-    internal async Task<(DailyAnalysisRecord Record, AiWorkItem? WorkItem)> BuildStatisticalRecordAsync(
+    internal async Task<(DailyAnalysisRecord Record, bool NeedsAi)> BuildStatisticalRecordAsync(
         DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true, int historyDays = 14,
         bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
         CancellationToken ct = default, string hostOs = WebHost.OsWindows, bool deferNonAiReport = false)
@@ -360,13 +319,11 @@ public class LogAnalysisService
         bool lowRisk = ruleRisk == RiskLevels.Low;
 
         // 判定依據（docs/archive/HISTORY.md #11）：純顯示用途，說明「為什麼是這個風險等級」，
-        // 不影響任何判定邏輯本身。AI 若把風險往上拉，CompleteAiAsync 會覆寫為 "ai_raise"
+        // 不影響任何判定邏輯本身。AI 若把風險往上拉，AI 排程補跑時會覆寫為 "ai_raise"
         var riskBasis = DescribeRiskBasis(issues, correlations, trendAlerts, ruleRisk);
 
-        // 前置掃描與主分析都移到 CompleteAiAsync；這裡只需要「日後要不要進 AI 段」的判準，
-        // 見本方法 XML 文件的說明
-        var tailIssues = AnalysisPromptBuilder.GetTailIssues(issues);
-        bool needsAi = useAi && (!lowRisk || tailIssues.Count >= MinTailForLowRiskScreening);
+        // 只需要「日後要不要進 AI 段」的判準，見本方法 XML 文件的說明：低風險日不排 AI
+        bool needsAi = useAi && !lowRisk;
 
         var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable, channels);
 
@@ -457,26 +414,14 @@ public class LogAnalysisService
             record.Headline = "（統計已完成，AI 分析排隊中）";
             record.Summary = "（統計已完成，AI 分析排隊中）";
             record.AiPending = true;
-
-            // Logs 窄化為風險事件選取結果（回饋十四輪 A2，取代原本呼叫端事後補窄化）：這裡已經
-            // 持有 issues（規則命中／趨勢比對皆已完成），窄化的不變量因此進到型別建構本身，
-            // 不再依賴唯一呼叫端手動記得補——見 RiskyEventSelector.SelectSourceEvents 文件。
-            // 本機與 NetIQ 兩條路徑統一套用同一份窄化結果（含深析報告的原始 log 選取池），
-            // 已知行為：報告池從全量縮成 risky 池（≤500 筆），fallback 焦點問題若不在池內
-            // 顯示「（無對應的原始 log）」——報告已有此優雅降級，非新增缺口。
-            var workItem = new AiWorkItem(targetDate, issues, trendAlerts, correlations, ruleRisk, riskBasis,
-                uncoveredChecks, dataIncomplete, errorCount, warningCount, auditCount, historyDays,
-                RiskyEventSelector.SelectSourceEvents(issues, logs), reportSuppressions);
-            return (record, workItem);
+            return (record, true);
         }
 
         // 不需要 AI：lowRisk 且尾巴事件不夠多（既有 skipAiForLowRisk 語意），或 useAi 全域關閉——
         // 兩者都在這裡直接定案，不進 AI 段
         bool skipAiForLowRisk = useAi && lowRisk;
-        record.Headline = skipAiForLowRisk ? "今日狀況正常，無需處理" : "（統計模式紀錄，未呼叫 AI 分析）";
-        record.Summary = skipAiForLowRisk
-            ? "今日無異常訊號，規則/趨勢/慢速趨勢/關聯四層檢查全數通過。"
-            : "（統計模式紀錄，未呼叫 AI 分析）";
+        record.Headline = skipAiForLowRisk ? LowRiskHeadline : "（統計模式紀錄，未呼叫 AI 分析）";
+        record.Summary = skipAiForLowRisk ? LowRiskSummary : "（統計模式紀錄，未呼叫 AI 分析）";
 
         // record 此時已是完整定案內容（Headline/Summary/RiskLevel/TrendAlerts/CorrelationAlerts/
         // UncoveredChecks/DataIncomplete 皆已設好），直接傳給報告產生器，PrepareAsync 會就地
@@ -484,7 +429,7 @@ public class LogAnalysisService
         if (!deferNonAiReport)
             record.PendingRiskReportDraft = await GenerateReportIfActionableAsync(record, logs, reportSuppressions, ct);
 
-        return (record, null);
+        return (record, false);
     }
 
     /// <summary>Generate the non-AI report only after the authoritative PRTG attachment has updated the saved host-day.</summary>
@@ -513,30 +458,6 @@ public class LogAnalysisService
             ? "風險事件快取為空；本報告不含原始事件摘錄。未重新查詢來源。"
             : $"原始事件摘錄取自每主機日有界風險事件快取（最多 {RiskyEventSelector.MaxPerHostDay} 筆），不代表完整日誌。未重新查詢來源。";
         return FinalizeGuardedReportAsync(record, logs, ct, cacheContext, allowAiDeepDive: false);
-    }
-
-    /// <summary>
-    /// Regenerates a mode-replay report from the persisted parent and the bounded raw-event cache.
-    /// The cache is presentation evidence only; it never changes the parent decision image.
-    /// </summary>
-    internal async Task<bool> FinalizeModeReplayReportAsync(DailyAnalysisRecord record,
-        CancellationToken ct = default, bool resourceModeDisabled = false)
-    {
-        if (!RiskLevels.IsActionable(record.RiskLevel)) return true;
-        ct.ThrowIfCancellationRequested();
-        var cached = _riskyEventStore?.QueryDay(record.HostId, record.Date) ?? [];
-        var logs = cached.Select(ToEventLogEntryData).ToList();
-        var decisionContext = resourceModeDisabled
-            ? "PRTG 正式模式已關閉；本報告依撤回 PRTG 證據後保存的主機日決定產生。"
-            : "PRTG 正式風險判定來自已保存的主機日紀錄。";
-        var cacheContext = cached.Count == 0
-            ? "NetIQ 原始事件快取為空，因此本報告不列為完整原始日誌。未重新查詢 NetIQ。"
-            : $"下方原始事件僅取自最多 {RiskyEventSelector.MaxPerHostDay} 筆的每主機日快取子集，不代表完整原始日誌。未重新查詢 NetIQ。";
-        var contextNote = $"{decisionContext} {cacheContext}";
-        if (record.AiAnalyzed)
-            contextNote += " 已保存的 AI 敘事沿用父紀錄；本次未重新執行 AI 深析。";
-
-        return await FinalizeGuardedReportAsync(record, logs, ct, contextNote, allowAiDeepDive: false);
     }
 
     private async Task<bool> FinalizeGuardedReportAsync(DailyAnalysisRecord record,
@@ -591,80 +512,6 @@ public class LogAnalysisService
     }
 
     /// <summary>
-    /// AI 段（docs/archive/FEEDBACK-12-PLAN.md §3.3）：對 <see cref="BuildStatisticalRecordAsync"/>
-    /// 判定需要 AI 的主機日執行前置掃描＋主分析＋深析報告，回傳定案結果供呼叫端合併進已寫入的
-    /// 統計紀錄——<see cref="AnalyzeDayAsync"/> 的組合呼叫直接套用；NetIQ pipeline 的兩階段
-    /// 消費者則透過類似 <c>AttachWeeklyCheckup</c> 的讀-改-寫回樣板套用（見 <c>AttachAiResult</c>）。
-    ///
-    /// 歷史在這裡才重讀，不是統計段算好傳進來：讓依序消費的 FIFO
-    /// 保序保證的「前一天已定案」語意在讀取當下自然成立，隔日 prompt 引用前一天 AI 摘要的
-    /// 既有語意不因兩階段化而降級。
-    /// </summary>
-    internal async Task<AiOutcome> CompleteAiAsync(AiWorkItem item, CancellationToken ct = default)
-    {
-        var inputPrtgFingerprint = PrtgFindingMapper.Fingerprint(item.Issues);
-        var history = _historyService.ReadRecent(item.TargetDate, item.HistoryDays)
-            .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
-        var tailIssues = AnalysisPromptBuilder.GetTailIssues(item.Issues);
-        bool lowRisk = item.RuleRisk == RiskLevels.Low;
-
-        // 前置掃描：Other 類事件種類超過主 prompt 呈現上限時，超出的項目先分批給獨立的
-        // AI 呼叫逐項篩選（這些項目彼此不需要一起看，適合拆分），值得注意的帶著掃描意見
-        // 回流主分析——主呼叫維持全局判讀，不因折疊漏看、也不因塞滿明細稀釋注意力。
-        bool shouldScreen = tailIssues.Count > 0 && (!lowRisk || tailIssues.Count >= MinTailForLowRiskScreening);
-        AnalysisPromptBuilder.ScreeningOutcome? screening = null;
-        if (shouldScreen)
-        {
-            screening = await _promptBuilder.ScreenTailAsync(item.TargetDate, tailIssues, ct);
-            Log.Info("前置掃描完成：共 {Total} 項，值得注意 {Notable} 項，一般雜訊 {Clean} 項，掃描失敗 {Failed} 項",
-                tailIssues.Count, screening.Notable.Count, screening.CleanCount, screening.FailedCount);
-        }
-
-        // 低風險日（四層皆無訊號）不呼叫主分析：沒有訊號就沒有故事可講，白話翻譯的價值趨近於零，
-        // 2026-07-20 AI 角色轉換——2000 台規模下這是 AI 時間預算能否成立的關鍵之一。
-        // 但前置掃描若在未分類事件裡找到值得注意的項目，仍要跑主分析——掃描結果必須能拉高當日
-        // 風險等級（MoreSevere），否則掃描發現的異常只會躺在 ScreeningNotes 裡不影響任何判定。
-        bool skipForLowRisk = lowRisk && (screening?.Notable.Count ?? 0) == 0;
-
-        string riskLevel = item.RuleRisk;
-        string? riskBasis = item.RiskBasis;
-        string headline;
-        string summary;
-        string trendAssessment = string.Empty;
-        string action = string.Empty;
-        bool aiAnalyzed;
-        int screenedTailCount = screening != null ? tailIssues.Count : 0;
-        List<string> screeningNotes = screening?.Notable
-            .Select(n => $"{n.Issue.LogName}/{n.Issue.Source} EventId {n.Issue.EventId} x{n.Issue.Count}：{n.Reason}")
-            .ToList() ?? new List<string>();
-
-        if (skipForLowRisk)
-        {
-            aiAnalyzed = false;
-            headline = "今日狀況正常，無需處理";
-            summary = "今日無異常訊號，規則/趨勢/慢速趨勢/關聯四層檢查全數通過。";
-        }
-        else
-        {
-            var (h, s, t, a, rl, riskBasisOverride, analyzed) = await RunMainAnalysisAsync(
-                item.TargetDate, item.Issues, item.ErrorCount, item.WarningCount, item.AuditCount,
-                history, item.TrendAlerts, item.Correlations, screening, item.DataIncomplete,
-                item.UncoveredChecks, item.RuleRisk, ct);
-            headline = h;
-            summary = s;
-            trendAssessment = t;
-            action = a;
-            riskLevel = rl;
-            aiAnalyzed = analyzed;
-            if (riskBasisOverride != null) riskBasis = riskBasisOverride;
-        }
-
-        return new AiOutcome(headline, summary, trendAssessment, action, riskLevel, riskBasis,
-            aiAnalyzed, screenedTailCount, screeningNotes, null, new List<CategoryDeepDive>(),
-            InputPrtgFingerprint: inputPrtgFingerprint);
-    }
-
-    /// <summary>
     /// AiPending 孤兒補跑（docs/archive/FEEDBACK-12-PLAN.md §3.10）：執行被取消時留下「統計已完成、
     /// AI 沒跑完」的紀錄，下次執行改由 <paramref name="pendingRecord"/> 本身重建主分析所需輸入——
     /// TopIssues／TrendAlerts／CorrelationAlerts／各項計數全部持久化在 ContentJson，足以重建
@@ -687,6 +534,17 @@ public class LogAnalysisService
     public async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
     {
         var inputPrtgFingerprint = HostDayWorkflowFingerprint.PrtgInputFingerprint(pendingRecord);
+
+        // 低風險日（四層皆無訊號，且 AI 沒有把它拉高過）不呼叫 AI：沒有訊號就沒有故事可講，
+        // 2000 台規模下這是 AI 時間預算能否成立的關鍵。舊資料中被標待補的低風險日，補跑到這裡也一併清掉待補。
+        if (pendingRecord.RiskLevel == RiskLevels.Low && pendingRecord.RiskBasis != "ai_raise")
+        {
+            return new AiOutcome(LowRiskHeadline, LowRiskSummary, string.Empty, string.Empty,
+                pendingRecord.RiskLevel, pendingRecord.RiskBasis, false,
+                pendingRecord.ScreenedTailCount, pendingRecord.ScreeningNotes,
+                null, new List<CategoryDeepDive>(),
+                InputPrtgFingerprint: inputPrtgFingerprint, Skipped: true);
+        }
         var history = _historyService.ReadRecent(pendingRecord.Date, historyDays)
             .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
         // PatternId 重建不出來：持久化時只留描述文字（同 Severity/ElevatesDayRisk 的既有簡化，
@@ -698,7 +556,7 @@ public class LogAnalysisService
 
         var (headline, summary, trendAssessment, action, riskLevel, riskBasisOverride, aiAnalyzed) = await RunMainAnalysisAsync(
             pendingRecord.Date, pendingRecord.TopIssues, pendingRecord.ErrorCount, pendingRecord.WarningCount,
-            pendingRecord.AuditEventCount, history, pendingRecord.TrendAlerts, correlations, screening: null,
+            pendingRecord.AuditEventCount, history, pendingRecord.TrendAlerts, correlations,
             pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel, ct);
         var riskBasis = riskBasisOverride ?? pendingRecord.RiskBasis;
 
@@ -718,7 +576,7 @@ public class LogAnalysisService
                     .Concat(SuppressionFilter.MutesOn(SuppressionFilter.MutesOf(allSuppressions), pendingRecord.Date))
                     .ToList();
 
-                // 形狀比照 CompleteAiAsync 的 scratch：GenerateReportIfActionableAsync 只看
+                // 形狀要與持久化紀錄一致的 scratch：GenerateReportIfActionableAsync 只看
                 // record 上這些欄位，少一個報告內容就缺一塊
                 var scratch = CloneForReport(pendingRecord);
                 scratch.RiskLevel = riskLevel;
@@ -787,9 +645,8 @@ public class LogAnalysisService
     };
 
     /// <summary>
-    /// 主分析 AI 呼叫本體，<see cref="CompleteAiAsync"/> 與 <see cref="RetryAiAsync"/> 共用——
-    /// 兩者唯一的差異是輸入資料的來源（新鮮算出的 <see cref="AiWorkItem"/> vs. 從既有紀錄重建），
-    /// AI 呼叫、JSON 契約驗證、三種降級分支完全相同，不該各寫一份。
+    /// 主分析 AI 呼叫本體，由 <see cref="RetryAiAsync"/> 呼叫（輸入從既有紀錄重建）：
+    /// AI 呼叫、JSON 契約驗證、三種降級分支都在這裡。
     /// </summary>
     /// <param name="ruleRisk">程式規則層判定的風險下限，AI 只能把它往上拉（見
     /// <see cref="RiskLevels.MoreSevere"/>），不能往下壓</param>
@@ -799,15 +656,15 @@ public class LogAnalysisService
         string? RiskBasisOverride, bool AiAnalyzed)> RunMainAnalysisAsync(
         DateTime date, List<LogIssueSignature> issues, int errorCount, int warningCount, int auditCount,
         List<DailyAnalysisRecord> history, List<string> trendAlerts, List<CorrelationFinding> correlations,
-        AnalysisPromptBuilder.ScreeningOutcome? screening, bool dataIncomplete, List<string> uncoveredChecks,
+        bool dataIncomplete, List<string> uncoveredChecks,
         string ruleRisk, CancellationToken ct)
     {
         var prompt = AnalysisPromptBuilder.BuildPrompt(date, issues, errorCount, warningCount, auditCount, history,
-            trendAlerts, correlations, screening, dataIncomplete, uncoveredChecks, _serverDescription);
+            trendAlerts, correlations, dataIncomplete, uncoveredChecks, _serverDescription, _hostOs);
 
         // response_format=json_object 只保證「合法 JSON」，不保證是我們要的物件形狀
         // （模型可能回傳陣列、或欄位塞入異常冗長的重複文字）；驗證失敗會自動重新請求
-        var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, AnalysisPromptBuilder.SystemPrompt,
+        var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, AnalysisPromptBuilder.SystemPromptFor(_hostOs),
             validate: r => r.RiskLevel.Length > 0 && r.Headline.Length > 0 && r.Story.Length > 0
                            && r.Headline.Length <= MaxHeadlineChars && r.Story.Length <= MaxSummaryChars
                            && r.TrendStory.Length <= MaxSummaryChars && r.Action.Length <= MaxSummaryChars,
@@ -816,7 +673,13 @@ public class LogAnalysisService
         if (result.Success)
         {
             // AI 判斷與程式判斷取較嚴重者：即使模型輕忽了，規則與趨勢比對的結論也會強制拉高風險等級
-            var riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.Value!.RiskLevel), ruleRisk);
+            var normalized = RiskLevels.Normalize(result.Value!.RiskLevel);
+            if (normalized == "未知")
+            {
+                // 不改判定（MoreSevere 仍以規則風險為準），但出一行聲：AI 給了無法歸一化的等級字串
+                Log.Warn("{Date:yyyy-MM-dd} AI 回覆的風險等級無法歸一化（原字串：{Raw}），風險維持規則層判定", date, result.Value.RiskLevel);
+            }
+            var riskLevel = RiskLevels.MoreSevere(normalized, ruleRisk);
             return (result.Value.Headline, result.Value.Story, result.Value.TrendStory, result.Value.Action,
                 riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
         }
@@ -825,17 +688,18 @@ public class LogAnalysisService
         {
             // 網路正常但重試 JsonRetryCount 次後仍不合格：保留原文（截斷避免報告膨脹），不當機、不遺失資訊；
             // 仍算完成 AI 分析，只是白話翻譯品質降級
-            var riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.RawContent), ruleRisk);
+            // 原文是格式不合格的自由文字，不從中推風險（單字比對會把「其中」「中斷」誤判成等級）；風險維持規則層判定
+            var riskLevel = ruleRisk;
             Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", date, result.Attempts);
             return ("AI 回覆格式異常，以下為原始內容",
                 $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{TextTruncation.Truncate(result.RawContent, MaxSummaryChars)}",
-                string.Empty, string.Empty, riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
+                string.Empty, string.Empty, riskLevel, null, true);
         }
 
         // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。
         // 偵測（規則/趨勢/關聯）與規則命中問題的處置建議（靜態知識庫）完全不受影響，
         // 只是少了白話摘要——降級語意刻意用正面表述，AI 已不是偵測的必要環節
-        // headline 帶「AI 待補」是刻意的（回饋二十輪 N）：ApplyOutcome 會把這種主機日標為
+        // headline 帶「AI 待補」是刻意的（回饋二十輪 N）：這種主機日維持
         // AiPending 讓「只補跑失敗或未執行」撿得到，但前端對 AiPending 一律顯示「AI 分析中」——
         // 沒有這個標記，失敗的主機日會永久顯示成「分析中」，使用者看不出它其實已經失敗
         Log.Error("{Date:yyyy-MM-dd} 主分析完全失敗，降級為統計模式：{Error}", date, result.Error);
@@ -844,35 +708,9 @@ public class LogAnalysisService
             string.Empty, string.Empty, ruleRisk, null, false);
     }
 
-    /// <summary>把 AI 段的定案結果套用到統計段已建立的紀錄——只有 <see cref="AnalyzeDayAsync"/>
-    /// 的組合呼叫用得到（兩段緊接著跑完才寫入一次）；NetIQ pipeline 的兩階段消費者統計段已經
-    /// 先寫入一次，AI 段完成後改走 <c>AttachAiResult</c> 的讀-改-寫回，不能重複使用這個方法。</summary>
-    private static void ApplyOutcome(DailyAnalysisRecord record, AiOutcome outcome)
-    {
-        record.Headline = outcome.Headline;
-        record.Summary = outcome.Summary;
-        record.TrendAssessment = outcome.TrendAssessment;
-        record.Action = outcome.Action;
-        record.RiskLevel = outcome.RiskLevel;
-        record.RiskBasis = outcome.RiskBasis;
-        record.AiAnalyzed = outcome.AiAnalyzed;
-        record.RiskReportPending = RiskLevels.IsActionable(record.RiskLevel);
-        // AI 失敗且非低風險才標待補（回饋二十輪 N）：低風險日本來就不會呼叫 AI
-        // （見 needsAi 的判準），標了會讓「只補跑」把它們全撿回來重跑一遍統計
-        record.AiPending = !outcome.AiAnalyzed && record.RiskLevel != RiskLevels.Low;
-        record.ScreenedTailCount = outcome.ScreenedTailCount;
-        record.ScreeningNotes = outcome.ScreeningNotes;
-        record.ReportFile = outcome.ReportFile;
-        record.PrtgReportEvidenceFingerprint = outcome.ReportFile == null
-            ? null
-            : outcome.ReportPrtgEvidenceFingerprint;
-        record.PendingRiskReportDraft = outcome.ReportDraft;
-        record.DeepDives.AddRange(outcome.DeepDives);
-    }
-
     /// <summary>
     /// 風險「中」以上輸出報告檔（含第二階段 AI 深入分析與原始 log）。統計段（不需要 AI）與
-    /// AI 段（<see cref="CompleteAiAsync"/>）都會呼叫——判準只看 <paramref name="record"/> 最終的
+    /// AI 補跑（<see cref="RetryAiAsync"/>）都會呼叫——判準只看 <paramref name="record"/> 最終的
     /// <see cref="DailyAnalysisRecord.RiskLevel"/>，不管風險是規則判定還是 AI 拉高的，這與拆分前
     /// 「report 生成不看 useAi、只看最終風險等級」的既有行為一致（統計模式下規則本身判定
     /// 中/高風險一樣會出報告，只是報告內容不含 AI 深析）。
@@ -880,7 +718,7 @@ public class LogAnalysisService
     /// <paramref name="record"/> 必須已填好 <see cref="RiskReportService.PrepareAsync"/> 會讀取的
     /// 全部欄位（Headline/Summary/TrendAssessment/Action/TopIssues/TrendAlerts/CorrelationAlerts/
     /// UncoveredChecks/DataIncomplete/ScreeningNotes/AiAnalyzed）——呼叫端若沒有現成的完整紀錄
-    /// （<see cref="CompleteAiAsync"/> 沒有自己的持久化紀錄），要組一個形狀完全對齊的暫用物件，
+    /// （例如補跑時組出的暫用物件），要組一個形狀完全對齊的物件，
     /// 少任何一個欄位，報告內容就會缺一塊。<see cref="DailyAnalysisRecord.DeepDives"/> 由
     /// <see cref="RiskReportService.PrepareAsync"/> 就地寫入同一個 <paramref name="record"/>。
     /// </summary>

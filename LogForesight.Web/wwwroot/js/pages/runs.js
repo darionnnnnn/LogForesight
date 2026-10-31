@@ -14,6 +14,7 @@ import {
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
+import { createSeqGuard, pollWhile } from '../core/async-guards.js';
 
 /* 色值於執行期讀 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
    是 style 直塗、吃不到 CSS class，故以 cssVar 取值：success=--lf-success、
@@ -140,30 +141,69 @@ let currentSummaryPage = 1;
 let currentErrors = [];
 let errorsSort = { key: 'count', dir: 'desc' };
 
+// load（整頁三塊）與 loadSummary（只換總表）共用同一個序號守門：任一方開始就讓更早的總表回應過期，
+// 慢的舊 loadSummary 不得覆寫剛換天數的總表。load 自己另有一個序號，連點天數時舊的整批回應整份丟掉。
+const summaryGuard = createSeqGuard();
+const loadGuard = createSeqGuard();
+
 async function load() {
+    const seq = loadGuard.next();
+    const summarySeq = summaryGuard.next();
     renderLoading(document.getElementById('run-summary'), 4);
     renderLoading(document.getElementById('run-errors'), 3);
     renderLoading(document.getElementById('run-list'), 4);
 
-    const [summaryPage, errors, runList] = await Promise.all([
-        api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`),
-        api.get(`/api/runs/errors?days=${currentDays}`),
-        api.get(`/api/runs/list?days=${currentDays}`)
-    ]);
+    let summaryPage, errors, runList;
+    try {
+        [summaryPage, errors, runList] = await Promise.all([
+            api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`),
+            api.get(`/api/runs/errors?days=${currentDays}`),
+            api.get(`/api/runs/list?days=${currentDays}`)
+        ]);
+    } catch (err) {
+        // 過期請求的失敗不處理：失敗態只該屬於最新一次載入（交給 guardLoad 呈現）
+        if (!loadGuard.isCurrent(seq)) return;
+        throw err;
+    }
+    if (!loadGuard.isCurrent(seq)) return;
 
     // 記住後端告知的最大天數供「全部」按鈕使用（不寫死）
     if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
 
     renderLegend();
-    renderSummary(summaryPage);
+    // 載入期間若使用者又換了總表頁（loadSummary 推進了序號），總表交給較新的那次，errors／list 照常渲染
+    if (summaryGuard.isCurrent(summarySeq)) renderSummary(summaryPage);
     renderErrors(errors);
     renderRunList(runList);
 }
 
+function runLoadContainers() {
+    return [
+        document.getElementById('run-summary'),
+        document.getElementById('run-errors'),
+        document.getElementById('run-list')
+    ];
+}
+
+/** 重新載入整頁三塊；失敗走 guardLoad 的失敗態，不留未處理的 rejection */
+function reloadRuns() {
+    return guardLoad(runLoadContainers(), load);
+}
+
 /** 只重新取執行總表（換頁時用，errors/list 不必重取） */
 async function loadSummary() {
-    renderLoading(document.getElementById('run-summary'), 4);
-    const summaryPage = await api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`);
+    const seq = summaryGuard.next();
+    const summaryEl = document.getElementById('run-summary');
+    renderLoading(summaryEl, 4);
+    let summaryPage;
+    try {
+        summaryPage = await api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`);
+    } catch {
+        if (summaryGuard.isCurrent(seq)) renderError(summaryEl, { onRetry: loadSummary });
+        return;
+    }
+    // 連續換頁時舊回應晚到不得蓋掉新頁
+    if (!summaryGuard.isCurrent(seq)) return;
     if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
     renderSummary(summaryPage);
 }
@@ -709,7 +749,7 @@ for (const button of document.querySelectorAll('[data-days]')) {
         for (const other of document.querySelectorAll('[data-days]')) {
             other.classList.toggle('active', other === button);
         }
-        load();
+        reloadRuns();
     });
 }
 
@@ -988,24 +1028,29 @@ let wasAiScheduleRunning = false;
 let scheduleStatusTimer = null;
 
 async function refreshScheduleStatus() {
-    const [status, aiStatus] = await Promise.all([
-        api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
-        api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
-        // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
-        // 兩者自帶錯誤吞掉，且快速計時器「執行中才開、已存在就不重建」，重複呼叫不會疊計時器
-        refreshPrtgSyncStatus(),
-        refreshPrtgBackfillStatus()
-    ]);
-    if (status) {
-        applyScheduleStatus(status);
-        applyPrtgOperationalStatus(status);
+    let status = null;
+    let aiStatus = null;
+    try {
+        [status, aiStatus] = await Promise.all([
+            api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
+            api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null),
+            // PRTG 同步／回填卡跟著常駐輪詢：夜間排程或其他分頁啟動的也要看得到進度與停止鈕。
+            // 兩者自帶錯誤吞掉，且快速輪詢「執行中才開、已存在就不重建」，重複呼叫不會疊輪詢
+            refreshPrtgSyncStatus(),
+            refreshPrtgBackfillStatus()
+        ]);
+        if (status) {
+            applyScheduleStatus(status);
+            applyPrtgOperationalStatus(status);
+        }
+        if (aiStatus) applyAiScheduleStatus(aiStatus);
+    } finally {
+        // 任一 apply 擲例外也要排下一輪，否則常駐輪詢整條靜默死亡
+        clearTimeout(scheduleStatusTimer);
+        const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
+        const interval = isAnyRunning ? 3000 : 10000;
+        scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
     }
-    if (aiStatus) applyAiScheduleStatus(aiStatus);
-
-    clearTimeout(scheduleStatusTimer);
-    const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
-    const interval = isAnyRunning ? 3000 : 10000;
-    scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
     return status;
 }
 
@@ -1175,7 +1220,7 @@ function applyScheduleStatus(status) {
     if (wasScheduleRunning && !status.isRunning) {
         toast('執行已結束，執行總表已刷新', 'info');
         currentSummaryPage = 1;   // 重設回最新頁，讓使用者一眼看到剛跑完的結果
-        load();
+        reloadRuns();
     }
     wasScheduleRunning = status.isRunning;
 }
@@ -1284,7 +1329,7 @@ function applyAiScheduleStatus(status) {
 
     if (wasAiScheduleRunning && !status.isRunning) {
         toast('AI 分析已結束', 'info');
-        load();
+        reloadRuns();
     }
     wasAiScheduleRunning = status.isRunning;
 }
@@ -1533,9 +1578,9 @@ async function refreshPrtgSyncStatus() {
         }
 
         if (status.isRunning) {
-            if (!prtgSyncTimer) prtgSyncTimer = setInterval(refreshPrtgSyncStatus, 3000);
+            if (!prtgSyncTimer) prtgSyncTimer = pollWhile(refreshPrtgSyncStatus, 3000);
         } else if (prtgSyncTimer) {
-            clearInterval(prtgSyncTimer);
+            prtgSyncTimer.stop();
             prtgSyncTimer = null;
         }
     } catch {
@@ -2096,13 +2141,14 @@ async function refreshPrtgBackfillStatus() {
     renderPrtgBackfillStatus(status);
 
     if (status.isRunning && !prtgBackfillPollTimer) {
-        prtgBackfillPollTimer = setInterval(async () => {
+        prtgBackfillPollTimer = pollWhile(async () => {
             const latest = await api.get('/api/admin/settings/prtg-backfill/status', { silent: true }).catch(() => null);
             if (!latest) return;
             renderPrtgBackfillStatus(latest);
             if (!latest.isRunning) {
-                clearInterval(prtgBackfillPollTimer);
+                prtgBackfillPollTimer.stop();
                 prtgBackfillPollTimer = null;
+                return false;
             }
         }, 2000);
     }
@@ -2144,11 +2190,7 @@ bindPrtgBackfill();
 bindPrtgSync();
 refreshPrtgBackfillStatus();
 refreshPrtgSyncStatus();
-guardLoad([
-    document.getElementById('run-summary'),
-    document.getElementById('run-errors'),
-    document.getElementById('run-list')
-], load);
+reloadRuns();
 
 // PRTG 維護頁「最近一次排程驗收」的「檢視執行」（core/prtg-acceptance.js）：?run=<id> 直接開該趟執行詳情
 const linkedRunId = new URLSearchParams(location.search).get('run');

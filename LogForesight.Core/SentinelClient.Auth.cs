@@ -34,7 +34,7 @@ public sealed partial class SentinelClient
                 return r;
             }, ct);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or SentinelTransientException)
+        catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
             throw new SentinelClientException($"連線 Sentinel「{_server.Name}」認證失敗（重試已耗盡）：{ex.Message}", ex);
         }
@@ -63,7 +63,7 @@ public sealed partial class SentinelClient
         }
     }
 
-    /// <summary>原廠文件範例回應為 <c>{"Token":"…"}</c>（見 docs/NETIQ-API-REFERENCE.md §1.1），
+    /// <summary>原廠文件範例回應為 <c>{"Token":"…"}</c>（見 docs/NETIQ-API-REFERENCE.md §2），
     /// 大小寫容忍以防實際環境版本差異</summary>
     private static string? TryExtractToken(string json)
     {
@@ -104,7 +104,7 @@ public sealed partial class SentinelClient
                 return r;
             }, ct);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or SentinelTransientException)
+        catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException or SentinelTransientException) && !ct.IsCancellationRequested) // 呼叫端取消以原例外向上傳，不包成「重試已耗盡」
         {
             throw new SentinelClientException($"連線 Sentinel「{_server.Name}」失敗（重試已耗盡）：{ex.Message}", ex);
         }
@@ -117,11 +117,27 @@ public sealed partial class SentinelClient
 
             if (_readLimits is null) Log.Info("[{Server}] token 可能已過期，重新認證後重放請求", _server.Name);
             else Log.Info("Bounded metadata probe is reauthenticating; identifiers withheld.");
+            await TryLogoutStaleTokenAsync(token);
             _token = null;
             return await SendAuthenticatedAsync(requestFactory, ct, allowReauth: false);
         }
 
         return resp;
+    }
+
+    /// <summary>重新認證前 best-effort 登出舊 token（短逾時；任何例外只記 Debug，不影響重新認證）。</summary>
+    private async Task TryLogoutStaleTokenAsync(string staleToken)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await DeleteTokenAsync(staleToken, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            if (_readLimits is null) Log.Debug(ex, "[{Server}] 重新認證前登出舊 token 失敗（非致命）", _server.Name);
+            else Log.Debug("Bounded metadata probe stale token logout failed; details withheld");
+        }
     }
 
     private static bool IsTransientStatus(HttpStatusCode code) =>
@@ -131,6 +147,15 @@ public sealed partial class SentinelClient
     {
         if (_settings.QueryDelayMs > 0)
             await Task.Delay(_settings.QueryDelayMs, ct);
+    }
+
+    /// <summary>以帳密 DELETE 登出指定 token（結束時登出與重新認證前登出共用）；例外由呼叫端決定如何記錄。</summary>
+    private async Task DeleteTokenAsync(string token, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Delete, $"{AuthTokensUrl}/{Uri.EscapeDataString(token)}");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_server.Username}:{_server.Password}")));
+        using var resp = await SendHttpAsync(req, ct);
     }
 
     private async Task<HttpResponseMessage> SendHttpAsync(HttpRequestMessage request, CancellationToken ct)

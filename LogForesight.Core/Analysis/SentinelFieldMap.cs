@@ -4,7 +4,7 @@ using System.Linq;
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// Sentinel 事件欄位鍵的單一事實來源（docs/NETIQ-API-REFERENCE.md §3.3、§9）。
+/// Sentinel 事件欄位鍵的單一事實來源（docs/NETIQ-API-REFERENCE.md §4 Windows、§4a Linux）。
 ///
 /// 這些鍵名是三輪 <c>--netiq-probe</c> 真實環境輸出實證定案的（元大環境，Sentinel「162」，
 /// 2026-07-29），**不是**官方文件推測——欄位「鍵」是 Sentinel schema 固定的，隨 collector 變的

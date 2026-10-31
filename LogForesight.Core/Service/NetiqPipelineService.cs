@@ -17,7 +17,8 @@ namespace LogForesight.Core.Service;
 /// （<see cref="SentinelQueryBuilder"/>／<see cref="SentinelFieldMap"/>／
 /// <see cref="SentinelEventMapper"/>），統計/趨勢/AI/報告仍是同一條零改動重用的下游。
 ///
-/// **當日續跑免費取得**：完成標記＝該主機當日已有分析紀錄（<see cref="IAnalysisRecordReader.HasRecord"/>，
+/// **當日續跑免費取得**：完成標記＝該主機當日已有分析紀錄（<c>MissingDateFinder.FindWithExistingDates</c>，每台主機一次
+/// <c>ReadRecent</c> 取回望窗內的紀錄再算缺漏日，
 /// 各主機的 record store 已按 owner host 隔離）。凌晨排程跑到一半掛掉，白天重跑只會補上
 /// 還沒完成的主機/日期，不會重複分析——與本機模式的缺漏日回補同一機制，不是另外設計的功能。
 /// </summary>
@@ -289,6 +290,19 @@ public class NetiqPipelineService
         var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
         var linuxTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)).ToList();
 
+        // 作業系統標記不是 windows／linux 的目標沒有對應的查詢形狀，無法查詢：逐台出聲而不是靜默略過
+        // （TotalHosts 有算它們，不講就變成「清單上有、查詢裡沒有」）。這些主機沒有進任何計畫，
+        // 不進進度分母（HostDaysTotal 只累加計畫內的缺漏日），所以不影響進度到 100%；
+        // 也不計入「已完成跳過」——那個計數的語意是「已有分析紀錄」，混進去會讓使用者誤以為它們分析過了。
+        foreach (var t in targets.Where(t =>
+                     !string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase) &&
+                     !string.Equals(t.Os, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)))
+        {
+            _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
+            _console.WriteLine($"  ⚠ [{sentinel.Name}] 主機 {t.HostName} 的作業系統標記 {t.Os} 無法辨識，未查詢");
+            result.AddWarning($"主機 {t.HostName} 的作業系統標記 {t.Os} 無法辨識，未查詢");
+        }
+
         if (windowsTargets.Count > 0)
         {
             await RunServerOsGroupAsync(sentinel, windowsTargets, WebHost.OsWindows, trendWindowDays, result, suppressionSnapshot, ct);
@@ -305,6 +319,21 @@ public class NetiqPipelineService
         Sentinel sentinel, List<NetiqTarget> targets, string os, int trendWindowDays, NetiqPipelineResult result,
         List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
+        // 位址不是合法 IPv4 的主機不進查詢：壞值會被原樣插進 Lucene，讓同批其他主機一起被 Sentinel 拒絕。
+        // 在計畫階段就濾掉，所以它們不進進度分母（HostDaysTotal 只累加計畫內的缺漏日），進度仍能到 100%。
+        var unqueryable = targets.Where(t => !SentinelQueryBuilder.IsValidIpv4(t.IpAddress)).ToList();
+        foreach (var t in unqueryable)
+        {
+            _hostDayTiming?.MarkIncomplete(_runRecorder.RunId);
+            _console.WriteLine($"  ⚠ [{sentinel.Name}] 主機 {t.HostName} 的位址 {t.IpAddress} 不是 IPv4，未查詢");
+            result.AddWarning($"主機 {t.HostName} 的位址 {t.IpAddress} 不是 IPv4，未查詢");
+        }
+        if (unqueryable.Count > 0)
+        {
+            targets = targets.Except(unqueryable).ToList();
+            if (targets.Count == 0) return;
+        }
+
         var osLabel = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase) ? "Linux" : "Windows";
         _console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 {osLabel} 主機");
 
@@ -501,6 +530,20 @@ public class NetiqPipelineService
             throw;
         }
 
+        if (searchResult.Unreadable)
+        {
+            // Sentinel 回報有資料卻一筆都取不回（結果頁讀不到或解析不出）：這不是筆數截斷，
+            // 二分重查只會得到同樣的空結果（50 台批次會白查 99 次），也不能污染 IsHighVolume。
+            // 該批記為失敗，沿用批次查詢失敗的記法。
+            foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
+            NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "failed");
+            _console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：Sentinel 回報 {searchResult.Found} 筆但取回 0 筆");
+            Log.Warn("[{Server}] {Date} Sentinel 回報 {Found} 筆但取回 0 筆，不視為截斷，該批記為失敗", sentinelName, date, searchResult.Found);
+            result.AddFailed(batch.Length);
+            _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
+            return;
+        }
+
         if (searchResult.Truncated)
         {
             // 截斷時二分重查（回饋十三輪 B2）：整批共用一個 job，原本無法判斷截斷影響哪幾台，
@@ -653,7 +696,7 @@ public class NetiqPipelineService
             _eventLogService, _aiService, plan.Store, _suppressionStore,
             target.RoleDesc, _reportService, target.HostName, target.HostId,
             hostGroupIds: plan.GroupIds, suppressionSnapshot: suppressionSnapshot,
-            logSource: AnalysisLogSource.Netiq);
+            logSource: AnalysisLogSource.Netiq, hostOs: target.Os);
 
         // 記錄是否已成功寫入
         DailyAnalysisRecord? record = null;
@@ -666,8 +709,8 @@ public class NetiqPipelineService
             // （docs/BACKLOG.md 未決事項 #3，留待試點核對），v1 誠實的作法是不宣稱
             // 「已檢查且無異常」——channels=null 时 UncoveredChecks 不會列出這兩個頻道，
             // 這是已知的 v1 限制而非遺漏，待試點確認覆蓋現況後再決定要不要正式申報「不適用」。
-            AiWorkItem? workItem;
-            (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
+            bool needsAi;
+            (record, needsAi) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null, ct, hostOs: target.Os, deferNonAiReport: true);
 
@@ -712,7 +755,7 @@ public class NetiqPipelineService
             // record.TopIssues，晚一步併入的 finding 就進不了問題案件與處理狀態鏈。
             HostDayPostProcessor.AttachPrtgFindings(
                 _prtgFindings, plan.Store, record, target.HostId, aiConfigured: _useAi, logContext: logContext);
-            if (workItem == null)
+            if (!needsAi)
                 await analysisService.FinalizeNonAiReportAfterPrtgAttachmentAsync(record, events, ct);
 
             try
@@ -737,8 +780,8 @@ public class NetiqPipelineService
             HostDayPostProcessor.RecordPermissionChanges(
                 _permissionChangeStore, _permissionHostDayClaims, target.HostName, target.Os, events, date, logContext, _permissionMappings);
 
-            // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（docs/NETIQ-API-REFERENCE.md §4.4：
-            // 「整台主機近 24h 零事件＝無資料來源告警，沿用既有無回報機制」）——零事件也 Touch 的話，
+            // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（零事件不更新，沿用既有「未回報」機制，
+            // 判定見 HostAdminService.IsSilent）——零事件也 Touch 的話，
             // 轉送已掛掉的主機會永遠顯示為正常回報，正是「沒查 ≠ 沒事」要防的靜默盲區。
             // 代價是「當日剛好沒有任何 watchlist/錯誤事件」的安靜主機兩天後會被標無回報——
             // 這個訊號值得人工看一眼（確認是真安靜還是轉送掛了），試點階段再依誤報率校準。
@@ -747,7 +790,7 @@ public class NetiqPipelineService
                 _hostTouches[target.HostId] = new HostTouch(displayName, DateTime.Now);
             }
 
-            if (workItem != null)
+            if (needsAi)
             {
                 _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 統計完成（待 AI 排程分析）");
             }
@@ -772,7 +815,7 @@ public class NetiqPipelineService
             _console.WriteLine($"  ✗ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +
                               "（未寫入紀錄，下次執行自動重試）");
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
-            // 刻意不寫入歷史：下次執行的缺漏日判定（HasRecord）會自動把這天當缺漏重新處理，
+            // 刻意不寫入歷史：下次執行的缺漏日判定（MissingDateFinder）會自動把這天當缺漏重新處理，
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
             return "failed";
         }

@@ -9,10 +9,9 @@ namespace LogForesight.Web.Services;
 /// 等於幾秒內把同一組聚合（內部 6 個以上查詢）整套重算一次。builder 本身是 Scoped
 /// （逐請求），快取必須獨立成 Singleton 才跨請求生效。
 ///
-/// 為什麼是**短 TTL 而不是版本戳**：排行結果橫跨 records／handling／案件多張表，
-/// 沒有單一版本錨點可當失效鍵；硬湊一個會做出「該失效沒失效」的假新鮮，讓兩頁數字分岔
-/// ——那正是這份投影當初共用化要消滅的症狀。TTL 內處理狀態變更最多延遲
-/// <see cref="TtlSeconds"/> 秒反映，頁面本身也不是即時看板，可接受。
+/// 鍵含資料版本戳（<see cref="DataVersionStamp"/>）；背景寫入執行中版本不推進，
+/// 故保留 TTL 作為上限：背景寫入造成的變動最多延遲 <see cref="TtlSeconds"/> 秒反映，
+/// 頁面本身也不是即時看板，可接受。
 ///
 /// 鍵含**可見主機集合**：不同授權範圍的使用者各自一份，不得串味。
 /// </summary>
@@ -30,16 +29,25 @@ public class IssueRankingCache
     private readonly object _lock = new();
     private readonly Dictionary<string, (List<IssueRankingDto> Items, DateTime CachedAt, DateTime LastAccess)> _entries = new();
 
-    public IssueRankingCache(Func<DateTime>? now = null) => _now = now ?? (() => DateTime.Now);
+    private readonly DataVersionStamp _versionStamp;
 
-    /// <summary>組鍵：區間＋可見範圍＋主機總數＋靜音排除（<see cref="IssueExclusion.CacheToken"/>）。
+    public IssueRankingCache(DataVersionStamp versionStamp, Func<DateTime>? now = null)
+    {
+        _versionStamp = versionStamp;
+        _now = now ?? (() => DateTime.Now);
+    }
+
+    /// <summary>目前資料版本；呼叫端組鍵時傳給 <see cref="KeyOf"/>。</summary>
+    public long Version => _versionStamp.Current;
+
+    /// <summary>組鍵：資料版本戳＋區間＋可見範圍＋主機總數＋靜音排除（<see cref="IssueExclusion.CacheToken"/>）。
     /// 主機 id 排序後串起，順序不同的同一集合是同一鍵。靜音設定或換日改變時鍵跟著變，不等 TTL。</summary>
-    public static string KeyOf(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts, string exclusionToken)
+    public static string KeyOf(long version, DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts, string exclusionToken)
     {
         var hosts = visibleHostIds == null
             ? "*"
             : string.Join(",", visibleHostIds.OrderBy(id => id));
-        return $"{from:yyyyMMdd}|{to:yyyyMMdd}|{totalHosts}|{exclusionToken}|{hosts}";
+        return $"v{version}|{from:yyyyMMdd}|{to:yyyyMMdd}|{totalHosts}|{exclusionToken}|{hosts}";
     }
 
     /// <summary>命中回傳**副本**——呼叫端會 Take／篩選，不能讓它改到共用清單。</summary>

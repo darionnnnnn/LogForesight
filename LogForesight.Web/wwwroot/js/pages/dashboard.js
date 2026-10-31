@@ -13,8 +13,12 @@ import { formatNumber, formatDateTime, CATEGORY_NAMES, SEVERITY_ORDER, severityC
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 import { bindRangeChips, setActiveChip } from '../core/date-range.js';
+import { createSeqGuard } from '../core/async-guards.js';
+import { safeStorage } from '../core/storage.js';
 
-let currentDays = Number(localStorage.getItem('lf.dashboard.days')) || 7;
+let currentDays = Number(safeStorage.get('lf.dashboard.days')) || 7;
+const loadGuard = createSeqGuard();      // 連點期間切換時，慢的舊回應不得蓋掉新結果
+const aiFocusGuard = createSeqGuard();
 
 async function load() {
     // serverAdmin 沒有業務資料檢視能力（§6.2 最小授權），儀表板會是一片空白——
@@ -25,18 +29,29 @@ async function load() {
         return;
     }
 
+    const seq = loadGuard.next();
     renderLoading(document.getElementById('dashboard-categories'), 3);
     renderLoading(document.getElementById('dashboard-issues'), 3);
     renderLoading(document.getElementById('dashboard-hosts'), 4);
     renderLoading(document.getElementById('dashboard-group-risk'), 3);
 
-    const [data, user, displaySettings, myBadge] = await Promise.all([
-        api.get(`/api/dashboard/summary?days=${currentDays}`),
-        getCurrentUser(),
-        getDisplaySettings(),
-        // 我的交辦單數字走既有聚合端點，不動儀表板後端 DTO；失敗就不顯示那張卡（靜默）
-        api.get('/api/handlers/me/badge', { silent: true }).catch(() => null)
-    ]);
+    let data, user, displaySettings, myBadge;
+    try {
+        [data, user, displaySettings, myBadge] = await Promise.all([
+            api.get(`/api/dashboard/summary?days=${currentDays}`),
+            getCurrentUser(),
+            getDisplaySettings(),
+            // 我的交辦單數字走既有聚合端點，不動儀表板後端 DTO；失敗就不顯示那張卡（靜默）
+            api.get('/api/handlers/me/badge', { silent: true }).catch(() => null)
+        ]);
+    } catch (err) {
+        // 過期請求的失敗不處理：失敗態只該屬於最新一次載入，否則會把新結果換成「載入失敗」
+        if (!loadGuard.isCurrent(seq)) return;
+        throw err;
+    }
+
+    // 回應回來時已有更新的載入（又切了期間）就整份丟掉，不得寫入任何頁面狀態
+    if (!loadGuard.isCurrent(seq)) return;
 
     document.getElementById('dashboard-range').textContent = `${data.from} ～ ${data.to}`;
 
@@ -57,9 +72,11 @@ async function load() {
 async function loadAiFocus() {
     const container = document.getElementById('dashboard-ai-focus');
     container.replaceChildren();
+    const seq = aiFocusGuard.next();
 
     // AI 未設定時直接不打 today-focus（避免每次進儀表板都白發一次請求，docs/archive/FEEDBACK-7-PLAN.md）
     if (!await getAiAvailable()) return;
+    if (!aiFocusGuard.isCurrent(seq)) return;
 
     let focus;
     try {
@@ -67,6 +84,7 @@ async function loadAiFocus() {
     } catch {
         return;
     }
+    if (!aiFocusGuard.isCurrent(seq)) return;
     if (!focus || !focus.items || focus.items.length === 0) return;
 
     const card = document.createElement('div');
@@ -116,7 +134,7 @@ function renderServerAdminGuide() {
     for (const id of ['dashboard-kpi', 'dashboard-ai-focus']) {
         document.getElementById(id)?.replaceChildren();
     }
-    for (const id of ['dashboard-categories', 'dashboard-hosts']) {
+    for (const id of ['dashboard-categories', 'dashboard-issues', 'dashboard-hosts']) {
         document.getElementById(id)?.closest('.row')?.classList.add('d-none');
     }
     for (const el of document.querySelectorAll('[data-range]')) el.closest('.btn-group')?.classList.add('d-none');
@@ -823,20 +841,27 @@ async function loadFreshness() {
 
 loadFreshness();
 
+/** 載入失敗時要換成失敗態的容器；第一個顯示訊息，其餘清空 */
+function dashboardLoadContainers() {
+    return [
+        document.getElementById('dashboard-categories'),
+        document.getElementById('dashboard-issues'),
+        document.getElementById('dashboard-hosts'),
+        document.getElementById('dashboard-group-risk'),
+        document.getElementById('dashboard-kpi')
+    ];
+}
+
 const rangeChips = bindRangeChips({
     markActive: true,
     onApply: ({ days }) => {
         currentDays = days;
-        localStorage.setItem('lf.dashboard.days', String(currentDays));
-        load();
+        safeStorage.set('lf.dashboard.days', String(currentDays));
+        guardLoad(dashboardLoadContainers(), load);
     }
 });
 
 // 還原上次選的期間（§8.6-1 篩選記憶）
 setActiveChip(rangeChips, currentDays);
 
-guardLoad([
-    document.getElementById('dashboard-categories'),
-    document.getElementById('dashboard-hosts'),
-    document.getElementById('dashboard-group-risk')
-], load);
+guardLoad(dashboardLoadContainers(), load);

@@ -163,7 +163,7 @@ public sealed class PrtgValueAssessment
     /// <summary>預估到達門檻的日期上限：斜率極小時引擎算出的天數可到 1e9，超過這個數就不給日期（DateOnly 會溢位，也沒有意義）。</summary>
     public const int MaxProjectionDays = 3650;
     /// <summary>過去日的對應取「該日或之前最近一日」，往回看這麼多天（與每日管線同一個視窗）；找不到時沿用之後最早一份（docs/PRTG-SPEC.md §4）。</summary>
-    public const int MapLookbackDays = 31;
+    public const int MapLookbackDays = PrtgHostMapLookup.LookbackDays;
 
     private readonly EfPrtgStore _store;
     private readonly IReadOnlyDictionary<string, PrtgValueSemantic> _semanticOverrides;
@@ -236,8 +236,11 @@ public sealed class PrtgValueAssessment
         var known = sensors.Where(s => PrtgValueSemantics.TryResolve(s.SensorType, _semanticOverrides, out _)).ToList();
         var valuesBySensor = _store.GetReadinessValues(known.Select(s => s.SensorObjid).ToArray(), windowStart, windowEnd)
             .GroupBy(v => v.SensorObjid).ToDictionary(g => g.Key, g => g.ToList());
+        // 讀取窗上界延到今天（含），讓第一份對應之前的日子可往後沿用（PrtgHostMapLookup）。
+        var today = DateTime.Today;
+        var mapsEnd = today.AddDays(1) > windowEnd ? today.AddDays(1) : windowEnd;
         var mapsByDevice = _store.GetReadinessMaps(known.Select(s => s.DeviceObjid).Distinct().ToArray(),
-                windowStart.AddDays(-MapLookbackDays), windowEnd)
+                windowStart.AddDays(-MapLookbackDays), mapsEnd)
             .GroupBy(m => m.DeviceObjid)
             .ToDictionary(g => g.Key, g => g.OrderBy(m => m.MapDate).ToList());
 
@@ -252,7 +255,7 @@ public sealed class PrtgValueAssessment
             var maps = mapsByDevice.GetValueOrDefault(sensor.DeviceObjid) ?? [];
             bool MappedToSensorHost(DateTime day)
             {
-                var row = maps.LastOrDefault(m => m.MapDate.Date <= day && m.MapDate.Date > day.AddDays(-MapLookbackDays - 1));
+                var row = PrtgHostMapLookup.Select(maps, day, MapLookbackDays, today);
                 // 人工對應也以 ok 寫入當日對應表（PrtgHostMapper），這裡只認 ok。
                 return row is { MapStatus: PrtgMapStatus.Ok } && row.HostId == sensor.HostId;
             }

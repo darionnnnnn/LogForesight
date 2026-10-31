@@ -44,15 +44,15 @@ public class EfRiskyEventStore : IRiskyEventStore
                 {
                     HostId = hostId,
                     Date = day,
-                    LogName = e.LogName,
-                    Source = e.Source,
+                    LogName = ColumnClamp.ClampFor<RiskyEventRow>(e.LogName, nameof(RiskyEventRow.LogName))!,
+                    Source = ColumnClamp.ClampFor<RiskyEventRow>(e.Source, nameof(RiskyEventRow.Source))!,
                     SourceKey = WorkOrderIssueKey.SourceKeyOf(e.Source),
                     EventId = e.EventId,
                     EntryType = e.EntryType,
                     EventTime = e.EventTime,
                     Message = e.Message,
                     SourceEvidenceJson = SourceEvidence.Serialize(e.SourceEvidence),
-                    RuleId = e.RuleId,
+                    RuleId = ColumnClamp.ClampFor<RiskyEventRow>(e.RuleId, nameof(RiskyEventRow.RuleId)),
                     CreatedAt = e.CreatedAt
                 });
             }
@@ -148,23 +148,24 @@ public class EfRiskyEventStore : IRiskyEventStore
         return rows.Select(Map).ToList();
     }
 
-    public int Prune(int retentionDays)
+    public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
+
+    /// <summary>可注入單次上限與批次大小的清除（測試用）；一律走 <see cref="BatchedPrune"/>，只撈主鍵、分批刪除。</summary>
+    internal int Prune(int retentionDays, int maxRows, int batchSize)
     {
         var cutoff = DateTime.Today.AddDays(-retentionDays);
-        using var ctx = _contextFactory();
+        var pruned = BatchedPrune.Run<long>(
+            _contextFactory,
+            (ctx, take) => ctx.RiskyEvents.Where(r => r.Date < cutoff).OrderBy(r => r.Id).Select(r => r.Id).Take(take).ToList(),
+            (ctx, keys) => ctx.RiskyEvents.Where(r => keys.Contains(r.Id)).ExecuteDelete(),
+            ctx => ctx.RiskyEvents.Count(r => r.Date < cutoff),
+            "風險事件暫存",
+            maxRows,
+            batchSize);
 
-        var stale = ctx.RiskyEvents.Where(r => r.Date < cutoff).ToList();
-        if (stale.Count == 0)
-        {
+        if (pruned == 0)
             Log.Info("[SQL] RiskyEvent.Prune（保留 {Days} 天）：無可清除紀錄", retentionDays);
-            return 0;
-        }
-
-        ctx.RiskyEvents.RemoveRange(stale);
-        ctx.SaveChanges();
-
-        Log.Info("[SQL] RiskyEvent.Prune（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆", retentionDays, cutoff, stale.Count);
-        return stale.Count;
+        return pruned;
     }
 
     private static RiskyEvent Map(RiskyEventRow row) => new()

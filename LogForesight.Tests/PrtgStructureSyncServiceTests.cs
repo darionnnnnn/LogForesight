@@ -138,6 +138,9 @@ public class PrtgStructureSyncServiceTests : IDisposable
     {
         public List<string> RequestedUrls { get; } = new();
 
+        public Task<HttpResponseMessage> SendAsyncForTests(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            SendAsync(request, cancellationToken);
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var url = request.RequestUri!.ToString();
@@ -466,5 +469,93 @@ public class PrtgStructureSyncServiceTests : IDisposable
 
         // 鏡像是空的，重算後該日對應應該被清空
         Assert.Empty(prtgStore.GetHostMapForDate(day));
+    }
+
+    private sealed class EmptyDevicesHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri!.ToString();
+            var json = url.Contains("content=devices", StringComparison.OrdinalIgnoreCase)
+                ? "{\"treesize\":0,\"devices\":[]}"
+                : url.Contains("content=sensors", StringComparison.OrdinalIgnoreCase)
+                    ? "{\"treesize\":0,\"sensors\":[]}"
+                    : "{\"treesize\":0,\"messages\":[]}";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private async Task WaitIdleAsync(PrtgStructureSyncService service)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (service.IsRunning && DateTime.UtcNow < deadline) await Task.Delay(20);
+        Assert.False(service.IsRunning, "結構同步背景工作應在受控回應後結束。");
+    }
+
+    [Fact]
+    public async Task 結構同步_0台裝置_保存為失敗並帶訊息()
+    {
+        EnablePrtg();
+        var service = Create();
+        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new EmptyDevicesHandler(), new PrtgRequestBudget());
+
+        Assert.True(service.TryStart(out var error, out _), error);
+        await WaitIdleAsync(service);
+
+        Assert.False(service.GetStatus().LastSuccess);
+        Assert.Equal("PRTG 回傳 0 台裝置，請檢查 PRTG 帳號權限與取數設定", service.GetStatus().LastErrorMessage);
+    }
+
+    private sealed class ThrowingSentinelStore : FakeSentinelStore, ISentinelStore
+    {
+        List<Sentinel> ISentinelStore.GetAll() => throw new InvalidOperationException("sentinel 讀取失敗");
+    }
+
+    [Fact]
+    public async Task 結構同步_一般例外_保存為失敗狀態且執行狀態結束()
+    {
+        EnablePrtg();
+        var state = new PrtgStructureSyncRunState();
+        var service = new PrtgStructureSyncService(_settingsStore, _backend, state, new SchedulerRunState(),
+            new HostStore(_backend.Blob("hosts")), StatusStore(), new PrtgBackfillRunState(),
+            new ThrowingSentinelStore(), new DataVersionStamp());
+        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new EmptyDevicesHandler(), new PrtgRequestBudget());
+
+        Assert.True(service.TryStart(out var error, out _), error);
+        await WaitIdleAsync(service);
+
+        Assert.False(service.GetStatus().LastSuccess);
+        Assert.Contains("sentinel 讀取失敗", service.GetStatus().LastErrorMessage);
+    }
+
+    private sealed class RulesBumpingHandler(StorageBackend backend) : HttpMessageHandler
+    {
+        private int _bumped;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            // 同步進行中存規則：規則版本 +1，結構同步的範圍柵欄不應因此取消
+            if (Interlocked.Exchange(ref _bumped, 1) == 0)
+                backend.Blob("rules").Mutate<object?>(_ => ("{\"marker\":1}", null));
+            return new StructureSyncHandler().SendAsyncForTests(request, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task 結構同步_執行中規則版本變動_不取消()
+    {
+        EnablePrtg();
+        new HostStore(_backend.Blob("hosts")).MutateBatch(hosts =>
+            hosts.Add(new WebHost { HostId = 9, HostName = "sync-fixture", IpAddress = "10.50.0.9", Active = true }));
+        var service = Create();
+        service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new RulesBumpingHandler(_backend), new PrtgRequestBudget());
+
+        Assert.True(service.TryStart(out var error, out _), error);
+        await WaitIdleAsync(service);
+
+        Assert.True(service.GetStatus().LastSuccess, service.GetStatus().LastErrorMessage);
     }
 }

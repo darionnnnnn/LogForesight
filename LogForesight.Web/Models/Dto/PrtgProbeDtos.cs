@@ -205,6 +205,7 @@ public class SetPrtgManualMapRequest
     public long? ExpectedScopeRevision { get; set; }
     public long DeviceObjid { get; set; }
     public long HostId { get; set; }
+    [StringLength(512, ErrorMessage = "指派說明不可超過 512 字")]
     public string? Note { get; set; }
 }
 
@@ -240,6 +241,9 @@ public class PrtgManualMapDto
     public DateTime CreatedAt { get; set; }
     public string? RemapWarning { get; set; }
     public int SameIpSkippedCount { get; set; }
+
+    /// <summary>此人工對應的 device 已不在 PRTG 裝置鏡像（PRTG 端已刪除），不會納入取數範圍</summary>
+    public bool MissingInMirror { get; set; }
 }
 
 /// <summary>刪除類操作的回應：是否真的刪到，以及重算今日對應的警告（null＝重算正常）。

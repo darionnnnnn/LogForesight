@@ -79,18 +79,18 @@ public class AIService : IAiService
     private readonly IAiRequestGate _gate;
     private readonly AiLane _lane;
 
-    public AIService(AiSettings settings, IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null,
-        IAiRequestGate? gate = null, AiLane lane = AiLane.Background)
-        : this(settings, CreateDefaultHandler(), dumper, usageMeter, gate, lane)
+    public AIService(AiSettings settings, IAiRequestGate gate, IPromptDumper? dumper = null,
+        IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
+        : this(settings, CreateDefaultHandler(), gate, dumper, usageMeter, lane)
     {
     }
 
-    internal AIService(AiSettings settings, HttpMessageHandler handler, IPromptDumper? dumper = null,
-        IAiUsageMeter? usageMeter = null, IAiRequestGate? gate = null, AiLane lane = AiLane.Background)
+    internal AIService(AiSettings settings, HttpMessageHandler handler, IAiRequestGate gate,
+        IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null, AiLane lane = AiLane.Background)
     {
         _dumper = dumper ?? new NullPromptDumper();
         _usageMeter = usageMeter;
-        _gate = gate ?? NullAiRequestGate.Instance;
+        _gate = gate ?? throw new ArgumentNullException(nameof(gate));
         _lane = lane;
         _httpClient = new HttpClient(handler)
         {
@@ -186,7 +186,7 @@ public class AIService : IAiService
 
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>
     /// <param name="maxTokens">覆寫預設的 token 上限；null 則用設定檔的 Ai.MaxTokens。
-    /// 短小的終端 JSON（如每日總覽、前置掃描）該用較小的上限——模型一旦退化重複輸出，
+    /// 短小的終端 JSON（如每日總覽）該用較小的上限——模型一旦退化重複輸出，
     /// 上限越大只是讓失敗的嘗試跑越久才觸頂，不會讓成功率變高；篇幅本來就較長的深入分析
     /// 才需要調大</param>
     public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
@@ -378,7 +378,17 @@ public class AIService : IAiService
 
             if (!response.Success)
             {
-                lastError = response.Error;
+                // 傳輸層失敗（連線、HTTP 錯誤、逾時）：沒有回覆可供修正，重問只會把同一段等待再放大一次，
+                // 立即回傳失敗。JSON 重試只針對「有回應但內容不合格」（D4 契約 4）。
+                Log.Warn("ChatJsonAsync 傳輸層失敗（第 {Attempt}/{Total} 次），不進 JSON 重試：{Error}",
+                    attempt, totalAttempts, response.Error);
+                // 空回覆屬內容層失敗、已由 Polly 層重試過：同樣不進 JSON 重試，但錯誤訊息沿用契約失敗的組法（附「（空回覆）」）
+                var transportError = response.Error == EmptyAiResponseException.DefaultMessage
+                    ? $"{JsonContractError}：{FormatErrorResponseSnippet(rawContent)}"
+                    : response.Error;
+                // RawContent 刻意留空：前一次嘗試的不合格回覆不是這次的結果，帶著它會讓呼叫端走「原文保留」降級、
+                // 把傳輸失敗的主機日標成 AI 已完成而不再補跑；完全失敗才會維持待補
+                return new AiJsonResult<T> { Success = false, RawContent = string.Empty, Error = transportError, Attempts = attempt };
             }
             else
             {

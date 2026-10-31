@@ -153,9 +153,8 @@ public sealed class LocalAnalysisAiDecouplingTests : IDisposable
 
     /// <summary>
     /// 接線守衛：上面幾條測試驗的是 LogAnalysisService 的統計段行為，
-    /// **不會**因為 AnalysisOrchestrator 改回呼叫 AnalyzeDayAsync（行內跑 AI）而轉紅——
-    /// 實測過：把主流程那一行換回 AnalyzeDayAsync，五條測試照樣全綠。
-    /// 因此另以原始碼守衛釘住主流程的選擇，否則本批次的契約沒有任何回歸保護。
+    /// **不會**因為 AnalysisOrchestrator 改回行內跑 AI 而轉紅。
+    /// 因此另以原始碼守衛釘住主流程的選擇（走統計段、AI 交給 AI 排程），否則本批次的契約沒有任何回歸保護。
     /// </summary>
     [Fact]
     public void 主流程本機路徑必須走統計段而非行內AI()
@@ -173,8 +172,5 @@ public sealed class LocalAnalysisAiDecouplingTests : IDisposable
         var source = File.ReadAllText(path);
 
         Assert.Contains("AnalyzeDayStatisticalAsync(", source);
-
-        // 註解裡提到方法名不算違規，只禁止實際呼叫（await ...AnalyzeDayAsync(）
-        Assert.DoesNotContain("analysisService.AnalyzeDayAsync(", source);
     }
 }

@@ -10,6 +10,7 @@ import { api, getAiAvailable } from '../core/api.js';
 import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad, applyBackfillDaysLimit } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
+import { pollWhile } from '../core/async-guards.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
 initNetiqImportTab({ reloadSentinels: () => loadSentinels() });
@@ -391,13 +392,13 @@ async function refreshProbeStatus() {
     renderProbeStatus(status);
 
     if (status.isRunning && !probePollTimer) {
-        probePollTimer = setInterval(async () => {
+        probePollTimer = pollWhile(async () => {
             const latest = await api.get('/api/admin/netiq/probe/status', { silent: true }).catch(() => null);
             if (!latest) return;
             renderProbeStatus(latest);
             if (!latest.isRunning) {
-                clearInterval(probePollTimer);
                 probePollTimer = null;
+                return false;
             }
         }, 2000);
     }

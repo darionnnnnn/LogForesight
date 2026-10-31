@@ -269,15 +269,18 @@ public class PrtgProbeService
             if (overallDeadline != null)
                 overallDeadline.CancelAfter(EnvironmentProbeOverallTimeoutForTesting);
             var scopeReader = new PrtgScopeRevisionReader(_backend, _hosts);
-            using var operation = new PrtgOperationScope(s, _settings.Get, overallDeadline?.Token ?? ct,
-                dataFlow ? scopeReader.ReadRawSemantic : scopeReader.Read,
-                dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
-            client.OperationCheckpoint = operation.Checkpoint;
-            var runToken = operation.Token;
             var success = false;
             var cancelled = false;
+            PrtgOperationScope? operation = null;
+            var runToken = overallDeadline?.Token ?? ct;
             try
             {
+                // 建構移入 try：擲例外時 finally 仍會 FinishRun，不會讓探測永遠停在執行中。
+                operation = new PrtgOperationScope(s, _settings.Get, overallDeadline?.Token ?? ct,
+                    dataFlow ? scopeReader.ReadRawSemantic : scopeReader.Read,
+                    dataFlow ? "資料流探測" : "環境探測", requireEnabled: false);
+                client.OperationCheckpoint = operation.Checkpoint;
+                runToken = operation.Token;
                 using (client)
                 {
                     operation.Checkpoint();
@@ -318,7 +321,7 @@ public class PrtgProbeService
             {
                 success = false;
                 console.WriteLine();
-                if (overallDeadline?.IsCancellationRequested == true && !ct.IsCancellationRequested && !operation.SettingsChanged)
+                if (overallDeadline?.IsCancellationRequested == true && !ct.IsCancellationRequested && operation?.SettingsChanged != true)
                 {
                     // A probe deadline is a failed run, not a user cancellation.
                     console.WriteLine($"環境探測超過整輪時間上限（{EnvironmentProbeOverallTimeoutForTesting.TotalSeconds:0.#} 秒），已停止後續請求。");
@@ -326,7 +329,7 @@ public class PrtgProbeService
                 else
                 {
                     cancelled = true;
-                    console.WriteLine(operation.SettingsChanged ? "設定或範圍變更，探測已停止。" : "探測已由使用者停止。");
+                    console.WriteLine(operation?.SettingsChanged == true ? "設定或範圍變更，探測已停止。" : "探測已由使用者停止。");
                 }
             }
             catch (Exception ex)
@@ -336,6 +339,8 @@ public class PrtgProbeService
             }
             finally
             {
+                if (operation == null) client.Dispose();
+                operation?.Dispose();
                 _state.FinishRun(success, cancelled);
             }
         });
