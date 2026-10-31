@@ -32,7 +32,10 @@ public class DashboardController : ControllerBase
     public ApiResponse<DashboardDto> Summary([FromQuery] int? days) =>
         // Clamp 同 host-detail 慣例（1..90）：未夾住時任意整數（含負數／超大值）會直接進
         // DateTime.Today.AddDays(-days+1) 算出離譜的查詢區間
-        ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(Math.Clamp(days ?? DefaultDays, 1, 90)));
+        ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(ClampDays(days)));
+
+    /// <summary>summary／today-focus 共用的天數夾範圍（1..90）</summary>
+    public static int ClampDays(int? days) => Math.Clamp(days ?? DefaultDays, 1, 90);
 }
 
 /// <summary>

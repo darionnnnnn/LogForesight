@@ -115,7 +115,7 @@ public class AiController : ControllerBase
     public async Task<ApiResponse<AiFocusDto?>> TodayFocus([FromQuery] int? days)
     {
         if (!_ai.Available) return ApiResponse<AiFocusDto?>.Ok(null);
-        var dashboard = _dashboard.GetSummary(days ?? DashboardController.DefaultDays);
+        var dashboard = _dashboard.GetSummary(DashboardController.ClampDays(days));
         return ApiResponse<AiFocusDto?>.Ok(await _ai.TodayFocusAsync(dashboard));
     }
 

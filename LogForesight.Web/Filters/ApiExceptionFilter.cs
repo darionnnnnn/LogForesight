@@ -23,7 +23,7 @@ public class ApiExceptionFilter : IExceptionFilter
         var (status, code, message) = context.Exception switch
         {
             DomainException domain => (
-                StatusCodeFor(domain.Code),
+                ApiErrorCodes.StatusOf(domain.Code),
                 domain.Code,
                 domain.Message),
 
@@ -35,13 +35,35 @@ public class ApiExceptionFilter : IExceptionFilter
                 ApiErrorCodes.Conflict,
                 conflict.Message),
 
+            // 用戶端已斷線（關分頁／取消請求）：沒人收回應，不是故障
+            OperationCanceledException when context.HttpContext.RequestAborted.IsCancellationRequested => (
+                499,
+                ApiErrorCodes.ServerError,
+                "請求已取消。"),
+
+            // 請求沒被取消卻拋 OCE：多半是 HttpClient 逾時（外部服務太慢），不是本站程式錯誤
+            OperationCanceledException => (
+                ApiErrorCodes.StatusOf(ApiErrorCodes.UpstreamTimeout),
+                ApiErrorCodes.UpstreamTimeout,
+                "外部服務回應逾時，請稍後再試。"),
+
             _ => (
                 StatusCodes.Status500InternalServerError,
                 ApiErrorCodes.ServerError,
                 "系統發生未預期的錯誤，請稍後再試；若持續發生請聯繫系統管理員。")
         };
 
-        if (status >= 500)
+        if (status == 499)
+        {
+            Log.Debug("API 請求已被用戶端取消（{0} {1}）",
+                context.HttpContext.Request.Method, context.HttpContext.Request.Path);
+        }
+        else if (code == ApiErrorCodes.UpstreamTimeout)
+        {
+            Log.Warn("API 外部服務逾時（{0} {1}）：{2}",
+                context.HttpContext.Request.Method, context.HttpContext.Request.Path, context.Exception.GetType().Name);
+        }
+        else if (status >= 500)
         {
             Log.Error(context.Exception, "API 未預期例外：{0} {1}",
                 context.HttpContext.Request.Method, context.HttpContext.Request.Path);
@@ -56,13 +78,4 @@ public class ApiExceptionFilter : IExceptionFilter
         context.Result = new ObjectResult(ApiResponse<object>.Fail(code, message)) { StatusCode = status };
         context.ExceptionHandled = true;
     }
-
-    private static int StatusCodeFor(string code) => code switch
-    {
-        ApiErrorCodes.NotFound => StatusCodes.Status404NotFound,
-        ApiErrorCodes.Forbidden => StatusCodes.Status403Forbidden,
-        ApiErrorCodes.Conflict => StatusCodes.Status409Conflict,
-        ApiErrorCodes.AuthExpired => StatusCodes.Status401Unauthorized,
-        _ => StatusCodes.Status400BadRequest
-    };
 }

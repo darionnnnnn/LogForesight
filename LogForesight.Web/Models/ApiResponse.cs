@@ -44,4 +44,19 @@ public static class ApiErrorCodes
     public const string ValidationFailed = "validation_failed";
     public const string Conflict = "conflict";
     public const string ServerError = "server_error";
+    public const string UpstreamTimeout = "upstream_timeout";
+
+    /// <summary>錯誤碼 → HTTP 狀態碼的唯一登錄處；新增錯誤碼時只改這裡</summary>
+    public static readonly IReadOnlyDictionary<string, int> Table = new Dictionary<string, int>
+    {
+        [NotFound] = 404,
+        [Forbidden] = 403,
+        [Conflict] = 409,
+        [AuthExpired] = 401,
+        [ServerError] = 500,
+        [UpstreamTimeout] = 503
+    };
+
+    /// <summary>取錯誤碼對應的狀態碼；表外（含 validation_failed）一律 400</summary>
+    public static int StatusOf(string code) => Table.TryGetValue(code, out var status) ? status : 400;
 }
