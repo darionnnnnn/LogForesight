@@ -164,7 +164,48 @@ function makeDashboard() {
     return { run: inst.load, api, writes };
 }
 
+/** 儀表板自動 AI 卡：抽 production 的 loadAiFocus 與 renderAiFocusResting，只替換 api 與 DOM 邊界 */
+function makeAiFocus() {
+    const source = sourceOf('dashboard.js');
+    const container = {
+        children: [],
+        replaceChildren(...nodes) { this.children = nodes; }
+    };
+    const mkNode = () => ({
+        className: '', textContent: '', children: [],
+        appendChild(c) { this.children.push(c); return c; }
+    });
+    const rejection = { error: null };
+    const factory = new Function('api', 'getAiAvailable', 'createSeqGuard', 'container', 'mkNode', 'icon', 'renderAiInline', 'appUrl', 'recordsUrl', `
+        let currentDays = 7;
+        const aiFocusGuard = createSeqGuard();
+        const document = { getElementById: () => container, createElement: () => mkNode() };
+        ${extractFunction(source, 'function renderAiFocusResting(')}
+        ${extractFunction(source, 'async function loadAiFocus(')}
+        return { loadAiFocus };
+    `);
+    const api = { get: async () => { throw rejection.error; } };
+    const inst = factory(api, async () => true, createSeqGuard, container, mkNode, () => mkNode(), () => {}, (x) => x, (x) => x);
+    return { run: inst.loadAiFocus, container, rejection };
+}
+
 const cases = {
+    async dashboard自動AI卡遇429顯示暫時休息且不隱藏() {
+        const c = makeAiFocus();
+        c.rejection.error = Object.assign(new Error('AI 使用太頻繁'), { status: 429, retryAfterSeconds: 23 });
+        await c.run();
+        assert.equal(c.container.children.length, 1, '429 時卡片不得被隱藏');
+        const card = c.container.children[0];
+        const text = card.children[0].textContent;
+        assert(text.includes('暫時休息'), `應顯示暫時休息：${text}`);
+        assert(text.includes('23'), `應帶秒數：${text}`);
+    },
+    async dashboard自動AI卡一般失敗維持隱藏() {
+        const c = makeAiFocus();
+        c.rejection.error = Object.assign(new Error('boom'), { status: 500 });
+        await c.run();
+        assert.equal(c.container.children.length, 0, '非 429 的失敗維持整卡不顯示');
+    },
     // ---- audit ----
     async audit舊回應晚到不渲染() {
         const c = makeAudit();

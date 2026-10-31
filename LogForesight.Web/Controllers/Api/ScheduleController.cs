@@ -241,7 +241,7 @@ public class ScheduleController : ControllerBase
             {
                 var latestAttempts = NetiqSourceAttempt.ReadLatest(_storageBackend, from, to);
                 if (latestAttempts.Values.Any(attempt => attempt.Status == "unknown"))
-                    return ApiResponse<RunPreviewDto>.Fail("netiq_attempt_ledger_invalid",
+                    return ApiResponse<RunPreviewDto>.Fail(ApiErrorCodes.NetiqAttemptLedgerInvalid,
                         "NetIQ 最近執行狀態資料不完整，無法準確預覽補跑範圍；請先檢查執行狀態或聯絡管理員。");
 
                 retryAttemptHostIds = latestAttempts.Values
@@ -251,7 +251,7 @@ public class ScheduleController : ControllerBase
             }
             catch (InvalidDataException)
             {
-                return ApiResponse<RunPreviewDto>.Fail("netiq_attempt_ledger_invalid",
+                return ApiResponse<RunPreviewDto>.Fail(ApiErrorCodes.NetiqAttemptLedgerInvalid,
                     "NetIQ 最近執行狀態資料損毀或超出可檢查範圍，無法準確預覽補跑範圍；請檢查執行狀態或聯絡管理員。");
             }
         }

@@ -36,14 +36,14 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if ((visible.Count == 0 && !canViewAll) || policy.HostIds.Any(visibility.IsCaseGrantOnly) ||
             (!canViewAll && !policy.HostIds.All(visible.Contains))) return Forbid();
         if (policy.HostIds.Count > HostLimit)
-            return Conflict(ApiResponse.Fail("scope_limit_exceeded", "既有主機範圍超過 3,000 筆；已拒絕回傳不完整修復清單。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "既有主機範圍超過 3,000 筆；已拒絕回傳不完整修復清單。"));
         var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
         var savedHosts = policy.HostIds.Distinct().Order().Select(id => DescribeSavedHost(sourceSnapshot, visible, id)).ToArray();
         var store = backend.PrtgStore();
         var fence = CaptureFence(policy, visible, store, sourceSnapshot.Version);
         if (!FenceMatches(fence, Store().Get(), VisibleHostIds(sourceSnapshot), store) ||
             fence.HostVersion != sourceSnapshot.Version)
-            return Conflict(ApiResponse.Fail("catalogue_changed", "主機、授權或來源目錄在讀取期間已變更；請重新載入。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "主機、授權或來源目錄在讀取期間已變更；請重新載入。"));
         return Ok(ApiResponse<object>.Ok(new { policy.Revision,
             Enabled = settings.PrtgEnabled, Ready = settings.PrtgEnabled && !string.IsNullOrWhiteSpace(settings.PrtgUrl),
             HostIds = policy.HostIds.ToArray(), SensorIds = policy.SensorIds.ToArray(),
@@ -57,7 +57,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         [FromQuery] string? catalogueToken = null)
     {
         if (NormalizeSearch(search).Length > 128)
-            return BadRequest(ApiResponse.Fail("validation_failed", "搜尋文字最多 128 個字元。"));
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, "搜尋文字最多 128 個字元。"));
         R01PageToken? token;
         if (string.IsNullOrWhiteSpace(cursor))
         {
@@ -70,14 +70,14 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var eligibleSnapshot = EligibleHosts(sourceSnapshot, visible);
         var eligible = eligibleSnapshot.Hosts;
         if (eligible.Count > HostLimit)
-            return Conflict(ApiResponse.Fail("scope_limit_exceeded", "NetIQ 可選主機超過 3,000 台；目前操作已拒絕，未截斷候選範圍。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "NetIQ 可選主機超過 3,000 台；目前操作已拒絕，未截斷候選範圍。"));
         var store = backend.PrtgStore();
-        if (!FenceMatches(token!, Store().Get(), visible, store)) return Conflict(ApiResponse.Fail("catalogue_changed", "主機、映射或可見範圍已變更；請重新載入目錄。"));
+        if (!FenceMatches(token!, Store().Get(), visible, store)) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "主機、映射或可見範圍已變更；請重新載入目錄。"));
         var page = store.GetMonitoringHostPage(eligible.Keys.ToArray(), token!.Search, token.Offset, PageSize,
             string.IsNullOrWhiteSpace(cursor) ? null : token.Total);
-        if (!FenceMatches(token, Store().Get(), VisibleHostIds(sourceSnapshot), store)) return Conflict(ApiResponse.Fail("catalogue_changed", "目錄在查詢期間已變更，請重新查詢。"));
+        if (!FenceMatches(token, Store().Get(), VisibleHostIds(sourceSnapshot), store)) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "目錄在查詢期間已變更，請重新查詢。"));
         if (page.Total > HostLimit)
-            return Conflict(ApiResponse.Fail("scope_limit_exceeded", "目錄主機超過 3,000 台；請縮小範圍後重試。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "目錄主機超過 3,000 台；請縮小範圍後重試。"));
         var names = eligible;
         var rows = page.Rows.Select(r => new { r.HostId, HostName = names.TryGetValue(r.HostId, out var host) ? host.HostName : r.HostName }).ToArray();
         var nextOffset = token.Offset + rows.Length;
@@ -91,9 +91,9 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
     public IActionResult SensorPage([FromBody] PrtgMonitoringPageRequest request)
     {
         if (NormalizeSearch(request.Search).Length > 128 || request.Offset > 100000)
-            return BadRequest(ApiResponse.Fail("validation_failed", "搜尋文字最多 128 個字元，頁面位置超出上限。"));
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, "搜尋文字最多 128 個字元，頁面位置超出上限。"));
         if (request.HostIds is null || request.HostIds.Count is < 1 or > HostLimit || request.Offset < 0)
-            return BadRequest(ApiResponse.Fail("validation_failed", "所選主機需為 1 至 3,000 台，頁面位置無效。"));
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, "所選主機需為 1 至 3,000 台，頁面位置無效。"));
         R01PageToken? token;
         if (string.IsNullOrWhiteSpace(request.Cursor))
         {
@@ -102,7 +102,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
                 HostHash = HashIds(request.HostIds) };
         }
         else if (!TryReadCursor(request.Cursor, "sensors", request.Search, request.HostIds, out token, out var error)) return error!;
-        if (token!.Offset != request.Offset) return BadRequest(ApiResponse.Fail("invalid_cursor", "頁面位置與伺服器游標不一致。"));
+        if (token!.Offset != request.Offset) return BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidCursor, "頁面位置與伺服器游標不一致。"));
         var sourceSnapshot = hosts.CapturePrtgSnapshot();
         var visible = VisibleHostIds(sourceSnapshot);
         var eligibleSnapshot = EligibleHosts(sourceSnapshot, visible);
@@ -110,12 +110,12 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if (request.HostIds.Distinct().Count() != request.HostIds.Count || request.HostIds.Any(id => !eligible.ContainsKey(id)))
             return Forbid();
         var store = backend.PrtgStore();
-        if (!FenceMatches(token, Store().Get(), visible, store)) return Conflict(ApiResponse.Fail("catalogue_changed", "目錄或授權已變更；請重新查詢。"));
+        if (!FenceMatches(token, Store().Get(), visible, store)) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "目錄或授權已變更；請重新查詢。"));
         var mapDate = token.MapDate;
-        if (!mapDate.HasValue) return Conflict(ApiResponse.Fail("catalogue_changed", "尚無有效的最新全域主機對應日期。"));
+        if (!mapDate.HasValue) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "尚無有效的最新全域主機對應日期。"));
         var page = store.GetMonitoringSensorPage(mapDate.Value, request.HostIds, token.Search, request.Offset, PageSize,
             string.IsNullOrWhiteSpace(request.Cursor) ? null : token.Total);
-        if (!FenceMatches(token, Store().Get(), VisibleHostIds(sourceSnapshot), store)) return Conflict(ApiResponse.Fail("catalogue_changed", "目錄在查詢期間已變更，請重新查詢。"));
+        if (!FenceMatches(token, Store().Get(), VisibleHostIds(sourceSnapshot), store)) return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "目錄在查詢期間已變更，請重新查詢。"));
         var nextOffset = request.Offset + page.Rows.Count;
         var next = nextOffset < page.Total ? ProtectToken(token with { Offset = nextOffset, Total = page.Total }) : null;
         return Ok(ApiResponse<object>.Ok(new { page.Total, Rows = page.Rows, NextCursor = next,
@@ -134,18 +134,18 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var visible = VisibleHostIds(sourceSnapshot);
         var eligibleSnapshot = EligibleHosts(sourceSnapshot, visible);
         var eligible = eligibleSnapshot.Hosts;
-        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail("scope_limit_exceeded", "NetIQ 主機超過 3,000 台，已拒絕完整目錄。"));
+        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "NetIQ 主機超過 3,000 台，已拒絕完整目錄。"));
         if (selectedHosts.Any(id => !eligible.ContainsKey(id))) return Forbid();
         if (!TryReadFence(request.CatalogueToken, out var fence, out var error)) return error!;
         var store = backend.PrtgStore();
         if (!FenceMatches(fence!, Store().Get(), visible, store) || fence!.HostVersion != sourceSnapshot.Version)
-            return Conflict(ApiResponse.Fail("catalogue_changed", "來源、可見範圍或目錄已變更；請重新載入後再估算。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "來源、可見範圍或目錄已變更；請重新載入後再估算。"));
         if (!fence.MapDate.HasValue || store.CountValidMonitoringSensors(fence.MapDate.Value, selectedHosts, selectedSensors) != selectedSensors.Length)
-            return BadRequest(ApiResponse.Fail("invalid_selection", "所有 sensor 必須存在於目前最新全域對應日，且屬於所選主機；沒有 ID 會被截斷或忽略。"));
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidSelection, "所有 sensor 必須存在於目前最新全域對應日，且屬於所選主機；沒有 ID 會被截斷或忽略。"));
         var hostCandidates = store.GetMonitoringHostPage(eligible.Keys.ToArray(), null, 0, 1);
         var available = store.GetMonitoringSensorPage(fence.MapDate.Value, selectedHosts, null, 0, 1);
         if (!FenceMatches(fence, Store().Get(), VisibleHostIds(sourceSnapshot), store) || fence.HostVersion != sourceSnapshot.Version)
-            return Conflict(ApiResponse.Fail("catalogue_changed", "估算期間來源、可見範圍或目錄已變更；請重新載入。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "估算期間來源、可見範圍或目錄已變更；請重新載入。"));
         var requestHash = HashRequest(request);
         var estimate = fence with { Kind = "estimate", ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(5),
             HostHash = HashIds(selectedHosts), SensorHash = HashIds(selectedSensors), RequestHash = requestHash,
@@ -176,21 +176,21 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if (!TryReadToken(request.EstimateToken, out var estimate) || estimate!.Kind != "estimate" ||
             estimate.ExpiresAtUtc <= DateTimeOffset.UtcNow || estimate.HostHash != HashIds(request.HostIds) ||
             estimate.SensorHash != HashIds(request.SensorIds) || estimate.RequestHash != HashRequest(request))
-            return Conflict(ApiResponse.Fail("estimate_required", "儲存前需對目前完整主機與 sensor 重新估算；估算權杖無效或已逾期。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.EstimateRequired, "儲存前需對目前完整主機與 sensor 重新估算；估算權杖無效或已逾期。"));
         var sourceSnapshot = hosts.CapturePrtgSnapshot();
         var visible = VisibleHostIds(sourceSnapshot);
         var eligible = EligibleHosts(sourceSnapshot, visible).Hosts;
-        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail("scope_limit_exceeded", "NetIQ 主機超過 3,000 台，已拒絕完整目錄。"));
+        if (eligible.Count > HostLimit) return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "NetIQ 主機超過 3,000 台，已拒絕完整目錄。"));
         if (selectedHosts.Any(id => !eligible.ContainsKey(id))) return Forbid();
         var store = backend.PrtgStore();
         if (!FenceMatches(estimate, Store().Get(), visible, store) || estimate.HostVersion != sourceSnapshot.Version)
-            return Conflict(ApiResponse.Fail("catalogue_changed", "估算後可見範圍或目錄已變更；請重新估算。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "估算後可見範圍或目錄已變更；請重新估算。"));
         if (selectedSensors.Length > 0 && (!estimate.MapDate.HasValue ||
                 store.CountValidMonitoringSensors(estimate.MapDate.Value, selectedHosts, selectedSensors) != selectedSensors.Length))
-            return Conflict(ApiResponse.Fail("selection_changed", "所選 sensor 已不全屬於目前最新對應日的所選主機；請重新選取與估算。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.SelectionChanged, "所選 sensor 已不全屬於目前最新對應日的所選主機；請重新選取與估算。"));
         // 查詢後再核一次：估算後被撤回的可見權限不能趁查詢期間保存。
         if (!FenceMatches(estimate, Store().Get(), VisibleHostIds(sourceSnapshot), store))
-            return Conflict(ApiResponse.Fail("catalogue_changed", "估算後可見範圍或目錄已變更；請重新估算。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "估算後可見範圍或目錄已變更；請重新估算。"));
         try
         {
             var result = Store().Update(p =>
@@ -211,7 +211,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
                 "prtg", result.Revision);
             return Ok(ApiResponse<string>.Ok(result.Revision));
         }
-        catch (InvalidOperationException ex) { return Conflict(ApiResponse.Fail("conflict", ex.Message)); }
+        catch (InvalidOperationException ex) { return Conflict(ApiResponse.Fail(ApiErrorCodes.Conflict, ex.Message)); }
     }
 
     private PrtgMonitoringPolicyStore Store() => new(backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
@@ -289,7 +289,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         error = null;
         if (!TryReadToken(text, out token) || token!.Kind != "fence")
         {
-            error = BadRequest(ApiResponse.Fail("invalid_token", "目錄版本權杖無效或已逾期，請重新載入。"));
+            error = BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidToken, "目錄版本權杖無效或已逾期，請重新載入。"));
             return false;
         }
         return true;
@@ -302,7 +302,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if (!TryReadToken(text, out token) || token!.Kind != kind || token.Search != NormalizeSearch(search) ||
             token.HostHash != HashIds(hostIds))
         {
-            error = BadRequest(ApiResponse.Fail("invalid_cursor", "目錄游標無效、逾期或與目前搜尋範圍不符。"));
+            error = BadRequest(ApiResponse.Fail(ApiErrorCodes.InvalidCursor, "目錄游標無效、逾期或與目前搜尋範圍不符。"));
             return false;
         }
         return true;
@@ -320,7 +320,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
     public IActionResult Preview([FromQuery] DateTime? day = null, [FromQuery] int offset = 0, [FromQuery] int limit = 100)
     {
         if (offset < 0 || offset > 30000 || limit is < 1 or > PageSize || day > DateTime.Today)
-            return BadRequest(ApiResponse.Fail("validation_failed", "預覽日期不可在未來；每頁最多 100 筆，頁面位置不得超過 30,000。"));
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ValidationFailed, "預覽日期不可在未來；每頁最多 100 筆，頁面位置不得超過 30,000。"));
         var targetDay = (day ?? DateTime.Today.AddDays(-1)).Date;
         var sourceSnapshot = hosts.CapturePrtgSnapshot();
         var visible = VisibleHostIds(sourceSnapshot);
@@ -328,7 +328,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         var allHosts = sourceSnapshot.Hosts;
         var eligibleCount = allHosts.Count(h => visible.Contains(h.HostId) && h.Active && h.MergedInto == null && h.Source == "netiq");
         if (eligibleCount > HostLimit)
-            return Conflict(ApiResponse.Fail("scope_limit_exceeded", "可見 NetIQ 範圍超過 3,000 台；評估預覽已拒絕，不會回傳部分結果。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.ScopeLimitExceeded, "可見 NetIQ 範圍超過 3,000 台；評估預覽已拒絕，不會回傳部分結果。"));
         var fullScope = visible.Count > 0 && eligibleCount > 0 && allHosts.All(h => visible.Contains(h.HostId));
         var visibleNetiqHosts = allHosts.Where(h => visible.Contains(h.HostId) && h.Active && h.MergedInto == null && h.Source == "netiq")
             .Select(h => h.HostId).ToArray();
@@ -373,7 +373,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if (HashIds(VisibleHostIds(sourceSnapshot)) != HashIds(visible) ||
             hostVersion != backend.Blob("hosts").ReadVersion() || sentinelVersion != backend.Blob("sentinels").ReadVersion() ||
             rulesVersion != backend.Blob("rules").ReadVersion())
-            return Conflict(ApiResponse.Fail("catalogue_changed", "範圍或 sentinel 設定在預覽期間變更，請重新查詢。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "範圍或 sentinel 設定在預覽期間變更，請重新查詢。"));
         var scopeRevision = $"{scopeRevisionVersion}:{policyStoreVersion}:{rulesVersion}:{sentinelFingerprint}:{hostFingerprint}";
         var policyHosts = policy.HostIds.ToHashSet();
         var sensorTypes = store.GetSensorStatuses().GroupBy(s => s.Objid).ToDictionary(g => g.Key, g => g.First().SensorType);
@@ -412,7 +412,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             settingsStoreVersion != settingsBlob.ReadVersion() || policyStoreVersion != backend.Blob(PrtgMonitoringPolicyStore.BlobKey).ReadVersion() ||
             scopeRevisionVersion != backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion() || rulesVersion != backend.Blob("rules").ReadVersion() ||
             catalogueRevision != store.ReadCatalogueDataRevision() || hostMapDataRevision != store.ReadHostMapDataRevision())
-            return Conflict(ApiResponse.Fail("catalogue_changed", "主機、政策、規則、目錄或來源範圍在預覽期間變更，請重新查詢。"));
+            return Conflict(ApiResponse.Fail(ApiErrorCodes.CatalogueChanged, "主機、政策、規則、目錄或來源範圍在預覽期間變更，請重新查詢。"));
         return Ok(ApiResponse<object>.Ok(new { Day = targetDay, SettingsRevision = settings.Revision, PolicyRevision = policy.Revision,
             ScopeRevision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scopeRevision))), Total = dataPage.Total, Offset = offset,
             Complete = offset == 0 && rows.Length == dataPage.Total, HasMore = offset + rows.Length < dataPage.Total, Rows = rows,
@@ -422,7 +422,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
     private static bool ValidBoundedSelection(PrtgMonitoringRequest request, out string reason, out string code)
     {
         reason = "";
-        code = "validation_failed";
+        code = ApiErrorCodes.ValidationFailed;
         if (request.HostIds is null || request.SensorIds is null)
         {
             reason = "主機與 sensor 清單必須明確提供。";
@@ -431,25 +431,25 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
         if (request.HostIds.Count > HostLimit || request.HostIds.Any(id => id <= 0) ||
             request.HostIds.Distinct().Count() > HostLimit)
         {
-            code = "scope_limit_exceeded";
+            code = ApiErrorCodes.ScopeLimitExceeded;
             reason = "主機清單最多 3,000 個有效且去重的 ID（空＝全部已對應主機）；超出會拒絕，不會截斷。";
             return false;
         }
         if (request.SensorIds.Count > SensorLimit && request.SensorIds.Count < 30000)
         {
-            code = "scope_limit_exceeded";
+            code = ApiErrorCodes.ScopeLimitExceeded;
             reason = "sensor 清單上限為 15,000；擴量至 30,000 尚不支援，清單不會截斷。";
             return false;
         }
         if (request.SensorIds.Count >= 30000)
         {
-            code = "unsupported_capacity";
+            code = ApiErrorCodes.UnsupportedCapacity;
             reason = "30,000 顆 sensor 的擴量範圍目前不支援；請縮小至 15,000 顆以內。";
             return false;
         }
         if (request.SensorIds.Any(id => id <= 0) || request.SensorIds.Distinct().Count() > SensorLimit)
         {
-            code = "scope_limit_exceeded";
+            code = ApiErrorCodes.ScopeLimitExceeded;
             reason = "sensor 清單最多 15,000 個有效且去重的 ID（空＝不限）；超出範圍會拒絕，不會截斷。";
             return false;
         }

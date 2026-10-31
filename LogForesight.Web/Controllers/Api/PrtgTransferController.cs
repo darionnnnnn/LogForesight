@@ -68,7 +68,7 @@ public sealed class PrtgTransferController : ControllerBase
     [RequireViewAll]
     [HttpPost("/api/admin/settings/prtg-import")]
     public IActionResult LegacyPrtgImport() =>
-        StatusCode(410, ApiResponse.Fail("legacy_import_retired",
+        StatusCode(410, ApiResponse.Fail(ApiErrorCodes.LegacyImportRetired,
             "請使用管理介面的可續傳診斷匯入；V1/V2 JSON 舊檔仍可使用。舊單次入口已停止接收檔案。"));
 
     [HttpPost]
@@ -113,12 +113,12 @@ public sealed class PrtgTransferController : ControllerBase
             var store = Store();
             var status = store.GetStatus(transferId, binding);
             if (ordinal < 0 || ordinal >= status.ChunkCount)
-                throw new PrtgTransferStoreException("chunk_shape_invalid", "片段序號超出宣告範圍。", 400);
+                throw new PrtgTransferStoreException(ApiErrorCodes.ChunkShapeInvalid, "片段序號超出宣告範圍。", 400);
             var expectedBytes = checked((int)Math.Min(EfPrtgTransferStore.MaxChunkBytes,
                 status.DeclaredBytes - checked((long)ordinal * EfPrtgTransferStore.MaxChunkBytes)));
             if (!string.Equals(Request.ContentType?.Split(';', 2)[0].Trim(), "application/octet-stream", StringComparison.OrdinalIgnoreCase) ||
                 Request.ContentLength != expectedBytes)
-                throw new PrtgTransferStoreException("chunk_size_invalid", "請以 application/octet-stream 傳送正確長度的單片原始位元組。", 400);
+                throw new PrtgTransferStoreException(ApiErrorCodes.ChunkSizeInvalid, "請以 application/octet-stream 傳送正確長度的單片原始位元組。", 400);
 
             // 先持久保留 buffer lease，通過後才配置並讀取最多 4 MiB request body。
             lease = store.BeginChunkWrite(transferId, ordinal, expectedBytes, binding, DateTimeOffset.UtcNow);
@@ -131,7 +131,7 @@ public sealed class PrtgTransferController : ControllerBase
             {
                 store.ReleaseChunkWrite(lease, binding, DateTimeOffset.UtcNow);
                 lease = null;
-                throw new PrtgTransferStoreException("transfer_binding_changed", "片段接收期間全站主機範圍或來源設定已變更。", 403);
+                throw new PrtgTransferStoreException(ApiErrorCodes.TransferBindingChanged, "片段接收期間全站主機範圍或來源設定已變更。", 403);
             }
             cancellationToken.ThrowIfCancellationRequested();
             acceptStarted = true;
@@ -140,11 +140,11 @@ public sealed class PrtgTransferController : ControllerBase
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return StatusCode(499, ApiResponse.Fail("request_cancelled", "片段讀取已取消；尚未接受的內容可安全重送。"));
+            return StatusCode(499, ApiResponse.Fail(ApiErrorCodes.RequestCancelled, "片段讀取已取消；尚未接受的內容可安全重送。"));
         }
         catch (EndOfStreamException)
         {
-            return BadRequest(ApiResponse.Fail("chunk_body_truncated", "片段本文長度不足，請查詢狀態後重送。"));
+            return BadRequest(ApiResponse.Fail(ApiErrorCodes.ChunkBodyTruncated, "片段本文長度不足，請查詢狀態後重送。"));
         }
         finally
         {
@@ -177,13 +177,13 @@ public sealed class PrtgTransferController : ControllerBase
             {
                 var currentBinding = CaptureBinding();
                 if (currentBinding != binding)
-                    throw new PrtgTransferStoreException("transfer_binding_changed", "驗證期間全站主機範圍或來源設定已變更。", 403);
+                    throw new PrtgTransferStoreException(ApiErrorCodes.TransferBindingChanged, "驗證期間全站主機範圍或來源設定已變更。", 403);
                 return Task.FromResult(store.ReadChunk(lease, ordinal, currentBinding, DateTimeOffset.UtcNow));
             }, cancellationToken).ConfigureAwait(false);
 
             var finalBinding = CaptureBinding();
             if (finalBinding != binding)
-                throw new PrtgTransferStoreException("transfer_binding_changed", "驗證期間全站主機範圍或來源設定已變更。", 403);
+                throw new PrtgTransferStoreException(ApiErrorCodes.TransferBindingChanged, "驗證期間全站主機範圍或來源設定已變更。", 403);
             cancellationToken.ThrowIfCancellationRequested();
             var completed = store.CompleteValidation(lease, validation.PackageSha256,
                 validation.ResultManifestJson, finalBinding, DateTimeOffset.UtcNow);
@@ -203,13 +203,13 @@ public sealed class PrtgTransferController : ControllerBase
         }
         catch (System.Text.Json.JsonException)
         {
-            const string code = "json_invalid";
+            const string code = ApiErrorCodes.JsonInvalid;
             if (lease != null) TryFailValidation(store, lease, code);
             return UnprocessableEntity(ApiResponse.Fail(code, "舊版診斷 JSON 格式無效或已截斷。"));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return StatusCode(499, ApiResponse.Fail("validation_cancelled", "驗證已取消；片段仍保留，可重新查詢或續驗。"));
+            return StatusCode(499, ApiResponse.Fail(ApiErrorCodes.ValidationCancelled, "驗證已取消；片段仍保留，可重新查詢或續驗。"));
         }
         finally
         {
@@ -228,7 +228,7 @@ public sealed class PrtgTransferController : ControllerBase
     {
         if (!_currentUser.IsAuthenticated || !_currentUser.Has(Capability.Maintain) ||
             string.IsNullOrWhiteSpace(_currentUser.Account) || (_currentUser.UserId <= 0 && !_currentUser.IsServerAdmin))
-            throw new PrtgTransferStoreException("transfer_access_unverified", "無法確認登入者、主機可見範圍或 PRTG 來源，拒絕診斷傳輸。", 403);
+            throw new PrtgTransferStoreException(ApiErrorCodes.TransferAccessUnverified, "無法確認登入者、主機可見範圍或 PRTG 來源，拒絕診斷傳輸。", 403);
 
         var snapshot = _hosts.CapturePrtgSnapshot();
         var allIds = snapshot.Hosts.Select(x => x.HostId).ToHashSet();
@@ -236,7 +236,7 @@ public sealed class PrtgTransferController : ControllerBase
             ? allIds : _visibility.GetVisibleHostIds(snapshot);
         if (allIds.Count == 0 || visibleIds.Count == 0 || !allIds.SetEquals(visibleIds) ||
             allIds.Any(_visibility.IsCaseGrantOnly))
-            throw new PrtgTransferStoreException("transfer_full_visibility_required", "診斷傳輸需要管理者可見全部主機；空範圍或案件授與不允許。", 403);
+            throw new PrtgTransferStoreException(ApiErrorCodes.TransferFullVisibilityRequired, "診斷傳輸需要管理者可見全部主機；空範圍或案件授與不允許。", 403);
 
         var settings = _settings.Get();
         var scopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey).ReadVersion();
@@ -246,7 +246,7 @@ public sealed class PrtgTransferController : ControllerBase
         var policyVersion = policyBlob.ReadVersion();
         var policy = new PrtgMonitoringPolicyStore(policyBlob).Get();
         if (policyBlob.ReadVersion() != policyVersion || _hosts.DataVersion != snapshot.Version)
-            throw new PrtgTransferStoreException("transfer_context_changed", "來源或主機範圍在核對期間改變，請重試。", 409);
+            throw new PrtgTransferStoreException(ApiErrorCodes.TransferContextChanged, "來源或主機範圍在核對期間改變，請重試。", 409);
         var policyHosts = string.Join(",", policy.HostIds.Order().Select(x => x.ToString(CultureInfo.InvariantCulture)));
         var policySensors = string.Join(",", policy.SensorIds.Order().Select(x => x.ToString(CultureInfo.InvariantCulture)));
         var sourceText = $"url:{settings.PrtgUrl?.Trim() ?? ""}|enabled:{settings.PrtgEnabled}|" +
@@ -264,14 +264,14 @@ public sealed class PrtgTransferController : ControllerBase
     }
 
     private static bool IsValidationFailure(string code) =>
-        code is "package_hash_mismatch" or "chunk_integrity_failed" or "transfer_chunks_incomplete";
+        code is ApiErrorCodes.PackageHashMismatch or ApiErrorCodes.ChunkIntegrityFailed or ApiErrorCodes.TransferChunksIncomplete;
 
     private static string FailureCode(string message)
     {
         var separator = message.IndexOf(':');
-        var candidate = separator > 0 ? message[..separator] : "package_invalid";
+        var candidate = separator > 0 ? message[..separator] : ApiErrorCodes.PackageInvalid;
         return candidate.Length <= 64 && candidate.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')
-            ? candidate : "package_invalid";
+            ? candidate : ApiErrorCodes.PackageInvalid;
     }
 
     private static string SafeValidationMessage(string code) => code switch

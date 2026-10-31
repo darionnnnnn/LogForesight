@@ -207,9 +207,10 @@ async function onSubmit(event) {
         } else {
             messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
         }
-    } catch {
+    } catch (err) {
         if (requestGeneration !== generation) return;
-        messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
+        const content = err?.status === 429 ? err.message : 'AI 目前忙碌或無法回應，稍後再試。';
+        messages.push({ role: 'assistant', content, failed: true });
     } finally {
         // 只在對話仍是自己發起的那一個時收尾；已被重設的對話，重設時就把畫面狀態處理好了——
         // 此時新對話可能正在等待自己的回覆，舊請求不得把送出鈕或輸入框重新開啟

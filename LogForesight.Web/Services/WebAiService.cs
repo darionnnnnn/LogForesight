@@ -33,6 +33,13 @@ public interface IWebAiService
     Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class;
 
     /// <summary>
+    /// 同上，但快取未命中、真的要呼叫 AI 之前先問 <paramref name="beforeCall"/>：回 false 就不呼叫、回 null
+    /// （每人節流在此扣額，快取命中不扣）。預設實作忽略 beforeCall，替身不必跟著改。
+    /// </summary>
+    Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt, Func<bool> beforeCall) where T : class =>
+        GenerateAsync<T>(cacheKey, systemPrompt, userPrompt);
+
+    /// <summary>
     /// 詳情頁對話（R7 精簡版）一輪回覆：純文字、不走快取（每輪內容都不同，快取沒有意義）。
     /// 任何失敗回 null，呼叫端顯示「AI 目前忙碌或無法回應」。
     /// </summary>
@@ -219,7 +226,10 @@ public class WebAiService : IWebAiService
         }
     }
 
-    public async Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class
+    public Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class =>
+        GenerateAsync<T>(cacheKey, systemPrompt, userPrompt, () => true);
+
+    public async Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt, Func<bool> beforeCall) where T : class
     {
         var cached = _cache.Get(cacheKey);
         if (cached != null)
@@ -232,6 +242,7 @@ public class WebAiService : IWebAiService
         {
             var ai = GetClient();
             if (ai == null) return null;
+            if (!beforeCall()) return null;   // 真的要呼叫 AI 了才扣每人額度
 
             var result = await ai.ChatJsonAsync<T>(userPrompt, systemPrompt);
             if (!result.Success || result.Value == null) return null;

@@ -2204,8 +2204,8 @@ function aiInterpretPanel(issue) {
                 // 只有真的拿到判讀結果才鎖：逾時或回空時鎖死，使用者只能重整整頁才能再試一次
                 button.disabled = true;
             }
-        } catch {
-            output.textContent = 'AI 目前無法判讀這個問題。';
+        } catch (err) {
+            output.textContent = err?.status === 429 ? err.message : 'AI 目前無法判讀這個問題。';
             output.classList.add('text-muted');
         } finally {
             restore();

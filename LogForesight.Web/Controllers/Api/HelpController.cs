@@ -20,13 +20,16 @@ public class HelpController : ControllerBase
     private readonly HelpQaService _qa;
     private readonly SetupWizardStateStore _setupState;
     private readonly ICurrentUser _currentUser;
+    private readonly ManualAiThrottle _manualThrottle;
 
-    public HelpController(HelpContentService content, HelpQaService qa, SetupWizardStateStore setupState, ICurrentUser currentUser)
+    public HelpController(HelpContentService content, HelpQaService qa, SetupWizardStateStore setupState, ICurrentUser currentUser,
+        ManualAiThrottle manualThrottle)
     {
         _content = content;
         _qa = qa;
         _setupState = setupState;
         _currentUser = currentUser;
+        _manualThrottle = manualThrottle;
     }
 
     /// <summary>manifest＋全部章節內容一次取回（總量 &lt;200KB，不值得做分節載入）。
@@ -47,6 +50,14 @@ public class HelpController : ControllerBase
     [SkipDataVersionBump]
     [HttpPost("ask")]
     [Permission(Capability.Maintain)]
-    public async Task<ApiResponse<AskHelpResponseDto?>> Ask([FromBody] AskHelpRequest request) =>
-        ApiResponse<AskHelpResponseDto?>.Ok(await _qa.AskAsync(request.Question));
+    public async Task<ApiResponse<AskHelpResponseDto?>> Ask([FromBody] AskHelpRequest request)
+    {
+        // 問答不走快取：驗證通過、AI 可用、真的要呼叫時才扣額（驗證錯誤與 AI 未設定不扣）
+        var rejectedAfter = 0;
+        var answer = await _qa.AskAsync(request.Question, () =>
+            _manualThrottle.TryAcquire(_currentUser.UserId, DateTime.UtcNow, out rejectedAfter));
+        return rejectedAfter > 0
+            ? AiRateLimit.Reject<AskHelpResponseDto?>(Response, rejectedAfter)
+            : ApiResponse<AskHelpResponseDto?>.Ok(answer);
+    }
 }

@@ -27,7 +27,8 @@ public class AiController : ControllerBase
     private readonly RiskyEventLookupService _eventLookup;
     private readonly IHostStore _hosts;
     private readonly HandlingNoteAiService _noteAi;
-    private readonly HandlingNoteTidyThrottle _tidyThrottle;
+    private readonly ManualAiThrottle _manualThrottle;
+    private readonly AutoAiThrottle _autoThrottle;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly ISystemSettingsStore _systemSettings;
@@ -41,7 +42,8 @@ public class AiController : ControllerBase
         RiskyEventLookupService eventLookup,
         IHostStore hosts,
         HandlingNoteAiService noteAi,
-        HandlingNoteTidyThrottle tidyThrottle,
+        ManualAiThrottle manualThrottle,
+        AutoAiThrottle autoThrottle,
         ICurrentUser currentUser,
         IAuditService audit,
         ISystemSettingsStore systemSettings,
@@ -54,7 +56,8 @@ public class AiController : ControllerBase
         _eventLookup = eventLookup;
         _hosts = hosts;
         _noteAi = noteAi;
-        _tidyThrottle = tidyThrottle;
+        _manualThrottle = manualThrottle;
+        _autoThrottle = autoThrottle;
         _currentUser = currentUser;
         _audit = audit;
         _systemSettings = systemSettings;
@@ -84,10 +87,10 @@ public class AiController : ControllerBase
         // 只有真的會呼叫 AI 的請求才扣節流額度：太短或超長在服務內直接回提示／驗證錯誤，不該讓使用者被擋
         var trimmedLength = (request.Text ?? "").Trim().Length;
         var willCallAi = trimmedLength >= HandlingNoteAiService.MinInputChars && trimmedLength <= HandlingNoteAiService.MaxInputChars;
-        if (willCallAi && !_tidyThrottle.TryAcquire(_currentUser.UserId, DateTime.UtcNow))
+        if (willCallAi && !_manualThrottle.TryAcquire(_currentUser.UserId, DateTime.UtcNow, out var retryAfter))
         {
-            return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse<TidyNoteResponseDto>.Fail(
-                ApiErrorCodes.Forbidden, "AI 整理太頻繁，請稍候再試。"));
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                AiRateLimit.Reject<TidyNoteResponseDto>(Response, retryAfter));
         }
 
         var inputLength = (request.Text ?? "").Trim().Length;
@@ -117,7 +120,9 @@ public class AiController : ControllerBase
     {
         if (!_ai.Available) return ApiResponse<AiFocusDto?>.Ok(null);
         var dashboard = _dashboard.GetSummary(DashboardController.ClampDays(days));
-        return ApiResponse<AiFocusDto?>.Ok(await _ai.TodayFocusAsync(dashboard));
+        var gate = AiRateLimit.Gate(_autoThrottle, _currentUser.UserId);
+        var focus = await _ai.TodayFocusAsync(dashboard, gate.BeforeCall);
+        return gate.Rejected ? AiRateLimit.Reject<AiFocusDto?>(Response, gate.RetryAfter) : ApiResponse<AiFocusDto?>.Ok(focus);
     }
 
     /// <summary>查詢結果 AI 歸納（W1-2）：跨主機同簽章聚類 → AI 講白話</summary>
@@ -139,7 +144,9 @@ public class AiController : ControllerBase
         };
         var clusters = _recordsList.ClusterSignatures(request);
         var salt = $"{from}|{to}|{riskLevels}|{categories}|{hostIds}";
-        return ApiResponse<AiTextDto?>.Ok(await _ai.SummarizeQueryAsync(clusters, salt));
+        var gate = AiRateLimit.Gate(_autoThrottle, _currentUser.UserId);
+        var summary = await _ai.SummarizeQueryAsync(clusters, salt, gate.BeforeCall);
+        return gate.Rejected ? AiRateLimit.Reject<AiTextDto?>(Response, gate.RetryAfter) : ApiResponse<AiTextDto?>.Ok(summary);
     }
 
     /// <summary>詳情頁單一問題的 AI 判讀（W2）</summary>
@@ -154,7 +161,9 @@ public class AiController : ControllerBase
         var issue = detail.TopIssues.FirstOrDefault(i => IssueSignatureKeyComparer.Instance.Equals(i.IssueKey, issueKey));
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
-        return ApiResponse<AiTextDto?>.Ok(await _ai.InterpretIssueAsync(issue, detail.HostName, detail.Date, _hosts.Get(hostId)?.Os));
+        var gate = AiRateLimit.Gate(_manualThrottle, _currentUser.UserId);
+        var text = await _ai.InterpretIssueAsync(issue, detail.HostName, detail.Date, _hosts.Get(hostId)?.Os, gate.BeforeCall);
+        return gate.Rejected ? AiRateLimit.Reject<AiTextDto?>(Response, gate.RetryAfter) : ApiResponse<AiTextDto?>.Ok(text);
     }
 
     /// <summary>
@@ -174,6 +183,10 @@ public class AiController : ControllerBase
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
         ValidateChatMessages(request.Messages);
+
+        // 對話沒有快取，通過驗證、確定要呼叫 AI（含第一輪的現場事件查詢）時才扣額
+        if (!_manualThrottle.TryAcquire(_currentUser.UserId, DateTime.UtcNow, out var chatRetryAfter))
+            return AiRateLimit.Reject<AiTextDto?>(Response, chatRetryAfter);
 
         // 當日分析報告全文一併餵給 AI（docs/archive/HISTORY.md #11）：與「報告全文」卡同一條路、
         // 同一套授權（GetReport 內部同樣先 GetOne 驗證可見範圍）；無報告（低風險日）時為 null，

@@ -14,7 +14,7 @@ public class HelpControllerAuthorizationTests
         var content = new HelpContentService();
         var qa = new HelpQaService(content, new FakeWebAi { Available = aiAvailable }, user);
         // AskAvailable 不碰 setupState，傳 null 即可
-        return new HelpController(content, qa, null!, user);
+        return new HelpController(content, qa, null!, user, new ManualAiThrottle());
     }
 
     [Fact]

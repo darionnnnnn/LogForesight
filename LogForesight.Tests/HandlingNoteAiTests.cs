@@ -171,15 +171,15 @@ public class HandlingNoteAiTests
         Assert.Equal(StatusCodes.Status403Forbidden, result.StatusCode);
     }
 
-    private static AiController CreateController(IWebAiService ai, ICurrentUser user, IAuditService audit, HandlingNoteTidyThrottle throttle) =>
+    private static AiController CreateController(IWebAiService ai, ICurrentUser user, IAuditService audit, ManualAiThrottle throttle) =>
         // 與 tidy-note 無關的相依不會被觸及，傳 null 即可
         new(null!, null!, null!, null!, null!, null!,
-            new HandlingNoteAiService(ai), throttle, user, audit, new FakeSystemSettingsStore(), new AiAnalysisRunState());
+            new HandlingNoteAiService(ai), throttle, new AutoAiThrottle(), user, audit, new FakeSystemSettingsStore(), new AiAnalysisRunState());
 
     [Fact]
     public async Task 同一使用者60秒內第7次_429_其他使用者不受影響()
     {
-        var throttle = new HandlingNoteTidyThrottle();
+        var throttle = new ManualAiThrottle();
         var ai = new SequenceWebAi(Enumerable.Repeat<string?>("整理結果", 20).ToArray());
         var controller = CreateController(ai, FakeCurrentUser.ForUser(7, Capability.Handle), new RecordingAuditService(), throttle);
 
@@ -194,7 +194,8 @@ public class HandlingNoteAiTests
         var objectResult = Assert.IsType<ObjectResult>(blocked.Result);
         Assert.Equal(StatusCodes.Status429TooManyRequests, objectResult.StatusCode);
         var body = Assert.IsType<ApiResponse<TidyNoteResponseDto>>(objectResult.Value);
-        Assert.Equal("AI 整理太頻繁，請稍候再試。", body.Error!.Message);
+        Assert.Equal(ApiErrorCodes.RateLimited, body.Error!.Code);
+        Assert.Matches(@"^AI 使用太頻繁，請約 \d+ 秒後再試$", body.Error!.Message);
         Assert.Equal(6, ai.Calls);
 
         var other = CreateController(ai, FakeCurrentUser.ForUser(8, Capability.Handle), new RecordingAuditService(), throttle);
@@ -204,7 +205,7 @@ public class HandlingNoteAiTests
     [Fact]
     public void 節流窗口滑過60秒後恢復()
     {
-        var throttle = new HandlingNoteTidyThrottle();
+        var throttle = new ManualAiThrottle();
         var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         for (var i = 0; i < 6; i++) Assert.True(throttle.TryAcquire(1, t0.AddSeconds(i)));
         Assert.False(throttle.TryAcquire(1, t0.AddSeconds(59)));
@@ -218,7 +219,7 @@ public class HandlingNoteAiTests
         var output = "【處理】\n- 回收 WEB01 應用程式集區並調整閒置逾時設定完成";
         var audit = new RecordingAuditService();
         var ai = new SequenceWebAi(output, null);
-        var controller = CreateController(ai, FakeCurrentUser.ForUser(9, Capability.Handle), audit, new HandlingNoteTidyThrottle());
+        var controller = CreateController(ai, FakeCurrentUser.ForUser(9, Capability.Handle), audit, new ManualAiThrottle());
 
         await controller.TidyNote(new TidyNoteRequest { Text = input, IssueLabel = "W3SVC (1000)", HostCount = 1 });
         await controller.TidyNote(new TidyNoteRequest { Text = "太短了" });

@@ -126,8 +126,17 @@ async function initAiSummary() {
             // AI 產出走 markdown-lite 唯一渲染出口（S7）：DOM 組裝、不解析 HTML
             renderAiText(box, result.text, { badge: 'AI 歸納', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
             area.appendChild(box);
-        } catch {
-            // 靜默
+        } catch (err) {
+            // 一般失敗靜默；被每人節流擋下時說明稍後再試
+            if (err?.status === 429) {
+                area.replaceChildren();
+                const note = document.createElement('div');
+                note.className = 'text-muted small';
+                note.textContent = err.retryAfterSeconds
+                    ? `AI 暫時休息，約 ${err.retryAfterSeconds} 秒後再試。`
+                    : 'AI 暫時休息，請稍後再試。';
+                area.appendChild(note);
+            }
         } finally {
             restore();
         }

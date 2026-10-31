@@ -69,6 +69,19 @@ async function load() {
  * AI 今日焦點（docs/archive/HISTORY.md §6 W1-1）：純加值。
  * AI 不可用或回空時整卡不顯示——不留「載入失敗」的殘影。
  */
+function renderAiFocusResting(container, err) {
+    const seconds = err.retryAfterSeconds;
+    const card = document.createElement('div');
+    card.className = 'lf-card mb-3';
+    const body = document.createElement('div');
+    body.className = 'lf-card__body text-muted small';
+    body.textContent = seconds
+        ? `AI 暫時休息，約 ${seconds} 秒後再試。`
+        : 'AI 暫時休息，請稍後再試。';
+    card.appendChild(body);
+    container.replaceChildren(card);
+}
+
 async function loadAiFocus() {
     const container = document.getElementById('dashboard-ai-focus');
     container.replaceChildren();
@@ -81,7 +94,9 @@ async function loadAiFocus() {
     let focus;
     try {
         focus = await api.get(`/api/ai/today-focus?days=${currentDays}`, { silent: true });
-    } catch {
+    } catch (err) {
+        // 被每人節流擋下不是「AI 不可用」：卡片留著並說明稍後會好，不要讓它無聲消失
+        if (aiFocusGuard.isCurrent(seq) && err?.status === 429) renderAiFocusResting(container, err);
         return;
     }
     if (!aiFocusGuard.isCurrent(seq)) return;

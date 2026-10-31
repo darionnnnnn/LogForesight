@@ -67,7 +67,7 @@ public class CalibrationController : ControllerBase
         catch (CalibrationCapacityException exception)
         {
             return CapacityResponse(exception.Retryable ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status413PayloadTooLarge,
-                exception.Retryable ? "capture_busy" : "capacity_exceeded", exception.Message);
+                exception.Retryable ? ApiErrorCodes.CaptureBusy : ApiErrorCodes.CapacityExceeded, exception.Message);
         }
     }
 
@@ -82,7 +82,7 @@ public class CalibrationController : ControllerBase
         if (!_currentUser.HasViewAll())
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse.Fail(ApiErrorCodes.Forbidden, ForbiddenMessage));
         if (!RequestAdmission.Wait(0))
-            return CapacityResponse(StatusCodes.Status503ServiceUnavailable, "capture_busy", "另一個校準資料擷取或匯出正在執行，請稍後重試。");
+            return CapacityResponse(StatusCodes.Status503ServiceUnavailable, ApiErrorCodes.CaptureBusy, "另一個校準資料擷取或匯出正在執行，請稍後重試。");
         BoundedMemoryStream? buffer = null;
         IDisposable? budgetLifetime = null;
         IDisposable? outputBudgetReservation = null;
@@ -155,7 +155,7 @@ public class CalibrationController : ControllerBase
         {
             buffer?.Dispose();
             return CapacityResponse(exception.Retryable ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status413PayloadTooLarge,
-                exception.Retryable ? "capture_busy" : "capacity_exceeded", exception.Message);
+                exception.Retryable ? ApiErrorCodes.CaptureBusy : ApiErrorCodes.CapacityExceeded, exception.Message);
         }
         catch
         {

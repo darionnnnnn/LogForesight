@@ -52,9 +52,15 @@ public class AiInsightService
 
     public bool Available => _ai.Available;
 
+    /// <summary>帶節流掛鉤的快取產生：beforeCall 只在快取未命中、真的要呼叫 AI 時才被問</summary>
+    private Task<T?> GenerateAsync<T>(string cacheKey, string system, string user, Func<bool>? beforeCall) where T : class =>
+        beforeCall == null
+            ? _ai.GenerateAsync<T>(cacheKey, system, user)
+            : _ai.GenerateAsync<T>(cacheKey, system, user, beforeCall);
+
     // ── W1-1 儀表板「今日焦點」──────────────────────────────────────────────
 
-    public async Task<AiFocusDto?> TodayFocusAsync(DashboardDto dashboard)
+    public async Task<AiFocusDto?> TodayFocusAsync(DashboardDto dashboard, Func<bool>? beforeCall = null)
     {
         // 全期無風險就不必勞煩 AI——沒有可排序的東西
         if (dashboard.HighRiskDays == 0 && dashboard.MediumRiskDays == 0) return null;
@@ -69,7 +75,7 @@ public class AiInsightService
             "只輸出 JSON：{\"items\":[{\"text\":\"...\",\"categories\":\"Storage\",\"riskLevels\":\"高,中\"}]}，" +
             "categories/riskLevels 可省略。第一個字元必須是 {。";
 
-        var result = await _ai.GenerateAsync<FocusResult>(cacheKey, system, input);
+        var result = await GenerateAsync<FocusResult>(cacheKey, system, input, beforeCall);
         if (result?.Items == null || result.Items.Count == 0) return null;
 
         var dto = new AiFocusDto();
@@ -137,7 +143,7 @@ public class AiInsightService
 
     // ── W1-2 查詢結果 AI 歸納（聚類由程式先算，AI 只講白話）─────────────────
 
-    public async Task<AiTextDto?> SummarizeQueryAsync(List<IssueClusterDto> clusters, string cacheSalt)
+    public async Task<AiTextDto?> SummarizeQueryAsync(List<IssueClusterDto> clusters, string cacheSalt, Func<bool>? beforeCall = null)
     {
         if (clusters.Count == 0) return null;
 
@@ -152,14 +158,14 @@ public class AiInsightService
             "只根據提供的聚合資料，不要臆測。" + PromptGuidelines.Language +
             "只輸出 JSON：{\"text\":\"...\"}。第一個字元必須是 {。";
 
-        var result = await _ai.GenerateAsync<TextResult>(cacheKey, system, sb.ToString());
+        var result = await GenerateAsync<TextResult>(cacheKey, system, sb.ToString(), beforeCall);
         return string.IsNullOrWhiteSpace(result?.Text) ? null : new AiTextDto { Text = result!.Text.Trim() };
     }
 
     // ── W2 詳情頁快速判讀（主要服務未命中規則的「其他」類別）──────────────
 
     /// <param name="hostOs">該主機的作業系統（linux／windows）；null 或查不到時預設 Windows</param>
-    public async Task<AiTextDto?> InterpretIssueAsync(IssueDto issue, string hostName, string date, string? hostOs = null)
+    public async Task<AiTextDto?> InterpretIssueAsync(IssueDto issue, string hostName, string date, string? hostOs = null, Func<bool>? beforeCall = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"主機 {hostName}，日期 {date}。");
@@ -176,7 +182,7 @@ public class AiInsightService
             "只根據提供的資料，不要臆測。" + PromptGuidelines.Language +
             "只輸出 JSON：{\"text\":\"...\"}。第一個字元必須是 {。";
 
-        var result = await _ai.GenerateAsync<TextResult>(cacheKey, system, sb.ToString());
+        var result = await GenerateAsync<TextResult>(cacheKey, system, sb.ToString(), beforeCall);
         return string.IsNullOrWhiteSpace(result?.Text) ? null : new AiTextDto { Text = result!.Text.Trim() };
     }
 

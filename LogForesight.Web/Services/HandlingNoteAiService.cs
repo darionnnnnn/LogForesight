@@ -81,38 +81,3 @@ public class TidyNoteResult
     public bool Failed { get; set; }
     public bool Truncated { get; set; }
 }
-
-/// <summary>
-/// AI 整理的每使用者節流（Singleton）：同一使用者 60 秒內最多 6 次，行程內滑動窗口。
-/// 重啟即歸零——這只是防手滑連按與濫用外部 AI 額度，不是安全邊界。
-/// </summary>
-public class HandlingNoteTidyThrottle
-{
-    public const int MaxCalls = 6;
-    public static readonly TimeSpan Window = TimeSpan.FromSeconds(60);
-
-    private readonly object _lock = new();
-    private readonly Dictionary<long, Queue<DateTime>> _calls = new();
-
-    /// <summary>還在額度內就記一次並回 true；超過回 false（不記）</summary>
-    public bool TryAcquire(long userId, DateTime nowUtc)
-    {
-        lock (_lock)
-        {
-            // 順手清掉整個窗口都過期的使用者，字典不隨歷來使用者數無限成長
-            foreach (var key in _calls.Where(kv => kv.Value.Count == 0 || nowUtc - kv.Value.Last() >= Window)
-                         .Select(kv => kv.Key).ToList())
-                _calls.Remove(key);
-
-            if (!_calls.TryGetValue(userId, out var queue))
-            {
-                queue = new Queue<DateTime>();
-                _calls[userId] = queue;
-            }
-            while (queue.Count > 0 && nowUtc - queue.Peek() >= Window) queue.Dequeue();
-            if (queue.Count >= MaxCalls) return false;
-            queue.Enqueue(nowUtc);
-            return true;
-        }
-    }
-}
