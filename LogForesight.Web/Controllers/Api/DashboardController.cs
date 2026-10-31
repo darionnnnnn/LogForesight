@@ -83,13 +83,14 @@ public class RunActivityController : ControllerBase
     {
         // 單一告示只能顯示一條進度，主／本機軌的取捨由 SchedulerRunState.LatestActivity
         // 單點決定（回饋十四輪 UI-6 體檢）——這支與健康診斷共用同一個選擇邏輯，不各自記得。
-        var (phase, done, total) = _runState.LatestActivity();
+        var s = _runState.Snapshot();
+        var (phase, done, total) = (s.ActivityPhase, s.ActivityDone, s.ActivityTotal);
 
-        if (_runState.IsRunning || phase != null)
+        if (s.IsRunning || phase != null)
         {
             return ApiResponse<RunActivityDto>.Ok(new RunActivityDto
             {
-                IsRunning = _runState.IsRunning,
+                IsRunning = s.IsRunning,
                 Done = done,
                 Total = total,
                 // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台）——「主機日」這個單位
@@ -102,12 +103,12 @@ public class RunActivityController : ControllerBase
                 },
                 // 誰觸發的：與排程頁共用 RunTriggerText，兩邊對同一個 Trigger 值算出相同文字。
                 // 沒在跑時不講（閒置沒有「觸發者」可言）。
-                TriggerText = _runState.IsRunning && CanSeeTrigger
-                    ? RunTriggerText.Of(_runState.Trigger, _userDisplayNames, _users)
+                TriggerText = s.IsRunning && CanSeeTrigger
+                    ? RunTriggerText.Of(s.Trigger, _userDisplayNames, _users)
                     : null,
                 CaseDaySyncPending = _cases.CountDaySyncPending(),
                 // 取數分支：互斥判斷要分得出「取數在跑」與「只有 AI 在跑」（見 DTO 註解）
-                IsFetchRun = _runState.IsRunning
+                IsFetchRun = s.IsRunning
             });
         }
 
