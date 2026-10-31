@@ -758,7 +758,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 |---|---|
 | 類型分布圖的某一段（如「儲存裝置×高」） | `/records?categories=Storage&severity=High&from=...&to=...` |
 | 趨勢折線的某一個資料點（某日高風險數） | `/records?riskLevels=高&from=該日&to=該日` |
-| 儀表板統計卡（逾期未處理 N 件） | `/records?statuses=open,in_progress&overdue=1` |
+| 儀表板統計卡（未處理問題，逾期數在標題） | `/records?view=issue&statuses=open&riskLevels=高,中,低&from=...&to=...`（`overdue=true` 只在明細視角生效，見記錄查詢的篩選支援矩陣） |
 | 高風險主機排行的一列 | `/hosts/{id}`（時間軸） |
 | 執行監控異常彙總的一列 | 該錯誤的執行詳情清單 |
 
