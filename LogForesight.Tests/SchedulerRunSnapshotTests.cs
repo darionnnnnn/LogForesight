@@ -106,7 +106,7 @@ public class SchedulerRunSnapshotTests
     [Fact]
     public void 結構守門_RunActivity的Get取數分支只讀一次Snapshot()
     {
-        var body = MethodBody(Path.Combine("LogForesight.Web", "Controllers", "Api", "DashboardController.cs"),
+        var body = MethodBody(Path.Combine("LogForesight.Web", "Controllers", "Api", "RunActivityController.cs"),
             "ApiResponse<RunActivityDto> Get(");
         Assert.Equal(1, Count(body, "_runState."));
         Assert.Contains("_runState.Snapshot()", body);

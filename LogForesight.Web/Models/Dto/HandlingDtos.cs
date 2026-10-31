@@ -631,3 +631,10 @@ public class PermissionCategoryOptionDto
     public string Key { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
 }
+
+public class LastIssueNoteDto
+{
+    public string Note { get; set; } = "";
+    public string HostName { get; set; } = "";
+    public string Date { get; set; } = "";
+}

@@ -17,7 +17,7 @@ using System.Text.Json;
 namespace LogForesight.Web.Controllers.Api;
 
 [ApiController, Route("api/prtg/monitoring"), Permission(Capability.Maintain)]
-public sealed partial class PrtgMonitoringController(StorageBackend backend, IHostStore hosts,
+public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore hosts,
     IVisibilityService visibility, ICurrentUser user, IAuditService audit, DataVersionStamp stamp,
     IDataProtectionProvider protection) : ControllerBase
 {
@@ -417,54 +417,7 @@ public sealed partial class PrtgMonitoringController(StorageBackend backend, IHo
             Complete = offset == 0 && rows.Length == dataPage.Total, HasMore = offset + rows.Length < dataPage.Total, Rows = rows,
             Limitations = "預覽是現在的資格與條件，不預測命中、責任人或信箱實收。部分管理者不揭露不可歸戶資源。" }));
     }
-}
 
-public sealed class PrtgMonitoringRequest
-{
-    public string Revision { get; set; } = "";
-    public List<long> HostIds { get; set; } = [];
-    public List<long> SensorIds { get; set; } = [];
-    public string CatalogueToken { get; set; } = "";
-    public string? EstimateToken { get; set; }
-}
-
-public sealed class PrtgMonitoringPageRequest
-{
-    public string CatalogueToken { get; set; } = "";
-    public string? Cursor { get; set; }
-    public string? Search { get; set; }
-    public List<long> HostIds { get; set; } = [];
-    public int Offset { get; set; }
-}
-
-public sealed record PrtgSavedHost(long HostId, string HostName, string Status);
-
-public sealed record R01PageToken
-{
-    public string Kind { get; init; } = "";
-    public string Owner { get; init; } = "";
-    public DateTimeOffset ExpiresAtUtc { get; init; }
-    public string PolicyRevision { get; init; } = "";
-    public long PolicyStoreVersion { get; init; }
-    public string VisibleHash { get; init; } = "";
-    public long HostVersion { get; init; }
-    public long ScopeRevision { get; init; }
-    public long CatalogueRevision { get; init; }
-    public long MapRevision { get; init; }
-    public DateTime? MapDate { get; init; }
-    public string Search { get; init; } = "";
-    public int Offset { get; init; }
-    public string HostHash { get; init; } = "";
-    public string SensorHash { get; init; } = "";
-    public string RequestHash { get; init; } = "";
-    public string SourceHash { get; init; } = "";
-    public int Total { get; init; }
-    public string SettingsRevision { get; init; } = "";
-    public long SettingsStoreVersion { get; init; }
-}
-
-public sealed partial class PrtgMonitoringController
-{
     private static bool ValidBoundedSelection(PrtgMonitoringRequest request, out string reason, out string code)
     {
         reason = "";
@@ -517,4 +470,30 @@ public sealed partial class PrtgMonitoringController
         };
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(canonical))));
     }
+}
+
+public sealed record PrtgSavedHost(long HostId, string HostName, string Status);
+
+public sealed record R01PageToken
+{
+    public string Kind { get; init; } = "";
+    public string Owner { get; init; } = "";
+    public DateTimeOffset ExpiresAtUtc { get; init; }
+    public string PolicyRevision { get; init; } = "";
+    public long PolicyStoreVersion { get; init; }
+    public string VisibleHash { get; init; } = "";
+    public long HostVersion { get; init; }
+    public long ScopeRevision { get; init; }
+    public long CatalogueRevision { get; init; }
+    public long MapRevision { get; init; }
+    public DateTime? MapDate { get; init; }
+    public string Search { get; init; } = "";
+    public int Offset { get; init; }
+    public string HostHash { get; init; } = "";
+    public string SensorHash { get; init; } = "";
+    public string RequestHash { get; init; } = "";
+    public string SourceHash { get; init; } = "";
+    public int Total { get; init; }
+    public string SettingsRevision { get; init; } = "";
+    public long SettingsStoreVersion { get; init; }
 }
