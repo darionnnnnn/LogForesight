@@ -147,7 +147,7 @@ public class SystemSettingsService : ISystemSettingsService
     public SystemSettingsDto Update(UpdateSystemSettingsRequest request)
     {
         var before = _store.Get();
-        var expectedRevision = request.ExpectedRevision ?? before.Revision;
+        var expectedRevision = RequireExpectedRevision(request.ExpectedRevision);
         EnsureSettingsRevision(before, expectedRevision);
 
         var severities = NormalizeSeverities(request.UnhandledSeverities);
@@ -505,72 +505,8 @@ public class SystemSettingsService : ISystemSettingsService
             // AD 設定不含任何機密（bind 用登入者自己的帳密），伺服器清單可以整份留稽核
             detail: new
             {
-                Before = new
-                {
-                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.DefaultNotePhrases,
-                    before.AiProvider, AiBaseUrl = UrlSecrets.Mask(before.AiBaseUrl), before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
-                    before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
-                    before.RawEventRetentionDays, before.ReportRetentionDays,
-                    before.WatchedFolders, before.ServerDescription, before.CheckupIntervalDays, before.AnalysisChannels,
-                    before.PermissionOperatorFields, before.PermissionMemberFields, before.PermissionGroupFields, before.PermissionObjectFields,
-                    before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter,
-                    before.MailEnabled, before.SmtpServer, before.SmtpPort, before.SmtpUseTls, before.SmtpAccount,
-                    before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
-                    before.MailOnRunCompleted, before.MailDailyEnabled, before.MailDailyTime,
-                    before.MailWeeklyEnabled, before.MailWeeklyDayOfWeek, before.MailWeeklyTime, before.MailUrgentEnabled,
-                    before.PrtgEnabled, PrtgUrl = UrlSecrets.Mask(before.PrtgUrl), before.PrtgAuthMode, before.PrtgUsername,
-                    before.PrtgIgnoreSslErrors, before.PrtgTimeoutSeconds,
-                    before.PrtgFetchConcurrency, before.PrtgBackfillDays, before.PrtgRetentionDays,
-                    before.PrtgResourceGuardEnabled,
-                    PrtgResourceGuardSensorObjids = string.Join(", ", before.PrtgResourceGuardSensorObjids),
-                    before.PrtgResourceGuardCpuPercent,
-                    before.PrtgResourceGuardMemoryFreePercent,
-                    before.PrtgResourceGuardCheckSeconds,
-                    before.PrtgResourceGuardPauseMinutes,
-                    before.PrtgResourceGuardStrikes,
-                    before.PrtgResourceGuardMaxPauseMinutes,
-                    PrtgSensorTypeWhitelist = string.Join(", ", before.PrtgSensorTypeWhitelist),
-                    PrtgSensorTypeCategoryOverrides = string.Join(", ", before.PrtgSensorTypeCategoryOverrides),
-                    before.PrtgValueFetchScope,
-                    before.PrtgFetchStrategy,
-                    PrtgValueFetchExtraHosts = string.Join(", ", before.PrtgValueFetchExtraHosts),
-                    PrtgHasApiToken = !string.IsNullOrEmpty(before.PrtgApiTokenEnc),
-                    PrtgHasPassword = !string.IsNullOrEmpty(before.PrtgPasswordEnc),
-                    PrtgHasPasshash = !string.IsNullOrEmpty(before.PrtgPasshashEnc)
-                },
-                After = new
-                {
-                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.DefaultNotePhrases,
-                    saved.AiProvider, AiBaseUrl = UrlSecrets.Mask(saved.AiBaseUrl), saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
-                    saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
-                    saved.RawEventRetentionDays, saved.ReportRetentionDays,
-                    saved.WatchedFolders, saved.ServerDescription, saved.CheckupIntervalDays, saved.AnalysisChannels,
-                    saved.PermissionOperatorFields, saved.PermissionMemberFields, saved.PermissionGroupFields, saved.PermissionObjectFields,
-                    saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter,
-                    saved.MailEnabled, saved.SmtpServer, saved.SmtpPort, saved.SmtpUseTls, saved.SmtpAccount,
-                    saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
-                    saved.MailOnRunCompleted, saved.MailDailyEnabled, saved.MailDailyTime,
-                    saved.MailWeeklyEnabled, saved.MailWeeklyDayOfWeek, saved.MailWeeklyTime, saved.MailUrgentEnabled,
-                    saved.PrtgEnabled, PrtgUrl = UrlSecrets.Mask(saved.PrtgUrl), saved.PrtgAuthMode, saved.PrtgUsername,
-                    saved.PrtgIgnoreSslErrors, saved.PrtgTimeoutSeconds,
-                    saved.PrtgFetchConcurrency, saved.PrtgBackfillDays, saved.PrtgRetentionDays,
-                    saved.PrtgResourceGuardEnabled,
-                    PrtgResourceGuardSensorObjids = string.Join(", ", saved.PrtgResourceGuardSensorObjids),
-                    saved.PrtgResourceGuardCpuPercent,
-                    saved.PrtgResourceGuardMemoryFreePercent,
-                    saved.PrtgResourceGuardCheckSeconds,
-                    saved.PrtgResourceGuardPauseMinutes,
-                    saved.PrtgResourceGuardStrikes,
-                    saved.PrtgResourceGuardMaxPauseMinutes,
-                    PrtgSensorTypeWhitelist = string.Join(", ", saved.PrtgSensorTypeWhitelist),
-                    PrtgSensorTypeCategoryOverrides = string.Join(", ", saved.PrtgSensorTypeCategoryOverrides),
-                    saved.PrtgValueFetchScope,
-                    saved.PrtgFetchStrategy,
-                    PrtgValueFetchExtraHosts = string.Join(", ", saved.PrtgValueFetchExtraHosts),
-                    PrtgHasApiToken = !string.IsNullOrEmpty(saved.PrtgApiTokenEnc),
-                    PrtgHasPassword = !string.IsNullOrEmpty(saved.PrtgPasswordEnc),
-                    PrtgHasPasshash = !string.IsNullOrEmpty(saved.PrtgPasshashEnc)
-                },
+                Before = SettingsAuditProjection.From(before),
+                After = SettingsAuditProjection.From(saved),
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey),
                 SmtpPasswordChanged = request.ClearSmtpPassword || !string.IsNullOrEmpty(request.SmtpPassword),
                 PrtgApiTokenChanged = request.ClearPrtgApiToken || !string.IsNullOrEmpty(request.PrtgApiToken),
@@ -581,6 +517,11 @@ public class SystemSettingsService : ISystemSettingsService
         return ToDto(saved);
     }
 
+    private static string RequireExpectedRevision(string? expectedRevision) =>
+        string.IsNullOrWhiteSpace(expectedRevision)
+            ? throw DomainException.Validation("缺少設定版本（ExpectedRevision），請重新載入設定後再儲存。")
+            : expectedRevision;
+
     private static void EnsureSettingsRevision(SystemSettings current, string expected)
     {
         if (!string.Equals(current.Revision, expected, StringComparison.Ordinal))
@@ -590,7 +531,7 @@ public class SystemSettingsService : ISystemSettingsService
     public SystemSettingsDto UpdatePrtg(UpdatePrtgSettingsRequest request)
     {
         var before = _store.Get();
-        var expectedRevision = request.ExpectedRevision ?? before.Revision;
+        var expectedRevision = RequireExpectedRevision(request.ExpectedRevision);
         EnsureSettingsRevision(before, expectedRevision);
 
         var effectiveRetentionDays = before.RetentionDays;
