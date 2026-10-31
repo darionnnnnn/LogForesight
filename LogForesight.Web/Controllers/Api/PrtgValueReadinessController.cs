@@ -59,7 +59,7 @@ public sealed class PrtgValueReadinessController : ControllerBase
         var settings = new SystemSettingsStore(_backend.Blob("system_settings")).Get();
         var semanticOverrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(settings.PrtgSensorTypeCategoryOverrides);
         var assessment = new PrtgValueAssessment(_backend.PrtgStore(), semanticOverrides);
-        var deviceToHost = assessment.DeviceToHostOn(completedDay, evaluationHostIds);
+        var deviceToHost = assessment.DeviceToHostOn(completedDay, completedDay, evaluationHostIds);
         var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
 
         var summary = PrtgValueReadiness.Compute(assessment, deviceToHost, evaluationHostIds, policySensorIds, completedDay, ct);

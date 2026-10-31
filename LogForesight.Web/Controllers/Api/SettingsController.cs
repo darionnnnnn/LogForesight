@@ -480,7 +480,7 @@ public class SettingsController : ControllerBase
         var prtgStore = _backend.PrtgStore();
 
         // 與校準同一個來源：錨點今天、回看 30 天的最近一次對應
-        var mapRows = prtgStore.GetLatestHostMapWithDate(30, DateTime.Today).Rows
+        var mapRows = prtgStore.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays, DateTime.Today).Rows
             .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue)
             .ToList();
 
@@ -792,7 +792,7 @@ public class SettingsController : ControllerBase
         var summary = store.GetMirrorSummary();
 
         // 搜尋最近有對應資料的日期（至多往前找 30 天）
-        var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(30);
+        var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays);
 
         var whitelist = _settings.Get().PrtgSensorTypeWhitelist;
         var coverage = store.GetWhitelistCoverage(whitelist, mapDate);
@@ -990,7 +990,7 @@ public class SettingsController : ControllerBase
             return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto { Page = normPage, PageSize = normPageSize });
 
         var store = _backend.PrtgStore();
-        var (mapDate, rows) = store.GetLatestHostMapWithDate(30);
+        var (mapDate, rows) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays);
         var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip), new PrtgAddressResolver());
         return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto
         {
@@ -1015,7 +1015,7 @@ public class SettingsController : ControllerBase
         RequireFullPrtgTransferAccess();
         if (_backend == null) return ApiResponse<List<PrtgNameMismatchDto>>.Ok(new());
         var hostById = (_hosts?.GetAll() ?? new List<WebHost>()).ToDictionary(h => h.HostId);
-        var items = _backend.PrtgStore().GetLatestHostMapWithDate(30).Rows
+        var items = _backend.PrtgStore().GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays).Rows
             .Where(m => m.MapStatus == PrtgMapStatus.Ok && m.HostId.HasValue &&
                         (m.Note ?? "").StartsWith(PrtgHostMapper.NoteNameMismatchPrefix, StringComparison.Ordinal))
             .GroupBy(m => m.HostId!.Value)
@@ -1092,7 +1092,7 @@ public class SettingsController : ControllerBase
         }
 
         var store = _backend.PrtgStore();
-        var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(30);
+        var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays);
 
         var targetStatus = PrtgMapStatus.Conflict;
 

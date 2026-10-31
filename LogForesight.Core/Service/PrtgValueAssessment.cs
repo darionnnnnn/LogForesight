@@ -207,13 +207,35 @@ public sealed class PrtgValueAssessment
         _store.GetDeviceNamesByObjids(objids);
 
     /// <summary>
-    /// 某個已完成日的 device → 主機：取該日或之前 <see cref="MapLookbackDays"/> 日內最近一份對應（找不到時沿用之後最早一份），只認 ok
-    /// （人工對應也以 ok 寫入），且主機在 <paramref name="evaluationHostIds"/> 內。與每日管線過去日的取法相同。
+    /// 某日採用哪一份主機對應的唯一取法（每日管線、維護頁就緒度、規則試算、<see cref="AssessPage"/> 共用）。
+    /// 過去日取該日或之前 <see cref="MapLookbackDays"/> 日內最近一份（找不到時沿用之後最早一份）；
+    /// 最新日（<paramref name="day"/> == <paramref name="newest"/>）先用當日對應，當日沒有任何 ok 列
+    /// （這趟沒算出來、或主檔暫時讀不到而寫出一整天 unmatched）時退回前一天為錨點的最近一份——
+    /// 不退回的話這天會被當成「沒有任何對應」評估完成，卻沒有證據，也不再隔晚補評。回傳的日期晚於 day 即為沿用。
     /// </summary>
-    public Dictionary<long, long> DeviceToHostOn(DateOnly day, IReadOnlySet<long> evaluationHostIds)
+    public static (DateTime? MapDate, List<PrtgHostMapRow> Rows) ResolveHostMapRows(EfPrtgStore store, DateTime day, DateTime newest)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        var d = day.Date;
+        if (d == newest.Date)
+        {
+            var todayRows = store.GetHostMapForDate(d);
+            if (todayRows.Any(r => r.MapStatus == PrtgMapStatus.Ok)) return (d, todayRows);
+            // 錨點用最新日自己會找回同一份 unmatched；主機真的被移除時由評估範圍濾掉，不會誤歸戶
+            var prior = store.GetLatestHostMapWithDate(MapLookbackDays, anchor: d.AddDays(-1));
+            return prior.MapDate != null && prior.Rows.Any(r => r.MapStatus == PrtgMapStatus.Ok) ? prior : (d, todayRows);
+        }
+        return store.GetLatestHostMapWithDate(MapLookbackDays, anchor: d);
+    }
+
+    /// <summary>
+    /// 某個已完成日的 device → 主機：對應取法見 <see cref="ResolveHostMapRows"/>（<paramref name="newest"/> 為本次評估的最新已完成日），
+    /// 只認 ok（人工對應也以 ok 寫入），且主機在 <paramref name="evaluationHostIds"/> 內。
+    /// </summary>
+    public Dictionary<long, long> DeviceToHostOn(DateOnly day, DateOnly newest, IReadOnlySet<long> evaluationHostIds)
     {
         var deviceToHost = new Dictionary<long, long>();
-        foreach (var row in _store.GetLatestHostMapWithDate(MapLookbackDays, day.ToDateTime(TimeOnly.MinValue)).Rows)
+        foreach (var row in ResolveHostMapRows(_store, day.ToDateTime(TimeOnly.MinValue), newest.ToDateTime(TimeOnly.MinValue)).Rows)
         {
             if (row.MapStatus == PrtgMapStatus.Ok && row.HostId is { } hostId && evaluationHostIds.Contains(hostId))
                 deviceToHost[row.DeviceObjid] = hostId;
@@ -221,9 +243,13 @@ public sealed class PrtgValueAssessment
         return deviceToHost;
     }
 
-    /// <summary>評估一頁候選（≤ <see cref="PageSize"/> 顆）在 <paramref name="completedDay"/> 往回 <paramref name="windowDays"/> 日的數值。</summary>
+    /// <summary>
+    /// 評估一頁候選（≤ <see cref="PageSize"/> 顆）在 <paramref name="completedDay"/> 往回 <paramref name="windowDays"/> 日的數值。
+    /// <paramref name="newest"/> 為本次評估的最新已完成日（省略＝<paramref name="completedDay"/>）；
+    /// 該日的主機對應走 <see cref="ResolveHostMapRows"/>（含最新日退路），其餘日期走逐 device 的 <see cref="PrtgHostMapLookup"/>。
+    /// </summary>
     public IReadOnlyList<PrtgValueAssessmentRow> AssessPage(IReadOnlyList<PrtgValueSensor> sensors,
-        DateOnly completedDay, int windowDays, int requiredDays)
+        DateOnly completedDay, int windowDays, int requiredDays, DateOnly? newest = null)
     {
         if (sensors.Count > PageSize)
             throw new ArgumentOutOfRangeException(nameof(sensors), $"每頁最多 {PageSize} 顆 sensor。");
@@ -244,6 +270,17 @@ public sealed class PrtgValueAssessment
             .GroupBy(m => m.DeviceObjid)
             .ToDictionary(g => g.Key, g => g.OrderBy(m => m.MapDate).ToList());
 
+        // 最新日的對應與每日管線同一個解析結果（含退路）；其餘日期逐 device 選
+        var newestDate = (newest ?? completedDay).ToDateTime(TimeOnly.MinValue);
+        var newestHostByDevice = new Dictionary<long, long?>();
+        if (newestDate >= windowStart && newestDate < windowEnd)
+        {
+            foreach (var row in ResolveHostMapRows(_store, newestDate, newestDate).Rows)
+            {
+                if (row.MapStatus == PrtgMapStatus.Ok) newestHostByDevice[row.DeviceObjid] = row.HostId;
+            }
+        }
+
         var result = new List<PrtgValueAssessmentRow>(sensors.Count);
         foreach (var sensor in sensors)
         {
@@ -255,6 +292,8 @@ public sealed class PrtgValueAssessment
             var maps = mapsByDevice.GetValueOrDefault(sensor.DeviceObjid) ?? [];
             bool MappedToSensorHost(DateTime day)
             {
+                if (day.Date == newestDate)
+                    return newestHostByDevice.TryGetValue(sensor.DeviceObjid, out var newestHost) && newestHost == sensor.HostId;
                 var row = PrtgHostMapLookup.Select(maps, day, MapLookbackDays, today);
                 // 人工對應也以 ok 寫入當日對應表（PrtgHostMapper），這裡只認 ok。
                 return row is { MapStatus: PrtgMapStatus.Ok } && row.HostId == sensor.HostId;

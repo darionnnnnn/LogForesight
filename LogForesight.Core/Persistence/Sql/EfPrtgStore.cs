@@ -1534,7 +1534,7 @@ public sealed class EfPrtgStore
         if (sensors.Count != sensorCount)
             throw CalibrationCapacity("PRTG sensor mirror 在擷取期間變更，請重試。");
 
-        var mapDate = FindLatestHostMapDate(ctx, 30, mapAnchor);
+        var mapDate = FindLatestHostMapDate(ctx, PrtgHostMapLookup.LatestLookbackDays, mapAnchor);
         var maps = new List<PrtgHostMapRow>();
         if (mapDate.HasValue)
         {
@@ -2213,7 +2213,7 @@ public sealed class EfPrtgStore
         if (eligibleHostIds.Count == 0) return new PrtgMonitoringHostPage(null, 0, []);
         var ids = eligibleHostIds.Distinct().ToArray();
         using var ctx = _contextFactory();
-        var mapDate = FindLatestHostMapDate(ctx, 30, null);
+        var mapDate = FindLatestHostMapDate(ctx, PrtgHostMapLookup.LatestLookbackDays, null);
         if (!mapDate.HasValue) return new PrtgMonitoringHostPage(null, 0, []);
         var query = ctx.PrtgHostMaps.AsNoTracking()
             .Where(m => m.MapDate == mapDate.Value && m.MapStatus == PrtgMapStatus.Ok &&
@@ -2268,7 +2268,7 @@ public sealed class EfPrtgStore
     /// 基準日是「正在回填的那一天」而不是今天——拿今天當基準會取到回填當下的對應，
     /// 與該日的實際對應不符。</param>
     public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapWithDate(
-        int maxLookbackDays = 30, DateTime? anchor = null)
+        int maxLookbackDays = PrtgHostMapLookup.LatestLookbackDays, DateTime? anchor = null)
     {
         using var __perf = _performance.Measure("prtg:GetLatestHostMapWithDate");
         using var ctx = _contextFactory();
@@ -2287,7 +2287,7 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>只讀取最新全域映射日期，不載入該日期的映射列。</summary>
-    public DateTime? GetLatestHostMapDate(int maxLookbackDays = 30)
+    public DateTime? GetLatestHostMapDate(int maxLookbackDays = PrtgHostMapLookup.LatestLookbackDays)
     {
         using var ctx = _contextFactory();
         return FindLatestHostMapDate(ctx, maxLookbackDays, null);
@@ -2296,7 +2296,7 @@ public sealed class EfPrtgStore
     /// <summary>
     /// 取得最近 30 天內最近一個有對應資料日期的 PRTG 主機對應清單（唯讀查詢）。
     /// </summary>
-    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = 30) =>
+    public List<PrtgHostMapRow> GetLatestHostMap(int maxLookbackDays = PrtgHostMapLookup.LatestLookbackDays) =>
         GetLatestHostMapWithDate(maxLookbackDays).Rows;
 
     /// <summary>
@@ -2310,7 +2310,7 @@ public sealed class EfPrtgStore
     /// 窗內完全沒有資料時才回傳 (null, 空清單)。
     /// </summary>
     public (DateTime? MapDate, List<PrtgHostMapRow> Rows) GetLatestHostMapForHost(
-        long hostId, int maxLookbackDays = 30, DateTime? anchor = null)
+        long hostId, int maxLookbackDays = PrtgHostMapLookup.LatestLookbackDays, DateTime? anchor = null)
     {
         using var __perf = _performance.Measure("prtg:GetLatestHostMapForHost");
         using var ctx = _contextFactory();
@@ -2335,7 +2335,7 @@ public sealed class EfPrtgStore
     /// hostIds 為空時直接回空清單，不查資料庫。
     /// </summary>
     public List<PrtgHostMapRow> GetLatestHostMapForHosts(
-        IReadOnlyCollection<long> hostIds, int maxLookbackDays = 30)
+        IReadOnlyCollection<long> hostIds, int maxLookbackDays = PrtgHostMapLookup.LatestLookbackDays)
     {
         using var __perf = _performance.Measure("prtg:GetLatestHostMapForHosts");
         if (hostIds.Count == 0)

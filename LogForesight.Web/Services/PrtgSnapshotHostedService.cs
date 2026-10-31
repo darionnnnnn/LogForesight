@@ -1369,7 +1369,7 @@ public class PrtgSnapshotHostedService : BackgroundService
         var store = _backend.PrtgStore();
         var today = now.Date;
         // 與校準同一個來源：錨點今天、回看 30 天的最近一次對應
-        var (_, hostMaps) = store.GetLatestHostMapWithDate(30, today);
+        var (_, hostMaps) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays, today);
         var activeHostIds = _hosts.GetAll().Where(h => h.Active && !h.MergedInto.HasValue)
             .Select(h => h.HostId).ToHashSet();
         var okDeviceIds = hostMaps

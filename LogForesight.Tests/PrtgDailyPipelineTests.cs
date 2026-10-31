@@ -2439,4 +2439,147 @@ public class PrtgDailyPipelineTests : IDisposable
         Assert.All(run.PrtgDays, stat => Assert.DoesNotContain("未完成評估", stat.Note ?? string.Empty));
         Assert.All(run.PrtgDays, stat => Assert.True(stat.NeedsReevaluation));
     }
+
+    // ---- 趨勢評估失敗一律標 Partial ----
+
+    private static KnownIssueRule TrendRule(string ruleCode, string category, PrtgTrendThresholds? trend, PrtgDiskTrendThresholds? disk) => new()
+    {
+        Id = "t-trend-" + ruleCode, Platform = "prtg", PrtgRuleCode = ruleCode, PrtgThreshold = 0,
+        PrtgTrendThresholds = trend, PrtgDiskTrendThresholds = disk, PrtgSensorCategory = category,
+        Enabled = true, Severity = IssueSeverity.Medium, ElevatesDayRisk = false, Description = "trend fixture"
+    };
+
+    /// <summary>四類趨勢規則（磁碟／記憶體／CPU／Ping）各自的規則、sensor 類型與標籤。</summary>
+    private static readonly (string Code, string Category, string SensorType, string Label)[] TrendKinds =
+    [
+        (PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgSensorCategories.Disk, "SNMP Disk Free", "磁碟"),
+        (PrtgRuleEvaluator.RuleMemoryUsedTrend, PrtgSensorCategories.Memory, "SNMP Memory", "記憶體使用"),
+        (PrtgRuleEvaluator.RuleCpuLoadTrend, PrtgSensorCategories.Cpu, "SNMP CPU Load", "CPU 負載"),
+        (PrtgRuleEvaluator.RulePingLatencyTrend, PrtgSensorCategories.Availability, "Ping", "Ping 延遲"),
+    ];
+
+    private static KnownIssueRule TrendRuleOf((string Code, string Category, string SensorType, string Label) kind, bool invalid)
+    {
+        if (kind.Code == PrtgRuleEvaluator.RuleDiskFreeTrend)
+        {
+            var disk = PrtgDiskTrendThresholds.Provisional;
+            // 最少有效日大於觀察窗：AssessPage 擲 ArgumentOutOfRangeException
+            return TrendRule(kind.Code, kind.Category, null, invalid ? disk with { MinimumValidDays = disk.RecentWindowDays + 5 } : disk);
+        }
+        var trend = PrtgTrendThresholds.ProvisionalFor(kind.Code);
+        return TrendRule(kind.Code, kind.Category, invalid ? trend with { MinimumValidDays = trend.WindowDays + 5 } : trend, null);
+    }
+
+    private async Task<(BatchRun Run, PrtgDayStat Day)> RunTrendScenarioAsync(
+        IReadOnlyList<(string Code, string Category, string SensorType, string Label)> enabledKinds,
+        IReadOnlyCollection<string> failingCodes, bool withSensors)
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var rules = KnownIssueSeed.CreateRules().Where(r => !TrendKinds.Any(k => k.Code == r.PrtgRuleCode)).ToList();
+        rules.AddRange(enabledKinds.Select(k => TrendRuleOf(k, failingCodes.Contains(k.Code))));
+        KnownIssueCatalog.Initialize(rules);
+
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-TREND", Active = true, IpAddress = "192.168.60.1" });
+        var prtgStore = _backend.PrtgStore();
+        prtgStore.UpsertDevices([new PrtgDeviceRow { Objid = 601, Name = "SRV-TREND", Ip = "192.168.60.1" }], DateTime.Now);
+        if (withSensors)
+        {
+            prtgStore.UpsertSensors(TrendKinds.Select((k, i) => new PrtgSensorRow
+            { Objid = 6010 + i, DeviceObjid = 601, Name = k.Label, SensorType = k.SensorType, Status = "Up" }).ToArray(), DateTime.Now);
+        }
+        MapDeviceToHost(day, 601, host);
+        SeedNetiqParent(host, day);
+        var (ctx, _, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        ctx.RunRecorder.Finish(1);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"))
+            .GetRun(ctx.RunRecorder.RunId)!;
+        return (run, run.PrtgDays!.Single(s => s.Date.Date == day.Date));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task 任一類趨勢評估擲例外_整趟Partial且說明講出類別(int kindIndex)
+    {
+        var kind = TrendKinds[kindIndex];
+
+        var (run, dayStat) = await RunTrendScenarioAsync([kind], [kind.Code], withSensors: true);
+
+        Assert.Equal(BatchRun.PrtgOutcomePartial, run.PrtgOutcome);
+        Assert.Equal(BatchRun.PrtgOutcomePartial, dayStat.Outcome);
+        Assert.Contains($"{kind.Label}趨勢證據未完整；尚未完成風險判定。", dayStat.Note);
+    }
+
+    [Fact]
+    public async Task 多類趨勢評估同時失敗_說明列出全部類別()
+    {
+        var (_, dayStat) = await RunTrendScenarioAsync(TrendKinds, TrendKinds.Select(k => k.Code).ToArray(), withSensors: true);
+
+        Assert.Contains("磁碟、記憶體使用、CPU 負載、Ping 延遲趨勢證據未完整；尚未完成風險判定。", dayStat.Note);
+    }
+
+    [Fact]
+    public async Task 趨勢評估沒有失敗_規則缺失或無候選sensor都不算失敗()
+    {
+        // 規則存在、門檻合法、有候選 sensor（數值不足只是原因，不是失敗）
+        var (_, ok) = await RunTrendScenarioAsync(TrendKinds, [], withSensors: true);
+        Assert.DoesNotContain("趨勢證據未完整", ok.Note ?? "");
+    }
+
+    [Fact]
+    public async Task 趨勢規則門檻非法但沒有候選sensor_不算失敗()
+    {
+        var (_, noCandidates) = await RunTrendScenarioAsync(TrendKinds, TrendKinds.Select(k => k.Code).ToArray(), withSensors: false);
+        Assert.DoesNotContain("趨勢證據未完整", noCandidates.Note ?? "");
+    }
+
+    [Fact]
+    public async Task 趨勢規則不存在或停用_不算失敗()
+    {
+        var (_, none) = await RunTrendScenarioAsync([], [], withSensors: true);
+        Assert.DoesNotContain("趨勢證據未完整", none.Note ?? "");
+    }
+
+    [Fact]
+    public async Task 最新日整天unmatched時_數值就緒度與AssessPage走同一個退路()
+    {
+        EnableConservativePrtgWithDefaultWhitelist();
+        var newest = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        // 主機主檔暫時沒有 IP：管線重算最新日的對應會寫出一整天 unmatched
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-VALUE-FALLBACK", Active = true, IpAddress = null });
+        var prtgStore = _backend.PrtgStore();
+        prtgStore.UpsertDevices([new PrtgDeviceRow { Objid = 93, Name = "dev-93", Ip = "192.168.9.93" }], DateTime.Now);
+        prtgStore.UpsertSensors(
+        [
+            new PrtgSensorRow { Objid = 9301, DeviceObjid = 93, Name = "Ping", SensorType = "Ping", Status = "Down" },
+            new PrtgSensorRow { Objid = 9302, DeviceObjid = 93, Name = "Disk", SensorType = "SNMP Disk Free", Status = "Up" }
+        ], DateTime.Now);
+        prtgStore.AppendStateChanges([new PrtgStateChangeRow { SensorObjid = 9301, ChangedAt = newest.Date.AddHours(2), Status = "Down" }]);
+        MapDeviceToHost(newest.AddDays(-1), 93, host);
+        SeedNetiqParent(host, newest);
+        var (ctx, _, _, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { newest }, Task.CompletedTask, hostIds: null, guard: null);
+
+        // 狀態型 finding 歸戶（既有行為），且最新日的對應確實全是 unmatched
+        Assert.NotEmpty(registry.For(host.HostId, newest));
+        Assert.DoesNotContain(prtgStore.GetHostMapForDate(newest), r => r.MapStatus == PrtgMapStatus.Ok);
+
+        var assessment = new PrtgValueAssessment(prtgStore, new Dictionary<string, PrtgValueSemantic>());
+        var day = DateOnly.FromDateTime(newest);
+        var deviceToHost = assessment.DeviceToHostOn(day, day, new HashSet<long> { host.HostId });
+        Assert.Equal(host.HostId, Assert.Single(deviceToHost).Value);
+
+        var sensor = new PrtgValueSensor(9302, 93, host.HostId, "Disk", "SNMP Disk Free", PrtgSensorCategories.Disk);
+        var row = Assert.Single(assessment.AssessPage([sensor], day, 1, 1));
+        Assert.NotEqual(PrtgValueReason.MappingInvalid, row.Reason);
+    }
 }

@@ -64,13 +64,32 @@ internal static class PrtgDailyPipeline
         var totalTargetSensors = 0;
         var totalFailedSensors = 0;
         var totalValuesWritten = 0;
-        var diskAssessmentFailed = false;
+        // 數值趨勢評估（磁碟／記憶體／CPU／Ping）擲例外的類別；任一類失敗整趟為 Partial，最新日說明列出類別
+        var failedTrendLabels = new List<string>();
         string? interruptedDayReason = null;
 
         // 逐日累計（規則評估、歸戶、觸發式取數）在 finally 才寫進執行紀錄：
         // 中途被停止或擲例外時，已經評估完的日子也要留下逐日結果，執行總表才不會整排「—」。
         var dayStates = new Dictionary<DateTime, PrtgDayState>();
         PrtgFetchResult? fetchResult = null;
+
+        // 趨勢評估的失敗外殼：取消穿透；其他例外記 Log 與主控台，並把類別記到整趟與最新日（任一類失敗＝Partial）。
+        // 評估本體各類自行保留（閾值型別、finding 建構與規則選取不同）；規則缺失或沒有候選 sensor 不是失敗，不會進到這裡。
+        void EvaluateTrend(string label, Action evaluate)
+        {
+            try
+            {
+                evaluate();
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                failedTrendLabels.Add(label);
+                if (dayStates.TryGetValue(newest, out var newestState)) newestState.TrendFailedLabels.Add(label);
+                Log.Error(ex, "PRTG {Label}趨勢評估失敗；既有 findings 照常發布", label);
+                prtgConsole.WriteLine($"  ⚠ {label}趨勢評估失敗，既有 findings 照常發布：" + ex.Message);
+            }
+        }
         var syncFailed = false;
         // 逐日「無產出」判定要用的事實（在 try 內決定，finally 寫逐日結果時用）
         var rulesAvailableForStat = true;
@@ -343,22 +362,8 @@ internal static class PrtgDailyPipeline
             var reportedDuplicateRuleWarnings = new HashSet<string>();
 
             // 最新一天用剛重算的當日對應；過去日取「該日或之前最近一日」的既有對應，沒有時沿用之後最早的一份（docs/PRTG-SPEC.md §4）。
-            // 視窗與觸發式取數同一個，規則歸戶與取數看到的主機才會一致。回傳的日期晚於 d 即為沿用。
-            // 最新一天的對應這趟沒算出來（對應擲例外、沒有寫入）時退回前一份，與觸發式取數同一種取法——
-            // 不退回的話這天會被當成「沒有任何對應」評估完成，PRTG 腿記為成功卻沒有證據，也不再隔晚補評。
-            (DateTime? MapDate, List<PrtgHostMapRow> Rows) ResolveHostMapRows(DateTime d)
-            {
-                if (d == newest)
-                {
-                    var todayRows = prtgStore.GetHostMapForDate(newest);
-                    if (todayRows.Any(r => r.MapStatus == PrtgMapStatus.Ok)) return (newest, todayRows);
-                    // 最新日沒有任何 ok（這趟沒算出來、或主檔暫時讀不到而寫出一整天 unmatched）：以前一天為錨點找最近一份有列的對應；
-                    // 錨點用最新日自己會找回同一份 unmatched。主機真的被移除時由評估範圍濾掉，不會誤歸戶
-                    var prior = prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: newest.AddDays(-1));
-                    return prior.MapDate != null && prior.Rows.Any(r => r.MapStatus == PrtgMapStatus.Ok) ? prior : (newest, todayRows);
-                }
-                return prtgStore.GetLatestHostMapWithDate(PrtgTriggeredValueFetcher.HostMapLookbackDays, anchor: d);
-            }
+            // 取法與維護頁就緒度、規則試算同一個（PrtgValueAssessment.ResolveHostMapRows），規則歸戶與數值評估看到的主機才會一致。
+            // 回傳的日期晚於 d 即為沿用。
 
             // 包裝層：合成問題靜音項目（以紀錄日 day 判定，見下方逐主機標記）
             var allSuppressions = new MuteAwareSuppressionStore(
@@ -382,7 +387,7 @@ internal static class PrtgDailyPipeline
                 ct.ThrowIfCancellationRequested();
                 progress?.Report(RunPhases.PrtgDateRange, days.Count, i + 1);
                 var day = days[i].Date;
-                var state = dayStates[day] = new PrtgDayState { DiskAssessmentFailed = diskAssessmentFailed };
+                var state = dayStates[day] = new PrtgDayState();
                 var plan = planned[day] = new PrtgPlannedDay();
                 if (days.Count > 1)
                 {
@@ -391,7 +396,7 @@ internal static class PrtgDailyPipeline
 
                 try
                 {
-                    var (mapDate, mapRows) = ResolveHostMapRows(day);
+                    var (mapDate, mapRows) = PrtgValueAssessment.ResolveHostMapRows(prtgStore, day, newest);
                     var deviceToHost = DeviceToHost(mapRows, evaluationHostIds);
                     if (mapDate is { } borrowed && borrowed.Date > day.Date && deviceToHost.Count > 0)
                     {
@@ -470,7 +475,7 @@ internal static class PrtgDailyPipeline
                     var readinessAssessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                     var readinessDay = DateOnly.FromDateTime(newest);
                     var readiness = PrtgValueReadiness.Compute(readinessAssessment,
-                        readinessAssessment.DeviceToHostOn(readinessDay, evaluationHostIds), evaluationHostIds,
+                        readinessAssessment.DeviceToHostOn(readinessDay, readinessDay, evaluationHostIds), evaluationHostIds,
                         policySensorIds, readinessDay, ct);
                     prtgConsole.WriteLine(PrtgValueReadiness.FormatLine(readiness));
                 }
@@ -488,7 +493,7 @@ internal static class PrtgDailyPipeline
             if (diskRule?.PrtgDiskTrendThresholds is { } diskThresholds && newest < DateTime.Today &&
                 planned.TryGetValue(newest, out var newestPlan) && newestPlan.DeviceToHost.Count > 0)
             {
-                try
+                EvaluateTrend("磁碟", () =>
                 {
                     var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                     var completedDay = DateOnly.FromDateTime(newest);
@@ -501,7 +506,7 @@ internal static class PrtgDailyPipeline
                         operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                         var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                         foreach (var row in assessment.AssessPage(page, completedDay,
-                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays))
+                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays, completedDay))
                         {
                             reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                             var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
@@ -521,15 +526,7 @@ internal static class PrtgDailyPipeline
                         : $"磁碟趨勢評估（{newest:yyyy-MM-dd}）：{candidates.Count} 顆，" +
                           string.Join("、", reasons.OrderBy(pair => pair.Key).Select(pair =>
                               $"{PrtgValueReasonText.Label(pair.Key)} {pair.Value}")) + $"；新增 finding {added} 筆。");
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    diskAssessmentFailed = true;
-                    dayStates[newest].DiskAssessmentFailed = true;
-                    Log.Error(ex, "PRTG 磁碟趨勢評估失敗；既有狀態型 findings 繼續發布");
-                    prtgConsole.WriteLine("  ⚠ 磁碟趨勢評估失敗，既有狀態型 findings 照常發布：" + ex.Message);
-                }
+                });
             }
 
             // 數值趨勢規則（記憶體／CPU／Ping）
@@ -557,7 +554,7 @@ internal static class PrtgDailyPipeline
                         _ => code
                     };
 
-                    try
+                    EvaluateTrend(label, () =>
                     {
                         var assessment = new PrtgValueAssessment(prtgStore, semanticOverrides);
                         var completedDay = DateOnly.FromDateTime(newest);
@@ -569,7 +566,7 @@ internal static class PrtgDailyPipeline
                             operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                             var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                             foreach (var row in assessment.AssessPage(page, completedDay,
-                                         thresholds.WindowDays, thresholds.MinimumValidDays))
+                                         thresholds.WindowDays, thresholds.MinimumValidDays, completedDay))
                             {
                                 reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                                 var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
@@ -589,13 +586,7 @@ internal static class PrtgDailyPipeline
                             : $"{label}趨勢評估（{newest:yyyy-MM-dd}）：{candidates.Count} 顆，" +
                               string.Join("、", reasons.OrderBy(pair => pair.Key).Select(pair =>
                                   $"{PrtgValueReasonText.Label(pair.Key)} {pair.Value}")) + $"；新增 finding {added} 筆。");
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        Log.Error(ex, "PRTG {Label}趨勢評估失敗；既有 findings 照常發布", label);
-                        prtgConsole.WriteLine($"  ⚠ {label}趨勢評估失敗，既有 findings 照常發布：" + ex.Message);
-                    }
+                    });
                 }
             }
 
@@ -837,7 +828,7 @@ internal static class PrtgDailyPipeline
             {
                 prtgOutcome = BatchRun.PrtgOutcomeFailed;
             }
-            else if ((fetchResult != null && fetchResult.Failures > 0) || totalFailedSensors > 0 || diskAssessmentFailed)
+            else if ((fetchResult != null && fetchResult.Failures > 0) || totalFailedSensors > 0 || failedTrendLabels.Count > 0)
             {
                 prtgOutcome = BatchRun.PrtgOutcomePartial;
             }
@@ -927,10 +918,10 @@ internal static class PrtgDailyPipeline
                     {
                         var s = dayStates[day];
                         var failedSensors = s.Triggered?.FailedSensors ?? 0;
-                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed || s.DiskAssessmentFailed,
+                        var (outcome, note) = ClassifyDay(syncFailed, failedSensors > 0 || stageFailed || s.TrendFailedLabels.Count > 0,
                             rulesAvailableForStat, sensorMirrorEmpty, s.MapAvailable, conservativeStrategy);
-                        if (s.DiskAssessmentFailed && outcome == BatchRun.PrtgOutcomePartial)
-                            note = "磁碟趨勢證據未完整；尚未完成風險判定。";
+                        if (s.TrendFailedLabels.Count > 0 && outcome == BatchRun.PrtgOutcomePartial)
+                            note = $"{string.Join("、", s.TrendFailedLabels)}趨勢證據未完整；尚未完成風險判定。";
                         if (stageFailed && note is null && outcome == BatchRun.PrtgOutcomePartial)
                             note = StageFailureNote(fetchResult!.StageFailures);
                         if (s.MapBorrowedFrom is { } borrowedFrom)
@@ -1128,7 +1119,8 @@ internal static class PrtgDailyPipeline
         public bool MapAvailable;
         /// <summary>該日之前沒有對應、沿用之後那份時的對應日；逐日說明會註明。</summary>
         public DateTime? MapBorrowedFrom;
-        public bool DiskAssessmentFailed;
+        /// <summary>擲例外的數值趨勢評估類別（磁碟、記憶體使用…）；非空＝該日趨勢證據未完整。</summary>
+        public List<string> TrendFailedLabels { get; } = new();
         /// <summary>規則命中的主機，觸發式取數會把它們併進候選（規則命中但風險未上調的主機也要取數）。</summary>
         public HashSet<long> TriggerHosts { get; } = new();
         public PrtgTriggeredFetchResult? Triggered;
