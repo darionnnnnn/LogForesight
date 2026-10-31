@@ -337,7 +337,7 @@ public sealed class PrtgTrendEvidenceTests : IDisposable
 
         var store = new EfPrtgStore(NewContext);
         var assessment = new PrtgValueAssessment(store, new Dictionary<string, PrtgValueSemantic>());
-        var controller = new HostDetailController(null!, store, new StubVisibility(hostId), assessment, new FakeRuleStore());
+        var controller = new HostDetailController(null!, new HostPrtgDetailService(store, new StubVisibility(hostId), assessment, new FakeRuleStore()));
 
         var result = controller.Prtg(hostId).Data;
         Assert.NotNull(result);
@@ -376,7 +376,7 @@ public sealed class PrtgTrendEvidenceTests : IDisposable
             Category = IssueCategory.Resource, Severity = IssueSeverity.High, Description = "edited", CountThreshold = 1
         });
         var editedStore = new FakeRuleStore { Content = new RuleFileContent { SeedVersion = KnownIssueSeed.Version, Rules = edited } };
-        var editedController = new HostDetailController(null!, store, new StubVisibility(hostId), assessment, editedStore);
+        var editedController = new HostDetailController(null!, new HostPrtgDetailService(store, new StubVisibility(hostId), assessment, editedStore));
         var editedMem = Assert.Single(editedController.Prtg(hostId).Data!.Devices).Sensors.Single(s => s.Objid == 2001);
         Assert.Equal(10, editedMem.RequiredDays);
         Assert.Equal(nameof(PrtgValueReason.Ready), editedMem.ValueReasonCode);

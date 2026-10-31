@@ -38,6 +38,7 @@ public class SettingsController : ControllerBase
     private readonly ICurrentUser? _currentUser;
     private readonly IPrtgTransferCapacityProvider? _transferCapacity;
     private readonly PrtgScopePurgeAuthorizationService? _scopePurgeAuthorization;
+    private readonly PrtgConflictQueryService _conflictQuery;
 
     public SettingsController(
         ISystemSettingsService settings,
@@ -53,7 +54,8 @@ public class SettingsController : ControllerBase
         PrtgDeviceIndexCache? deviceIndexCache = null,
         IVisibilityService? visibility = null, ICurrentUser? currentUser = null,
         IPrtgTransferCapacityProvider? transferCapacity = null,
-        PrtgScopePurgeAuthorizationService? scopePurgeAuthorization = null)
+        PrtgScopePurgeAuthorizationService? scopePurgeAuthorization = null,
+        PrtgConflictQueryService? conflictQuery = null)
     {
         _hosts = hosts;
         _settings = settings;
@@ -70,6 +72,8 @@ public class SettingsController : ControllerBase
         _currentUser = currentUser;
         _transferCapacity = transferCapacity;
         _scopePurgeAuthorization = scopePurgeAuthorization;
+        // 單元測試直接 new 控制器時不經 DI：以同一組後端／主機庫／快取組一份，行為相同
+        _conflictQuery = conflictQuery ?? new PrtgConflictQueryService(backend, hosts, deviceIndexCache);
     }
 
     [HttpGet]
@@ -1076,147 +1080,10 @@ public class SettingsController : ControllerBase
         // 只列衝突：PRTG 端有、主機清單沒有的 device（unmatched）不呈現在畫面（docs/PRTG-SPEC.md §1）；
         // 未對應的清單主機改由 prtg-unmapped-hosts 列出
         if (!string.Equals(status, PrtgMapStatus.Conflict, StringComparison.OrdinalIgnoreCase))
-        {
             throw DomainException.Validation("status 僅支援 conflict 查詢；未對應的主機請改用 prtg-unmapped-hosts。");
-        }
 
         var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
-
-        if (_backend == null)
-        {
-            return ApiResponse<PrtgHostMapPageDto>.Ok(new PrtgHostMapPageDto
-            {
-                Page = normPage,
-                PageSize = normPageSize
-            });
-        }
-
-        var store = _backend.PrtgStore();
-        var (mapDate, hostMaps) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays);
-
-        var targetStatus = PrtgMapStatus.Conflict;
-
-        // 依 DeviceObjid 排序後才分頁：GetLatestHostMapWithDate 的查詢沒有 ORDER BY，
-        // 未排序就分頁時同一列可能在兩頁重複出現、也可能整列被跳過。
-        var filteredRows = hostMaps
-            .Where(m => string.Equals(m.MapStatus, targetStatus, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(m => m.DeviceObjid)
-            .ToList();
-
-        var total = filteredRows.Count;
-        var pagedRows = filteredRows
-            .Skip((normPage - 1) * normPageSize)
-            .Take(normPageSize)
-            .ToList();
-
-        // 裝置索引（objid → 裝置、正規化 IP → 同 IP 裝置）改走短 TTL 的跨請求快取
-        // （回饋四十五輪 B5）：原本每翻一頁都把裝置全表讀回來重建一次索引，
-        // 而裝置表是結構鏡像、一天只在夜間同步時變一次。
-        // 沒注入快取時（單元測試直接 new controller）退回「當場建一份」，行為完全相同。
-        var deviceIndex = _deviceIndexCache != null
-            ? _deviceIndexCache.GetOrAdd(PrtgDeviceIndexCache.GlobalKey, () => store.GetAllDevices())
-            : new PrtgDeviceIndex(store.GetAllDevices());
-
-        var hostStore = _hosts ?? new HostStore(_backend.Blob("hosts"));
-        var activeHosts = hostStore.GetAll()
-            .Where(h => h.Active && h.MergedInto == null)
-            .ToList();
-
-        var hostsByNormIp = new Dictionary<string, List<WebHost>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var h in activeHosts)
-        {
-            var normIp = PrtgHostMapper.NormalizeIp(h.IpAddress);
-            if (normIp == null) continue;
-            if (!hostsByNormIp.TryGetValue(normIp, out var list))
-            {
-                list = new List<WebHost>();
-                hostsByNormIp[normIp] = list;
-            }
-            list.Add(h);
-        }
-
-        var items = new List<PrtgConflictItemDto>(pagedRows.Count);
-        foreach (var row in pagedRows)
-        {
-            var device = deviceIndex.ByObjid(row.DeviceObjid);
-            var normIp = PrtgHostMapper.NormalizeIp(row.Ip);
-
-            var sameDevices = deviceIndex.ByNormIp(normIp);
-
-            var isMultiDevice = sameDevices.Count > 1;
-            string conflictKind;
-            var note = row.Note ?? "";
-            // 衝突只剩兩種（docs/PRTG-SPEC.md §4）：名稱命中多台主機、一 IP 由多台主機共用。
-            // 同 IP 多 device 已改為全部對應到該 IP 的主機，不再是衝突。
-            conflictKind = note.StartsWith(PrtgHostMapper.NoteHostnameMultiHostsPrefix, StringComparison.Ordinal)
-                ? "hostname-multi"
-                : "multi-host";
-
-            List<PrtgConflictDeviceDto> sameIpDevices;
-            if (isMultiDevice)
-            {
-                sameIpDevices = sameDevices
-                    .Select(d => new PrtgConflictDeviceDto
-                    {
-                        Objid = d.Objid,
-                        Name = d.Name,
-                        GroupPath = d.GroupPath
-                    })
-                    .ToList();
-            }
-            else
-            {
-                sameIpDevices = new List<PrtgConflictDeviceDto>
-                {
-                    new()
-                    {
-                        Objid = row.DeviceObjid,
-                        Name = device?.Name,
-                        GroupPath = device?.GroupPath
-                    }
-                };
-            }
-
-            List<PrtgCandidateHostDto> candidateHosts;
-            if (normIp != null && hostsByNormIp.TryGetValue(normIp, out var matchedHosts))
-            {
-                candidateHosts = matchedHosts
-                    .Select(h => new PrtgCandidateHostDto
-                    {
-                        HostId = h.HostId,
-                        HostName = h.HostName,
-                        IpAddress = h.IpAddress
-                    })
-                    .ToList();
-            }
-            else
-            {
-                candidateHosts = new List<PrtgCandidateHostDto>();
-            }
-
-            items.Add(new PrtgConflictItemDto
-            {
-                DeviceObjid = row.DeviceObjid,
-                DeviceName = device?.Name,
-                GroupPath = device?.GroupPath,
-                Ip = row.Ip,
-                HostName = isMultiDevice ? null : row.HostName,
-                Note = row.Note,
-                MapStatus = row.MapStatus ?? targetStatus,
-                ConflictKind = conflictKind,
-                SameIpDevices = sameIpDevices,
-                CandidateHosts = candidateHosts
-            });
-        }
-
-        return ApiResponse<PrtgHostMapPageDto>.Ok(new PrtgHostMapPageDto
-        {
-            MapDate = mapDate,
-            Total = total,
-            Page = normPage,
-            PageSize = normPageSize,
-            Items = items
-        });
+        return ApiResponse<PrtgHostMapPageDto>.Ok(_conflictQuery.GetConflictPage(normPage, normPageSize));
     }
 
     // ── PRTG 人工主機對應（PRTG 第 2 輪任務E-1）──────────────────────────────────

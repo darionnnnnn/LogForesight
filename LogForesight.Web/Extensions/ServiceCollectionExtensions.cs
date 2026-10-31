@@ -335,6 +335,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRecordRepository, RecordRepository>();
         services.AddScoped<RecordListQueryService>();
         services.AddScoped<RecordDetailQueryService>();
+        services.AddScoped<HostPrtgDetailService>();
+        services.AddScoped<PrtgConflictQueryService>();
         // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
         services.AddScoped<IssueRankingBuilder>();
         // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，

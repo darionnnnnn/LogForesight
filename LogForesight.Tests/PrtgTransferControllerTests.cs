@@ -310,7 +310,7 @@ public sealed class PrtgTransferControllerTests
         http.Request.ContentType = "application/octet-stream";
         var controller = fixture.Controller;
         controller.ControllerContext = new ControllerContext { HttpContext = http };
-        var denied = Assert.IsType<ObjectResult>(await controller.PutChunk(transferId, 0, CancellationToken.None));
+        var denied = Assert.IsType<ObjectResult>(await ThroughFilterAsync(() => controller.PutChunk(transferId, 0, CancellationToken.None)));
         Assert.Equal(409, denied.StatusCode);
         Assert.Equal(0, body.ReadCount);
         store.ReleaseChunkWrite(held, binding, DateTimeOffset.UtcNow);
@@ -340,18 +340,45 @@ public sealed class PrtgTransferControllerTests
         Assert.Equal(0, store.GetStatus(transferId, binding).ReceivedBytes);
 
         fixture.User.Account = "renamed-account";
-        Assert.Equal(403, Assert.IsType<ObjectResult>(fixture.Controller.GetStatus(transferId)).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(ThroughFilter(() => fixture.Controller.GetStatus(transferId))).StatusCode);
         fixture.User.Account = "maintainer";
         fixture.Settings.Update(settings => settings.PrtgUrl = "https://changed.example/prtg");
-        Assert.Equal(403, Assert.IsType<ObjectResult>(fixture.Controller.GetStatus(transferId)).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(ThroughFilter(() => fixture.Controller.GetStatus(transferId))).StatusCode);
 
         var secondId = fixture.CreateTransfer();
         fixture.Hosts.Upsert(new() { HostName = "third", Source = "netiq", Active = true });
-        Assert.Equal(403, Assert.IsType<ObjectResult>(fixture.Controller.GetStatus(secondId)).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(ThroughFilter(() => fixture.Controller.GetStatus(secondId))).StatusCode);
 
         var policyStore = new PrtgMonitoringPolicyStore(fixture.Backend.Blob(PrtgMonitoringPolicyStore.BlobKey));
         policyStore.Update(policy => policy.SensorIds = [11, 12]);
-        Assert.Equal(403, Assert.IsType<ObjectResult>(fixture.Controller.GetStatus(secondId)).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(ThroughFilter(() => fixture.Controller.GetStatus(secondId))).StatusCode);
+    }
+
+    /// <summary>
+    /// 模擬正式站台的例外管線：PrtgTransferStoreException 由 ApiExceptionFilter 轉成狀態碼＋信封，
+    /// 單元測試直接呼叫控制器時沒有 MVC 管線，這裡補上同一個 filter。
+    /// </summary>
+    private static IActionResult ThroughFilter(Func<IActionResult> action)
+    {
+        try { return action(); }
+        catch (PrtgTransferStoreException ex) { return Filtered(ex); }
+    }
+
+    private static async Task<IActionResult> ThroughFilterAsync(Func<Task<IActionResult>> action)
+    {
+        try { return await action(); }
+        catch (PrtgTransferStoreException ex) { return Filtered(ex); }
+    }
+
+    private static IActionResult Filtered(Exception ex)
+    {
+        var http = new DefaultHttpContext();
+        var context = new Microsoft.AspNetCore.Mvc.Filters.ExceptionContext(
+            new ActionContext(http, new Microsoft.AspNetCore.Routing.RouteData(),
+                new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor()),
+            new List<Microsoft.AspNetCore.Mvc.Filters.IFilterMetadata>()) { Exception = ex };
+        new ApiExceptionFilter().OnException(context);
+        return context.Result!;
     }
 
     [Fact]
@@ -402,7 +429,7 @@ public sealed class PrtgTransferControllerTests
         }
         var other = fixture.CreateTransfer();
         fixture.Settings.Update(settings => settings.PrtgUrl = "https://changed.example/prtg");
-        Assert.Equal(403, Assert.IsAssignableFrom<ObjectResult>(fixture.Controller.GetStatus(other)).StatusCode);
+        Assert.Equal(403, Assert.IsAssignableFrom<ObjectResult>(ThroughFilter(() => fixture.Controller.GetStatus(other))).StatusCode);
         Assert.IsType<OkObjectResult>(fixture.Controller.Abandon(other));
         Assert.Equal(PrtgTransferStates.Abandoned, fixture.TransferRow(other).State);
     }
@@ -465,7 +492,8 @@ public sealed class PrtgTransferControllerTests
         builder.Services.AddSingleton<ICurrentUser>(fixture.User);
         builder.Services.AddSingleton<ISystemSettingsStore>(fixture.Settings);
         builder.Services.AddSingleton<IAuditService, NoopAudit>();
-        builder.Services.AddControllers().AddApplicationPart(typeof(PrtgTransferController).Assembly);
+        builder.Services.AddControllers(options => options.Filters.Add<ApiExceptionFilter>())
+            .AddApplicationPart(typeof(PrtgTransferController).Assembly);
         await using var app = builder.Build();
         app.UsePathBase("/lf-r11");
         app.UseMiddleware<CsrfHeaderMiddleware>();

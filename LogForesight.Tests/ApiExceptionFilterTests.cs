@@ -133,4 +133,44 @@ public class ApiExceptionFilterTests
         Assert.DoesNotContain("Math.Clamp(days ?? DefaultDays, 1, 90)", ai);
         Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(dash, @"Math\.Clamp\([^)]*,\s*1,\s*90\)").Count);
     }
+
+    [Theory]
+    [InlineData("transfer_binding_changed", 403)]
+    [InlineData("transfer_context_changed", 409)]
+    [InlineData("chunk_shape_invalid", 400)]
+    [InlineData("transfer_not_found", 404)]
+    [InlineData("transfer_store_busy", 503)]
+    public void PRTG診斷傳輸儲存例外_狀態碼與錯誤碼取自拋出點(string code, int httpStatus)
+    {
+        var ctx = NewContext(new LogForesight.Core.Persistence.Sql.PrtgTransferStoreException(code, "傳輸錯誤訊息", httpStatus), aborted: false);
+
+        RunFilter(ctx);
+
+        var result = Assert.IsType<ObjectResult>(ctx.Result);
+        Assert.Equal(httpStatus, result.StatusCode);
+        var body = Assert.IsType<ApiResponse<object>>(result.Value);
+        Assert.False(body.Success);
+        Assert.Equal(code, body.Error!.Code);
+        Assert.Equal("傳輸錯誤訊息", body.Error.Message);
+        Assert.True(ctx.ExceptionHandled);
+    }
+
+    [Theory]
+    [InlineData(typeof(InvalidOperationException))]
+    [InlineData(typeof(System.IO.InvalidDataException))]
+    [InlineData(typeof(System.Text.Json.JsonException))]
+    [InlineData(typeof(System.IO.EndOfStreamException))]
+    public void 通用型別例外不被全域對照_仍為500通用訊息(Type exceptionType)
+    {
+        var ex = (Exception)Activator.CreateInstance(exceptionType, "內部細節不得外洩")!;
+        var ctx = NewContext(ex, aborted: false);
+
+        RunFilter(ctx);
+
+        var result = Assert.IsType<ObjectResult>(ctx.Result);
+        Assert.Equal(500, result.StatusCode);
+        var body = Assert.IsType<ApiResponse<object>>(result.Value);
+        Assert.Equal(ApiErrorCodes.ServerError, body.Error!.Code);
+        Assert.DoesNotContain("內部細節", body.Error.Message);
+    }
 }

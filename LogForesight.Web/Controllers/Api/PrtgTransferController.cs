@@ -44,39 +44,26 @@ public sealed class PrtgTransferController : ControllerBase
     [RequestSizeLimit(16 * 1024)]
     public IActionResult Create([FromBody] PrtgTransferCreateRequestDto request)
     {
-        try
-        {
-            var binding = CaptureBinding();
-            var store = Store();
-            var status = store.Create(new PrtgTransferCreateRequest(request.TransferId,
-                request.DeclaredBytes, request.ChunkCount, request.PackageSha256, binding), DateTimeOffset.UtcNow);
-            return Ok(ApiResponse<PrtgTransferStatus>.Ok(status));
-        }
-        catch (PrtgTransferStoreException ex) { return StoreError(ex); }
+        var binding = CaptureBinding();
+        var status = Store().Create(new PrtgTransferCreateRequest(request.TransferId,
+            request.DeclaredBytes, request.ChunkCount, request.PackageSha256, binding), DateTimeOffset.UtcNow);
+        return Ok(ApiResponse<PrtgTransferStatus>.Ok(status));
     }
 
     [HttpGet("{transferId:guid}")]
     public IActionResult GetStatus(Guid transferId)
     {
-        try
-        {
-            var binding = CaptureBinding();
-            return Ok(ApiResponse<PrtgTransferStatus>.Ok(Store().GetStatus(transferId, binding)));
-        }
-        catch (PrtgTransferStoreException ex) { return StoreError(ex); }
+        var binding = CaptureBinding();
+        return Ok(ApiResponse<PrtgTransferStatus>.Ok(Store().GetStatus(transferId, binding)));
     }
 
     [HttpPost("{transferId:guid}/abandon")]
     [RequestSizeLimit(1024)]
     public IActionResult Abandon(Guid transferId)
     {
-        try
-        {
-            var binding = CaptureBinding();
-            Store().AbandonOwned(transferId, binding, DateTimeOffset.UtcNow);
-            return Ok(ApiResponse<object>.Ok(new { TransferId = transferId, State = PrtgTransferStates.Abandoned }));
-        }
-        catch (PrtgTransferStoreException ex) { return StoreError(ex); }
+        var binding = CaptureBinding();
+        Store().AbandonOwned(transferId, binding, DateTimeOffset.UtcNow);
+        return Ok(ApiResponse<object>.Ok(new { TransferId = transferId, State = PrtgTransferStates.Abandoned }));
     }
 
     [HttpPut("{transferId:guid}/chunks/{ordinal:int}")]
@@ -120,7 +107,6 @@ public sealed class PrtgTransferController : ControllerBase
             var receipt = store.AcceptChunk(lease, payload, currentBinding, DateTimeOffset.UtcNow);
             return Ok(ApiResponse<PrtgTransferChunkReceipt>.Ok(receipt));
         }
-        catch (PrtgTransferStoreException ex) { return StoreError(ex); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return StatusCode(499, ApiResponse.Fail("request_cancelled", "片段讀取已取消；尚未接受的內容可安全重送。"));
@@ -267,6 +253,7 @@ public sealed class PrtgTransferController : ControllerBase
         _ => "舊版診斷 JSON 未通過格式、欄位或完整性驗證。"
     };
 
+    // 只剩 Complete 還需要：它要先把驗證租約標成失敗才回錯誤；其餘端點的 PrtgTransferStoreException 由 ApiExceptionFilter 轉譯
     private IActionResult StoreError(PrtgTransferStoreException exception) =>
         StatusCode(exception.HttpStatusCode, ApiResponse.Fail(exception.Code, exception.Message));
 
