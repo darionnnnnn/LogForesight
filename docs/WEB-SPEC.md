@@ -116,10 +116,12 @@ LogForesight.Web/
 
 | 層 | 做 | 不做 |
 |---|---|---|
-| API Controller | 綁定/驗證 DTO、呼叫單一 Service 方法、回傳信封 | 業務判斷、直接用 Repository、組 SQL/LINQ、try-catch（交給 ExceptionFilter） |
+| API Controller | 綁定/驗證 DTO、呼叫單一 Service 方法、回傳信封 | 業務判斷、直接用 Repository、組 SQL/LINQ、純轉譯的 try-catch（交給 ExceptionFilter） |
 | Service | 業務規則、授權範圍過濾（呼叫 `IVisibilityService`）、稽核寫入、跨 Repository 組合 | 讀 HttpContext（需要目前使用者時注入 `ICurrentUser`）、格式化顯示文字 |
 | Repository | 查詢組合、分頁、對 Core 介面的轉接 | 授權判斷、業務規則 |
 | View + JS | 呈現、互動、呼叫 API | 權限判斷邏輯（選單顯示依 `/api/auth/me` 回傳的能力，但**真正的防線在後端**） |
+
+控制器一檔一個、檔名＝類別名；全部 action 的（HTTP 方法、路由、`[Permission]` 能力、匿名、`[RequireViewAll]`、`[SkipDataVersionBump]`）由 `ControllerRouteSnapshotTests` 對基準檔守門，沒有 `[Permission]` 的控制器必須列在該測試的白名單並附理由。全站 PRTG 對應類端點以 `[RequireViewAll]` 宣告，不在 action 內手寫檢查。
 
 ### 4.3 DI 註冊表
 
@@ -484,12 +486,26 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 { "success": false, "data": null, "error": { "code": "validation_failed", "message": "預計完成日不可早於今天" } }
 ```
 
-- 錯誤碼固定小寫 snake_case：`auth_expired`、`forbidden`、`not_found`、`validation_failed`、
-  `conflict`、`server_error`。`message` 一律是**可直接顯示給使用者的繁體中文**——
+- 錯誤碼固定小寫 snake_case，**唯一登錄處是 `ApiErrorCodes`**（常數＋`Table` 狀態碼對照，表外一律 400）；`Fail(`／`DomainException(` 不得傳字面字串（`ApiErrorCodeGuardTests` 守門）。通用碼：
+
+  | 碼 | HTTP | 用途 |
+  |---|---|---|
+  | `validation_failed` | 400 | 輸入不合法（表外預設） |
+  | `auth_failed` | 401 | 登入帳密錯誤 |
+  | `auth_expired` | 401 | 登入逾期 |
+  | `forbidden` | 403 | 沒有權限 |
+  | `not_found` | 404 | 資源不存在 |
+  | `conflict` | 409 | 樂觀鎖衝突、執行互斥 |
+  | `rate_limited` | 429 | 登入嘗試或 AI 使用太頻繁，回應帶 `Retry-After` |
+  | `server_error` | 500 | 未預期例外 |
+  | `service_unavailable` | 503 | 升級遷移進行中，寫入暫停 |
+  | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
+
+  PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
-  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板。
+  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯。
   **樂觀鎖衝突另有一支**：處理狀態三表以
   `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
   `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
@@ -1082,6 +1098,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **預設視角**：URL 完全沒有查詢參數（從側欄直接進頁）→ **依問題**
   （主機量大後「有哪些問題、誰在處理」才是主要動線）；帶任何查詢參數（下鑽連結帶
   `statuses`/`severity` 等明細專屬條件）→ 維持**明細**，全站下鑽連結零改動、數字對得上。
+- **篩選支援矩陣**（`RecordQuerySupport` 單一出處，前端 `viewSupports` 對應）：明細支援處理狀態、逾期、未指派；依問題支援處理狀態與未指派；依主機、依日期三者皆不支援（彙總視角套用處理篩選需全撈處理資料）。目前視角不支援的條件**不送出、不顯示標籤**，條件列改顯示「目前的檢視不支援：…（切回明細可套用）」；值保留在網址，切回支援的視角自動恢復。`hostIds`／`groupIds` 給了卻沒有任何合法數字回 400，不當成未指定。
 - **依問題視角的處理**：狀態 chip 篩「處理概況」三態（`by-issue` 的 `statuses`，
   群組層級 `GroupStatus`）、「未指派」chip 篩 `Handlers` 為空的問題；點列**就地展開**該問題
   受影響主機×日期（重用 `GET api/records` 明細端點、可見範圍已過濾），每列「去處理」直連風險日詳情。
