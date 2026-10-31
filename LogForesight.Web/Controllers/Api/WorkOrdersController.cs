@@ -26,11 +26,13 @@ public class WorkOrdersController : ControllerBase
     }
 
     /// <summary>手動派工人選（交辦、改派／拆出、日層級指派共用）；能力沿用類別層 Assign</summary>
+    [SkipDataVersionBump]
     [HttpPost("candidates")]
     [Permission(Capability.Assign)]
     public ApiResponse<List<WorkOrderCandidateDto>> Candidates([FromBody] WorkOrderCandidatesRequest request) =>
         ApiResponse<List<WorkOrderCandidateDto>>.Ok(_candidates.Get(request));
 
+    [SkipDataVersionBump]
     [HttpPost("preview")]
     public ApiResponse<WorkOrderPreviewDto> Preview([FromBody] CreateWorkOrderRequest request) =>
         ApiResponse<WorkOrderPreviewDto>.Ok(_service.Preview(request));

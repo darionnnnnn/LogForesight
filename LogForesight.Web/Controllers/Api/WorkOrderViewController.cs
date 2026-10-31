@@ -31,6 +31,7 @@ public class WorkOrderViewController : ControllerBase
     /// 標記管理者已看過這張單（未讀回覆判定）。回一般 ApiResponse（前端的 api.js 要有 JSON 本體才算成功）；不具 Assign 時不寫入、同樣回成功。
     /// 放在這個沒有類別層能力標註的 controller 是因為處理人與 ViewAll 使用者開詳情也會呼叫，不該因此得到 403。
     /// </summary>
+    [SkipDataVersionBump]
     [HttpPost("{id:long}/seen")]
     public ApiResponse<bool> Seen(long id)
     {

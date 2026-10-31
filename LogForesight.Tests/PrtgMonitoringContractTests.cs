@@ -58,12 +58,12 @@ public sealed class PrtgMonitoringContractTests : IDisposable
             [new() { MapDate = DateTime.Today, DeviceObjid = 10, HostId = 1, HostName = "VISIBLE", MapStatus = PrtgMapStatus.Ok }]);
     }
     private PrtgMonitoringController Controller(Visible? visible = null, ICurrentUser? currentUser = null) => new(_backend, _hosts, visible ?? new(1, 2),
-        currentUser ?? FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, new DataVersionStamp(), _protection);
+        currentUser ?? FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _protection);
     private PrtgMonitoringController ControllerWithRealVisibility(ICurrentUser currentUser, IUserStore? userStore = null)
     {
         var visibility = new VisibilityService(currentUser, userStore ?? new FakeUserStore(), new FakeUserGroupStore(),
             new FakeGroupAccessStore(), _hosts, new FakeIssueCaseStore(), new FakeSystemSettingsStore());
-        return new(_backend, _hosts, visibility, currentUser, _audit, new DataVersionStamp(), _protection);
+        return new(_backend, _hosts, visibility, currentUser, _audit, _protection);
     }
     private static PrtgMonitoringRequest Request(string revision = "") => new()
     { Revision = revision, HostIds = [1], SensorIds = [100] };

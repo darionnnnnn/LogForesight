@@ -44,6 +44,7 @@ public class ImportsController : ControllerBase
     }
 
     /// <summary>上傳並預覽（不寫入任何資料）</summary>
+    [SkipDataVersionBump]
     [HttpPost("{kind}/preview")]
     public ApiResponse<ImportPlan> Preview(ImportKind kind, IFormFile? file)
     {

@@ -59,16 +59,19 @@ public class SettingsController : ControllerBase
     }
 
     /// <summary>AD 測試連線（docs/archive/HISTORY.md #9）：用表單目前填的值＋管理者當場輸入的帳密試 bind</summary>
+    [SkipDataVersionBump]
     [HttpPost("ad-test")]
     public ApiResponse<TestAdConnectionResultDto> TestAdConnection([FromBody] TestAdConnectionRequest request) =>
         ApiResponse<TestAdConnectionResultDto>.Ok(_settings.TestAdConnection(request));
 
     /// <summary>測試寄信（回饋十五輪批次D）：用表單目前填的值試寄一封信，密碼留空沿用已儲存的密碼</summary>
+    [SkipDataVersionBump]
     [HttpPost("mail-test")]
     public async Task<ApiResponse<TestMailResultDto>> TestMail([FromBody] TestMailRequest request) =>
         ApiResponse<TestMailResultDto>.Ok(await _settings.TestMail(request));
 
     /// <summary>PRTG 測試連線（PRTG 第 1 輪批次B）：用表單目前填的值試連線，token 留空沿用已儲存的 token</summary>
+    [SkipDataVersionBump]
     [HttpPost("prtg-test")]
     public async Task<ApiResponse<TestPrtgConnectionResultDto>> TestPrtg([FromBody] TestPrtgConnectionRequest request, CancellationToken ct)
         => ApiResponse<TestPrtgConnectionResultDto>.Ok(await _settings.TestPrtgAsync(request, ct));

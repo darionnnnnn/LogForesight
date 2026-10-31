@@ -76,6 +76,7 @@ public class AiController : ControllerBase
     /// 處理說明「AI 整理」（回饋第 50 輪批次C-3）：每使用者 60 秒 6 次節流；
     /// 每次呼叫寫一筆稽核，detail 只記長度／問題名稱／結果，**不記原文與輸出**。
     /// </summary>
+    [SkipDataVersionBump]
     [HttpPost("tidy-note")]
     [Permission(Capability.Handle)]
     public async Task<ActionResult<ApiResponse<TidyNoteResponseDto>>> TidyNote([FromBody] TidyNoteRequest request)
@@ -161,6 +162,7 @@ public class AiController : ControllerBase
     /// 授權與 context 完全複用 GetDetail（同 interpret-issue），不信任 client 帶來的內容以外欄位——
     /// 輪數、角色交錯、單則長度一律伺服器端強制，不只是前端 UX 限制。
     /// </summary>
+    [SkipDataVersionBump]
     [HttpPost("chat")]
     public async Task<ApiResponse<AiTextDto?>> Chat([FromBody] ChatRequest request)
     {

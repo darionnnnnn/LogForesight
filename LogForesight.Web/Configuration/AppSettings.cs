@@ -114,6 +114,12 @@ public class ServerSettings
     /// （登入節流的 IP 維度靠它）。空＝不處理轉送標頭。
     /// </summary>
     public List<string> TrustedProxies { get; set; } = new();
+
+    /// <summary>
+    /// 回應標頭 <c>X-Frame-Options</c> 的值（防止站台被嵌進別人的頁面）。預設 <c>DENY</c>；
+    /// 需要被同網域頁面嵌入時改 <c>SAMEORIGIN</c>；空字串＝不送此標頭。
+    /// </summary>
+    public string FrameOptions { get; set; } = "DENY";
 }
 
 public class JwtSettings

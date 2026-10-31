@@ -18,7 +18,7 @@ namespace LogForesight.Web.Controllers.Api;
 
 [ApiController, Route("api/prtg/monitoring"), Permission(Capability.Maintain)]
 public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore hosts,
-    IVisibilityService visibility, ICurrentUser user, IAuditService audit, DataVersionStamp stamp,
+    IVisibilityService visibility, ICurrentUser user, IAuditService audit,
     IDataProtectionProvider protection) : ControllerBase
 {
     private const int HostLimit = 3000;
@@ -86,6 +86,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             CatalogueToken = ProtectToken(token with { Kind = "fence", Search = "", Offset = 0 }) }));
     }
 
+    [SkipDataVersionBump]
     [HttpPost("sensors")]
     public IActionResult SensorPage([FromBody] PrtgMonitoringPageRequest request)
     {
@@ -121,6 +122,7 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             CatalogueToken = ProtectToken(token with { Kind = "fence", Search = "", Offset = 0 }) }));
     }
 
+    [SkipDataVersionBump]
     [HttpPost("estimate")]
     public IActionResult Estimate([FromBody] PrtgMonitoringRequest request)
     {
@@ -207,7 +209,6 @@ public sealed class PrtgMonitoringController(StorageBackend backend, IHostStore 
             audit.Record("prtg_monitoring_confirm",
                 $"儲存 PRTG 監看範圍：主機 {(selectedHosts.Length == 0 ? "全部已對應" : selectedHosts.Length + " 台")}、sensor {(selectedSensors.Length == 0 ? "不限" : selectedSensors.Length + " 顆")}。",
                 "prtg", result.Revision);
-            stamp.Bump();
             return Ok(ApiResponse<string>.Ok(result.Revision));
         }
         catch (InvalidOperationException ex) { return Conflict(ApiResponse.Fail("conflict", ex.Message)); }

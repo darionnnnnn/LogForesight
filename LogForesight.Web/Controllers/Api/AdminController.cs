@@ -290,6 +290,7 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>批次加入成員的預覽（網段／關鍵字命中主機，不寫入）</summary>
+    [SkipDataVersionBump]
     [HttpPost("host-groups/{groupId:long}/members/preview")]
     public ApiResponse<HostGroupMemberPreviewDto> PreviewMembers(
         long groupId, [FromBody] HostGroupMemberQueryRequest request) =>
@@ -347,6 +348,7 @@ public class AdminController : ControllerBase
         ApiResponse<SentinelDto>.Ok(_sentinels.SetActive(sentinelId, request.Active));
 
     /// <summary>測試連線（項目 6）：驗證網址／帳密是否正確，不落地任何東西</summary>
+    [SkipDataVersionBump]
     [HttpPost("sentinels/test-connection")]
     public async Task<ApiResponse<TestSentinelConnectionResultDto>> TestSentinelConnection(
         [FromBody] TestSentinelConnectionRequest request, CancellationToken ct) =>

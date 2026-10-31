@@ -26,11 +26,13 @@ public class RulesController : ControllerBase
         ApiResponse<List<RuleDto>>.Ok(_service.GetRules());
 
     /// <summary>儲存前的即時驗證（不寫入）</summary>
+    [SkipDataVersionBump]
     [HttpPost("validate")]
     public ApiResponse<RuleValidationDto> Validate([FromBody] SaveRuleRequest request) =>
         ApiResponse<RuleValidationDto>.Ok(_service.ValidateRule(request));
 
     /// <summary>磁碟趨勢草稿唯讀預覽；支援 Enabled=false，最多 730 個已完成日、每頁最多 100 筆日期×sensor 結果。</summary>
+    [SkipDataVersionBump]
     [HttpPost("disk-trend-preview")]
     public ApiResponse<DiskTrendRulePreviewDto> PreviewDiskTrend([FromBody] DiskTrendRulePreviewRequest request) =>
         ApiResponse<DiskTrendRulePreviewDto>.Ok(_service.PreviewDiskTrend(request, HttpContext.RequestAborted));

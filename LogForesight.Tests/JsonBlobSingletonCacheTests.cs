@@ -1,5 +1,9 @@
+using LogForesight.Web.Filters;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -126,12 +130,13 @@ public class JsonBlobSingletonCacheTests : IDisposable
 }
 
 /// <summary>
-/// 回饋四十五輪 B3：資料版本戳的失效白名單（<see cref="DataVersionStampPolicy"/>）。
+/// 資料版本戳的推進判定（<see cref="DataVersionStampPolicy"/>）：排除法由端點宣告
+/// <see cref="SkipDataVersionBumpAttribute"/>，中介層只看端點中繼資料，不比對路徑字串。
 /// 走的是真正掛在管線上的那個方法，不另抄一份判定。
 /// </summary>
 public class DataVersionStampPolicyTests
 {
-    private static (HttpContext Context, DataVersionStamp Stamp) Request(string method, string path, int status = 200)
+    private static (HttpContext Context, DataVersionStamp Stamp) Request(string method, string path, int status = 200, bool skip = false)
     {
         var services = new ServiceCollection();
         var stamp = new DataVersionStamp();
@@ -141,47 +146,38 @@ public class DataVersionStampPolicyTests
         context.Request.Method = method;
         context.Request.Path = path;
         context.Response.StatusCode = status;
+        var metadata = skip
+            ? new EndpointMetadataCollection(new SkipDataVersionBumpAttribute())
+            : new EndpointMetadataCollection();
+        context.SetEndpoint(new Endpoint(_ => Task.CompletedTask, metadata, path));
         return (context, stamp);
     }
 
-    /// <summary>驗收 6：白名單內的成功非 GET 請求不推進版本戳</summary>
+    /// <summary>端點貼了 [SkipDataVersionBump]：成功的非 GET 請求也不推進版本戳（路徑長什麼樣都無關）</summary>
     [Theory]
-    [InlineData("/api/auth/login")]
-    [InlineData("/api/auth/logout")]
-    [InlineData("/api/help/ask")]
-    [InlineData("/api/ai/chat")]
-    public void 白名單端點_不推進版本戳(string path)
+    [InlineData("POST", "/api/auth/login")]
+    [InlineData("POST", "/api/work-orders/15/seen/")]
+    [InlineData("PUT", "/api/anything/else")]
+    public void 有標記的端點_不推進版本戳(string method, string path)
     {
-        var (context, stamp) = Request("POST", path);
+        var (context, stamp) = Request(method, path, skip: true);
 
         DataVersionStampPolicy.BumpIfNeeded(context);
 
         Assert.Equal(0, stamp.Current);
     }
 
-    /// <summary>以 POST 承載的唯讀查詢（派工人選、日層級指派預覽）與只寫「已看過」的 seen：不推進（含尾斜線）</summary>
-    [Theory]
-    [InlineData("/api/work-orders/candidates")]
-    [InlineData("/api/records/12/2026-10-01/handling/assign/preview")]
-    [InlineData("/api/work-orders/15/seen")]
-    [InlineData("/api/work-orders/15/seen/")]
-    public void 唯讀POST與seen_不推進版本戳(string path)
-    {
-        var (context, stamp) = Request("POST", path);
-
-        DataVersionStampPolicy.BumpIfNeeded(context);
-
-        Assert.Equal(0, stamp.Current);
-    }
-
-    /// <summary>驗收 6 反例：會改分析資料的端點（處理狀態寫入）必須推進</summary>
+    /// <summary>排除法：沒有標記的成功非 GET 一律推進，就算路徑長得像舊的尾碼清單（/candidates、/seen、login）</summary>
     [Theory]
     [InlineData("PUT", "/api/records/12/2026-09-16/handling")]
     [InlineData("PUT", "/api/handling/issue-cases/assign")]
     [InlineData("POST", "/api/work-orders/12/reply")]
-    [InlineData("PUT", "/api/records/12/2026-10-01/handling/assign")]
     [InlineData("POST", "/api/work-orders/15/return")]
-    public void 處理狀態寫入_推進版本戳(string method, string path)
+    [InlineData("POST", "/api/something-brand-new")]
+    [InlineData("POST", "/api/something/candidates")]
+    [InlineData("POST", "/api/auth/login")]
+    [InlineData("PUT", "/api/prtg/monitoring")]
+    public void 無標記的端點_推進版本戳(string method, string path)
     {
         var (context, stamp) = Request(method, path);
 
@@ -190,43 +186,122 @@ public class DataVersionStampPolicyTests
         Assert.Equal(1, stamp.Current);
     }
 
-    /// <summary>驗收 6：白名單是排除法——未知（將來新增）的路徑預設仍推進</summary>
+    /// <summary>沒有端點中繼資料（例如未匹配到端點的請求）也走預設：推進</summary>
     [Fact]
-    public void 未知路徑_預設推進版本戳()
+    public void 無端點時_預設推進版本戳()
     {
-        var (context, stamp) = Request("POST", "/api/something-brand-new");
+        var (context, stamp) = Request("POST", "/api/x");
+        context.SetEndpoint(null);
 
         DataVersionStampPolicy.BumpIfNeeded(context);
 
         Assert.Equal(1, stamp.Current);
     }
 
+    /// <summary>GET／HEAD 與失敗回應一律不推進（無論有無標記）</summary>
     [Theory]
-    [InlineData("/api/admin/settings/prtg-import-transfers", 0)]
-    [InlineData("/api/admin/settings/prtg-import-transfers/123/chunks/0", 0)]
-    [InlineData("/api/admin/settings/prtg-import-transfers/123/complete", 0)]
-    [InlineData("/api/admin/settings/prtg-import-transfers/123/abandon", 0)]
-    [InlineData("/api/admin/settings/prtg-import-transfers-extra", 1)]
-    [InlineData("/api/prtg/monitoring", 1)]
-    public void DiagnosticTransfersDoNotEvictFormalCachesButRealSettingsStillDo(string path, long expected)
+    [InlineData("GET", "/api/records", 200, false)]
+    [InlineData("HEAD", "/api/records", 200, false)]
+    [InlineData("POST", "/api/work-orders/12/reply", 400, false)]
+    [InlineData("POST", "/api/work-orders/12/reply", 500, false)]
+    [InlineData("POST", "/api/work-orders/12/reply", 400, true)]
+    public void GET與失敗回應_不推進版本戳(string method, string path, int status, bool skip)
     {
-        var (context, stamp) = Request("POST", path);
-        DataVersionStampPolicy.BumpIfNeeded(context);
-        Assert.Equal(expected, stamp.Current);
-    }
-
-    /// <summary>GET 與失敗回應一律不推進（既有行為，不得被白名單改動連帶破壞）</summary>
-    [Theory]
-    [InlineData("GET", "/api/records", 200)]
-    [InlineData("HEAD", "/api/records", 200)]
-    [InlineData("POST", "/api/work-orders/12/reply", 400)]
-    [InlineData("POST", "/api/work-orders/12/reply", 500)]
-    public void GET與失敗回應_不推進版本戳(string method, string path, int status)
-    {
-        var (context, stamp) = Request(method, path, status);
+        var (context, stamp) = Request(method, path, status, skip);
 
         DataVersionStampPolicy.BumpIfNeeded(context);
 
         Assert.Equal(0, stamp.Current);
+    }
+
+    /// <summary>
+    /// 不改變分析資料的端點必須貼 [SkipDataVersionBump]：原白名單、唯讀 POST 尾碼、診斷匯入搬運，
+    /// 加上唯讀 POST 的預覽／試算／連線測試。以 MVC 實際列舉的端點中繼資料判定（與執行期同一份）。
+    /// </summary>
+    [Theory]
+    [InlineData("POST", "/api/auth/login")]
+    [InlineData("POST", "/api/auth/logout")]
+    [InlineData("POST", "/api/help/ask")]
+    [InlineData("POST", "/api/ai/chat")]
+    [InlineData("POST", "/api/work-orders/candidates")]
+    [InlineData("POST", "/api/records/{hostId:long}/{date}/handling/assign/preview")]
+    [InlineData("POST", "/api/work-orders/{id:long}/seen")]
+    [InlineData("POST", "/api/admin/settings/prtg-import-transfers")]
+    [InlineData("POST", "/api/admin/settings/prtg-import-transfers/{transferId:guid}/abandon")]
+    [InlineData("PUT", "/api/admin/settings/prtg-import-transfers/{transferId:guid}/chunks/{ordinal:int}")]
+    [InlineData("POST", "/api/admin/settings/prtg-import-transfers/{transferId:guid}/complete")]
+    [InlineData("POST", "/api/ai/tidy-note")]
+    [InlineData("POST", "/api/rules/validate")]
+    [InlineData("POST", "/api/rules/disk-trend-preview")]
+    [InlineData("POST", "/api/admin/settings/ad-test")]
+    [InlineData("POST", "/api/admin/settings/mail-test")]
+    [InlineData("POST", "/api/admin/settings/prtg-test")]
+    [InlineData("POST", "/api/admin/sentinels/test-connection")]
+    [InlineData("POST", "/api/work-orders/preview")]
+    [InlineData("POST", "/api/admin/host-groups/{groupId:long}/members/preview")]
+    [InlineData("POST", "/api/admin/settings/prtg-backfill/selected/preview")]
+    [InlineData("POST", "/api/imports/{kind}/preview")]
+    [InlineData("POST", "/api/prtg/monitoring/sensors")]
+    [InlineData("POST", "/api/prtg/monitoring/estimate")]
+    public void 唯讀與免推進端點_都貼了SkipDataVersionBump(string method, string route)
+    {
+        var matches = EndpointsByRoute().Where(d => d.Method == method && d.Route == route).ToList();
+        Assert.NotEmpty(matches);
+        Assert.All(matches, d => Assert.True(d.Skip, $"{method} {route} 應貼 [SkipDataVersionBump]"));
+    }
+
+    /// <summary>反例：會寫分析資料或設定的端點不得貼標記（灰區與真寫入端點）</summary>
+    [Theory]
+    [InlineData("PUT", "/api/prtg/monitoring")]
+    [InlineData("POST", "/api/work-orders/{id:long}/reply")]
+    [InlineData("PUT", "/api/records/{hostId:long}/{date}/handling")]
+    [InlineData("POST", "/api/health/freshness-ack")]
+    public void 會寫資料的端點_沒有貼SkipDataVersionBump(string method, string route)
+    {
+        var matches = EndpointsByRoute().Where(d => d.Method == method && d.Route == route).ToList();
+        Assert.NotEmpty(matches);
+        Assert.All(matches, d => Assert.False(d.Skip, $"{method} {route} 不應貼 [SkipDataVersionBump]"));
+    }
+
+    /// <summary>舊的路徑清單機制不得殘留：Program.cs 的判定只看端點中繼資料，PRTG 監看範圍儲存也不再手動推進</summary>
+    [Fact]
+    public void 舊的路徑清單與手動Bump已移除()
+    {
+        var root = RepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Program.cs"));
+        foreach (var legacy in new[] { "ReadOnlyPostSuffixes", "EndsWith(\"/candidates\"", "\"/api/auth/login\"", "\"/api/help/ask\"",
+                     "Whitelist", "prtg-import-transfers" })
+            Assert.DoesNotContain(legacy, program);
+        var monitoring = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Controllers", "Api", "PrtgMonitoringController.cs"));
+        Assert.DoesNotContain(".Bump()", monitoring);
+    }
+
+    private static IReadOnlyList<(string Method, string Route, bool Skip)> EndpointsByRoute()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddControllersWithViews()
+            .AddApplicationPart(typeof(SkipDataVersionBumpAttribute).Assembly);
+        using var provider = services.BuildServiceProvider();
+        var result = new List<(string, string, bool)>();
+        foreach (var d in provider.GetRequiredService<IActionDescriptorCollectionProvider>()
+                     .ActionDescriptors.Items.OfType<ControllerActionDescriptor>())
+        {
+            var route = "/" + (d.AttributeRouteInfo?.Template ?? "").TrimStart('/');
+            var skip = d.EndpointMetadata.OfType<SkipDataVersionBumpAttribute>().Any();
+            foreach (var method in d.EndpointMetadata.OfType<HttpMethodMetadata>().SelectMany(m => m.HttpMethods).Distinct())
+                result.Add((method.ToUpperInvariant(), route, skip));
+        }
+
+        return result;
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        Assert.True(dir != null, "找不到 LogForesight.sln");
+        return dir!.FullName;
     }
 }

@@ -182,6 +182,7 @@ public class PrtgBackfillAdminController : ControllerBase
         return ApiResponse<StartPrtgBackfillResultDto>.Ok(new StartPrtgBackfillResultDto { Started = true });
     }
 
+    [SkipDataVersionBump]
     [HttpPost("prtg-backfill/selected/preview")]
     public ApiResponse<PrtgSelectedBackfillPreviewDto> PreviewSelectedPrtgBackfill(
         [FromBody] PrtgSelectedBackfillRequest request)

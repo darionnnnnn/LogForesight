@@ -190,6 +190,10 @@ try
         app.UsePathBase(pathBase.TrimEnd('/'));
     }
 
+    // 安全回應標頭：排在 UsePathBase 之後、所有可能提前結束請求的中介層（例外處理、重新導向、
+    // 驗證、停用帳號、搬移閘門、CSRF）之前，401／403／503 與靜態檔回應才都帶得到。
+    app.Use(SecurityHeadersPolicy.Middleware(settings.Server.FrameOptions));
+
     if (!app.Environment.IsDevelopment())
     {
         app.UseExceptionHandler("/error");
@@ -221,11 +225,10 @@ try
     app.UseMiddleware<MigrationGateMiddleware>();
     app.UseMiddleware<CsrfHeaderMiddleware>();   // 非 GET 的 API 需帶 X-Requested-By（§6.4）
 
-    // 資料版本戳（回饋三十五輪批次F）：任何成功的非 GET 請求都推進一次，讓儀表板／報表的
-    // 整包快取失效。刻意做成單一咽喉而不是在每個寫入服務裡各 bump 一次——後者只要新增
-    // 端點時忘記加就會顯示過期資料，而這裡新端點自動涵蓋。
-    // 回饋四十五輪 B3：加上失效白名單（見 DataVersionStampPolicy）——仍是**排除法**，
-    // 新端點依舊預設推進，單一咽喉的性質不變。
+    // 資料版本戳：任何成功的非 GET 請求都推進一次，讓儀表板／報表的整包快取失效。
+    // 刻意做成單一咽喉而不是在每個寫入服務裡各 bump 一次——後者只要新增端點時忘記加就會顯示
+    // 過期資料，而這裡新端點自動涵蓋。不改變分析資料的端點在自己身上貼
+    // [SkipDataVersionBump]（見 DataVersionStampPolicy）——仍是**排除法**，新端點預設推進。
     app.Use(async (context, next) =>
     {
         await next();
@@ -268,37 +271,17 @@ finally
 
 
 /// <summary>
-/// 資料版本戳的推進判定（回饋四十五輪 B3）。
+/// 資料版本戳的推進判定。
 ///
-/// 原本「任何成功的非 GET 請求都推進」讓「登出」「問 AI」這種完全不影響分析資料的請求
-/// 也把儀表板／報表的整包快取整批清掉，多人使用時幾乎恆為 cold。
-///
-/// 這裡採**排除法**：白名單外的非 GET 一律推進，所以**新端點仍自動涵蓋**，
+/// 採**排除法**：成功的非 GET／HEAD 請求一律推進，只有端點自己貼了
+/// <see cref="SkipDataVersionBumpAttribute"/> 才免推進，所以**新端點仍自動涵蓋**，
 /// 單一咽喉的設計理由（不必在每個寫入服務裡各記得 bump 一次）不受影響。
-/// 方向性的取捨也不變：白名單漏列一個端點只是快取多失效一次（等同改動前的現狀），
-/// 多列一個卻是使用者看到過期資料——**有疑慮就不要放進來**。
+/// 判定只看端點中繼資料、不比對路徑字串，宣告跟著端點走，改路由不會讓清單漂移。
+/// 方向性的取捨：漏貼一個端點只是快取多失效一次，多貼一個卻是使用者看到過期資料——
+/// **有疑慮就不要貼**。
 /// </summary>
 public static class DataVersionStampPolicy
 {
-    /// <summary>
-    /// 不改變分析資料的非 GET 端點。逐條理由：
-    /// <list type="bullet">
-    /// <item><c>/api/auth/login</c>、<c>/api/auth/logout</c>：只動登入 cookie 與稽核，
-    /// 不寫任何 records／handling／案件資料。</item>
-    /// <item><c>/api/help/ask</c>：操作說明書的 AI 提問，純讀取＋呼叫外部模型。</item>
-    /// <item><c>/api/ai/chat</c>：詳情頁 AI 判讀對話，不持久化（授權與 context 複用讀取路徑）。</item>
-    /// </list>
-    /// 註：顯示偏好設定（<c>/api/settings/display</c>）目前只有 GET，沒有非 GET 端點可列；
-    /// 管理端的設定寫入（<c>/api/admin/settings</c>）會改變顯示範圍與分析口徑，**不列入**。
-    /// </summary>
-    private static readonly HashSet<string> Whitelist = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "/api/auth/login",
-        "/api/auth/logout",
-        "/api/help/ask",
-        "/api/ai/chat"
-    };
-
     /// <summary>中介軟體本體：判定成立才推進版本戳。判定與動作寫在一起，
     /// 測試才驗得到真正跑在管線裡的那條路徑（而不是另抄一份判定）。</summary>
     public static void BumpIfNeeded(HttpContext context)
@@ -307,25 +290,39 @@ public static class DataVersionStampPolicy
         context.RequestServices.GetRequiredService<DataVersionStamp>().Bump();
     }
 
-    /// <summary>
-    /// 以 POST 承載的唯讀查詢（主機清單走 body：派工人選、日層級指派預覽）與只寫「管理者已看過」標記的 seen：
-    /// 都不改變分析資料，推進只會讓儀表板與報表的整包快取每開一次窗就失效一次。以尾碼比對，因為路徑含 id。
-    /// </summary>
-    private static readonly string[] ReadOnlyPostSuffixes = { "/candidates", "/assign/preview", "/seen" };
-
-    /// <summary>成功的非 GET／非 HEAD 請求，且路徑不在白名單（含唯讀 POST 尾碼）時才推進版本戳</summary>
+    /// <summary>成功的非 GET／非 HEAD 請求，且端點沒有 <see cref="SkipDataVersionBumpAttribute"/> 時才推進版本戳</summary>
     public static bool ShouldBump(HttpContext context)
     {
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
             return false;
         if (context.Response.StatusCode >= 400) return false;
 
-        var path = context.Request.Path.Value;
-        // Diagnostic chunks affect only isolated transfer tables.
-        if (context.Request.Path.StartsWithSegments("/api/admin/settings/prtg-import-transfers")) return false;
-        if (path == null) return true;
-        var trimmed = path.TrimEnd('/');
-        if (ReadOnlyPostSuffixes.Any(s => trimmed.EndsWith(s, StringComparison.OrdinalIgnoreCase))) return false;
-        return !Whitelist.Contains(trimmed);
+        return context.GetEndpoint()?.Metadata.GetMetadata<SkipDataVersionBumpAttribute>() == null;
+    }
+}
+
+/// <summary>
+/// 全站安全回應標頭：<c>X-Content-Type-Options: nosniff</c>、<c>Referrer-Policy: strict-origin-when-cross-origin</c>，
+/// 以及依 <c>Server:FrameOptions</c> 決定的 <c>X-Frame-Options</c>（空字串＝不送）。
+/// 用 <c>OnStarting</c> 在回應開始送出前寫入，連提前結束請求（401／403／503）與靜態檔回應都涵蓋。
+/// </summary>
+public static class SecurityHeadersPolicy
+{
+    public static Func<HttpContext, Func<Task>, Task> Middleware(string? frameOptions)
+    {
+        var frame = string.IsNullOrWhiteSpace(frameOptions) ? null : frameOptions.Trim();
+        return (context, next) =>
+        {
+            context.Response.OnStarting(static state =>
+            {
+                var (response, frameValue) = ((HttpResponse, string?))state;
+                // 用索引子覆寫而不是 Headers.Add：下游若也設了同名標頭不致擲例外
+                response.Headers["X-Content-Type-Options"] = "nosniff";
+                response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+                if (frameValue != null) response.Headers["X-Frame-Options"] = frameValue;
+                return Task.CompletedTask;
+            }, (context.Response, frame));
+            return next();
+        };
     }
 }

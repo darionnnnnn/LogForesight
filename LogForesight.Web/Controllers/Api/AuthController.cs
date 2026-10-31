@@ -1,5 +1,6 @@
 ﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
+using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -60,6 +61,7 @@ public class AuthController : ControllerBase
             RequiresPassword = _provider.RequiresPassword
         });
 
+    [SkipDataVersionBump]
     [HttpPost("login")]
     [AllowAnonymous]
     public ActionResult<ApiResponse<CurrentUserDto>> Login([FromBody] LoginRequest request)
@@ -115,6 +117,7 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<CurrentUserDto>.Ok(ToDto(outcome.Identity)));
     }
 
+    [SkipDataVersionBump]
     [HttpPost("logout")]
     public ApiResponse Logout()
     {

@@ -58,6 +58,7 @@ public class HandlingController : ControllerBase
             _day.Assign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId, request.Reassign));
 
     /// <summary>日層級指派預覽（只讀）：確認前先看將建幾件、哪些已有人處理；權限同 assign</summary>
+    [SkipDataVersionBump]
     [HttpPost("assign/preview")]
     [Permission(Capability.Assign)]
     public ApiResponse<HandlingAssignPreviewDto> PreviewAssign(long hostId, string date, [FromBody] AssignPreviewRequest request) =>

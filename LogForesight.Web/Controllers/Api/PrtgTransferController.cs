@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace LogForesight.Web.Controllers.Api;
 
 [ApiController]
+[SkipDataVersionBump]
 [Route("api/admin/settings/prtg-import-transfers")]
 [Permission(Capability.Maintain)]
 public sealed class PrtgTransferController : ControllerBase
