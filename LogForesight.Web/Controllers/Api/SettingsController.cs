@@ -701,7 +701,7 @@ public class SettingsController : ControllerBase
                     new PrtgAddressResolver(), ignoreOverride: forceAuto);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
             // 釋放交給下面的 finally，這裡不重複做
             return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
@@ -764,11 +764,7 @@ public class SettingsController : ControllerBase
                 Sensors = sensors
             });
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
             return ApiResponse<PrtgResourceGuardPreviewResultDto>.Ok(new PrtgResourceGuardPreviewResultDto
             {
@@ -1076,6 +1072,7 @@ public class SettingsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
+        RequireFullPrtgTransferAccess();
         // 只列衝突：PRTG 端有、主機清單沒有的 device（unmatched）不呈現在畫面（docs/PRTG-SPEC.md §1）；
         // 未對應的清單主機改由 prtg-unmapped-hosts 列出
         if (!string.Equals(status, PrtgMapStatus.Conflict, StringComparison.OrdinalIgnoreCase))
@@ -1120,7 +1117,7 @@ public class SettingsController : ControllerBase
             ? _deviceIndexCache.GetOrAdd(PrtgDeviceIndexCache.GlobalKey, () => store.GetAllDevices())
             : new PrtgDeviceIndex(store.GetAllDevices());
 
-        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var hostStore = _hosts ?? new HostStore(_backend.Blob("hosts"));
         var activeHosts = hostStore.GetAll()
             .Where(h => h.Active && h.MergedInto == null)
             .ToList();
@@ -1254,7 +1251,7 @@ public class SettingsController : ControllerBase
         }
 
         var store = _backend.PrtgStore();
-        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var hostStore = _hosts ?? new HostStore(_backend.Blob("hosts"));
         var hostMap = hostStore.GetAll().ToDictionary(h => h.HostId);
         var manualMaps = store.GetManualMaps();
 

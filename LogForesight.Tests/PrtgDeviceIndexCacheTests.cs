@@ -131,7 +131,8 @@ public class PrtgHostMapCachedPagingTests : IDisposable
             new AiUsageStore(_backend.Blob("ai_usage")),
             new RecordingAuditService(),
             backend: _backend,
-            deviceIndexCache: new PrtgDeviceIndexCache(() => _now));
+            deviceIndexCache: new PrtgDeviceIndexCache(() => _now),
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
 
         var httpContext = new DefaultHttpContext
         {

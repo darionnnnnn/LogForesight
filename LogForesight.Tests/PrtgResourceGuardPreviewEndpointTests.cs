@@ -195,4 +195,69 @@ public class PrtgResourceGuardPreviewEndpointTests : IDisposable
         Assert.Equal("mirror-fallback", res.Data!.Source);
         Assert.Contains(res.Data.Warnings, w => w.Contains("直接查詢 PRTG 失敗"));
     }
+
+    private HttpListener StartSilentServer(out int port)
+    {
+        port = GetFreePort();
+        var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        // 收下連線但不回應，讓用戶端只能等逾時
+        _ = Task.Run(async () =>
+        {
+            try { var ctx = await listener.GetContextAsync(); await Task.Delay(4000); ctx.Response.Abort(); }
+            catch { }
+        });
+        return listener;
+    }
+
+    private void ConfigureLive(int port, bool overrideList)
+    {
+        new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
+        {
+            s.PrtgUrl = $"http://127.0.0.1:{port}";
+            s.PrtgAuthMode = PrtgAuthModes.Token;
+            s.PrtgApiTokenEnc = CryptoHelper.Encrypt("token");
+            s.PrtgTimeoutSeconds = 1;
+            s.PrtgResourceGuardSensorObjids = overrideList ? new List<string> { "1001" } : new List<string>();
+        });
+    }
+
+    [Fact]
+    public async Task 請求已取消時直接查PRTG的預覽穿透取消_不回Success為false()
+    {
+        using var listener = StartSilentServer(out var port);
+        ConfigureLive(port, overrideList: false);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _controller.PreviewPrtgResourceGuard(cts.Token));
+    }
+
+    [Fact]
+    public async Task 直接查PRTG逾時但請求未取消_退回鏡像而不穿出例外()
+    {
+        using var listener = StartSilentServer(out var port);
+        ConfigureLive(port, overrideList: false);
+
+        var res = await _controller.PreviewPrtgResourceGuard(CancellationToken.None);
+
+        Assert.True(res.Success);
+        Assert.NotNull(res.Data);
+        Assert.Equal("mirror-fallback", res.Data!.Source);
+    }
+
+    [Fact]
+    public async Task 取值階段逾時但請求未取消_回Success為false而非500()
+    {
+        using var listener = StartSilentServer(out var port);
+        ConfigureLive(port, overrideList: true);
+
+        var res = await _controller.PreviewPrtgResourceGuard(CancellationToken.None);
+
+        Assert.True(res.Success);
+        Assert.NotNull(res.Data);
+        Assert.False(res.Data!.Success);
+        Assert.False(string.IsNullOrWhiteSpace(res.Data.ErrorMessage));
+    }
 }

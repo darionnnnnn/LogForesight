@@ -215,7 +215,8 @@ public class PrtgUnmatchedMapUiTests : IDisposable
             new StubSystemSettingsService(),
             new AiUsageStore(_backend.Blob("ai_usage")),
             _audit,
-            backend: null);
+            backend: null,
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll));
 
         var res = controller.GetPrtgHostMap("conflict", page: 1, pageSize: 20);
         Assert.True(res.Success);

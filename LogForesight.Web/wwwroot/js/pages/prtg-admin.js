@@ -1371,7 +1371,10 @@ async function refreshConflicts(page = conflictPage, options = {}) {
         renderConflictPagination(totalPages);
         updateConflictBatchBar();
     } catch (error) {
-        renderConflictsError(error && error.message ? error.message : '載入衝突清單失敗');
+        // 全站對應清單只開放可檢視全部主機的角色；受限角色看到的是權限說明，不是「載入失敗」
+        renderConflictsError(error && error.status === 403
+            ? '需要可檢視全部主機的權限才能查看衝突清單'
+            : (error && error.message ? error.message : '載入衝突清單失敗'));
     }
 }
 

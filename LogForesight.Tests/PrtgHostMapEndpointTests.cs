@@ -456,6 +456,26 @@ public class PrtgHostMapEndpointTests : IDisposable
     }
 
     [Fact]
+    public void 衝突清單端點_受限Maintain擲403_ViewAll正常回傳()
+    {
+        var restricted = new SettingsController(
+            new StubSystemSettingsService(),
+            new AiUsageStore(_backend.Blob("ai_usage")),
+            _audit,
+            backend: _backend,
+            hosts: _hosts,
+            visibility: new FullVisibility(_hosts),
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Maintain));
+
+        var ex = Assert.Throws<DomainException>(() => restricted.GetPrtgHostMap("conflict"));
+        Assert.Equal(ApiErrorCodes.Forbidden, ex.Code);
+
+        var ok = _controller.GetPrtgHostMap("conflict");
+        Assert.True(ok.Success);
+        Assert.NotNull(ok.Data);
+    }
+
+    [Fact]
     public void status非conflict時回驗證例外()
     {
         var ex1 = Assert.Throws<DomainException>(() => _controller.GetPrtgHostMap("ok"));
