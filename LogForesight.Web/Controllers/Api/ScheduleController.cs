@@ -481,7 +481,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>觸發者文字：與 /api/run-activity 共用同一份判定（回饋四十五輪批次A3）</summary>
     private string TriggerText(string? trigger) =>
-        RunTriggerText.Of(trigger, _userDisplayNames, _users);
+        trigger is null ? "閒置" : RunTriggerText.Of(trigger, _userDisplayNames, _users);
 
     private static string RerunModeText(RerunMode mode) => mode switch
     {
@@ -504,7 +504,7 @@ public class ScheduleController : ControllerBase
         return ApiResponse<AiScheduleStatusDto>.Ok(new AiScheduleStatusDto
         {
             IsRunning = snapshot.IsRunning,
-            TriggerText = snapshot.Trigger != null ? TriggerText(snapshot.Trigger) : "閒置",
+            TriggerText = TriggerText(snapshot.Trigger),
             StartedAt = snapshot.StartedAt,
             CompletedAt = snapshot.CompletedAt,
             LatestMessage = snapshot.LatestMessage,
