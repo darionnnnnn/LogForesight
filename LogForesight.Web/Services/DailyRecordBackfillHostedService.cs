@@ -44,12 +44,15 @@ public class DailyRecordBackfillHostedService : BackgroundService
                     try
                     {
                         _backfiller.Run(stoppingToken);
-                        // 回填改寫了儀表板聚合的抽出欄，快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                        _dataVersion.Bump();
                     }
                     catch (Exception ex)
                     {
                         Log.Error(ex, "[SQL] lf_daily_records 抽出欄回填失敗：{Msg}", ex.Message);
+                    }
+                    finally
+                    {
+                        // 回填改寫了儀表板聚合的抽出欄，失敗前已落地的批次同樣要讓快取失效；背景服務不走 HTTP 管線
+                        _dataVersion.Bump();
                     }
                 }, stoppingToken),
                 stoppingToken);

@@ -47,13 +47,16 @@ public class WorkOrderBackfillHostedService : BackgroundService
                     try
                     {
                         _backfiller.Run(stoppingToken);
-                        // 案件的交辦單連結已被背景改寫，快取要失效
-                        _dataVersion.Bump();
                     }
                     catch (Exception ex)
                     {
                         // 整併失敗不影響站台運作：記 log，不讓背景例外把行程帶走
                         Log.Error(ex, "[SQL] 交辦單整併失敗：{Msg}", ex.Message);
+                    }
+                    finally
+                    {
+                        // 整併是分批交易，中途失敗前面的批次已落地，成功或失敗都要推進版本（案件的交辦單連結已改寫）
+                        _dataVersion.Bump();
                     }
                 }, stoppingToken),
                 stoppingToken);

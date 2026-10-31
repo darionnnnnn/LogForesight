@@ -118,8 +118,6 @@ public class TopIssueBackfillHostedService : BackgroundService
                 try
                 {
                     _runAll(stoppingToken);
-                    // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
-                    _dataVersion.Bump();
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -131,6 +129,11 @@ public class TopIssueBackfillHostedService : BackgroundService
                     // 記 log 讓它查得到，不要讓背景例外變成未處理例外把行程帶走
                     failed = true;
                     Log.Error(ex, "[SQL] lf_top_issues 聚合欄回填失敗：{Msg}", ex.Message);
+                }
+                finally
+                {
+                    // 回填是分批寫入，中途失敗前面的批次已落地，成功或失敗都要推進版本；背景服務不走 HTTP 管線
+                    _dataVersion.Bump();
                 }
             }, stoppingToken),
             stoppingToken);

@@ -70,9 +70,6 @@ public class PermissionChangeMigrationHostedService : BackgroundService
                 Log.Error(ex, "[SQL] 權限異動重剖回填失敗（不影響新資料）：{Msg}", ex.Message);
             }
 
-            // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
-            _dataVersion.Bump();
-
             // 舊版每主機日「權限異動（彙總）」列的一次性清理：那批列的產生邏輯已移除，
             // 內容是「本日另有 N 則未逐則列出」，被它取代的逐則列並沒有寫進資料庫，
             // 點開看不到任何明細。失敗不影響站台，下次啟動會再試一次。
@@ -88,6 +85,10 @@ public class PermissionChangeMigrationHostedService : BackgroundService
             {
                 Log.Error(ex, "[SQL] 舊彙總列清理失敗（不影響新資料）：{Msg}", ex.Message);
             }
+
+            // 資料已被背景改寫（重剖與清理都會改列），儀表板／報表快取要失效：背景服務不走 HTTP 管線。
+            // 放在清理之後：清理刪列後若沒有推進版本，快取會繼續算進已刪的彙總列
+            _dataVersion.Bump();
         }, stoppingToken);
     }
 
