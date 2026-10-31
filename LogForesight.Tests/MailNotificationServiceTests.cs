@@ -114,6 +114,35 @@ public class MailNotificationServiceTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// 郵件由關轉開的預填：窗口內每個主機日的 key 只由 ListHostDates 的輕量投影產生，
+    /// 不再另外整批 Query（含 ContentJson 反序列化）——即時信的 key 在無工作流版本時與摘要 key 逐字相同。
+    /// </summary>
+    [Fact]
+    public void 啟用預填_只用輕量主機日投影_不整批查詢紀錄且兩集合內容相同()
+    {
+        var host1 = _hosts.Upsert(new WebHost { HostName = "prefill-1", Active = true });
+        var host2 = _hosts.Upsert(new WebHost { HostName = "prefill-2", Active = true });
+        _records.Add(Record(host1.HostId, host1.HostName, Yesterday, RiskLevels.High));
+        _records.Add(Record(host2.HostId, host2.HostName, Yesterday.AddDays(-2), RiskLevels.Low));
+        var state = new MailNotifyStateStore(_fx.Blob("mail_notify_state"));
+        var service = new MailNotificationService(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
+            state, _freshness,
+            new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore(), _issueOwners, _issueAggregates);
+
+        service.MarkExistingRecordsAsNotified(summary: true, urgent: true);
+
+        var expected = new[]
+        {
+            $"{host1.HostId}|{Yesterday:yyyy-MM-dd}",
+            $"{host2.HostId}|{Yesterday.AddDays(-2):yyyy-MM-dd}"
+        };
+        var s = state.Get();
+        Assert.Equal(expected.OrderBy(k => k), s.SummarySentKeys.OrderBy(k => k));
+        Assert.Equal(expected.OrderBy(k => k), s.UrgentSentKeys.OrderBy(k => k));
+        Assert.Null(_records.LastFilter);   // 沒有任何 Query() 呼叫
+    }
+
     [Theory]
     [InlineData("summary", 50)]
     [InlineData("urgent", 20)]

@@ -170,6 +170,94 @@ public class PathBaseTests
         Assert.Equal(SameSiteMode.Strict, writeOptions.SameSite);
     }
 
+    /// <summary>
+    /// 掛載前綴的設定值驗證：空白不套用；以 / 開頭的去掉尾端 / 後套用；其餘（例如少了開頭 /）
+    /// 啟動時直接擲例外並點名設定鍵，不自動補 /，也不讓框架的 ArgumentException 蓋掉真正原因。
+    /// </summary>
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData("/", null)]
+    [InlineData("/app", "/app")]
+    [InlineData("/app/", "/app")]
+    [InlineData("/app//", "/app")]
+    [InlineData("  /app/  ", "/app")]
+    public void 掛載前綴設定_空白不套用_斜線開頭去尾端斜線後套用(string? value, string? expected)
+    {
+        Assert.Equal(expected, new ServerSettings { PathBase = value! }.ResolvePathBase());
+    }
+
+    [Theory]
+    [InlineData("app")]
+    [InlineData("LogForesight/")]
+    [InlineData("\\app")]
+    public void 掛載前綴設定_缺開頭斜線時擲例外並點名設定鍵與目前值(string value)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => new ServerSettings { PathBase = value }.ResolvePathBase());
+
+        Assert.Contains("Server:PathBase", ex.Message);
+        Assert.Contains("必須以 / 開頭", ex.Message);
+        Assert.Contains(value, ex.Message);
+    }
+
+    /// <summary>啟動驗證（fail fast）要把壞的掛載前綴列進錯誤清單，不是等到 UsePathBase 才爆框架例外</summary>
+    [Fact]
+    public void 啟動驗證_掛載前綴缺開頭斜線時不合格並點名設定鍵()
+    {
+        var settings = new WebAppSettings
+        {
+            Jwt = new JwtSettings { SecretKey = new string('k', 40), ExpireHours = 8 },
+            Auth = new AuthSettings
+            {
+                Provider = "Ldap",
+                ServerAdmin = new ServerAdminSettings
+                {
+                    Account = "svc-lfadmin",
+                    PasswordHash = "PBKDF2$210000$s79Mzbz0FKaArA2SsMlCuQ==$2JKMIZGXFQbelisLIZZo+WAMCPJ0Ao3XPm5jg8TFy9M="
+                }
+            },
+            Storage = new LogForesight.Core.Configuration.StorageSettings { Type = "Sqlite", DataRoot = AppContext.BaseDirectory },
+            Server = new ServerSettings { PathBase = "LogForesight" }
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(strict: false, "Development"));
+
+        Assert.Contains("Server:PathBase", ex.Message);
+        Assert.Contains("必須以 / 開頭", ex.Message);
+    }
+
+    /// <summary>IIS 子 Application 會自動填前綴，Server:PathBase 又有值就會雙重前綴——要在啟動時警告</summary>
+    [Theory]
+    [InlineData("/LogForesight", "/app", true)]
+    [InlineData("/LogForesight", "", false)]
+    [InlineData("/LogForesight", null, false)]
+    [InlineData("/", "/app", false)]
+    [InlineData("", "/app", false)]
+    [InlineData(null, "/app", false)]
+    public void 雙重前綴警告_只在IIS子應用且又設了PathBase時出現(string? iisApplPath, string? pathBase, bool warns)
+    {
+        var warning = new ServerSettings { PathBase = pathBase! }.DoublePrefixWarning(iisApplPath);
+
+        if (!warns) { Assert.Null(warning); return; }
+        Assert.NotNull(warning);
+        Assert.Contains("Server:PathBase", warning);
+        Assert.Contains("雙重前綴", warning);
+    }
+
+    /// <summary>Program.cs 不得繞過強型別設定直接讀 Server:PathBase（WEB-SPEC §5：組態鍵名只存在於設定類別）</summary>
+    [Fact]
+    public void Program不直接讀PathBase組態鍵()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var program = File.ReadAllText(Path.Combine(dir!.FullName, "LogForesight.Web", "Program.cs"));
+
+        Assert.DoesNotContain("Configuration[\"Server:PathBase\"]", program);
+        Assert.Contains("settings.Server.ResolvePathBase()", program);
+    }
+
     /// <summary>掛載名稱含非 ASCII 時，Path 用編碼後形式——瀏覽器 path-match 比對的是
     /// 請求 URL 的編碼後路徑，存解碼後的值會永遠比不中、Cookie 不被送回（登入迴圈）。</summary>
     [Fact]

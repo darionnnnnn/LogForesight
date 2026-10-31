@@ -184,11 +184,14 @@ try
     // 掛載前綴：IIS 以子 Application 掛載時 ASP.NET Core 會自動填 Request.PathBase，
     // 這個設定只給「Kestrel 直曝但前面有反向代理加了前綴」的情境，以及本機驗證前綴行為用。
     // 必須排在所有 middleware 之前——之後才註冊的東西看到的 Path 才是扣掉前綴的。
-    var pathBase = builder.Configuration["Server:PathBase"];
-    if (!string.IsNullOrWhiteSpace(pathBase))
+    // 值已在 settings.Validate 驗過（必須以 / 開頭），這裡只負責套用。
+    var pathBase = settings.Server.ResolvePathBase();
+    if (pathBase != null)
     {
-        app.UsePathBase(pathBase.TrimEnd('/'));
+        app.UsePathBase(pathBase);
     }
+    var doublePrefixWarning = settings.Server.DoublePrefixWarning(Environment.GetEnvironmentVariable("ASPNETCORE_APPL_PATH"));
+    if (doublePrefixWarning != null) logger.Warn(doublePrefixWarning);
 
     // 安全回應標頭：排在 UsePathBase 之後、所有可能提前結束請求的中介層（例外處理、重新導向、
     // 驗證、停用帳號、搬移閘門、CSRF）之前，401／403／503 與靜態檔回應才都帶得到。

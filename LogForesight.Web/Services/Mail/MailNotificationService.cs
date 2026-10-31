@@ -720,12 +720,10 @@ public class MailNotificationService
             _state.Update(s =>
             {
                 if (summary) foreach (var key in keys) s.SummarySentKeys.Add(key);
+                // 即時信的 key 在沒有工作流版本時就是 RecordKey（host|date），與上面的 keys 逐字相同，
+                // 不需要為了算它而把窗口內整批紀錄（含 ContentJson）讀回來反序列化
                 if (urgent)
-                {
                     foreach (var key in keys) s.UrgentSentKeys.Add(key);
-                    foreach (var record in _records.Query(new RecordQueryFilter { From = from, To = to }))
-                        s.UrgentSentKeys.Add(UrgentRecordKey(record));
-                }
             });
         }
         catch (Exception ex)
