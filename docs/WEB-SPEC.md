@@ -144,7 +144,9 @@ LogForesight.Web/
 
 ```json
 {
-  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "", "SqliteWal": true },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）
+  // PathBase 必須以 / 開頭或留空（IIS 子 Application 不要設）；TrustedProxies 填反向代理 IP；FrameOptions 空字串＝不送 X-Frame-Options
+  "Server": { "PathBase": "", "TrustedProxies": [], "FrameOptions": "DENY" },
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
