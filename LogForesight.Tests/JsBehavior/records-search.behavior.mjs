@@ -307,6 +307,10 @@ const cases = {
 };
 
 const name = process.argv[2];
+if (!name) {
+    console.log(Object.keys(cases).join('\n'));
+    process.exit(0);
+}
 const fn = cases[name];
 assert(fn, `未知案例：${name}`);
 await fn();

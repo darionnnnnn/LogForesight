@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using Xunit;
 
@@ -68,45 +67,13 @@ public class ApiTimeoutBehaviorTests
         var script = Path.Combine(scriptDir, "api-guard.behavior.mjs");
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
 
-        var psi = new ProcessStartInfo("node")
-        {
-            WorkingDirectory = scriptDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false
-        };
-        psi.ArgumentList.Add("--experimental-default-type=module");
-        psi.ArgumentList.Add(script);
-        psi.ArgumentList.Add(caseName);
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--experimental-default-type=module", script, caseName }, scriptDir,
+            timeout: TimeSpan.FromSeconds(15), label: caseName);
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
 
-        Process? process;
-        try
-        {
-            process = Process.Start(psi);
-        }
-        catch (Exception ex)
-        {
-            // 走到這裡表示 NodeTheory 偵測時 node 還在、真正要跑時卻啟動不了——
-            // 那是環境在測試中途壞掉，不是「沒有 node」，照常紅
-            throw new InvalidOperationException(
-                "偵測到 node 卻無法啟動它（前端行為測試腳本因此沒有跑到）。", ex);
-        }
-
-        Assert.NotNull(process);
-        // 先非同步讀輸出、逾時就結束整個程序樹再判失敗；先 ReadToEnd 會在 node 不結束時無限卡住
-        var stdoutTask = process!.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(15_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* 已經結束就算了 */ }
-            Assert.Fail($"node 執行逾時：{caseName}");
-        }
-        var stdout = stdoutTask.GetAwaiter().GetResult();
-        var stderr = stderrTask.GetAwaiter().GetResult();
-
-        Assert.True(process.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
+        Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);
     }
 }

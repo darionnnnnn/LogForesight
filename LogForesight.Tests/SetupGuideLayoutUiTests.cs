@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -57,28 +56,13 @@ public class SetupGuideLayoutUiTests
 
     private static string RunNode(string jsCode)
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "node",
-            Arguments = "--experimental-default-type=module --input-type=module",
-            WorkingDirectory = FindRepoRoot(),
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--experimental-default-type=module", "--input-type=module" },
+            FindRepoRoot(), stdin: jsCode + "\n", timeout: TimeSpan.FromSeconds(60), label: "RunNode");
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
 
-        using var proc = Process.Start(psi);
-        Assert.NotNull(proc);
-        proc!.StandardInput.WriteLine(jsCode);
-        proc.StandardInput.Close();
-
-        var stdout = proc.StandardOutput.ReadToEnd();
-        var stderr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
-
-        Assert.True(proc.ExitCode == 0, $"Node script failed (exit code {proc.ExitCode}): {stderr}\n{stdout}");
+        Assert.True(r.ExitCode == 0, $"Node script failed (exit code {r.ExitCode}): {stderr}\n{stdout}");
         return stdout;
     }
 

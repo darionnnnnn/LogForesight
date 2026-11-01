@@ -35,7 +35,7 @@ class FakeNode {
     }
     set textContent(value) { this._text = String(value); this.children = []; }
 
-    set innerHTML(value) { this._html = String(value); }
+    set innerHTML(value) { this._html = String(value); this.children = []; this._text = ''; }
     get innerHTML() { return this._html || ''; }
 
     appendChild(child) { this.children.push(child); return child; }

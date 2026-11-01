@@ -86,6 +86,10 @@ const cases = {
 };
 
 const name = process.argv[2];
+if (!name) {
+    console.log(Object.keys(cases).join('\n'));
+    process.exit(0);
+}
 if (!(name in cases)) {
     console.log(`FAIL ${name} 未知案例`);
     process.exit(1);

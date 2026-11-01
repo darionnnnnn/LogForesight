@@ -113,6 +113,10 @@ const cases = {
 };
 
 const name = process.argv[2];
+if (!name) {
+    console.log(Object.keys(cases).join('\n'));
+    process.exit(0);
+}
 assert(cases[name], `未知的案例：${name}`);
 cases[name]();
 console.log(`PASS ${name}`);
