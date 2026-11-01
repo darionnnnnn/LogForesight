@@ -306,6 +306,7 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
         }));
         var hosts = new HostStore(_backend.Blob("hosts"));
         Assert.Throws<PrtgScopePurgeBusyException>(() => hosts.Upsert(new WebHost { HostName = "scope-race" }));
+        Assert.Throws<PrtgScopePurgeBusyException>(() => _prtg.UpsertIpExclude(new PrtgIpExcludeRow { Ip = "10.9.9.9" }));
 
         // Model a scope source committed by an older/out-of-process writer that did not use the slot guard.
         // The per-batch version read and delete share one transaction, so no newly unsafe candidate is deleted.

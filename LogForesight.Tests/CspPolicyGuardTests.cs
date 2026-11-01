@@ -45,12 +45,13 @@ public sealed class CspPolicyGuardTests
             {
                 if (Regex.IsMatch(m.Value, @"\bsrc\s*=", RegexOptions.IgnoreCase)) continue;   // 外部腳本由 script-src 'self' 放行
                 inspected++;
-                if (!Regex.IsMatch(m.Value, @"\bnonce\s*=", RegexOptions.IgnoreCase))
+                // 值必須是 @Context.GetCspNonce()：寫死字串或別的變數會與標頭不一致，Enforce 下整段被擋而守門仍綠
+                if (!Regex.IsMatch(m.Value, @"\bnonce\s*=\s*""@Context\.GetCspNonce\(\)""", RegexOptions.IgnoreCase))
                     offenders.Add($"{Path.GetRelativePath(views, file)}: {m.Value}");
             }
         }
         Assert.True(inspected >= 4, $"預期至少掃到 4 段 inline script，實際 {inspected}（守門自身失效？）");
-        Assert.True(offenders.Count == 0, "下列 inline script 沒有 nonce：" + Environment.NewLine + string.Join(Environment.NewLine, offenders));
+        Assert.True(offenders.Count == 0, "下列 inline script 沒有 nonce，或 nonce 值不是 @Context.GetCspNonce()：" + Environment.NewLine + string.Join(Environment.NewLine, offenders));
     }
 
     [Fact]

@@ -145,17 +145,12 @@ async function runAiSummary() {
         area.appendChild(box);
     } catch (err) {
         if (isStale()) return;
+        // 失敗一律不清空既有摘要，只在最後一列補一行中性提示（同一列覆寫，不疊兩行）
         if (err?.status === 429) {
-            // 被每人節流擋下時說明稍後再試
-            area.replaceChildren();
-            const note = document.createElement('div');
-            note.className = 'text-muted small';
-            note.textContent = err.retryAfterSeconds
+            showAiSummaryNotice(area, err.retryAfterSeconds
                 ? `AI 暫時休息，約 ${err.retryAfterSeconds} 秒後再試。`
-                : 'AI 暫時休息，請稍後再試。';
-            area.appendChild(note);
+                : 'AI 暫時休息，請稍後再試。');
         } else {
-            // 其他失敗：不清空既有摘要，只在最後一列補一行中性提示
             showAiSummaryNotice(area, '這次歸納沒有成功，請稍後再試。');
         }
     } finally {

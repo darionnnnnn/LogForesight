@@ -189,7 +189,7 @@ Rising 才會產生告警文字、進 `TrendAlerts`／`SuppressedTrendAlerts`（
 `ComputeRuleBasedRisk` 的風險等級判定；Low 嚴重度簽章的 Rising **不吵、不拉風險**，但
 `Trend`／`Severity` 欄位仍照常標記與升級——資訊沒有遺失，只是不再單靠「量的變化」把一個
 本質上輕微的問題拉成需要人工介入的中風險日（Low 嚴重度雜訊型簽章天然量大、頻率波動本來就
-劇烈，過去的無閘門設計等於任何一個雜訊簽章某天多發生幾次就能觸發告警）。判定點在
+劇烈，沒有閘門的話任何一個雜訊簽章某天多發生幾次就能觸發告警）。判定點在
 `TrendAnalyzer.Apply`：`preEscalationSeverity`（升級前的原始嚴重度）在寫入 `sig.Severity`
 之前先捕捉，`preEscalationSeverity >= IssueSeverity.Medium` 才把告警文字送進
 `alerts`／`alertRefs`，否則整段略過（不進 `suppressedAlerts`——那是給「本來會吵、但被使用者

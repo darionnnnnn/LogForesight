@@ -1,4 +1,4 @@
-﻿﻿﻿/**
+﻿/**
  * records.js search() 的競態與失敗態行為測試（第 59 輪 G2）。
  *
  * 抽出並執行 production 的 search，搭配 production 的 createSeqGuard，只替換 api、畫面邊界；
@@ -289,6 +289,23 @@ const cases = {
         await run;
         assert.equal(ctx.area.children.length, 1);
         assert.equal(ctx.area.children[0].textContent, 'AI 暫時休息，約 7 秒後再試。');
+    },
+    async aiSummary429ThenFailureShowsSingleNoticeAndKeepsPrevious() {
+        const ctx = makeAiContext();
+        const first = ctx.runAiSummary();
+        ctx.pending[0].resolve({ text: '第一次的歸納' });
+        await first;
+        const second = ctx.runAiSummary();
+        ctx.pending[1].reject(Object.assign(new Error('rate'), { status: 429, retryAfterSeconds: 5 }));
+        await second;
+        assert.equal(ctx.boxes().length, 1, '節流也要保留舊內容');
+        assert.deepEqual(ctx.notices().map(n => n.textContent), ['AI 暫時休息，約 5 秒後再試。']);
+        const third = ctx.runAiSummary();
+        ctx.pending[2].reject(Object.assign(new Error('boom'), { status: 500 }));
+        await third;
+        assert.equal(ctx.boxes().length, 1);
+        assert.deepEqual(ctx.notices().map(n => n.textContent), ['這次歸納沒有成功，請稍後再試。'], '提示同一列覆寫，不疊兩行');
+        assert.equal(ctx.area.children.length, 2);
     },
     async 支援矩陣與後端一致() {
         const ctx = makeFilterContext();

@@ -337,7 +337,7 @@ public static class SecurityHeadersPolicy
         return (context, next) =>
         {
             // nonce 在請求一開始就產生並存進 Items，view 轉譯時讀到的與回應標頭是同一個值
-            string? policy = csp == CspMode.Off ? null : BuildCsp(context.GetCspNonce(), frame, context.Request.PathBase.Value ?? "");
+            string? policy = csp == CspMode.Off ? null : BuildCsp(context.GetCspNonce(), frame, context.Request.PathBase.ToUriComponent());
             context.Response.OnStarting(static state =>
             {
                 var (response, frameValue, cspMode, cspPolicy) = ((HttpResponse, string?, CspMode, string?))state;

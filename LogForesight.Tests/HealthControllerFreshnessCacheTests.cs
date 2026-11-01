@@ -64,6 +64,27 @@ public class HealthControllerFreshnessCacheTests
     }
 
     [Fact]
+    public void Freshness_VersionUnchanged_RecomputesAfterTtl()
+    {
+        using var fx = new EfSqliteFixture();
+        var options = new ScheduleOptionsStore(fx.Blob("schedule_options"));
+        var runs = new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs"));
+        var counting = new CountingFreshness(runs, options);
+        var now = new DateTime(2026, 1, 1, 8, 0, 0);
+        var cache = new SummaryCache(new DataVersionStamp(), () => now);
+        var controller = Create(counting, options, FakeCurrentUser.WithCapabilities(Capability.Maintain), cache, new FakeUserGroupStore(), new FakeUserStore());
+
+        controller.Freshness();
+        now = now.AddSeconds(SummaryCache.TtlSeconds - 1);
+        controller.Freshness();
+        Assert.Equal(1, counting.Calls);
+
+        now = now.AddSeconds(2);   // 背景排程結束不走 HTTP、沒有 Bump：靠 TTL 當上限
+        controller.Freshness();
+        Assert.Equal(2, counting.Calls);
+    }
+
+    [Fact]
     public void Freshness_AdminContactsFilledForNonMaintainer_DoNotLeakToMaintainerViaCache()
     {
         using var fx = new EfSqliteFixture();

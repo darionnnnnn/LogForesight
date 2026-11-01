@@ -50,7 +50,8 @@ public class CaseDaySyncHostedService : BackgroundService
             {
                 // 每 5 秒一拍；閒置時由 schedule 決定跳過幾拍（上限 30 秒），資料版本一變動即喚醒
                 await Task.Delay(IdleDelay, stoppingToken);
-                if (!schedule.ShouldRun(_dataVersion.Current)) continue;
+                var versionAtStart = _dataVersion.Current;
+                if (!schedule.ShouldRun(versionAtStart)) continue;
 
                 var processedAny = false;
                 try
@@ -78,8 +79,9 @@ public class CaseDaySyncHostedService : BackgroundService
                     // 資料已被背景改寫，儀表板／報表快取要失效：背景服務不走 HTTP 管線
                     if (processedAny) _dataVersion.Bump();
 
-                    // 版本值要在自己 Bump 之後才記，否則下一拍會被自己的 Bump 喚醒
-                    schedule.OnRunCompleted(processedAny, _dataVersion.Current);
+                    // 有處理到：記自己 Bump 之後的值，否則下一拍會被自己的 Bump 喚醒（反正下一拍本來就會再跑）；
+                    // 沒處理到：記執行前的值，執行期間別人的寫入才會在下一拍喚醒，不被一起吞掉
+                    schedule.OnRunCompleted(processedAny, processedAny ? _dataVersion.Current : versionAtStart);
                 }
             }
         }

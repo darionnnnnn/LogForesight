@@ -14,6 +14,7 @@ public class SlidingWindowThrottle<TKey> where TKey : notnull
     private readonly int _maxKeys;
     private readonly object _lock = new();
     private readonly Dictionary<TKey, Queue<DateTime>> _calls = new();
+    private DateTime _lastSweepUtc = DateTime.MinValue;
 
     public SlidingWindowThrottle(int maxCalls, TimeSpan window, int maxKeys = DefaultMaxKeys)
     {
@@ -35,10 +36,15 @@ public class SlidingWindowThrottle<TKey> where TKey : notnull
     {
         lock (_lock)
         {
-            // 順手清掉整個窗口都過期的鍵，字典不隨歷來鍵數無限成長
-            foreach (var expired in _calls.Where(kv => kv.Value.Count == 0 || nowUtc - kv.Value.Last() >= _window)
-                         .Select(kv => kv.Key).ToList())
-                _calls.Remove(expired);
+            // 清掉整個窗口都過期的鍵，字典不隨歷來鍵數無限成長。每個視窗最多掃一次、鍵數已滿時立刻掃：
+            // 匿名的 CSP 回報端點鍵數可到上限，每次呼叫都全掃會讓一個請求在鎖內做上百萬次比較
+            if (_calls.Count >= _maxKeys || nowUtc - _lastSweepUtc >= _window)
+            {
+                foreach (var expired in _calls.Where(kv => kv.Value.Count == 0 || nowUtc - kv.Value.Last() >= _window)
+                             .Select(kv => kv.Key).ToList())
+                    _calls.Remove(expired);
+                _lastSweepUtc = nowUtc;
+            }
 
             if (!_calls.TryGetValue(key, out var queue))
             {

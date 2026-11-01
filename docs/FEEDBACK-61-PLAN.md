@@ -1,6 +1,6 @@
 # LogForesight 第 61 輪規劃：遞延 bug、效能、CSP、守門測試、文件對齊
 
-> 狀態：實作完成，待換模型體檢（分支 `feature/feedback-61`，未併 dev）
+> 狀態：體檢完成，待併 dev（分支 `feature/feedback-61`）
 > 基準：dev@fe241168（7,357 通過／10 略過；`--list-tests` 共 7,082 條，Theory 算一條）
 > 來源：第 59 輪 PLAN §5 草案（L 文件／M 守門）、第 60 輪 PLAN §6 草案（純效能＋CSP）、BACKLOG「第 60 輪體檢遞延」；三份合併去重 41 項
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度用 Sonnet 5.5／Haiku 5.5；一個 checkout 一次只派一個改檔代理；每批驗證後各自 commit 並 push 到 `feature/feedback-61`
@@ -325,3 +325,24 @@ HealthService 10、ScheduleFreshness 8、CaseDaySync 12、PrtgAddressResolver 11
 - 自我體檢後定向（`PrtgAddressResolver|CspPolicyGuard|CspReport|DbSpecModelParity|SchemaUpgrader|DocNarrative|DocCrossReference|UiTests|JsModuleImport|BehaviorTests|ApiTimeout|PrtgMirror|HelpContentService|NodeRuntime`）：**557 通過／0 失敗**；未重跑全量（只動上述檔案，收尾併 dev 後跑一次）。
 - 升級注意（README 已寫）：CSP 預設強制（Development 僅回報）、`Server:Csp` 三值、外部服務逾時改顯示為失敗、補跑預覽帳本不完整回 409、未設 `Server:TrustedProxies` 時 CSP 回報節流全站共用。
 
+## 體檢輪修正
+
+體檢方 Fable 5.1（實作與自查為 Opus 5.5）。三個 Sonnet 5.5 唯讀代理分區掃描（A 管理者操作流程＋後端對抗、B 使用者前端流程＋行為測試真偽、C 測試假守門＋文件稽核；共同規則要求每區最高三條附探針），規劃逐條比對由主代理親做；代理回報全部回到程式碼或探針重驗後才改。
+
+**規劃比對**：§3 41 項與 §4 清單皆有對應實作與測試。與 §3 文字不同、經判定可接受者：P-5 的 `PrtgScopeWriteWhilePurgingTests` 以 store 層 `Busy_slot_throws_dedicated_exception…`（主機／人工對應／日對應，體檢補 IP 排除）＋ `ApiExceptionFilterTests` 409 案取代——三個端點到過濾器之間沒有會吞掉 `PrtgScopePurgeBusyException` 的 catch（`EnsureScopeMutationSlotFree` 11 個呼叫點、Web `catch (InvalidOperationException)` 全數帶 `when` 或不在路徑上）；M-7 `noassert.py` 未入庫（誤判多，C# `TestHygieneTests` 是唯一來源）；§4 的「排程告示延遲 30 秒」與「帳本一句」都寫在 `22-system-health`（新鮮度告示與帳本告示所在頁），`10-scheduler`／`12-settings` 不重複。
+
+**修正（每條附迴歸測試或突變結果）**：
+1. `PrtgAddressResolver`：`Invalidate()` 只清字典，清空前就卡在 DNS 的查詢回來後把修好前的結果寫回（正快取 5 分鐘）→ 加世代號，查詢開始後若被 Invalidate 就不寫回；新測試 `Invalidate_發生在DNS查詢進行中_該次結果不寫回快取`（拿掉世代比對轉紅）。
+2. `CaseDaySyncHostedService`：沒處理到資料那趟記的是執行後版本，執行期間別人的 HTTP 寫入連同被吞掉，待辦最多多等 30 秒 → 沒處理到時記執行前的版本（有處理到仍記 Bump 後的值，避免自我喚醒）；`CaseDaySyncSchedule` 註解同步。服務層無測試，以狀態表核對（探針 p4.mjs：序列 5,10,20,40 → 5,10,20,25）。
+3. `Program.cs`：`report-uri` 用 `PathBase.Value`，子 Application 路徑含非 ASCII 時標頭值含非 ASCII、Kestrel 在 `OnStarting` 擲例外 → 改 `ToUriComponent()`（與 `_Layout` 同一形式）；`SecurityHeadersTests` 既有案綠。
+4. `SlidingWindowThrottle`：每次 `TryAcquire` 在鎖內對全部鍵做 LINQ 掃描，匿名的 CSP 回報端點鍵數可到 1 萬、單一請求最多約 157 個違規各掃一次 → 改為每個視窗最多掃一次或鍵數已滿時掃；`PerUserThrottleTests`／`LoginThrottleTests` 綠。
+5. `CspReportController.Clean`：只換控制字元，U+2028／U+2029 與 bidi 等格式字元仍可混入日誌行 → 一併換空白；測試擴充（拿掉 Format 類別轉紅）。
+6. `records.js` AI 歸納：429 提示沒有 `data-role` 且會清掉舊摘要，429 之後再失敗會疊兩行 → 429 與其他失敗走同一個提示出口（保留舊摘要、同一列覆寫）；mini-dom 的 `querySelector` 補 `[name="value"]`、`remove()` 真的脫離父節點（原本是空函式，去重從未被測到）；新案 `aiSummary429ThenFailureShowsSingleNoticeAndKeepsPrevious`（改回 `replaceChildren` 轉紅）；說明書 `03-issues` 提示位置（結果表上方）與節流行為同步。
+7. `CspPolicyGuardTests`：nonce 只驗屬性存在，寫死字串也綠 → 值必須是 `@Context.GetCspNonce()`（把一處改成 `nonce="x"` 轉紅）。
+8. 規劃驗收寫了但實作輪缺的測試補齊：`ReportFileMigrationTests` 已取消 token 不搬任何列；`HealthControllerFreshnessCacheTests` 版本不變、TTL 到期重算（`SummaryCache` 可注入時鐘）。
+9. `records-search.behavior.mjs` 檔頭 BOM 累積到三個（dev 上兩個）→ 一個。
+10. 現行文件沿革句改成現況陳述 14 處：`DESIGN-SYSTEM`（本輪不做）、`WEB-SPEC`（本輪範圍界定、規則改為、同時自 DB-SPEC 移除、與過去完全相同、過去沒有頂層 catch、過去只在風險日詳情、同輪把…改走 IRunConsole）、`RULES-SPEC`（console 退場後）、`DB-SPEC`（過去正是漏在這裡）、`DETECTION-SPEC`（過去的無閘門設計）、`BACKLOG` 三處「體檢」、`README`（批次退場後）。守門 regex 維持 §8 的定案（只鎖輪次字樣），這些字眼由人工判讀。
+
+**查證後不改**：批次對應遇清除忙碌回 200＋失敗訊息（批次端點本來就是部分成功語意，單筆才 409）；逐日同步連續例外退避到 30 秒（避免 5 秒狂打，PLAN N-2 定案）；`SchedulerHostedService` 取消時以英文例外訊息當結果、逾時訊息含英文原文（既有行為，非本輪引入）；`Runs` 頁被用詞守門排除（Dev／Admin 角色可見，不是處理人頁）；`TestHygieneTests` 判定寬度、`DocCrossReferenceTests` 不比 `§8.6-8` 子項、`refreshPrtgMirror` 在途旗標空窗無法以行為測試重現且後兩個 `isStale` 檢查點未被案例走到、CSP 回報節流 1 萬鍵可被灌滿只影響回報可見度——皆屬低風險，不另立項。
+
+體檢後定向（`PrtgAddressResolver|CspPolicyGuard|CspReport|ReportFileMigration|HealthControllerFreshness|CaseDaySync|Throttle|SecurityHeaders|SecurityHardening|UiTests|JsModuleImport|BehaviorTests|ApiTimeout|NodeRuntime|HelpContentService|DocNarrative|DocCrossReference|LoginThrottle|PrtgScopePurgeStore`）：**604 通過／0 失敗**；四條新斷言各做一次突變皆轉紅、備份還原並 touch。全量在併 dev 後跑（見終檢輪）。

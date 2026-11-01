@@ -297,6 +297,22 @@ public class PrtgAddressResolverTests
     }
 
     [Fact]
+    public void Invalidate_發生在DNS查詢進行中_該次結果不寫回快取()
+    {
+        PrtgAddressResolver? resolver = null;
+        var dns = new FakeDns(_ =>
+        {
+            resolver!.Invalidate();   // 使用者在這筆查詢卡住期間按了「同步結構與對應」
+            return new[] { IPAddress.Parse("10.5.5.5") };
+        });
+        resolver = new PrtgAddressResolver(dns.Lookup);
+
+        Assert.Equal("10.5.5.5", resolver.Resolve("late.local"));
+        Assert.Equal("10.5.5.5", resolver.Resolve("late.local"));
+        Assert.Equal(2, dns.Calls.Count);   // 第二次仍查 DNS：修好前的結果沒有被記住
+    }
+
+    [Fact]
     public void Invalidate_清空快取後重查()
     {
         var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });

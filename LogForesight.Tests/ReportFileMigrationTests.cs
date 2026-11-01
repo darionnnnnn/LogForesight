@@ -85,6 +85,20 @@ public sealed class ReportFileMigrationTests : IDisposable
         new EfReportStore(_fx.NewContext).Read(new HostKey { HostId = hostId, HostName = hostName }, date, kind);
 
     [Fact]
+    public void 已取消的token_不搬任何列()
+    {
+        var day = new DateTime(2026, 8, 20);
+        var path = WriteExportFile("2026-08-20_高風險_已取消.txt", "不該被搬");
+        SeedRecord(42, "SRV-NETIQ-07", day, RiskLevels.High, path);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Migrator().Run(cts.Token);
+
+        Assert.Null(Read(42, "SRV-NETIQ-07", day, ReportKinds.DailyRisk));
+    }
+
+    [Fact]
     public void 紀錄指向的風險報告_搬入並歸到該紀錄的主機()
     {
         var day = new DateTime(2026, 8, 20);

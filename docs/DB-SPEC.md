@@ -184,9 +184,8 @@ docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
 **`AttachAiResult`（`IAnalysisRecordStore`）**：AI 段完成後覆寫暫代的 `ContentJson`
 內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`、`ai_pending`（清 false）、`ai_analyzed`**
 （AI 有可能把程式判定的風險等級往上拉），只改 `ContentJson` 而漏改抽出欄會讓依 `risk_level`
-篩選的查詢（清單頁、儀表板）看不到這筆紀錄升級後的真正風險——`ai_pending` 過去正是漏在
-這裡（只寫進 JSON、欄位永遠停在 1），是本專案反覆出現過的「抽出欄漂移」bug 家族的同一種
-模式，寫入路徑因此固定放在同一處一起做。
+篩選的查詢（清單頁、儀表板）看不到這筆紀錄升級後的真正風險——只寫進 JSON、抽出欄
+停在舊值就是「抽出欄漂移」這類缺陷的典型形狀，寫入路徑因此固定放在同一處一起做。
 
 ```
 lf_top_issues                                        -- LogIssueSignature 的**抽出子表**（不是一比一鏡像）：

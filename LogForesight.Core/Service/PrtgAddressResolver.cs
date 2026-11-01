@@ -40,6 +40,9 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
     private readonly ConcurrentDictionary<string, (string? Value, DateTimeOffset ExpiresAt)> _cache =
         new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>快取世代：Invalidate 時遞增；清空前就開始的 DNS 查詢回來後不得把修好前的結果寫回</summary>
+    private int _generation;
+
     /// <summary>正式建構子，使用真正的 DNS 解析與系統時鐘。</summary>
     public PrtgAddressResolver() : this(SystemDnsAsync, TimeProvider.System)
     {
@@ -69,7 +72,11 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
     }
 
     /// <summary>清空快取（使用者觸發同步結構與對應時呼叫）。只在具體類別，不屬於介面。</summary>
-    public void Invalidate() => _cache.Clear();
+    public void Invalidate()
+    {
+        Interlocked.Increment(ref _generation);
+        _cache.Clear();
+    }
 
     /// <inheritdoc/>
     public string? Resolve(string? value)
@@ -94,7 +101,8 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
         if (_cache.TryGetValue(token, out var cached) && cached.ExpiresAt > now)
             return cached.Value;
 
-        // 5. DNS 解析，取第一個 IPv4 位址
+        // 5. DNS 解析，取第一個 IPv4 位址（記下開始時的世代，查詢期間被 Invalidate 就不寫回）
+        var generation = Volatile.Read(ref _generation);
         string? result = null;
         try
         {
@@ -111,7 +119,8 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
             // DNS 解析失敗 → result 維持 null（視為查無，負快取）
         }
 
-        Store(token, result, now + (result != null ? PositiveTtl : NegativeTtl));
+        if (generation == Volatile.Read(ref _generation))
+            Store(token, result, now + (result != null ? PositiveTtl : NegativeTtl));
         return result;
     }
 

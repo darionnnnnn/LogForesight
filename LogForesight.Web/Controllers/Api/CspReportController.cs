@@ -1,4 +1,5 @@
 using System.Text;
+using System.Globalization;
 using System.Text.Json;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Services;
@@ -131,13 +132,17 @@ public class CspReportController : ControllerBase
     private static string Str(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
-    /// <summary>各欄截 512 字，換行與其他控制字元換成空白（防日誌注入與偽造多行紀錄）</summary>
+    /// <summary>各欄截 512 字；控制字元、行／段分隔字元（U+2028／U+2029）與格式字元（bidi 控制等）換成空白（防日誌注入與偽造多行紀錄）</summary>
     private static string Clean(string value)
     {
         if (value.Length > MaxFieldChars) value = value[..MaxFieldChars];
         return string.Create(value.Length, value, static (span, src) =>
         {
-            for (var i = 0; i < src.Length; i++) span[i] = char.IsControl(src[i]) ? ' ' : src[i];
+            for (var i = 0; i < src.Length; i++) span[i] = IsUnsafeForLog(src[i]) ? ' ' : src[i];
         });
     }
+
+    private static bool IsUnsafeForLog(char c) =>
+        char.IsControl(c) || char.GetUnicodeCategory(c) is UnicodeCategory.LineSeparator
+            or UnicodeCategory.ParagraphSeparator or UnicodeCategory.Format;
 }

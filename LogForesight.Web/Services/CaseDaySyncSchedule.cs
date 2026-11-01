@@ -6,7 +6,8 @@ namespace LogForesight.Web.Services;
 /// 服務迴圈每 5 秒一拍，每拍問這裡「這拍要不要執行」：
 /// 上一次有處理到資料 → 下一拍就再執行；沒處理到（閒置）→ 依序等 1、2、4、6 拍（5／10／20／30 秒），
 /// 之後維持 6 拍（上限 30 秒）；資料版本與上次執行完成時記下的不同（有人寫了資料）→ 這拍立即執行並重設等待。
-/// 記下的版本值必須是**執行完成後**的值：服務自己處理完會 Bump 一次版本，記執行前的值會讓它自我喚醒、退化成 5 秒輪詢。
+/// 記下的版本值：有處理到資料時取**執行完成後**的值（服務自己會 Bump 一次，記執行前的值會自我喚醒、退化成 5 秒輪詢）；
+/// 沒處理到時取**執行前**的值（執行期間別人的寫入才喚得醒）。
 /// 非執行緒安全：只由服務迴圈單一執行緒呼叫。
 /// </summary>
 public sealed class CaseDaySyncSchedule
@@ -38,7 +39,7 @@ public sealed class CaseDaySyncSchedule
         return _beat >= _nextRunBeat;
     }
 
-    /// <summary>執行完成後呼叫：<paramref name="processedAny"/> 是否處理到資料；<paramref name="versionAfterRun"/> 為執行（含服務自己 Bump）完成後的版本值。</summary>
+    /// <summary>執行完成後呼叫：<paramref name="processedAny"/> 是否處理到資料；<paramref name="versionAfterRun"/> 為要當作基準的版本值（有處理到＝含自己 Bump 之後，沒處理到＝執行前）。</summary>
     public void OnRunCompleted(bool processedAny, long versionAfterRun)
     {
         _hasRun = true;

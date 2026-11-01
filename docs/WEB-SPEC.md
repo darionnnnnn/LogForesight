@@ -566,7 +566,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   （比對顯示名、不分大小寫）與捲動高度上限，供「負責人」這類數十人的清單使用；
   **篩選以隱藏（`d-none`）實作、不移除節點**——移除的話被篩掉的已勾選項目會連值一起消失
   （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題負責與靜音負責人與主機負責人兩處，
-  其餘呼叫端不傳此選項、行為與過去完全相同。
+  其餘呼叫端不傳此選項、行為不受此選項影響。
 - `core/format.js`：日期、風險等級徽章、狀態徽章的統一格式化（風險/狀態的顯示規則只寫一次）。
 - **`core/` 模組總表**（`wwwroot/js/core/` 全部檔案；上列四個模組的細節不重複）：
 
@@ -889,7 +889,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
     ——它直接操作 DOM，會繞過 `onRowExpand` 的 lazy 填充，lazy 模式的頁面用了會展出空白詳情列。
 
 - **載入失敗的收斂**：骨架列（`renderLoading`）是
-  「等一下就會有東西」的承諾，但各頁的 `load()`／`init()` 過去沒有頂層 catch——中途任何一支 API
+  「等一下就會有東西」的承諾；各頁的 `load()`／`init()` 若沒有頂層 catch，中途任何一支 API
   失敗或前端例外，骨架列就**永遠**留在畫面上（錯誤 toast 幾秒後消失，使用者看到的是「一直載入」）。
   `ui.js` 的 `guardLoad(containers, fn)` 包住各頁載入流程，失敗時把骨架列換成「載入失敗」空狀態；
   全部頁面的進入點皆已套用。實際踩到的案例：主機維護頁在**沒有任何 Sentinel 的全新環境**下，
@@ -1174,7 +1174,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   欄位——**vs 基準**（語意與計算式同 §9.1，`IssueBaselineCalculator` 共用）、
   **本期首見**（受查詢期間截斷）、**首見（機房）**（不受截斷，↔
   `lf_issue_first_seen`）、**出現密度**（N/M 天＋密度條，文字為主、圖為輔，不可只留圖）、
-  **最近出現**（日期＋是否仍在發生）；嚴重度欄另補「重大」旗標（過去只在風險日詳情看得到）。
+  **最近出現**（日期＋是否仍在發生）；嚴重度欄另補「重大」旗標（與風險日詳情同一個旗標）。
   資料來源走 `IIssueAggregateQuery` 的 SQL 聚合（不把整段期間的紀錄撈回記憶體聚合——2000 台規模下的記憶體 GroupBy 會讓單次查詢逾時）。
 - **第四視角「依問題」**：一列一個問題（Source＋EventId 分組，
   與詳情頁/主機頁彙總同一套 `GroupIssuesBySignature` 鍵），欄位＝問題／分類／嚴重度（期間最高）／
@@ -2603,7 +2603,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      回應的 `citedChapterIds` 是 `HelpChapterScorer` 選進 prompt 的候選章節，**不是**模型
      自述實際引用了哪些——兩者可能不同（模型未必用到候選裡的每一節）。前端標籤誠實標為
      「參考章節（提供給 AI 的內容）」，不宣稱是模型的實際引用。
-- **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
+- **明確不做**（功能範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
   prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
   結構已為它預留素材。
 - API：`GET api/help/manual`（任何已登入者；回應依能力過濾章節）、`GET api/help/ask-available`
@@ -2942,9 +2942,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   介面回報（本機段逐日、NetIQ 段各 Sentinel 平行掃描完 plans 後累加分母、逐主機日累加分子
   ——分母隨掃描逐步變大、只增不減），Web 端 `WebRunProgress` 落地 `SchedulerRunState`，
   status API 帶 `progressPhase/progressDone/progressTotal`。total=0（清理／掃描階段）顯示
-  不定進度動畫。同輪把 `NetiqPipelineService` 整支從 `Console.WriteLine` 改走 `IRunConsole`
-  ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
-  其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
+  不定進度動畫。`NetiqPipelineService` 的進度輸出走 `IRunConsole`（不是 `Console.WriteLine`：
+  站台沒有主控台接收端，寫到主控台的話排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息會凍結）。
+  **輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
   **PRTG 進度軌**：PRTG 擷取與本機／NetIQ 並行，因此在 NetIQ、本機之外自成一組**互不覆蓋**的欄位
   （`prtgProgressPhase/Done/Total`）。phase 為 `prtg-wait-sync`（等手動作業——同步或回填——結束，PRTG-SPEC §5a）／
@@ -3097,8 +3097,8 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 `source_name`／`source_key`／`event_id`、`day_sync_pending`／`day_sync_intent`、`cancelled`）
 欄位級定義與部分唯一索引的理由見 [DB-SPEC.md](DB-SPEC.md) §A。
 
-同時自 DB-SPEC 移除：`lf_user_host_map`、`lf_users.is_admin`（由群組制取代）；
-`lf_record_handling.handler_id` 的「自動帶入負責人」規則改為：負責人唯一→自動帶入
+DB-SPEC 沒有 `lf_user_host_map` 與 `lf_users.is_admin`（可見範圍與管理權由群組制決定）；
+`lf_record_handling.handler_id` 的「自動帶入負責人」規則：負責人唯一→自動帶入
 （稽核 account=`(system)`），多人或無→留空待 `Assign`。
 
 ### 10.2 儲存介面（Core）

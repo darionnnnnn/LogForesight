@@ -162,8 +162,8 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 
 ## Seed／匯入政策
 
-> **現況（console 退場後）**：下文的 `--import-rules`／`--apply`／`--overwrite-builtin` 這組
-> CLI 旗標已隨批次 console 專案退場移除，現行入口是 **Web 規則維護頁的「內建規則升級」
+> **現況**：下文的 `--import-rules`／`--apply`／`--overwrite-builtin` 這組
+> CLI 旗標不存在（專案沒有批次 console），現行入口是 **Web 規則維護頁的「內建規則升級」
 > 橫幅**（預覽差異 modal＋「覆蓋已修改的內建規則」勾選＝同一套語意，分類/套用邏輯
 > 在 Core 純函數 `RuleImportPlanner`）。本節描述的**合併語意逐條不變**，原文保留。
 

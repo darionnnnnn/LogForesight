@@ -154,14 +154,14 @@ public sealed class CspReportControllerTests : IDisposable
     [Fact]
     public async Task 欄位含換行與控制字元時記錄內容只剩空白且各欄截512字()
     {
-        var body = Legacy.Replace("https://evil/a.js", "https://evil/\\r\\nFAKE\\t\\u0085X").Replace("https://lf/x", new string('d', 700));
+        var body = Legacy.Replace("https://evil/a.js", "https://evil/\\r\\nFAKE\\t\\u0085X\\u2028\\u202eY").Replace("https://lf/x", new string('d', 700));
 
         Assert.Equal(204, await Post(NewController(), body, "application/csp-report"));
 
         var line = Assert.Single(Logs);
         Assert.DoesNotContain('\r', line);
         Assert.DoesNotContain('\n', line);
-        Assert.Contains("https://evil/  FAKE  X", line);
+        Assert.Contains("https://evil/  FAKE  X  Y", line);
         Assert.Contains(new string('d', 512), line);
         Assert.DoesNotContain(new string('d', 513), line);
     }

@@ -34,6 +34,7 @@ public class RecordsSearchBehaviorTests
     [InlineData("aiSummaryFailureShowsNoticeAndKeepsPrevious")]
     [InlineData("aiSummaryFailureAfterFilterChangeIsSilent")]
     [InlineData("aiSummary429KeepsRestMessage")]
+    [InlineData("aiSummary429ThenFailureShowsSingleNoticeAndKeepsPrevious")]
     public void 查詢頁search行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
