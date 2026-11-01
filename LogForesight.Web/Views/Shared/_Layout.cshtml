@@ -5,6 +5,7 @@
     等前端 fetch 回來才替換會閃動，所以伺服器端就渲染好。
 *@
 @using Microsoft.AspNetCore.Mvc.ViewFeatures
+@using LogForesight.Web.Security
 @inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     // 頁尾顯示版本號（docs/archive/HISTORY.md P1-4）：報修時能確認回報者手上的部署是哪個版本
@@ -23,9 +24,9 @@
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     @* 站台掛載路徑（IIS 子 Application 時是 /LogForesight 這種前綴）：前端的連結組裝與
        API 呼叫靠它補前綴，見 wwwroot/js/core/paths.js 的 appUrl()。必須早於任何 module。 *@
-    <script>window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
+    <script nonce="@Context.GetCspNonce()">window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
     @* JsonSerializer 預設 encoder 會跳脫 HTML 特殊字元；模組載入前提供單一顯示字典。 *@
-    <script>window.LF_LABELS = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(new {
+    <script nonce="@Context.GetCspNonce()">window.LF_LABELS = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(new {
         categories = LogForesight.Core.Analysis.IssueCategoryNames.All,
         severities = new Dictionary<string, string> { ["High"] = "高", ["Medium"] = "中", ["Low"] = "低" }
     }));</script>

@@ -18,6 +18,9 @@ public class CsrfHeaderMiddleware
     public const string HeaderName = "X-Requested-By";
     public const string HeaderValue = "LogForesight";
 
+    /// <summary>CSP 違規回報端點（瀏覽器直接 POST，無法帶自訂標頭）</summary>
+    public const string CspReportPath = "/api/csp-report";
+
     private readonly RequestDelegate _next;
 
     public CsrfHeaderMiddleware(RequestDelegate next)
@@ -41,6 +44,10 @@ public class CsrfHeaderMiddleware
     private static bool RequiresHeader(HttpContext context)
     {
         if (!context.Request.Path.StartsWithSegments("/api")) return false;
+
+        // 瀏覽器自動送出的 CSP 違規回報不帶自訂標頭；只放行這一條精確路徑（不用前綴），端點本身另有大小與頻率限制
+        if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.Equals(CspReportPath, StringComparison.OrdinalIgnoreCase))
+            return false;
 
         return !HttpMethods.IsGet(context.Request.Method)
                && !HttpMethods.IsHead(context.Request.Method)

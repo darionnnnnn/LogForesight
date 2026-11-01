@@ -145,8 +145,9 @@ LogForesight.Web/
 ```json
 {
   "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "", "SqliteWal": true },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）
-  // PathBase 必須以單一 / 開頭且不含空白、?、#，或留空（IIS 子 Application 不要設）；TrustedProxies 填反向代理 IP；FrameOptions 空字串＝不送 X-Frame-Options
-  "Server": { "PathBase": "", "TrustedProxies": [], "FrameOptions": "DENY" },
+  // PathBase 必須以單一 / 開頭且不含空白、?、#，或留空（IIS 子 Application 不要設）；TrustedProxies 每個元素只接受單一 IP（反向代理叢集逐台列出，不支援 CIDR）；
+  // FrameOptions 空字串＝不送 X-Frame-Options；Csp 為 Off | ReportOnly | Enforce（不分大小寫），留空＝Development 用 ReportOnly、其餘環境用 Enforce（§6.5）
+  "Server": { "PathBase": "", "TrustedProxies": [], "FrameOptions": "DENY", "Csp": "" },
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
@@ -325,6 +326,29 @@ SameSite=Strict 已擋跨站帶 Cookie；再加一層防禦深度：`CsrfHeaderM
 **非 GET 的 API 請求**必須帶自訂標頭 `X-Requested-By: LogForesight`（`core/api.js` 統一加上）。
 跨站表單無法自訂標頭，兩層皆破才會失守。不用 ASP.NET Antiforgery token（它假設表單 post 模型，
 與「全 API」架構不合）。
+
+### 6.5 安全回應標頭與內容安全政策（CSP）
+
+安全標頭由 `SecurityHeadersPolicy.Middleware` 在 `UsePathBase` 之後、所有可能提前結束請求的中介層之前以 `OnStarting` 寫入，
+401／403／503 與靜態檔回應同樣涵蓋：`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、
+依 `Server:FrameOptions` 的 `X-Frame-Options`（空字串＝不送）。
+
+**CSP**：`Server:Csp` 三態——`Off`（不送）、`ReportOnly`（送 `Content-Security-Policy-Report-Only`）、`Enforce`（送 `Content-Security-Policy`）；
+未設定時 Development 為 `ReportOnly`、其餘環境為 `Enforce`；其他值啟動失敗並點名 `Server:Csp`。政策單行：
+
+`default-src 'self'; script-src 'self' 'nonce-{n}'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors {fa}; report-uri {PathBase}/api/csp-report`
+
+- `{n}`：每請求 16 bytes 隨機（base64），存在 `HttpContext.Items`，View 以 `Context.GetCspNonce()` 讀取，同一請求多次讀取同值。
+- `{fa}`：`FrameOptions` 為 DENY→`'none'`、SAMEORIGIN→`'self'`、空字串→整條 `frame-ancestors` 省略。
+- `img-src` 含 `data:`：bootstrap 的 `data:image/svg+xml` 與品牌 logo（`data:image/png|jpeg;base64`）；`CspPolicyGuardTests` 掃 CSS 守門。
+- 反向代理另行加 CSP 時，瀏覽器對多條政策取交集。
+
+**回報端點** `POST api/csp-report`（`CspReportController`）：匿名（`[AllowAnonymous]`、`[SkipDataVersionBump]`），`CsrfHeaderMiddleware` 精確放行此路徑的 POST。
+本文最多讀 8,192 bytes（超過回 413、不記錄）；每來源 IP 60 秒 10 次（超過回 429、不記錄；`Connection.RemoteIpAddress` 為 null 時視為 `unknown`，
+未設 `Server:TrustedProxies` 時反向代理後的所有請求共用一個額度）。接受 `application/csp-report`、`application/reports+json`、`application/json`；
+無法解析回 204、不記錄。每筆違規取 document-uri、violated／effective-directive、blocked-uri、original-policy，各截 512 字並把換行換成空白，
+同一「指令＋blocked-uri」60 秒只記一次，以 Info 寫入 `LogForesight.Web.CspReport`（進 web.log）。其餘情況一律 204 不回內容。
+計數器為 `SlidingWindowThrottle<TKey>`（鍵數上限 10,000，滿了拒絕新鍵、舊鍵照常計數）。
 
 ## 7. 授權與 API 慣例
 
@@ -574,7 +598,8 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - `pages/*.js`：一頁一模組，`_Layout.cshtml` 以 `<script type="module">` 載入對應頁模組；
   頁面需要的初始參數（如 record id）用 `data-*` 屬性放在 View 的根元素上，JS 讀取——
   **cshtml 內不寫 inline script、不用 Razor 內插 JS 變數**。
-  例外只有下列 inline script，其餘一律不得新增：`_Layout.cshtml` 與 `Login.cshtml` 各一行
+  例外只有下列四段 inline script，皆帶每請求 nonce（`nonce="@Context.GetCspNonce()"`，§6.5）；新增 inline script 必帶 nonce，
+  `CspPolicyGuardTests` 掃所有 View 守門：`_Layout.cshtml` 與 `Login.cshtml` 各一行
   `window.LF_BASE = Request.PathBase`（§8.1a，必須早於任何 module）；`_Layout.cshtml` 的
   `window.LF_LABELS`（問題類別名稱表 `categories` 與嚴重度中文名 `severities`，server-render 為單一顯示字典，
   `format.js` 的 `CATEGORY_NAMES`／`SEVERITY_NAMES` 由它取值，登入頁不需要所以不帶）；`Login.cshtml`

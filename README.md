@@ -111,6 +111,12 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 **所有回應多了三個安全標頭**（`X-Content-Type-Options`、`Referrer-Policy`、`X-Frame-Options: DENY`），升級後立即生效。
 若有其他入口網站以 iframe 嵌入本站，把 `appsettings.json` 的 `Server:FrameOptions` 改為 `SAMEORIGIN` 或空字串（不送此標頭）。
 
+**內容安全政策（CSP）預設強制**：所有回應帶 `Content-Security-Policy`（Development 環境預設只回報，送 `Content-Security-Policy-Report-Only`）。
+`appsettings.json` 的 `Server:Csp` 可設 `Off`（不送）、`ReportOnly`（只回報不攔截）、`Enforce`（強制），不分大小寫，留空＝依環境決定。
+違規回報寫入 `web.log`（logger `LogForesight.Web.CspReport`，同一違規 60 秒只記一次）。需要被其他頁面嵌入時改 `Server:FrameOptions`
+（政策的 `frame-ancestors` 會跟著變）。自訂品牌圖示不受影響。反向代理若自行加了 CSP，瀏覽器會取兩者的交集，過嚴時請在代理端放寬。
+未設 `Server:TrustedProxies` 時，回報端點的每 IP 節流會讓反向代理後的所有使用者共用一個額度。
+
 **`Server:PathBase` 格式錯誤時啟動訊息會點名設定鍵**：值必須以 `/` 開頭（例如 `/LogForesight`），以前缺斜線同樣無法啟動，只是訊息看不出原因。
 掛在 IIS 子 Application 底下時不要再設 `Server:PathBase`（IIS 會自動加前綴，重複設定會變成雙重前綴，啟動時會記警告）。
 

@@ -325,6 +325,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ManualAiThrottle>();
         services.AddSingleton<AutoAiThrottle>();
 
+        // CSP 違規回報端點的節流：窗口要全站共用，Singleton
+        services.AddSingleton<CspReportIpThrottle>();
+        services.AddSingleton<CspReportDedupThrottle>();
+
         // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
         services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();

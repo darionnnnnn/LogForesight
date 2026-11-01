@@ -142,6 +142,7 @@ POST	/api/auth/login	C=-;A=-	anonymous	-	skipbump	AuthController
 POST	/api/auth/logout	C=-;A=-	-	-	skipbump	AuthController
 GET	/api/auth/me	C=-;A=-	-	-	-	AuthController
 GET	/api/auth/options	C=-;A=-	anonymous	-	-	AuthController
+POST	/api/csp-report	C=-;A=-	anonymous	-	skipbump	CspReportController
 GET	/api/dashboard/summary	C=-;A=-	-	-	-	DashboardController
 GET	/api/handlers/me/badge	C=-;A=-	-	-	-	HandlersController
 GET	/api/handlers/{userId:long}/work-orders	C=-;A=-	-	-	-	HandlersController

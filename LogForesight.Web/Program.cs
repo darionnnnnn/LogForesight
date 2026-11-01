@@ -5,6 +5,7 @@ using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Middleware;
+using LogForesight.Web.Security;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.HttpOverrides;
 using NLog;
@@ -195,7 +196,7 @@ try
 
     // 安全回應標頭：排在 UsePathBase 之後、所有可能提前結束請求的中介層（例外處理、重新導向、
     // 驗證、停用帳號、搬移閘門、CSRF）之前，401／403／503 與靜態檔回應才都帶得到。
-    app.Use(SecurityHeadersPolicy.Middleware(settings.Server.FrameOptions));
+    app.Use(SecurityHeadersPolicy.Middleware(settings.Server.FrameOptions, settings.Server.ResolveCspMode(app.Environment.EnvironmentName)));
 
     if (!app.Environment.IsDevelopment())
     {
@@ -306,25 +307,56 @@ public static class DataVersionStampPolicy
 
 /// <summary>
 /// 全站安全回應標頭：<c>X-Content-Type-Options: nosniff</c>、<c>Referrer-Policy: strict-origin-when-cross-origin</c>，
-/// 以及依 <c>Server:FrameOptions</c> 決定的 <c>X-Frame-Options</c>（空字串＝不送）。
+/// 依 <c>Server:FrameOptions</c> 決定的 <c>X-Frame-Options</c>（空字串＝不送），
+/// 以及依 <c>Server:Csp</c> 決定的內容安全政策（<c>Content-Security-Policy</c>／<c>-Report-Only</c>／不送）。
 /// 用 <c>OnStarting</c> 在回應開始送出前寫入，連提前結束請求（401／403／503）與靜態檔回應都涵蓋。
 /// </summary>
 public static class SecurityHeadersPolicy
 {
-    public static Func<HttpContext, Func<Task>, Task> Middleware(string? frameOptions)
+    /// <summary>
+    /// 組出 CSP 政策字串（單行）。inline script 一律要帶 <paramref name="nonce"/>；
+    /// <c>img-src</c> 含 <c>data:</c> 是因為 bootstrap 的 data:image/svg+xml 與品牌 logo 的 data URI。
+    /// </summary>
+    public static string BuildCsp(string nonce, string? frameOptions, string pathBase)
+    {
+        var parts = new List<string>
+        {
+            "default-src 'self'",
+            $"script-src 'self' 'nonce-{nonce}'",
+            "style-src 'self'",
+            "img-src 'self' data:",
+            "font-src 'self'",
+            "connect-src 'self'",
+            "worker-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'"
+        };
+        var frame = (frameOptions ?? "").Trim();
+        if (frame.Equals("DENY", StringComparison.OrdinalIgnoreCase)) parts.Add("frame-ancestors 'none'");
+        else if (frame.Equals("SAMEORIGIN", StringComparison.OrdinalIgnoreCase)) parts.Add("frame-ancestors 'self'");
+        parts.Add($"report-uri {pathBase}/api/csp-report");
+        return string.Join("; ", parts);
+    }
+
+    public static Func<HttpContext, Func<Task>, Task> Middleware(string? frameOptions, CspMode csp = CspMode.Off)
     {
         var frame = string.IsNullOrWhiteSpace(frameOptions) ? null : frameOptions.Trim();
         return (context, next) =>
         {
+            // nonce 在請求一開始就產生並存進 Items，view 轉譯時讀到的與回應標頭是同一個值
+            string? policy = csp == CspMode.Off ? null : BuildCsp(context.GetCspNonce(), frame, context.Request.PathBase.Value ?? "");
             context.Response.OnStarting(static state =>
             {
-                var (response, frameValue) = ((HttpResponse, string?))state;
+                var (response, frameValue, cspMode, cspPolicy) = ((HttpResponse, string?, CspMode, string?))state;
                 // 用索引子覆寫而不是 Headers.Add：下游若也設了同名標頭不致擲例外
                 response.Headers["X-Content-Type-Options"] = "nosniff";
                 response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
                 if (frameValue != null) response.Headers["X-Frame-Options"] = frameValue;
+                if (cspPolicy != null)
+                    response.Headers[cspMode == CspMode.Enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only"] = cspPolicy;
                 return Task.CompletedTask;
-            }, (context.Response, frame));
+            }, (context.Response, frame, csp, policy));
             return next();
         };
     }

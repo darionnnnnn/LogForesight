@@ -41,6 +41,7 @@ public class ControllerRouteSnapshotTests
         ["DisplaySettingsController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
         ["HandlersController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
         ["HandlingController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
+        ["CspReportController"] = "CSP 違規回報：瀏覽器自動匿名 POST，防護在端點內（8KB 上限、每 IP 節流、去重）",
         ["HealthController"] = "健康檢查：health 匿名、freshness 僅需登入",
         ["HelpController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",
         ["HostsController"] = "讀取類 action 登入即可（FallbackPolicy），可見範圍由 Service 層 IVisibilityService 過濾",

@@ -1,4 +1,5 @@
 ﻿@using Microsoft.AspNetCore.Mvc.ViewFeatures
+@using LogForesight.Web.Security
 @inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     ViewData["Title"] = "登入";
@@ -19,7 +20,7 @@
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     @* 登入頁不套 _Layout，掛載前綴要自己注入——漏掉的話登入頁的 API 全數 404
        （畫面症狀是「無法取得登入設定」）。 *@
-    <script>window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
+    <script nonce="@Context.GetCspNonce()">window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
 </head>
 <body>
     <div class="lf-login">
@@ -53,7 +54,7 @@
 
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js" asp-append-version="true"></script>
     <script type="module" src="~/js/pages/login.js" asp-append-version="true"></script>
-    <script>
+    <script nonce="@Context.GetCspNonce()">
         window.addEventListener('load', function () {
             if (window.LF_LOGIN_READY !== true) {
                 var errorBox = document.getElementById('login-error');
