@@ -51,7 +51,7 @@ public class PermissionFilter : IAuthorizationFilter
         // 一套專門偵測入侵跡象的系統，對「有人在試探自己的權限邊界」不該視而不見。
         var capabilityLabel = string.Join("／", _capabilities);
         _audit.Record(
-            action: "access_denied",
+            action: AuditActions.AccessDenied,
             summary: $"權限不足：嘗試存取需要「{capabilityLabel}」能力的功能 {context.HttpContext.Request.Method} {context.HttpContext.Request.Path}",
             targetKind: "auth",
             targetId: capabilityLabel,

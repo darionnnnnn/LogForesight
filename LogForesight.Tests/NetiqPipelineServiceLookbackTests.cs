@@ -111,8 +111,13 @@ public class NetiqPipelineServiceLookbackTests
     [Fact]
     public void ValidateBackfillDays_等於上限或未指定時通過()
     {
-        ScheduleController.ValidateBackfillDays(180, retentionDays: 180);
-        ScheduleController.ValidateBackfillDays(null, retentionDays: 180);
+        // 意圖：兩種輸入都不擲例外
+        var ex = Record.Exception(() =>
+        {
+            ScheduleController.ValidateBackfillDays(180, retentionDays: 180);
+            ScheduleController.ValidateBackfillDays(null, retentionDays: 180);
+        });
+        Assert.Null(ex);
     }
 }
 

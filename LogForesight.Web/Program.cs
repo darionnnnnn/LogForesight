@@ -171,15 +171,7 @@ try
     // 否則任何人都能自己帶 X-Forwarded-For 偽造來源 IP 繞過節流。未設定＝完全不處理。
     if (settings.Server.TrustedProxies.Count > 0)
     {
-        var forwarded = new ForwardedHeadersOptions
-        {
-            ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
-        };
-        forwarded.KnownNetworks.Clear();
-        forwarded.KnownProxies.Clear();
-        foreach (var proxy in settings.Server.TrustedProxies)
-            forwarded.KnownProxies.Add(System.Net.IPAddress.Parse(proxy.Trim()));
-        app.UseForwardedHeaders(forwarded);
+        app.UseForwardedHeaders(ForwardedHeadersSetup.Build(settings.Server.TrustedProxies));
     }
 
     // 掛載前綴：IIS 以子 Application 掛載時 ASP.NET Core 會自動填 Request.PathBase，
@@ -359,5 +351,22 @@ public static class SecurityHeadersPolicy
             }, (context.Response, frame, csp, policy));
             return next();
         };
+    }
+}
+
+/// <summary>反向代理轉送標頭選項的唯一建構點（Program 與測試共用）：只信任設定列出的代理 IP，清空預設的迴路信任。</summary>
+internal static class ForwardedHeadersSetup
+{
+    internal static ForwardedHeadersOptions Build(IEnumerable<string> trustedProxies)
+    {
+        var forwarded = new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+        };
+        forwarded.KnownNetworks.Clear();
+        forwarded.KnownProxies.Clear();
+        foreach (var proxy in trustedProxies)
+            forwarded.KnownProxies.Add(System.Net.IPAddress.Parse(proxy.Trim()));
+        return forwarded;
     }
 }

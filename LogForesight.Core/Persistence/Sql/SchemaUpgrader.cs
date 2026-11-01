@@ -289,44 +289,8 @@ internal static class SchemaUpgrader
 
         // Durable PRTG scope-purge ownership and batch progress. Progress is written in the
         // same transaction as each bounded delete so a lost response is safely replayable.
-        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs", isSqlite ? """
-            CREATE TABLE lf_prtg_scope_purge_jobs (
-                job_id TEXT NOT NULL PRIMARY KEY, actor_id INTEGER NOT NULL,
-                parent_job_id TEXT NULL, previous_job_id TEXT NULL, source TEXT NOT NULL, status TEXT NOT NULL,
-                active_owner TEXT NULL, lease_expires_at_utc TEXT NULL,
-                keep_set_json TEXT NOT NULL, candidate_sensor_ids_json TEXT NOT NULL, scope_fingerprint TEXT NOT NULL,
-                accepted_at_utc TEXT NOT NULL, updated_at_utc TEXT NOT NULL,
-                values_watermark INTEGER NOT NULL, state_changes_watermark INTEGER NOT NULL,
-                values_cursor INTEGER NOT NULL, state_changes_cursor INTEGER NOT NULL,
-                candidate_values INTEGER NOT NULL, candidate_state_changes INTEGER NOT NULL,
-                deleted_values INTEGER NOT NULL, deleted_state_changes INTEGER NOT NULL,
-                remaining_values INTEGER NOT NULL, remaining_state_changes INTEGER NOT NULL,
-                otherwise_removed_values INTEGER NOT NULL, otherwise_removed_state_changes INTEGER NOT NULL,
-                counts_reconciled INTEGER NOT NULL DEFAULT 1,
-                monitored_devices INTEGER NOT NULL, permission_revision INTEGER NOT NULL,
-                auth_fingerprint TEXT NULL, scope_fence_json TEXT NULL,
-                stop_reason TEXT NULL, revision INTEGER NOT NULL
-            );
-            """ : """
-            CREATE TABLE lf_prtg_scope_purge_jobs (
-                job_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_scope_purge_jobs PRIMARY KEY,
-                actor_id bigint NOT NULL, parent_job_id nvarchar(100) NULL, previous_job_id nvarchar(36) NULL,
-                source nvarchar(24) NOT NULL, status nvarchar(24) NOT NULL,
-                active_owner nvarchar(24) NULL, lease_expires_at_utc datetime2 NULL,
-                keep_set_json nvarchar(max) NOT NULL, candidate_sensor_ids_json nvarchar(max) NOT NULL, scope_fingerprint nvarchar(128) NOT NULL,
-                accepted_at_utc datetime2 NOT NULL, updated_at_utc datetime2 NOT NULL,
-                values_watermark bigint NOT NULL, state_changes_watermark bigint NOT NULL,
-                values_cursor bigint NOT NULL, state_changes_cursor bigint NOT NULL,
-                candidate_values bigint NOT NULL, candidate_state_changes bigint NOT NULL,
-                deleted_values bigint NOT NULL, deleted_state_changes bigint NOT NULL,
-                remaining_values bigint NOT NULL, remaining_state_changes bigint NOT NULL,
-                otherwise_removed_values bigint NOT NULL, otherwise_removed_state_changes bigint NOT NULL,
-                counts_reconciled bit NOT NULL CONSTRAINT DF_lf_prtg_scope_purge_counts_reconciled DEFAULT 1,
-                monitored_devices int NOT NULL, permission_revision bigint NOT NULL,
-                auth_fingerprint nvarchar(128) NULL, scope_fence_json nvarchar(max) NULL,
-                stop_reason nvarchar(max) NULL, revision bigint NOT NULL
-            );
-            """);
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs",
+            isSqlite ? SqliteCreatePrtgScopePurgeJobs : SqlServerCreatePrtgScopePurgeJobs);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs",
             "IX_lf_prtg_scope_purge_status", "status, updated_at_utc");
         AddFilteredUniqueIndexIfMissing(ctx, isSqlite, "lf_prtg_scope_purge_jobs",
@@ -363,94 +327,14 @@ internal static class SchemaUpgrader
         CreateTableIfMissing(ctx, isSqlite, "lf_prtg_ip_excludes",
             isSqlite ? SqliteCreatePrtgIpExcludes : SqlServerCreatePrtgIpExcludes);
 
-        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", isSqlite ? """
-            CREATE TABLE lf_prtg_transfer_sessions (
-                transfer_id TEXT NOT NULL PRIMARY KEY,
-                owner_id TEXT NOT NULL,
-                scope_hash TEXT NOT NULL,
-                source_identity_hash TEXT NOT NULL,
-                declared_bytes INTEGER NOT NULL CHECK(declared_bytes > 0),
-                chunk_count INTEGER NOT NULL CHECK(chunk_count > 0),
-                package_sha256 TEXT NOT NULL,
-                received_bytes INTEGER NOT NULL DEFAULT 0 CHECK(received_bytes >= 0 AND received_bytes <= declared_bytes),
-                received_chunks INTEGER NOT NULL DEFAULT 0 CHECK(received_chunks >= 0 AND received_chunks <= chunk_count),
-                state TEXT NOT NULL DEFAULT 'receiving' CHECK(state IN ('receiving','validating','validation-failed','complete','abandoned')),
-                version INTEGER NOT NULL DEFAULT 1,
-                active_write_id TEXT NULL,
-                active_write_bytes INTEGER NOT NULL DEFAULT 0 CHECK(active_write_bytes >= 0 AND active_write_bytes <= 16777216),
-                active_write_until_utc INTEGER NULL,
-                lease_owner TEXT NULL,
-                lease_until_utc INTEGER NULL,
-                result_manifest_json TEXT NULL CHECK(result_manifest_json IS NULL OR length(CAST(result_manifest_json AS BLOB)) <= 65536),
-                failure_code TEXT NULL,
-                created_at_utc INTEGER NOT NULL,
-                updated_at_utc INTEGER NOT NULL,
-                completed_at_utc INTEGER NULL,
-                abandoned_at_utc INTEGER NULL,
-                cleanup_after_ordinal INTEGER NOT NULL DEFAULT -1,
-                CHECK(declared_bytes > 0 AND chunk_count > 0 AND received_bytes >= 0 AND received_bytes <= declared_bytes AND received_chunks >= 0 AND received_chunks <= chunk_count)
-            )
-            """ : """
-            CREATE TABLE lf_prtg_transfer_sessions (
-                transfer_id uniqueidentifier NOT NULL,
-                owner_id nvarchar(128) NOT NULL,
-                scope_hash varchar(64) NOT NULL,
-                source_identity_hash varchar(64) NOT NULL,
-                declared_bytes bigint NOT NULL,
-                chunk_count int NOT NULL,
-                package_sha256 varchar(64) NOT NULL,
-                received_bytes bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_received_bytes DEFAULT 0,
-                received_chunks int NOT NULL CONSTRAINT DF_lf_prtg_transfer_received_chunks DEFAULT 0,
-                state nvarchar(24) NOT NULL CONSTRAINT DF_lf_prtg_transfer_state DEFAULT N'receiving',
-                version bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_version DEFAULT 1,
-                active_write_id uniqueidentifier NULL,
-                active_write_bytes bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_active_bytes DEFAULT 0,
-                active_write_until_utc bigint NULL,
-                lease_owner nvarchar(128) NULL,
-                lease_until_utc bigint NULL,
-                result_manifest_json nvarchar(max) NULL,
-                failure_code nvarchar(64) NULL,
-                created_at_utc bigint NOT NULL,
-                updated_at_utc bigint NOT NULL,
-                completed_at_utc bigint NULL,
-                abandoned_at_utc bigint NULL,
-                cleanup_after_ordinal int NOT NULL CONSTRAINT DF_lf_prtg_transfer_cleanup_ordinal DEFAULT -1,
-                CONSTRAINT PK_lf_prtg_transfer_sessions PRIMARY KEY (transfer_id),
-                CONSTRAINT CK_lf_prtg_transfer_sessions_size CHECK(declared_bytes > 0 AND chunk_count > 0 AND received_bytes >= 0 AND received_bytes <= declared_bytes AND received_chunks >= 0 AND received_chunks <= chunk_count),
-                CONSTRAINT CK_lf_prtg_transfer_sessions_buffer CHECK(active_write_bytes >= 0 AND active_write_bytes <= 16777216),
-                CONSTRAINT CK_lf_prtg_transfer_sessions_state CHECK(state IN (N'receiving',N'validating',N'validation-failed',N'complete',N'abandoned')),
-                CONSTRAINT CK_lf_prtg_transfer_sessions_manifest CHECK(result_manifest_json IS NULL OR DATALENGTH(result_manifest_json) <= 131072)
-            )
-            """);
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions",
+            isSqlite ? SqliteCreatePrtgTransferSessions : SqlServerCreatePrtgTransferSessions);
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", "IX_lf_prtg_transfer_state_id", "state, transfer_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", "IX_lf_prtg_transfer_write", "state, active_write_until_utc");
         AddIndexIfMissing(ctx, isSqlite, "lf_prtg_transfer_sessions", "IX_lf_prtg_transfer_cleanup", "state, updated_at_utc, transfer_id");
 
-        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_transfer_chunks", isSqlite ? """
-            CREATE TABLE lf_prtg_transfer_chunks (
-                transfer_id TEXT NOT NULL,
-                ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-                payload BLOB NOT NULL,
-                byte_length INTEGER NOT NULL CHECK(byte_length > 0 AND byte_length <= 4194304),
-                sha256 TEXT NOT NULL,
-                accepted_at_utc INTEGER NOT NULL,
-                CONSTRAINT PK_lf_prtg_transfer_chunks PRIMARY KEY (transfer_id, ordinal),
-                CONSTRAINT FK_lf_prtg_transfer_chunks_sessions FOREIGN KEY (transfer_id) REFERENCES lf_prtg_transfer_sessions(transfer_id) ON DELETE RESTRICT,
-                CHECK(length(payload) = byte_length)
-            )
-            """ : """
-            CREATE TABLE lf_prtg_transfer_chunks (
-                transfer_id uniqueidentifier NOT NULL,
-                ordinal int NOT NULL,
-                payload varbinary(max) NOT NULL,
-                byte_length int NOT NULL,
-                sha256 varchar(64) NOT NULL,
-                accepted_at_utc bigint NOT NULL,
-                CONSTRAINT PK_lf_prtg_transfer_chunks PRIMARY KEY (transfer_id, ordinal),
-                CONSTRAINT FK_lf_prtg_transfer_chunks_sessions FOREIGN KEY (transfer_id) REFERENCES lf_prtg_transfer_sessions(transfer_id),
-                CONSTRAINT CK_lf_prtg_transfer_chunks_payload CHECK(ordinal >= 0 AND byte_length > 0 AND byte_length <= 4194304 AND DATALENGTH(payload) = byte_length)
-            )
-            """);
+        CreateTableIfMissing(ctx, isSqlite, "lf_prtg_transfer_chunks",
+            isSqlite ? SqliteCreatePrtgTransferChunks : SqlServerCreatePrtgTransferChunks);
 
         // 交辦單（↔ WorkOrderRow／WorkOrderEventRow）與案件的成員欄。
         // 既有案件的 source_* 與 work_order_id 由 WorkOrderBackfiller 在背景補，不在啟動路徑上跑
@@ -641,6 +525,137 @@ internal static class SchemaUpgrader
     /// 必須含 <c>source_key IS NOT NULL</c>：SQL Server 唯一索引把 NULL 視為相等、SQLite 視為相異，
     /// 不排除 NULL 的話同一人兩張多問題單在 SQL Server 會撞索引、在 SQLite 不會——兩後端行為分岔。
     /// </summary>
+    internal const string SqlServerCreatePrtgScopePurgeJobs = """
+        CREATE TABLE lf_prtg_scope_purge_jobs (
+            job_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_scope_purge_jobs PRIMARY KEY,
+            actor_id bigint NOT NULL, parent_job_id nvarchar(100) NULL, previous_job_id nvarchar(36) NULL,
+            source nvarchar(24) NOT NULL, status nvarchar(24) NOT NULL,
+            active_owner nvarchar(24) NULL, lease_expires_at_utc datetime2 NULL,
+            keep_set_json nvarchar(max) NOT NULL, candidate_sensor_ids_json nvarchar(max) NOT NULL, scope_fingerprint nvarchar(128) NOT NULL,
+            accepted_at_utc datetime2 NOT NULL, updated_at_utc datetime2 NOT NULL,
+            values_watermark bigint NOT NULL, state_changes_watermark bigint NOT NULL,
+            values_cursor bigint NOT NULL, state_changes_cursor bigint NOT NULL,
+            candidate_values bigint NOT NULL, candidate_state_changes bigint NOT NULL,
+            deleted_values bigint NOT NULL, deleted_state_changes bigint NOT NULL,
+            remaining_values bigint NOT NULL, remaining_state_changes bigint NOT NULL,
+            otherwise_removed_values bigint NOT NULL, otherwise_removed_state_changes bigint NOT NULL,
+            counts_reconciled bit NOT NULL CONSTRAINT DF_lf_prtg_scope_purge_counts_reconciled DEFAULT 1,
+            monitored_devices int NOT NULL, permission_revision bigint NOT NULL,
+            auth_fingerprint nvarchar(128) NULL, scope_fence_json nvarchar(max) NULL,
+            stop_reason nvarchar(max) NULL, revision bigint NOT NULL
+        );
+        """;
+
+    internal const string SqliteCreatePrtgScopePurgeJobs = """
+        CREATE TABLE lf_prtg_scope_purge_jobs (
+            job_id TEXT NOT NULL PRIMARY KEY, actor_id INTEGER NOT NULL,
+            parent_job_id TEXT NULL, previous_job_id TEXT NULL, source TEXT NOT NULL, status TEXT NOT NULL,
+            active_owner TEXT NULL, lease_expires_at_utc TEXT NULL,
+            keep_set_json TEXT NOT NULL, candidate_sensor_ids_json TEXT NOT NULL, scope_fingerprint TEXT NOT NULL,
+            accepted_at_utc TEXT NOT NULL, updated_at_utc TEXT NOT NULL,
+            values_watermark INTEGER NOT NULL, state_changes_watermark INTEGER NOT NULL,
+            values_cursor INTEGER NOT NULL, state_changes_cursor INTEGER NOT NULL,
+            candidate_values INTEGER NOT NULL, candidate_state_changes INTEGER NOT NULL,
+            deleted_values INTEGER NOT NULL, deleted_state_changes INTEGER NOT NULL,
+            remaining_values INTEGER NOT NULL, remaining_state_changes INTEGER NOT NULL,
+            otherwise_removed_values INTEGER NOT NULL, otherwise_removed_state_changes INTEGER NOT NULL,
+            counts_reconciled INTEGER NOT NULL DEFAULT 1,
+            monitored_devices INTEGER NOT NULL, permission_revision INTEGER NOT NULL,
+            auth_fingerprint TEXT NULL, scope_fence_json TEXT NULL,
+            stop_reason TEXT NULL, revision INTEGER NOT NULL
+        );
+        """;
+
+    internal const string SqlServerCreatePrtgTransferSessions = """
+        CREATE TABLE lf_prtg_transfer_sessions (
+            transfer_id uniqueidentifier NOT NULL,
+            owner_id nvarchar(128) NOT NULL,
+            scope_hash varchar(64) NOT NULL,
+            source_identity_hash varchar(64) NOT NULL,
+            declared_bytes bigint NOT NULL,
+            chunk_count int NOT NULL,
+            package_sha256 varchar(64) NOT NULL,
+            received_bytes bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_received_bytes DEFAULT 0,
+            received_chunks int NOT NULL CONSTRAINT DF_lf_prtg_transfer_received_chunks DEFAULT 0,
+            state nvarchar(24) NOT NULL CONSTRAINT DF_lf_prtg_transfer_state DEFAULT N'receiving',
+            version bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_version DEFAULT 1,
+            active_write_id uniqueidentifier NULL,
+            active_write_bytes bigint NOT NULL CONSTRAINT DF_lf_prtg_transfer_active_bytes DEFAULT 0,
+            active_write_until_utc bigint NULL,
+            lease_owner nvarchar(128) NULL,
+            lease_until_utc bigint NULL,
+            result_manifest_json nvarchar(max) NULL,
+            failure_code nvarchar(64) NULL,
+            created_at_utc bigint NOT NULL,
+            updated_at_utc bigint NOT NULL,
+            completed_at_utc bigint NULL,
+            abandoned_at_utc bigint NULL,
+            cleanup_after_ordinal int NOT NULL CONSTRAINT DF_lf_prtg_transfer_cleanup_ordinal DEFAULT -1,
+            CONSTRAINT PK_lf_prtg_transfer_sessions PRIMARY KEY (transfer_id),
+            CONSTRAINT CK_lf_prtg_transfer_sessions_size CHECK(declared_bytes > 0 AND chunk_count > 0 AND received_bytes >= 0 AND received_bytes <= declared_bytes AND received_chunks >= 0 AND received_chunks <= chunk_count),
+            CONSTRAINT CK_lf_prtg_transfer_sessions_buffer CHECK(active_write_bytes >= 0 AND active_write_bytes <= 16777216),
+            CONSTRAINT CK_lf_prtg_transfer_sessions_state CHECK(state IN (N'receiving',N'validating',N'validation-failed',N'complete',N'abandoned')),
+            CONSTRAINT CK_lf_prtg_transfer_sessions_manifest CHECK(result_manifest_json IS NULL OR DATALENGTH(result_manifest_json) <= 131072)
+        )
+        """;
+
+    internal const string SqliteCreatePrtgTransferSessions = """
+        CREATE TABLE lf_prtg_transfer_sessions (
+            transfer_id TEXT NOT NULL PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            scope_hash TEXT NOT NULL,
+            source_identity_hash TEXT NOT NULL,
+            declared_bytes INTEGER NOT NULL CHECK(declared_bytes > 0),
+            chunk_count INTEGER NOT NULL CHECK(chunk_count > 0),
+            package_sha256 TEXT NOT NULL,
+            received_bytes INTEGER NOT NULL DEFAULT 0 CHECK(received_bytes >= 0 AND received_bytes <= declared_bytes),
+            received_chunks INTEGER NOT NULL DEFAULT 0 CHECK(received_chunks >= 0 AND received_chunks <= chunk_count),
+            state TEXT NOT NULL DEFAULT 'receiving' CHECK(state IN ('receiving','validating','validation-failed','complete','abandoned')),
+            version INTEGER NOT NULL DEFAULT 1,
+            active_write_id TEXT NULL,
+            active_write_bytes INTEGER NOT NULL DEFAULT 0 CHECK(active_write_bytes >= 0 AND active_write_bytes <= 16777216),
+            active_write_until_utc INTEGER NULL,
+            lease_owner TEXT NULL,
+            lease_until_utc INTEGER NULL,
+            result_manifest_json TEXT NULL CHECK(result_manifest_json IS NULL OR length(CAST(result_manifest_json AS BLOB)) <= 65536),
+            failure_code TEXT NULL,
+            created_at_utc INTEGER NOT NULL,
+            updated_at_utc INTEGER NOT NULL,
+            completed_at_utc INTEGER NULL,
+            abandoned_at_utc INTEGER NULL,
+            cleanup_after_ordinal INTEGER NOT NULL DEFAULT -1,
+            CHECK(declared_bytes > 0 AND chunk_count > 0 AND received_bytes >= 0 AND received_bytes <= declared_bytes AND received_chunks >= 0 AND received_chunks <= chunk_count)
+        )
+        """;
+
+    internal const string SqlServerCreatePrtgTransferChunks = """
+        CREATE TABLE lf_prtg_transfer_chunks (
+            transfer_id uniqueidentifier NOT NULL,
+            ordinal int NOT NULL,
+            payload varbinary(max) NOT NULL,
+            byte_length int NOT NULL,
+            sha256 varchar(64) NOT NULL,
+            accepted_at_utc bigint NOT NULL,
+            CONSTRAINT PK_lf_prtg_transfer_chunks PRIMARY KEY (transfer_id, ordinal),
+            CONSTRAINT FK_lf_prtg_transfer_chunks_sessions FOREIGN KEY (transfer_id) REFERENCES lf_prtg_transfer_sessions(transfer_id),
+            CONSTRAINT CK_lf_prtg_transfer_chunks_payload CHECK(ordinal >= 0 AND byte_length > 0 AND byte_length <= 4194304 AND DATALENGTH(payload) = byte_length)
+        )
+        """;
+
+    internal const string SqliteCreatePrtgTransferChunks = """
+        CREATE TABLE lf_prtg_transfer_chunks (
+            transfer_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+            payload BLOB NOT NULL,
+            byte_length INTEGER NOT NULL CHECK(byte_length > 0 AND byte_length <= 4194304),
+            sha256 TEXT NOT NULL,
+            accepted_at_utc INTEGER NOT NULL,
+            CONSTRAINT PK_lf_prtg_transfer_chunks PRIMARY KEY (transfer_id, ordinal),
+            CONSTRAINT FK_lf_prtg_transfer_chunks_sessions FOREIGN KEY (transfer_id) REFERENCES lf_prtg_transfer_sessions(transfer_id) ON DELETE RESTRICT,
+            CHECK(length(payload) = byte_length)
+        )
+        """;
+
     internal const string WorkOrderActiveIssueFilter = "closed_at IS NULL AND source_key IS NOT NULL";
 
     /// <summary>部分唯一索引 DDL：SQL Server（filtered index）與 SQLite（partial index）同一份語法</summary>
@@ -726,7 +741,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreateWorkOrderEvents = """
+    internal const string SqlServerCreateWorkOrderEvents = """
         CREATE TABLE lf_work_order_events (
             event_id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_work_order_events PRIMARY KEY,
             work_order_id bigint NOT NULL,
@@ -1138,7 +1153,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreateIssueHandling = """
+    internal const string SqlServerCreateIssueHandling = """
         CREATE TABLE lf_issue_handling (
             id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_issue_handling PRIMARY KEY,
             host_name nvarchar(255) NOT NULL,
@@ -1175,7 +1190,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreateIssueCases = """
+    internal const string SqlServerCreateIssueCases = """
         CREATE TABLE lf_issue_cases (
             case_id nvarchar(64) NOT NULL CONSTRAINT PK_lf_issue_cases PRIMARY KEY,
             host_name nvarchar(255) NOT NULL,
@@ -1209,7 +1224,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreateRecordHandling = """
+    internal const string SqlServerCreateRecordHandling = """
         CREATE TABLE lf_record_handling (
             id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_record_handling PRIMARY KEY,
             host_name nvarchar(255) NOT NULL,
@@ -1267,7 +1282,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreateIssueFirstSeen = """
+    internal const string SqlServerCreateIssueFirstSeen = """
         CREATE TABLE lf_issue_first_seen (
             source_key nvarchar(255) NOT NULL,
             event_id int NOT NULL,
@@ -1305,7 +1320,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePermissionChanges = """
+    internal const string SqlServerCreatePermissionChanges = """
         CREATE TABLE lf_permission_changes (
             id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_permission_changes PRIMARY KEY,
             change_id nvarchar(64) NOT NULL,
@@ -1351,7 +1366,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreateReports = """
+    internal const string SqlServerCreateReports = """
         CREATE TABLE lf_reports (
             report_id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_reports PRIMARY KEY,
             host_id bigint NOT NULL,
@@ -1381,7 +1396,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgDevices = """
+    internal const string SqlServerCreatePrtgDevices = """
         CREATE TABLE lf_prtg_devices (
             objid bigint NOT NULL CONSTRAINT PK_lf_prtg_devices PRIMARY KEY,
             name nvarchar(255) NOT NULL,
@@ -1415,7 +1430,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgSensors = """
+    internal const string SqlServerCreatePrtgSensors = """
         CREATE TABLE lf_prtg_sensors (
             objid bigint NOT NULL CONSTRAINT PK_lf_prtg_sensors PRIMARY KEY,
             device_objid bigint NOT NULL,
@@ -1447,7 +1462,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgStateChanges = """
+    internal const string SqlServerCreatePrtgStateChanges = """
         CREATE TABLE lf_prtg_state_changes (
             id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_prtg_state_changes PRIMARY KEY,
             sensor_objid bigint NOT NULL,
@@ -1474,7 +1489,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgValues = """
+    internal const string SqlServerCreatePrtgValues = """
         CREATE TABLE lf_prtg_values (
             id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_prtg_values PRIMARY KEY,
             sensor_objid bigint NOT NULL,
@@ -1495,7 +1510,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgSampledBatches = """
+    internal const string SqlServerCreatePrtgSampledBatches = """
         CREATE TABLE lf_prtg_sampled_batches (
             batch_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_sampled_batches PRIMARY KEY,
             created_at datetime2 NOT NULL
@@ -1516,7 +1531,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgHostMap = """
+    internal const string SqlServerCreatePrtgHostMap = """
         CREATE TABLE lf_prtg_host_map (
             map_date datetime2 NOT NULL,
             device_objid bigint NOT NULL,
@@ -1541,7 +1556,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgManualMap = """
+    internal const string SqlServerCreatePrtgManualMap = """
         CREATE TABLE lf_prtg_manual_map (
             device_objid bigint NOT NULL,
             host_id bigint NOT NULL,
@@ -1736,7 +1751,7 @@ internal static class SchemaUpgrader
         )
         """;
 
-    private const string SqlServerCreatePrtgIpExcludes = """
+    internal const string SqlServerCreatePrtgIpExcludes = """
         CREATE TABLE lf_prtg_ip_excludes (
             ip nvarchar(64) NOT NULL,
             note nvarchar(512) NULL,

@@ -1413,7 +1413,9 @@ public class MailNotificationServiceTests : IDisposable
     {
         _settingsStore.ThrowOnGet = new InvalidOperationException("blob 讀取失敗");
 
-        await Create().NotifyAfterRunAsync();
+        // 意圖：不擲例外
+        var ex = await Xunit.Record.ExceptionAsync(() => Create().NotifyAfterRunAsync());
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -1426,7 +1428,8 @@ public class MailNotificationServiceTests : IDisposable
 
         // SendSafeAsync 內部已 try/catch 到底——這裡不拋例外就是通過，呼叫端（排程輪詢／
         // 執行收尾）不該因為一封信寄失敗而受影響
-        await Create().NotifyAfterRunAsync();
+        var ex = await Xunit.Record.ExceptionAsync(() => Create().NotifyAfterRunAsync());
+        Assert.Null(ex);
     }
 
     // ── CheckAndSendDailyWeeklyAsync：每日／每週定時彙總 ────────────────────

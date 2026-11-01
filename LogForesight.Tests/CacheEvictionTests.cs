@@ -17,7 +17,7 @@ public class CacheEvictionTests
     /// <summary>以「寫入」與「是否命中」兩個動作描述一個快取，讓五個快取跑同一套情境。</summary>
     private sealed record CacheHarness(Action<int> Put, Func<int, bool> Hits);
 
-    private static void RunScenario(Func<Func<DateTime>, CacheHarness> build)
+    private static void AssertLruEvictionScenario(Func<Func<DateTime>, CacheHarness> build)
     {
         var now = new DateTime(2026, 9, 1, 10, 0, 0);
         DateTime Clock() => now = now.AddMilliseconds(1);
@@ -36,7 +36,7 @@ public class CacheEvictionTests
     [Fact]
     public void SummaryCache_滿了淘汰最久沒存取的一筆()
     {
-        RunScenario(clock =>
+        AssertLruEvictionScenario(clock =>
         {
             var cache = new SummaryCache(new DataVersionStamp(), clock);
             return new CacheHarness(
@@ -53,7 +53,7 @@ public class CacheEvictionTests
     [Fact]
     public void IssueRankingCache_滿了淘汰最久沒存取的一筆()
     {
-        RunScenario(clock =>
+        AssertLruEvictionScenario(clock =>
         {
             var cache = new IssueRankingCache(new DataVersionStamp(), clock);
             return new CacheHarness(
@@ -65,7 +65,7 @@ public class CacheEvictionTests
     [Fact]
     public void ActionableSnapshotCache_滿了淘汰最久沒存取的一筆()
     {
-        RunScenario(clock =>
+        AssertLruEvictionScenario(clock =>
         {
             var cache = new ActionableSnapshotCache(new DataVersionStamp(), clock);
             return new CacheHarness(
@@ -77,7 +77,7 @@ public class CacheEvictionTests
     [Fact]
     public void IssueOwnedHostIdsCache_滿了淘汰最久沒存取的一筆()
     {
-        RunScenario(clock =>
+        AssertLruEvictionScenario(clock =>
         {
             var cache = new IssueOwnedHostIdsCache(new DataVersionStamp(), clock);
             return new CacheHarness(
@@ -94,7 +94,7 @@ public class CacheEvictionTests
     [Fact]
     public void NextUnhandledSequenceCache_滿了淘汰最久沒存取的一筆()
     {
-        RunScenario(clock =>
+        AssertLruEvictionScenario(clock =>
         {
             var cache = new NextUnhandledSequenceCache(new DataVersionStamp(), clock);
             return new CacheHarness(

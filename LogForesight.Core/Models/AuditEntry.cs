@@ -74,6 +74,9 @@ public static class AuditActions
     public const string LoginThrottled = "login_throttled";
     public const string LoginThrottleCleared = "login_throttle_cleared";
 
+    /// <summary>權限不足被拒（PermissionAttribute 寫入）：嘗試存取自己沒有能力的功能</summary>
+    public const string AccessDenied = "access_denied";
+
     // 處理流程
     public const string HandlingAssign = "handling_assign";
     public const string HandlingStatus = "handling_status";

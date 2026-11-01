@@ -126,7 +126,9 @@ public class SecurityHardeningTests
     [MemberData(nameof(FactoryValueCases))]
     public void 非嚴格模式_出廠值放行(string which)
     {
-        WithFactoryValue(which).Validate(strict: false, "Development");   // 不應拋例外
+        // 意圖：非嚴格模式下出廠值不擲例外
+        var ex = Record.Exception(() => WithFactoryValue(which).Validate(strict: false, "Development"));
+        Assert.Null(ex);
     }
 
     // ── 2. 網址機敏參數 ──────────────────────────────────────────────────
