@@ -238,6 +238,7 @@ public class FrontendMiscBehaviorTests
     [InlineData("說明書首次載入不捲動而一般切章會捲動")]
     [InlineData("郵件帳本提示_未達九成且無滿載紀錄時不顯示")]
     [InlineData("郵件帳本提示_滿載時帶出數字時間與收件人")]
+    [InlineData("郵件帳本提示_顯示五個佔用分項且各有白話說明")]
     [InlineData("郵件帳本提示_達九成但無滿載紀錄時顯示接近上限")]
     public void 小項行為案例(string caseName)
     {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Diagnostics;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -184,6 +185,64 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
         }
+    }
+
+    [Fact]
+    public void GetLatestNote_1201筆不相符加最舊一筆相符_跨批命中()
+    {
+        var day = DateTime.Today;
+        var matchKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
+        var otherKey = IssueSignatureKey.For("System", "Other", 7, System.Diagnostics.EventLogEntryType.Error);
+        using (var ctx = _fixture.NewContext())
+        {
+            ctx.IssueHandlings.Add(NewHandlingRow("SRV-OLD", day, matchKey, "oldest match", day.AddDays(-30)));
+            for (var i = 0; i < 1201; i++)
+                ctx.IssueHandlings.Add(NewHandlingRow("SRV-N" + i, day, otherKey, "noise " + i, day.AddMinutes(-i)));
+            ctx.SaveChanges();
+        }
+
+        var result = new EfIssueHandlingStore(_fixture.NewContext).GetLatestNote(matchKey, null);
+
+        Assert.NotNull(result);
+        Assert.Equal("oldest match", result.Value.Note);
+        Assert.Equal("SRV-OLD", result.Value.HostName);
+    }
+
+    [Fact]
+    public void GetLatestNote_同UpdatedAt六百筆_批次邊界不漏不重()
+    {
+        var day = DateTime.Today;
+        var matchKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
+        var otherKey = IssueSignatureKey.For("System", "Other", 7, System.Diagnostics.EventLogEntryType.Error);
+        var same = day.AddHours(5);
+        using (var ctx = _fixture.NewContext())
+        {
+            // 依 Id 升冪插入 600 筆；索引 50（Id 較小者）降冪排序後落在第 550 位，跨過 500 的批次邊界
+            for (var i = 0; i < 600; i++)
+                ctx.IssueHandlings.Add(NewHandlingRow("SRV-S" + i, day, i == 50 ? matchKey : otherKey, "note " + i, same));
+            ctx.SaveChanges();
+        }
+
+        var result = new EfIssueHandlingStore(_fixture.NewContext).GetLatestNote(matchKey, null);
+
+        Assert.NotNull(result);
+        Assert.Equal("note 50", result.Value.Note);
+    }
+
+    [Fact]
+    public void GetLatestNote_分批查詢SQLServer翻譯不含note欄()
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var sql = EfIssueHandlingStore.BuildNoteCandidateBatchQuery(
+            ctx, new[] { "k1" }, (DateTime.Today, 10L), EfIssueHandlingStore.NoteCandidateBatchSize).ToQueryString();
+
+        Assert.Contains("TOP(", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY", sql, StringComparison.OrdinalIgnoreCase);
+        var selectPart = sql.Substring(0, sql.IndexOf("FROM", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("note", selectPart, StringComparison.OrdinalIgnoreCase);
     }
 
     private static IssueHandlingRow NewHandlingRow(string host, DateTime day, string issueKey, string note, DateTime updatedAt) => new()

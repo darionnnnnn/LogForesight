@@ -2118,6 +2118,22 @@ public class MailNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void 郵件貢獻帳本狀態_已逾時的reserved不計入預約數()
+    {
+        var (service, state) = CreateLedgerScenario("ledger-stale@test.local", limit: null, prefill: 0);
+        var now = DateTime.UtcNow;
+        state.Update(s =>
+        {
+            s.MailContributionReservations[new string('1', 64)] = new MailContributionReservation { ReservationId = "old", Status = "reserved", CreatedAtUtc = now.AddMinutes(-6) };
+            s.MailContributionReservations[new string('2', 64)] = new MailContributionReservation { ReservationId = "new", Status = "reserved", CreatedAtUtc = now.AddMinutes(-1) };
+        });
+
+        var status = service.GetContributionLedgerStatus();
+
+        Assert.Equal(1, status.ReservedKeys);
+    }
+
+    [Fact]
     public async Task 郵件貢獻帳本未滿_正常寄送後不記為滿載()
     {
         const string recipient = "ledger-status-ok@test.local";

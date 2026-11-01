@@ -176,15 +176,43 @@ public sealed class ReportFileMigrator
     /// </summary>
     private IEnumerable<MigrationItem> FromRecords(CancellationToken ct)
     {
-        List<DailyRecordRow> rows;
-        using (var ctx = _contextFactory())
+        // 依 RecordId 升冪、每批 RecordBatchSize 列、每批新的 context；投影只取遷移要用的欄位，
+        // 不把 OriginalRiskContentJson 等大欄位整批撈進記憶體。取消時不再取下一批。
+        long lastId = 0;
+        while (true)
         {
-            rows = ctx.DailyRecords.AsNoTracking()
-                .Where(r => r.RiskLevel != RiskLevels.Low || r.WeeklyCheckupDate != null)
-                .OrderBy(r => r.RecordId)
-                .ToList();
-        }
+            if (ct.IsCancellationRequested) yield break;
 
+            List<RecordCandidate> rows;
+            using (var ctx = _contextFactory())
+            {
+                rows = BuildRecordBatchQuery(ctx, lastId, RecordBatchSize).ToList();
+            }
+            if (rows.Count == 0) yield break;
+            lastId = rows[^1].RecordId;
+
+            foreach (var item in MigrationItemsOf(rows, ct)) yield return item;
+
+            if (rows.Count < RecordBatchSize) yield break;
+        }
+    }
+
+    /// <summary>FromRecords 每批列數</summary>
+    internal const int RecordBatchSize = 500;
+
+    internal sealed record RecordCandidate(long RecordId, long HostId, string HostName, DateTime RecordDate,
+        string RiskLevel, DateTime CreatedAt, string ContentJson);
+
+    internal static IQueryable<RecordCandidate> BuildRecordBatchQuery(LfDbContext ctx, long afterRecordId, int take) =>
+        ctx.DailyRecords.AsNoTracking()
+            .Where(r => r.RecordId > afterRecordId && (r.RiskLevel != RiskLevels.Low || r.WeeklyCheckupDate != null))
+            .OrderBy(r => r.RecordId)
+            .Select(r => new RecordCandidate(r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel,
+                r.CreatedAt, r.ContentJson))
+            .Take(take);
+
+    private IEnumerable<MigrationItem> MigrationItemsOf(List<RecordCandidate> rows, CancellationToken ct)
+    {
         foreach (var row in rows)
         {
             if (ct.IsCancellationRequested) yield break;

@@ -23,7 +23,8 @@ public class MailNotifyStateStore : JsonBlobSingleton<MailNotifyState>
     /// （總上限 12,000，由單一 blob 4 MiB 推導）穩態滿載。
     /// </summary>
     public const int ContributionReceiptRetentionDays = 45;
-    private static readonly TimeSpan PreparedMailReservationLifetime = TimeSpan.FromMinutes(5);
+    /// <summary>預約（reserved）的有效期；逾時者下一次預約時會被清掉，健康頁帳本分項也不再計入</summary>
+    internal static readonly TimeSpan PreparedMailReservationLifetime = TimeSpan.FromMinutes(5);
 
     public MailNotifyStateStore(EfJsonBlobStore blob) : base(blob) => _blob = blob;
 

@@ -251,4 +251,59 @@ public sealed class ReportFileMigrationTests : IDisposable
         using var ctx = _fx.NewContext();
         Assert.Equal(0, ctx.Reports.Count());
     }
+
+    /// <summary>超過一批（500 列）的紀錄都要被處理；逾時代表續批游標卡住</summary>
+    [Fact]
+    public void 一千二百零一列符合條件_跨三批全部搬到()
+    {
+        var day = new DateTime(2026, 8, 20);
+        var path = WriteExportFile("2026-08-20_高風險_批次.txt", "批次內容");
+        const int total = 1201;
+        using (var ctx = _fx.NewContext())
+        {
+            for (var i = 1; i <= total; i++)
+            {
+                var content = new Dictionary<string, object?>
+                {
+                    ["Date"] = day, ["Host"] = "SRV-" + i, ["HostId"] = (long)i,
+                    ["RiskLevel"] = RiskLevels.High, ["ReportFile"] = path
+                };
+                ctx.DailyRecords.Add(new DailyRecordRow
+                {
+                    HostId = i, HostName = "SRV-" + i, RecordDate = day, RiskLevel = RiskLevels.High,
+                    ContentJson = JsonSerializer.Serialize(content), CreatedAt = day.AddHours(3),
+                    SecurityLogAvailable = true
+                });
+            }
+            ctx.SaveChanges();
+        }
+
+        var migrator = Migrator();
+        using var cts = new CancellationTokenSource();
+        var task = Task.Run(() => migrator.Run(cts.Token));
+        var finished = task.Wait(TimeSpan.FromSeconds(60));
+        if (!finished) { cts.Cancel(); task.Wait(TimeSpan.FromSeconds(10)); }
+        Assert.True(finished, "遷移逾時，續批游標可能沒有前進");
+
+        Assert.Equal(total, migrator.State.MigratedRows);
+        using var check = _fx.NewContext();
+        Assert.Equal(total, check.Reports.Count());
+        Assert.Equal("批次內容", Read(1201, "SRV-1201", day, ReportKinds.DailyRisk)?.Content);
+        Assert.Equal("批次內容", Read(501, "SRV-501", day, ReportKinds.DailyRisk)?.Content);
+    }
+
+    [Fact]
+    public void 候選批次查詢_SQLServer翻譯不含大欄位且只取RecordId之後()
+    {
+        var builder = new DbContextOptionsBuilder<LfDbContext>();
+        builder.UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;");
+        using var ctx = new LfDbContext(builder.Options);
+
+        var sql = ReportFileMigrator.BuildRecordBatchQuery(ctx, 10, ReportFileMigrator.RecordBatchSize).ToQueryString();
+
+        Assert.DoesNotContain("original_risk_content_json", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("content_json", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("TOP(", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY", sql, StringComparison.OrdinalIgnoreCase);
+    }
 }

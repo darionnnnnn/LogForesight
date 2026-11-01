@@ -471,6 +471,7 @@ const cases = {
         assert(text.includes('已預約 100（'), text);
         assert(text.includes('寄送中 200（'), text);
         assert(text.includes('結果不確定 300（寄送結果不確定、為避免重複寄送而保留的項目）'), text);
+        assert(text.includes('寄送中或結果不確定的項目不會自動釋放，因為釋放會造成重複寄信。'), text);
         // 接近上限（未滿載紀錄）也要帶分項；舊版回應缺欄位時以 0 計
         const near = inst.mailLedgerNotice({ occupiedKeys: 10800, limit: 12000, lastFullAtUtc: null, lastFullRecipient: null });
         assert(near.includes('結果不確定 0（'), near);

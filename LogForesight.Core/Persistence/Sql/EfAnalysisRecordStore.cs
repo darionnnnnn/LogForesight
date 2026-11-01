@@ -1090,11 +1090,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     public DateTime? LastWeeklyCheckupDate()
     {
         using var ctx = _contextFactory();
-        var dates = OwnedRows(ctx)
+        // 可空 Max 由資料庫端聚合，零筆回 null，不把所有日期撈回 C#
+        return OwnedRows(ctx)
             .Where(r => r.WeeklyCheckupDate != null)
-            .Select(r => r.WeeklyCheckupDate)
-            .ToList();
-        return dates.Count == 0 ? null : dates.Max();
+            .Max(r => r.WeeklyCheckupDate);
     }
 
     // ── 查詢（Web 面）─────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 using System.Text.Json;
 
@@ -515,6 +516,53 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.True(read.WeeklyCheckup!.HasFindings);
         Assert.Equal("本週磁碟錯誤緩慢上升", read.WeeklyCheckup.Conclusion);
         Assert.Equal(date.Date, store.LastWeeklyCheckupDate());
+    }
+
+    /// <summary>
+    /// LastWeeklyCheckupDate 必須由資料庫端聚合（MAX），不把所有日期撈回 C#。
+    /// 純量聚合無法 ToQueryString，且 SQL Server 無法連線，這裡以 SQLite 命令攔截器取得實際送出的 SQL。
+    /// </summary>
+    [Fact]
+    public void LastWeeklyCheckupDate_由資料庫端MAX聚合_零筆回null()
+    {
+        var interceptor = new CommandCaptureInterceptor();
+        var store = new EfAnalysisRecordStore(() =>
+            new LfDbContext(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<LfDbContext>()
+                .UseSqlite(_fx.NewContext().Database.GetDbConnection())
+                .AddInterceptors(interceptor).Options), "sqlite-in-memory");
+
+        Assert.Null(store.LastWeeklyCheckupDate());
+        Assert.Contains(interceptor.Commands, c => c.Contains("MAX(", StringComparison.OrdinalIgnoreCase));
+
+        var date = DateTime.Today;
+        store.Append(Record(date));
+        store.AttachWeeklyCheckup(date, new WeeklyCheckupResult { CheckupDate = date, Conclusion = "x" });
+        interceptor.Commands.Clear();
+        Assert.Equal(date.Date, store.LastWeeklyCheckupDate());
+        Assert.Contains(interceptor.Commands, c => c.Contains("MAX(", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed class CommandCaptureInterceptor : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public List<string> Commands { get; } = new();
+
+        public override Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<object> ScalarExecuting(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<object> result)
+        {
+            Commands.Add(command.CommandText);
+            return result;
+        }
+
+        public override Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> ReaderExecuting(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result)
+        {
+            Commands.Add(command.CommandText);
+            return result;
+        }
     }
 
     /// <summary>
