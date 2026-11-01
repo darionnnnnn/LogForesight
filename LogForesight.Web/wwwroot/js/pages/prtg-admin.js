@@ -2107,10 +2107,29 @@ function bindConflictBatchControls() {
 }
 
 let scopeRefresh = null;
+// 髒旗標：in-flight 那趟進行中又被呼叫，代表寫入端剛完成、那趟讀到的可能是寫入前的快照
+let scopeRefreshDirty = false;
 function refreshPrtgMirror() {
-    if (scopeRefresh) return scopeRefresh;
-    scopeRefresh = refreshPrtgMirrorCore().finally(() => { scopeRefresh = null; });
+    if (scopeRefresh) {
+        scopeRefreshDirty = true;
+        return scopeRefresh;
+    }
+    scopeRefresh = runScopeRefresh().finally(() => { scopeRefresh = null; });
     return scopeRefresh;
+}
+// 一趟進行中又被呼叫（寫入端剛完成）就標髒：這趟讀到的可能是寫入前的快照，不渲染（避免舊值閃現），
+// 結束後再跑下一趟；同一趟進行中的多次呼叫合併成下一趟。只有沒被標髒的那趟會渲染，它的失敗照舊往外擲；
+// 被標髒那趟的失敗不影響下一趟。
+async function runScopeRefresh() {
+    for (;;) {
+        scopeRefreshDirty = false;
+        let failure = null;
+        try { await refreshPrtgMirrorCore(() => scopeRefreshDirty); } catch (error) { failure = error; }
+        if (!scopeRefreshDirty) {
+            if (failure) throw failure;
+            return;
+        }
+    }
 }
 // 範圍快照：revision 前後各讀一次，中間三個請求各自成敗互不影響（allSettled）。
 // 回傳 { mirror, manualMaps, ipExcludes } 各為 { ok: true, value } 或 { ok: false, error }；
@@ -2206,12 +2225,16 @@ function bindRiskReviewRetry() {
     });
 }
 
-async function refreshPrtgMirrorCore() {
+async function refreshPrtgMirrorCore(isStale = () => false) {
     const snapshot = await loadScopeSnapshot();
+    // 讀完快照後的步驟都屬於「渲染」：被標髒（讀的是寫入前的快照）就整個跳過，交給補跑
+    if (isStale()) return;
     if (snapshot.revision !== undefined) scopeRevision = snapshot.revision;
     renderScopeSnapshot(snapshot);
     bindRiskReviewRetry();
+    if (isStale()) return;
     await refreshRiskReviewPanel(1);
+    if (isStale()) return;
     await refreshScopePurge();
 }
 

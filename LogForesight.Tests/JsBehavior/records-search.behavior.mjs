@@ -1,4 +1,4 @@
-﻿﻿/**
+﻿﻿﻿/**
  * records.js search() 的競態與失敗態行為測試（第 59 輪 G2）。
  *
  * 抽出並執行 production 的 search，搭配 production 的 createSeqGuard，只替換 api、畫面邊界；
@@ -96,6 +96,31 @@ function makeFilterContext() {
     const hint = () => children.find(c => c.getAttribute?.('data-role') === 'unsupported-filters-hint') ?? null;
     const tagLabels = () => children.filter(c => c !== hint()).map(c => c.textContent);
     return { ...api, hint, tagLabels, isHidden: () => classes.has('d-none') };
+}
+
+/** AI 歸納：執行 production 的 runAiSummary／showAiSummaryNotice，api 由測試控制回應時序 */
+function makeAiContext() {
+    const dom = installDom();
+    const area = dom.newElement('div');
+    const button = dom.newElement('button');
+    dom.byId.set('ai-summary', area);
+    dom.byId.set('btn-ai-summary', button);
+    const pending = [];
+    const state = { restored: 0, toasts: [] };
+    const api = { get: (url) => new Promise((resolve, reject) => pending.push({ url, resolve, reject })) };
+    const loc = { search: '?q=1' };
+    const factory = new Function('api', 'document', 'location', 'withBusy', 'toast', 'renderAiText', `
+        ${extractFunction('function showAiSummaryNotice')}
+        ${extractFunction('async function runAiSummary')}
+        return { runAiSummary };
+    `);
+    const { runAiSummary } = factory(api, globalThis.document, loc,
+        () => () => { state.restored++; },
+        (message) => state.toasts.push(message),
+        (box, text) => { box.textContent = text; });
+    const boxes = () => area.children.filter(c => c.className.includes('alert'));
+    const notices = () => area.children.filter(c => c.getAttribute('data-role') === 'ai-summary-notice');
+    return { runAiSummary, area, pending, state, loc, boxes, notices };
 }
 
 const baseFilters = () => ({
@@ -212,6 +237,58 @@ const cases = {
         const text = ctx.hint().textContent;
         assert(text.includes('只看逾期'));
         assert(!text.includes('僅未指派'), '只列實際被略過的條件');
+    },
+    async aiSummaryStaleResponseIsDropped() {
+        const ctx = makeAiContext();
+        const run = ctx.runAiSummary();
+        ctx.loc.search = '?q=2';   // 等回應期間改了篩選
+        ctx.pending[0].resolve({ text: '別組條件的歸納' });
+        await run;
+        assert.equal(ctx.pending.length, 1, '必須真的送出請求');
+        assert.equal(ctx.area.children.length, 0, '過期的歸納不得寫進摘要區');
+        assert.equal(ctx.state.toasts.length, 0);
+        assert.equal(ctx.state.restored, 1, '按鈕仍要還原');
+    },
+    async aiSummaryFailureShowsNoticeAndKeepsPrevious() {
+        const ctx = makeAiContext();
+        const first = ctx.runAiSummary();
+        ctx.pending[0].resolve({ text: '第一次的歸納' });
+        await first;
+        assert.equal(ctx.boxes().length, 1, '先決條件：第一次成功要有內容');
+        const second = ctx.runAiSummary();
+        ctx.pending[1].reject(Object.assign(new Error('boom'), { status: 500 }));
+        await second;
+        assert.equal(ctx.boxes().length, 1, '舊內容必須保留');
+        assert.equal(ctx.boxes()[0].textContent, '第一次的歸納');
+        assert.equal(ctx.notices().length, 1);
+        assert.equal(ctx.notices()[0].textContent, '這次歸納沒有成功，請稍後再試。');
+        assert.equal(ctx.notices()[0].className, 'text-muted small');
+        assert.equal(ctx.area.children[ctx.area.children.length - 1], ctx.notices()[0], '提示固定在最後一列');
+        assert.equal(ctx.state.restored, 2);
+        // 下一次成功就清掉提示
+        const third = ctx.runAiSummary();
+        ctx.pending[2].resolve({ text: '第三次' });
+        await third;
+        assert.equal(ctx.notices().length, 0);
+        assert.equal(ctx.boxes()[0].textContent, '第三次');
+    },
+    async aiSummaryFailureAfterFilterChangeIsSilent() {
+        const ctx = makeAiContext();
+        const run = ctx.runAiSummary();
+        ctx.loc.search = '?q=2';
+        ctx.pending[0].reject(Object.assign(new Error('boom'), { status: 500 }));
+        await run;
+        assert.equal(ctx.pending.length, 1);
+        assert.equal(ctx.area.children.length, 0, '篩選已變的失敗不得顯示提示');
+        assert.equal(ctx.state.restored, 1);
+    },
+    async aiSummary429KeepsRestMessage() {
+        const ctx = makeAiContext();
+        const run = ctx.runAiSummary();
+        ctx.pending[0].reject(Object.assign(new Error('rate'), { status: 429, retryAfterSeconds: 7 }));
+        await run;
+        assert.equal(ctx.area.children.length, 1);
+        assert.equal(ctx.area.children[0].textContent, 'AI 暫時休息，約 7 秒後再試。');
     },
     async 支援矩陣與後端一致() {
         const ctx = makeFilterContext();

@@ -22,6 +22,11 @@ public sealed class PrtgMirrorRefreshBehaviorTests
     [InlineData("revisionMismatchShowsSameMessageInAllThreeAreas")]
     [InlineData("allSucceedRendersThreeAreasAndStoresRevision")]
     [InlineData("riskReviewPendingRequestIsSilent")]
+    [InlineData("rewriteDuringInFlightTriggersOneRerun")]
+    [InlineData("threeCallsDuringInFlightStillTwoRounds")]
+    [InlineData("callDuringRerunTriggersThirdRound")]
+    [InlineData("inFlightFailureStillReruns")]
+    [InlineData("noConcurrencyRunsOnce")]
     public void PRTG鏡像重整分區錯誤的production行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

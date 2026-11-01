@@ -31,6 +31,10 @@ public class RecordsSearchBehaviorTests
     [InlineData("切回明細恢復逾期與標籤且提示消失")]
     [InlineData("依問題視角只略過逾期")]
     [InlineData("支援矩陣與後端一致")]
+    [InlineData("aiSummaryStaleResponseIsDropped")]
+    [InlineData("aiSummaryFailureShowsNoticeAndKeepsPrevious")]
+    [InlineData("aiSummaryFailureAfterFilterChangeIsSilent")]
+    [InlineData("aiSummary429KeepsRestMessage")]
     public void 查詢頁search行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

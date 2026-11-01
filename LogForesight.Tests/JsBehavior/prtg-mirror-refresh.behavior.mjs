@@ -25,19 +25,36 @@ const MANUAL = [{ id: 'm1' }];
 const EXCLUDES = [{ id: 'e1' }];
 
 // 以可控的 api 替身執行正式的 loadScopeSnapshot／renderScopeSnapshot／refreshRiskReviewPanel
-function makeHarness({ failures = {}, revisions = ['r1', 'r1'], riskReview, riskPending } = {}) {
+// rounds（選用）：以「每趟讀快照」為單位控制時序——gate[n] 為第 n 趟開頭要等的 promise，fail[n] 為第 n 趟開頭擲例外；
+// 啟用時每趟的 revision 為 r<n>、鏡像資料為 { round: n }，方便斷言畫面是哪一趟的結果。
+function makeHarness({ failures = {}, revisions = ['r1', 'r1'], riskReview, riskPending, rounds } = {}) {
     const dom = installDom();
     const riskEl = dom.newElement('div');
     riskEl.id = 'prtg-risk-review';
     dom.byId.set('prtg-risk-review', riskEl);
     const log = { rendered: [], errors: [], getCalls: [] };
     let revisionIndex = 0;
+    let revisionCalls = 0;
+    const currentRound = () => Math.floor((revisionCalls - 1) / 2) + 1;
     const api = {
         get: async (url, options) => {
             log.getCalls.push({ url, options });
-            if (url.endsWith('/prtg-scope-revision')) return revisions[Math.min(revisionIndex++, revisions.length - 1)];
+            if (url.endsWith('/prtg-scope-revision')) {
+                if (rounds) {
+                    const isBefore = revisionCalls % 2 === 0;
+                    revisionCalls += 1;
+                    const round = currentRound();
+                    if (isBefore) {
+                        log.roundsStarted = round;
+                        if (rounds.gate?.[round]) await rounds.gate[round];
+                        if (rounds.fail?.[round]) { revisionCalls += 1; throw new Error(`第 ${round} 趟讀快照失敗`); }
+                    }
+                    return `r${round}`;
+                }
+                return revisions[Math.min(revisionIndex++, revisions.length - 1)];
+            }
             for (const key of Object.keys(failures)) if (url.endsWith(key)) throw new Error(failures[key]);
-            if (url.endsWith('/prtg-mirror')) return MIRROR;
+            if (url.endsWith('/prtg-mirror')) return rounds ? { round: currentRound() } : MIRROR;
             if (url.endsWith('/prtg-manual-map')) return MANUAL;
             if (url.endsWith('/prtg-ip-excludes')) return EXCLUDES;
             if (url.startsWith('/api/prtg/risk-review/pending')) {
@@ -61,18 +78,19 @@ function makeHarness({ failures = {}, revisions = ['r1', 'r1'], riskReview, risk
         renderManualMaps: data => log.rendered.push(['manual', data]),
         renderIpExcludes: data => log.rendered.push(['excludes', data]),
         renderListError: (containerId, label, message) => log.errors.push({ containerId, label, message }),
-        refreshPrtgMirror: () => { },
         // 與 core/async-guards.js 的 createSeqGuard 同形：頁面模組層以它守住重疊的待重評面板重讀
         createSeqGuard: () => { let current = 0; return { next: () => ++current, isCurrent: seq => seq === current }; }
     };
-    const names = ['loadScopeSnapshot', 'renderScopeSnapshot', 'refreshRiskReviewPanel'];
+    const names = ['loadScopeSnapshot', 'renderScopeSnapshot', 'refreshRiskReviewPanel', 'refreshPrtgMirror', 'runScopeRefresh', 'refreshPrtgMirrorCore'];
     const bodies = names.map(n => {
         const text = extractFunction(`function ${n}(`);
         return source.includes(`async function ${n}(`) ? `async ${text}` : text;
     }).join('\n');
-    const factory = new Function(...Object.keys(deps),
-        `let riskReviewPage = 1;\nconst riskReviewGuard = createSeqGuard();\n${bodies}\nreturn { loadScopeSnapshot, renderScopeSnapshot, refreshRiskReviewPanel };`);
-    const fns = factory(...Object.values(deps));
+    const factory = new Function(...Object.keys(deps), 'log',
+        `let riskReviewPage = 1;\nconst riskReviewGuard = createSeqGuard();\nlet scopeRevision = null;\nlet scopeRefresh = null;\nlet scopeRefreshDirty = false;\nconst bindRiskReviewRetry = () => { };\nconst refreshScopePurge = async () => { log.purgeCalls += 1; };\n${bodies}\nreturn { loadScopeSnapshot, renderScopeSnapshot, refreshRiskReviewPanel, refreshPrtgMirror, getScopeRevision: () => scopeRevision };`);
+    log.purgeCalls = 0;
+    log.roundsStarted = 0;
+    const fns = factory(...Object.values(deps), log);
     return { fns, log, riskEl, dom };
 }
 
@@ -174,7 +192,94 @@ async function overlappingRiskReviewCallsRenderPendingListOnce() {
     assert.equal(lists[0].children[0].children[0].textContent.startsWith('B'), true, '留下的應是最後一趟（第 2 頁）的結果');
 }
 
+// 寫入端剛完成時，前一趟（寫入前發出）還在飛：補跑恰一趟，且前一趟的舊快照不得渲染、不得寫 scopeRevision
+async function rewriteDuringInFlightTriggersOneRerun() {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const h = makeHarness({ rounds: { gate: { 1: gate } } });
+    const first = h.fns.refreshPrtgMirror();
+    await new Promise(r => setTimeout(r, 0));
+    const second = h.fns.refreshPrtgMirror();
+    release();
+    await Promise.all([first, second]);
+    assert.equal(h.log.roundsStarted, 2, '應恰兩輪讀快照');
+    assert.equal(h.log.getCalls.filter(c => c.url.endsWith('/prtg-mirror')).length, 2);
+    const mirrors = h.log.rendered.filter(r => r[0] === 'mirror');
+    assert.equal(mirrors.length, 1, `只應渲染補跑那趟：${JSON.stringify(h.log.rendered)}`);
+    assert.equal(mirrors[0][1].round, 2, '畫面應為第二輪資料');
+    assert.equal(h.fns.getScopeRevision(), 'r2');
+    assert.equal(h.log.purgeCalls, 1, '被標髒那趟不得清除預覽');
+}
+
+async function threeCallsDuringInFlightStillTwoRounds() {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const h = makeHarness({ rounds: { gate: { 1: gate } } });
+    const first = h.fns.refreshPrtgMirror();
+    await new Promise(r => setTimeout(r, 0));
+    const second = h.fns.refreshPrtgMirror();
+    const third = h.fns.refreshPrtgMirror();
+    release();
+    await Promise.all([first, second, third]);
+    assert.equal(h.log.roundsStarted, 2, '連叫三次仍只兩輪');
+    assert.equal(h.log.rendered.filter(r => r[0] === 'mirror').length, 1);
+    assert.equal(h.fns.getScopeRevision(), 'r2');
+}
+
+// 補跑那趟進行中又有寫入完成：補跑讀到的也可能是寫入前的快照，必須再跑第三趟，只渲染第三趟
+async function callDuringRerunTriggersThirdRound() {
+    let release1, release2;
+    const gate1 = new Promise(resolve => { release1 = resolve; });
+    const gate2 = new Promise(resolve => { release2 = resolve; });
+    const h = makeHarness({ rounds: { gate: { 1: gate1, 2: gate2 } } });
+    const first = h.fns.refreshPrtgMirror();
+    await new Promise(r => setTimeout(r, 0));
+    const second = h.fns.refreshPrtgMirror();
+    release1();
+    for (let i = 0; i < 50 && h.log.roundsStarted < 2; i++) await new Promise(r => setTimeout(r, 0));
+    assert.equal(h.log.roundsStarted, 2, '第二趟應已開始');
+    const third = h.fns.refreshPrtgMirror();
+    release2();
+    await Promise.all([first, second, third]);
+    assert.equal(h.log.roundsStarted, 3, '補跑期間的呼叫應再跑一趟');
+    const mirrors = h.log.rendered.filter(r => r[0] === 'mirror');
+    assert.equal(mirrors.length, 1, `只應渲染最後一趟：${JSON.stringify(h.log.rendered)}`);
+    assert.equal(mirrors[0][1].round, 3);
+    assert.equal(h.fns.getScopeRevision(), 'r3');
+}
+
+async function inFlightFailureStillReruns() {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const h = makeHarness({ rounds: { gate: { 1: gate }, fail: { 1: true } } });
+    const first = h.fns.refreshPrtgMirror();
+    await new Promise(r => setTimeout(r, 0));
+    const second = h.fns.refreshPrtgMirror();
+    release();
+    await Promise.all([first, second]);
+    assert.equal(h.log.roundsStarted, 2, '第一趟失敗仍要補跑');
+    const mirrors = h.log.rendered.filter(r => r[0] === 'mirror');
+    assert.equal(mirrors.length, 1);
+    assert.equal(mirrors[0][1].round, 2);
+    assert.equal(h.log.errors.length, 0, '第一趟的失敗訊息不得渲染');
+    assert.equal(h.fns.getScopeRevision(), 'r2');
+}
+
+// 沒有並發時只跑一趟
+async function noConcurrencyRunsOnce() {
+    const h = makeHarness({ rounds: {} });
+    await h.fns.refreshPrtgMirror();
+    assert.equal(h.log.roundsStarted, 1);
+    assert.equal(h.log.rendered.filter(r => r[0] === 'mirror')[0][1].round, 1);
+    assert.equal(h.fns.getScopeRevision(), 'r1');
+}
+
 const cases = {
+    rewriteDuringInFlightTriggersOneRerun,
+    threeCallsDuringInFlightStillTwoRounds,
+    callDuringRerunTriggersThirdRound,
+    inFlightFailureStillReruns,
+    noConcurrencyRunsOnce,
     overlappingRiskReviewCallsRenderPendingListOnce,
     manualMapRejectOnlyManualMapAreaShowsError,
     mirrorRejectOnlyMirrorAreaShowsError,

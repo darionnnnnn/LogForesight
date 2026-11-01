@@ -109,38 +109,58 @@ async function initAiSummary() {
     aiAvailable = await getAiAvailable();
     updateAiSummaryButton();
 
-    document.getElementById('btn-ai-summary').addEventListener('click', async () => {
-        const area = document.getElementById('ai-summary');
-        const button = document.getElementById('btn-ai-summary');
-        const restore = withBusy(button, '歸納中');
-        try {
-            const params = new URLSearchParams(location.search);
-            const result = await api.get(`/api/ai/query-summary?${params.toString()}`, { silent: true });
-            area.replaceChildren();
-            if (!result || !result.text) {
-                toast('目前沒有跨主機的共通訊號可歸納', 'info');
-                return;
-            }
-            const box = document.createElement('div');
-            box.className = 'alert alert-light border mb-0';
-            // AI 產出走 markdown-lite 唯一渲染出口（S7）：DOM 組裝、不解析 HTML
-            renderAiText(box, result.text, { badge: 'AI 歸納', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
-            area.appendChild(box);
-        } catch (err) {
-            // 一般失敗靜默；被每人節流擋下時說明稍後再試
-            if (err?.status === 429) {
-                area.replaceChildren();
-                const note = document.createElement('div');
-                note.className = 'text-muted small';
-                note.textContent = err.retryAfterSeconds
-                    ? `AI 暫時休息，約 ${err.retryAfterSeconds} 秒後再試。`
-                    : 'AI 暫時休息，請稍後再試。';
-                area.appendChild(note);
-            }
-        } finally {
-            restore();
+    document.getElementById('btn-ai-summary').addEventListener('click', runAiSummary);
+}
+
+// 失敗提示放在摘要區內最後一列；下一次成功或篩選變更（search() 清空摘要區）時一併清掉
+function showAiSummaryNotice(area, text) {
+    area.querySelector?.('[data-role="ai-summary-notice"]')?.remove();
+    const note = document.createElement('div');
+    note.className = 'text-muted small';
+    note.setAttribute('data-role', 'ai-summary-notice');
+    note.textContent = text;
+    area.appendChild(note);
+}
+
+async function runAiSummary() {
+    const area = document.getElementById('ai-summary');
+    const button = document.getElementById('btn-ai-summary');
+    const restore = withBusy(button, '歸納中');
+    // 點擊當下的查詢字串：等回應期間使用者改了篩選，這份歸納就是別組條件的，回來時直接丟棄
+    const queryAtClick = location.search;
+    const isStale = () => location.search !== queryAtClick;
+    try {
+        const params = new URLSearchParams(queryAtClick);
+        const result = await api.get(`/api/ai/query-summary?${params.toString()}`, { silent: true });
+        if (isStale()) return;
+        area.replaceChildren();
+        if (!result || !result.text) {
+            toast('目前沒有跨主機的共通訊號可歸納', 'info');
+            return;
         }
-    });
+        const box = document.createElement('div');
+        box.className = 'alert alert-light border mb-0';
+        // AI 產出走 markdown-lite 唯一渲染出口（S7）：DOM 組裝、不解析 HTML
+        renderAiText(box, result.text, { badge: 'AI 歸納', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
+        area.appendChild(box);
+    } catch (err) {
+        if (isStale()) return;
+        if (err?.status === 429) {
+            // 被每人節流擋下時說明稍後再試
+            area.replaceChildren();
+            const note = document.createElement('div');
+            note.className = 'text-muted small';
+            note.textContent = err.retryAfterSeconds
+                ? `AI 暫時休息，約 ${err.retryAfterSeconds} 秒後再試。`
+                : 'AI 暫時休息，請稍後再試。';
+            area.appendChild(note);
+        } else {
+            // 其他失敗：不清空既有摘要，只在最後一列補一行中性提示
+            showAiSummaryNotice(area, '這次歸納沒有成功，請稍後再試。');
+        }
+    } finally {
+        restore();
+    }
 }
 
 function updateAiSummaryButton() {
