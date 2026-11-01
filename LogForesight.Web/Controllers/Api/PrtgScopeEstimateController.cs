@@ -30,6 +30,7 @@ public class PrtgScopeEstimateController : ControllerBase
     private readonly IVisibilityService _visibility;
     private readonly ICurrentUser _currentUser;
     private readonly PrtgScopePurgeAuthorizationService _scopePurgeAuthorization;
+    private readonly IPrtgAddressResolver _addressResolver;
 
     public PrtgScopeEstimateController(
         ISystemSettingsService settings,
@@ -38,7 +39,8 @@ public class PrtgScopeEstimateController : ControllerBase
         PrtgSnapshotHostedService snapshot,
         IVisibilityService visibility,
         ICurrentUser currentUser,
-        PrtgScopePurgeAuthorizationService scopePurgeAuthorization)
+        PrtgScopePurgeAuthorizationService scopePurgeAuthorization,
+        IPrtgAddressResolver addressResolver)
     {
         _settings = settings;
         _backend = backend;
@@ -47,6 +49,7 @@ public class PrtgScopeEstimateController : ControllerBase
         _visibility = visibility;
         _currentUser = currentUser;
         _scopePurgeAuthorization = scopePurgeAuthorization;
+        _addressResolver = addressResolver;
     }
 
     // ── PRTG 資源守門預覽（批次F 階段4）────────────────────────────────────
@@ -259,7 +262,7 @@ public class PrtgScopeEstimateController : ControllerBase
                     liveClient = PrtgClientFactory.Create(settings);
                     targets = PrtgResourceGuardTargets.Resolve(
                         new PrtgLiveGuardSource(liveClient, ct, console), settings, sentinels, console,
-                        new PrtgAddressResolver(), ignoreOverride: forceAuto);
+                        _addressResolver, ignoreOverride: forceAuto);
                     source = "live";
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -275,7 +278,7 @@ public class PrtgScopeEstimateController : ControllerBase
                     console.WriteLine($"[PRTG資源守門] 直接查詢 PRTG 失敗（{liveEx.Message}），改用本機鏡像資料。");
                     targets = PrtgResourceGuardTargets.Resolve(
                         new PrtgMirrorGuardSource(prtgStore), settings, sentinels, console,
-                        new PrtgAddressResolver(), ignoreOverride: forceAuto);
+                        _addressResolver, ignoreOverride: forceAuto);
                     source = "mirror-fallback";
                 }
             }
@@ -283,7 +286,7 @@ public class PrtgScopeEstimateController : ControllerBase
             {
                 targets = PrtgResourceGuardTargets.Resolve(
                     new PrtgMirrorGuardSource(prtgStore), settings, sentinels, console,
-                    new PrtgAddressResolver(), ignoreOverride: forceAuto);
+                    _addressResolver, ignoreOverride: forceAuto);
             }
         }
         catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
@@ -378,7 +381,7 @@ public class PrtgScopeEstimateController : ControllerBase
         var coverage = store.GetWhitelistCoverage(whitelist, mapDate);
 
         // 主機口徑：與「未對應主機」清單、主機頁篩選同一份判定（PrtgHostCoverage）
-        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), hostMaps, store.GetIpExcludes().Select(e => e.Ip), new PrtgAddressResolver());
+        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), hostMaps, store.GetIpExcludes().Select(e => e.Ip), _addressResolver);
         var nameMismatchHosts = PrtgHostCoverage.NameMismatchHostIds(hostMaps).Count;
 
         DateTime? snapshotLastAt = null;
@@ -442,7 +445,7 @@ public class PrtgScopeEstimateController : ControllerBase
             var settings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
             scope = PrtgScopeDevices.Compute(
                 store, _hosts, new PrtgMirrorGuardSource(store), settings,
-                new SentinelStore(backend.Blob("sentinels")).GetAll(), new ResourceGuardWarningConsole(), new PrtgAddressResolver(),
+                new SentinelStore(backend.Blob("sentinels")).GetAll(), new ResourceGuardWarningConsole(), _addressResolver,
                 hostIds: null);
         }
         catch (Exception ex)

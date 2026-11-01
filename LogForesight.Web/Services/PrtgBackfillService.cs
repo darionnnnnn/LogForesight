@@ -224,6 +224,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
     /// <summary>鏡像沒有感測器時，回填自己先做一次結構同步。</summary>
     private readonly PrtgStructureSyncService _structureSync;
     private readonly TimeProvider _timeProvider;
+    private readonly IPrtgAddressResolver _addressResolver;
     private readonly Func<SystemSettings, PrtgClient>? _clientFactory;
 
     /// <summary>全量回填的完成水位（docs/PRTG-SPEC.md §5）：中斷後重跑只補剩下的日子。</summary>
@@ -242,6 +243,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         PrtgStructureSyncRunState structureSyncState,
         ISentinelStore sentinels,
         PrtgStructureSyncService structureSync,
+        IPrtgAddressResolver addressResolver,
         TimeProvider? timeProvider = null,
         Func<SystemSettings, PrtgClient>? clientFactory = null)
     {
@@ -254,6 +256,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         _schedulerRunState = schedulerRunState;
         _structureSyncState = structureSyncState;
         _structureSync = structureSync;
+        _addressResolver = addressResolver;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _clientFactory = clientFactory;
         _watermark = new PrtgBackfillWatermarkStore(backend.Blob(PrtgBackfillWatermarkStore.BlobKey));
@@ -459,7 +462,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
         if (PrtgValueFetchScope.BackfillBlockedReason(settings.PrtgFetchStrategy, settings.PrtgSensorTypeWhitelist) is { } blocked)
             throw DomainException.Validation(blocked);
         var scopeResult = PrtgScopeDevices.Compute(store, _hosts, new PrtgMirrorGuardSource(store), settings,
-            _sentinels.GetAll(), new SilentBackfillConsole(), new PrtgAddressResolver(), hostIds: null);
+            _sentinels.GetAll(), new SilentBackfillConsole(), _addressResolver, hostIds: null);
         var (extraScopeHosts, _) = PrtgValueFetchScope.ResolveHostNames(settings.PrtgValueFetchExtraHosts,
             _hosts.GetAll().Select(host => (host.HostId, host.HostName, host.Active, host.MergedInto.HasValue)));
         var plan = PrtgFullBackfillPlanBuilder.Build(store, _backend.RecordStore(), anchor,
@@ -863,7 +866,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                 // 監看裝置：回填不做主機對應，直接以既有對應算一次，整趟共用；指定主機時只算那些主機
                 var scopeResult = PrtgScopeDevices.Compute(
                     prtgStore, _hosts, new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
-                    console, new PrtgAddressResolver(), hostIds);
+                    console, _addressResolver, hostIds);
                 console.WriteLine($"監看裝置：{scopeResult.DeviceObjids.Count} 台");
 
                 var resume = run.Resume;

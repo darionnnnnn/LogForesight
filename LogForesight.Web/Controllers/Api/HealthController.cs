@@ -32,6 +32,7 @@ public class HealthController : ControllerBase
     private readonly IUserStore _users;
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly LoginThrottle _throttle;
+    private readonly SummaryCache _summaryCache;
 
     public HealthController(
         HealthService health,
@@ -42,9 +43,11 @@ public class HealthController : ControllerBase
         IUserGroupStore groups,
         IUserStore users,
         IUserDisplayNameService userDisplayNames,
-        LoginThrottle throttle)
+        LoginThrottle throttle,
+        SummaryCache summaryCache)
     {
         _throttle = throttle;
+        _summaryCache = summaryCache;
         _health = health;
         _freshness = freshness;
         _optionsStore = optionsStore;
@@ -86,7 +89,24 @@ public class HealthController : ControllerBase
     [HttpGet("freshness")]
     public ApiResponse<ScheduleFreshnessDto> Freshness()
     {
-        var freshness = _freshness.GetScheduleFreshness(DateTime.Now);
+        // 內容與使用者無關（排程是否新鮮是全站狀態），所以鍵不帶授權維度；
+        // 聯絡名單依檢視者不同，在快取外另填。版本戳由 DataVersionStampPolicy 在 freshness-ack
+        // 與排程設定儲存（皆為成功的非 GET 請求）後自動推進，另保留 30 秒 TTL 當上限。
+        var cached = _summaryCache.GetOrAdd(
+            SummaryCache.KeyOf("schedule-freshness", "", Array.Empty<long>()),
+            () => _freshness.GetScheduleFreshness(DateTime.Now));
+
+        // 快取取出的是共用實例，絕不可就地改寫：複製一份再填聯絡名單，否則一個非 Maintain 使用者
+        // 填入的名單會洩漏給後面的 Maintain 使用者。
+        var freshness = new ScheduleFreshnessDto
+        {
+            ScheduleEnabled = cached.ScheduleEnabled,
+            LastSuccessAt = cached.LastSuccessAt,
+            Stale = cached.Stale,
+            AckedUntil = cached.AckedUntil,
+            Acked = cached.Acked,
+            AdminContacts = new List<string>(cached.AdminContacts)
+        };
         if (freshness.Stale && !freshness.Acked && !_currentUser.Has(Capability.Maintain))
         {
             freshness.AdminContacts = AdminMembersResolver.GetAdminMembers(_groups, _users)

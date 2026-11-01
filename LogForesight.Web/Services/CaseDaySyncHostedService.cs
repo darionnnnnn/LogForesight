@@ -7,7 +7,7 @@ namespace LogForesight.Web.Services;
 /// （<see cref="IssueCaseCoordinator.ApplyPendingCaseDays"/>）。
 ///
 /// 有待同步案件時一批接一批跑，整輪清空後才 Bump 一次資料版本（逐批 Bump 會讓儀表板快取反覆失效）；
-/// 沒有待同步時每隔一段時間輪詢。單批例外只記 log、稍後重試，不讓背景例外把行程帶走。
+/// 沒有待同步時由 CaseDaySyncSchedule 退避輪詢（5／10／20／30 秒，資料版本變動即喚醒）。單批例外只記 log、稍後重試，不讓背景例外把行程帶走。
 ///
 /// 每一輪處理完待同步後接著跑交辦單結案掃描（<see cref="WorkOrderCoordinator.SweepClosures"/>）：
 /// 詳情頁逐筆標記不經過交辦單協調器，成員因此全結案的單靠這裡補結案；有結案時與同步共用同一次 Bump。
@@ -19,7 +19,7 @@ public class CaseDaySyncHostedService : BackgroundService
     /// <summary>啟動延遲（暫定）：讓站台其餘啟動流程先完成</summary>
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(20);
 
-    /// <summary>沒有待同步或單批失敗時的等待（暫定）</summary>
+    /// <summary>迴圈每拍的間隔（暫定）；閒置時的實際輪詢間隔由 CaseDaySyncSchedule 決定</summary>
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(5);
 
     /// <summary>每批處理的案件數（暫定）</summary>
@@ -45,8 +45,13 @@ public class CaseDaySyncHostedService : BackgroundService
         {
             await Task.Delay(StartupDelay, stoppingToken);
 
+            var schedule = new CaseDaySyncSchedule();
             while (!stoppingToken.IsCancellationRequested)
             {
+                // 每 5 秒一拍；閒置時由 schedule 決定跳過幾拍（上限 30 秒），資料版本一變動即喚醒
+                await Task.Delay(IdleDelay, stoppingToken);
+                if (!schedule.ShouldRun(_dataVersion.Current)) continue;
+
                 var processedAny = false;
                 try
                 {
@@ -72,9 +77,10 @@ public class CaseDaySyncHostedService : BackgroundService
                 {
                     // 資料已被背景改寫，儀表板／報表快取要失效：背景服務不走 HTTP 管線
                     if (processedAny) _dataVersion.Bump();
-                }
 
-                await Task.Delay(IdleDelay, stoppingToken);
+                    // 版本值要在自己 Bump 之後才記，否則下一拍會被自己的 Bump 喚醒
+                    schedule.OnRunCompleted(processedAny, _dataVersion.Current);
+                }
             }
         }
         catch (OperationCanceledException)

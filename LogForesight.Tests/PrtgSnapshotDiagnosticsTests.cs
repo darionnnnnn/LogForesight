@@ -379,10 +379,10 @@ public sealed class PrtgSnapshotDiagnosticsTests : IDisposable
         var backfillState = new PrtgBackfillRunState();
         var sync = new PrtgStructureSyncService(settings, _backend, syncState, scheduler, hostStore,
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), backfillState,
-            new FakeSentinelStore(), new DataVersionStamp(), lifetime);
+            new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver(), lifetime);
         var probe = new PrtgProbeRunState();
         var backfill = new PrtgBackfillService(settings, _backend, backfillState, probe, hostStore, scheduler,
-            syncState, new FakeSentinelStore(), sync);
+            syncState, new FakeSentinelStore(), sync, new LogForesight.Core.Service.PrtgAddressResolver());
         return new PrtgSnapshotHostedService(settings, _backend, scheduler, sync, backfill, hostStore,
             new FakeSentinelStore(), probe, lifetime);
     }

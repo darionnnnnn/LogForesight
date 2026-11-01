@@ -322,7 +322,7 @@ public class ScheduleGuardStatusCodeTests : IDisposable
         var backfill = new PrtgBackfillService(
             _settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
             hosts, schedulerState, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
-            new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState, hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
+            new PrtgStructureSyncService(_settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState, hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver()), new LogForesight.Core.Service.PrtgAddressResolver());
 
         var effectiveVisibility = visibility ?? new FullPrtgVisibility(hosts);
         // 「完整可見者」＝持有 ViewAll；由測試給的可見集合推得，保留部分可見與案件授權案例的角色。

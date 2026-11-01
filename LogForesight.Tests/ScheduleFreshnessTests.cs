@@ -484,6 +484,7 @@ public class ScheduleFreshnessTests
             users: users,
             groups: groups,
             userDisplayNames: displayNames,
-            throttle: new LoginThrottle());
+            throttle: new LoginThrottle(),
+            summaryCache: new SummaryCache(new DataVersionStamp()));
     }
 }

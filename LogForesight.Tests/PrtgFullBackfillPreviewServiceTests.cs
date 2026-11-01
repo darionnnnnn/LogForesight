@@ -51,9 +51,9 @@ public sealed class PrtgFullBackfillPreviewServiceTests : IDisposable
         var sentinels = new FakeSentinelStore();
         var sync = new PrtgStructureSyncService(_settings, _backend, syncState, _scheduler, _hosts,
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), _runState,
-            sentinels, new DataVersionStamp());
+            sentinels, new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
         _service = new PrtgBackfillService(_settings, _backend, _runState, new PrtgProbeRunState(), _hosts,
-            _scheduler, syncState, sentinels, sync, _clock,
+            _scheduler, syncState, sentinels, sync, new LogForesight.Core.Service.PrtgAddressResolver(), _clock,
             _ => CreateOfflinePrtgClient(_offlineHistoricRequests, (id, day) => _failHistoric(id, day)));
         SeedTwoDays();
     }

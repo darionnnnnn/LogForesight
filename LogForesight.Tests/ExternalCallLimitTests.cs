@@ -222,10 +222,10 @@ public class ExternalCallLimitTests : IDisposable
         var statusStore = new PrtgStructureSyncStatusStore(backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         var backfillState = new PrtgBackfillRunState();
         var structureSync = new PrtgStructureSyncService(settingsStore, backend, syncState, schedulerRunState, hostStore,
-            statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), lifetime);
+            statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver(), lifetime);
         var probeState = new PrtgProbeRunState();
         var backfill = new PrtgBackfillService(settingsStore, backend, backfillState, probeState, hostStore,
-            schedulerRunState, syncState, new FakeSentinelStore(), structureSync);
+            schedulerRunState, syncState, new FakeSentinelStore(), structureSync, new LogForesight.Core.Service.PrtgAddressResolver());
 
         settingsStore.Update(s =>
         {

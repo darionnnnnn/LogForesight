@@ -66,8 +66,8 @@ public class HostAdminServiceTests : IDisposable
                 new FakeSystemSettingsStore(),
                 backend,
                 new SchedulerRunState(),
-                new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new FakeHostApplicationLifetime()),
-                new PrtgBackfillService(new FakeSystemSettingsStore(), backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(), null!),
+                new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver(), new FakeHostApplicationLifetime()),
+                new PrtgBackfillService(new FakeSystemSettingsStore(), backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(), null!, new LogForesight.Core.Service.PrtgAddressResolver()),
                 hostStore,
                 new FakeSentinelStore(),
                 new PrtgProbeRunState(),
@@ -93,7 +93,7 @@ public class HostAdminServiceTests : IDisposable
         new EfPrtgStore(_fx.NewContext),
         _mapRefresher,
         new FakeSystemSettingsStore(), permissionVersion ?? TestPermissionStamps.Shared,
-        _snapshotService);
+        _snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
 
     private HostAdminService CreateWithPrtg(EfPrtgStore prtgStore) => new(
         _hosts,
@@ -106,7 +106,7 @@ public class HostAdminServiceTests : IDisposable
         prtgStore,
         _mapRefresher,
         new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
-        _snapshotService);
+        _snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -837,7 +837,7 @@ public class HostAdminServiceTests : IDisposable
         prtgStore,
         _mapRefresher,
         settings, TestPermissionStamps.Shared,
-        _snapshotService);
+        _snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
 
     [Fact]
     public void GetHosts_未回報主機PRTG提示_down_up_nomap與正常主機null_sensor只查一次()

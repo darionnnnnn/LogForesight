@@ -1633,7 +1633,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 不超過 5000 列就地展開（回應 `synced=true`），超過就標 `DaySyncPending` 交背景 `CaseDaySyncHostedService`
 分批完成（回應帶待同步案件數）。同步函式冪等：同一次意圖重跑不重複寫；待同步期間再操作同一案件時新意圖覆蓋舊意圖。
 進度出現在詳情頁「逐日同步中 N 台」與活動告示「案件逐日同步：待處理 N 件」（`/api/run-activity` 的
-`caseDaySyncPending`，與 `isRunning`／`isFetchRun` 無關）。
+`caseDaySyncPending`，與 `isRunning`／`isFetchRun` 無關）。背景服務每 5 秒一拍，閒置時退避至 30 秒（5／10／20／30 秒，`CaseDaySyncSchedule`），資料版本一變動即喚醒。
 
 **夜間掛接**（每個主機日寫入後；①②③ 在 `IssueCaseCoordinator.AttachNewDay`，剩下沒人接的問題交給 `NightlyDispatch`，由 `WorkOrderDispatcher.Decide` 判定 ⓪、閘門與 ④⑤⑥；本機、NetIQ、PRTG 三路並行共用一份
 派工脈絡，決策與寫入整段在脈絡鎖內）：
@@ -2235,7 +2235,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   新鮮度只把排程觸發的取數執行算入成功判定，排除 `BatchRun.JobType == ai`；過期狀態可按
   「確認並靜音」並指定「靜音到」日期，該動作寫入 `health_freshness_ack` 稽核。健康頁的
   正常徽章只表示目前檢查結果，不代表 NetIQ／PRTG 外部資料一定完整；外部資料需分別到
-  「排程作業」與「PRTG 維護 > 環境探測」確認。
+  「排程作業」與「PRTG 維護 > 環境探測」確認。`/api/health/freshness` 有 30 秒全站快取（內容與使用者無關，管理員聯絡名單在快取外依檢視者另填），確認靜音與排程設定儲存後立即失效。
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
   1. **層級與顯示**：以按鈕反白選擇

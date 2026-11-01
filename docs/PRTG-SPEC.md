@@ -213,7 +213,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 
 1. **純語法層**（`PrtgAddress.Normalize`，對外名稱 `PrtgHostMapper.NormalizeIp`）：去空白、scheme、路徑、query、port（裸 IPv6 不誤拆）、IPv4 前導零，結果須為合法 IP。IPv4 只認完整四段十進位（全專案共用 `IpSyntax`）：`10.1`、`12345`、`0x7f.1` 這類簡寫不當成 IP（框架會把它們解成別的位址而錯對應），改走下面的名稱退路。
 2. **解析層**（`PrtgAddressResolver`）：純語法層回 null 時，只有通過 `PrtgAddress.IsDnsCandidate` 的名稱才送 DNS（只查 IPv4、1 秒逾時可取消，
-   同實例同名只解析一次、失敗也快取）。整串沒有字母、或第一段全數字且每段只含數字或佔位字 x（`10.2xx.x.x`）視為打壞的 IPv4，不送 DNS；IDN 不送。
+   Web 端的解析器是全站單例：成功快取 5 分鐘、DNS 查無（例外或零筆 IPv4）負快取 60 秒、逾時不快取（下一次立即重查），條目上限 1 萬筆（滿了不寫入新項），「同步結構與對應」開始時清空；夜間管線、探測、守門每趟自建，逐趟快取）。整串沒有字母、或第一段全數字且每段只含數字或佔位字 x（`10.2xx.x.x`）視為打壞的 IPv4，不送 DNS；IDN 不送。
 
 device 分組鍵用解析層結果。IP 排除清單的儲存鍵是純語法值，device 側比對用解析後 IP。`lf_prtg_devices.Ip` 保存 PRTG 原始字串。
 

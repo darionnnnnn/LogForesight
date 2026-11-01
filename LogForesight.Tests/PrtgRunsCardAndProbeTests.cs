@@ -98,8 +98,8 @@ public class PrtgRunsCardAndProbeTests : IDisposable
                 settingsStore,
                 backend,
                 new SchedulerRunState(),
-                new PrtgStructureSyncService(settingsStore, backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), sentinelStore, new DataVersionStamp(), new FakeHostApplicationLifetime()),
-                new PrtgBackfillService(settingsStore, backend, new PrtgBackfillRunState(), probeState, hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), sentinelStore, null!),
+                new PrtgStructureSyncService(settingsStore, backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), sentinelStore, new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver(), new FakeHostApplicationLifetime()),
+                new PrtgBackfillService(settingsStore, backend, new PrtgBackfillRunState(), probeState, hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), sentinelStore, null!, new LogForesight.Core.Service.PrtgAddressResolver()),
                 hostStore,
                 sentinelStore,
                 probeState,
@@ -167,8 +167,8 @@ public class PrtgRunsCardAndProbeTests : IDisposable
                 new FakeSystemSettingsStore(),
                 backend,
                 new SchedulerRunState(),
-                new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new FakeHostApplicationLifetime()),
-                new PrtgBackfillService(new FakeSystemSettingsStore(), backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(), null!),
+                new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, new PrtgStructureSyncRunState(), new SchedulerRunState(), hostStore, new PrtgStructureSyncStatusStore(backend.Blob("sync_status")), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver(), new FakeHostApplicationLifetime()),
+                new PrtgBackfillService(new FakeSystemSettingsStore(), backend, new PrtgBackfillRunState(), new PrtgProbeRunState(), hostStore, new SchedulerRunState(), new PrtgStructureSyncRunState(), new FakeSentinelStore(), null!, new LogForesight.Core.Service.PrtgAddressResolver()),
                 hostStore,
                 new FakeSentinelStore(),
                 new PrtgProbeRunState(),
@@ -210,7 +210,7 @@ public class PrtgRunsCardAndProbeTests : IDisposable
             mapRefresher,
             _settingsStore,
             TestPermissionStamps.Shared,
-            snapshotService);
+            snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
 
         // 1. 新增有 IP 的主機 → RequestScopeRefresh 呼叫 1 次
         service.SaveHost(new SaveHostRequest

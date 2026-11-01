@@ -22,7 +22,7 @@ public class ScheduleFreshnessService
     /// <summary>
     /// 計算排程資料新鮮度。
     /// </summary>
-    public ScheduleFreshnessDto GetScheduleFreshness(DateTime now)
+    public virtual ScheduleFreshnessDto GetScheduleFreshness(DateTime now)
     {
         var options = _scheduleOptions.Get();
         var scheduleEnabled = options.Enabled;

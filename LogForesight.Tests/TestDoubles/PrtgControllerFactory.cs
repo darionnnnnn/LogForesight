@@ -30,7 +30,7 @@ internal static class PrtgControllerFactory
         SchedulerRunState? scheduler = null, PrtgStructureSyncRunState? state = null) =>
         new(SettingsStore(backend), backend, state ?? new PrtgStructureSyncRunState(), scheduler ?? new SchedulerRunState(),
             hosts ?? Hosts(backend), new PrtgStructureSyncStatusStore(backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
-            new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp());
+            new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
 
     public static PrtgBackfillService Backfill(StorageBackend backend, IHostStore? hosts = null,
         SchedulerRunState? scheduler = null, PrtgStructureSyncService? sync = null)
@@ -39,7 +39,7 @@ internal static class PrtgControllerFactory
         scheduler ??= new SchedulerRunState();
         return new PrtgBackfillService(SettingsStore(backend), backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
             hosts, scheduler, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
-            sync ?? Sync(backend, hosts, scheduler));
+            sync ?? Sync(backend, hosts, scheduler), new LogForesight.Core.Service.PrtgAddressResolver());
     }
 
     public static PrtgProbeService Probe(StorageBackend backend, IHostStore? hosts = null,
@@ -78,7 +78,7 @@ internal static class PrtgControllerFactory
         currentUser ??= FullUser();
         return new PrtgScopeEstimateController(settings, backend, hosts, snapshot ?? Snapshot(backend, hosts),
             visibility ?? AllVisible(hosts), currentUser,
-            scopePurgeAuthorization ?? PurgeAuthorization(backend, hosts, currentUser));
+            scopePurgeAuthorization ?? PurgeAuthorization(backend, hosts, currentUser), new LogForesight.Core.Service.PrtgAddressResolver());
     }
 
     public static PrtgBackfillAdminController BackfillAdmin(StorageBackend backend, IAuditService audit,
@@ -96,7 +96,7 @@ internal static class PrtgControllerFactory
     {
         hosts ??= Hosts(backend);
         return new PrtgHostMappingAdminController(audit, backend, hosts, mapRefresher ?? NoRefresh(),
-            conflictQuery ?? Conflict(backend, hosts));
+            conflictQuery ?? Conflict(backend, hosts), new LogForesight.Core.Service.PrtgAddressResolver());
     }
 
     private sealed class NoRefresher : IPrtgHostMapRefresher

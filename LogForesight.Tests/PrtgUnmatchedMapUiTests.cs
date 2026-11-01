@@ -36,7 +36,7 @@ public class PrtgUnmatchedMapUiTests : IDisposable
         settingsStore.Update(x => x.PrtgEnabled = true);
 
         _controller = PrtgControllerFactory.HostMapping(_backend, _audit, _hosts,
-            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend));
+            mapRefresher: new PrtgHostMapRefresher(settingsStore, new LogForesight.Core.Service.PrtgAddressResolver(), _backend));
 
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
