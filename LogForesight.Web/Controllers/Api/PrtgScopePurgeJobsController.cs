@@ -74,11 +74,8 @@ public sealed class PrtgScopePurgeJobsController : ControllerBase
             accepted = jobs.Accept(request.PreviewId, _currentUser.UserId, authorization.PermissionRevision,
                 authorization.AuthFingerprint, PrtgScopePurge.ComputeFingerprint(store, scope!), DateTimeOffset.UtcNow);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("另一個範圍外清除作業", StringComparison.Ordinal))
-        {
-            throw DomainException.Conflict(ex.Message);
-        }
-        catch (InvalidOperationException ex)
+        // 清除作業忙碌（PrtgScopePurgeBusyException）不攔，交給 ApiExceptionFilter 回 409
+        catch (InvalidOperationException ex) when (ex is not PrtgScopePurgeBusyException)
         {
             throw DomainException.Validation(ex.Message);
         }
@@ -132,11 +129,8 @@ public sealed class PrtgScopePurgeJobsController : ControllerBase
                 PrtgScopePurge.ComputeFingerprint(store, scope!), DateTimeOffset.UtcNow, cancellationToken,
                 authorization.ToBatchFence());
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("另一個範圍外清除作業", StringComparison.Ordinal))
-        {
-            throw DomainException.Conflict(ex.Message);
-        }
-        catch (InvalidOperationException ex)
+        // 清除作業忙碌（PrtgScopePurgeBusyException）不攔，交給 ApiExceptionFilter 回 409
+        catch (InvalidOperationException ex) when (ex is not PrtgScopePurgeBusyException)
         {
             throw DomainException.Validation(ex.Message);
         }

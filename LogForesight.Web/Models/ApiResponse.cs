@@ -141,7 +141,7 @@ public static class ApiErrorCodes
         [ChunkBodyTruncated] = 400,
         [JsonInvalid] = 422,
         [InvalidReason] = 400,
-        [NetiqAttemptLedgerInvalid] = 200,
+        [NetiqAttemptLedgerInvalid] = 409,
         [CapacityExceeded] = 413,
         [ExportFailed] = 422,
         [PackageInvalid] = 422,

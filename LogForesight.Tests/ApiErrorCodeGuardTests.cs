@@ -78,6 +78,14 @@ public class ApiErrorCodeGuardTests
     }
 
     [Fact]
+    public void StatusTable_HasNoCodeMappedTo200()
+    {
+        // 錯誤回應不可帶 200：用戶端與監控靠狀態碼分辨成功與失敗
+        var offenders = ApiErrorCodes.Table.Where(kv => kv.Value == 200).Select(kv => kv.Key).ToList();
+        Assert.True(offenders.Count == 0, "狀態碼表中對應 200 的錯誤碼：" + string.Join("、", offenders));
+    }
+
+    [Fact]
     public void NewGenericCodes_MapToTheirStatus()
     {
         Assert.Equal(429, ApiErrorCodes.StatusOf(ApiErrorCodes.RateLimited));

@@ -499,7 +499,7 @@ public class PrtgScopeEstimateController : ControllerBase
                 authorization.PermissionRevision, authorization.AuthFingerprint, fingerprint, keepSet,
                 scope!.DeviceObjids.Count, DateTimeOffset.UtcNow, previous?.JobId, scope.ScopeFenceJson);
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (ex is not PrtgScopePurgeBusyException)
         {
             throw DomainException.Validation(ex.Message);
         }
@@ -510,7 +510,7 @@ public class PrtgScopeEstimateController : ControllerBase
             preview = store.PreviewOutOfScopeCandidateDetails(boundary.CandidateSensorIds, ScopePurgeTopDevices,
                 visibleDevices);
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (ex is not PrtgScopePurgeBusyException)
         {
             throw DomainException.Validation(ex.Message);
         }

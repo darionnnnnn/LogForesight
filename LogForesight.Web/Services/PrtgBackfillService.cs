@@ -269,8 +269,9 @@ public class PrtgBackfillService : IPrtgBackfillTail
     /// </summary>
     public string? ScopePurgeConflict()
     {
-        if (_schedulerRunState.IsRunning)
-            return $"取數執行中{ElapsedSuffix(_schedulerRunState.StartedAt)}，請等它結束後再清除。";
+        var runSnapshot = _schedulerRunState.Snapshot();
+        if (runSnapshot.IsRunning)
+            return $"取數執行中{ElapsedSuffix(runSnapshot.StartedAt)}，請等它結束後再清除。";
         var syncSnapshot = _structureSyncState.Snapshot();
         if (syncSnapshot.IsRunning)
             return $"「同步結構與對應」執行中{ElapsedSuffix(syncSnapshot.StartedAt)}，請等它完成後再清除。";
@@ -721,9 +722,10 @@ public class PrtgBackfillService : IPrtgBackfillTail
         }
 
         // 取數執行與回填同時打同一台 PRTG，兩邊都會變慢且互相拖累
-        if (blockWhenSchedulerRunning && _schedulerRunState.IsRunning)
+        var schedulerSnapshot = blockWhenSchedulerRunning ? _schedulerRunState.Snapshot() : null;
+        if (schedulerSnapshot is { IsRunning: true })
         {
-            error = $"取數執行中{ElapsedSuffix(_schedulerRunState.StartedAt)}，回填會與它同時查詢同一台 PRTG。請等它結束，或在取數執行卡按「停止執行」後再回填。";
+            error = $"取數執行中{ElapsedSuffix(schedulerSnapshot.StartedAt)}，回填會與它同時查詢同一台 PRTG。請等它結束，或在取數執行卡按「停止執行」後再回填。";
             isConflict = true;
             return false;
         }

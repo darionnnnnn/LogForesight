@@ -497,11 +497,12 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `auth_expired` | 401 | 登入逾期 |
   | `forbidden` | 403 | 沒有權限 |
   | `not_found` | 404 | 資源不存在 |
-  | `conflict` | 409 | 樂觀鎖衝突、執行互斥 |
+  | `conflict` | 409 | 樂觀鎖衝突、執行互斥、PRTG 範圍外清除作業佔用範圍寫入 |
   | `rate_limited` | 429 | 登入嘗試或 AI 使用太頻繁，回應帶 `Retry-After` |
   | `server_error` | 500 | 未預期例外 |
   | `service_unavailable` | 503 | 升級遷移進行中，寫入暫停 |
   | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
+  | `netiq_attempt_ledger_invalid` | 409 | NetIQ 最近執行狀態資料不完整或損毀，補跑範圍預覽無法準確計算 |
 
   PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。

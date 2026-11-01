@@ -84,12 +84,11 @@ public sealed class ScheduleRunPreviewNetiqAttemptTests : IDisposable
             db.SaveChanges();
         }
 
-        var response = Controller(new long[] { 1 }).RunPreview("all", null, null, onlyMissingOrFailed: true, backfillDays: 1);
+        var ex = Assert.Throws<DomainException>(() =>
+            Controller(new long[] { 1 }).RunPreview("all", null, null, onlyMissingOrFailed: true, backfillDays: 1));
 
-        Assert.False(response.Success);
-        Assert.Equal("netiq_attempt_ledger_invalid", response.Error!.Code);
-        Assert.Contains("無法準確預覽", response.Error.Message);
-        Assert.Null(response.Data);
+        Assert.Equal("netiq_attempt_ledger_invalid", ex.Code);
+        Assert.Contains("無法準確預覽", ex.Message);
     }
 
     private void SeedParentRows(IEnumerable<long> ids, DateTime date)

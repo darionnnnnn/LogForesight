@@ -333,7 +333,7 @@ public class PrtgHostMappingAdminController : ControllerBase
             {
                 Log.Error(ex, "批次設定 PRTG 人工主機對應失敗，裝置 ID: {DeviceObjid}", deviceObjid);
                 failedDeviceObjid = deviceObjid;
-                failureMessage = ex is PrtgScopeConflictException ? ex.Message : "儲存裝置對應資料時發生伺服器錯誤。";
+                failureMessage = ex is PrtgScopeConflictException or PrtgScopePurgeBusyException ? ex.Message : "儲存裝置對應資料時發生伺服器錯誤。";
                 for (int j = i + 1; j < request.DeviceObjids.Count; j++)
                     notProcessedIds.Add(request.DeviceObjids[j]);
                 break;

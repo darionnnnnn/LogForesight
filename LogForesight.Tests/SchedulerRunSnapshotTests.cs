@@ -111,4 +111,17 @@ public class SchedulerRunSnapshotTests
         Assert.Equal(1, Count(body, "_runState."));
         Assert.Contains("_runState.Snapshot()", body);
     }
+
+    [Fact]
+    public void 結構守門_HealthService與PrtgBackfillService不逐屬性讀取執行狀態()
+    {
+        var root = FindRepoRoot();
+        var health = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Services", "HealthService.cs"));
+        Assert.DoesNotMatch(@"_runState\.(IsRunning|Trigger|StartedAt|LastOutcome|LatestActivity)", health);
+        Assert.Contains("_runState.Snapshot()", health);
+
+        var backfill = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Services", "PrtgBackfillService.cs"));
+        Assert.DoesNotMatch(@"_schedulerRunState\.(IsRunning|StartedAt)", backfill);
+        Assert.Contains("_schedulerRunState.Snapshot()", backfill);
+    }
 }
