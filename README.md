@@ -18,7 +18,7 @@ MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Lo
 > **現在唯一的分析執行途徑是 Web 的排程／立即執行**（見下方「使用方式」）。
 
 ```
-LogForesight.Core/     Web 共用的類別庫（原批次與 Web 共用，批次退場後仍是分析邏輯的所在地）
+LogForesight.Core/     Web 共用的類別庫（分析邏輯的所在地）
 ├── Analysis/           無狀態的純規則/分析邏輯：規則表、趨勢比對、跨 log 關聯分析、聚合統計、prompt 預算
 ├── Models/             資料模型：分析紀錄、AI 回應契約與容錯解析、權限快照、
 │                        Web 身分/主機/處理狀態/權限異動確認/稽核/執行紀錄
@@ -111,10 +111,21 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 **所有回應多了三個安全標頭**（`X-Content-Type-Options`、`Referrer-Policy`、`X-Frame-Options: DENY`），升級後立即生效。
 若有其他入口網站以 iframe 嵌入本站，把 `appsettings.json` 的 `Server:FrameOptions` 改為 `SAMEORIGIN` 或空字串（不送此標頭）。
 
+**內容安全政策（CSP）預設強制**：所有回應帶 `Content-Security-Policy`（Development 環境預設只回報，送 `Content-Security-Policy-Report-Only`）。
+`appsettings.json` 的 `Server:Csp` 可設 `Off`（不送）、`ReportOnly`（只回報不攔截）、`Enforce`（強制），不分大小寫，留空＝依環境決定。
+違規回報寫入 `web.log`（logger `LogForesight.Web.CspReport`，同一違規 60 秒只記一次）。需要被其他頁面嵌入時改 `Server:FrameOptions`
+（政策的 `frame-ancestors` 會跟著變）。自訂品牌圖示不受影響。反向代理若自行加了 CSP，瀏覽器會取兩者的交集，過嚴時請在代理端放寬。
+未設 `Server:TrustedProxies` 時，回報端點的每 IP 節流會讓反向代理後的所有使用者共用一個額度。
+升級後若有頁面功能失效，先把 `Server:Csp` 設成 `ReportOnly` 重啟恢復使用，再到 `web.log` 查 `LogForesight.Web.CspReport` 的違規紀錄找出被擋的資源。
+
+**外部服務逾時顯示為失敗**：取數途中呼叫 Sentinel、AI 等外部服務逾時，執行紀錄與排程狀態卡顯示「失敗：呼叫外部服務逾時」，不再顯示成「已停止（使用者取消）」；NetIQ 單批逾時只讓該批記為失敗，其餘批次與其他 Sentinel 照常進行，下次執行自動補跑。
+
+**補跑預覽遇到 NetIQ 執行狀態帳本不完整時回 HTTP 409**（錯誤碼 `netiq_attempt_ledger_invalid`，畫面訊息不變）；自行呼叫 `/api/admin/schedule/run-preview` 的外部腳本若以 HTTP 200 判斷成功，需改看狀態碼。
+
 **`Server:PathBase` 格式錯誤時啟動訊息會點名設定鍵**：值必須以 `/` 開頭（例如 `/LogForesight`），以前缺斜線同樣無法啟動，只是訊息看不出原因。
 掛在 IIS 子 Application 底下時不要再設 `Server:PathBase`（IIS 會自動加前綴，重複設定會變成雙重前綴，啟動時會記警告）。
 
-**郵件通知首輪可能補寄**：「已寄出」收據的保留期由 180 天縮短為實際回看所需的天數，SMTP 連線被拒、DNS 或 TLS 失敗這類確定沒寄出的情況也改為可重寄。升級後第一輪寄送時，先前因此卡住的內容可能補寄一次。
+**郵件通知首輪可能補寄**：「已寄出」收據的保留期由 180 天縮短為實際回看所需的天數，SMTP 連線被拒、DNS 或 TLS 失敗這類確定沒寄出的情況也改為可重寄。升級後首次寄送時，先前因此卡住的內容可能補寄一次。
 
 **API 錯誤碼調整**：登入帳密錯誤回 `auth_failed`、太頻繁回 `rate_limited`（429，帶 `Retry-After`）、升級遷移中回 `service_unavailable`（503）、外部服務逾時回 `upstream_timeout`（503）、用戶端中斷回 499。HTTP 狀態碼除後兩者外不變；外部監控若依錯誤碼字串告警請一併調整。AI 功能另有每人每分鐘上限。
 
@@ -387,7 +398,7 @@ token 有效期等細節），待核對清單見 [docs/BACKLOG.md](docs/BACKLOG.
    - **查詢耗時基準**：「系統管理 > 排程作業」頁的執行紀錄提供每次執行的總耗時，除以主機數
      可概算「平均每主機查詢耗時」，供估算不同批次規模／平行度下的總時間。
    - AI 時間分兩段估，不要把「主分析＋深入分析疊在一起的總耗時」當成「單次呼叫」耗時代入
-     （舊版文件曾寫「單次數十秒到一兩分鐘」，那是兩段疊加值，直接代入會把預算高估數倍）：
+     （兩段合計常見數十秒到一兩分鐘，把合計當成單次代入會把預算高估數倍）：
      「非低風險日佔比 × 主機數 × 主分析呼叫耗時（5～15 秒）」，加上「觸發深入分析的
      主機日佔比 × 主機數 × 深入分析耗時（15～70 秒，只有 Other 類別命中規則外的問題才
      觸發，見「深入分析」一節）」，兩段相加再加上「查詢耗時基準 × 主機數」，反推開啟 AI
@@ -807,7 +818,7 @@ SQLite 使用 WAL 日誌模式（`Storage:SqliteWal`，預設 true）：資料�
 
 ## 開發測試與驗收準則
 
-2026-10-15使用者定案；後續開發與收尾均適用。第54輪的容量審查結果見 docs/archive/FEEDBACK-54-PLAN.md 作業 D。
+2026-10-15使用者定案；後續開發與收尾均適用。容量審查結果見 docs/archive/FEEDBACK-54-PLAN.md 作業 D。
 
 - 每次執行前先判斷「必要測試，還是過度測試」，寫明要排除的具體風險、既有證據缺口與最小範圍；沒有新風險就不跑。
 - 沿用相同受影響程式、依賴、設定與環境的有效證據；換階段、換代理、更新純文件或需要回報，都不是重跑理由。失敗後只補修正所影響的驗證。
@@ -899,30 +910,8 @@ log 每天歸檔：當天內容在 `web.log`，跨日時歸檔成 `archive\web-y
 
 ## 後續方向
 
-- **通知管道**：目前只在 Web「排程作業」頁與排程狀態卡顯示，需要主動查看才會發現。排程執行時
-  沒人盯著畫面，下一步可考慮接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位
-  為第二層縱深防禦，即時性要求不如第一層監控，故未列為優先項。
-- **多台伺服器（NetIQ Sentinel 整合）**：連線設定、主機清單管理與跨主機集中分析的取數管線皆已
-  完成（見上方「NetIQ 主機清單」章節），**API 欄位對應已對真實 Sentinel 環境多輪 probe 驗證，
-  生產環境長期試點（登錄實機連續跑數晚核對）尚未進行**；本機每台主機皆有的體檢 due-date
-  輪巡、跨主機（多台之間）關聯層、機房總覽報告等規劃對 NetIQ 主機仍待實作。工程層級的待辦
-  細節見 [docs/BACKLOG.md](docs/BACKLOG.md)。
+已知但刻意未做的項目見 [docs/BACKLOG.md](docs/BACKLOG.md)。
 
 ## 文件地圖
 
-`docs/` 目前的現況文件（描述「現在的行為是什麼」，操作者/開發者日常查閱）：
-
-| 文件 | 內容 |
-|---|---|
-| [docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md) | 偵測與 AI 內部規格：五層偵測、監控訊號清單、趨勢／關聯判定、體檢、小模型策略、AI 穩定性設計 |
-| [docs/WEB-SPEC.md](docs/WEB-SPEC.md) | Web 查詢/維護介面的完整規格：架構、分層、驗證授權、API 慣例、前端慣例、各頁面規格 |
-| [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) | PRTG 連線、鏡像、取數範圍、回填、環境探測、資源守門與狀態變更規格 |
-| [docs/DB-SPEC.md](docs/DB-SPEC.md) | 資料庫欄位級規格：資料表設計、索引、保留策略、Schema 升級機制 |
-| [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md) | 全站色票、字型、元件、頁面骨架、說明文字與操作人員用詞規範 |
-| [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) | Sentinel REST API 參考：認證、事件查詢、欄位對應、查詢 payload |
-| [docs/RULES-SPEC.md](docs/RULES-SPEC.md) | 規則外部化與告警抑制機制（主機／群組／全站）：語意邊界、規則模型、seed／匯入政策 |
-| [docs/LINUX-RULES.md](docs/LINUX-RULES.md) | Linux 規則面現況：規則模型、主機 OS 標記、目前的種子規則清單 |
-| [docs/BACKLOG.md](docs/BACKLOG.md) | 現況待辦清單（已知但刻意未做的項目），問題解決後即從文件移除 |
-
-`docs/archive/` 是已完成規劃案與開發歷程的存放處——記錄「當時如何決策、如何實作」，
-一般情況不需要打開；要追溯某個現況決策的來龍去脈時才查閱。
+各文件用途見 [CLAUDE.md](CLAUDE.md) 的「文件地圖」。`docs/archive/` 是已完成規劃案與開發歷程的存放處，一般情況不需要打開；要追溯某個現況決策的來龍去脈時才查閱。

@@ -122,9 +122,9 @@ public class SetupUxF2Tests : IDisposable
         var lifetime = new FakeHostApplicationLifetime();
         var statusStore = new PrtgStructureSyncStatusStore(backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         var backfillState = new PrtgBackfillRunState();
-        var structureSync = new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, syncState, new SchedulerRunState(), _hosts, statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), lifetime);
+        var structureSync = new PrtgStructureSyncService(new FakeSystemSettingsStore(), backend, syncState, new SchedulerRunState(), _hosts, statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver(), lifetime);
         var probeState = new PrtgProbeRunState();
-        var backfill = new PrtgBackfillService(new FakeSystemSettingsStore(), backend, backfillState, probeState, _hosts, new SchedulerRunState(), syncState, new FakeSentinelStore(), structureSync);
+        var backfill = new PrtgBackfillService(new FakeSystemSettingsStore(), backend, backfillState, probeState, _hosts, new SchedulerRunState(), syncState, new FakeSentinelStore(), structureSync, new LogForesight.Core.Service.PrtgAddressResolver());
         var snapshotService = new PrtgSnapshotHostedService(new FakeSystemSettingsStore(), backend, new SchedulerRunState(), structureSync, backfill, _hosts, new FakeSentinelStore(), probeState, lifetime);
 
         var service = new HostAdminService(
@@ -136,7 +136,7 @@ public class SetupUxF2Tests : IDisposable
             new EfPrtgStore(_fx.NewContext),
             new NoopMapRefresher(),
             new FakeSystemSettingsStore(), stamp,
-            snapshotService);
+            snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
         return (service, stamp);
     }
 

@@ -155,9 +155,13 @@ public class BatchRunBranchOutcomeTests
     {
         var recorder = new BatchRunRecorder(null, "test-host", Array.Empty<string>());
         // 當 _store 為 null 時，直接 return，不拋例外
-        recorder.RecordLocalOutcome(5, 0);
-        recorder.RecordNetiqOutcome(10, 1, 2);
-        recorder.RecordPrtgOutcome(BatchRun.PrtgOutcomeSuccess, 20, 0, 1);
+        var ex = Record.Exception(() =>
+        {
+            recorder.RecordLocalOutcome(5, 0);
+            recorder.RecordNetiqOutcome(10, 1, 2);
+            recorder.RecordPrtgOutcome(BatchRun.PrtgOutcomeSuccess, 20, 0, 1);
+        });
+        Assert.Null(ex);
     }
 
     [Fact]

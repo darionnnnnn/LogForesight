@@ -1,4 +1,5 @@
 using LogForesight.Web.Auth;
+using LogForesight.Web.Security;
 
 namespace LogForesight.Web.Configuration;
 
@@ -112,6 +113,9 @@ public class WebAppSettings
             !frameOptions.Equals("SAMEORIGIN", StringComparison.OrdinalIgnoreCase))
             errors.Add($"Server:FrameOptions 只能是 DENY、SAMEORIGIN 或空字串（不送此標頭），目前值：「{Server.FrameOptions}」。");
 
+        try { Server.ResolveCspMode(environmentName); }
+        catch (InvalidOperationException ex) { errors.Add(ex.Message); }
+
         if (errors.Count > 0)
             throw new InvalidOperationException("appsettings.json 設定不合格：" + Environment.NewLine + string.Join(Environment.NewLine, errors.Select(e => "  - " + e)));
     }
@@ -130,6 +134,26 @@ public class ServerSettings
     /// 需要被同網域頁面嵌入時改 <c>SAMEORIGIN</c>；空字串＝不送此標頭。
     /// </summary>
     public string FrameOptions { get; set; } = "DENY";
+
+    /// <summary>
+    /// 內容安全政策（CSP）模式：<c>Off</c>（不送）、<c>ReportOnly</c>（只回報）、<c>Enforce</c>（強制），不分大小寫。
+    /// null 或空白＝未設定：Development 環境用 <c>ReportOnly</c>，其餘環境用 <c>Enforce</c>。
+    /// </summary>
+    public string? Csp { get; set; }
+
+    /// <summary>解析 <see cref="Csp"/>；未設定時依環境名稱決定預設，值不合格擲例外並點名設定鍵</summary>
+    public CspMode ResolveCspMode(string environmentName)
+    {
+        var text = (Csp ?? "").Trim();
+        if (text.Length == 0)
+            return string.Equals(environmentName, "Development", StringComparison.OrdinalIgnoreCase)
+                ? CspMode.ReportOnly
+                : CspMode.Enforce;
+        if (text.Equals("Off", StringComparison.OrdinalIgnoreCase)) return CspMode.Off;
+        if (text.Equals("ReportOnly", StringComparison.OrdinalIgnoreCase)) return CspMode.ReportOnly;
+        if (text.Equals("Enforce", StringComparison.OrdinalIgnoreCase)) return CspMode.Enforce;
+        throw new InvalidOperationException($"Server:Csp 只能是 Off、ReportOnly、Enforce 或留空（依環境決定預設），目前值：「{Csp}」。");
+    }
 
     /// <summary>
     /// 站台掛載前綴（例：<c>/LogForesight</c>）。空白＝掛在網站根目錄。必須以 <c>/</c> 開頭，

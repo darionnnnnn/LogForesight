@@ -27,6 +27,21 @@ public class PerUserThrottleTests
     }
 
     [Fact]
+    public void 鍵數達上限後新鍵被拒_舊鍵照常計數()
+    {
+        var throttle = new SlidingWindowThrottle<string>(2, TimeSpan.FromSeconds(60), maxKeys: 2);
+        Assert.True(throttle.TryAcquire("a", T0));
+        Assert.True(throttle.TryAcquire("b", T0));
+
+        Assert.False(throttle.TryAcquire("c", T0, out var retry));   // 新鍵：滿了就拒
+        Assert.True(retry >= 1);
+        Assert.True(throttle.TryAcquire("a", T0));                    // 舊鍵照常計數
+        Assert.False(throttle.TryAcquire("a", T0));                   // 到自己的額度才拒
+        Assert.False(throttle.TryAcquire("c", T0));                   // 先前被拒的新鍵沒有被記錄占位
+        Assert.True(throttle.TryAcquire("c", T0.AddSeconds(61)));     // 視窗過期清掉舊鍵後可進
+    }
+
+    [Fact]
     public void 不同使用者不互擋()
     {
         var manual = new ManualAiThrottle();

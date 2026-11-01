@@ -5,8 +5,8 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 類別彙總（docs/WEB-SPEC.md §10.3）。
 ///
-/// 這是**兩個儲存後端共用的同一份規則**：SQL 後端寫入時用它填 lf_record_categories，
-/// JSONL 後端在查詢時即時計算。測試釘住的是「兩邊必然算出相同數字」的那份定義。
+/// 類別×嚴重度的唯一定義：問題清單與詳情在查詢時呼叫它自問題列聚合（沒有獨立的類別表）。
+/// 測試釘住的是這份定義本身，所有呼叫端必然算出相同數字。
 /// </summary>
 public class CategoryAggregatorTests
 {

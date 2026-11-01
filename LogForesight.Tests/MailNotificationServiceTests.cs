@@ -1413,7 +1413,9 @@ public class MailNotificationServiceTests : IDisposable
     {
         _settingsStore.ThrowOnGet = new InvalidOperationException("blob 讀取失敗");
 
-        await Create().NotifyAfterRunAsync();
+        // 意圖：不擲例外
+        var ex = await Xunit.Record.ExceptionAsync(() => Create().NotifyAfterRunAsync());
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -1426,7 +1428,8 @@ public class MailNotificationServiceTests : IDisposable
 
         // SendSafeAsync 內部已 try/catch 到底——這裡不拋例外就是通過，呼叫端（排程輪詢／
         // 執行收尾）不該因為一封信寄失敗而受影響
-        await Create().NotifyAfterRunAsync();
+        var ex = await Xunit.Record.ExceptionAsync(() => Create().NotifyAfterRunAsync());
+        Assert.Null(ex);
     }
 
     // ── CheckAndSendDailyWeeklyAsync：每日／每週定時彙總 ────────────────────
@@ -2115,6 +2118,22 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Equal(1, status.UnknownKeys);
         Assert.Equal(status.OccupiedKeys,
             status.AcceptedKeys + status.HeldKeys + status.ReservedKeys + status.AttemptedKeys + status.UnknownKeys);
+    }
+
+    [Fact]
+    public void 郵件貢獻帳本狀態_已逾時的reserved不計入預約數()
+    {
+        var (service, state) = CreateLedgerScenario("ledger-stale@test.local", limit: null, prefill: 0);
+        var now = DateTime.UtcNow;
+        state.Update(s =>
+        {
+            s.MailContributionReservations[new string('1', 64)] = new MailContributionReservation { ReservationId = "old", Status = "reserved", CreatedAtUtc = now.AddMinutes(-6) };
+            s.MailContributionReservations[new string('2', 64)] = new MailContributionReservation { ReservationId = "new", Status = "reserved", CreatedAtUtc = now.AddMinutes(-1) };
+        });
+
+        var status = service.GetContributionLedgerStatus();
+
+        Assert.Equal(1, status.ReservedKeys);
     }
 
     [Fact]

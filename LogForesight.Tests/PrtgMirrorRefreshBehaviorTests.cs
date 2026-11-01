@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using Xunit;
 
@@ -22,29 +21,25 @@ public sealed class PrtgMirrorRefreshBehaviorTests
     [InlineData("revisionMismatchShowsSameMessageInAllThreeAreas")]
     [InlineData("allSucceedRendersThreeAreasAndStoresRevision")]
     [InlineData("riskReviewPendingRequestIsSilent")]
+    [InlineData("rewriteDuringInFlightTriggersOneRerun")]
+    [InlineData("threeCallsDuringInFlightStillTwoRounds")]
+    [InlineData("callDuringRerunTriggersThirdRound")]
+    [InlineData("inFlightFailureStillReruns")]
+    [InlineData("noConcurrencyRunsOnce")]
+    [InlineData("mirrorSuccessClearsErrorSlotAndKeepsStatsNodes")]
+    [InlineData("overlappingRiskReviewCallsRenderPendingListOnce")]
+    [InlineData("partialFailureStillStoresRevision")]
     public void PRTG鏡像重整分區錯誤的production行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
         var script = Path.Combine(scriptDir, "prtg-mirror-refresh.behavior.mjs");
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
-        var psi = new ProcessStartInfo("node")
-        {
-            WorkingDirectory = scriptDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false
-        };
-        psi.ArgumentList.Add("--experimental-default-type=module");
-        psi.ArgumentList.Add(script);
-        psi.ArgumentList.Add(caseName);
-        using var process = Process.Start(psi);
-        Assert.NotNull(process);
-        var stdout = process!.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        Assert.True(process.WaitForExit(60_000), $"node 執行逾時：{caseName}");
-        Assert.True(process.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--experimental-default-type=module", script, caseName }, scriptDir,
+            timeout: TimeSpan.FromSeconds(60), label: caseName);
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
+        Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);
     }
 }

@@ -42,7 +42,7 @@ LogForesight 將「系統偵測」與「主動示警」完全解耦：
 |---|---|---|---|
 | **`Rule`**（全規則型） | `RuleId` | 命中指定規則的所有事件 | 標記 `LogIssueSignature.Suppressed`，排除重大旗標與嚴重度對日風險之拉升。支援 Host／Group／Site 三種範圍。 |
 | **`Signature`**（問題簽章型） | `SignatureKey`<br>（來源＋EventId＋類型） | 未命中規則之 Other 類別事件簽章 | 針對特定未知問題簽章精準靜音，不影響同一來源的其他 Event ID。僅支援 Host 範圍。 |
-| **`Correlation`**（關聯模式型） | `CorrelationPatternId`<br>（19 種關聯 Pattern ID） | 跨 log 組合比對出之攻擊鏈與故障鏈模式 | 命中的關聯模式整批自 `correlations` 移除，不參與風險判定。**影響面極大**，建立時強制要求填寫原因並跳出強警告。僅支援 Host 範圍。 |
+| **`Correlation`**（關聯模式型） | `CorrelationPatternId`<br>（23 種關聯 Pattern ID） | 跨 log 組合比對出之攻擊鏈與故障鏈模式 | 命中的關聯模式整批自 `correlations` 移除，不參與風險判定。**影響面極大**，建立時強制要求填寫原因並跳出強警告。僅支援 Host 範圍。 |
 | **`Volume`**（總量型） | `VolumeKind`<br>（`error` 或 `audit`） | 整體錯誤量或安全稽核事件量之突增趨勢 | `TrendAnalyzer` 略過對應類別的總量暴增判定，不再觸發總量趨勢告警。僅支援 Host 範圍。 |
 
 ## 三種生效範圍（`SuppressionScopes`）與支援矩陣

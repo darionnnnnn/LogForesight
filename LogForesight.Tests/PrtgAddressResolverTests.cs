@@ -170,6 +170,161 @@ public class PrtgAddressResolverTests
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"耗時 {sw.Elapsed}");
     }
 
+    /// <summary>可手動撥快的時鐘，驗證快取到期</summary>
+    private sealed class ManualClock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan span) => _now += span;
+    }
+
+    [Fact]
+    public void Resolve_查無_59秒內不重查_61秒後重查()
+    {
+        var clock = new ManualClock();
+        var dns = new FakeDns(_ => Array.Empty<IPAddress>());
+        var resolver = new PrtgAddressResolver(dns.Lookup, clock);
+
+        Assert.Null(resolver.Resolve("gone.local"));
+        clock.Advance(TimeSpan.FromSeconds(59));
+        Assert.Null(resolver.Resolve("gone.local"));
+        Assert.Single(dns.Calls);
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.Null(resolver.Resolve("gone.local"));
+        Assert.Equal(2, dns.Calls.Count);
+    }
+
+    [Fact]
+    public void Resolve_成功_5分鐘內不重查_之後重查()
+    {
+        var clock = new ManualClock();
+        var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
+        var resolver = new PrtgAddressResolver(dns.Lookup, clock);
+
+        Assert.Equal("10.5.5.5", resolver.Resolve("prtg.local"));
+        clock.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromSeconds(1));
+        Assert.Equal("10.5.5.5", resolver.Resolve("prtg.local"));
+        Assert.Single(dns.Calls);
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.Equal("10.5.5.5", resolver.Resolve("prtg.local"));
+        Assert.Equal(2, dns.Calls.Count);
+    }
+
+    [Fact]
+    public void Resolve_逾時_不寫快取_下一次立即重查()
+    {
+        var clock = new ManualClock();
+        var attempts = 0;
+        var resolver = new PrtgAddressResolver(host =>
+        {
+            attempts++;
+            return attempts == 1 ? null : new[] { IPAddress.Parse("10.7.7.7") };
+        }, clock);
+
+        Assert.Null(resolver.Resolve("slow.local"));
+        Assert.Equal("10.7.7.7", resolver.Resolve("slow.local"));
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public void Resolve_逾時路徑經正式DNS包裝_不寫快取()
+    {
+        var clock = new FireOnDemandTimeProvider();
+        var calls = 0;
+        var resolver = new PrtgAddressResolver(async (host, ct) =>
+        {
+            calls++;
+            clock.FireAll();
+            await Task.Delay(Timeout.Infinite, ct);
+            return Array.Empty<IPAddress>();
+        }, clock);
+
+        Assert.Null(resolver.Resolve("slow.invalid"));
+        Assert.Null(resolver.Resolve("slow.invalid"));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void Resolve_32執行緒並行解析同一組名稱_不擲例外且查詢次數有界()
+    {
+        var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
+        var resolver = new PrtgAddressResolver(host => { lock (dns) return dns.Lookup(host); });
+        var names = Enumerable.Range(0, 10).Select(i => $"host{i}.local").ToArray();
+
+        var tasks = Enumerable.Range(0, 32).Select(_ => Task.Run(() =>
+        {
+            foreach (var n in names) Assert.Equal("10.5.5.5", resolver.Resolve(n));
+        })).ToArray();
+        Task.WaitAll(tasks);
+
+        Assert.True(dns.Calls.Count <= 20, $"DNS 呼叫 {dns.Calls.Count} 次");
+    }
+
+    [Fact]
+    public void Resolve_達條目上限_新名稱不進快取但仍回傳解析結果()
+    {
+        var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
+        var resolver = new PrtgAddressResolver(dns.Lookup);
+        for (var i = 0; i < PrtgAddressResolver.MaxEntries; i++)
+            resolver.Resolve($"fill{i}.local");
+        Assert.Equal(PrtgAddressResolver.MaxEntries, dns.Calls.Count);
+
+        Assert.Equal("10.5.5.5", resolver.Resolve("extra.local"));
+        Assert.Equal("10.5.5.5", resolver.Resolve("extra.local"));
+        Assert.Equal(PrtgAddressResolver.MaxEntries + 2, dns.Calls.Count);
+
+        // 既有項目不被清空
+        Assert.Equal("10.5.5.5", resolver.Resolve("fill0.local"));
+        Assert.Equal(PrtgAddressResolver.MaxEntries + 2, dns.Calls.Count);
+    }
+
+    [Fact]
+    public void Resolve_達條目上限且既有條目過期_先清過期再收新名稱()
+    {
+        var clock = new ManualClock();
+        var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
+        var resolver = new PrtgAddressResolver(dns.Lookup, clock);
+        for (var i = 0; i < PrtgAddressResolver.MaxEntries; i++)
+            resolver.Resolve($"fill{i}.local");
+
+        clock.Advance(TimeSpan.FromMinutes(6));   // 全部超過正快取 5 分鐘
+        resolver.Resolve("extra.local");
+        var calls = dns.Calls.Count;
+        Assert.Equal("10.5.5.5", resolver.Resolve("extra.local"));
+        Assert.Equal(calls, dns.Calls.Count);     // 第二次命中快取，沒有再查 DNS
+    }
+
+    [Fact]
+    public void Invalidate_發生在DNS查詢進行中_該次結果不寫回快取()
+    {
+        PrtgAddressResolver? resolver = null;
+        var dns = new FakeDns(_ =>
+        {
+            resolver!.Invalidate();   // 使用者在這筆查詢卡住期間按了「同步結構與對應」
+            return new[] { IPAddress.Parse("10.5.5.5") };
+        });
+        resolver = new PrtgAddressResolver(dns.Lookup);
+
+        Assert.Equal("10.5.5.5", resolver.Resolve("late.local"));
+        Assert.Equal("10.5.5.5", resolver.Resolve("late.local"));
+        Assert.Equal(2, dns.Calls.Count);   // 第二次仍查 DNS：修好前的結果沒有被記住
+    }
+
+    [Fact]
+    public void Invalidate_清空快取後重查()
+    {
+        var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
+        var resolver = new PrtgAddressResolver(dns.Lookup);
+
+        resolver.Resolve("prtg.local");
+        resolver.Invalidate();
+        resolver.Resolve("prtg.local");
+
+        Assert.Equal(2, dns.Calls.Count);
+    }
+
     /// <summary>手動時鐘：記下每個計時器的到期時間與回呼，<see cref="FireAll"/> 時一次觸發，其餘時間永不到期。</summary>
     private sealed class FireOnDemandTimeProvider : TimeProvider
     {

@@ -80,6 +80,19 @@ public class ApiExceptionFilterTests
     }
 
     [Fact]
+    public void PrtgScopePurgeBusyException_回409_conflict_與原訊息()
+    {
+        var ctx = NewContext(new LogForesight.Core.Persistence.PrtgScopePurgeBusyException("x"), aborted: false);
+        RunFilter(ctx);
+
+        var result = Assert.IsType<ObjectResult>(ctx.Result);
+        Assert.Equal(409, result.StatusCode);
+        var error = Assert.IsType<ApiResponse<object>>(result.Value).Error!;
+        Assert.Equal("conflict", error.Code);
+        Assert.Equal("x", error.Message);
+    }
+
+    [Fact]
     public void DomainException_NotFound回404()
     {
         var ctx = NewContext(new DomainException(ApiErrorCodes.NotFound, "找不到"), aborted: false);

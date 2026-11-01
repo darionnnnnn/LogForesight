@@ -224,8 +224,7 @@ public class LfDbContext : DbContext
             // 問題事實表的聚合維度（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：
             // 這張表原本只當「篩選子表」用（EXISTS 子查詢），拿不到主機與日期就無法在 SQL 端
             // 回答「這個問題影響幾台、跨哪段期間」——那正是需求「主視角改成問題」要的兩個數字。
-            // 這四欄自父列與問題本身去正規化而來，寫入時一併填好（同 lf_record_categories
-            // 「寫入時算好、查詢端直接讀」的既有分工，WEB-SPEC §10.3）。
+            // 這四欄自父列與問題本身去正規化而來，寫入時一併填好，查詢端直接讀。
             e.Property(x => x.HostId).HasColumnName("host_id").HasDefaultValue(0L);
             e.Property(x => x.RecordDate).HasColumnName("record_date");
             e.Property(x => x.EventCount).HasColumnName("event_count").HasDefaultValue(0);

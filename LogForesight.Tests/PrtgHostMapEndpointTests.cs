@@ -38,7 +38,7 @@ public class PrtgHostMapEndpointTests : IDisposable
         settingsStore.Update(x => x.PrtgEnabled = true);
 
         _controller = PrtgControllerFactory.HostMapping(_backend, _audit, _hosts,
-            mapRefresher: new PrtgHostMapRefresher(settingsStore, _backend));
+            mapRefresher: new PrtgHostMapRefresher(settingsStore, new LogForesight.Core.Service.PrtgAddressResolver(), _backend));
         _scope = PrtgControllerFactory.ScopeEstimate(new StubSystemSettingsService(), _backend, _hosts,
             visibility: new FullVisibility(_hosts));
 
@@ -238,7 +238,7 @@ public class PrtgHostMapEndpointTests : IDisposable
     {
         var settings = new SystemSettingsStore(_backend.Blob("system_settings"));
         settings.Update(x => x.PrtgEnabled = enabled);
-        return (settings, new PrtgHostMapRefresher(settings, _backend));
+        return (settings, new PrtgHostMapRefresher(settings, new LogForesight.Core.Service.PrtgAddressResolver(), _backend));
     }
 
     [Fact]
@@ -573,9 +573,9 @@ public class PrtgHostMapEndpointTests : IDisposable
         var lifetime = new FakeHostApplicationLifetime();
         var statusStore = new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey));
         var backfillState = new PrtgBackfillRunState();
-        var structureSync = new PrtgStructureSyncService(new FakeSystemSettingsStore(), _backend, syncState, new SchedulerRunState(), hostStore, statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), lifetime);
+        var structureSync = new PrtgStructureSyncService(new FakeSystemSettingsStore(), _backend, syncState, new SchedulerRunState(), hostStore, statusStore, backfillState, new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver(), lifetime);
         var probeState = new PrtgProbeRunState();
-        var backfill = new PrtgBackfillService(new FakeSystemSettingsStore(), _backend, backfillState, probeState, hostStore, new SchedulerRunState(), syncState, new FakeSentinelStore(), structureSync);
+        var backfill = new PrtgBackfillService(new FakeSystemSettingsStore(), _backend, backfillState, probeState, hostStore, new SchedulerRunState(), syncState, new FakeSentinelStore(), structureSync, new LogForesight.Core.Service.PrtgAddressResolver());
         var snapshotService = new PrtgSnapshotHostedService(new FakeSystemSettingsStore(), _backend, new SchedulerRunState(), structureSync, backfill, hostStore, new FakeSentinelStore(), probeState, lifetime);
 
         var service = new HostAdminService(
@@ -587,9 +587,9 @@ public class PrtgHostMapEndpointTests : IDisposable
             _audit,
             new UserDisplayNameService(new FakeSystemSettingsStore()),
             _backend.PrtgStore(),
-            new PrtgHostMapRefresher(new FakeSystemSettingsStore(), _backend),
+            new PrtgHostMapRefresher(new FakeSystemSettingsStore(), new LogForesight.Core.Service.PrtgAddressResolver(), _backend),
             new FakeSystemSettingsStore(), TestPermissionStamps.Shared,
-            snapshotService);
+            snapshotService, new LogForesight.Core.Service.PrtgAddressResolver());
 
         var list = service.GetAllActiveHostOptions();
 
@@ -766,7 +766,7 @@ public class PrtgHostMapEndpointTests : IDisposable
             settingsStore, _backend, new PrtgStructureSyncRunState(), schedulerState,
             new HostStore(_backend.Blob("hosts")),
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
-            new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp());
+            new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
 
         var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, structureSync: syncService);
 

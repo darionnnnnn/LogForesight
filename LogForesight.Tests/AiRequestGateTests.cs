@@ -54,6 +54,8 @@ public sealed class AiRequestGateTests
 
         var lease = await gate.EnterAsync(AiLane.Background, CancellationToken.None).WaitAsync(Generous);
 
+        // 能在 Generous 內取得許可（逾時會擲 TimeoutException）就代表讓路有上限
+        Assert.NotNull(lease);
         lease.Dispose();
     }
 

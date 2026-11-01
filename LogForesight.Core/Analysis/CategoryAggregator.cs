@@ -1,7 +1,7 @@
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// 單一類別在某一天的彙總（↔ lf_record_categories）。
+/// 單一類別在某一天的彙總（查詢時自 lf_top_issues 聚合，沒有獨立的類別表）。
 /// 各嚴重度的分解（<see cref="CriticalCount"/> 等）是 2026-07-21 為 Web 報表的
 /// 「類別×嚴重度」堆疊圖新增的——只有 MaxSeverity 答不出「這個類別各嚴重度各幾項」。
 /// </summary>
@@ -33,10 +33,9 @@ public class CategorySummary
 /// <summary>
 /// 類別彙總的計算（docs/WEB-SPEC.md §10.3、DB-PLAN 一致性機制 #4）。
 ///
-/// **純函數、單點定義**：批次寫入時呼叫它把結果存進 lf_record_categories，
-/// 任何需要重算彙總的呼叫端也用同一個函數。所有呼叫端因此保證產出逐位一致的數字——
+/// **純函數、單點定義**：Web 查詢時呼叫它自 lf_top_issues 的問題列聚合出類別彙總，
+/// 任何需要類別彙總的呼叫端也用同一個函數。所有呼叫端因此保證產出逐位一致的數字——
 /// 如果各自實作一份，遲早會出現「儀表板說 3 件、明細列出 4 件」這種沒人能解釋的差異。
-/// （Jsonl 後端退役前，這裡曾是「檔案端查詢期即時聚合」與「SQL 端寫入時入庫」共用的單點。）
 ///
 /// 與 <see cref="RecordStorageShaper"/> 同一個理由：能被兩個後端共用的規則，
 /// 就不該長在單一實作裡面。

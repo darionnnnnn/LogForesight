@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -60,18 +59,11 @@ public class SetupMailInlineUiTests
         var js = Read("LogForesight.Web", "wwwroot", "js", "pages", "setup.js");
         var match = Regex.Match(js, @"export function parseRecipients\(raw\)\s*(\{[^}]+\})");
         Assert.True(match.Success);
-        var psi = new ProcessStartInfo("node", "--experimental-default-type=module --input-type=module")
-        {
-            WorkingDirectory = Root(), RedirectStandardInput = true, RedirectStandardOutput = true,
-            RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true
-        };
-        using var process = Process.Start(psi);
-        Assert.NotNull(process);
-        process!.StandardInput.WriteLine($"function parseRecipients(raw) {match.Groups[1].Value}");
-        process.StandardInput.WriteLine("const a = parseRecipients(' a@x.test \\n b@x.test\\n a@x.test\\n '); if (a.length !== 2 || a[0] !== 'a@x.test' || a[1] !== 'b@x.test' || parseRecipients(null).length) throw new Error('invalid recipients');");
-        process.StandardInput.Close();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, error);
+        var script = $"function parseRecipients(raw) {match.Groups[1].Value}\n" +
+            "const a = parseRecipients(' a@x.test \\n b@x.test\\n a@x.test\\n '); if (a.length !== 2 || a[0] !== 'a@x.test' || a[1] !== 'b@x.test' || parseRecipients(null).length) throw new Error('invalid recipients');\n";
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--experimental-default-type=module", "--input-type=module" },
+            Root(), stdin: script, timeout: TimeSpan.FromSeconds(60), label: "parseRecipients");
+        Assert.True(r.ExitCode == 0, r.Stderr);
     }
 }

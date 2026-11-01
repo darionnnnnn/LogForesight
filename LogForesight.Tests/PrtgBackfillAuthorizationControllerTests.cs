@@ -300,9 +300,9 @@ public sealed class PrtgBackfillAuthorizationControllerTests : IDisposable
         var structureState = new PrtgStructureSyncRunState();
         var structure = new PrtgStructureSyncService(_settings, _backend, structureState, scheduler,
             _hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
-            runState, new FakeSentinelStore(), new DataVersionStamp());
+            runState, new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
         var service = new PrtgBackfillService(_settings, _backend, runState, new PrtgProbeRunState(),
-            _hosts, scheduler, structureState, new FakeSentinelStore(), structure, clientFactory: clientFactory);
+            _hosts, scheduler, structureState, new FakeSentinelStore(), structure, new LogForesight.Core.Service.PrtgAddressResolver(), clientFactory: clientFactory);
         var controller = PrtgControllerFactory.BackfillAdmin(_backend, _audit, backfill: service,
             structureSync: structure, hosts: _hosts, visibility: visibility,
             currentUser: viewAll ? FakeCurrentUser.WithCapabilities(Capability.Maintain, Capability.ViewAll)

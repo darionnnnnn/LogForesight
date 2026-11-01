@@ -8,8 +8,8 @@
 
 - 依據 [nextlevelbuilder/ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)（MIT）的設計智能資料庫產生：以「security log analysis enterprise dashboard」「enterprise log analytics admin dashboard professional clean light data-dense」等情境檢索其 84 種 UI 風格、192 色盤、74 組字型配對與 UX 指南後收斂。skill 僅在開發期作為檢索工具，**不進出貨產物、不引入任何執行期依賴**，符合 WEB-SPEC §8.1 憲章。
 - 風格定位：**Data-Dense Dashboard（BI/Analytics）× Swiss 極簡**——資料密度優先、低彩度中性底、明確層級、剋制動效。skill 對此風格的定義：「Multiple charts/widgets, data tables, KPI cards, minimal padding, grid layout, space-efficient, maximum data visibility」。
-- 色彩策略：**深企業藍（deep enterprise blue）主色 + 琥珀（amber）強調色**，取代 v1 靛藍。skill「Analytics Dashboard」色盤原型：Blue data + amber highlights，語意是「藍＝資料與信任、琥珀＝需要注意的亮點」，與資安日誌產品的「大多正常、少數要看」的資訊結構吻合。
-- 深色模式：本輪不做（淺色打磨到位後另案）。
+- 色彩策略：**深企業藍（deep enterprise blue）主色 + 琥珀（amber）強調色**。skill「Analytics Dashboard」色盤原型：Blue data + amber highlights，語意是「藍＝資料與信任、琥珀＝需要注意的亮點」，與資安日誌產品的「大多正常、少數要看」的資訊結構吻合。
+- 深色模式：未提供（淺色打磨到位後另案評估）。
 
 ## 2. 色彩 token（v1 → v2 對照）
 

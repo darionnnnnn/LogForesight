@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using System.Text;
+﻿using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -238,6 +237,7 @@ public class FrontendMiscBehaviorTests
     [InlineData("說明書首次載入不捲動而一般切章會捲動")]
     [InlineData("郵件帳本提示_未達九成且無滿載紀錄時不顯示")]
     [InlineData("郵件帳本提示_滿載時帶出數字時間與收件人")]
+    [InlineData("郵件帳本提示_顯示五個佔用分項且各有白話說明")]
     [InlineData("郵件帳本提示_達九成但無滿載紀錄時顯示接近上限")]
     public void 小項行為案例(string caseName)
     {
@@ -252,42 +252,12 @@ public class FrontendMiscBehaviorTests
         var script = Path.Combine(scriptDir, "misc-pages.behavior.mjs");
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
 
-        var psi = new ProcessStartInfo("node")
-        {
-            WorkingDirectory = scriptDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false
-        };
-        psi.ArgumentList.Add("--experimental-default-type=module");
-        psi.ArgumentList.Add(script);
-        psi.ArgumentList.Add(caseName);
-
-        Process? process;
-        try
-        {
-            process = Process.Start(psi);
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException("偵測到 node 卻無法啟動行為測試腳本。", ex);
-        }
-
-        Assert.NotNull(process);
-        // 先非同步讀輸出、逾時就結束整個程序樹再判失敗，避免實作壞掉時 node 不結束而卡死
-        var stdoutTask = process!.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(15_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* 已經結束就算了 */ }
-            Assert.Fail($"node 執行逾時：{caseName}");
-        }
-
-        var stdout = stdoutTask.GetAwaiter().GetResult();
-        var stderr = stderrTask.GetAwaiter().GetResult();
-        Assert.True(process.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--experimental-default-type=module", script, caseName }, scriptDir,
+            timeout: TimeSpan.FromSeconds(15), label: caseName);
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
+        Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);
     }
 }
@@ -315,42 +285,12 @@ public class ChatPanelGenerationBehaviorTests
         var script = Path.Combine(scriptDir, "chat-panel-generation.behavior.mjs");
         Assert.True(File.Exists(script), $"找不到行為測試腳本: {script}");
 
-        var psi = new ProcessStartInfo("node")
-        {
-            WorkingDirectory = scriptDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false
-        };
-        psi.ArgumentList.Add("--experimental-default-type=module");
-        psi.ArgumentList.Add(script);
-        psi.ArgumentList.Add(caseName);
-
-        Process? process;
-        try
-        {
-            process = Process.Start(psi);
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException("偵測到 node 卻無法啟動行為測試腳本。", ex);
-        }
-
-        Assert.NotNull(process);
-        // 先非同步讀輸出、逾時就結束整個程序樹再判失敗，避免實作壞掉時 node 不結束而卡死
-        var stdoutTask = process!.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(15_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* 已經結束就算了 */ }
-            Assert.Fail($"node 執行逾時：{caseName}");
-        }
-
-        var stdout = stdoutTask.GetAwaiter().GetResult();
-        var stderr = stderrTask.GetAwaiter().GetResult();
-        Assert.True(process.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--experimental-default-type=module", script, caseName }, scriptDir,
+            timeout: TimeSpan.FromSeconds(15), label: caseName);
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
+        Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);
     }
 }

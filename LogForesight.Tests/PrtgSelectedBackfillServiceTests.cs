@@ -44,9 +44,9 @@ public sealed class PrtgSelectedBackfillServiceTests : IDisposable
         var syncState = new PrtgStructureSyncRunState();
         var sync = new PrtgStructureSyncService(_settings, _backend, syncState, scheduler, _hosts,
             new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), state,
-            new FakeSentinelStore(), new DataVersionStamp());
+            new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
         _service = new PrtgBackfillService(_settings, _backend, state, new PrtgProbeRunState(), _hosts,
-            scheduler, syncState, new FakeSentinelStore(), sync);
+            scheduler, syncState, new FakeSentinelStore(), sync, new LogForesight.Core.Service.PrtgAddressResolver());
     }
 
     public void Dispose()

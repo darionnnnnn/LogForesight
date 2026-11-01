@@ -35,13 +35,13 @@ class FakeNode {
     }
     set textContent(value) { this._text = String(value); this.children = []; }
 
-    set innerHTML(value) { this._html = String(value); }
+    set innerHTML(value) { this._html = String(value); this.children = []; this._text = ''; }
     get innerHTML() { return this._html || ''; }
 
-    appendChild(child) { this.children.push(child); return child; }
-    append(...nodes) { nodes.forEach(n => this.children.push(n)); }
-    replaceChildren(...nodes) { this.children = [...nodes]; this._text = ''; }
-    remove() { }
+    appendChild(child) { this.children.push(child); if (child) child._parent = this; return child; }
+    append(...nodes) { nodes.forEach(n => { this.children.push(n); if (n) n._parent = this; }); }
+    replaceChildren(...nodes) { this.children = [...nodes]; this._text = ''; nodes.forEach(n => { if (n) n._parent = this; }); }
+    remove() { if (this._parent) this._parent.children = this._parent.children.filter(c => c !== this); this._parent = null; }
     setAttribute(name, value) { this.attributes[name] = String(value); }
     setAttributeNS(_ns, name, value) { this.attributes[name] = String(value); }
     getAttribute(name) { return this.attributes[name] ?? null; }
@@ -49,7 +49,10 @@ class FakeNode {
     dispatch(type) { (this.listeners[type] || []).forEach(h => h()); }
 
     querySelector(selector) {
-        // 只支援 class 選擇器：toast() 要拿 .toast-body，renderLoading 的骨架列驗證要拿 .lf-skeleton
+        // 支援 class 選擇器（toast() 的 .toast-body、renderLoading 的 .lf-skeleton）
+        // 與單一屬性等值選擇器 [name="value"]（AI 歸納提示的去重）
+        const attr = /^\[([\w-]+)="([^"]*)"\]$/.exec(selector);
+        if (attr && this.getAttribute(attr[1]) === attr[2]) return this;
         const name = selector.replace(/^\./, '');
         if (selector.startsWith('.') && this.classList.contains(name)) return this;
         for (const child of this.children) {

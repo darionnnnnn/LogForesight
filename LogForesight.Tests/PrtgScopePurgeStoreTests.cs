@@ -165,7 +165,7 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
         SeedRows();
         var first = Accept(Preview());
         var second = Preview();
-        Assert.Throws<InvalidOperationException>(() => Accept(second));
+        Assert.Throws<PrtgScopePurgeBusyException>(() => Accept(second));
 
         var stopped = _jobs.RunBatch(first.JobId, first.Revision, "changed-generation", Now.AddMinutes(2));
         Assert.Equal("stopped", stopped.Status);
@@ -181,13 +181,28 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
     }
 
     [Fact]
+    public void Busy_slot_throws_dedicated_exception_for_second_accept_and_host_store_write()
+    {
+        SeedRows();
+        // 資源圍籬以真實時間判定租約是否逾期，所以這案用目前時間建立作業
+        var now = DateTimeOffset.UtcNow;
+        Accept(Preview(now: now), now: now.AddMinutes(1));
+        var ex1 = Assert.Throws<PrtgScopePurgeBusyException>(() => Accept(Preview(now: now), now: now.AddMinutes(1)));
+        Assert.Contains("另一個範圍外清除作業", ex1.Message);
+        var hosts = new HostStore(_backend.Blob("hosts-busy"));
+        var ex2 = Assert.Throws<PrtgScopePurgeBusyException>(() => hosts.Upsert(new WebHost { HostName = "busy-write" }));
+        Assert.Contains("監看範圍正在清除中", ex2.Message);
+        Assert.IsAssignableFrom<InvalidOperationException>(ex2);
+    }
+
+    [Fact]
     public void Automatic_parent_and_manual_confirmation_share_one_durable_slot()
     {
         SeedRows();
         var automatic = _jobs.CreateAutomatic("nightly-parent-42", Fingerprint, Keep, 1, Now);
         var replay = _jobs.CreateAutomatic("nightly-parent-42", Fingerprint, Keep, 1, Now.AddMinutes(1));
         Assert.Equal(automatic.JobId, replay.JobId);
-        Assert.Throws<InvalidOperationException>(() => Accept(Preview()));
+        Assert.Throws<PrtgScopePurgeBusyException>(() => Accept(Preview()));
         var completed = _jobs.RunBatch(automatic.JobId, automatic.Revision, Fingerprint, Now.AddMinutes(2),
             ownershipCheck: () => true);
         Assert.Equal("complete", completed.Status);
@@ -283,14 +298,15 @@ public sealed class PrtgScopePurgeStoreTests : IDisposable
         var accepted = _jobs.Accept(preview.JobId, 7, 3, null, Fingerprint, now.AddMinutes(1));
 
         // The host-map writer's slot check and mutation share one serializable transaction.
-        Assert.Throws<InvalidOperationException>(() => _prtg.ReplaceHostMapForDate(DateTime.Today,
+        Assert.Throws<PrtgScopePurgeBusyException>(() => _prtg.ReplaceHostMapForDate(DateTime.Today,
             new[] { new PrtgHostMapRow { DeviceObjid = 2, HostId = 77, HostName = "changed" } }));
-        Assert.Throws<InvalidOperationException>(() => _prtg.UpsertManualMap(new PrtgManualMapRow
+        Assert.Throws<PrtgScopePurgeBusyException>(() => _prtg.UpsertManualMap(new PrtgManualMapRow
         {
             DeviceObjid = 2, HostId = 77, Note = "changed"
         }));
         var hosts = new HostStore(_backend.Blob("hosts"));
-        Assert.Throws<InvalidOperationException>(() => hosts.Upsert(new WebHost { HostName = "scope-race" }));
+        Assert.Throws<PrtgScopePurgeBusyException>(() => hosts.Upsert(new WebHost { HostName = "scope-race" }));
+        Assert.Throws<PrtgScopePurgeBusyException>(() => _prtg.UpsertIpExclude(new PrtgIpExcludeRow { Ip = "10.9.9.9" }));
 
         // Model a scope source committed by an older/out-of-process writer that did not use the slot guard.
         // The per-batch version read and delete share one transaction, so no newly unsafe candidate is deleted.

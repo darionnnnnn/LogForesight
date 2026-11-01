@@ -266,7 +266,9 @@ public class WebAppSettingsValidationTests
     {
         var settings = Baseline();
 
-        settings.Validate(strict: false, "Development");   // 不應拋例外
+        // 意圖：非 Production 用已知值不擲例外
+        var ex = Record.Exception(() => settings.Validate(strict: false, "Development"));
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -276,7 +278,9 @@ public class WebAppSettingsValidationTests
         settings.Jwt.SecretKey = "這是另外產生的至少三十二個位元組長的隨機字串內容測試用途";
         settings.Auth.ServerAdmin.PasswordHash = PasswordHasher.Hash("Production-Overridden-P@ssw0rd");
 
-        settings.Validate(strict: true, "Production");   // 不應拋例外
+        // 意圖：Production 已覆寫成非已知值不擲例外
+        var ex = Record.Exception(() => settings.Validate(strict: true, "Production"));
+        Assert.Null(ex);
     }
 
     [Fact]

@@ -35,6 +35,13 @@ public class ApiExceptionFilter : IExceptionFilter
                 ApiErrorCodes.Conflict,
                 conflict.Message),
 
+            // PRTG 範圍外清除作業佔用範圍寫入槽：多人／背景同時操作的正常結果，不是故障，回 409。
+            // 型別繼承 InvalidOperationException，所以必須排在任何會先吃掉 InvalidOperationException 的 arm 之前
+            LogForesight.Core.Persistence.PrtgScopePurgeBusyException busy => (
+                StatusCodes.Status409Conflict,
+                ApiErrorCodes.Conflict,
+                busy.Message),
+
             // PRTG 診斷傳輸儲存層的領域例外：狀態碼與錯誤碼由拋出點決定（例如 403 transfer_binding_changed、
             // 409 transfer_context_changed），訊息本身就是給使用者看的。專屬型別，不會誤傷其他控制器
             LogForesight.Core.Persistence.Sql.PrtgTransferStoreException transfer => (

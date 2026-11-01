@@ -240,7 +240,7 @@ public class NetiqPipelineService
                 {
                     await RunServerAsync(sentinel, targets, trendWindowDays, result, suppressionSnapshot, serverCt);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!(ex is OperationCanceledException && serverCt.IsCancellationRequested))
                 {
                     _hostDayTiming?.MarkIncomplete(timingRunId);
                     // 失敗隔離：一台 Sentinel 整台失聯（如連線位址設定壞掉）不該讓其餘 Sentinel
@@ -514,7 +514,8 @@ public class NetiqPipelineService
                     StreamOnly: true),
                 ct);
         }
-        catch (SentinelClientException ex)
+        // 逾時（HttpClient 擲 TaskCanceledException 但 ct 未取消）與 SentinelClientException 同樣算該批失敗、續跑下一批
+        catch (Exception ex) when (ex is SentinelClientException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
             foreach (var plan in batch) _hostDayTiming?.RecordSourceFailure(_runRecorder.RunId, plan.Target.HostId, date);
             NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "failed");
@@ -524,7 +525,7 @@ public class NetiqPipelineService
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             return;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             NetiqSourceAttempt.RecordBatch(_backend, batch.Select(p => p.Target.HostId).ToArray(), date, _runRecorder.RunId, "stopped");
             throw;
@@ -645,7 +646,7 @@ public class NetiqPipelineService
                 NetiqSourceAttempt.RecordBatch(_backend, group.Select(item => item.HostId).ToArray(), date, _runRecorder.RunId, group.Key);
             var finished = terminalAttempts.Select(item => item.HostId).ToHashSet();
             var pending = batch.Select(plan => plan.Target.HostId).Where(hostId => !finished.Contains(hostId)).ToArray();
-            NetiqSourceAttempt.RecordBatch(_backend, pending, date, _runRecorder.RunId, "stopped");
+            NetiqSourceAttempt.RecordBatch(_backend, pending, date, _runRecorder.RunId, ct.IsCancellationRequested ? "stopped" : "failed");
             throw;
         }
 
@@ -804,7 +805,7 @@ public class NetiqPipelineService
             _progress?.Report(RunPhases.Netiq, result.HostDaysDone, result.HostDaysTotal);
             return dataIncomplete ? "partial" : "success";
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
             if (!timingRecorded) _hostDayTiming?.RecordUnknown(_runRecorder.RunId, target.HostId, date);
             NetiqSourceAttempt.RecordBatch(_backend, new[] { target.HostId }, date, _runRecorder.RunId, "failed");

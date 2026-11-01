@@ -219,7 +219,7 @@ public class RunNowPrtgValuesTests
         public FakeStructureSync(Harness h, List<string> log, Func<string?> behavior)
             : base(h.Settings, h.Backend, h.SyncState, h.Scheduler, new HostStore(h.Backend.Blob("hosts")),
                 new PrtgStructureSyncStatusStore(h.Backend.Blob(PrtgStructureSyncStatusStore.BlobKey)),
-                h.BackfillState, new FakeSentinelStore(), new DataVersionStamp())
+                h.BackfillState, new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver())
         {
             _behavior = behavior;
             Log = log;
@@ -265,7 +265,7 @@ public class RunNowPrtgValuesTests
             var sync = new FakeStructureSync(this, SyncLog, () => syncBehavior?.Invoke(this));
             Service = new PrtgBackfillService(
                 Settings, Backend, BackfillState, new PrtgProbeRunState(),
-                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore(), sync);
+                new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore(), sync, new LogForesight.Core.Service.PrtgAddressResolver());
         }
 
         public void SeedMirror()

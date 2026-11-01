@@ -27,15 +27,18 @@ public sealed class PrtgScopePurgeJobsController : ControllerBase
     private readonly PrtgScopePurgeAuthorizationService _authorization;
     private readonly IAuditService _audit;
     private readonly PrtgBackfillService? _backfill;
+    private readonly IPrtgAddressResolver _addressResolver;
 
     public PrtgScopePurgeJobsController(StorageBackend backend, ICurrentUser currentUser,
-        PrtgScopePurgeAuthorizationService authorization, IAuditService audit, PrtgBackfillService? backfill = null)
+        PrtgScopePurgeAuthorizationService authorization, IAuditService audit, IPrtgAddressResolver addressResolver,
+        PrtgBackfillService? backfill = null)
     {
         _backend = backend;
         _currentUser = currentUser;
         _authorization = authorization;
         _audit = audit;
         _backfill = backfill;
+        _addressResolver = addressResolver;
     }
 
     [HttpPost("~/api/admin/settings/prtg-scope-purge/confirm")]
@@ -74,11 +77,8 @@ public sealed class PrtgScopePurgeJobsController : ControllerBase
             accepted = jobs.Accept(request.PreviewId, _currentUser.UserId, authorization.PermissionRevision,
                 authorization.AuthFingerprint, PrtgScopePurge.ComputeFingerprint(store, scope!), DateTimeOffset.UtcNow);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("另一個範圍外清除作業", StringComparison.Ordinal))
-        {
-            throw DomainException.Conflict(ex.Message);
-        }
-        catch (InvalidOperationException ex)
+        // 清除作業忙碌（PrtgScopePurgeBusyException）不攔，交給 ApiExceptionFilter 回 409
+        catch (InvalidOperationException ex) when (ex is not PrtgScopePurgeBusyException)
         {
             throw DomainException.Validation(ex.Message);
         }
@@ -132,11 +132,8 @@ public sealed class PrtgScopePurgeJobsController : ControllerBase
                 PrtgScopePurge.ComputeFingerprint(store, scope!), DateTimeOffset.UtcNow, cancellationToken,
                 authorization.ToBatchFence());
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("另一個範圍外清除作業", StringComparison.Ordinal))
-        {
-            throw DomainException.Conflict(ex.Message);
-        }
-        catch (InvalidOperationException ex)
+        // 清除作業忙碌（PrtgScopePurgeBusyException）不攔，交給 ApiExceptionFilter 回 409
+        catch (InvalidOperationException ex) when (ex is not PrtgScopePurgeBusyException)
         {
             throw DomainException.Validation(ex.Message);
         }
@@ -149,7 +146,7 @@ public sealed class PrtgScopePurgeJobsController : ControllerBase
             throw DomainException.Forbidden("此清除作業屬於其他操作者。");
     }
 
-    private static (PrtgScopeResult? Scope, string? Blocked) ComputeTrustedScope(StorageBackend backend)
+    private (PrtgScopeResult? Scope, string? Blocked) ComputeTrustedScope(StorageBackend backend)
     {
         var store = backend.PrtgStore();
         PrtgScopeResult? scope = null;
@@ -159,7 +156,7 @@ public sealed class PrtgScopePurgeJobsController : ControllerBase
             scope = PrtgScopeDevices.Compute(store, new HostStore(backend.Blob("hosts")),
                 new PrtgMirrorGuardSource(store), settings,
                 new SentinelStore(backend.Blob("sentinels")).GetAll(), new SilentRunConsole(),
-                new PrtgAddressResolver(), hostIds: null);
+                _addressResolver, hostIds: null);
         }
         catch (Exception ex)
         {

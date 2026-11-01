@@ -47,7 +47,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         new(_settingsStore, _backend, state ?? new PrtgStructureSyncRunState(),
             schedulerState ?? new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")), StatusStore(), backfillState ?? new PrtgBackfillRunState(),
-            new FakeSentinelStore(), new DataVersionStamp());
+            new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
 
     // ── 手動作業閘門（同步＋回填合成，docs/PRTG-SPEC.md §5a）──────────────────
 
@@ -446,7 +446,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         });
 
         // PRTG 未啟用（預設）
-        var refresher = new PrtgHostMapRefresher(_settingsStore, _backend);
+        var refresher = new PrtgHostMapRefresher(_settingsStore, new LogForesight.Core.Service.PrtgAddressResolver(), _backend);
         Assert.Null(refresher.TryRefreshToday());
 
         // 既有對應原封不動——若真的重算了，鏡像是空的會把它洗掉
@@ -465,7 +465,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
             new() { DeviceObjid = 5002, HostId = 9, MapStatus = PrtgMapStatus.Ok, Ip = "10.5.0.2" }
         });
 
-        Assert.Null(new PrtgHostMapRefresher(_settingsStore, _backend).TryRefreshToday());
+        Assert.Null(new PrtgHostMapRefresher(_settingsStore, new LogForesight.Core.Service.PrtgAddressResolver(), _backend).TryRefreshToday());
 
         // 鏡像是空的，重算後該日對應應該被清空
         Assert.Empty(prtgStore.GetHostMapForDate(day));
@@ -521,7 +521,7 @@ public class PrtgStructureSyncServiceTests : IDisposable
         var state = new PrtgStructureSyncRunState();
         var service = new PrtgStructureSyncService(_settingsStore, _backend, state, new SchedulerRunState(),
             new HostStore(_backend.Blob("hosts")), StatusStore(), new PrtgBackfillRunState(),
-            new ThrowingSentinelStore(), new DataVersionStamp());
+            new ThrowingSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver());
         service.ClientFactoryForTests = settings => PrtgClientFactory.Create(settings, new EmptyDevicesHandler(), new PrtgRequestBudget());
 
         Assert.True(service.TryStart(out var error, out _), error);

@@ -109,14 +109,14 @@ public sealed class PrtgScopePurgeStore
             if (expectedScopeFenceJson != null && !LockScopeFence(ctx, expectedScopeFenceJson))
                 throw new InvalidOperationException("監看範圍在計算期間已變更，拒絕自動清除。");
             var occupied = ctx.PrtgScopePurgeJobs.AsNoTracking().Any(x => x.ActiveOwner == "active");
-            if (occupied) throw new InvalidOperationException("另一個範圍外清除作業正在執行。");
+            if (occupied) throw new PrtgScopePurgeBusyException("另一個範圍外清除作業正在執行。");
             var row = NewJob(ctx, actorId: 0, parentJobId, "automatic", "accepted", fingerprint,
                 keepSet, monitoredDevices, permissionRevision: 0, authFingerprint: null, now);
             row.ActiveOwner = "active";
             row.LeaseExpiresAtUtc = LeaseExpiresAt(now);
             ctx.PrtgScopePurgeJobs.Add(row);
             try { ctx.SaveChanges(); }
-            catch (DbUpdateException) { throw new InvalidOperationException("另一個範圍外清除作業正在執行。"); }
+            catch (DbUpdateException) { throw new PrtgScopePurgeBusyException("另一個範圍外清除作業正在執行。"); }
             tx.Commit();
             return row;
         });
@@ -232,14 +232,14 @@ public sealed class PrtgScopePurgeStore
 
             // The unique nullable slot is a database-enforced cross-process mutex.
             var occupied = ctx.PrtgScopePurgeJobs.AsNoTracking().Any(x => x.ActiveOwner == "active");
-            if (occupied) throw new InvalidOperationException("另一個範圍外清除作業正在執行。");
+            if (occupied) throw new PrtgScopePurgeBusyException("另一個範圍外清除作業正在執行。");
             row.Status = "accepted";
             row.ActiveOwner = "active";
             row.LeaseExpiresAtUtc = LeaseExpiresAt(now);
             row.UpdatedAtUtc = now.UtcDateTime;
             row.Revision++;
             try { ctx.SaveChanges(); }
-            catch (DbUpdateException) { throw new InvalidOperationException("另一個範圍外清除作業正在執行。"); }
+            catch (DbUpdateException) { throw new PrtgScopePurgeBusyException("另一個範圍外清除作業正在執行。"); }
             tx.Commit();
             return row;
         });
@@ -290,7 +290,7 @@ public sealed class PrtgScopePurgeStore
             }
             PauseExpiredOwner(ctx, now, exceptJobId: jobId);
             if (row.ActiveOwner != "active" && ctx.PrtgScopePurgeJobs.AsNoTracking().Any(x => x.JobId != jobId && x.ActiveOwner == "active"))
-                throw new InvalidOperationException("另一個範圍外清除作業正在執行。");
+                throw new PrtgScopePurgeBusyException("另一個範圍外清除作業正在執行。");
             cancellationToken.ThrowIfCancellationRequested();
             if (authorizationFence != null &&
                 (row.Source != "manual" || row.AuthFingerprint != authorizationFence.AuthFingerprint ||
@@ -460,7 +460,7 @@ public sealed class PrtgScopePurgeStore
         LockScopeMutationGate(ctx);
         PauseExpiredOwner(ctx, DateTimeOffset.UtcNow, exceptJobId: null);
         if (ctx.PrtgScopePurgeJobs.AsNoTracking().Any(x => x.ActiveOwner == "active"))
-            throw new InvalidOperationException("監看範圍正在清除中，請稍後再變更來源、對應或主機範圍。");
+            throw new PrtgScopePurgeBusyException("監看範圍正在清除中，請稍後再變更來源、對應或主機範圍。");
     }
 
     private static DateTime LeaseExpiresAt(DateTimeOffset now) => now.UtcDateTime.Add(OwnerLeaseLifetime);

@@ -34,10 +34,12 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
 
     private readonly StorageBackend? _backend;
     private readonly ISystemSettingsStore _settings;
+    private readonly IPrtgAddressResolver _addressResolver;
 
-    public PrtgHostMapRefresher(ISystemSettingsStore settings, StorageBackend? backend = null)
+    public PrtgHostMapRefresher(ISystemSettingsStore settings, IPrtgAddressResolver addressResolver, StorageBackend? backend = null)
     {
         _settings = settings;
+        _addressResolver = addressResolver;
         _backend = backend;
     }
 
@@ -55,7 +57,7 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
 
             var hostStore = new HostStore(_backend.Blob("hosts"));
             var mapper = new PrtgHostMapper(
-                _backend.PrtgStore(), hostStore, new SilentRunConsole(), new PrtgAddressResolver());
+                _backend.PrtgStore(), hostStore, new SilentRunConsole(), _addressResolver);
             mapper.MapForDate(DateTime.Today);
             return null;
         }
@@ -84,7 +86,7 @@ public class PrtgHostMapRefresher : IPrtgHostMapRefresher
             }
 
             var today = DateTime.Today;
-            var mapper = new PrtgHostMapper(store, new HostStore(_backend.Blob("hosts")), new SilentRunConsole(), new PrtgAddressResolver());
+            var mapper = new PrtgHostMapper(store, new HostStore(_backend.Blob("hosts")), new SilentRunConsole(), _addressResolver);
             // 重算要逐台解析 DNS、可能跑上幾分鐘；期間使用者若做了人工對應或 IP 排除（scope revision 會動），
             // 這趟算出來的今天對應已經過時，寫回去會蓋掉使用者剛做的指派——範圍版本不一致就重算，最多三次
             var scopeRevision = _backend.Blob(EfPrtgStore.ScopeRevisionBlobKey);

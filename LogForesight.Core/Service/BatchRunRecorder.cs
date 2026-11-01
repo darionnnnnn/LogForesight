@@ -4,7 +4,7 @@ using NLog.Targets;
 namespace LogForesight.Core.Service;
 
 /// <summary>
-/// 批次執行紀錄的收集（docs/WEB-SPEC.md §2.1 Phase 4、§11-5）。
+/// 批次執行紀錄的收集（docs/WEB-SPEC.md §11、§10.1）。
 ///
 /// 啟動時登記一列（FinishedAt=null），結束時回填——於是「異常中斷的執行」變成可查詢的狀態，
 /// 比等到「今天沒紀錄」才發現早一步。

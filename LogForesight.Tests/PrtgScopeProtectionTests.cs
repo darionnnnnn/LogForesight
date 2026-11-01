@@ -466,7 +466,7 @@ public class PrtgScopeProtectionTests : IDisposable
         var scheduler = new SchedulerRunState();
         var backfill = new PrtgBackfillService(settingsStore, _backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
             _hosts, scheduler, new PrtgStructureSyncRunState(), new FakeSentinelStore(),
-            new PrtgStructureSyncService(settingsStore, _backend, new PrtgStructureSyncRunState(), scheduler, _hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
+            new PrtgStructureSyncService(settingsStore, _backend, new PrtgStructureSyncRunState(), scheduler, _hosts, new PrtgStructureSyncStatusStore(_backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver()), new LogForesight.Core.Service.PrtgAddressResolver());
         var audit = new RecordingAuditService();
         var users = new UserStore(_backend.Blob("purge-test-users"), _backend.Blob("purge-test-user-last-login"));
         var groups = new UserGroupStore(_backend.Blob("purge-test-user-groups"));
@@ -478,7 +478,7 @@ public class PrtgScopeProtectionTests : IDisposable
             new UserCapabilityResolver(groups, _hosts), currentUser, new WebAppSettings(), _backend);
         var controller = PrtgControllerFactory.ScopeEstimate(new StubSettingsService(), _backend, _hosts,
             currentUser: currentUser, scopePurgeAuthorization: purgeAuthorization);
-        var jobsController = new PrtgScopePurgeJobsController(_backend, currentUser, purgeAuthorization, audit, backfill);
+        var jobsController = new PrtgScopePurgeJobsController(_backend, currentUser, purgeAuthorization, audit, new LogForesight.Core.Service.PrtgAddressResolver(), backfill);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -505,7 +505,7 @@ public class PrtgScopeProtectionTests : IDisposable
         currentUser = FakeCurrentUser.ForUser(userId, Capability.Maintain);
         var authorization = new PrtgScopePurgeAuthorizationService(users,
             new UserCapabilityResolver(groups, _hosts), currentUser, new WebAppSettings(), _backend);
-        return new PrtgScopePurgeJobsController(_backend, currentUser, authorization, new RecordingAuditService());
+        return new PrtgScopePurgeJobsController(_backend, currentUser, authorization, new RecordingAuditService(), new LogForesight.Core.Service.PrtgAddressResolver());
     }
 
     [Fact]
@@ -519,7 +519,7 @@ public class PrtgScopeProtectionTests : IDisposable
         var authorization = new PrtgScopePurgeAuthorizationService(users,
             new UserCapabilityResolver(groups, _hosts), serverAdmin, new WebAppSettings(), _backend);
         var controller = new PrtgScopePurgeJobsController(_backend, serverAdmin, authorization,
-            new RecordingAuditService());
+            new RecordingAuditService(), new LogForesight.Core.Service.PrtgAddressResolver());
 
         Assert.Throws<DomainException>(() => controller.Get(automatic.JobId));
         Assert.Throws<DomainException>(() => controller.Resume(automatic.JobId,

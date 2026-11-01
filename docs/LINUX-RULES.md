@@ -180,8 +180,8 @@ Event」（或 CEF 路徑的對應樣板），資訊量就是 program 本身，�
 | 2 | Warning |
 | 3～5 | Error |
 
-**與原設計草案的差異**：草案原本設想 syslog priority 文字（emerg/alert/crit/err/warning/
-notice/info/debug）能直接映射 `EntryType`，但四輪 probe 實證推翻了這個假設——Sentinel 的
+**`sev` 不等於 syslog priority**：syslog priority 文字（emerg/alert/crit/err/warning/
+notice/info/debug）無法直接映射 `EntryType`（四輪 probe 實證）——Sentinel 的
 `sev` 是純數值欄位（0～5），且**不可靠地承載 syslog priority 語意**：NetworkManager 的
 `<warn>` 訊息與 dockerd 的 `level=error` 訊息都落在 `sev=1`，而「pam session opened」這類
 例行訊息反而落在 `sev=3～5`。上表因此是**計數用途的務實選擇**，不是語意重建——規則層／
@@ -194,7 +194,7 @@ notice/info/debug）能直接映射 `EntryType`，但四輪 probe 實證推翻�
 Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一份程式碼的 Linux 分支：Windows
 版靠 EventId 群組比對，Linux 版靠 **regex 解析 `msg` 文字**取 (user, ip) 再找同日重疊。
 `LogAnalysisService.BuildStatisticalRecordAsync` 對 Linux 主機呼叫
-`LinuxCorrelationAnalyzer.Detect(issues, logs)` 取代原本固定回傳空列表的短路。
+`LinuxCorrelationAnalyzer.Detect(issues, logs)`（不短路回傳空列表）。
 
 比對邏輯【SSH 破解得手】：同日 `builtin-linux-ssh-bruteforce` 簽章達門檻（≥10，
 `HeavyBruteforceThreshold`，與規則本身的 `CountThreshold` 各自獨立設定，比照 Windows

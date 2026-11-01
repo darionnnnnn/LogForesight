@@ -28,19 +28,22 @@ public class PrtgHostMappingAdminController : ControllerBase
     private readonly IHostStore _hosts;
     private readonly IPrtgHostMapRefresher _mapRefresher;
     private readonly PrtgConflictQueryService _conflictQuery;
+    private readonly IPrtgAddressResolver _addressResolver;
 
     public PrtgHostMappingAdminController(
         IAuditService audit,
         StorageBackend backend,
         IHostStore hosts,
         IPrtgHostMapRefresher mapRefresher,
-        PrtgConflictQueryService conflictQuery)
+        PrtgConflictQueryService conflictQuery,
+        IPrtgAddressResolver addressResolver)
     {
         _audit = audit;
         _backend = backend;
         _hosts = hosts;
         _mapRefresher = mapRefresher;
         _conflictQuery = conflictQuery;
+        _addressResolver = addressResolver;
     }
 
     /// <summary>
@@ -54,7 +57,7 @@ public class PrtgHostMappingAdminController : ControllerBase
         var (normPage, normPageSize) = Paging.Normalize(page, pageSize);
         var store = _backend.PrtgStore();
         var (mapDate, rows) = store.GetLatestHostMapWithDate(PrtgHostMapLookup.LatestLookbackDays);
-        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip), new PrtgAddressResolver());
+        var unmapped = PrtgHostCoverage.Unmapped(_hosts.GetAll(), rows, store.GetIpExcludes().Select(e => e.Ip), _addressResolver);
         return ApiResponse<PrtgUnmappedHostPageDto>.Ok(new PrtgUnmappedHostPageDto
         {
             MapDate = mapDate,
@@ -333,7 +336,7 @@ public class PrtgHostMappingAdminController : ControllerBase
             {
                 Log.Error(ex, "批次設定 PRTG 人工主機對應失敗，裝置 ID: {DeviceObjid}", deviceObjid);
                 failedDeviceObjid = deviceObjid;
-                failureMessage = ex is PrtgScopeConflictException ? ex.Message : "儲存裝置對應資料時發生伺服器錯誤。";
+                failureMessage = ex is PrtgScopeConflictException or PrtgScopePurgeBusyException ? ex.Message : "儲存裝置對應資料時發生伺服器錯誤。";
                 for (int j = i + 1; j < request.DeviceObjids.Count; j++)
                     notProcessedIds.Add(request.DeviceObjids[j]);
                 break;

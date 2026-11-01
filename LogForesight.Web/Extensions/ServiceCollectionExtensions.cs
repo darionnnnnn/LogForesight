@@ -325,6 +325,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ManualAiThrottle>();
         services.AddSingleton<AutoAiThrottle>();
 
+        // CSP 違規回報端點的節流：窗口要全站共用，Singleton
+        services.AddSingleton<CspReportIpThrottle>();
+        services.AddSingleton<CspReportDedupThrottle>();
+
         // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
         services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();
@@ -538,6 +542,9 @@ public static class ServiceCollectionExtensions
 
         // PRTG 歷史回填（PRTG 第 1 輪批次E）：狀態單例與背景執行入口
         services.AddSingleton<PrtgBackfillRunState>();
+        // Web 端位址解析器全站單例（成功快取 5 分鐘、查無 60 秒、逾時不快取；同步結構與對應開始時清空）
+        services.AddSingleton<PrtgAddressResolver>();
+        services.AddSingleton<IPrtgAddressResolver>(sp => sp.GetRequiredService<PrtgAddressResolver>());
         services.AddSingleton<PrtgBackfillService>();
 
         // PRTG 同步結構與對應（docs/PRTG-SPEC.md §5a）：狀態單例、上次結果的持久化 store 與背景執行入口。
@@ -566,6 +573,7 @@ public static class ServiceCollectionExtensions
         // 人工對應／IP 排除／主機主檔變更三條路徑共用同一份實作
         services.AddSingleton<IPrtgHostMapRefresher>(sp => new PrtgHostMapRefresher(
             sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetRequiredService<IPrtgAddressResolver>(),
             sp.GetService<StorageBackend>()));
 
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。

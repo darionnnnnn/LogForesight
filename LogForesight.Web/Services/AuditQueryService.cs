@@ -35,6 +35,9 @@ public class AuditQueryService
 
     public Dictionary<string, string> GetActionNames() => new(ActionNames);
 
+    /// <summary>供 AuditActionNamesTests 對照 AuditActions 常數（守門：新增動作常數必須同時補中文名）</summary>
+    internal static IReadOnlyDictionary<string, string> ActionNamesForTest => ActionNames;
+
     /// <summary>
     /// 動作代碼 → 中文。放在後端而不是前端：動作代碼由後端定義，
     /// 對照表跟著定義走才不會在新增動作時漏掉一邊。
@@ -47,7 +50,7 @@ public class AuditQueryService
         [AuditActions.SessionExpired] = "工作階段逾期",
         [AuditActions.LoginThrottled] = "登入嘗試過多暫停",
         [AuditActions.LoginThrottleCleared] = "解除登入暫停",
-        ["access_denied"] = "權限不足被拒",
+        [AuditActions.AccessDenied] = "權限不足被拒",
 
         [AuditActions.HandlingAssign] = "指派處理人",
         [AuditActions.HandlingStatus] = "變更處理狀態",

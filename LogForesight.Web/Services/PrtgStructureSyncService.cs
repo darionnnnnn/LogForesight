@@ -102,6 +102,9 @@ public class PrtgStructureSyncService
     private readonly ISentinelStore _sentinels;
     private readonly IHostApplicationLifetime? _lifetime;
 
+    /// <summary>全站單例的位址解析器；使用者觸發同步時清空它的 DNS 快取，讓對應用到最新解析結果。</summary>
+    private readonly PrtgAddressResolver _addressResolver;
+
     // 測試可注入受控 HTTP handler；正式環境一律沿用共用 PRTG 用戶端與請求預算。
     internal Func<SystemSettings, PrtgClient>? ClientFactoryForTests { get; set; }
 
@@ -130,8 +133,10 @@ public class PrtgStructureSyncService
         PrtgBackfillRunState backfillState,
         ISentinelStore sentinels,
         DataVersionStamp versionStamp,
+        PrtgAddressResolver addressResolver,
         IHostApplicationLifetime? lifetime = null)
     {
+        _addressResolver = addressResolver;
         _backfillState = backfillState;
         _sentinels = sentinels;
         _versionStamp = versionStamp;
@@ -290,6 +295,9 @@ public class PrtgStructureSyncService
         if (!TryBeginSync(s, out var cts, out var client, out error, out isConflict))
             return false;
 
+        // 使用者主動要求同步：清掉位址解析快取，DNS 剛修好的名稱不必再等 TTL
+        _addressResolver.Invalidate();
+
         _ = Task.Run(() => ExecuteAsync(s, client!, cts));
         return true;
     }
@@ -389,7 +397,7 @@ public class PrtgStructureSyncService
                 var fetchService = PrtgFetchService.Create(client, _backend, prtgStore, s, console, guard: null);
 
                 var status = await PrtgStructureSyncRunner.RunAsync(
-                    fetchService, prtgStore, _hosts, new PrtgAddressResolver(),
+                    fetchService, prtgStore, _hosts, _addressResolver,
                     s.PrtgFetchConcurrency, console, operation.Token,
                     new PrtgMirrorGuardSource(prtgStore), s, _sentinels.GetAll(),
                     progress: (phase, done, total) => _state.UpdateProgress(phase, done, total),

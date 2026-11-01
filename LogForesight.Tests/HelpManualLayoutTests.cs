@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -28,24 +27,12 @@ public sealed class HelpManualLayoutTests
     public void 說明書文件排版的production行為(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");
-        var psi = new ProcessStartInfo("node")
-        {
-            WorkingDirectory = scriptDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false
-        };
-        psi.ArgumentList.Add("--experimental-default-type=module");
-        psi.ArgumentList.Add(Path.Combine(scriptDir, "markdown-doc.behavior.mjs"));
-        psi.ArgumentList.Add(caseName);
-        using var process = Process.Start(psi);
-        Assert.NotNull(process);
-        var stdout = process!.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        Assert.True(process.WaitForExit(60_000), $"node 執行逾時：{caseName}");
-        Assert.True(process.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--experimental-default-type=module", Path.Combine(scriptDir, "markdown-doc.behavior.mjs"), caseName }, scriptDir,
+            timeout: TimeSpan.FromSeconds(60), label: caseName);
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
+        Assert.True(r.ExitCode == 0, $"行為案例失敗：{caseName}{Environment.NewLine}{stdout}{stderr}");
         Assert.Contains($"PASS {caseName}", stdout);
     }
 

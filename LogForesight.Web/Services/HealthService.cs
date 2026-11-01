@@ -108,7 +108,8 @@ public class HealthService
         // 診斷頁只有一行進度可顯示：主／子軌取捨（子進度優先）由 LatestActivity 單點決定
         // （回饋十四輪 UI-6 體檢，與 /api/run-activity 同一個選擇邏輯）——只讀主進度的話，
         // AI 佇列消化階段這裡會停在搜尋階段的凍結數字，看起來像分析卡死。
-        var analysisActivity = _runState.LatestActivity();
+        // 同一份快照：與 EndRun 的整批清空不會交錯成混合狀態
+        var runSnapshot = _runState.Snapshot();
 
         var firstSeenProgress = _firstSeenSeedService?.Progress;
         var firstSeenFailed = firstSeenProgress?.IsFailed == true;
@@ -154,14 +155,14 @@ public class HealthService
                     LastAt = o.LastAt
                 })
                 .ToList(),
-            AnalysisRunning = _runState.IsRunning,
-            AnalysisTrigger = _runState.Trigger,
-            AnalysisStartedAt = _runState.StartedAt,
-            AnalysisPhase = analysisActivity.Phase,
-            AnalysisDone = analysisActivity.Done,
-            AnalysisTotal = analysisActivity.Total,
-            LastRunSucceeded = _runState.LastOutcome?.Success,
-            LastRunEndedAt = _runState.LastOutcome?.EndedAt,
+            AnalysisRunning = runSnapshot.IsRunning,
+            AnalysisTrigger = runSnapshot.Trigger,
+            AnalysisStartedAt = runSnapshot.StartedAt,
+            AnalysisPhase = runSnapshot.ActivityPhase,
+            AnalysisDone = runSnapshot.ActivityDone,
+            AnalysisTotal = runSnapshot.ActivityTotal,
+            LastRunSucceeded = runSnapshot.LastOutcome?.Success,
+            LastRunEndedAt = runSnapshot.LastOutcome?.EndedAt,
 
             // 回填未完成期間問題聚合的數字會偏低但看起來正常——必須看得到（P4）
             BackfillInProgress = _backfiller.Progress.InProgress,

@@ -821,7 +821,7 @@ public class PrtgBackfillRunnerTests : IDisposable
             Service = new PrtgBackfillService(
                 Settings, Backend, new PrtgBackfillRunState(), new PrtgProbeRunState(),
                 new HostStore(Backend.Blob("hosts")), Scheduler, SyncState, new FakeSentinelStore(),
-                new PrtgStructureSyncService(Settings, Backend, SyncState, Scheduler, new HostStore(Backend.Blob("hosts")), new PrtgStructureSyncStatusStore(Backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp()));
+                new PrtgStructureSyncService(Settings, Backend, SyncState, Scheduler, new HostStore(Backend.Blob("hosts")), new PrtgStructureSyncStatusStore(Backend.Blob(PrtgStructureSyncStatusStore.BlobKey)), new PrtgBackfillRunState(), new FakeSentinelStore(), new DataVersionStamp(), new LogForesight.Core.Service.PrtgAddressResolver()), new LogForesight.Core.Service.PrtgAddressResolver());
         }
 
         public void AddMap(string status) =>

@@ -273,4 +273,58 @@ public sealed class PrtgValueAssessmentTests : IDisposable
         var signature = PrtgFindingMapper.ToSignature(finding, Completed.ToDateTime(TimeOnly.MinValue), 12);
         Assert.Equal("prtg:disk_free_trend:201", signature.EventKey);
     }
+
+    // ── 最新日對應外層算一次（P-7）──────────────────────────────────────
+
+    private static long HostMapQueryCount(SqlPerformanceMonitor monitor) =>
+        monitor.Snapshot().TopSlowOperations
+            .Where(o => o.Operation == "prtg:GetHostMapForDate" || o.Operation == "prtg:GetLatestHostMapWithDate")
+            .Sum(o => o.Count);
+
+    [Theory]
+    [InlineData(false)] // 最新日有 ok 對應
+    [InlineData(true)]  // 最新日整天沒有 ok，借前一份
+    public void 外層傳入最新日對應_三頁只查一次且結果與不傳相同(bool newestDayEmpty)
+    {
+        SeedSensors((101, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            (102, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            (103, 2, "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            (104, 2, "SNMP CPU Load", PrtgSensorCategories.Cpu),
+            (105, 1, "SNMP CPU Load", PrtgSensorCategories.Cpu));
+        MapDays(3, (1, 11), (2, 12));
+        if (newestDayEmpty) _store.ReplaceHostMapForDate(Completed.ToDateTime(TimeOnly.MinValue), new List<PrtgHostMapRow>());
+        foreach (var id in new long[] { 101, 102, 103, 104, 105 }) SeedHours(id, 3, (d, h) => 10 + h);
+
+        var overrides = new Dictionary<string, PrtgValueSemantic>();
+        var candidates = new PrtgValueAssessment(_store, overrides)
+            .Candidates(new Dictionary<long, long> { [1] = 11, [2] = 12 }, new HashSet<long> { 11, 12 }, new HashSet<long>(), null)
+            .ToList();
+        Assert.Equal(5, candidates.Count);
+        var pages = candidates.Chunk(2).ToList();
+        Assert.Equal(3, pages.Count);
+
+        // 不傳：每頁自己算
+        var monitorA = new SqlPerformanceMonitor(thresholdMs: 0);
+        var assessA = new PrtgValueAssessment(new EfPrtgStore(_fx.NewContext, monitorA), overrides);
+        var rowsA = pages.SelectMany(p => assessA.AssessPage(p, Completed, 3, 3, Completed)).ToList();
+
+        // 外層傳入：整趟只算一次
+        var monitorB = new SqlPerformanceMonitor(thresholdMs: 0);
+        var assessB = new PrtgValueAssessment(new EfPrtgStore(_fx.NewContext, monitorB), overrides);
+        var map = assessB.ResolveNewestHostMap(Completed);
+        var rowsB = pages.SelectMany(p => assessB.AssessPage(p, Completed, 3, 3, Completed, map)).ToList();
+        // 外層算一次的查詢數＝單次解析的查詢數；不傳時三頁各解析一次
+        var perResolve = HostMapQueryCount(monitorB);
+        Assert.True(perResolve >= 1);
+        Assert.Equal(perResolve * 3, HostMapQueryCount(monitorA));
+
+        Assert.Equal(rowsA.Count, rowsB.Count);
+        for (var i = 0; i < rowsA.Count; i++)
+        {
+            Assert.Equal(rowsA[i].Sensor.SensorObjid, rowsB[i].Sensor.SensorObjid);
+            Assert.Equal(rowsA[i].Reason, rowsB[i].Reason);
+            Assert.Equal(rowsA[i].ValidDays, rowsB[i].ValidDays);
+        }
+        Assert.All(rowsB, r => Assert.Equal(PrtgValueReason.Ready, r.Reason));
+    }
 }

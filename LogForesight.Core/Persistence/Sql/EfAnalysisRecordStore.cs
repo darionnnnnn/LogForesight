@@ -843,7 +843,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             Category = ColumnClamp.ClampFor<TopIssueRow>(issue.Category.ToString(), nameof(TopIssueRow.Category))!,
             SeverityRank = (int)issue.Severity,
             // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
-            // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
+            // 類別彙總另由 CategoryAggregator 在查詢時聚合、不在此入庫（WEB-SPEC §10.3），
             // 分析層看不到這張表，批次的分析邏輯零修改
             HostId = hostId,
             RecordDate = recordDate.Date,
@@ -1090,11 +1090,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     public DateTime? LastWeeklyCheckupDate()
     {
         using var ctx = _contextFactory();
-        var dates = OwnedRows(ctx)
+        // 可空 Max 由資料庫端聚合，零筆回 null，不把所有日期撈回 C#
+        return OwnedRows(ctx)
             .Where(r => r.WeeklyCheckupDate != null)
-            .Select(r => r.WeeklyCheckupDate)
-            .ToList();
-        return dates.Count == 0 ? null : dates.Max();
+            .Max(r => r.WeeklyCheckupDate);
     }
 
     // ── 查詢（Web 面）─────────────────────────────────────────────────────────

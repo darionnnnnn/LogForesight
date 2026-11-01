@@ -252,7 +252,7 @@ public class AnalysisOrchestrator
             var ruleStore = new KnownIssueRuleStore(backend.Blob("rules"));
             RuleBootstrapper.Run(ruleStore);
 
-            // 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §2.1 Phase 4）：Web 的「回復預設」需要
+            // 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §9.7）：Web 的「回復預設」需要
             // 一份使用者碰不到的原始內容才比較得出差異。放在 RuleBootstrapper 之後——那時規則庫已就緒。
             try
             {
@@ -271,7 +271,7 @@ public class AnalysisOrchestrator
             // 到期抑制的通知移到 hostStore.Touch 之後才印（回饋十三輪 F）：Group／Site 範圍的抑制
             // 判定需要知道本機的群組成員資格，那個資訊要等主機登記完成才拿得到，見下方。
 
-            // 執行紀錄（docs/WEB-SPEC.md §2.1 Phase 4）：啟動時登記、結束時回填，讓 Web 的執行監控頁
+            // 執行紀錄（docs/WEB-SPEC.md §11）：啟動時登記、結束時回填，讓 Web 的執行監控頁
             // 能回答「昨晚每台主機都跑了嗎、有沒有出問題」。掛上 NLog target 後 Warn 以上自動流入，
             // 不需要在既有程式碼各處加呼叫。建立失敗不影響分析（見 BatchRunRecorder）。
             BatchRunStore? batchRunStore = null;
@@ -329,7 +329,7 @@ public class AnalysisOrchestrator
                     runRecorder.Milestone("AI 未設定，本次以統計模式執行");
                 }
 
-                // 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
+                // 登記本機於主機清單（docs/WEB-SPEC.md §9.1）：Web 的儀表板要能指出
                 // 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
                 // 同時取回主機 PK——那是分析紀錄與主機的關聯鍵（docs/archive/HISTORY.md），
                 // 所以這段必須排在分析服務、以及本機歸戶的歷史 store 建立之前。
@@ -497,7 +497,7 @@ public class AnalysisOrchestrator
                         new HostKey { HostId = currentHostId, HostName = currentHost }, permissionFileName, reportSb.ToString());
                     runConsole.WriteLine("  📄 權限異動報告（含逐項明細）已產生，可於「權限異動檢核」頁檢視。");
 
-                    // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與報告全文是既有輸出、
+                    // 雙軌寫入（docs/WEB-SPEC.md §9.5）：上面的 console 告警與報告全文是既有輸出、
                     // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動檢核」逐筆確認。
                     try
                     {
@@ -747,13 +747,13 @@ public class AnalysisOrchestrator
                 result.Elapsed = runStopwatch.Elapsed;
                 return result;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
             {
                 runRecorder.Fatal(ex);
                 throw;
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: false);
             // 使用者手動停止（Phase 3）：停在主機日邊界，不是失敗——BatchRun 由呼叫端依情境回填
@@ -770,11 +770,15 @@ public class AnalysisOrchestrator
             if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: false);
             // 全域防護：任何未預期的錯誤都要留下訊息並回報失敗，讓呼叫端（Web 的 BatchRun
             // 回填與排程狀態卡的「上次執行結果」）能監控到。
-            console.WriteLine($"\n執行失敗：{ex}");
+            // HttpClient 逾時擲 TaskCanceledException（屬 OCE），但走到這裡代表 ct 並未取消：是逾時不是使用者停止
+            var isTimeout = ex is OperationCanceledException;
+            var failureMessage = isTimeout ? $"呼叫外部服務逾時：{ex.Message}" : ex.Message;
+            console.WriteLine(isTimeout ? $"\n執行失敗：呼叫外部服務逾時：{ex.Message}" : $"\n執行失敗：{ex}");
             console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
-            Log.Fatal(ex, "執行失敗，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
+            if (isTimeout) Log.Fatal(ex, "呼叫外部服務逾時，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
+            else Log.Fatal(ex, "執行失敗，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
             result.Success = false;
-            result.FailureMessage = ex.Message;
+            result.FailureMessage = failureMessage;
             result.Elapsed = runStopwatch.Elapsed;
             return result;
         }
@@ -1172,7 +1176,7 @@ public class AnalysisOrchestrator
                 runRecorder.Milestone($"⚠ 本次有 {netiqResult.Warnings.Count} 項警告：{preview}{suffix}");
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             _hostDayTiming?.MarkIncomplete(runRecorder.RunId);
             throw;

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -788,21 +787,12 @@ assert.equal(context.prtgFetchStrategy, 'Aggressive');
 assert.equal(hint.textContent, '往前 30 天');
 console.log('PASS operational status refresh');
 ";
-        var psi = new ProcessStartInfo("node")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        psi.ArgumentList.Add("--eval");
-        psi.ArgumentList.Add(nodeScript);
-        psi.ArgumentList.Add(helper);
-        using var process = Process.Start(psi);
-        Assert.NotNull(process);
-        var stdout = process!.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        Assert.True(process.WaitForExit(15_000), "運作摘要 Node 行為測試逾時");
-        Assert.True(process.ExitCode == 0, $"運作摘要行為測試失敗：{stdout}{stderr}");
+        var r = NodeRuntime.RunOrFail(
+            new[] { "--eval", nodeScript, helper },
+            timeout: TimeSpan.FromSeconds(15), label: "運作摘要 Node 行為測試");
+        var stdout = r.Stdout;
+        var stderr = r.Stderr;
+        Assert.True(r.ExitCode == 0, $"運作摘要行為測試失敗：{stdout}{stderr}");
         Assert.Contains("PASS operational status refresh", stdout);
     }
 

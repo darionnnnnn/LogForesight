@@ -101,25 +101,64 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore, IIssueNoteQuery
         string issueKey, IReadOnlyCollection<string>? visibleHostNameKeys)
     {
         using var ctx = _contextFactory();
-        var query = ctx.IssueHandlings.AsNoTracking()
-            .Where(h => h.Note != null && h.Note.Trim() != "");
-        if (visibleHostNameKeys != null)
-        {
-            if (visibleHostNameKeys.Count == 0) return null;
-            var keys = visibleHostNameKeys.Distinct(StringComparer.Ordinal).ToList();
-            query = query.Where(h => keys.Contains(h.HostNameKey));
-        }
+        if (visibleHostNameKeys != null && visibleHostNameKeys.Count == 0) return null;
+        var keys = visibleHostNameKeys?.Distinct(StringComparer.Ordinal).ToList();
 
         // 沒有 source_key 欄可供 provider 中立查詢；不要用 UPPER()，SQLite 與 SQL Server
         // 的 Unicode 大小寫規則不同。先用可見主機（若有）及 note 非空索引粗篩，再在 C#
-        // 用同一完整鍵 comparer。成本是 O(粗篩後列數)；有授權主機時受主機集合限制，
-        // 無主機限制時沒有安全的固定 Take 上限，否則可能漏掉真正最新的匹配列。
-        var row = query
-            .OrderByDescending(h => h.UpdatedAt)
-            .Select(h => new { h.HostName, h.RecordDate, h.IssueKey, h.Note, h.UpdatedAt })
-            .ToList()
-            .FirstOrDefault(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, issueKey));
-        return row == null ? null : (row.HostName, row.RecordDate, row.Note!, row.UpdatedAt);
+        // 用同一完整鍵 comparer。投影不含 Note 全文，以 (UpdatedAt, Id) 降冪鍵集分批，
+        // 命中即停；命中後才以 Id 回頭取一次 Note。
+        (DateTime UpdatedAt, long Id)? after = null;
+        while (true)
+        {
+            var batch = BuildNoteCandidateBatchQuery(ctx, keys, after, NoteCandidateBatchSize).ToList();
+            if (batch.Count == 0) return null;
+
+            var hit = batch.FirstOrDefault(h => IssueSignatureKeyComparer.Instance.Equals(h.IssueKey, issueKey));
+            if (hit != null)
+            {
+                var note = ctx.IssueHandlings.AsNoTracking()
+                    .Where(h => h.Id == hit.Id)
+                    .Select(h => h.Note)
+                    .FirstOrDefault();
+                return note == null ? null : (hit.HostName, hit.RecordDate, note, hit.UpdatedAt);
+            }
+
+            if (batch.Count < NoteCandidateBatchSize) return null;
+            var last = batch[^1];
+            after = (last.UpdatedAt, last.Id);
+        }
+    }
+
+    /// <summary>GetLatestNote 每批粗篩列數</summary>
+    internal const int NoteCandidateBatchSize = 500;
+
+    internal sealed record NoteCandidate(long Id, string HostName, DateTime RecordDate, string IssueKey, DateTime UpdatedAt);
+
+    /// <summary>
+    /// 一批說明候選（不含 Note 全文）。下一批條件：UpdatedAt 較小，或相等且 Id 較小——
+    /// 兩者合成嚴格全序，同時間戳多筆跨批也不漏不重。
+    /// </summary>
+    internal static IQueryable<NoteCandidate> BuildNoteCandidateBatchQuery(
+        LfDbContext ctx, IReadOnlyCollection<string>? hostNameKeys, (DateTime UpdatedAt, long Id)? after, int take)
+    {
+        var query = ctx.IssueHandlings.AsNoTracking()
+            .Where(h => h.Note != null && h.Note.Trim() != "");
+        if (hostNameKeys != null)
+        {
+            var keys = hostNameKeys.ToList();
+            query = query.Where(h => keys.Contains(h.HostNameKey));
+        }
+        if (after is { } cursor)
+        {
+            var at = cursor.UpdatedAt;
+            var id = cursor.Id;
+            query = query.Where(h => h.UpdatedAt < at || (h.UpdatedAt == at && h.Id < id));
+        }
+        return query
+            .OrderByDescending(h => h.UpdatedAt).ThenByDescending(h => h.Id)
+            .Select(h => new NoteCandidate(h.Id, h.HostName, h.RecordDate, h.IssueKey, h.UpdatedAt))
+            .Take(take);
     }
 
     public void Save(IssueHandling handling) => SaveMany(new[] { handling });

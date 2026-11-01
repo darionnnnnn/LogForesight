@@ -40,7 +40,19 @@
 `lf_issue_handling`、`lf_issue_cases`、`lf_work_orders`、`lf_work_order_events`、
 `lf_record_handling`、`lf_issue_first_seen`、`lf_risky_events`、`lf_permission_changes`、
 `lf_reports`、`lf_prtg_devices`、`lf_prtg_sensors`、`lf_prtg_state_changes`、
-`lf_prtg_values`、`lf_prtg_scope_purge_jobs`、`lf_prtg_sampled_batches`、`lf_prtg_host_map`、`lf_prtg_manual_map`、`lf_prtg_ip_excludes`。
+`lf_prtg_values`、`lf_prtg_scope_purge_jobs`、`lf_prtg_sampled_batches`、`lf_prtg_host_map`、`lf_prtg_manual_map`、`lf_prtg_ip_excludes`、
+`lf_prtg_transfer_sessions`、`lf_prtg_transfer_chunks`。
+
+每張實體表的欄位區塊（偽 DDL，型別用本文件的通用寫法）都由 `DbSpecModelParityTests` 對 `LfDbContext` 的 EF 模型守門：
+欄名、可空性必須一致，且每張表只能有一個區塊。
+
+```
+lf_log_lines                                         -- append-only 逐行 JSONL（稽核／執行／匯入／處理歷程等）
+  seq            bigint PK IDENTITY                  -- 自增，即附加順序
+  log_key        nvarchar(100) NOT NULL              -- 日誌來源（如 audit、handling_log）
+  line           text NOT NULL                       -- 一行 JSON
+  created_at     timestamp NULL                      -- 插入時間；補此欄之前寫入的列為 NULL
+```
 
 ### 主機與授權（Web「只看自己負責的主機」的基礎）
 
@@ -66,28 +78,26 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   risk_level       nvarchar(10) NOT NULL          -- 高/中/低
   has_correlation  bool NOT NULL DEFAULT 0
   weekly_checkup_date date NULL
-  content_json     text NOT NULL
+  content_json     text NOT NULL                      -- 整筆 DailyAnalysisRecord 的 JSON（摘要、趨勢評估、行動建議、
+                                                     -- 未檢查項目申報等都只在這裡）；詳情被精簡後為空字串
+  original_risk_content_json text NULL               -- 歷史弱佐證重評前的原始判定 JSON（PrtgRiskProjectionStore 首次改寫時留存）
+  write_revision   bigint NOT NULL DEFAULT 0          -- 併發權杖：SaveChanges 以原修訂比對並遞增
+  risk_projection_version int NOT NULL DEFAULT 0      -- 歷史弱佐證重評已套用的投影版本；低於現行版本者待重評
+  risk_review_status nvarchar(24) NOT NULL DEFAULT 'unchecked'
+                                                     -- 重評狀態（unchecked／pending／unavailable／current／revised）
+  created_at       timestamp NOT NULL
   detail_pruned    bool NOT NULL DEFAULT 0
-  error_count      int NOT NULL
-  warning_count    int NOT NULL
-  audit_count      int NOT NULL
-  ai_analyzed      bool NOT NULL
+  headline         text NOT NULL DEFAULT ''           -- AI 白話標題（↔ DailyAnalysisRecord.Headline，抽出欄）
+  data_incomplete  bool NOT NULL DEFAULT 0
+  security_log_available bool NULL                -- 三態：NULL=未嘗試
+  error_count      int NOT NULL DEFAULT 0
+  warning_count    int NOT NULL DEFAULT 0
+  ai_analyzed      bool NOT NULL DEFAULT 0
   ai_pending       bool NOT NULL DEFAULT 0        -- NetIQ 搜尋與 AI 判讀
                                                   -- 脫鉤的第三態（統計已寫入、AI 段排隊中），
                                                   -- 與 ai_analyzed=false 是不同語意
-  security_log_available bool NULL                -- 三態：NULL=未嘗試
-  data_incomplete  bool NOT NULL
-  headline         nvarchar(200)                  -- AI 白話標題（↔ DailyAnalysisRecord.Headline）
-  summary          nvarchar(2000)                 -- AI 白話敘述（↔ Summary，序列化欄位名不變）
-  trend_assessment nvarchar(2000)
-  action           nvarchar(500)                  -- AI 白話行動建議（↔ Action，取代原 recommendations_json 多項清單）
-  screened_tail_count  int NOT NULL
-  screening_notes_json text                       -- List<string>
-  uncovered_checks_json text                      -- List<string>（未檢查項目申報）
-  report_id        bigint NULL FK → lf_reports       -- 有風險報告時指向全文
   log_source       smallint NOT NULL DEFAULT 0       -- 主機日來源：0 Unknown／1 Local／2 Netiq／3 Prtg（PRTG 獨立主機日，
                                                      -- 見 PRTG-SPEC §9）；缺日、重跑、趨勢歷史等日誌分析查詢排除 3
-  created_at       timestamp NOT NULL
   extract_version  int NOT NULL DEFAULT 0            -- 抽出欄（headline/
                                                      -- data_incomplete/security_log_available/
                                                      -- error_count/warning_count/ai_analyzed/
@@ -130,7 +140,7 @@ lf_issue_first_seen                                  -- 問題的機房首見日
 啟動時比對相同就整段跳過——來源鍵回填尚未完成時，兩段合併查詢以
 `COALESCE(source_key, UPPER(source_name))` 作為來源鍵並依 `event_id` 分組；回填完成後直接
 使用 `source_key`，`source_name` 只作舊列相容 fallback。這些查詢在需要補齊時仍可能是全表掃，
-千萬列級環境下不能每次重啟都跑一遍（回饋二十輪 C）。合併吃分析等級的 300 秒逾時
+千萬列級環境下不能每次重啟都跑一遍。合併吃分析等級的 300 秒逾時
 （不是前景的 60 秒），失敗每 30 分重試最多 3 次後停止，狀態經
 `/api/health/detail` 申報並在三次失敗時反映為降級——補不完的症狀是老問題被
 `PriorityScore` 當成 7 天內的新問題，畫面上完全看不出來，所以必須申報。
@@ -174,9 +184,8 @@ docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
 **`AttachAiResult`（`IAnalysisRecordStore`）**：AI 段完成後覆寫暫代的 `ContentJson`
 內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`、`ai_pending`（清 false）、`ai_analyzed`**
 （AI 有可能把程式判定的風險等級往上拉），只改 `ContentJson` 而漏改抽出欄會讓依 `risk_level`
-篩選的查詢（清單頁、儀表板）看不到這筆紀錄升級後的真正風險——`ai_pending` 過去正是漏在
-這裡（只寫進 JSON、欄位永遠停在 1），是本專案反覆出現過的「抽出欄漂移」bug 家族的同一種
-模式，寫入路徑因此固定放在同一處一起做。
+篩選的查詢（清單頁、儀表板）看不到這筆紀錄升級後的真正風險——只寫進 JSON、抽出欄
+停在舊值就是「抽出欄漂移」這類缺陷的典型形狀，寫入路徑因此固定放在同一處一起做。
 
 ```
 lf_top_issues                                        -- LogIssueSignature 的**抽出子表**（不是一比一鏡像）：
@@ -205,10 +214,28 @@ lf_top_issues                                        -- LogIssueSignature 的**�
   event_count       int NOT NULL                      -- 'count' 是保留字，改名
   category          nvarchar(20) NOT NULL             -- Storage/Hardware/Security/...
   severity_rank     int NOT NULL                      -- IssueSeverity 的**序數**（不是字串）
-  prtg_message_status_semantic_version int NULL     -- PRTG訊息狀態finding的解析版本；舊列維持NULL
   elevates_day_risk bit NOT NULL DEFAULT 0            -- 「重大」旗標（排行清單的嚴重度維度）
   known_issue       nvarchar(max) NULL                -- 命中規則表時的中文說明（SQLite TEXT；
                                                      --   依問題視角的說明欄直接查此欄不解 JSON）
+  source_observations_json text NULL                  -- 有界的來源證據 JSON（SourceEvidence）；舊列為 NULL
+  source_observations_truncated bool NOT NULL DEFAULT 0 -- 來源證據是否因上限被截斷
+```
+
+```
+lf_risky_events                                      -- 風險 log 暫存：每個主機日入選的原始風險事件（同主機日重跑時整日取代）
+  id             bigint PK IDENTITY
+  host_id        bigint NOT NULL                     -- 主機識別值，不設資料庫 FK
+  date           date NOT NULL                       -- 事件所屬的主機日；原始事件保留期清理依這一欄
+  log_name       nvarchar(255) NOT NULL              -- 事件記錄檔（Application／System／Security 等）
+  source         nvarchar(255) NOT NULL              -- 事件來源（保留原始大小寫）
+  source_key     nvarchar(255) NULL                  -- source 正規化大寫鍵；舊列在背景回填完成前為 NULL
+  event_id       int NOT NULL
+  entry_type     int NOT NULL                        -- EventLogEntryType 的整數值
+  event_time     timestamp NOT NULL                  -- 事件發生時間
+  message        text NOT NULL                       -- 事件原文，截至 2000 字
+  source_evidence_json text NULL                     -- 截斷訊息前擷取的有界來源證據 JSON；舊列為 NULL
+  rule_id        nvarchar(100) NULL                  -- 命中規則的 Id；未命中規則（僅趨勢異常入庫）為 NULL
+  created_at     timestamp NOT NULL                  -- 事件列建立時間
 ```
 
 `lf_top_issues` 與 `lf_risky_events` 都有可空的 `source_key`；後者仍保留 `source` 作為舊列
@@ -368,18 +395,18 @@ AI 問答已降為未來選項（決策：先把報告顯示與查詢做好，�
 ### 索引
 
 ```
-lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢；(ai_pending, detail_pruned) `IX_lf_daily_records_ai_pending_pruned` — 待補筆數的覆蓋索引；(log_source, record_date) `IX_lf_daily_src_date` — 排除 PRTG 獨立主機日
+lf_daily_records:  (record_date)；(host_id, record_date)；(risk_level, record_date) — 可行動快照的日層級篩選；(extract_version) — 回填掃描；(ai_pending, record_date) — 全域待補查詢；(ai_pending, detail_pruned) `IX_lf_daily_records_ai_pending_pruned` — 待補筆數的覆蓋索引；(log_source, record_date) `IX_lf_daily_src_date` — 排除 PRTG 獨立主機日；(risk_projection_version, record_id) `IX_lf_daily_risk_projection` — 歷史弱佐證重評的待辦掃描
 lf_issue_first_seen: PK(source_key, event_id)
-lf_top_issues:     (record_id)；(source_key, event_id, record_date) — 來源問題聚合
+lf_top_issues:     (record_id)；(source_key, event_id, record_date) — 來源問題聚合；(category)
                    (event_id, source_name) — 舊相容路徑的跨主機查詢
                    (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合
                    (event_id, record_date) — 問題彙總「event_id IN + 日期範圍」的等值前導索引
-lf_risky_events:   (host_id, date, source_key, event_id) — 風險事件依主機／日期／問題查詢
-lf_blobs:          PK(blob_key)；`version` — 整份型 store 的快取失效權杖
-lf_log_lines:      PK(log_key, seq)；(log_key, created_at) — append-only JSONL
-lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)
-                   -- 另有 created_at 欄：僅新增列時落、更新不覆寫，舊列為 NULL；
-                   -- 目前無消費端，是 MTTA 成效指標（docs/BACKLOG.md）的資料基礎
+lf_risky_events:   (host_id, date, source_key, event_id) — 風險事件依主機／日期／問題查詢；
+                   (host_id, date, source, event_id) — AI 對話查詢形狀；(date) — 原始事件保留期清理
+lf_blobs:          PK(blob_key)
+lf_log_lines:      PK(seq)；(log_key, seq)；(log_key, created_at) — append-only JSONL
+lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)；
+                   (issue_key, updated_at) — 取問題最近一筆處理說明
 
 lf_issue_cases:    (host_name_key, issue_key, closed_at)；(handler_id, closed_at)；
                    (work_order_id, closed_at)；(source_key, event_id, closed_at) — 依問題查案件；
@@ -388,17 +415,22 @@ lf_work_orders:    (handler_id, closed_at)；(source_key, event_id, closed_at)�
                    部分唯一 (handler_id, source_key, event_id) WHERE closed_at IS NULL AND source_key IS NOT NULL
 lf_work_order_events: (work_order_id, created_at)
 lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)
-lf_reports:        (host_id, report_date)
+lf_reports:        UNIQUE(host_id, host_name, report_date, kind)；(created_at) — 保留期清理
 lf_permission_changes: 見上方定義區塊（不在此重列，避免兩份索引清單各自演化）
 lf_prtg_manual_map: PK(device_objid)；(host_id) — 人工主機對應（長期有效，不列入保留期清理）
 lf_prtg_ip_excludes: PK(ip) — IP 排除清單（該 IP 底下的 device 不做主機對應、不取數；長期有效，不列入保留期清理）
 
 lf_prtg_devices:      (ip)
 lf_prtg_sensors:      (device_objid)；(sensor_type)
-lf_prtg_state_changes: (sensor_objid, changed_at)；(created_at)；(changed_at) — 不帶 sensor 條件的時間區間查詢
-lf_prtg_values:       UNIQUE(sensor_objid, period_start)；(created_at)；(period_start) — 同上
+lf_prtg_state_changes: (sensor_objid, changed_at)；(sensor_objid, id) — 範圍清除分批；(created_at)；
+                      (changed_at) — 不帶 sensor 條件的時間區間查詢（`SchemaUpgrader` 補建，不在 EF 模型）
+lf_prtg_values:       UNIQUE(sensor_objid, period_start)；(sensor_objid, id) — 範圍清除分批；(created_at)；
+                      (period_start) — 同上（`SchemaUpgrader` 補建，不在 EF 模型）
 lf_prtg_sampled_batches: PK(batch_id)；(created_at) — sampled 整批提交的重試冪等識別；與數值同交易寫入
 lf_prtg_host_map:     PK(map_date, device_objid)；(created_at)
+lf_prtg_scope_purge_jobs: PK(job_id)；(status, updated_at_utc)；部分唯一 (active_owner) WHERE active_owner IS NOT NULL — 跨程序唯一執行槽
+lf_prtg_transfer_sessions: PK(transfer_id)；(state, transfer_id)；(state, active_write_until_utc)；(state, updated_at_utc, transfer_id) — 清理掃描
+lf_prtg_transfer_chunks: PK(transfer_id, ordinal)
 ```
 
 `lf_prtg_values (period_start)` 與 `lf_prtg_state_changes (changed_at)` 是單欄索引，**不是**上面兩個
@@ -469,7 +501,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 
 **升級告知**：修好之後的第一個副作用是「這些設定值第一次真正生效」——既有部署升級後第一晚
 就會開始真的刪 NetIQ 主機的過期資料。若當初因為「反正沒作用」把天數設得很短，那是一次
-無法復原的刪除。README 的「升級注意事項」與說明書「資料保留」段都有對應警語（回饋二十輪 F）。
+無法復原的刪除。README 的「升級注意事項」與說明書「資料保留」段都有對應警語。
 積壓超過單次上限（`EfAnalysisRecordStore.MaxPruneRowsPerRun` = 50,000）時，執行畫面會申報
 剩餘筆數**與預估還需幾次執行**——只報筆數的話，「陸續清完」與「卡住了」在畫面上分不出來。
 
@@ -511,12 +543,10 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | handling_log（保留 730 天） | 每次標記／指派一列，批次標記亦逐筆記錄 | **唯一以稽核年限成長的一張**，6000 台屬千萬列級 |
 | lf_reports.content（文字大宗） | 風險日約 10% × 30KB ≈ 2GB/年 | ~4~5GB |
 
-這個量級可沿用現有索引；正式 SQL Server 的執行計畫仍需依實際資料量觀察。配套不變：
+這個量級可沿用現有索引；正式 SQL Server 的執行計畫仍需依實際資料量觀察。
 
-- **Schema 演進採「只增不改」**：新版本只加欄位（nullable 或有預設值）、不改不刪既有欄位，
-  舊資料永遠可讀；配合 EF Core migration 記錄版本。
-- **檔案端 120 天輪替**（與首次回補天數一致）：txt 定位為「臨時資料庫」，
-  DB 上線時最多匯入近 120 天歷史——此限制已知悉並接受，保留年限自 DB 上線日起算。
+Schema 演進採「只增不改」：新版本只加欄位（nullable 或有預設值）、不改不刪既有欄位，
+舊資料永遠可讀；升級由 `SchemaUpgrader` 冪等補欄補索引（見「Schema 升級機制」）。
 
 ## Web 查詢情境 → 資料表對應（驗證 schema 夠用）
 
@@ -608,20 +638,24 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 
 ```
 lf_record_handling                                   -- 風險日處理狀態（當前快照，儀表板查這張）
-  record_id      bigint PK FK → lf_daily_records     -- 一筆風險日一個狀態
-  status         nvarchar(20) NOT NULL DEFAULT 'open'
+  id             bigint PK IDENTITY
+  host_name      nvarchar(255) NOT NULL              -- 主機名稱原值（顯示用）
+  host_name_key  nvarchar(255) NOT NULL              -- 主機名稱正規化大寫鍵，比對一律用這欄（collation-safety）
+  record_date    date NOT NULL                       -- 風險日；(host_name_key, record_date) 一天一列
+  status         nvarchar(30) NOT NULL
                  -- 'open'(未處理) | 'in_progress'(處理中) | 'resolved'(已處理)
                  -- | 'wont_fix'(評估後決定不處理——說明寫在 note)
                  -- | 'false_positive'(誤報) | 'known_noise'(已知雜訊)
   handler_id     bigint NULL                         -- 處理人員 id；使用者主檔在 lf_blobs，不設資料庫 FK
   due_date       date NULL                        -- 預計完成日（儀表板「逾期未處理」的依據）
-  note           nvarchar(1000) NULL              -- 處理說明：為何不處理/已更換硬體等
-  updated_at     timestamp NOT NULL
+  note           text NULL                        -- 處理說明：為何不處理/已更換硬體等
+  updated_at     timestamp NOT NULL                 -- 併發權杖
+  UNIQUE (host_name_key, record_date)
 ```
 
 **處理歷程不另建表**：`lf_record_handling` 是當前快照；狀態／說明異動的 append-only
 歷程以 `lf_log_lines` 的 `log_key='handling_log'` 保存。儀表板查快照，詳情頁再按
-`record_id` 讀完整敘事。
+`(host_name_key, record_date)` 讀完整敘事。
 
 - 主管儀表板從「有哪些風險」升級成「有哪些風險**還沒人處理**」＋「哪些**已逾期**」
   （status IN ('open','in_progress') AND due_date < 今天）
@@ -631,7 +665,26 @@ lf_record_handling                                   -- 風險日處理狀態（
   跨日追蹤以**案件**（一台主機 × 一個問題）為單位，派工與回覆以**交辦單**（一個問題 × 一批主機 ×
   一位處理人）為單位。本系統的處理鏈是處理狀態的唯一事實來源，不外接工單系統——外接只會多一份
   會漂移的副本。逐日列仍是儀表板、報表與清單唯一的投影面，案件與交辦單都只是協調紀錄。
-- 索引：`lf_record_handling (status)`、`(due_date)`；歷程走 `lf_log_lines` 的 `(log_key, created_at)`。
+- 索引見「索引」章；歷程走 `lf_log_lines` 的 `(log_key, created_at)`。
+
+```
+lf_issue_handling                                    -- 問題層級的逐日處理狀態：一台主機 × 一天 × 一個問題簽章一列
+  id                 bigint PK IDENTITY
+  host_name          nvarchar(255) NOT NULL          -- 主機名稱原值（顯示用）
+  host_name_key      nvarchar(255) NOT NULL          -- 主機名稱正規化大寫鍵，比對一律用這欄
+  record_date        date NOT NULL
+  issue_key          nvarchar(512) NOT NULL          -- 五段問題簽章（LogName、Source、EventId、EntryType、EventKey）
+  status             nvarchar(30) NOT NULL           -- 問題層級處理狀態
+  actor_id           bigint NULL                     -- 寫入此狀態的操作者 id；使用者主檔在 lf_blobs，不設資料庫 FK
+  actor_account      nvarchar(255) NOT NULL          -- 操作者帳號（反正規化，追責用）
+  note               text NULL                       -- 處理說明
+  due_date           date NULL                       -- 預計完成日
+  case_id            nvarchar(64) NULL               -- 回鏈所屬問題案件 lf_issue_cases.case_id
+  updated_at         timestamp NOT NULL              -- 併發權杖
+  created_at         timestamp NULL                  -- 首次寫入時間：僅新增列時落、更新不覆寫，舊列為 NULL；
+                                                     -- 目前無消費端，是 MTTA 成效指標（docs/BACKLOG.md）的資料基礎
+  UNIQUE (host_name_key, record_date, issue_key)
+```
 
 ```
 lf_issue_cases                                       -- 問題案件：一台主機 × 一個問題的跨日處理歸屬
@@ -657,6 +710,7 @@ lf_issue_cases                                       -- 問題案件：一台主
   day_sync_pending   bool NOT NULL DEFAULT 0         -- 逐日列尚待背景同步
   day_sync_intent    text NULL                       -- 待同步的意圖（狀態、操作者、時間、模式，JSON）
   cancelled          bool NOT NULL DEFAULT 0         -- 因取消交辦而結案；同步時把案件寫出的非結案日子改回明確未處理
+  prtg_evidence_json text NULL                       -- 案件的最小 PRTG 證據；父分析精簡或重建後仍可查
 
 lf_work_orders                                       -- 交辦單：一個問題 × 一批主機 × 一位處理人
   work_order_id      bigint PK 自增
@@ -748,6 +802,14 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 
 ### F. `lf_blobs.version`：整份型 store 的快取失效權杖
 
+```
+lf_blobs                                             -- 整份 JSON 型 store，一個 key 一列
+  blob_key       nvarchar(100) PK                    -- store 名稱（如 hosts、users、system_settings）
+  content        text NOT NULL                       -- 整份 JSON 內容
+  updated_at     timestamp NOT NULL                  -- EF 並發權杖（樂觀鎖，防更新遺失）
+  version        bigint NOT NULL                     -- 快取失效權杖，Mutate 每次寫入遞增；同為並發權杖
+```
+
 `lf_blobs` 每一列存一整份 JSON（key＝store 名稱）。`hosts`／`host_groups`／`group_access`
 三份隨主機數成長，3000 台的 `hosts` 約 4 MB，而 `IHostStore.GetAll()` 在單一 HTTP 請求內
 會被呼叫十餘次（`HostLookup`／`HostAliasIndex`／可見範圍解析各自都要）。
@@ -771,7 +833,7 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 最近登入時間獨立保存在 `user_last_login` blob，登入時不改寫 `users`，避免每次登入都讓使用者快取失效。
 其餘集合型 store（`sentinels`、`rules`…）不啟用讀取快取。
 
-**`IHostStore.DataVersion`**（回饋二十七輪）：把 `version` 對外曝光成主機清單的資料版本，
+**`IHostStore.DataVersion`**：把 `version` 對外曝光成主機清單的資料版本，
 供**上層**判定「用這份清單建出來的東西要不要重建」。目前唯一消費端是
 `EfIssueAggregateQuery` 的主機別名索引快照——清單本身早有快取，但**由它建出來的索引**沒有，
 而報表一次請求會呼叫八個以上的聚合方法，等於把 3000 台的三張字典重建八次。
@@ -780,7 +842,7 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 存成「建完後再讀一次的新版本」的話，兩次讀之間若有人改了主機，就會把新版本號配上舊內容，
 過期索引一路命中到下次寫入為止；反過來版本偏舊只會多重建一次，是安全的失敗方向。
 
-**`ai_usage`**（回饋二十七輪）：AI token 用量統計，單一物件型 blob（`AiUsageStore`）。
+**`ai_usage`**：AI token 用量統計，單一物件型 blob（`AiUsageStore`）。
 內容＝累計起算日＋不受裁切的累計值（呼叫次數／prompt／completion／total／未回報 usage 次數）
 ＋每日列（保留 90 天，超過裁掉）。**累計與每日是兩套數字**：每日只供趨勢檢視，
 使用者問的「目前累計用了多少」要的是不隨裁切變小的那一個。不另開資料表的理由是它跟著 DB
@@ -842,6 +904,135 @@ AI 整理的稽核動作為 `ai_note_tidy`，寫在既有稽核紀錄，僅記�
 
 ### 表與欄位
 
+```
+lf_prtg_devices                                      -- PRTG device 結構鏡像
+  objid            bigint PK                          -- PRTG 指定的 device 識別（外部主鍵，不自增）
+  name             nvarchar(255) NOT NULL
+  group_path       nvarchar(512) NOT NULL             -- PRTG 群組路徑
+  ip               nvarchar(64) NULL                  -- PRTG 的 host 欄（IP 或主機名稱），主機對應的比對來源
+  tags             text NULL                          -- PRTG 標籤原文
+  status           nvarchar(64) NULL                  -- PRTG 狀態字串原樣
+  dependency_objid bigint NULL                        -- PRTG 相依物件識別
+  paused           bool NOT NULL
+  synced_at        timestamp NOT NULL                 -- 最近一次結構同步刷新時間（同步成功後刪除本趟沒刷新到的列）
+  created_at       timestamp NOT NULL
+```
+
+```
+lf_prtg_sensors                                      -- PRTG sensor 結構鏡像（只含取數範圍內裝置）
+  objid            bigint PK                          -- PRTG 指定的 sensor 識別（外部主鍵，不自增）
+  device_objid     bigint NOT NULL                    -- 所屬 device；不設資料庫 FK
+  name             nvarchar(255) NOT NULL
+  sensor_type      nvarchar(128) NOT NULL             -- PRTG sensor 類型
+  tags             text NULL
+  unit             nvarchar(64) NULL                  -- 數值單位
+  status           nvarchar(64) NULL
+  thresholds_json  text NULL                          -- （用途待補）現行同步一律寫 NULL，程式內沒有讀取端
+  dependency_objid bigint NULL
+  paused           bool NOT NULL
+  category         nvarchar(64) NULL                  -- 語意分類（traffic／disk／cpu／memory／availability／hardware）
+  category_source  nvarchar(16) NULL                  -- 分類來源；auto＝由 type 對照表判定，非 auto 的人工值不被覆蓋
+  synced_at        timestamp NOT NULL
+  created_at       timestamp NOT NULL
+```
+
+```
+lf_prtg_state_changes                                -- PRTG sensor 狀態變更與訊息
+  id               bigint PK IDENTITY
+  sensor_objid     bigint NOT NULL                    -- 不設資料庫 FK
+  changed_at       timestamp NOT NULL                 -- 狀態變更時間（本地時間）
+  status           nvarchar(64) NOT NULL
+  prev_status      nvarchar(64) NULL                  -- 變更前狀態
+  message          text NULL                          -- PRTG 訊息原文
+  quality          nvarchar(16) NOT NULL              -- 資料品質（ok／paused／unknown／nodata／untrusted／sampled）
+  created_at       timestamp NOT NULL                 -- 寫入時間；保留期清理依這一欄
+```
+
+```
+lf_prtg_values                                       -- PRTG 每小時聚合數值
+  id               bigint PK IDENTITY
+  sensor_objid     bigint NOT NULL                    -- 不設資料庫 FK
+  period_start     timestamp NOT NULL                 -- 小時起點（本地時間）
+  avg_value        float NULL
+  min_value        float NULL
+  max_value        float NULL
+  coverage         float NULL                         -- 該小時資料涵蓋率（百分比）；sampled 列為實得樣本數 ÷ 期望樣本數 × 100
+  quality          nvarchar(16) NOT NULL              -- 資料品質，值域同 lf_prtg_state_changes.quality
+  created_at       timestamp NOT NULL                 -- 寫入時間；保留期清理依這一欄
+  UNIQUE (sensor_objid, period_start)
+```
+
+```
+lf_prtg_sampled_batches                              -- 快照 sampled 整批提交的冪等識別（與數值同交易寫入）
+  batch_id         nvarchar(36) PK                    -- 批次 GUID 字串
+  created_at       timestamp NOT NULL                 -- 保留期清理依這一欄
+```
+
+```
+lf_prtg_host_map                                     -- PRTG device 對主機的按日映射
+  map_date         date PK
+  device_objid     bigint PK                          -- 與 map_date 組成主鍵
+  ip               nvarchar(64) NULL                  -- 比對當下 device 的位址
+  host_id          bigint NULL                        -- 對應到的主機；ok 以外的狀態可為 NULL
+  host_name        nvarchar(255) NULL
+  map_status       nvarchar(16) NOT NULL              -- ok／conflict／unmatched
+  note             nvarchar(512) NULL                 -- 對應結果的白話說明（共用 IP、主機名稱不符等）
+  created_at       timestamp NOT NULL                 -- 保留期清理依這一欄
+```
+
+```
+lf_prtg_manual_map                                   -- 人工指定的 PRTG device 對主機（長期有效，不按日）
+  device_objid     bigint PK                          -- PRTG 指定的外部主鍵，不自增
+  host_id          bigint NOT NULL
+  created_by       nvarchar(64) NULL                  -- 建立者帳號
+  note             nvarchar(512) NULL
+  created_at       timestamp NOT NULL
+```
+
+```
+lf_prtg_ip_excludes                                  -- 人工指定的 IP 排除清單（長期有效，不按日）
+  ip               nvarchar(64) PK
+  note             nvarchar(512) NULL
+  created_by       nvarchar(64) NULL                  -- 建立者帳號
+  created_at       timestamp NOT NULL
+```
+
+```
+lf_prtg_scope_purge_jobs                             -- 取數範圍外清除作業的耐久預覽／接受與批次進度
+  job_id           nvarchar(36) PK                    -- 耐久預覽／作業識別
+  actor_id         bigint NOT NULL                    -- 操作者
+  parent_job_id    nvarchar(100) NULL                 -- 自動作業的父作業
+  previous_job_id  nvarchar(36) NULL                  -- 先前的部分完成作業
+  source           nvarchar(24) NOT NULL              -- 入口種類
+  status           nvarchar(24) NOT NULL
+  active_owner     nvarchar(24) NULL                  -- 僅執行中作業持有的全域執行槽，其餘為 NULL
+  lease_expires_at_utc timestamp NULL                 -- 執行槽租約到期時間
+  keep_set_json    text NOT NULL                      -- 固定的保留集合
+  candidate_sensor_ids_json text NOT NULL             -- 固定的候選 sensor 集合
+  scope_fence_json text NULL                          -- 來源版本柵欄
+  scope_fingerprint nvarchar(128) NOT NULL
+  accepted_at_utc  timestamp NOT NULL                 -- 伺服器接受時間
+  updated_at_utc   timestamp NOT NULL
+  values_watermark bigint NOT NULL                    -- 接受邊界：此後新增的數值列不加入舊確認
+  state_changes_watermark bigint NOT NULL
+  values_cursor    bigint NOT NULL                    -- 分批刪除游標
+  state_changes_cursor bigint NOT NULL
+  candidate_values bigint NOT NULL                    -- 候選列數
+  candidate_state_changes bigint NOT NULL
+  deleted_values   bigint NOT NULL                    -- 本作業已刪列數
+  deleted_state_changes bigint NOT NULL
+  remaining_values bigint NOT NULL                    -- 剩餘列數
+  remaining_state_changes bigint NOT NULL
+  otherwise_removed_values bigint NOT NULL            -- 被其他流程刪除的列數
+  otherwise_removed_state_changes bigint NOT NULL
+  counts_reconciled bool NOT NULL                     -- 計數是否已核對
+  monitored_devices int NOT NULL                      -- 監看裝置數基準
+  permission_revision bigint NOT NULL                 -- 接受當下的權限版本
+  auth_fingerprint nvarchar(128) NULL                 -- 授權／救援設定指紋
+  stop_reason      text NULL
+  revision         bigint NOT NULL                    -- EF 並發權杖
+```
+
 - `lf_prtg_observations`：已移除。`SchemaUpgrader.DropTableIfExists` 在既有 DB 冪等刪除殘留表（索引隨表移除；SQL Server 走 `OBJECT_ID` 判斷，未在真實 SQL Server 驗證）。
   **升級前備份**。診斷匯出不再含 `Observations` 區段，舊包匯入照驗不寫入；舊版站台匯不進新版匯出的包（docs/PRTG-SPEC.md §10）。
   已停寫的欄位（`lf_top_issues.prtg_message_status_semantic_version`／`prtg_message_time_fingerprint`、`lf_prtg_values.trust_version`／`trusted_proof`）保留不 DROP COLUMN。
@@ -857,6 +1048,43 @@ flush 後發布具校驗的 manifest，SQL 提交後才確認；重播沿用 `lf
 有效舊 `checkpoint.json` 先驗 checksum 再原子遷移。`.lock` 以 OS 排他寫入保護工作者生命週期，勿手動刪鎖。
 
 ### PRTG 隔離診斷傳輸
+
+```
+lf_prtg_transfer_sessions                            -- 診斷包傳輸工作（時間欄存 UTC ticks，bigint）
+  transfer_id      guid PK
+  owner_id         nvarchar(128) NOT NULL             -- 建立者身分雜湊（使用者 id＋是否站台管理員＋帳號）；續傳與匯入只允許同一人
+  scope_hash       nvarchar(64) NOT NULL              -- 建立當下的 PRTG 範圍版本與可見裝置清單雜湊；不同就拒絕續傳
+  source_identity_hash nvarchar(64) NOT NULL          -- 建立當下的 PRTG 網址、啟用狀態與監看政策雜湊；不同就拒絕續傳
+  declared_bytes   bigint NOT NULL                    -- 宣告的套件大小
+  chunk_count      int NOT NULL                       -- 宣告的片段數
+  package_sha256   nvarchar(64) NOT NULL              -- 套件雜湊
+  received_bytes   bigint NOT NULL                    -- 已接受的位元組
+  received_chunks  int NOT NULL                       -- 已接受的片段數
+  state            nvarchar(24) NOT NULL              -- receiving／validating／validation-failed／complete／abandoned
+  version          bigint NOT NULL                    -- 併發權杖
+  active_write_id  guid NULL                          -- 進行中的寫入工作
+  active_write_bytes bigint NOT NULL                  -- 進行中寫入的記憶體保守預留量（宣告本文的 4 倍），不是請求位元組數
+  active_write_until_utc bigint NULL                  -- 寫入保留到期時間
+  lease_owner      nvarchar(128) NULL                 -- 驗證／匯出租約持有者
+  lease_until_utc  bigint NULL                        -- 租約到期時間
+  result_manifest_json text NULL                      -- 驗證結果清單 JSON（有大小上限）
+  failure_code     nvarchar(64) NULL                  -- 驗證失敗代碼
+  created_at_utc   bigint NOT NULL
+  updated_at_utc   bigint NOT NULL
+  completed_at_utc bigint NULL
+  abandoned_at_utc bigint NULL
+  cleanup_after_ordinal int NOT NULL DEFAULT -1       -- 清理游標：已刪到的片段序號
+```
+
+```
+lf_prtg_transfer_chunks                              -- 診斷包原始片段
+  transfer_id      guid PK                            -- FK → lf_prtg_transfer_sessions
+  ordinal          int PK                             -- 片段序號，從 0 起
+  payload          varbinary NOT NULL                 -- 原始片段（至多 4 MiB）
+  byte_length      int NOT NULL                       -- 片段位元組數，與 payload 長度一致
+  sha256           nvarchar(64) NOT NULL              -- 片段 SHA-256
+  accepted_at_utc  bigint NOT NULL                    -- 接受時間（UTC ticks）
+```
 
 `lf_prtg_transfer_sessions` 保存 owner／scope／source 雜湊、宣告大小、套件雜湊、狀態、租約／版本、接收量與清理游標；`lf_prtg_transfer_chunks` 以（工作, ordinal）為鍵保存 ≤4 MiB 原始片段與 SHA-256。
 共用記憶體帳本 256 MiB（上傳按片段四倍、驗證 16 MiB、匯出 128 MiB）。清理 complete 7 日、abandoned／validation_failed 1 日，每分鐘最多 16 工作各 8 片，游標耐久保存。
@@ -882,18 +1110,6 @@ NetIQ 回執與既存父紀錄的資格失效由 RecordBatch 在同一 Serializa
 
 ### PRTG 範圍清除作業
 
-`lf_prtg_scope_purge_jobs` 由既有 `LfDbContext`／`SchemaUpgrader` 建立與冪等補欄，SQLite／SQL Server 保持相同語意。欄位如下；字串及UTC日期依現有 provider 映射，所有計數／watermark／cursor／revision 為64位整數。
-
-| 欄位 | 用途 |
-|---|---|
-| `job_id`（PK，36） | 耐久預覽／作業識別 |
-| `actor_id`、`parent_job_id`（可空，100）、`previous_job_id`（可空，36）、`source`（24） | 操作者、自動父作業、先前部分作業與入口種類 |
-| `status`（24）、`active_owner`（可空，24）、`lease_expires_at_utc`（可空） | 狀態、跨程序唯一執行槽與租約 |
-| `keep_set_json`、`candidate_sensor_ids_json`、`scope_fence_json`（可空）、`scope_fingerprint`（128） | 固定保留／候選集合及來源版本柵欄 |
-| `accepted_at_utc`、`updated_at_utc` | 伺服器建立／接受基準及最後更新時間 |
-| `values_watermark`、`state_changes_watermark`、`values_cursor`、`state_changes_cursor` | 接受邊界與分批游標，新資料不加入舊確認 |
-| `candidate_values`、`candidate_state_changes`、`deleted_values`、`deleted_state_changes` | 候選及本作業已刪計數 |
-| `remaining_values`、`remaining_state_changes`、`otherwise_removed_values`、`otherwise_removed_state_changes`、`counts_reconciled`（bool） | 剩餘、其他流程刪除及核對狀態 |
-| `monitored_devices`（int）、`permission_revision`、`auth_fingerprint`（可空，128）、`stop_reason`（可空）、`revision` | 基準、授權／救援設定、原因及EF併發權杖 |
+`lf_prtg_scope_purge_jobs` 由既有 `LfDbContext`／`SchemaUpgrader` 建立與冪等補欄，SQLite／SQL Server 保持相同語意。欄位見上方「表與欄位」的區塊；字串及UTC日期依現有 provider 映射，所有計數／watermark／cursor／revision 為64位整數。
 
 `UX_lf_prtg_scope_purge_active_owner` 對非NULL執行槽唯一，`IX_lf_prtg_scope_purge_status` 索引狀態／更新時間；values與state_changes各新增 `(sensor_objid,id)` 清除索引。scope gate使用既有 `prtg_scope_revision` blob；每批的刪除、游標、進度及完成時基準同交易提交，並鎖定範圍／權限相依版本。不能以租約時間或記憶體 IsRunning 取代持久所有權。

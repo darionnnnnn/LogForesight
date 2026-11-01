@@ -826,7 +826,8 @@ function mailLedgerBreakdown(ledger) {
         + `；舊格式保留 ${n(ledger.heldKeys)}（舊版寄送紀錄換算而來的保留項目）`
         + `；已預約 ${n(ledger.reservedKeys)}（準備寄送、尚未開始）`
         + `；寄送中 ${n(ledger.attemptedKeys)}（已開始寄送、等待結果）`
-        + `；結果不確定 ${n(ledger.unknownKeys)}（寄送結果不確定、為避免重複寄送而保留的項目）`;
+        + `；結果不確定 ${n(ledger.unknownKeys)}（寄送結果不確定、為避免重複寄送而保留的項目）`
+        + '。寄送中或結果不確定的項目不會自動釋放，因為釋放會造成重複寄信。';
 }
 
 /** 郵件貢獻帳本提示：佔用達上限 90% 或有最近一次滿載紀錄才回字串（附五項佔用分項），否則回 null（不顯示） */

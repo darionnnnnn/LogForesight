@@ -1990,13 +1990,15 @@ public class MailNotificationService
         var ledger = _state.Get();
         var occupied = GetOccupiedMailContributionKeys().Count;
         var reservations = ledger.MailContributionReservations.Values;
+        // 已逾時的 reserved 下一次預約時會被清掉，不算佔用中的預約（共用 store 的單一常數）
+        var reservedAfter = DateTime.UtcNow - MailNotifyStateStore.PreparedMailReservationLifetime;
         lock (_ledgerFullLock)
             return new LogForesight.Web.Models.Dto.MailContributionLedgerDto
             {
                 OccupiedKeys = occupied,
                 AcceptedKeys = ledger.AcceptedMailContributionReceipts.Count,
                 HeldKeys = ledger.HeldLegacyMailContributionReceipts.Count,
-                ReservedKeys = reservations.Count(r => r.Status == "reserved"),
+                ReservedKeys = reservations.Count(r => r.Status == "reserved" && r.CreatedAtUtc > reservedAfter),
                 AttemptedKeys = reservations.Count(r => r.Status == "attempted"),
                 UnknownKeys = reservations.Count(r => r.Status == "unknown"),
                 Limit = _acceptedMailContributionLimit,

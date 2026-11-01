@@ -501,12 +501,13 @@ internal static class PrtgDailyPipeline
                         PrtgSensorCategories.Disk);
                     var reasons = new Dictionary<PrtgValueReason, int>();
                     var added = 0;
+                    var newestHostMap = assessment.ResolveNewestHostMap(completedDay);
                     foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                     {
                         operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                         var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                         foreach (var row in assessment.AssessPage(page, completedDay,
-                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays, completedDay))
+                                     diskThresholds.RecentWindowDays, diskThresholds.MinimumValidDays, completedDay, newestHostMap))
                         {
                             reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                             var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
@@ -561,12 +562,13 @@ internal static class PrtgDailyPipeline
                         var candidates = assessment.Candidates(trendPlan.DeviceToHost, evaluationHostIds, policySensorIds, category);
                         var reasons = new Dictionary<PrtgValueReason, int>();
                         var added = 0;
+                        var newestHostMap = assessment.ResolveNewestHostMap(completedDay);
                         foreach (var page in candidates.Chunk(PrtgValueAssessment.PageSize))
                         {
                             operationScope.Checkpoint(); ct.ThrowIfCancellationRequested();
                             var pageDeviceNames = prtgStore.GetDeviceNamesByObjids(page.Select(s => s.DeviceObjid).Distinct().ToList());
                             foreach (var row in assessment.AssessPage(page, completedDay,
-                                         thresholds.WindowDays, thresholds.MinimumValidDays, completedDay))
+                                         thresholds.WindowDays, thresholds.MinimumValidDays, completedDay, newestHostMap))
                             {
                                 reasons[row.Reason] = reasons.GetValueOrDefault(row.Reason) + 1;
                                 var deviceName = PrtgValueAssessment.DeviceDisplayName(pageDeviceNames, row.Sensor.DeviceObjid);
