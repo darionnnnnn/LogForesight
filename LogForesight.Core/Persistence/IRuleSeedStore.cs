@@ -15,7 +15,7 @@ public class RuleSeedSnapshot
 }
 
 /// <summary>
-/// 內建規則的原廠種子鏡像（docs/WEB-SPEC.md §14-#4「回復預設」的支撐）。
+/// 內建規則的原廠種子鏡像（docs/WEB-SPEC.md §9.7「回復預設」的支撐）。
 ///
 /// 為什麼需要獨立一份而不是直接用程式裡的 <see cref="KnownIssueSeed"/>：
 /// 「回復預設」要回復的是**這條規則出貨時的樣子**，而使用者改過的內容就存在 rules.json 裡，

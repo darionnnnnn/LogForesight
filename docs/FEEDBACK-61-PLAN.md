@@ -69,7 +69,7 @@
 | 每端點都有授權 | `ControllerRouteSnapshotTests`：快照（method, route, permission, anon）＋「每個控制器都有授權宣告」＋一檔一控制器 | **已覆蓋，不做** |
 | SQL Server DDL vs 設計期模型 | 只有 `lf_risky_events`（`SchemaUpgraderRiskyEventsTests:102`） | ◆ 基表 4 張（`lf_blobs`／`lf_daily_records`／`lf_log_lines`／`lf_top_issues`）純靠 `EnsureCreated`；其餘 **20** 張有 SQL Server DDL，但 14 個獨立常數（部分 `private`）＋ 3 張（purge_jobs／transfer_sessions／transfer_chunks）內嵌在 `Upgrade()` 三元運算式（`SchemaUpgrader.cs:293-330／367-460`）；格式不一（行內多欄、具名 DEFAULT、`dbo.` 前綴） |
 | DB-SPEC 對 `ctx.Model` | 無 | ◆ DB-SPEC 只有 **9** 張表有欄位區塊（`lf_daily_records／issue_first_seen／top_issues／permission_changes／reports／record_handling／issue_cases／work_orders／work_order_events`），格式為縮排兩格的偽 DDL（型別是 `bool`／`text`／`timestamp`，不是 SQL Server 型別）；其餘 15 張只有散文 |
-| 文件 §xref 存在性 | 無 | ◆ 引用格式雜（`§14-#4`、`§2.1 Phase 4`、`§3.8-1`、`§9.9e-1`、`§7.2`），distinct 約 72 個；**已失效**：`IRuleSeedStore.cs:18`「WEB-SPEC §14-#4」、`AnalysisOrchestrator.cs:255／274／332／500` 與 `BatchRunRecorder.cs:7`「§2.1」「§11-5」（WEB-SPEC 只有 `## 1`～`## 9`） |
+| 文件 §xref 存在性 | 無 | ◆ 引用格式雜（`§14-#4`、`§2.1 Phase 4`、`§3.8-1`、`§9.9e-1`、`§7.2`），distinct 約 72 個；**已失效**：`IRuleSeedStore.cs:18`「WEB-SPEC §14-#4」、`AnalysisOrchestrator.cs:255／274／332／500` 與 `BatchRunRecorder.cs:7`「§2.1」「§11-5」（實際失效的是 §14、§2.1 與「§11-5」寫法） |
 | PatternId 數量對文件與說明書 | `CorrelationPatternIdsTests` 固定 23（18＋2＋3） | ◆ `DETECTION-SPEC.md:70-71`、`RULES-SPEC.md:220` 正確；**說明書三處寫「19 種」**：`01-overview.ai.md:88`、`04-record-detail.ai.md:66`、`07-suppression.ai.md:45` |
 | `.ai.md`／`.md` 標題同步 | 無；20 章各兩檔 | 新增 |
 | 無斷言測試 | 大括號配對精掃：**19 個**（`CacheEvictionTests` 4、`FrontendConsistencyUiTests` 3、`WebAuthTests` 2、`SourceKeyFastReadyTests` 2、`MailNotificationServiceTests` 2、其餘各 1） | 逐條補斷言 |
@@ -269,7 +269,7 @@ HealthService 10、ScheduleFreshness 8、CaseDaySync 12、PrtgAddressResolver 11
 | M-d | M-2＋L-2（DB-SPEC） | 一個 |
 | M-e1 | M-4＋L-3 第一部分（敘事守門與清理） | 一個 |
 | M-e2 | L-4（BACKLOG 主題式重排、README 收斂） | 一個 |
-| L-3b | WEB-SPEC 事實比對（唯讀代理分四段：§1～§3、§4～§6、§7～§8、§9），主代理重驗後修 | 一個 |
+| L-3b | WEB-SPEC 事實比對（唯讀代理分四段：§1～§6、§7～§8、§9、§10～§12），主代理重驗後修 | 一個 |
 
 規格階段對 §3 的修正（實作以本表為準）：
 
@@ -281,7 +281,7 @@ HealthService 10、ScheduleFreshness 8、CaseDaySync 12、PrtgAddressResolver 11
 | P-5 | 新例外 `sealed : Exception` | 改 `sealed : InvalidOperationException` | 既有背景服務與控制器的 `catch (InvalidOperationException)` 行為不變；Web 只在會把它轉成 400 的 catch 加 `when (ex is not …)` |
 | M-6 | H1 相等＋H2 集合相等 | 只比 H1（AI 版去掉「（AI 參考指引）」或「（AI 檢索版）」後綴） | 實測 23 章 H2 全部不同——AI 版刻意以檢索結構重寫，強推 H2 相同等於重寫 23 份文件 |
 | M-4 | 禁詞＝CLAUDE.md 那組＋本輪／上一輪／這一輪 | 守門只鎖「第 N 輪」「回饋 N 輪」「體檢輪」「審查輪」；「原本／後來／改為／取代」改為 L-3 逐句人工判讀 | 「本輪」在 WEB-SPEC 是郵件寄送輪次等領域用語；「改為／取代」大量描述現行行為（WEB-SPEC 48 處） |
-| L-3 | WEB-SPEC 分段「§10／§11／§12」 | 分四段 §1～§3、§4～§6、§7～§8、§9 | WEB-SPEC 現行只有 §1～§9，§10～§12 是沿用第 59 輪草案的過時字樣 |
+| L-3 | WEB-SPEC 分段未定 | 分四段 §1～§6、§7～§8、§9、§10～§12 | WEB-SPEC 現行有 §1～§12（§9 頁面規格約 2,000 行單獨一段） |
 | P-2 | 「補跑期間的呼叫合併進補跑、總共只多一趟」 | 每一趟進行中被呼叫就再跑下一趟（同一趟內多次呼叫合併），只渲染最後一趟 | 原寫法讓補跑期間完成的寫入同樣讀到舊快照，等於把原 bug 往後挪一趟；驗收補 `callDuringRerunTriggersThirdRound` |
 | M-c／M-d／M-e | M 先紅、L 再修綠（分兩段） | 守門與對應文件修正同段提交 | 全域規則要求每個 commit 可獨立建置、驗證且全綠 |
 

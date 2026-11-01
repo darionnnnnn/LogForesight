@@ -63,7 +63,7 @@
      - `首次出現且大量`：未命中規則之 Low 簽章首次出現且單日次數 $\ge 100$ 次。
      - `持續惡化`：近 7 天總量達前 7 天總量 1.5 倍以上。
 3. **關聯訊號（Correlation Alerts）**：
-   - `CorrelationAnalyzer` 跨 log 組合比對出的 19 種攻擊鏈與故障鏈模式。
+   - `CorrelationAnalyzer` 跨 log 組合比對出的 23 種攻擊鏈與故障鏈模式。
    - 標示「🔗 關聯訊號（程式確定性比對）」，附帶時序說明與組合條件。
 4. **已抑制的告警（Suppressed Alerts）**：
    - 因 `RuleSuppression` 設定而關閉通知與風險升級的告警。

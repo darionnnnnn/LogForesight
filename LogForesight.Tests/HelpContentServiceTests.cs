@@ -184,4 +184,57 @@ public class HelpContentServiceTests
         Assert.Contains("部分完成", prtg.ContentForAi);
         Assert.Contains("AI 跟隨取數", scheduler.Content);
     }
+
+    /// <summary>
+    /// 使用者版與 AI 版是同一章的兩種寫法，章名必須一致：只改一邊會讓 AI 檢索到的章名與使用者畫面對不上。
+    /// 只比 H1（H2 兩版刻意不同結構）；AI 版 H1 結尾的「（AI 參考指引）」「（AI 檢索版）」標註先去掉再比。
+    /// </summary>
+    [Fact]
+    public void 說明書每章的使用者版與AI版H1一致()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.True(dir != null, "找不到 LogForesight.sln，無法定位專案根目錄");
+        var helpDir = Path.Combine(dir!.FullName, "LogForesight.Web", "HelpContent");
+
+        string FirstH1(string path)
+        {
+            var line = File.ReadAllLines(path).Select(l => l.TrimStart('\uFEFF'))
+                .FirstOrDefault(l => l.StartsWith("# ", StringComparison.Ordinal));
+            Assert.True(line != null, $"{Path.GetFileName(path)} 找不到 H1 標題");
+            return line!.Substring(2).Trim();
+        }
+
+        var userFiles = Directory.GetFiles(helpDir, "*.md")
+            .Where(f => !f.EndsWith(".ai.md", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .ToList();
+        Assert.NotEmpty(userFiles);   // 一章都沒掃到等於沒測到東西
+
+        var problems = new List<string>();
+        foreach (var userFile in userFiles)
+        {
+            var aiFile = Path.ChangeExtension(userFile, ".ai.md");
+            var name = Path.GetFileName(userFile);
+            if (!File.Exists(aiFile))
+            {
+                problems.Add($"{name} 缺少對應的 AI 版 {Path.GetFileName(aiFile)}");
+                continue;
+            }
+
+            var userH1 = FirstH1(userFile);
+            var aiH1 = System.Text.RegularExpressions.Regex.Replace(
+                FirstH1(aiFile), @"（AI (參考指引|檢索版)）$", "").Trim();
+            if (!string.Equals(userH1, aiH1, StringComparison.Ordinal))
+            {
+                problems.Add($"{name} H1「{userH1}」≠ {Path.GetFileName(aiFile)} H1（去標註後）「{aiH1}」");
+            }
+        }
+
+        Assert.True(problems.Count == 0, "說明書使用者版與 AI 版 H1 不同步：\n" + string.Join("\n", problems));
+    }
 }
