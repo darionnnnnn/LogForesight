@@ -253,8 +253,39 @@ HealthService 10、ScheduleFreshness 8、CaseDaySync 12、PrtgAddressResolver 11
 - **升級／既有資料**：README 四條（CSP、`TrustedProxies`、409、逾時顯示變更）；無 schema 變更；N-4 新快取只在記憶體。
 - **複檢結論**：相對提案 v1，砍掉三個不該做的改動（N-8 合一、N-10 自動釋放、P-1 兩站點）、改掉兩個會造成實害的設計（N-1 服務層快取共享 DTO、N-4 負快取吞逾時）、補上兩個阻擋級前置（`img-src data:`、Development ReportOnly）與一條被漏掉的 500 路徑（P-5 `EnsureScopeMutationSlotFree`）、把 N-2 的新訊號換成既有版本戳、O-2 節流改泛化既有類別而非新造；每項都有至少一條可機器判定的驗收與一條突變。
 
-## 8. 執行紀錄
+## 8. 階段拆分與規格階段設計修正
+
+| 階段 | 範圍 | commit 單位 |
+|---|---|---|
+| P-a | P-1、P-7（Core） | 一個 |
+| P-b | P-4、P-5、P-6（Web＋WEB-SPEC §7.2） | 一個 |
+| P-c | P-2、P-3（前端） | 一個 |
+| N-a | N-1、N-2、N-4（Web＋PRTG-SPEC／WEB-SPEC 各一句） | 一個 |
+| N-b | N-5、N-6、N-7、N-9、N-10 | 一個 |
+| O | O-1～O-3 | 一個 |
+| M-a | M-12、M-13、M-9（測試基礎建設） | 一個 |
+| M-b | M-1、M-7、M-8、M-10、M-11、M-14（程式碼守門） | 一個 |
+| M-c | M-3＋L-1、M-5、M-6（文件守門與修正同段，交出即綠） | 一個 |
+| M-d | M-2＋L-2（DB-SPEC） | 一個 |
+| M-e1 | M-4＋L-3 第一部分（敘事守門與清理） | 一個 |
+| M-e2 | L-4（BACKLOG 主題式重排、README 收斂） | 一個 |
+| L-3b | WEB-SPEC 事實比對（唯讀代理分四段：§1～§3、§4～§6、§7～§8、§9），主代理重驗後修 | 一個 |
+
+規格階段對 §3 的修正（實作以本表為準）：
+
+| 項 | §3 原寫法 | 修正 | 理由 |
+|---|---|---|---|
+| N-4 | Core `PrtgDailyPipeline:217／321` 也改由呼叫端傳入 | Core 6 處全部不動，只改 Web 13 處 | Core 六處都在夜間管線／探測／守門內每趟建一次，逐趟快取本來就合理；效能問題只在 Web 請求執行緒 |
+| N-4 | `PrtgHostMapRefresher` 重新載入前 `Invalidate()` | 改在 `PrtgStructureSyncService` 使用者觸發的同步開始時 `Invalidate()` | 使用者修好 DNS 後按的是「同步結構與對應」 |
+| N-2 | 「每 5 秒檢查版本」的實作方式未定 | 抽純判定類別 `CaseDaySyncSchedule`，迴圈每 5 秒一拍問它要不要執行；記下的版本值取「執行完成後」 | 測試專案沒有假時鐘套件；服務自己在 finally `Bump()`，取執行前的值會自我喚醒成 5 秒輪詢 |
+| P-5 | 新例外 `sealed : Exception` | 改 `sealed : InvalidOperationException` | 既有背景服務與控制器的 `catch (InvalidOperationException)` 行為不變；Web 只在會把它轉成 400 的 catch 加 `when (ex is not …)` |
+| M-6 | H1 相等＋H2 集合相等 | 只比 H1（AI 版去掉「（AI 參考指引）」或「（AI 檢索版）」後綴） | 實測 23 章 H2 全部不同——AI 版刻意以檢索結構重寫，強推 H2 相同等於重寫 23 份文件 |
+| M-4 | 禁詞＝CLAUDE.md 那組＋本輪／上一輪／這一輪 | 守門只鎖「第 N 輪」「回饋 N 輪」「體檢輪」「審查輪」；「原本／後來／改為／取代」改為 L-3 逐句人工判讀 | 「本輪」在 WEB-SPEC 是郵件寄送輪次等領域用語；「改為／取代」大量描述現行行為（WEB-SPEC 48 處） |
+| L-3 | WEB-SPEC 分段「§10／§11／§12」 | 分四段 §1～§3、§4～§6、§7～§8、§9 | WEB-SPEC 現行只有 §1～§9，§10～§12 是沿用第 59 輪草案的過時字樣 |
+| M-c／M-d／M-e | M 先紅、L 再修綠（分兩段） | 守門與對應文件修正同段提交 | 全域規則要求每個 commit 可獨立建置、驗證且全綠 |
+
+## 9. 執行紀錄
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| | | | | |
+| 規劃 | Fable 5.1 主代理＋兩個 Sonnet 唯讀審查 | d3457f9e | — | — |

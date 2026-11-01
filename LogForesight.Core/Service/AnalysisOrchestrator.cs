@@ -747,13 +747,13 @@ public class AnalysisOrchestrator
                 result.Elapsed = runStopwatch.Elapsed;
                 return result;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
             {
                 runRecorder.Fatal(ex);
                 throw;
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: false);
             // 使用者手動停止（Phase 3）：停在主機日邊界，不是失敗——BatchRun 由呼叫端依情境回填
@@ -770,11 +770,15 @@ public class AnalysisOrchestrator
             if (timingRunId.HasValue) _hostDayTiming?.Complete(timingRunId.Value, pipelineCompleted: false);
             // 全域防護：任何未預期的錯誤都要留下訊息並回報失敗，讓呼叫端（Web 的 BatchRun
             // 回填與排程狀態卡的「上次執行結果」）能監控到。
-            console.WriteLine($"\n執行失敗：{ex}");
+            // HttpClient 逾時擲 TaskCanceledException（屬 OCE），但走到這裡代表 ct 並未取消：是逾時不是使用者停止
+            var isTimeout = ex is OperationCanceledException;
+            var failureMessage = isTimeout ? $"呼叫外部服務逾時：{ex.Message}" : ex.Message;
+            console.WriteLine(isTimeout ? $"\n執行失敗：呼叫外部服務逾時：{ex.Message}" : $"\n執行失敗：{ex}");
             console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
-            Log.Fatal(ex, "執行失敗，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
+            if (isTimeout) Log.Fatal(ex, "呼叫外部服務逾時，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
+            else Log.Fatal(ex, "執行失敗，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
             result.Success = false;
-            result.FailureMessage = ex.Message;
+            result.FailureMessage = failureMessage;
             result.Elapsed = runStopwatch.Elapsed;
             return result;
         }
@@ -1172,7 +1176,7 @@ public class AnalysisOrchestrator
                 runRecorder.Milestone($"⚠ 本次有 {netiqResult.Warnings.Count} 項警告：{preview}{suffix}");
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             _hostDayTiming?.MarkIncomplete(runRecorder.RunId);
             throw;

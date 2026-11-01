@@ -229,6 +229,17 @@ public sealed class PrtgValueAssessment
     }
 
     /// <summary>
+    /// 最新日要用的主機對應（含是否借前一份）。分頁迴圈的呼叫端在迴圈外算一次，
+    /// 再經 <see cref="AssessPage"/> 的 <c>newestHostMap</c> 傳入每頁，避免每頁重複查同一份對應。
+    /// 本類別是長壽服務，結果不記在實例欄位。
+    /// </summary>
+    public (DateTime? MapDate, List<PrtgHostMapRow> Rows) ResolveNewestHostMap(DateOnly newest)
+    {
+        var newestDate = newest.ToDateTime(TimeOnly.MinValue);
+        return ResolveHostMapRows(_store, newestDate, newestDate);
+    }
+
+    /// <summary>
     /// 某個已完成日的 device → 主機：對應取法見 <see cref="ResolveHostMapRows"/>（<paramref name="newest"/> 為本次評估的最新已完成日），
     /// 只認 ok（人工對應也以 ok 寫入），且主機在 <paramref name="evaluationHostIds"/> 內。
     /// </summary>
@@ -247,9 +258,12 @@ public sealed class PrtgValueAssessment
     /// 評估一頁候選（≤ <see cref="PageSize"/> 顆）在 <paramref name="completedDay"/> 往回 <paramref name="windowDays"/> 日的數值。
     /// <paramref name="newest"/> 為本次評估的最新已完成日（省略＝<paramref name="completedDay"/>）；
     /// 最新日整天沒有 ok 對應時借 <see cref="ResolveHostMapRows"/> 的退路，其餘情況（含最新日有 ok）逐 device 走 <see cref="PrtgHostMapLookup"/>。
+    /// <paramref name="newestHostMap"/> 為呼叫端已用 <see cref="ResolveNewestHostMap"/> 算好的最新日對應（分頁迴圈外算一次）；
+    /// 不傳則本頁自己算（舊行為）。
     /// </summary>
     public IReadOnlyList<PrtgValueAssessmentRow> AssessPage(IReadOnlyList<PrtgValueSensor> sensors,
-        DateOnly completedDay, int windowDays, int requiredDays, DateOnly? newest = null)
+        DateOnly completedDay, int windowDays, int requiredDays, DateOnly? newest = null,
+        (DateTime? MapDate, List<PrtgHostMapRow> Rows)? newestHostMap = null)
     {
         if (sensors.Count > PageSize)
             throw new ArgumentOutOfRangeException(nameof(sensors), $"每頁最多 {PageSize} 顆 sensor。");
@@ -276,7 +290,7 @@ public sealed class PrtgValueAssessment
         Dictionary<long, long?>? borrowedNewestHostByDevice = null;
         if (newestDate >= windowStart && newestDate < windowEnd)
         {
-            var (mapDate, rows) = ResolveHostMapRows(_store, newestDate, newestDate);
+            var (mapDate, rows) = newestHostMap ?? ResolveHostMapRows(_store, newestDate, newestDate);
             if (mapDate is { } resolved && resolved.Date != newestDate.Date)
             {
                 borrowedNewestHostByDevice = new Dictionary<long, long?>();

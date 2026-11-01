@@ -738,7 +738,7 @@ public class LogAnalysisService
                 host: new HostKey { HostId = _hostId, HostName = _host }, ct: ct,
                 reportContextNote: reportContextNote, allowAiDeepDive: allowAiDeepDive);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
             Log.Error(ex, "風險報告輸出失敗：{Date:yyyy-MM-dd}", record.Date);
             return null;
