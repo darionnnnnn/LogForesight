@@ -35,6 +35,8 @@
 申報走執行詳情的 Milestone。刻意不做：預估需要逐主機掃既有紀錄＋處理狀態，3000 台規模下
 預覽查詢成本不成比例。觸發條件：實際使用中出現「按下去才發現重跑範圍與預期差很多」的回饋
 時，再評估抽樣預估或非同步預估。
+- **CSP 違規回報只用 `report-uri`**：未同時送 `Report-To`／`Reporting-Endpoints` 新語法（`/api/csp-report` 已能解析 `application/reports+json`）。
+  **觸發時機**：主流瀏覽器停止支援 `report-uri`，或需要回報 CSP 以外的違規類型。
 
 ## NetIQ 整合：試點驗證與遞延項目
 
@@ -348,7 +350,7 @@
 - **建單改背景作業**：4000 台 × 10 天建單同步段約 2.2 秒、預覽約 0.8 秒，目前同步完成。**觸發時機**：建單同步段超過 30 秒。
 - **背景服務與前景共用連線池**：`PrtgSnapshotHostedService`、`AiAnalysisHostedService`、`HostDayWorkflowRecoveryHostedService`、`PrtgRiskReviewHostedService` 注入站台的 `StorageBackend`，與前景請求共用連線池（只有分析主流程自建獨立池）。SQLite 本來就停用連線池；SQL Server 預設池 100，四支服務峰值約 15 條。**觸發時機**：系統健康頁或 SQL Server 端出現連線池耗盡／等待連線逾時。修法：以 keyed DI 註冊第二個 `StorageBackend` 給這四支服務，並逐一核對快照 journal 綁定與跨實例快取都以版本戳為鍵。
 - **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：需先在實機查「`host_id` 不同但同名」的列數，再決定加 `host_name_key` 欄位，或只對 `host_id=0` 舊列做名稱備援。
-- **Core 取數路徑的 `catch (Exception ex) when (ex is not OperationCanceledException)`**：Core 取數路徑已區分 HttpClient 逾時（`TaskCanceledException`、ct 未取消）與使用者取消；PRTG 側與目錄掃描的無條件 OCE catch 因下游已轉型而未改。
+- **PRTG 側與 NetIQ 目錄掃描仍以無條件 `catch (OperationCanceledException)` 判斷取消**（`PrtgDailyPipeline`、`PrtgScopeDevices`、`PrtgStructureSyncRunner`、`PrtgSnapshotHostedService`、`NetiqDiscoveryService`）：`PrtgClient` 與 `NetiqDirectoryClient` 已把 ct 未取消的逾時轉成非取消例外，目前不會把逾時誤判成使用者停止。**觸發時機**：在這些路徑新增不經這兩個用戶端的 HTTP 呼叫時，改用「OCE 且 ct 已取消」判斷（樣板見 `PrtgScopeEstimateController`）。
 - **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
 - **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
 
@@ -515,8 +517,8 @@
 - **快照暫停時長的門檻固定 15 分鐘**：激進策略的快照間隔是 5 分鐘，三次以內的暫停不會印出來。
   **觸發時機**：激進策略下想看到更短的暫停。
 - **PRTG 主機對應：名稱型裝置多且解析不到時每趟付 N 秒**：`PrtgHostMapper.MapForDate` 依 PRTG-SPEC §4 定案對每台名稱型 device 做 DNS（分組鍵要用解析後的 IP），
-  解析器每趟 `new`、失敗快取不跨趟，逾時 1 秒——500 台解析不到的名稱型 device 就是每趟 500 秒，
-  夜間批次與手動「同步結構與對應」都付。候選判定已把打壞的 IP 擋在 DNS 之外，但合法名稱解析不到
+  夜間管線每趟自建解析器；Web 端的全站單例雖有 60 秒負快取，但「同步結構與對應」開始時會清空，逾時又不快取（1 秒）——
+  500 台解析不到的名稱型 device 仍是每趟 500 秒，夜間批次與手動同步都付。候選判定已把打壞的 IP 擋在 DNS 之外，但合法名稱解析不到
   （內網名稱沒進 DNS）擋不住。處理方向：解析改批次並行（`Task.WhenAll` 分批 16）或跨趟負向快取帶 TTL；
   兩者都要動 `IPrtgAddressResolver` 簽章。**觸發時機**：探測「IP 覆蓋概要」的 DNS 名稱台數破百、
   或同步結構與對應的執行紀錄顯示對應階段超過兩分鐘。
