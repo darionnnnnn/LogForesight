@@ -11,7 +11,6 @@ namespace LogForesight.Tests;
 /// 1. 同一行含 <c>docs/archive/</c> 的行——那是指向歷程的一行背景說明。
 /// 2. CLAUDE.md「文件紀律」條目——規則本文正在列舉禁詞。
 /// 3. README.md「升級注意事項」章——升級注意以版本差異為本質。
-/// 4. docs/BACKLOG.md 的標題行（<c>#</c> 開頭）——M-e2 重排後移除（此規則隨之刪除）。
 /// </summary>
 public class DocNarrativeGuardTests
 {
@@ -90,12 +89,6 @@ public class DocNarrativeGuardTests
             }
 
             if (line.Contains("docs/archive/", StringComparison.Ordinal) || inDisciplineItem || inUpgradeSection)
-            {
-                continue;
-            }
-
-            // M-e2 重排後移除：BACKLOG 的 "## 回饋…輪遞延" 這類章節標題暫時放行。
-            if (fileName == "BACKLOG.md" && line.StartsWith("#", StringComparison.Ordinal))
             {
                 continue;
             }

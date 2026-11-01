@@ -905,30 +905,8 @@ log 每天歸檔：當天內容在 `web.log`，跨日時歸檔成 `archive\web-y
 
 ## 後續方向
 
-- **通知管道**：目前只在 Web「排程作業」頁與排程狀態卡顯示，需要主動查看才會發現。排程執行時
-  沒人盯著畫面，下一步可考慮接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位
-  為第二層縱深防禦，即時性要求不如第一層監控，故未列為優先項。
-- **多台伺服器（NetIQ Sentinel 整合）**：連線設定、主機清單管理與跨主機集中分析的取數管線皆已
-  完成（見上方「NetIQ 主機清單」章節），**API 欄位對應已對真實 Sentinel 環境多輪 probe 驗證，
-  生產環境長期試點（登錄實機連續跑數晚核對）尚未進行**；本機每台主機皆有的體檢 due-date
-  輪巡、跨主機（多台之間）關聯層、機房總覽報告等規劃對 NetIQ 主機仍待實作。工程層級的待辦
-  細節見 [docs/BACKLOG.md](docs/BACKLOG.md)。
+已知但刻意未做的項目見 [docs/BACKLOG.md](docs/BACKLOG.md)。
 
 ## 文件地圖
 
-`docs/` 目前的現況文件（描述「現在的行為是什麼」，操作者/開發者日常查閱）：
-
-| 文件 | 內容 |
-|---|---|
-| [docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md) | 偵測與 AI 內部規格：五層偵測、監控訊號清單、趨勢／關聯判定、體檢、小模型策略、AI 穩定性設計 |
-| [docs/WEB-SPEC.md](docs/WEB-SPEC.md) | Web 查詢/維護介面的完整規格：架構、分層、驗證授權、API 慣例、前端慣例、各頁面規格 |
-| [docs/PRTG-SPEC.md](docs/PRTG-SPEC.md) | PRTG 連線、鏡像、取數範圍、回填、環境探測、資源守門與狀態變更規格 |
-| [docs/DB-SPEC.md](docs/DB-SPEC.md) | 資料庫欄位級規格：資料表設計、索引、保留策略、Schema 升級機制 |
-| [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md) | 全站色票、字型、元件、頁面骨架、說明文字與操作人員用詞規範 |
-| [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) | Sentinel REST API 參考：認證、事件查詢、欄位對應、查詢 payload |
-| [docs/RULES-SPEC.md](docs/RULES-SPEC.md) | 規則外部化與告警抑制機制（主機／群組／全站）：語意邊界、規則模型、seed／匯入政策 |
-| [docs/LINUX-RULES.md](docs/LINUX-RULES.md) | Linux 規則面現況：規則模型、主機 OS 標記、目前的種子規則清單 |
-| [docs/BACKLOG.md](docs/BACKLOG.md) | 現況待辦清單（已知但刻意未做的項目），問題解決後即從文件移除 |
-
-`docs/archive/` 是已完成規劃案與開發歷程的存放處——記錄「當時如何決策、如何實作」，
-一般情況不需要打開；要追溯某個現況決策的來龍去脈時才查閱。
+各文件用途見 [CLAUDE.md](CLAUDE.md) 的「文件地圖」。`docs/archive/` 是已完成規劃案與開發歷程的存放處，一般情況不需要打開；要追溯某個現況決策的來龍去脈時才查閱。
