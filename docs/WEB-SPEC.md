@@ -21,7 +21,7 @@
 | 6 | 分層 | Controllers / Models / Services / Repositories / Auth / Filters / Configuration（§4） |
 | 7 | 授權 | Middleware（JWT 驗證身分）＋ ActionFilter（能力檢查）＋ Service 層（資料範圍過濾），三層各司其職（§6、§7） |
 | 8 | 驗證方式 | **JWT，存放於 HttpOnly Cookie**（不放 localStorage，決策理由見 §6.1） |
-| 9 | 組態 | 全部參數集中 `appsettings.json`，程式以強型別 `Appsettings` 類別取得（§5） |
+| 9 | 組態 | 全部參數集中 `appsettings.json`，程式以強型別 `WebAppSettings` 類別取得（§5） |
 | 10 | DI | 內建 DI 容器，介面註冊表見 §4.3；一律建構式注入，不用 Service Locator |
 | 11 | 圖表套件 | **Chart.js v4（MIT）**，自架於 wwwroot/lib、經 `core/charts.js` 單點包裝（選型評估與排除清單見 §8.3） |
 | 12 | 報表原則 | 主管報表以圖表/統計呈現、**排版優先**；所有圖表元素可點擊下鑽到實際項目（§8.4、§9.6） |
@@ -63,7 +63,7 @@ flowchart LR
 | 原則 | 本專案的落實方式 |
 |---|---|
 | **S** 單一職責 | Controller 只做「HTTP ↔ DTO 轉換與呼叫 Service」，不含業務邏輯；Service 只做業務規則，不碰 HttpContext；Repository 只做資料存取，不做授權判斷。稽核、授權、例外處理各自是獨立的 Filter/Middleware，不散落在各 Action 內 |
-| **O** 開放封閉 | 儲存後端以 `Storage.Type` 切換實作、不改呼叫端（Strategy + Factory，沿用批次端既有模式）；驗證方式以 `IAuthenticationProvider` 抽換（Stub → AD/Windows）；新增角色能力只改 `RoleCapabilityMap` 一處 |
+| **O** 開放封閉 | 儲存後端以 `Storage.Type` 切換實作、不改呼叫端（Strategy + Factory）；驗證方式以 `IAuthenticationProvider` 抽換（Stub → AD/Windows）；新增角色能力只改 `RoleCapabilityMap` 一處 |
 | **L** 里氏替換 | Sqlite 與 SqlServer 實作必須通過**同一組合約測試**（DB-SPEC 一致性機制 #3），語意寫在介面註解，實作不得偏離——替換 provider 不允許行為差異（JSONL 曾是第三個受此規則約束的後端，已退役，見 §10.4） |
 | **I** 介面隔離 | 有測試假件依賴的儲存介面按聚合根拆分（`IUserStore`、`IKnownIssueRuleStore`…），不做一個巨型 `IRepository`；讀寫需求差異大的（分析紀錄）維持既有的 Reader/Writer 分離；單一實作且測試零引用的介面（如原 `IAuditLogStore`、`IBatchRunStore`）已於簡化重構移除，改直接依賴具體類別，不留只有一個實作的抽象層 |
 | **D** 依賴反轉 | Service 依賴抽象（保留下來的介面，或本身就穩定的具體類別）而非拼裝細節；`EfJsonBlobStore`/`EfJsonLogStore` 是儲存層唯一的底層實作，定義與實作都在 Core，依賴方向永遠指向抽象。Controller 與 Service 全部建構式注入 |
@@ -79,7 +79,7 @@ LogForesight.Web/
 ├── Program.cs                    -- 組態載入、DI 註冊、middleware 管線（保持薄，註冊邏輯抽到擴充方法）
 ├── appsettings.json
 ├── Configuration/
-│   └── Appsettings.cs            -- 強型別組態（§5）
+│   └── AppSettings.cs            -- 強型別組態 WebAppSettings（§5）
 ├── Controllers/
 │   ├── PagesController.cs        -- MVC：只回傳 View() 頁面殼，一頁一 Action，無資料邏輯
 │   └── Api/                      -- API：[ApiController]、[Route("api/...")]、只回傳 JSON
@@ -97,7 +97,7 @@ LogForesight.Web/
 │   └── ApiResponse.cs            -- 統一回應信封（§7.2）
 ├── Services/                     -- 業務規則層：多數直接是具體類別（如 HandlingService）；
 │                                     僅有測試假件依賴的介面（IVisibilityService 等）與其實作同資料夾
-├── Repositories/                 -- 資料存取層：組合 Core 儲存介面的查詢（如儀表板聚合）
+├── Repositories/                 -- 資料存取層：目前只有 RecordRepository（分析紀錄查詢，強制套用可見範圍）；儀表板聚合在 DashboardService
 ├── Auth/                         -- IAuthenticationProvider、StubAuthenticationProvider、JwtTokenService、RoleCapabilityMap
 ├── Filters/                      -- PermissionAttribute/Filter、ApiExceptionFilter
 ├── Middleware/                   -- CsrfHeaderMiddleware（§6.4）
@@ -109,8 +109,7 @@ LogForesight.Web/
         └── pages/                -- 一頁一模組（dashboard.js、records.js…），與 View 一一對應
 ```
 
-已移除以下範本殘留：移除 `wwwroot/lib/jquery*`、`_ValidationScriptsPartial.cshtml`、
-`Views/Home/Privacy.cshtml`；首頁控制器為 `PagesController`。
+`Controllers/Api/` 共約 45 個控制器，上方僅列代表；完整清單見 `LogForesight.Tests/Fixtures/controller-route-snapshot.txt`。
 
 ### 4.2 分層責任邊界（違反即打回）
 
@@ -127,40 +126,41 @@ LogForesight.Web/
 
 | 介面 | 實作 | 生命週期 |
 |---|---|---|
-| `Appsettings` | 組態綁定單例 | Singleton |
+| `WebAppSettings` | 組態綁定單例 | Singleton |
 | Core 各 `IXxxStore`（有測試假件依賴者） | 以 `StorageBackend`（依 `Storage.Type` 建立的單一路由點）的 `Blob`/`LogStore` 組出 | Singleton |
-| `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ldap）——DB 的 AD 設定開啟時改走 DB 動態設定 | Singleton |
+| `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ad）——DB 的 AD 設定開啟時改走 DB 動態設定 | Singleton |
 | `JwtTokenService` | 直接注入具體類別（`IJwtTokenService` 介面因測試零引用，簡化重構時已移除） | Singleton |
 | `ICurrentUser` | `HttpContextCurrentUser`（自 Claims 讀取） | Scoped |
 | `IVisibilityService` | `VisibilityService`（授權主機解析＋每請求快取） | Scoped |
 | `IAuditService` | `AuditService` | Scoped |
 | 各業務 Service / Repository | 多數直接注入具體類別；僅有測試假件依賴的介面（`IUserStore`／`IHostStore`／`ICsvImporter` 等約 25 個）保留介面 | Scoped |
 
-## 5. 組態（appsettings.json ↔ Appsettings.cs）
+## 5. 組態（appsettings.json ↔ Configuration/AppSettings.cs）
 
-**§12appsettings 精簡**：本檔**只保留「站台還沒起來、資料庫還沒連上之前就必須
+**appsettings 精簡**：本檔**只保留「站台還沒起來、資料庫還沒連上之前就必須
 知道」的啟動與安全前提**，其餘一律以 DB（「系統管理 > 設定」頁）為唯一事實來源——改完即時生效、
 不必重啟站台，也不會出現「檔案一份、DB 一份」的漂移。
 
 ```json
 {
-  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "", "SqliteWal": true },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "", "SqliteWal": true },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）；DataRoot 空＝Web 執行檔目錄
   // PathBase 必須以單一 / 開頭且不含空白、?、#，或留空（IIS 子 Application 不要設）；TrustedProxies 每個元素只接受單一 IP（反向代理叢集逐台列出，不支援 CIDR）；
   // FrameOptions 空字串＝不送 X-Frame-Options；Csp 為 Off | ReportOnly | Enforce（不分大小寫），留空＝Development 用 ReportOnly、其餘環境用 Enforce（§6.5）
   "Server": { "PathBase": "", "TrustedProxies": [], "FrameOptions": "DENY", "Csp": "" },
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
-  "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
+  "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8, "CookieName": "lf_auth" },
   "Auth": {
-    // Ad（正式;AD 伺服器設定在設定頁）| Stub（測試,不驗密碼;Production 啟動會被擋下）
+    // Ad（正式;AD 伺服器設定在設定頁）| Stub（測試,不驗密碼;環境不是 Development 時啟動會被擋下）
     "Provider": "Stub",
-    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>" }
+    // MaxFailedAttempts（預設 5）連續失敗幾次鎖定、LockoutMinutes（預設 15）鎖定分鐘數
+    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>", "MaxFailedAttempts": 5, "LockoutMinutes": 15 }
   },
   "AllowedHosts": "*"
 }
 ```
 
-**已自 appsettings 退役的區段（§12／§13）與其新家**：
+**不在 appsettings 的區段與其所在**：
 
 | 原區段 | 現在在哪 |
 |---|---|
@@ -170,24 +170,25 @@ LogForesight.Web/
 | `Import`（MaxFileSizeKb／MaxRows） | 設定頁「分析參數」→ `SystemSettings.ImportMaxFileSizeKb`／`ImportMaxRows`（每次上傳即時讀取） |
 | `Ui:DashboardDefaultDays`／`RunMatrixDays` | 程式常數 `DashboardController.DefaultDays`／`RunsController.DefaultRunSummaryDays`（前端本來就明傳期間，這只是 API fallback） |
 | `Ui:DefaultPageSize` | **直接刪除**——盤點後無任何消費端（「有設定無行為」是本專案紅線） |
-| `Auth:Ldap:Domain` | **退役**：AD 驗證的唯一事實來源是設定頁（`AdAuthEnabled`／`AdServers`）；`LdapAuthenticationProvider` 一併移除，`Provider=Ad` 在 AD 未設定時的 fallback 為 `UnconfiguredAdAuthenticationProvider`（回前端的訊息與密碼錯誤相同，真正原因只寫進記錄檔；見 §6.2） |
-| `Netiq:DiscoveryClient` | **退役**（§13）：改為「NetIQ 維護」頁的 `UseOfflineDemoData` 開關，僅非 Production 可開 |
+| `Auth:Ldap:Domain` | **退役**：AD 驗證的唯一事實來源是設定頁（`AdAuthEnabled`／`AdServers`）；沒有獨立的 LDAP Provider 類別，`Provider=Ad` 在 AD 未設定時的 fallback 為 `UnconfiguredAdAuthenticationProvider`（回前端的訊息與密碼錯誤相同，真正原因只寫進記錄檔；見 §6.2） |
+| `Netiq:DiscoveryClient` | **退役**：由「NetIQ 維護」頁的 `UseOfflineDemoData` 開關決定，僅非 Production 可開 |
 
 > **升級零遷移**：每個新 `SystemSettings` 欄位的程式內建預設值＝原 appsettings 的出廠值，
 > 舊部署升級後行為不變，直到管理者主動在設定頁調整。壞值（手改 DB、舊 blob 缺欄位反序列化成 0）
 > 由 `RuntimeSettingsResolver` 擋掉並保留出廠值——「0 秒逾時」比不改更糟。
 
-- `Appsettings.cs` 是巢狀類別的單一根（`Appsettings.Storage.Type` 這樣取用），
-  `Program.cs` 以 `Configuration.Get<Appsettings>()` 綁定並註冊 Singleton，任何類別建構式注入取得。
-  **不在程式中直接讀 `IConfiguration`**——組態鍵名只存在於 Appsettings.cs 一處，改名不會有魔法字串漏網。
-- **啟動時驗證**：`Appsettings.Validate()` 檢查必填（如 `Jwt.SecretKey` 非空、`Storage.DataRoot`
-  存在、`Auth.ServerAdmin` 帳號與雜湊非空、`Auth.Provider=Stub` 時環境不得為 Production），
-  不合格直接 fail fast 拋例外，不讓站台帶病啟動——沿用批次端「設定錯誤要顯性化」的原則。
-- **新增設定必須有消費端**：「有設定無行為」是本專案紅線（§12 刪掉的 `Ui:DefaultPageSize`
-  正是這種殘留）。新增可調整項目時預設放 DB 設定頁，只有啟動前提才進 appsettings。
-- **與批次設定的一致性**：Web 與批次 exe 各有自己的 appsettings.json，但 `Storage` 區段
-  （Type/DataRoot/ConnectionString）**兩邊必須指向同一後端**——欄位定義放 Core 的
-  `StorageSettings` 共用類別，語意只有一份；部署文件需註明兩份設定同步調整。
+- `Configuration/AppSettings.cs` 的 `WebAppSettings` 是巢狀類別的單一根（`settings.Storage.Type` 這樣取用），
+  `Program.cs` 以 `Configuration.Get<WebAppSettings>()` 綁定並註冊 Singleton，任何類別建構式注入取得。
+  **不在程式中直接讀 `IConfiguration`**——組態鍵名只存在於 `AppSettings.cs` 一處，改名不會有魔法字串漏網。
+  `Storage` 區段的型別 `StorageSettings` 定義在 Core。
+- **啟動時驗證**：`WebAppSettings.Validate(strict, environmentName)` 檢查：`Storage.Type` 受支援、
+  `Jwt.SecretKey` 非空且至少 32 bytes、`Jwt.ExpireHours` > 0、`Storage.DataRoot`（空則取執行檔目錄）目錄存在、
+  `Auth.ServerAdmin` 帳號與雜湊非空且雜湊為 PBKDF2 格式、`Server.TrustedProxies` 每項為 IP、
+  `Server.PathBase`／`FrameOptions`／`Csp` 值合法；`strict`（環境不是 `Development`）時另擋下公開已知的測試
+  SecretKey／PasswordHash 與 `Auth.Provider=Stub`。
+  不合格直接 fail fast 拋例外，不讓站台帶病啟動——設定錯誤要顯性化。
+- **新增設定必須有消費端**：「有設定無行為」是本專案紅線（無消費端的 `Ui:DefaultPageSize` 即屬此類）。
+  新增可調整項目時預設放 DB 設定頁，只有啟動前提才進 appsettings。
 - **`Storage.Type` 二選一**（`Sqlite` 為預設與主要測試方式，`Jsonl` 檔案後端已
   全面退役、設成 `Jsonl` 啟動即報錯）：`Sqlite`（測試/開發用的單一 `.db` 檔真資料庫，不寫任何
   JSON 檔，預設）／`SqlServer`（正式環境，2000 台量級）。**全部資料**（分析紀錄＋webdata）
@@ -197,16 +198,11 @@ LogForesight.Web/
   （帳號 `svc-lfadmin` / 密碼 `LogForesight-dev`），讓開發者 clone 後 `dotnet run` 即可登入測試,不必先做設定。
   這些值會進版控與 GitHub、任何人都看得到,**因此絕不能沿用到正式環境**：正式環境一律用環境變數覆寫
   （`Jwt__SecretKey`、`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
-  `Ad`（§12 起舊值 `Ldap` 視同 `Ad`；`Provider=Stub` 且 `ASPNETCORE_ENVIRONMENT=Production` 時
+  `Ad`（舊值 `Ldap` 視同 `Ad`；`Provider=Stub` 且環境不是 `Development` 時
   啟動 fail fast 的欄杆會擋下帶著測試設定上線的失誤）。
   想覆寫本機測試值可用 `appsettings.Development.json`（gitignore）。
-- `Storage.DataRoot`：JSONL 後端的資料根目錄＝批次執行檔目錄（`history.txt`、`rules.json` 所在），
-  Web 的自有資料寫入其下 `webdata\`（§10.3）。
-- **開發環境自動推算 `DataRoot`**：`ASPNETCORE_ENVIRONMENT=Development` 且 `Storage.DataRoot` 為空時，
-  `Program.cs` 依本站台輸出目錄推算同一個 repo 內批次的輸出目錄（`{repo}\LogForesight\bin\{Config}\{TFM}`），
-  不寫死絕對路徑——不綁使用者名稱、自動跟著 Debug/Release 與 TFM 變動。
-  推算不出（目錄結構非預期）時維持空值、交由 `Validate()` 顯性報錯。開發者若明確填了 `DataRoot` 則尊重其值、不推算；
-  正式環境不受影響（本機制只在 Development 生效）。
+- `Storage.DataRoot`：Sqlite 未設定 `ConnectionString` 時預設 `.db` 檔所在的目錄，也是診斷 log 等產出檔案的位置；
+  空＝Web 執行檔目錄（`AppContext.BaseDirectory`），不依環境另行推算。SqlServer 或自訂連線字串時資料不在此目錄。
 
 ## 6. 身分驗證
 
@@ -229,10 +225,10 @@ LogForesight.Web/
   → IAuthenticationProvider.AuthenticateAsync(account, password)
       serverAdmin 帳號比對（任何 Provider 下優先檢查，見下方專節）
       Stub 實作：`IUserStore` 的 `users` JSON blob 有該帳號且 active 即通過（password 忽略）——僅供開發/前期測試
-      正式（§12 起）：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
+      正式：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
         bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider
   → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 簽發 JWT → Set-Cookie
-  → 稽核 login / login_failed（§13）
+  → 稽核 login / login_failed（§11）
 ```
 
 **憑證不正確的路徑一律回「帳號或密碼錯誤。」**：查無帳號、密碼錯誤、AD 尚未設定三者
@@ -263,9 +259,9 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 - **密碼以雜湊存放**（PBKDF2，不存明文——設定檔會進備份/複本，明文密碼會跟著擴散）。
   輪替 SOP：產生新雜湊填入 `PasswordHash` 後重啟站台即可，產生指令
   （`LogForesight.Web.exe --hash-password`）提供；已簽發的 JWT 最長 8 小時自然失效。
-- **Web 端鎖定**：serverAdmin 連續 5 次登入失敗鎖定 15 分鐘（記憶體計數即可）——
-  它是本地帳號、**不受 AD 帳戶鎖定原則保護**，必須自帶防暴力破解；一般 AD 帳號則不做
-  Web 端鎖定，交由 AD 原則（見下）。**此鎖定只在驗密碼的 Provider（正式 Ldap）下有意義**；
+- **Web 端鎖定**：serverAdmin 連續 5 次登入失敗鎖定 15 分鐘（`Auth.ServerAdmin.MaxFailedAttempts`／`LockoutMinutes`，記憶體計數）——
+  它是本地帳號、**不受 AD 帳戶鎖定原則保護**，必須自帶防暴力破解；一般 AD 帳號沒有這種連續失敗鎖定，
+  只受下方的登入節流與 AD 原則約束。**此鎖定只在驗密碼的 Provider（正式 Ad）下有意義**；
   `Provider=Stub` 不驗密碼（見下方「Stub 免密碼」），serverAdmin 直接放行、無密碼可錯、不計失敗。
 - 全部操作照常稽核（account=設定的帳號名、user_id NULL）；儀表板登入失敗卡對它的
   失敗嘗試同樣可見。
@@ -277,24 +273,27 @@ serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。�
 
 **Stub 免密碼**：測試期間環境不含核心重要
 主機，免密碼風險已評估接受。**「免密碼」的界線在後端、不在前端**：`Provider=Stub` 下登入頁
-**照常顯示密碼欄、使用者照常輸入、前端驗證不變**；密碼送到後端後，Stub 模式一律通過密碼
+**照常顯示密碼欄，但密碼欄為選填（`login.js` 不設 `required`，留空可送出）**；密碼送到後端後，Stub 模式一律通過密碼
 驗證——**不論輸入什麼密碼（含錯誤、留空）都放行**。一般帳號由 `StubAuthenticationProvider.Verify`
 恆回 Ok；**本地救援帳號 serverAdmin 同樣一致**：`IdentityService` 把
 `IAuthenticationProvider.RequiresPassword` 傳入 `ServerAdminAuthenticator.TryLogin`，為 `false`
 （Stub）時不比對密碼直接放行並清空失敗計數。`Provider=Stub` 且
-`ASPNETCORE_ENVIRONMENT=Production` 時啟動 fail fast 的欄杆維持不變（防的是「帶著 Stub 上
-正式環境」的失誤，不是測試期的使用）——正式環境強制 Ldap（`RequiresPassword=true`），
+環境不是 `Development` 時啟動 fail fast（防的是「帶著 Stub 上
+正式環境」的失誤，不是測試期的使用）——正式環境強制 Ad（`RequiresPassword=true`），
 救援帳號仍走 PBKDF2 密碼＋鎖定，這條免密碼捷徑到不了正式環境。
 
-**正式驗證（已定案：AD LDAP）**：`LdapAuthenticationProvider` 以使用者帳密向 AD bind 驗證；
-AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及可信來源 IP 節流，命中門檻時
-不再呼叫 AD，減少密碼噴灑觸發網域鎖定。救援帳號不受共用 IP 門檻連坐，仍受本身鎖定限制。
+**正式驗證（已定案：AD LDAP）**：`DynamicAuthenticationProvider` 依設定頁的 AD 設定，經 `LdapCredentialVerifier`
+以使用者帳密向 AD bind 驗證（AD 未設定時 fallback 為 `UnconfiguredAdAuthenticationProvider`）；
+AD 帳戶本身的鎖定依網域原則；Web 端另對登入請求按帳號及可信來源 IP 節流（`LoginThrottle`：5 分鐘滑動窗口內
+同一帳號失敗 10 次或同一來源 IP 失敗 50 次即暫停 5 分鐘，計數鍵上限 1 萬個；暫停期間回 429 `rate_limited`），
+命中門檻時不再呼叫 AD，減少密碼噴灑觸發網域鎖定。迴路位址與未知來源不計入 IP 維度。
+救援帳號豁免 IP 維度（不受共用 IP 門檻連坐），只看帳號維度，仍受本身鎖定限制。
 帳號一律先經 `AccountNames.Canonical` 正規化（去前後空白、去掉 `DOMAIN\` 網域前綴）：LDAP bind、帳號節流鍵、
 使用者查找都用正規化帳號，`CORP\bob` 與 `bob` 是同一個人、同一個節流桶；查找時正規化帳號找不到才退回原字串
 （相容既有含 `\` 的本地帳號）。登入請求的帳號與密碼各上限 256 字。登入後導回的 `returnUrl` 只接受站內相對路徑，
 含 tab、換行字元或 `//`、`\`、`://` 一律拒絕（`core/safe-return-url.js`）。
 
-JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`pv`（簽發時的
+JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣列）、`srvadm`（serverAdmin 標記）、`pv`（簽發時的
 `PermissionVersionStamp`）、`jti`、`exp`。**能力進 token、主機授權範圍不進 token**——範圍每次請求由
 `IVisibilityService` 即時解析。`ActiveUserMiddleware` 對一般使用者每個請求都從 `IUserStore` 檢查帳號仍為 active；
 serverAdmin 不在 `IUserStore`，不做這項檢查；一般使用者另比對 token 的 `pv` 與 `PermissionVersionStamp`，版本不符就重算能力、
@@ -316,7 +315,7 @@ serverAdmin 不在 `IUserStore`，沒有這個欄位。
   不等 token 自然過期。群組、使用者、主機停用／合併等影響能力或可見範圍的異動推進 `PermissionVersionStamp`；
   下一個請求發現 `pv` 不符時，重算能力並依 §6.2 契約換發 token。
 - API 收到過期/無效 token → 401 ＋ 信封 error code `auth_expired`；前端攔截後導向登入頁。
-  過期後首個被拒請求補記稽核 `session_expired`（誠實邊界：無法記錄「過期那一刻」）。
+  稽核動作碼 `session_expired` 保留於對照表，目前沒有寫入點。
 - `POST /api/auth/logout`：以目前 JWT 的 `jti` 加入行程內 `RevokedTokens`，保留到該 token 原本的 `exp`，再清除 Cookie＋稽核
   `logout`；只清 Cookie 不足以阻止已被複製的 token 重放。行程重啟會清空撤銷清單，剩餘效期仍由 JWT `exp` 結束。
 
@@ -374,7 +373,7 @@ admin   → ViewAll, Handle, Assign, ConfirmPermission, Maintain, DevMonitor, Vi
 public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 ```
 
-`PermissionFilter`（`IAsyncAuthorizationFilter`）：能力不足回 403 並寫稽核（result=`denied`）。
+`PermissionFilter`（`IAuthorizationFilter`，同步）：能力不足時寫稽核（result=`denied`）；`/api` 路徑回 403 信封，其餘頁面導向 `/access-denied`。
 **Service 層的資料範圍過濾是不可繞過的最後防線**：即使某個 API 忘了掛 Filter，
 查詢仍只回授權範圍的資料。
 
@@ -390,7 +389,7 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 對方登入後看得到自己負責的主機、卻連處理狀態都標不了，被交辦也回覆不了——「有可見範圍
 無處置能力」是半套。能力進 JWT；負責人變動會推進權限版本，下一次請求重算能力並無感刷新
 原工作階段的 token（可見範圍則即時生效）。
-停用帳號一律視為無能力（登入本來就進不來，見 §6.3）。
+停用帳號由登入與 `ActiveUserMiddleware`（逐請求 401）攔截，`UserCapabilityResolver` 本身不檢查停用（見 §6.3）。
 
 **負責人路徑**：第 3 層的授權鏈**擴充為聯集**——
 `WebHost.OwnerUserIds` 含此人的（啟用中）主機直接可見，與群組授權同級（整台可見，
@@ -412,8 +411,10 @@ GetIssueOwnedHostIds`，內部呼叫 `IIssueAggregateQuery.HostIdsFor` 反查 `l
 `DayHandlingCommandService.DefaultHandlerId` 的自動帶入處理人同樣先查問題負責人，但只在
 跨命中問題聯集去重後**恰一人**且未停用時帶入，多人不猜、落回主機負責人規則。
 管理頁 `/admin/issue-owners`（側欄「系統管理＞問題負責與靜音」，`Maintain`）：
-`IssueOwnersController` GET／GET recent-issues（近 30 天出現過的問題選擇器，依主機數排序）／
-PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從近期問題挑選或手動輸入
+`IssueOwnersController`（`api/admin/issue-owners`）：GET 清單／GET `{source}/{eventId}/mute-history`（靜音歷程）／
+GET `recent-issues`（近 30 天出現過的問題選擇器，依主機數排序）／PUT／DELETE `{source}/{eventId}`／
+PUT、DELETE `{source}/{eventId}/conclusion`（機房結論）／PUT、DELETE `{source}/{eventId}/mute`（靜音），
+寫入走稽核（`IssueOwnerAdminService`）；新增時可從近期問題挑選或手動輸入
 (Source, EventId)，編輯時鍵鎖定只能改負責人與備註。
 
 **機房結論**：`IssueProfile` 額外承載
@@ -438,7 +439,7 @@ false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時�
 SetConclusion`）——兩個呼叫端共用同一套驗證與 merge 邏輯，不各自重寫一份。
 
 **案件授與**：前面路徑之外、刻意更窄的一條。
-被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrants`／
+被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrantHostNames`／
 `IsCaseGrantOnly`，`EnsureVisible` 放行）——沒有這條路徑，把問題交辦給不在該主機授權範圍內的人
 等於白指派（對方打不開）。授與以「**現在或曾經**是處理人」為準，結案後仍看得到自己處理過的東西。
 只授與那個問題，因此 `RecordDetailQueryService` 對這類檢視者**裁剪**：重點問題只留被授與的、
@@ -588,6 +589,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `prtg-diagnostic-upload.js` | PRTG 診斷檔分片（4 MiB）上傳、續傳與雜湊 |
   | `prtg-probe-types.js` | 從環境探測輸出擷取實際觀察到的 sensor 類型 |
   | `prtg-scope-labels.js` | PRTG 啟用狀態與數值取數對象的顯示字串，維護頁與排程作業頁共用 |
+  | `prtg-sensor-categories.js` | PRTG sensor 分類（流量／磁碟／CPU／記憶體／連通性／硬體健康）的中文顯示字典（label 與表格短稱） |
   | `report-view.js` | 報告全文共用呈現（風險／體檢／權限異動三種） |
   | `run-phases.js` | 取數進度軌的 phase 文案與單位（§9.10） |
   | `safe-return-url.js` | 登入後導回網址的站內相對路徑檢查（純函式） |
@@ -595,7 +597,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `storage.js` | `safeStorage`：localStorage 的安全包裝，見 §8.6 |
   | `ui.js` | toast、確認對話框、表格、分頁、載入／空／失敗狀態等共用元件 |
 
-- `pages/*.js`：一頁一模組，`_Layout.cshtml` 以 `<script type="module">` 載入對應頁模組；
+- `pages/*.js`：一頁一模組，`_Layout.cshtml` 只載入 `core/layout.js`，各 View 自己以 `<script type="module">` 載入對應頁模組；
   頁面需要的初始參數（如 record id）用 `data-*` 屬性放在 View 的根元素上，JS 讀取——
   **cshtml 內不寫 inline script、不用 Razor 內插 JS 變數**。
   例外只有下列四段 inline script，皆帶每請求 nonce（`nonce="@Context.GetCspNonce()"`，§6.5）；新增 inline script 必帶 nonce，
@@ -608,7 +610,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   就能維護，工具鏈越少、五年後越可能還編得起來（對應決策 #4 的防廢棄考量）。
   第三方 JS 套件僅限白名單：Bootstrap（範本內建）＋ Chart.js（§8.3）；新增套件需符合
   §8.3 的選型限制（開放授權以 MIT 優先、排除中國起源/中國社群主導維護的套件）並更新本文件。
-- **圖示資產白名單**：Bootstrap Icons（MIT）——**僅手動複製約 24 個 symbol**
+- **圖示資產白名單**：Bootstrap Icons（MIT）——**僅手動複製 28 個 symbol**
   到 `wwwroot/img/icons.svg` 單一 sprite，屬純靜態 SVG 資產、**無任何執行程式碼**、零外部請求、
   不引入字型檔，故不受上面「前端套件」的執行風險限制；用法見 §8.2「圖示」。
 - **字型資產白名單**（見 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) §3）：Fira Sans／Fira Code
@@ -846,8 +848,9 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 6c. **載入失敗狀態附「重試」鈕**：重試只重跑那一段載入流程（整頁重載會丟掉已設好的篩選條件），
    按下後先回到骨架狀態。**找不到資料（404）不給重試鈕**：重試永遠不會成功。
 7. **每頁筆數可選**：`renderPagination` 的每頁筆數下拉固定 10/20/30/50/100，
-   預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。表格提供
-   「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
+   預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。問題查詢
+   （`records.js`）與交辦單詳情（`work-order-detail.js`，成員表）提供
+   「複製為 CSV」按鈕（前端序列化，零後端成本）；其餘表格沒有此按鈕
 8. 日期區間提供快捷鈕：昨日／近 7 天／近 30 天／近 90 天（各頁選項略有不同），
    樣式統一為**相連的 `btn-group btn-group-sm`＋`btn-outline-secondary`**，不帶文字標籤。
    **期間終點一律錨在昨天**（分析只產到昨天，錨在今天會讓最後一天必然沒有資料），
@@ -873,7 +876,7 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
     以 `indeterminate` 呈現「本頁部分已選」。首見於主機頁批次改群組，供之後其他清單頁比照。
 12. **使用者名稱欄位固定顯示「顯示名稱(帳號)」**：
     半形括號；前端唯一出口 `format.js formatUserName()`（查無顯示名稱退回帳號），後端組字串的
-    出口（TriggerText 之類「誰做的」敘述句）走 `NameFormat.FormatAccount()`。DTO 只補
+    敘述句（TriggerText 之類「誰做的」）走 `IUserDisplayNameService.OfAccount()`。DTO 只補
     displayName／account 素材、不在後端組顯示字串（格式是前端的事）；查無對應使用者
     （登入失敗打錯帳號、serverAdmin 本地帳號、已刪除帳號）一律優雅退回只顯示帳號。
     **例外**：使用者管理頁維持「帳號／顯示名稱」兩欄（表格語意已清楚，不合併）；右上角目前
@@ -896,16 +899,17 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 - **清單查詢與狀態輪詢的唯一寫法**（`core/async-guards.js`，無 DOM 相依）：
   - 會被連按篩選、換頁、切換範圍打斷的查詢一律用 `createSeqGuard()`：發出前 `next()` 取序號，回應或失敗回來先 `isCurrent(seq)`，
     不是最新一次就整份丟掉、不得寫入任何頁面狀態（失敗態只屬於最新一次查詢）。目前用於 `audit`、`dashboard`、`hosts`、
-    `permission-changes`、`records`、`reports`、`runs`（執行總表）。
+    `permission-changes`、`prtg-admin`、`records`、`reports`、`runs`（執行總表）。
   - 狀態輪詢一律用 `pollWhile(fn, intervalMs)`：`fn` 跑完才排下一輪（在途請求不疊加）、首輪也等一個間隔、
     例外只 `console.warn` 一次並照常續排、`fn` 回傳 `false` 或呼叫 `stop()` 即停。頁面不得 `setInterval(async …)`
     或以 `setInterval` 驅動具名 async 函式（`PollingUiTests` 掃全部 `pages/*.js`）。依狀態切換間隔而以 `setTimeout`
     自排程者（排程作業頁的排程狀態）必須把「排下一輪」放在 `finally`，否則一次例外就讓常駐輪詢靜默停掉。
     `pollWhile` 不做背景分頁降頻與失敗退避（見 BACKLOG）。
   - `core/storage.js` 的 `safeStorage`（`get`／`set`／`remove`，全部 try/catch；隱私模式或停用站台資料時 `get` 回 `null`、
-    寫入靜默略過）是讀寫 localStorage 的預設入口。`FrontendGuardUiTests.LocalStorage直接呼叫只出現在白名單檔` 掃
-    `pages/` 與 `core/ui.js`，直接呼叫 `localStorage.` 的檔案限白名單（`permission-changes`、`settings`、`note-editor`、
-    `layout`、`prtg-admin`、`record-detail`，自帶 try/catch）；同檔 `Toast第二參數只能是Bootstrap有的型別` 限 toast 型別為
+    寫入靜默略過）是讀寫 localStorage 的預設入口。`FrontendGuardUiTests.Storage直接呼叫必須改用安全包裝或包在try內` 掃
+    `core/`（除 `storage.js`）與 `pages/`：`localStorage.`／`sessionStorage.` 的直接呼叫，該行與前 8 行內必須有 `try {`，
+    否則改用 `safeStorage`／`safeSession`；`載入階段會執行的檔案不直接碰Storage` 另鎖 `layout.js`、`report-view.js` 只走 `safeStorage`；
+    同檔 `Toast第二參數只能是Bootstrap有的型別` 限 toast 型別為
     `primary`／`secondary`／`success`／`danger`／`warning`／`info`（寫成 `error` 會得到不存在的 `text-bg-error`）。
 
 ### 8.6a 說明文字顯示原則與全站用詞規範
@@ -1013,7 +1017,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   資料同交辦總覽待派頁籤的試跑 `GetGaps`（近 7 天：昨天往前 7 天），主數字＝待派問題總數、
   超過試跑上限時顯示「超過上限」，副行為其中無法派出的問題數；點卡進待派頁籤 `/work-orders#gaps`；
   不具 `Assign` 者該欄為 null、不試跑。整包快取的鍵含 Assign 維度）、未回報主機、
-  **依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
+  **依群組風險概況**、Web 登入失敗 24h 卡（具 `ViewAudit` 才顯示）。
 - **一個問題只歸一個類別**：同一個 (Source, EventId) 的 `lf_top_issues` 列可能帶不同 category
   （規則調整過、或部分主機日未命中規則而落 `Other`）。`AggregateByCategory` 先以
   `MIN(category)` 把每個問題收斂成單一類別再分卡——與依問題視角（`Aggregate` 的
@@ -1350,7 +1354,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      |---|---|
      | `CaseId` | GUID 字串，逐日列回鏈用 |
      | `HostName` | 現行主機名稱（同 handling 鍵語意） |
-     | `IssueKey` | 問題簽章鍵（`LogName|Source|EventId|EntryType`） |
+     | `IssueKey` | 問題簽章鍵（`LogName|Source|EventId|EntryType`；事件鍵 `EventKey` 非空時附加第五段，如 Linux 規則 Id、PRTG `prtg:代碼:objid`） |
+     | `PrtgEvidence` | PRTG 來源問題的案件證據（非 PRTG 問題為空） |
      | `IssueLabel` | 「Source EventId」反正規化（同 `RecordHandlingLog.IssueLabel`，避免規則改名/清理影響追責） |
      | `Status` | 值域同 `IssueHandlingStatuses`（open／in_progress／observing／escalated／結案四種，新增 escalated） |
      | `HandlerId` | 案件處理人——同一問題跨日只歸一人 |
@@ -1362,7 +1367,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      | `UpdatedAt` | 最近更新時間（併發權杖） |
      | `WorkOrderId` | 所屬交辦單（§9.4b）；**進行中案件必屬一張交辦單**，只有升級整併前的舊案件可能暫時為空 |
      | `SourceName`／`EventId` | 自 `IssueKey` 解析的反正規化欄，依問題查案件走索引 |
-     | `DaySyncPending`／`Cancelled` | 逐日列待背景同步；因取消交辦而結案 |
+     | `DaySyncPending`／`DaySyncIntent`／`Cancelled` | 逐日列待背景同步與其寫入意圖（`DaySyncPending` 為 false 時意圖為空）；因取消交辦而結案 |
 
      同一（主機, 問題簽章）同時間至多一個進行中案件（`ClosedAt == null` 唯一）；歷史結案案件
      保留（查得到「上次誰處理的、怎麼結的」）。`IssueHandling` 增列 `CaseId`：案件展開寫入的列
@@ -1516,7 +1521,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 
 ### 9.4 `/hosts/{id}` 主機詳情/時間軸（全角色，限授權）
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/**作業系統**/Sentinel/負責人/群組）、
-  最近體檢結論、權限異動紀錄、生效中抑制清單。標題同 9.3 一併顯示 Sentinel 回報的顯示名（詳見 [LINUX-RULES.md](LINUX-RULES.md)「Web UI」段）。
+  最近體檢結論。標題同 9.3 一併顯示 Sentinel 回報的顯示名（詳見 [LINUX-RULES.md](LINUX-RULES.md)「Web UI」段）。
 - **重點問題（期間彙總）**：問題查詢「依主機」
   下鑽進來時，時間軸卡下方有期間內問題
   彙總表（`HostDetailDto.TopSignatures`，依 Source+EventId 分組：最高嚴重度／總次數／
@@ -1536,7 +1541,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   一個 (Source,EventId) 對應多個完整 IssueKey（LogName/EntryType 不同）時合併呈現、狀態各自取
   當日實際列。
 - **指定主機更新鈕**：就近原則——看著這台主機覺得資料舊了當場按。開確認 modal（可選一次性回補天數
-  1~14，不落地設定）後送 `POST api/admin/schedule/run`（scope=host）；
+  1 至 `HostDetailDto.MaxBackfillDays`——即 `min(365, 歷史保留天數)`，不落地設定）後送 `POST api/admin/schedule/run`（scope=host）；
   **取數執行中時停用（不是隱藏）並在按鈕旁與 modal 內各說明一次原因**：按鈕消失會被當成
   「權限被拿掉了」，而說明只放在 modal 裡等於看不到——按鈕一停用 modal 就打不開，
   使用者面對的仍是一顆沒有理由的灰按鈕。狀態訂閱 §8.6 6a 的全站告示事件、只看 `isFetchRun`
@@ -1651,7 +1656,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 （不做逐人已讀）；**未讀＝進行中、有回覆，且 `last_reply_at` 晚於 `COALESCE(admin_seen_at, created_at)`**。
 判定只有一份定義：C# 端 `WorkOrder.HasUnreadReply`，SQL 端 `EfWorkOrderStore.UnreadReplyPredicate`（清單 `unreadOnly` 篩選與
 未讀計數共用），兩處互相註明。詳情的 GET 不寫任何東西；前端載入詳情成功後呼叫一次 `POST {id}/seen`（靜默），
-後端只在檢視者具 `Assign` 時寫入 `admin_seen_at`（單句 UPDATE，不動 `updated_at`），其餘一律回 204 不寫入——
+後端只在檢視者具 `Assign` 時寫入 `admin_seen_at`（單句 UPDATE，不動 `updated_at`），其餘一律回 200（`ApiResponse<bool>`）不寫入——
 唯讀的 `ViewAll` 與處理人本人開詳情不算已讀。處理人再次回覆就又變成未讀。
 
 **逐日同步**：改案件狀態的操作（建單、回覆、取消、代為結案、改派）先改案件列，再估算逐日寫入量——
@@ -1723,7 +1728,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 | `POST preview`／`POST` | `Assign` | 交辦預覽與建單（同一 request 形狀） |
 | `POST {id}/append`／`reassign`／`split`／`cancel` | `Assign` | 單操作；取消原因必填 |
 | `POST {id}/return { note }` | `Assign` | 退回處理人（`escalated` 成員改回處理中）；說明必填 ≤500；無 `escalated` 成員或單已結案回驗證錯誤 |
-| `POST {id}/seen` | 登入（僅 `Assign` 會寫入） | 標記管理者已看過（未讀回覆判定）；回 204，不具 `Assign` 時不寫入也回 204 |
+| `POST {id}/seen` | 登入（僅 `Assign` 會寫入） | 標記管理者已看過（未讀回覆判定）；回 200＋`ApiResponse<bool>`，不具 `Assign` 時不寫入也回 200 |
 | `POST candidates { hostIds, source?, eventId? }` | `Assign` | 手動派工人選（啟用且具 Handle；附可見台數、暫停、最近處理過同問題、負載；排序：最近處理過 → 看得到全部主機 → 負載輕 → 帳號） |
 | `POST {id}/admin-close` | `Assign`＋`Handle` | 代為結案 |
 | `POST {id}/reply`／`POST reply-many` | `Handle`，限本人的單 | 回覆；多單回覆含別人的單時整筆 403 零寫入 |
@@ -1825,6 +1830,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   - `GET api/permission-changes/categories` → 類別 key 與中文標籤（篩選下拉的來源；
     **不可改成從當頁資料收集**，那樣沒出現在當頁的類別就選不到）
   - `GET api/permission-changes/ids` → `{ changeIds, total, truncated }`（僅待確認；與清單共用同一份篩選組裝）
+  - `GET api/permission-changes/report?host=&date=` → 該主機該日的權限異動報告全文（`ReportViewDto`，查無回 null）
   - `PUT api/permission-changes/{id}/confirm`（單筆；已被他人處理時回 Conflict）
   - `POST api/permission-changes/confirm/batch` → `{ updatedCount, skipped[] }`（一次上限 500；
     標記可疑時說明必填；稽核一次寫一筆，action `perm_confirm_batch`）
@@ -1868,7 +1874,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 │  告警數量趨勢（折線，日粒度，        │  風險類型分布（水平堆疊長條：        │
 │  高/中風險雙線，語意色）             │  8 類 × 嚴重度，類別固定色盤）        │
 ├─ 圖表區第二列：排行卡（col-6，主機｜問題切換）│ 三顆占比小圖並排（右半 col-6，各 col-4）┤
-│  水平長條 Top 10＋「其他N筆」  │ 風險層級占比│受影響主機占比│處理進度（圖上文下）│
+│  水平長條 Top 10＋「其他 N 台／個問題」│ 風險層級占比│受影響主機占比│處理進度（圖上文下）│
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -1922,14 +1928,13 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   不送出請求也不換成骨架列，與後端 `from > to` 回 400 同口徑。
 - **列印/匯出**：`@media print` 樣式（隱藏側欄與工具鈕、卡片不裁切）——主管列印或另存 PDF
   給上級是真實使用情境，排版好看必須含列印版面。
-- API：`GET api/reports/summary?from=&to=&handlingScope=all|unresolved|open|unassigned`
+- API：`GET api/reports/summary?from=&to=&handlingScope=all|unresolved|open|unassigned&compare=previous|yoy`
   （KPI＋圖表＋TotalHosts＋Handling＋套用的 HandlingScope 一次回傳）。
   **日期區間規則**（`QueryStringParsing.ParseDateRange` 是所有 controller 的
   唯一入口）：報表 `from > to` 回 400（不交換）、含首尾超過 366 天回 400；缺 `to` 預設昨天、
   缺 `from` 預設 `to` 往前 29 天。其他帶 from/to 的端點（records／ai／audit／handling）
   顛倒時自動交換、不設上限。這是對外行為變更：改版前顛倒區間會算出負天數繞過 366 天檢查，
   進 service 才被交換成多年區間。
-  （原 `GET api/reports/signature` 於 §4 隨簽章查詢併入問題查詢一併移除。）
 
 ### 9.7 `/admin/rules` 規則維護（`Maintain`）
 - **規則庫初始化**：`rules` blob 只有批次的 `RuleBootstrapper` 會初始化，全新環境（批次從未執行過）Web 開站即假設
@@ -1972,11 +1977,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   庫內種子版本落後內建種子時頁頂顯示橫幅「內建規則有更新 vX→vY」→「預覽差異」modal 逐條列
   新增／更新／略過／衝突（衝突＝使用者改過的 builtin）→「套用」（附 checkbox「連同已修改的
   內建規則一併覆蓋（保留啟用狀態）」＝`--overwrite-builtin` 語意；custom 規則永不觸碰）。
-  分類與套用邏輯拆到 Core 純函數 `RuleImportPlanner.BuildPlan/Apply`；批次 console CLI（`--import-rules`，
-  當時薄包裝共用同一份邏輯）已退場移除，Web 是現在
-  唯一的入口；套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
-- API：`GET/POST api/rules`、`GET/PUT/DELETE api/rules/{id}`、`POST api/rules/{id}/restore`、
-  `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`、
+  分類與套用邏輯在 Core 純函數 `RuleImportPlanner.BuildPlan/Apply`；Web 是唯一的入口，
+  套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
+- API：`GET api/rules`（全量清單）、`POST api/rules`（新增或更新，`SaveRule`）、`POST api/rules/validate`（儲存前驗證）、
+  `POST api/rules/disk-trend-preview`（磁碟趨勢規則試算）、`DELETE api/rules/{id}`、
+  `GET api/rules/{id}/restore-preview`、`POST api/rules/{id}/restore`、`PUT api/rules/{id}/enabled`、
+  `GET api/rules/suppressions`（全部抑制清單）、`POST/DELETE api/rules/{id}/suppressions`、
   `GET api/rules/{id}/suppression-preview`。
   `RuleDto`／`SaveRuleRequest` 帶 `Platform`＋三個 Linux 比對欄位；`RuleSuppressionDto` 的 `Platform`
   由 RuleId 反查帶出（非新儲存欄位）。維持單一端點回全量、前端分平台呈現（規則量級小，不需分頁端點）。
@@ -1985,8 +1991,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **抑制目標四型**：「告警抑制」分頁新增「目標
   型別」欄＋篩選 chip（規則／簽章／關聯／音量），非規則目標的列顯示 `TargetLabel`＋`Platform`
   （無 `RuleId` 可查詢）。新增／解除統一走絕對路徑端點 `POST/DELETE /api/suppressions`（不綁
-  `ruleId`，`AddSuppressionRequest` 依 `TargetType` 帶對應欄位），舊的 `{ruleId}/suppressions`
-  端點保留、內部委派同一份 `RuleAdminService` 邏輯供既有呼叫端相容。規則清單列上有抑制時顯示
+  `ruleId`，`AddSuppressionRequest` 依 `TargetType` 帶對應欄位）；`{ruleId}/suppressions`
+  端點內部委派同一份 `RuleAdminService` 邏輯。規則清單列上有抑制時顯示
   抑制筆數徽章＋前 3 筆 tooltip 預覽（`RuleDto.SuppressionCount`／`SuppressionPreview`，範圍最寬
   的排最前——Site > Group > Host）。**新三型（簽章／關聯／音量）目前僅支援 `Host` 範圍**
   。
@@ -2033,7 +2039,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   本次新增的主機（同 OS 原則）。**沒有 hosts.csv 匯入路徑**，沒有獨立的 CSV
   匯入器可掛這個欄位，掃描精靈是現存匯入路徑唯一的選填欄入口。
 - 主機清單**為伺服器端分頁＋搜尋＋篩選**：`GET api/admin/hosts` 改參數化
-  （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/**dir**/page/pageSize）回傳 `PagedResult<HostDto>`；
+  （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/prtgMap/sort/**dir**/page/pageSize；`prtgMap` 為 mapped／conflict／unmatched）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天，唯一判定 `HostAdminService.IsSilent`）。
   未回報主機的狀態徽章另加一顆 PRTG 現況（`HostDto.PrtgHint`／`PrtgHintStale`：主機失聯／主機在線，問題在日誌取數端／無資料／無 PRTG 對應，過期加註），只算本頁，語意見 docs/PRTG-SPEC.md §9。
@@ -2044,8 +2050,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `PUT api/admin/hosts/groups/batch`（`{hostIds, groupIds, mode}`）→ `HostAdminService.SetGroupsBatch`
   → `IHostStore.SetGroupsBatch` 一次 `Mutate` 完成整批（不逐台呼叫既有 `SetGroups`），略過已併入的
   主機並回報；寫入單筆彙總 audit（不是逐台散列）。
-- **NetIQ 匯入即時落盤**：主機頁曾經的「排入匯入佇列」機制已整組移除，掃描/勾選精靈送出後
-  即時落盤（不再等批次執行套用），精靈已搬離主機頁（現在在 §9.9a「匯入」分頁）。落盤邏輯為
+- **NetIQ 匯入即時落盤**：掃描/勾選精靈送出後經 `POST api/admin/netiq/import`
+  即時落盤，精靈在 §9.9a「匯入」分頁。落盤邏輯為
   Core 純函數 `NetiqImportApplier`（新增/更新/孤兒復活三態），供 Web 與批次共用同一份規則。
 - **NetIQ 單筆登錄與啟停**：單筆登錄（`NetiqHostService.AddHost`）對**既有主機**，Sentinel 與角色描述省略（未選／空白）時沿用既有值，明確提供才覆寫
   （與批次登錄 `BulkAddHosts` 同一判定）；群組與負責人不動。主機啟停（`SetActive`）以既有主機的複本只改 `Active`：**停用時保留孤兒標記**
@@ -2055,8 +2061,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   **授權矩陣**（列=user 角色群組、欄=主機群組、勾選=授權）。
 - 使用者清單的**接單**欄：「暫停接單」切換即存（`PUT api/admin/users/{id}/dispatch-paused`），
   暫停後自動派工不再派新單給此人，既有交辦單不受影響（§7.1「派工池與暫停接單」）。
-- API：`api/admin/users*`、`api/admin/hosts*`（分頁）、`api/admin/netiq/import`（排入）／`import-queue`（查詢）／
-  `import-queue/{id}/cancel`（取消）、`api/admin/groups*`、`api/admin/access*`；`api/hosts?query=`／`?ids=`／`/groups`（§9.2）
+- API：`api/admin/users*`、`api/admin/hosts*`（分頁）、`api/admin/netiq/import`（即時落盤）、`api/admin/groups*`、`api/admin/access*`；`api/hosts?query=`／`?ids=`／`/groups`（§9.2）
 
 ### 9.8a `/admin/users/{id}` 使用者詳細（`Maintain`）
 
@@ -2152,8 +2157,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   查無才用到本開關控制的即時查詢。
 - **NetIQ 取數的查詢對象限制**：只有位址是合法 IPv4、且 `Os` 標記為 `windows`／`linux` 的主機會被查詢；位址不是 IPv4 或作業系統標記無法辨識的主機，
   逐台印警告（執行詳情與本趟警告）、標記該趟未完整、不查詢，也不進進度分母（機制見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §5）。
-- **離線示範資料開關**（`UseOfflineDemoData`，§13，**預設關閉＝真實連線**）：
-  appsettings 的 `Netiq:DiscoveryClient` 已退役，由本開關取代。
+- **離線示範資料開關**（`UseOfflineDemoData`，**預設關閉＝真實連線**）：
+  appsettings 沒有 `Netiq:DiscoveryClient`，由本開關決定。
   開關**僅非 Production 顯示**（DTO 的 `CanUseOfflineDemo`）；三道保險擋正式環境——前端不顯示、
   `NetiqOptionsService.Update` 在 Production 拒絕開啟並強制關閉、DI 選型
   （`UseStubNetiqClient(isProduction, flag)`）在 Production 一律真連線。開啟時頁面常駐警示徽章，
@@ -2223,7 +2228,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **「診斷」分頁（NetIQ API probe Web 化，承接 `--netiq-probe`）**：選一台已設定的 Sentinel、
   選填 Windows／Linux 樣本 IP（對應原 `--sample-ip`／`--sample-linux-ip`）→ 執行 13 步驗證查詢
   （欄位對應／dt 邊界／分頁效能／IP 批次上限／頻道覆蓋等，是 Linux Sentinel 接入 P3 閘門的
-  載具）。查詢邏輯拆 Core 純服務 `NetiqProbeRunner`；批次 console CLI 薄殼已退場移除，Web 是現在唯一的入口，輸出契約不變——仍是可直接
+  載具）。查詢邏輯拆 Core 純服務 `NetiqProbeRunner`；Web 是唯一的入口，輸出是可直接
   複製貼回對話定案欄位的純文字。長耗時操作走「觸發→背景執行→
   輪詢」（`NetiqProbeRunState` 自成一個併發 1 的 probe gate，**不與排程/手動分析共用**——
   probe 是小規模診斷查詢，不該被夜間分析互斥擋住）；輸出即時累積到唯讀 textarea＋「複製」鈕。
@@ -2269,10 +2274,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      ：
      - `DefaultHidden`（預設）：詳情頁嚴重度篩選預設只亮勾選層級（初始值經 `RecordDetailDto.UnhandledSeverities`
        帶給前端，僅首次載入初始化、批次套用重載不重置），未勾選層級的篩選鈕仍在、可手動點開；
-       儀表板、報表與問題查詢頁統計不受影響（仍計入全部層級）。
+       儀表板、報表與問題查詢頁統計不受影響（仍計入全部層級）；**例外**：儀表板與報表的「風險類型」卡片
+       （`RecordStatsBuilder.BuildCategoryCards`）不論模式，永遠只計勾選的層級。
      - `SiteHidden`：未勾選層級在**後端查詢層全站排除**——過濾收斂在 `RecordRepository` 單一咽喉點
        ，
-       詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖與簽章查詢全部同一套過濾，沒有例外頁。
+       詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖全部同一套過濾，沒有例外頁。
        **明確不動**：日風險等級的判定結果與報告 txt（批次已算定的證據層，不可事後改寫）。
   1b. **日風險等級顯示**：
       高／中／低三顆按鈕，「高」鎖定恆選（`SystemSettingsService.Update` 驗證，全隱藏會讓
@@ -2293,14 +2299,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      `{base}/openai/deployments/{deployment}/chat/completions?api-version=…`、認證改
      `api-key` 標頭且主體不送 `model`（由 deployment 決定）。「算不算已設定」的必填欄位
      依提供者而異，`AiSettings.IsConfigured` 與 `WebAiService` 共用同一份判定
-     （分開寫會漂移成「首頁說可用、實際建不出客戶端」）。**§12起本頁是 AI
+     （分開寫會漂移成「首頁說可用、實際建不出客戶端」）。**本頁是 AI
      全部參數的唯一事實來源**——原 appsettings 的 `Ai` 區段整段退役，`TimeoutSeconds`/`RetryCount`/
      `RetryDelaySeconds`/`JsonRetryCount`/`MaxTokens`/`DeepDiveMaxTokens`/兩個 penalty/
-     `ExtraRequestFieldsJson`（JSON 物件文字，存檔驗證格式）移入本分頁的**進階參數折疊區**
+     `AiExtraRequestFieldsJson`（JSON 物件文字，存檔驗證格式）移入本分頁的**進階參數折疊區**
      （`<details>`，出廠值＝原 appsettings 值）。生效路徑：批次經 `RuntimeSettingsResolver.
      ApplyAiAdvanced`（每次執行重讀）；Web 互動情境把進階參數指紋納入 `SettingsBoundClient`
      快照，存檔即重建客戶端。位址留空＝刻意停用 AI（無任何退路悄悄接手）。
-  2b. **分析參數**（§12 新分頁）：伺服器角色描述（`ServerDescription`，帶入 prompt）、
+  2b. **分析參數**：伺服器角色描述（`ServerDescription`，帶入 prompt）、
      體檢間隔天數（`CheckupIntervalDays`）、額外監控權限異動的資料夾（`WatchedFolders`，
      一行一路徑）、掃描頻道（`AnalysisChannels`，一行一頻道全名、空＝預設六頻道；只正規化
      不驗證已知性——自訂頻道是既有設計，拼錯會在分析時誠實申報「不存在／不適用」）、
@@ -2606,15 +2612,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 ### 9.9d `/setup` 首次啟動精靈（`Maintain`）
 
 - **回答「設好了嗎」，與 `/api/health/detail` 的「現在健康嗎」刻意分開**（後者是六大塊維運
-  訊號，硬併會讓它更難用）。`SetupReadinessService` 彙整七個一次性設定步驟成 checklist：
-  storage／admin-account（不可跳過）＋ mail／ai／netiq／groups／schedule（可跳過、可逆）。
+  訊號，硬併會讓它更難用）。`SetupReadinessService` 彙整十個一次性設定步驟成 checklist：
+  storage／ad／admin-account／dept-groups／netiq／groups／prtg／mail／ai／schedule；storage 與 admin-account 不可跳過，
+  ad 僅在 `Auth.Provider=Stub` 時可跳過，其餘可跳過、可逆。
   「完成」全部自動判定（讀現成 store，不新增探測邏輯）、「跳過」由使用者手動決定
   （`SetupWizardStateStore`，blob `setup_wizard_state`）。步驟清單不含規則版本——規則庫由
   RuleBootstrapper 啟動時自動就緒，使用者無事可做。
 - **不進側欄**：入口在操作說明書清單第一項（type=link 導引卡，見 §9.9c）；直接輸入網址也可達。
   全部步驟達終態（`allSettled`）後可勾「隱藏教學文件裡的精靈入口」（隱藏只影響清單入口，
   `/setup` 本身仍可用）。
-- **版面**：頂部整體進度（x/7＋進度條）＋垂直 checklist（狀態圓點＋標題＋detail＋
+- **版面**：頂部整體進度（n/10＋進度條）＋垂直 checklist（狀態圓點＋標題＋detail＋
   「前往設定」「跳過此步」）；聚焦步驟寫入 `location.hash`（`#step-{id}`）深連結；「前往設定」
   帶 `?from=setup`，目標頁（`layout.js` 共用）顯示可關閉的「返回啟動精靈」提示列。
 - API：`GET api/admin/setup/status`、`POST api/admin/setup/skip/{stepId}`（未知／不可跳過的
@@ -2984,9 +2991,9 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **Pipeline 警告上收**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
   「…（完整清單見執行詳情）」，不必到單次執行詳情逐條翻找。
-- **三頁籤**：執行總表／
-  異常彙總／執行紀錄，沿用設定頁既有的 `nav-tabs`＋`bindTabs` 模式；天數篩選與圖例移到頁籤列
-  下方，三頁籤共用同一次 API 抓回的資料（`load()` 一次 `Promise.all` 三支端點），切頁籤只是
+- **四頁籤**：執行總表／
+  異常彙總／執行紀錄／排程設定，沿用設定頁既有的 `nav-tabs`＋`bindTabs` 模式；天數篩選與圖例移到頁籤列
+  下方（切到排程設定時整組隱藏），前三個報表頁籤共用同一次 API 抓回的資料（`load()` 一次 `Promise.all` 三支端點），切頁籤只是
   切換面板可見度，不重打 API。頁籤 `<ul>` 與面板必須是同一層手足元素（比照 `#settings-tabs`）：
   `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，頁籤若被包進日期篩選的 flex 容器就找不到面板。
   - **執行總表**（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
@@ -3054,13 +3061,14 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 ### 9.11 `/audit` 稽核紀錄（`ViewAudit`）
 - 篩選（期間/使用者/動作分類/對象/result，denied 快速鈕）、清單（時間/帳號/summary/result）、
   展開 before/after 對照。時間欄支援表頭排序（`dir`，預設新到舊）＋每頁筆數下拉。
-- API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&dir=&page=&pageSize=`
+- API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&dir=&page=&pageSize=`、
+  `GET api/audit/actions`（動作代碼與中文名稱對照）
 
 ## 10. 資料模型與儲存層
 
-### 10.1 本文件新增的表（DB-SPEC 未含；欄位級定義，遵守同一套可移植規則）
+### 10.1 本文件新增的邏輯模型（DB-SPEC 未含；欄位級定義，遵守同一套可移植規則）
 
-前期各輪已定案、集中收錄於此：
+以下為邏輯模型，實體存於 `lf_blobs`／`lf_log_lines`（見 §10.2），不是同名的獨立資料表。
 
 ```
 lf_user_groups        group_id PK / group_name UNIQUE / role('user'|'dev'|'manager'|'admin') / builtin bool / active bool
@@ -3119,7 +3127,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `NetiqOptionsStore`（介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore` | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
 | `WorkOrderOutboxStore` | blob `work_order_outbox`（單一物件：交辦通知待寄項目，key 由種類、單號、收件人、入列時間 ticks 組成；入列時間為本地時間，上限 2 萬筆；寄送規則見 §9.4b「通知」） | Web＋批次（夜間派工入列） |
-| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）、先落庫再寄的即時通知意圖 `UrgentOutbox`、郵件貢獻帳本（已寄 `AcceptedMailContributionReceipts`、舊格式保留 `HeldLegacyMailContributionReceipts`，皆 180 天清理；寄送中預約 `MailContributionReservations`，`reserved` 逾 5 分鐘釋放、`attempted`／`unknown` 不自動釋放；三者合計上限 12,000 鍵，預約失敗時鍵已被佔用記 Info、滿載記 Warn）、交辦摘要各時刻最後寄出日 `WorkOrderDigestLastSentSlots`、資料過期警示旗標與日期） | Web |
+| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）、先落庫再寄的即時通知意圖 `UrgentOutbox`、郵件貢獻帳本（已寄 `AcceptedMailContributionReceipts`、舊格式保留 `HeldLegacyMailContributionReceipts`，皆 45 天清理；寄送中預約 `MailContributionReservations`，`reserved` 逾 5 分鐘釋放、`attempted`／`unknown` 不自動釋放；三者合計上限 12,000 鍵，預約失敗時鍵已被佔用記 Info、滿載記 Warn）、交辦摘要各時刻最後寄出日 `WorkOrderDigestLastSentSlots`、資料過期警示旗標與日期） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；含 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬；交辦單成員） | Web＋批次 |
@@ -3148,25 +3156,15 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | 處理狀態環圈、逾期下鑽 | `lf_record_handling`（`status`/`due_date` 索引既有） | 無影響 |
 | 跨主機同簽章查詢 | `lf_top_issues (event_id, source_name)` 索引既有 | 無影響 |
 | 登入失敗 24h 卡 | `lf_audit_logs (action)` 索引既有 | 無影響 |
-| **類型分布圖（類別×嚴重度堆疊）、severity 下鑽篩選** | `lf_record_categories` 原僅有 `max_severity` | **需修改**（見下） |
+| **類型分布圖（類別×嚴重度堆疊）、severity 下鑽篩選** | `lf_top_issues`（問題列自帶類別與嚴重度） | 無影響，類別×嚴重度由 `CategoryAggregator` 在查詢時自 `lf_top_issues` 聚合，沒有獨立的類別表 |
 
-**唯一的 schema 修改**：`lf_record_categories` 增列 `critical_count / high_count /
-medium_count / low_count` 四個 int 欄（符合「只增不改」，已回寫 DB-SPEC.md）。
-不加的話「類別×嚴重度」查詢就得掃 `lf_top_issues` 聚合——正是這張彙總表要避免的事。
+**類別彙總**：計算定義為 Core 的**純函數 `CategoryAggregator`**（問題列 → 各類別含嚴重度分解的彙總列），
+單元測試直接覆蓋；Web 的記錄詳情（`RecordDetailQueryService`）與清單（`RecordListQueryService`）
+查詢時呼叫同一個函數，所有呼叫端因此得到逐位一致的數字。分析邏輯與 schema 都不需為此修改。
 
-**console（批次 exe）影響**：**分析邏輯零修改**。類別彙總本來就是「寫入時由
-lf_top_issues 算好」的持久層職責，批次的分析層看不到這張表。落實方式：
-
-- 彙總計算定義為 Core 的**純函數 `CategoryAggregator`**（`List<LogIssueSignature>` →
-  各類別含嚴重度分解的彙總列），單元測試直接覆蓋——與 `RecordStorageShaper` 同一套
-  單點原則（DB-SPEC 一致性機制 #4：規則不長在單一實作裡，不同呼叫端共用同一份）
-- 寫入路徑（批次 exe 執行）呼叫 `CategoryAggregator` 算好後隨 `lf_daily_records` 一併入庫
-  （`lf_record_categories` 的四個計數欄），Web 查詢端直接讀已算好的欄位，不必查詢期重算
-  （只剩單一寫入時機，Jsonl 後端退役前的替代路徑已移除）
-
-**API 影響**：`api/records` 增加兩個選用參數——`severity`（經 `lf_record_categories`
-的計數欄過濾）與 `overdue`（join `lf_record_handling.due_date`），§8.4 下鑽表格的
-目標 URL 全部由既有＋此二參數覆蓋。
+**API 影響**：`api/records` 有兩個選用參數——`severity`（以問題的嚴重度過濾）與 `overdue`
+（對照 `lf_record_handling.due_date` 與問題層級處理狀態判定；只在明細視角生效，見 §9.2 篩選支援矩陣），
+§8.4 下鑽表格的目標 URL 全部由既有參數加此二參數覆蓋。
 
 ### 10.4 Jsonl 檔案後端退役與 blob 併發防線
 
@@ -3211,7 +3209,7 @@ SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走�
   `AnalysisRecordStoreHostScopeContractTests`（ownerHost 歸戶）、`HostStoreContractTests`／
   `UserStoreContractTests`（webdata）、`KnownIssueRuleStoreContractTests`／
   `SuppressionStoreContractTests`／`RuleBootstrapperContractTests`
-  （規則與抑制；`RuleImporterRunContractTests` 已隨批次 console CLI 退場一併移除），另有 `EfWebdataStoreTests` 驗 blob/log 代表型往返。**新增 store 時，
+  （規則與抑制），另有 `EfWebdataStoreTests` 驗 blob/log 代表型往返。**新增 store 時，
   SQLite 合約子類為必要項**（Jsonl 合約實作已隨檔案後端一併退役，見 §10.4）。
 - 表由程式首次啟動時 `EnsureCreated` 自動建立；對**既有** DB 的欄位/索引增補由 `SchemaUpgrader`
   （自製冪等 DDL，見 [DB-SPEC.md](DB-SPEC.md)「Schema 升級機制」）在 EnsureCreated
@@ -3280,10 +3278,11 @@ SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走�
 這期間站台仍在服務——不過濾的話，使用者開頁面觸發的慢 SQL、儀表板互動 AI 的逾時、
 AI 分析排程的失敗，全都會被記進「這趟取數執行」的執行詳情，並讓它被判成「有警告」。
 
-因此 recorder 建立時推入 `ScopeContext.PushProperty("lf_run_id", runId)`，
-target 的 `Write` **只收 scope 內 runId 相符的事件**，其餘丟棄
+因此 recorder 建立時推入 `ScopeContext.PushProperty("lf_run_scope", token)`（`token` 是該 recorder 實例的 GUID 識別碼，
+不是 runId——不同 store 可能配出相同 runId），
+target 的 `Write` **只收 scope 內識別碼相符的事件**，其餘丟棄
 （完整診斷仍在 `logs\logforesight.log`）。同一行程同時有取數與 AI 兩個 recorder 時各認各的，
-target 名稱也帶 runId 以免互相移除。
+target 名稱也帶 runId 與識別碼以免互相移除。
 
 > **`ScopeContext` 是 `AsyncLocal`：只沿非同步呼叫鏈往下傳，不會往上傳。**
 > recorder 因此**必須在涵蓋整趟執行的方法本體內建構**（現況是 `AnalysisOrchestrator.RunAsync`）。
