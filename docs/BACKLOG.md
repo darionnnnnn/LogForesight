@@ -22,8 +22,8 @@
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
   `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠缺漏日判定（`MissingDateFinder`：已有分析紀錄的主機日不重查）。
   探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
-  （權限被拒）與全站 24h distinct（不可行）。**涵蓋保證改版**：移除自適應時間窗
-  （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），改為窄化 filter
+  （權限被拒）與全站 24h distinct（不可行）。**涵蓋保證**：不用自適應時間窗
+  （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），採窄化 filter
   （限 System/Application 頻道，成本正比主機數而非事件量）＋殘差輪掃（觸頂時排除已見主機重查）
   ＋全事件短窗補充掃描，見 docs/NETIQ-API-REFERENCE.md §3.4。
   **尚未經過真實 Sentinel 端到端驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑
@@ -185,8 +185,8 @@
   重複出現時內容通常相近，理論上可快取共用；但 AI 呼叫本身已有既有的成本控制設計（統計模式
   短路、報告只在 Other 類別才呼叫），這項最佳化的邊際效益現階段不明顯，暫緩。
 - **`SlowTrendAnalyzer` 的離群值敏感度**（重新界定，原標題「中位數化」不準確）：
-  `TrendAnalyzer` 的基準是「一組每日次數取中位數」，所以換統計量講得通（先改為中位數、
-  再進一步改為非零日中位數）；但 `SlowTrendAnalyzer` 比的是**兩個 7 天窗口的總量和**
+  `TrendAnalyzer` 的基準是「一組每日次數取中位數」，所以換統計量講得通（基準取中位數、
+  總量層取非零日中位數）；但 `SlowTrendAnalyzer` 比的是**兩個 7 天窗口的總量和**
   （近 7 天累計 vs 前 7 天累計），結構上根本沒有「基準中位數」這個東西可以換，零膨脹也不會
   讓它退化（`priorTotal > 0` 的守門已擋掉全零前期）。它真正的同類問題是「單日爆量墊高整個
   窗口總量」——那要改的是窗口內的聚合方式（如逐日取中位數再乘天數、或先削峰再加總），
@@ -205,17 +205,16 @@
   問題鍵串接交給 EF 而非手寫 `||`／`+`），但這是「降低風險」不是「已驗證」。正式環境第一次
   跑分析與開報表時要看 nlog 有沒有 SQL 例外。
 - **效益未實機量測**：`SqlPerformanceMonitor` 會記錄 `blob:hosts:Read`（S1 快取，單一請求應降到
-  0～1 次）、`blob:hosts:ReadVersion`（回饋二十輪 G 補上——版本探測本來不計入任何 key，
+  0～1 次）、`blob:hosts:ReadVersion`（版本探測本來不計入任何 key，
   只看 `Read` 會漏掉每次 `GetAll()` 都做的那趟往返，是驗證方法本身的盲區）與各聚合方法的耗時，
   實測時據此確認。前端三頁（設定／詳情／報表）未做瀏覽器實測
   （在 `[Authorize]` 之後），只做了 JS 語法檢查。
 - **`scope != all` 的報表路徑仍在記憶體**：`ReportService` 對 `unresolved`／`open`／`unassigned`
   三種顯示範圍仍以 `QueryLightweight` 載入整段期間的紀錄再 `FilterByScope`。母體只有高／中風險日、
-  量級小一階，且 366 天上限現在真的擋得住（回饋二十輪 A 之前，起訖顛倒會算出負天數繞過檢查，
-  進 service 才被交換成多年區間——那時這條的「已受上限約束」前提其實不成立）；
+  量級小一階，且 366 天上限由 `QueryStringParsing.ParseDateRange` 統一擋住（見 WEB-SPEC 日期區間規則）；
   `DeriveDayHandling` 已能提供 SQL 端的日狀態，真的成為瓶頸時可接上。
-- **`AggregateByDate` 仍逐列物化**（回饋十九輪 E2 遺留）：輕量列、無 Headline，量級＝天數 × 主機數。
-  「依日期」視角在 3000 台 × 長區間會感覺到；改法同本輪對 `AggregateByHost` 做的（SQL 端 GROUP BY 後
+- **`AggregateByDate` 仍逐列物化**：輕量列、無 Headline，量級＝天數 × 主機數。
+  「依日期」視角在 3000 台 × 長區間會感覺到；改法同 `AggregateByHost` 現行做法（SQL 端 GROUP BY 後
   才折併別名）。
 - **初次上線的歷史回補**：實測穩態 3000 主機日／小時，3000 台每日增量約一小時沒問題；但
   `InitialHistoryDays` 預設 120 天 × 3000 台 ＝ 36 萬主機日 ≈ 五天，期間站台數字不完整。
@@ -229,7 +228,7 @@
 
 ## 設計面債務（未排期）
 
-- **`visibleSeverities` 參數仍是選填（形狀未改）**：立場已在回饋二十輪 B1／B2 定案並落地
+- **`visibleSeverities` 參數仍是選填（形狀未改）**：立場已定案並落地
   ——待辦／KPI／排行／風險類型卡皆尊重 SiteHidden 顯示設定，所有正式呼叫端都已明確傳入。
   但 `IIssueAggregateQuery` 上的參數形狀仍是 `= null` 選填（10 處），編譯器不會逼新呼叫端表態；
   這正是 `IssueRankingBuilder` 註解記錄過的踩雷模式（rollup 參數選填→兩個呼叫端都忘了傳→死了一整輪）。
@@ -254,7 +253,7 @@
 `SchemaUpgrader.MergeIssueFirstSeenSeed` 改增量後，全表掃描的修正段只在初次回補跑一次
 （`issue_first_seen_full_done` 旗標）。保留期清理刪列的情況下，種子回補理論上仍可能讓
 既有組合的首見日偏晚（重新分析舊日期則不會——`UpsertFirstSeen` 以被分析日 upsert、
-只在較早時往前更新，第三十一輪查證確認）。方法的 `force=true` 會完整重算（浮水印視為 0、全掃修正段照跑），但目前沒有使用者入口呼叫它——需要時再決定接成維護頁按鈕或低頻排程。實務影響：首見日只用於
+只在較早時往前更新，經查證確認）。方法的 `force=true` 會完整重算（浮水印視為 0、全掃修正段照跑），但目前沒有使用者入口呼叫它——需要時再決定接成維護頁按鈕或低頻排程。實務影響：首見日只用於
 「這個問題第一次出現在機房是什麼時候」的參考顯示，偏晚不影響判定與告警。
 
 ### 重新分析模式的 run-preview 預估與監控頁進度列
@@ -285,7 +284,7 @@
 ### 依問題視角的日風險子查詢重複四次
 
 依問題視角的日風險母體限縮（`ApplyRiskLevels`）在一次 `Aggregate` 呼叫裡會下四次同樣的
-`lf_daily_records` 子查詢（主查詢＋三個輔助）。**索引部分已解決**——回饋三十六輪已加
+`lf_daily_records` 子查詢（主查詢＋三個輔助）。**索引部分已解決**——已加
 `IX_lf_daily_records_risk_date (risk_level, record_date)`；剩下的是「同一個子查詢下四次」本身，
 可改成一次取出 record_id 集合再共用。實測仍是瓶頸時再做。
 
@@ -297,7 +296,7 @@
 - **既有 SQL Server 庫可能留有兩份同欄位索引**：全新安裝已不會重複（EF 具名索引與升級器同名，`DataConsistencyJ2Tests` 守門）。殘留只在舊命名建出的既有庫：`SchemaUpgrader.RemoveDuplicateIndexes` 對 SQLite 會移除，對 SQL Server 只警告不移除。影響是寫入吞吐與儲存空間、不影響正確性。**觸發時機**：正式機升級日誌出現重複索引警告時，以 DBA 手動移除。
 - **高風險（特權目標）判定的涵蓋範圍待議**：目前只標「成員新增到特權群組」。終檢建議一併涵蓋「成員移除」（把稽核人員移出 Domain Admins 是入侵後常見動作）與 ACL 授權對象（`權限新增（ACL 規則）` 的授權對象若是 Everyone／Domain Admins）。後者要改成比對 `Before`／`After` 的授權對象而非 `Target`（`Target` 是路徑，永遠不會命中群組關鍵字）。這是安全判定的範圍決策，需要與使用者確認後再改。
 - **權限異動的批次確認上限（500）是否放寬**：吵雜 DC 單日曾達 9 萬則，但例行同步成對合併落地後量預期大幅下降。先觀察合併後的實際待確認量，再決定要不要放寬上限或提供「符合篩選全部確認」。
-- **權限異動的查詢側效能在量增後未實測**：權限異動不設每主機日筆數上限，吵雜 DC 單日可達數萬則（實例 9.2 萬）。`/permission-changes` 的查詢與分頁在這個量級下是否仍可接受尚未實測；若實測出問題，處理方向是索引與查詢形狀，另案一輪。（寫入側的兩個無上界點已於回饋三十四輪處理：去重改逐主機日查資料庫、`raw_text` 截斷 8000 字、`AppendChanges` 每 500 筆分批。）
+- **權限異動的查詢側效能在量增後未實測**：權限異動不設每主機日筆數上限，吵雜 DC 單日可達數萬則（實例 9.2 萬）。`/permission-changes` 的查詢與分頁在這個量級下是否仍可接受尚未實測；若實測出問題，處理方向是索引與查詢形狀，另案一輪。（寫入側的兩個無上界點已處理：去重改逐主機日查資料庫、`raw_text` 截斷 8000 字、`AppendChanges` 每 500 筆分批。）
 - **權限異動的排序在兩個 provider 上定序不同**：`OrderBy(HostName)` 在 SQLite 是 BINARY（大寫排在小寫前），SQL Server 依資料庫定序（多半不分大小寫）。分頁情境下順序不穩定可能造成翻頁時漏列或重複。可改為對已全大寫的 `HostNameKey` 排序。
 
 ## 回饋二十七輪遞延
@@ -341,7 +340,7 @@
 
 - **報告檔遷移器尚未退場**：退場條件見本檔〈升級期一次性機制與退場條件〉；移除時連同 `export` 這個已死的目錄概念一起拿掉。
 
-- **NetIQ 取數仍以「整個 job 的事件桶」為單位**（回饋三十五輪批次E1 遞延）：`NetiqPipelineService`
+- **NetIQ 取數仍以「整個 job 的事件桶」為單位**：`NetiqPipelineService`
   的 `eventsByIp` 持有該 job 全部事件（單 job 上限 10 萬筆），映射完才逐 IP 移除。本輪已在解析端
   加上欄位過濾讓**單筆**事件大小有上界，但**筆數**仍是整批。要再往下壓得改成「逐頁即映射即分析」，
   需一併處理「同一 IP 多台主機共用桶子」的既有語意（移除時機錯了會讓第二台拿到空事件、
@@ -456,12 +455,12 @@
 
 ### PRTG 第 4 輪未修項（體檢發現，判定不影響正確性）
 
-以下經第 4 輪收尾體檢查證屬實，判定不會靜默造成錯誤結論，故未修；留在這裡免得日後當成新發現重查。
+以下經收尾體檢查證屬實，判定不會靜默造成錯誤結論，故未修；留在這裡免得日後當成新發現重查。
 
 - **`PrtgFinding.Magnitude` 刻意不落 `Count`**（已定位，非缺陷）：整日 Down 會是 1440，
   用它填 `Count` 會讓 PRTG finding 在問題排行的「次數」維度壓過所有真實事件計數。
   它的用途是規則測試、`Detail` 文案與校準數值匯出的門檻分佈統計（PRTG-SPEC §11）。
-- **匯出不能選資料類別**：規劃原本允許只匯出某幾張表，實作是固定全類別。
+- **匯出不能選資料類別**：規劃允許只匯出某幾張表，實作則是固定全類別。
   實際檔案過大時再加。
 - **觸發式取數的收尾掃描會多跑一次**：輪詢迴圈是「先掃描、再判斷分析是否完成」，
   跳出後迴圈外還有一次收尾掃描，因此分析一開始就完成時會連續掃兩次。
@@ -634,7 +633,7 @@ DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案�
 ## 前端：PRTG 診斷匯出改為瀏覽器端載入後儲存，上限 64 MiB
 
 匯出下載改走 `api.download`（有界讀取、逾時、401 導登入、失敗留在原頁），整份內容先載入記憶體再存檔，
-超過 64 MiB 會提示縮小日期範圍；原本以整頁跳轉下載沒有這個上限。
+超過 64 MiB 會提示縮小日期範圍；整頁跳轉下載則沒有這個上限。
 **觸發時機**：大站長日期範圍匯出碰到上限時，改為串流寫檔或對該端點傳較大的 `maxBytes`。
 
 ## 交辦：日層級指派與夜間派工的略過原因順序不同
@@ -663,7 +662,7 @@ DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案�
 
 ## 第 60 輪體檢遞延（純效能與需實機確認，未排期）
 
-下列項目已核對屬實，因需量測、schema 變更或部署端確認而未在第 60 輪處理；細節與核對證據見 `docs/archive/FEEDBACK-60-PLAN.md` §1 K 表與 §6。
+下列項目已核對屬實，因需量測、schema 變更或部署端確認而未處理；細節與核對證據見 `docs/archive/FEEDBACK-60-PLAN.md` §1 K 表與 §6。
 
 - **內容安全政策（CSP）**：四段 inline script（`_Layout.cshtml` 兩段、`Login.cshtml` 兩段）改 nonce，加回報端點寫入 NLog，先 report-only 收集再強制；`frame-ancestors` 需先確認部署端有無嵌入。
 - **排程新鮮度告示每次換頁重算**（`/api/health/freshness`）：30～60 秒短快取；內容與使用者無關。
@@ -674,11 +673,11 @@ DESIGN-SYSTEM §1 既有決定：本階段只做淺色，打磨完成後另案�
 - **`OwnedRows` 的 `host_id OR UPPER(host_name)` 無法用索引**：先查資料有無「id 不同但同名」的列再決定加 `host_name_key` 欄位或只對 `host_id=0` 舊列做名稱備援；`LastWeeklyCheckupDate` 改下推 MAX。
 - **郵件貢獻帳本的管理出口與結構**：不確定預約的釋放端點與健康頁指引、逾時自動釋放的政策、依收件人分配額、搬出 blob 改真表。
 - **`ReportFileMigrator` 一次撈全部非低風險列**、**寄前重核逐收件人重查整個窗口**、**AI 快取整份 blob 讀寫無上限**、**`netiq_attempt_ledger_invalid` 以 HTTP 200 回失敗**。
-- **Core 取數路徑的 `catch (Exception ex) when (ex is not OperationCanceledException)` 把 HttpClient 逾時當成使用者取消**（`NetiqPipelineService` 逐 Sentinel 隔離、`LogAnalysisService` 三處、`AnalysisOrchestrator` 外殼）：`HttpClient` 逾時擲的是 `TaskCanceledException`（屬 OCE）而 ct 未取消，會穿過失敗隔離、整趟當成「使用者停止」結束。第 60 輪 Z-2 只普查 PRTG 與設定控制器站點；改法同 Z-2（`when (ex is not OperationCanceledException || !ct.IsCancellationRequested)`），但三處各有外層 OCE 分支要一起改語意並補「逾時≠取消」的測試，先量測逾時實際發生頻率再排。
+- **Core 取數路徑的 `catch (Exception ex) when (ex is not OperationCanceledException)` 把 HttpClient 逾時當成使用者取消**（`NetiqPipelineService` 逐 Sentinel 隔離、`LogAnalysisService` 三處、`AnalysisOrchestrator` 外殼）：`HttpClient` 逾時擲的是 `TaskCanceledException`（屬 OCE）而 ct 未取消，會穿過失敗隔離、整趟當成「使用者停止」結束。目前只有 PRTG 與設定控制器站點已修；改法同該處（`when (ex is not OperationCanceledException || !ct.IsCancellationRequested)`），但三處各有外層 OCE 分支要一起改語意並補「逾時≠取消」的測試，先量測逾時實際發生頻率再排。
 - **PRTG 維護頁 `refreshPrtgMirror` 的去重會把寫入後的重讀併進寫入前已在飛的那趟**：同步結束輪詢觸發的重讀未完成時新增／刪除 IP 排除或人工對應，畫面顯示寫入前清單、`scopeRevision` 停在舊值，下一次寫入被 409 擋下（使用者再按一次重新整理即恢復）。改法：in-flight 結束後自動再跑一次。觸發時機：實測回報「剛加的排除沒出現」。
 - **記錄查詢「AI 歸納」在途時改篩選或切視角，舊查詢的結果仍寫回摘要區**：點擊時記下 `search` 世代、回應回來比對再寫；非 429 的靜默失敗也不清前一次的休息提示。觸發時機：有人回報摘要與清單不符。
-- **`PrtgValueAssessment.AssessPage` 每頁重讀最新日主機對應**（四類各自分頁，每頁一次 `GetHostMapForDate`＋必要時 `GetLatestHostMapWithDate`）：把「最新日是否借前一份」在 `PrtgDailyPipeline` 外層算一次傳入。純效能，歸第 61 輪量測後排。
-- **`HealthService` 仍逐屬性讀 `SchedulerRunState`**（`IsRunning`／`Trigger`／`StartedAt`／`LatestActivity()`），`EndRun` 交錯時可能讀到混合狀態；`AiAnalysisHostedService`、`PrtgBackfillService` 同形。改讀一次 `Snapshot()`（第 60 輪 Z-6 只收斂 `GetStatus` 與 `RunActivity`）。皆 null 安全，只影響顯示一致性。
+- **`PrtgValueAssessment.AssessPage` 每頁重讀最新日主機對應**（四類各自分頁，每頁一次 `GetHostMapForDate`＋必要時 `GetLatestHostMapWithDate`）：把「最新日是否借前一份」在 `PrtgDailyPipeline` 外層算一次傳入。純效能，待量測後再排。
+- **`HealthService` 仍逐屬性讀 `SchedulerRunState`**（`IsRunning`／`Trigger`／`StartedAt`／`LatestActivity()`），`EndRun` 交錯時可能讀到混合狀態；`AiAnalysisHostedService`、`PrtgBackfillService` 同形。改讀一次 `Snapshot()`（目前只有 `GetStatus` 與 `RunActivity` 已收斂）。皆 null 安全，只影響顯示一致性。
 - **日層級指派逐問題建單**（`BuildCasesForDay`）：成本在全域鎖與逐筆 SQL，先量測再決定；「每個問題一張單」的語意不改。
 - **`BatchRunStore` 查舊於視窗的執行編號時整份讀回**（`ReadAllRunLines` 回退）。
 - **NetIQ 結果頁外層鍵的猜測式解析**（`SentinelClient.CandidateArrayKeys`）：待用診斷頁確認實機外層鍵後寫進 NETIQ-API-REFERENCE 再收窄。

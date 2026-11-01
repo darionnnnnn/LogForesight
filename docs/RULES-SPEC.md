@@ -14,7 +14,7 @@
 
 ## 目標與整體流程
 
-1. **規則從寫死改為外部維護**：初次部署時把內建種子（`KnownIssueSeed.CreateRules()`）寫入
+1. **規則外部維護（不寫死）**：初次部署時把內建種子（`KnownIssueSeed.CreateRules()`）寫入
    `rules.json`（未來 DB 後端則寫入資料表），之後在該檔案/資料表直接維護，不需要重新編譯部署。
 2. **啟動流程**：`rules.json` 不存在 → 寫入種子（僅此一次）；存在 → 載入＋驗證（單條不合格
    跳過、遮蔽偵測只警告）→ 呼叫 `KnownIssueCatalog.Initialize` 生效。全程見
@@ -75,7 +75,7 @@
 | `Origin` | `builtin`（程式內建，seed/匯入會更新其內容）／`custom`（使用者自訂，程式永不覆寫） |
 | `Enabled` | 停用開關，語意見上方「三條邊界」第 1 點 |
 | `Scope` | 生效範圍，此版本只接受 `"all"`，為未來多主機/群組規則卡位（見下） |
-| `MatchAllEventIds` | 顯式宣告「不看 EventIds，來源命中就算」，取代舊版「EventIds 空陣列＝全比對」的隱含語意 |
+| `MatchAllEventIds` | 顯式宣告「不看 EventIds，來源命中就算」，避免「EventIds 空陣列＝全比對」的隱含語意 |
 | `MatchFilter` | 為未來「同規則同主機下只關閉部分比對範圍」卡位，此版本必須為 `null` |
 | `Platform` | `windows`（預設）／`linux`／`prtg`，決定用哪組比對欄位（見下；prtg 的比對欄位是 `PrtgRuleCode`／`PrtgThreshold`／`PrtgSensorCategory`，語意見 docs/PRTG-SPEC.md §9） |
 
@@ -156,7 +156,7 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
   程式降級用內建種子（規則）或空清單（抑制）繼續執行，不因內容壞掉而整個中斷。
 - **單一物件解析失敗只跳過該條**，其餘照常載入（逐元素 try/catch，而非整份反序列化）。
 - **原子寫入**：由 `EfJsonBlobStore.Mutate` 的單一交易保證（含 `UpdatedAt` 樂觀鎖與重試），
-  取代檔案時代的「寫 `.tmp` 再 `File.Move`」手法——批次與 Web 併發寫入不會有一方被靜默蓋掉。
+  不使用檔案時代的「寫 `.tmp` 再 `File.Move`」手法——批次與 Web 併發寫入不會有一方被靜默蓋掉。
 - Enum（`Category`/`Severity`）以字串儲存（`JsonStringEnumConverter`），不是數字——
   值本身可讀，也對應下方 DB 正規化草案的 `CHECK` 約束設計。
 
@@ -381,7 +381,7 @@ docs/DETECTION-SPEC.md）。詳情頁的簽章／關聯抑制入口本來就硬�
 
 `rules.json` 是巢狀 JSON，但 DB 階段**不做「序列化成 JSON 字串塞進 nvarchar 欄位」**——那只是
 把檔案格式的習慣搬進關聯式資料庫，改一條處置步驟要整包字串解析/編輯/跳脫，DB 的型別檢查與
-約束完全幫不上忙，也違背了「規則搬進 DB 好維護」的初衷。改為正規化的 1 主表＋3 子表：
+約束完全幫不上忙，也違背了「規則搬進 DB 好維護」的初衷。因此採正規化的 1 主表＋3 子表：
 
 ```
 lf_rules（每條規則一列）

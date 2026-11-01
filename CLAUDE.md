@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **7,357 通過／10 略過**（第 60 輪收尾併 dev，Windows；
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **7,357 通過／10 略過**（Windows；
   歷次基線見 `docs/archive/README.md`）；略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑。文件／說明書批次可先跑定向的
   `dotnet test --filter FullyQualifiedName~HelpContentServiceTests` 與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -99,7 +99,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
   「案件」只留在管理與進階說明。相關導覽名稱以 `layout.js` 與 View 的實際顯示文字校對，
   manifest 只是待比對資料，不是導覽名稱的來源。
 - 不要替 PRTG 數值再加閘門：數值可信＝三條件（該日對應有效、可用列、單位可判，`PrtgValueAssessment` 是唯一評估入口，PRTG-SPEC §9b）。
-  不足就顯示原因（`PrtgValueReason`），不要另造證據、資格或授權層——那是第 54 輪整批移除的形狀。記憶體可用 % 轉已用 % 只在 `EvaluateTrend` 一處。
+  不足就顯示原因（`PrtgValueReason`），不要另造證據、資格或授權層——那是已整批移除的形狀（背景見 `docs/archive/README.md`）。記憶體可用 % 轉已用 % 只在 `EvaluateTrend` 一處。
 - 不要在不可信範圍做清除：外部查詢未收斂、回傳空資料、權限縮小、範圍異常縮小、沒有成功對應
   或沒有成功寫入時，不得清除 PRTG 鏡像、狀態或數值資料；資源守門使用的裝置／sensor 需保留。
 - 不要讓排程觸發判定各寫一套：所有排程觸發查詢走單一查詢點，明確排除 `BatchRun.JobType == ai`；
