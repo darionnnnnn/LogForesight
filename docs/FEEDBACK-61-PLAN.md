@@ -1,6 +1,6 @@
 # LogForesight 第 61 輪規劃：遞延 bug、效能、CSP、守門測試、文件對齊
 
-> 狀態：規劃中（待使用者確認 §2 定案後才開分支）
+> 狀態：實作完成，待換模型體檢（分支 `feature/feedback-61`，未併 dev）
 > 基準：dev@fe241168（7,357 通過／10 略過；`--list-tests` 共 7,082 條，Theory 算一條）
 > 來源：第 59 輪 PLAN §5 草案（L 文件／M 守門）、第 60 輪 PLAN §6 草案（純效能＋CSP）、BACKLOG「第 60 輪體檢遞延」；三份合併去重 41 項
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度用 Sonnet 5.5／Haiku 5.5；一個 checkout 一次只派一個改檔代理；每批驗證後各自 commit 並 push 到 `feature/feedback-61`
@@ -290,3 +290,28 @@ HealthService 10、ScheduleFreshness 8、CaseDaySync 12、PrtgAddressResolver 11
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | 規劃 | Fable 5.1 主代理＋兩個 Sonnet 唯讀審查 | d3457f9e | — | — |
+| P-a | Sonnet 5.5 實作；Opus 5.5 主代理驗收 | 8672c45a | 定向 362 綠；主代理突變（外層取消分支）轉紅 | 規格只要求單批逾時案，代理補「整台 Sentinel 逾時」才讓 :243 的突變轉紅；`EfPrtgStore` sealed，改用 `SqlPerformanceMonitor` 計數 |
+| P-b | Sonnet 5.5；主代理 | 35469192 | 定向 165 綠；過濾器 arm／狀態碼表突變轉紅 | 主代理補 `PrtgHostMappingAdminController` 批次對應遇清除忙碌顯示原訊息（代理白名單外）；P-4 用結構守門取代行為測試（`HealthService` 相依過多） |
+| P-c | Sonnet 5.5；主代理 | e4c9ae1e | 前端定向 521 綠；三項突變轉紅 | **規格缺陷**：原契約「補跑期間的呼叫合併、只多一趟」會讓補跑期間的寫入同樣讀到舊快照；主代理改為逐趟迴圈並補 `callDuringRerunTriggersThirdRound`（見 §8 修正表） |
+| N-a | Sonnet 5.5；主代理 | 35057c7a | 定向＋DI 接線 619 綠；五項突變轉紅 | `ScheduleFreshnessService.GetScheduleFreshness` 加 `virtual` 供計數（白名單外，規格允許）；代理結束時留背景計時器，主代理 TaskStop |
+| N-b | Sonnet 5.5；主代理 | dfc09b22 | 定向 609 綠；五項突變轉紅 | N-6 `Max()` 為純量聚合無法 `ToQueryString`，改用 SQLite 命令攔截器斷言 `MAX(`；N-7 `>`→`>=` 為等價突變（`Exists` 擋重複），改用游標不前進；發現一個從未登錄的 behavior 案例 → 追加為 M-a 的登錄守門 |
+| O | Sonnet 5.5；主代理 | 03a0a1bb | 核心 149 綠（代理聯集 961 綠）；四項突變轉紅 | 匿名控制器列入 `ControllerRouteSnapshotTests.PermissionExempt`（白名單外一行，守門本來就要求）；本機有軟體改寫 localhost 回應標頭，CSP 標頭測試改在行程內執行中介層 |
+| M-a | Sonnet 5.5；主代理 | 5e15f2c0 | 前端 423 綠（改前 410，略過 0）；三項突變轉紅 | 登錄守門抓出 prtg-mirror-refresh 三個從未執行的案例（含上一輪宣稱突變轉紅的 `overlappingRiskReviewCallsRenderPendingListOnce`），補登錄皆綠 |
+| M-b | Sonnet 5.5；主代理 | 44cbaca7 | 定向 403 綠；六項突變轉紅；DDL 45 段搬移前後逐字相同 | M-1 比對納入升級器 `AddColumnIfMissing`（四張表的欄位由補欄而來）；`noassert.py` 有誤判，C# 守門自行抹除字串與註解 |
+| M-c | Sonnet 5.5；主代理 | e920d137 | 定向 41 綠；三項突變轉紅 | M-5 regex 改認「合計」避免抓到子計數；另抓到第四處「19 種」；主代理更正 PLAN 中「WEB-SPEC 只有 §1～§9」的錯誤 |
+| M-d | Sonnet 5.5；主代理 | f4afd32d | 定向 79 綠；兩項突變轉紅 | 舊 DB-SPEC 對 `lf_daily_records`、`lf_record_handling` 的描述已與模型脫節（刪 8 補 4、整塊重寫）；主代理親核傳輸綁定三欄用途後改寫註解 |
+| M-e1 | Sonnet 5.5；主代理 | 87536d6b | 文件守門 25 綠；突變轉紅 | 主代理核對三處推論句（`ParseDateRange` 366 天成立） |
+| M-e2 | Sonnet 5.5；主代理 | a4591146 | 文件守門綠；重排前後條目標題比對 | 42→15 章；缺少的 16 條皆為預期刪除或合併（主代理逐條追到去處） |
+| §4 補漏 | 主代理 | 0e2eee9b | 說明書與文件守門 18 綠 | 逐項對照 §4 清單時發現說明書三處、PRTG-SPEC 兩句、README 兩條、CLAUDE.md 規則尚未落地；「排程告示延遲」寫進系統健康章（新鮮度所在處）而非排程章 |
+| L-3b | 五個 Sonnet 唯讀比對＋Sonnet 改檔；主代理 | 74a118ff | 文件守門 26 綠；過時名稱 grep 歸零 | 47 條全部成立；主代理抽查「錯」類皆屬實，另補兩處白名單外的過時註解（`CategoryAggregatorTests`、`LfDbContext`） |
+
+## 體檢交接
+
+- 全量（主代理，Windows，所有段落提交後）：**7,524 通過／0 失敗／10 略過**，較基線 7,357／10 增加 167 條，略過數不變（規模壓測）。
+- 規劃逐項比對：§3 P／N／O／M／L 與 §4 文件同步逐項對照，§4 有說明書三處、PRTG-SPEC 兩句、README 兩條、CLAUDE.md 規則在逐段實作時未落地，已於 0e2eee9b 補齊；其餘皆有對應 commit（見 §9）。
+- 規格階段修正 9 條記於 §8；實作中最重要的一條是 P-2 原契約本身有缺陷（補跑期間的寫入仍會讀到舊快照），已由主代理改正並補測試。
+- 本輪新增的守門會在日後持續擋退化：behavior 案例必須登錄、測試必須有斷言、不得直接起 node、文件章節引用存在、DB-SPEC＝模型、DDL＝模型、現行文件無輪次字樣、inline script 帶 nonce、lib CSS 用 data: 時 img-src 放行、稽核常數有中文名、處理人可見頁無「案件」。
+- 尚未做：換模型體檢；瀏覽器實際操作（CSP 強制下各頁是否有被擋的資源——已以原始碼守門與 grep 覆蓋，未開瀏覽器；PRTG 維護頁補跑、AI 歸納提示以 behavior 測試覆蓋）；CLAUDE.md 基線數字（收尾時更新）。
+- 已知限制：SQL Server 只驗 EF `ToQueryString` 翻譯形狀（N-6 的 MAX 以 SQLite 攔截器驗）；CSP 標頭測試在行程內執行中介層（本機有軟體改寫 localhost 回應標頭）；DNS 快取 TTL 與 CSP 回報節流未經實機驗證。
+- 升級注意（README 已寫）：CSP 預設強制（Development 僅回報）、`Server:Csp` 三值、外部服務逾時改顯示為失敗、補跑預覽帳本不完整回 409、未設 `Server:TrustedProxies` 時 CSP 回報節流全站共用。
+
