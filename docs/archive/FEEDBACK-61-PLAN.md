@@ -1,6 +1,6 @@
 # LogForesight 第 61 輪規劃：遞延 bug、效能、CSP、守門測試、文件對齊
 
-> 狀態：體檢完成，待併 dev（分支 `feature/feedback-61`）
+> 狀態：全案完成已併 dev
 > 基準：dev@fe241168（7,357 通過／10 略過；`--list-tests` 共 7,082 條，Theory 算一條）
 > 來源：第 59 輪 PLAN §5 草案（L 文件／M 守門）、第 60 輪 PLAN §6 草案（純效能＋CSP）、BACKLOG「第 60 輪體檢遞延」；三份合併去重 41 項
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度用 Sonnet 5.5／Haiku 5.5；一個 checkout 一次只派一個改檔代理；每批驗證後各自 commit 並 push 到 `feature/feedback-61`
@@ -346,3 +346,9 @@ HealthService 10、ScheduleFreshness 8、CaseDaySync 12、PrtgAddressResolver 11
 **查證後不改**：批次對應遇清除忙碌回 200＋失敗訊息（批次端點本來就是部分成功語意，單筆才 409）；逐日同步連續例外退避到 30 秒（避免 5 秒狂打，PLAN N-2 定案）；`SchedulerHostedService` 取消時以英文例外訊息當結果、逾時訊息含英文原文（既有行為，非本輪引入）；`Runs` 頁被用詞守門排除（Dev／Admin 角色可見，不是處理人頁）；`TestHygieneTests` 判定寬度、`DocCrossReferenceTests` 不比 `§8.6-8` 子項、`refreshPrtgMirror` 在途旗標空窗無法以行為測試重現且後兩個 `isStale` 檢查點未被案例走到、CSP 回報節流 1 萬鍵可被灌滿只影響回報可見度——皆屬低風險，不另立項。
 
 體檢後定向（`PrtgAddressResolver|CspPolicyGuard|CspReport|ReportFileMigration|HealthControllerFreshness|CaseDaySync|Throttle|SecurityHeaders|SecurityHardening|UiTests|JsModuleImport|BehaviorTests|ApiTimeout|NodeRuntime|HelpContentService|DocNarrative|DocCrossReference|LoginThrottle|PrtgScopePurgeStore`）：**604 通過／0 失敗**；四條新斷言各做一次突變皆轉紅、備份還原並 touch。全量在併 dev 後跑（見終檢輪）。
+
+## 終檢輪
+
+- 併 dev（`--no-ff`，dev 自分支起點未移動、合併後樹與分支逐位元組相同）後全量 25 分鐘：7,528 通過／2 失敗／10 略過。兩條失敗都不是程式問題：(1) `HelpWritingGuideTests` 抓到體檢改寫的說明書句子用了禁詞「原本」→ 改「先前」；(2) `PrtgAddressResolverTests` 32 執行緒並行案斷言「DNS ≤ 20 次」在全量負載下不成立（冷快取下同名同時未命中的次數取決於排程時機，實作輪單跑過、全量下翻車）→ 改成先填滿快取再並行、斷言 DNS 次數不增加（確定性）。兩處都是測試與說明書文字，生產樹與全量跑過的那棵相同，只重跑定向 37 綠、不重跑全量；基線以 **7,530 通過／0 失敗／10 略過** 記（較實作輪 7,524 多 6 條＝體檢補的測試；較上輪基線 7,357 多 173 條）。
+- 體檢修正 commit（a84b9494）單獨再掃：解析器世代號以 `Volatile.Read`／`Interlocked.Increment` 配對、`Resolve` 在快取未命中後才取世代；逐日同步版本基準兩種取法與 `ShouldRun` 的喚醒條件對得上（版本變動那拍沒處理到就記該版本，不會自我喚醒）；節流每視窗掃一次在鍵數飽和且全部存活時退回每次掃（與原行為相同，只在飽和時）；`ToUriComponent()` 對空 PathBase 回空字串、既有 `report-uri /api/csp-report` 斷言不變；mini-dom 的 `_parent` 只在替身內部使用。終檢無新發現。
+- 文件稽核：文件守門（敘事、§引用、說明書 H1）綠；CLAUDE.md 基線改 7,530／10；PLAN 歸檔並補 `docs/archive/README.md` 索引。

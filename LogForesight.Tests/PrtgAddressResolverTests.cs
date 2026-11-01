@@ -252,6 +252,10 @@ public class PrtgAddressResolverTests
         var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
         var resolver = new PrtgAddressResolver(host => { lock (dns) return dns.Lookup(host); });
         var names = Enumerable.Range(0, 10).Select(i => $"host{i}.local").ToArray();
+        // 先在主執行緒各查一次把快取填滿：之後 32 執行緒的並行讀取一次 DNS 都不該再打
+        // （冷快取下同名同時未命中的次數取決於排程時機，在全量測試負載下不是穩定的上界）
+        foreach (var n in names) Assert.Equal("10.5.5.5", resolver.Resolve(n));
+        Assert.Equal(names.Length, dns.Calls.Count);
 
         var tasks = Enumerable.Range(0, 32).Select(_ => Task.Run(() =>
         {
@@ -259,7 +263,7 @@ public class PrtgAddressResolverTests
         })).ToArray();
         Task.WaitAll(tasks);
 
-        Assert.True(dns.Calls.Count <= 20, $"DNS 呼叫 {dns.Calls.Count} 次");
+        Assert.Equal(names.Length, dns.Calls.Count);
     }
 
     [Fact]
