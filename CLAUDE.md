@@ -114,6 +114,11 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要在 action 內手寫「全站檢視」判斷：全站 PRTG 對應類端點一律貼 `[RequireViewAll]`；新增或搬動控制器後 `ControllerRouteSnapshotTests` 必須綠，基準檔只在刻意改權限時以 `LF_UPDATE_ROUTE_SNAPSHOT=1` 重產並逐列檢查差異——漏一行檢查就是把全站主機身分給了受限角色。
 - 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。
 - 不要在 `Fail(`／`DomainException(` 傳錯誤碼字面：新碼先登錄到 `ApiErrorCodes`（常數＋狀態碼表），WEB-SPEC §7.2 同步。
+  Core 擲給 Web 需要特定狀態碼的錯誤，用專屬例外型別交給 `ApiExceptionFilter` 對應（如 `ConcurrentUpdateException`、`PrtgScopePurgeBusyException`），不要在控制器比對例外訊息字串。
+- 不要新增不帶 nonce 的 inline script：CSP 只放行每請求 nonce，漏帶的腳本在正式環境被瀏覽器擋掉（`CspPolicyGuardTests` 掃所有 view）。
+  同理不要在 view 或 JS 字串寫 `style=` 屬性與 inline 事件屬性；動態樣式用 `classList` 或 `style.setProperty`。
+- 不要用「是不是 `OperationCanceledException`」判斷使用者取消：HttpClient 逾時擲的 `TaskCanceledException` 也是 OCE，只有「OCE 且 ct 已取消」才是取消（樣板見 `PrtgScopeEstimateController`）。
+- 新增 `*.behavior.mjs` 案例要同時在 C# `InlineData` 登錄，前端行為測試一律經 `NodeRuntime.RunOrFail` 執行（`NodeRuntimeTests` 守門兩件事）。
 - K 的來源鍵就緒閘門必須分開：`IIssueAggregateQuery` 等 `lf_top_issues.source_key` 回填與
   `lf_issue_first_seen` 舊鍵重整完成；`IRiskyEventStore` 只等 `lf_risky_events.source_key`
   回填完成。後者在前者回填後開始，但不是聯合讀取閘門；每批 500 列。啟動快判（`TopIssueBackfiller.TryFastReady`）只針對前者、在進背景閘門前以索引可 seek 的 EXISTS 判定；後者以版本化 blob `risky_events_source_key_done` 短路，不得改回每次啟動 `Count()` 全表。就緒旗標只升不降。索引完整鍵序列是

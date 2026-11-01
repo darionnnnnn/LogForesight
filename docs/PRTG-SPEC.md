@@ -172,6 +172,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
 - 範圍外數值與狀態變更：`PrtgScopePurge.RunAfterStructureSync` 只在結構同步與對應全部成功、`CheckScope`（範圍非 null、非部分處理、監看裝置非空、裝置鏡像本趟更新）
   與 `CheckShrink`（已有基準且減少量不超過 `max(基準 × 30%, 50 台)`）都通過時才清。首次無基準等情況不自動清，由維護頁「監看範圍外資料」預覽後人工確認。
   資源守門所需的裝置與 sensor 不因數值範圍變小而被清。
+  清除作業進行中，任何範圍寫入（來源、對應、排除、主機範圍）由 `PrtgScopePurgeBusyException` 擋下，API 回 409／`conflict`。
 
 範圍 ≤ 500 台（`PerDeviceSensorFetchLimit`）逐台查感測器，超過時全站分頁再濾。白天新進範圍的裝置由快照服務的範圍補抓帶進鏡像（§3b）。
 「最後結構同步時間」取裝置表（`GetLatestStructureSyncedAt`）。
@@ -507,7 +508,7 @@ AI prompt 的【PRTG 監控訊號】區塊只餵已判定、未抑制的 finding
 
 `PrtgValueAssessment` 是數值的唯一評估入口（每日管線、就緒度卡、規則啟用與試算、主機詳情共用）。只讀已落盤資料、每頁最多 100 顆。
 
-**最新已完成日的對應退路**（`PrtgValueAssessment.ResolveHostMapRows`，管線與就緒度、規則試算共用同一份）：最新日的對應整天沒有 `ok` 列時（主檔暫時讀不到、整天寫成 unmatched），改用前一天為錨點的最近一份對應；最新日有 `ok` 列時，就緒度仍逐 device 沿用（當天缺列的 device 用它自己較早的對應）；過去日照 §4 規則。四類數值趨勢（磁碟、記憶體、CPU、Ping）任一類評估失敗，整趟標部分完成，當日說明寫「{類別}趨勢證據未完整；尚未完成風險判定。」——規則不存在、停用或沒有候選 sensor 不算失敗。
+**最新已完成日的對應退路**（`PrtgValueAssessment.ResolveHostMapRows`，管線與就緒度、規則試算共用同一份）：最新日的對應整天沒有 `ok` 列時（主檔暫時讀不到、整天寫成 unmatched），改用前一天為錨點的最近一份對應；最新日有 `ok` 列時，就緒度仍逐 device 沿用（當天缺列的 device 用它自己較早的對應）；過去日照 §4 規則。分頁評估時，每日管線與就緒度試算在分頁迴圈外以 `ResolveNewestHostMap` 解析一次再傳給每頁（`PrtgValueAssessment` 是長壽服務，不在實例內記憶）。四類數值趨勢（磁碟、記憶體、CPU、Ping）任一類評估失敗，整趟標部分完成，當日說明寫「{類別}趨勢證據未完整；尚未完成風險判定。」——規則不存在、停用或沒有候選 sensor 不算失敗。
 
 **數值可信＝三條件**：(1) 該日 sensor 所在裝置有 `ok` 或人工對應，且是評估日的同一台主機（過去日依 §4「某日用哪一份對應」，含往後沿用：`PrtgValueAssessment` 逐 device 以 `PrtgHostMapLookup.Select` 選對應，讀取窗上界延到今天，
 第一份對應之前的日子沿用之後最早一份，回填的舊值因此能歸戶）；

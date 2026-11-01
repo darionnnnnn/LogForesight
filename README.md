@@ -117,6 +117,10 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 （政策的 `frame-ancestors` 會跟著變）。自訂品牌圖示不受影響。反向代理若自行加了 CSP，瀏覽器會取兩者的交集，過嚴時請在代理端放寬。
 未設 `Server:TrustedProxies` 時，回報端點的每 IP 節流會讓反向代理後的所有使用者共用一個額度。
 
+**外部服務逾時顯示為失敗**：取數途中呼叫 Sentinel、AI 等外部服務逾時，執行紀錄與排程狀態卡顯示「失敗：呼叫外部服務逾時」，不再顯示成「已停止（使用者取消）」；NetIQ 單批逾時只讓該批記為失敗，其餘批次與其他 Sentinel 照常進行，下次執行自動補跑。
+
+**補跑預覽遇到 NetIQ 執行狀態帳本不完整時回 HTTP 409**（錯誤碼 `netiq_attempt_ledger_invalid`，畫面訊息不變）；自行呼叫 `/api/admin/schedule/run-preview` 的外部腳本若以 HTTP 200 判斷成功，需改看狀態碼。
+
 **`Server:PathBase` 格式錯誤時啟動訊息會點名設定鍵**：值必須以 `/` 開頭（例如 `/LogForesight`），以前缺斜線同樣無法啟動，只是訊息看不出原因。
 掛在 IIS 子 Application 底下時不要再設 `Server:PathBase`（IIS 會自動加前綴，重複設定會變成雙重前綴，啟動時會記警告）。
 
