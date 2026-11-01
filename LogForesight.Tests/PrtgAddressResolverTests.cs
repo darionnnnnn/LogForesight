@@ -281,6 +281,22 @@ public class PrtgAddressResolverTests
     }
 
     [Fact]
+    public void Resolve_達條目上限且既有條目過期_先清過期再收新名稱()
+    {
+        var clock = new ManualClock();
+        var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });
+        var resolver = new PrtgAddressResolver(dns.Lookup, clock);
+        for (var i = 0; i < PrtgAddressResolver.MaxEntries; i++)
+            resolver.Resolve($"fill{i}.local");
+
+        clock.Advance(TimeSpan.FromMinutes(6));   // 全部超過正快取 5 分鐘
+        resolver.Resolve("extra.local");
+        var calls = dns.Calls.Count;
+        Assert.Equal("10.5.5.5", resolver.Resolve("extra.local"));
+        Assert.Equal(calls, dns.Calls.Count);     // 第二次命中快取，沒有再查 DNS
+    }
+
+    [Fact]
     public void Invalidate_清空快取後重查()
     {
         var dns = new FakeDns(_ => new[] { IPAddress.Parse("10.5.5.5") });

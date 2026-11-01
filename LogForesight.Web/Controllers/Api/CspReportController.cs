@@ -131,10 +131,13 @@ public class CspReportController : ControllerBase
     private static string Str(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
-    /// <summary>各欄截 512 字，換行換成空白（防日誌注入與偽造多行紀錄）</summary>
+    /// <summary>各欄截 512 字，換行與其他控制字元換成空白（防日誌注入與偽造多行紀錄）</summary>
     private static string Clean(string value)
     {
         if (value.Length > MaxFieldChars) value = value[..MaxFieldChars];
-        return value.Replace('\r', ' ').Replace('\n', ' ');
+        return string.Create(value.Length, value, static (span, src) =>
+        {
+            for (var i = 0; i < src.Length; i++) span[i] = char.IsControl(src[i]) ? ' ' : src[i];
+        });
     }
 }

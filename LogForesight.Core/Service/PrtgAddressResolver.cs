@@ -21,7 +21,7 @@ public interface IPrtgAddressResolver
 /// DNS 明確查無（例外或零筆 IPv4）負快取 <see cref="NegativeTtl"/>（60 秒）——避免同一個壞位址每次請求都重付查詢成本，
 /// 又能讓使用者修好 DNS 後很快生效；**逾時不寫快取**——逾時多半是 DNS 伺服器暫時不通而不是名稱不存在，
 /// 記住會把暫時性故障放大成一分鐘的誤判，下一次直接重查即可。
-/// 條目上限 <see cref="MaxEntries"/>：滿了就不寫入新項（不清空既有，仍照常回傳解析結果），避免亂值灌爆記憶體。
+/// 條目上限 <see cref="MaxEntries"/>：滿了先清掉已過期的條目，仍滿才不寫入新項（不清空未過期的，仍照常回傳解析結果），避免亂值灌爆記憶體。
 /// 使用者觸發「同步結構與對應」時呼叫 <see cref="Invalidate"/> 清空，讓對應用到最新的 DNS 結果。
 /// </summary>
 public sealed class PrtgAddressResolver : IPrtgAddressResolver
@@ -115,11 +115,17 @@ public sealed class PrtgAddressResolver : IPrtgAddressResolver
         return result;
     }
 
-    /// <summary>寫入快取；已滿時不寫入新項（既有項目仍可被覆寫更新）。</summary>
+    /// <summary>寫入快取；已滿時先清掉過期條目，仍滿才不寫入新項（既有項目仍可被覆寫更新）。
+    /// 不清過期項的話，單例被灌滿一次後快取就永久停收新名稱、退化成每次查 DNS。</summary>
     private void Store(string token, string? value, DateTimeOffset expiresAt)
     {
         if (_cache.Count >= MaxEntries && !_cache.ContainsKey(token))
-            return;
+        {
+            var now = _timeProvider.GetUtcNow();
+            foreach (var entry in _cache)
+                if (entry.Value.ExpiresAt <= now) _cache.TryRemove(entry.Key, out _);
+            if (_cache.Count >= MaxEntries) return;
+        }
         _cache[token] = (value, expiresAt);
     }
 

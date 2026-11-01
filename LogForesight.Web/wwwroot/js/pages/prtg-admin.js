@@ -2114,7 +2114,7 @@ function refreshPrtgMirror() {
         scopeRefreshDirty = true;
         return scopeRefresh;
     }
-    scopeRefresh = runScopeRefresh().finally(() => { scopeRefresh = null; });
+    scopeRefresh = runScopeRefresh();
     return scopeRefresh;
 }
 // 一趟進行中又被呼叫（寫入端剛完成）就標髒：這趟讀到的可能是寫入前的快照，不渲染（避免舊值閃現），
@@ -2126,6 +2126,8 @@ async function runScopeRefresh() {
         let failure = null;
         try { await refreshPrtgMirrorCore(() => scopeRefreshDirty); } catch (error) { failure = error; }
         if (!scopeRefreshDirty) {
+            // 與「沒被標髒」的判定同步清掉在途：留到 finally 會有一段空窗，期間的呼叫標了髒卻拿到這個已結束的 promise
+            scopeRefresh = null;
             if (failure) throw failure;
             return;
         }

@@ -112,6 +112,9 @@ public class DbSpecModelParityTests
         foreach (var g in blocks.GroupBy(b => b.Table).Where(g => g.Count() > 1))
             failures.Add($"{g.Key}: 文件出現 {g.Count()} 個區塊（只能有一個）");
 
+        foreach (var t in blocks.Select(b => b.Table).Distinct().Where(t => !model.ContainsKey(t)).OrderBy(t => t, StringComparer.Ordinal))
+            failures.Add($"{t}: 文件有欄位區塊、模型沒有這張表");
+
         foreach (var (table, modelCols) in model.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             var found = blocks.Where(b => b.Table == table).ToList();
@@ -177,5 +180,9 @@ public class DbSpecModelParityTests
         // 同一張表出現兩個區塊
         var dup = lines.Concat(new[] { "```", "lf_reports -- 重複", "  report_id bigint PK", "```" }).ToList();
         Assert.Contains(Compare(dup), f => f.StartsWith("lf_reports:", StringComparison.Ordinal) && f.Contains("2 個區塊"));
+
+        // 文件殘留模型已刪的表
+        var ghost = lines.Concat(new[] { "```", "lf_ghost_table", "  ghost_id bigint NOT NULL PK", "```" }).ToList();
+        Assert.Contains(Compare(ghost), f => f.StartsWith("lf_ghost_table:", StringComparison.Ordinal) && f.Contains("模型沒有"));
     }
 }

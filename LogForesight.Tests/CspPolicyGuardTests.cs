@@ -7,7 +7,8 @@ namespace LogForesight.Tests;
 /// <summary>
 /// CSP 守門：政策與實際資產不能脫鉤。
 /// (a) 靜態 CSS 只要用了 data: URI，政策的 img-src 就必須允許 data:；
-/// (b) 所有 view 的 inline script 都必須帶 nonce（沒帶的在強制模式下整段被瀏覽器擋掉）。
+/// (b) 所有 view 的 inline script 都必須帶 nonce（沒帶的在強制模式下整段被瀏覽器擋掉）；
+/// (c) view 與前端 JS 不得寫 style 屬性與 inline 事件屬性（style-src、script-src 都不放行 inline）。
 /// 政策字串取自 <see cref="SecurityHeadersPolicy.BuildCsp"/>（中介層實際使用的同一支建構函式），不另抄一份。
 /// </summary>
 public sealed class CspPolicyGuardTests
@@ -50,6 +51,31 @@ public sealed class CspPolicyGuardTests
         }
         Assert.True(inspected >= 4, $"預期至少掃到 4 段 inline script，實際 {inspected}（守門自身失效？）");
         Assert.True(offenders.Count == 0, "下列 inline script 沒有 nonce：" + Environment.NewLine + string.Join(Environment.NewLine, offenders));
+    }
+
+    [Fact]
+    public void view與前端JS沒有style屬性與inline事件屬性()
+    {
+        var web = Path.Combine(RepoRoot(), "LogForesight.Web");
+        var files = Directory.EnumerateFiles(Path.Combine(web, "Views"), "*.cshtml", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(Path.Combine(web, "wwwroot", "js"), "*.js", SearchOption.AllDirectories))
+            .ToList();
+        Assert.True(files.Count >= 20, $"只掃到 {files.Count} 個檔案（守門自身失效？）");
+
+        // 只認 HTML 標籤內的屬性（含 view 的跨行標籤、JS 字串裡的標籤）：<div style="…">、<button onclick="…">。
+        // JS 的 element.style.x = …、el.onclick = … 屬性指派與同名變數不受 CSP 限制，不算
+        var attr = new Regex(@"<[a-zA-Z][^<>]*?\s(style|on[a-z]+)\s*=", RegexOptions.IgnoreCase);
+        var offenders = new List<string>();
+        foreach (var f in files)
+        {
+            var text = File.ReadAllText(f);
+            foreach (Match m in attr.Matches(text))
+            {
+                var line = text.AsSpan(0, m.Index).Count('\n') + 1;
+                offenders.Add($"{Path.GetRelativePath(web, f)}:{line}: {m.Value.ReplaceLineEndings(" ")}");
+            }
+        }
+        Assert.True(offenders.Count == 0, "下列位置有 inline style 或事件屬性，強制 CSP 下會被擋：" + Environment.NewLine + string.Join(Environment.NewLine, offenders));
     }
 
     private static string RepoRoot()

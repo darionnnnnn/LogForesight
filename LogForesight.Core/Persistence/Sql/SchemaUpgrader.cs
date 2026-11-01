@@ -520,11 +520,6 @@ internal static class SchemaUpgrader
             .ToList();
     }
 
-    /// <summary>
-    /// 「同一處理人同一問題至多一張進行中交辦單」部分唯一索引的過濾條件（與 LfDbContext 的 HasFilter 同字串）。
-    /// 必須含 <c>source_key IS NOT NULL</c>：SQL Server 唯一索引把 NULL 視為相等、SQLite 視為相異，
-    /// 不排除 NULL 的話同一人兩張多問題單在 SQL Server 會撞索引、在 SQLite 不會——兩後端行為分岔。
-    /// </summary>
     internal const string SqlServerCreatePrtgScopePurgeJobs = """
         CREATE TABLE lf_prtg_scope_purge_jobs (
             job_id nvarchar(36) NOT NULL CONSTRAINT PK_lf_prtg_scope_purge_jobs PRIMARY KEY,
@@ -656,6 +651,11 @@ internal static class SchemaUpgrader
         )
         """;
 
+    /// <summary>
+    /// 「同一處理人同一問題至多一張進行中交辦單」部分唯一索引的過濾條件（與 LfDbContext 的 HasFilter 同字串）。
+    /// 必須含 <c>source_key IS NOT NULL</c>：SQL Server 唯一索引把 NULL 視為相等、SQLite 視為相異，
+    /// 不排除 NULL 的話同一人兩張多問題單在 SQL Server 會撞索引、在 SQLite 不會——兩後端行為分岔。
+    /// </summary>
     internal const string WorkOrderActiveIssueFilter = "closed_at IS NULL AND source_key IS NOT NULL";
 
     /// <summary>部分唯一索引 DDL：SQL Server（filtered index）與 SQLite（partial index）同一份語法</summary>

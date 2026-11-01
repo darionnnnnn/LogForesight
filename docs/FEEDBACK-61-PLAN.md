@@ -313,5 +313,15 @@ HealthService 10、ScheduleFreshness 8、CaseDaySync 12、PrtgAddressResolver 11
 - 本輪新增的守門會在日後持續擋退化：behavior 案例必須登錄、測試必須有斷言、不得直接起 node、文件章節引用存在、DB-SPEC＝模型、DDL＝模型、現行文件無輪次字樣、inline script 帶 nonce、lib CSS 用 data: 時 img-src 放行、稽核常數有中文名、處理人可見頁無「案件」。
 - 尚未做：換模型體檢；瀏覽器實際操作（CSP 強制下各頁是否有被擋的資源——已以原始碼守門與 grep 覆蓋，未開瀏覽器；PRTG 維護頁補跑、AI 歸納提示以 behavior 測試覆蓋）；CLAUDE.md 基線數字（收尾時更新）。
 - 已知限制：SQL Server 只驗 EF `ToQueryString` 翻譯形狀（N-6 的 MAX 以 SQLite 攔截器驗）；CSP 標頭測試在行程內執行中介層（本機有軟體改寫 localhost 回應標頭）；DNS 快取 TTL 與 CSP 回報節流未經實機驗證。
+- 實作方自我體檢（Opus 5.5 主代理＋三個 Sonnet 5.5 唯讀代理分「後端正確性」「CSP 與前端使用者動線」「測試守門與文件」；發現逐條讀碼驗證後才改），修正 7 條，皆附突變或定向測試：
+  1. `PrtgAddressResolver` 滿 1 萬筆後過期條目永不清除，快取永久停收新名稱、退化成每次查 DNS → 滿載時先清過期項（新測試，突變轉紅）。
+  2. PRTG 維護頁 `refreshPrtgMirror` 在途旗標留給 `.finally` 清，結束到清除之間的呼叫會標髒卻拿到已結束的 promise、補跑遺失 → 與「沒被標髒」判定同步清除。
+  3. CSP 回報只把 `\r\n` 換空白，其他控制字元（tab、NEL）仍進 web.log → 所有控制字元換空白（測試擴充，突變轉紅）。
+  4. `SchemaUpgrader` 抽出 DDL 常數時插進 `WorkOrderActiveIssueFilter` 的 XML 註解與常數之間，註解貼錯對象 → 搬回。
+  5. DB-SPEC 守門只查「模型有的表要有區塊」，文件殘留已刪表不會被抓 → 補反向檢查與突變案例。
+  6. CLAUDE.md 寫「view／JS 不得有 `style=` 與 inline 事件屬性」卻沒有守門 → `CspPolicyGuardTests` 補一條（只認 HTML 標籤內的屬性、整檔比對涵蓋跨行標籤；突變轉紅）。
+  7. 文件：WEB-SPEC 回報端點寫「接受三種 Content-Type」但程式不檢查 → 改成依本文形狀解析；補鍵數滿載時的行為；README 刪「舊版文件曾寫」沿革、補 CSP 出問題時先設 `ReportOnly` 再查 `LogForesight.Web.CspReport` 的退回步驟；PRTG-SPEC 同步解析快取滿載行為。
+- 經驗證不成立或不改：`LogAnalysisService.cs:165／494`（§3 P-1 已定案純 DB 降級路徑不改）；記錄查詢翻頁丟棄進行中的 AI 歸納（翻頁本來就重查並清空摘要區，行為一致）；`AddColumnIfMissing` 解析失敗（會讓比對轉紅，非靜默）；CSP 回報節流每次掃描整個字典（沿用既有 `PerUserThrottle` 行為，上限 1 萬鍵）；匿名者灌滿回報節流鍵（只影響回報可見度，已寫進 WEB-SPEC）；`PrtgDailyPipeline` 候選為空時多查一次最新日對應（不影響正確性）。
+- 自我體檢後定向（`PrtgAddressResolver|CspPolicyGuard|CspReport|DbSpecModelParity|SchemaUpgrader|DocNarrative|DocCrossReference|UiTests|JsModuleImport|BehaviorTests|ApiTimeout|PrtgMirror|HelpContentService|NodeRuntime`）：**557 通過／0 失敗**；未重跑全量（只動上述檔案，收尾併 dev 後跑一次）。
 - 升級注意（README 已寫）：CSP 預設強制（Development 僅回報）、`Server:Csp` 三值、外部服務逾時改顯示為失敗、補跑預覽帳本不完整回 409、未設 `Server:TrustedProxies` 時 CSP 回報節流全站共用。
 

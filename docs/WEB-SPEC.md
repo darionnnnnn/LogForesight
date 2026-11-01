@@ -344,10 +344,10 @@ SameSite=Strict 已擋跨站帶 Cookie；再加一層防禦深度：`CsrfHeaderM
 
 **回報端點** `POST api/csp-report`（`CspReportController`）：匿名（`[AllowAnonymous]`、`[SkipDataVersionBump]`），`CsrfHeaderMiddleware` 精確放行此路徑的 POST。
 本文最多讀 8,192 bytes（超過回 413、不記錄）；每來源 IP 60 秒 10 次（超過回 429、不記錄；`Connection.RemoteIpAddress` 為 null 時視為 `unknown`，
-未設 `Server:TrustedProxies` 時反向代理後的所有請求共用一個額度）。接受 `application/csp-report`、`application/reports+json`、`application/json`；
-無法解析回 204、不記錄。每筆違規取 document-uri、violated／effective-directive、blocked-uri、original-policy，各截 512 字並把換行換成空白，
+未設 `Server:TrustedProxies` 時反向代理後的所有請求共用一個額度）。不檢查 Content-Type，依本文形狀解析舊式 `{"csp-report":{…}}`、Reporting API 陣列與單筆物件；
+無法解析回 204、不記錄。每筆違規取 document-uri、violated／effective-directive、blocked-uri、original-policy，各截 512 字並把換行與其他控制字元換成空白，
 同一「指令＋blocked-uri」60 秒只記一次，以 Info 寫入 `LogForesight.Web.CspReport`（進 web.log）。其餘情況一律 204 不回內容。
-計數器為 `SlidingWindowThrottle<TKey>`（鍵數上限 10,000，滿了拒絕新鍵、舊鍵照常計數）。
+計數器為 `SlidingWindowThrottle<TKey>`（鍵數上限 10,000，滿了拒絕新鍵、舊鍵照常計數）：大量不同來源灌滿時，新來源的回報會被 429、新的違規組合不記錄，直到窗口過期騰出位置。
 
 ## 7. 授權與 API 慣例
 
