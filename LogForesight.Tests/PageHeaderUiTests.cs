@@ -13,7 +13,7 @@ public class PageHeaderUiTests
     [Fact]
     public void renderPageHeader呼叫不得三者皆空()
     {
-        var pagesDir = Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages");
+        var pagesDir = Path.Combine(WebRoot(), "wwwroot", "js", "pages");
         var calls = System.Text.RegularExpressions.Regex.Matches(string.Empty, "x").Count;
         foreach (var file in Directory.EnumerateFiles(pagesDir, "*.js"))
         {
