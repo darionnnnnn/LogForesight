@@ -75,6 +75,45 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         };
     }
 
+    /// <summary>同一天第二個窗口：整天都有精確值的 sensor 不重查，還缺小時的照查</summary>
+    [Fact]
+    public async Task RunAsync_整天已有ok數值的sensor不重查_不足的照查()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        recordStore.Append(CreateRecord(101, "SRV-A", day, "高"));
+        recordStore.Append(CreateRecord(102, "SRV-B", day, "高"));
+        store.UpsertDevices(new List<PrtgDeviceRow>
+        {
+            new() { Objid = 1001, Name = "Dev-1", Ip = "10.0.0.1" },
+            new() { Objid = 1002, Name = "Dev-2", Ip = "10.0.0.2" }
+        }, day);
+        store.UpsertSensors(new List<PrtgSensorRow>
+        {
+            new() { Objid = 2001, DeviceObjid = 1001, Name = "S1", SensorType = "SNMP CPU Load", Paused = false },
+            new() { Objid = 2002, DeviceObjid = 1002, Name = "S2", SensorType = "SNMP CPU Load", Paused = false }
+        }, day);
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 1002, HostId = 102, MapStatus = PrtgMapStatus.Ok }
+        });
+        store.UpsertValues(Enumerable.Range(0, 24).Select(hour => new PrtgValueRow
+        {
+            SensorObjid = 2001, PeriodStart = day.AddHours(hour), AvgValue = 1, Coverage = 100, Quality = PrtgDataQuality.Ok, CreatedAt = day
+        }).ToList());
+
+        var (client, handler) = CreateClient(_ => JsonResponse("{\"histdata\":[{\"datetime\":\"2026-08-30 01:00:00\",\"value_\":10.0,\"coverage\":100}]}"));
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), new TestConsole(), new Dictionary<string, string>());
+        var result = await new PrtgTriggeredValueFetcher(fetchService, store, recordStore, new TestConsole()).RunAsync(
+            day, whitelist: null, concurrency: 2, analysisCompleted: () => true, ct: CancellationToken.None, pollSeconds: 1);
+
+        Assert.DoesNotContain(handler.RequestedUrls, u => u.Contains("id=2001"));
+        Assert.Contains(handler.RequestedUrls, u => u.Contains("id=2002") && u.Contains("historicdata"));
+        Assert.Equal(1, result.TargetSensors);
+    }
+
     [Fact]
     public async Task RunAsync_只對風險高與中的主機取數()
     {

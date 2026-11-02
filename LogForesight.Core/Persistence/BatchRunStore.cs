@@ -169,7 +169,27 @@ public sealed record PrtgDayStat(
     int FailedSensors,
     string? Note = null,
     /// <summary>該日 PRTG 未完整評估並發佈，或結構同步失敗；排程下次自動補評估（舊 JSON 缺欄為 false）。</summary>
-    bool NeedsReevaluation = false);
+    bool NeedsReevaluation = false,
+    /// <summary>該趟對這一天有完整的來源同步（Full 範圍、同步與主機對應都成立，或沿用同日另一趟）；同日下一個窗口據此不再同步（舊 JSON 缺欄為 false）。</summary>
+    bool SourceSynced = false);
+
+/// <summary>執行紀錄的共用查詢：同一份「最新一筆」判定，不各寫一份。</summary>
+public static class BatchRunQueries
+{
+    /// <summary>取數類（排除 AI）中，依 StartedAt、RunId 由新到舊第一筆 PrtgDays 含該日者；沒有回 null。</summary>
+    public static (BatchRun Run, PrtgDayStat Stat)? LatestPrtgDayStat(IEnumerable<BatchRun> runs, DateTime day)
+    {
+        var date = day.Date;
+        foreach (var run in runs.Where(r => r.JobType != BatchRun.JobTypeAi && r.PrtgDays != null)
+                     .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.RunId))
+        {
+            var stat = run.PrtgDays!.FirstOrDefault(s => s.Date.Date == date);
+            if (stat != null) return (run, stat);
+        }
+
+        return null;
+    }
+}
 
 /// <summary>
 /// 執行期間的診斷紀錄（↔ lf_batch_run_logs）。

@@ -673,7 +673,9 @@ public class AnalysisOrchestrator
                 }
                 // 指定主機更新：PRTG 也只處理那幾台主機的監看裝置（partial 範圍不做任何「沒刷新到就清」）
                 var prtgHostIds = request.Scope != RunScope.Full ? request.HostIds : null;
-                var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, manualWorkGate);
+                var reuseSyncFrom = PrtgReevaluationPlanner.ReusableSyncFrom(request.Trigger, request.Scope, recentRuns, prtgDays, DateTime.Today);
+                var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, manualWorkGate,
+                    reuseSyncFrom: reuseSyncFrom);
 
                 // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
                 // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，

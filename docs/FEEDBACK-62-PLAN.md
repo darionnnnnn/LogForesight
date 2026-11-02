@@ -309,6 +309,7 @@
 
 **設計修正**：
 - A-2（實測推翻 §1A「組格線不改」）：1600px 時各組整組換列，KPI 實際佔兩排，且 14rem 上限在組間留白，達不到使用者要的「一橫排」。`kpiStrip` 加 `singleRow` 選項（只有儀表板用，其他頁的 KPI 不變）：576px 以上各組同排依卡數分寬、`auto-fit minmax(9rem,1fr)` 撐滿；575px 以下仍每組兩欄。
+- B-1：`LatestPrtgDayStat` 由 `PrtgReevaluationPlanner` 與沿用判定共用；`RunMonitorService` 的迴圈另含「舊紀錄無 PrtgDays」退路、`LastScheduledPrtgDay` 只取排程趟且語意不同（§2-12 的主張過寬），兩者不併。沿用測試放在 `PrtgDailyPipelineTests`（要用其私有 fixture），不另開 `PrtgDailyPipelineResumeTests`。
 - E-1（實作發現）：`LogEntryType` 轉換點是 `EventRecordMapper.FromClassic`；非 Windows 的本機掃描與權限監控以結果上的 `PlatformUnsupported` 旗標告知呼叫端，由 orchestrator 各印一行，不走 Warn。`[WindowsFact]` 目前只掛 `DynamicAuthenticationProviderTests`，其餘由使用者第一次 Mac 全量的紅燈清單補齊（§2-32）。
 - A-1：`revealFirstRow` 只用 `hidden` 屬性（`el.hidden`），mini-dom 不必補 `removeAttribute` 等方法；展開鍵與 `bindRememberedCollapse` 同前綴，兩行讀寫不抽共用函式（抽了要改 ui-collapse 行為測試的注入，得不償失）。
 

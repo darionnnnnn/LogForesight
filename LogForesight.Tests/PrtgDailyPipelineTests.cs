@@ -395,6 +395,64 @@ public class PrtgDailyPipelineTests : IDisposable
         }
     }
 
+    private (WebHost Host, DateTime Day, HostStore Hosts) SeedDownSensorForYesterday()
+    {
+        EnableUnreachablePrtg();
+        var day = DateTime.Today.AddDays(-1);
+        var hostStore = new HostStore(_backend.Blob("hosts"));
+        var host = hostStore.Upsert(new WebHost { Source = "netiq", HostName = "SRV-RESUME", Active = true, IpAddress = "192.168.1.1" });
+        var prtgStore = _backend.PrtgStore();
+        var now = DateTime.Now;
+        prtgStore.UpsertDevices(new[] { new PrtgDeviceRow { Objid = 1, Name = "SRV-RESUME", Ip = "192.168.1.1" } }, now);
+        prtgStore.UpsertSensors(new[] { new PrtgSensorRow { Objid = 2001, DeviceObjid = 1, Name = "Disk", SensorType = "SNMP Disk Free" } }, now);
+        prtgStore.AppendStateChanges(new[] { new PrtgStateChangeRow { SensorObjid = 2001, ChangedAt = day.AddHours(2), Status = "Down" } });
+        MapDeviceToHost(day, 1, host);
+        SeedNetiqParent(host, day);
+        return (host, day, hostStore);
+    }
+
+    /// <summary>
+    /// 第二個窗口沿用同步：不打 PRTG，但規則評估與發佈照跑——登錄簿要有內容，
+    /// 否則這一趟才落地的主機日拿不到 finding，workflow 也會記成等待。
+    /// </summary>
+    [Fact]
+    public async Task 沿用本日同步_不打PRTG但登錄簿仍有finding且下一窗口可再沿用()
+    {
+        var (host, day, hostStore) = SeedDownSensorForYesterday();
+        var (ctx, console, progress, registry) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask,
+            hostIds: null, guard: null, reuseSyncFrom: DateTime.Today.AddHours(1));
+
+        Assert.DoesNotContain(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
+        Assert.Contains(console.Lines, l => l.Contains("沿用本日 01:00"));
+        Assert.True(registry.IsEvaluated(day));
+        Assert.NotEmpty(registry.For(host.HostId, day));
+        Assert.Contains(RunPhases.PrtgFindingsReady, progress.Phases);
+
+        ctx.RunRecorder.Finish(0);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!;
+        var stat = run.PrtgDays!.Single();
+        Assert.Contains("沿用本日 01:00", stat.Note);
+        Assert.True(stat.SourceSynced);
+        Assert.False(stat.NeedsReevaluation);
+        Assert.Equal(RunPhaseOutcomes.Skipped, run.Phases!.Single(p => p.Key == RunTimingPhases.PrtgSync).Outcome);
+    }
+
+    [Fact]
+    public async Task 來源同步失敗_統計標示未同步_下一窗口不會沿用()
+    {
+        var (_, day, hostStore) = SeedDownSensorForYesterday();
+        var (ctx, console, _, _) = CreateContext();
+
+        await PrtgDailyPipeline.RunAsync(ctx, _backend, hostStore, new[] { day }, Task.CompletedTask, hostIds: null, guard: null);
+
+        Assert.Contains(console.Lines, l => l.Contains("開始同步 PRTG 裝置結構鏡像"));
+        ctx.RunRecorder.Finish(0);
+        var run = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")).GetRun(ctx.RunRecorder.RunId)!;
+        Assert.False(run.PrtgDays!.Single().SourceSynced);
+    }
+
     private void EnableUnreachablePrtg() =>
         new SystemSettingsStore(_backend.Blob("system_settings")).Update(s =>
         {

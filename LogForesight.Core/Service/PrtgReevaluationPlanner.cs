@@ -31,23 +31,15 @@ public static class PrtgReevaluationPlanner
             return Array.Empty<DateTime>();
         }
 
-        var nonAiRuns = recentRuns
-            .Where(r => r.JobType != BatchRun.JobTypeAi)
-            .OrderByDescending(r => r.StartedAt)
-            .ThenByDescending(r => r.RunId)
-            .ToList();
+        var nonAiRuns = recentRuns.Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
 
         var selected = new List<DateTime>();
 
         for (var date = maxDate; date >= minDate; date = date.AddDays(-1))
         {
-            var latestRunWithDate = nonAiRuns.FirstOrDefault(r =>
-                r.PrtgDays != null && r.PrtgDays.Any(s => s.Date.Date == date));
-
-            if (latestRunWithDate != null)
+            if (BatchRunQueries.LatestPrtgDayStat(nonAiRuns, date) is { } latest)
             {
-                var stat = latestRunWithDate.PrtgDays!.First(s => s.Date.Date == date);
-                if (stat.NeedsReevaluation)
+                if (latest.Stat.NeedsReevaluation)
                 {
                     selected.Add(date);
                 }
@@ -92,5 +84,33 @@ public static class PrtgReevaluationPlanner
         }
 
         return lastFinishedRun.PrtgDays.FirstOrDefault(s => s.Outcome != BatchRun.PrtgOutcomeSuccess);
+    }
+    /// <summary>
+    /// 本趟能否沿用同日另一趟的來源同步（docs/PRTG-SPEC.md §3）：只有排程趟、Full 範圍，而且本趟每一天
+    /// 最新的那筆統計都是今天開跑、來源同步完整。手動執行一律重做——按下去就是要重跑。
+    /// 回傳被沿用那一趟的開始時間；不能沿用回 null。「最新」刻意不跳過失敗趟：同步失敗之後的下一個窗口要重試。
+    /// </summary>
+    public static DateTime? ReusableSyncFrom(string? trigger, RunScope scope, IReadOnlyList<BatchRun>? recentRuns,
+        IReadOnlyList<DateTime> days, DateTime today)
+    {
+        if (trigger != BatchRunTriggers.Schedule || scope != RunScope.Full || recentRuns == null || days.Count == 0)
+        {
+            return null;
+        }
+
+        DateTime? reusedFrom = null;
+        foreach (var day in days)
+        {
+            if (BatchRunQueries.LatestPrtgDayStat(recentRuns, day) is not { } latest ||
+                !latest.Stat.SourceSynced ||
+                latest.Run.StartedAt.Date != today.Date)
+            {
+                return null;
+            }
+
+            if (reusedFrom == null || latest.Run.StartedAt < reusedFrom) reusedFrom = latest.Run.StartedAt;
+        }
+
+        return reusedFrom;
     }
 }

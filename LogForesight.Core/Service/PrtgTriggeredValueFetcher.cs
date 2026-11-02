@@ -145,6 +145,12 @@ public sealed class PrtgTriggeredValueFetcher
             }
 
             var targets = _store.GetValueFetchTargets(whitelist, deviceObjids);
+            var alreadyFetched = _store.GetSensorsWithFullDayValues(day, targets);
+            if (alreadyFetched.Count > 0)
+            {
+                targets = targets.Where(id => !alreadyFetched.Contains(id)).ToList();
+                _console.WriteLine($"觸發式取數：{alreadyFetched.Count} 個 sensor 已有 {day:yyyy-MM-dd} 整天的數值，不重查。");
+            }
             if (targets.Count == 0) return;
 
             var (written, failedSensors) = await _fetchService.FetchValuesForSensorsAsync(day, targets, concurrency, ct, progress);
