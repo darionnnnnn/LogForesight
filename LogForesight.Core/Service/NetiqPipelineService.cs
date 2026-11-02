@@ -106,6 +106,8 @@ public class NetiqPipelineService
     /// <param name="permissionMappings">權限異動自訂欄位對應；null＝使用內建官方欄位名</param>
     /// <param name="rerunMode">重新分析模式，預設 None</param>
     /// <param name="guard">PRTG 資源守門閘門；null＝不受守門（測試／離峰手動作業）</param>
+    private readonly DateTime _today;
+
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
@@ -121,7 +123,7 @@ public class NetiqPipelineService
         PrtgFindingsRegistry? prtgFindings = null,
         HostDayWorkflowService? workflow = null,
         bool prtgEnabled = true,
-        INetiqHostDayTimingCollector? hostDayTiming = null)
+        INetiqHostDayTimingCollector? hostDayTiming = null, DateTime? runToday = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -148,6 +150,7 @@ public class NetiqPipelineService
         _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
         _permissionMappings = permissionMappings;
         _rerunMode = rerunMode;
+        _today = (runToday ?? DateTime.Today).Date;
         _guard = guard;
         _workflow = workflow;
         _prtgEnabled = prtgEnabled;
@@ -348,13 +351,14 @@ public class NetiqPipelineService
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = _backend.RecordStore(hostKey);
             var missingScan = MissingDateFinder.FindWithExistingDates(
-                store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
+                // 第二個參數是本趟的今天（見 runToday）
+                store, _today, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
             var missingDates = missingScan.MissingDates;
 
             // 缺漏日與重跑日共用同一個回望窗口（回饋三十四輪 C）：兩者找的是同一條時間軸上
             // 互斥的兩半（沒紀錄的補、有紀錄的依模式重跑），沒有任何模式需要兩個不同的天數。
             var rerunDates = _rerunMode != RerunMode.None
-                ? RerunDateFinder.Find(store, _backend.IssueHandlingStore(), target.HostName, lookback, _rerunMode)
+                ? RerunDateFinder.Find(store, _today, _backend.IssueHandlingStore(), target.HostName, lookback, _rerunMode)
                 : new List<DateTime>();
             var targetDates = missingDates.Union(rerunDates).OrderBy(d => d).ToList();
 

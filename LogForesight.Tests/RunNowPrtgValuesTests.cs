@@ -164,6 +164,47 @@ public class RunNowPrtgValuesTests
     }
 
     [Fact]
+    public async Task 階段紀錄_頂層階段都有結果_排程說明與本機無待補可見()
+    {
+        var log = new EventLog();
+        var dir = Path.Combine(Path.GetTempPath(), "lf-phase-run-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var settings = new AppSettings
+            {
+                Ai = new AiSettings { BaseUrl = "" },
+                Storage = new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "t.db")};Pooling=False" }
+            };
+            var orchestrator = new AnalysisOrchestrator(new EmptyCandidateSource(), NullAiRequestGate.Instance);
+            var result = await orchestrator.RunAsync(
+                new RunRequest { Scope = RunScope.Full, IncludeLocal = false, WindowNote = "本趟為今日第 2 個執行窗口（18:00～23:00）" },
+                settings, dir, new RetentionOptions(), new LoggingConsole(log), CancellationToken.None,
+                new RecordingProgress(log), manualWorkGate: null, prtgBackfillTail: null);
+            Assert.True(result.Success, result.FailureMessage);
+
+            var backend = new StorageBackend(settings.Storage, dir, 1);
+            var store = new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"));
+            var run = store.GetRun(result.BatchRunId!.Value)!;
+            var outcomes = run.Phases!.ToDictionary(p => p.Key, p => p.Outcome);
+            Assert.Equal(RunPhaseOutcomes.Skipped, outcomes[RunTimingPhases.Netiq]);
+            Assert.Equal(RunPhaseOutcomes.Skipped, outcomes[RunTimingPhases.Prtg]);
+            Assert.Equal(RunPhaseOutcomes.Success, outcomes[RunTimingPhases.Retention]);
+            Assert.All(run.Phases!, p => Assert.NotNull(p.FinishedAt));
+            Assert.True(run.StartedAt <= run.Phases!.Min(p => p.StartedAt));
+
+            var milestones = store.GetLogs(run.RunId).Select(l => l.Message).ToList();
+            Assert.Contains("本趟為今日第 2 個執行窗口（18:00～23:00）", milestones);
+            Assert.Contains(milestones, m => m.StartsWith("NetIQ 機房分析結束：跳過", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task 接續天數0_不呼叫()
     {
         var log = new EventLog();

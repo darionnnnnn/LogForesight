@@ -12,14 +12,15 @@ namespace LogForesight.Core.Service;
 /// </summary>
 internal static class MissingDateFinder
 {
-    public static List<DateTime> Find(IAnalysisRecordReader store, int lookbackDays, bool requireAi = false, bool useAi = true)
-        => FindWithExistingDates(store, lookbackDays, requireAi, useAi).MissingDates;
+    public static List<DateTime> Find(IAnalysisRecordReader store, DateTime today, int lookbackDays, bool requireAi = false, bool useAi = true)
+        => FindWithExistingDates(store, today, lookbackDays, requireAi, useAi).MissingDates;
 
+    /// <param name="today">本趟的「今天」，由 orchestrator 趟首取一次往下傳：跨午夜時各路才會是同一個目標日。</param>
     public static MissingDateScanResult FindWithExistingDates(
-        IAnalysisRecordReader store, int lookbackDays, bool requireAi = false, bool useAi = true)
+        IAnalysisRecordReader store, DateTime today, int lookbackDays, bool requireAi = false, bool useAi = true)
     {
         // 只有 PRTG finding 的主機日不算「已分析」：日誌分析仍要補這一天，寫入時原地更新那一列。
-        var recent = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
+        var recent = store.ReadRecent(today.AddDays(-1), lookbackDays)
             .Where(r => r.LogSource != AnalysisLogSource.Prtg).ToList();
         var existingRecordDates = recent.Select(r => r.Date.Date).ToHashSet();
         var existingNetiqDates = recent.Where(r => r.LogSource == AnalysisLogSource.Netiq)
@@ -31,7 +32,7 @@ internal static class MissingDateFinder
                 .Where(r => r.LogSource == AnalysisLogSource.Netiq && r.LatestNetiqAttemptStatus is "failed" or "running" or "partial" or "retained-incomplete")
                 .Select(r => r.Date.Date).ToHashSet();
             var missingDates = Enumerable.Range(1, lookbackDays)
-                .Select(offset => DateTime.Today.AddDays(-offset))
+                .Select(offset => today.AddDays(-offset))
                 .Where(date => !existingRecordDates.Contains(date) || retryDates.Contains(date))
                 .OrderBy(date => date)
                 .ToList();
@@ -45,7 +46,7 @@ internal static class MissingDateFinder
             .ToDictionary(g => g.Key, g => g.First());
 
         var missing = Enumerable.Range(1, lookbackDays)
-            .Select(offset => DateTime.Today.AddDays(-offset))
+            .Select(offset => today.AddDays(-offset))
             .Where(date => !records.TryGetValue(date, out var r) || HostDayPostProcessor.NeedsBackfill(r, useAi))
             .OrderBy(date => date)
             .ToList();

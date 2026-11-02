@@ -26,6 +26,12 @@ public class RunRequest
     /// <summary>手動觸發的一次性回補天數覆寫（Phase 3）；null＝用 NetiqOptions.BackfillDays。</summary>
     public int? BackfillOverride { get; init; }
 
+    /// <summary>排程趟屬於今日第幾個執行窗口的說明（里程碑用）；非排程趟為 null。</summary>
+    public string? WindowNote { get; init; }
+
+    /// <summary>自動補跑的停止時刻：補跑在窗口外開跑，不能用「不在窗口內」判斷停止；其餘趟為 null。</summary>
+    public DateTime? CatchUpDeadline { get; init; }
+
     public bool DebugDump { get; init; }
 
     /// <summary>
@@ -96,7 +102,11 @@ internal sealed record AnalysisRunContext(
     CancellationToken Ct, EventLogService EventLogService, IssueCaseCoordinator CaseCoordinator,
     IRiskyEventStore RiskyEventStore, BatchRunRecorder RunRecorder, OrchestratorResult Result,
     bool UseAi, IRunProgress? Progress, PrtgFindingsRegistry PrtgFindings, NightlyDispatch Dispatch,
-    HostDayWorkflowService? Workflow = null, bool PrtgEnabled = false);
+    HostDayWorkflowService? Workflow = null, bool PrtgEnabled = false)
+{
+    /// <summary>本趟的「今天」（趟首取一次）：跨午夜時本機、NetIQ、PRTG 才是同一個目標日</summary>
+    public DateTime Today { get; init; } = DateTime.Today;
+}
 
 /// <summary>
 /// 執行輸出的抽象：只抽「輸出去哪裡」，不抽「輸出什麼」——<see cref="AnalysisOrchestrator"/>
@@ -239,6 +249,7 @@ public class AnalysisOrchestrator
     {
         var runStopwatch = Stopwatch.StartNew();
         var runStartedAt = DateTime.Now;
+        var runToday = runStartedAt.Date;
         var result = new OrchestratorResult();
         long? timingRunId = null;
 
@@ -297,6 +308,10 @@ public class AnalysisOrchestrator
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
+            if (request.WindowNote != null)
+            {
+                runRecorder.Milestone(request.WindowNote);
+            }
             if (request.CatchUpNote != null)
             {
                 runRecorder.Milestone(request.CatchUpNote);
@@ -498,7 +513,7 @@ public class AnalysisOrchestrator
                         reportSb.AppendLine();
                     }
 
-                    var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
+                    var permissionFileName = $"{runToday:yyyy-MM-dd}_權限異動.txt";
                     await reportSink.WriteAsync(ReportKind.Permission,
                         new HostKey { HostId = currentHostId, HostName = currentHost }, permissionFileName, reportSb.ToString());
                     runConsole.WriteLine("  📄 權限異動報告（含逐項明細）已產生，可於「權限異動檢核」頁檢視。");
@@ -546,7 +561,7 @@ public class AnalysisOrchestrator
                 RetentionPruner.Run(backend, retention, runConsole, batchRunStore);
                 retentionPhase.Complete(RunPhaseOutcomes.Success);
 
-                var yesterday = DateTime.Today.AddDays(-1);
+                var yesterday = runToday.AddDays(-1);
 
                 // 本機／NetIQ 並行執行（回饋十七輪批次E，取代原本「本機跑完才進 NetIQ」的依序關係）：
                 // 2000 台規模下本機回補多天時，NetIQ 機房分析原本要空等本機跑完才能開始，兩者其實
@@ -611,7 +626,10 @@ public class AnalysisOrchestrator
                 var runCtx = new AnalysisRunContext(
                     request, settings, retention, runConsole, ct, eventLogService, caseCoordinator,
                     riskyEventStore, runRecorder, result, useAi, progress, prtgFindings, nightlyDispatch,
-                    new HostDayWorkflowService(new HostDayWorkflowStore(backend)), systemSettings.PrtgEnabled);
+                    new HostDayWorkflowService(new HostDayWorkflowStore(backend)), systemSettings.PrtgEnabled)
+                {
+                    Today = runToday
+                };
 
                 // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
                 // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
@@ -652,7 +670,7 @@ public class AnalysisOrchestrator
                     : Task.CompletedTask;
 
                 var analysisTask = Task.WhenAll(localTask, netiqTask);
-                var basePrtgDays = BuildPrtgDays(request, retention, DateTime.Today);
+                var basePrtgDays = BuildPrtgDays(request, retention, runToday);
                 IReadOnlyList<BatchRun>? recentRuns = null;
                 try
                 {
@@ -663,7 +681,7 @@ public class AnalysisOrchestrator
                     Log.Warn(ex, "讀取近期批次執行失敗，略過 PRTG 補評估規劃");
                 }
 
-                var prtgDays = ResolvePrtgDays(request, retention, DateTime.Today, recentRuns, systemSettings.PrtgEnabled);
+                var prtgDays = ResolvePrtgDays(request, retention, runToday, recentRuns, systemSettings.PrtgEnabled);
                 if (prtgDays.Count > basePrtgDays.Count)
                 {
                     var extraDays = prtgDays.Except(basePrtgDays).OrderByDescending(d => d).ToList();
@@ -673,7 +691,7 @@ public class AnalysisOrchestrator
                 }
                 // 指定主機更新：PRTG 也只處理那幾台主機的監看裝置（partial 範圍不做任何「沒刷新到就清」）
                 var prtgHostIds = request.Scope != RunScope.Full ? request.HostIds : null;
-                var reuseSyncFrom = PrtgReevaluationPlanner.ReusableSyncFrom(request.Trigger, request.Scope, recentRuns, prtgDays, DateTime.Today);
+                var reuseSyncFrom = PrtgReevaluationPlanner.ReusableSyncFrom(request.Trigger, request.Scope, recentRuns, prtgDays, runToday);
                 var prtgTask = PrtgDailyPipeline.RunAsync(runCtx, backend, hostStore, prtgDays, analysisTask, prtgHostIds, resourceGuard, manualWorkGate,
                     reuseSyncFrom: reuseSyncFrom);
 
@@ -708,7 +726,7 @@ public class AnalysisOrchestrator
                 }
 
                 // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
-                if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
+                if (weeklyCheckupService.ShouldRun(runToday, settings.Analysis.CheckupIntervalDays))
                 {
                     var checkupPhase = runRecorder.Phase(RunTimingPhases.Checkup);
                     runConsole.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
@@ -827,6 +845,17 @@ public class AnalysisOrchestrator
     }
 
 
+    /// <summary>
+    /// 本機與 NetIQ 的回望天數：沒指定用該路常態值；手動指定就照指定（受保留期上限夾制）。
+    /// 自動補跑帶的是「缺口天數」，只該放大不該縮小——缺口 1 天不能把常態回望 14 天縮成 1 天。
+    /// </summary>
+    internal static int EffectiveLookback(int? requested, int branchDefault, bool isCatchUp, int limit)
+    {
+        if (requested is not { } days) return branchDefault;
+        var clamped = Math.Min(days, limit);
+        return isCatchUp ? Math.Max(clamped, branchDefault) : clamped;
+    }
+
     private async Task RunLocalAnalysisAsync(
         AnalysisRunContext ctx, LogAnalysisService analysisService, IAnalysisRecordStore historyService,
         IIssueHandlingStore handlingStore, string currentHost, long currentHostId, DateTime yesterday)
@@ -846,14 +875,16 @@ public class AnalysisOrchestrator
         // 夾制只套在使用者明示的天數上：留空時的預設值（首次執行的 InitialHistoryDays）本來就受
         // 「保留天數不可小於首次回補天數」的設定驗證管，再夾一次會在既有 DB 的異常設定下
         // 把首跑回補靜默縮短（終檢抓到）。
-        var lookbackDays = request.BackfillOverride is { } requested
-            ? Math.Min(requested, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
-            : (historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays);
+        var lookbackDays = EffectiveLookback(
+            request.BackfillOverride,
+            historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays,
+            isCatchUp: request.CatchUpNote != null,
+            NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
 
-        var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed, useAi: useAi);
+        var missingDates = MissingDateFinder.Find(historyService, ctx.Today, lookbackDays, requireAi: request.OnlyMissingOrFailed, useAi: useAi);
 
         var rerunDates = request.RerunMode != RerunMode.None
-            ? RerunDateFinder.Find(historyService, handlingStore, currentHost, lookbackDays, request.RerunMode)
+            ? RerunDateFinder.Find(historyService, ctx.Today, handlingStore, currentHost, lookbackDays, request.RerunMode)
             : new List<DateTime>();
         var rerunDateSet = rerunDates.ToHashSet();
 
@@ -908,7 +939,7 @@ public class AnalysisOrchestrator
             // 這是排程執行占用 22GB 的主因之一。改成逐塊取數、逐塊分析、逐塊釋放——
             // 同一時間記憶體裡只有一塊（預設 7 天）的事件。逐日分析的順序不變（由舊到新，
             // 趨勢比對依賴前面日期寫入的歷史），只是取數的邊界跟著區塊走。
-            var chunks = EventLogService.SplitDateRange(rangeStart, DateTime.Today, EventLogService.DefaultScanChunkDays)
+            var chunks = EventLogService.SplitDateRange(rangeStart, ctx.Today, EventLogService.DefaultScanChunkDays)
                 .Where(chunk => datesToAnalyze.Any(d => d >= chunk.Start && d < chunk.EndExclusive))
                 .ToList();
 
@@ -1162,10 +1193,9 @@ public class AnalysisOrchestrator
             var netiqOptions = new NetiqOptionsStore(backend.Blob("netiq_options")).Get();
             // 手動觸發的一次性回補天數覆寫（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：只影響這次執行，
             // 不落地——netiqOptions 是本次呼叫剛從 store 讀出的獨立物件，就地覆寫不影響下次讀取的設定值
-            if (request.BackfillOverride is { } backfillOverride)
-            {
-                netiqOptions.BackfillDays = backfillOverride;
-            }
+            netiqOptions.BackfillDays = EffectiveLookback(
+                request.BackfillOverride, netiqOptions.BackfillDays, isCatchUp: request.CatchUpNote != null,
+                NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
             // 回望天數的有效上限＝目前的保留天數（超過保留期的回補下輪就被清掉，白跑）。
             // Web 端儲存與觸發時都驗證過，但這條路徑直接讀 blob——blob 裡若存著舊的大值、
             // 或 RetentionDays 事後被調小，不在這裡夾住就會回望超過保留期，
@@ -1184,7 +1214,8 @@ public class AnalysisOrchestrator
                 prtgFindings: prtgFindings,
                 workflow: workflow,
                 prtgEnabled: prtgEnabled,
-                hostDayTiming: _hostDayTiming);
+                hostDayTiming: _hostDayTiming,
+                runToday: ctx.Today);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;

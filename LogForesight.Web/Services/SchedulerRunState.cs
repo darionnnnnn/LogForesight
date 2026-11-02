@@ -36,6 +36,7 @@ public sealed record SchedulerRunSnapshot(
     bool IsRunning,
     string? Trigger,
     DateTime? StartedAt,
+    DateTime? CatchUpDeadline,
     string? LatestMessage,
     string? ProgressPhase,
     int ProgressDone,
@@ -74,6 +75,9 @@ public class SchedulerRunState
 
     public bool IsRunning { get; private set; }
     public string? Trigger { get; private set; }
+
+    /// <summary>自動補跑的停止時刻；其餘趟為 null（見 <see cref="LogForesight.Core.Service.ScheduleCalculator.ShouldStopScheduledRun"/>）</summary>
+    public DateTime? CatchUpDeadline { get; private set; }
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
 
@@ -264,7 +268,7 @@ public class SchedulerRunState
     }
 
     /// <summary>已在執行中時回 false（呼叫端據此直接拒絕，不排隊）；成功開始時回 true 並給出可用於停止的 CancellationTokenSource</summary>
-    public bool TryBeginRun(string trigger, out CancellationTokenSource cts)
+    public bool TryBeginRun(string trigger, out CancellationTokenSource cts, DateTime? catchUpDeadline = null)
     {
         lock (_lock)
         {
@@ -276,6 +280,7 @@ public class SchedulerRunState
 
             IsRunning = true;
             Trigger = trigger;
+            CatchUpDeadline = catchUpDeadline;
             StartedAt = DateTime.Now;
             if (trigger == LogForesight.Core.Persistence.BatchRunTriggers.Schedule)
             {
@@ -362,7 +367,7 @@ public class SchedulerRunState
         {
             var (aPhase, aDone, aTotal) = LatestActivityLocked();
             return new SchedulerRunSnapshot(
-                IsRunning, Trigger, StartedAt, LatestMessage,
+                IsRunning, Trigger, StartedAt, CatchUpDeadline, LatestMessage,
                 _netiq.Phase, _netiq.Done, _netiq.Total,
                 _local.Phase, _local.Done, _local.Total,
                 _prtg.Phase, _prtg.Done, _prtg.Total,
@@ -492,6 +497,7 @@ public class SchedulerRunState
         {
             IsRunning = false;
             Trigger = null;
+            CatchUpDeadline = null;
             StartedAt = null;
             ResetTracks();
             PrtgFindingsReady = false;

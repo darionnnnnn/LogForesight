@@ -108,6 +108,21 @@ public static class ScheduleCalculator
     }
 
     /// <summary>單一窗口是否涵蓋 now（環狀比較，天生處理跨午夜：Start &gt; End 時判斷「晚於 Start 或早於 End」）</summary>
+    /// <summary>「本趟為今日第 n 個執行窗口」：窗口依開始時間排序；現在不在任何窗口內回 null。</summary>
+    public static string? DescribeCurrentWindow(DateTime now, IEnumerable<ScheduleWindow> windows)
+    {
+        var ordered = windows.OrderBy(w => w.Start, StringComparer.Ordinal).ToList();
+        var index = ordered.FindIndex(w => IsWithinWindow(now, w));
+        return index < 0 ? null : $"本趟為今日第 {index + 1} 個執行窗口（{ordered[index].Start}～{ordered[index].End}）";
+    }
+
+    /// <summary>
+    /// 排程趟該不該優雅停止。一般排程趟看「還在不在窗口內」；自動補跑本來就在窗口外開跑，
+    /// 用那個判斷會在下一次輪詢被取消、等於補不到東西，所以看自己的停止時刻。
+    /// </summary>
+    public static bool ShouldStopScheduledRun(DateTime now, IEnumerable<ScheduleWindow> windows, DateTime? catchUpDeadline) =>
+        catchUpDeadline is { } deadline ? now >= deadline : !IsWithinAnyWindow(now, windows);
+
     public static bool IsWithinWindow(DateTime now, ScheduleWindow window)
     {
         if (!TryParseMinutes(window.Start, out var start) || !TryParseMinutes(window.End, out var end)) return false;

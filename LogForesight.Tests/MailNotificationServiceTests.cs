@@ -390,7 +390,7 @@ public class MailNotificationServiceTests : IDisposable
     public async Task NotifyAfterRunAsync_窗口涵蓋MissingDateFinder會回補的日期()
     {
         var store = new FakeAnalysisRecordReader();
-        var missingDates = MissingDateFinder.Find(store, lookbackDays: 3);
+        var missingDates = MissingDateFinder.Find(store, DateTime.Today, lookbackDays: 3);
         // 今天永遠不在缺漏日清單裡（offset 從 1 起算）——這正是頭號發現的根因
         Assert.DoesNotContain(DateTime.Today, missingDates);
         Assert.Contains(Yesterday, missingDates);

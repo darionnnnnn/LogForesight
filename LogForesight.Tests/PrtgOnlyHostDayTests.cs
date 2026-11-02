@@ -130,13 +130,13 @@ public sealed class PrtgOnlyHostDayTests : IDisposable
 
         Assert.False(store.HasRecord(Day));
         Assert.False(store.HasAnyRecord());
-        Assert.Contains(Day.Date, MissingDateFinder.Find(store, 3));
+        Assert.Contains(Day.Date, MissingDateFinder.Find(store, DateTime.Today, 3));
         Assert.Empty(store.ListHostDates(Day, Day, logAnalysisOnly: true));
         Assert.Single(store.ListHostDates(Day, Day)); // 郵件預填等其他用途照常包含
 
         store.Append(Netiq(13));
         Assert.True(store.HasRecord(Day));
-        Assert.DoesNotContain(Day.Date, MissingDateFinder.Find(store, 3));
+        Assert.DoesNotContain(Day.Date, MissingDateFinder.Find(store, DateTime.Today, 3));
         Assert.Single(store.ListHostDates(Day, Day, logAnalysisOnly: true));
     }
 

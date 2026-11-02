@@ -9,7 +9,7 @@ namespace LogForesight.Core.Service;
 internal static class RerunDateFinder
 {
     public static List<DateTime> Find(
-        IAnalysisRecordReader store,
+        IAnalysisRecordReader store, DateTime today,
         IIssueHandlingStore handlingStore,
         string hostName,
         int lookbackDays,
@@ -21,7 +21,7 @@ internal static class RerunDateFinder
         }
 
         var candidateDates = Enumerable.Range(1, lookbackDays)
-            .Select(offset => DateTime.Today.AddDays(-offset))
+            .Select(offset => today.AddDays(-offset))
             .Where(date => store.HasRecord(date))
             .ToList();
 
@@ -30,8 +30,8 @@ internal static class RerunDateFinder
             return candidateDates.OrderBy(date => date).ToList();
         }
 
-        var from = DateTime.Today.AddDays(-lookbackDays);
-        var to = DateTime.Today.AddDays(-1);
+        var from = today.AddDays(-lookbackDays);
+        var to = today.AddDays(-1);
         var handlings = handlingStore.GetMany(new[] { hostName }, from, to);
 
         var matchingHandlings = handlings

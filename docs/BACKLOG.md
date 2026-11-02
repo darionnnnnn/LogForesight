@@ -38,6 +38,11 @@
 - **CSP 違規回報只用 `report-uri`**：未同時送 `Report-To`／`Reporting-Endpoints` 新語法（`/api/csp-report` 已能解析 `application/reports+json`）。
   **觸發時機**：主流瀏覽器停止支援 `report-uri`，或需要回報 CSP 以外的違規類型。
 
+### 自動補跑只看最近一個已結束的窗口
+
+多窗口時更早錯過的窗口不補，由下一個窗口的缺漏日機制吸收。
+**觸發時機**：實際出現連續錯過多個窗口、缺漏日吸收不了的情況。
+
 ### 測試的時鐘與時區抽象
 
 約 209 個測試檔直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。沒有 `IClock`。

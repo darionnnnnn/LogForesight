@@ -1163,7 +1163,7 @@ function applyScheduleStatus(status) {
     }
 
     document.getElementById('schedule-run-state').textContent = status.isRunning
-        ? `執行中（${status.triggerText}）`
+        ? `執行中（${status.triggerText}${status.catchUpDeadline ? `，補跑到 ${formatDateTime(status.catchUpDeadline)} 停止` : ''}）`
         : '閒置';
 
     if (status.isRunning && status.startedAt) {

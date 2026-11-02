@@ -19,7 +19,7 @@ public sealed class RerunDateFinderTests
         var store = new FakeAnalysisRecordReader(dates);
         var handlingStore = new FakeIssueHandlingStore();
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 2, RerunMode.None);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 2, RerunMode.None);
 
         Assert.Empty(result);
         Assert.Equal(0, handlingStore.GetManyCallCount);
@@ -35,7 +35,7 @@ public sealed class RerunDateFinderTests
         var store = new FakeAnalysisRecordReader(dates);
         var handlingStore = new FakeIssueHandlingStore();
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays, RerunMode.Unhandled);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays, RerunMode.Unhandled);
 
         Assert.Empty(result);
         Assert.Equal(0, handlingStore.GetManyCallCount);
@@ -51,7 +51,7 @@ public sealed class RerunDateFinderTests
         var store = new FakeAnalysisRecordReader(new[] { d1, d3 });
         var handlingStore = new FakeIssueHandlingStore();
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 3, RerunMode.Unhandled);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 3, RerunMode.Unhandled);
 
         Assert.Equal(new[] { d3, d1 }, result);
     }
@@ -73,7 +73,7 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = Host, Date = d5, Status = IssueHandlingStatuses.Resolved, IssueKey = "k3" }
         });
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 5, RerunMode.Unhandled);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 5, RerunMode.Unhandled);
 
         Assert.Equal(new[] { d4, d1 }, result);
     }
@@ -104,7 +104,7 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = Host, Date = d9, Status = IssueHandlingStatuses.KnownNoise, IssueKey = "k9" }
         });
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 9, RerunMode.UnhandledAndAssigned);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 9, RerunMode.UnhandledAndAssigned);
 
         Assert.Equal(new[] { d5, d4, d3, d2, d1 }, result);
     }
@@ -123,7 +123,7 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = Host, Date = d3, Status = IssueHandlingStatuses.Resolved, IssueKey = "k3" }
         });
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 3, RerunMode.All);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 3, RerunMode.All);
 
         Assert.Equal(new[] { d3, d2, d1 }, result);
     }
@@ -140,9 +140,9 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = Host, Date = d1, Status = IssueHandlingStatuses.InProgress, IssueKey = "k2" }
         });
 
-        var unhandledResult = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
-        var unhandledAndAssignedResult = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.UnhandledAndAssigned);
-        var allResult = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.All);
+        var unhandledResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
+        var unhandledAndAssignedResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.UnhandledAndAssigned);
+        var allResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.All);
 
         Assert.Empty(unhandledResult);
         Assert.Empty(unhandledAndAssignedResult);
@@ -159,7 +159,7 @@ public sealed class RerunDateFinderTests
         var store = new FakeAnalysisRecordReader(new[] { d1, d2, d3 });
         var handlingStore = new FakeIssueHandlingStore();
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 3, RerunMode.Unhandled);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 3, RerunMode.Unhandled);
 
         Assert.Equal(new[] { d3, d2, d1 }, result);
     }
@@ -174,7 +174,7 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = Host, Date = dates[0], Status = IssueHandlingStatuses.InProgress, IssueKey = "k1" }
         });
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 5, RerunMode.Unhandled);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 5, RerunMode.Unhandled);
 
         Assert.Equal(1, handlingStore.GetManyCallCount);
         Assert.Equal(0, handlingStore.GetForDayCallCount);
@@ -192,8 +192,8 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = otherHost, Date = d1, Status = IssueHandlingStatuses.Resolved, IssueKey = "k1" }
         });
 
-        var unhandledResult = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
-        var unhandledAndAssignedResult = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.UnhandledAndAssigned);
+        var unhandledResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
+        var unhandledAndAssignedResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.UnhandledAndAssigned);
 
         Assert.Equal(new[] { d1 }, unhandledResult);
         Assert.Equal(new[] { d1 }, unhandledAndAssignedResult);
@@ -210,9 +210,9 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = "srv-01", Date = d1, Status = IssueHandlingStatuses.Resolved, IssueKey = "k1" }
         });
 
-        var unhandledResult = RerunDateFinder.Find(store, handlingStore, "SRV-01", lookbackDays: 1, RerunMode.Unhandled);
-        var unhandledAndAssignedResult = RerunDateFinder.Find(store, handlingStore, "SRV-01", lookbackDays: 1, RerunMode.UnhandledAndAssigned);
-        var allResult = RerunDateFinder.Find(store, handlingStore, "SRV-01", lookbackDays: 1, RerunMode.All);
+        var unhandledResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, "SRV-01", lookbackDays: 1, RerunMode.Unhandled);
+        var unhandledAndAssignedResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, "SRV-01", lookbackDays: 1, RerunMode.UnhandledAndAssigned);
+        var allResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, "SRV-01", lookbackDays: 1, RerunMode.All);
 
         Assert.Empty(unhandledResult);
         Assert.Empty(unhandledAndAssignedResult);
@@ -231,8 +231,8 @@ public sealed class RerunDateFinderTests
             new IssueHandling { HostName = Host, Date = dateWithTime, Status = IssueHandlingStatuses.Resolved, IssueKey = "k1" }
         });
 
-        var unhandledResult = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
-        var unhandledAndAssignedResult = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.UnhandledAndAssigned);
+        var unhandledResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
+        var unhandledAndAssignedResult = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.UnhandledAndAssigned);
 
         Assert.Empty(unhandledResult);
         Assert.Empty(unhandledAndAssignedResult);
@@ -247,7 +247,7 @@ public sealed class RerunDateFinderTests
         var store = new FakeAnalysisRecordReader(new[] { today, yesterday });
         var handlingStore = new FakeIssueHandlingStore();
 
-        var result = RerunDateFinder.Find(store, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
+        var result = RerunDateFinder.Find(store, DateTime.Today, handlingStore, Host, lookbackDays: 1, RerunMode.Unhandled);
 
         Assert.Single(result);
         Assert.Equal(yesterday, result[0]);
