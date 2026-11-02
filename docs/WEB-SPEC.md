@@ -1078,7 +1078,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     ExcludeConcluded`）。此為固定行為，無切換選擇器（刻意，見 docs/BACKLOG.md 的
     「顯示範圍選擇器」條目）。
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
-  加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
+  加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「已分析資料未顯示風險訊號」大字狀態
   （沒事也要一眼確認是真的沒事）。
 - **頂部 KPI 卡列分三組**（`kpiStrip`，docs/DESIGN-SYSTEM.md §6b）：風險概況（高／中風險日、監控主機數、涵蓋率缺口天數）、
   待處理（未處理問題、待派工問題、我的交辦單、未回報主機）、權限與安全（權限異動待確認、24 小時登入失敗）；各卡出現條件不變，整組沒有卡時不顯示。

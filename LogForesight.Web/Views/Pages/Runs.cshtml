@@ -268,14 +268,14 @@
                     <input class="form-check-input" type="checkbox" id="schedule-auto-catchup" data-maintain-only disabled />
                     <label class="form-check-label" for="schedule-auto-catchup">錯過窗口時自動補跑</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="站台在排程窗口期間沒有執行（停機、IIS 閒置回收）時，於窗口結束後 4 小時內自動補跑一次，回望天數涵蓋漏掉的日子。關閉後不會自動補跑，可在排程作業頁手動立即執行。">
+                            data-bs-content="站台在排程窗口期間沒有執行（停機、IIS 閒置回收）時，於窗口結束後 4 小時內自動補跑一次，回望天數涵蓋漏掉的日子；補跑最長跑滿錯過的窗口長度，到點優雅停止。關閉後不會自動補跑，可在排程作業頁手動立即執行。">
                         <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                 </div>
 
                 <span class="form-label small fw-semibold d-inline-block" id="schedule-windows-label">執行窗口</span>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
+                        data-bs-content="Start 到點觸發一次執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。設多組時每組都會跑一次，只接著做當天還沒完成的部分：本機與 NetIQ 跳過已完成的主機日，PRTG 當天已同步過就沿用。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <div id="schedule-windows" role="group" aria-labelledby="schedule-windows-label" class="mb-2"></div>
