@@ -2667,6 +2667,73 @@ a.lf-calendar__cell:focus-visible {
     height: 6px;
 }
 
+/* 階段時間軸（core/run-timeline.js）：條的位置與寬度是動態量值，走 CSS 變數；結果一律另有文字，不只靠顏色 */
+.lf-phase-timeline {
+    display: grid;
+    gap: var(--lf-space-2);
+    padding: var(--lf-space-2) 0;
+    font-size: var(--lf-font-size-sm);
+}
+
+.lf-phase-row {
+    display: grid;
+    grid-template-columns: 9rem minmax(6rem, 1fr) minmax(0, 2fr);
+    align-items: center;
+    gap: var(--lf-space-3);
+}
+
+.lf-phase-row--sub .lf-phase-name {
+    padding-left: var(--lf-space-3);
+    color: var(--lf-text-muted);
+}
+
+.lf-phase-track {
+    position: relative;
+    height: 0.625rem;
+    border-radius: 999px;
+    background: var(--lf-border);
+    overflow: hidden;
+}
+
+.lf-phase-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: min(var(--lf-phase-start, 0%), calc(100% - 2px));
+    width: var(--lf-phase-width, 0);
+    min-width: 2px;
+    border-radius: 999px;
+    background: var(--lf-primary);
+}
+
+.lf-phase-bar--success { background: var(--lf-success); }
+.lf-phase-bar--partial { background: var(--lf-warning); }
+.lf-phase-bar--failed { background: var(--lf-danger); }
+.lf-phase-bar--stopped { background: var(--lf-severity-high); }
+.lf-phase-bar--skipped { background: var(--lf-border-strong); }
+.lf-phase-bar--interrupted { background: var(--lf-cat-hardware); }
+
+.lf-phase-detail {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--lf-text-muted);
+}
+
+.lf-day-timing {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-1) var(--lf-space-5);
+    padding: var(--lf-space-2) 0 var(--lf-space-3);
+    font-size: var(--lf-font-size-sm);
+}
+
+@media (max-width: 767.98px) {
+    .lf-phase-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--lf-space-1);
+    }
+}
+
 /* 最新訊息固定兩行高，訊息長短不影響卡片高度 */
 .lf-run-message {
     min-height: 2.5em;

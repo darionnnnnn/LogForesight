@@ -309,6 +309,7 @@
 
 **設計修正**：
 - A-2（實測推翻 §1A「組格線不改」）：1600px 時各組整組換列，KPI 實際佔兩排，且 14rem 上限在組間留白，達不到使用者要的「一橫排」。`kpiStrip` 加 `singleRow` 選項（只有儀表板用，其他頁的 KPI 不變）：576px 以上各組同排依卡數分寬、`auto-fit minmax(9rem,1fr)` 撐滿；575px 以下仍每組兩欄。
+- C-3：§2-22「欄組」改成一欄「執行時間」（起訖與總耗時），各路區間放展開列，表格不再加寬。計時模組獨立成 `core/run-timeline.js`，供列表、詳情、總表共用。實測確認總表依既定規範不含今天：今天凌晨的那一趟要明天才進總表，當下看「執行紀錄」頁籤。
 - B-2：§2-13 的「開始時備註待補量」改成結束時備註：NetIQ 的待補量要等逐主機規劃才知道，提前算等於重做一次；「手動執行」不另寫里程碑（列表已有觸發來源欄）。§2-16 的 `HostDayPostProcessor` 零命中放寬：`ReplaceRiskyEvents` 的 `DateTime.Today` 是保留期上界，不是目標日，跨午夜無影響。
 - B-1：`LatestPrtgDayStat` 由 `PrtgReevaluationPlanner` 與沿用判定共用；`RunMonitorService` 的迴圈另含「舊紀錄無 PrtgDays」退路、`LastScheduledPrtgDay` 只取排程趟且語意不同（§2-12 的主張過寬），兩者不併。沿用測試放在 `PrtgDailyPipelineTests`（要用其私有 fixture），不另開 `PrtgDailyPipelineResumeTests`。
 - E-1（實作發現）：`LogEntryType` 轉換點是 `EventRecordMapper.FromClassic`；非 Windows 的本機掃描與權限監控以結果上的 `PlatformUnsupported` 旗標告知呼叫端，由 orchestrator 各印一行，不走 Warn。`[WindowsFact]` 目前只掛 `DynamicAuthenticationProviderTests`，其餘由使用者第一次 Mac 全量的紅燈清單補齊（§2-32）。
@@ -318,6 +319,7 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
+| C-2／C-3 | 主代理 | 完成 | 定向 568 綠；突變「聯集改相加」「中斷趟計入」皆紅；實測兩個窗口各觸發一趟，里程碑寫第 1、2 個窗口，時間軸展開無誤；實測後設定已還原 | §2-18 的 PRTG 沿用因本機未設 PRTG 無法實機驗，由管線測試涵蓋 |
 | B-2／B-3 | 主代理 | 完成 | 排程定向 355 綠；突變「補跑不看停止點」「max 改 min」皆紅；真實 orchestrator 跑一趟驗階段與窗口說明 | 見設計修正 B-2 |
 | B-1 | 主代理 | 完成 | PRTG 定向 170 綠；突變「不看 SourceSynced」「24 改 1」皆紅 | 見設計修正 B-1 |
 | C-1 | 主代理 | 完成 | 定向 320 綠；突變「Dispose 一律 success」「頂層不寫快照」皆紅 | 無 |

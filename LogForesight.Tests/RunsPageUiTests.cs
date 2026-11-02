@@ -246,6 +246,18 @@ public class RunsPageUiTests
         Assert.DoesNotContain("title: '影響主機'", js);
     }
     [Fact]
+    public void 時間軸不寫inline樣式_詳情狀態讀後端不自算()
+    {
+        var timeline = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "core", "run-timeline.js"));
+        Assert.DoesNotContain("style=", timeline);
+        Assert.Contains("--lf-phase-start", timeline);
+
+        var runs = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+        Assert.Contains("detail.status === 'stopped'", runs);
+        Assert.DoesNotContain("detail.exitCode === 0", runs);
+    }
+
+    [Fact]
     public void 階段計時鍵都有前端文案且不混進進度軌()
     {
         var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "core", "run-phases.js"));

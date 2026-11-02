@@ -12,6 +12,7 @@ import {
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
+import { dayTimingText, formatDuration, phaseSeconds, renderDayTiming, renderPhaseTimeline } from '../core/run-timeline.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
@@ -250,6 +251,7 @@ function renderSummary(summaryPage) {
     renderTable(container, {
         columns: [
             { title: '日期', render: s => s.date },
+            { title: '執行時間', render: s => dayTimingText(s.timing) },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
             { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
@@ -264,7 +266,11 @@ function renderSummary(summaryPage) {
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
         // 點日期就地展開該天每台主機的狀態（§2）：懶載入，展開才 fetch，各列狀態獨立
-        onRowExpand: (summary, cell) => renderDayDetailInto(cell, summary.date),
+        onRowExpand: (summary, cell) => {
+            const hosts = document.createElement('div');
+            cell.replaceChildren(renderDayTiming(summary.timing), hosts);
+            renderDayDetailInto(hosts, summary.date);
+        },
         empty: { title: '尚無執行紀錄', hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。' }
     });
 
@@ -473,24 +479,24 @@ const RUN_LIST_COLUMNS = [
     {
         title: '耗時', className: 'text-end', sortKey: 'durationSeconds', sortDefaultDir: 'desc',
         sortValue: r => r.durationSeconds ?? -1,
-        render: r => r.durationSeconds != null ? formatDuration(r.durationSeconds) : '進行中'
+        render: r => r.interrupted ? '—（異常中斷）' : (r.durationSeconds != null ? formatDuration(r.durationSeconds) : '進行中')
     },
     { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => r.triggerText },
     { title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc', sortValue: r => r.daysAnalyzed, render: r => String(r.daysAnalyzed) },
     {
         title: '本機', className: 'text-end', sortKey: 'localDaysAnalyzed', sortDefaultDir: 'desc',
         sortValue: r => r.localDaysAnalyzed ?? -1,
-        render: r => formatLocalBranch(r.localDaysAnalyzed, r.localDaysFailed)
+        render: r => withPhaseDuration(formatLocalBranch(r.localDaysAnalyzed, r.localDaysFailed), r, 'local')
     },
     {
         title: 'NetIQ', className: 'text-end', sortKey: 'netiqDaysAnalyzed', sortDefaultDir: 'desc',
         sortValue: r => r.netiqDaysAnalyzed ?? -1,
-        render: r => formatNetiqBranch(r.netiqDaysAnalyzed, r.netiqDaysFailed, r.netiqHostsSkipped)
+        render: r => withPhaseDuration(formatNetiqBranch(r.netiqDaysAnalyzed, r.netiqDaysFailed, r.netiqHostsSkipped), r, 'netiq')
     },
     {
         title: 'PRTG', className: 'text-end', sortKey: 'prtgOutcome',
         sortValue: r => r.prtgOutcome ?? '',
-        render: r => renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts, r.prtgStrategy)
+        render: r => withPhaseDuration(renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts, r.prtgStrategy), r, 'prtg')
     },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
@@ -498,6 +504,19 @@ const RUN_LIST_COLUMNS = [
     },
     { title: '', className: 'text-end', render: r => viewRunButton(r.runId) }
 ];
+
+/** 分路欄：原本的內容下面加一行小字耗時，不加新欄（手機上表格已經夠寬） */
+function withPhaseDuration(content, run, key) {
+    const seconds = phaseSeconds(run.phases, key);
+    if (seconds == null) return content;
+    const wrap = document.createElement('div');
+    wrap.append(content);
+    const time = document.createElement('div');
+    time.className = 'small text-muted';
+    time.textContent = formatDuration(seconds);
+    wrap.appendChild(time);
+    return wrap;
+}
 
 function renderRunList(runs) {
     currentRunList = runs;
@@ -513,6 +532,7 @@ function renderRunListTable() {
             runListSort = { key, dir };
             renderRunListTable();
         },
+        onRowExpand: (run, cell) => cell.replaceChildren(renderPhaseTimeline(run)),
         empty: { title: '此期間沒有執行紀錄', hint: '請調整上方的查詢期間，或至排程設定確認執行週期。' }
     });
 }
@@ -568,6 +588,12 @@ async function showDetail(runId, retryBody = null) {
     statsRow.className = 'row g-3 mb-3';
     renderStats(statsRow, detail);
     body.appendChild(statsRow);
+
+    if (detail.phases?.length) {
+        const timeline = renderPhaseTimeline(detail);
+        timeline.classList.add('mb-3');
+        body.appendChild(timeline);
+    }
 
     // PRTG 逐日：每個資料日的結局與取數數字（舊紀錄或 PRTG 未產出時沒有這張表）
     if (Array.isArray(detail.prtgDays) && detail.prtgDays.length > 0) {
@@ -648,7 +674,7 @@ async function showDetail(runId, retryBody = null) {
 function renderStats(container, detail) {
     const stats = [
         { label: '狀態', value: statusText(detail) },
-        { label: '耗時', value: detail.durationSeconds != null ? formatDuration(detail.durationSeconds) : '—' },
+        { label: '耗時', value: detail.interrupted ? '—（異常中斷）' : detail.durationSeconds != null ? formatDuration(detail.durationSeconds) : '—' },
         { label: '分析天數', value: detail.daysAnalyzed },
         // AI 未設定時這欄多半是「0（失敗 0）」的雜訊；歷史上真的呼叫過 AI 的執行紀錄仍如實顯示
         // （docs/archive/FEEDBACK-7-PLAN.md）
@@ -680,17 +706,10 @@ function renderStats(container, detail) {
     }
 }
 
+// 狀態與列表同一份判定（後端 BatchRunStatus.Compute），這裡只負責文字
 function statusText(detail) {
-    if (detail.finishedAt == null) return '未回報結束';
-    if (detail.stopped) return '已停止（手動停止或執行窗口結束）';
-    return detail.exitCode === 0 ? '成功' : `失敗（exit ${detail.exitCode}）`;
-}
-
-function formatDuration(seconds) {
-    if (seconds < 60) return `${seconds} 秒`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
-    return `${Math.floor(minutes / 60)} 時 ${minutes % 60} 分`;
+    if (detail.status === 'stopped') return '已停止（手動停止或執行窗口結束）';
+    return STATUS_META[detail.status]?.label ?? detail.status;
 }
 
 // 執行詳情「來源」欄：紀錄器內建的兩種來源顯示中文，其他（NLog logger 短名）照舊

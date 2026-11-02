@@ -3008,9 +3008,12 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     整列「未執行」，而這張表存在的理由正是「一眼看出昨晚哪幾台沒跑」。`days` 仍代表列數
     （範圍 `[Today-days, Today-1]`），分頁數學不變。今天的執行看狀態卡與「執行紀錄」頁籤
     ——**異常彙總與執行紀錄刻意仍含今天**，它們是事件清單、不是主機×日視角。
+    「執行時間」欄用同一個鍵（當天開跑）：取數趟的最早開始～最晚結束與實際總耗時（聯集，重疊不重複算）；
+    展開列再列本機／NetIQ／PRTG／AI 各路區間與耗時（`RunDayTimingBuilder`）。AI 趟只進 AI 那一路，不進主機×日。
+    異常中斷的趟不計入聯集（結束時刻是站台重啟時刻），只寫趟數與最後活動；舊紀錄沒有階段資料時各路顯示「—」。
   - **異常彙總**（Error/Fatal 按訊息聚合）。
   - **執行紀錄**：`GET api/runs/list?days=N`
-    （`RunMonitorService.GetRunList`），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
+    （`RunMonitorService.GetRunList`），點列就地展開階段時間軸（`core/run-timeline.js`：每個階段一條、依整趟比例定位，起訖、耗時、結果都有文字；PRTG 子階段縮排；異常中斷的耗時顯示「—」），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
     主機／**作業類型**（取數分析｜AI 分析，`BatchRun.JobType`）／狀態／開始時間／耗時／
     觸發來源／分析天數／警告與錯誤數，回答「這一次到底跑了多久、誰觸發的」，同一天內的
     多次手動重跑各自一列。AI 分析排程的每次執行也寫一筆（`JobType=ai`，AiCalls/AiFailures
@@ -3043,7 +3046,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   最多 18 萬格 DOM，因此每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
   點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。狀態判定在 `BuildCell`。
 - **NetIQ 主機的執行狀態以分析紀錄判定**：NetIQ 主機沒有個別的
-  `lf_batch_runs` 紀錄（`NetiqPipelineService` 只以跑批次的那台機器名義登記彙總的一筆），
+  `batch_runs` 紀錄（`NetiqPipelineService` 只以跑批次的那台機器名義登記彙總的一筆），
   逐台比對 `BatchRun.HostName` 永遠比不到。`RunMonitorService` 因此
   依 `WebHost.Source` 分流：`local` 主機走 `BuildCell`；`netiq` 主機查
   `IAnalysisRecordQuery.ListHostDates`（只投影 HostId／RecordDate 的輕量查詢），
@@ -3086,9 +3089,7 @@ lf_host_owners        host_id FK + user_id FK，PK(host_id, user_id)
 lf_rule_seeds         rule_id PK / seed_version int / content_json text        -- builtin 規則原廠快照（回復預設用）
 （lf_rules 增列 modified_by bigint NULL / modified_at timestamp NULL）
 
-lf_batch_runs         run_id PK / host_id FK / started_at / finished_at NULL / exit_code NULL /
-                      app_version / args / days_analyzed / ai_calls / ai_failures / warn_count / error_count
-lf_batch_run_logs     log_id PK / run_id FK / logged_at / level / logger / message nvarchar(2000) / exception_text text
+（執行紀錄不是獨立實體表：`lf_log_lines` 的 `log_key='batch_runs'`／`'batch_run_logs'` 每列一筆 JSON，同一 RunId 取最後一列，欄位見 docs/DB-SPEC.md）
 
 lf_import_logs        import_id PK / user_id FK / kind / file_name / added_count / updated_count / detail_json / created_at
 
@@ -3314,7 +3315,7 @@ target 名稱也帶 runId 與識別碼以免互相移除。
 2. `summary` 在寫入當下組好人話（含對象名稱與前後值摘要）；欄位級對照放 `detail_json`。
 3. `PermissionFilter` 攔下的 403 寫 `result='denied'`。
 4. **稽核/執行紀錄寫入失敗不得中斷業務操作**——catch 後寫 Web 端 NLog（`logs\web.log`），照常回應。
-5. 批次端：啟動先寫 `lf_batch_runs`（finished_at=NULL），結束回填；進 store 的只有
+5. 批次端：啟動先寫 `batch_runs`（FinishedAt 為空），頂層階段結束時追加快照，結束時回填；進 store 的只有
    Warn 以上＋固定 Info 里程碑；訊息自帶脈絡（處理日期＋階段）。NLog 檔案 log 職責不變。
 6. 保留：各類資料的保留期與預設值見 §9.9b 項次 4 與 [DB-SPEC.md](DB-SPEC.md)「保留策略」（稽核 730、執行歷程 120、業務資料 180、原始事件內容 120，皆可調且下限 90）。
 

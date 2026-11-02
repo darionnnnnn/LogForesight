@@ -96,7 +96,7 @@ public class SchedulerHostedService : BackgroundService
         try
         {
             var closed = CloseInterruptedRuns(_mutexGate, _batchRunStore, DateTime.Now,
-                System.Diagnostics.Process.GetCurrentProcess().StartTime);
+                System.Diagnostics.Process.GetCurrentProcess().StartTime, _systemSettingsStore.Get().RunLogRetentionDays);
             if (closed == null)
             {
                 Log.Info("另一個執行個體仍持有執行鎖，略過中斷執行的關閉");
@@ -353,12 +353,14 @@ public class SchedulerHostedService : BackgroundService
     /// 拿不到鎖（例如另一個執行個體正在跑）時回傳 null；拿到鎖時回傳關閉筆數。
     /// 只關 <paramref name="processStartedAt"/> 之前開始的執行——本行程自己的執行仍在跑。
     /// </summary>
-    internal static int? CloseInterruptedRuns(NamedMutexGate gate, BatchRunStore store, DateTime now, DateTime processStartedAt)
+    internal static int? CloseInterruptedRuns(NamedMutexGate gate, BatchRunStore store, DateTime now, DateTime processStartedAt,
+        int lookbackDays = SystemSettings.DefaultRunLogRetentionDays)
     {
         int? closedCount = null;
         var acquired = gate.RunExclusive(() =>
         {
-            closedCount = store.CloseUnfinishedRuns(now, 7, processStartedAt);
+            // 回看到保留期：站台停機超過一週時，更早的未結束紀錄不能永遠卡在執行中
+            closedCount = store.CloseUnfinishedRuns(now, lookbackDays, processStartedAt);
         }, TimeSpan.Zero, runActionWhenNotAcquired: false);
 
         return acquired ? closedCount : null;
