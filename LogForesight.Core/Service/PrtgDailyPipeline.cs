@@ -60,6 +60,7 @@ internal static class PrtgDailyPipeline
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
         string? prtgOutcome = null;
+        var prtgPhase = runRecorder.Phase(RunTimingPhases.Prtg);
         var totalTriggerHosts = 0;
         var totalTargetSensors = 0;
         var totalFailedSensors = 0;
@@ -205,6 +206,7 @@ internal static class PrtgDailyPipeline
             //    FetchDayAsync 各階段自帶 catch，取消以外幾乎不會整個擲出；真的擲出而 provider 沒被呼叫時
             //    mapResult 為 null，不另外補做對應。
             PrtgHostMapResult? mapResult = null;
+            var syncPhase = runRecorder.Phase(RunTimingPhases.PrtgSync);
             var syncStopwatch = Stopwatch.StartNew();
             try
             {
@@ -276,6 +278,9 @@ internal static class PrtgDailyPipeline
             }
 
             syncStopwatch.Stop();
+            syncPhase.Complete(syncFailed ? RunPhaseOutcomes.Failed
+                : fetchResult is { Failures: > 0 } ? RunPhaseOutcomes.Partial
+                : RunPhaseOutcomes.Success);
             operationScope.CompletedStage("來源同步已返回（詳見成功／失敗狀態）");
 
             operationScope.Checkpoint();
@@ -787,6 +792,7 @@ internal static class PrtgDailyPipeline
                     {
                         operationScope.Checkpoint();
                         var state = dayStates[day];
+                        var triggeredPhase = runRecorder.Phase(RunTimingPhases.PrtgTriggered, day.ToString("yyyy-MM-dd"));
                         var dayResult = await triggeredFetcher.RunAsync(
                             day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
                             () => analysisTask.IsCompleted, ct, extraTriggerHosts: state.TriggerHosts,
@@ -794,6 +800,7 @@ internal static class PrtgDailyPipeline
                             scope: systemSettings.PrtgValueFetchScope,
                             extraScopeHosts: scopeHostIds);
 
+                        triggeredPhase.Complete(dayResult.FailedSensors > 0 ? RunPhaseOutcomes.Partial : RunPhaseOutcomes.Success);
                         state.Triggered = dayResult;
                         totalTriggerHosts += dayResult.TriggerHosts;
                         totalTargetSensors += dayResult.TargetSensors;
@@ -957,6 +964,14 @@ internal static class PrtgDailyPipeline
                 var statsByDay = dayStats.ToDictionary(stat => stat.Date.Date);
                 dayStats = days.Select(day => statsByDay[day.Date]).ToList();
             }
+
+            prtgPhase.Complete(ct.IsCancellationRequested ? RunPhaseOutcomes.Stopped : prtgOutcome switch
+            {
+                BatchRun.PrtgOutcomeSuccess or BatchRun.PrtgOutcomeNoOutput => RunPhaseOutcomes.Success,
+                BatchRun.PrtgOutcomePartial => RunPhaseOutcomes.Partial,
+                BatchRun.PrtgOutcomeFailed => RunPhaseOutcomes.Failed,
+                _ => RunPhaseOutcomes.Skipped
+            }, prtgOutcome == BatchRun.PrtgOutcomeDisabled ? "PRTG 未啟用" : null);
 
             if (prtgOutcome != null)
             {

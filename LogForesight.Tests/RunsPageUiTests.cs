@@ -245,6 +245,24 @@ public class RunsPageUiTests
         Assert.Contains("title: '執行站台', sortKey: 'affectedHosts'", js);
         Assert.DoesNotContain("title: '影響主機'", js);
     }
+    [Fact]
+    public void 階段計時鍵都有前端文案且不混進進度軌()
+    {
+        var js = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "core", "run-phases.js"));
+        var block = js[js.IndexOf("TIMING_PHASE_LABEL", StringComparison.Ordinal)..];
+        block = block[..block.IndexOf("};", StringComparison.Ordinal)];
+        foreach (var (key, label) in LogForesight.Core.Service.RunTimingPhases.Labels)
+        {
+            Assert.Matches($"'?{System.Text.RegularExpressions.Regex.Escape(key)}'?: '{System.Text.RegularExpressions.Regex.Escape(label)}'", block);
+        }
+
+        // 計時專用鍵不得進進度軌：SchedulerRunState 依 prtg- 前綴分派，混入會蓋掉進度顯示
+        foreach (var key in new[] { "permission-check", "retention", "prtg", "dispatch", "checkup", "prtg-value-fill", "ai" })
+        {
+            Assert.DoesNotContain(key, LogForesight.Core.Service.RunPhases.All);
+        }
+    }
+
     /// <summary>
     /// 批次G1：phase 字面值集中在 RunPhases 之後，前端標籤表的完整性由這條測試守住。
     /// 過去 Core／Web／JS 三層各寫裸字串，新增一個 phase 只要漏改前端，

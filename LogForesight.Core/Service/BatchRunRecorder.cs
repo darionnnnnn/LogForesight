@@ -50,6 +50,7 @@ public class BatchRunRecorder : IDisposable
     /// 讓狀態卡與執行明細看得到「這趟執行本次不會出現在執行監控」；null＝維持原本只寫 log。
     /// </param>
     /// <param name="jobType">作業類型（選填）：<see cref="BatchRun.JobTypeAi"/>＝AI 分析排程；null＝一般批次/取數執行。</param>
+    /// <param name="startedAt">整趟的起點（選填）：recorder 建構前已有前置作業時由呼叫端傳入，讓紀錄與「總執行時間」同一個起點。</param>
     /// <remarks>
     /// 【AsyncLocal 作用域限制】<see cref="ScopeContext"/> 底層是 <see cref="AsyncLocal{T}"/>：
     /// 它沿著非同步呼叫鏈**向下**傳遞，但不會向外（向上）傳播。因此 recorder 必須在
@@ -60,14 +61,14 @@ public class BatchRunRecorder : IDisposable
     /// </remarks>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
         CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null,
-        bool catchUp = false)
+        bool catchUp = false, DateTime? startedAt = null)
     {
         _store = store;
         _ct = ct;
         _run = new BatchRun
         {
             HostName = hostName,
-            StartedAt = DateTime.Now,
+            StartedAt = startedAt ?? DateTime.Now,
             AppVersion = typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString() ?? "unknown",
             Args = string.Join(" ", args),
             Trigger = trigger,
@@ -101,6 +102,11 @@ public class BatchRunRecorder : IDisposable
     // 呼叫 Log.Warn 時），一併納入同一把鎖。
     private readonly object _countLock = new();
 
+    // 快照與結束列互斥：結束後才落地的舊快照（FinishedAt 為空）會讓這趟永遠顯示執行中。
+    // 鎖序固定 _rowLock → _countLock；_countLock 內不呼叫 store（store 內的 Warn 會經 NLog target 回來取 _countLock）。
+    private readonly object _rowLock = new();
+    private readonly List<PhaseScope> _openPhases = new();
+
     public long RunId => _run.RunId;
 
     /// <summary>Whether this recorder still owns the live parent run with the supplied durable id.</summary>
@@ -130,6 +136,105 @@ public class BatchRunRecorder : IDisposable
         set { lock (_countLock) _run.Stopped = value; }
     }
 
+    /// <summary>
+    /// 開始一個階段。頂層階段的起訖各記一則里程碑，結束時追加一列快照（執行中與異常中斷的趟也看得到已完成的階段）；
+    /// 子階段只隨結束列寫出，避免一趟的列數隨天數成長。同一個鍵可以有多個實例（多日的觸發式取數），以回傳的 scope 配對。
+    /// </summary>
+    public PhaseScope Phase(string key, string? note = null)
+    {
+        var record = new RunPhaseRecord(key, DateTime.Now) { Note = note };
+        var scope = new PhaseScope(this, record);
+        lock (_countLock)
+        {
+            if (_finished)
+            {
+                Log.Warn("執行紀錄已結束，略過階段 {0}", key);
+                scope.Abandon();
+                return scope;
+            }
+            (_run.Phases ??= new List<RunPhaseRecord>()).Add(record);
+            _openPhases.Add(scope);
+        }
+
+        if (RunTimingPhases.IsTopLevel(key))
+        {
+            Milestone($"{RunTimingPhases.Label(key)}開始{(note == null ? "" : $"（{note}）")}");
+        }
+        return scope;
+    }
+
+    private void CompletePhase(PhaseScope scope, RunPhaseRecord record, string outcome, string? note)
+    {
+        lock (_countLock)
+        {
+            if (_finished)
+            {
+                Log.Warn("執行紀錄已結束，略過階段 {0} 的結果", record.Key);
+                return;
+            }
+            record.FinishedAt = DateTime.Now;
+            record.Outcome = outcome;
+            if (note != null) record.Note = note;
+            _openPhases.Remove(scope);
+        }
+
+        if (!RunTimingPhases.IsTopLevel(record.Key)) return;
+
+        var elapsed = record.FinishedAt!.Value - record.StartedAt;
+        Milestone($"{RunTimingPhases.Label(record.Key)}結束：{RunPhaseOutcomes.Label(outcome)}" +
+                  $"{(record.Note == null ? "" : $"（{record.Note}）")}，耗時 {elapsed.ToString(@"hh\:mm\:ss")}");
+        WriteSnapshot();
+    }
+
+    private void WriteSnapshot()
+    {
+        if (_store == null) return;
+        try
+        {
+            lock (_rowLock)
+            {
+                BatchRun copy;
+                lock (_countLock)
+                {
+                    if (_finished) return;
+                    copy = _run.Snapshot();
+                }
+                _store.FinishRun(copy);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "階段快照寫入失敗（不影響本次分析）：{0}", ex.Message);
+        }
+    }
+
+    /// <summary>沒明講結果就離開（例外或取消）時依取消權杖判定，例外路徑不留懸空階段</summary>
+    private string ImplicitOutcome() => _ct.IsCancellationRequested ? RunPhaseOutcomes.Stopped : RunPhaseOutcomes.Failed;
+
+    /// <summary>單一階段的範圍：<see cref="Complete"/> 寫結果（只有第一次有效），未呼叫就 Dispose 視為停止或失敗</summary>
+    public sealed class PhaseScope : IDisposable
+    {
+        private readonly BatchRunRecorder _owner;
+        private readonly RunPhaseRecord _record;
+        private int _completed;
+
+        internal PhaseScope(BatchRunRecorder owner, RunPhaseRecord record)
+        {
+            _owner = owner;
+            _record = record;
+        }
+
+        internal void Abandon() => _completed = 1;
+
+        public void Complete(string outcome, string? note = null)
+        {
+            if (Interlocked.Exchange(ref _completed, 1) == 1) return;
+            _owner.CompletePhase(this, _record, outcome, note);
+        }
+
+        public void Dispose() => Complete(_owner.ImplicitOutcome());
+    }
+
     /// <summary>里程碑：固定的 Info 級紀錄（開始/掃描完成/逐日分析完成/結束）</summary>
     public void Milestone(string message) => Append("Info", "Milestone", message, null);
 
@@ -143,7 +248,7 @@ public class BatchRunRecorder : IDisposable
     private readonly object _outputLock = new();
     private int _outputWritten;
     private int _outputSkipped;
-    private readonly Queue<string> _outputTail = new();
+    private readonly Queue<(DateTime LoggedAt, string Message)> _outputTail = new();
     private bool _outputFlushed;
 
     /// <summary>
@@ -165,7 +270,7 @@ public class BatchRunRecorder : IDisposable
                 return;
             }
 
-            _outputTail.Enqueue(message);
+            _outputTail.Enqueue((DateTime.Now, message));
             if (_outputTail.Count > OutputTailCapacity)
             {
                 _outputTail.Dequeue();
@@ -191,8 +296,12 @@ public class BatchRunRecorder : IDisposable
             _outputFlushed = true;
             if (_outputSkipped > 0)
                 Append("Info", "Output", $"（中間略過 {_outputSkipped} 行輸出）", null);
+            // 保留行的時間是當下記的：尾段才寫入不代表它們都發生在結束時刻
             while (_outputTail.Count > 0)
-                Append("Info", "Output", _outputTail.Dequeue(), null);
+            {
+                var (loggedAt, message) = _outputTail.Dequeue();
+                Append("Info", "Output", message, null, loggedAt);
+            }
         }
     }
 
@@ -256,17 +365,31 @@ public class BatchRunRecorder : IDisposable
     public void Finish(int exitCode)
     {
         if (_finished || _store == null) return;
-        _finished = true;
+
+        // 還開著的階段先收掉（例外直接離開、沒走到各自的 Complete），結束列才看得到完整的階段
+        List<PhaseScope> open;
+        lock (_countLock) open = _openPhases.ToList();
+        foreach (var phase in open) phase.Dispose();
 
         try
         {
-            FlushOutputTail();
-            _target?.Detach();
-            _scope?.Dispose();
-            _scope = null;
-            _run.FinishedAt = DateTime.Now;
-            _run.ExitCode = exitCode;
-            _store.FinishRun(_run);
+            lock (_rowLock)
+            {
+                BatchRun final;
+                lock (_countLock)
+                {
+                    if (_finished) return;
+                    _finished = true;
+                    _run.FinishedAt = DateTime.Now;
+                    _run.ExitCode = exitCode;
+                    final = _run.Snapshot();
+                }
+                FlushOutputTail();
+                _target?.Detach();
+                _scope?.Dispose();
+                _scope = null;
+                _store.FinishRun(final);
+            }
         }
         catch (Exception ex)
         {
@@ -290,7 +413,7 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    private void Append(string level, string logger, string message, string? exceptionText)
+    private void Append(string level, string logger, string message, string? exceptionText, DateTime? loggedAt = null)
     {
         if (_store == null) return;
 
@@ -299,7 +422,7 @@ public class BatchRunRecorder : IDisposable
             _store.AppendLog(new BatchRunLog
             {
                 RunId = _run.RunId,
-                LoggedAt = DateTime.Now,
+                LoggedAt = loggedAt ?? DateTime.Now,
                 Level = level,
                 Logger = logger,
                 Message = message,

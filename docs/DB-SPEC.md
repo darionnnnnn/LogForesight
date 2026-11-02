@@ -36,6 +36,10 @@
 預留的主機、使用者、類別彙總、深析、週體檢、完整問答與風險日處理歷程表，均不視為現行實體表。
 欄位若尚未從 blob／content_json 抽出，文件以實際存放位置描述，不把設計草圖當成 DDL。
 
+執行紀錄（`lf_log_lines` 的 `log_key='batch_runs'`）每列是一筆 `BatchRun` JSON，同一個 RunId 取最後一列。`Phases` 記各階段起訖：
+`Key`（`RunTimingPhases`）、`StartedAt`、`FinishedAt`、`Outcome`（success／partial／failed／stopped／skipped）、`Note`；
+頂層階段結束時追加一列，PRTG 子階段只隨結束列寫出。舊紀錄缺此欄（null），不從舊 log 推算。
+
 目前實體表清單：`lf_blobs`、`lf_log_lines`、`lf_daily_records`、`lf_top_issues`、
 `lf_issue_handling`、`lf_issue_cases`、`lf_work_orders`、`lf_work_order_events`、
 `lf_record_handling`、`lf_issue_first_seen`、`lf_risky_events`、`lf_permission_changes`、

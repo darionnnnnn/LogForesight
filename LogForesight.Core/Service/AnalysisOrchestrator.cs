@@ -238,6 +238,7 @@ public class AnalysisOrchestrator
         IPrtgBackfillTail? prtgBackfillTail = null)
     {
         var runStopwatch = Stopwatch.StartNew();
+        var runStartedAt = DateTime.Now;
         var result = new OrchestratorResult();
         long? timingRunId = null;
 
@@ -291,7 +292,7 @@ public class AnalysisOrchestrator
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
                 onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"),
-                catchUp: request.CatchUpNote != null);
+                catchUp: request.CatchUpNote != null, startedAt: runStartedAt);
             result.BatchRunId = runRecorder.RunId > 0 ? runRecorder.RunId : null;
             // Missing/duplicate recorder identity leaves timing unavailable without affecting analysis.
             timingRunId = TryBeginHostDayTiming(runRecorder.RunId, _hostDayTiming);
@@ -449,6 +450,7 @@ public class AnalysisOrchestrator
 
                 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
                 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
+                var permissionPhase = runRecorder.Phase(RunTimingPhases.PermissionCheck);
                 runConsole.WriteLine($"\n檢查權限異動（監控 {permissionMonitor.WatchedFolders.Count} 個資料夾 + 本機 Administrators 群組）...");
                 var permissionCheck = permissionMonitor.Check();
                 if (permissionCheck.PlatformUnsupported)
@@ -538,7 +540,11 @@ public class AnalysisOrchestrator
                     runConsole.WriteLine("  未偵測到權限異動。");
                 }
 
+                permissionPhase.Complete(permissionCheck.PlatformUnsupported ? RunPhaseOutcomes.Skipped : RunPhaseOutcomes.Success);
+
+                var retentionPhase = runRecorder.Phase(RunTimingPhases.Retention);
                 RetentionPruner.Run(backend, retention, runConsole, batchRunStore);
+                retentionPhase.Complete(RunPhaseOutcomes.Success);
 
                 var yesterday = DateTime.Today.AddDays(-1);
 
@@ -683,22 +689,26 @@ public class AnalysisOrchestrator
                 {
                     // 三路匯合（含任一路擲例外）：已寫入的交辦單成員都要補記 appended 事件並彙總，否則失敗那一趟留痕不完整；
                     // 收尾本身失敗只記警告
+                    var dispatchPhase = runRecorder.Phase(RunTimingPhases.Dispatch);
                     try
                     {
                         var dispatchSummary = runCtx.Dispatch.FlushRun(DateTime.Now);
                         runCtx.Result.DispatchSummary = dispatchSummary;
                         // 走 console 才進得了執行紀錄（Log.Info 不進）；管理者隔天要從這一行看出「昨晚派了什麼、為什麼沒派」
                         runConsole.WriteLine("\n" + NightlyDispatch.DescribeSummary(dispatchSummary));
+                        dispatchPhase.Complete(RunPhaseOutcomes.Success);
                     }
                     catch (Exception ex)
                     {
                         Log.Warn(ex, "夜間派工收尾失敗（交辦單成員已寫入，只缺本趟 appended 事件）");
+                        dispatchPhase.Complete(RunPhaseOutcomes.Failed);
                     }
                 }
 
                 // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
                 if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
                 {
+                    var checkupPhase = runRecorder.Phase(RunTimingPhases.Checkup);
                     runConsole.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
                     var checkupStopwatch = Stopwatch.StartNew();
                     var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays,
@@ -726,6 +736,7 @@ public class AnalysisOrchestrator
                         }
                     }
                     runConsole.WriteLine($"  ⏱ 體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
+                    checkupPhase.Complete(checkup.Completed ? RunPhaseOutcomes.Success : RunPhaseOutcomes.Partial);
                     Log.Info("體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
                         yesterday, checkup.Completed, checkup.HasFindings, checkupStopwatch.ElapsedMilliseconds);
                 }
@@ -735,8 +746,10 @@ public class AnalysisOrchestrator
                 //    回填不能等這趟結束後另開：回填入口會被「取數執行中」擋下，而那個旗標要到這趟結束才放開。
                 if (request.PrtgBackfillDays > 0 && prtgBackfillTail != null)
                 {
+                    var valueFillPhase = runRecorder.Phase(RunTimingPhases.PrtgValueFill, $"{request.PrtgBackfillDays} 天");
                     runRecorder.Milestone($"接續補 PRTG 數值 {request.PrtgBackfillDays} 天");
                     var tailOk = await prtgBackfillTail.RunTailAsync(request.PrtgBackfillDays, prtgHostIds, runConsole, ct);
+                    valueFillPhase.Complete(tailOk ? RunPhaseOutcomes.Success : RunPhaseOutcomes.Partial);
                     runRecorder.Milestone(tailOk ? "PRTG 數值補齊完成" : "PRTG 數值補齊未完成（原因見上方輸出）");
                 }
 
@@ -819,6 +832,8 @@ public class AnalysisOrchestrator
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress, prtgFindings, dispatch, workflow, prtgEnabled) = ctx;
 
+        using var localPhase = runRecorder.Phase(RunTimingPhases.Local);
+
         // 回望天數（回饋三十四輪 C）：立即執行的「回望天數」是單一欄位，缺漏日與重跑日
         // 共用同一個窗口，且**本機與 NetIQ 都適用**——合併前這個欄位只影響 NetIQ，
         // 本機只吃重跑天數，填 30 天卻只回補 14 天是說不通的靜默不一致。
@@ -853,6 +868,7 @@ public class AnalysisOrchestrator
             console.WriteLine($"\n{skipMessage}");
             runRecorder.Milestone(skipMessage);
             Log.Info("{Date:yyyy-MM-dd} 已有分析紀錄，本次跳過", yesterday);
+            localPhase.Complete(RunPhaseOutcomes.Skipped, "無待補");
             return;
         }
 
@@ -1064,6 +1080,7 @@ public class AnalysisOrchestrator
             runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
             // 本機失敗目前是整段例外由外層攔截，不逐日累計，故失敗日數傳 0
             runRecorder.RecordLocalOutcome(result.LocalResults.Count, 0);
+            localPhase.Complete(RunPhaseOutcomes.Success, $"{result.LocalResults.Count} 天");
 
             if (request.RerunMode != RerunMode.None)
             {
@@ -1109,6 +1126,8 @@ public class AnalysisOrchestrator
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress, prtgFindings, dispatch, workflow, prtgEnabled) = ctx;
 
+        using var netiqPhase = runRecorder.Phase(RunTimingPhases.Netiq);
+
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
 
         // NetiqHosts 範圍（Phase 3 手動觸發指定主機）：篩到只剩請求的 HostId，其餘略過不查、不警告
@@ -1130,7 +1149,11 @@ public class AnalysisOrchestrator
             console.WriteLine($"\n  ⚠ NetIQ 主機清單有 {netiqHostList.Warnings.Count} 項需要注意：");
             foreach (var warning in netiqHostList.Warnings) console.WriteLine($"    - {warning}");
         }
-        if (netiqHostList.TotalHosts == 0) return;
+        if (netiqHostList.TotalHosts == 0)
+        {
+            netiqPhase.Complete(RunPhaseOutcomes.Skipped, "沒有 NetIQ 主機");
+            return;
+        }
 
         try
         {
@@ -1174,6 +1197,13 @@ public class AnalysisOrchestrator
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
                     : ""));
             runRecorder.RecordNetiqOutcome(netiqResult.HostDaysAnalyzed, netiqResult.HostsFailed, netiqResult.HostsSkippedUpToDate);
+            netiqPhase.Complete(
+                netiqResult.HostsFailed > 0 ? RunPhaseOutcomes.Partial
+                    : netiqResult.HostDaysAnalyzed == 0 ? RunPhaseOutcomes.Skipped
+                    : RunPhaseOutcomes.Success,
+                netiqResult.HostDaysAnalyzed == 0 && netiqResult.HostsFailed == 0
+                    ? "無待補"
+                    : $"分析 {netiqResult.HostDaysAnalyzed} 主機日、已完成跳過 {netiqResult.HostsSkippedUpToDate}、失敗 {netiqResult.HostsFailed}");
 
             // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的
             // 里程碑列表完全看不到「這次有異常」（docs/archive/FEEDBACK-12-PLAN.md §1.3）。彙整成一條
@@ -1195,6 +1225,7 @@ public class AnalysisOrchestrator
             _hostDayTiming?.MarkIncomplete(runRecorder.RunId);
             result.Success = false;
             result.FailureMessage ??= $"NetIQ 分析失敗：{ex.Message}";
+            netiqPhase.Complete(RunPhaseOutcomes.Failed);
             // 與本機分析的失敗邊界一致：NetIQ 這段出問題不該讓已經完成的本機分析與寫入作廢，
             // 只記錄失敗、留給下次執行的缺漏日回補機制自動重試
             Log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");

@@ -261,6 +261,7 @@ public class AiAnalysisHostedService : BackgroundService
             var args = new[] { forceRerun ? "ai --force-rerun" : "ai" };
             using BatchRunRecorder recorder = new(_batchRuns, Environment.MachineName, args, trigger, runCts.Token, jobType: BatchRun.JobTypeAi);
             _runState.SetCurrentBatchRunId(recorder.RunId);
+            var aiPhase = recorder.Phase(RunTimingPhases.Ai);
 
             try
             {
@@ -290,6 +291,12 @@ public class AiAnalysisHostedService : BackgroundService
                     stopped = true;
                 }
 
+                aiPhase.Complete(
+                    stopped ? RunPhaseOutcomes.Stopped
+                        : !success ? RunPhaseOutcomes.Failed
+                        : counters.Failed > 0 ? RunPhaseOutcomes.Partial
+                        : RunPhaseOutcomes.Success,
+                    $"完成 {counters.Done} 筆、失敗 {counters.Failed} 筆");
                 recorder.DaysAnalyzed = counters.Done;
                 // 實際呼叫過 AI 的筆數：成功且非 Skipped（Skipped 不呼叫 AI）加上失敗者
                 recorder.AiCalls = counters.Done - counters.Skipped + counters.Failed;

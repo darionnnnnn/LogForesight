@@ -40,6 +40,25 @@ public class RunOutputRecordingTests
     }
 
     [Fact]
+    public void 超量輸出的尾段保留當下時間_不是全部等於結束時刻()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            for (var i = 1; i <= 1505; i++) recorder.Message(i.ToString());
+            System.Threading.Thread.Sleep(50);
+            recorder.Finish(0);
+        }
+
+        var finishedAt = store.GetRecentRuns(1, null).Single(r => r.RunId == runId).FinishedAt!.Value;
+        var tail = OutputLogs(store, runId).Single(l => l.Message == "1505");
+        Assert.True(tail.LoggedAt < finishedAt, $"尾段時間 {tail.LoggedAt:O} 應早於結束 {finishedAt:O}");
+    }
+
+    [Fact]
     public void 超過上限保留前1500行與最後500行並註明略過行數()
     {
         using var fixture = new EfSqliteFixture();

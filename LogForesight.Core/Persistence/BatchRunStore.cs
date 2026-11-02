@@ -135,6 +135,26 @@ public class BatchRun
 
     /// <summary>逐日 PRTG 統計（null＝舊紀錄或未執行 PRTG）</summary>
     public List<PrtgDayStat>? PrtgDays { get; set; }
+
+    /// <summary>各階段起訖（null＝舊紀錄，不從舊 log 推算；鍵見 <see cref="LogForesight.Core.Service.RunTimingPhases"/>）</summary>
+    public List<RunPhaseRecord>? Phases { get; set; }
+
+    /// <summary>寫入用的獨立副本：寫入時其他路徑可能正在改階段清單，序列化不能直接讀活的物件</summary>
+    public BatchRun Snapshot()
+    {
+        var copy = (BatchRun)MemberwiseClone();
+        copy.PrtgDays = PrtgDays?.ToList();
+        copy.Phases = Phases?.Select(phase => phase with { }).ToList();
+        return copy;
+    }
+}
+
+/// <summary>執行紀錄的單一階段。FinishedAt／Outcome 為 null＝進行中或該趟異常中斷。</summary>
+public sealed record RunPhaseRecord(string Key, DateTime StartedAt)
+{
+    public DateTime? FinishedAt { get; set; }
+    public string? Outcome { get; set; }
+    public string? Note { get; set; }
 }
 
 /// <summary>PRTG 單日擷取與分析統計摘要（逐日 PRTG 統計）。</summary>
