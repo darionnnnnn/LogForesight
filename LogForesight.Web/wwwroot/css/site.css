@@ -1105,11 +1105,12 @@ a.lf-stat:hover .lf-card,
 .lf-card--clickable:hover {
     box-shadow: var(--lf-shadow-md);
     border-color: var(--lf-primary-soft-border);
-    transform: translateY(-1px);
 }
 
 /*
   KPI 卡列（core/ui.js kpiStrip，docs/DESIGN-SYSTEM.md §6b）：分組、等高、限寬。
+  - singleRow（--row）：三組排同一排、依卡數分寬，每組放得下幾張就顯示幾張，其餘由 core/reveal.js 收合；
+    不換列也不留 14rem 上限造成的組間空白。575px 以下回到每組佔滿一列、每列兩張。
   - 組內 CSS grid：同一列的卡片天生等高（每張卡都有一行副標佔位，結構上就同高，不靠 min-height）。
   - 卡寬 9rem～14rem：下限讓標籤不逐字換行，上限避免 2000px 寬螢幕上每張卡被拉成 400px 以上。
   - ≥1200px 放得下的組並排，各組以卡片數當 flex-grow 分寬、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；窄螢幕各組依序佔滿一列，375px 每列兩張。
@@ -1159,6 +1160,17 @@ a.lf-stat:hover .lf-card,
         /* 組寬下限＝卡數 × 9rem ＋ 間距；放不下就整組換列，不壓縮卡寬 */
         flex: var(--lf-kpi-count, 1) 1 0;
         min-width: min(calc(var(--lf-kpi-count, 1) * 9rem + (var(--lf-kpi-count, 1) - 1) * var(--lf-space-3)), 100%);
+    }
+}
+
+@media (min-width: 576px) {
+    .lf-kpi-strip--row .lf-kpi-group {
+        flex: var(--lf-kpi-count, 1) 1 0;
+        min-width: 9rem;
+    }
+
+    .lf-kpi-strip--row .lf-kpi-grid {
+        grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     }
 }
 
@@ -1213,6 +1225,24 @@ a.lf-kpi-card--link:focus-visible {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
     gap: var(--lf-space-3);
+}
+
+/* 第一排以外收合時的揭露鈕（core/reveal.js）。列印時紙上沒有按鈕可點，一律全部顯示 */
+.lf-reveal-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--lf-space-2);
+}
+
+@media print {
+    .lf-kpi-grid > [hidden],
+    .lf-category-grid > [hidden] {
+        display: block !important;
+    }
+
+    .lf-reveal-bar {
+        display: none !important;
+    }
 }
 
 /* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */

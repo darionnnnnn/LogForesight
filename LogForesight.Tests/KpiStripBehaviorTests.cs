@@ -22,6 +22,7 @@ public class KpiStripBehaviorTests
 
     [NodeTheory]
     [InlineData("emptyGroupsAreNotRendered")]
+    [InlineData("singleRowOptionAddsModifierOnlyWhenAsked")]
     [InlineData("cardWithoutSubStillHasSubPlaceholder")]
     [InlineData("linkCardIsAnchorWithAppUrlHref")]
     [InlineData("variantAppliesToValue")]

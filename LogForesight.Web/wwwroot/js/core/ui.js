@@ -1621,13 +1621,14 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
  * groups：`[{ title?, cards: [{ value, label, variant?, url?, sub?, title? }] }]`
  * - sub：可見副標（字串或 Node）；title：完整說明（卡片 title 屬性，副標被截斷時用）。
  * - 沒有卡的組不輸出；所有組都沒有卡時回傳空容器，由呼叫端決定要不要顯示。
+ * - singleRow：各組排在同一排依卡數分寬、卡片撐滿（搭配 core/reveal.js 只顯示第一排的頁面用）。
  * - 每張卡一律有副標列（沒有副標時是空佔位，保留一行高度）——這是「同列等高」的結構前提，
  *   不能靠 min-height 補丁。有 url 的卡整張是 <a>（href 經 appUrl）；hover 只變陰影與邊框，不位移。
  * 外部字串一律 textContent，不當 HTML 解析。
  */
-export function kpiStrip(groups) {
+export function kpiStrip(groups, { singleRow = false } = {}) {
     const strip = document.createElement('div');
-    strip.className = 'lf-kpi-strip';
+    strip.className = singleRow ? 'lf-kpi-strip lf-kpi-strip--row' : 'lf-kpi-strip';
 
     for (const group of groups ?? []) {
         const cards = (group?.cards ?? []).filter(Boolean);
@@ -1641,6 +1642,7 @@ export function kpiStrip(groups) {
             const titleEl = document.createElement('h2');
             titleEl.className = 'lf-kpi-group__title';
             titleEl.textContent = group.title;
+            if (group.help) titleEl.appendChild(group.help);
             section.appendChild(titleEl);
         }
 

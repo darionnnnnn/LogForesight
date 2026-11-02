@@ -43,6 +43,13 @@ const cardsOf = strip => {
 const subOf = card => card.find(n => has(n, 'lf-kpi-card__sub'));
 
 const cases = {
+    singleRowOptionAddsModifierOnlyWhenAsked() {
+        const { kpiStrip } = load();
+        const groups = [{ title: 'A', cards: [{ value: 1, label: 'x' }] }];
+        assert.equal(kpiStrip(groups).className, 'lf-kpi-strip');
+        assert.equal(kpiStrip(groups, { singleRow: true }).className, 'lf-kpi-strip lf-kpi-strip--row');
+    },
+
     emptyGroupsAreNotRendered() {
         const { kpiStrip } = load();
         const strip = kpiStrip([
