@@ -21,16 +21,14 @@
 <form id="settings-form" novalidate>
     <div class="lf-card mb-3" data-panel="levels">
         <div class="lf-card__header">
-            <h2 class="lf-card__title">層級與顯示</h2>
+            <h2 class="lf-card__title">層級與顯示
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="以下設定僅套用於問題嚴重度（高／中／低，掛在單一問題上；特別嚴重的問題另以「重大」徽章標註，見規則維護頁）：「未處理」計算（未勾選的等級若從未被人明確標記過，會顯示「不處理（預設）」，不計入未處理數量；使用者仍可隨時手動「調回未處理」）與下方「未勾選層級的顯示方式」。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+            </h2>
         </div>
         <div class="lf-card__body">
-            <p class="text-muted small mb-2">
-                以下設定僅套用於<strong>問題嚴重度</strong>（高／中／低，掛在單一問題上；
-                特別嚴重的問題另以「重大」徽章標註，見規則維護頁）：
-                「未處理」計算（未勾選的等級若從未被人明確標記過，會顯示「不處理（預設）」，
-                不計入未處理數量；使用者仍可隨時手動「調回未處理」）與下方
-                「未勾選層級的顯示方式」。
-            </p>
             <p class="text-muted small mb-2">
                 <strong>日風險等級</strong>（高／中／低風險日，儀表板與報表的「高風險日」等統計）
                 由批次分析綜合規則、趨勢、關聯訊號算定，是事後不可改寫的證據層——
@@ -103,13 +101,11 @@
             <div class="mb-3 d-none" id="ai-azure-deployment-wrap">
                 <label for="ai-azure-deployment" class="form-label">部署名稱（Deployment Name）</label>
                 <input type="text" class="form-control" id="ai-azure-deployment" placeholder="例如 gpt-4o" />
-                <div class="form-text">Azure OpenAI 建立的模型部署名稱。</div>
             </div>
 
             <div class="mb-3 d-none" id="ai-azure-api-version-wrap">
                 <label for="ai-azure-api-version" class="form-label">API 版本</label>
                 <input type="text" class="form-control" id="ai-azure-api-version" placeholder="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" data-default="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" />
-                <div class="form-text">Azure OpenAI API 版本，預設 @LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion。</div>
             </div>
 
             <div class="mb-2" id="ai-api-key-wrap">
@@ -128,16 +124,16 @@
                 <summary class="fw-semibold">進階設定（逾時／重試／token 上限／取樣）</summary>
                 @* 還原預設值（docs/archive/FEEDBACK-10-PLAN.md §3）：只把欄位填回出廠值，仍需按「儲存」才生效
                    （整頁單一 form 語意，不做偷偷落盤）。放 summary 外側，避免點按鈕誤觸折疊 *@
-                <div class="mt-2">
+                <div class="mt-2 mb-3 d-flex align-items-center gap-2">
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-ai-advanced-reset">
                         <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                         還原預設值
                     </button>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                            data-bs-content="預設值即原本 appsettings 的出廠值，平常不需調整。改動只影響排程／立即執行的批次分析與 Web 互動情境共用的取樣參數；逾時與重試在互動情境另有更短的固定值（避免使用者盯著轉圈）。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
                 </div>
-                <p class="text-muted small mt-2 mb-3">
-                    預設值即原本 appsettings 的出廠值，平常不需調整。改動只影響**排程／立即執行**的批次分析
-                    與 Web 互動情境共用的取樣參數；逾時與重試在互動情境另有更短的固定值（避免使用者盯著轉圈）。
-                </p>
                 <div class="row g-3">
                     <div class="col-md-4">
                         <label for="ai-timeout-seconds" class="form-label">單次呼叫逾時（秒）</label>
@@ -150,8 +146,11 @@
                     </div>
                     <div class="col-md-4">
                         <label for="ai-retry-delay-seconds" class="form-label">首次重試等待（秒）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                                data-bs-content="之後每次重試的等待時間指數遞增（10 → 20 → 40）。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
                         <input type="number" class="form-control" id="ai-retry-delay-seconds" min="0" max="300" />
-                        <div class="form-text">之後指數遞增（10 → 20 → 40）</div>
                     </div>
                     <div class="col-md-4">
                         <label for="ai-json-retry-count" class="form-label">JSON 檢查未過重問次數</label>
@@ -159,8 +158,12 @@
                     </div>
                     <div class="col-md-4">
                         <label for="ai-max-tokens" class="form-label">一般呼叫 token 上限</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                                data-bs-content="上限抓得越緊，退化輸出越快觸頂而被截斷。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
                         <input type="number" class="form-control" id="ai-max-tokens" min="0" max="131072" />
-                        <div class="form-text">0＝不設上限；抓緊可讓退化輸出更快觸頂</div>
+                        <div class="form-text">0＝不設上限</div>
                     </div>
                     <div class="col-md-4">
                         <label for="ai-deep-dive-max-tokens" class="form-label">深入分析 token 上限</label>
@@ -168,8 +171,11 @@
                     </div>
                     <div class="col-md-4">
                         <label for="ai-frequency-penalty" class="form-label">頻率懲罰</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                                data-bs-content="用來抑制反覆重複的退化輸出。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
                         <input type="number" class="form-control" id="ai-frequency-penalty" min="0" max="2" step="0.1" />
-                        <div class="form-text">抑制反覆重複的退化輸出</div>
                     </div>
                     <div class="col-md-4">
                         <label for="ai-presence-penalty" class="form-label">存在懲罰</label>
@@ -258,13 +264,14 @@
     @* 分析參數（§12：自 appsettings 的 Permissions／Analysis／Import 區段遷入）*@
     <div class="lf-card mb-3 d-none" data-panel="analysis">
         <div class="lf-card__header">
-            <h2 class="lf-card__title">分析參數</h2>
+            <h2 class="lf-card__title">分析參數
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="以下分析與掃描參數儲存後，在下一次排程或立即執行時生效。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+            </h2>
         </div>
         <div class="lf-card__body">
-            <p class="text-muted small mb-3">
-                以下分析與掃描參數儲存後，在<strong>下一次排程或立即執行時生效</strong>。
-            </p>
-
             <div class="mb-3">
                 <label for="server-description" class="form-label">伺服器角色描述</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
@@ -291,7 +298,7 @@
                 </button>
                 <textarea class="form-control lf-mono" id="watched-folders" rows="3"
                           placeholder="C:\inetpub\wwwroot&#10;%ProgramFiles%\YourApp"></textarea>
-                <div class="form-text">一行一個路徑；留空＝只監控本站台執行檔目錄。</div>
+                <div class="form-text">留空＝只監控本站台執行檔目錄。</div>
             </div>
 
             <div class="mb-3">
@@ -302,44 +309,43 @@
                 </button>
                 <textarea class="form-control lf-mono" id="analysis-channels" rows="3"
                           placeholder="留空＝預設六頻道"></textarea>
-                <div class="form-text">一行一個頻道全名；留空＝預設六頻道。</div>
             </div>
 
             <details class="mt-3" id="analysis-advanced" data-advanced>
                 <summary class="fw-semibold">進階設定（權限異動欄位對應／匯入上限）</summary>
                 <hr />
-                <h3 class="h6">權限異動自訂欄位對應</h3>
-                <p class="text-muted small mb-3">
-                    事件訊息使用非標準欄位名時才需要設定，留空代表只使用內建的標準欄位名。
-                </p>
+                <h3 class="h6">權限異動自訂欄位對應
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                            data-bs-content="事件訊息使用非標準欄位名時才需要設定；各欄留空代表只使用內建的標準欄位名。操作者帳號對應事件主體區段的帳戶名稱，成員帳號對應成員區段的帳戶名稱，群組名稱與物件名稱各對應其名稱欄位。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                </h3>
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
                         <label for="perm-operator-fields" class="form-label">操作者帳號自訂欄位</label>
                         <textarea class="form-control lf-mono" id="perm-operator-fields" rows="2" placeholder="一行一個欄位名"></textarea>
-                        <div class="form-text">對應主體區段帳戶名稱；留空＝只用內建官方欄位名。</div>
                     </div>
                     <div class="col-md-6">
                         <label for="perm-member-fields" class="form-label">成員帳號自訂欄位</label>
                         <textarea class="form-control lf-mono" id="perm-member-fields" rows="2" placeholder="一行一個欄位名"></textarea>
-                        <div class="form-text">對應成員區段帳戶名稱；留空＝只用內建官方欄位名。</div>
                     </div>
                     <div class="col-md-6">
                         <label for="perm-group-fields" class="form-label">群組名稱自訂欄位</label>
                         <textarea class="form-control lf-mono" id="perm-group-fields" rows="2" placeholder="一行一個欄位名"></textarea>
-                        <div class="form-text">對應群組名稱；留空＝只用內建官方欄位名。</div>
                     </div>
                     <div class="col-md-6">
                         <label for="perm-object-fields" class="form-label">物件名稱自訂欄位</label>
                         <textarea class="form-control lf-mono" id="perm-object-fields" rows="2" placeholder="一行一個欄位名"></textarea>
-                        <div class="form-text">對應物件名稱；留空＝只用內建官方欄位名。</div>
                     </div>
                 </div>
 
                 <hr />
-                <h3 class="h6">匯入上限</h3>
-                <p class="text-muted small mb-3">
-                    CSV 匯入大小與列數限制，每次上傳時即時讀取、<strong>立刻生效</strong>。
-                </p>
+                <h3 class="h6">匯入上限
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                            data-bs-content="CSV 匯入大小與列數限制，每次上傳時即時讀取、立刻生效。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                </h3>
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label for="import-max-file-size-kb" class="form-label">CSV 匯入檔案大小上限（KB）</label>
@@ -425,10 +431,12 @@
 
             <hr />
 
-            <h3 class="h6">測試連線</h3>
-            <p class="text-muted small">
-                用你自己的 AD 帳密，測試以上設定是否能連上並驗證成功（尚未儲存也可以測）。密碼只用於這次測試，不會被儲存。
-            </p>
+            <h3 class="h6">測試連線
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="用你自己的 AD 帳密，測試以上設定是否能連上並驗證成功（尚未儲存也可以測）。密碼只用於這次測試，不會被儲存。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+            </h3>
             <div class="row g-2 align-items-end mb-2">
                 <div class="col-sm-5">
                     <label for="ad-test-account" class="form-label small mb-1">測試帳號</label>
@@ -464,7 +472,6 @@
                 <label for="retention-days" class="form-label">歷史資料保留天數</label>
                 <div class="text-muted small mb-2">
                     刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄與案件。不可小於首次執行回補天數。
-                    （報告全文存在資料庫裡，另有下方的「報告保留天數」。）
                 </div>
                 <input type="number" class="form-control lf-maxw-sm" id="retention-days" min="90" max="3650" required />
             </div>
@@ -512,9 +519,10 @@
             <h3 class="h6">首次執行回補</h3>
             <div class="mb-3">
                 <label for="initial-history-days" class="form-label">首次執行回補天數</label>
-                <div class="text-muted small mb-2">
-                    歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。此設定僅決定首次執行的回溯天數，不會刪除任何資料。
-                </div>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
                 <input type="number" class="form-control lf-maxw-sm" id="initial-history-days" min="90" max="3650" required />
             </div>
             <p class="text-muted small mb-0">
@@ -590,13 +598,14 @@
        版面比照「AD 驗證」區塊（連線設定＋折疊進階＋測試按鈕） *@
     <div class="lf-card mb-3 d-none" data-panel="guard" id="guard">
         <div class="lf-card__header">
-            <h2 class="lf-card__title">資源守門</h2>
+            <h2 class="lf-card__title">資源守門
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="執行期間監看主機資源，緊張時暫停取數，等資源回落再繼續。NetIQ 取數與 PRTG 擷取兩路都受它節制。進階設定的出廠值適用大多數環境；誤判或放行太慢時再調整。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+            </h2>
         </div>
         <div class="lf-card__body">
-            <p class="text-muted small mb-2">
-                執行期間監看主機資源，緊張時暫停取數，等資源回落再繼續。
-                <strong>NetIQ 取數與 PRTG 擷取兩路都受它節制。</strong>
-            </p>
             <p class="small mb-3" id="guard-prtg-hint">
                 資源數據取自 PRTG：需先在
                 <a href="@Url.Content("~/admin/prtg")">PRTG 維護</a> 頁啟用模組並設定連線。
@@ -611,17 +620,18 @@
 
             <details class="mt-3 mb-3" id="guard-advanced" data-advanced>
                 <summary class="fw-semibold">進階設定（CPU／記憶體門檻、檢查與暫停時間）</summary>
-                <p class="text-muted small mt-2 mb-3">出廠值適用大多數環境；誤判或放行太慢時再調整。</p>
-                <div class="row g-3 mb-3">
+                <div class="row g-3 mt-1 mb-3">
                     <div class="col-md-6">
                         <label for="prtg-guard-cpu-percent" class="form-label">CPU 門檻（%）</label>
                         <input type="number" class="form-control" id="prtg-guard-cpu-percent" min="1" max="100" />
-                        <div class="form-text">CPU 使用率達此值算緊張。</div>
                     </div>
                     <div class="col-md-6">
                         <label for="prtg-guard-memory-free-percent" class="form-label">可用記憶體門檻（%）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                                data-bs-content="可用記憶體低於此值算緊張（方向與 CPU 相反）。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
                         <input type="number" class="form-control" id="prtg-guard-memory-free-percent" min="0" max="99" />
-                        <div class="form-text">可用<strong>記憶體</strong>低於此值算緊張（方向與 CPU 相反）。</div>
                     </div>
                 </div>
 
@@ -629,22 +639,19 @@
                     <div class="col-md-3">
                         <label for="prtg-guard-check-seconds" class="form-label">檢查間隔（秒）</label>
                         <input type="number" class="form-control" id="prtg-guard-check-seconds" min="15" max="600" />
-                        <div class="form-text">檢查間隔（秒）。</div>
                     </div>
                     <div class="col-md-3">
                         <label for="prtg-guard-pause-minutes" class="form-label">暫停檢查時間（分鐘）</label>
                         <input type="number" class="form-control" id="prtg-guard-pause-minutes" min="1" max="60" />
-                        <div class="form-text">判定緊張後等待幾分鐘再檢查。</div>
                     </div>
                     <div class="col-md-3">
                         <label for="prtg-guard-strikes" class="form-label">連續超標次數</label>
                         <input type="number" class="form-control" id="prtg-guard-strikes" min="1" max="10" />
-                        <div class="form-text">連續幾次超標才算緊張。</div>
                     </div>
                     <div class="col-md-3">
                         <label for="prtg-guard-max-pause-minutes" class="form-label">累計暫停上限（分鐘）</label>
                         <input type="number" class="form-control" id="prtg-guard-max-pause-minutes" min="10" max="600" />
-                        <div class="form-text">單趟累計暫停上限；超過後放行並警告，避免門檻設錯造成整晚空轉。</div>
+                        <div class="form-text">超過後放行並警告，避免門檻設錯造成整晚空轉。</div>
                     </div>
                 </div>
 
@@ -656,7 +663,7 @@
                 <textarea class="form-control lf-mono" id="prtg-guard-sensor-objids" rows="4"
                           placeholder="1001&#10;1002"></textarea>
                 <div class="form-text">
-                    覆寫清單，一行一個 objid；留空＝自動偵測。
+                    一行一個 objid；留空＝自動偵測。
                     鏡像尚未同步過時自動偵測會落空，這時用「自動偵測並填入」直接查 PRTG 取得 objid。
                 </div>
             </div>
@@ -837,10 +844,12 @@
 
             <hr />
 
-            <h3 class="h6">測試寄信</h3>
-            <p class="text-muted small">
-                用上方表單目前填的值試寄一封信（尚未儲存也可以測）；密碼欄留空時 fallback 已儲存的密碼。
-            </p>
+            <h3 class="h6">測試寄信
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="用上方表單目前填的值試寄一封信（尚未儲存也可以測）；密碼欄留空時沿用已儲存的密碼。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+            </h3>
             <div class="d-flex align-items-center gap-2 mb-2">
                 <button type="button" class="btn btn-sm btn-outline-primary" id="mail-test-btn">測試寄信</button>
             </div>
@@ -876,13 +885,14 @@
        伺服器端渲染，存檔後重新整理即生效 *@
     <div class="lf-card mb-3 d-none" data-panel="brand">
         <div class="lf-card__header">
-            <h2 class="lf-card__title">外觀</h2>
+            <h2 class="lf-card__title">外觀
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="套用於左側選單頂端與登入頁。改動存檔後重新整理頁面即可看到。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+            </h2>
         </div>
         <div class="lf-card__body">
-            <p class="text-muted small mb-3">
-                套用於左側選單頂端與登入頁。改動存檔後<strong>重新整理頁面</strong>即可看到。
-            </p>
-
             <div class="row g-3">
                 <div class="col-md-6">
                     <label for="brand-name" class="form-label">主標題</label>
@@ -891,8 +901,12 @@
                 </div>
                 <div class="col-md-6">
                     <label for="brand-subtitle" class="form-label">副標題</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                            data-bs-content="副標題比主標題短時自動撐開字距左右對齊，較長時靠左對齊。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
                     <input type="text" class="form-control" id="brand-subtitle" maxlength="40" placeholder="事件日誌預警" />
-                    <div class="form-text">留空＝不顯示副標題，只留主標題。副標題比主標題短時自動撐開字距左右對齊，較長時靠左對齊。</div>
+                    <div class="form-text">留空＝不顯示副標題，只留主標題。</div>
                 </div>
 
                 <div class="col-12">
