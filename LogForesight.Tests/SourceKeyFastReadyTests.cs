@@ -173,7 +173,7 @@ public sealed class SourceKeyFastReadyTests : IDisposable
         ctx.RiskyEvents.Add(new RiskyEventRow
         {
             HostId = 1, Date = Date, LogName = "System", Source = "Disk", SourceKey = sourceKey, EventId = 1,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, EventTime = Date, Message = "m", CreatedAt = Date
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, EventTime = Date, Message = "m", CreatedAt = Date
         });
         ctx.SaveChanges();
     }

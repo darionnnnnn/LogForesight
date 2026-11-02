@@ -845,7 +845,7 @@ public class TopIssueRow
     /// <summary>完整簽章的第一段——與 <see cref="EntryType"/> 一起才能組回 IssueSignatureKey 去 join 處理狀態</summary>
     public string LogName { get; set; } = string.Empty;
 
-    /// <summary>完整簽章的第四段（<see cref="System.Diagnostics.EventLogEntryType"/> 的整數值）</summary>
+    /// <summary>完整簽章的第四段（<see cref="LogForesight.Core.Models.LogEntryType"/> 的整數值）</summary>
     public int EntryType { get; set; }
 
     /// <summary>命中規則表時的已知問題說明（latest 快照，同一 RecordId 內只有一個值）——
@@ -872,7 +872,7 @@ public class RiskyEventRow
     /// <summary>依 WorkOrderIssueKey.SourceKeyOf 寫入；舊列在背景回填完成前為 null。</summary>
     public string? SourceKey { get; set; }
     public int EventId { get; set; }
-    public EventLogEntryType EntryType { get; set; }
+    public LogEntryType EntryType { get; set; }
     public DateTime EventTime { get; set; }
     public string Message { get; set; } = string.Empty;
     /// <summary>Bounded SourceEvidence JSON captured before message truncation.</summary>

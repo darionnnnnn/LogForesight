@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using LogForesight.Web.Auth;
 using Xunit;
 
@@ -10,6 +11,7 @@ namespace LogForesight.Tests;
 /// 不觸發任何實際網路連線——用空密碼讓 LdapCredentialVerifier 在碰網路前就短路回傳，
 /// 藉此證明「確實進了 AD 路徑」而非委派給 fallback。
 /// </summary>
+[SupportedOSPlatform("windows")]
 public class DynamicAuthenticationProviderTests
 {
     private readonly FakeSystemSettingsStore _store = new();
@@ -17,7 +19,7 @@ public class DynamicAuthenticationProviderTests
 
     private DynamicAuthenticationProvider Create() => new(_store, _fallback);
 
-    [Fact]
+    [WindowsFact]
     public void AD停用時_Verify委派給fallback()
     {
         _store.Update(s => s.AdAuthEnabled = false);
@@ -29,7 +31,7 @@ public class DynamicAuthenticationProviderTests
         Assert.Same(_fallback.ResultToReturn, result);
     }
 
-    [Fact]
+    [WindowsFact]
     public void AD啟用但伺服器清單為空時_Verify委派給fallback()
     {
         _store.Update(s => { s.AdAuthEnabled = true; s.AdServers = new List<string>(); });
@@ -40,7 +42,7 @@ public class DynamicAuthenticationProviderTests
         Assert.Equal(1, _fallback.VerifyCalls);
     }
 
-    [Fact]
+    [WindowsFact]
     public void AD啟用且伺服器非空時_Verify不委派給fallback_改走AD路徑()
     {
         _store.Update(s =>
@@ -59,7 +61,7 @@ public class DynamicAuthenticationProviderTests
         Assert.Equal("密碼為空", result.FailureReason);
     }
 
-    [Fact]
+    [WindowsFact]
     public void RequiresPassword_AD停用時委派給fallback()
     {
         _fallback.RequiresPasswordValue = false;
@@ -68,7 +70,7 @@ public class DynamicAuthenticationProviderTests
         Assert.False(Create().RequiresPassword);
     }
 
-    [Fact]
+    [WindowsFact]
     public void RequiresPassword_AD啟用且有伺服器時一律true_不論fallback為何()
     {
         _fallback.RequiresPasswordValue = false;   // 即使底層 fallback 是 Stub（不驗密碼）
@@ -81,7 +83,7 @@ public class DynamicAuthenticationProviderTests
         Assert.True(Create().RequiresPassword);
     }
 
-    [Fact]
+    [WindowsFact]
     public void RequiresPassword_AD啟用但伺服器清單為空時委派給fallback()
     {
         _fallback.RequiresPasswordValue = false;
@@ -90,7 +92,7 @@ public class DynamicAuthenticationProviderTests
         Assert.False(Create().RequiresPassword);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Name_反映目前生效的驗證方式()
     {
         _fallback.NameValue = "Stub";
@@ -106,7 +108,7 @@ public class DynamicAuthenticationProviderTests
     }
 
     /// <summary>設定變更即生效（S8 快照重建），不必重啟站台——關掉 AD 後下一次 Verify 立刻改走 fallback</summary>
-    [Fact]
+    [WindowsFact]
     public void 設定關閉後下一次呼叫立刻改走fallback_不必重建Provider()
     {
         _store.Update(s =>

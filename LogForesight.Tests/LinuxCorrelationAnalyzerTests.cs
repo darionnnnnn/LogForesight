@@ -16,7 +16,7 @@ public class LinuxCorrelationAnalyzerTests
         LogName = LogAggregator.LinuxLogName,
         Source = "sshd",
         EventId = 0,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         Message = message
     };
 

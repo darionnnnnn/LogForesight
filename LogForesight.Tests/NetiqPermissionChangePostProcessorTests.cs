@@ -136,7 +136,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
                 Source = "Microsoft-Windows-Security-Auditing",
                 LogName = "Security",
                 TimeGenerated = eventTime,
-                EntryType = EventLogEntryType.Information,
+                EntryType = LogEntryType.Information,
                 Message = "已將成員新增到安全性通用群組。\r\n群組名稱:\tEnterprise Admins\r\n成員名稱:\tCONTOSO\\AdminUser"
             }
         };
@@ -177,7 +177,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
                 Source = "Microsoft-Windows-Security-Auditing",
                 LogName = "Security",
                 TimeGenerated = eventTime,
-                EntryType = EventLogEntryType.Information,
+                EntryType = LogEntryType.Information,
                 Message = longMessage
             }
         };
@@ -208,7 +208,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
                 Source = "Microsoft-Windows-Security-Auditing",
                 LogName = "Security",
                 TimeGenerated = new DateTime(2026, 8, 19, 11, 0, 0),
-                EntryType = EventLogEntryType.Information,
+                EntryType = LogEntryType.Information,
                 Message = "A member was added to a security-enabled universal group.\nGroup Name: Domain Admins\nMember Name: user1"
             }
         };

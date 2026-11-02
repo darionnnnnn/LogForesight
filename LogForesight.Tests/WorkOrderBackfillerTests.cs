@@ -220,11 +220,11 @@ public class WorkOrderBackfillerTests : IDisposable
     [Fact]
     public void LastReplyAt_處理歷程SourceUnicode大小寫異體仍命中但EventKey仍區分()
     {
-        var candidateKey = IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error);
-        var logKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
+        var candidateKey = IssueSignatureKey.For("System", "ſ", 153, LogForesight.Core.Models.LogEntryType.Error);
+        var logKey = IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error);
         AddLegacyCase("unicode", "SRV-UNICODE", candidateKey, 1);
         AppendLog(1, logKey, HandlingActions.IssueStatus, Base.AddHours(2));
-        AppendLog(1, IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error, "other-rule"),
+        AppendLog(1, IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error, "other-rule"),
             HandlingActions.IssueStatus, Base.AddHours(3));
 
         Backfiller().Run(CancellationToken.None);

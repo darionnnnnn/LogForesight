@@ -214,7 +214,7 @@ public class WorkOrderOutboxTests : IDisposable
             Headline = host.HostName,
             TopIssues = new List<LogIssueSignature>
             {
-                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error, Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other }
+                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error, Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other }
             }
         });
 
@@ -294,8 +294,8 @@ public class WorkOrderOutboxTests : IDisposable
             Headline = host.HostName,
             TopIssues = new List<LogIssueSignature>
             {
-                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error, Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other },
-                new() { LogName = "System", Source = "ntfs", EventId = 55, EntryType = EventLogEntryType.Error, Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other }
+                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error, Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other },
+                new() { LogName = "System", Source = "ntfs", EventId = 55, EntryType = LogEntryType.Error, Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other }
             }
         });
 

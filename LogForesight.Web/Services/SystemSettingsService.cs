@@ -754,8 +754,16 @@ public class SystemSettingsService : ISystemSettingsService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-    [SupportedOSPlatform("windows")]
     public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new DomainException(ApiErrorCodes.PlatformUnsupported, LdapCredentialVerifier.UnsupportedPlatformMessage);
+
+        return TestAdConnectionWindows(request);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private TestAdConnectionResultDto TestAdConnectionWindows(TestAdConnectionRequest request)
     {
         var servers = NormalizeAdServers(request.Servers);
         if (servers.Count == 0)

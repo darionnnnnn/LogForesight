@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// SentinelFieldMap.MapEntryType：sev/xdasOutcome → EventLogEntryType 的推導
+/// SentinelFieldMap.MapEntryType：sev/xdasOutcome → LogEntryType 的推導
 /// （docs/NETIQ-API-REFERENCE.md §4，三輪 --netiq-probe 真實輸出實證的部分見各測試註解）。
 /// </summary>
 public class SentinelFieldMapTests
@@ -15,7 +15,7 @@ public class SentinelFieldMapTests
         // 第二、三輪 probe 實證：4624/4776 等成功事件 xdasoutcome=0、XDAS_OUT_SUCCESS
         var type = SentinelFieldMap.MapEntryType("Security", severity: 0, xdasOutcome: 0);
 
-        Assert.Equal(EventLogEntryType.SuccessAudit, type);
+        Assert.Equal(LogEntryType.SuccessAudit, type);
     }
 
     [Theory]
@@ -26,7 +26,7 @@ public class SentinelFieldMapTests
         // 第三輪 probe 實證：4771 Kerberos 預先驗證失敗 xdasoutcome=1、XDAS_OUT_INVALID_INPUT
         var type = SentinelFieldMap.MapEntryType("Security", severity: 4, xdasOutcome: xdasOutcome);
 
-        Assert.Equal(EventLogEntryType.FailureAudit, type);
+        Assert.Equal(LogEntryType.FailureAudit, type);
     }
 
     [Fact]
@@ -34,7 +34,7 @@ public class SentinelFieldMapTests
     {
         var type = SentinelFieldMap.MapEntryType("Security", severity: 0, xdasOutcome: null);
 
-        Assert.Equal(EventLogEntryType.FailureAudit, type);
+        Assert.Equal(LogEntryType.FailureAudit, type);
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class SentinelFieldMapTests
         // Application 頻道 Security-SPP 通知 sev=1
         var type = SentinelFieldMap.MapEntryType("System", severity: 1, xdasOutcome: null);
 
-        Assert.Equal(EventLogEntryType.Information, type);
+        Assert.Equal(LogEntryType.Information, type);
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public class SentinelFieldMapTests
     {
         var type = SentinelFieldMap.MapEntryType("Application", severity: 4, xdasOutcome: null);
 
-        Assert.Equal(EventLogEntryType.Error, type);
+        Assert.Equal(LogEntryType.Error, type);
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public class SentinelFieldMapTests
     {
         var type = SentinelFieldMap.MapEntryType("system", severity: 0, xdasOutcome: 0);
 
-        Assert.Equal(EventLogEntryType.Information, type);
+        Assert.Equal(LogEntryType.Information, type);
     }
 
     [Fact]
@@ -68,19 +68,19 @@ public class SentinelFieldMapTests
     {
         var type = SentinelFieldMap.MapEntryType("SECURITY", severity: 0, xdasOutcome: 0);
 
-        Assert.Equal(EventLogEntryType.SuccessAudit, type);
+        Assert.Equal(LogEntryType.SuccessAudit, type);
     }
 
     // ── Linux（docs/archive/FEEDBACK-12-PLAN.md §4.4，輪 B 第 3/4 項定案）──────────────
 
     [Theory]
-    [InlineData(0, EventLogEntryType.Information)]
-    [InlineData(1, EventLogEntryType.Information)]
-    [InlineData(2, EventLogEntryType.Warning)]
-    [InlineData(3, EventLogEntryType.Error)]
-    [InlineData(4, EventLogEntryType.Error)]
-    [InlineData(5, EventLogEntryType.Error)]
-    public void MapEntryTypeLinux_sev對應EntryType(int severity, EventLogEntryType expected)
+    [InlineData(0, LogEntryType.Information)]
+    [InlineData(1, LogEntryType.Information)]
+    [InlineData(2, LogEntryType.Warning)]
+    [InlineData(3, LogEntryType.Error)]
+    [InlineData(4, LogEntryType.Error)]
+    [InlineData(5, LogEntryType.Error)]
+    public void MapEntryTypeLinux_sev對應EntryType(int severity, LogEntryType expected)
     {
         // 輪 B 實測分佈：sev0=1.87M/sev1=7.67M/sev2=8/sev3~5=2.4k（全站/24h）——
         // 這個對應是計數用途的務實選擇，不是 syslog priority 語意還原（NetworkManager 的
@@ -93,6 +93,6 @@ public class SentinelFieldMapTests
     {
         // 與 Windows 版 MapEntryType 的關鍵差異：Linux 沒有 Security 特例（xdasoutcome 不存在），
         // 純粹依 sev 分段，函數簽章上也刻意不收頻道名參數
-        Assert.Equal(EventLogEntryType.Error, SentinelFieldMap.MapEntryTypeLinux(5));
+        Assert.Equal(LogEntryType.Error, SentinelFieldMap.MapEntryTypeLinux(5));
     }
 }

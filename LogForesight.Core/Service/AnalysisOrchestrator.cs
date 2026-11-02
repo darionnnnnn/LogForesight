@@ -451,6 +451,10 @@ public class AnalysisOrchestrator
                 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
                 runConsole.WriteLine($"\n檢查權限異動（監控 {permissionMonitor.WatchedFolders.Count} 個資料夾 + 本機 Administrators 群組）...");
                 var permissionCheck = permissionMonitor.Check();
+                if (permissionCheck.PlatformUnsupported)
+                {
+                    runConsole.WriteLine($"  · {PermissionMonitorService.UnsupportedPlatformMessage}");
+                }
                 if (permissionCheck.Alerts.Count > 0)
                 {
                     runConsole.WriteLine("  ╔══════════════════════════════════════════════════╗");
@@ -936,7 +940,12 @@ public class AnalysisOrchestrator
                 {
                     warningsPrinted = true;
 
-                    if (scanResult.SecurityAvailable == false)
+                    if (scanResult.PlatformUnsupported)
+                    {
+                        // 非 Windows：整趟只輸出這一行，不再逐頻道報「無法讀取／存取被拒」
+                        console.WriteLine($"  · {EventLogService.UnsupportedPlatformReason}");
+                    }
+                    else if (scanResult.SecurityAvailable == false)
                     {
                         console.WriteLine("  ⚠ Security log 本次無法讀取（需系統管理員權限），入侵跡象相關偵測將標記為未檢查。");
                     }
@@ -946,7 +955,7 @@ public class AnalysisOrchestrator
                     {
                         console.WriteLine($"  · 下列頻道在本機不存在（未安裝對應角色，相關偵測不適用）：{string.Join("、", missingChannels)}");
                     }
-                    var deniedChannels = scanResult.ChannelsDenied.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
+                    var deniedChannels = scanResult.PlatformUnsupported ? new List<string>() : scanResult.ChannelsDenied.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
                     if (deniedChannels.Count > 0)
                     {
                         console.WriteLine($"  ⚠ 下列頻道存取被拒（需系統管理員權限，屬偵測盲區）：{string.Join("、", deniedChannels)}");

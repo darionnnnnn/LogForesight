@@ -91,7 +91,7 @@ public class RiskyEventSelectorTests
             .Select(i => new EventLogEntryData
             {
                 TimeGenerated = Date.AddMinutes(i),
-                EntryType = EventLogEntryType.Error,
+                EntryType = LogEntryType.Error,
                 LogName = sig.LogName,
                 Source = sig.Source,
                 EventId = sig.EventId,
@@ -129,7 +129,7 @@ public class RiskyEventSelectorTests
             new()
             {
                 TimeGenerated = Date,
-                EntryType = EventLogEntryType.Error,
+                EntryType = LogEntryType.Error,
                 LogName = sig.LogName,
                 Source = sig.Source,
                 EventId = sig.EventId,
@@ -242,7 +242,7 @@ public class RiskyEventSelectorTests
             .Select(i => new EventLogEntryData
             {
                 TimeGenerated = Date.AddMinutes(i),
-                EntryType = EventLogEntryType.Error,
+                EntryType = LogEntryType.Error,
                 LogName = sig.LogName,
                 Source = sig.Source,
                 EventId = sig.EventId,
@@ -299,7 +299,7 @@ public class RiskyEventSelectorTests
             LogName = logName,
             Source = source,
             EventId = eventId,
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             Count = count,
             Severity = severity,
             RuleId = ruleId,

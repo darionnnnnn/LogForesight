@@ -191,7 +191,7 @@ public class SlowTrendAnalyzerTests
         LogName = "System",
         Source = "disk",
         EventId = 153,
-        EntryType = System.Diagnostics.EventLogEntryType.Error,
+        EntryType = LogForesight.Core.Models.LogEntryType.Error,
         Count = count,
         Severity = IssueSeverity.Critical,
         Category = IssueCategory.Storage,
@@ -208,7 +208,7 @@ public class SlowTrendAnalyzerTests
             new()
             {
                 LogName = "System", Source = "disk", EventId = 153,
-                EntryType = System.Diagnostics.EventLogEntryType.Error,
+                EntryType = LogForesight.Core.Models.LogEntryType.Error,
                 Count = count, Severity = IssueSeverity.Critical, Category = IssueCategory.Storage,
                 FirstSeen = "00:00", LastSeen = "23:59"
             }

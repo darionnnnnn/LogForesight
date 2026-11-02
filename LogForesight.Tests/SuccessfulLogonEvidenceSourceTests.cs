@@ -112,8 +112,8 @@ public sealed class SuccessfulLogonEvidenceSourceTests : IDisposable
     private static EventLogEntryData Logon(DateTime time, string logName, int eventId, string message) => new()
     {
         TimeGenerated = time,
-        EntryType = eventId == 4625 ? EventLogEntryType.FailureAudit
-            : eventId == 4624 ? EventLogEntryType.SuccessAudit : EventLogEntryType.Information,
+        EntryType = eventId == 4625 ? LogEntryType.FailureAudit
+            : eventId == 4624 ? LogEntryType.SuccessAudit : LogEntryType.Information,
         LogName = logName,
         Source = logName == "Security" ? "Microsoft-Windows-Security-Auditing" : logName,
         EventId = eventId,

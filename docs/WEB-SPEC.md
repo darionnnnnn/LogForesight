@@ -527,6 +527,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `server_error` | 500 | 未預期例外 |
   | `service_unavailable` | 503 | 升級遷移進行中，寫入暫停 |
   | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
+  | `platform_unsupported` | 501 | 本平台不支援該功能（非 Windows 的 AD 連線測試等 Windows 專屬能力） |
   | `netiq_attempt_ledger_invalid` | 409 | NetIQ 最近執行狀態資料不完整或損毀，補跑範圍預覽無法準確計算 |
 
   PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——

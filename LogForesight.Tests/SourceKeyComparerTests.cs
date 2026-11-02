@@ -89,11 +89,11 @@ public sealed class SourceKeyComparerTests
         var coordinator = new IssueCaseCoordinator(cases, handlings, logs, records, hosts, profiles);
         var first = new LogIssueSignature
         {
-            LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error
+            LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error
         };
         var second = new LogIssueSignature
         {
-            LogName = "Application", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error
+            LogName = "Application", Source = "disk", EventId = 153, EntryType = LogEntryType.Error
         };
 
         var firstKey = IssueSignatureKey.For(first);

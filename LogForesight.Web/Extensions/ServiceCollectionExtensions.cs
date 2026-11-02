@@ -25,6 +25,23 @@ namespace LogForesight.Web.Extensions;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    /// <summary>
+    /// 驗證方式的選擇點：AD 動態設定（LDAP／AccountManagement）只在 Windows 可用，
+    /// 非 Windows 直接用 fallback，不建立 <see cref="DynamicAuthenticationProvider"/>。
+    /// <paramref name="isWindows"/> 可注入，讓非 Windows 分支能在 Windows 上測。
+    /// </summary>
+    internal static IAuthenticationProvider SelectAuthenticationProvider(
+        ISystemSettingsStore settings, IAuthenticationProvider fallback, Func<bool> isWindows)
+    {
+        // 注入的委派分析器看不懂，故同時以 OperatingSystem.IsWindows() 讓 CA1416 通過。
+        if (!isWindows() || !OperatingSystem.IsWindows())
+        {
+            return fallback;
+        }
+
+        return new DynamicAuthenticationProvider(settings, fallback);
+    }
+
     /// <summary>Core 的儲存後端。依 Storage.Type 建立，Web 的其他部分對後端無感知</summary>
     public static IServiceCollection AddStorage(this IServiceCollection services, WebAppSettings settings)
     {
@@ -152,7 +169,7 @@ public static class ServiceCollectionExtensions
                     $"未知的 Auth:Provider「{settings.Auth.Provider}」，可用值為 Ad 或 Stub。")
             };
 
-            return new DynamicAuthenticationProvider(sp.GetRequiredService<ISystemSettingsStore>(), fallback);
+            return SelectAuthenticationProvider(sp.GetRequiredService<ISystemSettingsStore>(), fallback, OperatingSystem.IsWindows);
         });
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

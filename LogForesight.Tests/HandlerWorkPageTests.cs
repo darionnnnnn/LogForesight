@@ -208,7 +208,7 @@ public class HandlerWorkPageTests : IDisposable
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private static LogIssueSignature Signature(int eventId) =>
-        new() { LogName = "System", Source = Source, EventId = eventId, EntryType = EventLogEntryType.Error };
+        new() { LogName = "System", Source = Source, EventId = eventId, EntryType = LogEntryType.Error };
 
     private WorkOrderReplyController Controller(WebUser user) =>
         new(new WorkOrderReplyService(_coordinator, _orders, _cases, FakeCurrentUser.ForUser(user.UserId, Capability.Handle), _audit, _mail));

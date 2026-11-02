@@ -84,7 +84,7 @@ public sealed class ColumnClampTests : IDisposable
             new()
             {
                 HostId = 1, Date = Date, LogName = "System", Source = "src", EventId = 1,
-                EntryType = System.Diagnostics.EventLogEntryType.Error, EventTime = Date, Message = "m",
+                EntryType = LogForesight.Core.Models.LogEntryType.Error, EventTime = Date, Message = "m",
                 RuleId = new string('r', max + 10), CreatedAt = Date
             }
         });

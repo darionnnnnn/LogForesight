@@ -90,7 +90,7 @@ public static class PrtgFindingMapper
             LogName = PrtgLogName,
             Source = $"PRTG:{identityRuleCode}",
             EventId = 0,
-            EntryType = EventLogEntryType.Warning,
+            EntryType = LogEntryType.Warning,
             EventKey = $"prtg:{identityRuleCode}:{targetObjid}",
             Count = 1,
             FirstSeen = "00:00",

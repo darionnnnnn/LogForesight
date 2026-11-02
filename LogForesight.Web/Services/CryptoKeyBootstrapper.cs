@@ -169,10 +169,25 @@ public static class CryptoKeyBootstrapper
         }
     }
 
-    /// <summary>Windows 上把金鑰檔 ACL 限縮為「目前執行身分＋Administrators 完全控制、移除繼承」；失敗只 Warn。</summary>
+    /// <summary>
+    /// Windows 上把金鑰檔 ACL 限縮為「目前執行身分＋Administrators 完全控制、移除繼承」；
+    /// 非 Windows（macOS／Linux）改設檔案模式 600（僅擁有者可讀寫）。失敗只 Warn。
+    /// </summary>
     private static void RestrictAcl(string path)
     {
-        if (!OperatingSystem.IsWindows()) return;
+        if (!OperatingSystem.IsWindows())
+        {
+            try
+            {
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "[Crypto] 無法將金鑰檔 {0} 的檔案模式設為 600（不影響運作，建議手動 chmod 600）。", path);
+            }
+            return;
+        }
+
         try
         {
             var security = new FileSecurity();

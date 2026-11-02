@@ -24,8 +24,8 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
     {
         const string host = "SRV-K";
         var day = DateTime.Today;
-        var oldKey = IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error);
-        var requestedKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
+        var oldKey = IssueSignatureKey.For("System", "ſ", 153, LogForesight.Core.Models.LogEntryType.Error);
+        var requestedKey = IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error);
 
         using (var ctx = _fixture.NewContext())
         {
@@ -70,7 +70,7 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
     public void IssueHandlingStore_可見主機粗篩不擴大讀取範圍()
     {
         var day = DateTime.Today;
-        var key = IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error);
+        var key = IssueSignatureKey.For("System", "ſ", 153, LogForesight.Core.Models.LogEntryType.Error);
         using (var ctx = _fixture.NewContext())
         {
             ctx.IssueHandlings.AddRange(
@@ -80,7 +80,7 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
         }
 
         var result = new EfIssueHandlingStore(_fixture.NewContext)
-            .GetLatestNote(IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error),
+            .GetLatestNote(IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error),
                 new[] { HostNameKey.Of("SRV-VISIBLE") });
 
         Assert.NotNull(result);
@@ -92,8 +92,8 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
     public void IssueCaseStore_命中Unicode大小寫legacy案件且IssueKeysOnHost使用同一comparer()
     {
         const string host = "SRV-K";
-        var oldKey = IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error);
-        var requestedKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
+        var oldKey = IssueSignatureKey.For("System", "ſ", 153, LogForesight.Core.Models.LogEntryType.Error);
+        var requestedKey = IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error);
         using (var ctx = _fixture.NewContext())
         {
             ctx.IssueCases.Add(new IssueCaseRow
@@ -120,14 +120,14 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
     {
         const int noiseRows = 5000;
         var day = DateTime.Today;
-        var requestedKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
-        var legacyKey = IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error);
+        var requestedKey = IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error);
+        var legacyKey = IssueSignatureKey.For("System", "ſ", 153, LogForesight.Core.Models.LogEntryType.Error);
 
         using (var ctx = _fixture.NewContext())
         {
             var rows = Enumerable.Range(0, noiseRows)
                 .Select(i => NewHandlingRow(
-                    $"SRV-N-{i:D4}", day, IssueSignatureKey.For("System", $"noise-{i}", 153, System.Diagnostics.EventLogEntryType.Error),
+                    $"SRV-N-{i:D4}", day, IssueSignatureKey.For("System", $"noise-{i}", 153, LogForesight.Core.Models.LogEntryType.Error),
                     $"noise-{i}", day.AddMinutes(i)))
                 .ToList();
             rows.Add(NewHandlingRow("SRV-MATCH", day, legacyKey, "legacy answer", day.AddDays(2)));
@@ -157,8 +157,8 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
                 var backend = new StorageBackend(
                     new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={dbPath}" }, dir);
                 var day = DateTime.Today;
-                var oldKey = IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error);
-                var newerKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
+                var oldKey = IssueSignatureKey.For("System", "ſ", 153, LogForesight.Core.Models.LogEntryType.Error);
+                var newerKey = IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error);
                 backend.Blob("issue_handling").Mutate<object?>(_ =>
                     (JsonSerializer.Serialize(new List<IssueHandling>
                     {
@@ -177,7 +177,7 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
 
             var row = Assert.Single(backend.IssueHandlingStore().GetForDay("SRV-M", DateTime.Today));
             Assert.Equal(IssueHandlingStatuses.Observing, row.Status);
-            Assert.Equal(IssueSignatureKey.For("System", "ſ", 153, System.Diagnostics.EventLogEntryType.Error), row.IssueKey);
+            Assert.Equal(IssueSignatureKey.For("System", "ſ", 153, LogForesight.Core.Models.LogEntryType.Error), row.IssueKey);
             Assert.Equal(1, backend.HandlingMigrator.State.IssueHandlingRows);
         }
         finally
@@ -191,8 +191,8 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
     public void GetLatestNote_1201筆不相符加最舊一筆相符_跨批命中()
     {
         var day = DateTime.Today;
-        var matchKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
-        var otherKey = IssueSignatureKey.For("System", "Other", 7, System.Diagnostics.EventLogEntryType.Error);
+        var matchKey = IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error);
+        var otherKey = IssueSignatureKey.For("System", "Other", 7, LogForesight.Core.Models.LogEntryType.Error);
         using (var ctx = _fixture.NewContext())
         {
             ctx.IssueHandlings.Add(NewHandlingRow("SRV-OLD", day, matchKey, "oldest match", day.AddDays(-30)));
@@ -212,8 +212,8 @@ public sealed class SqlIssueSignatureStorageTests : IDisposable
     public void GetLatestNote_同UpdatedAt六百筆_批次邊界不漏不重()
     {
         var day = DateTime.Today;
-        var matchKey = IssueSignatureKey.For("System", "S", 153, System.Diagnostics.EventLogEntryType.Error);
-        var otherKey = IssueSignatureKey.For("System", "Other", 7, System.Diagnostics.EventLogEntryType.Error);
+        var matchKey = IssueSignatureKey.For("System", "S", 153, LogForesight.Core.Models.LogEntryType.Error);
+        var otherKey = IssueSignatureKey.For("System", "Other", 7, LogForesight.Core.Models.LogEntryType.Error);
         var same = day.AddHours(5);
         using (var ctx = _fixture.NewContext())
         {

@@ -18,7 +18,7 @@ public class WorkOrderQueryServiceTests
 {
     private const string Source = "disk";
     private const int EventId = 153;
-    private static readonly string IssueKey = IssueSignatureKey.For("System", Source, EventId, EventLogEntryType.Error);
+    private static readonly string IssueKey = IssueSignatureKey.For("System", Source, EventId, LogEntryType.Error);
     private static readonly DateTime D2 = DateTime.Today.AddDays(-2);
 
     private readonly FakeHostStore _hosts = new();
@@ -113,7 +113,7 @@ public class WorkOrderQueryServiceTests
     private IssueCase AddPrtgMember(long orderId, string host, string code, string sensor, DateTime? closed = null)
     {
         if (_hosts.FindByName(host) == null) _hosts.Upsert(new WebHost { HostName = host });
-        var issueKey = IssueSignatureKey.For("PRTG", $"PRTG:{code}", 0, EventLogEntryType.Warning,
+        var issueKey = IssueSignatureKey.For("PRTG", $"PRTG:{code}", 0, LogEntryType.Warning,
             $"prtg:{code}:{sensor}");
         var c = new IssueCase
         {
@@ -299,7 +299,7 @@ public class WorkOrderQueryServiceTests
         {
             HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-1),
             TopIssues = new() { new LogIssueSignature { LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
-                EntryType = EventLogEntryType.Warning, EventKey = "prtg:disk_free_trend:123", SampleMessages = new() { sample } } }
+                EntryType = LogEntryType.Warning, EventKey = "prtg:disk_free_trend:123", SampleMessages = new() { sample } } }
         });
         var otherHost = _hosts.Upsert(new WebHost { HostName = "HOST-OTHER" });
         _records.Add(new DailyAnalysisRecord
@@ -378,7 +378,7 @@ public class WorkOrderQueryServiceTests
             TopIssues = new() { new LogIssueSignature
             {
                 LogName = "PRTG", Source = "PRTG:warning", EventId = 0,
-                EntryType = EventLogEntryType.Warning, EventKey = "prtg:disk_free_trend:123",
+                EntryType = LogEntryType.Warning, EventKey = "prtg:disk_free_trend:123",
                 SampleMessages = new() { "must not attach" }
             } }
         });
@@ -678,7 +678,7 @@ public class WorkOrderQueryServiceTests
             _records.Add(new DailyAnalysisRecord
             {
                 Date = D2, HostId = host.HostId, Host = h,
-                TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = Source, EventId = EventId, EntryType = EventLogEntryType.Error } }
+                TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = Source, EventId = EventId, EntryType = LogEntryType.Error } }
             });
         }
         var t0 = DateTime.Today.AddHours(8);

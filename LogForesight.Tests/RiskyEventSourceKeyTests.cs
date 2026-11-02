@@ -136,7 +136,7 @@ public sealed class RiskyEventSourceKeyTests : IDisposable
         LogName = "System",
         Source = source,
         EventId = eventId,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         EventTime = date,
         Message = message,
         CreatedAt = date
@@ -151,7 +151,7 @@ public sealed class RiskyEventSourceKeyTests : IDisposable
         Source = source,
         SourceKey = sourceKey,
         EventId = eventId,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         EventTime = date,
         Message = message,
         CreatedAt = date

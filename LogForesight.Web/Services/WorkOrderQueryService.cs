@@ -419,7 +419,7 @@ public class WorkOrderQueryService
         var signature = IssueSignatureKey.TryParseFull(issueKey);
         if (signature == null
             || !string.Equals(signature.Value.LogName, PrtgFindingMapper.PrtgLogName, StringComparison.OrdinalIgnoreCase)
-            || signature.Value.EventId != 0 || signature.Value.EntryType != EventLogEntryType.Warning
+            || signature.Value.EventId != 0 || signature.Value.EntryType != LogEntryType.Warning
             || !string.Equals(signature.Value.Source, $"PRTG:{expectedCode}", StringComparison.OrdinalIgnoreCase)) return false;
 
         var parts = signature.Value.EventKey.Split(':');

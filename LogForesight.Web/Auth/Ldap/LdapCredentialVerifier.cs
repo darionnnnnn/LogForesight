@@ -11,8 +11,15 @@ internal static class LdapCredentialVerifier
 {
     private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
+    /// <summary>非 Windows 平台 AD 驗證／連線測試的固定說明。</summary>
+    internal const string UnsupportedPlatformMessage = "此平台不支援 AD 連線測試";
+
     public static CredentialCheckResult Verify(LdapService ldap, string account, string? password)
     {
+        // 非 Windows 無 AD 驗證能力（LdapService 為 Windows 專屬）；正常情況呼叫端已在選擇驗證方式時避開，這裡是最後防線。
+        if (!OperatingSystem.IsWindows())
+            return CredentialCheckResult.Fail(UnsupportedPlatformMessage);
+
         // AD 不接受空密碼驗證：某些 AD 設定下空密碼的 bind 會「成功」（匿名 bind），
         // 那會變成任何人輸入帳號就能登入，必須自己先擋掉。
         if (string.IsNullOrEmpty(password))

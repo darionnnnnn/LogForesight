@@ -11,7 +11,7 @@ namespace LogForesight.Tests;
 public class CaseDaySyncTests
 {
     private const string IssueLabel = "disk 153";
-    private static readonly string IssueKey = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Error);
+    private static readonly string IssueKey = IssueSignatureKey.For("System", "disk", 153, LogEntryType.Error);
     private static readonly DateTime D1 = DateTime.Today.AddDays(-3);
     private static readonly DateTime D2 = DateTime.Today.AddDays(-2);
     private static readonly DateTime D3 = DateTime.Today.AddDays(-1);
@@ -40,7 +40,7 @@ public class CaseDaySyncTests
                     Date = date, HostId = existing.HostId, Host = host,
                     TopIssues = new List<LogIssueSignature>
                     {
-                        new() { LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error }
+                        new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error }
                     }
                 });
             }

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net8.0-windows</TargetFramework>
+        <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
     </PropertyGroup>
@@ -23,10 +23,10 @@
       不收錄：批次 CLI 專屬類別（SelfTestRunner／RuleImporter／NetiqProbeCli）與 Program.cs，
               那些仍是批次 exe 的職責，Web 不需要也不應該引用。
 
-      TargetFramework 為 net8.0-windows 而非 net8.0：LogIssueSignature.EntryType 使用
-      System.Diagnostics.EventLogEntryType（Windows 專屬），是既有序列化契約的一部分。
-      本系統本來就只在 Windows 上運作（讀 Windows Event Log、AD 驗證），
-      為了平台中立而改掉這個型別會動到歷史資料格式，不划算。
+      TargetFramework 為 net8.0（可在 macOS／Linux 建置）：LogIssueSignature.EntryType 使用自訂的
+      LogEntryType（成員名稱與整數值同 System.Diagnostics.EventLogEntryType，序列化與 DB 契約不變）；
+      只有讀取真實 Windows 事件的 EventRecordMapper 轉換點才碰 EventLogEntryType，且帶 Windows 平台標註。
+      Windows 專屬 API 一律由 CA1416 守門（Directory.Build.props 視為錯誤）。
     -->
     <ItemGroup>
         <PackageReference Include="NLog" Version="6.1.4" />

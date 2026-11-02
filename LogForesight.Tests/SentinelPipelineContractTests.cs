@@ -30,7 +30,7 @@ public class SentinelPipelineContractTests : IDisposable
             new()
             {
                 TimeGenerated = when,
-                EntryType = EventLogEntryType.FailureAudit,
+                EntryType = LogEntryType.FailureAudit,
                 LogName = "Security",
                 Source = source,
                 Message = "帳戶無法登入。",
@@ -79,7 +79,7 @@ public class SentinelPipelineContractTests : IDisposable
     {
         var localEntries = new List<EventLogEntryData>
         {
-            new() { TimeGenerated = DateTime.Now, EntryType = EventLogEntryType.Error, LogName = "Application", Source = "Unknown-Provider", EventId = 99999 }
+            new() { TimeGenerated = DateTime.Now, EntryType = LogEntryType.Error, LogName = "Application", Source = "Unknown-Provider", EventId = 99999 }
         };
         var sentinelFields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {

@@ -79,7 +79,7 @@ public class HandlingNoteBackendTests : IDisposable
     }
 
     private static LogIssueSignature Signature(int eventId) =>
-        new() { LogName = "System", Source = Source, EventId = eventId, EntryType = EventLogEntryType.Error };
+        new() { LogName = "System", Source = Source, EventId = eventId, EntryType = LogEntryType.Error };
 
     private long CreateOrder(int eventId, string host) =>
         _coordinator.Create(new WorkOrderCreateRequest

@@ -73,7 +73,7 @@ public sealed class IssueMuteTests : IDisposable
 
     private static LogIssueSignature Issue(string source = Source, int eventId = EventId) => new()
     {
-        LogName = "System", Source = source, EventId = eventId, EntryType = EventLogEntryType.Error,
+        LogName = "System", Source = source, EventId = eventId, EntryType = LogEntryType.Error,
         Severity = IssueSeverity.High, Count = 3
     };
 

@@ -70,7 +70,7 @@ public class WorkOrderCandidateServiceTests
         {
             CaseId = Guid.NewGuid().ToString("N"),
             HostName = "SRV-A",
-            IssueKey = IssueSignatureKey.For(Source, "disk", EventId, EventLogEntryType.Error),
+            IssueKey = IssueSignatureKey.For(Source, "disk", EventId, LogEntryType.Error),
             Status = IssueHandlingStatuses.Resolved,
             HandlerId = handlerId,
             ClosedAt = DateTime.Today.AddDays(-daysAgo)

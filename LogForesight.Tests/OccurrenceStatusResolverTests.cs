@@ -22,7 +22,7 @@ public class OccurrenceStatusResolverTests
     {
         var host = _hosts.Upsert(new WebHost { HostName = "host1" });
         var issueKey = IssueSignatureKey.For(
-            PrtgFindingMapper.PrtgLogName, "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "sensor-1");
+            PrtgFindingMapper.PrtgLogName, "PRTG:disk_free_trend", 0, LogEntryType.Warning, "sensor-1");
 
         var day1 = new DateTime(2026, 8, 1);
         _issueHandlings.Save(new IssueHandling
@@ -58,7 +58,7 @@ public class OccurrenceStatusResolverTests
     {
         var host = _hosts.Upsert(new WebHost { HostName = "host1" });
         var issueKey = IssueSignatureKey.For(
-            PrtgFindingMapper.PrtgLogName, "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "sensor-1");
+            PrtgFindingMapper.PrtgLogName, "PRTG:disk_free_trend", 0, LogEntryType.Warning, "sensor-1");
 
         var day1 = new DateTime(2026, 8, 1);
         _issueHandlings.Save(new IssueHandling
@@ -95,7 +95,7 @@ public class OccurrenceStatusResolverTests
         // 三級化前寫入的 Critical（rank 3）正規化為 High；未處理等級只含 High 時必須算作 Open。
         _settings.Update(s => s.UnhandledSeverities = ["High"]);
         var host = _hosts.Upsert(new WebHost { HostName = "host-legacy" });
-        var issueKey = IssueSignatureKey.For("System", "Legacy", 1, EventLogEntryType.Error, "");
+        var issueKey = IssueSignatureKey.For("System", "Legacy", 1, LogEntryType.Error, "");
         var day = new DateTime(2026, 9, 10);
         var occurrences = new[]
         {

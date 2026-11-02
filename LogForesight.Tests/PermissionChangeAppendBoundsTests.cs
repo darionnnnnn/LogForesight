@@ -22,7 +22,7 @@ public class PermissionChangeAppendBoundsTests
         Source = "Microsoft-Windows-Security-Auditing",
         LogName = "Security",
         TimeGenerated = at,
-        EntryType = EventLogEntryType.Information,
+        EntryType = LogEntryType.Information,
         Message = message
     };
 

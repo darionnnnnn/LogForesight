@@ -33,7 +33,7 @@ public class IssueExclusionTests : IDisposable
 
     private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity = IssueSeverity.High) => new()
     {
-        LogName = "System", Source = source, EventId = eventId, EntryType = EventLogEntryType.Warning,
+        LogName = "System", Source = source, EventId = eventId, EntryType = LogEntryType.Warning,
         Category = IssueCategory.Storage, Severity = severity, Count = 1
     };
 

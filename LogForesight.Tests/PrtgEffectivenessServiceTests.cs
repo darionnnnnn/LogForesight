@@ -242,15 +242,15 @@ public sealed class PrtgEffectivenessServiceTests
         {
             var keyDown = IssueSignatureKey.For(new LogIssueSignature
             {
-                LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = System.Diagnostics.EventLogEntryType.Error, EventKey = "s1"
+                LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = LogForesight.Core.Models.LogEntryType.Error, EventKey = "s1"
             });
             var keyDisk = IssueSignatureKey.For(new LogIssueSignature
             {
-                LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0, EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "s2"
+                LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0, EntryType = LogForesight.Core.Models.LogEntryType.Warning, EventKey = "s2"
             });
             var keySys = IssueSignatureKey.For(new LogIssueSignature
             {
-                LogName = "System", Source = "Kernel", EventId = 1, EntryType = System.Diagnostics.EventLogEntryType.Error
+                LogName = "System", Source = "Kernel", EventId = 1, EntryType = LogForesight.Core.Models.LogEntryType.Error
             });
 
             db.IssueHandlings.AddRange(

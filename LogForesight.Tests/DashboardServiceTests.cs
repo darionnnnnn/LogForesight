@@ -285,13 +285,13 @@ public class DashboardServiceTests : IDisposable
         var highIssue = new LogIssueSignature
         {
             LogName = "Security", Source = "Auth", EventId = 4625,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Category = IssueCategory.Security, Severity = IssueSeverity.High
         };
         var lowIssue = new LogIssueSignature
         {
             LogName = "Security", Source = "Audit", EventId = 4624,
-            EntryType = System.Diagnostics.EventLogEntryType.Information,
+            EntryType = LogForesight.Core.Models.LogEntryType.Information,
             Category = IssueCategory.Security, Severity = IssueSeverity.Low
         };
 
@@ -336,13 +336,13 @@ public class DashboardServiceTests : IDisposable
         var highIssue = new LogIssueSignature
         {
             LogName = "Security", Source = "Auth", EventId = 4625,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Category = IssueCategory.Security, Severity = IssueSeverity.High
         };
         var lowIssue = new LogIssueSignature
         {
             LogName = "Security", Source = "Audit", EventId = 4624,
-            EntryType = System.Diagnostics.EventLogEntryType.Information,
+            EntryType = LogForesight.Core.Models.LogEntryType.Information,
             Category = IssueCategory.Security, Severity = IssueSeverity.Low
         };
 
@@ -387,13 +387,13 @@ public class DashboardServiceTests : IDisposable
         var issue1 = new LogIssueSignature
         {
             LogName = "System", Source = "Disk", EventId = 7,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Category = IssueCategory.Storage, Severity = IssueSeverity.High
         };
         var issue2 = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 7,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Category = IssueCategory.Storage, Severity = IssueSeverity.High
         };
 
@@ -436,13 +436,13 @@ public class DashboardServiceTests : IDisposable
         var openIssue = new LogIssueSignature
         {
             LogName = "System", Source = "Disk", EventId = 7,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Category = IssueCategory.Storage, Severity = IssueSeverity.High
         };
         var inProgressIssue = new LogIssueSignature
         {
             LogName = "System", Source = "DCOM", EventId = 10016,
-            EntryType = System.Diagnostics.EventLogEntryType.Warning,
+            EntryType = LogForesight.Core.Models.LogEntryType.Warning,
             Category = IssueCategory.Service, Severity = IssueSeverity.High
         };
 
@@ -535,7 +535,7 @@ public class DashboardServiceTests : IDisposable
         var b = AddHost("HOST-B", 1);
         LogIssueSignature Sig(string source, int eventId) => new()
         {
-            LogName = "System", Source = source, EventId = eventId, EntryType = System.Diagnostics.EventLogEntryType.Error,
+            LogName = "System", Source = source, EventId = eventId, EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Category = IssueCategory.Service, Severity = IssueSeverity.High, Count = 2
         };
         _recordStore.Append(new DailyAnalysisRecord { HostId = a.HostId, Host = a.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { Sig("Auth", 4625), Sig("Cron", 7) } });

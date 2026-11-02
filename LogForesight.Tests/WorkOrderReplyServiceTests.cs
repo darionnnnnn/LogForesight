@@ -74,7 +74,7 @@ public class WorkOrderReplyServiceTests : IDisposable
     }
 
     private static LogIssueSignature Signature(int eventId) =>
-        new() { LogName = "System", Source = Source, EventId = eventId, EntryType = EventLogEntryType.Error };
+        new() { LogName = "System", Source = Source, EventId = eventId, EntryType = LogEntryType.Error };
 
     private WorkOrderReplyService Service(ICurrentUser user) => new(_coordinator, _orders, _cases, user, _audit, _mail);
 

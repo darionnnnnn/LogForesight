@@ -71,7 +71,7 @@ public class PromptHostKindTests
     private static LogIssueSignature OtherIssue() => new()
     {
         LogName = "Application", Source = "demo", EventId = 9999,
-        EntryType = EventLogEntryType.Error, Severity = IssueSeverity.High,
+        EntryType = LogEntryType.Error, Severity = IssueSeverity.High,
         Category = IssueCategory.Other, Count = 3
     };
 
@@ -111,7 +111,7 @@ public class PromptHostKindTests
             Date = new DateTime(2026, 7, 31), HostId = 1, Host = "HOST-L", RiskLevel = "中", AiPending = true,
             TopIssues = new List<LogIssueSignature>
             {
-                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error,
+                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error,
                         Severity = IssueSeverity.High, Category = IssueCategory.Storage,
                         RuleId = "builtin-disk-error", Count = 3 }
             },

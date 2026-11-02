@@ -94,13 +94,13 @@ public class OccurrenceFullKeyRegressionTests : IDisposable
 
     private static LogIssueSignature PrtgDown(string sensorKey) => new()
     {
-        LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = EventLogEntryType.Error,
+        LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = LogEntryType.Error,
         EventKey = sensorKey, Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Hardware
     };
 
     private static LogIssueSignature Sshd() => new()
     {
-        LogName = "Linux", Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Warning,
+        LogName = "Linux", Source = "sshd", EventId = 0, EntryType = LogEntryType.Warning,
         EventKey = "builtin-linux-ssh-bruteforce", Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Security
     };
 

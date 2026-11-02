@@ -129,7 +129,7 @@ public class RecordQueryServiceSearchTests : IDisposable
             [new LogIssueSignature
             {
                 LogName = "PRTG", Source = "PRTG:down", EventId = 0,
-                EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = "prtg:down:2001",
+                EntryType = LogForesight.Core.Models.LogEntryType.Warning, EventKey = "prtg:down:2001",
                 Severity = IssueSeverity.High, Count = 1
             }], aiConfigured: false));
 
@@ -190,7 +190,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var issue = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         AddRecord(host, Yesterday, "高", issues: new[] { issue });
 
@@ -414,7 +414,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var issue = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         AddRecord(host, Yesterday, "高", issues: new[] { issue });
 
@@ -442,7 +442,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var issue = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         AddRecord(host, Yesterday, "高", issues: new[] { issue });
 
@@ -466,7 +466,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var issue = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         AddRecord(host, Yesterday, "高", issues: new[] { issue });
         AddRecord(other, Yesterday, "高", issues: new[] { issue });
@@ -488,7 +488,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     private static LogIssueSignature DiskIssue(IssueSeverity severity = IssueSeverity.High) => new()
     {
         LogName = "System", Source = "disk", EventId = 153,
-        EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = severity
+        EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = severity
     };
 
     [Fact]
@@ -664,12 +664,12 @@ public class RecordQueryServiceSearchTests : IDisposable
         var assignedIssue = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         var unassignedIssue = new LogIssueSignature
         {
             LogName = "System", Source = "Ntfs", EventId = 55,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
 
         AddRecord(assignedHost, Yesterday, "高", issues: new[] { assignedIssue });
@@ -700,12 +700,12 @@ public class RecordQueryServiceSearchTests : IDisposable
         var openIssue = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         var resolvedIssue = new LogIssueSignature
         {
             LogName = "System", Source = "Ntfs", EventId = 55,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         AddRecord(openHost, Yesterday, "高", issues: new[] { openIssue });   // 從未標記＝未處理
         AddRecord(resolvedHost, Yesterday, "高", issues: new[] { resolvedIssue });
@@ -737,7 +737,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var net = new LogIssueSignature
         {
             LogName = "System", Source = "Network", EventId = 99,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.Medium
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.Medium
         };
         AddRecord(d, Yesterday, "中", issues: new[] { net });
 
@@ -1017,7 +1017,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var lowIssue = new LogIssueSignature
         {
             LogName = "System", Source = "noisy", EventId = 111,
-            EntryType = System.Diagnostics.EventLogEntryType.Information, Severity = IssueSeverity.Low
+            EntryType = LogForesight.Core.Models.LogEntryType.Information, Severity = IssueSeverity.Low
         };
         AddRecord(host, Yesterday, "高", issues: new[] { lowIssue });
 
@@ -1063,7 +1063,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var issueB = new LogIssueSignature
         {
             LogName = "Application", Source = "other", EventId = 999,
-            EntryType = System.Diagnostics.EventLogEntryType.Warning, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Warning, Severity = IssueSeverity.High
         };
         AddRecord(AddHost("HOST-B1"), Yesterday, "高", issues: new[] { issueB });
 
@@ -1296,12 +1296,12 @@ public class RecordQueryServiceSearchTests : IDisposable
         var onHighDay = new LogIssueSignature
         {
             LogName = "System", Source = "on-high", EventId = 101,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         var onLowDay = new LogIssueSignature
         {
             LogName = "System", Source = "on-low", EventId = 102,
-            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
         };
         AddRecord(host, Yesterday, "高", issues: new[] { onHighDay });
         AddRecord(host, Yesterday.AddDays(-1), "低", issues: new[] { onLowDay });
@@ -1325,7 +1325,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var lowSeverity = new LogIssueSignature
         {
             LogName = "System", Source = "noisy", EventId = 111,
-            EntryType = System.Diagnostics.EventLogEntryType.Information, Severity = IssueSeverity.Low
+            EntryType = LogForesight.Core.Models.LogEntryType.Information, Severity = IssueSeverity.Low
         };
         AddRecord(host, Yesterday, "高", issues: new[] { lowSeverity });
 

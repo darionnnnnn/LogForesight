@@ -1676,7 +1676,7 @@ public class PrtgDailyPipelineTests : IDisposable
             LogName = PrtgFindingMapper.PrtgLogName,
             Source = "PRTG:down",
             EventId = 0,
-            EntryType = System.Diagnostics.EventLogEntryType.Warning,
+            EntryType = LogForesight.Core.Models.LogEntryType.Warning,
             EventKey = PrtgEventKey("down", 2001)
         };
         var targetKey = IssueSignatureKey.For(targetSig);
@@ -1989,7 +1989,7 @@ public class PrtgDailyPipelineTests : IDisposable
                 new()
                 {
                     LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:warning", EventId = 0,
-                    EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = PrtgEventKey("warning", 2001),
+                    EntryType = LogForesight.Core.Models.LogEntryType.Warning, EventKey = PrtgEventKey("warning", 2001),
                     Count = 1, Severity = IssueSeverity.Medium
                 }
             }
@@ -2046,7 +2046,7 @@ public class PrtgDailyPipelineTests : IDisposable
                     new()
                     {
                         LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:down", EventId = 0,
-                        EntryType = System.Diagnostics.EventLogEntryType.Warning, EventKey = PrtgEventKey("down", 2001),
+                        EntryType = LogForesight.Core.Models.LogEntryType.Warning, EventKey = PrtgEventKey("down", 2001),
                         Count = 1, Severity = IssueSeverity.High, ElevatesDayRisk = true
                     }
                 }

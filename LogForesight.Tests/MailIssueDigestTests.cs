@@ -41,7 +41,7 @@ public class MailIssueDigestTests : IDisposable
         IssueCategory category = IssueCategory.Storage) => new()
         {
             LogName = "System", Source = source, EventId = eventId,
-            EntryType = EventLogEntryType.Warning, Category = category, Severity = severity, Count = 1
+            EntryType = LogEntryType.Warning, Category = category, Severity = severity, Count = 1
         };
 
     private void Add(long hostId, string host, DateTime date, params LogIssueSignature[] issues) =>
@@ -139,7 +139,7 @@ public class MailIssueDigestTests : IDisposable
         _issueHandlings.Save(new IssueHandling
         {
             HostName = "A", Date = today,
-            IssueKey = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning),
+            IssueKey = IssueSignatureKey.For("System", "disk", 153, LogEntryType.Warning),
             Status = IssueHandlingStatuses.InProgress, DueDate = today.AddDays(-1)   // 預計完成日已過
         });
 
@@ -209,7 +209,7 @@ public class MailIssueDigestTests : IDisposable
         LogIssueSignature PrtgIssue(string sensorId) => new()
         {
             LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
-            EntryType = EventLogEntryType.Warning, Category = IssueCategory.Storage,
+            EntryType = LogEntryType.Warning, Category = IssueCategory.Storage,
             Severity = IssueSeverity.High, Count = 1, EventKey = $"prtg:disk_free_trend:{sensorId}"
         };
         Add(prtgHost.HostId, prtgHost.HostName, previous, PrtgIssue("11"));
@@ -222,7 +222,7 @@ public class MailIssueDigestTests : IDisposable
         {
             HostName = staleHost.HostName, Date = current,
             IssueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0,
-                EventLogEntryType.Warning, "prtg:disk_free_trend:12"),
+                LogEntryType.Warning, "prtg:disk_free_trend:12"),
             Status = IssueHandlingStatuses.InProgress, DueDate = current.AddDays(-1)
         });
         var scope = new MailIssueContributionScope(
@@ -259,14 +259,14 @@ public class MailIssueDigestTests : IDisposable
             LogName = "PRTG",
             Source = "PRTG:disk_free_trend",
             EventId = 0,
-            EntryType = EventLogEntryType.Warning,
+            EntryType = LogEntryType.Warning,
             Category = IssueCategory.Storage,
             Severity = IssueSeverity.High,
             Count = 1,
             EventKey = "prtg:disk_free_trend:sensor-1"
         };
 
-        var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
+        var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, LogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
 
         // Day 1: 標記誤報
         Add(host.HostId, host.HostName, day1, RiskLevels.High, PrtgIssue());

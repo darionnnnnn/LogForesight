@@ -71,7 +71,7 @@ public class KnownIssueCatalogTests : IDisposable
     [Fact]
     public void 未命中任何規則時歸類為Other且Low()
     {
-        var logs = MakeEntries(1, "TotallyUnknownSource", 1, EventLogEntryType.Error);
+        var logs = MakeEntries(1, "TotallyUnknownSource", 1, LogEntryType.Error);
         var signature = Assert.Single(LogAggregator.Aggregate(logs));
 
         Assert.Equal(IssueCategory.Other, signature.Category);
@@ -422,13 +422,13 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.False(rule.ElevatesDayRisk);
 
         // 達門檻 (10 筆) 為 High
-        var logs10 = MakeEntries(10, "Security-Auditing", 4703, EventLogEntryType.SuccessAudit);
+        var logs10 = MakeEntries(10, "Security-Auditing", 4703, LogEntryType.SuccessAudit);
         var sig10 = LogAggregator.Aggregate(logs10).FirstOrDefault(s => s.EventId == 4703);
         Assert.NotNull(sig10);
         Assert.Equal(IssueSeverity.High, sig10!.Severity);
 
         // 未達門檻 (1 筆) 降為 Medium
-        var logs1 = MakeEntries(1, "Security-Auditing", 4703, EventLogEntryType.SuccessAudit);
+        var logs1 = MakeEntries(1, "Security-Auditing", 4703, LogEntryType.SuccessAudit);
         var sig1 = LogAggregator.Aggregate(logs1).FirstOrDefault(s => s.EventId == 4703);
         Assert.NotNull(sig1);
         Assert.Equal(IssueSeverity.Medium, sig1!.Severity);
@@ -452,16 +452,16 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.True(rule.ElevatesDayRisk);
     }
 
-    private static EventLogEntryType InferEntryType(string source, int eventId)
+    private static LogEntryType InferEntryType(string source, int eventId)
     {
         if (!source.Equals("Security-Auditing", StringComparison.OrdinalIgnoreCase))
         {
-            return EventLogEntryType.Error;
+            return LogEntryType.Error;
         }
-        return eventId is 4625 or 4740 or 4771 ? EventLogEntryType.FailureAudit : EventLogEntryType.SuccessAudit;
+        return eventId is 4625 or 4740 or 4771 ? LogEntryType.FailureAudit : LogEntryType.SuccessAudit;
     }
 
-    private static List<EventLogEntryData> MakeEntries(int count, string source, int eventId, EventLogEntryType entryType)
+    private static List<EventLogEntryData> MakeEntries(int count, string source, int eventId, LogEntryType entryType)
         => Enumerable.Range(0, count)
             .Select(i => new EventLogEntryData
             {

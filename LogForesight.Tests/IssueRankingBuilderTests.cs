@@ -44,7 +44,7 @@ public class IssueRankingBuilderTests : IDisposable
         string source, int eventId, int count = 1,
         IssueSeverity severity = IssueSeverity.Low, bool elevates = false,
         IssueCategory category = IssueCategory.Storage,
-        string logName = "System", EventLogEntryType entryType = EventLogEntryType.Warning) => new()
+        string logName = "System", LogEntryType entryType = LogEntryType.Warning) => new()
         {
             LogName = logName, Source = source, EventId = eventId, EntryType = entryType,
             Category = category, Severity = severity, ElevatesDayRisk = elevates, Count = count
@@ -207,7 +207,7 @@ public class IssueRankingBuilderTests : IDisposable
         _issueHandlings.Save(new IssueHandling
         {
             HostName = "A", Date = today,
-            IssueKey = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning),
+            IssueKey = IssueSignatureKey.For("System", "disk", 153, LogEntryType.Warning),
             Status = IssueHandlingStatuses.Observing, DueDate = today.AddDays(-1)   // 觀察期已過
         });
 
@@ -242,16 +242,16 @@ public class IssueRankingBuilderTests : IDisposable
         var hostB = _hosts.Upsert(new WebHost { HostName = "B" });
 
         Add(hostA.HostId, "A", d0,
-            Issue("disk", 153, severity: IssueSeverity.High, logName: "System", entryType: EventLogEntryType.Warning));
+            Issue("disk", 153, severity: IssueSeverity.High, logName: "System", entryType: LogEntryType.Warning));
         Add(hostB.HostId, "B", d0,
-            Issue("disk", 153, severity: IssueSeverity.High, logName: "Application", entryType: EventLogEntryType.Error));
+            Issue("disk", 153, severity: IssueSeverity.High, logName: "Application", entryType: LogEntryType.Error));
 
         // B 已標記為已處理；A 沒有任何標記，嚴重度 High 落在預設「需處理」名單內 → 未處理
         _issueHandlings.Save(new IssueHandling
         {
             HostName = "B",
             Date = d0,
-            IssueKey = IssueSignatureKey.For("Application", "disk", 153, EventLogEntryType.Error),
+            IssueKey = IssueSignatureKey.For("Application", "disk", 153, LogEntryType.Error),
             Status = IssueHandlingStatuses.Resolved
         });
 
@@ -277,7 +277,7 @@ public class IssueRankingBuilderTests : IDisposable
         _issueHandlings.Save(new IssueHandling
         {
             HostName = "A", Date = d0,
-            IssueKey = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning),
+            IssueKey = IssueSignatureKey.For("System", "disk", 153, LogEntryType.Warning),
             Status = IssueHandlingStatuses.Resolved
         });
 
@@ -464,7 +464,7 @@ public class IssueRankingBuilderTests : IDisposable
                 LogName = "PRTG",
                 Source = "PRTG:disk_free_trend",
                 EventId = 0,
-                EntryType = EventLogEntryType.Warning,
+                EntryType = LogEntryType.Warning,
                 Category = IssueCategory.Storage,
                 Severity = IssueSeverity.High,
                 Count = 1,
@@ -480,7 +480,7 @@ public class IssueRankingBuilderTests : IDisposable
                 TopIssues = new List<LogIssueSignature> { prtgIssue }
             });
 
-            var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
+            var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, LogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
             backend.IssueHandlingStore().Save(new IssueHandling
             {
                 HostName = host.HostName,
@@ -537,7 +537,7 @@ public class IssueRankingBuilderTests : IDisposable
                 LogName = "PRTG",
                 Source = "PRTG:disk_free_trend",
                 EventId = 0,
-                EntryType = EventLogEntryType.Warning,
+                EntryType = LogEntryType.Warning,
                 Category = IssueCategory.Storage,
                 Severity = IssueSeverity.High,
                 Count = 1,
@@ -561,7 +561,7 @@ public class IssueRankingBuilderTests : IDisposable
                 TopIssues = new List<LogIssueSignature> { prtgIssue }
             });
 
-            var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
+            var issueKey = IssueSignatureKey.For("PRTG", "PRTG:disk_free_trend", 0, LogEntryType.Warning, "prtg:disk_free_trend:sensor-1");
             backend.IssueHandlingStore().Save(new IssueHandling
             {
                 HostName = host.HostName,

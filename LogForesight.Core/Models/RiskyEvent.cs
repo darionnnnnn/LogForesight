@@ -23,7 +23,7 @@ public class RiskyEvent
     public string LogName { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public int EventId { get; set; }
-    public EventLogEntryType EntryType { get; set; }
+    public LogEntryType EntryType { get; set; }
 
     /// <summary>事件原始時間戳</summary>
     public DateTime EventTime { get; set; }

@@ -28,7 +28,7 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
     private static LogIssueSignature RuleHitIssue() => new()
     {
         LogName = "System", Source = "disk", EventId = 153,
-        EntryType = EventLogEntryType.Error, Severity = IssueSeverity.High,
+        EntryType = LogEntryType.Error, Severity = IssueSeverity.High,
         Category = IssueCategory.Storage, RuleId = "builtin-disk-error", Count = 3
     };
 
@@ -174,7 +174,7 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
             new()
             {
                 HostId = 1, Date = Date, LogName = "System", Source = "disk", EventId = 153,
-                EntryType = EventLogEntryType.Error, EventTime = Date.AddHours(1),
+                EntryType = LogEntryType.Error, EventTime = Date.AddHours(1),
                 Message = "磁碟發生 I/O 錯誤", RuleId = "builtin-disk-error", CreatedAt = DateTime.Now
             }
         };
@@ -228,7 +228,7 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         _riskyEvents.Rows = new List<RiskyEvent>();
         var lowIssue = new LogIssueSignature
         {
-            LogName = "System", Source = "noisy", EventId = 1, EntryType = EventLogEntryType.Information,
+            LogName = "System", Source = "noisy", EventId = 1, EntryType = LogEntryType.Information,
             Severity = IssueSeverity.Low, Category = IssueCategory.Other, Count = 1
         };
         var service = NewService(_riskyEvents);

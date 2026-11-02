@@ -33,7 +33,7 @@ public class IssueTodoQueryTests : IDisposable
 
     private static LogIssueSignature Issue(
         string source, int eventId, IssueSeverity severity = IssueSeverity.High,
-        string logName = "System", EventLogEntryType entryType = EventLogEntryType.Warning) => new()
+        string logName = "System", LogEntryType entryType = LogEntryType.Warning) => new()
         {
             LogName = logName, Source = source, EventId = eventId, EntryType = entryType,
             Category = IssueCategory.Storage, Severity = severity, Count = 1

@@ -160,9 +160,9 @@ public static class IssueSignatureKey
     /// <summary>
     /// 四段鍵（LogName|Source|EventId|EntryType），不含 EventKey 第五段。供不需要區分規則／sensor 的
     /// Source＋EventId 聚合使用；要和處理狀態、案件比對的完整鍵一律走
-    /// <see cref="For(string,string,int,System.Diagnostics.EventLogEntryType,string)"/>。
+    /// <see cref="For(string,string,int,LogForesight.Core.Models.LogEntryType,string)"/>。
     /// </summary>
-    public static string For(string logName, string source, int eventId, System.Diagnostics.EventLogEntryType entryType) =>
+    public static string For(string logName, string source, int eventId, LogForesight.Core.Models.LogEntryType entryType) =>
         $"{logName}|{source}|{eventId}|{(int)entryType}";
 
     /// <summary>
@@ -172,13 +172,13 @@ public static class IssueSignatureKey
     /// Linux 事件 EventKey 為空字串，回傳四段鍵，字串一字不變。
     /// 從 lf_top_issues 取列組鍵（event_key 欄）與從 <see cref="LogIssueSignature"/> 組鍵都走這裡。
     /// </summary>
-    public static string For(string logName, string source, int eventId, System.Diagnostics.EventLogEntryType entryType, string eventKey)
+    public static string For(string logName, string source, int eventId, LogForesight.Core.Models.LogEntryType entryType, string eventKey)
     {
         var baseKey = For(logName, source, eventId, entryType);
         return eventKey.Length > 0 ? $"{baseKey}|{eventKey}" : baseKey;
     }
 
-    /// <summary>簽章的完整鍵，見 <see cref="For(string,string,int,System.Diagnostics.EventLogEntryType,string)"/></summary>
+    /// <summary>簽章的完整鍵，見 <see cref="For(string,string,int,LogForesight.Core.Models.LogEntryType,string)"/></summary>
     public static string For(LogIssueSignature signature) =>
         For(signature.LogName, signature.Source, signature.EventId, signature.EntryType, signature.EventKey);
 
@@ -198,13 +198,13 @@ public static class IssueSignatureKey
     /// 格式不符（段數不對、EventId 或 EntryType 不是整數）回 null。
     /// 不變式：對任一簽章 s，以本方法組回的簽章再 <see cref="For(LogIssueSignature)"/> 必與原鍵逐字相同。
     /// </summary>
-    public static (string LogName, string Source, int EventId, System.Diagnostics.EventLogEntryType EntryType, string EventKey)?
+    public static (string LogName, string Source, int EventId, LogForesight.Core.Models.LogEntryType EntryType, string EventKey)?
         TryParseFull(string? key)
     {
         var parts = SplitKey(key);
         if (parts == null || !int.TryParse(parts[3], out var entryType)) return null;
 
-        return (parts[0], parts[1], int.Parse(parts[2]), (System.Diagnostics.EventLogEntryType)entryType,
+        return (parts[0], parts[1], int.Parse(parts[2]), (LogForesight.Core.Models.LogEntryType)entryType,
             parts.Length == 5 ? parts[4] : string.Empty);
     }
 

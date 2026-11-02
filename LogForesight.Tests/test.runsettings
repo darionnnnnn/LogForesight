@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  測試環境的固定值（IDE 測試總管不繼承 shell 的環境變數，寫在文件裡不夠）：
+  - LF_REQUIRE_NODE=1：node 找不到時前端行為測試要失敗，不可靜默略過造成假全綠。
+  - TZ=Asia/Taipei：部署環境固定台北時區；macOS／Linux 上讓日界相關測試與正式環境同基準（Windows 不看這個變數）。
+-->
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <LF_REQUIRE_NODE>1</LF_REQUIRE_NODE>
+      <TZ>Asia/Taipei</TZ>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

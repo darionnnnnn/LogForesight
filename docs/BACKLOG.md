@@ -38,6 +38,11 @@
 - **CSP 違規回報只用 `report-uri`**：未同時送 `Report-To`／`Reporting-Endpoints` 新語法（`/api/csp-report` 已能解析 `application/reports+json`）。
   **觸發時機**：主流瀏覽器停止支援 `report-uri`，或需要回報 CSP 以外的違規類型。
 
+### 測試的時鐘與時區抽象
+
+約 209 個測試檔直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。沒有 `IClock`。
+**觸發時機**：非 Windows 平台出現跨日界或 DST 相關的偶發紅燈時，再抽時鐘與固定時區。
+
 ## NetIQ 整合：試點驗證與遞延項目
 
 - **NetIQ 接線（試點驗證）**：取數邏輯（`SentinelFieldMap`／`SentinelEventMapper`／

@@ -38,7 +38,7 @@ public class LogIssueSignature
     public int EventId { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
-    public EventLogEntryType EntryType { get; set; }
+    public LogEntryType EntryType { get; set; }
 
     /// <summary>
     /// Linux 簽章聚合鍵的第五段（docs/archive/FEEDBACK-12-PLAN.md §4.2，實作 docs/LINUX-RULES.md §131-146
@@ -280,7 +280,7 @@ internal static class LogAggregator
     /// 反查對應的簽章時要用同一套鍵計算，否則 ssh-bruteforce／ssh-accept 這類「同 program
     /// 不同規則」的原始事件會在風險 log 暫存裡混在一起（兩個簽章各自撈到同一批原始事件）。
     /// </summary>
-    internal static (string LogName, string Source, int EventId, EventLogEntryType EntryType, string EventKey) GroupKeyFor(EventLogEntryData l)
+    internal static (string LogName, string Source, int EventId, LogEntryType EntryType, string EventKey) GroupKeyFor(EventLogEntryData l)
     {
         if (!l.LogName.Equals(LinuxLogName, StringComparison.OrdinalIgnoreCase))
         {
@@ -468,7 +468,7 @@ internal static class LogAggregator
     }
 
     private static (List<LoginFailureDetail>? Details, int TotalCount, bool Truncated) ExtractLoginFailureDetailsForGroup(
-        (string LogName, string Source, int EventId, EventLogEntryType EntryType, string EventKey) key,
+        (string LogName, string Source, int EventId, LogEntryType EntryType, string EventKey) key,
         IEnumerable<string> rawMessages)
     {
         if (key.LogName.Equals(LinuxLogName, StringComparison.OrdinalIgnoreCase))

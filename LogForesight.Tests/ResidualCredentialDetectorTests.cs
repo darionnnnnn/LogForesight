@@ -1031,7 +1031,7 @@ public class ResidualCredentialDetectorTests
                 LogName = "Security",
                 Source = "Microsoft-Windows-Security-Auditing",
                 EventId = 4740,
-                EntryType = EventLogEntryType.SuccessAudit,
+                EntryType = LogEntryType.SuccessAudit,
                 Message = $"A user account was locked out.\nAccount Name: user{i}\nCaller Computer Name: WKS01",
                 TimeGenerated = DateTime.Today
             });

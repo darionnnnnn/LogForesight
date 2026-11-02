@@ -103,7 +103,7 @@ public class RuleBootstrapperContractTests : IDisposable
             LogName = "System",
             Source = disabledRuleSourcePattern,
             EventId = disabledRuleEventId,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Count = 1
         };
         KnownIssueCatalog.Classify(disabledSignature);
@@ -115,7 +115,7 @@ public class RuleBootstrapperContractTests : IDisposable
             LogName = "System",
             Source = enabledRule.SourcePattern,
             EventId = enabledRule.EventIds[0],
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Count = 1
         };
         KnownIssueCatalog.Classify(enabledSignature);

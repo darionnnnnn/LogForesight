@@ -23,12 +23,12 @@ public class IssueDaysForContractTests : IDisposable
 
     private static LogIssueSignature Win(string source, int eventId) => new()
     {
-        LogName = "System", Source = source, EventId = eventId, EntryType = EventLogEntryType.Error, Count = 1
+        LogName = "System", Source = source, EventId = eventId, EntryType = LogEntryType.Error, Count = 1
     };
 
     private static LogIssueSignature Linux(string eventKey) => new()
     {
-        LogName = "syslog", Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Warning, EventKey = eventKey, Count = 1
+        LogName = "syslog", Source = "sshd", EventId = 0, EntryType = LogEntryType.Warning, EventKey = eventKey, Count = 1
     };
 
     private static readonly string WinKey = IssueSignatureKey.For(Win("disk", 153));
@@ -139,7 +139,7 @@ public class IssueDaysForContractTests : IDisposable
             ctx.TopIssues.Add(new TopIssueRow
             {
                 RecordId = recordId, HostId = a, RecordDate = DateTime.MinValue,
-                LogName = "System", SourceName = "disk", EventId = 153, EntryType = (int)EventLogEntryType.Error,
+                LogName = "System", SourceName = "disk", EventId = 153, EntryType = (int)LogEntryType.Error,
                 Category = "Other", EventKey = string.Empty
             });
             ctx.SaveChanges();

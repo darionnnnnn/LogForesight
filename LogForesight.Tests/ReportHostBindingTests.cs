@@ -38,7 +38,7 @@ public class ReportHostBindingTests
                 new()
                 {
                     LogName = "System", Source = "disk", EventId = 7,
-                    EntryType = System.Diagnostics.EventLogEntryType.Error,
+                    EntryType = LogForesight.Core.Models.LogEntryType.Error,
                     Severity = IssueSeverity.High, Count = 3, Category = IssueCategory.Storage
                 }
             }
@@ -75,7 +75,7 @@ public class ReportHostBindingTests
                 new()
                 {
                     LogName = "System", Source = "disk", EventId = 7,
-                    EntryType = System.Diagnostics.EventLogEntryType.Error,
+                    EntryType = LogForesight.Core.Models.LogEntryType.Error,
                     Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Storage
                 }
             }

@@ -208,6 +208,10 @@ const cases = {
 };
 
 const name = process.argv[2];
+if (!name) {
+    Object.keys(cases).forEach(key => console.log(key));
+    process.exit(0);
+}
 if (!cases[name]) {
     console.error(`未知案例：${name}`);
     process.exit(2);

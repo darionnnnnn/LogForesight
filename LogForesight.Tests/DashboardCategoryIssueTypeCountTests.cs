@@ -34,7 +34,7 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         string source, int eventId, int count = 1,
         IssueSeverity severity = IssueSeverity.Low, bool elevates = false,
         IssueCategory category = IssueCategory.Storage,
-        string logName = "System", EventLogEntryType entryType = EventLogEntryType.Warning) => new()
+        string logName = "System", LogEntryType entryType = LogEntryType.Warning) => new()
         {
             LogName = logName,
             Source = source,

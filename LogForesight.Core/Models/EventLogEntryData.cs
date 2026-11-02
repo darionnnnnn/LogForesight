@@ -11,7 +11,7 @@ namespace LogForesight.Core.Models;
 public class EventLogEntryData
 {
     public DateTime TimeGenerated { get; set; }
-    public EventLogEntryType EntryType { get; set; }
+    public LogEntryType EntryType { get; set; }
     public string LogName { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;

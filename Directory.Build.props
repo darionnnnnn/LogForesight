@@ -6,5 +6,7 @@
   -->
   <PropertyGroup>
     <Version>1.0.53.2</Version>
+    <!-- 平台專屬 API 呼叫一律視為錯誤：不得用 NoWarn／#pragma 壓制 -->
+    <WarningsAsErrors>$(WarningsAsErrors);CA1416</WarningsAsErrors>
   </PropertyGroup>
 </Project>

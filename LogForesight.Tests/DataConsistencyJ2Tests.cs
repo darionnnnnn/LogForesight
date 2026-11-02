@@ -38,7 +38,7 @@ public class DataConsistencyJ2Tests : IDisposable
 
     private static LogIssueSignature Issue() => new()
     {
-        LogName = "System", Source = Source, EventId = EventId, EntryType = EventLogEntryType.Error,
+        LogName = "System", Source = Source, EventId = EventId, EntryType = LogEntryType.Error,
         Severity = IssueSeverity.High
     };
 

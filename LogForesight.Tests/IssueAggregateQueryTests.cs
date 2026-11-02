@@ -36,7 +36,7 @@ public class IssueAggregateQueryTests : IDisposable
     private static LogIssueSignature Issue(
         string source, int eventId, int count = 1,
         IssueSeverity severity = IssueSeverity.Low, bool elevates = false,
-        string logName = "System", EventLogEntryType entryType = EventLogEntryType.Warning,
+        string logName = "System", LogEntryType entryType = LogEntryType.Warning,
         string eventKey = "") => new()
         {
             LogName = logName, Source = source, EventId = eventId, EntryType = entryType,
@@ -49,7 +49,7 @@ public class IssueAggregateQueryTests : IDisposable
         LogName = "PRTG",
         Source = "PRTG",
         EventId = 0,
-        EntryType = EventLogEntryType.Warning,
+        EntryType = LogEntryType.Warning,
         EventKey = eventKey,
         Category = IssueCategory.Other,
         Severity = IssueSeverity.Medium,
@@ -259,14 +259,14 @@ public class IssueAggregateQueryTests : IDisposable
     public void 相異完整簽章_供join處理狀態()
     {
         var d0 = new DateTime(2026, 8, 1);
-        Add(1, "A", d0, Issue("disk", 153, logName: "System", entryType: EventLogEntryType.Warning));
-        Add(2, "B", d0, Issue("disk", 153, logName: "Application", entryType: EventLogEntryType.Error));
+        Add(1, "A", d0, Issue("disk", 153, logName: "System", entryType: LogEntryType.Warning));
+        Add(2, "B", d0, Issue("disk", 153, logName: "Application", entryType: LogEntryType.Error));
 
         var agg = Query().Aggregate(IssueExclusion.None, d0, d0, null).Single();
 
         Assert.Equal(2, agg.IssueKeys.Count);
-        Assert.Contains(IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning), agg.IssueKeys);
-        Assert.Contains(IssueSignatureKey.For("Application", "disk", 153, EventLogEntryType.Error), agg.IssueKeys);
+        Assert.Contains(IssueSignatureKey.For("System", "disk", 153, LogEntryType.Warning), agg.IssueKeys);
+        Assert.Contains(IssueSignatureKey.For("Application", "disk", 153, LogEntryType.Error), agg.IssueKeys);
     }
 
     [Fact]
@@ -479,7 +479,7 @@ public class IssueAggregateQueryTests : IDisposable
         var result = Query().ActionableOccurrences(IssueExclusion.None, d0, d0.AddDays(1), null);
 
         var occurrence = Assert.Single(result);
-        Assert.Equal(IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning), occurrence.IssueKey);
+        Assert.Equal(IssueSignatureKey.For("System", "disk", 153, LogEntryType.Warning), occurrence.IssueKey);
     }
 
     [Fact]
@@ -595,7 +595,7 @@ public class IssueAggregateQueryTests : IDisposable
         var result = Query().ActionableOccurrences(IssueExclusion.None, d0, d0.AddDays(1), null, null, visibleRiskLevels);
 
         var occurrence = Assert.Single(result);
-        Assert.Equal(IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning), occurrence.IssueKey);
+        Assert.Equal(IssueSignatureKey.For("System", "disk", 153, LogEntryType.Warning), occurrence.IssueKey);
     }
 
     [Fact]

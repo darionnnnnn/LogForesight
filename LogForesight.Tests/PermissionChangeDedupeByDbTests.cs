@@ -25,7 +25,7 @@ public class PermissionChangeDedupeByDbTests
             Source = "Microsoft-Windows-Security-Auditing",
             LogName = "Security",
             TimeGenerated = at,
-            EntryType = EventLogEntryType.Information,
+            EntryType = LogEntryType.Information,
             Message = $"已將成員新增到安全性通用群組。\r\n群組名稱:\tEnterprise Admins\r\n成員名稱:\t{member}"
         }
     };

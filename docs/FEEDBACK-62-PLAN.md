@@ -309,12 +309,15 @@
 
 **設計修正**：
 - A-2（實測推翻 §1A「組格線不改」）：1600px 時各組整組換列，KPI 實際佔兩排，且 14rem 上限在組間留白，達不到使用者要的「一橫排」。`kpiStrip` 加 `singleRow` 選項（只有儀表板用，其他頁的 KPI 不變）：576px 以上各組同排依卡數分寬、`auto-fit minmax(9rem,1fr)` 撐滿；575px 以下仍每組兩欄。
+- E-1（實作發現）：`LogEntryType` 轉換點是 `EventRecordMapper.FromClassic`；非 Windows 的本機掃描與權限監控以結果上的 `PlatformUnsupported` 旗標告知呼叫端，由 orchestrator 各印一行，不走 Warn。`[WindowsFact]` 目前只掛 `DynamicAuthenticationProviderTests`，其餘由使用者第一次 Mac 全量的紅燈清單補齊（§2-32）。
 - A-1：`revealFirstRow` 只用 `hidden` 屬性（`el.hidden`），mini-dom 不必補 `removeAttribute` 等方法；展開鍵與 `bindRememberedCollapse` 同前綴，兩行讀寫不抽共用函式（抽了要改 ui-collapse 行為測試的注入，得不償失）。
 
 ## 9. 執行紀錄
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
+| E-1 | sonnet（API 連線中斷，主代理接手驗收） | 完成 | `dotnet build --no-incremental` 0 錯誤、CA1416 零；全量 7,557 綠／10 略過／1 紅（新行為腳本未支援無參數列案例，已修並定向重跑） | 代理跑全量途中斷線，改檔已齊，主代理審 diff 與重跑 |
+| E-2 | 主代理 | 完成 | `NodeRuntimeTests`、`PlatformGuard`、Help 定向綠；`git add --renormalize` 無差異 | Mac 全量與 E-3（CI job）等使用者實機（§2-35） |
 | A-1／A-2 | 主代理 | 完成 | 定向 492 綠；突變「第二排」「改 class」皆紅；實測 1600／1200／768／375：KPI 同排（375 為每組兩欄）、無橫向捲動、無主控台錯誤、展開後重新整理仍展開 | 實測推翻「組格線不改」（見設計修正）；字級切換由行為測試驗（實測「大」未跨越欄數門檻） |
 
 ## 10. 審查回合紀錄（第一版 → 第二版）

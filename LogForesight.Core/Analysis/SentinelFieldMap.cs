@@ -119,22 +119,22 @@ public static class SentinelFieldMap
         Q1ProjectionFields.Concat(LinuxQ1ProjectionFields).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Linux sev→<see cref="EventLogEntryType"/> 的推導（輪 B 第 3/4 項定案）：
+    /// Linux sev→<see cref="LogEntryType"/> 的推導（輪 B 第 3/4 項定案）：
     /// <c>0~1→Information、2→Warning、3~5→Error</c>。**這是計數用途的務實選擇，不是 syslog
     /// priority 語意的還原**——輪 B 實證 sev 不可靠承載該語意（NetworkManager 的 <c>&lt;warn&gt;</c>
     /// 與 dockerd 的 <c>level=error</c> 皆落在 sev=1；「pam_unix session opened」這類正常訊息
     /// 反而落在 sev3-5）。誤差只影響錯誤/警告計數與 generic 收集門檻，不影響規則命中
     /// （program＋message 比對，見 <see cref="KnownIssueCatalog.FindLinuxRule"/>，與 EntryType 無關）。
     /// </summary>
-    public static EventLogEntryType MapEntryTypeLinux(int severity) => severity switch
+    public static LogEntryType MapEntryTypeLinux(int severity) => severity switch
     {
-        <= 1 => EventLogEntryType.Information,
-        2 => EventLogEntryType.Warning,
-        _ => EventLogEntryType.Error
+        <= 1 => LogEntryType.Information,
+        2 => LogEntryType.Warning,
+        _ => LogEntryType.Error
     };
 
     /// <summary>
-    /// 嚴重度→<see cref="EventLogEntryType"/> 的推導。**部分門檻是候選值，未經試點實證**：
+    /// 嚴重度→<see cref="LogEntryType"/> 的推導。**部分門檻是候選值，未經試點實證**：
     /// Security 頻道靠 <see cref="XdasOutcome"/>（廠商固定分類，比 sev 門檻可靠）判斷成功/失敗稽核；
     /// 非 Security 頻道目前只有 sev=1（Information）與 sev=4（對應本機 Error 等級的失敗事件）兩個錨點，
     /// 2／3 的 Warning/Error 分界是依常見遞增嚴重度量表（0-1 低、2-3 中、4-5 高）的合理猜測，
@@ -142,19 +142,19 @@ public static class SentinelFieldMap
     /// 猜錯的後果僅止於報告上的等級徽章與分組粒度顯示不夠精確，不影響規則命中（規則比對的是
     /// Source＋EventId，與 EntryType 無關）。
     /// </summary>
-    public static EventLogEntryType MapEntryType(string logName, int severity, int? xdasOutcome)
+    public static LogEntryType MapEntryType(string logName, int severity, int? xdasOutcome)
     {
         if (string.Equals(logName, "Security", StringComparison.OrdinalIgnoreCase))
         {
             // xdasOutcome 缺席時保守当失敗處理——稽核事件寧可多算一筆失敗也不要漏算
-            return xdasOutcome == 0 ? EventLogEntryType.SuccessAudit : EventLogEntryType.FailureAudit;
+            return xdasOutcome == 0 ? LogEntryType.SuccessAudit : LogEntryType.FailureAudit;
         }
 
         return severity switch
         {
-            <= 1 => EventLogEntryType.Information,
-            <= 3 => EventLogEntryType.Warning,          // 候選門檻，未實證
-            _ => EventLogEntryType.Error                 // sev>=4 已實證對應失敗/錯誤事件
+            <= 1 => LogEntryType.Information,
+            <= 3 => LogEntryType.Warning,          // 候選門檻，未實證
+            _ => LogEntryType.Error                 // sev>=4 已實證對應失敗/錯誤事件
         };
     }
 }
