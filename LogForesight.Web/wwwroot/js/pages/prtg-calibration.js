@@ -3,7 +3,7 @@
  */
 
 import { api, saveBlobAsFile } from '../core/api.js';
-import { toast, withBusy, guardLoad, renderLoading, renderSpinner } from '../core/ui.js';
+import { toast, withBusy, guardLoad, renderLoading, renderSpinner, renderEmpty } from '../core/ui.js';
 import { formatNumber, formatTime } from '../core/format.js';
 
 let latestStatusData = null;
@@ -243,7 +243,7 @@ function renderAssessment(data) {
 
 /**
  * 判定查詢是四項重查詢（含逐筆反序列化），動輒數十秒（回饋第 45 輪 B7）：
- * 過去只有按鈕忙碌樣式，四張卡停在「尚未執行判定查詢」不動，看起來像沒反應。
+ * 過去只有按鈕忙碌樣式，四張卡停在空狀態不動，看起來像沒反應。
  * 四張卡先放骨架列，狀態那行放 spinner；失敗時由 guardLoad 收成可重試的狀態
  * （錯誤 toast 由 api.js 統一發，這裡不再自己發一次）。
  */
@@ -255,6 +255,7 @@ async function runAssessment() {
         .filter(Boolean);
     const restore = withBusy(calcBtn, '計算中…');
 
+    showCards();
     if (hintEl) renderSpinner(hintEl, '判定查詢執行中…');
     metricEls.forEach(el => renderLoading(el, 3));
 
@@ -306,6 +307,18 @@ function bindEvents() {
     exportBtn?.addEventListener('click', downloadPackage);
 }
 
+/** 尚未計算時只顯示一處空狀態，四張卡在第一次計算開始後才出現。 */
+function renderCalibrationEmpty() {
+    const empty = document.getElementById('calibration-empty');
+    if (empty) renderEmpty(empty, { title: '尚未執行判定查詢', hint: '請點擊上方「重新計算」。' });
+}
+
+function showCards() {
+    document.getElementById('calibration-empty')?.replaceChildren();
+    document.getElementById('calibration-cards')?.classList.remove('d-none');
+}
+
 export function initCalibration() {
+    renderCalibrationEmpty();
     bindEvents();
 }
