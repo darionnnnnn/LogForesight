@@ -237,14 +237,6 @@ public class BatchRunRecorder : IDisposable
 
         internal void Abandon() => _completed = 1;
 
-        /// <summary>結束列寫出前的最後收尾（呼叫端已持 _countLock）：只填欄位，不寫里程碑、不寫快照</summary>
-        internal void CloseSilently(DateTime finishedAt, string outcome)
-        {
-            if (Interlocked.Exchange(ref _completed, 1) == 1) return;
-            _record.FinishedAt = finishedAt;
-            _record.Outcome = outcome;
-        }
-
         public void Complete(string outcome, string? note = null)
         {
             if (Interlocked.Exchange(ref _completed, 1) == 1) return;
@@ -401,11 +393,16 @@ public class BatchRunRecorder : IDisposable
                     _finished = true;
                     _run.FinishedAt = DateTime.Now;
                     _run.ExitCode = exitCode;
-                    // 上面收階段與進鎖之間才開的階段：在同一把鎖內直接收掉，結束列不留永遠「進行中」的階段
-                    foreach (var straggler in _openPhases)
+                    // 上面收階段與進鎖之間才開、或 Complete 已過了只做一次的閘門但還沒取到鎖的階段：
+                    // 直接掃紀錄本身，沒有訖的在同一把鎖內收掉，結束列不留永遠「進行中」的階段
+                    var implicitOutcome = ImplicitOutcome();
+                    foreach (var record in _run.Phases ?? Enumerable.Empty<RunPhaseRecord>())
                     {
-                        straggler.CloseSilently(_run.FinishedAt.Value, ImplicitOutcome());
+                        if (record.FinishedAt != null) continue;
+                        record.FinishedAt = _run.FinishedAt;
+                        record.Outcome = implicitOutcome;
                     }
+                    foreach (var straggler in _openPhases) straggler.Abandon();
                     _openPhases.Clear();
                     final = _run.Snapshot();
                 }

@@ -1,6 +1,6 @@
 # LogForesight 第 62 輪規劃：儀表板漸進揭露、排程續跑與執行時間、說明文字收斂、macOS 可建置
 
-> 狀態：實作完成，待換模型體檢（feature/feedback-62）；Mac 實機驗收與 CI macOS job 待使用者
+> 狀態：全案完成已併 dev；Mac 實機驗收與 CI macOS job 待使用者
 > 基準：dev@b4757155（7,530 通過／10 略過，Windows；`--list-tests` 7,246 條，Theory 每組資料算一條）
 > 來源：使用者 2026-11-02 五項重點（儀表板一排優先／執行紀錄時間／多窗口續跑／說明文字原則／macOS 開發）
 > 實作方式：主代理寫規格與驗收；改檔代理由主代理依複雜度選 sonnet 或 haiku（使用者 2026-11-02 指定，取代前版的 opus 分工）；一個 checkout 一次只派一個改檔代理；每批驗證後各自 commit 並 push 到 `feature/feedback-62`
@@ -369,6 +369,11 @@
 **體檢後接受不改**：執行紀錄列排序後展開收起（`renderTable` 既有行為，總表亦然）；`helpIcon` 重繪未 dispose popover（只在切換期間、影響小）；`DescribeCurrentWindow` 的序號對跨午夜窗口依開始時間排（已在註解寫明）；階段快照資料量約 5 倍（量測數字與觸發條件記 BACKLOG）；`?` 的 `storage` 注入替身擲例外會外拋（正式路徑走 `safeStorage`）。
 
 **體檢後測試數**：見終檢節。
+
+## 終檢輪
+
+- 體檢修正 commit 本身重讀一遍：`Finish` 收殘留階段的方式再改一次——原寫法靠 scope 的「只做一次」閘門，`Complete` 已過閘門但還沒取到鎖的那條會漏；改成在鎖內直接掃 `_run.Phases` 沒有訖的紀錄補上，不依賴 scope 狀態（`BatchRunRecorderPhaseTests` 全綠）。這一小段是終檢後才改，沒有再跑一次全量：改動只在 `_countLock` 內的欄位補值，由該類別測試與死鎖迴歸案涵蓋。
+- 其餘無新發現。文件：CLAUDE.md 測試基線更新為本輪收官數字；歸檔索引補一列。
 
 ## 10. 審查回合紀錄（第一版 → 第二版）
 
