@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
+using System.Runtime.Versioning;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Core.Service;
 
@@ -21,6 +23,7 @@ internal static class EventRecordMapper
     /// <summary>
     /// 映射單筆事件；<see cref="EventRecord.TimeCreated"/> 為 null 的極罕見事件回傳 null，呼叫端略過。
     /// </summary>
+    [SupportedOSPlatform("windows")]
     public static EventLogEntryData? Map(EventRecord record, string logName, bool isAuditChannel)
     {
         if (record.TimeCreated is not { } time)
@@ -68,31 +71,38 @@ internal static class EventRecordMapper
     }
 
     /// <summary>
-    /// Level/Keywords → legacy <see cref="EventLogEntryType"/>。
-    /// 刻意保留 classic API 的「Critical → 0」慣例：EventLogEntryType 列舉沒有 Critical 值，
+    /// 唯一碰到 Windows 專屬 <see cref="EventLogEntryType"/> 的轉換點：classic <see cref="EventLog"/> 讀到的
+    /// 類型轉成與平台無關的 <see cref="LogEntryType"/>（成員名稱與整數值相同，含 Critical 的 0）。
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    public static LogEntryType FromClassic(EventLogEntryType type) => (LogEntryType)(int)type;
+
+    /// <summary>
+    /// Level/Keywords → legacy <see cref="LogEntryType"/>。
+    /// 刻意保留 classic API 的「Critical → 0」慣例：LogEntryType 列舉沒有 Critical 值，
     /// classic 讀新式 Critical 事件（如 Kernel-Power 41）時 EntryType 就是 0，
     /// EventLogService.ShouldInclude、LogAnalysisService 的錯誤計數與顯示、history.txt 序列化都依賴它。
     /// </summary>
-    public static EventLogEntryType MapEntryType(byte? level, long? keywords, bool isAuditChannel)
+    public static LogEntryType MapEntryType(byte? level, long? keywords, bool isAuditChannel)
     {
         if (isAuditChannel && keywords is { } kw)
         {
             if ((kw & AuditFailureKeyword) != 0)
             {
-                return EventLogEntryType.FailureAudit;
+                return LogEntryType.FailureAudit;
             }
             if ((kw & AuditSuccessKeyword) != 0)
             {
-                return EventLogEntryType.SuccessAudit;
+                return LogEntryType.SuccessAudit;
             }
         }
 
         return level switch
         {
-            1 => (EventLogEntryType)0,          // Critical：沿用 classic 的無名稱值 0
-            2 => EventLogEntryType.Error,
-            3 => EventLogEntryType.Warning,
-            _ => EventLogEntryType.Information   // 4(Info)/5(Verbose)/0/null
+            1 => (LogEntryType)0,          // Critical：沿用 classic 的無名稱值 0
+            2 => LogEntryType.Error,
+            3 => LogEntryType.Warning,
+            _ => LogEntryType.Information   // 4(Info)/5(Verbose)/0/null
         };
     }
 
@@ -101,6 +111,7 @@ internal static class EventRecordMapper
     /// 會回傳 null 或丟例外，退回把 Properties 值串起來——帳號/IP 等關鍵欄位仍保得住，
     /// 只是少了樣板文字（本機讀本機通常有 metadata，此 fallback 是防禦性設計）。
     /// </summary>
+    [SupportedOSPlatform("windows")]
     private static string ReadMessage(EventRecord record)
     {
         try

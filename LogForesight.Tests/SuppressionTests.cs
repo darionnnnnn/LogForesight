@@ -439,7 +439,7 @@ public class SuppressionTests
     [Fact]
     public void MarkSuppressed套用規則型與簽章型抑制並回傳標記筆數()
     {
-        var sigKey = IssueSignatureKey.For("System", "Service Control Manager", 7034, System.Diagnostics.EventLogEntryType.Error);
+        var sigKey = IssueSignatureKey.For("System", "Service Control Manager", 7034, LogForesight.Core.Models.LogEntryType.Error);
 
         var activeSuppressions = new List<RuleSuppression>
         {

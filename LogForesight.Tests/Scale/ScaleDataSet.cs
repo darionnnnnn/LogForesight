@@ -223,7 +223,7 @@ public sealed class ScaleDataSet : IDisposable
             LogName = logName,
             Source = source,
             EventId = eventId,
-            EntryType = severity == IssueSeverity.Low ? EventLogEntryType.Warning : EventLogEntryType.Error,
+            EntryType = severity == IssueSeverity.Low ? LogEntryType.Warning : LogEntryType.Error,
             Category = category,
             Severity = severity,
             ElevatesDayRisk = elevates,

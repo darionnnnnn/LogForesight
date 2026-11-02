@@ -6,6 +6,79 @@ namespace LogForesight.Tests;
 
 public class PrtgReevaluationPlannerTests
 {
+    private static BatchRun SyncRun(DateTime startedAt, DateTime day, bool sourceSynced, long runId = 1, string? jobType = null) => new()
+    {
+        RunId = runId,
+        StartedAt = startedAt,
+        JobType = jobType,
+        PrtgDays = new List<PrtgDayStat> { new(day, BatchRun.PrtgOutcomeSuccess, 0, 0, true, 0, 0, 0, SourceSynced: sourceSynced) }
+    };
+
+    [Fact]
+    public void 沿用同步_排程Full且今天有完整同步才成立()
+    {
+        var today = new DateTime(2026, 11, 2);
+        var day = today.AddDays(-1);
+        var earlier = today.AddHours(1);
+        var runs = new[] { SyncRun(earlier, day, sourceSynced: true) };
+
+        Assert.Equal(earlier, PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full, runs, new[] { day }, today));
+        Assert.Null(PrtgReevaluationPlanner.ReusableSyncFrom("manual:admin", RunScope.Full, runs, new[] { day }, today));
+        Assert.Null(PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.NetiqHosts, runs, new[] { day }, today));
+        Assert.Null(PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full, null, new[] { day }, today));
+        // 昨天開跑的同步不能給今天沿用
+        Assert.Null(PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full,
+            new[] { SyncRun(today.AddHours(-3), day, sourceSynced: true) }, new[] { day }, today));
+    }
+
+    [Fact]
+    public void 沿用同步_回傳來源實際同步時刻_不是沿用趟自己的開跑時間()
+    {
+        var today = new DateTime(2026, 11, 2);
+        var day = today.AddDays(-1);
+        var synced = today.AddHours(2);
+        var reuseRun = SyncRun(today.AddHours(4), day, sourceSynced: true, runId: 2);
+        reuseRun.PrtgDays = new List<PrtgDayStat> { reuseRun.PrtgDays![0] with { SourceSyncedAt = synced } };
+
+        Assert.Equal(synced, PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full, new[] { reuseRun }, new[] { day }, today));
+    }
+
+    [Fact]
+    public void 沿用同步_最新一筆沒有完整同步就重做_即使更早有完整的()
+    {
+        var today = new DateTime(2026, 11, 2);
+        var day = today.AddDays(-1);
+        var runs = new[]
+        {
+            SyncRun(today.AddHours(1), day, sourceSynced: true, runId: 1),
+            // 之後有人只更新一台主機（或同步失敗）：最新的統計不完整
+            SyncRun(today.AddHours(9), day, sourceSynced: false, runId: 2)
+        };
+
+        Assert.Null(PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full, runs, new[] { day }, today));
+    }
+
+    [Fact]
+    public void 沿用同步_本趟每一天都要涵蓋_AI趟不算()
+    {
+        var today = new DateTime(2026, 11, 2);
+        var yesterday = today.AddDays(-1);
+        var older = today.AddDays(-3);
+        var runs = new[] { SyncRun(today.AddHours(1), yesterday, sourceSynced: true) };
+
+        Assert.Null(PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full, runs, new[] { yesterday, older }, today));
+        Assert.Null(PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full,
+            new[] { SyncRun(today.AddHours(1), yesterday, sourceSynced: true, jobType: BatchRun.JobTypeAi) }, new[] { yesterday }, today));
+    }
+
+    [Fact]
+    public void 舊紀錄沒有SourceSynced欄位_讀出為false()
+    {
+        var stat = System.Text.Json.JsonSerializer.Deserialize<PrtgDayStat>(
+            """{"Date":"2026-11-01T00:00:00","Outcome":"success","Findings":0,"AttributedHosts":0,"MapAvailable":true,"TriggerHosts":0,"TargetSensors":0,"FailedSensors":0}""")!;
+        Assert.False(stat.SourceSynced);
+    }
+
     private static BatchRun CreateRun(
         DateTime startedAt,
         string trigger = "schedule",

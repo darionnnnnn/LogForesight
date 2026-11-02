@@ -2,12 +2,10 @@
 
     <PropertyGroup>
         <!--
-          net8.0-windows（非 net8.0）：引用的 LogForesight.Core 為 net8.0-windows
-          （LogIssueSignature.EntryType 使用 Windows 專屬的 EventLogEntryType，屬既有序列化契約）。
-          本系統本來就只在 Windows 上運作——分析 Windows Event Log、AD 驗證、部署於 Windows Server，
-          綁定 Windows 不是額外的限制。詳見 docs/WEB-SPEC.md §2。
+          net8.0：可在 macOS／Linux 建置。Windows 專屬能力（AD 驗證、Event Log、權限監控）在非 Windows 平台
+          退化為明確的「此平台不支援」回應；CA1416 視為錯誤，詳見 README「macOS 開發」。
         -->
-        <TargetFramework>net8.0-windows</TargetFramework>
+        <TargetFramework>net8.0</TargetFramework>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
     </PropertyGroup>
@@ -19,7 +17,7 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
         <PackageReference Include="NLog.Web.AspNetCore" Version="6.0.4" />
-        <!-- AD 帳密驗證（LdapAuthenticationProvider／Auth/Ldap）。Windows 專屬，與 net8.0-windows 一致 -->
+        <!-- AD 帳密驗證（LdapAuthenticationProvider／Auth/Ldap）。Windows 專屬，非 Windows 由呼叫端守門 -->
         <PackageReference Include="System.DirectoryServices.AccountManagement" Version="9.0.0" />
         <!-- Auth/Ldap/LdapService：直接以 DirectoryEntry bind，取得比 AccountManagement 更細的
              失敗原因（子錯誤碼）與使用者屬性（displayName／mail），docs/WEB-FEEDBACK-PLAN.md #9 -->

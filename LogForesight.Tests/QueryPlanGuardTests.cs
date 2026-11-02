@@ -103,7 +103,7 @@ public sealed class QueryPlanGuardTests : IClassFixture<QueryPlanGuardTests.Plan
                         LogName = "System",
                         Source = sources[(n + i) % sources.Length],
                         EventId = 100 + (n + i) % 17,
-                        EntryType = System.Diagnostics.EventLogEntryType.Error,
+                        EntryType = LogForesight.Core.Models.LogEntryType.Error,
                         Count = 3 + i
                     });
                 _records.Append(new DailyAnalysisRecord

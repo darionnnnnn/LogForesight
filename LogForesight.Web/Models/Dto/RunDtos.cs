@@ -29,6 +29,9 @@ public class RunDaySummaryDto
     /// <summary>優雅停止（手動停止或執行窗口 End 到點）——不算失敗，見 <c>BatchRun.Stopped</c></summary>
     public int StoppedCount { get; set; }
 
+    /// <summary>當天開跑的執行時間（null＝當天沒有任何趟）</summary>
+    public RunDayTimingDto? Timing { get; set; }
+
     /// <summary>PRTG 擷取成果狀態（取該日取數類最後一筆，null＝舊紀錄或當日未執行 PRTG）</summary>
     public string? PrtgOutcome { get; set; }
 
@@ -80,9 +83,55 @@ public class RunDayHostStatusDto
     public int RunCount { get; set; }
 }
 
+public class RunPhaseDto
+{
+    public string Key { get; set; } = string.Empty;
+    public DateTime StartedAt { get; set; }
+    public DateTime? FinishedAt { get; set; }
+    public string? Outcome { get; set; }
+    public string? Note { get; set; }
+
+    public static List<RunPhaseDto>? From(List<RunPhaseRecord>? phases) => phases?.Select(p => new RunPhaseDto
+    {
+        Key = p.Key,
+        StartedAt = p.StartedAt,
+        FinishedAt = p.FinishedAt,
+        Outcome = p.Outcome,
+        Note = p.Note
+    }).ToList();
+}
+
+/// <summary>某一路當天開跑的區間與耗時（同日多趟取聯集）</summary>
+public class RunBranchTimingDto
+{
+    public string Key { get; set; } = string.Empty;
+    public DateTime From { get; set; }
+    public DateTime To { get; set; }
+    public int Seconds { get; set; }
+}
+
+/// <summary>執行總表的當天執行時間：取數趟的起訖與總耗時，加上本機／NetIQ／PRTG／AI 各路明細</summary>
+public class RunDayTimingDto
+{
+    public DateTime? FirstStartedAt { get; set; }
+    public DateTime? LastFinishedAt { get; set; }
+    public int? TotalSeconds { get; set; }
+    public int InterruptedCount { get; set; }
+    public DateTime? LastInterruptedActivityAt { get; set; }
+    public List<RunBranchTimingDto> Branches { get; set; } = new();
+}
+
 public class RunDetailDto
 {
     public long RunId { get; set; }
+
+    /// <summary>與列表同一份判定（BatchRunStatus.Compute），詳情不另算一次</summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>異常中斷：FinishedAt 是站台重啟時刻，不代表這趟跑到那時候</summary>
+    public bool Interrupted { get; set; }
+
+    public List<RunPhaseDto>? Phases { get; set; }
     public string HostName { get; set; } = string.Empty;
     public DateTime StartedAt { get; set; }
     public DateTime? FinishedAt { get; set; }
@@ -186,7 +235,11 @@ public class RunListItemDto
     public DateTime? FinishedAt { get; set; }
     public int? DurationSeconds { get; set; }
 
-    /// <summary>success | failed | stopped | running | stuck，與 RunDayHostStatusDto.Status
+    public bool Interrupted { get; set; }
+
+    public List<RunPhaseDto>? Phases { get; set; }
+
+    /// <summary>success | warning | failed | stopped | running | stuck，與 RunDayHostStatusDto.Status
     /// 同一套語意（不含 backfilled／none——那是「沒有這筆 BatchRun」的狀態，這裡每筆都存在）</summary>
     public string Status { get; set; } = string.Empty;
 

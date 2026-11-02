@@ -51,8 +51,8 @@ public sealed class MergedLookbackDaysTests : IDisposable
         const int lookback = 7;
         var store = StoreWithRecordsOn(2, 4, 6);
 
-        var missing = MissingDateFinder.Find(store, lookback);
-        var rerun = RerunDateFinder.Find(store, _handlings, HostName, lookback, mode);
+        var missing = MissingDateFinder.Find(store, DateTime.Today, lookback);
+        var rerun = RerunDateFinder.Find(store, DateTime.Today, _handlings, HostName, lookback, mode);
 
         // 互斥：一天要嘛有紀錄要嘛沒有，不可能同時落在兩邊
         Assert.Empty(missing.Intersect(rerun));
@@ -70,7 +70,7 @@ public sealed class MergedLookbackDaysTests : IDisposable
     {
         var store = StoreWithRecordsOn(2, 4, 6);
 
-        var rerun = RerunDateFinder.Find(store, _handlings, HostName, 7, RerunMode.None);
+        var rerun = RerunDateFinder.Find(store, DateTime.Today, _handlings, HostName, 7, RerunMode.None);
 
         Assert.Empty(rerun);
     }
@@ -80,10 +80,10 @@ public sealed class MergedLookbackDaysTests : IDisposable
     {
         var store = StoreWithRecordsOn(2, 9);
 
-        var missingShort = MissingDateFinder.Find(store, 7);
-        var rerunShort = RerunDateFinder.Find(store, _handlings, HostName, 7, RerunMode.All);
-        var missingLong = MissingDateFinder.Find(store, 14);
-        var rerunLong = RerunDateFinder.Find(store, _handlings, HostName, 14, RerunMode.All);
+        var missingShort = MissingDateFinder.Find(store, DateTime.Today, 7);
+        var rerunShort = RerunDateFinder.Find(store, DateTime.Today, _handlings, HostName, 7, RerunMode.All);
+        var missingLong = MissingDateFinder.Find(store, DateTime.Today, 14);
+        var rerunLong = RerunDateFinder.Find(store, DateTime.Today, _handlings, HostName, 14, RerunMode.All);
 
         // 第 9 天在 7 天窗口外、14 天窗口內：兩側都必須跟著同一個天數走
         Assert.Single(rerunShort);

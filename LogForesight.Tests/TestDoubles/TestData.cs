@@ -16,7 +16,7 @@ internal static class TestData
         LogName = "System",
         Source = source,
         EventId = eventId,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         Severity = severity
     };
 
@@ -32,7 +32,7 @@ internal static class TestData
             LogName = logName,
             Source = source,
             EventId = eventId,
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             Count = count,
             Severity = severity,
             Category = category,

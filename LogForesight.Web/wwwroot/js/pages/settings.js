@@ -199,7 +199,7 @@ function updateAiProviderFields(provider) {
     const providerHint = document.getElementById('ai-provider-hint');
 
     if (provider === 'OpenAi') {
-        if (providerHint) providerHint.textContent = `使用 OpenAI 官方 API 服務。${CLOUD_AI_DECLARATION}`;
+        if (providerHint) providerHint.textContent = CLOUD_AI_DECLARATION;
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = 'API 位址（選填）';
         baseUrlInput.placeholder = '留空使用官方端點，要走 proxy 才填';
@@ -207,12 +207,12 @@ function updateAiProviderFields(provider) {
         modelWrap.classList.remove('d-none');
         modelLabel.textContent = '模型名稱（必填）';
         modelInput.placeholder = '例如 gpt-4o、gpt-4o-mini';
-        modelHint.textContent = '例如 gpt-4o、gpt-4o-mini。';
+        modelHint.textContent = '';
         azureDepWrap.classList.add('d-none');
         azureVerWrap.classList.add('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
     } else if (provider === 'AzureOpenAi') {
-        if (providerHint) providerHint.textContent = `使用 Microsoft Azure OpenAI 服務。${CLOUD_AI_DECLARATION}`;
+        if (providerHint) providerHint.textContent = CLOUD_AI_DECLARATION;
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = '端點位址（Endpoint，必填）';
         baseUrlInput.placeholder = 'https://your-resource.openai.azure.com/';
@@ -222,7 +222,7 @@ function updateAiProviderFields(provider) {
         azureVerWrap.classList.remove('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
     } else {
-        if (providerHint) providerHint.textContent = '使用本機或內部部署之 OpenAI 相容端點（如 llama.cpp／KoboldCpp）。';
+        if (providerHint) providerHint.textContent = '';
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = 'API 位址';
         baseUrlInput.placeholder = 'http://localhost:8080';

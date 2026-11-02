@@ -605,7 +605,7 @@ function renderDetailView() {
         rowHref: r => `/records/${r.hostId}/${r.date}${detailQuery()}`,
         empty: {
             title: '沒有符合條件的資料',
-            hint: '請調整日期區間或篩選條件；若剛部署，請先確認批次分析已執行過。'
+            hint: '請調整篩選條件或日期區間；若剛部署，請先確認批次分析已執行過。'
         }
     });
 }
@@ -913,7 +913,7 @@ async function renderIssueOccurrences(cell, group) {
         ],
         rows: result.items,
         rowHref: r => `/records/${r.hostId}/${r.date}`,
-        empty: { title: '沒有資料', hint: '查無符合目前條件的主機日。' }
+        empty: { title: '沒有資料', hint: '請調整篩選條件或日期區間。' }
     });
 
     // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）

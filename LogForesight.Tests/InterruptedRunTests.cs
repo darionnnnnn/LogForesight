@@ -81,6 +81,23 @@ public class InterruptedRunTests : IDisposable
     }
 
     [Fact]
+    public void 站台啟動關閉未結束紀錄_回看到保留期_超過一週的也關得掉()
+    {
+        using var fx = new EfSqliteFixture();
+        var store = new BatchRunStore(fx.LogStore("runs"), fx.LogStore("run_logs"));
+        var now = DateTime.Now;
+        var runId = store.StartRun(new BatchRun { HostName = "H", StartedAt = now.AddDays(-30) });
+
+        var closed = SchedulerHostedService.CloseInterruptedRuns(
+            new NamedMutexGate(@"Local\LF-close-" + Guid.NewGuid()), store, now, now);
+
+        Assert.Equal(1, closed);
+        var run = store.GetRun(runId)!;
+        Assert.True(run.Interrupted);
+        Assert.NotNull(run.FinishedAt);
+    }
+
+    [Fact]
     public void CloseUnfinishedRuns_第二次呼叫_回傳0()
     {
         var store = NewBatchRunStore();

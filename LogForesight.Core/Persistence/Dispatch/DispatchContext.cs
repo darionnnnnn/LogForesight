@@ -176,7 +176,7 @@ public sealed class DispatchContext
                 || IssueSignatureKey.TryParseFull(c.IssueKey) is not { } signature
                 || !string.Equals(signature.LogName, PrtgFindingMapper.PrtgLogName, StringComparison.OrdinalIgnoreCase)
                 || !string.Equals(signature.Source, "PRTG:warning", StringComparison.OrdinalIgnoreCase)
-                || signature.EventId != 0 || signature.EntryType != EventLogEntryType.Warning
+                || signature.EventId != 0 || signature.EntryType != LogEntryType.Warning
                 || !TryPrtgSensorId(signature.EventKey, "warning", out var warningSensorId)
                 || !string.Equals(sensorId, warningSensorId, StringComparison.Ordinal)
                 || !IsOrderActive(orderId)) continue;

@@ -311,7 +311,7 @@ public class UserDisplayNameServiceTests
             Source = "disk",
             EventId = 153,
             LogName = "System",
-            EntryType = System.Diagnostics.EventLogEntryType.Error
+            EntryType = LogForesight.Core.Models.LogEntryType.Error
         };
         var issueKey = IssueSignatureKey.For(issue);
 

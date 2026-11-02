@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-and-test:
-    # net8.0-windows：批次端讀 Windows Event Log、AD 驗證，只能在 Windows 上建置與測試
+    # 正式環境是 Windows（讀 Event Log、AD 驗證），這裡跑得到那些 Windows 專屬路徑
     runs-on: windows-latest
 
     steps:

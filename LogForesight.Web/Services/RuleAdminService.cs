@@ -443,7 +443,7 @@ public class RuleAdminService
                             LogName = PrtgFindingMapper.PrtgLogName,
                             Source = $"PRTG:{draft.PrtgRuleCode}",
                             EventId = 0,
-                            EntryType = EventLogEntryType.Warning,
+                            EntryType = LogEntryType.Warning,
                             EventKey = $"prtg:{draft.PrtgRuleCode}:{row.Sensor.SensorObjid}",
                             RuleId = draft.Id
                         };

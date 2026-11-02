@@ -1,3 +1,5 @@
+# 文字檔在版控內一律 LF；各平台工作樹依 core.autocrlf 決定。
+* text=auto
 # 驗收證據以原始位元組 SHA 綁定；禁止 checkout 或 add 自動轉換換行。
 LogForesight.Tests/Fixtures/prtg-round53-formal-cases.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 LogForesight.Tests/Fixtures/prtg-usefulness-controlled-truth-v1.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

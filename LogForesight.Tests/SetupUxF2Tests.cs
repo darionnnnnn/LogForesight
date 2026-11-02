@@ -517,7 +517,7 @@ public class SetupUxF2Tests : IDisposable
         bar = bar[..bar.IndexOf("</div>", StringComparison.Ordinal)];
         Assert.Contains("id=\"btn-batch-owners\"", bar);
         Assert.Contains("btn-outline-primary\" id=\"btn-batch-owners\"", bar);
-        Assert.Contains("大量指派也可以用 CSV：", bar);
+        Assert.Contains("用 CSV 大量指派", bar);
 
         var js = Js("hosts.js");
         Assert.Contains("appUrl('/admin/imports')", js);

@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using LogForesight.Web.Auth;
 using Xunit;
 
@@ -10,6 +11,7 @@ namespace LogForesight.Tests;
 /// 不觸發任何實際網路連線——用空密碼讓 LdapCredentialVerifier 在碰網路前就短路回傳，
 /// 藉此證明「確實進了 AD 路徑」而非委派給 fallback。
 /// </summary>
+[SupportedOSPlatform("windows")]
 public class DynamicAuthenticationProviderTests
 {
     private readonly FakeSystemSettingsStore _store = new();
@@ -40,7 +42,7 @@ public class DynamicAuthenticationProviderTests
         Assert.Equal(1, _fallback.VerifyCalls);
     }
 
-    [Fact]
+    [WindowsFact]
     public void AD啟用且伺服器非空時_Verify不委派給fallback_改走AD路徑()
     {
         _store.Update(s =>
@@ -106,7 +108,7 @@ public class DynamicAuthenticationProviderTests
     }
 
     /// <summary>設定變更即生效（S8 快照重建），不必重啟站台——關掉 AD 後下一次 Verify 立刻改走 fallback</summary>
-    [Fact]
+    [WindowsFact]
     public void 設定關閉後下一次呼叫立刻改走fallback_不必重建Provider()
     {
         _store.Update(s =>

@@ -284,7 +284,7 @@ Failure Code:		0x12";
                 LogName = "System",
                 Source = "disk",
                 EventId = 153,
-                EntryType = EventLogEntryType.Warning,
+                EntryType = LogEntryType.Warning,
                 Message = "The IO operation at logical block address ... failed.",
                 TimeGenerated = DateTime.Today
             }

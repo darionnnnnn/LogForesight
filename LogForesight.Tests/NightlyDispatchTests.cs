@@ -36,7 +36,7 @@ public class NightlyDispatchTests
 
     private static LogIssueSignature Issue(bool suppressed = false) => new()
     {
-        LogName = "System", Source = Source, EventId = EventId, EntryType = EventLogEntryType.Error,
+        LogName = "System", Source = Source, EventId = EventId, EntryType = LogEntryType.Error,
         Severity = IssueSeverity.High, Suppressed = suppressed
     };
 
@@ -45,7 +45,7 @@ public class NightlyDispatchTests
     private static LogIssueSignature PrtgFinding(string rule, string sensorId, bool suppressed = false) => new()
     {
         LogName = "PRTG", Source = $"PRTG:{rule}", EventId = 0,
-        EntryType = EventLogEntryType.Warning, EventKey = $"prtg:{rule}:{sensorId}",
+        EntryType = LogEntryType.Warning, EventKey = $"prtg:{rule}:{sensorId}",
         Severity = IssueSeverity.High, Suppressed = suppressed
     };
 
@@ -253,7 +253,7 @@ public class NightlyDispatchTests
         _settings.AutoDispatchEnabled = true;
 
         const string sensorId = "2001";
-        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
+        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, LogEntryType.Warning, $"prtg:warning:{sensorId}");
         // 前置經 WorkOrderCoordinator 建出「自動派工單＋其進行中案件」
         var orderId = Seeder().Assign("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
             handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now,
@@ -262,7 +262,7 @@ public class NightlyDispatchTests
         var trend = new LogIssueSignature
         {
             LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
-            EntryType = EventLogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
+            EntryType = LogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
             Severity = IssueSeverity.High
         };
         var trendKey = IssueSignatureKey.For(trend);
@@ -291,7 +291,7 @@ public class NightlyDispatchTests
             VisibleHostIds = new HashSet<long> { _hosts.FindByName("SRV-01")!.HostId } });
         _settings.AutoDispatchEnabled = true;
         const string sensorId = "2001";
-        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
+        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, LogEntryType.Warning, $"prtg:warning:{sensorId}");
         // 前置經 WorkOrderCoordinator 建出「自動派工單＋其進行中案件」
         var orderId = Seeder().Assign("SRV-02", warningKey, "PRTG:warning", DateTime.Today,
             handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now,
@@ -299,7 +299,7 @@ public class NightlyDispatchTests
         var trend = new LogIssueSignature
         {
             LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
-            EntryType = EventLogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
+            EntryType = LogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
             Severity = IssueSeverity.High
         };
         var (dispatch, _) = Create();
@@ -318,7 +318,7 @@ public class NightlyDispatchTests
             VisibleHostIds = new HashSet<long> { _hosts.FindByName("SRV-01")!.HostId } });
         _settings.AutoDispatchEnabled = true;
         const string sensorId = "2001";
-        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, EventLogEntryType.Warning, $"prtg:warning:{sensorId}");
+        var warningKey = IssueSignatureKey.For("PRTG", "PRTG:warning", 0, LogEntryType.Warning, $"prtg:warning:{sensorId}");
         // 前置經 WorkOrderCoordinator 建出「自動派工單＋其進行中案件」
         var orderId = Seeder().Assign("SRV-01", warningKey, "PRTG:warning", DateTime.Today,
             handlerId: 7, note: null, dueDate: null, actorId: null, actorAccount: "system", occurredAt: DateTime.Now,
@@ -331,7 +331,7 @@ public class NightlyDispatchTests
         var trend = new LogIssueSignature
         {
             LogName = "PRTG", Source = "PRTG:disk_free_trend", EventId = 0,
-            EntryType = EventLogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
+            EntryType = LogEntryType.Warning, EventKey = $"prtg:disk_free_trend:{sensorId}",
             Severity = IssueSeverity.High
         };
         var (dispatch, _) = Create();
@@ -515,7 +515,7 @@ public class NightlyDispatchTests
         var newIssue = new LogIssueSignature
         {
             LogName = "System", Source = newSource, EventId = newEventId,
-            EntryType = EventLogEntryType.Error, Severity = IssueSeverity.High
+            EntryType = LogEntryType.Error, Severity = IssueSeverity.High
         };
 
         Attach(dispatch, "SRV-01", today, existingIssue, newIssue);

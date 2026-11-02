@@ -527,6 +527,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `server_error` | 500 | 未預期例外 |
   | `service_unavailable` | 503 | 升級遷移進行中，寫入暫停 |
   | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
+  | `platform_unsupported` | 501 | 本平台不支援該功能（非 Windows 的 AD 連線測試等 Windows 專屬能力） |
   | `netiq_attempt_ledger_invalid` | 409 | NetIQ 最近執行狀態資料不完整或損毀，補跑範圍預覽無法準確計算 |
 
   PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
@@ -734,8 +735,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 風險是畫面最響亮的元素（原則 1）。共用 helper 集中在 `ui.js`：`button()`（統一按鈕）、
 `bindTabs()`（頁籤切換）、`renderPagination()`（分頁）、`icon()`（SVG 圖示）。報告全文維持
 `<pre class="report-text">` 等寬原樣呈現（含框線符號），但外層卡片給足留白與工具列
-（複製、下載 txt），不是把 txt 直接貼在白背景上。頁面上的大段說明改以一行 `.lf-hint` ＋
-`question-circle` popover 收納（`layout.js` 的 `initHelpPopovers()` 統一初始化），大型表單的
+（複製、下載 txt），不是把 txt 直接貼在白背景上。說明文字依 §8.6a 取捨，收進 `?` 的走
+`question-circle` popover（`layout.js` 的 `initHelpPopovers()` 統一初始化），大型表單的
 次要欄位以 Bootstrap collapse 漸進揭露（如規則頁的處置知識庫預設收合）。
 
 **頁首元件 `renderPageHeader`**（`ui.js`，樣式 `.lf-page-header`）：topbar 是每頁唯一的標題（唯一的 `<h1>`，
@@ -862,13 +863,9 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
    兩欄自動退回單欄（Bootstrap grid 原生行為，不需額外處理）。內容仍可能超高者另加
    `modal-dialog-scrollable`。短訊息的二次確認框（`confirmAction`）刻意不套用——
    寬版對單句確認文字反而鬆散。
-10. **常駐說明文字收斂為 hover icon**：純描述性的
-    `.form-text`（說明「這欄位是什麼」但不影響能否送出）改為 `core/ui.js` 的 `helpIcon(content, title)`
-    ——小圖示鈕，`hover`/`focus` 觸發 `bootstrap.Popover`；放在 `<label>` **之後、`<input>` 之前的
-    同層 sibling**（不巢在 `<label>` 內——互動元素巢在 `<label>` 內在不同瀏覽器的點擊/焦點行為不一致，
-    專案內無此前例）。**保留常駐顯示**的判準：說明陳述的是不可逆或會擋住送出的後果（例如「未分組時
-    只有 admin 看得到」「建立後不可修改」「保留天數上限」），這類文字不該藏在要滑鼠移過去才看得到的
-    icon 裡；純描述性質（例如「用於向 Sentinel 查詢」）才收斂。
+10. **說明文字收斂**：判準見 §8.6a。`helpIcon(content, title)` 是小圖示鈕，`hover`/`focus` 觸發
+    `bootstrap.Popover`；放在 `<label>` **之後、`<input>` 之前的同層 sibling**（不巢在 `<label>` 內——
+    互動元素巢在 `<label>` 內在不同瀏覽器的點擊/焦點行為不一致，專案內無此前例）。
 11. **批次操作跨頁選取**：伺服器端分頁清單若支援批次
     操作，勾選狀態存 `Map<id, rowDto>`（不是純 id 集合）——批次確認畫面通常要顯示「勾了哪些」的
     名稱／摘要，而那些列未必在目前這一頁，只能靠勾選當下存下的物件；翻頁／篩選不清空，僅
@@ -914,19 +911,19 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 
 ### 8.6a 說明文字顯示原則與全站用詞規範
 
-**常駐顯示 vs 收進 icon 的分類基準**：頁面上的欄位說明文字分兩類——
+**總則**：版面與標籤能說明的就不再寫一遍；真正要講的放 `?`；只有後果性的句子常駐。
+畫面上的每一句說明依序問三個問題：
 
-1. **常駐顯示**：陳述「不可逆操作」（例如「建立後不可修改」）、「資料可見性後果」（例如
-   「未分組時只有 admin 看得到」）、或「送出會被擋的硬性限制中與當前輸入直接相關」者——
-   這類文字不該藏在要滑鼠移過去才看得到的地方。
-2. **收進 icon**（`core/ui.js` 的 `helpIcon(content, title)`，`hover`/`focus` 觸發
-   `bootstrap.Popover`，放在 `<label>` 之後、`<input>` 之前的同層 sibling）：驗證限制的
-   完整說明（送出被擋時 toast 會再講一次，欄位旁不需常駐）、營運調校指引、格式範例、
-   資料來源說明等純描述性文字。
+1. **保留常駐**：不可逆操作（「建立後不可修改」）、資料可見性後果（「未分組時只有 admin 看得到」）、
+   會擋住送出的硬性限制、特殊值語意（「留空＝」「0＝」）、空狀態的「下一步」、含資料的動態狀態句、
+   影響當下決策的警示與口徑提醒（「各數字的分母不同，不能互相換算」）。這些不能藏在要滑鼠移過去才看得到的地方，手機上也要看得到。
+2. **收進 `?`**（`helpIcon`／`headerWithHelp`／`renderPageHeader({ help })`）：驗證限制的完整說明、
+   營運調校指引、格式範例、資料來源、口徑定義。
+3. **刪除**：複述欄位名或標題、複述版面已呈現的事（「點選卡片檢視…」「點列檢視…」）、
+   與旁邊 `?` 或另一段重複的句子、同頁重複出現的同句提示。
 
-`.lf-hint` 頁首說明維持「一行式＋popover 雙層」形態（見上方「版面骨架」段）；內容含
-`<code>` 排版等 popover 保不住 HTML 格式的情況（如主機頁批次貼上的格式說明）維持常駐，
-屬技術限制下的例外。
+內容含 `<code>` 排版等 popover 保不住 HTML 格式的情況（如主機頁批次貼上的格式說明）維持常駐，屬技術限制下的例外。
+頁首（`renderPageHeader`）至少要有副標、動作或 `help` 其中之一，都沒有就不放頁首。
 
 **全站用詞規範**：文字措辭以**官方用詞（微軟正體中文詞彙）或一般台灣 IT 慣用詞**為主，
 以微軟語言入口網（Microsoft Language Portal）詞彙為優先參照，無官方詞才用台灣業界慣用詞：
@@ -1011,7 +1008,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
 - 區塊：風險類型統計卡（8 類：主數字＝**問題類型數** `IssueTypeCount`——相異 (Source, EventId)、
   跨主機跨日皆去重；次行為涉及主機數、期間累計主機×日、嚴重度分解）、**重點問題 Top 5**、
-  高風險主機排行、待辦區（未處理/逾期/權限異動 pending 數；具 `Handle` 者在「未處理問題」之後多一張
+  高風險主機排行、頂部 KPI 卡列的「待處理」與「權限與安全」組（未處理／逾期、權限異動待確認；具 `Handle` 者多一張
   **我的交辦單**卡：進行中單數，副行台數、逾期台數與未回覆單數，連到自己的 §9.4a，資料同側欄徽章
   `GET api/handlers/me/badge`；具 `Assign` 者另有**待派工問題**卡：`DashboardDto.PendingDispatch`，
   資料同交辦總覽待派頁籤的試跑 `GetGaps`（近 7 天：昨天往前 7 天），主數字＝待派問題總數、
@@ -1081,16 +1078,18 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     ExcludeConcluded`）。此為固定行為，無切換選擇器（刻意，見 docs/BACKLOG.md 的
     「顯示範圍選擇器」條目）。
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
-  加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
+  加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「已分析資料未顯示風險訊號」大字狀態
   （沒事也要一眼確認是真的沒事）。
 - **頂部 KPI 卡列分三組**（`kpiStrip`，docs/DESIGN-SYSTEM.md §6b）：風險概況（高／中風險日、監控主機數、涵蓋率缺口天數）、
-  待處理（未處理問題、我的交辦單、待派工問題、未回報主機）、權限與安全（權限異動待確認、24 小時登入失敗）；各卡出現條件不變，整組沒有卡時不顯示。
+  待處理（未處理問題、待派工問題、我的交辦單、未回報主機）、權限與安全（權限異動待確認、24 小時登入失敗）；各卡出現條件不變，整組沒有卡時不顯示。
+- **預設只顯示第一排**（`core/reveal.js`）：KPI 卡列與風險類型各一顆揭露鈕，依實際格線欄數藏起第一排以外的卡，
+  按鈕寫出被藏幾項與其中幾項告警（KPI 看紅字、風險類型看重大紅邊）；全部放得下時不顯示按鈕。展開狀態記在瀏覽器
+  （`lf.collapse.dashboard-kpi`、`lf.collapse.dashboard-categories`），列印時一律全部顯示。風險類型的順序由後端排定（有高 > 有中 > 問題數）。
 - **未回報主機是頂部 KPI 卡列的一張計數卡**：兩千台規模下逐台列出可能數百筆，
   以計數（`SilentHostsCount`）＋下鑽到主機頁的 `/admin/hosts?status=silent`
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
   0 台時照常顯示 0（secondary 色），不換成空狀態插圖；「沒回報 ≠ 沒問題」放卡片 tooltip，
-  PRTG 啟用且其中有 PRTG 感測器異常的主機時顯示為「沒回報 ≠ 沒問題；其中 N 台有 PRTG 監測項目異常」（`SilentHostsPrtgDownCount`，判定見 docs/PRTG-SPEC.md §9）；此鏡像提示是未回報主機的診斷資訊，不等於正式每日 `silent` finding；正式規則要求完整原生 presence 快照及目前 timeline 證據。此值不能推論整台主機失聯。
-  空出的右下角由「依群組風險概況」補位，與高風險主機 6／6 分欄。
+  PRTG 啟用且其中有 PRTG 感測器異常的主機時副標顯示「其中 N 台有 PRTG 監測項目異常」（`SilentHostsPrtgDownCount`，判定見 docs/PRTG-SPEC.md §9）；此鏡像提示是未回報主機的診斷資訊，不等於正式每日 `silent` finding；正式規則要求完整原生 presence 快照及目前 timeline 證據。此值不能推論整台主機失聯。
 - **依群組風險概況**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
   「未處理數」**只計未處理（Open）**，與 KPI 卡「未處理問題」同一個定義——含處理中會讓
@@ -2758,6 +2757,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **無 `Maintain` 時設定改唯讀而非整塊隱藏**：動作類按鈕隱藏、輸入控制項 `disabled`＋頂端一行說明。
     整塊藏起來會連「目前設定是什麼」也看不到，而那正是 `DevMonitor` 需要的資訊。
 - **結果語意**：主程序與 AI 各自顯示「正常結束」或「已停止」；缺省／null 結果顯示「結果未知」。正常結束不表示 PRTG／AI 待補皆完成，需同時查看來源欄與待補數。AI 取消後拒絕 provider 晚到結果，保留完成紀錄及待補；目前版本的 Running workflow 在取消／例外時收尾，版本已更新者不覆寫。
+- **多窗口續跑**：每個窗口實例觸發一次，不看前一趟成敗；同日每趟的目標日都是昨天。本機與 NetIQ 依缺漏日只補未完成的主機日；PRTG 在同日最新統計的來源同步完整時沿用，不重打外部系統（PRTG-SPEC §3）；權限檢查、保留清除、派工與體檢每趟照常。趟首里程碑寫「本趟為今日第 n 個執行窗口」，各路結束里程碑寫結果與數量；一趟的目標日在開跑時固定，跨午夜不變——跨午夜窗口（如 22:00→06:00）午夜後處理到的主機仍以開跑日的昨天為目標，隔晚才分析新的一天；要讓資料日當晚完成，窗口開始時間設在午夜後。
+- **錯過窗口自動補跑（`AutoCatchUp`）**：站台停機錯過窗口時，窗口結束後 4 小時內補跑最近一個已結束的窗口一次，`Trigger` 仍是 `schedule`、算該窗口已觸發。補跑在窗口外開跑，不受窗口結束停止；它的停止點＝開跑時刻＋錯過窗口的長度（狀態卡與里程碑都寫出來）。本機與 NetIQ 的回望取缺口天數與常態值較大者。站台重啟造成的異常中斷，在窗口內由正常觸發補一次，仍受窗口結束停止。
 - **異常中斷（重啟時關閉）**：站台啟動時取得執行鎖後，把本行程啟動之前開始、仍未結束的執行（取數與 AI 皆是）補一列結束紀錄並標 `Interrupted`，狀態顯示「異常中斷」（與「本行程沒有持有、卻逾 6 小時未結束」的異常中斷同一狀態；本行程仍持有的執行不論跑多久都顯示執行中，`BatchRunStatus.Compute` 的 `heldByThisProcess`），詳情多一則「站台重啟時發現此執行未正常結束」。拿不到執行鎖（另一個行程仍在跑）時整段略過。同一個排程窗口群組（`ScheduleCalculator.MostRecentWindowStart`）內第一筆中斷的排程執行不計入「已觸發」，因此窗口內或窗口結束 4 小時內會自動補跑一次；第二次中斷不再補，避免反覆崩潰時無限重跑。
 - **PRTG 待補評估與上一趟**：閒置時 PRTG 卡多兩列（執行中不顯示）。「待補評估」列出排程下次會自動補評估的天數與最早日期，並指路「立即執行回望 N 天」可立即補；「上一趟」列出最近一趟取數第一個非成功日的結局與原因，原因為「規則庫沒有啟用中的 PRTG 規則」時附「前往規則維護」連結。資料來自 `GET status` 的 `prtgPendingDays`／`prtgLastIssue*`（`SchedulerHostedService.PrtgRunHealth`，一次讀最近 8 天執行紀錄）。
 - **PRTG 停用指引**：只向 Maintain 顯示維護入口，啟用方式是「擷取參數」勾選「啟用 PRTG 擷取」並儲存。保守策略的數值範圍選單不作啟用開關；停用時排程擷取／回填不跑，維護者仍可手動同步結構。
@@ -3003,9 +3004,12 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     整列「未執行」，而這張表存在的理由正是「一眼看出昨晚哪幾台沒跑」。`days` 仍代表列數
     （範圍 `[Today-days, Today-1]`），分頁數學不變。今天的執行看狀態卡與「執行紀錄」頁籤
     ——**異常彙總與執行紀錄刻意仍含今天**，它們是事件清單、不是主機×日視角。
+    「執行時間」欄用同一個鍵（當天開跑）：取數趟的最早開始～最晚結束與實際總耗時（聯集，重疊不重複算）；
+    展開列再列本機／NetIQ／PRTG／AI 各路區間與耗時（`RunDayTimingBuilder`）。AI 趟只進 AI 那一路，不進主機×日。
+    異常中斷的趟不計入聯集（結束時刻是站台重啟時刻），只寫趟數與最後活動；舊紀錄沒有階段資料時各路顯示「—」。
   - **異常彙總**（Error/Fatal 按訊息聚合）。
   - **執行紀錄**：`GET api/runs/list?days=N`
-    （`RunMonitorService.GetRunList`），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
+    （`RunMonitorService.GetRunList`），點列就地展開階段時間軸（`core/run-timeline.js`：每個階段一條、依整趟比例定位，起訖、耗時、結果都有文字；PRTG 子階段縮排；異常中斷的耗時顯示「—」），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
     主機／**作業類型**（取數分析｜AI 分析，`BatchRun.JobType`）／狀態／開始時間／耗時／
     觸發來源／分析天數／警告與錯誤數，回答「這一次到底跑了多久、誰觸發的」，同一天內的
     多次手動重跑各自一列。AI 分析排程的每次執行也寫一筆（`JobType=ai`，AiCalls/AiFailures
@@ -3038,7 +3042,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   最多 18 萬格 DOM，因此每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
   點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。狀態判定在 `BuildCell`。
 - **NetIQ 主機的執行狀態以分析紀錄判定**：NetIQ 主機沒有個別的
-  `lf_batch_runs` 紀錄（`NetiqPipelineService` 只以跑批次的那台機器名義登記彙總的一筆），
+  `batch_runs` 紀錄（`NetiqPipelineService` 只以跑批次的那台機器名義登記彙總的一筆），
   逐台比對 `BatchRun.HostName` 永遠比不到。`RunMonitorService` 因此
   依 `WebHost.Source` 分流：`local` 主機走 `BuildCell`；`netiq` 主機查
   `IAnalysisRecordQuery.ListHostDates`（只投影 HostId／RecordDate 的輕量查詢），
@@ -3081,9 +3085,7 @@ lf_host_owners        host_id FK + user_id FK，PK(host_id, user_id)
 lf_rule_seeds         rule_id PK / seed_version int / content_json text        -- builtin 規則原廠快照（回復預設用）
 （lf_rules 增列 modified_by bigint NULL / modified_at timestamp NULL）
 
-lf_batch_runs         run_id PK / host_id FK / started_at / finished_at NULL / exit_code NULL /
-                      app_version / args / days_analyzed / ai_calls / ai_failures / warn_count / error_count
-lf_batch_run_logs     log_id PK / run_id FK / logged_at / level / logger / message nvarchar(2000) / exception_text text
+（執行紀錄不是獨立實體表：`lf_log_lines` 的 `log_key='batch_runs'`／`'batch_run_logs'` 每列一筆 JSON，同一 RunId 取最後一列，欄位見 docs/DB-SPEC.md）
 
 lf_import_logs        import_id PK / user_id FK / kind / file_name / added_count / updated_count / detail_json / created_at
 
@@ -3309,7 +3311,7 @@ target 名稱也帶 runId 與識別碼以免互相移除。
 2. `summary` 在寫入當下組好人話（含對象名稱與前後值摘要）；欄位級對照放 `detail_json`。
 3. `PermissionFilter` 攔下的 403 寫 `result='denied'`。
 4. **稽核/執行紀錄寫入失敗不得中斷業務操作**——catch 後寫 Web 端 NLog（`logs\web.log`），照常回應。
-5. 批次端：啟動先寫 `lf_batch_runs`（finished_at=NULL），結束回填；進 store 的只有
+5. 批次端：啟動先寫 `batch_runs`（FinishedAt 為空），頂層階段結束時追加快照，結束時回填；進 store 的只有
    Warn 以上＋固定 Info 里程碑；訊息自帶脈絡（處理日期＋階段）。NLog 檔案 log 職責不變。
 6. 保留：各類資料的保留期與預設值見 §9.9b 項次 4 與 [DB-SPEC.md](DB-SPEC.md)「保留策略」（稽核 730、執行歷程 120、業務資料 180、原始事件內容 120，皆可調且下限 90）。
 

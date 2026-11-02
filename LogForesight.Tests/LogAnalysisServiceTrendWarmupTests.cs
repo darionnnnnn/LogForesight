@@ -25,7 +25,7 @@ public class LogAnalysisServiceTrendWarmupTests : IDisposable
         LogName = "System",
         Source = "disk",
         EventId = 153,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         Message = "測試事件"
     };
 

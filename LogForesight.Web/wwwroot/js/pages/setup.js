@@ -94,7 +94,7 @@ export function updateAiProviderView(form, provider, { hasApiKey = false, declar
     const textDeclaration = declaration || CLOUD_AI_DECLARATION;
 
     if (provider === 'OpenAi') {
-        if (providerHint) providerHint.textContent = `使用 OpenAI 官方 API 服務。${textDeclaration}`;
+        if (providerHint) providerHint.textContent = textDeclaration;
         baseUrlWrap?.classList.remove('d-none');
         if (baseUrlLabel) baseUrlLabel.textContent = 'API 位址（選填）';
         if (baseUrlInput) baseUrlInput.placeholder = '留空使用官方端點，要走 proxy 才填';
@@ -102,12 +102,12 @@ export function updateAiProviderView(form, provider, { hasApiKey = false, declar
         modelWrap?.classList.remove('d-none');
         if (modelLabel) modelLabel.textContent = '模型名稱（必填）';
         if (modelInput) modelInput.placeholder = '例如 gpt-4o、gpt-4o-mini';
-        if (modelHint) modelHint.textContent = '例如 gpt-4o、gpt-4o-mini。';
+        if (modelHint) modelHint.textContent = '';
         azureDepWrap?.classList.add('d-none');
         azureVerWrap?.classList.add('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
     } else if (provider === 'AzureOpenAi') {
-        if (providerHint) providerHint.textContent = `使用 Microsoft Azure OpenAI 服務。${textDeclaration}`;
+        if (providerHint) providerHint.textContent = textDeclaration;
         baseUrlWrap?.classList.remove('d-none');
         if (baseUrlLabel) baseUrlLabel.textContent = '端點位址（Endpoint，必填）';
         if (baseUrlInput) baseUrlInput.placeholder = 'https://your-resource.openai.azure.com/';
@@ -117,7 +117,7 @@ export function updateAiProviderView(form, provider, { hasApiKey = false, declar
         azureVerWrap?.classList.remove('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
     } else {
-        if (providerHint) providerHint.textContent = '使用本機或內部部署之 OpenAI 相容端點（如 llama.cpp／KoboldCpp）。';
+        if (providerHint) providerHint.textContent = '';
         baseUrlWrap?.classList.remove('d-none');
         if (baseUrlLabel) baseUrlLabel.textContent = 'API 位址';
         if (baseUrlInput) baseUrlInput.placeholder = 'http://localhost:8080';
@@ -267,6 +267,10 @@ function renderSteps() {
 function renderAdInlineForm(step) {
     const template = document.getElementById('setup-ad-template');
     const form = template.content.firstElementChild.cloneNode(true);
+    // layout.js 只在頁面載入時掃描一次 popover；範本複製出來的 ? 要自行初始化
+    for (const el of form.querySelectorAll('[data-bs-toggle="popover"]')) {
+        new bootstrap.Popover(el, { trigger: 'hover focus', html: false });
+    }
 
     const enabledCheckbox = form.querySelector('#setup-ad-auth-enabled');
     const serversInput = form.querySelector('#setup-ad-servers');

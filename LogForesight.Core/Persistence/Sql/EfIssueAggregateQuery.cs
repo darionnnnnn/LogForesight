@@ -495,7 +495,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     HostId = g.Key.SurvivingHostId,
                     IssueKey = IssueSignatureKey.For(
                         g.Key.LogName, g.Select(x => x.SourceName).Min() ?? g.Key.SourceKey, g.Key.EventId,
-                        (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
+                        (LogForesight.Core.Models.LogEntryType)g.Key.EntryType,
                         g.Key.EventKey),
                     LastSeen = latest.RecordDate,
                     SeverityRank = latest.SeverityRank,
@@ -648,7 +648,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 HostId = g.Key.SurvivingHostId,
                 IssueKey = IssueSignatureKey.For(
                     g.Key.LogName, g.Select(x => x.SourceName).Min() ?? g.Key.SourceKey, g.Key.EventId,
-                    (System.Diagnostics.EventLogEntryType)g.Key.EntryType,
+                    (LogForesight.Core.Models.LogEntryType)g.Key.EntryType,
                     g.Key.EventKey),
                 LastSeen = g.Max(x => x.LastSeen),
                 SeverityRank = g.Max(x => x.MaxSeverityRank)
@@ -669,7 +669,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     private static string IssueKeyFor(string logName, string sourceName, int eventId, int entryType, string? eventKey)
     {
         // 組鍵單點（含 EventKey 第五段）只在 IssueSignatureKey 的五參數多載，這裡不另寫一份
-        return IssueSignatureKey.For(logName, sourceName, eventId, (System.Diagnostics.EventLogEntryType)entryType, eventKey ?? string.Empty);
+        return IssueSignatureKey.For(logName, sourceName, eventId, (LogForesight.Core.Models.LogEntryType)entryType, eventKey ?? string.Empty);
     }
 
     private sealed record DayHandlingRaw(
@@ -2044,7 +2044,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 g => g.Key,
                 g => (IReadOnlyList<string>)g
                     .Select(x => IssueSignatureKey.For(x.LogName, x.SourceName, x.EventId,
-                        (System.Diagnostics.EventLogEntryType)x.EntryType))
+                        (LogForesight.Core.Models.LogEntryType)x.EntryType))
                     .Distinct(StringComparer.Ordinal)
                     .ToList());
     }

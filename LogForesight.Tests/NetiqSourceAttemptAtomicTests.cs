@@ -114,7 +114,7 @@ public sealed class NetiqSourceAttemptAtomicTests : IDisposable
             withdrawn.LatestNetiqAttemptAtUtc);
         Assert.False(withdrawn.CanSupplementWithPrtg());
         var store = _backend.RecordStore(new HostKey { HostId = netiqId, HostName = $"host-{netiqId}" });
-        Assert.Contains(Day, MissingDateFinder.FindWithExistingDates(store, lookbackDays: 1).MissingDates);
+        Assert.Contains(Day, MissingDateFinder.FindWithExistingDates(store, DateTime.Today, lookbackDays: 1).MissingDates);
         Assert.Equal(beforeLocal.ContentJson, ReadParent(localId).ContentJson);
         Assert.Equal(beforeLocal.WriteRevision, ReadParent(localId).WriteRevision);
         Assert.Equal(beforePruned.ContentJson, ReadParent(prunedId).ContentJson);

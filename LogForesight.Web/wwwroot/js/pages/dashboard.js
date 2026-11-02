@@ -2,13 +2,14 @@
  * 總覽儀表板（docs/WEB-SPEC.md §9.1）。
  *
  * 排版遵循 §8.2 視覺層級：有「重大」問題時該類別卡加紅邊；
- * 全數無風險時首屏顯示大字「無風險訊號」——沒事也要一眼確認是真的沒事。
+ * 全數無風險時首屏顯示大字「已分析資料未顯示風險訊號」——沒事也要一眼確認是真的沒事。
  * 所有數字皆可下鑽（§8.4）。
  */
 
 import { api, getAiAvailable, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
-import { renderTable, renderLoading, renderEmpty, icon, kpiStrip, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, icon, kpiStrip, guardLoad, helpIcon } from '../core/ui.js';
+import { revealFirstRow } from '../core/reveal.js';
 import { categoryName, formatNumber, formatDateTime, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell, severityCell, issueDensityCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
@@ -19,6 +20,19 @@ import { safeStorage } from '../core/storage.js';
 let currentDays = Number(safeStorage.get('lf.dashboard.days')) || 7;
 const loadGuard = createSeqGuard();      // 連點期間切換時，慢的舊回應不得蓋掉新結果
 const aiFocusGuard = createSeqGuard();
+
+// 兩個區域各一顆揭露鈕；重新渲染前要釋放舊格線上的 observer
+const reveals = {};
+
+function mountReveal(name, options) {
+    reveals[name]?.dispose();
+    reveals[name] = options ? revealFirstRow({ key: `dashboard-${name}`, ...options }) : null;
+}
+
+// 清單受檢視權、期間與顯示設定限制：空清單一律同一句，不各寫一種說法
+const EMPTY_SCOPE_HINT = '僅代表目前可見的分析結果；未回報、未分析或隱藏的項目不代表沒有問題。';
+
+const DAY_RISK_HELP = '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。';
 
 async function load() {
     // serverAdmin 沒有業務資料檢視能力（§6.2 最小授權），儀表板會是一片空白——
@@ -249,8 +263,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
             variant: data.highRiskDays > 0 ? 'danger' : 'secondary',
             // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/archive/HISTORY.md #5）；
             // 顯示範圍另受「日風險等級顯示」設定影響（docs/archive/FEEDBACK-3-PLAN.md #8）
-            sub: '批次分析算定',
-            title: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
+            title: DAY_RISK_HELP,
             url: recordsUrl({ riskLevels: '高', from: data.from, to: data.to })
         }
     ];
@@ -261,8 +274,7 @@ function renderKpi(data, user, displaySettings, myBadge) {
             label: '中風險日',
             value: data.mediumRiskDays,
             variant: data.mediumRiskDays > 0 ? 'warning' : 'secondary',
-            sub: '批次分析算定',
-            title: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
+            title: DAY_RISK_HELP,
             url: recordsUrl({ riskLevels: '中', from: data.from, to: data.to })
         });
     }
@@ -280,7 +292,6 @@ function renderKpi(data, user, displaySettings, myBadge) {
             label: '涵蓋率缺口天數',
             value: data.coverageGapDays,
             variant: data.coverageGapDays > 0 ? 'warning' : 'secondary',
-            sub: '資料不完整或未讀取',
             title: '資料不完整或 Security log 未讀取的日子',
             url: null
         }
@@ -302,24 +313,6 @@ function renderKpi(data, user, displaySettings, myBadge) {
         sub: todoSub
     });
 
-    // 我的交辦單：緊接在「未處理問題」之後——主管看完「有哪些事沒處理」，
-    // 處理人接著要看的就是「其中有幾張在我手上」，兩張卡同屬待辦脈絡應該相鄰。
-    // 沒有 Handle 能力的角色動不了手，這張卡對他們只是噪音，不顯示。
-    if (myBadge && hasCapability(user, 'Handle')) {
-        cards.push({
-            group: 'todo',
-            label: '我的交辦單',
-            value: myBadge.activeWorkOrders ?? 0,
-            // 0 張時仍顯示（處理人看到「0 張」是有意義的），只是不用強調色
-            variant: (myBadge.overdueMembers ?? 0) > 0 ? 'danger'
-                : ((myBadge.activeWorkOrders ?? 0) > 0 ? 'primary' : 'secondary'),
-            hint: `${formatNumber(myBadge.activeMembers ?? 0)} 台；`
-                + `逾期 ${formatNumber(myBadge.overdueMembers ?? 0)} 台、`
-                + `未回覆 ${formatNumber(myBadge.unrepliedWorkOrders ?? 0)} 張`,
-            url: `/handlers/${user.userId}`
-        });
-    }
-
     // 待派工問題（具 Assign 者，後端才填 pendingDispatch）：管理者早上要知道「有多少問題沒人接」。
     // 資料同交辦總覽待派頁籤的試跑（近 7 天）；點卡直接進該頁籤（#gaps）。null 時不建卡。
     if (data.pendingDispatch) {
@@ -340,6 +333,24 @@ function renderKpi(data, user, displaySettings, myBadge) {
         });
     }
 
+    // 我的交辦單：排在待派工之後。管理者同時有兩張卡時第一排先看「有多少問題沒人接」；
+    // 處理人沒有待派工卡，這張自然緊接「未處理問題」。
+    // 沒有 Handle 能力的角色動不了手，這張卡對他們只是噪音，不顯示。
+    if (myBadge && hasCapability(user, 'Handle')) {
+        cards.push({
+            group: 'todo',
+            label: '我的交辦單',
+            value: myBadge.activeWorkOrders ?? 0,
+            // 0 張時仍顯示（處理人看到「0 張」是有意義的），只是不用強調色
+            variant: (myBadge.overdueMembers ?? 0) > 0 ? 'danger'
+                : ((myBadge.activeWorkOrders ?? 0) > 0 ? 'primary' : 'secondary'),
+            hint: `${formatNumber(myBadge.activeMembers ?? 0)} 台；`
+                + `逾期 ${formatNumber(myBadge.overdueMembers ?? 0)} 台、`
+                + `未回覆 ${formatNumber(myBadge.unrepliedWorkOrders ?? 0)} 張`,
+            url: `/handlers/${user.userId}`
+        });
+    }
+
     // 未回報主機計數卡（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
     // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
     // 0 台時照常顯示，不換成空狀態插圖（KPI 卡列慣例）。
@@ -349,8 +360,9 @@ function renderKpi(data, user, displaySettings, myBadge) {
         value: data.silentHostsCount,
         variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
         hint: data.silentHostsPrtgDownCount > 0
-            ? `其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常；沒回報 ≠ 沒問題`
-            : '沒回報 ≠ 沒問題',
+            ? `其中 ${formatNumber(data.silentHostsPrtgDownCount)} 台有 PRTG 監測項目異常`
+            : undefined,
+        title: '沒回報 ≠ 沒問題',
         url: '/admin/hosts?status=silent'
     });
 
@@ -374,13 +386,14 @@ function renderKpi(data, user, displaySettings, myBadge) {
         });
     }
 
-    // 三組：風險概況／待處理／權限與安全。說明放可見副標（sub），完整文字留在 title（DESIGN-SYSTEM §6b：說明不只藏在 tooltip）
+    // 三組：風險概況／待處理／權限與安全。副標只放含資料或口徑的句子，說明文字原則見 WEB-SPEC §8.6a
     const groups = [
-        { key: 'risk', title: '風險概況' },
+        { key: 'risk', title: '風險概況', help: helpIcon(DAY_RISK_HELP) },
         { key: 'todo', title: '待處理' },
         { key: 'security', title: '權限與安全' }
     ].map(g => ({
         title: g.title,
+        help: g.help,
         cards: cards.filter(card => card.group === g.key).map(card => ({
             value: typeof card.value === 'string' ? card.value : formatNumber(card.value),
             label: card.label,
@@ -392,16 +405,28 @@ function renderKpi(data, user, displaySettings, myBadge) {
     }));
 
     const container = document.getElementById('dashboard-kpi');
-    container.replaceChildren(kpiStrip(groups));
+    const strip = kpiStrip(groups, { singleRow: true });
+    container.replaceChildren(strip);
+    mountKpiReveal(strip, container);
+}
+
+function mountKpiReveal(strip, container) {
+    mountReveal('kpi', {
+        grids: [...strip.querySelectorAll('.lf-kpi-grid')],
+        host: container,
+        noun: '項指標',
+        isAlert: card => card.querySelector('.text-danger') !== null
+    });
 }
 
 function renderCategories(data) {
     const container = document.getElementById('dashboard-categories');
 
     if (data.categories.length === 0) {
+        mountReveal('categories', null);
         renderEmpty(container, {
             title: '本期可見資料未列出問題訊號',
-            hint: '僅代表目前可見的分析結果；未回報、未分析或隱藏的項目不代表沒有問題。'
+            hint: EMPTY_SCOPE_HINT
         });
         return;
     }
@@ -462,6 +487,12 @@ function renderCategories(data) {
     }
 
     container.replaceChildren(grid);
+    mountReveal('categories', {
+        grids: [grid],
+        host: container,
+        noun: '類',
+        isAlert: link => link.querySelector('.lf-card--critical') !== null
+    });
 }
 
 /**
@@ -520,7 +551,7 @@ function renderTopIssues(data) {
         // 帶 view=issue 明確指定視角（帶參數時預設會回到明細視角），期間沿用本頁的區間
         rowHref: i => recordsUrl({ view: 'issue', source: i.source, eventId: i.eventId,
                                   riskLevels: '高,中,低', from: data.from, to: data.to }),
-        empty: { title: '本期可見資料未列出重點問題', hint: '清單受檢視權、期間與顯示設定限制；空清單不代表全站沒有問題。' }
+        empty: { title: '本期可見資料未列出重點問題', hint: EMPTY_SCOPE_HINT }
     });
 }
 
@@ -744,7 +775,7 @@ function renderHosts(data) {
             { title: '最新狀況', render: h => h.latestHeadline }
         ],
         rows: data.hostRanking,
-        empty: { title: '本期沒有風險主機', hint: '目前可見資料未列出風險主機；未回報或無分析紀錄不代表正常。' }
+        empty: { title: '本期沒有風險主機', hint: EMPTY_SCOPE_HINT }
     });
 }
 

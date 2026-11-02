@@ -183,7 +183,7 @@ public sealed class EfIssueAggregateQueryReadyParityTests : IDisposable
             EventCount = eventCount,
             ElevatesDayRisk = false,
             LogName = "System",
-            EntryType = (int)System.Diagnostics.EventLogEntryType.Warning,
+            EntryType = (int)LogForesight.Core.Models.LogEntryType.Warning,
             EventKey = string.Empty
         };
 

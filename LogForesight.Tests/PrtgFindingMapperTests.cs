@@ -102,7 +102,7 @@ public class PrtgFindingMapperTests
         Assert.Equal("PRTG", sig.LogName);
         Assert.Equal("PRTG:down", sig.Source);
         Assert.Equal(0, sig.EventId);
-        Assert.Equal(EventLogEntryType.Warning, sig.EntryType);
+        Assert.Equal(LogEntryType.Warning, sig.EntryType);
         Assert.Equal(1, sig.Count);
         Assert.Equal("00:00", sig.FirstSeen);
         Assert.Equal("23:59", sig.LastSeen);

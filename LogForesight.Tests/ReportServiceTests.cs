@@ -126,7 +126,7 @@ public class ReportServiceTests : IDisposable
         var issue = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153, Severity = IssueSeverity.High, Count = 1,
-            EntryType = System.Diagnostics.EventLogEntryType.Error
+            EntryType = LogForesight.Core.Models.LogEntryType.Error
         };
         AddRecord(openHost, DateTime.Today, "高", issue);        // 未處理
         AddRecord(resolvedHost, DateTime.Today, "高", issue);    // 已結案
@@ -155,12 +155,12 @@ public class ReportServiceTests : IDisposable
         var muted = new LogIssueSignature
         {
             LogName = "System", Source = "disk", EventId = 153, Severity = IssueSeverity.High, Count = 1,
-            EntryType = System.Diagnostics.EventLogEntryType.Error
+            EntryType = LogForesight.Core.Models.LogEntryType.Error
         };
         var normal = new LogIssueSignature
         {
             LogName = "System", Source = "netlogon", EventId = 5719, Severity = IssueSeverity.High, Count = 1,
-            EntryType = System.Diagnostics.EventLogEntryType.Error
+            EntryType = LogForesight.Core.Models.LogEntryType.Error
         };
         AddRecord(host, DateTime.Today, "高", muted, normal);
 

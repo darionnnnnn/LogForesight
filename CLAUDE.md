@@ -39,7 +39,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **7,530 通過／10 略過**（Windows；
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **7,530 通過／10 略過**（Windows；macOS 另略過 `[WindowsFact]`／`[WindowsTheory]`；環境變數由 `LogForesight.Tests/test.runsettings` 帶入；
   歷次基線見 `docs/archive/README.md`）；略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑。文件／說明書批次可先跑定向的
   `dotnet test --filter FullyQualifiedName~HelpContentServiceTests` 與 JSON／Markdown 結構校驗；
   不把定向結果當成整合基線。**改前端的段落**定向篩選至少要含 `UiTests|JsModuleImport|BehaviorTests|ApiTimeout`——
@@ -115,6 +115,7 @@ LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event L
 - 不要用 `IPAddress.TryParse` 判斷「是不是 IP」：它把 `10.1`、`12345` 解成別台主機的位址；一律走 `IpSyntax`（守門測試掃白名單）。
 - 不要在 `Fail(`／`DomainException(` 傳錯誤碼字面：新碼先登錄到 `ApiErrorCodes`（常數＋狀態碼表），WEB-SPEC §7.2 同步。
   Core 擲給 Web 需要特定狀態碼的錯誤，用專屬例外型別交給 `ApiExceptionFilter` 對應（如 `ConcurrentUpdateException`、`PrtgScopePurgeBusyException`），不要在控制器比對例外訊息字串。
+- 不要在正式碼或測試用 `System.Diagnostics.EventLogEntryType`：它的組件標 Windows 專屬，一律用 `LogEntryType`，只有 `EventRecordMapper.FromClassic` 是轉換點。呼叫 Windows 專屬 API 要有平台守門；`CA1416` 在 `Directory.Build.props` 是建置錯誤，不得用 `NoWarn`／`#pragma` 壓掉。
 - 不要新增不帶 nonce 的 inline script：CSP 只放行每請求 nonce，漏帶的腳本在正式環境被瀏覽器擋掉（`CspPolicyGuardTests` 掃所有 view）。
   同理不要在 view 或 JS 字串寫 `style=` 屬性與 inline 事件屬性；動態樣式用 `classList` 或 `style.setProperty`。
 - 不要用「是不是 `OperationCanceledException`」判斷使用者取消：HttpClient 逾時擲的 `TaskCanceledException` 也是 OCE，只有「OCE 且 ct 已取消」才是取消（樣板見 `PrtgScopeEstimateController`）。

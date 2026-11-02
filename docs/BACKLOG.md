@@ -38,6 +38,23 @@
 - **CSP 違規回報只用 `report-uri`**：未同時送 `Report-To`／`Reporting-Endpoints` 新語法（`/api/csp-report` 已能解析 `application/reports+json`）。
   **觸發時機**：主流瀏覽器停止支援 `report-uri`，或需要回報 CSP 以外的違規類型。
 
+### 執行紀錄的階段快照讓每趟資料量約放大 5 倍
+
+每趟頂層階段結束各追加一列完整 `BatchRun` 快照（含 `PrtgDays` 與 `Phases`），量測 180 趟、14 個 PRTG 日：
+舊 4.1 KB／趟、新 22.5 KB／趟；`GetRun`（121 天窗口）7 ms → 119 ms，`GetRecentRuns`（180 趟）6 ms → 91 ms。排程 Tick 每 60 秒只讀 2 天，不受影響；
+執行紀錄「全部」（保留期 120 天）與站台啟動關閉未結束紀錄會讀到數 MB。
+**觸發時機**：執行紀錄頁開「全部」或執行詳情明顯變慢時——做法是列表不帶 `Phases`（展開時再讀明細）、中途快照不重複整份 `PrtgDays`。
+
+### 自動補跑只看最近一個已結束的窗口
+
+多窗口時更早錯過的窗口不補，由下一個窗口的缺漏日機制吸收。
+**觸發時機**：實際出現連續錯過多個窗口、缺漏日吸收不了的情況。
+
+### 測試的時鐘與時區抽象
+
+約 209 個測試檔直接用 `DateTime.Now`，產品碼也依部署機本地時區；macOS／Linux 以 `TZ=Asia/Taipei` 對齊。沒有 `IClock`。
+**觸發時機**：非 Windows 平台出現跨日界或 DST 相關的偶發紅燈時，再抽時鐘與固定時區。
+
 ## NetIQ 整合：試點驗證與遞延項目
 
 - **NetIQ 接線（試點驗證）**：取數邏輯（`SentinelFieldMap`／`SentinelEventMapper`／

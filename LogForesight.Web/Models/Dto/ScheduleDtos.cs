@@ -87,6 +87,9 @@ public class ScheduleStatusDto
     public bool IsRunning { get; set; }
     public string? TriggerText { get; set; }
     public DateTime? StartedAt { get; set; }
+
+    /// <summary>自動補跑的停止時刻（其餘趟為 null）</summary>
+    public DateTime? CatchUpDeadline { get; set; }
     public string? LatestMessage { get; set; }
 
     /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：netiq 專屬（回饋十七輪批次E 起，

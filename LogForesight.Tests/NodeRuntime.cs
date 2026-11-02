@@ -27,6 +27,34 @@ public static class NodeRuntime
 {
     private static readonly Lazy<bool> Detected = new(Probe, isThreadSafe: true);
 
+    private static readonly Lazy<string> Executable = new(
+        () => ResolveExecutable(Environment.GetEnvironmentVariable("PATH"), File.Exists), isThreadSafe: true);
+
+    /// <summary>
+    /// 先看 PATH；找不到再探 Homebrew 與 /usr/local 的固定位置。macOS 從 IDE 測試總管啟動時
+    /// 不繼承 shell 的 PATH，只靠 PATH 會讓前端測試找不到 node。都沒有就回 "node"，交由探測判定不可用。
+    /// </summary>
+    internal static string ResolveExecutable(string? pathEnv, Func<string, bool> fileExists)
+    {
+        // Windows 只認 node.exe：Scoop 這類 shim 目錄同時放 sh 腳本 node 與 node.exe，無副檔名那個 Process.Start 跑不起來
+        var names = OperatingSystem.IsWindows() ? new[] { "node.exe" } : new[] { "node" };
+        foreach (var dir in (pathEnv ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var name in names)
+            {
+                var candidate = Path.Combine(dir, name);
+                if (fileExists(candidate)) return candidate;
+            }
+        }
+
+        foreach (var candidate in new[] { "/opt/homebrew/bin/node", "/usr/local/bin/node" })
+        {
+            if (fileExists(candidate)) return candidate;
+        }
+
+        return "node";
+    }
+
     public static bool IsAvailable => Detected.Value;
 
     public const string RequireNodeVariable = "LF_REQUIRE_NODE";
@@ -87,7 +115,7 @@ public static class NodeRuntime
 
     private static NodeRunResult RunCore(IReadOnlyList<string> args, string? workingDirectory, string? stdin, TimeSpan timeout)
     {
-        var psi = new ProcessStartInfo("node")
+        var psi = new ProcessStartInfo(Executable.Value)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

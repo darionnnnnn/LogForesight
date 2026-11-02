@@ -22,7 +22,7 @@ public sealed class LocalAnalysisAiDecouplingTests : IDisposable
         Enumerable.Range(0, count).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddHours(-(i % 20)),
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             LogName = "System",
             Source = "disk",
             EventId = 153,

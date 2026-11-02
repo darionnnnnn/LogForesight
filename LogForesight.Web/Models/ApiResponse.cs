@@ -49,6 +49,7 @@ public static class ApiErrorCodes
     public const string ServiceUnavailable = "service_unavailable";
     public const string AuthFailed = "auth_failed";
     public const string CaptureBusy = "capture_busy";
+    public const string PlatformUnsupported = "platform_unsupported";
 
     // 專屬流程（PRTG 目錄／診斷傳輸／校準／排程預覽）的領域碼：前端不依碼分支，message 才是事實來源。
     // 傳輸儲存層（Core）自帶狀態碼，這裡登錄的狀態碼與其拋出點一致，供對帳與守門
@@ -127,6 +128,7 @@ public static class ApiErrorCodes
         [ServiceUnavailable] = 503,
         [AuthFailed] = 401,
         [CaptureBusy] = 503,
+        [PlatformUnsupported] = 501,
         [ScopeLimitExceeded] = 409,
         [CatalogueChanged] = 409,
         [EstimateRequired] = 409,

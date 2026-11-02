@@ -595,12 +595,12 @@ public class TrendAnalyzerTests
             .Select(d =>
             {
                 var h = HistoryDay(DateTime.Today.AddDays(-d), "Microsoft-Windows-Security-Auditing", 4625, 2, IssueSeverity.Medium, "Security", IssueCategory.Security);
-                h.TopIssues[0].EntryType = EventLogEntryType.FailureAudit;
+                h.TopIssues[0].EntryType = LogEntryType.FailureAudit;
                 return h;
             })
             .ToList();
         var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 10, IssueSeverity.Medium, IssueCategory.Security);
-        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.EntryType = LogEntryType.FailureAudit;
         sig.ResidualCredentialRetry = true;
         sig.ElevatesDayRisk = false;
 
@@ -622,12 +622,12 @@ public class TrendAnalyzerTests
             .Select(d =>
             {
                 var h = HistoryDay(DateTime.Today.AddDays(-d), "Microsoft-Windows-Security-Auditing", 4625, 2, IssueSeverity.Medium, "Security", IssueCategory.Security);
-                h.TopIssues[0].EntryType = EventLogEntryType.FailureAudit;
+                h.TopIssues[0].EntryType = LogEntryType.FailureAudit;
                 return h;
             })
             .ToList();
         var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 10, IssueSeverity.Medium, IssueCategory.Security);
-        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.EntryType = LogEntryType.FailureAudit;
         sig.ResidualCredentialRetry = true;
 
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 10,
@@ -650,12 +650,12 @@ public class TrendAnalyzerTests
             .Select(d =>
             {
                 var h = HistoryDay(DateTime.Today.AddDays(-d), "Microsoft-Windows-Security-Auditing", 4625, 2, IssueSeverity.Medium, "Security", IssueCategory.Security);
-                h.TopIssues[0].EntryType = EventLogEntryType.FailureAudit;
+                h.TopIssues[0].EntryType = LogEntryType.FailureAudit;
                 return h;
             })
             .ToList();
         var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 10, IssueSeverity.Medium, IssueCategory.Security);
-        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.EntryType = LogEntryType.FailureAudit;
         sig.ResidualCredentialRetry = false;
 
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 10);
@@ -676,7 +676,7 @@ public class TrendAnalyzerTests
             .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 20, RiskLevel = "低" })
             .ToList();
         var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 480, IssueSeverity.Medium, IssueCategory.Security);
-        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.EntryType = LogEntryType.FailureAudit;
         sig.ResidualCredentialRetry = true;
 
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, todayErrorCount: 0, todayAuditCount: 500);
@@ -695,7 +695,7 @@ public class TrendAnalyzerTests
             .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 20, RiskLevel = "低" })
             .ToList();
         var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 100, IssueSeverity.Medium, IssueCategory.Security);
-        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.EntryType = LogEntryType.FailureAudit;
         sig.ResidualCredentialRetry = true;
 
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, todayErrorCount: 0, todayAuditCount: 500);

@@ -9,6 +9,26 @@ namespace LogForesight.Tests;
 /// </summary>
 public class PageHeaderUiTests
 {
+    /// <summary>WEB-SPEC §8.6a：頁首至少要有副標、動作或 help，三者皆空會留下一條空白區塊</summary>
+    [Fact]
+    public void renderPageHeader呼叫不得三者皆空()
+    {
+        var pagesDir = Path.Combine(WebRoot(), "wwwroot", "js", "pages");
+        var calls = System.Text.RegularExpressions.Regex.Matches(string.Empty, "x").Count;
+        foreach (var file in Directory.EnumerateFiles(pagesDir, "*.js"))
+        {
+            foreach (System.Text.RegularExpressions.Match call in System.Text.RegularExpressions.Regex.Matches(
+                         File.ReadAllText(file), @"renderPageHeader\([^,]+,\s*\{(?<body>[^;]*?)\}\s*\)\s*;"))
+            {
+                calls++;
+                var body = call.Groups["body"].Value;
+                Assert.True(body.Contains("subtitle") || body.Contains("actions") || body.Contains("help"),
+                    $"{Path.GetFileName(file)} 的 renderPageHeader 三者皆空");
+            }
+        }
+        Assert.True(calls > 0, "守門掃不到任何 renderPageHeader 呼叫，正規式失效");
+    }
+
     /// <summary>
     /// 套用頁首的頁（cshtml 檔名 → 對應頁模組）。其餘頁不套用的理由：
     /// 頂部已是 .lf-toolbar 篩選列（Audit／Records／Hosts／Users）、

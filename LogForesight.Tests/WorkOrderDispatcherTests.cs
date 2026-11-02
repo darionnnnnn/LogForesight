@@ -33,7 +33,7 @@ public class WorkOrderDispatcherTests
 
     private static LogIssueSignature Issue(IssueSeverity severity = IssueSeverity.High, bool suppressed = false) => new()
     {
-        LogName = "System", Source = Source, EventId = EventId, EntryType = EventLogEntryType.Error,
+        LogName = "System", Source = Source, EventId = EventId, EntryType = LogEntryType.Error,
         Severity = severity, Suppressed = suppressed
     };
 

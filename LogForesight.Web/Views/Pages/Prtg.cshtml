@@ -24,19 +24,13 @@
 </ul>
 
 <div data-panel="effectiveness" class="d-none">
-    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
-        <dl class="row mb-0">
-            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">統計 PRTG 對分析的幫助：抓到幾個問題、建了多少交辦、被日誌佐證多少、被標誤報多少。</dd>
-            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">想決定規則門檻要不要調，或要不要改用激進策略時。</dd>
-            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">各數字的分母不同，不能互相換算成比例。</dd>
-        </dl>
-    </aside>
     <section class="lf-card mb-4" id="prtg-effectiveness" aria-labelledby="prtg-effectiveness-title">
         <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
             <h2 class="lf-card__title" id="prtg-effectiveness-title">PRTG 使用效果</h2>
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="統計 PRTG 對分析的幫助：抓到幾個問題、建了多少交辦、被日誌佐證多少、被標誤報多少。想決定規則門檻要不要調，或要不要改用激進策略時來看。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
         </div>
         <div class="lf-card__body">
-            <p class="small text-muted">依所選日期統計既有資料。各項數字的計算對象不同，彼此不構成轉換流程；「—」代表資料不足以計算，不代表 0。</p>
+            <p class="small text-muted">依所選日期統計既有資料。各數字的分母不同，不能互相換算成比例；「—」代表資料不足以計算，不代表 0。</p>
             <div class="row g-2 align-items-end mb-3">
                 <div class="col-12 col-sm-5 col-md-4"><label class="form-label" for="prtg-effectiveness-from">起始日期</label><input class="form-control" type="date" id="prtg-effectiveness-from" /></div>
                 <div class="col-12 col-sm-5 col-md-4"><label class="form-label" for="prtg-effectiveness-through">結束日期</label><input class="form-control" type="date" id="prtg-effectiveness-through" /></div>
@@ -65,17 +59,11 @@
 </div>
 
 <div data-panel="selected-backfill" class="d-none">
-    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
-        <dl class="row mb-0">
-            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">把過去幾天的 PRTG 逐小時數值補進來。保守策略補全部已對應主機。</dd>
-            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用 PRTG，或想補齊過去日子的數值時。</dd>
-            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會重新判斷過去的風險；要重算請到排程作業頁用「立即執行」回望。</dd>
-        </dl>
-    </aside>
     <section class="lf-card" aria-labelledby="prtg-full-backfill-title">
-        <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-full-backfill-title">全量歷史回填</h2></div>
+        <div class="lf-card__header"><h2 class="lf-card__title" id="prtg-full-backfill-title">全量歷史回填</h2>
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="把過去幾天的 PRTG 逐小時數值補進來，保守策略補全部已對應主機。第一次啟用 PRTG，或想補齊過去日子的數值時來這裡。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button></div>
         <div class="lf-card__body">
-            <p class="small text-muted">依已儲存的回填天數、各日主機對應與 sensor 白名單預估：保守策略補全部已對應主機，激進策略依「夜間數值取數對象」。只含主機清單內的主機，不是全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。</p>
+            <p class="small text-muted">依已儲存的回填天數、各日主機對應與 sensor 白名單預估：保守策略補全部已對應主機，激進策略依「夜間數值取數對象」。只含主機清單內的主機，不是全站所有 PRTG sensor。只讀本機鏡像與紀錄，不連線 PRTG；狀態變更的分頁數及來源回應時間無法預估。不會重新判斷過去的風險；要重算請到排程作業頁用「立即執行」回望。</p>
             <div class="d-flex flex-wrap gap-2 mb-3">
                 <button type="button" class="btn btn-outline-primary" id="prtg-full-backfill-preview">預估全量工作量</button>
                 <button type="button" class="btn btn-danger" id="prtg-full-backfill-start" disabled>確認並開始全量回填</button>
@@ -111,19 +99,14 @@
 </div>
 
 <div data-panel="connection">
-    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
-        <dl class="row mb-0">
-            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">設定本系統連到 PRTG 的位址與認證，並測試連線。</dd>
-            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用，或 PRTG 換位址、換帳號時。</dd>
-            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會開始取數；取數要到「擷取參數」勾選啟用。</dd>
-        </dl>
-    </aside>
     <form id="prtg-connection-form">
         <div class="lf-card">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">連線</h2>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="設定本系統連到 PRTG 的位址與認證，並測試連線。第一次啟用，或 PRTG 換位址、換帳號時來這裡。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
             </div>
             <div class="lf-card__body">
+                <p class="small text-muted">不會開始取數；取數要到「擷取參數」勾選啟用。</p>
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
                         <label for="prtg-url" class="form-label">PRTG 位址</label>
@@ -131,12 +114,12 @@
                     </div>
                     <div class="col-md-6">
                         <label for="prtg-auth-mode" class="form-label">認證方式</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="PRTG 21.x 之後版本建議使用 API token；舊版 PRTG 或特定環境可切換為帳號密碼。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
                         <select class="form-select" id="prtg-auth-mode">
                             <option value="token">API token（推薦，PRTG 21+）</option>
                             <option value="password">帳號密碼（PRTG 傳統 API / passhash）</option>
                             <option value="passhash">帳號＋passhash</option>
                         </select>
-                        <div class="form-text">PRTG 21.x 之後版本建議使用 API token；舊版 PRTG 或特定環境可切換為帳號密碼。</div>
                     </div>
                 </div>
 
@@ -144,8 +127,8 @@
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
                             <label for="prtg-username" class="form-label">使用者帳號</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="具備讀取權限的 PRTG 登入帳號。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
                             <input type="text" class="form-control" id="prtg-username" placeholder="prtgadmin" />
-                            <div class="form-text">具備讀取權限的 PRTG 登入帳號。</div>
                         </div>
                     </div>
                 </div>
@@ -224,39 +207,29 @@
 </div>
 
 <div data-panel="params" class="d-none">
-    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
-        <dl class="row mb-0">
-            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">決定要不要啟用 PRTG 擷取、多久取一次數值、取哪些類型。</dd>
-            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用，或要調整取數頻率與監看類型時。</dd>
-            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">按「儲存」前不生效；不會補過去的數值（到「歷史回填」）。</dd>
-        </dl>
-    </aside>
     <form id="prtg-params-form">
         <div class="lf-card">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">擷取參數</h2>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="決定要不要啟用 PRTG 擷取、多久取一次數值、取哪些類型。第一次啟用，或要調整取數頻率與監看類型時來這裡。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
             </div>
             <div class="lf-card__body">
+                <p class="small text-muted">按「儲存」前不生效；不會補過去的數值（到「歷史回填」）。</p>
                 <div class="mb-3">
                     <label for="prtg-fetch-strategy" class="form-label fw-semibold">取數策略</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="保守：每 15 分鐘對 PRTG 查一次快照目標感測器的目前值（一天約 96 次，每 100 顆一個請求，最多三批快照在途，與其他作業共用配額並保留 Profile 位置），夜間不逐顆查詢，數值全由快照供應。激進：每 5 分鐘一次（一天約 288 次），另在夜間對觸發主機逐顆查詢歷史值（每晚數百次、單次 5～70 秒），PRTG 負擔明顯較高。實際的快照目標感測器數與每日寫入列數，請按下方「估算規模」查看。兩種策略下快照連續失敗 3 次都會自動拉長間隔（上限 60 分鐘）。">
+                            data-bs-content="保守：每 15 分鐘對 PRTG 查一次快照目標感測器的目前值（一天約 96 次，每 100 顆一個請求，最多三批快照在途，與其他作業共用配額並保留 Profile 位置），夜間不逐顆查詢，數值全由快照供應。激進：每 5 分鐘一次（一天約 288 次），另在夜間對觸發主機逐顆查詢歷史值（每晚數百次、單次 5～70 秒），PRTG 負擔明顯較高。實際的快照目標感測器數與每日寫入列數，請按下方「估算規模」查看。兩種策略下快照連續失敗 3 次都會自動拉長間隔（上限 60 分鐘）。快照是對 PRTG 發一次全量查詢取即時值，由站台自己平均成小時值。">
                         <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <select class="form-select" id="prtg-fetch-strategy">
                         <option value="conservative">保守（預設）：每 15 分鐘快照一次，夜間不逐顆查詢</option>
                         <option value="aggressive">激進：每 5 分鐘快照一次，夜間另逐顆查詢觸發主機</option>
                     </select>
-                    <div class="form-text">
-                        快照是對 PRTG 發一次全量查詢取即時值，由站台自己平均成小時值。
-                    </div>
                     <div class="small text-warning mt-2 d-none" id="prtg-strategy-aggressive-hint">
                         激進策略每 5 分鐘對 PRTG 查一次快照目標感測器的目前值（每 100 顆一個請求，最多三批快照在途），並在每晚對觸發主機逐顆查詢歷史值，PRTG 負載明顯較高。請先用保守策略觀察執行輸出裡的快照耗時與失敗數，確認 PRTG 承受得住再切換；切換後若看到快照間隔被自動拉長，代表 PRTG 已經回不來，請切回保守。
                     </div>
                     <div class="small text-info mt-2 d-none" id="prtg-strategy-suggested-hint">已帶入建議設定（併發請求數與逾時秒數），仍可依環境需求修改。</div>
                 </div>
-
-                <div class="small text-muted mb-3" id="prtg-strategy-scope-explanation">保守策略：夜間不逐顆查詢歷史值，數值由每 15 分鐘的快照供應（快照涵蓋全部監看裝置），數值取數對象不適用。激進策略：夜間依數值取數對象逐顆查詢。</div>
 
                 <div class="form-check mb-3">
                     <input class="form-check-input" type="checkbox" id="prtg-enabled" />
@@ -268,7 +241,7 @@
                     <div class="d-flex align-items-center gap-2">
                         <label for="prtg-value-fetch-scope" class="form-label fw-semibold mb-0">夜間數值取數對象</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                data-bs-content="PRTG 擷取由上方開關控制。數值取數對象只決定激進策略夜間要抓哪些主機的歷史值；保守策略仍同步監看裝置的感測器與狀態變更，數值由快照供應。預設只抓當日出問題的主機。要為值型規則累積基線時才放寬，並先估算站台負載。">
+                                data-bs-content="PRTG 擷取由上方開關控制。數值取數對象只決定激進策略夜間要抓哪些主機的歷史值；保守策略仍同步監看裝置的感測器與狀態變更，數值由快照供應。預設只抓當日出問題的主機。要為值型規則累積基線時才放寬，並先估算站台負載。保守策略下此範圍不適用（歷史回填與立即執行的「一併補齊」會補全部已對應主機）；切回激進策略時保留上次設定。停用 PRTG 擷取時，夜間擷取、歷史回填與排程結構同步不執行；維護者仍可手動同步結構。環境探測與資源守門預覽不受影響。 「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <span class="small text-muted d-none" id="prtg-scope-inapplicable-hint">保守策略下不適用</span>
@@ -278,10 +251,6 @@
                         <option value="all-mapped">全部已對應主機</option>
                         <option value="triggered-plus-list">觸發主機＋指定清單</option>
                     </select>
-                    <div class="form-text">
-                        保守策略下此範圍不適用（歷史回填與立即執行的「一併補齊」會補全部已對應主機）；切回激進策略時保留上次設定。停用 PRTG 擷取時，夜間擷取、歷史回填與排程結構同步不執行；維護者仍可手動同步結構。環境探測與資源守門預覽不受影響。
-                        「全部已對應主機」要求 sensor type 白名單非空——留空等於對全部 sensor 取數。
-                    </div>
                 </div>
 
                 <div class="row g-3 mb-3">
@@ -294,16 +263,16 @@
                     </div>
                     <div class="col-md-6">
                         <label for="prtg-timeout-seconds" class="form-label">請求逾時（秒）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="historicdata 單次實測最長超過 100 秒，激進策略或執行歷史回填時建議設 120 以上。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
                         <input type="number" class="form-control" id="prtg-timeout-seconds" min="5" max="600" />
-                        <div class="form-text">historicdata 單次實測最長超過 100 秒，激進策略或執行歷史回填時建議設 120 以上。</div>
                     </div>
                 </div>
 
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label for="prtg-fetch-concurrency" class="form-label">併發請求數</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="保守策略建議 2、激進策略建議 4；實測併發 8 時 PRTG 端開始排隊，單次延遲可能超過請求逾時。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
                         <input type="number" class="form-control" id="prtg-fetch-concurrency" min="1" max="8" />
-                        <div class="form-text">保守策略建議 2、激進策略建議 4；實測併發 8 時 PRTG 端開始排隊，單次延遲可能超過請求逾時。</div>
                     </div>
                     <div class="col-md-4">
                         <label for="prtg-backfill-days" class="form-label">歷史回填天數</label>
@@ -437,13 +406,6 @@
 </div>
 
 <div data-panel="mirror" class="d-none">
-    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
-        <dl class="row mb-0">
-            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">看 PRTG 資料有沒有完整複製過來、哪些主機還沒對應到 PRTG 裝置，並在這裡同步或指派。</dd>
-            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">新增主機後、主機頁出現「PRTG 未對應」，或排程作業頁顯示同步失敗時。</dd>
-            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">不會改主機清單，也不會補過去的數值。只列主機清單內的主機。</dd>
-        </dl>
-    </aside>
     <section class="lf-card mb-3" aria-labelledby="prtg-snapshot-diagnostics-title">
         <div class="lf-card__header d-flex flex-wrap align-items-center justify-content-between gap-2">
             <h2 class="lf-card__title" id="prtg-snapshot-diagnostics-title">快照最近 24 個完整小時</h2>
@@ -457,12 +419,13 @@
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">鏡像狀態</h2>
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="看 PRTG 資料有沒有完整複製過來、哪些主機還沒對應到 PRTG 裝置，並在這裡同步或指派。新增主機後、主機頁出現「PRTG 未對應」，或排程作業頁顯示同步失敗時來這裡。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
         </div>
         <div class="lf-card__body">
             <div id="prtg-mirror-section">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <p class="text-muted small mb-0">
-                        顯示目前 PRTG 鏡像資料庫五表的同步統計與最近一次主機對應分析結果。
+                        只列主機清單內的主機；不會改主機清單，也不會補過去的數值。
                     </p>
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="prtg-mirror-refresh">重新整理</button>
                 </div>
@@ -618,20 +581,14 @@
 </div>
 
 <div data-panel="probe" class="d-none">
-    <aside class="lf-callout-info small px-3 py-2 rounded mb-3" aria-label="這個頁籤的用途">
-        <dl class="row mb-0">
-            <dt class="col-sm-2">這頁做什麼</dt><dd class="col-sm-10 mb-1">檢查 PRTG 連得上、資料取得到，並估算取數規模。</dd>
-            <dt class="col-sm-2">什麼時候來</dt><dd class="col-sm-10 mb-1">第一次啟用、調整範圍前，或取數結果異常時。</dd>
-            <dt class="col-sm-2">不會做什麼</dt><dd class="col-sm-10 mb-0">只讀取、不寫入正式資料。結果包含不在主機清單內的裝置（全站診斷用）。</dd>
-        </dl>
-    </aside>
     <div class="lf-card mb-4" id="prtg-probe">
         <div class="lf-card__header">
             <h2 class="lf-card__title">環境探測</h2>
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-content="檢查 PRTG 連得上、資料取得到，並估算取數規模。第一次啟用、調整範圍前，或取數結果異常時來這裡。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button>
         </div>
         <div class="lf-card__body">
             <p class="text-muted small mb-3">
-                「小範圍資料流驗證」會從已對應主機挑一顆符合白名單的 sensor，讀取昨天一天的 PRTG 歷史數值，沿正式取值路徑寫入並讀回資料庫；只證明 API→資料庫資料流，不證明 28 天趨勢。「完整環境探測」則唯讀檢查全站結構、分頁行為與四類數值 sensor 的單位判定。驗證成功不會自動啟用規則。
+                「小範圍資料流驗證」會從已對應主機挑一顆符合白名單的 sensor，讀取昨天一天的 PRTG 歷史數值，沿正式取值路徑寫入並讀回資料庫；只證明 API→資料庫資料流，不證明 28 天趨勢。「完整環境探測」則唯讀檢查全站結構、分頁行為與四類數值 sensor 的單位判定。驗證成功不會自動啟用規則。結果包含不在主機清單內的裝置（全站診斷用）。
             </p>
             <div class="d-flex align-items-center gap-3 mb-3">
                 <button type="button" class="btn btn-primary" id="prtg-probe-flow-start">驗證小範圍資料流</button>
@@ -687,7 +644,9 @@
                 <span class="text-muted small" id="calibration-status-hint">尚未計算</span>
             </div>
 
-            <div class="row g-3 mb-4">
+            <div id="calibration-empty" class="mb-4"></div>
+
+            <div class="row g-3 mb-4 d-none" id="calibration-cards">
                 <!-- 1. PRTG 值型基線 -->
                 <div class="col-lg-6">
                     <div class="border rounded p-3 h-100 bg-light" id="calibration-card-prtg-value-baseline">
@@ -695,9 +654,7 @@
                             <h3 class="h6 fw-bold mb-0">PRTG 值型基線</h3>
                             <span class="badge bg-secondary" id="badge-prtg-value-baseline">尚未計算</span>
                         </div>
-                        <div class="mb-3" id="metrics-prtg-value-baseline">
-                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
-                        </div>
+                        <div class="mb-3" id="metrics-prtg-value-baseline"></div>
                         <div class="mb-3">
                             <div class="text-muted small fw-semibold mb-1">門檻現值</div>
                             <div id="thresholds-prtg-value-baseline">
@@ -721,9 +678,7 @@
                             <span class="badge bg-secondary" id="badge-prtg-rule-thresholds">尚未計算</span>
                         </div>
                         <p class="text-muted small">此卡依狀態變更訊息重算 down、flapping、warning；silent 與磁碟趨勢不在此卡評估，未評估不代表零命中。</p>
-                        <div class="mb-3" id="metrics-prtg-rule-thresholds">
-                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
-                        </div>
+                        <div class="mb-3" id="metrics-prtg-rule-thresholds"></div>
                         <div class="mb-3">
                             <div class="text-muted small fw-semibold mb-1">校準資料量門檻</div>
                             <div id="thresholds-prtg-rule-thresholds">
@@ -746,9 +701,7 @@
                             <h3 class="h6 fw-bold mb-0">數值取得量級</h3>
                             <span class="badge bg-secondary" id="badge-triggered-fetch-magnitude">尚未計算</span>
                         </div>
-                        <div class="mb-3" id="metrics-triggered-fetch-magnitude">
-                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
-                        </div>
+                        <div class="mb-3" id="metrics-triggered-fetch-magnitude"></div>
                         <div class="mb-3">
                             <div class="text-muted small fw-semibold mb-1">門檻現值</div>
                             <div id="thresholds-triggered-fetch-magnitude">
@@ -771,9 +724,7 @@
                             <h3 class="h6 fw-bold mb-0">殘留判定門檻</h3>
                             <span class="badge bg-secondary" id="badge-residual-credential-thresholds">尚未計算</span>
                         </div>
-                        <div class="mb-3" id="metrics-residual-credential-thresholds">
-                            <div class="text-muted small">尚未執行判定查詢，請點擊上方「重新計算」按鈕。</div>
-                        </div>
+                        <div class="mb-3" id="metrics-residual-credential-thresholds"></div>
                         <div class="mb-3">
                             <div class="text-muted small fw-semibold mb-1">門檻現值</div>
                             <div id="thresholds-residual-credential-thresholds">

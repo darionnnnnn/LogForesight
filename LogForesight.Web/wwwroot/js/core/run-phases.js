@@ -17,6 +17,23 @@ export const PROGRESS_PHASE_LABEL = {
     'prtg-triggered': 'PRTG 觸發式取數',
     'prtg-wait-sync': '等待 PRTG 手動作業（同步／回填）結束，可在 PRTG 卡停止'
 };
+/** PRTG 底下的子階段（時間軸縮排歸在 PRTG 軌下）；其餘 prtg- 開頭的鍵（數值補齊）是頂層 */
+export const TIMING_SUB_PHASES = new Set(['prtg-sync', 'prtg-triggered']);
+
+/** 執行紀錄階段計時鍵（Core 的 RunTimingPhases）的顯示名稱；完整性由 RunsPageUiTests 以反射核對 */
+export const TIMING_PHASE_LABEL = {
+    'permission-check': '權限檢查',
+    retention: '保留期清除',
+    local: '本機分析',
+    netiq: 'NetIQ 機房分析',
+    prtg: 'PRTG',
+    dispatch: '夜間派工收尾',
+    checkup: '體檢',
+    'prtg-value-fill': 'PRTG 數值補齊',
+    ai: 'AI 分析',
+    'prtg-sync': 'PRTG 結構同步',
+    'prtg-triggered': 'PRTG 觸發式取數'
+};
 export const PROGRESS_PHASE_UNIT = {
     'prtg-sync': 'sensor',
     'prtg-sync-devices': '台',

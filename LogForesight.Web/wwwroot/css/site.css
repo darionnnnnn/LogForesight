@@ -1105,11 +1105,12 @@ a.lf-stat:hover .lf-card,
 .lf-card--clickable:hover {
     box-shadow: var(--lf-shadow-md);
     border-color: var(--lf-primary-soft-border);
-    transform: translateY(-1px);
 }
 
 /*
   KPI 卡列（core/ui.js kpiStrip，docs/DESIGN-SYSTEM.md §6b）：分組、等高、限寬。
+  - singleRow（--row）：三組排同一排、依卡數分寬，每組放得下幾張就顯示幾張，其餘由 core/reveal.js 收合；
+    不換列也不留 14rem 上限造成的組間空白。575px 以下回到每組佔滿一列、每列兩張。
   - 組內 CSS grid：同一列的卡片天生等高（每張卡都有一行副標佔位，結構上就同高，不靠 min-height）。
   - 卡寬 9rem～14rem：下限讓標籤不逐字換行，上限避免 2000px 寬螢幕上每張卡被拉成 400px 以上。
   - ≥1200px 放得下的組並排，各組以卡片數當 flex-grow 分寬、放不下整組換列（兩個 4 卡組要約 1900px 才並排）；窄螢幕各組依序佔滿一列，375px 每列兩張。
@@ -1133,6 +1134,10 @@ a.lf-stat:hover .lf-card,
 .lf-kpi-group--n4 { --lf-kpi-count: 4; }
 .lf-kpi-group--n5 { --lf-kpi-count: 5; }
 .lf-kpi-group--n6 { --lf-kpi-count: 6; }
+
+.lf-kpi-group__title .lf-help {
+    margin-left: var(--lf-space-1);
+}
 
 .lf-kpi-group__title {
     margin: 0 0 var(--lf-space-2);
@@ -1159,6 +1164,17 @@ a.lf-stat:hover .lf-card,
         /* 組寬下限＝卡數 × 9rem ＋ 間距；放不下就整組換列，不壓縮卡寬 */
         flex: var(--lf-kpi-count, 1) 1 0;
         min-width: min(calc(var(--lf-kpi-count, 1) * 9rem + (var(--lf-kpi-count, 1) - 1) * var(--lf-space-3)), 100%);
+    }
+}
+
+@media (min-width: 576px) {
+    .lf-kpi-strip--row .lf-kpi-group {
+        flex: var(--lf-kpi-count, 1) 1 0;
+        min-width: 9rem;
+    }
+
+    .lf-kpi-strip--row .lf-kpi-grid {
+        grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     }
 }
 
@@ -1213,6 +1229,24 @@ a.lf-kpi-card--link:focus-visible {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
     gap: var(--lf-space-3);
+}
+
+/* 第一排以外收合時的揭露鈕（core/reveal.js）。列印時紙上沒有按鈕可點，一律全部顯示 */
+.lf-reveal-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--lf-space-2);
+}
+
+@media print {
+    .lf-kpi-grid > [hidden],
+    .lf-category-grid > [hidden] {
+        display: block !important;
+    }
+
+    .lf-reveal-bar {
+        display: none !important;
+    }
 }
 
 /* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */
@@ -2635,6 +2669,73 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-run-progress {
     height: 6px;
+}
+
+/* 階段時間軸（core/run-timeline.js）：條的位置與寬度是動態量值，走 CSS 變數；結果一律另有文字，不只靠顏色 */
+.lf-phase-timeline {
+    display: grid;
+    gap: var(--lf-space-2);
+    padding: var(--lf-space-2) 0;
+    font-size: var(--lf-font-size-sm);
+}
+
+.lf-phase-row {
+    display: grid;
+    grid-template-columns: 9rem minmax(6rem, 1fr) minmax(0, 2fr);
+    align-items: center;
+    gap: var(--lf-space-3);
+}
+
+.lf-phase-row--sub .lf-phase-name {
+    padding-left: var(--lf-space-3);
+    color: var(--lf-text-muted);
+}
+
+.lf-phase-track {
+    position: relative;
+    height: 0.625rem;
+    border-radius: 999px;
+    background: var(--lf-border);
+    overflow: hidden;
+}
+
+.lf-phase-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: min(var(--lf-phase-start, 0%), calc(100% - 2px));
+    width: var(--lf-phase-width, 0);
+    min-width: 2px;
+    border-radius: 999px;
+    background: var(--lf-primary);
+}
+
+.lf-phase-bar--success { background: var(--lf-success); }
+.lf-phase-bar--partial { background: var(--lf-warning); }
+.lf-phase-bar--failed { background: var(--lf-danger); }
+.lf-phase-bar--stopped { background: var(--lf-severity-high); }
+.lf-phase-bar--skipped { background: var(--lf-border-strong); }
+.lf-phase-bar--interrupted { background: var(--lf-cat-hardware); }
+
+.lf-phase-detail {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--lf-text-muted);
+}
+
+.lf-day-timing {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-1) var(--lf-space-5);
+    padding: var(--lf-space-2) 0 var(--lf-space-3);
+    font-size: var(--lf-font-size-sm);
+}
+
+@media (max-width: 767.98px) {
+    .lf-phase-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--lf-space-1);
+    }
 }
 
 /* 最新訊息固定兩行高，訊息長短不影響卡片高度 */

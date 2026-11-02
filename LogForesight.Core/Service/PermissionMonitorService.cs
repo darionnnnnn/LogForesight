@@ -1,4 +1,5 @@
 using System.DirectoryServices.AccountManagement;
+using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using LogForesight.Core.Models;
@@ -25,6 +26,9 @@ internal class PermissionCheckResult
     public List<string> Alerts { get; } = new();
     public List<PermissionChangeDetail> Details { get; } = new();
 
+    /// <summary>非 Windows 平台未執行檢查（Alerts／Details 皆空）；呼叫端據此輸出一行說明。</summary>
+    public bool PlatformUnsupported { get; init; }
+
     public void Add(string alert, PermissionChangeDetail detail)
     {
         Alerts.Add(alert);
@@ -47,10 +51,16 @@ internal class PermissionMonitorService
 
     private readonly PermissionSnapshotStore _snapshotStore;
     private readonly List<string> _watchedFolders;
+    private readonly Func<bool> _isWindows;
 
-    public PermissionMonitorService(PermissionSettings settings, PermissionSnapshotStore snapshotStore)
+    /// <summary>非 Windows 平台權限監控不適用時的固定說明。</summary>
+    public const string UnsupportedPlatformMessage = "此平台不支援本機權限監控";
+
+    /// <param name="isWindows">平台判定；預設 <see cref="OperatingSystem.IsWindows"/>，可注入以便在 Windows 上測非 Windows 分支。</param>
+    public PermissionMonitorService(PermissionSettings settings, PermissionSnapshotStore snapshotStore, Func<bool>? isWindows = null)
     {
         _snapshotStore = snapshotStore;
+        _isWindows = isWindows ?? OperatingSystem.IsWindows;
 
         // 執行檔自身目錄一律監控（防止程式本身被竄改），加上使用者在 appsettings.json 額外指定的資料夾
         var folders = new List<string> { AppContext.BaseDirectory.TrimEnd('\\') };
@@ -64,6 +74,18 @@ internal class PermissionMonitorService
 
     /// <summary>比對權限快照，回傳異動告警與逐項明細（皆空＝無異動或首次執行建立基準）</summary>
     public PermissionCheckResult Check()
+    {
+        // 注入的委派分析器看不懂，故同時以 OperatingSystem.IsWindows() 讓 CA1416 通過。
+        if (!_isWindows() || !OperatingSystem.IsWindows())
+        {
+            return new PermissionCheckResult { PlatformUnsupported = true };
+        }
+
+        return CheckWindows();
+    }
+
+    [SupportedOSPlatform("windows")]
+    private PermissionCheckResult CheckWindows()
     {
         Log.Info("開始權限檢查：監控 {FolderCount} 個資料夾", _watchedFolders.Count);
         var current = Capture();
@@ -226,6 +248,7 @@ internal class PermissionMonitorService
         return result;
     }
 
+    [SupportedOSPlatform("windows")]
     private PermissionSnapshot Capture()
     {
         var folders = new Dictionary<string, FolderAclSnapshot>();
@@ -242,6 +265,7 @@ internal class PermissionMonitorService
         };
     }
 
+    [SupportedOSPlatform("windows")]
     private static FolderAclSnapshot CaptureFolder(string path)
     {
         try
@@ -269,6 +293,7 @@ internal class PermissionMonitorService
     }
 
     /// <summary>回傳 null 代表讀取失敗（而非群組真的沒有成員），呼叫端須區分避免誤判</summary>
+    [SupportedOSPlatform("windows")]
     private static List<string>? CaptureAdministratorsMembers()
     {
         try

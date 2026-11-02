@@ -14,7 +14,7 @@ public class IssueCaseCoordinatorAutoAssignTests
 {
     private const string Host = "SRV-A";
     private const string IssueLabel = "disk 153";
-    private static readonly string IssueKey = IssueSignatureKey.For("System", "disk", 153, System.Diagnostics.EventLogEntryType.Error);
+    private static readonly string IssueKey = IssueSignatureKey.For("System", "disk", 153, LogForesight.Core.Models.LogEntryType.Error);
 
     private readonly FakeHostStore _hosts = new();
     private readonly FakeAnalysisRecordQuery _records = new();
@@ -52,7 +52,7 @@ public class IssueCaseCoordinatorAutoAssignTests
     {
         new()
         {
-            LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error,
+            LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error,
             Severity = IssueSeverity.High
         }
     };

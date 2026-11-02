@@ -48,13 +48,13 @@ public class WorkOrderAssignRoutingTests
     private static LogIssueSignature DiskIssue() => new()
     {
         LogName = "System", Source = "disk", EventId = 153,
-        EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
     };
 
     private static LogIssueSignature NtfsIssue() => new()
     {
         LogName = "System", Source = "ntfs", EventId = 55,
-        EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        EntryType = LogForesight.Core.Models.LogEntryType.Error, Severity = IssueSeverity.High
     };
 
     private WebHost AddHost(string name) => _hosts.Upsert(new WebHost { HostName = name, Active = true });

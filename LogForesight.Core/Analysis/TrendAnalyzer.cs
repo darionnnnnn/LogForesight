@@ -321,7 +321,7 @@ public static class TrendAnalyzer
         if (reliableAuditHistory.Count > 0)
         {
             var residualAuditCount = issues
-                .Where(i => i.ResidualCredentialRetry && (i.EntryType is EventLogEntryType.FailureAudit or EventLogEntryType.SuccessAudit))
+                .Where(i => i.ResidualCredentialRetry && (i.EntryType is LogEntryType.FailureAudit or LogEntryType.SuccessAudit))
                 .Sum(i => i.Count);
             var effectiveTodayAuditCount = Math.Max(0, todayAuditCount - residualAuditCount);
             var residualAuditNote = residualAuditCount > 0 ? $"（已排除疑似殘留憑證重試 {residualAuditCount} 筆）" : "";

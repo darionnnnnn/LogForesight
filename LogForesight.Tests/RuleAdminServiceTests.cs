@@ -742,7 +742,7 @@ public class RuleAdminServiceTests
     public void Signature目標_成功建立且帶回標籤與平台()
     {
         var service = Create();
-        var key = IssueSignatureKey.For("Application", "MyNoisyApp", 1000, System.Diagnostics.EventLogEntryType.Error);
+        var key = IssueSignatureKey.For("Application", "MyNoisyApp", 1000, LogForesight.Core.Models.LogEntryType.Error);
 
         service.AddSuppression(new AddSuppressionRequest
         {
@@ -1213,7 +1213,7 @@ public class RuleAdminServiceTests
         LogName = "PRTG",
         Source = eventKey.StartsWith("prtg:flapping", StringComparison.Ordinal) ? "PRTG:flapping" : "PRTG:down",
         EventId = 0,
-        EntryType = System.Diagnostics.EventLogEntryType.Warning,
+        EntryType = LogForesight.Core.Models.LogEntryType.Warning,
         EventKey = eventKey,
         Category = IssueCategory.Other,
         Severity = IssueSeverity.High,

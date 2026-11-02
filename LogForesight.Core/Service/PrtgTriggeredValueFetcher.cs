@@ -97,6 +97,7 @@ public sealed class PrtgTriggeredValueFetcher
         }
 
         var fetchedHosts = new HashSet<long>();
+        var skippedAsFetched = 0;
         var totalTargetSensors = 0;
         var totalValuesWritten = 0;
         var totalFailedSensors = 0;
@@ -145,6 +146,13 @@ public sealed class PrtgTriggeredValueFetcher
             }
 
             var targets = _store.GetValueFetchTargets(whitelist, deviceObjids);
+            var alreadyFetched = _store.GetSensorsWithFullDayValues(day, targets);
+            if (alreadyFetched.Count > 0)
+            {
+                skippedAsFetched += alreadyFetched.Count;
+                targets = targets.Where(id => !alreadyFetched.Contains(id)).ToList();
+                _console.WriteLine($"觸發式取數：{alreadyFetched.Count} 個 sensor 已有 {day:yyyy-MM-dd} 整天的數值，不重查。");
+            }
             if (targets.Count == 0) return;
 
             var (written, failedSensors) = await _fetchService.FetchValuesForSensorsAsync(day, targets, concurrency, ct, progress);
@@ -180,8 +188,10 @@ public sealed class PrtgTriggeredValueFetcher
             await ScanAndFetchAsync();
         }
 
-        // 有目標 sensor 卻全部失敗不算成功完成，不記新鮮度
-        if (!(totalFailedSensors > 0 && totalValuesWritten == 0))
+        // 有目標 sensor 卻全部失敗不算成功完成，不記新鮮度；
+        // 目標全因「該日已有整天數值」略過也不記——記 0 會累積 ZeroStreak，把正常的第二個窗口標成可疑
+        var onlySkipped = skippedAsFetched > 0 && totalTargetSensors == 0;
+        if (!(totalFailedSensors > 0 && totalValuesWritten == 0) && !onlySkipped)
         {
             _fetchService.RecordFreshness(PrtgFreshnessStore.Values, totalValuesWritten);
         }

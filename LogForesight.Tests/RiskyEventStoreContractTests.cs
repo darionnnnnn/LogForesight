@@ -25,7 +25,7 @@ public class RiskyEventStoreContractTests : IDisposable
         LogName = "System",
         Source = source,
         EventId = eventId,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         EventTime = eventTime ?? date,
         Message = message,
         RuleId = "builtin-disk-error",

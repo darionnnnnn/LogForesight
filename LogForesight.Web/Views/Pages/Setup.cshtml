@@ -46,8 +46,11 @@
             </div>
             <div class="mb-3">
                 <label for="setup-ad-servers" class="form-label small fw-semibold">AD 伺服器</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus"
+                        data-bs-content="一行一台，依序嘗試第一個可連線者。可填 IP 或主機名稱／FQDN。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
                 <textarea class="form-control form-control-sm" id="setup-ad-servers" rows="3" placeholder="一行一台，例如：&#10;dc1.corp.local&#10;dc2.corp.local"></textarea>
-                <div class="form-text small text-muted">一行一台 AD / LDAP 伺服器主機名稱或 IP。</div>
             </div>
             <div class="row g-2 mb-3">
                 <div class="col-sm-6">
@@ -127,7 +130,6 @@
             <div class="mb-3">
                 <label for="setup-mail-recipients" class="form-label small fw-semibold">收件人</label>
                 <textarea class="form-control form-control-sm" id="setup-mail-recipients" rows="3" placeholder="一行一位，例如：&#10;admin@corp.local"></textarea>
-                <div class="form-text small text-muted">一行一位收件人電子郵件地址。</div>
             </div>
             <div class="mb-3" role="group" aria-labelledby="setup-mail-trigger-label">
                 <span class="form-label small fw-semibold d-block" id="setup-mail-trigger-label">通知觸發</span>
@@ -178,12 +180,10 @@
             <div class="mb-3 d-none" id="setup-ai-azure-deployment-wrap">
                 <label for="setup-ai-azure-deployment" class="form-label small fw-semibold">部署名稱（Deployment Name）</label>
                 <input type="text" class="form-control form-control-sm" id="setup-ai-azure-deployment" placeholder="例如 gpt-4o" />
-                <div class="form-text small text-muted">Azure OpenAI 建立的模型部署名稱。</div>
             </div>
             <div class="mb-3 d-none" id="setup-ai-azure-api-version-wrap">
                 <label for="setup-ai-azure-api-version" class="form-label small fw-semibold">API 版本</label>
                 <input type="text" class="form-control form-control-sm" id="setup-ai-azure-api-version" placeholder="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" value="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" data-default="@LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion" />
-                <div class="form-text small text-muted">Azure OpenAI API 版本，預設 @LogForesight.Core.Configuration.AiProviders.DefaultAzureApiVersion。</div>
             </div>
             <div class="mb-3" id="setup-ai-api-key-wrap">
                 <label for="setup-ai-api-key" class="form-label small fw-semibold" id="setup-ai-api-key-label">API 金鑰</label>

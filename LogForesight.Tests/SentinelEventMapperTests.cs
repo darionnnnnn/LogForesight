@@ -71,7 +71,7 @@ public class SentinelEventMapperTests
         Assert.Equal(4624, mapped!.EventId);
         Assert.Equal("Microsoft-Windows-Security-Auditing", mapped.Source);
         Assert.Equal("Security", mapped.LogName);
-        Assert.Equal(EventLogEntryType.SuccessAudit, mapped.EntryType);
+        Assert.Equal(LogEntryType.SuccessAudit, mapped.EntryType);
         Assert.Contains("svc-test.corp", mapped.Message);
     }
 
@@ -82,7 +82,7 @@ public class SentinelEventMapperTests
 
         Assert.NotNull(mapped);
         Assert.Equal(4771, mapped!.EventId);
-        Assert.Equal(EventLogEntryType.FailureAudit, mapped.EntryType);
+        Assert.Equal(LogEntryType.FailureAudit, mapped.EntryType);
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class SentinelEventMapperTests
         Assert.NotNull(mapped);
         Assert.Equal("System", mapped!.LogName);
         Assert.Equal("Microsoft-Windows-Ntfs", mapped.Source);
-        Assert.Equal(EventLogEntryType.Information, mapped.EntryType);
+        Assert.Equal(LogEntryType.Information, mapped.EntryType);
     }
 
     [Fact]
@@ -276,13 +276,13 @@ public class SentinelEventMapperTests
     }
 
     [Theory]
-    [InlineData(0, EventLogEntryType.Information)]
-    [InlineData(1, EventLogEntryType.Information)]
-    [InlineData(2, EventLogEntryType.Warning)]
-    [InlineData(3, EventLogEntryType.Error)]
-    [InlineData(4, EventLogEntryType.Error)]
-    [InlineData(5, EventLogEntryType.Error)]
-    public void Linux事件_sev對應EntryType(int sev, EventLogEntryType expected)
+    [InlineData(0, LogEntryType.Information)]
+    [InlineData(1, LogEntryType.Information)]
+    [InlineData(2, LogEntryType.Warning)]
+    [InlineData(3, LogEntryType.Error)]
+    [InlineData(4, LogEntryType.Error)]
+    [InlineData(5, LogEntryType.Error)]
+    public void Linux事件_sev對應EntryType(int sev, LogEntryType expected)
     {
         var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -361,7 +361,7 @@ public class SentinelEventMapperTests
         Assert.NotNull(mapped);
         var expectedTime = DateTimeOffset.Parse("2026-07-29T03:07:28.000Z").ToLocalTime().DateTime;
         Assert.Equal(expectedTime, mapped!.TimeGenerated);
-        Assert.Equal(EventLogEntryType.SuccessAudit, mapped.EntryType);
+        Assert.Equal(LogEntryType.SuccessAudit, mapped.EntryType);
         Assert.Equal("Security", mapped.LogName);
         Assert.Equal("Microsoft-Windows-Security-Auditing", mapped.Source);
         Assert.Equal("帳戶已順利登入。    主體：安全性識別碼：S-1-5-18   帳戶名稱：svc-test.corp", mapped.Message);

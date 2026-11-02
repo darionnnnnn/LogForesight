@@ -97,7 +97,7 @@ public sealed class DiskTrendEvidenceQueryTests : IDisposable
                     Source = source,
                     LogName = "PRTG",
                     EventId = 0,
-                    EntryType = EventLogEntryType.Warning,
+                    EntryType = LogEntryType.Warning,
                     EventKey = $"prtg:disk_free_trend:{sensor}",
                     RuleId = ruleId,
                     SampleMessages = new() { detail }

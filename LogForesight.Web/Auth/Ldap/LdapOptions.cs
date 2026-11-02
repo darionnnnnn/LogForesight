@@ -1,4 +1,5 @@
 using System.DirectoryServices;
+using System.Runtime.Versioning;
 
 namespace LogForesight.Web.Auth.Ldap;
 
@@ -33,6 +34,7 @@ public sealed class LdapOptions
     /// <summary>Email 屬性名稱。</summary>
     public string EmailAttribute { get; set; } = "mail";
 
-    /// <summary>bind 驗證方式，預設 Secure。</summary>
+    /// <summary>bind 驗證方式，預設 Secure。（System.DirectoryServices 為 Windows 專屬）</summary>
+    [SupportedOSPlatform("windows")]
     public AuthenticationTypes AuthenticationType { get; set; } = AuthenticationTypes.Secure;
 }

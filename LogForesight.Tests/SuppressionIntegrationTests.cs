@@ -22,7 +22,7 @@ public class SuppressionIntegrationTests : IDisposable
         Enumerable.Range(0, count).Select(i => new EventLogEntryData
         {
             TimeGenerated = day.AddHours(1).AddMinutes(i),
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             LogName = "Application",
             Source = "TotallyUnknownVendorApp",
             EventId = 99999,
@@ -45,7 +45,7 @@ public class SuppressionIntegrationTests : IDisposable
         var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
         var suppressionStore = new FakeSuppressionStore();
         var service = MakeService(history, suppressionStore);
-        var signatureKey = IssueSignatureKey.For("Application", "TotallyUnknownVendorApp", 99999, EventLogEntryType.Error);
+        var signatureKey = IssueSignatureKey.For("Application", "TotallyUnknownVendorApp", 99999, LogEntryType.Error);
 
         // 前 7 天（T-13..T-7）每天 x1、近期 6 天（T-6..T-1）每天 x2、今日 x5：
         // priorTotal=7、recentTotal=12+5=17，17>=10 且 17>=7*1.5=10.5，本該觸發慢速惡化
@@ -94,13 +94,13 @@ public class SuppressionIntegrationTests : IDisposable
             .Select(i => new EventLogEntryData
             {
                 TimeGenerated = day.AddHours(1).AddMinutes(i), LogName = LogAggregator.LinuxLogName,
-                Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Error,
+                Source = "sshd", EventId = 0, EntryType = LogEntryType.Error,
                 Message = $"Failed password for invalid user root from 10.0.0.{i} port 22 ssh2"
             })
             .Concat(Enumerable.Range(0, 3).Select(i => new EventLogEntryData
             {
                 TimeGenerated = day.AddHours(2).AddMinutes(i), LogName = LogAggregator.LinuxLogName,
-                Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Error,
+                Source = "sshd", EventId = 0, EntryType = LogEntryType.Error,
                 Message = $"Accepted password for admin from 10.0.0.{i} port 22 ssh2"
             }))
             .ToList();
@@ -170,7 +170,7 @@ public class SuppressionIntegrationTests : IDisposable
         var errorEvents = Enumerable.Range(0, 20).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddMinutes(i),
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             LogName = "System",
             Source = "SomeNoisyApp",
             EventId = 1,
@@ -208,7 +208,7 @@ public class SuppressionIntegrationTests : IDisposable
         events.AddRange(Enumerable.Range(0, 15).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddMinutes(i),
-            EntryType = EventLogEntryType.FailureAudit,
+            EntryType = LogEntryType.FailureAudit,
             LogName = "Security",
             Source = "Security-Auditing",
             EventId = 4625,
@@ -217,7 +217,7 @@ public class SuppressionIntegrationTests : IDisposable
         events.Add(new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddMinutes(20),
-            EntryType = EventLogEntryType.SuccessAudit,
+            EntryType = LogEntryType.SuccessAudit,
             LogName = "Security",
             Source = "Security-Auditing",
             EventId = 4720,
@@ -242,7 +242,7 @@ public class SuppressionIntegrationTests : IDisposable
         events.AddRange(Enumerable.Range(0, 15).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddMinutes(i),
-            EntryType = EventLogEntryType.FailureAudit,
+            EntryType = LogEntryType.FailureAudit,
             LogName = "Security",
             Source = "Security-Auditing",
             EventId = 4625,
@@ -251,7 +251,7 @@ public class SuppressionIntegrationTests : IDisposable
         events.Add(new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddMinutes(20),
-            EntryType = EventLogEntryType.SuccessAudit,
+            EntryType = LogEntryType.SuccessAudit,
             LogName = "Security",
             Source = "Security-Auditing",
             EventId = 4720,

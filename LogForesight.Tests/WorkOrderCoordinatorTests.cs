@@ -13,7 +13,7 @@ public class WorkOrderCoordinatorTests
     private const string Source = "disk";
     private const int EventId = 153;
     private const string IssueLabel = "disk 153";
-    private static readonly string IssueKey = IssueSignatureKey.For("System", Source, EventId, EventLogEntryType.Error);
+    private static readonly string IssueKey = IssueSignatureKey.For("System", Source, EventId, LogEntryType.Error);
     private static readonly DateTime D1 = DateTime.Today.AddDays(-3);
     private static readonly DateTime D2 = DateTime.Today.AddDays(-2);
     private static readonly DateTime D3 = DateTime.Today.AddDays(-1);
@@ -73,7 +73,7 @@ public class WorkOrderCoordinatorTests
                     Date = date, HostId = existing.HostId, Host = host,
                     TopIssues = new List<LogIssueSignature>
                     {
-                        new() { LogName = "System", Source = Source, EventId = EventId, EntryType = EventLogEntryType.Error }
+                        new() { LogName = "System", Source = Source, EventId = EventId, EntryType = LogEntryType.Error }
                     }
                 });
             }

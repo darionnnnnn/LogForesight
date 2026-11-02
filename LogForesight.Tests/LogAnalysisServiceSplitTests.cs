@@ -25,7 +25,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         Enumerable.Range(0, count).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddHours(-(i % 20)),
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             LogName = "System",
             Source = "disk",
             EventId = 153,
@@ -107,11 +107,11 @@ public class LogAnalysisServiceSplitTests : IDisposable
         };
         var suppressedEvent = new EventLogEntryData
         {
-            TimeGenerated = DateTime.Today.AddHours(-1), EntryType = EventLogEntryType.Error,
+            TimeGenerated = DateTime.Today.AddHours(-1), EntryType = LogEntryType.Error,
             LogName = "Application", Source = "QuietVendor", EventId = 9001,
             Message = "已知的低優先級雜訊"
         };
-        var signatureKey = IssueSignatureKey.For("Application", "QuietVendor", 9001, EventLogEntryType.Error);
+        var signatureKey = IssueSignatureKey.For("Application", "QuietVendor", 9001, LogEntryType.Error);
         var suppressions = new FakeSuppressionStore();
         suppressions.SaveAll(new List<RuleSuppression>
         {
@@ -297,7 +297,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         var noise = Enumerable.Range(0, 30).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddHours(-1),
-            EntryType = EventLogEntryType.Information,
+            EntryType = LogEntryType.Information,
             LogName = "Application",
             Source = $"QuietZqApp{i}",
             EventId = 7000 + i,
@@ -469,7 +469,7 @@ public class LogAnalysisServiceSplitTests : IDisposable
         Enumerable.Range(0, count).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddHours(-(i % 20)),
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             LogName = "System",
             Source = "Ntfs",
             EventId = 55,

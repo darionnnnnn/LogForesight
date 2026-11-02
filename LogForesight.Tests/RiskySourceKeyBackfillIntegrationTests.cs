@@ -83,7 +83,7 @@ public sealed class RiskySourceKeyBackfillIntegrationTests : IDisposable
             Source = source,
             SourceKey = sourceKey,
             EventId = eventId,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            EntryType = LogForesight.Core.Models.LogEntryType.Error,
             EventTime = Date,
             Message = message,
             CreatedAt = Date

@@ -64,7 +64,7 @@ public sealed class AiEvidenceVersionContractTests : IDisposable
         var informational = new LogIssueSignature
         {
             LogName = PrtgFindingMapper.PrtgLogName, Source = "PRTG:informational", EventKey = "prtg:informational:22",
-            EventId = 0, EntryType = EventLogEntryType.Information, Severity = IssueSeverity.Low,
+            EventId = 0, EntryType = LogEntryType.Information, Severity = IssueSeverity.Low,
             ElevatesDayRisk = false, Count = 1
         };
         Assert.True(lowStore.AttachPrtgFindings(lowHostId, lowDay, [informational], NoPatterns, out _, aiConfigured: true));

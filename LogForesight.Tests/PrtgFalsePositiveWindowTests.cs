@@ -8,10 +8,10 @@ namespace LogForesight.Tests;
 public class PrtgFalsePositiveWindowTests
 {
     private static readonly string PrtgKey = IssueSignatureKey.For(
-        PrtgFindingMapper.PrtgLogName, "PRTG:disk_free_trend", 0, EventLogEntryType.Warning, "sensor-1");
+        PrtgFindingMapper.PrtgLogName, "PRTG:disk_free_trend", 0, LogEntryType.Warning, "sensor-1");
 
     private static readonly string NonPrtgKey = IssueSignatureKey.For(
-        "System", "Disk", 153, EventLogEntryType.Error, "disk-error");
+        "System", "Disk", 153, LogEntryType.Error, "disk-error");
 
     [Fact]
     public void 標記日當天_涵蓋()

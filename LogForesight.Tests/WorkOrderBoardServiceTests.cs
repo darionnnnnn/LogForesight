@@ -119,13 +119,13 @@ public class WorkOrderBoardServiceTests : IDisposable
 
     private static LogIssueSignature Disk(IssueSeverity severity = IssueSeverity.High) => new()
     {
-        LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error,
+        LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error,
         Severity = severity, Count = 1, Category = IssueCategory.Other
     };
 
     private static LogIssueSignature Ntfs(IssueSeverity severity = IssueSeverity.High) => new()
     {
-        LogName = "System", Source = "ntfs", EventId = 55, EntryType = EventLogEntryType.Error,
+        LogName = "System", Source = "ntfs", EventId = 55, EntryType = LogEntryType.Error,
         Severity = severity, Count = 1, Category = IssueCategory.Other
     };
 
@@ -472,13 +472,13 @@ public class WorkOrderBoardServiceTests : IDisposable
 
     private static LogIssueSignature Sshd() => new()
     {
-        LogName = "Linux", Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Warning,
+        LogName = "Linux", Source = "sshd", EventId = 0, EntryType = LogEntryType.Warning,
         EventKey = "builtin-linux-ssh-bruteforce", Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Security
     };
 
     private static LogIssueSignature PrtgDown() => new()
     {
-        LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = EventLogEntryType.Error,
+        LogName = "PRTG", Source = "PRTG:down", EventId = 0, EntryType = LogEntryType.Error,
         EventKey = "prtg:down:1001", Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Hardware
     };
 

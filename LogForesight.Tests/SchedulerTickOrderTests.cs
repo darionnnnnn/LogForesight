@@ -85,6 +85,29 @@ public class SchedulerTickOrderTests : IDisposable
     }
 
     [Fact]
+    public async Task Tick_自動補跑在窗口外不被停止_到停止點才停止()
+    {
+        var (service, runState, _) = Create(false, WindowAwayFromNow(), (_, _) => Task.CompletedTask);
+        Assert.True(runState.TryBeginRun(BatchRunTriggers.Schedule, out var runCts, DateTime.Now.AddHours(1)));
+        await service.TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(runCts.IsCancellationRequested, "補跑本來就在窗口外開跑，不能被窗口結束邏輯取消");
+        runState.EndRun();
+
+        Assert.True(runState.TryBeginRun(BatchRunTriggers.Schedule, out var lateCts, DateTime.Now.AddMinutes(-1)));
+        await service.TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(lateCts.IsCancellationRequested, "到停止點要優雅停止，不能一路跑進上班時間");
+    }
+
+    [Fact]
+    public void 佔住窗口的趟_手動與自動補跑算_一般排程趟不算()
+    {
+        Assert.True(SchedulerHostedService.OccupiesScheduleWindow("manual:a", null));
+        Assert.True(SchedulerHostedService.OccupiesScheduleWindow(BatchRunTriggers.Schedule, DateTime.Now));
+        Assert.False(SchedulerHostedService.OccupiesScheduleWindow(BatchRunTriggers.Schedule, null));
+        Assert.False(SchedulerHostedService.OccupiesScheduleWindow(null, null));
+    }
+
+    [Fact]
     public async Task Tick_上一次寄信未完成時下一輪跳過不重複啟動()
     {
         var calls = 0;

@@ -32,7 +32,7 @@ public class DayHandlingSqlDerivationTests : IDisposable
     private static LogIssueSignature Issue(
         string source, int eventId, int count = 1,
         IssueSeverity severity = IssueSeverity.Low, bool elevates = false,
-        string logName = "System", EventLogEntryType entryType = EventLogEntryType.Warning, string eventKey = "") => new()
+        string logName = "System", LogEntryType entryType = LogEntryType.Warning, string eventKey = "") => new()
         {
             LogName = logName, Source = source, EventId = eventId, EntryType = entryType,
             Category = IssueCategory.Other, Severity = severity, ElevatesDayRisk = elevates, Count = count,
@@ -206,7 +206,7 @@ public class DayHandlingSqlDerivationTests : IDisposable
                         LogName = x.LogName,
                         Source = x.SourceName,
                         EventId = x.EventId,
-                        EntryType = (EventLogEntryType)x.EntryType,
+                        EntryType = (LogEntryType)x.EntryType,
                         EventKey = x.EventKey,
                         Severity = (IssueSeverity)x.SeverityRank
                     }).ToList();
@@ -489,7 +489,7 @@ public class DayHandlingSqlDerivationTests : IDisposable
             var issues = ctx.TopIssues.Where(x => x.RecordId == dr.RecordId).ToList().Select(x => new LogIssueSignature
             {
                 LogName = x.LogName, Source = x.SourceName, EventId = x.EventId,
-                EntryType = (EventLogEntryType)x.EntryType, EventKey = x.EventKey, Severity = (IssueSeverity)x.SeverityRank
+                EntryType = (LogEntryType)x.EntryType, EventKey = x.EventKey, Severity = (IssueSeverity)x.SeverityRank
             }).ToList();
             var key = dr.HostName.ToUpperInvariant();
             var handling = ctx.RecordHandlings.FirstOrDefault(rh => rh.HostNameKey == key && rh.RecordDate == dr.RecordDate);

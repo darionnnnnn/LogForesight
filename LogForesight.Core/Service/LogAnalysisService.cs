@@ -223,9 +223,9 @@ public class LogAnalysisService
         var reportSuppressions = activeSuppressions.Concat(SuppressionFilter.MutesOn(mutes, targetDate)).ToList();
 
         // EntryType 0 是 classic API 讀到的 Critical 等級事件（如 Kernel-Power 41），計入錯誤
-        var errorCount = logs.Count(l => l.EntryType == EventLogEntryType.Error || (int)l.EntryType == 0);
-        var warningCount = logs.Count(l => l.EntryType == EventLogEntryType.Warning);
-        var auditCount = logs.Count(l => l.EntryType is EventLogEntryType.FailureAudit or EventLogEntryType.SuccessAudit);
+        var errorCount = logs.Count(l => l.EntryType == LogEntryType.Error || (int)l.EntryType == 0);
+        var warningCount = logs.Count(l => l.EntryType == LogEntryType.Warning);
+        var auditCount = logs.Count(l => l.EntryType is LogEntryType.FailureAudit or LogEntryType.SuccessAudit);
 
         // 錨定在被分析的那一天：回補中間缺漏日時，檔案裡已經有該日之後的紀錄，
         // 而 TrendAnalyzer 不自行過濾日期——不錨定就等於拿後來發生的事去判斷這一天

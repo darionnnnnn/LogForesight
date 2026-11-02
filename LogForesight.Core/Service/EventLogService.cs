@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
+using System.Runtime.Versioning;
+using LogForesight.Core.Models;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -22,6 +24,12 @@ public class EventLogScanResult
     public bool ReadFailed { get; init; }
 
     /// <summary>
+    /// 本平台不支援讀取 Windows Event Log（非 Windows）時 true；此時 <see cref="ReadFailed"/> 亦為 true、Entries 為空。
+    /// 與一般讀取失敗分開：這是平台限制，不是權限或故障，呼叫端據此只輸出一行說明、不計警告。
+    /// </summary>
+    public bool PlatformUnsupported { get; init; }
+
+    /// <summary>
     /// 頻道在本機不存在（未安裝對應角色，如無 Defender 或未啟用 RDP）時 true。
     /// 與 <see cref="ReadFailed"/> 刻意分開：不存在屬預期、該偵測不適用，不算故障、不觸發 DataIncomplete。
     /// </summary>
@@ -36,6 +44,9 @@ public class MultiSourceScanResult
 {
     public List<EventLogEntryData> Entries { get; init; } = new();
     public Dictionary<string, EventLogScanResult> BySource { get; init; } = new();
+
+    /// <summary>任一來源因平台不支援（非 Windows）而未讀取。</summary>
+    public bool PlatformUnsupported => BySource.Values.Any(r => r.PlatformUnsupported);
 
     /// <summary>Security 來源本次是否可讀（null = 未包含在本次掃描的來源清單中）</summary>
     public bool? SecurityAvailable => BySource.TryGetValue("Security", out var r) ? !r.ReadFailed : null;
@@ -73,6 +84,17 @@ public class EventLogService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    /// <summary>非 Windows 平台讀取 Event Log 時回報的固定原因字串。</summary>
+    public const string UnsupportedPlatformReason = "此平台不支援 Windows Event Log 讀取";
+
+    private readonly Func<bool> _isWindows;
+
+    /// <param name="isWindows">平台判定；預設 <see cref="OperatingSystem.IsWindows"/>，可注入以便在 Windows 上測非 Windows 分支。</param>
+    public EventLogService(Func<bool>? isWindows = null)
+    {
+        _isWindows = isWindows ?? OperatingSystem.IsWindows;
+    }
+
     /// <summary>預設分析的日誌來源。Security 需要系統管理員權限，讀不到時會略過並提示</summary>
     public static readonly string[] DefaultLogNames = { "System", "Application", "Security" };
 
@@ -96,6 +118,19 @@ public class EventLogService
     /// 走 <see cref="EventLogReader"/>（classic API 讀不到的新式頻道）。
     /// </summary>
     public EventLogScanResult ScanRange(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds = null)
+    {
+        // 注入的委派分析器看不懂，故同時以 OperatingSystem.IsWindows() 讓 CA1416 通過。
+        if (!_isWindows() || !OperatingSystem.IsWindows())
+        {
+            // 不寫 Warn：平台限制不是故障，不該計入本趟警告數；由呼叫端整趟只輸出一行說明。
+            return new EventLogScanResult { Entries = new(), Complete = false, ReadFailed = true, PlatformUnsupported = true };
+        }
+
+        return ScanRangeWindows(startDate, endDateExclusive, logName, securityExtraEventIds);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private EventLogScanResult ScanRangeWindows(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds)
         => ClassicApiLogs.Contains(logName)
             ? ScanRangeClassic(startDate, endDateExclusive, logName, securityExtraEventIds)
             : ScanRangeModern(startDate, endDateExclusive, logName, securityExtraEventIds);
@@ -104,6 +139,7 @@ public class EventLogService
     /// 新式 Operational 頻道（Defender/RDP）的 EventLogReader 掃描。這些頻道沒有遷移前的歷史，
     /// <c>Source</c> 用 <see cref="EventRecord.ProviderName"/>（完整 manifest 名）不影響任何舊資料。
     /// </summary>
+    [SupportedOSPlatform("windows")]
     private EventLogScanResult ScanRangeModern(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds = null)
     {
         var logs = new List<EventLogEntryData>();
@@ -188,6 +224,7 @@ public class EventLogService
     /// 取該日誌目前實際保留、可回溯到的最早事件時間（正向讀第一筆即最舊一筆，惰性讀取只讀一筆）。
     /// 空日誌回傳 null。
     /// </summary>
+    [SupportedOSPlatform("windows")]
     private static DateTime? ReadEarliestTime(string logName)
     {
         var query = new EventLogQuery(logName, PathType.LogName) { ReverseDirection = false };
@@ -201,6 +238,7 @@ public class EventLogService
     /// 與遷移前完全相同，維持既有識別鍵（尤其 <c>Source</c> 為註冊短來源名），不斷舊 history.txt 趨勢。
     /// 見 <see cref="ClassicApiLogs"/> 的說明。
     /// </summary>
+    [SupportedOSPlatform("windows")]
     private EventLogScanResult ScanRangeClassic(DateTime startDate, DateTime endDateExclusive, string logName, int[]? securityExtraEventIds = null)
     {
         var logs = new List<EventLogEntryData>();
@@ -232,8 +270,9 @@ public class EventLogService
                 }
 
                 int eventId = (int)(entry.InstanceId & 0xFFFF);
+                var entryType = EventRecordMapper.FromClassic(entry.EntryType);
 
-                if (!ShouldInclude(policy, entry.EntryType, eventId, securityExtraEventIds))
+                if (!ShouldInclude(policy, entryType, eventId, securityExtraEventIds))
                 {
                     continue;
                 }
@@ -241,7 +280,7 @@ public class EventLogService
                 logs.Add(new EventLogEntryData
                 {
                     TimeGenerated = entry.TimeGenerated,
-                    EntryType = entry.EntryType,
+                    EntryType = entryType,
                     LogName = logName,
                     Source = entry.Source,
                     Message = entry.Message,
@@ -343,11 +382,11 @@ public class EventLogService
         return chunks;
     }
 
-    private static bool ShouldInclude(ChannelPolicy policy, EventLogEntryType type, int eventId, int[]? securityExtraEventIds)
+    private static bool ShouldInclude(ChannelPolicy policy, LogEntryType type, int eventId, int[]? securityExtraEventIds)
     {
-        // Critical 等級事件 EntryType 為 0（EventLogEntryType 列舉沒有 Critical 值，見 EventRecordMapper），
+        // Critical 等級事件 EntryType 為 0（LogEntryType 列舉沒有 Critical 值，見 EventRecordMapper），
         // 這類事件最嚴重，所有頻道一律收，絕不能被過濾掉
-        if (type is EventLogEntryType.Error or EventLogEntryType.Warning || (int)type == 0)
+        if (type is LogEntryType.Error or LogEntryType.Warning || (int)type == 0)
         {
             return true;
         }
@@ -355,11 +394,11 @@ public class EventLogService
         switch (policy.Kind)
         {
             case ChannelInclusionKind.SecurityAudit:
-                if (type == EventLogEntryType.FailureAudit)
+                if (type == LogEntryType.FailureAudit)
                 {
                     return true;
                 }
-                if (type == EventLogEntryType.SuccessAudit)
+                if (type == LogEntryType.SuccessAudit)
                 {
                     return KnownIssueCatalog.SecurityAuditWatchlist.Contains(eventId)
                            || (securityExtraEventIds != null && securityExtraEventIds.Contains(eventId));

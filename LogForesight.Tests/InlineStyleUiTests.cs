@@ -54,6 +54,8 @@ public class InlineStyleUiTests
         ["pages/dashboard.js"] = new[] { "--lf-swatch" },
         // 時間軸格子的風險色、圖例色塊
         ["pages/host-detail.js"] = new[] { "--lf-swatch" },
+        // 階段時間軸條的位置與寬度
+        ["core/run-timeline.js"] = new[] { "--lf-phase-start", "--lf-phase-width" },
         // 狀態圖例色塊、批次進度條寬度、狀態計數文字色
         ["pages/runs.js"] = new[] { "--lf-swatch", "--lf-progress", "--lf-status-color" },
         // 設定精靈進度條寬度、步驟狀態色點

@@ -33,7 +33,7 @@ public class ReportPerformanceContractTests : IDisposable
 
     private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity = IssueSeverity.High) => new()
     {
-        LogName = "System", Source = source, EventId = eventId, EntryType = EventLogEntryType.Warning,
+        LogName = "System", Source = source, EventId = eventId, EntryType = LogEntryType.Warning,
         Category = IssueCategory.Other, Severity = severity, Count = 1
     };
 

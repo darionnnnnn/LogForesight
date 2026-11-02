@@ -56,7 +56,7 @@ public sealed class SourceEvidenceTests
         var logs = Enumerable.Range(0, 100).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddMinutes(i), LogName = "System", Source = "disk",
-            EventId = 153, EntryType = EventLogEntryType.Error,
+            EventId = 153, EntryType = LogEntryType.Error,
             SourceEvidence = new SourceEvidence
             {
                 SourceKind = SourceEvidenceKind.LocalEventRecord,
@@ -176,7 +176,7 @@ public sealed class SourceEvidenceTests
                 new LogIssueSignature
                 {
                     LogName = "System", Source = "disk", EventId = 153,
-                    EntryType = EventLogEntryType.Error, Count = observations.Count,
+                    EntryType = LogEntryType.Error, Count = observations.Count,
                     SourceObservations = observations
                 }
             }
@@ -212,7 +212,7 @@ public sealed class SourceEvidenceTests
             new RiskyEvent
             {
                 HostId = 77, Date = date, LogName = "System", Source = "disk", EventId = 153,
-                EntryType = EventLogEntryType.Error, EventTime = date.AddHours(1),
+                EntryType = LogEntryType.Error, EventTime = date.AddHours(1),
                 Message = new string('m', 2000), SourceEvidence = evidence
             }
         });

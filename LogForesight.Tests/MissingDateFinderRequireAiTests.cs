@@ -34,12 +34,22 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         Enumerable.Range(0, count).Select(i => new EventLogEntryData
         {
             TimeGenerated = DateTime.Today.AddHours(-(i % 20)),
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             LogName = "System",
             Source = "disk",
             EventId = 153,
             Message = $"磁碟發生 I/O 錯誤 #{i}"
         }).ToList();
+
+    [Fact]
+    public void 目標日取自傳入的今天_跨午夜時不跟著系統時鐘變()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "test-host");
+        var today = new DateTime(2026, 3, 10);
+        Assert.Equal(
+            new[] { new DateTime(2026, 3, 8), new DateTime(2026, 3, 9) },
+            MissingDateFinder.Find(store, today, lookbackDays: 2));
+    }
 
     [Fact]
     public void 新模式下_AI待補的主機日不再由取數補跑_AI已定案失敗的仍會()
@@ -64,7 +74,7 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
             Headline = "今日分析摘要暫缺（AI 服務未回應）"
         });
 
-        var missing = MissingDateFinder.Find(store, lookbackDays: 3, requireAi: true);
+        var missing = MissingDateFinder.Find(store, DateTime.Today, lookbackDays: 3, requireAi: true);
 
         Assert.DoesNotContain(pendingDate, missing);   // 待補歸 AI 排程
         Assert.Contains(failedDate, missing);           // 終局失敗歸取數重跑
@@ -91,7 +101,7 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         store.Append(record);
 
         // 驗證新模式（requireAi: true）下 targetDate 被略過（不在待跑清單中）
-        var missing = MissingDateFinder.Find(store, lookbackDays: 1, requireAi: true);
+        var missing = MissingDateFinder.Find(store, DateTime.Today, lookbackDays: 1, requireAi: true);
 
         Assert.DoesNotContain(targetDate, missing);
     }
@@ -117,7 +127,7 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         store.Append(record);
 
         // 預設模式（requireAi: false）
-        var missing = MissingDateFinder.Find(store, lookbackDays: 2, requireAi: false);
+        var missing = MissingDateFinder.Find(store, DateTime.Today, lookbackDays: 2, requireAi: false);
 
         // 昨天已有紀錄 -> 不在待跑清單中
         Assert.DoesNotContain(yesterday, missing);
@@ -171,7 +181,7 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
 
         // 3. 待補的辨識者是 AI 分析排程（QueryPendingAi），不是取數的 MissingDateFinder
         //    ——取數重抓待補會與 AI 排程打架（體檢輪語意變更）
-        var missingDates = MissingDateFinder.Find(store, lookbackDays: 3, requireAi: true);
+        var missingDates = MissingDateFinder.Find(store, DateTime.Today, lookbackDays: 3, requireAi: true);
         Assert.DoesNotContain(yesterday, missingDates);
         Assert.Equal(1, store.CountPendingAi());
 

@@ -1848,6 +1848,44 @@ public class EfPrtgStoreTests : IDisposable
     }
 
     [Fact]
+    public void 整天已取的sensor_只認滿24列ok_sampled與不足都不算()
+    {
+        var store = CreateStore();
+        var day = new DateTime(2026, 8, 30);
+        PrtgValueRow Row(long sensor, int hour, string quality) => new()
+        {
+            SensorObjid = sensor, PeriodStart = day.AddHours(hour), AvgValue = 1, Coverage = 100, Quality = quality, CreatedAt = day
+        };
+        store.UpsertValues(Enumerable.Range(0, 24).Select(h => Row(1, h, PrtgDataQuality.Ok))
+            .Concat(Enumerable.Range(0, 23).Select(h => Row(2, h, PrtgDataQuality.Ok)))
+            .Concat(Enumerable.Range(0, 24).Select(h => Row(3, h, PrtgDataQuality.Sampled)))
+            .ToList());
+
+        var full = store.GetSensorsWithFullDayValues(day, new long[] { 1, 2, 3, 4 });
+
+        Assert.Equal(new long[] { 1 }, full.OrderBy(id => id));
+        Assert.Empty(store.GetSensorsWithFullDayValues(day.AddDays(1), new long[] { 1 }));
+        Assert.Empty(store.GetSensorsWithFullDayValues(day, Array.Empty<long>()));
+    }
+
+    [Fact]
+    public void 整天已取查詢_兩後端都翻譯得出來且帶品質條件()
+    {
+        var day = new DateTime(2026, 8, 30);
+        foreach (var options in new[]
+                 {
+                     new DbContextOptionsBuilder<LfDbContext>().UseSqlServer("Server=.;Database=LfTranslateOnly;Trusted_Connection=True;").Options,
+                     new DbContextOptionsBuilder<LfDbContext>().UseSqlite("Data Source=:memory:").Options
+                 })
+        {
+            using var ctx = new LfDbContext(options);
+            var sql = EfPrtgStore.BuildFullDaySensorsQuery(ctx.PrtgValues, day, new long[] { 1, 2 }).ToQueryString();
+            Assert.Contains("quality", sql);
+            Assert.Contains("HAVING", sql);
+        }
+    }
+
+    [Fact]
     public void 小時曲線查詢_SQLServer翻譯得出來()
     {
         var options = new DbContextOptionsBuilder<LfDbContext>()

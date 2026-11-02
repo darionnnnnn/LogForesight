@@ -82,7 +82,7 @@ public class WorkOrderCommandServiceTests : IDisposable
 
     // ── 測試資料 ─────────────────────────────────────────────────────────────
 
-    private static LogIssueSignature Disk(string logName = "System", EventLogEntryType entryType = EventLogEntryType.Error) => new()
+    private static LogIssueSignature Disk(string logName = "System", LogEntryType entryType = LogEntryType.Error) => new()
     {
         LogName = logName, Source = "disk", EventId = 153, EntryType = entryType,
         Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other
@@ -90,7 +90,7 @@ public class WorkOrderCommandServiceTests : IDisposable
 
     private static LogIssueSignature Ntfs() => new()
     {
-        LogName = "System", Source = "ntfs", EventId = 55, EntryType = EventLogEntryType.Error,
+        LogName = "System", Source = "ntfs", EventId = 55, EntryType = LogEntryType.Error,
         Severity = IssueSeverity.High, Count = 1, Category = IssueCategory.Other
     };
 
@@ -144,7 +144,7 @@ public class WorkOrderCommandServiceTests : IDisposable
     public void 同口徑_依問題視角該問題的主機數等於預覽受影響主機數()
     {
         AddHost("HOST-A");
-        AddHost("HOST-B", Disk(), Disk(entryType: EventLogEntryType.Warning));
+        AddHost("HOST-B", Disk(), Disk(entryType: LogEntryType.Warning));
         AddHost("HOST-C");
         AddHost("HOST-D", Ntfs());
         var handler = AddUser("DOMAIN\\h", "處理人");

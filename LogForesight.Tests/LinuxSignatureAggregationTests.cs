@@ -22,7 +22,7 @@ public class LinuxSignatureAggregationTests : IDisposable
         LogName = LogAggregator.LinuxLogName,
         Source = program,
         EventId = 0,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         Message = message
     };
 
@@ -77,7 +77,7 @@ public class LinuxSignatureAggregationTests : IDisposable
             LogName = "System",
             Source = "disk",
             EventId = 153,
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             Message = $"磁碟發生 I/O 錯誤 #{i}"
         }).ToList();
 
@@ -107,7 +107,7 @@ public class LinuxSignatureAggregationTests : IDisposable
             LogName = "System",
             Source = "disk",
             EventId = 153,
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             EventKey = string.Empty
         };
 
@@ -122,7 +122,7 @@ public class LinuxSignatureAggregationTests : IDisposable
             LogName = LogAggregator.LinuxLogName,
             Source = "sshd",
             EventId = 0,
-            EntryType = EventLogEntryType.Error,
+            EntryType = LogEntryType.Error,
             EventKey = "builtin-linux-ssh-bruteforce"
         };
 
@@ -155,7 +155,7 @@ public class LinuxSignatureAggregationTests : IDisposable
         LogName = LogAggregator.LinuxLogName,
         Source = "sshd",
         EventId = 0,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         EventKey = eventKey,
         Count = count,
         Severity = IssueSeverity.High

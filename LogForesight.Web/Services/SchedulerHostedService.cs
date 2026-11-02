@@ -96,7 +96,7 @@ public class SchedulerHostedService : BackgroundService
         try
         {
             var closed = CloseInterruptedRuns(_mutexGate, _batchRunStore, DateTime.Now,
-                System.Diagnostics.Process.GetCurrentProcess().StartTime);
+                System.Diagnostics.Process.GetCurrentProcess().StartTime, _systemSettingsStore.Get().RunLogRetentionDays);
             if (closed == null)
             {
                 Log.Info("另一個執行個體仍持有執行鎖，略過中斷執行的關閉");
@@ -224,18 +224,19 @@ public class SchedulerHostedService : BackgroundService
             // 窗口 End 到點（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：對「排程觸發」的進行中執行發
             // 優雅停止（停在主機日邊界）。手動觸發不受時間窗限制（§1.4.4），不在這裡停。
             // 刻意放在 Enabled 檢查之前——執行中途被關掉 Enabled，這次排程執行仍該按窗口停。
-            if (_runState.Trigger == BatchRunTriggers.Schedule &&
-                !ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.Windows) &&
+            var running = _runState.Snapshot();
+            if (running.Trigger == BatchRunTriggers.Schedule &&
+                ScheduleCalculator.ShouldStopScheduledRun(DateTime.Now, options.Windows, running.CatchUpDeadline) &&
                 _runState.TryCancel())
             {
-                Log.Info("執行窗口已結束，對排程觸發的執行發出優雅停止（停在主機日邊界）。");
+                Log.Info("執行窗口或補跑停止點已到，對排程觸發的執行發出優雅停止（停在主機日邊界）。");
             }
             // 手動執行佔住 gate 時，這個窗口的自動觸發會靜默消失——手動觸發不受窗口 End 停止
             // （§1.4.4），一趟大回填可以吃掉整段窗口。畫面上看起來就是「排程沒跑，也沒說為什麼」。
             // 這裡把它說出來：狀態卡顯示、里程碑進那次手動執行的紀錄，每個窗口只記一次。
-            if (_runState.Trigger != null && _runState.Trigger != BatchRunTriggers.Schedule)
+            if (OccupiesScheduleWindow(running.Trigger, running.CatchUpDeadline))
             {
-                NoteSkippedScheduleWindow(options);
+                NoteSkippedScheduleWindow(options, running.CatchUpDeadline);
             }
 
             return; // 執行中不再觸發新的執行，不排隊
@@ -252,7 +253,8 @@ public class SchedulerHostedService : BackgroundService
             // 這個窗口原本跑過、但那趟被站台重啟標成異常中斷時，執行紀錄與狀態卡要看得到「為什麼又跑一次」
             var interruptedAt = ScheduleCalculator.InterruptedRunAllowingCatchUp(now, ScheduledRunTimes(recentRuns), options.Windows);
             await TriggerRunAsync(ComposeScheduledRequest(
-                interruptedAt is { } at ? $"補跑：上一趟排程執行（{at:HH:mm} 開始）異常中斷" : null));
+                interruptedAt is { } at ? $"補跑：上一趟排程執行（{at:HH:mm} 開始）異常中斷" : null,
+                ScheduleCalculator.DescribeCurrentWindow(now, options.Windows)));
             return;
         }
 
@@ -283,7 +285,9 @@ public class SchedulerHostedService : BackgroundService
                     ? Math.Clamp((now.Date - earlier.Value.Date).Days, 1, effectiveLimit)
                     : 1;
 
-                var catchUpNote = $"補跑：上一個排程窗口（{start:MM-dd HH:mm}～{end:MM-dd HH:mm}）未執行，本趟回望 {days} 天";
+                // 補跑在窗口外開跑：給它原窗口長度的時間，到點優雅停止，不會一路跑進上班時間
+                var deadline = now + (end - start);
+                var catchUpNote = $"補跑：上一個排程窗口（{start:MM-dd HH:mm}～{end:MM-dd HH:mm}）未執行，本趟回望 {days} 天，{deadline:HH:mm} 停止";
                 Log.Info(catchUpNote);
 
                 var scheduledReq = ComposeScheduledRequest();
@@ -293,6 +297,7 @@ public class SchedulerHostedService : BackgroundService
                     HostIds = scheduledReq.HostIds,
                     BackfillOverride = days,
                     CatchUpNote = catchUpNote,
+                    CatchUpDeadline = deadline,
                     Trigger = scheduledReq.Trigger
                 };
 
@@ -308,7 +313,11 @@ public class SchedulerHostedService : BackgroundService
     /// 訊息進狀態卡的「最新訊息」與 NLog；**不進里程碑**——里程碑屬於某一次執行的紀錄，
     /// 而這件事發生在輪詢執行緒、拿不到那次執行的 recorder。事後追查走 NLog。
     /// </summary>
-    private void NoteSkippedScheduleWindow(ScheduleOptions options)
+    /// <summary>會佔住窗口、讓窗口自動觸發消失的趟：手動趟，以及在窗口外開跑、可能跑進下一個窗口的自動補跑</summary>
+    internal static bool OccupiesScheduleWindow(string? trigger, DateTime? catchUpDeadline) =>
+        trigger != null && (trigger != BatchRunTriggers.Schedule || catchUpDeadline != null);
+
+    private void NoteSkippedScheduleWindow(ScheduleOptions options, DateTime? catchUpDeadline)
     {
         if (!options.Enabled) return;
 
@@ -333,8 +342,11 @@ public class SchedulerHostedService : BackgroundService
         {
             // 補跑時機要說準：手動執行結束時若仍在窗口內，ShouldTriggerNow 會判定「這個實例尚未觸發過」
             // 而立刻補觸發；只有手動執行跨過窗口 End 才會等到下一個窗口。
-            var text = $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用；" +
-                       "手動執行結束後若仍在窗口內會立即補跑，否則等下一個窗口。";
+            var text = catchUpDeadline is { } deadline
+                ? $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的補跑佔用（補跑最晚 {deadline:HH:mm} 停止）；" +
+                  "補跑結束後若仍在窗口內會立即補觸發，否則等下一個窗口。"
+                : $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用；" +
+                  "手動執行結束後若仍在窗口內會立即補跑，否則等下一個窗口。";
             Log.Info(text);
             _runState.ReportMessage(text);
         }
@@ -345,12 +357,14 @@ public class SchedulerHostedService : BackgroundService
     /// 拿不到鎖（例如另一個執行個體正在跑）時回傳 null；拿到鎖時回傳關閉筆數。
     /// 只關 <paramref name="processStartedAt"/> 之前開始的執行——本行程自己的執行仍在跑。
     /// </summary>
-    internal static int? CloseInterruptedRuns(NamedMutexGate gate, BatchRunStore store, DateTime now, DateTime processStartedAt)
+    internal static int? CloseInterruptedRuns(NamedMutexGate gate, BatchRunStore store, DateTime now, DateTime processStartedAt,
+        int lookbackDays = SystemSettings.DefaultRunLogRetentionDays)
     {
         int? closedCount = null;
         var acquired = gate.RunExclusive(() =>
         {
-            closedCount = store.CloseUnfinishedRuns(now, 7, processStartedAt);
+            // 回看到保留期：站台停機超過一週時，更早的未結束紀錄不能永遠卡在執行中
+            closedCount = store.CloseUnfinishedRuns(now, lookbackDays, processStartedAt);
         }, TimeSpan.Zero, runActionWhenNotAcquired: false);
 
         return acquired ? closedCount : null;
@@ -392,8 +406,8 @@ public class SchedulerHostedService : BackgroundService
     /// 刪除既有分析結果重跑是破壞性動作，只在有人看著的手動觸發發生，不在無人看管的夜間排程。
     /// 抽成獨立函式是為了讓這條契約測得到。
     /// </summary>
-    internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null) =>
-        new() { Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote };
+    internal static RunRequest ComposeScheduledRequest(string? catchUpNote = null, string? windowNote = null) =>
+        new() { Scope = RunScope.Full, Trigger = BatchRunTriggers.Schedule, CatchUpNote = catchUpNote, WindowNote = windowNote };
 
     /// <summary>
     /// 把呼叫端的請求與目前排程設定合成實際執行用的請求（<see cref="TriggerRunAsync"/> 的純函式部分）。
@@ -413,6 +427,8 @@ public class SchedulerHostedService : BackgroundService
         IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
         Trigger = request.Trigger,
         CatchUpNote = request.CatchUpNote,
+        WindowNote = request.WindowNote,
+        CatchUpDeadline = request.CatchUpDeadline,
         PrtgBackfillDays = request.PrtgBackfillDays
     };
 
@@ -435,7 +451,7 @@ public class SchedulerHostedService : BackgroundService
         var scheduleOptions = _scheduleOptionsStore.Get();
         var effectiveRequest = ComposeEffectiveRequest(request, scheduleOptions);
 
-        if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts))
+        if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts, effectiveRequest.CatchUpDeadline))
         {
             return false;
         }

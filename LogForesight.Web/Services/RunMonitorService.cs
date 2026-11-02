@@ -94,8 +94,8 @@ public class RunMonitorService
         var windowDays = skipFromEnd + pageCount + 1;
         // AI 排程的執行（JobType=ai）不進主機×日視角：它不是「哪台主機哪天跑了沒」的語意，
         // 混入會讓 AllHosts 把執行主機當成一台幽靈主機列進總表（體檢輪）
-        var runs = _runs.GetRecentRuns(windowDays, hostNames: null)
-            .Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
+        var allRuns = _runs.GetRecentRuns(windowDays, hostNames: null);
+        var runs = allRuns.Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
 
         // 分析紀錄窗口：本頁日期 D 對應 D-1 的分析紀錄，多帶一天
         var recordFrom = pageFrom.AddDays(-1);
@@ -111,7 +111,13 @@ public class RunMonitorService
         for (var date = pageFrom; date <= pageEnd; date = date.AddDays(1))
         {
             var dateStr = date.ToString("yyyy-MM-dd");
-            var summary = new RunDaySummaryDto { Date = dateStr, TotalHosts = hosts.Count };
+            var summary = new RunDaySummaryDto
+            {
+                Date = dateStr,
+                TotalHosts = hosts.Count,
+                // 與主機格同一個鍵（當天開跑）；AI 趟只進這裡，不進主機×日
+                Timing = RunDayTimingBuilder.Build(allRuns.Where(r => r.StartedAt.Date == date.Date).ToList())
+            };
             var failedHosts = new List<string>();
 
             // 執行總表的 PRTG 欄依「資料日期」取（而不是開始日期）：
@@ -365,6 +371,9 @@ public class RunMonitorService
             HostName = run.HostName,
             StartedAt = run.StartedAt,
             FinishedAt = run.FinishedAt,
+            Status = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold, _isHeld(run)),
+            Interrupted = run.Interrupted,
+            Phases = RunPhaseDto.From(run.Phases),
             ExitCode = run.ExitCode,
             Stopped = run.Stopped,
             AppVersion = run.AppVersion,
@@ -374,9 +383,7 @@ public class RunMonitorService
             AiFailures = run.AiFailures,
             WarnCount = run.WarnCount,
             ErrorCount = run.ErrorCount,
-            DurationSeconds = run.FinishedAt.HasValue
-                ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
-                : null,
+            DurationSeconds = RunDurationSeconds(run),
             TriggerText = RunTriggerText.Of(run.Trigger ?? "console", _displayNameService, _users),
             LocalDaysAnalyzed = run.LocalDaysAnalyzed,
             LocalDaysFailed = run.LocalDaysFailed,
@@ -416,6 +423,12 @@ public class RunMonitorService
     /// 與「執行總表」（按日期彙總每台主機的最新一筆）不同——這裡逐筆列出，含同一天內的多次
     /// 手動重跑，回答的是「每一次執行本身的細節」而非「這一天整體狀況」。
     /// </summary>
+    /// <summary>異常中斷的結束時刻是站台重啟時刻，算出來含整段停機，所以不給耗時</summary>
+    private static int? RunDurationSeconds(BatchRun run) =>
+        run.FinishedAt.HasValue && !run.Interrupted
+            ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
+            : null;
+
     public List<RunListItemDto> GetRunList(int days) =>
         _runs.GetRecentRuns(days, hostNames: null)
             .Select(run => new RunListItemDto
@@ -424,9 +437,9 @@ public class RunMonitorService
                 HostName = run.HostName,
                 StartedAt = run.StartedAt,
                 FinishedAt = run.FinishedAt,
-                DurationSeconds = run.FinishedAt.HasValue
-                    ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
-                    : null,
+                DurationSeconds = RunDurationSeconds(run),
+                Interrupted = run.Interrupted,
+                Phases = RunPhaseDto.From(run.Phases),
                 Status = BatchRunStatus.Compute(run, DateTime.Now, StuckThreshold, _isHeld(run)),
                 JobTypeText = run.JobType == BatchRun.JobTypeAi ? "AI 分析" : "取數分析",
                 TriggerText = RunTriggerText.Of(run.Trigger ?? "console", _displayNameService, _users),

@@ -73,7 +73,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                 new LogIssueSignature
                 {
                     LogName = "PRTG", Source = "disk", EventId = 0,
-                    EntryType = System.Diagnostics.EventLogEntryType.Warning,
+                    EntryType = LogForesight.Core.Models.LogEntryType.Warning,
                     Count = 1, SourceObservations = new() { evidence }
                 }
             }
@@ -110,7 +110,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                 new LogIssueSignature
                 {
                     LogName = "System", Source = Source, EventId = EventId,
-                    EntryType = System.Diagnostics.EventLogEntryType.Error,
+                    EntryType = LogForesight.Core.Models.LogEntryType.Error,
                     Count = observations.Count, SourceObservations = observations
                 }
             }
@@ -140,7 +140,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                     LogName = "System",
                     Source = Source,
                     EventId = EventId,
-                    EntryType = System.Diagnostics.EventLogEntryType.Error,
+                    EntryType = LogForesight.Core.Models.LogEntryType.Error,
                     Count = 3,
                     Severity = IssueSeverity.High,
                     FirstSeen = "00:00",
@@ -149,7 +149,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
             }
         });
 
-    private static string IssueKey => IssueSignatureKey.For("System", Source, EventId, System.Diagnostics.EventLogEntryType.Error);
+    private static string IssueKey => IssueSignatureKey.For("System", Source, EventId, LogForesight.Core.Models.LogEntryType.Error);
 
     // ── HasPriorHandling 旗標 ──────────────────────────────────────────────────
 
@@ -339,7 +339,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                     LogName = "Security",
                     Source = "Microsoft-Windows-Security-Auditing",
                     EventId = 4625,
-                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    EntryType = LogForesight.Core.Models.LogEntryType.FailureAudit,
                     Count = 43,
                     Severity = IssueSeverity.High,
                     FirstSeen = "00:00",
@@ -410,7 +410,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                     LogName = "System",
                     Source = Source,
                     EventId = EventId,
-                    EntryType = System.Diagnostics.EventLogEntryType.Error,
+                    EntryType = LogForesight.Core.Models.LogEntryType.Error,
                     Count = 1,
                     Severity = IssueSeverity.Low,
                     FirstSeen = "00:00",
@@ -445,7 +445,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                     LogName = "Security",
                     Source = "Microsoft-Windows-Security-Auditing",
                     EventId = 4625,
-                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    EntryType = LogForesight.Core.Models.LogEntryType.FailureAudit,
                     Count = 40,
                     Severity = IssueSeverity.Medium,
                     FirstSeen = "00:00",
@@ -481,7 +481,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                     LogName = "Security",
                     Source = "Microsoft-Windows-Security-Auditing",
                     EventId = 4771,
-                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    EntryType = LogForesight.Core.Models.LogEntryType.FailureAudit,
                     Count = 10,
                     Severity = IssueSeverity.High,
                     FirstSeen = "00:00",
@@ -528,7 +528,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                     LogName = "Security",
                     Source = "Microsoft-Windows-Security-Auditing",
                     EventId = 4625,
-                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    EntryType = LogForesight.Core.Models.LogEntryType.FailureAudit,
                     Count = 5,
                     Severity = IssueSeverity.Low,
                     FirstSeen = "00:00",
@@ -575,7 +575,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
                     LogName = "Security",
                     Source = "Microsoft-Windows-Security-Auditing",
                     EventId = 4625,
-                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    EntryType = LogForesight.Core.Models.LogEntryType.FailureAudit,
                     Count = 2,
                     Severity = IssueSeverity.Low,
                     FirstSeen = "00:00",

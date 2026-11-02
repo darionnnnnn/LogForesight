@@ -15,7 +15,7 @@ public class PrtgCrossDayDiskTrendTests
         LogName = PrtgFindingMapper.PrtgLogName,
         Source = $"PRTG:{code}",
         EventId = 0,
-        EntryType = EventLogEntryType.Warning,
+        EntryType = LogEntryType.Warning,
         EventKey = $"prtg:{code}:2001",
         SampleMessages = new List<string> { "原始說明" },
         Severity = severity,

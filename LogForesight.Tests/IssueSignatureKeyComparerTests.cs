@@ -9,12 +9,12 @@ public sealed class IssueSignatureKeyComparerTests
     public void 完整簽章只正規化Source_其餘欄位仍區分且Hash一致()
     {
         var comparer = IssueSignatureKeyComparer.Instance;
-        var lower = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Error, "rule-a");
-        var upper = IssueSignatureKey.For("System", "DISK", 153, EventLogEntryType.Error, "rule-a");
-        var differentLog = IssueSignatureKey.For("Application", "DISK", 153, EventLogEntryType.Error, "rule-a");
-        var differentEvent = IssueSignatureKey.For("System", "DISK", 154, EventLogEntryType.Error, "rule-a");
-        var differentType = IssueSignatureKey.For("System", "DISK", 153, EventLogEntryType.Warning, "rule-a");
-        var differentEventKey = IssueSignatureKey.For("System", "DISK", 153, EventLogEntryType.Error, "rule-b");
+        var lower = IssueSignatureKey.For("System", "disk", 153, LogEntryType.Error, "rule-a");
+        var upper = IssueSignatureKey.For("System", "DISK", 153, LogEntryType.Error, "rule-a");
+        var differentLog = IssueSignatureKey.For("Application", "DISK", 153, LogEntryType.Error, "rule-a");
+        var differentEvent = IssueSignatureKey.For("System", "DISK", 154, LogEntryType.Error, "rule-a");
+        var differentType = IssueSignatureKey.For("System", "DISK", 153, LogEntryType.Warning, "rule-a");
+        var differentEventKey = IssueSignatureKey.For("System", "DISK", 153, LogEntryType.Error, "rule-b");
 
         Assert.True(comparer.Equals(lower, upper));
         Assert.Equal(comparer.GetHashCode(lower), comparer.GetHashCode(upper));
@@ -50,8 +50,8 @@ public sealed class IssueSignatureKeyComparerTests
             cases, handlings, new FakeHandlingStore(), new FakeAnalysisRecordQuery(), hosts,
             new FakeIssueOwnerStore());
 
-        var oldKey = IssueSignatureKey.For("System", "DISK", 153, EventLogEntryType.Error);
-        var newKey = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Error);
+        var oldKey = IssueSignatureKey.For("System", "DISK", 153, LogEntryType.Error);
+        var newKey = IssueSignatureKey.For("System", "disk", 153, LogEntryType.Error);
         var day = DateTime.Today;
         var oldUpdated = day.AddHours(1);
         var newUpdated = day.AddHours(2);
@@ -88,11 +88,11 @@ public sealed class IssueSignatureKeyComparerTests
             {
                 new LogIssueSignature
                 {
-                    LogName = "System", Source = "disk", EventId = 153, EntryType = EventLogEntryType.Error
+                    LogName = "System", Source = "disk", EventId = 153, EntryType = LogEntryType.Error
                 },
                 new LogIssueSignature
                 {
-                    LogName = "System", Source = "DISK", EventId = 153, EntryType = EventLogEntryType.Error
+                    LogName = "System", Source = "DISK", EventId = 153, EntryType = LogEntryType.Error
                 }
             },
             day.AddHours(3));

@@ -217,7 +217,6 @@
     <section class="lf-card mb-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">異常彙總</h2>
-            <span class="text-muted small">同一錯誤在幾台主機出現——判斷是個案還是通案</span>
         </div>
         <div class="lf-card__body p-0" id="run-errors"></div>
     </section>
@@ -227,7 +226,6 @@
     <section class="lf-card mb-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">執行紀錄</h2>
-            <span class="text-muted small">逐筆列出每一次執行（含同一天內的多次手動重跑），回答「這一次跑了多久、誰觸發的」</span>
         </div>
         <div class="lf-card__body p-0" id="run-list"></div>
     </section>
@@ -270,14 +268,14 @@
                     <input class="form-check-input" type="checkbox" id="schedule-auto-catchup" data-maintain-only disabled />
                     <label class="form-check-label" for="schedule-auto-catchup">錯過窗口時自動補跑</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="站台在排程窗口期間沒有執行（停機、IIS 閒置回收）時，於窗口結束後 4 小時內自動補跑一次，回望天數涵蓋漏掉的日子。關閉後不會自動補跑，可在排程作業頁手動立即執行。">
+                            data-bs-content="站台在排程窗口期間沒有執行（停機、IIS 閒置回收）時，於窗口結束後 4 小時內自動補跑一次，回望天數涵蓋漏掉的日子；補跑最長跑滿錯過的窗口長度，到點優雅停止。關閉後不會自動補跑，可在排程作業頁手動立即執行。">
                         <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                 </div>
 
                 <span class="form-label small fw-semibold d-inline-block" id="schedule-windows-label">執行窗口</span>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
+                        data-bs-content="Start 到點觸發一次執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。設多組時每組都會跑一次，只接著做當天還沒完成的部分：本機與 NetIQ 跳過已完成的主機日，PRTG 當天已同步過就沿用。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <div id="schedule-windows" role="group" aria-labelledby="schedule-windows-label" class="mb-2"></div>
@@ -299,13 +297,13 @@
         <section class="lf-card mb-3">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">AI 分析</h2>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="AI 分析不需要另外啟用，設定好「系統管理 &gt; 設定 &gt; AI 服務」即生效。以下設定的是背景補跑：積壓的待補要在哪個時段消化、同時跑幾件。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
             </div>
             <div class="lf-card__body">
-                <p class="text-muted small">
-                    AI 分析在每次取數執行產出結果後自動進行，不需要另外啟用；
-                    設定好「系統管理 &gt; 設定 &gt; AI 服務」即生效。
-                    以下設定的是<strong>背景補跑</strong>：積壓的待補要在哪個時段消化、同時跑幾件。
-                </p>
+                <p class="text-muted small">AI 跟著取數自動進行，不受窗口限制；這裡只設定背景補跑。</p>
 
                 <label class="form-label small fw-semibold" for="schedule-ai-windows">背景補跑窗口</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
@@ -325,7 +323,6 @@
                     </button>
                     <input type="number" class="form-control form-control-sm lf-input-narrow" id="schedule-ai-concurrency"
                            min="1" max="8" value="1" data-maintain-only disabled />
-                    <div class="form-text small text-muted">同時進行的 AI 分析數。地端模型建議 1；接外部 API 可調高。</div>
                 </div>
             </div>
         </section>

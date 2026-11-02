@@ -29,7 +29,7 @@ public class RiskReportServiceTests
         LogName = "System",
         Source = "disk",
         EventId = 153,
-        EntryType = EventLogEntryType.Error,
+        EntryType = LogEntryType.Error,
         Count = 47,
         FirstSeen = "03:12",
         LastSeen = "23:40",
@@ -207,7 +207,7 @@ public class RiskReportServiceTests
         LogName = "Linux",
         Source = "sshd",
         EventId = 0,
-        EntryType = EventLogEntryType.Warning,
+        EntryType = LogEntryType.Warning,
         EventKey = ruleId,
         RuleId = ruleId,
         Count = count,
@@ -222,7 +222,7 @@ public class RiskReportServiceTests
         LogName = "Linux",
         Source = "sshd",
         EventId = 0,
-        EntryType = EventLogEntryType.Warning,
+        EntryType = LogEntryType.Warning,
         Message = message,
         TimeGenerated = DateTime.Today.AddMinutes(minute)
     };

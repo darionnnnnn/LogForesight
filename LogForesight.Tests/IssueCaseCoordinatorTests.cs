@@ -13,7 +13,7 @@ public class IssueCaseCoordinatorTests
 {
     private const string Host = "SRV-A";
     private const string IssueLabel = "disk 153";
-    private static readonly string IssueKey = IssueSignatureKey.For("System", "disk", 153, System.Diagnostics.EventLogEntryType.Error);
+    private static readonly string IssueKey = IssueSignatureKey.For("System", "disk", 153, LogForesight.Core.Models.LogEntryType.Error);
 
     private readonly FakeHostStore _hosts = new();
     private readonly FakeAnalysisRecordQuery _records = new();
@@ -44,7 +44,7 @@ public class IssueCaseCoordinatorTests
             Host = Host,
             TopIssues = new List<LogIssueSignature>
             {
-                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+                new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
             }
         });
     }
@@ -216,8 +216,8 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error },
-            new() { LogName = "System", Source = "other", EventId = 999, EntryType = System.Diagnostics.EventLogEntryType.Warning }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error },
+            new() { LogName = "System", Source = "other", EventId = 999, EntryType = LogForesight.Core.Models.LogEntryType.Warning }
         };
 
         var result = coordinator.AttachNewDay(Host, newDay, issues, DateTime.Now);
@@ -240,7 +240,7 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
 
         var first = coordinator.AttachNewDay(Host, newDay, issues, DateTime.Now);
@@ -256,7 +256,7 @@ public class IssueCaseCoordinatorTests
     {
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
 
         var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
@@ -277,7 +277,7 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
         var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
 
@@ -299,7 +299,7 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
         var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
 
@@ -326,7 +326,7 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
         var result = coordinator.AttachNewDay(Host, newDay, issues, DateTime.Now);
 
@@ -354,7 +354,7 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
         var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
 
@@ -374,7 +374,7 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
         var coordinator = Create();
         coordinator.AttachNewDay(Host, DateTime.Today.AddDays(-1), issues, DateTime.Now);
@@ -442,7 +442,7 @@ public class IssueCaseCoordinatorTests
 
         var issues = new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         };
         var result = coordinator.AttachNewDay(Host, newDay, issues, DateTime.Now);
 
@@ -502,7 +502,7 @@ public class IssueCaseCoordinatorTests
 
         coordinator.AttachNewDay(Host, newDay, new List<LogIssueSignature>
         {
-            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = LogForesight.Core.Models.LogEntryType.Error }
         }, DateTime.Now);
 
         var after = _cases.Get(caseId)!;

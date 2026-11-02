@@ -20,6 +20,13 @@ public sealed class PrtgAdminPageUiTests
     private static string Script() =>
         File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "prtg-admin.js"));
 
+    [Fact]
+    public void 不再有頁籤用途callout_改由頁籤標題旁的問號承接()
+    {
+        Assert.DoesNotContain("aria-label=\"這個頁籤的用途\"", View());
+        Assert.DoesNotContain("lf-callout-info", View());
+    }
+
     [Theory]
     [InlineData("connection")]
     [InlineData("params")]
@@ -27,18 +34,41 @@ public sealed class PrtgAdminPageUiTests
     [InlineData("probe")]
     [InlineData("selected-backfill")]
     [InlineData("effectiveness")]
-    public void 每個頁籤開頭都有用途說明_做什麼什麼時候來不會做什麼(string panel)
+    public void 每個頁籤的第一張卡標題區都有問號說明(string panel)
     {
         var view = View();
-        var marker = $"<div data-panel=\"{panel}\"";
-        var start = view.IndexOf(marker, StringComparison.Ordinal);
+        var start = view.IndexOf($"<div data-panel=\"{panel}\"", StringComparison.Ordinal);
         Assert.True(start >= 0, $"找不到頁籤 {panel}");
-        // 用途區必須緊接在頁籤容器開頭（第一個子元素），不是藏在頁籤底部
-        var head = view.Substring(start, Math.Min(900, view.Length - start));
-        Assert.Contains("aria-label=\"這個頁籤的用途\"", head);
-        Assert.Contains("這頁做什麼", head);
-        Assert.Contains("什麼時候來", head);
-        Assert.Contains("不會做什麼", head);
+        var titleEnd = view.IndexOf("</div>", view.IndexOf("lf-card__title", start, StringComparison.Ordinal), StringComparison.Ordinal);
+        // mirror 頁籤第一張卡是快照診斷，問號放在緊接的「鏡像狀態」卡標題旁
+        var scopeEnd = panel == "mirror" ? view.IndexOf("鏡像狀態</h2>", start, StringComparison.Ordinal) + 600 : titleEnd + 600;
+        var head = view.Substring(start, Math.Min(scopeEnd - start, view.Length - start));
+        Assert.Contains("class=\"lf-help\"", head);
+        Assert.Contains("data-bs-toggle=\"popover\"", head);
+    }
+
+    [Theory]
+    [InlineData("各數字的分母不同，不能互相換算成比例")]
+    [InlineData("結果包含不在主機清單內的裝置")]
+    [InlineData("不會開始取數；取數要到「擷取參數」勾選啟用")]
+    [InlineData("不會重新判斷過去的風險")]
+    public void 後果與口徑句常駐_不收進問號(string sentence)
+    {
+        Assert.Contains(sentence, View());
+    }
+
+    [Fact]
+    public void 尚未計算的空狀態只寫一處_不在四張校準卡各重複一份()
+    {
+        var view = View();
+        Assert.DoesNotContain("尚未執行判定查詢，請點擊上方", view);
+        Assert.Contains("id=\"calibration-empty\"", view);
+        // 首次啟用的順序由頁首「啟用準備」清單負責（帶連結），連線頁籤不再另列一份把表單往下擠
+        Assert.DoesNotContain("prtg-setup-empty", view);
+        Assert.Contains("id=\"prtg-setup-steps\"", view);
+        var calibration = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "js", "pages", "prtg-calibration.js"));
+        Assert.Equal(1, Regex.Matches(calibration, "尚未執行判定查詢").Count);
+        Assert.Contains("renderEmpty(", calibration);
     }
 
     [Fact]

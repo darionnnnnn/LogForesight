@@ -96,6 +96,30 @@ public sealed class NodeRuntimeTests
     }
 
     [Fact]
+    public void 找node先看PATH_找不到才探固定位置_都沒有回node()
+    {
+        var pathDir = Path.Combine("tools", "bin");
+        var pathEnv = pathDir + Path.PathSeparator + "other";
+        var onPath = Path.Combine(pathDir, OperatingSystem.IsWindows() ? "node.exe" : "node");
+        var shimScript = Path.Combine(pathDir, "node");
+
+        Assert.Equal(onPath, NodeRuntime.ResolveExecutable(pathEnv, f => f == onPath || f == "/opt/homebrew/bin/node"));
+        // Windows 的 shim 目錄同時有 sh 腳本 node 與 node.exe：要挑 exe，不然 Process.Start 起不來
+        if (OperatingSystem.IsWindows())
+            Assert.Equal(onPath, NodeRuntime.ResolveExecutable(pathEnv, f => f == onPath || f == shimScript));
+        Assert.Equal("/opt/homebrew/bin/node", NodeRuntime.ResolveExecutable(pathEnv, f => f == "/opt/homebrew/bin/node"));
+        Assert.Equal("/usr/local/bin/node", NodeRuntime.ResolveExecutable(null, f => f == "/usr/local/bin/node"));
+        Assert.Equal("node", NodeRuntime.ResolveExecutable(pathEnv, _ => false));
+    }
+
+    [Fact]
+    public void 測試設定檔把LF_REQUIRE_NODE帶進測試環境()
+    {
+        // dotnet test 與 IDE 都讀 csproj 指定的 test.runsettings；讀不到時前端測試會靜默略過
+        Assert.Equal("1", Environment.GetEnvironmentVariable("LF_REQUIRE_NODE"));
+    }
+
+    [Fact]
     public void 測試專案只有NodeRuntime可以啟動node()
     {
         var root = Path.Combine(FindRepoRoot(), "LogForesight.Tests");

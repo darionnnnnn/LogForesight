@@ -36,7 +36,8 @@ internal static class PrtgDailyPipeline
         IReadOnlyCollection<long>? hostIds,
         PrtgResourceGuard? guard = null,
         IPrtgManualWorkGate? manualWorkGate = null,
-        PrtgRequestBudget? requestBudget = null)
+        PrtgRequestBudget? requestBudget = null,
+        DateTime? reuseSyncFrom = null)
     {
         if (days == null || days.Count == 0)
         {
@@ -60,6 +61,7 @@ internal static class PrtgDailyPipeline
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
         string? prtgOutcome = null;
+        var prtgPhase = runRecorder.Phase(RunTimingPhases.Prtg);
         var totalTriggerHosts = 0;
         var totalTargetSensors = 0;
         var totalFailedSensors = 0;
@@ -91,6 +93,9 @@ internal static class PrtgDailyPipeline
             }
         }
         var syncFailed = false;
+        // 本趟對這些日期是否有完整的來源同步（下一個窗口據此沿用）；只在 Full 範圍、同步與對應都成立時為真
+        var sourceSynced = false;
+        DateTime? syncStartedAt = null;
         // 逐日「無產出」判定要用的事實（在 try 內決定，finally 寫逐日結果時用）
         var rulesAvailableForStat = true;
         var sensorMirrorEmpty = false;
@@ -205,77 +210,98 @@ internal static class PrtgDailyPipeline
             //    FetchDayAsync 各階段自帶 catch，取消以外幾乎不會整個擲出；真的擲出而 provider 沒被呼叫時
             //    mapResult 為 null，不另外補做對應。
             PrtgHostMapResult? mapResult = null;
+            using var syncPhase = runRecorder.Phase(RunTimingPhases.PrtgSync);
             var syncStopwatch = Stopwatch.StartNew();
-            try
+            syncStartedAt = DateTime.Now;
+            // 本日已有一趟完整做過來源同步：不再打 PRTG，規則評估、發佈與補追加照跑（全部讀本地鏡像），
+            // 否則記憶體登錄簿是空的，這一趟才落地的主機日會拿不到 PRTG finding（docs/PRTG-SPEC.md §3）。
+            if (reuseSyncFrom is { } reusedAt)
             {
-                progress?.Report(RunPhases.PrtgSync, 0, 0);
-                fetchResult = await fetchService.FetchDayAsync(
-                    newest, systemSettings.PrtgFetchConcurrency, ct,
-                    devicesRefreshed =>
-                    {
-                        var mirrorStore = backend.PrtgStore();
-                        var resolver = new PrtgAddressResolver();
-                        if (!devicesRefreshed && !skipStructureSync)
-                        {
-                            prtgConsole.WriteLine("  ⚠ 裝置結構本趟未成功更新，主機對應依既有鏡像重算。");
-                        }
-                        try
-                        {
-                            var hostMapper = new PrtgHostMapper(mirrorStore, hostStore, prtgConsole, resolver);
-                            mapResult = hostMapper.MapForDate(newest);
-                            runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：{mapResult.HostSummary}");
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
-                            prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
-                        }
-                        var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
-                        var scope = PrtgScopeDevices.Compute(mirrorStore, hostStore, new PrtgMirrorGuardSource(mirrorStore),
-                            systemSettings, sentinels, prtgConsole, resolver, hostIds, includeGuardInPartial: requestedHostIds == null);
-                        if (scope.IsPartial)
-                        {
-                            prtgConsole.WriteLine($"本趟 PRTG 只處理指定的 {hostIds!.Count} 台主機（{scope.DeviceObjids.Count} 台裝置）。");
-                        }
-                        return scope;
-                    },
-                    syncStructure: !skipStructureSync, fetchValues: false,
-                    progress: (stage, done, total) => progress?.Report(stage, done, total),
-                    stateChangesFrom: oldest.AddDays(-1));
-
-                // 只報監看裝置（主機清單內的主機對應到的裝置與守門目標），不報 PRTG 全站裝置數（docs/PRTG-SPEC.md §1）
-                var scopeText = fetchResult.Scope is { } fetchScope ? $"監看裝置 {fetchScope.DeviceObjids.Count} 台、" : "";
-                var summary = $"PRTG 每日擷取完成（{newest:yyyy-MM-dd}）：{scopeText}感測器 {fetchResult.Sensors}、" +
-                              $"狀態變更新增 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
-                              (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : "");
-
-                prtgConsole.WriteLine(summary);
-                runRecorder.Milestone(summary);
-                // 失敗原因進「重要紀錄」：只計數的話執行詳情只看得到「部分失敗」，不知道是哪個階段
-                foreach (var failure in fetchResult.StageFailures)
+                var reuseMessage = $"PRTG 沿用本日 {reusedAt:HH:mm} 的結構同步與狀態變更，本趟不重新同步。";
+                prtgConsole.WriteLine(reuseMessage);
+                runRecorder.Milestone(reuseMessage);
+            }
+            else
+            {
+                try
                 {
-                    runRecorder.Milestone($"PRTG 擷取階段失敗：{(failure.Length > 300 ? failure[..299] + "…" : failure)}");
+                    progress?.Report(RunPhases.PrtgSync, 0, 0);
+                    fetchResult = await fetchService.FetchDayAsync(
+                        newest, systemSettings.PrtgFetchConcurrency, ct,
+                        devicesRefreshed =>
+                        {
+                            var mirrorStore = backend.PrtgStore();
+                            var resolver = new PrtgAddressResolver();
+                            if (!devicesRefreshed && !skipStructureSync)
+                            {
+                                prtgConsole.WriteLine("  ⚠ 裝置結構本趟未成功更新，主機對應依既有鏡像重算。");
+                            }
+                            try
+                            {
+                                var hostMapper = new PrtgHostMapper(mirrorStore, hostStore, prtgConsole, resolver);
+                                mapResult = hostMapper.MapForDate(newest);
+                                runRecorder.Milestone($"PRTG 主機對應完成（{newest:yyyy-MM-dd}）：{mapResult.HostSummary}");
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                throw;
+                            }
+                            catch (Exception ex)
+                            {
+                                Log.Error(ex, "PRTG 主機對應失敗，不影響擷取與分析成果");
+                                prtgConsole.WriteLine($"\n  ✗ PRTG 主機對應失敗：{ex.Message}");
+                            }
+                            var sentinels = new SentinelStore(backend.Blob("sentinels")).GetAll();
+                            var scope = PrtgScopeDevices.Compute(mirrorStore, hostStore, new PrtgMirrorGuardSource(mirrorStore),
+                                systemSettings, sentinels, prtgConsole, resolver, hostIds, includeGuardInPartial: requestedHostIds == null);
+                            if (scope.IsPartial)
+                            {
+                                prtgConsole.WriteLine($"本趟 PRTG 只處理指定的 {hostIds!.Count} 台主機（{scope.DeviceObjids.Count} 台裝置）。");
+                            }
+                            return scope;
+                        },
+                        syncStructure: !skipStructureSync, fetchValues: false,
+                        progress: (stage, done, total) => progress?.Report(stage, done, total),
+                        stateChangesFrom: oldest.AddDays(-1));
+
+                    // 只報監看裝置（主機清單內的主機對應到的裝置與守門目標），不報 PRTG 全站裝置數（docs/PRTG-SPEC.md §1）
+                    var scopeText = fetchResult.Scope is { } fetchScope ? $"監看裝置 {fetchScope.DeviceObjids.Count} 台、" : "";
+                    var summary = $"PRTG 每日擷取完成（{newest:yyyy-MM-dd}）：{scopeText}感測器 {fetchResult.Sensors}、" +
+                                  $"狀態變更新增 {fetchResult.StateChanges}、數值 {fetchResult.Values}" +
+                                  (fetchResult.Failures > 0 ? $"、失敗階段 {fetchResult.Failures}" : "");
+
+                    prtgConsole.WriteLine(summary);
+                    runRecorder.Milestone(summary);
+                    // 失敗原因進「重要紀錄」：只計數的話執行詳情只看得到「部分失敗」，不知道是哪個階段
+                    foreach (var failure in fetchResult.StageFailures)
+                    {
+                        runRecorder.Milestone($"PRTG 擷取階段失敗：{(failure.Length > 300 ? failure[..299] + "…" : failure)}");
+                    }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                // 取消訊號必須穿透，讓上層統一處理中斷
-                throw;
-            }
-            catch (Exception ex)
-            {
-                syncFailed = true;
-                // 與 NetIQ 機房分析的失敗邊界一致：PRTG 擷取出問題不該讓整趟分析失敗，
-                // 外部系統失聯或異常不影響本機與 NetIQ 的分析成果，只記錄失敗留給下次排程或手動回補
-                Log.Error(ex, "PRTG 每日擷取失敗，本機與 NetIQ 分析結果不受影響");
-                prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
+                catch (OperationCanceledException)
+                {
+                    // 取消訊號必須穿透，讓上層統一處理中斷
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    syncFailed = true;
+                    // 與 NetIQ 機房分析的失敗邊界一致：PRTG 擷取出問題不該讓整趟分析失敗，
+                    // 外部系統失聯或異常不影響本機與 NetIQ 的分析成果，只記錄失敗留給下次排程或手動回補
+                    Log.Error(ex, "PRTG 每日擷取失敗，本機與 NetIQ 分析結果不受影響");
+                    prtgConsole.WriteLine($"\n  ✗ PRTG 每日擷取失敗：{ex.Message}（本機與 NetIQ 分析結果不受影響）");
+                }
             }
 
             syncStopwatch.Stop();
+            syncPhase.Complete(
+                reuseSyncFrom != null ? RunPhaseOutcomes.Skipped
+                    : syncFailed ? RunPhaseOutcomes.Failed
+                    : fetchResult is { Failures: > 0 } ? RunPhaseOutcomes.Partial
+                    : RunPhaseOutcomes.Success,
+                reuseSyncFrom is { } syncFrom ? $"沿用本日 {syncFrom:HH:mm}" : null);
+            sourceSynced = reuseSyncFrom != null
+                || (requestedHostIds == null && !syncFailed && fetchResult is { HistoryAffectingFailure: false } && mapResult != null);
             operationScope.CompletedStage("來源同步已返回（詳見成功／失敗狀態）");
 
             operationScope.Checkpoint();
@@ -468,7 +494,7 @@ internal static class PrtgDailyPipeline
 
             // 數值資料就緒度：與維護頁就緒度卡同一個計算與同一種對應取法（DeviceToHostOn），兩處數字才會相同。
             var semanticOverrides = PrtgSensorTypeCategoryMap.ParseSemanticOverrides(systemSettings.PrtgSensorTypeCategoryOverrides);
-            if (newest < DateTime.Today)
+            if (newest < ctx.Today)
             {
                 try
                 {
@@ -490,7 +516,7 @@ internal static class PrtgDailyPipeline
             // 數值規則（目前為 disk_free_trend）只讀評估前已落盤的完整日，只評估最新的已完成日；
             // 不等待本趟觸發式取數、不接觸 PRTG API；每頁最多 100 顆（docs/PRTG-SPEC.md §9b）。
             var diskRule = SelectSingleRule(prtgRules, PrtgRuleEvaluator.RuleDiskFreeTrend, PrtgSensorCategories.Disk, prtgConsole);
-            if (diskRule?.PrtgDiskTrendThresholds is { } diskThresholds && newest < DateTime.Today &&
+            if (diskRule?.PrtgDiskTrendThresholds is { } diskThresholds && newest < ctx.Today &&
                 planned.TryGetValue(newest, out var newestPlan) && newestPlan.DeviceToHost.Count > 0)
             {
                 EvaluateTrend("磁碟", () =>
@@ -531,7 +557,7 @@ internal static class PrtgDailyPipeline
             }
 
             // 數值趨勢規則（記憶體／CPU／Ping）
-            if (newest < DateTime.Today && planned.TryGetValue(newest, out var trendPlan) && trendPlan.DeviceToHost.Count > 0)
+            if (newest < ctx.Today && planned.TryGetValue(newest, out var trendPlan) && trendPlan.DeviceToHost.Count > 0)
             {
                 var otherTrendCodes = new[]
                 {
@@ -787,6 +813,7 @@ internal static class PrtgDailyPipeline
                     {
                         operationScope.Checkpoint();
                         var state = dayStates[day];
+                        using var triggeredPhase = runRecorder.Phase(RunTimingPhases.PrtgTriggered, day.ToString("yyyy-MM-dd"));
                         var dayResult = await triggeredFetcher.RunAsync(
                             day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
                             () => analysisTask.IsCompleted, ct, extraTriggerHosts: state.TriggerHosts,
@@ -794,6 +821,7 @@ internal static class PrtgDailyPipeline
                             scope: systemSettings.PrtgValueFetchScope,
                             extraScopeHosts: scopeHostIds);
 
+                        triggeredPhase.Complete(dayResult.FailedSensors > 0 ? RunPhaseOutcomes.Partial : RunPhaseOutcomes.Success);
                         state.Triggered = dayResult;
                         totalTriggerHosts += dayResult.TriggerHosts;
                         totalTargetSensors += dayResult.TargetSensors;
@@ -928,11 +956,16 @@ internal static class PrtgDailyPipeline
                             note = StageFailureNote(fetchResult!.StageFailures);
                         if (s.MapBorrowedFrom is { } borrowedFrom)
                             note = (note is null ? "" : note + "；") + $"沿用 {borrowedFrom:yyyy-MM-dd} 的主機對應";
+                        if (reuseSyncFrom is { } reused)
+                            note = (note is null ? "" : note + "；") + $"沿用本日 {reused:HH:mm} 的結構同步";
                         return new PrtgDayStat(day, outcome, s.Findings, s.AttributedHosts, s.MapAvailable,
                             s.Triggered?.TriggerHosts ?? 0, s.Triggered?.TargetSensors ?? 0, failedSensors, note,
                             // 只有影響過去日資料的失敗才重評：結構（裝置／感測器鏡像）沒取齊、狀態變更沒取齊（下一趟成功即收斂）。
                             // 單一裝置的感測器查詢固定失敗這類不影響已落地資料的失敗，重評治不好，標了只會讓「待補評估」永遠掛著
-                            NeedsReevaluation: syncFailed || historyAffectingFailure || !prtgFindings.IsEvaluated(day));
+                            NeedsReevaluation: syncFailed || historyAffectingFailure || !prtgFindings.IsEvaluated(day),
+                            SourceSynced: sourceSynced,
+                            // 沿用趟記的是來源那趟實際同步的時刻，第三個窗口才不會把「沿用的時間」當成同步時間
+                            SourceSyncedAt: sourceSynced ? reuseSyncFrom ?? syncStartedAt : null);
                     })
                     .ToList();
 
@@ -957,6 +990,14 @@ internal static class PrtgDailyPipeline
                 var statsByDay = dayStats.ToDictionary(stat => stat.Date.Date);
                 dayStats = days.Select(day => statsByDay[day.Date]).ToList();
             }
+
+            prtgPhase.Complete(ct.IsCancellationRequested ? RunPhaseOutcomes.Stopped : prtgOutcome switch
+            {
+                BatchRun.PrtgOutcomeSuccess or BatchRun.PrtgOutcomeNoOutput => RunPhaseOutcomes.Success,
+                BatchRun.PrtgOutcomePartial => RunPhaseOutcomes.Partial,
+                BatchRun.PrtgOutcomeFailed => RunPhaseOutcomes.Failed,
+                _ => RunPhaseOutcomes.Skipped
+            }, prtgOutcome == BatchRun.PrtgOutcomeDisabled ? "PRTG 未啟用" : null);
 
             if (prtgOutcome != null)
             {

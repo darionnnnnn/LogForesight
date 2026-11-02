@@ -17,7 +17,7 @@ public class PrtgCrossDayTests
         LogName = PrtgFindingMapper.PrtgLogName,
         Source = $"PRTG:{ruleCode}",
         EventId = 0,
-        EntryType = EventLogEntryType.Warning,
+        EntryType = LogEntryType.Warning,
         EventKey = $"prtg:{ruleCode}:{objid}",
         SampleMessages = new List<string> { "原始說明" },
         Severity = severity,

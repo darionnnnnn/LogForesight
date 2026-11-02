@@ -375,7 +375,8 @@ public class FrontendConsistencyUiTests
         var js = ReadJs("pages", "dashboard.js");
         Assert.Contains("data.silentHostsPrtgDownCount > 0", js);
         Assert.Contains("台有 PRTG 監測項目異常", js);
-        Assert.Contains("'沒回報 ≠ 沒問題'", js);
+        // WEB-SPEC §9.1：這句放卡片 tooltip，不佔副標
+        Assert.Contains("title: '沒回報 ≠ 沒問題'", js);
     }
 
     [Fact]
@@ -726,6 +727,36 @@ public class FrontendConsistencyUiTests
         foreach (Match b in blocks)
         {
             Assert.DoesNotContain("transform", b.Groups["body"].Value);
+        }
+
+        // 風險類型卡同一套動效：hover 只變陰影與邊框
+        var clickable = Regex.Match(css, @"a\.lf-stat:hover \.lf-card,\s*\.lf-card--clickable:hover\s*\{(?<body>[^}]*)\}");
+        Assert.True(clickable.Success);
+        Assert.DoesNotContain("transform", clickable.Groups["body"].Value);
+    }
+
+    [Fact]
+    public void 儀表板揭露鈕_原生button帶aria且列印全部顯示()
+    {
+        var reveal = ReadJs("core", "reveal.js");
+        Assert.Contains("document.createElement('button')", reveal);
+        Assert.Contains("toggle.setAttribute('aria-expanded'", reveal);
+        Assert.Contains("toggle.setAttribute('aria-controls'", reveal);
+
+        var css = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "wwwroot", "css", "site.css"));
+        var print = Regex.Match(css, @"@media print\s*\{\s*\.lf-kpi-grid > \[hidden\][\s\S]*?\.lf-reveal-bar\s*\{\s*display:\s*none !important;");
+        Assert.True(print.Success, "列印樣式要還原被藏的卡並隱藏揭露鈕");
+    }
+
+    [Fact]
+    public void 儀表板刪除的版面複述句不得回來()
+    {
+        var js = ReadJs("pages", "dashboard.js");
+        var view = File.ReadAllText(Path.Combine(FindRepoRoot(), "LogForesight.Web", "Views", "Pages", "Dashboard.cshtml"));
+        foreach (var removed in new[] { "批次分析算定'", "資料不完整或未讀取", "點選卡片檢視該類型", "影響最廣的前 5 個問題", "點列檢視該群組" })
+        {
+            Assert.DoesNotContain(removed, js);
+            Assert.DoesNotContain(removed, view);
         }
     }
 }

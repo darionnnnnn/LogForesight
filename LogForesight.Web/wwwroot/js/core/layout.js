@@ -8,6 +8,7 @@
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
+import { FONT_SCALE_EVENT } from './reveal.js';
 import { safeStorage } from './storage.js';
 import { formatUserName, formatNumber, formatDateTime } from './format.js';
 import { initBrandAlign } from './brand-align.js';
@@ -368,6 +369,7 @@ function applyFontScale(scale) {
     for (const button of document.querySelectorAll('#lf-font-scale [data-scale]')) {
         button.classList.toggle('active', button.dataset.scale === scale);
     }
+    window.dispatchEvent(new CustomEvent(FONT_SCALE_EVENT));
 }
 
 let isFromSetup = false;

@@ -67,7 +67,7 @@ public class LoginFailureAccountDisplayRulesTests : IDisposable
                     LogName = "Security",
                     Source = "Microsoft-Windows-Security-Auditing",
                     EventId = 4625,
-                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    EntryType = LogForesight.Core.Models.LogEntryType.FailureAudit,
                     Count = 5,
                     Severity = IssueSeverity.High,
                     FirstSeen = "00:00",
