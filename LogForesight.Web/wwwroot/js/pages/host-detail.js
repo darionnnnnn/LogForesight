@@ -106,7 +106,7 @@ function renderHeader(detail) {
     }
 
     renderPageHeader(document.getElementById('page-header'), {
-        subtitle: [title, ' 的風險時間軸與處理狀況'],
+        subtitle: title,
         actions
     });
     // 按鈕是每次 load() 重建的，須在頁首渲染（按鈕進 DOM）之後補上目前狀態

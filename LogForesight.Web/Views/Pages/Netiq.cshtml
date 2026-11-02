@@ -21,10 +21,10 @@
             <h2 class="lf-card__title">
                 Sentinel <span class="text-muted small" id="sentinel-count"></span>
             </h2>
-            <span tabindex="0" data-bs-toggle="popover"
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                   data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請切到本頁的「匯入」分頁。">
                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-            </span>
+            </button>
         </div>
         <div class="lf-card__body p-0" id="sentinel-list"></div>
     </div>
@@ -130,10 +130,10 @@
     <div class="lf-card mb-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">掃描匯入</h2>
-            <span tabindex="0" data-bs-toggle="popover"
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                   data-bs-content="掃描是「查一個網段」，不是盲掃全站——請輸入網段前綴（如 192.168.0）或 CIDR（如 192.168.0.0/24）。結果只涵蓋掃描窗口內有事件回報的主機，涵蓋範圍會顯示在掃描結果上方，安靜的主機請至主機頁手動登錄。">
                 <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-            </span>
+            </button>
         </div>
         <div class="lf-card__body" id="netiq-scan-picker"></div>
     </div>
@@ -150,10 +150,10 @@
 <div class="lf-card mb-3 d-none" data-panel="probe">
     <div class="lf-card__header">
         <h2 class="lf-card__title">NetIQ API 診斷</h2>
-        <span tabindex="0" data-bs-toggle="popover"
+        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
               data-bs-content="對選定的 Sentinel 執行一組小規模驗證查詢（逐台十幾筆查詢，近 1～24 小時級距），用於核對欄位對應／時區／批次大小；不影響夜間排程分析（各自獨立執行、互不阻塞）。輸出可直接複製貼回對話討論。">
             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-        </span>
+        </button>
     </div>
     <div class="lf-card__body">
         <div class="row g-3 mb-3">
@@ -185,8 +185,7 @@
         <textarea class="form-control font-monospace small" id="probe-output" rows="20" readonly placeholder="尚未執行過診斷。"></textarea>
 
         <hr />
-        <h3 class="h6">安全欄位形狀探測</h3>
-        <p class="small text-muted">單一選定 Sentinel、近 1 小時、最多 3 筆事件；30 秒期限、單一查詢、最多 12 次 HTTP 請求、每個回應本文最多 512 KiB、報告最多 32 KiB。只顯示格式安全的欄名與 JSON 形狀，不輸出欄位值、IP、帳號、訊息或連線位址。候選形狀不是語意證明，也不會授權強匹配。</p>
+        <h3 class="h6">安全欄位形狀探測 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-content="單一選定 Sentinel、近 1 小時、最多 3 筆事件；30 秒期限、單一查詢、最多 12 次 HTTP 請求、每個回應本文最多 512 KiB、報告最多 32 KiB。只顯示格式安全的欄名與 JSON 形狀，不輸出欄位值、IP、帳號、訊息或連線位址。候選形狀不是語意證明，也不會授權強匹配。"><svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg></button></h3>
         <div class="d-flex align-items-center gap-3 mb-3">
             <button type="button" class="btn btn-outline-primary" id="probe-metadata-start">執行安全欄位探測</button>
             <div class="text-muted small" id="probe-metadata-state"></div>

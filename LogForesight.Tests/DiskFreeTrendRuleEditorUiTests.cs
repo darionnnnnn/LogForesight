@@ -137,7 +137,9 @@ public sealed class DiskFreeTrendRuleEditorUiTests
 
         Assert.Contains("class=\"row g-2 align-items-end\"", view);
         Assert.Contains("col-12 col-sm-6 d-flex gap-2", view);
-        Assert.Contains("可用 Tab 鍵操作", view);
+        // 鍵盤可操作＝翻頁與試算都是原生 button（不再鎖說明句）
+        Assert.Contains("<button type=\"button\" class=\"btn btn-outline-secondary flex-fill\" id=\"rule-disk-preview-previous\"", view);
+        Assert.Contains("<button type=\"button\" class=\"btn btn-primary w-100\" id=\"rule-disk-preview-run\"", view);
         Assert.Contains("role=\"status\" aria-live=\"polite\"", view);
         Assert.Contains("id=\"rule-disk-preview-run\"", view);
         Assert.Contains("id=\"rule-disk-preview-previous\"", view);

@@ -59,7 +59,7 @@ function initRecordSections() {
 
 initRecordSections();
 
-// 頁首：用途副標＋頁面層級動作「下一筆未處理」。按鈕先以 d-none 建立（保留原 id），
+// 頁首：只放頁面層級動作「下一筆未處理」。按鈕先以 d-none 建立（保留原 id），
 // 待 load() 之後的 setupNextUnhandled() 取得下一筆再顯示——header 在模組頂層先渲染，
 // 一定早於 guardLoad(load) 與 setupNextUnhandled 的 getElementById。
 const nextUnhandledLink = document.createElement('a');
@@ -67,7 +67,6 @@ nextUnhandledLink.className = 'btn btn-sm btn-outline-primary d-none lf-no-print
 nextUnhandledLink.id = 'next-unhandled';
 nextUnhandledLink.textContent = '下一筆未處理 →';
 renderPageHeader(document.getElementById('page-header'), {
-    subtitle: '逐項處理這台主機這一天的風險問題。',
     actions: [nextUnhandledLink]
 });
 

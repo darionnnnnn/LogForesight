@@ -39,12 +39,12 @@
         <div class="lf-card__header">
             <h2 class="lf-card__title">授權矩陣</h2>
             <span class="text-muted small">勾選＝該部門可看見該群組的主機</span>
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                    data-bs-content="只列出一般使用者群組：admin / manager / dev 角色本來就能看見全部主機，不需要也不受此矩陣影響。">
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+            </button>
         </div>
         <div class="lf-card__body">
-            <div class="alert alert-light border small mb-3">
-                只列出一般使用者群組：<strong>admin / manager / dev 角色本來就能看見全部主機</strong>，
-                不需要也不受此矩陣影響。
-            </div>
             <div id="access-matrix"></div>
         </div>
     </div>

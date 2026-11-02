@@ -217,7 +217,6 @@
     <section class="lf-card mb-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">異常彙總</h2>
-            <span class="text-muted small">同一錯誤在幾台主機出現——判斷是個案還是通案</span>
         </div>
         <div class="lf-card__body p-0" id="run-errors"></div>
     </section>
@@ -227,7 +226,6 @@
     <section class="lf-card mb-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">執行紀錄</h2>
-            <span class="text-muted small">逐筆列出每一次執行（含同一天內的多次手動重跑），回答「這一次跑了多久、誰觸發的」</span>
         </div>
         <div class="lf-card__body p-0" id="run-list"></div>
     </section>
@@ -299,13 +297,13 @@
         <section class="lf-card mb-3">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">AI 分析</h2>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="AI 分析不需要另外啟用，設定好「系統管理 &gt; 設定 &gt; AI 服務」即生效。以下設定的是背景補跑：積壓的待補要在哪個時段消化、同時跑幾件。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
             </div>
             <div class="lf-card__body">
-                <p class="text-muted small">
-                    AI 分析在每次取數執行產出結果後自動進行，不需要另外啟用；
-                    設定好「系統管理 &gt; 設定 &gt; AI 服務」即生效。
-                    以下設定的是<strong>背景補跑</strong>：積壓的待補要在哪個時段消化、同時跑幾件。
-                </p>
+                <p class="text-muted small">AI 跟著取數自動進行，不受窗口限制；這裡只設定背景補跑。</p>
 
                 <label class="form-label small fw-semibold" for="schedule-ai-windows">背景補跑窗口</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
@@ -325,7 +323,6 @@
                     </button>
                     <input type="number" class="form-control form-control-sm lf-input-narrow" id="schedule-ai-concurrency"
                            min="1" max="8" value="1" data-maintain-only disabled />
-                    <div class="form-text small text-muted">同時進行的 AI 分析數。地端模型建議 1；接外部 API 可調高。</div>
                 </div>
             </div>
         </section>

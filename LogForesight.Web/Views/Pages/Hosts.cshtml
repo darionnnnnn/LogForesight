@@ -50,7 +50,7 @@
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-select-all-matching">
         全選符合目前篩選的主機
     </button>
-    <span class="text-muted small">選取後可批次設定群組；已併入其他主機的列不會被選到。</span>
+    <span class="text-muted small">已併入其他主機的列不會被選到。</span>
 </div>
 
 @* 批次改群組（docs/archive/FEEDBACK-5-PLAN.md §8）：勾選跨頁／篩選保留，這條列只在有勾選時出現 *@
@@ -60,7 +60,7 @@
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-tier">批次設定分級</button>
     <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-owners">指派負責人</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
-    <span class="small text-muted">大量指派也可以用 CSV：<a id="link-owner-csv" href="#">資料匯入 › 負責人</a></span>
+    <span class="small text-muted"><a id="link-owner-csv" href="#">用 CSV 大量指派</a></span>
 </div>
 
 <div class="lf-card">
@@ -84,10 +84,12 @@
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label for="host-name" class="form-label">主機名稱 <span class="text-danger">*</span></label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="本機主機須與批次回報的機器名稱一致；NetIQ 主機請填 IP。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                            </button>
                             <input type="text" class="form-control" id="host-name" required />
-                            <div class="form-text" id="host-name-hint">
-                                本機主機須與批次回報的機器名稱一致；NetIQ 主機請填 IP。建立後不可修改。
-                            </div>
+                            <div class="form-text" id="host-name-hint">建立後不可修改。</div>
                         </div>
                         <div class="col-md-6">
                             <label for="host-ip" class="form-label">IP 位址</label>
@@ -150,10 +152,11 @@
                         </div>
                         <div class="col-md-6">
                             <span class="form-label d-inline-block" id="host-owners-label">負責人</span>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="負責人會自動取得所負責主機的檢視權限，並具備處理狀態維護權限（等同部門群組授權的第二條路徑）。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                            </button>
                             <div id="host-owners" role="group" aria-labelledby="host-owners-label" class="border rounded p-2 lf-scroll-sm"></div>
-                            <div class="form-text">
-                                負責人會<strong>自動取得</strong>所負責主機的檢視權限，並具備處理狀態維護權限（等同部門群組授權的第二條路徑）。
-                            </div>
                         </div>
                         <div class="col-12">
                             <div class="form-check">

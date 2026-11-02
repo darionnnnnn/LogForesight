@@ -631,7 +631,7 @@ async function replyOrder(row, carry) {
     if (!panel.querySelector('.handler-wo-member-hint')) {
         const hint = document.createElement('div');
         hint.className = 'lf-hint mb-2 handler-wo-member-hint';
-        hint.textContent = '勾選這次處理好的主機後按「回覆選取的主機」；全部處理好可按「全選」';
+        hint.textContent = '全部處理好可按「全選」';
         panel.prepend(hint);
     }
     panel.focus();
