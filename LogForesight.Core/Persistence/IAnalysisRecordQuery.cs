@@ -122,7 +122,7 @@ public interface IAnalysisRecordQuery
 
     /// <summary>
     /// 窗口內「哪個主機（HostId）、哪一天有分析紀錄」的輕量投影（執行監控頁 NetIQ 主機專用，
-    /// docs/WEB-SPEC.md §9.10）。NetIQ 主機沒有個別的 <c>lf_batch_runs</c> 紀錄（管線只用主批次
+    /// docs/WEB-SPEC.md §9.10）。NetIQ 主機沒有個別的 <c>batch_runs</c> 紀錄（管線只用主批次
     /// 那一筆彙總計數，見 <c>NetiqPipelineService</c>），「當日是否有分析紀錄」是唯一可用的執行代理指標。
     /// 只投影 HostId／RecordDate，不反序列化整份 ContentJson——避免逐格查詢在兩千台規模下退化成
     /// 全量載入。HostId=0（舊列／無主機識別）不列入，NetIQ 紀錄必有真實 HostId。

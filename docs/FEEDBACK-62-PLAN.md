@@ -345,6 +345,31 @@
 - **體檢建議重點**：`PrtgDailyPipeline` 重新縮排的同步段（diff 大、語意應不變）；`BatchRunRecorder.Finish` 的鎖序與結束列；`LogEntryType` 替換是否動到 JSON／DB 契約；D 批「收進 `?`」的主觀判定（§8 設計修正、執行紀錄）；D-3 把「儲存後下一次排程才生效」移進 `?` 是否該常駐。
 - **過程事故**：D-1 有一次提交夾帶測試編譯錯誤（b040771a 修正），之後改成測試通過才提交；E-1 代理中途斷線，由主代理審 diff 接手。
 
+## 體檢輪修正
+
+實作：Claude Opus 5.5；體檢：Claude Fable 5.1（換模型後）。三路唯讀代理（後端對抗／前端走查／跨平台與文件，各附探針）＋主代理親核 `dev..feature/feedback-62` 全 diff 與 36 條定案。
+
+| # | 哪裡 | 症狀 | 怎麼修 | 迴歸測試 |
+|---|---|---|---|---|
+| 1（嚴重） | `BatchRunRecorder.Phase`／`CompletePhase` | 持 `_countLock` 時呼叫 `Log.Warn`；NLog target 的 `Write` 先持 target 鎖再回頭取 `_countLock`，兩條執行緒反序互等。探針：Finish 期間晚到的 Phase 加並行 Warn，60 輪內必卡死 | 旗標在鎖內記、鎖外才寫 log | `BatchRunRecorderPhaseTests.結束期間晚到的階段呼叫遇到並行Warn不死鎖`（10 輪、20 秒上限） |
+| 2 | `BatchRunRecorder.Finish` | 收階段與進鎖之間才開的階段不會被收，結束列留永遠「進行中」的階段（探針 1/150） | 進鎖設 `_finished` 後再把殘留階段在鎖內靜默收掉（`CloseSilently`） | 同上測試斷言結束列全部階段有訖 |
+| 3 | `PrtgTriggeredValueFetcher` | 目標全因「該日已有整天數值」略過時仍 `RecordFreshness(Values, 0)`，三個窗口後 `ZeroStreak≥3`，探測把數值新鮮度標成可疑 | 全部略過時不記新鮮度 | `PrtgTriggeredValueFetcherTests.RunAsync_目標全部已取時不把新鮮度記成0` |
+| 4 | `PrtgDailyPipeline` 的 `syncPhase`／`triggeredPhase` | 沒用 `using`，例外或取消時要到 Finish 才被收，時間軸上拉到整趟最後、比父階段晚結束 | 改 `using var` | 既有 `BatchRunRecorderPhaseTests` 的 Dispose 語意 |
+| 5 | `PrtgReevaluationPlanner.ReusableSyncFrom` | 回傳的是沿用趟自己的開跑時間，第三個窗口看到的「沿用本日 04:00」其實 02:00 就同步了 | `PrtgDayStat` 加 `SourceSyncedAt`，沿用趟沿用來源值 | `PrtgReevaluationPlannerTests.沿用同步_回傳來源實際同步時刻…`、管線測試斷言 `SourceSyncedAt` |
+| 6 | `SchedulerHostedService.NoteSkippedScheduleWindow` | 自動補跑佔住下一窗口時寫「被進行中的手動執行佔用」 | 依 `CatchUpDeadline` 分支文字；Tick 改讀一次 `Snapshot()` 避免 Trigger 與 deadline 分開讀 | 既有 `SchedulerTickOrderTests` 綠；文字由實測代理探針重現 |
+| 7 | `RunDayTimingBuilder.UnionSeconds` | end<start 的髒資料算成負秒 | 入口夾成 end≥start | `RunDayTimingBuilderTests.結束早於開始的髒資料不算負時間` |
+| 8 | `run-timeline.js` | `prtg-value-fill` 被 `startsWith('prtg-')` 當成子階段縮排；`dayTimingText` 缺值印空字串 | 子階段改明確集合 `TIMING_SUB_PHASES`；缺值顯示「—」 | `runs-timeline.behavior.mjs` 兩案 |
+| 9 | `reveal.js` | `grids` 為空仍建按鈕並寫出 `aria-controls=""` | 空格線直接回 no-op | `dashboard-reveal.behavior.mjs.emptyGridsMountNothing` |
+| 10 | `NodeRuntime.ResolveExecutable` | Windows 先試無副檔名 `node`，Scoop shim 目錄會挑到 sh 腳本、`Process.Start` 失敗，`LF_REQUIRE_NODE=1` 下整批前端測試紅 | Windows 只認 `node.exe` | `NodeRuntimeTests` 補 shim 目錄案 |
+| 11 | `DynamicAuthenticationProviderTests` | 8 案全掛 `[WindowsFact]`，其中 6 案只走 fallback 不碰 AD，Mac 白白少覆蓋 | 只有走 AD 路徑的 2 案保留 | — |
+| 12 | 說明書 `.ai.md` | `02-dashboard.ai.md`、`10-scheduler.ai.md` 沒跟使用者版同步（HELP-WRITING-GUIDE §6） | 補第一排揭露、多窗口續跑、補跑停止點、執行時間與時間軸 | `HelpContentServiceTests` |
+| 13 | 註解／文件 | `ScheduleCalculator`、`EfPrtgStore`、`NetiqPipelineService` 的 XML 註解錯位；`LogEntryType.cs` 註解寫成同自己；DB-SPEC 舊型別名；csproj 懸空參照 §2；`IAnalysisRecordQuery` 殘留 `lf_batch_runs`；`PlatformGuardTests` 補 Critical(0) 往返 | 逐一修正 | — |
+| 14 | 跨午夜窗口 | `runToday` 趟首固定後，22:00→06:00 這種窗口午夜後處理到的主機仍分析前天（舊行為各主機自取日期會分析到昨天，但 PRTG 一直是固定的）。屬 §2-16 的取捨，沒改碼 | WEB-SPEC §9.10 與說明書寫明「窗口開始時間設在午夜後」 | `HelpWritingGuideTests` |
+
+**體檢後接受不改**：執行紀錄列排序後展開收起（`renderTable` 既有行為，總表亦然）；`helpIcon` 重繪未 dispose popover（只在切換期間、影響小）；`DescribeCurrentWindow` 的序號對跨午夜窗口依開始時間排（已在註解寫明）；階段快照資料量約 5 倍（量測數字與觸發條件記 BACKLOG）；`?` 的 `storage` 注入替身擲例外會外拋（正式路徑走 `safeStorage`）。
+
+**體檢後測試數**：見終檢節。
+
 ## 10. 審查回合紀錄（第一版 → 第二版）
 
 兩個 opus 審查代理（使用者／管理者走查；程式面／整體影響）共提出 8 條嚴重、13 條中等、若干輕微與附錄 D 異議。主代理逐條重驗後處置：

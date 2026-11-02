@@ -116,6 +116,15 @@ public class PlatformGuardTests : IDisposable
     }
 
     [Fact]
+    public void LogIssueSignature_Critical的無名稱值0以數字序列化且讀得回()
+    {
+        var signature = new LogIssueSignature { LogName = "System", Source = "Test", EventId = 41, EntryType = (LogEntryType)0 };
+        var json = JsonSerializer.Serialize(signature);
+        Assert.Contains("\"EntryType\":0", json);
+        Assert.Equal((LogEntryType)0, JsonSerializer.Deserialize<LogIssueSignature>(json)!.EntryType);
+    }
+
+    [Fact]
     public void LogIssueSignature_舊資料以名稱存下的EntryType仍讀得回()
     {
         var back = JsonSerializer.Deserialize<LogIssueSignature>("{\"LogName\":\"System\",\"EntryType\":\"Warning\"}");

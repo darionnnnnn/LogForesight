@@ -224,8 +224,9 @@ public class SchedulerHostedService : BackgroundService
             // 窗口 End 到點（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：對「排程觸發」的進行中執行發
             // 優雅停止（停在主機日邊界）。手動觸發不受時間窗限制（§1.4.4），不在這裡停。
             // 刻意放在 Enabled 檢查之前——執行中途被關掉 Enabled，這次排程執行仍該按窗口停。
-            if (_runState.Trigger == BatchRunTriggers.Schedule &&
-                ScheduleCalculator.ShouldStopScheduledRun(DateTime.Now, options.Windows, _runState.CatchUpDeadline) &&
+            var running = _runState.Snapshot();
+            if (running.Trigger == BatchRunTriggers.Schedule &&
+                ScheduleCalculator.ShouldStopScheduledRun(DateTime.Now, options.Windows, running.CatchUpDeadline) &&
                 _runState.TryCancel())
             {
                 Log.Info("執行窗口或補跑停止點已到，對排程觸發的執行發出優雅停止（停在主機日邊界）。");
@@ -233,9 +234,9 @@ public class SchedulerHostedService : BackgroundService
             // 手動執行佔住 gate 時，這個窗口的自動觸發會靜默消失——手動觸發不受窗口 End 停止
             // （§1.4.4），一趟大回填可以吃掉整段窗口。畫面上看起來就是「排程沒跑，也沒說為什麼」。
             // 這裡把它說出來：狀態卡顯示、里程碑進那次手動執行的紀錄，每個窗口只記一次。
-            if (OccupiesScheduleWindow(_runState.Trigger, _runState.CatchUpDeadline))
+            if (OccupiesScheduleWindow(running.Trigger, running.CatchUpDeadline))
             {
-                NoteSkippedScheduleWindow(options);
+                NoteSkippedScheduleWindow(options, running.CatchUpDeadline);
             }
 
             return; // 執行中不再觸發新的執行，不排隊
@@ -316,7 +317,7 @@ public class SchedulerHostedService : BackgroundService
     internal static bool OccupiesScheduleWindow(string? trigger, DateTime? catchUpDeadline) =>
         trigger != null && (trigger != BatchRunTriggers.Schedule || catchUpDeadline != null);
 
-    private void NoteSkippedScheduleWindow(ScheduleOptions options)
+    private void NoteSkippedScheduleWindow(ScheduleOptions options, DateTime? catchUpDeadline)
     {
         if (!options.Enabled) return;
 
@@ -341,8 +342,11 @@ public class SchedulerHostedService : BackgroundService
         {
             // 補跑時機要說準：手動執行結束時若仍在窗口內，ShouldTriggerNow 會判定「這個實例尚未觸發過」
             // 而立刻補觸發；只有手動執行跨過窗口 End 才會等到下一個窗口。
-            var text = $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用；" +
-                       "手動執行結束後若仍在窗口內會立即補跑，否則等下一個窗口。";
+            var text = catchUpDeadline is { } deadline
+                ? $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的補跑佔用（補跑最晚 {deadline:HH:mm} 停止）；" +
+                  "補跑結束後若仍在窗口內會立即補觸發，否則等下一個窗口。"
+                : $"排程窗口（{windowStart.Value:HH:mm}）的自動觸發已被進行中的手動執行佔用；" +
+                  "手動執行結束後若仍在窗口內會立即補跑，否則等下一個窗口。";
             Log.Info(text);
             _runState.ReportMessage(text);
         }

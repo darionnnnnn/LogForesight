@@ -25,6 +25,18 @@ public sealed class RerunDateFinderTests
         Assert.Equal(0, handlingStore.GetManyCallCount);
     }
 
+    [Fact]
+    public void Find_候選日依傳入的今天算_不跟系統時鐘()
+    {
+        var today = new DateTime(2026, 3, 10);
+        var store = new FakeAnalysisRecordReader(new[] { new DateTime(2026, 3, 9), new DateTime(2026, 3, 8), DateTime.Today.AddDays(-1) });
+        var handlingStore = new FakeIssueHandlingStore();
+
+        var result = RerunDateFinder.Find(store, today, handlingStore, Host, lookbackDays: 2, RerunMode.All);
+
+        Assert.Equal(new[] { new DateTime(2026, 3, 8), new DateTime(2026, 3, 9) }, result);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

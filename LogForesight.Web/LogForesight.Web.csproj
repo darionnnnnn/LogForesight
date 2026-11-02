@@ -3,7 +3,7 @@
     <PropertyGroup>
         <!--
           net8.0：可在 macOS／Linux 建置。Windows 專屬能力（AD 驗證、Event Log、權限監控）在非 Windows 平台
-          退化為明確的「此平台不支援」回應；CA1416 視為錯誤，詳見 docs/WEB-SPEC.md §2。
+          退化為明確的「此平台不支援」回應；CA1416 視為錯誤，詳見 README「macOS 開發」。
         -->
         <TargetFramework>net8.0</TargetFramework>
         <Nullable>enable</Nullable>

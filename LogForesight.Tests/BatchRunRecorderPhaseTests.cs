@@ -115,6 +115,34 @@ public class BatchRunRecorderPhaseTests : IDisposable
         Assert.NotNull(run.FinishedAt);
     }
 
+    /// <summary>
+    /// 死鎖迴歸：結束期間有晚到的階段呼叫，同時另一條執行緒在 scope 內一直 Warn。
+    /// Phase／Complete 若在持 _countLock 時寫 log，就會與 NLog target（先持 target 鎖、再取 _countLock）反序而卡死。
+    /// </summary>
+    [Fact]
+    public void 結束期間晚到的階段呼叫遇到並行Warn不死鎖()
+    {
+        var logger = NLog.LogManager.GetLogger("LogForesight.Tests.PhaseDeadlock");
+        for (var iteration = 0; iteration < 10; iteration++)
+        {
+            var recorder = new BatchRunRecorder(_store, "H", Array.Empty<string>());
+            for (var i = 0; i < 1600; i++) recorder.Message("line " + i);   // 讓 Finish 有尾段要寫，拉長結束窗口
+            using var stop = new CancellationTokenSource();
+            using var go = new ManualResetEventSlim();
+            var warner = Task.Run(() => { go.Wait(); while (!stop.IsCancellationRequested) { logger.Warn("w"); Thread.Sleep(1); } });
+            var late = Task.Run(() => { go.Wait(); for (var i = 0; i < 40; i++) recorder.Phase(RunTimingPhases.Local).Complete(RunPhaseOutcomes.Success); });
+            var finish = Task.Run(() => { go.Wait(); recorder.Finish(0); });
+            go.Set();
+            var completed = Task.WaitAll(new[] { finish, late }, TimeSpan.FromSeconds(20));
+            stop.Cancel();
+            warner.Wait(TimeSpan.FromSeconds(5));
+            Assert.True(completed, $"第 {iteration} 輪：Finish 與晚到的階段呼叫沒有在 20 秒內完成（疑似死鎖）");
+            Assert.NotNull(Latest(recorder.RunId).FinishedAt);
+            Assert.All(Latest(recorder.RunId).Phases ?? new List<RunPhaseRecord>(), p => Assert.NotNull(p.FinishedAt));
+            recorder.Dispose();
+        }
+    }
+
     [Fact]
     public void 傳入起點就寫進紀錄()
     {

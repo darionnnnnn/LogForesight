@@ -44,6 +44,9 @@ export function revealFirstRow({
     storage = safeStorage,
     eventTarget = window
 }) {
+    // 沒有格線（例如 KPI 全無卡片）就沒有可收合的東西，不建按鈕也不掛 observer
+    if (!grids || grids.length === 0) return { dispose() {} };
+
     const storageKey = `lf.collapse.${key}`;
     let expanded = storage.get(storageKey) === 'open';
     let lastColumns = null;

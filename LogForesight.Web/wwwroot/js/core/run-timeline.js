@@ -3,7 +3,7 @@
  * 三路並行，所以每個階段一條水平條，依整趟時間比例定位；顏色之外一律有文字結果。
  * 外部字串（階段備註）一律 textContent。
  */
-import { TIMING_PHASE_LABEL } from './run-phases.js';
+import { TIMING_PHASE_LABEL, TIMING_SUB_PHASES } from './run-phases.js';
 
 const OUTCOME_TEXT = {
     success: '成功',
@@ -22,7 +22,7 @@ export function formatDuration(seconds) {
 
 // 後端回本機時間字串（無時區），不經 Date 換算，直接取時分秒
 const timeOf = iso => String(iso).slice(11, 19);
-const minuteOf = iso => String(iso).slice(11, 16);
+const minuteOf = iso => (iso ? String(iso).slice(11, 16) : '—');
 const secondsBetween = (from, to) => Math.max(0, Math.round((new Date(to) - new Date(from)) / 1000));
 
 /** 某一路在這趟的耗時；舊紀錄、沒跑或還沒結束回 null */
@@ -38,7 +38,7 @@ function phaseRow(phase, runStart, span, now, interrupted) {
     const state = open ? (interrupted ? 'interrupted' : 'running') : phase.outcome;
 
     const row = document.createElement('div');
-    row.className = phase.key.startsWith('prtg-') ? 'lf-phase-row lf-phase-row--sub' : 'lf-phase-row';
+    row.className = TIMING_SUB_PHASES.has(phase.key) ? 'lf-phase-row lf-phase-row--sub' : 'lf-phase-row';
 
     const name = document.createElement('div');
     name.className = 'lf-phase-name';

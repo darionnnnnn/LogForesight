@@ -23,6 +23,19 @@ public class RunDayTimingBuilderTests
     };
 
     [Fact]
+    public void 結束早於開始的髒資料不算負時間()
+    {
+        var timing = RunDayTimingBuilder.Build(new[]
+        {
+            Run(At(2), At(1), Phase(RunTimingPhases.Local, At(2), At(1))),
+            Run(At(3), At(3, 30), Phase(RunTimingPhases.Local, At(3), At(3, 30)))
+        })!;
+
+        Assert.Equal(1800, timing.TotalSeconds);
+        Assert.Equal(1800, timing.Branches.Single().Seconds);
+    }
+
+    [Fact]
     public void 沒有任何趟回null()
     {
         Assert.Null(RunDayTimingBuilder.Build(Array.Empty<BatchRun>()));

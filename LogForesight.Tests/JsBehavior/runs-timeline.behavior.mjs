@@ -37,6 +37,23 @@ const cases = {
         assert.ok(sub.classList.contains('lf-phase-row--sub'));
     },
 
+    valueFillIsTopLevelNotSubPhase() {
+        const timeline = renderPhaseTimeline({
+            startedAt: at(1), finishedAt: at(2),
+            phases: [
+                { key: 'prtg-value-fill', startedAt: at(1), finishedAt: at(2), outcome: 'success' },
+                { key: 'prtg-sync', startedAt: at(1), finishedAt: at(1, 30), outcome: 'success' }
+            ]
+        });
+        assert.ok(!timeline.children[0].classList.contains('lf-phase-row--sub'));
+        assert.ok(timeline.children[1].classList.contains('lf-phase-row--sub'));
+    },
+
+    missingDayTimingFieldsShowDash() {
+        assert.equal(dayTimingText({ firstStartedAt: null, totalSeconds: 5, lastFinishedAt: at(1), interruptedCount: 0 }), '—～01:00（5 秒）');
+        assert.equal(dayTimingText({ totalSeconds: null, interruptedCount: 1, lastInterruptedActivityAt: null }), '異常中斷 1 趟（最後活動 —）');
+    },
+
     skippedPhaseSaysSo() {
         const timeline = renderPhaseTimeline({
             startedAt: at(1), finishedAt: at(2),

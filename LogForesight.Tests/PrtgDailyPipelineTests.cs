@@ -435,6 +435,7 @@ public class PrtgDailyPipelineTests : IDisposable
         var stat = run.PrtgDays!.Single();
         Assert.Contains("沿用本日 01:00", stat.Note);
         Assert.True(stat.SourceSynced);
+        Assert.Equal(DateTime.Today.AddHours(1), stat.SourceSyncedAt);
         Assert.False(stat.NeedsReevaluation);
         Assert.Equal(RunPhaseOutcomes.Skipped, run.Phases!.Single(p => p.Key == RunTimingPhases.PrtgSync).Outcome);
     }

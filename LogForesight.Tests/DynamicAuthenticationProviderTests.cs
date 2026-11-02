@@ -19,7 +19,7 @@ public class DynamicAuthenticationProviderTests
 
     private DynamicAuthenticationProvider Create() => new(_store, _fallback);
 
-    [WindowsFact]
+    [Fact]
     public void AD停用時_Verify委派給fallback()
     {
         _store.Update(s => s.AdAuthEnabled = false);
@@ -31,7 +31,7 @@ public class DynamicAuthenticationProviderTests
         Assert.Same(_fallback.ResultToReturn, result);
     }
 
-    [WindowsFact]
+    [Fact]
     public void AD啟用但伺服器清單為空時_Verify委派給fallback()
     {
         _store.Update(s => { s.AdAuthEnabled = true; s.AdServers = new List<string>(); });
@@ -61,7 +61,7 @@ public class DynamicAuthenticationProviderTests
         Assert.Equal("密碼為空", result.FailureReason);
     }
 
-    [WindowsFact]
+    [Fact]
     public void RequiresPassword_AD停用時委派給fallback()
     {
         _fallback.RequiresPasswordValue = false;
@@ -70,7 +70,7 @@ public class DynamicAuthenticationProviderTests
         Assert.False(Create().RequiresPassword);
     }
 
-    [WindowsFact]
+    [Fact]
     public void RequiresPassword_AD啟用且有伺服器時一律true_不論fallback為何()
     {
         _fallback.RequiresPasswordValue = false;   // 即使底層 fallback 是 Stub（不驗密碼）
@@ -83,7 +83,7 @@ public class DynamicAuthenticationProviderTests
         Assert.True(Create().RequiresPassword);
     }
 
-    [WindowsFact]
+    [Fact]
     public void RequiresPassword_AD啟用但伺服器清單為空時委派給fallback()
     {
         _fallback.RequiresPasswordValue = false;
@@ -92,7 +92,7 @@ public class DynamicAuthenticationProviderTests
         Assert.False(Create().RequiresPassword);
     }
 
-    [WindowsFact]
+    [Fact]
     public void Name_反映目前生效的驗證方式()
     {
         _fallback.NameValue = "Stub";

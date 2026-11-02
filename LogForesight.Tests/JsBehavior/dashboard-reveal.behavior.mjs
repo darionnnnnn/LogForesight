@@ -74,6 +74,13 @@ const cases = {
         assert.equal(toggle.type, 'button');
     },
 
+    emptyGridsMountNothing() {
+        const host = dom.newElement('div');
+        const reveal = revealFirstRow({ grids: [], host, key: 'k', noun: '項指標', measure: () => 0, createObserver: () => { throw new Error('不該建 observer'); }, storage: { get: () => null, set() {} }, eventTarget: { addEventListener() { throw new Error('不該掛事件'); }, removeEventListener() {} } });
+        assert.equal(host.children.length, 0);
+        reveal.dispose();
+    },
+
     zeroColumnsMeansNotLaidOutSoNothingHidden() {
         const grid = makeGrid(4);
         const { bar } = setup({ grids: [grid], columns: new Map([[grid, 0]]) });

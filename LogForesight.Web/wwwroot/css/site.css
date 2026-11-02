@@ -1135,6 +1135,10 @@ a.lf-stat:hover .lf-card,
 .lf-kpi-group--n5 { --lf-kpi-count: 5; }
 .lf-kpi-group--n6 { --lf-kpi-count: 6; }
 
+.lf-kpi-group__title .lf-help {
+    margin-left: var(--lf-space-1);
+}
+
 .lf-kpi-group__title {
     margin: 0 0 var(--lf-space-2);
     font-size: var(--lf-font-size-sm);

@@ -67,7 +67,8 @@ internal static class RunDayTimingBuilder
         var total = TimeSpan.Zero;
         DateTime? currentStart = null;
         DateTime currentEnd = default;
-        foreach (var (start, end) in spans.OrderBy(s => s.Start))
+        // 時鐘回撥造成 end<start 的髒資料不算負時間
+        foreach (var (start, end) in spans.Select(s => (s.Start, End: s.End < s.Start ? s.Start : s.End)).OrderBy(s => s.Start))
         {
             if (currentStart == null || start > currentEnd)
             {

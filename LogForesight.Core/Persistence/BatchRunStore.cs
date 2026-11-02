@@ -23,7 +23,7 @@ public static class BatchRunExtensions
 }
 
 /// <summary>
-/// 一次批次執行的紀錄（↔ lf_batch_runs）。
+/// 一次批次執行的紀錄（lf_log_lines 的 log_key=batch_runs，每列一筆 JSON、同 RunId 取最後一列）。
 ///
 /// <see cref="FinishedAt"/> 為 null 代表「執行中或異常中斷」——這是刻意的設計：
 /// 啟動時先寫一列、結束時回填，於是「掛掉的執行」變成可查詢的狀態
@@ -171,7 +171,9 @@ public sealed record PrtgDayStat(
     /// <summary>該日 PRTG 未完整評估並發佈，或結構同步失敗；排程下次自動補評估（舊 JSON 缺欄為 false）。</summary>
     bool NeedsReevaluation = false,
     /// <summary>該趟對這一天有完整的來源同步（Full 範圍、同步與主機對應都成立，或沿用同日另一趟）；同日下一個窗口據此不再同步（舊 JSON 缺欄為 false）。</summary>
-    bool SourceSynced = false);
+    bool SourceSynced = false,
+    /// <summary>來源同步實際發生的時刻；沿用趟沿用來源的值，不寫自己的開跑時間（舊 JSON 缺欄為 null）。</summary>
+    DateTime? SourceSyncedAt = null);
 
 /// <summary>執行紀錄的共用查詢：同一份「最新一筆」判定，不各寫一份。</summary>
 public static class BatchRunQueries

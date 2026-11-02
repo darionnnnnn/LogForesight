@@ -22,6 +22,7 @@ public class DashboardRevealBehaviorTests
 
     [NodeTheory]
     [InlineData("collapsesBeyondFirstRow")]
+    [InlineData("emptyGridsMountNothing")]
     [InlineData("zeroColumnsMeansNotLaidOutSoNothingHidden")]
     [InlineData("noButtonWhenEverythingFits")]
     [InlineData("sharedButtonSpansAllGridsAndCountsAlerts")]

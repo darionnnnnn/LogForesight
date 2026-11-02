@@ -95,6 +95,7 @@ internal static class PrtgDailyPipeline
         var syncFailed = false;
         // 本趟對這些日期是否有完整的來源同步（下一個窗口據此沿用）；只在 Full 範圍、同步與對應都成立時為真
         var sourceSynced = false;
+        DateTime? syncStartedAt = null;
         // 逐日「無產出」判定要用的事實（在 try 內決定，finally 寫逐日結果時用）
         var rulesAvailableForStat = true;
         var sensorMirrorEmpty = false;
@@ -209,8 +210,9 @@ internal static class PrtgDailyPipeline
             //    FetchDayAsync 各階段自帶 catch，取消以外幾乎不會整個擲出；真的擲出而 provider 沒被呼叫時
             //    mapResult 為 null，不另外補做對應。
             PrtgHostMapResult? mapResult = null;
-            var syncPhase = runRecorder.Phase(RunTimingPhases.PrtgSync);
+            using var syncPhase = runRecorder.Phase(RunTimingPhases.PrtgSync);
             var syncStopwatch = Stopwatch.StartNew();
+            syncStartedAt = DateTime.Now;
             // 本日已有一趟完整做過來源同步：不再打 PRTG，規則評估、發佈與補追加照跑（全部讀本地鏡像），
             // 否則記憶體登錄簿是空的，這一趟才落地的主機日會拿不到 PRTG finding（docs/PRTG-SPEC.md §3）。
             if (reuseSyncFrom is { } reusedAt)
@@ -811,7 +813,7 @@ internal static class PrtgDailyPipeline
                     {
                         operationScope.Checkpoint();
                         var state = dayStates[day];
-                        var triggeredPhase = runRecorder.Phase(RunTimingPhases.PrtgTriggered, day.ToString("yyyy-MM-dd"));
+                        using var triggeredPhase = runRecorder.Phase(RunTimingPhases.PrtgTriggered, day.ToString("yyyy-MM-dd"));
                         var dayResult = await triggeredFetcher.RunAsync(
                             day, systemSettings.PrtgSensorTypeWhitelist, systemSettings.PrtgFetchConcurrency,
                             () => analysisTask.IsCompleted, ct, extraTriggerHosts: state.TriggerHosts,
@@ -961,7 +963,9 @@ internal static class PrtgDailyPipeline
                             // 只有影響過去日資料的失敗才重評：結構（裝置／感測器鏡像）沒取齊、狀態變更沒取齊（下一趟成功即收斂）。
                             // 單一裝置的感測器查詢固定失敗這類不影響已落地資料的失敗，重評治不好，標了只會讓「待補評估」永遠掛著
                             NeedsReevaluation: syncFailed || historyAffectingFailure || !prtgFindings.IsEvaluated(day),
-                            SourceSynced: sourceSynced);
+                            SourceSynced: sourceSynced,
+                            // 沿用趟記的是來源那趟實際同步的時刻，第三個窗口才不會把「沿用的時間」當成同步時間
+                            SourceSyncedAt: sourceSynced ? reuseSyncFrom ?? syncStartedAt : null);
                     })
                     .ToList();
 

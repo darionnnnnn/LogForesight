@@ -36,9 +36,11 @@ public static class NodeRuntime
     /// </summary>
     internal static string ResolveExecutable(string? pathEnv, Func<string, bool> fileExists)
     {
+        // Windows 只認 node.exe：Scoop 這類 shim 目錄同時放 sh 腳本 node 與 node.exe，無副檔名那個 Process.Start 跑不起來
+        var names = OperatingSystem.IsWindows() ? new[] { "node.exe" } : new[] { "node" };
         foreach (var dir in (pathEnv ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            foreach (var name in new[] { "node", "node.exe" })
+            foreach (var name in names)
             {
                 var candidate = Path.Combine(dir, name);
                 if (fileExists(candidate)) return candidate;

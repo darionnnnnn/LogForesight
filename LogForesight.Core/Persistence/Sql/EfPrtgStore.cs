@@ -2634,10 +2634,6 @@ public sealed class EfPrtgStore
     }
 
     /// <summary>
-    /// 選出要擷取數值的 sensor：位於指定 device 上、未暫停、且 type 命中白名單者。
-    /// 白名單為 null 或空代表不限制 type（沿用設定語意）。device 集合為空時回空清單。
-    /// </summary>
-    /// <summary>
     /// 該日已有整天（24 個小時）精確值的 sensor：同一天第二個窗口的觸發式取數不再重查（historicdata 單次 5～72 秒）。
     /// 快照自算的 sampled 不算——算的話保守策略累積的快照會讓精確值永遠取不到。
     /// 不足 24 列（PRTG 當時還沒出齊）整日重取，只回 nodata 的 sensor 也每個窗口重取。
@@ -2668,6 +2664,10 @@ public sealed class EfPrtgStore
             .Select(g => g.Key);
     }
 
+    /// <summary>
+    /// 選出要擷取數值的 sensor：位於指定 device 上、未暫停、且 type 命中白名單者。
+    /// 白名單為 null 或空代表不限制 type（沿用設定語意）。device 集合為空時回空清單。
+    /// </summary>
     public List<long> GetValueFetchTargets(IReadOnlyCollection<string>? whitelist, IReadOnlyCollection<long> deviceObjids)
     {
         using var __perf = _performance.Measure("prtg:GetValueFetchTargets");

@@ -87,6 +87,9 @@ public class NetiqPipelineService
     /// 一趟執行內的 <c>DateTime.Now</c> 差異對「最後回報時間」沒有意義。</summary>
     private sealed record HostTouch(string? DisplayName, DateTime ReportedAt);
 
+    /// <summary>本趟的「今天」：由 orchestrator 趟首取一次下傳，跨午夜不漂移；測試不傳時等於建構當下的今天</summary>
+    private readonly DateTime _today;
+
     /// <param name="console">輸出去哪裡（docs/archive/FEEDBACK-8-PLAN.md #2）：原本整支寫死 Console.WriteLine，
     /// console 批次專案退場後這些輸出沒有任何地方接收——排程跑到 NetIQ 段（整晚執行的大宗）時
     /// Web 狀態卡的訊息其實是凍結的。改走與本機路徑相同的 <see cref="IRunConsole"/>。</param>
@@ -106,8 +109,6 @@ public class NetiqPipelineService
     /// <param name="permissionMappings">權限異動自訂欄位對應；null＝使用內建官方欄位名</param>
     /// <param name="rerunMode">重新分析模式，預設 None</param>
     /// <param name="guard">PRTG 資源守門閘門；null＝不受守門（測試／離峰手動作業）</param>
-    private readonly DateTime _today;
-
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,

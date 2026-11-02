@@ -19,6 +19,8 @@ public class RunsTimelineBehaviorTests
 
     [NodeTheory]
     [InlineData("barsArePositionedByRunSpan")]
+    [InlineData("valueFillIsTopLevelNotSubPhase")]
+    [InlineData("missingDayTimingFieldsShowDash")]
     [InlineData("skippedPhaseSaysSo")]
     [InlineData("runningPhaseDrawsToNow")]
     [InlineData("interruptedRunStopsAtLastActivity")]

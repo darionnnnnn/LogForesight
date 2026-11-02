@@ -32,6 +32,18 @@ public class PrtgReevaluationPlannerTests
     }
 
     [Fact]
+    public void 沿用同步_回傳來源實際同步時刻_不是沿用趟自己的開跑時間()
+    {
+        var today = new DateTime(2026, 11, 2);
+        var day = today.AddDays(-1);
+        var synced = today.AddHours(2);
+        var reuseRun = SyncRun(today.AddHours(4), day, sourceSynced: true, runId: 2);
+        reuseRun.PrtgDays = new List<PrtgDayStat> { reuseRun.PrtgDays![0] with { SourceSyncedAt = synced } };
+
+        Assert.Equal(synced, PrtgReevaluationPlanner.ReusableSyncFrom(BatchRunTriggers.Schedule, RunScope.Full, new[] { reuseRun }, new[] { day }, today));
+    }
+
+    [Fact]
     public void 沿用同步_最新一筆沒有完整同步就重做_即使更早有完整的()
     {
         var today = new DateTime(2026, 11, 2);

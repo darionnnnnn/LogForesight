@@ -114,6 +114,36 @@ public class PrtgTriggeredValueFetcherTests : IDisposable
         Assert.Equal(1, result.TargetSensors);
     }
 
+    /// <summary>目標全因「該日已有整天數值」略過時不記新鮮度：記 0 會累積 ZeroStreak，把正常的第二個窗口標成可疑</summary>
+    [Fact]
+    public async Task RunAsync_目標全部已取時不把新鮮度記成0()
+    {
+        var day = new DateTime(2026, 8, 30);
+        var store = CreateStore();
+        var recordStore = CreateRecordStore();
+        recordStore.Append(CreateRecord(101, "SRV-A", day, "高"));
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 1001, Name = "Dev-1", Ip = "10.0.0.1" } }, day);
+        store.UpsertSensors(new List<PrtgSensorRow> { new() { Objid = 2001, DeviceObjid = 1001, Name = "S1", SensorType = "SNMP CPU Load", Paused = false } }, day);
+        store.ReplaceHostMapForDate(day, new List<PrtgHostMapRow> { new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok } });
+        store.UpsertValues(Enumerable.Range(0, 24).Select(hour => new PrtgValueRow
+        {
+            SensorObjid = 2001, PeriodStart = day.AddHours(hour), AvgValue = 1, Coverage = 100, Quality = PrtgDataQuality.Ok, CreatedAt = day
+        }).ToList());
+        var freshness = new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey));
+        freshness.Record(PrtgFreshnessStore.Values, 5);
+        freshness.Record(PrtgFreshnessStore.Values, 0);
+        freshness.Record(PrtgFreshnessStore.Values, 0);
+
+        var (client, handler) = CreateClient(_ => JsonResponse("{\"histdata\":[]}"));
+        var fetchService = new PrtgFetchService(client, store, freshness, new TestConsole(), new Dictionary<string, string>());
+        await new PrtgTriggeredValueFetcher(fetchService, store, recordStore, new TestConsole()).RunAsync(
+            day, whitelist: null, concurrency: 1, analysisCompleted: () => true, ct: CancellationToken.None, pollSeconds: 1);
+
+        Assert.Empty(handler.RequestedUrls);
+        // 第三個 0 沒被記：ZeroStreak 停在 2，不會變成可疑
+        Assert.Equal(2, freshness.GetAll()[PrtgFreshnessStore.Values].ZeroStreak);
+    }
+
     [Fact]
     public async Task RunAsync_只對風險高與中的主機取數()
     {

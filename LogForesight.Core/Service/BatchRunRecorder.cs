@@ -144,16 +144,22 @@ public class BatchRunRecorder : IDisposable
     {
         var record = new RunPhaseRecord(key, DateTime.Now) { Note = note };
         var scope = new PhaseScope(this, record);
+        bool late;
         lock (_countLock)
         {
-            if (_finished)
+            late = _finished;
+            if (!late)
             {
-                Log.Warn("執行紀錄已結束，略過階段 {0}", key);
-                scope.Abandon();
-                return scope;
+                (_run.Phases ??= new List<RunPhaseRecord>()).Add(record);
+                _openPhases.Add(scope);
             }
-            (_run.Phases ??= new List<RunPhaseRecord>()).Add(record);
-            _openPhases.Add(scope);
+        }
+        // 不在 _countLock 內寫 log：NLog target 的 Write 先持 target 鎖再回頭取 _countLock，反過來拿就會死鎖
+        if (late)
+        {
+            Log.Warn("執行紀錄已結束，略過階段 {0}", key);
+            scope.Abandon();
+            return scope;
         }
 
         if (RunTimingPhases.IsTopLevel(key))
@@ -165,17 +171,22 @@ public class BatchRunRecorder : IDisposable
 
     private void CompletePhase(PhaseScope scope, RunPhaseRecord record, string outcome, string? note)
     {
+        bool late;
         lock (_countLock)
         {
-            if (_finished)
+            late = _finished;
+            if (!late)
             {
-                Log.Warn("執行紀錄已結束，略過階段 {0} 的結果", record.Key);
-                return;
+                record.FinishedAt = DateTime.Now;
+                record.Outcome = outcome;
+                if (note != null) record.Note = note;
+                _openPhases.Remove(scope);
             }
-            record.FinishedAt = DateTime.Now;
-            record.Outcome = outcome;
-            if (note != null) record.Note = note;
-            _openPhases.Remove(scope);
+        }
+        if (late)
+        {
+            Log.Warn("執行紀錄已結束，略過階段 {0} 的結果", record.Key);
+            return;
         }
 
         if (!RunTimingPhases.IsTopLevel(record.Key)) return;
@@ -225,6 +236,14 @@ public class BatchRunRecorder : IDisposable
         }
 
         internal void Abandon() => _completed = 1;
+
+        /// <summary>結束列寫出前的最後收尾（呼叫端已持 _countLock）：只填欄位，不寫里程碑、不寫快照</summary>
+        internal void CloseSilently(DateTime finishedAt, string outcome)
+        {
+            if (Interlocked.Exchange(ref _completed, 1) == 1) return;
+            _record.FinishedAt = finishedAt;
+            _record.Outcome = outcome;
+        }
 
         public void Complete(string outcome, string? note = null)
         {
@@ -382,6 +401,12 @@ public class BatchRunRecorder : IDisposable
                     _finished = true;
                     _run.FinishedAt = DateTime.Now;
                     _run.ExitCode = exitCode;
+                    // 上面收階段與進鎖之間才開的階段：在同一把鎖內直接收掉，結束列不留永遠「進行中」的階段
+                    foreach (var straggler in _openPhases)
+                    {
+                        straggler.CloseSilently(_run.FinishedAt.Value, ImplicitOutcome());
+                    }
+                    _openPhases.Clear();
                     final = _run.Snapshot();
                 }
                 FlushOutputTail();

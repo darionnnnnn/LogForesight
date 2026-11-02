@@ -88,7 +88,7 @@ public static class PrtgReevaluationPlanner
     /// <summary>
     /// 本趟能否沿用同日另一趟的來源同步（docs/PRTG-SPEC.md §3）：只有排程趟、Full 範圍，而且本趟每一天
     /// 最新的那筆統計都是今天開跑、來源同步完整。手動執行一律重做——按下去就是要重跑。
-    /// 回傳被沿用那一趟的開始時間；不能沿用回 null。「最新」刻意不跳過失敗趟：同步失敗之後的下一個窗口要重試。
+    /// 回傳來源同步實際發生的時刻（沿用趟會一路傳下去，不會變成沿用趟自己的時間）；不能沿用回 null。「最新」刻意不跳過失敗趟：同步失敗之後的下一個窗口要重試。
     /// </summary>
     public static DateTime? ReusableSyncFrom(string? trigger, RunScope scope, IReadOnlyList<BatchRun>? recentRuns,
         IReadOnlyList<DateTime> days, DateTime today)
@@ -108,7 +108,8 @@ public static class PrtgReevaluationPlanner
                 return null;
             }
 
-            if (reusedFrom == null || latest.Run.StartedAt < reusedFrom) reusedFrom = latest.Run.StartedAt;
+            var syncedAt = latest.Stat.SourceSyncedAt ?? latest.Run.StartedAt;
+            if (reusedFrom == null || syncedAt < reusedFrom) reusedFrom = syncedAt;
         }
 
         return reusedFrom;

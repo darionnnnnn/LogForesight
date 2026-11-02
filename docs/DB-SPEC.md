@@ -39,7 +39,7 @@
 執行紀錄（`lf_log_lines` 的 `log_key='batch_runs'`）每列是一筆 `BatchRun` JSON，同一個 RunId 取最後一列。`Phases` 記各階段起訖：
 `Key`（`RunTimingPhases`）、`StartedAt`、`FinishedAt`、`Outcome`（success／partial／failed／stopped／skipped）、`Note`；
 頂層階段結束時追加一列，PRTG 子階段只隨結束列寫出。舊紀錄缺此欄（null），不從舊 log 推算。
-`PrtgDays[].SourceSynced`：該趟對這一天有完整的來源同步（或沿用同日另一趟），同日下一個窗口據此不重新同步；舊紀錄缺欄為 false（docs/PRTG-SPEC.md §3）。
+`PrtgDays[].SourceSynced`：該趟對這一天有完整的來源同步（或沿用同日另一趟），同日下一個窗口據此不重新同步；`SourceSyncedAt` 是來源同步實際發生的時刻，沿用趟沿用來源的值。舊紀錄缺欄為 false／null（docs/PRTG-SPEC.md §3）。
 
 目前實體表清單：`lf_blobs`、`lf_log_lines`、`lf_daily_records`、`lf_top_issues`、
 `lf_issue_handling`、`lf_issue_cases`、`lf_work_orders`、`lf_work_order_events`、
@@ -212,7 +212,7 @@ lf_top_issues                                        -- LogIssueSignature 的**�
   source_name       nvarchar(255) NOT NULL            -- 原始顯示名稱；比對使用 source_key
   source_key        nvarchar(255) NULL                 -- SourceKeyOf 正規化鍵；舊列背景回填期間可為 NULL
   event_id          int NOT NULL
-  entry_type        int NOT NULL DEFAULT 0            -- EventLogEntryType 的**整數值**（不是字串）
+  entry_type        int NOT NULL DEFAULT 0            -- LogEntryType 的**整數值**（不是字串；值同 classic 列舉）
   event_key         nvarchar(255) NOT NULL DEFAULT '' -- 完整簽章第五段（
                                                      --   Linux 規則 Id，Windows 恆空字串；聚合鍵仍是
                                                      --   (source_name, event_id)，見 ContentJson 補充節）
@@ -235,7 +235,7 @@ lf_risky_events                                      -- 風險 log 暫存：每�
   source         nvarchar(255) NOT NULL              -- 事件來源（保留原始大小寫）
   source_key     nvarchar(255) NULL                  -- source 正規化大寫鍵；舊列在背景回填完成前為 NULL
   event_id       int NOT NULL
-  entry_type     int NOT NULL                        -- EventLogEntryType 的整數值
+  entry_type     int NOT NULL                        -- LogEntryType 的整數值（值同 classic 列舉）
   event_time     timestamp NOT NULL                  -- 事件發生時間
   message        text NOT NULL                       -- 事件原文，截至 2000 字
   source_evidence_json text NULL                     -- 截斷訊息前擷取的有界來源證據 JSON；舊列為 NULL
