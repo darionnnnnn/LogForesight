@@ -75,16 +75,21 @@ function makeRuns() {
     const api = makePendingApi();
     const rendered = { summary: [], errors: [], list: [] };
     const guard = () => { let n = 0; return { next: () => ++n, isCurrent: (s) => s === n }; };
-    const el = {};
-    const inst = build('runs.js', ['async function load(', 'async function loadSummary('], `
+    const el = { classList: { add() {}, remove() {}, toggle() {} } };
+    const failures = { n: 0 };
+    const inst = build('runs.js', ['async function load(', 'async function loadSummary(', 'function hideErrorsNotice(',
+        'async function loadErrors(', 'function reloadErrors('], `
         let currentDays = 14;
         let currentSummaryPage = 1;
         let summaryMaxDays = null;
+        let errorsMinLevel = 'error';
         const summaryGuard = createSeqGuard();
         const loadGuard = createSeqGuard();
+        const errorsGuard = createSeqGuard();
         const document = { getElementById: () => el };
-    `, '{ load, loadSummary }', {
+    `, '{ load, loadSummary, loadErrors, reloadErrors, setLevel(v) { errorsMinLevel = v; } }', {
         api, el,
+        guardLoad: async (_c, fn) => { try { return await fn(); } catch { failures.n++; return undefined; } },
         createSeqGuard: guard,
         renderLoading: () => {},
         renderError: () => {},
@@ -94,12 +99,57 @@ function makeRuns() {
         renderRunList: (d) => rendered.list.push(d.tag)
     });
     return {
-        inst, api, rendered,
+        inst, api, rendered, failures,
         /** 從第 firstPending 個請求起連續三個（summary／errors／list）一起回應 */
         settleLoad(firstPending, tag) {
-            for (let i = 0; i < 3; i++) api.pending[firstPending + i].resolve({ tag, groups: { tag } }); // errors 端點回 { groups, ... }，renderErrors 收 groups
+            for (let i = 0; i < 3; i++) api.pending[firstPending + i].resolve({ tag, groups: [], failedWithoutErrorRuns: 0 }); // errors 端點回 { groups, failedWithoutErrorRuns }，renderErrors 收完整物件
         }
     };
+}
+
+function makeClassEl() {
+    const classes = new Set(['d-none']);
+    return { classes, textContent: '', disabled: false, classList: {
+        add: (c) => classes.add(c), remove: (c) => classes.delete(c),
+        toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); } } };
+}
+
+function makeErrorsNotice() {
+    const box = makeClassEl();
+    const text = makeClassEl();
+    const els = { 'run-errors-notice': box, 'run-errors-notice-text': text };
+    const inst = build('runs.js', ['function renderErrors(', 'function renderErrorsNotice('], '', '{ renderErrors }', {
+        document: { getElementById: (id) => els[id] ?? null },
+        formatNumber: (n) => String(n),
+        renderErrorsTable: () => {}
+    });
+    return { inst, box, text };
+}
+
+function makeExport({ capabilities, fail = null, blob = { size: 1 } }) {
+    const wrap = makeClassEl();
+    const button = makeClassEl();
+    const els = { 'runs-export-wrap': wrap, 'runs-export-btn': button };
+    const urls = [], opts = [], saved = [], toasts = [], busy = { restored: 0 };
+    const inst = build('runs.js', ['async function initExportButton(', 'async function hasExportData(', 'async function exportDiagnostics(', 'function applyDaysSelection('], `
+        let currentDays = 14;
+        let summaryMaxDays = null;
+    `, '{ initExportButton, exportDiagnostics, applyDaysSelection, setMaxDays(v) { summaryMaxDays = v; } }', {
+        document: { getElementById: (id) => els[id] ?? null },
+        getCurrentUser: async () => ({ capabilities }),
+        hasCapability: (u, c) => u.capabilities.includes(c),
+        api: {
+            download: async (url, o) => {
+                urls.push(url); opts.push(o);
+                if (fail) throw fail;
+                return { blob, filename: null };
+            }
+        },
+        saveBlobAsFile: (blob, filename) => saved.push({ blob, filename }),
+        toast: (message, type) => toasts.push({ message, type }),
+        withBusy: (b) => { b.disabled = true; return () => { b.disabled = false; busy.restored++; }; }
+    });
+    return { inst, wrap, button, urls, opts, saved, toasts, busy };
 }
 
 const cases = {
@@ -423,6 +473,133 @@ const cases = {
         await paged;
         assert.deepEqual(r.rendered.summary, ['paged'], '總表只該是較新的換頁結果');
         assert.deepEqual(r.rendered.errors, ['load'], 'errors 與清單仍照常渲染');
+    },
+
+    // ---- runs：異常彙總換等級（批次D）----
+    async runs整頁載入帶目前選的等級() {
+        const r = makeRuns();
+        r.inst.setLevel('warn');
+        const p = r.inst.load();
+        const errorsUrl = r.api.pending.find((x) => x.url.startsWith('/api/runs/errors')).url;
+        assert.match(errorsUrl, /minLevel=warn/);
+        r.settleLoad(0, 'x');
+        await p;
+    },
+    async runs換等級只重取異常彙總一塊() {
+        const r = makeRuns();
+        const p = r.inst.load();
+        r.settleLoad(0, 'first');
+        await p;
+        const before = r.api.pending.length;
+        r.inst.setLevel('warn');
+        const q = r.inst.reloadErrors();
+        assert.equal(r.api.pending.length, before + 1, '只多一個請求');
+        const last = r.api.pending[before];
+        assert.match(last.url, /^\/api\/runs\/errors\?days=14&minLevel=warn$/);
+        last.resolve({ tag: 'warn', groups: [], failedWithoutErrorRuns: 0 });
+        await q;
+        assert.deepEqual(r.rendered.errors, ['first', 'warn']);
+        assert.deepEqual(r.rendered.summary, ['first'], '總表不重繪');
+        assert.deepEqual(r.rendered.list, ['first'], '執行紀錄不重繪');
+    },
+    async runs換等級舊回應晚到不覆寫新結果() {
+        const r = makeRuns();
+        const a = r.inst.reloadErrors();
+        r.inst.setLevel('warn');
+        const b = r.inst.reloadErrors();
+        r.api.pending[1].resolve({ tag: 'warn', groups: [] });
+        await b;
+        r.api.pending[0].resolve({ tag: 'error-old', groups: [] });
+        await a;
+        assert.deepEqual(r.rendered.errors, ['warn']);
+    },
+    async runs整頁載入晚到不覆寫較新的等級結果() {
+        const r = makeRuns();
+        const full = r.inst.load();            // pending[0..2]，帶 error
+        r.inst.setLevel('warn');
+        const re = r.inst.reloadErrors();      // pending[3]
+        r.api.pending[3].resolve({ tag: 'warn', groups: [] });
+        await re;
+        r.settleLoad(0, 'old-load');
+        await full;
+        assert.deepEqual(r.rendered.errors, ['warn'], '整頁載入的舊異常彙總不得蓋掉較新的等級結果');
+        assert.deepEqual(r.rendered.summary, ['old-load'], '總表仍照常渲染');
+    },
+    async runs換等級失敗走失敗態且不影響其他區塊() {
+        const r = makeRuns();
+        const p = r.inst.load();
+        r.settleLoad(0, 'first');
+        await p;
+        const q = r.inst.reloadErrors();
+        r.api.pending[3].reject(new Error('boom'));
+        await q;
+        assert.equal(r.failures.n, 1, '失敗交給 guardLoad');
+        assert.deepEqual(r.rendered.summary, ['first']);
+        assert.deepEqual(r.rendered.errors, ['first']);
+    },
+
+    // ---- runs：無錯誤紀錄趟次提示（D-3）----
+    runs提示N為0不顯示() {
+        const t = makeErrorsNotice();
+        t.inst.renderErrors({ groups: [], failedWithoutErrorRuns: 0 });
+        assert(t.box.classes.has('d-none'), 'N=0 不佔版面');
+    },
+    runs提示N大於0顯示且帶趟數() {
+        const t = makeErrorsNotice();
+        t.inst.renderErrors({ groups: [], failedWithoutErrorRuns: 3 });
+        assert(!t.box.classes.has('d-none'));
+        assert.equal(t.text.textContent, '另有 3 趟中斷或失敗，但沒有錯誤紀錄。');
+        t.inst.renderErrors({ groups: [], failedWithoutErrorRuns: 0 });
+        assert(t.box.classes.has('d-none'), '之後 N=0 要再藏起來');
+    },
+
+    // ---- runs：匯出分析資料（D-1）----
+    async runs有ViewAll才顯示匯出鈕() {
+        const without = makeExport({ capabilities: ['DevMonitor'] });
+        await without.inst.initExportButton();
+        assert(without.wrap.classes.has('d-none'), '沒有 ViewAll 要維持隱藏');
+        const withAll = makeExport({ capabilities: ['ViewAll'] });
+        await withAll.inst.initExportButton();
+        assert(!withAll.wrap.classes.has('d-none'));
+    },
+    async runs匯出帶目前天數並存檔() {
+        const t = makeExport({ capabilities: ['ViewAll'] });
+        await t.inst.exportDiagnostics();
+        assert.deepEqual(t.urls, ['/api/runs/export?days=14']);
+        assert.deepEqual(t.opts[0], { timeoutMs: 300000, silent: true });
+        assert.equal(t.saved[0].filename, 'run-diagnostics-14d.json', '沒有伺服器檔名時用備用檔名');
+        assert.equal(t.toasts[0].type, 'success');
+        assert(!t.button.disabled, '完成後按鈕復原');
+    },
+    async runs匯出沒有資料時提示不同() {
+        const empty = makeExport({ capabilities: ['ViewAll'], blob: { text: async () => '{"meta":{"hasData":false}}' } });
+        await empty.inst.exportDiagnostics();
+        assert.match(empty.toasts[0].message, /沒有執行紀錄/);
+        const full = makeExport({ capabilities: ['ViewAll'], blob: { text: async () => '{"meta":{"hasData":true}}' } });
+        await full.inst.exportDiagnostics();
+        assert.doesNotMatch(full.toasts[0].message, /沒有執行紀錄/);
+        const broken = makeExport({ capabilities: ['ViewAll'], blob: { text: async () => 'not json' } });
+        await broken.inst.exportDiagnostics();
+        assert.equal(broken.toasts[0].type, 'success', '解析失敗不影響已完成的下載');
+    },
+    async runs切全部時匯出帶後端最大天數() {
+        const t = makeExport({ capabilities: ['ViewAll'] });
+        assert.equal(t.inst.applyDaysSelection('all'), false, '尚未收到最大天數時不動作');
+        t.inst.setMaxDays(90);
+        assert.equal(t.inst.applyDaysSelection('all'), true);
+        await t.inst.exportDiagnostics();
+        assert.deepEqual(t.urls, ['/api/runs/export?days=90']);
+        assert.equal(t.saved[0].filename, 'run-diagnostics-90d.json');
+    },
+    async runs匯出失敗有提示且按鈕復原() {
+        const t = makeExport({ capabilities: ['ViewAll'], fail: new Error('資料量太大，請縮小天數') });
+        await t.inst.exportDiagnostics();
+        assert.equal(t.saved.length, 0);
+        assert.equal(t.toasts.length, 1);
+        assert.equal(t.toasts[0].type, 'danger');
+        assert.match(t.toasts[0].message, /縮小天數/);
+        assert(!t.button.disabled, '失敗後按鈕復原');
+        assert.equal(t.busy.restored, 1);
     },
 
     // ---- help-manual：首次載入不捲動 ----

@@ -193,6 +193,16 @@
         @* 全部按鈕（批次G）：天數來自後端 MaxDays（RunLogRetentionDays 設定值），不寫死 *@
         <button type="button" class="btn btn-outline-primary" data-days="all">全部</button>
     </div>
+    @* 匯出分析資料（批次D）：範圍就是左邊選的天數，所以放在天數鈕旁。預設隱藏，runs.js 確認有 ViewAll 才顯示 *@
+    <div class="d-flex align-items-center gap-1 d-none" id="runs-export-wrap">
+        <button type="button" class="btn btn-sm btn-outline-secondary lf-touch-36" id="runs-export-btn">
+            <svg class="lf-icon me-1" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#download"></use></svg>匯出分析資料
+        </button>
+        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" aria-label="匯出分析資料說明"
+                data-bs-content="內容：所選天數內的執行紀錄、異常彙總與診斷資訊，用來請外部 AI 協助分析排程問題。檔案已去識別化（主機名稱、帳號、位址等已改成代號），但自由文字無法保證完全遮除，交給外部 AI 前請先瀏覽內容。">
+            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+        </button>
+    </div>
 </div>
 
 <div data-panel="summary">
@@ -217,6 +227,18 @@
     <section class="lf-card mb-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">異常彙總</h2>
+            <div class="d-flex align-items-center gap-2">
+                <label class="small text-muted mb-0" for="run-errors-level">顯示等級</label>
+                <select class="form-select form-select-sm w-auto lf-touch-36" id="run-errors-level">
+                    <option value="error" selected>Error 以上</option>
+                    <option value="warn">Warn 以上</option>
+                </select>
+            </div>
+        </div>
+        @* 沒有錯誤紀錄卻失敗或中斷的趟數（D-3）：大於 0 才顯示，等於 0 不佔版面 *@
+        <div class="alert alert-secondary py-2 small mx-3 mt-3 mb-0 d-none" id="run-errors-notice" role="status">
+            <span id="run-errors-notice-text"></span>
+            <button type="button" class="btn btn-sm btn-outline-dark lf-touch-36 ms-2" id="run-errors-notice-go">查看執行紀錄</button>
         </div>
         <div class="lf-card__body p-0" id="run-errors"></div>
     </section>

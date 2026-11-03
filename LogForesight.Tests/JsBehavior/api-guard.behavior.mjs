@@ -138,7 +138,8 @@ const cases = {
         globalThis.fetch = async () => new Response('<html>登入</html>', { headers: { 'Content-Type': 'text/html' } });
         let caught;
         try { await api.downloadJson('/api/prtg/acceptance/export', { silent: true }); } catch (error) { caught = error; }
-        assert(caught instanceof ApiError && caught.code === 'download_invalid_response', '登入頁或非 JSON 不可保存為證據檔');
+        assert(caught instanceof ApiError && caught.code === 'download_invalid_response', '登入頁或非 JSON 不可保存為檔案');
+        assert(caught.message.includes('JSON 檔案') && !caught.message.includes('證據檔'), '下載文案用「檔案」，不用「證據檔」');
     },
     async JSON下載502HTML顯示一般錯誤並帶狀態() {
         globalThis.fetch = async () => new Response('<html>Bad Gateway</html>',
