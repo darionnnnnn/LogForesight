@@ -830,6 +830,25 @@ public class RunExportServiceTests
         }
     }
 
+    [Fact]
+    public void 訊號組_同訊息同時有Warn與Error_count含兩者且errorFatalCount只算Error()
+    {
+        using var h = new RunExportHarness();
+        var run = h.AddRun();
+        h.AddLog(run, "Warn", "Orchestrator", "磁碟剩餘 12 GB");
+        h.AddLog(run, "Error", "Orchestrator", "磁碟剩餘 3 GB");
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            var group = Assert.Single(root.GetProperty("signalGroups").EnumerateArray());
+            Assert.Equal("Error", group.GetProperty("level").GetString());
+            Assert.Equal(2, group.GetProperty("count").GetInt32());
+            Assert.Equal(1, group.GetProperty("errorFatalCount").GetInt32());
+            Assert.Equal(1, root.GetProperty("meta").GetProperty("signalTotals").GetProperty("errorFatal").GetInt32());
+        }
+    }
+
     /// <summary>故意漏遮：訊息含 LEAKME 時原樣回傳。其餘委派給真實遮罩器（含結果掃描）</summary>
     private sealed class LeakyMasker : IRunExportMasker
     {

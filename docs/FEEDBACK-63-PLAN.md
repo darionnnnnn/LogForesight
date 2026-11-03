@@ -1,6 +1,6 @@
 # LogForesight 第 63 輪規劃：排程作業的診斷資料匯出（給 AI 分析）
 
-> 狀態：實作中（`feature/feedback-63`）
+> 狀態：體檢完成，待併 dev（終檢後改「全案完成已併 dev」）
 > 基準：dev@6ab5480d（7,624 通過／10 略過，Windows）
 > 來源：使用者 2026-11-03 需求——把執行紀錄與異常彙總匯出給 AI，找出專案尚未完善的細節
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度選 Sonnet 5.5 或 Haiku 5.5；同一 checkout 一次一個改檔代理；主代理獨立重驗
@@ -161,6 +161,7 @@
 | 版本字串 `8.0.12.1`、日期 `2026.11.03` | 四段版本號會被當 IP 遮掉，接受（只在文字內；`appVersion` 欄位不走文字遮罩）；三段日期不動 |
 | 中文緊鄰主機名：`主機SRV01失敗` | 遮成 `主機host-001失敗` |
 | 字典為空（全新站台） | 仍能匯出，樣式比對照常生效 |
+| （體檢輪推翻）`dev-server` | 原定「整段不被切開」；體檢發現同一條邊界規則讓 `WEBSRV01_20261103.log` 漏遮，改為 `_`、`-`、`.` 都是邊界，`dev-server` 遮成 `user-001-server` |
 | 事件訊息 `Account Name: alice`、`S-1-5-21-…` | 帳號與 SID 被遮，欄位名保留（帳號不在 `WebUser` 也要遮得掉） |
 | 保留詞與結果掃描 | 保留清單不算殘留，不得讓匯出失敗 |
 
@@ -408,6 +409,35 @@
   - 移除類：本輪沒有移除對外介面；AI 回覆片段只在匯出省略，畫面與儲存不變。
 - **升級與既有資料**：不動 schema、不寫回資料；舊紀錄缺 `Phases`、`Trigger`、`PrtgDays` 時各欄輸出 `null` 或歸入 `unknown`／舊紀錄類別，C-1 與 `runStats` 已交代。
 - **本次補進本文的細節**：逐行讀取要避免 `GetLogs` 的重複讀取；組字典需要上限；IP 應對應到主機代號；`GroupPath` 要切段比對；AI 回覆片段要從匯出移除。
+
+## 體檢輪修正（Fable 5.1，2026-11-03）
+
+實作：Opus 5.5 主代理＋Sonnet 5.5 改檔代理；體檢：Fable 5.1，三個 Sonnet 唯讀審查代理分區（Core 讀取路徑／匯出與去識別化／前端與文件）附探針，主代理逐條重驗並親做規劃比對與修正。
+
+| # | 嚴重度 | 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|---|---|
+| 1 | 高 | `RunExportDeidentifier` 字典邊界 | 字典詞後接 `_`、`-`、`.`＋英數時不遮（`D:\logs\WEBSRV01_20261103.log`、`WEBSRV01-nightly`、`WEBSRV01.contoso.eu`、`backup_10.1.2.3.tmp` 原樣輸出），結果掃描用同一套邊界也看不到，匯出成功並夾帶原值 | 邊界改為「非英數即邊界」，**推翻批次B 反例表的「dev-server 整段不被切開」**（現為 `user-001-server`，寧可多遮）；FQDN 首段已是主機代號時整串只留代號 | `體檢_字典詞與IP貼著底線連字號點號仍要遮_且掃描抓得到`（5 案）；突變（`_` 改回詞內字元）紅 |
+| 2 | 中 | `EfJsonLogStore.EnumerateLines` | 延遲列舉期間一直持有 SQLite 讀取交易；`Storage:SqliteWal=false` 時 recorder 的 `AppendLog` 被擋到逾時擲例外、NLog target 吞掉，匯出期間的執行紀錄行靜默遺失（探針實測 5.6 秒後 `database is locked`） | 改為依 `Seq` 鍵集分頁（2,000 行／頁），每頁讀完就釋放 DbContext 再交給呼叫端；註解改寫 | `EnumerateLines分頁讀取_每頁各自開關連線_結果完整且依序`；突變（第一頁後結束）紅 |
+| 3 | 中 | `Ipv4Rx`／`Ipv6Rx` 的 lookbehind | `x_10.1.2.3`、`host.10.1.2.3`、`ver10.1.2.3`、`addr:fe80::1`、`RemoteAddress:2001:db8::5` 不遮且掃描 clean | IPv4 前後只排除數字；IPv6 允許前一字元是冒號，時間字串仍由「含 `::` 或 8 段」擋掉 | 同 #1 的 Theory 與 `體檢_IPv6貼著冒號前綴也要遮` |
+| 4 | 中 | `Tlds` 清單 | 頂級網域只列約 30 個，`svc.contoso.eu`、`db01.contoso.co`、`mail.example.cloud` 不遮 | 擴充清單；兩個字母全小寫或全大寫的最後一段視為國碼；檔名副檔名（`Foo.cs`、`site.js`）排除 | `體檢_國碼與常見頂級網域都當FQDN_程式識別字不誤判`（5 案） |
+| 5 | 中 | 密鑰實際值比對 | 密鑰值若是代號字彙的子字串（`secret`、`host`、`user-0`…），結果掃描把自己產生的代號當殘留，該站台匯出永遠失敗 | 這類值略過實際值比對（只靠樣式遮罩），記一筆不含值的 Warn | `體檢_與代號字彙重疊的密鑰值略過比對_匯出不會永遠失敗` |
+| 6 | 低 | `AiJson.HasUnclosedBrackets` | 只從第一個 `{` 起算，`[`、`[{"a":1}` 這類被截斷的陣列回覆被分類為 `no_json` 而非 `truncated` | 自己掃描、從第一個 `{` 或 `[` 起算；解析候選順序不變 | `HasUnclosedBrackets` 新增 5 組 InlineData |
+| 7 | 低 | 匯出訊號組 | 同一正規化訊息同時有 Warn 與 Error 時併成一組，`count` 含兩者，單看組無法算 Error 次數 | 新增 `errorFatalCount`，guide 說明 | `訊號組_同訊息同時有Warn與Error_count含兩者且errorFatalCount只算Error` |
+| 8 | 低 | `RunExportDeidentifierFactory` 字典來源 | 漏收 `PrtgValueFetchExtraHosts`（使用者手填的主機名／IP）與 `UpdatedByAccount` | 補進主機與帳號字典 | `體檢_PRTG額外取數主機與最後修改帳號也進字典` |
+| 9 | 低 | `runs.js` 異常彙總表 | 列缺 `affectedHosts` 時 `join` 擲例外，整張表不渲染 | `hostsOf()` 缺欄當空清單 | 行為案 `runs異常彙總缺affectedHosts欄位不拋例外` |
+| 10 | 低 | `runs.js` 等級變數初值 | 重新整理後瀏覽器還原下拉為 Warn，變數仍是 `error`，畫面與選單不一致 | 初值讀下拉目前的值，值只認 `warn` | 行為案 `runs等級值只認warn其餘為error`＋`RunsPageUiTests` 靜態斷言 |
+| 11 | 低 | 說明書 `10-scheduler.md` | 提示列文字只引半句；「系統管理員與開發人員看得到」但該章節 Dev 讀不到 | 引用全文；改為「只有能檢視全部主機的帳號看得到」 | `HelpContentServiceTests` 守門 |
+
+審查抓到但本輪不修（已記錄去處）：
+
+- `AiJson.TryParseDetailed` 對含孤立代理字元的回覆擲 `ArgumentException`（既有行為，舊 `TryParse` 相同）→ 63-2 批次B-2 連同空陣列判定一起處理。
+- `QueryByHeadline` 在 SQL Server 不分大小寫、SQLite 二進位比較（標題是常數，實務不會出現變體）→ 63-2 批次B-6 改欄位判定後消失。
+- `Basic` 純字母 base64 與表單編碼（`+`）形式的密鑰不遮（低）→ 63-2 批次F 一併看。
+- PRTG 未啟用且鏡像讀取**擲例外**時字典沒有裝置名（讀取成功時照收）→ 可接受，不處理。
+
+規劃比對：批次 A～F 的「改動」與驗收條目逐條有對應（主代理抽查 D、E 契約子句與稽核、錯誤碼、說明書；代理核對 WEB-SPEC 新增文字逐句與程式碼相符）。推翻一條規劃反例（#1），已回寫批次B 反例表的說明。
+
+體檢後定向：`RunExport|BatchRunStoreSqlPushdownTests|AIServiceJsonDiagnosticsTests|FrontendMisc|RunsPageUiTests|HelpContent|RunMonitorServiceTests` 429 條（428 通過／1 規模測試略過）。全量在併 dev 後重跑，結果見終檢節。
 
 ## 體檢交接
 

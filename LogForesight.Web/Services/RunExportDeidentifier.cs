@@ -16,8 +16,8 @@ namespace LogForesight.Web.Services;
 /// <item>代號（<c>host-001</c>、<c>user-001</c>…）依首次出現配發，只在同一個實例內穩定，**不用雜湊**（雜湊可被字典反推）。
 /// 檔案內不放對照表。</item>
 /// <item>主機的 IP 與名稱對應到同一個 host 代號；Sentinel 位址對應到 sentinel 代號。</item>
-/// <item>字典比對不分大小寫；前後不是英數、<c>_</c>（以及夾在英數之間的 <c>-</c>／<c>.</c>）才算邊界，
-/// 中文相鄰視為邊界。保留詞（AI、PRTG、NetIQ、Sentinel）不進字典。</item>
+/// <item>字典比對不分大小寫；前後不是英數才算邊界——<c>_</c>、<c>-</c>、<c>.</c> 都是邊界，
+/// <c>WEBSRV01_20261103.log</c>、<c>WEBSRV01-nightly</c>、<c>WEBSRV01.contoso.eu</c> 裡的主機名都要遮（寧可多遮）；中文相鄰視為邊界。保留詞（AI、PRTG、NetIQ、Sentinel）不進字典。</item>
 /// <item>IP 判斷一律走 <see cref="IpSyntax"/>；IPv6 只認含 <c>::</c> 或完整 8 段者，避免把 <c>12:34:56</c> 這類時間當位址。</item>
 /// <item>序列化完成後以 <see cref="ScanResidual"/>／<see cref="EnsureNoResidual"/> 掃整份 JSON，有殘留就中止匯出。
 /// 伺服器 log 只記類別與次數，不記原值。</item>
@@ -95,9 +95,11 @@ public sealed class RunExportDeidentifier : IRunExportMasker
 
     private static readonly Regex SidRx = new(@"(?<![A-Za-z0-9_\-])S-1-[0-9]+(?:-[0-9]+)+(?![A-Za-z0-9_\-])", Opt, RegexTimeout);
 
-    private static readonly Regex Ipv4Rx = new(@"(?<![A-Za-z0-9_.])[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?![A-Za-z0-9_]|\.[0-9])", Opt, RegexTimeout);
+    // 前後只排除數字：x_10.1.2.3、host.10.1.2.3、ver10.1.2.3 裡的位址都要遮（五段以上的版本號會被遮掉後四段，接受）
+    private static readonly Regex Ipv4Rx = new(@"(?<![0-9])[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?![0-9]|\.[0-9])", Opt, RegexTimeout);
 
-    private static readonly Regex Ipv6Rx = new(@"(?<![A-Za-z0-9_:.])[0-9A-Fa-f:.]{3,}(?![A-Za-z0-9_:])", Opt, RegexTimeout);
+    // 前面可以是冒號：addr:fe80::1、RemoteAddress:2001:db8::5 的位址要遮；時間 12:34:56 由「含 :: 或完整 8 段」擋掉
+    private static readonly Regex Ipv6Rx = new(@"(?<![A-Za-z0-9_.])[0-9A-Fa-f:.]{3,}(?![A-Za-z0-9_:])", Opt, RegexTimeout);
 
     private static readonly Regex FqdnRx = new(
         @"(?<![A-Za-z0-9_@.\-])[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)+(?![A-Za-z0-9_\-])", Opt, RegexTimeout);
@@ -136,14 +138,20 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     {
         "com", "net", "org", "edu", "gov", "mil", "biz", "info", "local", "lan", "corp", "internal",
         "intranet", "home", "localdomain", "tw", "cn", "jp", "hk", "sg", "us", "uk", "de", "fr", "kr",
-        "au", "ca", "io", "ru", "nl"
+        "au", "ca", "io", "ru", "nl", "eu", "co", "cloud", "dev", "app", "site", "online", "tech", "xyz",
+        "me", "cc", "tv", "asia", "int", "pro", "mobi", "name", "ai", "ltd", "inc", "ngo", "int"
     };
+
+    /// <summary>兩個字母、全小寫或全大寫的最後一段視為國碼網域（清單列不完，漏遮比多遮糟）</summary>
+    private static bool LooksLikeCountryCode(string tld) => tld.Length == 2 && tld.All(char.IsAsciiLetter);
 
     private static readonly HashSet<string> NotFqdn = new(StringComparer.OrdinalIgnoreCase) { "asp.net", "vb.net" };
 
     private static readonly HashSet<string> FileExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "log", "txt", "json", "xml", "dll", "exe", "config", "ini", "cs", "csv", "db", "sql", "bak", "evtx", "yml", "yaml"
+        "log", "txt", "json", "xml", "dll", "exe", "config", "ini", "cs", "csv", "db", "sql", "bak", "evtx", "yml", "yaml",
+        "js", "mjs", "cjs", "ts", "py", "go", "rb", "sh", "md", "pl", "vb", "fs", "rs", "kt", "ps1", "psm1", "css", "htm", "html",
+        "cshtml", "csproj", "sln", "pdb", "pdf", "zip", "png", "jpg", "gif", "svg", "ico", "cfg", "tmp", "dat", "bin", "old", "map"
     };
 
     // ---- 字典 ----
@@ -161,6 +169,10 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Entry> _ipMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _secrets;
+
+    /// <summary>代號字彙：密鑰值若是其中任一字串的子字串（例如密碼就叫 secret、host），結果掃描會把自己產生的代號當殘留、
+    /// 讓匯出永遠失敗；這種值略過實際值比對，只靠樣式遮罩。</summary>
+    private const string TokenVocabulary = "secret host-000 user-000 sentinel-000 device-000 group-000 ip-000 url-000 domain-000 email-000 sid-000 role-000";
 
     /// <inheritdoc />
     public IReadOnlyList<string> UndecryptableSecrets { get; }
@@ -185,6 +197,11 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         foreach (var raw in source.Secrets)
         {
             if (string.IsNullOrEmpty(raw) || raw.Length < 4) continue;
+            if (TokenVocabulary.Contains(raw, StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Warn("診斷匯出：有一組密鑰值與代號字彙重疊，略過實際值比對（只靠樣式遮罩）。");
+                continue;
+            }
             secrets.Add(raw);
             var escaped = Uri.EscapeDataString(raw);
             if (!string.Equals(escaped, raw, StringComparison.Ordinal)) secrets.Add(escaped);
@@ -747,28 +764,23 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         return true;
     }
 
-    private static bool IsWordChar(char c) => c < 128 && (char.IsAsciiLetterOrDigit(c) || c == '_');
+    private static bool IsWordChar(char c) => c < 128 && char.IsAsciiLetterOrDigit(c);
 
-    /// <summary>開頭邊界：前一字元不是英數／底線；前一字元若是 - 或 .，只有它前面也是英數時才算連在同一個詞裡。中文相鄰視為邊界</summary>
+    /// <summary>開頭邊界：前一字元不是英數。底線、連字號、點都算邊界——檔名 WEBSRV01_20261103.log、工作名 WEBSRV01-nightly
+    /// 裡的主機名一樣要遮；結果掃描用同一套邊界，這裡放過的掃描也看不到。中文相鄰視為邊界</summary>
     private static bool StartBoundary(string s, int i)
     {
         if (i == 0) return true;
         if (!IsWordChar(s[i])) return true;
-        var prev = s[i - 1];
-        if (IsWordChar(prev)) return false;
-        if (prev is '-' or '.') return i < 2 || !IsWordChar(s[i - 2]);
-        return true;
+        return !IsWordChar(s[i - 1]);
     }
 
-    /// <summary>結尾邊界：後一字元不是英數／底線；後一字元若是 - 或 .，後面接英數才算同一個詞（句尾的點不算）</summary>
+    /// <summary>結尾邊界：後一字元不是英數（SRV01 不會吃掉 SRV010 的一部分）</summary>
     private static bool EndBoundary(string s, int end)
     {
         if (end >= s.Length) return true;
         if (!IsWordChar(s[end - 1])) return true;
-        var next = s[end];
-        if (IsWordChar(next)) return false;
-        if (next is '-' or '.') return end + 1 >= s.Length || !IsWordChar(s[end + 1]);
-        return true;
+        return !IsWordChar(s[end]);
     }
 
     // ===== 階段 4：樣式 =====
@@ -890,10 +902,13 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         var tld = labels[^1];
         // 頂級網域必須是全小寫或全大寫：Pascal Case（System.Net、Logger.Info）是程式識別字，不是網域
         var isCasedUniformly = tld == tld.ToLowerInvariant() || tld == tld.ToUpperInvariant();
-        if (!isCasedUniformly || !Tlds.Contains(tld)) return v;
+        // 檔名（Foo.cs、site.js）不是網域，即使副檔名長得像國碼
+        if (FileExtensions.Contains(tld)) return v;
+        if (!isCasedUniformly || !(Tlds.Contains(tld) || LooksLikeCountryCode(tld))) return v;
 
-        // 第一段是已知主機（短名稱）→ 對到同一個 host 代號
+        // 第一段是已知主機（短名稱）→ 整串對到同一個 host 代號；字典階段已先把短名稱換成代號時，同樣只留主機代號
         if (_entries.TryGetValue(Lower(labels[0]), out var first) && first.Kind == Kinds.Host) return Token(first);
+        if (IsTokenLike(labels[0]) && labels[0].StartsWith(Kinds.Host + "-", StringComparison.Ordinal)) return labels[0];
         return Token(Kinds.Domain, $"d:{Lower(v)}");
     }
 }

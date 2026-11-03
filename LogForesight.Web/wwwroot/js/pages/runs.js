@@ -142,7 +142,13 @@ let currentSummaryPage = 1;
 let currentErrors = [];
 let errorsSort = { key: 'count', dir: 'desc' };
 // 異常彙總的等級門檻（error＝Error 以上、warn＝Warn 以上）：整頁 load() 與單獨換等級共用同一份
-let errorsMinLevel = 'error';
+/** 等級下拉的值只認 warn，其餘一律 error（送後端的值也只有這兩種） */
+function normalizeMinLevel(value) {
+    return value === 'warn' ? 'warn' : 'error';
+}
+
+// 初值讀下拉目前的值：瀏覽器重新整理時可能還原表單狀態，寫死 'error' 會讓畫面與選單不一致
+let errorsMinLevel = normalizeMinLevel(document.getElementById('run-errors-level')?.value);
 
 // load（整頁三塊）與 loadSummary（只換總表）共用同一個序號守門：任一方開始就讓更早的總表回應過期，
 // 慢的舊 loadSummary 不得覆寫剛換天數的總表。load 自己另有一個序號，連點天數時舊的整批回應整份丟掉。
@@ -464,6 +470,11 @@ function viewRunButton(runId) {
     return button;
 }
 
+/** 站台清單缺欄時當空清單，一列壞資料不讓整張表渲染失敗 */
+function hostsOf(group) {
+    return Array.isArray(group.affectedHosts) ? group.affectedHosts : [];
+}
+
 const ERROR_COLUMNS = [
     { title: '等級', sortKey: 'level', sortValue: e => e.level, render: e => errorLevelCell(e) },
     { title: '訊息', render: e => messageCell(e) },
@@ -472,7 +483,7 @@ const ERROR_COLUMNS = [
     { title: '影響趟數', className: 'text-end', sortKey: 'affectedRuns', sortDefaultDir: 'desc', sortValue: e => e.affectedRuns, render: e => formatNumber(e.affectedRuns) },
     // 這一欄的資料來源是 BatchRun.HostName＝**跑批次的站台**，不是被分析的主機。
     // 標成「影響主機」會讓人把站台名誤讀成問題主機（回饋 2.5 的誤判成因之一）。
-    { title: '執行站台', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => e.affectedHosts.length, render: e => e.affectedHosts.join('、') },
+    { title: '執行站台', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => hostsOf(e).length, render: e => hostsOf(e).join('、') },
     { title: '最近發生', sortKey: 'lastSeen', sortDefaultDir: 'desc', sortValue: e => e.lastSeen, render: e => formatDateTime(e.lastSeen) },
     { title: '', className: 'text-end', render: e => detailButton(e.latestRunId) }
 ];
@@ -852,7 +863,7 @@ for (const button of document.querySelectorAll('[data-days]')) {
 
 // 異常彙總的等級下拉：只重取這一塊，不重整總表與執行紀錄
 document.getElementById('run-errors-level')?.addEventListener('change', (event) => {
-    errorsMinLevel = event.target.value === 'warn' ? 'warn' : 'error';
+    errorsMinLevel = normalizeMinLevel(event.target.value);
     reloadErrors();
 });
 

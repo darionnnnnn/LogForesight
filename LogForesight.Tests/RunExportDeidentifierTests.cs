@@ -55,6 +55,57 @@ public class RunExportDeidentifierTests
 
     private static RunExportDeidentifier MakeWithHosts(params DeidentifierHost[] hosts) => Make(Src(hosts: hosts));
 
+    // ===== 體檢輪：邊界、IP 前綴、代號字彙密鑰、國碼網域 =====
+
+    [Theory]
+    [InlineData("D:\\logs\\WEBSRV01_20261103.log")]
+    [InlineData("job WEBSRV01-nightly aborted")]
+    [InlineData("connect WEBSRV01.contoso.eu refused")]
+    [InlineData("backup_10.1.2.3.tmp")]
+    [InlineData("x_10.1.2.3 與 host.10.1.2.3 與 ver10.1.2.3")]
+    public void 體檢_字典詞與IP貼著底線連字號點號仍要遮_且掃描抓得到(string text)
+    {
+        var m = MakeWithHosts(H(1, "WEBSRV01", ip: "10.1.2.3"));
+
+        var masked = m.Mask(text);
+
+        Assert.DoesNotContain("WEBSRV01", masked, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("10.1.2.3", masked);
+        // 掃描與遮罩同一套邊界：遮罩前的原文一定被掃出殘留，遮罩後乾淨
+        Assert.NotEmpty(m.ScanResidual(System.Text.Json.JsonSerializer.Serialize(new { text })));
+        Assert.Empty(m.ScanResidual(System.Text.Json.JsonSerializer.Serialize(new { text = masked })));
+    }
+
+    [Fact]
+    public void 體檢_IPv6貼著冒號前綴也要遮()
+    {
+        var m = Make();
+        Assert.Equal("addr:ip-001 down", m.Mask("addr:fe80::1 down"));
+        Assert.Equal("RemoteAddress:ip-002 x", m.Mask("RemoteAddress:2001:db8::5 x"));
+        Assert.Equal("於 12:34:56 開始", m.Mask("於 12:34:56 開始"));
+    }
+
+    [Fact]
+    public void 體檢_與代號字彙重疊的密鑰值略過比對_匯出不會永遠失敗()
+    {
+        var m = Make(Src(hosts: new[] { H(1, "WEBSRV01") }, secrets: new[] { "secret", "host", "user-0", "Pa55-word" }));
+
+        Assert.Equal("host-001 failed secret", m.Mask("WEBSRV01 failed Pa55-word"));
+        Assert.Empty(m.ScanResidual("{\"a\":\"host-001 failed secret user-001\"}"));
+        Assert.Equal(new Dictionary<string, int> { ["secret"] = 1 }, m.ScanResidual("{\"a\":\"Pa55-word\"}"));
+    }
+
+    [Theory]
+    [InlineData("svc.contoso.eu down", "domain-001 down")]
+    [InlineData("db01.contoso.co failed", "domain-001 failed")]
+    [InlineData("mail.example.cloud", "domain-001")]
+    [InlineData("System.Net.Http.HttpClient", "System.Net.Http.HttpClient")]
+    [InlineData("LogForesight.Core.Service.X", "LogForesight.Core.Service.X")]
+    public void 體檢_國碼與常見頂級網域都當FQDN_程式識別字不誤判(string text, string expected)
+    {
+        Assert.Equal(expected, Make().Mask(text));
+    }
+
     // ===== 反例表（文件 §批次B「容易誤判的反例」逐條）=====
 
     [Fact]
@@ -81,7 +132,9 @@ public class RunExportDeidentifierTests
     {
         var m = Make(Src(users: new[] { new DeidentifierUser(1, "dev", null, null) }));
         var masked = m.Mask("dev 登入；device 正常；dev-server 重啟；結尾是 dev.");
-        Assert.Equal("user-001 登入；device 正常；dev-server 重啟；結尾是 user-001.", masked);
+        // 體檢輪推翻規劃的「dev-server 不被切開」：連字號與底線都是邊界，寧可多遮——
+        // 否則 WEBSRV01_20261103.log、WEBSRV01-nightly 裡的主機名會原樣流出，結果掃描也看不到
+        Assert.Equal("user-001 登入；device 正常；user-001-server 重啟；結尾是 user-001.", masked);
     }
 
     [Fact]
@@ -865,6 +918,21 @@ public class RunExportDeidentifierTestsSource : IDisposable
         var s = Build();
         var m = Factory(s).Create();
         Assert.Equal("ip-001", m.Mask("1.2.3.4"));
+    }
+
+    [Fact]
+    public void 體檢_PRTG額外取數主機與最後修改帳號也進字典()
+    {
+        var s = Build();
+        s.Settings.Update(x =>
+        {
+            x.PrtgValueFetchExtraHosts = new List<string> { "EXTRA-NAS01", "10.9.9.9" };
+            x.UpdatedByAccount = "opsadmin";
+        });
+
+        var m = Factory(s).Create();
+
+        Assert.Equal("host-001 host-002 user-001", m.Mask("EXTRA-NAS01 10.9.9.9 opsadmin"));
     }
 
     [Fact]

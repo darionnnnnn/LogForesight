@@ -244,6 +244,8 @@ public class FrontendMiscBehaviorTests
     [InlineData("runs有ViewAll才顯示匯出鈕")]
     [InlineData("runs匯出帶目前天數並存檔")]
     [InlineData("runs匯出沒有資料時提示不同")]
+    [InlineData("runs異常彙總缺affectedHosts欄位不拋例外")]
+    [InlineData("runs等級值只認warn其餘為error")]
     [InlineData("runs切全部時匯出帶後端最大天數")]
     [InlineData("runs匯出失敗有提示且按鈕復原")]
     [InlineData("說明書首次載入不捲動而一般切章會捲動")]

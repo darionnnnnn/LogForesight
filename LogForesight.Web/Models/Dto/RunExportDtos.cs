@@ -239,6 +239,9 @@ public sealed record ExportSignalGroupDto
     public IReadOnlyList<ExportStageCountDto> Stages { get; init; } = Array.Empty<ExportStageCountDto>();
     public int Count { get; init; }
     public int AffectedRuns { get; init; }
+
+    /// <summary>組內 Error／Fatal 等級的次數（source=log）；同一正規化訊息同時以 Warn 與 Error 出現時，count 含兩者</summary>
+    public int ErrorFatalCount { get; init; }
     public string FirstSeen { get; init; } = string.Empty;
     public string LastSeen { get; init; } = string.Empty;
     public IReadOnlyList<ExportDayCountDto> Daily { get; init; } = Array.Empty<ExportDayCountDto>();

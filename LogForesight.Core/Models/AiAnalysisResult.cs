@@ -63,10 +63,37 @@ internal static class AiJson
     }
 
     /// <summary>
-    /// 回覆是否有「開了卻沒收尾」的跡象：有 '{'，但括號（或字串）到結尾仍未閉合。
-    /// 與 <see cref="TryRepairTruncated"/> 同一套掃描，供診斷分辨「被截斷」與其他格式問題。
+    /// 回覆是否有「開了卻沒收尾」的跡象：從第一個 '{' 或 '[' 起算，括號（或字串）到結尾仍未閉合。
+    /// 只供診斷分辨「被截斷」與其他格式問題；陣列開頭也要算（<c>[{"a":1}</c> 是被截斷，不是沒有 JSON），
+    /// 所以不沿用只從 '{' 起算的 <see cref="TryRepairTruncated"/>，解析候選的順序與結果不受影響。
     /// </summary>
-    public static bool HasUnclosedBrackets(string raw) => TryRepairTruncated(raw) != null;
+    public static bool HasUnclosedBrackets(string raw)
+    {
+        var start = raw.IndexOfAny(new[] { '{', '[' });
+        if (start < 0) return false;
+
+        var depth = 0;
+        bool inString = false, escape = false;
+        foreach (var c in raw.AsSpan(start))
+        {
+            if (inString)
+            {
+                if (escape) { escape = false; }
+                else if (c == '\\') { escape = true; }
+                else if (c == '"') { inString = false; }
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"': inString = true; break;
+                case '{' or '[': depth++; break;
+                case '}' or ']': if (depth > 0) depth--; break;
+            }
+        }
+
+        return depth > 0 || inString;
+    }
 
     private static IEnumerable<string> Candidates(string raw)
     {

@@ -621,6 +621,11 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
     [InlineData("{\"a\":1}", false)]
     [InlineData("沒有大括號", false)]
     [InlineData("", false)]
+    [InlineData("[", true)]
+    [InlineData("[{\"a\":1}", true)]
+    [InlineData("[1,2", true)]
+    [InlineData("[]", false)]
+    [InlineData("[\n]", false)]
     public void HasUnclosedBrackets(string raw, bool expected) =>
         Assert.Equal(expected, AiJson.HasUnclosedBrackets(raw));
 

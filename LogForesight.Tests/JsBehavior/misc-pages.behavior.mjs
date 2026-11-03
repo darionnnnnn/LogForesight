@@ -571,6 +571,19 @@ const cases = {
         assert.equal(t.toasts[0].type, 'success');
         assert(!t.button.disabled, '完成後按鈕復原');
     },
+    async runs異常彙總缺affectedHosts欄位不拋例外() {
+        const inst = build('runs.js', ['function hostsOf('], '', '{ hostsOf }');
+        assert.deepEqual(inst.hostsOf({}), []);
+        assert.deepEqual(inst.hostsOf({ affectedHosts: null }), []);
+        assert.deepEqual(inst.hostsOf({ affectedHosts: ['A'] }), ['A']);
+    },
+    async runs等級值只認warn其餘為error() {
+        const inst = build('runs.js', ['function normalizeMinLevel('], '', '{ normalizeMinLevel }');
+        assert.equal(inst.normalizeMinLevel('warn'), 'warn');
+        assert.equal(inst.normalizeMinLevel('error'), 'error');
+        assert.equal(inst.normalizeMinLevel(undefined), 'error');
+        assert.equal(inst.normalizeMinLevel('WARN'), 'error');
+    },
     async runs匯出沒有資料時提示不同() {
         const empty = makeExport({ capabilities: ['ViewAll'], blob: { text: async () => '{"meta":{"hasData":false}}' } });
         await empty.inst.exportDiagnostics();

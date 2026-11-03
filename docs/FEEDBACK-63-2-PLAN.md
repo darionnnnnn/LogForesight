@@ -160,7 +160,7 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`。原因是 `ChatJsonA
 ### 改動
 
 - **B-1 證據**：`AiResponse` 多帶清洗前原文長度與頭尾（1,500／500 字）、`reasoning_content`／`reasoning` 欄位是否存在與長度、`finish_reason`（已有）；診斷 JSON 加這些欄位；`AiJsonDiagnostics.TryRead` 相容舊格式（缺欄為 null）。
-- **B-2 空陣列判定與無文法重試**：清洗後的內容去空白後是 `[]`、`{}` 或只有括號與換行 → 視為空回覆（類別 `empty`，診斷另標 `emptyShape: array|object`）；`ChatJsonAsync` 第二次起 `jsonMode:false`，重試提示加一句「可以先思考，最後輸出一個 JSON 物件」。成功路徑的 `RawContent` 仍是清洗後內容。
+- **B-2 空陣列判定與無文法重試**：清洗後的內容去空白後是 `[]`、`{}` 或只有括號與換行 → 視為空回覆（類別 `empty`，診斷另標 `emptyShape: array|object`）；含孤立代理字元的回覆（第 63 輪體檢：`TryParseDetailed` 擲 `ArgumentException`，一路炸到排程計 Failed）先把孤立代理字元換成 U+FFFD 再解析，類別記 `parse_other`；`ChatJsonAsync` 第二次起 `jsonMode:false`，重試提示加一句「可以先思考，最後輸出一個 JSON 物件」。成功路徑的 `RawContent` 仍是清洗後內容。
 - **B-3 schema**：`SchemaUpgrader` 加 `lf_daily_records.ai_degraded_attempts`；`DailyRecordRow`、`DailyAnalysisRecord` 對應欄位；`DB-SPEC` 同步。SQL Server／SQLite 型別照既有先例。
 - **B-4 降級語意**：`LogAnalysisService` 降級分支：標題依定案產生、`AiAnalyzed=false`、`AiPending=true`、`ai_degraded_attempts+1`，達上限時 `AiPending=false` 並在標題後綴改為「（AI 摘要已放棄：連續 3 次格式異常）」；`AiOutcome.AiDegraded=true`。`RetryAiAsync` 的低風險跳過與其他分支不變。**什麼算一次**：同一主機日每趟 AI 排程最多 +1，同趟內的 3 次 `ChatJsonAsync` 重試不算 3 次。
 - **B-5 計數與等級**：`AiAnalysisHostedService` 對 `AiDegraded` 計 `Failed`、不計 `Done`；`ChatJsonAsync` 最終失敗 `Log.Error`→`Log.Warn`；`aiFailureRate` 因此有值。
@@ -192,6 +192,7 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`。原因是 `ChatJsonA
 - **F-2** `KeepDomains` 加登錄機碼：`HKLM`、`HKCU`、`HKCR`、`HKU`、`HKCC`、`HKEY_LOCAL_MACHINE`、`HKEY_CURRENT_USER`、`HKEY_CLASSES_ROOT`、`HKEY_USERS`、`SOFTWARE`、`SYSTEM`、`Wow6432Node`。
 - **F-3** `DeidentifierSettings.From`：`AdSearchBase` 的每個 `DC=` 標籤進網域字典（`DC=brk,DC=local` → `brk`、`brk.local`）；`AdServers` 的主機部分已在。
 - **F-4** `meta.deidentification.notice` 補一句「群組名稱若是常見詞且長度在兩字以內不會被遮」。
+- **F-5**（第 63 輪體檢遺留，低）`Basic` 後純字母的 base64 與表單編碼（空白編成 `+`）形式的密鑰：前者改為「長度 ≥ 16 且 base64 可解碼」就遮；後者加進密鑰的編碼變體。
 
 ### 測試 / 驗收
 

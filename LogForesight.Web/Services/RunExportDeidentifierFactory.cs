@@ -105,7 +105,7 @@ public sealed record DeidentifierSettings
             Names = names,
             Urls = new List<string?> { s.PrtgUrl, s.AiBaseUrl },
             Domains = domains,
-            Accounts = new List<string?> { s.SmtpAccount, s.PrtgUsername },
+            Accounts = new List<string?> { s.SmtpAccount, s.PrtgUsername, s.UpdatedByAccount },
             Emails = emails
         };
     }
@@ -212,7 +212,12 @@ public sealed class RunExportDeidentifierFactory
         return new RunExportDeidentifierSource
         {
             Hosts = hosts.Select(h => new DeidentifierHost(
-                h.HostId, h.HostName, h.DisplayName, h.IpAddress, h.NetiqServer, h.OrphanedFromSentinel, h.RoleDesc)).ToList(),
+                    h.HostId, h.HostName, h.DisplayName, h.IpAddress, h.NetiqServer, h.OrphanedFromSentinel, h.RoleDesc))
+                // PRTG 數值取數的額外主機是使用者手填的主機名或 IP，不在主機清單裡，同樣是識別資訊
+                .Concat((settings.PrtgValueFetchExtraHosts ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => new DeidentifierHost(0, x, null, null, null, null, null)))
+                .ToList(),
             HostGroupNames = groups.Select(g => (string?)g.GroupName).ToList(),
             Users = users.Select(u => new DeidentifierUser(u.UserId, u.Account, u.DisplayName, u.Email)).ToList(),
             Sentinels = sentinels.Select(s => new DeidentifierSentinel(s.SentinelId, s.Name, s.BaseUrl, s.Username)).ToList(),

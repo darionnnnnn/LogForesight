@@ -479,6 +479,31 @@ public class BatchRunStoreSqlPushdownTests : IDisposable
     }
 
     [Fact]
+    public void EnumerateLines分頁讀取_每頁各自開關連線_結果完整且依序()
+    {
+        // 體檢輪：整段列舉抓著讀取交易會在 SQLite 非 WAL 模式擋住 recorder 的寫入，改成鍵集分頁、每頁讀完就釋放連線。
+        // 以「列舉期間建立了幾個 DbContext」證明分頁：超過一頁的資料至少要開兩次
+        var contexts = 0;
+        LfDbContext Counting() { contexts++; return NewContext(); }
+        var store = new EfJsonLogStore(Counting, "paged");
+        var total = EfJsonLogStore.EnumeratePageSize + 7;
+        store.AppendLines(Enumerable.Range(1, total).Select(i => $"{{\"i\":{i}}}").ToList());
+        var before = contexts;
+
+        var seen = new List<string>();
+        foreach (var line in store.EnumerateLines(null, null))
+        {
+            // 回呼途中對同一個 store 寫入：分頁之後沒有讀取交易在手上，不會被自己擋住
+            if (seen.Count == 0) store.AppendLine("{\"late\":true}");
+            seen.Add(line);
+        }
+
+        Assert.Equal(total + 1, seen.Count); // 途中追加的那一行在最後一頁被讀到（Seq 更大）
+        Assert.Equal(Enumerable.Range(1, total).Select(i => $"{{\"i\":{i}}}"), seen.Take(total));
+        Assert.True(contexts - before >= 2, $"列舉期間只建立 {contexts - before} 個 DbContext，沒有分頁");
+    }
+
+    [Fact]
     public void GetRecentErrors走逐行路徑_不呼叫緩衝版讀取()
     {
         // 門檻 0：每次量測都進最慢清單，可由操作名稱確認走了哪一條讀取路徑
