@@ -191,6 +191,12 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
     HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly) =>
         throw new NotImplementedException();
 
+    List<DailyAnalysisRecord> IAnalysisRecordQuery.QueryByHeadline(DateTime from, DateTime to, string headline, int take) =>
+        _records.Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date
+                && string.Equals(r.Headline, headline, StringComparison.Ordinal))
+            .OrderByDescending(r => r.Date.Date).ThenBy(r => r.HostId).ThenBy(r => r.RecordId)
+            .Take(Math.Max(take, 0)).ToList();
+
     List<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPendingAi(int batchSize, PendingAiQuery? query) =>
         PendingAiFake.Query(_records, batchSize, query);
 

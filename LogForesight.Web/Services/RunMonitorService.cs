@@ -363,7 +363,8 @@ public class RunMonitorService
     public RunDetailDto GetDetail(long runId)
     {
         var run = _runs.GetRun(runId) ?? throw DomainException.NotFound("找不到這次執行紀錄。");
-        var logs = _runs.GetLogs(runId);
+        // AI JSON 失敗診斷行只給匯出用（內容是整段回覆片段），不在執行詳情顯示
+        var logs = _runs.GetLogs(runId).Where(l => !IsDiagnosticsOnly(l)).ToList();
 
         return new RunDetailDto
         {
@@ -470,7 +471,8 @@ public class RunMonitorService
     public RunErrorSummaryDto GetErrorSummary(int days, string minLevel = MinLevelError)
     {
         var includeWarn = ParseMinLevel(minLevel);
-        var logs = _runs.GetRecentLogs(days, includeWarn);
+        // 診斷行（AiJsonDiagnostics）只給匯出用：不是這趟的新問題，也不該在彙總裡成組
+        var logs = _runs.GetRecentLogs(days, includeWarn).Where(l => !IsDiagnosticsOnly(l)).ToList();
         var recentRuns = _runs.GetRecentRuns(days, null);
         var runsById = recentRuns.ToDictionary(r => r.RunId);
 
@@ -524,6 +526,10 @@ public class RunMonitorService
         if (string.Equals(minLevel, MinLevelWarn, StringComparison.OrdinalIgnoreCase)) return true;
         throw DomainException.Validation("minLevel 只接受 error 或 warn。");
     }
+
+    /// <summary>AI JSON 失敗診斷行：以 logger 名稱判定（<see cref="AiJsonDiagnostics.LoggerName"/>），不比對訊息內容</summary>
+    private static bool IsDiagnosticsOnly(BatchRunLog log) =>
+        string.Equals(log.Logger, AiJsonDiagnostics.LoggerName, StringComparison.Ordinal);
 
     /// <summary>以 logger 名稱判定（共用 <see cref="BatchRunRecorder.ExemptWarnLogger"/>），不比對訊息內容</summary>
     private static bool IsExemptWarn(BatchRunLog log) =>

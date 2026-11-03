@@ -22,6 +22,15 @@ public class BatchRunRecorder : IDisposable
     /// </summary>
     public const string ExemptWarnLogger = "SqlPerformanceMonitor";
 
+    /// <summary>
+    /// 不計入 WarnCount 的 logger 短名稱（依名稱判定，不比對訊息內容）：慢 SQL 監控，以及
+    /// AI JSON 失敗診斷（<see cref="AiJsonDiagnostics.LoggerName"/>，只給匯出用的證據行，
+    /// 不是這趟分析的新問題）。兩者仍照常寫入執行紀錄。執行監控頁（RunMonitorService）共用此判定。
+    /// </summary>
+    public static bool IsWarnCountExemptLogger(string? loggerName) =>
+        string.Equals(loggerName, ExemptWarnLogger, StringComparison.Ordinal)
+        || string.Equals(loggerName, AiJsonDiagnostics.LoggerName, StringComparison.Ordinal);
+
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;
     private readonly BatchRunNLogTarget? _target;
@@ -429,7 +438,7 @@ public class BatchRunRecorder : IDisposable
             }
             else if (level == "Warn")
             {
-                if (!string.Equals(loggerName, ExemptWarnLogger, StringComparison.Ordinal))
+                if (!IsWarnCountExemptLogger(loggerName))
                     _run.WarnCount++;
             }
         }

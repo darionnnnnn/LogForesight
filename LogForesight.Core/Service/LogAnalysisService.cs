@@ -23,6 +23,12 @@ public class LogAnalysisService
     /// <summary>標題欄位（headline）的長度上限——比敘事欄位更短，一句話而非一段話</summary>
     private const int MaxHeadlineChars = 60;
 
+    /// <summary>
+    /// AI 重試耗盡但有回覆原文時的降級標題（原文保留）。「什麼算一個格式異常案例」就看紀錄標題是否
+    /// **精確等於**這個值——產生處與匯出的查詢共用此常數，不各寫一份字面值。
+    /// </summary>
+    public const string AiFormatAnomalyHeadline = "AI 回覆格式異常，以下為原始內容";
+
     private readonly EventLogService _eventLogService;
     private readonly IAiService _aiService;
     private readonly IAnalysisRecordStore _historyService;
@@ -557,7 +563,8 @@ public class LogAnalysisService
         var (headline, summary, trendAssessment, action, riskLevel, riskBasisOverride, aiAnalyzed) = await RunMainAnalysisAsync(
             pendingRecord.Date, pendingRecord.TopIssues, pendingRecord.ErrorCount, pendingRecord.WarningCount,
             pendingRecord.AuditEventCount, history, pendingRecord.TrendAlerts, correlations,
-            pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel, ct);
+            pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel,
+            _hostId != 0 ? _hostId : pendingRecord.HostId, ct);
         var riskBasis = riskBasisOverride ?? pendingRecord.RiskBasis;
 
         PreparedRiskReport? reportDraft = null;
@@ -657,7 +664,7 @@ public class LogAnalysisService
         DateTime date, List<LogIssueSignature> issues, int errorCount, int warningCount, int auditCount,
         List<DailyAnalysisRecord> history, List<string> trendAlerts, List<CorrelationFinding> correlations,
         bool dataIncomplete, List<string> uncoveredChecks,
-        string ruleRisk, CancellationToken ct)
+        string ruleRisk, long hostId, CancellationToken ct)
     {
         var prompt = AnalysisPromptBuilder.BuildPrompt(date, issues, errorCount, warningCount, auditCount, history,
             trendAlerts, correlations, dataIncomplete, uncoveredChecks, _serverDescription, _hostOs);
@@ -668,7 +675,8 @@ public class LogAnalysisService
             validate: r => r.RiskLevel.Length > 0 && r.Headline.Length > 0 && r.Story.Length > 0
                            && r.Headline.Length <= MaxHeadlineChars && r.Story.Length <= MaxSummaryChars
                            && r.TrendStory.Length <= MaxSummaryChars && r.Action.Length <= MaxSummaryChars,
-            label: $"daily-{date:yyyyMMdd}", ct: ct);
+            // label 帶主機識別（第 63 輪 F-3）：失敗診斷才對得回「哪一台、哪一天」
+            label: $"daily-{date:yyyyMMdd}-h{hostId}", ct: ct);
 
         if (result.Success)
         {
@@ -690,8 +698,9 @@ public class LogAnalysisService
             // 仍算完成 AI 分析，只是白話翻譯品質降級
             // 原文是格式不合格的自由文字，不從中推風險（單字比對會把「其中」「中斷」誤判成等級）；風險維持規則層判定
             var riskLevel = ruleRisk;
-            Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", date, result.Attempts);
-            return ("AI 回覆格式異常，以下為原始內容",
+            Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）：{Error}",
+                date, result.Attempts, result.Error);
+            return (AiFormatAnomalyHeadline,
                 $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{TextTruncation.Truncate(result.RawContent, MaxSummaryChars)}",
                 string.Empty, string.Empty, riskLevel, null, true);
         }

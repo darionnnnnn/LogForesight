@@ -528,6 +528,12 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .Select(r => (r.HostId, r.Date.Date))
             .ToHashSet();
 
+    public List<DailyAnalysisRecord> QueryByHeadline(DateTime from, DateTime to, string headline, int take) =>
+        _records.Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date
+                && string.Equals(r.Headline, headline, StringComparison.Ordinal))
+            .OrderByDescending(r => r.Date.Date).ThenBy(r => r.HostId).ThenBy(r => r.RecordId)
+            .Take(Math.Max(take, 0)).ToList();
+
     public List<DailyAnalysisRecord> QueryPendingAi(int batchSize, PendingAiQuery? query = null) =>
         PendingAiFake.Query(_records, batchSize, query);
 

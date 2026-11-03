@@ -878,6 +878,44 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
+    public void 異常彙總_AI診斷logger的行完全排除_warn模式也看不到()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));
+        SeedLog(run, "Warn", "{\"label\":\"daily-20261101-h1\"}", logger: AiJsonDiagnostics.LoggerName);
+        SeedLog(run, "Warn", "一般警告", logger: "Other");
+        SeedLog(run, "Error", "診斷 logger 的 Error 也不顯示", logger: AiJsonDiagnostics.LoggerName);
+        // 訊息長得像診斷、logger 不同：不得被當成診斷（依 logger 名稱，不比對訊息）
+        SeedLog(run, "Warn", "{\"label\":\"daily-20261101-h2\"}", logger: "Other");
+        var service = Create();
+
+        var warn = service.GetErrorSummary(7, "warn").Groups;
+        var error = service.GetErrorSummary(7).Groups;
+
+        Assert.DoesNotContain(warn, g => g.Message.Contains("診斷 logger"));
+        Assert.Equal(2, warn.Count);
+        Assert.Contains(warn, g => g.Message == "一般警告");
+        Assert.Contains(warn, g => g.Message.Contains("h2"));
+        Assert.DoesNotContain(warn, g => g.Message.Contains("h1"));
+        Assert.Empty(error);
+    }
+
+    [Fact]
+    public void 執行詳情_Logs排除AI診斷logger的行_其他行照常()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));
+        SeedLog(run, "Warn", "診斷行", logger: AiJsonDiagnostics.LoggerName);
+        SeedLog(run, "Warn", "慢查詢", logger: BatchRunRecorder.ExemptWarnLogger);
+        SeedLog(run, "Info", "一般資訊");
+        SeedLog(run, "Warn", "診斷行（同訊息、不同 logger）", logger: "Other");
+
+        var detail = Create().GetDetail(run);
+
+        Assert.DoesNotContain(detail.Logs, l => l.Logger == AiJsonDiagnostics.LoggerName);
+        Assert.Equal(3, detail.Logs.Count);
+        Assert.Contains(detail.Logs, l => l.Logger == BatchRunRecorder.ExemptWarnLogger);
+    }
+
+    [Fact]
     public void 異常彙總_組內等級取最高()
     {
         var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1), exitCode: 1, errorCount: 2);
