@@ -8,7 +8,8 @@
   - 狀態輪詢：`GET /api/admin/schedule/status`，回傳當前執行狀態（`SchedulerRunState`）。
   - 手動觸發：`POST /api/admin/schedule/run`，觸發立即執行（`SchedulerService.TriggerNow`）。
   - 中止執行：`POST /api/admin/schedule/cancel`，發出取消訊號中斷進行中的執行。
-  - 執行紀錄：`GET /api/runs/list`（清單）、`GET /api/runs/summary`（執行總表）、`GET /api/runs/errors`（異常彙總）、`GET /api/runs/{runId}`（單筆明細）。
+  - 執行紀錄：`GET /api/runs/list`（清單）、`GET /api/runs/summary`（執行總表）、`GET /api/runs/errors`（異常彙總，`minLevel=error|warn`）、`GET /api/runs/export`（診斷匯出）、`GET /api/runs/{runId}`（單筆明細）。
+  - 診斷匯出：只有具 `ViewAll` 的角色可用（Dev、Admin），serverAdmin 看不到按鈕且 API 回 403。內容是收斂後的訊號組、異常趟、階段統計、每日狀態、設定背景與 AI 回覆格式異常案例，一律去識別化；代號只在單一檔案內有效，沒有對照表，可用保留的 `runId` 與時間回頁面核對。遮不乾淨時回 `export_deidentification_failed`，不給檔案。事件文字無法保證完全遮除。
   - 排程設定：`GET`／`PUT /api/admin/schedule/options`。
   - 台數預覽：`GET /api/admin/schedule/run-preview`，依選取範圍與執行模式試算預計執行的主機台數。
   - AI 排程：`GET /api/admin/schedule/ai-status`、`POST /api/admin/schedule/ai-run`（取數執行中回 409「取數執行中，AI 分析會自動跟隨取數進度」）、`POST /api/admin/schedule/ai-cancel`。

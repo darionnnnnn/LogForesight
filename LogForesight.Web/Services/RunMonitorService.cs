@@ -472,8 +472,8 @@ public class RunMonitorService
 
     /// <summary>
     /// 異常彙總：把近 N 天的 Error/Fatal 依訊息聚合。
-    /// 回答的是「這是個案還是通案」——同一個錯誤在 20 台機器上出現，
-    /// 跟只在一台上出現，處理方式完全不同。
+    /// 判斷個案或通案看影響趟數（去重 RunId）。「執行站台」是跑這趟的主機，不是被分析的主機，
+    /// 通常只有一個值，不能拿來判斷影響幾台。
     /// </summary>
     public RunErrorSummaryDto GetErrorSummary(int days, string minLevel = MinLevelError)
     {
