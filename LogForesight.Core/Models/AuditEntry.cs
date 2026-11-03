@@ -199,6 +199,9 @@ public static class AuditActions
     // 校準數值匯出（docs/archive/FEEDBACK-37-PLAN.md 批次A4）
     public const string CalibrationExport = "calibration_export";
 
+    /// <summary>排程作業診斷匯出（第 63 輪）：DetailJson 只含天數、組數、趟數、位元組數與各類代號數，不含任何內容</summary>
+    public const string RunDiagnosticsExport = "run_diagnostics_export";
+
     /// <summary>處理說明 AI 整理（回饋第 50 輪批次C-3）：DetailJson 只含長度／問題名稱／結果，不含原文與輸出</summary>
     public const string AiNoteTidy = "ai_note_tidy";
 

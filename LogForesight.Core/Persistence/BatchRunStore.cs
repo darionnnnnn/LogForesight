@@ -426,17 +426,29 @@ public class BatchRunStore
     /// </summary>
     public List<BatchRunLog> GetRecentLogs(int days, bool includeWarn)
     {
-        var cutoff = DateTime.Today.AddDays(-days + 1);
         var result = new List<BatchRunLog>();
 
-        // 與 GetRecentRuns 同一套：SQL 端粗篩（含緩衝），業務時間與 Level 的判斷仍在記憶體端
-        ForEachLog(cutoff.AddDays(-AppendTimeBufferDays), null, l =>
+        ForEachRecentLog(days, l =>
         {
-            if (l.LoggedAt.Date < cutoff) return;
             if (l.Level is "Error" or "Fatal" || (includeWarn && l.Level == "Warn")) result.Add(l);
         });
 
         return result.OrderByDescending(l => l.LoggedAt).ToList();
+    }
+
+    /// <summary>
+    /// 逐筆處理近 N 天（<see cref="BatchRunLog.LoggedAt"/> 的日期不早於 [今天-N+1]）的全部診斷行，不緩衝。
+    /// 與 <see cref="GetRecentRuns"/> 同一套：SQL 端粗篩（含緩衝），業務時間的判斷在記憶體端。
+    /// 異常彙總與診斷匯出共用這個期間定義，兩邊的次數才對得上。
+    /// </summary>
+    public void ForEachRecentLog(int days, Action<BatchRunLog> action)
+    {
+        var cutoff = DateTime.Today.AddDays(-days + 1);
+        ForEachLog(cutoff.AddDays(-AppendTimeBufferDays), null, l =>
+        {
+            if (l.LoggedAt.Date < cutoff) return;
+            action(l);
+        });
     }
 
     /// <summary>

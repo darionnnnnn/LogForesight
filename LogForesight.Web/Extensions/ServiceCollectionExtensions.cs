@@ -455,6 +455,17 @@ public static class ServiceCollectionExtensions
         });
         services.AddScoped<RunMonitorService>();
 
+        // 排程作業診斷匯出的內容組裝（第 63 輪批次 C）：Scoped（依賴 Scoped 的 RunMonitorService）；
+        // 遮罩器每次匯出由工廠建新實例（代號只在單一檔案內穩定），字典來源讀取失敗在建立時就中止
+        services.AddScoped<IRunExportService>(sp => new RunExportService(
+            sp.GetRequiredService<BatchRunStore>(),
+            sp.GetRequiredService<RunMonitorService>(),
+            sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetRequiredService<ScheduleOptionsStore>(),
+            sp.GetRequiredService<IHostStore>(),
+            sp.GetRequiredService<IAnalysisRecordQuery>(),
+            () => sp.GetRequiredService<RunExportDeidentifierFactory>().Create()));
+
         // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。

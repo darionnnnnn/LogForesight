@@ -22,6 +22,9 @@ public class BatchRunRecorder : IDisposable
     /// </summary>
     public const string ExemptWarnLogger = "SqlPerformanceMonitor";
 
+    /// <summary>執行輸出（<c>IRunConsole</c> 的白話訊息）寫進執行紀錄時的 logger 名稱；寫入端與診斷匯出的判讀共用</summary>
+    public const string OutputLogger = "Output";
+
     /// <summary>
     /// 不計入 WarnCount 的 logger 短名稱（依名稱判定，不比對訊息內容）：慢 SQL 監控，以及
     /// AI JSON 失敗診斷（<see cref="AiJsonDiagnostics.LoggerName"/>，只給匯出用的證據行，
@@ -286,7 +289,7 @@ public class BatchRunRecorder : IDisposable
             if (_outputWritten < OutputHeadLimit)
             {
                 _outputWritten++;
-                Append("Info", "Output", message, null);
+                Append("Info", OutputLogger, message, null);
                 return;
             }
 
@@ -315,12 +318,12 @@ public class BatchRunRecorder : IDisposable
             if (_outputFlushed) return;
             _outputFlushed = true;
             if (_outputSkipped > 0)
-                Append("Info", "Output", $"（中間略過 {_outputSkipped} 行輸出）", null);
+                Append("Info", OutputLogger, $"（中間略過 {_outputSkipped} 行輸出）", null);
             // 保留行的時間是當下記的：尾段才寫入不代表它們都發生在結束時刻
             while (_outputTail.Count > 0)
             {
                 var (loggedAt, message) = _outputTail.Dequeue();
-                Append("Info", "Output", message, null, loggedAt);
+                Append("Info", OutputLogger, message, null, loggedAt);
             }
         }
     }

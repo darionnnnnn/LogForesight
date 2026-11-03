@@ -13,15 +13,47 @@ public class LogAnalysisService
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     /// <summary>低風險日定案文字（統計段與 <see cref="RetryAiAsync"/> 的低風險跳過共用）</summary>
-    private const string LowRiskHeadline = "今日狀況正常，無需處理";
+    public const string LowRiskHeadline = "今日狀況正常，無需處理";
     private const string LowRiskSummary = "今日無異常訊號，規則/趨勢/慢速趨勢/關聯四層檢查全數通過。";
 
     /// <summary>敘事欄位（story/trend_story/action）的合理長度上限。這些是一到兩句話的白話敘述，
-    /// 不該超過這個長度，超過視為模型異常重複輸出（JSON 語法可能仍合法，但內容不合理），觸發 JSON 重試</summary>
-    private const int MaxSummaryChars = 600;
+    /// 不該超過這個長度，超過視為模型異常重複輸出（JSON 語法可能仍合法，但內容不合理），觸發 JSON 重試。
+    /// 公開是為了讓診斷匯出的說明與案例回覆形狀判定引用同一個值，不各寫一份</summary>
+    public const int MaxSummaryChars = 600;
 
     /// <summary>標題欄位（headline）的長度上限——比敘事欄位更短，一句話而非一段話</summary>
-    private const int MaxHeadlineChars = 60;
+    public const int MaxHeadlineChars = 60;
+
+    /// <summary>格式異常降級摘要的說明前綴（嘗試次數前段）；產生處（<see cref="BuildAiFormatAnomalySummary"/>）與
+    /// 診斷匯出的解析（<see cref="TryParseAiFormatAnomalySummary"/>）共用，不各寫一份字面值</summary>
+    public const string AiFormatAnomalySummaryPrefixHead = "（AI 回覆經 ";
+
+    /// <summary>格式異常降級摘要的說明前綴（嘗試次數後段）</summary>
+    public const string AiFormatAnomalySummaryPrefixTail = " 次嘗試仍未通過 JSON 檢查，保留原文供參考）";
+
+    /// <summary>組出格式異常降級的摘要：說明前綴＋截斷後的回覆原文</summary>
+    internal static string BuildAiFormatAnomalySummary(int attempts, string rawContent) =>
+        $"{AiFormatAnomalySummaryPrefixHead}{attempts}{AiFormatAnomalySummaryPrefixTail}{TextTruncation.Truncate(rawContent, MaxSummaryChars)}";
+
+    /// <summary>
+    /// 把格式異常降級摘要拆成「嘗試次數」與「保留的回覆原文」。前綴不存在或次數解析不到時，
+    /// <paramref name="attempts"/> 為 null，<paramref name="reply"/> 為整段摘要（不剝除任何內容）；回傳值表示前綴是否存在。
+    /// </summary>
+    public static bool TryParseAiFormatAnomalySummary(string? summary, out int? attempts, out string reply)
+    {
+        attempts = null;
+        reply = summary ?? string.Empty;
+        if (!reply.StartsWith(AiFormatAnomalySummaryPrefixHead, StringComparison.Ordinal)) return false;
+
+        var tailAt = reply.IndexOf(AiFormatAnomalySummaryPrefixTail, AiFormatAnomalySummaryPrefixHead.Length, StringComparison.Ordinal);
+        if (tailAt < 0) return false;
+
+        var digits = reply.Substring(AiFormatAnomalySummaryPrefixHead.Length, tailAt - AiFormatAnomalySummaryPrefixHead.Length);
+        if (int.TryParse(digits, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n))
+            attempts = n;
+        reply = reply[(tailAt + AiFormatAnomalySummaryPrefixTail.Length)..];
+        return true;
+    }
 
     /// <summary>
     /// AI 重試耗盡但有回覆原文時的降級標題（原文保留）。「什麼算一個格式異常案例」就看紀錄標題是否
@@ -701,7 +733,7 @@ public class LogAnalysisService
             Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）：{Error}",
                 date, result.Attempts, result.Error);
             return (AiFormatAnomalyHeadline,
-                $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{TextTruncation.Truncate(result.RawContent, MaxSummaryChars)}",
+                BuildAiFormatAnomalySummary(result.Attempts, result.RawContent),
                 string.Empty, string.Empty, riskLevel, null, true);
         }
 

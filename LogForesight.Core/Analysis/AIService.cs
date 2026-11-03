@@ -472,7 +472,7 @@ public class AIService : IAiService
                     // 印出回覆預覽方便診斷（截斷、前言文字、格式跑掉等），不然完全是黑盒子；
                     // 只取頭尾各一截、控制在數百字元內，不是把整段回覆存進去
                     var preview = PreviewForLog(response.Content);
-                    Log.Warn("JSON 解析失敗（第 {Attempt}/{Total} 次），型別={Type}，回覆長度={ResponseChars}，預覽：{Preview}",
+                    Log.Warn(JsonParseFailedTemplate,
                         attempt, totalAttempts, typeof(T).Name, response.Content.Length, preview);
                 }
                 else
@@ -480,7 +480,7 @@ public class AIService : IAiService
                     lastError = "AI 回覆內容未通過檢查（可能為異常重複文字或欄位不合理）";
                     // JSON 語法沒問題、是內容合理性沒過關：記錄解析出的物件本身（本來就是我們定義的
                     // 小結構，不是原始長文字），才看得出究竟是哪個欄位不合理
-                    Log.Warn("JSON 內容檢查未通過（第 {Attempt}/{Total} 次），型別={Type}，解析結果：{Parsed}",
+                    Log.Warn(JsonValidationFailedTemplate,
                         attempt, totalAttempts, typeof(T).Name, SafeSerialize(parsed));
                 }
 
@@ -518,6 +518,23 @@ public class AIService : IAiService
     /// 改文案會讓「要不要附上回覆片段」的判定靜默失效（訊息照樣顯示，片段卻消失）。
     /// </summary>
     internal const string JsonContractError = "AI 回覆不是合法 JSON 或格式不符契約";
+
+    // 逐次嘗試的兩個 Warn 範本。診斷匯出的「歷次失敗統計」從已寫入執行紀錄的訊息比對字首與型別標記，
+    // 所以字首、型別標記、回覆片段標記都抽成常數，產生處與匯出共用，不各寫一份字面值
+    // （改文案時兩邊同步；比對不到只會讓統計變 0，不影響任何判定）。
+    internal const string JsonParseFailedPrefix = "JSON 解析失敗（第 ";
+    internal const string JsonValidationFailedPrefix = "JSON 內容檢查未通過（第 ";
+    internal const string JsonFailureTypeMarker = "，型別=";
+    internal const string JsonParseFailedPreviewMarker = "預覽：";
+    internal const string JsonValidationParsedMarker = "解析結果：";
+
+    private const string JsonParseFailedTemplate =
+        JsonParseFailedPrefix + "{Attempt}/{Total} 次）" + JsonFailureTypeMarker + "{Type}，回覆長度={ResponseChars}，"
+        + JsonParseFailedPreviewMarker + "{Preview}";
+
+    private const string JsonValidationFailedTemplate =
+        JsonValidationFailedPrefix + "{Attempt}/{Total} 次）" + JsonFailureTypeMarker + "{Type}，"
+        + JsonValidationParsedMarker + "{Parsed}";
 
     /// <summary>
     /// AI 契約失敗時附加於錯誤訊息的回覆片段長度上限（300 字元）。

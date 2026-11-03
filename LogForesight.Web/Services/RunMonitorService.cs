@@ -335,6 +335,13 @@ public class RunMonitorService
 
     private string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
 
+    /// <summary>
+    /// 單筆執行的狀態（與列表、詳情同一份判定）。診斷匯出逐趟分類時使用，
+    /// 「本行程是否仍持有這筆」的判斷在這個服務內，匯出不重寫一份。
+    /// </summary>
+    public string StatusOfRun(BatchRun run, DateTime now) =>
+        BatchRunStatus.Compute(run, now, StuckThreshold, _isHeld(run));
+
     private RunDayHostStatusDto BuildCell(string date, List<BatchRun> dayRuns)
     {
         if (dayRuns.Count == 0)

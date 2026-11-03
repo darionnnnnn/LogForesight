@@ -24,7 +24,7 @@ namespace LogForesight.Web.Services;
 /// </list>
 /// 單一執行緒使用為主；代號配發內部有鎖，同一實例被並行呼叫時代號仍一致。
 /// </summary>
-public sealed class RunExportDeidentifier
+public sealed class RunExportDeidentifier : IRunExportMasker
 {
     private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
@@ -513,8 +513,13 @@ public sealed class RunExportDeidentifier
     /// 回傳類別 → 次數（不含原值）；空字典＝乾淨。內容不是合法 JSON 時回 <c>unparsable</c>。
     /// <paramref name="allowedLiterals"/> 是整串相等時放行的值（例如 <c>appVersion</c> 這類刻意不遮罩的欄位）。
     /// 保留詞不在字典內，因此不算殘留。
+    /// <paramref name="scanPropertyNames"/> 為 false 時只掃值、不掃屬性名稱：匯出的欄位名是程式固定的結構，
+    /// 站台的字典卻可能有 <c>status</c>、<c>count</c> 這類常見詞（帳號、群組名稱都可以這樣取），
+    /// 連欄位名一起掃，該站台每次匯出都會失敗。呼叫端用 false 時，**動態鍵只能是程式自己產生的值**，
+    /// 不得把資料內容當成屬性名稱。預設 true（逐一掃描屬性名稱），既有呼叫端行為不變。
     /// </summary>
-    public IReadOnlyDictionary<string, int> ScanResidual(string json, IEnumerable<string>? allowedLiterals = null)
+    public IReadOnlyDictionary<string, int> ScanResidual(string json, IEnumerable<string>? allowedLiterals = null,
+        bool scanPropertyNames = true)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         var allowed = allowedLiterals is null
@@ -550,7 +555,7 @@ public sealed class RunExportDeidentifier
                     case JsonValueKind.Object:
                         foreach (var p in el.EnumerateObject())
                         {
-                            ScanString(p.Name, allowed, counts);
+                            if (scanPropertyNames) ScanString(p.Name, allowed, counts);
                             stack.Push(p.Value);
                         }
 
@@ -566,9 +571,9 @@ public sealed class RunExportDeidentifier
     /// 殘留掃描失敗即停：有任何殘留就丟 <see cref="RunExportDeidentificationException"/>，呼叫端不得輸出任何檔案。
     /// 伺服器 log 只記類別與次數。
     /// </summary>
-    public void EnsureNoResidual(string json, IEnumerable<string>? allowedLiterals = null)
+    public void EnsureNoResidual(string json, IEnumerable<string>? allowedLiterals = null, bool scanPropertyNames = true)
     {
-        var residual = ScanResidual(json, allowedLiterals);
+        var residual = ScanResidual(json, allowedLiterals, scanPropertyNames);
         if (residual.Count == 0) return;
 
         Log.Warn("匯出去識別化結果掃描發現殘留（{0}），已中止匯出。", string.Join("、", residual.Select(kv => $"{kv.Key}={kv.Value}")));
