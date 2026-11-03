@@ -78,8 +78,8 @@ public class RunsController : ControllerBase
     private int MaxRunDays() => Math.Max(90, _settingsStore.Get().RunLogRetentionDays);
 
     [HttpGet("errors")]
-    public ApiResponse<List<RunErrorGroupDto>> Errors([FromQuery] int days = 14) =>
-        ApiResponse<List<RunErrorGroupDto>>.Ok(_service.GetErrorSummary(Math.Clamp(days, 1, MaxRunDays())));
+    public ApiResponse<RunErrorSummaryDto> Errors([FromQuery] int days = 14, [FromQuery] string minLevel = RunMonitorService.MinLevelError) =>
+        ApiResponse<RunErrorSummaryDto>.Ok(_service.GetErrorSummary(Math.Clamp(days, 1, MaxRunDays()), minLevel));
 
     /// <summary>執行紀錄分頁（回饋十七輪批次F-3）：每一筆 BatchRun 的扁平清單</summary>
     [HttpGet("list")]

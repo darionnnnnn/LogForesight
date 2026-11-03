@@ -440,4 +440,89 @@ public class BatchRunStoreSqlPushdownTests : IDisposable
         Assert.Equal("SRV-OLD", Assert.Single(store.GetRecentRuns(7, null)).HostName);
         Assert.Equal("SRV-OLD", store.GetRun(1)!.HostName);
     }
+
+    // ── 第 63 輪批次A：逐行讀取 ────────────────────────────────────────
+
+    [Fact]
+    public void ForEachLog與緩衝版結果相同_含損毀行與空白行()
+    {
+        var store = NewBatchRunStore();
+        var runId = store.StartRun(Run("SRV-01", DateTime.Now));
+        store.AppendLog(new BatchRunLog { RunId = runId, Level = "Warn", Message = "w1" });
+        AppendRaw("batch_run_logs", "{壞掉的 JSON");
+        AppendRaw("batch_run_logs", "   ");
+        store.AppendLog(new BatchRunLog { RunId = runId, Level = "Error", Message = "e1" });
+
+        var streamed = new List<BatchRunLog>();
+        store.ForEachLog(DateTime.Today.AddDays(-1), null, streamed.Add);
+
+        // GetLogs 走緩衝版（ReadLines → JsonLogParser）
+        Assert.Equal(new[] { "w1", "e1" }, streamed.Select(l => l.Message));
+        Assert.Equal(store.GetLogs(runId).Select(l => l.LogId), streamed.Select(l => l.LogId));
+    }
+
+    [Fact]
+    public void ForEachLog空範圍_不呼叫處理函式()
+    {
+        var store = NewBatchRunStore();
+        var runId = store.StartRun(Run("SRV-01", DateTime.Now));
+        store.AppendLog(new BatchRunLog { RunId = runId, Level = "Error", Message = "e1" });
+        Assert.Empty(CollectLogs(store, DateTime.Now.AddDays(10), null)); // 下界在未來
+        Assert.Empty(CollectLogs(store, null, DateTime.Now.AddDays(-10))); // 上界在過去
+    }
+
+    private static List<BatchRunLog> CollectLogs(BatchRunStore store, DateTime? from, DateTime? to)
+    {
+        var list = new List<BatchRunLog>();
+        store.ForEachLog(from, to, list.Add);
+        return list;
+    }
+
+    [Fact]
+    public void GetRecentErrors走逐行路徑_不呼叫緩衝版讀取()
+    {
+        // 門檻 0：每次量測都進最慢清單，可由操作名稱確認走了哪一條讀取路徑
+        var monitor = new SqlPerformanceMonitor(thresholdMs: 0);
+        var store = new BatchRunStore(
+            new EfJsonLogStore(NewContext, "batch_runs", monitor),
+            new EfJsonLogStore(NewContext, "batch_run_logs", monitor));
+        var runId = store.StartRun(Run("SRV-01", DateTime.Now));
+        store.AppendLog(new BatchRunLog { RunId = runId, Level = "Error", Message = "boom" });
+
+        var errors = store.GetRecentErrors(3);
+
+        Assert.Equal("boom", Assert.Single(errors).Message);
+        var operations = monitor.Snapshot().TopSlowOperations.Select(o => o.Operation).ToList();
+        Assert.Contains("log:batch_run_logs:EnumerateLinesByDate", operations);
+        Assert.DoesNotContain("log:batch_run_logs:ReadLinesByDate", operations);
+    }
+
+    [Fact]
+    public void GetRecentLogs_includeWarn才含Warn_且行為與GetRecentErrors一致()
+    {
+        var store = NewBatchRunStore();
+        var runId = store.StartRun(Run("SRV-01", DateTime.Now));
+        store.AppendLog(new BatchRunLog { RunId = runId, Level = "Warn", Message = "w", LoggedAt = DateTime.Today.AddHours(2) });
+        store.AppendLog(new BatchRunLog { RunId = runId, Level = "Error", Message = "e", LoggedAt = DateTime.Today.AddHours(3) });
+
+        Assert.Equal(new[] { "e" }, store.GetRecentLogs(3, includeWarn: false).Select(l => l.Message));
+        Assert.Equal(new[] { "e", "w" }, store.GetRecentLogs(3, includeWarn: true).Select(l => l.Message));
+        Assert.Equal(store.GetRecentErrors(3).Select(l => l.LogId), store.GetRecentLogs(3, false).Select(l => l.LogId));
+    }
+
+    [Fact]
+    public void GetRunsByIds_窗口內與窗口外的趟次都取得到_不存在的不在結果內()
+    {
+        var store = NewBatchRunStore();
+        // RunId 單調遞增：窗口外的舊列號碼小於窗口內最小者，才會觸發退回全撈
+        var old = store.StartRun(Run("SRV-OLD", DateTime.Now.AddDays(-400)));
+        var inWindow = store.StartRun(Run("SRV-01", DateTime.Now));
+        Backdate("batch_runs", 1, DateTime.Today.AddDays(-400)); // 附加時間也在保留窗口之外
+
+        var found = store.GetRunsByIds(new HashSet<long> { inWindow, old, 99999 });
+
+        Assert.Equal("SRV-01", found[inWindow].HostName);
+        Assert.Equal("SRV-OLD", found[old].HostName);
+        Assert.DoesNotContain(99999, found.Keys);
+    }
 }

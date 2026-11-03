@@ -241,6 +241,24 @@ public sealed class EfJsonLogStore
     }
 
     /// <summary>
+    /// <see cref="ReadLines(DateTime?,DateTime?)"/> 的不緩衝版本：依附加順序逐行吐出，不先 <c>ToList</c>，
+    /// 記憶體峰值不隨範圍內的行數成長。篩選語意與緩衝版完全相同（沿用 <see cref="ApplyDateRange"/>）。
+    /// 注意：回傳的是延遲列舉——DbContext 與連線在列舉結束（或呼叫端提早 Dispose 列舉器）時才釋放，
+    /// 慢操作量測（<c>log:{key}:EnumerateLinesByDate</c>）也涵蓋整段列舉，而不是只量到建立查詢。
+    /// 呼叫端不得在列舉途中對同一個 store 寫入長交易（SQLite 單寫入者）。
+    /// </summary>
+    public IEnumerable<string> EnumerateLines(DateTime? from, DateTime? to)
+    {
+        using var __perf = _performance.Measure($"log:{_key}:EnumerateLinesByDate");
+        using var ctx = _contextFactory();
+        var query = ApplyDateRange(ctx.LogLines.AsNoTracking().Where(l => l.LogKey == _key), from, to)
+            .OrderBy(l => l.Seq)
+            .Select(l => l.Line);
+        foreach (var line in query.AsEnumerable())
+            yield return line;
+    }
+
+    /// <summary>
     /// 全表分頁讀取（依附加順序，預設新到舊），SQL 端 OFFSET/FETCH，不必先讀全表。
     /// 僅適合「完全不篩選、只是要分頁瀏覽全部」的情境——若還有其他篩選條件，
     /// 呼叫端應改用 <see cref="ReadLines(DateTime?,DateTime?)"/> 撈候選集後在記憶體精確過濾與分頁。

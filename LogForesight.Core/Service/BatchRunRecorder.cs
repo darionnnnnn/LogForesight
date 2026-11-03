@@ -20,7 +20,7 @@ public class BatchRunRecorder : IDisposable
     /// 慢 SQL 效能監控器名稱：資料層效能告警 ≠ 這趟分析有問題。
     /// 慢查詢 Warn 仍照常寫入執行詳情供排查，但不計入 WarnCount，避免整趟成功執行被判成 warning。
     /// </summary>
-    private const string ExemptWarnLogger = "SqlPerformanceMonitor";
+    public const string ExemptWarnLogger = "SqlPerformanceMonitor";
 
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;

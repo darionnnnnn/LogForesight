@@ -417,15 +417,66 @@ public class BatchRunStore
         logs.Where(l => l.RunId == runId).OrderBy(l => l.LogId).ToList();
 
     /// <summary>近 N 天的 Error/Fatal 紀錄（異常彙總）</summary>
-    public List<BatchRunLog> GetRecentErrors(int days)
+    public List<BatchRunLog> GetRecentErrors(int days) => GetRecentLogs(days, includeWarn: false);
+
+    /// <summary>
+    /// 近 N 天的 Error/Fatal（<paramref name="includeWarn"/> 為 true 時加上 Warn）紀錄，新到舊。
+    /// 逐行讀取、逐行篩選，只把符合等級的行留在記憶體——診斷行大多是 Info（含 Output 白話訊息），
+    /// 不再先整段載入再篩。
+    /// </summary>
+    public List<BatchRunLog> GetRecentLogs(int days, bool includeWarn)
     {
         var cutoff = DateTime.Today.AddDays(-days + 1);
+        var result = new List<BatchRunLog>();
 
         // 與 GetRecentRuns 同一套：SQL 端粗篩（含緩衝），業務時間與 Level 的判斷仍在記憶體端
-        return ReadLogs(cutoff.AddDays(-AppendTimeBufferDays), null)
-            .Where(l => l.LoggedAt.Date >= cutoff && l.Level is "Error" or "Fatal")
-            .OrderByDescending(l => l.LoggedAt)
-            .ToList();
+        ForEachLog(cutoff.AddDays(-AppendTimeBufferDays), null, l =>
+        {
+            if (l.LoggedAt.Date < cutoff) return;
+            if (l.Level is "Error" or "Fatal" || (includeWarn && l.Level == "Warn")) result.Add(l);
+        });
+
+        return result.OrderByDescending(l => l.LoggedAt).ToList();
+    }
+
+    /// <summary>
+    /// 依附加時間範圍逐筆處理診斷行（不緩衝；單行損毀照舊跳過）。窄化不保證精確，
+    /// 業務時間的判斷由呼叫端的 <paramref name="action"/> 負責。
+    /// </summary>
+    public void ForEachLog(DateTime? from, DateTime? to, Action<BatchRunLog> action)
+    {
+        foreach (var line in _logs.EnumerateLines(from, to))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            BatchRunLog? item;
+            try { item = JsonSerializer.Deserialize<BatchRunLog>(line, LfJsonOptions.Compact); }
+            catch (JsonException) { continue; } // 逐行獨立：單行損毀只跳過該行
+            if (item != null) action(item);
+        }
+    }
+
+    /// <summary>
+    /// 依 RunId 一次取回多筆執行（異常彙總解析站台用）。與 <see cref="GetRun"/> 同一套窗口規則，
+    /// 但整批只讀一次窗口、最多退回全撈一次，不逐筆呼叫 GetRun。找不到的 RunId（已被保留期清除）不在結果內。
+    /// </summary>
+    public Dictionary<long, BatchRun> GetRunsByIds(IReadOnlyCollection<long> runIds)
+    {
+        var found = new Dictionary<long, BatchRun>();
+        if (runIds.Count == 0) return found;
+
+        var from = DateTime.Today.AddDays(-RunLookupWindowDays - AppendTimeBufferDays);
+        var window = LatestPerRun(ReadRunLinesFrom(from));
+        foreach (var r in window)
+            if (runIds.Contains(r.RunId)) found[r.RunId] = r;
+
+        var missing = runIds.Where(id => id > 0 && !found.ContainsKey(id)).ToList();
+        var minInWindow = window.Count == 0 ? long.MaxValue : window.Min(r => r.RunId);
+        if (missing.Any(id => id < minInWindow))
+        {
+            foreach (var r in LatestPerRun(ReadAllRunLines()))
+                if (runIds.Contains(r.RunId)) found[r.RunId] = r;
+        }
+        return found;
     }
 
     /// <summary>

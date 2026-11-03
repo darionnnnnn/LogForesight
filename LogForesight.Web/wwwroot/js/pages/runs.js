@@ -174,7 +174,7 @@ async function load() {
     renderLegend();
     // 載入期間若使用者又換了總表頁（loadSummary 推進了序號），總表交給較新的那次，errors／list 照常渲染
     if (summaryGuard.isCurrent(summarySeq)) renderSummary(summaryPage);
-    renderErrors(errors);
+    renderErrors(errors.groups);
     renderRunList(runList);
 }
 

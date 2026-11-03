@@ -97,7 +97,7 @@ function makeRuns() {
         inst, api, rendered,
         /** 從第 firstPending 個請求起連續三個（summary／errors／list）一起回應 */
         settleLoad(firstPending, tag) {
-            for (let i = 0; i < 3; i++) api.pending[firstPending + i].resolve({ tag });
+            for (let i = 0; i < 3; i++) api.pending[firstPending + i].resolve({ tag, groups: { tag } }); // errors 端點回 { groups, ... }，renderErrors 收 groups
         }
     };
 }
