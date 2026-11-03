@@ -139,7 +139,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         "com", "net", "org", "edu", "gov", "mil", "biz", "info", "local", "lan", "corp", "internal",
         "intranet", "home", "localdomain", "tw", "cn", "jp", "hk", "sg", "us", "uk", "de", "fr", "kr",
         "au", "ca", "io", "ru", "nl", "eu", "co", "cloud", "dev", "app", "site", "online", "tech", "xyz",
-        "me", "cc", "tv", "asia", "int", "pro", "mobi", "name", "ai", "ltd", "inc", "ngo", "int"
+        "me", "cc", "tv", "asia", "int", "pro", "mobi", "name", "ai", "ltd", "inc", "ngo"
     };
 
     /// <summary>兩個字母、全小寫或全大寫的最後一段視為國碼網域（清單列不完，漏遮比多遮糟）</summary>

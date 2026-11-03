@@ -1,6 +1,6 @@
 # LogForesight 第 63 輪規劃：排程作業的診斷資料匯出（給 AI 分析）
 
-> 狀態：體檢完成，待併 dev（終檢後改「全案完成已併 dev」）
+> 狀態：全案完成已併 dev（dev@abd10f24 merge；Fable 5.1 體檢與終檢完成）
 > 基準：dev@6ab5480d（7,624 通過／10 略過，Windows）
 > 來源：使用者 2026-11-03 需求——把執行紀錄與異常彙總匯出給 AI，找出專案尚未完善的細節
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度選 Sonnet 5.5 或 Haiku 5.5；同一 checkout 一次一個改檔代理；主代理獨立重驗
@@ -438,6 +438,13 @@
 規劃比對：批次 A～F 的「改動」與驗收條目逐條有對應（主代理抽查 D、E 契約子句與稽核、錯誤碼、說明書；代理核對 WEB-SPEC 新增文字逐句與程式碼相符）。推翻一條規劃反例（#1），已回寫批次B 反例表的說明。
 
 體檢後定向：`RunExport|BatchRunStoreSqlPushdownTests|AIServiceJsonDiagnosticsTests|FrontendMisc|RunsPageUiTests|HelpContent|RunMonitorServiceTests` 429 條（428 通過／1 規模測試略過）。全量在併 dev 後重跑，結果見終檢節。
+
+## 終檢輪（Fable 5.1）
+
+- 體檢修正 commit `77fc6550` 的正式碼 diff 由主代理重讀一遍：無新發現；順手清掉 `Tlds` 清單重複的 `"int"`（終檢 commit）。
+- 併入 dev 後全量 `dotnet test`：**7,956 通過／0 失敗／11 略過**（29 分 51 秒；基線由 7,624／10 更新為 7,956／11，寫進 CLAUDE.md）。合併樹與分支逐位元組相同（`git diff --quiet feature/feedback-63 dev`），全量重跑是因為體檢改了程式碼。
+- 文件稽核：WEB-SPEC §9.10／§7.2／§11、說明書、BACKLOG 與程式碼逐句相符（體檢區 C 代理核對、主代理抽查）。
+- 第 63-2 輪規劃（`docs/FEEDBACK-63-2-PLAN.md`）推翻本輪兩條契約：匯出案例判定改看欄位、執行總表總耗時含跟隨取數的 AI 趟。
 
 ## 體檢交接
 
