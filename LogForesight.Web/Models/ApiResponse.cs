@@ -115,6 +115,9 @@ public static class ApiErrorCodes
     public const string TransferVersionConflict = "transfer_version_conflict";
     public const string ChunkWriteLeaseStale = "chunk_write_lease_stale";
 
+    // 排程作業診斷匯出：去識別化失敗（字典來源讀不到、或結果掃描有殘留）→ 中止匯出、不給任何檔案
+    public const string ExportDeidentificationFailed = "export_deidentification_failed";
+
     /// <summary>錯誤碼 → HTTP 狀態碼的唯一登錄處；新增錯誤碼時只改這裡</summary>
     public static readonly IReadOnlyDictionary<string, int> Table = new Dictionary<string, int>
     {
@@ -189,7 +192,8 @@ public static class ApiErrorCodes
         [TransferRetentionNotElapsed] = 409,
         [CleanupCursorConflict] = 409,
         [TransferVersionConflict] = 409,
-        [ChunkWriteLeaseStale] = 409
+        [ChunkWriteLeaseStale] = 409,
+        [ExportDeidentificationFailed] = 500
     };
 
     /// <summary>取錯誤碼對應的狀態碼；表外（含 validation_failed）一律 400</summary>

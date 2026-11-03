@@ -49,6 +49,13 @@ public class ApiExceptionFilter : IExceptionFilter
                 transfer.Code,
                 transfer.Message),
 
+            // 排程作業診斷匯出的去識別化失敗：中止匯出、不給檔案。訊息與例外屬性只含來源名稱與殘留類別次數，
+            // 不含原值，可以直接回給使用者並寫進 log
+            LogForesight.Web.Services.RunExportDeidentificationException deidentification => (
+                ApiErrorCodes.StatusOf(ApiErrorCodes.ExportDeidentificationFailed),
+                ApiErrorCodes.ExportDeidentificationFailed,
+                deidentification.Message),
+
             // 用戶端已斷線（關分頁／取消請求）：沒人收回應，不是故障
             OperationCanceledException when context.HttpContext.RequestAborted.IsCancellationRequested => (
                 499,

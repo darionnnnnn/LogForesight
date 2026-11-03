@@ -529,12 +529,13 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
   | `platform_unsupported` | 501 | 本平台不支援該功能（非 Windows 的 AD 連線測試等 Windows 專屬能力） |
   | `netiq_attempt_ledger_invalid` | 409 | NetIQ 最近執行狀態資料不完整或損毀，補跑範圍預覽無法準確計算 |
+  | `export_deidentification_failed` | 500 | 排程作業診斷匯出無法確認已完成去識別化（字典來源讀取失敗或結果掃描有殘留），不產生任何檔案 |
 
   PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
-  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯。
+  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯；去識別化失敗另有專屬例外 `RunExportDeidentificationException`，訊息與屬性只含來源名稱與殘留類別次數、不含原值。
   **樂觀鎖衝突另有一支**：處理狀態三表以
   `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
   `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——

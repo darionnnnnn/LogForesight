@@ -80,6 +80,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReportUsageQuery>(sp => sp.GetRequiredService<EfReportStore>());
         services.AddSingleton<EfPrtgStore>(sp => sp.GetRequiredService<StorageBackend>().PrtgStore());
         services.AddSingleton<IPrtgTransferCapacityProvider, PrtgTransferCapacityProbe>();
+        // 排程作業診斷匯出的去識別化：工廠是 Singleton（只持有 store 參照），遮罩器每次匯出由 Create() 建新實例
+        services.AddSingleton(sp => new RunExportDeidentifierFactory(
+            sp.GetRequiredService<IHostStore>(),
+            sp.GetRequiredService<IHostGroupStore>(),
+            sp.GetRequiredService<IUserStore>(),
+            sp.GetRequiredService<ISentinelStore>(),
+            () => sp.GetRequiredService<EfPrtgStore>().GetAllDevices(),
+            sp.GetRequiredService<ISystemSettingsStore>()));
         services.AddSingleton<PrtgLegacyJsonTransferValidator>();
         services.AddHostedService<PrtgDiagnosticRetentionHostedService>();
 

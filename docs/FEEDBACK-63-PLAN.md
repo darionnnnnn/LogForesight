@@ -219,6 +219,7 @@
 - **C-5 進行中的趟次**：列入 `runStats` 的 `running`，不進 `abnormalRuns`；`guide` 說明這是匯出當下的快照。
 - **C-6 稽核**：新增 `AuditActions.RunDiagnosticsExport`（`run_diagnostics_export`）與 `AuditQueryService.ActionNames` 中文對照（同 commit）。detail 只記天數、組數、趟數、位元組數與各類代號數，不記內容。稽核寫入失敗依 §11-4 不中斷，失敗路徑不寫成功稽核。
 - **C-7 權限與併發**：`[RequireViewAll]`；`SemaphoreSlim` 取不到回 503 `capture_busy`；接受 `RequestAborted`，取消時不寫稽核；訊息不寫死「校準」。
+- **C-10 結果掃描的範圍（批次B 驗收時補的設計修正）**：`guide` 說明文字、JSON 欄位名、封閉集合的值（狀態、等級、階段、作業類型、觸發類別、logger、`appVersion`）是程式自己產生的，不是資料。字典裡可能有 `admin`、`status` 這類常見詞，若連這些一起掃，該站台**每次匯出都會失敗**。所以：`guide` 不進掃描；欄位名由固定結構保證；封閉集合的值以 `allowedLiterals` 整串放行；**其他所有字串都要掃**。測試要涵蓋帳號 `admin`、群組 `status` 的站台能成功匯出，且放行清單不會放過主機名。
 - **C-9 AI 格式異常區塊**：依 F-4 組裝；`context` 另加 `AiMaxTokens`、`AiJsonRetryCount`，`guide` 寫明欄位長度上限（標題 60、其餘 600）與各失敗類別的意思；`meta` 標示 `includesEventText=true`。
 - **C-8 路由快照**：`LF_UPDATE_ROUTE_SNAPSHOT=1` 重產 `controller-route-snapshot.txt`，只新增 export 一列，逐列確認差異。
 
@@ -421,3 +422,4 @@
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | A | Sonnet 5.5 medium | 完成 | 主代理重跑定向 564 綠、代理突變兩項皆紅、diff 逐段檢視 | 分組鍵多了「是否不計警告」，讓欄位值單一；`misc-pages.behavior.mjs` 替身隨 A-3 形狀連動 |
+| B | Sonnet 5.5 high | 完成 | 主代理重跑定向 152 綠／1 略過，全文閱讀；代理突變六項皆紅，規模測試 0.7 秒 | 代號另加 `email`、`sid`、`role`；內建 SID 與內建主體不遮；標籤值只取單一詞，**含空白的人名若不在字典，後半可能漏遮**（已知限制，`meta` 提醒）；掃描範圍見 C-10 |
