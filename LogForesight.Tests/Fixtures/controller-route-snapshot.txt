@@ -226,6 +226,7 @@ POST	/api/rules/{ruleId}/suppressions	C=Maintain;A=-	-	-	-	RulesController
 GET	/api/run-activity	C=-;A=-	-	-	-	RunActivityController
 GET	/api/runs/day/{date}	C=DevMonitor|Maintain;A=-	-	-	-	RunsController
 GET	/api/runs/errors	C=DevMonitor|Maintain;A=-	-	-	-	RunsController
+GET	/api/runs/export	C=DevMonitor|Maintain;A=-	-	viewall	-	RunsController
 GET	/api/runs/list	C=DevMonitor|Maintain;A=-	-	-	-	RunsController
 GET	/api/runs/summary	C=DevMonitor|Maintain;A=-	-	-	-	RunsController
 GET	/api/runs/{runId:long}	C=DevMonitor|Maintain;A=-	-	-	-	RunsController

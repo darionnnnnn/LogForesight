@@ -1,9 +1,11 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace LogForesight.Web.Controllers.Api;
@@ -22,13 +24,23 @@ public class RunsController : ControllerBase
     /// <summary>summary 分頁的預設每頁天數（批次G）</summary>
     public const int DefaultRunSummaryPageSize = 30;
 
+    /// <summary>診斷匯出同一時間只允許一個（組裝要讀整段期間的診斷行並逐行遮罩）；不與校準共用閘門，兩者互不相關</summary>
+    private static readonly SemaphoreSlim ExportAdmission = new(1, 1);
+
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private readonly RunMonitorService _service;
     private readonly ISystemSettingsStore _settingsStore;
+    private readonly IRunExportService _export;
+    private readonly IAuditService _audit;
 
-    public RunsController(RunMonitorService service, ISystemSettingsStore settingsStore)
+    public RunsController(RunMonitorService service, ISystemSettingsStore settingsStore,
+        IRunExportService export, IAuditService audit)
     {
         _service = service;
         _settingsStore = settingsStore;
+        _export = export;
+        _audit = audit;
     }
 
     /// <summary>
@@ -78,8 +90,72 @@ public class RunsController : ControllerBase
     private int MaxRunDays() => Math.Max(90, _settingsStore.Get().RunLogRetentionDays);
 
     [HttpGet("errors")]
-    public ApiResponse<List<RunErrorGroupDto>> Errors([FromQuery] int days = 14) =>
-        ApiResponse<List<RunErrorGroupDto>>.Ok(_service.GetErrorSummary(Math.Clamp(days, 1, MaxRunDays())));
+    public ApiResponse<RunErrorSummaryDto> Errors([FromQuery] int days = 14, [FromQuery] string minLevel = RunMonitorService.MinLevelError) =>
+        ApiResponse<RunErrorSummaryDto>.Ok(_service.GetErrorSummary(Math.Clamp(days, 1, MaxRunDays()), minLevel));
+
+    /// <summary>
+    /// 匯出給 AI 分析的診斷資料（第 63 輪批次 C）：一律去識別化、同類訊息收斂、沒有開關。
+    /// 涵蓋全站資料，須可檢視全部主機（serverAdmin 回 403）；同一時間只允許一個匯出（503 capture_busy）。
+    /// 去識別化失敗（字典來源讀不到、結果掃描有殘留）回 500 export_deidentification_failed，不給任何檔案。
+    /// </summary>
+    [RequireViewAll(ExportForbiddenMessage)]
+    [HttpGet("export")]
+    public IActionResult Export([FromQuery] int days = DefaultRunSummaryDays)
+    {
+        if (!ExportAdmission.Wait(0))
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse.Fail(ApiErrorCodes.CaptureBusy, "另一個診斷資料匯出正在執行，請稍後重試。"));
+
+        try
+        {
+            var clamped = Math.Clamp(days, 1, MaxRunDays());
+            var cancellationToken = ControllerContext?.HttpContext?.RequestAborted ?? CancellationToken.None;
+
+            // 取消（用戶端斷線）時例外直接穿出，由 ApiExceptionFilter 轉成 499；不寫稽核，也不留檔案
+            var result = _export.Build(clamped, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            RecordAudit(result);
+            return new FileContentResult(result.Bytes, "application/json")
+            {
+                FileDownloadName = $"run-diagnostics-{DateTime.Today:yyyyMMdd}-{clamped}d.json"
+            };
+        }
+        finally
+        {
+            ExportAdmission.Release();
+        }
+    }
+
+    private const string ExportForbiddenMessage = "診斷資料涵蓋全站執行紀錄，須由可檢視全部主機的管理者匯出。";
+
+    /// <summary>稽核只記天數、組數、趟數、位元組數與各類代號數，不記任何內容；寫入失敗不中斷（WEB-SPEC §11-4）</summary>
+    private void RecordAudit(RunExportResult result)
+    {
+        try
+        {
+            _audit.Record(
+                action: AuditActions.RunDiagnosticsExport,
+                summary: $"匯出排程診斷資料（近 {result.Days} 天）",
+                targetKind: "run_diagnostics",
+                targetId: DateTime.Today.ToString("yyyyMMdd"),
+                detail: new
+                {
+                    Days = result.Days,
+                    Runs = result.RunCount,
+                    SignalGroups = result.SignalGroupCount,
+                    AbnormalRuns = result.AbnormalRunCount,
+                    AiCases = result.AiCaseCount,
+                    Bytes = result.Bytes.Length,
+                    Tokens = result.TokenCounts.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                        .ToDictionary(kv => kv.Key, kv => kv.Value)
+                });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "診斷匯出的稽核寫入失敗（不影響匯出結果）");
+        }
+    }
 
     /// <summary>執行紀錄分頁（回饋十七輪批次F-3）：每一筆 BatchRun 的扁平清單</summary>
     [HttpGet("list")]

@@ -1683,6 +1683,11 @@ a.lf-kpi-card--link:focus-visible {
     width: 100%;
 }
 
+/* 排程作業頁的小尺寸控制項（匯出鈕、等級下拉）：觸控區至少 36px 高 */
+.lf-touch-36 {
+    min-height: 36px; /* 固定 36px：根字級隨「小／中／大」切換，rem 在小字級會低於設計規範的觸控下限 */
+}
+
 .lf-toolbar__row + .lf-toolbar__row {
     padding-top: var(--lf-space-3);
     border-top: 1px solid var(--lf-border);

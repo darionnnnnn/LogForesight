@@ -153,6 +153,83 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
     }
 
     [Fact]
+    public async Task 降級為原文保留_標題摘要風險與AiAnalyzed維持既有語意()
+    {
+        _ai.NextContent = "這是一段不合格的回覆";
+        var service = NewService(riskyEventStore: null);
+
+        var outcome = await service.RetryAiAsync(
+            PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
+
+        Assert.Equal(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        Assert.Equal("AI 回覆格式異常，以下為原始內容", LogAnalysisService.AiFormatAnomalyHeadline);
+        Assert.Equal("（AI 回覆經 1 次嘗試仍未通過 JSON 檢查，保留原文供參考）這是一段不合格的回覆", outcome.Summary);
+        Assert.Equal("中", outcome.RiskLevel);
+        Assert.True(outcome.AiAnalyzed);
+        Assert.False(outcome.Skipped);
+    }
+
+    [Theory]
+    [InlineData(7L, "daily-20260731-h7")]   // 服務帶主機 id：用服務的
+    [InlineData(0L, "daily-20260731-h1")]   // 服務沒帶：退回紀錄自己的 HostId
+    public async Task 主分析label帶主機識別(long serviceHostId, string expectedLabel)
+    {
+        _ai.NextContent = """{"risk_level":"中","headline":"h","story":"s","trend_story":"","action":"a"}""";
+        var service = new LogAnalysisService(new EventLogService(), _ai, new EfAnalysisRecordStore(_fx.NewContext, "test"),
+            new FakeSuppressionStore(), reportService: new RiskReportService(_ai, _reportSink),
+            hostId: serviceHostId, riskyEventStore: null);
+
+        await service.RetryAiAsync(
+            PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
+
+        Assert.Contains(expectedLabel, _ai.Labels);
+    }
+
+    [Fact]
+    public async Task 降級的Warn帶失敗原因_且診斷行用含主機識別的label_經真實AIService()
+    {
+        var handler = new AlwaysContentHandler("這不是 JSON");
+        var realAi = new AIService(new AiSettings
+        {
+            BaseUrl = "http://localhost:1", RetryCount = 0, RetryDelaySeconds = 1, TimeoutSeconds = 10, JsonRetryCount = 0
+        }, handler, NullAiRequestGate.Instance);
+        var service = new LogAnalysisService(new EventLogService(), realAi,
+            new EfAnalysisRecordStore(_fx.NewContext, "test"), new FakeSuppressionStore(),
+            reportService: new RiskReportService(realAi, _reportSink), hostId: 5, riskyEventStore: null);
+        var store = new BatchRunStore(_fx.LogStore("runs"), _fx.LogStore("run_logs"));
+
+        long runId;
+        AiOutcome outcome;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            outcome = await service.RetryAiAsync(
+                PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
+            recorder.Finish(0);
+        }
+
+        Assert.Equal(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        var logs = store.GetLogs(runId);
+        var degraded = Assert.Single(logs, l => l.Logger == nameof(LogAnalysisService) && l.Message.Contains("降級為原文保留"));
+        Assert.Contains("1 次嘗試仍未通過 JSON 檢查）：", degraded.Message);
+        Assert.Contains("AI 回覆不是合法 JSON 或格式不符契約", degraded.Message);
+        var diagnostics = AiJsonDiagnostics.TryRead(Assert.Single(logs, l => l.Logger == AiJsonDiagnostics.LoggerName).Message);
+        Assert.Equal("daily-20260731-h5", diagnostics!.Label);
+        Assert.Equal(AiJsonDiagnostics.CategoryNoJson, Assert.Single(diagnostics.AttemptDetails).Category);
+    }
+
+    private sealed class AlwaysContentHandler(string content) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"" + content + "\"}}]}",
+                    System.Text.Encoding.UTF8, "application/json")
+            });
+    }
+
+    [Fact]
     public async Task JSON的risk_level為高風險且規則風險低時拉高到高並標ai_raise()
     {
         _ai.NextContent = """{"risk_level":"高風險","headline":"h","story":"s","trend_story":"","action":"a"}""";

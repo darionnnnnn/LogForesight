@@ -80,6 +80,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReportUsageQuery>(sp => sp.GetRequiredService<EfReportStore>());
         services.AddSingleton<EfPrtgStore>(sp => sp.GetRequiredService<StorageBackend>().PrtgStore());
         services.AddSingleton<IPrtgTransferCapacityProvider, PrtgTransferCapacityProbe>();
+        // 排程作業診斷匯出的去識別化：工廠是 Singleton（只持有 store 參照），遮罩器每次匯出由 Create() 建新實例
+        services.AddSingleton(sp => new RunExportDeidentifierFactory(
+            sp.GetRequiredService<IHostStore>(),
+            sp.GetRequiredService<IHostGroupStore>(),
+            sp.GetRequiredService<IUserStore>(),
+            sp.GetRequiredService<ISentinelStore>(),
+            () => sp.GetRequiredService<EfPrtgStore>().GetAllDevices(),
+            sp.GetRequiredService<ISystemSettingsStore>()));
         services.AddSingleton<PrtgLegacyJsonTransferValidator>();
         services.AddHostedService<PrtgDiagnosticRetentionHostedService>();
 
@@ -446,6 +454,17 @@ public static class ServiceCollectionExtensions
             return new PrtgValueAssessment(store, semanticOverrides);
         });
         services.AddScoped<RunMonitorService>();
+
+        // 排程作業診斷匯出的內容組裝（第 63 輪批次 C）：Scoped（依賴 Scoped 的 RunMonitorService）；
+        // 遮罩器每次匯出由工廠建新實例（代號只在單一檔案內穩定），字典來源讀取失敗在建立時就中止
+        services.AddScoped<IRunExportService>(sp => new RunExportService(
+            sp.GetRequiredService<BatchRunStore>(),
+            sp.GetRequiredService<RunMonitorService>(),
+            sp.GetRequiredService<ISystemSettingsStore>(),
+            sp.GetRequiredService<ScheduleOptionsStore>(),
+            sp.GetRequiredService<IHostStore>(),
+            sp.GetRequiredService<IAnalysisRecordQuery>(),
+            () => sp.GetRequiredService<RunExportDeidentifierFactory>().Create()));
 
         // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）

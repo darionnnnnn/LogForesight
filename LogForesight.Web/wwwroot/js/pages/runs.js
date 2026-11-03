@@ -5,7 +5,7 @@
  * 而「沒有紀錄」看起來跟「一切正常」一模一樣。
  */
 
-import { api, getAiAvailable, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getAiAvailable, getCurrentUser, hasCapability, saveBlobAsFile } from '../core/api.js';
 import { PROGRESS_PHASE_LABEL, PROGRESS_PHASE_UNIT } from '../core/run-phases.js';
 import {
     renderTable, renderLoading, renderEmpty, renderError, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
@@ -141,15 +141,27 @@ let currentSummaryPage = 1;
 // 異常彙總（本地排序，筆數通常不多，不加分頁）
 let currentErrors = [];
 let errorsSort = { key: 'count', dir: 'desc' };
+// 異常彙總的等級門檻（error＝Error 以上、warn＝Warn 以上）：整頁 load() 與單獨換等級共用同一份
+/** 等級下拉的值只認 warn，其餘一律 error（送後端的值也只有這兩種） */
+function normalizeMinLevel(value) {
+    return value === 'warn' ? 'warn' : 'error';
+}
+
+// 初值讀下拉目前的值：瀏覽器重新整理時可能還原表單狀態，寫死 'error' 會讓畫面與選單不一致
+let errorsMinLevel = normalizeMinLevel(document.getElementById('run-errors-level')?.value);
 
 // load（整頁三塊）與 loadSummary（只換總表）共用同一個序號守門：任一方開始就讓更早的總表回應過期，
 // 慢的舊 loadSummary 不得覆寫剛換天數的總表。load 自己另有一個序號，連點天數時舊的整批回應整份丟掉。
 const summaryGuard = createSeqGuard();
 const loadGuard = createSeqGuard();
+// 異常彙總另有序號：換等級只重取這一塊，慢的舊回應不得覆寫較新的結果（整頁 load 也會推進它）
+const errorsGuard = createSeqGuard();
 
 async function load() {
     const seq = loadGuard.next();
     const summarySeq = summaryGuard.next();
+    const errorsSeq = errorsGuard.next();
+    hideErrorsNotice();
     renderLoading(document.getElementById('run-summary'), 4);
     renderLoading(document.getElementById('run-errors'), 3);
     renderLoading(document.getElementById('run-list'), 4);
@@ -158,7 +170,7 @@ async function load() {
     try {
         [summaryPage, errors, runList] = await Promise.all([
             api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`),
-            api.get(`/api/runs/errors?days=${currentDays}`),
+            api.get(`/api/runs/errors?days=${currentDays}&minLevel=${errorsMinLevel}`),
             api.get(`/api/runs/list?days=${currentDays}`)
         ]);
     } catch (err) {
@@ -174,8 +186,30 @@ async function load() {
     renderLegend();
     // 載入期間若使用者又換了總表頁（loadSummary 推進了序號），總表交給較新的那次，errors／list 照常渲染
     if (summaryGuard.isCurrent(summarySeq)) renderSummary(summaryPage);
-    renderErrors(errors);
+    // 載入期間若使用者換了等級（loadErrors 推進了序號），異常彙總交給較新的那次
+    if (errorsGuard.isCurrent(errorsSeq)) renderErrors(errors);
     renderRunList(runList);
+}
+
+/** 只重新取異常彙總（換等級時用）；失敗走 guardLoad 的失敗態，不影響總表與執行紀錄 */
+function reloadErrors() {
+    return guardLoad([document.getElementById('run-errors')], loadErrors);
+}
+
+async function loadErrors() {
+    const seq = errorsGuard.next();
+    hideErrorsNotice();
+    renderLoading(document.getElementById('run-errors'), 3);
+    let errors;
+    try {
+        errors = await api.get(`/api/runs/errors?days=${currentDays}&minLevel=${errorsMinLevel}`);
+    } catch (err) {
+        // 過期請求的失敗不處理：失敗態只該屬於最新一次
+        if (!errorsGuard.isCurrent(seq)) return;
+        throw err;
+    }
+    if (!errorsGuard.isCurrent(seq)) return;
+    renderErrors(errors);
 }
 
 function runLoadContainers() {
@@ -436,20 +470,70 @@ function viewRunButton(runId) {
     return button;
 }
 
+/** 站台清單缺欄時當空清單，一列壞資料不讓整張表渲染失敗 */
+function hostsOf(group) {
+    return Array.isArray(group.affectedHosts) ? group.affectedHosts : [];
+}
+
 const ERROR_COLUMNS = [
-    { title: '等級', sortKey: 'level', sortValue: e => e.level, render: e => levelBadge(e.level) },
+    { title: '等級', sortKey: 'level', sortValue: e => e.level, render: e => errorLevelCell(e) },
     { title: '訊息', render: e => messageCell(e) },
     { title: '次數', className: 'text-end', sortKey: 'count', sortDefaultDir: 'desc', sortValue: e => e.count, render: e => formatNumber(e.count) },
+    // 影響趟數＝組內去重後的執行趟數；「次數」是診斷行數，同一趟可以出現很多次
+    { title: '影響趟數', className: 'text-end', sortKey: 'affectedRuns', sortDefaultDir: 'desc', sortValue: e => e.affectedRuns, render: e => formatNumber(e.affectedRuns) },
     // 這一欄的資料來源是 BatchRun.HostName＝**跑批次的站台**，不是被分析的主機。
     // 標成「影響主機」會讓人把站台名誤讀成問題主機（回饋 2.5 的誤判成因之一）。
-    { title: '執行站台', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => e.affectedHosts.length, render: e => e.affectedHosts.join('、') },
+    { title: '執行站台', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => hostsOf(e).length, render: e => hostsOf(e).join('、') },
     { title: '最近發生', sortKey: 'lastSeen', sortDefaultDir: 'desc', sortValue: e => e.lastSeen, render: e => formatDateTime(e.lastSeen) },
     { title: '', className: 'text-end', render: e => detailButton(e.latestRunId) }
 ];
 
-function renderErrors(errors) {
-    currentErrors = errors;
+/** 接收完整回應 { groups, failedWithoutErrorRuns } */
+function renderErrors(data) {
+    currentErrors = data?.groups ?? [];
+    renderErrorsNotice(data?.failedWithoutErrorRuns);
     renderErrorsTable();
+}
+
+function hideErrorsNotice() {
+    document.getElementById('run-errors-notice')?.classList.add('d-none');
+}
+
+/** 沒有錯誤紀錄卻失敗或中斷的趟數：大於 0 才顯示，等於 0 不佔版面 */
+function renderErrorsNotice(count) {
+    const box = document.getElementById('run-errors-notice');
+    if (!box) return;
+    const n = Number(count) || 0;
+    if (n > 0) {
+        document.getElementById('run-errors-notice-text').textContent = `另有 ${formatNumber(n)} 趟中斷或失敗，但沒有錯誤紀錄。`;
+        box.classList.remove('d-none');
+    } else {
+        box.classList.add('d-none');
+    }
+}
+
+/** 等級徽章；Warn 組若不計入該趟警告數（慢 SQL 監控），加小標說明 */
+function errorLevelCell(group) {
+    const wrap = document.createElement('div');
+    wrap.appendChild(levelBadge(group.level));
+    if (group.excludedFromWarnCount) {
+        const note = document.createElement('div');
+        note.className = 'small text-muted';
+        note.textContent = '不計入警告數';
+        wrap.appendChild(note);
+    }
+    return wrap;
+}
+
+/** 空狀態文字隨等級門檻變：Error 組不能暗示一切正常 */
+function errorsEmptyState() {
+    if (errorsMinLevel === 'warn') {
+        return { title: '此期間沒有 Warn 以上的紀錄', hint: '這段期間的執行紀錄中沒有警告、錯誤或嚴重錯誤等級的訊息。' };
+    }
+    return {
+        title: '此期間沒有 Error 或 Fatal 等級的紀錄',
+        hint: '這不代表一切正常：可把「顯示等級」改成 Warn 以上，或到「執行紀錄」頁籤逐趟檢視。'
+    };
 }
 
 function renderErrorsTable() {
@@ -461,7 +545,7 @@ function renderErrorsTable() {
             errorsSort = { key, dir };
             renderErrorsTable();
         },
-        empty: { title: '此期間沒有錯誤紀錄', hint: '所有批次執行都沒有產生 Error 或 Fatal 等級的訊息。' }
+        empty: errorsEmptyState()
     });
 }
 
@@ -546,7 +630,7 @@ function messageCell(group) {
 
 function levelBadge(level) {
     const span = document.createElement('span');
-    span.className = `lf-badge lf-badge--${level === 'Fatal' ? 'dark' : 'danger'}`;
+    span.className = `lf-badge lf-badge--${level === 'Fatal' ? 'dark' : (level === 'Warn' ? 'warning' : 'danger')}`;
     span.textContent = level;
     return span;
 }
@@ -753,16 +837,21 @@ function logMessageCell(log) {
     return wrap;
 }
 
+/** 依天數鈕的值更新 currentDays；「全部」尚未收到後端最大天數時回 false（不動作） */
+function applyDaysSelection(raw) {
+    if (raw === 'all') {
+        // 「全部」：天數來自後端告知的 MaxDays（RunLogRetentionDays），不寫死
+        if (summaryMaxDays == null) return false;
+        currentDays = summaryMaxDays;
+    } else {
+        currentDays = Number(raw);
+    }
+    return true;
+}
+
 for (const button of document.querySelectorAll('[data-days]')) {
     button.addEventListener('click', () => {
-        const raw = button.dataset.days;
-        if (raw === 'all') {
-            // 「全部」：天數來自後端告知的 MaxDays（RunLogRetentionDays），不寫死
-            if (summaryMaxDays == null) return;   // 還沒收到後端回應，不動作
-            currentDays = summaryMaxDays;
-        } else {
-            currentDays = Number(raw);
-        }
+        if (!applyDaysSelection(button.dataset.days)) return;
         // 切換天數時重設為第 1 頁
         currentSummaryPage = 1;
         for (const other of document.querySelectorAll('[data-days]')) {
@@ -771,6 +860,58 @@ for (const button of document.querySelectorAll('[data-days]')) {
         reloadRuns();
     });
 }
+
+// 異常彙總的等級下拉：只重取這一塊，不重整總表與執行紀錄
+document.getElementById('run-errors-level')?.addEventListener('change', (event) => {
+    errorsMinLevel = normalizeMinLevel(event.target.value);
+    reloadErrors();
+});
+
+// 提示列的按鈕：切到「執行紀錄」頁籤（走 bindTabs 的點擊機制，同步更新 hash）
+document.getElementById('run-errors-notice-go')?.addEventListener('click', () => {
+    document.querySelector('#runs-tabs [data-tab="list"]')?.click();
+});
+
+// ── 匯出分析資料（批次D）：需要 ViewAll；範圍就是目前選的天數 ──────────────────────────
+async function initExportButton() {
+    try {
+        const user = await getCurrentUser();
+        if (hasCapability(user, 'ViewAll')) {
+            document.getElementById('runs-export-wrap')?.classList.remove('d-none');
+        }
+    } catch {
+        // 取不到使用者就維持隱藏；頁面其餘功能不受影響
+    }
+}
+
+/** 讀檔案的 meta.hasData 決定提示文字；讀不到時當作有資料，提示不得影響已完成的下載 */
+async function hasExportData(blob) {
+    try {
+        return JSON.parse(await blob.text())?.meta?.hasData !== false;
+    } catch {
+        return true;
+    }
+}
+
+async function exportDiagnostics() {
+    const button = document.getElementById('runs-export-btn');
+    const days = currentDays;
+    const restore = withBusy(button, '匯出中…');
+    try {
+        const { blob, filename } = await api.download(`/api/runs/export?days=${days}`,
+            { timeoutMs: 300000, silent: true });
+        saveBlobAsFile(blob, filename || `run-diagnostics-${days}d.json`);
+        toast(await hasExportData(blob)
+            ? `已匯出最近 ${days} 天的分析資料，交給外部 AI 前請先瀏覽內容。`
+            : `已匯出，但最近 ${days} 天沒有執行紀錄，檔案只有設定與說明。`, 'success');
+    } catch (error) {
+        toast(error?.message || '匯出失敗，請稍後再試。', 'danger');
+    } finally {
+        restore();
+    }
+}
+
+document.getElementById('runs-export-btn')?.addEventListener('click', exportDiagnostics);
 
 // ── 排程設定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）──────────────────────────────
 // 這頁的權限是 DevMonitor 或 Maintain 任一（見 PagesController.Runs）：dev 進得來但只能看，
@@ -2205,6 +2346,7 @@ bindTabs(document.getElementById('runs-tabs'), {
 });
 
 loadSchedule();
+initExportButton();
 bindPrtgBackfill();
 bindPrtgSync();
 refreshPrtgBackfillStatus();

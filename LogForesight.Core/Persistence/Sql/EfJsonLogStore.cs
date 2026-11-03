@@ -241,6 +241,42 @@ public sealed class EfJsonLogStore
     }
 
     /// <summary>
+    /// <see cref="ReadLines(DateTime?,DateTime?)"/> 的分頁版本：依附加順序逐行吐出，記憶體峰值只有一頁（<see cref="EnumeratePageSize"/> 行）。
+    /// 篩選語意與緩衝版完全相同（沿用 <see cref="ApplyDateRange"/>），以 <c>Seq</c> 做鍵集分頁、不用 OFFSET。
+    /// **每一頁讀完就釋放 DbContext 與連線，再把那一頁交給呼叫端**：若整段列舉都抓著讀取交易，SQLite 非 WAL
+    /// （journal_mode=DELETE）模式下會擋住同一段時間的寫入——診斷匯出跑幾秒，recorder 的 AppendLog 就卡到逾時、
+    /// 那幾行執行紀錄靜默遺失。呼叫端因此可以在回呼裡對同一個 store 讀寫。
+    /// 慢操作量測（<c>log:{key}:EnumerateLinesByDate</c>）涵蓋整段列舉。
+    /// </summary>
+    public IEnumerable<string> EnumerateLines(DateTime? from, DateTime? to)
+    {
+        using var __perf = _performance.Measure($"log:{_key}:EnumerateLinesByDate");
+        long? lastSeq = null;
+        while (true)
+        {
+            List<(long Seq, string Line)> page;
+            using (var ctx = _contextFactory())
+            {
+                var query = ApplyDateRange(ctx.LogLines.AsNoTracking().Where(l => l.LogKey == _key), from, to);
+                if (lastSeq is { } after) query = query.Where(l => l.Seq > after);
+                page = query.OrderBy(l => l.Seq)
+                    .Take(EnumeratePageSize)
+                    .Select(l => new { l.Seq, l.Line })
+                    .AsEnumerable()
+                    .Select(l => (l.Seq, l.Line))
+                    .ToList();
+            }
+
+            foreach (var row in page) yield return row.Line;
+            if (page.Count < EnumeratePageSize) yield break;
+            lastSeq = page[^1].Seq;
+        }
+    }
+
+    /// <summary><see cref="EnumerateLines"/> 每頁行數：一頁的 JSON 約數 MB 以內，連線持有時間毫秒級</summary>
+    internal const int EnumeratePageSize = 2000;
+
+    /// <summary>
     /// 全表分頁讀取（依附加順序，預設新到舊），SQL 端 OFFSET/FETCH，不必先讀全表。
     /// 僅適合「完全不篩選、只是要分頁瀏覽全部」的情境——若還有其他篩選條件，
     /// 呼叫端應改用 <see cref="ReadLines(DateTime?,DateTime?)"/> 撈候選集後在記憶體精確過濾與分頁。

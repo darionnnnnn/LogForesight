@@ -1639,6 +1639,38 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             .ToHashSet();
     }
 
+    /// <summary>
+    /// 標題精確查詢的 SQL 形狀（獨立出來讓 provider 翻譯測試能對 SQL Server 做 <c>ToQueryString</c>）。
+    /// headline 欄位是抽出欄（與 ContentJson 內的 Headline 同步寫入），等於比較整欄、可下推。
+    /// 相等比較沿用資料庫的字串比對語意（SQL Server 預設不分大小寫），標題是固定常數、不會有近似變體。
+    /// </summary>
+    internal static IQueryable<DailyRecordRow> BuildHeadlineQuery(
+        LfDbContext ctx, DateTime fromDate, DateTime toDate, string headline, int take) =>
+        ctx.DailyRecords.AsNoTracking()
+            .Where(r => r.RecordDate >= fromDate && r.RecordDate <= toDate && r.Headline == headline)
+            .OrderByDescending(r => r.RecordDate)
+            .ThenBy(r => r.HostId)
+            .ThenBy(r => r.RecordId)
+            .Take(take);
+
+    public List<DailyAnalysisRecord> QueryByHeadline(DateTime from, DateTime to, string headline, int take)
+    {
+        if (take <= 0 || string.IsNullOrEmpty(headline) || from.Date > to.Date) return new List<DailyAnalysisRecord>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        using var ctx = _contextFactory();
+
+        var rows = BuildHeadlineQuery(ctx, f, t, headline, take).ToList();
+
+        var result = rows.Select(Deserialize).ToList();
+        Log.Debug("[SQL] QueryByHeadline（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} take={Take}）→ {Count} 筆、{Ms}ms",
+            f, t, take, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryByHeadline", sw.ElapsedMilliseconds);
+        return result;
+    }
+
     public List<DailyAnalysisRecord> QueryPendingAi(int batchSize, PendingAiQuery? query = null)
     {
         if (batchSize <= 0) return new List<DailyAnalysisRecord>();

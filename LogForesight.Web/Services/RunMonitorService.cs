@@ -335,6 +335,13 @@ public class RunMonitorService
 
     private string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
 
+    /// <summary>
+    /// 單筆執行的狀態（與列表、詳情同一份判定）。診斷匯出逐趟分類時使用，
+    /// 「本行程是否仍持有這筆」的判斷在這個服務內，匯出不重寫一份。
+    /// </summary>
+    public string StatusOfRun(BatchRun run, DateTime now) =>
+        BatchRunStatus.Compute(run, now, StuckThreshold, _isHeld(run));
+
     private RunDayHostStatusDto BuildCell(string date, List<BatchRun> dayRuns)
     {
         if (dayRuns.Count == 0)
@@ -363,7 +370,8 @@ public class RunMonitorService
     public RunDetailDto GetDetail(long runId)
     {
         var run = _runs.GetRun(runId) ?? throw DomainException.NotFound("找不到這次執行紀錄。");
-        var logs = _runs.GetLogs(runId);
+        // AI JSON 失敗診斷行只給匯出用（內容是整段回覆片段），不在執行詳情顯示
+        var logs = _runs.GetLogs(runId).Where(l => !IsDiagnosticsOnly(l)).ToList();
 
         return new RunDetailDto
         {
@@ -464,21 +472,35 @@ public class RunMonitorService
 
     /// <summary>
     /// 異常彙總：把近 N 天的 Error/Fatal 依訊息聚合。
-    /// 回答的是「這是個案還是通案」——同一個錯誤在 20 台機器上出現，
-    /// 跟只在一台上出現，處理方式完全不同。
+    /// 判斷個案或通案看影響趟數（去重 RunId）。「執行站台」是跑這趟的主機，不是被分析的主機，
+    /// 通常只有一個值，不能拿來判斷影響幾台。
     /// </summary>
-    public List<RunErrorGroupDto> GetErrorSummary(int days)
+    public RunErrorSummaryDto GetErrorSummary(int days, string minLevel = MinLevelError)
     {
-        var errors = _runs.GetRecentErrors(days);
-        var runsById = _runs.GetRecentRuns(days, null).ToDictionary(r => r.RunId);
+        var includeWarn = ParseMinLevel(minLevel);
+        // 診斷行（AiJsonDiagnostics）只給匯出用：不是這趟的新問題，也不該在彙總裡成組
+        var logs = _runs.GetRecentLogs(days, includeWarn).Where(l => !IsDiagnosticsOnly(l)).ToList();
+        var recentRuns = _runs.GetRecentRuns(days, null);
+        var runsById = recentRuns.ToDictionary(r => r.RunId);
 
-        return errors
-            .GroupBy(e => NormalizeMessage(e.Message))
+        // 長跑的趟次開始時間可能早於期間起點（錯誤依 LoggedAt 篩、趟次依 StartedAt 篩），
+        // 缺的 RunId 一次補查，只有已被保留期清除的才顯示「（未知）」
+        var missingIds = logs.Select(l => l.RunId).Where(id => !runsById.ContainsKey(id)).ToHashSet();
+        if (missingIds.Count > 0)
+            foreach (var (id, run) in _runs.GetRunsByIds(missingIds))
+                runsById[id] = run;
+
+        var groups = logs
+            // Warn 組中來自慢 SQL 監控的另成一組：它不計入該趟警告數，畫面要能區分
+            .GroupBy(e => (Key: RunMessageNormalizer.Normalize(e.Message), Exempt: IsExemptWarn(e)))
             .Select(group => new RunErrorGroupDto
             {
                 Message = group.First().Message,
-                Level = group.Any(e => e.Level == "Fatal") ? "Fatal" : "Error",
+                // 組內最高等級：Fatal > Error > Warn
+                Level = group.Any(e => e.Level == "Fatal") ? "Fatal" : group.Any(e => e.Level == "Error") ? "Error" : "Warn",
                 Count = group.Count(),
+                AffectedRuns = group.Select(e => e.RunId).Distinct().Count(),
+                ExcludedFromWarnCount = group.Key.Exempt,
                 AffectedHosts = group
                     .Select(e => runsById.TryGetValue(e.RunId, out var run) ? run.HostName : "（未知）")
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -490,20 +512,33 @@ public class RunMonitorService
             })
             .OrderByDescending(g => g.Count)
             .ToList();
+
+        // 失敗或異常中斷、卻沒有任何 Error 行的趟次：不會出現在上面的分組裡，
+        // 單看分組會以為這段期間一切正常。running／stopped／warning 不算。
+        var now = DateTime.Now;
+        var failedWithoutError = recentRuns.Count(r =>
+            r.ErrorCount == 0
+            && BatchRunStatus.Compute(r, now, StuckThreshold, _isHeld(r)) is BatchRunStatus.Failed or BatchRunStatus.Stuck);
+
+        return new RunErrorSummaryDto { Groups = groups, FailedWithoutErrorRuns = failedWithoutError };
     }
 
-    /// <summary>
-    /// 聚合前正規化：訊息裡的日期、數字、GUID 會讓「同一個錯誤」看起來各不相同。
-    /// 不正規化的話異常彙總會退化成一筆一組，完全失去「這是通案嗎」的判斷價值。
-    /// </summary>
-    private static string NormalizeMessage(string message)
+    public const string MinLevelError = "error";
+    public const string MinLevelWarn = "warn";
+
+    /// <summary>minLevel 只接受 error（預設）與 warn；其他值一律是驗證錯誤，不靜默退回預設</summary>
+    private static bool ParseMinLevel(string? minLevel)
     {
-        var normalized = System.Text.RegularExpressions.Regex.Replace(
-            message, @"\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?", "{date}");
-        normalized = System.Text.RegularExpressions.Regex.Replace(
-            normalized, @"\b[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}\b", "{guid}");
-        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\d+", "{n}");
-
-        return normalized;
+        if (string.Equals(minLevel, MinLevelError, StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.Equals(minLevel, MinLevelWarn, StringComparison.OrdinalIgnoreCase)) return true;
+        throw DomainException.Validation("minLevel 只接受 error 或 warn。");
     }
+
+    /// <summary>AI JSON 失敗診斷行：以 logger 名稱判定（<see cref="AiJsonDiagnostics.LoggerName"/>），不比對訊息內容</summary>
+    private static bool IsDiagnosticsOnly(BatchRunLog log) =>
+        string.Equals(log.Logger, AiJsonDiagnostics.LoggerName, StringComparison.Ordinal);
+
+    /// <summary>以 logger 名稱判定（共用 <see cref="BatchRunRecorder.ExemptWarnLogger"/>），不比對訊息內容</summary>
+    private static bool IsExemptWarn(BatchRunLog log) =>
+        log.Level == "Warn" && string.Equals(log.Logger, BatchRunRecorder.ExemptWarnLogger, StringComparison.Ordinal);
 }

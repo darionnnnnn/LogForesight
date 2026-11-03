@@ -20,7 +20,19 @@ public class BatchRunRecorder : IDisposable
     /// 慢 SQL 效能監控器名稱：資料層效能告警 ≠ 這趟分析有問題。
     /// 慢查詢 Warn 仍照常寫入執行詳情供排查，但不計入 WarnCount，避免整趟成功執行被判成 warning。
     /// </summary>
-    private const string ExemptWarnLogger = "SqlPerformanceMonitor";
+    public const string ExemptWarnLogger = "SqlPerformanceMonitor";
+
+    /// <summary>執行輸出（<c>IRunConsole</c> 的白話訊息）寫進執行紀錄時的 logger 名稱；寫入端與診斷匯出的判讀共用</summary>
+    public const string OutputLogger = "Output";
+
+    /// <summary>
+    /// 不計入 WarnCount 的 logger 短名稱（依名稱判定，不比對訊息內容）：慢 SQL 監控，以及
+    /// AI JSON 失敗診斷（<see cref="AiJsonDiagnostics.LoggerName"/>，只給匯出用的證據行，
+    /// 不是這趟分析的新問題）。兩者仍照常寫入執行紀錄。執行監控頁（RunMonitorService）共用此判定。
+    /// </summary>
+    public static bool IsWarnCountExemptLogger(string? loggerName) =>
+        string.Equals(loggerName, ExemptWarnLogger, StringComparison.Ordinal)
+        || string.Equals(loggerName, AiJsonDiagnostics.LoggerName, StringComparison.Ordinal);
 
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;
@@ -277,7 +289,7 @@ public class BatchRunRecorder : IDisposable
             if (_outputWritten < OutputHeadLimit)
             {
                 _outputWritten++;
-                Append("Info", "Output", message, null);
+                Append("Info", OutputLogger, message, null);
                 return;
             }
 
@@ -306,12 +318,12 @@ public class BatchRunRecorder : IDisposable
             if (_outputFlushed) return;
             _outputFlushed = true;
             if (_outputSkipped > 0)
-                Append("Info", "Output", $"（中間略過 {_outputSkipped} 行輸出）", null);
+                Append("Info", OutputLogger, $"（中間略過 {_outputSkipped} 行輸出）", null);
             // 保留行的時間是當下記的：尾段才寫入不代表它們都發生在結束時刻
             while (_outputTail.Count > 0)
             {
                 var (loggedAt, message) = _outputTail.Dequeue();
-                Append("Info", "Output", message, null, loggedAt);
+                Append("Info", OutputLogger, message, null, loggedAt);
             }
         }
     }
@@ -429,7 +441,7 @@ public class BatchRunRecorder : IDisposable
             }
             else if (level == "Warn")
             {
-                if (!string.Equals(loggerName, ExemptWarnLogger, StringComparison.Ordinal))
+                if (!IsWarnCountExemptLogger(loggerName))
                     _run.WarnCount++;
             }
         }

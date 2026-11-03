@@ -168,6 +168,12 @@ public class AnalysisOrchestrator
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    /// <summary>
+    /// 執行輸出中「頻率異常／慢速惡化」小節的標題文字（不含行首符號）。它是分析結果類輸出（被監控主機的狀況），
+    /// 不是專案缺陷：診斷匯出挑 ⚠／✗ 行時依這個常數排除，與這裡的輸出共用同一份文字。
+    /// </summary>
+    public const string TrendAlertConsoleHeading = "頻率異常／慢速惡化（與近期歷史比對）：";
+
     private readonly IDispatchCandidateSource _candidateSource;
     private readonly Action? _permissionVersionBump;
     private readonly INetiqHostDayTimingCollector? _hostDayTiming;
@@ -1358,7 +1364,7 @@ public class AnalysisOrchestrator
         // 程式比對歷史後發現的頻率異常（首次出現、頻率上升、總量突增），用黃色提醒
         if (record.TrendAlerts.Count > 0)
         {
-            console.WriteLine($"\n  ⚠ 頻率異常／慢速惡化（與近期歷史比對）：");
+            console.WriteLine($"\n  ⚠ {TrendAlertConsoleHeading}");
             foreach (var alert in record.TrendAlerts)
             {
                 console.WriteLine($"    - {alert}");

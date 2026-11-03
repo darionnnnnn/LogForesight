@@ -62,6 +62,44 @@ public sealed class SqlPerformanceMonitor
 
     public int ThresholdMs { get; }
 
+    // 慢查詢 Warn 的範本與解析放在一起：診斷匯出要把這些行依操作彙總，解析必須和產生處共用同一份文字
+    private const string SlowLogPrefix = "[SQL][慢] ";
+    private const string SlowLogMiddle = " 耗時 ";
+    private const string SlowLogThresholdMarker = "ms，超過門檻 ";
+    private const string SlowLogTemplate =
+        SlowLogPrefix + "{Operation}" + SlowLogMiddle + "{Ms}" + SlowLogThresholdMarker + "{Threshold}ms";
+
+    /// <summary>
+    /// 從慢查詢 Warn 的訊息取出操作名稱與耗時（毫秒）。格式不符（改過文案、被截斷）回 false，
+    /// 呼叫端應退回一般訊息處理，不得丟棄。
+    /// </summary>
+    public static bool TryParseSlowLog(string? message, out string operation, out long elapsedMs)
+    {
+        operation = string.Empty;
+        elapsedMs = 0;
+        if (message is null || !message.StartsWith(SlowLogPrefix, StringComparison.Ordinal)) return false;
+
+        var middleAt = message.LastIndexOf(SlowLogMiddle, StringComparison.Ordinal);
+        var thresholdAt = message.LastIndexOf(SlowLogThresholdMarker, StringComparison.Ordinal);
+        if (middleAt < SlowLogPrefix.Length || thresholdAt <= middleAt) return false;
+
+        var msText = message.Substring(middleAt + SlowLogMiddle.Length, thresholdAt - middleAt - SlowLogMiddle.Length);
+        if (!long.TryParse(msText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var ms))
+            return false;
+
+        var tail = message[(thresholdAt + SlowLogThresholdMarker.Length)..];
+        if (!tail.EndsWith("ms", StringComparison.Ordinal) ||
+            !long.TryParse(tail[..^2], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _))
+            return false;
+
+        var name = message[SlowLogPrefix.Length..middleAt];
+        if (name.Length == 0) return false;
+
+        operation = name;
+        elapsedMs = ms;
+        return true;
+    }
+
     /// <summary>
     /// 記錄一次資料層操作。<paramref name="operation"/> 要能定位到程式碼裡的哪條路徑
     /// （例如 <c>Query</c>、<c>blob:issue_handling:Mutate</c>），不要只寫「SQL」——
@@ -90,7 +128,7 @@ public sealed class SqlPerformanceMonitor
 
         RecordTopSlow(operation ?? string.Empty, elapsedMs);
 
-        Log.Warn("[SQL][慢] {Operation} 耗時 {Ms}ms，超過門檻 {Threshold}ms", operation, elapsedMs, ThresholdMs);
+        Log.Warn(SlowLogTemplate, operation, elapsedMs, ThresholdMs);
     }
 
     /// <summary>

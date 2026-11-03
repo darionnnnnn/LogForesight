@@ -20,6 +20,30 @@ public class AiResponse
     public bool Success { get; init; }
     public string Content { get; init; } = string.Empty;
     public string? Error { get; init; }
+
+    // 以下為診斷用的呼叫資訊（第 63 輪 F-1）：只新增資料、不影響成敗判定與內容；
+    // 伺服器沒有回對應欄位、或這次根本沒走到 HTTP 回應（傳輸層失敗）時為 null。
+
+    /// <summary>送出的使用者 prompt 字元數（重試時含附加的修正說明）</summary>
+    public int? PromptChars { get; init; }
+
+    /// <summary>送出的 system prompt 字元數；沒有 system prompt 為 0</summary>
+    public int? SystemPromptChars { get; init; }
+
+    /// <summary>
+    /// 回覆字元數：成功時是清洗後 <see cref="Content"/> 的長度；空回覆失敗時是伺服器原始回覆的長度
+    /// （清洗後才變空的情況會大於 0）。
+    /// </summary>
+    public int? ResponseChars { get; init; }
+
+    /// <summary>伺服器回報的 prompt token 數（usage.prompt_tokens）；省略 usage 的伺服器為 null</summary>
+    public int? PromptTokens { get; init; }
+
+    /// <summary>伺服器回報的 completion token 數（usage.completion_tokens）</summary>
+    public int? CompletionTokens { get; init; }
+
+    /// <summary>伺服器回報的 choices[0].finish_reason（stop／length…）；沒有欄位為 null</summary>
+    public string? FinishReason { get; init; }
 }
 
 /// <summary>ChatJsonAsync 的結果：JSON 解析並通過內容檢查才算成功，含實際嘗試次數供除錯</summary>
@@ -66,6 +90,9 @@ public class AIService : IAiService
     private readonly ResiliencePipeline _retryPipeline;
     private readonly IPromptDumper _dumper;
 
+    /// <summary>診斷用的模型名稱：Azure 沒有 model 欄位，記部署名稱</summary>
+    private readonly string _azureDeployment;
+
     /// <summary>token 用量計量（回饋二十七輪作業 B）；null＝不統計（批次以外的臨時實例、測試）</summary>
     private readonly IAiUsageMeter? _usageMeter;
 
@@ -104,6 +131,7 @@ public class AIService : IAiService
         };
 
         _provider = AiProviders.Normalize(settings.Provider);
+        _azureDeployment = settings.AzureDeployment?.Trim() ?? "";
         _defaultModel = string.IsNullOrWhiteSpace(settings.Model) ? AiProviders.DefaultModel(_provider) : settings.Model.Trim();
 
         var (endpointUrl, applyAuth) = ResolveEndpointAndAuth(settings);
@@ -250,6 +278,8 @@ public class AIService : IAiService
         }
         if (_lane != AiLane.Interactive) await _requestQueue.WaitAsync(ct);
         var sw = Stopwatch.StartNew();
+        // 最近一次 HTTP 回應的診斷資訊（Polly 重試時以最後一次為準）；只讀取、不影響任何判斷
+        ChatCallInfo? lastCallInfo = null;
         try
         {
             // 全站閘道在本實例佇列之後取：排在自己佇列裡的呼叫不佔全站許可。
@@ -284,6 +314,9 @@ public class AIService : IAiService
                 RecordUsage(result?.Usage);
 
                 var text = result?.Choices.FirstOrDefault()?.Message.Content;
+                lastCallInfo = new ChatCallInfo(
+                    text?.Length ?? 0, result?.Usage?.PromptTokens, result?.Usage?.CompletionTokens,
+                    result?.Choices.FirstOrDefault()?.FinishReason);
 
                 // 空回應視為失敗觸發重試，不讓「無內容」流進分析結果
                 if (string.IsNullOrWhiteSpace(text))
@@ -305,7 +338,14 @@ public class AIService : IAiService
 
             Log.Info("Chat 完成：耗時={ElapsedMs}ms, 回應長度={ResponseChars} 字元", sw.ElapsedMilliseconds, content.Length);
             _dumper.Dump(label, systemPrompt ?? "", prompt, content);
-            return new AiResponse { Success = true, Content = content };
+            return new AiResponse
+            {
+                Success = true, Content = content,
+                PromptChars = prompt.Length, SystemPromptChars = systemPrompt?.Length ?? 0,
+                ResponseChars = content.Length,
+                PromptTokens = lastCallInfo?.PromptTokens, CompletionTokens = lastCallInfo?.CompletionTokens,
+                FinishReason = lastCallInfo?.FinishReason
+            };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -326,7 +366,16 @@ public class AIService : IAiService
         catch (Exception ex)
         {
             Log.Warn(ex, "Chat 最終失敗（重試已耗盡）：耗時={ElapsedMs}ms", sw.ElapsedMilliseconds);
-            return new AiResponse { Success = false, Error = ex.Message };
+            // 只有空回覆失敗是「伺服器有回、內容空」，才有回應資訊可帶；連線、HTTP、逾時沒有
+            var emptyInfo = ex is EmptyAiResponseException ? lastCallInfo : null;
+            return new AiResponse
+            {
+                Success = false, Error = ex.Message,
+                PromptChars = prompt.Length, SystemPromptChars = systemPrompt?.Length ?? 0,
+                ResponseChars = emptyInfo?.ResponseChars,
+                PromptTokens = emptyInfo?.PromptTokens, CompletionTokens = emptyInfo?.CompletionTokens,
+                FinishReason = emptyInfo?.FinishReason
+            };
         }
         finally
         {
@@ -366,6 +415,9 @@ public class AIService : IAiService
         string rawContent = string.Empty;
         string? lastError = null;
         int totalAttempts = _jsonRetryCount + 1;
+        // 診斷（第 63 輪 F-2）：每次「內容層失敗」的嘗試各記一筆，最終失敗時寫成一行；
+        // 只累積資料，不參與下面任何成敗與重試判斷
+        var attemptDiagnostics = new List<AiJsonAttemptDiagnostics>();
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
@@ -383,9 +435,18 @@ public class AIService : IAiService
                 Log.Warn("ChatJsonAsync 傳輸層失敗（第 {Attempt}/{Total} 次），不進 JSON 重試：{Error}",
                     attempt, totalAttempts, response.Error);
                 // 空回覆屬內容層失敗、已由 Polly 層重試過：同樣不進 JSON 重試，但錯誤訊息沿用契約失敗的組法（附「（空回覆）」）
-                var transportError = response.Error == EmptyAiResponseException.DefaultMessage
+                var isEmptyResponse = response.Error == EmptyAiResponseException.DefaultMessage;
+                var transportError = isEmptyResponse
                     ? $"{JsonContractError}：{FormatErrorResponseSnippet(rawContent)}"
                     : response.Error;
+                if (isEmptyResponse)
+                {
+                    var emptyAttempt = AiJsonDiagnostics.BuildAttempt<T>(attempt, response, string.Empty, null);
+                    if (emptyAttempt != null) attemptDiagnostics.Add(emptyAttempt);
+                }
+                // 純傳輸層失敗（先前也沒有任何內容層失敗）不寫；先前有內容層失敗的，那些證據照寫
+                WriteDiagnostics<T>(label, model, maxTokens, attempt, attemptDiagnostics,
+                    isEmptyResponse ? AiJsonDiagnostics.EndedEmpty : AiJsonDiagnostics.EndedTransport);
                 // RawContent 刻意留空：前一次嘗試的不合格回覆不是這次的結果，帶著它會讓呼叫端走「原文保留」降級、
                 // 把傳輸失敗的主機日標成 AI 已完成而不再補跑；完全失敗才會維持待補
                 return new AiJsonResult<T> { Success = false, RawContent = string.Empty, Error = transportError, Attempts = attempt };
@@ -393,7 +454,8 @@ public class AIService : IAiService
             else
             {
                 rawContent = response.Content;
-                var parsed = AiJson.TryParse<T>(response.Content);
+                var parseOutcome = AiJson.TryParseDetailed<T>(response.Content);
+                var parsed = parseOutcome.Value;
 
                 if (parsed != null && (validate == null || validate(parsed)))
                 {
@@ -410,7 +472,7 @@ public class AIService : IAiService
                     // 印出回覆預覽方便診斷（截斷、前言文字、格式跑掉等），不然完全是黑盒子；
                     // 只取頭尾各一截、控制在數百字元內，不是把整段回覆存進去
                     var preview = PreviewForLog(response.Content);
-                    Log.Warn("JSON 解析失敗（第 {Attempt}/{Total} 次），型別={Type}，回覆長度={ResponseChars}，預覽：{Preview}",
+                    Log.Warn(JsonParseFailedTemplate,
                         attempt, totalAttempts, typeof(T).Name, response.Content.Length, preview);
                 }
                 else
@@ -418,9 +480,12 @@ public class AIService : IAiService
                     lastError = "AI 回覆內容未通過檢查（可能為異常重複文字或欄位不合理）";
                     // JSON 語法沒問題、是內容合理性沒過關：記錄解析出的物件本身（本來就是我們定義的
                     // 小結構，不是原始長文字），才看得出究竟是哪個欄位不合理
-                    Log.Warn("JSON 內容檢查未通過（第 {Attempt}/{Total} 次），型別={Type}，解析結果：{Parsed}",
+                    Log.Warn(JsonValidationFailedTemplate,
                         attempt, totalAttempts, typeof(T).Name, SafeSerialize(parsed));
                 }
+
+                var failedAttempt = AiJsonDiagnostics.BuildAttempt<T>(attempt, response, response.Content, parseOutcome);
+                if (failedAttempt != null) attemptDiagnostics.Add(failedAttempt);
             }
 
         }
@@ -433,7 +498,19 @@ public class AIService : IAiService
 
         Log.Error("ChatJsonAsync 最終失敗（{Total} 次嘗試皆未通過），型別={Type}，原因：{Error}",
             totalAttempts, typeof(T).Name, finalError);
+        WriteDiagnostics<T>(label, model, maxTokens, totalAttempts, attemptDiagnostics, AiJsonDiagnostics.EndedExhausted);
         return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = finalError, Attempts = totalAttempts };
+    }
+
+    /// <summary>寫 AI JSON 失敗診斷（見 <see cref="AiJsonDiagnostics"/>）；模型與 max_tokens 取實際生效值。</summary>
+    private void WriteDiagnostics<T>(string label, string? model, int? maxTokens, int attemptsMade,
+        IReadOnlyList<AiJsonAttemptDiagnostics> attempts, string endedBy) where T : class
+    {
+        if (attempts.Count == 0) return;
+        var effectiveModel = _provider == AiProviders.AzureOpenAi
+            ? _azureDeployment
+            : (!string.IsNullOrWhiteSpace(model) ? model : _defaultModel);
+        AiJsonDiagnostics.Write(label, typeof(T).Name, effectiveModel, maxTokens ?? _maxTokens, attemptsMade, endedBy, attempts);
     }
 
     /// <summary>
@@ -441,6 +518,23 @@ public class AIService : IAiService
     /// 改文案會讓「要不要附上回覆片段」的判定靜默失效（訊息照樣顯示，片段卻消失）。
     /// </summary>
     internal const string JsonContractError = "AI 回覆不是合法 JSON 或格式不符契約";
+
+    // 逐次嘗試的兩個 Warn 範本。診斷匯出的「歷次失敗統計」從已寫入執行紀錄的訊息比對字首與型別標記，
+    // 所以字首、型別標記、回覆片段標記都抽成常數，產生處與匯出共用，不各寫一份字面值
+    // （改文案時兩邊同步；比對不到只會讓統計變 0，不影響任何判定）。
+    internal const string JsonParseFailedPrefix = "JSON 解析失敗（第 ";
+    internal const string JsonValidationFailedPrefix = "JSON 內容檢查未通過（第 ";
+    internal const string JsonFailureTypeMarker = "，型別=";
+    internal const string JsonParseFailedPreviewMarker = "預覽：";
+    internal const string JsonValidationParsedMarker = "解析結果：";
+
+    private const string JsonParseFailedTemplate =
+        JsonParseFailedPrefix + "{Attempt}/{Total} 次）" + JsonFailureTypeMarker + "{Type}，回覆長度={ResponseChars}，"
+        + JsonParseFailedPreviewMarker + "{Preview}";
+
+    private const string JsonValidationFailedTemplate =
+        JsonValidationFailedPrefix + "{Attempt}/{Total} 次）" + JsonFailureTypeMarker + "{Type}，"
+        + JsonValidationParsedMarker + "{Parsed}";
 
     /// <summary>
     /// AI 契約失敗時附加於錯誤訊息的回覆片段長度上限（300 字元）。
@@ -686,5 +780,19 @@ public class AIService : IAiService
     {
         [JsonPropertyName("message")]
         public OpenAIMessage Message { get; set; } = new();
+
+        /// <summary>
+        /// stop／length／content_filter…；部分伺服器省略。用 JsonElement 接而不是 string：
+        /// 這個欄位只為診斷而讀，伺服器給了意料之外的型別也不能讓信封解析失敗而改變呼叫行為。
+        /// </summary>
+        [JsonPropertyName("finish_reason")]
+        public JsonElement? FinishReasonRaw { get; set; }
+
+        [JsonIgnore]
+        public string? FinishReason =>
+            FinishReasonRaw is { ValueKind: JsonValueKind.String } v ? v.GetString() : null;
     }
+
+    /// <summary>單次 HTTP 回應的診斷資訊（原始回覆長度、token 用量、結束原因）</summary>
+    private sealed record ChatCallInfo(int ResponseChars, int? PromptTokens, int? CompletionTokens, string? FinishReason);
 }

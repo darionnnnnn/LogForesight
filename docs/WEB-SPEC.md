@@ -529,12 +529,13 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   | `upstream_timeout` | 503 | 外部服務（AI、PRTG、Sentinel）逾時 |
   | `platform_unsupported` | 501 | 本平台不支援該功能（非 Windows 的 AD 連線測試等 Windows 專屬能力） |
   | `netiq_attempt_ledger_invalid` | 409 | NetIQ 最近執行狀態資料不完整或損毀，補跑範圍預覽無法準確計算 |
+  | `export_deidentification_failed` | 500 | 排程作業診斷匯出無法確認已完成去識別化（字典來源讀取失敗或結果掃描有殘留），不產生任何檔案 |
 
   PRTG 目錄與診斷傳輸、校準（含 `capture_busy`）、排程預覽的領域碼同樣登錄在 `ApiErrorCodes`，以程式為準。用戶端中斷（請求已取消）回 499＋`request_cancelled`、不記錯誤日誌。`message` 一律是**可直接顯示給使用者的繁體中文**——
   前端不做錯誤碼→文案對照表（維護不動的東西就不要建）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
-  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯。
+  Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板；領域例外自帶狀態碼與錯誤碼者（`PrtgTransferStoreException`）由 Filter 依例外轉譯；去識別化失敗另有專屬例外 `RunExportDeidentificationException`，訊息與屬性只含來源名稱與殘留類別次數、不含原值。
   **樂觀鎖衝突另有一支**：處理狀態三表以
   `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
   `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
@@ -2847,6 +2848,17 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   **不為 PRTG 另闢一區**——PRTG 沒有主機日語意，硬拆會做出一張空表。
 - **異常彙總的欄位是「執行站台」不是「影響主機」**：那一欄的來源是 `BatchRun.HostName`
   ＝跑批次的站台，不是被分析的主機。標成「影響主機」會讓人把站台名誤讀成出問題的主機。
+  判斷個案或通案看「影響趟數」（去重 RunId）。`GET errors` 回 `{ groups, failedWithoutErrorRuns }`；`minLevel` 為 `error`（預設）或 `warn`，其他值 400。
+  `failedWithoutErrorRuns` 是狀態為 `failed`／`stuck` 且 `ErrorCount == 0` 的趟數：這種趟次沒有 Error 行，不會出現在分組裡，大於 0 時畫面顯示提示並連到執行紀錄。
+  站台解析涵蓋開始時間早於期間起點的長跑趟次，只有趟次已被保留期清除才顯示「（未知）」。診斷行以不緩衝的 `BatchRunStore.ForEachLog` 逐行讀取。
+- **診斷資料匯出**（`GET /api/runs/export?days=N`，工具列「匯出分析資料」）：給 AI 分析用的單一 JSON，只有一種格式。
+  - **權限與資源**：類別層 `DevMonitor|Maintain` 加 `[RequireViewAll]`，serverAdmin 回 403。單一併發（搶不到回 503 `capture_busy`）；檔案上限 16 MiB，超過回 413 `capacity_exceeded`，不截斷。寫稽核 `run_diagnostics_export`，只記天數、組數、趟數、位元組數與代號數，不記內容。沒有設定鍵，上限是 `RunExportLimits` 常數。
+  - **內容**：`meta`（期間、省略項目 `omitted`、去識別化摘要）、`guide`（給 AI 的名詞解釋）、`context`（排程與模組設定白名單）、`dailyHealth`（逐日狀態台數，不含今天、不含主機名單）、`runStats`（依作業與觸發類別、階段耗時、版本）、`signalGroups`＋`stacks`、`slowSql`、`abnormalRuns`、`aiFormatAnomalies`。
+  - **訊號組**：Warn 以上的診斷行，加上 `Output` 中去空白後行首為 `⚠`／`✗` 的行（只影響匯出多寡，不影響任何判定；分析結果類輸出排除）。先遮罩、再以 `RunMessageNormalizer` 正規化，組鍵含 logger，所以組數可能少於畫面；`source=log` 的 Error＋Fatal 次數總和必須等於同期異常彙總的次數總和。
+  - **不匯出**：正常趟次逐筆、一般輸出與里程碑、帳號與主機名單、訊號組內的 AI 回覆片段、prompt 全文。
+  - **去識別化**（`RunExportDeidentifier`，一律套用，無開關）：順序固定為密鑰 → URL → 已知字典（長字串優先）→ 樣式。代號依首次出現配發、只在單一檔案內穩定、不用雜湊，檔案內沒有對照表；主機 IP 對應到同一個主機代號。字典來源讀取失敗，或序列化後掃描仍有字典原值、IPv4、Email、密鑰，一律中止並回 500 `export_deidentification_failed`，不給檔案。憑證用目前金鑰解不開（搬站或換金鑰後的舊值）不中止：略過實際值比對，改靠 `password=`、`passhash=`、`Bearer` 等樣式遮罩，名稱寫進 `meta.deidentification.undecryptableSecrets`。`guide` 不進掃描；封閉集合的值整串放行；只掃值不掃欄位名（匯出沒有動態欄位名），避免帳號 `status` 這類常見詞讓匯出永遠失敗。標籤後的值只取單一詞，含空白的人名若不在字典內，後半可能漏遮；檔案 `meta` 寫明自由文字無法保證完全遮除。
+  - **AI 回覆格式異常**（`aiFormatAnomalies`）：案例是 `Headline` 精確等於 `LogAnalysisService.AiFormatAnomalyHeadline` 的主機日紀錄，涵蓋解析失敗與內容檢查失敗兩種；重新分析成功後就不再是案例。每案附遮罩後的回覆前 600 字、回覆類別、輸入特徵（`AiInputFeatures`）、同主機前後 7 天最接近的正常日作對照；最新 50 案另附遮罩後的問題清單。
+  - **失敗診斷**：`ChatJsonAsync` 最終失敗且有內容層失敗時，以 logger `AiJsonDiagnostics` 寫一行 Warn（精簡 JSON：`finish_reason`、字數與 token 數、解析錯誤位置、各欄長度、回覆頭尾）。它不計入 `WarnCount`，執行詳情與異常彙總都不顯示，只給匯出。互動 AI 卡片不在 recorder 範圍內，不納入。
 - **AI 跟隨取數**：AI 分析**沒有獨立的啟用開關**，AI 服務設定好（`IWebAiService.Available`）就一律啟用。
   取數執行一發佈當日 PRTG finding（`prtg-findings-ready`），`SchedulerRunState` 就發出通知讓
   AI 立刻開跑，**不等自己的 60 秒輪詢**——否則使用者按下「立即執行」後看到的是取數在跑、AI 卻閒著。
@@ -3007,7 +3019,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     「執行時間」欄用同一個鍵（當天開跑）：取數趟的最早開始～最晚結束與實際總耗時（聯集，重疊不重複算）；
     展開列再列本機／NetIQ／PRTG／AI 各路區間與耗時（`RunDayTimingBuilder`）。AI 趟只進 AI 那一路，不進主機×日。
     異常中斷的趟不計入聯集（結束時刻是站台重啟時刻），只寫趟數與最後活動；舊紀錄沒有階段資料時各路顯示「—」。
-  - **異常彙總**（Error/Fatal 按訊息聚合）。
+  - **異常彙總**（Error/Fatal 按訊息聚合，可切換含 Warn，見本節「異常彙總的欄位」）。
   - **執行紀錄**：`GET api/runs/list?days=N`
     （`RunMonitorService.GetRunList`），點列就地展開階段時間軸（`core/run-timeline.js`：每個階段一條、依整趟比例定位，起訖、耗時、結果都有文字；PRTG 子階段縮排；異常中斷的耗時顯示「—」），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
     主機／**作業類型**（取數分析｜AI 分析，`BatchRun.JobType`）／狀態／開始時間／耗時／
@@ -3302,11 +3314,13 @@ target 名稱也帶 runId 與識別碼以免互相移除。
 之後附上最後回覆的前 300 字（換行與連續空白摺成單一空白、超長截斷加「…」、空回覆寫「（空回覆）」）。
 沒有這段，異常彙總裡幾百筆同樣的一句話無從判斷是模型能力還是 prompt 問題。**不附 prompt**。
 
+**不計入 `WarnCount` 的 logger** 只有 `SqlPerformanceMonitor` 與 `AiJsonDiagnostics`（`BatchRunRecorder.IsWarnCountExemptLogger`），後者見 §9.10「診斷資料匯出」。
+
 1. 所有**寫入類** Service 方法完成業務寫入後呼叫 `IAuditService.Append(...)`；動作代碼清單
    依定案（auth/handling/perm_confirm/rule/admin/import 六類；交辦單 `work_order_*`、
    派工旗標 `group_dispatch_pool`／`user_dispatch_paused`、問題靜音 `issue_mute`／`issue_unmute` 歸 handling 與 admin；另有排程作業
    `schedule_*` 與 NetIQ 診斷 `netiq_probe_run`——後者雖是查詢，但屬對 Sentinel 的主動查詢
-   操作，比照寫入記錄）。查詢/瀏覽不記。新增動作代碼時 `AuditQueryService.ActionNames`
+   操作，比照寫入記錄；全站資料離站的匯出同樣記錄：`calibration_export`、`prtg_data_export`、`run_diagnostics_export`）。查詢/瀏覽不記。新增動作代碼時 `AuditQueryService.ActionNames`
    的中文對照表**必須同 commit 補上**——漏了不會壞，但稽核頁會顯示原始代碼字串。
 2. `summary` 在寫入當下組好人話（含對象名稱與前後值摘要）；欄位級對照放 `detail_json`。
 3. `PermissionFilter` 攔下的 403 寫 `result='denied'`。

@@ -50,11 +50,11 @@ async function readJsonDownload(response, options) {
         if (!response.ok) {
             throw reject('download_http_error', `伺服器暫時無法完成下載（HTTP ${response.status}），請稍後再試。`);
         }
-        throw reject('download_invalid_response', '伺服器未提供 JSON 證據檔，請確認登入狀態後重試。');
+        throw reject('download_invalid_response', '伺服器未提供 JSON 檔案，請確認登入狀態後重試。');
     }
     if (Number(response.headers.get('Content-Length')) > limit) {
         response.body.cancel().catch(() => {});
-        throw reject('download_byte_cap', '證據檔超過下載上限，請縮小日期範圍；未提供部分檔案。');
+        throw reject('download_byte_cap', '檔案超過下載上限，請縮小日期範圍；未提供部分檔案。');
     }
     const reader = response.body.getReader();
     let interruption = null;
@@ -68,7 +68,7 @@ async function readJsonDownload(response, options) {
     const timeoutMs = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
         ? options.timeoutMs : GET_TIMEOUT_MS;
     const timer = setTimeout(() => interrupt(reject('timeout',
-        '證據檔下載逾時，請縮小日期範圍或稍後重試；未提供部分檔案。')), timeoutMs);
+        '檔案下載逾時，請縮小日期範圍或稍後重試；未提供部分檔案。')), timeoutMs);
     if (options.signal?.aborted) abort();
     else options.signal?.addEventListener('abort', abort, { once: true });
     try {
@@ -82,7 +82,7 @@ async function readJsonDownload(response, options) {
             size += value.byteLength;
             if (size > limit) {
                 interrupt(reject('download_byte_cap',
-                    '證據檔超過下載上限，請縮小日期範圍；未提供部分檔案。'));
+                    '檔案超過下載上限，請縮小日期範圍；未提供部分檔案。'));
                 throw interruption;
             }
             parts.push(value);
@@ -90,7 +90,7 @@ async function readJsonDownload(response, options) {
     } catch (error) {
         reader.cancel().catch(() => {});
         if (error instanceof ApiError || error.name === 'AbortError') throw error;
-        throw reject('download_failed', '證據檔傳輸中斷，請稍後重試；未提供部分檔案。');
+        throw reject('download_failed', '檔案傳輸中斷，請稍後重試；未提供部分檔案。');
     } finally {
         clearTimeout(timer);
         options.signal?.removeEventListener('abort', abort);

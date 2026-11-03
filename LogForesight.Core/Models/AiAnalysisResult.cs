@@ -12,8 +12,18 @@ namespace LogForesight.Core.Models;
 /// </summary>
 internal static class AiJson
 {
-    public static T? TryParse<T>(string raw) where T : class
+    public static T? TryParse<T>(string raw) where T : class => TryParseDetailed<T>(raw).Value;
+
+    /// <summary>
+    /// <see cref="TryParse{T}"/> 的帶診斷版本：候選順序、判定與回傳值與舊版完全相同
+    /// （舊版直接委派到這裡），只額外帶出失敗時的證據——最後一個 <see cref="JsonException"/>，
+    /// 以及「哪個候選語法合法、卻無法繫結到型別」。診斷只在失敗路徑多做事，成功路徑沒有額外成本。
+    /// </summary>
+    public static AiJsonParseOutcome<T> TryParseDetailed<T>(string raw) where T : class
     {
+        JsonException? lastException = null;
+        JsonException? lastSyntaxValidException = null;
+
         foreach (var candidate in Candidates(raw))
         {
             try
@@ -21,16 +31,68 @@ internal static class AiJson
                 var result = JsonSerializer.Deserialize<T>(candidate);
                 if (result != null)
                 {
-                    return result;
+                    return new AiJsonParseOutcome<T>(result, null, null);
                 }
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
                 // 換下一個候選區段
+                lastException = ex;
+                if (IsSyntaxValid(candidate))
+                {
+                    lastSyntaxValidException = ex;
+                }
             }
         }
 
-        return null;
+        return new AiJsonParseOutcome<T>(null, lastException, lastSyntaxValidException);
+    }
+
+    /// <summary>候選字串本身是不是合法 JSON 語法（與能否繫結到目標型別無關）；只在解析失敗時呼叫。</summary>
+    private static bool IsSyntaxValid(string candidate)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(candidate);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 回覆是否有「開了卻沒收尾」的跡象：從第一個 '{' 或 '[' 起算，括號（或字串）到結尾仍未閉合。
+    /// 只供診斷分辨「被截斷」與其他格式問題；陣列開頭也要算（<c>[{"a":1}</c> 是被截斷，不是沒有 JSON），
+    /// 所以不沿用只從 '{' 起算的 <see cref="TryRepairTruncated"/>，解析候選的順序與結果不受影響。
+    /// </summary>
+    public static bool HasUnclosedBrackets(string raw)
+    {
+        var start = raw.IndexOfAny(new[] { '{', '[' });
+        if (start < 0) return false;
+
+        var depth = 0;
+        bool inString = false, escape = false;
+        foreach (var c in raw.AsSpan(start))
+        {
+            if (inString)
+            {
+                if (escape) { escape = false; }
+                else if (c == '\\') { escape = true; }
+                else if (c == '"') { inString = false; }
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"': inString = true; break;
+                case '{' or '[': depth++; break;
+                case '}' or ']': if (depth > 0) depth--; break;
+            }
+        }
+
+        return depth > 0 || inString;
     }
 
     private static IEnumerable<string> Candidates(string raw)
@@ -166,6 +228,15 @@ internal static class AiJson
         }
     }
 }
+
+/// <summary>
+/// <see cref="AiJson.TryParseDetailed{T}"/> 的結果。<paramref name="Value"/> 與舊版 TryParse 的回傳值相同；
+/// <paramref name="LastException"/> 是最後一個失敗候選的 <see cref="JsonException"/>；
+/// <paramref name="LastSyntaxValidException"/> 是最後一個「語法合法、卻無法繫結到型別」的候選所擲的例外
+/// （非 null 即代表型別不符，其 Path 指到不符的欄位）。
+/// </summary>
+internal readonly record struct AiJsonParseOutcome<T>(
+    T? Value, JsonException? LastException, JsonException? LastSyntaxValidException) where T : class;
 
 /// <summary>
 /// 每日總覽分析（第一階段呼叫）的 JSON 契約。

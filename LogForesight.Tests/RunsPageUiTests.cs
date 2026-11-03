@@ -1023,6 +1023,33 @@ console.log('PASS operational status refresh');
         Assert.Contains("public bool PrtgBackfillWaiting", dto);
     }
 
+    /// <summary>批次D：匯出分析資料鈕預設隱藏、異常彙總等級下拉有可見 label、不含 inline style。</summary>
+    [Fact]
+    public void 匯出鈕預設隱藏且等級下拉有label且無inlineStyle()
+    {
+        var root = FindRepoRoot();
+        var view = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "Views", "Pages", "Runs.cshtml"));
+        var js = File.ReadAllText(Path.Combine(root, "LogForesight.Web", "wwwroot", "js", "pages", "runs.js"));
+
+        Assert.Matches("id=\"runs-export-wrap\"", view);
+        Assert.Matches("class=\"[^\"]*\\bd-none\\b[^\"]*\" id=\"runs-export-wrap\"", view);
+        Assert.Contains("匯出分析資料", view);
+        // 體檢輪：等級變數的初值要讀下拉目前的值（重新整理後瀏覽器可能還原表單狀態）
+        Assert.Contains("normalizeMinLevel(document.getElementById('run-errors-level')?.value)", js);
+        Assert.Contains("自由文字無法保證完全遮除", view);
+        Assert.Contains("<label class=\"small text-muted mb-0\" for=\"run-errors-level\">顯示等級</label>", view);
+        Assert.Contains("id=\"run-errors-level\"", view);
+        Assert.Matches("class=\"[^\"]*\\bd-none\\b[^\"]*\" id=\"run-errors-notice\"", view);
+        Assert.DoesNotContain("style=", view);
+
+        Assert.Contains("hasCapability(user, 'ViewAll')", js);
+        Assert.Contains("timeoutMs: 300000, silent: true", js);
+        Assert.Contains("run-diagnostics-${days}d.json", js);
+        Assert.Contains("minLevel=${errorsMinLevel}", js);
+        Assert.Contains("title: '影響趟數'", js);
+        Assert.DoesNotContain("style=", js);
+    }
+
     /// <summary>PRTG 維護頁「檢視該趟執行」以 ?run=id 直接開執行詳情；AI 設定狀態跟著 ai-status 即時更新。</summary>
     [Fact]
     public void 執行詳情深連結與AI設定狀態即時同步()

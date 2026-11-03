@@ -131,6 +131,16 @@ public interface IAnalysisRecordQuery
     HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to, bool logAnalysisOnly = false);
 
     /// <summary>
+    /// 依日期範圍與標題查**完整**紀錄（非輕量投影），日期新到舊、同日依主機 id、紀錄 id；最多 <paramref name="take"/> 筆。
+    /// <paramref name="from"/>、<paramref name="to"/> 皆含界（以日期比較）；<paramref name="headline"/> 是
+    /// **精確相等**（不是包含、不是前綴），比對下推到 SQL 的 headline 欄位，不載入不相關列。
+    /// 用途：撈「AI 回覆格式異常」案例（標題為 <see cref="LogForesight.Core.Service.LogAnalysisService.AiFormatAnomalyHeadline"/>）。
+    /// 不套用主機授權——呼叫端自行處理；詳情已清除的列照回（<see cref="DailyAnalysisRecord.DetailPruned"/>＝true）。
+    /// take ≤ 0、headline 為空或日期區間顛倒回空清單。
+    /// </summary>
+    List<DailyAnalysisRecord> QueryByHeadline(DateTime from, DateTime to, string headline, int take);
+
+    /// <summary>
     /// 取一批待補 AI 的主機日（批次C）：條件 ai_pending = true，日期範圍與方向由 <paramref name="query"/> 決定
     /// （null＝全範圍、日期新到舊）；同日依主機、紀錄 id 排序。
     /// 不反序列化 ContentJson，只回傳識別資訊與重建 AI 輸入時必要的最小欄位（沿用 QueryLightweight 投影手法）。

@@ -732,4 +732,210 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal(DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd"), oldest.Date);
         Assert.Equal(DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"), newest.Date);
     }
+
+    // ── 第 63 輪批次A：異常彙總（GetErrorSummary） ─────────────────────
+
+    private long SeedRun(string host, DateTime startedAt, int? exitCode = 0, int errorCount = 0,
+        bool finished = true, bool interrupted = false, bool stopped = false)
+    {
+        var store = Runs();
+        var run = new BatchRun { HostName = host, StartedAt = startedAt, AppVersion = "1.0" };
+        var id = store.StartRun(run);
+        if (finished)
+        {
+            run.FinishedAt = startedAt.AddMinutes(5);
+            run.ExitCode = exitCode;
+            run.ErrorCount = errorCount;
+            run.Interrupted = interrupted;
+            run.Stopped = stopped;
+            store.FinishRun(run);
+        }
+        return id;
+    }
+
+    private void SeedLog(long runId, string level, string message, string logger = "Test", DateTime? at = null) =>
+        Runs().AppendLog(new BatchRunLog
+        {
+            RunId = runId, Level = level, Message = message, Logger = logger, LoggedAt = at ?? DateTime.Now
+        });
+
+    [Fact]
+    public void 異常彙總_同訊息只差數字日期guid_併成一組()
+    {
+        var a = SeedRun("SRV-01", DateTime.Now.AddHours(-3), exitCode: 1, errorCount: 1);
+        var b = SeedRun("SRV-02", DateTime.Now.AddHours(-2), exitCode: 1, errorCount: 1);
+        SeedLog(a, "Error", "主機 12 逾時 2026-11-01 10:00");
+        SeedLog(b, "Error", "主機 345 逾時 2026-11-02 11:30");
+        SeedLog(b, "Error", "主機 9 逾時 2026-11-03 01:00");
+
+        var summary = Create().GetErrorSummary(7);
+
+        var group = Assert.Single(summary.Groups);
+        Assert.Equal(3, group.Count);
+        Assert.Equal(new[] { "SRV-01", "SRV-02" }, group.AffectedHosts);
+    }
+
+    [Fact]
+    public void 異常彙總_影響趟數是RunId去重數_不是次數()
+    {
+        var a = SeedRun("SRV-01", DateTime.Now.AddHours(-3), exitCode: 1, errorCount: 3);
+        var b = SeedRun("SRV-01", DateTime.Now.AddHours(-2), exitCode: 1, errorCount: 1);
+        SeedLog(a, "Error", "boom 1");
+        SeedLog(a, "Error", "boom 2");
+        SeedLog(a, "Error", "boom 3");
+        SeedLog(b, "Error", "boom 4");
+
+        var group = Assert.Single(Create().GetErrorSummary(7).Groups);
+
+        Assert.Equal(4, group.Count);
+        Assert.Equal(2, group.AffectedRuns);
+    }
+
+    [Fact]
+    public void 異常彙總_開始時間早於期間起點的趟次仍解得出站台()
+    {
+        // 趟次 5 天前開始、跑到現在才出錯；查近 2 天時 GetRecentRuns 不含它
+        var runId = SeedRun("SRV-LONG", DateTime.Today.AddDays(-5), exitCode: 1, errorCount: 1);
+        SeedLog(runId, "Error", "長跑的錯誤");
+
+        var group = Assert.Single(Create().GetErrorSummary(2).Groups);
+
+        Assert.Equal(new[] { "SRV-LONG" }, group.AffectedHosts);
+    }
+
+    [Fact]
+    public void 異常彙總_趟次已被清除時才顯示未知()
+    {
+        SeedLog(runId: 99999, level: "Error", message: "孤兒錯誤");
+
+        var group = Assert.Single(Create().GetErrorSummary(7).Groups);
+
+        Assert.Equal(new[] { "（未知）" }, group.AffectedHosts);
+    }
+
+    [Fact]
+    public void 異常彙總_沒有失敗或中斷趟時中斷計數為0()
+    {
+        SeedRun("SRV-01", DateTime.Now.AddHours(-3)); // 成功
+        SeedRun("SRV-02", DateTime.Now.AddHours(-2), stopped: true); // 已停止
+        SeedRun("SRV-03", DateTime.Now.AddMinutes(-10), finished: false); // 執行中
+
+        Assert.Equal(0, Create().GetErrorSummary(7).FailedWithoutErrorRuns);
+    }
+
+    [Fact]
+    public void 異常彙總_失敗或中斷但無錯誤行的趟才計入_有ErrorCount的不算()
+    {
+        SeedRun("SRV-01", DateTime.Now.AddHours(-5), exitCode: 1); // failed、無錯誤 → 算
+        SeedRun("SRV-02", DateTime.Now.AddHours(-4), exitCode: 2, interrupted: true); // stuck、無錯誤 → 算
+        var withErrors = SeedRun("SRV-03", DateTime.Now.AddHours(-3), exitCode: 1, errorCount: 2); // 有 Error → 不算
+        SeedLog(withErrors, "Error", "有錯誤行");
+        SeedRun("SRV-04", DateTime.Now.AddHours(-2)); // 成功 → 不算
+
+        var summary = Create().GetErrorSummary(7);
+
+        Assert.Equal(2, summary.FailedWithoutErrorRuns);
+        Assert.Single(summary.Groups);
+    }
+
+    [Fact]
+    public void 異常彙總_minLevel預設只含ErrorFatal_warn才含Warn()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1), exitCode: 0);
+        SeedLog(run, "Warn", "只是警告");
+        SeedLog(run, "Error", "真的錯誤");
+        var service = Create();
+
+        Assert.Equal(new[] { "真的錯誤" }, service.GetErrorSummary(7).Groups.Select(g => g.Message));
+        Assert.Equal(new[] { "真的錯誤" }, service.GetErrorSummary(7, "error").Groups.Select(g => g.Message));
+        var withWarn = service.GetErrorSummary(7, "warn").Groups;
+        Assert.Equal(new[] { "只是警告", "真的錯誤" }, withWarn.Select(g => g.Message).OrderBy(m => m, StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("info")]
+    [InlineData("fatal")]
+    [InlineData("")]
+    [InlineData("warning")]
+    public void 異常彙總_minLevel不認得的值回驗證錯誤(string minLevel)
+    {
+        Assert.Throws<DomainException>(() => Create().GetErrorSummary(7, minLevel));
+    }
+
+    [Fact]
+    public void 異常彙總_Warn組中SqlPerformanceMonitor標示不計入警告數_依logger不依訊息()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));
+        SeedLog(run, "Warn", "[SQL][慢] Query 耗時 2500ms", logger: BatchRunRecorder.ExemptWarnLogger);
+        // 訊息一樣但 logger 不同：不得被當成免計
+        SeedLog(run, "Warn", "[SQL][慢] Query 耗時 3100ms", logger: "Other");
+
+        var groups = Create().GetErrorSummary(7, "warn").Groups;
+
+        Assert.Equal(2, groups.Count);
+        Assert.True(Assert.Single(groups, g => g.ExcludedFromWarnCount).Count == 1);
+        Assert.False(Assert.Single(groups, g => !g.ExcludedFromWarnCount).ExcludedFromWarnCount);
+    }
+
+    [Fact]
+    public void 異常彙總_AI診斷logger的行完全排除_warn模式也看不到()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));
+        SeedLog(run, "Warn", "{\"label\":\"daily-20261101-h1\"}", logger: AiJsonDiagnostics.LoggerName);
+        SeedLog(run, "Warn", "一般警告", logger: "Other");
+        SeedLog(run, "Error", "診斷 logger 的 Error 也不顯示", logger: AiJsonDiagnostics.LoggerName);
+        // 訊息長得像診斷、logger 不同：不得被當成診斷（依 logger 名稱，不比對訊息）
+        SeedLog(run, "Warn", "{\"label\":\"daily-20261101-h2\"}", logger: "Other");
+        var service = Create();
+
+        var warn = service.GetErrorSummary(7, "warn").Groups;
+        var error = service.GetErrorSummary(7).Groups;
+
+        Assert.DoesNotContain(warn, g => g.Message.Contains("診斷 logger"));
+        Assert.Equal(2, warn.Count);
+        Assert.Contains(warn, g => g.Message == "一般警告");
+        Assert.Contains(warn, g => g.Message.Contains("h2"));
+        Assert.DoesNotContain(warn, g => g.Message.Contains("h1"));
+        Assert.Empty(error);
+    }
+
+    [Fact]
+    public void 執行詳情_Logs排除AI診斷logger的行_其他行照常()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1));
+        SeedLog(run, "Warn", "診斷行", logger: AiJsonDiagnostics.LoggerName);
+        SeedLog(run, "Warn", "慢查詢", logger: BatchRunRecorder.ExemptWarnLogger);
+        SeedLog(run, "Info", "一般資訊");
+        SeedLog(run, "Warn", "診斷行（同訊息、不同 logger）", logger: "Other");
+
+        var detail = Create().GetDetail(run);
+
+        Assert.DoesNotContain(detail.Logs, l => l.Logger == AiJsonDiagnostics.LoggerName);
+        Assert.Equal(3, detail.Logs.Count);
+        Assert.Contains(detail.Logs, l => l.Logger == BatchRunRecorder.ExemptWarnLogger);
+    }
+
+    [Fact]
+    public void 異常彙總_組內等級取最高()
+    {
+        var run = SeedRun("SRV-01", DateTime.Now.AddHours(-1), exitCode: 1, errorCount: 2);
+        SeedLog(run, "Warn", "同一件事 1");
+        SeedLog(run, "Error", "同一件事 2");
+        SeedLog(run, "Fatal", "同一件事 3");
+        var run2 = SeedRun("SRV-02", DateTime.Now.AddHours(-1), exitCode: 1, errorCount: 1);
+        SeedLog(run2, "Warn", "另一件事 1");
+        SeedLog(run2, "Error", "另一件事 2");
+
+        var groups = Create().GetErrorSummary(7, "warn").Groups;
+
+        Assert.Equal("Fatal", Assert.Single(groups, g => g.Message.StartsWith("同一件事")).Level);
+        Assert.Equal("Error", Assert.Single(groups, g => g.Message.StartsWith("另一件事")).Level);
+    }
+
+    [Fact]
+    public void 訊息正規化_畫面與匯出共用同一個實作()
+    {
+        Assert.Equal("失敗 {n} 次 於 {date} id={guid}",
+            RunMessageNormalizer.Normalize("失敗 12 次 於 2026-11-03 10:00:01 id=3F2504E0-4F89-11D3-9A0C-0305E82C3301"));
+    }
 }

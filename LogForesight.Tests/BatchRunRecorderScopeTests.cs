@@ -276,6 +276,66 @@ public class BatchRunRecorderScopeTests
     }
 
     [Fact]
+    public void AI診斷logger的Warn寫入log但不計入WarnCount()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+        // 完整名稱帶命名空間時，短名稱取最後一段也要對得上；實際診斷 logger 沒有句點
+        var logger = LogManager.GetLogger(AiJsonDiagnostics.LoggerName);
+
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            logger.Warn("{Diagnostics}", "{\"label\":\"daily-20261101-h1\"}");
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(runId);
+        Assert.NotNull(run);
+        Assert.Equal(0, run!.WarnCount);
+
+        var log = Assert.Single(store.GetLogs(runId));
+        Assert.Equal(AiJsonDiagnostics.LoggerName, log.Logger);
+        Assert.Equal("Warn", log.Level);
+        Assert.Equal("{\"label\":\"daily-20261101-h1\"}", log.Message);
+    }
+
+    [Fact]
+    public void AI診斷logger與慢SQL各自免計_其他logger同訊息仍計數()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            LogManager.GetLogger(AiJsonDiagnostics.LoggerName).Warn("同一段訊息");
+            LogManager.GetLogger("LogForesight.Core.Persistence.Sql.SqlPerformanceMonitor").Warn("同一段訊息");
+            LogManager.GetLogger("LogForesight.Core.Service.SomeOtherService").Warn("同一段訊息");
+            LogManager.GetLogger(AiJsonDiagnostics.LoggerName).Error("診斷 logger 的 Error 照常計數");
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(runId);
+        Assert.NotNull(run);
+        Assert.Equal(1, run!.WarnCount);
+        Assert.Equal(1, run.ErrorCount);
+        Assert.Equal(4, store.GetLogs(runId).Count);
+    }
+
+    [Theory]
+    [InlineData("SqlPerformanceMonitor", true)]
+    [InlineData("AiJsonDiagnostics", true)]
+    [InlineData("AIService", false)]
+    [InlineData("aijsondiagnostics", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void 免計WarnCount的logger判定_只認兩個名稱(string? name, bool expected) =>
+        Assert.Equal(expected, BatchRunRecorder.IsWarnCountExemptLogger(name));
+
+    [Fact]
     public void 其他來源的Warn照常計數()
     {
         using var fixture = new EfSqliteFixture();

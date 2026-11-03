@@ -217,11 +217,25 @@ public class RunErrorGroupDto
 {
     public string Message { get; set; } = string.Empty;
     public string Level { get; set; } = string.Empty;
+    /// <summary>出現次數（診斷行數）</summary>
     public int Count { get; set; }
+    /// <summary>影響趟數：組內去重後的 RunId 數（與 <see cref="Count"/> 的「次數」不同）</summary>
+    public int AffectedRuns { get; set; }
+    /// <summary>true＝Warn 且來自慢 SQL 效能監控（不計入該趟的警告數，只供排查）</summary>
+    public bool ExcludedFromWarnCount { get; set; }
     public List<string> AffectedHosts { get; set; } = new();
     public DateTime FirstSeen { get; set; }
     public DateTime LastSeen { get; set; }
     public long LatestRunId { get; set; }
+}
+
+/// <summary>異常彙總的回應：訊息分組，加上沒有任何 Error 行卻失敗或中斷的趟數</summary>
+public class RunErrorSummaryDto
+{
+    public List<RunErrorGroupDto> Groups { get; set; } = new();
+
+    /// <summary>狀態為 failed 或 stuck 且 ErrorCount 為 0 的趟數（這些趟不會出現在 <see cref="Groups"/>）</summary>
+    public int FailedWithoutErrorRuns { get; set; }
 }
 
 /// <summary>執行紀錄（回饋十七輪批次F-3）：每一筆 BatchRun 原始資料的扁平清單，不像

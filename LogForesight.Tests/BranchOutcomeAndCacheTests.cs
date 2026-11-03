@@ -201,7 +201,7 @@ public class BranchOutcomeAndCacheTests : IDisposable
         }
 
         var service = CreateService();
-        var controller = new RunsController(service, new FakeSystemSettingsStore());
+        var controller = new RunsController(service, new FakeSystemSettingsStore(), new StubRunExportService(), new RecordingAuditService());
 
         // /api/runs/list is an execution-time view and includes the current local day.
         var list = Assert.IsType<ApiResponse<List<RunListItemDto>>>(controller.List(days: 1)).Data!;
