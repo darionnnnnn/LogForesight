@@ -19,6 +19,9 @@ public interface IRunExportMasker
     /// <summary>各類代號已配發的數量</summary>
     IReadOnlyDictionary<string, int> TokenCounts { get; }
 
+    /// <summary>解不開、無法比對實際值的憑證名稱（不含任何值）；要寫進檔案交代</summary>
+    IReadOnlyList<string> UndecryptableSecrets => Array.Empty<string>();
+
     /// <summary>
     /// 結果掃描，失敗即停（丟 <see cref="RunExportDeidentificationException"/>）。
     /// <paramref name="scanPropertyNames"/> 為 false 時只掃值，見 <see cref="RunExportDeidentifier.ScanResidual"/>。

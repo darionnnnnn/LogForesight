@@ -908,12 +908,34 @@ public class RunExportDeidentifierTestsSource : IDisposable
     }
 
     [Fact]
-    public void 密文解不開就中止_不知道實際值就無法保證遮得掉()
+    public void 密文解不開不中止匯出_記下名稱且樣式遮罩照常()
+    {
+        const string Undecryptable = "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        var s = Build();
+        s.Settings.Update(x =>
+        {
+            x.PrtgPasswordEnc = Undecryptable;
+            x.AiApiKeyEnc = Undecryptable;
+        });
+
+        var masker = Factory(s).Create();
+
+        Assert.Equal(new[] { "AI 金鑰", "PRTG 密碼" }, masker.UndecryptableSecrets);
+        Assert.DoesNotContain("plain-value-1", masker.Mask("連線失敗 password=plain-value-1"));
+    }
+
+    [Fact]
+    public void 其他來源讀取失敗仍然中止_解不開的憑證不放寬字典來源()
     {
         var s = Build();
-        s.Settings.Update(x => x.AiApiKeyEnc = "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        s.Settings.Update(x =>
+        {
+            x.PrtgEnabled = true;
+            x.PrtgPasswordEnc = "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        });
+        s.PrtgSource = () => throw new InvalidOperationException("壞了");
 
         var ex = Assert.Throws<RunExportDeidentificationException>(() => Factory(s).Create());
-        Assert.Equal("AI 金鑰", ex.SourceName);
+        Assert.Equal("PRTG 裝置鏡像", ex.SourceName);
     }
 }

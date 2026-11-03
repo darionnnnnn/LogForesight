@@ -55,6 +55,9 @@ public sealed record ExportDeidentificationDto
 {
     public IReadOnlyList<ExportTokenCountDto> Tokens { get; init; } = Array.Empty<ExportTokenCountDto>();
     public string Notice { get; init; } = string.Empty;
+
+    /// <summary>解不開、無法比對實際值的憑證名稱（固定清單，不含任何值）</summary>
+    public IReadOnlyList<string> UndecryptableSecrets { get; init; } = Array.Empty<string>();
 }
 
 public sealed record ExportTokenCountDto(string Kind, int Count);

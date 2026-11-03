@@ -811,6 +811,25 @@ public class RunExportServiceTests
         Assert.DoesNotContain("SRV-LEAK", string.Join(",", ex.Residual.Keys));
     }
 
+    [Fact]
+    public void 解不開的憑證仍可匯出_名稱寫進meta且不含值()
+    {
+        using var h = new RunExportHarness();
+        var run = h.AddRun();
+        h.AddLog(run, "Error", "Orchestrator", "連線失敗 password=plain-value-1");
+
+        var (root, bytes, doc) = h.Export(masker: () => RunExportDeidentifier.Create(
+            new RunExportDeidentifierSource { UndecryptableSecrets = new[] { "PRTG 密碼" } }));
+
+        using (doc)
+        {
+            var names = root.GetProperty("meta").GetProperty("deidentification")
+                .GetProperty("undecryptableSecrets").EnumerateArray().Select(e => e.GetString()).ToList();
+            Assert.Equal(new[] { "PRTG 密碼" }, names);
+            Assert.DoesNotContain("plain-value-1", System.Text.Encoding.UTF8.GetString(bytes));
+        }
+    }
+
     /// <summary>故意漏遮：訊息含 LEAKME 時原樣回傳。其餘委派給真實遮罩器（含結果掃描）</summary>
     private sealed class LeakyMasker : IRunExportMasker
     {

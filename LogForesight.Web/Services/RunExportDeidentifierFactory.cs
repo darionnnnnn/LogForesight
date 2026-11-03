@@ -131,18 +131,24 @@ public sealed record RunExportDeidentifierSource
 
     /// <summary>已設定的密鑰實際值（解密後的明碼）：AI 金鑰、SMTP、PRTG 密碼／token／passhash、Sentinel 密碼</summary>
     public IReadOnlyList<string> Secrets { get; init; } = Array.Empty<string>();
+
+    /// <summary>用目前金鑰解不開、因此無法比對實際值的憑證名稱（例如「PRTG 密碼」），不含任何值</summary>
+    public IReadOnlyList<string> UndecryptableSecrets { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
 /// 建立「本次匯出專用」的遮罩器：從主機、主機群組、使用者、Sentinel、PRTG 裝置鏡像與系統設定讀出字典來源。
 /// 每次匯出呼叫一次 <see cref="Create"/>，代號只在該實例內穩定。
 ///
-/// **任一來源讀取（或密鑰解密）失敗就丟 <see cref="RunExportDeidentificationException"/>**，不以殘缺字典繼續；
+/// **任一來源讀取失敗就丟 <see cref="RunExportDeidentificationException"/>**，不以殘缺字典繼續；
+/// 密鑰解不開不中止，改記進 <see cref="RunExportDeidentifierSource.UndecryptableSecrets"/>（理由見 <see cref="Secret"/>）。
 /// PRTG 未啟用或鏡像為空屬正常（PRTG 未啟用時鏡像讀取失敗也視為沒有資料，已啟用才算失敗）。
 /// 身分規則放在 Web，不帶進 Core。
 /// </summary>
 public sealed class RunExportDeidentifierFactory
 {
+    private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
+
     private readonly IHostStore _hosts;
     private readonly IHostGroupStore _hostGroups;
     private readonly IUserStore _users;
@@ -194,13 +200,14 @@ public sealed class RunExportDeidentifierFactory
         }
 
         var secrets = new List<string>();
-        Secret(secrets, "AI 金鑰", settings.AiApiKeyEnc);
-        Secret(secrets, "SMTP 密碼", settings.SmtpPasswordEnc);
-        Secret(secrets, "PRTG API token", settings.PrtgApiTokenEnc);
-        Secret(secrets, "PRTG 密碼", settings.PrtgPasswordEnc);
-        Secret(secrets, "PRTG passhash", settings.PrtgPasshashEnc);
+        var undecryptable = new List<string>();
+        Secret(secrets, undecryptable, "AI 金鑰", settings.AiApiKeyEnc);
+        Secret(secrets, undecryptable, "SMTP 密碼", settings.SmtpPasswordEnc);
+        Secret(secrets, undecryptable, "PRTG API token", settings.PrtgApiTokenEnc);
+        Secret(secrets, undecryptable, "PRTG 密碼", settings.PrtgPasswordEnc);
+        Secret(secrets, undecryptable, "PRTG passhash", settings.PrtgPasshashEnc);
         foreach (var sentinel in sentinels)
-            Secret(secrets, "Sentinel 密碼", sentinel.PasswordEnc);
+            Secret(secrets, undecryptable, "Sentinel 密碼", sentinel.PasswordEnc);
 
         return new RunExportDeidentifierSource
         {
@@ -211,7 +218,8 @@ public sealed class RunExportDeidentifierFactory
             Sentinels = sentinels.Select(s => new DeidentifierSentinel(s.SentinelId, s.Name, s.BaseUrl, s.Username)).ToList(),
             PrtgDevices = devices.Select(d => new DeidentifierPrtgDevice(d.Objid, d.Name, d.Ip, d.GroupPath)).ToList(),
             Settings = DeidentifierSettings.From(settings),
-            Secrets = secrets
+            Secrets = secrets,
+            UndecryptableSecrets = undecryptable.Distinct(StringComparer.Ordinal).ToList()
         };
     }
 
@@ -232,22 +240,22 @@ public sealed class RunExportDeidentifierFactory
     }
 
     /// <summary>
-    /// 把密文欄位解成明碼放進密鑰清單。解不開的密文＝不知道實際值＝無法保證遮得掉，視為來源失敗；
-    /// 非密文格式的值（舊資料或測試）原樣當成密鑰。
+    /// 把密文欄位解成明碼放進密鑰清單；非密文格式的值（舊資料或測試）原樣當成密鑰。
+    ///
+    /// **解不開的密文不中止匯出**：密文用目前金鑰解不開，常見於搬站或換金鑰後留下的舊憑證（站台照常運作，
+    /// 也可能根本不是目前使用的認證方式）。它阻擋匯出時，使用者只能重填憑證才拿得到檔案，與排查問題的用途相反。
+    /// 目前的行程讀不出這個值，也無法用它連線，因此不會把它寫進之後的紀錄；只有換金鑰前寫入的舊紀錄有理論風險，
+    /// 由 <c>password=</c>、<c>passhash=</c>、<c>Bearer</c> 等樣式比對接手，並把欄位名稱寫進檔案的 meta 交代。
     /// </summary>
-    private static void Secret(List<string> secrets, string name, string? stored)
+    private static void Secret(List<string> secrets, List<string> undecryptable, string name, string? stored)
     {
         if (string.IsNullOrEmpty(stored)) return;
 
-        string plain;
-        try
+        if (!CryptoHelper.TryDecrypt(stored, out var plain))
         {
-            if (!CryptoHelper.TryDecrypt(stored, out plain))
-                throw new InvalidOperationException("密文無法解密");
-        }
-        catch (Exception ex)
-        {
-            throw new RunExportDeidentificationException(name, ex);
+            undecryptable.Add(name);
+            Log.Warn("診斷匯出：「{0}」用目前金鑰解不開，略過實際值比對；請重新設定該憑證。", name);
+            return;
         }
 
         if (!string.IsNullOrEmpty(plain)) secrets.Add(plain);
