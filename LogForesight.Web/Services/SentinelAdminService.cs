@@ -14,11 +14,14 @@ public class SentinelAdminService
     private readonly IHostStore _hosts;
     private readonly IAuditService _audit;
     private readonly PermissionVersionStamp _permissionVersion;
+    private readonly ISystemSettingsStore? _settings;
 
     public SentinelAdminService(
         ISentinelStore sentinels, IHostStore hosts, IAuditService audit,
-        PermissionVersionStamp permissionVersion)
+        PermissionVersionStamp permissionVersion, ISystemSettingsStore? settings = null)
     {
+        // settings 供儲存／刪除密文後重新評估解密狀態（CryptoRecovery）；DI 一律提供
+        _settings = settings;
         _sentinels = sentinels;
         _hosts = hosts;
         _audit = audit;
@@ -81,6 +84,9 @@ public class SentinelAdminService
             UseEsmDirectory = request.UseEsmDirectory ?? existing?.UseEsmDirectory ?? false
         });
 
+        // 密碼可能剛被重新輸入：全部解得開就清掉「部分憑證無法解密」旗標（儲存已成功，失敗只記 Warn）
+        CryptoRecovery.Reevaluate(_settings, _sentinels);
+
         // 改名時同步所有掛在這台 Sentinel 下的主機顯示快照——不然要等下次批次/人工編輯才會更新，
         // 畫面會有一段時間顯示改名前的名稱
         if (previousName != null && !string.Equals(previousName, name, StringComparison.Ordinal))
@@ -104,6 +110,9 @@ public class SentinelAdminService
         var sentinel = _sentinels.Get(sentinelId) ?? throw DomainException.NotFound("找不到這台 Sentinel。");
 
         _sentinels.Delete(sentinelId);
+
+        // 刪掉解不開的密文也算恢復
+        CryptoRecovery.Reevaluate(_settings, _sentinels);
 
         // 直接處理，不沿用 NetiqOrphanSweeper：那支是給批次啟動時的全庫掃描用，
         // 帶有「現存 Sentinel 名單整個是空的就安全跳過」的欄杆（防設定尚未匯入時誤判）；

@@ -60,8 +60,9 @@ public static class CryptoKeyBootstrapper
 
         // 同步版互斥：整段同步、無 await，取得與釋放在同一條執行緒（見 NamedMutexGate.RunExclusive）。
         // 金鑰檔產生、指紋 claim 與密文重加密都必須在鎖內；逾時不可讓任何一項寫入繼續。
+        var probed = false;
         var acquired = new NamedMutexGate(MutexName).RunExclusive(
-            () => RunCore(backend, path, settingsStore, sentinelStore), mutexTimeout,
+            () => probed = RunCore(backend, path, settingsStore, sentinelStore), mutexTimeout,
             runActionWhenNotAcquired: false);
         if (!acquired)
             throw new InvalidOperationException(
@@ -70,8 +71,10 @@ public static class CryptoKeyBootstrapper
 
         Log.Info("密文金鑰來源：{0}；金鑰檔：{1}", CryptoHelper.KeySource, path);
 
-        // 金鑰不符時 RunCore 提早返回，探測放在這裡才一定會跑到
-        ProbeSecrets(settingsStore, sentinelStore);
+        // 指紋不符的路徑 RunCore 已在鎖內探測過（探測結果決定能不能覆寫指紋），不重複探測、不重複噴 Warn；
+        // 指紋相符的路徑在 rewrap 之後探測一次。兩條路徑都恰好一次。
+        if (!probed)
+            ProbeSecrets(settingsStore, sentinelStore);
     }
 
     /// <summary>
@@ -81,7 +84,13 @@ public static class CryptoKeyBootstrapper
     /// </summary>
     /// <returns>解不開的項目顯示名稱（不含任何值）</returns>
     internal static IReadOnlyList<string> ProbeSecrets(ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)
+        => ProbeSecretsCore(settingsStore, sentinelStore, out _);
+
+    /// <param name="completed">探測是否完整跑完；讀不到設定等例外時為 false（此時回傳空清單不代表「全部解得開」）</param>
+    private static IReadOnlyList<string> ProbeSecretsCore(
+        ISystemSettingsStore settingsStore, ISentinelStore sentinelStore, out bool completed)
     {
+        completed = false;
         try
         {
             var bad = new List<string>();
@@ -93,6 +102,7 @@ public static class CryptoKeyBootstrapper
 
             if (bad.Count > 0)
                 Log.Warn("[Crypto] 啟動探測：下列憑證用目前金鑰解不開：{0}。請還原正確的金鑰檔，或到對應設定頁重新輸入。", string.Join("、", bad));
+            completed = true;
             return bad;
         }
         catch (Exception ex)
@@ -102,31 +112,101 @@ public static class CryptoKeyBootstrapper
         }
     }
 
-    private static void RunCore(StorageBackend backend, string path, ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)
+    /// <returns>是否已在鎖內做過啟動探測（指紋不符路徑為 true；相符路徑由呼叫端在 rewrap 之後探測）</returns>
+    private static bool RunCore(StorageBackend backend, string path, ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)
     {
         var envSet = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("LF_CRYPTO_KEY"));
+        var blob = backend.Blob(FingerprintBlobKey);
+
+        // 金鑰檔不存在而指紋 blob 已有內容＝金鑰檔遺失後被新產生（不是首次啟動）。
+        // 必須在 TryCreateKeyFile 之前讀；用環境變數金鑰時不適用（本來就不產生金鑰檔）。
+        var keyFileLost = false;
         if (!envSet && !File.Exists(path))
+        {
+            keyFileLost = !string.IsNullOrWhiteSpace(ReadBlobSafely(blob));
             TryCreateKeyFile(path);
+        }
 
         CryptoHelper.UseKeyFile(path);
 
         var fingerprint = CryptoHelper.KeyFingerprint;
-        var blob = backend.Blob(FingerprintBlobKey);
         var fingerprintCheck = ClaimOrValidateFingerprint(blob, fingerprint);
         var recorded = fingerprintCheck.Recorded;
         if (recorded != null)
         {
+            // 指紋不符：先用目前金鑰探測全部密文。每一筆非空密文都解得開（含 inventory 全空）代表所有憑證
+            // 都已用目前金鑰重新輸入，舊指紋只是過期記錄，覆寫它；有任何一筆解不開（含停用的 Sentinel、SMTP）
+            // 就維持不符——多站台共用資料庫、各自金鑰的情境不得被另一個站台覆寫。
+            var bad = ProbeSecretsCore(settingsStore, sentinelStore, out var completed);
+            if (completed && bad.Count == 0 && OverwriteFingerprint(blob, recorded, fingerprint))
+            {
+                Log.Warn("[Crypto] 金鑰指紋已更新為目前金鑰檔（所有憑證已用新金鑰重新輸入；原指紋 {0}，目前 {1}）。", recorded, fingerprint);
+                KeyMismatch = false;
+                RewrapAll(settingsStore, sentinelStore);
+                return true;
+            }
+
             KeyMismatch = true;
-            Log.Error("金鑰檔與資料庫不相符（資料庫記錄的指紋 {0}，目前金鑰 {1}）：可能是還原資料庫時沒有一併還原金鑰檔，" +
-                      "或多個站台共用同一個資料庫。所有密碼欄位將無法解密，請還原正確的金鑰檔或到設定頁重新輸入密碼。",
-                recorded, fingerprint);
-            return;
+            if (keyFileLost)
+                Log.Error("[Crypto] 金鑰檔遺失：{0} 不存在，但資料庫已有金鑰指紋 {1}，系統已新產生金鑰（指紋 {2}），" +
+                          "原本加密的所有密碼欄位都將無法解密。常見原因：重新部署清掉了執行目錄，或 DataRoot 指到部署目錄。" +
+                          "請從備份還原原本的金鑰檔；沒有備份時到設定頁重新輸入全部憑證（含停用的 Sentinel，或清空）後重新啟動站台。" +
+                          "建議把 DataRoot 放在部署目錄之外，或把 keys 資料夾排除在部署清除範圍。",
+                    path, recorded, fingerprint);
+            else
+                Log.Error("金鑰檔與資料庫不相符（資料庫記錄的指紋 {0}，目前金鑰 {1}）：可能是還原資料庫時沒有一併還原金鑰檔，" +
+                          "或多個站台共用同一個資料庫（共用資料庫的站台必須共用同一把金鑰）。所有密碼欄位將無法解密，" +
+                          "請還原正確的金鑰檔，或到設定頁重新輸入全部憑證（含停用的 Sentinel，或清空）後重新啟動站台。",
+                    recorded, fingerprint);
+            return true;
         }
 
         KeyMismatch = false;
+        RewrapAll(settingsStore, sentinelStore);
+        return false;
+    }
+
+    private static void RewrapAll(ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)
+    {
         var rewrapped = RewrapSettings(settingsStore) + RewrapSentinels(sentinelStore);
         if (rewrapped > 0)
             Log.Info("[Crypto] 已將 {0} 個舊格式（enc:v1）密碼欄位重新加密為 enc:v2。", rewrapped);
+    }
+
+    private static string? ReadBlobSafely(EfJsonBlobStore blob)
+    {
+        try { return blob.Read(); }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Crypto] 讀取金鑰指紋記錄失敗，無法判斷金鑰檔是否遺失：{0}", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 在同一個 blob 原子操作內，確認目前記錄仍是 <paramref name="expectedRecorded"/> 才覆寫成目前金鑰指紋，
+    /// 並留下 UpdatedAt／ReplacedFingerprint；記錄已被其他行程改動則不寫、回 false。
+    /// </summary>
+    internal static bool OverwriteFingerprint(EfJsonBlobStore blob, string expectedRecorded, string fingerprint)
+    {
+        return blob.Mutate<bool>(current =>
+        {
+            var now = ReadFingerprint(current);
+            if (now == null || !string.Equals(now, expectedRecorded, StringComparison.OrdinalIgnoreCase))
+                return (current ?? "", false);
+
+            DateTime createdAt;
+            try { createdAt = JsonSerializer.Deserialize<FingerprintRecord>(current!)?.CreatedAt ?? DateTime.Now; }
+            catch (JsonException) { createdAt = DateTime.Now; }
+            var content = JsonSerializer.Serialize(new FingerprintRecord
+            {
+                Fingerprint = fingerprint,
+                CreatedAt = createdAt,
+                UpdatedAt = DateTime.Now,
+                ReplacedFingerprint = expectedRecorded
+            });
+            return (content, true);
+        });
     }
 
     /// <summary>
@@ -302,6 +382,12 @@ public static class CryptoKeyBootstrapper
     {
         public string Fingerprint { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
+
+        /// <summary>指紋被覆寫的時間（自動修復才有）</summary>
+        public DateTime? UpdatedAt { get; set; }
+
+        /// <summary>被覆寫掉的原指紋（自動修復才有）</summary>
+        public string? ReplacedFingerprint { get; set; }
     }
 
     private sealed class FingerprintMismatchException : Exception

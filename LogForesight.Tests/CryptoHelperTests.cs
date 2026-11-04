@@ -285,6 +285,71 @@ public class CryptoHelperV2Tests : IDisposable
         Assert.True(CryptoHelper.DecryptFailureSeen);
     }
 
+    // ── 第 63-2 輪批次H-2：ReevaluateDecryptFailure ──
+
+    private static List<string> CaptureCryptoErrors(Action action)
+    {
+        var target = new NLog.Targets.MemoryTarget("lf-crypto-helper-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target, typeof(CryptoHelper).FullName);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            action();
+            return target.Logs.ToList();
+        }
+        finally
+        {
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
+
+    [Fact]
+    public void ReevaluateDecryptFailure_旗標為真後全部解得開_旗標假且已回報清單清空()
+    {
+        var bad = CryptoHelper.EncryptWith(OtherKey, "secret");
+        Assert.False(CryptoHelper.TryDecrypt(bad, out _));
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+
+        var ok = CryptoHelper.ReevaluateDecryptFailure(new[] { CryptoHelper.Encrypt("a"), "", null, "plain" });
+
+        Assert.True(ok);
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+        // ReportedFailures 已清：同一筆壞密文再失敗一次會再記一次 Error，旗標再度為真
+        var logs = CaptureCryptoErrors(() => Assert.False(CryptoHelper.TryDecrypt(bad, out _)));
+        Assert.Single(logs, l => l.StartsWith("Error|"));
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void ReevaluateDecryptFailure_有一筆解不開_旗標維持為真且不清已回報清單()
+    {
+        var bad = CryptoHelper.EncryptWith(OtherKey, "secret");
+        Assert.False(CryptoHelper.TryDecrypt(bad, out _));
+
+        var ok = CryptoHelper.ReevaluateDecryptFailure(new[] { CryptoHelper.Encrypt("a"), bad });
+
+        Assert.False(ok);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+        // 已回報清單沒被清：同一筆再失敗不重複記 Error
+        var logs = CaptureCryptoErrors(() => Assert.False(CryptoHelper.TryDecrypt(bad, out _)));
+        Assert.Empty(logs.Where(l => l.StartsWith("Error|")));
+    }
+
+    [Fact]
+    public void ReevaluateDecryptFailure_空集合與全空字串_視為全部解得開()
+    {
+        CryptoHelper.TryDecrypt(CryptoHelper.EncryptWith(OtherKey, "x"), out _);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+
+        Assert.True(CryptoHelper.ReevaluateDecryptFailure(new string?[] { "", null }));
+
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+    }
+
     [Fact]
     public void TryDecrypt_非密文原樣回true_密文成功解開()
     {

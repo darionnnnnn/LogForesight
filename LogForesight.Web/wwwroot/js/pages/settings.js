@@ -912,7 +912,8 @@ function renderBackgroundJobs(detail) {
 
 /** 密碼欄位加密：金鑰不相符或曾有密文解不開時顯示警示，否則顯示金鑰來源 */
 function cryptoStatus(detail) {
-    if (detail.cryptoKeyMismatch || detail.cryptoDecryptFailure) return '部分密碼無法解密，請重新輸入（見 log）';
+    if (detail.cryptoKeyMismatch) return '金鑰與資料庫不相符：重新輸入全部憑證後重新啟動站台即解除（見 log）';
+    if (detail.cryptoDecryptFailure) return '部分憑證無法解密，請重新輸入（見 log）';
     const sourceLabels = { env: '環境變數', file: '金鑰檔', embedded: '內嵌（不建議）' };
     return `金鑰來源：${sourceLabels[detail.cryptoKeySource] ?? (detail.cryptoKeySource || '未知')}`;
 }

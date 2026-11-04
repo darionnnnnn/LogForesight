@@ -84,7 +84,7 @@ public class SystemSettingsServiceTests : IDisposable
         });
     }
 
-    private static UpdateSystemSettingsRequest ValidRequest(
+    internal static UpdateSystemSettingsRequest ValidRequest(
         int runLogRetentionDays = 120, int auditRetentionDays = 730, int rawEventRetentionDays = 120) => new()
     {
         ExpectedRevision = "legacy",
