@@ -1002,6 +1002,7 @@ public sealed class RunExportService : IRunExportService
                 NetiqDaysFailed = r.NetiqDaysFailed,
                 NetiqHostsSkipped = r.NetiqHostsSkipped,
                 PrtgOutcome = r.PrtgOutcome == null ? null : Closed(r.PrtgOutcome, KnownPrtgOutcomes),
+                PrtgOutcomeNote = string.IsNullOrWhiteSpace(r.PrtgOutcomeNote) ? null : TextCut(r.PrtgOutcomeNote, _l.AiInputTextChars),
                 UnsuccessfulPhases = (r.Phases ?? new List<RunPhaseRecord>())
                     .Where(p => p.FinishedAt.HasValue
                         ? p.Outcome is RunPhaseOutcomes.Failed or RunPhaseOutcomes.Partial or RunPhaseOutcomes.Stopped

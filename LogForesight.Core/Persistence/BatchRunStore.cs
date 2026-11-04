@@ -106,6 +106,13 @@ public class BatchRun
     /// </summary>
     public string? PrtgOutcome { get; set; }
 
+    /// <summary>
+    /// 趟次層的 PRTG 結局原因（目前只有 <see cref="PrtgOutcomeDisabled"/> 早退時寫入：未啟用／尚未設定認證資訊／憑證無法解密）。
+    /// 放趟次而不放 <see cref="PrtgDays"/>：早退沒有逐日統計，硬補一筆會改變 <c>LastRunIssue</c> 與補評估判定。
+    /// null＝舊紀錄或沒有原因要說明。
+    /// </summary>
+    public string? PrtgOutcomeNote { get; set; }
+
     /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgSensorsFetched { get; set; }
 
@@ -118,8 +125,17 @@ public class BatchRun
     /// <summary>PRTG 觸發式取數問題主機數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgTriggeredHosts { get; set; }
 
-    /// <summary>PRTG 未啟用（<see cref="PrtgOutcome"/>）</summary>
+    /// <summary>PRTG 未啟用或憑證不可用（<see cref="PrtgOutcome"/>；原因見 <see cref="PrtgOutcomeNote"/>）</summary>
     public const string PrtgOutcomeDisabled = "disabled";
+
+    /// <summary><see cref="PrtgOutcomeNote"/>：設定中 PRTG 整合未啟用</summary>
+    public const string PrtgNoteNotEnabled = "PRTG 未啟用";
+
+    /// <summary><see cref="PrtgOutcomeNote"/>：已啟用但連線位址或認證資訊沒填完整</summary>
+    public const string PrtgNoteNotConfigured = "尚未設定認證資訊";
+
+    /// <summary><see cref="PrtgOutcomeNote"/>：認證密文存在但解不開（金鑰檔與資料庫不相符）</summary>
+    public const string PrtgNoteUndecryptable = "憑證無法解密，請到 PRTG 維護頁重新輸入";
 
     /// <summary>PRTG 擷取成功（<see cref="PrtgOutcome"/>）</summary>
     public const string PrtgOutcomeSuccess = "success";

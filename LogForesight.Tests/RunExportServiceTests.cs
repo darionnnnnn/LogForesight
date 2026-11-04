@@ -1323,4 +1323,40 @@ public class RunExportServiceTests
     [InlineData("api:xyz", "other")]
     public void 觸發類別只輸出類別不輸出帳號(string? trigger, string expected) =>
         Assert.Equal(expected, RunExportService.TriggerCategory(trigger));
+
+    [Fact]
+    public void 異常趟帶PRTG早退原因_走Text遮罩()
+    {
+        using var h = new RunExportHarness();
+        var y = RunExportHarness.Y;
+        var plain = h.AddRun("SRV-N1", y.AddHours(1), r =>
+        {
+            r.WarnCount = 1;
+            r.PrtgOutcome = BatchRun.PrtgOutcomeDisabled;
+            r.PrtgOutcomeNote = BatchRun.PrtgNoteUndecryptable;
+        });
+        // 原因字串萬一帶了位址之類的身分資訊，也必須和其他自由文字一樣被遮罩
+        var leaky = h.AddRun("SRV-N2", y.AddHours(2), r =>
+        {
+            r.WarnCount = 1;
+            r.PrtgOutcome = BatchRun.PrtgOutcomeDisabled;
+            r.PrtgOutcomeNote = "憑證無法解密，來源 10.7.7.7";
+        });
+        var legacy = h.AddRun("SRV-N3", y.AddHours(3), r => { r.WarnCount = 1; r.PrtgOutcome = BatchRun.PrtgOutcomeDisabled; });
+
+        var (root, bytes, doc) = h.Export();
+        using (doc)
+        {
+            var byId = root.G("abnormalRuns").L().ToDictionary(a => a.G("runId").GetInt64());
+            Assert.Equal(BatchRun.PrtgNoteUndecryptable, byId[plain.RunId].S("prtgOutcomeNote"));
+            Assert.Equal("disabled", byId[plain.RunId].S("prtgOutcome"));
+
+            var masked = byId[leaky.RunId].S("prtgOutcomeNote");
+            Assert.StartsWith("憑證無法解密", masked);
+            Assert.DoesNotContain("10.7.7.7", masked);
+            Assert.DoesNotContain("10.7.7.7", Encoding.UTF8.GetString(bytes));
+
+            Assert.Equal(JsonValueKind.Null, byId[legacy.RunId].G("prtgOutcomeNote").ValueKind);
+        }
+    }
 }

@@ -306,6 +306,9 @@ public sealed record ExportAbnormalRunDto
     public int? NetiqDaysFailed { get; init; }
     public int? NetiqHostsSkipped { get; init; }
     public string? PrtgOutcome { get; init; }
+
+    /// <summary>趟次層的 PRTG 結局原因（disabled 早退：未啟用／尚未設定認證資訊／憑證無法解密）；經 Text 遮罩，沒有原因為 null</summary>
+    public string? PrtgOutcomeNote { get; init; }
     public IReadOnlyList<ExportUnsuccessfulPhaseDto> UnsuccessfulPhases { get; init; } = Array.Empty<ExportUnsuccessfulPhaseDto>();
     public IReadOnlyList<ExportPrtgDayDto> UnsuccessfulPrtgDays { get; init; } = Array.Empty<ExportPrtgDayDto>();
     public IReadOnlyList<string> SignalCodes { get; init; } = Array.Empty<string>();

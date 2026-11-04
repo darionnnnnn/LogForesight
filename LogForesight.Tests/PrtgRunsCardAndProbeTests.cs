@@ -343,4 +343,40 @@ public class PrtgRunsCardAndProbeTests : IDisposable
 
     // ── 驗收點 7：相容性探測去識別 JSON 下載 UI 與邏輯 ──────────────────
 
+    // ── 第 63-2 輪 A-3：卡片只讀後端的 prtgCredentialState，不再自己湊判定 ──────────
+
+    private static string RepoFile(params string[] parts)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "LogForesight.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return File.ReadAllText(Path.Combine(new[] { dir!.FullName }.Concat(parts).ToArray()));
+    }
+
+    [Fact]
+    public void runs頁沒有第二份憑證判定_卡片改讀prtgCredentialState()
+    {
+        var js = RepoFile("LogForesight.Web", "wwwroot", "js", "pages", "runs.js");
+
+        Assert.DoesNotContain("hasPrtgConnection", js);
+        Assert.DoesNotContain("prtgHasApiToken", js);
+        Assert.DoesNotContain("prtgHasPassword", js);
+        Assert.DoesNotContain("prtgHasPasshash", js);
+        // 設定 API 與排程狀態 API 兩條路徑都要把憑證狀態交給同一個卡片函式
+        Assert.Contains("settings.prtgCredentialState", js);
+        Assert.Contains("scheduleStatus.prtgCredentialState", js);
+        Assert.Contains("status.prtgCredentialState", js);
+    }
+
+    [Fact]
+    public void runs頁憑證無法解密提示連到PRTG維護頁連線頁籤並走Url_Content()
+    {
+        var view = RepoFile("LogForesight.Web", "Views", "Pages", "Runs.cshtml");
+
+        Assert.Contains("id=\"prtg-credential-hint\"", view);
+        Assert.Contains("@Url.Content(\"~/admin/prtg\")#connection", view);
+        Assert.Contains("class=\"small text-warning d-none\" id=\"prtg-credential-hint\"", view);
+        var js = RepoFile("LogForesight.Web", "wwwroot", "js", "core", "prtg-scope-labels.js");
+        Assert.Contains("已啟用（憑證無法解密）", js);
+    }
 }

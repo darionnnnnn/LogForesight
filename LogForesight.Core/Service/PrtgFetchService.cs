@@ -83,15 +83,25 @@ public sealed class PrtgFetchService
     private readonly IRunConsole _console;
     private readonly PrtgResourceGuard? _guard;
     private readonly IReadOnlyDictionary<string, string> _categoryOverrides;
+    private readonly bool _retryTransientPaging;
+
+    /// <summary>等待重試的等待函式（測試注入零等待；null＝真的等）。</summary>
+    internal Func<TimeSpan, CancellationToken, Task>? RetryDelay { get; init; }
 
     /// <param name="categoryOverrides">
     /// sensor type 語意分類補充對照表，由建構端以
     /// <see cref="PrtgSensorTypeCategoryMap.ParseOverrides"/> 自目前設定解析出的 Map 傳入
     /// （錯誤行已被略過；設定層存檔時已擋，這裡只防禦舊資料）。
     /// </param>
+    /// <param name="retryTransientPaging">
+    /// 表格分頁讀取（devices、sensors、messages）遇到逾時／連線失敗／5xx／429 時等待重試（<see cref="PrtgTablePager.RetryDelays"/>）。
+    /// 預設關；只有夜間管線、結構同步與歷史回填這類無人值守、慢一點沒關係的路徑開啟，探測與快照維持單次失敗即回報。
+    /// </param>
     public PrtgFetchService(PrtgClient client, EfPrtgStore store, PrtgFreshnessStore freshness, IRunConsole console,
-        IReadOnlyDictionary<string, string> categoryOverrides, PrtgResourceGuard? guard = null)
+        IReadOnlyDictionary<string, string> categoryOverrides, PrtgResourceGuard? guard = null,
+        bool retryTransientPaging = false)
     {
+        _retryTransientPaging = retryTransientPaging;
         _client = client;
         _store = store;
         _freshness = freshness;
@@ -105,9 +115,10 @@ public sealed class PrtgFetchService
     /// 每日管線、快照、回填、結構同步與探測不再各自組建構參數（測試可直接用建構子傳替身）。
     /// </summary>
     public static PrtgFetchService Create(PrtgClient client, StorageBackend backend, EfPrtgStore store,
-        SystemSettings settings, IRunConsole console, PrtgResourceGuard? guard) =>
+        SystemSettings settings, IRunConsole console, PrtgResourceGuard? guard, bool retryTransientPaging = false) =>
         new(client, store, new PrtgFreshnessStore(backend.Blob(PrtgFreshnessStore.BlobKey)), console,
-            PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map, guard);
+            PrtgSensorTypeCategoryMap.ParseOverrides(settings.PrtgSensorTypeCategoryOverrides).Map, guard,
+            retryTransientPaging);
 
     /// <summary>
     /// 記錄某類 PRTG 資料成功完成一次擷取（見 <see cref="PrtgFreshnessStore"/>）。
@@ -1451,7 +1462,8 @@ public sealed class PrtgFetchService
         Func<IReadOnlyList<JsonElement>, bool>? stopAfterPage = null)
         => PrtgTablePager.FetchAsync(
             _client, _console, content, columns, extraQuery, mapper, onBatch, ct, phase, progress, stageLabel,
-            rowKey: rowKey, stopAfterPage: stopAfterPage);
+            rowKey: rowKey, stopAfterPage: stopAfterPage,
+            retry: _retryTransientPaging ? new PrtgPagerRetry(RetryDelay) : null);
 
     /// <summary>
     /// PRTG paused 欄位的容錯判定（唯一實作，供 devices 與 sensors 共用）。

@@ -14,7 +14,16 @@ namespace LogForesight.Tests;
 internal static class NLogTestConfigurationInitializer
 {
     [ModuleInitializer]
-    internal static void Initialize() => LogManager.Configuration ??= new LoggingConfiguration();
+    internal static void Initialize()
+    {
+        LogManager.Configuration ??= new LoggingConfiguration();
+        // PRTG 分頁等待重試（15 秒、60 秒）在整合測試連到不可達位址時會讓案例慢數分鐘；測試組件一律零等待
+        LogForesight.Core.Service.PrtgTablePager.DefaultWait = (_, ct) =>
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+    }
 }
 
 /// <summary>
@@ -383,5 +392,32 @@ public class BatchRunRecorderScopeTests
         Assert.Single(logs);
         Assert.Equal("SqlPerformanceMonitor", logs[0].Logger);
         Assert.Equal("Error", logs[0].Level);
+    }
+
+    [Fact]
+    public async Task 略過憑證驗證的兩則提醒是Info_趟次不會因此變成有警告()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+
+        long runId;
+        using (var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            // 不注入 handler：由 client 自己建 handler，各寫出一則「略過憑證驗證」的提醒
+            using var prtg = new PrtgClient("https://prtg.example.com", "token", 30, ignoreSslErrors: true, handler: null,
+                PrtgAuthModes.Token, "", "", "");
+            var sentinelSettings = new NetiqOptions { AllowInvalidCertificates = true };
+            await using var sentinel = new SentinelClient(
+                new SentinelServer { Name = "SENTINEL-A", BaseUrl = "https://sentinel.local:8443", Username = "u", Password = "p" },
+                sentinelSettings);
+            recorder.Finish(0);
+        }
+
+        var run = store.GetRun(runId)!;
+        Assert.Equal(0, run.WarnCount);
+        Assert.Equal(0, run.ErrorCount);
+        Assert.Empty(store.GetLogs(runId));
+        Assert.Equal(BatchRunStatus.Success, BatchRunStatus.Compute(run, DateTime.Now, TimeSpan.FromHours(6)));
     }
 }

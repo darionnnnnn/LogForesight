@@ -479,4 +479,286 @@ public class PrtgTablePagerTests
         Assert.Equal(baselineWritten, written);
         Assert.Equal(baselineHandler.RequestedUrls.Count, handler.RequestedUrls.Count);
     }
+
+    // ───────── 等待重試（第 63-2 輪批次 A-4）─────────
+
+    /// <summary>時間加速的配額時鐘：共享配額照常生效，但多次請求的測試不必真的等。</summary>
+    private sealed class FastClock : IPrtgClock
+    {
+        private const int Factor = 1000;
+        private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
+        public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
+        public TimeSpan Elapsed => TimeSpan.FromTicks(_watch.Elapsed.Ticks * Factor);
+        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) =>
+            Task.Delay(TimeSpan.FromTicks(Math.Max(1, delay.Ticks / Factor)), cancellationToken);
+    }
+
+    /// <summary>依請求序號（0 起算）決定回應；script 可以直接擲例外模擬逾時或連線失敗。</summary>
+    private sealed class ScriptedHandler(Func<int, HttpResponseMessage> script) : HttpMessageHandler
+    {
+        private int _count;
+        public int Count => Volatile.Read(ref _count);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var index = Interlocked.Increment(ref _count) - 1;
+            return Task.FromResult(script(index));
+        }
+    }
+
+    private static HttpResponseMessage OkJson(string json) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+
+    private static HttpResponseMessage StatusOnly(HttpStatusCode code) => new(code);
+
+    private static HttpResponseMessage TimeoutNow() =>
+        throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException());
+
+    private sealed class RetryRig : IDisposable
+    {
+        private readonly PrtgClient _client;
+        public ScriptedHandler Handler { get; }
+        public List<TimeSpan> Delays { get; } = new();
+        public List<long> Written { get; } = new();
+        public CancellationToken? LastDelayToken { get; private set; }
+        public Func<TimeSpan, CancellationToken, Task>? DelayOverride { get; set; }
+
+        public RetryRig(Func<int, HttpResponseMessage> script, string authMode = PrtgAuthModes.Token)
+        {
+            Handler = new ScriptedHandler(script);
+            var budget = new PrtgRequestBudget(new FastClock());
+            _client = authMode == PrtgAuthModes.Passhash
+                ? new PrtgClient("https://prtg.example.com", "", 30, true, Handler, PrtgAuthModes.Passhash, "operator", "", "1234567890", budget)
+                : new PrtgClient("https://prtg.example.com", "token123", 30, true, Handler, PrtgAuthModes.Token, "", "", "", budget);
+        }
+
+        public Task<PrtgPagerResult> RunAsync(bool retry = true, int pageSize = 5, CancellationToken ct = default)
+        {
+            PrtgPagerRetry? options = retry
+                ? new PrtgPagerRetry((span, token) =>
+                {
+                    lock (Delays) Delays.Add(span);
+                    LastDelayToken = token;
+                    return DelayOverride?.Invoke(span, token) ?? Task.CompletedTask;
+                })
+                : null;
+            return PrtgTablePager.FetchAsync<long>(
+                _client, new TestConsole(), "devices", "objid", null,
+                mapper: el => el.GetProperty("objid").GetInt64(),
+                onBatch: batch => Written.AddRange(batch),
+                ct: ct, pageSize: pageSize, retry: options);
+        }
+
+        public void Dispose() => _client.Dispose();
+    }
+
+    [Fact]
+    public async Task 重試預設關閉_單次逾時即擲出且不等待()
+    {
+        using var rig = new RetryRig(_ => TimeoutNow());
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => rig.RunAsync(retry: false));
+
+        Assert.Equal(PrtgFailureKind.Timeout, ex.Kind);
+        Assert.Equal(1, rig.Handler.Count);
+        Assert.Empty(rig.Delays);
+    }
+
+    [Fact]
+    public async Task 逾時重試兩次後成功_延遲依序是15秒與60秒()
+    {
+        using var rig = new RetryRig(i => i < 2 ? TimeoutNow() : OkJson(Page("devices", new long[] { 1, 2, 3 })));
+
+        var result = await rig.RunAsync();
+
+        Assert.Equal(1, result.Pages);
+        Assert.Equal(3, result.Mapped);
+        Assert.Equal(new long[] { 1, 2, 3 }, rig.Written);
+        Assert.Equal(3, rig.Handler.Count);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60) }, rig.Delays);
+    }
+
+    [Fact]
+    public async Task 第三次仍失敗就擲出_總共只重試兩次()
+    {
+        using var rig = new RetryRig(_ => TimeoutNow());
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => rig.RunAsync());
+
+        Assert.Equal(PrtgFailureKind.Timeout, ex.Kind);
+        Assert.Equal(3, rig.Handler.Count);
+        Assert.Equal(2, rig.Delays.Count);
+    }
+
+    [Fact]
+    public async Task 多頁讀取共用兩次重試_不是每頁各兩次()
+    {
+        // 第 1 頁失敗一次（用掉第 1 次）、第 2 頁失敗一次（用掉第 2 次）、第 3 頁失敗時額度已盡 → 擲出。
+        // 若計數誤改成每頁各 2 次，第 3 頁會重試而成功，這案就不會擲例外。
+        using var rig = new RetryRig(i => i switch
+        {
+            0 => TimeoutNow(),
+            1 => OkJson(Page("devices", new long[] { 1, 2 })),
+            2 => TimeoutNow(),
+            3 => OkJson(Page("devices", new long[] { 3, 4 })),
+            4 => TimeoutNow(),
+            _ => OkJson(Page("devices", new long[] { 5 }))
+        });
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => rig.RunAsync(pageSize: 2));
+
+        Assert.Equal(PrtgFailureKind.Timeout, ex.Kind);
+        Assert.Equal(5, rig.Handler.Count);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60) }, rig.Delays);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData((HttpStatusCode)429)]
+    public async Task 暫時性狀態碼5xx與429會重試(HttpStatusCode code)
+    {
+        using var rig = new RetryRig(i => i == 0 ? StatusOnly(code) : OkJson(Page("devices", new long[] { 1 })));
+
+        var result = await rig.RunAsync();
+
+        Assert.Equal(1, result.Mapped);
+        Assert.Equal(2, rig.Handler.Count);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(15) }, rig.Delays);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData((HttpStatusCode)422)]
+    public async Task 非暫時性狀態碼不重試_立即擲出(HttpStatusCode code)
+    {
+        using var rig = new RetryRig(_ => StatusOnly(code));
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => rig.RunAsync());
+
+        Assert.Equal(PrtgFailureKind.HttpStatus, ex.Kind);
+        Assert.Equal((int)code, ex.StatusCode);
+        Assert.Equal(1, rig.Handler.Count);
+        Assert.Empty(rig.Delays);
+    }
+
+    [Fact]
+    public async Task 帳號認證401立即擲出且黏住_不重試也不再送出請求()
+    {
+        using var rig = new RetryRig(_ => StatusOnly(HttpStatusCode.Unauthorized), PrtgAuthModes.Passhash);
+
+        var first = await Assert.ThrowsAsync<PrtgClientException>(() => rig.RunAsync());
+        var second = await Assert.ThrowsAsync<PrtgClientException>(() => rig.RunAsync());
+
+        Assert.Equal(PrtgFailureKind.Credential, first.Kind);
+        Assert.Equal(401, first.StatusCode);
+        Assert.Equal(PrtgFailureKind.Credential, second.Kind);
+        Assert.Equal(1, rig.Handler.Count);
+        Assert.Empty(rig.Delays);
+    }
+
+    [Fact]
+    public async Task 連線層失敗會重試()
+    {
+        using var rig = new RetryRig(i => i == 0
+            ? throw new HttpRequestException("連線被拒", new System.Net.Sockets.SocketException())
+            : OkJson(Page("devices", new long[] { 1 })));
+
+        var result = await rig.RunAsync();
+
+        Assert.Equal(1, result.Mapped);
+        Assert.Equal(2, rig.Handler.Count);
+        Assert.Single(rig.Delays);
+    }
+
+    [Fact]
+    public async Task 回應不是合法JSON不重試()
+    {
+        using var rig = new RetryRig(_ => OkJson("this is not json"));
+
+        await Assert.ThrowsAnyAsync<JsonException>(() => rig.RunAsync());
+
+        Assert.Equal(1, rig.Handler.Count);
+        Assert.Empty(rig.Delays);
+    }
+
+    [Fact]
+    public async Task 等待期間取消令牌生效()
+    {
+        using var rig = new RetryRig(_ => TimeoutNow());
+        using var cts = new CancellationTokenSource();
+        rig.DelayOverride = async (_, token) =>
+        {
+            cts.Cancel();
+            await Task.Delay(Timeout.Infinite, token);
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => rig.RunAsync(ct: cts.Token));
+
+        Assert.Equal(cts.Token, rig.LastDelayToken);
+        Assert.Equal(1, rig.Handler.Count);
+        Assert.Single(rig.Delays);
+    }
+
+    [Fact]
+    public async Task 重試只寫Info不寫Warn_訊息含原因與第幾次()
+    {
+        var target = new NLog.Targets.MemoryTarget("lf-pager-retry-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target, typeof(PrtgTablePager).FullName!);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            using var rig = new RetryRig(i => i < 2 ? TimeoutNow() : OkJson(Page("devices", new long[] { 1 })));
+
+            await rig.RunAsync();
+
+            // 同一個 logger 也會被其他測試類的 treesize 警告寫入，這裡只看重試訊息
+            var retryLogs = target.Logs.Where(l => l.Contains("次重試")).ToList();
+            Assert.Equal(2, retryLogs.Count);
+            Assert.All(retryLogs, l => Assert.StartsWith("Info|", l));
+            Assert.Contains("第 1/2 次", retryLogs[0]);
+            Assert.Contains("第 2/2 次", retryLogs[1]);
+            Assert.All(retryLogs, l => Assert.Contains("連線 PRTG 伺服器失敗", l));
+        }
+        finally
+        {
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
+
+    [Theory]
+    [InlineData(PrtgFailureKind.Timeout, null, true)]
+    [InlineData(PrtgFailureKind.Transport, null, true)]
+    [InlineData(PrtgFailureKind.HttpStatus, 500, true)]
+    [InlineData(PrtgFailureKind.HttpStatus, 599, true)]
+    [InlineData(PrtgFailureKind.HttpStatus, 429, true)]
+    [InlineData(PrtgFailureKind.HttpStatus, 401, false)]
+    [InlineData(PrtgFailureKind.HttpStatus, 403, false)]
+    [InlineData(PrtgFailureKind.HttpStatus, 404, false)]
+    [InlineData(PrtgFailureKind.HttpStatus, 600, false)]
+    [InlineData(PrtgFailureKind.HttpStatus, null, false)]
+    [InlineData(PrtgFailureKind.Credential, 401, false)]
+    [InlineData(PrtgFailureKind.Credential, null, false)]
+    [InlineData(PrtgFailureKind.Other, null, false)]
+    [InlineData(PrtgFailureKind.Other, 503, false)]
+    public void 可重試判定只看Kind與狀態碼(PrtgFailureKind kind, int? status, bool expected)
+    {
+        var ex = new PrtgClientException("任意訊息，不參與判定", null, kind, status);
+
+        Assert.Equal(expected, PrtgTablePager.IsRetryable(ex));
+    }
+
+    [Fact]
+    public void 重試延遲常數是15秒與60秒()
+    {
+        Assert.Equal(new[] { TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60) }, PrtgTablePager.RetryDelays);
+    }
 }

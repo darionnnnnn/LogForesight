@@ -102,11 +102,24 @@ function formatNetiqBranch(analyzed, failed, skipped) {
     return text;
 }
 
-function renderPrtgCell(outcome, fetched, failed, triggeredHosts, strategy) {
+// 清單與詳情的 PRTG 欄：note 是趟次層原因（disabled 早退：未啟用／尚未設定認證資訊／憑證無法解密），
+// 徽章旁直接顯示文字，不只放在滑鼠提示；文字一律走 textContent
+function renderPrtgCell(outcome, fetched, failed, triggeredHosts, strategy, note = null) {
     if (outcome == null) return document.createTextNode('—');
     const badge = renderPrtgBadge(outcome);
     if (!badge) return document.createTextNode('—');
-    if (outcome === 'disabled') return badge;
+    if (outcome === 'disabled') {
+        if (!note) return badge;
+        badge.title = note;
+        const disabledWrap = document.createElement('span');
+        disabledWrap.className = 'd-inline-flex align-items-center gap-1';
+        disabledWrap.appendChild(badge);
+        const reason = document.createElement('small');
+        reason.className = 'text-muted';
+        reason.textContent = note;
+        disabledWrap.appendChild(reason);
+        return disabledWrap;
+    }
     const wrap = document.createElement('span');
     wrap.className = 'd-inline-flex align-items-center gap-1';
     wrap.appendChild(badge);
@@ -580,7 +593,7 @@ const RUN_LIST_COLUMNS = [
     {
         title: 'PRTG', className: 'text-end', sortKey: 'prtgOutcome',
         sortValue: r => r.prtgOutcome ?? '',
-        render: r => withPhaseDuration(renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts, r.prtgStrategy), r, 'prtg')
+        render: r => withPhaseDuration(renderPrtgCell(r.prtgOutcome, r.prtgSensorsFetched, r.prtgSensorsFailed, r.prtgTriggeredHosts, r.prtgStrategy, r.prtgOutcomeNote), r, 'prtg')
     },
     {
         title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
@@ -769,7 +782,7 @@ function renderStats(container, detail) {
         { label: '版本', value: detail.appVersion },
         { label: '本機', value: formatLocalBranch(detail.localDaysAnalyzed, detail.localDaysFailed) },
         { label: 'NetIQ', value: formatNetiqBranch(detail.netiqDaysAnalyzed, detail.netiqDaysFailed, detail.netiqHostsSkipped) },
-        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed, detail.prtgTriggeredHosts, detail.prtgStrategy) }
+        { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed, detail.prtgTriggeredHosts, detail.prtgStrategy, detail.prtgOutcomeNote) }
     ];
 
     for (const stat of stats) {
@@ -997,9 +1010,9 @@ async function loadSchedule() {
     if (settings) {
         // 啟用開關在 PRTG 維護頁「擷取參數」的「啟用 PRTG 擷取」勾選框，本頁只顯示狀態。
         prtgFetchStrategy = settings.prtgFetchStrategy ?? null;
-        renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope, prtgFetchStrategy);
-        // 立即執行前要判斷「連線已設定但擷取未啟用」，連線資訊沿用這一次整包設定
-        prtgConnectionConfigured = hasPrtgConnection(settings);
+        renderPrtgModuleState(Boolean(settings.prtgEnabled), settings.prtgValueFetchScope, prtgFetchStrategy, settings.prtgCredentialState);
+        // 立即執行前要判斷「連線已設定但擷取未啟用」：位址已填且後端判定憑證可用（單一出口 prtgCredentialState，前端不再自己湊判定）
+        prtgConnectionConfigured = Boolean(settings.prtgUrl) && settings.prtgCredentialState === 'ok';
         // 天數設定在 PRTG 維護頁，這裡只顯示按下去會回填幾天（沿用同一次整包設定，不另打 API）
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && settings.prtgBackfillDays) {
@@ -1009,7 +1022,7 @@ async function loadSchedule() {
         // DevMonitor cannot read the settings endpoint. The schedule status route exposes this
         // small operational projection without connection details or credentials.
         prtgFetchStrategy = scheduleStatus.prtgFetchStrategy ?? null;
-        renderPrtgModuleState(Boolean(scheduleStatus.prtgEnabled), scheduleStatus.prtgValueFetchScope, prtgFetchStrategy);
+        renderPrtgModuleState(Boolean(scheduleStatus.prtgEnabled), scheduleStatus.prtgValueFetchScope, prtgFetchStrategy, scheduleStatus.prtgCredentialState);
         prtgConnectionConfigured = false;
         const daysHintEl = document.getElementById('prtg-backfill-days-hint');
         if (daysHintEl && scheduleStatus.prtgBackfillDays) {
@@ -1219,7 +1232,7 @@ async function refreshScheduleStatus() {
 function applyPrtgOperationalStatus(status) {
     if (!status) return;
     prtgFetchStrategy = status.prtgFetchStrategy ?? null;
-    renderPrtgModuleState(Boolean(status.prtgEnabled), status.prtgValueFetchScope, prtgFetchStrategy);
+    renderPrtgModuleState(Boolean(status.prtgEnabled), status.prtgValueFetchScope, prtgFetchStrategy, status.prtgCredentialState);
     const daysHintEl = document.getElementById('prtg-backfill-days-hint');
     if (daysHintEl && status.prtgBackfillDays) {
         daysHintEl.textContent = `往前 ${status.prtgBackfillDays} 天`;
@@ -1765,30 +1778,20 @@ function bindPrtgSync() {
 }
 
 /** PRTG 模組總開關的狀態文字：關閉時整條路徑短路，畫面要說得出來。 */
-function renderPrtgModuleState(enabled, scope, strategy = prtgFetchStrategy) {
+function renderPrtgModuleState(enabled, scope, strategy = prtgFetchStrategy, credentialState = null) {
     prtgModuleEnabled = enabled;
     const el = document.getElementById('prtg-module-state');
     if (el) {
-        // 啟用時把生效範圍一起說出來——「已啟用」三個字看不出夜間到底會抓哪些主機
-        el.textContent = prtgModuleStateText(enabled, scope, strategy);
+        // 啟用時把生效範圍一起說出來——「已啟用」三個字看不出夜間到底會抓哪些主機；
+        // 憑證解不開時改說憑證問題（夜間會因此略過 PRTG，不能讓卡片只寫「已啟用」）
+        el.textContent = prtgModuleStateText(enabled, scope, strategy, credentialState);
         el.classList.toggle('text-muted', !enabled);
     }
 
     // 未啟用時指路
     document.getElementById('prtg-disabled-hint')?.classList.toggle('d-none', enabled === true);
-}
-
-/**
- * 連線是否已設定：與後端 PrtgClientFactory.HasUsableCredentials 同義（位址＋任一種認證）。
- * 只用來決定立即執行要不要提醒「填好了忘了開」——完全沒設定 PRTG 的站台不該每次執行都被問。
- */
-function hasPrtgConnection(settings) {
-    if (!settings?.prtgUrl) return false;
-    const mode = settings.prtgAuthMode || 'token';
-    if (mode === 'token') return Boolean(settings.prtgHasApiToken);
-    if (mode === 'password') return Boolean(settings.prtgUsername && settings.prtgHasPassword);
-    if (mode === 'passhash') return Boolean(settings.prtgUsername && settings.prtgHasPasshash);
-    return false;
+    // 已啟用但憑證解不開：指到 PRTG 維護頁「連線」頁籤重新輸入
+    document.getElementById('prtg-credential-hint')?.classList.toggle('d-none', !(enabled === true && credentialState === 'undecryptable'));
 }
 
 function renderAiScheduleProgress(status) {

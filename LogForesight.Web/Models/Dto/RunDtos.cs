@@ -171,6 +171,9 @@ public class RunDetailDto
     /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
     public string? PrtgOutcome { get; set; }
 
+    /// <summary>PRTG 結局原因（disabled 早退時：未啟用／尚未設定認證資訊／憑證無法解密；舊紀錄或無原因為 null）</summary>
+    public string? PrtgOutcomeNote { get; set; }
+
     /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgSensorsFetched { get; set; }
 
@@ -285,6 +288,9 @@ public class RunListItemDto
 
     /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
     public string? PrtgOutcome { get; set; }
+
+    /// <summary>PRTG 結局原因（disabled 早退時：未啟用／尚未設定認證資訊／憑證無法解密；舊紀錄或無原因為 null）</summary>
+    public string? PrtgOutcomeNote { get; set; }
 
     /// <summary>PRTG 觸發式取數目標感測器數（null＝舊紀錄或 PRTG 未產出）</summary>
     public int? PrtgSensorsFetched { get; set; }

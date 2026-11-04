@@ -253,6 +253,12 @@ public class FrontendMiscBehaviorTests
     [InlineData("郵件帳本提示_滿載時帶出數字時間與收件人")]
     [InlineData("郵件帳本提示_顯示五個佔用分項且各有白話說明")]
     [InlineData("郵件帳本提示_達九成但無滿載紀錄時顯示接近上限")]
+    [InlineData("runs清單PRTG未啟用有原因時徽章旁顯示文字")]
+    [InlineData("runs清單PRTG未啟用沒有原因時只有徽章")]
+    [InlineData("runs清單PRTG原因一律走textContent不當HTML")]
+    [InlineData("runs清單PRTG有成果時不顯示趟次原因")]
+    [InlineData("runs卡片憑證無法解密時顯示已啟用但憑證無法解密並露出連結提示")]
+    [InlineData("runs卡片憑證正常或未啟用時不顯示憑證提示")]
     public void 小項行為案例(string caseName)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

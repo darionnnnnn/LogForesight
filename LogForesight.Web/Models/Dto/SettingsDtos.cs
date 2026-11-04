@@ -157,6 +157,12 @@ public class SystemSettingsDto
 
     // ── PRTG 監控系統設定（批次B-1）─────────────────────────────────────────
     public bool PrtgEnabled { get; set; }
+
+    /// <summary>
+    /// PRTG 認證狀態（ok／not_configured／undecryptable；<c>PrtgClientFactory.CredentialState(...).ToWire()</c>）。
+    /// 前端判斷「憑證可不可用」只讀它，不再用 <c>PrtgHas*</c> 布林自己湊一份；undecryptable＝密文存在但解不開，需重新輸入。
+    /// </summary>
+    public string PrtgCredentialState { get; set; } = "not_configured";
     public string PrtgUrl { get; set; } = "";
     /// <summary>PRTG API token 是否已設定；token 本身 write-only，絕不回傳明碼或密文（同 AiHasApiKey 慣例）</summary>
     public bool PrtgHasApiToken { get; set; }

@@ -940,4 +940,37 @@ public class SentinelClientTests
             return await OnSend(request, cancellationToken);
         }
     }
+
+    [Fact]
+    public async Task 略過憑證驗證的提醒寫Info且訊息逐字不變()
+    {
+        var target = new NLog.Targets.MemoryTarget("lf-sentinel-ssl-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target, typeof(SentinelClient).FullName!);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            var settings = Settings();
+            settings.AllowInvalidCertificates = true;
+            var server = Server("https://sentinel-ssl-info.local:8443");
+
+            // 不注入 handler：由 client 自己建 handler，才會走到「略過憑證驗證」的提醒
+            await using var client = new SentinelClient(server, settings);
+
+            // 其他測試類也可能同時建立同類 client，只看這台伺服器的提醒；每一則都必須是 Info
+            var lines = target.Logs.Where(l => l.Contains("AllowInvalidCertificates") && l.Contains("SENTINEL-A")).ToList();
+            Assert.NotEmpty(lines);
+            Assert.All(lines, l => Assert.StartsWith("Info|", l));
+            Assert.Contains(
+                "Info|[SENTINEL-A] AllowInvalidCertificates 已啟用，本連線不驗證 Sentinel 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）",
+                lines);
+        }
+        finally
+        {
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
 }

@@ -134,6 +134,9 @@ public class ScheduleStatusDto
 
     /// <summary>PRTG 的唯讀運作摘要，提供 DevMonitor 顯示目前模組狀態；刻意不包含連線位址或憑證。</summary>
     public bool PrtgEnabled { get; set; }
+
+    /// <summary>PRTG 認證狀態（ok／not_configured／undecryptable）；只有狀態，不含任何憑證內容。</summary>
+    public string PrtgCredentialState { get; set; } = "not_configured";
     public string PrtgValueFetchScope { get; set; } = LogForesight.Core.Service.PrtgValueFetchScope.Triggered;
     public string PrtgFetchStrategy { get; set; } = LogForesight.Core.Service.PrtgFetchStrategy.Conservative;
     public int PrtgBackfillDays { get; set; } = LogForesight.Core.Models.SystemSettings.DefaultPrtgBackfillDays;

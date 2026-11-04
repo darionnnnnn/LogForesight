@@ -995,4 +995,170 @@ public class PrtgClientTests
             return await OnSend(request, cancellationToken);
         }
     }
+
+    // ───────── 失敗類型（第 63-2 輪批次 A-4）：重試判斷只能讀 Kind／StatusCode，不比對訊息 ─────────
+
+    private static PrtgClient KindClient(StubHandler stub, string authMode = PrtgAuthModes.Token) =>
+        authMode == PrtgAuthModes.Passhash
+            ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Passhash, "operator", "", "1234567890", new LogForesight.Core.Service.PrtgRequestBudget())
+            : authMode == PrtgAuthModes.Password
+                ? new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Password, "operator", "pw", "", new LogForesight.Core.Service.PrtgRequestBudget())
+                : new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "", new LogForesight.Core.Service.PrtgRequestBudget());
+
+    [Fact]
+    public async Task 失敗類型_HttpClient逾時為Timeout且沒有狀態碼()
+    {
+        var stub = new StubHandler { OnSend = (_, _) => throw new TaskCanceledException("逾時", new TimeoutException()) };
+        using var client = KindClient(stub);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+
+        Assert.Equal(PrtgFailureKind.Timeout, ex.Kind);
+        Assert.Null(ex.StatusCode);
+        Assert.StartsWith("連線 PRTG 伺服器失敗：", ex.Message);
+    }
+
+    [Fact]
+    public async Task 失敗類型_連不上為Transport()
+    {
+        var stub = new StubHandler { OnSend = (_, _) => throw new HttpRequestException("連線被拒", new System.Net.Sockets.SocketException()) };
+        using var client = KindClient(stub);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+
+        Assert.Equal(PrtgFailureKind.Transport, ex.Kind);
+        Assert.Null(ex.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData((HttpStatusCode)429)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task 失敗類型_其他狀態碼為HttpStatus且帶狀態碼(HttpStatusCode code)
+    {
+        var stub = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(code)) };
+        using var client = KindClient(stub);
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+
+        Assert.Equal(PrtgFailureKind.HttpStatus, ex.Kind);
+        Assert.Equal((int)code, ex.StatusCode);
+        if (code != HttpStatusCode.Forbidden)
+            Assert.Equal($"PRTG 伺服器回應錯誤：HTTP {(int)code}", ex.Message);
+    }
+
+    [Fact]
+    public async Task 失敗類型_token模式401為HttpStatus_帳號模式401為Credential並黏住()
+    {
+        var tokenStub = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)) };
+        using var tokenClient = KindClient(tokenStub);
+        var tokenEx = await Assert.ThrowsAsync<PrtgClientException>(() => tokenClient.GetJsonAsync("/api/x"));
+        Assert.Equal(PrtgFailureKind.HttpStatus, tokenEx.Kind);
+        Assert.Equal(401, tokenEx.StatusCode);
+
+        var stub = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)) };
+        using var client = KindClient(stub, PrtgAuthModes.Passhash);
+        var first = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+        Assert.Equal(PrtgFailureKind.Credential, first.Kind);
+        Assert.Equal(401, first.StatusCode);
+        // 黏住後的快取失敗仍是 Credential（沒有新的 HTTP 回應，所以沒有狀態碼）
+        var second = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/y"));
+        Assert.Equal(PrtgFailureKind.Credential, second.Kind);
+        Assert.Null(second.StatusCode);
+    }
+
+    [Fact]
+    public async Task 失敗類型_換取passhash時401與HTML登入頁都是Credential()
+    {
+        var unauthorized = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)) };
+        using (var client = KindClient(unauthorized, PrtgAuthModes.Password))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Credential, ex.Kind);
+            Assert.Equal(401, ex.StatusCode);
+        }
+
+        var html = new StubHandler { OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "<html>login</html>")) };
+        using (var client = KindClient(html, PrtgAuthModes.Password))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Credential, ex.Kind);
+            Assert.Null(ex.StatusCode);
+        }
+
+        var serverError = new StubHandler { OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)) };
+        using (var client = KindClient(serverError, PrtgAuthModes.Password))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.HttpStatus, ex.Kind);
+            Assert.Equal(503, ex.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task 失敗類型_讀取回應中斷為Transport_回傳HTML與設定錯誤為Other()
+    {
+        var broken = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ThrowingContent(new IOException("連線中斷")) })
+        };
+        using (var client = KindClient(broken))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Transport, ex.Kind);
+            Assert.Null(ex.StatusCode);
+        }
+
+        var html = new StubHandler { OnSend = (_, _) => Task.FromResult(JsonResponse(HttpStatusCode.OK, "<html>maintenance</html>")) };
+        using (var client = KindClient(html))
+        {
+            var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/x"));
+            Assert.Equal(PrtgFailureKind.Other, ex.Kind);
+        }
+
+        var badUrl = Assert.Throws<PrtgClientException>(() =>
+            new PrtgClient("not a url", SampleToken, 30, false, new StubHandler(), PrtgAuthModes.Token, "", "", ""));
+        Assert.Equal(PrtgFailureKind.Other, badUrl.Kind);
+        Assert.Null(badUrl.StatusCode);
+    }
+
+    private sealed class ThrowingContent(Exception error) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) => Task.FromException(error);
+        protected override bool TryComputeLength(out long length) { length = -1; return false; }
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromException<Stream>(error);
+    }
+
+    // ───────── A-5：略過憑證驗證的提醒是設定事實，不是警告 ─────────
+
+    [Fact]
+    public void 略過憑證驗證的提醒寫Info且訊息逐字不變()
+    {
+        var target = new NLog.Targets.MemoryTarget("lf-prtg-ssl-" + Guid.NewGuid().ToString("N")) { Layout = "${level}|${message}" };
+        var config = NLog.LogManager.Configuration ??= new NLog.Config.LoggingConfiguration();
+        config.AddTarget(target);
+        config.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target, typeof(PrtgClient).FullName!);
+        NLog.LogManager.ReconfigExistingLoggers();
+        try
+        {
+            // 不注入 handler：由 client 自己建 handler，才會走到「略過憑證驗證」的提醒
+            using var client = new PrtgClient(ValidUrl, SampleToken, 30, ignoreSslErrors: true, handler: null, PrtgAuthModes.Token, "", "", "");
+
+            // 其他測試類也可能同時建立同類 client，只看這則提醒；每一則都必須是 Info
+            var lines = target.Logs.Where(l => l.Contains("PrtgIgnoreSslErrors")).ToList();
+            Assert.NotEmpty(lines);
+            Assert.All(lines, l => Assert.StartsWith("Info|", l));
+            Assert.Contains(
+                "Info|[PRTG] PrtgIgnoreSslErrors 已啟用，本連線不驗證 PRTG 憑證（自簽憑證環境的逃生門，正式環境建議改安裝 CA 憑證）",
+                lines);
+        }
+        finally
+        {
+            config.RemoveTarget(target.Name);
+            config.LoggingRules.Where(r => r.Targets.Contains(target)).ToList().ForEach(r => config.LoggingRules.Remove(r));
+            NLog.LogManager.ReconfigExistingLoggers();
+        }
+    }
 }

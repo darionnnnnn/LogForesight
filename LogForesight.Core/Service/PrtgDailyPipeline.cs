@@ -61,6 +61,8 @@ internal static class PrtgDailyPipeline
 
         var prtgConsole = new PrefixedRunConsole(console, "[PRTG] ");
         string? prtgOutcome = null;
+        // 趟次層原因（只有 disabled 早退才有）；不進 PrtgDays，見 BatchRun.PrtgOutcomeNote
+        string? prtgOutcomeNote = null;
         var prtgPhase = runRecorder.Phase(RunTimingPhases.Prtg);
         var totalTriggerHosts = 0;
         var totalTargetSensors = 0;
@@ -109,12 +111,12 @@ internal static class PrtgDailyPipeline
             var systemSettings = new SystemSettingsStore(backend.Blob("system_settings")).Get();
             // 策略一讀到設定就定：連線建立前就失敗或取消的那趟，紀錄裡的策略才不會是預設的激進
             conservativeStrategy = !PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy).NightlyExactValues;
-            if (!systemSettings.PrtgEnabled ||
-                string.IsNullOrWhiteSpace(systemSettings.PrtgUrl) ||
-                !PrtgClientFactory.HasUsableCredentials(systemSettings))
+            var disabledReason = DisabledReason(systemSettings);
+            if (disabledReason is { } reason)
             {
-                prtgConsole.WriteLine("PRTG 未啟用或尚未設定認證資訊，略過。");
+                prtgConsole.WriteLine(reason.Console);
                 prtgOutcome = BatchRun.PrtgOutcomeDisabled;
+                prtgOutcomeNote = reason.Note;
                 return;
             }
 
@@ -160,7 +162,8 @@ internal static class PrtgDailyPipeline
             if (monitoringPolicy.HostIds.Count > 0)
                 hostIds = SelectActivePilotHostIds(monitoringPolicy.HostIds, requestedHostIds, () => evaluationHosts.Values.ToList());
 
-            var fetchService = PrtgFetchService.Create(client, backend, backend.PrtgStore(), systemSettings, prtgConsole, guard);
+            var fetchService = PrtgFetchService.Create(client, backend, backend.PrtgStore(), systemSettings, prtgConsole, guard,
+                retryTransientPaging: true);
 
             var strategyProfile = PrtgFetchStrategy.Profile(systemSettings.PrtgFetchStrategy);
             var strategyLabel = strategyProfile.NightlyExactValues ? "激進" : "保守";
@@ -997,7 +1000,7 @@ internal static class PrtgDailyPipeline
                 BatchRun.PrtgOutcomePartial => RunPhaseOutcomes.Partial,
                 BatchRun.PrtgOutcomeFailed => RunPhaseOutcomes.Failed,
                 _ => RunPhaseOutcomes.Skipped
-            }, prtgOutcome == BatchRun.PrtgOutcomeDisabled ? "PRTG 未啟用" : null);
+            }, prtgOutcome == BatchRun.PrtgOutcomeDisabled ? prtgOutcomeNote ?? BatchRun.PrtgNoteNotEnabled : null);
 
             if (prtgOutcome != null)
             {
@@ -1006,7 +1009,8 @@ internal static class PrtgDailyPipeline
                     Math.Max(0, totalTargetSensors - totalFailedSensors),
                     totalFailedSensors,
                     totalTriggerHosts,
-                    prtgEnabled ? (conservativeStrategy ? PrtgFetchStrategy.Conservative : PrtgFetchStrategy.Aggressive) : null);
+                    prtgEnabled ? (conservativeStrategy ? PrtgFetchStrategy.Conservative : PrtgFetchStrategy.Aggressive) : null,
+                    prtgOutcomeNote);
             }
 
             if (dayStats != null)
@@ -1056,6 +1060,26 @@ internal static class PrtgDailyPipeline
     }
 
     /// <summary>規則庫沒有啟用中的 PRTG 規則時的逐日原因。</summary>
+    /// <summary>
+    /// 取數前置條件不成立時的早退原因（成立回 null）。三種原因各有自己的執行輸出與趟次註記：
+    /// 未啟用、連線位址或認證沒填完整、認證密文解不開（讀 <see cref="PrtgClientFactory.CredentialState"/>，與各取數路徑同一個判定出口）。
+    /// </summary>
+    internal static (string Console, string Note)? DisabledReason(SystemSettings settings)
+    {
+        if (!settings.PrtgEnabled)
+            return ("PRTG 未啟用，略過。", BatchRun.PrtgNoteNotEnabled);
+
+        var credentialState = PrtgClientFactory.CredentialState(settings);
+        if (credentialState == CredentialState.Undecryptable)
+            return ("PRTG 認證資訊無法解密（金鑰檔與資料庫不相符），略過；請到 PRTG 維護頁重新輸入。",
+                BatchRun.PrtgNoteUndecryptable);
+
+        if (string.IsNullOrWhiteSpace(settings.PrtgUrl) || credentialState != CredentialState.Ok)
+            return ("PRTG 尚未設定認證資訊，略過。", BatchRun.PrtgNoteNotConfigured);
+
+        return null;
+    }
+
     public const string NoteNoRules = "規則庫沒有啟用中的 PRTG 規則（請至規則維護頁套用內建規則更新）";
 
     /// <summary>感測器鏡像為空時的逐日原因。</summary>

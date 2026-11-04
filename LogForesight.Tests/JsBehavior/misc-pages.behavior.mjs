@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.join(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
@@ -105,6 +105,42 @@ function makeRuns() {
             for (let i = 0; i < 3; i++) api.pending[firstPending + i].resolve({ tag, groups: [], failedWithoutErrorRuns: 0 }); // errors 端點回 { groups, failedWithoutErrorRuns }，renderErrors 收完整物件
         }
     };
+}
+
+function makePrtgNode(tag) {
+    return { tagName: tag, className: '', textContent: '', title: '', children: [], appendChild(c) { this.children.push(c); return c; } };
+}
+
+/** runs.js 的 PRTG 欄：抽出 renderPrtgBadge／renderPrtgCell 原文，只替換 document 與徽章對照表 */
+function makePrtgCell() {
+    return build('runs.js', ['function renderPrtgBadge(', 'function renderPrtgCell('], `
+        const PRTG_OUTCOME_META = {
+            disabled: { text: '未啟用', bg: 'bg-secondary' },
+            success: { text: '成功', bg: 'bg-success' }
+        };
+    `, '{ renderPrtgCell }', {
+        document: { createElement: makePrtgNode, createTextNode: (text) => ({ textContent: text, children: [] }) }
+    });
+}
+
+/** runs.js 的 PRTG 卡模組狀態：文字函式用 production 的 core/prtg-scope-labels.js */
+async function makePrtgModuleState() {
+    // prtg-scope-labels.js 經 paths.js 讀 window.LF_BASE
+    globalThis.window ??= { LF_BASE: '' };
+    const labels = await import(pathToFileURL(path.join(jsRoot, 'core', 'prtg-scope-labels.js')).href);
+    const els = {
+        'prtg-module-state': makeClassEl(),
+        'prtg-disabled-hint': makeClassEl(),
+        'prtg-credential-hint': makeClassEl()
+    };
+    const inst = build('runs.js', ['function renderPrtgModuleState('], `
+        let prtgModuleEnabled = null;
+        let prtgFetchStrategy = null;
+    `, '{ renderPrtgModuleState, state: () => ({ enabled: prtgModuleEnabled }) }', {
+        document: { getElementById: (id) => els[id] ?? null },
+        prtgModuleStateText: labels.prtgModuleStateText
+    });
+    return { inst, els };
 }
 
 function makeClassEl() {
@@ -613,6 +649,61 @@ const cases = {
         assert.match(t.toasts[0].message, /縮小天數/);
         assert(!t.button.disabled, '失敗後按鈕復原');
         assert.equal(t.busy.restored, 1);
+    },
+
+    // ---- runs：PRTG 早退原因與憑證無法解密的卡片（第 63-2 輪 A-3）----
+    runs清單PRTG未啟用有原因時徽章旁顯示文字() {
+        const { renderPrtgCell } = makePrtgCell();
+        const note = '憑證無法解密，請到 PRTG 維護頁重新輸入';
+        const cell = renderPrtgCell('disabled', null, null, null, null, note);
+        assert.equal(cell.children.length, 2, '徽章與原因文字並排');
+        const [badge, reason] = cell.children;
+        assert.equal(badge.textContent, '未啟用');
+        assert.equal(badge.title, note, '原因同時放在徽章的滑鼠提示');
+        assert.equal(reason.textContent, note);
+        assert.equal(reason.tagName, 'small');
+    },
+    runs清單PRTG未啟用沒有原因時只有徽章() {
+        const { renderPrtgCell } = makePrtgCell();
+        for (const note of [undefined, null, '']) {
+            const cell = renderPrtgCell('disabled', null, null, null, null, note);
+            assert.equal(cell.textContent, '未啟用');
+            assert.equal(cell.children.length, 0, `舊紀錄沒有原因（${JSON.stringify(note)}）時維持原本只有徽章`);
+        }
+    },
+    runs清單PRTG原因一律走textContent不當HTML() {
+        const { renderPrtgCell } = makePrtgCell();
+        const hostile = '<img src=x onerror=alert(1)>';
+        const cell = renderPrtgCell('disabled', null, null, null, null, hostile);
+        assert.equal(cell.children[1].textContent, hostile);
+        assert.equal(cell.children[1].innerHTML, undefined, '不得指派 innerHTML');
+    },
+    runs清單PRTG有成果時不顯示趟次原因() {
+        const { renderPrtgCell } = makePrtgCell();
+        const cell = renderPrtgCell('success', 5, 0, 2, 'aggressive', '不該出現的原因');
+        assert(!cell.children.some((c) => c.textContent === '不該出現的原因'));
+    },
+    async runs卡片憑證無法解密時顯示已啟用但憑證無法解密並露出連結提示() {
+        const t = await makePrtgModuleState();
+        t.inst.renderPrtgModuleState(true, 'triggered', 'aggressive', 'undecryptable');
+        assert.equal(t.els['prtg-module-state'].textContent, '已啟用（憑證無法解密）');
+        assert(!t.els['prtg-credential-hint'].classes.has('d-none'), '憑證提示要顯示');
+        assert(t.els['prtg-disabled-hint'].classes.has('d-none'), '已啟用就不再提示去啟用');
+        assert.equal(t.inst.state().enabled, true);
+    },
+    async runs卡片憑證正常或未啟用時不顯示憑證提示() {
+        const t = await makePrtgModuleState();
+        t.inst.renderPrtgModuleState(true, 'triggered', 'aggressive', 'ok');
+        assert.match(t.els['prtg-module-state'].textContent, /^已啟用（數值取數對象/);
+        assert(t.els['prtg-credential-hint'].classes.has('d-none'));
+        // 沒開的功能不提醒憑證：未啟用時即使狀態是 undecryptable 也只說未啟用
+        t.inst.renderPrtgModuleState(false, 'triggered', 'aggressive', 'undecryptable');
+        assert.equal(t.els['prtg-module-state'].textContent, '未啟用');
+        assert(t.els['prtg-credential-hint'].classes.has('d-none'));
+        assert(!t.els['prtg-disabled-hint'].classes.has('d-none'));
+        // 舊版後端沒有這個欄位（undefined／null）時退回原本的文字
+        t.inst.renderPrtgModuleState(true, 'triggered', 'aggressive');
+        assert.match(t.els['prtg-module-state'].textContent, /^已啟用（數值取數對象/);
     },
 
     // ---- help-manual：首次載入不捲動 ----

@@ -938,4 +938,54 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal("失敗 {n} 次 於 {date} id={guid}",
             RunMessageNormalizer.Normalize("失敗 12 次 於 2026-11-03 10:00:01 id=3F2504E0-4F89-11D3-9A0C-0305E82C3301"));
     }
+
+    [Fact]
+    public void PRTG早退的原因_總表清單詳情三處都帶出()
+    {
+        var dataDate = DateTime.Today.AddDays(-1);
+        var withNote = new BatchRun
+        {
+            HostName = "FETCH-NOTE",
+            StartedAt = dataDate.AddDays(1).AddHours(2),
+            FinishedAt = dataDate.AddDays(1).AddHours(2).AddMinutes(10),
+            ExitCode = 0,
+            PrtgOutcome = BatchRun.PrtgOutcomeDisabled,
+            PrtgOutcomeNote = BatchRun.PrtgNoteUndecryptable
+        };
+        Runs().StartRun(withNote);
+        var service = Create();
+
+        // 無逐日統計（PrtgDays 為 null）走資料日期對應的舊規則：原因取趟次層
+        var summary = Assert.Single(service.GetDaySummaries(3, 1, 30), s => s.Date == dataDate.ToString("yyyy-MM-dd"));
+        Assert.Equal(BatchRun.PrtgOutcomeDisabled, summary.PrtgOutcome);
+        Assert.Equal(BatchRun.PrtgNoteUndecryptable, summary.PrtgNote);
+
+        var listItem = Assert.Single(service.GetRunList(3), r => r.RunId == withNote.RunId);
+        Assert.Equal(BatchRun.PrtgNoteUndecryptable, listItem.PrtgOutcomeNote);
+
+        var detail = service.GetDetail(withNote.RunId);
+        Assert.Equal(BatchRun.PrtgNoteUndecryptable, detail.PrtgOutcomeNote);
+    }
+
+    [Fact]
+    public void PRTG舊紀錄沒有原因欄位_三處都是null且總表不憑空補原因()
+    {
+        var dataDate = DateTime.Today.AddDays(-1);
+        var legacy = new BatchRun
+        {
+            HostName = "FETCH-LEGACY",
+            StartedAt = dataDate.AddDays(1).AddHours(2),
+            FinishedAt = dataDate.AddDays(1).AddHours(2).AddMinutes(10),
+            ExitCode = 0,
+            PrtgOutcome = BatchRun.PrtgOutcomeDisabled
+        };
+        Runs().StartRun(legacy);
+        var service = Create();
+
+        var summary = Assert.Single(service.GetDaySummaries(3, 1, 30), s => s.Date == dataDate.ToString("yyyy-MM-dd"));
+        Assert.Equal(BatchRun.PrtgOutcomeDisabled, summary.PrtgOutcome);
+        Assert.Null(summary.PrtgNote);
+        Assert.Null(Assert.Single(service.GetRunList(3), r => r.RunId == legacy.RunId).PrtgOutcomeNote);
+        Assert.Null(service.GetDetail(legacy.RunId).PrtgOutcomeNote);
+    }
 }

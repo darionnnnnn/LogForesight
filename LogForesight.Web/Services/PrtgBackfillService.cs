@@ -850,7 +850,7 @@ public class PrtgBackfillService : IPrtgBackfillTail
                     console.WriteLine("結構同步完成，開始回填。");
                 }
 
-                var fetchService = PrtgFetchService.Create(run.Client, _backend, prtgStore, s, console, guard: null);
+                var fetchService = PrtgFetchService.Create(run.Client, _backend, prtgStore, s, console, guard: null, retryTransientPaging: true);
 
                 // 數值取數對象與排程取數共用同一份設定與判定（docs/PRTG-SPEC.md §3a）
                 var (scopeHostIds, unresolvedHosts) = PrtgValueFetchScope.ResolveHostNames(

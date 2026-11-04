@@ -1356,6 +1356,7 @@ public class SystemSettingsService : ISystemSettingsService
         SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
         // PRTG 監控系統設定
         PrtgEnabled = s.PrtgEnabled,
+        PrtgCredentialState = PrtgClientFactory.CredentialState(s).ToWire(),
         PrtgUrl = s.PrtgUrl,
         PrtgHasApiToken = !string.IsNullOrEmpty(s.PrtgApiTokenEnc),
         PrtgAuthMode = s.PrtgAuthMode,

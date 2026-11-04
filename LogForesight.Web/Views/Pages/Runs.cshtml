@@ -123,6 +123,12 @@
                 <span class="d-none" data-maintain-only data-maintain-action>要啟用自動擷取，請到 <a href="@Url.Content("~/admin/prtg")#params">PRTG 維護頁「擷取參數」</a>勾選「啟用 PRTG 擷取」並儲存；</span>
                 停用時排程擷取與回填不執行；維護者仍可手動同步結構。
             </div>
+            @* 已啟用但認證密文解不開（金鑰檔與資料庫不相符）：夜間會略過 PRTG，指路到「連線」頁籤重新輸入。 *@
+            <div class="small text-warning d-none" id="prtg-credential-hint">
+                PRTG 認證資訊無法解密（金鑰檔與資料庫不相符）。
+                <span class="d-none" data-maintain-only data-maintain-action>請到 <a href="@Url.Content("~/admin/prtg")#connection">PRTG 維護頁「連線」</a>重新輸入並儲存；</span>
+                重新輸入前，排程擷取與回填會略過 PRTG。
+            </div>
             <div class="lf-kv">
                 <span class="lf-kv__label">結構同步</span>
                 <span class="lf-kv__value" id="prtg-sync-summary">—</span>
