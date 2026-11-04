@@ -415,7 +415,9 @@ function mountKpiReveal(strip, container) {
         grids: [...strip.querySelectorAll('.lf-kpi-grid')],
         host: container,
         noun: '項指標',
-        isAlert: card => card.querySelector('.text-danger') !== null
+        isAlert: card => card.querySelector('.text-danger') !== null,
+        // 收合時三組等寬（只看展開狀態，不看量測結果，沒有量測→寬度→量測的回授）
+        onCollapsedChange: expanded => strip.classList.toggle('lf-kpi-strip--collapsed', !expanded)
     });
 }
 

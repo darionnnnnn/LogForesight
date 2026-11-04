@@ -41,6 +41,61 @@ function build(page, declarations, prelude, returns, args = {}) {
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+/** 主機頁徽章：以 production 的 prtgHintBadge／prtgUnmatchedLink／badge 搭簡易節點 */
+function makeHostBadge(canViewAll) {
+    const documentStub = { createElement: (tag) => ({ tag, className: '', textContent: '', title: '' }) };
+    return build('hosts.js', ['function prtgHintBadge(', 'function prtgUnmatchedLink(', 'function badge('],
+        `let canViewAll = ${canViewAll};`,
+        '{ prtgHintBadge }', { appUrl: (p) => `/app${p}`, document: documentStub });
+}
+
+/** PRTG 維護頁未對應清單：production 的 refreshUnmappedHosts／pin 讀取／清網址／跳轉高亮，api、網址、計時器為替身 */
+function makeUnmatched({ search = '', hash = '', items = [], total = 0, fail = null }) {
+    const log = [];
+    const urls = [];
+    const replaced = [];
+    const timers = [];
+    const row = { classes: new Set() };
+    row.classList = { add: (c) => row.classes.add(c), remove: (c) => row.classes.delete(c) };
+    const state = { fail, response: { items, total } };
+    const api = {
+        get: async (url) => {
+            urls.push(url);
+            if (state.fail) throw state.fail;
+            return state.response;
+        }
+    };
+    const documentStub = {
+        getElementById: (id) => {
+            assert.equal(id, 'prtg-unmatched-table');
+            return { querySelector: (selector) => { assert.equal(selector, 'tbody tr'); return row; } };
+        }
+    };
+    const inst = build('prtg-admin.js',
+        ['function readUnmatchedFocusHostId(', 'function clearUnmatchedFocusParams(', 'function revealPinnedUnmatchedHost(', 'async function refreshUnmappedHosts('],
+        `let unmappedPage = 1;
+        let unmappedPageSize = 20;
+        let jumpToUnmatchedSection = () => log.push('jump');
+        const whenInitialLoadSettled = (action) => action();
+        let unmatchedPinHostId = readUnmatchedFocusHostId();
+        const renderUnmappedHostsLoading = () => {};
+        const renderUnmappedHosts = () => log.push('render');
+        const renderUnmappedHostsPagination = () => {};
+        const renderUnmappedHostsError = (message) => log.push('error:' + message);`,
+        '{ refreshUnmappedHosts }',
+        {
+            api, log,
+            document: documentStub,
+            location: { search, hash, pathname: '/app/admin/prtg' },
+            history: { state: null, replaceState: (_s, _t, url) => replaced.push(url) },
+            setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }
+        });
+    return {
+        inst, log, urls, replaced, timers, row,
+        setFail: (error, response) => { state.fail = error; if (response) state.response = response; }
+    };
+}
+
 /** 可手動決定每個請求何時回應的 api 替身 */
 function makePendingApi() {
     const pending = [];
@@ -704,6 +759,145 @@ const cases = {
         // 舊版後端沒有這個欄位（undefined／null）時退回原本的文字
         t.inst.renderPrtgModuleState(true, 'triggered', 'aggressive');
         assert.match(t.els['prtg-module-state'].textContent, /^已啟用（數值取數對象/);
+    },
+
+    // ---- 第 63-2 輪批次D：主機頁「無 PRTG 對應」徽章連結 ----
+    hosts徽章有ViewAll時無PRTG對應是連結() {
+        const inst = makeHostBadge(true);
+        const el = inst.prtgHintBadge({ hostId: 7, prtgHint: 'no-map' });
+        assert.equal(el.tag, 'a');
+        assert.equal(el.href, '/app/admin/prtg?focus=unmatched&hostId=7#mirror');
+        assert.equal(el.title, '前往 PRTG 維護頁的未對應主機清單');
+        assert.match(el.className, /\blf-touch-36\b/);
+        assert.match(el.className, /\blf-badge\b/);
+        assert.equal(el.textContent, '無 PRTG 對應');
+    },
+    hosts徽章沒有ViewAll時無PRTG對應維持span() {
+        const inst = makeHostBadge(false);
+        const el = inst.prtgHintBadge({ hostId: 7, prtgHint: 'no-map' });
+        assert.equal(el.tag, 'span');
+        assert.equal(el.href, undefined);
+        assert.equal(el.textContent, '無 PRTG 對應');
+        assert.doesNotMatch(el.className, /lf-touch-36/);
+    },
+    hosts徽章其他prtgHint不因ViewAll變連結() {
+        const inst = makeHostBadge(true);
+        for (const hint of ['down', 'up', 'unknown']) {
+            const el = inst.prtgHintBadge({ hostId: 7, prtgHint: hint });
+            assert.equal(el.tag, 'span', hint);
+        }
+        assert.equal(inst.prtgHintBadge({ hostId: 7, prtgHint: 'ok' }), null);
+    },
+    hosts載入時依ViewAll能力決定徽章連結() {
+        const source = sourceOf('hosts.js');
+        assert(source.includes("canViewAll = hasCapability(currentUser, 'ViewAll');"), 'load() 要用目前使用者的 ViewAll 設定 canViewAll');
+        assert(source.includes('getCurrentUser()'), 'load() 要走 getCurrentUser 快取');
+    },
+
+    // ---- 第 63-2 輪批次D：PRTG 維護頁未對應清單定位 ----
+    async prtg未對應帶參數載入用pin跳轉高亮並清網址() {
+        const t = makeUnmatched({ search: '?focus=unmatched&hostId=5', hash: '#mirror', items: [{ hostId: 5 }, { hostId: 2 }, { hostId: 9 }], total: 3 });
+        await t.inst.refreshUnmappedHosts(1);
+        assert.equal(t.urls.length, 1);
+        assert(t.urls[0].includes('pinHostId=5'), t.urls[0]);
+        assert.deepEqual(t.log, ['render', 'jump']);
+        assert.equal(t.row.classes.has('lf-focus-flash'), true);
+        assert.deepEqual(t.timers.map(x => x.ms), [1500]);
+        t.timers[0].fn();
+        assert.equal(t.row.classes.has('lf-focus-flash'), false);
+        assert.deepEqual(t.replaced, ['/app/admin/prtg#mirror']);
+        // 再載入一次（重新整理清單）不再帶 pin、不再跳轉
+        await t.inst.refreshUnmappedHosts(1);
+        assert(!t.urls[1].includes('pinHostId'), t.urls[1]);
+        assert.equal(t.log.filter(x => x === 'jump').length, 1);
+    },
+    prtg未對應跳轉等初次載入全部結束才做() {
+        const inst = build('prtg-admin.js', ['function whenInitialLoadSettled(', 'function markInitialLoadSettled('],
+            'let initialLoadSettled = false; let afterInitialLoad = null;',
+            '{ whenInitialLoadSettled, markInitialLoadSettled }');
+        const log = [];
+        inst.whenInitialLoadSettled(() => log.push('reveal'));
+        assert.deepEqual(log, [], '其他區塊還在載入時不捲動');
+        inst.markInitialLoadSettled();
+        assert.deepEqual(log, ['reveal']);
+        inst.whenInitialLoadSettled(() => log.push('later'));
+        assert.deepEqual(log, ['reveal', 'later'], '載入結束後的呼叫立即執行');
+    },
+    async prtg未對應沒有參數時不pin不跳轉不改網址() {
+        const t = makeUnmatched({ search: '', hash: '#mirror', items: [{ hostId: 5 }], total: 1 });
+        await t.inst.refreshUnmappedHosts(1);
+        assert(!t.urls[0].includes('pinHostId'), t.urls[0]);
+        assert.deepEqual(t.log, ['render']);
+        assert.deepEqual(t.replaced, []);
+        assert.equal(t.timers.length, 0);
+    },
+    async prtg未對應載入失敗不跳轉但錯誤態顯示且之後不再pin() {
+        const t = makeUnmatched({ search: '?focus=unmatched&hostId=5', hash: '#mirror', fail: new Error('403 沒有權限') });
+        await t.inst.refreshUnmappedHosts(1);
+        assert.deepEqual(t.log, ['error:403 沒有權限']);
+        assert.equal(t.row.classes.has('lf-focus-flash'), false);
+        assert.equal(t.timers.length, 0);
+        // 失敗後重試（錯誤態的重試鈕）不再帶 pin
+        t.setFail(null, { items: [{ hostId: 5 }], total: 1 });
+        await t.inst.refreshUnmappedHosts(1);
+        assert(!t.urls[1].includes('pinHostId'), t.urls[1]);
+        assert(!t.log.includes('jump'), t.log.join());
+    },
+    async prtg未對應清單第一筆不是該台時跳轉但不高亮() {
+        const t = makeUnmatched({ search: '?focus=unmatched&hostId=5', hash: '#mirror', items: [{ hostId: 2 }, { hostId: 9 }], total: 2 });
+        await t.inst.refreshUnmappedHosts(1);
+        assert.deepEqual(t.log, ['render', 'jump']);
+        assert.equal(t.row.classes.has('lf-focus-flash'), false);
+        assert.equal(t.timers.length, 0);
+        assert.deepEqual(t.replaced, ['/app/admin/prtg#mirror']);
+    },
+    async prtg未對應focus參數不合法視為沒給() {
+        for (const search of ['?focus=unmatched&hostId=abc', '?focus=unmatched&hostId=0', '?focus=unmatched&hostId=-3', '?focus=unmatched', '?focus=other&hostId=5', '?hostId=5']) {
+            const t = makeUnmatched({ search, hash: '#mirror', items: [{ hostId: 5 }], total: 1 });
+            await t.inst.refreshUnmappedHosts(1);
+            assert(!t.urls[0].includes('pinHostId'), `${search} → ${t.urls[0]}`);
+            assert.deepEqual(t.log, ['render'], search);
+            assert.deepEqual(t.replaced, [], search);
+        }
+    },
+    async prtg未對應pin只用一次且翻頁不帶() {
+        const t = makeUnmatched({ search: '?focus=unmatched&hostId=5', hash: '#mirror', items: [{ hostId: 5 }], total: 60 });
+        await t.inst.refreshUnmappedHosts(2);
+        assert(!t.urls[0].includes('pinHostId'), t.urls[0]);
+        assert.deepEqual(t.replaced, []);
+        await t.inst.refreshUnmappedHosts(1);
+        assert(t.urls[1].includes('pinHostId=5'), t.urls[1]);
+        await t.inst.refreshUnmappedHosts(2);
+        assert(!t.urls[2].includes('pinHostId'), t.urls[2]);
+    },
+    async prtg未對應清網址保留其他參數與hash() {
+        const t = makeUnmatched({ search: '?foo=1&focus=unmatched&hostId=5', hash: '#mirror', items: [{ hostId: 5 }], total: 1 });
+        await t.inst.refreshUnmappedHosts(1);
+        assert.deepEqual(t.replaced, ['/app/admin/prtg?foo=1#mirror']);
+    },
+
+    prtg未對應跳轉共用既有區塊展開與捲動() {
+        const calls = [];
+        const mk = (name) => ({ name, listeners: {}, attrs: {}, textContent: '', classes: new Set(),
+            addEventListener(t, h) { this.listeners[t] = h; }, setAttribute(k, v) { this.attrs[k] = v; },
+            scrollIntoView(o) { calls.push(['scroll', name, o.block]); }, focus() { calls.push(['focus', name]); } });
+        for (const el of [mk('badge'), mk('section'), mk('collapse'), mk('toggle')]) el.classList = { add: (c) => el.classes.add(c), contains: (c) => el.classes.has(c), remove: (c) => el.classes.delete(c) }, (globalThis.__els ||= {})[el.name] = el;
+        const els = globalThis.__els;
+        const ids = { 'prtg-mirror-map-unmatched': els.badge, 'prtg-unmatched-section': els.section, 'prtg-unmatched-collapse': els.collapse, 'prtg-unmatched-toggle-btn': els.toggle };
+        const inst = build('prtg-admin.js', ['function bindUnmatchedControls('], 'let jumpToUnmatchedSection = null;',
+            '{ bind: bindUnmatchedControls, jump: () => jumpToUnmatchedSection }',
+            { document: { getElementById: (id) => ids[id] ?? null }, window: {} });
+        assert.equal(inst.jump(), null);
+        inst.bind();
+        assert.equal(typeof inst.jump(), 'function');
+        inst.jump()();
+        assert.equal(els.collapse.classes.has('show'), true, '要展開未對應區塊');
+        assert.deepEqual(calls, [['scroll', 'section', 'nearest'], ['focus', 'section']]);
+        // 徽章按鈕仍走同一個跳轉
+        calls.length = 0;
+        els.badge.listeners.click();
+        assert.deepEqual(calls, [['scroll', 'section', 'nearest'], ['focus', 'section']]);
+        delete globalThis.__els;
     },
 
     // ---- help-manual：首次載入不捲動 ----

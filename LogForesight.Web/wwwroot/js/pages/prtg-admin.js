@@ -1449,6 +1449,54 @@ function renderConflictPagination(totalPages) {
 let unmappedPage = 1;
 let unmappedPageSize = loadPageSize('prtg-unmatched');
 
+// 主機頁「無 PRTG 對應」徽章帶來的定位（?focus=unmatched&hostId=N）。一次性：
+// 只有進頁後第一次載入清單會帶 pinHostId，之後翻頁、重新整理都不再釘住
+let unmatchedPinHostId = readUnmatchedFocusHostId();
+// 由 bindUnmatchedControls 設定：展開未對應區塊並捲到定位（沿用徽章按鈕同一套，不另做捲動）
+let jumpToUnmatchedSection = null;
+
+function readUnmatchedFocusHostId() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('focus') !== 'unmatched') return null;
+    const hostId = Number(params.get('hostId'));
+    return Number.isInteger(hostId) && hostId > 0 ? hostId : null;
+}
+
+/** 移除 focus、hostId 參數但保留 hash（頁籤靠 #mirror），重新整理不再定位 */
+function clearUnmatchedFocusParams() {
+    const params = new URLSearchParams(location.search);
+    params.delete('focus');
+    params.delete('hostId');
+    const query = params.toString();
+    history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+}
+
+/** 清單載入成功後：跳到未對應區塊；該台確實排在第一筆才高亮那一列 1.5 秒 */
+// 初次載入的區塊各自非同步回來，上方區塊長高會把已捲到的位置往下推：
+// 從別頁跳過來要等全部載入結束才捲，否則畫面停在錯的地方。
+let initialLoadSettled = false;
+let afterInitialLoad = null;
+
+function whenInitialLoadSettled(action) {
+    if (initialLoadSettled) action();
+    else afterInitialLoad = action;
+}
+
+function markInitialLoadSettled() {
+    initialLoadSettled = true;
+    afterInitialLoad?.();
+    afterInitialLoad = null;
+}
+
+function revealPinnedUnmatchedHost(hostId, items) {
+    jumpToUnmatchedSection?.();
+    if (items.length === 0 || items[0].hostId !== hostId) return;
+    const row = document.getElementById('prtg-unmatched-table')?.querySelector('tbody tr');
+    if (!row) return;
+    row.classList.add('lf-focus-flash');
+    setTimeout(() => row.classList.remove('lf-focus-flash'), 1500);
+}
+
 /** 鏡像清單表格的載入中佔位：spinner 置中，等待樣式與全站其他區塊一致（ui.js 的 renderSpinner） */
 function renderMirrorTableLoading(container) {
     renderSpinner(container);
@@ -1531,9 +1579,14 @@ function renderUnmappedHostsLoading() {
 
 async function refreshUnmappedHosts(page = unmappedPage) {
     unmappedPage = page;
+    // 一次性釘住：只在第一頁、且只用一次（無論成功失敗都消耗，重試與之後的重整不再帶）
+    const pinHostId = page === 1 ? unmatchedPinHostId : null;
+    if (pinHostId !== null) unmatchedPinHostId = null;
     renderUnmappedHostsLoading();
+    let loadedItems = null;
     try {
-        const res = await api.get(`/api/admin/settings/prtg-unmapped-hosts?page=${unmappedPage}&pageSize=${unmappedPageSize}`, { silent: true });
+        const pinQuery = pinHostId !== null ? `&pinHostId=${pinHostId}` : '';
+        const res = await api.get(`/api/admin/settings/prtg-unmapped-hosts?page=${unmappedPage}&pageSize=${unmappedPageSize}${pinQuery}`, { silent: true });
         const total = (res && res.total) ? res.total : 0;
         const totalPages = Math.ceil(total / unmappedPageSize);
 
@@ -1541,10 +1594,17 @@ async function refreshUnmappedHosts(page = unmappedPage) {
             return refreshUnmappedHosts(totalPages);
         }
 
-        renderUnmappedHosts((res && res.items) ? res.items : []);
+        loadedItems = (res && res.items) ? res.items : [];
+        renderUnmappedHosts(loadedItems);
         renderUnmappedHostsPagination(totalPages);
     } catch (error) {
+        loadedItems = null;
         renderUnmappedHostsError(error && error.message ? error.message : '載入未對應主機清單失敗');
+    }
+    if (pinHostId !== null) {
+        clearUnmatchedFocusParams();
+        // 載入失敗（含 403）不跳轉，錯誤態照常顯示
+        if (loadedItems !== null) whenInitialLoadSettled(() => revealPinnedUnmatchedHost(pinHostId, loadedItems));
     }
 }
 
@@ -2995,13 +3055,14 @@ function bindUnmatchedControls() {
         });
     }
 
-    if (badge && section) {
-        const jumpToUnmatched = () => {
-            ensureExpanded();
-            section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            section.focus();
-        };
+    const jumpToUnmatched = () => {
+        ensureExpanded();
+        section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        section.focus();
+    };
+    if (section) jumpToUnmatchedSection = jumpToUnmatched;
 
+    if (badge && section) {
         badge.addEventListener('click', jumpToUnmatched);
         badge.addEventListener('keydown', event => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -3043,18 +3104,20 @@ function init() {
         document.getElementById('prtg-name-mismatch-toggle-btn'), 'prtg-name-mismatch');
     initCalibration();
     initValueReadiness();
-    loadSettings();
-    ensureBatchHostsLoaded();
-    refreshPrtgMirror();
-    loadSnapshotDiagnostics();
-    refreshAcceptanceAi();
-    refreshConflicts(1);
-    refreshUnmappedHosts(1);
-    refreshNameMismatch();
-    refreshPrtgProbeStatus();
-    refreshStructureSyncStatus();
-    refreshPrtgRuleBanner();
-    refreshScheduleWarning();
+    Promise.allSettled([
+        loadSettings(),
+        ensureBatchHostsLoaded(),
+        refreshPrtgMirror(),
+        loadSnapshotDiagnostics(),
+        refreshAcceptanceAi(),
+        refreshConflicts(1),
+        refreshUnmappedHosts(1),
+        refreshNameMismatch(),
+        refreshPrtgProbeStatus(),
+        refreshStructureSyncStatus(),
+        refreshPrtgRuleBanner(),
+        refreshScheduleWarning()
+    ]).then(markInitialLoadSettled);
 }
 
 init();

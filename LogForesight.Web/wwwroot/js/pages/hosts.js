@@ -5,7 +5,7 @@
  * 待歸屬、IP 衝突、未分組各自代表一種靜默的失效，藏起來就會變成沒人記得的盲區。
  */
 
-import { api } from '../core/api.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPager,
     checkboxList, button, loadPageSize, guardLoad, createPageSelection
@@ -38,6 +38,8 @@ const bulkModal = new bootstrap.Modal(document.getElementById('bulk-modal'));
 let currentPageHosts = [];
 let hostGroups = [];
 let users = [];
+// 目前使用者是否具 ViewAll：PRTG 維護頁的未對應清單端點要 ViewAll，沒有權限就不把徽章做成連結
+let canViewAll = false;
 let overview = { sentinelNames: [], ipConflicts: [] };
 let editingHost = null;
 let currentPage = 1;
@@ -77,11 +79,14 @@ const batchOwnersModal = new bootstrap.Modal(document.getElementById('batch-owne
 async function load() {
     renderLoading(listContainer, 5);
 
-    [hostGroups, users, overview] = await Promise.all([
+    let currentUser;
+    [hostGroups, users, overview, currentUser] = await Promise.all([
         api.get('/api/admin/host-groups'),
         api.get('/api/admin/users'),
-        api.get('/api/admin/netiq/overview')
+        api.get('/api/admin/netiq/overview'),
+        getCurrentUser()
     ]);
+    canViewAll = hasCapability(currentUser, 'ViewAll');
 
     conflictIds = new Set(overview.ipConflicts.flatMap(group => group.hosts.map(h => h.hostId)));
     unpolledIds = new Set(
@@ -455,7 +460,18 @@ function prtgHintBadge(host) {
         default: return null;
     }
     if (host.prtgHintStale) text += '（鏡像過期）';
+    if (host.prtgHint === 'no-map' && canViewAll) return prtgUnmatchedLink(host, text, variant);
     return badge(text, variant);
+}
+
+/** 「無 PRTG 對應」徽章的連結版：落到 PRTG 維護頁「鏡像狀態」的未對應清單，並把該台釘在最上面 */
+function prtgUnmatchedLink(host, text, variant) {
+    const link = document.createElement('a');
+    link.className = `lf-badge lf-badge--${variant} me-1 lf-touch-36`;
+    link.href = appUrl(`/admin/prtg?focus=unmatched&hostId=${encodeURIComponent(host.hostId)}#mirror`);
+    link.title = '前往 PRTG 維護頁的未對應主機清單';
+    link.textContent = text;
+    return link;
 }
 
 /** 分級徽章（回饋十九輪批次G）：核心用醒目色引起注意，一般不特別強調，測試用中性色 */

@@ -1178,6 +1178,14 @@ a.lf-stat:hover .lf-card,
     }
 }
 
+/* 收合（只顯示第一排）且放不下全部卡片的寬度：三組等寬，不然只剩一張卡的組會寬窄不一。
+   更寬的畫面全部卡片都放得下，維持依卡數分寬；等寬反而會讓卡多的組藏卡。展開移除類別後同樣回到依卡數分寬。 */
+@media (min-width: 576px) and (max-width: 1799.98px) {
+    .lf-kpi-strip--row.lf-kpi-strip--collapsed .lf-kpi-group {
+        flex: 1 1 0;
+    }
+}
+
 .lf-kpi-card {
     display: block;
     min-width: 0;
@@ -1526,6 +1534,9 @@ a.lf-kpi-card--link:focus-visible {
 /* ── 徽章：一律「顏色＋文字」，不做只靠顏色區分的 UI（§8.2）───────────────
    風險徽章維持高對比（風險必須是畫面最響亮的元素）；狀態徽章走淡色 token 系。*/
 
+a.lf-badge { text-decoration: none; }
+a.lf-badge:hover { text-decoration: underline; }
+
 .lf-badge {
     display: inline-flex;
     align-items: center;
@@ -1684,6 +1695,22 @@ a.lf-kpi-card--link:focus-visible {
 }
 
 /* 排程作業頁的小尺寸控制項（匯出鈕、等級下拉）：觸控區至少 36px 高 */
+/* 從他頁連結定位到某一列時的短暫高亮（1.5 秒後由 JS 移除類別）；動態淡出只在使用者不要求減少動態時才有 */
+.lf-focus-flash > td {
+    box-shadow: inset var(--lf-focus-ring);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .lf-focus-flash > td {
+        animation: lf-focus-flash-fade 1.5s ease-out;
+    }
+}
+
+@keyframes lf-focus-flash-fade {
+    from { box-shadow: inset var(--lf-focus-ring); }
+    to { box-shadow: inset 0 0 0 .2rem transparent; }
+}
+
 .lf-touch-36 {
     min-height: 36px; /* 固定 36px：根字級隨「小／中／大」切換，rem 在小字級會低於設計規範的觸控下限 */
 }

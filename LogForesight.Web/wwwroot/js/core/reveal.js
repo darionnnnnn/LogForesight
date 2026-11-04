@@ -30,6 +30,8 @@ export function countGridColumns(grid) {
  * @param {string} options.key 展開狀態的記憶鍵（lf.collapse.{key}）
  * @param {string} options.noun 按鈕文字的量詞與名詞，例如「項指標」「類」
  * @param {(child: Element) => boolean} [options.isAlert] 判斷被藏的卡是否帶告警
+ * @param {(expanded: boolean) => void} [options.onCollapsedChange] 初始與每次切換展開／收合時呼叫；
+ *        只傳展開狀態、不傳量測結果，呼叫端據此切換版面類別（本函式不認得 KPI 群組）
  * @returns {{ dispose: () => void }} 重新渲染前要呼叫，否則舊格線上的 observer 會累積
  */
 export function revealFirstRow({
@@ -38,6 +40,7 @@ export function revealFirstRow({
     key,
     noun,
     isAlert = () => false,
+    onCollapsedChange = null,
     measure = countGridColumns,
     // 延到下一格畫面：callback 內改 hidden 會讓被觀察的格線變高，同一輪內就會觸發瀏覽器的 ResizeObserver 迴圈錯誤
     createObserver = callback => new ResizeObserver(() => requestAnimationFrame(callback)),
@@ -51,6 +54,9 @@ export function revealFirstRow({
     let expanded = storage.get(storageKey) === 'open';
     let lastColumns = null;
     let disposed = false;
+
+    const notifyState = () => { if (onCollapsedChange) onCollapsedChange(expanded); };
+    notifyState();
 
     const bar = document.createElement('div');
     bar.className = 'lf-reveal-bar';
@@ -93,6 +99,7 @@ export function revealFirstRow({
     toggle.addEventListener('click', () => {
         expanded = !expanded;
         storage.set(storageKey, expanded ? 'open' : 'closed');
+        notifyState();
         render();
     });
 

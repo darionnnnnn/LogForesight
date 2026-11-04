@@ -259,6 +259,19 @@ public class FrontendMiscBehaviorTests
     [InlineData("runs清單PRTG有成果時不顯示趟次原因")]
     [InlineData("runs卡片憑證無法解密時顯示已啟用但憑證無法解密並露出連結提示")]
     [InlineData("runs卡片憑證正常或未啟用時不顯示憑證提示")]
+    [InlineData("hosts徽章有ViewAll時無PRTG對應是連結")]
+    [InlineData("hosts徽章沒有ViewAll時無PRTG對應維持span")]
+    [InlineData("hosts徽章其他prtgHint不因ViewAll變連結")]
+    [InlineData("hosts載入時依ViewAll能力決定徽章連結")]
+    [InlineData("prtg未對應帶參數載入用pin跳轉高亮並清網址")]
+    [InlineData("prtg未對應跳轉等初次載入全部結束才做")]
+    [InlineData("prtg未對應沒有參數時不pin不跳轉不改網址")]
+    [InlineData("prtg未對應載入失敗不跳轉但錯誤態顯示且之後不再pin")]
+    [InlineData("prtg未對應清單第一筆不是該台時跳轉但不高亮")]
+    [InlineData("prtg未對應focus參數不合法視為沒給")]
+    [InlineData("prtg未對應pin只用一次且翻頁不帶")]
+    [InlineData("prtg未對應清網址保留其他參數與hash")]
+    [InlineData("prtg未對應跳轉共用既有區塊展開與捲動")]
     public void 小項行為案例(string caseName)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
