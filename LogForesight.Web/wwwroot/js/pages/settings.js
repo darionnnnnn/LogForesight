@@ -184,7 +184,17 @@ function collectDayRiskLevels() {
         .map(btn => btn.dataset.riskLevel);
 }
 
-function updateAiProviderFields(provider) {
+/** 已設定金鑰／密碼時，欄位 placeholder 才講「留空＝沿用」；尚未設定就只標選填（狀態句不再重複這件事） */
+const KEEP_EXISTING_PLACEHOLDER = '留空＝沿用既有';
+
+/** 設定常駐說明；沒有內容時整個容器隱藏，避免留下空的 form-text */
+function setHint(el, text) {
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('d-none', !text);
+}
+
+function updateAiProviderFields(provider, hasApiKey = Boolean(current?.aiHasApiKey)) {
     const baseUrlWrap = document.getElementById('ai-base-url-wrap');
     const baseUrlLabel = document.getElementById('ai-base-url-label');
     const baseUrlInput = document.getElementById('ai-base-url');
@@ -192,48 +202,50 @@ function updateAiProviderFields(provider) {
     const modelWrap = document.getElementById('ai-model-wrap');
     const modelLabel = document.getElementById('ai-model-label');
     const modelInput = document.getElementById('ai-model');
-    const modelHint = document.getElementById('ai-model-hint');
     const azureDepWrap = document.getElementById('ai-azure-deployment-wrap');
     const azureVerWrap = document.getElementById('ai-azure-api-version-wrap');
     const apiKeyLabel = document.getElementById('ai-api-key-label');
     const providerHint = document.getElementById('ai-provider-hint');
 
     if (provider === 'OpenAi') {
-        if (providerHint) providerHint.textContent = CLOUD_AI_DECLARATION;
+        setHint(providerHint, CLOUD_AI_DECLARATION);
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = 'API 位址（選填）';
-        baseUrlInput.placeholder = '留空使用官方端點，要走 proxy 才填';
-        if (baseUrlHint) baseUrlHint.textContent = '留空使用官方端點，要走 proxy 才填。';
+        baseUrlInput.placeholder = 'https://api.openai.com';
+        setHint(baseUrlHint, '留空使用官方端點，要走 proxy 才填。');
         modelWrap.classList.remove('d-none');
         modelLabel.textContent = '模型名稱（必填）';
         modelInput.placeholder = '例如 gpt-4o、gpt-4o-mini';
-        modelHint.textContent = '';
         azureDepWrap.classList.add('d-none');
         azureVerWrap.classList.add('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
     } else if (provider === 'AzureOpenAi') {
-        if (providerHint) providerHint.textContent = CLOUD_AI_DECLARATION;
+        setHint(providerHint, CLOUD_AI_DECLARATION);
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = '端點位址（Endpoint，必填）';
         baseUrlInput.placeholder = 'https://your-resource.openai.azure.com/';
-        if (baseUrlHint) baseUrlHint.textContent = '';
+        setHint(baseUrlHint, '');
         modelWrap.classList.add('d-none');
         azureDepWrap.classList.remove('d-none');
         azureVerWrap.classList.remove('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
     } else {
-        if (providerHint) providerHint.textContent = '';
+        setHint(providerHint, '');
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = 'API 位址';
         baseUrlInput.placeholder = 'http://localhost:8080';
-        if (baseUrlHint) baseUrlHint.textContent = '';
+        setHint(baseUrlHint, '留空會停用 AI 分析與加值功能。');
         modelWrap.classList.remove('d-none');
         modelLabel.textContent = '模型名稱';
         modelInput.placeholder = 'local-model';
-        modelHint.textContent = '選填，預設 local-model。';
         azureDepWrap.classList.add('d-none');
         azureVerWrap.classList.add('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（選填）';
+    }
+
+    const apiKeyInput = document.getElementById('ai-api-key');
+    if (apiKeyInput) {
+        apiKeyInput.placeholder = hasApiKey ? KEEP_EXISTING_PLACEHOLDER : (provider === 'Local' ? '選填' : '');
     }
 }
 
@@ -405,15 +417,12 @@ function renderAiFields(settings) {
     document.getElementById('ai-model').value = settings.aiModel ?? '';
     document.getElementById('ai-azure-deployment').value = settings.aiAzureDeployment ?? '';
     document.getElementById('ai-azure-api-version').value = settings.aiAzureApiVersion || document.getElementById('ai-azure-api-version').dataset.default || '';
-    updateAiProviderFields(provider);
+    updateAiProviderFields(provider, Boolean(settings.aiHasApiKey));
 
     const apiKeyInput = document.getElementById('ai-api-key');
     apiKeyInput.value = '';
 
-    const hint = document.getElementById('ai-api-key-hint');
-    hint.textContent = settings.aiHasApiKey
-        ? '已設定金鑰；留空儲存＝沿用既有金鑰，輸入新值才會覆蓋。'
-        : '尚未設定金鑰；地端無驗證的端點可留空。';
+    setHint(document.getElementById('ai-api-key-hint'), settings.aiHasApiKey ? '已設定金鑰' : '');
 
     document.getElementById('ai-api-key-clear').checked = false;
 
@@ -544,9 +553,8 @@ function renderMailFields(settings) {
     document.getElementById('smtp-account').value = settings.smtpAccount ?? '';
 
     document.getElementById('smtp-password').value = '';
-    document.getElementById('smtp-password-hint').textContent = settings.smtpHasPassword
-        ? '已設定密碼；留空儲存＝沿用既有密碼，輸入新值才會覆蓋。'
-        : '尚未設定密碼；不需驗證的內網 relay 可留空。';
+    document.getElementById('smtp-password').placeholder = settings.smtpHasPassword ? KEEP_EXISTING_PLACEHOLDER : '選填';
+    setHint(document.getElementById('smtp-password-hint'), settings.smtpHasPassword ? '已設定密碼' : '');
     document.getElementById('smtp-password-clear').checked = false;
 
     document.getElementById('mail-from').value = settings.mailFrom ?? '';
@@ -1050,10 +1058,6 @@ function setBrandIcon(dataUri) {
         // 沒有自訂圖示時顯示內建圖示，讓預覽格永遠有東西（空框看起來像壞掉）
         preview.appendChild(icon('speedometer2'));
     }
-
-    document.getElementById('brand-icon-hint').textContent = brandIconDataUri
-        ? '已設定自訂圖示；重新選擇檔案即可更換。'
-        : '目前使用內建圖示。';
 }
 
 /**
