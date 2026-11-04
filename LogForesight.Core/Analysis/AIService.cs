@@ -44,6 +44,24 @@ public class AiResponse
 
     /// <summary>伺服器回報的 choices[0].finish_reason（stop／length…）；沒有欄位為 null</summary>
     public string? FinishReason { get; init; }
+
+    // 以下為「清洗前」的證據（第 63-2 輪 B-a-1）：<see cref="Content"/> 是清洗（去 channel 標記、簡轉繁）後的結果，
+    // 清洗把思考文字與標記整段剝掉，失敗時就看不到模型實際吐了什麼；這裡留下原文的長度與頭尾。
+
+    /// <summary>清洗前 choices[0].message.content 的字元數；伺服器沒有 content 為 null</summary>
+    public int? RawChars { get; init; }
+
+    /// <summary>清洗前原文的開頭（最多 <see cref="AiJsonDiagnostics.HeadChars"/> 字，已把孤立代理字元換成 U+FFFD）</summary>
+    public string? RawHead { get; init; }
+
+    /// <summary>清洗前原文的結尾（總長不超過開頭＋結尾上限時為 null，因為開頭已含全文）</summary>
+    public string? RawTail { get; init; }
+
+    /// <summary>
+    /// 伺服器另外放的思考文字字元數（<c>reasoning_content</c> 或 <c>reasoning</c> 欄位）；只記長度、不留內容。
+    /// 伺服器沒有這類欄位為 null。
+    /// </summary>
+    public int? ReasoningChars { get; init; }
 }
 
 /// <summary>ChatJsonAsync 的結果：JSON 解析並通過內容檢查才算成功，含實際嘗試次數供除錯</summary>
@@ -313,10 +331,14 @@ public class AIService : IAiService
                 // 後面因空回應／清洗後為空而重試的那些嘗試同樣要算進去，否則帳目會少計。
                 RecordUsage(result?.Usage);
 
-                var text = result?.Choices.FirstOrDefault()?.Message.Content;
+                var choice = result?.Choices.FirstOrDefault();
+                var text = choice?.Message.Content;
+                var (rawHead, rawTail) = text == null
+                    ? (null, null)
+                    : AiJsonDiagnostics.SplitHeadTail(AiJson.ReplaceLoneSurrogates(text));
                 lastCallInfo = new ChatCallInfo(
                     text?.Length ?? 0, result?.Usage?.PromptTokens, result?.Usage?.CompletionTokens,
-                    result?.Choices.FirstOrDefault()?.FinishReason);
+                    choice?.FinishReason, text?.Length, rawHead, rawTail, choice?.Message.ReasoningChars);
 
                 // 空回應視為失敗觸發重試，不讓「無內容」流進分析結果
                 if (string.IsNullOrWhiteSpace(text))
@@ -344,7 +366,9 @@ public class AIService : IAiService
                 PromptChars = prompt.Length, SystemPromptChars = systemPrompt?.Length ?? 0,
                 ResponseChars = content.Length,
                 PromptTokens = lastCallInfo?.PromptTokens, CompletionTokens = lastCallInfo?.CompletionTokens,
-                FinishReason = lastCallInfo?.FinishReason
+                FinishReason = lastCallInfo?.FinishReason,
+                RawChars = lastCallInfo?.RawChars, RawHead = lastCallInfo?.RawHead, RawTail = lastCallInfo?.RawTail,
+                ReasoningChars = lastCallInfo?.ReasoningChars
             };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -374,7 +398,9 @@ public class AIService : IAiService
                 PromptChars = prompt.Length, SystemPromptChars = systemPrompt?.Length ?? 0,
                 ResponseChars = emptyInfo?.ResponseChars,
                 PromptTokens = emptyInfo?.PromptTokens, CompletionTokens = emptyInfo?.CompletionTokens,
-                FinishReason = emptyInfo?.FinishReason
+                FinishReason = emptyInfo?.FinishReason,
+                RawChars = emptyInfo?.RawChars, RawHead = emptyInfo?.RawHead, RawTail = emptyInfo?.RawTail,
+                ReasoningChars = emptyInfo?.ReasoningChars
             };
         }
         finally
@@ -418,14 +444,18 @@ public class AIService : IAiService
         // 診斷（第 63 輪 F-2）：每次「內容層失敗」的嘗試各記一筆，最終失敗時寫成一行；
         // 只累積資料，不參與下面任何成敗與重試判斷
         var attemptDiagnostics = new List<AiJsonAttemptDiagnostics>();
+        // 上一次內容層失敗的類別（第 63-2 輪 B-a-2）：決定下一次要不要關掉文法（response_format），
+        // 也決定重試提示的尾句——兩者共用同一個判定（見 RetryWithoutGrammar），不各寫一份
+        string? lastCategory = null;
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
+            var withoutGrammar = attempt > 1 && RetryWithoutGrammar(lastCategory);
             var currentPrompt = attempt == 1 || string.IsNullOrWhiteSpace(lastError)
                 ? prompt
-                : BuildRetryPrompt(prompt, lastError, rawContent);
+                : BuildRetryPrompt(prompt, lastError, rawContent, withoutGrammar);
 
-            var response = await ChatAsync(currentPrompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens,
+            var response = await ChatAsync(currentPrompt, systemPrompt, jsonMode: !withoutGrammar, model: model, temperature: temperature, maxTokens: maxTokens,
                 label: totalAttempts > 1 ? $"{label}-a{attempt}" : label, ct: ct);
 
             if (!response.Success)
@@ -454,8 +484,12 @@ public class AIService : IAiService
             else
             {
                 rawContent = response.Content;
-                var parseOutcome = AiJson.TryParseDetailed<T>(response.Content);
-                var parsed = parseOutcome.Value;
+                // 空形狀（[]、{}、只有括號與換行）在解析之前就判定：文法允許陣列開頭時，被擋下思考的模型
+                // 最短的合法輸出就是 []；{} 則會被當成「全空欄位」的物件解析成功，要靠 validate 才擋得住。
+                // 判定放在這裡（內容層）而不是 ChatAsync 的 Polly 層——後者會立即回傳，第二次嘗試就打不到了
+                var emptyShape = AiJsonDiagnostics.DetectEmptyShape(response.Content);
+                AiJsonParseOutcome<T>? parseOutcome = emptyShape == null ? AiJson.TryParseDetailed(response.Content, validate) : null;
+                var parsed = parseOutcome?.Value;
 
                 if (parsed != null && (validate == null || validate(parsed)))
                 {
@@ -484,6 +518,8 @@ public class AIService : IAiService
                         attempt, totalAttempts, typeof(T).Name, SafeSerialize(parsed));
                 }
 
+                lastCategory = AiJsonDiagnostics.Classify(response.Content, response.FinishReason, parsed != null,
+                    parseOutcome?.LastSyntaxValidException != null);
                 var failedAttempt = AiJsonDiagnostics.BuildAttempt<T>(attempt, response, response.Content, parseOutcome);
                 if (failedAttempt != null) attemptDiagnostics.Add(failedAttempt);
             }
@@ -496,7 +532,9 @@ public class AIService : IAiService
             finalError = $"{JsonContractError}：{FormatErrorResponseSnippet(rawContent)}";
         }
 
-        Log.Error("ChatJsonAsync 最終失敗（{Total} 次嘗試皆未通過），型別={Type}，原因：{Error}",
+        // Warn 不是 Error（第 63-2 輪 B-a-4）：這裡是「模型回的格式不對」，呼叫端會降級保留原文、主機日照樣完成；
+        // 「AI 服務不通」（傳輸層失敗、主分析完全失敗）才是 Error，由呼叫端另記
+        Log.Warn("ChatJsonAsync 最終失敗（{Total} 次嘗試皆未通過），型別={Type}，原因：{Error}",
             totalAttempts, typeof(T).Name, finalError);
         WriteDiagnostics<T>(label, model, maxTokens, totalAttempts, attemptDiagnostics, AiJsonDiagnostics.EndedExhausted);
         return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = finalError, Attempts = totalAttempts };
@@ -567,11 +605,27 @@ public class AIService : IAiService
     /// <summary>
     /// ChatJsonAsync 重試時將上次失敗原因與回覆片段附加在使用者 prompt 尾端，要求模型修正。
     /// </summary>
-    private static string BuildRetryPrompt(string originalPrompt, string lastError, string? rawContent)
+    private static string BuildRetryPrompt(string originalPrompt, string lastError, string? rawContent, bool withoutGrammar)
     {
         var preview = string.IsNullOrWhiteSpace(rawContent) ? "（無回覆內容）" : PreviewForLog(rawContent);
-        return $"{originalPrompt}\n\n【前次嘗試失敗，請修正後重新回答】\n失敗原因：{lastError}\n前次回覆片段：{preview}\n請修正上述問題，並嚴格依要求輸出合法的 JSON。";
+        var closing = withoutGrammar ? RetryClosingWithoutGrammar : RetryClosingWithGrammar;
+        return $"{originalPrompt}\n\n【前次嘗試失敗，請修正後重新回答】\n失敗原因：{lastError}\n前次回覆片段：{preview}\n{closing}";
     }
+
+    /// <summary>重試提示的尾句：這次請求仍帶文法（response_format），模型只能直接輸出 JSON</summary>
+    internal const string RetryClosingWithGrammar = "請修正上述問題，並嚴格依要求輸出合法的 JSON。";
+
+    /// <summary>重試提示的尾句：這次請求不帶文法，模型可以先思考，但最後只能輸出一個 JSON 物件</summary>
+    internal const string RetryClosingWithoutGrammar =
+        "請修正上述問題。你可以先簡短思考，但最後必須只輸出一個 JSON 物件（以 { 開頭、以 } 結尾），不要輸出空陣列或空物件。";
+
+    /// <summary>
+    /// 上一次失敗的類別是否該讓下一次關掉文法。只有「模型什麼都沒說」（empty，含 []、{}）與「完全沒有 JSON」（no_json）
+    /// ——這兩種是文法把模型的思考擋成最短合法輸出的典型徵兆；內容檢查沒過（validation）、截斷、型別不符、
+    /// 其他解析失敗都是模型有寫出東西，維持文法才能保證語法合法。
+    /// </summary>
+    internal static bool RetryWithoutGrammar(string? lastCategory) =>
+        lastCategory is AiJsonDiagnostics.CategoryEmpty or AiJsonDiagnostics.CategoryNoJson;
 
     /// <summary>把解析出的（已是我們自訂的小型結構化物件，不是原始長文字）結果序列化成一行方便寫入 log，
     /// 並保守截斷長度以防單一欄位異常冗長時仍把 log 撐大</summary>
@@ -754,6 +808,30 @@ public class AIService : IAiService
         public string Content { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// 回應裡的 message（只讀，不會被序列化進請求）。<c>content</c> 以外的思考欄位只為診斷而讀：
+    /// llama.cpp 等伺服器會把模型的思考放在 <c>reasoning_content</c>（部分實作叫 <c>reasoning</c>），
+    /// 用 JsonElement 接，伺服器給了意料之外的型別也不能讓信封解析失敗而改變呼叫行為。
+    /// </summary>
+    private class OpenAIResponseMessage
+    {
+        [JsonPropertyName("content")]
+        public string? Content { get; set; }
+
+        [JsonPropertyName("reasoning_content")]
+        public JsonElement? ReasoningContentRaw { get; set; }
+
+        [JsonPropertyName("reasoning")]
+        public JsonElement? ReasoningRaw { get; set; }
+
+        /// <summary>思考文字的字元數（兩個欄位擇一，先看 reasoning_content）；兩者都沒有字串為 null</summary>
+        [JsonIgnore]
+        public int? ReasoningChars =>
+            ReasoningContentRaw is { ValueKind: JsonValueKind.String } a ? a.GetString()!.Length
+            : ReasoningRaw is { ValueKind: JsonValueKind.String } b ? b.GetString()!.Length
+            : null;
+    }
+
     private class OpenAIResponse
     {
         [JsonPropertyName("choices")]
@@ -778,8 +856,9 @@ public class AIService : IAiService
 
     private class OpenAIChoice
     {
+        // 回應用獨立的只讀型別：OpenAIMessage 同時用於請求序列化，不能讓請求多出 reasoning_content
         [JsonPropertyName("message")]
-        public OpenAIMessage Message { get; set; } = new();
+        public OpenAIResponseMessage Message { get; set; } = new();
 
         /// <summary>
         /// stop／length／content_filter…；部分伺服器省略。用 JsonElement 接而不是 string：
@@ -793,6 +872,7 @@ public class AIService : IAiService
             FinishReasonRaw is { ValueKind: JsonValueKind.String } v ? v.GetString() : null;
     }
 
-    /// <summary>單次 HTTP 回應的診斷資訊（原始回覆長度、token 用量、結束原因）</summary>
-    private sealed record ChatCallInfo(int ResponseChars, int? PromptTokens, int? CompletionTokens, string? FinishReason);
+    /// <summary>單次 HTTP 回應的診斷資訊（原始回覆長度、token 用量、結束原因、清洗前原文頭尾、思考欄位長度）</summary>
+    private sealed record ChatCallInfo(int ResponseChars, int? PromptTokens, int? CompletionTokens, string? FinishReason,
+        int? RawChars, string? RawHead, string? RawTail, int? ReasoningChars);
 }

@@ -97,6 +97,11 @@ public sealed class RunExportService : IRunExportService
         AiJsonDiagnostics.CategoryTypeMismatch, AiJsonDiagnostics.CategoryParseOther, AiJsonDiagnostics.CategoryValidation
     };
 
+    private static readonly HashSet<string> KnownEmptyShapes = new(StringComparer.Ordinal)
+    {
+        AiJsonDiagnostics.EmptyShapeArray, AiJsonDiagnostics.EmptyShapeObject
+    };
+
     private static readonly HashSet<string> KnownEndedBy = new(StringComparer.Ordinal)
     {
         AiJsonDiagnostics.EndedExhausted, AiJsonDiagnostics.EndedEmpty, AiJsonDiagnostics.EndedTransport
@@ -1318,7 +1323,13 @@ public sealed class RunExportService : IRunExportService
                     ParseErrorPath = string.IsNullOrEmpty(a.ParseErrorPath) ? null : Text(a.ParseErrorPath),
                     FieldLengths = a.FieldLengths?.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => FieldLength(kv.Key, kv.Value)).ToList(),
                     Head = Text(a.Head),
-                    Tail = a.Tail == null ? null : Text(a.Tail)
+                    Tail = a.Tail == null ? null : Text(a.Tail),
+                    EmptyShape = string.IsNullOrEmpty(a.EmptyShape) ? null : Closed(a.EmptyShape, KnownEmptyShapes),
+                    // 長度放行（整數）；原文頭尾和 head／tail 一樣是自由文字，走文字遮罩
+                    RawChars = a.RawChars,
+                    RawHead = a.RawHead == null ? null : Text(a.RawHead),
+                    RawTail = a.RawTail == null ? null : Text(a.RawTail),
+                    ReasoningChars = a.ReasoningChars
                 }).ToList()
             }).ToList();
         }
@@ -1353,7 +1364,7 @@ public sealed class RunExportService : IRunExportService
             "【省略】meta.omitted 列出每一處因上限而省略的項目、數量與上限；signalGroups 的省略會同時列出被省略的次數（occurrences）與其中 Error／Fatal 的次數（errorFatalOccurrences）。沒有出現的項目代表沒有被省略。",
             "【runStats】byJob 依作業類型（fetch＝取數分析，ai＝AI 分析排程）與觸發類別（schedule、manual、fetch-followup、console＝工作排程器或舊紀錄）統計；phases 是各階段耗時（只算有結束時間的）與未成功次數，P95 用最近排名法；versions 看問題是不是某一版之後才出現。",
             "【aiFormatAnomalies】「案例」是標題為「AI 回覆格式異常，以下為原始內容」的主機日紀錄，表示 AI 重試用盡後仍未通過 JSON 檢查、系統保留原文降級。attempts 是紀錄摘要前綴寫的嘗試次數（解析不到為 null）。replyShape：object＝以 { 開頭、fence＝Markdown 圍欄、array＝以 [ 開頭、text＝一般文字、blank＝空白；cutOff 為 true 代表保留字數已達 600 字上限，後面可能還有被截掉的內容，不要推測它是什麼。",
-            "【失敗類別】診斷的 category：empty＝空回覆；no_json＝完全沒有 {；truncated＝括號未閉合或 finishReason 為 length（被 maxTokens 截斷）；type_mismatch＝JSON 合法但欄位型別不符（parseErrorPath 指到欄位）；parse_other＝其他解析失敗；validation＝解析得出但內容檢查沒過（fieldLengths 是各欄字數，請對照 context.ai 的上限：headlineMaxChars 與 otherFieldMaxChars）。context.ai 的 aiMaxTokens 與 aiJsonRetryCount 是呼叫當時的設定值。",
+            "【失敗類別】診斷的 category：empty＝空回覆；no_json＝完全沒有 {；truncated＝括號未閉合或 finishReason 為 length（被 maxTokens 截斷）；type_mismatch＝JSON 合法但欄位型別不符（parseErrorPath 指到欄位）；parse_other＝其他解析失敗；validation＝解析得出但內容檢查沒過（fieldLengths 是各欄字數，請對照 context.ai 的上限：headlineMaxChars 與 otherFieldMaxChars）。context.ai 的 aiMaxTokens 與 aiJsonRetryCount 是呼叫當時的設定值。empty 的 emptyShape：array＝回覆只有 []、object＝只有 {}，這是伺服器用文法（response_format）強制輸出 JSON 時，模型想先思考卻被擋下的最短合法輸出；上一次是 empty 或 no_json 時，下一次嘗試會關掉文法重試，提示尾句改成允許先思考、最後只輸出一個 JSON 物件，其他類別的重試維持文法與「嚴格輸出合法 JSON」的尾句。rawChars、rawHead、rawTail 是清洗前（去 channel 標記與簡轉繁之前）的原文字數與頭尾，缺值代表與清洗後完全相同；reasoningChars 是伺服器另放在 reasoning_content 或 reasoning 欄位的思考字數，只有長度，null 代表伺服器沒有這類欄位。",
             "【診斷起始日】detailedDiagnosticsFirstSeen 是期間內最早一筆詳細診斷的日期；在那之前的案例只有摘要，沒有 category、finishReason 與字數。null 代表期間內沒有任何詳細診斷，可能是還沒發生過失敗，也可能是功能上線前的資料，兩者無法區分。",
             "【失敗歷史統計】summary.failureHistory 是從執行紀錄 Warn 訊息比對出的解析失敗與內容檢查失敗次數（依回覆型別）。比對靠固定的訊息字首，找不到就是 0，0 不代表沒發生過。",
             "【對照組】每個案例最多一筆 control：同一台主機、日期最接近（前後 7 天內，同距離取較新）、AI 正常分析完成的紀錄，只放輸入特徵；找不到是 null，不會換別台主機。comparison 是案例與對照各特徵的中位數與樣本數，任一組樣本為 0 時 features 為 null。請用它判斷是輸入內容造成的，還是模型本來就不穩。",

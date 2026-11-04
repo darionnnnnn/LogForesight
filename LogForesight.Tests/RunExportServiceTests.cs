@@ -1289,6 +1289,58 @@ public class RunExportServiceTests
         }
     }
 
+    [Fact]
+    public void AI案例_診斷的空形狀_清洗前原文_思考長度_原文走遮罩_長度放行_舊格式缺欄為null()
+    {
+        using var h = new RunExportHarness();
+        var y = RunExportHarness.Y;
+        var host = h.AddHost("SRV-RAW-1");
+        var date = y.AddDays(-2);
+        h.AddRecord(host, date, Anomaly, LogAnalysisService.BuildAiFormatAnomalySummary(3, "[]"));
+        var run = h.AddRun();
+        var label = $"daily-{date:yyyyMMdd}-h{host.HostId}";
+        h.AddLog(run, "Warn", AiJsonDiagnostics.LoggerName, RunExportHarness.DiagnosticMessage(label, attempts: new[]
+        {
+            new AiJsonAttemptDiagnostics
+            {
+                Attempt = 1, Category = "empty", Head = "[]", EmptyShape = "array",
+                RawChars = 1234, RawHead = "<|channel>thought 主機 SRV-RAW-1 從 10.8.8.8 連線<|channel>final<|message>[]",
+                RawTail = "結尾 10.8.8.9", ReasoningChars = 77
+            },
+            // 不在封閉集合內的 emptyShape 當資料處理（遮罩）；沒有新欄位的舊格式嘗試，匯出缺欄為 null
+            new AiJsonAttemptDiagnostics { Attempt = 2, Category = "empty", Head = "{}", EmptyShape = "形狀 10.8.8.7" },
+            new AiJsonAttemptDiagnostics { Attempt = 3, Category = "no_json", Head = "文字" }
+        }), y.AddHours(2));
+
+        var (root, bytes, doc) = h.Export();
+        using (doc)
+        {
+            var text = Encoding.UTF8.GetString(bytes);
+            foreach (var original in new[] { "SRV-RAW-1", "10.8.8.8", "10.8.8.9", "10.8.8.7" })
+                Assert.DoesNotContain(original, text, StringComparison.OrdinalIgnoreCase);
+
+            var attempts = root.G("aiFormatAnomalies").G("cases")[0].G("diagnostics")[0].G("attemptDetails").L();
+            Assert.Equal(3, attempts.Count);
+
+            var first = attempts[0];
+            Assert.Equal("array", first.S("emptyShape"));
+            Assert.Equal(1234, first.G("rawChars").GetInt32());
+            Assert.Equal(77, first.G("reasoningChars").GetInt32());
+            Assert.Contains("<|channel>thought", first.S("rawHead")); // 內容保留，只遮識別資料
+            Assert.Contains("host-", first.S("rawHead"));
+            Assert.Contains("ip-", first.S("rawHead"));
+            Assert.Contains("ip-", first.S("rawTail"));
+
+            Assert.DoesNotContain("形狀 10.8.8.7", text);
+
+            foreach (var key in new[] { "emptyShape", "rawChars", "rawHead", "rawTail", "reasoningChars" })
+            {
+                var present = attempts[2].TryGetProperty(key, out var value);
+                Assert.True(!present || value.ValueKind == JsonValueKind.Null, key);
+            }
+        }
+    }
+
     // ===== 純函式 =====
 
     [Fact]

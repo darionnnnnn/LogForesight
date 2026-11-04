@@ -32,13 +32,22 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         public HttpStatusCode Status { get; init; } = HttpStatusCode.OK;
         /// <summary>直接指定 finish_reason 的原始 JSON（測試非字串型別用）</summary>
         public string? RawFinishReasonJson { get; init; }
+        /// <summary>伺服器另放的思考文字（message 裡的 reasoning_content／reasoning）</summary>
+        public string? ReasoningContent { get; init; }
+        /// <summary>思考欄位名稱：reasoning_content 或 reasoning</summary>
+        public string ReasoningField { get; init; } = "reasoning_content";
+        /// <summary>直接指定思考欄位的原始 JSON（測試非字串型別用，欄位名稱用 ReasoningField）</summary>
+        public string? RawReasoningJson { get; init; }
     }
 
     private static HttpResponseMessage ToHttp(Reply r)
     {
         if (r.Status != HttpStatusCode.OK) return new HttpResponseMessage(r.Status);
         var choice = new StringBuilder("{\"message\":{\"role\":\"assistant\",\"content\":")
-            .Append(JsonSerializer.Serialize(r.Content)).Append('}');
+            .Append(JsonSerializer.Serialize(r.Content));
+        if (r.RawReasoningJson != null) choice.Append(",\"").Append(r.ReasoningField).Append("\":").Append(r.RawReasoningJson);
+        else if (r.ReasoningContent != null) choice.Append(",\"").Append(r.ReasoningField).Append("\":").Append(JsonSerializer.Serialize(r.ReasoningContent));
+        choice.Append('}');
         if (r.RawFinishReasonJson != null) choice.Append(",\"finish_reason\":").Append(r.RawFinishReasonJson);
         else if (r.FinishReason != null) choice.Append(",\"finish_reason\":").Append(JsonSerializer.Serialize(r.FinishReason));
         choice.Append('}');
@@ -56,10 +65,14 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
     {
         public int RequestCount { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        /// <summary>每次請求的本體（依序），供檢查有沒有帶 response_format、重試提示寫了什麼</summary>
+        public List<string> RequestBodies { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            RequestBodies.Add(request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct));
             var attempt = ++RequestCount;
-            return Task.FromResult(ToHttp(script(attempt)));
+            return ToHttp(script(attempt));
         }
     }
 
@@ -341,10 +354,10 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         Assert.Equal(1, entry.Attempts);
         Assert.Equal(AiJsonDiagnostics.EndedExhausted, entry.EndedBy);
 
-        // AIService 既有的 Warn（JSON 解析失敗）照常，每次嘗試一筆；診斷行不加一筆
-        Assert.Equal(1, run.WarnCount);
-        Assert.Equal(1, logs.Count(l => l.Logger == "AIService" && l.Level == "Warn"));
-        Assert.Equal(1, run.ErrorCount); // ChatJsonAsync 最終失敗的既有 Error
+        // AIService 的 Warn：每次嘗試一筆（JSON 解析失敗）＋最終失敗一筆（第 63-2 輪 B-a-4 由 Error 改 Warn）；診斷行不加一筆
+        Assert.Equal(2, run.WarnCount);
+        Assert.Equal(2, logs.Count(l => l.Logger == "AIService" && l.Level == "Warn"));
+        Assert.Equal(0, run.ErrorCount); // 格式異常是警告不是錯誤
     }
 
     [Fact]
@@ -561,11 +574,11 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         yield return new object?[] { Obj("高"), "高" };
         yield return new object?[] { "```json\n" + Obj("中") + "\n```", "中" };
         yield return new object?[] { "前言文字 " + Obj("低") + " 結尾", "低" };
-        // 多個物件：取第一個配對完整的（順序不得變）
-        yield return new object?[] { Obj("甲") + " 然後 " + Obj("乙"), "甲" };
-        yield return new object?[] { "{\"note\":\"x\"} " + Obj("丙"), "" }; // 第一個物件解析得出（全空欄位）就回它
-        // 陣列：包著的第一個物件
-        yield return new object?[] { "[" + Obj("丁") + "," + Obj("戊") + "]", "丁" };
+        // 多個物件：最後一個配對完整的優先（思考在前、答案在後；第 63-2 輪 B-a-3 由「第一個」改）
+        yield return new object?[] { Obj("甲") + " 然後 " + Obj("乙"), "乙" };
+        yield return new object?[] { "{\"note\":\"x\"} " + Obj("丙"), "丙" }; // 前面的全空欄位物件不再蓋掉真正的答案
+        // 陣列：包著的物件取最後一個
+        yield return new object?[] { "[" + Obj("丁") + "," + Obj("戊") + "]", "戊" };
         // 截斷：補括號後解析得出
         yield return new object?[] { "{\"risk_level\":\"己\",\"headline\":\"h\",\"story\":\"寫到一半", "己" };
         // 解析失敗
@@ -574,6 +587,27 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         yield return new object?[] { "null", null };
         yield return new object?[] { "{\"risk_level\":\"高\",\"action\":[\"a\"]}", null };
         yield return new object?[] { "{\"risk_level\": }", null };
+    }
+
+    [Theory]
+    [InlineData("{\"note\":\"x\"} 之後 {0}")]
+    [InlineData("{0} 尾端多一個 {\"note\":\"x\"}")]
+    public void TryParseDetailed_選第一個通過內容檢查的候選_思考在前或答案在前都選得對(string template)
+    {
+        var raw = template.Replace("{0}", Obj("高"));
+
+        var detailed = AiJson.TryParseDetailed<AiAnalysisResult>(raw, r => r.Headline.Length > 0);
+
+        Assert.Equal("高", detailed.Value?.RiskLevel);
+    }
+
+    [Fact]
+    public void TryParseDetailed_都沒通過內容檢查_回第一個解析得出的讓呼叫端走內容檢查失敗()
+    {
+        var detailed = AiJson.TryParseDetailed<AiAnalysisResult>("{\"note\":\"x\"}", r => r.Headline.Length > 0);
+
+        Assert.NotNull(detailed.Value);
+        Assert.Equal("", detailed.Value!.Headline);
     }
 
     [Theory]
@@ -644,6 +678,461 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
     [InlineData("{\"a\":1}", "LENGTH", false, true, "truncated")]  // truncated 優先於 type_mismatch（清單順序）
     public void 類別判定優先序(string content, string? finish, bool parsed, bool bindFailed, string expected) =>
         Assert.Equal(expected, AiJsonDiagnostics.Classify(content, finish, parsed, bindFailed));
+
+
+    // ══ 第 63-2 輪批次 B-a：證據、空形狀、無文法重試、候選順序、等級 ═════════════════
+
+    /// <summary>取出某次請求本體裡 user 訊息的內容（重試提示附在這裡）</summary>
+    private static string UserPromptOf(string requestBody)
+    {
+        using var doc = JsonDocument.Parse(requestBody);
+        return doc.RootElement.GetProperty("messages").EnumerateArray()
+            .Last(m => m.GetProperty("role").GetString() == "user").GetProperty("content").GetString()!;
+    }
+
+    private static bool HasResponseFormat(string requestBody)
+    {
+        using var doc = JsonDocument.Parse(requestBody);
+        return doc.RootElement.TryGetProperty("response_format", out _);
+    }
+
+    // ── B-a-1：證據 ────────────────────────────────────────────
+
+    [Fact]
+    public async Task 請求本體不含reasoning_content鍵_回應型別與請求型別分開()
+    {
+        var service = NewService(_ => new Reply { Content = "你好", ReasoningContent = "先想一想" }, 0, out var handler);
+
+        var response = await service.ChatAsync("測試提示詞", systemPrompt: "系統");
+
+        Assert.True(response.Success);
+        var body = Assert.Single(handler.RequestBodies);
+        Assert.DoesNotContain("reasoning", body);
+        using var doc = JsonDocument.Parse(body);
+        foreach (var message in doc.RootElement.GetProperty("messages").EnumerateArray())
+        {
+            Assert.Equal(new[] { "content", "role" }, message.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        }
+    }
+
+    [Theory]
+    [InlineData("reasoning_content")]
+    [InlineData("reasoning")]
+    public async Task 回應含思考欄位_診斷記長度不記內容(string fieldName)
+    {
+        var thinking = new string('想', 321);
+        var service = NewService(_ => new Reply { Content = "不是 JSON", ReasoningContent = thinking, ReasoningField = fieldName },
+            0, out _);
+
+        var (diagnostics, logs, _, _) = await RunAsync(service);
+
+        var attempt = Assert.Single(Assert.Single(diagnostics).AttemptDetails);
+        Assert.Equal(321, attempt.ReasoningChars);
+        Assert.DoesNotContain("想想想想", logs.Single(l => l.Logger == AiJsonDiagnostics.LoggerName).Message); // 只記長度
+    }
+
+    [Fact]
+    public async Task 回應沒有思考欄位_reasoningChars為null_ChatAsync帶出長度()
+    {
+        var service = NewService(_ => new Reply { Content = "你好" }, 0, out _);
+        Assert.Null((await service.ChatAsync("測試")).ReasoningChars);
+
+        var withThinking = NewService(_ => new Reply { Content = "你好", ReasoningContent = "ab" }, 0, out _);
+        Assert.Equal(2, (await withThinking.ChatAsync("測試")).ReasoningChars);
+    }
+
+    [Fact]
+    public async Task 思考欄位是非字串型別_不影響呼叫()
+    {
+        var service = NewService(_ => new Reply { Content = "你好", RawReasoningJson = "{\"a\":1}" }, 0, out _);
+
+        var response = await service.ChatAsync("測試");
+
+        Assert.True(response.Success);
+        Assert.Null(response.ReasoningChars);
+    }
+
+    [Fact]
+    public void 舊格式診斷行TryRead成功_新欄位為null()
+    {
+        const string oldLine = "{\"label\":\"daily-20261101-h7\",\"responseType\":\"AiAnalysisResult\",\"model\":\"m\",\"maxTokens\":2048,"
+            + "\"attempts\":1,\"endedBy\":\"exhausted\",\"attemptDetails\":[{\"attempt\":1,\"category\":\"no_json\",\"finishReason\":\"stop\","
+            + "\"promptChars\":10,\"systemPromptChars\":0,\"responseChars\":3,\"promptTokens\":5,\"completionTokens\":2,"
+            + "\"parseErrorPath\":null,\"fieldLengths\":null,\"head\":\"abc\",\"tail\":null}]}";
+
+        var entry = AiJsonDiagnostics.TryRead(oldLine);
+
+        Assert.NotNull(entry);
+        var attempt = Assert.Single(entry!.AttemptDetails);
+        Assert.Equal("no_json", attempt.Category);
+        Assert.Equal("abc", attempt.Head);
+        Assert.Null(attempt.EmptyShape);
+        Assert.Null(attempt.RawChars);
+        Assert.Null(attempt.RawHead);
+        Assert.Null(attempt.RawTail);
+        Assert.Null(attempt.ReasoningChars);
+    }
+
+    [Fact]
+    public async Task 清洗前原文的長度與頭尾_經真實路徑記進診斷()
+    {
+        // 清洗會剝掉 channel 標記與思考段，只留 final 段；原文頭尾要留在診斷裡
+        var raw = "<|channel>thought\n" + new string('思', 3000) + "<|channel>final<|message>這不是 JSON 結尾";
+        var service = NewService(_ => new Reply { Content = raw }, 0, out _);
+
+        var (diagnostics, _, _, _) = await RunAsync(service);
+
+        var attempt = Assert.Single(Assert.Single(diagnostics).AttemptDetails);
+        Assert.Equal("這不是 JSON 結尾", attempt.Head); // 清洗後
+        Assert.Equal(raw.Length, attempt.RawChars);
+        Assert.Equal(1500, attempt.RawHead!.Length);
+        Assert.StartsWith("<|channel>thought", attempt.RawHead);
+        Assert.Equal(500, attempt.RawTail!.Length);
+        Assert.EndsWith("這不是 JSON 結尾", attempt.RawTail);
+    }
+
+    [Fact]
+    public async Task 原文與清洗後相同_不重複記原文頭尾()
+    {
+        var service = NewService(_ => new Reply { Content = "不是 JSON" }, 0, out _);
+
+        var (diagnostics, _, _, _) = await RunAsync(service);
+
+        var attempt = Assert.Single(Assert.Single(diagnostics).AttemptDetails);
+        Assert.Equal("不是 JSON", attempt.Head);
+        Assert.Null(attempt.RawChars);
+        Assert.Null(attempt.RawHead);
+        Assert.Null(attempt.RawTail);
+    }
+
+    [Fact]
+    public async Task 整段皆思考清洗後為空_診斷仍有原文頭與思考長度()
+    {
+        var service = NewService(_ => new Reply { Content = "<|channel>thought\n只有思考沒有答案", ReasoningContent = "xyz" },
+            1, out var handler);
+
+        var (diagnostics, _, _, _) = await RunAsync(service);
+
+        Assert.Equal(1, handler.RequestCount); // 空回覆不進 JSON 重試（既有行為）
+        var attempt = Assert.Single(Assert.Single(diagnostics).AttemptDetails);
+        Assert.Equal(AiJsonDiagnostics.CategoryEmpty, attempt.Category);
+        Assert.Equal("", attempt.Head);
+        Assert.Equal("<|channel>thought\n只有思考沒有答案".Length, attempt.RawChars);
+        Assert.Equal("<|channel>thought\n只有思考沒有答案", attempt.RawHead);
+        Assert.Equal(3, attempt.ReasoningChars);
+    }
+
+    // ── B-a-2：空形狀、無文法重試 ────────────────────────────────
+
+    [Theory]
+    [InlineData("[\n]", "array")]
+    [InlineData("[]", "array")]
+    [InlineData("  [ ]  ", "array")]
+    [InlineData("{}", "object")]
+    [InlineData("{\n}", "object")]
+    [InlineData("[{}]", "array")]
+    public async Task 空形狀_類別empty_帶emptyShape_不進validate(string content, string shape)
+    {
+        var validated = 0;
+        var service = NewService(_ => new Reply { Content = content }, 0, out _);
+        long runId;
+        AiJsonResult<AiAnalysisResult> result;
+        using (var recorder = new BatchRunRecorder(_store, "test-host", Array.Empty<string>()))
+        {
+            runId = recorder.RunId;
+            result = await service.ChatJsonAsync<AiAnalysisResult>("請分析", validate: r => { validated++; return Validate(r); }, label: "daily-20261101-h7");
+            recorder.Finish(0);
+        }
+
+        Assert.False(result.Success);
+        Assert.Equal(0, validated); // {} 能解析成全空物件，但不得走到 validate
+        var entry = AiJsonDiagnostics.TryRead(_store.GetLogs(runId).Single(l => l.Logger == AiJsonDiagnostics.LoggerName).Message)!;
+        var attempt = Assert.Single(entry.AttemptDetails);
+        Assert.Equal(AiJsonDiagnostics.CategoryEmpty, attempt.Category);
+        Assert.Equal(shape, attempt.EmptyShape);
+        Assert.Equal(AiJsonDiagnostics.EndedExhausted, entry.EndedBy); // 內容層失敗，不是 Polly 層的「空回覆」
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("[")]
+    [InlineData("[{]")]
+    [InlineData("[1]")]
+    [InlineData("[{\"a\":1}]")]
+    public void 非空形狀_DetectEmptyShape回null(string content) =>
+        Assert.Null(AiJsonDiagnostics.DetectEmptyShape(content));
+
+    [Fact]
+    public async Task 空形狀不是Polly層的空回覆_會真的打第二次_且第二次不帶文法()
+    {
+        var service = NewService(a => a == 1 ? new Reply { Content = "[\n]" } : new Reply { Content = GoodJson },
+            2, out var handler);
+
+        var (_, _, _, result) = await RunAsync(service);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal(2, handler.RequestCount);
+        Assert.True(HasResponseFormat(handler.RequestBodies[0]));
+        Assert.False(HasResponseFormat(handler.RequestBodies[1]));
+    }
+
+    [Fact]
+    public async Task 空形狀連續失敗_第二次起都不帶文法()
+    {
+        var service = NewService(_ => new Reply { Content = "{}" }, 2, out var handler);
+
+        var (diagnostics, _, _, result) = await RunAsync(service);
+
+        Assert.False(result.Success);
+        Assert.Equal(3, handler.RequestCount);
+        Assert.Equal(new[] { true, false, false }, handler.RequestBodies.Select(HasResponseFormat).ToArray());
+        Assert.Equal(new[] { "object", "object", "object" }, Assert.Single(diagnostics).AttemptDetails.Select(a => a.EmptyShape).ToArray());
+    }
+
+    [Fact]
+    public async Task no_json之後也關文法()
+    {
+        var service = NewService(a => a == 1 ? new Reply { Content = "我先想一下，這不是 JSON" } : new Reply { Content = GoodJson },
+            1, out var handler);
+
+        var (_, _, _, result) = await RunAsync(service);
+
+        Assert.True(result.Success);
+        Assert.True(HasResponseFormat(handler.RequestBodies[0]));
+        Assert.False(HasResponseFormat(handler.RequestBodies[1]));
+    }
+
+    [Fact]
+    public async Task validation失敗後第二次仍帶文法()
+    {
+        var longHeadline = new string('標', 70);
+        var invalid = $"{{\"risk_level\":\"高\",\"headline\":\"{longHeadline}\",\"story\":\"內容\"}}";
+        var service = NewService(_ => new Reply { Content = invalid }, 2, out var handler);
+
+        var (diagnostics, _, _, result) = await RunAsync(service);
+
+        Assert.False(result.Success);
+        Assert.Equal(3, handler.RequestCount);
+        Assert.All(handler.RequestBodies, body => Assert.True(HasResponseFormat(body)));
+        Assert.All(Assert.Single(diagnostics).AttemptDetails, a => Assert.Equal(AiJsonDiagnostics.CategoryValidation, a.Category));
+    }
+
+    [Theory]
+    [InlineData("{\"risk_level\":\"高\",\"action\":[\"a\"]}")] // type_mismatch
+    [InlineData("{\"risk_level\":\"高\",\"headline\":")]        // truncated
+    [InlineData("{\"risk_level\":\"高\",\"headline\": }")]      // parse_other
+    public async Task 其他類別失敗後第二次仍帶文法(string content)
+    {
+        var service = NewService(_ => new Reply { Content = content }, 1, out var handler);
+
+        await RunAsync(service);
+
+        Assert.Equal(2, handler.RequestCount);
+        Assert.All(handler.RequestBodies, body => Assert.True(HasResponseFormat(body)));
+    }
+
+    [Fact]
+    public async Task 重試提示尾句_有文法的上次類別是嚴格輸出JSON()
+    {
+        var longHeadline = new string('標', 70);
+        var invalid = $"{{\"risk_level\":\"高\",\"headline\":\"{longHeadline}\",\"story\":\"內容\"}}";
+        var service = NewService(_ => new Reply { Content = invalid }, 1, out var handler);
+
+        await RunAsync(service, prompt: "原始提示詞");
+
+        Assert.Equal("原始提示詞", UserPromptOf(handler.RequestBodies[0]));
+        var retry = UserPromptOf(handler.RequestBodies[1]);
+        Assert.EndsWith(AIService.RetryClosingWithGrammar, retry);
+        Assert.DoesNotContain(AIService.RetryClosingWithoutGrammar, retry);
+        Assert.Contains("嚴格依要求輸出合法的 JSON", retry);
+    }
+
+    [Fact]
+    public async Task 重試提示尾句_無文法的上次類別是可以先思考最後只輸出一個JSON物件()
+    {
+        var service = NewService(_ => new Reply { Content = "[\n]" }, 1, out var handler);
+
+        await RunAsync(service, prompt: "原始提示詞");
+
+        var retry = UserPromptOf(handler.RequestBodies[1]);
+        Assert.EndsWith(AIService.RetryClosingWithoutGrammar, retry);
+        Assert.DoesNotContain(AIService.RetryClosingWithGrammar, retry);
+        Assert.Contains("先簡短思考", retry);
+        Assert.Contains("只輸出一個 JSON 物件", retry);
+    }
+
+    [Theory]
+    [InlineData("empty", true)]
+    [InlineData("no_json", true)]
+    [InlineData("validation", false)]
+    [InlineData("truncated", false)]
+    [InlineData("type_mismatch", false)]
+    [InlineData("parse_other", false)]
+    [InlineData(null, false)]
+    public void 哪些類別之後關文法(string? category, bool expected) =>
+        Assert.Equal(expected, AIService.RetryWithoutGrammar(category));
+
+    [Theory]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData("{\"a\":1}", null)]
+    [InlineData("[]", "array")]
+    [InlineData("{}", "object")]
+    [InlineData("]", null)]
+    [InlineData("[}", null)]
+    public void DetectEmptyShape(string content, string? expected) =>
+        Assert.Equal(expected, AiJsonDiagnostics.DetectEmptyShape(content));
+
+    // ── B-a-2：孤立代理字元 ─────────────────────────────────────
+
+    [Fact]
+    public void 孤立代理字元_TryParseDetailed不擲例外_回失敗結果()
+    {
+        // 不用 InlineData：xunit 對含孤立代理字元的參數無法產生穩定的測試案例識別
+        foreach (var raw in new[] { "垃圾\uD800文字 {x} 壞", "垃圾\uDC00文字 {x} 壞", "\uD800" })
+        {
+            var outcome = AiJson.TryParseDetailed<AiAnalysisResult>(raw);
+            Assert.Null(outcome.Value); // 沒有合格物件：失敗結果，不是 ArgumentException
+        }
+    }
+
+    [Fact]
+    public void 孤立代理字元在截斷的JSON裡_不擲例外_補括號後照常解析()
+    {
+        var outcome = AiJson.TryParseDetailed<AiAnalysisResult>("{\"risk_level\":\"\uD800\"");
+
+        Assert.Equal("\uFFFD", outcome.Value!.RiskLevel);
+    }
+
+    [Fact]
+    public void 孤立代理字元換成FFFD_成對的保留()
+    {
+        Assert.Equal("a\uFFFDb", AiJson.ReplaceLoneSurrogates("a\uD800b"));
+        Assert.Equal("a\uFFFDb", AiJson.ReplaceLoneSurrogates("a\uDC00b"));
+        Assert.Equal("a\uFFFD", AiJson.ReplaceLoneSurrogates("a\uD800"));
+        Assert.Equal("😀x", AiJson.ReplaceLoneSurrogates("😀x"));
+        const string clean = "沒有問題";
+        Assert.Same(clean, AiJson.ReplaceLoneSurrogates(clean));
+    }
+
+    [Fact]
+    public void 孤立代理字元在可解析的JSON裡_換成FFFD後仍解析成功()
+    {
+        var outcome = AiJson.TryParseDetailed<AiAnalysisResult>("{\"risk_level\":\"高\",\"headline\":\"a\uD800b\",\"story\":\"s\"}");
+
+        Assert.NotNull(outcome.Value);
+        Assert.Equal("a\uFFFDb", outcome.Value!.Headline);
+    }
+
+    [Fact]
+    public void 孤立代理字元的回覆_診斷嘗試紀錄不擲例外_可序列化_類別parse_other()
+    {
+        var content = "垃圾\uD800文字 {x} 壞";
+        var response = new AiResponse { Success = true, Content = content, FinishReason = "stop" };
+        var outcome = AiJson.TryParseDetailed<AiAnalysisResult>(content);
+
+        var attempt = AiJsonDiagnostics.BuildAttempt<AiAnalysisResult>(1, response, content, outcome);
+
+        Assert.NotNull(attempt);
+        Assert.Equal(AiJsonDiagnostics.CategoryParseOther, attempt!.Category);
+        Assert.Contains('\uFFFD', attempt.Head);
+        Assert.DoesNotContain('\uD800', attempt.Head);
+        _ = JsonSerializer.Serialize(attempt); // 不得因孤立代理字元而擲例外
+    }
+
+    [Fact]
+    public async Task 信封含孤立代理字元跳脫_ChatJsonAsync回失敗結果_不擲例外()
+    {
+        var handler = new RawBodyHandler("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"壞\\ud800字\"},\"finish_reason\":\"stop\"}]}");
+        var service = new AIService(new AiSettings
+        {
+            BaseUrl = "http://localhost:1", Model = "m", RetryCount = 0, RetryDelaySeconds = 1, TimeoutSeconds = 10, JsonRetryCount = 1
+        }, handler, NullAiRequestGate.Instance);
+
+        var result = await service.ChatJsonAsync<AiAnalysisResult>("請分析", validate: Validate);
+
+        Assert.False(result.Success);
+    }
+
+    private sealed class RawBodyHandler(string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            });
+    }
+
+    // ── B-a-3：候選順序 ─────────────────────────────────────────
+
+    [Fact]
+    public void 思考文字含空物件加正確JSON_取正確物件()
+    {
+        var raw = "輸出格式是 {} 這樣，先確認一下欄位。\n" + GoodJson;
+
+        var parsed = AiJson.TryParse<AiAnalysisResult>(raw);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("高", parsed!.RiskLevel);
+        Assert.Equal("標題", parsed.Headline);
+    }
+
+    [Fact]
+    public void 思考文字含奇數個引號加正確JSON_解析成功()
+    {
+        var raw = "我想說 \"好吧，答案如下：\n" + GoodJson;
+
+        var parsed = AiJson.TryParse<AiAnalysisResult>(raw);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("高", parsed!.RiskLevel);
+        Assert.Equal("內容", parsed.Story);
+    }
+
+    [Fact]
+    public void 思考文字同時有空物件與奇數個引號_取最後的正確JSON()
+    {
+        var raw = "{} 他說 \"好吧\n" + GoodJson;
+
+        var parsed = AiJson.TryParse<AiAnalysisResult>(raw);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("高", parsed!.RiskLevel);
+    }
+
+    [Fact]
+    public void 思考文字的奇數引號後有其他大括號_仍取最後的正確JSON()
+    {
+        var raw = "他說 \"好吧 {x} 然後 \n" + GoodJson;
+
+        var parsed = AiJson.TryParse<AiAnalysisResult>(raw);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("高", parsed!.RiskLevel);
+    }
+
+    [Fact]
+    public void 截斷物件的內層小物件不當成答案()
+    {
+        // 補括號後仍型別不符；內層的 {"a":1} 能解析成全空物件，但不是答案，結果必須維持失敗
+        var parsed = AiJson.TryParse<AiAnalysisResult>("{\"risk_level\":{\"a\":1},\"story\":\"寫到一半");
+
+        Assert.Null(parsed);
+    }
+
+    [Fact]
+    public void 多個完整物件_最後一個優先_其餘維持原順序()
+    {
+        var first = new List<string>();
+        foreach (var candidate in new[] { Obj("甲"), Obj("乙"), Obj("丙") })
+        {
+            first.Add(candidate);
+        }
+        var parsed = AiJson.TryParse<AiAnalysisResult>(string.Join(" 然後 ", first));
+
+        Assert.Equal("丙", parsed!.RiskLevel);
+    }
 
     [Fact]
     public void 診斷logger名稱不含句點_短名稱與完整名稱一致()

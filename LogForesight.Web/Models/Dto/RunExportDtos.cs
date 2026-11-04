@@ -441,6 +441,21 @@ public sealed record ExportAttemptDto
     public IReadOnlyList<ExportFieldLengthDto>? FieldLengths { get; init; }
     public string Head { get; init; } = string.Empty;
     public string? Tail { get; init; }
+
+    /// <summary>空回覆的細分：array（只有 []）或 object（只有 {}）；其他為 null</summary>
+    public string? EmptyShape { get; init; }
+
+    /// <summary>清洗前原文字元數；與清洗後完全相同或舊診斷沒有這欄時為 null</summary>
+    public int? RawChars { get; init; }
+
+    /// <summary>清洗前原文的開頭（走文字遮罩）；缺值同 <see cref="RawChars"/></summary>
+    public string? RawHead { get; init; }
+
+    /// <summary>清洗前原文的結尾（走文字遮罩）；缺值同 <see cref="RawChars"/>，總長不超過 2,000 字時也為 null</summary>
+    public string? RawTail { get; init; }
+
+    /// <summary>伺服器另放的思考欄位（reasoning_content／reasoning）字元數；只有長度；沒有該欄位為 null</summary>
+    public int? ReasoningChars { get; init; }
 }
 
 /// <summary>解析得出時的一個欄位：字串記長度，非字串記型別名</summary>

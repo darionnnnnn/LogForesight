@@ -15,14 +15,20 @@ internal static class AiJson
     public static T? TryParse<T>(string raw) where T : class => TryParseDetailed<T>(raw).Value;
 
     /// <summary>
-    /// <see cref="TryParse{T}"/> 的帶診斷版本：候選順序、判定與回傳值與舊版完全相同
-    /// （舊版直接委派到這裡），只額外帶出失敗時的證據——最後一個 <see cref="JsonException"/>，
+    /// <see cref="TryParse{T}"/> 的帶診斷版本（舊版直接委派到這裡），另外帶出失敗時的證據——最後一個 <see cref="JsonException"/>，
     /// 以及「哪個候選語法合法、卻無法繫結到型別」。診斷只在失敗路徑多做事，成功路徑沒有額外成本。
+    /// <paramref name="accept"/> 是呼叫端的內容檢查：回傳第一個通過檢查的候選；都沒通過時回傳第一個解析得出的候選，
+    /// 讓呼叫端照舊走內容檢查失敗路徑。這樣思考在前（<c>{"note":"x"}</c>＋答案）與答案在前（答案＋尾端小物件）兩種回覆都選得對。
     /// </summary>
-    public static AiJsonParseOutcome<T> TryParseDetailed<T>(string raw) where T : class
+    public static AiJsonParseOutcome<T> TryParseDetailed<T>(string raw, Func<T, bool>? accept = null) where T : class
     {
+        T? firstParsed = null;
         JsonException? lastException = null;
         JsonException? lastSyntaxValidException = null;
+
+        // 孤立代理字元會讓 JsonSerializer／JsonDocument 擲 ArgumentException（不是 JsonException），
+        // 例外一路冒到呼叫端；先換成 U+FFFD，讓它走一般的解析失敗路徑
+        raw = ReplaceLoneSurrogates(raw);
 
         foreach (var candidate in Candidates(raw))
         {
@@ -31,7 +37,11 @@ internal static class AiJson
                 var result = JsonSerializer.Deserialize<T>(candidate);
                 if (result != null)
                 {
-                    return new AiJsonParseOutcome<T>(result, null, null);
+                    if (accept == null || accept(result))
+                    {
+                        return new AiJsonParseOutcome<T>(result, null, null);
+                    }
+                    firstParsed ??= result;
                 }
             }
             catch (JsonException ex)
@@ -45,7 +55,35 @@ internal static class AiJson
             }
         }
 
-        return new AiJsonParseOutcome<T>(null, lastException, lastSyntaxValidException);
+        return firstParsed != null
+            ? new AiJsonParseOutcome<T>(firstParsed, null, null)
+            : new AiJsonParseOutcome<T>(null, lastException, lastSyntaxValidException);
+    }
+
+    /// <summary>
+    /// 把孤立的高／低代理字元換成 U+FFFD（成對的代理字元原樣保留）。字串沒有孤立代理字元時回傳同一個實例。
+    /// </summary>
+    internal static string ReplaceLoneSurrogates(string raw)
+    {
+        StringBuilder? sb = null;
+        for (var i = 0; i < raw.Length; i++)
+        {
+            var c = raw[i];
+            var lone = char.IsHighSurrogate(c)
+                ? !(i + 1 < raw.Length && char.IsLowSurrogate(raw[i + 1]))
+                : char.IsLowSurrogate(c) && !(i > 0 && char.IsHighSurrogate(raw[i - 1]));
+            if (lone)
+            {
+                sb ??= new StringBuilder(raw, 0, i, raw.Length);
+                sb.Append('\uFFFD');
+            }
+            else
+            {
+                sb?.Append(c);
+            }
+        }
+
+        return sb?.ToString() ?? raw;
     }
 
     /// <summary>候選字串本身是不是合法 JSON 語法（與能否繫結到目標型別無關）；只在解析失敗時呼叫。</summary>
@@ -95,23 +133,126 @@ internal static class AiJson
         return depth > 0 || inString;
     }
 
+    /// <summary>
+    /// 候選順序（第 63-2 輪 B-a-3）：原文 → 最後一個配對物件 → 其餘配對物件（原順序）→ 截斷修復 →
+    /// 從每個 '{' 獨立掃描的物件（最後一個優先）。重複的候選只試一次。
+    /// 最後一個優先，是因為會先思考的模型把思考寫在前、答案寫在後；思考文字裡的 <c>{}</c> 或範例物件
+    /// 若排在前面，會被當成「全空欄位」的結果解析成功而蓋掉真正的答案。
+    /// 思考文字含奇數個 <c>"</c> 時，連續追蹤字串狀態的配對掃描會整段翻轉、吞掉真正的物件，
+    /// 所以掃描結束時仍卡在字串裡（而且沒有未閉合的括號）就改用獨立掃描的結果；
+    /// 其餘情況獨立掃描只當最後的備援，排在截斷修復之後（截斷物件內層的小物件不會搶在修復之前被採用）。
+    /// </summary>
     private static IEnumerable<string> Candidates(string raw)
     {
-        yield return raw;
+        var tried = new HashSet<string>(StringComparer.Ordinal);
+        if (tried.Add(raw)) yield return raw;
 
-        var balanced = ExtractBalancedObjects(raw);
-        foreach (var candidate in balanced)
+        var balanced = ExtractBalancedObjects(raw, out var stringStateBroken);
+        List<string>? independent = null;
+        if (stringStateBroken)
         {
-            yield return candidate;
+            independent = ExtractIndependentObjects(raw);
+            balanced = independent;
+        }
+
+        foreach (var candidate in LastFirst(balanced))
+        {
+            if (tried.Add(candidate)) yield return candidate;
         }
 
         // 括號配對掃描到最後仍有未閉合的物件，代表輸出很可能被 max_tokens 截斷；
         // 嘗試補上缺少的收尾括號後再試一次解析，而不是直接放棄
         var repaired = TryRepairTruncated(raw);
-        if (repaired != null)
+        if (repaired != null && tried.Add(repaired))
         {
             yield return repaired;
         }
+
+        independent ??= ExtractIndependentObjects(raw);
+        foreach (var candidate in LastFirst(independent))
+        {
+            if (tried.Add(candidate)) yield return candidate;
+        }
+    }
+
+    /// <summary>最後一個先，其餘維持原順序</summary>
+    private static IEnumerable<string> LastFirst(List<string> items)
+    {
+        if (items.Count == 0) yield break;
+        yield return items[^1];
+        for (var i = 0; i < items.Count - 1; i++) yield return items[i];
+    }
+
+    /// <summary>獨立掃描時最多嘗試幾個起點；思考文字裡有大量未閉合的 '{' 時不讓掃描變成二次方</summary>
+    private const int MaxIndependentScans = 64;
+
+    /// <summary>
+    /// 從每個 '{' 起<b>各自獨立</b>掃描（每個起點的字串狀態從頭算），回傳互不重疊的配對完整物件，依出現順序。
+    /// 起點掃不到收尾時：該起點視為被截斷或被奇數引號干擾，只改從「掃描中落在字串裡的 '{'」繼續——
+    /// 落在字串外、深度大於 0 的 '{' 是它的內層物件，不當成候選（否則截斷物件的內層小物件會被當答案）。
+    /// </summary>
+    private static List<string> ExtractIndependentObjects(string raw)
+    {
+        var results = new List<string>();
+        var pos = 0;
+        var scans = 0;
+        while (scans++ < MaxIndependentScans)
+        {
+            var start = raw.IndexOf('{', pos);
+            if (start < 0) break;
+
+            var end = ScanBalancedEnd(raw, start, out var firstInStringBrace);
+            if (end >= 0)
+            {
+                results.Add(raw[start..(end + 1)]);
+                pos = end + 1;
+            }
+            else if (firstInStringBrace >= 0)
+            {
+                pos = firstInStringBrace;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// 從 <paramref name="start"/>（必為 '{'）起、字串狀態從頭算，找配對完整的收尾位置；找不到回 -1。
+    /// <paramref name="firstInStringBrace"/> 是掃描過程中第一個落在字串裡的 '{' 位置（沒有為 -1）。
+    /// </summary>
+    private static int ScanBalancedEnd(string raw, int start, out int firstInStringBrace)
+    {
+        firstInStringBrace = -1;
+        var depth = 0;
+        bool inString = false, escape = false;
+        for (var i = start; i < raw.Length; i++)
+        {
+            var c = raw[i];
+            if (inString)
+            {
+                if (escape) { escape = false; }
+                else if (c == '\\') { escape = true; }
+                else if (c == '"') { inString = false; }
+                else if (c == '{' && firstInStringBrace < 0) { firstInStringBrace = i; }
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"': inString = true; break;
+                case '{': depth++; break;
+                case '}':
+                    depth--;
+                    if (depth == 0) return i;
+                    break;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>
@@ -119,7 +260,7 @@ internal static class AiJson
     /// 依出現順序回傳。比天真的「第一個 { 到最後一個 }」更精準：
     /// 前言文字或多個 JSON 區段混雜時，仍能抓到真正配對完整的物件。
     /// </summary>
-    private static List<string> ExtractBalancedObjects(string raw)
+    private static List<string> ExtractBalancedObjects(string raw, out bool stringStateBroken)
     {
         var results = new List<string>();
         int depth = 0, start = -1;
@@ -160,6 +301,9 @@ internal static class AiJson
             }
         }
 
+        // 掃完仍卡在字串裡、括號卻都閉合了：物件之間（思考文字）有奇數個引號，字串狀態翻轉過，
+        // 這份結果不可信（真正的物件可能被當成字串內容吞掉）。被截斷的物件則是 depth 大於 0，不在此列
+        stringStateBroken = inString && depth == 0;
         return results;
     }
 
