@@ -181,6 +181,31 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task GetJsonAsync_回傳登入頁時擲例外_訊息講位址或認證_不是空白頁()
+    {
+        const string loginPage = "<!DOCTYPE html><html><head><title>PRTG Network Monitor - Login</title></head><body class=\"login\">Your login has failed.</body></html>";
+        var stub = new StubHandler { OnSend = (_, _) => Task.FromResult(HtmlResponse(HttpStatusCode.OK, loginPage)) };
+
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "");
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/table.json?content=sensors&count=1"));
+
+        Assert.Contains("HTML 而非 JSON", ex.Message);
+        Assert.DoesNotContain("沒有回資料", ex.Message);
+        Assert.Equal(PrtgFailureKind.Other, ex.Kind);
+    }
+
+    [Theory]
+    [InlineData("<HTML><BODY class=\"no-content\"><B class=\"no-content\">OK</B></BODY></HTML>", true)]
+    [InlineData("<html><body class=\"no-content\"><b class=\"no-content\"> ok </b></body></html>", true)]
+    [InlineData("<html><body class=\"login\">OK</body></html>", false)]
+    [InlineData("{\"sensors\":[]}", false)]
+    [InlineData("", false)]
+    public void 空白OK頁的判定(string body, bool expected)
+    {
+        Assert.Equal(expected, PrtgClient.IsEmptyOkPage(body.Trim()));
+    }
+
+    [Fact]
     public async Task GetJsonAsync_回傳HTML時擲例外且訊息可辨識()
     {
         const string html73Bytes = @"<HTML><BODY class=""no-content""><B class=""no-content"">OK</B></BODY></HTML>";
@@ -193,8 +218,9 @@ public class PrtgClientTests
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
 
-        Assert.Contains("HTML 而非 JSON", ex.Message);
-        Assert.Contains("no-content", ex.Message);
+        Assert.Contains("沒有回資料", ex.Message);
+        Assert.Equal(PrtgFailureKind.EmptyPage, ex.Kind);
+        Assert.DoesNotContain("登入頁", ex.Message);   // 這一頁不是認證問題，訊息不能把人引去改帳密
     }
 
     [Fact]
@@ -210,8 +236,9 @@ public class PrtgClientTests
         var ex = await Assert.ThrowsAsync<PrtgClientException>(() =>
             client.GetJsonAsync("/api/table.json?content=sensors&count=50000"));
 
-        Assert.Contains("HTML 而非 JSON", ex.Message);
-        Assert.Contains("no-content", ex.Message);
+        Assert.Contains("沒有回資料", ex.Message);
+        Assert.Equal(PrtgFailureKind.EmptyPage, ex.Kind);
+        Assert.DoesNotContain("登入頁", ex.Message);   // 這一頁不是認證問題，訊息不能把人引去改帳密
     }
 
     [Fact]

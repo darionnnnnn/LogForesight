@@ -511,6 +511,12 @@ public class PrtgTablePagerTests
 
     private static HttpResponseMessage StatusOnly(HttpStatusCode code) => new(code);
 
+    /// <summary>PRTG 在伺服器端放棄處理時回的 73 bytes 空白「OK」頁（HTTP 200）</summary>
+    private static HttpResponseMessage EmptyOkPage() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("<HTML><BODY class=\"no-content\"><B class=\"no-content\">OK</B></BODY></HTML>", Encoding.UTF8, "text/html")
+    };
+
     private static HttpResponseMessage TimeoutNow() =>
         throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException());
 
@@ -620,6 +626,18 @@ public class PrtgTablePagerTests
     public async Task 暫時性狀態碼5xx與429會重試(HttpStatusCode code)
     {
         using var rig = new RetryRig(i => i == 0 ? StatusOnly(code) : OkJson(Page("devices", new long[] { 1 })));
+
+        var result = await rig.RunAsync();
+
+        Assert.Equal(1, result.Mapped);
+        Assert.Equal(2, rig.Handler.Count);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(15) }, rig.Delays);
+    }
+
+    [Fact]
+    public async Task 空白OK頁會重試_它是伺服器端放棄不是認證錯誤()
+    {
+        using var rig = new RetryRig(i => i == 0 ? EmptyOkPage() : OkJson(Page("devices", new long[] { 1 })));
 
         var result = await rig.RunAsync();
 
@@ -745,6 +763,7 @@ public class PrtgTablePagerTests
     [InlineData(PrtgFailureKind.HttpStatus, 404, false)]
     [InlineData(PrtgFailureKind.HttpStatus, 600, false)]
     [InlineData(PrtgFailureKind.HttpStatus, null, false)]
+    [InlineData(PrtgFailureKind.EmptyPage, null, true)]
     [InlineData(PrtgFailureKind.Credential, 401, false)]
     [InlineData(PrtgFailureKind.Credential, null, false)]
     [InlineData(PrtgFailureKind.Other, null, false)]

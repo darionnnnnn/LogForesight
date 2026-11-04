@@ -551,6 +551,16 @@ public class PrtgClientFactoryCredentialStateTests : IDisposable
         return s;
     }
 
+    [Fact]
+    public void 憑證問題文字_解不開與沒設定分開講_可用為null()
+    {
+        Assert.Null(PrtgClientFactory.CredentialProblem(Make(PrtgAuthModes.Passhash, "admin", CryptoHelper.Encrypt("good"))));
+        Assert.Contains("尚未設定", PrtgClientFactory.CredentialProblem(Make(PrtgAuthModes.Passhash, "admin", ""))!);
+        var undecryptable = PrtgClientFactory.CredentialProblem(Make(PrtgAuthModes.Passhash, "admin", "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))!;
+        Assert.Contains("無法解密", undecryptable);
+        Assert.DoesNotContain("尚未設定", undecryptable);
+    }
+
     [Theory]
     [InlineData(PrtgAuthModes.Token)]
     [InlineData(PrtgAuthModes.Password)]

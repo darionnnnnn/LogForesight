@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using LogForesight.Core.Models;
 using LogForesight.Core.Service;
 using NLog;
@@ -32,7 +33,13 @@ public enum PrtgFailureKind
     HttpStatus,
 
     /// <summary>憑證本身不被接受（登入失敗、passhash 取得失敗，或同一個 client 已黏住的憑證失敗）。</summary>
-    Credential
+    Credential,
+
+    /// <summary>
+    /// HTTP 200 但內容是 PRTG 的空白「OK」頁（<c>&lt;B class="no-content"&gt;OK&lt;/B&gt;</c>）：PRTG 在伺服器端放棄處理
+    /// （忙碌、處理逾時、核心服務異常）時這樣回，昨天同一查詢可以成功；不是認證錯誤（那會是 401 或登入頁），值得等一下再試。
+    /// </summary>
+    EmptyPage
 }
 
 /// <summary>
@@ -361,6 +368,12 @@ public sealed class PrtgClient : IDisposable
         return span is { } s && s > TimeSpan.Zero ? s : null;
     }
 
+    /// <summary>PRTG 的空白「OK」頁：73 bytes、<c>class="no-content"</c>、內文只有 OK。登入頁與其他 HTML 不算。</summary>
+    internal static bool IsEmptyOkPage(string trimmedBody) =>
+        trimmedBody.StartsWith('<') &&
+        trimmedBody.Contains("class=\"no-content\"", StringComparison.OrdinalIgnoreCase) &&
+        Regex.IsMatch(trimmedBody, @">\s*OK\s*</B>", RegexOptions.IgnoreCase);
+
     private static PrtgClientException OversizeException(HttpRequestException ex) =>
         new("PRTG 回應超過 256 MB 上限，請縮小取數範圍或降低單次筆數", ex);
 
@@ -549,6 +562,14 @@ public sealed class PrtgClient : IDisposable
             }
 
             var trimmed = text.Trim();
+            if (expectJson && IsEmptyOkPage(trimmed))
+            {
+                throw new PrtgClientException(
+                    "PRTG 回應 OK 但沒有回資料：PRTG 在伺服器端放棄處理（忙碌、逾時或核心服務異常）時會回這個空白頁，" +
+                    "不是認證錯誤（認證錯誤會是 HTTP 401 或登入頁）。請稍後再試；持續發生請檢查 PRTG 核心伺服器的負載與狀態。",
+                    kind: PrtgFailureKind.EmptyPage);
+            }
+
             if (expectJson && trimmed.StartsWith('<'))
             {
                 var head = trimmed.Length > 80 ? trimmed[..80] : trimmed;

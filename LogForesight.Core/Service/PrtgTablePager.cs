@@ -309,7 +309,7 @@ internal static class PrtgTablePager
     /// </summary>
     internal static bool IsRetryable(PrtgClientException ex) => ex.Kind switch
     {
-        PrtgFailureKind.Timeout or PrtgFailureKind.Transport => true,
+        PrtgFailureKind.Timeout or PrtgFailureKind.Transport or PrtgFailureKind.EmptyPage => true,
         PrtgFailureKind.HttpStatus => ex.StatusCode is 429 or (>= 500 and <= 599),
         _ => false
     };

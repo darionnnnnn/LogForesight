@@ -269,9 +269,9 @@ public class PrtgStructureSyncService
             return false;
         }
 
-        if (!PrtgClientFactory.HasUsableCredentials(s))
+        if (PrtgClientFactory.CredentialProblem(s) is { } credentialProblem)
         {
-            error = "尚未設定 PRTG 認證資訊（API token 或帳號密碼），無法同步。";
+            error = $"{credentialProblem}，無法同步。";
             return false;
         }
 

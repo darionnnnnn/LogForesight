@@ -88,6 +88,17 @@ public static class PrtgClientFactory
     public static bool HasUsableCredentials(SystemSettings settings) => CredentialState(settings) == State.Ok;
 
     /// <summary>
+    /// 憑證不可用時給人看的原因（可用時 null）。回填、探測、結構同步三個手動入口共用這一句，
+    /// 不再各自寫「尚未設定」而把「解不開」也說成沒設定——那會讓人回頭去檢查根本沒問題的設定欄。
+    /// </summary>
+    public static string? CredentialProblem(SystemSettings settings) => CredentialState(settings) switch
+    {
+        State.Undecryptable => "PRTG 認證資訊無法解密（金鑰檔與資料庫不相符），請到 PRTG 維護頁「連線」重新輸入並儲存",
+        State.NotConfigured => "尚未設定 PRTG 認證資訊（API token 或帳號密碼）",
+        _ => null
+    };
+
+    /// <summary>
     /// 目前認證模式的憑證狀態——PRTG 憑證可用性的唯一判定出口。
     /// 只看目前認證模式用到的欄位；其他模式殘留的舊密文不影響結果。
     /// 密文欄有值但解不開＝<see cref="State.Undecryptable"/>（需重新輸入）；欄位空白或缺帳號＝<see cref="State.NotConfigured"/>。

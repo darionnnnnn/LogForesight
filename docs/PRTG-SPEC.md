@@ -97,7 +97,7 @@ PRTG 是環境內既有的監控系統，提供連續的數值時序與狀態變
   結束時比對 `treesize`：讀到筆數少於它（非「依時間提早停止」）擲 `PrtgPagingNotConvergedException`，已寫出的資料保留但該階段記為失敗，沒讀到的不能當成已刪除；
   `messages` 搭配 `filter_drel` 時 `treesize` 是否為過濾後筆數尚未證實，只印警告、不擲例外。
 - **分頁等待重試**（`PrtgTablePager.FetchAsync` 單點，由 `PrtgFetchService` 的 `retryTransientPaging` 開啟）：只包「單次請求本身」，每次 pager 執行（整個 devices／sensors／messages 讀取）**共最多 2 次**重試，不是每頁各 2 次；第 1 次重試前等 15 秒、第 2 次前等 60 秒（`RetryDelays`，暫定值），等待函式可注入，等待期間取消令牌生效。只對 `PrtgClientException.Kind` 為 `Timeout`、`Transport`，或 `HttpStatus` 且狀態碼為 5xx／429 者重試（`IsRetryable`，不比對訊息字串）；401／403／其他 4xx、`Credential`（含已黏住的憑證失敗）與 `Other` 立即擲出，不重試也不等待。重試只寫 Info（PRTG 慢的夜晚不讓趟次變「有警告」），用盡後的最終失敗照舊由呼叫端記錄。開啟的路徑只有夜間管線、結構同步與歷史回填；探測、快照與資源守門維持單次失敗即回報；逐顆 `historicdata` 不重試。
-- **數值取數的暫停與補抓**（`PrtgFetchService.FetchValuesAsync` 單點，夜間階段 4、觸發式取數、回填共用；常數在 `PrtgValueFetchRetryPolicy`，不開放設定）：逾時、連線失敗、5xx、429 時全部工作共用一個暫停閘，依序等 15、60、180 秒（之後維持 180，加 0～20% 誤差，`Retry-After` 較長時取它），成功一顆就歸零；閘已拉起時其他顆的失敗不讓序列前進。失敗的顆在全部送完後逐顆補抓一次，補抓不推進進度。連續 10 顆可重試失敗或實際總暫停將達 15 分鐘就停損：剩餘的顆計失敗、不送請求，同一個服務實例冷卻 10 分鐘（期間呼叫直接回全部失敗），避免觸發式輪詢與逐日回填反覆打停機的 PRTG。401、403、其他 4xx、解析與寫入失敗不暫停也不補抓。暫停與補抓寫 Info，停損寫 Warn。PRTG 完全不回時，併發 2 最壞約 17 分鐘內停損、併發 1 約 23 分鐘。
+- **數值取數的暫停與補抓**（`PrtgFetchService.FetchValuesAsync` 單點，夜間階段 4、觸發式取數、回填共用；常數在 `PrtgValueFetchRetryPolicy`，不開放設定）：逾時、連線失敗、5xx、429 與 PRTG 空白「OK」頁（`PrtgFailureKind.EmptyPage`：HTTP 200 但內文只有 `<B class="no-content">OK</B>`，PRTG 在伺服器端放棄處理時這樣回，不是認證錯誤）時全部工作共用一個暫停閘，依序等 15、60、180 秒（之後維持 180，加 0～20% 誤差，`Retry-After` 較長時取它），成功一顆就歸零；閘已拉起時其他顆的失敗不讓序列前進。失敗的顆在全部送完後逐顆補抓一次，補抓不推進進度。連續 10 顆可重試失敗或實際總暫停將達 15 分鐘就停損：剩餘的顆計失敗、不送請求，同一個服務實例冷卻 10 分鐘（期間呼叫直接回全部失敗），避免觸發式輪詢與逐日回填反覆打停機的 PRTG。401、403、其他 4xx、解析與寫入失敗不暫停也不補抓。暫停與補抓寫 Info，停損寫 Warn。PRTG 完全不回時，併發 2 最壞約 17 分鐘內停損、併發 1 約 23 分鐘。
 - **去重鍵是該 content 真正的唯一鍵**：預設 objid；messages 的 objid 是發出訊息的 sensor，列鍵為「objid＋時間」。
 - **狀態變更逐裝置查**（`PrtgFetchService.FetchStateChangesRangeAsync`）：區間＝最早目標日前一天到今天；不對 `id=0` 查（實機 treesize 封頂 100 萬、
   `count=5` 也逾時）。要查哪些物件集中在 `StateChangeQueryObjects`。`filter_drel` 取涵蓋區間起點的最小級距（7days／30days／12months），
@@ -327,6 +327,7 @@ IP 覆蓋（IPv4／DNS 名稱／無法判定，截斷警告）；分頁語意一
 
 - passhash 比照密碼加密、write-only。**憑證錯誤會黏住**（防帳號鎖定）：換取 passhash 遇 401/403／HTML 登入頁黏住；資料請求只在帳號類模式的 401 黏住（token 模式不黏）。黏住後同一個 client 的後續請求直接擲 `PrtgFailureKind.Credential` 例外、不再送出，分頁重試也不重試它；傳輸類失敗（連不上、逾時）與單一物件的 403 不黏。憑證密文解不開時連 client 都不建（見 §3 早退 `disabled`），所以不會用空憑證登入。
 - 憑證寫入依當前模式隔離。例外訊息不含 token、密碼、passhash（含 URL 編碼形式）。
+- 回應判定：HTTP 200 但內文是空白「OK」頁 → `EmptyPage`（可重試，訊息說明是伺服器端放棄、請稍後再試）；其他 HTML（登入頁）→ `Other`，訊息指向位址或認證。回填、探測、結構同步的憑證不可用訊息由 `PrtgClientFactory.CredentialProblem` 單點產生，解不開與沒設定分開講。
 
 ## 7. 設定
 
