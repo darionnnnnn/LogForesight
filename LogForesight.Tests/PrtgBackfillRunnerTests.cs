@@ -886,4 +886,85 @@ public class PrtgBackfillRunnerTests : IDisposable
         Assert.False(h.Service.TryCancel());
         Assert.False(h.Service.GetStatus().Cancelled);
     }
+
+    // ───────── 第 63-2 輪 H-1：有目標卻全部失敗不記數值新鮮度（與觸發式取數同一個判準）─────────
+
+    private void SeedValuesFreshness() =>
+        new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)).Record(PrtgFreshnessStore.Values, 5);
+
+    private PrtgFreshnessStore.Entry ValuesFreshness() =>
+        new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)).GetAll()[PrtgFreshnessStore.Values];
+
+    private (EfPrtgStore Store, EfAnalysisRecordStore Records) SetupTwoSensors(int sensorCount)
+    {
+        var (store, records) = SetupTriggered(1, DateTime.Today.AddDays(-1));
+        store.UpsertSensors(Enumerable.Range(1, sensorCount).Select(i =>
+            new PrtgSensorRow { Objid = 2000 + i, DeviceObjid = 1001, Name = $"Sensor-{i}", SensorType = "wmicpu", Paused = false }).ToList(),
+            DateTime.Today);
+        return (store, records);
+    }
+
+    [Fact]
+    public async Task RunAsync_目標sensor全部失敗時不記新鮮度()
+    {
+        var (store, records) = SetupTwoSensors(2);
+        SeedValuesFreshness();
+        var (client, _) = CreateClient(req => req.RequestUri!.ToString().Contains("content=messages")
+            ? JsonResponse(EmptyMessagesJson)
+            : JsonResponse("Internal Server Error", HttpStatusCode.InternalServerError));
+        var console = new TestConsole();
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 1, console, CancellationToken.None, new long[] { 1001 }, store, records);
+
+        Assert.False(ok);
+        Assert.Contains(console.Lines, l => l.Contains("回填完成：成功 0 天、失敗 1 天"));
+        // 新鮮度維持原樣：記一次 0 筆會累 ZeroStreak，把 PRTG 停機標成「可疑」
+        var entry = ValuesFreshness();
+        Assert.Equal(5, entry.LastCount);
+        Assert.Equal(0, entry.ZeroStreak);
+    }
+
+    [Fact]
+    public async Task RunAsync_停損使整天全部失敗時同樣不記新鮮度()
+    {
+        var (store, records) = SetupTwoSensors(12);
+        SeedValuesFreshness();
+        var (client, handler) = CreateClient(req => req.RequestUri!.ToString().Contains("content=messages")
+            ? JsonResponse(EmptyMessagesJson)
+            : throw new TaskCanceledException("逾時", new TimeoutException()));
+        var console = new TestConsole();
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        var ok = await PrtgBackfillRunner.RunAsync(fetchService, 1, 1, console, CancellationToken.None, new long[] { 1001 }, store, records);
+
+        Assert.False(ok);
+        Assert.Contains(console.Lines, l => l.Contains("停止數值取數"));
+        Assert.Equal(10, handler.RequestedUrls.Count(u => u.Contains("historicdata.json"))); // 連續 10 顆後不再送
+        var entry = ValuesFreshness();
+        Assert.Equal(5, entry.LastCount);
+        Assert.Equal(0, entry.ZeroStreak);
+    }
+
+    [Fact]
+    public async Task RunAsync_至少一顆成功就記新鮮度()
+    {
+        var (store, records) = SetupTwoSensors(2);
+        SeedValuesFreshness();
+        var (client, _) = CreateClient(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("content=messages")) return JsonResponse(EmptyMessagesJson);
+            if (url.Contains("id=2002")) return JsonResponse("Internal Server Error", HttpStatusCode.InternalServerError);
+            return JsonResponse(HistoricForRequest(url, OneHourHistJson));
+        });
+        var console = new TestConsole();
+        var fetchService = new PrtgFetchService(client, store, new PrtgFreshnessStore(new EfJsonBlobStore(_fx.NewContext, PrtgFreshnessStore.BlobKey)), console, new Dictionary<string, string>());
+
+        await PrtgBackfillRunner.RunAsync(fetchService, 1, 1, console, CancellationToken.None, new long[] { 1001 }, store, records);
+
+        var entry = ValuesFreshness();
+        Assert.Equal(1, entry.LastCount); // 成功那顆寫入的筆數
+        Assert.Equal(0, entry.ZeroStreak);
+    }
 }

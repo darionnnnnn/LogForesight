@@ -1129,7 +1129,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
-        Assert.Contains(console.Lines, l => l.Contains("1 個感測器的數值擷取失敗"));
+        Assert.Contains(console.Lines, l => l.Contains("數值擷取失敗 1 顆（其中逾時 0、補抓後仍失敗 1）"));
 
         using var ctx = _fx.NewContext();
         Assert.Equal(2, ctx.PrtgValues.Count());
@@ -1164,7 +1164,7 @@ public class PrtgFetchServiceTests : IDisposable
 
         Assert.Equal(0, result.Failures);
         Assert.Equal(2, result.Values);
-        Assert.Contains(console.Lines, l => l.Contains("其中 1 個是請求逾時"));
+        Assert.Contains(console.Lines, l => l.Contains("數值擷取失敗 1 顆（其中逾時 1、補抓後仍失敗 1）"));
 
         using var ctx = _fx.NewContext();
         Assert.Equal(2, ctx.PrtgValues.Count());

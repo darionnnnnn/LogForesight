@@ -1161,4 +1161,80 @@ public class PrtgClientTests
             NLog.LogManager.ReconfigExistingLoggers();
         }
     }
+
+    // ───────── Retry-After（第 63-2 輪批次 H-1）：標頭交給 HttpResponseMessage.Headers 解析，例外帶出從現在起的長度 ─────────
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private static async Task<PrtgClientException> FailWithAsync(HttpStatusCode code, Action<HttpResponseMessage>? decorate,
+        TimeProvider? clock = null)
+    {
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) =>
+            {
+                var resp = new HttpResponseMessage(code);
+                decorate?.Invoke(resp);
+                return Task.FromResult(resp);
+            }
+        };
+        using var client = new PrtgClient(ValidUrl, SampleToken, 30, false, stub, PrtgAuthModes.Token, "", "", "",
+            new LogForesight.Core.Service.PrtgRequestBudget(), clock);
+        return await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("api/historicdata.json?id=1"));
+    }
+
+    [Fact]
+    public async Task RetryAfter_秒數格式帶出等待長度()
+    {
+        var ex = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(120)));
+
+        Assert.Equal(PrtgFailureKind.HttpStatus, ex.Kind);
+        Assert.Equal(429, ex.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(120), ex.RetryAfter);
+    }
+
+    [Fact]
+    public async Task RetryAfter_日期格式用時鐘換算成從現在起的長度()
+    {
+        var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+        var ex = await FailWithAsync(HttpStatusCode.ServiceUnavailable,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(90)),
+            new FixedClock(now));
+
+        Assert.Equal(TimeSpan.FromSeconds(90), ex.RetryAfter);
+    }
+
+    [Fact]
+    public async Task RetryAfter_已過期的日期與零秒當作沒有()
+    {
+        var now = new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+        var past = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(-30)),
+            new FixedClock(now));
+        var zero = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.Zero));
+
+        Assert.Null(past.RetryAfter);
+        Assert.Null(zero.RetryAfter);
+    }
+
+    [Fact]
+    public async Task RetryAfter_沒有標頭或標頭無法解析時為null且其他欄位不變()
+    {
+        var none = await FailWithAsync(HttpStatusCode.InternalServerError, null);
+        var garbage = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.TryAddWithoutValidation("Retry-After", "稍後再試"));
+        var negative = await FailWithAsync(HttpStatusCode.TooManyRequests,
+            r => r.Headers.TryAddWithoutValidation("Retry-After", "-5"));
+
+        Assert.Null(none.RetryAfter);
+        Assert.Equal(500, none.StatusCode);
+        Assert.Null(garbage.RetryAfter);
+        Assert.Null(negative.RetryAfter);
+        Assert.Equal(PrtgFailureKind.HttpStatus, garbage.Kind);
+    }
 }

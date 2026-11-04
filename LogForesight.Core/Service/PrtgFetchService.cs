@@ -3,6 +3,7 @@ using System.Text.Json;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using NLog;
 
 namespace LogForesight.Core.Service;
 
@@ -77,6 +78,8 @@ public sealed class PrtgFetchService
     /// </summary>
     private static readonly TimeSpan EmptyDeviceGrace = TimeSpan.FromHours(36);
 
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     private readonly PrtgClient _client;
     private readonly EfPrtgStore _store;
     private readonly PrtgFreshnessStore _freshness;
@@ -85,8 +88,21 @@ public sealed class PrtgFetchService
     private readonly IReadOnlyDictionary<string, string> _categoryOverrides;
     private readonly bool _retryTransientPaging;
 
-    /// <summary>等待重試的等待函式（測試注入零等待；null＝真的等）。</summary>
+    /// <summary>
+    /// 等待重試的等待函式（測試注入零等待；null＝真的等）。表格分頁的重試與數值取數的共用暫停閘共用這一個注入點。
+    /// </summary>
     internal Func<TimeSpan, CancellationToken, Task>? RetryDelay { get; init; }
+
+    /// <summary>數值取數暫停長度的隨機誤差來源（回傳 [0,1)）；測試注入固定值以取得確定的暫停長度，null＝隨機。</summary>
+    internal Func<double>? ValueFetchJitter { get; init; }
+
+    /// <summary>停損冷卻到期判斷用的時鐘；測試注入可手動推進的時鐘。</summary>
+    internal TimeProvider TimeSource { get; init; } = TimeProvider.System;
+
+    // 數值取數停損後的冷卻（實例層：觸發式取數與回填都以同一個實例反覆呼叫 FetchValuesAsync）
+    private readonly object _valueFetchCooldownLock = new();
+    private DateTimeOffset _valueFetchCooldownUntil = DateTimeOffset.MinValue;
+    private bool _valueFetchCooldownNoticed;
 
     /// <param name="categoryOverrides">
     /// sensor type 語意分類補充對照表，由建構端以
@@ -1000,7 +1016,12 @@ public sealed class PrtgFetchService
     private static IReadOnlyList<long> StateChangeQueryObjects(IReadOnlyCollection<long> scopeDeviceObjids)
         => scopeDeviceObjids.OrderBy(id => id).ToList();
 
-    /// <summary>階段 4：對未暫停的 sensor 依併發上限擷取 hourly 聚合數值並逐 sensor 寫入鏡像表</summary>
+    /// <summary>
+    /// 階段 4：對未暫停的 sensor 依併發上限擷取 hourly 聚合數值並逐 sensor 寫入鏡像表。
+    /// 失敗處理在這裡單點完成（夜間階段 4、觸發式取數、回填三個呼叫端自動受惠），分三段：
+    /// 第一輪（並行，碰到可重試失敗就拉起共用暫停閘）→ 補抓輪（第一輪失敗的可重試顆，一次一顆）→ 彙總。
+    /// 政策細節見 <see cref="PrtgValueFetchRetryPolicy"/>；停損不是例外，呼叫端照舊拿到 <c>(寫入筆數, 失敗顆數)</c>。
+    /// </summary>
     private async Task<(int Written, int FailedSensors)> FetchValuesAsync(
         DateTime day,
         IReadOnlyList<(long Objid, bool Paused)> activeSensors,
@@ -1017,58 +1038,85 @@ public sealed class PrtgFetchService
         var totalSensors = activeSensors.Count;
         progress?.Invoke(stage, 0, totalSensors);
 
-        var sdate = day.Date.ToString("yyyy-MM-dd-00-00-00");
-        var edate = day.Date.AddDays(1).ToString("yyyy-MM-dd-00-00-00");
+        // 停損後的冷卻：不送任何請求，全部計失敗。觸發式取數每 30 秒、回填逐日都用同一個實例重複呼叫，
+        // 沒有這一道的話每次呼叫都重新累計 10 顆，PRTG 掛掉的整段時間會被反覆打。
+        if (TryRejectDuringValueFetchCooldown(totalSensors))
+        {
+            progress?.Invoke(stage, totalSensors, totalSensors);
+            return (0, totalSensors);
+        }
+
+        var run = new ValueFetchRun(day, activeSensors,
+            new PrtgValueFetchRetryPolicy(ValueFetchJitter),
+            new PauseGate(RetryDelay ?? PrtgTablePager.DefaultWait, TimeSource));
+
+        await FetchValuesFirstRoundAsync(run, concurrency, ct, progress, stage);
+        await FetchValuesSupplementRoundAsync(run, ct);
+        return SummarizeValueFetch(run);
+    }
+
+    /// <summary>
+    /// 一次 <see cref="FetchValuesAsync"/> 的共用狀態。每顆 sensor 的結果寫在自己的索引位置（不同顆互不干擾），
+    /// 政策與停損旗標的變動由 <see cref="Sync"/> 序列化。
+    /// </summary>
+    private sealed class ValueFetchRun
+    {
+        internal ValueFetchRun(DateTime day, IReadOnlyList<(long Objid, bool Paused)> sensors,
+            PrtgValueFetchRetryPolicy policy, PauseGate gate)
+        {
+            Day = day;
+            Sensors = sensors;
+            Policy = policy;
+            Gate = gate;
+            Sdate = day.Date.ToString("yyyy-MM-dd-00-00-00");
+            Edate = day.Date.AddDays(1).ToString("yyyy-MM-dd-00-00-00");
+            States = new ValueFetchState[sensors.Count];
+            Failures = new Exception?[sensors.Count];
+            Retryable = new bool[sensors.Count];
+            Supplemented = new bool[sensors.Count];
+        }
+
+        internal DateTime Day { get; }
+        internal IReadOnlyList<(long Objid, bool Paused)> Sensors { get; }
+        internal PrtgValueFetchRetryPolicy Policy { get; }
+        internal PauseGate Gate { get; }
+        internal string Sdate { get; }
+        internal string Edate { get; }
+        internal ValueFetchState[] States { get; }
+        internal Exception?[] Failures { get; }
+        /// <summary>該顆最近一次失敗是不是可重試（補抓清單的依據）。</summary>
+        internal bool[] Retryable { get; }
+        /// <summary>該顆有沒有進過補抓輪（「補抓後仍失敗」的計數依據）。</summary>
+        internal bool[] Supplemented { get; }
+        internal object Sync { get; } = new();
+        internal volatile bool Stopped;
+        internal string? StopReason;
+        internal string? FirstFailureMessage;
+        internal int Values;
+        internal int Unparsed;
+        internal int OutsideDay;
+        internal int StringFallback;
+        internal int ZoneDrift;
+    }
+
+    private enum ValueFetchState : byte { Pending = 0, Succeeded, Failed, NotSent }
+
+    /// <summary>第一輪：依併發上限並行取每一顆；進度只在這一輪推進（done 最終等於 total）。</summary>
+    private async Task FetchValuesFirstRoundAsync(
+        ValueFetchRun run, int concurrency, CancellationToken ct, Action<string, int, int>? progress, string stage)
+    {
+        var totalSensors = run.Sensors.Count;
         var maxConcurrency = Math.Max(concurrency, 1);
         using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-        var totalValues = 0;
-        var totalUnparsed = 0;
-        var totalOutsideDay = 0;
-        var totalStringFallback = 0;
-        var totalZoneDrift = 0;
-        var failedSensors = 0;
-        var timedOutSensors = 0;
         var completedSensors = 0;
-        string? firstFailureMessage = null;
 
-        var tasks = activeSensors.Select(async target =>
+        var tasks = Enumerable.Range(0, totalSensors).Select(async index =>
         {
             await semaphore.WaitAsync(ct);
             try
             {
                 ct.ThrowIfCancellationRequested();
-                if (_guard != null) await _guard.WaitIfBusyAsync(ct);
-                var query = $"api/historicdata.json?id={target.Objid}&avg={HistoricAverageSeconds}&sdate={sdate}&edate={edate}";
-                var json = await _client.GetJsonAsync(query, ct);
-                var rows = ParseHistoricData(json, target.Objid, out var unparsed, out var stringFallback, out var zoneDrift);
-                // 有些 PRTG 版本可能忽略 sdate/edate；不能因為 API 回了更多列就寫入請求日以外的資料。
-                var outsideDay = rows.RemoveAll(r => r.PeriodStart < day.Date || r.PeriodStart >= day.Date.AddDays(1));
-                if (outsideDay > 0) Interlocked.Add(ref totalOutsideDay, outsideDay);
-                if (unparsed > 0) Interlocked.Add(ref totalUnparsed, unparsed);
-                if (stringFallback > 0) Interlocked.Add(ref totalStringFallback, stringFallback);
-                if (zoneDrift > 0) Interlocked.Add(ref totalZoneDrift, zoneDrift);
-                if (rows.Count > 0)
-                {
-                    // 逐 sensor 寫入資料庫後立即釋放記憶體，絕不累積成大清單一次寫入
-                    var written = _store.UpsertValues(rows);
-                    Interlocked.Add(ref totalValues, written);
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // 單一 sensor 的失敗（逾時、404、PRTG 暫時 5xx）只影響它自己。
-                // 讓例外往外逃會被階段層的 catch 接住，於是「三千個 sensor 已寫進去、
-                // 第七個逾時」會被回報成「數值 0 筆、階段失敗」——已落地的資料反而看不見。
-                Interlocked.Increment(ref failedSensors);
-                if (IsTimeoutException(ex, ct))
-                {
-                    Interlocked.Increment(ref timedOutSensors);
-                }
-                Interlocked.CompareExchange(ref firstFailureMessage, ex.Message, null);
+                await TryFetchSensorValuesAsync(run, index, supplement: false, ct);
             }
             finally
             {
@@ -1079,40 +1127,258 @@ public sealed class PrtgFetchService
         });
 
         await Task.WhenAll(tasks);
+    }
+
+    /// <summary>
+    /// 補抓輪：第一輪失敗且可重試的顆，第一輪結束後一次一顆再抓一次（同樣先過暫停閘與配額）。
+    /// 補抓不推進進度；已停損就不補。補抓仍失敗的顆維持失敗。
+    /// </summary>
+    private async Task FetchValuesSupplementRoundAsync(ValueFetchRun run, CancellationToken ct)
+    {
+        if (run.Stopped) return;
+
+        var candidates = Enumerable.Range(0, run.Sensors.Count)
+            .Where(i => run.States[i] == ValueFetchState.Failed && run.Retryable[i])
+            .ToList();
+        if (candidates.Count == 0) return;
+
+        // 只寫 Info：PRTG 慢的夜晚不該讓趟次變成「有警告」
+        Log.Info("[PRTG] {Day:yyyy-MM-dd} 數值取數第一輪有 {Count} 顆可重試失敗，第一輪結束後逐顆補抓",
+            run.Day, candidates.Count);
+
+        var recovered = 0;
+        foreach (var index in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (run.Stopped) break;
+            await TryFetchSensorValuesAsync(run, index, supplement: true, ct);
+            if (run.States[index] == ValueFetchState.Succeeded) recovered++;
+        }
+
+        Log.Info("[PRTG] {Day:yyyy-MM-dd} 數值取數補抓結束：{Recovered}/{Count} 顆補抓成功",
+            run.Day, recovered, candidates.Count);
+    }
+
+    /// <summary>
+    /// 取一顆 sensor 的當日數值並寫入。流程：等暫停閘放行 → 守門 → 送出請求 → 寫入。
+    /// 單一 sensor 的失敗（逾時、404、PRTG 暫時 5xx）只影響它自己：記在 <see cref="ValueFetchRun"/> 的該索引，不往外擲。
+    /// 讓例外往外逃會被階段層的 catch 接住，於是「三千個 sensor 已寫進去、第七個逾時」會被回報成
+    /// 「數值 0 筆、階段失敗」——已落地的資料反而看不見。只有取消（OCE 且 ct 已取消）穿透。
+    /// 只有「請求本身」擲出的可重試 <see cref="PrtgClientException"/> 才進暫停／補抓；寫入失敗等其他例外一律不重試。
+    /// </summary>
+    private async Task TryFetchSensorValuesAsync(ValueFetchRun run, int index, bool supplement, CancellationToken ct)
+    {
+        var target = run.Sensors[index];
+        var requestPhase = false;
+        try
+        {
+            // 閘放行之後才呼叫守門；守門可能等很久，等完再看一次閘（等的期間別顆可能已經拉起暫停）
+            await run.Gate.WaitAsync(ct);
+            if (_guard != null)
+            {
+                await _guard.WaitIfBusyAsync(ct);
+                await run.Gate.WaitAsync(ct);
+            }
+
+            ct.ThrowIfCancellationRequested();
+            if (run.Stopped)
+            {
+                // 已停損：第一輪還沒送出的顆計失敗、不送請求；補抓輪的顆維持第一輪的失敗
+                if (!supplement) run.States[index] = ValueFetchState.NotSent;
+                return;
+            }
+
+            if (supplement) run.Supplemented[index] = true;
+            var query = $"api/historicdata.json?id={target.Objid}&avg={HistoricAverageSeconds}&sdate={run.Sdate}&edate={run.Edate}";
+            requestPhase = true;
+            var json = await _client.GetJsonAsync(query, ct);
+            requestPhase = false;
+            // PRTG 有回應就代表它活著：序列與連續失敗數歸零（後續的解析或寫入失敗是本機的事，與 PRTG 無關）
+            lock (run.Sync) run.Policy.RecordSuccess();
+
+            var rows = ParseHistoricData(json, target.Objid, out var unparsed, out var stringFallback, out var zoneDrift);
+            // 有些 PRTG 版本可能忽略 sdate/edate；不能因為 API 回了更多列就寫入請求日以外的資料。
+            var outsideDay = rows.RemoveAll(r => r.PeriodStart < run.Day.Date || r.PeriodStart >= run.Day.Date.AddDays(1));
+            if (outsideDay > 0) Interlocked.Add(ref run.OutsideDay, outsideDay);
+            if (unparsed > 0) Interlocked.Add(ref run.Unparsed, unparsed);
+            if (stringFallback > 0) Interlocked.Add(ref run.StringFallback, stringFallback);
+            if (zoneDrift > 0) Interlocked.Add(ref run.ZoneDrift, zoneDrift);
+            if (rows.Count > 0)
+            {
+                // 逐 sensor 寫入資料庫後立即釋放記憶體，絕不累積成大清單一次寫入
+                var written = _store.UpsertValues(rows);
+                Interlocked.Add(ref run.Values, written);
+            }
+
+            run.States[index] = ValueFetchState.Succeeded;
+            run.Failures[index] = null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var retryable = requestPhase && ex is PrtgClientException clientEx && run.Policy.ShouldRetry(clientEx);
+            run.States[index] = ValueFetchState.Failed;
+            run.Failures[index] = ex;
+            run.Retryable[index] = retryable;
+            Interlocked.CompareExchange(ref run.FirstFailureMessage, ex.Message, null);
+            if (retryable) OnRetryableValueFailure(run, (PrtgClientException)ex, ct);
+        }
+    }
+
+    /// <summary>
+    /// 可重試失敗的處理（同一把鎖內決定）：連續失敗達門檻或總暫停將達上限就停損；
+    /// 否則閘還沒拉起就依序列拉起一次暫停，閘已拉起時不疊加（序列不前進、總暫停不累加）。
+    /// </summary>
+    private void OnRetryableValueFailure(ValueFetchRun run, PrtgClientException ex, CancellationToken ct)
+    {
+        string? stopReason = null;
+        var pause = TimeSpan.Zero;
+        var consecutive = 0;
+        lock (run.Sync)
+        {
+            run.Policy.RecordRetryableFailure();
+            if (run.Stopped) return;
+            consecutive = run.Policy.ConsecutiveFailures;
+
+            if (run.Policy.ConsecutiveLimitReached)
+            {
+                stopReason = $"連續 {PrtgValueFetchRetryPolicy.MaxConsecutiveFailures} 顆可重試失敗";
+            }
+            else if (!run.Gate.IsRaised)
+            {
+                var delay = run.Policy.NextDelay(ex.RetryAfter);
+                if (run.Policy.WouldReachTotalPauseLimit(run.Gate.TotalPaused, delay))
+                {
+                    stopReason = $"總暫停時間將達 {(int)PrtgValueFetchRetryPolicy.MaxTotalPause.TotalMinutes} 分鐘";
+                }
+                else
+                {
+                    pause = delay;
+                    // 不等它：下一顆送出前的 Gate.WaitAsync 會等，自己這一顆也不例外
+                    _ = run.Gate.RaiseAsync(delay, ct);
+                }
+            }
+
+            if (stopReason != null)
+            {
+                run.Stopped = true;
+                run.StopReason = stopReason;
+                run.Gate.Reset(); // 等在閘前的工作不必再睡完剩下的時間，醒來看到停損旗標就收工
+            }
+        }
+
+        if (pause > TimeSpan.Zero)
+        {
+            Log.Info("[PRTG] {Day:yyyy-MM-dd} 數值取數失敗（{Reason}），全部工作暫停 {Seconds} 秒後繼續（連續失敗 {Consecutive} 顆）",
+                run.Day, ex.Message, (int)Math.Ceiling(pause.TotalSeconds), consecutive);
+        }
+
+        if (stopReason != null) EnterValueFetchCooldown();
+    }
+
+    /// <summary>停損：記下冷卻到期時間，並讓下一次第一個被回絕的呼叫再出聲一次。</summary>
+    private void EnterValueFetchCooldown()
+    {
+        lock (_valueFetchCooldownLock)
+        {
+            _valueFetchCooldownUntil = TimeSource.GetUtcNow() + PrtgValueFetchRetryPolicy.Cooldown;
+            _valueFetchCooldownNoticed = false;
+        }
+    }
+
+    /// <summary>冷卻期內回 true（呼叫端不送任何請求）；只有冷卻期內第一次被回絕時輸出一行，之後的回絕靜默。</summary>
+    private bool TryRejectDuringValueFetchCooldown(int sensorCount)
+    {
+        TimeSpan remaining;
+        bool notice;
+        lock (_valueFetchCooldownLock)
+        {
+            var now = TimeSource.GetUtcNow();
+            if (now >= _valueFetchCooldownUntil) return false;
+            remaining = _valueFetchCooldownUntil - now;
+            notice = !_valueFetchCooldownNoticed;
+            _valueFetchCooldownNoticed = true;
+        }
+
+        if (notice)
+        {
+            _console.WriteLine($"  ⚠ PRTG 數值取數仍在停損後的冷卻期（約 {Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes))} 分鐘後恢復），"
+                + $"本次 {sensorCount} 顆不送請求、計為失敗，留待下一趟。");
+        }
+        return true;
+    }
+
+    /// <summary>彙總：失敗計數、停損與各種損耗的 ⚠ 輸出，回傳 <c>(寫入筆數, 失敗顆數)</c>。</summary>
+    private (int Written, int FailedSensors) SummarizeValueFetch(ValueFetchRun run)
+    {
+        var failedSensors = 0;
+        var timedOutSensors = 0;
+        var supplementFailedSensors = 0;
+        var notSent = 0;
+        var supplementNotReached = 0;
+        for (var i = 0; i < run.Sensors.Count; i++)
+        {
+            switch (run.States[i])
+            {
+                case ValueFetchState.Succeeded:
+                    break;
+                case ValueFetchState.NotSent:
+                    failedSensors++;
+                    notSent++;
+                    break;
+                default:
+                    failedSensors++;
+                    if (run.Failures[i] is { } ex && IsTimeoutException(ex, CancellationToken.None)) timedOutSensors++;
+                    if (run.Supplemented[i]) supplementFailedSensors++;
+                    else if (run.Retryable[i]) supplementNotReached++;
+                    break;
+            }
+        }
+
+        if (run.Stopped)
+        {
+            // 第一輪就停損：已停止的是「沒送出」的那些；第一輪全送完才停損：已停止的是沒補抓到的那些
+            var stopped = notSent > 0 ? notSent : supplementNotReached;
+            _console.WriteLine($"  ⚠ PRTG 持續無法回應，本趟停止數值取數（已停止 {stopped} 顆），其餘留待下一趟。");
+            Log.Warn("[PRTG] {Day:yyyy-MM-dd} 數值取數停損：{Reason}；已停止 {Stopped} 顆不再送請求，同一服務實例冷卻 {Minutes} 分鐘",
+                run.Day, run.StopReason, stopped, (int)PrtgValueFetchRetryPolicy.Cooldown.TotalMinutes);
+        }
 
         if (failedSensors > 0)
         {
-            var timedOutPart = timedOutSensors > 0 ? $"（其中 {timedOutSensors} 個是請求逾時）" : "";
-            _console.WriteLine($"  ⚠ 有 {failedSensors} 個感測器的數值擷取失敗{timedOutPart}（其餘感測器不受影響，明日排程會自動再試）。"
-                + $"首則錯誤：{firstFailureMessage}");
+            _console.WriteLine($"  ⚠ 數值擷取失敗 {failedSensors} 顆（其中逾時 {timedOutSensors}、補抓後仍失敗 {supplementFailedSensors}）。"
+                + $"其餘感測器不受影響；缺的數值可由下一趟或回填補上。首則錯誤：{run.FirstFailureMessage}");
         }
 
         // 時間以 datetime_raw（UTC）為準；下面兩種情況都要看得見，不能靜默接受。
-        if (totalStringFallback > 0)
+        if (run.StringFallback > 0)
         {
-            _console.WriteLine($"  ⚠ 有 {totalStringFallback} 筆數值缺 datetime_raw，改以顯示字串依服務主機地區設定推得時段；"
+            _console.WriteLine($"  ⚠ 有 {run.StringFallback} 筆數值缺 datetime_raw，改以顯示字串依服務主機地區設定推得時段；"
                 + "若 PRTG 帳號時區與服務主機不同，這些列會落在錯的小時。");
         }
 
-        if (totalZoneDrift > 0)
+        if (run.ZoneDrift > 0)
         {
-            _console.WriteLine($"  ⚠ 有 {totalZoneDrift} 筆數值的顯示字串與 datetime_raw 換算結果差 30 分鐘以上——"
+            _console.WriteLine($"  ⚠ 有 {run.ZoneDrift} 筆數值的顯示字串與 datetime_raw 換算結果差 30 分鐘以上——"
                 + "PRTG 帳號時區與服務主機不同。數值已依 datetime_raw 落在正確的小時；請把 PRTG 帳號時區設成與服務主機相同，"
                 + "否則取數日期邊界會與 PRTG 畫面錯開。");
         }
 
-        if (totalUnparsed > 0)
+        if (run.Unparsed > 0)
         {
-            _console.WriteLine($"  ⚠ 有 {totalUnparsed} 筆數值的時間欄位無法解析而略過"
+            _console.WriteLine($"  ⚠ 有 {run.Unparsed} 筆數值的時間欄位無法解析而略過"
                 + "（缺 datetime_raw，顯示字串也無法以服務主機地區設定解析）。");
         }
 
-        if (totalOutsideDay > 0)
+        if (run.OutsideDay > 0)
         {
-            _console.WriteLine($"  ⚠ PRTG 回應含 {totalOutsideDay} 筆請求日期以外的數值，已略過而未寫入。");
+            _console.WriteLine($"  ⚠ PRTG 回應含 {run.OutsideDay} 筆請求日期以外的數值，已略過而未寫入。");
         }
 
-        return (totalValues, failedSensors);
+        return (run.Values, failedSensors);
     }
 
     private static bool IsTimeoutException(Exception ex, CancellationToken ct)

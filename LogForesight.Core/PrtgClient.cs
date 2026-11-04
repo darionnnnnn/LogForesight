@@ -41,10 +41,11 @@ public enum PrtgFailureKind
 public class PrtgClientException : Exception
 {
     public PrtgClientException(string message, Exception? inner = null,
-        PrtgFailureKind kind = PrtgFailureKind.Other, int? statusCode = null) : base(message, inner)
+        PrtgFailureKind kind = PrtgFailureKind.Other, int? statusCode = null, TimeSpan? retryAfter = null) : base(message, inner)
     {
         Kind = kind;
         StatusCode = statusCode;
+        RetryAfter = retryAfter;
     }
 
     /// <summary>失敗類型；未分類為 <see cref="PrtgFailureKind.Other"/>。</summary>
@@ -52,6 +53,12 @@ public class PrtgClientException : Exception
 
     /// <summary>HTTP 狀態碼（只有伺服器真的回了狀態碼的失敗才有值）。</summary>
     public int? StatusCode { get; }
+
+    /// <summary>
+    /// 伺服器以 <c>Retry-After</c> 標頭要求的等待時間（秒數或日期格式皆已換算成從現在起的長度）；
+    /// 沒有標頭、無法解析或已經過期（零或負值）時為 null。呼叫端不自己解析標頭字串。
+    /// </summary>
+    public TimeSpan? RetryAfter { get; }
 }
 
 /// <summary>Transport metadata is retained separately from the sensor's measurement clock.</summary>
@@ -342,6 +349,18 @@ public sealed class PrtgClient : IDisposable
         ex.InnerException == null &&
         ex.Message.Contains(MaxResponseBytes.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
 
+    /// <summary>
+    /// 讀 <c>Retry-After</c>：秒數格式直接取，日期格式用 <see cref="_timeProvider"/> 換算成從現在起的長度。
+    /// 解析交給 <see cref="HttpResponseMessage.Headers"/>，零或負值（已過期的日期）當作沒有。
+    /// </summary>
+    private TimeSpan? ReadRetryAfter(HttpResponseMessage resp)
+    {
+        var header = resp.Headers.RetryAfter;
+        if (header == null) return null;
+        var span = header.Delta ?? (header.Date is { } date ? date - _timeProvider.GetUtcNow() : (TimeSpan?)null);
+        return span is { } s && s > TimeSpan.Zero ? s : null;
+    }
+
     private static PrtgClientException OversizeException(HttpRequestException ex) =>
         new("PRTG 回應超過 256 MB 上限，請縮小取數範圍或降低單次筆數", ex);
 
@@ -492,7 +511,7 @@ public sealed class PrtgClient : IDisposable
             if (!resp.IsSuccessStatusCode)
             {
                 throw new PrtgClientException($"PRTG 伺服器回應錯誤：HTTP {(int)resp.StatusCode}",
-                    kind: PrtgFailureKind.HttpStatus, statusCode: (int)resp.StatusCode);
+                    kind: PrtgFailureKind.HttpStatus, statusCode: (int)resp.StatusCode, retryAfter: ReadRetryAfter(resp));
             }
 
             string text;
