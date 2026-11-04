@@ -923,6 +923,8 @@ Node 陣列（動態主體名稱以 `strong` 放在開頭，一律走 `textConte
 3. **刪除**：複述欄位名或標題、複述版面已呈現的事（「點選卡片檢視…」「點列檢視…」）、
    與旁邊 `?` 或另一段重複的句子、同頁重複出現的同句提示。
 
+設定頁依此收斂：常駐只留後果句與硬性限制，其餘進 `?`；AI 金鑰與 SMTP 密碼欄已設定時 placeholder 為「留空＝沿用既有」、狀態句只寫「已設定金鑰」／「已設定密碼」，尚未設定時狀態句隱藏（SMTP 密碼欄 placeholder 標「選填」）；「啟用郵件通知」的說明列出實際受它控制的五類通知（執行摘要、高風險即時、每日／每週摘要、交辦單通知、問題上報）。
+
 內容含 `<code>` 排版等 popover 保不住 HTML 格式的情況（如主機頁批次貼上的格式說明）維持常駐，屬技術限制下的例外。
 頁首（`renderPageHeader`）至少要有副標、動作或 `help` 其中之一，都沒有就不放頁首。
 
@@ -1086,6 +1088,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **預設只顯示第一排**（`core/reveal.js`）：KPI 卡列與風險類型各一顆揭露鈕，依實際格線欄數藏起第一排以外的卡，
   按鈕寫出被藏幾項與其中幾項告警（KPI 看紅字、風險類型看重大紅邊）；全部放得下時不顯示按鈕。展開狀態記在瀏覽器
   （`lf.collapse.dashboard-kpi`、`lf.collapse.dashboard-categories`），列印時一律全部顯示。風險類型的順序由後端排定（有高 > 有中 > 問題數）。
+  KPI 三組的寬度只取決於展開與否，不量測：`revealFirstRow` 以選用回呼 `onCollapsedChange(expanded)` 通知，`dashboard.js` 據此在 strip 上切換 `lf-kpi-strip--collapsed`；CSS 只在 `(min-width:576px) and (max-width:1799.98px)` 且收合時讓三組 `flex: 1 1 0` 等寬。更寬的畫面全部卡片放得下，維持依卡數分寬；展開後與小於 576px 同樣依卡數分寬。
 - **未回報主機是頂部 KPI 卡列的一張計數卡**：兩千台規模下逐台列出可能數百筆，
   以計數（`SilentHostsCount`）＋下鑽到主機頁的 `/admin/hosts?status=silent`
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
@@ -2043,6 +2046,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天，唯一判定 `HostAdminService.IsSilent`）。
   未回報主機的狀態徽章另加一顆 PRTG 現況（`HostDto.PrtgHint`／`PrtgHintStale`：主機失聯／主機在線，問題在日誌取數端／無資料／無 PRTG 對應，過期加註），只算本頁，語意見 docs/PRTG-SPEC.md §9。
+  「無 PRTG 對應」徽章只有具 `ViewAll` 的使用者才是連結（`/admin/prtg?focus=unmatched&hostId=N#mirror`，主機頁以 `getCurrentUser` 判斷）；其他人看到純文字徽章，因為未對應清單端點要 `ViewAll`。PRTG 維護頁讀到參數後，第一頁載入未對應清單時帶一次性的 `pinHostId`（`GET prtg-unmapped-hosts`，選用；該台在未對應集合內就排在整份清單最前面，其餘順序與總數不變，不在集合內當沒給），並把參數從網址移除（`replaceState`、保留 `#mirror`）。**初次載入的所有區塊都結束後**才展開並捲到未對應區塊，並在該台確實排第一筆時高亮那一列 1.5 秒（`lf-focus-flash`，使用者要求減少動態時不淡出）；清單載入失敗（含 403）不捲動，顯示既有錯誤態。
 - **批次改群組**：清單首欄勾選＋表頭全選，勾選跨頁／跨篩選保留
   （前端 `Map<hostId, hostDto>`，翻頁不清空，僅「清除選取」與套用成功清空）；已併入其他主機的列
   不給勾選。工具列「批次設定群組」開 modal：列出已勾主機＋現有群組徽章、模式單選（加入＝聯集、
@@ -2834,10 +2838,12 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   ——否則進站會先看到「沒有執行中」，過一下才跳出執行中。
 - **資源守門暫停中**：`status.pausedReason` 有值時狀態卡顯示短徽章，含 sensor 與數值的說明
   出現在同卡的「最新訊息」列與執行詳情（機制與取捨見 docs/PRTG-SPEC.md §12 可觀測性）。
+- **PRTG 認證狀態**（`prtgCredentialState`：`ok`／`not_configured`／`undecryptable`）：`GET api/admin/schedule/status` 與整包設定（`SystemSettingsDto`）都帶，值來自 `PrtgClientFactory.CredentialState(settings)`，是前端判斷 PRTG 憑證可不可用的唯一來源（只有狀態，不含憑證內容）；前端不再用 `prtgHas*` 布林自行推斷。已啟用但狀態為 `undecryptable` 時，PRTG 卡的模組狀態寫「已啟用（憑證無法解密）」（不再說數值取數對象），並顯示黃字提示「PRTG 認證資訊無法解密（金鑰檔與資料庫不相符）」，有維護權限者附連到 PRTG 維護頁「連線」的連結；立即執行判斷「連線已設定但擷取未啟用」時，`not_configured` 與 `undecryptable` 都視為未設定。夜間管線、回填、結構同步與探測在閘門處就停下，不送任何請求。
 - **執行紀錄分欄**：列表與執行詳情各有「本機／NetIQ／PRTG」三欄
   （各為「分析 n（失敗 m）」與 PRTG 狀態徽章＋sensor 數＋觸發主機數），
-  執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 五值：`disabled` 未啟用／`success`／`no_output` 無產出／
+  執行總表每日列另加一格 PRTG 狀態徽章（`PrtgOutcome` 五值：`disabled` 未啟用或憑證不可用／`success`／`no_output` 無產出／
   `partial` 結構同步成功但有 sensor 失敗／`failed` 結構同步失敗；取消執行時為 null）。
+  `disabled` 的原因放趟次層 `BatchRun.PrtgOutcomeNote`（`PrtgDailyPipeline.DisabledReason`，早退沒有逐日統計，所以不放 `PrtgDays`）：「PRTG 未啟用」、「尚未設定認證資訊」（位址或目前認證模式的憑證沒填完整）、「憑證無法解密，請到 PRTG 維護頁重新輸入」（金鑰檔與資料庫不相符）。執行紀錄列表與執行詳情的 PRTG 欄在徽章旁直接顯示原因文字，總表日期列的徽章提示與診斷匯出（`abnormalRuns[].prtgOutcomeNote`，經文字遮罩）也帶；舊紀錄為 null。
   「sensor N」是目標數扣掉失敗數，另附觸發主機數；**保守策略**（`BatchRun.PrtgStrategy`＝`conservative`）夜間不逐顆取數，改顯示「保守策略（數值由快照供應）」，
   執行詳情「PRTG 逐日」表的觸發主機／目標 sensor／失敗 sensor 顯示「—」並在表下說明；舊紀錄（null）照舊顯示數字。
   逐日「說明」欄：整趟共用階段失敗時寫出是哪個階段（`PrtgDailyPipeline.StageFailureNote`），完整訊息逐條進「重要紀錄」（「PRTG 擷取階段失敗：…」）；
@@ -2857,8 +2863,8 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **訊號組**：Warn 以上的診斷行，加上 `Output` 中去空白後行首為 `⚠`／`✗` 的行（只影響匯出多寡，不影響任何判定；分析結果類輸出排除）。先遮罩、再以 `RunMessageNormalizer` 正規化，組鍵含 logger，所以組數可能少於畫面；`source=log` 的 Error＋Fatal 次數總和必須等於同期異常彙總的次數總和。
   - **不匯出**：正常趟次逐筆、一般輸出與里程碑、帳號與主機名單、訊號組內的 AI 回覆片段、prompt 全文。
   - **去識別化**（`RunExportDeidentifier`，一律套用，無開關）：順序固定為密鑰 → URL → 已知字典（長字串優先）→ 樣式。代號依首次出現配發、只在單一檔案內穩定、不用雜湊，檔案內沒有對照表；主機 IP 對應到同一個主機代號。字典來源讀取失敗，或序列化後掃描仍有字典原值、IPv4、Email、密鑰，一律中止並回 500 `export_deidentification_failed`，不給檔案。憑證用目前金鑰解不開（搬站或換金鑰後的舊值）不中止：略過實際值比對，改靠 `password=`、`passhash=`、`Bearer` 等樣式遮罩，名稱寫進 `meta.deidentification.undecryptableSecrets`。`guide` 不進掃描；封閉集合的值整串放行；只掃值不掃欄位名（匯出沒有動態欄位名），避免帳號 `status` 這類常見詞讓匯出永遠失敗。標籤後的值只取單一詞，含空白的人名若不在字典內，後半可能漏遮；檔案 `meta` 寫明自由文字無法保證完全遮除。
-  - **AI 回覆格式異常**（`aiFormatAnomalies`）：案例是 `Headline` 精確等於 `LogAnalysisService.AiFormatAnomalyHeadline` 的主機日紀錄，涵蓋解析失敗與內容檢查失敗兩種；重新分析成功後就不再是案例。每案附遮罩後的回覆前 600 字、回覆類別、輸入特徵（`AiInputFeatures`）、同主機前後 7 天最接近的正常日作對照；最新 50 案另附遮罩後的問題清單。
-  - **失敗診斷**：`ChatJsonAsync` 最終失敗且有內容層失敗時，以 logger `AiJsonDiagnostics` 寫一行 Warn（精簡 JSON：`finish_reason`、字數與 token 數、解析錯誤位置、各欄長度、回覆頭尾）。它不計入 `WarnCount`，執行詳情與異常彙總都不顯示，只給匯出。互動 AI 卡片不在 recorder 範圍內，不納入。
+  - **AI 回覆格式異常**（`aiFormatAnomalies`）：案例由降級欄位判定（`IAnalysisRecordQuery.QueryAiDegradedCases`，不比對標題）：`ai_degraded_attempts > 0` 且（仍待補，或已達 3 次上限），或存量資料中標題精確等於 `LogAnalysisService.AiFormatAnomalyHeadline` 的舊紀錄；涵蓋解析失敗與內容檢查失敗兩種。降級過但之後 AI 摘要補成功的主機日不是案例，也不會被選為對照組。每案帶 `degradedAttempts`（AI 排程對這個主機日降級的次數，舊標題資料為 0）與 `abandoned`；`attempts` 仍是摘要前綴寫的單次呼叫內嘗試次數，摘要解析不出前綴時 `attempts`、`reply`、`replyShape` 為 null。每案附遮罩後的回覆前 600 字、回覆類別、輸入特徵（`AiInputFeatures`）、同主機前後 7 天最接近、從未降級過的正常日作對照；最新 50 案另附遮罩後的問題清單。
+  - **失敗診斷**：`ChatJsonAsync` 最終失敗且有內容層失敗時，以 logger `AiJsonDiagnostics` 寫一行 Warn（精簡 JSON：`finish_reason`、字數與 token 數、解析錯誤位置、各欄長度、回覆頭尾；另有 `emptyShape`——`category=empty` 時回覆只有 `[]` 或 `{}` 記 `array`／`object`；`rawChars`／`rawHead`／`rawTail`——清洗前（去 channel 標記與簡轉繁之前）原文的字數與頭 1,500／尾 500 字，與清洗後完全相同時省略；`reasoningChars`——伺服器另放在 `reasoning_content`／`reasoning` 的思考字數，只記長度）。回覆頭尾與原文頭尾走文字遮罩，孤立代理字元先換成 U+FFFD。`guide` 另寫明兩種「AI 失敗率」的分母（見下方「AI 格式異常降級」）。它不計入 `WarnCount`，執行詳情與異常彙總都不顯示，只給匯出。互動 AI 卡片不在 recorder 範圍內，不納入。
 - **AI 跟隨取數**：AI 分析**沒有獨立的啟用開關**，AI 服務設定好（`IWebAiService.Available`）就一律啟用。
   取數執行一發佈當日 PRTG finding（`prtg-findings-ready`），`SchedulerRunState` 就發出通知讓
   AI 立刻開跑，**不等自己的 60 秒輪詢**——否則使用者按下「立即執行」後看到的是取數在跑、AI 卻閒著。
@@ -2868,6 +2874,16 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
 - **AI 待補順序**（`AiAnalysisHostedService.SelectNextBatch`，每批重算）：近日層（紀錄日 ≥ 今天−2）新→舊，跟著取數；
   其餘為積壓層，七日一塊、塊由新到舊、塊內同主機舊→新——舊日的 AI 結論先寫回，後一天 prompt 的【近期歷史】才看得到。
   近日層被完整性閘門擋住時直接取積壓層；查詢以 `PendingAiQuery`（日期範圍＋方向）在 SQL 端排序，不放大批次。
+- **AI 格式異常降級**（`AiDegradation`；欄位見 DB-SPEC `ai_degraded_attempts`）：`ChatJsonAsync` 重試用盡仍有回覆原文但格式不合格時，主機日降級而非失敗。
+  - **判定與重試**：空形狀（去空白後只剩括號，如 `[]`、`{}`）在內容層判為 `empty`；上一次類別為 `empty` 或 `no_json` 時，下一次請求關掉 `response_format` 文法、提示尾句改為允許先簡短思考再輸出一個 JSON 物件，其他類別（內容檢查沒過、截斷、型別不符）維持文法。解析時有多個括號配對物件優先取最後一個通過內容檢查者。最終失敗寫 Warn（格式異常，主機日仍完成）；AI 服務不通（傳輸層失敗、主分析完全失敗）才是 Error。
+  - **狀態**：降級的主機日 `AiAnalyzed=true`、`AiPending=true`、`ai_degraded_attempts` +1（同一交易內決定，`Math.Min(…, 3)`）；達 3 次改 `AiPending=false` 放棄、次數保持 3。一次嘗試＝AI 排程對該主機日的一次處理，同趟內 `ChatJsonAsync` 的重試不另計；同輪不會再選到同一個主機日（下一輪才輪到下一次）。成功的結果不改次數；沒有每日節流，背景輪詢下三次可能在短時間內用完（BACKLOG）。
+  - **歸零**：任何「重標待補」都歸零——`MarkAllForAiRerun`（同一句 UPDATE）、PRTG 證據指紋變動重標、統計段 `Append` 重寫。歷史降級日不會自動補跑，要補用「強制重新分析」。
+  - **AI 服務完全失敗**（沒有拿到任何回覆）不算降級：`AiAnalyzed=false`、`AiPending=true`、次數不變；標題同用規則層結論，後綴「（AI 服務未回應，AI 待補）」，沒有問題時寫「今日分析摘要暫缺」＋同一後綴。
+  - **主機彙總的「最新狀況」**（儀表板排行、記錄頁主機檢視）：`HostRiskAggregate` 帶最新一天的 `LatestAiPending`、`LatestAiDegradedAttempts`，前端 `latestStatusCell` 只在降級或放棄時加徽章，其他狀態維持純文字。
+  - **標題與摘要**：標題由規則層結論加後綴組成——結論取命中規則的白話說明，沒有命中規則取最嚴重問題的來源與次數，沒有問題寫「今日偵測到 0 個問題」（上限 80 字）；後綴「（AI 摘要待補，第 N 次）」，放棄後「（AI 摘要已放棄：連續 3 次格式異常）」。摘要欄為「（AI 回覆經 N 次嘗試仍未通過 JSON 檢查，保留原文供參考）」加回覆原文。風險等級維持規則層判定。降級日仍是 `AiAnalyzed=true`，所以 `RiskReportService` 的分類 AI 深析與報告照常產生。
+  - **排程趟次計數**：降級計入 `aiFailures`（`aiFailures = Failed + Degraded`），`aiCalls` 照舊含降級；降級算有進度，不觸發本批全滅防線；階段結果與趟次因此為「有警告」，階段說明寫「降級 N 筆（AI 回覆格式異常）」。
+  - **兩種「AI 失敗率」**：呼叫層＝`AIService` 單次呼叫最終失敗次數／呼叫次數（診斷行、`signalGroups`）；主機日層＝AI 排程 `aiFailures／aiCalls`（趟次欄位、`runStats`），一個主機日算一次、降級算一次失敗。兩個分母不同，不能相除。
+  - **前端**：記錄 DTO 帶 `aiDegradedAttempts`（含輕量清單列），`core/format.js` 的 `aiStateOf(record)` 是清單、詳情共用的唯一判定，回 `pending`／`degraded`／`abandoned`／`done`，不比對標題；`degraded` 徽章「AI 摘要待補（第 N 次格式異常）」（warning）、`abandoned` 徽章「AI 摘要已放棄」（danger），`pending` 仍是「AI 分析中」。`AI_DEGRADED_MAX_ATTEMPTS` 與後端 `AiDegradation.MaxAttempts` 同為 3，`AiStateUiTests` 比對。AI 服務完全不通而標題含「AI 待補」的存量列，徽章顯示「AI 分析中」。
   成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。完整性閘門（PRTG 證據指紋、事後追加 finding 重標待補、隔晚重判）見 docs/PRTG-SPEC.md §3。
 - **AI 呼叫節流**：全站單一 `IAiRequestGate`（Core `AiRequestGate`，DI 單例）——互動車道（`WebAiService` 的互動與對話兩個實例）
   同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每輪共用的一個實例、工作流恢復；取數路徑的深析關閉）
@@ -3318,6 +3334,10 @@ target 名稱也帶 runId 與識別碼以免互相移除。
 **AI 契約失敗的錯誤訊息附回覆片段**：`ChatJsonAsync` 最終失敗時，訊息在「AI 回覆不是合法 JSON 或格式不符契約」
 之後附上最後回覆的前 300 字（換行與連續空白摺成單一空白、超長截斷加「…」、空回覆寫「（空回覆）」）。
 沒有這段，異常彙總裡幾百筆同樣的一句話無從判斷是模型能力還是 prompt 問題。**不附 prompt**。
+
+**警告等級**：「模型回了但格式不合格」是 Warn（`ChatJsonAsync` 最終失敗，主機日降級完成），「AI 服務不通」是 Error（傳輸層失敗、`LogAnalysisService` 主分析完全失敗）。PRTG 與 Sentinel 的「略過憑證驗證」提醒是 Info（刻意設定，不讓每趟都變「有警告」）；Security 記錄檔讀不到是真的偵測盲區，維持 Warn，服務帳號取得讀取權後才會消失。
+
+**取數前憑證前置檢查**（`CredentialPreflight`，logger 名稱 `CredentialPreflight`）：`AnalysisOrchestrator.RunAsync` 在三路分析之前，對 `SecretInventory` 中「這趟用得到」的密文逐筆試解（`CryptoHelper.TryDecrypt`），解不開的寫一行 Warn「取數前憑證檢查：下列憑證無法用目前金鑰解密，本趟略過：…」並在執行輸出留一行 ⚠。**只寫 Warn、不寫 Error**：Error 會讓只跑本機分析的趟也被判 failed；失敗的那一路由該路表達（NetIQ：該 Sentinel 轄下主機計失敗主機日並標未完成、不建 client、不送請求；PRTG：`disabled` 加原因）。檢查本身擲例外只記 Warn，不中斷分析。此 logger 計入 `WarnCount`。啟動時 `CryptoKeyBootstrapper.ProbeSecrets` 對同一份清單逐筆試解一次，使健康頁在第一個夜間取數之前就顯示降級，不改任何資料。
 
 **不計入 `WarnCount` 的 logger** 只有 `SqlPerformanceMonitor` 與 `AiJsonDiagnostics`（`BatchRunRecorder.IsWarnCountExemptLogger`），後者見 §9.10「診斷資料匯出」。
 

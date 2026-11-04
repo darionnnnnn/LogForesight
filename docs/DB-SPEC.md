@@ -167,6 +167,8 @@ ContentJson 內序列化的同名值僅為殘留，強制重新分析是整批 U
 摘要欄保留回覆原文。成功的 AI 結果不改次數。`MarkAllForAiRerun`（同一句 UPDATE）、PRTG 證據變動重標待補與
 統計段 `Append` 重寫都把次數歸零。
 
+欄位型別 `int NOT NULL DEFAULT 0`（SQLite 為 `INTEGER NOT NULL DEFAULT 0`），由 `SchemaUpgrader` 以 `AddColumnIfMissing` 補欄、既有列為 0，新建的 DB 由 `EnsureCreated` 直接建好；沒有索引（待補查詢走 `ai_pending` 複合索引，次數只在寫回與案例查詢時讀）。**只存資料列欄位**：`DailyAnalysisRecord.AiDegradedAttempts` 標 `[JsonIgnore]`，不進 `content_json`，讀列時由 `Deserialize(row)` 單點帶入，輕量清單投影也帶（前端徽章讀它）。診斷匯出的降級案例查詢（`QueryAiDegradedCases`）只讀抽出欄 `ai_degraded_attempts`、`ai_pending`、`headline`。
+
 **`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（詳見
 docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
 - `LogIssueSignature.EventKey`：問題簽章的第五個分組鍵欄位（Linux 事件命中規則時的規則 Id，
