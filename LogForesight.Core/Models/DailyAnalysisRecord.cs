@@ -121,6 +121,15 @@ public class DailyAnalysisRecord
     /// </summary>
     public bool AiPending { get; set; }
 
+    /// <summary>
+    /// AI 回覆連續格式異常（降級）的嘗試次數。單一事實來源是資料列欄位 <c>ai_degraded_attempts</c>，
+    /// 不進 ContentJson（<see cref="JsonIgnoreAttribute"/>），由儲存層讀列時單點帶入；
+    /// 任何「重標待補」（強制重新分析、PRTG 證據變動、統計段重寫）都歸零，成功的 AI 結果不動它。
+    /// 達 <see cref="LogForesight.Core.Service.AiDegradation.MaxAttempts"/> 即放棄（<see cref="AiPending"/> 轉 false、次數保持）。
+    /// </summary>
+    [JsonIgnore]
+    public int AiDegradedAttempts { get; set; }
+
     /// <summary>前置掃描檢視的低嚴重度項目數（0 = 當日事件種類未超過主 prompt 上限，未觸發掃描）</summary>
     public int ScreenedTailCount { get; set; }
 
@@ -211,6 +220,10 @@ public class DailyAnalysisRecord
 /// 風險是否被拉高」的最終結果才能決定要不要產生，所以報告產出的時機隨 AI 段一起移動，
 /// 不再是統計段的職責。
 /// </summary>
+/// <param name="AiDegraded">
+/// true＝AI 重試耗盡仍是格式異常（有回覆原文）。此時 <see cref="Headline"/> 是規則層結論（不含次數後綴），
+/// 寫入端在同一個交易內把次數 +1、依次數決定是否仍待補並補上標題後綴；<see cref="AiAnalyzed"/> 仍為 true。
+/// 這個旗標會隨 SQL 重試快照一起序列化，預設 false。</param>
 /// <param name="UncoveredChecksAddendum">
 /// 要追加進既有 <see cref="DailyAnalysisRecord.UncoveredChecks"/> 的項目（回饋十三輪 C，
 /// 孤兒補跑產報告）；null／空＝不追加。統計段寫入的 UncoveredChecks 已經定案，
@@ -233,7 +246,8 @@ public sealed record AiOutcome(
     string? InputPrtgFingerprint = null,
     string? ReportPrtgEvidenceFingerprint = null,
     LogForesight.Core.Persistence.PreparedRiskReport? ReportDraft = null,
-    bool Skipped = false);
+    bool Skipped = false,
+    bool AiDegraded = false);
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive

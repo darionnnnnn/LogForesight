@@ -67,6 +67,7 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "risk_projection_version", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "risk_review_status", isSqlite ? "TEXT NOT NULL DEFAULT 'unchecked'" : "nvarchar(24) NOT NULL DEFAULT 'unchecked'");
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_risk_projection", "risk_projection_version, record_id");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "ai_degraded_attempts", isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
 
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：這是 SQL 後端上線以來第一張
         // 「不是靠 EnsureCreated 建出來」的全新資料表——既有部署的 DB 已經存在，EnsureCreated

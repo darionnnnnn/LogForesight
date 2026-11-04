@@ -294,13 +294,15 @@ public class AiAnalysisHostedService : BackgroundService
                 aiPhase.Complete(
                     stopped ? RunPhaseOutcomes.Stopped
                         : !success ? RunPhaseOutcomes.Failed
-                        : counters.Failed > 0 ? RunPhaseOutcomes.Partial
+                        : counters.Failed > 0 || counters.Degraded > 0 ? RunPhaseOutcomes.Partial
                         : RunPhaseOutcomes.Success,
-                    $"完成 {counters.Done} 筆、失敗 {counters.Failed} 筆");
+                    $"完成 {counters.Done} 筆、失敗 {counters.Failed} 筆" +
+                    (counters.Degraded > 0 ? $"、降級 {counters.Degraded} 筆（AI 回覆格式異常）" : string.Empty));
                 recorder.DaysAnalyzed = counters.Done;
-                // 實際呼叫過 AI 的筆數：成功且非 Skipped（Skipped 不呼叫 AI）加上失敗者
-                recorder.AiCalls = counters.Done - counters.Skipped + counters.Failed;
-                recorder.AiFailures = counters.Failed;
+                // 實際呼叫過 AI 的筆數：成功且非 Skipped（Skipped 不呼叫 AI）加上失敗者與降級者（降級有呼叫、只是回覆不合格）
+                recorder.AiCalls = counters.Done - counters.Skipped + counters.Failed + counters.Degraded;
+                // 降級也是 AI 失敗：沒有拿到可用的白話摘要，趟次因此為「有警告」
+                recorder.AiFailures = counters.Failed + counters.Degraded;
                 recorder.Stopped = stopped;
                 recorder.Finish(success ? 0 : 1);
 
@@ -327,6 +329,8 @@ public class AiAnalysisHostedService : BackgroundService
     {
         public int Done;
         public int Failed;
+        /// <summary>AI 回覆格式異常而降級的件數（已寫回規則層結論、次數 +1；不含在 <see cref="Done"/> 內）</summary>
+        public int Degraded;
         /// <summary>低風險不需 AI、已清除待補的件數（已含在 <see cref="Done"/> 內）</summary>
         public int Skipped;
     }
@@ -436,7 +440,10 @@ public class AiAnalysisHostedService : BackgroundService
             var pendingTotal = pendingEstimate ??= _recordQuery.CountPendingAi();
             _runState.ReportProgress(totalDone, totalDone + pendingTotal, $"AI 白話分析補寫中（併發 {concurrency}）");
 
+            // 本批有進度的件數（成功完成＋降級寫回）；防線只看它是否為 0
             int batchSuccessCount = 0;
+            // 降級後仍待補的件數：它們有進度，但沒有離開待補，估算剩餘待補時要扣回來
+            int batchDegradedStillPending = 0;
 
             try
             {
@@ -533,6 +540,22 @@ public class AiAnalysisHostedService : BackgroundService
                                 }
                                 if (_workflow != null && workflowVersion > 0)
                                     _workflow.CompleteAi(record.HostId, record.Date, workflowVersion, success: true);
+                                if (outcome.AiDegraded)
+                                {
+                                    // 降級（AI 回覆格式異常）：結論與原文已寫回、次數 +1。算有進度（不觸發本批全滅防線），
+                                    // 但不算完成；同輪不再選到它（不從 attempted 移除），下一輪才輪到下一次嘗試。
+                                    var written = _recordQuery.GetOne(new[] { hostKey }, record.Date);
+                                    var attemptNo = written?.AiDegradedAttempts ?? full.AiDegradedAttempts + 1;
+                                    var stillPending = written?.AiPending ?? !AiDegradation.IsAbandoned(attemptNo);
+                                    Interlocked.Increment(ref counters.Degraded);
+                                    Interlocked.Increment(ref batchSuccessCount);
+                                    if (stillPending) Interlocked.Increment(ref batchDegradedStillPending);
+                                    _runState.ReportProgressDone(Volatile.Read(ref totalDone),
+                                        $"主機 {record.Host} {record.Date:yyyy-MM-dd} AI 降級（第 {attemptNo} 次）");
+                                    Log.Info("主機 {Host} {Date:yyyy-MM-dd} AI 回覆格式異常，已降級為規則層結論（第 {Attempt} 次，{State}）",
+                                        record.Host, record.Date, attemptNo, stillPending ? "下一輪再試" : "已放棄");
+                                    continue;
+                                }
                                 // 寫回後已不是待補；之後若因新證據重標，下一批照常再選得到
                                 lock (attempted) { attempted.Remove(AttemptKey(record)); }
                                 var doneNow = Interlocked.Increment(ref totalDone);
@@ -592,7 +615,7 @@ public class AiAnalysisHostedService : BackgroundService
             else
             {
                 // 估算歸零時下一批改實查，避免新進待補讓進度分母卡在 0
-                var estimate = pendingTotal - batchSuccessCount;
+                var estimate = pendingTotal - (batchSuccessCount - batchDegradedStillPending);
                 pendingEstimate = estimate > 0 ? estimate : null;
             }
         }

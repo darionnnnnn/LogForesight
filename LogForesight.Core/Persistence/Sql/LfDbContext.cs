@@ -189,6 +189,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.WarningCount).HasColumnName("warning_count").HasDefaultValue(0);
             e.Property(x => x.AiAnalyzed).HasColumnName("ai_analyzed").HasDefaultValue(false);
             e.Property(x => x.AiPending).HasColumnName("ai_pending").HasDefaultValue(false);
+            e.Property(x => x.AiDegradedAttempts).HasColumnName("ai_degraded_attempts").HasDefaultValue(0);
             // 日誌來源（AnalysisLogSource 數值）：NetIQ 涵蓋類統計要以 SQL 排除只有 PRTG 的主機日。
             e.Property(x => x.LogSource).HasColumnName("log_source").HasDefaultValue((short)0);
             // 存量回填的判定欄（取代 lf_top_issues 沿用的「record_date 是否為 MinValue」哨兵手法——
@@ -802,6 +803,9 @@ public class DailyRecordRow
     public int WarningCount { get; set; }
     public bool AiAnalyzed { get; set; }
     public bool AiPending { get; set; }
+
+    /// <summary>AI 回覆連續格式異常（降級）的次數；重標待補時歸零，達上限即放棄。↔ <see cref="LogForesight.Core.Models.DailyAnalysisRecord.AiDegradedAttempts"/></summary>
+    public int AiDegradedAttempts { get; set; }
     /// <summary><see cref="LogForesight.Core.Models.AnalysisLogSource"/> 的數值；舊列由 DailyRecordBackfiller 依 ContentJson 回填。</summary>
     public short LogSource { get; set; }
 

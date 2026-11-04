@@ -85,7 +85,8 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         Assert.Equal(2, handler.Requests);
         Assert.False(outcome.AiAnalyzed);
         Assert.False(outcome.Skipped);
-        Assert.Contains("AI 待補", outcome.Headline);
+        Assert.False(outcome.AiDegraded);   // 完全失敗不是降級：文字與待補語意不變
+        Assert.Equal("今日分析摘要暫缺（AI 服務未回應，AI 待補）", outcome.Headline);
     }
 
     private sealed class SequenceHandler : HttpMessageHandler
@@ -147,7 +148,9 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
 
         var outcome = await service.RetryAiAsync(pending, historyDays: 14);
 
-        Assert.Equal("AI 回覆格式異常，以下為原始內容", outcome.Headline);
+        // 降級標題改為規則層結論（不含次數後綴，後綴由寫入端依次數補），並標記 AiDegraded
+        Assert.Equal("disk EventId 153 今日出現 3 次", outcome.Headline);
+        Assert.True(outcome.AiDegraded);
         Assert.Equal("中", outcome.RiskLevel);
         Assert.NotEqual("ai_raise", outcome.RiskBasis);
     }
@@ -161,7 +164,10 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
         var outcome = await service.RetryAiAsync(
             PendingRecord(new List<LogIssueSignature> { RuleHitIssue() }, riskLevel: "中"), historyDays: 14);
 
-        Assert.Equal(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        Assert.Equal("disk EventId 153 今日出現 3 次", outcome.Headline);
+        Assert.NotEqual(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        Assert.True(outcome.AiDegraded);
+        // 常數保留給歷史資料（匯出仍用它辨認存量案例）
         Assert.Equal("AI 回覆格式異常，以下為原始內容", LogAnalysisService.AiFormatAnomalyHeadline);
         Assert.Equal("（AI 回覆經 1 次嘗試仍未通過 JSON 檢查，保留原文供參考）這是一段不合格的回覆", outcome.Summary);
         Assert.Equal("中", outcome.RiskLevel);
@@ -208,7 +214,8 @@ public class LogAnalysisServiceRetryAiTests : IDisposable
             recorder.Finish(0);
         }
 
-        Assert.Equal(LogAnalysisService.AiFormatAnomalyHeadline, outcome.Headline);
+        Assert.Equal("disk EventId 153 今日出現 3 次", outcome.Headline);
+        Assert.True(outcome.AiDegraded);
         var logs = store.GetLogs(runId);
         var degraded = Assert.Single(logs, l => l.Logger == nameof(LogAnalysisService) && l.Message.Contains("降級為原文保留"));
         Assert.Contains("1 次嘗試仍未通過 JSON 檢查）：", degraded.Message);

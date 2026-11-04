@@ -56,8 +56,8 @@ public class LogAnalysisService
     }
 
     /// <summary>
-    /// AI 重試耗盡但有回覆原文時的降級標題（原文保留）。「什麼算一個格式異常案例」就看紀錄標題是否
-    /// **精確等於**這個值——產生處與匯出的查詢共用此常數，不各寫一份字面值。
+    /// 歷史資料的格式異常降級標題（原文保留）。新的降級不再寫入這個標題（改為規則層結論加次數後綴，
+    /// 見 <see cref="AiDegradation"/>）；保留常數是為了讓匯出仍認得存量資料中標題精確等於它的案例。
     /// </summary>
     public const string AiFormatAnomalyHeadline = "AI 回覆格式異常，以下為原始內容";
 
@@ -592,12 +592,14 @@ public class LogAnalysisService
             .Select(desc => new CorrelationFinding { Description = desc, Severity = IssueSeverity.High, ElevatesDayRisk = false, PatternId = "" })
             .ToList();
 
-        var (headline, summary, trendAssessment, action, riskLevel, riskBasisOverride, aiAnalyzed) = await RunMainAnalysisAsync(
+        var main = await RunMainAnalysisAsync(
             pendingRecord.Date, pendingRecord.TopIssues, pendingRecord.ErrorCount, pendingRecord.WarningCount,
             pendingRecord.AuditEventCount, history, pendingRecord.TrendAlerts, correlations,
             pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel,
             _hostId != 0 ? _hostId : pendingRecord.HostId, ct);
-        var riskBasis = riskBasisOverride ?? pendingRecord.RiskBasis;
+        var (headline, summary, trendAssessment, action, riskLevel, aiAnalyzed) =
+            (main.Headline, main.Summary, main.TrendAssessment, main.Action, main.RiskLevel, main.AiAnalyzed);
+        var riskBasis = main.RiskBasisOverride ?? pendingRecord.RiskBasis;
 
         PreparedRiskReport? reportDraft = null;
         List<CategoryDeepDive> deepDives = new();
@@ -652,8 +654,18 @@ public class LogAnalysisService
             pendingRecord.ScreenedTailCount, pendingRecord.ScreeningNotes,
             null, deepDives, uncoveredChecksAddendum, inputPrtgFingerprint,
             ReportPrtgEvidenceFingerprint: reportDraft?.PrtgEvidenceFingerprint,
-            ReportDraft: reportDraft);
+            ReportDraft: reportDraft,
+            AiDegraded: main.Degraded);
     }
+
+    /// <summary>
+    /// <see cref="RunMainAnalysisAsync"/> 的結果。<c>RiskBasisOverride</c>：null＝AI 沒有把風險往上拉，
+    /// 呼叫端應維持原本的 RiskBasis；非 null（恆為 "ai_raise"）＝呼叫端應覆寫 RiskBasis。
+    /// <c>Degraded</c>：AI 重試耗盡仍是格式異常（標題為規則層結論，後綴與次數由寫入端補）。
+    /// </summary>
+    private sealed record MainAnalysisResult(
+        string Headline, string Summary, string TrendAssessment, string Action, string RiskLevel,
+        string? RiskBasisOverride, bool AiAnalyzed, bool Degraded = false);
 
     /// <summary>
     /// 風險事件暫存 → 原始 log（回饋十三輪 C）：欄位形狀足以餵報告產生器
@@ -689,10 +701,7 @@ public class LogAnalysisService
     /// </summary>
     /// <param name="ruleRisk">程式規則層判定的風險下限，AI 只能把它往上拉（見
     /// <see cref="RiskLevels.MoreSevere"/>），不能往下壓</param>
-    /// <returns><c>RiskBasisOverride</c>：null＝AI 沒有把風險往上拉，呼叫端應維持原本的
-    /// RiskBasis；非 null（恆為 "ai_raise"）＝呼叫端應覆寫 RiskBasis</returns>
-    private async Task<(string Headline, string Summary, string TrendAssessment, string Action, string RiskLevel,
-        string? RiskBasisOverride, bool AiAnalyzed)> RunMainAnalysisAsync(
+    private async Task<MainAnalysisResult> RunMainAnalysisAsync(
         DateTime date, List<LogIssueSignature> issues, int errorCount, int warningCount, int auditCount,
         List<DailyAnalysisRecord> history, List<string> trendAlerts, List<CorrelationFinding> correlations,
         bool dataIncomplete, List<string> uncoveredChecks,
@@ -720,21 +729,22 @@ public class LogAnalysisService
                 Log.Warn("{Date:yyyy-MM-dd} AI 回覆的風險等級無法歸一化（原字串：{Raw}），風險維持規則層判定", date, result.Value.RiskLevel);
             }
             var riskLevel = RiskLevels.MoreSevere(normalized, ruleRisk);
-            return (result.Value.Headline, result.Value.Story, result.Value.TrendStory, result.Value.Action,
+            return new MainAnalysisResult(result.Value.Headline, result.Value.Story, result.Value.TrendStory, result.Value.Action,
                 riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
         }
 
         if (result.RawContent.Length > 0)
         {
             // 網路正常但重試 JsonRetryCount 次後仍不合格：保留原文（截斷避免報告膨脹），不當機、不遺失資訊；
-            // 仍算完成 AI 分析，只是白話翻譯品質降級
+            // 仍算完成 AI 分析（AiAnalyzed=true），只是白話翻譯品質降級；標題改用規則層結論，
+            // 次數後綴與「是否仍待補」由寫入端在交易內決定（Degraded=true）
             // 原文是格式不合格的自由文字，不從中推風險（單字比對會把「其中」「中斷」誤判成等級）；風險維持規則層判定
             var riskLevel = ruleRisk;
             Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）：{Error}",
                 date, result.Attempts, result.Error);
-            return (AiFormatAnomalyHeadline,
+            return new MainAnalysisResult(AiDegradation.BuildRuleLayerHeadline(issues),
                 BuildAiFormatAnomalySummary(result.Attempts, result.RawContent),
-                string.Empty, string.Empty, riskLevel, null, true);
+                string.Empty, string.Empty, riskLevel, null, true, Degraded: true);
         }
 
         // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。
@@ -744,7 +754,7 @@ public class LogAnalysisService
         // AiPending 讓「只補跑失敗或未執行」撿得到，但前端對 AiPending 一律顯示「AI 分析中」——
         // 沒有這個標記，失敗的主機日會永久顯示成「分析中」，使用者看不出它其實已經失敗
         Log.Error("{Date:yyyy-MM-dd} 主分析完全失敗，降級為統計模式：{Error}", date, result.Error);
-        return ("今日分析摘要暫缺（AI 服務未回應，AI 待補）",
+        return new MainAnalysisResult("今日分析摘要暫缺（AI 服務未回應，AI 待補）",
             $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。可用排程頁「只補跑失敗或未執行」補回。",
             string.Empty, string.Empty, ruleRisk, null, false);
     }
