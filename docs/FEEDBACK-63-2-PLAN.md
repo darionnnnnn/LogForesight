@@ -364,25 +364,28 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
 ### 定案
 
 - **H-1 數值取數的失敗處理在 `FetchValuesAsync` 單點做**，三個呼叫端自動受惠；不新增設定鍵，常數集中在一個靜態類（`PrtgValueFetchRetryPolicy`）。
-  - **共用暫停**：任一顆碰到可重試失敗（沿用 `PrtgTablePager.IsRetryable`：Timeout／Transport／5xx／429）就把整批「暫停閘」拉起，所有工作在下一顆送出前都要等閘放行；暫停長度依序 15→60→180 秒（第 4 次起維持 180），加 0～20% 隨機誤差；回應若帶 `Retry-After`（秒數或日期）取其與序列值的較大者。暫停期間失敗的顆不再各自計入連續失敗。成功一顆就把序列歸零。
+  - **共用暫停**：任一顆碰到可重試失敗（沿用 `PrtgTablePager.IsRetryable`：Timeout／Transport／5xx／429）就把整批「暫停閘」拉起，所有工作在下一顆送出前（守門 `WaitIfBusyAsync` 之前）都要等閘放行；暫停長度依序 15→60→180 秒（第 4 次起維持 180），加 0～20% 隨機誤差；回應若帶 `Retry-After` 取其與序列值的較大者（由 `PrtgClient` 用 `HttpResponseMessage.Headers.RetryAfter` 讀出秒數或日期，放進 `PrtgClientException.RetryAfter`，取數端不自己解析）。閘已拉起時其他顆的失敗不再疊加序列。成功一顆就把序列歸零。
   - **補抓**：第一輪失敗的 sensor 收進清單，第一輪結束後**一次一顆**補抓一輪（concurrency 1），同樣受暫停閘與配額約束；補抓仍失敗才計入 `failedSensors`。401／403／其他 4xx、Credential 與非 `PrtgClientException` 的失敗不補抓。
-  - **停損**：一趟 `FetchValuesAsync` 的總暫停時間達 15 分鐘，或可重試失敗連續達 20 顆（中間沒有任何成功），就停止這一趟的數值取數：剩餘未送出的顆全部計為失敗、不再送請求，輸出一行 ⚠「PRTG 持續無法回應，本趟停止數值取數（已停止 N 顆），其餘留待下一趟」。停損**不是例外**，呼叫端照舊拿到 `(written, failed)`。
+  - **停損**：一次 `FetchValuesAsync` 的總暫停時間達 15 分鐘，或可重試失敗連續達 10 顆（中間沒有任何成功），就停止這一次的數值取數：剩餘未送出的顆全部計為失敗、不再送請求，輸出一行 ⚠「PRTG 持續無法回應，本趟停止數值取數（已停止 N 顆），其餘留待下一趟」。最壞情況（PRTG 完全不回、逾時 60 秒、併發 2）約 12 分鐘內停損。停損**不是例外**，呼叫端照舊拿到 `(written, failed)`。
+  - **停損後冷卻**：同一個 `PrtgFetchService` 實例在停損後 10 分鐘內，後續的 `FetchValuesAsync` 呼叫**不送任何請求**、直接回「全部失敗」（只在第一次冷卻回絕時輸出一行）。原因：觸發式取數每 30 秒用同一個實例輪詢、回填逐日用同一個實例，沒有冷卻的話每次呼叫都重新累計 10 顆，PRTG 掛掉的 8 小時裡會被反覆打。冷卻到期後下一次呼叫照常嘗試（序列與計數歸零）。
+  - **進度回呼**：`progress` 的總數固定為第一輪的顆數、`done` 只在第一輪推進，補抓輪不再推進（否則 done 會大於 total）。
+  - **新鮮度**：回填的日子若「有目標卻全部失敗」（含停損與冷卻回絕）不記 `PrtgFreshnessStore.Values`，與觸發式取數同一個判準（現況回填一律記，0 筆會累 `ZeroStreak` 把 PRTG 停機標成可疑）。
   - **可觀測**：暫停與補抓寫 Info（不是 Warn，與 A-4 同理）；停損寫 Warn 一行；結尾 ⚠ 那行改為「失敗 N 顆（其中逾時 M、補抓後仍失敗 K）」。
-  - **不做**：不改 `PrtgRequestBudget`、不改守門、不改 `PrtgTablePager`；不把失敗清單寫進資料庫（下一趟的候選由觸發邏輯決定，與現況相同）。
+  - **不做**：不改 `PrtgRequestBudget`、不改守門、不改 `PrtgTablePager`（表格分頁仍只有 A-4 的 2 次重試）；不把失敗清單寫進資料庫（下一趟的候選由觸發邏輯決定，與現況相同）；不新增設定鍵，門檻是常數。
 - **H-2 金鑰復原**
-  - **自動修復**：啟動時 `KeyMismatch` 為真，且 `ProbeSecrets` 對 inventory **每一筆非空密文都解得開**（含 inventory 為空的情況）→ 以目前金鑰指紋覆寫 blob、`KeyMismatch=false`、寫一行 Warn「金鑰指紋已更新為目前金鑰檔（所有憑證已用新金鑰重新輸入）」。有任何一筆解不開就維持現狀（多站台共用資料庫、各自金鑰的情境不得被另一站台覆寫）。
-  - **運行中復原**：`SecretInventory` 全部解得開時 `DecryptFailureSeen` 要能歸零——`CryptoHelper` 新增 `ReevaluateDecryptFailure(inventory)`（全部 `TryDecrypt` 成功才清旗標與 `ReportedFailures`），由設定頁與 Sentinel 儲存成功後呼叫；健康頁因此在重新輸入後即恢復，不必重啟。
+  - **自動修復**：啟動時 `KeyMismatch` 為真，且 `ProbeSecrets` 對 inventory **每一筆非空密文都解得開**（含 inventory 為空的情況；inventory 含停用的 Sentinel 與 SMTP，所以停用的 Sentinel 也要重新輸入或清空密碼，Warn 會列名稱）→ 以目前金鑰指紋覆寫 blob（`FingerprintRecord` 加 `UpdatedAt` 與 `ReplacedFingerprint`，留下可追查的痕跡）、`KeyMismatch=false`、寫一行 Warn「金鑰指紋已更新為目前金鑰檔（所有憑證已用新金鑰重新輸入；原指紋 X）」。有任何一筆解不開就維持現狀（多站台共用資料庫、各自金鑰的情境不得被另一站台覆寫）。inventory 以外沒有其他加密欄位（grep `CryptoHelper.Encrypt` 只有 AI 金鑰、SMTP、PRTG 三種認證、Sentinel 密碼），覆寫不會蓋掉看不見的壞密文。
+  - **運行中復原**：`SecretInventory` 全部解得開時 `DecryptFailureSeen` 要能歸零——`CryptoHelper` 新增 `ReevaluateDecryptFailure(IEnumerable<string> ciphertexts)`（全部 `TryDecrypt` 成功才清旗標與 `ReportedFailures`）；Web 端一個小 helper `CryptoRecovery.Reevaluate(settingsStore, sentinelStore)` 組 inventory 後呼叫它，由 `SystemSettingsService` 的三個會寫密文的儲存入口（一般設定、PRTG 連線、AI）與 `SentinelAdminService.SaveSentinel` 成功後各呼叫一次（同一個 helper，不各寫一份）；健康頁因此在重新輸入後即恢復，不必重啟。`KeyMismatch` 在運行中不變（指紋只在啟動時處理），健康頁文案區分「金鑰不符，重新輸入全部憑證後重啟站台即解除」與「部分憑證解不開」。
   - **遺失辨識**：`TryCreateKeyFile` 在指紋 blob 已非空時被叫到，代表「金鑰檔遺失而新產生」而不是首次啟動：Error 訊息改寫明這一點並點名常見原因（重新部署清掉執行目錄、`DataRoot` 指到部署目錄）；README 部署節加一條「`DataRoot` 放在部署目錄之外，或把 `keys\` 排除在清除範圍」。
 - **H-3 新鮮度警示可行動**
-  - `ScheduleFreshnessDto` 加 `lastRunStatus`（最近一趟已結束的排程取數趟：success／warning／failed／stopped／stuck／null）與 `credentialIssue`（`KeyMismatch || DecryptFailureSeen`）；橫幅在 stale 時多一句：有憑證問題→「最近一趟因憑證無法解密而失敗，請到設定頁重新輸入」並連到設定頁（維護者）或只顯示聯絡管理者（非維護者沿用 `AdminContacts`）；沒有憑證問題→「最近一趟狀態：失敗／停止／卡住，請看排程作業」。
-  - **手動完整執行算數**：`BatchRun` 新增 `Scope`（`full`／`local`／`netiq-hosts`，recorder 由 `RunRequest.Scope` 寫入；舊紀錄 null）；新鮮度的成功條件改為「（排程取數趟）或（手動取數趟且 `Scope==full`）且狀態 success／warning」。AI 趟與範圍縮小的手動趟維持不算。
+  - `ScheduleFreshnessDto` 加 `lastRunStatus`（最近一趟已結束的排程取數趟：success／warning／failed／stopped／stuck／null）與 `credentialIssue`（`KeyMismatch || DecryptFailureSeen`）；橫幅在 stale 時多一句，三種文案：有憑證問題→「最近一趟因憑證無法解密而失敗，請到設定頁重新輸入」，維護者（`hasCapability('Maintain')`）連到設定頁、非維護者沿用既有 `AdminContacts`；沒有憑證問題但有趟次→「最近一趟狀態：失敗／停止／卡住，請看排程作業」；`lastRunStatus` 為 null→「近 14 天沒有任何排程取數執行，請確認站台常駐（IIS 應用程式集區 AlwaysRunning）」。摘要信文字不變。
+  - **手動完整執行算數**：`BatchRun` 新增 `Scope`（`full`／`local`／`netiq-hosts`，recorder 由 `RunRequest.Scope` 寫入；舊紀錄與 AI 趟為 null；BatchRun 是 JSON 列，不動 schema）；新鮮度的成功條件改為「取數趟且狀態 success／warning，且（Trigger 是 schedule，或 Trigger 以 `manual:` 開頭且 `Scope==full`）」，判準收在 `BatchRunExtensions.CountsForFreshness()` 一個出口，`IsScheduledFetch()` 保留給其他呼叫端。AI 趟、`console` 舊趟、範圍縮小的手動趟維持不算；執行紀錄清單 DTO 帶 `scope` 顯示「完整／僅本機／指定主機」。
   - 不改 48 小時門檻、不改確認靜音機制、不改摘要信文字。
 
 ### 改動
 
-- **H-1** `PrtgFetchService.FetchValuesAsync`：抽出 `PrtgValueFetchRetryPolicy`（序列、誤差、停損常數、`ShouldRetry(ex)` 委派 `PrtgTablePager.IsRetryable`、`ParseRetryAfter`）與暫停閘（`PauseGate`：`WaitAsync(ct)`／`RaiseAsync(delay)`／`Reset()`，延遲函式可注入）；`PrtgClientException` 加 `RetryAfter`（`TimeSpan?`，由 `PrtgClient` 在 429／503 讀 `Retry-After` 填入）。
-- **H-2** `CryptoKeyBootstrapper`：`RunCore` 指紋不符時不立即返回，先探測；`ProbeSecrets` 回傳空清單且 `KeyMismatch` → `OverwriteFingerprint`；`TryCreateKeyFile` 前先讀 blob 判斷是否「新產生」。`CryptoHelper.ReevaluateDecryptFailure`；`SystemSettingsService.Save`／`SentinelAdminService` 儲存成功後呼叫。README。
-- **H-3** `BatchRun.Scope`＋`BatchRunRecorder` 寫入；`ScheduleFreshnessService` 條件與 DTO；`layout.js` 橫幅；WEB-SPEC §11 新鮮度一節；說明書 `22-system-health`。
+- **H-1** `PrtgFetchService.FetchValuesAsync`：新檔 `PrtgValueFetchRetry.cs` 放兩個小類——`PrtgValueFetchRetryPolicy`（序列、誤差、停損與冷卻常數、`ShouldRetry(ex)` 委派 `PrtgTablePager.IsRetryable`、連續失敗與總暫停計數、`NextDelay(retryAfter)`）與 `PauseGate`（`WaitAsync(ct)`／`RaiseAsync(delay, ct)`／`Reset()`，延遲函式與時鐘可注入）；`FetchValuesAsync` 改成「第一輪 → 補抓輪 → 彙總」三段，各段是私有方法，不再是一個 100 行的 lambda；實例欄位 `_valueFetchCooldownUntil`。`PrtgClientException` 加 `RetryAfter`（`TimeSpan?`），`PrtgClient` 在非成功狀態碼時讀 `Headers.RetryAfter` 填入。回填 `PrtgBackfillRunner` 兩處 `RecordFreshness` 套「全部失敗不記」。
+- **H-2** `CryptoKeyBootstrapper`：`RunCore` 指紋不符時先探測，探測全過才 `OverwriteFingerprint`（同一個 blob `Mutate`，寫 `UpdatedAt`／`ReplacedFingerprint`）；`TryCreateKeyFile` 前先讀 blob 判斷是否「新產生」並改 Error 文案。`CryptoHelper.ReevaluateDecryptFailure`；Web `CryptoRecovery` helper；四個儲存入口各呼叫一次；健康頁兩種文案（`settings.js:915` 附近）。README 部署節。
+- **H-3** `BatchRun.Scope`＋`BatchRunRecorder` 寫入＋`CountsForFreshness()`；`ScheduleFreshnessService` 條件與 DTO 兩欄；`RunMonitorService` 清單 DTO `scope`；`layout.js` 橫幅三種文案（抽成 `freshnessBannerText(freshness, isMaintainer)` 純函式供行為測試）；WEB-SPEC §11 新鮮度一節；說明書 `22-system-health`（含 AI 版）。
 
 ### 測試 / 驗收（`FullyQualifiedName~PrtgFetchService|FullyQualifiedName~PrtgValueFetch|FullyQualifiedName~PrtgTriggered|FullyQualifiedName~PrtgBackfill|FullyQualifiedName~PrtgClient|FullyQualifiedName~CryptoKeyBootstrapper|FullyQualifiedName~CryptoHelper|FullyQualifiedName~HealthService|FullyQualifiedName~ScheduleFreshness|FullyQualifiedName~HealthController|FullyQualifiedName~BatchRunRecorder|FullyQualifiedName~RunMonitorServiceTests|FullyQualifiedName~UiTests|FullyQualifiedName~JsModuleImport|FullyQualifiedName~BehaviorTests|FullyQualifiedName~ApiTimeout`）
 
@@ -391,19 +394,48 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
   - 連續三顆逾時 → 延遲依序 15／60／180；中間成功一顆後再失敗 → 回到 15。
   - `Retry-After: 120` 的 429 → 暫停 120 秒（大於序列值）；`Retry-After` 為日期格式也解得出。
   - 404 與 403 的顆：不暫停、不補抓、直接計失敗；401 走既有黏住（client 測試已有）。
-  - 停損：連續 20 顆可重試失敗 → 第 21 顆起不再呼叫 client（假 client 呼叫數＝20＋補抓 0）、`failed`＝全部、輸出含「停止數值取數」、Warn 一行；總暫停達 15 分鐘的路徑同樣停損。
+  - 停損：連續 10 顆可重試失敗 → 第 11 顆起不再呼叫 client（假 client 呼叫數＝10、補抓 0）、`failed`＝全部、輸出含「停止數值取數」、Warn 一行；總暫停達 15 分鐘的路徑（注入時鐘）同樣停損。
+  - 冷卻：停損後同一實例立刻再呼叫 → client 呼叫數不變、回全部失敗、輸出只多一行；注入時鐘推進 10 分鐘後再呼叫 → 照常送出。觸發式取數以 `pollSeconds=1`、`singlePass=false` 跑三輪輪詢 → client 總呼叫數＝10（只有第一輪累計到停損）。
+  - 進度：補抓輪存在時 `progress` 最後一筆 `done == total`，且 total 等於第一輪顆數。
+  - 回填新鮮度：某日目標 5 顆全部失敗 → `PrtgFreshnessStore.Values` 不更新（`ZeroStreak` 不變）；同日 1 顆成功 → 更新。
   - 取消：暫停期間取消令牌生效、不再送出。
   - 三個呼叫端：觸發式（全部失敗仍不記新鮮度）、回填（`PrtgBackfillRunner` 既有案全綠）、夜間階段 4（既有案全綠）。
-- H-2（`CryptoKeyBootstrapperTests`）：指紋不符＋全部憑證解得開 → blob 指紋更新、`KeyMismatch=false`、資料不變；指紋不符＋一筆解不開 → 不更新、`KeyMismatch=true`；inventory 為空＋指紋不符 → 更新；金鑰檔不存在且 blob 非空 → Error 訊息含「金鑰檔遺失」。`CryptoHelperTests`：旗標為真後 `ReevaluateDecryptFailure` 全部成功 → 旗標假、`ReportedFailures` 清空；有一筆失敗 → 旗標維持真。`SystemSettingsService` 儲存成功後呼叫一次（替身計數）。
-- H-3（`ScheduleFreshnessTests`）：手動 `Scope=full` 成功 → 不 stale；手動 `Scope=local` 成功 → 仍 stale；舊紀錄 `Scope=null` 的手動趟不算；`lastRunStatus` 取最近一趟已結束的排程取數趟；`credentialIssue` 兩值。`BatchRunRecorder`：三種 `RunScope` 各寫對應字串。行為測試（`layout` 橫幅切函式）：憑證問題＋維護者 → 含設定頁連結；非維護者 → 不含連結、含聯絡人；無憑證問題 → 含狀態句。`RunMonitorService` DTO 帶 `scope`（執行紀錄清單可看）。
+- H-2（`CryptoKeyBootstrapperTests`）：指紋不符＋全部憑證解得開 → blob 指紋更新且 `ReplacedFingerprint` 等於舊值、`KeyMismatch=false`、密文資料逐欄不變；指紋不符＋一筆解不開（含一台**停用**的 Sentinel）→ 不更新、`KeyMismatch=true`；inventory 為空＋指紋不符 → 更新；金鑰檔不存在且 blob 非空 → Error 訊息含「金鑰檔遺失」，blob 非空且金鑰檔存在 → 訊息不含它。`CryptoHelperTests`：旗標為真後 `ReevaluateDecryptFailure` 全部成功 → 旗標假、`ReportedFailures` 清空（再失敗一次會再記 Error 一次）；有一筆失敗 → 旗標維持真。`SystemSettingsServiceTests`／`SentinelAdminServiceTests`：四個儲存入口成功後 helper 各被叫一次（替身計數），儲存失敗（驗證例外）不叫。健康頁靜態測試：兩種文案字串存在。
+- H-3（`ScheduleFreshnessTests`）：手動 `Scope=full` 成功 → 不 stale；手動 `Scope=local`、`netiq-hosts` 成功 → 仍 stale；舊紀錄 `Scope=null` 的手動趟與 `console` 趟不算；手動 full 但 `failed` 不算；`lastRunStatus` 取最近一趟已結束的排程取數趟（手動趟不影響它）、沒有趟次為 null；`credentialIssue` 兩值。`BatchRunRecorder`：三種 `RunScope` 各寫對應字串、AI 趟為 null；`BatchRunStore` JSON 往返保留 `Scope`。行為測試（`freshnessBannerText` 純函式，登錄 `InlineData`）：憑證問題＋維護者 → 含設定頁連結；非維護者 → 不含連結；無憑證問題＋`failed` → 含「失敗」；`lastRunStatus` null → 含「常駐」。`HealthControllerFreshnessCacheTests` 既有快取案全綠。`RunMonitorService` 清單 DTO 帶 `scope` 三值文字。
 - 瀏覽器：本機以 Stub 製造 stale（調 `EnabledAt` 與一筆失敗排程趟）看橫幅兩種文案、375px 不撐破；PRTG 無法連線的實測交使用者（寫進體檢交接）。
-- 突變：H-1 暫停閘拿掉（各顆各自等）→ 「其餘 9 顆在閘放行後才送出」案紅；停損計數不歸零 → 「中間成功一顆後再失敗回到 15」案紅；H-2 探測有失敗仍覆寫 → 「一筆解不開不更新」案紅；H-3 手動 `local` 也算 → 「仍 stale」案紅。
+- 突變：H-1 暫停閘拿掉（各顆各自等）→ 「其餘 9 顆在閘放行後才送出」案紅；停損計數不歸零 → 「中間成功一顆後再失敗回到 15」案紅；冷卻拿掉 → 「三輪輪詢總呼叫數＝10」案紅；H-2 探測有失敗仍覆寫 → 「一筆解不開不更新」案紅；H-3 手動 `local` 也算 → 「仍 stale」案紅。
+
+### 審查（第二版，實作前）
+
+四個角度各自看過定案、改動與驗收，以下是抓到並已吸收進上文的缺口；沒列的代表看過但沒有要改。
+
+| 角度 | 缺口 | 處置 |
+|---|---|---|
+| 程式面 | 停損只管「一次呼叫」，觸發式每 30 秒、回填逐日都用同一個實例重叫，PRTG 掛掉的 8 小時會被反覆打 10 顆 | 加「停損後冷卻 10 分鐘」（實例層），驗收以三輪輪詢的總呼叫數鎖住 |
+| 程式面 | 補抓輪會讓 `progress` 的 `done` 超過 `total` | 補抓不推進進度 |
+| 程式面 | `Retry-After` 日期格式自己解析是重複造輪 | 用 `HttpResponseMessage.Headers.RetryAfter`，在 `PrtgClient` 讀、例外帶出 |
+| 程式面（DRY） | 運行中復原要在四個儲存入口呼叫 | 一個 `CryptoRecovery` helper，入口只呼叫 |
+| 程式面（SRP） | `FetchValuesAsync` 的 lambda 已近 100 行，再塞暫停與補抓會更難讀 | 拆三段私有方法；暫停閘與政策各自一個小類、可單測 |
+| 使用者（值班） | PRTG 完全不回時到底多久放棄？原定連續 20 顆配 60 秒逾時要 20 分鐘以上 | 改連續 10 顆，寫明最壞約 12 分鐘；說明書寫這個數字 |
+| 使用者（值班） | 橫幅只說「失敗」仍不知道做什麼；站台根本沒跑（IIS 回收）是另一種常見原因 | 三種文案，含「沒有任何執行→確認常駐」 |
+| 使用者（尖銳） | 「我停用的 Sentinel 也要重輸密碼才解除金鑰不符？」 | 是，因為 inventory 含全部密文；Warn 會列名稱，說明書寫清楚「重新輸入或清空」 |
+| 使用者（尖銳） | 「重新輸入後健康頁還是紅的」 | 運行中復原清旗標；`KeyMismatch` 要重啟才清，文案明講 |
+| 管理者 | 自動覆寫金鑰指紋是安全相關動作，不能無痕 | blob 記 `UpdatedAt`／`ReplacedFingerprint`，Warn 帶原指紋 |
+| 管理者 | 回填期間 PRTG 停機會把 `ZeroStreak` 累上去、新鮮度標成可疑 | 回填「全部失敗不記新鮮度」，與觸發式同判準 |
+| 管理者 | 手動趟算數的判準散在兩處會再漂移 | 收成 `CountsForFreshness()` 單一出口 |
+| 上帝視角 | H-1 讓激進策略的夜間階段 4 最多多出約 12 分鐘＋補抓；保守策略不跑階段 4，不受影響 | 接受，寫進 PRTG-SPEC §3 與說明書 |
+| 上帝視角 | 表格分頁（結構同步）仍只有 A-4 的 2 次重試，沒有共用暫停 | 明確不做（表格分頁已有 pager 層重試與配額）；寫在不做清單 |
+| 上帝視角 | `BatchRun.Scope` 是新欄位：匯出、`RunExportService` 的趟次分類、`RunDayTimingBuilder` 都讀 BatchRun | 只新增不改既有欄位語意；匯出本輪不帶 `scope`（BACKLOG 一條：診斷匯出補 `scope`） |
+| 上帝視角 | 多站台共用資料庫、各自金鑰：A 站全部重輸後覆寫指紋，B 站變成「不符且解不開」 | 正確行為（B 本來就解不開），README 寫明共用資料庫必須共用金鑰 |
+| 上帝視角 | H 三項彼此獨立、與 A～G 只共用 `SecretInventory`、`PrtgTablePager.IsRetryable`、`BatchRunStatus` | 可各自提交；順序 H-1 → H-2 → H-3，每項驗證過即 push |
 
 ## 明確不做（本輪定案）
 
 - **改提示詞、`response_format` 改 `json_schema`、調 `AiMaxTokens`**：等 B-a 的一夜證據。判讀準則先寫好：`finish_reason=length` 佔比高 → 先調 `AiMaxTokens`；`reasoning_content` 有值且 `content` 為 `[]` → 文法與思考衝突成立 → 評估 `json_schema` 或關思考。
 - **新增 PRTG 結局值**、**逐顆 sensor 取數重試**、**PRTG 停止重新評估對應存在前的日子**（記 BACKLOG）、**設定頁重排版面**、**代號對照表**、**serverAdmin 可見輸出**。
 - **Security 記錄檔警告改豁免**：那是真的盲區，不豁免；說明書寫怎麼消。
+- **表格分頁（結構同步、狀態變更）加共用暫停與停損**：已有 pager 層 2 次重試與請求配額；數值取數才是逐顆、數量大、沒有任何重試的那一路（批次H-1）。
+- **摘要信的新鮮度文字帶原因、診斷匯出帶 `scope`**：本輪只改站內橫幅；兩條記 BACKLOG。
 
 ## 規劃完成後複檢（第二版）
 
