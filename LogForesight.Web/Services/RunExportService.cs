@@ -508,7 +508,7 @@ public sealed class RunExportService : IRunExportService
                         .Select(kv => new ExportTokenCountDto(Lit(kv.Key), kv.Value)).ToList(),
                     UndecryptableSecrets = _m.UndecryptableSecrets.Select(Lit).ToList(),
                     Notice = Lit("主機、帳號、IP、網址、路徑、SID 與密鑰已換成代號，代號只在本檔內有效、檔案內沒有對照表；"
-                                 + "自由文字（訊息樣本、堆疊、AI 回覆與問題訊息）無法保證完全遮除，含空白的人名若不在系統字典內，後半可能漏遮。")
+                                 + "自由文字（訊息樣本、堆疊、AI 回覆與問題訊息）無法保證完全遮除，含空白的人名若不在系統字典內，後半可能漏遮；群組與角色名稱若在兩字以內不會被遮。")
                 },
                 SignalTotals = new ExportSignalTotalsDto
                 {

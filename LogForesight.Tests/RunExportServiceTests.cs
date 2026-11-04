@@ -812,6 +812,20 @@ public class RunExportServiceTests
     }
 
     [Fact]
+    public void F4_notice說明短名稱不遮()
+    {
+        using var h = new RunExportHarness();
+        h.AddRun();
+
+        var (root, _, doc) = h.Export();
+        using (doc)
+        {
+            Assert.Contains("群組與角色名稱若在兩字以內不會被遮",
+                root.GetProperty("meta").GetProperty("deidentification").GetProperty("notice").GetString());
+        }
+    }
+
+    [Fact]
     public void 解不開的憑證仍可匯出_名稱寫進meta且不含值()
     {
         using var h = new RunExportHarness();

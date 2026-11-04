@@ -70,8 +70,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
 
     private static readonly Regex BearerRx = new(@"(?<k>\bBearer\s+)[A-Za-z0-9\-._~+/]+=*", OptI, RegexTimeout);
 
-    // 要求含數字或 +/= 才當成 Basic 憑證，避免把 "Basic configuration" 這類英文詞組當密鑰
-    private static readonly Regex BasicRx = new(@"(?<k>\bBasic\s+)(?=[A-Za-z0-9+/]*[0-9+/=])[A-Za-z0-9+/]{8,}={0,2}", OptI, RegexTimeout);
+    private static readonly Regex BasicRx = new(@"(?<k>\bBasic\s+)(?<v>[A-Za-z0-9+/]{8,}={0,2})", OptI, RegexTimeout);
 
     // 密鑰類參數名＝值（URL 查詢字串、設定行、JSON 片段都涵蓋）。值為引號包起來的整段，或到空白／分隔符為止
     private static readonly Regex SecretKvRx = new(
@@ -87,8 +86,9 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     private static readonly Regex UncRx = new(
         @"\\\\(?<s>[A-Za-z0-9_.$\-]+)(?<r>(?:\\[^\s\\""'<>|:*?]*)*)", Opt, RegexTimeout);
 
+    // 帳號段不可回溯：HKLM\Software\Microsoft 若能回溯，會被切成 HKLM＋Softwar 而把路徑遮壞
     private static readonly Regex DomainUserRx = new(
-        @"(?<![A-Za-z0-9_\\:/.$\-])(?<d>[A-Za-z][A-Za-z0-9_\-]{1,30})\\(?<u>[A-Za-z0-9_$][A-Za-z0-9_.$\-]{0,63})(?![\\/])", Opt, RegexTimeout);
+        @"(?<![A-Za-z0-9_\\:/.$\-])(?<d>[A-Za-z][A-Za-z0-9_\-]{1,30})\\(?<u>(?>[A-Za-z0-9_$][A-Za-z0-9_.$\-]{0,63}))(?![\\/])", Opt, RegexTimeout);
 
     private static readonly Regex UserProfileRx = new(
         @"(?<k>(?<![A-Za-z0-9])[A-Za-z]:\\Users\\|/home/|/Users/)(?<n>[^\\/\s:*?""<>|]+)", OptI, RegexTimeout);
@@ -205,6 +205,9 @@ public sealed class RunExportDeidentifier : IRunExportMasker
             secrets.Add(raw);
             var escaped = Uri.EscapeDataString(raw);
             if (!string.Equals(escaped, raw, StringComparison.Ordinal)) secrets.Add(escaped);
+            // 表單編碼（空白→+）與 URL 編碼只差在這裡
+            var formEncoded = System.Net.WebUtility.UrlEncode(raw);
+            if (!string.Equals(formEncoded, raw, StringComparison.Ordinal)) secrets.Add(formEncoded);
         }
 
         _secrets = secrets.Distinct(StringComparer.Ordinal).OrderByDescending(x => x.Length).ToList();
@@ -214,6 +217,13 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     public static RunExportDeidentifier Create(RunExportDeidentifierSource source) => new(source);
 
     // ===== 字典建構 =====
+
+    /// <summary>主機、帳號、顯示名稱的最短長度：兩字中文姓名與 DB 這種主機名都是識別資訊，要遮</summary>
+    private const int MinIdentifierLength = 2;
+
+    /// <summary>群組、角色、站台描述的最短長度：這些是自由取的名稱，「成功」「DB」這類短詞多半是一般用語，
+    /// 進字典會把訊息裡的常見詞整批換掉（看不懂比漏遮這種非身分資訊更傷）</summary>
+    private const int MinDescriptiveLength = 3;
 
     private static string Lower(string s) => s.ToLowerInvariant();
 
@@ -231,7 +241,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         var sentinelEntry = (string? n) => new Entry(Kinds.Sentinel, $"s:{Lower(n!.Trim())}");
         if (!string.IsNullOrWhiteSpace(h.NetiqServer)) AddText(h.NetiqServer, sentinelEntry(h.NetiqServer));
         if (!string.IsNullOrWhiteSpace(h.OrphanedFromSentinel)) AddText(h.OrphanedFromSentinel, sentinelEntry(h.OrphanedFromSentinel));
-        if (!string.IsNullOrWhiteSpace(h.RoleDesc)) AddText(h.RoleDesc, new Entry(Kinds.Role, $"r:{Lower(h.RoleDesc.Trim())}"));
+        if (!string.IsNullOrWhiteSpace(h.RoleDesc)) AddText(h.RoleDesc, new Entry(Kinds.Role, $"r:{Lower(h.RoleDesc.Trim())}"), MinDescriptiveLength);
     }
 
     private void AddUser(DeidentifierUser u)
@@ -254,7 +264,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     private void AddGroupName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return;
-        AddText(name, new Entry(Kinds.Group, $"g:{Lower(name.Trim())}"));
+        AddText(name, new Entry(Kinds.Group, $"g:{Lower(name.Trim())}"), MinDescriptiveLength);
     }
 
     private void AddDevice(DeidentifierPrtgDevice d)
@@ -276,7 +286,7 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     private void AddSettings(DeidentifierSettings s)
     {
         foreach (var n in s.Names)
-            if (!string.IsNullOrWhiteSpace(n)) AddText(n, new Entry(Kinds.Domain, $"dom:{Lower(n.Trim())}"));
+            if (!string.IsNullOrWhiteSpace(n)) AddText(n, new Entry(Kinds.Domain, $"dom:{Lower(n.Trim())}"), MinDescriptiveLength);
         foreach (var d in s.Domains)
             if (!string.IsNullOrWhiteSpace(d)) AddText(d, new Entry(Kinds.Domain, $"dom:{Lower(d.Trim())}"));
         foreach (var a in s.Accounts)
@@ -374,11 +384,11 @@ public sealed class RunExportDeidentifier : IRunExportMasker
     }
 
     /// <summary>放進字典（先登錄者優先；空白、單一字元、保留詞不進）</summary>
-    private void AddText(string? text, Entry entry)
+    private void AddText(string? text, Entry entry, int minLength = MinIdentifierLength)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         var t = text.Trim();
-        if (t.Length < 2 || KeepWords.Contains(t)) return;
+        if (t.Length < minLength || KeepWords.Contains(t)) return;
 
         var key = Lower(t);
         if (!_entries.TryAdd(key, entry)) return;
@@ -671,7 +681,12 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         if (s.IndexOf("earer", StringComparison.OrdinalIgnoreCase) >= 0)
             s = BearerRx.Replace(s, m => { CountSecret(); return m.Groups["k"].Value + Kinds.Secret; });
         if (s.IndexOf("asic", StringComparison.OrdinalIgnoreCase) >= 0)
-            s = BasicRx.Replace(s, m => { CountSecret(); return m.Groups["k"].Value + Kinds.Secret; });
+            s = BasicRx.Replace(s, m =>
+            {
+                if (!LooksLikeBase64Credential(m.Groups["v"].Value)) return m.Value;
+                CountSecret();
+                return m.Groups["k"].Value + Kinds.Secret;
+            });
 
         if (s.IndexOfAny(new[] { '=', ':' }) >= 0)
         {
@@ -687,6 +702,16 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         }
 
         return s;
+    }
+
+    /// <summary>
+    /// Basic 後面接的是不是憑證：含數字或 +/= 就是；純字母時要長度是 4 的倍數且大小寫混合
+    /// （<c>dXNlcjpwYXNz</c> 是，<c>configuration</c>、<c>Authentication</c> 這類英文詞組不是）。
+    /// </summary>
+    private static bool LooksLikeBase64Credential(string value)
+    {
+        if (value.Any(c => char.IsAsciiDigit(c) || c is '+' or '/' or '=')) return true;
+        return value.Length % 4 == 0 && value.Skip(1).Any(char.IsAsciiLetterUpper) && value.Any(char.IsAsciiLetterLower);
     }
 
     private void CountSecret()
@@ -819,6 +844,11 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         return @"\\" + Token(Kinds.Host, $"n:{Lower(server)}") + m.Groups["r"].Value;
     }
 
+    /// <summary>登錄機碼的根（HKLM\Software）不是網域\帳號</summary>
+    private static bool IsRegistryHive(string value) =>
+        value.StartsWith("HKEY_", StringComparison.OrdinalIgnoreCase)
+        || value.ToUpperInvariant() is "HKLM" or "HKCU" or "HKCR" or "HKU" or "HKCC";
+
     private string ReplaceDomainUser(Match m)
     {
         var d = m.Groups["d"].Value;
@@ -829,6 +859,8 @@ public sealed class RunExportDeidentifier : IRunExportMasker
         if (u.Length == 0 || u.All(char.IsAsciiDigit)) return m.Value;
         var ext = u.LastIndexOf('.');
         if (ext > 0 && FileExtensions.Contains(u[(ext + 1)..])) return m.Value;
+
+        if (IsRegistryHive(d)) return m.Value;
 
         var maskedDomain = IsTokenLike(d) || KeepDomains.Contains(d) || KeepWords.Contains(d)
             ? d

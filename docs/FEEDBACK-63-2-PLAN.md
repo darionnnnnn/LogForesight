@@ -1,7 +1,7 @@
 # LogForesight 第 63-2 輪規劃：第一份診斷匯出的回饋（AI 格式異常、憑證解不開、執行時間、儀表板與設定頁）
 
-> 狀態：規劃中（2026-11-03 三視角審查後第二版），等第 63 輪併 dev 完成後自 dev 開 `feature/feedback-63-2`
-> 基準：dev（第 63 輪併入後的 merge commit；全量數字見第 63 輪 PLAN 終檢節）
+> 狀態：實作中（`feature/feedback-63-2`）
+> 基準：dev@0bf12e40（7,956 通過／11 略過，Windows）
 > 來源：使用者 2026-11-03 五項重點，加上第一份診斷匯出檔（14 天、站台 1.0.53.2、13 台主機、18 趟）的分析
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度選 Sonnet 5.5 或 Haiku 5.5；同一 checkout 一次一個改檔代理；主代理獨立重驗
 > 設計面：套用 `ui-ux-pro-max`（使用者確認）；檢索結果只有表單 label 綁定（#43）、表格不撐破版面（#71）、動作回饋（#61）三條相關；版面判斷以 `docs/DESIGN-SYSTEM.md` 與 WEB-SPEC §8.6a 為準
@@ -123,8 +123,8 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
 - **F-1** `AddText(text, entry, minLength)`：由登錄端依種類給最小長度；CJK 與 ASCII 各算自己的字數。
 - **F-2** `DomainUserRx` 的帳號段改為不可回溯（atomic group）且後面不得接 `\`／`/`；登錄 hive（`HKLM`、`HKCU`、`HKCR`、`HKU`、`HKCC`、`HKEY_*`）進 `KeepDomains` 作第二道。
 - **F-3** `AdSearchBase` 的每個 `DC=` 標籤與其串接（`brk`、`brk.local`）都進網域字典。
-- **F-4** `meta.deidentification.notice` 補「群組與角色名稱若是三字以內的常見詞不會被遮」。
-- **F-5** `Basic` 後長度 ≥ 16 且可 base64 解碼者就遮（不再要求含數字）；密鑰編碼變體加表單編碼（空白→`+`）。
+- **F-4** `meta.deidentification.notice` 補「群組與角色名稱若在兩字以內不會被遮」。
+- **F-5** `Basic` 後純字母者：長度是 4 的倍數且大小寫混合就遮（不再要求含數字；實作時發現原寫的「≥ 16」會放過 `dXNlcjpwYXNz`）；密鑰編碼變體加表單編碼（空白→`+`）。
 
 ### 測試 / 驗收（`FullyQualifiedName~RunExportDeidentifier|FullyQualifiedName~RunExportService`）
 

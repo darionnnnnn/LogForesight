@@ -84,6 +84,26 @@ public sealed record DeidentifierSettings
     private const string DefaultBrandSubtitle = "事件日誌預警";
 
     /// <summary>
+    /// AD 搜尋基準的網域名：<c>DC=brk,DC=local</c> → <c>brk.local</c>、<c>brk</c>。事件訊息常只印 NetBIOS 短名，
+    /// 設定裡沒有獨立欄位，這是唯一來源。最後一段是頂級網域（local、com）不單獨收，短於 3 字的標籤也不收，避免遮掉一般用語。
+    /// </summary>
+    private static IEnumerable<string?> AdDomainNames(string? searchBase)
+    {
+        if (string.IsNullOrWhiteSpace(searchBase)) yield break;
+
+        var labels = searchBase.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(part => part.StartsWith("DC=", StringComparison.OrdinalIgnoreCase))
+            .Select(part => part[3..].Trim())
+            .Where(label => label.Length > 0)
+            .ToList();
+        if (labels.Count == 0) yield break;
+
+        yield return string.Join('.', labels);
+        foreach (var label in labels.Take(labels.Count - 1))
+            if (label.Length >= 3) yield return label;
+    }
+
+    /// <summary>
     /// 由系統設定投影。預設的產品名稱與副標題不是站台識別，不放進字典
     /// （否則「LogForesight」這個詞在每一則訊息都被遮掉，分析價值歸零）；改過的才算。
     /// </summary>
@@ -96,6 +116,7 @@ public sealed record DeidentifierSettings
 
         var domains = new List<string?> { s.SmtpServer, s.AdSearchBase };
         domains.AddRange(s.AdServers ?? new List<string>());
+        domains.AddRange(AdDomainNames(s.AdSearchBase));
 
         var emails = new List<string?> { s.MailFrom };
         emails.AddRange(s.MailRecipients ?? new List<string>());
