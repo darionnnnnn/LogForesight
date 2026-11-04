@@ -12,7 +12,7 @@ import {
     toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit, setSpinnerText, cssVar
 } from '../core/ui.js';
 import { elapsedSinceText, formatDateTime, formatNumber, formatUserName } from '../core/format.js';
-import { dayTimingText, formatDuration, phaseSeconds, renderDayTiming, renderPhaseTimeline } from '../core/run-timeline.js';
+import { formatDuration, phaseSeconds, renderDayTiming, renderDayTimingCell, renderPhaseTimeline } from '../core/run-timeline.js';
 import { prtgHostMapSummary, prtgModuleStateText } from '../core/prtg-scope-labels.js';
 import { appUrl } from '../core/paths.js';
 import { createSeqGuard, pollWhile } from '../core/async-guards.js';
@@ -298,7 +298,7 @@ function renderSummary(summaryPage) {
     renderTable(container, {
         columns: [
             { title: '日期', render: s => s.date },
-            { title: '執行時間', render: s => dayTimingText(s.timing) },
+            { title: '執行時間', render: s => renderDayTimingCell(s.timing) },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
             { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },

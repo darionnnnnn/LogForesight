@@ -9,7 +9,7 @@ import { installDom } from './mini-dom.mjs';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const jsRoot = path.resolve(scriptDir, '..', '..', 'LogForesight.Web', 'wwwroot', 'js');
 installDom();
-const { renderPhaseTimeline, dayTimingText, renderDayTiming, phaseSeconds, formatDuration } =
+const { renderPhaseTimeline, dayTimingText, renderDayTiming, renderDayTimingCell, phaseSeconds, formatDuration } =
     await import(pathToFileURL(path.join(jsRoot, 'core', 'run-timeline.js')).href);
 
 const at = (h, m = 0) => `2026-11-02T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
@@ -122,6 +122,47 @@ const cases = {
         assert.equal(wrap.children.length, 4);
         assert.equal(wrap.children[0].textContent, '本機分析　—');
         assert.equal(wrap.children[1].textContent, 'NetIQ 機房分析　01:00～03:00（2 時 0 分）');
+    },
+
+    dayTimingTwoLines() {
+        const timing = { firstStartedAt: at(1), lastFinishedAt: at(1, 3), totalSeconds: 131, fetchSeconds: 44, followUpAiSeconds: 87, otherAiRuns: 0, interruptedCount: 0 };
+        const cell = renderDayTimingCell(timing);
+        assert.equal(cell.children.length, 2);
+        assert.equal(cell.children[0].textContent, '01:00～01:03（2 分 11 秒）');
+        assert.equal(cell.children[1].textContent, '取數 44 秒 · AI 1 分 27 秒');
+        assert.ok(cell.children[1].classList.contains('small'));
+        assert.ok(cell.children[1].classList.contains('text-muted'));
+        const withOther = renderDayTimingCell({ ...timing, otherAiRuns: 2, otherAiSeconds: 2400 });
+        assert.ok(withOther.children[1].textContent.includes('另有 AI 補跑 2 趟（'));
+        // 沒有第二行內容時維持純文字
+        assert.equal(renderDayTimingCell({ firstStartedAt: at(1), lastFinishedAt: at(2), totalSeconds: 3600, interruptedCount: 0 }), '01:00～02:00（1 時 0 分）');
+    },
+
+    dayTimingOtherAiOnlyDay() {
+        const timing = { totalSeconds: null, otherAiRuns: 1, otherAiSeconds: 1800, interruptedCount: 0 };
+        assert.ok(dayTimingText(timing).startsWith('AI 補跑 1 趟（'));
+        assert.equal(renderDayTimingCell(timing), dayTimingText(timing));
+        assert.equal(renderDayTimingCell(null), '—');
+        assert.equal(dayTimingText({ totalSeconds: null, otherAiRuns: 0, interruptedCount: 0 }), '—');
+    },
+
+    dayTimingLegacyNoPhases() {
+        const wrap = renderDayTiming({ fetchRuns: 2, fetchRunsWithoutPhases: 2, totalSeconds: 7200, firstStartedAt: at(1), lastFinishedAt: at(6), branches: [] });
+        assert.equal(wrap.children[0].textContent, '本機分析　無階段資料（升級前紀錄）');
+        assert.equal(wrap.children[1].textContent, 'NetIQ 機房分析　無階段資料（升級前紀錄）');
+        assert.ok(wrap.children[2].textContent.includes('無階段資料（升級前紀錄）'));
+        assert.equal(wrap.children[3].textContent, 'AI 分析　—');
+        // 新舊混合不標示；當天完全沒有趟次是「—」
+        const mixed = renderDayTiming({ fetchRuns: 2, fetchRunsWithoutPhases: 1, branches: [] });
+        assert.equal(mixed.children[0].textContent, '本機分析　—');
+        assert.equal(renderDayTiming(null).children[0].textContent, '本機分析　—');
+    },
+
+    dayTimingTotalRow() {
+        const wrap = renderDayTiming({ firstStartedAt: at(1), lastFinishedAt: at(1, 3), totalSeconds: 131, branches: [] });
+        assert.equal(wrap.children.length, 5);
+        assert.equal(wrap.children[4].textContent, '總計　01:00～01:03（2 分 11 秒）');
+        assert.equal(renderDayTiming({ branches: [] }).children.length, 4);
     }
 };
 

@@ -101,8 +101,16 @@ public class RunDayTimingBuilderTests
         Assert.Equal(7200, timing.TotalSeconds);
     }
 
+    private static BatchRun AiRun(DateTime from, DateTime? to, string? trigger, params RunPhaseRecord[] phases)
+    {
+        var run = Run(from, to, phases);
+        run.JobType = BatchRun.JobTypeAi;
+        run.Trigger = trigger!;
+        return run;
+    }
+
     [Fact]
-    public void AI趟只進AI那一路_不算進取數總耗時與起訖()
+    public void 非跟隨AI趟只進AI那一路_不算進取數總耗時與起訖_另列OtherAiRuns()
     {
         var ai = Run(At(7), At(9), Phase(RunTimingPhases.Ai, At(7), At(9)));
         ai.JobType = BatchRun.JobTypeAi;
@@ -113,5 +121,127 @@ public class RunDayTimingBuilderTests
         Assert.Equal(At(2), timing.LastFinishedAt);
         Assert.Equal(3600, timing.TotalSeconds);
         Assert.Equal(7200, timing.Branches.Single(b => b.Key == RunTimingPhases.Ai).Seconds);
+        Assert.Equal(1, timing.OtherAiRuns);
+        Assert.Equal(7200, timing.OtherAiSeconds);
+        Assert.Null(timing.FollowUpAiSeconds);
+        Assert.Equal(3600, timing.FetchSeconds);
+    }
+
+    [Fact]
+    public void 取數44秒加跟隨AI87秒不重疊_總計131秒_最晚結束涵蓋AI()
+    {
+        var fetch = Run(At(1), At(1).AddSeconds(44), Phase(RunTimingPhases.Local, At(1), At(1).AddSeconds(44)));
+        var ai = AiRun(At(1).AddSeconds(60), At(1).AddSeconds(147), BatchRunTriggers.FetchFollowUp,
+            Phase(RunTimingPhases.Ai, At(1).AddSeconds(60), At(1).AddSeconds(147)));
+
+        var timing = RunDayTimingBuilder.Build(new[] { fetch, ai })!;
+
+        Assert.Equal(131, timing.TotalSeconds);
+        Assert.Equal(44, timing.FetchSeconds);
+        Assert.Equal(87, timing.FollowUpAiSeconds);
+        Assert.Equal(At(1), timing.FirstStartedAt);
+        Assert.Equal(At(1).AddSeconds(147), timing.LastFinishedAt);
+        Assert.Equal(0, timing.OtherAiRuns);
+        Assert.Null(timing.OtherAiSeconds);
+    }
+
+    [Fact]
+    public void 跟隨AI與取數重疊只算一次()
+    {
+        var fetch = Run(At(1), At(1, 10), Phase(RunTimingPhases.Local, At(1), At(1, 10)));
+        var ai = AiRun(At(1, 5), At(1, 20), BatchRunTriggers.FetchFollowUp, Phase(RunTimingPhases.Ai, At(1, 5), At(1, 20)));
+
+        var timing = RunDayTimingBuilder.Build(new[] { fetch, ai })!;
+
+        Assert.Equal(20 * 60, timing.TotalSeconds);
+        Assert.Equal(10 * 60, timing.FetchSeconds);
+        Assert.Equal(15 * 60, timing.FollowUpAiSeconds);
+    }
+
+    [Fact]
+    public void 白天手動AI趟進OtherAiRuns_不進總計與起訖()
+    {
+        var fetch = Run(At(1), At(2), Phase(RunTimingPhases.Local, At(1), At(2)));
+        var manual = AiRun(At(14), At(14, 30), "manual", Phase(RunTimingPhases.Ai, At(14), At(14, 30)));
+        var schedule = AiRun(At(15), At(15, 10), BatchRunTriggers.Schedule, Phase(RunTimingPhases.Ai, At(15), At(15, 10)));
+
+        var timing = RunDayTimingBuilder.Build(new[] { fetch, manual, schedule })!;
+
+        Assert.Equal(3600, timing.TotalSeconds);
+        Assert.Equal(At(2), timing.LastFinishedAt);
+        Assert.Equal(2, timing.OtherAiRuns);
+        Assert.Equal(2400, timing.OtherAiSeconds);
+        Assert.Null(timing.FollowUpAiSeconds);
+    }
+
+    [Fact]
+    public void 跟隨AI趟沒有Phases_AI路用整趟起訖()
+    {
+        var fetch = Run(At(1), At(2), Phase(RunTimingPhases.Local, At(1), At(2)));
+        var ai = AiRun(At(2, 5), At(2, 35), BatchRunTriggers.FetchFollowUp);
+
+        var timing = RunDayTimingBuilder.Build(new[] { fetch, ai })!;
+
+        var branch = timing.Branches.Single(b => b.Key == RunTimingPhases.Ai);
+        Assert.Equal(At(2, 5), branch.From);
+        Assert.Equal(At(2, 35), branch.To);
+        Assert.Equal(1800, branch.Seconds);
+        Assert.Equal(5400, timing.TotalSeconds);
+    }
+
+    [Fact]
+    public void 取數趟全無Phases_FetchRunsWithoutPhases等於趟數()
+    {
+        var timing = RunDayTimingBuilder.Build(new[] { Run(At(1), At(2)), Run(At(5), At(6)) })!;
+
+        Assert.Equal(2, timing.FetchRuns);
+        Assert.Equal(2, timing.FetchRunsWithoutPhases);
+        Assert.Empty(timing.Branches);
+    }
+
+    [Fact]
+    public void 新舊混合_只用有Phases的趟算分路_舊趟仍算總計()
+    {
+        var timing = RunDayTimingBuilder.Build(new[]
+        {
+            Run(At(1), At(2)),
+            Run(At(5), At(6), Phase(RunTimingPhases.Local, At(5), At(5, 30)))
+        })!;
+
+        Assert.Equal(2, timing.FetchRuns);
+        Assert.Equal(1, timing.FetchRunsWithoutPhases);
+        Assert.Equal(1800, timing.Branches.Single().Seconds);
+        Assert.Equal(7200, timing.TotalSeconds);
+    }
+
+    [Fact]
+    public void 異常中斷的跟隨AI趟不計入總計()
+    {
+        var fetch = Run(At(1), At(2), Phase(RunTimingPhases.Local, At(1), At(2)));
+        var ai = AiRun(At(2), At(9), BatchRunTriggers.FetchFollowUp, Phase(RunTimingPhases.Ai, At(2), At(3)));
+        ai.Interrupted = true;
+
+        var timing = RunDayTimingBuilder.Build(new[] { fetch, ai })!;
+
+        Assert.Equal(3600, timing.TotalSeconds);
+        Assert.Equal(At(2), timing.LastFinishedAt);
+        Assert.Equal(1, timing.InterruptedCount);
+        Assert.Null(timing.FollowUpAiSeconds);
+    }
+
+    [Fact]
+    public void 當天只有AI補跑趟_沒有取數趟()
+    {
+        var ai = AiRun(At(14), At(14, 30), "manual", Phase(RunTimingPhases.Ai, At(14), At(14, 30)));
+
+        var timing = RunDayTimingBuilder.Build(new[] { ai })!;
+
+        Assert.Null(timing.FirstStartedAt);
+        Assert.Null(timing.TotalSeconds);
+        Assert.Null(timing.FetchSeconds);
+        Assert.Equal(1, timing.OtherAiRuns);
+        Assert.Equal(1800, timing.OtherAiSeconds);
+        Assert.Equal(0, timing.FetchRuns);
+        Assert.Equal(1800, timing.Branches.Single(b => b.Key == RunTimingPhases.Ai).Seconds);
     }
 }

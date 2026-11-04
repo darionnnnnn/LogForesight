@@ -28,6 +28,10 @@ public class RunsTimelineBehaviorTests
     [InlineData("phaseSecondsIgnoresSkippedAndOpen")]
     [InlineData("dayTimingCellTexts")]
     [InlineData("dayTimingBranchesShowEveryPath")]
+    [InlineData("dayTimingTwoLines")]
+    [InlineData("dayTimingOtherAiOnlyDay")]
+    [InlineData("dayTimingLegacyNoPhases")]
+    [InlineData("dayTimingTotalRow")]
     public void 時間軸與執行時間(string caseName)
     {
         var scriptDir = Path.Combine(FindRepoRoot(), "LogForesight.Tests", "JsBehavior");

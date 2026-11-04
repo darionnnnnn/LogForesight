@@ -115,7 +115,27 @@ public class RunDayTimingDto
 {
     public DateTime? FirstStartedAt { get; set; }
     public DateTime? LastFinishedAt { get; set; }
+    /// <summary>取數趟與跟隨取數 AI 趟的聯集秒數（異常中斷不計）；沒有可計算的趟為 null</summary>
     public int? TotalSeconds { get; set; }
+
+    /// <summary>只有取數趟的聯集秒數（null＝當天沒有已完成的取數趟）</summary>
+    public int? FetchSeconds { get; set; }
+
+    /// <summary>只有跟隨取數 AI 趟的聯集秒數（null＝當天沒有已完成的跟隨趟）</summary>
+    public int? FollowUpAiSeconds { get; set; }
+
+    /// <summary>非跟隨的 AI 趟（排程補跑、手動）趟數；不進起訖與總計</summary>
+    public int OtherAiRuns { get; set; }
+
+    /// <summary>非跟隨 AI 趟的聯集秒數（OtherAiRuns 為 0 時為 null）</summary>
+    public int? OtherAiSeconds { get; set; }
+
+    /// <summary>已完成（非異常中斷）的取數趟數；用來判斷「全部沒有階段資料」</summary>
+    public int FetchRuns { get; set; }
+
+    /// <summary>已完成（非異常中斷）的取數趟中，沒有 Phases 的趟數（升級前紀錄）</summary>
+    public int FetchRunsWithoutPhases { get; set; }
+
     public int InterruptedCount { get; set; }
     public DateTime? LastInterruptedActivityAt { get; set; }
     public List<RunBranchTimingDto> Branches { get; set; } = new();

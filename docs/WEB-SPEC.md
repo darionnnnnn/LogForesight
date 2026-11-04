@@ -3016,9 +3016,14 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
     整列「未執行」，而這張表存在的理由正是「一眼看出昨晚哪幾台沒跑」。`days` 仍代表列數
     （範圍 `[Today-days, Today-1]`），分頁數學不變。今天的執行看狀態卡與「執行紀錄」頁籤
     ——**異常彙總與執行紀錄刻意仍含今天**，它們是事件清單、不是主機×日視角。
-    「執行時間」欄用同一個鍵（當天開跑）：取數趟的最早開始～最晚結束與實際總耗時（聯集，重疊不重複算）；
-    展開列再列本機／NetIQ／PRTG／AI 各路區間與耗時（`RunDayTimingBuilder`）。AI 趟只進 AI 那一路，不進主機×日。
-    異常中斷的趟不計入聯集（結束時刻是站台重啟時刻），只寫趟數與最後活動；舊紀錄沒有階段資料時各路顯示「—」。
+    「執行時間」欄用同一個鍵（當天開跑，跨午夜仍以 `StartedAt.Date` 歸日），兩行呈現：
+    第一行是取數趟與跟隨取數 AI 趟（`Trigger=fetch-followup`）的最早開始～最晚結束與總耗時（聯集，重疊不重複算）；
+    第二行小字「取數 44 秒 · AI 1 分 27 秒」（`FetchSeconds`、`FollowUpAiSeconds`），當天另有非跟隨的 AI 趟（排程補跑、手動）時加「另有 AI 補跑 N 趟（M）」
+    （`OtherAiRuns`、`OtherAiSeconds`），這些趟不進第一行的起訖與總計；當天只有這類 AI 趟時第一行就寫「AI 補跑 N 趟（M）」。
+    `dailyHealth.totalSeconds`（診斷匯出）即第一行的總耗時，含跟隨取數 AI 趟。
+    展開列列本機／NetIQ／PRTG／AI 各路區間與耗時，最後一列「總計」（`RunDayTimingBuilder`）；AI 路在趟沒有階段資料時用整趟起訖。
+    異常中斷的趟不計入聯集（結束時刻是站台重啟時刻），只寫趟數與最後活動；
+    當天已完成的取數趟全部沒有階段資料（升級前紀錄，`FetchRunsWithoutPhases` 等於 `FetchRuns`）時，本機／NetIQ／PRTG 顯示「無階段資料（升級前紀錄）」，新舊混合時只用有階段資料的趟計算；當天完全沒有趟次才是「—」。AI 趟不進主機×日。
   - **異常彙總**（Error/Fatal 按訊息聚合，可切換含 Warn，見本節「異常彙總的欄位」）。
   - **執行紀錄**：`GET api/runs/list?days=N`
     （`RunMonitorService.GetRunList`），點列就地展開階段時間軸（`core/run-timeline.js`：每個階段一條、依整趟比例定位，起訖、耗時、結果都有文字；PRTG 子階段縮排；異常中斷的耗時顯示「—」），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
