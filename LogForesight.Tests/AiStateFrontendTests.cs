@@ -86,6 +86,7 @@ public class AiStateBehaviorTests
     [NodeTheory]
     [InlineData("aiStateOf四態")]
     [InlineData("aiStateOf完全失敗標題只看欄位不看文字")]
+    [InlineData("aiStateOf詳情已清除的列不再說會再試")]
     [InlineData("aiStateOf歷史舊標題與缺欄位維持完成")]
     [InlineData("上限常數是3")]
     [InlineData("降級徽章文字與用色")]

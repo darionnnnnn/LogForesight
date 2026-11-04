@@ -1883,6 +1883,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         var afterRerun = ReadRow(1, date);
         Assert.Equal(0, afterRerun.AiDegradedAttempts);
         Assert.True(afterRerun.AiPending);
+        Assert.DoesNotContain("AI 摘要待補", afterRerun.Headline);   // 次數歸零，標題不能還掛著後綴與徽章矛盾
 
         // ② PRTG 證據變動重標（同風險、指紋變動 → AiAnalyzed=false、AiPending=true）
         await RunAiOnceAsync(service, runState);
@@ -1894,6 +1895,7 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.Equal(0, afterPrtg.AiDegradedAttempts);
         Assert.True(afterPrtg.AiPending);
         Assert.False(afterPrtg.AiAnalyzed);
+        Assert.DoesNotContain("AI 摘要待補", afterPrtg.Headline);
 
         // ③ 統計段 Append 重寫同一列（PRTG 獨立主機日被日誌分析晚到取代）：歸零。
         // AI 未設定（兩邊都不待補）時 PRTG 重標路徑不會介入，歸零只能靠 Append 本身。

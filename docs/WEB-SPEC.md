@@ -2884,7 +2884,7 @@ API：`GET api/admin/calibration/status`、`GET api/admin/calibration/export`
   - **標題與摘要**：標題由規則層結論加後綴組成——結論取命中規則的白話說明，沒有命中規則取最嚴重問題的來源與次數，沒有問題寫「今日偵測到 0 個問題」（上限 80 字）；後綴「（AI 摘要待補，第 N 次）」，放棄後「（AI 摘要已放棄：連續 3 次格式異常）」。摘要欄為「（AI 回覆經 N 次嘗試仍未通過 JSON 檢查，保留原文供參考）」加回覆原文。風險等級維持規則層判定。降級日仍是 `AiAnalyzed=true`，所以 `RiskReportService` 的分類 AI 深析與報告照常產生。
   - **排程趟次計數**：降級計入 `aiFailures`（`aiFailures = Failed + Degraded`），`aiCalls` 照舊含降級；降級算有進度，不觸發本批全滅防線；階段結果與趟次因此為「有警告」，階段說明寫「降級 N 筆（AI 回覆格式異常）」。
   - **兩種「AI 失敗率」**：呼叫層＝`AIService` 單次呼叫最終失敗次數／呼叫次數（診斷行、`signalGroups`）；主機日層＝AI 排程 `aiFailures／aiCalls`（趟次欄位、`runStats`），一個主機日算一次、降級算一次失敗。兩個分母不同，不能相除。
-  - **前端**：記錄 DTO 帶 `aiDegradedAttempts`（含輕量清單列），`core/format.js` 的 `aiStateOf(record)` 是清單、詳情共用的唯一判定，回 `pending`／`degraded`／`abandoned`／`done`，不比對標題；`degraded` 徽章「AI 摘要待補（第 N 次格式異常）」（warning）、`abandoned` 徽章「AI 摘要已放棄」（danger），`pending` 仍是「AI 分析中」。`AI_DEGRADED_MAX_ATTEMPTS` 與後端 `AiDegradation.MaxAttempts` 同為 3，`AiStateUiTests` 比對。AI 服務完全不通而標題含「AI 待補」的存量列，徽章顯示「AI 分析中」。
+  - **前端**：記錄 DTO 帶 `aiDegradedAttempts`（含輕量清單列），`core/format.js` 的 `aiStateOf(record)` 是清單、詳情共用的唯一判定（`detailPruned` 的列不會是 pending／degraded：詳情已清就不再補跑），回 `pending`／`degraded`／`abandoned`／`done`，不比對標題；`degraded` 徽章「AI 摘要待補（第 N 次格式異常）」（warning）、`abandoned` 徽章「AI 摘要已放棄」（danger），`pending` 仍是「AI 分析中」。`AI_DEGRADED_MAX_ATTEMPTS` 與後端 `AiDegradation.MaxAttempts` 同為 3，`AiStateUiTests` 比對。AI 服務完全不通而標題含「AI 待補」的存量列，徽章顯示「AI 分析中」。
   成功寫回的主機日從本輪 `attempted` 集合移除，失敗者保留到下一輪。完整性閘門（PRTG 證據指紋、事後追加 finding 重標待補、隔晚重判）見 docs/PRTG-SPEC.md §3。
 - **AI 呼叫節流**：全站單一 `IAiRequestGate`（Core `AiRequestGate`，DI 單例）——互動車道（`WebAiService` 的互動與對話兩個實例）
   同時 2 條、排隊逾 5 秒視同失敗走現行降級（實例自己的佇列與閘道各以 5 秒為上限——閘道在佇列之後取，只限閘道等於沒限）；背景車道（取數執行內的週檢、AI 排程每輪共用的一個實例、工作流恢復；取數路徑的深析關閉）

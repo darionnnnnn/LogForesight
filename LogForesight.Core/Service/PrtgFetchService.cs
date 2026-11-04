@@ -1287,6 +1287,12 @@ public sealed class PrtgFetchService
         if (stopReason != null) EnterValueFetchCooldown();
     }
 
+    /// <summary>目前是否在停損後的冷卻期（呼叫 <see cref="FetchValuesAsync"/> 會被回絕）；觸發式輪詢據此決定要不要先把主機記成已抓。</summary>
+    internal bool ValueFetchCoolingDown
+    {
+        get { lock (_valueFetchCooldownLock) return TimeSource.GetUtcNow() < _valueFetchCooldownUntil; }
+    }
+
     /// <summary>停損：記下冷卻到期時間，並讓下一次第一個被回絕的呼叫再出聲一次。</summary>
     private void EnterValueFetchCooldown()
     {

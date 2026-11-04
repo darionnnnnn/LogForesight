@@ -46,8 +46,9 @@ public static class CredentialPreflight
             if (bad.Count == 0) return bad;
 
             var joined = string.Join("、", bad);
-            Log.Warn("取數前憑證檢查：下列憑證無法用目前金鑰解密，本趟略過：{0}（請到對應設定頁重新輸入）", joined);
-            console.WriteLine($"\n  ⚠ 下列憑證無法解密，本趟略過：{joined}；請到對應設定頁重新輸入");
+            // 「略過或失敗」而不是一律「略過」：Sentinel 與 PRTG 會略過，AI 金鑰解不開時本機供應商仍會用空金鑰呼叫、雲端供應商會失敗
+            Log.Warn("取數前憑證檢查：下列憑證無法用目前金鑰解密，相關取數會略過或失敗：{0}（請到對應設定頁重新輸入）", joined);
+            console.WriteLine($"\n  ⚠ 下列憑證無法解密：{joined}；相關取數會略過或失敗，請到對應設定頁重新輸入");
             return bad;
         }
         catch (Exception ex)

@@ -18,9 +18,8 @@ public class SentinelAdminService
 
     public SentinelAdminService(
         ISentinelStore sentinels, IHostStore hosts, IAuditService audit,
-        PermissionVersionStamp permissionVersion, ISystemSettingsStore? settings = null)
+        PermissionVersionStamp permissionVersion, ISystemSettingsStore settings)
     {
-        // settings 供儲存／刪除密文後重新評估解密狀態（CryptoRecovery）；DI 一律提供
         _settings = settings;
         _sentinels = sentinels;
         _hosts = hosts;

@@ -143,16 +143,17 @@ const HANDLING_STATUS = {
 };
 
 /**
+ * 同一主機日連續幾次 AI 回覆格式異常後放棄補跑。與後端 AiDegradation.MaxAttempts 同值，
+ * 由 AiStateUiTests 比對兩邊，改一邊忘了另一邊會紅。
+ */
+export const AI_DEGRADED_MAX_ATTEMPTS = 3;
+
+/**
  * 泛用淡色徽章工廠（§8.2「顏色＋文字」）——各頁面自訂狀態徽章（啟用/停用/IP衝突…）
  * 統一走這裡，取代散落各頁的 `badge text-bg-*`。variant 對應 site.css 的 lf-badge--*：
  * success | danger | warning | info | primary | neutral | dark。
  * icon（選填）為 sprite symbol id，會以 SVG 前置於文字（取代原本用 emoji 當圖示的做法）。
  */
-/**
- * 同一主機日連續幾次 AI 回覆格式異常後放棄補跑。與後端 AiDegradation.MaxAttempts 同值，
- * 由 AiStateUiTests 比對兩邊，改一邊忘了另一邊會紅。
- */
-export const AI_DEGRADED_MAX_ATTEMPTS = 3;
 
 /**
  * AI 摘要的狀態（清單與詳情共用的單一判定，只看欄位、不比對標題文字）：
@@ -163,7 +164,8 @@ export const AI_DEGRADED_MAX_ATTEMPTS = 3;
  */
 export function aiStateOf(record) {
     const attempts = Number(record?.aiDegradedAttempts) || 0;
-    if (record?.aiPending) return attempts > 0 ? 'degraded' : 'pending';
+    // 詳情已被保留期清除的列不會再補跑（AI 輸入無法重建），不論旗標怎麼留都不能再說「會再試」
+    if (record?.aiPending && !record?.detailPruned) return attempts > 0 ? 'degraded' : 'pending';
     return attempts >= AI_DEGRADED_MAX_ATTEMPTS ? 'abandoned' : 'done';
 }
 

@@ -780,6 +780,48 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
     // ───────── 觸發式取數：三輪輪詢只有第一輪累計到停損 ─────────
 
     [Fact]
+    public async Task 觸發式冷卻期內新觸發的主機不算已抓_冷卻結束後補抓()
+    {
+        // 第 1 台 12 顆全部逾時到停損；第 2 台在冷卻期內才變高風險，冷卻結束（時鐘推進 11 分鐘）後要補抓到
+        var rig = NewRig((id, _) => id < 3000 ? TimedOut() : Ok());
+        var store = rig.Store;
+        var records = new EfAnalysisRecordStore(_fx.NewContext, "test");
+        DailyAnalysisRecord Rec(long host) => new() { HostId = host, Host = $"SRV-{host}", Date = Day, RiskLevel = "高" };
+        store.UpsertDevices(new List<PrtgDeviceRow> { new() { Objid = 1001, Name = "D1", Ip = "10.0.0.1" }, new() { Objid = 1002, Name = "D2", Ip = "10.0.0.2" } }, Day);
+        var sensors = new List<PrtgSensorRow>();
+        sensors.AddRange(Enumerable.Range(1, 12).Select(i => new PrtgSensorRow { Objid = 2000 + i, DeviceObjid = 1001, Name = $"A{i}", SensorType = "SNMP CPU Load" }));
+        sensors.AddRange(Enumerable.Range(1, 3).Select(i => new PrtgSensorRow { Objid = 3000 + i, DeviceObjid = 1002, Name = $"B{i}", SensorType = "SNMP CPU Load" }));
+        store.UpsertSensors(sensors, Day);
+        store.ReplaceHostMapForDate(Day, new List<PrtgHostMapRow>
+        {
+            new() { DeviceObjid = 1001, HostId = 101, MapStatus = PrtgMapStatus.Ok },
+            new() { DeviceObjid = 1002, HostId = 102, MapStatus = PrtgMapStatus.Ok }
+        });
+        records.Append(Rec(101));
+
+        var polls = 0;
+        var fetcher = new PrtgTriggeredValueFetcher(rig.Service, store, records, rig.Console);
+        var result = await fetcher.RunAsync(Day, whitelist: null, concurrency: 1,
+            analysisCompleted: () =>
+            {
+                polls++;
+                if (polls == 1) records.Append(Rec(102));          // 冷卻期內才出現
+                if (polls == 2)
+                {
+                    rig.Clock.Advance(TimeSpan.FromMinutes(11));   // 冷卻結束
+                    rig.Respond = (_, _) => Ok();                   // PRTG 也恢復了
+                }
+                return polls >= 3;
+            },
+            ct: CancellationToken.None, pollSeconds: 1);
+
+        Assert.Equal(3, rig.Attempts.Keys.Count(id => id >= 3000));
+        Assert.Equal(15, result.ValuesWritten);   // 停損那一批（12 顆）冷卻後也重抓到
+        Assert.Equal(2, result.TriggerHosts);
+        Assert.Contains(rig.Console.Lines, l => l.Contains("等冷卻結束再抓"));
+    }
+
+    [Fact]
     public async Task 觸發式三輪輪詢總呼叫數為10_冷卻擋住第二三輪_全部失敗不記新鮮度()
     {
         var rig = NewRig((_, _) => TimedOut());
@@ -822,10 +864,11 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
             ct: CancellationToken.None, pollSeconds: 1);
 
         Assert.Equal(10, rig.HistoricCalls);
-        Assert.Equal(3, result.TriggerHosts);
-        Assert.Equal(18, result.TargetSensors);
+        // 冷卻期內出現的第 2、3 台不算已抓（沒送過請求），等冷卻結束的下一輪才會算進來
+        Assert.Equal(1, result.TriggerHosts);
+        Assert.Equal(12, result.TargetSensors);
         Assert.Equal(0, result.ValuesWritten);
-        Assert.Equal(18, result.FailedSensors);
+        Assert.Equal(12, result.FailedSensors);
         // 停損只出聲一次、冷卻回絕也只出聲一次（第 2、3 輪共用同一次冷卻通知）
         Assert.Single(rig.Console.Lines, l => l.Contains("停止數值取數"));
         Assert.Single(rig.Console.Lines, l => l.Contains("冷卻"));

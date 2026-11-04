@@ -58,6 +58,15 @@ public static class AiDegradation
     public static string BuildServiceFailedHeadline(IReadOnlyList<LogIssueSignature> issues) =>
         (issues.Count == 0 ? "今日分析摘要暫缺" : BuildRuleLayerHeadline(issues)) + ServiceFailedSuffix;
 
+    /// <summary>剝掉降級／放棄後綴（重標待補時用：次數歸零了，標題不能還寫「已放棄」）；沒有後綴原樣回傳。</summary>
+    public static string StripSuffix(string headline)
+    {
+        if (string.IsNullOrEmpty(headline)) return headline;
+        if (headline.EndsWith(AbandonedSuffix, StringComparison.Ordinal)) return headline[..^AbandonedSuffix.Length];
+        var at = headline.LastIndexOf(PendingSuffixHead, StringComparison.Ordinal);
+        return at >= 0 && headline.EndsWith(PendingSuffixTail, StringComparison.Ordinal) ? headline[..at] : headline;
+    }
+
     /// <summary>結論加後綴：未達上限為「第 N 次」、達上限為放棄字樣。結論先截斷，後綴一定完整保留。</summary>
     public static string ComposeHeadline(string conclusion, int attempts)
     {

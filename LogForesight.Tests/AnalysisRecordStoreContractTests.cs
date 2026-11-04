@@ -266,6 +266,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
             RiskLevel = "高",
             Headline = "測試標題",
             ErrorCount = 5,
+            AiPending = true,   // 降級待補的列：詳情清掉後不能再掛著「會自動再試」
             TopIssues = new List<LogIssueSignature>
             {
                 new() { LogName = "System", Source = "disk", EventId = 153, Count = 7, Severity = IssueSeverity.Critical }
@@ -280,6 +281,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
         using var ctx = _fx.NewContext();
         var row = ctx.DailyRecords.Single();
         Assert.True(row.DetailPruned);
+        Assert.False(row.AiPending);
         Assert.Equal(string.Empty, row.ContentJson);
         Assert.Equal("高", row.RiskLevel);
         Assert.Equal("測試標題", row.Headline);

@@ -102,9 +102,8 @@ public class SystemSettingsService : ISystemSettingsService
 
     public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit,
         IUserStore users, MailNotificationService mail, IReportUsageQuery reportUsage,
-        ISentinelStore? sentinels = null)
+        ISentinelStore sentinels)
     {
-        // sentinels 供儲存密文後重新評估解密狀態（CryptoRecovery）；DI 一律提供，null 只出現在不關心這件事的測試
         _sentinels = sentinels;
         _store = store;
         _currentUser = currentUser;

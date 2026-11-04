@@ -73,7 +73,7 @@ public static class NetiqProbeRunner
             }
             if (credentialState != CredentialState.Ok)
             {
-                console.WriteLine($"── {sentinel.Name}：帳密未設定（CanDiscover=false），略過 ──\n");
+                console.WriteLine($"── {sentinel.Name}：帳密未設定，略過 ──\n");
                 continue;
             }
 

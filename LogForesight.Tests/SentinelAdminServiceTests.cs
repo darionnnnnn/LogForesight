@@ -15,7 +15,7 @@ public class SentinelAdminServiceTests
     private readonly RecordingAuditService _audit = new();
 
     private SentinelAdminService Create(PermissionVersionStamp? permissionVersion = null) =>
-        new(_sentinels, _hosts, _audit, permissionVersion ?? TestPermissionStamps.Shared);
+        new(_sentinels, _hosts, _audit, permissionVersion ?? TestPermissionStamps.Shared, new FakeSystemSettingsStore());
 
     [Fact]
     public void 新增_密碼被加密且不回傳明碼()

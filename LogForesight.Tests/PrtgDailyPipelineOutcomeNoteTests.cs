@@ -211,7 +211,7 @@ public class PrtgCredentialStateDtoTests : IDisposable
             new ScheduleFreshnessService(new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs")),
                 new ScheduleOptionsStore(_backend.Blob("schedule_options"))),
             new WorkOrderOutboxStore(_backend.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()),
-        new FakeReportUsageQuery());
+        new FakeReportUsageQuery(), new FakeSentinelStore());
 
     private ScheduleController ScheduleController() => new(
         new ScheduleOptionsStore(_backend.Blob("schedule_options")), scheduler: null!, new SchedulerRunState(),

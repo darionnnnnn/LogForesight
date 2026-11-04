@@ -1453,6 +1453,7 @@ let unmappedPageSize = loadPageSize('prtg-unmatched');
 // 主機頁「無 PRTG 對應」徽章帶來的定位（?focus=unmatched&hostId=N）。一次性：
 // 只有進頁後第一次載入清單會帶 pinHostId，之後翻頁、重新整理都不再釘住
 let unmatchedPinHostId = readUnmatchedFocusHostId();
+let unmatchedPinApplied = false;   // 第一頁已跳轉高亮過；之後的翻頁只帶 pin 維持順序，不再捲動
 // 由 bindUnmatchedControls 設定：展開未對應區塊並捲到定位（沿用徽章按鈕同一套，不另做捲動）
 let jumpToUnmatchedSection = null;
 
@@ -1580,9 +1581,10 @@ function renderUnmappedHostsLoading() {
 
 async function refreshUnmappedHosts(page = unmappedPage) {
     unmappedPage = page;
-    // 一次性釘住：只在第一頁、且只用一次（無論成功失敗都消耗，重試與之後的重整不再帶）
-    const pinHostId = page === 1 ? unmatchedPinHostId : null;
-    if (pinHostId !== null) unmatchedPinHostId = null;
+    // 釘住：網址參數只讀一次（成功後清掉網址），但同一次停留的每一頁都帶同一個 pin——
+    // 後端是「釘住那台＋其餘原順序」的整份排序，第 2 頁起不帶會變回原順序，漏一台、重複一台。載入失敗就放棄 pin。
+    const pinHostId = unmatchedPinHostId;
+    const firstPinnedLoad = pinHostId !== null && page === 1 && !unmatchedPinApplied;
     renderUnmappedHostsLoading();
     let loadedItems = null;
     try {
@@ -1600,9 +1602,11 @@ async function refreshUnmappedHosts(page = unmappedPage) {
         renderUnmappedHostsPagination(totalPages);
     } catch (error) {
         loadedItems = null;
+        unmatchedPinHostId = null;
         renderUnmappedHostsError(error && error.message ? error.message : '載入未對應主機清單失敗');
     }
-    if (pinHostId !== null) {
+    if (firstPinnedLoad) {
+        unmatchedPinApplied = true;
         clearUnmatchedFocusParams();
         // 載入失敗（含 403）不跳轉，錯誤態照常顯示
         if (loadedItems !== null) whenInitialLoadSettled(() => revealPinnedUnmatchedHost(pinHostId, loadedItems));

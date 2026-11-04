@@ -727,10 +727,11 @@ public class PrtgProbeSiteCheckTests : IDisposable
         try
         {
             Assert.True(h.Service.TryStart(out var error, out _), error);
-            var blockedUrl = await blockedSiteCheck.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            // 等的是「站台對照那一筆請求有沒有到」，不是它多快到：全量並行時站台啟動可能被拖慢數十秒，給寬鬆上限
+            var blockedUrl = await blockedSiteCheck.Task.WaitAsync(TimeSpan.FromSeconds(120));
             Assert.Contains("content=devices&columns=objid,device,host&count=50000", blockedUrl, StringComparison.Ordinal);
 
-            var finishDeadline = DateTime.UtcNow.AddSeconds(10);
+            var finishDeadline = DateTime.UtcNow.AddSeconds(30);
             while (h.Service.GetStatus().IsRunning && DateTime.UtcNow < finishDeadline)
                 await Task.Delay(20);
 

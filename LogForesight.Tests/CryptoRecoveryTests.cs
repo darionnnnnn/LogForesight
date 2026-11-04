@@ -118,17 +118,6 @@ public class CryptoRecoveryTests : IDisposable
         Assert.True(CryptoHelper.DecryptFailureSeen);
     }
 
-    [Fact]
-    public void Reevaluate_缺其中一個store_不動作()
-    {
-        RaiseFailureFlag();
-
-        CryptoRecovery.Reevaluate(_store, null);
-        CryptoRecovery.Reevaluate(null, _sentinels);
-
-        Assert.True(CryptoHelper.DecryptFailureSeen);
-    }
-
     // ── 儲存入口 ──
 
     [Fact]

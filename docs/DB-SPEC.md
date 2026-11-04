@@ -525,7 +525,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 （實測平均 5.3 KB/筆），而年度同期比較需要的 KPI 與趨勢**沒有一項讀它**——
 那些全部來自抽出欄與 `lf_top_issues`。3000 台若把分析紀錄留兩年（`RetentionDays` 760），
 連 `content_json` 一起留約 12 GB；原始事件內容只留 120 天則約 1.9 GB。
-清除方式是把 `content_json` 設為空字串並標記 `detail_pruned`，**不刪列**，
+清除方式是把 `content_json` 設為空字串並標記 `detail_pruned`、同時清掉 `ai_pending`（AI 輸入無法重建，不能再說會補跑），**不刪列**，
 統計、風險等級、問題清單一律不受影響。驗證 `RawEventRetentionDays <= RetentionDays`——
 原始內容活得比它所屬的紀錄久沒有意義。
 

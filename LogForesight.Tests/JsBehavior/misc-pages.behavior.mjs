@@ -78,6 +78,7 @@ function makeUnmatched({ search = '', hash = '', items = [], total = 0, fail = n
         let jumpToUnmatchedSection = () => log.push('jump');
         const whenInitialLoadSettled = (action) => action();
         let unmatchedPinHostId = readUnmatchedFocusHostId();
+        let unmatchedPinApplied = false;
         const renderUnmappedHostsLoading = () => {};
         const renderUnmappedHosts = () => log.push('render');
         const renderUnmappedHostsPagination = () => {};
@@ -806,9 +807,10 @@ const cases = {
         t.timers[0].fn();
         assert.equal(t.row.classes.has('lf-focus-flash'), false);
         assert.deepEqual(t.replaced, ['/app/admin/prtg#mirror']);
-        // 再載入一次（重新整理清單）不再帶 pin、不再跳轉
+        // 再載入一次（重新整理清單）仍帶 pin 維持整份排序，但不再跳轉、不再清網址
         await t.inst.refreshUnmappedHosts(1);
-        assert(!t.urls[1].includes('pinHostId'), t.urls[1]);
+        assert(t.urls[1].includes('pinHostId=5'), t.urls[1]);
+        assert.equal(t.replaced.length, 1);
         assert.equal(t.log.filter(x => x === 'jump').length, 1);
     },
     prtg未對應跳轉等初次載入全部結束才做() {
@@ -925,15 +927,20 @@ const cases = {
             assert.deepEqual(t.replaced, [], search);
         }
     },
-    async prtg未對應pin只用一次且翻頁不帶() {
+    async prtg未對應翻頁仍帶同一個pin_只有第一頁第一次跳轉() {
         const t = makeUnmatched({ search: '?focus=unmatched&hostId=5', hash: '#mirror', items: [{ hostId: 5 }], total: 60 });
-        await t.inst.refreshUnmappedHosts(2);
-        assert(!t.urls[0].includes('pinHostId'), t.urls[0]);
-        assert.deepEqual(t.replaced, []);
         await t.inst.refreshUnmappedHosts(1);
-        assert(t.urls[1].includes('pinHostId=5'), t.urls[1]);
+        assert(t.urls[0].includes('pinHostId=5'), t.urls[0]);
+        assert.deepEqual(t.log.filter((l) => l === 'jump'), ['jump']);
+        assert.equal(t.replaced.length, 1);
+        // 第 2 頁仍帶 pin：後端整份排序才一致，不會漏一台、重複一台；但不再跳轉、不再清網址
         await t.inst.refreshUnmappedHosts(2);
-        assert(!t.urls[2].includes('pinHostId'), t.urls[2]);
+        assert(t.urls[1].includes('pinHostId=5'), t.urls[1]);
+        assert.deepEqual(t.log.filter((l) => l === 'jump'), ['jump']);
+        assert.equal(t.replaced.length, 1);
+        await t.inst.refreshUnmappedHosts(1);
+        assert(t.urls[2].includes('pinHostId=5'), t.urls[2]);
+        assert.deepEqual(t.log.filter((l) => l === 'jump'), ['jump']);
     },
     async prtg未對應清網址保留其他參數與hash() {
         const t = makeUnmatched({ search: '?foo=1&focus=unmatched&hostId=5', hash: '#mirror', items: [{ hostId: 5 }], total: 1 });

@@ -1,6 +1,6 @@
 # LogForesight 第 63-2 輪規劃：第一份診斷匯出的回饋（AI 格式異常、憑證解不開、執行時間、儀表板與設定頁）
 
-> 狀態：實作完成，待體檢（`feature/feedback-63-2`）
+> 狀態：全案完成（已併 dev）
 > 基準：dev@0bf12e40（7,956 通過／11 略過，Windows）
 > 來源：使用者 2026-11-03 五項重點，加上第一份診斷匯出檔（14 天、站台 1.0.53.2、13 台主機、18 趟）的分析
 > 實作方式：主代理寫規格與驗收；改檔代理依複雜度選 Sonnet 5.5 或 Haiku 5.5；同一 checkout 一次一個改檔代理；主代理獨立重驗
@@ -432,7 +432,7 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
 ## 明確不做（本輪定案）
 
 - **改提示詞、`response_format` 改 `json_schema`、調 `AiMaxTokens`**：等 B-a 的一夜證據。判讀準則先寫好：`finish_reason=length` 佔比高 → 先調 `AiMaxTokens`；`reasoning_content` 有值且 `content` 為 `[]` → 文法與思考衝突成立 → 評估 `json_schema` 或關思考。
-- **新增 PRTG 結局值**、**逐顆 sensor 取數重試**、**PRTG 停止重新評估對應存在前的日子**（記 BACKLOG）、**設定頁重排版面**、**代號對照表**、**serverAdmin 可見輸出**。
+- **新增 PRTG 結局值**、**逐顆 sensor 取數重試**（第一版定案；批次H-1 改為共用暫停＋補抓一輪，見 H-1）、**PRTG 停止重新評估對應存在前的日子**（記 BACKLOG）、**設定頁重排版面**、**代號對照表**、**serverAdmin 可見輸出**。
 - **Security 記錄檔警告改豁免**：那是真的盲區，不豁免；說明書寫怎麼消。
 - **表格分頁（結構同步、狀態變更）加共用暫停與停損**：已有 pager 層 2 次重試與請求配額；數值取數才是逐顆、數量大、沒有任何重試的那一路（批次H-1）。
 - **摘要信的新鮮度文字帶原因、診斷匯出帶 `scope`**：本輪只改站內橫幅；兩條記 BACKLOG。
@@ -458,6 +458,8 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
 - 金鑰指紋不符時，只要所有憑證都解得開，下次啟動會自動更新指紋並留下原指紋；重新部署清掉 `keys\` 會讓所有憑證解不開，`DataRoot` 要放在部署目錄之外。
 - 使用者站台**升級後仍要還原金鑰檔或重新輸入 Sentinel 與 PRTG 憑證**，否則取數繼續失敗、過期告示不會消失。
 - 舊的「完全失敗」主機日徽章由「AI 待補」變成「AI 分析中」，失敗原因留在標題文字。
+- 升級前已存在的「AI 回覆格式異常，以下為原始內容」主機日 `ai_pending=false`，不會被新的 3 次補跑機制接手；要補用「強制重新分析」（說明書 10-scheduler 已寫）。
+- 保留期清除詳情時會一併清掉 `ai_pending`；升級前已被清除且仍掛待補的列，畫面依 `detailPruned` 不再顯示待補，資料列的旗標由下次啟動的回填清理。
 
 ## 體檢交接
 
@@ -477,6 +479,28 @@ AI 跟隨取數 6 趟有 5 趟「失敗」、`exitCode 0`：`ChatJsonAsync` 最�
   8. **體檢看到但刻意沒修**：降級補跑沒有節流（BACKLOG）；舊「完全失敗」徽章寫 AI 分析中（規劃定案）；勾清除金鑰後 placeholder 仍寫沿用（低）；總表秒數截斷差 1 秒（低）；`Basic` 後大小寫混合英文詞與 AD 標籤常見詞多遮（寧可多遮）；`Retry-After` ≥ 15 分鐘整批停損（尊重伺服器）；匯入精靈下拉（BACKLOG）。
   9. **批次E 的 placeholder 切換**：金鑰與 SMTP「已設定」狀態靠攔截回應驗過，沒有用真實已設定的資料走一次儲存。
 - **交給使用者實測**：PRTG 真的無回應時的暫停與停損；還原金鑰或重新輸入後，警示解除與健康頁恢復；Security 權限做法；AI 一夜後的 `finish_reason`、`reasoning_content` 證據。
+
+## 體檢輪修正（Fable 5.1，2026-11-05）
+
+體檢方與實作方不同模型。先逐條比對規劃（F～H 的契約子句、改動清單雜項、點名的測試案）：全部有對應，只有兩處修正——PLAN「明確不做」仍列「逐顆 sensor 取數重試」（與 H-1 補抓矛盾，已註明）、NetIQ 探測輸出把 `CanDiscover=false` 印給使用者（已改）。接著三個 Sonnet 唯讀代理各附探針（X 夜間整趟流程、Y 資料生命週期與升級、Z 權限與架構），主代理逐條重驗後修正如下，每條都有迴歸測試與一次突變（全部紅）：
+
+| 編號 | 哪裡 | 症狀 | 修法 | 迴歸測試 |
+|---|---|---|---|---|
+| Y1 中 | `EfAnalysisRecordStore.PruneDetails`、`format.js aiStateOf`、匯出 `Abandoned` | 降級待補的主機日被保留期清掉詳情後，補跑端已排除它，列上 `ai_pending=true`／次數不動，畫面永遠寫「系統會在下一次 AI 排程自動再試」 | `PruneDetails` 同句清 `ai_pending`；`aiStateOf` 對 `detailPruned` 不回 pending／degraded；匯出 `Abandoned` 只看次數 | `PruneDetails_超過保留期…`（加 `AiPending=false`）、`aiStateOf詳情已清除的列不再說會再試` |
+| Y2 低中 | 三個 PRTG 重標點、`MarkAllForAiRerun` | 重標待補歸零次數後標題仍寫「（AI 摘要已放棄…）」或「第 N 次」，與「AI 分析中」徽章矛盾、匯出也不再算案例 | `AiDegradation.StripSuffix`；記憶體重標點同步改列與 record；`MarkAllForAiRerun` 先逐列剝 `attempts>0` 的後綴再整批 UPDATE | `剝後綴只剝降級與放棄_其他原樣`、`降級次數歸零…`（加標題斷言） |
+| X1 中 | `PrtgTriggeredValueFetcher` | 同趟停損後，冷卻期內才變高風險的主機被先記成已抓、冷卻回絕後同趟永不再抓，輸出卻說「留待下一趟」 | 冷卻期內不送也不記已抓（出聲一次）；停損那一批進 `retryAfterCooldown`，冷卻到期的輪詢再抓 | `觸發式冷卻期內新觸發的主機不算已抓_冷卻結束後補抓`；三輪輪詢案改期望 |
+| X2 中 | `PrtgReevaluationPlanner.Select` | PRTG 因憑證沒設定／解不開早退的夜晚沒有逐日統計，憑證修好後那些日子永遠不補評估 | 早退原因為憑證問題的排程趟比照中斷趟，其前一日入選；「未啟用」不算 | `Select_憑證問題早退的排程夜晚_其前一日入選_未啟用不算` |
+| X3 低 | `AnalysisOrchestrator` 前置檢查範圍 | 指定主機的趟仍把全站有主機的 Sentinel 列為「本趟略過」 | `NetiqHosts` 時只列那些主機所屬的 Sentinel | `指定主機的趟_只列那些主機所屬的Sentinel` |
+| X4 低 | `CredentialPreflight` 文案 | 一律寫「本趟略過」，AI 金鑰解不開時本機供應商其實仍會呼叫 | 改「相關取數會略過或失敗」 | 既有案維持 |
+| Z1 中低 | `prtg-admin.js refreshUnmappedHosts` | 釘住只在第 1 頁帶 pin，第 2 頁起回原順序：翻完整份漏一台、釘住那台重複 | 同一次停留每頁都帶同一個 pin；只有第一頁第一次跳轉與清網址；載入失敗放棄 pin | `prtg未對應翻頁仍帶同一個pin_只有第一頁第一次跳轉`；兩個既有案改期望 |
+| Z4 低 | `SystemSettingsService`／`SentinelAdminService` 建構子 | 可選相依為 null 時 `CryptoRecovery` 靜默不動作，沒有守門 | 改必填；測試建構點補替身 | 建置即守門 |
+| Z6 極低 | `format.js` | 常數註解插在徽章工廠註解中間 | 搬到正確位置 | — |
+
+**看過、刻意不修**（已有 BACKLOG 或屬設計取捨）：解密失敗旗標可能被舊快照舉回（BACKLOG）；`MaxConsecutiveFailures` 幾乎不會先於總暫停觸發——保留當時鐘不走時的保險，PRTG-SPEC 改寫為以總暫停為主；三份「無法解密」文案各自維護（語意一致，判定已單點）；`health/freshness` 對一般使用者多暴露「有憑證解不開」布林（低風險，沿用既有可讀範圍）；升級前已存在的 25 個舊格式異常列不會被新的補跑機制接手（寫進升級注意與說明書：用「強制重新分析」）；`SchemaUpgraderModelParityTests` 的 regex 對 SQL Server 半邊守門較弱。
+
+**規劃比對的其他結論**：H-3 的新鮮度規格寫在 WEB-SPEC §9 設定頁節而非 §11（§11 是稽核寫入規範，位置正確）；H-2「三個儲存入口」實作為 `Update`／`UpdatePrtg`／`SaveSentinel`／`DeleteSentinel` 四處（AI 在 `Update` 內）；A-4「`PrtgResourceGuardSource` 重試選項為關」不需測試——它不走 pager。
+
+測試：體檢修正後全量 8,401 通過、2 失敗、11 略過；兩案都是測試端——X4 改文案後 `CredentialPreflightTests` 的字串斷言，與 `PrtgProbeSiteCheckTests` 整體期限案在全量並行下等不到站台對照請求（30 秒上限，放寬到 120 秒、完成輪詢 10→30 秒，語意不變）。修正後定向 38 綠，正式碼沒有再動，基線記 8,403／11；併入 dev 後樹相同，不重跑。
 
 ## 執行紀錄
 

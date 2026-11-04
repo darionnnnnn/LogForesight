@@ -53,6 +53,8 @@ public sealed class DailyRecordBackfiller
     /// <summary>執行回填直到完成或被取消。每批一個交易，中途取消不回滾已完成的批次。</summary>
     public void Run(CancellationToken cancellationToken)
     {
+        ClearPrunedPending();
+
         var pending = CountPending();
         if (pending == 0)
         {
@@ -78,6 +80,19 @@ public sealed class DailyRecordBackfiller
 
         if (remaining == 0) Log.Info("[SQL] lf_daily_records 抽出欄回填完成：{Done} 列", done);
         else Log.Info("[SQL] lf_daily_records 抽出欄回填中止（站台關閉），剩餘 {Remaining} 列，下次啟動接續", remaining);
+    }
+
+    /// <summary>
+    /// 詳情已清（detail_pruned）的列不會再補跑（AI 輸入無法重建），掛著的 ai_pending 一律清掉。
+    /// PruneDetails 現在同句就清；這裡收拾升級前清除、版本已是最新而不會再進批次迴圈的舊列。冪等，一句 UPDATE。
+    /// </summary>
+    private void ClearPrunedPending()
+    {
+        using var ctx = _contextFactory();
+        var cleared = ctx.DailyRecords
+            .Where(r => r.DetailPruned && r.AiPending)
+            .ExecuteUpdate(s => s.SetProperty(r => r.AiPending, false));
+        if (cleared > 0) Log.Info("[SQL] 詳情已清除但仍標待補的 {Count} 列已清掉 ai_pending（不會再補跑）", cleared);
     }
 
     private int RunBatch()

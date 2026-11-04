@@ -29,6 +29,17 @@ public class AiDegradationTests
         Assert.Equal("儲存控制器逾時重置（AI 服務未回應，AI 待補）", AiDegradation.BuildServiceFailedHeadline(issues));
     }
 
+    [Theory]
+    [InlineData("磁碟錯誤偏多（AI 摘要待補，第 2 次）", "磁碟錯誤偏多")]
+    [InlineData("磁碟錯誤偏多（AI 摘要已放棄：連續 3 次格式異常）", "磁碟錯誤偏多")]
+    [InlineData("磁碟錯誤偏多", "磁碟錯誤偏多")]
+    [InlineData("今日分析摘要暫缺（AI 服務未回應，AI 待補）", "今日分析摘要暫缺（AI 服務未回應，AI 待補）")]
+    [InlineData("", "")]
+    public void 剝後綴只剝降級與放棄_其他原樣(string headline, string expected)
+    {
+        Assert.Equal(expected, AiDegradation.StripSuffix(headline));
+    }
+
     [Fact]
     public void AI服務完全失敗且沒有問題_標題只說摘要暫缺()
     {

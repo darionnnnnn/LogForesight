@@ -1210,7 +1210,7 @@ public sealed class RunExportService : IRunExportService
                     Risk = RiskLevels.All.Contains(rec.RiskLevel) ? Lit(rec.RiskLevel) : Text(rec.RiskLevel),
                     Attempts = attempts,
                     DegradedAttempts = rec.AiDegradedAttempts,
-                    Abandoned = rec.AiDegradedAttempts >= AiDegradation.MaxAttempts && !rec.AiPending,
+                    Abandoned = AiDegradation.IsAbandoned(rec.AiDegradedAttempts),
                     ReplyShape = shape == null ? null : Lit(shape.Shape),
                     CutOff = shape?.CutOff == true,
                     Reply = reply == null ? null : Text(reply),

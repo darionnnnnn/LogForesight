@@ -102,6 +102,9 @@ public sealed class PrtgTriggeredValueFetcher
         var totalValuesWritten = 0;
         var totalFailedSensors = 0;
         var isFirstScan = true;
+        var cooldownNoticed = false;
+        // 已抓過但那一批在停損中整批失敗的主機：冷卻結束後再抓一次（仍算在 fetchedHosts 的觸發主機數裡）
+        var retryAfterCooldown = new HashSet<long>();
 
         async Task ScanAndFetchAsync()
         {
@@ -130,15 +133,28 @@ public sealed class PrtgTriggeredValueFetcher
 
             var newHosts = candidateHosts
                 .Distinct()
-                .Where(id => !fetchedHosts.Contains(id))
+                .Where(id => !fetchedHosts.Contains(id) || retryAfterCooldown.Contains(id))
                 .ToList();
 
             if (newHosts.Count == 0) return;
+
+            // 停損後的冷卻期：先不把這些主機記成已抓，冷卻到期的下一輪輪詢會再碰到它們；
+            // 現在就記的話，冷卻回絕的「全部失敗」會讓這幾台在同一趟裡永遠不再抓，輸出卻說「留待下一趟」
+            if (_fetchService.ValueFetchCoolingDown)
+            {
+                if (!cooldownNoticed)
+                {
+                    cooldownNoticed = true;
+                    _console.WriteLine($"觸發式取數：PRTG 數值取數在停損後的冷卻期，{newHosts.Count} 台新問題主機等冷卻結束再抓。");
+                }
+                return;
+            }
 
             var deviceObjids = new List<long>();
             foreach (var h in newHosts)
             {
                 fetchedHosts.Add(h);
+                retryAfterCooldown.Remove(h);
                 if (hostToDevices.TryGetValue(h, out var devs))
                 {
                     deviceObjids.AddRange(devs);
@@ -156,6 +172,11 @@ public sealed class PrtgTriggeredValueFetcher
             if (targets.Count == 0) return;
 
             var (written, failedSensors) = await _fetchService.FetchValuesForSensorsAsync(day, targets, concurrency, ct, progress);
+            // 這一批在本次呼叫內停損（整批失敗）：留在候選裡，冷卻到期後的輪詢再試一次
+            if (written == 0 && failedSensors == targets.Count && _fetchService.ValueFetchCoolingDown)
+            {
+                foreach (var h in newHosts) retryAfterCooldown.Add(h);
+            }
             totalTargetSensors += targets.Count;
             totalValuesWritten += written;
             totalFailedSensors += failedSensors;

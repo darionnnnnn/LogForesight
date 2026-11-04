@@ -763,6 +763,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     row.AiPending = true;
                     row.AiDegradedAttempts = 0;
                     record.AiDegradedAttempts = 0;
+                    ResetDegradedHeadline(row, record);
                 }
             }
 
@@ -783,6 +784,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                         row.AiPending = true;
                         row.AiDegradedAttempts = 0;
                         record.AiDegradedAttempts = 0;
+                        ResetDegradedHeadline(row, record);
                     }
                 }
             }
@@ -797,6 +799,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 row.AiAnalyzed = false;
                 row.AiDegradedAttempts = 0;
                 record.AiDegradedAttempts = 0;
+                ResetDegradedHeadline(row, record);
             }
             if (!RiskLevels.IsActionable(record.RiskLevel)) record.RiskReportPending = false;
             else if (record.ReportFile == null ||
@@ -1054,6 +1057,9 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     .SetProperty(p => p.ContentJson, string.Empty)
                     .SetProperty(p => p.OriginalRiskContentJson, (string?)null)
                     .SetProperty(p => p.WriteRevision, p => p.WriteRevision + 1)
+                    // 詳情清掉後 AI 輸入無法重建，補跑端本來就排除這些列：待補旗標一起清，
+                    // 否則降級待補的列會永遠掛著「系統會自動再試」
+                    .SetProperty(p => p.AiPending, false)
                     .SetProperty(p => p.DetailPruned, true));
             total += updated;
         }
@@ -1763,6 +1769,13 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// 強制重新分析：整批重標待補（契約與判準見 <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/>）。
     /// 全庫範圍（不限本 store 的主機），與 <see cref="QueryPendingAi"/>／<see cref="CountPendingAi"/> 同層。
     /// </summary>
+    /// <summary>重標待補時同步剝掉降級後綴：資料列與記憶體物件一起改（ContentJson 內的標題由同一個 record 序列化）。</summary>
+    private static void ResetDegradedHeadline(DailyRecordRow row, DailyAnalysisRecord record)
+    {
+        record.Headline = AiDegradation.StripSuffix(record.Headline);
+        row.Headline = record.Headline;
+    }
+
     public int MarkAllForAiRerun()
     {
         var sw = Stopwatch.StartNew();
@@ -1772,6 +1785,13 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         // 的判準同源（AiPending = 非低風險）。已有 AI 白話的低風險列若被標回待補，補跑時
         // RetryAiAsync 會回 Skipped，並以低風險通用字樣覆寫、清空深入分析——等於白白蓋掉既有內容。
         // detail_pruned 的列同樣不標：詳情已清、AI 輸入無法重建（同 WhereAiPending）。
+        // 降級過的列先剝掉標題後綴（SQL 端不好做字串處理，這種列很少，逐列改）：次數歸零後標題不能還寫「已放棄」
+        var degraded = ctx.DailyRecords
+            .Where(r => r.RiskLevel != RiskLevels.Low && !r.DetailPruned && r.AiDegradedAttempts > 0)
+            .ToList();
+        foreach (var row in degraded) row.Headline = AiDegradation.StripSuffix(row.Headline);
+        if (degraded.Count > 0) ctx.SaveChanges();
+
         var affected = ctx.DailyRecords
             .Where(r => r.RiskLevel != RiskLevels.Low && !r.DetailPruned)
             .ExecuteUpdate(s => s

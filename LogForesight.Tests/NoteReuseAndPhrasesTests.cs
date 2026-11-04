@@ -228,7 +228,7 @@ public class NoteReuseAndPhrasesTests : IDisposable
                 new ScheduleFreshnessService(new BatchRunStore(_fx.LogStore("batch_runs"), _fx.LogStore("batch_run_logs")),
                     new ScheduleOptionsStore(_fx.Blob("schedule_options"))),
                 new WorkOrderOutboxStore(_fx.Blob(WorkOrderOutboxStore.BlobKey)), new FakeWorkOrderStore(new FakeIssueCaseStore()), new FakeIssueCaseStore(), new FakeRuleStore()),
-            new FakeReportUsageQuery());
+            new FakeReportUsageQuery(), new FakeSentinelStore());
 
         var request = SettingsRequest();
         request.DefaultNotePhrases = new List<string> { " 已通知廠商 ", "", "已通知廠商", "已確認為例行維護" };

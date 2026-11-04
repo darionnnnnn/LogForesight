@@ -233,7 +233,8 @@ public sealed class CredentialPreflightTests : IDisposable
     private void SeedSettings(Action<SystemSettings> edit) => new SystemSettingsStore(_backend.Blob("system_settings")).Update(edit);
 
     private (OrchestratorResult Result, BatchRun Run, List<BatchRunLog> Logs) Run(
-        Func<SystemSettings, IEnumerable<Sentinel>, IReadOnlySet<string>?, IReadOnlyList<SecretEntry>>? inventory = null)
+        Func<SystemSettings, IEnumerable<Sentinel>, IReadOnlySet<string>?, IReadOnlyList<SecretEntry>>? inventory = null,
+        RunRequest? request = null)
     {
         // 模擬啟動探測：先把壞密文的「第一次失敗」消耗掉（見類別說明）
         CryptoHelper.TryDecrypt(CredentialTestData.Undecryptable, out _);
@@ -241,7 +242,7 @@ public sealed class CredentialPreflightTests : IDisposable
         var orchestrator = new AnalysisOrchestrator(
             new EmptyCandidateSource(), NullAiRequestGate.Instance, secretInventory: inventory);
         var result = orchestrator.RunAsync(
-            new RunRequest { Scope = RunScope.Full, IncludeLocal = false },
+            request ?? new RunRequest { Scope = RunScope.Full, IncludeLocal = false },
             _app, _dir, new RetentionOptions(), new ListConsole(_console), CancellationToken.None).GetAwaiter().GetResult();
 
         var store = new BatchRunStore(_backend.LogStore("batch_runs"), _backend.LogStore("batch_run_logs"));
@@ -269,7 +270,7 @@ public sealed class CredentialPreflightTests : IDisposable
         Assert.Equal(0, run.ErrorCount);
         Assert.Equal(1, run.WarnCount);
         Assert.NotEqual(BatchRunStatus.Failed, BatchRunStatus.Compute(run, DateTime.Now, TimeSpan.FromHours(1)));
-        Assert.Contains(_console, l => l.Contains("下列憑證無法解密，本趟略過") && l.Contains("AI 金鑰") && l.Contains("請到對應設定頁重新輸入"));
+        Assert.Contains(_console, l => l.Contains("下列憑證無法解密：") && l.Contains("相關取數會略過或失敗") && l.Contains("AI 金鑰") && l.Contains("請到對應設定頁重新輸入"));
     }
 
     [Fact]
@@ -345,6 +346,23 @@ public sealed class CredentialPreflightTests : IDisposable
         Assert.Equal(0, run.ErrorCount);
         // 管線端：不送請求、計失敗主機日（由 NetiqPipelineBaselineTests 逐項斷言），這裡只確認整趟照常走完並留下輸出
         Assert.Contains(_console, l => l.Contains("Sentinel「SENT-A」密碼無法解密"));
+    }
+
+    [Fact]
+    public void 指定主機的趟_只列那些主機所屬的Sentinel()
+    {
+        var sentinels = new SentinelStore(_backend.Blob("sentinels"));
+        var a = sentinels.Upsert(new Sentinel { Name = "SENT-A", BaseUrl = "https://a.invalid", Username = "u", PasswordEnc = CredentialTestData.Undecryptable, Active = true });
+        var b = sentinels.Upsert(new Sentinel { Name = "SENT-B", BaseUrl = "https://b.invalid", Username = "u", PasswordEnc = CredentialTestData.Undecryptable, Active = true });
+        var hosts = new HostStore(_backend.Blob("hosts"));
+        var hostA = hosts.Upsert(new WebHost { HostName = "HOST-A", IpAddress = "10.0.0.1", Os = WebHost.OsWindows, SentinelId = a.SentinelId, NetiqServer = "SENT-A", Source = "netiq", Active = true });
+        hosts.Upsert(new WebHost { HostName = "HOST-B", IpAddress = "10.0.0.2", Os = WebHost.OsWindows, SentinelId = b.SentinelId, NetiqServer = "SENT-B", Source = "netiq", Active = true });
+
+        var (_, _, logs) = Run(request: new RunRequest { Scope = RunScope.NetiqHosts, HostIds = new[] { hostA.HostId }, IncludeLocal = false });
+
+        var warn = Assert.Single(PreflightLogs(logs));
+        Assert.Contains("SENT-A", warn.Message);
+        Assert.DoesNotContain("SENT-B", warn.Message);   // 這趟根本不查 SENT-B，不能說它「本趟略過」
     }
 
     [Fact]
@@ -507,7 +525,7 @@ public class SentinelAdminServiceCredentialStateTests : IDisposable
     }
 
     private SentinelAdminService Create() =>
-        new(_sentinels, new FakeHostStore(), new RecordingAuditService(), TestPermissionStamps.Shared);
+        new(_sentinels, new FakeHostStore(), new RecordingAuditService(), TestPermissionStamps.Shared, new FakeSystemSettingsStore());
 
     [Fact]
     public void DTO_credentialState三值()

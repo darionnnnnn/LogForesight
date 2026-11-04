@@ -14,11 +14,9 @@ public static class CryptoRecovery
 
     /// <summary>
     /// 重新評估解密失敗旗標。任何例外都只記 Warn、不外拋——儲存動作已成功，不得因此失敗。
-    /// 任一個 store 為 null（無法組出完整清單）時不動作，避免用不完整的清單誤清旗標。
     /// </summary>
-    public static void Reevaluate(ISystemSettingsStore? settingsStore, ISentinelStore? sentinelStore)
+    public static void Reevaluate(ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)
     {
-        if (settingsStore == null || sentinelStore == null) return;
         try
         {
             var entries = SecretInventory.Build(settingsStore.Get(), sentinelStore.GetAll());

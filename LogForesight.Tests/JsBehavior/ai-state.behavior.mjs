@@ -126,6 +126,11 @@ const cases = {
         // 標題文字寫了「AI 待補」但欄位是完成：不誤判
         assert.equal(aiStateOf(rec(true, false, 0, FAILED)), 'done');
     },
+    aiStateOf詳情已清除的列不再說會再試() {
+        assert.equal(aiStateOf({ aiPending: true, aiDegradedAttempts: 1, detailPruned: true }), 'done');
+        assert.equal(aiStateOf({ aiPending: true, aiDegradedAttempts: 0, detailPruned: true }), 'done');
+        assert.equal(aiStateOf({ aiPending: false, aiDegradedAttempts: 3, detailPruned: true }), 'abandoned');
+    },
     aiStateOf歷史舊標題與缺欄位維持完成() {
         assert.equal(aiStateOf(rec(true, false, 0, LEGACY_ANOMALY)), 'done');
         assert.equal(aiStateOf({}), 'done');

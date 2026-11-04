@@ -598,9 +598,14 @@ public class AnalysisOrchestrator
                 // （不是 Error：失敗的那一路由該路自己表達，不另外把整趟判成 failed；檢查本身失敗只記 Warn、不中斷）
                 CredentialPreflight.Run(runConsole, () =>
                 {
-                    var namesWithHosts = request.Scope == RunScope.LocalOnly
+                    // 只列這趟真的會查的 Sentinel：指定主機的趟只有那些主機所屬的 Sentinel，其他台解不開也與這趟無關
+                    var selection = request.Scope == RunScope.LocalOnly ? null : HostListSelection.FromStore(hostStore, sentinelStore);
+                    var namesWithHosts = selection == null
                         ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                        : HostListSelection.FromStore(hostStore, sentinelStore).ByServer.Keys
+                        : selection.ByServer
+                            .Where(kv => request.Scope != RunScope.NetiqHosts || request.HostIds == null
+                                         || kv.Value.Any(h => request.HostIds.Contains(h.HostId)))
+                            .Select(kv => kv.Key)
                             .ToHashSet(StringComparer.OrdinalIgnoreCase);
                     return _secretInventory(systemSettings, sentinelStore.GetAll(), namesWithHosts);
                 });
