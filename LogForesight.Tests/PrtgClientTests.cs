@@ -181,6 +181,25 @@ public class PrtgClientTests
     }
 
     [Fact]
+    public async Task 換passhash時回空白OK頁_不黏住_下一次還會再試()
+    {
+        var calls = 0;
+        var stub = new StubHandler
+        {
+            OnSend = (_, _) => Task.FromResult(Interlocked.Increment(ref calls) == 1
+                ? HtmlResponse(HttpStatusCode.OK, "<HTML><BODY class=\"no-content\"><B class=\"no-content\">OK</B></BODY></HTML>")
+                : JsonResponse(HttpStatusCode.OK, "{}"))
+        };
+        using var client = new PrtgClient(ValidUrl, "", 30, false, stub, PrtgAuthModes.Password, "admin", "pw", "");
+
+        var ex = await Assert.ThrowsAsync<PrtgClientException>(() => client.GetJsonAsync("/api/table.json?content=sensors&count=1"));
+
+        Assert.Equal(PrtgFailureKind.EmptyPage, ex.Kind);
+        await Record.ExceptionAsync(() => client.GetJsonAsync("/api/table.json?content=sensors&count=1"));
+        Assert.True(calls >= 2, "不該黏住：第二次呼叫要再送請求");
+    }
+
+    [Fact]
     public async Task GetJsonAsync_回傳登入頁時擲例外_訊息講位址或認證_不是空白頁()
     {
         const string loginPage = "<!DOCTYPE html><html><head><title>PRTG Network Monitor - Login</title></head><body class=\"login\">Your login has failed.</body></html>";

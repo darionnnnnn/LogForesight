@@ -105,10 +105,10 @@ function renderSetupSummary() {
         renderAcceptance(false);
         return;
     }
-    const credential = settings.prtgAuthMode === 'password' ? settings.prtgHasPassword && settings.prtgUsername
-        : settings.prtgAuthMode === 'passhash' ? settings.prtgHasPasshash && settings.prtgUsername : settings.prtgHasApiToken;
+    // 憑證狀態以後端為準：密文存在但解不開時，這裡不能寫「已確認」，告示正是把人導來這一頁重新輸入
+    const undecryptable = settings.prtgCredentialState === 'undecryptable';
     const checks = [
-        { ok: Boolean(settings.prtgUrl && credential), label: '已儲存的連線位址與認證', next: '設定連線並儲存', tab: 'connection' },
+        { ok: Boolean(settings.prtgUrl) && settings.prtgCredentialState === 'ok', label: '已儲存的連線位址與認證', next: undecryptable ? '憑證無法解密，請重新輸入並儲存' : '設定連線並儲存', tab: 'connection' },
         { ok: Boolean(settings.prtgEnabled), label: 'PRTG 擷取', next: '到擷取參數啟用並儲存', tab: 'params' },
         { ok: !setupState.sync?.isRunning && setupState.sync?.lastSuccess === true && Boolean(setupState.sync?.lastCompletedAt), label: '上次結構與主機對應同步', next: setupState.sync?.isRunning ? '同步進行中，稍後確認結果' : '同步結構並檢查主機對應', tab: 'mirror' },
         { ok: setupState.rules === true, label: 'PRTG 規則', next: '檢查並啟用 PRTG 規則', href: appUrl('/admin/rules') },
@@ -292,6 +292,13 @@ function bindPrtgEffectiveness() {
 let prtgEnabled = false;
 /** 已儲存的位址與認證是否足以啟動結構同步。 */
 let prtgStructureConfigured = false;
+
+/** 目前認證方式的憑證解不開時的欄位提示（其他情況回 null）：這時寫「已設定、留空沿用」會讓人以為不用重新輸入 */
+function undecryptableSecretHint(settings, mode, label) {
+    return settings.prtgCredentialState === 'undecryptable' && (settings.prtgAuthMode || 'token') === mode
+        ? `已儲存的 ${label} 無法解密，請重新輸入並儲存。`
+        : null;
+}
 /** 結構同步是否執行中：開關的閘與執行中的灰掉是同一顆按鈕的兩個理由，任一成立就不能按。 */
 let structureSyncRunning = false;
 let selectedBackfillTimer = null;
@@ -670,9 +677,9 @@ function renderPrtgFields(settings) {
     document.getElementById('prtg-clear-token').checked = false;
 
     const tokenHint = document.getElementById('prtg-api-token-hint');
-    tokenHint.textContent = settings.prtgHasApiToken
+    tokenHint.textContent = undecryptableSecretHint(settings, 'token', 'API token') ?? (settings.prtgHasApiToken
         ? '已設定 API token；留空儲存＝沿用既有 API token，輸入新值才會覆蓋。'
-        : '尚未設定 API token。';
+        : '尚未設定 API token。');
 
     const usernameInput = document.getElementById('prtg-username');
     if (usernameInput) {
@@ -691,9 +698,9 @@ function renderPrtgFields(settings) {
 
     const passwordHint = document.getElementById('prtg-password-hint');
     if (passwordHint) {
-        passwordHint.textContent = settings.prtgHasPassword
+        passwordHint.textContent = undecryptableSecretHint(settings, 'password', '密碼') ?? (settings.prtgHasPassword
             ? '已設定密碼；留空儲存＝沿用既有密碼，輸入新值才會覆蓋。'
-            : '尚未設定密碼。';
+            : '尚未設定密碼。');
     }
 
     const passhashInput = document.getElementById('prtg-passhash');
@@ -708,9 +715,9 @@ function renderPrtgFields(settings) {
 
     const passhashHint = document.getElementById('prtg-passhash-hint');
     if (passhashHint) {
-        passhashHint.textContent = settings.prtgHasPasshash
+        passhashHint.textContent = undecryptableSecretHint(settings, 'passhash', 'passhash') ?? (settings.prtgHasPasshash
             ? '已設定 passhash；留空儲存＝沿用既有 passhash，輸入新值才會覆蓋。'
-            : '尚未設定 passhash。';
+            : '尚未設定 passhash。');
     }
 
     syncPrtgAuthFields();
@@ -727,13 +734,7 @@ function renderPrtgFields(settings) {
 
 
     prtgEnabled = Boolean(settings.prtgEnabled);
-    const authMode = settings.prtgAuthMode || 'token';
-    const hasCredential = authMode === 'password'
-        ? Boolean(settings.prtgHasPassword && settings.prtgUsername)
-        : authMode === 'passhash'
-            ? Boolean(settings.prtgHasPasshash && settings.prtgUsername)
-            : Boolean(settings.prtgHasApiToken);
-    prtgStructureConfigured = Boolean(settings.prtgUrl?.trim() && hasCredential);
+    prtgStructureConfigured = Boolean(settings.prtgUrl?.trim()) && settings.prtgCredentialState === 'ok';
     document.getElementById('prtg-enabled').checked = prtgEnabled;
     const scopeSelect = document.getElementById('prtg-value-fetch-scope');
     if (scopeSelect) {
@@ -1459,7 +1460,7 @@ function readUnmatchedFocusHostId() {
     const params = new URLSearchParams(location.search);
     if (params.get('focus') !== 'unmatched') return null;
     const hostId = Number(params.get('hostId'));
-    return Number.isInteger(hostId) && hostId > 0 ? hostId : null;
+    return Number.isSafeInteger(hostId) && hostId > 0 ? hostId : null;
 }
 
 /** 移除 focus、hostId 參數但保留 hash（頁籤靠 #mirror），重新整理不再定位 */

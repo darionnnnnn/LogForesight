@@ -1050,8 +1050,15 @@ public sealed class PrtgFetchService
             new PrtgValueFetchRetryPolicy(ValueFetchJitter),
             new PauseGate(RetryDelay ?? PrtgTablePager.DefaultWait, TimeSource));
 
-        await FetchValuesFirstRoundAsync(run, concurrency, ct, progress, stage);
-        await FetchValuesSupplementRoundAsync(run, ct);
+        try
+        {
+            await FetchValuesFirstRoundAsync(run, concurrency, ct, progress, stage);
+            await FetchValuesSupplementRoundAsync(run, ct);
+        }
+        finally
+        {
+            run.Gate.Reset(); // 最後一顆失敗時拉起的暫停已經沒有人要等
+        }
         return SummarizeValueFetch(run);
     }
 
@@ -1239,15 +1246,16 @@ public sealed class PrtgFetchService
         var consecutive = 0;
         lock (run.Sync)
         {
+            // 閘已拉起時失敗的是同一波在途請求，不算新的一次：否則併發 8 第一波就數到 8，PRTG 重啟一分鐘就整趟放棄
+            if (run.Stopped || run.Gate.IsRaised) return;
             run.Policy.RecordRetryableFailure();
-            if (run.Stopped) return;
             consecutive = run.Policy.ConsecutiveFailures;
 
             if (run.Policy.ConsecutiveLimitReached)
             {
                 stopReason = $"連續 {PrtgValueFetchRetryPolicy.MaxConsecutiveFailures} 顆可重試失敗";
             }
-            else if (!run.Gate.IsRaised)
+            else
             {
                 var delay = run.Policy.NextDelay(ex.RetryAfter);
                 if (run.Policy.WouldReachTotalPauseLimit(run.Gate.TotalPaused, delay))

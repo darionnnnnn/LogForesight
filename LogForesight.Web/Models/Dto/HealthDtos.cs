@@ -192,10 +192,10 @@ public class ScheduleFreshnessDto
     public bool Acked { get; set; }
     public List<string> AdminContacts { get; set; } = new();
 
-    /// <summary>最近一趟已結束的排程取數趟的狀態（BatchRunStatus）；近 14 天沒有為 null</summary>
+    /// <summary>最近一趟排程取數趟的狀態（BatchRunStatus，含進行中與卡住）；近 14 天沒有為 null</summary>
     public string? LastRunStatus { get; set; }
 
-    /// <summary>金鑰不符或有憑證解不開：過期很可能是這個原因，告示要指路去重新輸入</summary>
+    /// <summary>有憑證解不開：過期很可能是這個原因，告示要指路去重新輸入</summary>
     public bool CredentialIssue { get; set; }
 }
 

@@ -22,7 +22,8 @@ internal static class AiJson
     /// </summary>
     public static AiJsonParseOutcome<T> TryParseDetailed<T>(string raw, Func<T, bool>? accept = null) where T : class
     {
-        T? firstParsed = null;
+        T? longestParsed = null;
+        var longestLength = -1;
         JsonException? lastException = null;
         JsonException? lastSyntaxValidException = null;
 
@@ -37,11 +38,17 @@ internal static class AiJson
                 var result = JsonSerializer.Deserialize<T>(candidate);
                 if (result != null)
                 {
-                    if (accept == null || accept(result))
+                    if (accept != null && accept(result))
                     {
                         return new AiJsonParseOutcome<T>(result, null, null);
                     }
-                    firstParsed ??= result;
+                    // 沒有內容檢查（或都沒通過）時取最長的：答案通常遠大於思考裡的 {} 或尾端的小物件，
+                    // 不論它排在前面或後面都選得對；只看順序的話總有一種排法會選到空欄位還判成功
+                    if (candidate.Length > longestLength)
+                    {
+                        longestParsed = result;
+                        longestLength = candidate.Length;
+                    }
                 }
             }
             catch (JsonException ex)
@@ -55,8 +62,8 @@ internal static class AiJson
             }
         }
 
-        return firstParsed != null
-            ? new AiJsonParseOutcome<T>(firstParsed, null, null)
+        return longestParsed != null
+            ? new AiJsonParseOutcome<T>(longestParsed, null, null)
             : new AiJsonParseOutcome<T>(null, lastException, lastSyntaxValidException);
     }
 

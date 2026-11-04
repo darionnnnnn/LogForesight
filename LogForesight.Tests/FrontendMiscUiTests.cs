@@ -183,6 +183,14 @@ public class FrontendMiscUiTests
     }
 
     [Fact]
+    public void PRTG維護頁檢查清單的認證項讀後端憑證狀態()
+    {
+        var source = ReadPage("prtg-admin.js");
+        Assert.Contains("Boolean(settings.prtgUrl) && settings.prtgCredentialState === 'ok'", source);
+        Assert.Contains("憑證無法解密，請重新輸入並儲存", source);
+    }
+
+    [Fact]
     public void 說明書只有首次載入關閉捲動且報表起訖日與範圍chip守門()
     {
         var help = ReadPage("help-manual.js");
@@ -267,6 +275,7 @@ public class FrontendMiscBehaviorTests
     [InlineData("prtg未對應跳轉等初次載入全部結束才做")]
     [InlineData("過期告示的連結與聯絡人依權限")]
     [InlineData("排程清單的觸發來源只標範圍縮小的趟次")]
+    [InlineData("PRTG憑證欄位提示只在目前模式解不開時改寫")]
     [InlineData("過期告示的原因句依憑證與最近一趟狀態")]
     [InlineData("prtg未對應沒有參數時不pin不跳轉不改網址")]
     [InlineData("prtg未對應載入失敗不跳轉但錯誤態顯示且之後不再pin")]

@@ -110,6 +110,21 @@ public class RunDayTimingBuilderTests
     }
 
     [Fact]
+    public void 有跟隨趟時補跑不進AI明細_明細不會比總計長()
+    {
+        var day = new DateTime(2026, 11, 1);
+        var timing = RunDayTimingBuilder.Build(new[]
+        {
+            new BatchRun { Trigger = "schedule", StartedAt = day.AddHours(1), FinishedAt = day.AddHours(1).AddMinutes(10) },
+            new BatchRun { Trigger = BatchRunTriggers.FetchFollowUp, JobType = BatchRun.JobTypeAi, StartedAt = day.AddHours(1).AddMinutes(10), FinishedAt = day.AddHours(1).AddMinutes(20) },
+            new BatchRun { Trigger = "schedule", JobType = BatchRun.JobTypeAi, StartedAt = day.AddHours(14), FinishedAt = day.AddHours(15) }
+        })!;
+
+        Assert.Equal(600, timing.Branches.Single(b => b.Key == RunTimingPhases.Ai).Seconds);
+        Assert.Equal(1, timing.OtherAiRuns);
+    }
+
+    [Fact]
     public void 非跟隨AI趟只進AI那一路_不算進取數總耗時與起訖_另列OtherAiRuns()
     {
         var ai = Run(At(7), At(9), Phase(RunTimingPhases.Ai, At(7), At(9)));

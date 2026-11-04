@@ -577,6 +577,20 @@ public sealed class PrtgValueFetchRetryServiceTests : IDisposable
         Assert.Equal((3, 0), (written, failed));
     }
 
+    [Fact]
+    public async Task 併發8時整波失敗只算一次_PRTG短暫中斷不會整趟放棄()
+    {
+        // 前 16 個請求失敗（兩波），之後 PRTG 恢復：每顆各算一次的話第二波就數到 10 而停損
+        var sent = 0;
+        var rig = NewRig((_, _) => Interlocked.Increment(ref sent) <= 16 ? TimedOut() : Ok(),
+            pauseBody: (_, ct) => Task.Delay(30, ct));
+
+        var (written, failed) = await RunAsync(rig, Ids(40), concurrency: 8);
+
+        Assert.Equal(0, failed);
+        Assert.Equal(40, written);
+    }
+
     // ───────── 停損與冷卻 ─────────
 
     [Fact]

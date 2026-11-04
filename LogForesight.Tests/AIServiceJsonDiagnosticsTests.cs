@@ -601,6 +601,16 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         Assert.Equal("高", detailed.Value?.RiskLevel);
     }
 
+    [Theory]
+    [InlineData("{\"note\":\"x\"} 之後 {0}")]
+    [InlineData("好的，結果如下：{0}\n補充 {\"note\":\"x\"}")]
+    public void TryParseDetailed_沒有內容檢查_答案在前或在後都選最長的(string template)
+    {
+        var detailed = AiJson.TryParseDetailed<AiAnalysisResult>(template.Replace("{0}", Obj("高")));
+
+        Assert.Equal("高", detailed.Value?.RiskLevel);
+    }
+
     [Fact]
     public void TryParseDetailed_都沒通過內容檢查_回第一個解析得出的讓呼叫端走內容檢查失敗()
     {
@@ -960,6 +970,39 @@ public sealed class AIServiceJsonDiagnosticsTests : IDisposable
         Assert.DoesNotContain(AIService.RetryClosingWithGrammar, retry);
         Assert.Contains("先簡短思考", retry);
         Assert.Contains("只輸出一個 JSON 物件", retry);
+    }
+
+    [Fact]
+    public async Task 空形狀之後的無文法重試回空內容_帶前次原文走降級_不繞過次數上限()
+    {
+        var service = NewService(n => new Reply { Content = n == 1 ? "[]" : "" }, 2, out var handler);
+
+        var result = await service.ChatJsonAsync<AiAnalysisResult>("p", validate: Validate);
+
+        Assert.False(result.Success);
+        Assert.Equal("[]", result.RawContent);   // 呼叫端靠非空的原文判定成降級，次數才會增加
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task 第一次就回空內容_維持完全失敗語意()
+    {
+        var service = NewService(_ => new Reply { Content = "" }, 2, out _);
+
+        var result = await service.ChatJsonAsync<AiAnalysisResult>("p", validate: Validate);
+
+        Assert.False(result.Success);
+        Assert.Equal("", result.RawContent);
+    }
+
+    [Fact]
+    public async Task 文法關掉後就不再打開_內容檢查沒過也一樣()
+    {
+        var service = NewService(n => new Reply { Content = n == 1 ? "[]" : "{\"headline\":\"\"}" }, 2, out var handler);
+
+        await service.ChatJsonAsync<AiAnalysisResult>("p", validate: Validate);
+
+        Assert.Equal(new[] { true, false, false }, handler.RequestBodies.Select(HasResponseFormat));
     }
 
     [Theory]

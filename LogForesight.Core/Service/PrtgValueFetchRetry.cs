@@ -22,7 +22,7 @@ internal sealed class PrtgValueFetchRetryPolicy
     /// <summary>隨機誤差的上限比例：實際暫停＝序列值 ×（1＋0～0.2），避免多條工作同時恢復又同時打 PRTG。</summary>
     internal const double JitterFraction = 0.2;
 
-    /// <summary>連續可重試失敗（中間沒有任何成功）達這個顆數就停損。逾時 60 秒、併發 2 時最壞約 17 分鐘（5 次逾時＋5 次暫停）。</summary>
+    /// <summary>連續可重試失敗的次數（同一個閘內的只算一次，成功歸零）達此數就停損。正常情況總暫停上限會先到（約 20 分鐘）；這一道保險給暫停被短路或時鐘不走的情況。</summary>
     internal const int MaxConsecutiveFailures = 10;
 
     /// <summary>一次 <c>FetchValuesAsync</c> 的總暫停時間上限；加上下一次暫停會達到它就停損。</summary>
@@ -59,7 +59,7 @@ internal sealed class PrtgValueFetchRetryPolicy
         ConsecutiveFailures = 0;
     }
 
-    /// <summary>記一次可重試失敗（含閘已拉起、不再疊加暫停的那些）。</summary>
+    /// <summary>記一次可重試失敗（閘已拉起時的失敗屬同一波，呼叫端不會記）。</summary>
     internal void RecordRetryableFailure() => ConsecutiveFailures++;
 
     /// <summary>

@@ -226,6 +226,11 @@ public class ScheduleFreshnessTests
         {
             Assert.False(Freshness().CredentialIssue);
 
+            // 金鑰不符但憑證都解得開（重新輸入後、重啟前）：不能再叫人輸入一次
+            CryptoKeyBootstrapper.KeyMismatch = true;
+            Assert.False(Freshness().CredentialIssue);
+            CryptoKeyBootstrapper.KeyMismatch = false;
+
             Assert.False(CryptoHelper.TryDecrypt("enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", out _));
             Assert.True(Freshness().CredentialIssue);
         }
@@ -233,6 +238,26 @@ public class ScheduleFreshnessTests
         {
             CryptoHelper.ResetForTests();
         }
+    }
+
+    [Fact]
+    public void 卡住沒結束的排程趟不會被更早的成功趟蓋掉()
+    {
+        var stuck = new BatchRun { Trigger = "schedule", StartedAt = DateTime.Now.AddHours(-10) };
+        using var fx = new EfSqliteFixture();
+        var runs = new BatchRunStore(fx.LogStore("batch_runs"), fx.LogStore("batch_run_logs"));
+        var done = Run("schedule", "full", 60);
+        runs.StartRun(done);
+        runs.FinishRun(done);
+        runs.StartRun(stuck);
+        var optionsBlob = fx.Blob("schedule_options");
+        var options = new ScheduleOptions { Enabled = true, EnabledAt = DateTime.Now.AddHours(-100) };
+        optionsBlob.Mutate(_ => (JsonSerializer.Serialize(options, LfJsonOptions.Pretty), options));
+
+        var result = new ScheduleFreshnessService(runs, new ScheduleOptionsStore(optionsBlob)).GetScheduleFreshness(DateTime.Now);
+
+        Assert.True(result.Stale);
+        Assert.Equal(BatchRunStatus.Stuck, result.LastRunStatus);
     }
 
     [Fact]

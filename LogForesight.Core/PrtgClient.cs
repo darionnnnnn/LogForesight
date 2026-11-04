@@ -325,6 +325,9 @@ public sealed class PrtgClient : IDisposable
 
                 var trimmed = text.Trim();
 
+                // 空白 OK 頁是 PRTG 放棄處理，不黏住：黏住會讓這個 client 之後都不再送請求，還把人引去改本來對的密碼
+                if (IsEmptyOkPage(trimmed)) throw EmptyPageException();
+
                 if (trimmed.StartsWith('<'))
                 {
                     // 帳密錯時 PRTG 回登入頁，但反向代理維護頁／WAF 阻擋頁同樣是 200+HTML——
@@ -367,6 +370,11 @@ public sealed class PrtgClient : IDisposable
         var span = header.Delta ?? (header.Date is { } date ? date - _timeProvider.GetUtcNow() : (TimeSpan?)null);
         return span is { } s && s > TimeSpan.Zero ? s : null;
     }
+
+    private static PrtgClientException EmptyPageException() => new(
+        "PRTG 回應 OK 但沒有回資料：PRTG 在伺服器端放棄處理（忙碌、逾時或核心服務異常）時會回這個空白頁，" +
+        "不是認證錯誤（認證錯誤會回 HTTP 401）。請稍後再試；持續發生請檢查 PRTG 核心伺服器的負載與狀態。",
+        kind: PrtgFailureKind.EmptyPage);
 
     /// <summary>PRTG 的空白「OK」頁：73 bytes、<c>class="no-content"</c>、內文只有 OK。登入頁與其他 HTML 不算。</summary>
     internal static bool IsEmptyOkPage(string trimmedBody) =>
@@ -562,13 +570,7 @@ public sealed class PrtgClient : IDisposable
             }
 
             var trimmed = text.Trim();
-            if (expectJson && IsEmptyOkPage(trimmed))
-            {
-                throw new PrtgClientException(
-                    "PRTG 回應 OK 但沒有回資料：PRTG 在伺服器端放棄處理（忙碌、逾時或核心服務異常）時會回這個空白頁，" +
-                    "不是認證錯誤（認證錯誤會回 HTTP 401）。請稍後再試；持續發生請檢查 PRTG 核心伺服器的負載與狀態。",
-                    kind: PrtgFailureKind.EmptyPage);
-            }
+            if (expectJson && IsEmptyOkPage(trimmed)) throw EmptyPageException();
 
             if (expectJson && trimmed.StartsWith('<'))
             {

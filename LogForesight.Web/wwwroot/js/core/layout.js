@@ -726,11 +726,13 @@ function caseDaySyncBar(activity) {
  * 過期告示的原因句：憑證解不開優先（它是最常見、也最能動手處理的原因）；
  * 其次是最近一趟排程沒成功；最近一趟成功或完全沒有趟次，代表排程根本沒在跑。
  */
-function freshnessReason(freshness) {
+function freshnessReason(freshness, canMaintain) {
     if (freshness.credentialIssue) {
-        return { text: '有憑證無法解密，取數會因此失敗；請重新輸入。', credential: true };
+        // 只有 DevMonitor 的人進不去維護頁，叫他重新輸入是做不到的指令；解不開的也可能是 AI 或郵件，所以取數只說可能
+        const action = canMaintain ? '請重新輸入' : '請通知管理者重新輸入';
+        return { text: `有憑證無法解密，相關取數可能失敗；${action}。`, credential: true };
     }
-    const statusText = { failed: '失敗', stopped: '已停止', stuck: '異常中斷' }[freshness.lastRunStatus];
+    const statusText = { failed: '失敗', stopped: '已停止', stuck: '異常中斷', running: '正在執行' }[freshness.lastRunStatus];
     return statusText
         ? { text: `最近一趟排程取數${statusText}。`, credential: false }
         : { text: '最近沒有排程取數在跑，請確認站台常駐（IIS 應用程式集區 AlwaysRunning）。', credential: false };
@@ -764,7 +766,7 @@ async function loadHealthBanner(user) {
 
     const text = document.createElement('span');
     const lastText = freshness.lastSuccessAt ? formatDateTime(freshness.lastSuccessAt) : '近 14 天沒有紀錄';
-    const reason = freshnessReason(freshness);
+    const reason = freshnessReason(freshness, hasCapability(user, 'Maintain'));
     const contacts = !hasCapability(user, 'Maintain') && freshness.adminContacts?.length
         ? `請聯絡：${freshness.adminContacts.join('、')}。`
         : '';

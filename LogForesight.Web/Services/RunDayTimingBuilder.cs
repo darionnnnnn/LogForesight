@@ -46,7 +46,9 @@ internal static class RunDayTimingBuilder
             FetchRunsWithoutPhases = settledFetch.Count(r => r.Phases == null || r.Phases.Count == 0),
             InterruptedCount = interrupted.Count,
             LastInterruptedActivityAt = interrupted.Count > 0 ? interrupted.Max(LastActivity) : null,
-            Branches = BranchKeys.Select(key => BuildBranch(key, dayRuns)).OfType<RunBranchTimingDto>().ToList()
+            // 有跟隨趟時補跑不進明細，否則展開列的 AI 時間會比總計長、對不上第二行；當天只有補跑時才顯示補跑
+            Branches = BranchKeys.Select(key => BuildBranch(key, followUps.Count > 0 ? dayRuns.Except(otherAi) : dayRuns))
+                .OfType<RunBranchTimingDto>().ToList()
         };
     }
 

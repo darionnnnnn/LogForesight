@@ -447,10 +447,12 @@ public class AIService : IAiService
         // 上一次內容層失敗的類別（第 63-2 輪 B-a-2）：決定下一次要不要關掉文法（response_format），
         // 也決定重試提示的尾句——兩者共用同一個判定（見 RetryWithoutGrammar），不各寫一份
         string? lastCategory = null;
+        // 文法一旦因 empty／no_json 關掉就不再打開：之後就算內容檢查沒過，回到文法只會再被擋成 []，浪費最後一次機會
+        var withoutGrammar = false;
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
-            var withoutGrammar = attempt > 1 && RetryWithoutGrammar(lastCategory);
+            withoutGrammar = withoutGrammar || (attempt > 1 && RetryWithoutGrammar(lastCategory));
             var currentPrompt = attempt == 1 || string.IsNullOrWhiteSpace(lastError)
                 ? prompt
                 : BuildRetryPrompt(prompt, lastError, rawContent, withoutGrammar);
@@ -477,9 +479,11 @@ public class AIService : IAiService
                 // 純傳輸層失敗（先前也沒有任何內容層失敗）不寫；先前有內容層失敗的，那些證據照寫
                 WriteDiagnostics<T>(label, model, maxTokens, attempt, attemptDiagnostics,
                     isEmptyResponse ? AiJsonDiagnostics.EndedEmpty : AiJsonDiagnostics.EndedTransport);
-                // RawContent 刻意留空：前一次嘗試的不合格回覆不是這次的結果，帶著它會讓呼叫端走「原文保留」降級、
-                // 把傳輸失敗的主機日標成 AI 已完成而不再補跑；完全失敗才會維持待補
-                return new AiJsonResult<T> { Success = false, RawContent = string.Empty, Error = transportError, Attempts = attempt };
+                // 傳輸失敗時 RawContent 刻意留空：前一次嘗試的不合格回覆不是這次的結果，帶著它會讓呼叫端走「原文保留」降級、
+                // 把傳輸失敗的主機日標成 AI 已完成而不再補跑；完全失敗才會維持待補。
+                // 空回覆不同：服務有回應，是模型給不出內容（例如關掉文法後思考吃光 token）。前面已有不合格回覆時要帶著它走降級，
+                // 否則次數永遠不增加、放棄上限失效，排程每一輪都重打 AI
+                return new AiJsonResult<T> { Success = false, RawContent = isEmptyResponse ? rawContent : string.Empty, Error = transportError, Attempts = attempt };
             }
             else
             {

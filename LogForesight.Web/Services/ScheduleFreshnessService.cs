@@ -38,10 +38,11 @@ public class ScheduleFreshnessService
 
         var lastSuccessAt = latestSuccess?.FinishedAt;
 
-        // 告示要講的是「排程那條路」的狀況，所以只看排程取數趟，手動趟不影響它
+        // 告示要講的是「排程那條路」的狀況，所以只看排程取數趟，手動趟不影響它；
+        // 沒結束的趟也算（進行中或卡住），否則卡住的那趟會被更早的成功趟蓋掉，告示反而說排程沒在跑
         var lastScheduled = runs
-            .Where(r => r.IsScheduledFetch() && r.FinishedAt != null)
-            .OrderByDescending(r => r.FinishedAt)
+            .Where(r => r.IsScheduledFetch())
+            .OrderByDescending(r => r.StartedAt)
             .FirstOrDefault();
 
         // Stale：ScheduleEnabled 且（LastSuccessAt 為 null 或 now - LastSuccessAt > 48 小時），
@@ -62,7 +63,8 @@ public class ScheduleFreshnessService
             AckedUntil = ackedUntil,
             Acked = acked,
             LastRunStatus = lastScheduled == null ? null : BatchRunStatus.Compute(lastScheduled, now, RunMonitorService.StuckThreshold),
-            CredentialIssue = CryptoKeyBootstrapper.KeyMismatch || CryptoHelper.DecryptFailureSeen
+            // 只看解密失敗：重新輸入全部憑證後金鑰不符要等重啟才解除，那段時間憑證其實都解得開，不能叫人再輸入一次
+            CredentialIssue = CryptoHelper.DecryptFailureSeen
         };
     }
 }

@@ -863,11 +863,22 @@ const cases = {
         assert.equal(runTriggerText({ triggerText: '手動', scope: 'local' }), '手動・僅本機');
         assert.equal(runTriggerText({ triggerText: '手動', scope: 'netiq-hosts' }), '手動・指定主機');
     },
+    PRTG憑證欄位提示只在目前模式解不開時改寫() {
+        const { undecryptableSecretHint: hint } = build('prtg-admin.js', ['function undecryptableSecretHint('], '', '{ undecryptableSecretHint }');
+        const bad = { prtgCredentialState: 'undecryptable', prtgAuthMode: 'passhash' };
+        assert(hint(bad, 'passhash', 'passhash').includes('無法解密'));
+        assert.equal(hint(bad, 'password', '密碼'), null);
+        assert(hint({ prtgCredentialState: 'undecryptable' }, 'token', 'API token').includes('無法解密'));
+        assert.equal(hint({ prtgCredentialState: 'ok', prtgAuthMode: 'passhash' }, 'passhash', 'passhash'), null);
+    },
     過期告示的原因句依憑證與最近一趟狀態() {
         const { freshnessReason } = build('../core/layout.js', ['function freshnessReason('], '', '{ freshnessReason }');
-        const credential = freshnessReason({ credentialIssue: true, lastRunStatus: 'failed' });
+        const credential = freshnessReason({ credentialIssue: true, lastRunStatus: 'failed' }, true);
         assert.equal(credential.credential, true);
         assert(credential.text.includes('憑證無法解密'), credential.text);
+        assert(credential.text.includes('；請重新輸入'), credential.text);
+        assert(freshnessReason({ credentialIssue: true }, false).text.includes('請通知管理者'));
+        assert.equal(freshnessReason({ credentialIssue: false, lastRunStatus: 'running' }, true).text, '最近一趟排程取數正在執行。');
         assert.equal(freshnessReason({ credentialIssue: false, lastRunStatus: 'failed' }).text, '最近一趟排程取數失敗。');
         assert.equal(freshnessReason({ credentialIssue: false, lastRunStatus: 'stopped' }).text, '最近一趟排程取數已停止。');
         assert.equal(freshnessReason({ credentialIssue: false, lastRunStatus: 'stuck' }).text, '最近一趟排程取數異常中斷。');
