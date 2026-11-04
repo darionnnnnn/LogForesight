@@ -723,6 +723,20 @@ function caseDaySyncBar(activity) {
 }
 
 /**
+ * 過期告示的原因句：憑證解不開優先（它是最常見、也最能動手處理的原因）；
+ * 其次是最近一趟排程沒成功；最近一趟成功或完全沒有趟次，代表排程根本沒在跑。
+ */
+function freshnessReason(freshness) {
+    if (freshness.credentialIssue) {
+        return { text: '有憑證無法解密，取數會因此失敗；請重新輸入。', credential: true };
+    }
+    const statusText = { failed: '失敗', stopped: '已停止', stuck: '異常中斷' }[freshness.lastRunStatus];
+    return statusText
+        ? { text: `最近一趟排程取數${statusText}。`, credential: false }
+        : { text: '最近沒有排程取數在跑，請確認站台常駐（IIS 應用程式集區 AlwaysRunning）。', credential: false };
+}
+
+/**
  * 排程資料過期告示：只有能處理它的人（Maintain／DevMonitor）才查，進頁查一次、不輪詢。
  * 過期且尚未確認靜音時顯示一條；其餘情況向協調器移除。
  */
@@ -750,13 +764,27 @@ async function loadHealthBanner(user) {
 
     const text = document.createElement('span');
     const lastText = freshness.lastSuccessAt ? formatDateTime(freshness.lastSuccessAt) : '近 14 天沒有紀錄';
-    text.textContent = `排程資料已超過 48 小時沒有成功更新（最近一次成功：${lastText}）。`;
+    const reason = freshnessReason(freshness);
+    const contacts = !hasCapability(user, 'Maintain') && freshness.adminContacts?.length
+        ? `請聯絡：${freshness.adminContacts.join('、')}。`
+        : '';
+    text.textContent = `排程資料已超過 48 小時沒有成功更新（最近一次成功：${lastText}）。${reason.text}${contacts}`;
 
     const runsLink = document.createElement('a');
     runsLink.href = appUrl('/runs');
     runsLink.textContent = '查看排程作業';
 
     bar.append(text, runsLink);
+
+    // 憑證要到各自的維護頁重新輸入；那兩頁需要 Maintain，只有 DevMonitor 的人改看聯絡人
+    if (reason.credential && hasCapability(user, 'Maintain')) {
+        for (const [label, path] of [['NetIQ 維護', '/admin/netiq'], ['PRTG 維護', '/admin/prtg#connection']]) {
+            const link = document.createElement('a');
+            link.href = appUrl(path);
+            link.textContent = label;
+            bar.appendChild(link);
+        }
+    }
 
     // 確認靜音在設定頁、需要 Maintain：只有 DevMonitor 的人看得到告示，但不給他進不去的連結
     if (hasCapability(user, 'Maintain')) {

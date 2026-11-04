@@ -12,6 +12,9 @@ public static class BatchRunTriggers
 
     /// <summary>取數完成後接續的 AI 分析（不算排程）</summary>
     public const string FetchFollowUp = "fetch-followup";
+
+    /// <summary>手動觸發的前綴（後面接帳號）</summary>
+    public const string ManualPrefix = "manual:";
 }
 
 /// <summary>BatchRun 的判定擴充：排程觸發判準的唯一出口。</summary>
@@ -20,6 +23,30 @@ public static class BatchRunExtensions
     /// <summary>取數排程執行的唯一判準：Trigger == schedule 且非 AI 背景工作（AI 不算取數排程的新鮮度或觸發；觸發判定、補跑說明、排程驗收共用）。</summary>
     public static bool IsScheduledFetch(this BatchRun run) =>
         run.Trigger == BatchRunTriggers.Schedule && run.JobType != BatchRun.JobTypeAi;
+
+    /// <summary>
+    /// 這一趟能不能算「資料有更新」（狀態另外判定）的唯一判準：排程取數趟，或完整範圍的手動取數趟。
+    /// 憑證修好後手動跑一次完整範圍，資料就是新的，不必等到下一個排程窗口；範圍縮小的手動趟、AI 趟與 console 舊趟不算。
+    /// </summary>
+    public static bool CountsForFreshness(this BatchRun run) =>
+        run.IsScheduledFetch() ||
+        (run.JobType != BatchRun.JobTypeAi && run.Scope == BatchRunScopes.Full &&
+         run.Trigger?.StartsWith(BatchRunTriggers.ManualPrefix, StringComparison.Ordinal) == true);
+}
+
+/// <summary>BatchRun.Scope 的固定值（RunScope 的落地字串；舊紀錄與 AI 趟為 null）。</summary>
+public static class BatchRunScopes
+{
+    public const string Full = "full";
+    public const string Local = "local";
+    public const string NetiqHosts = "netiq-hosts";
+
+    public static string Of(LogForesight.Core.Service.RunScope scope) => scope switch
+    {
+        LogForesight.Core.Service.RunScope.LocalOnly => Local,
+        LogForesight.Core.Service.RunScope.NetiqHosts => NetiqHosts,
+        _ => Full
+    };
 }
 
 /// <summary>
@@ -81,6 +108,9 @@ public class BatchRun
     /// AI 執行走執行紀錄的逐筆視角——它不是「哪台主機哪天跑了沒」的語意。
     /// </summary>
     public string? JobType { get; set; }
+
+    /// <summary>取數趟的範圍（<see cref="BatchRunScopes"/>）；舊紀錄與 AI 趟為 null</summary>
+    public string? Scope { get; set; }
 
     /// <summary>AI 分析排程執行的 <see cref="JobType"/> 值</summary>
     public const string JobTypeAi = "ai";

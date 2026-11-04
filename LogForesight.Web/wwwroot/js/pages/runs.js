@@ -567,6 +567,8 @@ function renderErrorsTable() {
 let currentRunList = [];
 let runListSort = { key: 'startedAt', dir: 'desc' };
 
+const RUN_SCOPE_TEXT = { full: '完整', local: '僅本機', 'netiq-hosts': '指定主機' };
+
 const RUN_LIST_COLUMNS = [
     { title: '主機', sortKey: 'hostName', sortValue: r => r.hostName, truncate: true, render: r => r.hostName },
     // 作業類型（批次D）：取數分析與 AI 分析的執行同列在這張表，一眼分得出來
@@ -780,6 +782,7 @@ function renderStats(container, detail) {
             : []),
         { label: '警告 / 錯誤', value: `${detail.warnCount} / ${detail.errorCount}` },
         { label: '版本', value: detail.appVersion },
+        ...(RUN_SCOPE_TEXT[detail.scope] ? [{ label: '範圍', value: RUN_SCOPE_TEXT[detail.scope] }] : []),
         { label: '本機', value: formatLocalBranch(detail.localDaysAnalyzed, detail.localDaysFailed) },
         { label: 'NetIQ', value: formatNetiqBranch(detail.netiqDaysAnalyzed, detail.netiqDaysFailed, detail.netiqHostsSkipped) },
         { label: 'PRTG', node: renderPrtgCell(detail.prtgOutcome, detail.prtgSensorsFetched, detail.prtgSensorsFailed, detail.prtgTriggeredHosts, detail.prtgStrategy, detail.prtgOutcomeNote) }

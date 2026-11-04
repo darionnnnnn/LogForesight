@@ -188,6 +188,9 @@ public class RunDetailDto
     /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
     public int? NetiqHostsSkipped { get; set; }
 
+    /// <summary>取數範圍（full | local | netiq-hosts，null＝舊紀錄或 AI 趟）</summary>
+    public string? Scope { get; set; }
+
     /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
     public string? PrtgOutcome { get; set; }
 
@@ -305,6 +308,9 @@ public class RunListItemDto
 
     /// <summary>NetIQ 機房分析已完成跳過的主機日數（null＝舊紀錄或 NetIQ 未產出）</summary>
     public int? NetiqHostsSkipped { get; set; }
+
+    /// <summary>取數範圍（full | local | netiq-hosts，null＝舊紀錄或 AI 趟）</summary>
+    public string? Scope { get; set; }
 
     /// <summary>PRTG 擷取成果狀態（disabled | success | partial | failed，null＝舊紀錄或未執行）</summary>
     public string? PrtgOutcome { get; set; }

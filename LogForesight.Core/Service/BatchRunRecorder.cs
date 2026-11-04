@@ -73,7 +73,7 @@ public class BatchRunRecorder : IDisposable
     /// </remarks>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
         CancellationToken ct = default, Action<string>? onRegistrationFailed = null, string? jobType = null,
-        bool catchUp = false, DateTime? startedAt = null)
+        bool catchUp = false, DateTime? startedAt = null, string? scope = null)
     {
         _store = store;
         _ct = ct;
@@ -85,6 +85,7 @@ public class BatchRunRecorder : IDisposable
             Args = string.Join(" ", args),
             Trigger = trigger,
             JobType = jobType,
+            Scope = scope,
             CatchUp = catchUp ? true : null
         };
 

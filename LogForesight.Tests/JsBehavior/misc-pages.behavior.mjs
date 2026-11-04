@@ -823,6 +823,20 @@ const cases = {
         inst.whenInitialLoadSettled(() => log.push('later'));
         assert.deepEqual(log, ['reveal', 'later'], '載入結束後的呼叫立即執行');
     },
+    過期告示的原因句依憑證與最近一趟狀態() {
+        const { freshnessReason } = build('../core/layout.js', ['function freshnessReason('], '', '{ freshnessReason }');
+        const credential = freshnessReason({ credentialIssue: true, lastRunStatus: 'failed' });
+        assert.equal(credential.credential, true);
+        assert(credential.text.includes('憑證無法解密'), credential.text);
+        assert.equal(freshnessReason({ credentialIssue: false, lastRunStatus: 'failed' }).text, '最近一趟排程取數失敗。');
+        assert.equal(freshnessReason({ credentialIssue: false, lastRunStatus: 'stopped' }).text, '最近一趟排程取數已停止。');
+        assert.equal(freshnessReason({ credentialIssue: false, lastRunStatus: 'stuck' }).text, '最近一趟排程取數異常中斷。');
+        for (const lastRunStatus of [null, 'success', 'warning']) {
+            const idle = freshnessReason({ credentialIssue: false, lastRunStatus });
+            assert.equal(idle.credential, false);
+            assert(idle.text.includes('常駐'), idle.text);
+        }
+    },
     async prtg未對應沒有參數時不pin不跳轉不改網址() {
         const t = makeUnmatched({ search: '', hash: '#mirror', items: [{ hostId: 5 }], total: 1 });
         await t.inst.refreshUnmappedHosts(1);

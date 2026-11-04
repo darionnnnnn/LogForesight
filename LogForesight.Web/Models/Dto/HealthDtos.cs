@@ -191,6 +191,12 @@ public class ScheduleFreshnessDto
     public DateTime? AckedUntil { get; set; }
     public bool Acked { get; set; }
     public List<string> AdminContacts { get; set; } = new();
+
+    /// <summary>最近一趟已結束的排程取數趟的狀態（BatchRunStatus）；近 14 天沒有為 null</summary>
+    public string? LastRunStatus { get; set; }
+
+    /// <summary>金鑰不符或有憑證解不開：過期很可能是這個原因，告示要指路去重新輸入</summary>
+    public bool CredentialIssue { get; set; }
 }
 
 /// <summary>確認資料過期提醒請求（任務 A-3）</summary>

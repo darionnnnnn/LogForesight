@@ -116,6 +116,8 @@ public class HealthControllerFreshnessCacheTests
         var maintainer = Create(freshness, options, FakeCurrentUser.WithCapabilities(Capability.Maintain), cache, groups, users);
 
         var first = viewer.Freshness();
+        // 控制器把快取內容複製一份再填聯絡名單：新欄位要一起複製，否則告示永遠拿不到原因
+        Assert.Equal(BatchRunStatus.Success, first.Data!.LastRunStatus);
         Assert.True(first.Data!.Stale);
         Assert.Single(first.Data.AdminContacts);
 
