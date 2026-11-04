@@ -1321,7 +1321,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             {
                 r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.HasCorrelation,
                 r.Headline, r.ErrorCount, r.WarningCount, r.DataIncomplete, r.SecurityLogAvailable,
-                r.AiAnalyzed, r.AiPending, r.DetailPruned, r.LogSource
+                r.AiAnalyzed, r.AiPending, r.AiDegradedAttempts, r.DetailPruned, r.LogSource
             })
             .ToList();
 
@@ -1342,6 +1342,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             SecurityLogAvailable = r.SecurityLogAvailable,
             AiAnalyzed = r.AiAnalyzed,
             AiPending = r.AiPending,
+            AiDegradedAttempts = r.AiDegradedAttempts,   // 清單徽章（降級待補／已放棄）讀這個，輕量列也要帶
             DetailPruned = r.DetailPruned,
             LogSource = (AnalysisLogSource)r.LogSource,
             // 輕量列沒有整份關聯訊號內容（那要整份 blob）——呼叫端（RecordListQueryService.ToListItem）
@@ -1665,34 +1666,37 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     }
 
     /// <summary>
-    /// 標題精確查詢的 SQL 形狀（獨立出來讓 provider 翻譯測試能對 SQL Server 做 <c>ToQueryString</c>）。
-    /// headline 欄位是抽出欄（與 ContentJson 內的 Headline 同步寫入），等於比較整欄、可下推。
-    /// 相等比較沿用資料庫的字串比對語意（SQL Server 預設不分大小寫），標題是固定常數、不會有近似變體。
+    /// AI 格式異常降級案例的 SQL 形狀（獨立出來讓 provider 翻譯測試能對 SQL Server 做 <c>ToQueryString</c>）。
+    /// 全部讀抽出欄（<c>ai_degraded_attempts</c>、<c>ai_pending</c>、<c>headline</c>），不碰 ContentJson 就能篩：
+    /// 次數 &gt; 0 且（仍待補，或已達放棄上限），或標題精確等於歷史資料的舊標題。
+    /// 標題相等沿用資料庫的字串比對語意（SQL Server 預設不分大小寫），舊標題是固定常數、不會有近似變體。
     /// </summary>
-    internal static IQueryable<DailyRecordRow> BuildHeadlineQuery(
-        LfDbContext ctx, DateTime fromDate, DateTime toDate, string headline, int take) =>
+    internal static IQueryable<DailyRecordRow> BuildAiDegradedCaseQuery(
+        LfDbContext ctx, DateTime fromDate, DateTime toDate, int take) =>
         ctx.DailyRecords.AsNoTracking()
-            .Where(r => r.RecordDate >= fromDate && r.RecordDate <= toDate && r.Headline == headline)
+            .Where(r => r.RecordDate >= fromDate && r.RecordDate <= toDate
+                && ((r.AiDegradedAttempts > 0 && (r.AiPending || r.AiDegradedAttempts >= AiDegradation.MaxAttempts))
+                    || r.Headline == LogAnalysisService.AiFormatAnomalyHeadline))
             .OrderByDescending(r => r.RecordDate)
             .ThenBy(r => r.HostId)
             .ThenBy(r => r.RecordId)
             .Take(take);
 
-    public List<DailyAnalysisRecord> QueryByHeadline(DateTime from, DateTime to, string headline, int take)
+    public List<DailyAnalysisRecord> QueryAiDegradedCases(DateTime from, DateTime to, int take)
     {
-        if (take <= 0 || string.IsNullOrEmpty(headline) || from.Date > to.Date) return new List<DailyAnalysisRecord>();
+        if (take <= 0 || from.Date > to.Date) return new List<DailyAnalysisRecord>();
 
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
         using var ctx = _contextFactory();
 
-        var rows = BuildHeadlineQuery(ctx, f, t, headline, take).ToList();
+        var rows = BuildAiDegradedCaseQuery(ctx, f, t, take).ToList();
 
         var result = rows.Select(Deserialize).ToList();
-        Log.Debug("[SQL] QueryByHeadline（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} take={Take}）→ {Count} 筆、{Ms}ms",
+        Log.Debug("[SQL] QueryAiDegradedCases（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} take={Take}）→ {Count} 筆、{Ms}ms",
             f, t, take, result.Count, sw.ElapsedMilliseconds);
-        _performance?.Record("records:QueryByHeadline", sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryAiDegradedCases", sw.ElapsedMilliseconds);
         return result;
     }
 

@@ -186,6 +186,7 @@ public class RecordDetailQueryService
             Action = caseGrantOnly ? "" : record.Action,
             AiAnalyzed = !caseGrantOnly && record.AiAnalyzed,
             AiPending = !caseGrantOnly && record.AiPending,
+            AiDegradedAttempts = caseGrantOnly ? 0 : record.AiDegradedAttempts,
             DetailPruned = record.DetailPruned,
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,

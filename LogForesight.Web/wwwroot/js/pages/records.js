@@ -21,7 +21,7 @@ import {
 import { statusesWhere } from '../core/handling-statuses.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_ORDER, categoryName, severityName, formatNumber,
-    formatUserName, toLocalDateString, analysisAnchorLocal, isAiRetryPending, issueBaselineCell, severityCell, issueDensityCell
+    formatUserName, toLocalDateString, analysisAnchorLocal, aiStateOf, aiDegradedBadge, issueBaselineCell, severityCell, issueDensityCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -626,20 +626,17 @@ function detailQuery() {
 function headlineCell(record) {
     const wrap = document.createElement('span');
 
-    if (record.aiAnalyzed && record.headline) {
+    // 降級待補／已放棄（看欄位，不比對標題文字）要排在「AI」徽章前面：降級的主機日 aiAnalyzed 也是 true
+    const degradedBadge = aiDegradedBadge(record, 'me-1');
+    if (degradedBadge) {
+        wrap.appendChild(degradedBadge);
+    } else if (record.aiAnalyzed && record.headline) {
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary me-1';
         badge.textContent = 'AI';
         badge.title = 'AI 產出摘要';
         wrap.appendChild(badge);
-    } else if (record.aiPending && isAiRetryPending(record.headline)) {
-        // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：與「分析中」區分開
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--warning me-1';
-        badge.textContent = 'AI 待補';
-        badge.title = 'AI 服務當時未回應，可用排程頁「只補跑失敗或未執行」補回';
-        wrap.appendChild(badge);
-    } else if (record.aiPending) {
+    } else if (aiStateOf(record) === 'pending') {
         // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
         // 中性色，跟灰字的「統計模式」區分開，不能看起來像失敗
         const badge = document.createElement('span');

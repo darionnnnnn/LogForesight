@@ -1090,8 +1090,7 @@ public sealed class RunExportService : IRunExportService
         private (List<DailyAnalysisRecord> Records, bool LowerBound) QueryCases()
         {
             _ct.ThrowIfCancellationRequested();
-            var records = _s._records.QueryByHeadline(_cutoff.AddDays(-1), DateTime.Today,
-                LogAnalysisService.AiFormatAnomalyHeadline, _l.AiCasesScanned);
+            var records = _s._records.QueryAiDegradedCases(_cutoff.AddDays(-1), DateTime.Today, _l.AiCasesScanned);
             return (records, records.Count >= _l.AiCasesScanned);
         }
 
@@ -1131,7 +1130,9 @@ public sealed class RunExportService : IRunExportService
             var parsed = scanned.Select(rec =>
             {
                 if (rec.DetailPruned) return (Rec: rec, Attempts: (int?)null, Reply: (string?)null, Shape: (AiReplyShapeResult?)null);
-                LogAnalysisService.TryParseAiFormatAnomalySummary(rec.Summary, out var attempts, out var reply);
+                // 解不出說明前綴的摘要不是「保留的 AI 回覆」（不能把整段規則層文字當回覆去分類），回覆與形狀都留 null
+                if (!LogAnalysisService.TryParseAiFormatAnomalySummary(rec.Summary, out var attempts, out var reply))
+                    return (Rec: rec, Attempts: (int?)null, Reply: (string?)null, Shape: (AiReplyShapeResult?)null);
                 return (Rec: rec, Attempts: attempts, Reply: reply, Shape: AiReplyShape.Classify(reply, LogAnalysisService.MaxSummaryChars));
             }).ToList();
 
@@ -1208,6 +1209,8 @@ public sealed class RunExportService : IRunExportService
                     DataSource = SourceOf(rec),
                     Risk = RiskLevels.All.Contains(rec.RiskLevel) ? Lit(rec.RiskLevel) : Text(rec.RiskLevel),
                     Attempts = attempts,
+                    DegradedAttempts = rec.AiDegradedAttempts,
+                    Abandoned = rec.AiDegradedAttempts >= AiDegradation.MaxAttempts && !rec.AiPending,
                     ReplyShape = shape == null ? null : Lit(shape.Shape),
                     CutOff = shape?.CutOff == true,
                     Reply = reply == null ? null : Text(reply),
@@ -1263,7 +1266,8 @@ public sealed class RunExportService : IRunExportService
 
         /// <summary>
         /// 對照組：同主機、日期最接近（前後 N 天內，同距離取較新）、AI 正常分析完成、
-        /// 標題不是格式異常也不是低風險跳過的紀錄，每案最多一筆；找不到是 null，不換別台主機。
+        /// 從未降級過（降級次數為 0，已恢復成功的也不選）、標題不是舊的格式異常也不是低風險跳過的紀錄，
+        /// 每案最多一筆；找不到是 null，不換別台主機。
         /// </summary>
         private (ExportControlDto? Control, AiInputFeatures? Features) FindControl(DailyAnalysisRecord rec)
         {
@@ -1277,6 +1281,7 @@ public sealed class RunExportService : IRunExportService
             var best = candidates
                 .Where(c => c.RecordId != rec.RecordId
                             && c.AiAnalyzed && !c.AiPending && !c.DetailPruned
+                            && c.AiDegradedAttempts == 0
                             && !string.IsNullOrEmpty(c.Headline)
                             && c.Headline != LogAnalysisService.AiFormatAnomalyHeadline
                             && c.Headline != LogAnalysisService.LowRiskHeadline
@@ -1363,7 +1368,8 @@ public sealed class RunExportService : IRunExportService
             "【次數對得上畫面】meta.signalTotals.errorFatal 等於排程作業頁「異常彙總」（預設只看 Error）各組次數的總和；組數可以不同，因為這裡先去識別化再分組，會把只差主機名的訊息併在一起。",
             "【省略】meta.omitted 列出每一處因上限而省略的項目、數量與上限；signalGroups 的省略會同時列出被省略的次數（occurrences）與其中 Error／Fatal 的次數（errorFatalOccurrences）。沒有出現的項目代表沒有被省略。",
             "【runStats】byJob 依作業類型（fetch＝取數分析，ai＝AI 分析排程）與觸發類別（schedule、manual、fetch-followup、console＝工作排程器或舊紀錄）統計；phases 是各階段耗時（只算有結束時間的）與未成功次數，P95 用最近排名法；versions 看問題是不是某一版之後才出現。",
-            "【aiFormatAnomalies】「案例」是標題為「AI 回覆格式異常，以下為原始內容」的主機日紀錄，表示 AI 重試用盡後仍未通過 JSON 檢查、系統保留原文降級。attempts 是紀錄摘要前綴寫的嘗試次數（解析不到為 null）。replyShape：object＝以 { 開頭、fence＝Markdown 圍欄、array＝以 [ 開頭、text＝一般文字、blank＝空白；cutOff 為 true 代表保留字數已達 600 字上限，後面可能還有被截掉的內容，不要推測它是什麼。",
+            "【aiFormatAnomalies】「案例」是 AI 重試用盡後仍未通過 JSON 檢查、系統保留原文降級的主機日紀錄，有兩種來源：一是 degradedAttempts 大於 0 且仍未成功（還在待補，或連續 3 次格式異常後已放棄，abandoned 為 true）；二是歷史資料中標題為「AI 回覆格式異常，以下為原始內容」的舊紀錄（degradedAttempts 為 0）。已恢復的不算案例：降級過但之後 AI 摘要補成功的主機日，degradedAttempts 雖大於 0，卻不在 aiFormatAnomalies 內，也不會當對照組。degradedAttempts 是 AI 排程對這個主機日降級的排程次數（每趟排程嘗試最多算 1 次，同一趟內的重試不另計）；attempts 是紀錄摘要前綴寫的單次呼叫內嘗試次數（解析不到為 null；摘要沒有這段前綴時 attempts、reply、replyShape 都是 null）。replyShape：object＝以 { 開頭、fence＝Markdown 圍欄、array＝以 [ 開頭、text＝一般文字、blank＝空白；cutOff 為 true 代表保留字數已達 600 字上限，後面可能還有被截掉的內容，不要推測它是什麼。",
+            "【兩種 AI 失敗率】runStats 的 aiFailures／aiCalls 是主機日層：AI 排程每個主機日算一次呼叫，格式異常降級也算一次失敗；signalGroups 與診斷行是呼叫層：以 AIService 的單次呼叫為單位，呼叫內每次嘗試各有一筆診斷行，重試用盡才算該次呼叫最終失敗。同一個主機日的一次呼叫在診斷行可能有 3 筆，在主機日層只算 1 次，兩個分母不同，不能直接相除或相減。",
             "【失敗類別】診斷的 category：empty＝空回覆；no_json＝完全沒有 {；truncated＝括號未閉合或 finishReason 為 length（被 maxTokens 截斷）；type_mismatch＝JSON 合法但欄位型別不符（parseErrorPath 指到欄位）；parse_other＝其他解析失敗；validation＝解析得出但內容檢查沒過（fieldLengths 是各欄字數，請對照 context.ai 的上限：headlineMaxChars 與 otherFieldMaxChars）。context.ai 的 aiMaxTokens 與 aiJsonRetryCount 是呼叫當時的設定值。empty 的 emptyShape：array＝回覆只有 []、object＝只有 {}，這是伺服器用文法（response_format）強制輸出 JSON 時，模型想先思考卻被擋下的最短合法輸出；上一次是 empty 或 no_json 時，下一次嘗試會關掉文法重試，提示尾句改成允許先思考、最後只輸出一個 JSON 物件，其他類別的重試維持文法與「嚴格輸出合法 JSON」的尾句。rawChars、rawHead、rawTail 是清洗前（去 channel 標記與簡轉繁之前）的原文字數與頭尾，缺值代表與清洗後完全相同；reasoningChars 是伺服器另放在 reasoning_content 或 reasoning 欄位的思考字數，只有長度，null 代表伺服器沒有這類欄位。",
             "【診斷起始日】detailedDiagnosticsFirstSeen 是期間內最早一筆詳細診斷的日期；在那之前的案例只有摘要，沒有 category、finishReason 與字數。null 代表期間內沒有任何詳細診斷，可能是還沒發生過失敗，也可能是功能上線前的資料，兩者無法區分。",
             "【失敗歷史統計】summary.failureHistory 是從執行紀錄 Warn 訊息比對出的解析失敗與內容檢查失敗次數（依回覆型別）。比對靠固定的訊息字首，找不到就是 0，0 不代表沒發生過。",

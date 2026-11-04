@@ -367,8 +367,14 @@ public sealed record ExportAiCaseDto
     public string DataSource { get; init; } = string.Empty;
     public string Risk { get; init; } = string.Empty;
 
-    /// <summary>從降級摘要的說明前綴解析；解析不到為 null</summary>
+    /// <summary>從降級摘要的說明前綴解析（單次呼叫內的嘗試次數）；解析不到為 null</summary>
     public int? Attempts { get; init; }
+
+    /// <summary>AI 排程對這個主機日降級的排程次數（歷史舊標題資料為 0）</summary>
+    public int DegradedAttempts { get; init; }
+
+    /// <summary>true：已達連續格式異常上限、不再補跑</summary>
+    public bool Abandoned { get; init; }
 
     /// <summary>object／fence／array／text／blank；詳情已清除（摘要沒留下）為 null</summary>
     public string? ReplyShape { get; init; }

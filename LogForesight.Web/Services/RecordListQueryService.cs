@@ -1089,6 +1089,7 @@ public class RecordListQueryService
             HasCoverageGap = record.HasCoverageGap,
             AiAnalyzed = record.AiAnalyzed,
             AiPending = record.AiPending,
+            AiDegradedAttempts = record.AiDegradedAttempts,
             PrtgOnly = record.LogSource == AnalysisLogSource.Prtg,
             // 對外三態（#12）：清單頁只呈現 未處理／處理中／已處理，結案類細節留給詳情頁
             HandlingStatus = HandlingStatuses.ExternalOf(progress.DayStatus),

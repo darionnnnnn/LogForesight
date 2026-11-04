@@ -9,7 +9,7 @@
 import { api, getAiAvailable, getCurrentUser, hasCapability, getDisplaySettings, canViewHandlerPage } from '../core/api.js';
 import { appUrl, recordsUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button, renderPageHeader } from '../core/ui.js';
-import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending, severityCell } from '../core/format.js';
+import { categoryName, riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, severityName, SEVERITY_ORDER, todayLocal, aiStateOf, aiDegradedBadge, severityCell } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
@@ -229,6 +229,35 @@ async function setupNextUnhandled() {
     button.classList.remove('d-none');
 }
 
+/**
+ * 標題列的 AI 狀態徽章（沒有要顯示的回 null）。狀態一律看欄位（aiStateOf），不比對標題文字：
+ * 降級待補／已放棄 → 排隊或執行中「AI 分析中」 → 未分析「統計模式」。案件授與檢視不顯示 AI 狀態。
+ */
+function aiStatusBadge(detail) {
+    if (detail.caseGrantOnly) return null;
+
+    const degradedBadge = aiDegradedBadge(detail);
+    if (degradedBadge) return degradedBadge;
+
+    if (aiStateOf(detail) === 'pending') {
+        // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
+        // 中性色，不能顯示成跟「統計模式（AI 未分析）」一樣，那看起來像失敗
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--info';
+        badge.textContent = 'AI 分析中';
+        badge.title = '統計結果已完成，AI 白話摘要正在背景處理，稍後重新整理即可看到';
+        return badge;
+    }
+    if (!detail.aiAnalyzed) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        badge.textContent = '統計模式（AI 未分析）';
+        badge.title = 'AI 未呼叫或呼叫失敗，規則與趨勢告警照常運作';
+        return badge;
+    }
+    return null;
+}
+
 function renderHeader(detail) {
     const container = document.getElementById('detail-header');
 
@@ -283,29 +312,8 @@ function renderHeader(detail) {
         top.appendChild(ipSpan);
     }
 
-    if (!detail.caseGrantOnly && detail.aiPending && isAiRetryPending(detail.headline)) {
-        // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：不能顯示成「分析中」——
-        // 那會讓人以為稍後重整就有，實際要靠排程「只補跑失敗或未執行」才補得回來
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--warning';
-        badge.textContent = 'AI 待補';
-        badge.title = 'AI 服務當時未回應，白話摘要從缺；可用排程頁「只補跑失敗或未執行」補回';
-        top.appendChild(badge);
-    } else if (!detail.caseGrantOnly && detail.aiPending) {
-        // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
-        // 中性色，不能顯示成跟「統計模式（AI 未分析）」一樣，那看起來像失敗
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--info';
-        badge.textContent = 'AI 分析中';
-        badge.title = '統計結果已完成，AI 白話摘要正在背景處理，稍後重新整理即可看到';
-        top.appendChild(badge);
-    } else if (!detail.caseGrantOnly && !detail.aiAnalyzed) {
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--secondary';
-        badge.textContent = '統計模式（AI 未分析）';
-        badge.title = 'AI 未呼叫或呼叫失敗，規則與趨勢告警照常運作';
-        top.appendChild(badge);
-    }
+    const aiBadge = aiStatusBadge(detail);
+    if (aiBadge) top.appendChild(aiBadge);
 
     body.appendChild(top);
     if (detail.logSource === 'Prtg') {
