@@ -55,7 +55,12 @@ function renderSentinels() {
 
 function renderDiscoverBadge(sentinel) {
     const span = document.createElement('span');
-    if (sentinel.canDiscover) {
+    if (sentinel.credentialState === 'undecryptable') {
+        // 密文存在但用目前金鑰解不開：canDiscover 仍是 true（只看欄位非空），要先判這個
+        span.className = 'lf-badge lf-badge--danger';
+        span.textContent = '密碼無法解密';
+        span.title = '金鑰檔與資料庫不相符，請編輯後重新輸入密碼';
+    } else if (sentinel.canDiscover) {
         span.className = 'lf-badge lf-badge--success';
         span.textContent = '已設定';
     } else {
@@ -139,9 +144,11 @@ function openSentinelModal(sentinel) {
     document.getElementById('sentinel-os').value = sentinel?.os ?? 'windows';
     document.getElementById('sentinel-use-esm').checked = sentinel?.useEsmDirectory ?? false;
     document.getElementById('sentinel-password').value = '';
-    document.getElementById('sentinel-password-hint').textContent = sentinel?.hasPassword
-        ? '已設定，留空＝不變更。'
-        : '留空＝此 Sentinel 無法主動掃描。';
+    document.getElementById('sentinel-password-hint').textContent = sentinel?.credentialState === 'undecryptable'
+        ? '已儲存的密碼無法解密（金鑰檔與資料庫不相符），請重新輸入。'
+        : sentinel?.hasPassword
+            ? '已設定，留空＝不變更。'
+            : '留空＝此 Sentinel 無法主動掃描。';
     document.getElementById('sentinel-test-result').replaceChildren();   // 換一台編輯時不留上一台的測試結果
 
     sentinelModal.show();
@@ -316,7 +323,9 @@ function renderProbeSentinelOptions() {
     for (const sentinel of sentinels) {
         const option = document.createElement('option');
         option.value = String(sentinel.sentinelId);
-        option.textContent = sentinel.canDiscover ? sentinel.name : `${sentinel.name}（帳密未設定）`;
+        option.textContent = sentinel.credentialState === 'undecryptable'
+            ? `${sentinel.name}（密碼無法解密）`
+            : sentinel.canDiscover ? sentinel.name : `${sentinel.name}（帳密未設定）`;
         probeSentinelSelect.appendChild(option);
     }
     if (previousValue && sentinels.some(s => String(s.sentinelId) === previousValue)) {

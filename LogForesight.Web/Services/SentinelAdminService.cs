@@ -259,6 +259,7 @@ public class SentinelAdminService
         Username = sentinel.Username,
         HasPassword = !string.IsNullOrEmpty(sentinel.PasswordEnc),
         CanDiscover = sentinel.CanDiscover,
+        CredentialState = SentinelConnectionFactory.CredentialStateOf(sentinel).ToWire(),
         Active = sentinel.Active,
         Os = sentinel.Os,
         CreatedAt = sentinel.CreatedAt,

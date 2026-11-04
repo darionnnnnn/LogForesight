@@ -220,15 +220,11 @@ public sealed class RunExportDeidentifierFactory
             throw new RunExportDeidentificationException("PRTG 裝置鏡像", ex);
         }
 
+        // 密文欄位清單只有 SecretInventory 一份（啟動探測與取數前置檢查共用）；這裡不看「這趟用不用得到」，全部都要比對
         var secrets = new List<string>();
         var undecryptable = new List<string>();
-        Secret(secrets, undecryptable, "AI 金鑰", settings.AiApiKeyEnc);
-        Secret(secrets, undecryptable, "SMTP 密碼", settings.SmtpPasswordEnc);
-        Secret(secrets, undecryptable, "PRTG API token", settings.PrtgApiTokenEnc);
-        Secret(secrets, undecryptable, "PRTG 密碼", settings.PrtgPasswordEnc);
-        Secret(secrets, undecryptable, "PRTG passhash", settings.PrtgPasshashEnc);
-        foreach (var sentinel in sentinels)
-            Secret(secrets, undecryptable, "Sentinel 密碼", sentinel.PasswordEnc);
+        foreach (var entry in SecretInventory.Build(settings, sentinels))
+            Secret(secrets, undecryptable, entry.Name, entry.Ciphertext);
 
         return new RunExportDeidentifierSource
         {

@@ -232,7 +232,19 @@ public class NetiqPipelineService
                     result.AddWarning($"Sentinel「{serverName}」設定已消失，轄下 {targets.Count} 台主機本次不查詢");
                     return;
                 }
-                if (!sentinel.CanDiscover)
+                // 憑證狀態讀單一出口（SentinelConnectionFactory），不再用 POCO 的 CanDiscover——
+                // 它只看密文欄位非空，解不開時仍是 true，會拿空密碼去登入（每晚重複，有鎖帳號風險）
+                var credentialState = SentinelConnectionFactory.CredentialStateOf(sentinel);
+                if (credentialState == CredentialState.Undecryptable)
+                {
+                    // 不建 client、不送任何請求；與整台失敗路徑一致：計失敗主機日並標未完成，讓下次執行重試
+                    _hostDayTiming?.MarkIncomplete(timingRunId);
+                    _console.WriteLine($"  ⚠ Sentinel「{serverName}」密碼無法解密，略過（轄下 {targets.Count} 台主機本次不查詢）");
+                    result.AddWarning($"Sentinel「{serverName}」密碼無法解密，轄下 {targets.Count} 台主機本次不查詢");
+                    result.AddFailed(targets.Count);
+                    return;
+                }
+                if (credentialState != CredentialState.Ok)
                 {
                     _hostDayTiming?.MarkIncomplete(timingRunId);
                     _console.WriteLine($"  ⚠ Sentinel「{serverName}」查詢帳密未設定，略過（轄下 {targets.Count} 台主機本次不查詢）");

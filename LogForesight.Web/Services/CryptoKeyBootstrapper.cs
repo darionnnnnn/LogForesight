@@ -69,6 +69,37 @@ public static class CryptoKeyBootstrapper
                 "請確認另一個 LogForesight 行程的啟動工作已完成後再重試。");
 
         Log.Info("密文金鑰來源：{0}；金鑰檔：{1}", CryptoHelper.KeySource, path);
+
+        // 金鑰不符時 RunCore 提早返回，探測放在這裡才一定會跑到
+        ProbeSecrets(settingsStore, sentinelStore);
+    }
+
+    /// <summary>
+    /// 啟動探測：對 <see cref="SecretInventory"/> 每一筆非空密文試解一次。<see cref="CryptoHelper.TryDecrypt"/>
+    /// 失敗時會設 <see cref="CryptoHelper.DecryptFailureSeen"/>，健康頁因此在第一個夜間取數之前就顯示降級，
+    /// 而不是等到某個功能剛好用到那組憑證。**不改任何資料**；探測失敗（讀不到設定等）只記 Warn，不得影響啟動。
+    /// </summary>
+    /// <returns>解不開的項目顯示名稱（不含任何值）</returns>
+    internal static IReadOnlyList<string> ProbeSecrets(ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)
+    {
+        try
+        {
+            var bad = new List<string>();
+            foreach (var entry in SecretInventory.Build(settingsStore.Get(), sentinelStore.GetAll()))
+            {
+                if (string.IsNullOrEmpty(entry.Ciphertext)) continue;
+                if (!CryptoHelper.TryDecrypt(entry.Ciphertext, out _)) bad.Add(entry.DisplayName);
+            }
+
+            if (bad.Count > 0)
+                Log.Warn("[Crypto] 啟動探測：下列憑證用目前金鑰解不開：{0}。請還原正確的金鑰檔，或到對應設定頁重新輸入。", string.Join("、", bad));
+            return bad;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Crypto] 啟動探測失敗（不影響啟動）：{0}", ex.Message);
+            return Array.Empty<string>();
+        }
     }
 
     private static void RunCore(StorageBackend backend, string path, ISystemSettingsStore settingsStore, ISentinelStore sentinelStore)

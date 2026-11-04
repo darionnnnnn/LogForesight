@@ -89,8 +89,7 @@ public class NetiqDiscoveryService
     {
         var server = _catalog.GetServer(serverName)
                      ?? throw DomainException.Validation($"找不到 Sentinel「{serverName}」。");
-        if (!server.CanDiscover)
-            throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
+        EnsureDiscoverable(server, serverName);
 
         CleanupExpired();
         lock (_registry.JobsLock)
@@ -178,6 +177,19 @@ public class NetiqDiscoveryService
         job.Cts.Cancel();
     }
 
+    /// <summary>
+    /// 掃描前的帳密檢查：解不開要讓使用者看到「無法解密」而不是「尚未設定」——
+    /// 兩者的處置不同（前者重新輸入密碼，金鑰檔與資料庫不相符；後者補填帳密）。
+    /// </summary>
+    private static void EnsureDiscoverable(SentinelServer server, string serverName)
+    {
+        if (server.CredentialState == CredentialState.Undecryptable)
+            throw DomainException.Validation(
+                $"Sentinel「{serverName}」的密碼無法解密（金鑰檔與資料庫不相符），無法主動掃描。請到「設定」分頁編輯該 Sentinel 重新輸入密碼。");
+        if (!server.CanDiscover)
+            throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
+    }
+
     public async Task<NetiqScanResultDto> ScanAsync(
         string serverName, string subnetPrefix, CancellationToken ct,
         Action<string, int>? onProgress = null,
@@ -187,8 +199,7 @@ public class NetiqDiscoveryService
     {
         var server = _catalog.GetServer(serverName)
                      ?? throw DomainException.Validation($"找不到 Sentinel「{serverName}」。");
-        if (!server.CanDiscover)
-            throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
+        EnsureDiscoverable(server, serverName);
 
         // 已登錄主機不必重新「發現」（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）：
         // 在 Sentinel 端就排除掉，沒有新主機時 found=0、一次查詢即結束。

@@ -14,6 +14,13 @@ public class SentinelDto
     public bool HasPassword { get; set; }
 
     public bool CanDiscover { get; set; }
+
+    /// <summary>
+    /// 密碼可用狀態（<c>ok</c>／<c>not_configured</c>／<c>undecryptable</c>）。<see cref="CanDiscover"/> 只看欄位是否非空，
+    /// 解不開時仍是 true；畫面要區分「解不開」請讀這個欄位。
+    /// </summary>
+    public string CredentialState { get; set; } = "not_configured";
+
     public bool Active { get; set; }
 
     /// <summary>'windows'／'linux'——這台 Sentinel 轄下主機的作業系統，掃描匯入精靈以此預填</summary>

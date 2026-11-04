@@ -109,6 +109,66 @@ public class CryptoKeyBootstrapperTests : IDisposable
         Assert.Equal(legacy, _sentinels.FindByName("S1")!.PasswordEnc);
     }
 
+    // ── 第 63-2 輪批次A：啟動探測 ──
+
+    private const string Undecryptable = "enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    [Fact]
+    public void 啟動探測_有解不開的密文_旗標為真且資料不變()
+    {
+        _settings.Update(s => s.PrtgPasswordEnc = Undecryptable);
+        _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = Undecryptable });
+        var updatedAt = _settings.Get().UpdatedAt;
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+
+        Run();
+
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+        Assert.Equal(Undecryptable, _settings.Get().PrtgPasswordEnc);
+        Assert.Equal(Undecryptable, _sentinels.FindByName("S1")!.PasswordEnc);
+        Assert.Equal(updatedAt, _settings.Get().UpdatedAt);
+    }
+
+    [Fact]
+    public void 啟動探測_全部正常_旗標維持為假()
+    {
+        _settings.Update(s =>
+        {
+            s.SmtpPasswordEnc = LegacyV1("smtp");
+            s.PrtgApiTokenEnc = "plain-old-token";
+        });
+        _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://s1", Username = "u", PasswordEnc = LegacyV1("pw") });
+
+        Run();
+
+        Assert.False(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void 啟動探測_金鑰指紋不符提早返回時仍會探測()
+    {
+        Run();
+        _backend.Blob("crypto_key_fingerprint").Mutate<bool>(_ => ("{\"Fingerprint\":\"0000000000000000\"}", true));
+        _settings.Update(s => s.AiApiKeyEnc = Undecryptable);
+
+        CryptoHelper.ResetForTests();
+        Run();
+
+        Assert.True(CryptoKeyBootstrapper.KeyMismatch);
+        Assert.True(CryptoHelper.DecryptFailureSeen);
+    }
+
+    [Fact]
+    public void 啟動探測_讀設定失敗只記警告_不擲例外()
+    {
+        var throwing = System.Reflection.DispatchProxy.Create<ISystemSettingsStore, RunExportDeidentifierTestsSource.ThrowingProxy<ISystemSettingsStore>>();
+        ((RunExportDeidentifierTestsSource.ThrowingProxy<ISystemSettingsStore>)(object)throwing).ThrowOn = "Get";
+
+        var bad = CryptoKeyBootstrapper.ProbeSecrets(throwing, _sentinels);
+
+        Assert.Empty(bad);
+    }
+
     [Fact]
     public void Sentinel密碼同樣被重加密()
     {

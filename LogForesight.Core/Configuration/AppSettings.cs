@@ -198,6 +198,13 @@ public class SentinelServer
 
     /// <summary>帳密齊備才可主動掃描（缺任一則精靈的掃描鈕停用並提示設定不完整）</summary>
     public bool CanDiscover => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
+
+    /// <summary>
+    /// 密碼的可用狀態，由 <c>SentinelConnectionFactory.ToConnectable</c> 填入：
+    /// <see cref="LogForesight.Core.Models.CredentialState.Undecryptable"/> 時 <see cref="Password"/> 是空字串，
+    /// 但原因是金鑰不符而不是沒填——呼叫端要分開講。手動建構的物件預設 Ok（只有工廠會判定）。
+    /// </summary>
+    public LogForesight.Core.Models.CredentialState CredentialState { get; set; } = LogForesight.Core.Models.CredentialState.Ok;
 }
 
 /// <summary>
