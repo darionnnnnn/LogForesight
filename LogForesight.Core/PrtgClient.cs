@@ -566,7 +566,7 @@ public sealed class PrtgClient : IDisposable
             {
                 throw new PrtgClientException(
                     "PRTG 回應 OK 但沒有回資料：PRTG 在伺服器端放棄處理（忙碌、逾時或核心服務異常）時會回這個空白頁，" +
-                    "不是認證錯誤（認證錯誤會是 HTTP 401 或登入頁）。請稍後再試；持續發生請檢查 PRTG 核心伺服器的負載與狀態。",
+                    "不是認證錯誤（認證錯誤會回 HTTP 401）。請稍後再試；持續發生請檢查 PRTG 核心伺服器的負載與狀態。",
                     kind: PrtgFailureKind.EmptyPage);
             }
 
